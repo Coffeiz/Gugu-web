@@ -22,7 +22,7 @@ from app.models import ConversationMessage, ConversationSession
 from agent.security import sanitize
 from agent.llm import genstream
 from agent import quota
-from agent.context import builder, loaders, session_snapshot, session_history, run_context, session_system
+from agent.context import builder, dynamic_tail, loaders, session_snapshot, session_history, run_context, session_system
 from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.conversation.session_metadata import generate_title, schedule_summary
 from agent.core import LLMRunner
@@ -122,7 +122,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             return builder.build_static_prompt(
                 DEFAULT_PROMPT_NAME, req.user_name,
                 style_prefs=style_prefs,
-                current_date=session_snapshot.current_date_text(current_user_tz),
+                current_date=dynamic_tail.current_date_text(current_user_tz),
             )
 
         snapshot = await session_snapshot.ensure_snapshot(

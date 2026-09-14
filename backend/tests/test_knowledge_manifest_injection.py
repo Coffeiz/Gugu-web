@@ -29,7 +29,7 @@ def test_build_split_renders_title_and_description():
         {"title": "发布流程", "topic": "发布", "description": "需要发版或回滚时先读。"},
     ])
     assert "## 知识" in text
-    assert "search_memory" in text
+    assert "read_knowledge" in text
     assert "- 发布流程：需要发版或回滚时先读。" in text
 
 

@@ -1,0 +1,16 @@
+export default {
+  plugins: ['@stryker-mutator/vitest-runner', '@stryker-mutator/typescript-checker'],
+  mutate: ['src/utils/optimisticMutation.ts'],
+  testRunner: 'vitest',
+  testFiles: ['test/optimisticMutation.test.ts'],
+  checkers: ['typescript'],
+  tsconfigFile: 'tsconfig.mutation.json',
+  reporters: ['clear-text', 'json'],
+  jsonReporter: { fileName: '.stryker-report/mutation.json' },
+  vitest: { related: false },
+  concurrency: 2,
+  timeoutMS: 20_000,
+  dryRunTimeoutMinutes: 2,
+  tempDirName: '.stryker-tmp',
+  cleanTempDir: 'always',
+}

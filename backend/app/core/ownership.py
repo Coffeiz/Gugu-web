@@ -22,6 +22,21 @@ from app.security.events import record_ownership_denied, security_fingerprint
 _log = logging.getLogger("ownership")
 
 
+def _ownership_identity(obj, user_id) -> tuple[object | None, bool]:
+    owner = getattr(obj, "user_id", None)
+    return owner, str(owner) == str(user_id)
+
+
+def _ownership_warning_fields(model, obj_id, owner, user_id) -> tuple[str, str | None, str | None, str]:
+    """构造脱敏告警字段，避免在归属拒绝日志中写入原始 ID。"""
+    return (
+        model.__name__,
+        security_fingerprint(obj_id)[:16],
+        security_fingerprint(owner)[:16] if owner is not None else None,
+        security_fingerprint(user_id)[:16],
+    )
+
+
 async def get_owned(db, model, obj_id, user_id):
     """按主键取 model 的一行并强制校验归属。
 
@@ -34,13 +49,11 @@ async def get_owned(db, model, obj_id, user_id):
     obj = await db.get(model, obj_id)
     if obj is None:
         return None
-    owner = getattr(obj, "user_id", None)
-    if str(owner) != str(user_id):
+    owner, is_owner = _ownership_identity(obj, user_id)
+    if not is_owner:
         _log.warning(
             "ownership.denied model=%s resource=%s owner=%s requester=%s",
-            model.__name__, security_fingerprint(obj_id)[:16],
-            security_fingerprint(owner)[:16] if owner is not None else None,
-            security_fingerprint(user_id)[:16],
+            *_ownership_warning_fields(model, obj_id, owner, user_id),
         )
         try:
             from app.security.events import get_request_context

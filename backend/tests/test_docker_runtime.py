@@ -856,8 +856,12 @@ def test_systemd_templates_pin_rootless_socket():
     assert 's#__RUN_HOME__#${run_home}#g' in start_script
     egress = (backend / "gugu-sandbox-egress.service").read_text(encoding="utf-8")
     assert "sandbox_egress_init.sh" in egress
+    assert 'ExecStart=/bin/sh "__APP_DIR__/scripts/sandbox_egress_init.sh"' in egress
     assert "GUGU_EGRESS_PROXY_URL=http://egress-proxy:3128" in egress
     assert "DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock" in egress
+    assert 'chmod 755 "$egress_script"' in start_script
+    assert 'runuser -u "$run_user"' in start_script
+    assert "test -r \"$1\"" in start_script
     sandboxd = (backend / "gugu-sandboxd.service").read_text(encoding="utf-8")
     assert "agent.sandbox.sandboxd" in sandboxd
     assert "--allowed-root __DATA_DIR__" in sandboxd

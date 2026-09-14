@@ -97,7 +97,7 @@ def build_static_prompt(prompt_name: str, user_name: str, *,
         prompt_text = ""
     if "{today}" in prompt_text:
         if current_date is None:
-            from agent.context.session_snapshot import current_date_text
+            from agent.context.dynamic_tail import current_date_text
             current_date = current_date_text()
         prompt_text = prompt_text.replace("{today}", current_date)
     prompt_policy = prompt_text.split("\n---", 1)[0].strip()

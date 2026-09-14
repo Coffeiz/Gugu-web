@@ -1278,6 +1278,9 @@ class RagIndexJob(Base):
     )
     source_type: Mapped[str] = mapped_column(String(32))
     source_id: Mapped[str] = mapped_column(String(255), default="")
+    # 同源待处理文档 ID 集合（PRD-RAG-9 §5.2）：合并只去重、不丢文档。
+    # source_id 列保留最后一条事件用于展示；来源级事件清空本集合。
+    pending_source_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     version: Mapped[str] = mapped_column(String(64), default="")
     operation: Mapped[str] = mapped_column(String(24), default="upsert")
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)

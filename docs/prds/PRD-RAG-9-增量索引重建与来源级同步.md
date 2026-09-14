@@ -1,12 +1,14 @@
 # PRD-RAG-9：增量索引重建与来源级同步
 
-> 状态：Draft
+> 状态：Phase 0–4 已实施；Phase 5 收敛完成（2026-09-13，见实施报告）
 > 创建：2026-09-09
-> 更新：2026-09-09
+> 更新：2026-09-13（补记查询侧 delta sync 恢复层；Phase 5 收敛与验收落档）
 > 所属层：RAG / Source Projection / TypeScript Worker
 > 前置 PRD：[`PRD-RAG-7-TS全链路检索分阶段迁移.md`](./PRD-RAG-7-TS全链路检索分阶段迁移.md)
 > 关联规范：[`RAG 与 Knowledge 架构`](../agent/06-RAG-AND-KNOWLEDGE.md)
 > 关联代码：`backend/agent/rag/`、`backend/agent/events/`、`backend/ts/workers/rag/`
+
+> 架构边界（2026-09-13）：TS Data Runtime 已承担查询期数据库索引及已接入来源的只读加载，Memory/受限文件读取通过 `StorageReader`；Python 负责身份认证、授权校验与索引写侧编排。本 PRD 仅定义业务变更后的 source projection 持久化、增量写入和 worker patch/recovery，不约束或否定 RAG-10 的 TS 查询期取数能力。写侧 doc-patch 是常态主路径；查询侧 `sync_index_from_database`（按 chunk 表水位增量补差）是官方恢复层，职责划分见 §8.2，不因查询侧具备自愈能力而豁免写侧的合并正确性要求。
 
 ## 0. 一句话目标
 
@@ -46,7 +48,7 @@ TS worker 根据前后文档差异执行 patch 或 replace
 
 ### 1.2 需要解决的问题
 
-1. 修改一个文档不应重新读取和重新投影整个来源。
+1. 修改一个文档不应重新读取和重新投影整个来源。本 PRD 描述的是索引写侧的来源 adapter 行为；查询期 TS Data Runtime 读取见 PRD-RAG-10。
 2. 文档内容变化后，旧 chunk 必须被准确删除，不能只追加新 chunk。
 3. 文件移动、项目归档、Knowledge 删除等非“新增”操作必须清理旧索引记录。
 4. 连续变更不能启动多个同源全量任务，也不能因合并事件而丢掉最终状态。
@@ -59,7 +61,7 @@ TS worker 根据前后文档差异执行 patch 或 replace
 ### 2.1 目标
 
 1. Knowledge 优先支持文档级增量重建。
-2. 文件、项目、日历、画布、对话和 Memory 按各自稳定父文档粒度接入增量更新。
+2. 文件、项目、日历、画布接入文档级增量；Conversation 与 Memory 保留现有来源级、watermark、瞬态槽或 snapshot 语义（Phase 5 定案：维持例外，见 Phase 3 定案与回归）。
 3. 只读取变更对象及其必要的旧投影，不扫描无关来源数据。
 4. 只生成变化文档的 chunk，并计算 `upserts` 与 `deletes`。
 5. 通过 TS worker `patch` 原子推进索引 revision。
@@ -71,7 +73,7 @@ TS worker 根据前后文档差异执行 patch 或 replace
 ### 2.2 非目标
 
 - 不改变 BM25、hybrid、confidence、top-k 或现有排序算法。
-- 不让 TS worker 访问数据库、文件库、Knowledge 存储、网络或用户凭据。
+- 本 PRD 的写路径不把数据库事务、文件/Knowledge 写入或凭据交给 TS worker；查询期 Data Runtime 的受限只读访问由 PRD-RAG-10 定义。
 - 不在 TS worker 内实现 ownership、workspace、project、folder、group/member 权限判断。
 - 不把增量更新变成当前轮实时刷新机制；当前轮已冻结的 snapshot 仍按既有生命周期工作。
 - 不在业务写入事务中同步等待完整索引重建。
@@ -176,9 +178,9 @@ source_id 缺失或来源不支持单文档读取
 规则：
 
 1. 没有运行任务时，事件进入队列并启动 worker。
-2. 运行任务时，新事件只更新 pending 状态和最后事件，不再启动并发来源重建。
-3. 当前任务完成后，如果存在 pending，则重新读取当前主数据并再执行一次。
-4. `upsert → delete` 最终按 delete 处理；`delete → upsert` 最终按当前主数据重新投影。
+2. 运行任务时不启动并发 worker。来源级重建可以合并为一次刷新；文档级增量必须保留所有待处理的 `source_id`，不能只留下最后一个文档事件。
+3. 当前任务完成后，按待处理文档 ID 重新读取当前主数据并逐项投影；遇到无 `source_id` 的 refresh 事件时，升级为来源级重建并清空已覆盖的文档级 pending 集合。
+4. 每个文档的最终动作由当前主数据决定：对象存在则 upsert，不存在则 delete；不能只依据最后一条事件的 `operation` 推断最终状态。
 5. 合并只减少重复工作，不能依据旧事件正文推断最终数据。
 6. worker 成功完成后才推进 `completed_generation`；失败必须保留失败状态和回退原因。
 
@@ -290,20 +292,31 @@ Knowledge、Memory 和其他来源的向量缓存继续保持各自边界，不�
 
 ### 8.2 事件丢失
 
-MVP 可以继续使用进程内合并队列，但必须增加以下恢复机制之一：
+MVP 使用进程内合并队列 + durable outbox。**已知的实现现状（2026-09-13 核对）**：内存队列与 outbox 对同一 `(owner, source_type)` 都只保留最后一条事件的 `source_id`，被覆盖的中间文档 ID 不会走写侧 doc-patch。
+
+该现状由**查询侧增量自同步**兜底（官方恢复层，非隐式行为）：TS worker 的 `sync_index_from_database` 按 `knowledge_index_entries` 的 chunk 表水位（watermark）只读取变更行并 patch 内存/磁盘索引，查询路径发现 revision 落后于 DB projection 时先同步再检索；水位缺失或超出墓碑视界时回退全量装载（`fallback_full`）。因此被合并丢弃的文档 ID 的最坏后果是「写侧少推一次 patch」，最终一致性由查询前自愈保证，不产生用户可见陈旧。
+
+写侧与查询侧的分工：
+
+```text
+写侧 doc-patch（主路径）：事件驱动、低延迟，把变更推到 worker
+查询侧 delta sync（恢复层）：冷启动/重启/事件丢失后的 revision 漂移自愈
+```
+
+恢复机制仍须满足以下之一（现状为 durable outbox）：
 
 - 持久化 dirty marker，记录 owner、source_type、source_id 和目标版本；或
 - 使用可重放的索引 outbox，在业务事务提交后写入待处理事件。
 
-进程启动时扫描未完成 dirty/outbox，按来源重放；不存在 durable marker 时，必须提供来源级定期校准任务，不能宣称事件丢失可自动恢复。
+进程启动时扫描未完成 dirty/outbox，按来源重放；不存在 durable marker 时，必须提供来源级定期校准任务，不能宣称事件丢失可自动恢复。Phase 5 需对「合并丢 ID → 查询前 delta sync 收敛」补显式回归（见 §10 Phase 5）。
 
 ### 8.3 Worker 重启
 
 TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 projection revision 不一致时：
 
 1. 禁止直接 patch；
-2. 加载当前 projection；
-3. 执行 replace；
+2. 加载当前 projection——优先走查询侧 delta sync 按水位增量补差；
+3. 水位缺失或不可信时执行来源级 replace（`fallback_full`）；
 4. 成功后清除恢复错误状态。
 
 ### 8.4 Session snapshot
@@ -368,32 +381,70 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 
 验收：1000 条 Knowledge 中修改 1 条时，只读取和 patch 该条；正文修改、关键词修改、删除和恢复均无旧 chunk 残留。
 
+### 阶段责任边界
+
+以下按代码责任域划分，不预设人员负责人。阶段验收由对应模块和测试共同负责；跨模块事项由表中列出的主责模块协调，不以接口存在代替端到端验收。
+
+| 阶段 | 主责模块 | 责任边界与交付证据 |
+| --- | --- | --- |
+| Phase 0 | `backend/agent/rag/delta.py`、`persistent_store.py`、TS RAG contracts | 稳定键、digest、diff 和 revision 契约；纯函数测试与旧路径回归。 |
+| Phase 1 | Knowledge adapter/store、`pipeline.py`、Knowledge vector cache、Knowledge 写入事件 | 单条读/投影/写库/向量/patch 的完整文档生命周期；Knowledge 专项测试。 |
+| Phase 2 | file/project adapters 与写入事件发布层、`index_builder.py` | 文件和项目变化的受影响集合、scope 清理及界面可见性；真实 scope 与召回回归。 |
+| Phase 3 | Calendar/Note/Canvas adapters、`events/bus.py`、`rag/index_jobs.py`、应用 lifespan | 剩余来源适配与 durable recovery；区分文档级来源和保留来源级/瞬态语义的例外。 |
+| Phase 4 | RAG benchmark、TS worker protocol、旧路径清理 | 性能场景与 worker 原子性/恢复证据；报告与实际跑过的场景一致。 |
+| Phase 5 | `events/bus.py`、`rag/index_jobs.py`、`pipeline.py`、来源回归测试和本 PRD/devlog | 收敛本轮审计缺口；队列/outbox 不丢不同文档 ID，补齐恢复、scope、来源例外测试，并同步状态、责任边界和测试报告。 |
+
 ### Phase 2：文件与项目增量
 
 - [x] 文件覆盖、重命名、移动、删除接入单文件/受影响目录增量。
 - [x] 项目字段、阶段和待办变化接入项目级增量。
 - [x] 明确文件夹和项目父文档变化时的受影响集合。
-- [x] 增加文件库、项目 UI 可见性与 RAG 召回一致性回归。
+- [ ] 增加文件库、项目 UI 可见性与 RAG 召回一致性端到端回归（列入 Phase 5）。
 
 验收：单文件或单项目变更不会扫描无关对象；移动后旧目录/旧项目 scope 不再召回。
 
 ### Phase 3：剩余来源与 durable recovery
 
-- [x] Calendar、Canvas、Note、Conversation、Memory 接入统一 delta contract。
+- [x] Calendar、Canvas、Note 接入文档级更新入口。
+- [x] Conversation、Memory 的增量边界已定案（Phase 5）：**维持例外**——conversation 保持来源级重建（召回侧消息水位由 `conversation_before_message_id` 承担，不属于索引重建），memory 保持瞬态槽/专用 snapshot 语义；例外回归见 `test_rag_phase5_convergence.py`。
 - [x] 引入 dirty marker 或索引 outbox。
-- [x] 启动恢复、失败重放和定期来源校准落地。
-- [x] 统一事件合并、取消、重试和状态查询。
+- [x] 启动恢复和失败重放通过 durable outbox 落地。
+- [ ] 定期来源校准入口未实现；outbox 满足基础恢复路径，管理端校准作为独立运维能力延后。
+- [x] 文档级事件合并已保留同源多个 `source_id`（bus pending 按 ID + outbox `pending_source_ids`，2026-09-13）。
+- [x] 事件重试和来源状态查询已接入；文档级合并正确性由 Phase 5 回归覆盖。
 
 验收：重启、重复事件、事件丢失模拟后，索引最终与主数据一致；无法恢复时有明确管理诊断。
 
 ### Phase 4：性能优化与旧路径清理
 
-- [x] 对比来源级 replace、chunk diff、TS patch 的 P50/P95。
-- [x] 校准批量事件合并窗口，避免过短导致重复 patch、过长导致明显延迟。
-- [x] 确认所有来源默认走增量；只保留明确的来源级重建和管理校准入口。
-- [x] 清理重复差异实现、旧 shadow 路径和仅用于迁移的测试。
+- [x] 记录 1000/3000 条规模下单文档增量与来源级重建的 P50/P95；分段耗时见实施报告（2026-09-13，`scripts/diagnostics/rag_phase5_perf.py`）。
+- [x] 批量事件合并策略定案：按 source_id 逐条保留、不设合并窗口——单文档 patch p50 ≈ 7.5ms（1000 条规模），无需窗口合并；依据同轮重复 patch 与延迟测量确认。
+- [x] 已接入的六个可单文档投影来源默认走增量；Conversation、Memory 按 Phase 3 所述保留专用语义。
+- [x] 清理重复差异实现、旧 shadow 路径和仅用于迁移的测试（含删除 ts_sidecar 死函数 `_index_document_digest`、update_document 死的全量 load）。
 
-验收：生产默认更新路径不再因单文档变化触发来源级全量重建；全量回退仍可手动执行并有测试覆盖。
+验收：已接入文档级增量的来源不因单文档变化触发来源级全量重建；全量回退仍可手动执行并有测试覆盖。性能报告不得将未测场景标记为已验证。
+
+### Phase 5：测试缺口收敛与阶段责任验收
+
+目标：把 PRD 的行为承诺、实现责任和真实回归证据重新对齐。此阶段不以增加测试数量为唯一目标；若测试揭示行为缺陷，应先修实现，再以回归测试锁定。
+
+2026-09-13 收敛完成（commit 0f443278c）。**收敛中发现并修复的实现缺陷**：
+
+1. `apply_document_patch` 只收 `delta.upserts` 导致未变化 chunk 被误打墓碑（多 chunk 文档部分编辑后索引静默丢内容，违反 §6.3「保留未变化 chunk」）——改为传当前全量 chunk 集，worker 仍只收 delta；回归 `test_partial_edit_keeps_unchanged_chunks`。
+2. `diagnostics.record_index_update` 的 `_log`/`json` 未定义，写路径诊断自上线起静默空转——修复后 §9 状态真实落日志。
+3. `update_document` 每次 patch 全量 `load_index_documents` 且结果未使用（死代码，O(来源规模)）——删除后单文档修改 p50 79ms→7.5ms（1000 条规模）。
+
+- [x] 修复内存事件队列与 durable outbox 的同源多文档合并：选择方案①修代码——bus `_rag_pending` 按 source_id 保留集合、refresh 事件覆盖文档级 pending；outbox 增 `pending_source_ids`（迁移 20260914000001），persist 并集、重放逐 ID 展开、成功逐 ID 移除，集合非空时保持 queued。
+- [x] 修正 revision mismatch 回退来源级 replace 后的诊断标注：显式 `mode=source_replace`。
+- [x] 新增并发与重启回归：阻塞文档 A 时提交 B/C 全部处理（`test_bus_keeps_all_pending_source_ids`）；refresh 覆盖文档级 pending（`test_bus_refresh_event_overrides_document_pending`）；重启后 outbox 逐 ID 重放收敛 DB projection + worker revision（`test_outbox_replay_converges_after_restart`）。
+- [x] 补齐来源真实变更测试：文件夹/阶段移动新 scope 可见、旧阶段无残留（`test_folder_move_clears_old_scope`）；Calendar 删除、Note、Canvas 关系由 `test_rag_remaining_sources_delta.py` 覆盖；部分编辑不丢 chunk（`test_partial_edit_keeps_unchanged_chunks`）。
+- [x] 补齐 Knowledge 与故障边界测试：仅关键词/描述变化的 `:k{hash}` 版本戳（`test_keyword_only_change_bumps_version_stamp`）、删除后恢复（`test_delete_then_restore_same_id`）、projection 事务失败不落脏（`test_projection_failure_leaves_old_chunks_intact`）、worker 不可用后 DB 先行 + 查询侧自愈（`test_worker_unavailable_is_ready_for_lazy_query_rebuild`）、向量部分失败不破坏 lexical 且重放幂等（`test_vector_partial_failure_keeps_lexical_and_replays_idempotent`）、owner scope 隔离（`test_owner_scope_isolation_on_patch`）。project/folder/group-member scope 隔离由 `test_rag_unified_query.py` 既有 ACL 回归覆盖。
+- [x] 诊断模式与日志脱敏断言：七态（document_patch / source_replace / revision_mismatch / worker_unavailable / projection_failed / event_replayed / no_change）真实落日志且断言（`test_diagnostic_modes_and_statuses`，含对 bug 2 的回归）；正文不进日志（`test_write_path_logs_never_contain_content`）。
+- [x] 完成性能测量：单文档修改/删除、连续 10 次同源多文档变更、来源级重建基线，分段耗时（`scripts/diagnostics/rag_phase5_perf.py`，结果见实施报告）；TS worker 段耗时见 2026-09-13 基准报告。
+- [x] 明确 Conversation/Memory 的产品范围：维持当前特殊路径（见 Phase 3 定案），补 `test_conversation_event_stays_source_level`、`test_memory_event_uses_dedicated_rebuild` 回归，并同步 §2、§7、Phase 3 和完成标准。
+- [x] 更新 Phase 0–5 完成状态与实施报告；只有行为、测试和性能证据都齐全的条目才标记完成。
+
+验收：同一用户同一来源的一批不同文档 ID 不会被事件合并或 outbox 覆盖；重启后最终索引与主数据一致；各阶段责任模块、来源例外和测试报告描述一致。✅（2026-09-13）
 
 ## 11. 测试计划
 
@@ -431,50 +482,62 @@ TS worker 重启后优先从持久化索引恢复。恢复版本与数据库 pro
 
 第一阶段目标不是承诺固定毫秒数，而是证明单文档变更的成本不再随来源总文档数线性增长；具体阈值在 Phase 0 基线后冻结。
 
-## 12. 文件修改目录树
+## 12. 责任模块与相关目录
 
-预计目录变化如下，实际实现时不得为了增量能力复制一套 tokenizer 或权限逻辑：
+本节按当前代码边界区分 RAG-9 写路径和 RAG-10 查询读路径。目录表示责任模块及测试落点，不表示每个文件都需要在同一阶段新增；实际完成状态以 Phase 0–5 和验证记录为准。不得为增量能力复制 tokenizer 或权限逻辑。
+
+### 12.1 本 PRD：索引写入、事件和恢复
 
 ```text
 docs/
-├── agent/
-│   └── 06-RAG-AND-KNOWLEDGE.md                  # 更新索引生命周期与增量边界
-├── devlog/
-│   └── YYYY-MM-DD-RAG增量索引实施.md             # 记录真实验证和回退案例
-└── prds/
-    └── PRD-RAG-9-增量索引重建与来源级同步.md      # 本 PRD
+├── agent/06-RAG-AND-KNOWLEDGE.md                 # 维护统一读写架构与索引生命周期
+├── devlog/YYYY-MM-DD-RAG增量索引实施.md           # 记录真实验证、缺口和回退案例
+└── prds/PRD-RAG-9-增量索引重建与来源级同步.md    # 本 PRD 与 Phase 0–5 验收状态
 
-backend/agent/
-├── events/
-│   ├── bus.py                                    # 合并队列、重试和状态
-│   └── types.py                                  # 事件字段/版本
-├── rag/
-│   ├── delta.py                                  # 通用 parent/chunk diff
-│   ├── index_builder.py                          # 单对象 source record / projection
-│   ├── persistent_store.py                       # 文档级 projection 增量写入
-│   ├── pipeline.py                               # patch、replace 回退和恢复
-│   ├── index_cache.py                            # revision 与 patch 前后缓存
-│   ├── vector_cache.py                           # 变化文档向量同步
-│   └── adapters/
-│       ├── knowledge.py                          # Knowledge 单条读取
-│       ├── indexed_sources.py                    # file/canvas/note 单对象读取
-│       ├── projects.py                            # project 单对象读取
-│       └── conversations.py                      # conversation watermark 增量
-└── tools/
-    └── memory.py                                 # save/delete Knowledge 事件状态
+backend/
+├── app/core/events.py                            # 业务资源写入后的 RAG 来源事件映射
+├── agent/events/
+│   ├── bus.py                                    # 写侧队列、串行消费、重试与恢复调度
+│   └── types.py                                  # RagIndexUpdated 事件契约
+├── agent/rag/
+│   ├── adapters/                                 # Python 写侧来源读取/授权范围投影
+│   ├── delta.py                                  # 通用 parent/chunk 差异契约
+│   ├── index_builder.py                          # 来源 source record 与 TS canonical projection 调用
+│   ├── index_jobs.py                             # durable outbox、重试与状态
+│   ├── persistent_store.py                       # KnowledgeIndexEntry 事务性增量写入
+│   ├── pipeline.py                               # 单文档 patch、来源 replace 与恢复编排
+│   └── vector_cache.py                           # 写侧向量同步
+├── agent/tools/memory.py                         # Knowledge 工具写入事件
+├── tests/
+│   ├── test_rag_delta.py
+│   ├── test_rag_knowledge_delta_index.py
+│   ├── test_rag_file_project_delta.py
+│   ├── test_rag_remaining_sources_delta.py
+│   ├── test_rag_index_jobs.py
+│   └── test_event_bus.py                         # 现有覆盖；Phase 5 在对应测试中补并发/多 ID/重启回归
+└── ts/
+    ├── packages/contracts/src/rag.ts             # projection、replace、patch 协议
+    └── workers/rag/
+        ├── src/index.ts                          # worker patch/replace 与 revision 处理
+        ├── src/index-builder.ts                  # TS canonical source projection / chunk
+        ├── src/adapters/                         # TS 来源投影适配器
+        └── test/worker.protocol.test.ts          # patch/revision 协议回归
+```
 
-backend/ts/
-├── packages/contracts/src/rag.ts                 # delta/patch 契约
-└── workers/rag/
-    ├── src/index.ts                              # patch 原子更新
-    └── test/worker.protocol.test.ts              # patch/revision 回归
+### 12.2 关联但不属于本 PRD 写路径迁移：TS 查询期只读数据层
 
-backend/tests/
-├── test_rag_delta.py                             # 通用 chunk diff
-├── test_rag_incremental_knowledge.py             # Knowledge 文档级增量
-├── test_rag_incremental_sources.py               # file/project 等来源
-├── test_rag_index_recovery.py                    # mismatch/restart/replay
-└── test_rag_event_coalescing.py                  # 同源事件竞态
+以下模块由 RAG-10 定义其查询期责任。它们读取 canonical 索引、revision 和接入的 source 数据；不负责 RAG-9 的业务事件、持久索引写事务或向量写入。
+
+```text
+backend/ts/packages/data-runtime/src/
+├── runtime.ts                                    # owner 绑定的只读 SQL/source reader
+├── rag-loader.ts                                 # source batch/cache 与 Memory 读取入口
+├── storage-reader.ts                             # 文件正文/Memory 的受控存储读取
+└── contracts.ts                                  # DataAccessContext / StorageReader 契约
+
+backend/ts/workers/rag/src/
+├── index.ts                                      # 查询期 DB index load/delta sync 与 worker 调度
+└── memory-loader.ts                              # Memory scope、快照及瞬态语料准备
 ```
 
 ## 13. 回滚策略
@@ -492,8 +555,9 @@ backend/tests/
 1. Knowledge 单文档变更不再读取整个 Knowledge 来源。
 2. 修改、删除、移动后的旧 chunk 和旧 scope 均能清理。
 3. TS patch 的 revision mismatch、重启和重复事件均有回归测试。
-4. 同源并发更新不会重复启动来源级任务，也不会丢最终状态。
+4. 同源并发更新不会重复启动来源级任务，且多个不同 `source_id` 不会在内存合并或 durable outbox 中丢失。
 5. 索引失败不会影响业务主数据提交，且能通过重放或来源级重建恢复。
 6. 当前 session snapshot、权限校验、排序分数和上下文前缀行为保持不变。
 7. 诊断和日志不包含正文、附件、凭据或宿主机路径。
 8. 完成全量与增量性能对比，并记录在对应 devlog 中。
+9. Conversation/Memory 等保留专用路径的来源例外已被明确记录并有相应回归测试；阶段责任与完成状态和实际证据一致。

@@ -1,0 +1,22 @@
+# updater sidecar 镜像 gobinary 豁免（2026-09-14）。
+# cosign v3.1.3 打包的 golang.org/x/* 与 moby/go-archive 依赖 CVE，上游库已修复但
+# cosign 尚未发布包含修复的版本；签名验证 CLI 场景下不可达/低风险。
+# docker:cli 内置 buildx 的 CVE-2026-17106 待基础镜像更新后移除。
+# 跟进：cosign 出新版本后升级 docker/updater/Dockerfile 并逐条删除。
+CVE-2026-17106
+CVE-2026-33818
+CVE-2026-39821
+CVE-2026-39822
+CVE-2026-46600
+CVE-2026-56852
+CVE-2026-56853
+CVE-2026-56854
+GHSA-hrxh-6v49-42gf
+CVE-2026-56858
+CVE-2026-56859
+CVE-2026-56860
+CVE-2026-56862
+CVE-2026-56864
+CVE-2026-56865
+CVE-2026-84304
+CVE-2026-84445

@@ -7,7 +7,7 @@ from .batch import NewMessageBatch
 from .history import conversation_messages
 from .messages import PromptMessages, newly_appended
 from .snapshot import fixed_messages
-from .system import reminder
+from ..dynamic_tail import reminder_message as reminder
 from .turn import assemble_turn, stance_digest
 
 

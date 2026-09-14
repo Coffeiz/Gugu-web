@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any, Awaitable, Callable
 
 from app.core.tz import now_utc, resolve_tz, LOCAL_TZ
@@ -32,36 +32,9 @@ INTERNAL_CONTEXT_POLICY = (
 )
 
 
-def date_boundary_note(hour: int) -> str:
-    """仅说明日出前的日期指代规则，不引导模型对用户作息做判断。"""
-    if hour >= 4:
-        return ""
-    return "；当前处于日出前时段，涉及日期时按日出边界理解：用户口中的「今天」指尚未结束的这个主观白天（日历昨天），「明天」指日出后的那天（日历今天）"
-
-
 def _tz_storage_value(user_tz) -> str:
     """JSON 只保存 IANA 名称；服务器固定偏移统一记为 LOCAL。"""
     return getattr(user_tz, "key", None) or "LOCAL"
-
-
-def current_time_text(user_tz=None) -> str:
-    """生成每轮 provider-only 时间提醒，包含当前日期与时分。"""
-    current = datetime.now(user_tz or LOCAL_TZ)
-    weekday = "一二三四五六日"[current.weekday()]
-    text = f"{current:%Y-%m-%d}（星期{weekday}）{current:%H:%M}"
-    text += date_boundary_note(current.hour)
-    return text
-
-
-def current_date_text(user_tz=None) -> str:
-    """生成只按日期变化的当前日期文本，不包含时分秒。"""
-    current = datetime.now(user_tz or LOCAL_TZ)
-    return f"{current:%Y-%m-%d}（星期{'一二三四五六日'[current.weekday()]}）"
-
-
-def reminder_message(content: str) -> dict:
-    """生成不带观测元数据的 reminder 消息。"""
-    return {"role": "user", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
 
 
 def workspace_binding_key(target: dict | None) -> dict:
@@ -92,21 +65,6 @@ def snapshot_message(content: str) -> dict:
         "role": "system",
         "content": f"[system-reminder]\n{INTERNAL_CONTEXT_POLICY}\n\n{content}\n[/system-reminder]",
     }
-
-
-def message_time_reminder(sent_at, user_tz=None) -> dict | None:
-    """把用户消息时间作为不可变的独立 reminder，按用户时区格式化。"""
-    if sent_at is None:
-        return None
-    if sent_at.tzinfo is None:
-        sent_at = sent_at.replace(tzinfo=timezone.utc)
-    local_time = sent_at.astimezone(user_tz or LOCAL_TZ)
-    return reminder_message(local_time.strftime("消息时间：%Y-%m-%d %H:%M"))
-
-
-def time_message(user_tz=None) -> dict:
-    """生成每轮唯一变化的尾部时间消息。"""
-    return reminder_message(f"当前时间：{current_time_text(user_tz)}")
 
 
 def canonical(value: Any) -> str:

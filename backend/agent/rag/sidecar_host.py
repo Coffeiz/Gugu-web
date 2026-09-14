@@ -64,7 +64,16 @@ class SidecarHost:
         return client
 
     async def handle_request(self, envelope: dict) -> tuple[dict, TsSidecarClient | None]:
-        """处理单个信封；返回 (响应 payload, 本次使用的内层 client)。"""
+        """处理单个信封；返回 (响应 payload, 本次使用的内层 client)。
+
+        宿主侧分段计时注入响应 ``probe.stage_ms``：``host_queue_ms`` = 到达→
+        派发（含 worker 进程确保），``host_upstream_ms`` = client._request 全程
+        （内含每 owner 锁等待 + worker 往返）——这是此前 RAG_PROBE 的诊断盲区
+        （sync op 不记 queue_wait、宿主内排队不可见）。worker 自身耗时由 worker
+        探针的 stage_ms 承担，两者相减即为宿主内等待。
+        """
+        loop = asyncio.get_running_loop()
+        arrival = loop.time()
         owner = str(envelope.get("owner") or "")
         payload = envelope.get("payload")
         if not owner or not isinstance(payload, dict):
@@ -74,19 +83,40 @@ class SidecarHost:
         timeout_seconds = max(0.05, timeout_ms / 1000) if timeout_ms else None
         client = self._client_for(owner)
         op = payload.get("op")
+        dispatch = loop.time()
         try:
             if op == "reuse_if_current":
                 ok = await client.reuse_if_current(payload.get("revision"))
-                return {"ok": ok}, client
-            if op == "replace_transient":
+                response = {"ok": ok}
+            elif op == "replace_transient":
                 short = self._transient_short_circuit(client, payload)
                 if short is not None:
-                    return short, client
-            response = await client._request(payload, timeout_seconds=timeout_seconds)
-            return dict(response.response), client
+                    response = short
+                else:
+                    response = dict(
+                        (await client._request(payload, timeout_seconds=timeout_seconds)).response,
+                    )
+            else:
+                response = dict(
+                    (await client._request(payload, timeout_seconds=timeout_seconds)).response,
+                )
+            if isinstance(response, dict) and response.get("status") == "ok":
+                probe = response.get("probe")
+                if not isinstance(probe, dict):
+                    probe = {}
+                    response["probe"] = probe
+                stage = probe.setdefault("stage_ms", {})
+                stage["host_queue_ms"] = int((dispatch - arrival) * 1000)
+                stage["host_upstream_ms"] = int((loop.time() - dispatch) * 1000)
+            return response, client
         except TsSidecarUnavailable as exc:
-            return ({"status": "error", "code": exc.code or "sidecar_unavailable",
-                     "message": str(exc)}, client)
+            response: dict[str, Any] = {
+                "status": "error", "code": exc.code or "sidecar_unavailable",
+                "message": str(exc),
+            }
+            if exc.diagnostics:
+                response["diagnostics"] = exc.diagnostics
+            return response, client
 
     @staticmethod
     def _transient_short_circuit(client: TsSidecarClient, payload: dict) -> dict | None:
@@ -125,6 +155,8 @@ class SidecarHost:
                         "code": payload.get("code"),
                         "message": payload.get("message"),
                     }
+                    if isinstance(payload.get("diagnostics"), dict):
+                        response["diagnostics"] = payload["diagnostics"]
                 writer.write((json.dumps(response, ensure_ascii=False) + "\n").encode())
                 await writer.drain()
         except (ConnectionError, OSError, ValueError):

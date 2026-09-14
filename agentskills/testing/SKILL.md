@@ -31,6 +31,18 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 - 只有产品契约明确改变并完成记录后才调整预期。
 - 回归用例名称和注释要写明防止的具体回归行为，至少包含触发路径和关键结果。
 
+## CRAP 与变异测试：周期性手动执行
+
+- CRAP 复杂度/覆盖率报告和变异测试不属于自动 CI，不由 push、PR 或发布流水线触发。
+- 由维护者每季度手动运行；触及登记范围的重大重构或发布前可额外运行。使用各自文档中的显式范围和命令，并审查报告中的风险项。
+- 这些检查是补充性的质量评估，不替代普通 pytest、Vitest、E2E；现有自动 CI 测试范围保持不变。
+- 变异测试范围和源码→测试映射以 `scripts/quality/mutation_scope.json` 为准；手动入口为 `backend/.venv/bin/python scripts/quality/mutation_report.py --language both`，可用 `--language python|typescript` 单独运行。报告输出到 `docs/reports/`，同日重跑须显式 `--overwrite`。
+- 如需保留同日基线并另存复跑，可传 `--report-dir docs/reports/<run-name>`；只允许写入 `docs/reports/` 内。
+- 变异报告必须把 killed、survived、timeout、编译/运行错误、无覆盖、等价和未检查状态分开。未运行、未覆盖或编译失败的变异不得计入 killed；只有完成行为审查后才能登记等价变异。
+- CRAP 目标预算为 5 分钟，单种语言的变异测试目标预算为 10 分钟；超预算优先排查环境和显式范围，不接入 CI 或放宽异常统计。
+- 报告历史记录长期保留；季度检查只清理确认可再生的临时缓存，不自动删除历史报告。
+- 如需改变这一策略，必须先更新对应 PRD 并明确评审，不能顺手把报告或变异任务接入 workflow。
+
 ## E2E（Playwright）
 
 配置在 `frontend/playwright.config.ts`，用例在 `frontend/e2e/*.spec.ts`。

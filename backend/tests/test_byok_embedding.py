@@ -68,6 +68,55 @@ def test_bound_override_enables_and_follows_tag(_clean_override):
     assert embedding.model_tag() == "platform:plat-model:8"
 
 
+def test_query_settings_pins_public_endpoint_and_keeps_credential_ephemeral(_clean_override, monkeypatch):
+    """交给 TS 的 query 配置在 Python 安全边界 pin 公网目标，且不改变共享写侧 embed。"""
+    platform = SimpleNamespace(
+        enabled=True, multimodal=False, provider="openai", api_key="platform-secret",
+        base_url="https://embedding.example/v1", model="text-embedding-3-small", dimensions=3,
+    )
+    monkeypatch.setattr(embedding, "get_settings", lambda: SimpleNamespace(embedding=platform))
+    monkeypatch.setattr("app.core.url_security.resolve_pinned_ip", lambda _url: ("8.8.8.8", None))
+
+    config = embedding.query_settings()
+
+    assert config == {
+        "provider": "openai", "base_url": "https://embedding.example/v1",
+        "pinned_ip": "8.8.8.8", "model": "text-embedding-3-small",
+        "dimensions": 3, "api_key": "platform-secret", "multimodal": False,
+    }
+
+
+def test_query_settings_does_not_forward_key_for_rejected_endpoint(_clean_override, monkeypatch):
+    platform = SimpleNamespace(
+        enabled=True, multimodal=False, provider="openai", api_key="must-not-cross-ipc",
+        base_url="https://private.example/v1", model="text-embedding-3-small", dimensions=0,
+    )
+    monkeypatch.setattr(embedding, "get_settings", lambda: SimpleNamespace(embedding=platform))
+    monkeypatch.setattr("app.core.url_security.resolve_pinned_ip",
+                        lambda _url: (None, "private destination"))
+
+    assert embedding.query_settings() is None
+
+
+def test_query_settings_allows_explicit_local_provider_and_still_pins(_clean_override, monkeypatch):
+    platform = SimpleNamespace(
+        enabled=True, multimodal=False, provider="ollama", api_key="",
+        base_url="http://localhost:11434/v1", model="nomic-embed-text", dimensions=0,
+    )
+    monkeypatch.setattr(embedding, "get_settings", lambda: SimpleNamespace(embedding=platform))
+    monkeypatch.setattr("app.core.url_security.resolve_pinned_ip",
+                        lambda _url: (None, "private destination"))
+    monkeypatch.setattr(embedding.socket, "getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("127.0.0.1", 11434)),
+    ])
+
+    config = embedding.query_settings()
+
+    assert config is not None
+    assert config["pinned_ip"] == "127.0.0.1"
+    assert config["api_key"] == ""
+
+
 def test_embed_uses_user_endpoint_and_key(monkeypatch, _clean_override):
     """embed 请求打到用户 base_url 的 /embeddings，带用户 key；dimensions=0 不传维度。"""
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)

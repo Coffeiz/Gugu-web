@@ -619,7 +619,7 @@ async def _delete_file(db, user_id, args: dict):
     # 软删进回收站，30 天可还原 —— 非不可逆，无需二次确认
     file_ids = args.get("file_ids")
     if file_ids is not None:
-        if not isinstance(file_ids, list) or not file_ids or len(file_ids) > 50:
+        if not _valid_file_ids(file_ids):
             return json.dumps({"error": "file_ids 必须是 1-50 个文件 id"})
         files = []
         for file_id in file_ids:
@@ -644,6 +644,11 @@ async def _delete_file(db, user_id, args: dict):
     return {"success": True, "file_id": fid, "name": fname,
             "note": "已移入回收站，30 天内可还原",
             "_file_op": {"op": "remove", "kind": "file", "id": fid}}
+
+
+def _valid_file_ids(file_ids) -> bool:
+    """批量软删除最多接收 50 个显式文件 ID，拒绝空集合和非数组输入。"""
+    return isinstance(file_ids, list) and bool(file_ids) and len(file_ids) <= 50
 
 
 async def _copy_file(db, user_id, args: dict):
@@ -1067,7 +1072,12 @@ class FilesSkill(BaseSkill):
         Tool(
             name="send_file", label="发送文件",
             description_short='发送文件或图片。',
-            description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用。文件库文件优先使用 list_files 返回的 file_id；也支持 Shell 逻辑路径 /workspace/...、/personal/...、/project/...，不要把路径填到 file_id。查位置请用文件链接。",
+            description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用。"
+                        "四个来源只能选其一：文件库文件优先用 list_files 返回的 file_id，也可以直接给文件名"
+                        "（重名时会返回候选让你用 file_id 消歧）；Shell 逻辑路径 /workspace/...、/personal/...、"
+                        "/project/... 用 file 传（路径方式单文件上限 10MB，更大的文件请用 file_id），不要把路径填到"
+                        " file_id；url 仅接受 http(s) 网络地址，本地或工作区文件不要用 url。"
+                        "title 可选：作为发给用户的展示名，所有来源通用。查位置请用文件链接。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1085,7 +1095,6 @@ class FilesSkill(BaseSkill):
                     {"required": ["attach_id"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["file_id"]}, {"required": ["url"]}]}},
                 ],
                 "allOf": [
-                    {"if": {"required": ["title"]}, "then": {"required": ["url"]}},
                     {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "file"}}}, "then": {"required": ["file"]}},
                     {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "file_id"}}}, "then": {"required": ["file_id"]}},
                     {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "url"}}}, "then": {"required": ["url"]}},

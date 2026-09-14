@@ -34,7 +34,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
     """Phase 5 统一查询主链：一次索引准备 + 一次 ``unified_query`` IPC。
 
     召回、来源聚合、conversation 水位、Memory 融合与 confidence 排序全部在
-    TS worker 内完成；Python 只保留 scope 授权、查询 embedding provider 调用、命中
+    TS worker 内完成；Python 只保留 scope 授权、embedding 凭据绑定、命中
     权限复核和最终注入组装。Memory 正文与缓存向量在 worker 内读取和驻留。
     """
 
@@ -55,7 +55,6 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         from agent.memory import embedding
 
         rank_options = rank_options or {}
-        embedding_enabled = embedding.is_enabled() and strategy in {"auto", "embedding"}
         if strategy not in {"auto", "bm25", "embedding"}:
             raise ValueError("策略只能是 auto、bm25 或 embedding")
         selected = [item for item in self._retrievers.values()
@@ -83,6 +82,15 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             probe_complete("completed", reason="scope_rejected")
             return [RetrievalBatch(item.source_type, fallback_reason="scope_rejected") for item in selected]
         probe_update(search={"spec_count": len(specs), "selected_source_count": len(selected)})
+
+        # 凭据仍在 Python 的身份/解密边界解析；目标 URL 安全校验与 DNS pin 在后台线程做，
+        # provider 请求和 query vector 生成均由 TS worker 执行。
+        query_embedding = (
+            await await_probe("query_embedding_config", asyncio.to_thread(embedding.query_settings))
+            if strategy in {"auto", "embedding"} and str(query or "").strip()
+            else None
+        )
+        embedding_enabled = query_embedding is not None
 
         if persistent:
             session_owner, owner = self._session_owner(persistent)
@@ -150,13 +158,9 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                         "prepare": memory_probe if isinstance(memory_probe, dict) else {},
                     })
                 ts_index = index
-                query_vector = list(await await_probe(
-                    "query_embedding", embedding.embed(query),
-                ) or []) if embedding_enabled else []
-                probe_update(search={"query_vector_dimensions": len(query_vector)})
                 query_kwargs = {
                     "searches": specs,
-                    "query_vector": query_vector,
+                    "query_embedding": query_embedding,
                     "source_order": [name for name in self.SOURCE_ORDER
                                      if name in {item.source_type for item in selected}],
                     "candidate_limit": candidate_limit,
@@ -204,11 +208,14 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             raise
         elapsed_ms = int((time.monotonic() - started) * 1000)
         fusion = response.get("fusion") or {}
-        # fallback 标签按 Python 侧事实判定：embedding 关闭/未配置 → embedding_disabled；
-        # 开启但无可用向量 → worker 回报 embedding_cache_unavailable；融合成功 → None。
-        fallback = None if embedding_enabled else "embedding_disabled"
+        # fallback 标签按 Python 侧事实判定：策略本身不含 embedding（bm25）→
+        # lexical_only（embedding 并未被禁用，只是没参与本轮）；auto/embedding
+        # 策略下 embedding 关闭/未配置 → embedding_disabled；开启但无可用向量
+        # → worker 回报 embedding_cache_unavailable；融合成功 → None。
         if embedding_enabled:
             fallback = fusion.get("fallback")
+        else:
+            fallback = "lexical_only" if strategy == "bm25" else "embedding_disabled"
         details = {
             **metadata,
             "document_count": sum((response.get("document_counts") or {}).values()),

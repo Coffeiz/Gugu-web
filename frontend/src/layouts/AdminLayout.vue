@@ -61,6 +61,10 @@
           <Icon name="admin.pulse" size="sm" />
           {{ t('admin.services') }}
         </div>
+        <div class="nav-item" :class="{ active: isActive('/updates') }" role="link" tabindex="0" @click="go('/updates')">
+          <Icon name="admin.stack" size="sm" />
+          {{ t('admin.updates') }}
+        </div>
         <div class="nav-item" :class="{ active: isActive('/ops') }" role="link" tabindex="0" @click="go('/ops')">
           <Icon name="admin.gauge" size="sm" />
           {{ t('admin.ops') }}

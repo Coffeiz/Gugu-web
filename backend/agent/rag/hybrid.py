@@ -1,4 +1,4 @@
-"""TypeScript lexical score 与已有 embedding 缓存的确定性混合排序。"""
+"""离线 RAG 质量诊断的参考融合实现；线上检索统一由 TS worker 执行。"""
 from __future__ import annotations
 
 from agent.rag.models import IndexDocument, RecallResult
@@ -15,7 +15,7 @@ def hybrid_results(
     vector_weight: float = VECTOR_WEIGHT,
     limit: int = 20,
 ) -> tuple[list[RecallResult], str | None]:
-    """只对已有缓存向量的文档混合；没有缓存的候选保留 lexical 分数。"""
+    """供离线探针做 Python 参考计算；生产路径不得调用。"""
     if not query_vector or not vector_map:
         return lexical[:limit], "embedding_cache_unavailable"
     from agent.memory.embedding import cosine

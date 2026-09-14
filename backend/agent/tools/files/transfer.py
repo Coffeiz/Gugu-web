@@ -315,6 +315,24 @@ async def inspect_image_url(url: str):
     return {"block": block}
 
 
+def _apply_title(artifact: dict, title: str | None) -> dict:
+    """title 作为展示名覆盖（所有来源通用）。
+
+    artifact 的 ``name`` 字段语义是「不含扩展名的展示名」；title 自带匹配的
+    后缀时剥掉，避免前端拼出双后缀。url 分支不经过这里——它本来就以 title
+    作为下载文件名。
+    """
+    text = str(title or "").strip()[:80]
+    if not text:
+        return artifact
+    ext = str(artifact.get("ext") or "").lower()
+    if ext and text.lower().endswith(f".{ext}"):
+        text = text[: -len(ext) - 1].rstrip()
+    if text:
+        artifact["name"] = text
+    return artifact
+
+
 async def _send_file(db, user_id, args: dict):
     """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
     网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
@@ -348,15 +366,16 @@ async def _send_file(db, user_id, args: dict):
         meta, note = await chat_attach.resolve_attach(user_id, attach_id)
         if not meta:
             return json.dumps({"error": "没找到这个附件，可能已经过期了（聊天附件只暂存 7 天）"}, ensure_ascii=False)
-        name = f"{meta['name']}.{meta['ext']}" if meta.get("ext") else meta["name"]
+        artifact = _apply_title({
+            "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta.get("ext"),
+            "size_bytes": meta.get("size"), "kind": meta.get("kind"),
+            "img_width": meta.get("img_width"), "img_height": meta.get("img_height"),
+        }, args.get("title"))
+        shown = f"{artifact['name']}.{artifact['ext']}" if artifact.get("ext") else artifact["name"]
         return {
             "ok": True,
-            "message": f"已把《{name}》重新发到对话窗口。{note}".strip(),
-            "_artifact": {
-                "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta.get("ext"),
-                "size_bytes": meta.get("size"), "kind": meta.get("kind"),
-                "img_width": meta.get("img_width"), "img_height": meta.get("img_height"),
-            },
+            "message": f"已把《{shown}》重新发到对话窗口。{note}".strip(),
+            "_artifact": artifact,
         }
 
     # Shell 生成的文件可能尚未登记到文件库；先处理逻辑绝对路径，避免把它
@@ -366,28 +385,30 @@ async def _send_file(db, user_id, args: dict):
     if isinstance(path_artifact, str):
         return path_artifact
     if path_artifact:
-        path_name = path_artifact["name"]
+        artifact = _apply_title(path_artifact, args.get("title"))
+        shown = f"{artifact['name']}.{artifact['ext']}" if artifact.get("ext") else artifact["name"]
         return {
             "ok": True,
-            "message": f"已把《{path_name}.{path_artifact['ext']}》发到对话窗口，用户可直接下载。",
-            "_artifact": path_artifact,
+            "message": f"已把《{shown}》发到对话窗口，用户可直接下载。",
+            "_artifact": artifact,
         }
 
     f, err = await _resolve_file(db, user_id, args)
     if err:
         return err
-    name = f"{f.display_name}.{f.ext}"
+    artifact = _apply_title({
+        "file_id": f.id,
+        "name": f.display_name,
+        "ext": f.ext,
+        "size_bytes": f.size_bytes,
+        "img_width": f.img_width,
+        "img_height": f.img_height,
+    }, args.get("title"))
+    shown = f"{artifact['name']}.{artifact['ext']}" if artifact.get("ext") else artifact["name"]
     return {
         "ok": True,
-        "message": f"已把《{name}》发到对话窗口，用户可直接下载。",
-        "_artifact": {
-            "file_id": f.id,
-            "name": f.display_name,
-            "ext": f.ext,
-            "size_bytes": f.size_bytes,
-            "img_width": f.img_width,
-            "img_height": f.img_height,
-        },
+        "message": f"已把《{shown}》发到对话窗口，用户可直接下载。",
+        "_artifact": artifact,
     }
 
 

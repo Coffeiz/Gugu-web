@@ -53,6 +53,36 @@ def test_worker_restore_probe_keeps_only_timing_and_aggregate_counts():
     }
 
 
+def test_worker_build_probe_keeps_only_whitelisted_aggregate_fields():
+    from agent.rag.ts_sidecar import _parse_worker_build_probe
+
+    event = _parse_worker_build_probe(
+        'GUGU_RAG_BUILD_PROBE {"op":"sync_index_from_database",'
+        '"phase":"delta_read_start","elapsed_ms":123.9,"counts":'
+        '{"passes":2,"scanned_rows":99,"owner_id":42,"query":"不得进入探针",'
+        '"document_count":true}}\n',
+    )
+
+    assert event == {
+        "op": "sync_index_from_database",
+        "phase": "delta_read_start",
+        "elapsed_ms": 123,
+        "counts": {"passes": 2, "scanned_rows": 99},
+    }
+
+
+def test_worker_build_probe_rejects_untrusted_operation_or_phase():
+    from agent.rag.ts_sidecar import _parse_worker_build_probe
+
+    assert _parse_worker_build_probe(
+        'GUGU_RAG_BUILD_PROBE {"op":"search","phase":"completed","elapsed_ms":1}',
+    ) is None
+    assert _parse_worker_build_probe(
+        'GUGU_RAG_BUILD_PROBE {"op":"load_index_from_database",'
+        '"phase":"raw_error","elapsed_ms":1}',
+    ) is None
+
+
 def test_wire_document_keeps_business_fields_for_cold_restore():
     from agent.rag.ts_sidecar import _wire_document
 

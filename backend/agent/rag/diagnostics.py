@@ -1,8 +1,12 @@
 """RAG 脱敏诊断；普通诊断不记录正文，受控 LoopScope 可记录排序 token 明细。"""
 from __future__ import annotations
 
+import json
+import logging
 import time
 import hashlib
+
+_log = logging.getLogger("agent.rag.index")
 
 
 def record_recall(*, namespace: str, source_type: str, candidate_count: int,

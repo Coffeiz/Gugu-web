@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from app.core.tz import set_ctx_tz
-from agent.context import assembly, builder, loaders, session_snapshot, session_system
+from agent.context import assembly, builder, dynamic_tail, loaders, session_snapshot, session_system
 from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 from agent.llm.llm_select import resolve_run_config_for_user, release as _release_model
 from agent.runner import (
@@ -33,7 +33,7 @@ def _scheduled_collect_result(collected: tuple) -> tuple[str, bool, dict]:
 def _build_scheduled_messages(
     system_prompt: str,
     snapshot_context: str,
-    now_str: str,
+    user_tz,
     prompt: str,
     memory: dict,
     *,
@@ -57,7 +57,7 @@ def _build_scheduled_messages(
             current_user={"role": "user", "content": user_content},
         )
         messages.append_batch(batch)
-        messages.set_dynamic_tail([assembly.reminder(f"当前时间：{now_str}")])
+        messages.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
         return messages
 
     messages = assembly.assemble(
@@ -70,7 +70,7 @@ def _build_scheduled_messages(
         current_user={"role": "user", "content": user_content},
     )
     messages.append_batch(batch)
-    messages.set_dynamic_tail([assembly.reminder(f"当前时间：{now_str}")])
+    messages.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
     return messages
 
 
@@ -124,7 +124,7 @@ async def run_scheduled_once(
                 knowledge = await loaders.load_knowledge_overview(user_id)
 
         prompt_name = DEFAULT_PROMPT_NAME
-        static_prompt, snapshot_context, now_str = builder.build_split(
+        static_prompt, snapshot_context, _now_str = builder.build_split(
             prompt_name,
             user_name,
             projects,
@@ -203,7 +203,7 @@ async def run_scheduled_once(
             messages = _build_scheduled_messages(
                 system_prompt,
                 snapshot_context,
-                now_str,
+                user_tz,
                 prompt,
                 memory,
                 use_anthropic=True,
@@ -223,7 +223,7 @@ async def run_scheduled_once(
             messages = _build_scheduled_messages(
                 system_prompt,
                 snapshot_context,
-                now_str,
+                user_tz,
                 prompt,
                 memory,
                 use_anthropic=False,

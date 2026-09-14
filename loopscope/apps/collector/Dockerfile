@@ -1,6 +1,6 @@
 FROM node:latest
 WORKDIR /app
-RUN npm install --global pnpm@10.15.0
+RUN npm install --global pnpm@latest
 # better-sqlite3 没有适配当前 Node ABI 时需要在镜像内编译原生 binding。
 RUN apt-get update \
  && apt-get upgrade -y \

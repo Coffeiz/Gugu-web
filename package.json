@@ -1,8 +1,7 @@
 {
   "name": "gugu-web-workspace",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
-  "packageManager": "pnpm@10.15.0",
   "engines": {
     "node": ">=22"
   },

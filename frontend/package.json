@@ -1,6 +1,6 @@
 {
   "name": "gugu-web",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
@@ -14,6 +14,7 @@
     "i18n:scan": "node scripts/check-i18n-static.mjs",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:mutation": "stryker run stryker.config.mjs",
     "test:fast": "vitest run src test",
     "test:css-glass": "node scripts/check-css-glass-regression.mjs",
     "test:ui-dialogs": "node scripts/check-ui-dialog-regression.mjs",
@@ -81,8 +82,12 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/typescript-checker": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^6.0.8",
+    "@vitest/coverage-v8": "4.1.11",
     "esbuild": "^0.28.1",
     "jsdom": "^29.1.1",
     "openapi-typescript": "^7.13.0",

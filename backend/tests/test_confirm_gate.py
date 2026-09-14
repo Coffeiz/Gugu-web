@@ -35,6 +35,25 @@ def _confirm_code(res) -> str:
     return payload["confirm_code"]
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("  YES  ", True),
+        ("1", True),
+        ("on", False),
+        (1, False),
+        (None, False),
+    ],
+)
+def test_confirm_flag_accepts_only_boolean_true_or_documented_strings(value, expected):
+    from agent.interactions.confirmations import is_confirmed
+
+    assert is_confirmed({"confirm": value}) is expected
+
+
 async def _mk(db, obj):
     db.add(obj)
     await db.commit()

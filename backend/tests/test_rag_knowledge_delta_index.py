@@ -174,7 +174,7 @@ async def test_document_patch_reads_and_projects_single_record(rag_env):
         await _full_seed(db, owner_id, {"k-a": "第一段|第二段", "k-b": "别的条目"})
     await _modify_entry(owner_id, "k-a", "改后一段|改后二段")
     stats: dict = {}
-    count = await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+    count = await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
     assert stats["mode"] == "document_patch"
     assert stats["status"] == "ready"
     assert count == 2
@@ -196,7 +196,7 @@ async def test_content_change_replaces_old_chunks_without_residue(rag_env):
         await _full_seed(db, owner_id, {"k-a": "旧一段|旧二段"})
     await _modify_entry(owner_id, "k-a", "新一段|新二段|新三段")
     stats: dict = {}
-    await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+    await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
     async with session_factory() as db:
         rows = await load_parent_documents(db, owner_id, "knowledge", "k-a")
     assert len(rows) == 3
@@ -215,8 +215,8 @@ async def test_delete_removes_all_chunks_and_keeps_siblings(rag_env):
     async with session_factory() as db:
         await _full_seed(db, owner_id, {"k-a": "一段|二段", "k-b": "保留"})
     stats: dict = {}
-    remaining = await pipeline.update_knowledge_document(
-        owner_id, "k-a", operation="delete", stats_out=stats,
+    remaining = await pipeline.update_document(
+        owner_id, "knowledge", "k-a", operation="delete", stats_out=stats,
     )
     assert remaining == 0
     assert stats["delete_count"] == 2 and stats["upsert_count"] == 0
@@ -236,7 +236,7 @@ async def test_no_change_skips_worker_and_keeps_revision(rag_env):
     async with session_factory() as db:
         await _full_seed(db, owner_id, {"k-a": "一段|二段"})
     stats: dict = {}
-    await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+    await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
     assert stats["status"] == "no_change"
     assert worker.ops() == []   # 无变化不打 worker
 
@@ -249,7 +249,7 @@ async def test_revision_mismatch_falls_back_to_source_replace(rag_env):
     await _modify_entry(owner_id, "k-a", "换一段|换二段")
     worker.fail_patch_codes = ["revision_mismatch"]
     stats: dict = {}
-    await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+    await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
     # patch 抛 mismatch（不记录），回退整来源 replace
     assert worker.ops() == ["replace"]
     assert stats["base_revision_match"] is False
@@ -267,7 +267,7 @@ async def test_worker_unavailable_is_ready_for_lazy_query_rebuild(rag_env):
     await _modify_entry(owner_id, "k-a", "换一段|换二段")
     worker.fail_patch_codes = ["worker_crashed"]
     stats: dict = {}
-    await pipeline.update_knowledge_document(owner_id, "k-a", stats_out=stats)
+    await pipeline.update_document(owner_id, "knowledge", "k-a", stats_out=stats)
     # DB 已推进 revision，查询侧会懒同步自愈；不判失败
     assert stats["status"] == "worker_unavailable"
     async with session_factory() as db:

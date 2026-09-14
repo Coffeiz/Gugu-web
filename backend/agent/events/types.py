@@ -21,9 +21,14 @@ class MemoryUpdated(Event):
 
 @dataclass
 class RagIndexUpdated(Event):
-    """RAG 索引更新信号；SSE 通知与索引生命周期分开。"""
+    """RAG 索引更新信号；SSE 通知与索引生命周期分开。
+
+    ``replayed``：由 durable outbox 恢复/重放路径生成的事件，诊断据此
+    区分 ``event_replayed``（PRD-RAG-9 §9）。
+    """
     user_id: object = None
     source_type: str = "memory"
     source_id: str = ""
     version: str = ""
     operation: str = "upsert"
+    replayed: bool = False

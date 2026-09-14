@@ -55,7 +55,7 @@ class ConversationAdapter:
             source_type=self.source_type,
             results=tuple(results),
             index_source="conversation-db",
-            fallback_reason="embedding_disabled",
+            fallback_reason="lexical_only",
             candidate_count=int(search_metadata.get("document_count", 0) or 0),
             metadata={
                 "engine": str(search_metadata.get("engine") or "conversation-db"),

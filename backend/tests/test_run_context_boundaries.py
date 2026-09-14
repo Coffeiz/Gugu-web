@@ -28,7 +28,7 @@ async def test_prepare_run_binds_rag_watermark_and_keeps_message_time_in_batch(
     audit_calls = []
     monkeypatch.setattr("agent.rag.injection.build_automatic_rag_context", fake_rag)
     monkeypatch.setattr(
-        run_context.session_snapshot,
+        run_context.dynamic_tail,
         "time_message",
         lambda _user_tz: current_time,
     )

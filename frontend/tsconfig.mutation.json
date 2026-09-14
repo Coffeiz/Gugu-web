@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/utils/optimisticIntent.ts",
+    "src/utils/optimisticMutation.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

@@ -57,7 +57,7 @@ def _install_unified_memory_stubs(monkeypatch, *, documents, selected=None):
         return {"transient_revision": "t1", "memory_source": "daily",
                 "document_count": len(documents), "vector_count": 0, "probe": {}}
 
-    async def unified_query(query, *, searches, query_vector, source_order,
+    async def unified_query(query, *, searches, query_embedding, source_order,
                             candidate_limit, rank_options, before_message_id=None,
                             vector_version=None):
         calls["searches"] = searches

@@ -1,6 +1,9 @@
 """P3.2 Agent 文件夹工具与 FileService 的最小对称回归。"""
 from pathlib import Path
+import json
+import pytest
 
+from agent.tools.files.documents import _valid_file_ids
 from app.core.tz import now_utc
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
@@ -267,6 +270,61 @@ async def test_agent_delete_file_moves_file_to_trash(db, user_a, tmp_path, monke
     await db.refresh(file)
     assert file.deleted_at is not None
     assert file.storage_key != original_key
+
+
+async def test_agent_bulk_delete_moves_every_file_to_trash(db, user_a, tmp_path, monkeypatch):
+    agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    service = FileService(db, storage=storage)
+    files = []
+    for name in ("批量删除一", "批量删除二"):
+        result = await service.create_file(
+            user_a.id,
+            space="personal",
+            project_id=None,
+            folder_id=None,
+            stage_name="",
+            mind_map_id=None,
+            display_name=name,
+            ext="txt",
+            mime_type="text/plain",
+            data=name.encode(),
+        )
+        files.append(result.file)
+    await db.commit()
+    original_keys = {file.id: file.storage_key for file in files}
+
+    deleted = await agent_files._delete_file(
+        db, user_a.id, {"file_ids": [file.id for file in files]},
+    )
+
+    assert deleted["success"] is True
+    assert deleted["deleted_count"] == 2
+    for file in files:
+        await db.refresh(file)
+        assert file.deleted_at is not None
+        assert file.storage_key != original_keys[file.id]
+
+
+async def test_agent_bulk_delete_rejects_empty_non_list_and_oversized_id_sets(
+    db, user_a, tmp_path, monkeypatch,
+):
+    agent_files, _storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    for file_ids in ([], "1", list(range(51))):
+        result = json.loads(await agent_files._delete_file(
+            db, user_a.id, {"file_ids": file_ids},
+        ))
+        assert result["error"] == "file_ids 必须是 1-50 个文件 id"
+
+
+@pytest.mark.parametrize(("file_ids", "expected"), [
+    ([1], True),
+    (list(range(50)), True),
+    (list(range(51)), False),
+    ([], False),
+    ("1", False),
+])
+def test_agent_bulk_delete_id_limit_includes_fifty_item_boundary(file_ids, expected):
+    assert _valid_file_ids(file_ids) is expected
 
 
 async def test_agent_create_file_svg_stores_image_mime_and_stays_readable(db, user_a, tmp_path, monkeypatch):

@@ -15,6 +15,7 @@ from app.core.tz import now_utc
 from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
+from app.services.storage.file_service.files import _is_overwrite_requested
 
 
 def _svc(db, tmp_path):
@@ -209,6 +210,16 @@ async def test_create_file_overwrite(db, user_a, tmp_path):
     assert r2.was_overwrite and r2.file.id == r1.file.id and r2.file.size_bytes == 5
     assert r2.file.version == old_version + 1
     assert await svc.storage.get(r2.file.storage_key) == b"newer"
+
+
+@pytest.mark.parametrize(("on_conflict", "file_id", "expected"), [
+    ("overwrite", 12, True),
+    ("keep_both", 12, False),
+    ("overwrite", None, False),
+    ("overwrite", 0, True),
+])
+def test_overwrite_branch_requires_explicit_mode_and_target(on_conflict, file_id, expected):
+    assert _is_overwrite_requested(on_conflict, file_id) is expected
 
 
 @pytest.mark.asyncio

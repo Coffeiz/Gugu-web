@@ -5,39 +5,45 @@
 ## 1. 架构定位
 
 ```text
-业务来源 / Memory / Conversation / Knowledge
-                    |
-            source adapter / projection
-                    |
-              Python RAG service
-             /       |        \
-       scope ACL   hybrid    injection
-                    |
-          Python index / TS lexical worker
-                    |
-             Context Assembly
-                    |
-               Agent Provider
+查询 / 召回路径
+Python API / Agent：认证身份、授权 owner/scope、设置查询约束
+                    │ 本机请求（owner/scope 已由 Python 校验）
+                    ▼
+TS RAG Worker + Data Runtime：读取数据库持久索引；Data Runtime 也提供支持来源的只读 reader，Memory 经受控存储读取
+                    │ 返回候选及必要来源数据
+                    ▼
+Python：最终 owner/scope 复核、引用组装、上下文注入
+                    ▼
+             Context Assembly → Agent Provider
+
+索引写入 / 重建路径
+业务主数据写入 → Python 事件与来源适配 → TS canonical projection/chunk
+                                      → Python 持久索引事务 / 向量同步
+                                      → TS worker patch / replace
 ```
 
 - **Knowledge** 是可保存、可版本化、可追溯的结构化知识主数据。
 - **RAG** 是召回链路，负责索引、检索、过滤、融合、排序和当前轮注入。
 - **Memory** 是用户长期信息来源；Conversation、Project、File、Canvas 和 Note 是其他可检索来源，但各来源的统一 RAG 接入状态不同，见第 2.1 节。
 - **Context Assembly** 只消费 RAG 返回的结构化结果，不自行查询数据库或复制权限逻辑。
+- **身份与权限边界**：Python 负责认证、身份解析和授权；TS Data Runtime 在已校验的 owner 上下文内直接读取数据库及明确接入的来源数据，并做 fail-closed 的 owner/scope 一致性检查。TS 校验是纵深防护，不取代 Python 授权事实。
+- **读写分离**：查询期取数/准备由 TS Data Runtime 与 worker 承担；来源变更事件、索引投影持久化事务和向量副作用仍由 Python 写路径编排，详见 PRD-RAG-9 与 PRD-RAG-10。
 
 ## 2. 来源与适配器
 
-当前 Python 侧通过 source adapter 读取业务主数据，生成已授权、未切块的 source record；TS worker 再把它们投影为统一 `IndexDocument`：
+读路径和写路径的数据读取职责不同：查询期由 TS Data Runtime 按 Python 已授权的 owner 上下文读取数据库来源；索引写入/重建仍由 Python source adapter 读取主数据并生成 source record，再交由 TS canonical projection 生成统一 `IndexDocument`。当前 Data Runtime 直接读取的来源能力如下：
 
-| 来源 | 作用 | 典型模块 |
-|---|---|---|
-| conversation | 检索历史对话和已持久化消息 | `rag/adapters/conversations.py` |
-| memory | 检索个人、群组和成员记忆 | `rag/adapters/memory.py`、`memory/` |
-| knowledge | 检索已保存知识条目 | `rag/adapters/knowledge.py`、`knowledge/` |
-| project | 检索项目元数据和项目范围内容 | `rag/adapters/projects.py` |
-| file | 检索已索引的项目文件 | `rag/adapters/indexed_sources.py`（`source_type=file`） |
-| canvas | 检索画布上的节点、便签、关系和分组信息 | `rag/index_builder.py`、`rag/adapters/indexed_sources.py`（`source_type=canvas`） |
-| note | 检索时间流普通笔记和 suggestion 节点 | `rag/index_builder.py`；显式工具仍走 `tools/mind.py` |
+| 来源 | 作用 | TS 查询期读取 | 写入/重建适配 |
+|---|---|---|---|
+| conversation | 检索历史对话和已持久化消息 | `DataRuntime.loadConversationMessages()` | `rag/adapters/conversations.py` |
+| memory | 检索个人、群组和成员记忆 | Memory 文件/对象存储经 `StorageReader`；scope 状态由 Data Runtime 读取 | `rag/adapters/memory.py`、`memory/` |
+| knowledge | 检索已保存知识条目 | `DataRuntime.loadKnowledge()` | `rag/adapters/knowledge.py`、`knowledge/` |
+| project | 检索项目元数据和项目范围内容 | `DataRuntime.loadProjects()` | `rag/adapters/projects.py` |
+| file | 检索文件元数据；受控正文经 `StorageReader` | `DataRuntime.loadFileMetadata()` | `rag/adapters/indexed_sources.py`（`source_type=file`） |
+| canvas | 检索画布节点及关系数据 | `DataRuntime.loadCanvas()` | `rag/index_builder.py`、`rag/adapters/indexed_sources.py`（`source_type=canvas`） |
+| note | 检索时间流普通笔记和 suggestion 节点 | 当前主要通过持久索引读取；显式来源数据入口仍由对应读路径提供 | `rag/index_builder.py`；显式工具仍走 `tools/mind.py` |
+
+TS Data Runtime 还直接读取 `knowledge_index_entries` 的 canonical chunks 与 revision，用于 worker 冷恢复和增量同步；它不因此获得索引写权限。Data Runtime 同时暴露上表中的数据库来源 reader，但这些 API 的存在不代表每个生产查询都会重新读取业务表：当前 worker 主查询使用持久 canonical 索引，Memory 准备走专用 loader。文件正文和 Memory 私有文件必须经过显式 `StorageReader`，不能由 worker 拼接任意路径读取。Data Runtime 当前 `DataAccessContext` 对非 owner scope fail-closed；群组/成员 scope 的授权仍由 Python 确定并复核。
 
 ### 2.1 当前来源接入状态
 
@@ -85,7 +91,7 @@ TS worker 的通用切块规则是：优先按段落和句子边界切分；超�
 
 注入时以 chunk 作为召回粒度、以父文档作为展示和去重粒度：同一来源命中多个相邻 chunk 时优先合并为一个结果，保留命中片段、来源和序号；不能因为 chunk overlap 把同一段内容重复注入。不同来源还必须分别补充 owner/ACL 隔离、删除后不再召回、版本更新、相邻 chunk 去重和自动召回回归测试。
 
-Adapter 负责读取和投影，不负责扩大用户权限。业务对象的 ownership、scope 和可见性在进入检索器前已经确定。
+无论是 Python 写侧 adapter 还是 TS Data Runtime 查询读取，都不负责扩大用户权限。Python 在把 owner/scope 交给 TS 前完成授权事实判断；TS 读取必须绑定 owner，并在返回结果后由 Python 复核可见性。
 
 ## 3. 统一数据契约
 
@@ -101,32 +107,33 @@ RAG 内部以 `Scope`、`IndexDocument` 和 `RecallCandidate` 传递数据：
 
 ```text
 当前请求身份 / IM context
-        -> 确定性 scope 解析
-        -> owner / group / member scope
-        -> source adapter 查询
-        -> matches_scope 硬过滤
-        -> 结果预算与去重
+        -> Python 认证、身份解析与 scope 授权
+        -> 将已授权 owner/scope 传给 TS Data Runtime / worker
+        -> TS 按 owner 条件直接读取已接入的数据源（不自行授权）
+        -> Python 最终 owner/scope 复核
+        -> 结果预算、去重与注入
 ```
 
 RAG 不信任模型自行传入的用户、群号或成员身份。Web 和 owner 私聊默认使用 owner scope；群聊根据 owner/member 身份和配置生成 group/member scope。跨群召回只有在明确 scope 且通过服务端 cursor/归属校验时才允许。
 
-权限过滤必须发生在正文回填和注入之前。TS worker 只接收已经划定 scope 的索引请求，不负责 ACL、ownership 或授权决策。
+权限过滤必须发生在正文回填和注入之前。TS Data Runtime/worker 可以读取数据库和已接入的 source 数据，但只接受 Python 认证授权链路提供的 owner；TS 按 owner 绑定查询并对不支持的 scope fail-closed，不负责 ACL、ownership 的授权事实或业务授权决策。Python 仍须在结果回填/注入前复核。
 
 ## 5. 索引与 TS lexical worker
 
-TypeScript worker 是固定 Node 制品，不是完整后端：
+TypeScript worker 是固定 Node 制品，不是完整后端；它通过 Data Runtime / StorageReader 执行受限只读取数：
 
 ```text
-Python 读取主数据并生成 source record
-        -> TS worker canonical projection / chunk
-        -> JSONL replace / patch
-        -> Jieba + ASCII entity tokenizer
-        -> BM25 召回 + IDF 非线性重排
-        -> confidence 选择、去重和预算
-        -> Python scope 复核、正文和 citation 回填
+查询期：TS Data Runtime 读取持久索引；按需可读取已接入 source / Memory
+        -> TS worker 准备索引、BM25/hybrid 召回与排序
+        -> Python 最终 owner/scope 复核、citation 组装和注入
+
+索引写入：Python 认证授权与事件编排 / source adapter 读主数据
+        -> TS canonical projection / chunk
+        -> Python 持久化索引事务、向量同步
+        -> TS worker replace / patch
 ```
 
-worker 使用 `backend/ts/packages/contracts/src/rag.ts` 作为协议契约，支持 `ping`、`adapt`、`replace`、`patch`、`search`、`batch_search`、`unified_query`、`hybrid_fuse` 和 `rank_candidates`。`patch` 只同步发生变化的 chunk slot，文档版本变化不会让未变化 chunk 被误判为新文档。
+worker 使用 `backend/ts/packages/contracts/src/rag.ts` 作为协议契约。除 `ping`、`adapt`、`replace`、`patch`、`search`、`batch_search`、`unified_query`、`hybrid_fuse` 和 `rank_candidates` 外，还提供 `database_revision`、`load_index_from_database`、`sync_index_from_database`、`load_vectors_from_storage` 和 `prepare_memory` 等查询期取数/准备操作。`patch` 只同步发生变化的 chunk slot，文档版本变化不会让未变化 chunk 被误判为新文档。
 
 ### 5.0 索引更新与增量边界（PRD-RAG-9）
 
@@ -135,34 +142,35 @@ worker 使用 `backend/ts/packages/contracts/src/rag.ts` 作为协议契约，�
 冷装载；socket 不可达时自动回退进程内 spawn。状态（revision/瞬态指纹/进程代数）以宿主为唯一
 权威，`reuse_if_current` 与 `replace_transient` 的短路判定都在宿主侧执行。
 
-索引更新事件（`RagIndexUpdated`）由事件总线按 (user, source_type) 合并串行消费，并先落 `index_jobs` durable outbox（进程重启后由恢复循环重放）。管线按事件是否携带 `source_id` 分流：
+索引更新事件（`RagIndexUpdated`）由事件总线按 (user, source_type) 串行消费，并先落 `index_jobs` durable outbox（进程重启后由恢复循环重放）。事件按来源归并不代表文档 ID 合并正确：多 `source_id` 不丢失的行为仍在 PRD-RAG-9 Phase 5 待验收。管线按事件是否携带 `source_id` 分流：
 
-- **文档级增量**（默认路径）：knowledge / file / project / calendar / note / canvas 六来源带 `source_id` 的事件走 `pipeline.update_document`——单对象读取 source record、单条 TS 投影、`compute_chunk_delta`（契约冻结在 `agent/rag/delta.py`，slot 键 `source_type:parent:chunk_index`，digest 不含 version 但含 scope/chunk_count）算出 upserts/deletes，DB 侧按父文档作用域 replace 写 `KnowledgeIndexEntry`，knowledge 额外做向量 upsert/delete；随后把增量 `patch` 给 TS worker，`revision_mismatch` 时回退 worker 侧来源级 `replace`，worker 不可用只记 `status=worker_unavailable`（DB revision 已推进，查询侧懒同步自愈）。
+- **文档级增量**（默认路径）：knowledge / file / project / calendar / note / canvas 六来源带 `source_id` 的事件走 Python `pipeline.update_document`——Python 单对象读取 source record，TS 投影，`compute_chunk_delta`（契约冻结在 `agent/rag/delta.py`，slot 键 `source_type:parent:chunk_index`，digest 不含 version 但含 scope/chunk_count）算出 upserts/deletes，Python DB 事务按父文档作用域 replace 写 `KnowledgeIndexEntry`，knowledge 额外做向量 upsert/delete；随后把增量 `patch` 给 TS worker，`revision_mismatch` 时回退 worker 侧来源级 `replace`，worker 不可用只记 `status=worker_unavailable`（DB revision 已推进，查询侧懒同步自愈）。
 - **来源级全量**（兜底/管理入口）：无 `source_id` 的事件、批量校准走 `rebuild_source_index`（来源内 chunk 对比替换）。诊断统一记 `mode=document_patch|source_replace` 与 upsert/delete 计数、耗时（§9 脱敏字段）。
 
 conversation（record 依赖相邻消息上下文）与 memory（worker 瞬态槽通道）不适用单文档增量，保持来源级/瞬态全量路径。
 
-worker 不访问网络、不输出业务正文、不做权限授权；运行时使用随制品发布的分词依赖，不能在 devserver 或 Docker 运行时临时编译 TypeScript。
+TS RAG 运行时通过受控 Data Runtime 只读访问数据库及显式来源存储；它不访问任意网络、不承担业务写入或权限授权、不输出未授权正文。运行时使用随制品发布的分词依赖，不能在 devserver 或 Docker 运行时临时编译 TypeScript。
 
 ### 5.1 TS 模块职责
 
-TS 模块是 RAG 的确定性 lexical sidecar，职责限定在“索引操作和候选计算”，不承载业务语义。具体包括：
+TS 模块是 RAG 查询期的数据读取与确定性检索 runtime，不负责身份授权等业务决策。具体包括：
 
 - **协议处理**：解析并校验 JSONL `ping`、`adapt`、`replace`、`patch`、`search`、`batch_search`、`unified_query`、`hybrid_fuse` 和 `rank_candidates` 请求，返回稳定的结构化结果和协议错误。
 - **索引维护**：按 owner/source 建立和替换索引，应用 chunk 增量 patch，维护 revision 与 candidate ID 的稳定映射。
+- **查询取数**：通过 Data Runtime 按已认证 owner 只读加载 canonical 索引，并提供支持来源的 reader；当前主查询从持久索引取数，Memory 通过专用 loader 准备。文件正文和 Memory 私有数据只经显式 StorageReader 读取。
 - **文本处理**：执行 Jieba 中文分词、ASCII entity tokenizer、规范化和必要的 token 统计；不修改 Python 传入的业务正文。
 - **词法检索与排序**：执行 BM25 lexical search、完整索引 IDF 重排、confidence 选择、候选截断，并返回 candidate ID、原始分数、重排分和排序位置。
-- **运行时隔离**：作为固定 Node 制品运行，不访问数据库、网络、文件业务存储或用户配置，不读取 API Key 和会话上下文。
+- **运行时隔离**：作为固定 Node 制品运行；通过 Data Runtime/StorageReader 受限只读访问数据库和明确授权的来源存储，不访问任意网络，不承担业务写入或授权决策，也不读取 API Key。
 
 TS 模块明确不负责：
 
 - ownership、ACL、群组/成员 scope 和跨用户隔离；
 - 判断来源是否允许被自动召回，或决定结果是否注入上下文；
-- 正文、附件、citation 和业务对象的读取与回填；
-- embedding 生成、向量数据库、Knowledge/Memory 写入和反思决策；
+- 业务身份认证与授权事实；最终可见性复核、引用组装及上下文注入仍由 Python 完成；
+- 写侧文档/Memory 向量生成、向量存储写入、Knowledge/Memory 写入和反思决策；query embedding provider 调用已迁入 owner-bound TS worker；
 - 重试、取消、超时补偿、索引事件编排和数据库事务。
 
-上述职责由 Python RAG service、source adapter、Context Assembly 和应用事件层完成。Python 侧必须在请求进入 TS worker 前完成来源范围划定，并在收到候选后再次执行 scope 过滤、正文回填、去重、预算控制和 citation 组装。
+Python API/Agent 负责身份建立、授权 scope、来源范围、BYOK 凭据解密/选择与查询约束；Data Runtime 与 worker 负责受限取数、query embedding 和检索准备。索引写入事件、来源投影的 DB 事务及文档/Memory 向量副作用仍由 Python 写路径负责。BYOK key 只经 owner-bound 专用 IPC 短暂传给 TS，不记录、不持久化、不回显；公网目标由 Python URL 安全校验并 pin，TS 禁止自动跟随重定向。Python 在收到 TS 返回内容后仍须进行最终 owner/scope 复核、正文/citation 组装、去重、预算控制和注入。详见 PRD-RAG-10 Phase 2。
 
 ## 6. 检索策略
 
@@ -365,7 +373,7 @@ RAG 相关缓存包括索引 cache、snapshot cache、vector cache 和持久化 
 ## 13. 当前限制与后续方向
 
 - Capability RAG 与内容 RAG 是不同问题：前者推荐工具能力，后者召回知识内容，不能共用权限语义。
-- TS worker 当前是 lexical sidecar，不负责 embedding、业务权限或正文存储。
+- TS RAG worker/Data Runtime 负责查询期的受限只读取数、索引准备、query embedding、lexical/hybrid 检索；不负责身份认证、业务授权或索引持久化写入。写侧向量生成仍在 Python。
 - 自动召回默认低成本、可选且可超时跳过；显式搜索仍是完整查询入口。
 - Knowledge 的 workspace/team scope、复杂冲突解决和更完整的质量评估仍需后续专题定义。
 - 具体协议和阈值以 `backend/agent/rag/`、`backend/agent/knowledge/`、TS worker 测试和相关 PRD 为准。

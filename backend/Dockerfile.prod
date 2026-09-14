@@ -111,6 +111,7 @@ ENV DB__HOST=postgres \
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY backend/app ./app
+COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY backend/onboarding ./onboarding
 COPY backend/alembic ./alembic

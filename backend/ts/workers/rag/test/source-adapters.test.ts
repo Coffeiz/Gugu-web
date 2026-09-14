@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { buildSourceDocuments } from "../src/index-builder.ts";
+import { buildDocuments } from "../src/adapters/base.ts";
 
 const ownerScope = { scope_type: "owner", scope_id: "owner-1" };
 
@@ -76,4 +77,24 @@ test("对话适配器只接受有 scope 的稳定摘要或消息切片", () => {
   assert.equal(documents[0].metadata?.message_id, "2");
   assert.equal(documents[0].metadata?.role, "user");
   assert.equal(documents[0].metadata?.kind, "message");
+});
+
+test("summary 为正文前缀截断时不重复拼进检索文本（记忆注入去重根因）", () => {
+  const [memory] = buildDocuments({
+    source_type: "memory", id: "daily:0", source_id: "daily",
+    title: "近期记忆", summary: "- 2026-09-14 凌晨聊了召回",
+    content: "- 2026-09-14 凌晨聊了召回", version_parts: ["daily", "daily:0"],
+    scope: ownerScope,
+  });
+  // 前缀守卫：summary 与正文相同（截断拷贝）则不再拼接，正文只出现一次。
+  assert.equal(memory.text, "近期记忆\n- 2026-09-14 凌晨聊了召回");
+
+  const [knowledge] = buildDocuments({
+    source_type: "knowledge", id: "k-1", source_id: "k-1",
+    title: "部署规范", summary: "发布时需要读",
+    content: "发布前必须跑完 CI 双工作流", version_parts: ["k", "1"],
+    scope: ownerScope,
+  });
+  // 真实摘要（与正文无前缀关系）照常保留 title/summary/content 三段。
+  assert.equal(knowledge.text, "部署规范\n发布时需要读\n发布前必须跑完 CI 双工作流");
 });

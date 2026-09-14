@@ -62,6 +62,10 @@ export function buildDocuments(
   const sourceId = String(record.source_id ?? record.id);
   // 摘要截断与 Python text[:240] 同为码点口径。
   const summary = record.summary ?? Array.from(normalized).slice(0, 240).join("");
+  // summary 只是正文前缀（无真实摘要时的截断拷贝，如 memory 系记录）时拼进
+  // text 会自我重复；真实摘要（如 knowledge description）与正文无前缀关系，照常保留。
+  const summaryForText =
+    summary && !normalized.startsWith(summary) ? summary : "";
   const parts = record.version_parts;
   const documentVersion = parts
     ? textVersion(normalized, ...parts)
@@ -71,7 +75,7 @@ export function buildDocuments(
   const title = record.title || "未命名";
   return chunks.map((text, chunkIndex) => ({
     id: `${record.source_type}:${parentId}:${chunkIndex}`,
-    text: [title, ...(summary ? [summary] : []), text].join("\n"),
+    text: [title, ...(summaryForText ? [summaryForText] : []), text].join("\n"),
     ...(typeof record.context_text === "string" && record.context_text.trim()
       ? { context_text: record.context_text.trim() }
       : {}),

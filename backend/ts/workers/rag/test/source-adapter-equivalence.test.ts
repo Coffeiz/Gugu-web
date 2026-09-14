@@ -27,7 +27,7 @@ test("file 适配器输出「文件/类型/空间/阶段」头部与五字段元
   const fileBody = "文件：方案.md\n类型：md\n空间：项目A\n阶段：评审\n这是文件正文";
   assert.equal(document.content, fileBody);
   assert.equal(document.summary, fileBody.slice(0, 240));
-  assert.equal(document.text, ["方案.md", fileBody.slice(0, 240), fileBody].join("\n"));
+  assert.equal(document.text, ["方案.md", fileBody].join("\n")); // summary 为正文前缀截断，不重复拼接（PRD-KNOWLEDGE-2 去重守卫）
   assert.deepEqual(document.metadata, {
     file_id: "7", mime_type: "", project_id: "", folder_id: "", space: "项目A",
   });
@@ -38,7 +38,7 @@ test("file 适配器输出「文件/类型/空间/阶段」头部与五字段元
     id: 8, title: "零", version_parts: ["8"], scope: ownerScope,
   }]);
   assert.equal(minimal.content, "文件：零");
-  assert.equal(minimal.text, ["零", "文件：零", "文件：零"].join("\n"));
+  assert.equal(minimal.text, ["零", "文件：零"].join("\n"));
   assert.equal(minimal.metadata.space, "");
 });
 
@@ -67,7 +67,7 @@ test("note 适配器空标题回落「便签」，content_plain 优先", () => {
   assert.equal(document.title, "便签");
   // Python 方言：空标题行被 filter(None) 去掉，「便签」只落在 title 字段。
   assert.equal(document.content, "纯文本");
-  assert.equal(document.text, ["便签", "纯文本", "纯文本"].join("\n"));
+  assert.equal(document.text, ["便签", "纯文本"].join("\n"));
   assert.deepEqual(document.metadata, { node_id: "3", kind: "note" });
 });
 
@@ -78,7 +78,7 @@ test("calendar 适配器无时间回落「全天」，空描述整行省略", ()
   }]);
   const eventBody = "活动：发布会\n日期：2026-09-10\n时间：全天";
   assert.equal(document.content, eventBody);
-  assert.equal(document.text, ["发布会", eventBody, eventBody].join("\n"));
+  assert.equal(document.text, ["发布会", eventBody].join("\n"));
   assert.deepEqual(document.metadata, { event_id: "9", project_id: "" });
 });
 
@@ -90,7 +90,7 @@ test("scheduled_task 适配器固定四行结构且空 payload 保留换行", ()
   // Python 方言：_documents 对全文 strip，尾部空 payload 换行不保留。
   const taskBody = "定时任务：日报\n计划：0 9 * * *\n状态：停用";
   assert.equal(document.content, taskBody);
-  assert.equal(document.text, ["日报", taskBody, taskBody].join("\n"));
+  assert.equal(document.text, ["日报", taskBody].join("\n"));
   assert.deepEqual(document.metadata, { task_id: "5", enabled: false });
 });
 
@@ -106,7 +106,7 @@ test("canvas 适配器以 id 为稳定 source_id，关系行带「关系：」�
   const canvasBody = "画布：发布规划\n节点：接口\n类型：canvas_note\n分组：后端\n关系：接口 → 测试\n接口说明";
   assert.equal(document.content, canvasBody);
   assert.equal(document.text,
-    ["发布规划 · 接口", canvasBody, canvasBody].join("\n"));
+    ["发布规划 · 接口", canvasBody].join("\n"));
   assert.equal(document.title, "发布规划 · 接口");
   assert.deepEqual(document.metadata, {
     canvas_id: "2", node_id: "9", node_type: "canvas_note", group_path: "后端",
@@ -136,7 +136,7 @@ test("conversation 适配器输出摘要与消息两种文档，元数据含会�
   assert.equal(documents[0].id, "conversation:conversation:1:summary:0");
   assert.equal(documents[0].parent_id, "conversation:1:summary");
   assert.equal(documents[0].content, "会话摘要：讨论了部署");
-  assert.equal(documents[0].text, ["部署会话", "会话摘要：讨论了部署", "会话摘要：讨论了部署"].join("\n"));
+  assert.equal(documents[0].text, ["部署会话", "会话摘要：讨论了部署"].join("\n")); // summary 与正文同文，不重复拼接
   assert.equal(documents[0].ranking_text, "会话摘要：讨论了部署");
   assert.deepEqual(documents[0].metadata, {
     session_id: "1", kind: "summary", session_source: "qq",

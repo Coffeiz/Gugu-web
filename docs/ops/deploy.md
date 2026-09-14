@@ -313,7 +313,7 @@ rootful Docker，必须明确设置 `GUGU_SANDBOX_ROOTLESS_REQUIRED=false`，不
 
 ### 3.10 生产构建物 Compose（默认端口 8000）
 
-生产环境不要使用前面的开发 Compose。生产 Compose 只消费已经构建好的
+生产环境不要使用前面的开发 Compose。拆分业务 Compose 只消费已经构建好的
 `GUGU_BACKEND_IMAGE` 和 `GUGU_FRONTEND_IMAGE`，不挂载源码，也不启动 Vite 或 Uvicorn
 热重载；前端由独立镜像提供静态 `dist`，入口 Nginx 负责页面、API 和 SSE 反代。
 
@@ -335,7 +335,7 @@ Redis 采用相同规则：默认连接 Compose 内部的 `redis:6379`，可用
 如果使用内部 Redis，设置 `GUGU_REDIS_PASSWORD` 后 Compose 会同时给内部 Redis
 启用密码认证；不设置则保持开发默认的无密码内网连接。
 
-构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）：
+构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）。拆分 backend/frontend 镜像仅供业务部署，持续发布到 GHCR，不属于普通用户更新链路：
 
 ```bash
 docker build -f backend/Dockerfile.prod \
@@ -346,17 +346,9 @@ docker push ghcr.io/coffeiz/gugu-web-backend:版本号
 docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 ```
 
-正式版本发布工作流会同时推送 GHCR 和 Docker Hub。Docker Hub 对应镜像为
-`docker.io/coffeiz/gugu-web-backend` 和 `docker.io/coffeiz/gugu-web-frontend`；自动更新清单默认
-仍使用 GHCR 的不可变 digest。手工发布到 Docker Hub 前，先使用具有推送权限的账号登录：
+正式版本发布工作流把公开的一体化 `gugu-web` 镜像推送到 Docker Hub（并镜像到 GHCR）；拆分 backend/frontend 继续推送到 GHCR，供业务部署使用。GHCR 包当前已公开，可匿名拉取；普通用户更新不使用这两个镜像。
 
-```bash
-docker login docker.io
-docker tag ghcr.io/coffeiz/gugu-web-backend:版本号 docker.io/coffeiz/gugu-web-backend:版本号
-docker tag ghcr.io/coffeiz/gugu-web-frontend:版本号 docker.io/coffeiz/gugu-web-frontend:版本号
-docker push docker.io/coffeiz/gugu-web-backend:版本号
-docker push docker.io/coffeiz/gugu-web-frontend:版本号
-```
+手工推送拆分镜像时，仍需使用具有 GHCR 写权限的账号登录 `ghcr.io`。
 
 访问地址为 `http://服务器地址:9595`。如需改端口，设置 `GUGU_HTTP_PORT`。
 同时在项目根目录 `.env` 设置 `GUGU_PUBLIC_APP_URL` 为用户实际访问的完整地址；域名部署示例为 `https://www.gugugu.site`。该值会注入后端，用于生成邮箱验证、密码重置等外部链接，不能填写 `localhost:9595` 或 Compose 服务名。
@@ -365,7 +357,7 @@ Admin 的 `config.override.json`；不要删除 `pgdata`、`Gugu-data`、`legacy
 
 生产部署目录仍需要提供 `backend/.env`（非代码构建物，用于 AI/IM 等运行配置）和
 `searxng/settings.yml`。当前项目统一使用 `latest` 跟随基础服务和应用镜像的最新版本；
-如需可复现发布，再通过环境变量覆盖应用镜像为具体版本或 Git SHA。
+如需可复现发布，再通过环境变量覆盖应用镜像为具体版本号标签或固定 digest（不使用 Git SHA 标签）。
 Shell 沙盒仍需额外提供宿主机 Rootless Docker Socket，并通过 `--profile sandbox` 启用。Compose 会同时启动受控 `egress-proxy` 和内部网络 `gugu-sandbox-egress`：
 
 ```bash
@@ -421,6 +413,10 @@ docker network inspect gugu-sandbox-egress
 > egress 引导只负责 Docker 网络和代理，不会擅自改写 `config.override.json` 或用户数据。
 > 配置中的 egress 代理必须先在 Admin 保存一次，之后 `gugu-sandbox-egress.service` 才能让
 > 实际沙盒请求通过这个地址工作。
+> 安装器会把引导脚本规范化为 `0755`，systemd 通过 `/bin/sh` 启动，并以 `RUN_USER` 校验
+> 引导脚本和 Squid 配置可读。若项目位于部署者的私有 home、而 `RUN_USER` 是另一个账号，
+> 应将项目放到服务用户可遍历的共享目录，或让 `RUN_USER` 与项目目录所属用户一致；安装器会在
+> 生成 systemd 单元并启动服务前明确报出权限问题，不会静默留下启动失败。
 >
 > 手动等效操作（不依赖 bootstrap 服务时）：
 >
@@ -743,6 +739,7 @@ Admin → Shell 沙盒），**先备份配置、只改这两个字段、原子�
 - 建出 `Gugu-data/users/`、`logs/`、`config.override.json` 并 `chown` 给运行用户（`ReadWritePaths` 要求路径**真实存在**，否则 systemd 报 `226/NAMESPACE`）；
 - `daemon-reload` + `enable` + `restart` 五个单元；因此执行完整 `make install` 前必须先让 Rootless Docker、固定镜像和用户数据根目录就绪。只跑网页开发环境时，使用 §3 的本地启动方式，不要把完整 systemd 安装当成免 Docker 的安装路径。
 - 运行用户必须显式指定：`RUN_USER=youruser make install`（须已存在、能读 `.venv` 与项目目录；项目在 `/home/<user>` 下时通常应使用该 user）。卸载：`make uninstall`（一并清五个）。
+- egress 引导脚本会安装为 `0755`，systemd 使用 `/bin/sh` 调用；安装器以服务身份检查脚本与 Squid 配置的读取权限，确保不同部署用户名下权限错误在启动前被发现。
 
 五个服务：
 
@@ -944,7 +941,7 @@ sudo journalctl -u gugu-gateway -f                    # 看频道起停日志
 
 ### 7.0.1 Docker Compose 生产镜像更新
 
-生产 Docker 部署不需要下载 Git 源码或在用户服务器重新构建。正式版本由 GitHub Actions 构建并推送到 GHCR，GitHub Release 附带 `update-manifest.json` 和签名 bundle。更新前先下载这两个资产，再使用仓库内的安全入口：
+一体化 Docker Compose 部署不需要下载 Git 源码或在用户服务器重新构建。正式版本由 GitHub Actions 构建 `gugu-web` 并推送到公开 Docker Hub（GHCR 保留镜像），GitHub Release 附带 `update-manifest.json` 和签名 bundle。新 manifest 固定 Docker Hub 的一体化应用 digest；拆分 backend/frontend 镜像不参与此更新。更新前先下载这两个资产，再使用仓库内的安全入口：
 
 ```bash
 scripts/release/compose-update.sh \
@@ -953,9 +950,31 @@ scripts/release/compose-update.sh \
   --confirm
 ```
 
-脚本会验证 manifest、Release 签名和 backend/frontend 镜像签名，备份 `backend/.env` 与数据库，拉取 manifest 指定的不可变 digest，并重建业务容器。它不会执行 `docker compose down -v`、无范围 `docker system prune`，也不会删除 `pgdata`、`Gugu-data`、`legacy_gugu_data`、`gugu_config` 或 `sandbox_socket`。
+脚本默认使用一体化 `docker-compose.yml`，验证 manifest、Release 签名和 `gugu-web` 镜像签名，备份 Compose 配置、`backend/.env` 与数据库，拉取 manifest 指定的不可变 digest，并只重建 `app`（以及使用同一镜像且正在运行的 `sandboxd`）。拆分 `docker-compose.prod.yml` 不属于此更新入口。脚本不会执行 `docker compose down -v`、无范围 `docker system prune`，也不会删除 `pgdata`、`Gugu-data`、`legacy_gugu_data`、`gugu_config` 或 `sandbox_socket`。
 
-普通更新不带 `--profile sandbox`，因此不会因为更新业务镜像而拉取 egress proxy 或其他沙盒专用镜像。若当前已有 `sandboxd` 在运行，脚本只会同步使用中的业务镜像，不会自动改变沙盒开关。
+普通更新仅拉取 `app` 和数据迁移服务所需的一体化镜像，不会拉取 egress proxy 或其他沙盒专用镜像。若 `sandboxd` 正在运行且配置为使用 `gugu-web` 同一镜像，脚本会同步更新它；自定义 sandboxd 镜像保持不变，也不会改变沙盒开关。
+
+#### Admin 在线更新与旧部署首次接入
+
+包含 updater sidecar 的 Compose 版本部署后，管理员可在 **Admin → 运维 → Docker 更新**检查稳定版、查看 GitHub Release 说明、预检并确认更新。预检包含当前 Alembic 迁移是否与应用唯一 head 一致、`/data` 与 `/config` 卷是否已挂载且可写、官方 updater sidecar 是否运行等项目。更新任务状态保存在 `gugu_updater_state` 命名卷中；浏览器关闭或 Admin 页面重新打开不会中断任务。普通账号不能访问对应 Admin API。更新和回滚都需要再次确认；回滚只恢复应用镜像，不会反向执行数据库迁移。
+
+已有部署首次接入时，先把版本化发布物中的 `docker-compose.yml`、更新脚本及 manifest 校验器放到部署目录/工具目录，**不要覆盖**根目录 `.env`、`backend/.env`、`Gugu-data` 或任何 Docker 数据卷。用包含 `updater` 服务的新 Compose 文件进行一次手动升级；脚本先验证目标 manifest 和 app 镜像，再从 Docker Hub 拉取官方 updater 镜像、校验其 Cosign 签名并启动 sidecar，之后才备份数据库并更新 app。若当前 Compose 文件没有 `updater` 服务，脚本不会自行改写 Compose 文件；此时 Admin 更新器不会可用，必须先安装该版本的 Compose 文件。
+
+如果更新脚本不在部署目录内，应显式指定部署路径和校验器路径；在部署目录执行，并从受保护的环境注入数据库密码（不要把密码写进命令参数或 shell 历史）：
+
+```bash
+cd /path/to/gugu-web-compose
+COMPOSE_PROJECT_DIR="$PWD" \
+COMPOSE_FILE="$PWD/docker-compose.yml" \
+UPDATE_VALIDATOR="/path/to/release/scripts/validate-update-manifest.mjs" \
+GUGU_DB_PASSWORD="$GUGU_DB_PASSWORD" \
+  /path/to/release/scripts/compose-update.sh \
+    --manifest /path/to/update-manifest.json \
+    --bundle /path/to/update-manifest.json.bundle \
+    --confirm
+```
+
+宿主机需有 Docker Compose 插件、Node.js、Cosign，且 `backend/.env` 已配置管理员密码。自动更新功能目前只支持一体化 `docker-compose.yml`；拆分 `docker-compose.prod.yml` 和源码/systemd 部署不适用。尚未在 dev/staging 完成灰度验收前，不应把 Admin 在线更新用于生产升级。
 
 部署安全约束：Compose 文件统一固定 project name 为 `gugu-web-compose`，从而保证数据库始终使用同一个 `gugu-web-compose_pgdata` 卷。不要通过改 project name、`-p` 参数或 `docker compose down -v` 启动/清理生产环境；更新前应先确认 `docker inspect gugu-web-compose-postgres-1` 的挂载卷仍为该卷。systemd/源码部署使用 `backend/deploy.sh` 时，会在迁移前生成包含 PostgreSQL custom-format dump 的完整备份，并在迁移后检查关键表和 Alembic 版本；数据库备份失败会直接中止部署。
 

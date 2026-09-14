@@ -23,6 +23,7 @@ import { adminExtraUi } from './sections/adminExtra'
 import { adminEmailUi } from './sections/adminEmail'
 import { subscriptionUi } from './sections/subscription'
 import { filesyncAdminUi } from './sections/filesync'
+import { adminUpdateUi } from './sections/adminUpdate'
 
 export const messages = {
   'zh-CN': { ...zhCN, toolNames: toolNames['zh-CN'], terminalUi: terminalUi['zh-CN'], filesUi: filesUi['zh-CN'], filesViewUi: filesViewUi['zh-CN'], profileGuguUi: profileGuguUi['zh-CN'], chatUi: chatUi['zh-CN'], perceptionUi: perceptionUi['zh-CN'], mindEditorUi: mindEditorUi['zh-CN'], memorySettingsUi: memorySettingsUi['zh-CN'], memoryMaintenanceUi: memoryMaintenanceUi['zh-CN'], calendarUi: calendarUi['zh-CN'], mindUi: mindUi['zh-CN'], scheduleUi: scheduleUi['zh-CN'], adminLlmUi: adminLlmUi['zh-CN'], personalityUi: personalityUi['zh-CN'], adminAnalyticsUi: adminAnalyticsUi['zh-CN'], adminStorageUi: adminStorageUi['zh-CN'], adminRuntimeUi: adminRuntimeUi['zh-CN'], adminUsageUi: adminUsageUi['zh-CN'], filesyncAdmin: filesyncAdminUi['zh-CN'], adminAgentUi: {}, agentConfigUi: {}, configUi: { ...configUi['zh-CN'], ...configExtraUi['zh-CN'] }, adminExtraUi: adminExtraUi['zh-CN'], adminEmailUi: adminEmailUi['zh-CN'], subscriptionUi: subscriptionUi['zh-CN'] },
@@ -32,5 +33,8 @@ export const messages = {
 Object.assign(messages['zh-CN'], { workspaceUi: workspaceUi['zh-CN'] })
 Object.assign(messages['ja-JP'], { workspaceUi: workspaceUi['ja-JP'] })
 Object.assign(messages['en-US'], { workspaceUi: workspaceUi['en-US'] })
+Object.assign(messages['zh-CN'], { adminUpdateUi: adminUpdateUi['zh-CN'] })
+Object.assign(messages['ja-JP'], { adminUpdateUi: adminUpdateUi['ja-JP'] })
+Object.assign(messages['en-US'], { adminUpdateUi: adminUpdateUi['en-US'] })
 applyLocalePatches(messages)
 export type MessageSchema = typeof zhCN

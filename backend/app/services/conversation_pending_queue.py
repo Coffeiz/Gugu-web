@@ -18,6 +18,11 @@ class PendingQueueClaimConflict(Exception):
     """待发消息已经被其他客户端认领、发送或移除。"""
 
 
+def _claim_lease_is_active(item: dict, now: float) -> bool:
+    claim_until = item.get("_claim_until")
+    return bool(item.get("_claim_token")) and isinstance(claim_until, (int, float)) and claim_until > now
+
+
 async def publish_session_pending_queue_changed(user_id, session_id: int, *, origin: str | None = None) -> None:
     """通知其他客户端刷新指定会话的待发队列；事件不包含消息正文。"""
     await events.publish(
@@ -241,8 +246,7 @@ async def claim_pending_queue_item(
     for index, item in enumerate(items):
         if not isinstance(item, dict) or item.get("key") != item_key:
             continue
-        claim_until = item.get("_claim_until")
-        if item.get("_claim_token") and isinstance(claim_until, (int, float)) and claim_until > now:
+        if _claim_lease_is_active(item, now):
             await db.commit()
             return None
         token = secrets.token_urlsafe(32)

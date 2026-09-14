@@ -114,8 +114,8 @@ packages:
 
 ### 5.1 版本与安装
 
-- 根 `package.json` 固定 `packageManager: "pnpm@<经验证版本>"`。
-- CI、Docker 和 devserver 使用 Corepack 或固定版本 pnpm，不允许自动使用系统全局版本。
+- 根与子 workspace 的 `package.json` 不固定 pnpm 版本；CI 与 Docker 使用执行时可获取的最新版 pnpm。
+- 依赖版本仍由 `pnpm-lock.yaml` 锁定；CI 和生产构建使用 `pnpm install --frozen-lockfile`。
 - CI 和生产构建使用 `pnpm install --frozen-lockfile`。
 - 本地开发使用 `pnpm install`，修改依赖后只由 pnpm 更新根 `pnpm-lock.yaml`。
 - 迁移完成后删除各子项目的 `package-lock.json`，删除根部空 `package-lock.json`。

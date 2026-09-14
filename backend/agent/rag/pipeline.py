@@ -11,7 +11,6 @@ from agent.rag.index_builder import build_source_records, records_to_write_docum
 from agent.rag.scope import normalize_memory_scope
 from agent.rag.persistent_store import (
     apply_document_patch,
-    load_index_documents,
     load_parent_documents,
     replace_source_documents,
 )
@@ -175,16 +174,6 @@ async def _replace_worker_index(
 DOCUMENT_PATCH_SOURCE_TYPES = {"knowledge", "file", "project", "calendar", "note", "canvas"}
 
 
-async def update_knowledge_document(
-    user_id: object, source_id: str, *, operation: str = "upsert",
-    stats_out: dict[str, object] | None = None,
-) -> int:
-    """兼容别名：knowledge 文档级增量（PRD-RAG-9 Phase 1 入口）。"""
-    return await update_document(
-        user_id, "knowledge", source_id, operation=operation, stats_out=stats_out,
-    )
-
-
 async def update_document(
     user_id: object, source_type: str, source_id: str, *, operation: str = "upsert",
     stats_out: dict[str, object] | None = None,
@@ -253,14 +242,15 @@ async def update_document(
                 old_keys = {cache_key(doc) for doc in old_documents}
                 new_keys = {cache_key(doc) for doc in new_documents}
                 vector_delete_keys = {key for key in (old_keys - new_keys) if key}
-            # DB 侧是父文档作用域 replace：版本推进/收缩的旧行由键集差删除，
-            # worker 侧 deletes 只需要消失的 slot（delta 契约）。
+            # DB 侧是父文档作用域 replace：必须传「当前全量 chunk 集」，
+            # 未变化 chunk 的行才能按 PRD §6.3 保留（只传 delta.upserts 会把
+            # 未变化 chunk 误打墓碑，部分编辑后索引静默丢内容）。
+            # worker 侧只收 delta（变化 upserts + 消失 slot），保持增量语义。
             await apply_document_patch(
-                db, user_id, source_type, str(source_id), upserts,
+                db, user_id, source_type, str(source_id), new_documents,
             )
             revision = await _owner_revision(db, user_id)
             await db.commit()
-            all_documents = await load_index_documents(db, user_id, source_types={source_type})
         if source_type == "knowledge":
             from agent.knowledge.vector_cache import apply_vector_delta
 
@@ -279,6 +269,9 @@ async def update_document(
         except TsSidecarUnavailable as exc:
             if exc.code == "revision_mismatch":
                 base_revision_match = False
+                # 回退来源级 replace 必须显式记录，不得伪装成增量成功（PRD-RAG-9 §4）。
+                if stats_out is not None:
+                    stats_out["mode"] = "source_replace"
                 try:
                     async with db_session._SessionLocal() as db:
                         await _replace_worker_index(user_id, db, revision, source_type=source_type)
@@ -322,6 +315,10 @@ async def handle_rag_index_event(event) -> bool:
                 )
                 mode = str(stats_out.get("mode", "source_replace"))
             stats = stats_out
+            status = str(stats.get("status", "ready"))
+            if getattr(event, "replayed", False) and status == "ready":
+                # durable outbox 重放成功的收敛，与首投递区分开（PRD-RAG-9 §9）。
+                status = "event_replayed"
             record_index_update(
                 source_type=event.source_type,
                 operation=event.operation,
@@ -333,7 +330,7 @@ async def handle_rag_index_event(event) -> bool:
                 upsert_count=stats.get("upsert_count"),
                 delete_count=stats.get("delete_count"),
                 projection_ms=stats.get("projection_ms"),
-                status=str(stats.get("status", "ready")),
+                status=status,
                 base_revision_match=stats.get("base_revision_match"),
             )
             return True
@@ -348,5 +345,9 @@ async def handle_rag_index_event(event) -> bool:
                 attempt=attempt,
                 success=False,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
+                mode=str(stats_out.get("mode") or (
+                    "document_patch" if use_document_patch else "source_replace"
+                )),
+                status="projection_failed",
             )
             return False
