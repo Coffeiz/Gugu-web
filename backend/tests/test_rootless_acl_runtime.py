@@ -45,6 +45,40 @@ def test_ensure_sandbox_acl_applies_plan_once(tmp_path: Path, fake_rootless):
     assert plan.host_user == pwd.getpwuid(os.getuid()).pw_name
 
 
+def test_ensure_sandbox_acl_uses_bootstrap_rootful_mapping(tmp_path: Path, monkeypatch, reset_acl_caches):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    applied = []
+    monkeypatch.setattr(rootless_permissions.shutil, "which", lambda name: "/usr/bin/setfacl")
+    monkeypatch.setattr(rootless_permissions, "_read_runtime_identity", lambda: (65532, 65532))
+    monkeypatch.setattr(
+        rootless_permissions,
+        "read_subordinate_ranges",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("rootful mapping must not read subordinate IDs")),
+    )
+    monkeypatch.setattr(rootless_permissions, "apply_permission_plan", applied.append)
+
+    assert ensure_sandbox_acl(root) is True
+    assert len(applied) == 1
+    assert applied[0].mapped_uid == 65532
+    assert applied[0].mapped_gid == 65532
+
+
+def test_runtime_identity_reads_and_validates_bootstrap_file(tmp_path: Path, monkeypatch):
+    identity_file = tmp_path / "sandbox-storage-identity.json"
+    monkeypatch.setattr(rootless_permissions, "_RUNTIME_IDENTITY_PATH", identity_file)
+    identity_file.write_text(
+        '{"schema":1,"daemon_mode":"rootful","container_uid":65532,'
+        '"container_gid":65532,"mapped_uid":65532,"mapped_gid":65532}',
+        encoding="utf-8",
+    )
+    assert rootless_permissions._read_runtime_identity() == (65532, 65532)
+
+    identity_file.write_text('{"schema":1,"daemon_mode":"rootless"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="UID/GID"):
+        rootless_permissions._read_runtime_identity()
+
+
 def test_ensure_sandbox_acl_degrades_without_setfacl(tmp_path: Path, monkeypatch, reset_acl_caches):
     monkeypatch.setattr(rootless_permissions.shutil, "which", lambda name: None)
     root = tmp_path / "workspace"

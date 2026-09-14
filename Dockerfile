@@ -1,4 +1,4 @@
-# 默认 Compose 一体化镜像：前端 dist + 后端生产运行时，单镜像承载完整站点。
+# 默认 Compose 一体化应用镜像：前端 dist + 后端生产运行时，由统一应用服务提供站点。
 # 与 backend/Dockerfile.prod、frontend/Dockerfile.prod（供生产分离 Compose 使用）并存；
 # 构建上下文 = 仓库根目录。
 #
@@ -77,14 +77,7 @@ RUN sed -i \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl \
-        # 内置依赖（GUGU_EMBEDDED_DEPS=1 时由入口拉起）：单容器一键部署无需外部
-        # postgres/redis。仅监听 127.0.0.1，数据在 /data/postgres、/data/redis。
-        postgresql redis-server supervisor \
         $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice libreoffice-writer fonts-noto-cjk; fi) \
-    # snakeoil 是 ssl-cert 包（postgresql 依赖）装的 Debian 全机通用示例证书，随层公开
-    # 会被 trivy secrets 扫描判为私钥泄漏；内嵌 PostgreSQL 只监听 127.0.0.1 且 ssl=off
-    # （见 docker-entrypoint.sh），用不到它，直接删。
-    && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem \
     && rm -rf /var/lib/apt/lists/*
 
 # CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁，
@@ -161,17 +154,11 @@ RUN mkdir -p logs \
 
 EXPOSE 9595
 
-# 一键部署面板（fnOS / 群晖 / Portainer 等）从镜像 ENV 枚举「可填变量」——业务默认值
-# 必须在这里声明，否则面板只露出 Python 自带的 PATH/PYTHON_*，用户根本不知道要填
-# 数据库。默认值与 docker-compose.yml 注入的值保持一致；SECRET_KEY 留空时由入口首次
-# 启动生成并写入持久化 env 文件，DB__PASSWORD 由面板或 backend/.env 填写。入口端口统一 9595：Nginx 在容器内监听 9595，
+# 默认 Compose 使用一体化应用镜像；前端、Nginx、Uvicorn、worker 与 IM gateway
+# 由同一个应用服务提供，PostgreSQL / Redis / SearXNG 由 Compose 中的独立服务提供。
+# 镜像声明应用变量，便于部署面板识别；SECRET_KEY 留空时由入口首次启动生成，
+# DB__PASSWORD 由 Compose 注入。入口端口统一 9595：Nginx 在容器内监听 9595，
 # Uvicorn 藏在 127.0.0.1:8001 后面（GUGU_APP_PORT），对外只有 9595 一个入口。
-#
-# 单容器完整启动契约也在这里默认成立（裸 docker run = 完整应用）：
-#   GUGU_SINGLE_CONTAINER=1  入口同时托管 Uvicorn/worker/IM gateway/Nginx；
-#   持久化路径收口 /data 与 /config 两个卷（STORAGE__LOCAL_PATH、BYOK 主密钥、
-#   Admin 配置覆盖文件、sandboxd socket），删容器重建数据不丢。
-# Compose 部署显式注入同名变量（含 GUGU_EMBEDDED_DEPS=0 走外部服务），互不影响。
 ENV DB__HOST=postgres \
     DB__PORT=5432 \
     DB__NAME=gugu \
@@ -186,7 +173,7 @@ ENV DB__HOST=postgres \
     # （process env 优先级高于 dotenv）。留空 = 首次启动自动生成随机密码写入
     # 持久化 env 文件并打印一次，公网部署用户显式覆盖即可。
     ADMIN_PASSWORD="" \
-    GUGU_SINGLE_CONTAINER=1 \
+    GUGU_UNIFIED_APP=1 \
     GUGU_APP_PORT=8001 \
     GUGU_ENABLE_WORKER=1 \
     GUGU_ENABLE_GATEWAY=1 \
@@ -196,12 +183,7 @@ ENV DB__HOST=postgres \
     STORAGE__LOCAL_PATH=/data/users \
     CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
     GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
-    GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
-    # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
-    GUGU_EMBEDDED_DEPS=1
-
-# 未显式绑定宿主目录时，让 Docker 自动创建匿名持久卷；显式 bind mount 仍优先。
-VOLUME ["/data", "/config"]
+    GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD curl -sf http://127.0.0.1:9595/health || exit 1

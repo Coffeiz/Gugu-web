@@ -402,6 +402,7 @@ services:
     # /var/run/docker.sock，脚本会自动改走 save|load 搬运。
     volumes:
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
+      - sandbox_socket:/run/gugu
       - ./squid/egress.conf:/config/squid/egress.conf:ro
       - ./backend/scripts/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
       - *gugu-data-mount

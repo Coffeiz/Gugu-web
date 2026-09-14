@@ -31,7 +31,7 @@ sidecar/缓存都是进程本地，请求落到冷进程就要全量 DB 装载 4
    - `gugu-rag-sidecar.service` 单元（照 backend 模板风格）；backend/worker/gateway
      模板加 `Wants/After` 软依赖 + 注入 `SEARCH__TS_SIDECAR_SOCKET`；start.sh
      SYSTEMD_SERVICES、Makefile uninstall、docker-entrypoint（embedded supervisord
-     `[program:rag-sidecar]` + 单容器 monitored_pids，`GUGU_ENABLE_RAG_SIDECAR=0` 可关）。
+     `[program:rag-sidecar]` + 默认应用服务 monitored_pids，`GUGU_ENABLE_RAG_SIDECAR=0` 可关）。
 3. **devserver 启用**：unit 安装 + `config.override.json` 加
    `search.ts_sidecar_socket=/run/user/1000/gugu-rag-sidecar.sock` 单键
    （备份 `config.override.json.bak-sidecar-20260913-003310`）。
@@ -68,11 +68,10 @@ worker/gateway 即回到进程内 spawn；`systemctl disable --now gugu-rag-side
 
 ## 镜像与 compose 起服务验证（同日补充）
 
-- **发现并修复双实例缺陷**：一体化镜像（根 `Dockerfile`）默认 `GUGU_SINGLE_CONTAINER=1`，
-  入口的 embedded 分支（supervisord `[program:rag-sidecar]`）和单容器分支
-  （monitored_pids）会同时各起一个 sidecar_host，后者启动时 unlink 前者的 socket
-  互相顶。修复：supervisord 块加 `GUGU_SINGLE_CONTAINER != 1` 门控，
-  单容器模式统一由 monitored_pids 负责（两分支写同一个 socket 路径的语义不变）。
+- **发现并修复双实例缺陷**：默认一体化应用的入口曾同时由 embedded 分支
+  （supervisord `[program:rag-sidecar]`）和应用进程托管逻辑（monitored_pids）启动
+  sidecar_host，后者启动时 unlink 前者的 socket，导致互相冲突。修复后由应用进程托管
+  逻辑统一启动 sidecar；当前运行契约见根 `Dockerfile` 与 `docker-compose.yml`。
 - **一体化镜像**（`docker build -f Dockerfile`）：构建成功（仅既有的
   SecretsUsedInArgOrEnv 警告）；容器 `healthy`，进程面 = postgres 17 + redis +
   **单个 sidecar_host** + uvicorn(8001) + nginx，`/run/gugu/rag-sidecar.sock` 存在，

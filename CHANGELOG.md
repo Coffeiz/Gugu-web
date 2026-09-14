@@ -9,6 +9,7 @@
 
 ### 改进
 
+- 默认 Compose 统一使用前后端应用镜像，PostgreSQL 和 Redis 由 Compose 服务管理；移除镜像内置数据库启动路径。
 - **拆分 backend/frontend 镜像同步发布到 Docker Hub**：业务服务器可直接按语义版本拉取；不发布 Git SHA 镜像标签。
 - **Cosign 签名改用 OCI referrers**：继续保留镜像签名与 updater 验签，但新发布不再生成 `sha256-<digest>.sig` 普通镜像标签。
 
@@ -17,7 +18,7 @@
 ### 改进
 
 - **RAG 检索稳定性与速度大幅提升**：长对话首轮检索不再超时——构建超时放宽到 120 秒、增量同步自动跳过内容未变的文档、冷启动从 15 秒以上超时降到 4 秒左右；自动召回超时窗口放宽到 10 秒，大索引快照落盘不再阻塞当次搜索。
-- **Docker Compose 自动更新使用 Docker Hub 一体化镜像**：清单固定 `gugu-web` 镜像 digest；拆分 backend/frontend 镜像留在 GHCR 业务发布链路中。
+- **Docker Compose 自动更新使用 Docker Hub 一体化应用镜像**：清单固定 `gugu-web` 镜像 digest；拆分 backend/frontend 镜像留在 GHCR 业务发布链路中。
 - **镜像发布改为版本号标签**：停止发布 Git SHA 镜像标签，稳定版继续维护 `latest` 别名。
 - **自动召回切向量融合策略**：未配置 embedding 时不再被误判为禁用，检索按混合策略正常回退。
 - **send_file 标题全来源通用**：修复 `file_id` + `title` 组合被误拒，标题参数对所有来源生效。
@@ -169,8 +170,6 @@
 
 ### 改进
 
-- **纯 Docker 单容器一键部署开箱即完整**：一体化镜像默认携带完整单容器启动契约（Uvicorn/worker/IM gateway/Nginx 全托管、内置 PostgreSQL/Redis、持久化路径收口 `/data` 与 `/config`），按文档 `docker run` 一条命令即是完整站点，删容器重建数据不丢；管理员密码不设公开默认值，首启自动生成随机密码（日志打印一次），也可显式指定。
-- **一体化镜像内置 PostgreSQL/Redis**：单容器一键部署（fnOS、群晖、`docker run`）不再需要外部数据库——镜像内置 PostgreSQL 与 Redis（仅监听容器内 127.0.0.1，supervisord 托管，数据落在 `/data` 卷），首次启动自动初始化；挂载 Docker socket 还会自动拉起内置沙盒服务。Compose 部署不受影响（显式 `GUGU_EMBEDDED_DEPS=0` 走外部服务）。
 - **部署入口端口统一 9595**：一体化镜像内 Nginx 监听端口从 8000 改为 9595（EXPOSE、健康检查跟随），镜像默认映射、Compose 宿主侧默认、`PUBLIC_APP_URL` 默认值三处一致——部署后只有 9595 一个入口，fnOS 等面板的默认映射不再与文档分叉，且避开 8000 这类易冲突端口；已部署用户显式设置过 `GUGU_HTTP_PORT`/`GUGU_PUBLIC_APP_URL` 的不受影响。
 - **一键部署镜像**：一体化镜像与后端分离镜像均声明数据库/Redis 等业务环境变量默认值，fnOS 等面板部署时可直接看到并填写，不再只露出 Python 自带变量；数据库等待超时改为明确报错并给出排查提示，不再静默继续后抛一长串连接栈。
 
@@ -230,7 +229,7 @@
 
 ### 改进
 
-- **一键部署**：默认 Compose 改为拉取包含前端、Nginx、Uvicorn、worker 和 IM gateway 的单容器镜像，PostgreSQL、Redis 与搜索服务仍独立运行。
+- **一键部署**：默认 Compose 使用包含前端、Nginx、Uvicorn、worker 和 IM gateway 的一体化应用镜像，PostgreSQL、Redis 与搜索服务仍由独立服务运行。
 - **部署配置**：清理不再使用的 Preview Compose 入口，保留默认一键部署、Dev 和 Prod 三条路径；默认 Compose 支持沙盒 egress 网络自定义和持久化运行数据。
 - **运行时依赖**：刷新自有镜像基础依赖，统一使用较新的运行时依赖，并将 LoopScope 的 `better-sqlite3` 更新到兼容 Node 22+ 的 13.0.3；补齐 RAG worker 运行依赖并保护稳定版 `latest` 镜像。
 - **文件预览**：咕咕可以将文件直接推送到当前网页预览，`gugu://` 文件链接直接打开预览；图片、PDF 和文本预览复用会话级缓存，减少重复下载。
@@ -239,7 +238,7 @@
 
 ### 修复
 
-- **静态资源访问**：修复默认 Compose 单容器镜像中 logo、字体等构建产物权限过严导致 Nginx 返回 403 的问题。
+- **静态资源访问**：修复默认 Compose 一体化应用镜像中 logo、字体等构建产物权限过严导致 Nginx 返回 403 的问题。
 - **文本编辑预览**：修复文本或 Markdown 保存后预览缓存仍显示旧内容的问题，关闭后重新打开也会保持最新版本，避免旧内容覆盖已保存修改。
 - **确认门协议**：统一工具、网页和 IM 的确认结果格式，修复确认状态在不同交互链路中重复确认或无法继续执行的问题。
 - **Shell Autopilot**：开启管理员和用户两级 Autopilot 后，危险命令及临时 egress 不再重复弹出确认；沙盒、代理、配额、超时和审计边界仍然生效。

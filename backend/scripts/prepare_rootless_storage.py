@@ -8,10 +8,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pwd
 import shutil
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -29,6 +31,7 @@ from agent.sandbox.rootless_permissions import (
 _WRITABLE_ROOT_NAMES = ("shell", "个人文件", "项目文件", "workspace")
 _CONTAINER_UID = 65532
 _CONTAINER_GID = 65532
+_RUNTIME_IDENTITY_PATH = Path("/run/gugu/sandbox-storage-identity.json")
 
 
 def discover_writable_roots(users_root: str | Path) -> tuple[Path, ...]:
@@ -86,6 +89,40 @@ def _host_subordinate_ranges(login: str) -> tuple[tuple[SubordinateRange, ...], 
     return read_subordinate_ranges(subuid_path, login), read_subordinate_ranges(subgid_path, login)
 
 
+def _write_runtime_identity(
+    path: str | Path,
+    *,
+    rootless: bool,
+    mapped_uid: int,
+    mapped_gid: int,
+) -> None:
+    """原子发布目标 daemon 映射，供 Web/Worker 的运行时 ACL 使用。"""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": 1,
+        "daemon_mode": "rootless" if rootless else "rootful",
+        "container_uid": _CONTAINER_UID,
+        "container_gid": _CONTAINER_GID,
+        "mapped_uid": mapped_uid,
+        "mapped_gid": mapped_gid,
+    }
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=target.parent,
+            prefix=f".{target.name}.", suffix=".tmp", delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            json.dump(payload, stream, separators=(",", ":"))
+            stream.write("\n")
+        temporary_path.chmod(0o644)
+        os.replace(temporary_path, target)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 def _probe_root(
     root: Path,
     *,
@@ -138,9 +175,12 @@ def prepare(
     docker_socket: str,
     image_ref: str,
     probe: bool,
+    identity_file: str | Path = _RUNTIME_IDENTITY_PATH,
 ) -> int:
     root = Path(users_root).expanduser().resolve(strict=True)
     roots = discover_writable_roots(root)
+    # 若 daemon 探测或权限校验失败，不能让运行时误用上一次启动遗留的映射。
+    Path(identity_file).unlink(missing_ok=True)
     rootless, socket_uid = _docker_info(docker_socket)
     host_owner_uid = root.stat().st_uid
     mapped_uid = _CONTAINER_UID
@@ -166,7 +206,14 @@ def prepare(
         apply_permission_plan(plan)
         if probe:
             _probe_root(writable_root, users_root=root, docker_socket=docker_socket, image_ref=image_ref)
-    print(f"沙盒存储 ACL 已就绪：目录数={len(roots)} 映射组={mapped_gid} 写入探针={probe}")
+    _write_runtime_identity(
+        identity_file,
+        rootless=rootless,
+        mapped_uid=mapped_uid,
+        mapped_gid=mapped_gid,
+    )
+    mode = "rootless" if rootless else "rootful"
+    print(f"沙盒存储 ACL 已就绪：daemon={mode} 目录数={len(roots)} 映射UID/GID={mapped_uid}/{mapped_gid} 写入探针={probe}")
     return len(roots)
 
 
@@ -177,6 +224,7 @@ def main() -> int:
     parser.add_argument("--docker-socket", default=os.environ.get("GUGU_ROOTLESS_DOCKER_SOCKET", "/run/gugu/docker.sock"))
     parser.add_argument("--image", required=True, help="已加载的沙盒镜像引用")
     parser.add_argument("--probe", action="store_true", help="应用 ACL 后用真实沙盒 UID 做写入探针")
+    parser.add_argument("--identity-file", default=os.environ.get("GUGU_SANDBOX_IDENTITY_FILE", str(_RUNTIME_IDENTITY_PATH)))
     args = parser.parse_args()
     try:
         prepare(
@@ -185,6 +233,7 @@ def main() -> int:
             docker_socket=args.docker_socket,
             image_ref=args.image,
             probe=args.probe,
+            identity_file=args.identity_file,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"错误：{exc}", file=os.sys.stderr)

@@ -1,4 +1,4 @@
-# Gugu 默认一键部署：单容器应用（Nginx + Uvicorn + worker + IM gateway）+ PostgreSQL + Redis。
+# Gugu 默认一键部署：一体化应用镜像（前后端 + worker + gateway）与 PostgreSQL、Redis 等服务。
 # 默认启动完整应用；需要 Shell 沙盒时追加：docker compose --profile sandbox up -d
 
 name: gugu-web-compose
@@ -17,10 +17,8 @@ x-gugu-data-mount: &gugu-data-mount
     create_host_path: true
 
 x-app-environment: &app-environment
-  GUGU_SINGLE_CONTAINER: "1"
+  GUGU_UNIFIED_APP: "1"
   GUGU_APP_PORT: "8001"
-  # Compose 部署用外部 postgres/redis 服务，显式关闭镜像内置依赖。
-  GUGU_EMBEDDED_DEPS: "0"
   GUGU_ENABLE_WORKER: "1"
   GUGU_ENABLE_GATEWAY: "1"
   GUGU_ENV_FILE: /app/.env
@@ -205,6 +203,7 @@ services:
       SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
     volumes:
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
+      - sandbox_socket:/run/gugu
       - *gugu-data-mount
       - /etc/passwd:/host/etc/passwd:ro
       - /etc/subuid:/host/etc/subuid:ro

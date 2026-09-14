@@ -9,7 +9,7 @@
 - 一个可访问的模型 Provider，或准备好的 BYOK 配置
 - 能访问镜像仓库和模型服务的网络
 
-## 快速启动（默认 Compose 单容器模式）
+## 快速启动（默认一体化 Compose）
 
 在仓库根目录执行：
 
@@ -42,37 +42,17 @@ ADMIN_PASSWORD=请替换为管理员密码
 docker compose up -d
 ```
 
-默认 Compose 会拉取包含前端、Nginx、Uvicorn、worker、IM gateway 的单容器应用镜像；它不挂载源码，也不运行开发服务器。它会启动 Gugu、PostgreSQL、Redis 和内置的 SearXNG 搜索服务。首次启动会初始化数据库并执行迁移。
+默认 Compose 拉取包含前端、Nginx、Uvicorn、worker、IM gateway 的统一应用镜像；它不挂载源码，也不运行开发服务器。PostgreSQL、Redis 和 SearXNG 由同一 Compose 项目中的独立服务提供。首次启动会初始化数据库并执行迁移。
 
 打开：<http://localhost:9595>
 
 管理后台：<http://localhost:9595/admin/>
 
-## 纯 Docker 一键部署（单容器全内置）
+升级请在同一部署目录执行 `docker compose pull && docker compose up -d`。不要删除数据库和数据卷；Compose 会复用 `pgdata`、`redisdata`、`Gugu-data`、配置卷及应用配置文件。
 
-不想用 Compose 的用户（fnOS、群晖等面板只有单容器部署入口）可以直接拉一体化镜像：镜像内置 PostgreSQL 与 Redis（默认 `GUGU_EMBEDDED_DEPS=1`，只监听容器内 127.0.0.1），数据全部落在挂载的数据卷里，一条命令即可启动完整站点：
+**管理员密码不设默认值**：首次启动未设置 `ADMIN_PASSWORD` 时，会生成随机密码并写入 `backend/.env`，同时在容器日志打印一次。公网部署务必在 `backend/.env` 设置自己的强密码。
 
-```bash
-docker run -d --name gugu \
-  -p 9595:9595 \
-  -v /你的数据目录:/data \
-  -v /你的配置目录:/config \
-  -e GUGU_DB_PASSWORD=请替换为数据库密码 \
-  coffeiz/gugu-web:latest
-```
-
-打开 <http://localhost:9595> 即可使用。
-
-不设置 `SECRET_KEY` 时，镜像会在首次启动生成高强度随机密钥并保存到持久化配置文件；后续重启和升级会复用原密钥。未显式绑定 `/data` 和 `/config` 时，Docker 会自动创建匿名卷，但生产环境建议明确绑定宿主机目录，便于备份和迁移。
-
-**管理员密码不设默认值**：启动时不设置 `ADMIN_PASSWORD`，首次启动会自动生成随机密码写入数据卷内的 `.env`（`/data/.env`）并在容器日志打印一次（`docker logs gugu` 查看），重建容器不丢失；也可以在启动时用 `-e ADMIN_USERNAME=... -e ADMIN_PASSWORD=...` 直接指定。公网部署务必使用自己的强密码。
-
-注意事项：
-
-- `/data` 卷保存数据库、用户文件与记忆，升级镜像时保留该卷数据不丢；`/config` 保存 Admin 配置。
-- **联网搜索不内置**：SearXNG 依赖较多、内置会显著增大镜像体积并带来依赖冲突风险，单容器模式下搜索相关工具不可用；需要搜索请改用下面的 Compose 方式。
-- **Shell 沙盒可选**：把宿主机 `/var/run/docker.sock` 一并挂进容器（`-v /var/run/docker.sock:/var/run/docker.sock`），入口检测到 socket 会自动拉起内置 sandboxd；不挂载则沙盒工具保持不可用，其余功能不受影响。
-- 默认 Compose（上一节）会显式设置 `GUGU_EMBEDDED_DEPS=0` 走各自的 postgres/redis 容器，两种方式互不影响。
+fnOS、群晖等支持 Compose 项目的面板，请导入仓库根目录的 `docker-compose.yml` 并在同一项目中更新服务。需要在面板中选择数据目录时，使用固定宿主机路径配置 `GUGU_DATA_HOST_DIR`；不要留空或在每次更新时换路径。
 
 ## Compose 配置
 
@@ -110,7 +90,7 @@ GUGU_SANDBOX_NETWORK_PROFILE=egress
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 ```
 
-默认 Compose（一体化）只用 `GUGU_WEB_IMAGE` 和 `GUGU_DB_PASSWORD`；只有需要分别管理前后端（拆分场景，参见「生产启动」节）时才使用 `docker-compose.prod.yml`，那时要再设 `GUGU_BACKEND_IMAGE` 和 `GUGU_FRONTEND_IMAGE`。需要从源码启动并热更新时使用 Dev Compose。
+默认 Compose 使用 `GUGU_WEB_IMAGE` 和 `GUGU_DB_PASSWORD`。只有需要分别管理前后端时才使用 `docker-compose.prod.yml`；从源码开发并热更新时使用 `docker-compose.dev.yml`。
 
 完整的应用配置仍放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)；根目录 `.env.example` 只包含 Compose 编排变量。
 
@@ -133,9 +113,9 @@ docker compose --profile sandbox up -d
 常用配置文件：
 
 - `backend/.env`：部署环境变量和敏感配置
-- `docker-compose.yml`：默认单容器（一体化镜像）一键部署入口，推荐用于绝大多数部署
+- `docker-compose.yml`：默认一体化应用部署入口，推荐用于常规部署
 - `docker-compose.dev.yml`：源码开发 Compose 服务
-- `docker-compose.prod.yml`：拆分场景备选（分别管理前后端镜像，参见「生产启动」节）
+- `docker-compose.prod.yml`：生产环境前后端分体部署
 
 不要把真实密码、Token 或 API Key 提交到 Git。
 
