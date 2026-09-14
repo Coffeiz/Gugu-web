@@ -7,10 +7,11 @@
 #
 # 脚本做什么：
 #   1. 从旧容器导出数据库（pg_dump，写入 backups/）；
-#   2. 停旧容器，把 /data 匿名卷中的用户文件、BYOK 主密钥等复制到宿主机
-#      Gugu-data 目录（剔除已导出的 postgres/、redis/ 数据目录）；
-#   3. 把旧 /data/.env 中的凭据（SECRET_KEY、ADMIN_PASSWORD 等）静默合并进
-#      backend/.env，缺 GUGU_DB_PASSWORD 时自动生成；
+#   2. 停旧容器；匿名卷部署把 /data 卷中的用户文件、BYOK 主密钥等复制到宿主机
+#      Gugu-data 目录（剔除已导出的 postgres/、redis/ 数据目录）；目录映射
+#      （bind）部署的数据已在宿主机，跳过复制、直接复用原目录；
+#   3. 把旧 /data/.env 中的凭据（SECRET_KEY、ADMIN_PASSWORD 等）与容器环境
+#      变量中的应用级键静默合并进 backend/.env，缺 GUGU_DB_PASSWORD 时自动生成；
 #   4. 启动 Compose 的 postgres 服务并恢复数据库，再启动完整应用
 #      （应用启动时自动把表结构迁移到新版）。
 #
@@ -64,12 +65,29 @@ DB_USER=${DB_USER:-gugu}
 DB_NAME=$(docker exec "$OLD_CONTAINER" sh -c 'printenv DB__NAME' 2>/dev/null || true)
 DB_NAME=${DB_NAME:-gugu}
 
-DATA_VOLUME=$(docker inspect "$OLD_CONTAINER" --format \
-  '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
-[ -n "$DATA_VOLUME" ] || { warn "旧容器没有 /data 卷挂载，无法定位数据"; exit 1; }
+DATA_MOUNT_TYPE=$(docker inspect "$OLD_CONTAINER" --format \
+  '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}{{end}}{{end}}')
+case "$DATA_MOUNT_TYPE" in
+  volume)
+    DATA_VOLUME=$(docker inspect "$OLD_CONTAINER" --format \
+      '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
+    [ -n "$DATA_VOLUME" ] || { warn "旧容器 /data 卷名为空，无法定位数据"; exit 1; }
+    DATA_DESC="匿名卷 $DATA_VOLUME"
+    ;;
+  bind)
+    DATA_BIND_SOURCE=$(docker inspect "$OLD_CONTAINER" --format \
+      '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}')
+    [ -n "$DATA_BIND_SOURCE" ] || { warn "旧容器 /data 为 bind 挂载但源路径为空"; exit 1; }
+    DATA_DESC="目录映射 $DATA_BIND_SOURCE"
+    ;;
+  *)
+    warn "旧容器 /data 挂载类型无法识别：${DATA_MOUNT_TYPE:-无挂载}"
+    exit 1
+    ;;
+esac
 WAS_RUNNING=$(docker inspect "$OLD_CONTAINER" --format '{{.State.Running}}')
 
-log "旧容器：$OLD_CONTAINER（镜像 $OLD_IMAGE，/data 匿名卷 $DATA_VOLUME）"
+log "旧容器：$OLD_CONTAINER（镜像 $OLD_IMAGE，/data $DATA_DESC）"
 log "数据库：$DB_NAME（用户 $DB_USER）"
 
 # ── 2. 导出数据库（趁内嵌 PG 还在运行）─────────────────────────────────
@@ -90,13 +108,22 @@ else
   log "数据库已导出：$DUMP_FILE"
 fi
 
-# ── 3. 停旧容器，复制数据文件到宿主机 Gugu-data ────────────────────────
-[ -n "$DATA_HOST_DIR" ] || DATA_HOST_DIR="$COMPOSE_DIR/Gugu-data"
+# ── 3. 停旧容器；匿名卷部署复制数据文件，bind 部署直接复用原目录 ────────
 run docker stop "$OLD_CONTAINER"
-log "复制 /data 数据文件到 $DATA_HOST_DIR（剔除 postgres/、redis/，已单独导出）"
-run docker run --rm --entrypoint sh \
-  -v "$DATA_VOLUME:/from:ro" -v "$DATA_HOST_DIR:/to" \
-  "$OLD_IMAGE" -c 'cp -a /from/. /to/ && rm -rf /to/postgres /to/redis'
+if [ "$DATA_MOUNT_TYPE" = "bind" ]; then
+  if [ -n "$DATA_HOST_DIR" ] && [ "$DATA_HOST_DIR" != "$DATA_BIND_SOURCE" ]; then
+    warn "--data-host-dir 与旧 bind 源不同；bind 部署的数据已在宿主机，忽略该参数"
+  fi
+  DATA_HOST_DIR="$DATA_BIND_SOURCE"
+  log "bind 挂载：数据已在宿主机 $DATA_HOST_DIR，跳过文件复制"
+  log "注意：目录中的 postgres/ 子目录是旧内嵌数据库，已不再使用，验证后可手动删除"
+else
+  [ -n "$DATA_HOST_DIR" ] || DATA_HOST_DIR="$COMPOSE_DIR/Gugu-data"
+  log "复制 /data 数据文件到 $DATA_HOST_DIR（剔除 postgres/、redis/，已单独导出）"
+  run docker run --rm --entrypoint sh \
+    -v "$DATA_VOLUME:/from:ro" -v "$DATA_HOST_DIR:/to" \
+    "$OLD_IMAGE" -c 'cp -a /from/. /to/ && rm -rf /to/postgres /to/redis'
+fi
 
 # ── 4. 旧 /data/.env 凭据静默合并进 backend/.env ───────────────────────
 BACKEND_ENV="$COMPOSE_DIR/backend/.env"
@@ -105,8 +132,13 @@ if [ "$DRY_RUN" != "1" ] && [ ! -f "$BACKEND_ENV" ]; then
   : > "$BACKEND_ENV"
   chmod 600 "$BACKEND_ENV"
 fi
+if [ "$DATA_MOUNT_TYPE" = "volume" ]; then
+  DATA_MOUNT_REF="$DATA_VOLUME:/from:ro"
+else
+  DATA_MOUNT_REF="$DATA_BIND_SOURCE:/from:ro"
+fi
 OLD_ENV_LINES=$(docker run --rm --entrypoint sh \
-  -v "$DATA_VOLUME:/from:ro" "$OLD_IMAGE" -c 'cat /from/.env' 2>/dev/null || true)
+  -v "$DATA_MOUNT_REF" "$OLD_IMAGE" -c 'cat /from/.env' 2>/dev/null || true)
 MERGED=0
 while IFS= read -r line; do
   case "$line" in ''|\#*) continue ;; esac
@@ -191,5 +223,9 @@ log ""
 log "迁移完成。应用启动时会自动把表结构迁移到新版，稍等 1-2 分钟后访问"
 log "站点验证管理员登录与历史数据。以下资源被保留，确认无误后可手动清理："
 log "  旧容器：docker rm $OLD_CONTAINER"
-log "  旧数据卷：docker volume rm $DATA_VOLUME"
+if [ "$DATA_MOUNT_TYPE" = "volume" ]; then
+  log "  旧数据卷：docker volume rm $DATA_VOLUME"
+else
+  log "  旧内嵌数据库目录：$DATA_BIND_SOURCE/postgres（已不再使用）"
+fi
 log "需要回滚时：docker compose stop && docker start $OLD_CONTAINER"

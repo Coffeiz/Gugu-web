@@ -56,7 +56,7 @@ fnOS、群晖等支持 Compose 项目的面板，请导入仓库根目录的 `do
 
 ## 从单容器版本（v1.2.x 及更早）迁移
 
-旧版一体化镜像内置 PostgreSQL/Redis，用 `docker run` 或 NAS 面板直接部署时，全部数据（数据库、用户文件、BYOK 主密钥、管理员凭据）都在容器的匿名卷里。新版镜像不再内置数据库，**直接重建容器会丢掉整个数据库**，升级前请在部署机上执行一次迁移脚本：
+旧版一体化镜像内置 PostgreSQL/Redis，用 `docker run` 或 NAS 面板直接部署时，全部数据（数据库、用户文件、BYOK 主密钥、管理员凭据）都在容器的匿名卷或映射目录里。新版镜像不再内置数据库，**直接重建容器会丢掉整个数据库**，升级前请在部署机上执行一次迁移脚本：
 
 ```bash
 git clone https://github.com/Coffeiz/Gugu-web.git
@@ -64,7 +64,7 @@ cd Gugu-web
 scripts/migrate-single-container-to-compose.sh --container <旧容器名>
 ```
 
-脚本会自动完成：导出旧数据库并恢复到新 Compose 的 postgres 服务（内嵌 PG 17 → postgres 18 跨版本必须走 dump/restore）、把旧 `/data` 匿名卷中的用户文件与 BYOK 主密钥复制到宿主机 `Gugu-data`、把旧 `/data/.env` 与容器环境变量中的应用级凭据（管理员密码、SECRET_KEY 等）静默合并进 `backend/.env`，缺 `GUGU_DB_PASSWORD` 时自动生成。
+脚本会自动完成：导出旧数据库并恢复到新 Compose 的 postgres 服务（内嵌 PG 17 → postgres 18 跨版本必须走 dump/restore）、把旧 `/data` 卷中的用户文件与 BYOK 主密钥复制到宿主机 `Gugu-data`（已配置目录映射的部署数据本就在宿主机，跳过复制、直接复用原目录）、把旧 `/data/.env` 与容器环境变量中的应用级凭据（管理员密码、SECRET_KEY 等）静默合并进 `backend/.env`，缺 `GUGU_DB_PASSWORD` 时自动生成。
 
 旧容器与旧数据卷全程保留不删除；启动后验证登录和历史数据完好，再按脚本结尾输出的命令清理。需要回滚时 `docker compose stop && docker start <旧容器名>`。NAS 面板用户迁移完成后，把 `docker-compose.yml` 导入面板项目接管，之后的更新走面板的 Compose 流程。
 
