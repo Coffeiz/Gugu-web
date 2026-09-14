@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { filesApi } from '@/services/api'
 import type { FolderCard } from '@/utils/filesNav'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import {
   archiveFormatForFile,
   archiveNameForFile,
@@ -29,6 +30,7 @@ export interface FileLibraryArchiveActionsOptions {
   selectedFolderKeys: Ref<Set<number | string>>
   getVisibleFolders: () => FolderCard[]
   clearSelection: () => void
+  createExtractionGhost: (name: string) => () => void
 }
 
 export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsOptions) {
@@ -119,13 +121,17 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
 
   async function submit(form: ArchiveDialogForm) {
     if (busy.value || success.value) return
+    const submittedMode = mode.value
+    const name = form.name.trim()
+    if (!name) {
+      error.value = t(submittedMode === 'compress' ? 'filesUi.archiveInvalidName' : 'filesUi.archiveInvalidFolderName')
+      return
+    }
     busy.value = true
     error.value = ''
+    let removeGhost: (() => void) | null = null
     try {
-      const name = form.name.trim()
-      if (!name) throw new Error(t(mode.value === 'compress' ? 'filesUi.archiveInvalidName' : 'filesUi.archiveInvalidFolderName'))
-
-      if (mode.value === 'compress') {
+      if (submittedMode === 'compress') {
         const fileIds = [...options.selectedFileIds.value]
         const folderIds = options.getVisibleFolders()
           .filter(folder => options.selectedFolderKeys.value.has(folder.id) && folder.type === 'folder' && folder.folderId != null)
@@ -141,21 +147,26 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
       } else {
         const archive = selectedArchive.value
         if (!archive) throw new Error('压缩包已不可用，请重新打开解压操作。')
-        const result = await filesApi.unarchive({
+        removeGhost = options.createExtractionGhost(name)
+        dialogOpen.value = false
+        selectedArchive.value = null
+        await filesApi.unarchive({
           fileId: archive.id,
           folderName: name,
           format: archiveFormatForFile(archive) ?? undefined,
         })
         await options.cacheStore.refresh()
-        success.value = t('filesUi.archiveExtracted', {
-          files: result.file_count,
-          folders: result.folder_count,
-          skipped: result.skipped_count,
-        })
       }
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : t('filesUi.archiveFailed')
+      if (submittedMode === 'extract') {
+        dialogOpen.value = false
+        selectedArchive.value = null
+        showAppError(errorMessage(cause, t('filesUi.archiveFailed')))
+      } else {
+        error.value = cause instanceof Error ? cause.message : t('filesUi.archiveFailed')
+      }
     } finally {
+      removeGhost?.()
       busy.value = false
     }
   }

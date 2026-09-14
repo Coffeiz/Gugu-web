@@ -12,7 +12,7 @@ Object.assign(filesUi['zh-CN'], {
   archiveSelectionChanged: '选中的项目已变化，请重新选择后再压缩。',
   archiveUnsupportedSpace: '该文件空间暂不支持压缩与解压。', archiveCrossSpace: '不能跨空间压缩。',
   archiveSameParent: '请选择同一目录中的文件和文件夹。', archiveInvalidName: '请输入压缩包名称。', archiveInvalidFolderName: '请输入解压文件夹名称。',
-  archiveCreated: '已创建 {name}', archiveExtracted: '已解压 {files} 个文件、{folders} 个文件夹，跳过 {skipped} 项。',
+  archiveCreated: '已创建 {name}', archiveExtracting: '解压中…',
   archiveFailed: '操作失败，请稍后重试。',
 })
 Object.assign(filesUi['ja-JP'], {
@@ -23,7 +23,7 @@ Object.assign(filesUi['ja-JP'], {
   archiveSelectionChanged: '選択内容が変更されました。選び直してから圧縮してください。',
   archiveUnsupportedSpace: 'このファイル領域では圧縮・解凍できません。', archiveCrossSpace: '異なる領域をまたいで圧縮することはできません。',
   archiveSameParent: '同じフォルダー内のファイルとフォルダーを選択してください。', archiveInvalidName: 'アーカイブ名を入力してください。', archiveInvalidFolderName: '展開先フォルダー名を入力してください。',
-  archiveCreated: '{name} を作成しました', archiveExtracted: 'ファイル {files} 件、フォルダー {folders} 件を解凍し、{skipped} 件をスキップしました。',
+  archiveCreated: '{name} を作成しました', archiveExtracting: '解凍中…',
   archiveFailed: '処理に失敗しました。しばらくしてから再試行してください。',
 })
 Object.assign(filesUi['en-US'], {
@@ -34,7 +34,7 @@ Object.assign(filesUi['en-US'], {
   archiveSelectionChanged: 'The selection changed. Select the items again before compressing.',
   archiveUnsupportedSpace: 'Compression and extraction are not supported in this file space.', archiveCrossSpace: 'Items from different spaces cannot be compressed together.',
   archiveSameParent: 'Select files and folders from the same directory.', archiveInvalidName: 'Enter an archive name.', archiveInvalidFolderName: 'Enter an extraction folder name.',
-  archiveCreated: 'Created {name}', archiveExtracted: 'Extracted {files} files and {folders} folders; skipped {skipped} items.',
+  archiveCreated: 'Created {name}', archiveExtracting: 'Extracting…',
   archiveFailed: 'The operation failed. Please try again later.',
 })
 export const filesViewUi = {

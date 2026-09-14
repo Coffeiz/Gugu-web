@@ -157,7 +157,7 @@ async def test_extract_creates_named_folder_next_to_archive_and_renames_collisio
 
 
 @pytest.mark.asyncio
-async def test_extract_unwraps_archive_root_when_it_matches_output_folder(db, user_a, tmp_path):
+async def test_extract_maps_single_archive_root_to_custom_output_folder_without_duplicate_empty_folder(db, user_a, tmp_path):
     storage = LocalStorageBackend(tmp_path / "storage")
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
@@ -167,7 +167,7 @@ async def test_extract_unwraps_archive_root_when_it_matches_output_folder(db, us
     zip_file = await _file(db, storage, user_a.id, "0824照片BG数据.zip", buffer.getvalue())
 
     summary = await extract_file(
-        db, user_a.id, zip_file.id, folder_name="0824照片BG数据", storage=storage,
+        db, user_a.id, zip_file.id, folder_name="解压结果", storage=storage,
     )
     await db.commit()
 
@@ -175,10 +175,12 @@ async def test_extract_unwraps_archive_root_when_it_matches_output_folder(db, us
     extracted = (await db.execute(select(File).where(
         File.user_id == user_a.id, File.id != zip_file.id,
     ))).scalars().all()
-    assert output_folder is not None and output_folder.name == "0824照片BG数据"
+    assert output_folder is not None and output_folder.name == "解压结果"
     assert summary["folder_count"] == 1
     assert summary["file_count"] == 11
     assert all(file.folder_id == output_folder.id for file in extracted)
+    created_folders = (await db.execute(select(Folder))).scalars().all()
+    assert created_folders == [output_folder]
 
 
 @pytest.mark.parametrize("folder_name", ["", "..", "../escape", "C:folder", "x" * 201])

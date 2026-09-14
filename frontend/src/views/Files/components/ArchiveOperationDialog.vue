@@ -17,7 +17,7 @@
           <input v-model="name" :disabled="busy || Boolean(success)" :maxlength="mode === 'compress' ? 300 : 200" autocomplete="off" />
         </label>
         <p v-if="error" class="archive-message is-error" role="alert">{{ error }}</p>
-        <p v-if="success" class="archive-message is-success" role="status">{{ success }}</p>
+        <p v-if="success && mode === 'compress'" class="archive-message is-success" role="status">{{ success }}</p>
       </div>
 
       <footer class="archive-dialog-footer">

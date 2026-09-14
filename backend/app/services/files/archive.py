@@ -623,23 +623,16 @@ def _tar_members(archive: tarfile.TarFile) -> list[_ArchiveMember]:
     return members
 
 
-def _unwrap_matching_output_folder(members: list[_ArchiveMember], folder_name: str) -> list[_ArchiveMember]:
-    """输出目录与归档唯一顶层目录同名时，去掉重复包装层。"""
+def _single_archive_root(members: list[_ArchiveMember]) -> str | None:
+    """返回归档唯一的顶层目录；它是包装层，应映射到用户指定的输出目录。"""
     visible_members = [member for member in members if member.path and not member.skipped]
-    visible_paths = [member.path for member in visible_members]
-    prefix = f"{folder_name}/"
-    if not visible_paths or not any(path.startswith(prefix) for path in visible_paths):
-        return members
-    if any(member.path == folder_name and not member.is_dir for member in visible_members):
-        return members
-    if not all(path == folder_name or path.startswith(prefix) for path in visible_paths):
-        return members
-    return [
-        replace(member, path=member.path[len(prefix):] if member.path.startswith(prefix) else "")
-        if member.path == folder_name or member.path.startswith(prefix)
-        else member
-        for member in members
-    ]
+    roots = {member.path.split("/", 1)[0] for member in visible_members}
+    if len(roots) != 1:
+        return None
+    root_name = next(iter(roots))
+    if any(member.path == root_name and not member.is_dir for member in visible_members):
+        return None
+    return root_name
 
 
 def _validate_member_names(members: list[_ArchiveMember]) -> None:
@@ -663,13 +656,12 @@ async def _create_extracted_folder(
     user_id,
     target: _Target,
     parent_id: int | None,
-    parent_archive_path: str,
+    parent_target_path: str,
     name: str,
     occupied_by_parent: dict[int | None, set[str]],
-    folder_by_archive_path: dict[str, int | None],
     created_folder_keys: list[str],
     created_folder_ids: list[int],
-) -> tuple[int, str]:
+) -> tuple[int, str, str]:
     if parent_id not in occupied_by_parent:
         occupied_by_parent[parent_id] = await _occupied_names(db, user_id, target, parent_id)
     occupied = occupied_by_parent[parent_id]
@@ -684,13 +676,11 @@ async def _create_extracted_folder(
     db.add(folder)
     await db.flush()
     created_folder_ids.append(folder.id)
-    archive_path = f"{parent_archive_path}/{name}" if parent_archive_path else name
-    target_folder_path = f"{target.folder_path}/{final_name}" if target.folder_path else final_name
+    target_folder_path = f"{parent_target_path}/{final_name}" if parent_target_path else final_name
     folder_key = await _physical_folder_key(storage, user_id, target, target_folder_path)
     created_folder_keys.append(folder_key)
     await storage.ensure_folder(folder_key)
-    folder_by_archive_path[archive_path] = folder.id
-    return folder.id, final_name
+    return folder.id, final_name, target_folder_path
 
 
 async def _ensure_archive_path_folders(
@@ -717,13 +707,11 @@ async def _ensure_archive_path_folders(
             parent_id = existing_id
             target_parent_path = folder_target_paths[next_archive_path]
         else:
-            parent_id, chosen = await _create_extracted_folder(
-                db, storage, user_id, target, parent_id, archive_parent,
-                segment, occupied_by_parent, folder_by_archive_path, created_folder_keys,
-                created_folder_ids,
+            parent_id, _, target_parent_path = await _create_extracted_folder(
+                db, storage, user_id, target, parent_id, target_parent_path,
+                segment, occupied_by_parent, created_folder_keys, created_folder_ids,
             )
-            next_archive_path = f"{archive_parent}/{segment}" if archive_parent else segment
-            target_parent_path = f"{target_parent_path}/{chosen}" if target_parent_path else chosen
+            folder_by_archive_path[next_archive_path] = parent_id
             folder_target_paths[next_archive_path] = target_parent_path
         archive_parent = next_archive_path
     return parent_id, archive_parent, target_parent_path
@@ -825,25 +813,28 @@ async def extract_file(
                     or len(safe_folder_name) > 200
                 ):
                     raise Invalid("archive.invalid_name", "解压文件夹名称无效")
-                members = _unwrap_matching_output_folder(members, safe_folder_name)
-                root_id, chosen_name = await _create_extracted_folder(
-                    db, storage, user_id, target, target.folder_id, "", safe_folder_name,
-                    occupied_by_parent, {}, created_folder_keys, created_folder_ids,
+                root_id, _, root_path = await _create_extracted_folder(
+                    db, storage, user_id, target, target.folder_id, target.folder_path,
+                    safe_folder_name, occupied_by_parent, created_folder_keys,
+                    created_folder_ids,
                 )
-                root_path = f"{target.folder_path}/{chosen_name}" if target.folder_path else chosen_name
                 extraction_target = replace(target, folder_id=root_id, folder_path=root_path)
+                # 归档只有一个顶层目录时，它只是包装层；映射到输出根目录，
+                # 不再创建第二层目录，也不依赖归档名与用户填写名相同。
+                archive_root = _single_archive_root(members)
+                if archive_root is not None:
+                    folder_by_archive_path[archive_root] = root_id
+                    folder_target_paths[archive_root] = root_path
             for member in members:
                 if not member.path:
                     continue
                 segments = member.path.split("/")
                 if member.is_dir:
-                    _, archive_path, _ = await _ensure_archive_path_folders(
+                    await _ensure_archive_path_folders(
                         db, storage, user_id, extraction_target, segments,
                         occupied_by_parent, folder_by_archive_path,
                         folder_target_paths, created_folder_keys, created_folder_ids,
                     )
-                    # 同一路径目录项只映射一次，不产生重复空目录。
-                    folder_by_archive_path.setdefault(archive_path, folder_by_archive_path.get(archive_path))
                     continue
                 if member.skipped:
                     continue

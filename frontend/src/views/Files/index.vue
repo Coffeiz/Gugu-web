@@ -559,6 +559,7 @@ const archiveActions = useFileLibraryArchiveActions({
   selectedFolderKeys,
   getVisibleFolders: () => sortedContents.value.folders,
   clearSelection,
+  createExtractionGhost: name => fileUpload.createExtractionGhost(name, t('filesUi.archiveExtracting')),
 })
 const {
   dialogOpen: archiveDialogOpen,
