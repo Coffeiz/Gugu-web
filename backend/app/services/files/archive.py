@@ -623,6 +623,25 @@ def _tar_members(archive: tarfile.TarFile) -> list[_ArchiveMember]:
     return members
 
 
+def _unwrap_matching_output_folder(members: list[_ArchiveMember], folder_name: str) -> list[_ArchiveMember]:
+    """输出目录与归档唯一顶层目录同名时，去掉重复包装层。"""
+    visible_members = [member for member in members if member.path and not member.skipped]
+    visible_paths = [member.path for member in visible_members]
+    prefix = f"{folder_name}/"
+    if not visible_paths or not any(path.startswith(prefix) for path in visible_paths):
+        return members
+    if any(member.path == folder_name and not member.is_dir for member in visible_members):
+        return members
+    if not all(path == folder_name or path.startswith(prefix) for path in visible_paths):
+        return members
+    return [
+        replace(member, path=member.path[len(prefix):] if member.path.startswith(prefix) else "")
+        if member.path == folder_name or member.path.startswith(prefix)
+        else member
+        for member in members
+    ]
+
+
 def _validate_member_names(members: list[_ArchiveMember]) -> None:
     """拒绝无法表示为 File/Folder 行的超长归档路径，避免写入中途遇到 DB 限制。"""
     for member in members:
@@ -806,6 +825,7 @@ async def extract_file(
                     or len(safe_folder_name) > 200
                 ):
                     raise Invalid("archive.invalid_name", "解压文件夹名称无效")
+                members = _unwrap_matching_output_folder(members, safe_folder_name)
                 root_id, chosen_name = await _create_extracted_folder(
                     db, storage, user_id, target, target.folder_id, "", safe_folder_name,
                     occupied_by_parent, {}, created_folder_keys, created_folder_ids,

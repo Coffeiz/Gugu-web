@@ -156,6 +156,31 @@ async def test_extract_creates_named_folder_next_to_archive_and_renames_collisio
     assert summary["created_count"] == 2
 
 
+@pytest.mark.asyncio
+async def test_extract_unwraps_archive_root_when_it_matches_output_folder(db, user_a, tmp_path):
+    storage = LocalStorageBackend(tmp_path / "storage")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("0824照片BG数据/", "")
+        for index in range(11):
+            archive.writestr(f"0824照片BG数据/图片-{index}.jpg", b"image")
+    zip_file = await _file(db, storage, user_a.id, "0824照片BG数据.zip", buffer.getvalue())
+
+    summary = await extract_file(
+        db, user_a.id, zip_file.id, folder_name="0824照片BG数据", storage=storage,
+    )
+    await db.commit()
+
+    output_folder = await db.get(Folder, summary["folder_ids"][0])
+    extracted = (await db.execute(select(File).where(
+        File.user_id == user_a.id, File.id != zip_file.id,
+    ))).scalars().all()
+    assert output_folder is not None and output_folder.name == "0824照片BG数据"
+    assert summary["folder_count"] == 1
+    assert summary["file_count"] == 11
+    assert all(file.folder_id == output_folder.id for file in extracted)
+
+
 @pytest.mark.parametrize("folder_name", ["", "..", "../escape", "C:folder", "x" * 201])
 @pytest.mark.asyncio
 async def test_extract_rejects_invalid_output_folder_name_without_creating_rows(
