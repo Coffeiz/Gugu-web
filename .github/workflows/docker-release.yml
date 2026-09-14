@@ -18,8 +18,6 @@ env:
   DOCKERHUB_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web
   DOCKERHUB_BACKEND_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web-backend
   DOCKERHUB_FRONTEND_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web-frontend
-  UPDATER_IMAGE_REPOSITORY: ghcr.io/coffeiz/gugu-web-updater
-  DOCKERHUB_UPDATER_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-web-updater
   SANDBOX_IMAGE_REPOSITORY: ghcr.io/coffeiz/gugu-sandbox
   DOCKERHUB_SANDBOX_IMAGE_REPOSITORY: docker.io/coffeiz/gugu-sandbox
   DOCKER_BUILDKIT: '1'
@@ -109,18 +107,6 @@ jobs:
           cache-from: type=gha,scope=default-compose
           cache-to: type=gha,mode=max,scope=default-compose
 
-      - name: Build updater sidecar image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/updater/Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: gugu-web-updater:ci
-          cache-from: type=gha,scope=updater
-          cache-to: type=gha,mode=max,scope=updater
-
       # 沙盒镜像不走构建缓存：apt 层一旦命中旧缓存，apt-get upgrade 不会真跑，
       # 镜像里就是旧包，而 trivy 漏洞库每次都是最新，必然假红（linux-libc-dev
       # 6.1.180-1 vs 6.1.187-1 案例 2026-09-10）。镜像小，全新构建只多几分钟。
@@ -151,10 +137,11 @@ jobs:
       - name: Smoke test TS RAG worker
         run: docker run --rm --entrypoint node gugu-web:ci bin/gugu-rag-ts-worker.mjs --version
 
-      - name: Smoke test updater sidecar
+      - name: Smoke test updater toolchain in app image
         run: |
-          docker run --rm --entrypoint python3 gugu-web-updater:ci -c 'import updater.daemon'
-          docker run --rm --entrypoint docker gugu-web-updater:ci compose version
+          docker run --rm --entrypoint python3 gugu-web:ci -c 'import updater.daemon'
+          docker run --rm --entrypoint docker gugu-web:ci compose version
+          docker run --rm --entrypoint cosign gugu-web:ci version
 
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
@@ -194,15 +181,6 @@ jobs:
           # vendored SBOM，避免把其中记录的旧版本误判为应用依赖。基础镜像
           # 自带的 /usr/local pip 也包含同一份内部依赖清单。
           skip-files: /opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
-
-      - name: Scan updater image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: gugu-web-updater:ci
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: '1'
 
       - name: Scan Shell sandbox runtime image
         uses: aquasecurity/trivy-action@v0.36.0
@@ -318,21 +296,6 @@ jobs:
             GUGU_REVISION=${{ github.sha }}
           # 不附加 SBOM attestation，避免 gha cache 中的旧清单被发布扫描优先消费。
 
-      - name: Build and push updater sidecar image
-        id: updater-image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/updater/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.UPDATER_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-            ${{ env.DOCKERHUB_UPDATER_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=updater
-          cache-to: type=gha,mode=max,scope=updater
-          provenance: mode=max
-
       - name: Build and push Shell sandbox runtime image
         id: sandbox-image
         uses: docker/build-push-action@v6
@@ -352,17 +315,12 @@ jobs:
         if: steps.version.outputs.is_stable == 'true'
         env:
           APP_DIGEST: ${{ steps.app-image.outputs.digest }}
-          UPDATER_DIGEST: ${{ steps.updater-image.outputs.digest }}
           SANDBOX_DIGEST: ${{ steps.sandbox-image.outputs.digest }}
         run: |
           docker buildx imagetools create \
             --tag "${IMAGE_REPOSITORY}:latest" \
             --tag "${DOCKERHUB_IMAGE_REPOSITORY}:latest" \
             "${IMAGE_REPOSITORY}@${APP_DIGEST}"
-          docker buildx imagetools create \
-            --tag "${UPDATER_IMAGE_REPOSITORY}:latest" \
-            --tag "${DOCKERHUB_UPDATER_IMAGE_REPOSITORY}:latest" \
-            "${UPDATER_IMAGE_REPOSITORY}@${UPDATER_DIGEST}"
           docker buildx imagetools create \
             --tag "${SANDBOX_IMAGE_REPOSITORY}:latest" \
             --tag "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}:latest" \
@@ -378,7 +336,6 @@ jobs:
           BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
           FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
           APP_DIGEST: ${{ steps.app-image.outputs.digest }}
-          UPDATER_DIGEST: ${{ steps.updater-image.outputs.digest }}
           SANDBOX_DIGEST: ${{ steps.sandbox-image.outputs.digest }}
         run: |
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
@@ -387,8 +344,6 @@ jobs:
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_FRONTEND_IMAGE_REPOSITORY}@${FRONTEND_DIGEST}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}@${APP_DIGEST}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_IMAGE_REPOSITORY}@${APP_DIGEST}"
-          cosign sign --yes --registry-referrers-mode=oci-1-1 "${UPDATER_IMAGE_REPOSITORY}@${UPDATER_DIGEST}"
-          cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_UPDATER_IMAGE_REPOSITORY}@${UPDATER_DIGEST}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
 
@@ -442,12 +397,6 @@ jobs:
       - name: Validate generated update manifest
         run: node scripts/release/validate-update-manifest.mjs release/update-manifest.json
 
-      - name: Sign update manifest
-        run: |
-          cosign sign-blob --yes \
-            --bundle release/update-manifest.json.bundle \
-            release/update-manifest.json
-
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -456,13 +405,9 @@ jobs:
           # Release 可能已手动创建（如提前按 CHANGELOG 发）或上次运行已建过；
           # 幂等处理：已存在只补传 manifest 附件，不存在才新建。
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" \
-              release/update-manifest.json \
-              release/update-manifest.json.bundle --clobber
+            gh release upload "$TAG" release/update-manifest.json --clobber
           else
-            gh release create "$TAG" \
-              release/update-manifest.json \
-              release/update-manifest.json.bundle \
+            gh release create "$TAG" release/update-manifest.json \
               --title "$TAG" \
               --generate-notes
           fi
@@ -473,7 +418,6 @@ jobs:
           BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
           FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
           APP_DIGEST: ${{ steps.app-image.outputs.digest }}
-          UPDATER_DIGEST: ${{ steps.updater-image.outputs.digest }}
         run: |
           {
             echo '### Docker 发布完成'
@@ -481,7 +425,6 @@ jobs:
             echo "- backend digest：$BACKEND_DIGEST"
             echo "- frontend digest：$FRONTEND_DIGEST"
             echo "- default Compose app digest：$APP_DIGEST"
-            echo "- updater digest：$UPDATER_DIGEST"
             echo '- 架构：linux/amd64'
             echo '- manifest：GitHub Release 资产'
           } >> "$GITHUB_STEP_SUMMARY"

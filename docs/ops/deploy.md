@@ -346,7 +346,7 @@ docker push ghcr.io/coffeiz/gugu-web-backend:版本号
 docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 ```
 
-正式版本发布工作流把一体化 `gugu-web`、updater、sandbox 和拆分 backend/frontend 镜像同步推送到 Docker Hub 与 GHCR；拆分镜像只使用语义版本号标签，不发布 Git SHA 标签。GHCR 包当前已公开，可匿名拉取；普通用户更新仍使用一体化镜像，不使用拆分镜像。
+正式版本发布工作流把一体化 `gugu-web`、sandbox 和拆分 backend/frontend 镜像同步推送到 Docker Hub 与 GHCR；拆分镜像只使用语义版本号标签，不发布 Git SHA 标签。GHCR 包当前已公开，可匿名拉取；普通用户更新仍使用一体化镜像，不使用拆分镜像。
 
 手工推送拆分镜像时，仍需使用具有 GHCR 写权限的账号登录 `ghcr.io`。
 
@@ -959,9 +959,9 @@ scripts/release/compose-update.sh \
 
 #### Admin 在线更新与旧部署首次接入
 
-包含 updater sidecar 的 Compose 版本部署后，管理员可在 **Admin → 运维 → Docker 更新**检查稳定版、查看 GitHub Release 说明、预检并确认更新。预检包含当前 Alembic 迁移是否与应用唯一 head 一致、`/data` 与 `/config` 卷是否已挂载且可写、官方 updater sidecar 是否运行等项目。更新任务状态保存在 `gugu_updater_state` 命名卷中；浏览器关闭或 Admin 页面重新打开不会中断任务。普通账号不能访问对应 Admin API。更新和回滚都需要再次确认；回滚只恢复应用镜像，不会反向执行数据库迁移。
+一体化 Compose 部署后（更新执行器已并入 app 容器，PRD-ADMIN-2 §1.1），管理员可在 **Admin → 运维 → Docker 更新**检查稳定版、查看 GitHub Release 说明、预检并确认更新。预检包含当前 Alembic 迁移是否与应用唯一 head 一致、`/data` 与 `/config` 卷是否已挂载且可写、Docker socket 是否已挂载等项目。启用条件：app 容器挂载 Docker socket（compose 默认挂载）且未设置 `GUGU_SELF_UPDATE=off`；未启用时更新页显示「此部署未启用一键更新」。更新任务状态保存在 `/data/updater`（持久卷）中；浏览器关闭或 Admin 页面重新打开不会中断任务。普通账号不能访问对应 Admin API。更新和回滚都需要再次确认；回滚只恢复应用镜像，不会反向执行数据库迁移。安全边界：更新能力不进入 Agent 工具注册表（模型与提示注入不可达），子进程参数全部硬编码。
 
-已有部署首次接入时，先把版本化发布物中的 `docker-compose.yml`、更新脚本及 manifest 校验器放到部署目录/工具目录，**不要覆盖**根目录 `.env`、`backend/.env`、`Gugu-data` 或任何 Docker 数据卷。用包含 `updater` 服务的新 Compose 文件进行一次手动升级；脚本先验证目标 manifest 和 app 镜像，再从 Docker Hub 拉取官方 updater 镜像、校验其 Cosign 签名并启动 sidecar，之后才备份数据库并更新 app。若当前 Compose 文件没有 `updater` 服务，脚本不会自行改写 Compose 文件；此时 Admin 更新器不会可用，必须先安装该版本的 Compose 文件。
+已有部署首次接入时，先把版本化发布物中的 `docker-compose.yml` 放到部署目录，**不要覆盖**根目录 `.env`、`backend/.env`、`Gugu-data` 或任何 Docker 数据卷。用新版 Compose 文件做一次手动升级（`docker compose -p <项目名> -f docker-compose.yml up -d`）；升级后 app 容器自带更新执行器与 Docker socket 挂载，Admin 一键更新即可用。更新流程只备份配置与数据库、拉取 manifest 指定的官方一体化镜像 digest 并重建 app，不做全局清理。
 
 如果更新脚本不在部署目录内，应显式指定部署路径和校验器路径；在部署目录执行，并从受保护的环境注入数据库密码（不要把密码写进命令参数或 shell 历史）：
 

@@ -9,32 +9,13 @@ ROOT_DIR="${COMPOSE_PROJECT_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
 MANIFEST=""
-MANIFEST_BUNDLE=""
 BACKUP_ROOT="${BACKUP_ROOT:-$ROOT_DIR/backup}"
 VALIDATOR="${UPDATE_VALIDATOR:-$SCRIPT_DIR/validate-update-manifest.mjs}"
 CONFIRMED=false
-BOOTSTRAP_UPDATER=true
-COSIGN_IDENTITY_REGEXP="${COSIGN_IDENTITY_REGEXP:-https://github\\.com/Coffeiz/Gugu-web/.github/workflows/docker-release\\.yml@refs/tags/v.*}"
-COSIGN_OIDC_ISSUER="${COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
-
-verify_image_signature() {
-  local image_ref="$1"
-  local -a identity_args=(
-    --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP"
-    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER"
-  )
-
-  # 优先验证新的 OCI 1.1 referrer + Sigstore bundle；失败后再检查已有的
-  # digest-derived .sig tag（旧 bundle 格式）。身份约束在两条路径上完全一致。
-  if ! cosign verify --experimental-oci11 "${identity_args[@]}" "$image_ref" >/dev/null 2>&1; then
-    cosign verify --experimental-oci11 --new-bundle-format=false \
-      "${identity_args[@]}" "$image_ref" >/dev/null
-  fi
-}
 
 usage() {
   cat <<'EOF'
-用法：scripts/release/compose-update.sh --manifest <update-manifest.json> --bundle <manifest.bundle> --confirm
+用法：scripts/release/compose-update.sh --manifest <update-manifest.json> --confirm
 
 环境变量：
   COMPOSE_FILE   一体化生产 Compose 文件，默认 docker-compose.yml
@@ -51,17 +32,8 @@ while (($# > 0)); do
       MANIFEST="$2"
       shift 2
       ;;
-    --bundle)
-      [[ $# -ge 2 ]] || { echo '缺少 --bundle 参数' >&2; exit 2; }
-      MANIFEST_BUNDLE="$2"
-      shift 2
-      ;;
     --confirm)
       CONFIRMED=true
-      shift
-      ;;
-    --skip-updater-bootstrap)
-      BOOTSTRAP_UPDATER=false
       shift
       ;;
     --help|-h)
@@ -77,15 +49,12 @@ while (($# > 0)); do
 done
 
 [[ -n "$MANIFEST" ]] || { echo '必须指定 --manifest' >&2; exit 2; }
-[[ -n "$MANIFEST_BUNDLE" ]] || { echo '必须指定 --bundle' >&2; exit 2; }
 [[ "$CONFIRMED" == true ]] || { echo '更新必须显式传入 --confirm' >&2; exit 2; }
 [[ -f "$MANIFEST" ]] || { echo 'manifest 文件不存在' >&2; exit 1; }
-[[ -f "$MANIFEST_BUNDLE" ]] || { echo 'manifest 签名 bundle 不存在' >&2; exit 1; }
 [[ -f "$COMPOSE_FILE" ]] || { echo 'Compose 文件不存在' >&2; exit 1; }
 [[ -f "$ROOT_DIR/backend/.env" ]] || { echo 'backend/.env 不存在，停止更新以保护运行配置' >&2; exit 1; }
 command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }
 command -v node >/dev/null || { echo '未找到 Node.js，无法校验 manifest' >&2; exit 1; }
-command -v cosign >/dev/null || { echo '未找到 Cosign，无法验证发布签名' >&2; exit 1; }
 [[ -n "${GUGU_DB_PASSWORD:-}" ]] || { echo '未设置 GUGU_DB_PASSWORD，停止更新' >&2; exit 1; }
 grep -Eq '^[[:space:]]*ADMIN_PASSWORD[[:space:]]*=[^[:space:]]' "$ROOT_DIR/backend/.env" \
   || { echo 'backend/.env 未设置 ADMIN_PASSWORD，停止更新' >&2; exit 1; }
@@ -122,41 +91,6 @@ TARGET_SANDBOXD_IMAGE=$("${COMPOSE[@]}" config --format json | node -e '
 UPDATE_SANDBOXD=false
 if [[ "$SANDBOXD_WAS_RUNNING" == true && "$TARGET_SANDBOXD_IMAGE" == "$GUGU_WEB_IMAGE" ]]; then
   UPDATE_SANDBOXD=true
-fi
-
-echo '验证 manifest 和业务镜像签名...'
-cosign verify-blob \
-  --bundle "$MANIFEST_BUNDLE" \
-  --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
-  --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
-  "$MANIFEST" >/dev/null
-verify_image_signature "$GUGU_WEB_IMAGE"
-
-# 旧部署第一次通过手动更新接入 Admin 更新器时，先启动 sidecar。只有在目标
-# manifest 与业务镜像都已验证后才引导；sidecar 自身执行更新时显式跳过，避免
-# Compose 重建正在运行的更新器。
-if [[ "$BOOTSTRAP_UPDATER" == true ]] && grep -qx updater <<<"$COMPOSE_SERVICES"; then
-  UPDATER_IMAGE=$("${COMPOSE[@]}" config --format json | node -e '
-    let input = "";
-    process.stdin.on("data", (chunk) => { input += chunk; });
-    process.stdin.on("end", () => process.stdout.write(JSON.parse(input).services.updater?.image ?? ""));
-  ')
-  [[ "$UPDATER_IMAGE" =~ ^docker\.io/coffeiz/gugu-web-updater:(latest|v?[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?)$ ]] \
-    || { echo 'updater 镜像不在官方发布白名单内' >&2; exit 1; }
-  echo '验证受限 Docker 更新器签名并启动 sidecar...'
-  "${COMPOSE[@]}" pull updater
-  UPDATER_DIGEST=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$UPDATER_IMAGE" | node -e '
-    let input = "";
-    process.stdin.on("data", (chunk) => { input += chunk; });
-    process.stdin.on("end", () => {
-      const digest = input.split(/\r?\n/).map((value) => value.trim().replace(/^index\.docker\.io\//, "docker.io/"))
-        .find((value) => /^(?:docker\.io\/)?coffeiz\/gugu-web-updater@sha256:[0-9a-f]{64}$/.test(value));
-      process.stdout.write(digest ? `docker.io/${digest.replace(/^docker\.io\//, "")}` : "");
-    });
-  ')
-  [[ -n "$UPDATER_DIGEST" ]] || { echo '无法解析已拉取的 updater 镜像 digest' >&2; exit 1; }
-  verify_image_signature "$UPDATER_DIGEST"
-  GUGU_UPDATER_IMAGE="$UPDATER_DIGEST" "${COMPOSE[@]}" up -d --no-deps updater
 fi
 
 DB_USER="${GUGU_DB_USER:-gugu}"

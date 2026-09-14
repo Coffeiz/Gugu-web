@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import json
 import secrets
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ from updater.daemon import UpdateDaemon
 from updater.database_check import validate_revision_state
 
 
-def make_daemon(tmp_path, monkeypatch, state=None):
+def make_daemon(tmp_path, monkeypatch, state=None, *, self_update="on"):
     project = tmp_path / "deployment"
     project.mkdir()
     (project / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
@@ -21,6 +22,7 @@ def make_daemon(tmp_path, monkeypatch, state=None):
     monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(project))
     monkeypatch.setenv("GUGU_UPDATER_STATE_DIR", str(state_dir))
     monkeypatch.setenv("GUGU_UPDATER_CODE_DIR", str(tmp_path / "updater-code"))
+    monkeypatch.setenv("GUGU_SELF_UPDATE", self_update)
     if state is not None:
         (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
     return UpdateDaemon(), state_dir
@@ -68,7 +70,7 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
     async def compose(_args):
         return {"services": {
             "app": {}, "postgres": {}, "redis": {}, "data-migrate": {},
-            "updater": {"image": "docker.io/coffeiz/gugu-web-updater:latest"},
+            "updater": {"image": "docker.io/coffeiz/gugu-web:latest"},
         }}
 
     async def compose_text(args, *, env=None, timeout=30):
@@ -91,6 +93,9 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_compose_text", compose_text)
     monkeypatch.setattr(daemon, "_docker_json", docker_json)
 
+    socket_path = daemon.project_dir / "docker.sock"
+    socket_path.write_bytes(b"")
+    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
     checks = await daemon._preflight_checks({
         "version": "v1.2.2",
         "minimum_version": "v1.2.1",
@@ -104,21 +109,8 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
     assert by_key["storage"]["ok"] is True
     assert by_key["database_migrations"]["ok"] is True
 
-    async def compose_with_untrusted_updater(_args):
-        return {"services": {
-            "app": {}, "postgres": {}, "redis": {}, "data-migrate": {},
-            "updater": {"image": "attacker.invalid/gugu-updater:latest"},
-        }}
-
-    async def compose_without_running_updater(args, *, env=None, timeout=30):
-        if args[:2] == ["ps", "-q"] and args[-1] == "app":
-            return "app-container\n"
-        if args[:4] == ["ps", "--status", "running", "--services"]:
-            return "app\n"
-        return "ok"
-
-    monkeypatch.setattr(daemon, "_compose", compose_with_untrusted_updater)
-    monkeypatch.setattr(daemon, "_compose_text", compose_without_running_updater)
+    # socket 未挂载（路径不存在）→ 自更新不可用
+    socket_path.unlink()
     checks = await daemon._preflight_checks({
         "version": "v1.2.2",
         "minimum_version": "v1.2.1",
@@ -338,3 +330,35 @@ async def test_rollback_preflight_rejects_without_app_service_definition(tmp_pat
     preflight = await daemon._rollback_preflight({"operator": "admin-test"})
     assert preflight["ready"] is False
     assert "challenge" not in preflight
+
+
+def test_self_update_disabled_blocks_methods(tmp_path, monkeypatch):
+    """GUGU_SELF_UPDATE=off：非 status 调用一律降级为未启用；status 返回 enabled=False。"""
+    import asyncio
+    import updater.client as client_module
+    from updater.client import UpdaterClientError, call_updater
+
+    make_daemon(tmp_path, monkeypatch, self_update="off")
+    monkeypatch.setattr(client_module, "_executor", None)
+    monkeypatch.setattr(client_module, "_executor_failed", False)
+
+    async def scenario():
+        with pytest.raises(UpdaterClientError) as exc_info:
+            await call_updater("check")
+        assert exc_info.value.code == "self_update_disabled"
+        status = await call_updater("status")
+        assert status["enabled"] is False
+
+    asyncio.run(scenario())
+
+
+def test_agent_tool_registry_has_no_update_capability():
+    """安全让步的边界断言：更新能力只存在于 Admin 路由，Agent 工具注册表不可达。"""
+    from agent.tools.base import registry
+
+    tool_names = set(registry._tools)
+    assert tool_names, "Agent 工具注册表为空，测试前提不成立"
+    # 域内 CRUD 的 update_*（改项目/事件等）不算部署自更新；命中即说明更新面泄漏进模型能力。
+    pattern = re.compile(r"(self_)?update_(docker|system|deployment|version|image)|^(docker|updater|deploy)($|_)", re.IGNORECASE)
+    offenders = sorted(name for name in tool_names if pattern.search(name))
+    assert offenders == [], f"Agent 工具注册表不得出现部署自更新能力：{offenders}"

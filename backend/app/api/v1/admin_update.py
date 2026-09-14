@@ -1,4 +1,4 @@
-"""Admin Docker 更新接口。镜像/路径/命令均由 updater sidecar 固定，不接受前端指定。"""
+"""Admin Docker 更新接口。更新执行器进程内直调（PRD-ADMIN-2 §1.1）；镜像/路径/命令均固定，不接受前端指定。"""
 
 from __future__ import annotations
 

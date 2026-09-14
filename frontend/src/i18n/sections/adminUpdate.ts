@@ -12,7 +12,8 @@ export const adminUpdateUi = {
     rollback: '回滚应用版本', confirmRollbackTitle: '确认恢复上一应用版本',
     confirmRollbackMessage: '将应用镜像恢复到 {target}。数据库结构不会自动回退，若失败请保留备份并检查服务状态。',
     confirmRollback: '确认回滚', rollingBack: '正在启动回滚…', rollbackAvailable: '上一版本镜像已保留，可由管理员手动确认回滚。',
-    updaterUnavailable: '一体化更新器不可用。请确认当前为标准 Docker Compose 一体化部署，并且 updater sidecar 正常运行。',
+    updaterUnavailable: '一体化更新器不可用。请确认当前为标准 Docker Compose 一体化部署。',
+    selfUpdateDisabled: '此部署未启用一键更新：需要在 app 容器上挂载 Docker socket 且未设置 GUGU_SELF_UPDATE=off。',
     updateUnavailable: '更新检查失败', loadFailed: '无法读取更新器状态', preflightFailed: '更新预检未通过', startFailed: '启动更新失败', rollbackFailed: '回滚失败',
     currentUnknown: '未知（旧版镜像可能没有版本标签）', notChecked: '尚未检查更新', checkingLabel: '正在查询 GitHub Release…',
     statuses: {
@@ -33,7 +34,8 @@ export const adminUpdateUi = {
     rollback: 'アプリをロールバック', confirmRollbackTitle: '前のアプリバージョンに戻しますか',
     confirmRollbackMessage: 'アプリイメージを {target} に戻します。DBスキーマは自動で戻りません。失敗時はバックアップを保持し、サービス状態を確認してください。',
     confirmRollback: 'ロールバックを確認', rollingBack: 'ロールバック開始中…', rollbackAvailable: '前のバージョンを保持しています。管理者が確認して手動で戻せます。',
-    updaterUnavailable: '一体型更新器を利用できません。標準 Docker Compose デプロイか、updater sidecar の状態を確認してください。',
+    updaterUnavailable: '一体型アップデータを利用できません。標準 Docker Compose デプロイか確認してください。',
+    selfUpdateDisabled: 'このデプロイではワンクリック更新が無効です：app コンテナに Docker socket をマウントし、GUGU_SELF_UPDATE=off を設定していない必要があります。',
     updateUnavailable: '更新確認に失敗しました', loadFailed: '更新器の状態を取得できません', preflightFailed: '更新前チェックに失敗しました', startFailed: '更新を開始できません', rollbackFailed: 'ロールバックに失敗しました',
     currentUnknown: '不明（旧イメージにバージョンラベルがない場合があります）', notChecked: '更新をまだ確認していません', checkingLabel: 'GitHub Release を確認中…',
     statuses: {
@@ -54,7 +56,8 @@ export const adminUpdateUi = {
     rollback: 'Roll back app version', confirmRollbackTitle: 'Confirm restore of the previous app version',
     confirmRollbackMessage: 'Restore the app image to {target}. The database schema is not rolled back automatically; keep backups and inspect service status if it fails.',
     confirmRollback: 'Confirm rollback', rollingBack: 'Starting rollback…', rollbackAvailable: 'The previous image is retained. An administrator can confirm a manual rollback.',
-    updaterUnavailable: 'The integrated updater is unavailable. Verify this is a standard Docker Compose deployment and that the updater sidecar is running.',
+    updaterUnavailable: 'The integrated updater is unavailable. Verify this is a standard Docker Compose deployment.',
+    selfUpdateDisabled: 'One-click updates are disabled on this deployment: mount the Docker socket into the app container and do not set GUGU_SELF_UPDATE=off.',
     updateUnavailable: 'Update check failed', loadFailed: 'Unable to read updater status', preflightFailed: 'Update preflight did not pass', startFailed: 'Unable to start update', rollbackFailed: 'Rollback failed',
     currentUnknown: 'Unknown (older images may not include a version label)', notChecked: 'Updates have not been checked yet', checkingLabel: 'Checking GitHub Releases…',
     statuses: {

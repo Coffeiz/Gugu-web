@@ -1,7 +1,9 @@
-"""仅执行固定 Gugu Compose 更新动作的 sidecar 控制服务。
+"""受限更新执行器：并入 app 进程内运行（PRD-ADMIN-2 §1.1）。
 
-服务只监听共享卷中的 Unix Socket；Docker Socket 不挂给业务应用。所有 Docker
-操作均由固定 Compose 文件和固定服务名执行，不接受任意命令、路径或镜像仓库。
+Admin 更新端点经 updater.client 进程内直调，无 Unix Socket IPC。所有 Docker
+操作均由固定 Compose 文件和固定服务名执行，不接受任意命令、路径或镜像仓库；
+更新能力不进入 Agent 工具注册表，模型与提示注入不可达。启用条件：app 容器
+挂载 Docker socket 且未设置 GUGU_SELF_UPDATE=off。
 """
 
 from __future__ import annotations
@@ -15,7 +17,6 @@ import re
 import secrets
 import shutil
 import signal
-import socket
 import tempfile
 import time
 import uuid
@@ -30,16 +31,12 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+]([0-9A-Za-z.-]+))?$")
 IMAGE_RE = re.compile(r"^(?:docker\.io|ghcr\.io)/coffeiz/gugu-web@sha256:[0-9a-f]{64}$")
 TAG_IMAGE_RE = re.compile(r"^(?:docker\.io/)?coffeiz/gugu-web:[A-Za-z0-9_.-]{1,128}$|^ghcr\.io/coffeiz/gugu-web:[A-Za-z0-9_.-]{1,128}$")
-UPDATER_IMAGE_RE = re.compile(
-    r"^docker\.io/coffeiz/gugu-web-updater:(?:latest|v?\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?)$"
-    r"|^docker\.io/coffeiz/gugu-web-updater@sha256:[0-9a-f]{64}$"
-)
+# 执行器并入 app 容器后，官方发布位即应用镜像白名单（tag/digest 二选一）。
 ALLOWED_REDIRECT_HOSTS = {
     "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
     "github-releases.githubusercontent.com",
 }
 MANIFEST_NAME = "update-manifest.json"
-BUNDLE_NAME = "update-manifest.json.bundle"
 TERMINAL = {"succeeded", "failed", "rollback_required"}
 ACTIVE = {"pending", "prechecking", "backing_up", "pulling", "migrating", "recreating", "health_checking", "rolling_back"}
 STAGE_BY_LINE = (
@@ -72,6 +69,11 @@ def _safe_image(value: str) -> bool:
     return bool(IMAGE_RE.fullmatch(value) or TAG_IMAGE_RE.fullmatch(value))
 
 
+def self_update_enabled() -> bool:
+    """一体化部署的自更新开关：GUGU_SELF_UPDATE=off 显式关闭（PRD-ADMIN-2 §1.1）。"""
+    return os.getenv("GUGU_SELF_UPDATE", "on").strip().lower() not in {"off", "0", "false", "no"}
+
+
 class SafeRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         parsed = urlparse(newurl)
@@ -87,9 +89,9 @@ class UpdateDaemon:
         if not self.project_dir.is_absolute() or not (self.project_dir / "docker-compose.yml").is_file():
             raise RuntimeError("Compose 项目目录无效")
         self.compose_file = self.project_dir / "docker-compose.yml"
-        self.state_dir = Path(os.getenv("GUGU_UPDATER_STATE_DIR", "/var/lib/gugu-updater")).resolve()
+        state_default = "/data/updater" if Path("/data").is_dir() else "/var/lib/gugu-updater"
+        self.state_dir = Path(os.getenv("GUGU_UPDATER_STATE_DIR", state_default)).resolve()
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.socket_path = Path(os.getenv("GUGU_UPDATER_SOCKET", "/run/gugu-updater/control.sock"))
         self.code_dir = Path(os.getenv("GUGU_UPDATER_CODE_DIR", "/opt/gugu-updater")).resolve()
         self.validator = self.code_dir / "scripts/release/validate-update-manifest.mjs"
         self.manifest_schema = self.code_dir / "deploy/update-manifest.schema.json"
@@ -204,7 +206,7 @@ class UpdateDaemon:
                 or _version_key(candidate_version) > _version_key(current_version)
             )
             return {
-                "enabled": True,
+                "enabled": self_update_enabled(),
                 "current": {"version": current_version} if isinstance(current, dict) else None,
                 "candidate": self._public_candidate(),
                 "has_update": has_update,
@@ -236,11 +238,11 @@ class UpdateDaemon:
         return await asyncio.to_thread(fetch)
 
     def _asset_url(self, version: str, name: str) -> str:
-        if not VERSION_RE.fullmatch(version) or name not in {MANIFEST_NAME, BUNDLE_NAME}:
+        if not VERSION_RE.fullmatch(version) or name != MANIFEST_NAME:
             raise ValueError("更新资源标识无效")
         return f"https://github.com/Coffeiz/Gugu-web/releases/download/{quote(version, safe='v.-+')}/{name}"
 
-    async def _verify_assets(self, manifest_bytes: bytes, bundle_bytes: bytes, *, expected_sha: str | None = None) -> dict[str, Any]:
+    async def _verify_assets(self, manifest_bytes: bytes, *, expected_sha: str | None = None) -> dict[str, Any]:
         digest = hashlib.sha256(manifest_bytes).hexdigest()
         if expected_sha and not secrets.compare_digest(digest, expected_sha):
             raise ValueError("已发布 manifest 与预检摘要不一致")
@@ -259,35 +261,18 @@ class UpdateDaemon:
         asset_dir = self.state_dir / "assets" / version
         asset_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         manifest_path = asset_dir / MANIFEST_NAME
-        bundle_path = asset_dir / BUNDLE_NAME
-        for path, data in ((manifest_path, manifest_bytes), (bundle_path, bundle_bytes)):
-            with path.open("wb") as stream:
-                stream.write(data)
-            os.chmod(path, 0o600)
+        with manifest_path.open("wb") as stream:
+            stream.write(manifest_bytes)
+        os.chmod(manifest_path, 0o600)
 
+        # 定位修订（PRD-ADMIN-2 §1.1）：移除签名校验；完整性由 HTTPS 拉取 +
+        # manifest sha256 与预检比对、镜像 digest 白名单保障。
         await self._command(["node", str(self.validator), "--schema", str(self.manifest_schema)], timeout=20)
         await self._command(["node", str(self.validator), str(manifest_path)], timeout=20)
-        await self._command([
-            "cosign", "verify-blob", "--bundle", str(bundle_path),
-            "--certificate-identity-regexp", self._cosign_identity(),
-            "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-            str(manifest_path),
-        ], timeout=60)
-        await self._command([
-            "cosign", "verify",
-            "--certificate-identity-regexp", self._cosign_identity(),
-            "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-            manifest["app_image"],
-        ], timeout=90)
         manifest["manifest_sha256"] = digest
         manifest["checked_at"] = _utc_now()
         manifest["_manifest_path"] = str(manifest_path)
-        manifest["_bundle_path"] = str(bundle_path)
         return manifest
-
-    @staticmethod
-    def _cosign_identity() -> str:
-        return r"https://github\.com/Coffeiz/Gugu-web/.github/workflows/docker-release\.yml@refs/tags/v.*"
 
     async def _check(self, _params: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -297,9 +282,7 @@ class UpdateDaemon:
                 version = provisional["version"]
             except (TypeError, KeyError, json.JSONDecodeError) as exc:
                 raise ValueError("Release manifest 格式无效") from exc
-            bundle_bytes = await self._read_url(self._asset_url(version, BUNDLE_NAME), limit=2_000_000)
-            # latest manifest 与 tag bundle 必须逐字节匹配；不信任 latest 路由的独立 bundle。
-            candidate = await self._verify_assets(manifest_bytes, bundle_bytes)
+            candidate = await self._verify_assets(manifest_bytes)
         except (OSError, URLError, TimeoutError) as exc:
             raise RuntimeError("无法访问 GitHub Release 更新源") from exc
         current = await self._current_release()
@@ -412,14 +395,13 @@ class UpdateDaemon:
         try:
             config = await self._compose(["config", "--format", "json"])
             services = config.get("services", {})
-            required = {"app", "postgres", "redis", "data-migrate", "updater"}
+            required = {"app", "postgres", "redis", "data-migrate"}
             add("compose", required.issubset(services), "一体化 Compose 服务定义完整" if required.issubset(services) else "Compose 缺少必需服务")
             app_ids = (await self._compose_text(["ps", "-q", "app"])).strip().splitlines()
             add("app", bool(app_ids), "一体化 app 容器正在运行" if app_ids else "一体化 app 容器未运行")
-            running_services = set((await self._compose_text(["ps", "--status", "running", "--services"])).splitlines())
-            updater_image = str(services.get("updater", {}).get("image") or "")
-            updater_ok = "updater" in running_services and bool(UPDATER_IMAGE_RE.fullmatch(updater_image))
-            add("updater", updater_ok, "官方 updater sidecar 正在运行" if updater_ok else "updater 缺失、未运行或镜像来源不受支持")
+            # 定位修订（§1.1）：更新执行器并入 app 进程；socket 挂载即启用。
+            socket_path = Path(os.getenv("GUGU_DOCKER_SOCKET", "/var/run/docker.sock"))
+            add("updater", socket_path.exists(), "Docker socket 已挂载，自更新可用" if socket_path.exists() else "未检测到 Docker socket 挂载；此部署未启用一键更新")
             await self._compose_text(["exec", "-T", "postgres", "sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'])
             await self._compose_text(["exec", "-T", "redis", "sh", "-c", 'if [ -n "$GUGU_REDIS_PASSWORD" ]; then redis-cli -a "$GUGU_REDIS_PASSWORD" ping; else redis-cli ping; fi'])
             add("dependencies", True, "PostgreSQL 和 Redis 健康")
@@ -466,7 +448,7 @@ class UpdateDaemon:
             add("disk", False, "无法检查部署目录磁盘空间")
 
         add("architecture", platform in candidate.get("architectures", []), "镜像架构与宿主机匹配" if platform in candidate.get("architectures", []) else "发布镜像不包含宿主机架构")
-        add("signature", True, "manifest 与一体化镜像签名、digest 均已验证")
+        add("signature", True, "manifest 摘要与一体化镜像 digest 白名单均已校验")
         current = self.state.get("current") or {}
         current_version = str(current.get("version") or "unknown")
         minimum_version = str(candidate.get("minimum_version") or "")
@@ -561,8 +543,7 @@ class UpdateDaemon:
         stderr_drain: asyncio.Task[bytes] | None = None
         try:
             manifest_bytes = await self._read_url(self._asset_url(candidate["version"], MANIFEST_NAME))
-            bundle_bytes = await self._read_url(self._asset_url(candidate["version"], BUNDLE_NAME), limit=2_000_000)
-            await self._verify_assets(manifest_bytes, bundle_bytes, expected_sha=candidate["manifest_sha256"])
+            await self._verify_assets(manifest_bytes, expected_sha=candidate["manifest_sha256"])
             backup_root = self.state_dir / "backups"
             backup_root.mkdir(parents=True, exist_ok=True, mode=0o700)
             env = os.environ.copy()
@@ -576,14 +557,11 @@ class UpdateDaemon:
                 "GUGU_WEB_IMAGE": str(self.state["task"]["previous_image"]),
             })
             manifest_path = temp_dir / MANIFEST_NAME
-            bundle_path = temp_dir / BUNDLE_NAME
             manifest_path.write_bytes(manifest_bytes)
-            bundle_path.write_bytes(bundle_bytes)
             os.chmod(manifest_path, 0o600)
-            os.chmod(bundle_path, 0o600)
             process = await asyncio.create_subprocess_exec(
                 "bash", str(self.compose_update_script),
-                "--manifest", str(manifest_path), "--bundle", str(bundle_path), "--confirm", "--skip-updater-bootstrap",
+                "--manifest", str(manifest_path), "--confirm",
                 cwd=self.project_dir, env=env,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
@@ -888,64 +866,3 @@ class UpdateDaemon:
         if process.returncode != 0:
             raise RuntimeError("固定更新命令失败")
         return stdout
-
-
-async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, daemon: UpdateDaemon) -> None:
-    try:
-        raw = await asyncio.wait_for(reader.readline(), timeout=5)
-        if not raw or len(raw) > 32768:
-            raise ValueError("请求过大或为空")
-        request = json.loads(raw)
-        result = await daemon.dispatch(request)
-        response = {"ok": True, "result": result}
-    except Exception as exc:
-        message = str(exc)
-        if isinstance(exc, RuntimeError) and message.startswith("已有 Docker 更新"):
-            code = "busy"
-        elif "过期" in message:
-            code = "challenge_expired"
-        elif message.startswith("无法访问 GitHub Release"):
-            code = "update_source_unavailable"
-        elif "预检" in message or "空间不足" in message or "未运行" in message:
-            code = "preflight_failed"
-        elif "确认" in message:
-            code = "challenge_invalid"
-        elif isinstance(exc, ValueError):
-            code = "invalid_request"
-        elif isinstance(exc, RuntimeError):
-            code = "operation_failed"
-        else:
-            code = "internal_error"
-        response = {"ok": False, "code": code, "message": message[:240]}
-    try:
-        writer.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n")
-        await writer.drain()
-    except (ConnectionError, OSError):
-        pass
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except OSError:
-            pass
-
-
-async def serve() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [gugu-updater] %(message)s")
-    daemon = UpdateDaemon()
-    daemon.socket_path.parent.mkdir(parents=True, exist_ok=True)
-    if daemon.socket_path.exists():
-        if not daemon.socket_path.is_socket():
-            raise RuntimeError("Unix Socket 路径已被非 socket 文件占用")
-        daemon.socket_path.unlink()
-    server = await asyncio.start_unix_server(
-        lambda reader, writer: _handle_client(reader, writer, daemon),
-        path=str(daemon.socket_path), limit=65536,
-    )
-    os.chmod(daemon.socket_path, 0o600)
-    async with server:
-        await server.serve_forever()
-
-
-if __name__ == "__main__":
-    asyncio.run(serve())

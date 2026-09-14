@@ -134,6 +134,22 @@ COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version
 RUN node bin/gugu-filesync-ts-worker.cjs --version
+
+# ── 自更新工具链（执行器并入 app 进程，PRD-ADMIN-2 §1.1）───────────────────
+# 签名校验随定位修订移除，仅保留 compose 插件供更新流程重建容器。
+# updater 资产（固定更新脚本/manifest 校验器/schema）落到 /opt/gugu-updater。
+ARG DOCKER_COMPOSE_VERSION=v2.39.2
+RUN mkdir -p /usr/local/libexec/docker/cli-plugins /opt/gugu-updater/scripts/release /opt/gugu-updater/deploy \
+    && curl -fsSL -o /usr/local/libexec/docker/cli-plugins/docker-compose \
+        "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${TARGETARCH}" \
+    && chmod 0755 /usr/local/libexec/docker/cli-plugins/docker-compose \
+    && docker compose version
+COPY scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/compose-update.sh
+COPY scripts/release/validate-update-manifest.mjs /opt/gugu-updater/scripts/release/validate-update-manifest.mjs
+COPY deploy/update-manifest.schema.json /opt/gugu-updater/deploy/update-manifest.schema.json
+RUN chmod 0755 /opt/gugu-updater/scripts/release/compose-update.sh
+RUN cd /app && python3 -c "import updater.daemon, updater.client"
+
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf
