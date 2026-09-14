@@ -49,6 +49,21 @@ async function renderDocx(buffer: ArrayBuffer, container: HTMLElement) {
     ignoreFonts: false,
     experimental: false,
   })
+  fitDocxWidth(container)
+}
+
+// docx-preview 按 A4 固定宽渲染，浮动窗比纸窄时会左右溢出叠成"两层"；
+// 按容器宽度对整叠纸做 zoom 缩放（zoom 影响布局盒，不会留下空白滚动区）。
+function fitDocxWidth(container: HTMLElement) {
+  const wrapper = container.querySelector<HTMLElement>(".docx-wrapper")
+  const section = wrapper?.querySelector<HTMLElement>("section.docx")
+  if (!wrapper || !section) return
+  wrapper.style.zoom = "1"
+  const pageWidth = section.offsetWidth
+  if (pageWidth <= 0) return
+  const available = container.clientWidth - 16
+  const scale = Math.min(1, available / pageWidth)
+  wrapper.style.zoom = scale < 1 ? String(scale) : "1"
 }
 
 async function renderXlsx(buffer: ArrayBuffer, container: HTMLElement) {
@@ -114,7 +129,19 @@ watch(activeSheet, (name) => {
   const container = containerRef.value
   if (name && container) renderSheet(name, container)
 })
-onBeforeUnmount(() => { containerRef.value?.replaceChildren() })
+// 浮动窗拖拽缩放会改变容器宽度，纸页宽度需要跟着重新适配。
+let resizeObserver: ResizeObserver | null = null
+onMounted(() => {
+  const container = containerRef.value
+  if (!container || typeof ResizeObserver === "undefined") return
+  resizeObserver = new ResizeObserver(() => fitDocxWidth(container))
+  resizeObserver.observe(container)
+})
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  containerRef.value?.replaceChildren()
+})
 </script>
 
 <style scoped>
@@ -133,6 +160,8 @@ onBeforeUnmount(() => { containerRef.value?.replaceChildren() })
   flex: 1; min-height: 0; overflow: auto; padding: 12px;
   background: var(--surface-card-solid, var(--bg-primary));
 }
+.office-container :deep(.docx-wrapper) { background: transparent; padding: 8px 0; }
+.office-container :deep(section.docx) { box-shadow: 0 1px 6px rgb(0 0 0 / 0.25); }
 .office-container :deep(table) { border-collapse: collapse; }
 .office-container :deep(td), .office-container :deep(th) { border: 1px solid var(--panel-glass-border); padding: 3px 8px; }
 .office-notice {
