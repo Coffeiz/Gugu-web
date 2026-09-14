@@ -225,7 +225,6 @@ def main() -> int:
     parser.add_argument("--docker-socket", default=os.environ.get("GUGU_ROOTLESS_DOCKER_SOCKET", "/run/gugu/docker.sock"))
     parser.add_argument("--image", required=True, help="已加载的沙盒镜像引用")
     parser.add_argument("--probe", action="store_true", help="应用 ACL 后用真实沙盒 UID 做写入探针")
-    parser.add_argument("--identity-file", default=os.environ.get("GUGU_SANDBOX_IDENTITY_FILE", str(_RUNTIME_IDENTITY_PATH)))
     args = parser.parse_args()
     try:
         prepare(
@@ -234,7 +233,6 @@ def main() -> int:
             docker_socket=args.docker_socket,
             image_ref=args.image,
             probe=args.probe,
-            identity_file=args.identity_file,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"错误：{exc}", file=os.sys.stderr)
