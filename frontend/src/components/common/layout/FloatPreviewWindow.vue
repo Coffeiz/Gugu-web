@@ -38,7 +38,7 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
-      <OfficeViewer v-else-if="isOffice && blobUrl" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" />
+      <OfficeViewer v-else-if="isOffice && blobUrl" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" @content-size="onOfficeContentSize" />
       <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
@@ -353,6 +353,12 @@ function fitWindow(contentW: number, contentH: number) {
   x.value = Math.max(0, Math.round((window.innerWidth  - fw) / 2) + stagger)
   y.value = Math.max(0, Math.round((window.innerHeight - fh - TITLE_H) / 2) + stagger)
   ready.value = true
+}
+
+function onOfficeContentSize(width: number, height: number) {
+  // pptx：按真实幻灯片宽高比适配窗口（首屏高度，多页靠滚动）。
+  fitWindow(width, height)
+  contentSize.value = `${width} × ${height}`
 }
 
 function onImageLoaded() {

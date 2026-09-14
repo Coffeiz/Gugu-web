@@ -20,6 +20,7 @@ import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ blobUrl: string; ext: string }>()
+const emit = defineEmits<{ (e: 'content-size', width: number, height: number): void }>()
 const { t } = useI18n()
 
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -86,12 +87,21 @@ function renderSheet(name: string, container: HTMLElement) {
   container.innerHTML = sheetHtml[name] ?? ''
 }
 
+let pptxPreviewer: { destroy: () => void; preview: (data: ArrayBuffer) => Promise<void> } | null = null
+
+// 只按打开时的容器宽渲染一次：内容尺寸上报一次、窗口适配一次。
+// 「容器变化→重渲染→再上报→窗口再适配」会形成越缩越小的振荡循环，绝不触发重渲染。
 async function renderPptx(buffer: ArrayBuffer, container: HTMLElement) {
   container.innerHTML = ''
   const { init } = await import('pptx-preview')
-  const width = Math.min(container.clientWidth || 960, 960)
-  const previewer = init(container, { width, height: Math.round(width * 9 / 16) })
-  await previewer.preview(buffer)
+  const width = Math.max(320, Math.round(container.clientWidth) - 16)
+  pptxPreviewer = (await init(container, { width, height: Math.round(width * 9 / 16) })) as typeof pptxPreviewer
+  await pptxPreviewer.preview(buffer)
+  const firstSlide = container.querySelector<HTMLElement>('.pptx-preview-slide-wrapper')
+  if (firstSlide) {
+    // 窗口高度按第一页适配（其余页靠容器滚动），宽度留出内边距余量。
+    emit('content-size', firstSlide.offsetWidth + 24, firstSlide.offsetHeight + 24)
+  }
 }
 
 let renderSequence = 0
@@ -138,6 +148,8 @@ onMounted(() => {
   resizeObserver.observe(container)
 })
 onBeforeUnmount(() => {
+  pptxPreviewer?.destroy()
+  pptxPreviewer = null
   resizeObserver?.disconnect()
   resizeObserver = null
   containerRef.value?.replaceChildren()
@@ -161,6 +173,16 @@ onBeforeUnmount(() => {
   background: var(--surface-card-solid, var(--bg-primary));
 }
 .office-container :deep(.docx-wrapper) { background: transparent; padding: 8px 0; }
+/* pptx 只读：禁选中文本、禁原生拖拽（图片/文本会被拖走），黑底改透明消除多余空底 */
+.office-container :deep(.pptx-preview-wrapper) {
+  background: transparent !important;
+  user-select: none;
+  /* 双滚动条消除：内层不再自滚，统一由 .office-container 滚动 */
+  overflow: visible !important;
+  height: auto !important;
+}
+.office-container :deep(.pptx-preview-wrapper) img,
+.office-container :deep(.pptx-preview-wrapper) svg { -webkit-user-drag: none; }
 .office-container :deep(section.docx) { box-shadow: 0 1px 6px rgb(0 0 0 / 0.25); }
 .office-container :deep(table) { border-collapse: collapse; }
 .office-container :deep(td), .office-container :deep(th) { border: 1px solid var(--panel-glass-border); padding: 3px 8px; }
