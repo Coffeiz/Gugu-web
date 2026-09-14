@@ -473,6 +473,9 @@ sandboxd 可见；配置变更后重启 `gugu-sandboxd gugu-backend gugu-worker`
   volume 的整个 `/data`。迁移成功后会在目标目录写入
   `.system/migrations/storage-root-v1.done`，后续重复启动只做 marker skip，不会比较冻结的
   旧卷与已经投入使用的新目录；数据库字段转换、配置结构转换等非文件复制迁移不能套用它。
+- v1.2.x 及更早的**单容器部署**（内嵌 PostgreSQL/Redis，数据在匿名卷）升级到 Compose 部署，
+  用 `scripts/migrate-single-container-to-compose.sh`：数据库走 pg_dump/restore 跨版本迁移
+  （不能直接拷数据目录），文件与凭据迁移、清理与回滚说明见 `docs/quick-deploy.md`「从单容器版本迁移」。
 
 ### 4.3 数据库迁移
 
