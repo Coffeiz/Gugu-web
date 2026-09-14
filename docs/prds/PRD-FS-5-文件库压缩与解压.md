@@ -1,6 +1,6 @@
 # PRD-FS-5：文件库压缩与解压
 
-> 状态：Phase 1–3 已完成；Phase 4 待收尾
+> 状态：全部阶段已完成
 > 创建：2026-09-11
 > 最近更新：2026-09-14
 > 关联模块：`backend/app/services/files/`、`backend/app/api/v1/files.py`、`backend/agent/tools/files/transfer.py`、`frontend/src/views/Files/index.vue`
@@ -141,4 +141,4 @@ docs/
 
 ### Phase 4：回归与收尾
 
-- [ ] `FS5-007` 后端全量回归 + devlog 实施记录；验收：`PYTHONPATH=. .venv/bin/pytest -q` 全绿，devlog 落盘。
+- [x] `FS5-007` 后端全量回归 + devlog 实施记录；验收：`PYTHONPATH=. .venv/bin/pytest -q` 全绿（2,973 passed），devlog 落盘。前端 `npm run typecheck`、`npm run test:run`（525 passed）与 `npm run build` 均通过。
