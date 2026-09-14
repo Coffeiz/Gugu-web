@@ -1,8 +1,8 @@
 # PRD-ADMIN-2：Docker 部署更新与版本分发
 
-> 状态：Phase 2 的 updater、Admin 更新页和手动回滚能力已实现并通过本地验证；dev/staging 灰度仍待执行。Phase 1 的新 tag 发布验证与 Compose 端到端升级验收也仍待执行。
+> 状态：定位修订（2026-09-14，见 §1.1）：一体化部署取消 updater sidecar，更新执行器并入 app 容器（docker socket 进 app，opt-out 可关）；sidecar 版已实现但将被替换。Phase 2 的灰度与新 tag 发布验证仍待执行。
 > 创建：2026-08-31
-> 最近更新：2026-09-13
+> 最近更新：2026-09-14
 > 关联模块：`docker-compose.prod.yml`、`.github/workflows/`、`docs/ops/deploy.md`、`frontend/src/views/Admin/`、`backend/app/api/v1/`
 > 背景参考：`PRD-ADMIN-1-Admin咕咕球管理助手.md`、`docs/ops/deploy.md`
 
@@ -33,10 +33,20 @@
 - 数据库迁移、容器健康检查和失败回滚成为标准流程。
 - 支持管理员查看版本说明、更新进度、失败原因和恢复建议。
 
+### 1.1 定位修订（2026-09-14）
+
+一体化部署的产品定位是**个人用户自己下载、自己更新，简单易用优先**。据此推翻 v1 原则中「更新服务独立容器 + Socket 不进 app」的隔离设计：
+
+- updater sidecar 容器取消；更新执行器并入 app 进程，Admin 更新页进程内直调，无 IPC。
+- docker socket 挂载进一体化 compose 的 app 容器（默认挂载，`GUGU_SELF_UPDATE=off` 显式关闭；未挂载时更新页显示「此部署未启用一键更新」）。fnOS 等面板单容器用户补一条挂载即可获得一键更新。
+- 明确接受的安全让步：docker socket 赋予宿主机容器控制权，app 进程一旦被 RCE 级打穿，暴露面从「咕咕数据」扩大到「宿主机容器」。缓解：更新能力不进入 Agent 工具注册表（模型与提示注入不可达）、子进程参数硬编码（固定项目目录/固定 compose 文件/白名单镜像）、Admin 权限 + 一次性确认门。
+- 保留：manifest 与 digest 白名单（仅允许官方 coffeiz/gugu-web 镜像）、预检、一键回滚、审计。移除：manifest 签名校验、双仓库发布、灰度通道（个人场景超配）。
+- 分体部署（docker-compose.prod.yml）本就不走 Admin 更新入口，不受影响。
+
 本 PRD 不包含：
 
 - 不支持普通用户从 GitHub 下载源码后自动构建。
-- 不把 Docker Socket 暴露给 backend、worker、gateway 或普通 Agent。
+- Docker Socket 不进入 Agent 工具注册表与模型可见能力（2026-09-14 修订：一体化 app 容器按 §1.1 挂载 socket 用于自更新，属部署配置而非 Agent 能力；worker/gateway 仍不挂载）。
 - 不允许更新助手执行任意 Shell、任意 Compose 文件或任意镜像地址。
 - 不在首版覆盖源码开发模式、桌面安装包、Kubernetes 或非 Docker 部署。
 - 不允许更新过程中删除业务数据卷或自动清理所有旧镜像。
