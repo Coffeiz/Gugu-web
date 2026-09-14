@@ -1,6 +1,6 @@
 # PRD-FS-5：文件库压缩与解压
 
-> 状态：Phase 1–2 已完成；Phase 3–4 待实施
+> 状态：Phase 1–3 已完成；Phase 4 待收尾
 > 创建：2026-09-11
 > 最近更新：2026-09-14
 > 关联模块：`backend/app/services/files/`、`backend/app/api/v1/files.py`、`backend/agent/tools/files/transfer.py`、`frontend/src/views/Files/index.vue`
@@ -15,7 +15,7 @@
 | 解压安全边界（zip-slip / 解压炸弹 / 符号链接） | ✅ | 路径预检、10,000 条/2GB/余量预算、链接跳过、整体回滚有服务测试 |
 | API `POST /files/archive` / `POST /files/unarchive` | ✅ | 薄壳复用服务；成功后发布文件创建事件，跨用户资源按归属层统一隐藏为 404 |
 | 咕咕工具 `compress_files` / `extract_files` | ✅ | typed entries 区分独立 File/Folder ID；无确认门；工具事件触发实时刷新 |
-| 前端「压缩」「解压到…」入口 | 🔲 | 未实施 |
+| 前端「压缩」「解压到…」入口 | ✅ | 文件多选压缩、支持格式卡片/列表解压、目标文件夹选择；显式空间根目录可作为目标 |
 
 ## 1. 背景与目标
 
@@ -137,7 +137,7 @@ docs/
 
 ### Phase 3：前端入口
 
-- [ ] `FS5-006` 文件页多选「压缩」入口 + zip/tar 卡片「解压到…」入口（复用目标文件夹选择器）；验收：typecheck 与前端单测全绿，5173 手工验收通过（压缩→列表出现 zip；解压→目标文件夹出现全部条目）。
+- [x] `FS5-006` 文件页多选「压缩」入口 + zip/tar 卡片/列表「解压到…」入口；目标文件夹选择器按空间过滤并显示完整路径，支持显式选择空间根目录。验收：typecheck、前端全量单测与生产构建通过；前后端归档/API 定向测试通过。未对共享开发文件库执行会写入真实文件的 5173 手工流程；压缩与解压核心行为由服务/API 自动化测试覆盖。
 
 ### Phase 4：回归与收尾
 

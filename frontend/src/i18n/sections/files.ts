@@ -3,11 +3,52 @@ export const filesUi = {
   'ja-JP': { uploadTitle: 'ファイルをアップロード', dropOr: 'ファイルをドロップ、または', choose: '選択', supported: 'PSD・PDF・ZIP・PNG など任意の形式に対応', remove: '削除', addMore: 'ファイルを追加', putInProject: 'プロジェクトに追加', optional: '任意', unlinked: '関連付けない', pending: '未開始', active: '進行中', done: '完了', undated: '日付なし', noProjects: 'プロジェクトがありません。未分類としてアップロードします', uploadLocation: 'アップロード先', putInFolder: 'フォルダーに追加', root: 'プロジェクト直下', noFolders: 'フォルダーがありません。プロジェクト直下に保存します', currentFolder: '現在のフォルダー', stage: 'ステージタグ', unmarked: 'タグなし', cancel: 'キャンセル', uploading: 'アップロード中…', confirmUpload: 'アップロードを確定', folderType: 'フォルダー', itemCount: '{count} 件', downloadZip: 'ZIP をダウンロード', removeFromCanvas: 'キャンバスから削除', deletedSnapshot: '削除済み、スナップショットのみ保持', personalFiles: '個人ファイル', projectFiles: 'プロジェクトファイル', trash: 'ごみ箱', year: '{year} 年', month: '{month} 月' },
   'en-US': { uploadTitle: 'Upload files', dropOr: 'Drop files here, or', choose: 'choose files', supported: 'PSD · PDF · ZIP · PNG and other formats supported', remove: 'Remove', addMore: 'Add more files', putInProject: 'Add to project', optional: 'Optional', unlinked: 'No project', pending: 'Not started', active: 'In progress', done: 'Completed', undated: 'No date', noProjects: 'No projects; files will be uploaded as unclassified', uploadLocation: 'Upload location', putInFolder: 'Add to folder', root: 'Project root', noFolders: 'No folders; files will be placed in the project root', currentFolder: 'Current folder', stage: 'Stage tag', unmarked: 'No tag', cancel: 'Cancel', uploading: 'Uploading…', confirmUpload: 'Confirm upload', folderType: 'Folder', itemCount: '{count} items', downloadZip: 'Download as ZIP', removeFromCanvas: 'Remove from canvas', deletedSnapshot: 'Deleted; snapshot retained', personalFiles: 'Personal files', projectFiles: 'Project files', trash: 'Trash', year: '{year}', month: '{month}' },
 } as const
+
+Object.assign(filesUi['zh-CN'], {
+  compress: '压缩', extract: '解压', archiveCompressTitle: '压缩所选内容', archiveExtractTitle: '解压文件',
+  archiveCompressHint: '所选文件与文件夹将打包为 ZIP；源内容上限为 512 MB。',
+  archiveExtractHint: '解压包会保留原文件，并将内容写入所选文件夹。',
+  archiveName: '压缩包名称', archiveTarget: '目标文件夹', archiveChooseTarget: '选择目标文件夹',
+  archivePersonalRoot: '个人文件根目录', archiveProjectRoot: '项目根目录', archiveWorkspaceRoot: '工作区根目录',
+  archiveSelectionChanged: '选中的项目已变化，请重新选择后再压缩。',
+  archiveUnsupportedSpace: '该文件空间暂不支持压缩与解压。', archiveCrossSpace: '不能跨空间压缩。',
+  archiveSameParent: '请选择同一目录中的文件和文件夹。', archiveInvalidTarget: '请选择有效的目标文件夹。',
+  archiveCreated: '已创建 {name}', archiveExtracted: '已解压 {files} 个文件、{folders} 个文件夹，跳过 {skipped} 项。',
+  archiveFailed: '操作失败，请稍后重试。',
+})
+Object.assign(filesUi['ja-JP'], {
+  compress: '圧縮', extract: '解凍', archiveCompressTitle: '選択項目を圧縮', archiveExtractTitle: 'ファイルを解凍',
+  archiveCompressHint: '選択したファイルとフォルダーを ZIP にまとめます。元データの上限は 512 MB です。',
+  archiveExtractHint: '元のアーカイブは保持し、内容を選択したフォルダーに展開します。',
+  archiveName: 'アーカイブ名', archiveTarget: '保存先フォルダー', archiveChooseTarget: '保存先を選択',
+  archivePersonalRoot: '個人ファイルのルート', archiveProjectRoot: 'プロジェクトのルート', archiveWorkspaceRoot: 'Workspace のルート',
+  archiveSelectionChanged: '選択内容が変更されました。選び直してから圧縮してください。',
+  archiveUnsupportedSpace: 'このファイル領域では圧縮・解凍できません。', archiveCrossSpace: '異なる領域をまたいで圧縮することはできません。',
+  archiveSameParent: '同じフォルダー内のファイルとフォルダーを選択してください。', archiveInvalidTarget: '有効な保存先フォルダーを選択してください。',
+  archiveCreated: '{name} を作成しました', archiveExtracted: 'ファイル {files} 件、フォルダー {folders} 件を解凍し、{skipped} 件をスキップしました。',
+  archiveFailed: '処理に失敗しました。しばらくしてから再試行してください。',
+})
+Object.assign(filesUi['en-US'], {
+  compress: 'Compress', extract: 'Extract', archiveCompressTitle: 'Compress selected items', archiveExtractTitle: 'Extract archive',
+  archiveCompressHint: 'Selected files and folders will be packed into a ZIP. Source content is limited to 512 MB.',
+  archiveExtractHint: 'The archive will be kept, and its contents will be written to the selected folder.',
+  archiveName: 'Archive name', archiveTarget: 'Destination folder', archiveChooseTarget: 'Choose a destination folder',
+  archivePersonalRoot: 'Personal files root', archiveProjectRoot: 'Project root', archiveWorkspaceRoot: 'Workspace root',
+  archiveSelectionChanged: 'The selection changed. Select the items again before compressing.',
+  archiveUnsupportedSpace: 'Compression and extraction are not supported in this file space.', archiveCrossSpace: 'Items from different spaces cannot be compressed together.',
+  archiveSameParent: 'Select files and folders from the same directory.', archiveInvalidTarget: 'Choose a valid destination folder.',
+  archiveCreated: 'Created {name}', archiveExtracted: 'Extracted {files} files and {folders} folders; skipped {skipped} items.',
+  archiveFailed: 'The operation failed. Please try again later.',
+})
 export const filesViewUi = {
   'zh-CN': { name: '名称', type: '类型', deletedAt: '删除时间', remaining: '剩余', size: '大小', sort: '排列', collapse: '收起内容', view: '查看内容', folder: '文件夹', days: '{count} 天', fileCount: '{count} 个文件', restoreFolder: '恢复文件夹及其内容', permanentDeleteFolder: '永久删除文件夹及其内容', emptyFolder: '空文件夹', restore: '恢复', permanentDelete: '永久删除', emptyTrash: '回收站为空', emptyTrashTitle: '清空回收站', emptyTrashMessage: '所有文件将被永久删除，无法恢复。', deleteFileTitle: '移到回收站', deleteFileMessage: '确认将“{name}”移到回收站？', deleteFolderTitle: '移到回收站', deleteFolderMessage: '确认将文件夹“{name}”及其内容移到回收站？', deleteSelectedTitle: '移到回收站', deleteSelectedMessage: '确认将选中的 {count} 项移到回收站？', permanentDeleteFileTitle: '永久删除文件', permanentDeleteFileMessage: '确认永久删除“{name}”？此操作不可恢复。', permanentDeleteFolderTitle: '永久删除文件夹', permanentDeleteFolderMessage: '确认永久删除文件夹“{name}”及其内容？此操作不可恢复。', permanentDeleteSelectedTitle: '永久删除选中项', permanentDeleteSelectedMessage: '确认永久删除选中的 {count} 项？此操作不可恢复。', confirm: '确认', rename: '重命名', downloadZip: '下载为 ZIP', moveToTrash: '移到回收站', download: '下载', items: '{count} 项', storageUsed: '已用 {used}', storageUsedWithLimit: '已用 {used} / {limit}' },
   'ja-JP': { name: '名前', type: '種類', deletedAt: '削除日時', remaining: '残り', size: 'サイズ', sort: '並べ替え', collapse: '内容を閉じる', view: '内容を表示', folder: 'フォルダー', days: '{count} 日', fileCount: '{count} 件', restoreFolder: 'フォルダーと内容を復元', permanentDeleteFolder: 'フォルダーと内容を完全に削除', emptyFolder: '空のフォルダー', restore: '復元', permanentDelete: '完全に削除', emptyTrash: 'ごみ箱は空です', emptyTrashTitle: 'ごみ箱を空にする', emptyTrashMessage: 'すべてのファイルを完全に削除します。元に戻せません。', deleteFileTitle: 'ごみ箱へ移動', deleteFileMessage: '「{name}」をごみ箱へ移動しますか？', deleteFolderTitle: 'ごみ箱へ移動', deleteFolderMessage: 'フォルダー「{name}」と内容をごみ箱へ移動しますか？', deleteSelectedTitle: 'ごみ箱へ移動', deleteSelectedMessage: '選択した {count} 件をごみ箱へ移動しますか？', permanentDeleteFileTitle: 'ファイルを完全に削除', permanentDeleteFileMessage: '「{name}」を完全に削除しますか？元に戻せません。', permanentDeleteFolderTitle: 'フォルダーを完全に削除', permanentDeleteFolderMessage: 'フォルダー「{name}」と内容を完全に削除しますか？元に戻せません。', permanentDeleteSelectedTitle: '選択項目を完全に削除', permanentDeleteSelectedMessage: '選択した {count} 件を完全に削除しますか？元に戻せません。', confirm: '確認', rename: '名前を変更', downloadZip: 'ZIP でダウンロード', moveToTrash: 'ごみ箱へ移動', download: 'ダウンロード', items: '{count} 件', storageUsed: '使用済み {used}', storageUsedWithLimit: '使用済み {used} / {limit}' },
   'en-US': { name: 'Name', type: 'Type', deletedAt: 'Deleted', remaining: 'Remaining', size: 'Size', sort: 'Sort', collapse: 'Collapse contents', view: 'View contents', folder: 'Folder', days: '{count} days', fileCount: '{count} files', restoreFolder: 'Restore folder and contents', permanentDeleteFolder: 'Permanently delete folder and contents', emptyFolder: 'Empty folder', restore: 'Restore', permanentDelete: 'Delete permanently', emptyTrash: 'Trash is empty', emptyTrashTitle: 'Empty trash', emptyTrashMessage: 'All files will be permanently deleted and cannot be recovered.', deleteFileTitle: 'Move to trash', deleteFileMessage: 'Move “{name}” to the trash?', deleteFolderTitle: 'Move to trash', deleteFolderMessage: 'Move folder “{name}” and its contents to the trash?', deleteSelectedTitle: 'Move to trash', deleteSelectedMessage: 'Move the selected {count} items to the trash?', permanentDeleteFileTitle: 'Delete file permanently', permanentDeleteFileMessage: 'Permanently delete “{name}”? This cannot be undone.', permanentDeleteFolderTitle: 'Delete folder permanently', permanentDeleteFolderMessage: 'Permanently delete folder “{name}” and its contents? This cannot be undone.', permanentDeleteSelectedTitle: 'Delete selected items permanently', permanentDeleteSelectedMessage: 'Permanently delete the selected {count} items? This cannot be undone.', confirm: 'Confirm', rename: 'Rename', downloadZip: 'Download as ZIP', moveToTrash: 'Move to trash', download: 'Download', items: '{count} items', storageUsed: '{used} used', storageUsedWithLimit: '{used} used / {limit}' },
 } as const
+
+Object.assign(filesViewUi['zh-CN'], { extractTo: '解压到…' })
+Object.assign(filesViewUi['ja-JP'], { extractTo: '解凍先…' })
+Object.assign(filesViewUi['en-US'], { extractTo: 'Extract to…' })
 
 export const workspaceUi = {
   'zh-CN': { workspaceDirectories: '工作区', workspaceDirectoriesHint: '位于文件库根目录的独立工作空间，默认工作区不可删除。', createWorkspace: '新建工作区', createWorkspaceHint: '工作区会直接创建在文件库根目录，并作为沙盒的独立目录。', workspaceNamePlaceholder: '工作区名称', defaultWorkspace: '默认', workspaceFileUnit: '文件', workspaceFolderUnit: '文件夹', loadingWorkspaces: '正在加载工作区…', noWorkspaces: '暂无工作区', workspaceLoadFailed: '工作区加载失败', workspaceCreateFailed: '工作区创建失败', renameWorkspace: '重命名工作区', workspaceRenameFailed: '工作区重命名失败', workspaceDeleteFailed: '工作区删除失败', deleteWorkspaceTitle: '删除工作区', deleteWorkspaceMessage: '确认删除「{name}」？\n将删除其中 {files} 个文件、{folders} 个文件夹，并解除 {sessions} 个会话和 {tasks} 个定时任务的绑定。', deleteWorkspace: '删除工作区' },

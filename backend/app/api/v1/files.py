@@ -180,6 +180,7 @@ async def create_archive(
     file = await compress_files(
         db, current_user.id, file_ids=body.file_ids, folder_ids=body.folder_ids,
         name=body.name, folder_id=body.folder_id,
+        use_source_folder="folder_id" not in body.model_fields_set,
     )
     await db.commit()
     await db.refresh(file)
@@ -203,7 +204,9 @@ async def unarchive_file(
     """解压归档到同空间目标目录；创建文件/文件夹后发布一次合并刷新事件。"""
     result = await extract_file(
         db, current_user.id, body.file_id,
-        folder_id=body.folder_id, format_hint=body.format,
+        folder_id=body.folder_id,
+        use_source_folder="folder_id" not in body.model_fields_set,
+        format_hint=body.format,
     )
     await db.commit()
     if result["created_count"]:

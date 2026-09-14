@@ -51,6 +51,27 @@ async def test_archive_api_creates_file_and_publishes_entity(db, user_a, storage
     assert published[0][1]["event_payload"]["entity"]["id"] == response.id
 
 
+async def test_archive_api_allows_explicit_personal_root_destination(db, user_a, storage, monkeypatch):
+    folder = Folder(user_id=user_a.id, project_id=None, name="来源目录")
+    db.add(folder)
+    await db.flush()
+    source = await _file(db, storage, user_a, "来源.txt")
+    source.folder_id = folder.id
+    await db.flush()
+
+    async def ignore_event(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(files_api.events, "publish", ignore_event)
+
+    response = await files_api.create_archive(
+        files_api.ArchiveRequest(file_ids=[source.id], folder_id=None),
+        current_user=user_a, origin=None, db=db,
+    )
+
+    assert response.folder_id is None
+
+
 async def test_unarchive_api_returns_created_ids_and_publishes_create(db, user_a, storage, monkeypatch):
     source = await _file(db, storage, user_a, "包.zip", b"placeholder")
     import io
@@ -80,6 +101,34 @@ async def test_unarchive_api_returns_created_ids_and_publishes_create(db, user_a
     assert len(published) == 1
     assert published[0][1]["operation"] == "create"
     assert published[0][1]["origin"] == "browser-tab"
+
+
+async def test_unarchive_api_allows_explicit_personal_root_destination(db, user_a, storage, monkeypatch):
+    folder = Folder(user_id=user_a.id, project_id=None, name="来源目录")
+    db.add(folder)
+    await db.flush()
+    source = await _file(db, storage, user_a, "包.zip")
+    source.folder_id = folder.id
+    import io
+    import zipfile
+
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("内容.txt", "你好")
+    await storage.put(source.storage_key, payload.getvalue(), "application/zip")
+
+    async def ignore_event(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(files_api.events, "publish", ignore_event)
+    result = await files_api.unarchive_file(
+        files_api.UnarchiveRequest(file_id=source.id, folder_id=None),
+        current_user=user_a, origin=None, db=db,
+    )
+
+    created = await db.get(File, result["file_ids"][0])
+    assert created is not None
+    assert created.folder_id is None
 
 
 async def test_archive_api_maps_source_limit_conflict(db, user_a, storage, monkeypatch):

@@ -5,12 +5,15 @@ defineProps({
   fileCount: { type: Number, default: 0 },
   folderCount: { type: Number, default: 0 },
   downloading: { type: Boolean, default: false },
+  archiving: { type: Boolean, default: false },
+  archiveDisabled: { type: Boolean, default: false },
   trash: { type: Boolean, default: false },
   compact: { type: Boolean, default: false },
 })
 
 const emit = defineEmits<{
   download: []
+  archive: []
   cut: []
   copy: []
   delete: []
@@ -41,6 +44,12 @@ const { t } = useI18n()
         <Icon name="action.download" v-if="!downloading" :size="compact ? 11 : 12" />
         <span v-else class="file-selection-spinner" />
         {{ downloading ? t('common.status.processing') : t('common.actions.download') }}
+      </button>
+      <span class="file-selection-divider" />
+      <button class="file-selection-btn" :disabled="archiveDisabled || archiving" @click="emit('archive')">
+        <Icon v-if="!archiving" name="action.archive" :size="compact ? 11 : 12" />
+        <span v-else class="file-selection-spinner" />
+        {{ archiving ? t('common.status.processing') : t('filesUi.compress') }}
       </button>
       <span class="file-selection-divider" />
       <button class="file-selection-btn" @click="emit('cut')">

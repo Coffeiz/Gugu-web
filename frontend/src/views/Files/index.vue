@@ -127,7 +127,9 @@
       :file-count="selectedIds.size"
       :folder-count="selectedFolderKeys.size + selectedTrashFolderIds.size"
       :downloading="downloadingZip"
+      :archiving="archiveBusy"
       :trash="currentType === 'trash'"
+      @archive="openCompressSelected"
       @download="downloadSelected"
       @cut="selCut"
       @copy="selCopy"
@@ -161,6 +163,19 @@
   <!-- 上传同名冲突确认 -->
   <UploadConflictDialog ref="conflictDialogRef" />
 
+  <ArchiveOperationDialog
+    :show="archiveDialogOpen"
+    :mode="archiveMode"
+    :target-options="archiveTargetOptions"
+    :initial-folder-value="archiveInitialFolderValue"
+    :initial-name="archiveInitialName"
+    :busy="archiveBusy"
+    :error="archiveError"
+    :success="archiveSuccess"
+    @close="closeArchiveDialog"
+    @submit="submitArchive"
+  />
+
 </template>
 
 <script setup lang="ts">
@@ -180,6 +195,7 @@ import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowser
 import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
 import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
+import ArchiveOperationDialog from '@/views/Files/components/ArchiveOperationDialog.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
@@ -198,6 +214,7 @@ import { useFileLibraryDirectory } from '@/composables/files/useFileLibraryDirec
 import { useFileLibrarySorting } from '@/composables/files/useFileLibrarySorting'
 import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelection'
 import { useFileLibraryBatchActions } from '@/composables/files/useFileLibraryBatchActions'
+import { useFileLibraryArchiveActions } from '@/composables/files/useFileLibraryArchiveActions'
 import { useFileLibraryTrashActions } from '@/composables/files/useFileLibraryTrashActions'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileLibraryContextActions } from '@/composables/files/useFileLibraryContextActions'
@@ -534,6 +551,28 @@ const batchActions = useFileLibraryBatchActions({
   },
   showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),
 })
+const archiveActions = useFileLibraryArchiveActions({
+  cacheStore,
+  selectedFileIds: selectedIds,
+  selectedFolderKeys,
+  getVisibleFolders: () => sortedContents.value.folders,
+  clearSelection,
+})
+const {
+  dialogOpen: archiveDialogOpen,
+  mode: archiveMode,
+  busy: archiveBusy,
+  error: archiveError,
+  success: archiveSuccess,
+  targetOptions: archiveTargetOptions,
+  initialFolderValue: archiveInitialFolderValue,
+  initialName: archiveInitialName,
+  extractable: isExtractableArchive,
+  openCompressSelected,
+  extractFile,
+  submit: submitArchive,
+  closeDialog: closeArchiveDialog,
+} = archiveActions
 const downloadingZip = batchActions.downloading
 const trashActions = useFileLibraryTrashActions({
   selectedFileIds: selectedIds,
@@ -738,6 +777,7 @@ const gridViewContext = {
   openCtx, folderListIcon, folderAccentColor, handleFolderClick,
   renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder,
   deleteFolder, selectedIds, previewFileIds, cbStore, handleFileClick,
+  isExtractableArchive, extractFile,
   isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
   downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading,
   folderLayoutKey, fileLayoutKey,
@@ -749,6 +789,7 @@ const listViewContext = {
   folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
   startRenameFolder, downloadFolder, deleteFolder, inSelectionMode, selectedIds,
   previewFileIds, cbStore, handleFileClick,
+  isExtractableArchive, extractFile,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
   deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
   folderLayoutKey, fileLayoutKey,

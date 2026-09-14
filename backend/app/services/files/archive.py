@@ -471,6 +471,7 @@ async def compress_files(
     folder_ids: Iterable[int] = (),
     name: str | None = None,
     folder_id: int | None = None,
+    use_source_folder: bool = True,
     storage: StorageBackend | None = None,
 ) -> File:
     """将同空间的文件/文件夹递归打包为 ZIP，并落为普通 File 行。"""
@@ -480,7 +481,7 @@ async def compress_files(
     first = files[0] if files else None
     first_folder = folders[0] if folders else None
     default_folder_id = first.folder_id if first is not None else first_folder.parent_id
-    target_folder_id = default_folder_id if folder_id is None else folder_id
+    target_folder_id = default_folder_id if use_source_folder and folder_id is None else folder_id
     target = await _resolve_target(
         db, user_id, space=scope[0], project_id=scope[1], workspace_directory_id=scope[2],
         folder_id=target_folder_id,
@@ -735,6 +736,7 @@ async def extract_file(
     file_id: int,
     *,
     folder_id: int | None = None,
+    use_source_folder: bool = True,
     format_hint: str | None = None,
     storage: StorageBackend | None = None,
 ) -> dict:
@@ -749,7 +751,7 @@ async def extract_file(
         raise Invalid("archive.unsupported_format", _UNSUPPORTED_FORMAT)
     if format_hint and format_hint.lower().lstrip(".") not in {"zip", "tar", "tar.gz", "tgz"}:
         raise Invalid("archive.unsupported_format", _UNSUPPORTED_FORMAT)
-    target_folder_id = archive_file.folder_id if folder_id is None else folder_id
+    target_folder_id = archive_file.folder_id if use_source_folder and folder_id is None else folder_id
     target = await _target_for_file(db, user_id, archive_file, target_folder_id)
     remaining = await _quota_remaining(db, user_id)
     max_bytes = min(remaining, MAX_EXTRACT_BYTES)

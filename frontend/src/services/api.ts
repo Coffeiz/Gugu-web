@@ -284,6 +284,18 @@ export const filesApi = {
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
+  archive: (data: { fileIds: number[]; folderIds: number[]; folderId?: number | null; name?: string }) =>
+    post<Schemas['FileResponse']>('/files/archive', data),
+  unarchive: (data: { fileId: number; folderId?: number | null; format?: string }) =>
+    post<{
+      created_count: number
+      file_count: number
+      folder_count: number
+      skipped_count: number
+      rejected_count: number
+      file_ids: number[]
+      folder_ids: number[]
+    }>('/files/unarchive', data),
   // workspaceDirectoryId：后端 schema 已支持，旧 OpenAPI 类型生成未覆盖，先由领域类型承接。
   update: (id: number, data: Schemas['FileUpdate'] & { workspaceDirectoryId?: number | null }, meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
   saveContent: (id: number, content: string) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）

@@ -34,6 +34,7 @@ async def _compress_files(db, user_id, args: dict):
         archive = await compress_files(
             db, user_id, file_ids=file_ids, folder_ids=folder_ids,
             name=args.get("name"), folder_id=args.get("folder_id"),
+            use_source_folder="folder_id" not in args,
         )
     except AppError as error:
         return {"error": error.public_message}
@@ -52,6 +53,7 @@ async def _extract_files(db, user_id, args: dict):
     try:
         result = await extract_file(
             db, user_id, args["file_id"], folder_id=args.get("folder_id"),
+            use_source_folder="folder_id" not in args,
             format_hint=args.get("format"),
         )
     except AppError as error:
