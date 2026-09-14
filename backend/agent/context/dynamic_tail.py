@@ -48,4 +48,6 @@ def message_time_reminder(sent_at, user_tz=None) -> dict | None:
 
 def time_message(user_tz=None) -> dict:
     """生成每轮唯一变化的尾部时间消息。"""
-    return reminder_message(f"当前时间：{current_time_text(user_tz)}")
+    return reminder_message(
+        f"仅供时间参考，不属于用户正文，请勿复述。\n当前时间：{current_time_text(user_tz)}"
+    )

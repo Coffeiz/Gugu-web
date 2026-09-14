@@ -3,12 +3,31 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.context import audit, run_context
+from agent.context import audit, dynamic_tail, run_context
 from agent.context.assembly import reminder
 from agent.context.provider_history import render_anthropic_message_roles
 from agent.providers import adapter_for
 from agent.providers.message_utils import render_openai_request_history
 from agent.rag import context as rag_context
+
+
+def test_time_message_marks_timestamp_as_reference_not_user_content(monkeypatch):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 14, 13, 10, tzinfo=tz)
+
+    monkeypatch.setattr(dynamic_tail, "datetime", FixedDatetime)
+
+    assert dynamic_tail.time_message(timezone.utc) == {
+        "role": "user",
+        "content": (
+            "[system-reminder]\n"
+            "仅供时间参考，不属于用户正文，请勿复述。\n"
+            "当前时间：2026-09-14（星期一）13:10\n"
+            "[/system-reminder]"
+        ),
+    }
 
 
 @pytest.mark.asyncio
