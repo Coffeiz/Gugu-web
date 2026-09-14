@@ -43,7 +43,7 @@ def _memory_value_text(value: Any) -> str:
 
 
 def _bounded_memory_parts(parts: list[tuple[str, Any]], budget: int = MEMORY_INJECT_CHARS) -> list[str]:
-    """按 owner 记忆的 2000 字符预算裁剪单个 IM scope。"""
+    """按 owner 记忆的 3000 字符预算裁剪单个 IM scope。"""
     used = 0
     out = []
     for title, value in parts:
