@@ -155,6 +155,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/DevEmail.vue'),
         meta: { title: 'devEmail.title' },
       }] : []),
+      // 三栏板式笔记页原型：仅 dev 注册；验证通过后用于替换 Mind/NotesView.vue，本路由随之删除
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/notes-three-pane',
+        name: 'DevNotesThreePane',
+        component: () => import('@/views/DevNotesThreePane.vue'),
+        meta: { title: 'devHome.tools.notesThreePane.label' },
+      }] : []),
     ],
   },
 

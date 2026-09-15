@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>笔记页三栏板式 Mock · Gugu-web</title>
+<style>
+  /* ── 设计 token：照抄 tokens/themes/glass-light.css + palettes/mist（aero 主色）── */
+  :root {
+    --primary: #7b7fb2;
+    --primary-hover: #6b6fa0;
+    --primary-pressed: #5d618e;
+    --content-primary: #1e2028;
+    --content-secondary: #747985;
+    --content-tertiary: #969bab;
+    --glass: color-mix(in srgb, var(--primary) 2%, rgba(255, 255, 255, .60));
+    --card-solid: rgba(255, 255, 255, .82);
+    --soft: rgba(123, 127, 178, .06);
+    --soft-hover: rgba(123, 127, 178, .10);
+    --hairline: rgba(30, 32, 40, .08);          /* 实心表面分隔线：内容色派生 */
+    --hairline-strong: rgba(30, 32, 40, .13);
+    --glass-border: rgba(255, 255, 255, .55);
+    --shadow-1: 0 2px 8px rgba(80, 90, 110, .08), inset 0 1px 0 rgba(255, 255, 255, .72);
+    --shadow-2: 0 6px 20px rgba(80, 90, 110, .12), inset 0 1px 0 rgba(255, 255, 255, .72);
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --page-bg: linear-gradient(160deg, #e8e9ee 0%, #d8dae4 35%, #bfc4d2 65%, #cfd3dc 100%);
+    /* 便签 tint（NoteCard.vue .tint-* 原值） */
+    --tint-amber: rgb(255, 246, 231);
+    --tint-coral: rgb(255, 236, 233);
+    --tint-blue:  rgb(224, 239, 251);
+    --tint-teal:  rgb(229, 248, 250);
+    --color-amber: #e8b04b;
+    --color-coral: #f08072;
+    --color-blue:  #5a9ce0;
+    --color-teal:  #4bbcb5;
+    --font-ui: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", -apple-system, "Segoe UI", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-ui);
+    background: var(--page-bg);
+    background-attachment: fixed;
+    color: var(--content-primary);
+    font-size: 14px;
+    overflow: hidden;
+  }
+  button { font-family: inherit; border: none; background: none; cursor: pointer; color: inherit; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(123, 127, 178, .28); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  .app { display: flex; height: 100vh; min-width: 1180px; }
+
+  /* ══ 左侧应用导航（现版 220px 玻璃侧栏）══ */
+  .sidebar {
+    flex: 0 0 220px;
+    display: flex; flex-direction: column;
+    padding: 18px 12px 14px;
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(1.5);
+    -webkit-backdrop-filter: blur(22px) saturate(1.5);
+    border-right: 1px solid var(--glass-border);
+    z-index: 10;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 18px; }
+  .brand-logo {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: linear-gradient(135deg, #7b7fb2, #c4afc8);
+    display: grid; place-items: center; color: #fff; font-size: 16px;
+    box-shadow: var(--shadow-1);
+  }
+  .brand-name { font-size: 16px; font-weight: 700; }
+  .nav-group { margin-top: 14px; }
+  .nav-label { font-size: 11px; color: var(--content-tertiary); padding: 0 12px 6px; letter-spacing: .04em; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 8px 12px; border-radius: var(--radius-sm);
+    font-size: 13.5px; color: var(--content-secondary); text-align: left;
+    transition: background .15s, color .15s;
+  }
+  .nav-item:hover { background: var(--soft-hover); }
+  .nav-item.active {
+    background: var(--card-solid); color: var(--content-primary); font-weight: 600;
+    box-shadow: var(--shadow-1);
+  }
+  .nav-item .ico { width: 17px; height: 17px; opacity: .75; flex: none; }
+  .nav-item .beta { margin-left: auto; font-size: 9.5px; color: var(--content-tertiary); border: 1px solid var(--hairline-strong); border-radius: 5px; padding: 1px 4px; }
+  .nav-item .count { margin-left: auto; font-size: 11px; color: var(--content-tertiary); background: var(--soft-hover); border-radius: 8px; padding: 1px 7px; }
+  .sidebar .spacer { flex: 1; }
+  .user-chip { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); }
+  .user-chip:hover { background: var(--soft-hover); }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, #c4afc8, #9590c4); display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 600; }
+  .user-name { font-size: 13px; font-weight: 600; }
+
+  /* ══ 右侧内容区 ══ */
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 18px 24px 22px; gap: 14px; }
+
+  /* 顶部：胶囊 Tabs 居中 + 右侧日历/筛选 */
+  .topbar { position: relative; flex: none; display: flex; align-items: center; justify-content: center; height: 40px; }
+  .tabs {
+    display: flex; gap: 4px; padding: 4px;
+    background: var(--glass); border: 1px solid var(--glass-border);
+    border-radius: 999px; box-shadow: var(--shadow-1);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  }
+  .tab { padding: 6px 22px; border-radius: 999px; font-size: 13.5px; color: var(--content-secondary); display: flex; align-items: center; gap: 7px; transition: all .15s; }
+  .tab.active { background: var(--card-solid); color: var(--content-primary); font-weight: 600; box-shadow: var(--shadow-1); }
+  .tab .ico { width: 15px; height: 15px; opacity: .8; }
+  .topbar-right { position: absolute; right: 0; display: flex; align-items: center; gap: 10px; }
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: var(--radius-sm);
+    display: grid; place-items: center; color: var(--content-secondary);
+    background: var(--glass); border: 1px solid var(--glass-border); box-shadow: var(--shadow-1);
+    transition: all .15s;
+  }
+  .icon-btn:hover { background: var(--card-solid); color: var(--content-primary); transform: translateY(-1px); }
+  .icon-btn .ico { width: 16px; height: 16px; }
+  .search-box {
+    display: flex; align-items: center; gap: 8px;
+    width: 220px; height: 34px; padding: 0 12px;
+    background: var(--glass); border: 1px solid var(--glass-border); border-radius: 999px;
+    box-shadow: var(--shadow-1); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  }
+  .search-box .ico { width: 14px; height: 14px; color: var(--content-tertiary); flex: none; }
+  .search-box input { border: none; outline: none; background: none; font-size: 13px; color: var(--content-primary); width: 100%; font-family: inherit; }
+  .search-box input::placeholder { color: var(--content-tertiary); }
+
+  /* ══ 三栏主区 ══ */
+  .panes { flex: 1; min-height: 0; display: flex; gap: 16px; }
+
+  /* ── 栏 1：按日期分组的便签列表 ── */
+  .list-pane { flex: 0 0 312px; min-height: 0; display: flex; flex-direction: column; }
+  .list-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 2px 12px; }
+  .date-label {
+    font-size: 12px; font-weight: 600; color: var(--content-tertiary);
+    padding: 14px 6px 8px; display: flex; align-items: baseline; gap: 8px;
+  }
+  .date-label:first-child { padding-top: 4px; }
+  .date-label .n { font-weight: 400; opacity: .75; }
+  .note-item {
+    position: relative; width: 100%; text-align: left;
+    padding: 11px 13px 10px; margin-bottom: 8px;
+    background: var(--card-solid); border: 1px solid transparent; border-radius: var(--radius-md);
+    box-shadow: var(--shadow-1); cursor: pointer;
+    transition: transform .15s, box-shadow .15s, border-color .15s, background .15s;
+    overflow: hidden;
+  }
+  .note-item:hover { transform: translateY(-1px); box-shadow: var(--shadow-2); }
+  .note-item.selected { border-color: color-mix(in srgb, var(--primary) 45%, transparent); background: var(--card-solid); }
+  .note-item.selected::before {
+    content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--primary);
+  }
+  .note-item.tint-amber { background: var(--tint-amber); }
+  .note-item.tint-coral { background: var(--tint-coral); }
+  .note-item.tint-blue  { background: var(--tint-blue); }
+  .note-item.tint-teal  { background: var(--tint-teal); }
+  .note-item.selected.tint-amber { background: var(--tint-amber); }
+  .note-item.selected.tint-coral { background: var(--tint-coral); }
+  .note-item.selected.tint-blue  { background: var(--tint-blue); }
+  .note-item.selected.tint-teal  { background: var(--tint-teal); }
+  .ni-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+  .ni-time { font-size: 11px; color: var(--content-tertiary); font-variant-numeric: tabular-nums; }
+  .ni-title { font-size: 13.5px; font-weight: 600; color: var(--content-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ni-preview {
+    font-size: 12.5px; color: var(--content-secondary); line-height: 1.55;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    margin-bottom: 7px;
+  }
+  .ni-preview.no-title { font-weight: 500; color: var(--content-primary); -webkit-line-clamp: 3; margin-top: 1px; }
+  .ni-foot { display: flex; align-items: center; gap: 8px; }
+  .ni-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .ni-dot.amber { background: var(--color-amber); }
+  .ni-dot.coral { background: var(--color-coral); }
+  .ni-dot.blue  { background: var(--color-blue); }
+  .ni-dot.teal  { background: var(--color-teal); }
+  .ni-task { font-size: 11px; color: var(--content-tertiary); display: flex; align-items: center; gap: 4px; }
+  .ni-task .ico { width: 12px; height: 12px; }
+
+  /* ── 栏 2：阅读窗格 ── */
+  .reading-pane {
+    flex: 1; min-width: 0; display: flex; flex-direction: column;
+    background: var(--card-solid);
+    border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-1);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    overflow: hidden;
+  }
+  .rp-head {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 16px 26px 0;
+  }
+  .rp-datetime { font-size: 12.5px; color: var(--content-tertiary); font-variant-numeric: tabular-nums; }
+  .rp-swatch { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(30,32,40,.10); }
+  .rp-swatch.amber { background: var(--color-amber); }
+  .rp-swatch.coral { background: var(--color-coral); }
+  .rp-swatch.blue  { background: var(--color-blue); }
+  .rp-swatch.teal  { background: var(--color-teal); }
+  .rp-swatch.none  { background: var(--soft-hover); }
+  .rp-actions { margin-left: auto; display: flex; gap: 8px; }
+  .btn-ghost {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 8px; font-size: 12.5px;
+    color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent);
+    background: transparent; transition: all .15s;
+  }
+  .btn-ghost:hover { background: var(--soft-hover); transform: translateY(-1px); }
+  .btn-ghost .ico { width: 13px; height: 13px; }
+  .rp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 26px 30px; }
+  .rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 8px 0 6px; letter-spacing: .01em; }
+  .rp-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-bottom: 14px; margin-bottom: 16px; border-bottom: 1px solid var(--hairline); }
+
+  /* 引用 chip（对齐聊天 @ chip 两行契约的简化版：图标不压扁 + label 不换行） */
+  .ref-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    max-width: 260px; padding: 3px 10px 3px 7px;
+    background: var(--soft); border: 1px solid var(--hairline); border-radius: 8px;
+    font-size: 12px; color: var(--content-secondary); text-decoration: none;
+    transition: background .15s;
+  }
+  .ref-chip:hover { background: var(--soft-hover); }
+  .ref-chip .ico { width: 13px; height: 13px; flex: none; color: var(--primary); }
+  .ref-chip .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ref-chip.inline { max-width: 200px; vertical-align: 2px; margin: 0 2px; }
+
+  /* 阅读区 Markdown */
+  .md { font-size: 14px; line-height: 1.8; color: var(--content-primary); }
+  .md h2 { font-size: 17px; font-weight: 700; margin: 22px 0 8px; }
+  .md h3 { font-size: 15px; font-weight: 700; margin: 18px 0 6px; }
+  .md p { margin: 8px 0; }
+  .md ul { margin: 8px 0; padding-left: 22px; }
+  .md li { margin: 4px 0; }
+  .md blockquote {
+    margin: 12px 0; padding: 10px 16px;
+    background: var(--soft); border-left: 3px solid color-mix(in srgb, var(--primary) 55%, transparent);
+    border-radius: 0 10px 10px 0; color: var(--content-secondary); font-size: 13.5px;
+  }
+  .md blockquote .bq-title { font-weight: 600; color: var(--content-primary); font-size: 13px; margin-bottom: 4px; }
+  .md blockquote .bq-li, .md blockquote .bq-p { margin: 3px 0; }
+  .md ul.tasks { list-style: none; padding-left: 0; }
+  .md p.oli { margin: 6px 0; }
+  .md p.oli .oli-n { font-weight: 700; margin-right: 2px; }
+  .md hr { border: none; height: 1px; background: var(--hairline); margin: 18px 0; }
+  .md code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; background: var(--soft-hover); padding: 1px 6px; border-radius: 5px; }
+  .md strong { font-weight: 700; }
+  .task { display: flex; align-items: flex-start; gap: 9px; list-style: none; margin-left: -22px !important; }
+  .task-box {
+    flex: none; width: 15px; height: 15px; margin-top: 5px; border-radius: 4.5px;
+    border: 1.5px solid color-mix(in srgb, var(--content-tertiary) 70%, transparent);
+    display: grid; place-items: center; color: #fff;
+  }
+  .task.done .task-box { background: var(--primary); border-color: var(--primary); }
+  .task.done .task-text { color: var(--content-tertiary); text-decoration: line-through; text-decoration-color: rgba(123,127,178,.5); }
+
+  /* ── 栏 3：笔记信息 ── */
+  .info-pane { flex: 0 0 264px; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 4px; }
+  .info-card {
+    padding: 14px 16px;
+    background: var(--glass); border: 1px solid var(--glass-border); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-1);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  }
+  .info-title { font-size: 12px; font-weight: 600; color: var(--content-secondary); margin-bottom: 10px; }
+  .kv { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; }
+  .kv .k { font-size: 12px; color: var(--content-tertiary); flex: none; }
+  .kv .v { font-size: 12.5px; color: var(--content-primary); font-variant-numeric: tabular-nums; }
+  .info-empty { font-size: 12px; color: var(--content-tertiary); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 应用导航（现版样式，仅作场景） -->
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-logo">咕</div><div class="brand-name">咕咕</div></div>
+    <nav class="nav-group">
+      <div class="nav-label">工作台</div>
+      <button class="nav-item"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>项目<span class="count">8</span></button>
+      <button class="nav-item"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>日历</button>
+      <button class="nav-item"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>定时任务</button>
+      <button class="nav-item active"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M8 8l3 7M16 8l-3 7M9 6h6"/></svg>思维</button>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-label">资源</div>
+      <button class="nav-item"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>文件库</button>
+      <button class="nav-item"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 4a3.5 3.5 0 010 8M21 20c0-2.6-1.6-4.8-4-5.6"/></svg>客户<span class="beta">BETA</span></button>
+      <button class="nav-item"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M2 20c0-3 2.7-5 6-5s6 2 6 5M14 15.4c2.9.3 6 2 6 4.6"/></svg>团队<span class="beta">BETA</span></button>
+    </nav>
+    <nav class="nav-group">
+      <div class="nav-label">通知</div>
+      <button class="nav-item"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 9a6 6 0 10-12 0c0 6-2 7-2 7h16s-2-1-2-7M10.5 20a2 2 0 003 0"/></svg>通知</button>
+    </nav>
+    <div class="spacer"></div>
+    <button class="user-chip"><div class="avatar">co</div><div class="user-name">coffeiz</div>
+      <svg class="ico" style="width:13px;height:13px;margin-left:auto;color:var(--content-tertiary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+  </aside>
+
+  <!-- 内容区 -->
+  <main class="content">
+    <header class="topbar">
+      <div class="tabs">
+        <button class="tab active"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h11l4 4v12a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z"/><path d="M9 9h7M9 13h7M9 17h5"/></svg>笔记</button>
+        <button class="tab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M8 8l3 7M16 8l-3 7M9 6h6"/></svg>画布</button>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" title="日历定位"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+        <label class="search-box">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input type="text" placeholder="筛选笔记…">
+        </label>
+      </div>
+    </header>
+
+    <div class="panes">
+      <!-- 栏 1：日期分组列表 -->
+      <section class="list-pane"><div class="list-scroll" id="noteList"></div></section>
+      <!-- 栏 2：阅读窗格 -->
+      <section class="reading-pane">
+        <div class="rp-head">
+          <span class="rp-datetime" id="rpDatetime"></span>
+          <span class="rp-swatch" id="rpSwatch" title="便签颜色"></span>
+          <div class="rp-actions">
+            <button class="btn-ghost"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3l4 4L8 20l-5 1 1-5L17 3z"/></svg>编辑</button>
+          </div>
+        </div>
+        <div class="rp-body">
+          <h1 class="rp-title" id="rpTitle"></h1>
+          <div class="rp-meta" id="rpMeta"></div>
+          <article class="md" id="rpMd"></article>
+        </div>
+      </section>
+      <!-- 栏 3：笔记信息 -->
+      <aside class="info-pane">
+        <div class="info-card">
+          <div class="info-title">笔记信息</div>
+          <div class="kv"><span class="k">创建时间</span><span class="v" id="infoCreated"></span></div>
+          <div class="kv"><span class="k">最后更新</span><span class="v" id="infoUpdated"></span></div>
+          <div class="kv"><span class="k">字数统计</span><span class="v" id="infoWords"></span></div>
+        </div>
+        <div class="info-card">
+          <div class="info-title">引用</div>
+          <div id="infoRefs"></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<script>
+/* ── 样例数据：严格按现有 MindNote 模型造（contentMd 首行 # = 标题；color 四色 tint；
+    ref 单引用 project/file；无标签、无版本历史——右栏只放模型里真实存在的字段）── */
+const REF_ICONS = {
+  project: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M10 6.5h7v7"/></svg>',
+  file: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h9l5 5v11a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z"/><path d="M14 4v5h5"/></svg>',
+};
+const notes = [
+  {
+    id: 1, day: 'today', time: '15:48', color: 'amber',
+    ref: { type: 'project', label: '咕咕 1.0 版本规划' },
+    capturedAt: '2026-09-16 15:48', updatedAt: '2026-09-16 16:02',
+    md: `# 提问系统设计思路
+
+遇到不确定的内容时，给用户发送问卡（多选 / 单选 / 简答），用户选择回答后由咕咕继续。相比咕咕主动追问更精准，能减少一来一回的轮次。
+
+## 提问系统
+
+问卡需要**轻量、直观**，不打断用户思路；答案支持多种类型，适配不同场景。
+
+## 按钮系统
+
+用按钮代替咕咕主动询问：点击按钮就能直接创建项目 / 日程 / 活动 / 待办等，省去用户打字和决策成本。
+
+> 设计要点
+> - 提问卡片需要轻量、直观，不打断用户思路
+> - 支持多种问答类型，适配不同场景
+> - 答案选择后能智能推进整个工作流
+
+---
+
+按钮项目由咕咕根据上下文预测填充，参见 [[咕咕 1.0 版本规划]] 里的排期。`,
+  },
+  {
+    id: 2, day: 'today', time: '10:30', color: 'coral', ref: null,
+    capturedAt: '2026-09-16 10:30', updatedAt: '2026-09-16 10:31',
+    md: `夏天太热，脑子也是。适合放弃一些事。
+
+我的夏季放弃清单：
+
+- 早晨第一个闹钟
+- 中午的播客
+- 晚上十一点后的所有计划`,
+  },
+  {
+    id: 3, day: 'today', time: '09:12', color: 'teal',
+    ref: { type: 'file', label: 'weekly-review.md' },
+    capturedAt: '2026-09-16 09:12', updatedAt: '2026-09-16 09:20',
+    md: `# 周视图设计优化
+
+考虑在周视图中加入项目能量素的可视化：
+
+- [x] 确定能量素的计算口径
+- [x] 色带用项目主色而不是状态色
+- [ ] 周视图与日视图切换时保留滚动位置
+- [ ] 空项目的占位文案
+
+视觉稿见 \`weekly-review-v3.fig\`。`,
+  },
+  {
+    id: 4, day: 'yesterday', time: '22:15', color: 'blue',
+    ref: { type: 'file', label: 'prd-storage.md' },
+    capturedAt: '2026-09-15 22:15', updatedAt: '2026-09-15 22:40',
+    md: `# 文件存储架构升级
+
+统一存储抽象层，支持本地 / OSS 双存储：
+
+## 分层
+
+1. **访问层**：统一的 \`Storage.driver\` 接口
+2. **驱动层**：local / oss 两个实现，按 bucket 配置路由
+3. **缓存层**：缩略图与常用小文件走内存 LRU
+
+> 迁移注意：旧文件保持懒迁移，不做一次性回填，避免升级时长事务。`,
+  },
+  {
+    id: 5, day: 'yesterday', time: '18:03', color: null, ref: null,
+    capturedAt: '2026-09-15 18:03', updatedAt: '2026-09-15 18:03',
+    md: `补录：上周想到的——待办超期三天自动降级到「本周补救」分组，而不是一直挂在原日期下面制造愧疚感。周末验证一下这个心理假设。`,
+  },
+  {
+    id: 6, day: 'earlier', time: '11:26', color: 'amber',
+    ref: { type: 'project', label: 'Mind 画布重构' },
+    capturedAt: '2026-09-13 11:26', updatedAt: '2026-09-13 14:05',
+    md: `# 画布连接方向提示词
+
+连接线的箭头语义在提示词里补一段：默认指向依赖方向，回环（loop）要显式声明，不然模型画出来的方向经常反。
+
+- [x] 提示词扩展
+- [ ] 连线高亮跟随主题色`,
+  },
+];
+
+const DAY_LABELS = { today: '今天 · 9月16日', yesterday: '昨天 · 9月15日', earlier: '9月13日' };
+
+/* ── 极简 Markdown 渲染：覆盖样例用到的语法（h2/h3/列表/任务/引用/hr/code/bold/[[引用]]）── */
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function inline(s) {
+  return esc(s)
+    .replace(/\[\[([^\]]+)\]\]/g, (_, label) =>
+      `<a class="ref-chip inline" href="javascript:void(0)"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M10 6.5h7v7"/></svg><span class="label">${label}</span></a>`)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+/* 结构在原始行上识别、内容经 inline() 转义——先 esc 整段会让 "> " 变 "&gt; " 失配 */
+function renderMd(src) {
+  const lines = src.split('\n');
+  let html = '', list = false, quote = false, firstQuoteLine = false;
+  const closeList = () => { if (list) { html += '</ul>'; list = false; } };
+  const closeQuote = () => { if (quote) { html += '</blockquote>'; quote = false; } };
+  for (const raw of lines) {
+    const t = raw.trimEnd();
+    if (/^#{2,6}\s/.test(t)) { closeList(); closeQuote(); html += `<h2>${inline(t.replace(/^#+\s/, ''))}</h2>`; continue; }
+    if (t === '---') { closeList(); closeQuote(); html += '<hr>'; continue; }
+    const q = t.match(/^>\s?(.*)$/);
+    if (q) {
+      if (!quote) { closeList(); html += '<blockquote>'; quote = true; firstQuoteLine = true; }
+      const text = q[1].trim();
+      if (!text) continue;
+      if (firstQuoteLine && !text.startsWith('- ')) { html += `<div class="bq-title">${inline(text)}</div>`; firstQuoteLine = false; continue; }
+      firstQuoteLine = false;
+      if (text.startsWith('- ')) { html += `<div class="bq-li">• ${inline(text.slice(2))}</div>`; continue; }
+      html += `<div class="bq-p">${inline(text)}</div>`; continue;
+    }
+    closeQuote();
+    const task = t.match(/^- \[([ xX])\]\s+(.*)$/);
+    if (task) {
+      if (!list) { html += '<ul class="tasks">'; list = true; }
+      const done = task[1].toLowerCase() === 'x';
+      html += `<li class="task${done ? ' done' : ''}"><span class="task-box">${done ? '✓' : ''}</span><span class="task-text">${inline(task[2])}</span></li>`;
+      continue;
+    }
+    if (/^-\s/.test(t)) {
+      if (!list) { html += '<ul>'; list = true; }
+      html += `<li>${inline(t.replace(/^-\s/, ''))}</li>`; continue;
+    }
+    closeList();
+    const oli = t.match(/^(\d+)\.\s+(.*)$/);
+    if (oli) { html += `<p class="oli"><span class="oli-n">${oli[1]}.</span>${inline(oli[2])}</p>`; continue; }
+    if (t.startsWith('# ')) continue;   // 首行标题已单独渲染
+    if (!t.trim()) continue;
+    html += `<p>${inline(t)}</p>`;
+  }
+  closeList(); closeQuote();
+  return html;
+}
+
+/* 标题拆分：与 useMindEditor.splitMindTitleBody 同口径——首行 # 才有标题区 */
+function splitTitleBody(md) {
+  const firstNl = md.indexOf('\n');
+  const first = (firstNl === -1 ? md : md.slice(0, firstNl)).trim();
+  const m = first.match(/^#{1,6}\s+(.+)$/);
+  if (m) return { title: m[1], body: firstNl === -1 ? '' : md.slice(firstNl + 1).trim() };
+  return { title: '', body: md.trim() };
+}
+function wordCount(md) {
+  return splitTitleBody(md).body.replace(/[#>*`\-\[\]x]/g, '').replace(/\s+/g, '').length;
+}
+function refChip(ref) {
+  if (!ref) return '';
+  return `<a class="ref-chip" href="javascript:void(0)">${REF_ICONS[ref.type]}<span class="label">${esc(ref.label)}</span></a>`;
+}
+
+/* ── 渲染 ── */
+const listEl = document.getElementById('noteList');
+let selectedId = notes[0].id;
+
+function renderList() {
+  let html = '', lastDay = '';
+  for (const n of notes) {
+    if (n.day !== lastDay) {
+      lastDay = n.day;
+      const count = notes.filter(x => x.day === n.day).length;
+      html += `<div class="date-label">${DAY_LABELS[n.day]}<span class="n">${count} 条</span></div>`;
+    }
+    const { title, body } = splitTitleBody(n.md);
+    const tasks = (n.md.match(/^- \[.\]/gm) || []).length;
+    html += `
+      <button class="note-item ${n.color ? 'tint-' + n.color : ''} ${n.id === selectedId ? 'selected' : ''}" data-id="${n.id}">
+        <div class="ni-head">
+          <span class="ni-time">${n.time}</span>
+          ${title ? `<span class="ni-title">${esc(title)}</span>` : ''}
+        </div>
+        <div class="ni-preview ${title ? '' : 'no-title'}">${esc(body.replace(/^- \[[ xX]\]\s*/gm, '').replace(/^- /gm, '· ').replace(/\n+/g, ' ').replace(/[#>*`]|[\[\]]/g, '').slice(0, 80))}</div>
+        <div class="ni-foot">
+          <span class="ni-dot ${n.color || ''}" style="${n.color ? '' : 'background:var(--content-tertiary);opacity:.35'}"></span>
+          ${n.ref ? refChip(n.ref) : ''}
+          ${tasks ? `<span class="ni-task"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8.5 12.5l2.5 2.5 5-5.5"/></svg>${tasks}</span>` : ''}
+        </div>
+      </button>`;
+  }
+  listEl.innerHTML = html;
+  listEl.querySelectorAll('.note-item').forEach(el =>
+    el.addEventListener('click', () => { selectedId = +el.dataset.id; renderList(); renderDetail(); }));
+}
+
+function renderDetail() {
+  const n = notes.find(x => x.id === selectedId);
+  const { title, body } = splitTitleBody(n.md);
+  document.getElementById('rpDatetime').textContent = n.capturedAt;
+  const sw = document.getElementById('rpSwatch');
+  sw.className = 'rp-swatch ' + (n.color || 'none');
+  document.getElementById('rpTitle').textContent = title || '';
+  document.getElementById('rpTitle').style.display = title ? '' : 'none';
+  document.getElementById('rpMeta').innerHTML =
+    `${n.ref ? refChip(n.ref) : '<span class="info-empty">无引用对象</span>'}`;
+  document.getElementById('rpMd').innerHTML = renderMd(body);
+  document.getElementById('infoCreated').textContent = n.capturedAt;
+  document.getElementById('infoUpdated').textContent = n.updatedAt;
+  document.getElementById('infoWords').textContent = wordCount(n.md) + ' 字';
+  document.getElementById('infoRefs').innerHTML = n.ref
+    ? `<a class="ref-chip" href="javascript:void(0)" style="max-width:100%">${REF_ICONS[n.ref.type]}<span class="label">${esc(n.ref.label)}</span>
+       <svg class="ico" style="margin-left:auto;color:var(--content-tertiary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 5h5v5M19 5l-8 8M19 13v5a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1h5"/></svg></a>`
+    : '<span class="info-empty">便签未引用项目 / 文件 / 活动</span>';
+}
+
+renderList();
+renderDetail();
+</script>
+</body>
+</html>
