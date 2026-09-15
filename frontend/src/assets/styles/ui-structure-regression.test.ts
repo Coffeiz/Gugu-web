@@ -643,6 +643,9 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     const archivedGuide = cssBlock(archivedProjects, '.year-body::before {')
     expect(archivedGuide).toContain('left: var(--ap-year-chevron-center)')
     expect(archivedGuide).toContain('background: var(--done-group-border)')
+    expect(archivedProjects).toContain('.month-group { margin-bottom: 0; }')
+    expect(cssBlock(archivedProjects, '.ap-list {')).toContain('box-sizing: border-box')
+    expect(cssBlock(archivedProjects, '.ap-list {')).toContain('padding: 0 0 0 4px')
 
     expect(uploadModal).toContain('.toggle-chev, .year-chev, .month-chev')
     expect(uploadModal).toContain('transform:rotate(-90deg)')

@@ -244,7 +244,7 @@ function formatDate(value: string | null | undefined): string {
 }
 
 /* ── 月目录 ── */
-.month-group { margin-bottom: 1px; }
+.month-group { margin-bottom: 0; }
 .month-row {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 4px 8px; border-radius: 7px;
@@ -256,9 +256,12 @@ function formatDate(value: string | null | undefined): string {
 .month-name { font-size: 11px; font-weight: 500; color: var(--content-secondary); flex: 1; }
 .month-cnt { font-size: 10px; color: var(--content-tertiary); }
 /* ── 项目行 ── */
-.ap-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 4px; min-height: 0; overflow: hidden; }
-.year-body[data-layout-open="false"]:not([data-runtime-group-animating="true"]),
-.ap-list[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height: 0; overflow: hidden; }
+.ap-list { display: flex; flex-direction: column; gap: 4px; padding: 0 0 0 4px; box-sizing: border-box; min-height: 0; overflow: hidden; }
+.year-body[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height: 0; overflow: hidden; }
+.ap-list[data-layout-open="false"]:not([data-runtime-group-animating="true"]) {
+  height: 0;
+  overflow: hidden;
+}
 .ap-row {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border-radius: 10px; transition: background 0.12s;

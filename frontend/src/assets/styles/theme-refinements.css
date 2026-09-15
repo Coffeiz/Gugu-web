@@ -79,7 +79,7 @@ html[data-theme='dark'][data-family] {
   --settings-popup-hover-bg: var(--surface-soft-hover);
   --settings-popup-danger: var(--status-danger);
   --settings-popup-danger-hover-bg: var(--status-danger-bg);
-  --settings-popup-divider: var(--border-subtle);
+  --settings-popup-divider: var(--popup-divider);
 }
 
 /* Mono settings uses the same geometry as Aero but switches only its surface vocabulary: a solid
@@ -92,7 +92,7 @@ html[data-theme='light'][data-family='mono'] {
   --settings-popup-hover-bg: var(--surface-soft-hover);
   --settings-popup-danger: var(--status-danger);
   --settings-popup-danger-hover-bg: var(--status-danger-bg);
-  --settings-popup-divider: var(--border-subtle);
+  --settings-popup-divider: var(--popup-divider);
 }
 html[data-theme='dark'][data-family='mono'] {
   --settings-popup-bg: var(--surface-card-solid);
