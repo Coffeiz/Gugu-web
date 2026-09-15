@@ -50,54 +50,9 @@ _HTTP_GET_RETRY_BACKOFF = [1, 2]
 _TRANSIENT_HTTPX = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
 
 
-class _PinnedAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
-    """把 TCP 连接固定到已通过 URL 安全检查的 IP。
-
-    httpcore 仍然收到原始 hostname，因此 HTTPS 的证书校验和 SNI 不变；只有
-    socket 建连目标被替换为已校验的 IP，避免 DNS rebinding 在校验和连接之间生效。
-    """
-
-    def __init__(self, ip: str):
-        from httpcore._backends.auto import AutoBackend
-
-        self._ip = ip
-        self._backend = AutoBackend()
-
-    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
-        return await self._backend.connect_tcp(
-            self._ip,
-            port,
-            timeout=timeout,
-            local_address=local_address,
-            socket_options=socket_options,
-        )
-
-    async def connect_unix_socket(self, path, timeout=None, socket_options=None):
-        return await self._backend.connect_unix_socket(
-            path, timeout=timeout, socket_options=socket_options
-        )
-
-    async def sleep(self, seconds):
-        return await self._backend.sleep(seconds)
-
-
-class _PinnedHTTPTransport(httpx.AsyncHTTPTransport):
-    """httpx transport：保留 hostname 的 HTTP 语义，固定 socket 目的 IP。"""
-
-    def __init__(self, ip: str):
-        super().__init__(trust_env=False)
-        previous = self._pool
-        self._pool = httpcore.AsyncConnectionPool(
-            ssl_context=previous._ssl_context,
-            max_connections=previous._max_connections,
-            max_keepalive_connections=previous._max_keepalive_connections,
-            keepalive_expiry=previous._keepalive_expiry,
-            http1=previous._http1,
-            http2=previous._http2,
-            retries=previous._retries,
-            network_backend=_PinnedAsyncNetworkBackend(ip),
-            socket_options=previous._socket_options,
-        )
+# IP 钉扎传输已上提到 app/core/pinned_http.py（MCP 客户端复用同一实现）。
+from app.core.pinned_http import PinnedAsyncNetworkBackend as _PinnedAsyncNetworkBackend
+from app.core.pinned_http import PinnedHTTPTransport as _PinnedHTTPTransport  # noqa: F401
 
 
 def _looks_like_html(text: str) -> bool:
