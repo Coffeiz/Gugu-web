@@ -46,21 +46,25 @@
 
     <!-- 栏 2+3：阅读窗格与信息栏合并为同一块玻璃面板，中间只用内容色细分隔线 -->
     <section class="ntp-detail" :class="{ empty: !selected }">
-      <div class="ntp-reading">
+      <div class="ntp-reading" :class="{ editing }">
         <template v-if="selected">
           <div class="rp-head">
             <span class="rp-datetime">{{ fullTime(selected) }}</span>
-            <span class="rp-swatch" :class="selected.color ?? 'none'" :title="t('mindUi.defaultColor')"></span>
+            <!-- 颜色选择：ColorSwatches 与便签卡同一组件；颜色不参与乐观锁冲突判定 -->
+            <ColorSwatches :model-value="selected.color" @update:model-value="onColor" />
             <div class="rp-actions">
+              <button v-if="!editing" class="rp-icon-btn" :title="t('mindUi.delete')" @click="onDelete">
+                <PhTrash :size="15" weight="bold" />
+              </button>
               <button v-if="!editing" class="rp-edit-btn" @click="startEdit">
-                <PhPencilSimple :size="13" weight="bold" />
+                <PhPencilSimple :size="15" weight="bold" />
                 {{ t('mindUi.edit') }}
               </button>
             </div>
           </div>
           <template v-if="!editing">
             <h1 v-if="selectedTitle" class="rp-title">{{ selectedTitle }}</h1>
-            <div v-if="nodeRef || selectedTitle" class="rp-meta">
+            <div v-if="nodeRef" class="rp-meta">
               <button v-if="nodeRef" class="ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
                 <component :is="refIcon(nodeRef.type)" :size="14" weight="bold" />
                 <span class="label">{{ nodeRef.label }}</span>
@@ -75,7 +79,7 @@
           <NoteEditor v-else v-model="editMd" :autofocus="true" class="rp-editor" @submit="finishEdit">
             <template #foot-actions>
               <button class="rp-done-btn" @click="finishEdit">
-                <PhCheck :size="12" weight="bold" /> {{ t('mindUi.editDone') }}
+                <PhCheck :size="14" weight="bold" /> {{ t('mindUi.editDone') }}
               </button>
               <button class="rp-cancel-btn" @click="cancelEdit">{{ t('common.actions.cancel') }}</button>
             </template>
@@ -107,8 +111,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack } from '@phosphor-icons/vue'
+import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack, PhTrash } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -117,6 +122,7 @@ import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd } from '@/composabl
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { MindNote } from '@/services/api'
 import NoteEditor from './components/NoteEditor.vue'
+import ColorSwatches from './components/ColorSwatches.vue'
 
 const store = useMindStore()
 const projectStore = useProjectStore()
@@ -304,6 +310,42 @@ async function finishEdit() {
 // 切换选中便签即退出编辑——三栏式里左侧列表始终可见，点别的条目语义明确是"看那条"
 watch(selectedId, () => { editing.value = false })
 
+// ── 颜色：只改 color 字段，不牵动 contentMd/version 冲突判定（与 NotesView.onColor 同口径）──
+async function onColor(color: string | null) {
+  const note = selected.value
+  if (!note) return
+  if (note.id < 0) {
+    store.notes = store.notes.map(n => n.id === note.id ? { ...n, color } : n)
+    return
+  }
+  try {
+    await store.updateNote(note.id, { color, version: note.version })
+  } catch {
+    showAppError(t('mind.colorSaveFailed'))
+  }
+}
+
+// ── 删除：confirmDialog 危险确认（前端规范禁原生 confirm），负 id 样例只删内存 ──
+async function onDelete() {
+  const note = selected.value
+  if (!note) return
+  if (!await confirmDialog({
+    title: t('mindThreePane.delTitle'),
+    message: t('mindThreePane.delMessage'),
+    tone: 'danger',
+    confirmText: t('mindUi.delete'),
+  })) return
+  if (note.id < 0) {
+    store.notes = store.notes.filter(n => n.id !== note.id)
+    return
+  }
+  try {
+    await store.deleteNote(note.id)
+  } catch {
+    showAppError(t('mind.deleteFailed'))
+  }
+}
+
 // ── 时间 / 日期标签 ──
 function timeHM(note: MindNote) {
   const d = parseUtc(note.capturedAt)
@@ -421,43 +463,62 @@ function onListScroll() {
   overflow: hidden;
 }
 .ntp-detail.empty { grid-template-columns: minmax(0, 1fr); }
-.ntp-reading { min-height: 0; overflow-y: auto; padding: 20px 28px 32px; }
+.ntp-reading { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 32px; }
+/* 编辑态：编辑器撑满窗格并内部滚动，工具栏和完成/取消按钮钉在窗格底部 */
+.ntp-reading.editing { overflow: hidden; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
-.rp-head { display: flex; align-items: center; gap: 10px; }
-.rp-datetime { font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.rp-swatch { width: 11px; height: 11px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(30, 32, 40, 0.12); }
-.rp-swatch.none { background: repeating-conic-gradient(#dcdce2 0% 25%, #fff 0% 50%) 0 0 / 6px 6px; }
-.rp-swatch.amber { background: #ffc05f; }
-.rp-swatch.coral { background: #ff826c; }
-.rp-swatch.blue  { background: #3196e2; }
-.rp-swatch.teal  { background: #53d2dc; }
-.rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 10px 0 0; color: var(--text-primary); }
-.rp-meta {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
-  padding-bottom: 14px; margin: 12px 0 16px;
+/* 头部分割线在两种模式下都在（只读模式的引用 chip 行不再自带分割线） */
+.rp-head {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  padding-bottom: 14px; margin-bottom: 16px;
   border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
+.rp-datetime { font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
+.rp-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .rp-title + .rp-meta { margin-top: 10px; }
-.rp-body { font-size: 14px; }
+.rp-body { font-size: 14px; margin-top: 14px; }
 
-/* 编辑态：编辑器撑满阅读栏剩余高度（NoteEditor 自带 .note-editor 排版），按钮沿用卡片完成按钮的口径 */
+/* 编辑/删除按钮：贴头部最右侧，34px 大点击区 */
+.rp-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
 .rp-edit-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 14px; border-radius: 999px; font-size: 12.5px;
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 18px; border-radius: 999px; font-size: 13px;
   color: var(--color-primary); border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
   background: transparent; cursor: pointer; font-family: inherit; transition: background 0.15s;
 }
 .rp-edit-btn:hover { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
-.rp-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; margin-top: 14px; }
+.rp-icon-btn {
+  display: grid; place-items: center; width: 34px; height: 34px;
+  border-radius: 999px; color: var(--text-secondary);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  background: transparent; cursor: pointer; transition: all 0.15s;
+}
+.rp-icon-btn:hover {
+  color: var(--theme-danger, var(--status-danger, #b98186));
+  border-color: color-mix(in srgb, var(--theme-danger, var(--status-danger, #b98186)) 45%, transparent);
+}
+
+/* 编辑态：标题行与只读大标题同字号（ne-body h1 默认 15px 是卡片口径）；小节标题对齐
+   只读视图的 15px；工具栏图标比卡片编辑态大一档（阅读窗格宽、密度低） */
+.rp-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.rp-editor :deep(.ne-body) { flex: 1; min-height: 0; overflow-y: auto; }
+.rp-editor :deep(.ProseMirror h1) { font-size: 23px; line-height: 1.35; margin: 2px 0 6px; }
+.rp-editor :deep(.ProseMirror h2),
+.rp-editor :deep(.ProseMirror h3) { font-size: 15px; font-weight: 700; }
+.rp-editor :deep(.ne-tool svg),
+.rp-editor :deep(.ne-style-item svg) { width: 16px; height: 16px; }
+.rp-editor :deep(.ne-tool),
+.rp-editor :deep(.ne-style-item) { width: 30px; height: 30px; }
 .rp-done-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
-  color: #fff; background: var(--color-primary); border: none; cursor: pointer; font-family: inherit;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 7px 18px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  color: var(--content-on-accent); background: var(--color-primary); border: none; cursor: pointer; font-family: inherit;
 }
 .rp-done-btn:hover { background: var(--action-primary-hover); }
 .rp-cancel-btn {
   display: inline-flex; align-items: center;
-  padding: 4px 10px; border-radius: 999px; font-size: 12px;
+  padding: 7px 16px; border-radius: 999px; font-size: 13px;
   color: var(--text-secondary); border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
   background: transparent; cursor: pointer; font-family: inherit;
 }
