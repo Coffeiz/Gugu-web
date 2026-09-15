@@ -83,7 +83,12 @@ RUN apt-get update \
 ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
 # TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串
 ARG TARGETARCH
-RUN curl -fsSL -o /tmp/gst-base.deb \
+RUN sed -i \
+        -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
+        -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && curl -fsSL -o /tmp/gst-base.deb \
         "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
     && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
     && rm -f /tmp/gst-base.deb

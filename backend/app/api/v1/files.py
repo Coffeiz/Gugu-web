@@ -13,7 +13,7 @@ from app.core.security import get_client_id, get_current_user, verify_stream_tok
 from app.core.tz import now_utc
 from app.core.upload_stream import spool_upload
 from app.db.session import get_db
-from app.models import File, Folder, Project, User
+from app.models import File, Folder, Project, User  # orm-exempt: 文件归档接口的模型引用随现有遗留查询，files Service 收口时一并移除
 from app.schemas import (
     CamelModel, FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,

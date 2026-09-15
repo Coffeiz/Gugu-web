@@ -1149,7 +1149,7 @@ async def embedding_rebuild(db: AsyncSession = Depends(get_db)):
                 return {"ok": False, "message": "已有重建任务在跑", "status": d}
         except Exception:
             pass
-    rows = (await db.execute(select(User.id))).scalars().all()
+    rows = (await db.execute(select(User.id))).scalars().all()  # orm-exempt: 管理员索引重建需要枚举全部用户，任务本身不暴露用户数据
     user_ids = [str(u) for u in rows]
     await r.set(_REBUILD_KEY, json.dumps(
         {"status": "running", "done": 0, "total": len(user_ids), "ts": time.time()}))
@@ -1265,7 +1265,7 @@ async def index_rebuild(db: AsyncSession = Depends(get_db)):
                 return {"ok": False, "message": "已有索引重建任务在跑", "status": state}
         except Exception:
             pass
-    rows = (await db.execute(select(User.id))).scalars().all()
+    rows = (await db.execute(select(User.id))).scalars().all()  # orm-exempt: 管理员索引重建需要枚举全部用户，任务本身不暴露用户数据
     user_ids = [str(user_id) for user_id in rows]
     await redis.set(_INDEX_REBUILD_KEY, json.dumps({
         "status": "running", "done": 0, "total": len(user_ids),
