@@ -82,7 +82,19 @@ const pptxContainerRef = ref<HTMLDivElement | null>(null)
 const sheetTabs = ref<string[]>([])
 const activeSheet = ref('')
 const notice = ref('')
-const docxViewMode = ref<'fit-width' | 'fit-page' | 'actual'>('fit-page')
+const DOCX_VIEW_MODE_KEY = 'gugu-docx-view-mode'
+type DocxViewMode = 'fit-width' | 'fit-page' | 'actual'
+
+function readDocxViewMode(): DocxViewMode {
+  try {
+    const value = localStorage.getItem(DOCX_VIEW_MODE_KEY)
+    return value === 'fit-width' || value === 'fit-page' ? value : 'fit-page'
+  } catch {
+    return 'fit-page'
+  }
+}
+
+const docxViewMode = ref<DocxViewMode>(readDocxViewMode())
 const docxScale = ref(1)
 const docxPageIndex = ref(0)
 const docxPageCount = ref(0)
@@ -295,7 +307,8 @@ function goToDocxPage(index: number) {
 // docx-preview 按 A4 固定宽渲染，浮动窗比纸窄时会左右溢出叠成"两层"；
 // 按容器宽度对整叠纸做 zoom 缩放（zoom 影响布局盒，不会留下空白滚动区）。
 function clampDocxScale(scale: number) {
-  return Math.min(2, Math.max(0.25, Math.round(scale * 100) / 100))
+  // 0.1% 精度对应缩放比例的 0.001。
+  return Math.min(2, Math.max(0.25, Math.round(scale * 1000) / 1000))
 }
 
 function getDocxLayoutSize(section: HTMLElement) {
@@ -337,29 +350,56 @@ function applyDocxView(container: HTMLElement) {
   const availableWidth = Math.max(1, viewport.clientWidth - 16)
   // 工具栏是悬浮层，不参与纸张布局。整页模式以预览器可视区域为基准，
   // 让纸张上下边界对齐可视区；宽度不足时再用宽度约束，保持纸张比例。
-  const availableHeight = Math.max(1, viewportRect.height - 16)
+  // 16px 是纸页自身的顶部布局余量；还要扣除滚动容器的底部内边距，
+  // 否则缩放结果会把纸页底部正好贴到视口边缘，底部间距只能靠滚动才能看到。
+  const paddingBottom = Number.parseFloat(getComputedStyle(viewport).paddingBottom) || 0
+  const availableHeight = Math.max(1, viewportRect.height - 16 - paddingBottom)
   const fitWidth = availableWidth / pageWidth
   const fitPage = Math.min(fitWidth, availableHeight / pageHeight)
   const scale = docxViewMode.value === 'fit-width'
     ? fitWidth
     : docxViewMode.value === 'fit-page'
       ? fitPage
-      : docxScale.value
+      // 手动缩放时窗口变窄也不能让纸张横向溢出；只在空间不足时自动缩小，
+      // 窗口变宽不自动放大，保留用户当前的缩放意图。
+      : Math.min(docxScale.value, fitWidth)
   docxScale.value = clampDocxScale(scale)
   wrapper.style.zoom = String(docxScale.value)
 }
 
-function setDocxViewMode(mode: 'fit-width' | 'fit-page' | 'actual') {
-  docxViewMode.value = mode
-  if (mode === 'actual') docxScale.value = 1
-  scheduleDocxView()
+type DocxZoomAnchor = { x: number; y: number }
+
+function getDocxZoomAnchor(): DocxZoomAnchor | null {
+  const viewport = docxPageScrollRoot
+  if (!viewport || docxScale.value <= 0) return null
+  return {
+    x: (viewport.scrollLeft + viewport.clientWidth / 2) / docxScale.value,
+    y: (viewport.scrollTop + viewport.clientHeight / 2) / docxScale.value,
+  }
 }
 
-function scheduleDocxView() {
+function setDocxViewMode(mode: 'fit-width' | 'fit-page' | 'actual') {
+  const anchor = getDocxZoomAnchor()
+  docxViewMode.value = mode
+  if (mode === 'fit-width' || mode === 'fit-page') {
+    try { localStorage.setItem(DOCX_VIEW_MODE_KEY, mode) } catch { /* 存储不可用时不影响预览 */ }
+  }
+  if (mode === 'actual') docxScale.value = 1
+  scheduleDocxView(anchor)
+}
+
+function scheduleDocxView(anchor: DocxZoomAnchor | null = null) {
   const request = ++docxViewRequest
   requestAnimationFrame(() => {
     if (request !== docxViewRequest) return
-    if (containerRef.value) applyDocxView(containerRef.value)
+    if (containerRef.value) {
+      applyDocxView(containerRef.value)
+      if (anchor && docxPageScrollRoot) {
+        const viewport = docxPageScrollRoot
+        viewport.scrollLeft = Math.max(0, anchor.x * docxScale.value - viewport.clientWidth / 2)
+        viewport.scrollTop = Math.max(0, anchor.y * docxScale.value - viewport.clientHeight / 2)
+      }
+    }
   })
 }
 
@@ -372,9 +412,14 @@ function setDocxModeActual() {
 }
 
 function changeDocxScale(delta: number) {
+  const anchor = getDocxZoomAnchor()
   docxViewMode.value = 'actual'
-  docxScale.value = clampDocxScale(docxScale.value + delta)
-  scheduleDocxView()
+  const currentPercent = docxScale.value * 100
+  const nextPercent = delta > 0
+    ? Math.floor(currentPercent / 10 + 1) * 10
+    : Math.ceil(currentPercent / 10 - 1) * 10
+  docxScale.value = clampDocxScale(nextPercent / 100)
+  scheduleDocxView(anchor)
 }
 
 const XLSX_MAX_ROWS = 500
@@ -856,7 +901,7 @@ onMounted(() => {
   const container = containerRef.value
   if (!container || typeof ResizeObserver === "undefined") return
   resizeObserver = new ResizeObserver(() => {
-    if (docxViewMode.value !== 'actual') scheduleDocxView()
+    scheduleDocxView()
   })
   resizeObserver.observe(container)
 })
@@ -915,7 +960,8 @@ onBeforeUnmount(() => {
 .office-viewer-root.pptx-zooming .pptx-render-surface {
   visibility: hidden;
 }
-.office-content-surface { min-height: 100%; }
+/* 让单页 DOCX 的内容表面跟随实际纸张高度，不额外撑满整个预览窗口。 */
+.office-content-surface { min-height: 0; }
 .office-container :deep(.docx-wrapper) { background: transparent; padding: 8px 0; }
 /* xlsx：统一网格——固定列宽行高、斑马纹、撑满容器宽度 */
 .office-container :deep(.xlsx-grid) {

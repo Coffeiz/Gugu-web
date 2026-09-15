@@ -173,6 +173,7 @@ const _unregEsc = registerEsc({
 })
 
 const isPptx = computed(() => props.win.file.ext?.toUpperCase() === 'PPTX')
+const isDocx = computed(() => props.win.file.ext?.toUpperCase() === 'DOCX')
 
 // ── 位置 / 尺寸（本地 reactive，同步回 store） ──────────────────────────────
 const x = ref(props.win.x)
@@ -482,7 +483,11 @@ async function load(f: Partial<FileMeta>, refresh = false) {
             const cachedResponse = await fetch(cached)
             if (cachedResponse.ok) {
               blobUrl.value = cached
-              if (!ready.value && !isPptx.value) fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+              // DOCX 使用预览器初始几何，避免下载完成时被通用窗口适配先撑成高窗。
+              if (isDocx.value) ready.value = true
+              else if (!ready.value && !isPptx.value && !isOffice.value) {
+                fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+              }
               return
             }
           } catch {
@@ -518,7 +523,9 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
       previewBlobCache.put(key, url)
       currentCacheKey.value = key
-      if ((!refresh || !ready.value) && !isPptx.value) {
+      if (isDocx.value) {
+        ready.value = true
+      } else if ((!refresh || !ready.value) && !isPptx.value && !isOffice.value) {
         fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
       }
     } else {

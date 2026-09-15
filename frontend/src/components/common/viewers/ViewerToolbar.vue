@@ -43,7 +43,9 @@
     <button class="iv-tb-btn" type="button" :title="zoomOutLabel" @click="$emit('zoom-out')">
       <Icon name="action.subtract" :size="12" />
     </button>
-    <span class="iv-tb-pct" :title="resetZoomLabel" @click="$emit('reset-zoom')">{{ Math.round(zoomPercent) }}%</span>
+    <span class="iv-tb-pct" :title="resetZoomLabel" @click="$emit('reset-zoom')">
+      {{ Number.isInteger(zoomPercent) ? zoomPercent : zoomPercent.toFixed(1) }}%
+    </span>
     <button class="iv-tb-btn" type="button" :title="zoomInLabel" @click="$emit('zoom-in')">
       <Icon name="action.add" :size="12" />
     </button>
@@ -131,7 +133,6 @@ function submitPageEdit() {
   --iv-toolbar-hover-bg: rgba(123, 127, 178, 0.12);
   --iv-toolbar-hover-fg: var(--color-primary);
   --iv-toolbar-pct-hover-fg: var(--text-primary);
-  --iv-toolbar-separator: color-mix(in srgb, var(--text-primary) 18%, transparent);
   position: absolute;
   z-index: 2;
   bottom: 14px;
@@ -206,7 +207,7 @@ function submitPageEdit() {
 }
 .iv-tb-page-input::-webkit-inner-spin-button,
 .iv-tb-page-input::-webkit-outer-spin-button { margin: 0; }
-.iv-toolbar-separator { width: 1px; height: 18px; margin: 0 4px; background: var(--iv-toolbar-separator); }
+.iv-toolbar-separator { width: 1px; height: 18px; margin: 0 4px; background: var(--popup-divider); }
 </style>
 
 <style>
@@ -219,6 +220,5 @@ html[data-theme='dark'][data-family] .iv-toolbar {
   --iv-toolbar-hover-bg: var(--option-bg-hover);
   --iv-toolbar-hover-fg: var(--action-primary);
   --iv-toolbar-pct-hover-fg: var(--content-primary);
-  --iv-toolbar-separator: color-mix(in srgb, var(--content-primary) 22%, transparent);
 }
 </style>
