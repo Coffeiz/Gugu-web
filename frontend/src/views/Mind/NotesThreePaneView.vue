@@ -36,14 +36,16 @@
                     @click.stop="toggleColorPicker(note.id)"
                   ></button>
                   <span class="color-drawer" :class="{ open: openColorFor === note.id }" @click.stop>
+                    <!-- 抽屉只列「可选的其他颜色」：当前色就在球上不重复出现；无色时球即默认，默认项也不进抽屉 -->
                     <button
-                      class="pop-dot none" :class="{ on: !note.color }"
+                      v-if="note.color"
+                      class="pop-dot none"
                       :title="t('mindUi.defaultColor')"
                       @click="pickColor(note, null)"
                     ></button>
                     <button
-                      v-for="c in NOTE_COLORS" :key="c"
-                      class="pop-dot" :class="[c, { on: note.color === c }]"
+                      v-for="c in NOTE_COLORS.filter(c => c !== note.color)" :key="c"
+                      class="pop-dot" :class="c"
                       :title="t(`mindUi.colors.${c}`)"
                       @click="pickColor(note, c)"
                     ></button>
@@ -513,7 +515,6 @@ function onListScroll() {
   flex: none; width: 16px; height: 16px; border-radius: 50%; padding: 0; cursor: pointer;
   border: 1px solid rgba(255, 255, 255, 0.85); box-shadow: 0 1px 2px rgba(80, 90, 110, 0.18);
 }
-.pop-dot.on { box-shadow: 0 0 0 2px var(--color-primary); }
 .pop-dot.none { background: repeating-conic-gradient(#dcdce2 0% 25%, #fff 0% 50%) 0 0 / 6px 6px; }
 .pop-dot.amber { background: #ffc05f; }
 .pop-dot.coral { background: #ff826c; }
