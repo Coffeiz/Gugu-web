@@ -590,8 +590,8 @@ class UpdateDaemon:
                 "UPDATE_VALIDATOR": str(self.validator),
                 # Compose 脚本先记录旧镜像，再从签名 manifest 切换到新 digest。
                 "GUGU_WEB_IMAGE": str(self.state["task"]["previous_image"]),
-                # compose-update.sh 会用旧 app 镜像启动独立 helper，避免 self-stop 截断更新链。
-                "GUGU_UPDATE_HELPER_IMAGE": str(self.state["task"]["previous_image"]),
+                # 用 manifest 已校验的目标镜像启动 helper；helper 必须包含 handoff 等待逻辑。
+                "GUGU_UPDATE_HELPER_IMAGE": str(candidate["app_image"]),
             })
             manifest_path = temp_dir / MANIFEST_NAME
             manifest_path.write_bytes(manifest_bytes)
