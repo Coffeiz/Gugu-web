@@ -6,7 +6,12 @@ FROM python:3.14-slim-trixie AS builder
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 
-RUN sed -i \
+# apt 下载走 cache mount（语义不变：索引每轮照拉、包照装），docker-clean
+# 会装完即删归档，先移除；lists 留在 cache mount 里不进镜像层。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
         -e "s|https\?://security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" \
         /etc/apt/sources.list.d/debian.sources \
@@ -15,8 +20,7 @@ RUN sed -i \
         build-essential \
         libffi-dev \
         libpq-dev \
-        libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+        libssl-dev
 
 WORKDIR /build
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
@@ -55,7 +59,10 @@ ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 ARG TARGETARCH
 ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
 
-RUN sed -i \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
         -e "s|https\?://security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" \
         /etc/apt/sources.list.d/debian.sources \
@@ -71,21 +78,22 @@ RUN sed -i \
     && curl -fsSL -o /tmp/gst-base.deb \
         "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
     && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
-    && rm -f /tmp/gst-base.deb \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -f /tmp/gst-base.deb
 
 # 基础包安全补丁升级：APT_MIRROR（TUNA）对 trixie-security 同步滞后，镜像里的
 # gzip/glib/mbedtls/pcre2/python3.13/sqlite3/libssh2/perl 等会停在带 CVE 的旧版
 # （2026-09-12 docker-release trivy 门连败根因，29 HIGH/CRITICAL）。逐包追 deb 是
 # 无底洞，这里把源切回官方 security pool 做一次完整 upgrade，自动覆盖后续 CVE；
 # 镜像源同步追平后可把 sed 段去掉。
-RUN sed -i \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && sed -i \
         -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
         -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get upgrade -y
 
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \

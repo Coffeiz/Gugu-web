@@ -5,10 +5,13 @@ FROM node:latest AS build
 WORKDIR /workspace
 RUN npm install --global pnpm@latest
 
-# 先复制稳定的 workspace 元数据，保证依赖层可复用。
+# 先复制稳定的 workspace 元数据，保证依赖层可复用；pnpm store 走 cache mount，
+# lockfile 变更时只下载增量。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY frontend/package.json ./frontend/package.json
-RUN pnpm install --filter gugu-web --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store \
+    && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY frontend/ ./frontend/
 WORKDIR /workspace/frontend
