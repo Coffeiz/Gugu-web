@@ -595,6 +595,18 @@ function onListScroll() {
 /* 标题→分割线→正文的节奏（12/14）与编辑态标题 h1 的 padding/margin 严格同值，
    两种模式切换时标题、分割线、正文的相对位置不动 */
 .rp-divider { border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent); margin: 12px 0 14px; }
+/* 编辑态常驻标题输入位：字级/下分割线与阅读态 rp-title + rp-divider 严格同值，
+   「标题文字→线→正文」的节奏两种模式一致；输入框本体透明无描边，只保留底线 */
+.rp-title-input {
+  flex: none; width: 100%; box-sizing: border-box; padding: 0 0 12px;
+  border: 0; border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border-radius: 0; outline: none; background: transparent;
+  margin: 0 0 14px;
+  font: 700 23px/1.35 var(--font-sans); color: var(--text-primary);
+  caret-color: var(--color-primary);
+}
+.rp-title-input::placeholder { color: var(--text-secondary); opacity: 0.55; font-weight: 500; }
+.rp-title-input:focus { border-bottom-color: color-mix(in srgb, var(--color-primary) 40%, transparent); }
 /* 正文区自占剩余高度滚动，底部操作区（编辑/删除）钉在窗格底部，与编辑态 Done/Cancel 同位 */
 .rp-body-wrap { flex: 1; min-height: 0; overflow-y: auto; }
 .rp-body { font-size: 14px; margin-top: 14px; }
