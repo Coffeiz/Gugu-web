@@ -26,14 +26,29 @@
                 <span v-if="titleOf(note)" class="ni-title">{{ titleOf(note) }}</span>
               </div>
               <div class="ni-preview" :class="{ 'no-title': !titleOf(note) }">{{ previewOf(note) }}</div>
-              <div v-if="note.color || taskCount(note) || note.id === selectedId" class="ni-foot">
-                <span class="ni-dot" :class="note.color ?? 'none'"></span>
-                <!-- 颜色选择放卡片里（选中卡才出现）；ColorSwatches 自带 stop 不会触发卡片选中 -->
-                <ColorSwatches
-                  v-if="note.id === selectedId"
-                  :model-value="note.color"
-                  @update:model-value="c => onColor(note, c)"
-                />
+              <div class="ni-foot">
+                <!-- 颜色球：显示当前颜色，点击向右展开抽屉选择（含默认纸色）；选完球即新色 -->
+                <span class="color-dot-wrap">
+                  <button
+                    class="ni-dot-btn"
+                    :class="[note.color || 'none', { open: openColorFor === note.id }]"
+                    :title="note.color ? t(`mindUi.colors.${note.color}`) : t('mindUi.defaultColor')"
+                    @click.stop="toggleColorPicker(note.id)"
+                  ></button>
+                  <span class="color-drawer" :class="{ open: openColorFor === note.id }" @click.stop>
+                    <button
+                      class="pop-dot none" :class="{ on: !note.color }"
+                      :title="t('mindUi.defaultColor')"
+                      @click="pickColor(note, null)"
+                    ></button>
+                    <button
+                      v-for="c in NOTE_COLORS" :key="c"
+                      class="pop-dot" :class="[c, { on: note.color === c }]"
+                      :title="t(`mindUi.colors.${c}`)"
+                      @click="pickColor(note, c)"
+                    ></button>
+                  </span>
+                </span>
                 <span v-if="taskCount(note)" class="ni-task">
                   <PhCheckSquare :size="13" weight="bold" />
                   {{ taskCount(note) }}
@@ -120,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack, PhTrash } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
@@ -133,7 +148,6 @@ import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd } from '@/composabl
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { MindNote } from '@/services/api'
 import NoteEditor from './components/NoteEditor.vue'
-import ColorSwatches from './components/ColorSwatches.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 
 const store = useMindStore()
@@ -147,6 +161,10 @@ const selectedId = ref<number | null>(null)
 
 onMounted(() => {
   if (!store.loaded) void store.fetchNotes().catch(() => { /* 网络/后端不可用：全局拦截器已报错，列表落空态即可 */ })
+  document.addEventListener('click', closeColorPicker)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeColorPicker)
 })
 
 // 当前选中的便签。数据刷新（勾待办 / 其他端改动）后 store.notes 是同引用替换，
@@ -334,7 +352,21 @@ async function finishEdit() {
 // 切换选中便签即退出编辑——三栏式里左侧列表始终可见，点别的条目语义明确是"看那条"
 watch(selectedId, () => { editing.value = false })
 
-// ── 颜色：只改 color 字段，不牵动 contentMd/version 冲突判定（与 NotesView.onColor 同口径）──
+// ── 颜色：卡片上的颜色球，点击弹出选择（含默认纸色），选完球即新色 ──
+// 颜色只改 color 字段，不牵动 contentMd/version 冲突判定（与 NotesView.onColor 同口径）
+const NOTE_COLORS = ['amber', 'coral', 'blue', 'teal'] as const
+const openColorFor = ref<number | null>(null)
+
+function toggleColorPicker(id: number) {
+  openColorFor.value = openColorFor.value === id ? null : id
+}
+function pickColor(note: MindNote, color: string | null) {
+  openColorFor.value = null
+  void onColor(note, color)
+}
+// 点卡片外任意处收起弹层（卡片本体/色球都有 stop，不会误收）
+function closeColorPicker() { openColorFor.value = null }
+
 async function onColor(note: MindNote, color: string | null) {
   if (note.id < 0) {
     store.notes = store.notes.map(n => n.id === note.id ? { ...n, color } : n)
@@ -428,7 +460,8 @@ function onListScroll() {
 .ntp-day-label .n { font-weight: 400; opacity: 0.7; }
 .ntp-item {
   position: relative; display: block; width: 100%; text-align: left;
-  padding: 11px 13px 10px; margin-bottom: 8px; overflow: hidden;
+  padding: 11px 13px 10px; margin-bottom: 8px;
+  /* 不能加 overflow:hidden——颜色弹层要从卡片向上弹出，裁剪会把弹层吃掉 */
   background: var(--surface-card-solid); border: 1px solid transparent; border-radius: var(--radius-md);
   box-shadow: var(--elevation-card); cursor: pointer; color: inherit; font-family: inherit;
   transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
@@ -454,13 +487,38 @@ function onListScroll() {
   margin-bottom: 7px;
 }
 .ni-preview.no-title { -webkit-line-clamp: 3; color: var(--text-primary); font-weight: 500; }
-.ni-foot { display: flex; align-items: center; gap: 8px; min-height: 14px; }
-.ni-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.ni-dot.none { background: var(--text-secondary); opacity: 0.3; }
-.ni-dot.amber { background: #ffc05f; }
-.ni-dot.coral { background: #ff826c; }
-.ni-dot.blue  { background: #3196e2; }
-.ni-dot.teal  { background: #53d2dc; }
+.ni-foot { display: flex; align-items: center; gap: 8px; min-height: 18px; }
+/* 颜色球：即当前颜色指示；点击向右展开抽屉选择（默认纸色 = 棋盘格），选完球即新色。
+   抽屉沿用 NoteEditor 样式/插入抽屉的「max-width 从 0 长开」模式，不用浮层 */
+.color-dot-wrap { position: relative; display: inline-flex; align-items: center; }
+.ni-dot-btn {
+  flex: none; width: 14px; height: 14px; border-radius: 50%; padding: 0; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.85); box-shadow: 0 1px 2px rgba(80, 90, 110, 0.18);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.ni-dot-btn:hover { transform: scale(1.12); }
+.ni-dot-btn.open { box-shadow: 0 0 0 2px var(--color-primary), 0 1px 2px rgba(80, 90, 110, 0.18); }
+.ni-dot-btn.none { background: repeating-conic-gradient(#dcdce2 0% 25%, #fff 0% 50%) 0 0 / 6px 6px; }
+.ni-dot-btn.amber { background: #ffc05f; }
+.ni-dot-btn.coral { background: #ff826c; }
+.ni-dot-btn.blue  { background: #3196e2; }
+.ni-dot-btn.teal  { background: #53d2dc; }
+.color-drawer {
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 0; opacity: 0; overflow: hidden;
+  transition: max-width 0.18s cubic-bezier(0.65, 0, 0.35, 1), opacity 0.14s ease;
+}
+.color-drawer.open { max-width: 140px; opacity: 1; }
+.pop-dot {
+  flex: none; width: 16px; height: 16px; border-radius: 50%; padding: 0; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.85); box-shadow: 0 1px 2px rgba(80, 90, 110, 0.18);
+}
+.pop-dot.on { box-shadow: 0 0 0 2px var(--color-primary); }
+.pop-dot.none { background: repeating-conic-gradient(#dcdce2 0% 25%, #fff 0% 50%) 0 0 / 6px 6px; }
+.pop-dot.amber { background: #ffc05f; }
+.pop-dot.coral { background: #ff826c; }
+.pop-dot.blue  { background: #3196e2; }
+.pop-dot.teal  { background: #53d2dc; }
 .ni-task { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); }
 
 /* 新建笔记：列表底部整宽胶囊，标准 ActionButton 只接管几何宽度 */
