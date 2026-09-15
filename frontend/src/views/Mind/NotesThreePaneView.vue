@@ -71,14 +71,15 @@
             <div class="rp-body-wrap">
               <article class="rp-body md-preview" @click="onBodyClick" v-html="previewHtml"></article>
             </div>
-            <!-- 底部操作区：与编辑态 Done/Cancel 同一位置 -->
+            <!-- 底部操作区：与编辑态 Done/Cancel 同一位置；删除带文字，四个按钮统一形态 -->
             <div class="rp-foot">
               <ActionButton variant="secondary" fit @click="startEdit">
                 <PhPencilSimple :size="14" weight="bold" />
                 {{ t('mindUi.edit') }}
               </ActionButton>
-              <ActionButton variant="secondary" fit :title="t('mindUi.delete')" @click="onDelete">
+              <ActionButton variant="secondary" fit @click="onDelete">
                 <PhTrash :size="14" weight="bold" />
+                {{ t('mindUi.delete') }}
               </ActionButton>
             </div>
           </template>
