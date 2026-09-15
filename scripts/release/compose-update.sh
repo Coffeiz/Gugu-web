@@ -62,9 +62,11 @@ if [[ "${GUGU_UPDATE_HELPER:-0}" != 1 && -n "${GUGU_UPDATE_HELPER_IMAGE:-}" ]]; 
     || { echo 'helper 镜像不在固定白名单内' >&2; exit 1; }
   APP_CONTAINER="$(cat /etc/hostname 2>/dev/null || true)"
   DATA_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
-  [[ -n "$DATA_SOURCE" && -d "$DATA_SOURCE" ]] || { echo '无法定位 /data 宿主机挂载，停止更新' >&2; exit 1; }
+  # inspect 返回的是宿主机 namespace 的 source；不要在 app 容器内用 -d/-e 检查它。
+  # 后续 docker run --mount 会由 Docker daemon 在宿主机 namespace 校验该路径。
+  [[ -n "$DATA_SOURCE" ]] || { echo '无法定位 /data 宿主机挂载，停止更新' >&2; exit 1; }
   DOCKER_SOCKET_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/run/docker.sock"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
-  [[ -n "$DOCKER_SOCKET_SOURCE" && -e "$DOCKER_SOCKET_SOURCE" ]] || { echo '无法定位 Docker socket 宿主机挂载，停止更新' >&2; exit 1; }
+  [[ -n "$DOCKER_SOCKET_SOURCE" ]] || { echo '无法定位 Docker socket 宿主机挂载，停止更新' >&2; exit 1; }
   HELPER_NAME="gugu-update-helper-${RANDOM}-${RANDOM}"
   docker run --rm --detach \
     --name "$HELPER_NAME" \

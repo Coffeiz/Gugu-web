@@ -84,3 +84,35 @@ async def test_failed_responses_probe_is_reused_for_same_configuration(monkeypat
 
     assert first == second == {"ok": False, "status": 404}
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_transient_responses_probe_failure_expires(monkeypatch):
+    import app.services.provider_diagnostics as diagnostics
+
+    diagnostics._responses_probe_cache.clear()
+    diagnostics._responses_probe_tasks.clear()
+    clock = 100.0
+    monkeypatch.setattr(diagnostics.time, "monotonic", lambda: clock)
+    calls = 0
+
+    async def probe_once(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {"ok": False, "status": 503}
+
+    monkeypatch.setattr(diagnostics, "_probe_responses_once", probe_once)
+    first = await diagnostics.probe_responses_capability(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
+    )
+    clock = 150.0
+    second = await diagnostics.probe_responses_capability(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
+    )
+    clock = 161.0
+    third = await diagnostics.probe_responses_capability(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
+    )
+
+    assert first == second == third == {"ok": False, "status": 503}
+    assert calls == 2

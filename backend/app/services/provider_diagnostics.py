@@ -6,9 +6,20 @@ import time
 from types import SimpleNamespace
 
 
-_RESPONSES_PROBE_TTL_SECONDS = 10 * 60
+_RESPONSES_PROBE_SUCCESS_TTL_SECONDS = 10 * 60
+_RESPONSES_PROBE_UNSUPPORTED_TTL_SECONDS = 60 * 60
+_RESPONSES_PROBE_TRANSIENT_TTL_SECONDS = 60
 _responses_probe_cache: dict[str, tuple[float, dict]] = {}
 _responses_probe_tasks: dict[str, asyncio.Task] = {}
+
+
+def _responses_probe_ttl(result: dict) -> float:
+    if result.get("ok"):
+        return _RESPONSES_PROBE_SUCCESS_TTL_SECONDS
+    status = result.get("status")
+    if status in {404, 405, 501}:
+        return _RESPONSES_PROBE_UNSUPPORTED_TTL_SECONDS
+    return _RESPONSES_PROBE_TRANSIENT_TTL_SECONDS
 
 
 def _responses_probe_key(*, provider: str, base_url: str, model: str,
@@ -54,15 +65,12 @@ async def probe_responses_capability(*, provider: str, api_key: str, base_url: s
         provider=provider, base_url=base_url, model=model, api_key=api_key,
     )
     now = time.monotonic()
-    for stale_key, (checked_at, _) in list(_responses_probe_cache.items()):
-        # 成功结果定期刷新；失败结果在当前配置指纹下保持，避免每轮对话重复打
-        # 一个已知不支持的端点。改地址、模型或凭据会自然产生新指纹。
-        if now - checked_at >= _RESPONSES_PROBE_TTL_SECONDS \
-                and _responses_probe_cache[stale_key][1].get("ok"):
+    for stale_key, (checked_at, result) in list(_responses_probe_cache.items()):
+        if now - checked_at >= _responses_probe_ttl(result):
             _responses_probe_cache.pop(stale_key, None)
     cached = _responses_probe_cache.get(key)
     if cached:
-        if not cached[1].get("ok") or now - cached[0] < _RESPONSES_PROBE_TTL_SECONDS:
+        if now - cached[0] < _responses_probe_ttl(cached[1]):
             return dict(cached[1])
         _responses_probe_cache.pop(key, None)
 

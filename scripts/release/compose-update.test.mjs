@@ -85,7 +85,6 @@ function createFixture() {
   fs.mkdirSync(binDir, { recursive: true })
   fs.mkdirSync(path.join(root, 'backend'), { recursive: true })
   fs.mkdirSync(path.join(root, 'data'), { recursive: true })
-  fs.writeFileSync(path.join(root, 'docker.sock'), '')
   fs.copyFileSync(sourceScript, path.join(scriptsDir, 'compose-update.sh'))
   fs.copyFileSync(sourceValidator, path.join(scriptsDir, 'validate-update-manifest.mjs'))
   fs.writeFileSync(path.join(root, 'backend', '.env'), 'ADMIN_PASSWORD=test-only-value\n')
@@ -129,8 +128,9 @@ function runUpdate(
       ...process.env,
       PATH: `${fixture.binDir}:${process.env.PATH}`,
       MOCK_DOCKER_LOG: fixture.dockerLog,
-      MOCK_DATA_SOURCE: path.join(fixture.root, 'data'),
-      MOCK_SOCKET_SOURCE: path.join(fixture.root, 'docker.sock'),
+      // 模拟只能在宿主 namespace 访问的路径，验证脚本不会在 app 容器内检查它们。
+      MOCK_DATA_SOURCE: '/host-only/gugu-data',
+      MOCK_SOCKET_SOURCE: '/run/user/1000/docker.sock',
       GUGU_DB_PASSWORD: 'test-only-value',
       BACKUP_ROOT: path.join(fixture.root, 'backup'),
       ...extraEnv,
@@ -149,7 +149,7 @@ test('app 更新会把 stop/recreate 交给独立 helper，避免 self-stop 截�
     assert.match(log, /--env GUGU_DB_PASSWORD/)
     assert.match(log, /--env GUGU_DB_USER/)
     assert.match(log, /--env GUGU_DB_NAME/)
-    assert.match(log, /source=.*docker\.sock,target=\/var\/run\/docker\.sock/)
+    assert.match(log, /source=\/run\/user\/1000\/docker\.sock,target=\/var\/run\/docker\.sock/)
     assert.doesNotMatch(log, /compose stop app/)
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
