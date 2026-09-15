@@ -1,6 +1,8 @@
 """链接按钮出站链路（PRD-LLM-24）：校验、part 结构、能力声明与降级分支。"""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent.im import link_buttons as lb
@@ -235,3 +237,87 @@ async def test_send_double_failure_is_failed(monkeypatch):
     )
     assert result["status"] == "failed"
     assert result["delivery"] == "none"
+
+
+# ── wire payload 与安全回归（§14.2/§14.4）────────────────────────────────────
+
+def test_qq_link_keyboard_wire_uses_jump_action_with_raw_url():
+    """§8.2/§14.2：QQ 跳转按钮 action.type=0，data 就是原始 URL，不带 opaque token。"""
+    from agent.gateway.qq import _link_keyboard_wire_payload
+    payload = _link_keyboard_wire_payload(GOOD_BUTTONS)
+    rows = payload["content"]["rows"]
+    wire_buttons = [b for row in rows for b in row["buttons"]]
+    assert len(wire_buttons) == 2
+    first = wire_buttons[0]
+    assert first["action"]["type"] == 0
+    assert first["action"]["data"] == "https://example.com/projects/123"
+    assert first["action"]["permission"] == {"type": 2}
+    assert "unsupport_tips" in first["action"]
+    assert all("token" not in json.dumps(b) for b in wire_buttons)
+
+
+def test_qq_ask_user_keyboard_keeps_callback_action_type():
+    """§8.2：现有 ask_user 回调按钮仍是 type=1 + encoded action_data，互不污染。"""
+    from agent.gateway.qq import _keyboard_wire_payload
+    prompt = {"prompt_id": 7, "options": [
+        {"id": "confirm", "label": "确认", "token": "tok-1"},
+        {"id": "cancel", "label": "取消", "token": "tok-2"},
+    ]}
+    payload = _keyboard_wire_payload(prompt)
+    wire_buttons = [b for row in payload["content"]["rows"] for b in row["buttons"]]
+    assert all(b["action"]["type"] == 1 for b in wire_buttons)
+    assert all(b["action"]["data"].startswith("gugu:") or b["action"]["data"] for b in wire_buttons)
+    assert all("https://" not in b["action"]["data"] for b in wire_buttons)
+
+
+def test_feishu_link_card_uses_open_url_without_callback():
+    """§8.3/§14.2：飞书卡片按钮用 open_url behavior，不生成 card.action.trigger token。"""
+    from agent.gateway.feishu import _build_link_card_payload
+    card = _build_link_card_payload("相关入口：", GOOD_BUTTONS)
+    actions = next(el for el in card["elements"] if el.get("tag") == "action")["actions"]
+    assert len(actions) == 2
+    assert actions[0]["behaviors"] == [{"type": "open_url", "default_url": "https://example.com/projects/123"}]
+    assert "token" not in json.dumps(card)
+    assert card["elements"][0]["content"] == "相关入口："
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_logs_do_not_leak_url(monkeypatch, capsys):
+    """§14.4：发送失败日志只允许 fingerprint，不得出现完整 URL。"""
+    async def fail_keyboard(*args, **kwargs):
+        return False
+
+    async def fail_text(payload, text):
+        return False
+
+    monkeypatch.setattr("agent.gateway.qq.send_link_keyboard", fail_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fail_text)
+
+    from agent.im.replies import send_link_button_message
+    secret_url = "https://example.com/private?token=super-secret-value"
+    buttons = [{"id": "s", "label": "入口", "url": secret_url}]
+    await send_link_button_message(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "U1"}, "入口：", buttons,
+    )
+    captured = capsys.readouterr()
+    assert "super-secret-value" not in captured.out + captured.err
+
+
+@pytest.mark.asyncio
+async def test_outbound_boundary_revalidates_urls(monkeypatch):
+    """§12：出站层第二道校验——上游未校验的危险 URL 在发送前被拦截，不触达网关。"""
+    called = []
+
+    async def fail_keyboard(*args, **kwargs):
+        called.append("keyboard")
+        return True
+
+    monkeypatch.setattr("agent.gateway.qq.send_link_keyboard", fail_keyboard)
+
+    from agent.im.replies import send_link_button_message
+    result = await send_link_button_message(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "U1"},
+        "入口：", [{"id": "s", "label": "S", "url": "https://127.0.0.1/x"}],
+    )
+    assert result["status"] == "failed"
+    assert called == []  # 未触达网关，也不产生文本降级

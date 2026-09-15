@@ -139,9 +139,19 @@ async def send_link_button_message(payload: dict, message: str, buttons: list[di
     输入必须已通过 ``agent.im.link_buttons`` 校验；这里只负责"当前平台用哪种
     渲染、失败怎么降级"，不重新解释按钮语义，也不创建任何待答交互。
     """
+    from agent.im.link_buttons import validate_link_button_url
     from agent.security import logsafe
 
     platform = str(payload.get("platform") or "")
+    # 第二道校验边界（PRD-LLM-24 §12）：出站层不信任上游传入的原始链接。
+    # 工具入口已校验一次；这里重验以覆盖未来绕过工具层的新调用方。
+    for button in buttons:
+        url_error = validate_link_button_url(str(button.get("url") or ""))
+        if url_error:
+            from agent.security import logsafe as _ls
+            print(f"[im] 链接按钮出站前校验失败 fp={_ls.fingerprint(str(button.get('id')))}", flush=True)
+            return _link_buttons_result("failed", platform, "none", buttons)
+
     fallback_text = _link_buttons_text(message, buttons)
 
     def _fp(text: str) -> str:
