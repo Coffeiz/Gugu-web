@@ -1,8 +1,8 @@
 # PRD-KNOWLEDGE-2：knowledge 读取边界独立与 read_knowledge 工具
 
-> 状态：Phase 1 已实施完成（随 v1.2.3 发布；提交 57cf19df8 落地 + b7b995f74 清理）；KN2-004 devserver 实测未记录 devlog，唯一遗留
+> 状态：Phase 1 已实施完成（随 v1.2.3 发布）；2026-09-16 复核结论——**search_memory 收窄维持不变**（不加回 knowledge），旧知识发现缺口由 read_knowledge 列举模式（自带全量 keyword 搜索）+ 清单截断如实提示解决
 > 创建：2026-09-13
-> 最近更新：2026-09-16
+> 最近更新：2026-09-16（二次修订）
 > 关联模块：`backend/agent/tools/memory.py`、`backend/agent/tools/knowledge.py`、`backend/agent/knowledge/store.py`、`backend/agent/rag/service.py`、`backend/agent/context/builder.py`、`backend/agent/knowledge/reflection.py`
 > 背景参考：PRD-KNOWLEDGE-1（统一知识系统，已完成）；PRD-MEM-1（记忆召回工具与混合检索）
 
@@ -10,9 +10,9 @@
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
-| knowledge 精确读取走索引（原痛点） | ✅ 已解决 | `agent/tools` 层 `source=knowledge` 返回引导文案；`rag/service.search_memory` 摘除 knowledge 检索器，`source=all` 不再隐性附带知识 |
+| knowledge 精确读取走索引（原痛点） | ✅ 已解决 | `read_knowledge` 直读 + 列举模式自带全量 keyword 搜索（写入即可读、覆盖全部条目）；`search_memory(source=knowledge)` 仍返回引导文案 |
 | `read_knowledge` 直读工具 | ✅ | `agent/tools/knowledge.py`：id 精确读 + 列举（scope/keyword 过滤、上限），直读 `KnowledgeStore` 写入即可读 |
-| `search_memory` 收窄为记忆专用 | ✅ | 工具层枚举 `all/profile/pattern/daily/memory`；service 层同步摘除（未知 source 走记忆来源过滤自然返回空） |
+| `search_memory` 收窄为记忆专用 | ✅ 维持 | 曾短暂评估加回 knowledge 检索，因确认 `read_knowledge` 列举模式已是全量搜索（包含匹配、写入即可读）而放弃；收窄边界与引导文案保持 v1.2.3 现状 |
 | knowledge 工具独立注册 | ✅ | save/update/delete/read_knowledge 迁入独立 `KnowledgeSkill`，工具名与参数契约不变 |
 | 配套（计数钉/技能文档/i18n/被动注入文案） | ✅ | capability 计数钉、`toolNames.ts` 三语、skills 文档无「search_memory 搜知识」残留、被动注入引导改指 read_knowledge |
 | KN2-004 devserver 实测 + devlog | 🔲 | 单测全绿（test_read_knowledge_tool + test_search_memory_boundary 10 passed），5173 实测与 devlog 记录未做 |
@@ -129,4 +129,4 @@ backend/
 - [ ] `KN2-004` devserver 实测两条路径：「保存知识 → read_knowledge 立即可见」「search_memory(source=knowledge) 返回引导文案」；验收：5173 实测通过，结论记录 devlog。
 
 > 实施记录：57cf19df8（Phase 1 落地）+ b7b995f74（search_memory service 层摘除 knowledge 检索器、边界测试更名、PRD 修正过时假设）。已随 v1.2.3 发布（2026-09-16）。
-> 待确认 1 结论（2026-09-16 复核）：**维持不加走索引的 search_knowledge 工具**——模糊召回由被动注入（`rag/injection.py` 每轮自动调 `search_knowledge` 注入相关条目）+ `read_knowledge` 列举/keyword 本地过滤覆盖；knowledge 量级小（几十到几百条），若实测模型频繁找不到旧知识再重启评估。
+> 待确认 1 结论（2026-09-16 复核）：**维持不加独立 search_knowledge 工具，search_memory 也不加回 knowledge**。旧知识发现缺口（上下文清单 `_KNOWLEDGE_MANIFEST_MAX_ITEMS=40` 只列最新条目，旧条目在清单与被动注入外不可见）改用以下方式闭合：① 清单截断时如实标注「另有 N 条更早条目」并引导 read_knowledge（builder.py）；② 引导语修正「清单不含 id、需先列举拿 id 再直读」；③ `read_knowledge` 列举模式的描述明确其本身就是知识搜索入口（全量 keyword 包含匹配、写入即可读）。
