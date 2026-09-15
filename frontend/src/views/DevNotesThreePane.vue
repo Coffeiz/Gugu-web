@@ -20,19 +20,21 @@
       <div class="dntp-side right">
         <span class="dntp-badge">DEV</span>
         <button class="dntp-seed" @click="seedSample">{{ t('mindThreePane.seed') }}</button>
+        <!-- 类名沿用 Mind/index.vue 的 mind-cal-picker / mind-filter：主题 paint 在
+             adoption/mind.css 里按这两个类名全局生效，换名就会丢掉玻璃质感（筛选胶囊变空壳） -->
         <DatePicker
           v-model="store.jumpTarget"
-          class="dntp-cal-picker"
-          popup-class="dntp-cal-popup"
+          class="mind-cal-picker"
+          popup-class="mind-cal-popup"
           :max="todayIso"
           :allowed-dates="store.timeline.map(g => g.date)"
           :show-clear="false"
           :title="t('mind.chooseDate')"
         />
-        <div class="dntp-filter">
-          <PhMagnifyingGlass :size="13" weight="bold" class="df-icon" />
+        <div class="mind-filter">
+          <PhMagnifyingGlass :size="13" weight="bold" class="mf-icon" />
           <input v-model="store.filterQ" type="text" :placeholder="t('mind.filter')" />
-          <button v-if="store.filterQ" class="df-clear" :title="t('mind.clear')" @click="store.filterQ = ''">
+          <button v-if="store.filterQ" class="mf-clear" :title="t('mind.clear')" @click="store.filterQ = ''">
             <PhX :size="11" weight="bold" />
           </button>
         </div>
@@ -182,25 +184,26 @@ function seedSample() {
 .dntp-tab:hover { color: var(--color-primary); }
 .dntp-tab.on { color: var(--text-primary); background: var(--surface-card-solid); box-shadow: var(--elevation-card); }
 
-:deep(.dntp-cal-picker) { width: auto !important; }
-:deep(.dntp-cal-picker .dp-input) {
+:deep(.mind-cal-picker) { width: auto !important; }
+:deep(.mind-cal-picker .dp-input) {
   width: 40px; height: 40px; padding: 0; box-sizing: border-box; justify-content: center;
   border-radius: 999px;
 }
-:deep(.dntp-cal-picker .dp-input span) { display: none; }
+:deep(.mind-cal-picker .dp-input span) { display: none; }
 
-.dntp-filter {
+/* 几何照抄 Mind/index.vue 的 .mind-filter；主题 paint 走 adoption/mind.css 的同名全局类 */
+.mind-filter {
   display: flex; align-items: center; gap: 6px;
   width: 200px; height: 40px; box-sizing: border-box;
   padding: 0 12px; border: 1px solid transparent; border-radius: 999px;
 }
-.df-icon { flex-shrink: 0; color: var(--text-secondary); opacity: 0.7; }
-.dntp-filter input {
+.mf-icon { flex-shrink: 0; color: var(--text-secondary); opacity: 0.7; }
+.mind-filter input {
   flex: 1; min-width: 0; border: none; outline: none; background: none;
   font-size: 12.5px; color: var(--text-primary); font-family: var(--font-sans);
 }
-.dntp-filter input::placeholder { color: var(--text-secondary); opacity: 0.6; }
-.df-clear {
+.mind-filter input::placeholder { color: var(--text-secondary); opacity: 0.6; }
+.mf-clear {
   flex-shrink: 0; display: inline-flex; padding: 2px;
   border: none; border-radius: 4px; background: none;
   color: var(--text-secondary); cursor: pointer;

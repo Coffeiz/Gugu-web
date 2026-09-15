@@ -45,17 +45,35 @@
           <div class="rp-head">
             <span class="rp-datetime">{{ fullTime(selected) }}</span>
             <span class="rp-swatch" :class="selected.color ?? 'none'" :title="t('mindUi.defaultColor')"></span>
+            <div class="rp-actions">
+              <button v-if="!editing" class="rp-edit-btn" @click="startEdit">
+                <PhPencilSimple :size="13" weight="bold" />
+                {{ t('mindUi.edit') }}
+              </button>
+            </div>
           </div>
-          <h1 v-if="selectedTitle" class="rp-title">{{ selectedTitle }}</h1>
-          <div v-if="nodeRef || selectedTitle" class="rp-meta">
-            <button v-if="nodeRef" class="ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
-              <component :is="refIcon(nodeRef.type)" :size="14" weight="bold" />
-              <span class="label">{{ nodeRef.label }}</span>
-            </button>
-          </div>
-          <!-- 只读正文复用 NoteCard 同一套 mdToPreviewHtml + 全局 .md-preview 样式：
-               待办勾选、引用 chip、代码块、引用块的行为和主题适配免费拿到 -->
-          <article class="rp-body md-preview" @click="onBodyClick" v-html="previewHtml"></article>
+          <template v-if="!editing">
+            <h1 v-if="selectedTitle" class="rp-title">{{ selectedTitle }}</h1>
+            <div v-if="nodeRef || selectedTitle" class="rp-meta">
+              <button v-if="nodeRef" class="ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
+                <component :is="refIcon(nodeRef.type)" :size="14" weight="bold" />
+                <span class="label">{{ nodeRef.label }}</span>
+              </button>
+            </div>
+            <!-- 只读正文复用 NoteCard 同一套 mdToPreviewHtml + 全局 .md-preview 样式：
+                 待办勾选、引用 chip、代码块、引用块的行为和主题适配免费拿到 -->
+            <article class="rp-body md-preview" @click="onBodyClick" v-html="previewHtml"></article>
+          </template>
+          <!-- 编辑态：整条 contentMd 进 NoteEditor（与卡片编辑同一台 TipTap），首行 # 即标题；
+               foot-actions 插槽挂完成/取消，与 NoteCard 的完成按钮同一插槽口径 -->
+          <NoteEditor v-else v-model="editMd" :autofocus="true" class="rp-editor" @submit="finishEdit">
+            <template #foot-actions>
+              <button class="rp-done-btn" @click="finishEdit">
+                <PhCheck :size="12" weight="bold" /> {{ t('mindUi.editDone') }}
+              </button>
+              <button class="rp-cancel-btn" @click="cancelEdit">{{ t('common.actions.cancel') }}</button>
+            </template>
+          </NoteEditor>
         </template>
         <div v-else class="ntp-state">{{ t('mind.noRecords') }}</div>
       </div>
@@ -83,7 +101,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PhArrowSquareOut, PhCalendarBlank, PhCheckSquare, PhFile, PhStack } from '@phosphor-icons/vue'
+import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhStack } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { useProjectStore } from '@/stores/projects'
@@ -92,6 +110,7 @@ import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd } from '@/composables/mind/useMindEditor'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { MindNote } from '@/services/api'
+import NoteEditor from './components/NoteEditor.vue'
 
 const store = useMindStore()
 const projectStore = useProjectStore()
@@ -199,6 +218,36 @@ async function onSave(note: MindNote, md: string) {
     }
   }
 }
+
+// ── 阅读窗格编辑态：整条 contentMd 进 NoteEditor（与卡片编辑同一台 TipTap）──
+const editing = ref(false)
+const editMd = ref('')
+
+function startEdit() {
+  if (!selected.value) return
+  editMd.value = selected.value.contentMd
+  editing.value = true
+}
+function cancelEdit() { editing.value = false }
+
+async function finishEdit() {
+  const note = selected.value
+  editing.value = false
+  if (!note) return
+  const md = editMd.value
+  if (md === note.contentMd) return
+  if (note.id < 0) {
+    // 样例数据（负 id）只改内存态，绝不落库
+    store.notes = store.notes.map(n => n.id === note.id
+      ? { ...n, contentMd: md, version: n.version + 1, updatedAt: new Date().toISOString() }
+      : n)
+    return
+  }
+  await onSave(note, md)
+}
+
+// 切换选中便签即退出编辑——三栏式里左侧列表始终可见，点别的条目语义明确是"看那条"
+watch(selectedId, () => { editing.value = false })
 
 // ── 时间 / 日期标签 ──
 function timeHM(note: MindNote) {
@@ -322,6 +371,29 @@ function onListScroll() {
 }
 .rp-title + .rp-meta { margin-top: 10px; }
 .rp-body { font-size: 14px; }
+
+/* 编辑态：编辑器撑满阅读栏剩余高度（NoteEditor 自带 .note-editor 排版），按钮沿用卡片完成按钮的口径 */
+.rp-edit-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 999px; font-size: 12.5px;
+  color: var(--color-primary); border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  background: transparent; cursor: pointer; font-family: inherit; transition: background 0.15s;
+}
+.rp-edit-btn:hover { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
+.rp-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; margin-top: 14px; }
+.rp-done-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  color: #fff; background: var(--color-primary); border: none; cursor: pointer; font-family: inherit;
+}
+.rp-done-btn:hover { background: var(--action-primary-hover); }
+.rp-cancel-btn {
+  display: inline-flex; align-items: center;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px;
+  color: var(--text-secondary); border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  background: transparent; cursor: pointer; font-family: inherit;
+}
+.rp-cancel-btn:hover { color: var(--text-primary); }
 
 /* 引用 chip（便签本体单引用）：对齐气泡 @ chip 契约——图标不压扁 + label 不换行 */
 .ntp-ref-chip {
