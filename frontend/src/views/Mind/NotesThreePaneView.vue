@@ -58,14 +58,16 @@
       <div ref="readingRef" class="ntp-reading" :class="{ editing }">
         <template v-if="selected">
           <template v-if="!editing">
-            <h1 v-if="selectedTitle" class="rp-title">{{ selectedTitle }}</h1>
-            <!-- 标题/正文之间的分割线；无标题且无引用时不画 -->
-            <div v-if="selectedTitle || nodeRef" class="rp-meta">
+            <!-- 标题行（引用 chip 并排）+ 固定分割线：间距与编辑态标题 h1 的
+                 padding/margin 完全同值，两种模式标题→分割线→正文的节奏一致 -->
+            <div v-if="selectedTitle || nodeRef" class="rp-title-row">
+              <h1 v-if="selectedTitle" class="rp-title">{{ selectedTitle }}</h1>
               <button v-if="nodeRef" class="ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
                 <component :is="refIcon(nodeRef.type)" :size="14" weight="bold" />
                 <span class="label">{{ nodeRef.label }}</span>
               </button>
             </div>
+            <div v-if="selectedTitle || nodeRef" class="rp-divider"></div>
             <!-- 只读正文复用 NoteCard 同一套 mdToPreviewHtml + 全局 .md-preview 样式：
                  待办勾选、引用 chip、代码块、引用块的行为和主题适配免费拿到 -->
             <div class="rp-body-wrap">
@@ -85,7 +87,7 @@
           </template>
           <!-- 编辑态：整条 contentMd 进 NoteEditor（与卡片编辑同一台 TipTap），首行 # 即标题；
                foot-actions 插槽挂完成/取消，宽窗格抽屉常开 -->
-          <NoteEditor v-else v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
+          <NoteEditor v-else v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" :class="{ 'has-title': !!selectedTitle }" @submit="finishEdit">
             <template #foot-actions>
               <ActionButton variant="primary" fit @click="finishEdit">
                 <PhCheck :size="14" weight="bold" /> {{ t('mindUi.editDone') }}
@@ -481,17 +483,15 @@ function onListScroll() {
 /* 编辑态：窗格底部只留 12px，别让钉底的工具栏下面空一截 */
 .ntp-reading.editing { overflow: hidden; padding-bottom: 12px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
-.rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 2px 0 0; color: var(--text-primary); }
-/* 标题/正文之间的分割线：chip 行自带下边线；无标题且无引用时整行不渲染 */
-.rp-meta {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
-  padding-bottom: 12px; margin: 12px 0 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
-}
-.rp-title + .rp-meta { margin-top: 10px; }
-/* 正文区自占剩余高度滚动，底部操作区（编辑/删除）钉在窗格底部，与编辑态 Done/Cancel 同位 */.rp-body-wrap { flex: 1; min-height: 0; overflow-y: auto; }
+.rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }
+.rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
+/* 标题→分割线→正文的节奏（12/14）与编辑态标题 h1 的 padding/margin 严格同值，
+   两种模式切换时标题、分割线、正文的相对位置不动 */
+.rp-divider { border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent); margin: 12px 0 14px; }
+/* 正文区自占剩余高度滚动，底部操作区（编辑/删除）钉在窗格底部，与编辑态 Done/Cancel 同位 */
+.rp-body-wrap { flex: 1; min-height: 0; overflow-y: auto; }
 .rp-body { font-size: 14px; margin-top: 14px; }
-.rp-meta + .rp-body-wrap .rp-body { margin-top: 0; }
+.rp-divider ~ .rp-body-wrap .rp-body { margin-top: 0; }
 .rp-foot { flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
 
 /* 编辑态：排版与只读预览完全同口径——mind-content 基础 13px 是窄卡片口径，宽窗格
@@ -501,7 +501,16 @@ function onListScroll() {
 .rp-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .rp-editor :deep(.ne-body) { flex: 1; min-height: 0; overflow-y: auto; }
 .rp-editor :deep(.ProseMirror) { font-size: 14px; }
-.rp-editor :deep(.ProseMirror h1) { font-size: 23px; line-height: 1.35; margin: 2px 0 6px; }
+/* 编辑器把所有 md 标题级别折叠成 h1（markdownToDoc level:1）：其余 h1 一律 15px
+   对齐 .md-preview h1；首块 h1 才是笔记标题（has-title 时与 .rp-title 同 23px，
+   自带下分割线补上编辑态缺失的「标题/正文」分隔线） */
+.rp-editor :deep(.ProseMirror h1) { font-size: 15px; font-weight: 700; margin: 0; }
+.rp-editor.has-title :deep(.ProseMirror > h1:first-child) {
+  font-size: 23px; line-height: 1.35;
+  /* 12/14 与只读态 .rp-divider 的 margin 严格同值：两模式标题→分割线→正文节奏一致 */
+  padding-bottom: 12px; margin-bottom: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
 .rp-editor :deep(.ProseMirror h2),
 .rp-editor :deep(.ProseMirror h3) { font-size: 15px; font-weight: 700; }
 .rp-editor :deep(.ne-tool svg),
