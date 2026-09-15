@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # 默认 Compose 一体化应用镜像：前端 dist + 后端生产运行时，由统一应用服务提供站点。
 # 与 backend/Dockerfile.prod、frontend/Dockerfile.prod（供生产分离 Compose 使用）并存；
 # 构建上下文 = 仓库根目录。
@@ -13,10 +14,13 @@ WORKDIR /workspace
 
 RUN npm install --global pnpm@latest
 
-# 依赖单独一层：workspace 元数据和 manifest 未变时改代码不重装。
+# 依赖单独一层：workspace 元数据和 manifest 未变时改代码不重装；
+# pnpm store 走 cache mount，lockfile 变更时只下载增量。
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY frontend/package.json ./frontend/package.json
-RUN pnpm install --filter gugu-web --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store \
+    && pnpm install --filter gugu-web --frozen-lockfile
 
 COPY frontend/ ./frontend/
 RUN cd frontend && pnpm build
@@ -41,19 +45,25 @@ ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 WORKDIR /build
 
-RUN sed -i \
+# apt 下载走 cache mount：索引每轮照拉、包照装（安全语义不变），
+# 只复用未变更版本的 .deb 下载；docker-clean 会装完即删归档，先移除。
+# lists 留在 cache mount 里不进镜像层，无需再手工清理。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
         -e "s|https\?://security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential libffi-dev libpq-dev libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+        build-essential libffi-dev libpq-dev libssl-dev
 
 COPY backend/requirements.txt ./requirements.txt
-RUN python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade --force-reinstall \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m venv /opt/venv \
+    && /opt/venv/bin/pip install -i "${PIP_INDEX_URL}" -r requirements.txt \
+    && /opt/venv/bin/pip install --upgrade --force-reinstall \
         -i "${PIP_INDEX_URL}" \
         "msgpack==1.2.2" "setuptools==84.0.0" \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
@@ -71,10 +81,12 @@ RUN sed -i \
         -e "s|https\?://security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" \
         /etc/apt/sources.list.d/debian.sources
 
-RUN apt-get update \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
-        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl \
-    && rm -rf /var/lib/apt/lists/*
+        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl
 
 # CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁，
 # 与 backend/Dockerfile.prod 同款：libgstreamer-plugins-base1.0-0 是 ffmpeg 的传递
@@ -98,13 +110,15 @@ RUN sed -i \
 # 会停在带 CVE 的旧版（2026-09-12 docker-release trivy 门失败根因）。逐包追 deb
 # 是无底洞，切回官方 security pool 做整段 upgrade 自动覆盖后续 CVE；
 # 镜像源同步追平后可移除本段。
-RUN sed -i \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && sed -i \
         -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
         -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get upgrade -y
 
 WORKDIR /app
 
