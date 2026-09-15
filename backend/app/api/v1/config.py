@@ -21,7 +21,7 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import FileSyncSettings, get_settings, save_override
-from app.core.redaction import redact
+from app.core.redaction import diag_log, redact
 from app.db.session import create_all_tables, reset_engine, get_db
 from agent.sandbox.docker_runtime import sandbox_readiness
 
@@ -1064,6 +1064,7 @@ async def test_voice(body: VoiceTestRequest):
 
 # ── Embedding 向量重建（换模型后批量重算所有用户的 pattern 向量）──────────────────
 _REBUILD_KEY = "emb:rebuild"
+_INDEX_REBUILD_KEY = "rag:index-rebuild"
 
 
 async def _rebuild_worker(user_ids: list[str]) -> None:
@@ -1164,6 +1165,125 @@ async def embedding_rebuild_status():
         return {"status": "idle"}
     try:
         return json.loads(cur if isinstance(cur, str) else cur.decode())
+    except Exception:
+        return {"status": "idle"}
+
+
+async def _rebuild_index_worker(user_ids: list[str]) -> None:
+    """后台按用户完整重投影 RAG 来源并强制刷新 TS 持久索引。
+
+    这是派生索引维护，不修改文件、对话等主数据；每个来源独立失败并继续，
+    让管理员能在一次任务中尽量收敛所有用户，同时得到明确的失败计数。
+    """
+    from agent.memory import embedding
+    from agent.rag.index_cache import get_index_cache
+    from agent.rag import pipeline as rag_pipeline
+    from app.core import redis as redis_mod
+    import app.db.session as db_session
+
+    redis = redis_mod.get_redis()
+    source_types = rag_pipeline.INDEX_REBUILD_SOURCE_TYPES
+    total = len(user_ids)
+    done = 0
+    documents = 0
+    failed_users = 0
+    failed_sources = 0
+
+    async def update_status(status: str = "running", *, message: str | None = None) -> None:
+        payload = {
+            "status": status, "done": done, "total": total,
+            "documents": documents, "failed_users": failed_users,
+            "failed_sources": failed_sources, "ts": time.time(),
+        }
+        if message:
+            payload["message"] = message
+        await redis.set(_INDEX_REBUILD_KEY, json.dumps(payload, ensure_ascii=False), ex=3600)
+
+    try:
+        for user_id in user_ids:
+            user_failed = False
+            for source_type in source_types:
+                try:
+                    if source_type == "memory":
+                        count = await rag_pipeline.rebuild_memory_index(
+                            user_id, operation="admin-index-rebuild",
+                        )
+                    else:
+                        count = await rag_pipeline.rebuild_source_index(
+                            user_id, source_type, operation="admin-index-rebuild",
+                        )
+                    documents += int(count or 0)
+                except Exception as exc:
+                    user_failed = True
+                    failed_sources += 1
+                    diag_log("app.api.v1.config.index_rebuild.source", exc)
+
+            # 来源写库完成后，直接执行一次全量数据库装载，确保 TS 磁盘索引不再
+            # 依赖下一次查询触发增量同步，也避免旧缓存只保留旧正文。
+            try:
+                db_session.ensure_engine()
+                async with db_session._SessionLocal() as db:
+                    revision = await rag_pipeline._owner_revision(db, user_id)
+                if revision:
+                    client = await rag_pipeline._knowledge_client(user_id)
+                    vector_tag = embedding.model_tag() if embedding.is_enabled() else ""
+                    await client.load_index_from_database(user_id, revision, vector_tag)
+                    get_index_cache().invalidate(user_id, include_snapshot=True)
+            except Exception as exc:
+                user_failed = True
+                diag_log("app.api.v1.config.index_rebuild.ts_index", exc)
+
+            done += 1
+            if user_failed:
+                failed_users += 1
+            await update_status()
+
+        status = "error" if failed_users else "done"
+        message = (
+            f"索引重建完成：{documents} 条文档"
+            + (f"；失败用户 {failed_users} 个，失败来源 {failed_sources} 个"
+               if failed_users else "")
+        )
+        await update_status(status, message=message)
+    except Exception as exc:
+        diag_log("app.api.v1.config.index_rebuild", exc)
+        await update_status("error", message="索引重建失败，请查看服务端诊断日志")
+
+
+@router.post("/index-rebuild")
+async def index_rebuild(db: AsyncSession = Depends(get_db)):
+    """管理员后台完整重建所有用户的 RAG 索引，不重建 embedding 向量。"""
+    from app.core.redis import get_redis
+    from app.models import User
+
+    redis = get_redis()
+    current = await redis.get(_INDEX_REBUILD_KEY)
+    if current:
+        try:
+            state = json.loads(current if isinstance(current, str) else current.decode())
+            if state.get("status") == "running":
+                return {"ok": False, "message": "已有索引重建任务在跑", "status": state}
+        except Exception:
+            pass
+    rows = (await db.execute(select(User.id))).scalars().all()
+    user_ids = [str(user_id) for user_id in rows]
+    await redis.set(_INDEX_REBUILD_KEY, json.dumps({
+        "status": "running", "done": 0, "total": len(user_ids),
+        "documents": 0, "failed_users": 0, "failed_sources": 0, "ts": time.time(),
+    }, ensure_ascii=False), ex=3600)
+    asyncio.create_task(_rebuild_index_worker(user_ids))
+    return {"ok": True, "message": f"索引重建已启动，共 {len(user_ids)} 个用户", "total": len(user_ids)}
+
+
+@router.get("/index-rebuild/status")
+async def index_rebuild_status():
+    from app.core.redis import get_redis
+
+    current = await get_redis().get(_INDEX_REBUILD_KEY)
+    if not current:
+        return {"status": "idle"}
+    try:
+        return json.loads(current if isinstance(current, str) else current.decode())
     except Exception:
         return {"status": "idle"}
 

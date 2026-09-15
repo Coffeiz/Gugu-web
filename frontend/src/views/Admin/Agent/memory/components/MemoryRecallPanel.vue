@@ -48,6 +48,7 @@
       <div class="behavior-item full-row"><div class="behavior-label"><span>{{ t('adminAgentMemory.dimensions') }}</span><span class="behavior-desc">{{ t('adminAgentMemory.dimensionsHint') }}</span></div><input v-model.number="embeddingDraft.dimensions" class="behavior-input number-input" type="number" :placeholder="t('adminAgentMemory.defaultDimensions')" /></div>
       <div class="behavior-item full-row"><div class="behavior-label"><span>{{ t('adminAgentMemory.testConnection') }}</span><span class="behavior-desc">{{ t('adminAgentMemory.testHint') }}</span></div><div class="action-row"><span v-if="embTest.msg" class="action-message" :class="{ error: !embTest.ok }">{{ embTest.msg }}</span><button class="btn-ghost" :disabled="embTest.loading" @click="testEmbedding">{{ embTest.loading ? t('adminAgentMemory.testing') : t('adminAgentMemory.test') }}</button></div></div>
       <div class="behavior-item full-row"><div class="behavior-label"><span>{{ t('adminAgentMemory.rebuild') }}</span><span class="behavior-desc">{{ t('adminAgentMemory.rebuildHint') }}</span></div><div class="action-row"><span v-if="rebuild.msg" class="action-message" :class="{ error: rebuild.error }">{{ rebuild.msg }}</span><button class="btn-ghost" :disabled="rebuild.running" @click="startRebuild">{{ rebuild.running ? `${t('adminAgentMemory.rebuilding')} ${rebuild.done}/${rebuild.total}` : t('adminAgentMemory.rebuild') }}</button></div></div>
+      <div class="behavior-item full-row"><div class="behavior-label"><span>{{ t('adminAgentMemory.indexRebuild') }}</span><span class="behavior-desc">{{ t('adminAgentMemory.indexRebuildHint') }}</span></div><div class="action-row"><span v-if="indexRebuild.msg" class="action-message" :class="{ error: indexRebuild.error }">{{ indexRebuild.msg }}</span><button class="btn-ghost" :disabled="indexRebuild.running" @click="startIndexRebuild">{{ indexRebuild.running ? `${t('adminAgentMemory.indexRebuilding')} ${indexRebuild.done}/${indexRebuild.total}` : t('adminAgentMemory.indexRebuild') }}</button></div></div>
     </div>
     <div class="card-actions"><span class="save-hint" :class="{ error: !!ragError || !!embeddingError }"><template v-if="ragSaved || embeddingSaved">{{ t('adminAgentMemory.saved') }}</template><template v-else>{{ ragError || embeddingError }}</template></span><button class="btn-ghost" @click="resetRag(); resetEmbedding()">{{ t('adminAgentMemory.undo') }}</button><button class="btn-primary" :disabled="ragSaving || embeddingSaving" @click="saveAll">{{ ragSaving || embeddingSaving ? t('adminAgentMemory.saving') : t('adminAgentMemory.save') }}</button></div>
   </section>
@@ -59,10 +60,14 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
+import { useAdminStore } from '@/stores/admin'
 import { useMemoryRecallConfig, RAG_SOURCE_KEYS } from '../useMemoryRecallConfig'
+import { useIndexRebuild } from '../useIndexRebuild'
 const { configStore, embeddingDraft, ragEnabled, ragAutoSources, toggleRagSource, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit, ragSaving, ragSaved, ragError, embeddingSaving, embeddingSaved, embeddingError, embTest, rebuild, startRebuild, resetEmbedding, resetRag, syncFromStore, saveAll, testEmbedding } = useMemoryRecallConfig()
 const { t } = useI18n()
+const { rebuild: indexRebuild, startIndexRebuild, pollIndexRebuild } = useIndexRebuild(useAdminStore(), t)
 onMounted(async () => { await configStore.fetchConfig(); syncFromStore() })
+onMounted(() => { void pollIndexRebuild() })
 </script>
 
 <style scoped>
