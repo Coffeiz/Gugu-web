@@ -805,6 +805,8 @@ async def xlsx_preview(
         )
     except (FileNotFoundError, KeyError):
         raise HTTPException(404, "物理文件丢失")
+    except PreviewError as error:
+        raise HTTPException(error.status_code, error.detail)
     return {
         "version": file.version,
         "sheets": [

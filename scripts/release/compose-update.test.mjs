@@ -15,7 +15,11 @@ const dockerMock = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$MOCK_DOCKER_LOG"
 if [[ "$1" == inspect ]]; then
-  printf '%s\\n' "\${MOCK_DATA_SOURCE:-/tmp}"
+  if [[ "$*" == *'/var/run/docker.sock'* ]]; then
+    printf '%s\\n' "\${MOCK_SOCKET_SOURCE:-/tmp/docker.sock}"
+  else
+    printf '%s\\n' "\${MOCK_DATA_SOURCE:-/tmp}"
+  fi
   exit 0
 fi
 if [[ "$1" == run ]]; then
@@ -81,6 +85,7 @@ function createFixture() {
   fs.mkdirSync(binDir, { recursive: true })
   fs.mkdirSync(path.join(root, 'backend'), { recursive: true })
   fs.mkdirSync(path.join(root, 'data'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'docker.sock'), '')
   fs.copyFileSync(sourceScript, path.join(scriptsDir, 'compose-update.sh'))
   fs.copyFileSync(sourceValidator, path.join(scriptsDir, 'validate-update-manifest.mjs'))
   fs.writeFileSync(path.join(root, 'backend', '.env'), 'ADMIN_PASSWORD=test-only-value\n')
@@ -125,6 +130,7 @@ function runUpdate(
       PATH: `${fixture.binDir}:${process.env.PATH}`,
       MOCK_DOCKER_LOG: fixture.dockerLog,
       MOCK_DATA_SOURCE: path.join(fixture.root, 'data'),
+      MOCK_SOCKET_SOURCE: path.join(fixture.root, 'docker.sock'),
       GUGU_DB_PASSWORD: 'test-only-value',
       BACKUP_ROOT: path.join(fixture.root, 'backup'),
       ...extraEnv,
@@ -139,6 +145,11 @@ test('app 更新会把 stop/recreate 交给独立 helper，避免 self-stop 截�
     assert.equal(result.status, 75, result.stderr)
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
     assert.match(log, /run .*--label com\.coffeiz\.gugu\.update-helper=true/)
+    assert.match(log, /--entrypoint \/bin\/bash/)
+    assert.match(log, /--env GUGU_DB_PASSWORD/)
+    assert.match(log, /--env GUGU_DB_USER/)
+    assert.match(log, /--env GUGU_DB_NAME/)
+    assert.match(log, /source=.*docker\.sock,target=\/var\/run\/docker\.sock/)
     assert.doesNotMatch(log, /compose stop app/)
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })

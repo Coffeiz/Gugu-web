@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import io
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.files import previews
+from app.api.v1 import files as files_api
 
 
 def _xlsx_bytes(sheet_xml: str) -> bytes:
@@ -87,3 +91,23 @@ async def test_xlsx_preview_single_flight_and_byte_budget(monkeypatch):
     finally:
         previews._XLSX_PREVIEW_CACHE.clear()
         previews._XLSX_PREVIEW_INFLIGHT.clear()
+
+
+@pytest.mark.asyncio
+async def test_xlsx_preview_maps_preview_limit_error_to_http_status(monkeypatch):
+    monkeypatch.setattr(
+        files_api,
+        "get_owned",
+        AsyncMock(return_value=SimpleNamespace(ext="xlsx", storage_key="xlsx", version=1, deleted_at=None)),
+    )
+    monkeypatch.setattr(
+        files_api,
+        "read_xlsx_preview",
+        AsyncMock(side_effect=previews.PreviewError(413, "XLSX 文件超过预览大小限制")),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await files_api.xlsx_preview(1, SimpleNamespace(id=1), None)
+
+    assert error.value.status_code == 413
+    assert error.value.detail == "XLSX 文件超过预览大小限制"

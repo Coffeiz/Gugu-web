@@ -63,10 +63,13 @@ if [[ "${GUGU_UPDATE_HELPER:-0}" != 1 && -n "${GUGU_UPDATE_HELPER_IMAGE:-}" ]]; 
   APP_CONTAINER="$(cat /etc/hostname 2>/dev/null || true)"
   DATA_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
   [[ -n "$DATA_SOURCE" && -d "$DATA_SOURCE" ]] || { echo '无法定位 /data 宿主机挂载，停止更新' >&2; exit 1; }
+  DOCKER_SOCKET_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/run/docker.sock"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
+  [[ -n "$DOCKER_SOCKET_SOURCE" && -e "$DOCKER_SOCKET_SOURCE" ]] || { echo '无法定位 Docker socket 宿主机挂载，停止更新' >&2; exit 1; }
   HELPER_NAME="gugu-update-helper-${RANDOM}-${RANDOM}"
   docker run --rm --detach \
     --name "$HELPER_NAME" \
     --label com.coffeiz.gugu.update-helper=true \
+    --entrypoint /bin/bash \
     --workdir "$ROOT_DIR" \
     --env GUGU_UPDATE_HELPER=1 \
     --env COMPOSE_PROJECT_DIR="$ROOT_DIR" \
@@ -75,10 +78,16 @@ if [[ "${GUGU_UPDATE_HELPER:-0}" != 1 && -n "${GUGU_UPDATE_HELPER_IMAGE:-}" ]]; 
     --env GUGU_UPDATER_CODE_DIR=/opt/gugu-updater \
     --env UPDATE_VALIDATOR=/opt/gugu-updater/scripts/release/validate-update-manifest.mjs \
     --env GUGU_WEB_IMAGE="${GUGU_WEB_IMAGE:-}" \
+    --env GUGU_DB_PASSWORD \
+    --env GUGU_DB_USER \
+    --env GUGU_DB_NAME \
+    --env DB__PASSWORD \
+    --env DB__USER \
+    --env DB__NAME \
     --env GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE="${MANIFEST}.handoff" \
     --mount "type=bind,source=$ROOT_DIR,target=$ROOT_DIR,readonly" \
     --mount "type=bind,source=$DATA_SOURCE,target=/data" \
-    --mount "type=bind,source=${GUGU_DOCKER_SOCKET:-/var/run/docker.sock},target=/var/run/docker.sock" \
+    --mount "type=bind,source=$DOCKER_SOCKET_SOURCE,target=/var/run/docker.sock" \
     "$HELPER_IMAGE" \
     /opt/gugu-updater/scripts/release/compose-update.sh --manifest "$MANIFEST" --confirm >/dev/null
   echo '更新任务已移交给独立 helper，当前 app 将按预期重启。'
