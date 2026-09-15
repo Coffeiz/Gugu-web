@@ -276,6 +276,9 @@ async def test_loopscope_wrapper_without_active_run_accepts_session_id(monkeypat
         async def prepared(self, _driver, _ctx):
             pass
 
+        async def failed(self, _reason):
+            pass
+
         async def round_finished(self, *_args):
             pass
 

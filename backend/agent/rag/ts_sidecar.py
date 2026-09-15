@@ -132,8 +132,8 @@ class SidecarRequestResult:
 def index_dir_for_owner(owner_user_id: object) -> str:
     """返回用户私有的隐藏 RAG 索引根目录。
 
-    生产环境把派生索引放在用户存储目录下；没有完整运行配置的单测继续使用
-    search.ts_sidecar_index_dir，避免测试依赖真实用户存储。
+    生产环境把派生索引放在用户存储目录下；没有完整运行配置时使用同一套
+    相对目录，避免引入另一套旧路径。
     """
     from app.core.config import get_settings
 
@@ -141,8 +141,8 @@ def index_dir_for_owner(owner_user_id: object) -> str:
     storage = getattr(settings, "storage", None)
     local_path = getattr(storage, "local_path", "") if storage is not None else ""
     if local_path:
-        return str(Path(local_path).expanduser() / str(owner_user_id) / ".system" / "rag" / "ts-index")
-    return str(Path(settings.search.ts_sidecar_index_dir).expanduser())
+        return str(Path(local_path).expanduser() / str(owner_user_id) / ".agent" / "rag" / "unified")
+    return str(Path(".agent") / "rag" / "unified")
 
 
 SIDE_CAR_IDLE_TTL_SECONDS = 30 * 60
@@ -435,19 +435,24 @@ class TsSidecarClient:
         self._transient_generation = generation
 
     async def reuse_if_current(self, revision: str | None) -> bool:
-        self.touch()
-        self._active_requests += 1
-        try:
-            await self._ensure_process()
-            expected = revision or ""
-            return bool(
-                self.index_dir
-                and self._revision == expected
-                and (self._document_count > 0 or not expected)
-            )
-        finally:
-            self._active_requests -= 1
+        # 宿主侧的多个 Python 进程可能同时请求首次恢复。启动检查必须与
+        # 其他 sidecar 请求共用 owner 锁，否则两个协程都可能在看到
+        # ``_process is None`` 后各自 spawn 一个 worker，后启动的进程会覆盖
+        # client 引用，留下一个无法回收、却仍读写同一索引目录的孤儿 worker。
+        async with self._lock:
             self.touch()
+            self._active_requests += 1
+            try:
+                await self._ensure_process()
+                expected = revision or ""
+                return bool(
+                    self.index_dir
+                    and self._revision == expected
+                    and (self._document_count > 0 or not expected)
+                )
+            finally:
+                self._active_requests -= 1
+                self.touch()
 
     async def search(
         self,
@@ -693,9 +698,11 @@ class TsSidecarClient:
             # 新进程里瞬态语料为空：递增代数让下次 replace_transient 必然重传。
             self._process_generation += 1
             self._transient_revision = None
-            # 原生 Jieba 首次加载词典可能超过查询超时；启动探活使用独立上限，
-            # 避免 worker 已启动但被 500ms 查询超时误判为不可用。
-            response = await self._request_unlocked({"op": "ping"}, timeout_seconds=5.0)
+            # 原生 Jieba 和磁盘索引恢复可能超过查询超时；启动探活复用构建级上限，
+            # 避免 worker 已启动但被短探活超时误判为不可用并主动关闭。
+            response = await self._request_unlocked(
+                {"op": "ping"}, timeout_seconds=BUILD_TIMEOUT_SECONDS,
+            )
             self._revision = response.get("revision") or self._revision
             self._document_count = int(response.get("document_count") or 0)
             self._vector_version = str(response.get("vector_version") or "")
@@ -1506,7 +1513,7 @@ def _expected_scoring_version() -> str:
 def _timeout_seconds() -> float:
     from app.core.config import get_settings
 
-    value = getattr(get_settings().search, "ts_sidecar_timeout_ms", 5000)
+    value = getattr(get_settings().search, "ts_sidecar_timeout_ms", 30_000)
     return max(0.05, min(int(value), 30_000) / 1000)
 
 

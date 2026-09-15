@@ -22,10 +22,11 @@ from app.services.storage import LocalStorageBackend
 
 
 def _fake_projection(records):
-    """测试投影：正文按「|」分段；version 取 record 的 version_parts 第二位。"""
+    """测试投影：文件只生成文件名 chunk，其余来源正文按「|」分段。"""
     documents = []
     for record, scope in records:
-        parts = [p for p in record["content"].split("|") if p]
+        parts = ([record["title"]] if record["source_type"] == "file"
+                 else [p for p in record["content"].split("|") if p])
         version_parts = record.get("version_parts") or []
         version = str(version_parts[1]) if len(version_parts) > 1 else "1"
         source_id = str(record.get("source_id") or record.get("id"))
@@ -86,7 +87,6 @@ async def fp_env(monkeypatch, tmp_path):
     storage = LocalStorageBackend(tmp_path)
     monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
     monkeypatch.setattr("agent.knowledge.store.get_storage", lambda: storage)
-    monkeypatch.setattr("agent.rag.index_builder.get_storage", lambda: storage)
 
     worker = FakeWorker()
     async def fake_client(_user_id):
@@ -128,33 +128,31 @@ async def _full_seed(db, owner_id: object) -> None:
 
 
 @pytest.mark.asyncio
-async def test_file_overwrite_patches_only_that_file(fp_env):
+async def test_file_content_overwrite_does_not_change_filename_index(fp_env):
     owner_id, worker, session_factory = fp_env
     async with session_factory() as db:
         row = await _mk_file(db, owner_id, "a.md", "文件A一段|文件A二段")
         await _mk_file(db, owner_id, "b.md", "文件B一段")
         await _full_seed(db, owner_id)
         file_id = row.id
-        # 覆盖写：换正文 + version 推进
+        # 仅覆盖正文 + version 推进；文件名索引不应发生变化。
         row.version = 2
         await db.commit()
     await storage_put(None, f"{owner_id}/fp/a.md", "新A一段|新A二段|新A三段")
     stats: dict = {}
     count = await pipeline.update_document(owner_id, "file", str(file_id), stats_out=stats)
-    assert stats["mode"] == "document_patch" and stats["status"] == "ready"
-    assert count == 3
-    assert worker.ops() == ["patch"]
-    patch_call = worker.calls[0][1]
-    assert all(cid.startswith(f"{file_id}:") for cid in patch_call["upserts"])
+    assert stats["mode"] == "document_patch" and stats["status"] == "no_change"
+    assert count == 1
+    assert worker.ops() == []
     async with session_factory() as db:
         rows_a = await load_parent_documents(db, owner_id, "file", str(file_id))
         rows_b = await load_parent_documents(db, owner_id, "file", None) if False else None
         from agent.rag.persistent_store import load_index_documents
         everything = await load_index_documents(db, owner_id, source_types={"file"})
-    assert [r.chunk_index for r in rows_a] == [0, 1, 2]
-    assert all("新A" in r.content for r in rows_a)
-    # b.md 完全不受影响：总共 3+1 条
-    assert len(everything) == 4
+    assert [r.chunk_index for r in rows_a] == [0]
+    assert all(r.content == "a.md" for r in rows_a)
+    # b.md 完全不受影响：总共 1+1 条
+    assert len(everything) == 2
 
 
 @pytest.mark.asyncio
@@ -169,7 +167,7 @@ async def test_file_delete_removes_only_that_file(fp_env):
     remaining = await pipeline.update_document(
         owner_id, "file", str(file_id), operation="delete", stats_out=stats,
     )
-    assert remaining == 0 and stats["delete_count"] == 2
+    assert remaining == 0 and stats["delete_count"] == 1
     async with session_factory() as db:
         from agent.rag.persistent_store import load_index_documents
         everything = await load_index_documents(db, owner_id, source_types={"file"})
@@ -197,7 +195,7 @@ async def test_file_rename_and_move_change_record_digest(fp_env):
     assert record[0]["stage_name"] == "阶段二"
     stats: dict = {}
     await pipeline.update_document(owner_id, "file", str(file_id), stats_out=stats)
-    assert stats["status"] == "ready" and stats["upsert_count"] == 2
+    assert stats["status"] == "ready" and stats["upsert_count"] == 1
     async with session_factory() as db:
         rows = await load_parent_documents(db, owner_id, "file", str(file_id))
     assert all(r.title == "新名.md" for r in rows)

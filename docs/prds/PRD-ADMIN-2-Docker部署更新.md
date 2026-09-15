@@ -1,8 +1,8 @@
 # PRD-ADMIN-2：Docker 部署更新与版本分发
 
-> 状态：Phase 2 的 updater、Admin 更新页和手动回滚能力已实现并通过本地验证；dev/staging 灰度仍待执行。Phase 1 的新 tag 发布验证与 Compose 端到端升级验收也仍待执行。
+> 状态：定位修订（2026-09-14，见 §1.1）：一体化部署取消 updater sidecar，更新执行器并入 app 容器（docker socket 进 app，opt-out 可关）；sidecar 版已实现但将被替换。Phase 2 的灰度与新 tag 发布验证仍待执行。
 > 创建：2026-08-31
-> 最近更新：2026-09-13
+> 最近更新：2026-09-14
 > 关联模块：`docker-compose.prod.yml`、`.github/workflows/`、`docs/ops/deploy.md`、`frontend/src/views/Admin/`、`backend/app/api/v1/`
 > 背景参考：`PRD-ADMIN-1-Admin咕咕球管理助手.md`、`docs/ops/deploy.md`
 
@@ -11,9 +11,9 @@
 | 能力 | 结果 | 状态 | 说明 |
 |---|---|---|---|
 | 普通用户 Compose 更新目标 | 已有一体化 Compose | ✅ 已确认 | 默认 `docker-compose.yml` 使用公开 `gugu-web` 镜像；拆分 backend/frontend 属业务部署路径。 |
-| 镜像发布策略 | 一体化镜像双发，拆分业务镜像走 GHCR | 🟡 新规则待发布验证 | `gugu-web` 发布到 Docker Hub 并镜像到 GHCR；backend/frontend 继续发布到 GHCR，供业务部署更新。 |
+| 镜像发布策略 | 一体化与拆分业务镜像均双发 | 🟡 新规则待发布验证 | 一体化 `gugu-web`、backend/frontend、updater、sandbox 均发布到 Docker Hub 与 GHCR；只发布语义版本号标签，不发布 Git SHA 镜像标签。 |
 | GitHub Release 更新清单 | manifest v2 已实现 | 🟡 待新 tag 验证 | 新 manifest 只记录 Docker Hub 的 `gugu-web` 固定 digest，并附签名 bundle；v1.2.1 的旧拆分 manifest 不作为一体化更新输入。 |
-| Docker 发布 CI | Workflow 已实现 | 🟡 新策略待 tag 验证 | 后续版本继续签名发布一体化镜像到双仓，并发布 GHCR backend/frontend 业务镜像。 |
+| Docker 发布 CI | Workflow 已实现 | 🟡 新策略待 tag 验证 | 后续版本签名发布一体化和拆分业务镜像到双仓；拆分 backend/frontend 供业务服务器按版本号直接拉取。 |
 | Compose 安全更新入口 | 一体化脚本已调整 | 🟡 端到端验收待执行 | 默认更新 `docker-compose.yml` 的 `app` 服务；拆分 `docker-compose.prod.yml` 不走该入口。 |
 | Admin 检查和执行更新 | 已实现 | 🟡 待灰度 | Admin 更新页可检查版本、展示 Release、执行预检并通过一次性确认发起更新；API 受 Admin 权限保护。 |
 | 更新服务与回滚 | 已实现 | 🟡 待灰度 | 受限 updater sidecar 持久化任务状态，只执行固定 Compose 更新/回滚动作；Docker Socket 不挂给 app。 |
@@ -22,7 +22,7 @@
 
 咕咕的普通用户不应该下载 Git 源码、安装前端/后端依赖或在本机重新构建镜像。对于 Docker Compose 部署，更新应当直接获取经过 CI 构建和验证的业务镜像，以降低安装门槛、减少本地磁盘消耗，并保证所有用户使用一致的构建产物。
 
-本 PRD 定义咕咕普通用户 Docker 部署的标准更新链路：GitHub 负责代码、Release 和更新说明，Docker Hub 的公开一体化 `gugu-web` 是更新主来源，GHCR 镜像该应用并继续承载 backend/frontend 业务镜像；Admin 负责展示和确认，独立更新服务负责在服务器执行默认一体化 Compose 更新。
+本 PRD 定义咕咕普通用户 Docker 部署的标准更新链路：GitHub 负责代码、Release 和更新说明，Docker Hub 的公开一体化 `gugu-web` 是更新主来源，GHCR 镜像该应用；拆分 backend/frontend 业务镜像同步发布到 Docker Hub 与 GHCR，供业务服务器按语义版本号拉取。Admin 负责展示和确认，独立更新服务负责在服务器执行默认一体化 Compose 更新。
 
 目标：
 
@@ -33,10 +33,20 @@
 - 数据库迁移、容器健康检查和失败回滚成为标准流程。
 - 支持管理员查看版本说明、更新进度、失败原因和恢复建议。
 
+### 1.1 定位修订（2026-09-14）
+
+一体化部署的产品定位是**个人用户自己下载、自己更新，简单易用优先**。据此推翻 v1 原则中「更新服务独立容器 + Socket 不进 app」的隔离设计：
+
+- updater sidecar 容器取消；更新执行器并入 app 进程，Admin 更新页进程内直调，无 IPC。
+- docker socket 挂载进一体化 compose 的 app 容器（默认挂载，`GUGU_SELF_UPDATE=off` 显式关闭；未挂载时更新页显示「此部署未启用一键更新」）。fnOS 等面板单容器用户补一条挂载即可获得一键更新。
+- 明确接受的安全让步：docker socket 赋予宿主机容器控制权，app 进程一旦被 RCE 级打穿，暴露面从「咕咕数据」扩大到「宿主机容器」。缓解：更新能力不进入 Agent 工具注册表（模型与提示注入不可达）、子进程参数硬编码（固定项目目录/固定 compose 文件/白名单镜像）、Admin 权限 + 一次性确认门。
+- 保留：manifest 与 digest 白名单（仅允许官方 coffeiz/gugu-web 镜像）、预检、一键回滚、审计。移除：manifest 签名校验、双仓库发布、灰度通道（个人场景超配）。
+- 分体部署（docker-compose.prod.yml）本就不走 Admin 更新入口，不受影响。
+
 本 PRD 不包含：
 
 - 不支持普通用户从 GitHub 下载源码后自动构建。
-- 不把 Docker Socket 暴露给 backend、worker、gateway 或普通 Agent。
+- Docker Socket 不进入 Agent 工具注册表与模型可见能力（2026-09-14 修订：一体化 app 容器按 §1.1 挂载 socket 用于自更新，属部署配置而非 Agent 能力；worker/gateway 仍不挂载）。
 - 不允许更新助手执行任意 Shell、任意 Compose 文件或任意镜像地址。
 - 不在首版覆盖源码开发模式、桌面安装包、Kubernetes 或非 Docker 部署。
 - 不允许更新过程中删除业务数据卷或自动清理所有旧镜像。
@@ -71,7 +81,7 @@ Release 同时关联一份 `update-manifest.json`，其中记录：
 }
 ```
 
-GitHub Release 是版本和说明来源；Docker Hub 是公开一体化应用的更新主来源，GHCR 镜像同一个 `gugu-web` 并继续接收拆分 backend/frontend 业务镜像。manifest v2 只包含一体化 app digest；更新器严格校验仓库白名单与不可变 digest，不接受聊天消息或前端输入的任意镜像地址。旧版 v1 拆分镜像 manifest 不会被当作一体化更新目标。
+GitHub Release 是版本和说明来源；Docker Hub 是公开一体化应用的更新主来源，GHCR 镜像同一个 `gugu-web`；拆分 backend/frontend 业务镜像同步发布到两个 registry。manifest v2 只包含一体化 app digest；更新器严格校验仓库白名单与不可变 digest，不接受聊天消息或前端输入的任意镜像地址。旧版 v1 拆分镜像 manifest 不会被当作一体化更新目标。
 
 ### FR-UPD-003：更新预检
 
@@ -142,7 +152,7 @@ Shell sandbox 是可选 profile。普通更新不因为用户未开启 sandbox �
 版本 tag
   → 一体化 gugu-web 与拆分 backend/frontend 构建
   → 单元测试、类型检查和镜像安全扫描
-  → gugu-web 推送 Docker Hub 与 GHCR；backend/frontend 发布到 GHCR
+  → gugu-web 与 backend/frontend 推送 Docker Hub 与 GHCR
   → 获取 Docker Hub gugu-web digest
   → 生成并签名 update-manifest.json
   → 创建 GitHub Release
@@ -271,7 +281,7 @@ Gugu-web/
 ### Phase 1：发布物与手动更新基础
 
 - [x] `UPD2-001` 固定版本、镜像命名、架构和 manifest Schema；验收：manifest Schema 与无依赖校验器已实现，能表达版本、最低版本、镜像 digest、迁移和回滚字段，并通过本地校验。
-- [ ] `UPD2-002` 🟡 建立 GitHub Actions Docker 发布流水线；验收：Workflow 版本 tag 构建一体化 app 与 backend/frontend 业务镜像，app 推送 Docker Hub 和 GHCR、拆分镜像持续发布 GHCR，生成 Docker Hub app digest 和 GitHub Release。
+- [ ] `UPD2-002` 🟡 建立 GitHub Actions Docker 发布流水线；验收：Workflow 版本 tag 构建一体化 app 与 backend/frontend 业务镜像，全部推送 Docker Hub 和 GHCR，不发布 Git SHA 镜像 tag，镜像使用 OCI 1.1 referrer 签名（不额外生成 `.sig` 普通 tag），生成 Docker Hub app digest 和 GitHub Release。
 - [x] `UPD2-003` 增加 manifest 签名、镜像白名单和 digest 校验；验收：发布 Workflow 生成 Cosign 签名，Compose 更新脚本校验 manifest v2、bundle、发布者身份和一体化镜像白名单，不接受拆分 backend/frontend 镜像。
 - [x] `UPD2-004` 补齐 Docker Compose 升级、迁移和配置保护脚本；验收：更新脚本备份配置和数据库，保留 PostgreSQL、Redis、用户文件、记忆、工作区和 Admin 配置卷，并明确禁止 `down -v` 和无范围清理。
 

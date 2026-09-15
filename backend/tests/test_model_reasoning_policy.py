@@ -1,6 +1,9 @@
 """模型级推理状态策略回归。"""
 from types import SimpleNamespace
 
+import pytest
+
+import agent.llm.llm_select as llm_select
 from agent.llm.llm_select import resolve_run_config
 
 
@@ -26,3 +29,90 @@ def test_missing_model_policy_defaults_to_off():
     model = _settings("off").ai
     delattr(model, "reasoning_persistence")
     assert resolve_run_config(SimpleNamespace(ai=model, ai_presets=None)).reasoning_persistence == "off"
+
+
+@pytest.mark.asyncio
+async def test_continuation_probes_responses_before_switching(monkeypatch):
+    calls = []
+
+    async def probe(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "status": 200}
+
+    monkeypatch.setattr("app.services.provider_diagnostics.probe_responses_capability", probe)
+    cfg = await llm_select.resolve_run_config_for_user(_settings("continuation"), None, "uid")
+
+    assert cfg.model.api_format == "responses"
+    assert cfg.reasoning_notice is None
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_responses_probe_keeps_chat_completions_and_notifies(monkeypatch):
+    async def probe(**kwargs):
+        return {"ok": False, "status": 404}
+
+    monkeypatch.setattr("app.services.provider_diagnostics.probe_responses_capability", probe)
+    settings = _settings("continuation")
+    settings.ai.base_url = "https://unsupported-responses.example/v1"
+    cfg = await llm_select.resolve_run_config_for_user(settings, None, "uid")
+
+    assert cfg.model.api_format == ""
+    assert cfg.reasoning_notice == "当前接口不支持推理续接"
+
+
+@pytest.mark.asyncio
+async def test_failed_responses_probe_is_reused_for_same_configuration(monkeypatch):
+    import app.services.provider_diagnostics as diagnostics
+
+    diagnostics._responses_probe_cache.clear()
+    diagnostics._responses_probe_tasks.clear()
+    calls = 0
+
+    async def probe_once(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {"ok": False, "status": 404}
+
+    monkeypatch.setattr(diagnostics, "_probe_responses_once", probe_once)
+    first = await diagnostics.probe_responses_capability(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
+    )
+    second = await diagnostics.probe_responses_capability(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
+    )
+
+    assert first == second == {"ok": False, "status": 404}
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_transient_responses_probe_failure_expires(monkeypatch):
+    import app.services.provider_diagnostics as diagnostics
+
+    diagnostics._responses_probe_cache.clear()
+    diagnostics._responses_probe_tasks.clear()
+    clock = 100.0
+    monkeypatch.setattr(diagnostics.time, "monotonic", lambda: clock)
+    calls = 0
+
+    async def probe_once(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {"ok": False, "status": 503}
+
+    monkeypatch.setattr(diagnostics, "_probe_responses_once", probe_once)
+    first = await diagnostics.probe_responses_capability(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
+    )
+    clock = 150.0
+    second = await diagnostics.probe_responses_capability(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
+    )
+    clock = 161.0
+    third = await diagnostics.probe_responses_capability(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
+    )
+
+    assert first == second == third == {"ok": False, "status": 503}
+    assert calls == 2

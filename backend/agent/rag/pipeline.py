@@ -24,6 +24,7 @@ _locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 INDEX_EVENT_SOURCE_TYPES = {
     "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation", "knowledge",
 }
+INDEX_REBUILD_SOURCE_TYPES = ("memory", *sorted(INDEX_EVENT_SOURCE_TYPES))
 
 
 def _in_memory_sqlite(engine) -> bool:

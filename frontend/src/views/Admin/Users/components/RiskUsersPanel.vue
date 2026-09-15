@@ -143,7 +143,7 @@ onMounted(load)
 .action-btn { padding: 4px 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.65); cursor: pointer; font-size: 12px; }
 .action-btn:hover { border-color: rgba(150,170,220,0.5); background: rgba(255,255,255,0.1); }
 .action-btn.danger { color: #e99a9a; border-color: rgba(220,80,80,0.25); }
-.event-detail { grid-column: 1 / -1; padding: 10px 0 0 40px; border-top: 1px solid rgba(255,255,255,0.07); }
+.event-detail { grid-column: 1 / -1; padding: 10px 0 0 40px; border-top: 1px solid var(--panel-divider); }
 .event-item { display: grid; grid-template-columns: 150px 1fr 120px; gap: 10px; padding: 5px 0; color: rgba(255,255,255,0.6); font-size: 12px; }
 .event-item code { color: rgba(180,190,230,0.8); }
 .event-item time { color: rgba(255,255,255,0.35); }

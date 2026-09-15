@@ -1025,9 +1025,9 @@ onBeforeUnmount(() => {
 .tv-md :deep(tr:hover td) { background: var(--surface-soft-hover); }
 
 .tv-md :deep(hr) {
-  /* 分割线从正文色派生而不是用 border token：1px 半透明线合成后仍偏淡，换实色次级文字色：绝对可辨且随主题自适应 */
+  /* Markdown 内容分割线统一使用内容分割 token，避免复用玻璃外框色。 */
   border: none;
-  border-top: 1px solid color-mix(in srgb, var(--content-primary) 20%, transparent);
+  border-top: 1px solid var(--content-divider);
   margin: 1.5em 0;
 }
 

@@ -13,7 +13,7 @@
 | backend/frontend 分离镜像发布 | ✅ 已完成 | CI 推送 `coffeiz/gugu-web-{backend,frontend}`，tag 为 `v1.0.x` 与 commit sha，仅 linux/amd64；现生产使用中。 |
 | 源码开发部署（Dev Compose） | ✅ 已完成 | `docker-compose.dev.yml` 保留源码挂载与热更新路径，供开发者使用。 |
 | 一体化应用镜像（前端+后端单镜像，仅生产运行时） | ✅ 已完成 | 根目录 `Dockerfile` 已通过 devserver linux/amd64 构建，镜像内含 Nginx + Uvicorn + worker + IM gateway。 |
-| 一键 compose（app+postgres+redis 单文件） | ✅ 已完成 | 根目录 `docker-compose.yml` 已提供默认单容器部署与 `sandbox` profile 配置；PostgreSQL/Redis 依赖版本与现 prod 统一为 `postgres:18` / `redis:latest`，PostgreSQL 18 持久卷挂载父目录。 |
+| 一键 Compose（app+postgres+redis 单文件） | ✅ 已完成 | 根目录 `docker-compose.yml` 提供默认一体化应用服务与 `sandbox` profile；PostgreSQL/Redis 作为独立服务运行，依赖版本为 `postgres:18` / `redis:latest`，PostgreSQL 18 持久卷挂载父目录。 |
 | Docker Hub `latest` 滚动 tag | 🔲 待实施 | 用户拍板随 v1.0.6 发布流水线一起加。 |
 | 多架构镜像（arm64） | 🔲 待评估 | 本期明确不做，README 标注 amd64-only。 |
 | README/DEPLOY 一键部署章节 | 🔲 待实施 | 留到 Phase 3。 |
@@ -31,7 +31,7 @@
 
 ### 1.2 目标
 
-1. **一键部署**：用户侧从「clone 仓库 → 配两套 env → 本地构建」变成「下载一个 compose 文件和一体化镜像 → 配最少变量 → `docker compose up -d`」，根目录 Compose 默认使用单容器应用模式。
+1. **一键部署**：用户侧从「clone 仓库 → 配两套 env → 本地构建」变成「下载一个 compose 文件和一体化镜像 → 配最少变量 → `docker compose up -d`」，根目录 Compose 默认使用一体化应用服务。
 2. **单一应用镜像**：前端 dist 与后端运行时合并为一个 `gugu-web:<tag>` 镜像，只含生产运行时，不含源码仓库、前端 node_modules、pnpm 缓存等构建期内容；保留 TS RAG worker 所需的 Linux x64 native 运行依赖。
 3. **数据安全边界**：PostgreSQL 与 Redis 为独立容器，用户数据全部在显式持久卷；升级 = 拉新镜像重建 app 容器，数据库与文件卷不动。
 4. **配置两条路径**：启动前用 compose 变量配置；未配项（模型 API Key 等）启动后在界面配置。缺了无法启动的关键项必须给人话提示。
@@ -39,11 +39,11 @@
 
 ### 1.3 明确不做
 
-- 不把 PostgreSQL/Redis 塞进应用容器（已否决的「真·单容器」方案 B）：升级即重建容器会绑死数据库生命周期，备份/迁移/排障全部变复杂。
+- PostgreSQL/Redis 独立于应用服务运行，升级应用镜像不会绑定数据库生命周期，备份、迁移和排障可以分别管理。
 - 不改变现有 `docker-compose.prod.yml` 生产部署路径；backend/frontend 分离镜像继续保留供现生产使用。
 - 不做 SQLite/无 Redis 轻量模式（PRD-ARCH-6 的范围）。
 - 不做多架构镜像（本期仅 linux/amd64）。
-- Docker release 流水线随 v1.0.6 接入默认单容器镜像构建、Trivy 安全门、双 registry 发布与 `latest` 标签。
+- Docker release 流水线随 v1.0.6 接入默认一体化应用镜像构建、Trivy 安全门、双 registry 发布与 `latest` 标签。
 - 不写死默认管理员密码。
 
 ## 2. 功能需求
@@ -58,7 +58,7 @@
 
 ### FR-DEPLOY-003：一键 compose
 
-根目录 `docker-compose.yml` 直接提供默认单容器配置与 `.env.example`：`docker compose up -d` 一条命令拉起 `app + postgres + redis`；Shell 沙盒经 `--profile sandbox` 显式启用（searxng/squid/bootstrap 策略与 Dev/Prod Compose 一致）。
+根目录 `docker-compose.yml` 直接提供默认一体化应用配置与 `.env.example`：`docker compose up -d` 一条命令拉起 `app + postgres + redis` 服务；Shell 沙盒经 `--profile sandbox` 显式启用（searxng/squid/bootstrap 策略与 Dev/Prod Compose 一致）。
 
 ### FR-DEPLOY-004：启动前置检查
 
@@ -70,7 +70,7 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 
 ### FR-DEPLOY-006：文档更新
 
-`README.md` / `README_en.md` 快速开始以一键部署为主（标注 amd64-only、依赖前置 Docker 20+/Compose v2、外网拉镜像、`Gugu-data` 目录创建、国内镜像源备注、随机密码说明与启动前自定义 `ADMIN_USERNAME/ADMIN_PASSWORD` 的方法），并保留 Dev Compose 源码开发说明。`docs/quick-deploy.md` 增补默认 Compose 单容器章节（变量表、升级、备份、沙盒 profile）。
+`README.md` / `README_en.md` 快速开始以一键部署为主（标注 amd64-only、依赖前置 Docker 20+/Compose v2、外网拉镜像、`Gugu-data` 目录创建、国内镜像源备注、随机密码说明与启动前自定义 `ADMIN_USERNAME/ADMIN_PASSWORD` 的方法），并保留 Dev Compose 源码开发说明。`docs/quick-deploy.md` 增补默认 Compose 章节（变量表、升级、备份、沙盒 profile）。
 
 ## 3. 技术方案
 
@@ -87,11 +87,11 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 
 现 prod nginx 的路径表如下：`/api/` 透传后端，并设置 `proxy_http_version 1.1`、`proxy_read_timeout 3600s`、`proxy_buffering off` 以覆盖 SSE 与 WebSocket；`/admin` 301 到 `/admin/`；`/admin/` 使用 `/admin/index.html` SPA 回退；`/fonts/` 仅提供真实静态文件并设置一年 immutable 缓存；其余路径使用 `/index.html` SPA 回退。
 
-路径规则与现 prod 一致，默认单容器模式使用镜像内 Nginx：`nginx/compose.conf` 负责静态资源、SPA 回退、字体缓存、请求体限制，以及将 `/api/`、SSE、WebSocket 和 `/health` 反代到容器内 Uvicorn；Uvicorn 监听容器内 8001，Nginx 对外监听 8000。常规分离镜像部署不受影响。
+路径规则与现 prod 一致，默认 Compose 的应用服务使用镜像内 Nginx：`nginx/compose.conf` 负责静态资源、SPA 回退、字体缓存、请求体限制，以及将 `/api/`、SSE、WebSocket 和 `/health` 反代到容器内 Uvicorn；Uvicorn 监听容器内 8001，Nginx 对外监听 8000。prod/dev 前后端分体部署不受影响。
 
 ### 3.3 环境变量
 
-沿用现有命名：`GUGU_DB_PASSWORD`、`SECRET_KEY`、`GUGU_DATA_HOST_DIR`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`GUGU_PUBLIC_APP_URL`；新增 `GUGU_WEB_IMAGE`（默认 Compose 单容器镜像引用，默认 `coffeiz/gugu-web:latest`）。BYOK 主密钥沿用 v1.0.5 的 `CREDENTIALS_MASTER_KEY_FILE` 持久卷机制，升级不丢。
+沿用现有命名：`GUGU_DB_PASSWORD`、`SECRET_KEY`、`GUGU_DATA_HOST_DIR`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`GUGU_PUBLIC_APP_URL`；新增 `GUGU_WEB_IMAGE`（默认 Compose 的统一应用镜像，默认 `coffeiz/gugu-web:latest`）。BYOK 主密钥沿用 v1.0.5 的 `CREDENTIALS_MASTER_KEY_FILE` 持久卷机制，升级不丢。
 
 Compose 用户数据默认 bind 到仓库同级 `Gugu-data`。v1.0.6 的 `data-migrate` 一次性服务复用 `migrate_storage_root.py`，将 v1.0.5 及更早版本的旧 named volume 复制到新目录；成功后在目标目录写入 `.system/migrations/storage-root-v1.done`，后续启动直接跳过旧卷扫描，避免用户修改新目录后因冻结旧卷产生冲突。源卷只读挂载并保留；首次迁移时目标已有不同内容仍会停止且不覆盖。
 
@@ -113,15 +113,15 @@ Compose 用户数据默认 bind 到仓库同级 `Gugu-data`。v1.0.6 的 `data-m
 
 - `gugu-web:phase2` 在 devserver linux/amd64 构建成功；默认 Compose 与 `sandbox` profile 配置校验通过。
 - 入口检查与管理员密码幂等性专项测试通过；默认 Compose 入口普通测试 3 项通过；入口脚本语法、gateway 导入与镜像内 Nginx 配置校验通过。
-- devserver 默认 Compose 单容器模式已部署在 `9596`；默认页面、Admin、health、Admin 登录负向接口、容器重启、`/data` 持久卷、BYOK 主密钥和 worker/gateway/Uvicorn/Nginx 进程烟测通过；sandbox profile 的 bootstrap 退出码为 0，sandboxd socket 与独立 egress 网络存在。
+- devserver 默认 Compose 已部署在 `9596`；默认页面、Admin、health、Admin 登录负向接口、容器重启、`/data` 持久卷、BYOK 主密钥和 worker/gateway/Uvicorn/Nginx 进程烟测通过；sandbox profile 的 bootstrap 退出码为 0，sandboxd socket 与独立 egress 网络存在。
 - sandboxd 显式禁用继承的 HTTP healthcheck，避免非 Web 进程被错误标记为 unhealthy。
-- 修复默认单容器构建产物静态文件权限：Vite 生成的素材在镜像内曾为 `600 root:root`，导致 Nginx 对 logo/字体返回 403；构建阶段统一修正为目录 755、文件 644。
+- 修复默认一体化应用镜像构建产物静态文件权限：Vite 生成的素材在镜像内曾为 `600 root:root`，导致 Nginx 对 logo/字体返回 403；构建阶段统一修正为目录 755、文件 644。
 - 默认、Dev、Prod 三份 Compose 配置解析通过；默认 Compose 所需相对路径、env 文件、Nginx/Squid 配置和 Dockerfile 路径检查通过；前端普通测试 66 个文件/424 项通过。
 - 本轮不执行 Trivy；此前尝试通过 `192.168.110.50:7890` 下载漏洞库仍因带宽过低超时，合并前另行扫描，不将本轮视为 Trivy 通过。
-- backend 全量普通测试结果：1909 passed、5 failed。失败为现有能力注册数量断言（实际 103、断言 102）2 项，以及 TypeScript RAG 测试缺少 `@node-rs/jieba` 导致 3 项失败；未因本次默认 Compose 单容器代码改动调整这些基线问题。
+- backend 全量普通测试结果：1909 passed、5 failed。失败为现有能力注册数量断言（实际 103、断言 102）2 项，以及 TypeScript RAG 测试缺少 `@node-rs/jieba` 导致 3 项失败；未因本次默认 Compose 部署改动调整这些基线问题。
 - 重建后镜像内依赖已核验为 `msgpack==1.2.2`、`setuptools==84.0.0`。此前旧镜像 Trivy 预扫发现的两个 HIGH 已在构建链中修复；对新镜像复扫时，漏洞库经 `192.168.110.50:7890` 下载仍超时，未取得最终通过/失败漏洞清单。
-- 已用 `--pull` 刷新全部自有镜像：开发/生产 backend、开发/生产 frontend、默认单容器应用、sandbox、LoopScope collector/frontend；LoopScope 统一 Node `latest`（当前 `26.8.1`），并将 `better-sqlite3` 从 `11.10.0` 升级至 `13.0.3` 以兼容新 Node ABI。
-- 默认单容器镜像约 4.44GB，现有 backend/frontend 镜像约 2.52GB/604MB。本轮按要求不执行 E2E、真实模型对话或完整 sandbox 运行验证，因此 `DEPLOY1-006` 保持未完成。
+- 已用 `--pull` 刷新全部自有镜像：开发/生产 backend、开发/生产 frontend、默认一体化应用、sandbox、LoopScope collector/frontend；LoopScope 统一 Node `latest`（当前 `26.8.1`），并将 `better-sqlite3` 从 `11.10.0` 升级至 `13.0.3` 以兼容新 Node ABI。
+- 默认一体化应用镜像约 4.44GB，现有 backend/frontend 镜像约 2.52GB/604MB。本轮按要求不执行 E2E、真实模型对话或完整 sandbox 运行验证，因此 `DEPLOY1-006` 保持未完成。
 
 ## 5. 风险与待确认问题
 
@@ -146,7 +146,7 @@ Compose 用户数据默认 bind 到仓库同级 `Gugu-data`。v1.0.6 的 `data-m
 
 ### Phase 2：一键 compose 与全流程
 
-- [x] `DEPLOY1-003` 将默认 `docker-compose.yml` + `.env.example` 切换为单容器应用（app+postgres+redis，沙盒 profile）；验收：默认与 `sandbox` profile 的 Compose 配置校验通过；普通测试通过；完整登录、配置 Key、对话链路按本轮不执行 E2E。
+- [x] `DEPLOY1-003` 将默认 `docker-compose.yml` + `.env.example` 切换为一体化应用服务（app+postgres+redis，沙盒 profile）；验收：默认与 `sandbox` profile 的 Compose 配置校验通过；普通测试通过；完整登录、配置 Key、对话链路按本轮不执行 E2E。
 - [x] `DEPLOY1-003a` 将 IM gateway 纳入默认 Compose app 进程监管；验收：入口默认启动 worker、gateway、Uvicorn、Nginx，并在任一关键进程退出时退出容器。
 - [x] `DEPLOY1-004` 实现入口前置检查（SECRET_KEY/GUGU_DB_PASSWORD/数据目录）；验收：缺省数据目录实测输出中文提示与 mkdir/chown 修复命令，未出现裸堆栈；密钥检查由同一入口逻辑覆盖。
 - [x] `DEPLOY1-005` 实现随机管理员密码生成（打印一次 + 原子追加 `.env`，重启不重复生成）；验收：首启落盘并打印，第二次启动不重复生成，已有字段不覆盖。
@@ -154,6 +154,6 @@ Compose 用户数据默认 bind 到仓库同级 `Gugu-data`。v1.0.6 的 `data-m
 
 ### Phase 3：文档与发布衔接
 
-- [x] `DEPLOY1-007` 更新 `README.md`/`README_en.md` 一键部署说明与 `docs/quick-deploy.md` 默认 Compose 单容器章节；验收：中英文一致，amd64 限制、依赖前置、随机密码说明齐全。
+- [x] `DEPLOY1-007` 更新 `README.md`/`README_en.md` 一键部署说明与 `docs/quick-deploy.md` 默认 Compose 章节；验收：中英文一致，amd64 限制、依赖前置、随机密码说明齐全。
 - [x] `DEPLOY1-009` 统一复用 `migrate_storage_root.py` 迁移旧 Compose named volume 到宿主机 `Gugu-data`；验收：默认/Dev/Prod Compose 均在业务服务前执行幂等迁移，源卷只读保留，冲突不覆盖。
-- [x] `DEPLOY1-008`（随 v1.0.6）Docker release 流水线增加默认单容器镜像构建推送与 `latest` tag；验收：tag 触发后 Docker Hub 出现 `gugu-web:<version>` 与 `latest`，README 一键命令可直接使用。
+- [x] `DEPLOY1-008`（随 v1.0.6）Docker release 流水线增加默认一体化应用镜像构建推送与 `latest` tag；验收：tag 触发后 Docker Hub 出现 `gugu-web:<version>` 与 `latest`，README 一键命令可直接使用。

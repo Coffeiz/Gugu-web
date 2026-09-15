@@ -44,9 +44,9 @@
     var(--modal-card-bg) 68%,
     var(--modal-card-bg) 100%
   ), var(--surface-base);
-  /* Content dividers are not glass edges. Aero light's border tokens are deliberately white, so
-     keep inner separators on the old neutral ink line and restore the dark mapping below. */
-  --panel-divider: color-mix(in srgb,var(--content-primary) 6%,transparent);
+  /* Content dividers are not glass edges; use the shared semantic divider instead of a theme
+     border that may be white in light glass mode. */
+  --panel-divider: var(--content-divider);
 
   --modal-card-bg: var(--surface-floating);
   --modal-card-border: var(--border-strong);
@@ -182,7 +182,8 @@
   --popup-item-radius: var(--radius-xs);
   --popup-item-danger: var(--status-danger);
   --popup-item-danger-bg-hover: var(--status-danger-bg);
-  --popup-divider: var(--border-subtle);
+  /* 浮层内部内容分割线复用内容语义色，不使用玻璃外框的 border-subtle。 */
+  --popup-divider: var(--content-divider);
   --popup-enter-duration: var(--motion-hover-control);
   --popup-leave-duration: var(--motion-hover-micro);
   --popup-enter-easing: var(--motion-ease-enter);
@@ -343,7 +344,7 @@ html[data-theme='dark'][data-family] {
   --gugu-chat-voice-highlight: var(--highlight-soft);
   --gugu-chat-voice-wave: var(--content-tertiary);
   --gugu-chat-voice-wave-playing: var(--action-primary);
-  --panel-divider: var(--border-subtle);
+  --panel-divider: var(--content-divider);
   --subpanel-border: var(--border-subtle);
 
   /* modal-bg 与亮色同走 --panel-bg 渐变，和其他 BaseModal 卡片一致；

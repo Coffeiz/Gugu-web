@@ -33,6 +33,8 @@
       :total="g.total"
       :failed="g.failed"
       :error="g.error"
+      :status-text="g.statusText"
+      :indeterminate="g.indeterminate"
       data-flip-target
     >
       <template #list="{ color, statusText }">

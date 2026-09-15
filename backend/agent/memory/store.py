@@ -62,7 +62,7 @@ _PATTERN_CONFIRM_STEP      = 0.1
 _PATTERN_MAX_CONF          = 0.97
 
 # ── memory.md 长期记忆向量检索参数 ──
-MEMORY_INJECT_CHARS = 2000   # memory.md 注入预算；超出才走向量挑相关块，否则整块注入
+MEMORY_INJECT_CHARS = 3000   # memory.md 注入预算；超出才走向量挑相关块，否则整块注入
 MEMORY_CHUNK_MAX    = 400    # 切块粒度：单块最大字数（超长段按句子边界再切）
 VECTOR_REBUILD_CONCURRENCY = 4  # 管理员重建的跨用户并发上限，避免打爆 embedding 服务
 

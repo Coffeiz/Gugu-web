@@ -151,6 +151,46 @@ async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypat
     assert "session_id" not in repr(body)
 
 
+def _keyboard_rows_for_labels(labels: list) -> list:
+    """构造指定标签的 prompt 并返回 keyboard rows。"""
+    prompt = {
+        "prompt_id": 7,
+        "platform_user_id": "ou_1",
+        "options": [{"id": f"opt-{i}", "label": label, "token": f"t-{i}"} for i, label in enumerate(labels)],
+    }
+    return qq._keyboard_wire_payload(prompt)["content"]["rows"]
+
+
+def test_keyboard_packs_rows_by_label_width():
+    # 短标签（1-2 字）：4 个 32 单位同排，第 5 个（10 单位）超预算 40 换行。
+    rows = _keyboard_rows_for_labels(["是", "否", "取消", "稍后再说"])
+    assert [len(row["buttons"]) for row in rows] == [4]
+    rows = _keyboard_rows_for_labels(["是", "否", "取消", "稍后再说", "自定义"])
+    assert [len(row["buttons"]) for row in rows] == [4, 1]
+    # 截图用例（5-6 字标签）：贪心两两成行，不再五挤一行截断。
+    rows = _keyboard_rows_for_labels(["1（主按钮）", "2（次按钮）", "3（文字按钮）", "都没点开", "自定义回复"])
+    assert [len(row["buttons"]) for row in rows] == [2, 2, 1]
+    # 单条超宽标签独占一行不报错（客户端截断不可避免，但排列不叠加截断）。
+    rows = _keyboard_rows_for_labels(["这是一个特别特别特别长的按钮标签"])
+    assert [len(row["buttons"]) for row in rows] == [1]
+    # 长标签多到 5 行装不下 → 抛 ValueError 走文本序号兜底。
+    try:
+        _keyboard_rows_for_labels(["自定义回复内容很长"] * 11)
+        raise AssertionError("11 个长标签按钮应当抛 ValueError 走文本兜底")
+    except ValueError:
+        pass
+
+
+def test_keyboard_fits_nine_medium_labels_in_five_rows():
+    """2026-09 真机回归：预算 30 时这组全 ≥16 单位的标签被误判装不下（9 行>5 行）
+    导致整块键盘消失；40 的预算必须恰好 5 行放下。"""
+    rows = _keyboard_rows_for_labels([
+        "继续聊费马大理石", "看下体型问题", "聊 Anthropic FLT", "看 OpenAI NS",
+        "澳门早茶推荐", "晚安", "继续 Anthropic 细节", "看下体型 + 减肥进展", "自定义回复",
+    ])
+    assert [len(row["buttons"]) for row in rows] == [2, 2, 2, 1, 2]
+
+
 async def test_post_keyboard_uses_markdown_with_keyboard(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []

@@ -1,4 +1,4 @@
-# 默认 Compose 一体化镜像：前端 dist + 后端生产运行时，单镜像承载完整站点。
+# 默认 Compose 一体化应用镜像：前端 dist + 后端生产运行时，由统一应用服务提供站点。
 # 与 backend/Dockerfile.prod、frontend/Dockerfile.prod（供生产分离 Compose 使用）并存；
 # 构建上下文 = 仓库根目录。
 #
@@ -63,9 +63,6 @@ RUN python -m venv /opt/venv \
 FROM python:3.14-slim-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
-# 是否安装 LibreOffice（doc/docx/ppt 转 PDF 预览）。体积大（500MB+），
-# 不需要文档预览时可传 --build-arg GUGU_INSTALL_LIBREOFFICE=false 关闭。
-ARG GUGU_INSTALL_LIBREOFFICE=true
 ARG GUGU_VERSION=unknown
 ARG GUGU_REVISION=unknown
 
@@ -77,14 +74,6 @@ RUN sed -i \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl \
-        # 内置依赖（GUGU_EMBEDDED_DEPS=1 时由入口拉起）：单容器一键部署无需外部
-        # postgres/redis。仅监听 127.0.0.1，数据在 /data/postgres、/data/redis。
-        postgresql redis-server supervisor \
-        $(if [ "${GUGU_INSTALL_LIBREOFFICE}" = "true" ]; then echo libreoffice libreoffice-writer fonts-noto-cjk; fi) \
-    # snakeoil 是 ssl-cert 包（postgresql 依赖）装的 Debian 全机通用示例证书，随层公开
-    # 会被 trivy secrets 扫描判为私钥泄漏；内嵌 PostgreSQL 只监听 127.0.0.1 且 ssl=off
-    # （见 docker-entrypoint.sh），用不到它，直接删。
-    && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem \
     && rm -rf /var/lib/apt/lists/*
 
 # CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁，
@@ -94,7 +83,12 @@ RUN apt-get update \
 ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
 # TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串
 ARG TARGETARCH
-RUN curl -fsSL -o /tmp/gst-base.deb \
+RUN sed -i \
+        -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
+        -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && curl -fsSL -o /tmp/gst-base.deb \
         "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
     && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
     && rm -f /tmp/gst-base.deb
@@ -131,7 +125,6 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py
 COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY backend/compose_bootstrap.py ./compose_bootstrap.py
-COPY backend/scripts/migrate_storage_root.py ./scripts/migrate_storage_root.py
 COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 COPY squid/egress.conf /opt/gugu/egress.conf
@@ -141,6 +134,28 @@ COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
 RUN node bin/gugu-rag-ts-worker.mjs --version
 RUN node bin/gugu-filesync-ts-worker.cjs --version
+
+# ── 自更新工具链（执行器并入 app 进程，PRD-ADMIN-2 §1.1）───────────────────
+# 签名校验随定位修订移除，仅保留 compose 插件供更新流程重建容器。
+# v5.5.1：内嵌 containerd v2.3.4 / docker-cli v29.7.2 均高于 trivy 门要求的修复版
+# （v2.39.2 因此被扫出 57 个 HIGH/CRITICAL，2026-09-16 docker-release 失败根因）。
+# updater 资产（固定更新脚本/manifest 校验器/schema）落到 /opt/gugu-updater。
+ARG DOCKER_COMPOSE_VERSION=v5.5.1
+# TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串（URL 404）
+ARG TARGETARCH
+# compose 发布资源用 uname 风格命名（x86_64/aarch64），与 TARGETARCH（amd64/arm64）不同名
+RUN mkdir -p /usr/local/libexec/docker/cli-plugins /opt/gugu-updater/scripts/release /opt/gugu-updater/deploy \
+    && compose_arch="$(case "${TARGETARCH}" in amd64) echo x86_64 ;; arm64) echo aarch64 ;; *) echo "${TARGETARCH}" ;; esac)" \
+    && curl -fsSL -o /usr/local/libexec/docker/cli-plugins/docker-compose \
+        "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${compose_arch}" \
+    && chmod 0755 /usr/local/libexec/docker/cli-plugins/docker-compose \
+    && docker compose version
+COPY scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/compose-update.sh
+COPY scripts/release/validate-update-manifest.mjs /opt/gugu-updater/scripts/release/validate-update-manifest.mjs
+COPY deploy/update-manifest.schema.json /opt/gugu-updater/deploy/update-manifest.schema.json
+RUN chmod 0755 /opt/gugu-updater/scripts/release/compose-update.sh
+RUN cd /app && python3 -c "import updater.daemon, updater.client"
+
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf
@@ -161,17 +176,11 @@ RUN mkdir -p logs \
 
 EXPOSE 9595
 
-# 一键部署面板（fnOS / 群晖 / Portainer 等）从镜像 ENV 枚举「可填变量」——业务默认值
-# 必须在这里声明，否则面板只露出 Python 自带的 PATH/PYTHON_*，用户根本不知道要填
-# 数据库。默认值与 docker-compose.yml 注入的值保持一致；SECRET_KEY 留空时由入口首次
-# 启动生成并写入持久化 env 文件，DB__PASSWORD 由面板或 backend/.env 填写。入口端口统一 9595：Nginx 在容器内监听 9595，
+# 默认 Compose 使用一体化应用镜像；前端、Nginx、Uvicorn、worker 与 IM gateway
+# 由同一个应用服务提供，PostgreSQL / Redis / SearXNG 由 Compose 中的独立服务提供。
+# 镜像声明应用变量，便于部署面板识别；SECRET_KEY 留空时由入口首次启动生成，
+# DB__PASSWORD 由 Compose 注入。入口端口统一 9595：Nginx 在容器内监听 9595，
 # Uvicorn 藏在 127.0.0.1:8001 后面（GUGU_APP_PORT），对外只有 9595 一个入口。
-#
-# 单容器完整启动契约也在这里默认成立（裸 docker run = 完整应用）：
-#   GUGU_SINGLE_CONTAINER=1  入口同时托管 Uvicorn/worker/IM gateway/Nginx；
-#   持久化路径收口 /data 与 /config 两个卷（STORAGE__LOCAL_PATH、BYOK 主密钥、
-#   Admin 配置覆盖文件、sandboxd socket），删容器重建数据不丢。
-# Compose 部署显式注入同名变量（含 GUGU_EMBEDDED_DEPS=0 走外部服务），互不影响。
 ENV DB__HOST=postgres \
     DB__PORT=5432 \
     DB__NAME=gugu \
@@ -186,7 +195,7 @@ ENV DB__HOST=postgres \
     # （process env 优先级高于 dotenv）。留空 = 首次启动自动生成随机密码写入
     # 持久化 env 文件并打印一次，公网部署用户显式覆盖即可。
     ADMIN_PASSWORD="" \
-    GUGU_SINGLE_CONTAINER=1 \
+    GUGU_UNIFIED_APP=1 \
     GUGU_APP_PORT=8001 \
     GUGU_ENABLE_WORKER=1 \
     GUGU_ENABLE_GATEWAY=1 \
@@ -196,12 +205,7 @@ ENV DB__HOST=postgres \
     STORAGE__LOCAL_PATH=/data/users \
     CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
     GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
-    GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
-    # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
-    GUGU_EMBEDDED_DEPS=1
-
-# 未显式绑定宿主目录时，让 Docker 自动创建匿名持久卷；显式 bind mount 仍优先。
-VOLUME ["/data", "/config"]
+    GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD curl -sf http://127.0.0.1:9595/health || exit 1

@@ -1069,7 +1069,7 @@ function resetPermissions() {
 .card-actions {
   display: flex; align-items: center; gap: 10px;
   margin-top: 18px; padding-top: 16px;
-  border-top: 1px solid rgba(255,255,255,0.07);
+  border-top: 1px solid var(--panel-divider);
 }
 .save-hint {
   flex: 1; font-size: 12px; color: #5ab899;
@@ -1102,7 +1102,7 @@ function resetPermissions() {
 .behavior-item {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid var(--panel-divider);
 }
 .behavior-item:last-child { border-bottom: none; }
 .behavior-label { display: flex; flex-direction: column; gap: 3px; }

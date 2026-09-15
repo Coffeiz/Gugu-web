@@ -127,7 +127,11 @@
       :file-count="selectedIds.size"
       :folder-count="selectedFolderKeys.size + selectedTrashFolderIds.size"
       :downloading="downloadingZip"
+      :archiving="archiveBusy"
+      :can-extract-archive="canExtractSelectedArchive"
       :trash="currentType === 'trash'"
+      @archive="openCompressSelected"
+      @extract="extractSelectedArchive"
       @download="downloadSelected"
       @cut="selCut"
       @copy="selCopy"
@@ -145,6 +149,8 @@
       :mod-key="modKey"
       :folder-target-valid="ctx.target?.type === 'folder'"
       :can-paste="cbStore.hasContent()"
+      :can-extract-archive="canExtractContextArchive"
+      :can-compress-selection="canCompressContextSelection"
       @action="handleCtxMenuAction"
     />
   </FileBrowserContextMenu>
@@ -160,6 +166,17 @@
 
   <!-- 上传同名冲突确认 -->
   <UploadConflictDialog ref="conflictDialogRef" />
+
+  <ArchiveOperationDialog
+    :show="archiveDialogOpen"
+    :mode="archiveMode"
+    :initial-name="archiveInitialName"
+    :busy="archiveBusy"
+    :error="archiveError"
+    :success="archiveSuccess"
+    @close="closeArchiveDialog"
+    @submit="submitArchive"
+  />
 
 </template>
 
@@ -180,6 +197,7 @@ import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowser
 import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
 import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
+import ArchiveOperationDialog from '@/views/Files/components/ArchiveOperationDialog.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
 import { useProjectStore } from '@/stores/projects'
@@ -198,6 +216,7 @@ import { useFileLibraryDirectory } from '@/composables/files/useFileLibraryDirec
 import { useFileLibrarySorting } from '@/composables/files/useFileLibrarySorting'
 import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelection'
 import { useFileLibraryBatchActions } from '@/composables/files/useFileLibraryBatchActions'
+import { useFileLibraryArchiveActions } from '@/composables/files/useFileLibraryArchiveActions'
 import { useFileLibraryTrashActions } from '@/composables/files/useFileLibraryTrashActions'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileLibraryContextActions } from '@/composables/files/useFileLibraryContextActions'
@@ -455,6 +474,11 @@ const selection = useFileLibrarySelection({
   enterFolder,
   openPreview: file => openPreview(file),
   isPreviewable,
+  openDirectFileAction: file => {
+    if (!isExtractableArchive(file)) return false
+    extractFile(file)
+    return true
+  },
 })
 const {
   selectedIds, selectedFolderKeys, selectedTrashFolderIds,
@@ -534,6 +558,40 @@ const batchActions = useFileLibraryBatchActions({
   },
   showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),
 })
+const archiveActions = useFileLibraryArchiveActions({
+  cacheStore,
+  selectedFileIds: selectedIds,
+  selectedFolderKeys,
+  getVisibleFolders: () => sortedContents.value.folders,
+  clearSelection,
+  createExtractionGhost: name => fileUpload.createExtractionGhost(name, t('filesUi.archiveExtracting')),
+})
+const {
+  dialogOpen: archiveDialogOpen,
+  mode: archiveMode,
+  busy: archiveBusy,
+  error: archiveError,
+  success: archiveSuccess,
+  initialName: archiveInitialName,
+  extractable: isExtractableArchive,
+  openCompressSelected,
+  extractFile,
+  submit: submitArchive,
+  closeDialog: closeArchiveDialog,
+} = archiveActions
+const selectedExtractableArchive = computed(() => {
+  if (currentType.value === 'trash' || selectedIds.value.size !== 1 || selectedFolderKeys.value.size > 0) return null
+  const [selectedId] = selectedIds.value
+  if (selectedId == null) return null
+  const selectedArchive = cacheStore.getFile(selectedId)
+  return selectedArchive && isExtractableArchive(selectedArchive) ? selectedArchive : null
+})
+const canExtractSelectedArchive = computed(() => Boolean(selectedExtractableArchive.value))
+
+function extractSelectedArchive() {
+  const archive = selectedExtractableArchive.value
+  if (archive) extractFile(archive)
+}
 const downloadingZip = batchActions.downloading
 const trashActions = useFileLibraryTrashActions({
   selectedFileIds: selectedIds,
@@ -601,12 +659,18 @@ const {
 // perf trace 实测证实）。单选/多选均由 Interaction Runtime 接管；拖拽中由 Runtime 命中
 // 目标并派发 Action，这里只提供 Files 特有的目标解析和业务移动 API。
 function isBcDroppable(seg: NavSeg, idx: number) {
-  // folder/personal/project 段都可作为拖放目标：folder→该文件夹，personal/project→对应根（parentId=null，
+  // folder/personal/project/workspace 段都可作为拖放目标：folder→该文件夹，根段→对应根（parentId=null，
   // resolveBcTarget 里非 folder 段一律映射为 null）。此前漏了 project，导致子目录文件夹拖不回项目根。
   // idx 是当前目录本身这一段（navPath 最后一位）时排除——拖回来不算有效落点，应该直接归位，
   // 不该演一遍飞入动画。
   if (idx === navPath.value.length - 1) return false
-  return seg.type === 'folder' || seg.type === 'personal' || seg.type === 'project'
+  return seg.type === 'folder' || seg.type === 'personal' || seg.type === 'project' || seg.type === 'workspace'
+}
+
+function currentWorkspaceDirectoryId(): number | null {
+  return currentSeg.value?.space === 'workspace'
+    ? (currentSeg.value.workspaceDirectoryId ?? null)
+    : null
 }
 
 async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId: number | string | null) {
@@ -615,6 +679,7 @@ async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId
   const targetProjectId = currentSeg.value?.type === 'project'
     ? currentSeg.value.id
     : (currentSeg.value?.projectId ?? null)
+  const workspaceDirectoryId = currentWorkspaceDirectoryId()
   const backups = nFolderIds.map(id => cacheStore.getFolder(id)).filter(Boolean) as FolderMeta[]
   let results: FolderMeta[] = []
   await InteractionSync.execute({
@@ -625,7 +690,7 @@ async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId
     // 服务端当前值；对不上（并发改动）后端给 409，走 rollback + loadContents 拉回真实状态。
     request: async mutation => {
       results = await Promise.all(nFolderIds.map(id =>
-        fileActions.moveFolder(id, nTarget, cacheStore.getFolder(id)?.version ?? 1, targetProjectId, { mutationId: mutation.mutationId })))
+        fileActions.moveFolder(id, nTarget, cacheStore.getFolder(id)?.version ?? 1, targetProjectId, { mutationId: mutation.mutationId }, workspaceDirectoryId)))
       return results
     },
     rollback: () => backups.forEach(b => cacheStore.updateFolder(b.id, { parentId: b.parentId })),
@@ -636,12 +701,13 @@ async function moveFoldersInto(folderIds: Array<number | string>, targetFolderId
 async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: number | string | null) {
   const nFileIds = fileIds as number[]
   const nTarget = targetFolderId as number | null
+  const workspaceDirectoryId = currentWorkspaceDirectoryId()
   const backups = nFileIds.map(id => cacheStore.getFile(id)).filter(Boolean) as FileMeta[]
   await InteractionSync.execute({
     scope: 'file.move', entityKey: `file-move:${nFileIds.join(',')}`,
     apply: () => nFileIds.forEach(id => cacheStore.updateFile(id, { folderId: nTarget })),
     afterMutate: loadContents,
-    request: mutation => Promise.all(nFileIds.map(id => fileActions.moveFile(id, nTarget, null, { mutationId: mutation.mutationId }))),
+    request: mutation => Promise.all(nFileIds.map(id => fileActions.moveFile(id, nTarget, null, { mutationId: mutation.mutationId }, workspaceDirectoryId))),
     rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId })),
     onError: err => console.error('[Files] 移动失败:', (err as Error).message),
   })
@@ -719,6 +785,8 @@ const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
   actions: {
     info: ctxInfo,
     download: ctxDownload,
+    'extract-archive': ctxExtractArchive,
+    'compress-selection': ctxCompressSelection,
     rename: ctxRename,
     cut: ctxCut,
     copy: ctxCopy,
@@ -733,11 +801,32 @@ const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
   },
 })
 const { state: ctx, openContext: openCtx, handleAction: handleCtxMenuAction } = contextActions
+const canExtractContextArchive = computed(() => {
+  const target = ctx.value.target
+  return currentType.value !== 'trash'
+    && (ctx.value.type === 'file' || ctx.value.type === 'multi-file')
+    && target != null
+    && 'ext' in target
+    && isExtractableArchive(target as FileMeta)
+})
+const canCompressContextSelection = computed(() => {
+  if (currentType.value === 'trash') return false
+  const target = ctx.value.target
+  if (ctx.value.type === 'multi-file') return selectedIds.value.size + selectedFolderKeys.value.size > 0
+  if (ctx.value.type === 'file') {
+    return target != null && 'ext' in target && selectedIds.value.has(Number(target.id))
+  }
+  if (ctx.value.type === 'folder') {
+    return target != null && selectedFolderKeys.value.has(target.id)
+  }
+  return false
+})
 const gridViewContext = {
   contents, sortedContents, selectedFolderKeys, previewFolderKeys, inSelectionMode,
   openCtx, folderListIcon, folderAccentColor, handleFolderClick,
   renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder,
   deleteFolder, selectedIds, previewFileIds, cbStore, handleFileClick,
+  isExtractableArchive, extractFile,
   isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
   downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading,
   folderLayoutKey, fileLayoutKey,
@@ -749,6 +838,7 @@ const listViewContext = {
   folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
   startRenameFolder, downloadFolder, deleteFolder, inSelectionMode, selectedIds,
   previewFileIds, cbStore, handleFileClick,
+  isExtractableArchive, extractFile,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
   deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
   folderLayoutKey, fileLayoutKey,
@@ -782,6 +872,15 @@ async function ctxDownload() {
     const dirName = currentSeg.value?.name ?? t('files.file')
     await fileActions.batchDownload(ids, [], `${dirName}.zip`)
   }
+}
+function ctxExtractArchive() {
+  const target = ctx.value.target as FileMeta | null
+  ctx.value.visible = false
+  if (target && isExtractableArchive(target)) extractFile(target)
+}
+function ctxCompressSelection() {
+  ctx.value.visible = false
+  openCompressSelected()
 }
 function ctxRename() {
   const f = ctx.value.target; ctx.value.visible = false

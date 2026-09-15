@@ -531,6 +531,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(floatPreview).not.toContain('y.value = Math.max(0, dragOrig.y')
   })
 
+  it('浮动预览标题栏双击切换最大化，操作按钮不冒泡', () => {
+    expect(floatPreview).toContain('@dblclick.prevent="toggleMaximize"')
+    expect(floatPreview).toContain('<div class="fpw-actions" @dblclick.stop>')
+  })
+
   it('settings-popup 保持原组件视觉，Mono/暗色只映射 token 且 danger hover 只有一层', () => {
     const settings = cssBlock(appSidebar, '.settings-popup {')
     expect(settings).toContain('background:var(--settings-popup-bg,rgba(255,255,255,.44))')
@@ -637,6 +642,15 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(archivedProjects).toContain('<FlipChevron :open="openMonths.has(yg.year + mg.month)" :size="8" />')
     expect(archivedProjects).not.toContain('.year-chev')
     expect(archivedProjects).not.toContain('.month-chev')
+    const archivedYearBody = cssBlock(archivedProjects, '.year-body {')
+    expect(archivedYearBody).toContain('padding: 0 0 0 var(--ap-year-content-indent)')
+    expect(archivedYearBody).not.toContain('border-left')
+    const archivedGuide = cssBlock(archivedProjects, '.year-body::before {')
+    expect(archivedGuide).toContain('left: var(--ap-year-chevron-center)')
+    expect(archivedGuide).toContain('background: var(--done-group-border)')
+    expect(archivedProjects).toContain('.month-group { margin-bottom: 0; }')
+    expect(cssBlock(archivedProjects, '.ap-list {')).toContain('box-sizing: border-box')
+    expect(cssBlock(archivedProjects, '.ap-list {')).toContain('padding: 0 0 0 4px')
 
     expect(uploadModal).toContain('.toggle-chev, .year-chev, .month-chev')
     expect(uploadModal).toContain('transform:rotate(-90deg)')

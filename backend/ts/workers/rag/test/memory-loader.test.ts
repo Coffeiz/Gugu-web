@@ -17,7 +17,7 @@ test("Memory loader 在 TS 内读取 owner index、刷新 daily 并只接收当�
   const ownerId = "memory-loader-owner-1";
   const parentId = "memory:profile:profile:0";
   const files = {
-    [`${ownerId}/.agent/rag/memory-index-v1.json`]: JSON.stringify({ schema_version: 1, documents: [
+    [`${ownerId}/.agent/rag/memory/index.json`]: JSON.stringify({ schema_version: 1, documents: [
       {
         document_id: parentId, parent_document_id: parentId, chunk_index: 0, chunk_count: 1,
         source_type: "memory", source_id: "profile", title: "用户画像", summary: "偏好咖啡",

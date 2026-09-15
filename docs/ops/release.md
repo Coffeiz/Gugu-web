@@ -71,7 +71,8 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
   git fetch origin && git tag -a v1.0.x -m "v1.0.x：一句话摘要" origin/main && git push origin v1.0.x
   ```
 
-- tag 触发 publish job：构建公开的一体化 `gugu-web` 并推送 Docker Hub（同时镜像到 GHCR），拆分 backend/frontend 业务镜像仅推送 GHCR；镜像只发布语义版本号标签，不再发布 Git SHA 标签，稳定版仍维护 `latest` 别名；镜像均做 Cosign 签名。update manifest 使用 `docker.io/coffeiz/gugu-web@sha256:...`，不引用拆分镜像。
+- tag 触发 publish job：构建公开的一体化 `gugu-web`、updater、sandbox 和拆分 backend/frontend 镜像，并同步推送 Docker Hub 与 GHCR；业务镜像只发布语义版本号标签，不发布 Git SHA 镜像标签。稳定版的一体化 `gugu-web`、updater、sandbox 仍维护 `latest` 别名；镜像均以 Cosign OCI 1.1 referrer 方式签名，签名不会创建 `sha256-<digest>.sig` 普通镜像 tag。此前已发布的旧式 `.sig` tag 保留，不做清理。update manifest 使用 `docker.io/coffeiz/gugu-web@sha256:...`，不引用拆分镜像。
+- Docker Hub 首次推送会按 `coffeiz` 命名空间的默认可见性创建 backend/frontend 仓库；首次发布前确认这两个仓库为 Public，确保业务服务器可匿名拉取。
 
 ### 发布失败处理
 
@@ -82,17 +83,17 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
 ## 5. 生产部署（root@<host>，/opt/Gugu-web-main）
 
 ```bash
-docker pull ghcr.io/coffeiz/gugu-web-backend:v1.0.x
-docker pull ghcr.io/coffeiz/gugu-web-frontend:v1.0.x
-docker tag ghcr.io/coffeiz/gugu-web-backend:v1.0.x   gugu-web-backend:prod
-docker tag ghcr.io/coffeiz/gugu-web-frontend:v1.0.x  gugu-web-frontend:prod
+docker pull docker.io/coffeiz/gugu-web-backend:v1.0.x
+docker pull docker.io/coffeiz/gugu-web-frontend:v1.0.x
+docker tag docker.io/coffeiz/gugu-web-backend:v1.0.x   gugu-web-backend:prod
+docker tag docker.io/coffeiz/gugu-web-frontend:v1.0.x  gugu-web-frontend:prod
 cd /opt/Gugu-web-main && docker compose -p gugu-web-main -f docker-compose.prod.yml up -d
 docker compose -p gugu-web-main -f docker-compose.prod.yml up -d --force-recreate sandboxd
 docker restart gugu-web-main-nginx-1
 ```
 
 - compose 项目名必须 `-p gugu-web-main`；`backend/.env`、`config.override.json` 属用户数据，流程中只读。
-- GHCR backend/frontend 包当前公开，可匿名拉取；发布工作流继续更新这些业务镜像。
+- backend/frontend 镜像在 Docker Hub 与 GHCR 均公开，可匿名拉取；业务服务器优先使用 Docker Hub，也可改用 GHCR 同版本标签。
 - sandboxd 与 backend 共用镜像 tag，`up -d` 检测不到 tag 底层镜像变化，必须 `--force-recreate`。
 - **最后一步 `docker restart nginx-1` 不能省**（v1.1.4 教训）：`up -d` 重建 backend/frontend 后
   容器 IP 会变，nginx 只在启动时解析上游地址，不重启就继续连旧 IP，公网整站 502
@@ -105,7 +106,7 @@ docker restart gugu-web-main-nginx-1
 由**宿主机 daemon** 解析，所以宿主机需要看到与容器内一致的 `Gugu-data` 路径。Compose
 会把 `GUGU_DATA_HOST_DIR` 直接 bind 到容器的 `/data`，未设置时按 Compose 文件目录解析为
 `Gugu-data`，首次启动会自动创建。启用 `sandbox` profile 时，`sandbox-bootstrap` 会在
-`data-migrate` 成功后自动为每个用户的 `shell`、`个人文件`、`项目文件` 根目录及已有子目录
+`sandbox-bootstrap` 成功后自动为每个用户的 `shell`、`个人文件`、`项目文件` 根目录及已有子目录
 设置 Rootless UID/GID ACL，并用真实沙盒 UID 做写入探针；不需要手工 chmod/chown：
 
 ```bash
@@ -117,10 +118,9 @@ docker -H unix:///run/user/1001/docker.sock pull debian@sha256:88200866dfff7ea7f
 - rootless 下沙盒进程使用目标 daemon 的 subordinate UID/GID 映射；bootstrap 会从宿主机的
   `/etc/passwd`、`/etc/subuid`、`/etc/subgid` 读取映射并写入 ACL。若探针失败，bootstrap
   会失败并在日志中给出权限错误，不能等到用户第一次执行 Shell 才发现。
-- 从旧 named volume 升级：Compose 的 `data-migrate` 会在业务服务启动前，把
-  `GUGU_LEGACY_DATA_VOLUME` 指定的旧卷（默认 `gugu-web-compose_gugu_data`）复制到
-  `GUGU_DATA_HOST_DIR`；升级前先停掉旧业务容器，源卷只读挂载并保留，不需要 `down -v`
-  或手工删卷。正式更新脚本会自动完成停服务、迁移和重启。
+- 从旧单容器升级：必须先执行 `scripts/migrate-single-container-to-compose.sh` 完成一次数据库、
+  用户文件和配置迁移；已经迁移到 Compose 持久化卷后，正式更新脚本不再执行旧的 named volume
+  文件迁移。
 
 ### 部署后验证清单
 

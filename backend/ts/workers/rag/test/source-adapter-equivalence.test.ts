@@ -16,7 +16,7 @@ test("版本计算与 Python text_version 逐位一致（冻结值）", () => {
   assert.equal(textVersion("", ""), textVersion("", ""));
 });
 
-test("file 适配器输出「文件/类型/空间/阶段」头部与五字段元数据", () => {
+test("file 适配器只索引文件名并保留五字段元数据", () => {
   const [document] = fileAdapter.toDocuments([{
     id: 7, title: "方案.md", ext: "md", space: "项目A", stage_name: "评审",
     content: "这是文件正文", version_parts: [7, "v3", "2026-09-09T00:00:00"],
@@ -24,39 +24,33 @@ test("file 适配器输出「文件/类型/空间/阶段」头部与五字段元
   }]);
   assert.equal(document.id, "file:file:7:0");
   assert.equal(document.parent_id, "file:7");
-  const fileBody = "文件：方案.md\n类型：md\n空间：项目A\n阶段：评审\n这是文件正文";
-  assert.equal(document.content, fileBody);
-  assert.equal(document.summary, fileBody.slice(0, 240));
-  assert.equal(document.text, ["方案.md", fileBody].join("\n")); // summary 为正文前缀截断，不重复拼接（PRD-KNOWLEDGE-2 去重守卫）
+  assert.equal(document.content, "方案.md");
+  assert.equal(document.summary, "");
+  assert.equal(document.text, ["方案.md", "方案.md"].join("\n"));
+  assert.doesNotMatch(document.text, /这是文件正文/);
   assert.deepEqual(document.metadata, {
     file_id: "7", mime_type: "", project_id: "", folder_id: "", space: "项目A",
   });
-  assert.equal(document.document_version, textVersion(
-    "文件：方案.md\n类型：md\n空间：项目A\n阶段：评审\n这是文件正文", "7", "v3", "2026-09-09T00:00:00"));
-  // 空头部字段整行省略；缺正文时只剩元数据索引行。
+  assert.equal(document.document_version, textVersion("方案.md", "7", "v3", "2026-09-09T00:00:00"));
   const [minimal] = fileAdapter.toDocuments([{
     id: 8, title: "零", version_parts: ["8"], scope: ownerScope,
   }]);
-  assert.equal(minimal.content, "文件：零");
-  assert.equal(minimal.text, ["零", "文件：零"].join("\n"));
+  assert.equal(minimal.content, "零");
+  assert.equal(minimal.text, ["零", "零"].join("\n"));
   assert.equal(minimal.metadata.space, "");
 });
 
-test("文件按 1000 字符分块、150 字符 overlap，并按码点计数", () => {
-  // 文件来源的元数据头部先独立成块，正文按统一的 1000 字符窗口切分。
+test("文件忽略正文并始终只生成一个文件名 chunk", () => {
   const long = "\u5b57".repeat(1000) + "\u{1F600}".repeat(40);
   const documents = fileAdapter.toDocuments([{
     id: 31, title: "长表情.md", content: long, version_parts: ["31"], scope: ownerScope,
   }]);
-  assert.equal(documents.length, 3);
-  assert.equal(documents[0].content, "文件：长表情.md");
-  assert.equal(Array.from(documents[1].content).length, 1000);
-  assert.equal(Array.from(documents[2].content).length, 190);
-  assert.equal(
-    Array.from(documents[2].content).slice(0, 150).join(""),
-    Array.from(documents[1].content).slice(-150).join(""),
-  );
-  assert.ok(documents.every((document) => document.chunk_count === 3));
+  assert.equal(documents.length, 1);
+  assert.equal(documents[0].content, "长表情.md");
+  assert.equal(documents[0].text, "长表情.md\n长表情.md");
+  assert.equal(documents[0].chunk_index, 0);
+  assert.equal(documents[0].chunk_count, 1);
+  assert.doesNotMatch(documents[0].content, /字|😀/u);
 });
 
 test("note 适配器空标题回落「便签」，content_plain 优先", () => {
@@ -157,7 +151,7 @@ test("conversation 适配器输出摘要与消息两种文档，元数据含会�
   });
 });
 
-test("统一入口按来源分发，文件长文按 1000 字符分块", () => {
+test("统一入口按来源分发，文件只生成文件名索引", () => {
   const documents = buildSourceDocuments({
     files: [{ id: 1, title: "长文.txt", content: "字".repeat(3000),
               version_parts: [1], scope: ownerScope }],
@@ -165,13 +159,9 @@ test("统一入口按来源分发，文件长文按 1000 字符分块", () => {
   });
   assert.ok(documents.every((document) => document.source_type !== undefined));
   const fileChunks = documents.filter((document) => document.source_type === "file");
-  assert.ok(fileChunks.length >= 3);
-  assert.equal(Array.from(fileChunks[1].content).length, 1000);
-  assert.equal(
-    Array.from(fileChunks[2].content).slice(0, 150).join(""),
-    Array.from(fileChunks[1].content).slice(-150).join(""),
-  );
-  assert.ok(fileChunks.every((chunk) => chunk.chunk_count === fileChunks[0].chunk_count));
+  assert.equal(fileChunks.length, 1);
+  assert.equal(fileChunks[0].content, "长文.txt");
+  assert.equal(fileChunks[0].chunk_count, 1);
   const noteDocuments = documents.filter((document) => document.source_type === "note");
   assert.equal(noteDocuments.length, 1);
 

@@ -114,6 +114,10 @@ export function useFileUpload(options: FileUploadOptions) {
 
   return {
     uploadingItems: queue.uploadingItems,
+    createExtractionGhost: (name: string, statusText: string) => {
+      const ghost = queue.createIndeterminateFolderGhost(name, statusText)
+      return () => queue.removeGhost(ghost)
+    },
     isDragging,
     uploadFiles,
     handleFileInput,

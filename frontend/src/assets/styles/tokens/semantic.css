@@ -40,6 +40,8 @@
   --border-hover: var(--theme-border-hover);
   --border-highlight: var(--theme-highlight-rest);
   --border-focus: var(--theme-focus);
+  /* 内容分割线使用前景色派生，避免玻璃主题的白色外框 token 落在浅色内容面上失去对比度。 */
+  --content-divider: color-mix(in srgb, var(--theme-content-primary) 10%, transparent);
   /* 文档内容需要在亮色玻璃表面保持可读的表格分隔线；通用玻璃边框可能是白色。 */
   --border-document-table: color-mix(in srgb, var(--theme-content-primary) 18%, transparent);
   /* Canvas 图表（chart.js）的网格线与刻度：玻璃主题的通用边框 token 在亮色下接近纯白

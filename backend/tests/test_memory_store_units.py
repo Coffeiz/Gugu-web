@@ -394,9 +394,9 @@ async def test_read_memory_vector_branch_embeds_query_once(storage, monkeypatch)
     patterns = [_pattern("p1", "喜欢猫"), _pattern("p2", "夜猫子")]
     await store.write_pattern_list(UID, patterns)
     await store.write_pattern_vecs(UID, {"p1": {"v": [1.0], "t": "t"}})
-    # 长期记忆超过 MEMORY_INJECT_CHARS(2000) 预算 → 触发按向量挑块
+    # 长期记忆超过 MEMORY_INJECT_CHARS(3000) 预算 → 触发按向量挑块
     #（retrieve_memory_block 的 budget 是 def 时绑定的默认值，不能靠 patch 常量缩小）
-    memory_text = "甲" * 1100 + "\n\n" + "乙" * 1100
+    memory_text = "甲" * 1600 + "\n\n" + "乙" * 1600
     await store.write_memory_doc(UID, memory_text)
     await store.write_memory_vecs(UID, {
         store._chunk_key(c): {"v": [1.0], "t": "t"} for c in store._memory_chunks(memory_text)
@@ -406,4 +406,4 @@ async def test_read_memory_vector_branch_embeds_query_once(storage, monkeypatch)
     assert calls["embed"] == 1                            # query 只 embed 一次、两边共用
     assert "喜欢猫" in result["pattern"] and "夜猫子" in result["pattern"]  # 重要度保底全保
     # 向量挑块生效：注入按预算截断而不是整篇（整篇 2202 字）
-    assert len(result["memory"]) <= 2000 < len(memory_text)
+    assert len(result["memory"]) <= store.MEMORY_INJECT_CHARS < len(memory_text)

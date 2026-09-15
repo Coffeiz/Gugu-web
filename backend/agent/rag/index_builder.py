@@ -1,14 +1,11 @@
 """把业务主数据投影为统一知识索引 chunk。"""
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections import defaultdict
 
 from sqlalchemy import select
 
-from app.core.chat_attach import TEXT_EXTS
-from app.services.storage import get_storage
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.adapters.knowledge import KnowledgeAdapter
 from agent.rag.adapters.projects import ProjectAdapter
@@ -28,30 +25,7 @@ from app.models import (
 )
 
 
-FILE_TEXT_MAX_BYTES = 1 * 1024 * 1024
-FILE_DOCUMENT_LOAD_CONCURRENCY = 8
 CONVERSATION_CONTEXT_MAX_CHARS = 600
-
-
-async def _extract_file_text(row: File) -> str:
-    """只抽取受支持的小型文本文件；失败时保留元数据索引，不伪造正文。"""
-    if (row.ext or "").lower() not in TEXT_EXTS:
-        return ""
-    if row.size_bytes and row.size_bytes > FILE_TEXT_MAX_BYTES:
-        return ""
-    try:
-        info = await get_storage().stat(row.storage_key)
-        if info is not None and info.size > FILE_TEXT_MAX_BYTES:
-            return ""
-        raw = await get_storage().get(row.storage_key)
-        return raw.decode("utf-8", errors="replace").strip()
-    except Exception:
-        return ""
-
-
-async def _extract_file_text_bounded(row: File, semaphore: asyncio.Semaphore) -> str:
-    async with semaphore:
-        return await _extract_file_text(row)
 
 
 def _scope(owner_user_id: object, session=None) -> Scope:
@@ -76,13 +50,14 @@ def _version_parts(*parts) -> list[str]:
     return [part.isoformat() if hasattr(part, "isoformat") else str(part or "") for part in parts]
 
 
-def file_record(row, body: str) -> dict:
+def file_record(row, body: str = "") -> dict:
     return {
         "source_type": "file", "id": str(row.id), "title": row.display_name,
         "ext": row.ext or "", "mime_type": row.mime_type or "",
         "project_id": str(row.project_id or ""), "folder_id": str(row.folder_id or ""),
         "space": row.space or "", "stage_name": row.stage_name or "",
-        "content": body or "",
+        # 文件 RAG 只建立文件名索引；正文仍由文件预览/读取链路按需获取。
+        "content": "",
         "version_parts": _version_parts(row.id, row.version, row.updated_at),
         "updated_at": _iso_or_none(row.updated_at),
     }
@@ -184,8 +159,7 @@ async def build_single_source_record(
         ))).scalar_one_or_none()
         if row is None:
             return None
-        semaphore = asyncio.Semaphore(1)
-        return file_record(row, await _extract_file_text_bounded(row, semaphore)), owner_scope
+        return file_record(row), owner_scope
     if source_type == "project":
         row = (await db.execute(select(Project).where(
             Project.user_id == owner_user_id,
@@ -288,11 +262,7 @@ async def build_source_records(db, owner_user_id: object, source_type: str) -> l
         rows = (await db.execute(select(File).where(
             File.user_id == owner_user_id, File.deleted_at.is_(None),
         ).order_by(File.updated_at.desc(), File.id.desc()))).scalars().all()
-        semaphore = asyncio.Semaphore(FILE_DOCUMENT_LOAD_CONCURRENCY)
-        bodies = await asyncio.gather(*(
-            _extract_file_text_bounded(row, semaphore) for row in rows
-        ))
-        return [(file_record(row, body), owner_scope) for row, body in zip(rows, bodies, strict=True)]
+        return [(file_record(row), owner_scope) for row in rows]
     if source_type == "note":
         rows = (await db.execute(select(MindNode).where(
             MindNode.user_id == owner_user_id,

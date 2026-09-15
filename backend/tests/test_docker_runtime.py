@@ -784,16 +784,52 @@ def test_prepare_storage_applies_target_daemon_mapping_and_probes(tmp_path, monk
         lambda root, **kwargs: probes.append((root, kwargs["image_ref"])),
     )
 
+    identity_file = tmp_path / "run" / "sandbox-storage-identity.json"
     assert prepare_rootless_storage.prepare(
         users_root,
         login=None,
         docker_socket="/run/user/1000/docker.sock",
         image_ref="debian:bookworm-slim@sha256:" + "a" * 64,
         probe=True,
+        identity_file=identity_file,
     ) == 4
     assert {plan.mapped_uid for plan in plans} == {165531}
     assert {plan.mapped_gid for plan in plans} == {165531}
     assert [root for root, _image in probes] == [plan.root for plan in plans]
+    assert json.loads(identity_file.read_text(encoding="utf-8")) == {
+        "schema": 1,
+        "daemon_mode": "rootless",
+        "container_uid": 65532,
+        "container_gid": 65532,
+        "mapped_uid": 165531,
+        "mapped_gid": 165531,
+    }
+
+
+def test_prepare_storage_publishes_rootful_identity_without_subordinate_ranges(tmp_path, monkeypatch):
+    from scripts import prepare_rootless_storage
+
+    users_root = tmp_path / "users"
+    (users_root / "user-a").mkdir(parents=True)
+    plans = []
+    monkeypatch.setattr(prepare_rootless_storage, "_docker_info", lambda _socket: (False, 0))
+    monkeypatch.setattr(prepare_rootless_storage, "apply_permission_plan", plans.append)
+    identity_file = tmp_path / "run" / "sandbox-storage-identity.json"
+
+    assert prepare_rootless_storage.prepare(
+        users_root,
+        login=None,
+        docker_socket="/var/run/docker.sock",
+        image_ref="debian:bookworm-slim",
+        probe=False,
+        identity_file=identity_file,
+    ) == 4
+    assert {plan.mapped_uid for plan in plans} == {65532}
+    assert {plan.mapped_gid for plan in plans} == {65532}
+    identity = json.loads(identity_file.read_text(encoding="utf-8"))
+    assert identity["daemon_mode"] == "rootful"
+    assert identity["mapped_uid"] == 65532
+    assert identity["mapped_gid"] == 65532
 
 
 def test_compose_sandbox_bootstrap_has_shared_storage_acl_contract():
@@ -805,8 +841,8 @@ def test_compose_sandbox_bootstrap_has_shared_storage_acl_contract():
         assert "/etc/passwd:/host/etc/passwd:ro" in block
         assert "/etc/subuid:/host/etc/subuid:ro" in block
         assert "/etc/subgid:/host/etc/subgid:ro" in block
+        assert "sandbox_socket:/run/gugu" in block
         assert "condition: service_completed_successfully" in block
-        assert "data-migrate:" in block
 
 
 def test_permission_plan_rejects_root_directory(tmp_path):
