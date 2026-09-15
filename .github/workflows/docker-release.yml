@@ -246,15 +246,14 @@ jobs:
           CI_SUFFIX: ci-${{ github.run_id }}
         run: |
           set -euo pipefail
-          copy() {
-            crane copy "${REGISTRY}/$1:${CI_SUFFIX}" "${REGISTRY}/$1:${VERSION}"
-            crane copy "${REGISTRY}/$1:${CI_SUFFIX}" "docker.io/$2:${VERSION}"
-            echo "copied $1 / $2"
-          }
-          copy coffeiz/gugu-web-backend coffeiz/gugu-web-backend
-          copy coffeiz/gugu-web-frontend coffeiz/gugu-web-frontend
-          copy coffeiz/gugu-web coffeiz/gugu-web
-          copy coffeiz/gugu-sandbox coffeiz/gugu-sandbox
+          crane copy "${REGISTRY}/coffeiz/gugu-web-backend:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web-backend:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web-backend:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web-backend:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web-frontend:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web-frontend:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web-frontend:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web-frontend:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-sandbox:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-sandbox:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-sandbox:${CI_SUFFIX}" "docker.io/coffeiz/gugu-sandbox:${VERSION}"
 
       - name: Resolve release digests
         id: digests

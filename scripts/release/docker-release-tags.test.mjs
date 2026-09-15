@@ -7,18 +7,29 @@ const workflowPath = new URL('../../.github/workflows/docker-release.yml', impor
 test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元数据', async () => {
   const workflow = await readFile(workflowPath, 'utf8')
   const publishJob = workflow.slice(workflow.indexOf('\n  publish:\n'))
-  const imageTagLines = publishJob.split('\n').filter(line =>
-    /^\s*\$\{\{\s*env\.[A-Z_]+\s*\}\}[^\n]*:\$\{\{/.test(line),
-  )
 
-  assert.equal(imageTagLines.length, 8, '预期 backend、frontend、app、sandbox 发布共八个版本标签（updater 与 app 同镜像）')
-  assert.ok(imageTagLines.every(line => line.includes('steps.version.outputs.version')))
-  assert.ok(imageTagLines.every(line => !line.includes('github.sha')))
-  assert.match(publishJob, /\$\{\{\s*env\.IMAGE_REPOSITORY\s*\}\}-backend:\$\{\{\s*steps\.version\.outputs\.version\s*\}\}/)
-  assert.match(publishJob, /\$\{\{\s*env\.IMAGE_REPOSITORY\s*\}\}-frontend:\$\{\{\s*steps\.version\.outputs\.version\s*\}\}/)
-  assert.match(publishJob, /\$\{\{\s*env\.DOCKERHUB_BACKEND_IMAGE_REPOSITORY\s*\}\}:\$\{\{\s*steps\.version\.outputs\.version\s*\}\}/)
-  assert.match(publishJob, /\$\{\{\s*env\.DOCKERHUB_FRONTEND_IMAGE_REPOSITORY\s*\}\}:\$\{\{\s*steps\.version\.outputs\.version\s*\}\}/)
-  assert.match(publishJob, /uses: sigstore\/cosign-installer@v3\.8\.1\s+with:\s+cosign-release: v3\.1\.3/)
+  // 发布不再重建镜像：publish 从 docker-build 推送的 :ci-<run_id> 纯复制，
+  // 保证 trivy 扫过的 digest 与发布的 digest 一致。
+  assert.match(publishJob, /CI_SUFFIX: ci-\$\{\{\s*github\.run_id\s*\}\}/)
+  const copyLines = publishJob.split('\n').filter(line => line.trim().startsWith('crane copy '))
+  assert.equal(copyLines.length, 8, 'backend、frontend、app、sandbox 各复制到 GHCR 与 Docker Hub 共八次')
+  // 版本 tag 全部使用发布版本号变量，Git SHA 不允许进入任何 tag。
+  assert.ok(copyLines.every(line => line.includes(':${VERSION}') && !line.includes('github.sha')),
+    '发布 tag 必须来自版本号变量')
+  // 四个镜像在两个 registry 的 digest 都要解析，供签名与 updater manifest 使用。
+  for (const key of [
+    'ghcr_backend', 'ghcr_frontend', 'ghcr_app', 'ghcr_sandbox',
+    'hub_backend', 'hub_frontend', 'hub_app', 'hub_sandbox',
+  ]) {
+    assert.match(publishJob, new RegExp(`echo "${key}=\\$\\(crane digest `), `缺少 digest 解析：${key}`)
+  }
+  // 稳定版 latest 别名改由 crane tag 打点。
+  assert.match(publishJob, /crane tag "\$\{IMAGE_REPOSITORY\}:\$\{VERSION\}" latest/,
+    '稳定版需继续更新默认部署使用的 latest 别名')
+  assert.match(workflow, /push: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/,
+    ':ci 中间镜像只在 tag 触发时推送，main/dispatch 运行零额外推送')
+
+  assert.match(publishJob, /uses: sigstore\/cosign-installer@v4\.1\.2\s+with:\s+cosign-release: v3\.1\.3/)
   const imageSignCommands = publishJob.split('\n').filter(line => line.includes('cosign sign --yes'))
   assert.equal(imageSignCommands.length, 8, '所有 GHCR 与 Docker Hub 镜像都应签名（updater 与 app 同镜像不单签）')
   assert.ok(imageSignCommands.every(line => line.includes('--registry-referrers-mode=oci-1-1')),
@@ -26,5 +37,4 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
   assert.match(publishJob, /cosign sign --yes --registry-referrers-mode=oci-1-1 "\$\{DOCKERHUB_BACKEND_IMAGE_REPOSITORY\}@\$\{BACKEND_DIGEST\}"/)
   assert.match(publishJob, /cosign sign --yes --registry-referrers-mode=oci-1-1 "\$\{DOCKERHUB_FRONTEND_IMAGE_REPOSITORY\}@\$\{FRONTEND_DIGEST\}"/)
   assert.match(publishJob, /GIT_SHA:\s*\$\{\{\s*github\.sha\s*\}\}/, 'manifest 仍应记录构建 commit SHA')
-  assert.match(publishJob, /--tag "\$\{IMAGE_REPOSITORY\}:latest"/, '稳定版需继续更新默认部署使用的 latest 别名')
 })
