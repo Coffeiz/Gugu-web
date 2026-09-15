@@ -162,12 +162,12 @@ def _keyboard_rows_for_labels(labels: list) -> list:
 
 
 def test_keyboard_packs_rows_by_label_width():
-    # 短标签（1-2 字）宽松：4 个 34 单位预算内可同排。
+    # 短标签（1-2 字）：3 个 20 单位同排，第 4 个（12 单位）超预算 30 换行。
     rows = _keyboard_rows_for_labels(["是", "否", "取消", "稍后再说"])
-    assert [len(row["buttons"]) for row in rows] == [4]
-    # 加一个放不下的 → 换行。
+    assert [len(row["buttons"]) for row in rows] == [3, 1]
+    # 第二行还能再装一个短的：12+10=22 ≤ 30。
     rows = _keyboard_rows_for_labels(["是", "否", "取消", "稍后再说", "自定义"])
-    assert [len(row["buttons"]) for row in rows] == [4, 1]
+    assert [len(row["buttons"]) for row in rows] == [3, 2]
     # 截图用例（5-6 字标签）：贪心两两成行，不再五挤一行截断。
     rows = _keyboard_rows_for_labels(["1（主按钮）", "2（次按钮）", "3（文字按钮）", "都没点开", "自定义回复"])
     assert [len(row["buttons"]) for row in rows] == [2, 2, 1]
