@@ -25,7 +25,7 @@
 - 默认 Compose 统一使用前后端应用镜像，PostgreSQL 和 Redis 由 Compose 服务管理；移除镜像内置数据库启动路径。
 - **单容器部署迁移脚本**：镜像不再内置数据库后，v1.2.x 及更早的单容器部署（`docker run` / NAS 面板，数据在匿名卷或映射目录里、含内嵌数据库）升级前必须先运行 `scripts/migrate-single-container-to-compose.sh`，自动完成数据库导出恢复、用户文件与凭据迁移；旧容器与旧卷保留不删除，支持 `--dry-run` 预演。该脚本只需在首次迁移到 Compose 时执行，已经使用 Compose 持久化卷的部署后续升级无需重复执行。详见部署文档「从单容器版本迁移」。
 - **拆分 backend/frontend 镜像同步发布到 Docker Hub**：业务服务器可直接按语义版本拉取；不发布 Git SHA 镜像标签。
-- **Cosign 签名改用 OCI referrers**：继续保留镜像签名与 updater 验签，但新发布不再生成 `sha256-<digest>.sig` 普通镜像标签。
+- **Cosign 签名改用 OCI referrers**：发布流程继续对四个镜像签名，签名以 OCI 1.1 referrers artifact 挂在镜像 digest 下，不再生成 `sha256-<digest>.sig` 普通镜像标签；更新流程不再做签名校验，需要验证时可用外部 cosign 工具按 digest 校验。
 
 ### 修复
 
