@@ -259,15 +259,33 @@ class AnthropicDriver:
                 break
             yield ("token", val)
 
-        tool_blocks = [b for b in final.content if b.type == "tool_use"]
-        text = "".join(b.text for b in final.content if b.type == "text")
-        tool_calls = [NormalizedToolCall(id=b.id, name=b.name, input=b.input) for b in tool_blocks]
+        # provider 已解析的 tool_use.name 仍可能混入内部流式尾标记或 XML 片段。
+        # 统一在驱动边界清洗，并让同一份 block 同时进入 RoundResult 与历史，避免
+        # core 只修正 dispatch 名称，却把污染后的原始 name 持久化到下一轮前缀。
+        from agent.tools.base import salvage_tool_name
+
+        raw_blocks = [
+            b.model_dump() if hasattr(b, "model_dump") else copy.deepcopy(dict(b))
+            for b in final.content
+        ]
+        for block in raw_blocks:
+            if block.get("type") != "tool_use":
+                continue
+            salvaged = salvage_tool_name(block.get("name"))
+            if salvaged is not None:
+                block["name"] = salvaged
+
+        tool_blocks = [b for b in raw_blocks if b.get("type") == "tool_use"]
+        text = "".join(str(b.get("text") or "") for b in raw_blocks if b.get("type") == "text")
+        tool_calls = [NormalizedToolCall(
+            id=b.get("id"), name=b.get("name"), input=b.get("input") or {}
+        ) for b in tool_blocks]
         yield ("done", RoundResult(
             text=text, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=final.usage.input_tokens, usage_out=final.usage.output_tokens,
             cache_tokens=getattr(final.usage, "cache_read_input_tokens", 0) or 0,
             cache_write_tokens=getattr(final.usage, "cache_creation_input_tokens", 0) or 0,
-            raw=final.content,
+            raw=raw_blocks,
         ))
 
     def _content_dicts(self, result: RoundResult, *, tool_ids: set[str] | None = None) -> list:
