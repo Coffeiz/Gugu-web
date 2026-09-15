@@ -660,8 +660,10 @@ function onListScroll() {
 .rp-editor :deep(.ne-body) { flex: 1; min-height: 0; overflow-y: auto; }
 .rp-editor :deep(.ProseMirror) { font-size: 14px; }
 /* 编辑器把所有 md 标题级别折叠成 h1（markdownToDoc level:1）：其余 h1 一律 15px
-   对齐 .md-preview h1（笔记标题改由独立的标题输入位承担，不再依赖首块 h1 字号） */
-.rp-editor :deep(.ProseMirror h1) { font-size: 15px; font-weight: 700; margin: 0; }
+   对齐 .md-preview h1（笔记标题改由独立的标题输入位承担，不再依赖首块 h1 字号）。
+   不写 margin——顶层块间距归 mind-content 的 owl selector 统一管，写了 0 会压过它，
+   标题与上下文的间距就比阅读态小 */
+.rp-editor :deep(.ProseMirror h1) { font-size: 15px; font-weight: 700; }
 .rp-editor :deep(.ProseMirror h2),
 .rp-editor :deep(.ProseMirror h3) { font-size: 15px; font-weight: 700; }
 .rp-editor :deep(.ne-tool svg),
