@@ -30,6 +30,27 @@ describe('useFileLibrarySelection shift 范围选择', () => {
     expect(sel.selectedIds.value.has(20)).toBe(true)
     expect(sel.selectedFolderKeys.value.size).toBe(0)
   })
+
+  it('单击不可预览的压缩包时交给直接动作，不进入选择态', () => {
+    const archive = { id: 42, ext: 'zip', displayName: '资料.zip' } as never
+    const openDirectFileAction = vi.fn(() => true)
+    const sel = useFileLibrarySelection({
+      containerRef: ref(null),
+      currentType: ref('all'),
+      getFolders: () => [],
+      getFiles: () => [archive],
+      getTrashFolders: () => [],
+      enterFolder: vi.fn(),
+      openPreview: vi.fn(),
+      isPreviewable: () => false,
+      openDirectFileAction,
+    })
+
+    sel.handleFileClick(archive, { currentTarget: null } as unknown as MouseEvent)
+
+    expect(openDirectFileAction).toHaveBeenCalledWith(archive)
+    expect(sel.selectedIds.value.size).toBe(0)
+  })
 })
 
 /** 回归：重命名输入框在手势中途因 blur 提交被卸载，浏览器会把 click 改派到

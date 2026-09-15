@@ -474,6 +474,11 @@ const selection = useFileLibrarySelection({
   enterFolder,
   openPreview: file => openPreview(file),
   isPreviewable,
+  openDirectFileAction: file => {
+    if (!isExtractableArchive(file)) return false
+    extractFile(file)
+    return true
+  },
 })
 const {
   selectedIds, selectedFolderKeys, selectedTrashFolderIds,
