@@ -16,6 +16,8 @@ export interface ChatMessage {
   html?: string | null
   files?: ChatFile[]
   references?: ChatReference[]
+  /** send_link_buttons 的 Web 渲染（PRD-LLM-24）：URL 均经服务端安全校验。 */
+  linkButtons?: { message: string; buttons: { id: string; label: string; url: string }[] }
   quotedText?: string
   time: string
   streaming?: boolean

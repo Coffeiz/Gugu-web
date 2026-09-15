@@ -606,6 +606,26 @@ export function useChatStream(options: {
               m.files.push(evt.file)
               scheduleStreamScroll()
             }
+          } else if (evt.type === 'link_buttons') {
+            if (live()) {
+              receivedAssistantContent = true
+              options.clearStatus()
+              if (aiIdx === -1) options.playIncomingMessageSfx()
+              if (aiIdx === -1) {
+                const messageId = mkid()
+                messages.value.push({
+                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
+                  runId: evt.run_id || currentRunId || undefined,
+                  roundId: evt.round_id || currentRoundId || undefined,
+                  _timelineOrder: nextTimelineOrder(),
+                })
+                sortLiveTimeline()
+                aiIdx = messages.value.findIndex(item => item.id === messageId)
+              }
+              const m = messages.value[aiIdx]
+              if (evt.link_buttons) m.linkButtons = evt.link_buttons
+              scheduleStreamScroll()
+            }
           } else if (evt.type === 'done') {
             if (live()) options.clearStatus()
           } else if (evt.type === 'error') {
