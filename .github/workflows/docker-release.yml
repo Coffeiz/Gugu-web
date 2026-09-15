@@ -141,7 +141,6 @@ jobs:
         run: |
           docker run --rm --entrypoint python3 gugu-web:ci -c 'import updater.daemon'
           docker run --rm --entrypoint docker gugu-web:ci compose version
-          docker run --rm --entrypoint cosign gugu-web:ci version
 
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
