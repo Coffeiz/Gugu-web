@@ -185,11 +185,9 @@ Compose 首次启动会自动创建目录；自定义目录需要保证运行 Do
 > **⚠️ 沙盒与 `Gugu-data` 的部署前置**（默认/Dev/Prod 三个 Compose 相同）：沙盒容器由
 > backend 通过 docker.sock 作为兄弟容器启动，`--mount src=.../users/<uid>/shell`
 > 由**宿主机 daemon** 解析，所以宿主机必须存在与容器内一致的 `Gugu-data` 路径。Compose
-> 已用 `GUGU_DATA_HOST_DIR`（未设置时按 Compose 文件目录解析为 `Gugu-data`）直接 bind；从旧版本
-> 升级时先停止旧业务容器（`docker compose stop`，不删卷），再执行 `docker compose up -d`，
-> 由 `data-migrate` 自动把旧 `gugu-web-compose_gugu_data` named volume 内容拷到新目录，
-> 源卷保留不删除，不需要手工执行第二套迁移。自定义旧 Compose 项目名时设置
-> `GUGU_LEGACY_DATA_VOLUME` 为实际卷名。启用 sandbox profile 时 compose 还会跑一次性
+> 已用 `GUGU_DATA_HOST_DIR`（未设置时按 Compose 文件目录解析为 `Gugu-data`）直接 bind；旧单容器
+> 部署必须先按上面的迁移步骤完成一次数据复制。已经迁移过的部署后续直接执行
+> `docker compose up -d`，不再执行旧的 named volume 迁移。启用 sandbox profile 时 compose 还会跑一次性
 > `sandbox-bootstrap`，自动在沙盒实际运行的 daemon（含 rootless）上准备 egress 网络、
 > squid 代理、沙盒镜像和用户 `shell`/文件目录 ACL，并用真实沙盒 UID 做写入探针；rootful
 > 单 daemon 部署下自动使用容器 UID/GID。详见 docs/ops/deploy.md。

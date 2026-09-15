@@ -69,7 +69,7 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
 
     async def compose(_args):
         return {"services": {
-            "app": {}, "postgres": {}, "redis": {}, "data-migrate": {},
+            "app": {}, "postgres": {}, "redis": {},
             "updater": {"image": "docker.io/coffeiz/gugu-web:latest"},
         }}
 

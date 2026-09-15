@@ -395,7 +395,7 @@ class UpdateDaemon:
         try:
             config = await self._compose(["config", "--format", "json"])
             services = config.get("services", {})
-            required = {"app", "postgres", "redis", "data-migrate"}
+            required = {"app", "postgres", "redis"}
             add("compose", required.issubset(services), "一体化 Compose 服务定义完整" if required.issubset(services) else "Compose 缺少必需服务")
             app_ids = (await self._compose_text(["ps", "-q", "app"])).strip().splitlines()
             add("app", bool(app_ids), "一体化 app 容器正在运行" if app_ids else "一体化 app 容器未运行")

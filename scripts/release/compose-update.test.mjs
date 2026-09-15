@@ -33,9 +33,9 @@ case "$command_name" in
     case "$1" in
       --services)
         if [[ "\${MOCK_SPLIT:-false}" == true ]]; then
-          printf '%s\\n' postgres backend worker gateway frontend migrate data-migrate
+          printf '%s\\n' postgres backend worker gateway frontend migrate
         else
-          printf '%s\\n' postgres redis searxng data-migrate app sandboxd
+          printf '%s\\n' postgres redis searxng app sandboxd
           if [[ "\${MOCK_UPDATER_SERVICE:-false}" == true ]]; then printf '%s\\n' updater; fi
         fi
         ;;
@@ -137,7 +137,7 @@ test('更新器从独立代码目录运行时仍使用部署目录和固定校�
       UPDATE_VALIDATOR: path.join(updaterCode, 'scripts', 'release', 'validate-update-manifest.mjs'),
     }, updaterScript)
     assert.equal(result.status, 0, result.stderr)
-    assert.match(fs.readFileSync(fixture.dockerLog, 'utf8'), /pull app data-migrate sandboxd/)
+    assert.match(fs.readFileSync(fixture.dockerLog, 'utf8'), /pull app sandboxd/)
     const backupRoot = path.join(fixture.root, 'backup')
     assert.equal(fs.readdirSync(backupRoot).length, 1)
   } finally {
@@ -152,7 +152,7 @@ test('只更新一体化 app，并在同镜像 sandboxd 运行时同步更新', 
     const result = runUpdate(fixture)
     assert.equal(result.status, 0, result.stderr)
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /pull app data-migrate sandboxd/)
+    assert.match(log, /pull app sandboxd/)
     assert.match(log, /up -d --no-deps --force-recreate app sandboxd/)
     assert.doesNotMatch(log, /gugu-web-(?:backend|frontend)/)
 
@@ -171,9 +171,9 @@ test('未运行 sandboxd 时不拉取或重建可选沙盒服务', () => {
     const result = runUpdate(fixture, { MOCK_SANDBOXD_RUNNING: 'false' })
     assert.equal(result.status, 0, result.stderr)
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /pull app data-migrate\n/)
+    assert.match(log, /pull app\n/)
     assert.match(log, /up -d --no-deps --force-recreate app\n/)
-    assert.doesNotMatch(log, /pull app data-migrate sandboxd/)
+    assert.doesNotMatch(log, /pull app sandboxd/)
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
   }

@@ -206,17 +206,6 @@ upsert_env_key() {
 # 数据目录必须显式写进 .env：bind 部署复用原目录，匿名卷部署固定到本次迁移的
 # 目标目录，避免 compose 回落到默认 ./Gugu-data 挂错位置。
 upsert_env_key GUGU_DATA_HOST_DIR "$DATA_HOST_DIR"
-# legacy 卷名只在用户未显式指定时写入：默认名 gugu-web-compose_gugu_data 是全局
-# 固定名，宿主机上有旧 compose 试验残留时 data-migrate 会拿它当迁移源（E2E 实测
-# 会因主密钥内容不同而拒绝启动）。匿名卷部署指向原卷做一致性校验，bind 部署
-# 指向本次专用的空卷直接跳过。
-if ! grep -q '^GUGU_LEGACY_DATA_VOLUME=' "$ROOT_ENV" 2>/dev/null; then
-  if [ "$DATA_MOUNT_TYPE" = "volume" ]; then
-    upsert_env_key GUGU_LEGACY_DATA_VOLUME "$DATA_VOLUME"
-  else
-    upsert_env_key GUGU_LEGACY_DATA_VOLUME "gugu-mig-legacy-${OLD_CONTAINER}"
-  fi
-fi
 if grep -q '^GUGU_DB_PASSWORD=.\+' "$ROOT_ENV" 2>/dev/null; then
   log "根 .env 已有 GUGU_DB_PASSWORD"
 else

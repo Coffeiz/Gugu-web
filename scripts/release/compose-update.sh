@@ -61,7 +61,7 @@ grep -Eq '^[[:space:]]*ADMIN_PASSWORD[[:space:]]*=[^[:space:]]' "$ROOT_DIR/backe
 
 COMPOSE=(docker compose -f "$COMPOSE_FILE" --profile sandbox)
 COMPOSE_SERVICES=$("${COMPOSE[@]}" config --services)
-for required_service in app postgres data-migrate; do
+for required_service in app postgres; do
   grep -qx "$required_service" <<<"$COMPOSE_SERVICES" \
     || { echo "Compose 文件不支持一体化更新：缺少 $required_service 服务" >&2; exit 1; }
 done
@@ -118,7 +118,7 @@ else
 fi
 
 echo '开始拉取 manifest 指定的一体化应用镜像...'
-PULL_SERVICES=(app data-migrate)
+PULL_SERVICES=(app)
 STOP_SERVICES=(app)
 RECREATE_SERVICES=(app)
 if [[ "$UPDATE_SANDBOXD" == true ]]; then
@@ -128,12 +128,8 @@ if [[ "$UPDATE_SANDBOXD" == true ]]; then
 fi
 "${COMPOSE[@]}" pull "${PULL_SERVICES[@]}"
 
-# 文件迁移必须在旧应用容器停止后执行，避免旧进程在复制期间继续写入 named volume。
-# stop 不删除卷；仅在 sandboxd 使用同一一体化镜像且当前运行时才同步重建它。
+# stop 不删除持久卷；仅在 sandboxd 使用同一一体化镜像且当前运行时才同步重建它。
 "${COMPOSE[@]}" stop "${STOP_SERVICES[@]}"
-echo '迁移旧版用户数据到 GUGU_DATA_HOST_DIR...'
-"${COMPOSE[@]}" up --no-deps --force-recreate data-migrate
-
 echo '重新创建一体化应用服务...'
 "${COMPOSE[@]}" up -d --no-deps --force-recreate "${RECREATE_SERVICES[@]}"
 

@@ -843,7 +843,6 @@ def test_compose_sandbox_bootstrap_has_shared_storage_acl_contract():
         assert "/etc/subgid:/host/etc/subgid:ro" in block
         assert "sandbox_socket:/run/gugu" in block
         assert "condition: service_completed_successfully" in block
-        assert "data-migrate:" in block
 
 
 def test_permission_plan_rejects_root_directory(tmp_path):
