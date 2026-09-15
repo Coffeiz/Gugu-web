@@ -63,6 +63,10 @@ jobs:
     name: Build & scan ${{ matrix.name }}
     needs: compose-validate
     runs-on: ubuntu-latest
+    # tag 触发时镜像推 :ci-<run_id>，publish 对该 digest 纯复制发布，需要 GHCR 写权限。
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -71,27 +75,39 @@ jobs:
             context: .
             dockerfile: backend/Dockerfile.prod
             tag: gugu-web-backend:ci
+            ci_image: ghcr.io/coffeiz/gugu-web-backend
             cache-scope: backend
           - name: frontend
             context: .
             dockerfile: frontend/Dockerfile.prod
             tag: gugu-web-frontend:ci
+            ci_image: ghcr.io/coffeiz/gugu-web-frontend
             cache-scope: frontend
           - name: app
             context: .
             dockerfile: Dockerfile
             tag: gugu-web:ci
+            ci_image: ghcr.io/coffeiz/gugu-web
             cache-scope: default-compose
           - name: sandbox
             context: docker/sandbox
             dockerfile: docker/sandbox/Dockerfile
             tag: gugu-sandbox:ci
+            ci_image: ghcr.io/coffeiz/gugu-sandbox
             cache-scope: sandbox
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -102,15 +118,22 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
-          push: false
+          # tag 触发时推 :ci-<run_id>：publish 对同一 digest 纯复制发布，不再重建——
+          # 保证「扫的就是发的」。run_id 隔离同 commit 两个并发运行（main push 与
+          # tag push）互相覆盖中间 tag 的竞态。
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           load: true
-          tags: ${{ matrix.tag }}
+          tags: |
+            ${{ matrix.tag }}
+            ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || '' }}
           # 沙盒镜像必须每轮全新构建（见下方冒烟注释），其余镜像吃 gha 层缓存。
           no-cache: ${{ matrix.name == 'sandbox' }}
+          # 版本 label 必须在构建期带真实 tag：publish 复制不改内容，updater 靠
+          # org.opencontainers.image.version 识别当前版本。
           build-args: |
             APT_MIRROR=https://deb.debian.org
             PIP_INDEX_URL=https://pypi.org/simple
-            ${{ matrix.name == 'app' && 'GUGU_VERSION=0.0.0-ci' || '' }}
+            GUGU_VERSION=${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-ci' }}
             GUGU_REVISION=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.cache-scope }}
           cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
@@ -207,101 +230,57 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Install crane
+        run: |
+          version="v0.20.3"
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${version}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin crane
+          crane version
 
-      - name: Build and push backend image
-        id: backend-image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: backend/Dockerfile.prod
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_REPOSITORY }}-backend:${{ steps.version.outputs.version }}
-            ${{ env.DOCKERHUB_BACKEND_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-          # 海外 runner 直连官方源，覆盖 Dockerfile 默认的国内镜像（同 docker-build）。
-          build-args: |
-            APT_MIRROR=https://deb.debian.org
-            PIP_INDEX_URL=https://pypi.org/simple
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
-          provenance: mode=max
-          # 不再附加 SBOM attestation：buildx 的 SBOM 生成结果会被 gha cache 缓存，
-          # 依赖层更新后可能仍是旧内容，trivy 扫描会优先读取 attestation 里的过期
-          # 包清单，导致发布扫描误报已修复的漏洞（如 msgpack 1.1.2）。
+      # 不再重建镜像：docker-build 已把本轮被 trivy 扫描过的镜像推到
+      # :ci-<run_id>，这里对同一 digest 纯复制到发布 tag——扫的就是发的。
+      # 同仓（GHCR）blob 已存在、秒级完成；跨仓到 Docker Hub 只传层不执行构建。
+      - name: Copy CI images to release tags
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CI_SUFFIX: ci-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          copy() {
+            crane copy "${REGISTRY}/$1:${CI_SUFFIX}" "${REGISTRY}/$1:${VERSION}"
+            crane copy "${REGISTRY}/$1:${CI_SUFFIX}" "docker.io/$2:${VERSION}"
+            echo "copied $1 / $2"
+          }
+          copy coffeiz/gugu-web-backend coffeiz/gugu-web-backend
+          copy coffeiz/gugu-web-frontend coffeiz/gugu-web-frontend
+          copy coffeiz/gugu-web coffeiz/gugu-web
+          copy coffeiz/gugu-sandbox coffeiz/gugu-sandbox
 
-      - name: Build and push frontend image
-        id: frontend-image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: frontend/Dockerfile.prod
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_REPOSITORY }}-frontend:${{ steps.version.outputs.version }}
-            ${{ env.DOCKERHUB_FRONTEND_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
-          provenance: mode=max
-          # 不再附加 SBOM attestation：buildx 的 SBOM 生成结果会被 gha cache 缓存，
-          # 依赖层更新后可能仍是旧内容，trivy 扫描会优先读取 attestation 里的过期
-          # 包清单，导致发布扫描误报已修复的漏洞（如 msgpack 1.1.2）。
+      - name: Resolve release digests
+        id: digests
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "ghcr_backend=$(crane digest "${IMAGE_REPOSITORY}-backend:${VERSION}")"
+            echo "ghcr_frontend=$(crane digest "${IMAGE_REPOSITORY}-frontend:${VERSION}")"
+            echo "ghcr_app=$(crane digest "${IMAGE_REPOSITORY}:${VERSION}")"
+            echo "ghcr_sandbox=$(crane digest "${SANDBOX_IMAGE_REPOSITORY}:${VERSION}")"
+            echo "hub_backend=$(crane digest "${DOCKERHUB_BACKEND_IMAGE_REPOSITORY}:${VERSION}")"
+            echo "hub_frontend=$(crane digest "${DOCKERHUB_FRONTEND_IMAGE_REPOSITORY}:${VERSION}")"
+            echo "hub_app=$(crane digest "${DOCKERHUB_IMAGE_REPOSITORY}:${VERSION}")"
+            echo "hub_sandbox=$(crane digest "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}:${VERSION}")"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push default Compose image
-        id: app-image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-            ${{ env.DOCKERHUB_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=default-compose
-          cache-to: type=gha,mode=max,scope=default-compose
-          provenance: mode=max
-          # 海外 runner 直连官方源（同 docker-build）。
-          build-args: |
-            APT_MIRROR=https://deb.debian.org
-            GUGU_VERSION=${{ steps.version.outputs.version }}
-            GUGU_REVISION=${{ github.sha }}
-          # 不附加 SBOM attestation，避免 gha cache 中的旧清单被发布扫描优先消费。
-
-      - name: Build and push Shell sandbox runtime image
-        id: sandbox-image
-        uses: docker/build-push-action@v6
-        with:
-          context: docker/sandbox
-          file: docker/sandbox/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.SANDBOX_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-            ${{ env.DOCKERHUB_SANDBOX_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-          # 与 docker-build 一致：沙盒镜像禁用层缓存（apt 层命中 = 旧包 + trivy 假红，
-          # linux-libc-dev 案例 2026-09-10）。此前的 cache-from 会读到历史发布写入的
-          # 旧层，与 docker-build 里全新构建并扫描的镜像不一致，一并移除。
-          no-cache: true
-          provenance: mode=max
-
-      - name: Tag stable image as latest
+      - name: Tag stable images as latest
         if: steps.version.outputs.is_stable == 'true'
         env:
-          APP_DIGEST: ${{ steps.app-image.outputs.digest }}
-          SANDBOX_DIGEST: ${{ steps.sandbox-image.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          docker buildx imagetools create \
-            --tag "${IMAGE_REPOSITORY}:latest" \
-            --tag "${DOCKERHUB_IMAGE_REPOSITORY}:latest" \
-            "${IMAGE_REPOSITORY}@${APP_DIGEST}"
-          docker buildx imagetools create \
-            --tag "${SANDBOX_IMAGE_REPOSITORY}:latest" \
-            --tag "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}:latest" \
-            "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
+          crane tag "${IMAGE_REPOSITORY}:${VERSION}" latest
+          crane tag "${DOCKERHUB_IMAGE_REPOSITORY}:${VERSION}" latest
+          crane tag "${SANDBOX_IMAGE_REPOSITORY}:${VERSION}" latest
+          crane tag "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}:${VERSION}" latest
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v4.1.2
@@ -310,18 +289,18 @@ jobs:
 
       - name: Sign immutable image references
         env:
-          BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
-          FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
-          APP_DIGEST: ${{ steps.app-image.outputs.digest }}
-          SANDBOX_DIGEST: ${{ steps.sandbox-image.outputs.digest }}
+          BACKEND_DIGEST: ${{ steps.digests.outputs.hub_backend }}
+          FRONTEND_DIGEST: ${{ steps.digests.outputs.hub_frontend }}
+          APP_DIGEST: ${{ steps.digests.outputs.hub_app }}
+          SANDBOX_DIGEST: ${{ steps.digests.outputs.hub_sandbox }}
         run: |
-          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}-backend@${BACKEND_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}-backend@${{ steps.digests.outputs.ghcr_backend }}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_BACKEND_IMAGE_REPOSITORY}@${BACKEND_DIGEST}"
-          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}-frontend@${FRONTEND_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}-frontend@${{ steps.digests.outputs.ghcr_frontend }}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_FRONTEND_IMAGE_REPOSITORY}@${FRONTEND_DIGEST}"
-          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}@${APP_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}@${{ steps.digests.outputs.ghcr_app }}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_IMAGE_REPOSITORY}@${APP_DIGEST}"
-          cosign sign --yes --registry-referrers-mode=oci-1-1 "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "${SANDBOX_IMAGE_REPOSITORY}@${{ steps.digests.outputs.ghcr_sandbox }}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
 
       - name: 同步 Docker Hub Overview
@@ -342,7 +321,7 @@ jobs:
       - name: Generate update manifest
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          APP_DIGEST: ${{ steps.app-image.outputs.digest }}
+          APP_DIGEST: ${{ steps.digests.outputs.hub_app }}
           GIT_SHA: ${{ github.sha }}
         run: |
           mkdir -p release
@@ -392,9 +371,10 @@ jobs:
       - name: Write release summary
         env:
           TAG: ${{ steps.version.outputs.version }}
-          BACKEND_DIGEST: ${{ steps.backend-image.outputs.digest }}
-          FRONTEND_DIGEST: ${{ steps.frontend-image.outputs.digest }}
-          APP_DIGEST: ${{ steps.app-image.outputs.digest }}
+          BACKEND_DIGEST: ${{ steps.digests.outputs.hub_backend }}
+          FRONTEND_DIGEST: ${{ steps.digests.outputs.hub_frontend }}
+          APP_DIGEST: ${{ steps.digests.outputs.hub_app }}
+          SANDBOX_DIGEST: ${{ steps.digests.outputs.hub_sandbox }}
         run: |
           {
             echo '### Docker 发布完成'
@@ -402,6 +382,8 @@ jobs:
             echo "- backend digest：$BACKEND_DIGEST"
             echo "- frontend digest：$FRONTEND_DIGEST"
             echo "- default Compose app digest：$APP_DIGEST"
+            echo "- sandbox digest：$SANDBOX_DIGEST"
             echo '- 架构：linux/amd64'
+            echo '- 镜像来源：docker-build 推送的 :ci-<run_id> digest 纯复制（扫的即发的）'
             echo '- manifest：GitHub Release 资产'
           } >> "$GITHUB_STEP_SUMMARY"
