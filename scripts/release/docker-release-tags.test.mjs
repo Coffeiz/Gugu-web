@@ -30,6 +30,9 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
     ':ci 中间镜像只在 tag 触发时推送，main/dispatch 运行零额外推送')
 
   assert.match(publishJob, /uses: sigstore\/cosign-installer@v4\.1\.2\s+with:\s+cosign-release: v3\.1\.3/)
+  // cosign 3.x 的 oci-1-1 referrers 模式在实验开关后面，缺 env 直接报 invalid argument
+  assert.match(publishJob, /COSIGN_EXPERIMENTAL:\s*'1'/,
+    '签名步骤必须设置 COSIGN_EXPERIMENTAL=1，否则 --registry-referrers-mode=oci-1-1 被拒')
   const imageSignCommands = publishJob.split('\n').filter(line => line.includes('cosign sign --yes'))
   assert.equal(imageSignCommands.length, 8, '所有 GHCR 与 Docker Hub 镜像都应签名（updater 与 app 同镜像不单签）')
   assert.ok(imageSignCommands.every(line => line.includes('--registry-referrers-mode=oci-1-1')),
