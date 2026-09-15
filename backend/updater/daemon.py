@@ -39,6 +39,7 @@ ALLOWED_REDIRECT_HOSTS = {
 MANIFEST_NAME = "update-manifest.json"
 TERMINAL = {"succeeded", "failed", "rollback_required"}
 ACTIVE = {"pending", "prechecking", "backing_up", "pulling", "migrating", "recreating", "health_checking", "rolling_back"}
+RECREATING_PENDING_RESTART = "recreating_pending_restart"
 STAGE_BY_LINE = (
     ("验证 manifest", "prechecking"),
     ("备份", "backing_up"),
@@ -99,9 +100,10 @@ class UpdateDaemon:
         self.manifest_latest_url = "https://github.com/Coffeiz/Gugu-web/releases/latest/download/"
         self.state_file = self.state_dir / "state.json"
         self._lock = asyncio.Lock()
+        self._resume_after_restart = False
         self.state = self._read_state()
         task = self.state.get("task")
-        if isinstance(task, dict) and task.get("failure_code") == "updater_restarted":
+        if self._resume_after_restart or (isinstance(task, dict) and task.get("failure_code") == "updater_restarted"):
             self._save()
 
     def _read_state(self) -> dict[str, Any]:
@@ -115,7 +117,18 @@ class UpdateDaemon:
             raise RuntimeError("更新器状态文件格式无效，拒绝覆盖")
         task = value.get("task")
         interrupted = False
-        if isinstance(task, dict) and task.get("status") in ACTIVE:
+        resumed = False
+        if isinstance(task, dict) and task.get("status") == RECREATING_PENDING_RESTART:
+            task.update({
+                "status": "health_checking",
+                "stage": "health_checking",
+                "progress": 90,
+                "message": "应用已重启，正在确认更新结果。",
+                "updated_at": _utc_now(),
+            })
+            self._resume_after_restart = True
+            resumed = True
+        elif isinstance(task, dict) and task.get("status") in ACTIVE:
             old = task
             old.update({
                 "status": "rollback_required" if old.get("previous_image") else "failed",
@@ -130,7 +143,7 @@ class UpdateDaemon:
         value.setdefault("task", None)
         value.setdefault("history", [])
         value.setdefault("challenges", [])
-        if interrupted:
+        if interrupted or resumed:
             history = value["history"]
             matched = False
             for row in history:
@@ -145,6 +158,27 @@ class UpdateDaemon:
     def _task_status(self) -> str | None:
         task = self.state.get("task")
         return str(task.get("status")) if isinstance(task, dict) else None
+
+    def start_pending_restart_resume(self) -> None:
+        """在新 app 启动后接管 helper 已完成的重建任务。"""
+        if not self._resume_after_restart:
+            return
+        self._resume_after_restart = False
+        asyncio.create_task(self._resume_after_restart_task())
+
+    async def _resume_after_restart_task(self) -> None:
+        task = self.state.get("task")
+        if not isinstance(task, dict):
+            return
+        task_id = str(task.get("id") or "")
+        if not task_id:
+            return
+        healthy = await self._wait_app_healthy()
+        if not healthy:
+            await self._finish_task(task_id, "rollback_required", "health_check_failed", "新版本未通过健康检查；上一版本已保留，可执行回滚。")
+            return
+        await self._record_current_release(str(task.get("version") or "unknown"), str(task.get("app_image") or ""))
+        await self._finish_task(task_id, "succeeded", None, "更新完成，应用健康检查通过。")
 
     def _save(self) -> None:
         tmp = self.state_file.with_suffix(".tmp")
@@ -541,6 +575,7 @@ class UpdateDaemon:
         temp_dir = Path(tempfile.mkdtemp(prefix="update-", dir=self.state_dir))
         process: asyncio.subprocess.Process | None = None
         stderr_drain: asyncio.Task[bytes] | None = None
+        handed_off = False
         try:
             manifest_bytes = await self._read_url(self._asset_url(candidate["version"], MANIFEST_NAME))
             await self._verify_assets(manifest_bytes, expected_sha=candidate["manifest_sha256"])
@@ -555,6 +590,8 @@ class UpdateDaemon:
                 "UPDATE_VALIDATOR": str(self.validator),
                 # Compose 脚本先记录旧镜像，再从签名 manifest 切换到新 digest。
                 "GUGU_WEB_IMAGE": str(self.state["task"]["previous_image"]),
+                # compose-update.sh 会用旧 app 镜像启动独立 helper，避免 self-stop 截断更新链。
+                "GUGU_UPDATE_HELPER_IMAGE": str(self.state["task"]["previous_image"]),
             })
             manifest_path = temp_dir / MANIFEST_NAME
             manifest_path.write_bytes(manifest_bytes)
@@ -589,6 +626,11 @@ class UpdateDaemon:
                 if stderr_drain:
                     stderr_drain.cancel()
                 raise RuntimeError("Compose 更新任务超时")
+            if process.returncode == 75:
+                handed_off = True
+                await self._set_stage(task_id, RECREATING_PENDING_RESTART)
+                Path(f"{manifest_path}.handoff").touch()
+                return
             if process.returncode != 0:
                 logger.warning("update failed task_id=%s stage=%s reason=compose_exit", task_id, self._task_status())
                 await self._finish_task(task_id, "rollback_required", "update_failed", "更新未完成，上一版本已保留；可检查日志或执行回滚。")
@@ -609,7 +651,8 @@ class UpdateDaemon:
             logger.warning("update failed task_id=%s stage=%s error_type=%s", task_id, self._task_status(), type(exc).__name__)
             await self._finish_task(task_id, "rollback_required", "updater_error", "更新中断；已保留上一版本镜像和备份，请检查更新器日志。")
         finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            if not handed_off:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     @staticmethod
     async def _terminate_process_group(process: asyncio.subprocess.Process) -> None:
@@ -638,6 +681,7 @@ class UpdateDaemon:
             task["progress"] = {
                 "prechecking": 10, "backing_up": 25, "pulling": 40,
                 "migrating": 60, "recreating": 75, "health_checking": 90,
+                RECREATING_PENDING_RESTART: 80,
             }.get(stage, task.get("progress", 0))
             task["message"] = self._stage_message(stage)
             task["updated_at"] = _utc_now()
@@ -652,6 +696,7 @@ class UpdateDaemon:
             "pulling": "正在拉取目标镜像",
             "migrating": "正在迁移用户数据",
             "recreating": "正在重建应用容器",
+            RECREATING_PENDING_RESTART: "更新已移交独立 helper，应用即将重启",
             "health_checking": "正在等待健康检查",
             "rolling_back": "正在恢复上一版本",
         }.get(stage, "更新处理中")

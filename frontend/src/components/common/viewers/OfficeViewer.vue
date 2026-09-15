@@ -638,7 +638,7 @@ async function loadXlsxImage(image: HTMLImageElement, imageId: number) {
     if (url) image.src = url
     return
   }
-  const load = filesApi.xlsxPreviewImage(fileId, imageId).then(blob => {
+  const load = filesApi.xlsxPreviewImage(fileId, imageId, props.fileVersion ?? 0).then(blob => {
     const url = URL.createObjectURL(blob)
     xlsxImageUrls.set(cacheKey, url)
     while (xlsxImageUrls.size > XLSX_IMAGE_CACHE_MAX) {

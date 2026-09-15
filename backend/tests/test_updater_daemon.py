@@ -56,6 +56,24 @@ def test_restart_converts_interrupted_task_to_recoverable_state(tmp_path, monkey
     assert persisted["history"][0]["failure_code"] == "updater_restarted"
 
 
+def test_recreating_pending_restart_is_resumed_not_marked_failed(tmp_path, monkeypatch):
+    """helper 已接管重建时，旧 app 退出不应把预期重启误判为 updater 崩溃。"""
+    daemon, _ = make_daemon(tmp_path, monkeypatch, {
+        "schema": 1,
+        "candidate": None,
+        "task": {
+            "id": "handoff-task", "status": "recreating_pending_restart",
+            "stage": "recreating_pending_restart", "previous_image": "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64,
+        },
+        "history": [],
+        "challenges": [],
+    })
+
+    assert daemon._resume_after_restart is True
+    assert daemon.state["task"]["status"] == "health_checking"
+    assert daemon.state["task"].get("failure_code") is None
+
+
 @pytest.mark.asyncio
 async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
     daemon, _ = make_daemon(tmp_path, monkeypatch)

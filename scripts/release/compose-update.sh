@@ -12,6 +12,7 @@ MANIFEST=""
 BACKUP_ROOT="${BACKUP_ROOT:-$ROOT_DIR/backup}"
 VALIDATOR="${UPDATE_VALIDATOR:-$SCRIPT_DIR/validate-update-manifest.mjs}"
 CONFIRMED=false
+HANDOFF_EXIT_CODE=75
 
 usage() {
   cat <<'EOF'
@@ -51,6 +52,49 @@ done
 [[ -n "$MANIFEST" ]] || { echo '必须指定 --manifest' >&2; exit 2; }
 [[ "$CONFIRMED" == true ]] || { echo '更新必须显式传入 --confirm' >&2; exit 2; }
 [[ -f "$MANIFEST" ]] || { echo 'manifest 文件不存在' >&2; exit 1; }
+
+# app 内的更新器不能在自己的容器里执行 stop app；否则后续 up 无法保证执行。
+# 使用当前 app 镜像启动一次性 helper，helper 与 app 生命周期解耦，再由它完成整个 Compose 更新。
+if [[ "${GUGU_UPDATE_HELPER:-0}" != 1 && -n "${GUGU_UPDATE_HELPER_IMAGE:-}" ]]; then
+  command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }
+  HELPER_IMAGE="$GUGU_UPDATE_HELPER_IMAGE"
+  [[ "$HELPER_IMAGE" =~ ^(docker\.io|ghcr\.io)/coffeiz/gugu-web(@sha256:[a-f0-9]{64}|:[A-Za-z0-9_.-]{1,128})$ ]] \
+    || { echo 'helper 镜像不在固定白名单内' >&2; exit 1; }
+  APP_CONTAINER="$(cat /etc/hostname 2>/dev/null || true)"
+  DATA_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
+  [[ -n "$DATA_SOURCE" && -d "$DATA_SOURCE" ]] || { echo '无法定位 /data 宿主机挂载，停止更新' >&2; exit 1; }
+  HELPER_NAME="gugu-update-helper-${RANDOM}-${RANDOM}"
+  docker run --rm --detach \
+    --name "$HELPER_NAME" \
+    --label com.coffeiz.gugu.update-helper=true \
+    --workdir "$ROOT_DIR" \
+    --env GUGU_UPDATE_HELPER=1 \
+    --env COMPOSE_PROJECT_DIR="$ROOT_DIR" \
+    --env COMPOSE_FILE="$COMPOSE_FILE" \
+    --env BACKUP_ROOT="$BACKUP_ROOT" \
+    --env GUGU_UPDATER_CODE_DIR=/opt/gugu-updater \
+    --env UPDATE_VALIDATOR=/opt/gugu-updater/scripts/release/validate-update-manifest.mjs \
+    --env GUGU_WEB_IMAGE="${GUGU_WEB_IMAGE:-}" \
+    --env GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE="${MANIFEST}.handoff" \
+    --mount "type=bind,source=$ROOT_DIR,target=$ROOT_DIR,readonly" \
+    --mount "type=bind,source=$DATA_SOURCE,target=/data" \
+    --mount "type=bind,source=${GUGU_DOCKER_SOCKET:-/var/run/docker.sock},target=/var/run/docker.sock" \
+    "$HELPER_IMAGE" \
+    /opt/gugu-updater/scripts/release/compose-update.sh --manifest "$MANIFEST" --confirm >/dev/null
+  echo '更新任务已移交给独立 helper，当前 app 将按预期重启。'
+  exit "$HANDOFF_EXIT_CODE"
+fi
+if [[ "${GUGU_UPDATE_HELPER:-0}" == 1 ]]; then
+  if [[ -n "${GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE:-}" ]]; then
+    for _ in $(seq 1 600); do
+      [[ -f "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE" ]] && break
+      sleep 0.1
+    done
+    [[ -f "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE" ]] || { echo '更新 handoff 状态未确认，停止 helper' >&2; exit 1; }
+    rm -f -- "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE"
+  fi
+  trap 'rm -f -- "$MANIFEST"' EXIT
+fi
 [[ -f "$COMPOSE_FILE" ]] || { echo 'Compose 文件不存在' >&2; exit 1; }
 [[ -f "$ROOT_DIR/backend/.env" ]] || { echo 'backend/.env 不存在，停止更新以保护运行配置' >&2; exit 1; }
 command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }

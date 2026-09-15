@@ -347,9 +347,9 @@ export const filesApi = {
       }
     }>
   }>(`/files/${id}/xlsx-preview`),
-  xlsxPreviewImage: async (id: number, imageId: number) => {
+  xlsxPreviewImage: async (id: number, imageId: number, version: number) => {
     const token = getToken()
-    const res = await fetch(`${BASE_URL}/files/${id}/xlsx-preview-image/${imageId}`, {
+    const res = await fetch(`${BASE_URL}/files/${id}/xlsx-preview-image/${imageId}?v=${encodeURIComponent(version)}`, {
       credentials: 'include',
       headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })

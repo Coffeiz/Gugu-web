@@ -32,6 +32,7 @@ def _get_executor() -> UpdateDaemon:
         raise UpdaterClientError("self_update_disabled", "此部署未启用一键更新")
     try:
         _executor = UpdateDaemon()
+        _executor.start_pending_restart_resume()
     except Exception as exc:
         # Compose 目录无效 / 状态文件损坏等：按未启用降级，不让 admin 反复 500。
         _executor_failed = True

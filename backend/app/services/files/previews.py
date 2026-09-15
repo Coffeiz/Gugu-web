@@ -18,6 +18,16 @@ from app.services.storage import get_storage
 THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
 THUMB_SEM = asyncio.Semaphore(max(1, (os.cpu_count() or 2) - 1))
 XLSX_PREVIEW_CACHE_MAX = 4
+XLSX_PREVIEW_CACHE_MAX_BYTES = 128 * 1024 * 1024
+XLSX_PREVIEW_MAX_FILE_BYTES = 256 * 1024 * 1024
+XLSX_PREVIEW_MAX_ENTRIES = 20_000
+XLSX_PREVIEW_MAX_TOTAL_UNCOMPRESSED = 512 * 1024 * 1024
+XLSX_PREVIEW_MAX_ENTRY_UNCOMPRESSED = 128 * 1024 * 1024
+XLSX_PREVIEW_MAX_XML_BYTES = 64 * 1024 * 1024
+XLSX_PREVIEW_MAX_IMAGE_BYTES = 32 * 1024 * 1024
+XLSX_PREVIEW_MAX_COMPRESSION_RATIO = 100
+XLSX_PREVIEW_MAX_ROWS = 500
+XLSX_PREVIEW_MAX_COLS = 60
 _XLSX_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 @dataclass
 class XlsxPreviewCacheEntry:
@@ -25,10 +35,12 @@ class XlsxPreviewCacheEntry:
     sheets: list[dict[str, list[dict[str, object]]]]
     sheet_data: list[dict[str, object]]
     image_paths: dict[int, tuple[str, str]]
+    size_bytes: int
 
 
 _XLSX_PREVIEW_CACHE: OrderedDict[tuple[int, int], XlsxPreviewCacheEntry] = OrderedDict()
 _XLSX_PREVIEW_LOCK = asyncio.Lock()
+_XLSX_PREVIEW_INFLIGHT: dict[tuple[int, int], asyncio.Task[XlsxPreviewCacheEntry]] = {}
 IMAGE_MIMES = frozenset({
     "image/jpeg", "image/png", "image/gif", "image/webp",
     "image/avif", "image/bmp", "image/svg+xml", "image/heic", "image/heif",
@@ -77,6 +89,43 @@ def _xlsx_attr(element: ElementTree.Element, local_name: str) -> str | None:
                  if _xlsx_local_name(key) == local_name), None)
 
 
+def _validate_xlsx_archive(archive: ZipFile, raw_size: int) -> None:
+    """在任何 XML 或图片解压前拒绝超出预览预算的压缩包。"""
+    if raw_size > XLSX_PREVIEW_MAX_FILE_BYTES:
+        raise PreviewError(413, "XLSX 文件超过预览大小限制")
+    infos = archive.infolist()
+    if len(infos) > XLSX_PREVIEW_MAX_ENTRIES:
+        raise PreviewError(413, "XLSX 文件条目数量超过预览限制")
+    total_uncompressed = 0
+    seen_names: set[str] = set()
+    for info in infos:
+        if info.filename in seen_names:
+            raise PreviewError(400, "XLSX 文件包含重复压缩条目")
+        seen_names.add(info.filename)
+        if info.file_size > XLSX_PREVIEW_MAX_ENTRY_UNCOMPRESSED:
+            raise PreviewError(413, "XLSX 压缩条目超过预览大小限制")
+        total_uncompressed += info.file_size
+        if total_uncompressed > XLSX_PREVIEW_MAX_TOTAL_UNCOMPRESSED:
+            raise PreviewError(413, "XLSX 解压总大小超过预览限制")
+        if info.compress_size and info.file_size / info.compress_size > XLSX_PREVIEW_MAX_COMPRESSION_RATIO:
+            raise PreviewError(413, "XLSX 压缩比超过预览安全限制")
+        if info.filename.startswith("xl/media/") and info.file_size > XLSX_PREVIEW_MAX_IMAGE_BYTES:
+            raise PreviewError(413, "XLSX 图片超过预览大小限制")
+
+
+def _read_xlsx_entry(archive: ZipFile, name: str, *, xml: bool = True) -> bytes:
+    try:
+        info = archive.getinfo(name)
+    except KeyError as error:
+        raise PreviewError(400, "XLSX 文件结构不完整") from error
+    if xml and info.file_size > XLSX_PREVIEW_MAX_XML_BYTES:
+        raise PreviewError(413, "XLSX XML 内容超过预览限制")
+    try:
+        return archive.read(name)
+    except (BadZipFile, KeyError) as error:
+        raise PreviewError(400, "XLSX 文件内容损坏") from error
+
+
 def _extract_xlsx_preview_sync(raw: bytes) -> tuple[list[dict[str, list[dict[str, object]]]], dict[int, tuple[str, str]]]:
     """读取 XLSX 图片位置元数据，不解压图片正文。
 
@@ -94,8 +143,9 @@ def _extract_xlsx_preview_sync(raw: bytes) -> tuple[list[dict[str, list[dict[str
         raise PreviewError(400, "不是有效的 XLSX 文件") from error
 
     with archive:
-        workbook = ElementTree.fromstring(archive.read("xl/workbook.xml"))
-        workbook_rels = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        _validate_xlsx_archive(archive, len(raw))
+        workbook = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/workbook.xml"))
+        workbook_rels = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/_rels/workbook.xml.rels"))
         rel_targets = {
             relationship.attrib.get("Id", ""): relationship.attrib.get("Target", "")
             for relationship in workbook_rels
@@ -112,7 +162,7 @@ def _extract_xlsx_preview_sync(raw: bytes) -> tuple[list[dict[str, list[dict[str
                 result.append({})
                 continue
             sheet_path = _xlsx_resolve_path("xl", target)
-            sheet_root = ElementTree.fromstring(archive.read(sheet_path))
+            sheet_root = ElementTree.fromstring(_read_xlsx_entry(archive, sheet_path))
             drawing = next((element for element in sheet_root.iter()
                             if _xlsx_local_name(element.tag) == "drawing"), None)
             if drawing is None:
@@ -122,7 +172,7 @@ def _extract_xlsx_preview_sync(raw: bytes) -> tuple[list[dict[str, list[dict[str
             sheet_dir = sheet_path.rsplit("/", 1)[0]
             sheet_name = sheet_path.rsplit("/", 1)[1]
             rels_path = f"{sheet_dir}/_rels/{sheet_name}.rels"
-            drawing_rels = ElementTree.fromstring(archive.read(rels_path))
+            drawing_rels = ElementTree.fromstring(_read_xlsx_entry(archive, rels_path))
             drawing_targets = {
                 relationship.attrib.get("Id", ""): relationship.attrib.get("Target", "")
                 for relationship in drawing_rels
@@ -133,11 +183,11 @@ def _extract_xlsx_preview_sync(raw: bytes) -> tuple[list[dict[str, list[dict[str
                 result.append({})
                 continue
             drawing_path = _xlsx_resolve_path(sheet_dir, drawing_target)
-            drawing_root = ElementTree.fromstring(archive.read(drawing_path))
+            drawing_root = ElementTree.fromstring(_read_xlsx_entry(archive, drawing_path))
             drawing_dir = drawing_path.rsplit("/", 1)[0]
             drawing_name = drawing_path.rsplit("/", 1)[1]
             drawing_rels_path = f"{drawing_dir}/_rels/{drawing_name}.rels"
-            drawing_rels_root = ElementTree.fromstring(archive.read(drawing_rels_path))
+            drawing_rels_root = ElementTree.fromstring(_read_xlsx_entry(archive, drawing_rels_path))
             media_targets = {
                 relationship.attrib.get("Id", ""): relationship.attrib.get("Target", "")
                 for relationship in drawing_rels_root
@@ -168,7 +218,7 @@ def _extract_xlsx_preview_sync(raw: bytes) -> tuple[list[dict[str, list[dict[str
                     col = int(col_node.text or "-1")
                 except ValueError:
                     continue
-                if row < 0 or col < 0:
+                if row < 0 or col < 0 or row >= XLSX_PREVIEW_MAX_ROWS or col >= XLSX_PREVIEW_MAX_COLS:
                     continue
                 media_path = _xlsx_resolve_path(drawing_dir, media_target)
                 if media_path not in archive.namelist():
@@ -209,13 +259,14 @@ def _extract_xlsx_sheet_data_sync(raw: bytes) -> list[dict[str, object]]:
         return ''.join(element.itertext())
 
     with archive:
+        _validate_xlsx_archive(archive, len(raw))
         shared_strings: list[str] = []
         if "xl/sharedStrings.xml" in archive.namelist():
-            shared_root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+            shared_root = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/sharedStrings.xml"))
             shared_strings = [text_of(item) for item in shared_root
                               if _xlsx_local_name(item.tag) == "si"]
-        workbook = ElementTree.fromstring(archive.read("xl/workbook.xml"))
-        workbook_rels = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        workbook = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/workbook.xml"))
+        workbook_rels = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/_rels/workbook.xml.rels"))
         rel_targets = {
             relationship.attrib.get("Id", ""): relationship.attrib.get("Target", "")
             for relationship in workbook_rels
@@ -229,7 +280,7 @@ def _extract_xlsx_sheet_data_sync(raw: bytes) -> list[dict[str, object]]:
                 result.append({"name": sheet_name, "cells": {}, "merges": [], "rowHeights": {}, "colWidths": {}, "rows": 0, "cols": 0})
                 continue
             sheet_path = _xlsx_resolve_path("xl", target)
-            root = ElementTree.fromstring(archive.read(sheet_path))
+            root = ElementTree.fromstring(_read_xlsx_entry(archive, sheet_path))
             cells: dict[str, str] = {}
             row_heights: dict[str, int] = {}
             col_widths: dict[str, int] = {}
@@ -238,7 +289,7 @@ def _extract_xlsx_sheet_data_sync(raw: bytes) -> list[dict[str, object]]:
             for row in root.iter():
                 if _xlsx_local_name(row.tag) == "row":
                     row_number = int(row.attrib.get("r", "0") or 0)
-                    if row_number and row.attrib.get("ht"):
+                    if 0 < row_number <= XLSX_PREVIEW_MAX_ROWS and row.attrib.get("ht"):
                         try:
                             row_heights[str(row_number - 1)] = round(float(row.attrib["ht"]) * 1.333)
                         except ValueError:
@@ -248,7 +299,7 @@ def _extract_xlsx_sheet_data_sync(raw: bytes) -> list[dict[str, object]]:
                         start = int(row.attrib.get("min", "1"))
                         end = int(row.attrib.get("max", str(start)))
                         width = round(float(row.attrib.get("width", "10")) * 8 + 16)
-                        for column in range(start - 1, end):
+                        for column in range(max(0, start - 1), min(XLSX_PREVIEW_MAX_COLS, end)):
                             col_widths[str(column)] = max(72, width)
                     except ValueError:
                         pass
@@ -257,6 +308,16 @@ def _extract_xlsx_sheet_data_sync(raw: bytes) -> list[dict[str, object]]:
                     continue
                 ref = cell.attrib.get("r")
                 if not ref:
+                    continue
+                try:
+                    column_text = ''.join(char for char in ref if char.isalpha())
+                    row_number = int(''.join(char for char in ref if char.isdigit()))
+                    column_number = 0
+                    for char in column_text.upper():
+                        column_number = column_number * 26 + ord(char) - 64
+                    if row_number > XLSX_PREVIEW_MAX_ROWS or column_number > XLSX_PREVIEW_MAX_COLS:
+                        continue
+                except ValueError:
                     continue
                 value_node = next((child for child in cell if _xlsx_local_name(child.tag) in {"v", "is"}), None)
                 value = "" if value_node is None else text_of(value_node)
@@ -269,16 +330,8 @@ def _extract_xlsx_sheet_data_sync(raw: bytes) -> list[dict[str, object]]:
                 elif cell_type == "inlineStr":
                     value = text_of(value_node) if value_node is not None else ""
                 cells[ref] = value
-                try:
-                    column_text = ''.join(char for char in ref if char.isalpha())
-                    row_number = int(''.join(char for char in ref if char.isdigit()))
-                    column_number = 0
-                    for char in column_text.upper():
-                        column_number = column_number * 26 + ord(char) - 64
-                    max_row = max(max_row, row_number)
-                    max_col = max(max_col, column_number)
-                except ValueError:
-                    pass
+                max_row = max(max_row, row_number)
+                max_col = max(max_col, column_number)
             merges: list[dict[str, int]] = []
             for merge in root.iter():
                 if _xlsx_local_name(merge.tag) != "mergeCell":
@@ -296,11 +349,15 @@ def _extract_xlsx_sheet_data_sync(raw: bytes) -> list[dict[str, object]]:
                     return number - 1, column - 1
                 start_row, start_col = decode(start)
                 end_row, end_col = decode(end)
-                merges.append({"s": start_row, "c": start_col, "e": end_row, "d": end_col})
-                max_row = max(max_row, end_row + 1)
-                max_col = max(max_col, end_col + 1)
+                if start_row < XLSX_PREVIEW_MAX_ROWS and start_col < XLSX_PREVIEW_MAX_COLS:
+                    merges.append({"s": start_row, "c": start_col,
+                                   "e": min(end_row, XLSX_PREVIEW_MAX_ROWS - 1),
+                                   "d": min(end_col, XLSX_PREVIEW_MAX_COLS - 1)})
+                    max_row = max(max_row, min(end_row + 1, XLSX_PREVIEW_MAX_ROWS))
+                    max_col = max(max_col, min(end_col + 1, XLSX_PREVIEW_MAX_COLS))
             result.append({"name": sheet_name, "cells": cells, "merges": merges, "rowHeights": row_heights,
-                           "colWidths": col_widths, "rows": max_row, "cols": max_col})
+                           "colWidths": col_widths, "rows": min(max_row, XLSX_PREVIEW_MAX_ROWS),
+                           "cols": min(max_col, XLSX_PREVIEW_MAX_COLS)})
         return result
 
 
@@ -311,17 +368,44 @@ async def read_xlsx_preview(storage, *, storage_key: str, file_id: int, version:
         if cached is not None:
             _XLSX_PREVIEW_CACHE.move_to_end(cache_key)
             return cached
+        task = _XLSX_PREVIEW_INFLIGHT.get(cache_key)
+        if task is None:
+            task = asyncio.create_task(_load_xlsx_preview(
+                storage, storage_key=storage_key, file_id=file_id, version=version,
+            ))
+            _XLSX_PREVIEW_INFLIGHT[cache_key] = task
+    try:
+        return await task
+    finally:
+        if task.done():
+            async with _XLSX_PREVIEW_LOCK:
+                if _XLSX_PREVIEW_INFLIGHT.get(cache_key) is task:
+                    _XLSX_PREVIEW_INFLIGHT.pop(cache_key, None)
+
+
+async def _load_xlsx_preview(storage, *, storage_key: str, file_id: int, version: int) -> XlsxPreviewCacheEntry:
+    stat = getattr(storage, "stat", None)
+    if callable(stat):
+        metadata = await stat(storage_key)
+        if metadata is not None and metadata.size > XLSX_PREVIEW_MAX_FILE_BYTES:
+            raise PreviewError(413, "XLSX 文件超过预览大小限制")
     raw = await storage.get(storage_key)
+    if len(raw) > XLSX_PREVIEW_MAX_FILE_BYTES:
+        raise PreviewError(413, "XLSX 文件超过预览大小限制")
     (sheets, image_paths), sheet_data = await asyncio.gather(
         asyncio.to_thread(_extract_xlsx_preview_sync, raw),
         asyncio.to_thread(_extract_xlsx_sheet_data_sync, raw),
     )
-    extracted = XlsxPreviewCacheEntry(raw=raw, sheets=sheets, sheet_data=sheet_data, image_paths=image_paths)
+    extracted = XlsxPreviewCacheEntry(
+        raw=raw, sheets=sheets, sheet_data=sheet_data, image_paths=image_paths, size_bytes=len(raw),
+    )
     async with _XLSX_PREVIEW_LOCK:
-        _XLSX_PREVIEW_CACHE[cache_key] = extracted
-        _XLSX_PREVIEW_CACHE.move_to_end(cache_key)
-        while len(_XLSX_PREVIEW_CACHE) > XLSX_PREVIEW_CACHE_MAX:
-            _XLSX_PREVIEW_CACHE.popitem(last=False)
+        _XLSX_PREVIEW_CACHE[(file_id, version)] = extracted
+        _XLSX_PREVIEW_CACHE.move_to_end((file_id, version))
+        total_bytes = sum(item.size_bytes for item in _XLSX_PREVIEW_CACHE.values())
+        while len(_XLSX_PREVIEW_CACHE) > XLSX_PREVIEW_CACHE_MAX or total_bytes > XLSX_PREVIEW_CACHE_MAX_BYTES:
+            _key, removed = _XLSX_PREVIEW_CACHE.popitem(last=False)
+            total_bytes -= removed.size_bytes
     return extracted
 
 
