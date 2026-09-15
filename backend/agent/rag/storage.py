@@ -11,7 +11,7 @@ MEMORY_INDEX_SCHEMA_VERSION = 1
 
 
 def _index_key(user_id: object) -> str:
-    return f"{user_id}/.agent/rag/memory-index-v1.json"
+    return f"{user_id}/.agent/rag/memory/index.json"
 
 
 def _document_to_record(document: IndexDocument) -> dict:

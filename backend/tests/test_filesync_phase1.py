@@ -228,6 +228,91 @@ async def test_local_reconcile_projects_create_update_move_and_delete(db, user_a
 
 
 @pytest.mark.asyncio
+async def test_full_reconcile_does_not_count_shell_files_against_file_library_quota(
+    db, user_a, monkeypatch, tmp_path,
+):
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(reconcile, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+        quota=SimpleNamespace(default_storage_limit_bytes=None),
+    ))
+    user_a.storage_limit_bytes = 16
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "small.txt").write_bytes(b"12345678")
+    shell_root = tmp_path / str(user_a.id) / "workspace"
+    shell_root.mkdir(parents=True)
+    (shell_root / "build.cache").write_bytes(b"x" * 128)
+
+    summary = await reconcile.reconcile_local_directory(db, user_a.id, root=root)
+    await db.commit()
+
+    assert summary.created == 1
+    assert summary.rejected == 0
+
+
+@pytest.mark.asyncio
+async def test_full_reconcile_none_limits_mean_unlimited(db, user_a, monkeypatch, tmp_path):
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(reconcile, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+        quota=SimpleNamespace(default_storage_limit_bytes=None),
+    ))
+    user_a.storage_limit_bytes = None
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "new.bin").write_bytes(b"x" * 32)
+
+    summary = await reconcile.reconcile_local_directory(db, user_a.id, root=root)
+    await db.commit()
+
+    assert summary.created == 1
+    assert summary.rejected == 0
+
+
+@pytest.mark.asyncio
+async def test_full_reconcile_projects_deletions_before_admitting_new_files(
+    db, user_a, monkeypatch, tmp_path,
+):
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(reconcile, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+        quota=SimpleNamespace(default_storage_limit_bytes=None),
+    ))
+    user_a.storage_limit_bytes = 8
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    old_path = root / "old.bin"
+    old_path.write_bytes(b"o" * 8)
+    await reconcile.reconcile_local_directory(db, user_a.id, root=root)
+    await db.commit()
+
+    old_path.unlink()
+    (root / "new.bin").write_bytes(b"n" * 8)
+    summary = await reconcile.reconcile_local_directory(db, user_a.id, root=root)
+    await db.commit()
+
+    assert summary.created == 1
+    assert summary.deleted == 1
+    assert summary.rejected == 0
+
+
+@pytest.mark.asyncio
 async def test_local_reconcile_projects_directory_workspace_shell_files(db, user_a, monkeypatch, tmp_path):
     """directory 型工作区绑定根即工作区目录：shell 产物按 space=workspace 投影。
 
@@ -1006,3 +1091,16 @@ async def test_targeted_batch_quota_headroom_accumulates_across_creates(db, user
         File.user_id == user_a.id, File.deleted_at.is_(None),
     ))).all())
     assert names == ["a", "seed"]
+
+    # 已有文件扩容也必须纳入配额，而不能只校验 CREATE。
+    (root / "a.bin").write_bytes(b"z" * 101)
+    update_summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={"a.bin"}),
+    )
+    await db.commit()
+    assert update_summary.updated == 0
+    assert update_summary.rejected == 1
+    row = (await db.scalars(select(File).where(
+        File.user_id == user_a.id, File.display_name == "a", File.deleted_at.is_(None),
+    ))).one()
+    assert row.size_bytes == 60

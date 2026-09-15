@@ -25,6 +25,16 @@ async def test_put_get_roundtrip(storage):
     assert await storage.get("u/a/doc.txt") == b"hello"
 
 
+async def test_iter_chunks_reads_local_objects_without_changing_bytes(storage):
+    payload = bytes(range(64)) * 4
+    await storage.put("u/a/large.bin", payload)
+
+    chunks = [chunk async for chunk in storage.iter_chunks("u/a/large.bin", chunk_size=37)]
+
+    assert b"".join(chunks) == payload
+    assert len(chunks) > 1
+
+
 async def test_failed_replace_keeps_previous_file(tmp_path, monkeypatch):
     """覆盖写被中断时不能留下空文件或半截内容。"""
     storage = LocalStorageBackend(tmp_path)

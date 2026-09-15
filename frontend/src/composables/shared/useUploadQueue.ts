@@ -12,6 +12,8 @@ interface UploadGhost {
   total?: number
   done?: number
   failed?: number
+  statusText?: string
+  indeterminate?: boolean
 }
 
 export function useUploadQueue() {
@@ -47,6 +49,15 @@ export function useUploadQueue() {
     return ghost
   }
 
+  function createIndeterminateFolderGhost(name: string, statusText: string) {
+    const ghost: UploadGhost = {
+      uid: ++_uid, name, isFolder: true, progress: 0, error: false,
+      statusText, indeterminate: true,
+    }
+    uploadingItems.value.push(ghost)
+    return ghost
+  }
+
   // 文件夹内一个文件完成（成功/失败都算「处理完」，失败额外记一笔）——按完成数推进整体进度，
   // 不做逐字节聚合（文件数量一多，逐文件 progress 事件汇总反而抖动，done/total 更稳定直观）。
   function bumpFolderGhost(ghost: UploadGhost, failed = false) {
@@ -65,5 +76,6 @@ export function useUploadQueue() {
   return {
     uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost,
     createFolderGhost, bumpFolderGhost,
+    createIndeterminateFolderGhost,
   }
 }

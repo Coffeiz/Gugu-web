@@ -319,6 +319,9 @@ function onColumnsPointerDown(e: PointerEvent) {
   // mousedown 事件，NoteCard.vue 的 onDocDown（document 上的 mousedown 监听，判断"点了
   // 卡外面就退出编辑"）就收不到这次点击了，编辑态点玻璃卡空白处会失效。文字选区改靠下面
   // 的 user-select:none 挡，不需要 preventDefault 这把大锤子。
+  // 拖拽开始即接管滚动位置，停止松手后的日期滑杆/滚轮/卡片弹簧，避免旧动画继续写 scrollLeft。
+  dateIndexRef.value?.stopMotion()
+  stopWheelMotion()
   stopCardFollow()
   if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
   cardVisualReturnRaf = 0

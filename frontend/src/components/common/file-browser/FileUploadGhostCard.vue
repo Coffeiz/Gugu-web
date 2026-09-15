@@ -2,10 +2,10 @@
   <div
     v-if="mode === 'grid'"
     class="fc-ghost"
-    :class="{ error, 'fc-ghost-folder': isFolder }"
+    :class="{ error, 'fc-ghost-folder': isFolder, 'is-indeterminate': indeterminate }"
     :style="{ '--fc-color': color }"
   >
-    <div class="fc-ghost-fill" :style="{ width: `${progress}%` }" />
+    <div class="fc-ghost-fill" :style="{ width: indeterminate ? '38%' : `${progress}%` }" />
     <span v-if="!isFolder" class="fc-ext-badge">{{ ext || '—' }}</span>
     <div class="fc-icon-area">
       <PhFolder v-if="isFolder" class="fc-big-icon" :size="86" />
@@ -17,8 +17,8 @@
     </div>
   </div>
 
-  <div v-else class="list-row fc-ghost-row" :class="[`fc-ghost-row-${listLayout}`, { error }]">
-    <div class="fc-ghost-fill" :style="{ width: `${progress}%` }" />
+  <div v-else class="list-row fc-ghost-row" :class="[`fc-ghost-row-${listLayout}`, { error, 'is-indeterminate': indeterminate }]">
+    <div class="fc-ghost-fill" :style="{ width: indeterminate ? '38%' : `${progress}%` }" />
     <slot name="list" :status-text="statusText" :color="color" />
   </div>
 </template>
@@ -39,10 +39,13 @@ const props = defineProps({
   total: { type: Number, default: 0 },
   failed: { type: Number, default: 0 },
   error: { type: Boolean, default: false },
+  statusText: { type: String, default: '' },
+  indeterminate: { type: Boolean, default: false },
 })
 
 const color = computed(() => props.isFolder ? '#8a8fa8' : fileIconColor(props.ext))
 const statusText = computed(() => {
+  if (props.statusText) return props.statusText
   if (props.isFolder) {
     if (props.error) return `${props.done - props.failed}/${props.total}（${props.failed} 个失败）`
     return `${props.done}/${props.total}`
@@ -66,6 +69,14 @@ const statusText = computed(() => {
     color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 18%, transparent),
     color-mix(in srgb, var(--fc-color, rgba(123,127,178,1)) 10%, transparent));
   transition: width 0.25s ease-out;
+}
+.fc-ghost.is-indeterminate .fc-ghost-fill,
+.fc-ghost-row.is-indeterminate .fc-ghost-fill {
+  animation: fc-ghost-indeterminate 1.25s ease-in-out infinite alternate;
+}
+@keyframes fc-ghost-indeterminate {
+  from { transform: translateX(-55%); }
+  to { transform: translateX(210%); }
 }
 .fc-ext-badge {
   position: absolute; top: 10px; left: 10px; z-index: 2;

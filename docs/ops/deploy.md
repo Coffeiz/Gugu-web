@@ -318,8 +318,8 @@ rootful Docker，必须明确设置 `GUGU_SANDBOX_ROOTLESS_REQUIRED=false`，不
 热重载；前端由独立镜像提供静态 `dist`，入口 Nginx 负责页面、API 和 SSE 反代。
 
 ```bash
-export GUGU_BACKEND_IMAGE=ghcr.io/coffeiz/gugu-web-backend:版本号
-export GUGU_FRONTEND_IMAGE=ghcr.io/coffeiz/gugu-web-frontend:版本号
+export GUGU_BACKEND_IMAGE=docker.io/coffeiz/gugu-web-backend:版本号
+export GUGU_FRONTEND_IMAGE=docker.io/coffeiz/gugu-web-frontend:版本号
 export GUGU_DB_PASSWORD='生产数据库密码'
 docker compose -f docker-compose.prod.yml up -d
 ```
@@ -335,7 +335,7 @@ Redis 采用相同规则：默认连接 Compose 内部的 `redis:6379`，可用
 如果使用内部 Redis，设置 `GUGU_REDIS_PASSWORD` 后 Compose 会同时给内部 Redis
 启用密码认证；不设置则保持开发默认的无密码内网连接。
 
-构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）。拆分 backend/frontend 镜像仅供业务部署，持续发布到 GHCR，不属于普通用户更新链路：
+构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）。正式版本由发布 workflow 同步推送 Docker Hub 与 GHCR，业务服务器可直接拉取 Docker Hub 版本标签；以下命令展示如何手动构建并推送到 GHCR：
 
 ```bash
 docker build -f backend/Dockerfile.prod \
@@ -346,14 +346,14 @@ docker push ghcr.io/coffeiz/gugu-web-backend:版本号
 docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 ```
 
-正式版本发布工作流把公开的一体化 `gugu-web` 镜像推送到 Docker Hub（并镜像到 GHCR）；拆分 backend/frontend 继续推送到 GHCR，供业务部署使用。GHCR 包当前已公开，可匿名拉取；普通用户更新不使用这两个镜像。
+正式版本发布工作流把一体化 `gugu-web`、sandbox 和拆分 backend/frontend 镜像同步推送到 Docker Hub 与 GHCR；拆分镜像只使用语义版本号标签，不发布 Git SHA 标签。GHCR 包当前已公开，可匿名拉取；普通用户更新仍使用一体化镜像，不使用拆分镜像。
 
 手工推送拆分镜像时，仍需使用具有 GHCR 写权限的账号登录 `ghcr.io`。
 
 访问地址为 `http://服务器地址:9595`。如需改端口，设置 `GUGU_HTTP_PORT`。
 同时在项目根目录 `.env` 设置 `GUGU_PUBLIC_APP_URL` 为用户实际访问的完整地址；域名部署示例为 `https://www.gugugu.site`。该值会注入后端，用于生成邮箱验证、密码重置等外部链接，不能填写 `localhost:9595` 或 Compose 服务名。
 生产 Compose 会自动执行数据库迁移，并持久化 PostgreSQL、用户文件、记忆、工作区和
-Admin 的 `config.override.json`；不要删除 `pgdata`、`Gugu-data`、`legacy_gugu_data` 或 `gugu_config`，确认迁移完成前尤其不要删除旧数据源卷。
+Admin 的 `config.override.json`；不要删除 `pgdata`、`Gugu-data` 或 `gugu_config`。
 
 生产部署目录仍需要提供 `backend/.env`（非代码构建物，用于 AI/IM 等运行配置）和
 `searxng/settings.yml`。当前项目统一使用 `latest` 跟随基础服务和应用镜像的最新版本；
@@ -464,15 +464,13 @@ sandboxd 可见；配置变更后重启 `gugu-sandboxd gugu-backend gugu-worker`
   > JWT（登录 Token）就是用 `SECRET_KEY` 签名的，**线上用默认值 = 任何人能伪造管理员/用户 Token**，必须换。改 `SECRET_KEY` 后所有已签发的 Token 失效（需重新登录），重启后端生效。
 - 其余（AI key、OSS、飞书凭据）登录 Admin 面板配，落到 `config.override.json`。
 - **公开站点地址**：在 `backend/.env` 设置 `PUBLIC_APP_URL=https://你的域名`。它是邮箱验证、密码重置等外部链接的唯一生成基址；若通过 Compose 启动，则用项目根目录 `.env` 的 `GUGU_PUBLIC_APP_URL` 注入同一值。
-- **存储**：默认本地为仓库根目录下的 `Gugu-data/users/`（与 `backend/` 同级）；运行时不再创建或维护 `backend/uploads/`。历史迁移只由 `migrate_storage_root.py` 读取旧目录。
+- **存储**：默认本地为仓库根目录下的 `Gugu-data/users/`（与 `backend/` 同级）；运行时不再创建或维护 `backend/uploads/`。
   裸机如需自定义目录，备份配置后将 `config.override.json.storage.local_path` 改为目标绝对路径，
   并同步调整 systemd 的 `ReadWritePaths` 与 Shell 的 `--allowed-root`；Compose 则在根目录
   `.env` 设置 `GUGU_DATA_HOST_DIR=/绝对路径`。
-- `migrate_storage_root.py` 是通用文件树迁移器：目录搬迁可继续传入对应的 `--source` 和
-  `--target` 复用；Compose 的 `data-migrate` 正是用 `--no-config-update` 迁移旧 named
-  volume 的整个 `/data`。迁移成功后会在目标目录写入
-  `.system/migrations/storage-root-v1.done`，后续重复启动只做 marker skip，不会比较冻结的
-  旧卷与已经投入使用的新目录；数据库字段转换、配置结构转换等非文件复制迁移不能套用它。
+- v1.2.x 及更早的**单容器部署**（内嵌 PostgreSQL/Redis，数据在匿名卷）升级到 Compose 部署，
+  用 `scripts/migrate-single-container-to-compose.sh`：数据库走 pg_dump/restore 跨版本迁移
+  （不能直接拷数据目录），文件与凭据迁移、清理与回滚说明见 `docs/quick-deploy.md`「从单容器版本迁移」。
 
 ### 4.3 数据库迁移
 
@@ -950,15 +948,15 @@ scripts/release/compose-update.sh \
   --confirm
 ```
 
-脚本默认使用一体化 `docker-compose.yml`，验证 manifest、Release 签名和 `gugu-web` 镜像签名，备份 Compose 配置、`backend/.env` 与数据库，拉取 manifest 指定的不可变 digest，并只重建 `app`（以及使用同一镜像且正在运行的 `sandboxd`）。拆分 `docker-compose.prod.yml` 不属于此更新入口。脚本不会执行 `docker compose down -v`、无范围 `docker system prune`，也不会删除 `pgdata`、`Gugu-data`、`legacy_gugu_data`、`gugu_config` 或 `sandbox_socket`。
+脚本默认使用一体化 `docker-compose.yml`，验证 manifest、Release 签名和 `gugu-web` 镜像签名，备份 Compose 配置、`backend/.env` 与数据库，拉取 manifest 指定的不可变 digest，并只重建 `app`（以及使用同一镜像且正在运行的 `sandboxd`）。拆分 `docker-compose.prod.yml` 不属于此更新入口。脚本不会执行 `docker compose down -v`、无范围 `docker system prune`，也不会删除 `pgdata`、`Gugu-data`、`gugu_config` 或 `sandbox_socket`。
 
 普通更新仅拉取 `app` 和数据迁移服务所需的一体化镜像，不会拉取 egress proxy 或其他沙盒专用镜像。若 `sandboxd` 正在运行且配置为使用 `gugu-web` 同一镜像，脚本会同步更新它；自定义 sandboxd 镜像保持不变，也不会改变沙盒开关。
 
 #### Admin 在线更新与旧部署首次接入
 
-包含 updater sidecar 的 Compose 版本部署后，管理员可在 **Admin → 运维 → Docker 更新**检查稳定版、查看 GitHub Release 说明、预检并确认更新。预检包含当前 Alembic 迁移是否与应用唯一 head 一致、`/data` 与 `/config` 卷是否已挂载且可写、官方 updater sidecar 是否运行等项目。更新任务状态保存在 `gugu_updater_state` 命名卷中；浏览器关闭或 Admin 页面重新打开不会中断任务。普通账号不能访问对应 Admin API。更新和回滚都需要再次确认；回滚只恢复应用镜像，不会反向执行数据库迁移。
+一体化 Compose 部署后（更新执行器已并入 app 容器，PRD-ADMIN-2 §1.1），管理员可在 **Admin → 运维 → Docker 更新**检查稳定版、查看 GitHub Release 说明、预检并确认更新。预检包含当前 Alembic 迁移是否与应用唯一 head 一致、`/data` 与 `/config` 卷是否已挂载且可写、Docker socket 是否已挂载等项目。启用条件：app 容器挂载 Docker socket（compose 默认挂载）且未设置 `GUGU_SELF_UPDATE=off`；未启用时更新页显示「此部署未启用一键更新」。更新任务状态保存在 `/data/updater`（持久卷）中；浏览器关闭或 Admin 页面重新打开不会中断任务。普通账号不能访问对应 Admin API。更新和回滚都需要再次确认；回滚只恢复应用镜像，不会反向执行数据库迁移。安全边界：更新能力不进入 Agent 工具注册表（模型与提示注入不可达），子进程参数全部硬编码。
 
-已有部署首次接入时，先把版本化发布物中的 `docker-compose.yml`、更新脚本及 manifest 校验器放到部署目录/工具目录，**不要覆盖**根目录 `.env`、`backend/.env`、`Gugu-data` 或任何 Docker 数据卷。用包含 `updater` 服务的新 Compose 文件进行一次手动升级；脚本先验证目标 manifest 和 app 镜像，再从 Docker Hub 拉取官方 updater 镜像、校验其 Cosign 签名并启动 sidecar，之后才备份数据库并更新 app。若当前 Compose 文件没有 `updater` 服务，脚本不会自行改写 Compose 文件；此时 Admin 更新器不会可用，必须先安装该版本的 Compose 文件。
+已有部署首次接入时，先把版本化发布物中的 `docker-compose.yml` 放到部署目录，**不要覆盖**根目录 `.env`、`backend/.env`、`Gugu-data` 或任何 Docker 数据卷。用新版 Compose 文件做一次手动升级（`docker compose -p <项目名> -f docker-compose.yml up -d`）；升级后 app 容器自带更新执行器与 Docker socket 挂载，Admin 一键更新即可用。更新流程只备份配置与数据库、拉取 manifest 指定的官方一体化镜像 digest 并重建 app，不做全局清理。
 
 如果更新脚本不在部署目录内，应显式指定部署路径和校验器路径；在部署目录执行，并从受保护的环境注入数据库密码（不要把密码写进命令参数或 shell 历史）：
 

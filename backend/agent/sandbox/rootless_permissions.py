@@ -1,11 +1,12 @@
 """Rootless Docker 工作区权限规划。
 
 Rootless 容器中的非 root UID/GID 会映射到宿主机的 subordinate UID/GID。
-本模块只负责解析映射并生成显式权限命令，不在 Web/Worker 请求路径中提权或
-修改文件权限。实际 apply 应由部署脚本或 sandboxd 执行。
+本模块负责解析映射、生成权限命令，并在 workspace 初始化时应用 ACL。Compose
+运行时映射由 sandbox-bootstrap 探测后共享；本机开发环境可从 subordinate ID 推导。
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import pwd
@@ -162,20 +163,49 @@ def default_permission_plan(root: str | Path, *, login: str | None = None) -> Wo
 # 沙盒容器内业务进程的固定 UID/GID（与 prepare_rootless_storage.py 保持一致）。
 _CONTAINER_SANDBOX_UID = 65532
 _CONTAINER_SANDBOX_GID = 65532
+_RUNTIME_IDENTITY_PATH = Path("/run/gugu/sandbox-storage-identity.json")
 # 进程生命周期内的幂等缓存：每棵挂载根只需补一次 ACL，重复递归 setfacl 纯属浪费。
 _acl_ready_roots: set[str] = set()
 _acl_warned_roots: set[str] = set()
+
+
+def _read_runtime_identity() -> tuple[int, int] | None:
+    """读取 bootstrap 按目标 Docker daemon 实际探测出的沙盒宿主 UID/GID。
+
+    Web/Worker 容器通常看不到目标 Docker socket，也没有宿主机 subordinate ID
+    配置，因此不能自行判断目标 daemon 是 rootful 还是 rootless。Compose bootstrap
+    与运行时共享 /run/gugu 卷，这份小型元数据是 daemon 身份映射的唯一权威来源。
+    文件不存在时保留原生开发环境的 /etc/subuid 推导行为。
+    """
+    try:
+        payload = json.loads(_RUNTIME_IDENTITY_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("无法读取沙盒 daemon 身份映射") from exc
+    if not isinstance(payload, dict) or payload.get("schema") != 1:
+        raise ValueError("沙盒 daemon 身份映射版本无效")
+    if payload.get("daemon_mode") not in {"rootful", "rootless"}:
+        raise ValueError("沙盒 daemon 模式无效")
+    if payload.get("container_uid") != _CONTAINER_SANDBOX_UID or payload.get("container_gid") != _CONTAINER_SANDBOX_GID:
+        raise ValueError("沙盒 daemon 身份映射与容器 UID/GID 不匹配")
+    mapped_uid = payload.get("mapped_uid")
+    mapped_gid = payload.get("mapped_gid")
+    if (
+        not isinstance(mapped_uid, int) or isinstance(mapped_uid, bool) or mapped_uid < 0
+        or not isinstance(mapped_gid, int) or isinstance(mapped_gid, bool) or mapped_gid < 0
+    ):
+        raise ValueError("沙盒 daemon 身份映射 UID/GID 无效")
+    return mapped_uid, mapped_gid
 
 
 def ensure_sandbox_acl(root: str | Path) -> bool:
     """运行时为单棵沙盒挂载根补齐 rootless ACL；成功返回 True。
 
     与 sandbox-bootstrap 一次性脚本（prepare_rootless_storage.py）使用同一套
-    权限计划，差别只在身份来源：脚本运行在 bootstrap 容器里，需要从 socket
-    属主和 /host/etc 推导登录用户；运行时调用方就是宿主部署用户进程，直接用
-    当前 uid 与 /etc/subuid、/etc/subgid。环境不满足（无 setfacl、无
-    subordinate 映射、命令执行失败，例如容器内 backend 以 root 运行）时返回
-    False，由调用方退回全员可写的 chmod 兜底，不阻塞业务请求。
+    权限计划。Compose 中优先读取 bootstrap 按目标 daemon 检测并共享的 UID/GID；
+    非 Compose 的原生开发环境则按当前用户的 subordinate ID 推导。环境不满足
+    （无 setfacl、映射不可用、命令执行失败）时返回 False，由调用方处理权限兜底。
     """
     resolved = str(Path(root).expanduser().resolve())
     if resolved in _acl_ready_roots:
@@ -184,13 +214,25 @@ def ensure_sandbox_acl(root: str | Path) -> bool:
         if not shutil.which("setfacl"):
             raise RuntimeError("未安装 setfacl")
         login = pwd.getpwuid(os.getuid()).pw_name
+        runtime_identity = _read_runtime_identity()
+        subuid: tuple[SubordinateRange, ...] = ()
+        subgid: tuple[SubordinateRange, ...] = ()
+        mapped_uid: int | None = None
+        mapped_gid: int | None = None
+        if runtime_identity is not None:
+            mapped_uid, mapped_gid = runtime_identity
+        else:
+            subuid = read_subordinate_ranges("/etc/subuid", login)
+            subgid = read_subordinate_ranges("/etc/subgid", login)
         plan = build_permission_plan(
             resolved,
             login=login,
-            subuid=read_subordinate_ranges("/etc/subuid", login),
-            subgid=read_subordinate_ranges("/etc/subgid", login),
+            subuid=subuid,
+            subgid=subgid,
             container_uid=_CONTAINER_SANDBOX_UID,
             container_gid=_CONTAINER_SANDBOX_GID,
+            mapped_uid=mapped_uid,
+            mapped_gid=mapped_gid,
             # 非 root 运行时无法 chgrp 到映射组（EPERM），只做 chmod + setfacl。
             apply_ownership=os.geteuid() == 0,
         )

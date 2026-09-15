@@ -10,7 +10,7 @@
 
 SHELL := /bin/bash
 .SILENT:
-.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev rag-ts-build filesync-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up check-context-compaction
+.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate backup clean deps deps-dev rag-ts-build filesync-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up check-context-compaction
 
 # 非 Compose 的宿主机 ACL 默认不自动修改；Compose sandbox profile 会由 bootstrap 自动初始化。
 SANDBOX_ACL ?= 0
@@ -120,10 +120,9 @@ rag-ts-build: filesync-ts-build ## 构建固定的 TypeScript RAG worker 制品�
 	@chmod 755 bin/gugu-rag-ts-worker.mjs
 	@node bin/gugu-rag-ts-worker.mjs --version
 
-update:      ## 装依赖 + 跑数据库和文件存储迁移（不用 git，适合 scp/rsync 部署）
+update:      ## 装依赖并跑数据库迁移（不用 git，适合 scp/rsync 部署）
 	@$(MAKE) deps
 	@$(MAKE) migrate
-	@$(MAKE) storage-migrate
 
 makeupdate: update ## update 的兼容别名，便于业务端一键升级
 
@@ -163,16 +162,6 @@ compose-up: ## 启动 Compose 轻量模式；SANDBOX_ACL=1 时启用 sandbox pro
 	  GUGU_DATA_HOST_DIR="$(GUGU_DATA_HOST_DIR)" docker compose -f "$(COMPOSE_FILE)" --profile sandbox up -d; \
 	else \
 	  GUGU_DATA_HOST_DIR="$(GUGU_DATA_HOST_DIR)" docker compose -f "$(COMPOSE_FILE)" up -d; \
-	fi
-
-storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users（Compose 复用同一脚本）
-	@set -e; \
-	if [ "$$(id -u)" -eq 0 ] && systemctl list-unit-files 2>/dev/null | grep -q '^gugu-backend.service'; then \
-	  ./start.sh stop; \
-	  $(VENV_BIN)/python scripts/migrate_storage_root.py --apply; \
-	  ./start.sh install; \
-	else \
-	  $(VENV_BIN)/python scripts/migrate_storage_root.py --apply; \
 	fi
 
 check-context-compaction: ## 检查 90% 自动压缩策略和旧入口

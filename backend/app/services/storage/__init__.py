@@ -112,6 +112,12 @@ class StorageBackend(ABC):
     async def get(self, key: str) -> bytes:
         """读取文件内容"""
 
+    async def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024):
+        """分块读取对象。自定义后端默认兼容 get；生产后端覆写以避免整文件进内存。"""
+        data = await self.get(key)
+        for offset in range(0, len(data), chunk_size):
+            yield data[offset:offset + chunk_size]
+
     @abstractmethod
     async def delete(self, key: str) -> None:
         """删除文件，不存在时静默忽略"""
@@ -276,6 +282,14 @@ class LocalStorageBackend(StorageBackend):
 
     async def get(self, key: str) -> bytes:
         return (self.root / key).read_bytes()
+
+    async def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024):
+        stream = await asyncio.to_thread((self.root / key).open, "rb")
+        try:
+            while chunk := await asyncio.to_thread(stream.read, chunk_size):
+                yield chunk
+        finally:
+            await asyncio.to_thread(stream.close)
 
     async def delete(self, key: str) -> None:
         path = self.root / key
@@ -450,6 +464,20 @@ class OSSStorageBackend(StorageBackend):
         result = await _oss_retry("storage.oss.get", "oss.get_timeout", "文件读取失败，请稍后重试",
                                    self.bucket.get_object, self.pfx + key)
         return result.read()
+
+    async def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024):
+        # SDK 响应是同步流；每次分块读放到线程池，避免阻塞事件循环且不聚合整个对象。
+        result = await _oss_retry(
+            "storage.oss.get_stream", "oss.get_timeout", "文件读取失败，请稍后重试",
+            self.bucket.get_object, self.pfx + key,
+        )
+        try:
+            while chunk := await asyncio.to_thread(result.read, chunk_size):
+                yield chunk
+        finally:
+            close = getattr(result, "close", None)
+            if close is not None:
+                await asyncio.to_thread(close)
 
     async def delete(self, key: str) -> None:
         # 幂等：删除不存在的 key，OSS 仍返回成功（不报错）——安全重试。

@@ -8,6 +8,14 @@
       <Icon name="action.download" :size="13" />
       {{ t('sharedUi.download') }}
     </button>
+    <button v-if="(type === 'file' || type === 'multi-file') && canExtractArchive" data-testid="context-extract-archive" class="ctx-item popup-menu-item" @click="emit('action', 'extract-archive')">
+      <Icon name="action.archive" :size="13" />
+      {{ t('filesViewUi.extractTo') }}
+    </button>
+    <button v-if="(type === 'file' || type === 'multi-file') && canCompressSelection" data-testid="context-compress-selection" class="ctx-item popup-menu-item" @click="emit('action', 'compress-selection')">
+      <Icon name="action.archive" :size="13" />
+      {{ t('filesUi.compress') }}
+    </button>
     <button v-if="type === 'file'" class="ctx-item popup-menu-item" @click="emit('action', 'rename')">
       <Icon name="action.edit" :size="13" />
       {{ t('sharedUi.rename') }}
@@ -34,6 +42,10 @@
     <button v-if="folderTargetValid" class="ctx-item popup-menu-item" @click="emit('action', 'download-folder')">
       <Icon name="action.download" :size="13" />
       {{ t('sharedUi.downloadZip') }}
+    </button>
+    <button v-if="folderTargetValid && canCompressSelection" data-testid="context-compress-selection" class="ctx-item popup-menu-item" @click="emit('action', 'compress-selection')">
+      <Icon name="action.archive" :size="13" />
+      {{ t('filesUi.compress') }}
     </button>
     <button v-if="folderTargetValid" class="ctx-item popup-menu-item" @click="emit('action', 'rename-folder')">
       <Icon name="action.edit" :size="13" />
@@ -94,6 +106,8 @@ defineProps({
   deleteSeparator: { type: Boolean, default: false },
   canCreateFolder: { type: Boolean, default: true },
   canPaste: { type: Boolean, default: false },
+  canExtractArchive: { type: Boolean, default: false },
+  canCompressSelection: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['action'])

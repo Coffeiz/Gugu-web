@@ -339,7 +339,14 @@ function handleToggleTodo(todo: ProjectTodo) {
 .stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 11px 4px 8px; margin-right: -3px; }
 .stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity var(--motion-hover-control) var(--motion-ease-standard); padding: 0 0 0 5px; margin-bottom: 2px; }
 .stage-node.stage-dragging { opacity: .15; pointer-events: none; transition: none; }
-.node-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0; }
+.node-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0; position: relative; }
+.node-row::before {
+  content: ''; position: absolute; left: -5px; top: 50%; transform: translateY(-50%);
+  width: 2px; height: 14px; border-radius: var(--radius-pill);
+  background: var(--action-primary); opacity: 0; pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+.stage-node:hover .node-row::before { opacity: .4; }
 .node-circle {
   width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; cursor: pointer; z-index: 1;
   border: 1.5px solid var(--option-border); background: var(--option-bg);

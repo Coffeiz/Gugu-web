@@ -34,11 +34,7 @@ def _index_roots() -> list[Path]:
         if storage_root.is_dir() and not storage_root.is_symlink():
             for user_dir in storage_root.iterdir():
                 if _USER_DIR.fullmatch(user_dir.name) and not user_dir.is_symlink():
-                    roots.append(user_dir / ".system" / "rag" / "ts-index")
-    # 旧 backend/var/rag-ts-index 只保留兼容清理，新的索引不会再写入这里。
-    legacy = settings.search.ts_sidecar_index_dir.strip()
-    if legacy:
-        roots.append(Path(legacy).expanduser())
+                    roots.append(user_dir / ".agent" / "rag" / "unified")
     return roots
 
 

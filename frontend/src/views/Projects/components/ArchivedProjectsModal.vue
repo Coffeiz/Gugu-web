@@ -206,7 +206,11 @@ function formatDate(value: string | null | undefined): string {
 }
 .ap-close:hover { background: var(--surface-soft-hover); }
 
-.ap-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 16px; }
+.ap-body {
+  --ap-year-chevron-center: 10px;
+  --ap-year-content-indent: 20px;
+  flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 16px;
+}
 .ap-empty { padding: 32px 0; text-align: center; color: var(--content-secondary); font-size: 13px; }
 
 /* ── 年目录（同「已完成」列约定）── */
@@ -223,14 +227,24 @@ function formatDate(value: string | null | undefined): string {
 .year-label { font-size: 12px; font-weight: 700; color: var(--content-primary); flex: 1; letter-spacing: 0.03em; }
 .year-cnt { font-size: 10px; color: var(--content-tertiary); }
 .year-body {
-  padding: 2px 0 2px 6px;
-  border-left: 1px solid var(--border-subtle);
-  margin-left: 6px; margin-top: 1px;
+  position: relative;
+  padding: 0 0 0 var(--ap-year-content-indent);
+  margin-top: 1px;
   min-height: 0; overflow: hidden;
+}
+.year-body::before {
+  content: '';
+  position: absolute;
+  left: var(--ap-year-chevron-center);
+  transform: translateX(-50%);
+  top: 0; bottom: 0;
+  width: 1px;
+  background: var(--done-group-border);
+  pointer-events: none;
 }
 
 /* ── 月目录 ── */
-.month-group { margin-bottom: 1px; }
+.month-group { margin-bottom: 0; }
 .month-row {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 4px 8px; border-radius: 7px;
@@ -242,9 +256,12 @@ function formatDate(value: string | null | undefined): string {
 .month-name { font-size: 11px; font-weight: 500; color: var(--content-secondary); flex: 1; }
 .month-cnt { font-size: 10px; color: var(--content-tertiary); }
 /* ── 项目行 ── */
-.ap-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 4px; min-height: 0; overflow: hidden; }
-.year-body[data-layout-open="false"]:not([data-runtime-group-animating="true"]),
-.ap-list[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height: 0; overflow: hidden; }
+.ap-list { display: flex; flex-direction: column; gap: 4px; padding: 0 0 0 4px; box-sizing: border-box; min-height: 0; overflow: hidden; }
+.year-body[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height: 0; overflow: hidden; }
+.ap-list[data-layout-open="false"]:not([data-runtime-group-animating="true"]) {
+  height: 0;
+  overflow: hidden;
+}
 .ap-row {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border-radius: 10px; transition: background 0.12s;

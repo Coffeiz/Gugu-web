@@ -717,7 +717,7 @@ async function cleanupLegacy(keys: string[]) {
 .recon-err { color: var(--status-danger); font-weight: var(--font-weight-semibold); }
 .recon-block { margin-top: 10px; }
 .recon-block-title { font-weight: var(--font-weight-semibold); margin-bottom: 4px; color: var(--content-primary); }
-.recon-row { padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.08); display: flex; gap: 8px; align-items: center; }
+.recon-row { padding: 4px 0; border-top: 1px solid var(--panel-divider); display: flex; gap: 8px; align-items: center; }
 .recon-name { font-weight: var(--font-weight-semibold); color: var(--content-primary); }
 .recon-meta { color: var(--content-secondary); word-break: break-all; flex: 1; min-width: 0; }
 .recon-row-acts, .recon-bulk { display: inline-flex; gap: 6px; flex-shrink: 0; margin-left: 8px; }

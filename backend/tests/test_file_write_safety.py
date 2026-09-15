@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from app.core.errors import ExpectedError, RetryableError
-from app.services.files.previews import render_cached_pdf, render_thumbnail, resolve_image_mime
+from app.services.files.previews import render_thumbnail, resolve_image_mime
 
 
 class TestPreviewFailureSafety:
@@ -33,18 +33,6 @@ class TestPreviewFailureSafety:
 
         assert content == raw
         assert media_type == "image/png"
-
-    @pytest.mark.asyncio
-    async def test_preview_failure_does_not_populate_cache(self):
-        with patch("app.services.files.previews.office_to_pdf", side_effect=RuntimeError("PDF 渲染失败")):
-            with pytest.raises(RuntimeError, match="PDF 渲染失败"):
-                await render_cached_pdf(b"pdf-source", cache_key="1:v1", extension="PDF")
-
-        with patch("app.services.files.previews.office_to_pdf", return_value=b"pdf-result") as convert:
-            result = await render_cached_pdf(b"pdf-source", cache_key="1:v1", extension="PDF")
-
-        assert result == b"pdf-result"
-        convert.assert_called_once()
 
 
 class TestAPIErrorLayering:

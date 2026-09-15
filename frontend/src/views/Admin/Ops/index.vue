@@ -206,10 +206,10 @@ onMounted(load)
 .ops-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ops-table th {
   text-align: left; font-weight: 600; color: rgba(255,255,255,0.4);
-  padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 12px;
+  padding: 8px 12px; border-bottom: 1px solid var(--panel-divider); font-size: 12px;
 }
 .ops-table th.num, .ops-table td.num { text-align: right; }
-.ops-table td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.ops-table td { padding: 9px 12px; border-bottom: 1px solid var(--panel-divider); }
 .tool-name { font-family: var(--font-mono, monospace); color: rgba(255,255,255,0.85); }
 .ops-table td.bad { color: #e58a8a; font-weight: 600; }
 .ops-table td.warn { color: #d9a94e; }

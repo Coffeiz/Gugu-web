@@ -5,12 +5,10 @@ import pytest
 from agent.loop_drivers import (
     AnthropicDriver,
     OpenAIDriver,
-    OpenAIResponsesDriver,
     RoundResult,
     NormalizedToolCall,
-    _ResponsesCtx,
 )
-from agent.providers.openai_responses import _ResponsesRaw
+from agent.providers.openai_responses import OpenAIResponsesDriver, _ResponsesCtx, _ResponsesRaw
 
 
 def _anthropic_result():

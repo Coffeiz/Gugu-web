@@ -181,9 +181,7 @@ async def test_shared_snapshot_index_merges_sources_and_filters_by_source(monkey
         content="项目 beta", version="v1",
     )
     _use_fake_sidecar(monkeypatch)
-    settings = SimpleNamespace(search=SimpleNamespace(
-        ts_sidecar_command="", ts_sidecar_index_dir="",
-    ))
+    settings = SimpleNamespace(search=SimpleNamespace(ts_sidecar_command=""))
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
     cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
     token = set_shared_index_key("snapshot:revision-1")
@@ -207,9 +205,7 @@ async def test_shared_snapshot_index_keeps_persistent_documents_in_worker(monkey
 
     persistent_document = _document("user-a", "项目 alpha", "v1")
     _use_fake_sidecar(monkeypatch)
-    settings = SimpleNamespace(search=SimpleNamespace(
-        ts_sidecar_command="", ts_sidecar_index_dir="",
-    ))
+    settings = SimpleNamespace(search=SimpleNamespace(ts_sidecar_command=""))
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
 
     async def load_documents(_db, _owner_user_id):
@@ -235,9 +231,7 @@ async def test_shared_snapshot_reuses_complete_persistent_index_without_loading_
 
     document = _document("user-a", "项目 alpha", "v1")
     _use_fake_sidecar(monkeypatch)
-    settings = SimpleNamespace(search=SimpleNamespace(
-        ts_sidecar_command="", ts_sidecar_index_dir="",
-    ))
+    settings = SimpleNamespace(search=SimpleNamespace(ts_sidecar_command=""))
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
     calls = {"load": 0}
 
@@ -260,9 +254,7 @@ async def test_shared_snapshot_reuses_complete_persistent_index_without_loading_
 @pytest.mark.asyncio
 async def test_cache_build_reuses_persistent_sidecar_revision(monkeypatch):
     document = _document("user-a", "项目 alpha", "v1")
-    settings = SimpleNamespace(search=SimpleNamespace(
-        ts_sidecar_command="/opt/gugu-rag-ts-worker", ts_sidecar_index_dir="/var/lib/gugu/rag-ts-index",
-    ))
+    settings = SimpleNamespace(search=SimpleNamespace(ts_sidecar_command="/opt/gugu-rag-ts-worker"))
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
     calls = {"reuse": 0, "replace": 0}
 

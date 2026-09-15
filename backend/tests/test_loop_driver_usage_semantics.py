@@ -196,6 +196,47 @@ async def test_anthropic_restored_blocks_do_not_flatten_dynamic_tail(monkeypatch
     assert ctx.restored_blocks is None
 
 
+@pytest.mark.asyncio
+async def test_anthropic_tool_name_cleanup_is_reused_for_dispatch_and_history(monkeypatch):
+    """provider 工具名被污染时，RoundResult 与回放历史必须使用同一个干净名称。"""
+    import agent.core as core
+
+    final = SimpleNamespace(
+        content=[{
+            "type": "tool_use",
+            "id": "call-1",
+            "name": "list_files]<]minimax[",
+            "input": {"space": "workspace"},
+        }],
+        usage=SimpleNamespace(
+            input_tokens=10, output_tokens=1,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ),
+    )
+
+    async def fake_stream_round(_client, _kwargs, _adapter):
+        yield ("final", final)
+
+    monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+    ctx = SimpleNamespace(
+        model="minimax-test", max_tokens=32, tools=[],
+        system_param={}, thinking_param={}, generation_param={},
+        supports_active_cache=False,
+        adapter=SimpleNamespace(
+            render_history=lambda messages: list(messages),
+            stream_sanitize_markers=lambda: ("]<]minimax",),
+        ),
+    )
+
+    result = None
+    async for kind, value in AnthropicDriver().run_round(object(), ctx, []):
+        if kind == "done":
+            result = value
+
+    assert result.tool_calls[0].name == "list_files"
+    assert result.raw[0]["name"] == "list_files"
+
+
 def test_anthropic_history_sanitizes_before_provider_render():
     """canonical time-context 保持独立边界，不应在每轮渲染后重复清洗。"""
     messages = PromptMessages([

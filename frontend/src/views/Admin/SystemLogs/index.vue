@@ -213,7 +213,7 @@ onMounted(load)
   padding: 10px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
-  border-bottom: 1px solid rgba(255,255,255,0.07);
+  border-bottom: 1px solid var(--panel-divider);
 }
 
 .lt-empty {
@@ -222,7 +222,7 @@ onMounted(load)
 }
 
 .lt-row {
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid var(--panel-divider);
   transition: background 0.12s;
 }
 .lt-row:last-child { border-bottom: none; }

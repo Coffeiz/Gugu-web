@@ -646,23 +646,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/files/{fid}/preview-pdf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Preview Pdf */
-        get: operations["preview_pdf_api_v1_files__fid__preview_pdf_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/files/{fid}/stream-url": {
         parameters: {
             query?: never;
@@ -1218,26 +1201,6 @@ export interface paths {
          * @description 下载暂存聊天附件原文件（用户自己发的附件，6h 内有效）。
          */
         get: operations["attachment_download_api_v1_agent_attachment__attach_id__download_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/agent/attachment/{attach_id}/preview-pdf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Attachment Preview Pdf
-         * @description 将聊天暂存附件（Office 格式）转换为 PDF 供前端预览。
-         */
-        get: operations["attachment_preview_pdf_api_v1_agent_attachment__attach_id__preview_pdf_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -8430,37 +8393,6 @@ export interface operations {
             };
         };
     };
-    preview_pdf_api_v1_files__fid__preview_pdf_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_stream_url_api_v1_files__fid__stream_url_get: {
         parameters: {
             query?: never;
@@ -9582,37 +9514,6 @@ export interface operations {
         };
     };
     attachment_download_api_v1_agent_attachment__attach_id__download_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                attach_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    attachment_preview_pdf_api_v1_agent_attachment__attach_id__preview_pdf_get: {
         parameters: {
             query?: never;
             header?: never;

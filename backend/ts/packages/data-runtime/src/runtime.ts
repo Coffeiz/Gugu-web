@@ -416,6 +416,7 @@ export class DataRuntime {
   async loadRagIndex(context: DataAccessContext): Promise<{
     revision: string | null;
     snapshot: RagIndexSnapshot;
+    watermark: RagCursor | null;
     probe: {
       stage_ms: Record<string, number>;
       counts: Record<string, number>;

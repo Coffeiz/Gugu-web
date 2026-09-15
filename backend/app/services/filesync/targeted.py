@@ -45,6 +45,7 @@ from app.services.filesync.reconcile import (
 from app.services.filesync.snapshots import save_snapshot
 from app.services.filesync.statcache import StatCache
 from app.services.workspaces import workspace_shell_supported
+from app.services.storage.quota_limits import resolve_file_library_limit
 
 
 @dataclass
@@ -66,9 +67,9 @@ class PathEventBatch:
 async def _quota_limit(db: AsyncSession, user_id) -> int:
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     quota_settings = getattr(get_settings(), "quota", None)
-    return int(
-        (user.storage_limit_bytes if user else None)
-        or getattr(quota_settings, "default_storage_limit_bytes", 2**63 - 1)
+    return resolve_file_library_limit(
+        user.storage_limit_bytes if user else None,
+        getattr(quota_settings, "default_storage_limit_bytes", None),
     )
 
 
@@ -138,16 +139,15 @@ async def _project_changed_file(
     quota_headroom: int,
     summary_inout: dict,
 ) -> int:
-    """单文件 create/update 投影；返回新建文件占用的字节数（未新建返回 0）。
+    """单文件 create/update 投影；返回本次变更的净字节增量。
 
     调用方必须按返回值在循环内逐个扣减批次 quota headroom：headroom 在批次
     开始时只算一次，若不随新建扣减，同批多个大文件会各自拿同一份余量、批量
-    突破存储配额。同批的删除文件不回补余量（删除投影排在创建之后，按不回补
-    处理方向保守，不会超卖配额）。
+    突破存储配额。扩容扣除增长部分，缩小文件则释放相应余量。
     """
     path = root / relative
     key = scope_prefix + relative
-    created_bytes = 0
+    size_delta = 0
     try:
         if _is_sync_temporary(path):
             return 0
@@ -178,6 +178,10 @@ async def _project_changed_file(
         previous = latest.get(("file", relative))
         if previous is not None and previous.observed_fingerprint == observed:
             return 0
+        size_delta = path.stat().st_size - int(row.size_bytes or 0)
+        if size_delta > quota_headroom:
+            summary_inout["rejected"] += 1
+            return 0
         row.size_bytes = path.stat().st_size
         row.size = str(path.stat().st_size)
         row.display_name = display_name
@@ -195,6 +199,10 @@ async def _project_changed_file(
         baseline = previous.observed_fingerprint if previous else None
     elif source is not None:
         row = source
+        size_delta = path.stat().st_size - int(row.size_bytes or 0)
+        if size_delta > quota_headroom:
+            summary_inout["rejected"] += 1
+            return 0
         old_key = row.storage_key
         row.storage_key = key
         row.display_name = display_name
@@ -216,7 +224,7 @@ async def _project_changed_file(
             summary_inout["rejected"] += 1
             return 0
         stat = path.stat()
-        created_bytes = stat.st_size
+        size_delta = stat.st_size
         row = File(
             user_id=user_id, display_name=display_name, ext=ext, space=space,
             project_id=project_id, folder_id=folder_id,
@@ -246,7 +254,7 @@ async def _project_changed_file(
         save_snapshot(user_id, binding.id, relative, path)
     except OSError:
         summary_inout["rejected"] += 1
-    return created_bytes
+    return size_delta
 
 
 async def _project_deleted_file(
@@ -437,7 +445,7 @@ async def project_path_events(
         )
     quota_headroom = quota_limit - await _live_storage_bytes(db, user_id)
     for relative in sorted(batch.changed):
-        # 新建文件逐个扣减余量：同批文件共享同一份额度，不扣减会批量突破配额
+        # 按净字节增量逐项更新余量：新增/扩容扣减，缩小文件释放余量。
         quota_headroom -= await _project_changed_file(
             db, user_id, binding, root, storage_root, scope_prefix, user_root,
             workspace_directory_id, relative, latest, stat_cache,

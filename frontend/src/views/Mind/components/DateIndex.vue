@@ -149,6 +149,7 @@ onBeforeUnmount(() => {
 
 defineExpose({
   settleTo: (index: number) => motion.settleTo(index),
+  stopMotion: motion.stopMotion,
 })
 
 const today = localDayKey(new Date())

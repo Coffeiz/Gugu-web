@@ -3,11 +3,11 @@ from agent.memory.store import DAILY_INJECT_CHARS, MEMORY_INJECT_CHARS, retrieve
 
 def test_memory_injection_budgets_are_two_thousand_chars():
     assert DAILY_INJECT_CHARS == 2000
-    assert MEMORY_INJECT_CHARS == 2000
+    assert MEMORY_INJECT_CHARS == 3000
 
 
 def test_memory_fallback_respects_hard_budget_without_embedding():
-    text = "甲" * 2500
+    text = "甲" * (MEMORY_INJECT_CHARS + 500)
     assert len(retrieve_memory_block(text, None, None)) == MEMORY_INJECT_CHARS
 
 

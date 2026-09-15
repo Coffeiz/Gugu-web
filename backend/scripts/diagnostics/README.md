@@ -55,7 +55,7 @@ node --experimental-strip-types \
   backend/scripts/diagnostics/rag_field_rescore_probe.ts \
   --allow-real-data \
   --input backend/scripts/diagnostics/local/<rag-run>.json \
-  --index-json <storage.local_path>/<user-id>/.system/rag/ts-index/<owner-hash>/index.json \
+  --index-json <storage.local_path>/<user-id>/.agent/rag/unified/<owner-hash>/index.json \
   --include-content
 ```
 
@@ -66,7 +66,7 @@ node --experimental-strip-types \
   backend/scripts/diagnostics/rag_field_rescore_probe.ts \
   --allow-real-data \
   --input /path/to/loopscope-runs.json \
-  --index-json /path/to/ts-index/index.json \
+  --index-json /path/to/unified/index.json \
   --include-content
 ```
 

@@ -16,8 +16,10 @@
       <span>{{ error }}</span>
     </div>
     <div v-if="!status && error" class="error-note secondary" role="note">{{ t('adminUpdateUi.updaterUnavailable') }}</div>
+    <div v-if="status && !status.enabled" class="error-note secondary" role="note">{{ t('adminUpdateUi.selfUpdateDisabled') }}</div>
 
     <UpdateOverview
+      v-if="!status || status.enabled"
       :current-version="currentVersion"
       :candidate="candidate"
       :has-update="hasUpdate"
@@ -33,6 +35,7 @@
     />
 
     <UpdateTask
+      v-if="!status || status.enabled"
       :task="status?.task ?? null"
       :history="status?.history ?? []"
       :loading="loading"

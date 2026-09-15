@@ -39,7 +39,14 @@ export function usePreviewBlobCache() {
     if (url && (!key || previewCache.get(key) !== url)) URL.revokeObjectURL(url)
   }
 
-  return { get, put, release, keyOf: previewBlobCacheKey }
+  function discard(key: string, url?: string | null): void {
+    const cached = previewCache.get(key)
+    if (!cached || (url && cached !== url)) return
+    previewCache.delete(key)
+    URL.revokeObjectURL(cached)
+  }
+
+  return { get, put, release, discard, keyOf: previewBlobCacheKey }
 }
 
 /** 仅供单元测试清空会话缓存，生产代码不要调用。 */

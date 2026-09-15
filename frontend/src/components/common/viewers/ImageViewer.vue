@@ -22,22 +22,26 @@
       <span>{{ t('viewerUi.imageLoadFailed') }}</span>
     </div>
 
-    <!-- 缩放工具栏 -->
-    <div v-if="!error" class="iv-toolbar" @mousedown.stop @dblclick.stop>
-      <button class="iv-tb-btn" :title="t('viewerUi.zoomOut')" @click="zoomOut">
-        <Icon name="action.subtract" :size="12" />
-      </button>
-      <span class="iv-tb-pct" @click="reset" :title="t('viewerUi.resetZoom')">{{ pct }}%</span>
-      <button class="iv-tb-btn" :title="t('viewerUi.zoomIn')" @click="zoomIn">
-        <Icon name="action.add" :size="12" />
-      </button>
-    </div>
+    <ViewerToolbar
+      v-if="!error"
+      :ariaLabel="t('viewerUi.imageToolbar')"
+      :zoom-percent="pct"
+      :previous-page-label="t('viewerUi.previousPage')"
+      :next-page-label="t('viewerUi.nextPage')"
+      :zoom-out-label="t('viewerUi.zoomOut')"
+      :reset-zoom-label="t('viewerUi.resetZoom')"
+      :zoom-in-label="t('viewerUi.zoomIn')"
+      @zoom-out="zoomOut"
+      @reset-zoom="reset"
+      @zoom-in="zoomIn"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
+import ViewerToolbar from './ViewerToolbar.vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const PADDING = 32
@@ -68,7 +72,6 @@ const error    = ref(false)
 
 let dragStart: { x: number; y: number } | null = null
 let resizeObserver: ResizeObserver | null = null
-let transitionRaf: number | null = null
 
 const imgStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
@@ -102,6 +105,7 @@ const pct = computed(() => Math.round(scale.value * 100))
 
 function applyZoom(newScale: number) {
   hasUserZoom.value = true
+  disableTransition.value = false
   scale.value = Math.min(MAX_ZOOM, Math.max(0.05, newScale))
   clamp()
 }
@@ -137,6 +141,7 @@ function onMouseUp() {
 
 function reset() {
   hasUserZoom.value = true
+  disableTransition.value = false
   // 矢量图的“原始大小”只是浏览器折算的默认对象尺寸（如无尺寸 SVG 的
   // 300×150），重置回 100% 会缩回窗口中间一小块，因此回到适配视图；
   // 位图保持原有的 100% 语义。
@@ -171,13 +176,6 @@ function fitToView(force = false) {
   tx.value = 0
   ty.value = 0
   imageReady.value = true
-  if (isAutomaticFit) {
-    if (transitionRaf !== null) cancelAnimationFrame(transitionRaf)
-    transitionRaf = requestAnimationFrame(() => {
-      transitionRaf = null
-      disableTransition.value = false
-    })
-  }
 }
 
 const emit = defineEmits(['loaded'])
@@ -218,7 +216,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('mousemove', onMouseMove)
   window.removeEventListener('mouseup', onMouseUp)
-  if (transitionRaf !== null) cancelAnimationFrame(transitionRaf)
   resizeObserver?.disconnect()
   resizeObserver = null
 })
@@ -226,20 +223,6 @@ onUnmounted(() => {
 
 <style scoped>
 .iv-wrap {
-  /* 亮色默认值保持原设计；暗色在本组件末尾重映射这些变量。
-     toolbar 本身始终只有下面一套属性声明，不再维护亮/暗两份组件 CSS。 */
-  --iv-toolbar-bg: rgba(255, 255, 255, 0.68);
-  --iv-toolbar-filter: blur(18px);
-  --iv-toolbar-border: rgba(255, 255, 255, 0.82);
-  --iv-toolbar-shadow:
-    0 4px 16px rgba(80, 90, 110, 0.10),
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 1px 0 0 rgba(255, 255, 255, 0.55);
-  --iv-toolbar-fg: var(--text-secondary);
-  --iv-toolbar-hover-bg: rgba(123, 127, 178, 0.12);
-  --iv-toolbar-hover-fg: var(--color-primary);
-  --iv-toolbar-pct-hover-fg: var(--text-primary);
-
   position: absolute;
   inset: 0;
   display: flex;
@@ -277,57 +260,4 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-/* ── 缩放工具栏 ── */
-.iv-toolbar {
-  position: absolute;
-  z-index: 2;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  background: var(--iv-toolbar-bg);
-  backdrop-filter: var(--iv-toolbar-filter);
-  -webkit-backdrop-filter: var(--iv-toolbar-filter);
-  border: 1px solid var(--iv-toolbar-border);
-  border-radius: 20px;
-  padding: 3px 5px;
-  pointer-events: auto;
-  box-shadow: var(--iv-toolbar-shadow);
-}
-.iv-tb-btn {
-  width: 26px; height: 26px;
-  border-radius: 50%; border: none;
-  background: transparent; color: var(--iv-toolbar-fg);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s, color 0.15s;
-}
-.iv-tb-btn svg { display: block; }
-.iv-tb-btn:hover {
-  background: var(--iv-toolbar-hover-bg);
-  color: var(--iv-toolbar-hover-fg);
-}
-.iv-tb-pct {
-  font-size: 11px; font-weight: 600;
-  color: var(--iv-toolbar-fg);
-  min-width: 38px; text-align: center;
-  cursor: pointer; letter-spacing: 0.02em;
-  padding: 0 2px; transition: color 0.15s;
-}
-.iv-tb-pct:hover { color: var(--iv-toolbar-pct-hover-fg); }
-</style>
-
-<style>
-/* 工具栏变量只在 ImageViewer 内消费，暗色映射也归还组件。 */
-html[data-theme='dark'][data-family] .iv-wrap {
-  --iv-toolbar-bg: color-mix(in srgb, var(--surface-floating) 90%, transparent);
-  --iv-toolbar-filter: var(--popup-surface-blur);
-  --iv-toolbar-border: var(--border-strong);
-  --iv-toolbar-shadow: var(--elevation-popup), inset 0 1px 0 var(--modal-card-highlight);
-  --iv-toolbar-fg: var(--content-secondary);
-  --iv-toolbar-hover-bg: var(--option-bg-hover);
-  --iv-toolbar-hover-fg: var(--action-primary);
-  --iv-toolbar-pct-hover-fg: var(--content-primary);
-}
 </style>

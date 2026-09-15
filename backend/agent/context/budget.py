@@ -509,6 +509,47 @@ def enforce_provider_overflow_fallback(
 
 
 def is_context_overflow_error(error: BaseException) -> bool:
-    """只识别明确的上下文超量错误，不把普通 API 错误误当成可重试。"""
-    text = f"{type(error).__name__}:{error}".lower()
-    return "request_too_large" in text or "context_length_exceeded" in text or "413" in text
+    """识别明确的输入上下文超限；输出上限错误不能靠压缩历史修复。"""
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if not isinstance(current, BaseException) or id(current) in seen:
+            continue
+        seen.add(id(current))
+        fields = {}
+        fields["exception_message"] = str(current)
+        for name in ("code", "type", "param", "message", "status_code"):
+            value = getattr(current, name, None)
+            if value is not None:
+                fields[name] = value
+        body = getattr(current, "body", None)
+        if isinstance(body, dict):
+            fields.update(body)
+        response = getattr(current, "response", None)
+        status = getattr(response, "status_code", None)
+        if status is not None:
+            fields["status_code"] = status
+        pending.extend((getattr(current, "cause", None), current.__cause__, current.__context__))
+
+        searchable = " ".join(str(value) for value in fields.values()).lower()
+        explicit_codes = (
+            "request_too_large", "context_length_exceeded", "context_window_exceeded",
+            "input_too_long", "prompt_too_long",
+        )
+        if any(code in searchable for code in explicit_codes):
+            return True
+        # 常见 OpenAI-compatible 文案；不接受 max_tokens/output 限制作为上下文溢出。
+        if any(marker in searchable for marker in ("max_tokens", "maximum output", "output token limit")):
+            continue
+        phrases = (
+            "maximum context length", "context window exceeded", "context length exceeded",
+            "input token count exceeds", "prompt is too long", "input is too long",
+            "request entity too large", "request too large",
+        )
+        if any(phrase in searchable for phrase in phrases):
+            return True
+        status = fields.get("status_code") or fields.get("status")
+        if str(status) == "413":
+            return True
+    return False

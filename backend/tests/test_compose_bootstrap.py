@@ -26,6 +26,21 @@ def test_validate_required_config_reports_actionable_missing_secret(tmp_path: Pa
         )
 
 
+def test_validate_required_config_requires_external_database_password(tmp_path: Path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("SECRET_KEY=test-secret\n", encoding="utf-8")
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    monkeypatch.delenv("GUGU_DB_PASSWORD", raising=False)
+    monkeypatch.delenv("DB__PASSWORD", raising=False)
+
+    with pytest.raises(ComposeConfigError, match="GUGU_DB_PASSWORD 未设置"):
+        validate_required_config(
+            env_file=env_file,
+            data_dir=tmp_path / "data",
+            host_data_dir="/srv/gugu-data",
+        )
+
+
 def test_validate_required_config_creates_missing_data_dir(tmp_path: Path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text("SECRET_KEY=secret\nGUGU_DB_PASSWORD=db-secret\n", encoding="utf-8")
@@ -66,7 +81,6 @@ def test_main_initializes_secret_and_data_dir(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("GUGU_ENV_FILE", str(env_file))
     monkeypatch.setenv("GUGU_DATA_DIR", str(data_dir))
     monkeypatch.setenv("GUGU_DB_PASSWORD", "db-secret")
-    monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "0")
     monkeypatch.delenv("SECRET_KEY", raising=False)
     monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
     monkeypatch.delenv("ADMIN_USERNAME", raising=False)

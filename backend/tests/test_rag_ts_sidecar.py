@@ -112,10 +112,9 @@ def test_index_dir_for_owner_uses_hidden_user_storage(monkeypatch, tmp_path):
         "app.core.config.get_settings",
         lambda: SimpleNamespace(
             storage=SimpleNamespace(local_path=str(tmp_path)),
-            search=SimpleNamespace(ts_sidecar_index_dir="var/legacy"),
         ),
     )
-    assert index_dir_for_owner("user-a").endswith("/user-a/.system/rag/ts-index")
+    assert index_dir_for_owner("user-a").endswith("/user-a/.agent/rag/unified")
 
 
 @pytest.mark.asyncio
@@ -288,6 +287,42 @@ async def test_build_ops_use_build_timeout_and_search_keeps_request_timeout(monk
 
 
 @pytest.mark.asyncio
+async def test_worker_start_ping_reuses_build_timeout(monkeypatch):
+    """冷恢复探活必须与索引构建共用超时，不能被短常量提前杀掉 worker。"""
+    from agent.rag import ts_sidecar as ts
+
+    captured: list[tuple[str, float | None]] = []
+
+    class _FakeProcess:
+        returncode = None
+        stdin = stdout = stderr = None
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    process = _FakeProcess()
+
+    async def fake_spawn(*args, **kwargs):
+        return process
+
+    async def fake_request_unlocked(self, payload, *, timeout_seconds=None):
+        captured.append((payload["op"], timeout_seconds))
+        return {"status": "ok", "revision": "r1", "document_count": 1}
+
+    monkeypatch.setattr(ts.asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr(ts.TsSidecarClient, "_request_unlocked", fake_request_unlocked)
+    client = ts.TsSidecarClient("test-owner", command="node worker")
+
+    await client._ensure_process()
+    await client.close()
+
+    assert captured == [("ping", ts.BUILD_TIMEOUT_SECONDS)]
+
+
+@pytest.mark.asyncio
 async def test_rank_guard_rejects_unknown_scoring_version(monkeypatch):
     """冻结契约：TS 评分版本漂移必须显式失败，不能静默接受差异。"""
     from agent.rag import ts_sidecar as ts
@@ -327,6 +362,36 @@ async def test_corrupt_index_reported_and_rebuilt(tmp_path):
         assert await client.reuse_if_current("revision-1") is True
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_reuse_if_current_serializes_worker_start(monkeypatch):
+    """并发首次恢复只能启动一个 worker，避免覆盖 client 引用留下孤儿进程。"""
+    from types import SimpleNamespace
+
+    client = TsSidecarClient("owner-race", command="node worker", index_dir="/tmp/index")
+    starts = 0
+    active_starts = 0
+
+    async def fake_ensure_process():
+        nonlocal starts, active_starts
+        if client._process is not None and client._process.returncode is None:
+            return
+        starts += 1
+        active_starts += 1
+        assert active_starts == 1
+        await asyncio.sleep(0)
+        client._process = SimpleNamespace(returncode=None)
+        client._revision = "revision-1"
+        client._document_count = 1
+        active_starts -= 1
+
+    monkeypatch.setattr(client, "_ensure_process", fake_ensure_process)
+    assert await asyncio.gather(
+        client.reuse_if_current("revision-1"),
+        client.reuse_if_current("revision-1"),
+    ) == [True, True]
+    assert starts == 1
 
 
 @pytest.mark.asyncio

@@ -376,7 +376,7 @@ onMounted(() => { load(); loadSecurity() })
 }
 
 .log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.log-table thead tr { border-bottom: 1px solid rgba(255,255,255,0.07); }
+.log-table thead tr { border-bottom: 1px solid var(--panel-divider); }
 .log-table th {
   padding: 11px 16px; text-align: left;
   color: rgba(255,255,255,0.3); font-weight: 600;
@@ -384,7 +384,7 @@ onMounted(() => { load(); loadSecurity() })
 }
 .log-table td {
   padding: 11px 16px; color: rgba(255,255,255,0.65);
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid var(--panel-divider);
 }
 .log-table tbody tr:last-child td { border-bottom: none; }
 .log-table tbody tr:hover td { background: rgba(255,255,255,0.03); }
@@ -407,7 +407,7 @@ onMounted(() => { load(); loadSecurity() })
 /* 分页 */
 .pagination {
   display: flex; align-items: center; gap: 12px;
-  padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.07);
+  padding: 12px 16px; border-top: 1px solid var(--panel-divider);
 }
 .page-info { font-size: 12px; color: rgba(255,255,255,0.3); flex: 1; }
 .page-btns { display: flex; align-items: center; gap: 8px; }

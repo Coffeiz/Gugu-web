@@ -33,6 +33,7 @@ import { showAppError } from '@/composables/core/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
+import { useProjectColumnViews } from '@/composables/projects/useProjectColumnViews'
 import type { Project } from '@/types/project'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
@@ -159,71 +160,10 @@ const liveFileCounts = computed(() => {
   return m
 })
 
-// 按状态分组的项目列表，缓存进 computed——之前是个普通函数，每次父组件重渲染
-// （项目移动、liveFileCounts 异步更新，往往是紧挨着的两次独立渲染）都会重新
-// filter/map/sort 一遍，且 map() 每次都生成全新的 project 对象。这些新对象配合
-// TransitionGroup 的 diff，在某些时机会让 Vue 把同一个 key 的 ProjectCard 实例
-// 整个卸载重挂载，而不只是 patch props（实测：拖拽落地动画中途，卡片的 Vue
-// 组件会在 <2ms 内 mounted→unmounted 一次，飞行中的克隆因此跟丢了目标元素引用，
-// 表现为落地卡在原地不动、直到别的卡片动画结束才瞬间归位）。改成 computed 后，
-// 只要 projects/cacheStore.loaded/liveFileCounts 这几个依赖没变，同一轮渲染
-// 内多次调用 columnProjects() 用的是同一份缓存结果，同一个 project 对象引用，
-// 不会再凭空多出这类相邻渲染间的对象churn。
-const projectViewCache = new Map<number, { source: Project; fileCount: number; view: Project }>()
-const columnListCache = new Map<string, Project[]>()
-const columnProjectsMap = computed(() => {
-  const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
-  const grouped = new Map()
-  const liveIds = new Set<number>()
-  for (const p of projectStore.projects) {
-    const list = grouped.get(p.status) ?? []
-    const fileCount = cacheStore.loaded ? (liveFileCounts.value.get(p.id) ?? 0) : p.fileCount
-    liveIds.add(p.id)
-    const cached = projectViewCache.get(p.id)
-    // Store 会原地更新 Project。派生 fileCount 需要克隆时，复用同一份 view 并同步整对象，
-    // 避免标题、优先级、日期、颜色等字段在乐观更新期间继续显示旧快照。
-    let view: Project
-    if (fileCount === p.fileCount) {
-      view = p
-    } else if (cached?.source === p && cached.view !== p) {
-      Object.assign(cached.view, p, { fileCount })
-      view = cached.view
-    } else {
-      view = { ...p, fileCount }
-    }
-    projectViewCache.set(p.id, { source: p, fileCount, view })
-    // cache 已加载后以前端计数为准（只计根目录文件），避免回退到服务端含文件夹的数字
-    list.push(view)
-    grouped.set(p.status, list)
-  }
-  for (const id of projectViewCache.keys()) {
-    if (!liveIds.has(id)) projectViewCache.delete(id)
-  }
-  for (const [statusKey, list] of grouped) {
-    if (statusKey === 'done') list.sort((a, b) => prioVal(b) - prioVal(a) || (b.doneAt ?? '').localeCompare(a.doneAt ?? ''))
-    else if (statusKey === 'active') list.sort((a, b) => prioVal(b) - prioVal(a) || (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)
-    else list.sort((a, b) => prioVal(b) - prioVal(a) || (a.startDate ?? '').localeCompare(b.startDate ?? '') || a.id - b.id)
-  }
-  // 状态更新只会影响来源列和目标列；复用其它列的数组引用，避免父级 computed
-  // 重新求值时让所有 KanbanColumn/DoneColumn 都进入一次 Vue patch。
-  const stableGrouped = new Map<string, Project[]>()
-  for (const statusKey of ['pending', 'active', 'done']) {
-    const next = grouped.get(statusKey) ?? []
-    const previous = columnListCache.get(statusKey)
-    const stable = previous
-      && previous.length === next.length
-      && previous.every((project, index) => project === next[index])
-      ? previous
-      : next
-    columnListCache.set(statusKey, stable)
-    stableGrouped.set(statusKey, stable)
-  }
-  return stableGrouped
+const { columnProjects } = useProjectColumnViews({
+  projects: computed(() => projectStore.projects),
+  liveFileCounts: computed(() => cacheStore.loaded ? liveFileCounts.value : null),
 })
-
-function columnProjects(statusKey) {
-  return columnProjectsMap.value.get(statusKey) ?? []
-}
 
 function openNewWithStatus(status) {
   uiStore.newProjectInitStatus = status ?? null

@@ -9,17 +9,14 @@ ROOT_DIR="${COMPOSE_PROJECT_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.yml}"
 MANIFEST=""
-MANIFEST_BUNDLE=""
 BACKUP_ROOT="${BACKUP_ROOT:-$ROOT_DIR/backup}"
 VALIDATOR="${UPDATE_VALIDATOR:-$SCRIPT_DIR/validate-update-manifest.mjs}"
 CONFIRMED=false
-BOOTSTRAP_UPDATER=true
-COSIGN_IDENTITY_REGEXP="${COSIGN_IDENTITY_REGEXP:-https://github\\.com/Coffeiz/Gugu-web/.github/workflows/docker-release\\.yml@refs/tags/v.*}"
-COSIGN_OIDC_ISSUER="${COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
+HANDOFF_EXIT_CODE=75
 
 usage() {
   cat <<'EOF'
-用法：scripts/release/compose-update.sh --manifest <update-manifest.json> --bundle <manifest.bundle> --confirm
+用法：scripts/release/compose-update.sh --manifest <update-manifest.json> --confirm
 
 环境变量：
   COMPOSE_FILE   一体化生产 Compose 文件，默认 docker-compose.yml
@@ -36,17 +33,8 @@ while (($# > 0)); do
       MANIFEST="$2"
       shift 2
       ;;
-    --bundle)
-      [[ $# -ge 2 ]] || { echo '缺少 --bundle 参数' >&2; exit 2; }
-      MANIFEST_BUNDLE="$2"
-      shift 2
-      ;;
     --confirm)
       CONFIRMED=true
-      shift
-      ;;
-    --skip-updater-bootstrap)
-      BOOTSTRAP_UPDATER=false
       shift
       ;;
     --help|-h)
@@ -62,22 +50,73 @@ while (($# > 0)); do
 done
 
 [[ -n "$MANIFEST" ]] || { echo '必须指定 --manifest' >&2; exit 2; }
-[[ -n "$MANIFEST_BUNDLE" ]] || { echo '必须指定 --bundle' >&2; exit 2; }
 [[ "$CONFIRMED" == true ]] || { echo '更新必须显式传入 --confirm' >&2; exit 2; }
 [[ -f "$MANIFEST" ]] || { echo 'manifest 文件不存在' >&2; exit 1; }
-[[ -f "$MANIFEST_BUNDLE" ]] || { echo 'manifest 签名 bundle 不存在' >&2; exit 1; }
+
+# app 内的更新器不能在自己的容器里执行 stop app；否则后续 up 无法保证执行。
+# 使用当前 app 镜像启动一次性 helper，helper 与 app 生命周期解耦，再由它完成整个 Compose 更新。
+if [[ "${GUGU_UPDATE_HELPER:-0}" != 1 && -n "${GUGU_UPDATE_HELPER_IMAGE:-}" ]]; then
+  command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }
+  HELPER_IMAGE="$GUGU_UPDATE_HELPER_IMAGE"
+  [[ "$HELPER_IMAGE" =~ ^(docker\.io|ghcr\.io)/coffeiz/gugu-web(@sha256:[a-f0-9]{64}|:[A-Za-z0-9_.-]{1,128})$ ]] \
+    || { echo 'helper 镜像不在固定白名单内' >&2; exit 1; }
+  APP_CONTAINER="$(cat /etc/hostname 2>/dev/null || true)"
+  DATA_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
+  # inspect 返回的是宿主机 namespace 的 source；不要在 app 容器内用 -d/-e 检查它。
+  # 后续 docker run --mount 会由 Docker daemon 在宿主机 namespace 校验该路径。
+  [[ -n "$DATA_SOURCE" ]] || { echo '无法定位 /data 宿主机挂载，停止更新' >&2; exit 1; }
+  DOCKER_SOCKET_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/run/docker.sock"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
+  [[ -n "$DOCKER_SOCKET_SOURCE" ]] || { echo '无法定位 Docker socket 宿主机挂载，停止更新' >&2; exit 1; }
+  HELPER_NAME="gugu-update-helper-${RANDOM}-${RANDOM}"
+  docker run --rm --detach \
+    --name "$HELPER_NAME" \
+    --label com.coffeiz.gugu.update-helper=true \
+    --entrypoint /bin/bash \
+    --workdir "$ROOT_DIR" \
+    --env GUGU_UPDATE_HELPER=1 \
+    --env COMPOSE_PROJECT_DIR="$ROOT_DIR" \
+    --env COMPOSE_FILE="$COMPOSE_FILE" \
+    --env BACKUP_ROOT="$BACKUP_ROOT" \
+    --env GUGU_UPDATER_CODE_DIR=/opt/gugu-updater \
+    --env UPDATE_VALIDATOR=/opt/gugu-updater/scripts/release/validate-update-manifest.mjs \
+    --env GUGU_WEB_IMAGE="${GUGU_WEB_IMAGE:-}" \
+    --env GUGU_DB_PASSWORD \
+    --env GUGU_DB_USER \
+    --env GUGU_DB_NAME \
+    --env DB__PASSWORD \
+    --env DB__USER \
+    --env DB__NAME \
+    --env GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE="${MANIFEST}.handoff" \
+    --mount "type=bind,source=$ROOT_DIR,target=$ROOT_DIR,readonly" \
+    --mount "type=bind,source=$DATA_SOURCE,target=/data" \
+    --mount "type=bind,source=$DOCKER_SOCKET_SOURCE,target=/var/run/docker.sock" \
+    "$HELPER_IMAGE" \
+    /opt/gugu-updater/scripts/release/compose-update.sh --manifest "$MANIFEST" --confirm >/dev/null
+  echo '更新任务已移交给独立 helper，当前 app 将按预期重启。'
+  exit "$HANDOFF_EXIT_CODE"
+fi
+if [[ "${GUGU_UPDATE_HELPER:-0}" == 1 ]]; then
+  if [[ -n "${GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE:-}" ]]; then
+    for _ in $(seq 1 600); do
+      [[ -f "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE" ]] && break
+      sleep 0.1
+    done
+    [[ -f "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE" ]] || { echo '更新 handoff 状态未确认，停止 helper' >&2; exit 1; }
+    rm -f -- "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE"
+  fi
+  trap 'rm -f -- "$MANIFEST"' EXIT
+fi
 [[ -f "$COMPOSE_FILE" ]] || { echo 'Compose 文件不存在' >&2; exit 1; }
 [[ -f "$ROOT_DIR/backend/.env" ]] || { echo 'backend/.env 不存在，停止更新以保护运行配置' >&2; exit 1; }
 command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }
 command -v node >/dev/null || { echo '未找到 Node.js，无法校验 manifest' >&2; exit 1; }
-command -v cosign >/dev/null || { echo '未找到 Cosign，无法验证发布签名' >&2; exit 1; }
 [[ -n "${GUGU_DB_PASSWORD:-}" ]] || { echo '未设置 GUGU_DB_PASSWORD，停止更新' >&2; exit 1; }
 grep -Eq '^[[:space:]]*ADMIN_PASSWORD[[:space:]]*=[^[:space:]]' "$ROOT_DIR/backend/.env" \
   || { echo 'backend/.env 未设置 ADMIN_PASSWORD，停止更新' >&2; exit 1; }
 
 COMPOSE=(docker compose -f "$COMPOSE_FILE" --profile sandbox)
 COMPOSE_SERVICES=$("${COMPOSE[@]}" config --services)
-for required_service in app postgres data-migrate; do
+for required_service in app postgres; do
   grep -qx "$required_service" <<<"$COMPOSE_SERVICES" \
     || { echo "Compose 文件不支持一体化更新：缺少 $required_service 服务" >&2; exit 1; }
 done
@@ -109,47 +148,6 @@ if [[ "$SANDBOXD_WAS_RUNNING" == true && "$TARGET_SANDBOXD_IMAGE" == "$GUGU_WEB_
   UPDATE_SANDBOXD=true
 fi
 
-echo '验证 manifest 和业务镜像签名...'
-cosign verify-blob \
-  --bundle "$MANIFEST_BUNDLE" \
-  --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
-  --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
-  "$MANIFEST" >/dev/null
-cosign verify \
-  --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
-  --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
-  "$GUGU_WEB_IMAGE" >/dev/null
-
-# 旧部署第一次通过手动更新接入 Admin 更新器时，先启动 sidecar。只有在目标
-# manifest 与业务镜像都已验证后才引导；sidecar 自身执行更新时显式跳过，避免
-# Compose 重建正在运行的更新器。
-if [[ "$BOOTSTRAP_UPDATER" == true ]] && grep -qx updater <<<"$COMPOSE_SERVICES"; then
-  UPDATER_IMAGE=$("${COMPOSE[@]}" config --format json | node -e '
-    let input = "";
-    process.stdin.on("data", (chunk) => { input += chunk; });
-    process.stdin.on("end", () => process.stdout.write(JSON.parse(input).services.updater?.image ?? ""));
-  ')
-  [[ "$UPDATER_IMAGE" =~ ^docker\.io/coffeiz/gugu-web-updater:(latest|v?[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?)$ ]] \
-    || { echo 'updater 镜像不在官方发布白名单内' >&2; exit 1; }
-  echo '验证受限 Docker 更新器签名并启动 sidecar...'
-  "${COMPOSE[@]}" pull updater
-  UPDATER_DIGEST=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$UPDATER_IMAGE" | node -e '
-    let input = "";
-    process.stdin.on("data", (chunk) => { input += chunk; });
-    process.stdin.on("end", () => {
-      const digest = input.split(/\r?\n/).map((value) => value.trim().replace(/^index\.docker\.io\//, "docker.io/"))
-        .find((value) => /^(?:docker\.io\/)?coffeiz\/gugu-web-updater@sha256:[0-9a-f]{64}$/.test(value));
-      process.stdout.write(digest ? `docker.io/${digest.replace(/^docker\.io\//, "")}` : "");
-    });
-  ')
-  [[ -n "$UPDATER_DIGEST" ]] || { echo '无法解析已拉取的 updater 镜像 digest' >&2; exit 1; }
-  cosign verify \
-    --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
-    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
-    "$UPDATER_DIGEST" >/dev/null
-  GUGU_UPDATER_IMAGE="$UPDATER_DIGEST" "${COMPOSE[@]}" up -d --no-deps updater
-fi
-
 DB_USER="${GUGU_DB_USER:-gugu}"
 DB_NAME="${GUGU_DB_NAME:-gugu}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -175,7 +173,7 @@ else
 fi
 
 echo '开始拉取 manifest 指定的一体化应用镜像...'
-PULL_SERVICES=(app data-migrate)
+PULL_SERVICES=(app)
 STOP_SERVICES=(app)
 RECREATE_SERVICES=(app)
 if [[ "$UPDATE_SANDBOXD" == true ]]; then
@@ -185,12 +183,8 @@ if [[ "$UPDATE_SANDBOXD" == true ]]; then
 fi
 "${COMPOSE[@]}" pull "${PULL_SERVICES[@]}"
 
-# 文件迁移必须在旧应用容器停止后执行，避免旧进程在复制期间继续写入 named volume。
-# stop 不删除卷；仅在 sandboxd 使用同一一体化镜像且当前运行时才同步重建它。
+# stop 不删除持久卷；仅在 sandboxd 使用同一一体化镜像且当前运行时才同步重建它。
 "${COMPOSE[@]}" stop "${STOP_SERVICES[@]}"
-echo '迁移旧版用户数据到 GUGU_DATA_HOST_DIR...'
-"${COMPOSE[@]}" up --no-deps --force-recreate data-migrate
-
 echo '重新创建一体化应用服务...'
 "${COMPOSE[@]}" up -d --no-deps --force-recreate "${RECREATE_SERVICES[@]}"
 

@@ -1,7 +1,9 @@
-"""仅执行固定 Gugu Compose 更新动作的 sidecar 控制服务。
+"""受限更新执行器：并入 app 进程内运行（PRD-ADMIN-2 §1.1）。
 
-服务只监听共享卷中的 Unix Socket；Docker Socket 不挂给业务应用。所有 Docker
-操作均由固定 Compose 文件和固定服务名执行，不接受任意命令、路径或镜像仓库。
+Admin 更新端点经 updater.client 进程内直调，无 Unix Socket IPC。所有 Docker
+操作均由固定 Compose 文件和固定服务名执行，不接受任意命令、路径或镜像仓库；
+更新能力不进入 Agent 工具注册表，模型与提示注入不可达。启用条件：app 容器
+挂载 Docker socket 且未设置 GUGU_SELF_UPDATE=off。
 """
 
 from __future__ import annotations
@@ -15,7 +17,6 @@ import re
 import secrets
 import shutil
 import signal
-import socket
 import tempfile
 import time
 import uuid
@@ -30,18 +31,15 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+]([0-9A-Za-z.-]+))?$")
 IMAGE_RE = re.compile(r"^(?:docker\.io|ghcr\.io)/coffeiz/gugu-web@sha256:[0-9a-f]{64}$")
 TAG_IMAGE_RE = re.compile(r"^(?:docker\.io/)?coffeiz/gugu-web:[A-Za-z0-9_.-]{1,128}$|^ghcr\.io/coffeiz/gugu-web:[A-Za-z0-9_.-]{1,128}$")
-UPDATER_IMAGE_RE = re.compile(
-    r"^docker\.io/coffeiz/gugu-web-updater:(?:latest|v?\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?)$"
-    r"|^docker\.io/coffeiz/gugu-web-updater@sha256:[0-9a-f]{64}$"
-)
+# 执行器并入 app 容器后，官方发布位即应用镜像白名单（tag/digest 二选一）。
 ALLOWED_REDIRECT_HOSTS = {
     "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
     "github-releases.githubusercontent.com",
 }
 MANIFEST_NAME = "update-manifest.json"
-BUNDLE_NAME = "update-manifest.json.bundle"
 TERMINAL = {"succeeded", "failed", "rollback_required"}
 ACTIVE = {"pending", "prechecking", "backing_up", "pulling", "migrating", "recreating", "health_checking", "rolling_back"}
+RECREATING_PENDING_RESTART = "recreating_pending_restart"
 STAGE_BY_LINE = (
     ("验证 manifest", "prechecking"),
     ("备份", "backing_up"),
@@ -53,6 +51,20 @@ STAGE_BY_LINE = (
 MIN_FREE_BYTES = 3 * 1024**3
 CHALLENGE_TTL_SECONDS = 600
 UPDATE_PROCESS_TIMEOUT_SECONDS = 90 * 60
+# 发布签名校验（供应链真实性）：更新前用固定 digest 的官方 Cosign verifier 校验
+# 目标镜像签名，identity 锚定 tag 触发的 docker-release.yml 发布工作流。
+# verifier 与被验镜像都按 digest 引用，两边都不可漂移；升级 verifier 必须
+# 显式修改这里的 digest（digest 对应 ghcr.io/sigstore/cosign/cosign:v3.1.3）。
+COSIGN_VERIFIER_IMAGE = (
+    "ghcr.io/sigstore/cosign/cosign@sha256:"
+    "9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8"
+)
+COSIGN_IDENTITY_REGEXP = (
+    r"^https://github\.com/Coffeiz/Gugu-web/\.github/workflows/docker-release\.yml@refs/tags/v.*$"
+)
+COSIGN_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+COSIGN_VERIFY_TIMEOUT_SECONDS = 300
+COSIGN_CACHE_DIRNAME = "sigstore-cache"
 logger = logging.getLogger("gugu.updater")
 
 
@@ -72,6 +84,21 @@ def _safe_image(value: str) -> bool:
     return bool(IMAGE_RE.fullmatch(value) or TAG_IMAGE_RE.fullmatch(value))
 
 
+def self_update_enabled() -> bool:
+    """一体化部署的自更新开关：GUGU_SELF_UPDATE=off 显式关闭（PRD-ADMIN-2 §1.1）。"""
+    return os.getenv("GUGU_SELF_UPDATE", "on").strip().lower() not in {"off", "0", "false", "no"}
+
+
+def signature_verification_enabled() -> bool:
+    """发布签名验证的 break-glass 开关。
+
+    只认容器启动 env（GUGU_UPDATER_SKIP_COSIGN=on），Admin API、manifest 和
+    Agent 都改不到它；关闭后 preflight 显示「已禁用」且 history 记录 skipped，
+    灾难恢复用，不是常规配置。
+    """
+    return os.getenv("GUGU_UPDATER_SKIP_COSIGN", "off").strip().lower() not in {"on", "1", "true", "yes"}
+
+
 class SafeRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         parsed = urlparse(newurl)
@@ -87,9 +114,9 @@ class UpdateDaemon:
         if not self.project_dir.is_absolute() or not (self.project_dir / "docker-compose.yml").is_file():
             raise RuntimeError("Compose 项目目录无效")
         self.compose_file = self.project_dir / "docker-compose.yml"
-        self.state_dir = Path(os.getenv("GUGU_UPDATER_STATE_DIR", "/var/lib/gugu-updater")).resolve()
+        state_default = "/data/updater" if Path("/data").is_dir() else "/var/lib/gugu-updater"
+        self.state_dir = Path(os.getenv("GUGU_UPDATER_STATE_DIR", state_default)).resolve()
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.socket_path = Path(os.getenv("GUGU_UPDATER_SOCKET", "/run/gugu-updater/control.sock"))
         self.code_dir = Path(os.getenv("GUGU_UPDATER_CODE_DIR", "/opt/gugu-updater")).resolve()
         self.validator = self.code_dir / "scripts/release/validate-update-manifest.mjs"
         self.manifest_schema = self.code_dir / "deploy/update-manifest.schema.json"
@@ -97,9 +124,10 @@ class UpdateDaemon:
         self.manifest_latest_url = "https://github.com/Coffeiz/Gugu-web/releases/latest/download/"
         self.state_file = self.state_dir / "state.json"
         self._lock = asyncio.Lock()
+        self._resume_after_restart = False
         self.state = self._read_state()
         task = self.state.get("task")
-        if isinstance(task, dict) and task.get("failure_code") == "updater_restarted":
+        if self._resume_after_restart or (isinstance(task, dict) and task.get("failure_code") == "updater_restarted"):
             self._save()
 
     def _read_state(self) -> dict[str, Any]:
@@ -113,7 +141,18 @@ class UpdateDaemon:
             raise RuntimeError("更新器状态文件格式无效，拒绝覆盖")
         task = value.get("task")
         interrupted = False
-        if isinstance(task, dict) and task.get("status") in ACTIVE:
+        resumed = False
+        if isinstance(task, dict) and task.get("status") == RECREATING_PENDING_RESTART:
+            task.update({
+                "status": "health_checking",
+                "stage": "health_checking",
+                "progress": 90,
+                "message": "应用已重启，正在确认更新结果。",
+                "updated_at": _utc_now(),
+            })
+            self._resume_after_restart = True
+            resumed = True
+        elif isinstance(task, dict) and task.get("status") in ACTIVE:
             old = task
             old.update({
                 "status": "rollback_required" if old.get("previous_image") else "failed",
@@ -128,7 +167,7 @@ class UpdateDaemon:
         value.setdefault("task", None)
         value.setdefault("history", [])
         value.setdefault("challenges", [])
-        if interrupted:
+        if interrupted or resumed:
             history = value["history"]
             matched = False
             for row in history:
@@ -143,6 +182,27 @@ class UpdateDaemon:
     def _task_status(self) -> str | None:
         task = self.state.get("task")
         return str(task.get("status")) if isinstance(task, dict) else None
+
+    def start_pending_restart_resume(self) -> None:
+        """在新 app 启动后接管 helper 已完成的重建任务。"""
+        if not self._resume_after_restart:
+            return
+        self._resume_after_restart = False
+        asyncio.create_task(self._resume_after_restart_task())
+
+    async def _resume_after_restart_task(self) -> None:
+        task = self.state.get("task")
+        if not isinstance(task, dict):
+            return
+        task_id = str(task.get("id") or "")
+        if not task_id:
+            return
+        healthy = await self._wait_app_healthy()
+        if not healthy:
+            await self._finish_task(task_id, "rollback_required", "health_check_failed", "新版本未通过健康检查；上一版本已保留，可执行回滚。")
+            return
+        await self._record_current_release(str(task.get("version") or "unknown"), str(task.get("app_image") or ""))
+        await self._finish_task(task_id, "succeeded", None, "更新完成，应用健康检查通过。")
 
     def _save(self) -> None:
         tmp = self.state_file.with_suffix(".tmp")
@@ -204,7 +264,7 @@ class UpdateDaemon:
                 or _version_key(candidate_version) > _version_key(current_version)
             )
             return {
-                "enabled": True,
+                "enabled": self_update_enabled(),
                 "current": {"version": current_version} if isinstance(current, dict) else None,
                 "candidate": self._public_candidate(),
                 "has_update": has_update,
@@ -236,11 +296,11 @@ class UpdateDaemon:
         return await asyncio.to_thread(fetch)
 
     def _asset_url(self, version: str, name: str) -> str:
-        if not VERSION_RE.fullmatch(version) or name not in {MANIFEST_NAME, BUNDLE_NAME}:
+        if not VERSION_RE.fullmatch(version) or name != MANIFEST_NAME:
             raise ValueError("更新资源标识无效")
         return f"https://github.com/Coffeiz/Gugu-web/releases/download/{quote(version, safe='v.-+')}/{name}"
 
-    async def _verify_assets(self, manifest_bytes: bytes, bundle_bytes: bytes, *, expected_sha: str | None = None) -> dict[str, Any]:
+    async def _verify_assets(self, manifest_bytes: bytes, *, expected_sha: str | None = None) -> dict[str, Any]:
         digest = hashlib.sha256(manifest_bytes).hexdigest()
         if expected_sha and not secrets.compare_digest(digest, expected_sha):
             raise ValueError("已发布 manifest 与预检摘要不一致")
@@ -259,35 +319,18 @@ class UpdateDaemon:
         asset_dir = self.state_dir / "assets" / version
         asset_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         manifest_path = asset_dir / MANIFEST_NAME
-        bundle_path = asset_dir / BUNDLE_NAME
-        for path, data in ((manifest_path, manifest_bytes), (bundle_path, bundle_bytes)):
-            with path.open("wb") as stream:
-                stream.write(data)
-            os.chmod(path, 0o600)
+        with manifest_path.open("wb") as stream:
+            stream.write(manifest_bytes)
+        os.chmod(manifest_path, 0o600)
 
+        # 定位修订（PRD-ADMIN-2 §1.1）：移除签名校验；完整性由 HTTPS 拉取 +
+        # manifest sha256 与预检比对、镜像 digest 白名单保障。
         await self._command(["node", str(self.validator), "--schema", str(self.manifest_schema)], timeout=20)
         await self._command(["node", str(self.validator), str(manifest_path)], timeout=20)
-        await self._command([
-            "cosign", "verify-blob", "--bundle", str(bundle_path),
-            "--certificate-identity-regexp", self._cosign_identity(),
-            "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-            str(manifest_path),
-        ], timeout=60)
-        await self._command([
-            "cosign", "verify",
-            "--certificate-identity-regexp", self._cosign_identity(),
-            "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-            manifest["app_image"],
-        ], timeout=90)
         manifest["manifest_sha256"] = digest
         manifest["checked_at"] = _utc_now()
         manifest["_manifest_path"] = str(manifest_path)
-        manifest["_bundle_path"] = str(bundle_path)
         return manifest
-
-    @staticmethod
-    def _cosign_identity() -> str:
-        return r"https://github\.com/Coffeiz/Gugu-web/.github/workflows/docker-release\.yml@refs/tags/v.*"
 
     async def _check(self, _params: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -297,9 +340,7 @@ class UpdateDaemon:
                 version = provisional["version"]
             except (TypeError, KeyError, json.JSONDecodeError) as exc:
                 raise ValueError("Release manifest 格式无效") from exc
-            bundle_bytes = await self._read_url(self._asset_url(version, BUNDLE_NAME), limit=2_000_000)
-            # latest manifest 与 tag bundle 必须逐字节匹配；不信任 latest 路由的独立 bundle。
-            candidate = await self._verify_assets(manifest_bytes, bundle_bytes)
+            candidate = await self._verify_assets(manifest_bytes)
         except (OSError, URLError, TimeoutError) as exc:
             raise RuntimeError("无法访问 GitHub Release 更新源") from exc
         current = await self._current_release()
@@ -394,6 +435,67 @@ class UpdateDaemon:
             result["challenge_expires_at"] = datetime.fromtimestamp(challenge["expires_at"], timezone.utc).isoformat()
         return result
 
+    def _cosign_command(self, image: str, cache_dir: Path) -> list[str]:
+        """构造 verifier 命令；独立成纯方法便于测试断言参数形状。
+
+        verify 子命令没有 referrers 模式开关（v3.1.3 实测：flag 仅 sign 有、
+        COSIGN_REGISTRY_REFERRERS_MODE 环境变量不存在），自动探测 referrers API
+        并在不支持时回落 legacy tag；发布端已用 --registry-referrers-mode=oci-1-1
+        钉死签名形态，验证端按 digest 查询即可命中 referrers artifact。
+        """
+        return [
+            "docker", "run", "--rm",
+            "-v", f"{cache_dir}:/root/.sigstore",
+            COSIGN_VERIFIER_IMAGE,
+            "verify",
+            "--certificate-identity-regexp", COSIGN_IDENTITY_REGEXP,
+            "--certificate-oidc-issuer", COSIGN_OIDC_ISSUER,
+            image,
+        ]
+
+    async def _cosign_run(self, command: list[str]) -> tuple[int | None, str]:
+        """运行 verifier 并返回 (returncode, stderr)；不把 stderr 写入可见日志。"""
+        process = await asyncio.create_subprocess_exec(
+            *command, cwd=self.project_dir, env=os.environ.copy(),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=COSIGN_VERIFY_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            return None, "timeout"
+        return process.returncode, stderr.decode("utf-8", errors="replace")
+
+    async def _verify_signature(self, image: str) -> dict[str, Any]:
+        """校验目标镜像的发布签名；fail-closed，任何失败都不得放行更新。
+
+        真实性锚点 = tag 触发的 docker-release.yml 的 GitHub OIDC 身份；
+        cosign 自行校验签名 payload 绑定的 digest 与被验镜像一致，无 TOCTOU 窗口。
+        """
+        if not signature_verification_enabled():
+            return {"ok": True, "skipped": True, "detail": "发布签名验证已被管理员禁用（GUGU_UPDATER_SKIP_COSIGN=on）"}
+        cache_dir = self.state_dir / COSIGN_CACHE_DIRNAME
+        cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            returncode, stderr = await self._cosign_run(self._cosign_command(image, cache_dir))
+        except (OSError, RuntimeError) as exc:
+            logger.info("cosign verify launcher failed error_type=%s", type(exc).__name__)
+            return {"ok": False, "skipped": False, "detail": "签名校验器无法启动，已阻断更新"}
+        if returncode == 0:
+            return {"ok": True, "skipped": False, "detail": "发布签名校验通过（GitHub Actions 发布身份）"}
+        if returncode is None:
+            return {"ok": False, "skipped": False, "detail": "签名校验超时，已阻断更新"}
+        lowered = stderr.lower()
+        if "no signatures found" in lowered or "signature not found" in lowered:
+            return {"ok": False, "skipped": False, "detail": "目标镜像没有发布签名，已阻断更新"}
+        if "none of the expected identities" in lowered or "no matching" in lowered:
+            return {"ok": False, "skipped": False, "detail": "签名身份与官方发布工作流不符，已阻断更新"}
+        logger.info("cosign verify failed rc=%s", returncode)
+        return {"ok": False, "skipped": False, "detail": "签名校验未通过，已阻断更新"}
+
     async def _preflight_checks(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
 
@@ -412,14 +514,13 @@ class UpdateDaemon:
         try:
             config = await self._compose(["config", "--format", "json"])
             services = config.get("services", {})
-            required = {"app", "postgres", "redis", "data-migrate", "updater"}
+            required = {"app", "postgres", "redis"}
             add("compose", required.issubset(services), "一体化 Compose 服务定义完整" if required.issubset(services) else "Compose 缺少必需服务")
             app_ids = (await self._compose_text(["ps", "-q", "app"])).strip().splitlines()
             add("app", bool(app_ids), "一体化 app 容器正在运行" if app_ids else "一体化 app 容器未运行")
-            running_services = set((await self._compose_text(["ps", "--status", "running", "--services"])).splitlines())
-            updater_image = str(services.get("updater", {}).get("image") or "")
-            updater_ok = "updater" in running_services and bool(UPDATER_IMAGE_RE.fullmatch(updater_image))
-            add("updater", updater_ok, "官方 updater sidecar 正在运行" if updater_ok else "updater 缺失、未运行或镜像来源不受支持")
+            # 定位修订（§1.1）：更新执行器并入 app 进程；socket 挂载即启用。
+            socket_path = Path(os.getenv("GUGU_DOCKER_SOCKET", "/var/run/docker.sock"))
+            add("updater", socket_path.exists(), "Docker socket 已挂载，自更新可用" if socket_path.exists() else "未检测到 Docker socket 挂载；此部署未启用一键更新")
             await self._compose_text(["exec", "-T", "postgres", "sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'])
             await self._compose_text(["exec", "-T", "redis", "sh", "-c", 'if [ -n "$GUGU_REDIS_PASSWORD" ]; then redis-cli -a "$GUGU_REDIS_PASSWORD" ping; else redis-cli ping; fi'])
             add("dependencies", True, "PostgreSQL 和 Redis 健康")
@@ -466,7 +567,11 @@ class UpdateDaemon:
             add("disk", False, "无法检查部署目录磁盘空间")
 
         add("architecture", platform in candidate.get("architectures", []), "镜像架构与宿主机匹配" if platform in candidate.get("architectures", []) else "发布镜像不包含宿主机架构")
-        add("signature", True, "manifest 与一体化镜像签名、digest 均已验证")
+        # integrity = 运输完整性（manifest 摘要 TOCTOU + namespace/digest 格式）；
+        # signature = 真实性（Cosign 验发布工作流身份），失败即 fail-closed。
+        add("integrity", True, "manifest 摘要校验与镜像 namespace/digest 格式校验通过")
+        signature = await self._verify_signature(str(candidate.get("app_image") or ""))
+        add("signature", signature["ok"], signature["detail"])
         current = self.state.get("current") or {}
         current_version = str(current.get("version") or "unknown")
         minimum_version = str(candidate.get("minimum_version") or "")
@@ -530,6 +635,7 @@ class UpdateDaemon:
             "previous_sandboxd_image": sandboxd_image if sandboxd_running else None,
             "sandboxd_was_running": sandboxd_running,
             "sandboxd_updated": sandboxd_tracks_app,
+            "signature_verification": "skipped" if not signature_verification_enabled() else "verified",
             "events": [{"stage": "pending", "at": _utc_now()}],
             "rollback_supported": bool(candidate.get("rollback_supported")),
         }
@@ -559,10 +665,10 @@ class UpdateDaemon:
         temp_dir = Path(tempfile.mkdtemp(prefix="update-", dir=self.state_dir))
         process: asyncio.subprocess.Process | None = None
         stderr_drain: asyncio.Task[bytes] | None = None
+        handed_off = False
         try:
             manifest_bytes = await self._read_url(self._asset_url(candidate["version"], MANIFEST_NAME))
-            bundle_bytes = await self._read_url(self._asset_url(candidate["version"], BUNDLE_NAME), limit=2_000_000)
-            await self._verify_assets(manifest_bytes, bundle_bytes, expected_sha=candidate["manifest_sha256"])
+            await self._verify_assets(manifest_bytes, expected_sha=candidate["manifest_sha256"])
             backup_root = self.state_dir / "backups"
             backup_root.mkdir(parents=True, exist_ok=True, mode=0o700)
             env = os.environ.copy()
@@ -574,16 +680,15 @@ class UpdateDaemon:
                 "UPDATE_VALIDATOR": str(self.validator),
                 # Compose 脚本先记录旧镜像，再从签名 manifest 切换到新 digest。
                 "GUGU_WEB_IMAGE": str(self.state["task"]["previous_image"]),
+                # 用 manifest 已校验的目标镜像启动 helper；helper 必须包含 handoff 等待逻辑。
+                "GUGU_UPDATE_HELPER_IMAGE": str(candidate["app_image"]),
             })
             manifest_path = temp_dir / MANIFEST_NAME
-            bundle_path = temp_dir / BUNDLE_NAME
             manifest_path.write_bytes(manifest_bytes)
-            bundle_path.write_bytes(bundle_bytes)
             os.chmod(manifest_path, 0o600)
-            os.chmod(bundle_path, 0o600)
             process = await asyncio.create_subprocess_exec(
                 "bash", str(self.compose_update_script),
-                "--manifest", str(manifest_path), "--bundle", str(bundle_path), "--confirm", "--skip-updater-bootstrap",
+                "--manifest", str(manifest_path), "--confirm",
                 cwd=self.project_dir, env=env,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
@@ -611,6 +716,11 @@ class UpdateDaemon:
                 if stderr_drain:
                     stderr_drain.cancel()
                 raise RuntimeError("Compose 更新任务超时")
+            if process.returncode == 75:
+                handed_off = True
+                await self._set_stage(task_id, RECREATING_PENDING_RESTART)
+                Path(f"{manifest_path}.handoff").touch()
+                return
             if process.returncode != 0:
                 logger.warning("update failed task_id=%s stage=%s reason=compose_exit", task_id, self._task_status())
                 await self._finish_task(task_id, "rollback_required", "update_failed", "更新未完成，上一版本已保留；可检查日志或执行回滚。")
@@ -631,7 +741,8 @@ class UpdateDaemon:
             logger.warning("update failed task_id=%s stage=%s error_type=%s", task_id, self._task_status(), type(exc).__name__)
             await self._finish_task(task_id, "rollback_required", "updater_error", "更新中断；已保留上一版本镜像和备份，请检查更新器日志。")
         finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            if not handed_off:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     @staticmethod
     async def _terminate_process_group(process: asyncio.subprocess.Process) -> None:
@@ -660,6 +771,7 @@ class UpdateDaemon:
             task["progress"] = {
                 "prechecking": 10, "backing_up": 25, "pulling": 40,
                 "migrating": 60, "recreating": 75, "health_checking": 90,
+                RECREATING_PENDING_RESTART: 80,
             }.get(stage, task.get("progress", 0))
             task["message"] = self._stage_message(stage)
             task["updated_at"] = _utc_now()
@@ -674,6 +786,7 @@ class UpdateDaemon:
             "pulling": "正在拉取目标镜像",
             "migrating": "正在迁移用户数据",
             "recreating": "正在重建应用容器",
+            RECREATING_PENDING_RESTART: "更新已移交独立 helper，应用即将重启",
             "health_checking": "正在等待健康检查",
             "rolling_back": "正在恢复上一版本",
         }.get(stage, "更新处理中")
@@ -888,64 +1001,3 @@ class UpdateDaemon:
         if process.returncode != 0:
             raise RuntimeError("固定更新命令失败")
         return stdout
-
-
-async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, daemon: UpdateDaemon) -> None:
-    try:
-        raw = await asyncio.wait_for(reader.readline(), timeout=5)
-        if not raw or len(raw) > 32768:
-            raise ValueError("请求过大或为空")
-        request = json.loads(raw)
-        result = await daemon.dispatch(request)
-        response = {"ok": True, "result": result}
-    except Exception as exc:
-        message = str(exc)
-        if isinstance(exc, RuntimeError) and message.startswith("已有 Docker 更新"):
-            code = "busy"
-        elif "过期" in message:
-            code = "challenge_expired"
-        elif message.startswith("无法访问 GitHub Release"):
-            code = "update_source_unavailable"
-        elif "预检" in message or "空间不足" in message or "未运行" in message:
-            code = "preflight_failed"
-        elif "确认" in message:
-            code = "challenge_invalid"
-        elif isinstance(exc, ValueError):
-            code = "invalid_request"
-        elif isinstance(exc, RuntimeError):
-            code = "operation_failed"
-        else:
-            code = "internal_error"
-        response = {"ok": False, "code": code, "message": message[:240]}
-    try:
-        writer.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n")
-        await writer.drain()
-    except (ConnectionError, OSError):
-        pass
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except OSError:
-            pass
-
-
-async def serve() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [gugu-updater] %(message)s")
-    daemon = UpdateDaemon()
-    daemon.socket_path.parent.mkdir(parents=True, exist_ok=True)
-    if daemon.socket_path.exists():
-        if not daemon.socket_path.is_socket():
-            raise RuntimeError("Unix Socket 路径已被非 socket 文件占用")
-        daemon.socket_path.unlink()
-    server = await asyncio.start_unix_server(
-        lambda reader, writer: _handle_client(reader, writer, daemon),
-        path=str(daemon.socket_path), limit=65536,
-    )
-    os.chmod(daemon.socket_path, 0o600)
-    async with server:
-        await server.serve_forever()
-
-
-if __name__ == "__main__":
-    asyncio.run(serve())

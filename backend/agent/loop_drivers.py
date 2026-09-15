@@ -16,7 +16,7 @@
 这个文件把这几件事收拢成共享协议和 `AnthropicDriver`、`OpenAIDriver`、`OllamaDriver`
 实现；OpenAI Responses 的独立 response-chain 驱动放在
 `agent/providers/openai_responses.py`，消息/缓存投影放在
-`agent/providers/message_utils.py`。这里保留 Responses 的兼容导出，避免旧调用方同时迁移。
+`agent/providers/message_utils.py`。Responses 驱动直接从 provider 模块引用。
 `core.py` 只写一条共享的 `_run_loop`，需要跟 provider 打交道时调用驱动。
 
 驱动接口四个构造方法：
@@ -259,15 +259,37 @@ class AnthropicDriver:
                 break
             yield ("token", val)
 
-        tool_blocks = [b for b in final.content if b.type == "tool_use"]
-        text = "".join(b.text for b in final.content if b.type == "text")
-        tool_calls = [NormalizedToolCall(id=b.id, name=b.name, input=b.input) for b in tool_blocks]
+        # provider 已解析的 tool_use.name 仍可能混入内部流式尾标记或 XML 片段。
+        # 统一在驱动边界清洗，并让同一份 block 同时进入 RoundResult 与历史，避免
+        # core 只修正 dispatch 名称，却把污染后的原始 name 持久化到下一轮前缀。
+        from agent.tools.base import salvage_tool_name
+
+        raw_blocks = []
+        for block in final.content:
+            if hasattr(block, "model_dump"):
+                raw_blocks.append(block.model_dump())
+            elif isinstance(block, dict):
+                raw_blocks.append(copy.deepcopy(block))
+            else:
+                raw_blocks.append(copy.deepcopy(vars(block)))
+        for block in raw_blocks:
+            if block.get("type") != "tool_use":
+                continue
+            salvaged = salvage_tool_name(block.get("name"))
+            if salvaged is not None:
+                block["name"] = salvaged
+
+        tool_blocks = [b for b in raw_blocks if b.get("type") == "tool_use"]
+        text = "".join(str(b.get("text") or "") for b in raw_blocks if b.get("type") == "text")
+        tool_calls = [NormalizedToolCall(
+            id=b.get("id"), name=b.get("name"), input=b.get("input") or {}
+        ) for b in tool_blocks]
         yield ("done", RoundResult(
             text=text, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=final.usage.input_tokens, usage_out=final.usage.output_tokens,
             cache_tokens=getattr(final.usage, "cache_read_input_tokens", 0) or 0,
             cache_write_tokens=getattr(final.usage, "cache_creation_input_tokens", 0) or 0,
-            raw=final.content,
+            raw=raw_blocks,
         ))
 
     def _content_dicts(self, result: RoundResult, *, tool_ids: set[str] | None = None) -> list:
@@ -542,16 +564,6 @@ class OpenAIDriver:
         # 跟 Anthropic 路不一样：这里不把 assistant 消息入历史，直接追问——是改动前就有的既有行为
         # （openai 路空回复兜底那段代码本来就没有 messages.append(_asst(...)) 这一步），原样保留。
         return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
-
-# OpenAI Responses 独立驱动的兼容导出；新代码应从 provider 模块直接导入。
-from agent.providers.openai_responses import (
-    OpenAIResponsesDriver,
-    _ResponsesCtx,
-    _ResponsesRaw,
-    _responses_input,
-    _responses_tools,
-)
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # Ollama 原生（/api/chat，NDJSON）

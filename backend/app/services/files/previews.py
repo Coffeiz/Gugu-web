@@ -1,8 +1,11 @@
 import asyncio
+import io
 import os
-import shutil
-import tempfile
+from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
+from zipfile import BadZipFile, ZipFile
+from xml.etree import ElementTree
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +17,30 @@ from app.services.storage import get_storage
 
 THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
 THUMB_SEM = asyncio.Semaphore(max(1, (os.cpu_count() or 2) - 1))
-OFFICE_EXTS = frozenset({"DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX"})
+XLSX_PREVIEW_CACHE_MAX = 4
+XLSX_PREVIEW_CACHE_MAX_BYTES = 128 * 1024 * 1024
+XLSX_PREVIEW_MAX_FILE_BYTES = 256 * 1024 * 1024
+XLSX_PREVIEW_MAX_ENTRIES = 20_000
+XLSX_PREVIEW_MAX_TOTAL_UNCOMPRESSED = 512 * 1024 * 1024
+XLSX_PREVIEW_MAX_ENTRY_UNCOMPRESSED = 128 * 1024 * 1024
+XLSX_PREVIEW_MAX_XML_BYTES = 64 * 1024 * 1024
+XLSX_PREVIEW_MAX_IMAGE_BYTES = 32 * 1024 * 1024
+XLSX_PREVIEW_MAX_COMPRESSION_RATIO = 100
+XLSX_PREVIEW_MAX_ROWS = 500
+XLSX_PREVIEW_MAX_COLS = 60
+_XLSX_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+@dataclass
+class XlsxPreviewCacheEntry:
+    raw: bytes
+    sheets: list[dict[str, list[dict[str, object]]]]
+    sheet_data: list[dict[str, object]]
+    image_paths: dict[int, tuple[str, str]]
+    size_bytes: int
+
+
+_XLSX_PREVIEW_CACHE: OrderedDict[tuple[int, int], XlsxPreviewCacheEntry] = OrderedDict()
+_XLSX_PREVIEW_LOCK = asyncio.Lock()
+_XLSX_PREVIEW_INFLIGHT: dict[tuple[int, int], asyncio.Task[XlsxPreviewCacheEntry]] = {}
 IMAGE_MIMES = frozenset({
     "image/jpeg", "image/png", "image/gif", "image/webp",
     "image/avif", "image/bmp", "image/svg+xml", "image/heic", "image/heif",
@@ -30,7 +56,6 @@ _DETECTED_IMAGE_MIMES = {
     "HEIF": "image/heif",
 }
 GENERIC_IMAGE_MIMES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
-_PDF_CACHE: dict[str, bytes] = {}
 
 
 class PreviewError(ValueError):
@@ -40,6 +65,368 @@ class PreviewError(ValueError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+def _xlsx_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xlsx_resolve_path(base: str, target: str) -> str:
+    parts: list[str] = []
+    for part in f"{base}/{target}".split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _xlsx_attr(element: ElementTree.Element, local_name: str) -> str | None:
+    return next((value for key, value in element.attrib.items()
+                 if _xlsx_local_name(key) == local_name), None)
+
+
+def _validate_xlsx_archive(archive: ZipFile, raw_size: int) -> None:
+    """在任何 XML 或图片解压前拒绝超出预览预算的压缩包。"""
+    if raw_size > XLSX_PREVIEW_MAX_FILE_BYTES:
+        raise PreviewError(413, "XLSX 文件超过预览大小限制")
+    infos = archive.infolist()
+    if len(infos) > XLSX_PREVIEW_MAX_ENTRIES:
+        raise PreviewError(413, "XLSX 文件条目数量超过预览限制")
+    total_uncompressed = 0
+    seen_names: set[str] = set()
+    for info in infos:
+        if info.filename in seen_names:
+            raise PreviewError(400, "XLSX 文件包含重复压缩条目")
+        seen_names.add(info.filename)
+        if info.file_size > XLSX_PREVIEW_MAX_ENTRY_UNCOMPRESSED:
+            raise PreviewError(413, "XLSX 压缩条目超过预览大小限制")
+        total_uncompressed += info.file_size
+        if total_uncompressed > XLSX_PREVIEW_MAX_TOTAL_UNCOMPRESSED:
+            raise PreviewError(413, "XLSX 解压总大小超过预览限制")
+        if info.compress_size and info.file_size / info.compress_size > XLSX_PREVIEW_MAX_COMPRESSION_RATIO:
+            raise PreviewError(413, "XLSX 压缩比超过预览安全限制")
+        if info.filename.startswith("xl/media/") and info.file_size > XLSX_PREVIEW_MAX_IMAGE_BYTES:
+            raise PreviewError(413, "XLSX 图片超过预览大小限制")
+
+
+def _read_xlsx_entry(archive: ZipFile, name: str, *, xml: bool = True) -> bytes:
+    try:
+        info = archive.getinfo(name)
+    except KeyError as error:
+        raise PreviewError(400, "XLSX 文件结构不完整") from error
+    if xml and info.file_size > XLSX_PREVIEW_MAX_XML_BYTES:
+        raise PreviewError(413, "XLSX XML 内容超过预览限制")
+    try:
+        return archive.read(name)
+    except (BadZipFile, KeyError) as error:
+        raise PreviewError(400, "XLSX 文件内容损坏") from error
+
+
+def _extract_xlsx_preview_sync(raw: bytes) -> tuple[list[dict[str, list[dict[str, object]]]], dict[int, tuple[str, str]]]:
+    """读取 XLSX 图片位置元数据，不解压图片正文。
+
+    XLSX 是 ZIP + XML 格式；这里使用 Python 标准库解析，避免把压缩包和
+    图片解压工作放到浏览器，也避免前端依赖 jszip。图片正文由单图接口按需解压。
+    """
+    mime_by_ext = {
+        "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+        "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp",
+        "svg": "image/svg+xml",
+    }
+    try:
+        archive = ZipFile(io.BytesIO(raw))
+    except BadZipFile as error:
+        raise PreviewError(400, "不是有效的 XLSX 文件") from error
+
+    with archive:
+        _validate_xlsx_archive(archive, len(raw))
+        workbook = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/workbook.xml"))
+        workbook_rels = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/_rels/workbook.xml.rels"))
+        rel_targets = {
+            relationship.attrib.get("Id", ""): relationship.attrib.get("Target", "")
+            for relationship in workbook_rels
+            if _xlsx_local_name(relationship.tag) == "Relationship"
+        }
+        result: list[dict[str, list[dict[str, object]]]] = []
+        image_paths: dict[int, tuple[str, str]] = {}
+        next_image_id = 0
+        sheets = [element for element in workbook.iter() if _xlsx_local_name(element.tag) == "sheet"]
+        for sheet in sheets:
+            workbook_rel_id = _xlsx_attr(sheet, "id")
+            target = rel_targets.get(workbook_rel_id or "")
+            if not target:
+                result.append({})
+                continue
+            sheet_path = _xlsx_resolve_path("xl", target)
+            sheet_root = ElementTree.fromstring(_read_xlsx_entry(archive, sheet_path))
+            drawing = next((element for element in sheet_root.iter()
+                            if _xlsx_local_name(element.tag) == "drawing"), None)
+            if drawing is None:
+                result.append({})
+                continue
+            drawing_rel_id = _xlsx_attr(drawing, "id")
+            sheet_dir = sheet_path.rsplit("/", 1)[0]
+            sheet_name = sheet_path.rsplit("/", 1)[1]
+            rels_path = f"{sheet_dir}/_rels/{sheet_name}.rels"
+            drawing_rels = ElementTree.fromstring(_read_xlsx_entry(archive, rels_path))
+            drawing_targets = {
+                relationship.attrib.get("Id", ""): relationship.attrib.get("Target", "")
+                for relationship in drawing_rels
+                if _xlsx_local_name(relationship.tag) == "Relationship"
+            }
+            drawing_target = drawing_targets.get(drawing_rel_id or "")
+            if not drawing_target:
+                result.append({})
+                continue
+            drawing_path = _xlsx_resolve_path(sheet_dir, drawing_target)
+            drawing_root = ElementTree.fromstring(_read_xlsx_entry(archive, drawing_path))
+            drawing_dir = drawing_path.rsplit("/", 1)[0]
+            drawing_name = drawing_path.rsplit("/", 1)[1]
+            drawing_rels_path = f"{drawing_dir}/_rels/{drawing_name}.rels"
+            drawing_rels_root = ElementTree.fromstring(_read_xlsx_entry(archive, drawing_rels_path))
+            media_targets = {
+                relationship.attrib.get("Id", ""): relationship.attrib.get("Target", "")
+                for relationship in drawing_rels_root
+                if _xlsx_local_name(relationship.tag) == "Relationship"
+            }
+            sheet_images: dict[str, list[dict[str, object]]] = {}
+            anchors = [element for element in drawing_root.iter()
+                       if _xlsx_local_name(element.tag) in {"oneCellAnchor", "twoCellAnchor"}]
+            for anchor in anchors:
+                from_node = next((element for element in anchor.iter()
+                                  if _xlsx_local_name(element.tag) == "from"), None)
+                pic = next((element for element in anchor.iter()
+                            if _xlsx_local_name(element.tag) == "pic"), None)
+                blip = next((element for element in pic.iter()
+                             if _xlsx_local_name(element.tag) == "blip"), None) if pic is not None else None
+                embed = _xlsx_attr(blip, "embed") if blip is not None else None
+                media_target = media_targets.get(embed or "")
+                if from_node is None or not media_target:
+                    continue
+                row_node = next((element for element in from_node.iter()
+                                 if _xlsx_local_name(element.tag) == "row"), None)
+                col_node = next((element for element in from_node.iter()
+                                 if _xlsx_local_name(element.tag) == "col"), None)
+                if row_node is None or col_node is None:
+                    continue
+                try:
+                    row = int(row_node.text or "-1")
+                    col = int(col_node.text or "-1")
+                except ValueError:
+                    continue
+                if row < 0 or col < 0 or row >= XLSX_PREVIEW_MAX_ROWS or col >= XLSX_PREVIEW_MAX_COLS:
+                    continue
+                media_path = _xlsx_resolve_path(drawing_dir, media_target)
+                if media_path not in archive.namelist():
+                    continue
+                extension = media_path.rsplit(".", 1)[-1].lower()
+                mime = mime_by_ext.get(extension, "application/octet-stream")
+                image: dict[str, object] = {
+                    "id": next_image_id,
+                }
+                image_paths[next_image_id] = (media_path, mime)
+                next_image_id += 1
+                extent = next((element for element in anchor.iter()
+                               if _xlsx_local_name(element.tag) == "ext"), None)
+                if extent is not None:
+                    try:
+                        width = int(int(extent.attrib.get("cx", "0")) / 9525)
+                        height = int(int(extent.attrib.get("cy", "0")) / 9525)
+                        if width > 0:
+                            image["width"] = width
+                        if height > 0:
+                            image["height"] = height
+                    except ValueError:
+                        pass
+                key = f"{row}:{col}"
+                sheet_images.setdefault(key, []).append(image)
+            result.append(sheet_images)
+        return result, image_paths
+
+
+def _extract_xlsx_sheet_data_sync(raw: bytes) -> list[dict[str, object]]:
+    """读取表格正文的轻量结构，避免把整个 XLSX 下载到浏览器再解析。"""
+    try:
+        archive = ZipFile(io.BytesIO(raw))
+    except BadZipFile as error:
+        raise PreviewError(400, "不是有效的 XLSX 文件") from error
+
+    def text_of(element: ElementTree.Element) -> str:
+        return ''.join(element.itertext())
+
+    with archive:
+        _validate_xlsx_archive(archive, len(raw))
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in archive.namelist():
+            shared_root = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/sharedStrings.xml"))
+            shared_strings = [text_of(item) for item in shared_root
+                              if _xlsx_local_name(item.tag) == "si"]
+        workbook = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/workbook.xml"))
+        workbook_rels = ElementTree.fromstring(_read_xlsx_entry(archive, "xl/_rels/workbook.xml.rels"))
+        rel_targets = {
+            relationship.attrib.get("Id", ""): relationship.attrib.get("Target", "")
+            for relationship in workbook_rels
+            if _xlsx_local_name(relationship.tag) == "Relationship"
+        }
+        result: list[dict[str, object]] = []
+        for sheet in [element for element in workbook.iter() if _xlsx_local_name(element.tag) == "sheet"]:
+            sheet_name = sheet.attrib.get("name") or "工作表"
+            target = rel_targets.get(_xlsx_attr(sheet, "id") or "")
+            if not target:
+                result.append({"name": sheet_name, "cells": {}, "merges": [], "rowHeights": {}, "colWidths": {}, "rows": 0, "cols": 0})
+                continue
+            sheet_path = _xlsx_resolve_path("xl", target)
+            root = ElementTree.fromstring(_read_xlsx_entry(archive, sheet_path))
+            cells: dict[str, str] = {}
+            row_heights: dict[str, int] = {}
+            col_widths: dict[str, int] = {}
+            max_row = 0
+            max_col = 0
+            for row in root.iter():
+                if _xlsx_local_name(row.tag) == "row":
+                    row_number = int(row.attrib.get("r", "0") or 0)
+                    if 0 < row_number <= XLSX_PREVIEW_MAX_ROWS and row.attrib.get("ht"):
+                        try:
+                            row_heights[str(row_number - 1)] = round(float(row.attrib["ht"]) * 1.333)
+                        except ValueError:
+                            pass
+                elif _xlsx_local_name(row.tag) == "col":
+                    try:
+                        start = int(row.attrib.get("min", "1"))
+                        end = int(row.attrib.get("max", str(start)))
+                        width = round(float(row.attrib.get("width", "10")) * 8 + 16)
+                        for column in range(max(0, start - 1), min(XLSX_PREVIEW_MAX_COLS, end)):
+                            col_widths[str(column)] = max(72, width)
+                    except ValueError:
+                        pass
+            for cell in root.iter():
+                if _xlsx_local_name(cell.tag) != "c":
+                    continue
+                ref = cell.attrib.get("r")
+                if not ref:
+                    continue
+                try:
+                    column_text = ''.join(char for char in ref if char.isalpha())
+                    row_number = int(''.join(char for char in ref if char.isdigit()))
+                    column_number = 0
+                    for char in column_text.upper():
+                        column_number = column_number * 26 + ord(char) - 64
+                    if row_number > XLSX_PREVIEW_MAX_ROWS or column_number > XLSX_PREVIEW_MAX_COLS:
+                        continue
+                except ValueError:
+                    continue
+                value_node = next((child for child in cell if _xlsx_local_name(child.tag) in {"v", "is"}), None)
+                value = "" if value_node is None else text_of(value_node)
+                cell_type = cell.attrib.get("t")
+                if cell_type == "s":
+                    try:
+                        value = shared_strings[int(value)]
+                    except (ValueError, IndexError):
+                        value = ""
+                elif cell_type == "inlineStr":
+                    value = text_of(value_node) if value_node is not None else ""
+                cells[ref] = value
+                max_row = max(max_row, row_number)
+                max_col = max(max_col, column_number)
+            merges: list[dict[str, int]] = []
+            for merge in root.iter():
+                if _xlsx_local_name(merge.tag) != "mergeCell":
+                    continue
+                ref = merge.attrib.get("ref", "")
+                if ":" not in ref:
+                    continue
+                start, end = ref.split(":", 1)
+                def decode(cell_ref: str) -> tuple[int, int]:
+                    letters = ''.join(char for char in cell_ref if char.isalpha()).upper()
+                    number = int(''.join(char for char in cell_ref if char.isdigit()))
+                    column = 0
+                    for char in letters:
+                        column = column * 26 + ord(char) - 64
+                    return number - 1, column - 1
+                start_row, start_col = decode(start)
+                end_row, end_col = decode(end)
+                if start_row < XLSX_PREVIEW_MAX_ROWS and start_col < XLSX_PREVIEW_MAX_COLS:
+                    merges.append({"s": start_row, "c": start_col,
+                                   "e": min(end_row, XLSX_PREVIEW_MAX_ROWS - 1),
+                                   "d": min(end_col, XLSX_PREVIEW_MAX_COLS - 1)})
+                    max_row = max(max_row, min(end_row + 1, XLSX_PREVIEW_MAX_ROWS))
+                    max_col = max(max_col, min(end_col + 1, XLSX_PREVIEW_MAX_COLS))
+            result.append({"name": sheet_name, "cells": cells, "merges": merges, "rowHeights": row_heights,
+                           "colWidths": col_widths, "rows": min(max_row, XLSX_PREVIEW_MAX_ROWS),
+                           "cols": min(max_col, XLSX_PREVIEW_MAX_COLS)})
+        return result
+
+
+async def read_xlsx_preview(storage, *, storage_key: str, file_id: int, version: int) -> XlsxPreviewCacheEntry:
+    cache_key = (file_id, version)
+    async with _XLSX_PREVIEW_LOCK:
+        cached = _XLSX_PREVIEW_CACHE.get(cache_key)
+        if cached is not None:
+            _XLSX_PREVIEW_CACHE.move_to_end(cache_key)
+            return cached
+        task = _XLSX_PREVIEW_INFLIGHT.get(cache_key)
+        if task is None:
+            task = asyncio.create_task(_load_xlsx_preview(
+                storage, storage_key=storage_key, file_id=file_id, version=version,
+            ))
+            _XLSX_PREVIEW_INFLIGHT[cache_key] = task
+    try:
+        return await task
+    finally:
+        if task.done():
+            async with _XLSX_PREVIEW_LOCK:
+                if _XLSX_PREVIEW_INFLIGHT.get(cache_key) is task:
+                    _XLSX_PREVIEW_INFLIGHT.pop(cache_key, None)
+
+
+async def _load_xlsx_preview(storage, *, storage_key: str, file_id: int, version: int) -> XlsxPreviewCacheEntry:
+    stat = getattr(storage, "stat", None)
+    if callable(stat):
+        metadata = await stat(storage_key)
+        if metadata is not None and metadata.size > XLSX_PREVIEW_MAX_FILE_BYTES:
+            raise PreviewError(413, "XLSX 文件超过预览大小限制")
+    raw = await storage.get(storage_key)
+    if len(raw) > XLSX_PREVIEW_MAX_FILE_BYTES:
+        raise PreviewError(413, "XLSX 文件超过预览大小限制")
+    (sheets, image_paths), sheet_data = await asyncio.gather(
+        asyncio.to_thread(_extract_xlsx_preview_sync, raw),
+        asyncio.to_thread(_extract_xlsx_sheet_data_sync, raw),
+    )
+    extracted = XlsxPreviewCacheEntry(
+        raw=raw, sheets=sheets, sheet_data=sheet_data, image_paths=image_paths, size_bytes=len(raw),
+    )
+    async with _XLSX_PREVIEW_LOCK:
+        _XLSX_PREVIEW_CACHE[(file_id, version)] = extracted
+        _XLSX_PREVIEW_CACHE.move_to_end((file_id, version))
+        total_bytes = sum(item.size_bytes for item in _XLSX_PREVIEW_CACHE.values())
+        while len(_XLSX_PREVIEW_CACHE) > XLSX_PREVIEW_CACHE_MAX or total_bytes > XLSX_PREVIEW_CACHE_MAX_BYTES:
+            _key, removed = _XLSX_PREVIEW_CACHE.popitem(last=False)
+            total_bytes -= removed.size_bytes
+    return extracted
+
+
+async def read_xlsx_preview_image(
+    storage,
+    *,
+    storage_key: str,
+    file_id: int,
+    version: int,
+    image_id: int,
+) -> tuple[bytes, str]:
+    entry = await read_xlsx_preview(storage, storage_key=storage_key, file_id=file_id, version=version)
+    target = entry.image_paths.get(image_id)
+    if target is None:
+        raise PreviewError(404, "图片不存在")
+    path, mime = target
+    try:
+        content = await asyncio.to_thread(lambda: ZipFile(io.BytesIO(entry.raw)).read(path))
+    except (BadZipFile, KeyError) as error:
+        raise PreviewError(404, "图片不存在") from error
+    return content, mime
 
 
 def resolve_image_mime(raw: bytes, declared_mime: str | None) -> str | None:
@@ -203,76 +590,3 @@ async def read_file_thumbnail(
     if size == "full" or mime == "image/svg+xml":
         return raw, mime
     return await render_thumbnail(raw, file_id, size, mime)
-
-
-async def office_to_pdf(data: bytes, extension: str) -> bytes:
-    tmpdir = Path(tempfile.mkdtemp())
-    try:
-        source = tmpdir / f"input.{extension.lower()}"
-        source.write_bytes(data)
-        # 将 LibreOffice 用户配置放进本次临时目录，兼容 systemd 的只读 HOME，并隔离并发转换。
-        process = await asyncio.create_subprocess_exec(
-            "libreoffice", "--headless",
-            f"-env:UserInstallation=file://{tmpdir}/loprofile",
-            "--convert-to", "pdf",
-            "--outdir", str(tmpdir), str(source),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            _, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            process.kill()
-            raise
-        if process.returncode != 0:
-            raise RuntimeError(f"转换失败：{stderr.decode(errors='replace')[:200]}")
-        pdf = tmpdir / "input.pdf"
-        if not pdf.exists():
-            raise RuntimeError("转换结果为空")
-        return pdf.read_bytes()
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-async def render_cached_pdf(raw: bytes, *, cache_key: str, extension: str) -> bytes:
-    """转换并缓存 Office/PDF 预览；缓存键由路由按文件版本构造。"""
-    cached = _PDF_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-    if len(_PDF_CACHE) > 50:
-        _PDF_CACHE.clear()
-    rendered = await office_to_pdf(raw, extension)
-    _PDF_CACHE[cache_key] = rendered
-    return rendered
-
-
-async def read_pdf_preview(
-    db: AsyncSession,
-    storage,
-    user_id: int,
-    file_id: int,
-) -> bytes:
-    """读取当前用户 Office 文件并生成带版本缓存的 PDF 预览。"""
-    file = await get_owned(db, File, file_id, user_id)
-    if file is None or file.deleted_at is not None:
-        raise PreviewError(404, "文件不存在")
-    if file.ext.upper() not in OFFICE_EXTS:
-        raise PreviewError(400, "不支持的格式")
-
-    raw = await storage.get(file.storage_key)
-    try:
-        return await render_cached_pdf(
-            raw,
-            cache_key=f"{file_id}:{file.updated_at.isoformat()}",
-            extension=file.ext,
-        )
-    except asyncio.TimeoutError as error:
-        raise PreviewError(422, "文档转换超时") from error
-    except RuntimeError as error:
-        raise PreviewError(422, str(error)) from error
-    except FileNotFoundError as error:
-        # 容器/宿主机未安装 LibreOffice（office_to_pdf 调 create_subprocess_exec("libreoffice")），
-        # 给友好提示而非 500 刷屏；装好组件配 GUGU_INSTALL_LIBREOFFICE=true 重新构建镜像即可。
-        raise PreviewError(422, "文档转换组件未安装，预览暂不可用") from error
-    except OSError as error:
-        raise PreviewError(422, "文档转换失败") from error

@@ -10,13 +10,23 @@ const releaseDir = path.dirname(fileURLToPath(import.meta.url))
 const sourceScript = path.join(releaseDir, 'compose-update.sh')
 const sourceValidator = path.join(releaseDir, 'validate-update-manifest.mjs')
 const appImage = `docker.io/coffeiz/gugu-web@sha256:${'a'.repeat(64)}`
-const updaterDigest = `docker.io/coffeiz/gugu-web-updater@sha256:${'b'.repeat(64)}`
 
 const dockerMock = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$MOCK_DOCKER_LOG"
+if [[ "$1" == inspect ]]; then
+  if [[ "$*" == *'/var/run/docker.sock'* ]]; then
+    printf '%s\\n' "\${MOCK_SOCKET_SOURCE:-/tmp/docker.sock}"
+  else
+    printf '%s\\n' "\${MOCK_DATA_SOURCE:-/tmp}"
+  fi
+  exit 0
+fi
+if [[ "$1" == run ]]; then
+  exit 0
+fi
 if [[ "$1" == image && "$2" == inspect ]]; then
-  printf '%s\\n' 'coffeiz/gugu-web-updater@sha256:${'b'.repeat(64)}'
+  printf '%s\\n' 'coffeiz/gugu-web@sha256:${'b'.repeat(64)}'
   exit 0
 fi
 [[ "$1" == compose ]] || exit 90
@@ -34,9 +44,9 @@ case "$command_name" in
     case "$1" in
       --services)
         if [[ "\${MOCK_SPLIT:-false}" == true ]]; then
-          printf '%s\\n' postgres backend worker gateway frontend migrate data-migrate
+          printf '%s\\n' postgres backend worker gateway frontend migrate
         else
-          printf '%s\\n' postgres redis searxng data-migrate app sandboxd
+          printf '%s\\n' postgres redis searxng app sandboxd
           if [[ "\${MOCK_UPDATER_SERVICE:-false}" == true ]]; then printf '%s\\n' updater; fi
         fi
         ;;
@@ -44,7 +54,7 @@ case "$command_name" in
       --format)
         image="$GUGU_WEB_IMAGE"
         if printenv GUGU_SANDBOXD_IMAGE >/dev/null 2>&1; then image="$GUGU_SANDBOXD_IMAGE"; fi
-        updater_image="\${MOCK_UPDATER_IMAGE:-docker.io/coffeiz/gugu-web-updater:1.2.2}"
+        updater_image="\${MOCK_UPDATER_IMAGE:-docker.io/coffeiz/gugu-web:1.2.2}"
         printf '{"services":{"sandboxd":{"image":"%s"},"updater":{"image":"%s"}}}\\n' "$image" "$updater_image"
         ;;
       *) exit 91 ;;
@@ -74,6 +84,7 @@ function createFixture() {
   fs.mkdirSync(scriptsDir, { recursive: true })
   fs.mkdirSync(binDir, { recursive: true })
   fs.mkdirSync(path.join(root, 'backend'), { recursive: true })
+  fs.mkdirSync(path.join(root, 'data'), { recursive: true })
   fs.copyFileSync(sourceScript, path.join(scriptsDir, 'compose-update.sh'))
   fs.copyFileSync(sourceValidator, path.join(scriptsDir, 'validate-update-manifest.mjs'))
   fs.writeFileSync(path.join(root, 'backend', '.env'), 'ADMIN_PASSWORD=test-only-value\n')
@@ -90,15 +101,12 @@ function createFixture() {
     release_notes_url: 'https://github.com/Coffeiz/Gugu-web/releases/tag/v1.2.2',
     rollback_supported: true,
   }))
-  fs.writeFileSync(path.join(root, 'manifest.bundle'), 'test-only-signature-bundle\n')
   const dockerPath = path.join(binDir, 'docker')
   fs.writeFileSync(dockerPath, dockerMock, { mode: 0o755 })
-  fs.writeFileSync(path.join(binDir, 'cosign'), '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$MOCK_COSIGN_LOG"\nif [[ "${MOCK_COSIGN_FAIL:-false}" == true ]]; then exit 3; fi\nif [[ "${MOCK_COSIGN_FAIL_UPDATER:-false}" == true && "$*" == *gugu-web-updater@* ]]; then exit 4; fi\nexit 0\n', { mode: 0o755 })
   return {
     root,
     binDir,
     dockerLog: path.join(root, 'docker.log'),
-    cosignLog: path.join(root, 'cosign.log'),
   }
 }
 
@@ -112,7 +120,6 @@ function runUpdate(
     scriptPath,
     ...extraArgs,
     '--manifest', path.join(fixture.root, 'manifest.json'),
-    '--bundle', path.join(fixture.root, 'manifest.bundle'),
     '--confirm',
   ], {
     cwd: fixture.root,
@@ -121,13 +128,52 @@ function runUpdate(
       ...process.env,
       PATH: `${fixture.binDir}:${process.env.PATH}`,
       MOCK_DOCKER_LOG: fixture.dockerLog,
-      MOCK_COSIGN_LOG: fixture.cosignLog,
+      // 模拟只能在宿主 namespace 访问的路径，验证脚本不会在 app 容器内检查它们。
+      MOCK_DATA_SOURCE: '/host-only/gugu-data',
+      MOCK_SOCKET_SOURCE: '/run/user/1000/docker.sock',
       GUGU_DB_PASSWORD: 'test-only-value',
       BACKUP_ROOT: path.join(fixture.root, 'backup'),
       ...extraEnv,
     },
   })
 }
+
+test('app 更新会把 stop/recreate 交给独立 helper，避免 self-stop 截断脚本', () => {
+  const fixture = createFixture()
+  try {
+    const result = runUpdate(fixture, { GUGU_UPDATE_HELPER_IMAGE: appImage })
+    assert.equal(result.status, 75, result.stderr)
+    const log = fs.readFileSync(fixture.dockerLog, 'utf8')
+    assert.match(log, /run .*--label com\.coffeiz\.gugu\.update-helper=true/)
+    assert.match(log, /--entrypoint \/bin\/bash/)
+    assert.match(log, /--env GUGU_DB_PASSWORD/)
+    assert.match(log, /--env GUGU_DB_USER/)
+    assert.match(log, /--env GUGU_DB_NAME/)
+    assert.match(log, /source=\/run\/user\/1000\/docker\.sock,target=\/var\/run\/docker\.sock/)
+    assert.doesNotMatch(log, /compose stop app/)
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('独立 helper 只在旧 app 持久化 handoff 后继续更新', () => {
+  const fixture = createFixture()
+  const manifestPath = path.join(fixture.root, 'manifest.json')
+  fs.writeFileSync(`${manifestPath}.handoff`, 'ready\n')
+  try {
+    const result = runUpdate(fixture, {
+      GUGU_UPDATE_HELPER: '1',
+      GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE: `${manifestPath}.handoff`,
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const log = fs.readFileSync(fixture.dockerLog, 'utf8')
+    assert.match(log, /compose .* stop app/)
+    assert.doesNotMatch(log, /docker run/)
+    assert.equal(fs.existsSync(`${manifestPath}.handoff`), false)
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
 
 test('更新器从独立代码目录运行时仍使用部署目录和固定校验器', () => {
   const fixture = createFixture()
@@ -143,7 +189,7 @@ test('更新器从独立代码目录运行时仍使用部署目录和固定校�
       UPDATE_VALIDATOR: path.join(updaterCode, 'scripts', 'release', 'validate-update-manifest.mjs'),
     }, updaterScript)
     assert.equal(result.status, 0, result.stderr)
-    assert.match(fs.readFileSync(fixture.dockerLog, 'utf8'), /pull app data-migrate sandboxd/)
+    assert.match(fs.readFileSync(fixture.dockerLog, 'utf8'), /pull app sandboxd/)
     const backupRoot = path.join(fixture.root, 'backup')
     assert.equal(fs.readdirSync(backupRoot).length, 1)
   } finally {
@@ -158,7 +204,7 @@ test('只更新一体化 app，并在同镜像 sandboxd 运行时同步更新', 
     const result = runUpdate(fixture)
     assert.equal(result.status, 0, result.stderr)
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /pull app data-migrate sandboxd/)
+    assert.match(log, /pull app sandboxd/)
     assert.match(log, /up -d --no-deps --force-recreate app sandboxd/)
     assert.doesNotMatch(log, /gugu-web-(?:backend|frontend)/)
 
@@ -177,85 +223,9 @@ test('未运行 sandboxd 时不拉取或重建可选沙盒服务', () => {
     const result = runUpdate(fixture, { MOCK_SANDBOXD_RUNNING: 'false' })
     assert.equal(result.status, 0, result.stderr)
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /pull app data-migrate\n/)
+    assert.match(log, /pull app\n/)
     assert.match(log, /up -d --no-deps --force-recreate app\n/)
-    assert.doesNotMatch(log, /pull app data-migrate sandboxd/)
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true })
-  }
-})
-
-test('手动升级验证 manifest、业务镜像和 updater 签名后引导 sidecar，sidecar 自身可跳过', () => {
-  const fixture = createFixture()
-  try {
-    const bootstrap = runUpdate(fixture, { MOCK_UPDATER_SERVICE: 'true' })
-    assert.equal(bootstrap.status, 0, bootstrap.stderr)
-    let log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    const updaterPullIndex = log.indexOf('pull updater')
-    const appPullIndex = log.indexOf('pull app data-migrate')
-    assert.ok(updaterPullIndex >= 0)
-    assert.ok(appPullIndex > updaterPullIndex)
-    assert.match(log, /image inspect --format/)
-    assert.match(log, /up -d --no-deps updater/)
-    assert.ok(fs.readFileSync(fixture.cosignLog, 'utf8').includes(updaterDigest))
-
-    fs.writeFileSync(fixture.dockerLog, '')
-    fs.writeFileSync(fixture.cosignLog, '')
-    const sidecarRun = runUpdate(fixture, {
-      MOCK_UPDATER_SERVICE: 'true',
-      COMPOSE_PROJECT_DIR: fixture.root,
-      UPDATE_VALIDATOR: path.join(fixture.root, 'scripts', 'release', 'validate-update-manifest.mjs'),
-    }, path.join(fixture.root, 'scripts', 'release', 'compose-update.sh'), ['--skip-updater-bootstrap'])
-    assert.equal(sidecarRun.status, 0, sidecarRun.stderr)
-    log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.doesNotMatch(log, /up -d --no-deps updater/)
-    assert.doesNotMatch(log, /pull updater/)
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true })
-  }
-})
-
-test('目标 manifest 签名失败时不得引导安装 updater', () => {
-  const fixture = createFixture()
-  try {
-    const result = runUpdate(fixture, {
-      MOCK_UPDATER_SERVICE: 'true',
-      MOCK_COSIGN_FAIL: 'true',
-    })
-    assert.notEqual(result.status, 0)
-    assert.doesNotMatch(fs.readFileSync(fixture.dockerLog, 'utf8'), /pull updater|up -d --no-deps updater/)
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true })
-  }
-})
-
-test('updater digest 签名失败时不得启动 sidecar', () => {
-  const fixture = createFixture()
-  try {
-    const result = runUpdate(fixture, {
-      MOCK_UPDATER_SERVICE: 'true',
-      MOCK_COSIGN_FAIL_UPDATER: 'true',
-    })
-    assert.notEqual(result.status, 0)
-    const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /pull updater/)
-    assert.doesNotMatch(log, /up -d --no-deps updater/)
-    assert.ok(fs.readFileSync(fixture.cosignLog, 'utf8').includes(updaterDigest))
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true })
-  }
-})
-
-test('拒绝非官方 updater 镜像来源', () => {
-  const fixture = createFixture()
-  try {
-    const result = runUpdate(fixture, {
-      MOCK_UPDATER_SERVICE: 'true',
-      MOCK_UPDATER_IMAGE: 'attacker.invalid/updater:latest',
-    })
-    assert.notEqual(result.status, 0)
-    assert.match(result.stderr, /updater 镜像不在官方发布白名单内/)
-    assert.doesNotMatch(fs.readFileSync(fixture.dockerLog, 'utf8'), /pull updater/)
+    assert.doesNotMatch(log, /pull app sandboxd/)
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
   }

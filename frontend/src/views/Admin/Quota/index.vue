@@ -514,7 +514,7 @@ PHASE7_QUOTA_OLD_END */
 .global-footer {
   display: flex; align-items: center; justify-content: space-between;
   margin-top: 18px; padding-top: 14px;
-  border-top: 1px solid rgba(255,255,255,0.07);
+  border-top: 1px solid var(--panel-divider);
 }
 .save-hint {
   display: flex; align-items: center; gap: 5px;
@@ -547,13 +547,13 @@ PHASE7_QUOTA_OLD_END */
   padding: 9px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
-  border-bottom: 1px solid rgba(255,255,255,0.07);
+  border-bottom: 1px solid var(--panel-divider);
 }
 .ut-row {
   display: grid;
   grid-template-columns: 200px 1fr 1fr 80px 120px;
   padding: 10px 16px; align-items: center;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid var(--panel-divider);
   font-size: 13px; transition: background 0.12s;
 }
 .ut-row:last-child { border-bottom: none; }

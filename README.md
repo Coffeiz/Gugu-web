@@ -196,7 +196,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/quick-deploy.md)。
 
-默认 Compose 会拉取一个包含前端、Nginx、Uvicorn、worker、IM gateway 的单容器应用镜像，不挂载源码，也不运行开发服务器；同时启动 PostgreSQL、Redis 和内置的 SearXNG 搜索服务。
+默认 Compose 使用统一的 Gugu 应用镜像，包含前端、Nginx、Uvicorn、worker 和 IM gateway；PostgreSQL、Redis、SearXNG 由 Compose 中的独立服务提供。部署及更新请始终使用仓库根目录的 [`docker-compose.yml`](docker-compose.yml)，数据挂载由该编排文件固定管理。prod/dev Compose 用于需要分开管理前后端的场景。详见[快速部署指南](docs/quick-deploy.md)。
 
 启动后访问：
 

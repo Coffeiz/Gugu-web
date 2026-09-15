@@ -28,14 +28,14 @@
           <div class="fp-body">
             <div v-if="loading" class="fp-status">
               <div class="fp-spinner"></div>
-              <span>{{ converting ? t('files.converting') : t('files.loading') }}</span>
+              <span>{{ t('files.loading') }}</span>
             </div>
             <div v-else-if="error" class="fp-status fp-error">
               <Icon name="status.warning" :size="32" style="opacity:.5" />
               <span>{{ error }}</span>
             </div>
             <template v-else-if="blobUrl || videoSrc">
-              <PdfViewer   v-if="isPdf || isOffice" :blobUrl="blobUrl ?? undefined" />
+              <PdfViewer v-if="isPdf" :blobUrl="blobUrl ?? undefined" />
               <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" :upscale="isVectorImage" />
               <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" />
               <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" />
@@ -108,7 +108,7 @@ import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
-import { isImageExt, isTextExt, isVideoExt, isOfficeExt, isAudioExt } from '@/stores/preview'
+import { isImageExt, isTextExt, isVideoExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
@@ -123,7 +123,6 @@ const emit = defineEmits(['close'])
 const blobUrl    = ref<string | null>(null)
 const videoSrc   = ref<string | null>(null)
 const loading    = ref(false)
-const converting = ref(false)
 const error      = ref<string | null>(null)
 const previewBlobCache = usePreviewBlobCache()
 const currentCacheKey = ref('')
@@ -174,7 +173,6 @@ watch(blobUrl, url => {
 const isText   = computed(() => isTextExt(props.file?.ext, props.file?.mimeType))
 const isVideo  = computed(() => isVideoExt(props.file?.ext))
 const isPdf    = computed(() => props.file?.ext?.toUpperCase() === 'PDF')
-const isOffice = computed(() => isOfficeExt(props.file?.ext))
 const isAudio  = computed(() => isAudioExt(props.file?.ext))
 
 const EXT_COLORS: Record<string, string> = {
@@ -208,7 +206,6 @@ async function load(file: Partial<FileMeta>, refresh = false) {
   revoke()
   currentCacheKey.value = ''   // 先按旧 key 判定上一个 blob 是否在缓存里，再清掉防串位
   loading.value    = true
-  converting.value = false
   error.value      = null
   extColor.value   = EXT_COLORS[(file.ext ?? '').toUpperCase()] ?? '#7b7fb2'
 
@@ -221,20 +218,6 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       const { url } = await filesApi.getStreamUrl(file.id!)
       if (sequence !== loadSequence) return
       videoSrc.value = withCacheBust(url, refresh)
-    } else if (isOfficeExt(file.ext)) {
-      converting.value = true
-      const officeUrl = file.attach_id
-        ? `${BASE_URL}/agent/attachment/${file.attach_id}/preview-pdf`
-        : `${BASE_URL}/files/${file.id!}/preview-pdf`
-      const res = await fetch(withCacheBust(officeUrl, refresh), { headers, cache: 'no-cache' })
-      if (sequence !== loadSequence) return
-      converting.value = false
-      if (!res.ok) throw new Error(`转换失败 (${res.status})`)
-      let blob = await res.blob()
-      if (sequence !== loadSequence) return
-      // iframe 内嵌渲染要求 application/pdf，转换结果若非此类型则重包一层
-      if (blob.type !== 'application/pdf') blob = new Blob([blob], { type: 'application/pdf' })
-      blobUrl.value = URL.createObjectURL(blob)
     } else {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
       const key = previewBlobCache.keyOf(file)
@@ -246,7 +229,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       const dlUrl = (file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
         : `${BASE_URL}/files/${file.id!}/download`) + bust
-      const res = await fetch(dlUrl, { headers, cache: 'no-cache' })
+      const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
       if (sequence !== loadSequence) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       let blob = await res.blob()
@@ -267,8 +250,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
   } finally {
     if (sequence === loadSequence) {
       loading.value    = false
-      converting.value = false
-    }
+        }
   }
 }
 

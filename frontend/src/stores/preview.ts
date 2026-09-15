@@ -71,6 +71,26 @@ export const usePreviewStore = defineStore('preview', () => {
   // siblings：调用方传同目录下的完整文件列表（可选），供图片预览左右切换用；
   // 只在图片间导航，siblings 里混着非图片文件会被 navigate() 自动跳过。
   function open(f: PreviewFile, siblings: PreviewFile[] | null = null) {
+    // Office（前端 HTML 渲染）与图片/视频/文本一样走浮动窗口；抽屉留给 PDF。
+    if (isOfficeExt(f.ext)) {
+      const existing = windows.value.find(w => w.file.id === f.id)
+      if (existing) { bringToFront(existing.id); return }
+      const idx = windows.value.length
+      const PW = Math.min(860, Math.round(window.innerWidth * 0.6))
+      const PH = Math.min(680, Math.round(window.innerHeight * 0.72))
+      windows.value.push({
+        id:       _nextId++,
+        file:     f,
+        siblings: siblings || [],
+        x:      Math.round((window.innerWidth  - PW) / 2) + idx * 30,
+        y:      Math.round((window.innerHeight - PH) / 2) + idx * 30,
+        w:      PW,
+        h:      PH,
+        zIndex: nextZ(),
+        _idx:   idx,
+      })
+      return
+    }
     if (isImageExt(f.ext) || isSvgMime(f.mimeType) || isVideoExt(f.ext) || isTextExt(f.ext, f.mimeType)) {
       const existing = windows.value.find(w => w.file.id === f.id)
       if (existing) { bringToFront(existing.id); return }

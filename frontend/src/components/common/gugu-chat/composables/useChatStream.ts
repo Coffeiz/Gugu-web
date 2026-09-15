@@ -555,6 +555,10 @@ export function useChatStream(options: {
                 options.setStatus(options.thinkingItem())
               }
             }
+          } else if (evt.type === 'notice') {
+            if (live() && typeof evt.message === 'string' && evt.message.trim()) {
+              options.setStatus({ kind: 'text', label: evt.message })
+            }
           } else if (evt.type === 'token') {
             if (live()) {
               if (String(evt.content || '').trim()) receivedAssistantContent = true

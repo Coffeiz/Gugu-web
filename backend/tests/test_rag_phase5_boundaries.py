@@ -25,11 +25,12 @@ from app.services.storage import LocalStorageBackend
 def _fake_projection(records):
     documents = []
     for record, scope in records:
-        # 与 TS files 适配器对齐：stage_name 渲染进投影文本（files.ts:36），
-        # 阶段/文件夹移动必须体现为投影内容变化。
-        stage_line = f"阶段：{record['stage_name']}" if record.get("stage_name") else ""
-        body = record.get("content") or ""
-        parts = [p for p in (stage_line + "\n" + body).split("|") if p and p.strip()]
+        if record["source_type"] == "file":
+            # 文件来源与 TS fileAdapter 对齐：只投影文件名，不读取正文或阶段文本。
+            parts = [record["title"]]
+        else:
+            body = record.get("content") or ""
+            parts = [p for p in body.split("|") if p and p.strip()]
         version_parts = record.get("version_parts") or []
         version = (str(version_parts[1]) if len(version_parts) > 1 else None) \
             or str(record.get("document_version") or "1").split(":")[0]
@@ -244,8 +245,8 @@ async def test_vector_partial_failure_keeps_lexical_and_replays_idempotent(kb_en
 
 
 @pytest.mark.asyncio
-async def test_folder_move_clears_old_scope(kb_env):
-    """文件夹/阶段移动：新 scope 可见、旧 scope 无残留（PRD Phase 2 验收）。"""
+async def test_stage_move_does_not_change_filename_index(kb_env):
+    """阶段变化不读取正文，也不改变只包含文件名的索引。"""
     from agent.rag.index_builder import build_single_source_record
     from app.models import File
 
@@ -282,14 +283,13 @@ async def test_folder_move_clears_old_scope(kb_env):
     assert record is not None
     stats: dict = {}
     count = await pipeline.update_document(owner_id, "file", file_id, stats_out=stats)
-    assert stats["status"] == "ready"
+    assert stats["status"] == "no_change"
     async with session_factory() as db:
         rows = await load_index_documents(db, owner_id, source_types={"file"})
     mine = [r for r in rows if r.source_id == file_id]
     assert count == len(mine)
-    # 移动后投影文本进新阶段、旧阶段无残留（对齐 TS files 适配器的阶段渲染）
-    assert any("阶段：阶段二" in r.content for r in mine)
-    assert all("阶段一" not in r.content for r in mine)
+    # 文件索引只保留文件名；阶段变化不应把正文或阶段文本写入索引。
+    assert all(r.content == "移动我.md" for r in mine)
     assert all(r.title == "移动我.md" for r in mine)
 
 

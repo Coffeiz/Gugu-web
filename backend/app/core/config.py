@@ -17,7 +17,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 OVERRIDE_FILE = Path(
@@ -83,8 +83,8 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(8000, description="最大输出 token 数")
-    context_tokens: int = Field(128000, description="历史上下文 token 预算")
+    max_tokens: int = Field(8000, gt=0, description="最大输出 token 数")
+    context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
     reasoning_persistence: Literal["off", "summary", "continuation"] = Field("off", description="跨请求推理状态: off | summary | continuation")
@@ -104,6 +104,12 @@ class AISettings(BaseModel):
     # 内部运行时标记：resolve_run_config_for_user 在每轮 run 开始时注入到模型副本上，
     # 随 run 落到 agent_usage.is_byok。exclude=True 保证不会序列化进配置文件或 API 响应。
     is_byok: bool = Field(False, exclude=True, description="内部标记：本轮是否使用用户 BYOK 凭据")
+
+    @model_validator(mode="after")
+    def validate_token_budget(self):
+        if self.max_tokens >= self.context_tokens:
+            raise ValueError("最大输出 token 数必须小于模型总上下文窗口")
+        return self
 
 
 class VoiceSettings(BaseModel):
@@ -207,8 +213,8 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 8000
-    context_tokens: int = 128000
+    max_tokens: int = Field(8000, gt=0)
+    context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
     reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
@@ -225,9 +231,16 @@ class AIPresetItem(BaseModel):
     capability_overrides: dict[str, bool] = Field(default_factory=dict)
     capability_checked_at: str = ""
     capability_fingerprint: str = ""
+
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
     # 内部运行时标记（同 AISettings.is_byok）：resolve_run_config_for_user 每轮注入，exclude 不落盘。
     is_byok: bool = Field(False, exclude=True)
+
+    @model_validator(mode="after")
+    def validate_token_budget(self):
+        if self.max_tokens >= self.context_tokens:
+            raise ValueError("最大输出 token 数必须小于模型总上下文窗口")
+        return self
 
 
 class AIPresets(BaseModel):
@@ -296,10 +309,6 @@ class SearchSettings(BaseModel):
         description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空=每个 Python 进程按需自启 worker（旧行为）。"
         "配置后 RAG worker 由 sidecar 宿主统一托管，多个后端进程共享热索引，后端重启不再触发冷装载",
     )
-    ts_sidecar_index_dir: str = Field(
-        "var/rag-ts-index",
-        description="旧版 TypeScript 索引目录；新索引默认保存在用户存储目录的 .system/rag/ts-index 下",
-    )
     ts_sidecar_index_ttl_seconds: int = Field(
         30 * 24 * 3600,
         ge=7 * 24 * 3600,
@@ -310,7 +319,7 @@ class SearchSettings(BaseModel):
         "unified",
         description="RAG 查询交付链：unified 为 TS worker 统一查询主链（唯一保留档；legacy/batch/shadow 灰度档已随旧 Python 查询链删除，显式配置旧值会在启动时报校验错误）",
     )
-    ts_sidecar_timeout_ms: int = Field(5000, ge=50, le=30_000, description="TypeScript worker 单次查询请求超时毫秒数")
+    ts_sidecar_timeout_ms: int = Field(30_000, ge=50, le=30_000, description="TypeScript worker 单次查询请求超时毫秒数")
     similar_image_provider: Literal["baidu_qianfan"] = Field("baidu_qianfan", description="相似图搜索 Provider；有效 API Key 即表示启用")
     similar_image_enabled: bool = Field(False, description="旧版相似图搜索开关，仅保留配置兼容，不再作为启用条件")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")

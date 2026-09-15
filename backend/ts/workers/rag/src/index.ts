@@ -218,6 +218,7 @@ async function restore(state: State): Promise<void> {
   let parsed: {
     version?: string; revision?: string; documents?: Document[];
     vectors?: Record<string, number[]>; vector_version?: string;
+    watermark?: { ts?: string; id?: number } | null;
   };
   try {
     parsed = JSON.parse(raw) as typeof parsed;
@@ -704,7 +705,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
         revision: request.revision,
         vector_version: request.vector_version,
       });
-      if (response && typeof response === "object") {
+      if (response?.status === "ok") {
         response.fallback_full = 1;
         if (response.probe && response.probe.counts) response.probe.counts.fallback_full = 1;
       }
@@ -750,7 +751,7 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
         revision: request.revision,
         vector_version: request.vector_version,
       });
-      if (response && typeof response === "object") {
+      if (response?.status === "ok") {
         response.fallback_full = 1;
         if (response.probe && response.probe.counts) response.probe.counts.fallback_full = 1;
       }

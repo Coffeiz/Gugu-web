@@ -735,8 +735,8 @@ class PresetCreate(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 8000
-    context_tokens: int = 128000
+    max_tokens: int = Field(8000, gt=0)
+    context_tokens: int = Field(128000, gt=1)
     thinking: str = "disabled"
     reasoning_effort: str = ""
     reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
@@ -757,6 +757,8 @@ class PresetCreate(BaseModel):
 
 @router.post("/llm-presets")
 async def create_llm_preset(body: PresetCreate):
+    if body.max_tokens >= body.context_tokens:
+        raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
     override = _read_override()
     presets = _ensure_presets(override)
     new_id = f"p_{_uuid.uuid4().hex[:8]}"
@@ -800,8 +802,8 @@ class PresetUpdate(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     model: str | None = None
-    max_tokens: int | None = None
-    context_tokens: int | None = None
+    max_tokens: int | None = Field(default=None, gt=0)
+    context_tokens: int | None = Field(default=None, gt=1)
     thinking: str | None = None
     reasoning_effort: str | None = None
     reasoning_persistence: Literal["off", "summary", "continuation"] | None = None
@@ -826,6 +828,10 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
     if not item:
         raise HTTPException(404, "预设不存在")
+    next_max_tokens = body.max_tokens if body.max_tokens is not None else int(item.get("max_tokens", 8000))
+    next_context_tokens = body.context_tokens if body.context_tokens is not None else int(item.get("context_tokens", 128000))
+    if next_max_tokens >= next_context_tokens:
+        raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
     if body.name is not None:
         item["name"] = body.name
     if body.provider is not None:

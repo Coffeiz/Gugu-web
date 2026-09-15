@@ -439,8 +439,7 @@ class KnowledgeIndexCache:
                     return TsLexicalIndex([], client, revision)
                 if not reused:
                     can_patch = bool(
-                        settings.ts_sidecar_index_dir
-                        and previous_documents is not None
+                        previous_documents is not None
                         and previous_revision is not None
                         and getattr(client, "_revision", None) == previous_revision
                     )

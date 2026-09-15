@@ -20,6 +20,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, NamedTuple
 
 from agent.llm import genstream
 from agent import loop_drivers
+from agent.providers.openai_responses import OpenAIResponsesDriver
 from agent.tools import registry
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
@@ -795,7 +796,7 @@ class LLMRunner:
                   "on_interaction": on_interaction}
         if reasoning_state is not None:
             kwargs["reasoning_state"] = reasoning_state
-        async for line in self._run_loop(loop_drivers.OpenAIResponsesDriver(), user_id, messages, ai, **kwargs):
+        async for line in self._run_loop(OpenAIResponsesDriver(), user_id, messages, ai, **kwargs):
             yield line
 
     # ── 共享主循环（PRD-LLM-1 Phase 2）────────────────────────────────────────

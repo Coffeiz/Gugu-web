@@ -37,7 +37,7 @@ Python 认证、身份与 scope 授权
 | `memory` | profile、daily、pattern 等 Memory | `memory` | 走 Memory 专用重建和向量同步 |
 | `knowledge` | 用户 Knowledge 条目 | `knowledge` | 主数据是用户目录下的 Knowledge Markdown |
 | `project` | 项目、阶段、待办 | `projects` | 通过项目适配器生成文档 |
-| `file` | 文件库文件和文件夹记录 | `files` | 只索引已授权的文件记录及其可检索内容 |
+| `file` | 文件库文件和文件夹记录 | `files` | 只索引已授权的文件名和文件元数据，不读取文件正文 |
 | `note` | 思维便签 | `mind` | 与画布资源共用 mind 事件 |
 | `canvas` | 思维画布节点 | `mind` | 与便签资源共用 mind 事件 |
 | `calendar` | 日历事件 | `calendar` | 只生成 owner 范围内文档 |
@@ -69,6 +69,7 @@ Python 认证、身份与 scope 授权
 - 持久投影更新后，当前进程的来源缓存立即失效；其他进程通过 revision 检测后重新加载。
 - TS worker 使用持久索引 revision；`patch` 必须携带正确的 `base_revision`，revision 不匹配时必须显式失败并由 Python 重建。
 - Memory 的向量缓存与统一来源投影是不同的存储边界；Knowledge 等来源的索引投影仍统一管理，避免被动 RAG 只覆盖某一个来源。
+- 用户存储下的派生索引统一归档到 `.agent/rag/`：`memory/index.json` 保存 Memory 专用索引，`unified/<owner-hash>/index.json` 保存统一来源索引。新版本直接在新目录重建，不读取或迁移旧索引目录。
 - 索引缺失、旧版本或事件丢失时，以主数据为准，执行来源级或用户级重建，不修改业务主数据。
 - 写路径不再有 Python 分块、`rag_write_mode` 或 shadow 分支；TS worker 失败由索引事件重试和诊断暴露，禁止静默回退到第二套投影。
 

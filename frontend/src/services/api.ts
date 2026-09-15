@@ -284,6 +284,18 @@ export const filesApi = {
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
+  archive: (data: { fileIds: number[]; folderIds: number[]; folderId?: number | null; name?: string }) =>
+    post<Schemas['FileResponse']>('/files/archive', data),
+  unarchive: (data: { fileId: number; folderId?: number | null; folderName?: string; format?: string }) =>
+    post<{
+      created_count: number
+      file_count: number
+      folder_count: number
+      skipped_count: number
+      rejected_count: number
+      file_ids: number[]
+      folder_ids: number[]
+    }>('/files/unarchive', data),
   // workspaceDirectoryId：后端 schema 已支持，旧 OpenAPI 类型生成未覆盖，先由领域类型承接。
   update: (id: number, data: Schemas['FileUpdate'] & { workspaceDirectoryId?: number | null }, meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
   saveContent: (id: number, content: string) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content }),   // 改文本正文（md 勾选框等）
@@ -320,6 +332,30 @@ export const filesApi = {
     }),
   // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
   getStreamUrl: (id: number) => get(`/files/${id}/stream-url`),
+  xlsxPreview: (id: number) => get<{
+    version: number
+    sheets: Array<{
+      images: Record<string, Array<{ id: number; width?: number; height?: number }>>
+      data: {
+        name?: string
+        cells?: Record<string, string>
+        merges?: Array<{ s: number; c: number; e: number; d: number }>
+        rowHeights?: Record<string, number>
+        colWidths?: Record<string, number>
+        rows?: number
+        cols?: number
+      }
+    }>
+  }>(`/files/${id}/xlsx-preview`),
+  xlsxPreviewImage: async (id: number, imageId: number, version: number) => {
+    const token = getToken()
+    const res = await fetch(`${BASE_URL}/files/${id}/xlsx-preview-image/${imageId}?v=${encodeURIComponent(version)}`, {
+      credentials: 'include',
+      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.blob()
+  },
   download: async (id: number, filename: string) => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/${id}/download`, {

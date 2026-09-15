@@ -175,7 +175,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8001`.
 
-The default Compose setup pulls one application image containing the frontend, Nginx, Uvicorn, worker, and IM gateway. It does not mount source code or run a development server. It starts Gugu, PostgreSQL, Redis, and the bundled SearXNG search service.
+The default Compose setup uses one unified Gugu application image containing the frontend, Nginx, Uvicorn, worker, and IM gateway. PostgreSQL, Redis, and SearXNG are provided by separate Compose services. Always use the repository's [`docker-compose.yml`](docker-compose.yml) for deployment and updates; it defines the persistent data mounts. The production and development Compose files are for deployments that need the frontend and backend managed separately. See the [quick deployment guide](docs/quick-deploy.md) for details.
 
 Open:
 

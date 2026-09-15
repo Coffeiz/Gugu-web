@@ -546,7 +546,7 @@ async function testSmtp() {
 .card-footer {
   display: flex; align-items: center; justify-content: space-between;
   margin-top: 16px; padding-top: 14px;
-  border-top: 1px solid rgba(255,255,255,0.07); gap: 12px;
+  border-top: 1px solid var(--panel-divider); gap: 12px;
 }
 .conn-preview {
   font-size: 11px; color: rgba(255,255,255,0.25);

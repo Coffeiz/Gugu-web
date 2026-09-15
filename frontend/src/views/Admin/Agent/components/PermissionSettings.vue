@@ -126,11 +126,11 @@ function setAgentFlag(key: string, value: boolean) {
 .permission-groups { display: flex; flex-direction: column; gap: 22px; }
 .permission-group h4 { color: rgba(255,255,255,0.58); font-size: 11px; font-weight: 650; letter-spacing: .02em; margin-bottom: 6px; }
 .permission-list { display: flex; flex-direction: column; }
-.permission-item { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 0; border-top: 1px solid rgba(255,255,255,0.07); }
+.permission-item { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 0; border-top: 1px solid var(--panel-divider); }
 .permission-label { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .permission-label > span:first-child { color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 600; }
 .permission-desc { color: rgba(255,255,255,0.38); font-size: 11px; line-height: 1.5; }
-.card-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 8px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); }
+.card-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--panel-divider); }
 .save-hint { flex: 1; color: #5ab899; font-size: 12px; }
 .save-hint.error { color: #e07878; }
 .btn-ghost, .btn-primary { border-radius: 8px; padding: 7px 14px; font-size: 12px; cursor: pointer; }

@@ -47,7 +47,7 @@ def _prepare_workspace_root(root: Path) -> None:
     解决「写」：文件库侧写入的 0660 文件（other 位为 0）沙盒仍读不到。这里
     优先套用与一次性 sandbox-bootstrap 相同的 ACL 授权（含递归补齐存量文件、
     每级目录 default ACL，后续新建文件自动继承），让沙盒映射身份获得读写；
-    环境不支持时（无 setfacl / subordinate 映射，如容器内 backend）退回与
+    环境不支持时（无 setfacl，或 rootless 开发环境缺少 subordinate 映射）退回与
     ensure_sandbox_root 一致的全员可写兼容取舍，目录内条目仍受容器权限约束。
     """
     root.mkdir(parents=True, exist_ok=True)
