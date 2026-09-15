@@ -8,10 +8,15 @@
     @mousedown.capture="previewStore.bringToFront(win.id)"
   >
     <!-- 标题栏（拖拽区） -->
-    <div class="fpw-title" :class="{ 'fpw-maximized-bar': maximized }" @mousedown.prevent="!maximized && startDrag($event)">
+    <div
+      class="fpw-title"
+      :class="{ 'fpw-maximized-bar': maximized }"
+      @mousedown.prevent="!maximized && startDrag($event)"
+      @dblclick.prevent="toggleMaximize"
+    >
       <span class="fpw-ext" :style="{ color: extColor, background: extColor + '22' }">{{ win.file.ext }}</span>
       <span class="fpw-name" :title="win.file.displayName">{{ win.file.displayName }}</span>
-      <div class="fpw-actions">
+      <div class="fpw-actions" @dblclick.stop>
         <template v-if="isText">
           <button class="fpw-btn" :title="t('sharedUi.decreaseFontSize')" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><Icon name="action.subtract" :size="12" /></button>
           <span class="fpw-font-size">{{ textFontSize }}</span>
