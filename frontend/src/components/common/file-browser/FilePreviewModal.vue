@@ -229,7 +229,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
       const dlUrl = (file.attach_id
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
         : `${BASE_URL}/files/${file.id!}/download`) + bust
-      const res = await fetch(dlUrl, { headers, cache: 'no-cache' })
+      const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
       if (sequence !== loadSequence) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       let blob = await res.blob()

@@ -332,6 +332,30 @@ export const filesApi = {
     }),
   // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
   getStreamUrl: (id: number) => get(`/files/${id}/stream-url`),
+  xlsxPreview: (id: number) => get<{
+    version: number
+    sheets: Array<{
+      images: Record<string, Array<{ id: number; width?: number; height?: number }>>
+      data: {
+        name?: string
+        cells?: Record<string, string>
+        merges?: Array<{ s: number; c: number; e: number; d: number }>
+        rowHeights?: Record<string, number>
+        colWidths?: Record<string, number>
+        rows?: number
+        cols?: number
+      }
+    }>
+  }>(`/files/${id}/xlsx-preview`),
+  xlsxPreviewImage: async (id: number, imageId: number) => {
+    const token = getToken()
+    const res = await fetch(`${BASE_URL}/files/${id}/xlsx-preview-image/${imageId}`, {
+      credentials: 'include',
+      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.blob()
+  },
   download: async (id: number, filename: string) => {
     const token = getToken()
     const res = await fetch(`${BASE_URL}/files/${id}/download`, {

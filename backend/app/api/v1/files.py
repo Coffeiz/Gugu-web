@@ -52,6 +52,8 @@ from app.services.files.previews import (
     pregenerate_thumb,
     read_image_dimensions,
     read_file_thumbnail,
+    read_xlsx_preview,
+    read_xlsx_preview_image,
 )
 from app.services.undo import UndoService
 from app.services.undo.files import file_snapshot, operation_state, ref_for, save_content_artifacts
@@ -783,6 +785,58 @@ async def download_file(
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
                  "Cache-Control": "private, max-age=300"},
     )
+
+
+@router.get("/{fid}/xlsx-preview")
+async def xlsx_preview(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """提取 XLSX 内嵌图片；结果按文件版本在后端进程内缓存。"""
+    file = await get_owned(db, File, fid, current_user.id)
+    if not file or file.deleted_at is not None:
+        raise HTTPException(404, "文件不存在")
+    if (file.ext or "").lower() != "xlsx":
+        raise HTTPException(415, "仅支持 XLSX 文件")
+    try:
+        preview = await read_xlsx_preview(
+            get_storage(), storage_key=file.storage_key, file_id=fid, version=file.version
+        )
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(404, "物理文件丢失")
+    return {
+        "version": file.version,
+        "sheets": [
+            {"images": preview.sheets[index], "data": preview.sheet_data[index] if index < len(preview.sheet_data) else {}}
+            for index in range(max(len(preview.sheets), len(preview.sheet_data)))
+        ],
+    }
+
+
+@router.get("/{fid}/xlsx-preview-image/{image_id}")
+async def xlsx_preview_image(
+    fid: int,
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    file = await get_owned(db, File, fid, current_user.id)
+    if not file or file.deleted_at is not None:
+        raise HTTPException(404, "文件不存在")
+    if (file.ext or "").lower() != "xlsx":
+        raise HTTPException(415, "仅支持 XLSX 文件")
+    try:
+        content, media_type = await read_xlsx_preview_image(
+            get_storage(), storage_key=file.storage_key, file_id=fid,
+            version=file.version, image_id=image_id,
+        )
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(404, "物理文件丢失")
+    except PreviewError as error:
+        raise HTTPException(error.status_code, error.detail)
+    return Response(content=content, media_type=media_type,
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 # ── GET /files/{fid}/stream-url ──────────────────────────────────────────────

@@ -38,7 +38,7 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
-      <OfficeViewer v-else-if="isOffice && blobUrl" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" @content-size="onOfficeContentSize" />
+      <OfficeViewer v-else-if="isOffice && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" />
       <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
@@ -172,17 +172,22 @@ const _unregEsc = registerEsc({
   close: () => previewStore.closeWindow(props.win.id),
 })
 
+const isPptx = computed(() => props.win.file.ext?.toUpperCase() === 'PPTX')
+
 // ── 位置 / 尺寸（本地 reactive，同步回 store） ──────────────────────────────
 const x = ref(props.win.x)
 const y = ref(props.win.y)
-const w = ref(props.win.w)
-const h = ref(props.win.h)
+// PPTX 由渲染器按容器宽度自适应；首次隐藏渲染也要给它一个接近最终尺寸的
+// 布局盒，避免先按默认小窗口渲染再放大。
+const w = ref(isPptx.value ? Math.round(window.innerWidth * 0.72) : props.win.w)
+const h = ref(isPptx.value ? Math.round(window.innerHeight * 0.64) : props.win.h)
 
 // ── 文件类型 ──────────────────────────────────────────────────────────────────
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => isTextExt(props.win.file.ext, props.win.file.mimeType))
 const isOffice = computed(() => isOfficeExt(props.win.file.ext))
+const isXlsx = computed(() => (props.win.file.ext ?? '').toLowerCase() === 'xlsx')
 const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
 const _SVG_EXTS = new Set(['SVG'])
 // 矢量图放大无损：开窗尺寸与内部适配都允许超过折算 natural 尺寸
@@ -355,7 +360,27 @@ function fitWindow(contentW: number, contentH: number) {
   ready.value = true
 }
 
+// 表格宽高不应按图片那样保持整体比例缩放：长表只需要在窗口内纵向滚动，
+// 否则几万像素的总高度会把宽度一起压缩成窄窗。
+function fitSpreadsheetWindow(contentW: number, contentH: number) {
+  const maxW = window.innerWidth - PAD * 2
+  const maxH = window.innerHeight - PAD * 2 - TITLE_H
+  const fw = Math.max(320, Math.min(Math.round(contentW), maxW))
+  const fh = Math.max(180, Math.min(Math.round(contentH), maxH))
+  w.value = fw
+  h.value = fh + TITLE_H
+  const stagger = (props.win._idx ?? 0) * 30
+  x.value = Math.max(0, Math.round((window.innerWidth - fw) / 2) + stagger)
+  y.value = Math.max(0, Math.round((window.innerHeight - fh - TITLE_H) / 2) + stagger)
+  ready.value = true
+}
+
 function onOfficeContentSize(width: number, height: number) {
+  if (isXlsx.value) {
+    fitSpreadsheetWindow(width, height)
+    contentSize.value = `${width} × ${height}`
+    return
+  }
   // pptx：按真实幻灯片宽高比适配窗口（首屏高度，多页靠滚动）。
   fitWindow(width, height)
   contentSize.value = `${width} × ${height}`
@@ -393,6 +418,9 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   videoSrc.value       = null
   loading.value        = true
   error.value          = null
+  // XLSX 的窗口尺寸要等后端表格结构渲染完成后才能确定，先隐藏窗口，
+  // 避免先按默认尺寸显示再突然跳到自然尺寸。
+  if (isXlsx.value && f.id != null && !f.attach_id) ready.value = false
   placeholderReady.value = false
   imageReady.value       = false
   placeholderSrc.value   = null
@@ -417,7 +445,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
     if (isVideoExt(f.ext)) {
       let url
       if (f.attach_id) {
-        const res = await fetch(withCacheBust(`${BASE_URL}/agent/attachment/${f.attach_id}/download`, refresh), { headers, cache: 'no-cache' })
+        const res = await fetch(withCacheBust(`${BASE_URL}/agent/attachment/${f.attach_id}/download`, refresh), { headers, credentials: 'include', cache: 'no-cache' })
         if (sequence !== loadSequence) return
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         url = URL.createObjectURL(await res.blob())
@@ -450,15 +478,38 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (!bust) {
         const cached = previewBlobCache.get(key)
         if (cached) {
-          blobUrl.value = cached
-          if (!ready.value) fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
-          return
+          try {
+            const cachedResponse = await fetch(cached)
+            if (cachedResponse.ok) {
+              blobUrl.value = cached
+              if (!ready.value && !isPptx.value) fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+              return
+            }
+          } catch {
+            // blob URL 可能在热更新或窗口销毁后失效，丢弃后重新下载原文件。
+          }
+          previewBlobCache.discard(key, cached)
         }
       }
-      const dlUrl = (f.attach_id
-        ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
-        : `${BASE_URL}/files/${f.id}/download`) + bust
-      const res = await fetch(dlUrl, { headers })
+      if (isXlsx.value && f.id != null && !f.attach_id) {
+        // XLSX 表格正文和图片都由后端按需提供，不再先下载整个压缩包。
+        blobUrl.value = null
+        currentCacheKey.value = ''
+        return
+      }
+      let dlUrl: string
+      if (f.attach_id) {
+        dlUrl = `${BASE_URL}/agent/attachment/${f.attach_id}/download${bust}`
+      } else {
+        let stream: { url: string }
+        try {
+          stream = await filesApi.getStreamUrl(f.id!)
+        } catch (error) {
+          throw new Error(`获取流地址失败：${error instanceof Error ? error.message : error}`)
+        }
+        dlUrl = withCacheBust(stream.url, refresh)
+      }
+      const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
       if (sequence !== loadSequence) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const url = URL.createObjectURL(await res.blob())
@@ -467,7 +518,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
       previewBlobCache.put(key, url)
       currentCacheKey.value = key
-      if (!refresh || !ready.value) {
+      if ((!refresh || !ready.value) && !isPptx.value) {
         fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
       }
     } else {
@@ -511,10 +562,14 @@ async function load(f: Partial<FileMeta>, refresh = false) {
           }
         }
       }
-      const dlUrl = f.attach_id
-        ? `${BASE_URL}/agent/attachment/${f.attach_id}/download`
-        : `${BASE_URL}/files/${f.id}/download`
-      const res = await fetch(dlUrl + bust, { headers, cache: 'no-cache' })
+      let dlUrl: string
+      if (f.attach_id) {
+        dlUrl = `${BASE_URL}/agent/attachment/${f.attach_id}/download${bust}`
+      } else {
+        const stream = await filesApi.getStreamUrl(f.id!)
+        dlUrl = withCacheBust(stream.url, refresh)
+      }
+      const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
       if (sequence !== loadSequence) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
@@ -908,19 +963,19 @@ onUnmounted(() => {
 /* ── resize 边缘与角标 ── */
 .fpw-resize {
   position: absolute;
-  bottom: -7.5px; right: -7.5px;
-  width: 15px; height: 15px;
+  bottom: -5px; right: -5px;
+  width: 10px; height: 10px;
   cursor: se-resize;
 }
 /* 只保留透明的可拖拽热区，缩放提示由鼠标指针提供。 */
-.fpw-resize-edge { position: absolute; width: 15px; height: 15px; }
-.fpw-resize-n, .fpw-resize-s { left: 15px; right: 15px; width: auto; height: 15px; cursor: ns-resize; }
-.fpw-resize-n { top: -7.5px; }
-.fpw-resize-s { bottom: -7.5px; }
-.fpw-resize-e, .fpw-resize-w { top: 15px; bottom: 15px; width: 15px; height: auto; cursor: ew-resize; }
-.fpw-resize-e { right: -15px; }
-.fpw-resize-w { left: -7.5px; }
-.fpw-resize-nw { top: -7.5px; left: -7.5px; cursor: nwse-resize; }
-.fpw-resize-ne { top: -7.5px; right: -7.5px; cursor: nesw-resize; }
-.fpw-resize-sw { bottom: -7.5px; left: -7.5px; cursor: nesw-resize; }
+.fpw-resize-edge { position: absolute; width: 5px; height: 5px; }
+.fpw-resize-n, .fpw-resize-s { left: 10px; right: 10px; width: auto; height: 5px; cursor: ns-resize; }
+.fpw-resize-n { top: -5px; }
+.fpw-resize-s { bottom: -5px; }
+.fpw-resize-e, .fpw-resize-w { top: 10px; bottom: 10px; width: 5px; height: auto; cursor: ew-resize; }
+.fpw-resize-e { right: -5px; }
+.fpw-resize-w { left: -5px; }
+.fpw-resize-nw { top: -5px; left: -5px; width: 10px; height: 10px; cursor: nwse-resize; }
+.fpw-resize-ne { top: -5px; right: -5px; width: 10px; height: 10px; cursor: nesw-resize; }
+.fpw-resize-sw { bottom: -5px; left: -5px; width: 10px; height: 10px; cursor: nesw-resize; }
 </style>

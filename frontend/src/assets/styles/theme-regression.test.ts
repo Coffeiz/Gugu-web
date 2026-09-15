@@ -44,6 +44,7 @@ const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesP
 const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
 const eventFormPanelVue = load('../../components/events/EventFormPanel.vue')
 const imageViewerVue = load('../../components/common/viewers/ImageViewer.vue')
+const viewerToolbarVue = load('../../components/common/viewers/ViewerToolbar.vue')
 const primitivesCss = load('./tokens/primitives.css')
 const fontsCss = load('./fonts.css')
 const paletteFiles = [['aero', 'mist'], ['mono', 'cafe'], ['rose', 'rose'], ['sky', 'sky'], ['sage', 'sage']].map(([file, name]) => ({
@@ -361,12 +362,13 @@ describe('主题 CSS 回归契约', () => {
     expect(themeAdoptionCss).toContain('color: var(--content-inverse);')
   })
 
-  it('ImageViewer 暗色只重映射 toolbar 局部 token，不复制实体 paint', () => {
-    const darkBlock = cssBlock(imageViewerVue, "html[data-theme='dark'][data-family] .iv-wrap")
+  it('ViewerToolbar 暗色只重映射 toolbar 局部 token，不复制实体 paint', () => {
+    const darkBlock = cssBlock(viewerToolbarVue, "html[data-theme='dark'][data-family] .iv-toolbar")
     expect(darkBlock).toContain('--iv-toolbar-bg:')
     expect(darkBlock).toContain('--iv-toolbar-border: var(--border-strong)')
     expect(darkBlock).toContain('--iv-toolbar-filter: var(--popup-surface-blur)')
-    expect(imageViewerVue).not.toContain("html[data-theme='dark'][data-family] .iv-toolbar")
+    expect(darkBlock).not.toMatch(/--iv-toolbar-(?:bg|border|shadow|filter):[^;{}]*(?:#fff\b|white\b|rgba?\(\s*255)/i)
+    expect(imageViewerVue).not.toContain('iv-toolbar {')
     expect(eventFormPanelVue).toContain('html[data-theme][data-family] .event-form-body')
   })
 
