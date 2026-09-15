@@ -478,12 +478,12 @@ onMounted(load)
   display: grid; grid-template-columns: 1fr 80px 90px;
   padding: 9px 14px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
   color: rgba(255,255,255,0.28); text-transform: uppercase;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid var(--panel-divider);
 }
 .model-row {
   display: grid; grid-template-columns: 1fr 80px 90px;
   padding: 11px 14px; font-size: 13px; color: rgba(255,255,255,0.65);
-  border-bottom: 1px solid rgba(255,255,255,0.04); align-items: center;
+  border-bottom: 1px solid var(--panel-divider); align-items: center;
 }
 .model-row:last-child { border-bottom: none; }
 .col-r { text-align: right; }

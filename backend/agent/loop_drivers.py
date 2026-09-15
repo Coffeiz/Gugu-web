@@ -16,7 +16,7 @@
 这个文件把这几件事收拢成共享协议和 `AnthropicDriver`、`OpenAIDriver`、`OllamaDriver`
 实现；OpenAI Responses 的独立 response-chain 驱动放在
 `agent/providers/openai_responses.py`，消息/缓存投影放在
-`agent/providers/message_utils.py`。这里保留 Responses 的兼容导出，避免旧调用方同时迁移。
+`agent/providers/message_utils.py`。Responses 驱动直接从 provider 模块引用。
 `core.py` 只写一条共享的 `_run_loop`，需要跟 provider 打交道时调用驱动。
 
 驱动接口四个构造方法：
@@ -560,16 +560,6 @@ class OpenAIDriver:
         # 跟 Anthropic 路不一样：这里不把 assistant 消息入历史，直接追问——是改动前就有的既有行为
         # （openai 路空回复兜底那段代码本来就没有 messages.append(_asst(...)) 这一步），原样保留。
         return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
-
-# OpenAI Responses 独立驱动的兼容导出；新代码应从 provider 模块直接导入。
-from agent.providers.openai_responses import (
-    OpenAIResponsesDriver,
-    _ResponsesCtx,
-    _ResponsesRaw,
-    _responses_input,
-    _responses_tools,
-)
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # Ollama 原生（/api/chat，NDJSON）

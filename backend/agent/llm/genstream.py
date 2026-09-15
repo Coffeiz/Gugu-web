@@ -195,6 +195,12 @@ async def publish(session_id, event: dict) -> None:
         elif et == "file" and event.get("file"):
             st["files"].append(event["file"])
             st["timeline"].append({"type": "file", "file": event["file"]})
+        elif et == "notice" and event.get("message"):
+            st["timeline"].append({
+                "type": "notice",
+                "message": event["message"],
+                "run_id": event.get("run_id") or st.get("run_id") or "",
+            })
         elif et == "done":
             st["done"] = True
         elif et == "error":

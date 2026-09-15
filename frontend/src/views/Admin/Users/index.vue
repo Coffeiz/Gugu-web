@@ -279,7 +279,7 @@ onMounted(load)
 <style scoped>
 .users-page { min-height: 100%; }
 
-.user-tabs { display: flex; gap: 4px; padding: 22px 36px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.user-tabs { display: flex; gap: 4px; padding: 22px 36px 0; border-bottom: 1px solid var(--panel-divider); }
 .user-tab { padding: 8px 14px 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: rgba(255,255,255,0.4); cursor: pointer; font-size: 13px; }
 .user-tab:hover { color: rgba(255,255,255,0.75); }
 .user-tab.active { color: rgba(210,215,255,0.95); border-bottom-color: rgba(150,165,225,0.9); }
@@ -328,7 +328,7 @@ onMounted(load)
   padding: 10px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
-  border-bottom: 1px solid rgba(255,255,255,0.07);
+  border-bottom: 1px solid var(--panel-divider);
 }
 
 .ut-row {
@@ -336,7 +336,7 @@ onMounted(load)
   grid-template-columns: 200px 180px 96px 1fr 1fr 62px 178px;
   padding: 10px 16px;
   align-items: center;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid var(--panel-divider);
   font-size: 13px;
   transition: background 0.12s;
 }
@@ -416,7 +416,7 @@ onMounted(load)
 
 .pagination {
   display: flex; align-items: center; justify-content: center; gap: 12px;
-  padding: 14px 16px; border-top: 1px solid rgba(255,255,255,0.07);
+  padding: 14px 16px; border-top: 1px solid var(--panel-divider);
 }
 .pg-btn {
   width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center;

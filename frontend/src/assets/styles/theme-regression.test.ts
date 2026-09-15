@@ -393,7 +393,7 @@ describe('主题 CSS 回归契约', () => {
     expect(fileSelectionToolbarVue).toContain('background: var(--control-bg)')
     expect(fileSelectionToolbarVue).toContain('background: var(--danger-button-bg)')
     expect(fileSelectionToolbarVue).toContain('background: var(--popup-divider)')
-    expect(semanticCss).toContain('--content-divider: color-mix(in srgb, var(--theme-content-primary) 15%, transparent)')
+    expect(semanticCss).toContain('--content-divider: color-mix(in srgb, var(--theme-content-primary) 10%, transparent)')
     expect(componentSurfacesCss).toContain('--popup-divider: var(--content-divider)')
     expect(componentSurfacesCss).toContain('--panel-divider: var(--content-divider)')
     expect(fileSelectionToolbarVue).not.toMatch(/(?:#(?:[0-9a-f]{3,8})\b|rgba?\()/i)

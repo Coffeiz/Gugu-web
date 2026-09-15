@@ -292,6 +292,7 @@ function forwardCapabilityOverride(key: string, enabled: boolean) {
 .model-fetch-btn, .pca-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .btn-ghost, .btn-primary { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
 @media(max-width:720px){ .modal-field-row { grid-template-columns:1fr; gap:0; } .modal-box { padding:18px; } .thinking-hint { max-width:none; } .modal-field--persistence { align-items:flex-start; } .modal-field--persistence > .option-button-row { flex-wrap:wrap; justify-content:flex-end; } }
+.modal-actions { border-top-color: var(--panel-divider); }
 </style>
 <style scoped>
 .btn-primary { background: var(--action-primary-bg); color: var(--content-on-accent); transition: background-color .15s; }
