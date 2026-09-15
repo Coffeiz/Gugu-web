@@ -137,8 +137,10 @@ RUN node bin/gugu-filesync-ts-worker.cjs --version
 
 # ── 自更新工具链（执行器并入 app 进程，PRD-ADMIN-2 §1.1）───────────────────
 # 签名校验随定位修订移除，仅保留 compose 插件供更新流程重建容器。
+# v5.5.1：内嵌 containerd v2.3.4 / docker-cli v29.7.2 均高于 trivy 门要求的修复版
+# （v2.39.2 因此被扫出 57 个 HIGH/CRITICAL，2026-09-16 docker-release 失败根因）。
 # updater 资产（固定更新脚本/manifest 校验器/schema）落到 /opt/gugu-updater。
-ARG DOCKER_COMPOSE_VERSION=v2.39.2
+ARG DOCKER_COMPOSE_VERSION=v5.5.1
 # TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串（URL 404）
 ARG TARGETARCH
 # compose 发布资源用 uname 风格命名（x86_64/aarch64），与 TARGETARCH（amd64/arm64）不同名
