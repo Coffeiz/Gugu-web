@@ -77,24 +77,31 @@ jobs:
             tag: gugu-web-backend:ci
             ci_image: ghcr.io/coffeiz/gugu-web-backend
             cache-scope: backend
+            # python slim 自带 ca-certificates，可用 https 官方源
+            apt_mirror: https://deb.debian.org
           - name: frontend
             context: .
             dockerfile: frontend/Dockerfile.prod
             tag: gugu-web-frontend:ci
             ci_image: ghcr.io/coffeiz/gugu-web-frontend
             cache-scope: frontend
+            apt_mirror: https://deb.debian.org
           - name: app
             context: .
             dockerfile: Dockerfile
             tag: gugu-web:ci
             ci_image: ghcr.io/coffeiz/gugu-web
             cache-scope: default-compose
+            # python slim 自带 ca-certificates，可用 https 官方源
+            apt_mirror: https://deb.debian.org
           - name: sandbox
             context: docker/sandbox
             dockerfile: docker/sandbox/Dockerfile
             tag: gugu-sandbox:ci
             ci_image: ghcr.io/coffeiz/gugu-sandbox
             cache-scope: sandbox
+            # bookworm-slim 内无 ca-certificates（在安装清单里），必须走 http
+            apt_mirror: http://deb.debian.org
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -131,7 +138,7 @@ jobs:
           # 版本 label 必须在构建期带真实 tag：publish 复制不改内容，updater 靠
           # org.opencontainers.image.version 识别当前版本。
           build-args: |
-            APT_MIRROR=https://deb.debian.org
+            APT_MIRROR=${{ matrix.apt_mirror }}
             PIP_INDEX_URL=https://pypi.org/simple
             GUGU_VERSION=${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-ci' }}
             GUGU_REVISION=${{ github.sha }}
