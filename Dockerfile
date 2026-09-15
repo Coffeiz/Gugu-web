@@ -139,9 +139,13 @@ RUN node bin/gugu-filesync-ts-worker.cjs --version
 # 签名校验随定位修订移除，仅保留 compose 插件供更新流程重建容器。
 # updater 资产（固定更新脚本/manifest 校验器/schema）落到 /opt/gugu-updater。
 ARG DOCKER_COMPOSE_VERSION=v2.39.2
+# TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串（URL 404）
+ARG TARGETARCH
+# compose 发布资源用 uname 风格命名（x86_64/aarch64），与 TARGETARCH（amd64/arm64）不同名
 RUN mkdir -p /usr/local/libexec/docker/cli-plugins /opt/gugu-updater/scripts/release /opt/gugu-updater/deploy \
+    && compose_arch="$(case "${TARGETARCH}" in amd64) echo x86_64 ;; arm64) echo aarch64 ;; *) echo "${TARGETARCH}" ;; esac)" \
     && curl -fsSL -o /usr/local/libexec/docker/cli-plugins/docker-compose \
-        "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${TARGETARCH}" \
+        "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${compose_arch}" \
     && chmod 0755 /usr/local/libexec/docker/cli-plugins/docker-compose \
     && docker compose version
 COPY scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/compose-update.sh
