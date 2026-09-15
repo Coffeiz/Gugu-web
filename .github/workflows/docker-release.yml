@@ -119,6 +119,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 本地镜像引用：tag 触发时 build 只带全限定 :ci-<run_id> 一个 tag（push+load
+      # 双 exporter，本地名即限定名），非 tag 运行仍是非限定 :ci。下方 smoke 与
+      # trivy 统一从这里取名字。
+      - name: Resolve local image ref
+        id: img
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}" >> "$GITHUB_OUTPUT"
+
       - name: Build ${{ matrix.name }} image
         uses: docker/build-push-action@v6
         with:
@@ -128,11 +135,12 @@ jobs:
           # tag 触发时推 :ci-<run_id>：publish 对同一 digest 纯复制发布，不再重建——
           # 保证「扫的就是发的」。run_id 隔离同 commit 两个并发运行（main push 与
           # tag push）互相覆盖中间 tag 的竞态。
+          # push 模式下 tags 只能放全限定名：非限定名（gugu-web:ci）会被 buildx 推到
+          # docker.io/library，而本 job 只登录 GHCR，401 insufficient scopes
+          # （v1.2.3 重打 tag 发布事故 2026-09-16）。
           push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           load: true
-          tags: |
-            ${{ matrix.tag }}
-            ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || '' }}
+          tags: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}
           # 沙盒镜像必须每轮全新构建（见下方冒烟注释），其余镜像吃 gha 层缓存。
           no-cache: ${{ matrix.name == 'sandbox' }}
           # 版本 label 必须在构建期带真实 tag：publish 复制不改内容，updater 靠
@@ -152,7 +160,7 @@ jobs:
       - name: Smoke test Shell sandbox runtime
         if: matrix.name == 'sandbox'
         run: |
-          docker run --rm --entrypoint bash gugu-sandbox:ci -lc '
+          docker run --rm --entrypoint bash ${{ steps.img.outputs.ref }} -lc '
             set -eu
             python --version
             node --version
@@ -165,13 +173,13 @@ jobs:
 
       - name: Smoke test TS RAG worker
         if: matrix.name == 'app'
-        run: docker run --rm --entrypoint node gugu-web:ci bin/gugu-rag-ts-worker.mjs --version
+        run: docker run --rm --entrypoint node ${{ steps.img.outputs.ref }} bin/gugu-rag-ts-worker.mjs --version
 
       - name: Smoke test updater toolchain in app image
         if: matrix.name == 'app'
         run: |
-          docker run --rm --entrypoint python3 gugu-web:ci -c 'import updater.daemon'
-          docker run --rm --entrypoint docker gugu-web:ci compose version
+          docker run --rm --entrypoint python3 ${{ steps.img.outputs.ref }} -c 'import updater.daemon'
+          docker run --rm --entrypoint docker ${{ steps.img.outputs.ref }} compose version
 
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
@@ -183,7 +191,7 @@ jobs:
       - name: Scan ${{ matrix.name }} image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ matrix.tag }}
+          image-ref: ${{ steps.img.outputs.ref }}
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
