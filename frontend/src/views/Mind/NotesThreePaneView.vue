@@ -650,7 +650,7 @@ function onListScroll() {
 .ntp-ref-chip svg { flex: none; color: var(--color-primary); }
 .ntp-ref-chip .label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ntp-ref-chip.wide { max-width: 100%; width: 100%; box-sizing: border-box; justify-content: flex-start; }
-.ref-list { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.ref-list { display: flex; flex-direction: column; align-items: stretch; gap: 1px; }
 
 /* ── 信息栏：与阅读窗格同一块玻璃，用内容色细分隔线分区 ── */
 .ntp-info {
