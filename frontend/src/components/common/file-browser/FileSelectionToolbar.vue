@@ -81,7 +81,6 @@ const { t } = useI18n()
 /* 浮动栏只有这一份实体 paint；Light / Dark 均由共享 popup/control/danger token 解析。
    position:absolute 由宿主的相对定位容器决定坐标系：文件页挂 files-page，项目编辑卡挂 modal-right。 */
 .file-selection-toolbar {
-  --file-selection-divider: color-mix(in srgb, var(--content-primary) 18%, transparent);
   position: absolute;
   left: 50%;
   bottom: 20px;
@@ -166,7 +165,7 @@ const { t } = useI18n()
   height: 18px;
   margin: 0 2px;
   flex-shrink: 0;
-  background: var(--file-selection-divider);
+  background: var(--popup-divider);
 }
 .file-selection-cancel {
   margin-left: 1px;

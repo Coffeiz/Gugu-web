@@ -182,7 +182,9 @@
   --popup-item-radius: var(--radius-xs);
   --popup-item-danger: var(--status-danger);
   --popup-item-danger-bg-hover: var(--status-danger-bg);
-  --popup-divider: var(--border-subtle);
+  /* 浮层内部内容分割线不能复用玻璃外框的 border-subtle；亮色玻璃主题的外框是白色半透明线，
+     放在浅色浮层内部会失去对比度。改由内容前景色派生，保持明暗主题下都有稳定可见度。 */
+  --popup-divider: color-mix(in srgb, var(--content-primary) 12%, transparent);
   --popup-enter-duration: var(--motion-hover-control);
   --popup-leave-duration: var(--motion-hover-micro);
   --popup-enter-easing: var(--motion-ease-enter);
