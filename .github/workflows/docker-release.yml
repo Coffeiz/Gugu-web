@@ -307,6 +307,9 @@ jobs:
           FRONTEND_DIGEST: ${{ steps.digests.outputs.hub_frontend }}
           APP_DIGEST: ${{ steps.digests.outputs.hub_app }}
           SANDBOX_DIGEST: ${{ steps.digests.outputs.hub_sandbox }}
+          # cosign 3.x 把 OCI 1.1 referrers 归在实验开关后面：不开会直接报
+          # invalid argument "oci-1-1"（v1.2.3 发布 2026-09-16 实测）
+          COSIGN_EXPERIMENTAL: '1'
         run: |
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${IMAGE_REPOSITORY}-backend@${{ steps.digests.outputs.ghcr_backend }}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_BACKEND_IMAGE_REPOSITORY}@${BACKEND_DIGEST}"
@@ -317,7 +320,10 @@ jobs:
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${SANDBOX_IMAGE_REPOSITORY}@${{ steps.digests.outputs.ghcr_sandbox }}"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "${DOCKERHUB_SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
 
+      # Overview 只是文档同步，失败不得连锁跳过后面的 manifest 与 GitHub Release
+      # （v1.1.3 发布时 Overview 403 连锁 skip 的事故）。
       - name: 同步 Docker Hub Overview
+        continue-on-error: true
         if: steps.version.outputs.is_stable == 'true'
         uses: peter-evans/dockerhub-description@v5
         with:
