@@ -280,7 +280,16 @@ export type RagRequest =
 
 export type RagHybridFuseResult = { chunk_id: string; score: number };
 
-export type RagSuccessResponse =
+type RagBuildResponseFields = {
+  /** 增量同步与冷加载的聚合诊断字段；仅部分构建操作返回。 */
+  applied_upserts?: number;
+  applied_deletes?: number;
+  fallback_full?: number;
+  probe?: RagIndexLoadProbe;
+  watermark?: { ts: string; id: number } | null;
+};
+
+export type RagSuccessResponse = (
   | { status: "ok"; version: string; revision: string | null }
   | { status: "ok"; version: string; revision: string; document_count: number; estimated_bytes: number; vector_count: number; vector_version: string }
   | { status: "ok"; version: string; revision: string; document_count: number; estimated_bytes: number; vector_count: number; vector_version: string; probe: RagIndexLoadProbe }
@@ -314,7 +323,8 @@ export type RagSuccessResponse =
       source_groups: Record<string, { candidate_count: number; hit_count: number }>;
       /** 仅阶段名、耗时与计数；不含查询或文档正文。 */
       probe?: RagUnifiedQueryProbe;
-    };
+    }
+) & RagBuildResponseFields;
 
 export type RagUnifiedQueryProbe = {
   stage_ms: Record<string, number>;
