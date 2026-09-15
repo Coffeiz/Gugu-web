@@ -493,6 +493,10 @@ function onListScroll() {
 .rp-body { font-size: 14px; margin-top: 14px; }
 .rp-divider ~ .rp-body-wrap .rp-body { margin-top: 0; }
 .rp-foot { flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
+/* 勾选框：mind-content 的 14px 是窄卡片口径，宽窗格预览侧浏览器默认渲染已是 16px，
+   编辑态按同值锁死，消除「编辑时 checkbox 变小」的观感差 */
+.rp-body-wrap :deep(.md-preview .np-tasks input[type="checkbox"]) { width: 16px; height: 16px; margin-top: 3px; }
+.rp-editor :deep(.ne-body ul[data-type="taskList"] input[type="checkbox"]) { width: 16px; height: 16px; margin-top: 3px; }
 
 /* 编辑态：排版与只读预览完全同口径——mind-content 基础 13px 是窄卡片口径，宽窗格
    两边一起抬到 14px；标题行与只读大标题同字号（ne-body h1 默认 15px 是卡片口径）；
