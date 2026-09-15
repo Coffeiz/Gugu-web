@@ -637,6 +637,12 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(archivedProjects).toContain('<FlipChevron :open="openMonths.has(yg.year + mg.month)" :size="8" />')
     expect(archivedProjects).not.toContain('.year-chev')
     expect(archivedProjects).not.toContain('.month-chev')
+    const archivedYearBody = cssBlock(archivedProjects, '.year-body {')
+    expect(archivedYearBody).toContain('padding: 0 0 0 var(--ap-year-content-indent)')
+    expect(archivedYearBody).not.toContain('border-left')
+    const archivedGuide = cssBlock(archivedProjects, '.year-body::before {')
+    expect(archivedGuide).toContain('left: var(--ap-year-chevron-center)')
+    expect(archivedGuide).toContain('background: var(--done-group-border)')
 
     expect(uploadModal).toContain('.toggle-chev, .year-chev, .month-chev')
     expect(uploadModal).toContain('transform:rotate(-90deg)')
