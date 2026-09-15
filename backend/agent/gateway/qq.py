@@ -1158,8 +1158,12 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
                 "unsupport_tips": "请回复选项序号或选项文字",
             },
         })
-    # 按估算宽度贪心切行：按钮平分一行宽度时中文标签会被客户端截断；
-    # 单条超宽标签独占一行也截不救，超出 5 行则放弃键盘走文本序号兜底。
+    return {"content": {"rows": [{"buttons": row} for row in _pack_button_rows(buttons)]}}
+
+
+def _pack_button_rows(buttons: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """按估算宽度贪心切行：按钮平分一行宽度时中文标签会被客户端截断；
+    单条超宽标签独占一行也截不救，超出 5 行则放弃键盘走文本兜底。"""
     rows: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     current_units = 0
@@ -1177,7 +1181,7 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             f"按钮宽度估算超出 QQ 键盘容量（最多 {KEYBOARD_MAX_ROWS} 行），转文本兜底"
         )
-    return {"content": {"rows": [{"buttons": row} for row in rows]}}
+    return rows
 
 
 async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str | None,
@@ -1216,6 +1220,58 @@ async def send_keyboard(target_id: str, text: str, prompt: dict[str, Any], *,
             return True
         except Exception as exc:
             diag_log("agent.gateway.qq.send_keyboard", exc)
+            _send_tokens.pop(channel_id, None)
+            if attempt == 2 or not _qq_is_transient(exc):
+                return False
+            await asyncio.sleep(0.5)
+    return False
+
+
+def _link_keyboard_wire_payload(buttons: list[dict[str, Any]]) -> dict[str, Any]:
+    """把已校验的链接按钮转成 QQ 官方跳转 Keyboard（action.type=0，PRD-LLM-24 §8.2）。
+
+    跳转按钮的 ``data`` 就是目标 URL 本身，不携带 ask_user 的 opaque token，
+    也不进入 interaction 事件解析；与回调按钮（type=1）协议隔离。
+    """
+    wire: list[dict[str, Any]] = []
+    for index, button in enumerate(buttons, start=1):
+        wire.append({
+            "id": f"gugu-link-{index}",
+            "render_data": {
+                "label": button["label"][:40],
+                "visited_label": button["label"][:40],
+                "style": 1,
+            },
+            "action": {
+                "type": 0,
+                "permission": {"type": 2},
+                "data": button["url"],
+                "unsupport_tips": "当前客户端不支持打开链接",
+            },
+        })
+    return {"content": {"rows": [{"buttons": row} for row in _pack_button_rows(wire)]}}
+
+
+async def send_link_keyboard(target_id: str, text: str, buttons: list[dict[str, Any]], *,
+                             channel_id: str, msg_id: str | None = None,
+                             group: bool = False) -> bool:
+    """发送带链接跳转 Keyboard 的 Markdown 消息；失败返回 False 由出站层文本降级。"""
+    target = "groups" if group else "users"
+    path = f"/v2/{target}/{target_id}/messages"
+    body = {
+        "msg_type": 2,
+        "markdown": {"content": text},
+        "keyboard": _link_keyboard_wire_payload(buttons),
+        "msg_seq": await _next_seq(msg_id),
+    }
+    if msg_id:
+        body["msg_id"] = msg_id
+    for attempt in (1, 2):
+        try:
+            await _qq_request(channel_id, "POST", path, json_body=body)
+            return True
+        except Exception as exc:
+            diag_log("agent.gateway.qq.send_link_keyboard", exc)
             _send_tokens.pop(channel_id, None)
             if attempt == 2 or not _qq_is_transient(exc):
                 return False

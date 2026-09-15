@@ -16,13 +16,18 @@ REPLY_CAPABILITY_IMAGE = "image"
 REPLY_CAPABILITY_REPLY = "reply"
 REPLY_CAPABILITY_KEYBOARD = "keyboard"
 REPLY_CAPABILITY_STREAM = "stream"
+REPLY_CAPABILITY_LINK_BUTTON = "link_button"
 
 _PLATFORM_REPLY_CAPABILITIES = {
+    # QQ 原生 Inline Keyboard 实际已在用（send_keyboard/_post_keyboard），
+    # 能力声明此前缺失导致键盘 part 被统一出站层误判为不支持（PRD-LLM-24 §8.2）。
     "qq": frozenset({
         REPLY_CAPABILITY_TEXT,
         REPLY_CAPABILITY_FILE,
         REPLY_CAPABILITY_IMAGE,
         REPLY_CAPABILITY_REPLY,
+        REPLY_CAPABILITY_KEYBOARD,
+        REPLY_CAPABILITY_LINK_BUTTON,
     }),
     "feishu": frozenset({
         REPLY_CAPABILITY_TEXT,
@@ -31,6 +36,7 @@ _PLATFORM_REPLY_CAPABILITIES = {
         REPLY_CAPABILITY_REPLY,
         REPLY_CAPABILITY_KEYBOARD,
         REPLY_CAPABILITY_STREAM,
+        REPLY_CAPABILITY_LINK_BUTTON,
     }),
     "wechat": frozenset({
         REPLY_CAPABILITY_TEXT,
@@ -61,7 +67,25 @@ _PART_CAPABILITIES = {
     "image": REPLY_CAPABILITY_IMAGE,
     "keyboard": REPLY_CAPABILITY_KEYBOARD,
     "stream": REPLY_CAPABILITY_STREAM,
+    "link_button": REPLY_CAPABILITY_LINK_BUTTON,
 }
+
+
+def link_button_part(message: str, buttons: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """平台无关的链接按钮 part（PRD-LLM-24）。
+
+    buttons 须已通过 ``agent.im.link_buttons`` 校验；这里只承载结构，
+    不拼任何平台 wire payload。渲染优先级：QQ Keyboard 跳转按钮 / 飞书
+    open_url 卡片 / Web 结构化按钮 / 微信与失败时的文本 URL 降级。
+    """
+    return {
+        "type": "link_button",
+        "message": message,
+        "buttons": [
+            {"id": str(b.get("id")), "label": str(b.get("label")), "url": str(b.get("url"))}
+            for b in buttons
+        ],
+    }
 
 
 def supported_reply_capabilities(platform: str) -> frozenset:
