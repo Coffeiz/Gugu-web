@@ -74,7 +74,8 @@
               <button class="ne-link-ok" @mousedown.prevent="confirmLink">{{ t('mindEditorUi.confirm') }}</button>
             </div>
           </div>
-          <button class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
+          <!-- expandDrawers（宽窗格常开）模式：抽屉已永久展开，开合按钮没有存在意义 -->
+          <button v-if="!expandDrawers" class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
                   @mousedown.prevent="toggleStylesMenu" :title="t('mindEditorUi.textStyle')">
             <PhTextAa :size="13" weight="bold" />
           </button>
@@ -94,7 +95,7 @@
               <PhQuotes :size="13" weight="bold" />
             </button>
           </div>
-          <button class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
+          <button v-if="!expandDrawers" class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
                   @mousedown.prevent="toggleInsertMenu" :title="t('mindEditorUi.insert')">
           <PhNoteBlank :size="13" weight="bold" />
           </button>

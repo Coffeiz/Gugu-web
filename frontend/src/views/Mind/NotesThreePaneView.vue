@@ -11,26 +11,35 @@
               <span>{{ dayLabel(group.date) }}</span>
               <span class="n">{{ t('mindThreePane.count', { count: group.items.length }) }}</span>
             </div>
-            <button
+            <div
               v-for="note in group.items"
               :key="note.id"
               class="ntp-item"
               :class="[note.color ? `tint-${note.color}` : '', { selected: note.id === selectedId }]"
+              role="button"
+              tabindex="0"
               @click="selectedId = note.id"
+              @keydown.enter.prevent="selectedId = note.id"
             >
               <div class="ni-head">
                 <span class="ni-time">{{ timeHM(note) }}</span>
                 <span v-if="titleOf(note)" class="ni-title">{{ titleOf(note) }}</span>
               </div>
               <div class="ni-preview" :class="{ 'no-title': !titleOf(note) }">{{ previewOf(note) }}</div>
-              <div v-if="note.color || taskCount(note)" class="ni-foot">
+              <div v-if="note.color || taskCount(note) || note.id === selectedId" class="ni-foot">
                 <span class="ni-dot" :class="note.color ?? 'none'"></span>
+                <!-- 颜色选择放卡片里（选中卡才出现）；ColorSwatches 自带 stop 不会触发卡片选中 -->
+                <ColorSwatches
+                  v-if="note.id === selectedId"
+                  :model-value="note.color"
+                  @update:model-value="c => onColor(note, c)"
+                />
                 <span v-if="taskCount(note)" class="ni-task">
                   <PhCheckSquare :size="13" weight="bold" />
                   {{ taskCount(note) }}
                 </span>
               </div>
-            </button>
+            </div>
           </template>
           <div v-if="!store.timeline.length" class="ntp-state">{{ t('mind.noRecords') }}</div>
           <div v-if="store.loadingMore" class="ntp-state">{{ t('common.status.loading') }}</div>
@@ -48,24 +57,9 @@
     <section class="ntp-detail" :class="{ empty: !selected }">
       <div ref="readingRef" class="ntp-reading" :class="{ editing }">
         <template v-if="selected">
-          <div class="rp-head">
-            <span class="rp-datetime">{{ fullTime(selected) }}</span>
-            <!-- 颜色选择：ColorSwatches 与便签卡同一组件；颜色不参与乐观锁冲突判定 -->
-            <ColorSwatches :model-value="selected.color" @update:model-value="onColor" />
-            <!-- 按钮统一走标准 ActionButton（action token），删除排在编辑右侧 -->
-            <div class="rp-actions">
-              <ActionButton v-if="!editing" variant="secondary" fit @click="startEdit">
-                <PhPencilSimple :size="14" weight="bold" />
-                {{ t('mindUi.edit') }}
-              </ActionButton>
-              <ActionButton v-if="!editing" variant="secondary" fit :title="t('mindUi.delete')" @click="onDelete">
-                <PhTrash :size="14" weight="bold" />
-              </ActionButton>
-            </div>
-          </div>
           <template v-if="!editing">
             <h1 v-if="selectedTitle" class="rp-title">{{ selectedTitle }}</h1>
-            <!-- 标题/正文之间的分割线；无标题且无引用时不画，避免和头部分割线贴脸 -->
+            <!-- 标题/正文之间的分割线；无标题且无引用时不画 -->
             <div v-if="selectedTitle || nodeRef" class="rp-meta">
               <button v-if="nodeRef" class="ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
                 <component :is="refIcon(nodeRef.type)" :size="14" weight="bold" />
@@ -74,10 +68,22 @@
             </div>
             <!-- 只读正文复用 NoteCard 同一套 mdToPreviewHtml + 全局 .md-preview 样式：
                  待办勾选、引用 chip、代码块、引用块的行为和主题适配免费拿到 -->
-            <article class="rp-body md-preview" @click="onBodyClick" v-html="previewHtml"></article>
+            <div class="rp-body-wrap">
+              <article class="rp-body md-preview" @click="onBodyClick" v-html="previewHtml"></article>
+            </div>
+            <!-- 底部操作区：与编辑态 Done/Cancel 同一位置 -->
+            <div class="rp-foot">
+              <ActionButton variant="secondary" fit @click="startEdit">
+                <PhPencilSimple :size="14" weight="bold" />
+                {{ t('mindUi.edit') }}
+              </ActionButton>
+              <ActionButton variant="secondary" fit :title="t('mindUi.delete')" @click="onDelete">
+                <PhTrash :size="14" weight="bold" />
+              </ActionButton>
+            </div>
           </template>
           <!-- 编辑态：整条 contentMd 进 NoteEditor（与卡片编辑同一台 TipTap），首行 # 即标题；
-               foot-actions 插槽挂完成/取消，宽窗格抽屉默认展开 -->
+               foot-actions 插槽挂完成/取消，宽窗格抽屉常开 -->
           <NoteEditor v-else v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
             <template #foot-actions>
               <ActionButton variant="primary" fit @click="finishEdit">
@@ -326,9 +332,7 @@ async function finishEdit() {
 watch(selectedId, () => { editing.value = false })
 
 // ── 颜色：只改 color 字段，不牵动 contentMd/version 冲突判定（与 NotesView.onColor 同口径）──
-async function onColor(color: string | null) {
-  const note = selected.value
-  if (!note) return
+async function onColor(note: MindNote, color: string | null) {
   if (note.id < 0) {
     store.notes = store.notes.map(n => n.id === note.id ? { ...n, color } : n)
     return
@@ -427,6 +431,7 @@ function onListScroll() {
   transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
 }
 .ntp-item:hover { transform: translateY(-1px); box-shadow: var(--elevation-card-hover); }
+.ntp-item:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .ntp-item.selected { border-color: color-mix(in srgb, var(--color-primary) 45%, transparent); }
 /* 便签四色 tint 消费主题 token（tokens/components/mind.css 定义亮暗两套值）——
    不能像 NoteCard 旧底稿那样硬编码浅色 rgb，暗色下会变成浅底配浅字不可读 */
@@ -473,14 +478,7 @@ function onListScroll() {
 /* 编辑态：窗格底部只留 12px，别让钉底的工具栏下面空一截 */
 .ntp-reading.editing { overflow: hidden; padding-bottom: 12px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
-/* 头部分割线在两种模式下都在（只读模式的引用 chip 行不再自带分割线） */
-.rp-head {
-  flex: none; display: flex; align-items: center; gap: 12px;
-  padding-bottom: 14px; margin-bottom: 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
-}
-.rp-datetime { font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
+.rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 2px 0 0; color: var(--text-primary); }
 /* 标题/正文之间的分割线：chip 行自带下边线；无标题且无引用时整行不渲染 */
 .rp-meta {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
@@ -488,17 +486,18 @@ function onListScroll() {
   border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 .rp-title + .rp-meta { margin-top: 10px; }
+/* 正文区自占剩余高度滚动，底部操作区（编辑/删除）钉在窗格底部，与编辑态 Done/Cancel 同位 */.rp-body-wrap { flex: 1; min-height: 0; overflow-y: auto; }
 .rp-body { font-size: 14px; margin-top: 14px; }
-.rp-meta + .rp-body { margin-top: 0; }
+.rp-meta + .rp-body-wrap .rp-body { margin-top: 0; }
+.rp-foot { flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
 
-/* 编辑/删除：标准 ActionButton，贴头部最右侧 */
-.rp-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
-
-/* 编辑态：标题行与只读大标题同字号（ne-body h1 默认 15px 是卡片口径）；小节标题对齐
-   只读视图的 15px；工具栏图标比卡片编辑态大一档（阅读窗格宽、密度低）；
+/* 编辑态：排版与只读预览完全同口径——mind-content 基础 13px 是窄卡片口径，宽窗格
+   两边一起抬到 14px；标题行与只读大标题同字号（ne-body h1 默认 15px 是卡片口径）；
+   小节标题对齐只读视图的 15px；工具栏图标比卡片编辑态大一档（阅读窗格宽、密度低）；
    工具栏/完成取消钉底，底部只留 12px 呼吸空间 */
 .rp-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .rp-editor :deep(.ne-body) { flex: 1; min-height: 0; overflow-y: auto; }
+.rp-editor :deep(.ProseMirror) { font-size: 14px; }
 .rp-editor :deep(.ProseMirror h1) { font-size: 23px; line-height: 1.35; margin: 2px 0 6px; }
 .rp-editor :deep(.ProseMirror h2),
 .rp-editor :deep(.ProseMirror h3) { font-size: 15px; font-weight: 700; }
