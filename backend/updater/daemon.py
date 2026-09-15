@@ -51,6 +51,20 @@ STAGE_BY_LINE = (
 MIN_FREE_BYTES = 3 * 1024**3
 CHALLENGE_TTL_SECONDS = 600
 UPDATE_PROCESS_TIMEOUT_SECONDS = 90 * 60
+# 发布签名校验（供应链真实性）：更新前用固定 digest 的官方 Cosign verifier 校验
+# 目标镜像签名，identity 锚定 tag 触发的 docker-release.yml 发布工作流。
+# verifier 与被验镜像都按 digest 引用，两边都不可漂移；升级 verifier 必须
+# 显式修改这里的 digest（digest 对应 ghcr.io/sigstore/cosign/cosign:v3.1.3）。
+COSIGN_VERIFIER_IMAGE = (
+    "ghcr.io/sigstore/cosign/cosign@sha256:"
+    "9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8"
+)
+COSIGN_IDENTITY_REGEXP = (
+    r"^https://github\.com/Coffeiz/Gugu-web/\.github/workflows/docker-release\.yml@refs/tags/v.*$"
+)
+COSIGN_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+COSIGN_VERIFY_TIMEOUT_SECONDS = 300
+COSIGN_CACHE_DIRNAME = "sigstore-cache"
 logger = logging.getLogger("gugu.updater")
 
 
@@ -73,6 +87,16 @@ def _safe_image(value: str) -> bool:
 def self_update_enabled() -> bool:
     """一体化部署的自更新开关：GUGU_SELF_UPDATE=off 显式关闭（PRD-ADMIN-2 §1.1）。"""
     return os.getenv("GUGU_SELF_UPDATE", "on").strip().lower() not in {"off", "0", "false", "no"}
+
+
+def signature_verification_enabled() -> bool:
+    """发布签名验证的 break-glass 开关。
+
+    只认容器启动 env（GUGU_UPDATER_SKIP_COSIGN=on），Admin API、manifest 和
+    Agent 都改不到它；关闭后 preflight 显示「已禁用」且 history 记录 skipped，
+    灾难恢复用，不是常规配置。
+    """
+    return os.getenv("GUGU_UPDATER_SKIP_COSIGN", "off").strip().lower() not in {"on", "1", "true", "yes"}
 
 
 class SafeRedirectHandler(HTTPRedirectHandler):
@@ -411,6 +435,67 @@ class UpdateDaemon:
             result["challenge_expires_at"] = datetime.fromtimestamp(challenge["expires_at"], timezone.utc).isoformat()
         return result
 
+    def _cosign_command(self, image: str, cache_dir: Path) -> list[str]:
+        """构造 verifier 命令；独立成纯方法便于测试断言参数形状。
+
+        verify 子命令没有 referrers 模式开关（v3.1.3 实测：flag 仅 sign 有、
+        COSIGN_REGISTRY_REFERRERS_MODE 环境变量不存在），自动探测 referrers API
+        并在不支持时回落 legacy tag；发布端已用 --registry-referrers-mode=oci-1-1
+        钉死签名形态，验证端按 digest 查询即可命中 referrers artifact。
+        """
+        return [
+            "docker", "run", "--rm",
+            "-v", f"{cache_dir}:/root/.sigstore",
+            COSIGN_VERIFIER_IMAGE,
+            "verify",
+            "--certificate-identity-regexp", COSIGN_IDENTITY_REGEXP,
+            "--certificate-oidc-issuer", COSIGN_OIDC_ISSUER,
+            image,
+        ]
+
+    async def _cosign_run(self, command: list[str]) -> tuple[int | None, str]:
+        """运行 verifier 并返回 (returncode, stderr)；不把 stderr 写入可见日志。"""
+        process = await asyncio.create_subprocess_exec(
+            *command, cwd=self.project_dir, env=os.environ.copy(),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=COSIGN_VERIFY_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            return None, "timeout"
+        return process.returncode, stderr.decode("utf-8", errors="replace")
+
+    async def _verify_signature(self, image: str) -> dict[str, Any]:
+        """校验目标镜像的发布签名；fail-closed，任何失败都不得放行更新。
+
+        真实性锚点 = tag 触发的 docker-release.yml 的 GitHub OIDC 身份；
+        cosign 自行校验签名 payload 绑定的 digest 与被验镜像一致，无 TOCTOU 窗口。
+        """
+        if not signature_verification_enabled():
+            return {"ok": True, "skipped": True, "detail": "发布签名验证已被管理员禁用（GUGU_UPDATER_SKIP_COSIGN=on）"}
+        cache_dir = self.state_dir / COSIGN_CACHE_DIRNAME
+        cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            returncode, stderr = await self._cosign_run(self._cosign_command(image, cache_dir))
+        except (OSError, RuntimeError) as exc:
+            logger.info("cosign verify launcher failed error_type=%s", type(exc).__name__)
+            return {"ok": False, "skipped": False, "detail": "签名校验器无法启动，已阻断更新"}
+        if returncode == 0:
+            return {"ok": True, "skipped": False, "detail": "发布签名校验通过（GitHub Actions 发布身份）"}
+        if returncode is None:
+            return {"ok": False, "skipped": False, "detail": "签名校验超时，已阻断更新"}
+        lowered = stderr.lower()
+        if "no signatures found" in lowered or "signature not found" in lowered:
+            return {"ok": False, "skipped": False, "detail": "目标镜像没有发布签名，已阻断更新"}
+        if "none of the expected identities" in lowered or "no matching" in lowered:
+            return {"ok": False, "skipped": False, "detail": "签名身份与官方发布工作流不符，已阻断更新"}
+        logger.info("cosign verify failed rc=%s", returncode)
+        return {"ok": False, "skipped": False, "detail": "签名校验未通过，已阻断更新"}
+
     async def _preflight_checks(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
 
@@ -482,7 +567,11 @@ class UpdateDaemon:
             add("disk", False, "无法检查部署目录磁盘空间")
 
         add("architecture", platform in candidate.get("architectures", []), "镜像架构与宿主机匹配" if platform in candidate.get("architectures", []) else "发布镜像不包含宿主机架构")
-        add("signature", True, "manifest 摘要与一体化镜像 digest 白名单均已校验")
+        # integrity = 运输完整性（manifest 摘要 TOCTOU + namespace/digest 格式）；
+        # signature = 真实性（Cosign 验发布工作流身份），失败即 fail-closed。
+        add("integrity", True, "manifest 摘要校验与镜像 namespace/digest 格式校验通过")
+        signature = await self._verify_signature(str(candidate.get("app_image") or ""))
+        add("signature", signature["ok"], signature["detail"])
         current = self.state.get("current") or {}
         current_version = str(current.get("version") or "unknown")
         minimum_version = str(candidate.get("minimum_version") or "")
@@ -546,6 +635,7 @@ class UpdateDaemon:
             "previous_sandboxd_image": sandboxd_image if sandboxd_running else None,
             "sandboxd_was_running": sandboxd_running,
             "sandboxd_updated": sandboxd_tracks_app,
+            "signature_verification": "skipped" if not signature_verification_enabled() else "verified",
             "events": [{"stage": "pending", "at": _utc_now()}],
             "rollback_supported": bool(candidate.get("rollback_supported")),
         }

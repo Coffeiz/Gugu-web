@@ -111,6 +111,11 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_compose_text", compose_text)
     monkeypatch.setattr(daemon, "_docker_json", docker_json)
 
+    async def signature_ok(_image):
+        return {"ok": True, "skipped": False, "detail": "发布签名校验通过"}
+
+    monkeypatch.setattr(daemon, "_verify_signature", signature_ok)
+
     socket_path = daemon.project_dir / "docker.sock"
     socket_path.write_bytes(b"")
     monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
@@ -380,3 +385,138 @@ def test_agent_tool_registry_has_no_update_capability():
     pattern = re.compile(r"(self_)?update_(docker|system|deployment|version|image)|^(docker|updater|deploy)($|_)", re.IGNORECASE)
     offenders = sorted(name for name in tool_names if pattern.search(name))
     assert offenders == [], f"Agent 工具注册表不得出现部署自更新能力：{offenders}"
+
+
+# ── 发布签名校验（供应链真实性）───────────────────────────────────────────────
+
+from updater.daemon import (
+    COSIGN_IDENTITY_REGEXP,
+    COSIGN_OIDC_ISSUER,
+    COSIGN_VERIFIER_IMAGE,
+    signature_verification_enabled,
+)
+
+
+def test_cosign_verifier_image_is_digest_pinned():
+    """verifier 必须按 digest 引用，防止 latest 漂移绕过固定校验器。"""
+    assert re.fullmatch(r"ghcr\.io/sigstore/cosign/cosign@sha256:[0-9a-f]{64}", COSIGN_VERIFIER_IMAGE)
+
+
+def test_cosign_command_pins_identity_issuer_and_referrers_mode(tmp_path, monkeypatch):
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+    image = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
+    argv = daemon._cosign_command(image, tmp_path / "cache")
+
+    assert argv[:3] == ["docker", "run", "--rm"]
+    # v3.1.3 的 verify 无 referrers 模式开关（自动探测），不得传入会被拒绝的 flag
+    assert "--registry-referrers-mode" not in argv
+    assert COSIGN_VERIFIER_IMAGE in argv
+    assert argv[argv.index("verify") - 1] == COSIGN_VERIFIER_IMAGE
+    assert argv[argv.index("--certificate-identity-regexp") + 1] == COSIGN_IDENTITY_REGEXP
+    assert argv[argv.index("--certificate-oidc-issuer") + 1] == COSIGN_OIDC_ISSUER
+    assert argv[-1] == image
+    # identity 只认 tag 触发的官方发布工作流
+    assert "docker-release" in COSIGN_IDENTITY_REGEXP and "refs/tags" in COSIGN_IDENTITY_REGEXP
+    # sigstore trusted root 缓存落在 updater state 目录（持久卷）内
+    assert any("/root/.sigstore" in part for part in argv)
+
+
+@pytest.mark.asyncio
+async def test_verify_signature_fail_closed_paths(tmp_path, monkeypatch):
+    """无签名/身份不符/超时/启动失败一律 ok=False，只有 rc=0 放行。"""
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+
+    async def run(rc, stderr):
+        return rc, stderr
+
+    cases = [
+        (0, "", True),
+        (1, "error: no signatures found", False),
+        (1, "none of the expected identities were matched", False),
+        (None, "timeout", False),
+    ]
+    for rc, stderr, expected_ok in cases:
+        async def fake_run(_command, _rc=rc, _stderr=stderr):
+            return _rc, _stderr
+
+        monkeypatch.setattr(daemon, "_cosign_run", fake_run)
+        result = await daemon._verify_signature("docker.io/coffeiz/gugu-web@sha256:" + "b" * 64)
+        assert result["ok"] is expected_ok, (rc, stderr, result)
+        assert result["skipped"] is False
+
+    async def broken_run(_command):
+        raise FileNotFoundError("docker missing")
+
+    monkeypatch.setattr(daemon, "_cosign_run", broken_run)
+    result = await daemon._verify_signature("docker.io/coffeiz/gugu-web@sha256:" + "b" * 64)
+    assert result["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_signature_skip_is_break_glass_only(tmp_path, monkeypatch):
+    """skip 开关打开时验签放行但标记 skipped，且不启动 verifier。"""
+    monkeypatch.setenv("GUGU_UPDATER_SKIP_COSIGN", "on")
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+
+    async def must_not_run(_command):
+        raise AssertionError("skip 模式下不得启动 verifier")
+
+    monkeypatch.setattr(daemon, "_cosign_run", must_not_run)
+    result = await daemon._verify_signature("docker.io/coffeiz/gugu-web@sha256:" + "c" * 64)
+    assert result == {"ok": True, "skipped": True, "detail": result["detail"]}
+    assert "禁用" in result["detail"]
+    assert signature_verification_enabled() is False
+
+    monkeypatch.delenv("GUGU_UPDATER_SKIP_COSIGN")
+    assert signature_verification_enabled() is True
+
+
+@pytest.mark.asyncio
+async def test_failing_signature_blocks_update_start(tmp_path, monkeypatch):
+    """fail-closed 端到端：验签失败 → preflight 不 ready → 不产生 challenge/token。"""
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+    (daemon.project_dir / "backend").mkdir()
+    (daemon.project_dir / "backend" / ".env").write_text("ADMIN_PASSWORD=test-only-value\n", encoding="utf-8")
+    daemon.state["current"] = {"version": "v1.2.2", "image": "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64}
+    daemon.state["candidate"] = {
+        "version": "v1.2.3", "channel": "stable", "minimum_version": "v1.2.2",
+        "app_image": "docker.io/coffeiz/gugu-web@sha256:" + "d" * 64,
+        "manifest_sha256": "e" * 64, "architectures": ["linux/amd64"],
+    }
+
+    async def command(_args, *, timeout, env=None):
+        return b"x86_64"
+
+    async def compose(_args):
+        return {"services": {"app": {}, "postgres": {}, "redis": {}}}
+
+    async def compose_text(args, *, env=None, timeout=30):
+        if args[:2] == ["ps", "-q"] and args[-1] == "app":
+            return "app-container\n"
+        return "ok"
+
+    async def docker_json(args, *, timeout=30):
+        if args[:1] == ["inspect"]:
+            return [{"Mounts": [{"Destination": "/data", "RW": True}, {"Destination": "/config", "RW": True}]}]
+        return []
+
+    monkeypatch.setattr(daemon, "_command", command)
+    monkeypatch.setattr(daemon, "_compose", compose)
+    monkeypatch.setattr(daemon, "_compose_text", compose_text)
+    monkeypatch.setattr(daemon, "_docker_json", docker_json)
+    monkeypatch.setattr("updater.daemon.shutil.disk_usage", lambda _path: SimpleNamespace(free=5 * 1024**3))
+
+    async def signature_fail(_image):
+        return {"ok": False, "skipped": False, "detail": "目标镜像没有发布签名，已阻断更新"}
+
+    monkeypatch.setattr(daemon, "_verify_signature", signature_fail)
+    socket_path = daemon.project_dir / "docker.sock"
+    socket_path.write_bytes(b"")
+    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
+
+    result = await daemon._preflight({"operator": "admin-test"})
+    assert result["ready"] is False
+    by_key = {item["key"]: item for item in result["checks"]}
+    assert by_key["signature"]["ok"] is False
+    assert by_key["integrity"]["ok"] is True
+    assert "challenge" not in result
