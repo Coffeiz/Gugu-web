@@ -38,33 +38,35 @@
       </div>
       <!-- 新建：进编辑态的空草稿。本地样例模式造负 id 草稿不落库；真实模式走 createNote，
            取消（未写内容）则把刚建的空便签删掉，不留垃圾行 -->
-      <button class="ntp-new" @click="createNew">
+      <ActionButton variant="secondary" fit class="ntp-new" @click="createNew">
         <PhPlus :size="14" weight="bold" />
         {{ t('mindThreePane.new') }}
-      </button>
+      </ActionButton>
     </section>
 
     <!-- 栏 2+3：阅读窗格与信息栏合并为同一块玻璃面板，中间只用内容色细分隔线 -->
     <section class="ntp-detail" :class="{ empty: !selected }">
-      <div class="ntp-reading" :class="{ editing }">
+      <div ref="readingRef" class="ntp-reading" :class="{ editing }">
         <template v-if="selected">
           <div class="rp-head">
             <span class="rp-datetime">{{ fullTime(selected) }}</span>
             <!-- 颜色选择：ColorSwatches 与便签卡同一组件；颜色不参与乐观锁冲突判定 -->
             <ColorSwatches :model-value="selected.color" @update:model-value="onColor" />
+            <!-- 按钮统一走标准 ActionButton（action token），删除排在编辑右侧 -->
             <div class="rp-actions">
-              <button v-if="!editing" class="rp-icon-btn" :title="t('mindUi.delete')" @click="onDelete">
-                <PhTrash :size="15" weight="bold" />
-              </button>
-              <button v-if="!editing" class="rp-edit-btn" @click="startEdit">
-                <PhPencilSimple :size="15" weight="bold" />
+              <ActionButton v-if="!editing" variant="secondary" fit @click="startEdit">
+                <PhPencilSimple :size="14" weight="bold" />
                 {{ t('mindUi.edit') }}
-              </button>
+              </ActionButton>
+              <ActionButton v-if="!editing" variant="secondary" fit :title="t('mindUi.delete')" @click="onDelete">
+                <PhTrash :size="14" weight="bold" />
+              </ActionButton>
             </div>
           </div>
           <template v-if="!editing">
             <h1 v-if="selectedTitle" class="rp-title">{{ selectedTitle }}</h1>
-            <div v-if="nodeRef" class="rp-meta">
+            <!-- 标题/正文之间的分割线；无标题且无引用时不画，避免和头部分割线贴脸 -->
+            <div v-if="selectedTitle || nodeRef" class="rp-meta">
               <button v-if="nodeRef" class="ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
                 <component :is="refIcon(nodeRef.type)" :size="14" weight="bold" />
                 <span class="label">{{ nodeRef.label }}</span>
@@ -75,13 +77,13 @@
             <article class="rp-body md-preview" @click="onBodyClick" v-html="previewHtml"></article>
           </template>
           <!-- 编辑态：整条 contentMd 进 NoteEditor（与卡片编辑同一台 TipTap），首行 # 即标题；
-               foot-actions 插槽挂完成/取消，与 NoteCard 的完成按钮同一插槽口径 -->
-          <NoteEditor v-else v-model="editMd" :autofocus="true" class="rp-editor" @submit="finishEdit">
+               foot-actions 插槽挂完成/取消，宽窗格抽屉默认展开 -->
+          <NoteEditor v-else v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
             <template #foot-actions>
-              <button class="rp-done-btn" @click="finishEdit">
+              <ActionButton variant="primary" fit @click="finishEdit">
                 <PhCheck :size="14" weight="bold" /> {{ t('mindUi.editDone') }}
-              </button>
-              <button class="rp-cancel-btn" @click="cancelEdit">{{ t('common.actions.cancel') }}</button>
+              </ActionButton>
+              <ActionButton variant="secondary" fit @click="cancelEdit">{{ t('common.actions.cancel') }}</ActionButton>
             </template>
           </NoteEditor>
         </template>
@@ -123,6 +125,7 @@ import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { MindNote } from '@/services/api'
 import NoteEditor from './components/NoteEditor.vue'
 import ColorSwatches from './components/ColorSwatches.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 
 const store = useMindStore()
 const projectStore = useProjectStore()
@@ -234,11 +237,24 @@ async function onSave(note: MindNote, md: string) {
 // ── 阅读窗格编辑态：整条 contentMd 进 NoteEditor（与卡片编辑同一台 TipTap）──
 const editing = ref(false)
 const editMd = ref('')
+const readingRef = ref<HTMLElement | null>(null)
 
-function startEdit() {
+/** 进编辑态后把窗格和页面级滚动都归零：TipTap autofocus 的 scrollIntoView 会把
+ *  overflow:hidden 窗格的滚动意图转嫁给 .page-content 祖先，表现为整页上跳、顶部区域变窄 */
+function settleReadingScroll() {
+  const el = readingRef.value
+  if (!el) return
+  el.scrollTop = 0
+  el.closest<HTMLElement>('.page-content')?.scrollTo({ top: 0 })
+}
+
+async function startEdit() {
   if (!selected.value) return
   editMd.value = selected.value.contentMd
   editing.value = true
+  await nextTick()
+  await new Promise(resolve => requestAnimationFrame(resolve))
+  settleReadingScroll()
 }
 function cancelEdit() {
   const note = selected.value
@@ -286,8 +302,7 @@ async function createNew() {
 async function selectAndEdit(id: number) {
   selectedId.value = id
   await nextTick()
-  editMd.value = selected.value?.contentMd ?? ''
-  editing.value = true
+  await startEdit()
 }
 
 async function finishEdit() {
@@ -440,17 +455,8 @@ function onListScroll() {
 .ni-dot.teal  { background: #53d2dc; }
 .ni-task { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); }
 
-/* 新建笔记：列表底部整宽胶囊，玻璃实底 + 主色文字 */
-.ntp-new {
-  flex: none; display: flex; align-items: center; justify-content: center; gap: 6px;
-  height: 44px; margin-top: 10px; box-sizing: border-box;
-  background: var(--surface-card-solid); border: 1px solid var(--glass-border);
-  border-radius: 999px; box-shadow: var(--elevation-card);
-  font-size: 13.5px; font-weight: 600; color: var(--color-primary);
-  cursor: pointer; font-family: inherit;
-  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
-}
-.ntp-new:hover { transform: translateY(-1px); box-shadow: var(--elevation-card-hover); }
+/* 新建笔记：列表底部整宽胶囊，标准 ActionButton 只接管几何宽度 */
+.ntp-new { width: 100%; flex: none; margin-top: 10px; }
 
 /* ── 栏 2+3：阅读 + 信息同一块玻璃 ── */
 .ntp-detail {
@@ -464,8 +470,8 @@ function onListScroll() {
 }
 .ntp-detail.empty { grid-template-columns: minmax(0, 1fr); }
 .ntp-reading { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 32px; }
-/* 编辑态：编辑器撑满窗格并内部滚动，工具栏和完成/取消按钮钉在窗格底部 */
-.ntp-reading.editing { overflow: hidden; }
+/* 编辑态：窗格底部只留 12px，别让钉底的工具栏下面空一截 */
+.ntp-reading.editing { overflow: hidden; padding-bottom: 12px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
 /* 头部分割线在两种模式下都在（只读模式的引用 chip 行不再自带分割线） */
 .rp-head {
@@ -475,32 +481,22 @@ function onListScroll() {
 }
 .rp-datetime { font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
-.rp-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+/* 标题/正文之间的分割线：chip 行自带下边线；无标题且无引用时整行不渲染 */
+.rp-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding-bottom: 12px; margin: 12px 0 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
 .rp-title + .rp-meta { margin-top: 10px; }
 .rp-body { font-size: 14px; margin-top: 14px; }
+.rp-meta + .rp-body { margin-top: 0; }
 
-/* 编辑/删除按钮：贴头部最右侧，34px 大点击区 */
+/* 编辑/删除：标准 ActionButton，贴头部最右侧 */
 .rp-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
-.rp-edit-btn {
-  display: inline-flex; align-items: center; gap: 7px;
-  height: 34px; padding: 0 18px; border-radius: 999px; font-size: 13px;
-  color: var(--color-primary); border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
-  background: transparent; cursor: pointer; font-family: inherit; transition: background 0.15s;
-}
-.rp-edit-btn:hover { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
-.rp-icon-btn {
-  display: grid; place-items: center; width: 34px; height: 34px;
-  border-radius: 999px; color: var(--text-secondary);
-  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
-  background: transparent; cursor: pointer; transition: all 0.15s;
-}
-.rp-icon-btn:hover {
-  color: var(--theme-danger, var(--status-danger, #b98186));
-  border-color: color-mix(in srgb, var(--theme-danger, var(--status-danger, #b98186)) 45%, transparent);
-}
 
 /* 编辑态：标题行与只读大标题同字号（ne-body h1 默认 15px 是卡片口径）；小节标题对齐
-   只读视图的 15px；工具栏图标比卡片编辑态大一档（阅读窗格宽、密度低） */
+   只读视图的 15px；工具栏图标比卡片编辑态大一档（阅读窗格宽、密度低）；
+   工具栏/完成取消钉底，底部只留 12px 呼吸空间 */
 .rp-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .rp-editor :deep(.ne-body) { flex: 1; min-height: 0; overflow-y: auto; }
 .rp-editor :deep(.ProseMirror h1) { font-size: 23px; line-height: 1.35; margin: 2px 0 6px; }
@@ -510,19 +506,7 @@ function onListScroll() {
 .rp-editor :deep(.ne-style-item svg) { width: 16px; height: 16px; }
 .rp-editor :deep(.ne-tool),
 .rp-editor :deep(.ne-style-item) { width: 30px; height: 30px; }
-.rp-done-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 7px 18px; border-radius: 999px; font-size: 13px; font-weight: 600;
-  color: var(--content-on-accent); background: var(--color-primary); border: none; cursor: pointer; font-family: inherit;
-}
-.rp-done-btn:hover { background: var(--action-primary-hover); }
-.rp-cancel-btn {
-  display: inline-flex; align-items: center;
-  padding: 7px 16px; border-radius: 999px; font-size: 13px;
-  color: var(--text-secondary); border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
-  background: transparent; cursor: pointer; font-family: inherit;
-}
-.rp-cancel-btn:hover { color: var(--text-primary); }
+.rp-editor :deep(.ne-toolbar-actions) { display: inline-flex; align-items: center; gap: 8px; }
 
 /* 引用 chip（便签本体单引用）：对齐气泡 @ chip 契约——图标不压扁 + label 不换行 */
 .ntp-ref-chip {
