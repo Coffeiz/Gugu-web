@@ -92,7 +92,7 @@
             </div>
             <!-- 底部操作区：与编辑态 Done/Cancel 同一位置；删除带文字，四个按钮统一形态 -->
             <div class="rp-foot">
-              <ActionButton variant="secondary" fit @click="startEdit">
+              <ActionButton variant="secondary" fit @click="startEdit()">
                 <PhPencilSimple :size="14" weight="bold" />
                 {{ t('mindUi.edit') }}
               </ActionButton>
@@ -113,7 +113,7 @@
               :placeholder="t('mind.titleOptional')"
               @keydown.enter.prevent
             >
-            <NoteEditor v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
+            <NoteEditor ref="noteEditorRef" v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
               <template #foot-actions>
                 <ActionButton variant="primary" fit @click="finishEdit">
                   <PhCheck :size="14" weight="bold" /> {{ t('mindUi.editDone') }}
@@ -268,8 +268,9 @@ const REF_ICONS: Record<string, typeof PhStack> = { project: PhStack, file: PhFi
 function refIcon(type: string) { return REF_ICONS[type] ?? PhCalendarBlank }
 function openNodeRef(ref: NtpNodeRef) { void openMindRef(ref.type, ref.id) }
 
-// 正文点击：待办勾选走与卡片同一条乐观锁保存路径；引用 chip 打开对应对象。
-// （编辑态入口暂缺：三栏板式的编辑模型是后续要定的独立问题，先只读验证布局。）
+// 正文点击：待办勾选走与卡片同一条乐观锁保存路径；引用 chip 打开对应对象；
+// 其余位置直接进编辑，光标落在被点的那个块（data-line-unit 与编辑器叶块同序，复用
+// NoteCard 同一套契约），没有序号（正文外空白）就随 NoteEditor autofocus 落文档末尾。
 function onBodyClick(e: MouseEvent) {
   const target = e.target as HTMLElement
   const note = selected.value
@@ -286,7 +287,14 @@ function onBodyClick(e: MouseEvent) {
     const refType = refEl.dataset.refType
     const refId = Number(refEl.dataset.refId)
     if (refType && Number.isFinite(refId)) void openMindRef(refType, refId)
+    return
   }
+  if (target.closest('a')) return
+  // 拖选文字松手时 click 仍会触发：有非空选区说明在复制文字，别拽进编辑态
+  const sel = window.getSelection()
+  if (sel && !sel.isCollapsed && sel.toString().length > 0) return
+  const lineEl = target.closest<HTMLElement>('[data-line-unit]')
+  void startEdit(lineEl ? Number(lineEl.dataset.lineUnit) : null)
 }
 
 async function onSave(note: MindNote, md: string) {
@@ -307,6 +315,7 @@ const editing = ref(false)
 const editTitle = ref('')
 const editMd = ref('')
 const titleInputRef = ref<HTMLInputElement | null>(null)
+const noteEditorRef = ref<{ focusAtLineUnit: (unit: number) => void } | null>(null)
 const readingRef = ref<HTMLElement | null>(null)
 
 /** 进编辑态后把窗格和页面级滚动都归零：TipTap autofocus 的 scrollIntoView 会把
@@ -318,7 +327,7 @@ function settleReadingScroll() {
   el.closest<HTMLElement>('.page-content')?.scrollTo({ top: 0 })
 }
 
-async function startEdit() {
+async function startEdit(lineUnit: number | null = null) {
   if (!selected.value) return
   const parts = splitMindTitleBody(selected.value.contentMd)
   editTitle.value = parts.titleRaw
@@ -327,21 +336,26 @@ async function startEdit() {
   await nextTick()
   await new Promise(resolve => requestAnimationFrame(resolve))
   settleReadingScroll()
-  // 无标题便签：光标直接落标题位，引导先写标题
-  if (!editTitle.value) titleInputRef.value?.focus()
+  // 从正文点进来的：光标落到被点的块（NoteEditor 的 focusAtLineUnit 会顺带重算补全下拉）；
+  // 工具栏入口且无标题便签：光标落标题位，引导先写标题
+  if (lineUnit != null) noteEditorRef.value?.focusAtLineUnit(lineUnit)
+  else if (!editTitle.value) titleInputRef.value?.focus()
 }
 function cancelEdit() {
   const note = selected.value
   const hadContent = !!combineTitleBody(editTitle.value.trim(), editMd.value).trim()
   editing.value = false
   // 新建后取消且没写任何内容：把空草稿删掉，不留垃圾行（负 id 只删内存，真实 id 走软删）
-  if (note && pendingNewId.value === note.id && !hadContent) {
-    pendingNewId.value = null
-    if (note.id < 0) {
-      store.notes = store.notes.filter(n => n.id !== note.id)
-    } else {
-      void store.deleteNote(note.id).catch(() => showAppError(t('mind.deleteFailed')))
-    }
+  if (note && pendingNewId.value === note.id && !hadContent) removeEmptyDraft(note)
+}
+
+/** 删掉「刚建、还没写内容」的草稿：负 id 只删内存，真实 id 走软删 */
+function removeEmptyDraft(note: MindNote) {
+  pendingNewId.value = null
+  if (note.id < 0) {
+    store.notes = store.notes.filter(n => n.id !== note.id)
+  } else {
+    void store.deleteNote(note.id).catch(() => showAppError(t('mind.deleteFailed')))
   }
 }
 // ── 新建：建一条空草稿并直接进编辑态 ──
@@ -349,7 +363,8 @@ function cancelEdit() {
 const pendingNewId = ref<number | null>(null)
 
 async function createNew() {
-  if (editing.value) return
+  // 正在编辑别的便签：退出即保存，先收掉再建新草稿
+  if (editing.value) await finishEdit()
   if (store.notes.some(n => n.id < 0)) {
     // 本地样例模式：造负 id 草稿，只进内存
     const now = new Date().toISOString()
@@ -382,10 +397,19 @@ async function selectAndEdit(id: number) {
 async function finishEdit() {
   const note = selected.value
   editing.value = false
-  pendingNewId.value = null
   if (!note) return
-  // 标题输入位 + 正文拼回单串 contentMd（无标题时只存正文，不产生假 `#` 行）
+  await applyEdit(note)
+  if (pendingNewId.value === note.id) pendingNewId.value = null
+}
+
+/** 把还在编辑态的标题+正文拼回 contentMd 落库/落内存；刚建的空草稿则直接删掉不留垃圾行。
+ *  完成按钮和「切走即保存」共用这一条收尾路径，语义保持一致 */
+async function applyEdit(note: MindNote) {
   const md = combineTitleBody(editTitle.value.trim(), editMd.value)
+  if (pendingNewId.value === note.id && !md.trim()) {
+    removeEmptyDraft(note)
+    return
+  }
   if (md === note.contentMd) return
   if (note.id < 0) {
     // 样例数据（负 id）只改内存态，绝不落库
@@ -397,8 +421,17 @@ async function finishEdit() {
   await onSave(note, md)
 }
 
-// 切换选中便签即退出编辑——三栏式里左侧列表始终可见，点别的条目语义明确是"看那条"
-watch(selectedId, () => { editing.value = false })
+// 切换选中便签即退出编辑；除显式「取消」外所有退出路径默认保存。此时 selected 已指向
+// 新条目，按 oldId 从 notes 里找回被切走的那条再收尾；先把 editing 置 false，让新条目
+// 以阅读态渲染、保存请求在后台走完
+watch(selectedId, async (_newId, oldId) => {
+  if (!editing.value) return
+  editing.value = false
+  const prev = oldId == null ? null : store.notes.find(n => n.id === oldId) ?? null
+  if (!prev) return
+  await applyEdit(prev)
+  if (pendingNewId.value === prev.id) pendingNewId.value = null
+})
 
 // ── 颜色：卡片上的颜色球，点击弹出选择（含默认纸色），选完球即新色 ──
 // 颜色只改 color 字段，不牵动 contentMd/version 冲突判定（与 NotesView.onColor 同口径）
@@ -650,7 +683,7 @@ function onListScroll() {
 .ntp-ref-chip svg { flex: none; color: var(--color-primary); }
 .ntp-ref-chip .label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ntp-ref-chip.wide { max-width: 100%; width: 100%; box-sizing: border-box; justify-content: flex-start; }
-.ref-list { display: flex; flex-direction: column; align-items: stretch; gap: 1px; }
+.ref-list { display: flex; flex-direction: column; align-items: stretch; gap: 5px; }
 
 /* ── 信息栏：与阅读窗格同一块玻璃，用内容色细分隔线分区 ── */
 .ntp-info {

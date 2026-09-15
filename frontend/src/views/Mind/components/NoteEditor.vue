@@ -433,7 +433,9 @@ watch(() => props.modelValue, (md) => {
  *  跟 mdToPreviewHtml 给引用块每段各分一个 data-line-unit 是对应的。 */
 function focusAtLineUnit(unitIdx: number) {
   const ed = editor.value
-  if (!ed) return
+  // useEditor（tiptap v3）在 onMounted 才真正 new Editor：从只读态点进编辑的头几拍
+  // editor 还不存在。挂起这次定位，实例就绪后补放光标，否则调用方拿到的就是静默落空
+  if (!ed) { pendingLineUnit = unitIdx; return }
   const LEAF_TYPES = new Set(['paragraph', 'heading', 'taskItem', 'listItem', 'orderedListItem', 'codeBlock'])
   let count = 0
   let target: number | null = null
@@ -451,6 +453,14 @@ function focusAtLineUnit(unitIdx: number) {
   // 飘到页面左上角。等浏览器画完这一帧布局稳定了，再照当前光标位置强制重新算一次。
   requestAnimationFrame(() => { if (editor.value) syncPicker(editor.value) })
 }
+
+let pendingLineUnit: number | null = null
+watch(editor, (ed) => {
+  if (!ed || pendingLineUnit === null) return
+  const unit = pendingLineUnit
+  pendingLineUnit = null
+  focusAtLineUnit(unit)
+})
 
 defineExpose({
   focus: () => editor.value?.commands.focus('end'),
