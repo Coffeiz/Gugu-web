@@ -96,7 +96,7 @@
                 <PhPencilSimple :size="14" weight="bold" />
                 {{ t('mindUi.edit') }}
               </ActionButton>
-              <ActionButton variant="secondary" fit @click="onDelete">
+              <ActionButton variant="danger" fit @click="onDelete">
                 <PhTrash :size="14" weight="bold" />
                 {{ t('mindUi.delete') }}
               </ActionButton>
@@ -109,7 +109,9 @@
               <ActionButton variant="primary" fit @click="finishEdit">
                 <PhCheck :size="14" weight="bold" /> {{ t('mindUi.editDone') }}
               </ActionButton>
-              <ActionButton variant="secondary" fit @click="cancelEdit">{{ t('common.actions.cancel') }}</ActionButton>
+              <ActionButton variant="secondary" fit @click="cancelEdit">
+                <PhX :size="14" weight="bold" /> {{ t('common.actions.cancel') }}
+              </ActionButton>
             </template>
           </NoteEditor>
         </template>
@@ -139,7 +141,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack, PhTrash } from '@phosphor-icons/vue'
+import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { MindConflictError, useMindStore } from '@/stores/mind'
