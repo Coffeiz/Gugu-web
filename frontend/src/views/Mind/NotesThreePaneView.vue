@@ -492,7 +492,7 @@ function onListScroll() {
 .ni-foot { display: flex; align-items: center; gap: 8px; min-height: 18px; }
 /* 颜色球：即当前颜色指示；点击向右展开抽屉选择（默认纸色 = 棋盘格），选完球即新色。
    抽屉沿用 NoteEditor 样式/插入抽屉的「max-width 从 0 长开」模式，不用浮层 */
-.color-dot-wrap { position: relative; display: inline-flex; align-items: center; }
+.color-dot-wrap { position: relative; display: inline-flex; align-items: center; gap: 6px; }
 .ni-dot-btn {
   flex: none; width: 14px; height: 14px; border-radius: 50%; padding: 0; cursor: pointer;
   border: 1px solid rgba(255, 255, 255, 0.85); box-shadow: 0 1px 2px rgba(80, 90, 110, 0.18);
