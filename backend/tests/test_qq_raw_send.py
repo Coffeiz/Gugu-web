@@ -151,31 +151,33 @@ async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypat
     assert "session_id" not in repr(body)
 
 
-def _keyboard_rows_for_options(count: int) -> list:
-    """构造 N 选项 prompt 并返回 keyboard rows。"""
+def _keyboard_rows_for_labels(labels: list) -> list:
+    """构造指定标签的 prompt 并返回 keyboard rows。"""
     prompt = {
         "prompt_id": 7,
         "platform_user_id": "ou_1",
-        "options": [{"id": f"opt-{i}", "label": f"选项{i}", "token": f"t-{i}"} for i in range(count)],
+        "options": [{"id": f"opt-{i}", "label": label, "token": f"t-{i}"} for i, label in enumerate(labels)],
     }
     return qq._keyboard_wire_payload(prompt)["content"]["rows"]
 
 
-def test_keyboard_packs_buttons_adaptively():
-    # ≤2 个：单行；3-4 个：每行 2 个；5-15 个：每行 3 个；16-25 个：5/行塞满 5 行；>25 个：抛错走文本兜底。
-    assert len(_keyboard_rows_for_options(1)[0]["buttons"]) == 1
-    assert len(_keyboard_rows_for_options(2)[0]["buttons"]) == 2
-    rows = _keyboard_rows_for_options(4)
-    assert [len(row["buttons"]) for row in rows] == [2, 2]
-    rows = _keyboard_rows_for_options(7)
-    assert [len(row["buttons"]) for row in rows] == [3, 3, 1]
-    rows = _keyboard_rows_for_options(15)
-    assert [len(row["buttons"]) for row in rows] == [3, 3, 3, 3, 3]
-    rows = _keyboard_rows_for_options(25)
-    assert [len(row["buttons"]) for row in rows] == [5] * 5
+def test_keyboard_packs_rows_by_label_width():
+    # 短标签（1-2 字）宽松：4 个 34 单位预算内可同排。
+    rows = _keyboard_rows_for_labels(["是", "否", "取消", "稍后再说"])
+    assert [len(row["buttons"]) for row in rows] == [4]
+    # 加一个放不下的 → 换行。
+    rows = _keyboard_rows_for_labels(["是", "否", "取消", "稍后再说", "自定义"])
+    assert [len(row["buttons"]) for row in rows] == [4, 1]
+    # 截图用例（5-6 字标签）：贪心两两成行，不再五挤一行截断。
+    rows = _keyboard_rows_for_labels(["1（主按钮）", "2（次按钮）", "3（文字按钮）", "都没点开", "自定义回复"])
+    assert [len(row["buttons"]) for row in rows] == [2, 2, 1]
+    # 单条超宽标签独占一行不报错（客户端截断不可避免，但排列不叠加截断）。
+    rows = _keyboard_rows_for_labels(["这是一个特别特别特别长的按钮标签"])
+    assert [len(row["buttons"]) for row in rows] == [1]
+    # 长标签多到 5 行装不下 → 抛 ValueError 走文本序号兜底。
     try:
-        _keyboard_rows_for_options(26)
-        raise AssertionError("26 个按钮应当抛 ValueError 走文本兜底")
+        _keyboard_rows_for_labels(["自定义回复内容很长"] * 11)
+        raise AssertionError("11 个长标签按钮应当抛 ValueError 走文本兜底")
     except ValueError:
         pass
 

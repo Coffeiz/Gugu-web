@@ -1117,6 +1117,19 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
         await _qq_request(channel_id, "POST", path, json_body=body)
 
 
+# QQ 键盘宽度模型（估算）：客户端按钮的真实字体度量拿不到，按字符宽度近似——
+# CJK/全角记 2、ASCII 记 1，每个按钮的边框+内边距+间距记固定装饰成本。
+# 行预算按真机实测校准（当前值约容纳 2 个六字标签或 4-5 个单字标签）。
+KEYBOARD_ROW_BUDGET = 34
+KEYBOARD_BUTTON_CHROME = 4
+KEYBOARD_MAX_ROWS = 5
+KEYBOARD_MAX_PER_ROW = 5
+
+
+def _label_units(label: str) -> int:
+    return sum(2 if ord(ch) > 0x2E7F else 1 for ch in label)
+
+
 def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
     """把统一交互动作转换为 QQ 官方 Inline Keyboard payload。"""
     from agent.interactions.qq import build_keyboard_payload
@@ -1144,22 +1157,26 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
                 "unsupport_tips": "请回复选项序号或选项文字",
             },
         })
-    # 自适应切行：按钮平分一行宽度时中文标签会被客户端截断，按总数收紧每行
-    # 数量换可读性；QQ 硬限制为每行最多 5 个、键盘最多 5 行。
-    total = len(buttons)
-    if not buttons or total > 25:
-        # 超出键盘容量：让 send_keyboard 捕获后走文本序号兜底。
-        raise ValueError(f"按钮数 {total} 超出 QQ 键盘容量（1-25）")
-    if total <= 2:
-        per_row = total
-    elif total <= 4:
-        per_row = 2
-    elif total <= 15:
-        per_row = 3
-    else:
-        per_row = 5  # 16-25 个：只有 5/行才能塞进 5 行
-    rows = [{"buttons": buttons[index:index + per_row]} for index in range(0, total, per_row)]
-    return {"content": {"rows": rows}}
+    # 按估算宽度贪心切行：按钮平分一行宽度时中文标签会被客户端截断；
+    # 单条超宽标签独占一行也截不救，超出 5 行则放弃键盘走文本序号兜底。
+    rows: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_units = 0
+    for button in buttons:
+        units = _label_units(button["render_data"]["label"]) + KEYBOARD_BUTTON_CHROME
+        if current and (len(current) >= KEYBOARD_MAX_PER_ROW
+                        or current_units + units > KEYBOARD_ROW_BUDGET):
+            rows.append(current)
+            current, current_units = [], 0
+        current.append(button)
+        current_units += units
+    if current:
+        rows.append(current)
+    if len(rows) > KEYBOARD_MAX_ROWS:
+        raise ValueError(
+            f"按钮宽度估算超出 QQ 键盘容量（最多 {KEYBOARD_MAX_ROWS} 行），转文本兜底"
+        )
+    return {"content": {"rows": [{"buttons": row} for row in rows]}}
 
 
 async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str | None,
