@@ -264,10 +264,14 @@ class AnthropicDriver:
         # core 只修正 dispatch 名称，却把污染后的原始 name 持久化到下一轮前缀。
         from agent.tools.base import salvage_tool_name
 
-        raw_blocks = [
-            b.model_dump() if hasattr(b, "model_dump") else copy.deepcopy(dict(b))
-            for b in final.content
-        ]
+        raw_blocks = []
+        for block in final.content:
+            if hasattr(block, "model_dump"):
+                raw_blocks.append(block.model_dump())
+            elif isinstance(block, dict):
+                raw_blocks.append(copy.deepcopy(block))
+            else:
+                raw_blocks.append(copy.deepcopy(vars(block)))
         for block in raw_blocks:
             if block.get("type") != "tool_use":
                 continue
