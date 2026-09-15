@@ -1,6 +1,6 @@
 export const adminUpdateUi = {
   'zh-CN': {
-    title: 'Docker 更新', description: '仅适用于一体化 Docker Compose 部署；更新器通过受限 sidecar 执行固定升级流程。',
+    title: '版本更新', description: '仅适用于一体化 Docker Compose 部署；更新器通过受限 sidecar 执行固定升级流程。',
     currentVersion: '当前版本', latestVersion: '稳定版', releaseNotes: '查看发行说明', check: '检查更新', checking: '检查中…', refresh: '刷新状态',
     noUpdate: '当前已是最新稳定版', available: '发现可用更新', preflight: '更新预检', runPreflight: '检查更新条件', preflighting: '正在预检…',
     checks: '检查项', beginUpdate: '开始更新', starting: '正在启动…', confirmUpdateTitle: '确认更新一体化部署',
@@ -22,7 +22,7 @@ export const adminUpdateUi = {
     },
   },
   'ja-JP': {
-    title: 'Docker 更新', description: '一体型 Docker Compose 専用です。制限付き sidecar が固定された更新手順を実行します。',
+    title: 'バージョン更新', description: '一体型 Docker Compose 専用です。制限付き sidecar が固定された更新手順を実行します。',
     currentVersion: '現在のバージョン', latestVersion: '安定版', releaseNotes: 'リリースノート', check: '更新を確認', checking: '確認中…', refresh: '状態を更新',
     noUpdate: '最新の安定版を使用しています', available: '新しいバージョンがあります', preflight: '更新前チェック', runPreflight: '更新条件を確認', preflighting: '確認中…',
     checks: 'チェック項目', beginUpdate: '更新を開始', starting: '開始中…', confirmUpdateTitle: '一体型デプロイの更新を確認',
@@ -44,7 +44,7 @@ export const adminUpdateUi = {
     },
   },
   'en-US': {
-    title: 'Docker updates', description: 'For the integrated Docker Compose deployment only. A restricted sidecar runs the fixed update workflow.',
+    title: 'Version updates', description: 'For the integrated Docker Compose deployment only. A restricted sidecar runs the fixed update workflow.',
     currentVersion: 'Current version', latestVersion: 'Stable release', releaseNotes: 'Release notes', check: 'Check for updates', checking: 'Checking…', refresh: 'Refresh status',
     noUpdate: 'Already on the latest stable release', available: 'An update is available', preflight: 'Update preflight', runPreflight: 'Check update requirements', preflighting: 'Checking…',
     checks: 'Checks', beginUpdate: 'Start update', starting: 'Starting…', confirmUpdateTitle: 'Confirm integrated deployment update',
