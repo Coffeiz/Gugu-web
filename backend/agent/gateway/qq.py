@@ -1144,7 +1144,21 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
                 "unsupport_tips": "请回复选项序号或选项文字",
             },
         })
-    rows = [{"buttons": buttons[index:index + 5]} for index in range(0, len(buttons), 5)]
+    # 自适应切行：按钮平分一行宽度时中文标签会被客户端截断，按总数收紧每行
+    # 数量换可读性；QQ 硬限制为每行最多 5 个、键盘最多 5 行。
+    total = len(buttons)
+    if not buttons or total > 25:
+        # 超出键盘容量：让 send_keyboard 捕获后走文本序号兜底。
+        raise ValueError(f"按钮数 {total} 超出 QQ 键盘容量（1-25）")
+    if total <= 2:
+        per_row = total
+    elif total <= 4:
+        per_row = 2
+    elif total <= 15:
+        per_row = 3
+    else:
+        per_row = 5  # 16-25 个：只有 5/行才能塞进 5 行
+    rows = [{"buttons": buttons[index:index + per_row]} for index in range(0, total, per_row)]
     return {"content": {"rows": rows}}
 
 

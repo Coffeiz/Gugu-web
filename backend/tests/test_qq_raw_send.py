@@ -151,6 +151,35 @@ async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypat
     assert "session_id" not in repr(body)
 
 
+def _keyboard_rows_for_options(count: int) -> list:
+    """构造 N 选项 prompt 并返回 keyboard rows。"""
+    prompt = {
+        "prompt_id": 7,
+        "platform_user_id": "ou_1",
+        "options": [{"id": f"opt-{i}", "label": f"选项{i}", "token": f"t-{i}"} for i in range(count)],
+    }
+    return qq._keyboard_wire_payload(prompt)["content"]["rows"]
+
+
+def test_keyboard_packs_buttons_adaptively():
+    # ≤2 个：单行；3-4 个：每行 2 个；5-15 个：每行 3 个；16-25 个：5/行塞满 5 行；>25 个：抛错走文本兜底。
+    assert len(_keyboard_rows_for_options(1)[0]["buttons"]) == 1
+    assert len(_keyboard_rows_for_options(2)[0]["buttons"]) == 2
+    rows = _keyboard_rows_for_options(4)
+    assert [len(row["buttons"]) for row in rows] == [2, 2]
+    rows = _keyboard_rows_for_options(7)
+    assert [len(row["buttons"]) for row in rows] == [3, 3, 1]
+    rows = _keyboard_rows_for_options(15)
+    assert [len(row["buttons"]) for row in rows] == [3, 3, 3, 3, 3]
+    rows = _keyboard_rows_for_options(25)
+    assert [len(row["buttons"]) for row in rows] == [5] * 5
+    try:
+        _keyboard_rows_for_options(26)
+        raise AssertionError("26 个按钮应当抛 ValueError 走文本兜底")
+    except ValueError:
+        pass
+
+
 async def test_post_keyboard_uses_markdown_with_keyboard(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []
