@@ -509,6 +509,13 @@ class _PendingInteraction(NamedTuple):
     replay: dict | None = None
 
 
+def _artifact_sse(artifact: dict) -> str:
+    """把工具产物转成一条 SSE 事件行；链接按钮走专用事件，其余按文件卡片。"""
+    if isinstance(artifact, dict) and artifact.get("kind") == "link_buttons":
+        return f"data: {json.dumps({'type': 'link_buttons', 'link_buttons': artifact}, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
+
+
 async def _dispatch_in_session(
     user_id, target, dispatch_input, *, session_id, session, run_id, tool_snapshot, skill_state,
 ):
@@ -1756,7 +1763,7 @@ class LLMRunner:
                                        status="success" if _is_successful_tool_result(res) else "error",
                                        result=res)
                     if artifact:
-                        yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
+                        yield _artifact_sse(artifact)
                     dispatched.append((tc, res))
                 from agent.context.assembly import NewMessageBatch
                 from agent.context.canonical_tool_history import canonical_tool_round
@@ -1954,7 +1961,7 @@ class LLMRunner:
                             status="success" if replay_ok else "error", result=replay_payload,
                         )
                         if artifact:
-                            yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
+                            yield _artifact_sse(artifact)
                         yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                         continue
                     replaced = _replace_tool_result(
