@@ -11,7 +11,8 @@ from app.services.storage import LocalStorageBackend
 def test_reconcile_skips_runtime_managed_user_namespaces(user_a):
     user_id = str(user_a.id)
 
-    assert config_api._is_internal_key(f"{user_id}/.system/rag/ts-index/index.json")
+    assert config_api._is_internal_key(f"{user_id}/.agent/rag/unified/index.json")
+    assert config_api._is_internal_key(f"{user_id}/.agent/rag/memory/index.json")
     assert config_api._is_internal_key(f"{user_id}/.agent/pattern.json")
     assert config_api._is_internal_key(f"{user_id}/shell/plot_test.py")
     assert config_api._is_internal_key(f"{user_id}/shell/shell_recover_test.txt")

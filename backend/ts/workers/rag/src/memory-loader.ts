@@ -5,7 +5,7 @@ import { DataRuntime } from "../../../packages/data-runtime/src/runtime.ts";
 import { buildDocuments } from "./adapters/base.ts";
 import { TtlCache } from "./ttl-cache.ts";
 
-const MEMORY_INDEX_KEY = ".agent/rag/memory-index-v1.json";
+const MEMORY_INDEX_KEY = ".agent/rag/memory/index.json";
 const MEMORY_CACHE_TTL_MS = 30 * 60 * 1000;
 const MEMORY_SOURCES = new Set(["profile", "pattern", "daily", "memory"]);
 const memoryCache = new TtlCache<{ revision: string; documents: RagDocument[] }>({
@@ -110,7 +110,7 @@ function memoryDocumentFromStored(ownerId: string, value: unknown): RagDocument 
   const content = String(row.content || "");
   if (!documentId || !parentId || !title || !content.trim()) return null;
   // summary 是正文前缀截断时不再重复拼接（与 adapters/base.ts 同一守卫；
-  // 存量 memory-index-v1.json 里固化的 summary 无需迁移，body 以 content 为准）。
+  // 存量 Memory 索引里固化的 summary 无需迁移，body 以 content 为准。
   const summaryText = summary && !content.trim().startsWith(summary) ? summary : "";
   return {
     id: `memory:${parentId}:${chunkIndex}`,

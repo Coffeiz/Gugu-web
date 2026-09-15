@@ -2,7 +2,7 @@
 
 export const RAG_CONTRACT_VERSION = "rag-v1" as const;
 // 0.5.0：数据读取与 Memory/向量准备统一在 TS worker 中执行。
-export const RAG_WORKER_VERSION = "0.6.0" as const;
+export const RAG_WORKER_VERSION = "0.6.1" as const;
 
 export type RagSourceType =
   | "memory"

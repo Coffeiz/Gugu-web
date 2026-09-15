@@ -309,10 +309,6 @@ class SearchSettings(BaseModel):
         description="gugu-rag-sidecar 常驻宿主的 unix socket 路径；为空=每个 Python 进程按需自启 worker（旧行为）。"
         "配置后 RAG worker 由 sidecar 宿主统一托管，多个后端进程共享热索引，后端重启不再触发冷装载",
     )
-    ts_sidecar_index_dir: str = Field(
-        "var/rag-ts-index",
-        description="旧版 TypeScript 索引目录；新索引默认保存在用户存储目录的 .system/rag/ts-index 下",
-    )
     ts_sidecar_index_ttl_seconds: int = Field(
         30 * 24 * 3600,
         ge=7 * 24 * 3600,
@@ -323,7 +319,7 @@ class SearchSettings(BaseModel):
         "unified",
         description="RAG 查询交付链：unified 为 TS worker 统一查询主链（唯一保留档；legacy/batch/shadow 灰度档已随旧 Python 查询链删除，显式配置旧值会在启动时报校验错误）",
     )
-    ts_sidecar_timeout_ms: int = Field(5000, ge=50, le=30_000, description="TypeScript worker 单次查询请求超时毫秒数")
+    ts_sidecar_timeout_ms: int = Field(30_000, ge=50, le=30_000, description="TypeScript worker 单次查询请求超时毫秒数")
     similar_image_provider: Literal["baidu_qianfan"] = Field("baidu_qianfan", description="相似图搜索 Provider；有效 API Key 即表示启用")
     similar_image_enabled: bool = Field(False, description="旧版相似图搜索开关，仅保留配置兼容，不再作为启用条件")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")

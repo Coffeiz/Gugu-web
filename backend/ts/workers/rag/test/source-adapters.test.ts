@@ -5,7 +5,7 @@ import { buildDocuments } from "../src/adapters/base.ts";
 
 const ownerScope = { scope_type: "owner", scope_id: "owner-1" };
 
-test("文件适配器输出与 Python 一致的头部行，并且不写入内部存储路径", () => {
+test("文件适配器只索引文件名，并且不写入正文或内部存储路径", () => {
   const [document] = buildSourceDocuments({
     files: [{
       id: 7, title: "方案.md", ext: "md", space: "项目A", stage_name: "评审",
@@ -15,10 +15,9 @@ test("文件适配器输出与 Python 一致的头部行，并且不写入内部
   });
   assert.equal(document.source_type, "file");
   assert.equal(document.parent_id, "file:7");
-  assert.match(document.content, /^文件：方案\.md/);
-  assert.match(document.content, /类型：md/);
-  assert.match(document.content, /空间：项目A/);
-  assert.match(document.content, /阶段：评审/);
+  assert.equal(document.content, "方案.md");
+  assert.equal(document.text, "方案.md\n方案.md");
+  assert.doesNotMatch(document.content, /这是文件正文/);
   assert.doesNotMatch(document.content, /storage|\/data\//);
   // 检索索引正文 = title\nsummary\ncontent（与 Python _wire_document 一致）。
   assert.match(document.text, /^方案\.md\n/);
@@ -84,6 +83,7 @@ test("summary 为正文前缀截断时不重复拼进检索文本（记忆注入
     source_type: "memory", id: "daily:0", source_id: "daily",
     title: "近期记忆", summary: "- 2026-09-14 凌晨聊了召回",
     content: "- 2026-09-14 凌晨聊了召回", version_parts: ["daily", "daily:0"],
+    document_version: "v1",
     scope: ownerScope,
   });
   // 前缀守卫：summary 与正文相同（截断拷贝）则不再拼接，正文只出现一次。
@@ -93,6 +93,7 @@ test("summary 为正文前缀截断时不重复拼进检索文本（记忆注入
     source_type: "knowledge", id: "k-1", source_id: "k-1",
     title: "部署规范", summary: "发布时需要读",
     content: "发布前必须跑完 CI 双工作流", version_parts: ["k", "1"],
+    document_version: "v1",
     scope: ownerScope,
   });
   // 真实摘要（与正文无前缀关系）照常保留 title/summary/content 三段。
