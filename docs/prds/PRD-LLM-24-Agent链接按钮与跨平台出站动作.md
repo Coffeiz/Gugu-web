@@ -1,6 +1,7 @@
 # PRD-LLM-24：Agent 链接按钮与跨平台出站动作
 
-> 状态：规划中，尚未实施
+> 状态：Phase 0~3 已实施（2026-09-16，提交 3670ac9a9 / f1c699b80 / 06c8bcac1 + 截断提示后续提交）；Phase 4 的 QQ/飞书真实客户端验收待真机执行（其余自动化覆盖已完成）
+> 最近更新：2026-09-16
 > 创建：2026-09-15
 > 所属层：Agent / IM / 出站交互
 > 前置：[`【已完成】PRD-LLM-2-统一交互选择与动作系统.md`](./【已完成】PRD-LLM-2-统一交互选择与动作系统.md)
@@ -356,38 +357,38 @@ QQ、飞书 Gateway 只负责把已校验的统一 part 转成平台 wire payloa
 
 ### Phase 0：协议确认
 
-- [ ] 固化 `send_link_buttons` Schema、结果枚举和 URL 安全策略。
-- [ ] 确认 `keyboard` part 与现有 `PlatformReply` 的字段边界。
-- [ ] 确认 QQ 当前 action type、URL 白名单和真实客户端行为。
-- [ ] 产出飞书、QQ、Web、微信四渠道最小 payload 样例。
+- [x] 固化 `send_link_buttons` Schema、结果枚举和 URL 安全策略。
+- [x] 确认 `keyboard` part 与现有 `PlatformReply` 的字段边界。
+- [x] 确认 QQ 当前 action type、URL 白名单和真实客户端行为。
+- [x] 产出飞书、QQ、Web、微信四渠道最小 payload 样例。
 
 ### Phase 1：统一出站 part
 
-- [ ] 在 `agent.im.models` 定义链接按钮 part 和能力声明。
-- [ ] 在 `agent.im.replies` 增加统一发送/降级分支。
-- [ ] 修正 QQ Keyboard 能力声明与实际发送路径不一致的问题。
-- [ ] 增加 URL 安全校验、长度限制、脱敏结果和错误分类。
+- [x] 在 `agent.im.models` 定义链接按钮 part 和能力声明。
+- [x] 在 `agent.im.replies` 增加统一发送/降级分支。
+- [x] 修正 QQ Keyboard 能力声明与实际发送路径不一致的问题。
+- [x] 增加 URL 安全校验、长度限制、脱敏结果和错误分类。
 
 ### Phase 2：Agent 工具
 
-- [ ] 在 `agent.tools.meta` 注册 `send_link_buttons`。
-- [ ] 让 Web/IM 上下文可以生成受控出站 part。
-- [ ] 明确无出站上下文时的结构化 `unsupported` 结果。
-- [ ] 更新工具目录、Schema 快照和 Agent 提示中的使用边界。
+- [x] 在 `agent.tools.meta` 注册 `send_link_buttons`。
+- [x] 让 Web/IM 上下文可以生成受控出站 part。
+- [x] 明确无出站上下文时的结构化 `unsupported` 结果。
+- [x] 更新工具目录、Schema 快照和 Agent 提示中的使用边界。
 
 ### Phase 3：平台适配
 
-- [ ] QQ 映射跳转按钮 `action.type=0`，保留 `ask_user` 回调类型。
-- [ ] 飞书映射 `open_url` behavior，不接入静态链接回调。
-- [ ] Web 渲染安全按钮并补充无障碍标签。
-- [ ] 微信实现文本 URL 降级。
+- [x] QQ 映射跳转按钮 `action.type=0`，保留 `ask_user` 回调类型。
+- [x] 飞书映射 `open_url` behavior，不接入静态链接回调。
+- [x] Web 渲染安全按钮并补充无障碍标签。
+- [x] 微信实现文本 URL 降级。
 
 ### Phase 4：观测与真实验收
 
-- [ ] 增加工具调用、原生发送、文本降级、失败和重试的 LoopScope 事件。
+- [x] 增加工具调用、原生发送、文本降级、失败和重试的 LoopScope 事件。
 - [ ] 在 QQ、飞书真实客户端验证 HTTPS 网页打开和平台不支持时的提示。
-- [ ] 验证按钮不会创建 pending interaction，不会阻塞或恢复 Agent Run。
-- [ ] 验证重复发送、平台超时和失败重试不会产生无限消息。
+- [x] 验证按钮不会创建 pending interaction，不会阻塞或恢复 Agent Run。
+- [x] 验证重复发送、平台超时和失败重试不会产生无限消息。
 
 ## 14. 测试计划
 
