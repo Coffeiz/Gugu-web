@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.utils import romaji
 
 
@@ -79,3 +81,16 @@ def test_to_romaji_uses_japanese_dictionary_for_japanese_locale(monkeypatch):
     monkeypatch.setattr(romaji, "_romkan2", SimpleNamespace(to_roma=lambda text: "toukyou"))
 
     assert romaji.to_romaji("東京", "ja-JP") == "toukyou"
+
+
+def test_real_sudachi_small_dict_readings():
+    """真词典基准：small 档读音锚定（镜像只装 sudachidict_small）。
+
+    未装 sudachipy/romkan2 的环境跳过；读音选 common 词，词典版本更新也应稳定。
+    """
+    if not romaji._HAS_JAPANESE_ROMAJI:
+        pytest.skip("sudachipy/romkan2 未安装")
+    assert romaji.to_romaji("東京タワー") == "toukyoutawa"
+    assert romaji.to_romaji("ありがとうございます") == "arigatougozaimasu"
+    assert romaji.to_romaji("憂鬱") == "youyu"
+    assert romaji.romaji_match("東京タワー", "toukyoutawa")
