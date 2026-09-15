@@ -1,19 +1,21 @@
 # PRD-KNOWLEDGE-2：knowledge 读取边界独立与 read_knowledge 工具
 
-> 状态：全部待实施（方向已定稿：knowledge 域从 search_memory 中独立，精确读取走直读；未开始编码）
+> 状态：Phase 1 已实施完成（随 v1.2.3 发布；提交 57cf19df8 落地 + b7b995f74 清理）；KN2-004 devserver 实测未记录 devlog，唯一遗留
 > 创建：2026-09-13
-> 最近更新：2026-09-13
-> 关联模块：`backend/agent/tools/memory.py`、`backend/agent/knowledge/store.py`、`backend/agent/rag/service.py`、`backend/agent/context/builder.py`、`backend/agent/knowledge/reflection.py`
+> 最近更新：2026-09-16
+> 关联模块：`backend/agent/tools/memory.py`、`backend/agent/tools/knowledge.py`、`backend/agent/knowledge/store.py`、`backend/agent/rag/service.py`、`backend/agent/context/builder.py`、`backend/agent/knowledge/reflection.py`
 > 背景参考：PRD-KNOWLEDGE-1（统一知识系统，已完成）；PRD-MEM-1（记忆召回工具与混合检索）
 
 ## 0. 实际状态
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
-| knowledge 精确读取走索引（现状痛点） | 🟡 | `search_memory(source=knowledge)` 走 BM25 异步索引链，读己之写不一致：刚更新的知识立即搜可能拿到旧结果 |
-| `read_knowledge` 直读工具 | 🔲 | 未实施 |
-| `search_memory` 收窄为记忆专用 | 🔲 | 未实施（source 枚举仍含 knowledge） |
-| knowledge 工具独立注册（脱离 MemorySkill） | 🔲 | save/update/delete_knowledge 仍在 `MemorySkill` |
+| knowledge 精确读取走索引（原痛点） | ✅ 已解决 | `agent/tools` 层 `source=knowledge` 返回引导文案；`rag/service.search_memory` 摘除 knowledge 检索器，`source=all` 不再隐性附带知识 |
+| `read_knowledge` 直读工具 | ✅ | `agent/tools/knowledge.py`：id 精确读 + 列举（scope/keyword 过滤、上限），直读 `KnowledgeStore` 写入即可读 |
+| `search_memory` 收窄为记忆专用 | ✅ | 工具层枚举 `all/profile/pattern/daily/memory`；service 层同步摘除（未知 source 走记忆来源过滤自然返回空） |
+| knowledge 工具独立注册 | ✅ | save/update/delete/read_knowledge 迁入独立 `KnowledgeSkill`，工具名与参数契约不变 |
+| 配套（计数钉/技能文档/i18n/被动注入文案） | ✅ | capability 计数钉、`toolNames.ts` 三语、skills 文档无「search_memory 搜知识」残留、被动注入引导改指 read_knowledge |
+| KN2-004 devserver 实测 + devlog | 🔲 | 单测全绿（test_read_knowledge_tool + test_search_memory_boundary 10 passed），5173 实测与 devlog 记录未做 |
 
 ## 1. 背景与目标
 
@@ -121,7 +123,10 @@ backend/
 
 ### Phase 1：边界切换（一次交付）
 
-- [ ] `KN2-001` 新增 `agent/tools/knowledge.py`：`read_knowledge`（id 精确读 + 列举/scope/keyword 过滤/上限）并将 save/update/delete_knowledge 迁入独立 `KnowledgeSkill` 注册；验收：`test_read_knowledge_tool.py` 全绿，工具名与参数契约不变，跨用户不可见。
-- [ ] `KN2-002` `search_memory` 收窄：source 枚举移除 knowledge、description 同步、拒绝文案引导 read_knowledge；`context/builder.py` 引导文案改指 read_knowledge；验收：`test_search_memory_boundary.py` 全绿，其余 source 行为与被动注入不受影响。
-- [ ] `KN2-003` 配套同步：capability 计数钉 +1、skills 技能文档中 knowledge 检索描述更新、events 快照计数、i18n `toolNames.ts`；验收：capability 全量测试绿（计数钉与本提交同行），技能文档无残留的「search_memory 搜知识」表述。
+- [x] `KN2-001` 新增 `agent/tools/knowledge.py`：`read_knowledge`（id 精确读 + 列举/scope/keyword 过滤/上限）并将 save/update/delete_knowledge 迁入独立 `KnowledgeSkill` 注册；验收：`test_read_knowledge_tool.py` 全绿，工具名与参数契约不变，跨用户不可见。
+- [x] `KN2-002` `search_memory` 收窄：source 枚举移除 knowledge、description 同步、拒绝文案引导 read_knowledge；`context/builder.py` 引导文案改指 read_knowledge；验收：`test_search_memory_boundary.py` 全绿，其余 source 行为与被动注入不受影响。
+- [x] `KN2-003` 配套同步：capability 计数钉 +1、skills 技能文档中 knowledge 检索描述更新、events 快照计数、i18n `toolNames.ts`；验收：capability 全量测试绿（计数钉与本提交同行），技能文档无残留的「search_memory 搜知识」表述。
 - [ ] `KN2-004` devserver 实测两条路径：「保存知识 → read_knowledge 立即可见」「search_memory(source=knowledge) 返回引导文案」；验收：5173 实测通过，结论记录 devlog。
+
+> 实施记录：57cf19df8（Phase 1 落地）+ b7b995f74（search_memory service 层摘除 knowledge 检索器、边界测试更名、PRD 修正过时假设）。已随 v1.2.3 发布（2026-09-16）。
+> 待确认 1 结论（2026-09-16 复核）：**维持不加走索引的 search_knowledge 工具**——模糊召回由被动注入（`rag/injection.py` 每轮自动调 `search_knowledge` 注入相关条目）+ `read_knowledge` 列举/keyword 本地过滤覆盖；knowledge 量级小（几十到几百条），若实测模型频繁找不到旧知识再重启评估。
