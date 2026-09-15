@@ -56,9 +56,37 @@ jobs:
           scripts/release/docker-release-tags.test.mjs
 
   docker-build:
-    name: Build production images
+    # 四个镜像按 matrix 并行构建+扫描：墙钟时间 ≈ 最慢单镜像（原串行 ~19 分钟）。
+    # CI 在 GitHub 托管 runner（海外）上直连官方源比默认 TUNA（国内镜像）快；
+    # APT_MIRROR / PIP_INDEX_URL 只覆盖声明了这些 ARG 的镜像（backend/app/sandbox），
+    # 未声明的自动忽略。本地/devserver 构建不传参数，仍走 TUNA 默认。
+    name: Build & scan ${{ matrix.name }}
     needs: compose-validate
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: .
+            dockerfile: backend/Dockerfile.prod
+            tag: gugu-web-backend:ci
+            cache-scope: backend
+          - name: frontend
+            context: .
+            dockerfile: frontend/Dockerfile.prod
+            tag: gugu-web-frontend:ci
+            cache-scope: frontend
+          - name: app
+            context: .
+            dockerfile: Dockerfile
+            tag: gugu-web:ci
+            cache-scope: default-compose
+          - name: sandbox
+            context: docker/sandbox
+            dockerfile: docker/sandbox/Dockerfile
+            tag: gugu-sandbox:ci
+            cache-scope: sandbox
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,60 +96,31 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build backend image
+      - name: Build ${{ matrix.name }} image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: backend/Dockerfile.prod
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: false
           load: true
-          tags: gugu-web-backend:ci
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
-
-      - name: Build frontend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: frontend/Dockerfile.prod
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: gugu-web-frontend:ci
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
-
-      - name: Build default Compose image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: gugu-web:ci
+          tags: ${{ matrix.tag }}
+          # 沙盒镜像必须每轮全新构建（见下方冒烟注释），其余镜像吃 gha 层缓存。
+          no-cache: ${{ matrix.name == 'sandbox' }}
           build-args: |
-            GUGU_VERSION=0.0.0-ci
+            APT_MIRROR=https://deb.debian.org
+            PIP_INDEX_URL=https://pypi.org/simple
+            ${{ matrix.name == 'app' && 'GUGU_VERSION=0.0.0-ci' || '' }}
             GUGU_REVISION=${{ github.sha }}
-          cache-from: type=gha,scope=default-compose
-          cache-to: type=gha,mode=max,scope=default-compose
+          cache-from: type=gha,scope=${{ matrix.cache-scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
 
-      # 沙盒镜像不走构建缓存：apt 层一旦命中旧缓存，apt-get upgrade 不会真跑，
+      # 沙盒镜像不走构建层缓存：apt 层一旦命中旧缓存，apt-get upgrade 不会真跑，
       # 镜像里就是旧包，而 trivy 漏洞库每次都是最新，必然假红（linux-libc-dev
-      # 6.1.180-1 vs 6.1.187-1 案例 2026-09-10）。镜像小，全新构建只多几分钟。
-      - name: Build Shell sandbox runtime image
-        uses: docker/build-push-action@v6
-        with:
-          context: docker/sandbox
-          file: docker/sandbox/Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: gugu-sandbox:ci
-          no-cache: true
-
+      # 6.1.180-1 vs 6.1.187-1 案例 2026-09-10）。Dockerfile 内的 apt 下载 cache
+      # mount 不受此限：软件源索引每轮照拉、upgrade 照跑，只复用未变版本的 .deb 下载。
       - name: Smoke test Shell sandbox runtime
+        if: matrix.name == 'sandbox'
         run: |
           docker run --rm --entrypoint bash gugu-sandbox:ci -lc '
             set -eu
@@ -135,9 +134,11 @@ jobs:
           '
 
       - name: Smoke test TS RAG worker
+        if: matrix.name == 'app'
         run: docker run --rm --entrypoint node gugu-web:ci bin/gugu-rag-ts-worker.mjs --version
 
       - name: Smoke test updater toolchain in app image
+        if: matrix.name == 'app'
         run: |
           docker run --rm --entrypoint python3 gugu-web:ci -c 'import updater.daemon'
           docker run --rm --entrypoint docker gugu-web:ci compose version
@@ -149,46 +150,15 @@ jobs:
       # skip-files：pip 自带 vendored SBOM（bom.cdx.json），记录的是 pip 内部依赖
       # （msgpack 1.1.2/setuptools 70.3.0），并非应用实际安装的包（1.2.2/84.0.0，
       # 构建断言保证）。trivy 会把它当语言专用清单解析成 python-pkg 目标并误报漏洞。
-      - name: Scan backend image
+      - name: Scan ${{ matrix.name }} image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: gugu-web-backend:ci
+          image-ref: ${{ matrix.tag }}
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
-          skip-files: /opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
-
-      - name: Scan frontend image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: gugu-web-frontend:ci
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: '1'
-
-      - name: Scan default Compose image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: gugu-web:ci
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: '1'
-          # 默认一体化镜像把 Python 依赖安装在 /opt/venv；排除 pip 自带的
-          # vendored SBOM，避免把其中记录的旧版本误判为应用依赖。基础镜像
-          # 自带的 /usr/local pip 也包含同一份内部依赖清单。
-          skip-files: /opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json
-
-      - name: Scan Shell sandbox runtime image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: gugu-sandbox:ci
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: '1'
+          skip-files: ${{ (matrix.name == 'backend' || matrix.name == 'app') && '/opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json' || '' }}
 
   publish:
     name: Publish Docker Hub app and GHCR business images
@@ -251,6 +221,10 @@ jobs:
           tags: |
             ${{ env.IMAGE_REPOSITORY }}-backend:${{ steps.version.outputs.version }}
             ${{ env.DOCKERHUB_BACKEND_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
+          # 海外 runner 直连官方源，覆盖 Dockerfile 默认的国内镜像（同 docker-build）。
+          build-args: |
+            APT_MIRROR=https://deb.debian.org
+            PIP_INDEX_URL=https://pypi.org/simple
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
           provenance: mode=max
@@ -290,7 +264,9 @@ jobs:
           cache-from: type=gha,scope=default-compose
           cache-to: type=gha,mode=max,scope=default-compose
           provenance: mode=max
+          # 海外 runner 直连官方源（同 docker-build）。
           build-args: |
+            APT_MIRROR=https://deb.debian.org
             GUGU_VERSION=${{ steps.version.outputs.version }}
             GUGU_REVISION=${{ github.sha }}
           # 不附加 SBOM attestation，避免 gha cache 中的旧清单被发布扫描优先消费。
@@ -306,8 +282,10 @@ jobs:
           tags: |
             ${{ env.SANDBOX_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
             ${{ env.DOCKERHUB_SANDBOX_IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=sandbox
-          cache-to: type=gha,mode=max,scope=sandbox
+          # 与 docker-build 一致：沙盒镜像禁用层缓存（apt 层命中 = 旧包 + trivy 假红，
+          # linux-libc-dev 案例 2026-09-10）。此前的 cache-from 会读到历史发布写入的
+          # 旧层，与 docker-build 里全新构建并扫描的镜像不一致，一并移除。
+          no-cache: true
           provenance: mode=max
 
       - name: Tag stable image as latest
@@ -326,7 +304,7 @@ jobs:
             "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.8.1
+        uses: sigstore/cosign-installer@v4.1.2
         with:
           cosign-release: v3.1.3
 
