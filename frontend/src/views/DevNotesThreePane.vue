@@ -145,7 +145,8 @@ function seedSample() {
 
 <style scoped>
 /* 顶栏几何照抄 Mind/index.vue（胶囊居中 + 右侧日历/筛选），主题 paint 走同一批 token */
-.dntp-page { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
+.dntp-page { display: flex; flex-direction: column; gap: 28px; height: 100%; min-height: 0; }
+/* 胶囊距视口顶部 28px（.dntp-bar margin-top），内容区与胶囊的间距取同一数值——上下留白对称 */
 .dntp-bar {
   display: grid; grid-template-columns: 1fr auto 1fr;
   align-items: center; gap: 12px;

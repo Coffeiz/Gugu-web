@@ -36,6 +36,12 @@
           <div v-if="store.loadingMore" class="ntp-state">{{ t('common.status.loading') }}</div>
         </template>
       </div>
+      <!-- 新建：进编辑态的空草稿。本地样例模式造负 id 草稿不落库；真实模式走 createNote，
+           取消（未写内容）则把刚建的空便签删掉，不留垃圾行 -->
+      <button class="ntp-new" @click="createNew">
+        <PhPlus :size="14" weight="bold" />
+        {{ t('mindThreePane.new') }}
+      </button>
     </section>
 
     <!-- 栏 2+3：阅读窗格与信息栏合并为同一块玻璃面板，中间只用内容色细分隔线 -->
@@ -99,9 +105,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhStack } from '@phosphor-icons/vue'
+import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { useProjectStore } from '@/stores/projects'
@@ -228,11 +234,60 @@ function startEdit() {
   editMd.value = selected.value.contentMd
   editing.value = true
 }
-function cancelEdit() { editing.value = false }
+function cancelEdit() {
+  const note = selected.value
+  editing.value = false
+  // 新建后取消：把没写内容的空草稿删掉，不留垃圾行（负 id 只删内存，真实 id 走软删）
+  if (note && pendingNewId.value === note.id) {
+    pendingNewId.value = null
+    if (note.id < 0) {
+      store.notes = store.notes.filter(n => n.id !== note.id)
+    } else {
+      void store.deleteNote(note.id).catch(() => showAppError(t('mind.deleteFailed')))
+    }
+  }
+}
+
+// ── 新建：建一条空草稿并直接进编辑态 ──
+// pendingNewId 记录"本次会话刚建、还没写内容"的草稿，取消时删掉
+const pendingNewId = ref<number | null>(null)
+
+async function createNew() {
+  if (editing.value) return
+  if (store.notes.some(n => n.id < 0)) {
+    // 本地样例模式：造负 id 草稿，只进内存
+    const now = new Date().toISOString()
+    const draft: MindNote = {
+      id: -Date.now(), kind: 'note', title: null, color: null, contentMd: '',
+      capturedAt: now, createdAt: now, updatedAt: now, version: 1,
+    }
+    store.notes = [draft, ...store.notes]
+    pendingNewId.value = draft.id
+    await selectAndEdit(draft.id)
+    return
+  }
+  try {
+    const created = await store.createNote({ contentMd: '' })
+    pendingNewId.value = created.id
+    await selectAndEdit(created.id)
+  } catch {
+    showAppError(t('mind.recordFailed'))
+  }
+}
+
+/** 选中刚建的草稿再进编辑：watch(selectedId) 是 pre-flush，同步紧跟的 editing=true 会被它
+ *  顶掉，必须等选中切换渲染完一帧后再开编辑态 */
+async function selectAndEdit(id: number) {
+  selectedId.value = id
+  await nextTick()
+  editMd.value = selected.value?.contentMd ?? ''
+  editing.value = true
+}
 
 async function finishEdit() {
   const note = selected.value
   editing.value = false
+  pendingNewId.value = null
   if (!note) return
   const md = editMd.value
   if (md === note.contentMd) return
@@ -294,7 +349,12 @@ function onListScroll() {
 
 /* ── 栏 1：日期分组列表 ── */
 .ntp-list { flex: 0 0 316px; min-height: 0; display: flex; flex-direction: column; }
-.ntp-list-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 2px 16px; }
+.ntp-list-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 2px 2px 16px;
+  /* 底部渐变淡出：卡片滚出可视区前先溶解进背景（新建按钮下方接住），不再生硬截断 */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent);
+}
 .ntp-state { padding: 28px 12px; font-size: 12.5px; color: var(--text-secondary); }
 .ntp-day-label {
   display: flex; align-items: baseline; gap: 8px;
@@ -311,10 +371,6 @@ function onListScroll() {
 }
 .ntp-item:hover { transform: translateY(-1px); box-shadow: var(--elevation-card-hover); }
 .ntp-item.selected { border-color: color-mix(in srgb, var(--color-primary) 45%, transparent); }
-.ntp-item.selected::before {
-  content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
-  border-radius: 0 3px 3px 0; background: var(--color-primary);
-}
 /* 便签四色 tint 消费主题 token（tokens/components/mind.css 定义亮暗两套值）——
    不能像 NoteCard 旧底稿那样硬编码浅色 rgb，暗色下会变成浅底配浅字不可读 */
 .ntp-item.tint-amber { background: var(--note-paper-amber); }
@@ -341,6 +397,18 @@ function onListScroll() {
 .ni-dot.blue  { background: #3196e2; }
 .ni-dot.teal  { background: #53d2dc; }
 .ni-task { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); }
+
+/* 新建笔记：列表底部整宽胶囊，玻璃实底 + 主色文字 */
+.ntp-new {
+  flex: none; display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 44px; margin-top: 10px; box-sizing: border-box;
+  background: var(--surface-card-solid); border: 1px solid var(--glass-border);
+  border-radius: 999px; box-shadow: var(--elevation-card);
+  font-size: 13.5px; font-weight: 600; color: var(--color-primary);
+  cursor: pointer; font-family: inherit;
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.ntp-new:hover { transform: translateY(-1px); box-shadow: var(--elevation-card-hover); }
 
 /* ── 栏 2+3：阅读 + 信息同一块玻璃 ── */
 .ntp-detail {
