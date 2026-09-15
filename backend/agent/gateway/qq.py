@@ -1119,8 +1119,9 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
 
 # QQ 键盘宽度模型（估算）：客户端按钮的真实字体度量拿不到，按字符宽度近似——
 # CJK/全角记 2、ASCII 记 1，每个按钮的边框+内边距+间距记固定装饰成本。
-# 行预算按真机实测校准（当前值容纳 2 个六字标签或 3-4 个短标签同排）。
-KEYBOARD_ROW_BUDGET = 30
+# 行预算按真机实测校准：3 个中长标签共 53 单位实测截断、26 单位宽松，
+# 取 40 ≈ 容纳 2 个长标签或 3-4 个短标签同排，留约两成安全边际。
+KEYBOARD_ROW_BUDGET = 40
 KEYBOARD_BUTTON_CHROME = 4
 KEYBOARD_MAX_ROWS = 5
 KEYBOARD_MAX_PER_ROW = 5
