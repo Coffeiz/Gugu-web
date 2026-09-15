@@ -475,7 +475,7 @@ function onListScroll() {
   overflow: hidden;
 }
 .ntp-detail.empty { grid-template-columns: minmax(0, 1fr); }
-.ntp-reading { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 32px; }
+.ntp-reading { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 12px; }
 /* 编辑态：窗格底部只留 12px，别让钉底的工具栏下面空一截 */
 .ntp-reading.editing { overflow: hidden; padding-bottom: 12px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
