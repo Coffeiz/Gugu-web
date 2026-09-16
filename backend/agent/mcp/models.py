@@ -27,6 +27,7 @@ class McpServerConfig:
     name: str                            # scope 内唯一，作命名空间
     transport: str = TRANSPORT_HTTP      # Phase 1 仅 http；Phase 2 增 stdio
     endpoint: str = ""
+    command: str = ""
     headers: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
     confirm_mode: str = CONFIRM_ALL

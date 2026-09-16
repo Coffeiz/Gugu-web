@@ -99,7 +99,7 @@ async def test_dispatch_routes_to_mcp_and_keeps_users_isolated(enabled_mcp):
 
 
 @pytest.mark.asyncio
-async def test_failed_server_enters_backoff_and_is_not_recalled(enabled_mcp):
+async def test_failed_server_enters_backoff_and_is_not_recalled(enabled_mcp, monkeypatch):
     user_id = uuid4()
     config = _config(user_id)
     manager = manager_module.McpToolManager()
@@ -110,7 +110,7 @@ async def test_failed_server_enters_backoff_and_is_not_recalled(enabled_mcp):
             type(self).list_calls += 1
             return {"error": "无法连接 MCP server，请检查地址与网络", "error_kind": "network"}
 
-    manager_module.McpClient = DeadClient
+    monkeypatch.setattr(manager_module, "McpClient", DeadClient)
     assert await manager.list_user_tools(user_id) == []
     assert await manager.list_user_tools(user_id) == []
     assert await manager.list_user_tools(user_id) == []

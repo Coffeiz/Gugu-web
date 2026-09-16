@@ -350,6 +350,8 @@ class McpSettings(BaseModel):
     default_timeout_seconds: int = Field(30, description="单次 MCP 调用默认超时")
     failure_threshold: int = Field(3, description="连续失败多少次进入退避")
     backoff_seconds: int = Field(60, description="退避时长（秒内不再外呼该 server）")
+    stdio_idle_seconds: int = Field(300, ge=30, le=3600, description="MCP stdio 空闲会话回收时间")
+    stdio_restart_limit: int = Field(3, ge=0, le=10, description="MCP stdio 单次连接允许的崩溃重启次数")
 
 
 class SmtpSettings(BaseModel):

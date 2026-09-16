@@ -264,6 +264,7 @@ export function useChatSessions(options: {
                 allowTextInput: Boolean(item.allow_text_input),
                 customInputActive: Boolean(item.custom_input_active),
                 taskPaused: Boolean(item.task_paused),
+                secretFields: Array.isArray(item.secret_fields) ? item.secret_fields : undefined,
                 resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
                 responseText: item.response_text ? String(item.response_text) : null,
                 expiresAt: item.expires_at ? String(item.expires_at) : undefined,

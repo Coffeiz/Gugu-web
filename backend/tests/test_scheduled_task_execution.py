@@ -592,7 +592,7 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
     monkeypatch.setattr(db_session, "_SessionLocal", lambda: _DbContext())
     monkeypatch.setattr(runner.loaders, "load_user_tz", AsyncMock(return_value="Asia/Shanghai"))
 
-    async def no_capability(tool_names, settings, owner_id=None, query=None):
+    async def no_capability(tool_names, settings, owner_id=None, query=None, **_kwargs):
         return None
 
     monkeypatch.setattr(runner, "_capability_context", no_capability)

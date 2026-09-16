@@ -44,6 +44,7 @@
             <ProfileAccountPane v-else-if="activeNav === 'account'" />
             <ProfileGuguPane v-else-if="activeNav === 'gugu'" />
             <ProfileByokPane v-else-if="activeNav === 'byok'" />
+            <ProfileMcpPane v-else-if="activeNav === 'mcp'" />
             <ProfileToolPermissionsPane v-else-if="activeNav === 'tools'" />
             <ProfileWorkspacesPane v-else-if="activeNav === 'workspaces'" />
             <ProfileImPane v-else-if="activeNav === 'im'" />
@@ -89,6 +90,7 @@ import ProfileImPane from './ProfileImPane.vue'
 import ProfileToolPermissionsPane from './ProfileToolPermissionsPane.vue'
 import ProfileWorkspacesPane from './ProfileWorkspacesPane.vue'
 import ProfileByokPane from './ProfileByokPane.vue'
+import ProfileMcpPane from './ProfileMcpPane.vue'
 import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/core/windowz'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -110,6 +112,7 @@ const navItems = [
   { key: 'gugu', label: 'sharedUi.guguSettings', icon: 'user.gugu' },
   { key: 'im', label: 'sharedUi.connectGugu', icon: 'communication.chat' },
   { key: 'byok', label: 'sharedUi.modelConfigNav', icon: 'user.security' },
+  { key: 'mcp', label: 'sharedUi.mcpConfigNav', icon: 'admin.wrench' },
   { key: 'tools', label: 'sharedUi.capabilityConfig', icon: 'admin.wrench' },
   { key: 'workspaces', label: 'sharedUi.workspaces', icon: 'admin.folder' },
 ]

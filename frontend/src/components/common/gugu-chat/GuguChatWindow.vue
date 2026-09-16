@@ -80,7 +80,7 @@
         :session-settling="sessionSettling"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
-        @interaction-select="onInteractionSelect" @reference-click="onReferenceClick"
+        @interaction-select="onInteractionSelect" @secret-submit="onSecretSubmit" @reference-click="onReferenceClick"
       />
 
       <!-- 排队条：生成中发出的消息不进对话流，在这里排队展示（可单条移除）；
@@ -190,6 +190,7 @@ const props = defineProps<{
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
   onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
+  onSecretSubmit: (msg: ChatMessage, values: Record<string, string>) => void
   onReferenceClick: (reference: ChatReference) => void
   onPromptConnect: () => void
   onFilesystemAuthorization: () => void

@@ -46,6 +46,7 @@ export interface ChatMessage {
     title: string
     body: string
     options: Array<{ id: string; label: string; token: string }>
+    secretFields?: Array<{ name: string; label: string; type?: 'secret' }>
     allowTextInput?: boolean
     customInputActive?: boolean
     taskPaused?: boolean

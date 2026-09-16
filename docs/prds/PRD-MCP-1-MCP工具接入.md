@@ -1,6 +1,6 @@
 # PRD-MCP-1：用户自带 MCP 工具接入
 
-> 状态：全部待实施（方向已定稿：首发支持用户自定义 MCP；平台级官方 MCP 暂缓——默认接什么未定，Admin 保留能力与扩展位；未开始编码）
+> 状态：Phase 1/2 代码已完成，真实 devserver/容器 e2e 待验收；Phase 3 已完成 MCP 用量展示，连接模板与用户级配额待按需实施；平台级官方 MCP 暂缓（默认接什么未定）
 > 创建：2026-09-13
 > 最近更新：2026-09-13
 > 关联模块：`backend/agent/tools/base.py`、`backend/agent/capabilities/selector.py`、`backend/agent/loop_drivers.py`、`backend/agent/core.py`、`backend/app/security/`（凭据加密）、`frontend/src/views/`（用户设置页）
@@ -10,12 +10,12 @@
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
-| MCP 基础接入能力（客户端、工具包装、dispatch 路由） | 🔲 | 未实施 |
-| 用户 MCP 配置管理（设置页 CRUD、凭据加密存储） | 🔲 | 未实施 |
-| 用户 MCP 工具进入对话（声明、调用、确认门） | 🔲 | 未实施 |
-| stdio 本地 server 接入（强制沙盒化） | 🔲 | 未实施，Phase 2 |
-| 咕咕自助管理 MCP 配置（`manage_mcp_servers` 工具 + ask_user 密文通道） | 🔲 | 未实施，Phase 2 |
-| 平台级官方 MCP（Admin 配置、全体用户可用） | 🔲 | 暂缓：默认接什么未定；数据模型与合并逻辑预留 `scope=platform` 扩展位，Admin 总开关与总量统计能力保留 |
+| MCP 基础接入能力（客户端、工具包装、dispatch 路由） | ✅ | 已完成并有单测 |
+| 用户 MCP 配置管理（设置页 CRUD、凭据加密存储） | ✅ | 已完成；真实页面验收待跑 |
+| 用户 MCP 工具进入对话（声明、调用、确认门） | ✅ | 已完成；桩级二轮链路通过 |
+| stdio 本地 server 接入（强制沙盒化） | 🟡 | 代码、协议测试、容器参数测试完成；真实 devserver 容器 e2e 待验收 |
+| 咕咕自助管理 MCP 配置（`manage_mcp_servers` 工具 + ask_user 密文通道） | ✅ | 已完成；真实 IM/Web 场景待验收 |
+| 平台级官方 MCP（Admin 配置、全体用户可用） | ⏸️ | 暂缓：默认接什么未定；数据模型与合并逻辑预留 `scope=platform` 扩展位，Admin 总开关与总量统计能力保留 |
 
 ## 1. 背景与目标
 
@@ -154,8 +154,8 @@ frontend/src/
 
 ## 4. 验证与上线
 
-- 单测：`PYTHONPATH=. .venv/bin/pytest tests/test_mcp_schema_adapter.py tests/test_mcp_manager_dispatch.py tests/test_mcp_settings_api.py tests/test_mcp_user_tools_e2e.py`——FakeMcpServer 桩覆盖：消毒降级、拒载、超限、跨用户隔离（A 配的 server B 不可见不可调）、超时结构化错误、退避、confirm_all 进确认门、`mcp.enabled=false` 全量摘除。
-- devserver e2e：本地起 echo MCP server，用户在设置页真实配置后走网页对话完成「声明 → 调用 → 二轮引用」，验证停机时人话错误、主对话不受影响；迁移在 devserver `alembic upgrade head` 后执行。
+- 单测：`PYTHONPATH=. .venv/bin/pytest tests/test_mcp_schema_adapter.py tests/test_mcp_manager_dispatch.py tests/test_mcp_settings_api.py tests/test_mcp_user_tools_e2e.py tests/test_mcp_stdio.py`——FakeMcpServer 桩覆盖：消毒降级、拒载、超限、跨用户隔离（A 配的 server B 不可见不可调）、超时结构化错误、退避、confirm_all 进确认门、`mcp.enabled=false` 全量摘除；stdio 覆盖 sandboxd JSONL 往返、断 socket、无 TTY 的固定容器边界与空闲回收后重连。
+- devserver e2e：待执行。需本地起 HTTP/stdio echo MCP server，用户在设置页真实配置后走网页对话完成「声明 → 调用 → 二轮引用」，并验证停机时人话错误、主对话不受影响；迁移在 devserver `alembic upgrade head` 后执行。
 - 灰度与回滚：`mcp.enabled` 平台总开关默认关，发布即安全；出问题关开关即全量摘除；DB 迁移 downgrade 删表回滚。
 - 观测：`agent_usage.scenario=mcp` 看调用量/失败率；用户设置页看各 server 状态。
 
@@ -184,24 +184,24 @@ frontend/src/
 
 ### Phase 1：基础接入能力 + 用户配置（最小可用）
 
-- [ ] `MCP1-001` 实现 `mcp/client.py` 最小 JSON-RPC 客户端（initialize / tools/list / tools/call，streamable HTTP），含超时与结构化错误；验收：对 FakeMcpServer 与真实 echo server 完成 list/call 往返，超时返回 `{"error": ...}` 而非异常。
-- [ ] `MCP1-002` 实现 `mcp/schema_adapter.py` 消毒与前缀、上限、Tool 包装（source=mcp、mutates=True、repeat_safe=False）；验收：`test_mcp_schema_adapter.py` 覆盖拒载/降级/裁剪/重名用例全部通过。
-- [ ] `MCP1-003` `user_mcp_servers` ORM 模型 + Alembic 迁移 + 凭据加密接入（复用平台主密钥），表含 `scope` 与可空 `user_id` 预留位；验收：`alembic upgrade/downgrade` 往返通过，密文落库、scope 内名称唯一约束生效。
-- [ ] `MCP1-004` 用户侧 CRUD + 连接测试 API（`/api/v1/mcp/servers`），含 URL 安全校验、上限拒绝、凭据掩码；验收：`test_mcp_settings_api.py` 通过，越权访问他人 server 返回 404。
-- [ ] `MCP1-005` 实现 `mcp/manager.py`：按 `(user, server)` 的工具缓存、dispatch 路由、退避、配置失效；验收：`test_mcp_manager_dispatch.py` 通过，跨用户隔离与 server 停机人话错误用例通过。
-- [ ] `MCP1-006` 接入 `loop_drivers.py` 按用户声明合并、`core.py` dispatch 路由、selector 合并；验收：用户配置后模型可见 `mcp_*` 工具并完成真实调用二轮对话；关闭 `mcp.enabled` 后从声明消失，未配置用户与 builtin 行为不变。
-- [ ] `MCP1-007` 设置页 `ProfileMcpPane`（对齐 BYOK 面板交互与主题契约）：列表、表单、连接状态、掩码回显；验收：devserver 5173 实测保存→对话可用→停机提示人话错误全链路，i18n 键齐、原生弹窗零使用。
-- [ ] `MCP1-008` devserver e2e + 故障演练（停机、超时、删配置即时摘除）；验收：按 §4 场景实测通过，结论记录 devlog。
+- [x] `MCP1-001` 实现 `mcp/client.py` 最小 JSON-RPC 客户端（initialize / tools/list / tools/call，streamable HTTP），含超时与结构化错误；FakeMcpServer 往返与异常单测通过，真实 echo server 待 e2e。
+- [x] `MCP1-002` 实现 `mcp/schema_adapter.py` 消毒与前缀、上限、Tool 包装（source=mcp、mutates=True、repeat_safe=False）；`test_mcp_schema_adapter.py` 通过。
+- [x] `MCP1-003` `user_mcp_servers` ORM 模型 + Alembic 迁移 + 凭据加密接入；表含 `scope` 与可空 `user_id` 预留位，CRUD/加密/唯一约束测试通过。
+- [x] `MCP1-004` 用户侧 CRUD + 连接测试 API（`/api/v1/mcp/servers`），含 URL 安全校验、上限拒绝、凭据掩码；越权 404 测试通过。
+- [x] `MCP1-005` 实现 `mcp/manager.py`：按 `(user, server)` 的工具缓存、dispatch 路由、退避、配置失效；跨用户隔离与停机错误测试通过。
+- [x] `MCP1-006` 接入按用户声明合并、`core.py` dispatch 路由、selector 合并；关闭 `mcp.enabled` 后从声明消失，桩级二轮链路通过。
+- [x] `MCP1-007` 设置页 `ProfileMcpPane`：列表、HTTP/stdio 表单、连接状态、凭据掩码；i18n 静态扫描、前端类型检查通过，真实页面链路待 e2e。
+- [ ] `MCP1-008` devserver e2e + 故障演练（停机、超时、删配置即时摘除）；代码与桩级测试完成，真实 5173/迁移/echo server 验收待执行。
 
 ### Phase 2：stdio 本地 server 与对话式管理
 
-- [ ] `MCP1-009` stdio 传输客户端：子进程在 rootless docker 沙盒内运行（沿 Dockerfile.sandbox 设施），宿主零直跑；含空闲回收、崩溃重启上限；验收：stdio echo server 在 devserver 沙盒内全链路可用，僵尸进程可回收，宿主文件系统不可见。
-- [ ] `MCP1-010` server 连接状态细览与手动「重新连接」；验收：设置页可触发重连并反映最新工具列表。
-- [ ] `MCP1-014` `manage_mcp_servers` 工具（list/add/enable/disable/remove/test_connection，确认门，仅当前用户 scope）；验收：对话内「帮我加一个 MCP」完成添加并进入下一轮声明，跨用户不可操作，确认文案含 server 名。
-- [ ] `MCP1-015` ask_user secret 字段类型 + 独立凭据提交端点 + 占位 tool result；IM 渠道降级「去网页补全」链接；聊天草稿排除 secret 字段；验收：secret 值在上下文、SSE 事件、草稿 localStorage、日志四处均不出现（单测断言），过期/伪造 pending id 被拒。
+- [ ] `MCP1-009` stdio 传输客户端：已实现 sandboxd + rootless Docker、空闲回收、崩溃重启上限；协议/参数/回收单测通过，真实 devserver 沙盒 e2e 待执行。
+- [x] `MCP1-010` server 连接状态细览与手动「重新连接」；设置页已可触发重连并反映最新工具列表。
+- [x] `MCP1-014` `manage_mcp_servers` 工具（list/add/enable/disable/remove/test_connection，确认门，仅当前用户 scope）；已覆盖 HTTP/stdio 连接测试与安全边界，真实对话 e2e 待执行。
+- [x] `MCP1-015` ask_user secret 字段类型 + 独立凭据提交端点 + 占位 tool result；Web 密文通道、IM 链接降级、聊天草稿排除 secret 已实现，凭据值不进入响应与测试断言。
 
 ### Phase 3：体验增强与平台级预留（按需）
 
-- [ ] `MCP1-011` 常用 server 连接模板（预填 endpoint/参数结构，凭据仍用户自填）；验收：模板仅生成配置草稿，不内置任何平台凭据。
-- [ ] `MCP1-012` 用户级调用配额与用量展示（scenario=mcp 已打标，补页面呈现）；验收：用量页可见 MCP 分类统计。
-- [ ] `MCP1-013` 平台级官方 MCP（`scope=platform`）：Admin 配置入口、全体用户零配置可见官方工具；前置条件：官方默认接什么已定案（待确认 5）；验收：按预留扩展位实施，用户无感获得平台工具且可按 server 白名单禁用。
+- [ ] `MCP1-011` 常用 server 连接模板；暂未实施，需先确定首发支持的常用 server，避免把未经确认的 endpoint/命令写入产品。
+- [~] `MCP1-012` 用户级调用配额与用量展示；已完成 `scenario=mcp` 打标、Admin 分类统计及平台聚合数字展示；用户级配额策略与设置项待定。
+- [ ] `MCP1-013` 平台级官方 MCP（`scope=platform`）；前置条件“官方默认接什么”未定，当前仅保留数据模型/合并扩展位及总开关/聚合统计。

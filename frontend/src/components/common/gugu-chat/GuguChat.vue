@@ -76,6 +76,7 @@
       :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
       :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
       :on-interaction-select="onInteractionSelect"
+      :on-secret-submit="onSecretSubmit"
       :on-reference-click="onReferenceClick"
       :on-prompt-connect="promptConnectIM"
       :on-filesystem-authorization="toggleSessionAuthorization"
@@ -544,6 +545,33 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
     _msg.interaction.submitting = false
     _msg.interaction.resolved = true
     _msg.interaction.selectedOptionId = option.id
+  }
+}
+
+async function onSecretSubmit(_msg: ChatMessage, values: Record<string, string>) {
+  const promptId = _msg.interaction?.promptId
+  if (!promptId || !_msg.interaction?.secretFields?.length) return
+  try {
+    const token = getToken()
+    const res = await fetch(`${API_BASE}/mcp/credentials/${promptId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ values }),
+    })
+    if (isUnauthorizedResponse(res)) return
+    if (!res.ok) {
+      if (_msg.interaction) _msg.interaction.submitting = false
+      _chatTip(t('chatUi.secretSubmitFailed'))
+      return
+    }
+    if (_msg.interaction) {
+      _msg.interaction.submitting = false
+      _msg.interaction.resolved = true
+      _msg.interaction.responseText = t('chatUi.secretSubmitted')
+    }
+  } catch {
+    if (_msg.interaction) _msg.interaction.submitting = false
+    _chatTip(t('chatUi.secretSubmitFailed'))
   }
 }
 

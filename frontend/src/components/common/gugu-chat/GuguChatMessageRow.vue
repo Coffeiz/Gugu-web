@@ -1,6 +1,8 @@
 <template>
   <GuguChatToolBubble v-if="msg.role === 'tool'" :msg="msg" />
-  <GuguChatInteraction v-else-if="msg.role === 'interaction'" :msg="msg" @select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)" />
+  <GuguChatInteraction v-else-if="msg.role === 'interaction'" :msg="msg"
+    @select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)"
+    @secret-submit="(selectedMsg, values) => $emit('secretSubmit', selectedMsg, values)" />
   <!-- 群聊左侧消息标发言人：ai 标"咕咕"，群成员标 platformUserName。只在
        群聊会话里显示，1:1 对话左侧默认就是咕咕，不额外占地方。 -->
   <div v-if="isGroupSession && msg.role !== 'user'" class="msg-speaker">{{ msg.role === 'ai' ? t('chatUi.gugu') : msg.speakerLabel }}</div>
@@ -106,6 +108,7 @@ const emit = defineEmits<{
   download: [file: ChatFile]
   actionClick: [e: MouseEvent]
   interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string }]
+  secretSubmit: [msg: ChatMessage, values: Record<string, string>]
   referenceClick: [reference: ChatReference]
 }>()
 

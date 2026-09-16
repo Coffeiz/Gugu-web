@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import logging
 import time
+import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -62,6 +64,9 @@ class _ServerRuntime:
     last_error: str | None = None
     consecutive_failures: int = 0
     backoff_until: float = 0.0
+    client: Any | None = None
+    last_used_at: float = 0.0
+    stdio_restarts: int = 0
 
     def in_backoff(self) -> bool:
         return time.monotonic() < self.backoff_until
@@ -181,12 +186,22 @@ class McpToolManager:
 
     def invalidate_server(self, user_id, server_id) -> None:
         """用户保存配置/停用/删除某 server 后清掉它的工具缓存。"""
-        self._runtimes.pop((self._user_key(user_id), _as_uuid(server_id)), None)
+        runtime = self._runtimes.pop((self._user_key(user_id), _as_uuid(server_id)), None)
+        if runtime is not None and runtime.client is not None:
+            try:
+                asyncio.get_running_loop().create_task(runtime.client.aclose())
+            except RuntimeError:
+                pass
 
     def invalidate_user(self, user_id) -> None:
         user_key = self._user_key(user_id)
         for key in [k for k in self._runtimes if k[0] == user_key]:
-            self._runtimes.pop(key, None)
+            runtime = self._runtimes.pop(key, None)
+            if runtime is not None and runtime.client is not None:
+                try:
+                    asyncio.get_running_loop().create_task(runtime.client.aclose())
+                except RuntimeError:
+                    pass
 
     def server_states(self, user_id) -> list[dict]:
         """设置页连接状态：正常/错误/退避中 + 载入的工具数（FR-MCP-6）。"""
@@ -268,7 +283,7 @@ class McpToolManager:
                 diag_log("agent.mcp.manager.decrypt_headers", exc)
         return McpServerConfig(
             id=row.id, user_id=row.user_id, name=row.name, transport=row.transport,
-            endpoint=row.endpoint, headers=headers, enabled=row.enabled,
+            endpoint=row.endpoint, command=row.command, headers=headers, enabled=row.enabled,
             confirm_mode=row.confirm_mode, timeout_seconds=row.timeout_seconds,
             tool_allowlist=list(row.tool_allowlist or []), scope=row.scope,
         )
@@ -280,6 +295,13 @@ class McpToolManager:
         if runtime is not None:
             if runtime.in_backoff():
                 return runtime
+            if (
+                config.transport == "stdio" and runtime.client is not None
+                and runtime.last_used_at > 0
+                and time.monotonic() - runtime.last_used_at >= settings.mcp.stdio_idle_seconds
+            ):
+                await runtime.client.aclose()
+                runtime.client = None
             if runtime.config == config and runtime.tools:
                 return runtime
         return await self._load_runtime(settings, config)
@@ -292,12 +314,16 @@ class McpToolManager:
         runtime.tools.clear()
         runtime.metas.clear()
 
-        client = McpClient(
-            config.endpoint, headers=config.headers,
-            timeout_seconds=float(config.timeout_seconds or settings.mcp.default_timeout_seconds),
-        )
+        client = await self._new_client(config, settings)
+        if client is None:
+            self._record_failure(key, runtime, "MCP stdio 沙盒不可用", "network")
+            self._runtimes[key] = runtime
+            return None
         listing = await client.list_tools()
         if "error" in listing:
+            close = getattr(client, "aclose", None)
+            if close is not None:
+                await close()
             self._record_failure(key, runtime, listing["error"], listing.get("error_kind", "protocol"))
             self._runtimes[key] = runtime
             return runtime if runtime.tools else None
@@ -346,6 +372,14 @@ class McpToolManager:
         runtime.state = _OK_STATE
         runtime.consecutive_failures = 0
         runtime.last_error = None
+        runtime.last_used_at = time.monotonic()
+        runtime.stdio_restarts = 0
+        if config.transport == "stdio":
+            runtime.client = client
+        else:
+            close = getattr(client, "aclose", None)
+            if close is not None:
+                await close()
         self._runtimes[key] = runtime
         return runtime
 
@@ -370,11 +404,26 @@ class McpToolManager:
         if meta is None:
             return {"error": "该 MCP 工具已不存在（server 工具列表变化），请重新发送消息"}
         key = (self._user_key(config.user_id), config.id)
-        client = McpClient(
-            config.endpoint, headers=config.headers,
-            timeout_seconds=float(config.timeout_seconds or settings.mcp.default_timeout_seconds),
-        )
+        client = runtime.client or await self._new_client(config, settings)
+        if client is None:
+            return {"error": "MCP stdio 沙盒不可用", "error_kind": "network"}
+        if config.transport == "stdio" and runtime.client is None:
+            # 空闲回收后保留的是工具元数据；首次再次调用时要把新会话挂回
+            # runtime，否则句柄会在本轮结束后丢失且无法被下一次空闲回收。
+            runtime.client = client
         raw = await client.call_tool(meta.tool_name, args)
+        runtime.last_used_at = time.monotonic()
+        if config.transport == "stdio" and "error" in raw:
+            restart_limit = settings.mcp.stdio_restart_limit
+            if runtime.stdio_restarts < restart_limit:
+                runtime.stdio_restarts += 1
+                await client.aclose()
+                runtime.client = await self._new_client(config, settings)
+                if runtime.client is not None:
+                    raw = await runtime.client.call_tool(meta.tool_name, args)
+                    runtime.last_used_at = time.monotonic()
+        elif config.transport == "stdio":
+            runtime.stdio_restarts = 0
         if "error" in raw:
             self._record_failure(key, runtime, raw["error"], raw.get("error_kind", "protocol"))
             return raw
@@ -383,6 +432,29 @@ class McpToolManager:
             text = self._extract_text(raw)
             return {"error": (text or "MCP 工具执行失败")[:2000]}
         return raw
+
+    async def _new_client(self, config: McpServerConfig, settings):
+        if config.transport != "stdio":
+            return McpClient(
+                config.endpoint, headers=config.headers,
+                timeout_seconds=float(config.timeout_seconds or settings.mcp.default_timeout_seconds),
+            )
+        from app.db import session as db_session
+        from app.services.workspaces import resolve_sandbox_root
+
+        db_session.ensure_engine()
+        if db_session._SessionLocal is None or config.user_id is None:
+            return None
+        async with db_session._SessionLocal() as db:
+            root = await resolve_sandbox_root(db, config.user_id)
+        if root is None:
+            return None
+        from agent.mcp.stdio_client import McpStdioClient
+
+        return McpStdioClient(
+            config.command, root=str(root),
+            timeout_seconds=float(config.timeout_seconds or settings.mcp.default_timeout_seconds),
+        )
 
     def _record_success(self, key, runtime: _ServerRuntime) -> None:
         runtime.state = _OK_STATE

@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.api.v1 import mcp_settings as api
-from app.models import UserMcpServer
+from app.models import ConversationSession, InteractionPrompt, UserMcpServer
 
 
 @pytest.fixture(autouse=True)
@@ -173,3 +173,44 @@ async def test_test_connection_reports_tools(db, user_a, monkeypatch):
     failed = await api.test_connection(created["id"], user=user_a, db=db)
     assert failed["ok"] is False
     assert "无法连接" in failed["error"]
+
+
+async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(db, user_a):
+    from app.services.interactions import create_agent_prompt, list_history
+
+    created = await api.create_server(
+        api.McpServerCreate(name="secure", endpoint="https://m.example.com"),
+        user=user_a, db=db,
+    )
+    session = ConversationSession(user_id=user_a.id, title="MCP 凭据测试", source="web")
+    db.add(session)
+    await db.commit()
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="call-credentials",
+        tool_name="manage_mcp_servers",
+        payload={
+            "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+            "body": "请输入凭据", "options": [],
+            "secret_fields": [{"name": "Authorization", "label": "Authorization", "type": "secret"}],
+            "credential_server_id": created["id"],
+        },
+    )
+    await db.commit()
+    assert actions == []
+    assert prompt.schema_json["secret_fields"] == [
+        {"name": "Authorization", "label": "Authorization", "type": "secret"},
+    ]
+
+    result = await api.submit_credentials(
+        prompt.id,
+        api.McpCredentialSubmit(values={"Authorization": "Bearer hidden-secret"}),
+        user=user_a,
+        db=db,
+    )
+    assert result == {"ok": True, "prompt_id": prompt.id}
+    stored = await db.get(InteractionPrompt, prompt.id)
+    assert stored.status == "resolved"
+    assert "hidden-secret" not in json.dumps(stored.schema_json)
+    history = await list_history(db, user_id=user_a.id, session_id=session.id)
+    assert history[0]["secret_fields"][0]["name"] == "Authorization"
+    assert "hidden-secret" not in json.dumps(history)

@@ -261,6 +261,33 @@ export const byokApi = {
   rebuildVectorsStatus: () => get<{ status: string; message?: string }>('/byok/embedding-rebuild/status'),
 }
 
+export interface McpServerItem {
+  id: string
+  name: string
+  scope: string
+  transport: string
+  endpoint: string
+  command: string
+  headers: Record<string, string>
+  has_credentials: boolean
+  enabled: boolean
+  confirm_mode: 'auto' | 'confirm_all'
+  timeout_seconds: number
+  tool_allowlist: string[]
+  state: string
+  loaded_tool_count: number
+}
+
+export const mcpApi = {
+  list: () => get<{ enabled: boolean; max_servers: number; items: McpServerItem[] }>('/mcp/servers'),
+  create: (data: Record<string, unknown>) => post<McpServerItem>('/mcp/servers', data),
+  update: (id: string, data: Record<string, unknown>) => patch<McpServerItem>(`/mcp/servers/${encodeURIComponent(id)}`, data),
+  remove: (id: string) => del(`/mcp/servers/${encodeURIComponent(id)}`),
+  test: (id: string) => post<{ ok: boolean; error?: string; tool_count?: number; tools?: string[] }>(`/mcp/servers/${encodeURIComponent(id)}/test_connection`, {}),
+  reconnect: (id: string) => post<{ ok: boolean; state: string; tool_count: number; error?: string }>(`/mcp/servers/${encodeURIComponent(id)}/reconnect`, {}),
+  tools: (id: string) => get(`/mcp/servers/${encodeURIComponent(id)}/tools`),
+}
+
 // ── Files ─────────────────────────────────────────────────────────────────────
 interface FileListParams {
   space?: string

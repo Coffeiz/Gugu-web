@@ -36,6 +36,7 @@ class UserMcpServer(Base):
     name:            Mapped[str]            = mapped_column(String(64))
     transport:       Mapped[str]            = mapped_column(String(16), default="http", server_default="http")
     endpoint:        Mapped[str]            = mapped_column(String(1000))
+    command:         Mapped[str]            = mapped_column(String(1000), default="")
     # headers 整体 JSON 序列化后信封加密（三件套同 UserProviderCredential 口径）
     encrypted_headers:       Mapped[str]            = mapped_column(Text, default="")
     headers_nonce:           Mapped[str]            = mapped_column(String(64), default="")

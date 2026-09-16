@@ -605,6 +605,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     # full-schema 模式只补用户 Skill，工具 Schema 保持 Provider 的原始完整注入。
     from agent.runner import (
         _apply_capability_context, _capability_context, _filter_shell_tool,
+        _load_mcp_tools,
         _pin_session_user_skill_metadata, _session_user_skill_metadata,
     )
     user_skill_metadata = _session_user_skill_metadata(session)
@@ -626,12 +627,16 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             )
             if shell_prompt is None:
                 tool_names = [name for name in tool_names if name != "shell"]
+        mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
+        modelctx.set_usage_context(
+            user_id, session_id, scenario="mcp" if mcp_tools else "chat",
+        )
     system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
     if shell_prompt:
         system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
     capability_context = await _capability_context(
         tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),
-        user_skill_metadata=user_skill_metadata,
+        user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
     )
     if capability_context is not None:
         if _pin_session_user_skill_metadata(session, capability_context):
@@ -651,7 +656,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     use_anthropic = run_config.use_anthropic if run_config is not None else use_anthropic_for(model_cfg)
 
     runner_locale = locale or snapshot.get("locale") or req.locale or "zh-CN"
-    runner = LLMRunner(tool_names, settings, capability_context=capability_context, locale=runner_locale)
+    runner = LLMRunner(
+        tool_names, settings, capability_context=capability_context, locale=runner_locale,
+        dynamic_tools=mcp_tools,
+    )
     full_reply = ""
     display_timeline: list[dict] = []
     active_segment: dict | None = None

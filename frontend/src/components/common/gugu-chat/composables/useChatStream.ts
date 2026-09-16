@@ -519,6 +519,7 @@ export function useChatStream(options: {
                 existing.interaction.allowTextInput = Boolean(evt.allow_text_input ?? existing.interaction.allowTextInput)
                 existing.interaction.customInputActive = Boolean(evt.custom_input_active ?? existing.interaction.customInputActive)
                 existing.interaction.taskPaused = Boolean(evt.task_paused ?? existing.interaction.taskPaused)
+                if (Array.isArray(evt.secret_fields)) existing.interaction.secretFields = evt.secret_fields
                 if (!existing.interaction.resolved) existing.interaction.options = evt.options
               } else {
                 messages.value.push({
@@ -533,6 +534,7 @@ export function useChatStream(options: {
                     allowTextInput: Boolean(evt.allow_text_input),
                     customInputActive: Boolean(evt.custom_input_active),
                     taskPaused: Boolean(evt.task_paused),
+                    secretFields: Array.isArray(evt.secret_fields) ? evt.secret_fields : undefined,
                     expiresAt: evt.expires_at ? String(evt.expires_at) : undefined,
                   },
                 })

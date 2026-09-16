@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
-from app.models import AgentUsage
+from app.models import AgentUsage, UserMcpServer
 
 # 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
 # tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
@@ -544,6 +544,18 @@ async def get_usage(month: str | None = None, model: str | None = None,
     by_scenario = await _scenario_aggregate(today_start)
     by_scenario_recent = await _scenario_aggregate(_utc_naive(today_start_local - timedelta(days=6)))
 
+    # 只返回全平台聚合数字，不暴露用户配置、server 名称或凭据。
+    mcp_server_row = await db.execute(
+        select(
+            func.count(UserMcpServer.id),
+            func.count(func.distinct(UserMcpServer.user_id)),
+        ).where(UserMcpServer.scope == "user", UserMcpServer.enabled.is_(True))
+    )
+    mcp_server_count, mcp_enabled_user_count = mcp_server_row.one()
+    mcp_call_count = await db.scalar(select(func.count(AgentUsage.id)).where(
+        AgentUsage.scenario == "mcp", AgentUsage.is_byok.is_(False),
+    ))
+
     # 有数据的月份列表（最近 12 个月）
     months_rows = await db.execute(
         text(f"""
@@ -654,6 +666,11 @@ async def get_usage(month: str | None = None, model: str | None = None,
         "by_model": by_model,
         "by_scenario": by_scenario,
         "by_scenario_recent": by_scenario_recent,
+        "mcp_summary": {
+            "enabled_users": mcp_enabled_user_count or 0,
+            "enabled_servers": mcp_server_count or 0,
+            "calls_total": mcp_call_count or 0,
+        },
         "active_model": model,
         "months":   available_months,
         "month":    target_month,

@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from uuid import UUID
+from typing import Literal
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,8 +24,9 @@ from app.core.config import get_settings
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.core.url_security import url_is_safe
+from app.core.tz import now_utc
 from app.db.session import get_db
-from app.models import User, UserMcpServer
+from app.models import InteractionPrompt, User, UserMcpServer
 
 _log = logging.getLogger("app.mcp_settings")
 
@@ -36,7 +39,9 @@ _CONFIRM_MODES = ("auto", "confirm_all")
 
 class McpServerCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=_NAME_MAX)
-    endpoint: str = Field(..., min_length=1, max_length=1000)
+    transport: Literal["http", "stdio"] = "http"
+    endpoint: str = Field(default="", max_length=1000)
+    command: str = Field(default="", max_length=1000)
     headers: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
     confirm_mode: str = "confirm_all"
@@ -46,13 +51,21 @@ class McpServerCreate(BaseModel):
 
 class McpServerPatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=_NAME_MAX)
+    transport: Literal["http", "stdio"] | None = None
     endpoint: str | None = Field(None, min_length=1, max_length=1000)
+    command: str | None = Field(None, min_length=1, max_length=1000)
     # None=不修改；{}=清空凭据
     headers: dict[str, str] | None = None
     enabled: bool | None = None
     confirm_mode: str | None = None
     timeout_seconds: int | None = None
     tool_allowlist: list[str] | None = None
+
+
+class McpCredentialSubmit(BaseModel):
+    """凭据表单只接受字段映射；值不会进入响应或 Prompt。"""
+
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 def _validate_name(name: str) -> str:
@@ -93,6 +106,17 @@ def _check_endpoint(endpoint: str) -> str:
     return endpoint
 
 
+def _validate_transport(transport: str, endpoint: str, command: str) -> tuple[str, str, str]:
+    if transport == "http":
+        return transport, _check_endpoint(endpoint), ""
+    command = (command or "").strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="stdio MCP server 必须填写启动命令")
+    if "\x00" in command:
+        raise HTTPException(status_code=400, detail="stdio 启动命令无效")
+    return transport, "", command
+
+
 def _server_view(row: UserMcpServer, settings=None) -> dict:
     """掩码视图：凭据只回显键名，值一律 ••••。"""
     headers: dict[str, str] = {}
@@ -113,6 +137,7 @@ def _server_view(row: UserMcpServer, settings=None) -> dict:
         "scope": row.scope,
         "transport": row.transport,
         "endpoint": row.endpoint,
+        "command": row.command,
         "headers": headers,
         "has_credentials": bool(row.encrypted_headers),
         "enabled": row.enabled,
@@ -160,7 +185,9 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
     settings = get_settings()
     name = _validate_name(payload.name)
     _validate_common(payload.confirm_mode, payload.timeout_seconds, payload.tool_allowlist)
-    endpoint = _check_endpoint(payload.endpoint)
+    transport, endpoint, command = _validate_transport(
+        payload.transport, payload.endpoint, payload.command,
+    )
 
     existing = (await db.execute(
         select(UserMcpServer.id).where(
@@ -189,8 +216,8 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     row = UserMcpServer(
-        user_id=user.id, scope="user", name=name, transport="http",
-        endpoint=endpoint, encrypted_headers=ciphertext, headers_nonce=nonce,
+        user_id=user.id, scope="user", name=name, transport=transport,
+        endpoint=endpoint, command=command, encrypted_headers=ciphertext, headers_nonce=nonce,
         encrypted_headers_key=wrapped_key, enabled=payload.enabled,
         confirm_mode=payload.confirm_mode or "confirm_all",
         timeout_seconds=payload.timeout_seconds or settings.mcp.default_timeout_seconds,
@@ -237,8 +264,11 @@ async def update_server(server_id: str, payload: McpServerPatch,
         if conflict is not None:
             raise HTTPException(status_code=400, detail=f"名称 {new_name} 已存在")
         row.name = new_name
-    if payload.endpoint is not None:
-        row.endpoint = _check_endpoint(payload.endpoint)
+    next_transport = payload.transport or row.transport
+    if payload.transport is not None or payload.endpoint is not None or payload.command is not None:
+        endpoint = payload.endpoint if payload.endpoint is not None else row.endpoint
+        command = payload.command if payload.command is not None else row.command
+        row.transport, row.endpoint, row.command = _validate_transport(next_transport, endpoint, command)
     if payload.headers is not None:
         if payload.headers:
             try:
@@ -293,14 +323,118 @@ async def test_connection(server_id: str, user: User = Depends(get_current_user)
 
     row = await _get_owned_server(db, server_id, user)
     config = McpToolManager._config_from_row(row)
-    client = McpClient(config.endpoint, headers=config.headers,
-                       timeout_seconds=float(config.timeout_seconds))
+    if row.transport == "stdio":
+        from app.services.workspaces import resolve_sandbox_root
+        from agent.mcp.stdio_client import McpStdioClient
+
+        root = await resolve_sandbox_root(db, user.id)
+        if root is None:
+            return {"ok": False, "error": "当前存储后端没有可用的 stdio 沙盒", "tools": []}
+        client = McpStdioClient(
+            config.command, root=str(root),
+            timeout_seconds=float(config.timeout_seconds),
+        )
+    else:
+        client = McpClient(config.endpoint, headers=config.headers,
+                           timeout_seconds=float(config.timeout_seconds))
     listing = await client.list_tools()
+    close = getattr(client, "aclose", None)
     if "error" in listing:
+        if close is not None:
+            await close()
         _invalidate(user.id, row.id)
         return {"ok": False, "error": listing["error"]}
     tool_names = [str(t.get("name") or "") for t in listing.get("tools") or []]
+    if close is not None:
+        await close()
     return {"ok": True, "tool_count": len(tool_names), "tools": tool_names[:64]}
+
+
+@router.post("/servers/{server_id}/reconnect")
+async def reconnect_server(server_id: str, user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    """清除指定 server 的运行时缓存并立即重新发现工具。"""
+    row = await _get_owned_server(db, server_id, user)
+    from agent.mcp.manager import mcp_manager
+
+    mcp_manager.invalidate_server(user.id, row.id)
+    tools = await mcp_manager.list_user_tools(user.id)
+    state = next(
+        (item for item in mcp_manager.server_states(user.id) if item["server_id"] == str(row.id)),
+        None,
+    )
+    return {
+        "ok": bool(state and state["state"] == "ok"),
+        "state": state["state"] if state else "unloaded",
+        "tool_count": state["tool_count"] if state else 0,
+        "total_loaded": len(tools),
+        "error": state["last_error"] if state else None,
+    }
+
+
+@router.post("/credentials/{prompt_id}")
+async def submit_credentials(prompt_id: int, payload: McpCredentialSubmit,
+                             user: User = Depends(get_current_user),
+                             db: AsyncSession = Depends(get_db)):
+    """安全保存 MCP 凭据并结束对应 Prompt；绝不把值写入聊天历史。"""
+    prompt = await db.scalar(select(InteractionPrompt).where(
+        InteractionPrompt.id == prompt_id,
+        InteractionPrompt.user_id == user.id,
+    ).with_for_update())
+    if prompt is None:
+        raise HTTPException(status_code=404, detail="凭据输入已不存在")
+    schema = prompt.schema_json if isinstance(prompt.schema_json, dict) else {}
+    fields = [item for item in (schema.get("secret_fields") or []) if isinstance(item, dict)]
+    allowed = {str(item.get("name") or "") for item in fields}
+    if not allowed or prompt.status != "active" or prompt.expires_at <= now_utc():
+        raise HTTPException(status_code=409, detail="凭据输入已过期")
+    if set(payload.values) != allowed:
+        raise HTTPException(status_code=400, detail="凭据字段不匹配")
+    if any(not isinstance(key, str) or not value.strip() or len(value) > 4096 for key, value in payload.values.items()):
+        raise HTTPException(status_code=400, detail="凭据不能为空或过长")
+    server_id = str((schema.get("context") or {}).get("mcp_credential_server_id") or "")
+    try:
+        server_uuid = UUID(server_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=409, detail="凭据目标已失效")
+    row = await get_owned(db, UserMcpServer, server_uuid, user.id)
+    if row is None or row.scope != "user":
+        raise HTTPException(status_code=404, detail="MCP server 不存在")
+
+    headers: dict[str, str] = {}
+    if row.encrypted_headers:
+        try:
+            decoded = json.loads(decrypt_envelope(
+                row.encrypted_headers, row.headers_nonce, row.encrypted_headers_key,
+                key_version=row.headers_key_version,
+            ))
+        except Exception as exc:
+            _log.warning("MCP 凭据解密失败，拒绝覆盖：server=%s error=%s", str(row.id)[:8], type(exc).__name__)
+            raise HTTPException(status_code=409, detail="已有凭据无法读取，请在设置中清空后重试") from exc
+        if not isinstance(decoded, dict):
+            raise HTTPException(status_code=409, detail="已有凭据格式无效")
+        headers = {str(key): str(value) for key, value in decoded.items()}
+    headers.update({key: value.strip() for key, value in payload.values.items()})
+    try:
+        ciphertext, nonce, wrapped_key = encrypt_envelope(
+            json.dumps(headers, ensure_ascii=False), allow_empty=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="凭据加密失败") from exc
+    row.encrypted_headers, row.headers_nonce = ciphertext, nonce
+    row.encrypted_headers_key, row.headers_key_version = wrapped_key, 1
+    prompt.status = "resolved"
+    prompt.resolved_at = now_utc()
+    prompt.schema_json = {
+        **schema,
+        "resolved_result": {
+            "kind": "form", "status": "answered", "prompt_id": prompt.id,
+            "option_id": None, "value": None, "text": "MCP 凭据已安全保存",
+        },
+    }
+    await db.commit()
+    _invalidate(user.id, row.id)
+    return {"ok": True, "prompt_id": prompt.id}
 
 
 @router.get("/servers/{server_id}/tools")

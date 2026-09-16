@@ -156,6 +156,9 @@ async def run_scheduled_once(
 
         mcp_allowed_names = allowed_tools if allowed_tools is not None else tool_names_override
         mcp_tools = await _load_mcp_tools(user_id, settings, mcp_allowed_names)
+        modelctx.set_usage_context(
+            user_id, scenario="mcp" if mcp_tools else "chat",
+        )
 
         shell_prompt = None
         if "shell" in tool_names:

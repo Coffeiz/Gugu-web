@@ -1694,8 +1694,8 @@ class LLMRunner:
                                 loaded_skill_slugs[skill_slug] = current_skill_digest
                     # 固定 Adapter 已在进入 dispatch 前归一到业务工具名，因此 ask_user
                     # 与直调走同一条交互卡创建流程。
-                    if effective_tool_name == "ask_user":
-                        # ask_user 是唯一会把当前 Run 挂起的普通工具：先把工具往返写进
+                    if effective_tool_name in {"ask_user", "manage_mcp_servers"}:
+                        # ask_user 与 MCP 凭据表单都会把当前 Run 挂起：先把工具往返写进
                         # provider history，等待回答后由 interaction service 替换 pending
                         # result，再从同一 session 继续，而不是把按钮文案伪装成新用户消息。
                         import json as _json
@@ -1715,6 +1715,7 @@ class LLMRunner:
                             )
                         if interaction is not None:
                             prompt, actions = interaction
+                            secret_fields = list((prompt.schema_json or {}).get("secret_fields") or [])
                             pending_result = _json.dumps({
                                 "status": "waiting_input",
                                 "prompt_id": prompt.id,
@@ -1732,7 +1733,8 @@ class LLMRunner:
                                 kind=prompt.kind, title=prompt.title, body=prompt.body,
                                 options=actions, allow_text_input=bool(
                                     (prompt.schema_json or {}).get("allow_text_input", False)
-                                ), expires_at=prompt.expires_at.isoformat(),
+                                ), secret_fields=secret_fields,
+                                expires_at=prompt.expires_at.isoformat(),
                             )
                             if on_interaction is not None:
                                 await on_interaction({
@@ -1744,6 +1746,7 @@ class LLMRunner:
                                     "allow_text_input": bool(
                                         (prompt.schema_json or {}).get("allow_text_input", False)
                                     ),
+                                    "secret_fields": secret_fields,
                                     "expires_at": prompt.expires_at.isoformat(),
                                     "round_id": round_id,
                                     "tool_call_id": tool_call_id,

@@ -23,6 +23,7 @@ from agent.tools.im import IMSkill
 from agent.tools.scheduled_tasks import ScheduledTasksSkill
 from agent.tools.web import WebSkill
 from agent.tools.meta import MetaSkill
+from agent.tools.mcp import McpSkill
 from agent.tools.link_buttons import LinkButtonsSkill
 from agent.tools.skill_management import SkillManagementSkill
 from agent.tools.shell import ShellSkill
@@ -36,5 +37,5 @@ __all__ = [
     "MindSkill",
     "MindCanvasSkill",
     "ConversationsSkill", "IMSkill", "ScheduledTasksSkill",
-    "WebSkill", "MetaSkill", "LinkButtonsSkill", "SkillManagementSkill", "ShellSkill", "WorkspacesSkill",
+    "WebSkill", "MetaSkill", "McpSkill", "LinkButtonsSkill", "SkillManagementSkill", "ShellSkill", "WorkspacesSkill",
 ]

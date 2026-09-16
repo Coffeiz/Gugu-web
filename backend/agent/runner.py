@@ -409,6 +409,9 @@ async def _run_collect_unlocked(
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
     mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
+    modelctx.set_usage_context(
+        user_id, session_id, scenario="mcp" if mcp_tools else "chat",
+    )
     user_skill_metadata = _session_user_skill_metadata(session)
     # 这里同样使用短事务。工具组装可能触发数据库查询，不能把前面已关闭的
     # session 传入，否则 AsyncSession 会在上下文外重新 checkout 连接并由 GC 回收。
@@ -850,6 +853,9 @@ async def _run_stream_unlocked(
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
     mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
+    modelctx.set_usage_context(
+        user_id, session_id, scenario="mcp" if mcp_tools else "chat",
+    )
     user_skill_metadata = _session_user_skill_metadata(session)
     async with _sess._SessionLocal() as tool_db:
         tool_names = await _filter_shell_tool(
