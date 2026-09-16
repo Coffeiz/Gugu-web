@@ -128,7 +128,11 @@ function cycleTheme() {
   setTheme(preference.value === 'light' ? 'dark' : preference.value === 'dark' ? 'system' : 'light')
 }
 
-function handleLogout() { authStore.logout(); router.push('/login') }
+// 登出带上当前页 redirect，重新登录后回到退出前的页面（如 /skills/mcp）。
+function handleLogout() {
+  authStore.logout()
+  void router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
+}
 
 async function refreshTerminalVisibility() {
   try {
