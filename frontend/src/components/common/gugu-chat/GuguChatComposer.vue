@@ -6,13 +6,7 @@
     </div>
     <span v-if="attUploading" class="chat-att-chip att-up">{{ t('common.status.processing') }}</span>
   </div>
-  <div ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded, 'ref-drop-hover': refDropHover }"
-       @pointerover="onRefDropPointerOver" @pointerleave="refDropHover = false">
-    <Transition name="chat-drop-fade">
-      <div v-if="refDropHover" class="chat-ref-drop-overlay" aria-hidden="true">
-        <span>{{ t('chat.dropReference') }}</span>
-      </div>
-    </Transition>
+  <div ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded }">
     <Transition name="chat-command-pop">
       <div v-if="commandMenuVisible && filteredCommands.length" class="chat-command-menu" role="listbox" :aria-label="t('chat.commandList')">
         <button
@@ -98,7 +92,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
  * 编辑器根节点是本组件内部的 DOM——父组件仍通过 expose 调用 focus/测高/重置高度，
  * 不重新拿一份引用，也不让 textarea 与视觉高亮层各自维护一套光标坐标。
  */
-import type { ChatFile, ChatReference } from './chatTypes'
+import { CHAT_REF_SURFACE_ID, type ChatFile, type ChatReference } from './chatTypes'
 const { t } = useI18n()
 
 const props = defineProps<{
@@ -131,45 +125,10 @@ const commandIndex = ref(0)
 const chatCommands = ref<ChatCommandOption[]>([])
 const inputRowEl = ref<HTMLElement | null>(null)
 
-// ── 拖文件卡进输入框 = @ 引用（Runtime 投放目标）──
-// 文件库/项目编辑卡的卡片是 Runtime 对象（file-item/folder-item）；这里把输入行
-// 注册成投放目标，drop 时 Runtime 发 move action，解析 objectIds 还原文件/文件夹
-// id，插入 mindRef chip——references 数组是文档派生物，自动带上且天然去重。
-const CHAT_REF_SURFACE_ID = 'gugu-chat:composer-ref'
-const CHAT_REF_ACCEPTS = ['file-item', 'folder-item']
-const refDropHover = ref(false)
+// ── 拖文件卡进聊天 = @ 引用（Runtime 投放目标挂在 GuguChatWindow 的窗口根上）──
+// 这里只消费 Runtime 的 move action：解析 objectIds 还原文件/文件夹 id，插入
+// mindRef chip——references 数组是文档派生物，自动带上且天然去重。
 const filesCache = useFilesCacheStore()
-
-runtime.surfaces.register({
-  id: CHAT_REF_SURFACE_ID,
-  type: 'chat-composer',
-  layout: 'grid',
-  accepts: [...CHAT_REF_ACCEPTS],
-  element: null,
-})
-const chatRefTargetGeneration = runtime.targets.register({
-  id: `${CHAT_REF_SURFACE_ID}:target`,
-  surfaceId: CHAT_REF_SURFACE_ID,
-  accepts: [...CHAT_REF_ACCEPTS],
-  priority: 5,
-  element: null,
-})
-watch(inputRowEl, (element, previous) => {
-  if (element === null && previous) return
-  runtime.targets.setElement(`${CHAT_REF_SURFACE_ID}:target`, element)
-}, { flush: 'post' })
-onUnmounted(() => {
-  runtime.targets.unregister(`${CHAT_REF_SURFACE_ID}:target`, chatRefTargetGeneration)
-  runtime.surfaces.unregister(CHAT_REF_SURFACE_ID, 0)
-  window.removeEventListener('pointerup', onGlobalPointerUp)
-})
-
-function onRefDropPointerOver(event: PointerEvent) {
-  // 投放代理是 pointer-events:none，拖拽悬停时底层元素能收到 pointer 事件；
-  // 主键按下状态才视为拖拽悬停，避免普通鼠标划过误亮遮罩。
-  if (event.buttons & 1) refDropHover.value = true
-}
-function onGlobalPointerUp() { refDropHover.value = false }
 
 function parseDroppedRef(objectId: string): ChatReference | null {
   const match = /(?:^|:)(file|folder):(\d+)$/.exec(objectId)
@@ -203,7 +162,28 @@ useRuntimeAction(async action => {
   if (!references.length) return
   if (!filesCache.loaded) await filesCache.load().catch(() => {})
   for (const reference of references) insertReferenceChip(reference)
+  // 落地动画结束后源卡片是瞬间显形的；给它补一段「从松手位置缩放淡入回归」的
+  // 入场动画，等 Runtime 结束对该对象的视觉接管后播放。
+  for (const objectId of objectIds) animateSourceReturn(objectId)
 })
+
+/** 落地收尾后源卡片会直接显形，这里等 Runtime 交还视觉所有权，再补一个短促的
+ *  缩放淡入（起点与 Runtime dismiss 的 0.72 缩放一致），读感是卡片自己飞回来了。 */
+function animateSourceReturn(objectId: string) {
+  const element = runtime.objects.get(objectId)?.element
+  if (!element) return
+  const tryAnimate = () => {
+    if (runtime.isControlled(objectId)) { requestAnimationFrame(tryAnimate); return }
+    element.animate(
+      [
+        { opacity: 0, transform: 'scale(0.72)' },
+        { opacity: 1, transform: 'none' },
+      ],
+      { duration: 240, easing: 'ease-out' },
+    )
+  }
+  requestAnimationFrame(tryAnimate)
+}
 const { items: referenceItems, loading: referenceLoading, active: referenceActive, search: searchReferences, reset: resetReferences, move: moveReferences } = useReferenceSuggest()
 const referencePicker = ref({ open: false, query: '', from: 0, to: 0 })
 let lastReferenceQuery: string | null = null
@@ -578,18 +558,4 @@ defineExpose({
 .send-btn svg { display: block; }
 .send-btn:hover:not(:disabled) { background: var(--action-primary-bg-hover); transform: none; }
 .send-btn:disabled { opacity: 0.55; cursor: default; }
-
-/* 拖文件卡进输入框的悬停遮罩：与 .chat-drop-overlay（附件上传）同一视觉语言 */
-.chat-input-row { position: relative; }
-.chat-ref-drop-overlay {
-  position: absolute; inset: 0; z-index: 60;
-  display: flex; align-items: center; justify-content: center;
-  pointer-events: none;
-  background: rgba(123,127,178,0.16);
-  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
-  border: 2px dashed rgba(123,127,178,0.6); border-radius: var(--radius-md);
-  color: var(--color-primary); font-size: 13px; font-weight: 600;
-}
-.chat-drop-fade-enter-active, .chat-drop-fade-leave-active { transition: opacity 0.15s ease; }
-.chat-drop-fade-enter-from, .chat-drop-fade-leave-to { opacity: 0; }
 </style>
