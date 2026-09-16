@@ -68,13 +68,27 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
     mkdir -p "$EMBED_DATA/postgres" "$EMBED_DATA/redis" /run/postgresql "$EMBED_RUN"
     chown postgres:postgres /run/postgresql "$EMBED_DATA/postgres"
     chown redis:redis "$EMBED_DATA/redis"
+    # fnOS 等面板绑定的宿主机目录常见 700/000 且属主是面板用户（或 root），postgres/redis
+    # 系统用户连「穿越」$EMBED_DATA 都做不到，initdb 会报 Permission denied（入口自身是
+    # root，mkdir/chown 全成功，炸点在 su 之后）。这里只给父目录补执行位（不开放读列表），
+    # 并把两个数据目录收成守护用户私有（initdb 自己会再收紧到 700）。
+    chmod a+x "$EMBED_DATA" 2>/dev/null || true
+    chown -R postgres:postgres "$EMBED_DATA/postgres"
+    chown -R redis:redis "$EMBED_DATA/redis"
+    chmod 700 "$EMBED_DATA/postgres" "$EMBED_DATA/redis"
     # 库名/用户名跟随 DB__NAME / DB__USER（默认 gugu）：面板暴露了这两个变量，
     # 初始化若硬编码 gugu，用户改了变量反而会把自己配坏。
     EMBED_DB_USER="${DB__USER:-gugu}"
     EMBED_DB_NAME="${DB__NAME:-gugu}"
     if [ ! -s "$EMBED_DATA/postgres/PG_VERSION" ]; then
         echo "[entrypoint] 首次启动：初始化内置 PostgreSQL（数据目录 $EMBED_DATA/postgres）..."
-        su -s /bin/bash postgres -c "\"$PG_BIN/initdb\" -D '$EMBED_DATA/postgres' --username='$EMBED_DB_USER' --encoding=UTF8"
+        if ! su -s /bin/bash postgres -c "\"$PG_BIN/initdb\" -D '$EMBED_DATA/postgres' --username='$EMBED_DB_USER' --encoding=UTF8"; then
+            echo "[entrypoint] 内置 PostgreSQL 初始化失败。" >&2
+            echo "  最常见原因：宿主机绑定目录权限过严（NAS 面板映射目录常见），守护用户无法写入。" >&2
+            echo "  请在宿主机执行：chmod 755 /你的数据目录 && chown -R 999:999 /你的数据目录" >&2
+            echo "  （999 是镜像内 postgres 用户的 uid；容器重启即可继续初始化）" >&2
+            exit 1
+        fi
         cat >> "$EMBED_DATA/postgres/pg_hba.conf" <<'HBA'
 host all all 127.0.0.1/32 trust
 host all all ::1/128 trust
