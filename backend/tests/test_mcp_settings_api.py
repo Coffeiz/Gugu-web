@@ -364,6 +364,96 @@ async def test_endpoint_credentials_are_encrypted_and_masked(db, user_a):
     ) == "https://mcp.amap.com/mcp?key=secret-amap-key"
 
 
+async def test_credential_values_echo_and_roundtrip(db, user_a):
+    """凭据槽位值在编辑视图明文回显（owner-only），落库仍为信封密文（产品定稿）。"""
+    created = await api.create_server(
+        api.McpServerCreate(
+            name="sealed_source",
+            endpoint="https://m.example.com",
+            credential_slots=[{"id": "authorization", "label": "Authorization",
+                               "target": "header", "name": "Authorization"}],
+            credential_values={"authorization": "Bearer sk-live-123"},
+        ),
+        user=user_a,
+        db=db,
+    )
+    # 回显明文
+    assert created["credential_values"] == {"authorization": "Bearer sk-live-123"}
+    # 落库为密文，无明文
+    row = await db.scalar(select(UserMcpServer).where(UserMcpServer.id == UUID(created["id"])))
+    assert "sk-live-123" not in row.encrypted_credentials
+    assert row.encrypted_credentials
+
+    # 更新值：回显与存储同步变化；缺省槽位 = 清除
+    updated = await api.update_server(
+        created["id"],
+        api.McpServerPatch(credential_values={"authorization": "Bearer sk-new"}),
+        user=user_a, db=db,
+    )
+    assert updated["credential_values"] == {"authorization": "Bearer sk-new"}
+
+    # 不带 credential_values 的更新保留原值（如只改名称）
+    renamed = await api.update_server(
+        created["id"], api.McpServerPatch(name="sealed_renamed"), user=user_a, db=db,
+    )
+    assert renamed["credential_values"] == {"authorization": "Bearer sk-new"}
+
+    # 值必须命中已声明的槽位
+    with pytest.raises(HTTPException) as exc:
+        await api.update_server(
+            created["id"], api.McpServerPatch(credential_values={"ghost": "x"}),
+            user=user_a, db=db,
+        )
+    assert "未知槽位" in exc.value.detail
+
+
+async def test_legacy_headers_surface_in_edit_view_and_migrate_on_save(db, user_a):
+    """legacy headers/query 密文行在编辑视图转换为槽位并明文回显；保存后迁移到槽位列。"""
+    from app.byok.crypto import encrypt_envelope
+
+    row = UserMcpServer(
+        user_id=user_a.id, scope="user", name="legacy_github",
+        transport="http", endpoint="https://api.example.com/mcp/",
+        credential_slots=[],
+    )
+    ct, nonce, wrapped = encrypt_envelope(
+        json.dumps({"Authorization": "Bearer ghp_legacy"}), allow_empty=False,
+    )
+    row.encrypted_headers, row.headers_nonce = ct, nonce
+    row.encrypted_headers_key, row.headers_key_version = wrapped, 1
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+
+    items = (await api.list_servers(user=user_a, db=db))["items"]
+    legacy_view = next(i for i in items if i["name"] == "legacy_github")
+    assert legacy_view["credential_slots"] == [{
+        "id": "legacy_header_0", "label": "Authorization",
+        "target": "header", "name": "Authorization", "prefix": "",
+    }]
+    assert legacy_view["credential_values"] == {"legacy_header_0": "Bearer ghp_legacy"}
+
+    # 保存后迁移到新槽位列，legacy 密文清除
+    await api.update_server(
+        str(row.id),
+        api.McpServerPatch(
+            credential_slots=legacy_view["credential_slots"],
+            credential_values=legacy_view["credential_values"],
+        ),
+        user=user_a, db=db,
+    )
+    migrated = await db.scalar(select(UserMcpServer).where(UserMcpServer.id == row.id))
+    assert [s["id"] for s in migrated.credential_slots] == ["legacy_header_0"]
+    assert migrated.encrypted_credentials
+    assert migrated.encrypted_headers == ""
+    from app.byok.crypto import decrypt_envelope
+    values = json.loads(decrypt_envelope(
+        migrated.encrypted_credentials, migrated.credentials_nonce,
+        migrated.encrypted_credentials_key, key_version=migrated.credentials_key_version,
+    ))
+    assert values == {"legacy_header_0": "Bearer ghp_legacy"}
+
+
 def test_manage_mcp_servers_mutation_metadata_distinguishes_read_actions():
     """管理工具的只读动作不能继承整个复合工具的 mutates 标记。"""
     from agent.tools.mcp import McpSkill

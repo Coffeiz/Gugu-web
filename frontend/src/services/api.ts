@@ -275,6 +275,8 @@ export interface McpServerItem {
     name: string
     prefix?: string
   }>
+  // 编辑视图明文回显的槽位值（owner-only；落库仍为信封密文）
+  credential_values?: Record<string, string>
   credential_state?: { configured: boolean; slot_ids: string[] }
   has_credentials: boolean
   enabled: boolean

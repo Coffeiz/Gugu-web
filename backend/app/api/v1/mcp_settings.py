@@ -1,12 +1,14 @@
 """用户侧 MCP server 配置接口（PRD-MCP-1 FR-MCP-1/4/6）。
 
 - CRUD + 连接测试 + 已载入工具列表；越权访问他人 server 一律 404。
-- endpoint 属不可信外部地址：保存/更新时强制 url_is_safe 前置校验；
-  凭据只保存注入槽位，敏感值通过通用 secret prompt 单独加密落库。
+- endpoint 属不可信外部地址：保存/更新时强制 url_is_safe 前置校验。
+- 凭据编辑视图对 owner 明文回显（产品定稿：只在传输与落库加密，前端可见可改）；
+  值提交后信封加密落库；对话内 secret prompt 通道保持独立，凭据不进模型上下文。
 - 上限：每用户 server 数、单 server 工具白名单长度；超限返回人话 400。
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from urllib.parse import parse_qsl, urlsplit
@@ -43,6 +45,8 @@ class McpServerCreate(BaseModel):
     endpoint: str = Field(default="", max_length=1000)
     command: str = Field(default="", max_length=1000)
     credential_slots: list[dict] = Field(default_factory=list)
+    # 槽位值的明文编辑入口（仅 owner 鉴权后可见可改）；落库前信封加密
+    credential_values: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
     confirm_mode: str = "confirm_all"
     timeout_seconds: int = 30
@@ -57,6 +61,7 @@ class McpServerPatch(BaseModel):
     endpoint: str | None = Field(None, max_length=1000)
     command: str | None = Field(None, max_length=1000)
     credential_slots: list[dict] | None = None
+    credential_values: dict[str, str] | None = None
     enabled: bool | None = None
     confirm_mode: str | None = None
     timeout_seconds: int | None = None
@@ -130,12 +135,64 @@ def _decrypt_endpoint(row: UserMcpServer) -> str:
         return ""
 
 
+def _credential_view_parts(row: UserMcpServer) -> tuple[list[dict], dict[str, str]]:
+    """槽位定义 + 解密后的凭据值（owner 明文回显；只在传输与落库加密）。
+
+    旧 headers/query 双轨密文行在视图层转换为统一槽位（不落库），
+    用户在编辑表单保存后即迁移到新的槽位列。
+    """
+    from agent.mcp.credentials import legacy_slots
+
+    slots = list(getattr(row, "credential_slots", None) or [])
+    values: dict[str, str] = {}
+    if getattr(row, "encrypted_credentials", ""):
+        try:
+            raw = decrypt_envelope(
+                row.encrypted_credentials, row.credentials_nonce,
+                row.encrypted_credentials_key, key_version=row.credentials_key_version,
+            )
+            decoded = json.loads(raw)
+            if isinstance(decoded, dict):
+                values = {str(k): str(v) for k, v in decoded.items()}
+        except Exception:
+            values = {}
+    if not slots and (row.encrypted_headers or row.encrypted_query_params):
+        headers: dict[str, str] = {}
+        query: dict[str, str] = {}
+        try:
+            if row.encrypted_headers:
+                raw = decrypt_envelope(
+                    row.encrypted_headers, row.headers_nonce,
+                    row.encrypted_headers_key, key_version=row.headers_key_version,
+                )
+                decoded = json.loads(raw)
+                if isinstance(decoded, dict):
+                    headers = {str(k): str(v) for k, v in decoded.items()}
+        except Exception:
+            headers = {}
+        try:
+            if row.encrypted_query_params:
+                raw = decrypt_envelope(
+                    row.encrypted_query_params, row.query_params_nonce,
+                    row.encrypted_query_params_key, key_version=row.query_params_key_version,
+                )
+                decoded = json.loads(raw)
+                if isinstance(decoded, dict):
+                    query = {str(k): str(v) for k, v in decoded.items()}
+        except Exception:
+            query = {}
+        if headers or query:
+            slots, values = legacy_slots(headers, query)
+    return slots, values
+
+
 def _server_view(row: UserMcpServer, settings=None) -> dict:
-    """返回 MCP 编辑视图；敏感值不回显，只返回槽位和配置状态。"""
+    """编辑视图：endpoint 与凭据值明文回显（owner-only；落库仍为信封密文）。"""
     endpoint_query_has_value = any(
         "{{secret:" not in value
         for _key, value in parse_qsl(urlsplit(_decrypt_endpoint(row)).query, keep_blank_values=True)
     )
+    slot_defs, credential_values = _credential_view_parts(row)
     return {
         "id": str(row.id),
         "name": row.name,
@@ -143,19 +200,23 @@ def _server_view(row: UserMcpServer, settings=None) -> dict:
         "transport": row.transport,
         "endpoint": _decrypt_endpoint(row),
         "command": row.command,
-        "credential_slots": list(getattr(row, "credential_slots", None) or []),
+        "credential_slots": slot_defs,
+        "credential_values": credential_values,
         "credential_state": {
             "configured": bool(
                 getattr(row, "encrypted_credentials", "")
                 or row.encrypted_headers
                 or row.encrypted_query_params
+                or credential_values
+                or endpoint_query_has_value
             ),
-            "slot_ids": [str(item.get("id")) for item in (getattr(row, "credential_slots", None) or []) if isinstance(item, dict)],
+            "slot_ids": [str(item.get("id")) for item in slot_defs if isinstance(item, dict)],
         },
         "has_credentials": bool(
             getattr(row, "encrypted_credentials", "")
             or row.encrypted_headers
             or row.encrypted_query_params
+            or credential_values
             or endpoint_query_has_value
         ),
         "enabled": row.enabled,
@@ -164,6 +225,49 @@ def _server_view(row: UserMcpServer, settings=None) -> dict:
         "tool_allowlist": list(row.tool_allowlist or []),
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+
+
+def _store_credential_values(row: UserMcpServer, values: dict[str, str] | None,
+                             slot_defs: list[dict]) -> None:
+    """把编辑表单提交的明文槽位值整体替换写入（信封加密落库）。
+
+    仅在 payload 显式携带 credential_values 时调用：提供即整体替换（含清空），
+    未提供则保留原值（对话内 secret prompt 通道写入的值不受设置页编辑影响）。
+    新槽位列成为权威来源后，legacy headers/query 双轨密文一并清除。
+    """
+    slot_ids = {item.get("id") for item in slot_defs if isinstance(item, dict)}
+    cleaned: dict[str, str] = {}
+    for key, value in (values or {}).items():
+        slot_id = str(key).strip()
+        if slot_id not in slot_ids:
+            raise HTTPException(status_code=400, detail=f"凭据值包含未知槽位：{slot_id}")
+        text = str(value)
+        if len(text) > 4096:
+            raise HTTPException(status_code=400, detail="单个凭据值不能超过 4096 字符")
+        if text:
+            cleaned[slot_id] = text
+    if cleaned:
+        try:
+            ciphertext, nonce, wrapped_key = encrypt_envelope(
+                json.dumps(cleaned, ensure_ascii=False), allow_empty=False,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="凭据加密失败") from exc
+        row.encrypted_credentials = ciphertext
+        row.credentials_nonce = nonce
+        row.encrypted_credentials_key = wrapped_key
+        row.credentials_key_version = 1
+    else:
+        row.encrypted_credentials = ""
+        row.credentials_nonce = ""
+        row.encrypted_credentials_key = ""
+        row.credentials_key_version = 1
+    row.encrypted_headers = ""
+    row.headers_nonce = ""
+    row.encrypted_headers_key = ""
+    row.encrypted_query_params = ""
+    row.query_params_nonce = ""
+    row.encrypted_query_params_key = ""
 
 
 def _with_runtime_state(view: dict, state: dict | None) -> dict:
@@ -259,6 +363,7 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
         timeout_seconds=payload.timeout_seconds or settings.mcp.default_timeout_seconds,
         tool_allowlist=list(payload.tool_allowlist or []),
     )
+    _store_credential_values(row, payload.credential_values, credential_slots)
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -318,6 +423,9 @@ async def update_server(server_id: str, payload: McpServerPatch,
             row.credential_slots = normalize_slots(payload.credential_slots)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload.credential_values is not None:
+        _store_credential_values(row, payload.credential_values,
+                                 list(row.credential_slots or []))
     if payload.enabled is not None:
         row.enabled = payload.enabled
     if payload.confirm_mode is not None:

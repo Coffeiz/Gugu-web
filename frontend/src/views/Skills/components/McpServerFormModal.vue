@@ -55,6 +55,11 @@ const confirmOptions = [
 ]
 const server = props.server
 const formError = ref('')
+// 槽位定义与已保存凭据值合并回显（明文编辑；保存时值单独信封加密）
+const seededSlots = (server?.credential_slots ?? []).map((slot) => {
+  const value = server?.credential_values?.[slot.id]
+  return value != null ? { ...slot, value } : { ...slot }
+})
 const form = reactive({
   name: server?.name ?? '',
   transport: (server?.transport === 'stdio' ? 'stdio' : 'http') as 'http' | 'stdio',
@@ -64,8 +69,8 @@ const form = reactive({
   tool_allowlist_text: server?.tool_allowlist?.join(', ') ?? '',
   confirm_mode: (server?.confirm_mode === 'auto' ? 'auto' : 'confirm_all') as 'auto' | 'confirm_all',
   enabled: server?.enabled ?? true,
-  credential_slots_text: server?.credential_slots?.length
-    ? JSON.stringify(server.credential_slots, null, 2)
+  credential_slots_text: seededSlots.length
+    ? JSON.stringify(seededSlots, null, 2)
     : '',
 })
 
@@ -84,7 +89,12 @@ function parseCredentialSlots(value: string): McpServerDraft['credential_slots']
       const label = String(entry.label ?? '').trim()
       const name = String(entry.name ?? '').trim()
       if (!id || !label || !target || !name) throw new Error()
-      return { id, label, target, name, prefix: String(entry.prefix ?? '') }
+      const prefix = String(entry.prefix ?? '')
+      // value 字段是该槽位的凭据值（明文编辑）；缺省表示保持已保存值不变
+      const slotValue = entry.value == null ? undefined : String(entry.value)
+      return slotValue != null && slotValue !== ''
+        ? { id, label, target, name, prefix, value: slotValue }
+        : { id, label, target, name, prefix }
     })
   } catch {
     throw new Error(t('skillsMcpUi.credentialSlotsInvalid'))
@@ -99,6 +109,13 @@ function submit() {
   }
   try {
     const credentialSlots = form.transport === 'http' ? parseCredentialSlots(form.credential_slots_text) : undefined
+    // value 单独抽出成 credential_values（信封加密落库）；definitions 不携带明文
+    const credentialValues = Object.fromEntries(
+      (credentialSlots ?? [])
+        .filter((slot): slot is typeof slot & { value: string } => typeof slot.value === 'string' && slot.value !== '')
+        .map(slot => [slot.id, slot.value]),
+    )
+    const slotDefs = (credentialSlots ?? []).map(({ value: _value, ...definition }) => definition)
     emit('save', {
       name: form.name,
       transport: form.transport,
@@ -108,7 +125,7 @@ function submit() {
       tool_allowlist: form.tool_allowlist_text.split(',').map(value => value.trim()).filter(Boolean),
       confirm_mode: form.confirm_mode,
       enabled: form.enabled,
-      ...(credentialSlots ? { credential_slots: credentialSlots } : {}),
+      ...(credentialSlots ? { credential_slots: slotDefs, credential_values: credentialValues } : {}),
     })
   } catch (cause) {
     formError.value = cause instanceof Error ? cause.message : t('skillsMcpUi.credentialSlotsInvalid')
