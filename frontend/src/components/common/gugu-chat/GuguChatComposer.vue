@@ -533,14 +533,17 @@ defineExpose({
   display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
   margin: 0 2px; padding: 0 5px; border: 1px solid var(--action-outline);
   border-radius: 5px; color: var(--content-primary); background: var(--action-soft);
-  /* 编辑器行高 14px×1.5=21px：chip 总高必须压在 21px 内，否则出现 @ 后整行被撑高 */
-  height: 21px; line-height: 1; font-size: 12px; white-space: nowrap;
+  /* 编辑器行高 14px×1.5=21px。chip 用 middle 对齐且与行框等高时，上下各溢出
+     1px 会把行盒撑到 23px（autogrow 量到 scrollHeight 变大 → 输入行变高）。
+     20px + 上下 -2px 负 margin 把行盒贡献收回行框内：行高恒定且视觉居中。 */
+  height: 20px; line-height: 1; font-size: 12px; white-space: nowrap;
+  margin: -2px 2px;
   /* 原子节点仍由 ProseMirror 整体选中/删除；这里不能用 user-select:all，
      否则光标紧贴引用末尾时，鼠标拖拽会被浏览器锁成“选中胶囊/移动光标”，
      无法继续建立前后文本选区。 */
   user-select: text;
 }
-.chat-input-editor :deep(.ProseMirror .mind-ref-icon) { flex: 0 0 auto; }
+.chat-input-editor :deep(.ProseMirror .mind-ref-icon) { flex: 0 0 auto; width: 11px; height: 11px; }
 .chat-input-editor :deep(.ProseMirror .mind-ref-label) { overflow: hidden; text-overflow: ellipsis; }
 
 .exp-send-btn { width: 28px; height: 28px; border-radius: 8px; }
