@@ -3,7 +3,7 @@
     <section class="skills-panel glass-card">
       <header class="skills-header">
         <SegmentedTabs
-          :model-value="route.name === 'SkillsMcp' && mcpVisible ? 'mcp' : 'skills'"
+          :model-value="route.name === 'SkillsMcp' ? 'mcp' : 'skills'"
           :tabs="skillTabs"
           :aria-label="t('skills.pageNavigation')"
           class="skills-nav"
