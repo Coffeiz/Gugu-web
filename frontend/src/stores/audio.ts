@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { isUnauthorizedResponse } from '@/services/authSession'
 
 const AUDIO_FILE_KEY = 'gugu_audio_file'
 
@@ -42,6 +43,7 @@ export const useAudioStore = defineStore('audio', () => {
       const res = await fetch(`${BASE_URL}/files/${f.id}/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
       if (requestEpoch !== getAccountBoundaryEpoch() || file.value?.id !== f.id) return

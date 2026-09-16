@@ -143,6 +143,7 @@ import AdminDatePicker from '@/components/AdminDatePicker.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
+import { isUnauthorizedResponse } from '@/services/authSession'
 import { fmtLocalDateTime, localDayKey } from '@/utils/dateAttribution'
 import { useI18n } from 'vue-i18n'
 
@@ -233,6 +234,7 @@ async function load(manual = false) {
     const res  = await fetch(`${BASE}/admin/audit-log`, {
       headers: { Authorization: `Bearer ${token}` },
     })
+    if (isUnauthorizedResponse(res, 'admin')) return
     const data = await res.json().catch(() => ({}))
     rows.value = data.items ?? []
   } catch {
@@ -254,6 +256,7 @@ async function loadSecurity() {
     const res = await fetch(`${BASE}/admin/audit-log/security-events?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
+    if (isUnauthorizedResponse(res, 'admin')) return
     securityRows.value = (await res.json().catch(() => ({}))).items ?? []
   } catch {
     securityRows.value = []

@@ -121,6 +121,7 @@ import { useUiStore } from '@/stores/ui'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, authApi, getToken } from '@/services/api'
+import { isUnauthorizedResponse } from '@/services/authSession'
 import { prefetchGreeting } from '@/composables/shared/useGreeting'
 import GuguChatFab from './GuguChatFab.vue'
 import GuguChatMiniPlayer from './GuguChatMiniPlayer.vue'
@@ -479,6 +480,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ token: option.token }),
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) {
         if (_msg.interaction) _msg.interaction.submitting = false
         _chatTip(t('chatUi.interactionSubmitFailed'))
@@ -511,6 +513,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ token: option.token }),
     })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) {
       if (_msg.interaction) {
         _msg.interaction.submitting = false
@@ -560,6 +563,7 @@ async function onChatSend() {
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ text }),
     })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) {
       _chatTip(t('chatUi.interactionSubmitFailed'))
       return
@@ -615,6 +619,7 @@ async function downloadFile(f: ChatFile) {
     const token = getToken()
     const res = await fetch(`${API_BASE}/agent/attachment/${f.attach_id}/download`,
       { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) { console.error('附件下载失败', res.status); return }
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)

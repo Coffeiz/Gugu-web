@@ -108,6 +108,7 @@ import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
+import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isTextExt, isVideoExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
@@ -231,6 +232,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
         : `${BASE_URL}/files/${file.id!}/download`) + bust
       const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
       if (sequence !== loadSequence) return
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       let blob = await res.blob()
       if (sequence !== loadSequence) return
@@ -290,6 +292,7 @@ async function handleDownload() {
       const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const url = URL.createObjectURL(await res.blob())
       const anchor = document.createElement('a')

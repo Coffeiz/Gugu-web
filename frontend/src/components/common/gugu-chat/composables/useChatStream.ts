@@ -1,6 +1,7 @@
 import { ref, type Ref } from 'vue'
 import { getLocale, i18n } from '@/i18n'
 import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
+import { isUnauthorizedResponse } from '@/services/authSession'
 import { useLiveStore } from '@/stores/live'
 import { playGuguSfx } from '@/services/sfx'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePayload } from '../chatTypes'
@@ -706,6 +707,7 @@ export function useChatStream(options: {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         signal: abortCtrl.value.signal,
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) return
       if (viewGeneration !== options.getViewGeneration() || sessionId.value !== id) return   // 期间又切走了，丢弃
       if (!res.body) return
@@ -769,6 +771,7 @@ export function useChatStream(options: {
         attachments: attachments.map(a => a.attach_id), references,
       }),
     })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (!res.body) throw new Error('empty response body')
     const reader = res.body.getReader()
@@ -911,6 +914,7 @@ export function useChatStream(options: {
                                ...(greetingForSession ? { greeting: greetingForSession } : {}) }),
         signal: requestController.signal,
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       if (!res.body) throw new Error('empty response body')
 

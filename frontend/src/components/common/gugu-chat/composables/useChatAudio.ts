@@ -4,6 +4,7 @@ import { getToken } from '@/services/api'
 import { API_BASE } from '../chatConstants'
 import type { ChatFile } from '../chatTypes'
 import { i18n } from '@/i18n'
+import { isUnauthorizedResponse } from '@/services/authSession'
 
 /**
  * 迷你播放器（文件库音频）+ 消息语音条播放的唯一状态所有权：<audio> 元素、
@@ -129,6 +130,7 @@ export function useChatAudio(options: {
         const token = getToken()
         const res = await fetch(`${API_BASE}/agent/attachment/${id}/download`,
           { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+        if (isUnauthorizedResponse(res)) return
         if (!res.ok) { options.onTip(res.status === 404 ? i18n.global.t('chatUi.voiceExpired') : i18n.global.t('chatUi.voiceLoadFailed')); return }
         url = URL.createObjectURL(await res.blob()); _voiceUrls[id] = url
       }

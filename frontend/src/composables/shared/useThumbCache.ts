@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { pLimit, THUMB_CONCURRENCY } from '@/utils/concurrency'
+import { isUnauthorizedResponse } from '@/services/authSession'
 
 const BASE    = import.meta.env.VITE_API_URL ?? '/api/v1'
 const cache   = new Map<string, string>() // `${id}_${size}` 或 `${id}_${size}_${revision}` → blobUrl
@@ -48,7 +49,10 @@ export function getThumb(id: number | string, size = 'card', revision?: ThumbRev
       cache: 'no-cache',
       signal: ctrl.signal,
     })
-      .then(r => (r.ok ? r.blob() : Promise.reject()))
+      .then(r => {
+        if (isUnauthorizedResponse(r)) throw new Error('登录已失效')
+        return r.ok ? r.blob() : Promise.reject()
+      })
       .then(blob => {
         const url = URL.createObjectURL(blob)
         cache.set(key, url)
@@ -84,7 +88,10 @@ export function getThumbUrl(key: string, url: string) {
       cache: 'no-cache',
       signal: ctrl.signal,
     })
-      .then(r => (r.ok ? r.blob() : Promise.reject()))
+      .then(r => {
+        if (isUnauthorizedResponse(r)) throw new Error('登录已失效')
+        return r.ok ? r.blob() : Promise.reject()
+      })
       .then(blob => {
         const blobUrl = URL.createObjectURL(blob)
         cache.set(key, blobUrl)

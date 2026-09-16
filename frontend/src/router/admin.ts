@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AdminLayout from '@/layouts/AdminLayout.vue'
+import { useAdminStore } from '@/stores/admin'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -141,14 +142,23 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const adminToken = localStorage.getItem('admin_token')
 
   if (to.meta.requiresAdmin && !adminToken) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
   if (to.meta.adminPublic && adminToken) {
-    return { path: '/config' }
+    const adminStore = useAdminStore()
+    if (!adminStore.adminUser && (await adminStore.validateSession()) === true) {
+      return { path: '/config' }
+    }
+  }
+  if (to.meta.requiresAdmin && adminToken) {
+    const adminStore = useAdminStore()
+    if (!adminStore.adminUser && (await adminStore.validateSession()) === false) {
+      return { path: '/login', query: { redirect: to.fullPath } }
+    }
   }
 })
 

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
 import { canAccessTerminals, workspacesApi } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
   // ── 用户认证页（无 layout）──
@@ -179,7 +180,7 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const userToken = localStorage.getItem('user_token')
 
   if (to.meta.requiresAuth && !userToken) {
@@ -187,7 +188,19 @@ router.beforeEach((to) => {
   }
 
   if (to.meta.authPublic && userToken) {
-    return { path: '/projects' }
+    const authStore = useAuthStore()
+    if (!authStore.user) await authStore.fetchMe()
+    if (authStore.isLoggedIn && authStore.user) return { path: '/projects' }
+  }
+
+  if (to.meta.requiresAuth && userToken) {
+    const authStore = useAuthStore()
+    if (!authStore.user) {
+      await authStore.fetchMe()
+      if (!authStore.isLoggedIn) {
+        return { path: '/login', query: { redirect: to.fullPath } }
+      }
+    }
   }
 })
 

@@ -56,6 +56,7 @@ import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
+import { isUnauthorizedResponse } from '@/services/authSession'
 
 const props = defineProps({ show: Boolean })
 const emit = defineEmits(['close'])
@@ -71,6 +72,7 @@ async function apiFeedback(category: string, content: string) {
     },
     body: JSON.stringify({ category, content }),
   })
+  if (isUnauthorizedResponse(res)) return
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.detail || t('feedback.submitFailed'))

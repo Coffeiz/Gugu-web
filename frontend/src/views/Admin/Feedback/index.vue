@@ -43,6 +43,7 @@ import { useI18n } from 'vue-i18n'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
+import { isUnauthorizedResponse } from '@/services/authSession'
 const { t } = useI18n()
 
 const categoryTabs = computed(() => [
@@ -84,6 +85,7 @@ async function load() {
     const res = await fetch(`/api/v1/admin/feedback?${params}`, {
       headers: { Authorization: `Bearer ${adminToken()}` },
     })
+    if (isUnauthorizedResponse(res, 'admin')) return
     const data = await res.json()
     items.value = data.items ?? []
     total.value = data.total ?? 0

@@ -6,6 +6,7 @@ import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePa
 import { displayQQFaces } from '../messageDisplay'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { effectiveTimezone } from '@/utils/userTimezone'
+import { isUnauthorizedResponse } from '@/services/authSession'
 
 interface RawSessionMessage {
   id: number
@@ -248,6 +249,7 @@ export function useChatSessions(options: {
         const interactionRes = await fetch(`${API_BASE}/agent/sessions/${id}/interactions`, {
           headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
         })
+        if (isUnauthorizedResponse(interactionRes)) return
         if (interactionRes.ok) {
           const interactionData = await interactionRes.json()
           for (const item of (interactionData.items || [])) {
