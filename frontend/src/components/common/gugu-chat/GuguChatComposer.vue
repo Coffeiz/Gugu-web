@@ -6,7 +6,13 @@
     </div>
     <span v-if="attUploading" class="chat-att-chip att-up">{{ t('common.status.processing') }}</span>
   </div>
-  <div ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded }">
+  <div ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded, 'ref-drop-hover': refDropHover }"
+       @pointerover="onRefDropPointerOver" @pointerleave="refDropHover = false">
+    <Transition name="chat-drop-fade">
+      <div v-if="refDropHover" class="chat-ref-drop-overlay" aria-hidden="true">
+        <span>{{ t('chat.dropReference') }}</span>
+      </div>
+    </Transition>
     <Transition name="chat-command-pop">
       <div v-if="commandMenuVisible && filteredCommands.length" class="chat-command-menu" role="listbox" :aria-label="t('chat.commandList')">
         <button
@@ -82,6 +88,9 @@ import { useReferenceSuggest } from '@/composables/mind/useReferenceSuggest'
 import { loadChatCommands, type ChatCommandOption } from './chatCommands'
 import { mindExtensions, type MindDocNode } from '@/composables/mind/useMindEditor'
 import { chatTextFromDoc } from './chatDocText'
+import { runtime } from '@/interaction/runtime'
+import { useRuntimeAction } from '@/interaction/runtime/vue'
+import { useFilesCacheStore } from '@/stores/filesCache'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -121,6 +130,80 @@ const commandMenuVisible = ref(false)
 const commandIndex = ref(0)
 const chatCommands = ref<ChatCommandOption[]>([])
 const inputRowEl = ref<HTMLElement | null>(null)
+
+// ── 拖文件卡进输入框 = @ 引用（Runtime 投放目标）──
+// 文件库/项目编辑卡的卡片是 Runtime 对象（file-item/folder-item）；这里把输入行
+// 注册成投放目标，drop 时 Runtime 发 move action，解析 objectIds 还原文件/文件夹
+// id，插入 mindRef chip——references 数组是文档派生物，自动带上且天然去重。
+const CHAT_REF_SURFACE_ID = 'gugu-chat:composer-ref'
+const CHAT_REF_ACCEPTS = ['file-item', 'folder-item']
+const refDropHover = ref(false)
+const filesCache = useFilesCacheStore()
+
+runtime.surfaces.register({
+  id: CHAT_REF_SURFACE_ID,
+  type: 'chat-composer',
+  layout: 'grid',
+  accepts: [...CHAT_REF_ACCEPTS],
+  element: null,
+})
+const chatRefTargetGeneration = runtime.targets.register({
+  id: `${CHAT_REF_SURFACE_ID}:target`,
+  surfaceId: CHAT_REF_SURFACE_ID,
+  accepts: [...CHAT_REF_ACCEPTS],
+  priority: 5,
+  element: null,
+})
+watch(inputRowEl, (element, previous) => {
+  if (element === null && previous) return
+  runtime.targets.setElement(`${CHAT_REF_SURFACE_ID}:target`, element)
+}, { flush: 'post' })
+onUnmounted(() => {
+  runtime.targets.unregister(`${CHAT_REF_SURFACE_ID}:target`, chatRefTargetGeneration)
+  runtime.surfaces.unregister(CHAT_REF_SURFACE_ID, 0)
+  window.removeEventListener('pointerup', onGlobalPointerUp)
+})
+
+function onRefDropPointerOver(event: PointerEvent) {
+  // 投放代理是 pointer-events:none，拖拽悬停时底层元素能收到 pointer 事件；
+  // 主键按下状态才视为拖拽悬停，避免普通鼠标划过误亮遮罩。
+  if (event.buttons & 1) refDropHover.value = true
+}
+function onGlobalPointerUp() { refDropHover.value = false }
+
+function parseDroppedRef(objectId: string): ChatReference | null {
+  const match = /(?:^|:)(file|folder):(\d+)$/.exec(objectId)
+  if (!match) return null
+  return { type: match[1] as ChatReference['type'], id: Number(match[2]), label: '' }
+}
+
+function insertReferenceChip(reference: ChatReference) {
+  const editor = chatEditor.value
+  if (!editor) return
+  // 文档里已有同 type+id 的 chip 时不重复插入（referencesFromDoc 本身也会去重）
+  if (referencesFromDoc(editor.getJSON() as MindDocNode)
+    .some(item => item.type === reference.type && item.id === reference.id)) return
+  let label: string
+  if (reference.type === 'folder') {
+    label = filesCache.getFolder(reference.id)?.name ?? `Folder ${reference.id}`
+  } else {
+    label = filesCache.getFile(reference.id)?.displayName ?? `File ${reference.id}`
+  }
+  editor.chain().focus('end')
+    .insertContent({ type: 'mindRef', attrs: { refType: reference.type, refId: reference.id, label } })
+    .insertContent(' ')
+    .run()
+}
+
+useRuntimeAction(async action => {
+  if (action.type !== 'move' && action.type !== 'move-group') return
+  if (action.toSurfaceId !== CHAT_REF_SURFACE_ID) return
+  const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
+  const references = objectIds.map(parseDroppedRef).filter((item): item is ChatReference => item !== null)
+  if (!references.length) return
+  if (!filesCache.loaded) await filesCache.load().catch(() => {})
+  for (const reference of references) insertReferenceChip(reference)
+})
 const { items: referenceItems, loading: referenceLoading, active: referenceActive, search: searchReferences, reset: resetReferences, move: moveReferences } = useReferenceSuggest()
 const referencePicker = ref({ open: false, query: '', from: 0, to: 0 })
 let lastReferenceQuery: string | null = null
@@ -495,4 +578,18 @@ defineExpose({
 .send-btn svg { display: block; }
 .send-btn:hover:not(:disabled) { background: var(--action-primary-bg-hover); transform: none; }
 .send-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* 拖文件卡进输入框的悬停遮罩：与 .chat-drop-overlay（附件上传）同一视觉语言 */
+.chat-input-row { position: relative; }
+.chat-ref-drop-overlay {
+  position: absolute; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  background: rgba(123,127,178,0.16);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  border: 2px dashed rgba(123,127,178,0.6); border-radius: var(--radius-md);
+  color: var(--color-primary); font-size: 13px; font-weight: 600;
+}
+.chat-drop-fade-enter-active, .chat-drop-fade-leave-active { transition: opacity 0.15s ease; }
+.chat-drop-fade-enter-from, .chat-drop-fade-leave-to { opacity: 0; }
 </style>
