@@ -108,3 +108,34 @@ def test_artifact_sse_routes_link_buttons_and_files():
     assert '"type": "link_buttons"' in lb
     file_evt = artifact_sse({"attach_id": "a1", "kind": "image"})
     assert '"type": "file"' in file_evt
+
+
+# ── loop.interactions.classify_interaction_answer（LLM25-010/011）────────────
+
+from agent.loop.interactions import classify_interaction_answer
+
+
+def test_classifier_user_cancel_is_normal_close():
+    assert classify_interaction_answer({"status": "cancelled", "option_id": "cancel"}) == "user_cancelled"
+
+
+def test_classifier_aborted_without_option_id():
+    """IM/Web 侧关单不带 option_id：异常终止，不是用户主动取消。"""
+    assert classify_interaction_answer({"status": "cancelled"}) == "aborted"
+
+
+def test_classifier_expired_and_resume_and_resolved():
+    assert classify_interaction_answer(None) == "expired"
+    assert classify_interaction_answer({"option_id": "continue"}) == "resume_unlimited"
+    assert classify_interaction_answer({"option_id": "goal"}) == "resume_unlimited"
+    assert classify_interaction_answer({"option_id": "answer", "text": "x"}) == "resolved"
+    assert classify_interaction_answer("文本回答") == "resolved"
+
+
+def test_unlimited_resume_still_blocked_by_absolute_limit():
+    """LLM25-011：resume_unlimited 只清业务计数；绝对上限判定独立于 unlimited。"""
+    assert rounds.round_budget_action(
+        round_number=100, verify_mode=False, task_rounds=0, verify_rounds=0,
+        unlimited_mode=True, max_rounds=None, max_verify_rounds=None,
+        max_absolute_rounds=MAX_ABS,
+    ) is rounds.RoundBudgetAction.ABSOLUTE_LIMIT

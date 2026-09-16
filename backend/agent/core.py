@@ -62,6 +62,13 @@ from agent.loop.tools import (
 from agent.loop.events import artifact_sse as _artifact_sse
 from agent.loop.models import PendingInteraction as _PendingInteraction
 from agent.loop import rounds as loop_rounds
+from agent.loop.interactions import (
+    CANCEL_CLOSE_TEXT as _CANCEL_CLOSE_TEXT,
+    PAUSE_CLOSE_TEXT as _PAUSE_CLOSE_TEXT,
+    classify_interaction_answer,
+    closing_frames as _closing_frames,
+    user_cancel as _user_cancel,
+)
 from agent.loop import provider as _loop_provider
 _loop_provider.set_driver_stream_round_resolver(lambda: _stream_round)
 
@@ -278,43 +285,7 @@ def _is_verify_placeholder(text: str) -> bool:
     return len(normalized) <= 16 and any(phrase in normalized for phrase in process_phrases)
 
 
-def _user_cancel(answer) -> bool:
-    """判断交互结果是否为「用户主动点取消」。
 
-    交互服务把用户点击的取消动作标成 ``option_id="cancel"``；IM 侧 cancel_check
-    关单不带 option_id，属于真正的异常终止。两者在调用方的收尾语义完全不同，
-    判定只此一处，避免三个 gate 各写一份后漂移。
-    """
-    return (
-        isinstance(answer, dict)
-        and answer.get("status") == "cancelled"
-        and answer.get("option_id") == "cancel"
-    )
-
-
-_CANCEL_CLOSE_TEXT = (
-    "好的，已取消这项操作，任务停在这里；前面完成的部分仍然有效，需要继续随时说一声。"
-)
-# 轮次限额弹窗（goal/budget）的取消文案：语义是「先停下攒额度」，不是「这次操作取消了」。
-_PAUSE_CLOSE_TEXT = "好的，任务先停在这里，前面的进展仍然有效，想继续随时说一声。"
-
-
-def _closing_frames(text: str, *, next_round: int) -> list[str]:
-    """用户取消后的收尾帧：先另起一轮，再发收尾正文。
-
-    前端按轮切分气泡（见 useChatStream.ts 的 finishRoundMessage），同一轮里的 token
-    会被追加到「工具调用前那条气泡」上——那样用户在底部看不到任何新内容，只看到
-    「取消没有下文」。取消是运行侧直接收尾、不走模型，所以必须自己补这次分帧。
-
-    这里必须发 ``round_start`` 而不是 ``_new_round``：后者在
-    ``_recover_interrupted_continuation`` 里表示「模型续轮还没开始」，收尾后紧接着
-    结束流会被判成续轮中断，于是凭空再发一次模型请求，用户会看到取消文案后面又
-    跟一条自我解释。``round_start`` 既同样切气泡，也让恢复逻辑认为续轮已开始。
-    """
-    return [
-        f"data: {json.dumps({'type': 'round_start', 'round_id': f'round-{next_round}', 'next_round': next_round}, ensure_ascii=False)}\n\n",
-        f"data: {json.dumps({'type': 'token', 'content': text}, ensure_ascii=False)}\n\n",
-    ]
 
 
 async def _im_cancelled(session_id: int | None = None) -> bool:
@@ -1063,7 +1034,8 @@ class LLMRunner:
                         heartbeat=lambda: genstream.touch(session_id),
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
-                    if _user_cancel(answer):
+                    _answer_kind = classify_interaction_answer(answer)
+                    if _answer_kind == "user_cancelled":
                         # 用户在弹窗上主动点取消＝正常收尾：补一段收尾正文走正常
                         # 持久化+done，不留 SSE 黑洞，也不把终止当异常。
                         for _frame in _closing_frames(
@@ -1071,14 +1043,14 @@ class LLMRunner:
                         ):
                             yield _frame
                         return
-                    if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                    if _answer_kind == "aborted":
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
-                    if answer is None:
+                    if _answer_kind == "expired":
                         # 弹窗过期不另造文案：落到循环后的兜底，把已完成
                         # 内容和"请重新发起"一并交代清楚。
                         break
-                    if answer.get("option_id") in {"continue", "goal"}:
+                    if _answer_kind == "resume_unlimited":
                         # 该按钮的语义是解除本次 run 的轮次限制；核实与任务
                         # 轮次都清零后回到同一主循环继续执行。
                         unlimited_mode = True
@@ -1129,20 +1101,21 @@ class LLMRunner:
                         heartbeat=lambda: genstream.touch(session_id),
                         cancel_check=lambda: _im_cancelled(session_id),
                     )
-                    if _user_cancel(answer):
+                    _answer_kind = classify_interaction_answer(answer)
+                    if _answer_kind == "user_cancelled":
                         # 用户主动点取消＝正常收尾：补收尾正文走正常持久化+done。
                         for _frame in _closing_frames(
                             _PAUSE_CLOSE_TEXT, next_round=round_number + 1,
                         ):
                             yield _frame
                         return
-                    if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                    if _answer_kind == "aborted":
                         yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
                         return
-                    if answer is None:
+                    if _answer_kind == "expired":
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次继续操作已过期，请重新发起任务。'}, ensure_ascii=False)}\n\n"
                         return
-                    if answer.get("option_id") in {"continue", "goal"}:
+                    if _answer_kind == "resume_unlimited":
                         # 该按钮的语义是解除本次 run 的工具调用限制，不创建 goal
                         # 目标任务；清零轮次后回到同一主循环继续执行。
                         unlimited_mode = True
