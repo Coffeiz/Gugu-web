@@ -321,6 +321,7 @@ async def test_connection(server_id: str, user: User = Depends(get_current_user)
     from agent.mcp.client import McpClient
     from agent.mcp.manager import McpToolManager, mcp_manager
 
+    settings = get_settings()
     row = await _get_owned_server(db, server_id, user)
     config = McpToolManager._config_from_row(row)
     if row.transport == "stdio":
@@ -344,9 +345,24 @@ async def test_connection(server_id: str, user: User = Depends(get_current_user)
             await close()
         _invalidate(user.id, row.id)
         return {"ok": False, "error": listing["error"]}
-    tool_names = [str(t.get("name") or "") for t in listing.get("tools") or []]
+    allowlist = set(config.tool_allowlist or [])
+    tool_names = [
+        str(t.get("name") or "")
+        for t in listing.get("tools") or []
+        if isinstance(t, dict)
+        and (not allowlist or str(t.get("name") or "") in allowlist)
+    ]
     if close is not None:
         await close()
+    if len(tool_names) > settings.mcp.max_tools_per_server:
+        return {
+            "ok": False,
+            "error": (
+                f"MCP server 工具数量 {len(tool_names)} 超出单个 server 上限 "
+                f"{settings.mcp.max_tools_per_server}，请配置工具白名单后重试"
+            ),
+            "tools": [],
+        }
     return {"ok": True, "tool_count": len(tool_names), "tools": tool_names[:64]}
 
 

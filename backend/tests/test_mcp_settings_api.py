@@ -175,6 +175,28 @@ async def test_test_connection_reports_tools(db, user_a, monkeypatch):
     assert "无法连接" in failed["error"]
 
 
+async def test_test_connection_rejects_tools_over_limit(db, user_a, monkeypatch):
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.mcp, "max_tools_per_server", 1)
+    created = await api.create_server(api.McpServerCreate(name="many", endpoint="https://m.example.com"),
+                                      user=user_a, db=db)
+
+    class TooManyClient:
+        def __init__(self, endpoint, headers=None, timeout_seconds=30.0):
+            pass
+
+        async def list_tools(self):
+            return {"tools": [{"name": "one"}, {"name": "two"}]}
+
+    monkeypatch.setattr("agent.mcp.client.McpClient", TooManyClient)
+    result = await api.test_connection(created["id"], user=user_a, db=db)
+    assert result["ok"] is False
+    assert result["tools"] == []
+    assert "超出单个 server 上限" in result["error"]
+
+
 async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(db, user_a):
     from app.services.interactions import create_agent_prompt, list_history
 

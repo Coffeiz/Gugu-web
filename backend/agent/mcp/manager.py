@@ -331,11 +331,11 @@ class McpToolManager:
         allowlist = set(config.tool_allowlist or [])
         used_names: set[str] = set()
         skipped: list[str] = []
+        accepted: list[tuple[str, dict, str]] = []
         for raw in listing.get("tools") or []:
-            if len(runtime.tools) >= settings.mcp.max_tools_per_server:
-                _log.warning("MCP server [%s] 工具数达到上限 %d，其余拒载",
-                             config.name, settings.mcp.max_tools_per_server)
-                break
+            if not isinstance(raw, dict):
+                skipped.append("<unknown>: 工具声明不是对象")
+                continue
             tool_name = str(raw.get("name") or "")
             prefixed = prefixed_tool_name(config.name, tool_name)
             reason = validate_input_schema(raw.get("inputSchema"))
@@ -355,6 +355,22 @@ class McpToolManager:
             if allowlist and tool_name not in allowlist:
                 continue     # 白名单外静默不载（用户显式选择的裁剪）
             used_names.add(prefixed)
+            accepted.append((tool_name, raw, prefixed))
+
+        if len(accepted) > settings.mcp.max_tools_per_server:
+            limit_error = (
+                f"MCP server 工具数量 {len(accepted)} 超出单个 server 上限 "
+                f"{settings.mcp.max_tools_per_server}，请配置工具白名单后重试"
+            )
+            close = getattr(client, "aclose", None)
+            if close is not None:
+                await close()
+            self._record_failure(key, runtime, limit_error, "limit")
+            self._runtimes[key] = runtime
+            _log.warning("MCP server [%s] 工具超限，拒绝加载", config.name)
+            return runtime
+
+        for tool_name, raw, prefixed in accepted:
             meta = McpToolMeta(
                 server_id=config.id, server_name=config.name, tool_name=tool_name,
                 prefixed_name=prefixed,
