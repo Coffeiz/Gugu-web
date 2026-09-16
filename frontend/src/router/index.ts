@@ -2,7 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
 import { canAccessTerminals, mcpApi, workspacesApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
-import { lastSkillsTab } from '@/views/Skills/skillsTab'
+import { lastSkillsTab, rememberSkillsTab } from '@/views/Skills/skillsTab'
 
 const routes: RouteRecordRaw[] = [
   // ── 用户认证页（无 layout）──
@@ -228,7 +228,11 @@ router.beforeEach(async (to) => {
   try {
     if (to.name === 'SkillsMcp') {
       const status = await mcpApi.status()
-      if (!status.enabled) return { path: '/skills' }
+      if (!status.enabled) {
+        // 记录仍是 mcp 会被上面 SkillsHome 分支再次重定向成死循环，先清掉。
+        rememberSkillsTab('skills')
+        return { path: '/skills' }
+      }
       return
     }
     const status = await workspacesApi.status()
