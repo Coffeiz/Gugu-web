@@ -40,6 +40,7 @@ import { mcpApi } from '@/services/api'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 import SkillsHome from './SkillsHome.vue'
 import McpServersView from './McpServersView.vue'
+import { rememberSkillsTab } from './skillsTab'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,7 +49,7 @@ const mcpCreateRequest = ref(0)
 const skillCreateRequest = ref(0)
 const mcpVisible = ref(false)
 
-const SKILLS_TAB_KEY = 'gugu-skills-tab'
+
 const skillTabs = computed(() => [
   { key: 'skills', label: t('skills.userSkills') },
   ...(mcpVisible.value ? [{ key: 'mcp', label: t('skills.mcp') }] : []),
@@ -66,18 +67,14 @@ async function refreshMcpVisibility() {
 
 function switchSkillTab(key: string) {
   // 记住显式选择：页内点击 tab 是用户意图；外部导航回 /skills 时据此恢复。
-  localStorage.setItem(SKILLS_TAB_KEY, key)
+  rememberSkillsTab(key === 'mcp' ? 'mcp' : 'skills')
   void router.push(key === 'mcp' ? '/skills/mcp' : '/skills')
 }
 
-onMounted(async () => {
-  await refreshMcpVisibility()
-  const lastTab = localStorage.getItem(SKILLS_TAB_KEY)
-  if (route.name === 'SkillsHome' && lastTab === 'mcp' && mcpVisible.value) {
-    void router.replace('/skills/mcp')
-  } else if (route.name === 'SkillsMcp') {
-    localStorage.setItem(SKILLS_TAB_KEY, 'mcp')
-  }
+onMounted(() => {
+  // tab 恢复由路由守卫在挂载前完成（见 router/index.ts），这里只补记直连 /skills/mcp 的情况。
+  if (route.name === 'SkillsMcp') rememberSkillsTab('mcp')
+  void refreshMcpVisibility()
   window.addEventListener(RESOURCE_REFRESH_EVENTS.mcp, refreshMcpVisibility)
 })
 onBeforeUnmount(() => window.removeEventListener(RESOURCE_REFRESH_EVENTS.mcp, refreshMcpVisibility))

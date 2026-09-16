@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
 import { canAccessTerminals, mcpApi, workspacesApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { lastSkillsTab } from '@/views/Skills/skillsTab'
 
 const routes: RouteRecordRaw[] = [
   // ── 用户认证页（无 layout）──
@@ -219,6 +220,10 @@ router.beforeEach(async (to) => {
 })
 
 router.beforeEach(async (to) => {
+  // 技能页 tab 记忆：进 /skills 前先看上次是否停在 MCP 页，挂载前重定向掉，
+  // 避免先渲染技能页再跳转的切换闪烁。SkillsMcp 守卫随后会做 MCP 开关校验，
+  // 关闭时回落 /skills。
+  if (to.name === 'SkillsHome' && lastSkillsTab() === 'mcp') return { name: 'SkillsMcp' }
   if (to.name !== 'Terminals' && to.name !== 'SkillsMcp') return
   try {
     if (to.name === 'SkillsMcp') {
