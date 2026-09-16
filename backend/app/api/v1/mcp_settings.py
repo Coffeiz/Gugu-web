@@ -372,7 +372,7 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     existing = (await db.execute(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-        select(UserMcpServer.id).where(
+        select(UserMcpServer.id).where(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径
             UserMcpServer.user_id == user.id,
             UserMcpServer.scope == "user",
             UserMcpServer.name == name,
@@ -439,7 +439,7 @@ async def update_server(server_id: str, payload: McpServerPatch,
     if payload.name is not None and payload.name != row.name:
         new_name = _validate_name(payload.name)
         conflict = (await db.execute(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-            select(UserMcpServer.id).where(
+            select(UserMcpServer.id).where(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径
                 UserMcpServer.user_id == user.id,
                 UserMcpServer.scope == "user",
                 UserMcpServer.name == new_name,
