@@ -508,7 +508,7 @@ export interface MindNoteUpdate {
 }
 /** `[[` 补全候选：type+id 是写进正文的稳定锚点，label 只作展示 */
 export interface MindRefSuggestItem {
-  type: 'project' | 'file' | 'event' | 'conversation'
+  type: 'project' | 'file' | 'folder' | 'event' | 'conversation'
   id: number
   label: string
   subtitle?: string | null

@@ -57,7 +57,7 @@ from app.services.mind import (
     update_note as update_note_service,
 )
 from app.models import (
-    CalendarEvent, ConversationMessage, ConversationSession, File, MindCanvasItem, Project,
+    CalendarEvent, ConversationMessage, ConversationSession, File, Folder, MindCanvasItem, Project,
     MindMap, MindNode, MindRelation, User,
 )
 from app.schemas import (
@@ -74,7 +74,7 @@ router = APIRouter(prefix="/mind", tags=["mind"])
 # 对话（客户不作为便签引用对象）单独查——@ 一段对话锚定的是具体某条消息（"准确的聊天
 # 位置"），不是整个会话，run_global_search 那边按 session 去重的逻辑在这里不适用，
 # 得自己按消息为粒度查，见 ref_suggest 下半段。
-_REF_TYPES = ["project", "file", "event"]
+_REF_TYPES = ["project", "file", "folder", "event"]
 
 
 def _to_resp(n: MindNode) -> MindNodeResponse:
@@ -266,9 +266,11 @@ async def ref_suggest(
         recent: list[MindRefSuggestItem] = []
         projects = (await db.scalars(select(Project).where(Project.user_id == current_user.id, Project.deleted_at.is_(None)).order_by(Project.updated_at.desc()).limit(limit))).all()  # orm-exempt: 概览项目读取待 Service 收口（1.1.2 遗留）
         files = (await db.scalars(select(File).where(File.user_id == current_user.id, File.deleted_at.is_(None)).order_by(File.updated_at.desc()).limit(limit))).all()
+        folders = (await db.scalars(select(Folder).where(Folder.user_id == current_user.id, Folder.deleted_at.is_(None)).order_by(Folder.updated_at.desc()).limit(limit))).all()
         events = (await db.scalars(select(CalendarEvent).where(CalendarEvent.user_id == current_user.id, CalendarEvent.deleted_at.is_(None)).order_by(CalendarEvent.date.desc()).limit(limit))).all()  # orm-exempt: 概览活动读取待 Service 收口（1.1.2 遗留）
         recent.extend(MindRefSuggestItem(type="project", id=x.id, label=x.name, subtitle=x.client) for x in projects)
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
+        recent.extend(MindRefSuggestItem(type="folder", id=x.id, label=x.name) for x in folders)
         recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
         return recent[:limit * len(_REF_TYPES)]
     result = await run_global_search(db, current_user.id, q, per_type=limit, types=_REF_TYPES)

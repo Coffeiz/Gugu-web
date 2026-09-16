@@ -5,7 +5,7 @@ from collections.abc import Iterable
 
 from app.core.ownership import get_owned
 from app.models import CalendarEvent, ConversationMessage, ConversationSession, File, Folder, Project
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 _MAX_REFERENCES = 6
 _MAX_REFERENCE_CHARS = 1200
@@ -59,6 +59,28 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
                     f"目录：{directory}\n阶段：{obj.stage_name or '未设置'}\n类型：{obj.mime_type or '未知'}"
                 )
                 blocks.append(f"[文件]\n{detail}")
+        elif kind == "folder":
+            obj = await get_owned(db, Folder, resource_id, user_id)
+            if obj and obj.deleted_at is None:
+                folder_path = await _folder_path(db, obj.parent_id) if obj.parent_id else ""
+                parent = f"{folder_path}/{obj.name}" if folder_path else obj.name
+                inner_files = (await db.scalars(
+                    select(File).where(
+                        File.user_id == user_id, File.folder_id == resource_id, File.deleted_at.is_(None),
+                    ).order_by(File.updated_at.desc()).limit(8)
+                )).all()
+                inner_count = await db.scalar(
+                    select(func.count()).select_from(File).where(
+                        File.user_id == user_id, File.folder_id == resource_id, File.deleted_at.is_(None),
+                    )
+                )
+                listing = "、".join(f"{f.display_name}.{f.ext}" for f in inner_files) if inner_files else "（空目录）"
+                more = f" 等 {inner_count} 个" if (inner_count or 0) > len(inner_files) else ""
+                detail = (
+                    f"目录 id：{obj.id}\n目录：{parent}\n"
+                    f"内含文件：{listing}{more}"
+                )
+                blocks.append(f"[文件夹]\n{detail}")
         elif kind == "event":
             obj = await get_owned(db, CalendarEvent, resource_id, user_id)
             if obj:

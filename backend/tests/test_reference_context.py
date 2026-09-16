@@ -73,3 +73,20 @@ async def test_other_users_file_reference_is_ignored(db, user_a, user_b, folder_
         db, user_b.id, [{"type": "file", "id": file.id, "label": "stolen"}],
     )
     assert context == ""
+
+
+async def test_folder_reference_lists_path_and_contents(db, user_a, folder_with_file):
+    folder, _file = folder_with_file
+    context = await build_reference_context(db, user_a.id, [{"type": "folder", "id": folder.id}])
+    assert "[文件夹]" in context
+    assert f"目录 id：{folder.id}" in context
+    assert "插画参考" in context
+    assert "内含文件：ZenlessZoneZero" in context
+
+
+async def test_folder_reference_cross_user_ignored(db, user_a, user_b):
+    other = Folder(user_id=user_b.id, name="别人的目录")
+    db.add(other)
+    await db.flush()
+    context = await build_reference_context(db, user_a.id, [{"type": "folder", "id": other.id}])
+    assert context == ""

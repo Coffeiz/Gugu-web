@@ -81,7 +81,7 @@ export interface ChatFile {
 
 /** 用户在聊天输入中选中的业务对象引用。 */
 export interface ChatReference {
-  type: 'project' | 'file' | 'event' | 'conversation'
+  type: 'project' | 'file' | 'folder' | 'event' | 'conversation'
   id: number
   label: string
 }
