@@ -4,11 +4,26 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from app.core.ownership import get_owned
-from app.models import CalendarEvent, ConversationMessage, ConversationSession, File, Project
+from app.models import CalendarEvent, ConversationMessage, ConversationSession, File, Folder, Project
 from sqlalchemy import select
 
 _MAX_REFERENCES = 6
 _MAX_REFERENCE_CHARS = 1200
+_FOLDER_CHAIN_MAX = 5
+
+
+async def _folder_path(db, folder_id: int | None) -> str:
+    """把文件的 folder_id 解析成「父/子」目录路径；无目录返回空串。"""
+    if folder_id is None:
+        return ""
+    names: list[str] = []
+    current = await db.get(Folder, folder_id)
+    depth = 0
+    while current is not None and depth < _FOLDER_CHAIN_MAX:
+        names.append(current.name)
+        current = await db.get(Folder, current.parent_id) if current.parent_id else None
+        depth += 1
+    return "/".join(reversed(names))
 
 
 async def build_reference_context(db, user_id, references: Iterable[dict] | None) -> str:
@@ -27,17 +42,27 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
         if kind == "project":
             obj = await get_owned(db, Project, resource_id, user_id)
             if obj:
-                detail = f"名称：{obj.name}\n状态：{obj.status}\n客户：{obj.client or '未设置'}\n进度：{obj.progress}%\n当前阶段：{obj.current_stage or '未设置'}"
+                detail = f"项目 id：{obj.id}\n名称：{obj.name}\n状态：{obj.status}\n客户：{obj.client or '未设置'}\n进度：{obj.progress}%\n当前阶段：{obj.current_stage or '未设置'}"
                 blocks.append(f"[项目]\n{detail}")
         elif kind == "file":
             obj = await get_owned(db, File, resource_id, user_id)
             if obj and obj.deleted_at is None:
-                detail = f"名称：{obj.display_name}.{obj.ext}\n空间：{obj.space}\n阶段：{obj.stage_name or '未设置'}\n类型：{obj.mime_type or '未知'}"
+                # 带 id 与所在目录：咕咕可直接 read_file(file_id) / list_files(folder_id)，
+                # 不必再按名字搜索——搜不到时整个引用就失效了。
+                folder_path = await _folder_path(db, obj.folder_id)
+                directory = (
+                    f"{folder_path}（folder_id={obj.folder_id}）"
+                    if folder_path else f"{obj.space} 空间根目录"
+                )
+                detail = (
+                    f"文件 id：{obj.id}\n名称：{obj.display_name}.{obj.ext}\n空间：{obj.space}\n"
+                    f"目录：{directory}\n阶段：{obj.stage_name or '未设置'}\n类型：{obj.mime_type or '未知'}"
+                )
                 blocks.append(f"[文件]\n{detail}")
         elif kind == "event":
             obj = await get_owned(db, CalendarEvent, resource_id, user_id)
             if obj:
-                detail = f"标题：{obj.title}\n日期：{obj.date}\n时间：{obj.time or '全天'}\n描述：{obj.description or '无'}"
+                detail = f"日程 id：{obj.id}\n标题：{obj.title}\n日期：{obj.date}\n时间：{obj.time or '全天'}\n描述：{obj.description or '无'}"
                 blocks.append(f"[日程]\n{detail}")
         elif kind == "conversation":
             session = await get_owned(db, ConversationSession, resource_id, user_id)
@@ -49,7 +74,7 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
                     .limit(1)
                 )
                 latest = getattr(message, "content", "") if message else ""
-                detail = f"标题：{session.title}\n最近内容：{latest[:900]}"
+                detail = f"会话 id：{session.id}\n标题：{session.title}\n最近内容：{latest[:900]}"
                 blocks.append(f"[对话]\n{detail}")
     if not blocks:
         return ""
