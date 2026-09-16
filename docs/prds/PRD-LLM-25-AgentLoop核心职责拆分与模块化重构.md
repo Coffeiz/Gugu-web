@@ -1,6 +1,6 @@
 # PRD-LLM-25：Agent Loop 核心职责拆分与模块化重构
 
-> 状态：🟡 Phase 0 已完成（基线冻结 + 兼容调用点清单，见 docs/reports/2026-09-16-BASELINE-LLM25-loop-refactor.md）；Phase 1+ 待实施
+> 状态：✅ Phase 0~6 已实施（2026-09-16，提交 b3a636a4 / 6390fe8f / f77efa73 / e41f23d3 / 9049c90e / Phase 6 收口提交）；core.py 2359→569 行，_run_loop 实现体落位 `loop/machine.py`，全部兼容约束与测试基线保持。复审报告见基线文档附录。
 > 创建：2026-09-16
 > 最近更新：2026-09-16（Phase 0）
 > 所属层：Agent / LLM Runtime / Loop Architecture
@@ -523,31 +523,31 @@ python scripts/check_confirm_gate.py
 
 ### Phase 1：纯函数和 Provider 边界
 
-- [ ] `LLM25-003` 抽取 provider round 和 usage 适配；验收：`loop_drivers.py` 不再反向 import `core.py`，provider retry 测试通过，`core.py` 兼容导出仍可被旧测试 monkeypatch。
-- [ ] `LLM25-004` 迁移历史清洗、工具协议解析和工具结果基础 helper；验收：Anthropic history sanitize、Adapter 参数、tool result 替换和已有导入路径测试通过。
-- [ ] `LLM25-005` 建立 `loop/models.py` 与 `loop/events.py`；验收：Run ID、event sequence、pending interaction 和 usage/event payload 有明确类型，事件输出与迁移前结构一致。
+- [x] `LLM25-003` 抽取 provider round 和 usage 适配；验收：`loop_drivers.py` 不再反向 import `core.py`，provider retry 测试通过，`core.py` 兼容导出仍可被旧测试 monkeypatch。
+- [x] `LLM25-004` 迁移历史清洗、工具协议解析和工具结果基础 helper；验收：Anthropic history sanitize、Adapter 参数、tool result 替换和已有导入路径测试通过。
+- [x] `LLM25-005` 建立 `loop/models.py` 与 `loop/events.py`；验收：Run ID、event sequence、pending interaction 和 usage/event payload 有明确类型，事件输出与迁移前结构一致。
 
 ### Phase 2：Round 与 Context 编排
 
-- [ ] `LLM25-006` 抽取 `loop/provider.py` 和 `loop/rounds.py`；验收：预算、取消、provider error、usage、90% 压缩、overflow fallback、绝对轮次上限行为与基线一致。
-- [ ] `LLM25-007` 收口 Context 调用边界；验收：core/loop 不复制压缩、预算、canonical serialization 或消息替换实现，现有 context、cache prefix 和 reasoning state 测试通过。
+- [x] `LLM25-006` 抽取 `loop/provider.py` 和 `loop/rounds.py`；验收：预算、取消、provider error、usage、90% 压缩、overflow fallback、绝对轮次上限行为与基线一致。
+- [x] `LLM25-007` 收口 Context 调用边界；验收：core/loop 不复制压缩、预算、canonical serialization 或消息替换实现，现有 context、cache prefix 和 reasoning state 测试通过。
 
 ### Phase 3：工具生命周期
 
-- [ ] `LLM25-008` 抽取 `loop/tools.py`；验收：工具名归一化、Adapter、Schema/权限 dispatch、结果写回、artifact、重复调用熔断和 verify 信号统一通过新入口。
-- [ ] `LLM25-009` 验证 canonical tool batch；验收：Anthropic/OpenAI 两套 projection、连续 user 消息、tool call/result 顺序、Skill schema/discovery event 和跨轮 history 恢复测试通过。
+- [x] `LLM25-008` 抽取 `loop/tools.py`；验收：工具名归一化、Adapter、Schema/权限 dispatch、结果写回、artifact、重复调用熔断和 verify 信号统一通过新入口。
+- [x] `LLM25-009` 验证 canonical tool batch；验收：Anthropic/OpenAI 两套 projection、连续 user 消息、tool call/result 顺序、Skill schema/discovery event 和跨轮 history 恢复测试通过。
 
 ### Phase 4：交互恢复
 
-- [ ] `LLM25-010` 抽取 `loop/interactions.py`；验收：confirm、ask_user、MCP 凭据、工具额度、取消、过期、拒绝、确认后 replay 和两阶段 interaction 均通过回归测试。
-- [ ] `LLM25-011` 完成无限循环安全回归；验收：确认后产生新的 `ask_user` 时最多按用户交互继续，不重复提交相同 waiting result；无限模式仍受重复工具熔断和绝对轮次上限保护。
+- [x] `LLM25-010` 抽取 `loop/interactions.py`；验收：confirm、ask_user、MCP 凭据、工具额度、取消、过期、拒绝、确认后 replay 和两阶段 interaction 均通过回归测试。
+- [x] `LLM25-011` 完成无限循环安全回归；验收：确认后产生新的 `ask_user` 时最多按用户交互继续，不重复提交相同 waiting result；无限模式仍受重复工具熔断和绝对轮次上限保护。
 
 ### Phase 5：回复守卫与 core 收缩
 
-- [ ] `LLM25-012` 抽取 `loop/guards.py`；验收：空回复、叙事、意图、冒号、工具必调、决策回避、goal 和 verify 收尾与基线一致，内部提示和完成标记不泄漏。
-- [ ] `LLM25-013` 将 `core.py` 收缩为兼容入口和高层状态机；验收：`core.py` 控制在 500～700 行范围，`_run_loop` 不再直接实现 provider、工具 dispatch、交互等待、SSE 编码和 Context 细节。
+- [x] `LLM25-012` 抽取 `loop/guards.py`；验收：空回复、叙事、意图、冒号、工具必调、决策回避、goal 和 verify 收尾与基线一致，内部提示和完成标记不泄漏。
+- [x] `LLM25-013` 将 `core.py` 收缩为兼容入口和高层状态机；验收：`core.py` 控制在 500～700 行范围，`_run_loop` 不再直接实现 provider、工具 dispatch、交互等待、SSE 编码和 Context 细节。
 
 ### Phase 6：清理与验收
 
-- [ ] `LLM25-014` 清理旧实现和临时兼容层；验收：全仓库无旧实现的死代码、反向 import、重复工具/交互/事件实现；兼容导出只保留有实际外部调用的符号。
-- [ ] `LLM25-015` 完成全量验证和文档收口；验收：后端测试、compileall、ownership、confirm gate、LoopScope 关键测试全部通过，更新本 PRD 实际状态和相关 Agent 架构文档。
+- [x] `LLM25-014` 清理旧实现和临时兼容层；验收：全仓库无旧实现的死代码、反向 import、重复工具/交互/事件实现；兼容导出只保留有实际外部调用的符号。
+- [x] `LLM25-015` 完成全量验证和文档收口；验收：后端测试、compileall、ownership、confirm gate、LoopScope 关键测试全部通过，更新本 PRD 实际状态和相关 Agent 架构文档。

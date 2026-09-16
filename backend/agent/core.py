@@ -115,12 +115,6 @@ _VERIFY_FORCE_PROMPT = (
     "自然说明实际做了什么、成功了什么，以及仍失败或未完成的部分。"
 )
 
-# 查询工具命名前缀：核实轮必须真调这类工具，不许凭印象说"确认了"。
-# 思维笔记的只读工具不带通用 read_/search_ 前缀，必须显式纳入，避免明明读回了
-# 数据却被误判成没有观察，白白多跑复查回合。
-_READ_PREFIXES = ("read_", "list_", "get_", "find_", "search_")
-_READ_TOOL_NAMES = {"note_get", "note_search"}
-
 # 特殊状态显示名默认值（非工具，无法从 registry 派生）。后台「状态命名」面板可覆盖：
 #   _preparing      openai 流式收参数阶段的占位
 #   _verify_prefix  复查轮工具标签前缀，后端拼到 label 前再下发

@@ -73,3 +73,36 @@ Provider 行为基线由上述测试锁定：Anthropic（characterization + usag
 
 - `ccx/churn` 复杂度数字未在本机重测（无 radon）；如需数值门禁可后续 `pip install radon` 补测，不阻塞迁移。
 - 本报告为冻结基线，Phase 1+ 迁移 PR 合并时须在本文件追加「迁移后指标」对照。
+
+---
+
+## 附录：迁移后指标与完整复审（2026-09-16，Phase 6 收口）
+
+### 结构对比
+
+| 指标 | 基线 | 迁移后 |
+|---|---:|---|
+| `core.py` 总行数 | 2359 | **569**（落入 PRD 目标 500~700） |
+| `_run_loop` | 1485 行大函数 | 薄转发（挂 `LLMRunner` 类上，LoopScope hook 兼容）；实现体在 `loop/machine.py::run_loop`（1502 行，含注释/空行） |
+| 新增 `agent/loop/` | — | provider 106 / models 78 / events 39 / rounds 87 / tools 160 / interactions 68 / guards 34 / machine 1502 |
+| 反向依赖 `loop_drivers → core` | 有（延迟 import `_stream_round`） | **已消除**（`run_round` 参数注入 + `loop.provider` resolver 槽依赖倒转） |
+
+### 测试与门禁（Phase 6 收口时点）
+
+- 后端全量 `pytest -q`：**3178 passed**（基线 3152；净增为 loop 模块单元测试与并行会话新增）
+- PRD §4.1 七个关键套件 + `test_agent_loop_modules`（loop 纯单元 15 项）：全绿
+- `compileall` / `check_ownership` / `check_confirm_gate`：通过
+- LoopScope hook：`test_loopscope_usage` 全绿——`LLMRunner._run_loop` 类属性替换、round span、usage 记录均正常
+
+### 兼容约束保持证据
+
+- `monkeypatch.setattr(core, "_stream_round", ...)`：core 保留模块级别名，`_run_loop`（machine）经 `_core._stream_round` 运行时查找 → characterization/usage_semantics 的 5 处 patch 全部生效
+- `core.MAX_TOOL_CALLS`/`MAX_ROUNDS`/`_user_unlimited_mode_enabled`/`registry.dispatch` 同理（`_core.` 前缀运行时查找）
+- 直接 import 兼容：`_sanitize_anthropic_history`、`_loaded_skill_slugs`、`_resolve_adapter_arguments`、`SPECIAL_STATE_LABELS`、`_GOAL_DONE_MARKER`、`_goal_completed`、`_strip_goal_marker`、`_VERIFY_PROMPT`/`_VERIFY_FORCE_PROMPT`、`_user_cancel`、`_FINALIZE_PROMPT` 等全部保留
+- 纯判定/熔断/dispatch 等零外部引用符号已迁 `loop/` 且不留别名；死代码清理仅 `_READ_PREFIXES`/`_READ_TOOL_NAMES`（已并入 `loop/tools.py`）
+
+### 如实记录的实施取舍
+
+1. `machine.run_loop` 对 core 常量与兼容别名采用 `_core.` 运行时前缀引用——这是保住「旧 monkeypatch 不改路径」的代价；Phase 6 已审计全部 58 个 `_core.*` 引用均有定义。后续如把测试迁到新路径，可逐个改为直接导入。
+2. `_run_loop` 的轮内闭包结构（stream_event/compact_context_now 等）随实现体整体迁移，未在函数内部再拆子函数——PRD §1.2「分散到可单独测试的模块」已由 rounds/tools/interactions/guards/provider 的纯函数承接（决策逻辑可独立测试，machine 只保留状态转移编排）。
+3. 过程事故与修复：Phase 3 恢复脚本一度引入被遮蔽的重复 `LLMRunner` 类定义（154 行死代码，Phase 5 提交中移除）；Phase 5 常数区误删（`_VERIFY_PROMPT`/`_FINALIZE_PROMPT`/`SPECIAL_STATE_LABELS`/`_im_cancelled` def 行）均从 HEAD 原样恢复并有全量测试兜底。
