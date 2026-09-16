@@ -29,13 +29,13 @@ fi
 EMBEDDED_SUPERVISORD_PID=""
 if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
     EMBED_DATA="${GUGU_DATA_DIR:-/data}"
-    # 持久化分级守卫（fnOS 面板事故教训）：
-    # ① /data 落在 overlay 联合文件系统 = 用户没挂任何卷，数据库写进容器可写层，
-    #    删容器即丢 → 拒绝启动，给出绑卷指引；
-    # ② /data 是 Docker 匿名卷（镜像 VOLUME 声明的零配置兜底）= 重启/崩溃不丢，
-    #    但面板"更新镜像"重建容器会拿到全新空卷（旧数据滞留成孤儿卷）→ 放行，
-    #    但日志显著警告并提示如何一次性绑稳；
-    # ③ 宿主机 bind mount = 完全持久，静默通过。
+    # 持久化分级守卫（fnOS 面板事故教训）。内置数据库必须落在宿主机 bind mount 上：
+    # ① bind mount → 完全持久，静默通过；
+    # ② Docker 匿名卷（镜像 VOLUME 声明的零配置兜底）→ 重启不丢，但面板"更新镜像"
+    #    重建容器会拿到全新空卷，旧数据滞留孤儿卷无法接上（fnOS v1.2.2 实测丢数据根因）
+    #    → 默认拒绝启动；确实只想临时试用的用户可显式 GUGU_ALLOW_ANONYMOUS_DATA=1
+    #    放行（日志仍会警告）；
+    # ③ overlay 可写层 = 连卷都没挂 → 一律拒绝。
     EMBED_DATA_FS="$(findmnt -n -o FSTYPE --target "$EMBED_DATA" 2>/dev/null || stat -f -c %T "$EMBED_DATA" 2>/dev/null || echo '')"
     if [ "$EMBED_DATA_FS" = "overlay" ] || [ "$EMBED_DATA_FS" = "overlayfs" ]; then
         echo "[entrypoint] 拒绝启动：${EMBED_DATA} 未挂载持久卷（当前在 overlay 可写层上）。" >&2
@@ -46,10 +46,17 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
     EMBED_DATA_SRC="$(findmnt -n -o SOURCE --target "$EMBED_DATA" 2>/dev/null || echo '')"
     case "$EMBED_DATA_SRC" in
         /var/lib/docker/volumes/*)
-            echo "[entrypoint] 警告：${EMBED_DATA} 使用的是 Docker 匿名卷（未绑定宿主机目录）。" >&2
-            echo "  重启和崩溃不会丢数据；但通过 NAS 面板/更新镜像重建容器时，会拿到一个全新的空卷，" >&2
-            echo "  旧数据将滞留在旧卷中无法自动接上。长期使用强烈建议现在就绑定宿主机目录：" >&2
-            echo "  -v /你的数据目录:/data -v /你的配置目录:/config" >&2
+            if [ "${GUGU_ALLOW_ANONYMOUS_DATA:-0}" = "1" ]; then
+                echo "[entrypoint] 警告：${EMBED_DATA} 使用 Docker 匿名卷（GUGU_ALLOW_ANONYMOUS_DATA=1）。" >&2
+                echo "  通过 NAS 面板更新镜像重建容器时会拿到全新空卷，旧数据滞留旧卷无法自动接上。" >&2
+            else
+                echo "[entrypoint] 拒绝启动：${EMBED_DATA} 当前使用 Docker 匿名卷，而非宿主机目录。" >&2
+                echo "  匿名卷在重启/崩溃时不丢数据，但 NAS 面板「更新镜像」重建容器时会拿到全新的空卷，" >&2
+                echo "  数据库将回到出厂状态（fnOS 单容器部署实测踩过）。长期使用请绑定宿主机目录：" >&2
+                echo "    -v /你的数据目录:/data -v /你的配置目录:/config" >&2
+                echo "  只想先临时试用、接受上述风险：加环境变量 GUGU_ALLOW_ANONYMOUS_DATA=1" >&2
+                exit 1
+            fi
             ;;
     esac
     EMBED_RUN=/run/gugu-embedded
