@@ -544,6 +544,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["byok"] = BYOKSettings.model_construct(**merged)
 
+            if "mcp" in override:
+                merged = {**self.mcp.model_dump(), **{
+                    k: v for k, v in (override["mcp"] or {}).items()
+                    if k in McpSettings.model_fields
+                }}
+                updates["mcp"] = McpSettings.model_construct(**merged)
+
             if "sandbox" in override:
                 merged = {**self.sandbox.model_dump(), **{
                     k: v for k, v in (override["sandbox"] or {}).items()
@@ -614,7 +621,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok", "mcp"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]
