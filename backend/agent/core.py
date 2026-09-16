@@ -52,6 +52,7 @@ from agent.tools.base import (
 from agent.context.assembly.messages import replace_tool_result as _replace_tool_result
 from agent.loop.events import artifact_sse as _artifact_sse
 from agent.loop.models import PendingInteraction as _PendingInteraction
+from agent.loop import rounds as loop_rounds
 from agent.loop import provider as _loop_provider
 _loop_provider.set_driver_stream_round_resolver(lambda: _stream_round)
 
@@ -916,10 +917,12 @@ class LLMRunner:
             return True
 
         def usage_compaction_due() -> bool:
-            from agent.context.compress_conv import AUTO_COMPACTION_RATIO
-
-            context_tokens = max(1, int(getattr(ai, "context_tokens", 0) or 0))
-            return run_context_usage >= int(context_tokens * AUTO_COMPACTION_RATIO) and not compaction_applied
+            # 90% 阈值判定归 loop/rounds（PRD-LLM-25 LLM25-006）；压缩执行仍归 context 模块。
+            return loop_rounds.usage_compaction_due(
+                run_context_usage=run_context_usage,
+                context_tokens=int(getattr(ai, "context_tokens", 0) or 0),
+                compaction_applied=compaction_applied,
+            )
 
         async def compact_after_usage_threshold() -> bool:
             """统一在 provider usage 达到 90% 后压缩旧 history。"""
@@ -953,7 +956,14 @@ class LLMRunner:
             })
 
         while True:
-            if round_number >= MAX_ABSOLUTE_ROUNDS:
+            _budget = loop_rounds.round_budget_action(
+                round_number=round_number, verify_mode=verify_mode,
+                task_rounds=task_rounds, verify_rounds=verify_rounds,
+                unlimited_mode=unlimited_mode,
+                max_rounds=self.max_rounds, max_verify_rounds=self.max_verify_rounds,
+                max_absolute_rounds=MAX_ABSOLUTE_ROUNDS,
+            )
+            if _budget is loop_rounds.RoundBudgetAction.ABSOLUTE_LIMIT:
                 _log.error(
                     "[core] Agent 触发绝对轮次安全上限：rounds=%s limit=%s run=%s",
                     round_number, MAX_ABSOLUTE_ROUNDS, run_id,
@@ -963,11 +973,7 @@ class LLMRunner:
             # 普通模式下，核实轮拥有独立预算；无限模式跳过该业务封顶。
             # 最后一轮额外留给模型输出核实后的收束文本。
             if verify_mode:
-                if (
-                    not unlimited_mode
-                    and self.max_verify_rounds is not None
-                    and verify_rounds >= self.max_verify_rounds
-                ):
+                if _budget is loop_rounds.RoundBudgetAction.VERIFY_LIMIT:
                     if self.stop_on_budget:
                         break
                     # 与任务轮上限同款弹窗：询问是否解除本轮限制继续，
@@ -1032,7 +1038,7 @@ class LLMRunner:
                     break
                 verify_rounds += 1
             else:
-                if not unlimited_mode and self.max_rounds is not None and task_rounds >= self.max_rounds:
+                if _budget is loop_rounds.RoundBudgetAction.TASK_LIMIT:
                     if self.stop_on_budget:
                         _log.warning("[core] 自动任务 LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, self.max_rounds)
                         yield f"data: {json.dumps({'type': 'error', 'detail': f'定时任务达到模型轮次上限（{self.max_rounds} 轮）'}, ensure_ascii=False)}\n\n"
