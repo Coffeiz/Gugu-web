@@ -50,6 +50,15 @@ from agent.tools.base import (
     mutating_tools as _mutating_tools,
 )
 from agent.context.assembly.messages import replace_tool_result as _replace_tool_result
+from agent.loop.tools import (
+    call_observes as _call_observes,
+    call_requires_verification as _call_requires_verification,
+    dispatch_in_session as _dispatch_in_session,
+    is_read_tool as _is_read_tool,
+    pending_tool_signal as _pending_tool_signal,
+    RepeatCallBreaker,
+    tool_result_payload as _tool_result_payload,
+)
 from agent.loop.events import artifact_sse as _artifact_sse
 from agent.loop.models import PendingInteraction as _PendingInteraction
 from agent.loop import rounds as loop_rounds
@@ -220,47 +229,6 @@ _WRITE_PREFIXES = (
 )
 
 
-def _call_requires_verification(tool_name: str, tool_input: Any, tool_snapshot, mutating_tools: set) -> bool:
-    """判断成功调用是否需要进入本地状态复查。
-
-    工具可以显式覆盖复查策略；未覆盖时，兼容既有工具契约的 mutates 语义。
-    """
-    tool = tool_snapshot.get(tool_name) if tool_snapshot is not None else None
-    override = getattr(tool, "verify_after_call", None)
-    if override is not None:
-        if callable(override):
-            try:
-                return bool(override(tool_input if isinstance(tool_input, dict) else {}))
-            except Exception as exc:
-                diag_log("agent.core.tool_verification_predicate", exc)
-                return True
-        return bool(override)
-    if tool_name not in mutating_tools:
-        return False
-    predicate = getattr(tool, "mutates_for_input", None)
-    if callable(predicate):
-        try:
-            return bool(predicate(tool_input if isinstance(tool_input, dict) else {}))
-        except Exception as exc:
-            # 元数据判断失败不能把一次调用误当成只读；保守按工具级 mutates 处理。
-            diag_log("agent.core.tool_mutation_predicate", exc)
-    return True
-
-
-def _call_observes(tool_name: str, tool_input: Any, tool_snapshot) -> bool:
-    """判断一次具体调用是否提供了复查所需的状态观察结果。"""
-    tool = tool_snapshot.get(tool_name) if tool_snapshot is not None else None
-    predicate = getattr(tool, "observes_for_input", None)
-    if callable(predicate):
-        try:
-            return bool(predicate(tool_input if isinstance(tool_input, dict) else {}))
-        except Exception as exc:
-            # 观察声明异常时不能假定状态已核实，交给既有复查预算处理。
-            diag_log("agent.core.tool_observation_predicate", exc)
-            return False
-    return _is_read_tool(tool_name)
-
-
 def _loaded_skill_slugs(messages) -> dict[str, str]:
     """从 Skill 的结构化使用标记找出已经进入上下文的正文。
 
@@ -349,72 +317,6 @@ def _closing_frames(text: str, *, next_round: int) -> list[str]:
     ]
 
 
-def _pending_tool_signal(status: str, result, pending: "_PendingInteraction", *, verify: bool) -> dict:
-    """交互中断（用户取消/超时）时，给工具气泡补的终态事件负载。
-
-    进交互门时运行侧已经发过一条 ``status="waiting"`` 的 tool_done，不补终态的话
-    气泡会永远停在「等待回复」——实时如此，刷新后也一样，因为展示时间线里存的
-    就是这个状态。
-    """
-    payload = {
-        "tool_call_id": pending.tool_call_id,
-        "name": pending.tool_name,
-        "status": status,
-        "verify": verify,
-    }
-    if result is not None:
-        payload["result"] = result
-    return payload
-
-
-# _PendingInteraction 已迁 `agent/loop/models.py`（别名见文件头兼容导入区）。
-
-
-async def _dispatch_in_session(
-    user_id, target, dispatch_input, *, session_id, session, run_id, tool_snapshot, skill_state,
-):
-    """带 dispatch 会话上下文执行一次工具调用。
-
-    首次调用与用户确认后重投必须走同一条路径：确认门授权判定、身份绑定和技能
-    状态都取自 dispatch 会话上下文，两处各写一遍早晚会漂移（重投时参数、目标
-    与首次完全一致是这个不变量的前提）。
-    """
-    from agent.tools.base import set_dispatch_session, reset_dispatch_session
-
-    _dispatch_token = set_dispatch_session(
-        session_id, session, run_id,
-        tool_snapshot=tool_snapshot,
-        skill_state=skill_state,
-    )
-    try:
-        return await registry.dispatch(user_id, target, dispatch_input)
-    finally:
-        reset_dispatch_session(_dispatch_token)
-
-
-def _tool_result_payload(result) -> dict:
-    """把 dispatch 返回值规范成可写入 tool_result 的 dict。
-
-    registry.dispatch 返回的是 JSON 字符串（少数工具返回 dict），而
-    ``_replace_tool_result`` 会对入参再做一次 json.dumps——直接把字符串塞进去
-    会把整段 JSON 变成带引号的字符串字面量，provider 侧工具回合就非法了。
-    """
-    if isinstance(result, dict):
-        return result
-    if isinstance(result, str):
-        try:
-            parsed = json.loads(result)
-        except (TypeError, ValueError):
-            return {"text": result}
-        return parsed if isinstance(parsed, dict) else {"result": parsed}
-    return {"result": result}
-
-
-def _is_read_tool(name: str) -> bool:
-    """返回该工具能否作为一次有效的状态观察。"""
-    return name.startswith(_READ_PREFIXES) or name in _READ_TOOL_NAMES
-
-
 async def _im_cancelled(session_id: int | None = None) -> bool:
     """检查 IM 与 Web 的生成取消标记。
 
@@ -460,6 +362,160 @@ async def _im_set_tool_state(tool_name: str) -> None:
             im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"],
             im["puid"], fine,
         )
+
+
+class LLMRunner:
+    """provider 无关的工具循环执行器。"""
+
+    def __init__(self, tool_names: list[str], settings, capability_context=None, locale: str | None = None,
+                 dynamic_tools=None,
+                 max_rounds: int | None | object = _DEFAULT_BUDGET,
+                 max_tool_calls: int | None | object = _DEFAULT_BUDGET,
+                 max_verify_rounds: int | None | object = _DEFAULT_BUDGET,
+                 max_verify_cycles: int | None | object = _DEFAULT_BUDGET,
+                 stop_on_budget: bool = False):
+        self.tool_names = tool_names
+        self.settings = settings
+        self.capability_context = capability_context
+        self.locale = locale
+        self.dynamic_tools = {
+            tool.name: tool for tool in (dynamic_tools or ())
+            if getattr(tool, "name", None)
+        }
+        self.max_rounds = MAX_ROUNDS if max_rounds is _DEFAULT_BUDGET else max_rounds
+        self.max_tool_calls = MAX_TOOL_CALLS if max_tool_calls is _DEFAULT_BUDGET else max_tool_calls
+        self.max_verify_rounds = MAX_VERIFY_LLM_ROUNDS if max_verify_rounds is _DEFAULT_BUDGET else max_verify_rounds
+        self.max_verify_cycles = MAX_VERIFY if max_verify_cycles is _DEFAULT_BUDGET else max_verify_cycles
+        self.stop_on_budget = stop_on_budget
+        # 状态显示名 = 特殊状态默认 ← 各工具 label ← 用户在后台「状态命名」面板的覆盖（热读）。
+        # 未覆盖的 key 自动回退默认，所以「保留默认」天然成立。
+        _ov = getattr(getattr(settings, "state_labels", None), "overrides", None) or {}
+        self.labels = {
+            **SPECIAL_STATE_LABELS,
+            **registry.labels(),
+            **{name: tool.label for name, tool in self.dynamic_tools.items()},
+            **{str(k): str(v) for k, v in _ov.items() if v},
+        }
+
+    def _provider_tool_names(self, names: list[str]) -> list[str]:
+        """无论能力目录模式如何，动态 MCP 都直接声明给 provider。"""
+        if not self.dynamic_tools:
+            return list(dict.fromkeys(names))
+        return list(dict.fromkeys([*names, *self.dynamic_tools]))
+
+    def _label(self, name: str, default: str | None = None) -> str:
+        """取状态显示名：命名含多个候选时随机取一（后端在发 tool_call 时调用）。"""
+        return _pick_label(self.labels.get(name, name if default is None else default))
+
+    def run(self, user_id, system_text: str, messages: list,
+            use_anthropic: bool, model_cfg=None,
+            session_id: int | None = None,
+            session=None,
+            on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+            reasoning_state=None,
+            reasoning_policy="off",
+            state_session_factory=None,
+            ) -> AsyncGenerator[str, None]:
+        # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
+        ai = model_cfg if model_cfg is not None else self.settings.ai
+        if reasoning_state is None and state_session_factory is not None:
+            from agent.context.reasoning_runtime import ReasoningStateCoordinator
+            from agent.context.reasoning_state import ReasoningPersistencePolicy
+            reasoning_state = ReasoningStateCoordinator(
+                user_id=user_id, session_id=session_id, model_cfg=ai,
+                policy=ReasoningPersistencePolicy.from_value(reasoning_policy),
+                session_factory=state_session_factory,
+            )
+        generation = self._run_provider(
+            user_id, system_text, messages, use_anthropic=use_anthropic,
+            model_cfg=ai, session_id=session_id, session=session,
+            on_interaction=on_interaction, reasoning_state=reasoning_state,
+        )
+        return self._recover_interrupted_continuation(
+            generation, user_id, system_text, messages,
+            use_anthropic=use_anthropic, model_cfg=ai,
+            session_id=session_id, session=session, reasoning_state=reasoning_state,
+            on_interaction=on_interaction,
+        )
+
+    def _run_provider(
+        self, user_id, system_text: str | None, messages: list, *,
+        use_anthropic: bool, model_cfg, session_id: int | None, session=None,
+        on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        reasoning_state=None,
+    ) -> AsyncGenerator[str, None]:
+        """启动一条未包装的 provider 流，续轮恢复只能调用这里。"""
+        ai = model_cfg if model_cfg is not None else self.settings.ai
+        if (getattr(ai, "provider", "") or "").lower() == "ollama" and \
+                getattr(ai, "ollama_api_mode", "native") == "native":
+            return self._run_ollama(
+                user_id, messages, ai, session_id=session_id,
+                session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
+            )
+        if str(getattr(ai, "api_format", "") or "").lower() in {"responses", "openai_responses"}:
+            return self._run_responses(
+                user_id, system_text, messages, ai, session_id=session_id,
+                session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
+            )
+        if use_anthropic:
+            return self._run_anthropic(
+                user_id, system_text, messages, ai, session_id=session_id,
+                session=session, on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
+            )
+        return self._run_openai(
+            user_id, messages, ai, session_id=session_id,
+            session=session, on_interaction=on_interaction,
+            reasoning_state=reasoning_state,
+        )
+
+
+    async def _recover_interrupted_continuation(
+        self, generation: AsyncGenerator[str, None], user_id, system_text,
+        messages: list, *, use_anthropic: bool, model_cfg, session_id: int | None,
+        session=None, on_interaction=None, reasoning_state=None,
+    ) -> AsyncGenerator[str, None]:
+        """统一处理工具续轮生成器提前结束。
+
+        ``_new_round`` 表示工具结果已经写回 messages，后续模型轮次必须继续。
+        如果 provider 流在 ``round_start`` 前异常结束，复用同一批已变更消息重试一次；
+        第二次仍未启动则输出错误，禁止网关把半截工具过程当成成功回复。
+        """
+        retried = False
+        continuation_pending = False
+        while True:
+            async for line in generation:
+                try:
+                    event = json.loads(line[6:])
+                except Exception:
+                    yield line
+                    continue
+                event_type = event.get("type")
+                if event_type == "_new_round":
+                    continuation_pending = True
+                elif event_type == "round_start":
+                    continuation_pending = False
+                elif event_type in {"_cancelled", "error"}:
+                    continuation_pending = False
+                yield line
+
+            if not continuation_pending:
+                return
+            if retried:
+                yield f"data: {json.dumps({'type': 'error', 'detail': '工具结果已返回，但后续回复没有完成，请重试。'}, ensure_ascii=False)}\n\n"
+                return
+            retried = True
+            _log.warning("工具续轮未开始，复用已提交工具结果恢复 LLM 请求 session=%s", session_id)
+            generation = self._run_provider(
+                user_id, system_text, messages, use_anthropic=use_anthropic,
+                model_cfg=model_cfg, session_id=session_id, session=session,
+                on_interaction=on_interaction,
+                reasoning_state=reasoning_state,
+            )
+            continuation_pending = False
+
 
 
 class LLMRunner:
@@ -757,8 +813,7 @@ class LLMRunner:
         guard_retry_buf: list[str] = []
         tool_calls_used = 0
         # 连续相同调用熔断状态：signature = (工具名, 归一化参数 JSON)，跨任务轮与核实轮计数
-        repeat_sig: tuple[str, str] | None = None
-        repeat_count = 0
+        repeat_breaker = RepeatCallBreaker(MAX_IDENTICAL_CONSECUTIVE_TOOL_CALLS)
         _request_conversation = getattr(messages, "conversation", messages)
         _request_user_index = last_user_index(_request_conversation)
         _user_req = (
@@ -1443,26 +1498,12 @@ class LLMRunner:
                     # 任何非 repeat_safe 的调用（含 ask_user）都会打断「连续」语义，
                     # 重置计数——中间穿插过一次别的调用就不算连续了。
                     if protocol_error is None and not tc.parse_error:
-                        repeat_tool = tool_snapshot.get(effective_tool_name)
-                        try:
-                            call_sig = (
-                                effective_tool_name,
-                                json.dumps(dispatch_input or {}, sort_keys=True, ensure_ascii=False, default=str),
-                            )
-                        except (TypeError, ValueError):
-                            call_sig = None
-                        if repeat_tool is None or not repeat_tool.repeat_safe:
-                            repeat_sig, repeat_count = None, 0
-                        elif call_sig is not None:
-                            if call_sig == repeat_sig:
-                                repeat_count += 1
-                            else:
-                                repeat_sig, repeat_count = call_sig, 1
-                            if repeat_count > MAX_IDENTICAL_CONSECUTIVE_TOOL_CALLS:
+                        # 连续相同调用熔断判定归 loop/tools（PRD-LLM-25 LLM25-008）。
+                        if repeat_breaker.register(tool_snapshot, effective_tool_name, dispatch_input):
                                 tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                                 _log.warning(
                                     "[core] 连续相同工具调用熔断：%s x%d（run=%s）",
-                                    effective_tool_name, repeat_count, run_id,
+                                    effective_tool_name, repeat_breaker.count, run_id,
                                 )
                                 yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
                                                    name=effective_tool_name, label=label, input=dispatch_input, verify=verify_mode,
