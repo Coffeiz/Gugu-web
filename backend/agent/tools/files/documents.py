@@ -187,11 +187,9 @@ async def _resolve_folder_path(db, user_id, raw: str, space, project_id, workspa
             db, user_id, seg, space=space, project_id=project_id,
             workspace_directory_id=workspace_directory_id,
         )
-        # 第一级在用户全部（按 space 过滤的）目录里找；其后逐级约束在上一级子目录内
-        candidates = [
-            folder for folder in named
-            if depth == 0 or folder.parent_id == parent_id
-        ]
+        # 逐级约束：depth 0 只认根目录（parent_id is None），与 _folder_by_name
+        # 「重名优先顶层」的语义一致——否则嵌套同名目录会让根路径误报歧义
+        candidates = [folder for folder in named if folder.parent_id == parent_id]
         if not candidates:
             siblings = await list_user_folders(
                 db, user_id, space=space, project_id=project_id,
@@ -860,6 +858,8 @@ class FilesSkill(BaseSkill):
                     "project_id": {"type": "integer"},
                     "workspace_directory_id": {"type": "integer"},
                     "folder": {"type": "string"},
+                    "folder_id": {"type": "integer"},
+                    "parent_id": {"type": "integer"},
                     "kind": {"type": "string", "enum": ["both", "file", "folder"]},
                     "ext": {"type": "string"},
                     "query": {"type": "string"},

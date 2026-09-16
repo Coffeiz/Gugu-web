@@ -217,6 +217,26 @@ async def test_list_dir_path_ambiguous_segment_reports_candidates(db, user_a):
     assert len(miss["candidates"]) == 2
 
 
+async def test_list_dir_path_first_segment_resolves_from_root_only(db, user_a):
+    """路径第一级只认根目录（P2 边界）：嵌套同名目录不参与第一级解析。
+
+    素材/（根）下有 方案/，同时 其他/素材/ 嵌套同名——「素材/方案」的路径语义
+    已明确从根出发，应直达根「素材」的「方案」，而不是误报「多个同名文件夹」。
+    """
+    root = await _mk(db, Folder(user_id=user_a.id, name="素材"))
+    plan = await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="方案"))
+    inside = await _mk(db, File(
+        user_id=user_a.id, display_name="路线图", ext="md",
+        folder_id=plan.id, storage_key="plan",
+    ))
+    other = await _mk(db, Folder(user_id=user_a.id, name="其他"))
+    await _mk(db, Folder(user_id=user_a.id, parent_id=other.id, name="素材"))
+
+    result = await _list_dir(db, user_a.id, {"folder": "素材/方案"})
+
+    assert [item["id"] for item in result["files"]] == [inside.id]
+
+
 async def test_list_dir_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
     workspace = await _mk(db, WorkspaceDirectory(
         user_id=user_a.id, name="F1 工作区", directory_name="f1-list",
