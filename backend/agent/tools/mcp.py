@@ -51,7 +51,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
     from agent.mcp.manager import McpToolManager, mcp_manager
     from app.api.v1.mcp_settings import (
         _check_endpoint,
-        _server_view,
+        agent_safe_server_view,
         _with_runtime_state,
         _validate_common,
         _validate_name,
@@ -75,7 +75,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         items = []
         for row in rows:
             items.append(_with_runtime_state(
-                _server_view(row), states.get(str(row.id)),
+                agent_safe_server_view(row), states.get(str(row.id)),
             ))
         return {"enabled": settings.mcp.enabled, "items": items}
 
@@ -160,7 +160,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         db.add(row)
         await db.commit()
         await db.refresh(row)
-        result = {"success": True, "server": _server_view(row)}
+        result = {"success": True, "server": agent_safe_server_view(row)}
         if credential_slots:
             result.update(_credential_prompt(row, "添加", credential_slots))
         return result
@@ -234,7 +234,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         await db.commit()
         await db.refresh(server)
         mcp_manager.invalidate_server(user_id, server.id)
-        result = {"success": True, "server": _server_view(server)}
+        result = {"success": True, "server": agent_safe_server_view(server)}
         if credential_slots:
             result.update(_credential_prompt(server, "更新", credential_slots))
         return result
@@ -249,12 +249,12 @@ async def _manage_mcp_servers(db, user_id, args: dict):
             if runtime is None or runtime.effective_state() != "ok":
                 return {
                     "success": True,
-                    "server": _server_view(server),
+                    "server": agent_safe_server_view(server),
                     "state": runtime.effective_state() if runtime else "unloaded",
                     "tool_count": 0,
                     "error": runtime.last_error if runtime else "MCP 工具加载失败",
                 }
-        return {"success": True, "server": _server_view(server)}
+        return {"success": True, "server": agent_safe_server_view(server)}
 
     if action == "remove":
         from agent.interactions.confirmations import needs_confirmation, target_confirmation_identity

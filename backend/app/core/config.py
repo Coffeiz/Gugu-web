@@ -187,6 +187,14 @@ class SandboxSettings(BaseModel):
         ),
         description="sandboxd Unix Socket；生产 Shell 必须通过该 socket 执行",
     )
+    stdio_max_sessions: int = Field(
+        8,
+        description="sandboxd 全局长驻 stdio MCP 会话上限；独立于一次性执行槽，避免长连接占满普通沙盒执行",
+    )
+    stdio_max_sessions_per_user: int = Field(
+        4,
+        description="单用户长驻 stdio MCP 会话上限（按沙盒根目录即用户计）",
+    )
 
 
 class FileSyncSettings(BaseModel):

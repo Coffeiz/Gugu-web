@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 from uuid import UUID
 from typing import Literal
 
@@ -219,6 +219,50 @@ def _server_view(row: UserMcpServer, settings=None) -> dict:
             or credential_values
             or endpoint_query_has_value
         ),
+        "enabled": row.enabled,
+        "confirm_mode": row.confirm_mode,
+        "timeout_seconds": row.timeout_seconds,
+        "tool_allowlist": list(row.tool_allowlist or []),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def agent_safe_server_view(row: UserMcpServer, settings=None) -> dict:
+    """Agent 工具结果视图：进入模型上下文，绝不携带凭据明文。
+
+    与 `_server_view`（owner 设置页编辑视图，明文回显是产品定稿）严格区分：
+    manage_mcp_servers 的 list/add/update/enable/disable 结果会原样序列化进
+    LLM 上下文，本视图只暴露管理必需字段——endpoint 仅保留 scheme+host+path
+    （query 可能带明文 key，整体去掉），credential_values 一律不返回；
+    槽位定义与 configured 状态保留，供模型判断还缺哪些凭据。
+    """
+    endpoint = _decrypt_endpoint(row)
+    if endpoint:
+        parts = urlsplit(endpoint)
+        endpoint = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    slot_defs, credential_values = _credential_view_parts(row)
+    configured = bool(
+        getattr(row, "encrypted_credentials", "")
+        or row.encrypted_headers
+        or row.encrypted_query_params
+        or credential_values
+        or any(
+            "{{secret:" not in value
+            for _key, value in parse_qsl(urlsplit(_decrypt_endpoint(row)).query, keep_blank_values=True)
+        )
+    )
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "scope": row.scope,
+        "transport": row.transport,
+        "endpoint": endpoint,
+        "command": row.command,
+        "credential_slots": slot_defs,
+        "credential_state": {
+            "configured": configured,
+            "slot_ids": [str(item.get("id")) for item in slot_defs if isinstance(item, dict)],
+        },
         "enabled": row.enabled,
         "confirm_mode": row.confirm_mode,
         "timeout_seconds": row.timeout_seconds,

@@ -26,6 +26,9 @@ from app.core.url_security import resolve_pinned_ip
 from agent.mcp.models import CLIENT_INFO, MCP_PROTOCOL_VERSION
 
 _LIST_TOOLS_MAX_PAGES = 8        # 分页拉全量的防御上限
+_MAX_RESPONSE_BYTES = 2_000_000  # 单次 JSON-RPC 响应体硬上限（防恶意 server 撑爆内存）
+_MAX_TOOL_DESCRIPTION_CHARS = 2_000  # 单工具 description 截断（防上下文被工具说明撑爆）
+_MAX_LIST_TOOLS_BYTES = 1_000_000    # tools/list 累计体积上限
 
 
 class McpClientError(Exception):
@@ -86,9 +89,10 @@ class McpClient:
         return result or {}
 
     async def list_tools(self) -> dict:
-        """返回 {"tools": [...]}；分页拉全量。"""
+        """返回 {"tools": [...]}；分页拉全量。description/总体积有防御上限。"""
         tools: list[dict] = []
         cursor: str | None = None
+        total_bytes = 0
         try:
             if not self._initialized:
                 init = await self.initialize()
@@ -99,8 +103,18 @@ class McpClient:
                 result = await self._request("tools/list", params)
                 if "error" in result:
                     return result
-                tools.extend(result.get("tools") or [])
+                for tool in result.get("tools") or []:
+                    if not isinstance(tool, dict):
+                        continue
+                    description = tool.get("description")
+                    if isinstance(description, str) and len(description) > _MAX_TOOL_DESCRIPTION_CHARS:
+                        tool["description"] = description[:_MAX_TOOL_DESCRIPTION_CHARS] + "…（超长说明已截断）"
+                    tools.append(tool)
+                    total_bytes += len(json.dumps(tool, ensure_ascii=False))
                 cursor = result.get("nextCursor")
+                if total_bytes > _MAX_LIST_TOOLS_BYTES:
+                    return {"error": "tools/list 响应体积超出防御上限，已拒绝加载该 server 的工具",
+                            "error_kind": "protocol"}
                 if not cursor:
                     break
             else:
@@ -181,7 +195,12 @@ class McpClient:
 
         async with self._build_client() as client:
             try:
-                resp = await client.post(self._request_url(), json=body, headers=self._base_headers())
+                # stream=True：响应体不急读，交给 _read_capped 流式累计——恶意/异常
+                # server 回几十 MB 时在硬上限处截断，而不是先整个吃进内存
+                request = client.build_request(
+                    "POST", self._request_url(), json=body, headers=self._base_headers(),
+                )
+                resp = await client.send(request, stream=True)
             except httpx.TimeoutException as exc:
                 raise McpClientError(
                     f"MCP server 响应超时（>{int(self._timeout_seconds)}s），"
@@ -193,23 +212,28 @@ class McpClient:
                     "无法连接 MCP server，请检查地址与网络", kind="network"
                 ) from exc
 
-        # 重定向一律不跟随（未校验的目的地不请求）
-        if 300 <= resp.status_code < 400:
-            raise McpClientError(
-                "MCP server 返回了重定向，出于安全考虑未跟随", kind="http"
-            )
-        if resp.status_code == 202:
-            return {}
-        if resp.status_code >= 400:
-            raise McpClientError(
-                f"MCP server 返回错误状态码 {resp.status_code}", kind="http"
-            )
+            try:
+                # 重定向一律不跟随（未校验的目的地不请求）
+                if 300 <= resp.status_code < 400:
+                    raise McpClientError(
+                        "MCP server 返回了重定向，出于安全考虑未跟随", kind="http"
+                    )
+                if resp.status_code == 202:
+                    return {}
+                if resp.status_code >= 400:
+                    raise McpClientError(
+                        f"MCP server 返回错误状态码 {resp.status_code}", kind="http"
+                    )
 
-        session_id = resp.headers.get("Mcp-Session-Id")
-        if session_id:
-            self._session_id = session_id
+                session_id = resp.headers.get("Mcp-Session-Id")
+                if session_id:
+                    self._session_id = session_id
 
-        payload = self._extract_message(resp, request_id)
+                content = await self._read_capped(resp)
+            finally:
+                await resp.aclose()
+
+        payload = self._extract_message(content, resp.headers.get("Content-Type") or "", request_id)
         if "error" in payload:
             err = payload.get("error") or {}
             message = err.get("message") if isinstance(err, dict) else str(err)
@@ -218,16 +242,33 @@ class McpClient:
             )
         return payload.get("result") or {}
 
-    def _extract_message(self, resp: httpx.Response, request_id: int) -> dict:
-        """从 application/json 或 text/event-stream 响应里取出本请求的 JSON-RPC 消息。
+    async def _read_capped(self, resp: httpx.Response) -> bytes:
+        """整包读入响应体，但硬上限先拒：Content-Length 预检 + 流式累计超限即断。"""
+        declared = (resp.headers.get("Content-Length") or "").strip()
+        if declared.isdigit() and int(declared) > _MAX_RESPONSE_BYTES:
+            raise McpClientError(
+                f"MCP server 响应体 {declared} 字节，超出防御上限 {_MAX_RESPONSE_BYTES}",
+                kind="protocol",
+            )
+        content = b""
+        async for chunk in resp.aiter_bytes():
+            content += chunk
+            if len(content) > _MAX_RESPONSE_BYTES:
+                raise McpClientError(
+                    f"MCP server 响应体超出防御上限 {_MAX_RESPONSE_BYTES} 字节",
+                    kind="protocol",
+                )
+        return content
 
-        POST 默认整包读入（非流式），SSE 流在服务端发送响应后即关闭，两种情况
-        都在内存内容上解析。
+    def _extract_message(self, content: bytes, content_type: str, request_id: int) -> dict:
+        """从 application/json 或 text/event-stream 内容里取出本请求的 JSON-RPC 消息。
+
+        两种情况都在已读入内存（且有上限）的字节上解析。
         """
-        content_type = (resp.headers.get("Content-Type") or "").lower()
+        content_type = content_type.lower()
         if "text/event-stream" not in content_type:
             try:
-                payload = resp.json()
+                payload = json.loads(content)
             except ValueError as exc:
                 raise McpClientError("MCP server 返回了非 JSON 内容", kind="protocol") from exc
             if isinstance(payload, dict) and "jsonrpc" not in payload:
@@ -261,8 +302,8 @@ class McpClient:
                 if matched is not None:
                     message = matched
 
-        for line in resp.iter_lines():
-            line = line.rstrip("\r")
+        for raw_line in content.decode("utf-8", errors="replace").split("\n"):
+            line = raw_line.rstrip("\r")
             if line.startswith("data:"):
                 data_lines.append(line[len("data:"):].lstrip())
             elif not line.strip():

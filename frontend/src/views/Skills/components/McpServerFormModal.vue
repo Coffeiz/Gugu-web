@@ -76,6 +76,12 @@ const form = reactive({
 
 const credentialSlotsPlaceholder = t('skillsMcpUi.credentialSlotsPlaceholder')
 
+// 打开时的原文（含回显的凭据值）：提交时与它比对，「用户没动过」就不提交凭据字段，
+// 保住对话内 secret 通道注入、表单里并不存在的值；「动过」（含清空）则显式整体替换。
+const initialSlotsText = server?.credential_slots?.length
+  ? JSON.stringify(server.credential_slots, null, 2)
+  : ''
+
 function parseCredentialSlots(value: string): McpServerDraft['credential_slots'] {
   if (!value.trim()) return undefined
   try {
@@ -108,7 +114,11 @@ function submit() {
     return
   }
   try {
-    const credentialSlots = form.transport === 'http' ? parseCredentialSlots(form.credential_slots_text) : undefined
+    const rawSlots = form.transport === 'http' ? parseCredentialSlots(form.credential_slots_text) : undefined
+    // 「未修改」→ 不提交凭据字段（后端语义=保留原值，secret 通道注入的值不受影响）；
+    // 「修改过」（含删空、HTTP→stdio 隐藏槽位）→ 显式提交：空数组 + 空值 = 真正清空。
+    const slotsExplicit = form.transport !== 'http' || form.credential_slots_text !== initialSlotsText
+    const credentialSlots = slotsExplicit ? (rawSlots ?? []) : undefined
     // value 单独抽出成 credential_values（信封加密落库）；definitions 不携带明文
     const credentialValues = Object.fromEntries(
       (credentialSlots ?? [])
@@ -125,7 +135,7 @@ function submit() {
       tool_allowlist: form.tool_allowlist_text.split(',').map(value => value.trim()).filter(Boolean),
       confirm_mode: form.confirm_mode,
       enabled: form.enabled,
-      ...(credentialSlots ? { credential_slots: slotDefs, credential_values: credentialValues } : {}),
+      ...(credentialSlots !== undefined ? { credential_slots: slotDefs, credential_values: credentialValues } : {}),
     })
   } catch (cause) {
     formError.value = cause instanceof Error ? cause.message : t('skillsMcpUi.credentialSlotsInvalid')

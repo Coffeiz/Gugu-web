@@ -82,6 +82,7 @@ class McpToolManager:
 
     def __init__(self):
         self._runtimes: dict[tuple[UUID, UUID], _ServerRuntime] = {}
+        self._idle_reaper_task: asyncio.Task | None = None
 
     # ── 声明侧：轮次组装时按用户合并 ──
 
@@ -469,12 +470,52 @@ class McpToolManager:
         runtime.stdio_restarts = 0
         if config.transport == "stdio":
             runtime.client = client
+            self._ensure_idle_reaper()
         else:
             close = getattr(client, "aclose", None)
             if close is not None:
                 await close()
         self._runtimes[key] = runtime
         return runtime
+
+    # ── stdio 空闲回收：后台 reaper 周期清扫，不依赖下一次 _ensure_runtime ──
+
+    _IDLE_REAPER_INTERVAL_SECONDS = 60.0
+
+    def _ensure_idle_reaper(self) -> None:
+        """首个长驻 stdio 连接建立时启动一次；沙盒执行槽不再被闲置连接长期占用。"""
+        if self._idle_reaper_task is not None and not self._idle_reaper_task.done():
+            return
+        self._idle_reaper_task = asyncio.create_task(self._idle_reaper_loop())
+
+    async def _idle_reaper_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._IDLE_REAPER_INTERVAL_SECONDS)
+            try:
+                await self.reap_idle_stdio()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                _log.warning("stdio idle reaper 异常（忽略继续）: %s", type(exc).__name__)
+
+    async def reap_idle_stdio(self, settings=None) -> int:
+        """关闭所有空闲超过 stdio_idle_seconds 的长驻 stdio 连接（工具缓存保留，
+        下次调用按既有退避/重连机制重开）。返回本次关闭数。"""
+        if settings is None:
+            from app.core.config import get_settings
+            settings = get_settings()
+        idle_seconds = float(settings.mcp.stdio_idle_seconds)
+        now = time.monotonic()
+        closed = 0
+        for runtime in list(self._runtimes.values()):
+            config = runtime.config
+            if config is None or config.transport != "stdio" or runtime.client is None:
+                continue
+            if runtime.last_used_at > 0 and now - runtime.last_used_at >= idle_seconds:
+                await runtime.client.aclose()
+                runtime.client = None
+                closed += 1
+        return closed
 
     def _make_handler(self, server_id: UUID, meta: McpToolMeta):
         """Tool.handler（async (db, user_id, args)）：走同一条 dispatch 契约。"""

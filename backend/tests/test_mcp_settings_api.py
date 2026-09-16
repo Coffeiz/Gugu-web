@@ -476,3 +476,89 @@ def test_manage_mcp_servers_schema_accepts_credential_slots():
     slots = tool.input_schema["properties"]["credential_slots"]
     assert slots["type"] == "array"
     assert slots["items"]["properties"]["target"]["enum"] == ["header", "query"]
+
+
+async def test_agent_tool_results_never_leak_credentials(db, user_a, monkeypatch):
+    """Blocker 回归：manage_mcp_servers 的所有工具结果进模型上下文，
+    任何 action 都不得携带 endpoint 明文 query 或 credential_values（PR #72 复审）。"""
+    import json as _json
+
+    from agent.mcp.manager import mcp_manager
+    from agent.tools.mcp import _manage_mcp_servers
+
+    async def _no_tools(_user_id):
+        return []
+
+    monkeypatch.setattr(mcp_manager, "list_user_tools", _no_tools)
+    monkeypatch.setattr(mcp_manager, "invalidate_server", lambda *a, **k: None)
+
+    created = await api.create_server(
+        api.McpServerCreate(name="leaky", endpoint="https://mcp.example.com/rpc?key=SUPER_SECRET_123",
+                            credential_slots=[{"id": "api_key", "label": "服务 Key", "target": "query", "name": "key"}],
+                            credential_values={"api_key": "SUPER_SECRET_123"}),
+        user=user_a, db=db,
+    )
+    owner_view = _json.dumps(created, ensure_ascii=False)
+    assert "SUPER_SECRET_123" in owner_view  # owner 编辑视图明文回显是产品定稿
+
+    # Agent 工具的全部读路径与写路径结果都不出现明文
+    actions = [
+        {"action": "list"},
+        {"action": "update", "server_id": created["id"], "enabled": True},
+        {"action": "enable", "server_id": created["id"]},
+        {"action": "disable", "server_id": created["id"]},
+        {"action": "test_connection", "server_id": created["id"]},
+    ]
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    for args in actions:
+        result = await _manage_mcp_servers(db, user_a.id, dict(args))
+        serialized = _json.dumps(result, ensure_ascii=False, default=str)
+        assert "SUPER_SECRET_123" not in serialized, f"{args['action']} 泄漏了凭据明文: {serialized[:200]}"
+        if "server" in result and isinstance(result["server"], dict):
+            assert "credential_values" not in result["server"], f"{args['action']} 返回了 credential_values"
+
+    # 安全视图保留管理字段：槽位定义与 configured 状态在，值不在
+    listed = await _manage_mcp_servers(db, user_a.id, {"action": "list"})
+    item = listed["items"][0]
+    assert item["credential_state"]["configured"] is True
+    assert item["credential_slots"][0]["id"] == "api_key"
+    assert item["endpoint"] == "https://mcp.example.com/rpc"  # 明文 query 已整体去除
+
+    # settings= 参数路径（API 侧同函数）同样不泄漏
+    row = (await db.execute(select(UserMcpServer).where(UserMcpServer.name == "leaky"))).scalar_one()
+    safe = api.agent_safe_server_view(row, settings)
+    assert "SUPER_SECRET_123" not in _json.dumps(safe, ensure_ascii=False)
+
+
+async def test_patch_explicit_clear_purges_credentials(db, user_a):
+    """P2 后端语义：credential_slots=[] + credential_values={} 是显式清空，
+    必须真正删除已存凭据（前端据此把「清空」翻译成显式提交）。"""
+    created = await api.create_server(
+        api.McpServerCreate(name="purge", endpoint="https://mcp.example.com",
+                            credential_slots=[{"id": "api_key", "label": "服务 Key", "target": "query", "name": "key"}],
+                            credential_values={"api_key": "SUPER_SECRET_123"}),
+        user=user_a, db=db,
+    )
+    assert created["credential_state"]["configured"] is True
+    updated = await api.update_server(
+        created["id"],
+        api.McpServerPatch(credential_slots=[], credential_values={}),
+        user=user_a, db=db,
+    )
+    assert updated["credential_slots"] == []
+    assert updated["credential_state"]["configured"] is False
+    row = (await db.execute(select(UserMcpServer).where(UserMcpServer.name == "purge"))).scalar_one()
+    assert not row.encrypted_credentials
+
+    # 未提供（None）= 保留原值，两条路径语义互不干扰
+    created2 = await api.create_server(
+        api.McpServerCreate(name="keep", endpoint="https://mcp.example.com",
+                            credential_slots=[{"id": "api_key", "label": "服务 Key", "target": "query", "name": "key"}],
+                            credential_values={"api_key": "KEEP_ME_456"}),
+        user=user_a, db=db,
+    )
+    await api.update_server(created2["id"], api.McpServerPatch(enabled=False), user=user_a, db=db)
+    row2 = (await db.execute(select(UserMcpServer).where(UserMcpServer.name == "keep"))).scalar_one()
+    assert row2.encrypted_credentials  # 未提交凭据字段 → 保留
