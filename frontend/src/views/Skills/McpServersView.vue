@@ -1,50 +1,213 @@
 <template>
-  <div class="mcp-page">
-    <div class="mcp-page-heading"><div><h2>{{ t('skillsMcpUi.title') }}</h2><p>{{ t('skillsMcpUi.hint') }}</p></div><button class="mcp-primary-btn" :disabled="items.length >= maxServers" @click="openEditor()">{{ t('skillsMcpUi.add') }}</button></div>
-    <div v-if="loading" class="mcp-muted">{{ t('skillsMcpUi.loading') }}</div>
-    <div v-else-if="error" class="mcp-message err">{{ error }}</div>
-    <template v-else>
-      <div v-if="!items.length" class="mcp-empty"><strong>{{ t('skillsMcpUi.empty') }}</strong><span>{{ t('skillsMcpUi.hint') }}</span></div>
-      <div v-for="item in items" :key="item.id" class="mcp-card">
-        <div class="mcp-card-main"><div class="mcp-card-title"><span class="mcp-state-dot" :class="`is-${item.state || 'unloaded'}`"></span>{{ item.name }}</div><div class="mcp-card-meta">{{ item.transport === 'stdio' ? item.command : item.endpoint }} · {{ stateLabel(item.state) }} · {{ t('skillsMcpUi.toolCount', { count: item.loaded_tool_count ?? 0 }) }}</div><div v-if="item.has_credentials" class="mcp-card-credential">{{ t('skillsMcpUi.credentialsConfigured') }}</div></div>
-        <div class="mcp-card-actions"><button class="mcp-chip" :disabled="busyId === item.id" @click="test(item)">{{ busyId === item.id ? t('skillsMcpUi.testing') : t('skillsMcpUi.test') }}</button><button class="mcp-chip" :disabled="busyId === item.id" @click="reconnect(item)">{{ busyId === item.id ? t('skillsMcpUi.testing') : t('skillsMcpUi.reconnect') }}</button><button class="mcp-chip" :class="{ active: item.enabled }" :disabled="busyId === item.id" @click="toggle(item)">{{ item.enabled ? t('skillsMcpUi.enabled') : t('skillsMcpUi.disabled') }}</button><button class="mcp-chip" @click="openEditor(item)">{{ t('skillsMcpUi.edit') }}</button><button class="mcp-danger-btn" :disabled="busyId === item.id" @click="remove(item)">{{ t('skillsMcpUi.delete') }}</button></div>
+  <div class="mcp-page" :aria-busy="loading">
+    <header class="section-header">
+      <ActionButton fit :disabled="items.length >= maxServers" @click="openCreate">
+        <Icon name="action.add" :size="14" />{{ t('skillsMcpUi.add') }}
+      </ActionButton>
+    </header>
+
+    <div v-if="error" class="error-banner" role="alert">
+      {{ error }} <button type="button" @click="load">{{ t('skills.retry') }}</button>
+    </div>
+
+    <template v-if="loaded">
+      <div v-if="!items.length" class="empty-state">
+        <Icon name="resource.skill" :size="32" />
+        <strong>{{ t('skillsMcpUi.empty') }}</strong>
+        <span>{{ t('skillsMcpUi.hint') }}</span>
+        <ActionButton fit :disabled="items.length >= maxServers" @click="openCreate">{{ t('skillsMcpUi.add') }}</ActionButton>
       </div>
-      <div v-if="editor" class="mcp-editor"><div class="mcp-editor-title">{{ editor.id ? t('skillsMcpUi.editTitle') : t('skillsMcpUi.addTitle') }}</div><div class="mcp-form-grid"><input v-model.trim="editor.name" class="mcp-input" :placeholder="t('skillsMcpUi.name')" autocomplete="off" /><select v-model="editor.transport" class="mcp-input"><option value="http">{{ t('skillsMcpUi.httpTransport') }}</option><option value="stdio">{{ t('skillsMcpUi.stdioTransport') }}</option></select><input v-if="editor.transport === 'http'" v-model.trim="editor.endpoint" class="mcp-input" :placeholder="t('skillsMcpUi.endpoint')" autocomplete="url" /><input v-else v-model.trim="editor.command" class="mcp-input" :placeholder="t('skillsMcpUi.command')" autocomplete="off" spellcheck="false" /><input v-model.number="editor.timeout_seconds" class="mcp-input" type="number" min="1" max="300" :placeholder="t('skillsMcpUi.timeout')" /><input v-model.trim="editor.tool_allowlist_text" class="mcp-input" :placeholder="t('skillsMcpUi.allowlist')" autocomplete="off" /><select v-model="editor.confirm_mode" class="mcp-input"><option value="confirm_all">{{ t('skillsMcpUi.confirmAll') }}</option><option value="auto">{{ t('skillsMcpUi.autoConfirm') }}</option></select><label class="mcp-enabled"><input v-model="editor.enabled" type="checkbox" /> {{ t('skillsMcpUi.enabled') }}</label></div><template v-if="editor.transport === 'http'"><label class="mcp-headers-label">{{ t('skillsMcpUi.headers') }}</label><textarea v-model="editor.headers_text" class="mcp-input mcp-headers" :placeholder="editor.id ? t('skillsMcpUi.headersKeep') : t('skillsMcpUi.headersPlaceholder')" autocomplete="off" spellcheck="false"></textarea><p class="mcp-muted">{{ t('skillsMcpUi.headersHint') }}</p></template><div v-if="message" class="mcp-message" :class="messageType">{{ message }}</div><div class="mcp-editor-actions"><button class="mcp-chip" @click="editor = null">{{ t('skillsMcpUi.cancel') }}</button><button class="mcp-chip active" :disabled="saving" @click="save">{{ saving ? t('skillsMcpUi.saving') : t('skillsMcpUi.save') }}</button></div></div>
-      <div v-if="!editor" class="mcp-add-row"><span class="mcp-muted">{{ t('skillsMcpUi.limit', { count: maxServers }) }}</span><button class="mcp-chip active" :disabled="items.length >= maxServers" @click="openEditor()">{{ t('skillsMcpUi.add') }}</button></div>
-      <div v-if="!editor && message" class="mcp-message" :class="messageType">{{ message }}</div>
+      <div v-else class="mcp-list scroll-surface scroll-surface--compact">
+        <McpCard
+          v-for="item in items"
+          :key="item.id"
+          :server="item"
+          :busy="busyId === item.id"
+          @toggle="toggle"
+          @test="test"
+          @reconnect="reconnect"
+          @edit="openEdit"
+          @remove="remove"
+        />
+      </div>
     </template>
+
+    <div v-if="loaded && items.length && !editor" class="mcp-footer">
+      <span class="mcp-muted">{{ t('skillsMcpUi.limit', { count: maxServers }) }}</span>
+      <span v-if="message" class="mcp-message" :class="messageType" role="status">{{ message }}</span>
+    </div>
+    <div v-else-if="loaded && message && !editor" class="mcp-message" :class="messageType" role="status">{{ message }}</div>
+
+    <McpServerFormModal
+      v-if="editor"
+      :key="formKey"
+      :show="editor"
+      :server="editing"
+      :busy="saving"
+      @close="closeEditor"
+      @save="save"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import Icon from '@/components/common/icons/Icon.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { mcpApi, type McpServerItem } from '@/services/api'
+import McpCard from './components/McpCard.vue'
+import McpServerFormModal from './components/McpServerFormModal.vue'
+import type { McpServerDraft } from './components/mcp-types'
 
 const { t } = useI18n()
-const loading = ref(false); const saving = ref(false); const busyId = ref<string | null>(null); const error = ref(''); const message = ref(''); const messageType = ref<'ok' | 'err'>('ok'); const items = ref<McpServerItem[]>([]); const maxServers = ref(5); const editor = ref<Editor | null>(null)
-interface Editor { id?: string; transport: 'http' | 'stdio'; name: string; endpoint: string; command: string; timeout_seconds: number; tool_allowlist_text: string; confirm_mode: 'auto' | 'confirm_all'; enabled: boolean; headers_text: string }
-function blankEditor(item?: McpServerItem): Editor { return { id: item?.id, transport: item?.transport === 'stdio' ? 'stdio' : 'http', name: item?.name ?? '', endpoint: item?.endpoint ?? '', command: item?.command ?? '', timeout_seconds: item?.timeout_seconds ?? 30, tool_allowlist_text: item?.tool_allowlist?.join(', ') ?? '', confirm_mode: item?.confirm_mode === 'auto' ? 'auto' : 'confirm_all', enabled: item?.enabled ?? true, headers_text: '' } }
-function stateLabel(state?: string) { return t(`skillsMcpUi.state.${state || 'unloaded'}`) }
-function parseHeaders(value: string): Record<string, string> | undefined { if (!value.trim()) return undefined; const parsed = JSON.parse(value); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(t('skillsMcpUi.headersInvalid')); return Object.fromEntries(Object.entries(parsed).map(([key, entry]) => [key, String(entry)])) }
-function payloadFor(draft: Editor) { const payload: Record<string, unknown> = { name: draft.name, transport: draft.transport, endpoint: draft.transport === 'http' ? draft.endpoint : '', command: draft.transport === 'stdio' ? draft.command : '', enabled: draft.enabled, confirm_mode: draft.confirm_mode, timeout_seconds: draft.timeout_seconds, tool_allowlist: draft.tool_allowlist_text.split(',').map(value => value.trim()).filter(Boolean) }; if (draft.transport === 'http') { const headers = parseHeaders(draft.headers_text); if (headers !== undefined) payload.headers = headers } return payload }
-async function load() { loading.value = true; error.value = ''; try { const result = await mcpApi.list(); items.value = result.items; maxServers.value = result.max_servers } catch (cause) { error.value = cause instanceof Error ? cause.message : t('skillsMcpUi.loadFailed') } finally { loading.value = false } }
-function openEditor(item?: McpServerItem) { message.value = ''; editor.value = blankEditor(item) }
-async function save() { if (!editor.value || saving.value) return; saving.value = true; message.value = ''; try { const draft = editor.value; if (draft.id) await mcpApi.update(draft.id, payloadFor(draft)); else await mcpApi.create(payloadFor(draft)); editor.value = null; message.value = t('skillsMcpUi.saved'); messageType.value = 'ok'; await load() } catch (cause) { message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.saveFailed'); messageType.value = 'err' } finally { saving.value = false } }
-async function test(item: McpServerItem) { busyId.value = item.id; message.value = ''; try { const result = await mcpApi.test(item.id); message.value = result.ok ? t('skillsMcpUi.testSuccess', { count: result.tool_count ?? 0 }) : (result.error || t('skillsMcpUi.testFailed')); messageType.value = result.ok ? 'ok' : 'err'; await load() } catch (cause) { message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.testFailed'); messageType.value = 'err' } finally { busyId.value = null } }
-async function reconnect(item: McpServerItem) { busyId.value = item.id; message.value = ''; try { const result = await mcpApi.reconnect(item.id); message.value = result.ok ? t('skillsMcpUi.reconnectSuccess', { count: result.tool_count }) : (result.error || t('skillsMcpUi.testFailed')); messageType.value = result.ok ? 'ok' : 'err'; await load() } catch (cause) { message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.testFailed'); messageType.value = 'err' } finally { busyId.value = null } }
-async function toggle(item: McpServerItem) { busyId.value = item.id; try { await mcpApi.update(item.id, { enabled: !item.enabled }); await load() } catch (cause) { message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.saveFailed'); messageType.value = 'err' } finally { busyId.value = null } }
-async function remove(item: McpServerItem) { if (!await confirmDialog({ title: t('skillsMcpUi.deleteTitle'), message: t('skillsMcpUi.deleteMessage', { name: item.name }), tone: 'danger', confirmText: t('skillsMcpUi.delete') })) return; busyId.value = item.id; try { await mcpApi.remove(item.id); message.value = t('skillsMcpUi.deleted'); messageType.value = 'ok'; await load() } catch (cause) { message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.deleteFailed'); messageType.value = 'err' } finally { busyId.value = null } }
+const loading = ref(false)
+const loaded = ref(false)
+const saving = ref(false)
+const busyId = ref<string | null>(null)
+const error = ref('')
+const message = ref('')
+const messageType = ref<'ok' | 'err'>('ok')
+const items = ref<McpServerItem[]>([])
+const maxServers = ref(5)
+const editor = ref(false)
+const editing = ref<McpServerItem | null>(null)
+const formKey = ref(0)
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await mcpApi.list()
+    items.value = result.items
+    maxServers.value = result.max_servers
+    loaded.value = true
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : t('skillsMcpUi.loadFailed')
+  } finally {
+    loading.value = false
+  }
+}
+
+function openCreate() {
+  message.value = ''
+  editing.value = null
+  formKey.value++
+  editor.value = true
+}
+
+function openEdit(item: McpServerItem) {
+  message.value = ''
+  editing.value = item
+  formKey.value++
+  editor.value = true
+}
+
+function closeEditor() {
+  editor.value = false
+  editing.value = null
+}
+
+async function save(draft: McpServerDraft) {
+  if (saving.value) return
+  saving.value = true
+  message.value = ''
+  try {
+    if (editing.value) await mcpApi.update(editing.value.id, { ...draft })
+    else await mcpApi.create({ ...draft })
+    closeEditor()
+    message.value = t('skillsMcpUi.saved')
+    messageType.value = 'ok'
+    await load()
+  } catch (cause) {
+    message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.saveFailed')
+    messageType.value = 'err'
+  } finally {
+    saving.value = false
+  }
+}
+
+async function test(item: McpServerItem) {
+  busyId.value = item.id
+  message.value = ''
+  try {
+    const result = await mcpApi.test(item.id)
+    message.value = result.ok ? t('skillsMcpUi.testSuccess', { count: result.tool_count ?? 0 }) : (result.error || t('skillsMcpUi.testFailed'))
+    messageType.value = result.ok ? 'ok' : 'err'
+    await load()
+  } catch (cause) {
+    message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.testFailed')
+    messageType.value = 'err'
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function reconnect(item: McpServerItem) {
+  busyId.value = item.id
+  message.value = ''
+  try {
+    const result = await mcpApi.reconnect(item.id)
+    message.value = result.ok ? t('skillsMcpUi.reconnectSuccess', { count: result.tool_count }) : (result.error || t('skillsMcpUi.testFailed'))
+    messageType.value = result.ok ? 'ok' : 'err'
+    await load()
+  } catch (cause) {
+    message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.testFailed')
+    messageType.value = 'err'
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function toggle(item: McpServerItem) {
+  busyId.value = item.id
+  try {
+    await mcpApi.update(item.id, { enabled: !item.enabled })
+    await load()
+  } catch (cause) {
+    message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.saveFailed')
+    messageType.value = 'err'
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function remove(item: McpServerItem) {
+  if (!await confirmDialog({
+    title: t('skillsMcpUi.deleteTitle'),
+    message: t('skillsMcpUi.deleteMessage', { name: item.name }),
+    tone: 'danger',
+    confirmText: t('skillsMcpUi.delete'),
+  })) return
+
+  busyId.value = item.id
+  try {
+    await mcpApi.remove(item.id)
+    message.value = t('skillsMcpUi.deleted')
+    messageType.value = 'ok'
+    await load()
+  } catch (cause) {
+    message.value = cause instanceof Error ? cause.message : t('skillsMcpUi.deleteFailed')
+    messageType.value = 'err'
+  } finally {
+    busyId.value = null
+  }
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
-.mcp-page { min-height:0; height:100%; overflow-y:auto; padding-right:4px; color:var(--content-primary); }
-.mcp-page-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }.mcp-page-heading h2 { margin:0; font-size:18px; }.mcp-page-heading p { margin:6px 0 0; color:var(--content-secondary); font-size:12px; }
-.mcp-primary-btn, .mcp-chip, .mcp-danger-btn { border-radius:var(--choice-chip-radius); border:1px solid var(--choice-chip-border); background:var(--choice-chip-bg); color:var(--choice-chip-fg); font:500 12px var(--font-sans); cursor:pointer; padding:7px 12px; transition:color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }.mcp-primary-btn { background:var(--action-primary-bg); border-color:var(--action-primary-bg); color:var(--content-on-accent); font-weight:600; }.mcp-chip:hover:not(:disabled) { background:var(--choice-chip-bg-hover); border-color:var(--choice-chip-border-hover); color:var(--choice-chip-fg-hover); }.mcp-chip.active { background:var(--choice-chip-bg-active); border-color:var(--choice-chip-border-active); color:var(--choice-chip-fg-active); font-weight:600; }.mcp-chip:disabled, .mcp-danger-btn:disabled, .mcp-primary-btn:disabled { opacity:.45; cursor:not-allowed; }.mcp-danger-btn { color:var(--status-danger); border-color:var(--status-danger-bg); }.mcp-danger-btn:hover:not(:disabled) { background:var(--status-danger-bg); }
-.mcp-muted { color:var(--content-secondary); font-size:12px; }.mcp-message { margin-top:12px; color:var(--status-success); font-size:12px; }.mcp-message.err { color:var(--status-danger); }.mcp-empty { display:flex; flex-direction:column; gap:8px; align-items:center; justify-content:center; min-height:240px; color:var(--content-secondary); }.mcp-empty strong { color:var(--content-primary); }
-.mcp-card { display:flex; align-items:center; gap:14px; padding:14px; margin-top:12px; border:1px solid var(--border-default); border-radius:var(--radius-md); background:var(--surface-card); box-shadow:var(--elevation-card); }.mcp-card-main { min-width:0; flex:1; }.mcp-card-title { display:flex; align-items:center; gap:7px; font-size:14px; font-weight:650; }.mcp-card-meta, .mcp-card-credential { margin-top:5px; color:var(--content-secondary); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.mcp-card-credential { color:var(--status-success); }.mcp-state-dot { width:7px; height:7px; border-radius:50%; background:var(--content-secondary); flex:0 0 auto; }.mcp-state-dot.is-ok { background:var(--status-success); }.mcp-state-dot.is-error, .mcp-state-dot.is-backoff { background:var(--status-danger); }.mcp-card-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; flex:0 0 auto; }
-.mcp-editor { margin-top:14px; padding:16px; border:1px solid var(--border-default); border-radius:var(--radius-md); background:var(--surface-soft); }.mcp-editor-title, .mcp-headers-label { color:var(--content-primary); font-size:13px; font-weight:650; }.mcp-form-grid { display:grid; grid-template-columns:1fr 2fr 100px; gap:8px; margin-top:10px; }.mcp-input { min-width:0; box-sizing:border-box; width:100%; min-height:34px; padding:7px 9px; border:1px solid var(--input-border); border-radius:var(--input-radius); background:var(--input-bg); color:var(--input-fg); font:12px var(--font-sans); outline:none; }.mcp-input:focus { border-color:var(--input-border-focus); box-shadow:var(--input-focus-shadow); }.mcp-enabled { display:flex; align-items:center; gap:6px; color:var(--content-secondary); font-size:12px; }.mcp-headers-label { display:block; margin-top:12px; }.mcp-headers { min-height:58px; resize:vertical; }.mcp-editor-actions, .mcp-add-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; }.mcp-add-row { border-top:1px solid var(--border-default); padding-top:14px; }
-@media (max-width:700px) { .mcp-card { align-items:flex-start; flex-direction:column; }.mcp-card-actions { justify-content:flex-start; }.mcp-form-grid { grid-template-columns:1fr; } }
+.mcp-page { min-height:0; height:100%; display:flex; flex-direction:column; }
+.section-header { display:flex; align-items:center; justify-content:flex-start; gap:20px; margin-bottom:16px; flex-shrink:0; }
+.mcp-list { flex:1; min-height:0; overflow-y:auto; column-count:2; column-gap:12px; margin:0 -8px; padding:10px 8px 16px; }
+.mcp-list :deep(.skill-card) { margin:0 0 12px; }
+.empty-state { min-height:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--content-secondary); }
+.empty-state strong { color:var(--content-primary); }.empty-state span { max-width:420px; font-size:12px; text-align:center; }
+.error-banner { padding:10px 12px; border-radius:var(--radius-sm); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
+.error-banner button { margin-left:10px; border:0; background:transparent; color:inherit; cursor:pointer; }
+.mcp-footer { display:flex; align-items:center; gap:14px; flex-shrink:0; border-top:1px solid var(--border-default); padding:14px 8px 0; }
+.mcp-muted, .mcp-message { color:var(--content-secondary); font-size:12px; }.mcp-message { margin-top:12px; }.mcp-footer .mcp-message { margin:0; }.mcp-message.ok { color:var(--status-success); }.mcp-message.err { color:var(--status-danger); }
+@media (max-width:720px) { .mcp-list { column-count:1; } }
 </style>

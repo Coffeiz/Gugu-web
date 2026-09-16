@@ -38,6 +38,9 @@ const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerConten
 const scheduleFormModal = load('../../views/Schedules/components/ScheduleFormModal.vue')
 const scheduleCard = load('../../views/Schedules/components/ScheduleCard.vue')
 const skillCard = load('../../views/Skills/components/SkillCard.vue')
+const mcpView = load('../../views/Skills/McpServersView.vue')
+const mcpCard = load('../../views/Skills/components/McpCard.vue')
+const mcpFormModal = load('../../views/Skills/components/McpServerFormModal.vue')
 const actionButton = load('../../components/common/controls/ActionButton.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
@@ -360,6 +363,19 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     // 主题层继续持有定时任务卡的最终 paint 与过渡（含新增的背景药丸）
     expect(load('./theme-adoption.css')).toContain('html[data-theme][data-family] .task-card .card-link-btn { color: var(--content-secondary); }')
     expect(interactionRefinements).toContain('background-color var(--hover-motion-control), opacity var(--hover-motion-control);')
+  })
+
+  it('MCP 技能页沿用技能页双列卡片、公共按钮和弹窗表单契约', () => {
+    expect(mcpView).toContain('<ActionButton fit')
+    expect(mcpView).toContain('column-count:2;')
+    expect(mcpView).not.toContain("t('skillsMcpUi.loading')")
+    expect(mcpCard).toContain('ToggleSwitch')
+    expect(mcpCard).toContain('class="card-link-btn"')
+    expect(mcpFormModal).toContain('<BaseModal')
+    expect(mcpFormModal).toContain('<SelectPopup')
+    expect(mcpFormModal).toContain('class="form-input"')
+    expect(mcpFormModal).toContain('var(--font-size-body)/var(--line-height-body)')
+    expect(mcpFormModal).not.toContain('<label>{{ t(\'skillsMcpUi.name\') }}<input')
   })
 
   it('定时任务清除边界按钮用居中图标，不回落字体字形', () => {
