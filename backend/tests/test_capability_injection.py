@@ -177,11 +177,11 @@ def test_skill_lookup_rejects_tool_metadata_in_skill_map():
 def test_catalog_derives_compact_field_signature_from_tool_registry():
     snapshot = CapabilitySnapshot(
         generation=1,
-        tools={"list_files": CapabilityMeta("list_files", "tool", "列出文件。")},
+        tools={"list_dir": CapabilityMeta("list_dir", "tool", "浏览目录。")},
         skills={},
     )
     block = catalog_block(snapshot)
-    assert "list_files" in block
+    assert "list_dir" in block
     assert "limit(integer" in block
     assert "例如" not in block
     assert "input_schema" not in block

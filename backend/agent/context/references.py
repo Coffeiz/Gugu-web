@@ -47,7 +47,7 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
         elif kind == "file":
             obj = await get_owned(db, File, resource_id, user_id)
             if obj and obj.deleted_at is None:
-                # 带 id 与所在目录：咕咕可直接 read_file(file_id) / list_files(folder_id)，
+                # 带 id 与所在目录：咕咕可直接 read_file(file_id) / list_dir(folder)，
                 # 不必再按名字搜索——搜不到时整个引用就失效了。
                 folder_path = await _folder_path(db, obj.folder_id)
                 directory = (

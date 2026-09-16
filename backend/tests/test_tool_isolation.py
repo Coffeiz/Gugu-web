@@ -19,7 +19,7 @@ from app.models import (
     File, Folder, Project, ScheduledTask, WorkspaceDirectory,
 )
 
-from agent.tools.files import _list_files, _resolve_file, _resolve_key, _resolve_target
+from agent.tools.files import _list_dir, _resolve_file, _resolve_key, _resolve_target
 from agent.tools.projects import _resolve_project, _update_project
 from agent.tools.calendar import _resolve_event, _remove_event_reminder
 from agent.tools.clients import _resolve_client
@@ -97,7 +97,7 @@ async def test_list_files_returns_full_folder_path(db, user_a):
         user_id=user_a.id, display_name="ReAct 对比", ext="md",
         folder_id=child.id, storage_key="k",
     ))
-    result = await _list_files(db, user_a.id, {"q": "ReAct"})
+    result = await _list_dir(db, user_a.id, {"q": "ReAct"})
     result = next(item for item in result["files"] if item["id"] == file.id)
     assert result["folder_path"] == "咕咕开发/方案"
 
@@ -114,7 +114,7 @@ async def test_list_files_filters_by_folder_id(db, user_a):
         folder_id=other.id, storage_key="other",
     ))
 
-    result = await _list_files(db, user_a.id, {"folder_id": target.id})
+    result = await _list_dir(db, user_a.id, {"folder": target.id})
 
     assert result["total"] == 1
     assert [item["id"] for item in result["files"]] == [inside.id]
@@ -133,13 +133,13 @@ async def test_list_files_shown_total_reveals_truncation(db, user_a):
             folder_id=folder.id, storage_key=f"k{i}",
         ))
 
-    result = await _list_files(db, user_a.id, {"folder_id": folder.id, "limit": 2})
+    result = await _list_dir(db, user_a.id, {"folder": folder.id, "limit": 2})
 
     assert result["total"] == 3
     assert result["shown"] == 2
     assert len(result["files"]) == 2
 
-    full = await _list_files(db, user_a.id, {"folder_id": folder.id, "limit": 200})
+    full = await _list_dir(db, user_a.id, {"folder": folder.id, "limit": 200})
     assert full["total"] == 3 and full["shown"] == 3
 
 async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user_a):
@@ -149,7 +149,7 @@ async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user
         folder_id=target.id, storage_key="inside",
     ))
 
-    result = await _list_files(db, user_a.id, {"folder_id": "咕咕开发", "space": "personal"})
+    result = await _list_dir(db, user_a.id, {"folder": "咕咕开发", "space": "personal"})
 
     assert [item["id"] for item in result["files"]] == [inside.id]
 
@@ -180,7 +180,7 @@ async def test_list_files_does_not_inherit_bound_workspace_directory(db, user_a,
 
     monkeypatch.setattr(file_documents, "_bound_workspace_target", bound_workspace)
 
-    result = await _list_files(db, user_a.id, {"queries": ["已看"]})
+    result = await _list_dir(db, user_a.id, {"queries": ["已看"]})
 
     assert [item["id"] for item in result["files"]] == [personal_file.id]
 

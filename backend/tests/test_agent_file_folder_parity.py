@@ -39,7 +39,7 @@ async def test_agent_folder_create_rename_delete_matches_service(db, user_a, tmp
     assert deleted["success"] is True
     assert await FileService(db, storage=storage).folder_tree.get(user_a.id, folder_id) is None
 
-    visible = await agent_files._list_folders(db, user_a.id, {})
+    visible = await agent_files._list_dir(db, user_a.id, {"kind": "folder"})
     assert folder_id not in {item["id"] for item in visible["folders"]}
 
     import agent.tools.trash as agent_trash
@@ -55,6 +55,7 @@ async def test_list_folders_does_not_inherit_bound_workspace_directory(db, user_
     await db.commit()
     await db.refresh(personal)
 
+    import agent.tools.files as agent_files
     import agent.tools.files.folders as folder_tools
 
     async def bound_workspace(*_args, **_kwargs):
@@ -67,7 +68,7 @@ async def test_list_folders_does_not_inherit_bound_workspace_directory(db, user_
 
     monkeypatch.setattr(folder_tools, "_bound_workspace_target", bound_workspace)
 
-    rows = await folder_tools._list_folders(db, user_a.id, {})
+    rows = await agent_files._list_dir(db, user_a.id, {"kind": "folder"})
 
     assert {item["id"] for item in rows["folders"]} == {personal.id, workspace.id}
 
@@ -232,7 +233,7 @@ async def test_agent_create_file_supports_batch_custom_extensions_and_partial_re
     assert result["failed_count"] == 1
     created_names = {item["name"] for item in result["created"]}
     assert created_names == {"script.py", "panel.custom"}
-    assert {item["ext"] for item in (await agent_files._list_files(db, user_a.id, {}))["files"]} >= {"py", "custom"}
+    assert {item["ext"] for item in (await agent_files._list_dir(db, user_a.id, {}))["files"]} >= {"py", "custom"}
     custom = next(item for item in result["created"] if item["name"] == "panel.custom")
     custom_file = await agent_files._resolve_file(db, user_a.id, {"file_id": custom["file_id"]})
     assert await storage.get(custom_file[0].storage_key) == "自定义文本".encode()
