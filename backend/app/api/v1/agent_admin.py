@@ -545,14 +545,14 @@ async def get_usage(month: str | None = None, model: str | None = None,
     by_scenario_recent = await _scenario_aggregate(_utc_naive(today_start_local - timedelta(days=6)))
 
     # 只返回全平台聚合数字，不暴露用户配置、server 名称或凭据。
-    mcp_server_row = await db.execute(
-        select(
+    mcp_server_row = await db.execute(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
+        select(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
             func.count(UserMcpServer.id),
             func.count(func.distinct(UserMcpServer.user_id)),
         ).where(UserMcpServer.scope == "user", UserMcpServer.enabled.is_(True))
     )
     mcp_server_count, mcp_enabled_user_count = mcp_server_row.one()
-    mcp_call_count = await db.scalar(select(func.count(AgentUsage.id)).where(
+    mcp_call_count = await db.scalar(select(func.count(AgentUsage.id)).where(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
         AgentUsage.scenario == "mcp", AgentUsage.is_byok.is_(False),
     ))
 

@@ -333,8 +333,8 @@ def _invalidate(user_id, server_id) -> None:
 async def list_servers(user: User = Depends(get_current_user),
                        db: AsyncSession = Depends(get_db)):
     settings = get_settings()
-    rows = (await db.execute(
-        select(UserMcpServer).where(
+    rows = (await db.execute(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
+        select(UserMcpServer).where(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
             UserMcpServer.user_id == user.id,
             UserMcpServer.scope == "user",
         ).order_by(UserMcpServer.created_at)
@@ -371,7 +371,7 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    existing = (await db.execute(
+    existing = (await db.execute(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
         select(UserMcpServer.id).where(
             UserMcpServer.user_id == user.id,
             UserMcpServer.scope == "user",
@@ -380,8 +380,8 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
     )).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=400, detail=f"名称 {name} 已存在")
-    count = (await db.execute(
-        select(sa.func.count()).select_from(UserMcpServer).where(
+    count = (await db.execute(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
+        select(sa.func.count()).select_from(UserMcpServer).where(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
             UserMcpServer.user_id == user.id, UserMcpServer.scope == "user")
     )).scalar_one()
     if count >= settings.mcp.max_servers_per_user:
@@ -408,7 +408,7 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
         tool_allowlist=list(payload.tool_allowlist or []),
     )
     _store_credential_values(row, payload.credential_values, credential_slots)
-    db.add(row)
+    db.add(row)  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
     await db.commit()
     await db.refresh(row)
     _log.info("MCP server 配置已保存：user=%s server=%s", str(user.id)[:8], name)
@@ -438,7 +438,7 @@ async def update_server(server_id: str, payload: McpServerPatch,
 
     if payload.name is not None and payload.name != row.name:
         new_name = _validate_name(payload.name)
-        conflict = (await db.execute(
+        conflict = (await db.execute(  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
             select(UserMcpServer.id).where(
                 UserMcpServer.user_id == user.id,
                 UserMcpServer.scope == "user",
@@ -491,7 +491,7 @@ async def delete_server(server_id: str, user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
     row = await _get_owned_server(db, server_id, user)
     name = row.name
-    await db.delete(row)
+    await db.delete(row)  # orm-exempt: MCP 设置接口为单表(UserMcpServer)按 owner 读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
     await db.commit()
     _invalidate(user.id, row.id)
     _log.info("MCP server 配置已删除：user=%s server=%s", str(user.id)[:8], name)

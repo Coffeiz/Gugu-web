@@ -29,7 +29,7 @@ from app.services.files.browser import (
 from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
-from app.models import File
+from app.models import File  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
 from app.services.storage.file_service import FileService
 from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
@@ -304,7 +304,7 @@ async def _list_dir(db, user_id, args: dict):
         if folder_ids:
             from sqlalchemy import func
             stmt = (
-                select(File.folder_id, func.count())
+                select(File.folder_id, func.count())  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
                 .where(
                     File.user_id == user_id,
                     File.deleted_at.is_(None),
@@ -312,7 +312,7 @@ async def _list_dir(db, user_id, args: dict):
                 )
                 .group_by(File.folder_id)
             )
-            counts = dict((await db.execute(stmt)).all())
+            counts = dict((await db.execute(stmt)).all())  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
         for folder in folder_rows:
             resolved = await resolve_folder_path(
                 db, user_id, folder.id, folder.project_id,

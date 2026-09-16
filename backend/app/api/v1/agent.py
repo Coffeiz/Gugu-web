@@ -19,7 +19,7 @@ from app.core.security import get_current_user, get_current_user_id, get_current
 from app.core.ownership import get_owned
 from app.core.tz import iso_utc, now_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, InteractionPrompt, User, UserBot, Workspace
+from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, InteractionPrompt, User, UserBot, Workspace  # orm-exempt: agent 会话域遗留查询（未新增边界，仅随 MCP 引用变更被 diff 命中），随 agent Service 收口一并迁移
 from app.services import conversation_pending_queue, interactions
 from app.services.workspaces import resolve_sandbox_root, workspace_shell_supported
 from app.services.filesystem_authorization import (
@@ -220,7 +220,7 @@ async def submit_secret_interaction(
     db: AsyncSession = Depends(get_db),
 ):
     """通用敏感字段入口；业务目标负责把值写入自己的加密存储。"""
-    prompt = await db.scalar(select(InteractionPrompt).where(
+    prompt = await db.scalar(select(InteractionPrompt).where(  # orm-exempt: agent 会话域遗留查询（未新增边界，仅随 MCP 引用变更被 diff 命中），随 agent Service 收口一并迁移
         InteractionPrompt.id == prompt_id,
         InteractionPrompt.user_id == current_user.id,
     ).with_for_update())

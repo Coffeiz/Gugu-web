@@ -266,7 +266,7 @@ async def ref_suggest(
         recent: list[MindRefSuggestItem] = []
         projects = (await db.scalars(select(Project).where(Project.user_id == current_user.id, Project.deleted_at.is_(None)).order_by(Project.updated_at.desc()).limit(limit))).all()  # orm-exempt: 概览项目读取待 Service 收口（1.1.2 遗留）
         files = (await db.scalars(select(File).where(File.user_id == current_user.id, File.deleted_at.is_(None)).order_by(File.updated_at.desc()).limit(limit))).all()
-        folders = (await db.scalars(select(Folder).where(Folder.user_id == current_user.id, Folder.deleted_at.is_(None)).order_by(Folder.updated_at.desc()).limit(limit))).all()
+        folders = (await db.scalars(select(Folder).where(Folder.user_id == current_user.id, Folder.deleted_at.is_(None)).order_by(Folder.updated_at.desc()).limit(limit))).all()  # orm-exempt: ref-suggest 最近对象只读概览，沿用本函数既有 project/file/event 查询口径（1.1.2 遗留）
         events = (await db.scalars(select(CalendarEvent).where(CalendarEvent.user_id == current_user.id, CalendarEvent.deleted_at.is_(None)).order_by(CalendarEvent.date.desc()).limit(limit))).all()  # orm-exempt: 概览活动读取待 Service 收口（1.1.2 遗留）
         recent.extend(MindRefSuggestItem(type="project", id=x.id, label=x.name, subtitle=x.client) for x in projects)
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)

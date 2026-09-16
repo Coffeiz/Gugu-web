@@ -63,8 +63,8 @@ async def _manage_mcp_servers(db, user_id, args: dict):
     action = str(args.get("action") or "").strip()
     if action == "list":
         settings = get_settings()
-        rows = (await db.execute(
-            select(UserMcpServer).where(
+        rows = (await db.execute(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
+            select(UserMcpServer).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
                 UserMcpServer.user_id == user_id,
                 UserMcpServer.scope == "user",
             ).order_by(UserMcpServer.created_at)
@@ -88,7 +88,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
                 server_id = _server_id(server_id_value)
             except ValueError as exc:
                 return {"error": str(exc)}
-            server = await db.scalar(select(UserMcpServer).where(
+            server = await db.scalar(select(UserMcpServer).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
                 UserMcpServer.id == server_id,
                 UserMcpServer.user_id == user_id,
                 UserMcpServer.scope == "user",
@@ -96,7 +96,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         elif server_name:
             # list 返回的 id 是最可靠的定位方式，但名称在用户范围内唯一；
             # 接受名称可以让模型直接复用刚刚列出的结果，避免把 name 误塞进 UUID。
-            server = await db.scalar(select(UserMcpServer).where(
+            server = await db.scalar(select(UserMcpServer).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
                 UserMcpServer.name == server_name,
                 UserMcpServer.user_id == user_id,
                 UserMcpServer.scope == "user",
@@ -119,12 +119,12 @@ async def _manage_mcp_servers(db, user_id, args: dict):
             int(args.get("timeout_seconds") or settings.mcp.default_timeout_seconds),
             list(args.get("tool_allowlist") or []),
         )
-        existing = (await db.execute(select(UserMcpServer.id).where(
+        existing = (await db.execute(select(UserMcpServer.id).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
             UserMcpServer.user_id == user_id, UserMcpServer.scope == "user", UserMcpServer.name == name,
         ))).scalar_one_or_none()
         if existing is not None:
             return {"error": f"名称 {name} 已存在"}
-        count = (await db.execute(select(UserMcpServer.id).where(
+        count = (await db.execute(select(UserMcpServer.id).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
             UserMcpServer.user_id == user_id, UserMcpServer.scope == "user",
         ))).scalars().all()
         if len(count) >= settings.mcp.max_servers_per_user:
@@ -157,7 +157,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
             timeout_seconds=int(args.get("timeout_seconds") or settings.mcp.default_timeout_seconds),
             tool_allowlist=list(args.get("tool_allowlist") or []),
         )
-        db.add(row)
+        db.add(row)  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
         await db.commit()
         await db.refresh(row)
         result = {"success": True, "server": agent_safe_server_view(row)}
@@ -172,7 +172,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         settings = get_settings()
         if "name" in args and args.get("name") and str(args["name"]).strip() != server.name:
             new_name = _validate_name(str(args["name"]))
-            conflict = (await db.execute(select(UserMcpServer.id).where(
+            conflict = (await db.execute(select(UserMcpServer.id).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
                 UserMcpServer.user_id == user_id,
                 UserMcpServer.scope == "user",
                 UserMcpServer.name == new_name,
@@ -264,7 +264,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         if gate is not None:
             return gate
         server_id = server.id
-        await db.delete(server)
+        await db.delete(server)  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
         await db.flush()
         mcp_manager.invalidate_server(user_id, server_id)
         return {"success": True, "server_id": str(server_id), "message": "MCP server 已删除。"}
