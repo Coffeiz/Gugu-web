@@ -2,7 +2,6 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
 import { canAccessTerminals, mcpApi, workspacesApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
-import { lastSkillsTab, rememberSkillsTab } from '@/views/Skills/skillsTab'
 
 const routes: RouteRecordRaw[] = [
   // ── 用户认证页（无 layout）──
@@ -88,6 +87,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'navigation.files' },
       },
       {
+        path: 'mcp',
+        name: 'SkillsMcp',
+        component: () => import('@/views/Mcp/index.vue'),
+        meta: { title: 'navigation.mcp' },
+      },
+      {
         path: 'skills',
         name: 'Skills',
         component: () => import('@/views/Skills/index.vue'),
@@ -100,10 +105,9 @@ const routes: RouteRecordRaw[] = [
             meta: { title: 'navigation.skills' },
           },
           {
+            // MCP 已抽成独立页面 /mcp；旧路径保留重定向兼容收藏与已分发的链接。
             path: 'mcp',
-            name: 'SkillsMcp',
-            component: () => import('@/views/Skills/McpServersView.vue'),
-            meta: { title: 'navigation.skills' },
+            redirect: { name: 'SkillsMcp' },
           },
         ],
       },
@@ -220,19 +224,11 @@ router.beforeEach(async (to) => {
 })
 
 router.beforeEach(async (to) => {
-  // 技能页 tab 记忆：进 /skills 前先看上次是否停在 MCP 页，挂载前重定向掉，
-  // 避免先渲染技能页再跳转的切换闪烁。SkillsMcp 守卫随后会做 MCP 开关校验，
-  // 关闭时回落 /skills。
-  if (to.name === 'SkillsHome' && lastSkillsTab() === 'mcp') return { name: 'SkillsMcp' }
   if (to.name !== 'Terminals' && to.name !== 'SkillsMcp') return
   try {
     if (to.name === 'SkillsMcp') {
       const status = await mcpApi.status()
-      if (!status.enabled) {
-        // 记录仍是 mcp 会被上面 SkillsHome 分支再次重定向成死循环，先清掉。
-        rememberSkillsTab('skills')
-        return { path: '/skills' }
-      }
+      if (!status.enabled) return { path: '/skills' }
       return
     }
     const status = await workspacesApi.status()
