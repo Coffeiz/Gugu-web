@@ -25,7 +25,7 @@
 cd frontend && npm run typecheck && npm run test:css-glass && npm run test:ui-dialogs
 
 # 2) 后端测试
-cd backend && PYTHONPATH=. python -m pytest -q
+cd backend && PYTHONPATH=. python -m pytest -q -n auto
 
 # 3) 本地构建生产镜像并 trivy 预扫（防患于未然，别让 CI 当第一个发现问题的）
 docker build -f backend/Dockerfile.prod  -t gugu-backend:release-check .
