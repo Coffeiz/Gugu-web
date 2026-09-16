@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | `base.py` | `Tool`、`BaseSkill`、registry、Schema 校验、统一 dispatch | 具体业务和资源查询 |
 | `meta.py` | 固定 Adapter（`call_tool`、`get_tool_schema`）、Skill 正文加载（`use_skill`）和元能力组合 | 用户 Skill 的创建、更新、删除实现 |
+| `link_buttons.py` | 链接按钮工具；通过固定 Adapter 按需获取 Schema 后发送 Web/AppLink 入口 | 不负责等待点击、接收点击结果或执行按钮对应的业务动作 |
 | `skill_management.py` | 用户 Prompt Skill 的创建、更新、删除工具；以独立的按需工具组注册，复用 Skill 注册服务、权限校验和确认门 | Skill 正文加载、普通业务工具注册 |
 | `text_edit.py` | 通用正文行级编辑契约和安全校验 | 具体文件、笔记或 Skill 的持久化 |
 | `filesystem_policy.py` | 把当前 Session/定时任务 dispatch 主体适配到统一 filesystem policy | 保存授权事实、创建 grant、实现第二套权限判断 |

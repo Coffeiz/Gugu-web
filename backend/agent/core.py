@@ -342,11 +342,16 @@ _WRITE_PREFIXES = (
 )
 
 
-def _mutating_tools(tool_names) -> set:
+def _mutating_tools(tool_names, tool_snapshot=None) -> set:
     """本次可用工具里的「增删改」集合：① 命名约定（写动词前缀，自动覆盖新工具）
     ② 并上 RESOURCE_BY_TOOL 里人工登记的（双保险，防约定外的特例漏判）。"""
     from app.core.events import RESOURCE_BY_TOOL
     by_name = {n for n in tool_names if n.startswith(_WRITE_PREFIXES)}
+    if tool_snapshot is not None:
+        by_name |= {
+            name for name in tool_names
+            if (tool := tool_snapshot.get(name)) is not None and tool.mutates
+        }
     return by_name | set(RESOURCE_BY_TOOL)
 
 
@@ -612,6 +617,7 @@ class LLMRunner:
     """provider 无关的工具循环执行器。"""
 
     def __init__(self, tool_names: list[str], settings, capability_context=None, locale: str | None = None,
+                 dynamic_tools=None,
                  max_rounds: int | None | object = _DEFAULT_BUDGET,
                  max_tool_calls: int | None | object = _DEFAULT_BUDGET,
                  max_verify_rounds: int | None | object = _DEFAULT_BUDGET,
@@ -621,6 +627,10 @@ class LLMRunner:
         self.settings = settings
         self.capability_context = capability_context
         self.locale = locale
+        self.dynamic_tools = {
+            tool.name: tool for tool in (dynamic_tools or ())
+            if getattr(tool, "name", None)
+        }
         self.max_rounds = MAX_ROUNDS if max_rounds is _DEFAULT_BUDGET else max_rounds
         self.max_tool_calls = MAX_TOOL_CALLS if max_tool_calls is _DEFAULT_BUDGET else max_tool_calls
         self.max_verify_rounds = MAX_VERIFY_LLM_ROUNDS if max_verify_rounds is _DEFAULT_BUDGET else max_verify_rounds
@@ -629,7 +639,18 @@ class LLMRunner:
         # 状态显示名 = 特殊状态默认 ← 各工具 label ← 用户在后台「状态命名」面板的覆盖（热读）。
         # 未覆盖的 key 自动回退默认，所以「保留默认」天然成立。
         _ov = getattr(getattr(settings, "state_labels", None), "overrides", None) or {}
-        self.labels = {**SPECIAL_STATE_LABELS, **registry.labels(), **{str(k): str(v) for k, v in _ov.items() if v}}
+        self.labels = {
+            **SPECIAL_STATE_LABELS,
+            **registry.labels(),
+            **{name: tool.label for name, tool in self.dynamic_tools.items()},
+            **{str(k): str(v) for k, v in _ov.items() if v},
+        }
+
+    def _provider_tool_names(self, names: list[str]) -> list[str]:
+        """完整 Schema 模式声明动态 MCP 工具，固定 Adapter 只声明适配入口。"""
+        if not self.dynamic_tools or getattr(self.capability_context, "fixed_adapter", False):
+            return list(dict.fromkeys(names))
+        return list(dict.fromkeys([*names, *self.dynamic_tools]))
 
     def _label(self, name: str, default: str | None = None) -> str:
         """取状态显示名：命名含多个候选时随机取一（后端在发 tool_call 时调用）。"""
@@ -848,15 +869,18 @@ class LLMRunner:
             if history_changed:
                 _log.warning("[anthropic] 请求历史已归一化：消息数 %s -> %s",
                               before_count, after_count)
+        from agent.tools import registry as tool_registry
+        tool_snapshot = tool_registry.snapshot_with_extras(tuple(self.dynamic_tools.values()))
         initial_tool_names = self.tool_names
         if (
             self.capability_context is not None
             and not getattr(self.capability_context, "metadata_only", False)
         ):
             initial_tool_names = list(self.capability_context.select_for_messages(messages).tool_names)
-        client, ctx = driver.prepare(initial_tool_names, ai, messages, system_text)
-        from agent.tools import registry as tool_registry
-        tool_snapshot = tool_registry.snapshot()
+        initial_tool_names = self._provider_tool_names(initial_tool_names)
+        client, ctx = driver.prepare(
+            initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
+        )
         if reasoning_state is not None:
             await reasoning_state.prepared(driver, ctx)
         # 只把能力上下文挂到 provider request context，供 LoopScope 记录脱敏指标；
@@ -874,7 +898,7 @@ class LLMRunner:
             else (_run_conversation[-1] if _run_conversation else None)
         )
 
-        _mutset = _mutating_tools(self.tool_names)
+        _mutset = _mutating_tools([*self.tool_names, *self.dynamic_tools], tool_snapshot)
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
         any_tool_called = False
         narration_retry = decision_retry = intent_retry = colon_retry = 0
@@ -1235,7 +1259,10 @@ class LLMRunner:
                     and not getattr(self.capability_context, "metadata_only", False)
                 ):
                     selected = self.capability_context.select_for_messages(messages)
-                    driver.update_tools(ctx, list(selected.tool_names))
+                    driver.update_tools(
+                        ctx, self._provider_tool_names(list(selected.tool_names)),
+                        tool_snapshot=tool_snapshot,
+                    )
                 _round_gen = driver.run_round(client, ctx, messages)
                 async for _kind, _val in _round_gen:
                     if _kind == "done":
@@ -1506,7 +1533,7 @@ class LLMRunner:
                         task_rounds = 0
                         remaining_tool_calls = 0
                         tool_budget_exceeded = False
-                        driver.update_tools(ctx, [])
+                        driver.update_tools(ctx, [], tool_snapshot=tool_snapshot)
                 for call_index, tc in enumerate(result.tool_calls):
                     raw_call_name = getattr(tc, "name", None)
                     dispatch_target, dispatch_input, protocol_error = _resolve_tool_call(
@@ -1520,11 +1547,11 @@ class LLMRunner:
                     # use_skill 委托等不经本循环的入口。
                     if (
                         effective_tool_name != "invalid_tool_call"
-                        and registry.get(effective_tool_name) is None
+                        and tool_snapshot.get(effective_tool_name) is None
                     ):
                         from agent.tools.base import salvage_tool_name
                         salvaged = salvage_tool_name(effective_tool_name)
-                        if salvaged is not None and registry.get(salvaged) is not None:
+                        if salvaged is not None and tool_snapshot.get(salvaged) is not None:
                             _log.info("[core] 工具名污染兜底：%r → %r", effective_tool_name, salvaged)
                             if raw_call_name == "call_tool":
                                 dispatch_target = salvaged
@@ -1554,7 +1581,7 @@ class LLMRunner:
                     # 任何非 repeat_safe 的调用（含 ask_user）都会打断「连续」语义，
                     # 重置计数——中间穿插过一次别的调用就不算连续了。
                     if protocol_error is None and not tc.parse_error:
-                        repeat_tool = registry.get(effective_tool_name)
+                        repeat_tool = tool_snapshot.get(effective_tool_name)
                         try:
                             call_sig = (
                                 effective_tool_name,

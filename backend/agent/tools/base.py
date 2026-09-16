@@ -369,10 +369,20 @@ class ToolRegistrySnapshot:
     backend 重启；测试或运行时扩展若要生效也必须重新创建进程。
     """
 
-    def __init__(self, source: "SkillRegistry"):
+    def __init__(self, source: "SkillRegistry", extra_tools: list[Tool] | tuple[Tool, ...] = ()):
         self._source = source
         tools = {}
         for name, tool in source._tools.items():
+            frozen = copy.copy(tool)
+            frozen.input_schema = copy.deepcopy(tool.input_schema)
+            tools[name] = frozen
+        # 动态工具只属于当前 run 的派生快照，不能写回 source._tools，也不能改变
+        # source.snapshot() 的进程级冻结语义。重名时以内置工具为准，调用方应在装载
+        # MCP 工具时提前拒载并记录诊断；这里再做一次防御，避免动态工具覆盖内置入口。
+        for tool in extra_tools:
+            name = getattr(tool, "name", None)
+            if not isinstance(name, str) or not name or name in tools:
+                continue
             frozen = copy.copy(tool)
             frozen.input_schema = copy.deepcopy(tool.input_schema)
             tools[name] = frozen
@@ -451,6 +461,15 @@ class SkillRegistry:
         if self._snapshot is None:
             self._snapshot = ToolRegistrySnapshot(self)
         return self._snapshot
+
+    def snapshot_with_extras(self, extra_tools: list[Tool] | tuple[Tool, ...] = ()) -> ToolRegistrySnapshot:
+        """返回不修改全局注册表的本轮派生快照。
+
+        MCP 工具按用户动态发现，不能进入进程级 registry snapshot；provider 声明、
+        固定 Adapter 和 dispatch 又必须看到同一份工具集合，因此在 run 边界合并一份
+        只读快照。``extra_tools`` 只保留非空且不覆盖 builtin 的工具。
+        """
+        return ToolRegistrySnapshot(self, extra_tools)
 
     def add(self, tool: Tool) -> None:
         # P4 · 注册期契约校验（fail-fast）：定义错在这里就炸，不留到运行时静默失效

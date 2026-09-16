@@ -14,6 +14,7 @@ from agent.runner import (
     _capability_context,
     _collect,
     _filter_shell_tool,
+    _load_mcp_tools,
 )
 
 
@@ -153,6 +154,9 @@ async def run_scheduled_once(
         if str(subject.get("subject_type") or "") == "scheduled_task" and not subject.get("script_authorization"):
             tool_names = [name for name in tool_names if name != "run_script"]
 
+        mcp_allowed_names = allowed_tools if allowed_tools is not None else tool_names_override
+        mcp_tools = await _load_mcp_tools(user_id, settings, mcp_allowed_names)
+
         shell_prompt = None
         if "shell" in tool_names:
             async with _sess._SessionLocal() as policy_db:
@@ -182,7 +186,10 @@ async def run_scheduled_once(
         system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
         if shell_prompt:
             system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
-        capability_context = await _capability_context(tool_names, settings, owner_id=user_id, query=prompt)
+        capability_context = await _capability_context(
+            tool_names, settings, owner_id=user_id, query=prompt,
+            dynamic_tools=mcp_tools,
+        )
         system_prompt, snapshot_context = _apply_capability_context(
             system_prompt,
             snapshot_context,
@@ -195,6 +202,7 @@ async def run_scheduled_once(
             tool_names,
             settings,
             capability_context=capability_context,
+            dynamic_tools=mcp_tools,
         )
 
         from app.core.chat_attach import build_user_content

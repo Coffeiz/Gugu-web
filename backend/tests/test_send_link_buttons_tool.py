@@ -5,12 +5,12 @@ import json
 
 import pytest
 
-from agent.tools import meta as meta_tools
+from agent.tools import link_buttons as link_button_tools
 from agent.tools.base import registry
 
 
 def _tool():
-    tools = {tool.name: tool for tool in meta_tools.MetaSkill.tools}
+    tools = {tool.name: tool for tool in link_button_tools.LinkButtonsSkill.tools}
     return tools["send_link_buttons"]
 
 

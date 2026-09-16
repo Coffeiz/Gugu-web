@@ -34,6 +34,17 @@ from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user
 from agent.models import AgentRequest, AgentResponse
 from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 
+
+async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
+    """按用户惰性载入 MCP 工具；不写入全局 Tool registry。"""
+    from agent.mcp.manager import mcp_manager
+
+    tools = await mcp_manager.list_user_tools(user_id)
+    if allowed_tool_names is None:
+        return tools
+    allowed = set(allowed_tool_names)
+    return [tool for tool in tools if tool.name in allowed]
+
 def _session_user_skill_metadata(session):
     """读取当前会话冻结的用户 Skill 目录；缺失时返回 None，允许首次建立。"""
     from agent.capabilities.skill_registry import deserialize_user_skill_metadata
@@ -61,7 +72,7 @@ def _pin_session_user_skill_metadata(session, capability_context) -> bool:
 
 
 async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query="",
-                              user_skill_metadata=None):
+                              user_skill_metadata=None, dynamic_tools=()):
     """按用户偏好创建能力上下文；full-schema 仍保留真实工具 Schema。"""
     from agent.capabilities.injector import (
         build_fixed_adapter_context,
@@ -87,11 +98,11 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
             if await _full_schema_preference(capability_db):
                 return await build_skill_metadata_context_for_user(
                     tool_names, db=capability_db, owner_id=owner_id, search_settings=settings,
-                    user_skill_metadata=user_skill_metadata,
+                    user_skill_metadata=user_skill_metadata, dynamic_tools=dynamic_tools,
                 )
             context = await build_fixed_adapter_context_for_user(
                 tool_names, db=capability_db, owner_id=owner_id, search_settings=settings,
-                user_skill_metadata=user_skill_metadata,
+                user_skill_metadata=user_skill_metadata, dynamic_tools=dynamic_tools,
             )
             if query:
                 await context.select_for_query(query)
@@ -100,11 +111,11 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
         if await _full_schema_preference(db):
             return await build_skill_metadata_context_for_user(
                 tool_names, db=db, owner_id=owner_id, search_settings=settings,
-                user_skill_metadata=user_skill_metadata,
+                user_skill_metadata=user_skill_metadata, dynamic_tools=dynamic_tools,
             )
         context = await build_fixed_adapter_context_for_user(
             tool_names, db=db, owner_id=owner_id, search_settings=settings,
-            user_skill_metadata=user_skill_metadata,
+            user_skill_metadata=user_skill_metadata, dynamic_tools=dynamic_tools,
         )
         if query:
             await context.select_for_query(query)
@@ -397,6 +408,7 @@ async def _run_collect_unlocked(
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
+    mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
     user_skill_metadata = _session_user_skill_metadata(session)
     # 这里同样使用短事务。工具组装可能触发数据库查询，不能把前面已关闭的
     # session 传入，否则 AsyncSession 会在上下文外重新 checkout 连接并由 GC 回收。
@@ -416,7 +428,7 @@ async def _run_collect_unlocked(
                 tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
         capability_context = await _capability_context(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
-            user_skill_metadata=user_skill_metadata,
+            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
         )
     system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
     if capability_context is not None:
@@ -426,7 +438,10 @@ async def _run_collect_unlocked(
     )
     if capability_context is not None:
         _snapshot_injection = session_snapshot.snapshot_message(snapshot_context)
-    runner = LLMRunner(tool_names, settings, capability_context=capability_context, locale=req.locale)
+    runner = LLMRunner(
+        tool_names, settings, capability_context=capability_context, locale=req.locale,
+        dynamic_tools=mcp_tools,
+    )
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
     im_used_tools = False
 
@@ -834,6 +849,7 @@ async def _run_stream_unlocked(
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
+    mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
     user_skill_metadata = _session_user_skill_metadata(session)
     async with _sess._SessionLocal() as tool_db:
         tool_names = await _filter_shell_tool(
@@ -851,7 +867,7 @@ async def _run_stream_unlocked(
                 tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
         capability_context = await _capability_context(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
-            user_skill_metadata=user_skill_metadata,
+            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
         )
     system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
     if capability_context is not None:
@@ -861,7 +877,10 @@ async def _run_stream_unlocked(
     )
     if capability_context is not None:
         _snapshot_injection = session_snapshot.snapshot_message(snapshot_context)
-    runner = LLMRunner(tool_names, settings, capability_context=capability_context)
+    runner = LLMRunner(
+        tool_names, settings, capability_context=capability_context,
+        dynamic_tools=mcp_tools,
+    )
     # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
     im_used_tools = False
 

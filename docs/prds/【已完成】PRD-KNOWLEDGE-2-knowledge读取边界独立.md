@@ -126,7 +126,7 @@ backend/
 - [x] `KN2-001` 新增 `agent/tools/knowledge.py`：`read_knowledge`（id 精确读 + 列举/scope/keyword 过滤/上限）并将 save/update/delete_knowledge 迁入独立 `KnowledgeSkill` 注册；验收：`test_read_knowledge_tool.py` 全绿，工具名与参数契约不变，跨用户不可见。
 - [x] `KN2-002` `search_memory` 收窄：source 枚举移除 knowledge、description 同步、拒绝文案引导 read_knowledge；`context/builder.py` 引导文案改指 read_knowledge；验收：`test_search_memory_boundary.py` 全绿，其余 source 行为与被动注入不受影响。
 - [x] `KN2-003` 配套同步：capability 计数钉 +1、skills 技能文档中 knowledge 检索描述更新、events 快照计数、i18n `toolNames.ts`；验收：capability 全量测试绿（计数钉与本提交同行），技能文档无残留的「search_memory 搜知识」表述。
-- [ ] `KN2-004` devserver 实测两条路径：「保存知识 → read_knowledge 立即可见」「search_memory(source=knowledge) 返回引导文案」；验收：5173 实测通过，结论记录 devlog。
+- [x] `KN2-004` devserver 实测两条路径：「保存知识 → read_knowledge 立即可见」「search_memory(source=knowledge) 返回引导文案」；验收：5173 实测通过，结论记录 devlog。
 
 > 实施记录：57cf19df8（Phase 1 落地）+ b7b995f74（search_memory service 层摘除 knowledge 检索器、边界测试更名、PRD 修正过时假设）。已随 v1.2.3 发布（2026-09-16）。
 > 待确认 1 结论（2026-09-16 复核）：**维持不加独立 search_knowledge 工具，search_memory 也不加回 knowledge**。旧知识发现缺口（上下文清单 `_KNOWLEDGE_MANIFEST_MAX_ITEMS=40` 只列最新条目，旧条目在清单与被动注入外不可见）改用以下方式闭合：① 清单截断时如实标注「另有 N 条更早条目」并引导 read_knowledge（builder.py）；② 引导语修正「清单不含 id、需先列举拿 id 再直读」；③ `read_knowledge` 列举模式的描述明确其本身就是知识搜索入口（全量 keyword 包含匹配、写入即可读）。

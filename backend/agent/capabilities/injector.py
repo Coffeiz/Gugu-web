@@ -11,7 +11,9 @@ CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
 # Skill 管理工具不属于默认业务工具集，只在能力快照中保留供 Adapter 按需发现；
 # 它们不会因此进入 Provider 的首轮工具 Schema。
-ON_DEMAND_TOOL_NAMES = ("list_skills", "create_skill", "update_skill", "delete_skill")
+ON_DEMAND_TOOL_NAMES = (
+    "list_skills", "create_skill", "update_skill", "delete_skill", "send_link_buttons",
+)
 
 
 def _capability_tool_names(tool_names: list[str]) -> list[str]:
@@ -180,31 +182,36 @@ def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 5, search
 
 async def build_fixed_adapter_context_for_user(
     tool_names: list[str], *, limit: int = 5, db=None, owner_id=None, search_settings=None,
-    user_skill_metadata=None,
+    user_skill_metadata=None, dynamic_tools=(),
 ) -> CapabilityToolContext:
     """构建当前 owner 的能力快照；用户 Skill 只进入 metadata，不加载正文。"""
+    dynamic_names = [tool.name for tool in (dynamic_tools or ()) if getattr(tool, "name", None)]
+    names = _capability_tool_names([*tool_names, *dynamic_names])
     if db is None or owner_id is None:
-        return build_fixed_adapter_context(tool_names, limit=limit, search_settings=search_settings, owner_id=owner_id)
-    names = _capability_tool_names(tool_names)
+        return build_fixed_adapter_context(names, limit=limit, search_settings=search_settings, owner_id=owner_id)
     index = await CapabilityIndex.from_registries_for_user(
         db, owner_id, tool_names=names, skill_metadata=user_skill_metadata,
+        dynamic_tools=dynamic_tools,
     )
     return _build_fixed_context(index, limit=limit, names=names, owner_id=owner_id, search_settings=search_settings)
 
 
 async def build_skill_metadata_context_for_user(
     tool_names: list[str], *, limit: int = 5, db=None, owner_id=None, search_settings=None,
-    user_skill_metadata=None,
+    user_skill_metadata=None, dynamic_tools=(),
 ) -> CapabilityToolContext:
     """只构建用户 Skill metadata，不改变 full-schema 的 Provider 工具注入。"""
+    dynamic_names = [tool.name for tool in (dynamic_tools or ()) if getattr(tool, "name", None)]
+    names = _capability_tool_names([*tool_names, *dynamic_names])
     if db is None or owner_id is None:
-        index = CapabilityIndex.from_registries(tool_names=_capability_tool_names(tool_names))
+        index = CapabilityIndex.from_registries(tool_names=names)
     else:
         index = await CapabilityIndex.from_registries_for_user(
-            db, owner_id, tool_names=_capability_tool_names(tool_names), skill_metadata=user_skill_metadata,
+            db, owner_id, tool_names=names, skill_metadata=user_skill_metadata,
+            dynamic_tools=dynamic_tools,
         )
     return _build_fixed_context(
-        index, limit=limit, names=_capability_tool_names(tool_names), owner_id=owner_id,
+        index, limit=limit, names=names, owner_id=owner_id,
         search_settings=search_settings, metadata_only=True,
     )
 
