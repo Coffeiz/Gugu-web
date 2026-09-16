@@ -384,7 +384,7 @@ QQ、飞书 Gateway 只负责把已校验的统一 part 转成平台 wire payloa
 ### Phase 4：观测与真实验收
 
 - [x] 增加工具调用、原生发送、文本降级、失败和重试的 LoopScope 事件。
-- [ ] 在 QQ、飞书真实客户端验证 HTTPS 网页打开和平台不支持时的提示。
+- [x] 在 QQ、飞书真实客户端验证 HTTPS 网页打开和平台不支持时的提示。
 - [x] 验证按钮不会创建 pending interaction，不会阻塞或恢复 Agent Run。
 - [x] 验证重复发送、平台超时和失败重试不会产生无限消息。
 
