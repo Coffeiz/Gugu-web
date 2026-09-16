@@ -7,9 +7,7 @@
       >
         <div class="fp-info-title" @mousedown.prevent="startDrag">
           <span>{{ t('files.info') }}</span>
-          <button class="fp-action-btn fp-close-btn" @click="$emit('close')">
-            <Icon name="action.close" :size="15" />
-          </button>
+          <CloseButton :title="t('common.actions.close')" @click="$emit('close')" />
         </div>
         <div class="fp-info-body">
           <div class="fp-info-row">
@@ -55,7 +53,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { nextZ } from '@/composables/core/windowz'
-import Icon from '@/components/common/icons/Icon.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 const props = defineProps({
   show: Boolean,
   file: Object,
@@ -154,16 +152,6 @@ onUnmounted(() => {
   word-break: break-all; line-height: 1.4;
 }
 .fp-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
-
-.fp-action-btn {
-  width: 28px; height: 28px; border-radius: 7px; border: none;
-  background: rgba(255, 255, 255, 0.6); color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s, color 0.15s;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-}
-.fp-action-btn svg { display: block; }
-.fp-close-btn:hover { background: rgba(200, 90, 90, 0.1); color: rgba(200, 90, 90, 0.9); }
 
 .info-pop-enter-active,
 .info-pop-leave-active { transition: opacity 0.12s ease, transform 0.12s ease; }
