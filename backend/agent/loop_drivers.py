@@ -217,8 +217,13 @@ class AnthropicDriver:
         schema_source = tool_snapshot or registry.snapshot()
         ctx.tools = schema_source.anthropic_schemas(tool_names)
 
-    async def run_round(self, client, ctx, messages):
-        from agent.core import _stream_round   # 延迟 import 避免循环依赖（core.py 反过来 import 本模块）
+    async def run_round(self, client, ctx, messages, stream_round=None):
+        # stream_round 由调用方注入（core._run_loop 传 core 兼容别名，保持旧测试
+        # 的 monkeypatch 生效）；不传时用本模块的正统实现——不再反向 import core
+        # （PRD-LLM-25 LLM25-003）。
+        if stream_round is None:
+            from agent.loop import provider as _loop_provider
+            stream_round = _loop_provider.resolve_driver_stream_round()
 
         # ② 给发出去的 messages 打一个滚动缓存断点（每条 message 的最后一个块）：多轮工具循环里
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
@@ -256,7 +261,7 @@ class AnthropicDriver:
             **ctx.generation_param,
         )
         final = None
-        async for kind, val in _stream_round(client, kwargs, ctx.adapter):
+        async for kind, val in stream_round(client, kwargs, ctx.adapter):
             if kind == "final":
                 final = val
                 break
@@ -419,7 +424,8 @@ class OpenAIDriver:
         schema_source = tool_snapshot or registry.snapshot()
         ctx.tools = schema_source.openai_schemas(tool_names) if providers.capability_snapshot(ctx.ai).get("tools", True) else []
 
-    async def run_round(self, client, ctx, messages):
+    async def run_round(self, client, ctx, messages, stream_round=None):
+        # stream_round 仅 AnthropicDriver 使用；接收并忽略，保持统一调用签名。
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
         outbound = render_openai_request_history(messages, ctx.adapter)
@@ -659,7 +665,8 @@ class OllamaDriver:
         schema_source = tool_snapshot or registry.snapshot()
         ctx.tools = schema_source.openai_schemas(tool_names)
 
-    async def run_round(self, client, ctx, messages):
+    async def run_round(self, client, ctx, messages, stream_round=None):
+        # stream_round 仅 AnthropicDriver 使用；接收并忽略，保持统一调用签名。
         payload = {
             "model": ctx.model,
             "messages": _ollama_messages(ctx.adapter.render_history(messages)),

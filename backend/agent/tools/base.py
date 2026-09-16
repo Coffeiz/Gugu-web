@@ -780,3 +780,48 @@ class SkillRegistry:
 
 
 registry = SkillRegistry()
+
+
+# 写动词命名前缀（原 core._WRITE_PREFIXES）：自动把新增写工具纳入 mutates 集合。
+WRITE_PREFIXES = (
+    "create_", "update_", "delete_", "add_", "remove_", "edit_", "rename_",
+    "move_", "copy_", "set_", "archive_", "restore_", "permanent_delete", "save_",
+)
+
+
+def mutating_tools(tool_names, tool_snapshot=None) -> set:
+    """本次可用工具里的「增删改」集合（原 core._mutating_tools）。
+
+    ① 命名约定（写动词前缀，自动覆盖新工具）② 并上 RESOURCE_BY_TOOL 里人工
+    登记的（双保险，防约定外的特例漏判）。"""
+    from app.core.events import RESOURCE_BY_TOOL
+    by_name = {n for n in tool_names if n.startswith(WRITE_PREFIXES)}
+    if tool_snapshot is not None:
+        by_name |= {
+            name for name in tool_names
+            if (tool := tool_snapshot.get(name)) is not None and tool.mutates
+        }
+    return by_name | set(RESOURCE_BY_TOOL)
+
+
+def is_successful_tool_result(result) -> bool:
+    """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应（原 core._is_successful_tool_result）。
+
+    入参既可能是工具返回的 JSON 字符串，也可能是已经解析好的 dict（确认后重投
+    的结果），两条路径必须给出一致的判定——否则 dict 会被 json.loads 的 TypeError
+    吞掉、把失败结果判成成功。
+    """
+    from agent.interactions.confirmations import confirmation_payload
+
+    if confirmation_payload(result) is not None:
+        return False
+    if isinstance(result, dict):
+        payload = result
+    else:
+        try:
+            payload = json.loads(result)
+        except (TypeError, json.JSONDecodeError):
+            return True
+    if not isinstance(payload, dict):
+        return True
+    return not payload.get("error") and payload.get("status") != "failed"

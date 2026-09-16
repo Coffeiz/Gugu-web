@@ -31,156 +31,30 @@ from agent.context.message_roles import last_user_index, user_text_from_message
 
 _log = logging.getLogger("agent.core")
 
-# ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
-# 把偶发 429 吸收成短延迟、不丢消息。只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
-_RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
-_MAX_CALL_TOOL_ADAPTER_DEPTH = 4
+# provider round、退避表与 usage 语义已迁 `agent/loop/provider.py`（PRD-LLM-25
+# LLM25-003）；历史清洗、工具协议解析等 helper 也分别迁回各自的归属模块。
+# 这里保留兼容别名：旧测试 `monkeypatch.setattr(core, "_stream_round", ...)` 仍
+# 通过本模块属性查找生效（_run_loop 调用时把该名字注入 driver.run_round）。
+from agent.loop.provider import RETRY_BACKOFF as _RETRY_BACKOFF
+from agent.loop.provider import provider_context_usage as _provider_context_usage
+from agent.loop.provider import stream_round as _stream_round
+from agent.context.provider_history import sanitize_anthropic_history as _sanitize_anthropic_history
+from agent.tools.tool_contract import (
+    MAX_CALL_TOOL_ADAPTER_DEPTH as _MAX_CALL_TOOL_ADAPTER_DEPTH,
+    resolve_adapter_arguments as _resolve_adapter_arguments,
+    resolve_tool_call as _resolve_tool_call,
+)
+from agent.tools.base import (
+    WRITE_PREFIXES as _WRITE_PREFIXES,
+    is_successful_tool_result as _is_successful_tool_result,
+    mutating_tools as _mutating_tools,
+)
+from agent.context.assembly.messages import replace_tool_result as _replace_tool_result
+from agent.loop.events import artifact_sse as _artifact_sse
+from agent.loop.models import PendingInteraction as _PendingInteraction
+from agent.loop import provider as _loop_provider
+_loop_provider.set_driver_stream_round_resolver(lambda: _stream_round)
 
-
-def _sanitize_anthropic_history(messages) -> tuple[int, int, bool]:
-    """在 canonical 层清洗 Anthropic 历史，并把结果写回消息容器。
-
-    不能等 provider 投影成普通文本后再清洗：``time-context`` 等 canonical
-    边界一旦被渲染成 ``text``，会被误判为可合并的相邻 user 消息，导致每轮
-    都看到一次历史变化并重复记录告警。
-    """
-    from agent.security.sanitize import sanitize_messages
-
-    conversation = list(getattr(messages, "conversation", messages))
-    cleaned = sanitize_messages(conversation)
-    if cleaned == conversation:
-        return len(conversation), len(cleaned), False
-
-    replace = getattr(messages, "replace_conversation", None)
-    if callable(replace):
-        replace(cleaned)
-    else:
-        messages[:] = cleaned
-    return len(conversation), len(cleaned), True
-
-
-def _provider_context_usage(driver: Any, result: Any) -> int:
-    """返回用于上下文阈值判断的完整 provider 输入量。
-
-    driver 层已把两条路归一成统一语义：``usage_in`` 只含未命中缓存的输入，
-    缓存命中在 ``cache_tokens``，Anthropic 本轮新写入缓存在
-    ``cache_write_tokens``。真实上下文占用 = 三者之和，不能只取 usage_in——
-    高缓存率下（如 DeepSeek 长对话 90%+ 命中）会把 100k 上下文看成 20k，
-    严重延迟 90% 压缩阈值甚至撞 context limit。
-    """
-    return (max(0, int(getattr(result, "usage_in", 0) or 0))
-            + max(0, int(getattr(result, "cache_tokens", 0) or 0))
-            + max(0, int(getattr(result, "cache_write_tokens", 0) or 0)))
-
-
-def _resolve_tool_call(raw_name: Any, raw_input: Any) -> tuple[str, Any, dict | None]:
-    """解析固定 Adapter，返回最终业务工具、参数和协议错误。
-
-    允许有限层的 ``call_tool`` 自包装，以兼容模型把 Adapter 调用本身又包进
-    Adapter 的输出；确认门、权限与重放必须始终看到最终业务工具名。参数仍由
-    最终工具自己的 Schema 校验，这里只校验 Adapter 外层协议。
-    """
-    if not isinstance(raw_name, str):
-        return "invalid_tool_call", {}, invalid_tool_call_payload()
-    if raw_name != "call_tool":
-        return raw_name, raw_input, None
-
-    target_name = raw_name
-    tool_input = raw_input
-    for _ in range(_MAX_CALL_TOOL_ADAPTER_DEPTH):
-        if not isinstance(tool_input, dict):
-            return "invalid_tool_call", {}, invalid_tool_call_payload(
-                path="arguments", reason="call_tool.arguments 必须是 JSON object"
-            )
-        raw_target_name = tool_input.get("name")
-        target_name = normalize_tool_name(raw_target_name)
-        if target_name is None:
-            return "invalid_tool_call", {}, invalid_tool_call_payload(
-                reason="call_tool.name 必须是字符串"
-            )
-
-        if "arguments" in tool_input:
-            if not isinstance(tool_input["arguments"], dict):
-                return "invalid_tool_call", {}, invalid_tool_call_payload(
-                    path="arguments", reason="call_tool.arguments 必须是 JSON object"
-                )
-            tool_input = tool_input["arguments"]
-        else:
-            flattened = {key: value for key, value in tool_input.items() if key != "name"}
-            if not flattened:
-                return "invalid_tool_call", {}, invalid_tool_call_payload(
-                    path="arguments", rule="required",
-                    reason="call_tool.arguments 是必填字段",
-                )
-            tool_input = flattened
-
-        if target_name != "call_tool":
-            return target_name, tool_input, None
-
-    return "invalid_tool_call", {}, invalid_tool_call_payload(
-        reason="call_tool 嵌套层数超过限制", rule="max_depth"
-    )
-
-
-def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
-    """兼容旧调用点的单层参数提取；主循环统一使用 ``_resolve_tool_call``。"""
-    if not isinstance(tool_input, dict):
-        return {}
-    arguments = tool_input.get("arguments")
-    if isinstance(arguments, dict):
-        return arguments
-    return {key: value for key, value in tool_input.items() if key != "name"}
-
-
-async def _stream_round(client, kwargs, adapter=None):
-    """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试（P2-b §4-A 标杆模板）。
-    yield ('token', delta) 逐字；结束 yield ('final', message)。
-
-    两种「抛出」语义不同，调用方（主循环边界）据此区分：
-    - **已吐过 token 中途出错**：不能重试（会重复输出），原样把底层异常抛出去——这不是
-      「重试用尽」，是「已产生副作用不敢重试」，按未知/中断处理，不伪装成 RetryableError。
-    - **重试用尽、一个 token 都没吐过**：包成 `RetryableError`（真正符合可重试语义：
-      幂等——还没输出任何东西，从头重试不会重复）。
-
-    `adapter`（`agent.providers.ProviderAdapter`）可选——不传（`None`）时只用下面这几个
-    provider 无关的基础瞬时错误类型；传了就叠加该 provider 专属的容错（PRD-LLM-1）。
-    """
-    import anthropic
-    transient = (anthropic.RateLimitError, anthropic.APITimeoutError,
-                 anthropic.APIConnectionError, anthropic.InternalServerError)
-    if adapter is not None:
-        # 各 provider 专属的「流式响应跟 SDK 期望 schema 对不上」容错，只加给对应 provider——
-        # 见 agent/providers.py 里每个适配器 transient_exceptions 的注释（MiniMax 的
-        # IndexError/KeyError/AttributeError 是目前唯一非空的一份）。不全局放宽，避免把
-        # 跟该 provider 无关的真实 bug 也当"重试就好"吞掉。
-        transient = transient + adapter.transient_exceptions
-    last = None
-    for i in range(len(_RETRY_BACKOFF) + 1):
-        emitted = False
-        try:
-            async with client.messages.stream(**kwargs) as stream:
-                async for delta in stream.text_stream:
-                    emitted = True
-                    yield ("token", delta)
-                yield ("final", await stream.get_final_message())
-                return
-        except transient as e:
-            last = e
-            if emitted:
-                raise   # 已吐 token，重试会重复输出——原样抛给上层当未知/中断处理
-            if i >= len(_RETRY_BACKOFF):
-                # where 里带上 provider——上次这里崩溃排查时 diag_log 没记 provider，只能靠
-                # 静态代码分析猜是哪家（PRD-LLM-1「待确认问题」），这次直接把它写进日志，
-                # 下次同类问题不用再猜。
-                _provider = adapter.name if adapter is not None else "unknown"
-                diag_log(f"agent.core.stream_round provider={_provider}", e)   # 原始 → 受限诊断出口
-                _log.warning("LLM 流式调用重试 %d 次后仍失败：%s", i, type(e).__name__)
-                raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
-                                      cause=e, attempt=i) from e
-            _log.info("LLM 瞬时错误 %s，%ss 后重试(%d)", type(e).__name__, _RETRY_BACKOFF[i], i + 1)
-            await asyncio.sleep(_RETRY_BACKOFF[i])
-    if last:
-        raise last
 
 # 工具循环最大轮次。普通任务和核实轮分开计数，核实预算不能放大普通任务的上限。
 MAX_ROUNDS = 30
@@ -345,19 +219,6 @@ _WRITE_PREFIXES = (
 )
 
 
-def _mutating_tools(tool_names, tool_snapshot=None) -> set:
-    """本次可用工具里的「增删改」集合：① 命名约定（写动词前缀，自动覆盖新工具）
-    ② 并上 RESOURCE_BY_TOOL 里人工登记的（双保险，防约定外的特例漏判）。"""
-    from app.core.events import RESOURCE_BY_TOOL
-    by_name = {n for n in tool_names if n.startswith(_WRITE_PREFIXES)}
-    if tool_snapshot is not None:
-        by_name |= {
-            name for name in tool_names
-            if (tool := tool_snapshot.get(name)) is not None and tool.mutates
-        }
-    return by_name | set(RESOURCE_BY_TOOL)
-
-
 def _call_requires_verification(tool_name: str, tool_input: Any, tool_snapshot, mutating_tools: set) -> bool:
     """判断成功调用是否需要进入本地状态复查。
 
@@ -397,29 +258,6 @@ def _call_observes(tool_name: str, tool_input: Any, tool_snapshot) -> bool:
             diag_log("agent.core.tool_observation_predicate", exc)
             return False
     return _is_read_tool(tool_name)
-
-
-def _is_successful_tool_result(result) -> bool:
-    """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应。
-
-    入参既可能是工具返回的 JSON 字符串，也可能是已经解析好的 dict（确认后重投
-    的结果），两条路径必须给出一致的判定——否则 dict 会被 json.loads 的 TypeError
-    吞掉、把失败结果判成成功。
-    """
-    from agent.interactions.confirmations import confirmation_payload
-
-    if confirmation_payload(result) is not None:
-        return False
-    if isinstance(result, dict):
-        payload = result
-    else:
-        try:
-            payload = json.loads(result)
-        except (TypeError, json.JSONDecodeError):
-            return True
-    if not isinstance(payload, dict):
-        return True
-    return not payload.get("error") and payload.get("status") != "failed"
 
 
 def _loaded_skill_slugs(messages) -> dict[str, str]:
@@ -469,23 +307,6 @@ def _is_verify_placeholder(text: str) -> bool:
         "核对完成", "复查完成", "都核实过了", "没问题",
     )
     return len(normalized) <= 16 and any(phrase in normalized for phrase in process_phrases)
-
-
-def _replace_tool_result(messages, *, tool_call_id: str, result: dict) -> bool:
-    """更新当前 Run 内存中的 pending tool result，供交互恢复后的下一轮使用。
-
-    走容器自己的实现，保证活消息与尚未落库的 canonical 快照一起改（见
-    ``PromptMessages.replace_tool_result``）；普通 list 只出现在直接调用 runner
-    的测试里，那种场景没有 canonical 快照需要同步。
-    """
-    replace = getattr(messages, "replace_tool_result", None)
-    if callable(replace):
-        return replace(tool_call_id=tool_call_id, result=result)
-    from agent.context.assembly.messages import replace_tool_result_block
-    for message in messages:
-        if replace_tool_result_block(message, tool_call_id=tool_call_id, result=result):
-            return True
-    return False
 
 
 def _user_cancel(answer) -> bool:
@@ -545,24 +366,7 @@ def _pending_tool_signal(status: str, result, pending: "_PendingInteraction", *,
     return payload
 
 
-class _PendingInteraction(NamedTuple):
-    """等待用户交互时暂存的调用现场。
-
-    ``replay`` 只有破坏性工具的确认门会填：用户在界面上确认后，服务端按原参数
-    重投这次调用，模型不必也不应重新调用一次。提问、预算弹窗恢复后交给模型
-    继续走，没有需要重投的调用现场。
-    """
-    prompt_id: int
-    tool_call_id: str
-    tool_name: str
-    replay: dict | None = None
-
-
-def _artifact_sse(artifact: dict) -> str:
-    """把工具产物转成一条 SSE 事件行；链接按钮走专用事件，其余按文件卡片。"""
-    if isinstance(artifact, dict) and artifact.get("kind") == "link_buttons":
-        return f"data: {json.dumps({'type': 'link_buttons', 'link_buttons': artifact}, ensure_ascii=False)}\n\n"
-    return f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
+# _PendingInteraction 已迁 `agent/loop/models.py`（别名见文件头兼容导入区）。
 
 
 async def _dispatch_in_session(
@@ -1314,7 +1118,8 @@ class LLMRunner:
                         ctx, self._provider_tool_names(list(selected.tool_names)),
                         tool_snapshot=tool_snapshot,
                     )
-                _round_gen = driver.run_round(client, ctx, messages)
+                # 注入 core 命名空间的 _stream_round：旧测试 monkeypatch 本模块属性仍生效。
+                _round_gen = driver.run_round(client, ctx, messages, stream_round=_stream_round)
                 async for _kind, _val in _round_gen:
                     if _kind == "done":
                         result = _val

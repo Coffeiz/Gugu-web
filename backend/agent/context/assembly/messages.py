@@ -202,3 +202,19 @@ def newly_appended(messages: list[dict], initial_conversation_len: int) -> list[
     if callable(method):
         return method(initial_conversation_len)
     return list(messages)[initial_conversation_len:]
+
+
+def replace_tool_result(messages, *, tool_call_id: str, result: dict) -> bool:
+    """更新当前 Run 内存中的 pending tool result（原 core._replace_tool_result）。
+
+    走容器自己的实现，保证活消息与尚未落库的 canonical 快照一起改（见
+    ``PromptMessages.replace_tool_result``）；普通 list 只出现在直接调用 runner
+    的测试里，那种场景没有 canonical 快照需要同步。
+    """
+    replace = getattr(messages, "replace_tool_result", None)
+    if callable(replace):
+        return replace(tool_call_id=tool_call_id, result=result)
+    for message in messages:
+        if replace_tool_result_block(message, tool_call_id=tool_call_id, result=result):
+            return True
+    return False

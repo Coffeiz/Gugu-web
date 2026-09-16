@@ -118,7 +118,8 @@ class OpenAIResponsesDriver:
         schema_source = tool_snapshot or registry.snapshot()
         ctx.tools = _responses_tools(schema_source.openai_schemas(tool_names))
 
-    async def run_round(self, client, ctx, messages):
+    async def run_round(self, client, ctx, messages, stream_round=None):
+        # stream_round 仅 AnthropicDriver 使用；本驱动接收并忽略，保持统一调用签名。
         rendered = ctx.adapter.render_history(messages)
         if ctx.previous_response_id:
             # response chain 已经包含旧历史；只发送上一个 response 之后的增量，

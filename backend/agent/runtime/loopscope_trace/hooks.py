@@ -476,7 +476,9 @@ def ensure_hooks() -> None:
             )
             history.finish({"message_count": len(messages) if isinstance(messages, list) else None})
 
-        async def traced_round(client, ctx, round_messages):
+        async def traced_round(client, ctx, round_messages, stream_round=None):
+            # stream_round 由 core 注入（PRD-LLM-25）：转发给被包裹的原 run_round。
+
             nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded, previous_round_messages
             round_index += 1
             # LoopScope 的 round input、cache digest 和上一轮对比都必须基于
@@ -635,7 +637,7 @@ def ensure_hooks() -> None:
             previous_round_messages = list(round_wire_messages)
             final = None
             try:
-                async for kind, value in original_round(client, ctx, round_messages):
+                async for kind, value in original_round(client, ctx, round_messages, stream_round=stream_round):
                     if kind == "done":
                         final = value
                         # 外层主循环收到 ("done", …) 会立即 break、不再消费本生成器,
