@@ -265,7 +265,9 @@ onUnmounted(() => {
 })
 
 function onRefPointerOver(event: PointerEvent) {
-  if (event.buttons & 1) refDropHover.value = true
+  // 必须是 Runtime 拖拽中：源卡片上会打 data-runtime-active 标记。
+  // 只判主键按下会把「框选文字」误判成拖拽（同样按着左键划过窗口）。
+  if ((event.buttons & 1) && document.querySelector('[data-runtime-active]')) refDropHover.value = true
 }
 // capture 阶段监听：源卡片处理器可能 stopPropagation，冒泡到不了 window。
 function onRefPointerUp() { refDropHover.value = false }

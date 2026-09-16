@@ -530,10 +530,11 @@ defineExpose({
 }
 .chat-input-editor :deep(.ProseMirror p) { margin: 0; }
 .chat-input-editor :deep(.ProseMirror .mind-ref) {
-  display: inline-flex; align-items: center; gap: 4px; vertical-align: baseline;
-  margin: 0 2px; padding: 1px 5px; border: 1px solid var(--action-outline);
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
+  margin: 0 2px; padding: 0 5px; border: 1px solid var(--action-outline);
   border-radius: 5px; color: var(--content-primary); background: var(--action-soft);
-  line-height: 1.35; white-space: nowrap;
+  /* 编辑器行高 14px×1.5=21px：chip 总高必须压在 21px 内，否则出现 @ 后整行被撑高 */
+  height: 21px; line-height: 1; font-size: 12px; white-space: nowrap;
   /* 原子节点仍由 ProseMirror 整体选中/删除；这里不能用 user-select:all，
      否则光标紧贴引用末尾时，鼠标拖拽会被浏览器锁成“选中胶囊/移动光标”，
      无法继续建立前后文本选区。 */
