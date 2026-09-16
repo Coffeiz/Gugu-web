@@ -54,6 +54,32 @@ docker compose up -d
 
 fnOS、群晖等支持 Compose 项目的面板，请导入仓库根目录的 `docker-compose.yml` 并在同一项目中更新服务。需要在面板中选择数据目录时，使用固定宿主机路径配置 `GUGU_DATA_HOST_DIR`；不要留空或在每次更新时换路径。
 
+## 纯 Docker 单容器部署（镜像内置数据库）
+
+不想用 Compose 的用户（fnOS、群晖等面板只有单容器部署入口）可以直接拉一体化镜像：镜像内置 PostgreSQL 与 Redis（默认 `GUGU_EMBEDDED_DEPS=1`，只监听容器内 127.0.0.1），数据落在挂载的数据卷里，一条命令即可启动完整站点：
+
+```bash
+docker run -d --name gugu \
+  -p 9595:9595 \
+  -v /你的数据目录:/data \
+  -v /你的配置目录:/config \
+  -e GUGU_DB_PASSWORD=请替换为数据库密码 \
+  coffeiz/gugu-web:latest
+```
+
+打开 <http://localhost:9595> 即可使用。
+
+**必须绑定宿主机目录**：`/data` 保存数据库、用户文件与记忆，`/config` 保存 Admin 配置，两者都要 `-v` 绑定到宿主机固定路径。不绑卷时入口会检测到 `/data` 落在容器可写层上并拒绝启动（内置数据库写进临时层，删容器即丢数据）；面板部署时请在面板的卷映射里把这两个路径指到宿主机目录，不要留在临时/匿名卷。升级镜像时保留这两个目录数据不丢。
+
+不设置 `SECRET_KEY` 时，镜像会在首次启动生成高强度随机密钥并保存到持久化配置文件；后续重启和升级会复用原密钥。未显式指定 `ADMIN_PASSWORD` 时首启自动生成随机密码写入 `/data/.env` 并在容器日志打印一次（`docker logs gugu` 查看），重建容器不丢失；公网部署务必用 `-e ADMIN_PASSWORD=...` 指定强密码。
+
+注意事项：
+
+- **联网搜索不内置**：SearXNG 依赖较多、内置会显著增大镜像体积并带来依赖冲突风险，单容器模式下搜索相关工具不可用；需要搜索请改用上面的 Compose 方式。
+- **Shell 沙盒可选**：把宿主机 `/var/run/docker.sock` 一并挂进容器（`-v /var/run/docker.sock:/var/run/docker.sock`），入口检测到 socket 会自动拉起内置 sandboxd；不挂载则沙盒工具保持不可用，其余功能不受影响。
+- 默认 Compose 显式设置 `GUGU_EMBEDDED_DEPS=0` 走各自的 postgres/redis 容器，两种方式互不影响。
+- 已在用 Compose 的部署不要切回单容器模式；从旧单容器版本迁移见下一节。
+
 ## 从单容器版本（v1.2.x 及更早）迁移
 
 旧版一体化镜像内置 PostgreSQL/Redis，用 `docker run` 或 NAS 面板直接部署时，全部数据（数据库、用户文件、BYOK 主密钥、管理员凭据）都在容器的匿名卷或映射目录里。新版镜像不再内置数据库，**直接重建容器会丢掉整个数据库**，升级前请在部署机上执行一次迁移脚本：

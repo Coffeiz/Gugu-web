@@ -5,6 +5,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **恢复一体化镜像内置 PostgreSQL/Redis（单容器一键部署）**：v1.2.3 移除内置数据库导致 `docker run` / NAS 面板单容器部署在等待 `postgres:5432` 时超时失败。内置路径回归镜像默认开启（supervisord 托管、只监听 127.0.0.1），Compose 部署显式 `GUGU_EMBEDDED_DEPS=0` 不受影响；同时补上当初缺失的持久化守卫——`/data` 落在容器可写层（fnOS 面板未绑卷的场景）时拒绝启动并给出绑卷指引，不再静默把数据库写进临时层。
+
 ## [1.2.3] - 2026-09-15
 
 ### 新功能
