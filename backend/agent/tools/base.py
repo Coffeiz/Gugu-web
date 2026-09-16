@@ -200,7 +200,7 @@ def salvage_tool_name(name: Any) -> str | None:
     """从被污染的工具名里抢救前缀，返回 None 表示放弃。
 
     模型偶发把 JSON 参数写成 XML 片段，或把 provider 内部分隔标记直接拼进
-    name（如 ``create_file"><target><space>…``、``list_files]<]minimax[``）。
+    name（如 ``create_file"><target><space>…``、``list_dir]<]minimax[``）。
     只按已知协议分隔符截断，不做模糊匹配；调用方必须自行用注册表/snapshot
     验证候选名后才能采纳。
     主循环（core.py 工具轮）在名字定稿处全局抢救一次，dispatch 保留同款

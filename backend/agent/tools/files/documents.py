@@ -7,7 +7,6 @@
 读/改/创建仅限 UTF-8 文本且 ≤256KB，已知文本扩展名和文件记录的 text/* MIME 都支持。
 创建（create_file）支持批量文件和自定义后缀，不做格式转换、不执行文件内容。
 """
-from datetime import datetime
 import json
 import re
 
@@ -27,14 +26,13 @@ from app.services.files.browser import (
     list_user_folders,
     search_user_files,
 )
-from app.services.projects import get_user_project
 from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.models import File
 from app.services.storage.file_service import FileService
 from app.search.query import normalize_queries
-from agent.tools.base import BaseSkill, Tool, current_dispatch_session
+from agent.tools.base import BaseSkill, Tool
 from agent.tools.text_edit import apply_line_edits, select_numbered_lines
 from .locations import (
     _bound_workspace_target, _coerce_loc, _folder_by_name,

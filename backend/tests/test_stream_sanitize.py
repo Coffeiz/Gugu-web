@@ -28,5 +28,5 @@ def test_normal_reply_start_is_not_delayed_or_changed():
 
 def test_salvage_tool_name_removes_provider_marker_before_history_persistence():
     """通用工具名清洗必须处理 provider 尾标记，避免污染名进入下一轮历史。"""
-    assert salvage_tool_name("list_files]<]minimax[") == "list_files"
+    assert salvage_tool_name("list_dir]<]minimax[") == "list_dir"
     assert salvage_tool_name('create_file"><target>') == "create_file"

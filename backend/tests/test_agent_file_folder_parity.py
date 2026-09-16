@@ -48,7 +48,7 @@ async def test_agent_folder_create_rename_delete_matches_service(db, user_a, tmp
     assert {item["folder_id"] for item in trash if item["kind"] == "folder"} == {folder_id}
 
 
-async def test_list_folders_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
+async def test_list_dir_folders_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
     personal = Folder(user_id=user_a.id, name="个人影视")
     workspace = await _mk_workspace_folder(db, user_a.id)
     db.add(personal)

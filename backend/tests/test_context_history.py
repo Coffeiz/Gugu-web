@@ -103,7 +103,7 @@ def test_user_message_time_stays_before_complete_tool_turn():
         chat_type=None, platform_user_id=None, platform_user_name=None,
     )
     assistant = _message("assistant", [{
-        "type": "tool_call", "id": "call-1", "name": "list_folders", "arguments": {},
+        "type": "tool_call", "id": "call-1", "name": "list_dir", "arguments": {},
     }])
     result = _message("user", [{
         "type": "tool_result", "tool_call_id": "call-1", "content": "[]",

@@ -199,7 +199,7 @@ def _user_files_stmt(
     *, space=None, project_id=None, folder_id=None,
     workspace_directory_id=None, ext=None, queries=None, mode=None,
 ):
-    """构造 list_files 共用的存活文件过滤条件（搜索与计数必须同口径）。"""
+    """构造 list_dir 共用的存活文件过滤条件（搜索与计数必须同口径）。"""
     stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
     if space:
         stmt = stmt.where(File.space == space)
@@ -266,7 +266,7 @@ async def count_user_files(
 ):
     """与 search_user_files 完全同口径的总数（不含 limit）。
 
-    list_files 靠它区分「就这么多」和「被 limit 截断」——没有这个数，
+    list_dir 靠它区分「就这么多」和「被 limit 截断」——没有这个数，
     模型拿小 limit 的前 N 条会当成全量下结论（真实漏判案例：根目录清理时
     两条排在截断线外的文件被当成不存在）。
     """

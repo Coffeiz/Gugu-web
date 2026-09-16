@@ -11,7 +11,6 @@ from app.services.files.browser import (
     get_user_folder,
 )
 from app.services.storage.file_service import FileService
-from app.services.storage.folders import resolve_folder_path
 from .locations import (
     _bound_workspace_target, _coerce_loc, _folder_by_name,
     _norm_target, _resolve_file, _target_loc,

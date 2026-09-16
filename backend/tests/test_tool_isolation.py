@@ -90,7 +90,7 @@ async def test_resolve_key_rejects_folder_from_other_space(db, user_a):
         )
 
 
-async def test_list_files_returns_full_folder_path(db, user_a):
+async def test_list_dir_returns_full_folder_path(db, user_a):
     root = await _mk(db, Folder(user_id=user_a.id, name="咕咕开发"))
     child = await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="方案"))
     file = await _mk(db, File(
@@ -102,7 +102,7 @@ async def test_list_files_returns_full_folder_path(db, user_a):
     assert result["folder_path"] == "咕咕开发/方案"
 
 
-async def test_list_files_filters_by_folder_id(db, user_a):
+async def test_list_dir_filters_by_folder_id(db, user_a):
     target = await _mk(db, Folder(user_id=user_a.id, name="原神"))
     other = await _mk(db, Folder(user_id=user_a.id, name="星穹铁道"))
     inside = await _mk(db, File(
@@ -120,7 +120,7 @@ async def test_list_files_filters_by_folder_id(db, user_a):
     assert [item["id"] for item in result["files"]] == [inside.id]
 
 
-async def test_list_files_shown_total_reveals_truncation(db, user_a):
+async def test_list_dir_shown_total_reveals_truncation(db, user_a):
     """shown/total 契约：被 limit 截断时必须暴露真实总数，不能让调用方把前 N 条当全量。
 
     真实漏判案例：根目录清理时模型按更新时间倒序只拿前 20 条，两条排在截断线外的
@@ -166,7 +166,7 @@ async def test_list_dir_offset_pagination_covers_all(db, user_a):
     assert seen == names
     assert page["total"] == 5
 
-async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user_a):
+async def test_list_dir_accepts_folder_name_without_integer_sql_error(db, user_a):
     target = await _mk(db, Folder(user_id=user_a.id, name="咕咕开发"))
     inside = await _mk(db, File(
         user_id=user_a.id, display_name="方案", ext="md",
@@ -217,7 +217,7 @@ async def test_list_dir_path_ambiguous_segment_reports_candidates(db, user_a):
     assert len(miss["candidates"]) == 2
 
 
-async def test_list_files_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
+async def test_list_dir_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
     workspace = await _mk(db, WorkspaceDirectory(
         user_id=user_a.id, name="F1 工作区", directory_name="f1-list",
     ))
