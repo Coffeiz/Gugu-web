@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { mapProjectResponse } from '@/types/project'
 import type { components } from '@/types/api'

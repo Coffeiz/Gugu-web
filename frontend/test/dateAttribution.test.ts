@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest'
 import { parseUtc, localDayKey, isSameLocalDay, isToday, isThisWeek, fmtLocalDateTime } from '@/utils/dateAttribution'
 
