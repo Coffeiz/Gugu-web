@@ -1,8 +1,8 @@
 # PRD-LLM-25：Agent Loop 核心职责拆分与模块化重构
 
-> 状态：🔲 待实施，已完成职责审查和迁移方案设计
+> 状态：🟡 Phase 0 已完成（基线冻结 + 兼容调用点清单，见 docs/reports/2026-09-16-BASELINE-LLM25-loop-refactor.md）；Phase 1+ 待实施
 > 创建：2026-09-16
-> 最近更新：2026-09-16
+> 最近更新：2026-09-16（Phase 0）
 > 所属层：Agent / LLM Runtime / Loop Architecture
 > 关联模块：`backend/agent/core.py`、`backend/agent/loop_drivers.py`、`backend/agent/runner.py`、`backend/agent/context/`、`backend/agent/interactions/`、`backend/agent/tools/`
 > 背景参考：`PRD-LLM-1`、`PRD-LLM-11`、`PRD-LLM-14`、`PRD-LLM-18`、2026-09-16 `core.py` 职责审查报告
@@ -518,8 +518,8 @@ python scripts/check_confirm_gate.py
 
 ### Phase 0：冻结基线
 
-- [ ] `LLM25-001` 建立 core 迁移基线；验收：记录当前 commit、`core.py`/`_run_loop` 行数、关键测试结果、Anthropic/OpenAI/Responses/Ollama 行为和 LoopScope 观测指标；不修改运行代码。
-- [ ] `LLM25-002` 梳理兼容调用点；验收：全仓库列出 `LLMRunner`、`_run_loop`、`_stream_round` 及 core helper 的导入、monkeypatch、继承和 hook 使用点，形成迁移清单。
+- [x] `LLM25-001` 建立 core 迁移基线；验收：记录当前 commit、`core.py`/`_run_loop` 行数、关键测试结果、Anthropic/OpenAI/Responses/Ollama 行为和 LoopScope 观测指标；不修改运行代码。（commit 0cb2d4e74；core.py 2359 行、_run_loop 875–2359 共 1485 行；七关键套件 132 passed、全量 3152 passed、compileall/ownership/confirm-gate 通过）
+- [x] `LLM25-002` 梳理兼容调用点；验收：全仓库列出 `LLMRunner`、`_run_loop`、`_stream_round` 及 core helper 的导入、monkeypatch、继承和 hook 使用点，形成迁移清单。（生产调用点 7 类、测试 monkeypatch 面 10 组、core 内部自由迁移符号 15 个、迁移顺序约束见基线报告 §2）
 
 ### Phase 1：纯函数和 Provider 边界
 
