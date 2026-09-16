@@ -73,7 +73,7 @@ function switchSkillTab(key: string) {
 onMounted(async () => {
   await refreshMcpVisibility()
   const lastTab = localStorage.getItem(SKILLS_TAB_KEY)
-  if (route.name === 'Skills' && lastTab === 'mcp' && mcpVisible.value) {
+  if (route.name === 'SkillsHome' && lastTab === 'mcp' && mcpVisible.value) {
     void router.replace('/skills/mcp')
   } else if (route.name === 'SkillsMcp') {
     localStorage.setItem(SKILLS_TAB_KEY, 'mcp')
