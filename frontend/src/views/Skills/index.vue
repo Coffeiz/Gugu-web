@@ -47,6 +47,8 @@ const { t } = useI18n()
 const mcpCreateRequest = ref(0)
 const skillCreateRequest = ref(0)
 const mcpVisible = ref(false)
+
+const SKILLS_TAB_KEY = 'gugu-skills-tab'
 const skillTabs = computed(() => [
   { key: 'skills', label: t('skills.userSkills') },
   ...(mcpVisible.value ? [{ key: 'mcp', label: t('skills.mcp') }] : []),
@@ -63,11 +65,19 @@ async function refreshMcpVisibility() {
 }
 
 function switchSkillTab(key: string) {
+  // 记住显式选择：页内点击 tab 是用户意图；外部导航回 /skills 时据此恢复。
+  localStorage.setItem(SKILLS_TAB_KEY, key)
   void router.push(key === 'mcp' ? '/skills/mcp' : '/skills')
 }
 
-onMounted(() => {
-  void refreshMcpVisibility()
+onMounted(async () => {
+  await refreshMcpVisibility()
+  const lastTab = localStorage.getItem(SKILLS_TAB_KEY)
+  if (route.name === 'Skills' && lastTab === 'mcp' && mcpVisible.value) {
+    void router.replace('/skills/mcp')
+  } else if (route.name === 'SkillsMcp') {
+    localStorage.setItem(SKILLS_TAB_KEY, 'mcp')
+  }
   window.addEventListener(RESOURCE_REFRESH_EVENTS.mcp, refreshMcpVisibility)
 })
 onBeforeUnmount(() => window.removeEventListener(RESOURCE_REFRESH_EVENTS.mcp, refreshMcpVisibility))
