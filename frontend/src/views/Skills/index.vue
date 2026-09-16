@@ -47,7 +47,9 @@ const router = useRouter()
 const { t } = useI18n()
 const mcpCreateRequest = ref(0)
 const skillCreateRequest = ref(0)
-const mcpVisible = ref(false)
+// 乐观种子：守卫放行 SkillsMcp 即代表 MCP 已启用，首帧就让 tab 存在——
+// 否则 activeIndex 找不到目标回退 0，status 返回后胶囊从技能位滑过去。
+const mcpVisible = ref(route.name === 'SkillsMcp')
 
 
 const skillTabs = computed(() => [
