@@ -258,6 +258,12 @@ html[data-theme='dark'][data-family] .fp-body {
 html[data-theme='dark'][data-family] .fpw-body:has(.tv-wrap) {
   background: var(--surface-base);
 }
+/* 常态也要暗色：.fp-action-btn 亮色写死白底白阴影，暗色下白块突兀（FileInfoPopup 信息窗） */
+html[data-theme='dark'][data-family] .fp-action-btn {
+  background: color-mix(in srgb, var(--surface-raised) 72%, transparent);
+  color: var(--content-secondary);
+  box-shadow: none;
+}
 html[data-theme='dark'][data-family] .fpw-btn:hover,
 html[data-theme='dark'][data-family] .fp-action-btn:hover {
   background: var(--surface-soft-hover);
