@@ -76,11 +76,11 @@ const form = reactive({
 
 const credentialSlotsPlaceholder = t('skillsMcpUi.credentialSlotsPlaceholder')
 
-// 打开时的原文（含回显的凭据值）：提交时与它比对，「用户没动过」就不提交凭据字段，
-// 保住对话内 secret 通道注入、表单里并不存在的值；「动过」（含清空）则显式整体替换。
-const initialSlotsText = server?.credential_slots?.length
-  ? JSON.stringify(server.credential_slots, null, 2)
-  : ''
+// 打开时的原文：与表单初始化值同源（seededSlots 回显含凭据值字段），这样「用户
+// 没动过」判定才成立——若拿原始 credential_slots（无 value）比较，配置过凭据的
+// 服务从打开起就永远算「已修改」，只改个超时也会把旧凭据整包重写回去，
+// 并发场景（另一处 secret 通道刚更新）会覆盖新值。
+const initialSlotsText = form.credential_slots_text
 
 function parseCredentialSlots(value: string): McpServerDraft['credential_slots'] {
   if (!value.trim()) return undefined

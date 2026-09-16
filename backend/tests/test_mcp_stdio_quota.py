@@ -97,3 +97,58 @@ async def test_ensure_idle_reaper_starts_once():
         await task
     except asyncio.CancelledError:
         pass
+
+
+@pytest.mark.asyncio
+async def test_reap_skips_in_flight_even_if_stale():
+    """二审 P2：正在外呼的连接即使 last_used_at 已超阈值也绝不可被 reaper 关闭。"""
+    settings = SimpleNamespace(mcp=SimpleNamespace(stdio_idle_seconds=60))
+    manager = manager_module.McpToolManager()
+
+    class FakeClient:
+        async def aclose(self):
+            raise AssertionError("in_flight 的连接不应被关闭")
+
+    config = McpServerConfig(id=uuid4(), user_id=uuid4(), name="busy", transport="stdio", command="x")
+    runtime = manager_module._ServerRuntime(config=config)
+    runtime.client = FakeClient()
+    runtime.last_used_at = time.monotonic() - 600
+    runtime.in_flight = 1
+    manager._runtimes[(config.user_id, config.id)] = runtime
+
+    assert await manager.reap_idle_stdio(settings) == 0
+    assert runtime.client is not None
+
+
+@pytest.mark.asyncio
+async def test_call_server_refreshes_last_used_before_awaiting():
+    """二审 P2：外呼前先刷新 last_used_at——空闲后第一次调用不再带着旧时间戳
+    给 reaper 递刀；调用结束后 in_flight 归零。"""
+    manager = manager_module.McpToolManager()
+    stale = time.monotonic() - 600
+    seen_at_call_time: list[float] = []
+
+    config = McpServerConfig(id=uuid4(), user_id=uuid4(), name="s", transport="stdio", command="x")
+    runtime = manager_module._ServerRuntime(config=config)
+
+    class FakeClient:
+        async def call_tool(self, name, arguments):
+            seen_at_call_time.append(runtime.last_used_at)
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+    runtime.client = FakeClient()
+    runtime.last_used_at = stale
+    runtime.in_flight = 0
+    from agent.mcp.models import McpToolMeta
+    runtime.metas["mcp_s_echo"] = McpToolMeta(
+        server_id=config.id, server_name="s", tool_name="echo", prefixed_name="mcp_s_echo",
+        description_short="回显", input_schema={"type": "object", "properties": {}},
+    )
+    manager._runtimes[(config.user_id, config.id)] = runtime
+
+    result = await manager._call_server(runtime, config, "mcp_s_echo", {"text": "hi"})
+
+    assert "error" not in result
+    assert seen_at_call_time and seen_at_call_time[0] > stale  # 外呼时已刷新
+    assert runtime.in_flight == 0
+    assert runtime.last_used_at >= seen_at_call_time[0]

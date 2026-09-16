@@ -69,6 +69,7 @@ class _ServerRuntime:
     client: Any | None = None
     last_used_at: float = 0.0
     stdio_restarts: int = 0
+    in_flight: int = 0
 
     def in_backoff(self) -> bool:
         return time.monotonic() < self.backoff_until
@@ -361,6 +362,7 @@ class McpToolManager:
                 return runtime
             if (
                 config.transport == "stdio" and runtime.client is not None
+                and runtime.in_flight == 0
                 and runtime.last_used_at > 0
                 and time.monotonic() - runtime.last_used_at >= settings.mcp.stdio_idle_seconds
             ):
@@ -511,6 +513,8 @@ class McpToolManager:
             config = runtime.config
             if config is None or config.transport != "stdio" or runtime.client is None:
                 continue
+            if runtime.in_flight > 0:
+                continue    # 有正在外呼的调用：即使时间窗上也绝不可关
             if runtime.last_used_at > 0 and now - runtime.last_used_at >= idle_seconds:
                 await runtime.client.aclose()
                 runtime.client = None
@@ -545,19 +549,28 @@ class McpToolManager:
             # 空闲回收后保留的是工具元数据；首次再次调用时要把新会话挂回
             # runtime，否则句柄会在本轮结束后丢失且无法被下一次空闲回收。
             runtime.client = client
-        raw = await client.call_tool(meta.tool_name, args)
-        runtime.last_used_at = time.monotonic()
-        if config.transport == "stdio" and "error" in raw:
-            restart_limit = settings.mcp.stdio_restart_limit
-            if runtime.stdio_restarts < restart_limit:
-                runtime.stdio_restarts += 1
-                await client.aclose()
-                runtime.client = await self._new_client(config, settings)
-                if runtime.client is not None:
-                    raw = await runtime.client.call_tool(meta.tool_name, args)
-                    runtime.last_used_at = time.monotonic()
-        elif config.transport == "stdio":
-            runtime.stdio_restarts = 0
+        # 先刷新再外呼：reaper 判空闲只看 last_used_at，不刷新的话「空闲后的
+        # 第一次调用」会带着旧时间戳被关掉正在使用的连接（PR #72 二审）。
+        # in_flight 覆盖超长调用：调用时长本身超过 idle 阈值时也不可回收。
+        runtime.in_flight += 1
+        try:
+            runtime.last_used_at = time.monotonic()
+            raw = await client.call_tool(meta.tool_name, args)
+            runtime.last_used_at = time.monotonic()
+            if config.transport == "stdio" and "error" in raw:
+                restart_limit = settings.mcp.stdio_restart_limit
+                if runtime.stdio_restarts < restart_limit:
+                    runtime.stdio_restarts += 1
+                    await client.aclose()
+                    runtime.client = await self._new_client(config, settings)
+                    if runtime.client is not None:
+                        runtime.last_used_at = time.monotonic()
+                        raw = await runtime.client.call_tool(meta.tool_name, args)
+                        runtime.last_used_at = time.monotonic()
+            elif config.transport == "stdio":
+                runtime.stdio_restarts = 0
+        finally:
+            runtime.in_flight = max(0, runtime.in_flight - 1)
         if "error" in raw:
             self._record_failure(key, runtime, raw["error"], raw.get("error_kind", "protocol"))
             return raw
