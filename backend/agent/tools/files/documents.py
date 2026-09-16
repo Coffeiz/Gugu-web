@@ -272,7 +272,11 @@ async def _list_dir(db, user_id, args: dict):
             queries=file_queries,
             mode=args.get("mode"),
         )
-        rows = await search_user_files(db, user_id, limit=limit, **filter_kwargs)
+        offset = max(0, int(args.get("offset") or 0))
+        sort = args.get("sort") if args.get("sort") in ("updated", "name") else "updated"
+        rows = await search_user_files(
+            db, user_id, limit=limit, offset=offset, sort=sort, **filter_kwargs,
+        )
         total = await count_user_files(db, user_id, **filter_kwargs)
         for file in rows:
             folder_path = "（根目录）"
@@ -845,10 +849,11 @@ class FilesSkill(BaseSkill):
             name="list_dir", label="浏览目录",
             description_short='浏览目录：一次列出子文件夹和文件；默认覆盖当前用户可访问的所有空间。',
             description="列出子文件夹与文件，可按空间、项目、工作区或目录筛选；不传位置条件时覆盖当前用户所有可访问空间。"
-                        "folder 传目录名或 id（也接受 folder_id/parent_id 写法），限定该目录的子文件夹与直属文件。"
-                        "返回 {shown, total, files, folders}：total/shown 只统计文件——shown<total 说明被 limit 截断，"
-                        "必须加大 limit 重查或改用更精确的过滤条件，不能把部分结果当全量下结论；确认「全部/清空/还剩几个」类问题时务必核对 total。"
+                        "folder 传目录名（支持 a/b/c 式路径，也可用 folder_id/parent_id 传 id），限定该目录的子文件夹与直属文件。"
+                        "返回 {shown, total, files, folders}：total/shown 只统计文件——shown<total 说明未取完，"
+                        "加大 limit、加 offset 翻页或改用更精确的过滤条件，不能把部分结果当全量下结论；确认「全部/清空/还剩几个」类问题时务必核对 total。"
                         "limit 只约束 files（上限 200）；folders 恒全量，每项带 file_count（直属文件数）。kind=file/folder 可只看其中一种。"
+                        "超大目录看全量：sort=\"name\" + limit=200 + offset 递增分页拉完（名字序翻页稳定不漏重）。"
                         "按关键词找文件时优先一次传 queries（默认 OR）；决定新文件落点时先看 folders 的 path/depth 审视一级和相关二级目录。",
             input_schema={
                 "type": "object",
@@ -863,6 +868,8 @@ class FilesSkill(BaseSkill):
                     "q": {"type": "string"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "mode": {"type": "string", "enum": ["OR", "AND"]},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "sort": {"type": "string", "enum": ["updated", "name"]},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                 },
             },

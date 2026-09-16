@@ -142,6 +142,30 @@ async def test_list_files_shown_total_reveals_truncation(db, user_a):
     full = await _list_dir(db, user_a.id, {"folder": folder.id, "limit": 200})
     assert full["total"] == 3 and full["shown"] == 3
 
+
+async def test_list_dir_offset_pagination_covers_all(db, user_a):
+    """offset+sort=name 翻页：任意大目录都能确定性拉全，且页间不漏不重。"""
+    folder = await _mk(db, Folder(user_id=user_a.id, name="大目录"))
+    names = ["a", "b", "c", "d", "e"]
+    for name in names:
+        await _mk(db, File(
+            user_id=user_a.id, display_name=name, ext="md",
+            folder_id=folder.id, storage_key=f"k-{name}",
+        ))
+    seen: list[str] = []
+    offset = 0
+    while True:
+        page = await _list_dir(db, user_a.id, {
+            "folder": folder.id, "kind": "file", "sort": "name",
+            "limit": 2, "offset": offset,
+        })
+        seen.extend(item["name"].rsplit(".", 1)[0] for item in page["files"])
+        if offset + page["shown"] >= page["total"]:
+            break
+        offset += page["shown"]
+    assert seen == names
+    assert page["total"] == 5
+
 async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user_a):
     target = await _mk(db, Folder(user_id=user_a.id, name="咕咕开发"))
     inside = await _mk(db, File(
