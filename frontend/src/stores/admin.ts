@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getCsrfHeaders } from '@/services/api'
+import { handleUnauthorized } from '@/services/authSession'
 
 export const useAdminStore = defineStore('admin', () => {
   const token = ref(localStorage.getItem('admin_token') || '')
@@ -25,6 +26,20 @@ export const useAdminStore = defineStore('admin', () => {
     localStorage.setItem('admin_token', token.value)
   }
 
+  async function validateSession(): Promise<boolean | null> {
+    if (!token.value) return false
+    const res = await authFetch('/api/v1/admin/auth/me')
+    if (res.status === 401) {
+      token.value = ''
+      adminUser.value = null
+      handleUnauthorized('admin')
+      return false
+    }
+    if (!res.ok) return null
+    adminUser.value = await res.json()
+    return true
+  }
+
   function logout() {
     void fetch('/api/v1/admin/auth/logout', {
       method: 'POST',
@@ -38,7 +53,7 @@ export const useAdminStore = defineStore('admin', () => {
 
   // 带 Token 的 fetch 封装
   async function authFetch(url: string, options: RequestInit = {}) {
-    return fetch(url, {
+    const response = await fetch(url, {
       ...options,
       credentials: 'include',
       headers: {
@@ -48,7 +63,9 @@ export const useAdminStore = defineStore('admin', () => {
         ...(options.headers || {}),
       },
     })
+    if (response.status === 401) handleUnauthorized('admin')
+    return response
   }
 
-  return { token, adminUser, isLoggedIn, login, logout, authFetch }
+  return { token, adminUser, isLoggedIn, login, logout, validateSession, authFetch }
 })

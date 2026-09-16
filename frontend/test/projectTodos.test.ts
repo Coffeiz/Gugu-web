@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { useProjectTodos } from '@/composables/projects/useProjectTodos'

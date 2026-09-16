@@ -76,6 +76,7 @@
       :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
       :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
       :on-interaction-select="onInteractionSelect"
+      :on-secret-submit="onSecretSubmit"
       :on-reference-click="onReferenceClick"
       :on-prompt-connect="promptConnectIM"
       :on-filesystem-authorization="toggleSessionAuthorization"
@@ -121,6 +122,7 @@ import { useUiStore } from '@/stores/ui'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, authApi, getToken } from '@/services/api'
+import { isUnauthorizedResponse } from '@/services/authSession'
 import { prefetchGreeting } from '@/composables/shared/useGreeting'
 import GuguChatFab from './GuguChatFab.vue'
 import GuguChatMiniPlayer from './GuguChatMiniPlayer.vue'
@@ -405,6 +407,17 @@ const {
   animateGreeting, clearStatus,
 } = conversation
 
+// 业务空状态可以请求打开聊天并预填一条配置指令；只消费一次，绝不自动发送。
+watch(() => uiStore.pendingChatPrefill, async (prompt) => {
+  if (!prompt) return
+  uiStore.pendingChatPrefill = null
+  open.value = true
+  if (!expanded.value) resetContentH()
+  inputText.value = prompt
+  await nextTick()
+  composerRef.value?.focus?.()
+}, { immediate: true })
+
 const visiblePendingQueue = computed(() => pendingQueue.value.filter(item => item.sessionId === sessionId.value))
 
 let stopPendingQueueRecovery = false
@@ -479,6 +492,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ token: option.token }),
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) {
         if (_msg.interaction) _msg.interaction.submitting = false
         _chatTip(t('chatUi.interactionSubmitFailed'))
@@ -511,6 +525,7 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ token: option.token }),
     })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) {
       if (_msg.interaction) {
         _msg.interaction.submitting = false
@@ -544,6 +559,33 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
   }
 }
 
+async function onSecretSubmit(_msg: ChatMessage, values: Record<string, string>) {
+  const promptId = _msg.interaction?.promptId
+  if (!promptId || !_msg.interaction?.secretFields?.length) return
+  try {
+    const token = getToken()
+    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/secrets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ values }),
+    })
+    if (isUnauthorizedResponse(res)) return
+    if (!res.ok) {
+      if (_msg.interaction) _msg.interaction.submitting = false
+      _chatTip(t('chatUi.secretSubmitFailed'))
+      return
+    }
+    if (_msg.interaction) {
+      _msg.interaction.submitting = false
+      _msg.interaction.resolved = true
+      _msg.interaction.responseText = t('chatUi.secretSubmitted')
+    }
+  } catch {
+    if (_msg.interaction) _msg.interaction.submitting = false
+    _chatTip(t('chatUi.secretSubmitFailed'))
+  }
+}
+
 async function onChatSend() {
   const promptId = pendingCustomPromptId.value
   if (!promptId) {
@@ -560,6 +602,7 @@ async function onChatSend() {
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ text }),
     })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) {
       _chatTip(t('chatUi.interactionSubmitFailed'))
       return
@@ -615,6 +658,7 @@ async function downloadFile(f: ChatFile) {
     const token = getToken()
     const res = await fetch(`${API_BASE}/agent/attachment/${f.attach_id}/download`,
       { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) { console.error('附件下载失败', res.status); return }
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
@@ -920,6 +964,30 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 }
 /* 咕咕发来的文件卡片 */
 :deep(.msg-files) { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
+
+/* send_link_buttons 复用 ask_user 的气泡与按钮契约：链接仍是普通导航，不产生交互回调。 */
+:deep(.msg-link-buttons) {
+  width: min(360px, 88%); box-sizing: border-box; margin: 6px 0 0; padding: 14px;
+  border: 1px solid var(--border-default); border-radius: var(--card-radius);
+  background: var(--surface-card-solid); color: var(--content-primary);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
+}
+:deep(.msg-link-buttons .interaction-body) {
+  margin-top: 0; color: var(--content-secondary); font-size: var(--font-size-sm);
+  line-height: var(--line-height-body); white-space: pre-wrap;
+}
+:deep(.msg-link-buttons .interaction-actions) {
+  display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%;
+  margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle);
+}
+:deep(.msg-link-buttons .interaction-option) {
+  flex: 0 1 auto; min-width: 0; max-width: 100%; height: auto; min-height: 34px;
+  white-space: normal; word-break: normal; overflow-wrap: anywhere;
+  line-height: var(--line-height-body);
+}
+:deep(.msg-link-buttons .interaction-option .app-action-button-content) {
+  display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere;
+}
 /* 按下反馈来自全局 .press-fx（模板里已加）——只要点击下沉，不要悬停抬起：
    这条挤在其它消息气泡中间，抬起会显得跟旁边气泡割裂 */
 :deep(.msg-file) {

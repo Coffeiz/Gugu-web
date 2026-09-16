@@ -29,6 +29,13 @@ class SandboxdServer:
         self.socket_path = Path(socket_path).expanduser()
         self.allowed_root = Path(allowed_root).expanduser().resolve(strict=True)
         self._slots = asyncio.Semaphore(4)
+        # stdio MCP 是长驻连接，绝不能和一次性 execute 共用 4 个槽：
+        # 否则几个长连接就能把普通沙盒执行饿死。独立配额 + 按用户上限。
+        sandbox_settings = get_settings().sandbox
+        self._stdio_slots = asyncio.Semaphore(max(1, int(sandbox_settings.stdio_max_sessions)))
+        self._stdio_per_user_limit = max(1, int(sandbox_settings.stdio_max_sessions_per_user))
+        self._stdio_counts: dict[str, int] = {}
+        self._stdio_lock = asyncio.Lock()
         self._active: dict[str, str] = {}
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._active_lock = asyncio.Lock()
@@ -67,6 +74,9 @@ class SandboxdServer:
                 raise ValueError("sandboxd operation 无效")
             if value.get("operation") == "pty_open":
                 await self._handle_pty(value, reader, writer)
+                return
+            if value.get("operation") == "stdio_open":
+                await self._handle_stdio(value, reader, writer)
                 return
             if value.get("operation") == "cancel":
                 request_id = str(value.get("request_id") or "").strip()
@@ -151,6 +161,86 @@ class SandboxdServer:
         await writer.drain()
         writer.close()
         await writer.wait_closed()
+
+    async def _handle_stdio(self, value: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """在 Rootless Docker 内桥接一个长驻 MCP stdio server。"""
+        root = self._validate_root(str(value.get("root") or ""))
+        command = str(value.get("command") or "").strip()
+        cwd = str(value.get("cwd") or ".")
+        if not command or len(command) > 1000:
+            raise ValueError("sandboxd stdio command 无效")
+        if value.get("network_profile") not in (None, "none"):
+            raise ValueError("MCP stdio 只允许断网沙盒")
+        settings = get_settings().sandbox
+        container_name = f"gugu-stdio-{uuid.uuid4().hex}"
+        async with self._stdio_lock:
+            count = self._stdio_counts.get(str(root), 0)
+            if count >= self._stdio_per_user_limit:
+                raise ValueError(
+                    f"该用户 stdio MCP 会话已达上限（{self._stdio_per_user_limit}），请先停用不用的服务"
+                )
+            self._stdio_counts[str(root)] = count + 1
+        try:
+            async with self._stdio_slots:
+                executor = DockerSandboxExecutor(root, settings)
+                handle = await executor.open_stdio(
+                    command, cwd=cwd, network_profile="none", container_name=container_name,
+                )
+                await writer.drain()
+                writer.write(encode_response({"type": "ready", "pid": handle.pid, "sandbox_id": handle.sandbox_id}))
+                await writer.drain()
+                output_total = 0
+
+                async def pump() -> None:
+                    nonlocal output_total
+                    while True:
+                        chunk = await handle.read()
+                        if not chunk:
+                            break
+                        output_total += len(chunk)
+                        if output_total > settings.pty_output_limit_bytes:
+                            await handle.close(force=True)
+                            break
+                        writer.write(encode_response({
+                            "type": "output", "data": base64.b64encode(chunk).decode("ascii"),
+                        }))
+                        await writer.drain()
+                    try:
+                        writer.write(encode_response({"type": "exit"}))
+                        await writer.drain()
+                    except (ConnectionError, OSError):
+                        pass
+
+                pump_task = asyncio.create_task(pump())
+                try:
+                    while True:
+                        control = await reader.readline()
+                        if not control:
+                            break
+                        message = json.loads(control.decode("utf-8"))
+                        message_type = message.get("type")
+                        if message_type == "input":
+                            data = base64.b64decode(message.get("data", ""), validate=True)
+                            if len(data) > 1_048_576:
+                                raise ValueError("sandboxd stdio 输入过大")
+                            await handle.write(data)
+                        elif message_type == "close":
+                            await handle.close(force=bool(message.get("force")))
+                            break
+                        else:
+                            raise ValueError("sandboxd stdio 控制消息无效")
+                finally:
+                    if not pump_task.done():
+                        pump_task.cancel()
+                        await asyncio.gather(pump_task, return_exceptions=True)
+                    await handle.close(force=True)
+        finally:
+            async with self._stdio_lock:
+                remaining = self._stdio_counts.get(str(root), 1) - 1
+                if remaining > 0:
+                    self._stdio_counts[str(root)] = remaining
+                else:
+                    self._stdio_counts.pop(str(root), None)
 
     async def _handle_pty(self, value: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         root = self._validate_root(str(value.get("root") or ""))

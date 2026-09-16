@@ -94,7 +94,7 @@ class OpenAIResponsesDriver:
     api_format = "responses"
     continuation_available = True
 
-    def prepare(self, tool_names, ai, messages, system_text):
+    def prepare(self, tool_names, ai, messages, system_text, tool_snapshot=None):
         import httpx
         from agent import providers
         from agent.tools import registry
@@ -102,7 +102,8 @@ class OpenAIResponsesDriver:
         client = providers.build_openai_client(
             ai, httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
         )
-        chat_tools = registry.openai_schemas(tool_names)
+        schema_source = tool_snapshot or registry.snapshot()
+        chat_tools = schema_source.openai_schemas(tool_names)
         tools = _responses_tools(chat_tools)
         return client, _ResponsesCtx(
             tools=tools, max_output_tokens=ai.max_tokens, model=ai.model,
@@ -112,11 +113,13 @@ class OpenAIResponsesDriver:
             ).encode("utf-8")).hexdigest()[:16],
         )
 
-    def update_tools(self, ctx, tool_names: list[str]) -> None:
+    def update_tools(self, ctx, tool_names: list[str], tool_snapshot=None) -> None:
         from agent.tools import registry
-        ctx.tools = _responses_tools(registry.openai_schemas(tool_names))
+        schema_source = tool_snapshot or registry.snapshot()
+        ctx.tools = _responses_tools(schema_source.openai_schemas(tool_names))
 
-    async def run_round(self, client, ctx, messages):
+    async def run_round(self, client, ctx, messages, stream_round=None):
+        # stream_round 仅 AnthropicDriver 使用；本驱动接收并忽略，保持统一调用签名。
         rendered = ctx.adapter.render_history(messages)
         if ctx.previous_response_id:
             # response chain 已经包含旧历史；只发送上一个 response 之后的增量，

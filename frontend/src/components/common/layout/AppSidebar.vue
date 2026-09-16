@@ -18,6 +18,7 @@
         <NavItem to="/files" icon="file.folder">{{ t('navigation.files') }}</NavItem>
         <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">{{ t('navigation.terminals') }}</NavItem>
         <NavItem to="/skills" icon="resource.skill">{{ t('navigation.skills') }}</NavItem>
+        <NavItem v-if="mcpVisible" to="/mcp" icon="resource.skill">MCP</NavItem>
       </div>
 
       <div class="nav-divider"></div>
@@ -101,7 +102,8 @@ import Icon from '@/components/common/icons/Icon.vue'
 import FeedbackModal from '@/components/common/feedback/FeedbackModal.vue'
 import SupportModal from '@/components/common/feedback/SupportModal.vue'
 import Brand from './Brand.vue'
-import { canAccessTerminals, workspacesApi } from '@/services/api'
+import { canAccessTerminals, mcpApi, workspacesApi } from '@/services/api'
+import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 import { SUPPORT_ALIPAY_QR_URL, SUPPORT_KOFI_URL, SUPPORT_WECHAT_QR_URL } from '@/config/support'
 import { useI18n } from 'vue-i18n'
 
@@ -121,14 +123,31 @@ const themeModeTitle = computed(() => preference.value === 'system'
   : `${t('layout.currentDisplay', { mode: currentModeLabel.value })}${t('layout.clickToSwitch')}`)
 const feedbackOpen = ref(false)
 const terminalVisible = ref(false)
+const mcpVisible = ref(false)
 const supportModalOpen = ref(false)
 const supportAvailable = computed(() => Boolean(SUPPORT_KOFI_URL || SUPPORT_ALIPAY_QR_URL || SUPPORT_WECHAT_QR_URL))
+
+async function refreshMcpVisibility() {
+  try {
+    const status = await mcpApi.status()
+    mcpVisible.value = status.enabled
+    if (!status.enabled && router.currentRoute.value.name === 'SkillsMcp') {
+      await router.replace('/skills')
+    }
+  } catch {
+    mcpVisible.value = false
+  }
+}
 
 function cycleTheme() {
   setTheme(preference.value === 'light' ? 'dark' : preference.value === 'dark' ? 'system' : 'light')
 }
 
-function handleLogout() { authStore.logout(); router.push('/login') }
+// 登出带上当前页 redirect，重新登录后回到退出前的页面（如 /skills/mcp）。
+function handleLogout() {
+  authStore.logout()
+  void router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
+}
 
 async function refreshTerminalVisibility() {
   try {
@@ -208,6 +227,8 @@ watch(() => liveStore.resourceEvent, (event) => {
 onMounted(() => {
   refreshTerminalVisibility()
   window.addEventListener('focus', refreshTerminalVisibility)
+  void refreshMcpVisibility()
+  window.addEventListener(RESOURCE_REFRESH_EVENTS.mcp, refreshMcpVisibility)
   window.addEventListener('resize', updateSettingsPosition)
   window.addEventListener('scroll', updateSettingsPosition, true)
 })
@@ -217,6 +238,7 @@ onUnmounted(() => {
   window.removeEventListener('focus', refreshTerminalVisibility)
   window.removeEventListener('resize', updateSettingsPosition)
   window.removeEventListener('scroll', updateSettingsPosition, true)
+  window.removeEventListener(RESOURCE_REFRESH_EVENTS.mcp, refreshMcpVisibility)
 })
 </script>
 

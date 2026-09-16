@@ -21,6 +21,7 @@ from agent.tools.tool_contract import (
     invalid_input_payload,
     normalize_input_by_schema,
     normalize_legacy_input,
+    unwrap_arguments_wrapper,
     validate_input,
 )
 
@@ -56,6 +57,25 @@ def test_send_email_normalizes_json_string_arrays_without_widening_schema():
         "send_email.sections:json_string_to_array",
         "send_email.actions:json_string_to_array",
     ]
+
+
+def test_unwrap_arguments_wrapper_only_when_inner_fields_match_schema():
+    schema = {
+        "type": "object",
+        "properties": {"url": {"type": "string"}, "urls": {"type": "array"}},
+    }
+    normalized, changed = unwrap_arguments_wrapper(
+        schema, {"arguments": {"url": "https://example.com"}},
+    )
+    assert changed is True
+    assert normalized == {"url": "https://example.com"}
+
+    untouched, changed = unwrap_arguments_wrapper(
+        {"type": "object", "properties": {"arguments": {"type": "object"}}},
+        {"arguments": {"url": "https://example.com"}},
+    )
+    assert changed is False
+    assert untouched["arguments"]["url"] == "https://example.com"
 
 
 @pytest.mark.parametrize("bad_input", [[], "query", 7, None])

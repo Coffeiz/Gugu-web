@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
-import { canAccessTerminals, workspacesApi } from '@/services/api'
+import { canAccessTerminals, mcpApi, workspacesApi } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
   // ── 用户认证页（无 layout）──
@@ -86,10 +87,29 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'navigation.files' },
       },
       {
+        path: 'mcp',
+        name: 'SkillsMcp',
+        component: () => import('@/views/Mcp/index.vue'),
+        meta: { title: 'navigation.mcp' },
+      },
+      {
         path: 'skills',
         name: 'Skills',
         component: () => import('@/views/Skills/index.vue'),
         meta: { title: 'navigation.skills' },
+        children: [
+          {
+            path: '',
+            name: 'SkillsHome',
+            component: () => import('@/views/Skills/SkillsHome.vue'),
+            meta: { title: 'navigation.skills' },
+          },
+          {
+            // MCP 已抽成独立页面 /mcp；旧路径保留重定向兼容收藏与已分发的链接。
+            path: 'mcp',
+            redirect: { name: 'SkillsMcp' },
+          },
+        ],
       },
       {
         path: 'terminals',
@@ -155,6 +175,14 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/DevEmail.vue'),
         meta: { title: 'devEmail.title' },
       }] : []),
+      // 三栏板式笔记页原型：仅 dev 注册；验证通过后用于替换 Mind/NotesView.vue，本路由随之删除。
+      // fullBleed 与 /mind 同口径：隐藏 topbar、去掉布局留白，内容区从导航栏右缘开始
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/notes-three-pane',
+        name: 'DevNotesThreePane',
+        component: () => import('@/views/DevNotesThreePane.vue'),
+        meta: { title: 'devHome.tools.notesThreePane.label', fullBleed: true },
+      }] : []),
     ],
   },
 
@@ -171,7 +199,7 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const userToken = localStorage.getItem('user_token')
 
   if (to.meta.requiresAuth && !userToken) {
@@ -179,13 +207,30 @@ router.beforeEach((to) => {
   }
 
   if (to.meta.authPublic && userToken) {
-    return { path: '/projects' }
+    const authStore = useAuthStore()
+    if (!authStore.user) await authStore.fetchMe()
+    if (authStore.isLoggedIn && authStore.user) return { path: '/projects' }
+  }
+
+  if (to.meta.requiresAuth && userToken) {
+    const authStore = useAuthStore()
+    if (!authStore.user) {
+      await authStore.fetchMe()
+      if (!authStore.isLoggedIn) {
+        return { path: '/login', query: { redirect: to.fullPath } }
+      }
+    }
   }
 })
 
 router.beforeEach(async (to) => {
-  if (to.name !== 'Terminals') return
+  if (to.name !== 'Terminals' && to.name !== 'SkillsMcp') return
   try {
+    if (to.name === 'SkillsMcp') {
+      const status = await mcpApi.status()
+      if (!status.enabled) return { path: '/skills' }
+      return
+    }
     const status = await workspacesApi.status()
     if (!canAccessTerminals(status)) return { path: '/projects' }
   } catch (cause) {

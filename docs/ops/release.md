@@ -25,7 +25,7 @@
 cd frontend && npm run typecheck && npm run test:css-glass && npm run test:ui-dialogs
 
 # 2) 后端测试
-cd backend && PYTHONPATH=. python -m pytest -q
+cd backend && PYTHONPATH=. python -m pytest -q -n auto
 
 # 3) 本地构建生产镜像并 trivy 预扫（防患于未然，别让 CI 当第一个发现问题的）
 docker build -f backend/Dockerfile.prod  -t gugu-backend:release-check .
@@ -53,6 +53,59 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
 - `CHANGELOG.md` 新增版本小节，只写用户可感知的变化；排查细节进 `docs/devlog/`（按日期一篇）。
 - 以上内容随最后一个功能 PR 一起进 dev，不要发版时临时补。
 
+### 3.1 发布说明固定结构
+
+每个版本的 `CHANGELOG.md` 小节和 GitHub Release 正文必须使用同一套结构。Release 正文按
+“English 在前、中文在后”排列；中文版本不要求逐句直译，但功能、修复、贡献者和反馈者必须一一对应。
+
+```markdown
+## What's New
+
+### New Features
+- 面向用户的新能力。
+
+### Improvements
+- 面向用户的改进。
+
+### Fixes
+- 用户可感知的修复。
+
+### Contributors
+- Thank you to [@login](https://github.com/login) for PR #123 / the related contribution.
+
+### Feedback & Issue Reporters
+- Thank you to [@login](https://github.com/login) for reporting [#60](https://github.com/Coffeiz/Gugu-web/issues/60).
+
+## 更新内容
+
+### 新功能
+- 面向用户的新能力。
+
+### 改进
+- 面向用户的改进。
+
+### 修复
+- 用户可感知的修复。
+
+### 贡献者
+- 感谢 [@login](https://github.com/login) 提交 PR #123 或参与相关贡献。
+
+### 反馈与问题报告
+- 感谢 [@login](https://github.com/login) 通过 [#60](https://github.com/Coffeiz/Gugu-web/issues/60) 提供反馈。
+```
+
+填写规则：
+
+- `Contributors` / `贡献者` 写实际贡献代码、测试、文档或设计的 GitHub 用户；优先引用合并 PR，必要时补充直接贡献者。
+- `Feedback & Issue Reporters` / `反馈与问题报告` 写本版本正文中引用的 issue 提交者；必须同时链接 issue 编号和报告者账号。
+- issue 提交者与代码贡献者是同一人时，两节仍按事实分别记录，不用把 issue 贡献混写成 PR 贡献。
+- 只感谢确实进入该版本的贡献；未合并 PR、重复 issue、机器人账号和自动生成内容不列入人工致谢，除非发布负责人明确说明其贡献。
+- 修复条目引用 issue 时，使用 `(#N)`；对应的致谢条目再提供完整 issue 链接和报告者账号。
+- 不在发布说明中写邮箱、内部用户名、私有链接、访问令牌或未公开的用户信息。
+- 如果版本没有外部贡献或 issue 反馈，也要保留章节并写“暂无”；不要为了填充而猜测贡献者。
+
+发版前必须从 GitHub PR/issue 元数据核对登录名和编号，不能根据 commit message、昵称或聊天记录猜测归属。
+
 ## 4. 打 tag 与发布
 
 - **前置条件**：版本 PR 已合并进 main，且合并前手动触发的 CI（含 trivy 门）全绿；
@@ -63,7 +116,8 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
 - tag 打在 **main 的合并提交**上，附注 tag。**发布命名口径**：
   - **tag 附注**：单行简式 `vx.y.z：一句话摘要`（v1.1.1 样式），不写完整更新内容；
   - **GitHub Release**：标题纯 `vx.y.z`，正文放 CHANGELOG 对应版本小节全文（v1.1.0 范式），
-    **未来发布正文双语：English 在前、中文在后**（v1.1.3 起的中文版不追溯）。
+    **未来发布正文双语：English 在前、中文在后**（v1.1.1～v1.2.3 的历史正文不追溯）；正文必须包含
+    `Contributors` / `贡献者` 和 `Feedback & Issue Reporters` / `反馈与问题报告` 两节。
     流水线默认 `--generate-notes`，发布绿后用
     `gh release edit vx.y.z --title vx.y.z --notes-file <对应 CHANGELOG 小节>` 覆写。
 

@@ -117,6 +117,91 @@ async def send_text(payload: dict, text: str) -> bool:
     return await send_reply(payload, PlatformReply.from_text(payload, text))
 
 
+def _link_buttons_text(message: str, buttons: list[dict]) -> str:
+    """链接按钮的文本降级：保留可复制可点击的完整 URL（PRD-LLM-24 §8.4）。"""
+    lines = [message.strip()] if message.strip() else []
+    lines.extend(f"· {button['label']}：{button['url']}" for button in buttons)
+    return "\n".join(lines)
+
+
+def _link_buttons_result(status: str, platform: str, delivery: str, buttons: list[dict]) -> dict:
+    return {
+        "status": status,
+        "platform": platform or "web",
+        "delivery": delivery,
+        "button_count": len(buttons),
+    }
+
+
+async def send_link_button_message(payload: dict, message: str, buttons: list[dict]) -> dict:
+    """统一发送链接按钮：原生优先，失败降级文本 URL（PRD-LLM-24 §8/§11）。
+
+    输入必须已通过 ``agent.im.link_buttons`` 校验；这里只负责"当前平台用哪种
+    渲染、失败怎么降级"，不重新解释按钮语义，也不创建任何待答交互。
+    """
+    from agent.im.link_buttons import validate_link_button_url
+    from agent.security import logsafe
+
+    platform = str(payload.get("platform") or "")
+    # 第二道校验边界（PRD-LLM-24 §12）：出站层不信任上游传入的原始链接。
+    # 工具入口已校验一次；这里重验以覆盖未来绕过工具层的新调用方。
+    for button in buttons:
+        url_error = validate_link_button_url(str(button.get("url") or ""))
+        if url_error:
+            from agent.security import logsafe as _ls
+            print(f"[im] 链接按钮出站前校验失败 fp={_ls.fingerprint(str(button.get('id')))}", flush=True)
+            return _link_buttons_result("failed", platform, "none", buttons)
+
+    fallback_text = _link_buttons_text(message, buttons)
+
+    def _fp(text: str) -> str:
+        return logsafe.fingerprint(text)
+
+    if platform == "qq":
+        is_group = payload.get("chat_type") == "group"
+        target_id = payload.get("chat_id") if is_group else payload.get("platform_user_id")
+        if not target_id:
+            print(f"[im] qq 链接按钮无出站目标 fp={_fp(fallback_text)}", flush=True)
+            return _link_buttons_result("unsupported", platform, "none", buttons)
+        from agent.gateway import qq
+        # 链接按钮不绑定被动回复窗口（同交互键盘：主动消息，避免 40034128）。
+        if await qq.send_link_keyboard(
+            target_id, message, buttons,
+            channel_id=payload.get("channel_id") or "",
+            msg_id=None,
+            group=is_group,
+        ):
+            return _link_buttons_result("sent", platform, "native", buttons)
+        if await send_text({**payload, "message_id": None}, fallback_text):
+            return _link_buttons_result("sent_with_fallback", platform, "text", buttons)
+        print(f"[im] qq 链接按钮原生与文本降级均失败 fp={_fp(fallback_text)}", flush=True)
+        return _link_buttons_result("failed", platform, "none", buttons)
+
+    if platform == "feishu":
+        target_id = payload.get("chat_id") or payload.get("platform_user_id")
+        if not target_id:
+            print(f"[im] feishu 链接按钮无出站目标 fp={_fp(fallback_text)}", flush=True)
+            return _link_buttons_result("unsupported", platform, "none", buttons)
+        from agent.gateway import feishu
+        if await feishu.send_link_card(target_id, message, buttons, payload.get("channel_id")):
+            return _link_buttons_result("sent", platform, "native", buttons)
+        if await send_text(payload, fallback_text):
+            return _link_buttons_result("sent_with_fallback", platform, "text", buttons)
+        print(f"[im] feishu 链接按钮原生与文本降级均失败 fp={_fp(fallback_text)}", flush=True)
+        return _link_buttons_result("failed", platform, "none", buttons)
+
+    if platform == "wechat":
+        # 微信没有原生 Keyboard：直接文本 URL，结果如实标记 fallback（§5.4）。
+        if payload.get("platform_user_id"):
+            if await send_text(payload, fallback_text):
+                return _link_buttons_result("sent_with_fallback", platform, "text", buttons)
+        return _link_buttons_result("failed", platform, "none", buttons)
+
+    # web 或未知渠道：由调用方（工具层）走结构化 artifact 出口，不经 IM 网关。
+    print(f"[im] 链接按钮渠道 {platform or 'web'} 无 IM 出站通道 fp={_fp(fallback_text)}", flush=True)
+    return _link_buttons_result("unsupported", platform, "none", buttons)
+
+
 async def send_interaction(payload: dict, prompt: dict) -> bool:
     """统一发送交互提示。
 

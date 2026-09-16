@@ -7,7 +7,7 @@
       </div>
       <div class="header-right">
         <Checkbox class="data-header-control" :model-value="excludeDev" :aria-label="t('adminAnalytics.excludeDevelopers')" @update:model-value="excludeDev = $event; load()">{{ t('adminAnalytics.excludeDevelopers') }}</Checkbox>
-        <AdminSegmentTabs
+        <SegmentedTabs
           :model-value="String(rangeDays)"
           :tabs="ranges"
           size="compact"
@@ -228,7 +228,7 @@ import {
 import { useAdminStore } from '@/stores/admin'
 import { useI18n } from 'vue-i18n'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
-import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { browserTz } from '@/utils/dateAttribution'
 import {

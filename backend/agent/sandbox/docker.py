@@ -92,6 +92,55 @@ class DockerPtyHandle:
             yield chunk
 
 
+class DockerStdioHandle:
+    """sandboxd 内部的 MCP stdio 句柄；宿主 Agent 不能直接构造。"""
+
+    def __init__(self, process: asyncio.subprocess.Process, sandbox_id: str):
+        self.process = process
+        self.pid = process.pid
+        self.sandbox_id = sandbox_id
+        self._closed = False
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
+
+    async def _drain_stderr(self) -> None:
+        if self.process.stderr is None:
+            return
+        while await self.process.stderr.readline():
+            pass
+
+    async def write(self, data: bytes) -> None:
+        if self._closed or self.process.stdin is None or self.process.returncode is not None:
+            raise RuntimeError("MCP stdio 已关闭")
+        self.process.stdin.write(data)
+        await self.process.stdin.drain()
+
+    async def read(self) -> bytes:
+        if self.process.stdout is None:
+            return b""
+        return await self.process.stdout.readline()
+
+    async def close(self, *, force: bool = False) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self.process.returncode is None:
+            try:
+                os.killpg(self.process.pid, signal.SIGKILL if force else signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout=3)
+            except asyncio.TimeoutError:
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                await self.process.wait()
+        if not self._stderr_task.done():
+            self._stderr_task.cancel()
+            await asyncio.gather(self._stderr_task, return_exceptions=True)
+
+
 def _tmpfs_spec(settings: SandboxSettings) -> str:
     """把临时配额落实为容器 /tmp 上限，而不是只在宿主机计数。"""
     size = max(64 * 1024 * 1024, int(getattr(settings, "ephemeral_quota_bytes", 64 * 1024 * 1024)))
@@ -393,6 +442,34 @@ exec bash --noprofile --norc -i
         image_index = argv.index(self.image)
         argv[image_index:image_index] = [r"--env=PS1=gugu-sandbox:\w\$ "]
         return argv
+
+    def build_stdio_argv(
+        self, command: str, *, cwd: str = ".", network_profile: str | None = None,
+        container_name: str | None = None,
+    ) -> list[str]:
+        """生成 MCP stdio 容器参数：允许 server 运行时，但仍使用完整沙盒基线。"""
+        argv = self.build_argv(
+            command, cwd=cwd, network_profile=network_profile,
+            container_name=container_name, allow_script_execution=True,
+        )
+        run_index = argv.index("run")
+        argv[run_index + 1:run_index + 1] = ["--interactive"]
+        return argv
+
+    async def open_stdio(
+        self, command: str, *, cwd: str = ".", network_profile: str | None = None,
+        container_name: str | None = None,
+    ) -> DockerStdioHandle:
+        """在固定 Rootless Docker 参数内启动长驻 MCP stdio server。"""
+        docker_argv = self.build_stdio_argv(
+            command, cwd=cwd, network_profile=network_profile, container_name=container_name,
+        )
+        process = await asyncio.create_subprocess_exec(
+            *docker_argv, cwd=self.root, env=docker_environment(),
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, start_new_session=True,
+        )
+        return DockerStdioHandle(process, container_name or "sandbox-stdio")
 
     async def open_pty(
         self,

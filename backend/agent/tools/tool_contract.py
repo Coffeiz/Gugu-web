@@ -124,6 +124,24 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
     return normalized, adaptations
 
 
+def unwrap_arguments_wrapper(schema: dict[str, Any], instance: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """兼容把业务参数误包成 ``{"arguments": {...}}`` 的调用方。
+
+    内置工具的 dispatch 接收的是业务参数对象，而 MCP/模型调用协议有时会把
+    参数再包一层 ``arguments``。只在目标 schema 没有同名业务字段，且内层至少
+    命中一个已声明字段时解包，避免改变真正声明了 ``arguments`` 字段的工具。
+    """
+    if set(instance) != {"arguments"} or not isinstance(instance["arguments"], dict):
+        return instance, False
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or "arguments" in properties:
+        return instance, False
+    inner = instance["arguments"]
+    if not any(key in properties for key in inner):
+        return instance, False
+    return inner, True
+
+
 def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """按工具 Schema 做无歧义的 JSON 类型归一化。
 
@@ -603,3 +621,66 @@ __all__ = [
     "normalize_input_by_schema",
     "validate_input",
 ]
+
+
+# 固定 Adapter 的有限自包装层数：模型偶尔会把 call_tool 本身再包进 call_tool。
+MAX_CALL_TOOL_ADAPTER_DEPTH = 4
+
+
+def resolve_tool_call(raw_name: Any, raw_input: Any) -> tuple[str, Any, dict | None]:
+    """解析固定 Adapter，返回最终业务工具、参数和协议错误（原 core._resolve_tool_call）。
+
+    允许有限层的 ``call_tool`` 自包装，以兼容模型把 Adapter 调用本身又包进
+    Adapter 的输出；确认门、权限与重放必须始终看到最终业务工具名。参数仍由
+    最终工具自己的 Schema 校验，这里只校验 Adapter 外层协议。
+    """
+    if not isinstance(raw_name, str):
+        return "invalid_tool_call", {}, invalid_tool_call_payload()
+    if raw_name != "call_tool":
+        return raw_name, raw_input, None
+
+    target_name = raw_name
+    tool_input = raw_input
+    for _ in range(MAX_CALL_TOOL_ADAPTER_DEPTH):
+        if not isinstance(tool_input, dict):
+            return "invalid_tool_call", {}, invalid_tool_call_payload(
+                path="arguments", reason="call_tool.arguments 必须是 JSON object"
+            )
+        raw_target_name = tool_input.get("name")
+        target_name = normalize_tool_name(raw_target_name)
+        if target_name is None:
+            return "invalid_tool_call", {}, invalid_tool_call_payload(
+                reason="call_tool.name 必须是字符串"
+            )
+
+        if "arguments" in tool_input:
+            if not isinstance(tool_input["arguments"], dict):
+                return "invalid_tool_call", {}, invalid_tool_call_payload(
+                    path="arguments", reason="call_tool.arguments 必须是 JSON object"
+                )
+            tool_input = tool_input["arguments"]
+        else:
+            flattened = {key: value for key, value in tool_input.items() if key != "name"}
+            if not flattened:
+                return "invalid_tool_call", {}, invalid_tool_call_payload(
+                    path="arguments", rule="required",
+                    reason="call_tool.arguments 是必填字段",
+                )
+            tool_input = flattened
+
+        if target_name != "call_tool":
+            return target_name, tool_input, None
+
+    return "invalid_tool_call", {}, invalid_tool_call_payload(
+        reason="call_tool 嵌套层数超过限制", rule="max_depth"
+    )
+
+
+def resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
+    """兼容旧调用点的单层参数提取；主循环统一使用 ``resolve_tool_call``。"""
+    if not isinstance(tool_input, dict):
+        return {}
+    arguments = tool_input.get("arguments")
+    if isinstance(arguments, dict):
+        return arguments
+    return {key: value for key, value in tool_input.items() if key != "name"}

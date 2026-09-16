@@ -23,6 +23,152 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ]; then
     python compose_bootstrap.py
 fi
 
+# 内置依赖模式（GUGU_EMBEDDED_DEPS=1，一体化镜像默认开）：单容器自带 PostgreSQL/Redis，
+# 由 supervisord 托管、只监听 127.0.0.1，数据全部收口在数据卷（/data），容器外无暴露，
+# 应用改连本机。Compose 部署显式设置 GUGU_EMBEDDED_DEPS=0 走各自容器，互不影响。
+EMBEDDED_SUPERVISORD_PID=""
+if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
+    EMBED_DATA="${GUGU_DATA_DIR:-/data}"
+    # 持久化分级守卫（fnOS 面板事故教训）。内置数据库必须落在宿主机 bind mount 上：
+    # ① bind mount → 完全持久，静默通过；
+    # ② Docker 匿名卷（镜像 VOLUME 声明的零配置兜底）→ 重启不丢，但面板"更新镜像"
+    #    重建容器会拿到全新空卷，旧数据滞留孤儿卷无法接上（fnOS v1.2.2 实测丢数据根因）
+    #    → 默认拒绝启动；确实只想临时试用的用户可显式 GUGU_ALLOW_ANONYMOUS_DATA=1
+    #    放行（日志仍会警告）；
+    # ③ overlay 可写层 = 连卷都没挂 → 一律拒绝。
+    EMBED_DATA_FS="$(findmnt -n -o FSTYPE --target "$EMBED_DATA" 2>/dev/null || stat -f -c %T "$EMBED_DATA" 2>/dev/null || echo '')"
+    if [ "$EMBED_DATA_FS" = "overlay" ] || [ "$EMBED_DATA_FS" = "overlayfs" ]; then
+        echo "[entrypoint] 拒绝启动：${EMBED_DATA} 未挂载持久卷（当前在 overlay 可写层上）。" >&2
+        echo "  内置 PostgreSQL/Redis 的数据会写进容器层，删除容器即全部丢失。" >&2
+        echo "  请在启动时绑定宿主机目录：-v /你的数据目录:/data -v /你的配置目录:/config" >&2
+        exit 1
+    fi
+    EMBED_DATA_SRC="$(findmnt -n -o SOURCE --target "$EMBED_DATA" 2>/dev/null || echo '')"
+    case "$EMBED_DATA_SRC" in
+        /var/lib/docker/volumes/*)
+            if [ "${GUGU_ALLOW_ANONYMOUS_DATA:-0}" = "1" ]; then
+                echo "[entrypoint] 警告：${EMBED_DATA} 使用 Docker 匿名卷（GUGU_ALLOW_ANONYMOUS_DATA=1）。" >&2
+                echo "  通过 NAS 面板更新镜像重建容器时会拿到全新空卷，旧数据滞留旧卷无法自动接上。" >&2
+            else
+                echo "[entrypoint] 拒绝启动：${EMBED_DATA} 当前使用 Docker 匿名卷，而非宿主机目录。" >&2
+                echo "  匿名卷在重启/崩溃时不丢数据，但 NAS 面板「更新镜像」重建容器时会拿到全新的空卷，" >&2
+                echo "  数据库将回到出厂状态（fnOS 单容器部署实测踩过）。长期使用请绑定宿主机目录：" >&2
+                echo "    -v /你的数据目录:/data -v /你的配置目录:/config" >&2
+                echo "  只想先临时试用、接受上述风险：加环境变量 GUGU_ALLOW_ANONYMOUS_DATA=1" >&2
+                exit 1
+            fi
+            ;;
+    esac
+    EMBED_RUN=/run/gugu-embedded
+    PG_BIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1)"
+    if [ -z "$PG_BIN" ] || ! command -v redis-server >/dev/null 2>&1 || ! command -v supervisord >/dev/null 2>&1; then
+        echo "[entrypoint] GUGU_EMBEDDED_DEPS=1 但镜像未内置 postgresql/redis/supervisor，无法启动内置依赖。" >&2
+        exit 1
+    fi
+    mkdir -p "$EMBED_DATA/postgres" "$EMBED_DATA/redis" /run/postgresql "$EMBED_RUN"
+    chown postgres:postgres /run/postgresql "$EMBED_DATA/postgres"
+    chown redis:redis "$EMBED_DATA/redis"
+    # fnOS 等面板绑定的宿主机目录常见 700/000 且属主是面板用户（或 root），postgres/redis
+    # 系统用户连「穿越」$EMBED_DATA 都做不到，initdb 会报 Permission denied（入口自身是
+    # root，mkdir/chown 全成功，炸点在 su 之后）。这里只给父目录补执行位（不开放读列表），
+    # 并把两个数据目录收成守护用户私有（initdb 自己会再收紧到 700）。
+    chmod a+x "$EMBED_DATA" 2>/dev/null || true
+    chown -R postgres:postgres "$EMBED_DATA/postgres"
+    chown -R redis:redis "$EMBED_DATA/redis"
+    chmod 700 "$EMBED_DATA/postgres" "$EMBED_DATA/redis"
+    # 库名/用户名跟随 DB__NAME / DB__USER（默认 gugu）：面板暴露了这两个变量，
+    # 初始化若硬编码 gugu，用户改了变量反而会把自己配坏。
+    EMBED_DB_USER="${DB__USER:-gugu}"
+    EMBED_DB_NAME="${DB__NAME:-gugu}"
+    if [ ! -s "$EMBED_DATA/postgres/PG_VERSION" ]; then
+        echo "[entrypoint] 首次启动：初始化内置 PostgreSQL（数据目录 $EMBED_DATA/postgres）..."
+        if ! su -s /bin/bash postgres -c "\"$PG_BIN/initdb\" -D '$EMBED_DATA/postgres' --username='$EMBED_DB_USER' --encoding=UTF8"; then
+            echo "[entrypoint] 内置 PostgreSQL 初始化失败。" >&2
+            echo "  最常见原因：宿主机绑定目录权限过严（NAS 面板映射目录常见），守护用户无法写入。" >&2
+            echo "  请在宿主机执行：chmod 755 /你的数据目录 && chown -R 999:999 /你的数据目录" >&2
+            echo "  （999 是镜像内 postgres 用户的 uid；容器重启即可继续初始化）" >&2
+            exit 1
+        fi
+        cat >> "$EMBED_DATA/postgres/pg_hba.conf" <<'HBA'
+host all all 127.0.0.1/32 trust
+host all all ::1/128 trust
+HBA
+        printf "\nlisten_addresses = '127.0.0.1'\n" >> "$EMBED_DATA/postgres/postgresql.conf"
+        # 只服务本机回环 + trust 认证，无需 TLS；镜像里删掉了 snakeoil 示例证书，
+        # 不显式关掉 Debian 默认的 ssl=on 会让 postgres 因证书缺失起不来。
+        printf "\nssl = off\n" >> "$EMBED_DATA/postgres/postgresql.conf"
+    fi
+    cat > "$EMBED_RUN/supervisord.conf" <<EOF
+[supervisord]
+nodaemon=false
+logfile=$EMBED_RUN/supervisord.log
+pidfile=$EMBED_RUN/supervisord.pid
+
+[program:postgres]
+command=$PG_BIN/postgres -D $EMBED_DATA/postgres
+user=postgres
+priority=10
+autorestart=true
+
+[program:redis]
+command=redis-server --bind 127.0.0.1 --port 6379 --dir $EMBED_DATA/redis --appendonly yes
+user=redis
+priority=10
+autorestart=true
+EOF
+    # RAG worker 宿主：统一应用模式下由后面的 monitored_pids 块托管；
+    # 仅非统一模式才交给 supervisord，两处都起会互相顶掉同一路径的 socket。
+    mkdir -p /run/gugu
+    export SEARCH__TS_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
+    if [ "${GUGU_UNIFIED_APP:-0}" != "1" ]; then
+        cat >> "$EMBED_RUN/supervisord.conf" <<SUPERVISEOF
+
+[program:rag-sidecar]
+directory=/app
+command=python -m agent.rag.sidecar_host --socket /run/gugu/rag-sidecar.sock
+priority=15
+autorestart=true
+SUPERVISEOF
+    fi
+    # 沙盒需要能创建隔离容器：仅当用户显式挂载了 docker socket 才把 sandboxd 纳入托管，
+    # 否则不启动（Shell 能力保持不可用，不影响其余功能）。
+    if [ -S /var/run/docker.sock ]; then
+        echo "[entrypoint] 检测到 docker socket：本次启动加入 sandboxd 托管（Shell 沙盒可用）。"
+        cat >> "$EMBED_RUN/supervisord.conf" <<EOF
+
+[program:sandboxd]
+directory=/app
+command=python -m agent.sandbox.sandboxd --socket /run/gugu/sandboxd.sock --allowed-root $EMBED_DATA/users
+priority=20
+autorestart=true
+EOF
+    fi
+    echo "[entrypoint] 启动内置 PostgreSQL / Redis（supervisord 托管）..."
+    supervisord -c "$EMBED_RUN/supervisord.conf"
+    EMBEDDED_SUPERVISORD_PID="$(cat "$EMBED_RUN/supervisord.pid" 2>/dev/null || true)"
+    # 应用改连本机内置实例；用户显式指向外部数据库时不覆盖。内置 postgres/redis 固定监听
+    # 5432/6379（supervisord 配置不读 DB__PORT/REDIS__PORT），因此一旦解析为内置实例就
+    # 把端口一并钉死，避免面板里改了端口后应用去连一个并不存在的监听。
+    case "${DB__HOST:-postgres}" in
+        postgres|127.0.0.1|localhost)
+            export DB__HOST=127.0.0.1 DB__PORT=5432
+            export DB__NAME="$EMBED_DB_NAME" DB__USER="$EMBED_DB_USER"
+            ;;
+    esac
+    case "${REDIS__HOST:-redis}" in
+        redis|127.0.0.1|localhost) export REDIS__HOST=127.0.0.1 REDIS__PORT=6379 ;;
+    esac
+    for _ in $(seq 1 30); do
+        if su -s /bin/bash postgres -c "$PG_BIN/pg_isready -h 127.0.0.1 -p 5432" >/dev/null 2>&1; then
+            echo "[entrypoint] 内置 PostgreSQL 已就绪"
+            break
+        fi
+        sleep 1
+    done
+    # 建应用库（幂等：已存在时忽略报错）。
+    su -s /bin/bash postgres -c "\"$PG_BIN/createdb\" -h 127.0.0.1 -U '$EMBED_DB_USER' '$EMBED_DB_NAME'" >/dev/null 2>&1 || true
+fi
+
 DB_HOST="${DB__HOST:-postgres}"
 DB_PORT="${DB__PORT:-5432}"
 
@@ -119,6 +265,8 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
     proxy_pid=$!
     monitored_pids+=("$proxy_pid")
     [ -n "$app_pid" ] && monitored_pids+=("$app_pid")
+    # 内置 postgres/redis 由 supervisord 托管：它退出（数据库两进程全挂）同样视为关键故障。
+    [ -n "$EMBEDDED_SUPERVISORD_PID" ] && monitored_pids+=("$EMBEDDED_SUPERVISORD_PID")
     stop_children() {
         for pid in "${monitored_pids[@]}"; do
             kill "$pid" 2>/dev/null || true

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { computed, isReactive, reactive } from 'vue'
 import { describe, expect, it } from 'vitest'
 import type { Project } from '@/types/project'

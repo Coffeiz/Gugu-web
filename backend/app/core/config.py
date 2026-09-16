@@ -187,6 +187,14 @@ class SandboxSettings(BaseModel):
         ),
         description="sandboxd Unix Socket；生产 Shell 必须通过该 socket 执行",
     )
+    stdio_max_sessions: int = Field(
+        8,
+        description="sandboxd 全局长驻 stdio MCP 会话上限；独立于一次性执行槽，避免长连接占满普通沙盒执行",
+    )
+    stdio_max_sessions_per_user: int = Field(
+        4,
+        description="单用户长驻 stdio MCP 会话上限（按沙盒根目录即用户计）",
+    )
 
 
 class FileSyncSettings(BaseModel):
@@ -341,6 +349,18 @@ class BYOKSettings(BaseModel):
     master_key: str = Field("", repr=False, description="BYOK 主密钥（仅从 CREDENTIALS_MASTER_KEY 注入，不写入响应）")
 
 
+class McpSettings(BaseModel):
+    """用户自带 MCP 工具接入（PRD-MCP-1 FR-MCP-1）。"""
+    enabled: bool = Field(True, description="平台总开关：关闭时全量摘除 MCP 工具（用户配置保留）")
+    max_servers_per_user: int = Field(10, description="每用户最多 MCP server 数")
+    max_tools_per_server: int = Field(64, description="单 server 最多载入工具数")
+    default_timeout_seconds: int = Field(30, description="单次 MCP 调用默认超时")
+    failure_threshold: int = Field(3, description="连续失败多少次进入退避")
+    backoff_seconds: int = Field(60, description="退避时长（秒内不再外呼该 server）")
+    stdio_idle_seconds: int = Field(300, ge=30, le=3600, description="MCP stdio 空闲会话回收时间")
+    stdio_restart_limit: int = Field(3, ge=0, le=10, description="MCP stdio 单次连接允许的崩溃重启次数")
+
+
 class SmtpSettings(BaseModel):
     host:     str           = Field("", description="SMTP 服务器地址")
     enabled:  bool          = Field(True, description="是否启用系统 SMTP 邮件能力")
@@ -437,6 +457,7 @@ class AppSettings(BaseSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
     byok: BYOKSettings = Field(default_factory=BYOKSettings)
+    mcp: McpSettings = Field(default_factory=McpSettings)
     # 业务 Live SSE 由 TypeScript 服务独立承载，FastAPI 不再提供代理入口。
 
     def apply_override(self) -> "AppSettings":
@@ -531,6 +552,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["byok"] = BYOKSettings.model_construct(**merged)
 
+            if "mcp" in override:
+                merged = {**self.mcp.model_dump(), **{
+                    k: v for k, v in (override["mcp"] or {}).items()
+                    if k in McpSettings.model_fields
+                }}
+                updates["mcp"] = McpSettings.model_construct(**merged)
+
             if "sandbox" in override:
                 merged = {**self.sandbox.model_dump(), **{
                     k: v for k, v in (override["sandbox"] or {}).items()
@@ -601,7 +629,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok", "mcp"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

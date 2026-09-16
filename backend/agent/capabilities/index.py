@@ -6,7 +6,7 @@ from dataclasses import replace
 from types import MappingProxyType
 
 from agent.tools import registry as tool_registry
-from .models import CapabilityMeta, CapabilitySnapshot
+from .models import CapabilityMeta, CapabilitySnapshot, DESCRIPTION_SHORT_MAX_CHARS
 from .skill_registry import SkillCapabilityRegistry
 from .tool_registry import ToolCapabilityRegistry
 from .errors import CapabilityReferenceError
@@ -54,23 +54,45 @@ class CapabilityIndex:
     async def from_registries_for_user(cls, db, owner_id: object, *,
                                        tool_names: list[str] | None = None,
                                        skill_names: list[str] | None = None,
-                                       skill_metadata: tuple[CapabilityMeta, ...] | None = None):
+                                       skill_metadata: tuple[CapabilityMeta, ...] | None = None,
+                                       dynamic_tools=()):
         """合并 builtin 与用户 Skill metadata；正文仍按需加载。
 
         ``skill_metadata`` 用于复用会话 snapshot。传入时不查询数据库，保证用户
         编辑 Skill 不会改写当前会话已经注入的目录；正文仍由 ``use_skill`` 实时读取。
         """
-        base = cls.from_registries(tool_names=tool_names, skill_names=skill_names)
+        tool_snapshot = tool_registry.snapshot()
+        registry_names = [
+            name for name in (tool_names if tool_names is not None else tool_snapshot.all_tool_names())
+            if tool_snapshot.get(name) is not None
+        ]
+        base = cls.from_registries(tool_names=registry_names, skill_names=skill_names)
+        dynamic_items = []
+        for tool in dynamic_tools or ():
+            name = getattr(tool, "name", "")
+            description = str(getattr(tool, "description_short", "") or "").strip()
+            if not name or not description:
+                continue
+            dynamic_items.append(CapabilityMeta(
+                name=name,
+                kind="tool",
+                description_short=description[:DESCRIPTION_SHORT_MAX_CHARS],
+                category=getattr(tool, "category", "") or "mcp",
+                permissions=tuple(getattr(tool, "permissions", ()) or ()),
+                platforms=tuple(getattr(tool, "platforms", ()) or ()),
+                source="mcp",
+                enabled=True,
+            ))
         user_items = (
             tuple(skill_metadata)
             if skill_metadata is not None
             else await SkillCapabilityRegistry().user_metadata(db, owner_id)
         )
-        tool_snapshot = tool_registry.snapshot()
-        authorized_tools = set(tool_names) if tool_names is not None else set(tool_snapshot._tools)
+        authorized_tools = set(registry_names)
+        authorized_tools.update(item.name for item in dynamic_items)
         # 先用全局 registry 判断关联名是否真实存在，再单独按本轮授权集收窄；
         # 历史 Skill 关联到后来关闭的工具时，不能把整个会话构建打成 500。
-        known_tools = set(tool_snapshot._tools)
+        known_tools = set(tool_snapshot._tools) | {item.name for item in dynamic_items}
         for item in user_items:
             missing = [name for name in item.related_tools if name not in known_tools]
             if missing:
@@ -86,7 +108,7 @@ class CapabilityIndex:
             replace(item, related_tools=tuple(name for name in item.related_tools if name in authorized_tools))
             for item in user_items
         )
-        return cls(tuple(base._tools.values()), tuple(base._skills.values()) + user_items,
+        return cls(tuple(base._tools.values()) + tuple(dynamic_items), tuple(base._skills.values()) + user_items,
                    base._diagnostics)
 
     def short_catalog(self, snapshot: CapabilitySnapshot) -> list[dict]:

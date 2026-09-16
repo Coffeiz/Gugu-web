@@ -207,7 +207,8 @@ function injectionSummary(span: any) {
   if (span.attributes?.context_source === 'tool_schema') {
     const selected = Array.isArray(input.selected_tool_names) ? input.selected_tool_names : []
     const count = selected.length > 0 ? selected.length : Number(input.tool_count ?? 0)
-    return `${count} 个工具`
+    const mcpCount = Array.isArray(input.mcp_tool_names) ? input.mcp_tool_names.length : 0
+    return `${count} 个工具${mcpCount ? ` · MCP ${mcpCount}` : ''}`
   }
   if (span.attributes?.context_source === 'capability_catalog') return `${input.skill_count ?? 0} 个 Skill · ${input.catalog_count ?? 0} 项能力`
   if (span.attributes?.context_source === 'skill_index') return `${span.attributes?.skill_count ?? 0} 个 Skill 索引`

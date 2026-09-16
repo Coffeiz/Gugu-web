@@ -33,4 +33,10 @@ export const devToolRegistry: DevToolEntry[] = [
     eyebrowKey: 'devHome.tools.email.eyebrow',
     descriptionKey: 'devHome.tools.email.description',
   },
+  {
+    path: '/dev/notes-three-pane',
+    labelKey: 'devHome.tools.notesThreePane.label',
+    eyebrowKey: 'devHome.tools.notesThreePane.eyebrow',
+    descriptionKey: 'devHome.tools.notesThreePane.description',
+  },
 ]

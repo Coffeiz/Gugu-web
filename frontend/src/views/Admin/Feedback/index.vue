@@ -8,7 +8,7 @@
       <RefreshButton :loading="refreshing" @click="load" :title="t('adminFeedback.refresh')" />
     </div>
 
-    <AdminSegmentTabs
+    <SegmentedTabs
       :model-value="filter"
       :tabs="categoryTabs"
       :aria-label="t('adminFeedback.category')"
@@ -40,9 +40,10 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
+import { isUnauthorizedResponse } from '@/services/authSession'
 const { t } = useI18n()
 
 const categoryTabs = computed(() => [
@@ -84,6 +85,7 @@ async function load() {
     const res = await fetch(`/api/v1/admin/feedback?${params}`, {
       headers: { Authorization: `Bearer ${adminToken()}` },
     })
+    if (isUnauthorizedResponse(res, 'admin')) return
     const data = await res.json()
     items.value = data.items ?? []
     total.value = data.total ?? 0

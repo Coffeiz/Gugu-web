@@ -107,6 +107,19 @@ def format_text_fallback(prompt: dict[str, Any], *, platform: str | None = None)
             instruction = "请点击选项；如需其他回答，请点击“自定义回复”后直接发送内容。"
         prefix = "⏸️ 任务已暂停，等待确认。\n" if paused else ""
         return f"{prefix}{title}\n{body}\n{choices}\n{instruction}"
+    if prompt.get("secret_fields"):
+        # IM 不提供凭据输入框；只给出网页入口，绝不把字段值拼进消息或 URL。
+        try:
+            from app.core.config import get_settings
+
+            base_url = str(getattr(get_settings().app, "public_app_url", "") or "").rstrip("/")
+        except Exception:
+            base_url = ""
+        link = f"{base_url}/?mcp_credential_prompt={int(prompt['prompt_id'])}" if base_url and prompt.get("prompt_id") else base_url
+        instruction = "请打开网页继续补全 MCP 凭据。"
+        if link:
+            instruction += f"\n{link}"
+        return f"{title}\n{body}\n{instruction}"
     instruction = (
         "请直接回复你的答案。"
         if platform in {"wechat", "feishu"}

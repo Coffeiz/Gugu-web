@@ -162,7 +162,7 @@ def test_phase8_migrated_tools_are_source_canonical_schema():
     for name in (
         "create_project", "create_event", "update_event", "save_uploaded_file",
         "list_events", "list_projects", "list_event_reminders", "remove_event_reminder",
-        "list_folders", "set_stages", "read_file",
+        "list_dir", "set_stages", "read_file",
         "note_get", "note_delete", "note_restore",
         "get_project", "read_conversation", "bind_web_session",
         "add_stage", "get_workspace", "get_upcoming", "create_client",

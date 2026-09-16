@@ -134,7 +134,8 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
 
     knowledge = knowledge if (include_knowledge and knowledge) else []
     kx_lines: list[str] = []
-    for item in knowledge[:_KNOWLEDGE_MANIFEST_MAX_ITEMS]:
+    shown = knowledge[:_KNOWLEDGE_MANIFEST_MAX_ITEMS]
+    for item in shown:
         title = str(item.get("title") or "").strip()
         if not title:
             continue
@@ -144,12 +145,20 @@ def build_split(prompt_name: str, user_name: str, projects: list, events: list,
             desc = f"（{topic}）" if topic else ""
         kx_lines.append(f"- {title}：{desc}" if desc else f"- {title}")
     if include_knowledge:
+        if len(knowledge) > len(kx_lines):
+            # 截断必须如实告知：清单只列最新一批，不提示的话更早的条目对模型完全
+            # 不可见，它既不会想到去检索也不会去列举（KN2 边界修订 2026-09-16）。
+            kx_lines.append(
+                f"（以上仅显示最新 {len(kx_lines)} 条，另有 {len(knowledge) - len(kx_lines)} 条更早条目未列出；"
+                "查找旧知识用 read_knowledge 列举（可带 keyword 过滤），或等被动召回命中）"
+            )
         kx_block = "\n".join(kx_lines) if kx_lines else "暂无已保存知识"
     else:
         kx_block = "（本次任务不需要知识上下文，未加载）"
     dynamic_parts.append(
-        "## 知识\n以下是已保存的知识条目，仅供判断是否与当前任务相关；"
-        "需要全文时用 read_knowledge 按 knowledge_id 直读，不要凭标题编造内容。\n" + kx_block
+        "## 知识\n以下是最近保存的知识条目标题，仅供判断是否与当前任务相关；"
+        "清单不含正文也不含 id：需要全文时先用 read_knowledge 列举（可带 keyword 过滤）"
+        "拿到 knowledge_id 再按 id 直读，不要凭标题编造内容。\n" + kx_block
     )
 
     src_block = _source_block(source, im_channels)

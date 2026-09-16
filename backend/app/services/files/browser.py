@@ -194,20 +194,12 @@ async def folder_download_rows(db: AsyncSession, user_id: int, folder_id: int):
     return folder, rows
 
 
-async def search_user_files(
-    db: AsyncSession,
+def _user_files_stmt(
     user_id,
-    *,
-    space=None,
-    project_id=None,
-    folder_id=None,
-    workspace_directory_id=None,
-    ext=None,
-    queries=None,
-    mode=None,
-    limit=100,
+    *, space=None, project_id=None, folder_id=None,
+    workspace_directory_id=None, ext=None, queries=None, mode=None,
 ):
-    """查询 Agent 文件工具使用的当前用户存活文件。"""
+    """构造 list_dir 共用的存活文件过滤条件（搜索与计数必须同口径）。"""
     stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
     if space:
         stmt = stmt.where(File.space == space)
@@ -222,9 +214,69 @@ async def search_user_files(
     normalized = normalize_queries(queries=queries)
     if normalized:
         stmt = stmt.where(keyword_condition([File.display_name], normalized, mode))
+    return stmt
+
+
+async def search_user_files(
+    db: AsyncSession,
+    user_id,
+    *,
+    space=None,
+    project_id=None,
+    folder_id=None,
+    workspace_directory_id=None,
+    ext=None,
+    queries=None,
+    mode=None,
+    limit=100,
+    offset=0,
+    sort="updated",
+):
+    """查询 Agent 文件工具使用的当前用户存活文件。
+
+    sort="name" 用于分页遍历：名字序在翻页期间稳定，不会因文件被改动而漏/重；
+    sort="updated"（默认）保持旧行为——最近改动的文件排最前。
+    """
+    stmt = _user_files_stmt(
+        user_id, space=space, project_id=project_id, folder_id=folder_id,
+        workspace_directory_id=workspace_directory_id, ext=ext,
+        queries=queries, mode=mode,
+    )
+    if sort == "name":
+        # 名字升序 + id 兜底：分页遍历时顺序稳定，同名文件（不同 ext/space）也不漏重
+        order = (File.display_name.asc(), File.ext.asc(), File.id.asc())
+    else:
+        order = (File.updated_at.desc(), File.id.desc())
     return (await db.execute(
-        stmt.order_by(File.updated_at.desc()).limit(limit)
+        stmt.order_by(*order).offset(offset).limit(limit)
     )).scalars().all()
+
+
+async def count_user_files(
+    db: AsyncSession,
+    user_id,
+    *,
+    space=None,
+    project_id=None,
+    folder_id=None,
+    workspace_directory_id=None,
+    ext=None,
+    queries=None,
+    mode=None,
+):
+    """与 search_user_files 完全同口径的总数（不含 limit）。
+
+    list_dir 靠它区分「就这么多」和「被 limit 截断」——没有这个数，
+    模型拿小 limit 的前 N 条会当成全量下结论（真实漏判案例：根目录清理时
+    两条排在截断线外的文件被当成不存在）。
+    """
+    from sqlalchemy import func
+    stmt = _user_files_stmt(
+        user_id, space=space, project_id=project_id, folder_id=folder_id,
+        workspace_directory_id=workspace_directory_id, ext=ext,
+        queries=queries, mode=mode,
+    )
+    return (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
 
 
 async def get_user_file(db: AsyncSession, user_id, file_id):

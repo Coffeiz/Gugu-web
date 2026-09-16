@@ -306,6 +306,70 @@ async def test_readonly_no_verify_triggered(monkeypatch, dispatched):
     assert ev["_usage"] == 1
 
 
+async def test_external_mutating_tool_can_skip_local_verification(monkeypatch, dispatched):
+    """外部工具仍禁止自动重放，但不因 mutates 标记强制进入本地复查。"""
+    tool = SimpleNamespace(mutates=True, verify_after_call=False)
+    monkeypatch.setattr(registry, "get", lambda name: tool if name == "mcp_gaode_maps_weather" else None)
+    patch_anthropic(monkeypatch, [
+        msg([TU("mcp_gaode_maps_weather", "1", {"city": "南京"})]),
+        msg([TX("南京今天阴天，最高 29 度。")]),
+    ])
+    messages = [{"role": "user", "content": "查一下南京天气"}]
+    ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+    assert "南京今天阴天" in text
+    assert n_verify(messages) == 0
+    assert ev["_usage"] == 1
+
+
+async def test_compound_mutating_tool_read_action_does_not_trigger_verify(monkeypatch, dispatched):
+    """整体可写的复合工具，其 list 分支仍应按只读调用处理。"""
+    tool = SimpleNamespace(mutates=True, mutates_for_input=lambda args: args.get("action") == "add")
+    monkeypatch.setattr(registry, "get", lambda name: tool if name == "manage_mcp_servers" else None)
+    patch_anthropic(monkeypatch, [
+        msg([TU("manage_mcp_servers", "1", {"action": "list"})]),
+        msg([TX("当前没有配置 MCP 服务")]),
+    ])
+    messages = [{"role": "user", "content": "看看 MCP 服务"}]
+    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
+    runner = LLMRunner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
+    ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, ai))
+    assert "当前没有配置 MCP 服务" in text
+    assert n_verify(messages) == 0
+    assert ev["_usage"] == 1
+
+
+async def test_compound_tool_read_action_ends_post_mutation_verify(monkeypatch, dispatched):
+    """复查轮调用复合工具的 list 分支后，应视为已观察状态并正常收束。"""
+    tool = SimpleNamespace(
+        mutates=True,
+        mutates_for_input=lambda args: args.get("action") == "add",
+        observes_for_input=lambda args: args.get("action") == "list",
+    )
+    monkeypatch.setattr(registry, "get", lambda name: tool if name == "manage_mcp_servers" else None)
+
+    async def fake_dispatch(_uid, name, args):
+        assert name == "manage_mcp_servers"
+        if args.get("action") == "add":
+            return {"success": True}, None
+        return {"items": []}, None
+
+    monkeypatch.setattr(core.registry, "dispatch", fake_dispatch)
+    patch_anthropic(monkeypatch, [
+        msg([TU("manage_mcp_servers", "add-1", {"action": "add"})]),
+        msg([TU("manage_mcp_servers", "list-1", {"action": "list"})]),
+        msg([TX("MCP 服务已确认配置完成")]),
+        msg([TX("MCP 服务配置已经完成")]),
+    ])
+    messages = [{"role": "user", "content": "添加 MCP 服务"}]
+    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
+    runner = LLMRunner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
+    ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, ai))
+
+    assert "MCP 服务配置已经完成" in text
+    assert n_verify(messages) == 1
+    assert ev["_usage"] == 1
+
+
 async def test_note_get_counts_as_verify_observation(monkeypatch, dispatched):
     """思维笔记的历史命名不应导致读回后还被重复要求复查。"""
     patch_anthropic(monkeypatch, [
@@ -656,6 +720,76 @@ async def test_tool_confirmation_confirm_replays_tool_without_model_recall(monke
     ]
     assert any("邮件已发送" in (c or "") for c in tool_results), "真实执行结果必须回写进工具往返"
     assert not any("请直接重新调用" in (c or "") for c in tool_results)
+
+
+async def test_mcp_confirm_replay_enters_credential_prompt_without_loop(monkeypatch, dispatched):
+    """MCP 添加的确认后凭据表单必须继续挂起 Run，不能把表单交给模型造成循环。"""
+    blocked = json.dumps({
+        "status": "waiting_confirmation", "needs_confirm": True,
+        "summary": "添加 MCP server [飞猪]", "confirm_code": "mcp-confirm",
+    }, ensure_ascii=False)
+    credential_form = {
+        "_interaction": "ask_user", "kind": "form", "title": "补全 MCP 服务凭据",
+        "body": "请输入凭据", "options": [],
+        "secret_fields": [{"name": "Authorization", "label": "Authorization", "type": "secret"}],
+        "secret_target": {"kind": "mcp_credentials", "server_id": "00000000-0000-0000-0000-000000000001"},
+        "allow_text_input": False,
+    }
+    calls: list[str] = []
+    prompt_calls: list[str] = []
+    waits = iter([
+        {"status": "confirmed", "option_id": "confirm", "confirm": True},
+        {"status": "answered", "prompt_id": 907, "text": "MCP 凭据已安全保存"},
+    ])
+
+    async def fake_dispatch(_uid, name, _inp):
+        calls.append(name)
+        if len(calls) == 1:
+            return blocked, None
+        return json.dumps(credential_form, ensure_ascii=False), None
+
+    async def fake_create_tool_confirmation(**_kwargs):
+        return {
+            "prompt_id": 906, "kind": "confirm", "title": "任务已暂停 · 管理 MCP 服务",
+            "body": "确认后将继续执行当前任务。",
+            "options": [{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+            "task_paused": True, "expires_at": "2026-09-10T21:00:00+08:00",
+        }
+
+    async def fake_create_agent_prompt(**kwargs):
+        prompt_calls.append(kwargs["tool_name"])
+        return SimpleNamespace(
+            id=907,
+            kind="form",
+            title="补全 MCP 服务凭据",
+            body="请输入凭据",
+            schema_json={"secret_fields": credential_form["secret_fields"], "allow_text_input": False},
+            expires_at=SimpleNamespace(isoformat=lambda: "2026-09-10T21:00:00+08:00"),
+        ), []
+
+    async def fake_wait_for_resolution(**_kwargs):
+        return next(waits)
+
+    monkeypatch.setattr(core.registry, "dispatch", fake_dispatch)
+    monkeypatch.setattr("app.services.interactions.create_tool_confirmation", fake_create_tool_confirmation)
+    monkeypatch.setattr("app.services.interactions.create_agent_prompt", fake_create_agent_prompt)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+
+    patch_anthropic(monkeypatch, [
+        msg([TU("manage_mcp_servers", "call-mcp-1", {"action": "add", "name": "飞猪"})]),
+        msg([TX("MCP 服务已添加，请继续填写凭据。")]),
+    ])
+    messages = [{"role": "user", "content": "帮我添加飞猪 MCP 服务"}]
+
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1)
+    )
+
+    assert calls == ["manage_mcp_servers", "manage_mcp_servers"]
+    assert prompt_calls == ["manage_mcp_servers"]
+    assert ev["interaction_required"] == 2
+    assert "MCP 服务已添加" in text
+    assert errors == []
 
 
 async def test_confirmed_replay_result_reaches_canonical_batch(monkeypatch, dispatched):

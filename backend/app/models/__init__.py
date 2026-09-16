@@ -1596,3 +1596,5 @@ class NotificationRead(Base):
     user_id:         Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     notification_id: Mapped[int]      = mapped_column(ForeignKey("site_notifications.id", ondelete="CASCADE"), index=True)
     read_at:         Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+from app.models.mcp import UserMcpServer  # noqa: E402  (PRD-MCP-1)

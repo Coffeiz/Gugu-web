@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'

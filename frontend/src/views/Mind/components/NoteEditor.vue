@@ -74,7 +74,8 @@
               <button class="ne-link-ok" @mousedown.prevent="confirmLink">{{ t('mindEditorUi.confirm') }}</button>
             </div>
           </div>
-          <button class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
+          <!-- expandDrawers（宽窗格常开）模式：抽屉已永久展开，开合按钮没有存在意义 -->
+          <button v-if="!expandDrawers" class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
                   @mousedown.prevent="toggleStylesMenu" :title="t('mindEditorUi.textStyle')">
             <PhTextAa :size="13" weight="bold" />
           </button>
@@ -94,7 +95,7 @@
               <PhQuotes :size="13" weight="bold" />
             </button>
           </div>
-          <button class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
+          <button v-if="!expandDrawers" class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
                   @mousedown.prevent="toggleInsertMenu" :title="t('mindEditorUi.insert')">
           <PhNoteBlank :size="13" weight="bold" />
           </button>
@@ -145,7 +146,10 @@ const props = withDefaults(defineProps<{
   // 一起藏起来，见下面 .ne-toolbar-floating.pending 的说明。非浮动模式下这个 prop
   // 不起作用（原有的 :deep(.ne-toolbar) 淡入规则仍然生效）。
   editReady?: boolean
-}>(), { placeholder: '写点什么…', compact: false, autofocus: false, floatToolbar: false, editReady: true })
+  // 样式/插入抽屉初始展开（默认收起）。宽版阅读窗格（三栏笔记原型）空间足够，
+  // 折叠反而多一步；窄卡片场景维持默认收起。
+  expandDrawers?: boolean
+}>(), { placeholder: '写点什么…', compact: false, autofocus: false, floatToolbar: false, editReady: true, expandDrawers: false })
 
 const emit = defineEmits<{
   (e: 'update:modelValue', md: string): void
@@ -273,7 +277,7 @@ const isFocused = ref(false)
 // 「样式」抽屉：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。菜单里的按钮都是
 // mousedown.prevent（不失焦，同待办/列表），链接输入框例外——它得真的拿到焦点才能打字，
 // 所以点开输入框那一刻编辑器会失焦，靠 linkInputOpen 挡住 onBlur 里顺手关抽屉的逻辑。
-const stylesOpen = ref(false)
+const stylesOpen = ref(props.expandDrawers === true)
 const linkInputOpen = ref(false)
 const linkUrl = ref('')
 const linkInputRef = ref<HTMLInputElement | null>(null)
@@ -336,7 +340,7 @@ function cancelLink() {
 
 // 「插入」抽屉：代码块/引用块/有序列表/分割线，2026-07-11 加（中等成本那档，块级
 // 元素）。都是一次性动作，选完就自己收起抽屉——不像样式那档可能要连续切换好几个。
-const insertOpen = ref(false)
+const insertOpen = ref(props.expandDrawers === true)
 
 const hasAnyBlock = computed(() => {
   const ed = editor.value
@@ -405,6 +409,8 @@ const editor = useEditor({
   onBlur() {
     isFocused.value = false
     clearDrawerSwitchTimer()   // 失焦直接双关，不留一个"马上要开另一个"的挂起计时器
+    // 宽窗格常开模式（expandDrawers）：抽屉保持展开，失焦不收
+    if (props.expandDrawers) return
     if (!linkInputOpen.value) stylesOpen.value = false
     insertOpen.value = false
   },
@@ -427,7 +433,9 @@ watch(() => props.modelValue, (md) => {
  *  跟 mdToPreviewHtml 给引用块每段各分一个 data-line-unit 是对应的。 */
 function focusAtLineUnit(unitIdx: number) {
   const ed = editor.value
-  if (!ed) return
+  // useEditor（tiptap v3）在 onMounted 才真正 new Editor：从只读态点进编辑的头几拍
+  // editor 还不存在。挂起这次定位，实例就绪后补放光标，否则调用方拿到的就是静默落空
+  if (!ed) { pendingLineUnit = unitIdx; return }
   const LEAF_TYPES = new Set(['paragraph', 'heading', 'taskItem', 'listItem', 'orderedListItem', 'codeBlock'])
   let count = 0
   let target: number | null = null
@@ -445,6 +453,14 @@ function focusAtLineUnit(unitIdx: number) {
   // 飘到页面左上角。等浏览器画完这一帧布局稳定了，再照当前光标位置强制重新算一次。
   requestAnimationFrame(() => { if (editor.value) syncPicker(editor.value) })
 }
+
+let pendingLineUnit: number | null = null
+watch(editor, (ed) => {
+  if (!ed || pendingLineUnit === null) return
+  const unit = pendingLineUnit
+  pendingLineUnit = null
+  focusAtLineUnit(unit)
+})
 
 defineExpose({
   focus: () => editor.value?.commands.focus('end'),

@@ -7,7 +7,7 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ## 后端（pytest）
 
-- 跑法：`PYTHONPATH=. .venv/bin/pytest`（devserver 上跑）。
+- 跑法：`PYTHONPATH=. .venv/bin/pytest`（devserver 上跑）；全量回归带并行 `-n auto`（内存库/fake 依赖逐 worker 独立；单测调试用 pdb 时去掉它，xdist 下断点不可用）。
 - 测试基座在 `backend/tests/conftest.py`：
   - `db` fixture 给每个测试一个全新的内存 SQLite（`StaticPool` 共享同一条连接），测完即弃。
   - `user_a`/`user_b` 是标准的多用户越权测试姿势：B 拥有资源，A 拿着 B 的资源 id 调工具，必须得到"不存在"而不是数据。

@@ -11,13 +11,13 @@ from .documents import (
     TEXT_EXTS, READ_MAX_BYTES, _DOC_MIME, _DOC_EXT, _DOC_EXT_ALIASES,
     _CREATE_NAME_EXT_RE, _CREATE_SPACES, _CREATE_BINARY_EXTS,
     _is_text_file_record, _split_create_name, _strip_ext, _resolve_file,
-    _list_files, _read_file, _edit_one, _edit_file, _create_file,
+    _list_dir, _read_file, _edit_one, _edit_file, _create_file,
     _save_one_attach, _save_uploaded_file, _rename_one, _rename_file,
     _delete_file, _copy_file, FilesSkill,
 )
 from .folders import (
     _as_dict, _descendant_folder_ids, _resolve_target, _move_one,
-    _move_folder, _move_items, _create_folder, _list_folders,
+    _move_folder, _move_items, _create_folder,
     _find_folder, _rename_folder, _delete_folder,
 )
 from .transfer import (

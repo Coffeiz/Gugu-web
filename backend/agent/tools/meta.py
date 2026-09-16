@@ -30,13 +30,24 @@ async def _get_tool_schema(db, user_id, args: dict):
     rejected: list[str] = []
     tool_snapshot = current_dispatch_tool_snapshot() or registry.snapshot()
     for raw_name in requested[:12]:
-        name = str(raw_name or "").strip()
-        if not name or name in declared:
+        requested_name = str(raw_name or "").strip()
+        if not requested_name:
             continue
-        if tool_snapshot.get(name) is None or not can_use_tool(name, allowed):
-            rejected.append(name)
-            continue
-        declared.append(name)
+        candidates = (
+            [name for name in tool_snapshot.all_tool_names() if name.startswith(requested_name[:-1])]
+            if requested_name.endswith("*")
+            else [requested_name]
+        )
+        accepted = False
+        for name in candidates:
+            if name in declared or len(declared) >= 12:
+                continue
+            if tool_snapshot.get(name) is None or not can_use_tool(name, allowed):
+                continue
+            declared.append(name)
+            accepted = True
+        if not accepted:
+            rejected.append(requested_name)
     if not declared and rejected:
         return {"error": "没有可获取 Schema 的已授权工具", "rejected": rejected}
     return {"tool_schemas": declared, "rejected": rejected}

@@ -19,7 +19,7 @@ from app.core.security import get_current_user, get_current_user_id, get_current
 from app.core.ownership import get_owned
 from app.core.tz import iso_utc, now_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, User, UserBot, Workspace
+from app.models import ConversationMessage, ConversationSession, FilesystemAuthorizationGrant, InteractionPrompt, User, UserBot, Workspace  # orm-exempt: agent 会话域遗留查询（未新增边界，仅随 MCP 引用变更被 diff 命中），随 agent Service 收口一并迁移
 from app.services import conversation_pending_queue, interactions
 from app.services.workspaces import resolve_sandbox_root, workspace_shell_supported
 from app.services.filesystem_authorization import (
@@ -129,6 +129,10 @@ class InteractionTextRequest(BaseModel):
     event_id: Optional[str] = None
 
 
+class SecretInteractionRequest(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
+
+
 class SandboxClearRequest(BaseModel):
     confirm_text: str = ""
 
@@ -206,6 +210,31 @@ async def respond_interaction(
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     return result
+
+
+@router.post("/interactions/{prompt_id}/secrets")
+async def submit_secret_interaction(
+    prompt_id: int,
+    body: SecretInteractionRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """通用敏感字段入口；业务目标负责把值写入自己的加密存储。"""
+    prompt = await db.scalar(select(InteractionPrompt).where(  # orm-exempt: agent 会话域遗留查询（未新增边界，仅随 MCP 引用变更被 diff 命中），随 agent Service 收口一并迁移
+        InteractionPrompt.id == prompt_id,
+        InteractionPrompt.user_id == current_user.id,
+    ).with_for_update())
+    if prompt is None:
+        raise HTTPException(404, "敏感信息输入不存在")
+    schema = prompt.schema_json if isinstance(prompt.schema_json, dict) else {}
+    context = schema.get("context") if isinstance(schema.get("context"), dict) else {}
+    target = context.get("secret_target")
+    if not isinstance(target, dict) or target.get("kind") != "mcp_credentials":
+        raise HTTPException(400, "当前敏感信息交互没有可用的业务处理器")
+    from app.services.mcp_credentials import consume_mcp_secret_prompt
+    return await consume_mcp_secret_prompt(
+        prompt, body.values, user=current_user, db=db,
+    )
 
 
 @router.post("/interactions/{prompt_id}/resume")

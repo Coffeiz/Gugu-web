@@ -38,6 +38,15 @@ const canvasDrawerContent = load('../../views/Mind/components/CanvasDrawerConten
 const scheduleFormModal = load('../../views/Schedules/components/ScheduleFormModal.vue')
 const scheduleCard = load('../../views/Schedules/components/ScheduleCard.vue')
 const skillCard = load('../../views/Skills/components/SkillCard.vue')
+const skillsIndex = load('../../views/Skills/index.vue')
+const skillsHome = load('../../views/Skills/SkillsHome.vue')
+const schedulesView = load('../../views/Schedules/index.vue')
+const mcpView = load('../../views/Skills/McpServersView.vue')
+const mcpCard = load('../../views/Skills/components/McpCard.vue')
+const mcpFormModal = load('../../views/Skills/components/McpServerFormModal.vue')
+const segmentedTabs = load('../../components/common/controls/SegmentedTabs.vue')
+const adminUsers = load('../../views/Admin/Users/index.vue')
+const usagePanel = load('../../views/Admin/Agent/observability/components/UsagePanel.vue')
 const actionButton = load('../../components/common/controls/ActionButton.vue')
 const systemLogs = load('../../views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
@@ -173,6 +182,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatToolBubble).not.toContain('.tool-event-bubble:focus-within')
   })
 
+  it('工具事件标题保留完整悬浮提示并覆盖 g 等下伸字形', () => {
+    expect(chatToolBubble).toContain(':title="toolLabel"')
+    expect(chatToolBubble).toContain('line-height: var(--line-height-ui);')
+  })
+
   it('工具卡片展开后仍通过独立 opacity 层过渡 hover，避免高度重排打断高亮', () => {
     const bubbleBlock = cssBlock(chatToolBubble, '.tool-event-bubble')
     const hoverLayerBlock = cssBlock(chatToolBubble, '.tool-event-bubble::after')
@@ -236,7 +250,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   })
 
   it('Shell 未授权时不允许直接进入终端页，也不让 PTY 403 自动重连', () => {
-    expect(terminalsRouter).toContain("if (to.name !== 'Terminals') return")
+    expect(terminalsRouter).toContain("if (to.name !== 'Terminals' && to.name !== 'SkillsMcp') return")
     expect(terminalsRouter).toContain('canAccessTerminals(status)')
     expect(terminalsView).toContain('if (status === 401 || status === 403)')
     expect(terminalPty).toContain('event.code === 4401 || event.code === 4403')
@@ -360,6 +374,61 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     // 主题层继续持有定时任务卡的最终 paint 与过渡（含新增的背景药丸）
     expect(load('./theme-adoption.css')).toContain('html[data-theme][data-family] .task-card .card-link-btn { color: var(--content-secondary); }')
     expect(interactionRefinements).toContain('background-color var(--hover-motion-control), opacity var(--hover-motion-control);')
+  })
+
+  it('MCP 技能页沿用技能页双列卡片、公共按钮和弹窗表单契约', () => {
+    expect(mcpView).toContain('<ActionButton fit')
+    expect(mcpView).toContain('column-count:2;')
+    expect(mcpView).not.toContain("t('skillsMcpUi.loading')")
+    expect(mcpCard).toContain('ToggleSwitch')
+    expect(mcpCard).toContain('class="card-link-btn"')
+    expect(mcpFormModal).toContain('<BaseModal')
+    expect(mcpFormModal).not.toContain('teleport-to="body"')
+    expect(mcpFormModal).toContain('<SelectPopup')
+    expect(mcpFormModal).toContain('class="form-input"')
+    expect(mcpFormModal).toContain('credential-slots-input control-resizable')
+    expect(mcpFormModal).not.toContain('.credential-slots-input { min-height:76px; resize:vertical; }')
+    expect(mcpFormModal).toContain('var(--font-size-body)/var(--line-height-body)')
+    expect(mcpFormModal).not.toContain('<label>{{ t(\'skillsMcpUi.name\') }}<input')
+    expect(mcpView).toContain('<McpServerFormModal\n      :key="formKey"')
+    expect(mcpView).not.toContain('<McpServerFormModal\n      v-if="editor"')
+  })
+
+  it('技能与 MCP 的空状态通过 GuguChat 预填配置请求，页签同行提供新建操作', () => {
+    expect(segmentedTabs).toContain('<SegmentedControl')
+    expect(segmentedTabs).toContain(':active-index="activeIndex"')
+    expect(segmentedTabs).not.toContain('rgba(255,255,255')
+    expect(adminUsers).toContain('<SegmentedTabs')
+    expect(adminUsers).not.toContain('class="user-tab"')
+    expect(usagePanel).toContain('<SegmentedTabs')
+    expect(usagePanel).not.toContain('class="period-tab"')
+    expect(usagePanel).not.toContain('class="metric-tab"')
+    // MCP 已抽成独立页面 /mcp（views/Mcp/index.vue），技能页回归纯技能列表
+    expect(skillsIndex).toContain('<SkillsHome')
+    expect(skillsIndex).not.toContain('<McpServersView')
+    expect(skillsIndex).not.toContain('<SegmentedTabs')
+    expect(skillsIndex).not.toContain('class="skills-nav-action"')
+    expect(skillsIndex).toContain('skillCreateRequest++')
+    expect(skillsIndex).toContain("{{ t('skills.create') }}")
+    expect(skillsHome).toContain('watch(() => props.createRequest')
+    expect(skillsHome).not.toContain('<header class="section-header">')
+    const mcpIndex = load('../../views/Mcp/index.vue')
+    expect(mcpIndex).toContain('<McpServersView')
+    expect(mcpIndex).toContain('createRequest++')
+    expect(mcpIndex).toContain("{{ t('skillsMcpUi.add') }}")
+    expect(mcpView).toContain('watch(() => props.createRequest')
+    expect(mcpView).toContain("pendingChatPrefill = t('skillsMcpUi.configureWithChat')")
+    expect(skillsHome).toContain("pendingChatPrefill = t('skills.configureWithChat')")
+    expect(schedulesView).toContain("pendingChatPrefill = t('schedules.configureWithChat')")
+    expect(guguChat).toContain('uiStore.pendingChatPrefill')
+    expect(guguChat).toContain('inputText.value = prompt')
+  })
+
+  it('MCP 管理工具完成时立即通知 MCP 页面刷新，回合收尾仍保留兜底通知', () => {
+    const chatStream = load('../../components/common/gugu-chat/composables/useChatStream.ts')
+    const chatActions = load('../../components/common/gugu-chat/composables/useChatActions.ts')
+    expect(chatStream).toContain("MCP_TOOLS.has(evt.name)) notifyResourceChanged('mcp')")
+    expect(chatActions).toContain("if (has(MCP_TOOLS)) notifyResourceChanged('mcp')")
   })
 
   it('定时任务清除边界按钮用居中图标，不回落字体字形', () => {

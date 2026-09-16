@@ -205,7 +205,7 @@ async def test_anthropic_tool_name_cleanup_is_reused_for_dispatch_and_history(mo
         content=[{
             "type": "tool_use",
             "id": "call-1",
-            "name": "list_files]<]minimax[",
+            "name": "list_dir]<]minimax[",
             "input": {"space": "workspace"},
         }],
         usage=SimpleNamespace(
@@ -233,8 +233,8 @@ async def test_anthropic_tool_name_cleanup_is_reused_for_dispatch_and_history(mo
         if kind == "done":
             result = value
 
-    assert result.tool_calls[0].name == "list_files"
-    assert result.raw[0]["name"] == "list_files"
+    assert result.tool_calls[0].name == "list_dir"
+    assert result.raw[0]["name"] == "list_dir"
 
 
 def test_anthropic_history_sanitizes_before_provider_render():
