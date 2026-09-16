@@ -9,6 +9,18 @@
         {{ option.label }}
       </ActionButton>
     </div>
+    <form v-if="secretFields.length && !resolved" class="interaction-secrets" @submit.prevent="submitSecrets">
+      <label v-for="field in secretFields" :key="field.name" class="interaction-secret-field">
+        <span>{{ field.label }}</span>
+        <input v-model="secretValues[field.name]" type="password" autocomplete="new-password"
+               :name="`mcp-secret-${field.name}`" :disabled="submitting || expired"
+               spellcheck="false" required />
+      </label>
+      <ActionButton class="interaction-secret-submit" fit type="submit"
+                    :disabled="resolved || submitting || expired || !secretsReady">
+        {{ t('chatUi.submitSecretFields') }}
+      </ActionButton>
+    </form>
     <div v-if="customInputActive" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
     <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
       {{ msg.interaction.responseText }}
@@ -53,9 +65,23 @@ const displayOptions = computed(() => (props.msg.interaction?.options || [])
   .map(option => option.id === CUSTOM_REPLY_OPTION_ID
     ? { ...option, label: t('chatUi.customReply') }
     : option))
+const secretFields = computed(() => (props.msg.interaction?.secretFields || [])
+  .filter(field => field && field.name))
+const secretValues = ref<Record<string, string>>({})
+const secretsReady = computed(() => secretFields.value.length > 0
+  && secretFields.value.every(field => Boolean(secretValues.value[field.name]?.trim())))
 const emit = defineEmits<{
   select: [msg: ChatMessage, option: { id: string; label: string; token: string }]
+  secretSubmit: [msg: ChatMessage, values: Record<string, string>]
 }>()
+function submitSecrets() {
+  if (!secretsReady.value || resolved.value || submitting.value || expired.value) return
+  submitting.value = true
+  if (props.msg.interaction) props.msg.interaction.submitting = true
+  emit('secretSubmit', props.msg, Object.fromEntries(
+    secretFields.value.map(field => [field.name, secretValues.value[field.name] || '']),
+  ))
+}
 function selectOption(option: { id: string; label: string; token: string }) {
   if (resolved.value || submitting.value || expired.value) return
   submitting.value = true
@@ -86,6 +112,9 @@ watch(() => props.msg.interaction?.resolved, (value) => {
 watch(() => props.msg.interaction?.submitting, (value) => {
   submitting.value = Boolean(value)
 })
+watch(() => props.msg.interaction?.resolved, (value) => {
+  if (value) secretValues.value = {}
+})
 watch(() => props.msg.interaction?.expiresAt, scheduleExpiry)
 onMounted(scheduleExpiry)
 onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
@@ -115,6 +144,10 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
   overflow-wrap: anywhere;
 }
 .interaction-custom-hint { margin-top: 8px; color: var(--content-secondary); font-size: var(--font-size-xs); }
+.interaction-secrets { display: grid; gap: 9px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle); }
+.interaction-secret-field { display: grid; gap: 5px; color: var(--content-secondary); font-size: var(--font-size-xs); }
+.interaction-secret-field input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 7px 9px; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--surface-input); color: var(--content-primary); }
+.interaction-secret-submit { justify-self: start; margin-top: 2px; }
 .interaction-response { margin-top: 8px; padding: 7px 9px; border-radius: var(--control-radius); background: var(--surface-soft); color: var(--content-secondary); font-size: var(--font-size-sm); white-space: pre-wrap; }
 .interaction-resolved { margin-top: 8px; color: var(--content-tertiary); font-size: var(--font-size-xs); }
 </style>

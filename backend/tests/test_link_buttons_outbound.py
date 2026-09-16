@@ -1,0 +1,316 @@
+"""链接按钮出站链路（PRD-LLM-24）：校验、part 结构、能力声明与降级分支。"""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from agent.im import link_buttons as lb
+from agent.im.models import PlatformReply, supported_reply_capabilities, link_button_part
+
+
+GOOD_BUTTONS = [
+    {"id": "open_project", "label": "打开项目", "url": "https://example.com/projects/123"},
+    {"id": "docs", "label": "文档", "url": "https://example.com/docs/guide"},
+]
+
+
+# ── URL / 输入校验 ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/projects/123",
+    "HTTPS://Example.COM/Path",
+    "https://example.com:443/ok",
+    "http://example.com:8080/ok",
+    "myapp://open/project/123",
+    "gugu://project/123",
+    "intent://open/project/123#Intent;scheme=myapp;end",
+    "mailto:person@example.com",
+    "tel:+123456",
+    "ftp://example.com/download.zip",
+])
+def test_validate_url_accepts_non_dangerous_schemes(url):
+    assert lb.validate_link_button_url(url) is None
+
+
+@pytest.mark.parametrize("url", [
+    "javascript:alert(1)",
+    "data:text/html;base64,xxx",
+    "file:///etc/passwd",
+    "blob:https://example.com/x",
+    "vbscript:msgbox(1)",
+    "about:blank",
+    "chrome://settings",
+    "view-source:https://example.com",
+    "https://user:pass@example.com/",                    # 凭据 URL
+    "",
+])
+def test_validate_url_rejects_unsafe(url):
+    assert lb.validate_link_button_url(url) is not None
+
+
+def test_validate_url_allows_http_and_private_targets():
+    assert lb.validate_link_button_url("http://example.com/ok") is None
+    assert lb.validate_link_button_url("https://127.0.0.1:8080/internal") is None
+    assert lb.validate_link_button_url("ftp://example.com") is None
+
+
+def test_validate_payload_whole_group_reject():
+    # 部分失败 = 整组拒绝（PRD §11）
+    buttons = [
+        *GOOD_BUTTONS,
+        {"id": "bad", "label": "坏按钮", "url": "javascript:void(0)"},
+    ]
+    normalized, error = lb.validate_link_buttons_payload("相关入口：", buttons)
+    assert normalized is None
+    assert "坏按钮" in error
+
+    normalized, error = lb.validate_link_buttons_payload("相关入口：", GOOD_BUTTONS)
+    assert error == ""
+    assert [b["id"] for b in normalized] == ["open_project", "docs"]
+
+
+@pytest.mark.parametrize("message,buttons", [
+    ("", GOOD_BUTTONS),                                   # 空 message
+    ("x" * 2001, GOOD_BUTTONS),                           # 超长 message
+    ("ok", []),                                           # 空按钮
+    ("ok", [{"id": "a", "label": "A", "url": "https://example.com"} for _ in range(6)]),  # 超 5 个
+    ("ok", [{"id": "a", "label": "A", "url": "https://example.com"},
+            {"id": "a", "label": "B", "url": "https://example.com/b"}]),                     # 重复 id
+    ("ok", [{"id": "a", "label": "x" * 41, "url": "https://example.com"}]),                  # 超长 label
+    ("ok\x07", GOOD_BUTTONS),                             # 控制字符
+    ("ok", [{"id": "a", "label": "A\x1b", "url": "https://example.com"}]),                   # label 控制字符
+])
+def test_validate_payload_schema_rejects(message, buttons):
+    normalized, error = lb.validate_link_buttons_payload(message, buttons)
+    assert normalized is None
+    assert error
+
+
+# ── part 结构与能力声明 ───────────────────────────────────────────────────────
+
+def test_link_button_part_shape():
+    part = link_button_part("相关入口：", GOOD_BUTTONS)
+    assert part["type"] == "link_button"
+    assert part["message"] == "相关入口："
+    assert part["buttons"] == GOOD_BUTTONS
+    reply = PlatformReply.from_parts({}, [part])
+    assert "link_button" in reply.required_capabilities
+
+
+def test_qq_declares_keyboard_and_link_button_now():
+    """QQ 原生键盘实际在用，能力声明必须与真实发送路径一致（PRD §8.2）。"""
+    caps = supported_reply_capabilities("qq")
+    assert {"keyboard", "link_button"} <= set(caps)
+    assert "link_button" in supported_reply_capabilities("feishu")
+    # 微信无原生链接按钮：必须走文本降级
+    assert "link_button" not in supported_reply_capabilities("wechat")
+
+
+# ── 出站降级分支 ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_send_qq_native_success(monkeypatch):
+    sent = {}
+
+    async def fake_send_link_keyboard(target_id, text, buttons, **kwargs):
+        sent["target"] = target_id
+        return True
+
+    async def fail_send_text(payload, text):
+        raise AssertionError("原生成功时不得发送文本降级")
+
+    monkeypatch.setattr("agent.gateway.qq.send_link_keyboard", fake_send_link_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fail_send_text)
+
+    from agent.im.replies import send_link_button_message
+    result = await send_link_button_message(
+        {"platform": "qq", "chat_type": "group", "chat_id": "G1", "channel_id": "c1"},
+        "相关入口：", GOOD_BUTTONS,
+    )
+    assert result == {"status": "sent", "platform": "qq", "delivery": "native", "button_count": 2}
+    assert sent["target"] == "G1"
+
+
+@pytest.mark.asyncio
+async def test_send_qq_native_failure_falls_back_to_text_once(monkeypatch):
+    text_calls = []
+
+    async def fail_keyboard(*args, **kwargs):
+        return False
+
+    async def fake_send_text(payload, text):
+        text_calls.append(text)
+        return True
+
+    monkeypatch.setattr("agent.gateway.qq.send_link_keyboard", fail_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fake_send_text)
+
+    from agent.im.replies import send_link_button_message, _link_buttons_text
+    result = await send_link_button_message(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "U1"},
+        "相关入口：", GOOD_BUTTONS,
+    )
+    assert result["status"] == "sent_with_fallback"
+    assert result["delivery"] == "text"
+    assert len(text_calls) == 1  # 文本降级只发一次
+    assert "https://example.com/projects/123" in text_calls[0]
+    assert _link_buttons_text("相关入口：", GOOD_BUTTONS).startswith("相关入口：")
+
+
+@pytest.mark.asyncio
+async def test_send_feishu_uses_link_card(monkeypatch):
+    card_args = {}
+
+    async def fake_send_link_card(receive_id, message, buttons, channel_id=None):
+        card_args.update(receive_id=receive_id, message=message, buttons=buttons)
+        return True
+
+    monkeypatch.setattr("agent.gateway.feishu.send_link_card", fake_send_link_card)
+
+    from agent.im.replies import send_link_button_message
+    result = await send_link_button_message(
+        {"platform": "feishu", "chat_id": "oc1", "channel_id": "ch1"},
+        "相关入口：", GOOD_BUTTONS,
+    )
+    assert result["status"] == "sent"
+    assert result["delivery"] == "native"
+    assert card_args["receive_id"] == "oc1"
+    assert card_args["buttons"] == GOOD_BUTTONS
+
+
+@pytest.mark.asyncio
+async def test_send_wechat_text_fallback_only(monkeypatch):
+    text_calls = []
+
+    async def fake_send_text(payload, text):
+        text_calls.append(text)
+        return True
+
+    monkeypatch.setattr("agent.im.replies.send_text", fake_send_text)
+
+    from agent.im.replies import send_link_button_message
+    result = await send_link_button_message(
+        {"platform": "wechat", "platform_user_id": "W1"}, "相关入口：", GOOD_BUTTONS,
+    )
+    # 微信没有原生按钮：如实标记 sent_with_fallback，不得谎报 native（PRD §5.4）
+    assert result["status"] == "sent_with_fallback"
+    assert result["delivery"] == "text"
+    assert "example.com/docs/guide" in text_calls[0]
+
+
+@pytest.mark.asyncio
+async def test_send_without_target_is_unsupported(monkeypatch):
+    async def fail_text(payload, text):
+        raise AssertionError("无出站目标时不得发送")
+
+    monkeypatch.setattr("agent.im.replies.send_text", fail_text)
+
+    from agent.im.replies import send_link_button_message
+    result = await send_link_button_message({"platform": "qq"}, "相关入口：", GOOD_BUTTONS)
+    assert result["status"] == "unsupported"
+    assert result["delivery"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_send_double_failure_is_failed(monkeypatch):
+    async def fail_keyboard(*args, **kwargs):
+        return False
+
+    async def fail_text(payload, text):
+        return False
+
+    monkeypatch.setattr("agent.gateway.qq.send_link_keyboard", fail_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fail_text)
+
+    from agent.im.replies import send_link_button_message
+    result = await send_link_button_message(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "U1"},
+        "相关入口：", GOOD_BUTTONS,
+    )
+    assert result["status"] == "failed"
+    assert result["delivery"] == "none"
+
+
+# ── wire payload 与安全回归（§14.2/§14.4）────────────────────────────────────
+
+def test_qq_link_keyboard_wire_uses_jump_action_with_raw_url():
+    """§8.2/§14.2：QQ 跳转按钮 action.type=0，data 就是原始 URL，不带 opaque token。"""
+    from agent.gateway.qq import _link_keyboard_wire_payload
+    payload = _link_keyboard_wire_payload(GOOD_BUTTONS)
+    rows = payload["content"]["rows"]
+    wire_buttons = [b for row in rows for b in row["buttons"]]
+    assert len(wire_buttons) == 2
+    first = wire_buttons[0]
+    assert first["action"]["type"] == 0
+    assert first["action"]["data"] == "https://example.com/projects/123"
+    assert first["action"]["permission"] == {"type": 2}
+    assert "unsupport_tips" in first["action"]
+    assert all("token" not in json.dumps(b) for b in wire_buttons)
+
+
+def test_qq_ask_user_keyboard_keeps_callback_action_type():
+    """§8.2：现有 ask_user 回调按钮仍是 type=1 + encoded action_data，互不污染。"""
+    from agent.gateway.qq import _keyboard_wire_payload
+    prompt = {"prompt_id": 7, "options": [
+        {"id": "confirm", "label": "确认", "token": "tok-1"},
+        {"id": "cancel", "label": "取消", "token": "tok-2"},
+    ]}
+    payload = _keyboard_wire_payload(prompt)
+    wire_buttons = [b for row in payload["content"]["rows"] for b in row["buttons"]]
+    assert all(b["action"]["type"] == 1 for b in wire_buttons)
+    assert all(b["action"]["data"].startswith("gugu:") or b["action"]["data"] for b in wire_buttons)
+    assert all("https://" not in b["action"]["data"] for b in wire_buttons)
+
+
+def test_feishu_link_card_uses_open_url_without_callback():
+    """§8.3/§14.2：飞书卡片按钮用 open_url behavior，不生成 card.action.trigger token。"""
+    from agent.gateway.feishu import _build_link_card_payload
+    card = _build_link_card_payload("相关入口：", GOOD_BUTTONS)
+    actions = next(el for el in card["elements"] if el.get("tag") == "action")["actions"]
+    assert len(actions) == 2
+    assert actions[0]["behaviors"] == [{"type": "open_url", "default_url": "https://example.com/projects/123"}]
+    assert "token" not in json.dumps(card)
+    assert card["elements"][0]["content"] == "相关入口："
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_logs_do_not_leak_url(monkeypatch, capsys):
+    """§14.4：发送失败日志只允许 fingerprint，不得出现完整 URL。"""
+    async def fail_keyboard(*args, **kwargs):
+        return False
+
+    async def fail_text(payload, text):
+        return False
+
+    monkeypatch.setattr("agent.gateway.qq.send_link_keyboard", fail_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fail_text)
+
+    from agent.im.replies import send_link_button_message
+    secret_url = "https://example.com/private?token=super-secret-value"
+    buttons = [{"id": "s", "label": "入口", "url": secret_url}]
+    await send_link_button_message(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "U1"}, "入口：", buttons,
+    )
+    captured = capsys.readouterr()
+    assert "super-secret-value" not in captured.out + captured.err
+
+
+@pytest.mark.asyncio
+async def test_outbound_boundary_revalidates_urls(monkeypatch):
+    """§12：出站层第二道校验——上游未校验的危险 Scheme 在发送前被拦截。"""
+    called = []
+
+    async def fail_keyboard(*args, **kwargs):
+        called.append("keyboard")
+        return True
+
+    monkeypatch.setattr("agent.gateway.qq.send_link_keyboard", fail_keyboard)
+
+    from agent.im.replies import send_link_button_message
+    result = await send_link_button_message(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "U1"},
+        "入口：", [{"id": "s", "label": "S", "url": "javascript:alert(1)"}],
+    )
+    assert result["status"] == "failed"
+    assert called == []  # 未触达网关，也不产生文本降级

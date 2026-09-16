@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import { renderMd, renderMdStream } from '@/components/common/gugu-chat/markdown'
 import { splitYamlFrontmatter } from '@/utils/markdown'

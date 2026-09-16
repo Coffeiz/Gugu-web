@@ -1,8 +1,8 @@
 # PRD-ADMIN-2：Docker 部署更新与版本分发
 
-> 状态：定位修订（2026-09-14，见 §1.1）：一体化部署取消 updater sidecar，更新执行器并入 app 容器（docker socket 进 app，opt-out 可关）；sidecar 版已实现但将被替换。Phase 2 的灰度与新 tag 发布验证仍待执行。
+> 状态：Phase 1、Phase 2 已完成（2026-09-16）。当前版本为 app 内置更新执行器、Docker Hub 主源、GHCR 同步发布；镜像签名使用 OCI 1.1 referrer。Phase 3 的离线/CDN manifest 与多架构支持仍待规划实施。
 > 创建：2026-08-31
-> 最近更新：2026-09-14
+> 最近更新：2026-09-16
 > 关联模块：`docker-compose.prod.yml`、`.github/workflows/`、`docs/ops/deploy.md`、`frontend/src/views/Admin/`、`backend/app/api/v1/`
 > 背景参考：`PRD-ADMIN-1-Admin咕咕球管理助手.md`、`docs/ops/deploy.md`
 
@@ -11,12 +11,12 @@
 | 能力 | 结果 | 状态 | 说明 |
 |---|---|---|---|
 | 普通用户 Compose 更新目标 | 已有一体化 Compose | ✅ 已确认 | 默认 `docker-compose.yml` 使用公开 `gugu-web` 镜像；拆分 backend/frontend 属业务部署路径。 |
-| 镜像发布策略 | 一体化与拆分业务镜像均双发 | 🟡 新规则待发布验证 | 一体化 `gugu-web`、backend/frontend、updater、sandbox 均发布到 Docker Hub 与 GHCR；只发布语义版本号标签，不发布 Git SHA 镜像标签。 |
-| GitHub Release 更新清单 | manifest v2 已实现 | 🟡 待新 tag 验证 | 新 manifest 只记录 Docker Hub 的 `gugu-web` 固定 digest，并附签名 bundle；v1.2.1 的旧拆分 manifest 不作为一体化更新输入。 |
-| Docker 发布 CI | Workflow 已实现 | 🟡 新策略待 tag 验证 | 后续版本签名发布一体化和拆分业务镜像到双仓；拆分 backend/frontend 供业务服务器按版本号直接拉取。 |
-| Compose 安全更新入口 | 一体化脚本已调整 | 🟡 端到端验收待执行 | 默认更新 `docker-compose.yml` 的 `app` 服务；拆分 `docker-compose.prod.yml` 不走该入口。 |
-| Admin 检查和执行更新 | 已实现 | 🟡 待灰度 | Admin 更新页可检查版本、展示 Release、执行预检并通过一次性确认发起更新；API 受 Admin 权限保护。 |
-| 更新服务与回滚 | 已实现 | 🟡 待灰度 | 受限 updater sidecar 持久化任务状态，只执行固定 Compose 更新/回滚动作；Docker Socket 不挂给 app。 |
+| 镜像发布策略 | 一体化与拆分业务镜像均双发 | ✅ 已确认 | 一体化 `gugu-web`、backend/frontend、sandbox 均发布到 Docker Hub 与 GHCR；只发布语义版本号标签，不发布 Git SHA 镜像标签；稳定版维护 `latest`。 |
+| GitHub Release 更新清单 | manifest v2 已实现 | ✅ 已确认 | manifest 记录 Docker Hub `gugu-web` 固定 digest；manifest 通过 HTTPS、SHA256、Schema 和镜像白名单校验，不单独发布 manifest 签名 bundle。 |
+| Docker 发布 CI | Workflow 已实现 | ✅ 已确认 | 版本 tag 构建并扫描四类镜像，使用 Cosign OCI 1.1 referrer 签名后发布到双仓；旧式 `.sig` 标签仅为历史遗留，不再新增。 |
+| Compose 安全更新入口 | 一体化脚本已实现 | ✅ 已确认 | 默认更新 `docker-compose.yml` 的 `app` 服务；仅在运行中的 `sandboxd` 使用同一 app 镜像时同步重建，拆分 `docker-compose.prod.yml` 不走该入口。 |
+| Admin 检查和执行更新 | 已实现 | ✅ 已确认 | Admin 更新页可检查版本、展示 Release、执行预检并通过一次性确认发起更新；API 受 Admin 权限保护。 |
+| 更新服务与回滚 | app 内置更新器已实现 | ✅ 已确认 | 更新执行器并入 app 进程，固定 Compose 文件/服务/镜像白名单，持久化任务状态并支持健康检查、失败恢复和管理员确认回滚。 |
 
 ## 1. 背景与目标
 
@@ -35,12 +35,12 @@
 
 ### 1.1 定位修订（2026-09-14）
 
-一体化部署的产品定位是**个人用户自己下载、自己更新，简单易用优先**。据此推翻 v1 原则中「更新服务独立容器 + Socket 不进 app」的隔离设计：
+一体化部署的产品定位是**个人用户自己下载、自己更新，简单易用优先**。当前实现采用 app 内置更新执行器：
 
-- updater sidecar 容器取消；更新执行器并入 app 进程，Admin 更新页进程内直调，无 IPC。
+- updater sidecar 容器不作为一体化部署组件；更新执行器并入 app 进程，Admin 更新页进程内直调，无 IPC。
 - docker socket 挂载进一体化 compose 的 app 容器（默认挂载，`GUGU_SELF_UPDATE=off` 显式关闭；未挂载时更新页显示「此部署未启用一键更新」）。fnOS 等面板单容器用户补一条挂载即可获得一键更新。
 - 明确接受的安全让步：docker socket 赋予宿主机容器控制权，app 进程一旦被 RCE 级打穿，暴露面从「咕咕数据」扩大到「宿主机容器」。缓解：更新能力不进入 Agent 工具注册表（模型与提示注入不可达）、子进程参数硬编码（固定项目目录/固定 compose 文件/白名单镜像）、Admin 权限 + 一次性确认门。
-- 保留：manifest 与 digest 白名单（仅允许官方 coffeiz/gugu-web 镜像）、预检、一键回滚、审计。移除：manifest 签名校验、双仓库发布、灰度通道（个人场景超配）。
+- 保留：manifest 与 digest 白名单（仅允许官方 coffeiz/gugu-web 镜像）、预检、一键回滚、审计。发布端继续同步 Docker Hub 与 GHCR；manifest 本身不单独签名，目标镜像使用 Cosign OCI 1.1 referrer 签名，更新前由固定 Cosign verifier 校验。
 - 分体部署（docker-compose.prod.yml）本就不走 Admin 更新入口，不受影响。
 
 本 PRD 不包含：
@@ -81,7 +81,7 @@ Release 同时关联一份 `update-manifest.json`，其中记录：
 }
 ```
 
-GitHub Release 是版本和说明来源；Docker Hub 是公开一体化应用的更新主来源，GHCR 镜像同一个 `gugu-web`；拆分 backend/frontend 业务镜像同步发布到两个 registry。manifest v2 只包含一体化 app digest；更新器严格校验仓库白名单与不可变 digest，不接受聊天消息或前端输入的任意镜像地址。旧版 v1 拆分镜像 manifest 不会被当作一体化更新目标。
+GitHub Release 是版本和说明来源；Docker Hub 是公开一体化应用的更新主来源，GHCR 镜像同一个 `gugu-web`；拆分 backend/frontend 业务镜像同步发布到两个 registry。manifest v2 只包含一体化 app digest；更新器严格校验仓库白名单与不可变 digest，并在预检阶段校验目标镜像的 Cosign OCI 1.1 签名，不接受聊天消息或前端输入的任意镜像地址。旧版 v1 拆分镜像 manifest 不会被当作一体化更新目标。
 
 ### FR-UPD-003：更新预检
 
@@ -92,7 +92,7 @@ GitHub Release 是版本和说明来源；Docker Hub 是公开一体化应用的
 - PostgreSQL、Redis 和一体化 app 服务当前状态可读取。
 - 配置文件和持久化卷存在且可读写。
 - 当前数据库迁移状态正常，没有未完成或冲突迁移。
-- 目标镜像架构与宿主机匹配，digest 和签名校验通过。
+- 目标镜像架构与宿主机匹配，digest 和 OCI 1.1 镜像签名校验通过。
 - 当前没有正在执行的更新任务。
 
 预检失败时只能查看原因和修复建议，不能继续执行覆盖更新。
@@ -154,7 +154,7 @@ Shell sandbox 是可选 profile。普通更新不因为用户未开启 sandbox �
   → 单元测试、类型检查和镜像安全扫描
   → gugu-web 与 backend/frontend 推送 Docker Hub 与 GHCR
   → 获取 Docker Hub gugu-web digest
-  → 生成并签名 update-manifest.json
+  → 生成 update-manifest.json，并对发布镜像生成 OCI 1.1 referrer 签名
   → 创建 GitHub Release
 ```
 
@@ -166,13 +166,13 @@ Shell sandbox 是可选 profile。普通更新不因为用户未开启 sandbox �
 
 更新器首先读取配置中的 manifest 地址。默认地址可以指向 GitHub Release 资产；当 GitHub API 不稳定或有速率限制时，改用固定 CDN/静态站点地址，内容仍由同一发布流水线生成。
 
-Manifest 必须通过 HTTPS 获取，并校验：JSON Schema、版本格式、镜像仓库白名单、digest 格式、最低版本、架构、签名和有效期。manifest v2 只允许 `docker.io/coffeiz/gugu-web`（GHCR 一体化镜像引用只作为受控镜像源）；backend/frontend 不在普通更新白名单中。更新器不得跟随未经校验的重定向。
+Manifest 必须通过 HTTPS 获取，并校验：JSON Schema、版本格式、镜像仓库白名单、digest 格式、最低版本、架构和有效期。manifest v2 只允许 `docker.io/coffeiz/gugu-web`（GHCR 一体化镜像引用只作为受控镜像源）；backend/frontend 不在普通更新白名单中。目标镜像签名由固定 digest 的 Cosign verifier 单独校验；旧式 `sha256-<digest>.sig` 普通 tag 不属于当前发布格式。更新器不得跟随未经校验的重定向。
 
 ### 3.3 更新执行器
 
-新增独立的 `gugu-updater`，可以是宿主机 systemd 服务或受限 sidecar。业务 backend 通过本地受保护的 Unix Socket 调用它，不直接挂载 Docker Socket。
+更新执行器位于 app 镜像的 `backend/updater/`，由 Admin API 通过进程内 client 调用，不再启用独立 updater sidecar 或 Unix Socket IPC。
 
-更新器只开放固定动作：检查状态、拉取指定 manifest、执行预检、开始更新、查看进度、查看结果、回滚指定上一版本。它不接受任意 Docker 命令、任意 Compose 文件、任意 registry 或任意宿主机路径。
+更新器只开放固定动作：检查状态、拉取指定 manifest、执行预检、开始更新、查看进度、查看结果、回滚指定上一版本。它不接受任意 Docker 命令、任意 Compose 文件、任意 registry 或任意宿主机路径。Docker Socket 仅在一体化 app 部署中按配置挂载，`GUGU_SELF_UPDATE=off` 可显式关闭。
 
 更新任务采用持久化状态机：`pending`、`prechecking`、`backing_up`、`pulling`、`migrating`、`recreating`、`health_checking`、`succeeded`、`failed`、`rollback_required`。每个阶段都写入开始时间、结束时间、结果和脱敏错误摘要。
 
@@ -199,21 +199,12 @@ Gugu-web/
 │   ├── app/
 │   │   ├── api/v1/
 │   │   │   └── admin_update.py                         # 新增：Admin 更新检查、预检、任务状态 API
-│   │   └── services/
-│   │       └── update_manifest.py                     # 新增：manifest 获取、Schema/签名/digest 校验
-│   └── updater/                                       # 新增：独立更新执行器
+│   │   └── services/                                  # 业务服务
+│   └── updater/                                       # app 内置更新执行器
 │       ├── __init__.py
-│       ├── api.py                                     # 本地 Unix Socket API
-│       ├── compose.py                                 # 白名单 Compose 操作
-│       ├── health.py                                  # 更新后健康检查
-│       ├── preflight.py                               # 磁盘、架构、服务和迁移预检
-│       ├── state.py                                   # 更新状态机和任务持久化
-│       ├── backup.py                                  # 配置/数据库元信息备份
-│       └── rollback.py                                # 上一版本引用恢复
-├── docker/
-│   └── updater/
-│       ├── Dockerfile                                 # 新增：更新器镜像（若采用 sidecar）
-│       └── gugu-updater.service                       # 新增：宿主机 systemd 运行方式（二选一）
+│       ├── client.py                                  # Admin API 进程内调用入口
+│       ├── daemon.py                                  # 更新状态机、预检、Compose、健康检查与回滚
+│       └── database_check.py                          # 数据库迁移 head 检查
 ├── docker-compose.prod.yml                            # 修改：更新器连接、健康检查和最小权限配置
 ├── deploy/
 │   └── update-manifest.schema.json                    # 新增：manifest JSON Schema
@@ -239,9 +230,7 @@ Gugu-web/
     └── update-manifest.json                           # 发布产物：由 CI 生成并上传到 Release
 ```
 
-文件职责边界：GitHub Actions 只负责构建和发布；`update_manifest.py` 只负责读取和验证版本信息；`backend/app/api/v1/admin_update.py` 只负责 Admin 鉴权、调度和状态展示；`backend/updater/` 才拥有执行 Compose 更新的能力。`docker-compose.prod.yml`、生产配置和持久化卷仍由部署环境持有，更新器不得自行覆盖用户配置。
-
-`docker/updater/gugu-updater.service` 与 `docker/updater/Dockerfile` 是两种部署形态的候选位置，最终只选择宿主机 systemd 或受限 sidecar 其中一种，不能同时启用两个更新器。
+文件职责边界：GitHub Actions 只负责构建、扫描和发布；`backend/updater/` 负责固定范围的 Compose 更新、预检、健康检查和回滚；`backend/app/api/v1/admin_update.py` 只负责 Admin 鉴权、调度和状态展示；`scripts/release/validate-update-manifest.mjs` 负责 manifest 校验。`docker-compose.prod.yml`、生产配置和持久化卷仍由部署环境持有，更新器不得自行覆盖用户配置。
 
 ## 4. 验证与上线
 
@@ -264,7 +253,7 @@ Gugu-web/
 | Docker Hub 不可达 | 无法检查或拉取标准更新 | 明确提示更新源不可用；GHCR 的同 digest 一体化镜像可作为显式受控来源，不在校验失败时自动改写 registry。 |
 | 镜像 tag 被覆盖 | 回滚到错误构建 | 生产只消费 digest，tag 仅用于展示和检索。 |
 | 数据库迁移不可逆 | 新镜像回滚后数据不兼容 | 发布前检查迁移策略，manifest 标注回滚能力，必要时阻止回滚。 |
-| 更新器拥有过高 Docker 权限 | 服务器被聊天入口间接控制 | Unix Socket、命令白名单、镜像白名单、路径白名单和独立 Admin 权限。 |
+| app 拥有 Docker Socket 权限 | app 被 RCE 后可能控制宿主机容器 | 默认仅一体化 app 挂载；可用 `GUGU_SELF_UPDATE=off` 关闭；更新能力不进入 Agent 工具注册表，并使用 Admin 权限、一次性确认、命令/镜像/路径白名单。 |
 | 新旧镜像同时占用磁盘 | 更新中途空间不足 | 预检估算空间，成功后只清理明确确认的旧业务镜像，不清理数据卷。 |
 | sandbox 可选依赖被误拉取 | 用户磁盘和下载时间增加 | sandbox 使用独立 Compose profile，普通更新不处理。 |
 
@@ -272,7 +261,7 @@ Gugu-web/
 
 - Docker Hub 匿名拉取限额及镜像可用性监控策略。
 - 是否首版只支持 `linux/amd64`，还是同时构建 `linux/arm64`。
-- 更新 manifest 是直接托管在 GitHub Release，还是发布后同步到独立 CDN。
+- 更新 manifest 后续是否同步到独立 CDN。
 - 失败后是否首版自动回滚，还是先停在 `rollback_required` 由管理员确认。
 - Admin 更新是否允许跨环境操作，还是每个部署实例只能更新自身环境。
 
@@ -281,18 +270,18 @@ Gugu-web/
 ### Phase 1：发布物与手动更新基础
 
 - [x] `UPD2-001` 固定版本、镜像命名、架构和 manifest Schema；验收：manifest Schema 与无依赖校验器已实现，能表达版本、最低版本、镜像 digest、迁移和回滚字段，并通过本地校验。
-- [ ] `UPD2-002` 🟡 建立 GitHub Actions Docker 发布流水线；验收：Workflow 版本 tag 构建一体化 app 与 backend/frontend 业务镜像，全部推送 Docker Hub 和 GHCR，不发布 Git SHA 镜像 tag，镜像使用 OCI 1.1 referrer 签名（不额外生成 `.sig` 普通 tag），生成 Docker Hub app digest 和 GitHub Release。
-- [x] `UPD2-003` 增加 manifest 签名、镜像白名单和 digest 校验；验收：发布 Workflow 生成 Cosign 签名，Compose 更新脚本校验 manifest v2、bundle、发布者身份和一体化镜像白名单，不接受拆分 backend/frontend 镜像。
+- [x] `UPD2-002` 建立 GitHub Actions Docker 发布流水线；验收：Workflow 版本 tag 构建一体化 app、backend/frontend 和 sandbox 镜像，全部推送 Docker Hub 和 GHCR，不发布 Git SHA 镜像 tag，镜像使用 OCI 1.1 referrer 签名（不额外生成 `.sig` 普通 tag），生成 Docker Hub app digest 和 GitHub Release。
+- [x] `UPD2-003` 增加镜像签名、manifest 白名单和 digest 校验；验收：发布 Workflow 对镜像生成 Cosign OCI 1.1 referrer 签名，更新器校验 manifest v2、镜像 digest、发布者身份和一体化镜像白名单，不接受拆分 backend/frontend 镜像。
 - [x] `UPD2-004` 补齐 Docker Compose 升级、迁移和配置保护脚本；验收：更新脚本备份配置和数据库，保留 PostgreSQL、Redis、用户文件、记忆、工作区和 Admin 配置卷，并明确禁止 `down -v` 和无范围清理。
 
 ### Phase 2：Admin 检查与受限执行
 
-- [x] `UPD2-005` 实现独立 `gugu-updater` 状态 API 和持久化任务状态机；验收：Unix Socket RPC、原子状态文件、任务互斥、重启中断恢复；预检覆盖服务、数据库迁移 head、数据/配置卷、镜像架构、磁盘和最低版本；本地 updater 状态测试通过。
+- [x] `UPD2-005` 实现 app 内置 updater 状态 API 和持久化任务状态机；验收：进程内 client、原子状态文件、任务互斥、重启中断恢复；预检覆盖服务、数据库迁移 head、数据/配置卷、镜像架构、磁盘、最低版本和镜像签名；本地 updater 状态测试通过。
 - [x] `UPD2-006` 接入 Admin 版本检查、Release 说明和更新确认流程；验收：Admin 更新页展示当前/目标版本、说明、预检和任务状态；更新/回滚使用操作者与目标绑定、十分钟有效的一次性确认；类型检查、i18n 测试和生产构建通过。
 - [x] `UPD2-007` 实现更新后健康检查和失败恢复；验收：Compose 更新成功后再次检查 app API 与 PostgreSQL，失败进入 `rollback_required` 并保留上一版本镜像引用；回滚需管理员再次确认，且明确提示不会逆转数据库迁移。
-- [ ] `UPD2-008` 完成 dev/staging 灰度和审计验收；验收：普通用户无权更新，Admin 操作可审计，未开启 sandbox 的部署不会拉取 sandbox 镜像。
+- [x] `UPD2-008` 完成 dev/staging 灰度和审计验收；验收：普通用户无权更新，Admin 操作可审计，未运行 sandbox 的部署不会拉取或重建 sandbox 服务；已用旧版本 Compose 在 devserver 完成升级验证。
 
-> Phase 2 本地验证：updater 单元测试 6 项、manifest/Compose 更新脚本测试 14 项、前端类型检查、i18n 测试和生产构建通过。`UPD2-008` 保持未完成：当前未在 dev/staging 部署此分支进行真实镜像升级、权限与审计验收；本机 Docker Compose CLI 和 daemon 均不可用，无法代替该灰度验证。
+> Phase 1/2 验证完成：updater 单元测试、manifest/Compose 更新脚本测试、前端类型检查、i18n 测试、生产构建，以及 devserver 旧版本 Compose 升级、权限、审计和 sandbox 边界验证均已通过。Docker Hub/GHCR 发布镜像的 OCI 1.1 referrer 签名已在 v1.2.3 发布中核验；历史 `.sig` 普通 tag 不再作为新发布产物。
 
 ### Phase 3：可靠性增强
 

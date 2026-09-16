@@ -59,6 +59,7 @@ import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { classifyLogLevel } from '@/utils/logLevel'
+import { isUnauthorizedResponse } from '@/services/authSession'
 const { t } = useI18n()
 
 const adminStore = useAdminStore()
@@ -151,6 +152,7 @@ async function startSSE() {
       },
       signal: controller.signal,
     })
+    if (isUnauthorizedResponse(res, 'admin')) return
     if (!res.ok || !res.body) throw new Error(`日志流连接失败（${res.status}）`)
     connected.value = true
 

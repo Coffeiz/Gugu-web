@@ -10,7 +10,7 @@
         <Icon name="admin.alarm" :size="32" />
         <strong>{{ t('schedules.emptyTitle') }}</strong>
         <span>{{ t('schedules.emptyHint') }}</span>
-        <ActionButton fit @click="openCreate">{{ t('schedules.createFirst') }}</ActionButton>
+        <ActionButton fit @click="openChatSetup">{{ t('schedules.createFirst') }}</ActionButton>
       </div>
       <div v-else-if="tasks.length" class="task-grid scroll-surface scroll-surface--compact">
         <ScheduleCard v-for="task in tasks" :key="task.id" :task="task" :busy="busy"
@@ -36,6 +36,7 @@ import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import { workspacesApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useUiStore } from '@/stores/ui'
 import ScheduleCard from './components/ScheduleCard.vue'
 import ScheduleFormModal from './components/ScheduleFormModal.vue'
 import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
@@ -43,6 +44,7 @@ import { useScheduledTasks } from '@/composables/schedules/useScheduledTasks'
 import { useFilesystemAuthorization } from '@/composables/useFilesystemAuthorization'
 
 const authStore = useAuthStore()
+const uiStore = useUiStore()
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
@@ -103,6 +105,8 @@ function openCreate() {
   formErr.value = ''
   showModal.value = true
 }
+
+function openChatSetup() { uiStore.pendingChatPrefill = t('schedules.configureWithChat') }
 
 function openEdit(task: Record<string, any>) {
   editing.value = task

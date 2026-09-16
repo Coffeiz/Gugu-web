@@ -14,12 +14,14 @@ SCHEDULED_MAX_TOOL_CALLS = 30
 class ScheduledLLMRunner(LLMRunner):
     """定时任务达到预算时直接返回失败事件，由外层自动重试或投递失败报告。"""
 
-    def __init__(self, tool_names, settings, capability_context=None, locale: str | None = None):
+    def __init__(self, tool_names, settings, capability_context=None, locale: str | None = None,
+                 dynamic_tools=None):
         super().__init__(
             tool_names,
             settings,
             capability_context=capability_context,
             locale=locale,
+            dynamic_tools=dynamic_tools,
             max_rounds=SCHEDULED_MAX_ROUNDS,
             max_tool_calls=SCHEDULED_MAX_TOOL_CALLS,
             max_verify_rounds=None,

@@ -86,7 +86,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl
+        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl \
+        # 内置依赖（GUGU_EMBEDDED_DEPS=1 时由入口拉起，镜像默认开）：单容器一键部署
+        # 无需外部 postgres/redis。仅监听 127.0.0.1，数据在 /data/postgres、/data/redis。
+        postgresql redis-server supervisor \
+    # snakeoil 是 ssl-cert 包（postgresql 依赖）装的 Debian 全机通用示例证书，随层公开
+    # 会被 trivy secrets 扫描判为私钥泄漏；内嵌 PostgreSQL 只监听 127.0.0.1 且 ssl=off
+    # （见 docker-entrypoint.sh），用不到它，直接删。
+    && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem
 
 # CVE-2026-18297（gstreamer-plugins-base OGG 任意代码执行，HIGH）安全门补丁，
 # 与 backend/Dockerfile.prod 同款：libgstreamer-plugins-base1.0-0 是 ffmpeg 的传递
@@ -219,7 +226,13 @@ ENV DB__HOST=postgres \
     STORAGE__LOCAL_PATH=/data/users \
     CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
     GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
-    GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock
+    GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
+    # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
+    GUGU_EMBEDDED_DEPS=1
+
+# 未显式绑定宿主目录时，让 Docker 自动创建匿名持久卷兜底；显式 bind mount 仍优先
+# （fnOS 等面板务必绑定宿主机目录，匿名卷在面板重建容器后可能被回收，见部署文档）。
+VOLUME ["/data", "/config"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD curl -sf http://127.0.0.1:9595/health || exit 1

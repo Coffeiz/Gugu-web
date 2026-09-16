@@ -27,6 +27,7 @@ from agent.tools.tool_contract import (
     invalid_input_payload,
     normalize_legacy_input,
     normalize_input_by_schema,
+    unwrap_arguments_wrapper,
     validate_input,
 )
 
@@ -199,7 +200,7 @@ def salvage_tool_name(name: Any) -> str | None:
     """从被污染的工具名里抢救前缀，返回 None 表示放弃。
 
     模型偶发把 JSON 参数写成 XML 片段，或把 provider 内部分隔标记直接拼进
-    name（如 ``create_file"><target><space>…``、``list_files]<]minimax[``）。
+    name（如 ``create_file"><target><space>…``、``list_dir]<]minimax[``）。
     只按已知协议分隔符截断，不做模糊匹配；调用方必须自行用注册表/snapshot
     验证候选名后才能采纳。
     主循环（core.py 工具轮）在名字定稿处全局抢救一次，dispatch 保留同款
@@ -290,6 +291,9 @@ class Tool:
     def __init__(self, name: str, description: str, input_schema: dict,
                  handler, label: str | None = None, destructive: bool = False,
                  mutates: bool = False,
+                 mutates_for_input: Callable[[dict], bool] | None = None,
+                 verify_after_call: bool | Callable[[dict], bool] | None = None,
+                 observes_for_input: Callable[[dict], bool] | None = None,
                  requires_confirmation: bool = False,
                  start_message: str | Callable[[dict], str] | None = None,
                  description_short: str | None = None,
@@ -319,6 +323,17 @@ class Tool:
         # confirm 二次确认，跟这个是两件事：写操作不一定不可逆（destructive），
         # 但只要写了就不能自动重放（mutates）。
         self.mutates = mutates
+        # 复合工具可以按实际参数声明本次调用是否写入状态。例如管理类工具通常同时
+        # 提供 list/test_connection 与 add/remove；不能因为工具整体可写，就把只读分支
+        # 当成写操作触发自我核实。未提供时沿用工具级 mutates 语义。
+        self.mutates_for_input = mutates_for_input
+        # 是否需要 Agent 在成功后进入本地状态复查。默认沿用 mutates；外部系统工具
+        # 可以保留 mutates=True（禁止自动重放），但显式关闭本地复查，避免把无法
+        # 读取本地状态的调用送进复查循环。
+        self.verify_after_call = verify_after_call
+        # 复合工具可以按实际参数声明本次调用是否提供状态观察。例如管理类工具的
+        # list/test_connection 分支可以结束写入后的复查；未提供时沿用工具名判断。
+        self.observes_for_input = observes_for_input
         # 纯观察类工具（同参数重复调用只读同一内部状态、无副作用且结果确定）才允许
         # 进入主循环的「连续相同调用熔断」。默认 False：写工具（create_event 每调一次
         # 都真产生副作用）和联网/外部状态读取（结果随时可能变化）都不算 repeat-safe，
@@ -334,6 +349,9 @@ class Tool:
         # label 是现有工具定义中的短用户可见名称；未显式补充短描述时用它作为迁移期
         # metadata，绝不从完整 description 截断生成。
         self.description_short = description_short or label or name
+        # 外部工具可为 Provider 提供比能力目录更完整的描述；未指定时保持
+        # 既有行为，内置工具仍使用 description_short。
+        self.provider_description = self.description_short
         self.category = category
         self.permissions = tuple(permissions)
         self.platforms = tuple(platforms)
@@ -346,7 +364,7 @@ class Tool:
     def to_anthropic(self) -> dict:
         return {
             "name": self.name,
-            "description": self.description_short,
+            "description": self.provider_description,
             "input_schema": copy.deepcopy(self.input_schema),
         }
 
@@ -355,7 +373,7 @@ class Tool:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": self.description_short,
+                "description": self.provider_description,
                 "parameters": copy.deepcopy(self.input_schema),
             },
         }
@@ -369,10 +387,20 @@ class ToolRegistrySnapshot:
     backend 重启；测试或运行时扩展若要生效也必须重新创建进程。
     """
 
-    def __init__(self, source: "SkillRegistry"):
+    def __init__(self, source: "SkillRegistry", extra_tools: list[Tool] | tuple[Tool, ...] = ()):
         self._source = source
         tools = {}
         for name, tool in source._tools.items():
+            frozen = copy.copy(tool)
+            frozen.input_schema = copy.deepcopy(tool.input_schema)
+            tools[name] = frozen
+        # 动态工具只属于当前 run 的派生快照，不能写回 source._tools，也不能改变
+        # source.snapshot() 的进程级冻结语义。重名时以内置工具为准，调用方应在装载
+        # MCP 工具时提前拒载并记录诊断；这里再做一次防御，避免动态工具覆盖内置入口。
+        for tool in extra_tools:
+            name = getattr(tool, "name", None)
+            if not isinstance(name, str) or not name or name in tools:
+                continue
             frozen = copy.copy(tool)
             frozen.input_schema = copy.deepcopy(tool.input_schema)
             tools[name] = frozen
@@ -451,6 +479,15 @@ class SkillRegistry:
         if self._snapshot is None:
             self._snapshot = ToolRegistrySnapshot(self)
         return self._snapshot
+
+    def snapshot_with_extras(self, extra_tools: list[Tool] | tuple[Tool, ...] = ()) -> ToolRegistrySnapshot:
+        """返回不修改全局注册表的本轮派生快照。
+
+        MCP 工具按用户动态发现，不能进入进程级 registry snapshot；provider 声明、
+        固定 Adapter 和 dispatch 又必须看到同一份工具集合，因此在 run 边界合并一份
+        只读快照。``extra_tools`` 只保留非空且不覆盖 builtin 的工具。
+        """
+        return ToolRegistrySnapshot(self, extra_tools)
 
     def add(self, tool: Tool) -> None:
         # P4 · 注册期契约校验（fail-fast）：定义错在这里就炸，不留到运行时静默失效
@@ -557,6 +594,7 @@ class SkillRegistry:
             return json.dumps(payload, ensure_ascii=False), None
 
         # 版本适配集中在契约层，只转换无歧义的旧字段，再进入当前 Schema 校验。
+        args, _arguments_unwrapped = unwrap_arguments_wrapper(tool.input_schema, args)
         args, _legacy_adaptations = normalize_legacy_input(name, args)
 
         # 正常工具会在 registry.add() 时缓存 validator；测试工具和少量运行时扩展可能直接
@@ -742,3 +780,48 @@ class SkillRegistry:
 
 
 registry = SkillRegistry()
+
+
+# 写动词命名前缀（原 core._WRITE_PREFIXES）：自动把新增写工具纳入 mutates 集合。
+WRITE_PREFIXES = (
+    "create_", "update_", "delete_", "add_", "remove_", "edit_", "rename_",
+    "move_", "copy_", "set_", "archive_", "restore_", "permanent_delete", "save_",
+)
+
+
+def mutating_tools(tool_names, tool_snapshot=None) -> set:
+    """本次可用工具里的「增删改」集合（原 core._mutating_tools）。
+
+    ① 命名约定（写动词前缀，自动覆盖新工具）② 并上 RESOURCE_BY_TOOL 里人工
+    登记的（双保险，防约定外的特例漏判）。"""
+    from app.core.events import RESOURCE_BY_TOOL
+    by_name = {n for n in tool_names if n.startswith(WRITE_PREFIXES)}
+    if tool_snapshot is not None:
+        by_name |= {
+            name for name in tool_names
+            if (tool := tool_snapshot.get(name)) is not None and tool.mutates
+        }
+    return by_name | set(RESOURCE_BY_TOOL)
+
+
+def is_successful_tool_result(result) -> bool:
+    """失败的写调用没有状态可复查，不能为它额外等待一轮模型响应（原 core._is_successful_tool_result）。
+
+    入参既可能是工具返回的 JSON 字符串，也可能是已经解析好的 dict（确认后重投
+    的结果），两条路径必须给出一致的判定——否则 dict 会被 json.loads 的 TypeError
+    吞掉、把失败结果判成成功。
+    """
+    from agent.interactions.confirmations import confirmation_payload
+
+    if confirmation_payload(result) is not None:
+        return False
+    if isinstance(result, dict):
+        payload = result
+    else:
+        try:
+            payload = json.loads(result)
+        except (TypeError, json.JSONDecodeError):
+            return True
+    if not isinstance(payload, dict):
+        return True
+    return not payload.get("error") and payload.get("status") != "failed"

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { uploadFilesWithFolders } from '@/composables/files/useFileUploadCore'
 import { getTopLevelUploadGroups } from '@/composables/files/useFileUploadController'

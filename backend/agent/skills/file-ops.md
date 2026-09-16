@@ -3,7 +3,7 @@ name: 文件操作
 description_long: 移动/改名/编辑/创建/保存文件、列文件或核对文件存在性、引用文件给跳转链接时——拿批量入口用法、核对与防覆盖做法
 description_short: 用户要查找、创建、编辑、移动或引用文件时使用。
 category: files
-related_tools: list_files, read_file, grep, edit_file, create_file, rename_file, move_items, copy_file, create_folder, delete_file, list_folders, rename_folder, delete_folder, send_file, list_recent_attachments, save_uploaded_file, web_download
+related_tools: list_dir, read_file, grep, edit_file, create_file, rename_file, move_items, copy_file, create_folder, delete_file, rename_folder, delete_folder, send_file, list_recent_attachments, save_uploaded_file, web_download
 emoji: 📂
 ---
 
@@ -24,7 +24,7 @@ emoji: 📂
 ## 查询与批量入口
 - 文件库位图可以直接用 `read_file(file_id=...)` 查看；该工具会把图片交给视觉模型，不是只能读取文本。SVG 当前按源码文本读取，不伪装成视觉图片。需要一次读取/比较多张位图时，才使用 `inspect_images` 的 `file_id` 数组；聊天历史附件使用 `attach_id`，网络候选使用图片 URL。
 - 需要在个人、项目或当前授权 Workspace 文件正文中定位关键词时使用 `grep`；它返回 `file_id`、逻辑路径、原始物理行号、命中行和可选上下文，不执行 Shell。`context_lines` 控制命中行前后各显示多少行，`limit` 控制总命中数。定位后用 `read_file(target_lines=...)` 精读，不能把 `global_search` 当正文检索。
-- **查询多个候选文件名时优先一次传 `list_files.queries`**：默认 OR，避免为了不同关键词重复查询；只有用户明确要求同时满足多个词时才使用 `mode: "AND"`。
+- **查询多个候选文件名时优先一次传 `list_dir.queries`**：默认 OR，避免为了不同关键词重复查询；只有用户明确要求同时满足多个词时才使用 `mode: "AND"`。
 - **移动 / 改名 / 编辑多个文件或文件夹 → 用批量入口一次调用，别一个个调**：
   - `move_items`：files + folders 一次搬到同一目标；**移文件夹会连里面的文件和子文件夹递归一起搬**，你不用管里面有几个。
   - `rename_file` 的 `renames`：多文件改名（按顺序编号等），自己排好序号一次传。
@@ -48,8 +48,9 @@ emoji: 📂
 
 ## 列出文件与核对存在性
 - 列文件 / 项目 / 事件 / 客户时，**严格按工具结果逐条列**，绝不凭印象脑补文件名、数量、id（别无中生有列 favicon、logo 之类"常见文件"）；不确定就调工具查，查不到就如实说"没有"。
-- **`list_files` 结果默认用目录树呈现，别写成一段话堆文件名**：按 `folder_path` 分组，文件夹一行，文件用缩进列出；每个文件带名称、大小或位置。结果横跨多个文件夹/项目时保持完整层级，让用户一眼看出“哪个文件夹下有哪些文件”。同名文件必须保留完整路径区分；不要把未出现在查询结果中的文件夹判断为空。文件很少（1~2个）时一句话带过也可以，不用为几个文件硬套目录树。
-- **核对存在性 / 数量时搜全空间**：同名文件可能同时在个人空间和某项目里（个人有 A5、项目「神椿插画」也有 A5）。你在个人空间删/改了几个，**不代表别处同名的也没了**。查"X 还在不在"时 **`list_files` 不要传 `space`/`project_id`（全空间搜）**，按返回的 `space`/`project_id` 看清它在哪，再下结论。用户说"还在"多半是真的——多半在你没查的那个空间。
+- **`list_dir` 结果默认用目录树呈现，别写成一段话堆文件名**：按 `folder_path` 分组，文件夹一行，文件用缩进列出；每个文件带名称、大小或位置。结果横跨多个文件夹/项目时保持完整层级，让用户一眼看出“哪个文件夹下有哪些文件”。同名文件必须保留完整路径区分；不要把未出现在查询结果中的文件夹判断为空。文件很少（1~2个）时一句话带过也可以，不用为几个文件硬套目录树。
+- **`list_dir` 返回 `shown/total`（只统计文件）**：`shown < total` 说明被 limit 截断，必须加大 limit 重查或加过滤条件，绝不能把返回的前 N 条当全量下结论；确认「全部 / 清空 / 还剩几个」时必须核对 `total`。folders 恒全量，每项带 `file_count`。
+- **核对存在性 / 数量时搜全空间**：同名文件可能同时在个人空间和某项目里（个人有 A5、项目「神椿插画」也有 A5）。你在个人空间删/改了几个，**不代表别处同名的也没了**。查"X 还在不在"时 **`list_dir` 不要传 `space`/`project_id`（全空间搜）**，按返回的 `space`/`project_id` 看清它在哪，再下结论。用户说"还在"多半是真的——多半在你没查的那个空间。
 - 拿不准某文件现在在哪 / 叫什么 → 这正是该**重新调一次查询工具**的少数情形（不属"省调用"）。
 
 ## 结果与落点
@@ -74,7 +75,7 @@ emoji: 📂
 
 ## 创建与保存位置
 - 用户已明确给出 `folder_id` 或明确说了文件夹名：直接按指定位置存，不再替他分类。
-- 其它情况下，目标项目或个人空间存在文件夹时，**先调 `list_folders`**。先看一级目录；只有某个一级目录和文件主题明显相关时，才继续看它的二级目录。
+- 其它情况下，目标项目或个人空间存在文件夹时，**先调 `list_dir(kind="folder")`**。先看一级目录；只有某个一级目录和文件主题明显相关时，才继续看它的二级目录。
 - 二级目录有唯一明显匹配就放进去；没有就放在匹配的一级目录。一级目录也没有相关项，才可以放根目录。
 - 多个目录都合理、或语义拿不准：问用户选哪个。宁可放根目录，也不要硬塞进错误目录。
 

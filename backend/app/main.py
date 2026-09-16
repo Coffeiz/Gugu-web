@@ -55,6 +55,7 @@ from app.api.v1 import admin_update as admin_update_router
 from app.api.v1 import notifications as notifications_router
 from app.api.v1 import user_skills as user_skills_router
 from app.api.v1 import byok as byok_router
+from app.api.v1 import mcp_settings as mcp_settings_router
 from app.api.v1 import undo as undo_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
@@ -493,6 +494,7 @@ app.include_router(
 app.include_router(notifications_router.router, prefix="/api/v1")
 app.include_router(user_skills_router.router, prefix="/api/v1")
 app.include_router(byok_router.router, prefix="/api/v1")
+app.include_router(mcp_settings_router.router, prefix="/api/v1")
 app.include_router(undo_router.router, prefix="/api/v1")
 
 

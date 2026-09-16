@@ -9,10 +9,8 @@ from app.services.files.browser import (
     descendant_folder_ids,
     find_user_folders_by_name,
     get_user_folder,
-    list_user_folders,
 )
 from app.services.storage.file_service import FileService
-from app.services.storage.folders import resolve_folder_path
 from .locations import (
     _bound_workspace_target, _coerce_loc, _folder_by_name,
     _norm_target, _resolve_file, _target_loc,
@@ -56,7 +54,7 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
         and workspace_directory_id == f.workspace_directory_id
     ):
         return json.dumps({"error": "未指定有效目标或文件已在该位置，未移动。"
-                                    "请用 target.folder 指定目标文件夹名，或先用 list_folders 确认。",
+                                    "请用 target.folder 指定目标文件夹名，或先用 list_dir 确认。",
                            "current_folder_id": f.folder_id})
 
     try:
@@ -142,7 +140,7 @@ async def _resolve_target(db, user_id, target: dict):
             db, user_id, fname, sp, project_id, bound_wd if sp == "workspace" else target.get("workspace_directory_id"),
         )
         if err:
-            return None, None, None, None, {"error": f"目标文件夹「{fname}」没找到，请用 list_folders 确认，或改用 folder_id"}
+            return None, None, None, None, {"error": f"目标文件夹「{fname}」没找到，请用 list_dir 确认，或改用 folder_id"}
         return (
             ("project" if fo.project_id else ("workspace" if fo.workspace_directory_id else "personal")),
             fo.project_id,
@@ -274,31 +272,6 @@ async def _create_folder(db, user_id, args: dict):
     await db.commit()
     return {"success": True, "folder_id": fo.id, "name": fo.name}
 
-
-
-async def _list_folders(db, user_id, args: dict):
-    rows = await list_user_folders(
-        db, user_id,
-        space=args.get("space"),
-        project_id=args.get("project_id"),
-        parent_id=args.get("parent_id"),
-        workspace_directory_id=args.get("workspace_directory_id"),
-    )
-    out = []
-    for folder in rows:
-        resolved = await resolve_folder_path(
-            db, user_id, folder.id, folder.project_id,
-            folder.workspace_directory_id,
-        )
-        if not resolved:
-            continue
-        _, path = resolved
-        out.append({
-            "id": folder.id, "name": folder.name, "path": path,
-            "project_id": folder.project_id, "parent_id": folder.parent_id,
-            "depth": path.count("/"),
-        })
-    return sorted(out, key=lambda item: (item["depth"], item["path"]))
 
 
 async def _find_folder(db, user_id, args: dict):

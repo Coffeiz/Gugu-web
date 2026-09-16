@@ -40,6 +40,7 @@ export const useUiStore = defineStore('ui', () => {
   const openProfile = ref(false)
   const profileInitialNav = ref<string | null>(null)
   const pendingChatSession   = ref<unknown>(null)
+  const pendingChatPrefill   = ref<string | null>(null)
   const pendingFileTarget    = ref<{ kind: string; id: number } | null>(null)
   const pendingChatMessageId = ref<number | null>(null)   // 对话搜索命中消息时，跳转后滚到该消息
   const pendingCalendarEvent = ref<{ id: number; date?: string } | null>(null)   // { id, date } 日程搜索跳转
@@ -123,6 +124,7 @@ export const useUiStore = defineStore('ui', () => {
     // pending 导航信号属于当前账号；登录/登出边界必须一起失效，避免旧页面的
     // 延迟监听在新账号页面挂载后误消费，或覆盖新账号自己的高光请求。
     pendingChatSession.value = null
+    pendingChatPrefill.value = null
     pendingFileTarget.value = null
     pendingChatMessageId.value = null
     pendingCalendarEvent.value = null
@@ -154,7 +156,7 @@ export const useUiStore = defineStore('ui', () => {
     notifCount, notifications, liveNotification, fetchNotifications, checkLoginBubble,
     pushNotification, markAllRead, markRead, resetAccountState,
     openNewProject, newProjectInitStatus, openProfile, profileInitialNav, sidebarCollapsed, newProjectRange,
-    calendarActiveRange, pendingChatSession, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
+    calendarActiveRange, pendingChatSession, pendingChatPrefill, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
     pendingChatMessageId, pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
     pendingNoteId,
   }

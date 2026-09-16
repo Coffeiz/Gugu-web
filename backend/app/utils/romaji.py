@@ -20,7 +20,8 @@ try:
     from sudachipy import Dictionary as _SudachiDictionary
     from sudachipy import SplitMode as _SudachiSplitMode
 
-    _sudachi_tokenizer = _SudachiDictionary().create()
+    # small 档词典：比 core 小 ~190MB，30 条中日文语料实测读音与 core 全一致
+    _sudachi_tokenizer = _SudachiDictionary(dict="small").create()
     _HAS_JAPANESE_ROMAJI = True
 except ImportError:
     _HAS_JAPANESE_ROMAJI = False

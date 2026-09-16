@@ -46,6 +46,7 @@ async def create_prompt(
     body: str,
     options: list[dict],
     context: dict | None = None,
+    secret_fields: list[dict] | None = None,
     allow_text_input: bool = False,
     source: str = "system",
     expires_minutes: int = 10,
@@ -91,6 +92,7 @@ async def create_prompt(
         body=body,
         schema_json={
             "options": rendered_options,
+            "secret_fields": list(secret_fields or []),
             "allow_text_input": allow_custom_reply,
             "source": source,
             "custom_input_active": False,
@@ -153,6 +155,13 @@ async def create_agent_prompt(
         if not option_id or not label or len(option_id) > 64 or len(label) > 120:
             return reject("invalid_option_fields")
         normalized.append({"id": option_id, "label": label, "action_type": "choice"})
+    from app.services.secret_prompts import normalize_secret_fields
+    secret_fields: list[dict] = []
+    raw_secret_fields = payload.get("secret_fields")
+    if raw_secret_fields is not None:
+        secret_fields = normalize_secret_fields(raw_secret_fields) or []
+        if not secret_fields:
+            return reject("invalid_secret_fields")
     title = str(payload.get("title") or "需要你的回答").strip()[:120]
     body = str(payload.get("body") or "").strip()[:1000]
     authorization = str(payload.get("authorization") or "").strip()
@@ -162,13 +171,27 @@ async def create_agent_prompt(
         return reject("authorization_requires_session")
     if authorization and (kind != "choice" or [item.get("id") for item in normalized] != ["confirm", "cancel"]):
         return reject("invalid_authorization_prompt")
+    from app.db import session as db_session
+
     context = {
         "tool_name": tool_name,
         "tool_call_id": tool_call_id,
     }
+    if secret_fields:
+        target = payload.get("secret_target")
+        if not isinstance(target, dict) or not target.get("kind"):
+            return reject("invalid_secret_target")
+        target = {
+            str(key): str(value)[:256]
+            for key, value in target.items()
+            if isinstance(key, str) and isinstance(value, (str, int))
+        }
+        context.update({
+            "secret_target": target,
+            "secret_fields": [item["name"] for item in secret_fields],
+        })
     if authorization == "user_sandbox":
         context["command_action"] = "filesystem_authorization_grant"
-    from app.db import session as db_session
     db_session.ensure_engine()
     if db_session._SessionLocal is None:
         return reject("database_session_unavailable")
@@ -182,8 +205,10 @@ async def create_agent_prompt(
             body=body,
             options=normalized,
             context=context,
-            # Agent 主动询问统一提供自定义回答，不由模型自行关闭这个能力。
-            allow_text_input=True,
+            secret_fields=secret_fields,
+            # 凭据表单只能通过独立安全接口提交，不能退化为普通聊天文本；
+            # 普通 ask_user 仍保留自定义回答入口。
+            allow_text_input=not bool(secret_fields),
             source="agent",
         )
         if authorization == "user_sandbox":
@@ -725,6 +750,8 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
             "tool_call_id": tool_call_id,
             "task_paused": bool(prompt.kind == "confirm" and tool_call_id),
             "options": options,
+            # 只回传字段名/标签/类型，不回传任何凭据值。
+            "secret_fields": list(schema.get("secret_fields") or []),
             "allow_text_input": bool(schema.get("source") == "agent" and schema.get("allow_text_input")),
             "custom_input_active": bool(schema.get("custom_input_active")),
             "expires_at": prompt.expires_at.isoformat(),
@@ -779,6 +806,8 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
             "tool_call_id": tool_call_id,
             "task_paused": bool(prompt.kind == "confirm" and tool_call_id),
             "options": options,
+            # 只回传字段名/标签/类型，不回传任何凭据值。
+            "secret_fields": list(schema.get("secret_fields") or []),
             "allow_text_input": bool(schema.get("source") == "agent" and schema.get("allow_text_input")),
             "custom_input_active": bool(schema.get("custom_input_active")),
             "resolved": prompt.status != "active" or prompt.expires_at <= now,

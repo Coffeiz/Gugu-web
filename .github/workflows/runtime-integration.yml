@@ -247,7 +247,7 @@ jobs:
         working-directory: backend
         env:
           PYTHONPATH: .
-        run: .venv/bin/python -m pytest -q
+        run: .venv/bin/python -m pytest -q -n auto
 
       - name: Affected L1 tests (PR)
         if: github.event_name == 'pull_request'

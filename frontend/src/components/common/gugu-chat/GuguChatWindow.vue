@@ -8,7 +8,8 @@
        因而直接跟随 layout；避免滚动容器/原生 scrollbar 追着旧几何缓动。 -->
   <div class="chat-window" :class="{ 'is-layout-resizing': resizing }" :style="windowStyle" ref="windowEl"
     @mousedown.capture="onRaiseChat"
-    @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+    @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
+    @pointerover="onRefPointerOver" @pointerleave="refDropHover = false">
 
     <!-- 拖入遮罩（覆盖整个窗口，大小窗通用）-->
     <Transition name="chat-drop-fade">
@@ -17,6 +18,16 @@
           <path d="M12 16V6M8 10l4-4 4 4"/><path d="M5 19h14"/>
         </svg>
         <span>{{ t('chat.dropAttachment') }}</span>
+      </div>
+    </Transition>
+
+    <!-- 拖文件卡进来 = @ 引用的悬停遮罩（Runtime 投放，视觉与附件遮罩同语言）-->
+    <Transition name="chat-drop-fade">
+      <div v-if="refDropHover" class="chat-drop-overlay chat-ref-overlay">
+        <svg width="30" height="30" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+          <path d="M216,68H133.39l-26-29.29a20,20,0,0,0-15-6.71H40A20,20,0,0,0,20,52V200.62A19.41,19.41,0,0,0,39.38,220H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68ZM44,56H90.61l10.67,12H44ZM212,196H44V92H212Z" />
+        </svg>
+        <span>{{ t('chat.dropReference') }}</span>
       </div>
     </Transition>
 
@@ -80,7 +91,7 @@
         :session-settling="sessionSettling"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
-        @interaction-select="onInteractionSelect" @reference-click="onReferenceClick"
+        @interaction-select="onInteractionSelect" @secret-submit="onSecretSubmit" @reference-click="onReferenceClick"
       />
 
       <!-- 排队条：生成中发出的消息不进对话流，在这里排队展示（可单条移除）；
@@ -118,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 /**
@@ -135,6 +146,8 @@ import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'
+import { CHAT_REF_ACCEPTS, CHAT_REF_SURFACE_ID } from './chatTypes'
+import { runtime } from '@/interaction/runtime'
 import type { QueuedMessage } from './composables/useChatStream'
 
 const props = defineProps<{
@@ -190,6 +203,7 @@ const props = defineProps<{
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
   onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
+  onSecretSubmit: (msg: ChatMessage, values: Record<string, string>) => void
   onReferenceClick: (reference: ChatReference) => void
   onPromptConnect: () => void
   onFilesystemAuthorization: () => void
@@ -219,6 +233,46 @@ const inputTextModel = computed({
 })
 
 const windowEl = ref<HTMLElement | null>(null)
+
+// ── 拖文件卡进聊天 = @ 引用（Runtime 投放目标：整个窗口都是判定区）──
+// 消费动作在 GuguChatComposer（插 chip），这里只负责目标注册与悬停遮罩。
+// 投放代理是 pointer-events:none，拖拽悬停时窗口能收到 pointer 事件；
+// 主键按下才视为拖拽悬停，普通划过不亮遮罩。松手（window pointerup）即清除，
+// 不然松开文件后指针仍在窗口里，遮罩会一直挂着。
+const refDropHover = ref(false)
+const chatRefSurfaceGeneration = runtime.surfaces.register({
+  id: CHAT_REF_SURFACE_ID,
+  type: 'chat-composer',
+  layout: 'grid',
+  accepts: [...CHAT_REF_ACCEPTS],
+  element: null,
+})
+const chatRefTargetGeneration = runtime.targets.register({
+  id: `${CHAT_REF_SURFACE_ID}:target`,
+  surfaceId: CHAT_REF_SURFACE_ID,
+  accepts: [...CHAT_REF_ACCEPTS],
+  priority: 5,
+  element: null,
+})
+watch(windowEl, (element, previous) => {
+  if (element === null && previous) return
+  runtime.targets.setElement(`${CHAT_REF_SURFACE_ID}:target`, element)
+}, { flush: 'post' })
+onUnmounted(() => {
+  runtime.targets.unregister(`${CHAT_REF_SURFACE_ID}:target`, chatRefTargetGeneration)
+  runtime.surfaces.unregister(CHAT_REF_SURFACE_ID, chatRefSurfaceGeneration)
+  window.removeEventListener('pointerup', onRefPointerUp)
+})
+
+function onRefPointerOver(event: PointerEvent) {
+  // 必须是 Runtime 拖拽中：源卡片上会打 data-runtime-active 标记。
+  // 只判主键按下会把「框选文字」误判成拖拽（同样按着左键划过窗口）。
+  if ((event.buttons & 1) && document.querySelector('[data-runtime-active]')) refDropHover.value = true
+}
+// capture 阶段监听：源卡片处理器可能 stopPropagation，冒泡到不了 window。
+function onRefPointerUp() { refDropHover.value = false }
+window.addEventListener('pointerup', onRefPointerUp, true)
+window.addEventListener('pointerup', onRefPointerUp)
 const messageListRef = ref<InstanceType<typeof GuguChatMessageList> | null>(null)
 const composerRef = ref<InstanceType<typeof GuguChatComposer> | null>(null)
 

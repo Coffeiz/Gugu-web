@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { useProjectStages } from '@/composables/projects/useProjectStages'

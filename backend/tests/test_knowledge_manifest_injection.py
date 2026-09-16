@@ -90,3 +90,25 @@ async def test_load_knowledge_overview_filters_to_owner_scope_and_newest_first(k
     # 只含 owner scope，且按更新时间新→旧排（清单取前 40 即最新 40 条）
     assert [item["title"] for item in overview] == ["私人知识", "旧知识"]
     assert overview[0]["description"] == "owner 作用域。"
+
+
+def test_build_split_manifest_truncation_is_disclosed():
+    """截断必须如实告知：清单超 40 条时标注剩余数量并引导 read_knowledge 列举。"""
+    knowledge = [{"title": f"条目{i}", "topic": "", "description": "x"} for i in range(45)]
+    text = _snapshot(knowledge)
+    assert "以上仅显示最新" in text
+    assert "45 条更早条目未列出" in text or "更早条目未列出" in text
+    assert "read_knowledge 列举" in text
+
+
+def test_build_split_manifest_within_cap_has_no_truncation_note():
+    knowledge = [{"title": f"条目{i}", "topic": "", "description": "x"} for i in range(10)]
+    text = _snapshot(knowledge)
+    assert "未列出" not in text
+
+
+def test_build_split_guidance_mentions_listing_for_ids():
+    """清单不含 id：引导语必须说明先列举拿 id 再直读。"""
+    text = _snapshot([{"title": "某条", "topic": "", "description": "x"}])
+    assert "不含正文也不含 id" in text
+    assert "拿到 knowledge_id 再按 id 直读" in text

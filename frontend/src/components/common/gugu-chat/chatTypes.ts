@@ -16,6 +16,8 @@ export interface ChatMessage {
   html?: string | null
   files?: ChatFile[]
   references?: ChatReference[]
+  /** send_link_buttons 的 Web 渲染（PRD-LLM-24）：URL 均经服务端安全校验。 */
+  linkButtons?: { message: string; buttons: { id: string; label: string; url: string }[] }
   quotedText?: string
   time: string
   streaming?: boolean
@@ -44,6 +46,7 @@ export interface ChatMessage {
     title: string
     body: string
     options: Array<{ id: string; label: string; token: string }>
+    secretFields?: Array<{ name: string; label: string; type?: 'secret' }>
     allowTextInput?: boolean
     customInputActive?: boolean
     taskPaused?: boolean
@@ -76,9 +79,13 @@ export interface ChatFile {
   img_height?: number
 }
 
+/** 拖文件卡进聊天 = @ 引用：Runtime 投放目标的共享契约（Window 注册，Composer 消费）。 */
+export const CHAT_REF_SURFACE_ID = 'gugu-chat:composer-ref'
+export const CHAT_REF_ACCEPTS = ['file-item', 'folder-item'] as const
+
 /** 用户在聊天输入中选中的业务对象引用。 */
 export interface ChatReference {
-  type: 'project' | 'file' | 'event' | 'conversation'
+  type: 'project' | 'file' | 'folder' | 'event' | 'conversation'
   id: number
   label: string
 }

@@ -7,15 +7,17 @@
 读/改/创建仅限 UTF-8 文本且 ≤256KB，已知文本扩展名和文件记录的 text/* MIME 都支持。
 创建（create_file）支持批量文件和自定义后缀，不做格式转换、不执行文件内容。
 """
-from datetime import datetime
 import json
 import re
+
+from sqlalchemy import select
 
 from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.services.storage.folders import resolve_folder_path
 from app.services.files.response import color_value
 from app.services.files.browser import (
+    count_user_files,
     descendant_folder_ids,
     find_user_files_by_name,
     find_user_folders_by_name,
@@ -24,13 +26,13 @@ from app.services.files.browser import (
     list_user_folders,
     search_user_files,
 )
-from app.services.projects import get_user_project
 from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
+from app.models import File  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
 from app.services.storage.file_service import FileService
 from app.search.query import normalize_queries
-from agent.tools.base import BaseSkill, Tool, current_dispatch_session
+from agent.tools.base import BaseSkill, Tool
 from agent.tools.text_edit import apply_line_edits, select_numbered_lines
 from .locations import (
     _bound_workspace_target, _coerce_loc, _folder_by_name,
@@ -39,7 +41,7 @@ from .locations import (
     _target_loc,
 )
 from .folders import (
-    _create_folder, _delete_folder, _find_folder, _list_folders,
+    _create_folder, _delete_folder, _find_folder,
     _move_items, _rename_folder,
 )
 from .grep import _grep_files
@@ -160,26 +162,91 @@ def _strip_ext(name: str, ext: str) -> str:
 
 
 # ── handlers ──
-async def _list_files(db, user_id, args: dict):
+async def _resolve_folder_path(db, user_id, raw: str, space, project_id, workspace_directory_id):
+    """把「个人文件/参考素材/方案」式路径（或单名）解析成 folder id。
+
+    按 "/" 切分逐级下钻：第一段若是空间别名（personal/个人文件）则映射为 space；
+    其余每段在上一级的子文件夹里按名匹配（精确优先，unique 才继续）。解析到第 i 级
+    失败时，报错带上一级实际存在的子目录，模型能自我纠正而不是瞎猜。
+    返回 (folder_id|None, 错误JSON|None)；空路径返回 (None, None) 表示不限目录。
+    """
+    raw = str(raw).strip().strip("/")
+    if not raw:
+        return None, None
+    segments = [seg for seg in (part.strip() for part in raw.split("/")) if seg]
+    if not segments:
+        return None, None
+
+    if len(segments) > 1 and segments[0].lower() in ("personal", "个人文件", "个人"):
+        space = space or "personal"
+        segments = segments[1:]
+
+    parent_id = None
+    for depth, seg in enumerate(segments):
+        named = await find_user_folders_by_name(
+            db, user_id, seg, space=space, project_id=project_id,
+            workspace_directory_id=workspace_directory_id,
+        )
+        # 逐级约束：depth 0 只认根目录（parent_id is None），与 _folder_by_name
+        # 「重名优先顶层」的语义一致——否则嵌套同名目录会让根路径误报歧义
+        candidates = [folder for folder in named if folder.parent_id == parent_id]
+        if not candidates:
+            siblings = await list_user_folders(
+                db, user_id, space=space, project_id=project_id,
+                parent_id=parent_id,
+                workspace_directory_id=workspace_directory_id,
+            )
+            where = "「{}」下".format(segments[depth - 1]) if depth else "根目录"
+            return None, json.dumps({
+                "error": "路径解析失败：{}没有名为「{}」的文件夹".format(where, seg),
+                "available_folders": sorted({folder.name for folder in siblings}),
+            })
+        if len(candidates) > 1:
+            return None, json.dumps({
+                "error": "路径解析失败：第 {} 级「{}」有多个同名文件夹，请改用 folder_id".format(depth + 1, seg),
+                "candidates": [{"id": folder.id, "parent_id": folder.parent_id} for folder in candidates],
+            })
+        parent_id = candidates[0].id
+    return parent_id, None
+
+
+async def _list_dir(db, user_id, args: dict):
+    """统一目录浏览：一次返回目录内的子文件夹与文件（取代 list_files/list_folders）。
+
+    folder 不传=当前用户所有可访问空间；传了（id 或名字）=该目录的子文件夹与直属文件。
+    parent_id 是 folder 的纯 id 形式。limit 只约束 files，folders 恒全量。
+    """
+    kind = args.get("kind") if args.get("kind") in ("both", "file", "folder") else "both"
+
     folder_value = args.get("folder_id")
     if folder_value in (None, ""):
         folder_value = args.get("folder")
-    folder_id = None
+    if folder_value in (None, ""):
+        folder_value = args.get("parent_id")
+    scope_folder_id = None
     if folder_value not in (None, ""):
         try:
-            folder_id = int(str(folder_value).strip().lstrip("#"))
+            scope_folder_id = int(str(folder_value).strip().lstrip("#"))
         except (TypeError, ValueError):
-            folder, error = await _folder_by_name(
-                db,
-                user_id,
-                folder_value,
-                args.get("space"),
-                args.get("project_id"),
-                args.get("workspace_directory_id"),
-            )
+            if "/" in str(folder_value).strip().strip("/"):
+                scope_folder_id, error = await _resolve_folder_path(
+                    db, user_id, folder_value,
+                    args.get("space"), args.get("project_id"),
+                    args.get("workspace_directory_id"),
+                )
+            else:
+                folder, error = await _folder_by_name(
+                    db,
+                    user_id,
+                    folder_value,
+                    args.get("space"),
+                    args.get("project_id"),
+                    args.get("workspace_directory_id"),
+                )
+                scope_folder_id = folder.id if folder is not None else None
             if error:
                 return error
-            folder_id = folder.id
+
     file_queries = normalize_queries(
         args.get("query") or args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
     )
@@ -188,34 +255,83 @@ async def _list_files(db, user_id, args: dict):
         limit = max(1, min(int(requested_limit), 200))
     except (TypeError, ValueError):
         limit = 100
-    rows = await search_user_files(
-        db, user_id,
-        space=args.get("space"),
-        project_id=args.get("project_id"),
-        folder_id=folder_id,
-        workspace_directory_id=args.get("workspace_directory_id"),
-        ext=args.get("ext"),
-        queries=file_queries,
-        mode=args.get("mode"),
-        limit=limit,
-    )
-    out = []
-    for file in rows:
-        folder_path = "（根目录）"
-        if file.folder_id:
-            resolved = await resolve_folder_path(
-                db, user_id, file.folder_id,
-                file.project_id if file.space == "project" else None,
-                file.workspace_directory_id,
+
+    out_files: list[dict] = []
+    total = 0
+    if kind != "folder":
+        filter_kwargs = dict(
+            space=args.get("space"),
+            project_id=args.get("project_id"),
+            folder_id=scope_folder_id,
+            workspace_directory_id=args.get("workspace_directory_id"),
+            ext=args.get("ext"),
+            queries=file_queries,
+            mode=args.get("mode"),
+        )
+        offset = max(0, int(args.get("offset") or 0))
+        sort = args.get("sort") if args.get("sort") in ("updated", "name") else "updated"
+        rows = await search_user_files(
+            db, user_id, limit=limit, offset=offset, sort=sort, **filter_kwargs,
+        )
+        total = await count_user_files(db, user_id, **filter_kwargs)
+        for file in rows:
+            folder_path = "（根目录）"
+            if file.folder_id:
+                resolved = await resolve_folder_path(
+                    db, user_id, file.folder_id,
+                    file.project_id if file.space == "project" else None,
+                    file.workspace_directory_id,
+                )
+                if resolved:
+                    _, folder_path = resolved
+            out_files.append({
+                "id": file.id, "name": f"{file.display_name}.{file.ext}", "ext": file.ext,
+                "space": file.space, "size": file.size, "project_id": file.project_id,
+                "folder_id": file.folder_id, "folder_path": folder_path,
+            })
+
+    out_folders: list[dict] = []
+    if kind != "file":
+        folder_rows = await list_user_folders(
+            db, user_id,
+            space=args.get("space"),
+            project_id=args.get("project_id"),
+            parent_id=scope_folder_id,
+            workspace_directory_id=args.get("workspace_directory_id"),
+        )
+        counts: dict[int, int] = {}
+        folder_ids = [folder.id for folder in folder_rows]
+        if folder_ids:
+            from sqlalchemy import func
+            stmt = (
+                select(File.folder_id, func.count())  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
+                .where(
+                    File.user_id == user_id,
+                    File.deleted_at.is_(None),
+                    File.folder_id.in_(folder_ids),
+                )
+                .group_by(File.folder_id)
             )
-            if resolved:
-                _, folder_path = resolved
-        out.append({
-            "id": file.id, "name": f"{file.display_name}.{file.ext}", "ext": file.ext,
-            "space": file.space, "size": file.size, "project_id": file.project_id,
-            "folder_id": file.folder_id, "folder_path": folder_path,
-        })
-    return out
+            counts = dict((await db.execute(stmt)).all())  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
+        for folder in folder_rows:
+            resolved = await resolve_folder_path(
+                db, user_id, folder.id, folder.project_id,
+                folder.workspace_directory_id,
+            )
+            if not resolved:
+                continue
+            _, path = resolved
+            out_folders.append({
+                "id": folder.id, "name": folder.name, "path": path,
+                "project_id": folder.project_id, "parent_id": folder.parent_id,
+                "depth": path.count("/"),
+                "file_count": counts.get(folder.id, 0),
+            })
+        out_folders.sort(key=lambda item: (item["depth"], item["path"]))
+
+    # shown/total 只统计 files（folders 恒全量、无截断语义）：shown<total 说明被
+    # limit 截断，必须加大 limit 重查或加过滤条件，不能把前 N 条当全量下结论。
+    return {"shown": len(out_files), "total": total, "files": out_files, "folders": out_folders}
 
 
 async def _read_file(db, user_id, args: dict):
@@ -726,27 +842,37 @@ class FilesSkill(BaseSkill):
     name = "files"
     tools = [
         Tool(
-            name="list_files", label="查询文件",
-            description_short='查询文件；默认覆盖当前用户可访问的所有空间。',
-            description="按空间、项目、工作区、文件夹、扩展名或名称关键词查询文件；不传位置条件时查询当前用户所有可访问空间，结果含完整 folder_path。",
+            name="list_dir", label="浏览目录",
+            description_short='浏览目录：一次列出子文件夹和文件；默认覆盖当前用户可访问的所有空间。',
+            description="列出子文件夹与文件，可按空间、项目、工作区或目录筛选；不传位置条件时覆盖当前用户所有可访问空间。"
+                        "folder 传目录名（支持 a/b/c 式路径，也可用 folder_id/parent_id 传 id），限定该目录的子文件夹与直属文件。"
+                        "返回 {shown, total, files, folders}：total/shown 只统计文件——shown<total 说明未取完，"
+                        "加大 limit、加 offset 翻页或改用更精确的过滤条件，不能把部分结果当全量下结论；确认「全部/清空/还剩几个」类问题时务必核对 total。"
+                        "limit 只约束 files（上限 200）；folders 恒全量，每项带 file_count（直属文件数）。kind=file/folder 可只看其中一种。"
+                        "超大目录看全量：sort=\"name\" + limit=200 + offset 递增分页拉完（名字序翻页稳定不漏重）。"
+                        "按关键词找文件时优先一次传 queries（默认 OR）；决定新文件落点时先看 folders 的 path/depth 审视一级和相关二级目录。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
+                    "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                     "project_id": {"type": "integer"},
-                    "folder_id": {"type": "integer"},
                     "workspace_directory_id": {"type": "integer"},
                     "folder": {"type": "string"},
+                    "folder_id": {"type": "integer"},
+                    "parent_id": {"type": "integer"},
+                    "kind": {"type": "string", "enum": ["both", "file", "folder"]},
                     "ext": {"type": "string"},
                     "query": {"type": "string"},
                     "q": {"type": "string"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "mode": {"type": "string", "enum": ["OR", "AND"]},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "sort": {"type": "string", "enum": ["updated", "name"]},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                 },
             },
             repeat_safe=True,
-            handler=_list_files,
+            handler=_list_dir,
         ),
         Tool(
             name="read_file", label="读取文件",
@@ -1022,23 +1148,6 @@ class FilesSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="list_folders", label="查询文件夹",
-            description_short='查询文件夹；默认覆盖当前用户可访问的所有空间。',
-            description="列出文件夹，可按空间、项目、工作区或父文件夹筛选；不传位置条件时查询当前用户所有可访问空间。"
-                        "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
-                    "project_id": {"type": "integer"},
-                    "parent_id": {"type": "integer"},
-                    "workspace_directory_id": {"type": "integer"},
-                },
-            },
-            repeat_safe=True,
-            handler=_list_folders,
-        ),
-        Tool(
             name="rename_folder", label="重命名文件夹",
             description_short='重命名文件夹；跨项目存在同名文件夹时按项目范围定位。',
             description="重命名文件夹。用 name 指定要改的文件夹名（或用 folder_id）。同名文件夹存在于多个项目时必须传 project_id 避免误操作。",
@@ -1120,7 +1229,7 @@ class FilesSkill(BaseSkill):
             name="send_file", label="发送文件",
             description_short='发送文件或图片。',
             description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用。"
-                        "四个来源只能选其一：文件库文件优先用 list_files 返回的 file_id，也可以直接给文件名"
+                        "四个来源只能选其一：文件库文件优先用 list_dir 返回的 file_id，也可以直接给文件名"
                         "（重名时会返回候选让你用 file_id 消歧）；Shell 逻辑路径 /workspace/...、/personal/...、"
                         "/project/... 用 file 传（路径方式单文件上限 10MB，更大的文件请用 file_id），不要把路径填到"
                         " file_id；url 仅接受 http(s) 网络地址，本地或工作区文件不要用 url。"

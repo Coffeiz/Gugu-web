@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { RELATION_CURVE_MAX_EXTEND, relationCurvePath, relationEnvelope } from './canvasRelationGeometry'
 

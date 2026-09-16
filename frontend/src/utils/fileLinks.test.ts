@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { resolveRelativeFileLink } from './fileLinks'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'

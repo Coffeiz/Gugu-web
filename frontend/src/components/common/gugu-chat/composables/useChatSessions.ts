@@ -1,7 +1,6 @@
 import { nextTick, computed, onScopeDispose, type Ref } from 'vue'
 import { i18n } from '@/i18n'
-import { agentApi, getToken } from '@/services/api'
-import { API_BASE } from '../chatConstants'
+import { agentApi } from '@/services/api'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePayload } from '../chatTypes'
 import { displayQQFaces } from '../messageDisplay'
 import type GuguChatComposer from '../GuguChatComposer.vue'
@@ -40,6 +39,7 @@ interface RawTimelineEvent {
   kind: 'assistant' | 'tool'
   text?: string
   files?: ChatFile[]
+  linkButtons?: ChatMessage['linkButtons']
   runId?: string
   roundId?: string
   toolCallId?: string
@@ -224,6 +224,7 @@ export function useChatSessions(options: {
           ? {
               id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null,
               files: event.files && event.files.length ? event.files : undefined,
+              linkButtons: event.linkButtons,
               time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
               runId: event.runId, roundId: event.roundId,
               _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
@@ -237,40 +238,39 @@ export function useChatSessions(options: {
               _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
             },
       )
+      const loadedInteractions: ChatMessage[] = []
+      // 刷新/切回会话时恢复尚未过期的交互按钮；服务端会轮换 pending action token，
+      // 因而前端不需要、也不会持久化旧 token。
+      try {
+        const interactionData = await agentApi.listSessionInteractions(String(id))
+        for (const item of (interactionData.items || [])) {
+          const promptId = Number(item.id)
+          if (!Number.isFinite(promptId)) continue
+          loadedInteractions.push({
+            id: promptId, dbId: promptId, role: 'interaction', text: '', _createdAt: item.created_at,
+            time: new Date(item.created_at || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
+            interaction: {
+              promptId, kind: String(item.kind || 'confirm'),
+              toolCallId: item.tool_call_id ? String(item.tool_call_id) : null,
+              title: String(item.title || i18n.global.t('chatUi.confirmRequired')), body: String(item.body || ''),
+              options: Array.isArray(item.options) ? item.options : [],
+              allowTextInput: Boolean(item.allow_text_input),
+              customInputActive: Boolean(item.custom_input_active),
+              taskPaused: Boolean(item.task_paused),
+              secretFields: Array.isArray(item.secret_fields) ? item.secret_fields : undefined,
+              resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
+              responseText: item.response_text ? String(item.response_text) : null,
+              expiresAt: item.expires_at ? String(item.expires_at) : undefined,
+            },
+          })
+        }
+      } catch { /* 交互恢复失败不阻断历史会话加载 */ }
       messages.value = sortTimelineMessages([
         ...loadedMessages,
         ...loadedTimeline,
         ...loadedTools,
+        ...loadedInteractions,
       ])
-      // 刷新/切回会话时恢复尚未过期的交互按钮；服务端会轮换 pending action token，
-      // 因而前端不需要、也不会持久化旧 token。
-      try {
-        const interactionRes = await fetch(`${API_BASE}/agent/sessions/${id}/interactions`, {
-          headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
-        })
-        if (interactionRes.ok) {
-          const interactionData = await interactionRes.json()
-          for (const item of (interactionData.items || [])) {
-            messages.value.push({
-              id: mkid(), role: 'interaction', text: '', _createdAt: item.created_at,
-              time: new Date(item.created_at || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
-              interaction: {
-                promptId: Number(item.id), kind: String(item.kind || 'confirm'),
-                toolCallId: item.tool_call_id ? String(item.tool_call_id) : null,
-                title: String(item.title || i18n.global.t('chatUi.confirmRequired')), body: String(item.body || ''),
-                options: Array.isArray(item.options) ? item.options : [],
-                allowTextInput: Boolean(item.allow_text_input),
-                customInputActive: Boolean(item.custom_input_active),
-                taskPaused: Boolean(item.task_paused),
-                resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
-                responseText: item.response_text ? String(item.response_text) : null,
-                expiresAt: item.expires_at ? String(item.expires_at) : undefined,
-              },
-            })
-          }
-          sortTimelineMessages(messages.value)
-        }
-      } catch { /* 交互恢复失败不阻断历史会话加载 */ }
       options.onContentReset(); options.resetSessionTurn()
       await nextTick()
       options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度

@@ -11,10 +11,7 @@
       <div v-if="flash" class="users-flash">{{ flash }}</div>
     </Transition>
 
-    <div class="user-tabs" role="tablist">
-      <button class="user-tab" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">{{ t('adminUsers.all') }}</button>
-      <button class="user-tab" :class="{ active: activeTab === 'risk' }" @click="activeTab = 'risk'">{{ t('adminUsers.risk') }}</button>
-    </div>
+    <SegmentedTabs v-model="activeTab" :tabs="userTabs" :aria-label="t('adminUsers.title')" class="user-tabs" />
 
     <RiskUsersPanel v-if="activeTab === 'risk'" />
 
@@ -141,6 +138,7 @@ import { useI18n } from 'vue-i18n'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import RiskUsersPanel from './components/RiskUsersPanel.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
+import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()
@@ -155,6 +153,10 @@ const deleteTarget = ref<any | null>(null)
 const flash = ref('')
 const deleting    = ref(false)
 const activeTab   = ref<'all' | 'risk'>('all')
+const userTabs = computed(() => [
+  { key: 'all', label: t('adminUsers.all') },
+  { key: 'risk', label: t('adminUsers.risk') },
+])
 
 const AVATAR_COLORS = [
   ['#5a6b9e', '#8490c4'],
@@ -279,10 +281,7 @@ onMounted(load)
 <style scoped>
 .users-page { min-height: 100%; }
 
-.user-tabs { display: flex; gap: 4px; padding: 22px 36px 0; border-bottom: 1px solid var(--panel-divider); }
-.user-tab { padding: 8px 14px 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: rgba(255,255,255,0.4); cursor: pointer; font-size: 13px; }
-.user-tab:hover { color: rgba(255,255,255,0.75); }
-.user-tab.active { color: rgba(210,215,255,0.95); border-bottom-color: rgba(150,165,225,0.9); }
+.user-tabs { margin: 22px 36px 0; }
 
 .page-header      { padding: 32px 36px 0; }
 .page-title-block { display: flex; flex-direction: column; }

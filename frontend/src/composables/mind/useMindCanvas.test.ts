@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { ref } from 'vue'
 import { describe, expect, it } from 'vitest'
 import { pickRelationAnchorSides, useMindCanvas } from './useMindCanvas'

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest'
 import { navPathFor, type NavSeg, type FolderCard } from '@/utils/filesNav'
 

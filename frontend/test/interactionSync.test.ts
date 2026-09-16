@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { beforeEach, describe, expect, it } from 'vitest'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { reconcileCanvasItems } from '@/interaction/sync/InteractionSyncReconciler'

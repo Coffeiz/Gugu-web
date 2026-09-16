@@ -86,7 +86,18 @@ async def test_get_session_messages_before_id_page_is_newest_first(db, user_a):
 
 async def test_get_session_messages_emits_timeline_and_suppresses_tool_events(db, user_a):
     session = await _mk_session(db, user_a)
-    timeline = [{"kind": "tool", "name": "http_get"}, {"kind": "text", "text": "结果"}]
+    timeline = [
+        {"kind": "tool", "name": "http_get"},
+        {"kind": "assistant", "text": "结果"},
+        {
+            "kind": "assistant",
+            "text": "",
+            "linkButtons": {
+                "message": "相关入口",
+                "buttons": [{"id": "docs", "label": "文档", "url": "https://example.com/docs"}],
+            },
+        },
+    ]
     await _mk_message(db, session.id, "user", "问题")
     timeline_message = await _mk_message(
         db, session.id, "assistant", "", display_timeline=timeline)
@@ -97,8 +108,9 @@ async def test_get_session_messages_emits_timeline_and_suppresses_tool_events(db
     # 带 display_timeline 的 assistant 轮次走 timelineEvents，不重复进正文列表
     assert all(not (m["role"] == "assistant" and m["content"] == "") for m in payload["messages"])
     events = payload["timelineEvents"]
-    assert [event["kind"] for event in events] == ["tool", "text"]
+    assert [event["kind"] for event in events] == ["tool", "assistant", "assistant"]
     assert events[0]["timelineOrder"] == timeline_message.id * 1000 + 1
+    assert events[2]["linkButtons"]["buttons"][0]["url"] == "https://example.com/docs"
     assert payload["toolEvents"] == []       # timeline 已含工具项，抑制兼容 toolEvents
 
 

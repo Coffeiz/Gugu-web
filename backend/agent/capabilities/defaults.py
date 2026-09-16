@@ -10,7 +10,12 @@ from __future__ import annotations
 
 DEFAULT_PROMPT_NAME = "default"
 SYSTEM_MEMORY_ENABLED = True
-NON_RESIDENT_TOOL_NAMES = frozenset({"list_skills", "create_skill", "update_skill", "delete_skill"})
+NON_RESIDENT_TOOL_NAMES = frozenset({
+    "list_skills", "create_skill", "update_skill", "delete_skill",
+    # 链接按钮只在模型明确需要给用户提供网页/AppLink 入口时按需获取 Schema。
+    # 工具仍保留在 Registry，供 get_tool_schema -> call_tool 执行链路使用。
+    "send_link_buttons",
+})
 
 
 def all_system_tool_names() -> list[str]:

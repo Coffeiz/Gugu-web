@@ -147,6 +147,8 @@ export default defineConfig({
   test: {
     // 纯逻辑单测（Vitest）。jsdom 环境：DOMPurify 等依赖 DOM 的工具需要 window。
     // 复用上方 resolve.alias（@ → src）。组件/E2E 后续再加（见 docs/security 报告 P1-a）。
+    // 不碰 DOM 的测试文件首行加 `// @vitest-environment node` 跳过 jsdom——
+    // 环境搭建是测试耗时大头，全量 33s → 15s（2026-09-17 实测）；新测试文件默认照此办理。
     environment: 'jsdom',
     include: ['test/**/*.{test,spec}.{js,ts}', 'src/**/*.{test,spec}.{js,ts}'],
   },

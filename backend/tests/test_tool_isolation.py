@@ -19,7 +19,7 @@ from app.models import (
     File, Folder, Project, ScheduledTask, WorkspaceDirectory,
 )
 
-from agent.tools.files import _list_files, _resolve_file, _resolve_key, _resolve_target
+from agent.tools.files import _list_dir, _resolve_file, _resolve_key, _resolve_target
 from agent.tools.projects import _resolve_project, _update_project
 from agent.tools.calendar import _resolve_event, _remove_event_reminder
 from agent.tools.clients import _resolve_client
@@ -90,19 +90,19 @@ async def test_resolve_key_rejects_folder_from_other_space(db, user_a):
         )
 
 
-async def test_list_files_returns_full_folder_path(db, user_a):
+async def test_list_dir_returns_full_folder_path(db, user_a):
     root = await _mk(db, Folder(user_id=user_a.id, name="咕咕开发"))
     child = await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="方案"))
     file = await _mk(db, File(
         user_id=user_a.id, display_name="ReAct 对比", ext="md",
         folder_id=child.id, storage_key="k",
     ))
-    rows = await _list_files(db, user_a.id, {"q": "ReAct"})
-    result = next(item for item in rows if item["id"] == file.id)
+    result = await _list_dir(db, user_a.id, {"q": "ReAct"})
+    result = next(item for item in result["files"] if item["id"] == file.id)
     assert result["folder_path"] == "咕咕开发/方案"
 
 
-async def test_list_files_filters_by_folder_id(db, user_a):
+async def test_list_dir_filters_by_folder_id(db, user_a):
     target = await _mk(db, Folder(user_id=user_a.id, name="原神"))
     other = await _mk(db, Folder(user_id=user_a.id, name="星穹铁道"))
     inside = await _mk(db, File(
@@ -114,24 +114,130 @@ async def test_list_files_filters_by_folder_id(db, user_a):
         folder_id=other.id, storage_key="other",
     ))
 
-    rows = await _list_files(db, user_a.id, {"folder_id": target.id})
+    result = await _list_dir(db, user_a.id, {"folder": target.id})
 
-    assert [item["id"] for item in rows] == [inside.id]
+    assert result["total"] == 1
+    assert [item["id"] for item in result["files"]] == [inside.id]
 
 
-async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user_a):
+async def test_list_dir_shown_total_reveals_truncation(db, user_a):
+    """shown/total 契约：被 limit 截断时必须暴露真实总数，不能让调用方把前 N 条当全量。
+
+    真实漏判案例：根目录清理时模型按更新时间倒序只拿前 20 条，两条排在截断线外的
+    文件被当成「不存在」。
+    """
+    folder = await _mk(db, Folder(user_id=user_a.id, name="截图"))
+    for i in range(3):
+        await _mk(db, File(
+            user_id=user_a.id, display_name=f"shot-{i}", ext="png",
+            folder_id=folder.id, storage_key=f"k{i}",
+        ))
+
+    result = await _list_dir(db, user_a.id, {"folder": folder.id, "limit": 2})
+
+    assert result["total"] == 3
+    assert result["shown"] == 2
+    assert len(result["files"]) == 2
+
+    full = await _list_dir(db, user_a.id, {"folder": folder.id, "limit": 200})
+    assert full["total"] == 3 and full["shown"] == 3
+
+
+async def test_list_dir_offset_pagination_covers_all(db, user_a):
+    """offset+sort=name 翻页：任意大目录都能确定性拉全，且页间不漏不重。"""
+    folder = await _mk(db, Folder(user_id=user_a.id, name="大目录"))
+    names = ["a", "b", "c", "d", "e"]
+    for name in names:
+        await _mk(db, File(
+            user_id=user_a.id, display_name=name, ext="md",
+            folder_id=folder.id, storage_key=f"k-{name}",
+        ))
+    seen: list[str] = []
+    offset = 0
+    while True:
+        page = await _list_dir(db, user_a.id, {
+            "folder": folder.id, "kind": "file", "sort": "name",
+            "limit": 2, "offset": offset,
+        })
+        seen.extend(item["name"].rsplit(".", 1)[0] for item in page["files"])
+        if offset + page["shown"] >= page["total"]:
+            break
+        offset += page["shown"]
+    assert seen == names
+    assert page["total"] == 5
+
+async def test_list_dir_accepts_folder_name_without_integer_sql_error(db, user_a):
     target = await _mk(db, Folder(user_id=user_a.id, name="咕咕开发"))
     inside = await _mk(db, File(
         user_id=user_a.id, display_name="方案", ext="md",
         folder_id=target.id, storage_key="inside",
     ))
 
-    rows = await _list_files(db, user_a.id, {"folder_id": "咕咕开发", "space": "personal"})
+    result = await _list_dir(db, user_a.id, {"folder": "咕咕开发", "space": "personal"})
 
-    assert [item["id"] for item in rows] == [inside.id]
+    assert [item["id"] for item in result["files"]] == [inside.id]
 
 
-async def test_list_files_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
+async def test_list_dir_resolves_slash_path(db, user_a):
+    """「/个人文件/参考素材/方案」式路径：逐级解析到叶子目录再列举。"""
+    root = await _mk(db, Folder(user_id=user_a.id, name="参考素材"))
+    child = await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="方案"))
+    inside = await _mk(db, File(
+        user_id=user_a.id, display_name="草稿", ext="md",
+        folder_id=child.id, storage_key="draft",
+    ))
+    sibling_file = await _mk(db, File(
+        user_id=user_a.id, display_name="直属于参考素材", ext="md",
+        folder_id=root.id, storage_key="direct",
+    ))
+
+    result = await _list_dir(db, user_a.id, {"folder": "/个人文件/参考素材/方案"})
+
+    assert [item["id"] for item in result["files"]] == [inside.id]
+
+    # 两级路径：列 root 本身，应含直属文件与子文件夹（带 file_count）
+    root_view = await _list_dir(db, user_a.id, {"folder": "个人文件/参考素材"})
+    assert [item["id"] for item in root_view["files"]] == [sibling_file.id]
+    assert [item["name"] for item in root_view["folders"]] == ["方案"]
+    assert root_view["folders"][0]["file_count"] == 1
+
+    # 未知路径：报错带同层可用目录，模型可自我纠正
+    miss = json.loads(await _list_dir(db, user_a.id, {"folder": "个人文件/参考素材/不存在"}))
+    assert "路径解析失败" in miss["error"]
+    assert miss["available_folders"] == ["方案"]
+
+
+async def test_list_dir_path_ambiguous_segment_reports_candidates(db, user_a):
+    root = await _mk(db, Folder(user_id=user_a.id, name="素材"))
+    await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="图"))
+    await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="图"))
+
+    miss = json.loads(await _list_dir(db, user_a.id, {"folder": "素材/图"}))
+    assert "多个同名文件夹" in miss["error"]
+    assert len(miss["candidates"]) == 2
+
+
+async def test_list_dir_path_first_segment_resolves_from_root_only(db, user_a):
+    """路径第一级只认根目录（P2 边界）：嵌套同名目录不参与第一级解析。
+
+    素材/（根）下有 方案/，同时 其他/素材/ 嵌套同名——「素材/方案」的路径语义
+    已明确从根出发，应直达根「素材」的「方案」，而不是误报「多个同名文件夹」。
+    """
+    root = await _mk(db, Folder(user_id=user_a.id, name="素材"))
+    plan = await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="方案"))
+    inside = await _mk(db, File(
+        user_id=user_a.id, display_name="路线图", ext="md",
+        folder_id=plan.id, storage_key="plan",
+    ))
+    other = await _mk(db, Folder(user_id=user_a.id, name="其他"))
+    await _mk(db, Folder(user_id=user_a.id, parent_id=other.id, name="素材"))
+
+    result = await _list_dir(db, user_a.id, {"folder": "素材/方案"})
+
+    assert [item["id"] for item in result["files"]] == [inside.id]
+
+
+async def test_list_dir_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
     workspace = await _mk(db, WorkspaceDirectory(
         user_id=user_a.id, name="F1 工作区", directory_name="f1-list",
     ))
@@ -157,9 +263,9 @@ async def test_list_files_does_not_inherit_bound_workspace_directory(db, user_a,
 
     monkeypatch.setattr(file_documents, "_bound_workspace_target", bound_workspace)
 
-    rows = await _list_files(db, user_a.id, {"queries": ["已看"]})
+    result = await _list_dir(db, user_a.id, {"queries": ["已看"]})
 
-    assert [item["id"] for item in rows] == [personal_file.id]
+    assert [item["id"] for item in result["files"]] == [personal_file.id]
 
 
 async def test_resolve_target_cross_user_folder(db, user_a, user_b):

@@ -7,7 +7,7 @@
       </div>
       <div class="header-right">
         <Checkbox class="data-header-control" :model-value="excludeDev" :aria-label="t('perception.excludeDevelopers')" @update:model-value="excludeDev = $event; load()">{{ t('perception.excludeDevelopers') }}</Checkbox>
-        <AdminSegmentTabs
+        <SegmentedTabs
           :model-value="String(hours)"
           :tabs="ranges"
           size="compact"
@@ -144,7 +144,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
-import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import IntentDistribution from './components/IntentDistribution.vue'

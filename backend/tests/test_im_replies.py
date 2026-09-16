@@ -560,7 +560,9 @@ def test_platform_reply_infers_keyboard_capability_from_parts():
 
     assert REPLY_CAPABILITY_KEYBOARD in reply.required_capabilities
     assert reply.unsupported_capabilities("feishu") == ()
-    assert REPLY_CAPABILITY_KEYBOARD in reply.unsupported_capabilities("qq")
+    # PRD-LLM-24 §8.2：QQ 原生 Keyboard 发送路径（send_keyboard/_post_keyboard）
+    # 早已存在，能力声明与真实路径对齐——键盘 part 在 QQ 上不再判为不支持。
+    assert reply.unsupported_capabilities("qq") == ()
 
 
 @pytest.mark.asyncio

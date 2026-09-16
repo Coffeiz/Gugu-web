@@ -81,9 +81,17 @@ async def test_ollama_native_stream_and_tool_roundtrip(monkeypatch):
     ])
     client = _OllamaClient(response)
     monkeypatch.setattr(providers, "build_ollama_client", lambda ai, timeout: client)
+    # 驱动现在从 run snapshot 取 schema（MCP 动态工具引入的间接层）：桩掉 snapshot
+    class _FakeSnapshot:
+        def openai_schemas(self, names):
+            return [{"type": "function", "function": {"name": name}} for name in names]
+
+        def anthropic_schemas(self, names):
+            return [{"name": name} for name in names]
+
     monkeypatch.setattr(
-        "agent.tools.registry.openai_schemas",
-        lambda names: [{"type": "function", "function": {"name": name}} for name in names],
+        "agent.tools.registry.snapshot",
+        lambda: _FakeSnapshot(),
     )
 
     driver = OllamaDriver()

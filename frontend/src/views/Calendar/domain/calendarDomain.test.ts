@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { components } from '@/types/api'
 import { canDrag, canResize, getDisplayColor, typeLabel } from './calendarRules'

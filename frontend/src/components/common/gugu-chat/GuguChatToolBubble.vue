@@ -2,7 +2,7 @@
   <div class="tool-event-bubble">
     <button class="tool-event-head" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
       <span class="tool-event-state" :class="`is-${msg.toolStatus || 'running'}`" aria-hidden="true" />
-      <span class="tool-event-label">{{ toolLabel }}</span>
+      <span class="tool-event-label" :title="toolLabel">{{ toolLabel }}</span>
       <span class="tool-event-meta">{{ statusText }}</span>
       <span v-if="durationText" class="tool-event-duration">{{ durationText }}</span>
       <FlipChevron :open="expanded" :size="10" :transition="'transform var(--motion-hover-card) var(--motion-ease-emphasis)'" aria-hidden="true" />
@@ -175,7 +175,7 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-state.is-error { background: var(--status-danger); }
 .tool-event-state.is-skipped { background: var(--status-warning); }
 .tool-event-state.is-cancelled { background: var(--content-tertiary); }
-.tool-event-label { min-width: 0; color: var(--content-primary); font-size: var(--font-size-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-event-label { display: block; min-width: 0; color: var(--content-primary); font-size: var(--font-size-sm); font-weight: 600; line-height: var(--line-height-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-event-meta { grid-column: 2; grid-row: 2; color: var(--content-secondary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-duration { grid-column: 3; grid-row: 1 / span 2; align-self: center; color: var(--content-tertiary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-head :deep(.flip-chevron) { grid-column: 4; grid-row: 1 / span 2; align-self: center; }

@@ -11,6 +11,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from 'xterm'
 import 'xterm/css/xterm.css'
 import { getToken } from '@/services/api'
+import { handleUnauthorized } from '@/services/authSession'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ terminalId: string; restartToken?: number }>()
@@ -98,6 +99,7 @@ function connect(forcePromptRecovery = false) {
     socket = null
     connected.value = false
     if (event.code === 4401 || event.code === 4403) {
+      if (event.code === 4401) handleUnauthorized('user')
       intentionalClose = true
       statusText.value = t('terminals.unavailable')
       return

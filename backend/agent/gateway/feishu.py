@@ -574,6 +574,69 @@ async def send_text(receive_id: str, text: str, channel_id: str | None = None) -
     return await asyncio.to_thread(_do_send, _clients[channel_id], receive_id, text)
 
 
+def _build_link_card_payload(message: str, buttons: list[dict]) -> dict:
+    """链接按钮的飞书卡片（PRD-LLM-24 §8.3）：markdown 正文 + open_url 按钮组。
+
+    behaviors 用 open_url，由客户端直接打开 HTTPS 地址；不注册
+    card.action.trigger 回调，不生成任何 action token。
+    """
+    action_buttons = [
+        {
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": str(button["label"])},
+            "type": "primary",
+            "behaviors": [{"type": "open_url", "default_url": str(button["url"])}],
+        }
+        for button in buttons
+    ]
+    elements: list[dict] = []
+    if message.strip():
+        elements.append({"tag": "markdown", "content": message.strip()})
+    elements.append({"tag": "action", "actions": action_buttons})
+    return {"config": {"wide_screen_mode": True}, "elements": elements}
+
+
+def _do_send_link_card(client, receive_id: str, message: str, buttons: list[dict]) -> bool:
+    from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+
+    rid_type = "open_id" if str(receive_id).startswith("ou_") else "chat_id"
+    content = json.dumps(_build_link_card_payload(message, buttons), ensure_ascii=False)
+    req = (
+        CreateMessageRequest.builder()
+        .receive_id_type(rid_type)
+        .request_body(
+            CreateMessageRequestBody.builder()
+            .receive_id(receive_id)
+            .msg_type("interactive")
+            .content(content)
+            .build()
+        ).build()
+    )
+    resp = client.im.v1.message.create(req)
+    if not resp.success():
+        print(f"[feishu] 链接卡片发送失败: code={resp.code} msg={resp.msg}", flush=True)
+        return False
+    return True
+
+
+async def send_link_card(receive_id: str, message: str, buttons: list[dict],
+                         channel_id: str | None = None) -> bool:
+    """发送链接按钮卡片；失败由统一出站层退回文本 URL。"""
+    app_id, app_secret = await _creds_by_id(channel_id)
+    if not app_id or not receive_id:
+        return False
+    if channel_id not in _clients:
+        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
+    try:
+        return await asyncio.to_thread(
+            _do_send_link_card, _clients[channel_id], receive_id, message, buttons
+        )
+    except Exception as e:
+        diag_log("agent.gateway.feishu.send_link_card", e)
+        print(f"[feishu] 链接卡片发送异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
+        return False
+
+
 async def send_interaction_card(receive_id: str, prompt: dict,
                                 channel_id: str | None = None) -> bool:
     """发送飞书原生交互卡片。"""

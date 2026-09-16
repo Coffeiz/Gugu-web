@@ -82,6 +82,9 @@ import { useReferenceSuggest } from '@/composables/mind/useReferenceSuggest'
 import { loadChatCommands, type ChatCommandOption } from './chatCommands'
 import { mindExtensions, type MindDocNode } from '@/composables/mind/useMindEditor'
 import { chatTextFromDoc } from './chatDocText'
+import { runtime } from '@/interaction/runtime'
+import { useRuntimeAction } from '@/interaction/runtime/vue'
+import { useFilesCacheStore } from '@/stores/filesCache'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -89,7 +92,7 @@ import { chatTextFromDoc } from './chatDocText'
  * 编辑器根节点是本组件内部的 DOM——父组件仍通过 expose 调用 focus/测高/重置高度，
  * 不重新拿一份引用，也不让 textarea 与视觉高亮层各自维护一套光标坐标。
  */
-import type { ChatFile, ChatReference } from './chatTypes'
+import { CHAT_REF_SURFACE_ID, type ChatFile, type ChatReference } from './chatTypes'
 const { t } = useI18n()
 
 const props = defineProps<{
@@ -121,6 +124,66 @@ const commandMenuVisible = ref(false)
 const commandIndex = ref(0)
 const chatCommands = ref<ChatCommandOption[]>([])
 const inputRowEl = ref<HTMLElement | null>(null)
+
+// ── 拖文件卡进聊天 = @ 引用（Runtime 投放目标挂在 GuguChatWindow 的窗口根上）──
+// 这里只消费 Runtime 的 move action：解析 objectIds 还原文件/文件夹 id，插入
+// mindRef chip——references 数组是文档派生物，自动带上且天然去重。
+const filesCache = useFilesCacheStore()
+
+function parseDroppedRef(objectId: string): ChatReference | null {
+  const match = /(?:^|:)(file|folder):(\d+)$/.exec(objectId)
+  if (!match) return null
+  return { type: match[1] as ChatReference['type'], id: Number(match[2]), label: '' }
+}
+
+function insertReferenceChip(reference: ChatReference) {
+  const editor = chatEditor.value
+  if (!editor) return
+  // 文档里已有同 type+id 的 chip 时不重复插入（referencesFromDoc 本身也会去重）
+  if (referencesFromDoc(editor.getJSON() as MindDocNode)
+    .some(item => item.type === reference.type && item.id === reference.id)) return
+  let label: string
+  if (reference.type === 'folder') {
+    label = filesCache.getFolder(reference.id)?.name ?? `Folder ${reference.id}`
+  } else {
+    label = filesCache.getFile(reference.id)?.displayName ?? `File ${reference.id}`
+  }
+  editor.chain().focus('end')
+    .insertContent({ type: 'mindRef', attrs: { refType: reference.type, refId: reference.id, label } })
+    .insertContent(' ')
+    .run()
+}
+
+useRuntimeAction(async action => {
+  if (action.type !== 'move' && action.type !== 'move-group') return
+  if (action.toSurfaceId !== CHAT_REF_SURFACE_ID) return
+  const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
+  const references = objectIds.map(parseDroppedRef).filter((item): item is ChatReference => item !== null)
+  if (!references.length) return
+  if (!filesCache.loaded) await filesCache.load().catch(() => {})
+  for (const reference of references) insertReferenceChip(reference)
+  // 落地动画结束后源卡片是瞬间显形的；给它补一段「从松手位置缩放淡入回归」的
+  // 入场动画，等 Runtime 结束对该对象的视觉接管后播放。
+  for (const objectId of objectIds) animateSourceReturn(objectId)
+})
+
+/** 落地收尾后源卡片会直接显形，这里等 Runtime 交还视觉所有权，再补一个短促的
+ *  缩放淡入（起点与 Runtime dismiss 的 0.72 缩放一致），读感是卡片自己飞回来了。 */
+function animateSourceReturn(objectId: string) {
+  const element = runtime.objects.get(objectId)?.element
+  if (!element) return
+  const tryAnimate = () => {
+    if (runtime.isControlled(objectId)) { requestAnimationFrame(tryAnimate); return }
+    element.animate(
+      [
+        { opacity: 0, transform: 'scale(0.72)' },
+        { opacity: 1, transform: 'none' },
+      ],
+      { duration: 240, easing: 'ease-out' },
+    )
+  }
+  requestAnimationFrame(tryAnimate)
+}
 const { items: referenceItems, loading: referenceLoading, active: referenceActive, search: searchReferences, reset: resetReferences, move: moveReferences } = useReferenceSuggest()
 const referencePicker = ref({ open: false, query: '', from: 0, to: 0 })
 let lastReferenceQuery: string | null = null
@@ -467,16 +530,22 @@ defineExpose({
 }
 .chat-input-editor :deep(.ProseMirror p) { margin: 0; }
 .chat-input-editor :deep(.ProseMirror .mind-ref) {
-  display: inline-flex; align-items: center; gap: 4px; vertical-align: baseline;
-  margin: 0 2px; padding: 1px 5px; border: 1px solid var(--action-outline);
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
+  margin: 0 2px; padding: 0 5px; border: 1px solid var(--action-outline);
   border-radius: 5px; color: var(--content-primary); background: var(--action-soft);
-  line-height: 1.35; white-space: nowrap;
+  /* 编辑器行高 14px×1.5=21px。chip 用 middle 对齐且与行框等高时，上下各溢出
+     1px 会把行盒撑到 23px（autogrow 量到 scrollHeight 变大 → 输入行变高）。
+     20px + 上下 -2px 负 margin 把行盒贡献收回行框内：行高恒定且视觉居中。 */
+  height: 20px; line-height: 1; font-size: 12px; white-space: nowrap;
+  /* 上 -3 / 下 -1：净值仍 -2（行盒不变），但把 chip 内容相对 middle 中线上抬 1px，
+     与图标/发送按钮的垂直中心对齐（它们都在行中心 +1px 处，见 border-top 偏移）。 */
+  margin: -3px 2px -1px 2px;
   /* 原子节点仍由 ProseMirror 整体选中/删除；这里不能用 user-select:all，
      否则光标紧贴引用末尾时，鼠标拖拽会被浏览器锁成“选中胶囊/移动光标”，
      无法继续建立前后文本选区。 */
   user-select: text;
 }
-.chat-input-editor :deep(.ProseMirror .mind-ref-icon) { flex: 0 0 auto; }
+.chat-input-editor :deep(.ProseMirror .mind-ref-icon) { flex: 0 0 auto; width: 11px; height: 11px; }
 .chat-input-editor :deep(.ProseMirror .mind-ref-label) { overflow: hidden; text-overflow: ellipsis; }
 
 .exp-send-btn { width: 28px; height: 28px; border-radius: 8px; }

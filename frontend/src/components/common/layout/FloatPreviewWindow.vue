@@ -159,6 +159,7 @@ import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
+import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isVideoExt, isTextExt, isOfficeExt, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
@@ -453,6 +454,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (f.attach_id) {
         const res = await fetch(withCacheBust(`${BASE_URL}/agent/attachment/${f.attach_id}/download`, refresh), { headers, credentials: 'include', cache: 'no-cache' })
         if (sequence !== loadSequence) return
+        if (isUnauthorizedResponse(res)) return
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         url = URL.createObjectURL(await res.blob())
         videoSrc.value = url
@@ -521,6 +523,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       }
       const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
       if (sequence !== loadSequence) return
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const url = URL.createObjectURL(await res.blob())
       if (sequence !== loadSequence) return
@@ -560,7 +563,10 @@ async function load(f: Partial<FileMeta>, refresh = false) {
           const token = localStorage.getItem('user_token') ?? ''
           const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
           fetch(`${BASE_URL}/agent/attachment/${f.attach_id}/thumb?size=card`, { headers: h })
-            .then(r => r.ok ? r.blob() : null).then(b => {
+            .then(r => {
+              if (isUnauthorizedResponse(r)) return null
+              return r.ok ? r.blob() : null
+            }).then(b => {
               if (sequence === loadSequence && b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
             }).catch(() => {})
         } else {
@@ -583,6 +589,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       }
       const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
       if (sequence !== loadSequence) return
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
       if (sequence !== loadSequence) return
@@ -639,6 +646,7 @@ async function handleDownload() {
       const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const url = URL.createObjectURL(await res.blob())
       const anchor = document.createElement('a')

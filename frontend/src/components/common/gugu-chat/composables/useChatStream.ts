@@ -1,12 +1,14 @@
 import { ref, type Ref } from 'vue'
 import { getLocale, i18n } from '@/i18n'
 import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
+import { isUnauthorizedResponse } from '@/services/authSession'
 import { useLiveStore } from '@/stores/live'
 import { playGuguSfx } from '@/services/sfx'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePayload } from '../chatTypes'
 import { renderMd } from '../markdown'
 import { API_BASE } from '../chatConstants'
-import { FILE_TOOLS, PROJECT_TOOLS, CALENDAR_TOOLS } from './useChatActions'
+import { FILE_TOOLS, PROJECT_TOOLS, CALENDAR_TOOLS, MCP_TOOLS } from './useChatActions'
+import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
@@ -153,30 +155,30 @@ export function useChatStream(options: {
     }
   }
 
-  function restorePendingQueueForSession(id: number, serverItems: QueuedMessagePayload[] = []) {
+  function restorePendingQueueForScope(targetSessionId: number | null, serverItems: QueuedMessagePayload[]) {
     const restored = (Array.isArray(serverItems) ? serverItems : [])
-      .filter(item => item.session_id === id)
+      .filter(item => targetSessionId == null ? item.session_id == null : item.session_id === targetSessionId)
       .map(item => ({
         ...item,
         queueId: item.queue_id,
-        sessionId: id,
+        sessionId: targetSessionId,
         // 恢复后绑定当前会话视图；队列归属仍以 sessionId 为准。
         viewGeneration: options.getViewGeneration(),
       }))
     const restoredIdentities = new Set(restored.map(queueIdentity))
-    const previousSessionItems = pendingQueue.value.filter(item => item.sessionId === id)
-    const unsavedLocalItems = previousSessionItems.filter(item =>
-      item.sessionId === id
+    const previousItems = pendingQueue.value.filter(item => item.sessionId === targetSessionId)
+    const unsavedLocalItems = previousItems.filter(item =>
+      item.sessionId === targetSessionId
       && !persistedQueueItems.has(queueIdentity(item))
       && !restoredIdentities.has(queueIdentity(item)),
     )
-    for (const item of previousSessionItems) {
+    for (const item of previousItems) {
       if (!restoredIdentities.has(queueIdentity(item)) && !unsavedLocalItems.includes(item)) {
         persistedQueueItems.delete(queueIdentity(item))
       }
     }
     pendingQueue.value = [
-      ...pendingQueue.value.filter(item => item.sessionId !== id),
+      ...pendingQueue.value.filter(item => item.sessionId !== targetSessionId),
       ...restored,
       ...unsavedLocalItems,
     ]
@@ -187,34 +189,12 @@ export function useChatStream(options: {
     if (serverItems.length) setPendingQueueRecoveryNeeded(true)
   }
 
+  function restorePendingQueueForSession(id: number, serverItems: QueuedMessagePayload[] = []) {
+    restorePendingQueueForScope(id, serverItems)
+  }
+
   function restorePendingQueueForDraft(items: QueuedMessagePayload[]) {
-    const restored = items.filter(item => item.session_id == null).map(item => ({
-      ...item,
-      queueId: item.queue_id,
-      sessionId: null,
-      viewGeneration: options.getViewGeneration(),
-    }))
-    const restoredIdentities = new Set(restored.map(queueIdentity))
-    const previousDraftItems = pendingQueue.value.filter(item => item.sessionId == null)
-    const unsavedLocalItems = previousDraftItems.filter(item =>
-      !persistedQueueItems.has(queueIdentity(item))
-      && !restoredIdentities.has(queueIdentity(item)),
-    )
-    for (const item of previousDraftItems) {
-      if (!restoredIdentities.has(queueIdentity(item)) && !unsavedLocalItems.includes(item)) {
-        persistedQueueItems.delete(queueIdentity(item))
-      }
-    }
-    pendingQueue.value = [
-      ...pendingQueue.value.filter(item => item.sessionId != null),
-      ...restored,
-      ...unsavedLocalItems,
-    ]
-    for (const item of restored) {
-      cancelledQueueKeys.delete(queueIdentity(item))
-      persistedQueueItems.add(queueIdentity(item))
-    }
-    if (items.length) setPendingQueueRecoveryNeeded(true)
+    restorePendingQueueForScope(null, items)
   }
 
   function removeQueued(queueId: string, key: number) {
@@ -483,6 +463,7 @@ export function useChatStream(options: {
               if (FILE_TOOLS.has(evt.name)) liveStore.bump('files')
               else if (PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
               else if (CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
+              else if (MCP_TOOLS.has(evt.name)) notifyResourceChanged('mcp')
             }
             const toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : ''
             const toolIndex = toolCallId ? toolMessageIndexes.get(toolCallId) : undefined
@@ -518,6 +499,7 @@ export function useChatStream(options: {
                 existing.interaction.allowTextInput = Boolean(evt.allow_text_input ?? existing.interaction.allowTextInput)
                 existing.interaction.customInputActive = Boolean(evt.custom_input_active ?? existing.interaction.customInputActive)
                 existing.interaction.taskPaused = Boolean(evt.task_paused ?? existing.interaction.taskPaused)
+                if (Array.isArray(evt.secret_fields)) existing.interaction.secretFields = evt.secret_fields
                 if (!existing.interaction.resolved) existing.interaction.options = evt.options
               } else {
                 messages.value.push({
@@ -532,6 +514,7 @@ export function useChatStream(options: {
                     allowTextInput: Boolean(evt.allow_text_input),
                     customInputActive: Boolean(evt.custom_input_active),
                     taskPaused: Boolean(evt.task_paused),
+                    secretFields: Array.isArray(evt.secret_fields) ? evt.secret_fields : undefined,
                     expiresAt: evt.expires_at ? String(evt.expires_at) : undefined,
                   },
                 })
@@ -604,6 +587,26 @@ export function useChatStream(options: {
               const m = messages.value[aiIdx]
               if (!m.files) m.files = []
               m.files.push(evt.file)
+              scheduleStreamScroll()
+            }
+          } else if (evt.type === 'link_buttons') {
+            if (live()) {
+              receivedAssistantContent = true
+              options.clearStatus()
+              if (aiIdx === -1) options.playIncomingMessageSfx()
+              if (aiIdx === -1) {
+                const messageId = mkid()
+                messages.value.push({
+                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
+                  runId: evt.run_id || currentRunId || undefined,
+                  roundId: evt.round_id || currentRoundId || undefined,
+                  _timelineOrder: nextTimelineOrder(),
+                })
+                sortLiveTimeline()
+                aiIdx = messages.value.findIndex(item => item.id === messageId)
+              }
+              const m = messages.value[aiIdx]
+              if (evt.link_buttons) m.linkButtons = evt.link_buttons
               scheduleStreamScroll()
             }
           } else if (evt.type === 'done') {
@@ -686,6 +689,7 @@ export function useChatStream(options: {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         signal: abortCtrl.value.signal,
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) return
       if (viewGeneration !== options.getViewGeneration() || sessionId.value !== id) return   // 期间又切走了，丢弃
       if (!res.body) return
@@ -749,6 +753,7 @@ export function useChatStream(options: {
         attachments: attachments.map(a => a.attach_id), references,
       }),
     })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (!res.body) throw new Error('empty response body')
     const reader = res.body.getReader()
@@ -891,6 +896,7 @@ export function useChatStream(options: {
                                ...(greetingForSession ? { greeting: greetingForSession } : {}) }),
         signal: requestController.signal,
       })
+      if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       if (!res.body) throw new Error('empty response body')
 

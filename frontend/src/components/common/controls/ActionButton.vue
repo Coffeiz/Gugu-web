@@ -1,16 +1,28 @@
 <template>
-  <button
+  <component
+    :is="href ? 'a' : 'button'"
     class="app-action-button"
     :class="[`is-${variant}`, { 'is-fit': fit }]"
-    :disabled="disabled"
-    :type="type"
+    :disabled="href ? undefined : disabled"
+    :type="href ? undefined : type"
+    :href="href"
+    :target="href ? target : undefined"
+    :rel="href ? rel : undefined"
   >
     <span class="app-action-button-content"><slot /></span>
-  </button>
+  </component>
 </template>
 
 <script setup lang="ts">
-withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean; fit?: boolean; type?: 'button' | 'submit' | 'reset' }>(), {
+withDefaults(defineProps<{
+  variant?: 'primary' | 'secondary' | 'danger'
+  disabled?: boolean
+  fit?: boolean
+  type?: 'button' | 'submit' | 'reset'
+  href?: string
+  target?: string
+  rel?: string
+}>(), {
   variant: 'primary',
   disabled: false,
   fit: false,
@@ -47,6 +59,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
     filter var(--motion-hover-control) var(--motion-ease-standard),
     opacity var(--motion-hover-control) ease;
 }
+.app-action-button[href] { text-decoration: none; }
 .app-action-button.is-fit { width: auto; min-width: 0; flex-basis: auto; }
 .app-action-button.is-primary {
   border: 0;
@@ -82,6 +95,19 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   color: var(--action-secondary-fg-hover);
   background: var(--action-secondary-bg);
   filter: brightness(1.04);
+  box-shadow: none;
+}
+/* 危险操作变体（删除/停用一类）：语义色走 --status-danger，随主题明暗自动取值 */
+.app-action-button.is-danger {
+  border: 1px solid color-mix(in srgb, var(--status-danger) 35%, transparent);
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+  box-shadow: none;
+}
+.app-action-button.is-danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--status-danger) 55%, transparent);
+  color: var(--status-danger);
+  background: color-mix(in srgb, var(--status-danger) 20%, transparent);
   box-shadow: none;
 }
 .app-action-button:active:not(:disabled) { transform: translateY(1px); opacity: .93; }

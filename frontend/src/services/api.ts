@@ -5,6 +5,7 @@
 import type { components } from '@/types/api'
 import { getLocale, i18n, type SupportedLocale } from '@/i18n'
 import { getInteractionClientId } from '@/interaction/sync/InteractionSyncState'
+import { handleUnauthorized, isUnauthorizedResponse } from '@/services/authSession'
 
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
@@ -92,9 +93,7 @@ async function request<T = any>(method: string, path: string, body: any = null, 
 
   if (!res.ok) {
     // token 失效时自动清除并跳转登录
-    if (res.status === 401) {
-      localStorage.removeItem('user_token')
-      window.location.href = '/login'
+    if (isUnauthorizedResponse(res)) {
       throw new Error(i18n.global.t('errors.loginRequired'))
     }
     const err = await res.json().catch(() => ({}))
@@ -142,6 +141,11 @@ export function uploadWithProgress(path: string, form: FormData, onProgress: (p:
       if (xhr.status >= 200 && xhr.status < 300) {
         try { resolve(JSON.parse(xhr.responseText)) } catch { resolve(null) }
       } else {
+        if (xhr.status === 401) {
+          handleUnauthorized('user')
+          reject(new Error(i18n.global.t('errors.loginRequired')))
+          return
+        }
         try {
           const d = JSON.parse(xhr.responseText).detail
           const msg = !d ? i18n.global.t('errors.http', { status: xhr.status })
@@ -257,6 +261,44 @@ export const byokApi = {
   rebuildVectorsStatus: () => get<{ status: string; message?: string }>('/byok/embedding-rebuild/status'),
 }
 
+export interface McpServerItem {
+  id: string
+  name: string
+  scope: string
+  transport: string
+  endpoint: string
+  command: string
+  credential_slots?: Array<{
+    id: string
+    label: string
+    target: 'header' | 'query'
+    name: string
+    prefix?: string
+  }>
+  // 编辑视图明文回显的槽位值（owner-only；落库仍为信封密文）
+  credential_values?: Record<string, string>
+  credential_state?: { configured: boolean; slot_ids: string[] }
+  has_credentials: boolean
+  enabled: boolean
+  confirm_mode: 'auto' | 'confirm_all'
+  timeout_seconds: number
+  tool_allowlist: string[]
+  state: string
+  loaded_tool_count: number
+  loaded_tool_names?: string[]
+}
+
+export const mcpApi = {
+  status: () => get<{ enabled: boolean }>('/mcp/status'),
+  list: () => get<{ enabled: boolean; max_servers: number; items: McpServerItem[] }>('/mcp/servers'),
+  create: (data: Record<string, unknown>) => post<McpServerItem>('/mcp/servers', data),
+  update: (id: string, data: Record<string, unknown>) => patch<McpServerItem>(`/mcp/servers/${encodeURIComponent(id)}`, data),
+  remove: (id: string) => del(`/mcp/servers/${encodeURIComponent(id)}`),
+  test: (id: string) => post<{ ok: boolean; error?: string; tool_count?: number; tools?: string[] }>(`/mcp/servers/${encodeURIComponent(id)}/test_connection`, {}),
+  reconnect: (id: string) => post<{ ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string }>(`/mcp/servers/${encodeURIComponent(id)}/reconnect`, {}),
+  tools: (id: string) => get(`/mcp/servers/${encodeURIComponent(id)}/tools`),
+}
+
 // ── Files ─────────────────────────────────────────────────────────────────────
 interface FileListParams {
   space?: string
@@ -353,6 +395,7 @@ export const filesApi = {
       credentials: 'include',
       headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
+    if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.blob()
   },
@@ -362,6 +405,7 @@ export const filesApi = {
       credentials: 'include',
       headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
+    if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
@@ -464,7 +508,7 @@ export interface MindNoteUpdate {
 }
 /** `[[` 补全候选：type+id 是写进正文的稳定锚点，label 只作展示 */
 export interface MindRefSuggestItem {
-  type: 'project' | 'file' | 'event' | 'conversation'
+  type: 'project' | 'file' | 'folder' | 'event' | 'conversation'
   id: number
   label: string
   subtitle?: string | null
@@ -584,6 +628,7 @@ export const foldersApi = {
     const res = await fetch(`${BASE_URL}/folders/${id}/download`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
+    if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
@@ -710,6 +755,7 @@ export const terminalsApi = {
     const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
     if (token) headers.Authorization = `Bearer ${token}`
     const res = await fetch(`${BASE_URL}/terminals/${encodeURIComponent(id)}/events?after=${after}`, { headers, signal })
+    if (isUnauthorizedResponse(res)) return
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (!res.body) return
     const reader = res.body.getReader()
@@ -763,6 +809,7 @@ export const agentApi = {
   getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
   greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
   updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>
     put(`/agent/pending-queues/${encodeURIComponent(queueId)}`, { items }),

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { buildUpcomingList } from './useCalendarUpcoming'
 import type { CalendarRenderItem } from '@/views/Calendar/domain/calendarTypes'

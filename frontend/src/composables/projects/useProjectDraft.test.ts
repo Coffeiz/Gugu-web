@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { useProjectDraft } from './useProjectDraft'
 import type { Project, ProjectStage } from '@/types/project'

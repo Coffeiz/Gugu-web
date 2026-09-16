@@ -7,3 +7,4 @@ watchfiles>=0.21       # 开发环境监听 Worker 代码并自动重启
 pytest-cov==7.1.0      # 可选质量报告：pytest 覆盖率 JSON
 lizard==1.23.0         # 可选质量报告：Python/TypeScript 圈复杂度
 mutmut==3.8.0          # 周期性手动变异测试；不得接入自动 CI
+pytest-xdist>=3.5      # 并行分片：内存 sqlite/伪造依赖逐 worker 独立，可直接 -n auto

@@ -13,6 +13,7 @@ import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 import { isLiveEventPayload, type LiveEventPayload } from '@/types/live-events'
 import { usePreviewStore } from '@/stores/preview'
+import { isUnauthorizedResponse } from '@/services/authSession'
 
 // live 事件与业务 API 使用同一 FastAPI owner，避免回退到已移除的 TS Live 服务。
 const LIVE_URL = '/api/v1/live/stream'
@@ -76,6 +77,10 @@ export const useLiveStore = defineStore('live', () => {
           headers: { Authorization: `Bearer ${token}` },
           signal: abort.signal,
         })
+        if (isUnauthorizedResponse(res)) {
+          running = false
+          return
+        }
         if (!res.ok || !res.body) throw new Error(`live stream ${res.status}`)
         connected.value = true
         retry = 0

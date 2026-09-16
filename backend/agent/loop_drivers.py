@@ -110,8 +110,9 @@ class RoundResult:
 class LoopDriver(Protocol):
     api_format: str
 
-    def prepare(self, tool_names: list[str], ai, messages: list, system_text: str | None): ...
-    def update_tools(self, ctx, tool_names: list[str]) -> None: ...
+    def prepare(self, tool_names: list[str], ai, messages: list, system_text: str | None,
+                tool_snapshot=None): ...
+    def update_tools(self, ctx, tool_names: list[str], tool_snapshot=None) -> None: ...
     def run_round(self, client, ctx, messages: list) -> AsyncGenerator[tuple, None]: ...
     def build_tool_round(self, result: RoundResult, dispatched: list) -> list[dict]: ...
     def build_followup(self, result: RoundResult, next_content: str,
@@ -177,13 +178,14 @@ class AnthropicDriver:
         ctx.restored_blocks = copy.deepcopy(blocks)
         return True
 
-    def prepare(self, tool_names, ai, messages, system_text):
+    def prepare(self, tool_names, ai, messages, system_text, tool_snapshot=None):
         import httpx
         from agent import providers
         from agent.llm.llm_select import supports_anthropic_active_cache
         from agent.tools import registry
 
-        tools = registry.anthropic_schemas(tool_names)
+        schema_source = tool_snapshot or registry.snapshot()
+        tools = schema_source.anthropic_schemas(tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
@@ -210,12 +212,18 @@ class AnthropicDriver:
         )
         return client, ctx
 
-    def update_tools(self, ctx, tool_names: list[str]) -> None:
+    def update_tools(self, ctx, tool_names: list[str], tool_snapshot=None) -> None:
         from agent.tools import registry
-        ctx.tools = registry.anthropic_schemas(tool_names)
+        schema_source = tool_snapshot or registry.snapshot()
+        ctx.tools = schema_source.anthropic_schemas(tool_names)
 
-    async def run_round(self, client, ctx, messages):
-        from agent.core import _stream_round   # 延迟 import 避免循环依赖（core.py 反过来 import 本模块）
+    async def run_round(self, client, ctx, messages, stream_round=None):
+        # stream_round 由调用方注入（core._run_loop 传 core 兼容别名，保持旧测试
+        # 的 monkeypatch 生效）；不传时用本模块的正统实现——不再反向 import core
+        # （PRD-LLM-25 LLM25-003）。
+        if stream_round is None:
+            from agent.loop import provider as _loop_provider
+            stream_round = _loop_provider.resolve_driver_stream_round()
 
         # ② 给发出去的 messages 打一个滚动缓存断点（每条 message 的最后一个块）：多轮工具循环里
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
@@ -253,7 +261,7 @@ class AnthropicDriver:
             **ctx.generation_param,
         )
         final = None
-        async for kind, val in _stream_round(client, kwargs, ctx.adapter):
+        async for kind, val in stream_round(client, kwargs, ctx.adapter):
             if kind == "final":
                 final = val
                 break
@@ -379,7 +387,7 @@ class OpenAIDriver:
         """Chat Completions 没有跨请求私有推理续接协议，明确返回不可用。"""
         return None
 
-    def prepare(self, tool_names, ai, messages, system_text):
+    def prepare(self, tool_names, ai, messages, system_text, tool_snapshot=None):
         import httpx
         from agent import providers
         from agent.tools import registry
@@ -390,7 +398,8 @@ class OpenAIDriver:
         supports_explicit_cache = adapter.supports_explicit_cache(model)
 
         declared = providers.capability_snapshot(ai)
-        tools = registry.openai_schemas(tool_names) if declared.get("tools", True) else []
+        schema_source = tool_snapshot or registry.snapshot()
+        tools = schema_source.openai_schemas(tool_names) if declared.get("tools", True) else []
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
         client = providers.build_openai_client(ai, _timeout)
 
@@ -409,12 +418,14 @@ class OpenAIDriver:
         )
         return client, ctx
 
-    def update_tools(self, ctx, tool_names: list[str]) -> None:
+    def update_tools(self, ctx, tool_names: list[str], tool_snapshot=None) -> None:
         from agent.tools import registry
         from agent import providers
-        ctx.tools = registry.openai_schemas(tool_names) if providers.capability_snapshot(ctx.ai).get("tools", True) else []
+        schema_source = tool_snapshot or registry.snapshot()
+        ctx.tools = schema_source.openai_schemas(tool_names) if providers.capability_snapshot(ctx.ai).get("tools", True) else []
 
-    async def run_round(self, client, ctx, messages):
+    async def run_round(self, client, ctx, messages, stream_round=None):
+        # stream_round 仅 AnthropicDriver 使用；接收并忽略，保持统一调用签名。
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
         outbound = render_openai_request_history(messages, ctx.adapter)
@@ -623,7 +634,7 @@ class OllamaDriver:
 
     api_format = "ollama"
 
-    def prepare(self, tool_names, ai, messages, system_text):
+    def prepare(self, tool_names, ai, messages, system_text, tool_snapshot=None):
         import httpx
         from agent import providers
         from agent.tools import registry
@@ -637,7 +648,8 @@ class OllamaDriver:
         think: bool | str = False if getattr(ai, "thinking", "disabled") != "adaptive" else effort
         if think not in {False, "low", "medium", "high", "max"}:
             think = "medium"
-        tools = registry.openai_schemas(tool_names)
+        schema_source = tool_snapshot or registry.snapshot()
+        tools = schema_source.openai_schemas(tool_names)
         return client, _OllamaCtx(
             tools=tools,
             max_tokens=ai.max_tokens,
@@ -648,11 +660,13 @@ class OllamaDriver:
             adapter=adapter,
         )
 
-    def update_tools(self, ctx, tool_names: list[str]) -> None:
+    def update_tools(self, ctx, tool_names: list[str], tool_snapshot=None) -> None:
         from agent.tools import registry
-        ctx.tools = registry.openai_schemas(tool_names)
+        schema_source = tool_snapshot or registry.snapshot()
+        ctx.tools = schema_source.openai_schemas(tool_names)
 
-    async def run_round(self, client, ctx, messages):
+    async def run_round(self, client, ctx, messages, stream_round=None):
+        # stream_round 仅 AnthropicDriver 使用；接收并忽略，保持统一调用签名。
         payload = {
             "model": ctx.model,
             "messages": _ollama_messages(ctx.adapter.render_history(messages)),

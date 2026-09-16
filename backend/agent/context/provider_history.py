@@ -128,3 +128,25 @@ def clean_persisted_history(messages: list[Any]) -> int:
         if removed and cleaned != content:
             message.content_json = cleaned
     return removed
+
+
+def sanitize_anthropic_history(messages) -> tuple[int, int, bool]:
+    """在 canonical 层清洗 Anthropic 历史，并把结果写回消息容器（原 core._sanitize_anthropic_history）。
+
+    不能等 provider 投影成普通文本后再清洗：``time-context`` 等 canonical
+    边界一旦被渲染成 ``text``，会被误判为可合并的相邻 user 消息，导致每轮
+    都看到一次历史变化并重复记录告警。
+    """
+    from agent.security.sanitize import sanitize_messages
+
+    conversation = list(getattr(messages, "conversation", messages))
+    cleaned = sanitize_messages(conversation)
+    if cleaned == conversation:
+        return len(conversation), len(cleaned), False
+
+    replace = getattr(messages, "replace_conversation", None)
+    if callable(replace):
+        replace(cleaned)
+    else:
+        messages[:] = cleaned
+    return len(conversation), len(cleaned), True

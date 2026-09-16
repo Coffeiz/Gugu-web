@@ -8,6 +8,7 @@ import { useEventModalStore } from '@/stores/eventModal'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
+import { useRouter } from 'vue-router'
 import { filesApi, agentApi, eventsApi } from '@/services/api'
 import { showAppNotice } from '@/composables/core/useAppToast'
 import { i18n } from '@/i18n'
@@ -23,6 +24,7 @@ export function useMindRefActions() {
   const projectStore = useProjectStore()
   const eventModalStore = useEventModalStore()
   const filesCache = useFilesCacheStore()
+  const router = useRouter()
   const previewStore = usePreviewStore()
   const uiStore = useUiStore()
 
@@ -55,6 +57,12 @@ export function useMindRefActions() {
       if (!filesCache.loaded) return 'unknown'
       await refreshFilesIfNeeded()
       return filesCache.getFile(refId) ? 'available' : 'missing'
+
+    }
+    if (refType === 'folder') {
+      if (!filesCache.loaded) await filesCache.load()
+      if (!filesCache.loaded) return 'unknown'
+      return filesCache.getFolder(refId) ? 'available' : 'missing'
     }
     if (refType === 'event') {
       try {
@@ -86,6 +94,11 @@ export function useMindRefActions() {
     else filesApi.download(file.id, `${file.displayName}.${file.ext}`).catch(() => {})
   }
 
+  // 文件夹引用：文件库尚不支持定位到具体目录，先打开文件库页（后续可加深链）。
+  async function openFolder(_id: number) {
+    await router.push('/files')
+  }
+
   // 对话引用存的 refId 是消息 id（锚定的是"准确的聊天位置"，不是整个会话），先反查它
   // 属于哪个会话，再走跟顶栏全局搜索命中消息完全一样的跳转机制（GuguChat.vue 的
   // pendingChatSession/pendingChatMessageId watch：打开面板、切会话、滚到并高亮这条消息）。
@@ -106,6 +119,7 @@ export function useMindRefActions() {
     if (state !== 'available') return false
     if (refType === 'project') projectStore.openModal({ id: refId })
     else if (refType === 'file') await openFile(refId)
+    else if (refType === 'folder') await openFolder(refId)
     else if (refType === 'event') eventModalStore.openModal(refId)
     else if (refType === 'conversation') await openConversationMessage(refId)
     return true
