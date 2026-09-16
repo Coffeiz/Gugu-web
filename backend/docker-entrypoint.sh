@@ -29,17 +29,29 @@ fi
 EMBEDDED_SUPERVISORD_PID=""
 if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
     EMBED_DATA="${GUGU_DATA_DIR:-/data}"
-    # 持久化守卫（fnOS 面板事故教训）：/data 落在 overlay 联合文件系统上说明用户没有
-    # 挂载任何卷，内置数据库会写进容器可写层——删容器数据即丢。宁可拒绝启动也不能
-    # 静默把数据库放进临时层。
+    # 持久化分级守卫（fnOS 面板事故教训）：
+    # ① /data 落在 overlay 联合文件系统 = 用户没挂任何卷，数据库写进容器可写层，
+    #    删容器即丢 → 拒绝启动，给出绑卷指引；
+    # ② /data 是 Docker 匿名卷（镜像 VOLUME 声明的零配置兜底）= 重启/崩溃不丢，
+    #    但面板"更新镜像"重建容器会拿到全新空卷（旧数据滞留成孤儿卷）→ 放行，
+    #    但日志显著警告并提示如何一次性绑稳；
+    # ③ 宿主机 bind mount = 完全持久，静默通过。
     EMBED_DATA_FS="$(findmnt -n -o FSTYPE --target "$EMBED_DATA" 2>/dev/null || stat -f -c %T "$EMBED_DATA" 2>/dev/null || echo '')"
-    # 探测失败（空值）时不拦截，避免误伤；检测到 overlay 即拒绝。
     if [ "$EMBED_DATA_FS" = "overlay" ] || [ "$EMBED_DATA_FS" = "overlayfs" ]; then
         echo "[entrypoint] 拒绝启动：${EMBED_DATA} 未挂载持久卷（当前在 overlay 可写层上）。" >&2
         echo "  内置 PostgreSQL/Redis 的数据会写进容器层，删除容器即全部丢失。" >&2
         echo "  请在启动时绑定宿主机目录：-v /你的数据目录:/data -v /你的配置目录:/config" >&2
         exit 1
     fi
+    EMBED_DATA_SRC="$(findmnt -n -o SOURCE --target "$EMBED_DATA" 2>/dev/null || echo '')"
+    case "$EMBED_DATA_SRC" in
+        /var/lib/docker/volumes/*)
+            echo "[entrypoint] 警告：${EMBED_DATA} 使用的是 Docker 匿名卷（未绑定宿主机目录）。" >&2
+            echo "  重启和崩溃不会丢数据；但通过 NAS 面板/更新镜像重建容器时，会拿到一个全新的空卷，" >&2
+            echo "  旧数据将滞留在旧卷中无法自动接上。长期使用强烈建议现在就绑定宿主机目录：" >&2
+            echo "  -v /你的数据目录:/data -v /你的配置目录:/config" >&2
+            ;;
+    esac
     EMBED_RUN=/run/gugu-embedded
     PG_BIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1)"
     if [ -z "$PG_BIN" ] || ! command -v redis-server >/dev/null 2>&1 || ! command -v supervisord >/dev/null 2>&1; then

@@ -25,4 +25,5 @@ def test_entrypoint_embedded_block_refuses_overlay_data_dir():
     entrypoint = (REPO_ROOT / "backend" / "docker-entrypoint.sh").read_text(encoding="utf-8")
     assert 'GUGU_EMBEDDED_DEPS:-0' in entrypoint, "入口必须保留内置依赖分支"
     assert "overlay" in entrypoint, "入口必须检查 /data 文件系统，拒绝写进 overlay 可写层"
+    assert "/var/lib/docker/volumes/" in entrypoint, "匿名卷模式必须日志警告重建丢数据风险（零配置可用但不静默）"
     assert "EMBEDDED_SUPERVISORD_PID" in entrypoint, "内置依赖进程必须纳入关键进程托管"
