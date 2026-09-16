@@ -217,7 +217,7 @@ class McpClient:
                 payload = resp.json()
             except ValueError as exc:
                 raise McpClientError("MCP server 返回了非 JSON 内容", kind="protocol") from exc
-            return self._match_id(payload, request_id)
+            return self._require_matching_id(payload, request_id)
 
         message: dict | None = None
         data_lines: list[str] = []
@@ -253,3 +253,14 @@ class McpClient:
         if isinstance(payload, dict) and payload.get("id") == request_id:
             return payload
         return None
+
+    @classmethod
+    def _require_matching_id(cls, payload: Any, request_id: int) -> dict:
+        """JSON 响应必须对应当前请求，否则统一归一为协议错误。"""
+        message = cls._match_id(payload, request_id)
+        if message is None:
+            raise McpClientError(
+                "MCP server 返回了不匹配的 JSON-RPC 响应",
+                kind="protocol",
+            )
+        return message

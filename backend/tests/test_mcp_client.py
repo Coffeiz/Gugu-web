@@ -161,12 +161,26 @@ def test_redirect_not_followed():
 
 def test_protocol_error_humanized():
     async def run():
-        def bad(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "method not found"}})
+        cases = [
+            (
+                {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "method not found"}},
+                "method not found",
+            ),
+            (
+                {"jsonrpc": "2.0", "id": 999, "result": {"tools": []}},
+                "不匹配",
+            ),
+        ]
+        for payload, expected in cases:
+            def response(_request: httpx.Request, payload=payload) -> httpx.Response:
+                return httpx.Response(200, json=payload)
 
-        client = McpClient("https://mcp.example.com/rpc", transport=httpx.MockTransport(bad))
-        result = await client.list_tools()
-        assert "error" in result
-        assert "method not found" in result["error"]
+            client = McpClient(
+                "https://mcp.example.com/rpc",
+                transport=httpx.MockTransport(response),
+            )
+            result = await client.list_tools()
+            assert result["error_kind"] == "protocol"
+            assert expected in result["error"]
 
     asyncio.run(run())
