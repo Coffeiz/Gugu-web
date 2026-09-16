@@ -23,7 +23,7 @@
 
 目标：
 
-- 用户可在技能页的 MCP 子页面维护自己的 MCP server（名称、endpoint、凭据请求头、启用开关、工具白名单、确认模式），保存后其 MCP 工具进入该用户自己的对话（Web 与 IM 均生效）。
+- 用户可在技能页的 MCP 子页面维护自己的 MCP server（名称、endpoint、凭据槽位、启用开关、工具白名单、确认模式），保存后其 MCP 工具进入该用户自己的对话（Web 与 IM 均生效）。
 - MCP 工具与 builtin 工具走同一条执行契约：schema 校验、参数归一化、调用熔断、结果预算、确认门全部复用，不为 MCP 开第二条执行路径。
 - 用户凭据加密存储、不进日志；单个 server 故障只影响该 server，不拖垮 Agent Loop。
 
@@ -38,18 +38,20 @@
 
 ### FR-MCP-1：用户配置管理
 
-- 用户在技能页的 MCP 子页面维护自己的 MCP server 列表，每个条目包含：名称（用户内唯一，作命名空间）、传输类型（Phase 1 仅 `http`，Phase 2 增 `stdio`）、endpoint URL、可选请求头（如 `Authorization`）、启用开关、超时秒数、工具白名单（为空 = 全部）、确认模式（`auto` / `confirm_all`，默认 `confirm_all`，用户可改 `auto`）。个人设置不再提供 MCP 配置入口。
-- 配置存数据库（用户维度表），请求头凭据使用平台凭据主密钥加密落库，任何接口不回显明文。删除 server 级联清掉其工具缓存。
-- 数量上限：每用户最多 5 个 server、单 server 最多 32 个工具、每用户可见工具总量最多 64 个；超上限保存/加载被拒并给出人话提示。
+- 用户在技能页的 MCP 子页面维护自己的 MCP server 列表，每个条目包含：名称（用户内唯一，作命名空间）、传输类型（Phase 1 仅 `http`，Phase 2 增 `stdio`）、endpoint URL、可选凭据槽位（可注入 header 或 query）、启用开关、超时秒数、工具白名单（为空 = 全部）、确认模式（`auto` / `confirm_all`，默认 `confirm_all`，用户可改 `auto`）。个人设置不再提供 MCP 配置入口。
+- 配置存数据库（用户维度表），凭据值使用平台凭据主密钥加密落库，任何接口不回显明文。删除 server 级联清掉其工具缓存。
+- 数量上限：每用户最多 10 个 server、单 server 最多 64 个工具；不设置每用户 MCP 工具总量上限。超出 server 或单 server 工具上限时拒绝保存/加载并给出人话提示。
 - 配置模型带 `scope` 字段：本期只实现 `scope=user`（用户自己维护）；`scope=platform`（Admin 维护、全体用户可用）仅预留字段与合并分支，不做 UI、不写入数据。
-- 保留平台总开关 `mcp.enabled`（配置项，默认关）：运维侧一键摘除全部 MCP 工具，用户配置保留。
+- 保留平台总开关 `mcp.enabled`（配置项，默认开）：运维侧一键摘除全部 MCP 工具，用户配置保留；关闭时 Admin 能力页、技能页和路由统一隐藏 MCP 入口。
 
 ### FR-MCP-2：工具发现与注册
 
-- 对用户启用的每个 server 惰性调用 `tools/list`，把工具包装为内部 `Tool` 对象：工具名统一前缀 `mcp_<server名>_<原工具名>`，在**该用户范围内**不与 builtin 及其他 server 工具重名；重名或非法名（非 `[a-zA-Z0-9_]`）跳过并记录诊断。
+- 对用户启用的每个 server 惰性调用 `tools/list`，把工具包装为内部 `Tool` 对象：工具名统一前缀 `mcp_<server命名空间>_<原工具名>`，在**该用户范围内**不与 builtin 及其他 server 工具重名；用户可见的 server 名称支持中文、字母、数字和下划线，内部命名空间转换为 ASCII 拼音/罗马音；原工具名仍按 Provider 的 `[a-zA-Z0-9_]` 约束校验，重名或非法名跳过并记录诊断。
 - server 端 `inputSchema` 必须是顶层 `type=object` 的 JSON Schema；不满足则该工具拒载并诊断。schema 中不适配的构造（`$ref`、嵌套 `oneOf`/`anyOf` 等 MiniMax 适配风险点）由消毒层集中降级，规则可单测。
-- 工具元数据默认值：`source="mcp"`、`repeat_safe=False`（外部状态不可进熔断白名单）、`mutates=True`（无法证明只读，定时任务不得自动重放含 MCP 调用的轮次）、`description_short` 取 server 描述首行截断到 100 字符。
-- 工具声明缓存在进程内，键含用户与配置版本；用户保存配置或 server 重连后失效。同一轮对话内工具集冻结，避免前缀缓存断裂。
+ - 工具元数据默认值：`source="mcp"`、`repeat_safe=False`（外部状态不可进熔断白名单）、`mutates=True`（无法证明只读，定时任务不得自动重放含 MCP 调用的轮次）、`description_short` 取 server 描述首行截断到 100 字符。
+ - 描述双轨：server 提供的**完整原始描述**仅发给 Provider（工具契约，不截断）；目录/RAG/能力摘要只消费 `description_short`，不把长描述带进检索语料。
+ - 单 server 命中的工具数超过上限时**整个 server 拒绝加载**并提示配置工具白名单，不做静默裁剪；与 builtin 工具重名的声明同样跳过并诊断。
+ - 工具声明缓存在进程内，键含用户与配置版本（`updated_at` 比对，可发现其他 worker 保存的新配置）；用户保存配置或 server 重连后失效。同一轮对话内工具集冻结，避免前缀缓存断裂。
 
 ### FR-MCP-3：工具执行与对话集成
 
@@ -67,9 +69,10 @@
 
 ### FR-MCP-5：生命周期
 
-- server 连接与工具列表按 `(user, server)` 惰性获取（首次该用户的轮次组装或调用时），失败不影响其他 server、其他用户与 builtin 工具。
+- server 连接与工具列表按 `(user, server)` 惰性获取（首次该用户的轮次组装或调用时），失败不影响其他 server、其他用户与 builtin 工具；装载期任何异常（DB 不可用等）一律降级为空集，绝不阻断主对话。
 - 单 server 连续失败达到阈值进入退避（60s 内不再外呼），期间返回结构化错误；退避结束自动恢复。用户保存配置立即清缓存重拉。
-- server 配置变更、停用、删除即时生效（下一轮对话生效，无需重启进程）。
+- stdio server 的子进程常驻并按空闲时长回收（默认 300s，可配）；单次调用崩溃自动重启并有次数上限；宿主零直跑，一律经 sandboxd 在容器内执行。
+- server 配置变更、停用、删除即时生效（下一轮对话生效，无需重启进程）；多 worker 进程通过配置版本比对感知彼此保存的新配置。
 
 ### FR-MCP-6：可观测
 
@@ -80,8 +83,8 @@
 
 ### FR-MCP-7：咕咕自助管理 MCP 配置
 
-- 咕咕拥有内置工具 `manage_mcp_servers`（动作：`list` / `add` / `enable` / `disable` / `remove` / `test_connection`），只能操作**当前用户自己**的 server 配置；`add`/`remove` 走确认门，工具定义沿用用户 Skill 注册先例（`requires_confirmation`、`mutates=True`）。
-- **凭据不进上下文**：`add` 只配置非凭据部分（名称、endpoint、传输类型）；需要凭据时通过 `ask_user` 卡片的 **secret 输入字段**收集，提交走独立端点（携带 pending id + 用户身份 + 过期校验），服务端直接加密写入对应 server 配置。模型拿到的 tool result 只是占位文本（「用户已在安全输入组件完成凭据填写」），凭据值的通道从到头不经过模型上下文、SSE 事件与聊天 store。
+- 咕咕拥有内置工具 `manage_mcp_servers`（动作：`list` / `add` / `update` / `enable` / `disable` / `remove` / `test_connection`），只能操作**当前用户自己**的 server 配置；`add`/`remove` 走确认门，工具定义沿用用户 Skill 注册先例（`requires_confirmation`、`mutates=True`）。
+- **凭据槽位协议**：`add`/`update` 只配置非凭据部分（名称、endpoint、传输类型/启动命令、`credential_slots` 槽位定义——注入位置 header/query、字段名、可选前缀；endpoint URL 内可用 `{{secret:槽位id}}` 占位符）。槽位定义不涉密、可进上下文；槽位**值**只在需要时通过 `ask_user` 卡片的 **secret 输入字段**收集，提交走独立端点（携带 pending prompt id + 用户身份 + 过期校验），服务端直接加密写入对应 server 配置。模型拿到的 tool result 只是占位文本（「敏感信息已安全保存」），凭据值的通道从到头不经过模型上下文、SSE 事件与聊天 store。
 - **IM 降级**：secret 字段仅 Web 支持；IM 渠道的该类卡片降级为「去网页补全凭据」链接，不在纯文本回复中收集凭据。
 - **防钓鱼**：凭据提交端点严格绑定 pending id 对应的那条 server 配置；卡片明示目标 server 名称。MCP 工具描述中的「向用户索要凭据」类指令不构成收集依据。
 - 前端红线：secret 字段值不进聊天 store、不进聊天草稿 localStorage（草稿序列化必须排除该字段）、不进日志。
@@ -96,43 +99,65 @@
 - **Phase 1 手写最小客户端**：只用到 `initialize` / `tools/list` / `tools/call`，`httpx` 实现 JSON-RPC（streamable HTTP）即可；stdio 留 Phase 2 且强制容器沙盒（用户不可信命令不得宿主直跑）。
 - **凭据加密复用平台主密钥体系**（BYOK 同一套 `CREDENTIALS_MASTER_KEY_FILE`），不新造加密机制。
 
-### 3.2 文件树
+### 3.2 文件树（按实际落位）
 
 ```text
 backend/
 ├── agent/
 │   ├── mcp/                              【新增】MCP 基础接入能力
-│   │   ├── __init__.py                   【新增】模块出口，暴露 McpToolManager 单例
-│   │   ├── client.py                     【新增】最小 JSON-RPC 客户端（httpx，streamable HTTP）
-│   │   ├── manager.py                    【新增】(user, server) 工具缓存、dispatch 路由、退避
-│   │   ├── schema_adapter.py             【新增】schema 消毒、命名前缀、数量上限、Tool 包装
+│   │   ├── __init__.py                   【新增】模块出口，暴露 mcp_manager 单例
+│   │   ├── client.py                     【新增】最小 JSON-RPC 客户端（httpx，streamable HTTP，IP 钉扎+禁重定向）
+│   │   ├── stdio_client.py               【新增】stdio 传输客户端（经 sandboxd Unix socket，容器内运行）
+│   │   ├── credentials.py                【新增】凭据槽位协议：normalize_slots / secret_fields / assemble_credentials / legacy 迁移
+│   │   ├── manager.py                    【新增】(user, server) 运行时缓存、dispatch 路由、退避、stdio 空闲回收与重启上限
+│   │   ├── schema_adapter.py             【新增】schema 消毒、命名前缀（server 段转拼音）、拒载规则、Tool 包装
 │   │   └── models.py                     【新增】McpServerConfig / McpToolMeta 数据类
+│   ├── sandbox/
+│   │   └── stdio.py                      【新增】sandboxd stdio 句柄（SandboxdStdioClient/Handle/Unavailable）
+│   ├── runner.py                         【修改】run 边界装载 dynamic_tools（MCP 工具），装载异常降级空集
+│   ├── scheduled_execution.py            【修改】定时任务同样装载 MCP（授权工具过滤），usage scenario=mcp 打标
 │   ├── capabilities/
+│   │   ├── index.py / injector.py        【修改】能力目录合并 MCP 工具与计数
 │   │   └── selector.py                   【修改】select 结果按当前用户合并启用中的 MCP 工具名
-│   ├── loop_drivers.py                   【修改】ctx.tools 组装处按用户合并 MCP 工具声明
+│   ├── loop_drivers.py                   【修改】prepare/update_tools 接受 tool_snapshot，声明合并 MCP 工具
 │   ├── core.py                           【修改】dispatch 入口按 source=mcp 路由到 manager
 │   └── tools/
-│       ├── mcp.py                        【新增】manage_mcp_servers 工具（list/add/enable/disable/remove/test）
-│       └── meta.py                       【修改】ask_user 增加 secret 输入字段类型（值不进上下文）
+│       ├── mcp.py                        【新增】manage_mcp_servers 工具（list/add/update/enable/disable/remove/test_connection，确认门）
+│       ├── base.py                       【修改】ToolRegistrySnapshot 支持 snapshot_with_extras（run 边界合并动态工具）
+│       ├── meta.py                       【修改】ask_user 增加 secret 输入字段类型（值不进上下文）
+│       └── tool_contract.py              【修改】新增 unwrap_arguments_wrapper（兼容 {"arguments":{...}} 包装）
 ├── app/
 │   ├── api/v1/
-│   │   └── mcp_settings.py               【新增】用户侧 /api/v1/mcp/servers CRUD、连接测试、凭据提交端点（pending id 绑定）
+│   │   ├── mcp_settings.py               【新增】/api/v1/mcp/status 与 /mcp/servers CRUD、test_connection、reconnect、tools 列表
+│   │   └── agent.py                      【修改】POST /api/v1/interactions/{prompt_id}/secrets 独立凭据提交端点（pending prompt 绑定）
 │   ├── models/
-│   │   └── mcp.py                        【新增】UserMcpServer ORM 模型
-│   ├── security/
-│   │   └── （复用既有凭据加密模块）        【不改】只新增 mcp 用途的调用方
+│   │   └── mcp.py                        【新增】UserMcpServer ORM 模型（endpoint/凭据信封加密 + legacy 双轨字段）
+│   ├── services/
+│   │   ├── mcp_credentials.py            【新增】secret prompt → MCP 凭据槽位的业务消费（绑定 server 归属与过期校验）
+│   │   └── secret_prompts.py             【新增】通用 secret_fields 协议校验与安全完成标记
 │   └── core/
-│       └── config.py                     【修改】settings 增加 mcp.enabled 总开关与数量上限默认值
-├── migrations/versions/
-│   └── xxxx_add_user_mcp_servers.py      【生成】Alembic 迁移，只能 alembic 生成/执行
+│       ├── config.py                     【修改】settings 增加 McpSettings（总开关、上限、退避、stdio 空闲/重启参数）
+│       ├── pinned_http.py                【新增】IP 钉扎 httpx transport（自 web.py 上提共享）
+│       └── url_security.py               【不改】resolve_pinned_ip 每跳校验
+├── alembic/versions/
+│   └── 20260916000001_add_user_mcp_servers.py 【生成】Alembic 迁移（downgrade 删表）
 └── tests/
-    ├── test_mcp_schema_adapter.py        【新增】消毒、前缀、上限、拒载
-    ├── test_mcp_manager_dispatch.py      【新增】FakeMcpServer 桩：路由、超时、退避、确认门、跨用户隔离
-    ├── test_mcp_settings_api.py          【新增】CRUD、上限拒绝、凭据掩码、URL 校验
+    ├── test_mcp_client.py                【新增】streamable HTTP 往返、SSE、会话、超时/重定向/协议错误
+    ├── test_mcp_stdio.py                 【新增】sandboxd JSONL 往返、断 socket、空闲回收重连
+    ├── test_mcp_credentials.py           【新增】槽位校验、装配、legacy 迁移
+    ├── test_mcp_schema_adapter.py        【新增】消毒、前缀、拒载、Tool 包装
+    ├── test_mcp_manager_dispatch.py      【新增】路由、超时、退避、确认门、跨用户隔离、超限拒载
+    ├── test_mcp_settings_api.py          【新增】CRUD、上限拒绝、凭据掩码、URL 校验、secret 通道
     └── test_mcp_user_tools_e2e.py        【新增】用户配置→对话声明→调用→二轮引用（桩级）
 frontend/src/
-├── views/Skills/McpServersView.vue       【新增】技能页下的 MCP server 管理子页面
-├── views/Skills/SkillsHome.vue            【新增】技能列表子页面
+├── views/Skills/
+│   ├── index.vue                         【修改】技能页承载 MCP 子页面（/skills/mcp）
+│   ├── McpServersView.vue                【新增】MCP server 管理子页面
+│   ├── SkillsHome.vue                    【新增】技能列表子页面
+│   └── components/
+│       ├── McpCard.vue                   【新增】MCP server 卡片（状态、工具数、重连）
+│       ├── McpServerFormModal.vue        【新增】HTTP/stdio 表单与凭据槽位编辑
+│       └── mcp-types.ts                  【新增】MCP 配置类型
 ├── components/common/gugu-chat/
 │   ├── GuguChatInteraction.vue           【修改】ask_user 卡片渲染 secret 密码框并走独立提交端点
 │   ├── chatTypes.ts                      【修改】interaction 协议增加 secret 字段类型
@@ -149,15 +174,15 @@ frontend/src/
 
 ### 3.3 数据与隐私边界
 
-- `user_mcp_servers` 表：`user_id` 可空外键（NULL=平台级来源，本期不写入）、名称在所属 scope 内唯一、endpoint、传输类型、加密后的 headers、`scope`、enabled、confirm_mode、超时、白名单 JSON、时间戳；迁移向下兼容（downgrade 删表）。
+- `user_mcp_servers` 表：`user_id` 可空外键（NULL=平台级来源，本期不写入）、名称在所属 scope 内唯一、endpoint、传输类型、凭据槽位与加密凭据、`scope`、enabled、confirm_mode、超时、白名单 JSON、时间戳；历史 headers/query 密文字段仅用于迁移期读取；迁移向下兼容（downgrade 删表）。
 - 凭据只以密文落库；解密只发生在向该用户的 server 发请求时；Admin 与用户列表接口一律掩码。
 - MCP 工具结果按既有工具输出规则进上下文与轨迹，不额外落可见日志。
 
 ## 4. 验证与上线
 
-- 单测：`PYTHONPATH=. .venv/bin/pytest tests/test_mcp_schema_adapter.py tests/test_mcp_manager_dispatch.py tests/test_mcp_settings_api.py tests/test_mcp_user_tools_e2e.py tests/test_mcp_stdio.py`——FakeMcpServer 桩覆盖：消毒降级、拒载、超限、跨用户隔离（A 配的 server B 不可见不可调）、超时结构化错误、退避、confirm_all 进确认门、`mcp.enabled=false` 全量摘除；stdio 覆盖 sandboxd JSONL 往返、断 socket、无 TTY 的固定容器边界与空闲回收后重连。
+- 单测：`PYTHONPATH=. .venv/bin/pytest tests/test_mcp_client.py tests/test_mcp_credentials.py tests/test_mcp_schema_adapter.py tests/test_mcp_manager_dispatch.py tests/test_mcp_settings_api.py tests/test_mcp_user_tools_e2e.py tests/test_mcp_stdio.py`——FakeMcpServer 桩覆盖：消毒降级、拒载、超限、跨用户隔离（A 配的 server B 不可见不可调）、超时结构化错误、退避、confirm_all 进确认门、`mcp.enabled=false` 全量摘除；stdio 覆盖 sandboxd JSONL 往返、断 socket、无 TTY 的固定容器边界与空闲回收后重连。
 - devserver e2e：待执行。需本地起 HTTP/stdio echo MCP server，用户在技能页 MCP 子页面真实配置后走网页对话完成「声明 → 调用 → 二轮引用」，并验证停机时人话错误、主对话不受影响；迁移在 devserver `alembic upgrade head` 后执行。
-- 灰度与回滚：`mcp.enabled` 平台总开关默认关，发布即安全；出问题关开关即全量摘除；DB 迁移 downgrade 删表回滚。
+- 灰度与回滚：`mcp.enabled` 平台总开关默认开；出问题可由 Admin 能力页关闭并全量摘除，用户配置保留；DB 迁移 downgrade 删表回滚。
 - 观测：`agent_usage.scenario=mcp` 看调用量/失败率；技能页 MCP 子页面看各 server 状态。
 
 ## 5. 风险与待确认问题
@@ -166,7 +191,7 @@ frontend/src/
 |---|---|---|
 | 用户提供恶意 endpoint（SSRF/内网探测） | 内网被打、凭据被诱探 | 强制既有 URL 安全校验 + 内网地址拒绝 + egress 代理 + 禁跟随重定向 |
 | 用户凭据泄露 | 用户第三方账号被盗 | 主密钥加密落库、接口掩码、日志脱敏 |
-| 工具数量爆炸 → 声明进前缀，上下文膨胀、缓存键变化 | 成本延迟上升 | 每用户 server/工具数量上限；轮内工具集冻结；白名单裁剪 |
+| 工具数量爆炸 → 声明进前缀，上下文膨胀、缓存键变化 | 成本延迟上升 | 每用户 server 数量、单 server 工具数量上限；轮内工具集冻结；白名单裁剪 |
 | 工具描述/结果注入提示词攻击 | 被诱导执行非预期操作 | 结果按不可信文本 + 预算截断；默认 confirm_all；确认凭证不来自文本 |
 | 恶意 server 描述诱导模型向用户索要凭据 | 凭据被钓鱼收集 | secret 提交端点严格绑定 pending id 对应配置；卡片明示 server 名；工具描述中的索要指令不构成收集依据 |
 | 不可用 server 拖慢对话（超时占轮次时长） | 用户等到超时 | 独立超时 + 退避 + 人话错误；连接状态可见 |
@@ -176,9 +201,9 @@ frontend/src/
 待确认：
 
 1. `confirm_mode` 默认值本稿取 `confirm_all`（安全侧，用户可改 `auto`）——是否合适？
-2. 每用户 5 server / 64 工具的上限量值是否合适（可配置，先给默认）。
+2. 每用户 10 server / 单 server 64 工具的上限量值是否合适（不设置每用户工具总量上限；可配置，先给默认）。
 3. IM 场景默认开放 MCP 工具，还是先只开 Web、IM 二期再放（本稿按全渠道同步生效）。
-4. 平台总开关 `mcp.enabled` 首发默认关、由你择时打开——是否符合预期。
+4. 平台总开关 `mcp.enabled` 首发默认开，可由 Admin 能力页随时关闭——是否符合预期。
 5. 平台级官方 MCP 的默认接入选型（接什么 server、凭据谁出、是否与内置工具重叠）未定——定案后按 `scope=platform` 预留位实施。
 
 ## 6. 唯一实施 TODO

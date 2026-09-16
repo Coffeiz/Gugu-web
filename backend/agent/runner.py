@@ -36,10 +36,20 @@ from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABL
 
 
 async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
-    """按用户惰性载入 MCP 工具；不写入全局 Tool registry。"""
+    """按用户惰性载入 MCP 工具；不写入全局 Tool registry。
+
+    MCP 是增强能力：任何装载期异常（DB 不可用、会话桩不可用等）都降级为空集，
+    绝不阻断主流程（FR-MCP-5：失败不影响 builtin 工具与主对话）。
+    """
     from agent.mcp.manager import mcp_manager
 
-    tools = await mcp_manager.list_user_tools(user_id)
+    try:
+        tools = await mcp_manager.list_user_tools(user_id)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+
+        diag_log("agent.runner.load_mcp_tools", exc)
+        return []
     if allowed_tool_names is None:
         return tools
     allowed = set(allowed_tool_names)
