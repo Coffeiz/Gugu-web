@@ -45,9 +45,9 @@ class LinkButtonsSkill(BaseSkill):
             name="send_link_buttons", label="发送链接按钮",
             description_short="向当前会话发送网页/AppLink 入口按钮；不等待点击，不回传结果",
             description=(
-                "向当前会话发送 1~5 个链接按钮，用户点击后在浏览器打开 HTTPS 网页或 AppLink。"
+                "向当前会话发送 1~5 个链接按钮，用户点击后打开 HTTPS 网页、系统入口或 AppLink。"
                 "只做导航入口：不等待用户点击，点击结果不会返回给咕咕，也不会暂停任务。"
-                "只接受服务端安全校验的 https 地址（域名白名单由部署配置管理，http 与自定义 scheme 未开放）；"
+                "支持 HTTPS、HTTP、系统入口和自定义 App Scheme；危险 Scheme 会被服务端拒绝。"
                 "删除、覆盖、授权、付款等需要服务端执行的动作不能用本工具，必须走对应工具的确认门；"
                 "当前平台不支持原生按钮时会自动退回可复制的文本链接。"
             ),

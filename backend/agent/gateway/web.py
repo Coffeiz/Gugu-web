@@ -847,6 +847,16 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     "text": "",
                     "files": [evt["file"]],
                 })
+            if etype == "link_buttons" and evt.get("link_buttons"):
+                # 链接按钮和文件卡片一样属于助手展示产物：实时流直接发给前端，
+                # 同时写进 display_timeline，刷新会话时才能从历史恢复。
+                display_timeline.append({
+                    "kind": "assistant",
+                    "runId": current_run_id or None,
+                    "roundId": current_round_id or None,
+                    "text": "",
+                    "linkButtons": evt["link_buttons"],
+                })
             if etype == "_cancelled":
                 cancelled = True
             elif etype == "error":
@@ -891,7 +901,12 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 text=full_reply,
                 display_timeline=[
                     item for item in display_timeline
-                    if item.get("kind") == "tool" or item.get("text") or item.get("files")
+                    if (
+                        item.get("kind") == "tool"
+                        or item.get("text")
+                        or item.get("files")
+                        or item.get("linkButtons")
+                    )
                 ],
                 files=sent_files,
                 tokens_in=usage_tokens["input"],

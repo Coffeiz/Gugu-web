@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { i18n } from '@/i18n'
 import { scheduledTasksApi } from '@/services/api'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
@@ -7,6 +7,7 @@ import { useLiveStore } from '@/stores/live'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { InteractionSyncEventQueue } from '@/interaction/sync/InteractionSyncEventQueue'
 import type { LiveEventPayload } from '@/types/live-events'
+import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 
 export type ScheduledTask = Record<string, any>
 
@@ -80,6 +81,11 @@ export function useScheduledTasks() {
 
   const live = useLiveStore()
   const eventQueue = new InteractionSyncEventQueue()
+  const onScheduledTasksChanged = () => { void load() }
+  if (typeof window !== 'undefined') {
+    window.addEventListener(RESOURCE_REFRESH_EVENTS.scheduledTasks, onScheduledTasksChanged)
+    onScopeDispose(() => window.removeEventListener(RESOURCE_REFRESH_EVENTS.scheduledTasks, onScheduledTasksChanged))
+  }
   let lastTaskEventTick = 0
   function applyScheduledTaskEvent(event: LiveEventPayload): boolean {
     const id = Number(event.entity_id)

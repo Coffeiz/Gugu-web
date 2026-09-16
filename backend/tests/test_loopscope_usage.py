@@ -25,6 +25,7 @@ import agent.core as core
 from agent.core import LLMRunner, _provider_context_usage
 from agent.runtime.loopscope_trace import hooks as loop_hooks
 from agent.runtime.loopscope_trace.hooks import _trace_conversation_messages, _trace_snapshot
+from agent.runtime.loopscope_trace.hooks import _tool_trace_attributes, _trace_tool_input
 from agent.runtime.loopscope_trace.state import (
     _ScopeRun,
     _now,
@@ -76,6 +77,35 @@ def test_loopscope_input_uses_real_user_after_internal_context():
     ]
 
     assert _extract_last_user(messages) == "用户真正的问题"
+
+
+def test_loopscope_mcp_tool_attributes_keep_identity_without_credentials():
+    tool = SimpleNamespace(
+        source="mcp", category="mcp", mcp_server_id="server-1",
+        mcp_server_name="高德", mcp_tool_name="maps_weather",
+        headers={"Authorization": "不得进入 trace"},
+    )
+
+    attrs = _tool_trace_attributes(tool, "mcp_gaode_maps_weather")
+
+    assert attrs == {
+        "tool_source": "mcp",
+        "tool_category": "mcp",
+        "mcp_server_id": "server-1",
+        "mcp_server_name": "高德",
+        "mcp_tool_name": "maps_weather",
+    }
+    assert "headers" not in attrs
+
+
+def test_loopscope_mcp_management_input_omits_header_values():
+    traced = _trace_tool_input("manage_mcp_servers", {
+        "action": "update",
+        "headers": {"Authorization": "Bearer test-pat"},
+    })
+
+    assert traced["headers"] == {"Authorization": "[credential omitted]"}
+    assert "test-pat" not in json.dumps(traced)
 
 
 def test_context_threshold_uses_cache_tokens_for_anthropic():

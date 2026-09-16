@@ -6,6 +6,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import type { Router } from 'vue-router'
 import { i18n } from '@/i18n'
+import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 
 // 工具名 → 受影响数据域，咕咕操作后据此刷新前端，免手动刷新页面。
 // 与后端 RESOURCE_BY_TOOL（app/core/events.py）保持一致——漏了哪个工具，对应视图就不会实时刷新。
@@ -14,6 +15,8 @@ export const PROJECT_TOOLS = new Set(['create_project','update_project','delete_
 export const CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
 export const FILE_TOOLS = new Set(['edit_file','create_file','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_uploaded_file','restore_file','permanent_delete'])
 export const SCHEDULED_TASK_TOOLS = new Set(['create_scheduled_task', 'update_scheduled_task', 'delete_scheduled_task'])
+export const SKILL_TOOLS = new Set(['create_skill', 'update_skill', 'delete_skill'])
+export const MCP_TOOLS = new Set(['manage_mcp_servers'])
 
 /**
  * gugu:// 协议链接（代码块复制、绑定 IM、打开文件）+ 工具完成后的前端刷新通知。
@@ -42,7 +45,14 @@ export function useChatActions(options: {
       // 定时任务没有独立的全局 store；通过 live rev 触发打开中的定时任务面板重拉。
       // 这条回合末兜底也覆盖当前标签页的 SSE 回声被视为 own event 的情况：咕咕工具
       // 没有更新页面上的本地草稿，不能沿用“自己已乐观更新所以跳过重拉”的规则。
-      if (has(SCHEDULED_TASK_TOOLS)) liveStore.bump('scheduled_tasks')
+      if (has(SCHEDULED_TASK_TOOLS)) {
+        liveStore.bump('scheduled_tasks')
+        notifyResourceChanged('scheduledTasks')
+      }
+      // 技能和 MCP 没有 live 资源 revision；聊天工具完成后通过同一套页面事件
+      // 通知已打开的管理页重新读取，避免必须手动刷新浏览器。
+      if (has(SKILL_TOOLS)) notifyResourceChanged('skills')
+      if (has(MCP_TOOLS)) notifyResourceChanged('mcp')
     } catch (e) { /* 刷新失败不影响对话 */ }
   }
 

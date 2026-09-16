@@ -1,7 +1,7 @@
 <template>
   <div class="agent-memory-page">
     <div class="page-header"><div class="page-title-block"><h2 class="page-title">{{ t('adminExtraUi.memoryTitle') }}</h2><p class="page-desc">{{ t('adminExtraUi.memoryDescription') }}</p></div></div>
-    <AdminSegmentTabs v-model="activeTab" :tabs="tabs" :aria-label="t('adminExtraUi.memoryCategory')" class="memory-tabs" />
+    <SegmentedTabs v-model="activeTab" :tabs="tabs" :aria-label="t('adminExtraUi.memoryCategory')" class="memory-tabs" />
     <div class="panels-wrap">
       <template v-if="activeTab === 'maintenance'">
         <MemoryMaintenanceSettings />
@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import MemoryMaintenancePanel from '../Agent/memory/components/MemoryMaintenancePanel.vue'
 import MemoryRecallPanel from '../Agent/memory/components/MemoryRecallPanel.vue'
 import MemoryMaintenanceSettings from '../Agent/memory/components/MemoryMaintenanceSettings.vue'

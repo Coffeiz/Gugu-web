@@ -2,14 +2,15 @@
 
 send_link_buttons 工具入口和 Gateway 出站前共用同一套校验；只做静态安全检查，
 不为验证 URL 而请求目标站点，也不跟随重定向。
+
+链接按钮支持 HTTPS、HTTP、系统入口和自定义 App Scheme；仅禁止会执行脚本、
+读取本地文件或进入浏览器内部上下文的危险 Scheme。按钮不会由后端请求目标 URL，
+因此不复用面向服务端出站请求的公网地址或域名白名单限制。
 """
 from __future__ import annotations
 
-import os
 import re
 from urllib.parse import urlparse
-
-from app.core.url_security import url_is_safe
 
 MAX_MESSAGE_CHARS = 2000
 MAX_BUTTONS = 5
@@ -19,23 +20,21 @@ MAX_URL_CHARS = 2048
 
 # 标签禁止控制字符（含 C0 与 DEL），避免按钮渲染和日志被注入不可见内容。
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
-# 显式端口只放行 https/http 的默认语义端口；其余一律视为非法端口拒绝。
-_ALLOWED_EXPLICIT_PORTS = {80, 443}
-
-
-def _allow_http() -> bool:
-    """http:// 是否放行由部署配置决定（GUGU_LINK_BUTTON_ALLOW_HTTP=on）；生产默认拒绝。"""
-    return os.getenv("GUGU_LINK_BUTTON_ALLOW_HTTP", "off").strip().lower() in {"on", "1", "true", "yes"}
-
-
-def _domain_allowlist() -> list[str]:
-    """部署配置的域名白名单（GUGU_LINK_BUTTON_DOMAIN_ALLOWLIST，逗号分隔）。
-
-    为空 = 放行全部公网 HTTPS 域名；非空时只允许列表内域名（含子域）。
-    白名单只能由部署配置管理，模型无法动态扩大（PRD-LLM-24 §12）。
-    """
-    raw = os.getenv("GUGU_LINK_BUTTON_DOMAIN_ALLOWLIST", "")
-    return [item.strip().lower().lstrip(".") for item in raw.split(",") if item.strip()]
+# 这些 Scheme 可能执行脚本、读取本地资源或进入浏览器内部页面，不能作为
+# 模型生成的导航按钮目标。其余已带 Scheme 的 URL 按黑名单策略放行。
+_BLOCKED_SCHEMES = {
+    "javascript",
+    "data",
+    "vbscript",
+    "file",
+    "blob",
+    "filesystem",
+    "about",
+    "chrome",
+    "chrome-extension",
+    "resource",
+    "view-source",
+}
 
 
 def validate_link_button_url(url: str) -> str | None:
@@ -49,18 +48,13 @@ def validate_link_button_url(url: str) -> str | None:
         return "URL 含有非法控制字符"
     parsed = urlparse(raw)
     scheme = (parsed.scheme or "").lower()
-    if scheme not in {"https"} and not (scheme == "http" and _allow_http()):
-        return "只支持 https:// 链接（http 与自定义 scheme 未开放）"
+    if not scheme:
+        return "URL 必须包含协议 Scheme"
+    if scheme in _BLOCKED_SCHEMES:
+        return "该 URL 使用了禁止的危险 Scheme"
     if parsed.username or parsed.password:
         return "URL 不能包含用户名或密码"
-    if parsed.port is not None and parsed.port not in _ALLOWED_EXPLICIT_PORTS:
-        return "URL 使用了不允许的端口"
-    host = (parsed.hostname or "").lower()
-    allowlist = _domain_allowlist()
-    if allowlist and not any(host == domain or host.endswith("." + domain) for domain in allowlist):
-        return "该域名不在链接按钮白名单内，请使用已配置的 HTTPS 域名"
-    # 复用外部请求安全边界：拒绝内网、本机、链路本地和云元数据地址。
-    return url_is_safe(raw)
+    return None
 
 
 def validate_link_buttons_payload(message: str, buttons: object) -> tuple[list[dict] | None, str]:

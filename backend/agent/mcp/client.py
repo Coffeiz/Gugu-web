@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import itertools
 import json
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any
 
 import httpx
@@ -44,10 +45,12 @@ class McpClient:
     """单 server 的 MCP 客户端；一次实例对应一次 initialize 会话。"""
 
     def __init__(self, endpoint: str, headers: dict[str, str] | None = None,
+                 query_params: dict[str, str] | None = None,
                  timeout_seconds: float = 30.0,
                  transport: httpx.AsyncBaseTransport | None = None):
         self._endpoint = endpoint
         self._headers = dict(headers or {})
+        self._query_params = {str(k): str(v) for k, v in (query_params or {}).items()}
         self._timeout_seconds = float(timeout_seconds)
         self._timeout = httpx.Timeout(self._timeout_seconds)
         self._transport = transport        # 测试注入 MockTransport；生产走 IP 钉扎
@@ -126,7 +129,7 @@ class McpClient:
         body = {"jsonrpc": "2.0", "method": method}
         try:
             async with self._build_client() as client:
-                await client.post(self._endpoint, json=body, headers=self._base_headers())
+                await client.post(self._request_url(), json=body, headers=self._base_headers())
         except Exception:
             pass
 
@@ -138,6 +141,16 @@ class McpClient:
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
         return headers
+
+    def _request_url(self) -> str:
+        """只在请求边界拼接已解密的 Query 凭据，不修改或回显持久化 endpoint。"""
+        if not self._query_params:
+            return self._endpoint
+        parts = urlsplit(self._endpoint)
+        configured_names = set(self._query_params)
+        query = [item for item in parse_qsl(parts.query, keep_blank_values=True) if item[0] not in configured_names]
+        query.extend(self._query_params.items())
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
     def _build_client(self) -> httpx.AsyncClient:
         transport: httpx.AsyncBaseTransport | None = self._transport
@@ -168,7 +181,7 @@ class McpClient:
 
         async with self._build_client() as client:
             try:
-                resp = await client.post(self._endpoint, json=body, headers=self._base_headers())
+                resp = await client.post(self._request_url(), json=body, headers=self._base_headers())
             except httpx.TimeoutException as exc:
                 raise McpClientError(
                     f"MCP server 响应超时（>{int(self._timeout_seconds)}s），"
@@ -217,6 +230,18 @@ class McpClient:
                 payload = resp.json()
             except ValueError as exc:
                 raise McpClientError("MCP server 返回了非 JSON 内容", kind="protocol") from exc
+            if isinstance(payload, dict) and "jsonrpc" not in payload:
+                # 部分网关在 endpoint、Key 或认证方式错误时返回自己的 JSON
+                # 错误包；把它和“响应 id 不匹配”区分开，便于定位配置问题。
+                provider_info = payload.get("info")
+                provider_code = payload.get("infocode")
+                if isinstance(provider_info, str) and provider_info.strip():
+                    detail = provider_info.strip()
+                    if isinstance(provider_code, str) and provider_code.strip():
+                        detail = f"{detail}（{provider_code.strip()}）"
+                    raise McpClientError(
+                        f"MCP server 返回上游错误：{detail}", kind="http"
+                    )
             return self._require_matching_id(payload, request_id)
 
         message: dict | None = None
@@ -249,10 +274,23 @@ class McpClient:
 
     @staticmethod
     def _match_id(payload: Any, request_id: int) -> dict | None:
-        """SSE 流里可能混有通知/其他请求的响应，只取 id 匹配的本请求消息。"""
-        if isinstance(payload, dict) and payload.get("id") == request_id:
+        """SSE 流里可能混有通知/其他请求的响应，只取 id 匹配的本请求消息。
+
+        JSON-RPC 的 id 允许字符串或数字；少数服务端会把客户端的数字 id
+        序列化成字符串。两者在这里按 JSON 标量值兼容比较，但不会接受
+        缺失 id、null 或其它类型，避免把异步通知误当成本次请求的响应。
+        """
+        if isinstance(payload, dict) and McpClient._json_rpc_ids_equal(payload.get("id"), request_id):
             return payload
         return None
+
+    @staticmethod
+    def _json_rpc_ids_equal(response_id: Any, request_id: int) -> bool:
+        if response_id is None or isinstance(response_id, bool):
+            return False
+        if isinstance(response_id, (int, str)):
+            return str(response_id) == str(request_id)
+        return False
 
     @classmethod
     def _require_matching_id(cls, payload: Any, request_id: int) -> dict:

@@ -7,6 +7,7 @@
           <span class="kind" :data-kind="span.kind">{{ span.kind }}</span>
           <strong>{{ span.name }}</strong>
           <span v-if="contextLabel" class="context-label">{{ contextLabel }}</span>
+          <span v-if="mcpDetails" class="mcp-label">MCP · {{ mcpDetails.server }} / {{ mcpDetails.tool }}</span>
           <span class="status" :data-status="span.status">{{ span.status }}</span>
         </div>
         <div v-if="codeLabel" class="code-line" title="Python source">
@@ -24,6 +25,7 @@
       <button v-if="assembly" :class="{ active: open.assembly }" @click="toggle('assembly')">Assembly</button>
       <button v-if="diagnostics" :class="{ active: open.diagnostics }" @click="toggle('diagnostics')">Diagnostics</button>
       <button v-if="schemaError" :class="{ active: open.schema }" @click="toggle('schema')">Schema</button>
+      <button v-if="mcpDetails" :class="{ active: open.mcp }" @click="toggle('mcp')">MCP</button>
       <button :class="{ active: open.input }" @click="toggle('input')">
         {{ firstDiff ? `Input · #${firstDiff.index}` : 'Input' }}
       </button>
@@ -99,6 +101,14 @@
       </div>
       <div class="panel-label">Arguments shape</div>
       <pre>{{ pretty(schemaError.arguments_shape) }}</pre>
+    </section>
+    <section v-if="open.mcp && mcpDetails" class="panel mcp-panel">
+      <div class="panel-label">MCP call</div>
+      <div class="mcp-grid">
+        <div><span>Server</span><strong>{{ mcpDetails.server }}</strong></div>
+        <div><span>Tool</span><code>{{ mcpDetails.tool }}</code></div>
+        <div v-if="mcpDetails.serverId"><span>Server ID</span><code>{{ mcpDetails.serverId }}</code></div>
+      </div>
     </section>
     <section v-if="open.input" ref="inputPanel" class="panel input-panel">
       <div class="panel-label">Input</div>
@@ -219,6 +229,14 @@ const schemaError = computed(() => {
   if (props.span.attributes?.context_source !== 'tool_schema_error') return null
   const input = props.span.input
   return input && typeof input === 'object' ? input as Record<string, unknown> : null
+})
+const mcpDetails = computed(() => {
+  if (props.span.attributes?.tool_source !== 'mcp') return null
+  return {
+    server: String(props.span.attributes?.mcp_server_name || '—'),
+    tool: String(props.span.attributes?.mcp_tool_name || props.span.name || '—'),
+    serverId: String(props.span.attributes?.mcp_server_id || ''),
+  }
 })
 const firstDiff = computed(() => {
   const value = diagnostics.value?.first_diff
@@ -366,6 +384,7 @@ const tokenChips = computed(() => {
 .status { flex:none; padding:2px 5px; border-radius:var(--radius-pill); font-size:8px; color:var(--content-tertiary); background:var(--surface-soft); }
 .status[data-status="error"] { color:var(--status-danger); background:color-mix(in srgb,var(--status-danger) 10%,transparent); }
 .context-label { flex:none; padding:2px 5px; border-radius:var(--radius-pill); color:var(--action-primary); background:var(--action-soft); font-size:8px; }
+.mcp-label { flex:none; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px 5px; border-radius:var(--radius-pill); color:var(--trace-tool); background:color-mix(in srgb,var(--trace-tool) 12%,transparent); font-size:8px; }
 .code-line { display:flex; align-items:center; gap:5px; margin-top:4px; min-width:0; color:var(--content-tertiary); font-size:9px; }
 .code-line code { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .metrics { padding:10px 12px 10px 0; display:flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:wrap; color:var(--content-tertiary); font:9px var(--font-mono); max-width:360px; }
@@ -377,6 +396,10 @@ const tokenChips = computed(() => {
 .schema-error-meta { display:flex; flex-wrap:wrap; gap:6px 14px; margin-bottom:10px; color:var(--content-secondary); font-size:9px; }
 .schema-error-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
 .schema-error-grid > div { min-width:0; }
+.mcp-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 18px; }
+.mcp-grid div { min-width:0; }
+.mcp-grid span { display:block; color:var(--content-tertiary); font-size:8px; margin-bottom:3px; text-transform:uppercase; letter-spacing:.08em; }
+.mcp-grid strong,.mcp-grid code { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
 .panel-label { margin-bottom:7px; color:var(--content-tertiary); font-size:8px; letter-spacing:.1em; text-transform:uppercase; }
 pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:10px/1.58 var(--font-mono); color:var(--content-primary); }
 .first-diff-panel { background:color-mix(in srgb,var(--status-warning) 7%,var(--surface-raised)); }

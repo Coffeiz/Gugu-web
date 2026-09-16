@@ -184,6 +184,9 @@ async def _stream_round(client, kwargs, adapter=None):
 
 # 工具循环最大轮次。普通任务和核实轮分开计数，核实预算不能放大普通任务的上限。
 MAX_ROUNDS = 30
+# unlimited 只解除产品层的普通轮次额度，不能解除服务级安全边界；任何状态机异常
+# 都必须在有限请求内收束，避免持续消耗 provider 配额并把 429 放大成后台风暴。
+MAX_ABSOLUTE_ROUNDS = 100
 _GOAL_DONE_MARKER = "<!-- GUGU_GOAL_DONE -->"
 _GOAL_POLICY = (
     "\n\n[内部目标任务规则] 当前会话处于目标任务模式。"
@@ -353,6 +356,47 @@ def _mutating_tools(tool_names, tool_snapshot=None) -> set:
             if (tool := tool_snapshot.get(name)) is not None and tool.mutates
         }
     return by_name | set(RESOURCE_BY_TOOL)
+
+
+def _call_requires_verification(tool_name: str, tool_input: Any, tool_snapshot, mutating_tools: set) -> bool:
+    """判断成功调用是否需要进入本地状态复查。
+
+    工具可以显式覆盖复查策略；未覆盖时，兼容既有工具契约的 mutates 语义。
+    """
+    tool = tool_snapshot.get(tool_name) if tool_snapshot is not None else None
+    override = getattr(tool, "verify_after_call", None)
+    if override is not None:
+        if callable(override):
+            try:
+                return bool(override(tool_input if isinstance(tool_input, dict) else {}))
+            except Exception as exc:
+                diag_log("agent.core.tool_verification_predicate", exc)
+                return True
+        return bool(override)
+    if tool_name not in mutating_tools:
+        return False
+    predicate = getattr(tool, "mutates_for_input", None)
+    if callable(predicate):
+        try:
+            return bool(predicate(tool_input if isinstance(tool_input, dict) else {}))
+        except Exception as exc:
+            # 元数据判断失败不能把一次调用误当成只读；保守按工具级 mutates 处理。
+            diag_log("agent.core.tool_mutation_predicate", exc)
+    return True
+
+
+def _call_observes(tool_name: str, tool_input: Any, tool_snapshot) -> bool:
+    """判断一次具体调用是否提供了复查所需的状态观察结果。"""
+    tool = tool_snapshot.get(tool_name) if tool_snapshot is not None else None
+    predicate = getattr(tool, "observes_for_input", None)
+    if callable(predicate):
+        try:
+            return bool(predicate(tool_input if isinstance(tool_input, dict) else {}))
+        except Exception as exc:
+            # 观察声明异常时不能假定状态已核实，交给既有复查预算处理。
+            diag_log("agent.core.tool_observation_predicate", exc)
+            return False
+    return _is_read_tool(tool_name)
 
 
 def _is_successful_tool_result(result) -> bool:
@@ -647,8 +691,8 @@ class LLMRunner:
         }
 
     def _provider_tool_names(self, names: list[str]) -> list[str]:
-        """完整 Schema 模式声明动态 MCP 工具，固定 Adapter 只声明适配入口。"""
-        if not self.dynamic_tools or getattr(self.capability_context, "fixed_adapter", False):
+        """无论能力目录模式如何，动态 MCP 都直接声明给 provider。"""
+        if not self.dynamic_tools:
             return list(dict.fromkeys(names))
         return list(dict.fromkeys([*names, *self.dynamic_tools]))
 
@@ -1105,6 +1149,13 @@ class LLMRunner:
             })
 
         while True:
+            if round_number >= MAX_ABSOLUTE_ROUNDS:
+                _log.error(
+                    "[core] Agent 触发绝对轮次安全上限：rounds=%s limit=%s run=%s",
+                    round_number, MAX_ABSOLUTE_ROUNDS, run_id,
+                )
+                yield f"data: {json.dumps({'type': 'error', 'detail': '本次任务执行轮次过多，已安全停止；请重新发起任务。'}, ensure_ascii=False)}\n\n"
+                return
             # 普通模式下，核实轮拥有独立预算；无限模式跳过该业务封顶。
             # 最后一轮额外留给模型输出核实后的收束文本。
             if verify_mode:
@@ -1782,11 +1833,11 @@ class LLMRunner:
                                            tool_call_id=tool_call_id, name=effective_tool_name, label=label,
                                            verify=verify_mode, status="waiting", result=res)
                         break
-                    if effective_tool_name in _mutset and _is_successful_tool_result(res):
+                    if _call_requires_verification(effective_tool_name, dispatch_input, tool_snapshot, _mutset) and _is_successful_tool_result(res):
                         did_mutate = True   # 本次成功做过增删改 → 立刻强制自我核实
                         if verify_mode:
                             verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
-                    elif verify_mode and _is_read_tool(effective_tool_name):
+                    elif verify_mode and _call_observes(effective_tool_name, dispatch_input, tool_snapshot):
                         verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
                     yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
                                        name=effective_tool_name, label=label, verify=verify_mode,
@@ -1972,17 +2023,128 @@ class LLMRunner:
                             # 结果发出去，否则模型会以为操作已执行。
                             executed, artifact = {"status": "error", "text": "确认未生效，请重新发起操作。"}, None
                         replay_payload = _tool_result_payload(executed)
+
+                        # 某些确认型工具是两阶段交互：确认后先完成写入，再返回
+                        # ``_interaction: ask_user`` 让用户补充安全信息（例如 MCP
+                        # server 凭据）。重放结果不能直接交给模型，否则模型会把
+                        # waiting_input 当成普通工具结果，重新规划同一个调用；在
+                        # unlimited 模式下这会演变成无界的 provider 请求循环。
+                        if (
+                            isinstance(replay_payload, dict)
+                            and replay_payload.get("_interaction") == "ask_user"
+                        ):
+                            from app.services.interactions import create_agent_prompt
+
+                            followup = await create_agent_prompt(
+                                user_id=user_id,
+                                session_id=session_id,
+                                tool_call_id=pending_tool_call_id,
+                                tool_name=replay_ctx["name"],
+                                payload=replay_payload,
+                            )
+                            if followup is None:
+                                diag_log(
+                                    "agent.core.confirm_replay_interaction",
+                                    RuntimeError("confirmed replay returned an invalid interaction"),
+                                )
+                                replay_payload = {
+                                    "status": "error",
+                                    "text": "确认后需要补充的信息无法建立，请重新发起操作。",
+                                }
+                            else:
+                                prompt, actions = followup
+                                secret_fields = list((prompt.schema_json or {}).get("secret_fields") or [])
+                                waiting_payload = _json.dumps({
+                                    "status": "waiting_input",
+                                    "prompt_id": prompt.id,
+                                }, ensure_ascii=False)
+                                _replace_tool_result(
+                                    messages,
+                                    tool_call_id=pending_tool_call_id,
+                                    result=waiting_payload,
+                                )
+                                yield stream_event(
+                                    "tool_done",
+                                    round_id=round_id,
+                                    tool_call_id=pending_tool_call_id,
+                                    name=replay_ctx["name"],
+                                    label=replay_ctx["label"],
+                                    verify=verify_mode,
+                                    status="waiting",
+                                    result=waiting_payload,
+                                )
+                                interaction_payload = {
+                                    "round_id": round_id,
+                                    "tool_call_id": pending_tool_call_id,
+                                    "prompt_id": prompt.id,
+                                    "kind": prompt.kind,
+                                    "title": prompt.title,
+                                    "body": prompt.body,
+                                    "options": actions,
+                                    "allow_text_input": bool(
+                                        (prompt.schema_json or {}).get("allow_text_input", False)
+                                    ),
+                                    "secret_fields": secret_fields,
+                                    "expires_at": prompt.expires_at.isoformat(),
+                                }
+                                yield stream_event("interaction_required", **interaction_payload)
+                                if on_interaction is not None:
+                                    await on_interaction(interaction_payload)
+                                answer = await wait_for_resolution(
+                                    user_id=user_id,
+                                    prompt_id=prompt.id,
+                                    heartbeat=lambda: genstream.touch(session_id),
+                                    cancel_check=lambda: _im_cancelled(session_id),
+                                )
+                                if _user_cancel(answer) or (
+                                    isinstance(answer, dict) and answer.get("status") == "cancelled"
+                                ):
+                                    yield stream_event(
+                                        "tool_done",
+                                        round_id=round_id,
+                                        tool_call_id=pending_tool_call_id,
+                                        name=replay_ctx["name"],
+                                        label=replay_ctx["label"],
+                                        verify=verify_mode,
+                                        status="cancelled",
+                                    )
+                                    yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                                    return
+                                if answer is None:
+                                    yield f"data: {json.dumps({'type': 'error', 'detail': '凭据输入已过期，请重新发起操作。'}, ensure_ascii=False)}\n\n"
+                                    return
+                                _replace_tool_result(
+                                    messages,
+                                    tool_call_id=pending_tool_call_id,
+                                    result=answer,
+                                )
+                                yield stream_event(
+                                    "tool_done",
+                                    round_id=round_id,
+                                    tool_call_id=pending_tool_call_id,
+                                    name=replay_ctx["name"],
+                                    label=replay_ctx["label"],
+                                    verify=verify_mode,
+                                    status="success" if _is_successful_tool_result(answer) else "error",
+                                    result=answer,
+                                )
+                                yield stream_event(
+                                    "_new_round",
+                                    round_id=round_id,
+                                    next_round=round_number + 1,
+                                )
+                                continue
                         _replace_tool_result(
                             messages,
                             tool_call_id=pending_tool_call_id,
                             result=replay_payload,
                         )
                         replay_ok = _is_successful_tool_result(replay_payload)
-                        if replay_ctx["name"] in _mutset and replay_ok:
+                        if _call_requires_verification(replay_ctx["name"], replay_ctx["input"], tool_snapshot, _mutset) and replay_ok:
                             did_mutate = True   # 确认后真的改了数据 → 照常进入自我核实
                             if verify_mode:
                                 verify_fixed = True
-                        elif verify_mode and _is_read_tool(replay_ctx["name"]):
+                        elif verify_mode and _call_observes(replay_ctx["name"], replay_ctx["input"], tool_snapshot):
                             verify_queried = True
                         yield stream_event(
                             "tool_done", round_id=round_id, tool_call_id=pending_tool_call_id,

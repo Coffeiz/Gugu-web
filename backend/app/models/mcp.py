@@ -1,7 +1,7 @@
 """用户 MCP server 配置（PRD-MCP-1 FR-MCP-1）。
 
 凭据（请求头）以 BYOK 同一套平台主密钥信封加密落库（encrypt_envelope/decrypt_envelope），
-任何接口不回显明文。user_id 可空是 scope=platform 的预留位（NULL=平台级，本期不写入）。
+编辑接口按当前配置回显明文供用户修改，但数据库仍不保存明文。user_id 可空是 scope=platform 的预留位（NULL=平台级，本期不写入）。
 """
 from __future__ import annotations
 
@@ -36,12 +36,28 @@ class UserMcpServer(Base):
     name:            Mapped[str]            = mapped_column(String(64))
     transport:       Mapped[str]            = mapped_column(String(16), default="http", server_default="http")
     endpoint:        Mapped[str]            = mapped_column(String(1000))
+    # HTTP endpoint 可能包含服务商 Key；只在服务端运行时解密，接口不回显明文。
+    encrypted_endpoint: Mapped[str]      = mapped_column(Text, default="")
+    endpoint_nonce:     Mapped[str]      = mapped_column(String(64), default="")
+    encrypted_endpoint_key: Mapped[str] = mapped_column(Text, default="")
+    endpoint_key_version: Mapped[int]    = mapped_column(Integer, default=1)
     command:         Mapped[str]            = mapped_column(String(1000), default="")
-    # headers 整体 JSON 序列化后信封加密（三件套同 UserProviderCredential 口径）
+    # 凭据整体 JSON 序列化后信封加密（三件套同 UserProviderCredential 口径）
+    auth_mode:             Mapped[str]            = mapped_column(String(16), default="headers", server_default="headers")
     encrypted_headers:       Mapped[str]            = mapped_column(Text, default="")
     headers_nonce:           Mapped[str]            = mapped_column(String(64), default="")
     encrypted_headers_key:   Mapped[str]            = mapped_column(Text, default="")
     headers_key_version:     Mapped[int]            = mapped_column(Integer, default=1)
+    encrypted_query_params:  Mapped[str]            = mapped_column(Text, default="")
+    query_params_nonce:      Mapped[str]            = mapped_column(String(64), default="")
+    encrypted_query_params_key: Mapped[str]        = mapped_column(Text, default="")
+    query_params_key_version: Mapped[int]          = mapped_column(Integer, default=1)
+    # 新的统一凭据槽位协议；旧 headers/query 字段仅供迁移期读取。
+    credential_slots: Mapped[list] = mapped_column(JSON, default=list)
+    encrypted_credentials: Mapped[str] = mapped_column(Text, default="")
+    credentials_nonce: Mapped[str] = mapped_column(String(64), default="")
+    encrypted_credentials_key: Mapped[str] = mapped_column(Text, default="")
+    credentials_key_version: Mapped[int] = mapped_column(Integer, default=1)
     enabled:         Mapped[bool]           = mapped_column(Boolean, default=True)
     confirm_mode:    Mapped[str]            = mapped_column(String(16), default="confirm_all", server_default="confirm_all")
     timeout_seconds: Mapped[int]            = mapped_column(Integer, default=30)

@@ -565,4 +565,6 @@ Bug 修复应尽量补充对应的 regression test；报告问题时请提供复
 
 - Email：<coffeiz216@gmail.com>
 - 个人主页：[coffeiz.space](https://coffeiz.space)
-- QQ 群：`929152357`
+- QQ 群：
+
+  <img src="docs/assets/QRCode/QQGroup.jpg" alt="QQ群二维码" width="260">

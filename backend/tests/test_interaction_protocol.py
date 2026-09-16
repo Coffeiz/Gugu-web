@@ -282,6 +282,42 @@ async def test_im_plain_text_answers_question_prompt_with_fallback_button(db, us
     assert stored.status == "resolved"
 
 
+@pytest.mark.asyncio
+async def test_list_history_keeps_selected_choice_after_refresh(db, user_a):
+    """刷新会话后，已消费的选择仍应作为已完成交互卡恢复。"""
+    session = ConversationSession(user_id=user_a.id, title="选择恢复", source="web")
+    db.add(session)
+    await db.commit()
+
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-refresh-choice",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "请选择",
+            "body": "刷新后仍应看得到结果",
+            "options": [
+                {"id": "keep", "label": "保留"},
+                {"id": "archive", "label": "归档"},
+            ],
+        },
+    )
+    selected = next(item for item in actions if item["id"] == "keep")
+    await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id,
+        token=selected["token"], event_id="evt-refresh-choice",
+    )
+
+    history = await list_history(db, user_id=user_a.id, session_id=session.id)
+    restored = next(item for item in history if item["id"] == prompt.id)
+    assert restored["resolved"] is True
+    assert restored["selected_option_id"] == "keep"
+    assert restored["response_text"] == "保留"
+
+
 async def test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted(db, user_a):
     session, _pending_message = await _make_interaction_session(db, user_a)
     prompt, actions = await create_agent_prompt(

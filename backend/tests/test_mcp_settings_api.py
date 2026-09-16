@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -28,29 +29,21 @@ def mcp_on(monkeypatch):
     monkeypatch.setattr(settings.mcp, "enabled", True)
 
 
-async def test_create_and_view_masks_credentials(db, user_a):
+async def test_create_and_view_credential_slots(db, user_a):
     created = await api.create_server(
         api.McpServerCreate(name="weather", endpoint="https://mcp.example.com/rpc",
-                            headers={"Authorization": "Bearer sk-secret-value"}),
+                            credential_slots=[{"id": "api_key", "label": "服务 Key", "target": "header", "name": "Authorization", "prefix": "Bearer "}]),
         user=user_a, db=db,
     )
     assert created["name"] == "weather"
-    assert created["has_credentials"] is True
-    assert created["headers"] == {"Authorization": "••••"}
-    assert "sk-secret-value" not in json.dumps(created)
+    assert created["has_credentials"] is False
+    assert created["credential_slots"][0]["id"] == "api_key"
+    assert "Authorization" in json.dumps(created)
 
-    # 密文落库：数据库行里没有明文凭据，且可解密回原值
+    # 配置接口只保存注入规则，不接收或落库敏感值。
     row = (await db.execute(select(UserMcpServer).where(UserMcpServer.name == "weather"))).scalar_one()
-    stored = json.dumps({
-        "enc": row.encrypted_headers, "nonce": row.headers_nonce, "key": row.encrypted_headers_key,
-    })
-    assert "sk-secret-value" not in stored
-    assert row.encrypted_headers and row.encrypted_headers.startswith("")
-
-    from app.byok.crypto import decrypt_envelope
-    raw = decrypt_envelope(row.encrypted_headers, row.headers_nonce,
-                           row.encrypted_headers_key, key_version=row.headers_key_version)
-    assert json.loads(raw) == {"Authorization": "Bearer sk-secret-value"}
+    assert row.credential_slots[0]["id"] == "api_key"
+    assert not row.encrypted_credentials
 
 
 async def test_name_conflict_and_invalid_names(db, user_a):
@@ -60,6 +53,11 @@ async def test_name_conflict_and_invalid_names(db, user_a):
         await api.create_server(api.McpServerCreate(name="weather", endpoint="https://mcp2.example.com"),
                                 user=user_a, db=db)
     assert "已存在" in exc.value.detail
+    created = await api.create_server(
+        api.McpServerCreate(name="高德", endpoint="https://mcp.example.com/gaode"),
+        user=user_a, db=db,
+    )
+    assert created["name"] == "高德"
     with pytest.raises(HTTPException):
         await api.create_server(api.McpServerCreate(name="我的 server!", endpoint="https://mcp.example.com"),
                                 user=user_a, db=db)
@@ -132,18 +130,37 @@ async def test_invalid_common_fields_rejected(db, user_a):
                                                     timeout_seconds=9999), user=user_a, db=db)
     with pytest.raises(HTTPException):
         await api.create_server(api.McpServerCreate(name="ok", endpoint="https://m.example.com",
-                                                    tool_allowlist=[f"t{i}" for i in range(64)]),
+                                                    tool_allowlist=[f"t{i}" for i in range(65)]),
                                 user=user_a, db=db)
 
 
-async def test_headers_clear_on_patch(db, user_a):
+async def test_credential_slots_update(db, user_a):
     created = await api.create_server(
-        api.McpServerCreate(name="cred", endpoint="https://m.example.com",
-                            headers={"Authorization": "Bearer x"}),
+        api.McpServerCreate(name="cred", endpoint="https://m.example.com"),
         user=user_a, db=db,
     )
-    updated = await api.update_server(created["id"], api.McpServerPatch(headers={}), user=user_a, db=db)
+    updated = await api.update_server(created["id"], api.McpServerPatch(credential_slots=[
+        {"id": "key", "label": "Key", "target": "query", "name": "key"},
+    ]), user=user_a, db=db)
+    assert updated["credential_slots"][0]["id"] == "key"
     assert updated["has_credentials"] is False
+
+
+async def test_http_patch_accepts_inactive_empty_command(db, user_a):
+    """HTTP 表单带回空 command 时，应由 transport 校验而非长度校验拦截。"""
+    created = await api.create_server(
+        api.McpServerCreate(name="http_edit", endpoint="https://m.example.com"),
+        user=user_a,
+        db=db,
+    )
+    updated = await api.update_server(
+        created["id"],
+        api.McpServerPatch(endpoint="https://m2.example.com", command=""),
+        user=user_a,
+        db=db,
+    )
+    assert updated["endpoint"] == "https://m2.example.com"
+    assert updated["command"] == ""
 
 
 async def test_test_connection_reports_tools(db, user_a, monkeypatch):
@@ -151,25 +168,25 @@ async def test_test_connection_reports_tools(db, user_a, monkeypatch):
                                       user=user_a, db=db)
 
     class FakeClient:
-        def __init__(self, endpoint, headers=None, timeout_seconds=30.0):
+        def __init__(self, endpoint, headers=None, query_params=None, timeout_seconds=30.0):
             pass
 
         async def list_tools(self):
             return {"tools": [{"name": "echo", "inputSchema": {"type": "object"}}]}
 
-    monkeypatch.setattr("agent.mcp.client.McpClient", FakeClient)
+    monkeypatch.setattr("agent.mcp.manager.McpClient", FakeClient)
     result = await api.test_connection(created["id"], user=user_a, db=db)
     assert result["ok"] is True
     assert result["tool_count"] == 1
 
     class DeadClient:
-        def __init__(self, endpoint, headers=None, timeout_seconds=30.0):
+        def __init__(self, endpoint, headers=None, query_params=None, timeout_seconds=30.0):
             pass
 
         async def list_tools(self):
             return {"error": "无法连接 MCP server，请检查地址与网络", "error_kind": "network"}
 
-    monkeypatch.setattr("agent.mcp.client.McpClient", DeadClient)
+    monkeypatch.setattr("agent.mcp.manager.McpClient", DeadClient)
     failed = await api.test_connection(created["id"], user=user_a, db=db)
     assert failed["ok"] is False
     assert "无法连接" in failed["error"]
@@ -184,24 +201,115 @@ async def test_test_connection_rejects_tools_over_limit(db, user_a, monkeypatch)
                                       user=user_a, db=db)
 
     class TooManyClient:
-        def __init__(self, endpoint, headers=None, timeout_seconds=30.0):
+        def __init__(self, endpoint, headers=None, query_params=None, timeout_seconds=30.0):
             pass
 
         async def list_tools(self):
-            return {"tools": [{"name": "one"}, {"name": "two"}]}
+            schema = {"type": "object", "properties": {}}
+            return {"tools": [
+                {"name": "one", "inputSchema": schema},
+                {"name": "two", "inputSchema": schema},
+            ]}
 
-    monkeypatch.setattr("agent.mcp.client.McpClient", TooManyClient)
+    monkeypatch.setattr("agent.mcp.manager.McpClient", TooManyClient)
     result = await api.test_connection(created["id"], user=user_a, db=db)
     assert result["ok"] is False
     assert result["tools"] == []
     assert "超出单个 server 上限" in result["error"]
 
 
+async def test_manage_mcp_servers_can_resolve_actions_by_name(db, user_a):
+    from agent.tools.mcp import _manage_mcp_servers
+
+    created = await api.create_server(
+        api.McpServerCreate(name="amap", endpoint="https://mcp.example.com/mcp"),
+        user=user_a,
+        db=db,
+    )
+    result = await _manage_mcp_servers(
+        db,
+        user_a.id,
+        {"action": "enable", "name": created["name"]},
+    )
+    assert result["success"] is True
+    assert result["server"]["id"] == created["id"]
+
+
+async def test_manage_mcp_servers_can_update_non_secret_config(db, user_a):
+    from agent.tools.mcp import _manage_mcp_servers
+
+    created = await api.create_server(
+        api.McpServerCreate(name="editable", endpoint="https://mcp.example.com/old"),
+        user=user_a,
+        db=db,
+    )
+    result = await _manage_mcp_servers(db, user_a.id, {
+        "action": "update",
+        "server_id": created["id"],
+        "endpoint": "https://mcp.example.com/new",
+        "timeout_seconds": 45,
+        "enabled": False,
+    })
+    assert result["success"] is True
+    assert result["server"]["endpoint"] == "https://mcp.example.com/new"
+    assert result["server"]["timeout_seconds"] == 45
+    assert result["server"]["enabled"] is False
+    row = await db.scalar(select(UserMcpServer).where(UserMcpServer.id == UUID(created["id"])))
+    assert row.encrypted_credentials == ""
+    assert "_interaction" not in result
+
+
+async def test_manage_mcp_servers_uses_generic_secret_prompt_for_slots(db, user_a, monkeypatch):
+    from agent.tools.mcp import _manage_mcp_servers
+    from app.services.interactions import create_agent_prompt
+    from app.services.mcp_credentials import consume_mcp_secret_prompt
+    from app.models import ConversationSession
+
+    monkeypatch.setattr("agent.interactions.confirmations.needs_confirmation", lambda *args, **kwargs: None)
+    result = await _manage_mcp_servers(db, user_a.id, {
+        "action": "add",
+        "name": "generic_auth",
+        "endpoint": "https://m.example.com/mcp?key={{secret:key}}",
+        "credential_slots": [
+            {"id": "key", "label": "服务 Key", "target": "query", "name": "key"},
+        ],
+    })
+    assert result["_interaction"] == "ask_user"
+    assert result["secret_fields"] == [{"name": "key", "label": "服务 Key", "type": "secret"}]
+    assert "secret_target" in result
+
+    session = ConversationSession(user_id=user_a.id, title="通用敏感字段", source="web")
+    db.add(session)
+    await db.commit()
+    prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="generic-secret",
+        tool_name="manage_mcp_servers", payload=result,
+    )
+    await db.commit()
+    saved = await consume_mcp_secret_prompt(
+        prompt, {"key": "hidden-key"}, user=user_a, db=db,
+    )
+    assert saved["ok"] is True
+    row = await db.scalar(select(UserMcpServer).where(UserMcpServer.name == "generic_auth"))
+    assert row.encrypted_credentials
+    assert "hidden-key" not in row.encrypted_credentials
+
+
+async def test_manage_mcp_servers_requires_server_id_or_name(db, user_a):
+    from agent.tools.mcp import _manage_mcp_servers
+
+    result = await _manage_mcp_servers(db, user_a.id, {"action": "test_connection"})
+    assert result == {"error": "需要提供 server_id 或 name"}
+
+
 async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(db, user_a):
     from app.services.interactions import create_agent_prompt, list_history
 
     created = await api.create_server(
-        api.McpServerCreate(name="secure", endpoint="https://m.example.com"),
+        api.McpServerCreate(
+            name="secure", endpoint="https://m.example.com",
+            credential_slots=[{"id": "Authorization", "label": "Authorization", "target": "header", "name": "Authorization"}],
+        ),
         user=user_a, db=db,
     )
     session = ConversationSession(user_id=user_a.id, title="MCP 凭据测试", source="web")
@@ -214,7 +322,7 @@ async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(d
             "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
             "body": "请输入凭据", "options": [],
             "secret_fields": [{"name": "Authorization", "label": "Authorization", "type": "secret"}],
-            "credential_server_id": created["id"],
+            "secret_target": {"kind": "mcp_credentials", "server_id": created["id"]},
         },
     )
     await db.commit()
@@ -223,11 +331,9 @@ async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(d
         {"name": "Authorization", "label": "Authorization", "type": "secret"},
     ]
 
-    result = await api.submit_credentials(
-        prompt.id,
-        api.McpCredentialSubmit(values={"Authorization": "Bearer hidden-secret"}),
-        user=user_a,
-        db=db,
+    from app.services.mcp_credentials import consume_mcp_secret_prompt
+    result = await consume_mcp_secret_prompt(
+        prompt, {"Authorization": "Bearer hidden-secret"}, user=user_a, db=db,
     )
     assert result == {"ok": True, "prompt_id": prompt.id}
     stored = await db.get(InteractionPrompt, prompt.id)
@@ -236,3 +342,47 @@ async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(d
     history = await list_history(db, user_id=user_a.id, session_id=session.id)
     assert history[0]["secret_fields"][0]["name"] == "Authorization"
     assert "hidden-secret" not in json.dumps(history)
+
+
+async def test_endpoint_credentials_are_encrypted_and_masked(db, user_a):
+    created = await api.create_server(
+        api.McpServerCreate(
+            name="amap_endpoint",
+            endpoint="https://mcp.amap.com/mcp?key=secret-amap-key",
+        ),
+        user=user_a,
+        db=db,
+    )
+    assert created["endpoint"] == "https://mcp.amap.com/mcp?key=secret-amap-key"
+    row = await db.scalar(select(UserMcpServer).where(UserMcpServer.id == UUID(created["id"])))
+    assert row.encrypted_endpoint
+    assert "secret-amap-key" not in row.encrypted_endpoint
+    from app.byok.crypto import decrypt_envelope
+    assert decrypt_envelope(
+        row.encrypted_endpoint, row.endpoint_nonce, row.encrypted_endpoint_key,
+        key_version=row.endpoint_key_version,
+    ) == "https://mcp.amap.com/mcp?key=secret-amap-key"
+
+
+def test_manage_mcp_servers_mutation_metadata_distinguishes_read_actions():
+    """管理工具的只读动作不能继承整个复合工具的 mutates 标记。"""
+    from agent.tools.mcp import McpSkill
+
+    tool = next(item for item in McpSkill.tools if item.name == "manage_mcp_servers")
+    assert tool.mutates is True
+    assert tool.mutates_for_input({"action": "list"}) is False
+    assert tool.mutates_for_input({"action": "test_connection"}) is False
+    assert tool.mutates_for_input({"action": "add"}) is True
+    assert tool.mutates_for_input({"action": "update"}) is True
+    assert tool.observes_for_input({"action": "list"}) is True
+    assert tool.observes_for_input({"action": "test_connection"}) is True
+    assert tool.observes_for_input({"action": "add"}) is False
+
+
+def test_manage_mcp_servers_schema_accepts_credential_slots():
+    from agent.tools.mcp import McpSkill
+
+    tool = next(item for item in McpSkill.tools if item.name == "manage_mcp_servers")
+    slots = tool.input_schema["properties"]["credential_slots"]
+    assert slots["type"] == "array"
+    assert slots["items"]["properties"]["target"]["enum"] == ["header", "query"]

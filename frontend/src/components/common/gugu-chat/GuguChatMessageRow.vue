@@ -23,14 +23,16 @@
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
   <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat /></div>
-  <!-- send_link_buttons（PRD-LLM-24）：URL 全部经服务端安全校验，这里只渲染锚点；
+  <!-- send_link_buttons（PRD-LLM-24）：URL 全部经服务端安全校验，这里只渲染普通导航链接；
        target=_blank 配合 noopener noreferrer，不使用 v-html 拼接。 -->
-  <div v-if="msg.linkButtons?.buttons?.length" class="msg-link-buttons" role="group" :aria-label="msg.linkButtons.message || t('chatUi.gugu')">
-    <span v-if="msg.linkButtons.message" class="mlb-message">{{ displayQQFaces(msg.linkButtons.message) }}</span>
-    <a v-for="b in msg.linkButtons.buttons" :key="b.id" class="msg-link-btn press-fx"
-       :href="b.url" target="_blank" rel="noopener noreferrer" :aria-label="b.label">
-      {{ b.label }}
-    </a>
+  <div v-if="msg.linkButtons?.buttons?.length" class="msg-link-buttons interaction-bubble" role="group" :aria-label="msg.linkButtons.message || t('chatUi.gugu')">
+    <div v-if="msg.linkButtons.message" class="interaction-body">{{ displayQQFaces(msg.linkButtons.message) }}</div>
+    <div class="interaction-actions">
+      <ActionButton v-for="b in msg.linkButtons.buttons" :key="b.id" class="interaction-option" fit
+                    :href="b.url" target="_blank" rel="noopener noreferrer" :aria-label="b.label">
+        {{ b.label }}
+      </ActionButton>
+    </div>
   </div>
   <div v-if="msg.files && msg.files.length" class="msg-files">
     <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
@@ -76,6 +78,7 @@
 
 <script setup lang="ts">
 import Icon from '@/components/common/icons/Icon.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
 /**
  * 单条消息展示：只接收消息对象和展示回调，不直接读取全局 Store、不直接修改会话数组。

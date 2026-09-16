@@ -92,8 +92,8 @@ def _tool_field_signature(name: str) -> str:
 class CapabilityToolContext:
     """Run 内的能力上下文。
 
-    固定 Adapter 模式只把稳定入口注册给 Provider，业务工具通过 ``get_tool_schema``
-    按需追加 canonical Schema；metadata-only 模式只用于 Skill 目录和诊断，
+    固定 Adapter 模式只把内置业务工具的稳定入口注册给 Provider；动态 MCP 工具
+    由 runner 直接追加完整 Schema。metadata-only 模式只用于 Skill 目录和诊断，
     不参与 Provider 工具选择。
     """
 

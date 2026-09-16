@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -182,5 +183,70 @@ def test_protocol_error_humanized():
             result = await client.list_tools()
             assert result["error_kind"] == "protocol"
             assert expected in result["error"]
+
+    asyncio.run(run())
+
+
+def test_numeric_request_id_can_match_string_response_id():
+    """兼容少数把 JSON-RPC 数字 id 序列化为字符串的 MCP 服务。"""
+    async def run():
+        def response(request: httpx.Request) -> httpx.Response:
+            request_id = json.loads(request.content.decode("utf-8")).get("id")
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": str(request_id), "result": {"tools": []}},
+            )
+
+        client = McpClient(
+            "https://mcp.example.com/rpc",
+            transport=httpx.MockTransport(response),
+        )
+        result = await client.list_tools()
+        assert result == {"tools": []}
+
+    asyncio.run(run())
+
+
+def test_provider_json_error_is_not_reported_as_id_mismatch():
+    async def run():
+        def response(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"status": "0", "info": "INVALID_USER_KEY", "infocode": "10001"},
+            )
+
+        client = McpClient(
+            "https://mcp.example.com/rpc",
+            transport=httpx.MockTransport(response),
+        )
+        result = await client.list_tools()
+        assert result["error_kind"] == "http"
+        assert "INVALID_USER_KEY" in result["error"]
+        assert "不匹配" not in result["error"]
+
+    asyncio.run(run())
+
+
+def test_query_credentials_are_added_only_to_request_url():
+    async def run():
+        seen_urls: list[str] = []
+
+        def response(request: httpx.Request) -> httpx.Response:
+            seen_urls.append(str(request.url))
+            request_id = json.loads(request.content.decode("utf-8")).get("id")
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": request_id, "result": {"tools": []}},
+            )
+
+        client = McpClient(
+            "https://mcp.example.com/mcp?region=cn&key=stale-value",
+            query_params={"key": "secret-value"},
+            transport=httpx.MockTransport(response),
+        )
+        assert await client.list_tools() == {"tools": []}
+        assert parse_qs(urlsplit(seen_urls[0]).query) == {
+            "region": ["cn"], "key": ["secret-value"],
+        }
 
     asyncio.run(run())

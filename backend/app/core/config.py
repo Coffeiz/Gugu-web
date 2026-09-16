@@ -342,11 +342,10 @@ class BYOKSettings(BaseModel):
 
 
 class McpSettings(BaseModel):
-    """用户自带 MCP 工具接入（PRD-MCP-1 FR-MCP-1）。总开关默认关：发布即安全。"""
-    enabled: bool = Field(False, description="平台总开关：关闭时全量摘除 MCP 工具（用户配置保留）")
-    max_servers_per_user: int = Field(5, description="每用户最多 MCP server 数")
-    max_tools_per_server: int = Field(32, description="单 server 最多载入工具数")
-    max_tools_per_user: int = Field(64, description="每用户可见 MCP 工具总量上限")
+    """用户自带 MCP 工具接入（PRD-MCP-1 FR-MCP-1）。"""
+    enabled: bool = Field(True, description="平台总开关：关闭时全量摘除 MCP 工具（用户配置保留）")
+    max_servers_per_user: int = Field(10, description="每用户最多 MCP server 数")
+    max_tools_per_server: int = Field(64, description="单 server 最多载入工具数")
     default_timeout_seconds: int = Field(30, description="单次 MCP 调用默认超时")
     failure_threshold: int = Field(3, description="连续失败多少次进入退避")
     backoff_seconds: int = Field(60, description="退避时长（秒内不再外呼该 server）")

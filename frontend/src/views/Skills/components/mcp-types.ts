@@ -7,5 +7,11 @@ export interface McpServerDraft {
   tool_allowlist: string[]
   confirm_mode: 'auto' | 'confirm_all'
   enabled: boolean
-  headers?: Record<string, string>
+  credential_slots?: Array<{
+    id: string
+    label: string
+    target: 'header' | 'query'
+    name: string
+    prefix?: string
+  }>
 }

@@ -32,11 +32,13 @@ def test_tool_registered_with_schema_contract():
 
 
 def test_tool_description_states_boundaries():
-    """§6.1：描述必须写明不等待点击、不回传结果、https 校验、不做业务动作、有文本降级。"""
+    """§6.1：描述必须写明不等待点击、不回传结果、链接类型边界、不做业务动作、有文本降级。"""
     description = _tool().description
     assert "不等待用户点击" in description
     assert "不会返回给咕咕" in description
-    assert "https" in description
+    assert "HTTPS" in description
+    assert "App Scheme" in description
+    assert "危险 Scheme" in description
     assert "确认门" in description
     assert "文本链接" in description
 

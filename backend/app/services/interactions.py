@@ -155,20 +155,13 @@ async def create_agent_prompt(
         if not option_id or not label or len(option_id) > 64 or len(label) > 120:
             return reject("invalid_option_fields")
         normalized.append({"id": option_id, "label": label, "action_type": "choice"})
+    from app.services.secret_prompts import normalize_secret_fields
     secret_fields: list[dict] = []
     raw_secret_fields = payload.get("secret_fields")
     if raw_secret_fields is not None:
-        if tool_name != "manage_mcp_servers" or not isinstance(raw_secret_fields, list) or len(raw_secret_fields) > 8:
+        secret_fields = normalize_secret_fields(raw_secret_fields) or []
+        if not secret_fields:
             return reject("invalid_secret_fields")
-        import re
-        for field in raw_secret_fields:
-            if not isinstance(field, dict) or field.get("type", "secret") != "secret":
-                return reject("invalid_secret_field_type")
-            name = str(field.get("name") or "").strip()
-            label = str(field.get("label") or name).strip()
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name) or not label or len(label) > 120:
-                return reject("invalid_secret_field")
-            secret_fields.append({"name": name, "label": label, "type": "secret"})
     title = str(payload.get("title") or "需要你的回答").strip()[:120]
     body = str(payload.get("body") or "").strip()[:1000]
     authorization = str(payload.get("authorization") or "").strip()
@@ -185,28 +178,17 @@ async def create_agent_prompt(
         "tool_call_id": tool_call_id,
     }
     if secret_fields:
-        from uuid import UUID
-        from app.models import UserMcpServer
-        server_id = str(payload.get("credential_server_id") or "")
-        try:
-            parsed_server_id = UUID(server_id)
-        except (ValueError, AttributeError):
-            return reject("invalid_credential_server")
-        db_session.ensure_engine()
-        if db_session._SessionLocal is None:
-            return reject("database_session_unavailable")
-        async with db_session._SessionLocal() as check_db:
-            server = await check_db.scalar(select(UserMcpServer).where(
-                UserMcpServer.id == parsed_server_id,
-                UserMcpServer.user_id == user_id,
-                UserMcpServer.scope == "user",
-            ))
-        if server is None:
-            return reject("credential_server_not_found")
+        target = payload.get("secret_target")
+        if not isinstance(target, dict) or not target.get("kind"):
+            return reject("invalid_secret_target")
+        target = {
+            str(key): str(value)[:256]
+            for key, value in target.items()
+            if isinstance(key, str) and isinstance(value, (str, int))
+        }
         context.update({
-            "mcp_credential_server_id": str(parsed_server_id),
-            "mcp_credential_server_name": server.name,
-            "mcp_credential_fields": [item["name"] for item in secret_fields],
+            "secret_target": target,
+            "secret_fields": [item["name"] for item in secret_fields],
         })
     if authorization == "user_sandbox":
         context["command_action"] = "filesystem_authorization_grant"

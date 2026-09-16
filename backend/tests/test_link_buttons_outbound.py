@@ -21,45 +21,38 @@ GOOD_BUTTONS = [
     "https://example.com/projects/123",
     "HTTPS://Example.COM/Path",
     "https://example.com:443/ok",
+    "http://example.com:8080/ok",
+    "myapp://open/project/123",
+    "gugu://project/123",
+    "intent://open/project/123#Intent;scheme=myapp;end",
+    "mailto:person@example.com",
+    "tel:+123456",
+    "ftp://example.com/download.zip",
 ])
-def test_validate_url_accepts_https(url):
+def test_validate_url_accepts_non_dangerous_schemes(url):
     assert lb.validate_link_button_url(url) is None
 
 
 @pytest.mark.parametrize("url", [
-    "http://example.com",                                # 默认拒绝 http
     "javascript:alert(1)",
     "data:text/html;base64,xxx",
     "file:///etc/passwd",
     "blob:https://example.com/x",
-    "myapp://open",
-    "intent://example.com",
-    "tel:+123456",
-    "mailto:a@example.com",
+    "vbscript:msgbox(1)",
+    "about:blank",
+    "chrome://settings",
+    "view-source:https://example.com",
     "https://user:pass@example.com/",                    # 凭据 URL
-    "https://example.com:8080/x",                        # 非法端口
-    "https://127.0.0.1/x",                               # 环回
-    "https://169.254.169.254/latest/meta-data",          # 云元数据
-    "https://192.168.1.10/admin",                        # 内网
     "",
 ])
 def test_validate_url_rejects_unsafe(url):
     assert lb.validate_link_button_url(url) is not None
 
 
-def test_validate_url_domain_allowlist(monkeypatch):
-    monkeypatch.setenv("GUGU_LINK_BUTTON_DOMAIN_ALLOWLIST", "example.com, gugu.example.org")
-    assert lb.validate_link_button_url("https://example.com/ok") is None
-    assert lb.validate_link_button_url("https://www.example.com/ok") is None  # 子域放行（www 可解析）
-    assert lb.validate_link_button_url("https://notexample.com/") is not None
-    assert lb.validate_link_button_url("https://evil.example.org.evil.com/") is not None
-    assert "白名单" in lb.validate_link_button_url("https://random.net/x")
-
-
-def test_validate_url_allows_http_only_when_configured(monkeypatch):
-    monkeypatch.setenv("GUGU_LINK_BUTTON_ALLOW_HTTP", "on")
+def test_validate_url_allows_http_and_private_targets():
     assert lb.validate_link_button_url("http://example.com/ok") is None
-    assert lb.validate_link_button_url("ftp://example.com") is not None
+    assert lb.validate_link_button_url("https://127.0.0.1:8080/internal") is None
+    assert lb.validate_link_button_url("ftp://example.com") is None
 
 
 def test_validate_payload_whole_group_reject():
@@ -305,7 +298,7 @@ async def test_failed_delivery_logs_do_not_leak_url(monkeypatch, capsys):
 
 @pytest.mark.asyncio
 async def test_outbound_boundary_revalidates_urls(monkeypatch):
-    """§12：出站层第二道校验——上游未校验的危险 URL 在发送前被拦截，不触达网关。"""
+    """§12：出站层第二道校验——上游未校验的危险 Scheme 在发送前被拦截。"""
     called = []
 
     async def fail_keyboard(*args, **kwargs):
@@ -317,7 +310,7 @@ async def test_outbound_boundary_revalidates_urls(monkeypatch):
     from agent.im.replies import send_link_button_message
     result = await send_link_button_message(
         {"platform": "qq", "chat_type": "c2c", "platform_user_id": "U1"},
-        "入口：", [{"id": "s", "label": "S", "url": "https://127.0.0.1/x"}],
+        "入口：", [{"id": "s", "label": "S", "url": "javascript:alert(1)"}],
     )
     assert result["status"] == "failed"
     assert called == []  # 未触达网关，也不产生文本降级

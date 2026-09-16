@@ -27,6 +27,7 @@ from agent.tools.tool_contract import (
     invalid_input_payload,
     normalize_legacy_input,
     normalize_input_by_schema,
+    unwrap_arguments_wrapper,
     validate_input,
 )
 
@@ -290,6 +291,9 @@ class Tool:
     def __init__(self, name: str, description: str, input_schema: dict,
                  handler, label: str | None = None, destructive: bool = False,
                  mutates: bool = False,
+                 mutates_for_input: Callable[[dict], bool] | None = None,
+                 verify_after_call: bool | Callable[[dict], bool] | None = None,
+                 observes_for_input: Callable[[dict], bool] | None = None,
                  requires_confirmation: bool = False,
                  start_message: str | Callable[[dict], str] | None = None,
                  description_short: str | None = None,
@@ -319,6 +323,17 @@ class Tool:
         # confirm 二次确认，跟这个是两件事：写操作不一定不可逆（destructive），
         # 但只要写了就不能自动重放（mutates）。
         self.mutates = mutates
+        # 复合工具可以按实际参数声明本次调用是否写入状态。例如管理类工具通常同时
+        # 提供 list/test_connection 与 add/remove；不能因为工具整体可写，就把只读分支
+        # 当成写操作触发自我核实。未提供时沿用工具级 mutates 语义。
+        self.mutates_for_input = mutates_for_input
+        # 是否需要 Agent 在成功后进入本地状态复查。默认沿用 mutates；外部系统工具
+        # 可以保留 mutates=True（禁止自动重放），但显式关闭本地复查，避免把无法
+        # 读取本地状态的调用送进复查循环。
+        self.verify_after_call = verify_after_call
+        # 复合工具可以按实际参数声明本次调用是否提供状态观察。例如管理类工具的
+        # list/test_connection 分支可以结束写入后的复查；未提供时沿用工具名判断。
+        self.observes_for_input = observes_for_input
         # 纯观察类工具（同参数重复调用只读同一内部状态、无副作用且结果确定）才允许
         # 进入主循环的「连续相同调用熔断」。默认 False：写工具（create_event 每调一次
         # 都真产生副作用）和联网/外部状态读取（结果随时可能变化）都不算 repeat-safe，
@@ -334,6 +349,9 @@ class Tool:
         # label 是现有工具定义中的短用户可见名称；未显式补充短描述时用它作为迁移期
         # metadata，绝不从完整 description 截断生成。
         self.description_short = description_short or label or name
+        # 外部工具可为 Provider 提供比能力目录更完整的描述；未指定时保持
+        # 既有行为，内置工具仍使用 description_short。
+        self.provider_description = self.description_short
         self.category = category
         self.permissions = tuple(permissions)
         self.platforms = tuple(platforms)
@@ -346,7 +364,7 @@ class Tool:
     def to_anthropic(self) -> dict:
         return {
             "name": self.name,
-            "description": self.description_short,
+            "description": self.provider_description,
             "input_schema": copy.deepcopy(self.input_schema),
         }
 
@@ -355,7 +373,7 @@ class Tool:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": self.description_short,
+                "description": self.provider_description,
                 "parameters": copy.deepcopy(self.input_schema),
             },
         }
@@ -576,6 +594,7 @@ class SkillRegistry:
             return json.dumps(payload, ensure_ascii=False), None
 
         # 版本适配集中在契约层，只转换无歧义的旧字段，再进入当前 Schema 校验。
+        args, _arguments_unwrapped = unwrap_arguments_wrapper(tool.input_schema, args)
         args, _legacy_adaptations = normalize_legacy_input(name, args)
 
         # 正常工具会在 registry.add() 时缓存 validator；测试工具和少量运行时扩展可能直接

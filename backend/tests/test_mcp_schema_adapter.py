@@ -2,6 +2,7 @@
 from agent.mcp.models import McpToolMeta
 from agent.mcp.schema_adapter import (
     build_mcp_tool,
+    description_for_provider,
     description_short_of,
     prefixed_tool_name,
     sanitize_input_schema,
@@ -17,6 +18,7 @@ def test_prefix_and_rejects_illegal_names():
     assert prefixed_tool_name("weather", "") is None
     # server 名非法字符降级为下划线
     assert prefixed_tool_name("my server", "go") == "mcp_my_server_go"
+    assert prefixed_tool_name("高德", "weather") == "mcp_gaode_weather"
     # 超长拒载
     assert prefixed_tool_name("s", "t" * 70) is None
 
@@ -131,6 +133,7 @@ def test_build_mcp_tool_wraps_with_contract_defaults():
         prefixed_name="mcp_weather_get_forecast",
         description_short="查询天气预报",
         input_schema={"type": "object", "properties": {"city": {"type": "string"}}},
+        provider_description="查询天气预报\n完整参数说明：city 为城市名称。",
     )
 
     async def handler(db, user_id, args):
@@ -139,12 +142,18 @@ def test_build_mcp_tool_wraps_with_contract_defaults():
     tool = build_mcp_tool(meta, handler)
     assert tool.source == "mcp"
     assert tool.mutates is True
+    assert tool.verify_after_call is False
     assert tool.repeat_safe is False
     assert tool.requires_confirmation is False
     assert tool.input_schema["type"] == "object"
     assert tool.name == "mcp_weather_get_forecast"
+    assert tool.to_anthropic()["description"] == "查询天气预报\n完整参数说明：city 为城市名称。"
+    assert tool.to_openai()["function"]["description"] == "查询天气预报\n完整参数说明：city 为城市名称。"
     # schema_version/label 等 registry 契约字段可正常使用
     assert tool.label == "[weather] get_forecast"
+    assert tool.mcp_server_id == meta.server_id
+    assert tool.mcp_server_name == "weather"
+    assert tool.mcp_tool_name == "get_forecast"
 
 
 def test_description_short_first_line_truncated():
@@ -152,3 +161,14 @@ def test_description_short_first_line_truncated():
     long = "长" * 250
     assert len(description_short_of(long)) == 100
     assert description_short_of(None) == ""
+
+
+def test_provider_description_preserves_multiline_content_without_catalog_limit():
+    description = "第一行说明\n第二行参数约束\n" + ("详细说明" * 80)
+
+    assert description_for_provider(description) == description
+    assert description_short_of(description) == "第一行说明"
+
+
+def test_provider_description_uses_fallback_only_when_missing():
+    assert description_for_provider("  \n", "MCP 工具默认说明") == "MCP 工具默认说明"

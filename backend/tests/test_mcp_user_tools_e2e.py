@@ -16,7 +16,7 @@ class EchoClient:
         return {
             "tools": [{
                 "name": "echo",
-                "description": "回显内容",
+                "description": "回显内容\n参数 text 会原样返回。\n请按厂商提供的完整说明调用。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {"text": {"type": "string"}},
@@ -35,8 +35,7 @@ async def test_user_config_to_dynamic_declaration_call_and_next_round(monkeypatc
     settings = SimpleNamespace(
         mcp=SimpleNamespace(
             enabled=True,
-            max_tools_per_user=64,
-            max_tools_per_server=32,
+            max_tools_per_server=64,
             default_timeout_seconds=30,
             failure_threshold=3,
             backoff_seconds=60,
@@ -56,6 +55,11 @@ async def test_user_config_to_dynamic_declaration_call_and_next_round(monkeypatc
 
     tools = await manager.list_user_tools(user_id)
     assert [tool.name for tool in tools] == ["mcp_demo_echo"]
+    assert tools[0].description_short == "回显内容"
+    assert tools[0].to_openai()["function"]["description"] == (
+        "回显内容\n参数 text 会原样返回。\n请按厂商提供的完整说明调用。"
+    )
+    assert tools[0].to_anthropic()["description"] == tools[0].to_openai()["function"]["description"]
 
     # 动态工具只进入本轮派生快照，下一轮按用户重新得到同名声明；全局 registry 不变。
     runner = LLMRunner(["ask_user"], settings, dynamic_tools=tools)
@@ -71,7 +75,7 @@ async def test_user_config_to_dynamic_declaration_call_and_next_round(monkeypatc
 @pytest.mark.asyncio
 async def test_mcp_disabled_removes_user_tools_from_declaration(monkeypatch):
     settings = SimpleNamespace(
-        mcp=SimpleNamespace(enabled=False, max_tools_per_user=64),
+        mcp=SimpleNamespace(enabled=False),
         ai=SimpleNamespace(provider="fake", model="fake"),
     )
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
@@ -80,6 +84,61 @@ async def test_mcp_disabled_removes_user_tools_from_declaration(monkeypatch):
     manager._iter_enabled_configs = lambda _user_id: _configs([])
     assert await manager.list_user_tools(user_id) == []
     assert LLMRunner([], settings, dynamic_tools=[])._provider_tool_names([]) == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_without_description_still_enters_dynamic_catalog(monkeypatch):
+    settings = SimpleNamespace(
+        mcp=SimpleNamespace(
+            enabled=True, max_tools_per_server=64,
+            default_timeout_seconds=30, failure_threshold=3, backoff_seconds=60,
+        ),
+        ai=SimpleNamespace(provider="fake", model="fake"),
+    )
+    monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
+    class NoDescriptionClient:
+        async def list_tools(self):
+            return {
+                "tools": [{
+                    "name": "echo",
+                    "inputSchema": {"type": "object", "properties": {}},
+                }],
+            }
+
+    monkeypatch.setattr(manager_module, "McpClient", lambda *args, **kwargs: NoDescriptionClient())
+    user_id = uuid4()
+    config = McpServerConfig(
+        id=uuid4(), user_id=user_id, name="gaode", endpoint="https://mcp.example/rpc",
+        confirm_mode="auto",
+    )
+    manager = manager_module.McpToolManager()
+    manager._iter_enabled_configs = lambda _user_id: _configs([config])
+
+    tools = await manager.list_user_tools(user_id)
+    assert tools[0].description_short
+    assert "echo" in tools[0].description_short
+
+
+def test_dynamic_mcp_tools_are_declared_in_provider_in_fixed_adapter_mode():
+    from types import SimpleNamespace
+    from agent.tools.base import Tool
+
+    dynamic = Tool(
+        name="mcp_gaode_geocode",
+        description="高德地理编码",
+        input_schema={"type": "object", "properties": {"address": {"type": "string"}}},
+        handler=lambda _db, _user, _args: None,
+    )
+    settings = SimpleNamespace(state_labels=SimpleNamespace(overrides={}))
+    runner = LLMRunner(
+        ["call_tool", "get_tool_schema"], settings,
+        capability_context=SimpleNamespace(fixed_adapter=True),
+        dynamic_tools=[dynamic],
+    )
+
+    assert runner._provider_tool_names(["call_tool", "get_tool_schema"]) == [
+        "call_tool", "get_tool_schema", "mcp_gaode_geocode",
+    ]
 
 
 async def _configs(configs):

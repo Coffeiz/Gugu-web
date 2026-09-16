@@ -268,7 +268,14 @@ export interface McpServerItem {
   transport: string
   endpoint: string
   command: string
-  headers: Record<string, string>
+  credential_slots?: Array<{
+    id: string
+    label: string
+    target: 'header' | 'query'
+    name: string
+    prefix?: string
+  }>
+  credential_state?: { configured: boolean; slot_ids: string[] }
   has_credentials: boolean
   enabled: boolean
   confirm_mode: 'auto' | 'confirm_all'
@@ -276,15 +283,17 @@ export interface McpServerItem {
   tool_allowlist: string[]
   state: string
   loaded_tool_count: number
+  loaded_tool_names?: string[]
 }
 
 export const mcpApi = {
+  status: () => get<{ enabled: boolean }>('/mcp/status'),
   list: () => get<{ enabled: boolean; max_servers: number; items: McpServerItem[] }>('/mcp/servers'),
   create: (data: Record<string, unknown>) => post<McpServerItem>('/mcp/servers', data),
   update: (id: string, data: Record<string, unknown>) => patch<McpServerItem>(`/mcp/servers/${encodeURIComponent(id)}`, data),
   remove: (id: string) => del(`/mcp/servers/${encodeURIComponent(id)}`),
   test: (id: string) => post<{ ok: boolean; error?: string; tool_count?: number; tools?: string[] }>(`/mcp/servers/${encodeURIComponent(id)}/test_connection`, {}),
-  reconnect: (id: string) => post<{ ok: boolean; state: string; tool_count: number; error?: string }>(`/mcp/servers/${encodeURIComponent(id)}/reconnect`, {}),
+  reconnect: (id: string) => post<{ ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string }>(`/mcp/servers/${encodeURIComponent(id)}/reconnect`, {}),
   tools: (id: string) => get(`/mcp/servers/${encodeURIComponent(id)}/tools`),
 }
 
@@ -798,6 +807,7 @@ export const agentApi = {
   getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
   greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
   updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>
     put(`/agent/pending-queues/${encodeURIComponent(queueId)}`, { items }),

@@ -2,14 +2,14 @@
 
 - CRUD + 连接测试 + 已载入工具列表；越权访问他人 server 一律 404。
 - endpoint 属不可信外部地址：保存/更新时强制 url_is_safe 前置校验；
-  凭据（请求头）整体信封加密落库，接口只回显掩码。
+  凭据只保存注入槽位，敏感值通过通用 secret prompt 单独加密落库。
 - 上限：每用户 server 数、单 server 工具白名单长度；超限返回人话 400。
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
+from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID
 from typing import Literal
 
@@ -26,7 +26,7 @@ from app.core.security import get_current_user
 from app.core.url_security import url_is_safe
 from app.core.tz import now_utc
 from app.db.session import get_db
-from app.models import InteractionPrompt, User, UserMcpServer
+from app.models import User, UserMcpServer
 
 _log = logging.getLogger("app.mcp_settings")
 
@@ -42,7 +42,7 @@ class McpServerCreate(BaseModel):
     transport: Literal["http", "stdio"] = "http"
     endpoint: str = Field(default="", max_length=1000)
     command: str = Field(default="", max_length=1000)
-    headers: dict[str, str] = Field(default_factory=dict)
+    credential_slots: list[dict] = Field(default_factory=list)
     enabled: bool = True
     confirm_mode: str = "confirm_all"
     timeout_seconds: int = 30
@@ -52,28 +52,29 @@ class McpServerCreate(BaseModel):
 class McpServerPatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=_NAME_MAX)
     transport: Literal["http", "stdio"] | None = None
-    endpoint: str | None = Field(None, min_length=1, max_length=1000)
-    command: str | None = Field(None, min_length=1, max_length=1000)
-    # None=不修改；{}=清空凭据
-    headers: dict[str, str] | None = None
+    # 非当前传输方式的字段会由前端以空字符串提交；真正的必填校验在
+    # _validate_transport 中按 transport 执行，避免 Pydantic 先误报最小长度。
+    endpoint: str | None = Field(None, max_length=1000)
+    command: str | None = Field(None, max_length=1000)
+    credential_slots: list[dict] | None = None
     enabled: bool | None = None
     confirm_mode: str | None = None
     timeout_seconds: int | None = None
     tool_allowlist: list[str] | None = None
 
 
-class McpCredentialSubmit(BaseModel):
-    """凭据表单只接受字段映射；值不会进入响应或 Prompt。"""
-
-    values: dict[str, str] = Field(default_factory=dict)
+@router.get("/status")
+async def mcp_status(user: User = Depends(get_current_user)):
+    """返回平台 MCP 入口状态；不触发任何 server 连接。"""
+    return {"enabled": get_settings().mcp.enabled}
 
 
 def _validate_name(name: str) -> str:
     name = (name or "").strip()
-    if not re.fullmatch(r"[a-zA-Z0-9_]{1,64}", name):
+    if not re.fullmatch(r"[\w]{1,64}", name, flags=re.UNICODE):
         raise HTTPException(
             status_code=400,
-            detail="名称只能包含字母、数字和下划线（1-64 位），作为工具命名空间使用",
+            detail="名称只能包含中文、字母、数字和下划线（1-64 位）",
         )
     return name
 
@@ -117,35 +118,60 @@ def _validate_transport(transport: str, endpoint: str, command: str) -> tuple[st
     return transport, "", command
 
 
+def _decrypt_endpoint(row: UserMcpServer) -> str:
+    if not row.encrypted_endpoint:
+        return row.endpoint
+    try:
+        return decrypt_envelope(
+            row.encrypted_endpoint, row.endpoint_nonce, row.encrypted_endpoint_key,
+            key_version=row.endpoint_key_version,
+        )
+    except Exception:
+        return ""
+
+
 def _server_view(row: UserMcpServer, settings=None) -> dict:
-    """掩码视图：凭据只回显键名，值一律 ••••。"""
-    headers: dict[str, str] = {}
-    if row.encrypted_headers:
-        try:
-            raw = decrypt_envelope(
-                row.encrypted_headers, row.headers_nonce, row.encrypted_headers_key,
-                key_version=row.headers_key_version,
-            )
-            decoded = json.loads(raw)
-            if isinstance(decoded, dict):
-                headers = {str(k): "••••" for k in decoded}
-        except Exception:
-            headers = {"(加密数据)": "••••"}
+    """返回 MCP 编辑视图；敏感值不回显，只返回槽位和配置状态。"""
+    endpoint_query_has_value = any(
+        "{{secret:" not in value
+        for _key, value in parse_qsl(urlsplit(_decrypt_endpoint(row)).query, keep_blank_values=True)
+    )
     return {
         "id": str(row.id),
         "name": row.name,
         "scope": row.scope,
         "transport": row.transport,
-        "endpoint": row.endpoint,
+        "endpoint": _decrypt_endpoint(row),
         "command": row.command,
-        "headers": headers,
-        "has_credentials": bool(row.encrypted_headers),
+        "credential_slots": list(getattr(row, "credential_slots", None) or []),
+        "credential_state": {
+            "configured": bool(
+                getattr(row, "encrypted_credentials", "")
+                or row.encrypted_headers
+                or row.encrypted_query_params
+            ),
+            "slot_ids": [str(item.get("id")) for item in (getattr(row, "credential_slots", None) or []) if isinstance(item, dict)],
+        },
+        "has_credentials": bool(
+            getattr(row, "encrypted_credentials", "")
+            or row.encrypted_headers
+            or row.encrypted_query_params
+            or endpoint_query_has_value
+        ),
         "enabled": row.enabled,
         "confirm_mode": row.confirm_mode,
         "timeout_seconds": row.timeout_seconds,
         "tool_allowlist": list(row.tool_allowlist or []),
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+
+
+def _with_runtime_state(view: dict, state: dict | None) -> dict:
+    """把当前 worker 的运行时状态合并到统一的 server 视图。"""
+    view["state"] = state["state"] if state else "unloaded"
+    view["loaded_tool_count"] = state["tool_count"] if state else 0
+    view["loaded_tool_names"] = state["tool_names"] if state else []
+    return view
 
 
 def _invalidate(user_id, server_id) -> None:
@@ -167,14 +193,17 @@ async def list_servers(user: User = Depends(get_current_user),
     )).scalars().all()
     from agent.mcp.manager import mcp_manager
 
+    # 运行时工具缓存在 worker 内；列表页不能只读本进程旧缓存，否则咕咕
+    # 刚在另一个 worker 装载成功时，这里仍会显示 0 个工具。已启用服务
+    # 在没有有效缓存时会按需执行一次 tools/list，之后仍复用缓存。
+    if settings.mcp.enabled:
+        await mcp_manager.list_user_tools(user.id)
     states = {s["server_id"]: s for s in mcp_manager.server_states(user.id)}
     items = []
     for row in rows:
-        view = _server_view(row, settings)
-        state = states.get(str(row.id))
-        view["state"] = state["state"] if state else "unloaded"
-        view["loaded_tool_count"] = state["tool_count"] if state else 0
-        items.append(view)
+        items.append(_with_runtime_state(
+            _server_view(row, settings), states.get(str(row.id)),
+        ))
     return {"enabled": settings.mcp.enabled, "max_servers": settings.mcp.max_servers_per_user,
             "items": items}
 
@@ -188,6 +217,11 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
     transport, endpoint, command = _validate_transport(
         payload.transport, payload.endpoint, payload.command,
     )
+    from agent.mcp.credentials import normalize_slots
+    try:
+        credential_slots = normalize_slots(payload.credential_slots)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     existing = (await db.execute(
         select(UserMcpServer.id).where(
@@ -208,17 +242,19 @@ async def create_server(payload: McpServerCreate, user: User = Depends(get_curre
             detail=f"每个用户最多添加 {settings.mcp.max_servers_per_user} 个 MCP server",
         )
 
-    try:
-        ciphertext, nonce, wrapped_key = encrypt_envelope(
-            json.dumps(payload.headers, ensure_ascii=False), allow_empty=True,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    endpoint_ciphertext = endpoint_nonce = endpoint_wrapped_key = ""
+    if transport == "http":
+        try:
+            endpoint_ciphertext, endpoint_nonce, endpoint_wrapped_key = encrypt_envelope(endpoint, allow_empty=False)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="endpoint 加密失败") from exc
 
     row = UserMcpServer(
         user_id=user.id, scope="user", name=name, transport=transport,
-        endpoint=endpoint, command=command, encrypted_headers=ciphertext, headers_nonce=nonce,
-        encrypted_headers_key=wrapped_key, enabled=payload.enabled,
+        endpoint="", encrypted_endpoint=endpoint_ciphertext, endpoint_nonce=endpoint_nonce,
+        encrypted_endpoint_key=endpoint_wrapped_key, command=command,
+        enabled=payload.enabled,
+        credential_slots=credential_slots,
         confirm_mode=payload.confirm_mode or "confirm_all",
         timeout_seconds=payload.timeout_seconds or settings.mcp.default_timeout_seconds,
         tool_allowlist=list(payload.tool_allowlist or []),
@@ -266,26 +302,22 @@ async def update_server(server_id: str, payload: McpServerPatch,
         row.name = new_name
     next_transport = payload.transport or row.transport
     if payload.transport is not None or payload.endpoint is not None or payload.command is not None:
-        endpoint = payload.endpoint if payload.endpoint is not None else row.endpoint
+        endpoint = payload.endpoint if payload.endpoint is not None else _decrypt_endpoint(row)
         command = payload.command if payload.command is not None else row.command
-        row.transport, row.endpoint, row.command = _validate_transport(next_transport, endpoint, command)
-    if payload.headers is not None:
-        if payload.headers:
+        row.transport, endpoint, row.command = _validate_transport(next_transport, endpoint, command)
+        if next_transport == "http":
             try:
-                ciphertext, nonce, wrapped_key = encrypt_envelope(
-                    json.dumps(payload.headers, ensure_ascii=False), allow_empty=True,
-                )
+                row.encrypted_endpoint, row.endpoint_nonce, row.encrypted_endpoint_key = encrypt_envelope(endpoint, allow_empty=False)
             except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            row.encrypted_headers, row.headers_nonce = ciphertext, nonce
-            row.encrypted_headers_key, row.headers_key_version = wrapped_key, 1
-        else:
-            # 空对象表示主动清除凭据；不能把“空 JSON”继续加密保存，否则
-            # 列表接口仍会误报 has_credentials=true。
-            row.encrypted_headers = ""
-            row.headers_nonce = ""
-            row.encrypted_headers_key = ""
-            row.headers_key_version = 1
+                raise HTTPException(status_code=400, detail="endpoint 加密失败") from exc
+            row.endpoint_key_version = 1
+        row.endpoint = ""
+    if payload.credential_slots is not None:
+        from agent.mcp.credentials import normalize_slots
+        try:
+            row.credential_slots = normalize_slots(payload.credential_slots)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if payload.enabled is not None:
         row.enabled = payload.enabled
     if payload.confirm_mode is not None:
@@ -318,51 +350,18 @@ async def delete_server(server_id: str, user: User = Depends(get_current_user),
 async def test_connection(server_id: str, user: User = Depends(get_current_user),
                           db: AsyncSession = Depends(get_db)):
     """连接测试：initialize + tools/list，返回人话结果与工具数（FR-MCP-6）。"""
-    from agent.mcp.client import McpClient
     from agent.mcp.manager import McpToolManager, mcp_manager
 
-    settings = get_settings()
     row = await _get_owned_server(db, server_id, user)
     config = McpToolManager._config_from_row(row)
-    if row.transport == "stdio":
-        from app.services.workspaces import resolve_sandbox_root
-        from agent.mcp.stdio_client import McpStdioClient
-
-        root = await resolve_sandbox_root(db, user.id)
-        if root is None:
-            return {"ok": False, "error": "当前存储后端没有可用的 stdio 沙盒", "tools": []}
-        client = McpStdioClient(
-            config.command, root=str(root),
-            timeout_seconds=float(config.timeout_seconds),
-        )
-    else:
-        client = McpClient(config.endpoint, headers=config.headers,
-                           timeout_seconds=float(config.timeout_seconds))
-    listing = await client.list_tools()
-    close = getattr(client, "aclose", None)
-    if "error" in listing:
-        if close is not None:
-            await close()
-        _invalidate(user.id, row.id)
-        return {"ok": False, "error": listing["error"]}
-    allowlist = set(config.tool_allowlist or [])
-    tool_names = [
-        str(t.get("name") or "")
-        for t in listing.get("tools") or []
-        if isinstance(t, dict)
-        and (not allowlist or str(t.get("name") or "") in allowlist)
-    ]
-    if close is not None:
-        await close()
-    if len(tool_names) > settings.mcp.max_tools_per_server:
+    runtime = await mcp_manager.refresh_config(config)
+    if runtime is None or runtime.effective_state() != "ok":
         return {
             "ok": False,
-            "error": (
-                f"MCP server 工具数量 {len(tool_names)} 超出单个 server 上限 "
-                f"{settings.mcp.max_tools_per_server}，请配置工具白名单后重试"
-            ),
+            "error": (runtime.last_error if runtime else "MCP server 未能建立连接"),
             "tools": [],
         }
+    tool_names = [meta.tool_name for meta in runtime.metas.values()]
     return {"ok": True, "tool_count": len(tool_names), "tools": tool_names[:64]}
 
 
@@ -371,86 +370,20 @@ async def reconnect_server(server_id: str, user: User = Depends(get_current_user
                            db: AsyncSession = Depends(get_db)):
     """清除指定 server 的运行时缓存并立即重新发现工具。"""
     row = await _get_owned_server(db, server_id, user)
-    from agent.mcp.manager import mcp_manager
+    from agent.mcp.manager import McpToolManager, mcp_manager
 
-    mcp_manager.invalidate_server(user.id, row.id)
-    tools = await mcp_manager.list_user_tools(user.id)
-    state = next(
-        (item for item in mcp_manager.server_states(user.id) if item["server_id"] == str(row.id)),
-        None,
-    )
+    config = McpToolManager._config_from_row(row)
+    runtime = await mcp_manager.refresh_config(config)
+    state = runtime.effective_state() if runtime else "unloaded"
+    tool_count = len(runtime.tools) if runtime and state == "ok" else 0
     return {
-        "ok": bool(state and state["state"] == "ok"),
-        "state": state["state"] if state else "unloaded",
-        "tool_count": state["tool_count"] if state else 0,
-        "total_loaded": len(tools),
-        "error": state["last_error"] if state else None,
+        "ok": state == "ok",
+        "state": state,
+        "tool_count": tool_count,
+        "total_loaded": tool_count,
+        "tool_names": sorted(runtime.tools) if runtime and state == "ok" else [],
+        "error": runtime.last_error if runtime and state != "ok" else None,
     }
-
-
-@router.post("/credentials/{prompt_id}")
-async def submit_credentials(prompt_id: int, payload: McpCredentialSubmit,
-                             user: User = Depends(get_current_user),
-                             db: AsyncSession = Depends(get_db)):
-    """安全保存 MCP 凭据并结束对应 Prompt；绝不把值写入聊天历史。"""
-    prompt = await db.scalar(select(InteractionPrompt).where(
-        InteractionPrompt.id == prompt_id,
-        InteractionPrompt.user_id == user.id,
-    ).with_for_update())
-    if prompt is None:
-        raise HTTPException(status_code=404, detail="凭据输入已不存在")
-    schema = prompt.schema_json if isinstance(prompt.schema_json, dict) else {}
-    fields = [item for item in (schema.get("secret_fields") or []) if isinstance(item, dict)]
-    allowed = {str(item.get("name") or "") for item in fields}
-    if not allowed or prompt.status != "active" or prompt.expires_at <= now_utc():
-        raise HTTPException(status_code=409, detail="凭据输入已过期")
-    if set(payload.values) != allowed:
-        raise HTTPException(status_code=400, detail="凭据字段不匹配")
-    if any(not isinstance(key, str) or not value.strip() or len(value) > 4096 for key, value in payload.values.items()):
-        raise HTTPException(status_code=400, detail="凭据不能为空或过长")
-    server_id = str((schema.get("context") or {}).get("mcp_credential_server_id") or "")
-    try:
-        server_uuid = UUID(server_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(status_code=409, detail="凭据目标已失效")
-    row = await get_owned(db, UserMcpServer, server_uuid, user.id)
-    if row is None or row.scope != "user":
-        raise HTTPException(status_code=404, detail="MCP server 不存在")
-
-    headers: dict[str, str] = {}
-    if row.encrypted_headers:
-        try:
-            decoded = json.loads(decrypt_envelope(
-                row.encrypted_headers, row.headers_nonce, row.encrypted_headers_key,
-                key_version=row.headers_key_version,
-            ))
-        except Exception as exc:
-            _log.warning("MCP 凭据解密失败，拒绝覆盖：server=%s error=%s", str(row.id)[:8], type(exc).__name__)
-            raise HTTPException(status_code=409, detail="已有凭据无法读取，请在设置中清空后重试") from exc
-        if not isinstance(decoded, dict):
-            raise HTTPException(status_code=409, detail="已有凭据格式无效")
-        headers = {str(key): str(value) for key, value in decoded.items()}
-    headers.update({key: value.strip() for key, value in payload.values.items()})
-    try:
-        ciphertext, nonce, wrapped_key = encrypt_envelope(
-            json.dumps(headers, ensure_ascii=False), allow_empty=True,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="凭据加密失败") from exc
-    row.encrypted_headers, row.headers_nonce = ciphertext, nonce
-    row.encrypted_headers_key, row.headers_key_version = wrapped_key, 1
-    prompt.status = "resolved"
-    prompt.resolved_at = now_utc()
-    prompt.schema_json = {
-        **schema,
-        "resolved_result": {
-            "kind": "form", "status": "answered", "prompt_id": prompt.id,
-            "option_id": None, "value": None, "text": "MCP 凭据已安全保存",
-        },
-    }
-    await db.commit()
-    _invalidate(user.id, row.id)
-    return {"ok": True, "prompt_id": prompt.id}
 
 
 @router.get("/servers/{server_id}/tools")

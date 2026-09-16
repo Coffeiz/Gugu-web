@@ -29,6 +29,7 @@ from agent.mcp.client import McpClient
 from agent.mcp.models import McpServerConfig, McpToolMeta, SCOPE_USER
 from agent.mcp.schema_adapter import (
     build_mcp_tool,
+    description_for_provider,
     description_short_of,
     prefixed_tool_name,
     sanitize_input_schema,
@@ -40,6 +41,7 @@ from agent.tools.tool_contract import (
     enrich_tool_error,
     invalid_input_payload,
     normalize_input_by_schema,
+    unwrap_arguments_wrapper,
     validate_input,
 )
 
@@ -93,16 +95,11 @@ class McpToolManager:
 
         tools: list[Tool] = []
         seen_names: set[str] = set()
-        budget = settings.mcp.max_tools_per_user
         async for config in self._iter_enabled_configs(user_id):
             runtime = await self._ensure_runtime(settings, config)
             if runtime is None or runtime.in_backoff():
                 continue
             for name, tool in runtime.tools.items():
-                if len(tools) >= budget:
-                    _log.warning("用户 %s 的 MCP 工具总量达到上限 %d，多余工具未声明",
-                                 str(user_id)[:8], budget)
-                    return tools
                 if name in seen_names:
                     continue
                 seen_names.add(name)
@@ -150,6 +147,7 @@ class McpToolManager:
             )
             _log_traj(tool_name, user_id, args, False, "mcp:tool_input_invalid:type", t0)
             return json.dumps(payload, ensure_ascii=False), None
+        args, _ = unwrap_arguments_wrapper(tool.input_schema, args)
         args, _ = normalize_input_by_schema(tool.input_schema, args)
         if tool._input_validator is None:
             tool._input_validator = build_validator(tool.input_schema)
@@ -203,6 +201,16 @@ class McpToolManager:
                 except RuntimeError:
                     pass
 
+    async def refresh_config(self, config: McpServerConfig) -> _ServerRuntime | None:
+        """强制按给定配置重新发现工具，并把结果写入运行时缓存。"""
+        from app.core.config import get_settings
+
+        self.invalidate_server(config.user_id, config.id)
+        runtime = await self._load_runtime(get_settings(), config)
+        # 失败时 _load_runtime 可能返回 None，但仍会把诊断状态写入缓存；
+        # 连接测试需要把该状态中的真实错误返回给调用方。
+        return runtime or self._runtimes.get((self._user_key(config.user_id), config.id))
+
     def server_states(self, user_id) -> list[dict]:
         """设置页连接状态：正常/错误/退避中 + 载入的工具数（FR-MCP-6）。"""
         out = []
@@ -215,6 +223,7 @@ class McpToolManager:
                 "server_id": str(sid),
                 "state": state,
                 "tool_count": len(runtime.tools) if state != _BACKOFF_STATE else 0,
+                "tool_names": sorted(runtime.tools) if state != _BACKOFF_STATE else [],
                 "last_error": sanitize_error(runtime.last_error) if runtime.last_error else None,
             })
         return out
@@ -268,8 +277,37 @@ class McpToolManager:
     @staticmethod
     def _config_from_row(row) -> McpServerConfig:
         from app.byok.crypto import decrypt_envelope
+        from agent.mcp.credentials import normalize_slots
 
-        headers: dict[str, str] = {}
+        endpoint = row.endpoint
+        if row.encrypted_endpoint:
+            try:
+                endpoint = decrypt_envelope(
+                    row.encrypted_endpoint, row.endpoint_nonce, row.encrypted_endpoint_key,
+                    key_version=row.endpoint_key_version,
+                )
+            except Exception as exc:
+                diag_log("agent.mcp.manager.decrypt_endpoint", exc)
+                endpoint = ""
+        legacy_headers: dict[str, str] = {}
+        legacy_query: dict[str, str] = {}
+        credential_values: dict[str, str] = {}
+        try:
+            slots = normalize_slots(getattr(row, "credential_slots", None) or [])
+        except ValueError as exc:
+            diag_log("agent.mcp.manager.invalid_credential_slots", exc)
+            slots = []
+        if getattr(row, "encrypted_credentials", ""):
+            try:
+                raw = decrypt_envelope(
+                    row.encrypted_credentials, row.credentials_nonce,
+                    row.encrypted_credentials_key, key_version=row.credentials_key_version,
+                )
+                decoded = json.loads(raw)
+                if isinstance(decoded, dict):
+                    credential_values = {str(k): str(v) for k, v in decoded.items()}
+            except Exception as exc:
+                diag_log("agent.mcp.manager.decrypt_credentials", exc)
         if row.encrypted_headers:
             try:
                 raw = decrypt_envelope(
@@ -278,20 +316,45 @@ class McpToolManager:
                 )
                 decoded = json.loads(raw)
                 if isinstance(decoded, dict):
-                    headers = {str(k): str(v) for k, v in decoded.items()}
+                    legacy_headers = {str(k): str(v) for k, v in decoded.items()}
             except Exception as exc:      # 解密失败按无凭据处理，让连接自然失败并诊断
                 diag_log("agent.mcp.manager.decrypt_headers", exc)
+        if row.encrypted_query_params:
+            try:
+                raw = decrypt_envelope(
+                    row.encrypted_query_params, row.query_params_nonce,
+                    row.encrypted_query_params_key, key_version=row.query_params_key_version,
+                )
+                decoded = json.loads(raw)
+                if isinstance(decoded, dict):
+                    legacy_query = {str(k): str(v) for k, v in decoded.items()}
+            except Exception as exc:
+                diag_log("agent.mcp.manager.decrypt_query_params", exc)
+        if not credential_values and (legacy_headers or legacy_query):
+            from agent.mcp.credentials import legacy_slots
+            slots, credential_values = legacy_slots(legacy_headers, legacy_query)
         return McpServerConfig(
             id=row.id, user_id=row.user_id, name=row.name, transport=row.transport,
-            endpoint=row.endpoint, command=row.command, headers=headers, enabled=row.enabled,
+            endpoint=endpoint, command=row.command,
+            credential_slots=slots,
+            credential_values=credential_values,
+            enabled=row.enabled,
             confirm_mode=row.confirm_mode, timeout_seconds=row.timeout_seconds,
             tool_allowlist=list(row.tool_allowlist or []), scope=row.scope,
+            updated_at=row.updated_at,
         )
 
     async def _ensure_runtime(self, settings, config: McpServerConfig) -> _ServerRuntime | None:
         """惰性装载：配置未变且已装载/退避中直接用缓存；否则重拉 tools/list。"""
         key = (self._user_key(config.user_id), config.id)
         runtime = self._runtimes.get(key)
+        if runtime is not None:
+            # 配置可能由另一个 worker 保存；必须先比较版本，再判断旧运行时
+            # 是否处于退避，否则旧失败状态会阻止新配置重新连接。
+            if runtime.config != config:
+                await self._close_runtime(runtime)
+                self._runtimes.pop(key, None)
+                runtime = None
         if runtime is not None:
             if runtime.in_backoff():
                 return runtime
@@ -305,6 +368,14 @@ class McpToolManager:
             if runtime.config == config and runtime.tools:
                 return runtime
         return await self._load_runtime(settings, config)
+
+    async def _close_runtime(self, runtime: _ServerRuntime) -> None:
+        if runtime.client is None:
+            return
+        close = getattr(runtime.client, "aclose", None)
+        if close is not None:
+            await close()
+        runtime.client = None
 
     async def _load_runtime(self, settings, config: McpServerConfig) -> _ServerRuntime | None:
         """拉 tools/list 构建工具集；失败状态也落缓存（退避/计数才能跨调用生效）。"""
@@ -371,11 +442,17 @@ class McpToolManager:
             return runtime
 
         for tool_name, raw, prefixed in accepted:
+            fallback_description = f"{config.name} MCP 工具：{tool_name}"
+            provider_description = description_for_provider(
+                raw.get("description"), fallback_description,
+            )
+            description_short = description_short_of(raw.get("description")) or fallback_description
             meta = McpToolMeta(
                 server_id=config.id, server_name=config.name, tool_name=tool_name,
                 prefixed_name=prefixed,
-                description_short=description_short_of(raw.get("description")),
+                description_short=description_short,
                 input_schema=raw.get("inputSchema"),
+                provider_description=provider_description,
             )
             runtime.metas[prefixed] = meta
             runtime.tools[prefixed] = build_mcp_tool(
@@ -451,10 +528,21 @@ class McpToolManager:
 
     async def _new_client(self, config: McpServerConfig, settings):
         if config.transport != "stdio":
-            return McpClient(
-                config.endpoint, headers=config.headers,
-                timeout_seconds=float(config.timeout_seconds or settings.mcp.default_timeout_seconds),
-            )
+            from agent.mcp.credentials import assemble_credentials
+            try:
+                endpoint, headers, query_params = assemble_credentials(
+                    config.endpoint, config.credential_slots, config.credential_values,
+                )
+            except ValueError as exc:
+                _log.warning("MCP server [%s] 凭据槽位未满足：%s", config.name, str(exc))
+                return None
+            client_kwargs = {
+                "headers": headers,
+                "timeout_seconds": float(config.timeout_seconds or settings.mcp.default_timeout_seconds),
+            }
+            if query_params:
+                client_kwargs["query_params"] = query_params
+            return McpClient(endpoint, **client_kwargs)
         from app.db import session as db_session
         from app.services.workspaces import resolve_sandbox_root
 

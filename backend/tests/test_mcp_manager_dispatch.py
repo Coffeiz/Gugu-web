@@ -71,7 +71,7 @@ async def test_server_tool_limit_rejects_loading_instead_of_truncating(enabled_m
     class TooManyClient(FakeMcpClient):
         listing = {"tools": [
             {"name": f"tool_{index}", "inputSchema": {"type": "object"}}
-            for index in range(33)
+            for index in range(65)
         ]}
 
     monkeypatch.setattr(manager_module, "McpClient", TooManyClient)
@@ -93,7 +93,7 @@ async def test_allowlist_is_applied_before_server_tool_limit(enabled_mcp, monkey
     class TooManyClient(FakeMcpClient):
         listing = {"tools": [
             {"name": f"tool_{index}", "inputSchema": {"type": "object"}}
-            for index in range(33)
+            for index in range(65)
         ]}
 
     monkeypatch.setattr(manager_module, "McpClient", TooManyClient)
@@ -102,6 +102,28 @@ async def test_allowlist_is_applied_before_server_tool_limit(enabled_mcp, monkey
 
     tools = await manager.list_user_tools(user_id)
     assert [tool.name for tool in tools] == ["mcp_demo_tool_32"]
+
+
+@pytest.mark.asyncio
+async def test_user_tools_have_no_separate_total_limit(enabled_mcp, monkeypatch):
+    user_id = uuid4()
+    configs = [_config(user_id, name=f"server_{index}") for index in range(3)]
+
+    class ManyToolsClient(FakeMcpClient):
+        listing = {"tools": [
+            {"name": f"tool_{index}", "inputSchema": {"type": "object"}}
+            for index in range(64)
+        ]}
+
+    monkeypatch.setattr(manager_module, "McpClient", ManyToolsClient)
+    monkeypatch.setattr(enabled_mcp.mcp, "max_tools_per_server", 64)
+    manager = manager_module.McpToolManager()
+    manager._iter_enabled_configs = lambda _user_id: _configs(configs)
+
+    tools = await manager.list_user_tools(user_id)
+
+    assert len(tools) == 3 * 64
+    assert tools[-1].name == "mcp_server_2_tool_63"
 
 
 @pytest.mark.asyncio

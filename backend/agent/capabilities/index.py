@@ -6,7 +6,7 @@ from dataclasses import replace
 from types import MappingProxyType
 
 from agent.tools import registry as tool_registry
-from .models import CapabilityMeta, CapabilitySnapshot
+from .models import CapabilityMeta, CapabilitySnapshot, DESCRIPTION_SHORT_MAX_CHARS
 from .skill_registry import SkillCapabilityRegistry
 from .tool_registry import ToolCapabilityRegistry
 from .errors import CapabilityReferenceError

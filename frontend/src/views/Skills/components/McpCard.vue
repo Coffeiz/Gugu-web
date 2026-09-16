@@ -2,7 +2,7 @@
   <article class="skill-card" :class="{ off: !props.server.enabled }">
     <div class="sc-top">
       <span class="sc-title-wrap">
-        <span class="sc-state-dot" :class="`is-${props.server.state || 'unloaded'}`" aria-hidden="true"></span>
+        <span class="sc-state-dot" :class="`is-${statusState}`" aria-hidden="true"></span>
         <span class="sc-name" :title="props.server.name">{{ props.server.name }}</span>
       </span>
       <ToggleSwitch
@@ -16,7 +16,7 @@
     <div class="sc-when">
       <span>{{ transportLabel }}</span>
       <span>{{ t('skillsMcpUi.toolCount', { count: props.server.loaded_tool_count ?? 0 }) }}</span>
-      <span>{{ stateLabel }}</span>
+      <span>{{ statusLabel }}</span>
     </div>
     <p class="sc-desc" :title="connectionTarget">{{ connectionTarget }}</p>
     <p v-if="props.server.has_credentials" class="sc-credential">{{ t('skillsMcpUi.credentialsConfigured') }}</p>
@@ -45,7 +45,10 @@ defineEmits<{
 
 const { t } = useI18n()
 const transportLabel = computed(() => props.server.transport === 'stdio' ? t('skillsMcpUi.stdioTransport') : t('skillsMcpUi.httpTransport'))
-const stateLabel = computed(() => t(`skillsMcpUi.state.${props.server.state || 'unloaded'}`))
+const statusState = computed(() => props.server.enabled ? (props.server.state || 'unloaded') : 'disabled')
+const statusLabel = computed(() => props.server.enabled
+  ? `${t('skillsMcpUi.enabled')} · ${t(`skillsMcpUi.state.${props.server.state || 'unloaded'}`)}`
+  : t('skillsMcpUi.disabled'))
 const connectionTarget = computed(() => props.server.transport === 'stdio' ? props.server.command : props.server.endpoint)
 </script>
 
@@ -60,7 +63,7 @@ const connectionTarget = computed(() => props.server.transport === 'stdio' ? pro
 .skill-card > * { position:relative; z-index:1; }.skill-card:hover { box-shadow:var(--card-shadow-hover); }.skill-card:hover::after { opacity:1; }.skill-card.off { opacity:.5; }
 .sc-top { display:flex; align-items:center; gap:8px; min-width:0; }.sc-title-wrap { display:flex; align-items:center; gap:7px; min-width:0; flex:1; }
 .sc-name { min-width:0; flex:1; font-size:13px; line-height:19px; font-weight:600; color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sc-state-dot { width:7px; height:7px; border-radius:50%; background:var(--content-secondary); flex:0 0 auto; }.sc-state-dot.is-ok { background:var(--status-success); }.sc-state-dot.is-error, .sc-state-dot.is-backoff { background:var(--status-danger); }
+.sc-state-dot { width:7px; height:7px; border-radius:50%; background:var(--content-secondary); flex:0 0 auto; }.sc-state-dot.is-ok { background:var(--status-success); }.sc-state-dot.is-error, .sc-state-dot.is-backoff { background:var(--status-danger); }.sc-state-dot.is-disabled { background:var(--content-secondary); }
 .sc-when { display:flex; gap:10px; min-width:0; font-size:12px; color:var(--text-secondary); }.sc-when span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.sc-desc { margin:0; padding:6px 9px; border-radius:8px; background:var(--surface-soft); font-size:12px; line-height:1.45; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.sc-credential { margin:0; color:var(--status-success); font-size:11px; }
 .sc-foot { display:flex; align-items:flex-end; justify-content:space-between; gap:8px; margin-top:auto; }.sc-updated { min-width:0; font-size:11px; color:var(--text-secondary); opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.sc-acts { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
 .sc-acts .card-link-btn:disabled { opacity:.5; cursor:default; }.sc-acts .card-link-btn:disabled:hover { background:transparent; color:var(--content-secondary); }

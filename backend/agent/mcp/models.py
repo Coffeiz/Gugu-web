@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from uuid import UUID
 
 SCOPE_USER = "user"
@@ -20,7 +21,7 @@ CLIENT_INFO = {"name": "gugu-web", "version": "1.0"}
 
 @dataclass
 class McpServerConfig:
-    """一条用户 MCP server 配置（headers 已解密）。"""
+    """一条用户 MCP server 配置（凭据已解密，仅存在于请求运行时）。"""
 
     id: UUID
     user_id: UUID | None                 # None=平台级（本期不写入，预留）
@@ -28,12 +29,16 @@ class McpServerConfig:
     transport: str = TRANSPORT_HTTP      # Phase 1 仅 http；Phase 2 增 stdio
     endpoint: str = ""
     command: str = ""
-    headers: dict[str, str] = field(default_factory=dict)
+    credential_slots: list[dict[str, str]] = field(default_factory=list)
+    credential_values: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
     confirm_mode: str = CONFIRM_ALL
     timeout_seconds: int = 30
     tool_allowlist: list[str] = field(default_factory=list)   # 空=全部工具
     scope: str = SCOPE_USER
+    # 数据库配置版本。多 worker 进程各自持有缓存，配置更新时间用于发现其他
+    # worker 已经保存过的新配置并丢弃旧的成功/失败运行时。
+    updated_at: datetime | None = None
 
     @property
     def confirm_required(self) -> bool:
@@ -50,3 +55,5 @@ class McpToolMeta:
     prefixed_name: str        # mcp_<server>_<tool>
     description_short: str
     input_schema: dict
+    # MCP server 原始描述：仅用于发给 Provider，不进入能力目录/RAG 摘要。
+    provider_description: str = ""

@@ -1,16 +1,28 @@
 <template>
-  <button
+  <component
+    :is="href ? 'a' : 'button'"
     class="app-action-button"
     :class="[`is-${variant}`, { 'is-fit': fit }]"
-    :disabled="disabled"
-    :type="type"
+    :disabled="href ? undefined : disabled"
+    :type="href ? undefined : type"
+    :href="href"
+    :target="href ? target : undefined"
+    :rel="href ? rel : undefined"
   >
     <span class="app-action-button-content"><slot /></span>
-  </button>
+  </component>
 </template>
 
 <script setup lang="ts">
-withDefaults(defineProps<{ variant?: 'primary' | 'secondary' | 'danger'; disabled?: boolean; fit?: boolean; type?: 'button' | 'submit' | 'reset' }>(), {
+withDefaults(defineProps<{
+  variant?: 'primary' | 'secondary' | 'danger'
+  disabled?: boolean
+  fit?: boolean
+  type?: 'button' | 'submit' | 'reset'
+  href?: string
+  target?: string
+  rel?: string
+}>(), {
   variant: 'primary',
   disabled: false,
   fit: false,
@@ -47,6 +59,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary' | 'danger'; disable
     filter var(--motion-hover-control) var(--motion-ease-standard),
     opacity var(--motion-hover-control) ease;
 }
+.app-action-button[href] { text-decoration: none; }
 .app-action-button.is-fit { width: auto; min-width: 0; flex-basis: auto; }
 .app-action-button.is-primary {
   border: 0;

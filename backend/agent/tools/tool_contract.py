@@ -124,6 +124,24 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
     return normalized, adaptations
 
 
+def unwrap_arguments_wrapper(schema: dict[str, Any], instance: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """兼容把业务参数误包成 ``{"arguments": {...}}`` 的调用方。
+
+    内置工具的 dispatch 接收的是业务参数对象，而 MCP/模型调用协议有时会把
+    参数再包一层 ``arguments``。只在目标 schema 没有同名业务字段，且内层至少
+    命中一个已声明字段时解包，避免改变真正声明了 ``arguments`` 字段的工具。
+    """
+    if set(instance) != {"arguments"} or not isinstance(instance["arguments"], dict):
+        return instance, False
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or "arguments" in properties:
+        return instance, False
+    inner = instance["arguments"]
+    if not any(key in properties for key in inner):
+        return instance, False
+    return inner, True
+
+
 def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """按工具 Schema 做无歧义的 JSON 类型归一化。
 

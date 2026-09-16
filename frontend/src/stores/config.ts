@@ -157,6 +157,9 @@ export const useConfigStore = defineStore('config', () => {
     byok: {
       enabled: true,
     },
+    mcp: {
+      enabled: true,
+    },
   })
 
   async function fetchConfig() {
@@ -179,6 +182,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.smtp)    Object.assign(cfg.smtp,    sanitizeForEdit(data.smtp))
       if (data.security) Object.assign(cfg.security, data.security)
       if (data.byok)    Object.assign(cfg.byok,    data.byok)
+      if (data.mcp)     Object.assign(cfg.mcp,     data.mcp)
     } catch {
       // 后端未启动时静默，使用默认值
     } finally {

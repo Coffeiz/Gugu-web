@@ -9,9 +9,9 @@
     </div>
 
     <!-- 标签栏 -->
-    <AdminSegmentTabs v-if="!standaloneMode" :model-value="activeTab" :tabs="tabs" :aria-label="t('agent.tabsLabel')" class="agent-tabs" @update:model-value="switchTab" />
+    <SegmentedTabs v-if="!standaloneMode" :model-value="activeTab" :tabs="tabs" :aria-label="t('agent.tabsLabel')" class="agent-tabs" @update:model-value="switchTab" />
 
-    <AdminSegmentTabs v-if="activeTab === 'behavior'" v-model="behaviorTab" :tabs="behaviorTabs" :aria-label="t('agent.behaviorTabsLabel')" class="behavior-tabs" />
+    <SegmentedTabs v-if="activeTab === 'behavior'" v-model="behaviorTab" :tabs="behaviorTabs" :aria-label="t('agent.behaviorTabsLabel')" class="behavior-tabs" />
 
     <div class="panels-wrap">
 
@@ -29,7 +29,14 @@
       />
 
       <!-- ── 能力目录 ── -->
-      <CapabilityCatalogPanel v-if="activeTab === 'behavior' && behaviorTab === 'capabilities'" />
+      <CapabilityCatalogPanel
+        v-if="activeTab === 'behavior' && behaviorTab === 'capabilities'"
+        :mcp-enabled="configStore.cfg.mcp.enabled"
+        :mcp-saving="mcpSaving"
+        :mcp-saved="mcpSaved"
+        :mcp-error="mcpError"
+        @toggle-mcp="saveMcpEnabled"
+      />
 
       <!-- ── LLM 预设 ── -->
       <div v-if="activeTab === 'llm'">
@@ -561,12 +568,13 @@ import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from '../Config/components/ConfigField.vue'
-import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
 import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.vue'
 import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS } from '@/utils/modelProviders'
+import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
@@ -582,6 +590,9 @@ const permissionSaving = ref(false)
 const permissionSaved = ref(false)
 const permissionError = ref('')
 const sandboxRuntimeEnabled = ref(false)
+const mcpSaving = ref(false)
+const mcpSaved = ref(false)
+const mcpError = ref('')
 
 const tabs = computed(() => [
   { key: 'llm',      label: t('agent.llm') },
@@ -601,6 +612,21 @@ const behaviorTab = ref('runtime')
 function switchTab(key: string) {
   activeTab.value = key
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
+}
+
+async function saveMcpEnabled(enabled: boolean) {
+  mcpSaving.value = true
+  mcpSaved.value = false
+  mcpError.value = ''
+  await configStore.saveConfig({ mcp: { enabled } })
+  if (configStore.saveError) {
+    mcpError.value = configStore.saveError
+  } else {
+    mcpSaved.value = true
+    window.dispatchEvent(new Event(RESOURCE_REFRESH_EVENTS.mcp))
+    setTimeout(() => { mcpSaved.value = false }, 3000)
+  }
+  mcpSaving.value = false
 }
 
 // ── LLM 预设 ──────────────────────────────────────────────────────────────

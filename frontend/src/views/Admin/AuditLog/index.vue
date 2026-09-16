@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <AdminSegmentTabs
+    <SegmentedTabs
       :model-value="view"
       :tabs="auditTabs"
       :aria-label="t('adminAudit.title')"
@@ -141,7 +141,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import AdminDatePicker from '@/components/AdminDatePicker.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
-import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { fmtLocalDateTime, localDayKey } from '@/utils/dateAttribution'

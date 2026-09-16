@@ -407,6 +407,17 @@ const {
   animateGreeting, clearStatus,
 } = conversation
 
+// 业务空状态可以请求打开聊天并预填一条配置指令；只消费一次，绝不自动发送。
+watch(() => uiStore.pendingChatPrefill, async (prompt) => {
+  if (!prompt) return
+  uiStore.pendingChatPrefill = null
+  open.value = true
+  if (!expanded.value) resetContentH()
+  inputText.value = prompt
+  await nextTick()
+  composerRef.value?.focus?.()
+}, { immediate: true })
+
 const visiblePendingQueue = computed(() => pendingQueue.value.filter(item => item.sessionId === sessionId.value))
 
 let stopPendingQueueRecovery = false
@@ -553,7 +564,7 @@ async function onSecretSubmit(_msg: ChatMessage, values: Record<string, string>)
   if (!promptId || !_msg.interaction?.secretFields?.length) return
   try {
     const token = getToken()
-    const res = await fetch(`${API_BASE}/mcp/credentials/${promptId}`, {
+    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/secrets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ values }),
@@ -954,16 +965,29 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 /* 咕咕发来的文件卡片 */
 :deep(.msg-files) { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
 
-/* send_link_buttons 链接按钮组（PRD-LLM-24）：锚点按钮 + 说明文本 */
-:deep(.msg-link-buttons) { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; max-width: 88%; align-items: center; }
-:deep(.msg-link-buttons .mlb-message) { flex-basis: 100%; font-size: 13px; opacity: 0.85; }
-:deep(.msg-link-btn) {
-  display: inline-flex; align-items: center; padding: 7px 14px; cursor: pointer;
-  font-size: 13px; font-weight: 500; text-decoration: none; color: var(--content-inverse);
-  background: var(--color-primary); border-radius: 14px;
-  transition: background 0.2s ease, transform 0.15s ease, opacity 0.15s ease;
+/* send_link_buttons 复用 ask_user 的气泡与按钮契约：链接仍是普通导航，不产生交互回调。 */
+:deep(.msg-link-buttons) {
+  width: min(360px, 88%); box-sizing: border-box; margin: 6px 0 0; padding: 14px;
+  border: 1px solid var(--border-default); border-radius: var(--card-radius);
+  background: var(--surface-card-solid); color: var(--content-primary);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
 }
-:deep(.msg-link-btn:hover) { background: var(--action-primary-hover); }
+:deep(.msg-link-buttons .interaction-body) {
+  margin-top: 0; color: var(--content-secondary); font-size: var(--font-size-sm);
+  line-height: var(--line-height-body); white-space: pre-wrap;
+}
+:deep(.msg-link-buttons .interaction-actions) {
+  display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%;
+  margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle);
+}
+:deep(.msg-link-buttons .interaction-option) {
+  flex: 0 1 auto; min-width: 0; max-width: 100%; height: auto; min-height: 34px;
+  white-space: normal; word-break: normal; overflow-wrap: anywhere;
+  line-height: var(--line-height-body);
+}
+:deep(.msg-link-buttons .interaction-option .app-action-button-content) {
+  display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere;
+}
 /* 按下反馈来自全局 .press-fx（模板里已加）——只要点击下沉，不要悬停抬起：
    这条挤在其它消息气泡中间，抬起会显得跟旁边气泡割裂 */
 :deep(.msg-file) {

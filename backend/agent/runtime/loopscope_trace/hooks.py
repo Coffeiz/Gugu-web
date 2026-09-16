@@ -49,6 +49,33 @@ def _provider_schema_for_tool(tools: Any, tool_name: str) -> dict[str, Any] | No
     return None
 
 
+def _tool_trace_attributes(tool: Any, tool_name: str) -> dict[str, Any]:
+    """返回工具 Span 的可展示元数据；MCP 只记录身份，不记录凭据。"""
+    source = str(getattr(tool, "source", "builtin") or "builtin")
+    attrs: dict[str, Any] = {
+        "tool_source": source,
+        "tool_category": str(getattr(tool, "category", "") or ""),
+    }
+    if source == "mcp":
+        attrs.update({
+            "mcp_server_id": str(getattr(tool, "mcp_server_id", "") or ""),
+            "mcp_server_name": str(getattr(tool, "mcp_server_name", "") or ""),
+            "mcp_tool_name": str(getattr(tool, "mcp_tool_name", "") or tool_name),
+        })
+    return {key: value for key, value in attrs.items() if value != ""}
+
+
+def _trace_tool_input(tool_name: str, args: Any) -> Any:
+    """保留 MCP 管理调用结构，但拒绝把请求头值写入 LoopScope。"""
+    if tool_name != "manage_mcp_servers" or not isinstance(args, dict):
+        return _jsonable(args)
+    value = dict(args)
+    headers = value.get("headers")
+    if isinstance(headers, dict):
+        value["headers"] = {str(key): "[credential omitted]" for key in headers}
+    return _jsonable(value)
+
+
 def _argument_shape(value: Any) -> Any:
     """生成参数结构摘要，方便快速筛选 Schema 错误。"""
     if isinstance(value, dict):
@@ -245,13 +272,18 @@ def ensure_hooks() -> None:
 
     async def dispatch(user_id, name, args):
         run = _scope_run.get()
-        source = registry.snapshot() if hasattr(registry, "snapshot") else registry
+        from agent.tools.base import current_dispatch_tool_snapshot
+
+        source = current_dispatch_tool_snapshot()
+        if source is None:
+            source = registry.snapshot() if hasattr(registry, "snapshot") else registry
         tool = source.get(name) if source is not None else None
         handler = getattr(tool, "handler", None)
         span = run.span(
-            "tool", str(name), {"arguments": _jsonable(args)},
+            "tool", str(name), {"arguments": _trace_tool_input(str(name), args)},
             code=_code_ref(handler or original_dispatch),
             token_impact={"argument_tokens": _estimate_tokens(args)},
+            **_tool_trace_attributes(tool, str(name)),
         ) if run else None
         try:
             result = await original_dispatch(user_id, name, args)
@@ -518,6 +550,7 @@ def ensure_hooks() -> None:
                     selected_tool_names = _tool_names_from_schemas(getattr(ctx, "tools", None))
                 schema_tokens = int(cache_diag.get("tool_schema_tokens_estimate", 0) or 0)
                 schema_bytes = int(cache_diag.get("tool_schema_bytes", 0) or 0)
+                mcp_tool_names = [name for name in selected_tool_names if name.startswith("mcp_")]
                 tool_context = run.span(
                     "context",
                     "Tool schemas injected",
@@ -526,6 +559,7 @@ def ensure_hooks() -> None:
                         "schema_bytes": schema_bytes,
                         "schema_digest": cache_diag.get("tool_schema_digest", ""),
                         "selected_tool_names": selected_tool_names,
+                        "mcp_tool_names": mcp_tool_names,
                     },
                     parent_span_id=ctx_span.id,
                     code=_code_ref(original_round),

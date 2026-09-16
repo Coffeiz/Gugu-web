@@ -44,7 +44,7 @@ QQ Keyboard / 飞书交互卡片 / Web 按钮 / 微信文本链接
 
 1. Agent 能明确请求向当前会话发送一个或多个链接按钮。
 2. 飞书和 QQ 优先使用原生卡片/Keyboard；不支持时有可读的文本链接降级。
-3. 按钮点击后由客户端打开 HTTPS 网页或 HTTPS AppLink；不承诺任意第三方自定义 scheme 都能拉起 App。
+3. 按钮点击后由客户端打开 HTTPS/HTTP 网页、系统入口或 App Scheme；不承诺任意第三方 scheme 都能在各平台拉起 App。
 4. 链接按钮发送不暂停当前 Run，不产生待回答交互，不等待点击确认。
 5. 同一工具协议可供 Web、QQ、飞书使用；微信保持安全的文本降级。
 6. URL、按钮数量、标签长度、平台能力和发送失败状态全部由服务端校验并记录脱敏结果。
@@ -64,7 +64,7 @@ QQ Keyboard / 飞书交互卡片 / Web 按钮 / 微信文本链接
 - 不修改 `ask_user` 的 `InteractionPrompt`、`InteractionAction`、暂停、恢复、过期和消费协议。
 - 不为链接按钮创建可点击回调，不追踪用户是否真的打开了网页。
 - 不让按钮点击直接执行 Gugu 后端业务；需要服务端动作时使用 `ask_user`、工具确认门或业务回调。
-- 不保证 `myapp://`、`intent://` 等任意第三方协议在 QQ、飞书或 Web 客户端中可用。
+- 不保证 `myapp://`、`intent://` 等任意第三方协议在 QQ、飞书或 Web 客户端中可用；是否能拉起由客户端和操作系统决定。
 - 不允许模型指定任意收件人、Bot 或跨用户会话发送按钮。
 - 不在本期实现按钮排序编辑器、复杂卡片布局、表单、菜单和多级交互。
 - 不改变微信当前文本出站协议；微信只提供安全的文本 URL 降级。
@@ -74,7 +74,7 @@ QQ Keyboard / 飞书交互卡片 / Web 按钮 / 微信文本链接
 | 术语 | 含义 |
 |---|---|
 | 链接按钮 | 用户点击后由客户端打开目标 URL，不向 Agent 返回结果 |
-| AppLink | 以 HTTPS 为主、由平台或应用配置的可跳转链接，通常带网页 fallback |
+| AppLink | 由平台或应用配置的可跳转链接，可以是 HTTPS Universal Link，也可以是 App Scheme |
 | 交互按钮 | 点击后向服务端提交 action，并可能恢复或改变 Agent Run |
 | `ask_user` | 需要用户回答的阻塞式交互；结果回写原工具调用 |
 | `send_link_buttons` | 非阻塞式出站导航；只负责送达链接按钮 |
@@ -90,7 +90,7 @@ QQ Keyboard / 飞书交互卡片 / Web 按钮 / 微信文本链接
 
 ### 5.2 发送多个资源入口
 
-用户让咕咕“把这几个文件的入口发出来”。工具一次最多发送受控数量的按钮，每个按钮只包含展示标签和经过校验的 HTTPS 地址。
+用户让咕咕“把这几个文件的入口发出来”。工具一次最多发送受控数量的按钮，每个按钮只包含展示标签和经过校验的导航 URL。
 
 ### 5.3 需要服务端动作的相似场景
 
@@ -98,7 +98,7 @@ QQ Keyboard / 飞书交互卡片 / Web 按钮 / 微信文本链接
 
 ### 5.4 不支持原生按钮的平台
 
-微信或平台接口拒绝原生按钮时，发送一段包含标题和 HTTPS 地址的文本。工具结果必须明确标记 `fallback=text`，不能谎报为原生按钮已发送。
+微信或平台接口拒绝原生按钮时，发送一段包含标题和 URL 的文本。工具结果必须明确标记 `fallback=text`，不能谎报为原生按钮已发送。
 
 ## 6. Agent 工具协议
 
@@ -168,28 +168,26 @@ QQ Keyboard / 飞书交互卡片 / Web 按钮 / 微信文本链接
 
 ## 7. URL 安全策略
 
-### 7.1 首版允许范围
+### 7.1 首版允许范围（黑名单模式）
 
-首版默认只允许：
+首版不维护 Scheme、域名或公网地址白名单。只要 URL：
 
-- `https://` URL；
-- 已配置并通过平台要求的域名；
-- Gugu 自有页面的 HTTPS 路由；
-- 带网页 fallback 的 HTTPS AppLink/Universal Link。
+- 包含 Scheme；
+- 不属于下方明确禁止的危险 Scheme；
+- 不含空白控制字符、用户名或密码，且未超过长度限制；
 
-`http://` 是否允许由部署配置决定，生产环境默认拒绝并返回可理解的校验错误。
+就可以作为导航按钮发送，包括 `https://`、`http://`、自定义 App Scheme、系统入口以及其他由客户端支持的协议。服务端不请求目标 URL，因此这里不执行面向后端外部请求的域名、内网地址或 SSRF 检查。
 
 ### 7.2 必须拒绝
 
 服务端拒绝以下 scheme 或形式：
 
-- `javascript:`、`data:`、`file:`、`blob:`；
-- 未配置的 `myapp:`、`intent:`、`tel:`、`mailto:` 等自定义或系统 scheme；
-- 含用户名、密码或非法端口的 URL；
-- 指向本机、内网、云元数据和环回地址的 URL；
-- 通过 URL 编码、大小写或重定向绕过 scheme/域名校验的地址。
+- `javascript:`、`data:`、`vbscript:`、`file:`、`blob:`、`filesystem:`；
+- `about:`、`chrome:`、`chrome-extension:`、`resource:`、`view-source:` 等浏览器内部 scheme；
+- 含用户名或密码的 URL；
+- 空 URL、缺少 Scheme、包含控制字符或超过长度限制的输入。
 
-链接按钮的校验应复用现有 URL 安全模块和外部请求安全边界，但发送按钮不应为了验证 URL 而主动请求目标站点，也不应自动跟随重定向。
+链接按钮使用独立的静态黑名单校验；不应为了验证 URL 而主动请求目标站点，也不应自动跟随重定向。平台是否支持某个合法 Scheme，由对应客户端适配器决定；不支持时按文本链接降级。
 
 ### 7.3 危险动作边界
 
@@ -395,8 +393,8 @@ QQ、飞书 Gateway 只负责把已校验的统一 part 转成平台 wire payloa
 ### 14.1 单元测试
 
 - Schema 拒绝空消息、空按钮、超过 5 个按钮、重复 ID 和超长字段。
-- URL 校验拒绝危险 scheme、内网地址、凭据 URL、非法端口和未白名单域名。
-- URL 校验接受合法 HTTPS URL 和配置的 AppLink。
+- URL 校验拒绝危险 scheme、空/超长/控制字符输入和凭据 URL。
+- URL 校验接受合法 HTTP(S)、系统入口和自定义 App Scheme，不依赖域名白名单。
 - 工具结果正确返回 `sent`、`sent_with_fallback`、`rejected`、`failed`、`unsupported`。
 - `send_link_buttons` 不创建 `InteractionPrompt`，不调用 `consume_action()`。
 - QQ 使用跳转 action type，现有 `ask_user` 仍使用回调 action type。
@@ -442,4 +440,4 @@ QQ、飞书 Gateway 只负责把已校验的统一 part 转成平台 wire payloa
 
 如果未来需要“点击按钮后通知咕咕并继续任务”，应新增明确的交互动作类型，例如 `await_click`，复用 `InteractionPrompt/Action` 的身份、过期和消费协议；不能把 `send_link_buttons` 改成隐式等待，也不能仅凭 URL 点击推断业务成功。
 
-如果未来需要第三方 App 深链，应优先支持带网页 fallback 的 HTTPS Universal Link/AppLink，并由管理员维护按平台的 scheme 白名单和审核状态；不在模型参数中开放任意自定义协议。
+如果未来需要更强的平台治理，可以增加按平台的 Scheme 配置或审核状态；这不作为当前工具服务端的 URL 过滤前置条件。当前模型可以生成非危险自定义协议，但客户端是否支持由平台和操作系统决定。

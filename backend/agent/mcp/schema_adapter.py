@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.utils.romaji import to_romaji
 from agent.mcp.models import McpToolMeta, TOOL_NAME_PREFIX
 from agent.tools.base import Tool
 
@@ -37,13 +38,34 @@ def description_short_of(description: str | None) -> str:
     return first_line
 
 
-def prefixed_tool_name(server_name: str, tool_name: str) -> str | None:
-    """组装 `mcp_<server>_<tool>`；非法名（非 [a-zA-Z0-9_]）或超长返回 None=拒载。
+def description_for_provider(description: str | None, fallback: str = "") -> str:
+    """返回 MCP server 提供的完整描述；缺失时才使用适配器默认文案。
 
-    server 名同样允许用户配置出错：非法字符在这里降级为下划线（配置侧另有校验）；
-    工具名则保持严格——server 给什么就是什么，非法直接跳过并诊断（FR-MCP-2）。
+    MCP 描述是 server 的工具契约，不能复用面向目录/RAG 的短摘要。这里不做
+    长度截断；Provider 自身会按模型上下文能力处理描述长度。
     """
-    safe_server = re.sub(r"[^a-zA-Z0-9_]", "_", (server_name or "").strip()) or "server"
+    if isinstance(description, str) and description.strip():
+        return description
+    return fallback
+
+
+def prefixed_tool_name(server_name: str, tool_name: str) -> str | None:
+    """组装 `mcp_<server>_<tool>`；Provider 名称非法或超长返回 None=拒载。
+
+    server 名是用户可见名称，先转为拼音/罗马音再组成 ASCII 命名空间；工具名则保持
+    Provider 的 ASCII 约束——server 给什么就是什么，非法直接跳过并诊断（FR-MCP-2）。
+    """
+    raw_server = (server_name or "").strip()
+    romanized_server = to_romaji(raw_server, "zh-CN") if raw_server else ""
+    safe_server = re.sub(r"[^a-zA-Z0-9_]", "_", romanized_server)
+    if not re.search(r"[a-zA-Z0-9_]", safe_server):
+        # pypinyin 不可用或遇到未覆盖文字时仍生成确定的 ASCII 命名空间，避免
+        # 不同中文服务都退化成同一串下划线。
+        safe_server = "_".join(
+            f"u{ord(char):x}" if not char.isascii() else char
+            for char in raw_server
+        )
+    safe_server = safe_server or "server"
     tool = (tool_name or "").strip()
     if not tool or not _NAME_PATTERN.match(tool):
         return None
@@ -183,17 +205,25 @@ def build_mcp_tool(meta: McpToolMeta, handler) -> Tool:
     mutates=True（无法证明只读，定时任务不得自动重放）。确认门在 handler 内按
     server 的 confirm_mode 处理，不走 Tool.requires_confirmation（那是 registry 工具的机制）。
     """
-    return Tool(
+    tool = Tool(
         name=meta.prefixed_name,
-        description=meta.description_short,
+        description=meta.provider_description or meta.description_short,
         input_schema=sanitize_input_schema(meta.input_schema),
         handler=handler,
         label=f"[{meta.server_name}] {meta.tool_name}",
         destructive=False,
         mutates=True,
+        verify_after_call=False,
         requires_confirmation=False,
         description_short=meta.description_short,
         category="mcp",
         source="mcp",
         repeat_safe=False,
     )
+    tool.provider_description = meta.provider_description or meta.description_short
+    # LoopScope 需要区分动态 MCP 工具与同名的内置工具；这里只挂载服务和工具
+    # 元数据，不携带 endpoint、请求头或其他凭据。
+    tool.mcp_server_id = str(meta.server_id)
+    tool.mcp_server_name = meta.server_name
+    tool.mcp_tool_name = meta.tool_name
+    return tool

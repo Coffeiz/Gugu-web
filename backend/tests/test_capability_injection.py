@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.capabilities.injector import catalog_block
+from agent.capabilities.index import CapabilityIndex
 from agent.capabilities.models import CapabilityMeta, CapabilitySnapshot
 from agent.core import LLMRunner, _loaded_skill_slugs, _resolve_adapter_arguments
 from agent.skills import skill_content_digest
@@ -262,6 +263,48 @@ async def test_get_tool_schema_can_discover_skill_management_tools_on_demand():
         "tool_schemas": ["list_skills", "create_skill", "update_skill", "delete_skill"],
         "rejected": [],
     }
+
+
+@pytest.mark.anyio
+async def test_get_tool_schema_expands_dynamic_tool_prefix():
+    from agent.tools import registry
+    from agent.tools.base import Tool, set_dispatch_session, reset_dispatch_session
+    from agent.tools.meta import _get_tool_schema
+
+    dynamic = Tool(
+        name="mcp_demo_geocode",
+        description="地理编码",
+        input_schema={"type": "object", "properties": {"address": {"type": "string"}}},
+        handler=lambda _db, _user, _args: None,
+    )
+    snapshot = registry.snapshot_with_extras((dynamic,))
+    token = set_dispatch_session(None, tool_snapshot=snapshot)
+    try:
+        result = await _get_tool_schema(None, None, {"tools": ["mcp_demo_*"]})
+    finally:
+        reset_dispatch_session(token)
+
+    assert result == {"tool_schemas": ["mcp_demo_geocode"], "rejected": []}
+
+
+@pytest.mark.anyio
+async def test_dynamic_mcp_metadata_context_truncates_description_without_name_error():
+    from agent.tools.base import Tool
+
+    dynamic = Tool(
+        name="mcp_demo_weather",
+        description="天气查询工具",
+        description_short="x" * 120,
+        input_schema={"type": "object", "properties": {}},
+        handler=lambda _db, _user, _args: None,
+    )
+
+    index = await CapabilityIndex.from_registries_for_user(
+        None, None, tool_names=[], skill_metadata=(), dynamic_tools=[dynamic],
+    )
+    metadata = index.snapshot(authorized_names=[dynamic.name]).tools[dynamic.name]
+
+    assert metadata.description_short == "x" * 100
 
 
 def test_catalog_rejects_long_description_instead_of_truncating():

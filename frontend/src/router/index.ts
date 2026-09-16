@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
-import { canAccessTerminals, workspacesApi } from '@/services/api'
+import { canAccessTerminals, mcpApi, workspacesApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
@@ -219,8 +219,13 @@ router.beforeEach(async (to) => {
 })
 
 router.beforeEach(async (to) => {
-  if (to.name !== 'Terminals') return
+  if (to.name !== 'Terminals' && to.name !== 'SkillsMcp') return
   try {
+    if (to.name === 'SkillsMcp') {
+      const status = await mcpApi.status()
+      if (!status.enabled) return { path: '/skills' }
+      return
+    }
     const status = await workspacesApi.status()
     if (!canAccessTerminals(status)) return { path: '/projects' }
   } catch (cause) {
