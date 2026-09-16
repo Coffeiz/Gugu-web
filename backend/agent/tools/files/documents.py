@@ -164,6 +164,56 @@ def _strip_ext(name: str, ext: str) -> str:
 
 
 # ── handlers ──
+async def _resolve_folder_path(db, user_id, raw: str, space, project_id, workspace_directory_id):
+    """把「个人文件/参考素材/方案」式路径（或单名）解析成 folder id。
+
+    按 "/" 切分逐级下钻：第一段若是空间别名（personal/个人文件）则映射为 space；
+    其余每段在上一级的子文件夹里按名匹配（精确优先，unique 才继续）。解析到第 i 级
+    失败时，报错带上一级实际存在的子目录，模型能自我纠正而不是瞎猜。
+    返回 (folder_id|None, 错误JSON|None)；空路径返回 (None, None) 表示不限目录。
+    """
+    raw = str(raw).strip().strip("/")
+    if not raw:
+        return None, None
+    segments = [seg for seg in (part.strip() for part in raw.split("/")) if seg]
+    if not segments:
+        return None, None
+
+    if len(segments) > 1 and segments[0].lower() in ("personal", "个人文件", "个人"):
+        space = space or "personal"
+        segments = segments[1:]
+
+    parent_id = None
+    for depth, seg in enumerate(segments):
+        named = await find_user_folders_by_name(
+            db, user_id, seg, space=space, project_id=project_id,
+            workspace_directory_id=workspace_directory_id,
+        )
+        # 第一级在用户全部（按 space 过滤的）目录里找；其后逐级约束在上一级子目录内
+        candidates = [
+            folder for folder in named
+            if depth == 0 or folder.parent_id == parent_id
+        ]
+        if not candidates:
+            siblings = await list_user_folders(
+                db, user_id, space=space, project_id=project_id,
+                parent_id=parent_id,
+                workspace_directory_id=workspace_directory_id,
+            )
+            where = "「{}」下".format(segments[depth - 1]) if depth else "根目录"
+            return None, json.dumps({
+                "error": "路径解析失败：{}没有名为「{}」的文件夹".format(where, seg),
+                "available_folders": sorted({folder.name for folder in siblings}),
+            })
+        if len(candidates) > 1:
+            return None, json.dumps({
+                "error": "路径解析失败：第 {} 级「{}」有多个同名文件夹，请改用 folder_id".format(depth + 1, seg),
+                "candidates": [{"id": folder.id, "parent_id": folder.parent_id} for folder in candidates],
+            })
+        parent_id = candidates[0].id
+    return parent_id, None
+
+
 async def _list_dir(db, user_id, args: dict):
     """统一目录浏览：一次返回目录内的子文件夹与文件（取代 list_files/list_folders）。
 
@@ -182,17 +232,24 @@ async def _list_dir(db, user_id, args: dict):
         try:
             scope_folder_id = int(str(folder_value).strip().lstrip("#"))
         except (TypeError, ValueError):
-            folder, error = await _folder_by_name(
-                db,
-                user_id,
-                folder_value,
-                args.get("space"),
-                args.get("project_id"),
-                args.get("workspace_directory_id"),
-            )
+            if "/" in str(folder_value).strip().strip("/"):
+                scope_folder_id, error = await _resolve_folder_path(
+                    db, user_id, folder_value,
+                    args.get("space"), args.get("project_id"),
+                    args.get("workspace_directory_id"),
+                )
+            else:
+                folder, error = await _folder_by_name(
+                    db,
+                    user_id,
+                    folder_value,
+                    args.get("space"),
+                    args.get("project_id"),
+                    args.get("workspace_directory_id"),
+                )
+                scope_folder_id = folder.id if folder is not None else None
             if error:
                 return error
-            scope_folder_id = folder.id
 
     file_queries = normalize_queries(
         args.get("query") or args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,

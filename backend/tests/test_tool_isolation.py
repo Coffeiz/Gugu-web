@@ -154,6 +154,45 @@ async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user
     assert [item["id"] for item in result["files"]] == [inside.id]
 
 
+async def test_list_dir_resolves_slash_path(db, user_a):
+    """「/个人文件/参考素材/方案」式路径：逐级解析到叶子目录再列举。"""
+    root = await _mk(db, Folder(user_id=user_a.id, name="参考素材"))
+    child = await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="方案"))
+    inside = await _mk(db, File(
+        user_id=user_a.id, display_name="草稿", ext="md",
+        folder_id=child.id, storage_key="draft",
+    ))
+    sibling_file = await _mk(db, File(
+        user_id=user_a.id, display_name="直属于参考素材", ext="md",
+        folder_id=root.id, storage_key="direct",
+    ))
+
+    result = await _list_dir(db, user_a.id, {"folder": "/个人文件/参考素材/方案"})
+
+    assert [item["id"] for item in result["files"]] == [inside.id]
+
+    # 两级路径：列 root 本身，应含直属文件与子文件夹（带 file_count）
+    root_view = await _list_dir(db, user_a.id, {"folder": "个人文件/参考素材"})
+    assert [item["id"] for item in root_view["files"]] == [sibling_file.id]
+    assert [item["name"] for item in root_view["folders"]] == ["方案"]
+    assert root_view["folders"][0]["file_count"] == 1
+
+    # 未知路径：报错带同层可用目录，模型可自我纠正
+    miss = json.loads(await _list_dir(db, user_a.id, {"folder": "个人文件/参考素材/不存在"}))
+    assert "路径解析失败" in miss["error"]
+    assert miss["available_folders"] == ["方案"]
+
+
+async def test_list_dir_path_ambiguous_segment_reports_candidates(db, user_a):
+    root = await _mk(db, Folder(user_id=user_a.id, name="素材"))
+    await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="图"))
+    await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="图"))
+
+    miss = json.loads(await _list_dir(db, user_a.id, {"folder": "素材/图"}))
+    assert "多个同名文件夹" in miss["error"]
+    assert len(miss["candidates"]) == 2
+
+
 async def test_list_files_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
     workspace = await _mk(db, WorkspaceDirectory(
         user_id=user_a.id, name="F1 工作区", directory_name="f1-list",
