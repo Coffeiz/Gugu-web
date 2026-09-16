@@ -78,7 +78,7 @@ async def test_agent_file_create_defaults_to_workspace_without_full_sandbox_gran
         assert folder.workspace_directory_id == default_directory.id
 
         listed = await agent_files._list_folders(db, user_a.id, {})
-        assert any(item["id"] == folder.id for item in listed)
+        assert any(item["id"] == folder.id for item in listed["folders"])
     finally:
         reset_dispatch_session(token)
 

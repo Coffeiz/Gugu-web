@@ -97,8 +97,8 @@ async def test_list_files_returns_full_folder_path(db, user_a):
         user_id=user_a.id, display_name="ReAct 对比", ext="md",
         folder_id=child.id, storage_key="k",
     ))
-    rows = await _list_files(db, user_a.id, {"q": "ReAct"})
-    result = next(item for item in rows if item["id"] == file.id)
+    result = await _list_files(db, user_a.id, {"q": "ReAct"})
+    result = next(item for item in result["files"] if item["id"] == file.id)
     assert result["folder_path"] == "咕咕开发/方案"
 
 
@@ -114,10 +114,33 @@ async def test_list_files_filters_by_folder_id(db, user_a):
         folder_id=other.id, storage_key="other",
     ))
 
-    rows = await _list_files(db, user_a.id, {"folder_id": target.id})
+    result = await _list_files(db, user_a.id, {"folder_id": target.id})
 
-    assert [item["id"] for item in rows] == [inside.id]
+    assert result["total"] == 1
+    assert [item["id"] for item in result["files"]] == [inside.id]
 
+
+async def test_list_files_shown_total_reveals_truncation(db, user_a):
+    """shown/total 契约：被 limit 截断时必须暴露真实总数，不能让调用方把前 N 条当全量。
+
+    真实漏判案例：根目录清理时模型按更新时间倒序只拿前 20 条，两条排在截断线外的
+    文件被当成「不存在」。
+    """
+    folder = await _mk(db, Folder(user_id=user_a.id, name="截图"))
+    for i in range(3):
+        await _mk(db, File(
+            user_id=user_a.id, display_name=f"shot-{i}", ext="png",
+            folder_id=folder.id, storage_key=f"k{i}",
+        ))
+
+    result = await _list_files(db, user_a.id, {"folder_id": folder.id, "limit": 2})
+
+    assert result["total"] == 3
+    assert result["shown"] == 2
+    assert len(result["files"]) == 2
+
+    full = await _list_files(db, user_a.id, {"folder_id": folder.id, "limit": 200})
+    assert full["total"] == 3 and full["shown"] == 3
 
 async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user_a):
     target = await _mk(db, Folder(user_id=user_a.id, name="咕咕开发"))
@@ -126,9 +149,9 @@ async def test_list_files_accepts_folder_name_without_integer_sql_error(db, user
         folder_id=target.id, storage_key="inside",
     ))
 
-    rows = await _list_files(db, user_a.id, {"folder_id": "咕咕开发", "space": "personal"})
+    result = await _list_files(db, user_a.id, {"folder_id": "咕咕开发", "space": "personal"})
 
-    assert [item["id"] for item in rows] == [inside.id]
+    assert [item["id"] for item in result["files"]] == [inside.id]
 
 
 async def test_list_files_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
@@ -157,9 +180,9 @@ async def test_list_files_does_not_inherit_bound_workspace_directory(db, user_a,
 
     monkeypatch.setattr(file_documents, "_bound_workspace_target", bound_workspace)
 
-    rows = await _list_files(db, user_a.id, {"queries": ["已看"]})
+    result = await _list_files(db, user_a.id, {"queries": ["已看"]})
 
-    assert [item["id"] for item in rows] == [personal_file.id]
+    assert [item["id"] for item in result["files"]] == [personal_file.id]
 
 
 async def test_resolve_target_cross_user_folder(db, user_a, user_b):

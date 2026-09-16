@@ -16,6 +16,7 @@ from app.core.tz import now_utc
 from app.services.storage.folders import resolve_folder_path
 from app.services.files.response import color_value
 from app.services.files.browser import (
+    count_user_files,
     descendant_folder_ids,
     find_user_files_by_name,
     find_user_folders_by_name,
@@ -188,8 +189,7 @@ async def _list_files(db, user_id, args: dict):
         limit = max(1, min(int(requested_limit), 200))
     except (TypeError, ValueError):
         limit = 100
-    rows = await search_user_files(
-        db, user_id,
+    filter_kwargs = dict(
         space=args.get("space"),
         project_id=args.get("project_id"),
         folder_id=folder_id,
@@ -197,8 +197,9 @@ async def _list_files(db, user_id, args: dict):
         ext=args.get("ext"),
         queries=file_queries,
         mode=args.get("mode"),
-        limit=limit,
     )
+    rows = await search_user_files(db, user_id, limit=limit, **filter_kwargs)
+    total = await count_user_files(db, user_id, **filter_kwargs)
     out = []
     for file in rows:
         folder_path = "（根目录）"
@@ -215,7 +216,9 @@ async def _list_files(db, user_id, args: dict):
             "space": file.space, "size": file.size, "project_id": file.project_id,
             "folder_id": file.folder_id, "folder_path": folder_path,
         })
-    return out
+    # shown/total 让调用方一眼看出是否被 limit 截断；截断时必须加大 limit
+    # 重查或加过滤条件，不能把前 N 条当成全量下结论。
+    return {"shown": len(out), "total": total, "files": out}
 
 
 async def _read_file(db, user_id, args: dict):
@@ -728,7 +731,9 @@ class FilesSkill(BaseSkill):
         Tool(
             name="list_files", label="查询文件",
             description_short='查询文件；默认覆盖当前用户可访问的所有空间。',
-            description="按空间、项目、工作区、文件夹、扩展名或名称关键词查询文件；不传位置条件时查询当前用户所有可访问空间，结果含完整 folder_path。",
+            description="按空间、项目、工作区、文件夹、扩展名或名称关键词查询文件；不传位置条件时查询当前用户所有可访问空间，结果含完整 folder_path。"
+                        "返回 {shown, total, files}：total 是同条件全量总数，shown 是本次返回数；shown<total 说明被 limit 截断，必须加大 limit 重查或改用更精确的过滤条件，不能把部分结果当成全量下结论。"
+                        "确认「全部/清空/还剩几个」类问题时务必核对 total。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1025,6 +1030,7 @@ class FilesSkill(BaseSkill):
             name="list_folders", label="查询文件夹",
             description_short='查询文件夹；默认覆盖当前用户可访问的所有空间。',
             description="列出文件夹，可按空间、项目、工作区或父文件夹筛选；不传位置条件时查询当前用户所有可访问空间。"
+                        "返回 {shown, total, folders}：total 是同条件总数，shown 是本次返回数。"
                         "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
             input_schema={
                 "type": "object",

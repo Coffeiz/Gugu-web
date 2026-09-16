@@ -298,7 +298,10 @@ async def _list_folders(db, user_id, args: dict):
             "project_id": folder.project_id, "parent_id": folder.parent_id,
             "depth": path.count("/"),
         })
-    return sorted(out, key=lambda item: (item["depth"], item["path"]))
+    sorted_out = sorted(out, key=lambda item: (item["depth"], item["path"]))
+    # 与 list_files 同契约：shown/total 表明是否全量。当前实现本就不截断，
+    # 带上这两个字段是为了契约对称，也给未来加软上限留好语义。
+    return {"shown": len(sorted_out), "total": len(sorted_out), "folders": sorted_out}
 
 
 async def _find_folder(db, user_id, args: dict):
