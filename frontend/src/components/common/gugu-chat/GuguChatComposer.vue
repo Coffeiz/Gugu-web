@@ -537,7 +537,9 @@ defineExpose({
      1px 会把行盒撑到 23px（autogrow 量到 scrollHeight 变大 → 输入行变高）。
      20px + 上下 -2px 负 margin 把行盒贡献收回行框内：行高恒定且视觉居中。 */
   height: 20px; line-height: 1; font-size: 12px; white-space: nowrap;
-  margin: -2px 2px;
+  /* 上 -3 / 下 -1：净值仍 -2（行盒不变），但把 chip 内容相对 middle 中线上抬 1px，
+     与图标/发送按钮的垂直中心对齐（它们都在行中心 +1px 处，见 border-top 偏移）。 */
+  margin: -3px 2px -1px 2px;
   /* 原子节点仍由 ProseMirror 整体选中/删除；这里不能用 user-select:all，
      否则光标紧贴引用末尾时，鼠标拖拽会被浏览器锁成“选中胶囊/移动光标”，
      无法继续建立前后文本选区。 */
