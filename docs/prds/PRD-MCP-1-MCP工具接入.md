@@ -1,17 +1,17 @@
 # PRD-MCP-1：用户自带 MCP 工具接入
 
-> 状态：Phase 1/2 代码已完成，真实 devserver/容器 e2e 待验收；Phase 3 已完成 MCP 用量展示，连接模板与用户级配额待按需实施；平台级官方 MCP 暂缓（默认接什么未定）
+> 状态：Phase 1/2 代码已完成，真实 devserver/容器 e2e 待验收；MCP 用户配置已从个人设置迁移到技能页 `/skills/mcp`；Phase 3 已完成 MCP 用量展示，连接模板与用户级配额待按需实施；平台级官方 MCP 暂缓（默认接什么未定）
 > 创建：2026-09-13
-> 最近更新：2026-09-13
-> 关联模块：`backend/agent/tools/base.py`、`backend/agent/capabilities/selector.py`、`backend/agent/loop_drivers.py`、`backend/agent/core.py`、`backend/app/security/`（凭据加密）、`frontend/src/views/`（用户设置页）
-> 背景参考：MCP 规范（Model Context Protocol，tools 能力）；`agent/__init__.py` 路线图已预留 mcp Phase；凭据加密先例见 BYOK 主密钥体系（`CREDENTIALS_MASTER_KEY_FILE`）；设置页先例见 `ProfileByokPane`
+> 最近更新：2026-09-16
+> 关联模块：`backend/agent/tools/base.py`、`backend/agent/capabilities/selector.py`、`backend/agent/loop_drivers.py`、`backend/agent/core.py`、`backend/app/security/`（凭据加密）、`frontend/src/views/Skills/`（技能页 MCP 子页面）
+> 背景参考：MCP 规范（Model Context Protocol，tools 能力）；`agent/__init__.py` 路线图已预留 mcp Phase；凭据加密先例见 BYOK 主密钥体系（`CREDENTIALS_MASTER_KEY_FILE`）；表单交互先例见 `ProfileByokPane`
 
 ## 0. 实际状态
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
 | MCP 基础接入能力（客户端、工具包装、dispatch 路由） | ✅ | 已完成并有单测 |
-| 用户 MCP 配置管理（设置页 CRUD、凭据加密存储） | ✅ | 已完成；真实页面验收待跑 |
+| 用户 MCP 配置管理（技能页 CRUD、凭据加密存储） | ✅ | 已完成；入口为 `/skills/mcp`，不再放在个人设置 |
 | 用户 MCP 工具进入对话（声明、调用、确认门） | ✅ | 已完成；桩级二轮链路通过 |
 | stdio 本地 server 接入（强制沙盒化） | 🟡 | 代码、协议测试、容器参数测试完成；真实 devserver 容器 e2e 待验收 |
 | 咕咕自助管理 MCP 配置（`manage_mcp_servers` 工具 + ask_user 密文通道） | ✅ | 已完成；真实 IM/Web 场景待验收 |
@@ -23,7 +23,7 @@
 
 目标：
 
-- 用户可在设置中维护自己的 MCP server（名称、endpoint、凭据请求头、启用开关、工具白名单、确认模式），保存后其 MCP 工具进入该用户自己的对话（Web 与 IM 均生效）。
+- 用户可在技能页的 MCP 子页面维护自己的 MCP server（名称、endpoint、凭据请求头、启用开关、工具白名单、确认模式），保存后其 MCP 工具进入该用户自己的对话（Web 与 IM 均生效）。
 - MCP 工具与 builtin 工具走同一条执行契约：schema 校验、参数归一化、调用熔断、结果预算、确认门全部复用，不为 MCP 开第二条执行路径。
 - 用户凭据加密存储、不进日志；单个 server 故障只影响该 server，不拖垮 Agent Loop。
 
@@ -38,7 +38,7 @@
 
 ### FR-MCP-1：用户配置管理
 
-- 用户在设置页维护自己的 MCP server 列表，每个条目包含：名称（用户内唯一，作命名空间）、传输类型（Phase 1 仅 `http`，Phase 2 增 `stdio`）、endpoint URL、可选请求头（如 `Authorization`）、启用开关、超时秒数、工具白名单（为空 = 全部）、确认模式（`auto` / `confirm_all`，默认 `confirm_all`，用户可改 `auto`）。
+- 用户在技能页的 MCP 子页面维护自己的 MCP server 列表，每个条目包含：名称（用户内唯一，作命名空间）、传输类型（Phase 1 仅 `http`，Phase 2 增 `stdio`）、endpoint URL、可选请求头（如 `Authorization`）、启用开关、超时秒数、工具白名单（为空 = 全部）、确认模式（`auto` / `confirm_all`，默认 `confirm_all`，用户可改 `auto`）。个人设置不再提供 MCP 配置入口。
 - 配置存数据库（用户维度表），请求头凭据使用平台凭据主密钥加密落库，任何接口不回显明文。删除 server 级联清掉其工具缓存。
 - 数量上限：每用户最多 5 个 server、单 server 最多 32 个工具、每用户可见工具总量最多 64 个；超上限保存/加载被拒并给出人话提示。
 - 配置模型带 `scope` 字段：本期只实现 `scope=user`（用户自己维护）；`scope=platform`（Admin 维护、全体用户可用）仅预留字段与合并分支，不做 UI、不写入数据。
@@ -73,7 +73,7 @@
 
 ### FR-MCP-6：可观测
 
-- 用户设置页展示每个 server 的连接状态（正常 / 错误 / 退避中）与载入的工具数。
+- 技能页 MCP 子页面展示每个 server 的连接状态（正常 / 错误 / 退避中）与载入的工具数。
 - 工具调用轨迹（`_log_traj`）与用量统计沿用既有机制，MCP 调用打标 `agent_usage.scenario=mcp`。
 - Admin 仅能看到平台级总量统计（启用用户数、server 总数、调用量），不可见用户配置内容与凭据。
 - 关键事件（保存/停用/退避/拒载/超限）写可见日志，不含用户内容与凭据。
@@ -131,7 +131,8 @@ backend/
     ├── test_mcp_settings_api.py          【新增】CRUD、上限拒绝、凭据掩码、URL 校验
     └── test_mcp_user_tools_e2e.py        【新增】用户配置→对话声明→调用→二轮引用（桩级）
 frontend/src/
-├── views/Profile/ProfileMcpPane.vue      【新增】用户 MCP 设置面板（对齐 ProfileByokPane 先例）
+├── views/Skills/McpServersView.vue       【新增】技能页下的 MCP server 管理子页面
+├── views/Skills/SkillsHome.vue            【新增】技能列表子页面
 ├── components/common/gugu-chat/
 │   ├── GuguChatInteraction.vue           【修改】ask_user 卡片渲染 secret 密码框并走独立提交端点
 │   ├── chatTypes.ts                      【修改】interaction 协议增加 secret 字段类型
@@ -155,9 +156,9 @@ frontend/src/
 ## 4. 验证与上线
 
 - 单测：`PYTHONPATH=. .venv/bin/pytest tests/test_mcp_schema_adapter.py tests/test_mcp_manager_dispatch.py tests/test_mcp_settings_api.py tests/test_mcp_user_tools_e2e.py tests/test_mcp_stdio.py`——FakeMcpServer 桩覆盖：消毒降级、拒载、超限、跨用户隔离（A 配的 server B 不可见不可调）、超时结构化错误、退避、confirm_all 进确认门、`mcp.enabled=false` 全量摘除；stdio 覆盖 sandboxd JSONL 往返、断 socket、无 TTY 的固定容器边界与空闲回收后重连。
-- devserver e2e：待执行。需本地起 HTTP/stdio echo MCP server，用户在设置页真实配置后走网页对话完成「声明 → 调用 → 二轮引用」，并验证停机时人话错误、主对话不受影响；迁移在 devserver `alembic upgrade head` 后执行。
+- devserver e2e：待执行。需本地起 HTTP/stdio echo MCP server，用户在技能页 MCP 子页面真实配置后走网页对话完成「声明 → 调用 → 二轮引用」，并验证停机时人话错误、主对话不受影响；迁移在 devserver `alembic upgrade head` 后执行。
 - 灰度与回滚：`mcp.enabled` 平台总开关默认关，发布即安全；出问题关开关即全量摘除；DB 迁移 downgrade 删表回滚。
-- 观测：`agent_usage.scenario=mcp` 看调用量/失败率；用户设置页看各 server 状态。
+- 观测：`agent_usage.scenario=mcp` 看调用量/失败率；技能页 MCP 子页面看各 server 状态。
 
 ## 5. 风险与待确认问题
 
@@ -190,13 +191,13 @@ frontend/src/
 - [x] `MCP1-004` 用户侧 CRUD + 连接测试 API（`/api/v1/mcp/servers`），含 URL 安全校验、上限拒绝、凭据掩码；越权 404 测试通过。
 - [x] `MCP1-005` 实现 `mcp/manager.py`：按 `(user, server)` 的工具缓存、dispatch 路由、退避、配置失效；跨用户隔离与停机错误测试通过。
 - [x] `MCP1-006` 接入按用户声明合并、`core.py` dispatch 路由、selector 合并；关闭 `mcp.enabled` 后从声明消失，桩级二轮链路通过。
-- [x] `MCP1-007` 设置页 `ProfileMcpPane`：列表、HTTP/stdio 表单、连接状态、凭据掩码；i18n 静态扫描、前端类型检查通过，真实页面链路待 e2e。
+- [x] `MCP1-007` 技能页 MCP 子页面 `/skills/mcp`：列表、HTTP/stdio 表单、连接状态、凭据掩码；已从个人设置移除 MCP 导航；i18n 静态扫描、前端类型检查通过，真实页面链路待 e2e。
 - [ ] `MCP1-008` devserver e2e + 故障演练（停机、超时、删配置即时摘除）；代码与桩级测试完成，真实 5173/迁移/echo server 验收待执行。
 
 ### Phase 2：stdio 本地 server 与对话式管理
 
 - [ ] `MCP1-009` stdio 传输客户端：已实现 sandboxd + rootless Docker、空闲回收、崩溃重启上限；协议/参数/回收单测通过，真实 devserver 沙盒 e2e 待执行。
-- [x] `MCP1-010` server 连接状态细览与手动「重新连接」；设置页已可触发重连并反映最新工具列表。
+- [x] `MCP1-010` server 连接状态细览与手动「重新连接」；技能页 MCP 子页面已可触发重连并反映最新工具列表。
 - [x] `MCP1-014` `manage_mcp_servers` 工具（list/add/enable/disable/remove/test_connection，确认门，仅当前用户 scope）；已覆盖 HTTP/stdio 连接测试与安全边界，真实对话 e2e 待执行。
 - [x] `MCP1-015` ask_user secret 字段类型 + 独立凭据提交端点 + 占位 tool result；Web 密文通道、IM 链接降级、聊天草稿排除 secret 已实现，凭据值不进入响应与测试断言。
 

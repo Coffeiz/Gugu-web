@@ -91,6 +91,20 @@ const routes: RouteRecordRaw[] = [
         name: 'Skills',
         component: () => import('@/views/Skills/index.vue'),
         meta: { title: 'navigation.skills' },
+        children: [
+          {
+            path: '',
+            name: 'SkillsHome',
+            component: () => import('@/views/Skills/SkillsHome.vue'),
+            meta: { title: 'navigation.skills' },
+          },
+          {
+            path: 'mcp',
+            name: 'SkillsMcp',
+            component: () => import('@/views/Skills/McpServersView.vue'),
+            meta: { title: 'navigation.skills' },
+          },
+        ],
       },
       {
         path: 'terminals',
