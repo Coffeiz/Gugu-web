@@ -15,12 +15,14 @@
 - **web_download 连接清理**：修复下载超时后因 PostgreSQL 连接已关闭导致 `Transaction.rollback` 二次报错的问题；下载前结束文件夹校验事务，失效连接会被安全清理。
 - **OpenAI 接口格式可显式选择**：OpenAI、Qwen、GLM、DeepSeek、MiMo、Ollama 兼容模式和本地兼容服务支持在模型配置中选择 Chat Completions 或 Responses；Ollama 原生与 MiMo Anthropic 兼容模式继续保留。
 - **Responses API 驱动与兼容回退**：Responses 模式改用 OpenAI SDK 的 Responses 流式接口，支持工具调用和 response chain；第三方兼容服务不支持完整 Responses 协议时自动回退 Chat Completions，修复最小探测成功但实际 Agent 请求失败的问题（[#73](https://github.com/Coffeiz/Gugu-web/issues/73)）。
+- **Admin Agent 用量视图**：新增排除开发者、包含 BYOK 过滤，以及日/周/月视图；日视图按小时展示，周/月按自然周期展示，并统一统计时区与当前周期边界。
 
 ### 修复
 
 - **Responses 前缀缓存统计与跨 run 复用**：正确记录 Responses 返回的缓存命中量，并为固定 instructions 与工具 Schema 使用稳定的缓存路由键；LoopScope 现在能区分固定前缀、历史增长和真实 cache 命中，修复 Responses 模式长期显示 `0 cache` 的问题（[#73](https://github.com/Coffeiz/Gugu-web/issues/73)）。
 - **思考内容泄漏防护**：仅识别并清理明确的思考块标记，不再把普通文案中的 `thinking`、`think` 等词误判为隐藏思考内容；模型服务错误与内部异常提示也分开处理，避免把后端细节直接展示给用户。
 - **工具能力摘要注入**：统一工具字段签名和能力目录注入路径，减少重复 Schema 与无效上下文，MCP 动态工具在摘要模式下仍能保持可调用信息。
+- **推理状态与周期导航**：模型池或路由切换到 `off` 时会清理旧 continuation state；管理员修改模型运行配置后同步失效旧状态；修复用量月视图日期溢出及当前周期“下一页”按钮状态不准确的问题。
 
 ## [1.3.0] - 2026-09-17
 
