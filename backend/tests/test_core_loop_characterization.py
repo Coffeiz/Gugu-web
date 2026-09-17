@@ -1638,3 +1638,43 @@ async def test_continuation_recovery_refires_only_without_round_start(monkeypatc
     out, refires = await _recover_frames(settled, monkeypatch)
     assert refires == 0, "续轮已开始（round_start）就不该再发模型请求"
     assert [json.loads(l[len("data: "):])["type"] for l in out] == ["_new_round", "round_start"]
+
+
+async def test_budget_stop_does_not_spin_when_model_keeps_calling_tools(monkeypatch, dispatched):
+    """预算停止（工具已摘除）后模型仍坚持输出 tool_call：最多给一次 followup，
+    然后强制收束——不能空转到 100 轮绝对上限（2026-09-18 实测连转 75 轮）。"""
+    import app.services.interactions as interactions_mod
+
+    from datetime import datetime, timedelta
+
+    async def _decline_prompt(**_kwargs):
+        # 返回真 prompt 对象：None 会走「无交互通道」直接报错收尾，到不了拒绝分支
+        prompt = SimpleNamespace(
+            id=1, kind="confirm", title="工具调用上限", body="是否继续？",
+            expires_at=datetime.now() + timedelta(minutes=5),
+        )
+        options = [{"id": "cancel", "label": "就此打住", "action_type": "cancel"}]
+        return prompt, options
+
+    async def _declined(**_kwargs):
+        return {"option_id": "cancel"}
+
+    monkeypatch.setattr(interactions_mod, "create_tool_budget_prompt", _decline_prompt)
+    monkeypatch.setattr(interactions_mod, "wait_for_resolution", _declined)
+
+    tool_use_round = msg([TU("web_search", "t1", {"query": "x"})])
+    patch_anthropic(monkeypatch, [
+        tool_use_round,   # R1: 预算内最后一次真实调用（max_tool_calls=1）
+        tool_use_round,   # R2: 预算耗尽 → 拒绝弹窗 → 停止；仍调工具 → followup 1
+        tool_use_round,   # R3: 再调 → 强制收束（不再追问）
+        tool_use_round,   # R4: 不应到达
+    ])
+    messages = [{"role": "user", "content": "帮我查一下"}]
+    ev, text, errors = await drain(make_runner(max_tool_calls=1)._run_anthropic(
+        "u", "sys", messages, AI,
+    ))
+
+    assert "工具调用额度已用完" in "".join(text), f"实际 text 片段: {text[-3:]}"
+    # followup 只追一次，随后强制收束
+    assert len([m for m in messages if m.get("content") == core._TOOL_BUDGET_STOP_PROMPT]) == 1
+    assert ev["error"] == 0

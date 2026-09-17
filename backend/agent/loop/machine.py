@@ -108,6 +108,7 @@ async def run_loop(
         pending_responses_capability_failure = None
         narration_retry = decision_retry = intent_retry = colon_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
+        budget_stop_rounds = 0  # 预算停止后模型仍坚持调工具的连续轮数（止损用）
         guard_retry_pending = False
         colon_retry_pending = False
         guard_retry_buf: list[str] = []
@@ -1394,6 +1395,23 @@ async def run_loop(
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
                 if tool_budget_stop_requested:
+                    # 预算停止后模型仍反复输出工具调用：给一次 followup 让它收束；
+                    # 若继续坚持（工具已被摘除，任何调用都是空转），强制终结而不是
+                    # 空转到绝对轮次上限——2026-09-18 实测 MiniMax 连转 75 轮烧到
+                    # 100 轮保险丝，期间每轮 ~3s 全是占位结果。
+                    budget_stop_rounds += 1
+                    if budget_stop_rounds >= 2:
+                        _core._log.warning(
+                            "[core] 工具预算停止后模型连续 %d 轮仍尝试调用工具，强制收束 run=%s",
+                            budget_stop_rounds, run_id,
+                        )
+                        stop_text = "工具调用额度已用完，我先停在这里；已完成的操作都保留。想继续的话，发「继续」让我接着做。"
+                        async for _line in _core.genstream.typed_stream(stop_text):
+                            yield _line
+                        if reasoning_state is not None:
+                            await reasoning_state.completed()
+                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+                        return
                     messages.append_batch(driver.build_followup(
                         result, _core._TOOL_BUDGET_STOP_PROMPT,
                     ))
