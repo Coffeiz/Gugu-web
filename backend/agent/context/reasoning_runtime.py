@@ -133,15 +133,11 @@ class ReasoningStateCoordinator:
                 self._mark_unavailable("missing_session")
             self._publish_diagnostics("prepared")
             return
-        if self.policy.mode == "off":
-            # off 是默认/常见路径。旧状态在模型配置变更边界清理；普通 run
-            # 不再为了一次无意义的 lookup 额外打开数据库事务。
-            self._publish_diagnostics("prepared")
-            return
         if not self.policy.can_resume:
             # off/summary 不恢复 provider payload，但仍必须读取一次 state：
             # 这会失效旧的 active continuation，并返回正确的版本号供 summary
-            # 本轮提交时使用，避免留下可被后续恢复的旧分支。
+            # 本轮提交时使用，避免留下可被后续恢复的旧分支。即使模型池或
+            # router 在下一轮重新选回原 preset，也不能复活这条旧分支。
             async with self.session_factory() as db:
                 lookup = await provider_reasoning_state.load_state(
                     db, user_id=self.user_id, session_id=self.session_id, policy=self.policy,

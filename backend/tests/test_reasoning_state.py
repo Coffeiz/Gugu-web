@@ -128,7 +128,7 @@ async def test_coordinator_diagnostics_distinguish_state_lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_coordinator_off_skips_state_lookup_but_summary_loads_it(monkeypatch):
+async def test_coordinator_off_invalidates_state_before_pool_can_restore_it(monkeypatch):
     calls = []
 
     class _DbContext:
@@ -156,7 +156,7 @@ async def test_coordinator_off_skips_state_lookup_but_summary_loads_it(monkeypat
         session_factory=lambda: _DbContext(),
     )
     await off.prepared(driver, ctx)
-    assert off.expected_version == 0
+    assert off.expected_version == 7
     assert off.diagnostics()["state_status"] == "disabled"
 
     summary = ReasoningStateCoordinator(
@@ -168,7 +168,7 @@ async def test_coordinator_off_skips_state_lookup_but_summary_loads_it(monkeypat
     assert summary.expected_version == 7
     assert summary.diagnostics()["state_status"] == "summary_only"
 
-    assert calls == ["summary"]
+    assert calls == ["off", "summary"]
 
 
 @pytest.mark.asyncio

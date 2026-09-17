@@ -38,7 +38,11 @@ function shiftAnchor(days: number) {
   if (!base) return
   const next = new Date(`${base}T00:00:00Z`)
   if (props.period === 'week') next.setUTCDate(next.getUTCDate() + days * 7)
-  else if (props.period === 'month') next.setUTCMonth(next.getUTCMonth() + days)
+  else if (props.period === 'month') {
+    // 先归一到月初，避免 5 月 31 日加一个月溢出到 7 月。
+    next.setUTCDate(1)
+    next.setUTCMonth(next.getUTCMonth() + days)
+  }
   else next.setUTCDate(next.getUTCDate() + days)
   const nextDate = next.toISOString().slice(0, 10)
   if (usage.value?.current_date && nextDate > usage.value.current_date) return

@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage, User, UserMcpServer
+from app.services import provider_reasoning_state
 
 # 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
 # tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
@@ -74,6 +75,17 @@ def _write_override(data: dict):
     write_override_json(data)
     from app.core.config import invalidate_settings_cache
     invalidate_settings_cache()
+
+
+async def _invalidate_reasoning_states(db: AsyncSession | None) -> None:
+    """模型运行配置改变后，失效所有可能指向旧 provider 的状态。"""
+    # 允许现有的纯函数式单元测试直接调用 endpoint；真实 FastAPI 请求会注入
+    # AsyncSession。配置文件已先原子写入，状态清理失败时让请求失败，避免继续
+    # 暴露一条已经与当前配置不一致的 continuation 链。
+    if not isinstance(db, AsyncSession):
+        return
+    await provider_reasoning_state.invalidate_all_states(db)
+    await db.commit()
 
 
 def _mask_key(key: str) -> str:
@@ -783,7 +795,7 @@ class StrategyUpdate(BaseModel):
 
 
 @router.post("/llm-presets/strategy")
-async def set_llm_strategy(body: StrategyUpdate):
+async def set_llm_strategy(body: StrategyUpdate, db: AsyncSession = Depends(get_db)):
     if body.strategy is not None and body.strategy not in ("active", "pool", "router"):
         raise HTTPException(400, "strategy 只能是 active / pool / router")
     if body.pool_mode is not None and body.pool_mode not in ("random", "round_robin", "least_loaded"):
@@ -795,6 +807,7 @@ async def set_llm_strategy(body: StrategyUpdate):
     if body.pool_mode is not None:
         presets["pool_mode"] = body.pool_mode
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {"strategy": presets.get("strategy", "active"), "pool_mode": presets.get("pool_mode", "random")}
 
 
@@ -844,7 +857,7 @@ class PresetCreate(BaseModel):
 
 
 @router.post("/llm-presets")
-async def create_llm_preset(body: PresetCreate):
+async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_db)):
     if body.max_tokens >= body.context_tokens:
         raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
     override = _read_override()
@@ -881,6 +894,7 @@ async def create_llm_preset(body: PresetCreate):
         presets["active_id"] = new_id
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
 
@@ -910,7 +924,7 @@ class PresetUpdate(BaseModel):
 
 
 @router.put("/llm-presets/{preset_id}")
-async def update_llm_preset(preset_id: str, body: PresetUpdate):
+async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -969,11 +983,12 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
 
 @router.delete("/llm-presets/{preset_id}")
-async def delete_llm_preset(preset_id: str):
+async def delete_llm_preset(preset_id: str, db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     if len(presets.get("items", [])) <= 1:
@@ -982,11 +997,12 @@ async def delete_llm_preset(preset_id: str):
         raise HTTPException(400, "无法删除当前激活的预设，请先切换到其他预设")
     presets["items"] = [it for it in presets["items"] if it["id"] != preset_id]
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {"deleted": preset_id}
 
 
 @router.post("/llm-presets/{preset_id}/activate")
-async def activate_llm_preset(preset_id: str):
+async def activate_llm_preset(preset_id: str, db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -995,6 +1011,7 @@ async def activate_llm_preset(preset_id: str):
     presets["active_id"] = preset_id
     override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {"active_id": preset_id}
 
 
@@ -1085,7 +1102,7 @@ async def _probe_local_capabilities(item: dict) -> dict:
 
 
 @router.post("/llm-presets/{preset_id}/capabilities")
-async def probe_llm_capabilities(preset_id: str):
+async def probe_llm_capabilities(preset_id: str, db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -1102,6 +1119,7 @@ async def probe_llm_capabilities(preset_id: str):
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     from types import SimpleNamespace
     from agent import providers
     return {"fingerprint": fingerprint, "checked_at": checked_at, "results": result,
@@ -1109,7 +1127,7 @@ async def probe_llm_capabilities(preset_id: str):
 
 
 @router.put("/llm-presets/{preset_id}/capability-overrides")
-async def update_capability_overrides(preset_id: str, body: dict[str, bool]):
+async def update_capability_overrides(preset_id: str, body: dict[str, bool], db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -1124,6 +1142,7 @@ async def update_capability_overrides(preset_id: str, body: dict[str, bool]):
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {"capability_overrides": body}
 
 
@@ -1451,7 +1470,7 @@ async def probe_vision_preview(body: VisionProbePreview, dim: str = "image"):
 
 
 @router.post("/llm-presets/{preset_id}/probe-vision")
-async def probe_vision_preset(preset_id: str, dim: str = ""):
+async def probe_vision_preset(preset_id: str, dim: str = "", db: AsyncSession = Depends(get_db)):
     """探测预设模型的多模态能力，并把明确结论写回对应字段。
 
     `dim`：image | video | audio，只测单维度；省略则依次测全部三维度。
@@ -1474,6 +1493,7 @@ async def probe_vision_preset(preset_id: str, dim: str = ""):
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     if len(dims) == 1:
         d = dims[0]
         result = results[d]
