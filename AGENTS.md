@@ -10,6 +10,7 @@
 | design | `agentskills/design/SKILL.md` | UI 视觉与交互规范 |
 | testing | `agentskills/testing/SKILL.md` | 写/改测试 |
 | devserver | `agentskills/devserver/SKILL.md` | 部署/同步/运维 |
+| release | `agentskills/release/SKILL.md` | 发版、PR 合并、版本 tag、CHANGELOG、生产部署 |
 | local | `agentskills/local/SKILL.md` | 使用本地开发机、代理和 devserver 连接信息 |
 | loopscope | `agentskills/loopscope/SKILL.md` | LoopScope trace、Collector、上下文观测与脱敏边界 |
 
@@ -53,6 +54,7 @@
 
 - 注释、日志、用户文案、文档和 commit message 使用简体中文。
 - Changelog 只记录简短用户可感知变化；详细排查过程按 `docs/devlog/README.md` 约定写入 `docs/devlog/` 下的独立记录。
+- **不要每步改动都提交**。提交只在三个时机：① feature 全部功能经用户确认完成后；② bug 修复经用户确认生效后；③ 推送前统一提交。过程改动保留在工作区，方便用户查看 diff 与调整；任务指令显式要求分阶段提交时（如 /goal 写明"每阶段单独提交"）按该任务指令执行。
 
 ## 前端提醒组件规范
 
@@ -62,14 +64,8 @@
 
 ## 发版与 PR 规范
 
-- 发版流程与前置检查以 `docs/ops/release.md` 为准。
-- PR 合并前 CI 必须全绿。GitHub CI **不随 PR 自动触发**（省 Actions usage），合并前必须人工手动触发：
-  Actions 页对两个 workflow（Runtime integration、Docker release）各 Run workflow 一次并选 PR 分支
-  （或 `gh workflow run <name> --ref <分支>`），全部全绿后才允许合并；docker-release 已含镜像构建 + trivy 安全门。
-- **打版本 tag 前必须先过本地预检**：前端回归脚本 + 后端测试 + 本地构建生产镜像并 trivy 预扫，
-  全部通过后 tag 才允许指向 main 的合并提交；发布失败的 tag 重打规则见 `docs/ops/release.md` §4。
-- 发版改版本号时，记得确认 DevTools 控制台 ASCII 横幅的版本号跟着更新（取自
-  `frontend/package.json`，见 `docs/ops/release.md` §3）。
+- 发版、PR 合并、打 tag、CHANGELOG 与生产部署的操作规范见 `agentskills/release/SKILL.md`；流程细节以 `docs/ops/release.md` 为准。
+- **未经用户授权不得主动触发 GitHub CI**（含 PR workflow、补跑重跑）：CI 不随 PR 自动触发（省 Actions usage），何时触发、触发哪些 workflow 由用户决定；合并前的两 workflow 全绿要求见 release skill。
 
 ## Git 提交完整性
 
