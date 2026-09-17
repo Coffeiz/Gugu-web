@@ -135,6 +135,8 @@ delta = 分支任务前缀 + 本次反思所需动态数据
 
 反思 prompt 继续要求输出现有 JSON schema，但不再把主会话正文重新复制成独立输入。现有 profile、pattern、daily、summary、perception、feedback 和 Knowledge candidate 的解析与写回逻辑保持不变。
 
+append 模式对完整历史的使用边界（`_APPEND_HISTORY_DIRECTIVE`，仅 append 路径追加）：**新增方向**（profile_add/pattern_add/daily/knowledge_candidate）仍严格限待反思回合；**矛盾检测方向**开放完整历史——仅当历史与待反思回合或存量记忆明显矛盾/过时时提 profile_remove / pattern_remove（照抄存量记忆原文）或据此修正 summary。remove 依据锚定存量原文，模型引历史对话原文（从未入库）时 writer 按原文匹配自然 no-op。devserver 实测（session 387，MiniMax-M3，3 次重复）：schema 无退化、remove 零误报、新增未被抑制。
+
 如果 owner 阈值缓冲包含多轮消息，不新增复杂的群聊批处理逻辑：
 
 - 当前回合有主请求快照且为内联冲刷路径：直接使用本回合快照做一次追加式反思；

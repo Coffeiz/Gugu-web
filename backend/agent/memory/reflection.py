@@ -678,6 +678,16 @@ _TASK_REQUIREMENTS = (
     "+ knowledge_candidate（明确、可复用的事实/规则、已验证的工具效率经验，或 owner 明确提供/确认的非敏感人物关系与人物资料才标 true，并给一个用于 Knowledge RAG 的短查询；单次工具调用、owner 画像/习惯、猜测、转述和敏感个人信息标 false）。"
 )
 
+# 仅 append_reuse 路径追加：完整历史的使用边界（PRD-LLM-27 §6.3）。
+# 新增方向仍严格限待反思回合；只开放「矛盾检测」给完整历史——remove 的依据
+# 锚定在存量记忆条目原文上，模型若引历史对话原文（从未入库），writer 按原文
+# 匹配自然 no-op，误删风险双重兜底（提示词 + writer 匹配）。
+_APPEND_HISTORY_DIRECTIVE = (
+    "【完整历史的使用边界】上面提供了本会话的完整历史，仅限两种用法：\n"
+    "① 理解待反思回合中的指代与背景——不要为历史内容新建 profile/pattern/daily/knowledge_candidate，新增只来自【待反思回合】；\n"
+    "② 矛盾检测：仅当完整历史与待反思回合或【已知的用户画像】【已知的行为模式】明显矛盾、被推翻或已过时，才提 profile_remove / pattern_remove（照抄上面存量记忆里的原文字符串，不要引历史对话原文）或据此修正 summary——宁缺毋滥，拿不准就不提。"
+)
+
 
 def _reflection_context_block(existing_profile, existing_pattern, existing_summary,
                               prev_turn: dict | None) -> str:
@@ -779,6 +789,7 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
         + _reflection_context_block(existing_profile, existing_pattern, existing_summary, prev_turn)
         + "【待反思回合（只从这些回合提取；上面的会话历史仅用于理解指代，不要为历史内容新建记忆）】\n"
         + f"{turns_block}\n\n"
+        + _APPEND_HISTORY_DIRECTIVE + "\n\n"
         + _TASK_REQUIREMENTS
     )
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096

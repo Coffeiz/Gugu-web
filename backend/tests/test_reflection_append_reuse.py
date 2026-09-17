@@ -139,6 +139,9 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
     assert "待反思回合" in branch_input.delta
     assert "我最喜欢骑自行车" in branch_input.delta
     assert "不要为历史内容新建记忆" in branch_input.delta
+    # 完整历史边界指令：append 必含（矛盾检测开放给历史），且声明 remove 锚定存量原文
+    assert reflection._APPEND_HISTORY_DIRECTIVE in branch_input.delta
+    assert "照抄上面存量记忆里的原文字符串" in branch_input.delta
     assert reflection._TASK_REQUIREMENTS in branch_input.delta
     assert policy.name == "reflection"
     assert policy.output_mode == "json"
@@ -148,6 +151,14 @@ def test_task_requirements_single_source():
     """standalone 与 append 两条提取路径必须引用同一份任务要求常量。"""
     source = inspect.getsource(reflection)
     assert source.count("_TASK_REQUIREMENTS") >= 3   # 定义 + 两条路径各引用一次
+
+
+def test_history_directive_append_only():
+    """完整历史边界指令只进 append 路径：standalone 无历史，不该多这段话。"""
+    extract_src = inspect.getsource(reflection._extract)
+    append_src = inspect.getsource(reflection._extract_append)
+    assert "_APPEND_HISTORY_DIRECTIVE" not in extract_src
+    assert "_APPEND_HISTORY_DIRECTIVE" in append_src
 
 
 # ── reflect 模式分流（§6.3）──────────────────────────────────────────
