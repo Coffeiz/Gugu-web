@@ -295,5 +295,5 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [`PRD-LLM-8-Prompt-Caching优化.md`](./【已完成】PRD-LLM-8-Prompt-Caching优化.md)
 - [`PRD-LLM-14-Batch单一事实源与Canonical History一致性.md`](./【已完成】PRD-LLM-14-Batch单一事实源与Canonical History一致性.md)
 - [`PRD-LLM-23-跨Provider推理状态持久化与续接.md`](./【已完成】PRD-LLM-23-跨Provider推理状态持久化与续接.md)
-- [`PRD-LLM-25-Agent主循环模块化拆分.md`](./【已完成】PRD-LLM-25-Agent主循环模块化拆分.md)——Phase 2 的快照捕获钩子落在 `loop/machine.py` 轮次收尾处，不得破坏 LLM-25 的模块边界
+- [`PRD-LLM-25-AgentLoop核心职责拆分与模块化重构.md`](./PRD-LLM-25-AgentLoop核心职责拆分与模块化重构.md)——Phase 2 的快照捕获钩子落在 `loop/machine.py` 轮次收尾处，不得破坏 LLM-25 的模块边界
 - [`PRD-KNOWLEDGE-1-统一知识系统.md`](./【已完成】PRD-KNOWLEDGE-1-统一知识系统.md)
