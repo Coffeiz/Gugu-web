@@ -496,12 +496,14 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
 
 
 async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
-                             *, session_id=None) -> None:
+                             *, session_id=None, snapshot=None) -> None:
     """Memory 反思末尾追加的 Knowledge 沉淀；落库成功后补发索引重建事件。
 
     这条链路不经 save_knowledge 工具，没人替它发 RagIndexUpdated，漏发会让
     持久索引投影缺行（主数据存在但检索不到）。source_id 留空即按
     (user, source_type) 整源重建，与 rebuild 粒度一致。
+    snapshot 仅在 Memory 资格门通过时传入：Knowledge 作为 sibling branch
+    复用同一主会话快照（§6.4）；Memory 的 JSON 输出不进入 Knowledge 上下文。
     """
     try:
         from agent.knowledge.reflection import candidate_request, reflect_if_candidate
@@ -510,7 +512,7 @@ async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
             mode = "explicit" if _explicit_knowledge_request(user_msg) else "automatic"
             saved = await reflect_if_candidate(
                 user_id, user_msg, assistant_reply, settings, query,
-                save_mode=mode, session_id=session_id,
+                save_mode=mode, session_id=session_id, snapshot=snapshot,
             )
             if saved:
                 from agent import events
@@ -529,6 +531,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                   turns=None, snapshot=None) -> bool:
     out = None
     bound_model = None
+    use_append = False   # 异常路径下的安全默认：Knowledge 回落独立分支
     turns = turns or [{
         "user_msg": user_msg,
         "assistant_reply": assistant_reply,
@@ -640,8 +643,11 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         from agent.memory import periodic
         await periodic.maybe_schedule(user_id, settings)
         # Knowledge 复用本轮 Memory 反思时机；只有 Memory 反思明确标记候选时才追加一次调用。
+        # snapshot 仅在 Memory 资格门通过时传入（§6.4 sibling branch），否则 None
+        # → Knowledge 走独立分支。
         await _reflect_knowledge(
             user_id, user_msg, assistant_reply, settings, out, session_id=session_id,
+            snapshot=snapshot if use_append else None,
         )
         try:
             from agent.security.logsafe import fingerprint

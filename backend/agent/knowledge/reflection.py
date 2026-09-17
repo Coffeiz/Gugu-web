@@ -101,6 +101,16 @@ def candidate_request(out: object) -> tuple[bool, str]:
     return bool(query), query
 
 
+# 仅 append_reuse 路径追加（PRD-LLM-27 §6.4）：完整历史只用于理解上下文，
+# operations 只针对输入 JSON 里的待反思回合与知识候选——Knowledge 与 Memory
+# 是共享同一前缀的 sibling branch，各自 delta 独立组装，互不继承对方输出。
+_KNOWLEDGE_HISTORY_DIRECTIVE = (
+    "【完整历史的使用边界】上面提供了本会话的完整历史，仅用于理解本次待反思回合的"
+    "指代与背景；operations 只针对输入 JSON 中的待反思回合与知识候选，"
+    "不要为历史内容新建任何操作。"
+)
+
+
 async def reflect_if_candidate(
     user_id: object,
     user_message: str,
@@ -110,8 +120,14 @@ async def reflect_if_candidate(
     *,
     save_mode: str = "automatic",
     session_id: object | None = None,
+    snapshot: object | None = None,
 ) -> int:
-    """候选命中后执行一次 Knowledge RAG + 专用反思，并写入主数据。"""
+    """候选命中后执行一次 Knowledge RAG + 专用反思，并写入主数据。
+
+    snapshot（PRD-LLM-27 §6.4）：Memory 反思资格门通过时传入主会话快照，
+    Knowledge 作为 sibling branch 复用同一前缀（append_reuse）；不传或资格
+    不满足时走独立分支，写入与索引事件语义不变。
+    """
     from agent.rag.service import search_knowledge
     from agent.knowledge.capture import build_entry
     from agent.knowledge.store import KnowledgeStore
@@ -132,14 +148,50 @@ async def reflect_if_candidate(
     scope_revision = hashlib.sha256(
         f"knowledge:{candidate_query}".encode("utf-8")
     ).hexdigest()[:16]
-    branch = await ContextBranch().run(
-        BranchInput(
+    # §6.4 sibling branch：Memory 资格门通过时复用同一主会话快照（同一前缀、
+    # 同一渲染出口）；专用规则与输入 JSON 按边界进 delta。资格任一不满足
+    # （含 provider 切换）即回落独立分支，写入语义不变。
+    use_append = (
+        snapshot is not None
+        and isinstance(session_id, int)
+        and snapshot.session_id == session_id
+    )
+    if use_append:
+        from agent.context.cache_capability import prefix_cache_capable
+        from agent.context.reflection_snapshot import model_identity
+        from agent.llm.modelctx import effective_ai
+
+        if (not prefix_cache_capable(snapshot.ai, settings)
+                or model_identity(snapshot.ai) != model_identity(effective_ai(settings))):
+            use_append = False
+    if use_append:
+        from agent.context.prefix_history import render_branch_prefix
+
+        branch_input = BranchInput(
+            stable_system=snapshot.system_prompt,
+            delta=(
+                load_prompt() + "\n\n"
+                + _KNOWLEDGE_HISTORY_DIRECTIVE + "\n\n"
+                + request
+            ),
+            scope="knowledge",
+            scope_revision=scope_revision,
+            session_id=int(session_id),
+            run_id=snapshot.run_id,
+            history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
+            tools=tuple(snapshot.tools),
+            branch_mode="append_reuse",
+        )
+    else:
+        branch_input = BranchInput(
             stable_system=load_prompt(),
             delta=request,
             scope="knowledge",
             scope_revision=scope_revision,
             session_id=int(session_id) if isinstance(session_id, int) else None,
-        ),
+        )
+    branch = await ContextBranch().run(
+        branch_input,
         BranchPolicy(name="knowledge", output_mode="json", max_tokens=900),
         settings,
     )
