@@ -115,6 +115,13 @@ delta = 分支任务前缀 + 本次反思所需动态数据
 
 分支任务提示词必须放在末尾追加消息中，而不是替换 system prompt。Memory 和 Knowledge 的专用规则仍由各自领域模块加载，但作为末尾任务内容发送，以保留主会话 system 前缀。
 
+**delta 与 canonical history 的边界（前缀不断裂的硬约束）**。目标回合内容的两半位置天然不同：`user_msg` 与工具轮次已在主请求输入里（是 `history_messages` 前缀的末尾部分，不重复追加）；`assistant_reply` 是主请求输出、不在输入序列里，由分支在前缀之后追加。provider 前缀缓存按「与已缓存序列的最长公共逐字节前缀」命中——**尾部追加不影响前缀命中**，断裂只来自修改（中间插入、改写既有消息、混入每轮变化内容）。因此：
+
+- delta（`assistant_reply` + 反思任务消息，含标记包裹的原文引用）必须在分支本地拼接为临时普通列表：`list(history_messages) + [assistant_reply, task]`，直接交给 `provider_runner.complete_messages()`；
+- delta **禁止**走 `PromptMessages.append_batch()` 等 canonical 追加路径——该路径会封存 canonical batch、计算 `batch_digest` 并经 `_sync_backing()` 写回 backing，等价于把反思内容写进主会话事实源；
+- delta 里引用的原文一律取 Redis 队列载荷中的组装前原文，不得从 history 消息中反抠（history 中的 user 消息可能叠有组装层 system-reminder 等每轮变化内容）；`user_msg` 既在前缀末尾，delta 允许只下指令不重贴全文；
+- 该边界作为共享 helper 的契约条款固化：`_branch_prefix_history()` 提炼（见下）后的 helper 必须保证输出是脱离 canonical 簿记的普通列表，压缩与反思共用同一纪律。
+
 实现时必须区分 `PromptMessages.conversation` 和 `dynamic_tail`：不能简单把整个 `PromptMessages` 列表摊平后重放。动态尾缀是否纳入分支，必须按照主 provider 的实际缓存边界决定；内部时间 reminder 等每轮变化内容不能无意中破坏稳定前缀。
 
 ### 6.3 Memory 反思
