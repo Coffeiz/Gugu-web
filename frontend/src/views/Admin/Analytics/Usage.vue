@@ -7,6 +7,7 @@
       </div>
       <div class="header-right">
         <Checkbox class="data-header-control" :model-value="excludeDev" :aria-label="t('adminAnalyticsUi.excludeDevelopers')" @update:model-value="excludeDev = $event; load()">{{ t('adminAnalyticsUi.excludeDevelopers') }}</Checkbox>
+        <Checkbox class="data-header-control" :model-value="includeByok" :aria-label="t('adminAnalyticsUi.includeByok')" @update:model-value="includeByok = $event; load()">{{ t('adminAnalyticsUi.includeByok') }}</Checkbox>
         <SegmentedTabs
           :model-value="String(rangeDays)"
           :tabs="ranges"
@@ -249,7 +250,7 @@ import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { browserTz } from '@/utils/dateAttribution'
 import { barChartOptions, chartThemeKey, cssVar } from '@/utils/chartKit'
 import {
-  excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,
+  excludeDev, includeByok, usageQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,
   BLUE, AMBER, TEAL, fmtTok, sumArr, dailyAvg,
 } from './_shared'
 
@@ -347,14 +348,14 @@ async function load() {
   setTimeout(() => { refreshing.value = false }, 550)
   err.value = ''
   try {
-    const xd = xdQuery('&')
+    const uq = usageQuery('&')
     const [sumRes, trdRes, useRes, dpRes, dimRes, tdRes] = await Promise.all([
-      admin.authFetch(`/api/v1/admin/analytics/summary?_=1&timezone=${encodeURIComponent(browserTz())}${xd}`),
-      admin.authFetch(`/api/v1/admin/analytics/trends?days=60&timezone=${encodeURIComponent(browserTz())}${xd}`),
-      admin.authFetch(`/api/v1/admin/agent/usage?timezone=${encodeURIComponent(browserTz())}`),
-      admin.authFetch(`/api/v1/admin/analytics/session-depth?_=1${xd}`),
-      admin.authFetch(`/api/v1/admin/analytics/active-dimensions?_=1${xd}`),
-      admin.authFetch(`/api/v1/admin/analytics/tool-distribution?_=1${xd}`),
+      admin.authFetch(`/api/v1/admin/analytics/summary?_=1&timezone=${encodeURIComponent(browserTz())}${uq}`),
+      admin.authFetch(`/api/v1/admin/analytics/trends?days=60&timezone=${encodeURIComponent(browserTz())}${uq}`),
+      admin.authFetch(`/api/v1/admin/agent/usage?timezone=${encodeURIComponent(browserTz())}${uq}`),
+      admin.authFetch(`/api/v1/admin/analytics/session-depth?_=1${uq}`),
+      admin.authFetch(`/api/v1/admin/analytics/active-dimensions?_=1${uq}`),
+      admin.authFetch(`/api/v1/admin/analytics/tool-distribution?_=1${uq}`),
     ])
     if (!trdRes.ok) throw new Error(`trends ${trdRes.status}`)
     trends.value = await trdRes.json()
