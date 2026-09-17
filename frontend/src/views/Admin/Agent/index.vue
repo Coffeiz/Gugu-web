@@ -634,9 +634,10 @@ const PROVIDERS = computed(() => [
   ...MODEL_PROVIDERS.map(provider => ({ key: provider.value, label: t(provider.labelKey), base_url: provider.base_url, model: provider.model })),
 ])
 
-// MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
+// OpenAI-compatible provider 可显式选择 Chat Completions / Responses；MiMo 另外保留 Anthropic。
 const API_FORMATS = computed(() => [
   { key: 'openai',    label: t('adminAgentUi.formatOpenai') },
+  { key: 'responses', label: t('adminAgentUi.formatResponses') },
   { key: 'anthropic', label: t('adminAgentUi.formatAnthropic') },
 ])
 

@@ -116,3 +116,21 @@ async def test_transient_responses_probe_failure_expires(monkeypatch):
 
     assert first == second == third == {"ok": False, "status": 503}
     assert calls == 2
+
+
+def test_runtime_responses_failure_overrides_success_probe_cache():
+    import app.services.provider_diagnostics as diagnostics
+
+    diagnostics._responses_probe_cache.clear()
+    diagnostics.record_responses_capability_failure(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1",
+        model="gpt-test", status=400,
+    )
+
+    key = diagnostics._responses_probe_key(
+        provider="openai", api_key="sk-test", base_url="https://example.test/v1",
+        model="gpt-test",
+    )
+    assert diagnostics._responses_probe_cache[key][1] == {
+        "ok": False, "status": 400, "detail": "真实请求不支持 Responses 协议",
+    }

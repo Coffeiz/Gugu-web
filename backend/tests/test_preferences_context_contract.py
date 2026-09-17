@@ -27,8 +27,10 @@ def test_style_preference_static_prefix_is_stable_across_channels():
 
     assert len(set(static_parts)) == 1
     static = static_parts[0]
-    assert static.index("## 风格偏好") > static.index("当前、最新、最近")
-    assert all("## 风格偏好" not in dynamic for dynamic in dynamic_parts)
+    assert static.index("## 用户回复风格要求") > static.index("当前、最新、最近")
+    assert all("## 用户回复风格要求" not in dynamic for dynamic in dynamic_parts)
+    assert "除非用户当前消息明确要求其他表达方式，否则必须遵守" in static
+    assert "不限制段落数量" in static
 
 
 def test_locale_rule_is_first_and_uses_the_selected_language():
@@ -116,7 +118,14 @@ def test_phase0_keeps_controlled_style_preferences_distinct_from_personality_tex
         style_prefs={"reply_tone": "lively", "reply_length": "detailed"},
     )
 
-    assert "偏活泼" in static
+    assert "语气：活泼" in static
     assert "详细" in static
     assert "personality_preference" not in static
     assert "personality_preference" not in dynamic
+
+
+def test_default_style_preferences_are_explicitly_injected():
+    static, _, _ = builder.build_split("default", "测试用户", [], [])
+
+    assert "语气：自然" in static
+    assert "回复长度：适中" in static

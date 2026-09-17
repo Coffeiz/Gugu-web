@@ -5,6 +5,17 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.1] - 2026-09-17
+
+### 改进
+
+- **Knowledge 写入边界与 Markdown 输出规范**：只有用户明确要求记住、保存或修改 Knowledge 时才允许写入；普通聊天和自动反思不再视为保存授权，同时按回复复杂度统一标题、粗体、代码块、列表、表格和分隔线的使用规则，并区分持续有效与一次性格式要求，减少格式异常。
+
+- **技能与 MCP 图标统一**：技能使用书本图标，MCP 使用连接器图标，侧边导航与空状态页面保持一致。
+- **web_download 连接清理**：修复下载超时后因 PostgreSQL 连接已关闭导致 `Transaction.rollback` 二次报错的问题；下载前结束文件夹校验事务，失效连接会被安全清理。
+- **OpenAI 接口格式可显式选择**：OpenAI、Qwen、GLM、DeepSeek、MiMo、Ollama 兼容模式和本地兼容服务支持在模型配置中选择 Chat Completions 或 Responses；Ollama 原生与 MiMo Anthropic 兼容模式继续保留。
+- **Responses API 驱动与兼容回退**：Responses 模式改用 OpenAI SDK 的 Responses 流式接口，支持工具调用和 response chain；第三方兼容服务不支持完整 Responses 协议时自动回退 Chat Completions，修复最小探测成功但实际 Agent 请求失败的问题（[#73](https://github.com/Coffeiz/Gugu-web/issues/73)）。
+
 ## [1.3.0] - 2026-09-17
 
 ### 新功能

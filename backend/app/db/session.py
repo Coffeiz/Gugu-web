@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from typing import AsyncGenerator
 from app.core.config import get_settings
+from app.core.redaction import diag_log
 
 _engine = None
 _SessionLocal = None
@@ -95,6 +96,20 @@ async def dispose_engine() -> None:
         await old_engine.dispose()
 
 
+async def rollback_safely(session: AsyncSession, *, where: str = "app.db.rollback") -> bool:
+    """回滚事务；连接已断开时销毁当前会话而不是覆盖原始异常。"""
+    try:
+        await session.rollback()
+        return True
+    except Exception as exc:
+        diag_log(where, exc)
+        try:
+            await session.invalidate()
+        except Exception as invalidate_exc:
+            diag_log(f"{where}.invalidate", invalidate_exc)
+        return False
+
+
 def _schedule_dispose(engine) -> None:
     """安排旧连接池关闭，避免把仍持有连接的 engine 直接交给 GC。"""
     async def _dispose() -> None:
@@ -126,10 +141,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         async def _cleanup() -> None:
             # 显式 rollback 结束异常/取消后遗留的事务；close 通常也会做这件事，
             # 但不能把连接清理契约寄托在 Session 的隐式行为上。
-            try:
-                await session.rollback()
-            finally:
-                await session.close()
+            await rollback_safely(session, where="app.db.session_cleanup")
+            await session.close()
 
         # 客户端断开 SSE/流式请求时，Starlette 可能取消当前 task。用 shield
         # 保护 rollback + close，避免取消沿着 asyncpg terminate 路径打断清理。

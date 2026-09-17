@@ -62,3 +62,26 @@ async def test_web_download_rejects_conflicting_location():
     )
 
     assert result == {"error": "space=personal 不能同时指定 project_id"}
+
+
+@pytest.mark.asyncio
+async def test_web_download_ends_folder_read_transaction_before_network(monkeypatch):
+    from agent.tools import web
+
+    folder = SimpleNamespace(deleted_at=None, project_id=None)
+    db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+    monkeypatch.setattr(web, "get_user_folder", AsyncMock(return_value=folder))
+    monkeypatch.setattr(
+        web,
+        "_download_bytes",
+        AsyncMock(return_value={"error": "下载失败：网络超时或连接失败"}),
+    )
+
+    result = await web._web_download(
+        db,
+        "user-1",
+        {"url": "https://example.test/a.bin", "folder_id": 3},
+    )
+
+    assert result == {"error": "下载失败：网络超时或连接失败"}
+    db.commit.assert_awaited_once()

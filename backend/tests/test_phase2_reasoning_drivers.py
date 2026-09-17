@@ -8,7 +8,12 @@ from agent.loop_drivers import (
     RoundResult,
     NormalizedToolCall,
 )
-from agent.providers.openai_responses import OpenAIResponsesDriver, _ResponsesCtx, _ResponsesRaw
+from agent.providers.openai_responses import (
+    OpenAIResponsesDriver,
+    ResponsesCompatibilityError,
+    _ResponsesCtx,
+    _ResponsesRaw,
+)
 
 
 def _anthropic_result():
@@ -70,6 +75,15 @@ class _FakeResponsesClient:
         return _FakeResponsesStream(list(self.events))
 
 
+class _ResponsesStatusError(Exception):
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+
+async def _raise_status(status_code):
+    raise _ResponsesStatusError(status_code)
+
+
 @pytest.mark.asyncio
 async def test_responses_driver_uses_response_chain_and_function_call_items():
     response = {
@@ -111,6 +125,62 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
 
     followup = driver.build_tool_round(result, [(result.tool_calls[0], "日历为空")])
     assert followup[1] == {"role": "tool", "tool_call_id": "call-1", "content": "日历为空"}
+
+
+@pytest.mark.asyncio
+async def test_responses_driver_marks_full_request_protocol_error():
+    compatibility_error = _ResponsesStatusError(400)
+    compatibility_error.body = {"error": {"code": "json_parse_error", "message": "invalid Responses input"}}
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **kwargs: _raise_error(compatibility_error)),
+    )
+    driver = OpenAIResponsesDriver()
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
+
+    with pytest.raises(ResponsesCompatibilityError) as raised:
+        async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
+            pass
+    assert raised.value.status_code == 400
+
+
+async def _raise_error(error):
+    raise error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_code,message,should_raise",
+    [
+        (400, "HTTP 400 bad request", False),
+        (400, "context_length_exceeded", False),
+        (404, "model not found", False),
+        (400, "json_parse_error: ResponseInput deserialize failed", True),
+        (405, "method not allowed", True),
+    ],
+)
+async def test_responses_driver_only_classifies_explicit_compatibility_errors(
+    status_code, message, should_raise,
+):
+    error = _ResponsesStatusError(status_code)
+    error.message = message
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **kwargs: _raise_error(error)),
+    )
+    driver = OpenAIResponsesDriver()
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
+
+    if should_raise:
+        with pytest.raises(ResponsesCompatibilityError):
+            async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
+                pass
+    else:
+        with pytest.raises(_ResponsesStatusError):
+            async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
+                pass
 
 
 def test_responses_driver_keeps_tool_images_as_input_image_items():

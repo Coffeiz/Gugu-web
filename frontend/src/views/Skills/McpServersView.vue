@@ -6,10 +6,10 @@
 
     <template v-if="loaded">
       <div v-if="!items.length" class="empty-state">
-        <Icon name="resource.skill" :size="32" />
+        <Icon name="resource.mcp" :size="32" />
         <strong>{{ t('skillsMcpUi.empty') }}</strong>
         <span>{{ t('skillsMcpUi.hint') }}</span>
-        <ActionButton fit @click="openChatSetup">{{ t('skillsMcpUi.add') }}</ActionButton>
+        <ActionButton fit @click="openChatSetup">{{ t('skillsMcpUi.createFirst') }}</ActionButton>
       </div>
       <div v-else class="mcp-list scroll-surface scroll-surface--compact">
         <McpCard
