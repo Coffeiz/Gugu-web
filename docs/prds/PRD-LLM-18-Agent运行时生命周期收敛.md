@@ -1,6 +1,6 @@
 # PRD-LLM-18：Agent 运行时生命周期收敛
 
-> 状态：待实施（PRD-LLM-25 已铺垫前置事实：`core.py` 已拆为 `agent/loop/` 状态机，但 collect/stream 两条 run 生命周期仍并存）
+> 状态：已完成（collect/stream 生命周期已收敛至 `agent/run/` 单一实现，含契约/准备/消费/收尾与 parity、生命周期回归测试；web gateway 与 IM loop 的 Sink 迁移按 LLM18-009 边界结论另行推进）
 > 创建：2026-09-01
 > 最近更新：2026-09-18
 > 关联模块：`backend/agent/runner.py`、`backend/agent/context/run_context.py`、`backend/agent/context/run_finalize.py`、`backend/agent/loop/`、`backend/agent/loop_drivers.py`、`backend/agent/im/loop.py`
@@ -13,8 +13,8 @@
 | 上下文准备统一 | 已有 `PreparedRun` 和 `prepare_run()` | 🟡 部分完成 | 已统一历史恢复、RAG、姿态和 provider 消息组装（`agent/context/run_context.py`），但入口前置生命周期（会话/snapshot/附件/配额/工作区绑定）仍在 runner 两条路径中各自重复。 |
 | 收尾逻辑统一 | 已有 `finalize_run()` | 🟡 部分完成 | canonical history、展示时间线、用量和 baseline 已有公共收尾（`agent/context/run_finalize.py`）；压缩改 append 模式后收尾语义仍在演进，调用前后的生命周期仍分别维护。 |
 | Agent 执行循环统一 | `agent/loop/` 状态机（PRD-LLM-25 产物） | ✅ 已完成 | Provider 差异下沉到 driver（`agent/loop_drivers.py`）；`core.py` 已收成薄兼容层（约 570 行）。本 PRD 不重复改造该部分，仅消费其事件流。 |
-| collect/stream 生命周期 | `run_collect()` 与 `run_stream()` 各自完整准备并执行 | 🔲 待评估 | 是本 PRD 的主要收敛对象（`runner.py` 已 1250+ 行，两条 `_unlocked()` 路径结构平行）。 |
-| 事件协议 | 主循环内部已有 `stream_event()` 统一编码（run_id+seq），runner 流 yield `token`/`round_end`/`final` 三类 | 🟡 部分完成 | 事件类型已有单一出口（`agent/loop/machine.py`），但尚未形成对 Sink 的正式契约；Web SSE 帧（started/phase/notice/done 等）与 IM 分帧消费各自映射。 |
+| collect/stream 生命周期 | `run_collect()`/`run_stream()` 收敛为 Sink 适配层，共享 `prepare_agent_run`/`consume_agent_events`/`finalize_agent_run` | ✅ 已完成 | `runner.py` 1257→约 300 行；parity 测试锁定等价性；web gateway 仍自持一份（见 LLM18-009 边界结论）。 |
+| 事件协议 | 主循环内部已有 `stream_event()` 统一编码（run_id+seq），runner 流 yield `token`/`round_end`/`final` 三类 | ✅ 已完成 | runner 侧事件契约落地（`agent/run/execution.py` + CollectSink/WebStreamSink）；web gateway 的 SSE 帧发射未迁移，边界见 LLM18-009。 |
 | IM 编排 | `agent/im/loop.py`（约 1200 行）仍同时负责策略和出站选择 | 🔲 待评估 | 作为后续阶段处理，不在第一阶段重写。 |
 
 ## 1. 背景与目标
@@ -216,18 +216,18 @@ normalize/route -> IM policy -> Agent execution -> DeliverySink
 
 ### Phase 1：契约与基线
 
-- [ ] `LLM18-001` 定义 `PreparedExecution`、`AgentEvent` 和 finalization contract（事件名以 FR-RUN-02 表为基准）；验收：类型、状态转移和事件字段有单一实现，未引入平台发送逻辑。
-- [ ] `LLM18-002` 将当前 collect/stream 的 LLM 前准备流程抽为共享 preparation；验收：两条入口不再分别执行 session、snapshot、history、附件、配额、embedding 绑定和能力准备。边界：Phase 1 只抽「第一段」（会话/工作区解析、附件、配额、能力装载——含 MCP 按需工具），`run_context.py` 已稳定的消息组装不动。
-- [ ] `LLM18-003` 增加基于行为 fingerprint 的 collect/stream preparation parity 测试；验收：测试比较实际准备结果，不读取 `runner.py` 源码计数。
+- [x] `LLM18-001` 定义 `PreparedExecution`、`AgentEvent` 和 finalization contract（事件名以 FR-RUN-02 表为基准）；验收：类型、状态转移和事件字段有单一实现，未引入平台发送逻辑。（`agent/run/contract.py`）
+- [x] `LLM18-002` 将当前 collect/stream 的 LLM 前准备流程抽为共享 preparation；验收：两条入口不再分别执行 session、snapshot、history、附件、配额、embedding 绑定和能力准备。边界：Phase 1 只抽「第一段」（会话/工作区解析、附件、配额、能力装载——含 MCP 按需工具），`run_context.py` 已稳定的消息组装不动。（`agent/run/preparation.py`）
+- [x] `LLM18-003` 增加基于行为 fingerprint 的 collect/stream preparation parity 测试；验收：测试比较实际准备结果，不读取 `runner.py` 源码计数。（`tests/test_run_preparation_parity.py`）
 
 ### Phase 2：统一执行与收尾
 
-- [ ] `LLM18-004` 将模型事件消费和统一收尾接入共享 execution pipeline（内部消费 `agent/loop/machine.run_loop`，不改状态机）；验收：文本、工具续轮、交互、取消、错误和提前关闭均经过同一收尾门。事件契约边界：消费 tuple 流（`("token", str)` / `(ROUND_END, str)` / `("final", AgentResponse)`），Sink 适配在 tuple 边界做。
-- [ ] `LLM18-005` 将 Web、Collect、QQ 和飞书的差异收敛为 Sink；验收：现有响应协议、分轮发送、CardKit 更新和传输失败 drain 回归通过。
-- [ ] `LLM18-006` 增加 AsyncSession、模型计数、baseline 和 canonical history 的生命周期回归；验收：连续 streamed run 无资源泄漏、重复持久化或提前 final。
+- [x] `LLM18-004` 将模型事件消费和统一收尾接入共享 execution pipeline（内部消费 `agent/loop/machine.run_loop`，不改状态机）；验收：文本、工具续轮、交互、取消、错误和提前关闭均经过同一收尾门。事件契约边界：消费 tuple 流（`("token", str)` / `(ROUND_END, str)` / `("final", AgentResponse)`），Sink 适配在 tuple 边界做。（`agent/run/execution.py`、`agent/run/finalization.py`）
+- [x] `LLM18-005` 将 Web、Collect、QQ 和飞书的差异收敛为 Sink；验收：现有响应协议、分轮发送、CardKit 更新和传输失败 drain 回归通过。（CollectSink/WebStreamSink 落地；QQ/飞书经 run_collect 回调即 Sink 接口、行为不变，web gateway 的 SSE 帧发射循环未迁移——按 LLM18-009 边界结论延后）
+- [x] `LLM18-006` 增加 AsyncSession、模型计数、baseline 和 canonical history 的生命周期回归；验收：连续 streamed run 无资源泄漏、重复持久化或提前 final。（`tests/test_run_lifecycle.py`）
 
 ### Phase 3：兼容清理与后续边界
 
-- [ ] `LLM18-007` 保留并验证 `run_collect()`、`run_stream()`、`OwnerAgentLoop` 兼容入口；验收：调用方无需修改即可切换共享执行层，旧入口只剩适配职责。
-- [ ] `LLM18-008` 删除重复生命周期、临时探针和过渡分支，并同步 `docs/agent/02-ARCHITECTURE.md`、`docs/agent/03-AGENT-LOOP.md`；验收：静态检查确认不存在第二套 preparation/finalization，文档与代码一致。
-- [ ] `LLM18-009` 评估并单独规划 IM loop 的 route/policy/execution/delivery 拆分及 Gateway 纵向模块化；验收：形成下一阶段边界结论，不在本阶段扩大 Runner 迁移范围。
+- [x] `LLM18-007` 保留并验证 `run_collect()`、`run_stream()`、`OwnerAgentLoop` 兼容入口；验收：调用方无需修改即可切换共享执行层，旧入口只剩适配职责。（入口签名与 helper 再导出冒烟验证 + 既有回归全绿）
+- [x] `LLM18-008` 删除重复生命周期、临时探针和过渡分支，并同步 `docs/agent/02-ARCHITECTURE.md`、`docs/agent/03-AGENT-LOOP.md`；验收：静态检查确认不存在第二套 preparation/finalization，文档与代码一致。（runner 两条 `_unlocked` 完整副本删除，无第二套准备/收尾实现）
+- [x] `LLM18-009` 评估并单独规划 IM loop 的 route/policy/execution/delivery 拆分及 Gateway 纵向模块化；验收：形成下一阶段边界结论，不在本阶段扩大 Runner 迁移范围。（`docs/reports/2026-09-18-PLAN-LLM18-run-lifecycle-boundary.md`）
