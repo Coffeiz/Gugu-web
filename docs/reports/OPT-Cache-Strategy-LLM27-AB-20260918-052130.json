@@ -1,0 +1,120 @@
+{
+  "owner": "019fc2e0-5d71-7b35-8e86-09109553b064",
+  "session_id": 324,
+  "provider": "qwen",
+  "model": "qwen3.8-flash",
+  "triggers": 3,
+  "base_turns": 3,
+  "per_trigger": [
+    {
+      "trigger": 1,
+      "prefix_exchanges": 4,
+      "history_messages": 10,
+      "append": {
+        "ok": true,
+        "usage": {
+          "fresh_input": 4149,
+          "cache_read": 8530,
+          "cache_write": 0,
+          "output": 282,
+          "cache_rate": 0.6728
+        },
+        "mode": "append_reuse"
+      },
+      "standalone": {
+        "usage": {
+          "fresh_input": 3895,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 399,
+          "cache_rate": 0.0
+        }
+      },
+      "warm_main_sim": {
+        "fresh_input": 8765,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 645,
+        "cache_rate": 0.0
+      }
+    },
+    {
+      "trigger": 2,
+      "prefix_exchanges": 5,
+      "history_messages": 12,
+      "append": {
+        "ok": true,
+        "usage": {
+          "fresh_input": 4273,
+          "cache_read": 8530,
+          "cache_write": 0,
+          "output": 820,
+          "cache_rate": 0.6663
+        },
+        "mode": "append_reuse"
+      },
+      "standalone": {
+        "usage": {
+          "fresh_input": 377,
+          "cache_read": 3568,
+          "cache_write": 0,
+          "output": 550,
+          "cache_rate": 0.9044
+        }
+      },
+      "warm_main_sim": {
+        "fresh_input": 285,
+        "cache_read": 8530,
+        "cache_write": 0,
+        "output": 68,
+        "cache_rate": 0.9677
+      }
+    },
+    {
+      "trigger": 3,
+      "prefix_exchanges": 6,
+      "history_messages": 14,
+      "append": {
+        "ok": true,
+        "usage": {
+          "fresh_input": 4565,
+          "cache_read": 8530,
+          "cache_write": 0,
+          "output": 930,
+          "cache_rate": 0.6514
+        },
+        "mode": "append_reuse"
+      },
+      "standalone": {
+        "usage": {
+          "fresh_input": 503,
+          "cache_read": 3568,
+          "cache_write": 0,
+          "output": 419,
+          "cache_rate": 0.8764
+        }
+      },
+      "warm_main_sim": {
+        "fresh_input": 358,
+        "cache_read": 8530,
+        "cache_write": 0,
+        "output": 236,
+        "cache_rate": 0.9597
+      }
+    }
+  ],
+  "totals": {
+    "append": {
+      "fresh": 12987,
+      "read": 25590,
+      "out": 2032,
+      "cache_rate": 0.6633
+    },
+    "standalone": {
+      "fresh": 4775,
+      "read": 7136,
+      "out": 1368,
+      "cache_rate": 0.5991
+    }
+  }
+}

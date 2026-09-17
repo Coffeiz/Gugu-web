@@ -17,10 +17,10 @@ import time
 
 # 实测确认跨调用前缀缓存生效的 provider（2026-09-18 AB 实测：
 # docs/reports/OPT-Cache-Strategy-LLM27-AB-*.md——MiniMax-M3 在带显式 cache_control
-# 的分支请求上稳定命中 ~80%，推翻早期「minimax 不跨调用缓存」的判断）。
+# 的分支请求上稳定命中 ~80%；qwen3.8-flash（DashScope 兼容端）对任意稳定前缀
+# 隐式缓存，append 稳定命中、warm 命中 95.97%）。
 # deepseek 服务端自动缓存；openai 自动前缀缓存；anthropic ephemeral 断点跨请求生效。
-# qwen 仍默认关闭（未实测确认）。
-_DEFAULT_CAPABLE = frozenset({"deepseek", "openai", "anthropic", "minimax"})
+_DEFAULT_CAPABLE = frozenset({"deepseek", "openai", "anthropic", "minimax", "qwen"})
 
 # 运行中摘出：窗口内连续 N 次命中率为 0 即摘出，冷却后重新给机会。
 _MISS_THRESHOLD = 3

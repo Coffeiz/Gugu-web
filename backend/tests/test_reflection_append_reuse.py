@@ -70,7 +70,7 @@ def test_decision_rejects_cross_session_buffer():
 
 
 def test_decision_rejects_uncapable_provider():
-    _capture(session_id=7, provider="qwen")
+    _capture(session_id=7, provider="unknown-llm")
     snapshot = peek_reflection_snapshot("u1", 7)
     assert reflection._append_reuse_decision(snapshot, _turns(7), SimpleNamespace(), None) == \
         (False, "provider_not_capable")
