@@ -9,6 +9,7 @@
 
 ### 改进
 
+- **技能与 MCP 图标统一**：技能使用书本图标，MCP 使用连接器图标，侧边导航与空状态页面保持一致。
 - **OpenAI 接口格式可显式选择**：OpenAI、Qwen、GLM、DeepSeek、MiMo、Ollama 兼容模式和本地兼容服务支持在模型配置中选择 Chat Completions 或 Responses；Ollama 原生与 MiMo Anthropic 兼容模式继续保留。
 - **Responses API 驱动与兼容回退**：Responses 模式改用 OpenAI SDK 的 Responses 流式接口，支持工具调用和 response chain；第三方兼容服务不支持完整 Responses 协议时自动回退 Chat Completions，修复最小探测成功但实际 Agent 请求失败的问题（[#73](https://github.com/Coffeiz/Gugu-web/issues/73)）。
 
