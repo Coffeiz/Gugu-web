@@ -49,6 +49,10 @@ class ProviderAdapter:
     def supports_active_cache(self, model: str = "") -> bool:
         return self.capabilities(model).cache_mode == "active"
 
+    def supports_responses_prompt_cache_key(self, ai) -> bool:
+        """是否确认支持 Responses 的 ``prompt_cache_key`` 请求字段。"""
+        return False
+
     def supports_explicit_cache(self, model: str = "") -> bool:
         """是否在 OpenAI-compatible 请求中尝试发送显式缓存锚点。
 
@@ -169,6 +173,13 @@ class ProviderAdapter:
             return "responses" if configured == "openai_responses" else configured
         if self.name in ("anthropic", "minimax"):
             return "anthropic"
+        # 已知 OpenAI-compatible Provider 的空配置代表其固定默认协议。
+        # 不能再从自定义 URL 中猜测协议，否则 Qwen 等 Provider 配置了包含
+        # ``anthropic`` 字样的地址时会被错误切到 Anthropic 请求体。
+        known_openai_providers = {"openai", "qwen", "glm", "glm-coding", "deepseek", "mimo", "ollama", "local"}
+        if self.name in known_openai_providers or \
+                (getattr(ai, "provider", "") or "").lower() in known_openai_providers:
+            return "openai"
         if "anthropic" in (getattr(ai, "base_url", "") or "").lower():
             return "anthropic"
         return "openai"

@@ -19,6 +19,7 @@ class StreamSanitizer:
         self._markers = list(adapter.stream_sanitize_markers()) if adapter is not None else []
         self._buf = ""
         self._cut = False
+        self._thought = _ThinkBlockStreamSanitizer()
 
     def feed(self, delta: str) -> str:
         """喂入一个流式增量，返回可安全输出的已清洗文本（可能为空）。"""
@@ -33,7 +34,7 @@ class StreamSanitizer:
                 out = self._buf[:idx]
                 self._buf = ""
                 self._cut = True
-                return out
+                return self._thought.feed(out)
 
         # 未出现完整标记：检查末尾是否是某个标记的前缀
         # 只保留最长前缀匹配部分，其余立即透传
@@ -48,7 +49,7 @@ class StreamSanitizer:
             emit = self._buf
             self._buf = ""
 
-        return emit
+        return self._thought.feed(emit)
 
     def flush(self) -> str:
         """流结束时输出残留缓冲（未触发截断时）。"""
@@ -56,6 +57,108 @@ class StreamSanitizer:
             return ""
         out = self._buf
         self._buf = ""
+        return self._thought.feed(out) + self._thought.flush()
+
+
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def strip_think_blocks(text: str) -> str:
+    """移除模型以 XML 标签泄漏的思考块，不按 ``thinking`` 等普通词汇匹配。
+
+    这里只识别精确的 ``<think>`` 和 ``</think>`` 标签，避免正文讨论思考、推理或
+    thinking 时被误删。未闭合的思考块也会被丢弃，防止内部内容进入用户可见输出。
+    """
+    if not text:
+        return text
+
+    output: list[str] = []
+    cursor = 0
+    in_thought = False
+    while cursor < len(text):
+        if in_thought:
+            close = text.find(_THINK_CLOSE, cursor)
+            if close < 0:
+                break
+            cursor = close + len(_THINK_CLOSE)
+            in_thought = False
+            continue
+
+        opening = text.find(_THINK_OPEN, cursor)
+        closing = text.find(_THINK_CLOSE, cursor)
+        if closing >= 0 and (opening < 0 or closing < opening):
+            output.append(text[cursor:closing])
+            cursor = closing + len(_THINK_CLOSE)
+        elif opening >= 0:
+            output.append(text[cursor:opening])
+            cursor = opening + len(_THINK_OPEN)
+            in_thought = True
+        else:
+            output.append(text[cursor:])
+            break
+    return "".join(output)
+
+
+class _ThinkBlockStreamSanitizer:
+    """按流分片移除精确思考标签，保留标签前后的正常正文。"""
+
+    def __init__(self):
+        self._buf = ""
+        self._in_thought = False
+
+    def feed(self, text: str) -> str:
+        if not text:
+            return ""
+        self._buf += text
+        output: list[str] = []
+        while self._buf:
+            if self._in_thought:
+                close = self._buf.find(_THINK_CLOSE)
+                if close < 0:
+                    hold = _longest_suffix_prefix(self._buf, _THINK_CLOSE)
+                    self._buf = self._buf[-hold:] if hold else ""
+                    break
+                self._buf = self._buf[close + len(_THINK_CLOSE):]
+                self._in_thought = False
+                continue
+
+            opening = self._buf.find(_THINK_OPEN)
+            closing = self._buf.find(_THINK_CLOSE)
+            if closing >= 0 and (opening < 0 or closing < opening):
+                output.append(self._buf[:closing])
+                self._buf = self._buf[closing + len(_THINK_CLOSE):]
+                continue
+            if opening >= 0:
+                output.append(self._buf[:opening])
+                self._buf = self._buf[opening + len(_THINK_OPEN):]
+                self._in_thought = True
+                continue
+
+            hold = max(
+                _longest_suffix_prefix(self._buf, _THINK_OPEN),
+                _longest_suffix_prefix(self._buf, _THINK_CLOSE),
+            )
+            if hold:
+                output.append(self._buf[:-hold])
+                self._buf = self._buf[-hold:]
+            else:
+                output.append(self._buf)
+                self._buf = ""
+            break
+        return "".join(output)
+
+    def flush(self) -> str:
+        """丢弃未闭合思考块及不完整标签，避免流结束时泄漏内部内容。"""
+        if self._in_thought:
+            self._buf = ""
+            return ""
+        out = self._buf
+        self._buf = ""
+        # 单独的 `<` 仍可能是普通正文（例如数学比较式），只有两个字符以上的
+        # 不完整标签前缀才丢弃，避免流结束时误吞正常文案。
+        if len(out) > 1 and out in {_THINK_OPEN[:len(out)], _THINK_CLOSE[:len(out)]}:
+            return ""
         return out
 
 

@@ -33,7 +33,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
-from app.models import AgentUsage, UserMcpServer
+from app.models import AgentUsage, User, UserMcpServer
+from app.services import provider_reasoning_state
 
 # 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
 # tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
@@ -74,6 +75,17 @@ def _write_override(data: dict):
     write_override_json(data)
     from app.core.config import invalidate_settings_cache
     invalidate_settings_cache()
+
+
+async def _invalidate_reasoning_states(db: AsyncSession | None) -> None:
+    """模型运行配置改变后，失效所有可能指向旧 provider 的状态。"""
+    # 允许现有的纯函数式单元测试直接调用 endpoint；真实 FastAPI 请求会注入
+    # AsyncSession。配置文件已先原子写入，状态清理失败时让请求失败，避免继续
+    # 暴露一条已经与当前配置不一致的 continuation 链。
+    if not isinstance(db, AsyncSession):
+        return
+    await provider_reasoning_state.invalidate_all_states(db)
+    await db.commit()
 
 
 def _mask_key(key: str) -> str:
@@ -131,6 +143,17 @@ def _ensure_presets(override: dict) -> dict:
     return presets
 
 router = APIRouter(prefix="/admin/agent", tags=["admin"])
+
+_DEV_USER_SQ = select(User.id).where(User.is_developer == True)  # orm-exempt: 管理员统计跨用户筛选，Service 收口随 Admin 统计迁移
+
+
+def _usage_filters(*, include_byok: bool, exclude_dev: bool) -> list:
+    filters = []
+    if not include_byok:
+        filters.append(AgentUsage.is_byok.is_(False))
+    if exclude_dev:
+        filters.append(AgentUsage.user_id.notin_(_DEV_USER_SQ))
+    return filters
 
 
 @router.get("/capabilities")
@@ -455,19 +478,36 @@ def _usage_timezone_expr(name: str | None) -> tuple[object, str]:
     return tz, f"INTERVAL '{sign}{hours} hours'"
 
 
-def _utc_naive(dt: datetime) -> datetime:
-    """将用户本地边界转成兼容旧 DB 驱动的 UTC naive datetime。"""
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+def _utc_aware(dt: datetime) -> datetime:
+    """将用户本地边界转成带 UTC 时区的 datetime，交给 asyncpg 时避免再次按本地时区解释。"""
+    return dt.astimezone(timezone.utc)
+
+
+def _usage_local_hour(created_at: datetime, user_tz) -> int:
+    """按用户时区取用量小时；无时区值按项目约定解释为 UTC。"""
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    else:
+        created_at = created_at.astimezone(timezone.utc)
+    return created_at.astimezone(user_tz).hour
 
 
 @router.get("/usage")
 async def get_usage(month: str | None = None, model: str | None = None,
+                    exclude_dev: bool = Query(False), include_byok: bool = Query(False),
+                    date: str | None = Query(default=None),
                     timezone_name: str | None = Query(default=None, alias="timezone"),
                     db: AsyncSession = Depends(get_db)):
     import calendar as cal
 
     user_tz, tz_expr = _usage_timezone_expr(timezone_name)
-    today = datetime.now(user_tz).date()
+    current_date = datetime.now(user_tz).date()
+    try:
+        anchor_date = datetime.strptime(date, "%Y-%m-%d").date() if date else current_date
+    except (TypeError, ValueError):
+        anchor_date = current_date
+    anchor_date = min(anchor_date, current_date)
+    today = anchor_date
 
     # 总计
     total_row = await db.execute(
@@ -477,13 +517,16 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.is_byok.is_(False))
+        ).where(*_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev))
     )
     total_calls, total_in, total_out, total_cache_read, total_cache_write = total_row.one()
 
     # 今日
     today_start_local = datetime(today.year, today.month, today.day, tzinfo=user_tz)
-    today_start = _utc_naive(today_start_local)
+    today_start = _utc_aware(today_start_local)
+    day_end_utc = _utc_aware(today_start_local + timedelta(days=1))
+    # 当前自然日不能把数据库中可能存在的未来时间戳算进来；历史日期仍统计完整 24 小时。
+    today_end = min(day_end_utc, now_utc()) if today == current_date else day_end_utc
     today_row = await db.execute(
         select(
             func.count(AgentUsage.id),
@@ -491,7 +534,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.created_at >= today_start, AgentUsage.is_byok.is_(False))
+        ).where(AgentUsage.created_at >= today_start, AgentUsage.created_at < today_end, *_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev))
     )
     today_calls, today_in, today_out, today_cache_read, today_cache_write = today_row.one()
 
@@ -505,7 +548,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.is_byok.is_(False))
+        ).where(*_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev))
         .group_by(AgentUsage.model, AgentUsage.provider)
         .order_by(func.count(AgentUsage.id).desc())
     )
@@ -516,9 +559,11 @@ async def get_usage(month: str | None = None, model: str | None = None,
 
     # 按场景分组（chat=主对话 / reflection=记忆反思 / compaction=压缩 / knowledge=知识反思）；
     # 2026-09-10 之前的存量行没有 scenario 标记，全部落在 chat 里。
-    # 返回今日与最近 7 天两套聚合，前端跟随「今日 / 最近」时段切换展示；
-    # 不提供全期口径，避免与顶部时段卡对不上。
-    async def _scenario_aggregate(since):
+    # 返回日、周、月三套日历聚合，前端跟随右上角视图切换展示。
+    async def _scenario_aggregate(since, until=None):
+        bounds = [AgentUsage.created_at >= since, *_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev)]
+        if until is not None:
+            bounds.append(AgentUsage.created_at < until)
         rows = await db.execute(  # orm-exempt: 用量场景统计读取待 Service 收口（1.1.2 新增）
             select(  # orm-exempt: 同上，scenario 聚合查询待 Service 收口
                 AgentUsage.scenario,
@@ -527,7 +572,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
                 func.coalesce(func.sum(AgentUsage.tokens_out), 0),
                 func.coalesce(func.sum(AgentUsage.cache_read), 0),
                 func.coalesce(func.sum(AgentUsage.cache_write), 0),
-            ).where(AgentUsage.created_at >= since, AgentUsage.is_byok.is_(False))
+            ).where(*bounds)
             .group_by(AgentUsage.scenario)
             .order_by(func.count(AgentUsage.id).desc())
         )
@@ -541,19 +586,31 @@ async def get_usage(month: str | None = None, model: str | None = None,
             for r in rows.all()
         ]
 
-    by_scenario = await _scenario_aggregate(today_start)
-    by_scenario_recent = await _scenario_aggregate(_utc_naive(today_start_local - timedelta(days=6)))
+    day_end_local = today_start_local + timedelta(days=1)
+    week_start_date = today - timedelta(days=today.weekday())
+    week_start_local = datetime(week_start_date.year, week_start_date.month, week_start_date.day, tzinfo=user_tz)
+    week_end_local = week_start_local + timedelta(days=7)
+    month_start_local = datetime(today.year, today.month, 1, tzinfo=user_tz)
+    month_end_local = month_start_local + timedelta(days=cal.monthrange(today.year, today.month)[1])
+    by_scenario = await _scenario_aggregate(today_start, today_end)
+    by_scenario_week = await _scenario_aggregate(_utc_aware(week_start_local), _utc_aware(week_end_local))
+    by_scenario_month = await _scenario_aggregate(_utc_aware(month_start_local), _utc_aware(month_end_local))
 
     # 只返回全平台聚合数字，不暴露用户配置、server 名称或凭据。
     mcp_server_row = await db.execute(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
         select(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
             func.count(UserMcpServer.id),
             func.count(func.distinct(UserMcpServer.user_id)),
-        ).where(UserMcpServer.scope == "user", UserMcpServer.enabled.is_(True))
+        ).where(
+            UserMcpServer.scope == "user",
+            UserMcpServer.enabled.is_(True),
+            *([UserMcpServer.user_id.notin_(_DEV_USER_SQ)] if exclude_dev else []),
+        )
     )
     mcp_server_count, mcp_enabled_user_count = mcp_server_row.one()
     mcp_call_count = await db.scalar(select(func.count(AgentUsage.id)).where(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
-        AgentUsage.scenario == "mcp", AgentUsage.is_byok.is_(False),
+        AgentUsage.scenario == "mcp",
+        *_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev),
     ))
 
     # 有数据的月份列表（最近 12 个月）
@@ -561,7 +618,8 @@ async def get_usage(month: str | None = None, model: str | None = None,
         text(f"""
             SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM') AS m
             FROM agent_usage
-            WHERE NOT is_byok
+            WHERE {"1=1" if include_byok else "NOT is_byok"}
+              {"AND user_id NOT IN (SELECT id FROM users WHERE is_developer)" if exclude_dev else ""}
             GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM')
             ORDER BY m DESC
             LIMIT 12
@@ -569,9 +627,11 @@ async def get_usage(month: str | None = None, model: str | None = None,
     )
     available_months = [r[0] for r in months_rows.all()]
 
-    # 确定目标月份
+    # 确定目标月份；月视图跟随日期切换器所在的自然月。
     if month and month in available_months:
         target_month = month
+    elif date:
+        target_month = today.strftime("%Y-%m")
     elif available_months:
         target_month = available_months[0]
     else:
@@ -587,6 +647,40 @@ async def get_usage(month: str | None = None, model: str | None = None,
     days_in_month = cal.monthrange(year, mon)[1]
     month_end_local = month_start_local + timedelta(days=days_in_month)
 
+    agent_nd = ""
+    if not include_byok:
+        agent_nd += " AND NOT is_byok"
+    if exclude_dev:
+        agent_nd += " AND user_id NOT IN (SELECT id FROM users WHERE is_developer)"
+    # 单日图表按用户时区拆成 24 个小时。先取 UTC 记录，再在应用层转换本地小时，
+    # 避免数据库 session 时区或 timestamptz 的隐式转换造成小时偏移。
+    hour_bounds = [
+        AgentUsage.created_at >= today_start,
+        AgentUsage.created_at < today_end,
+        *_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev),
+    ]
+    if model:
+        hour_bounds.append(AgentUsage.model == model)
+    today_hour_rows = await db.execute(select(  # orm-exempt: 管理员用量小时聚合读取待 Service 收口
+        AgentUsage.created_at,
+        _effective_input_expr(),
+        AgentUsage.tokens_out,
+        AgentUsage.cache_read,
+        AgentUsage.cache_write,
+    ).where(*hour_bounds))
+    today_hour_map = {}
+    for created_at, tokens_in, tokens_out, cache_read, cache_write in today_hour_rows.all():
+        hour = _usage_local_hour(created_at, user_tz)
+        entry = today_hour_map.setdefault(hour, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0})
+        entry["calls"] += 1
+        entry["tokens_in"] += int(tokens_in or 0)
+        entry["tokens_out"] += int(tokens_out or 0)
+        entry["cache_read"] += int(cache_read or 0)
+        entry["cache_write"] += int(cache_write or 0)
+    today_hourly = []
+    for hour in range(24):
+        entry = today_hour_map.get(hour, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0})
+        today_hourly.append({"date": f"{hour:02d}:00", **entry, "cache_ratio": round(entry["cache_read"] / entry["tokens_in"], 6) if entry["tokens_in"] else 0})
     daily_sql = f"""
             SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
@@ -596,9 +690,9 @@ async def get_usage(month: str | None = None, model: str | None = None,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
             WHERE created_at >= :month_start AND created_at < :month_end
-              AND NOT is_byok
+              {agent_nd}
     """
-    daily_params = {"month_start": _utc_naive(month_start_local), "month_end": _utc_naive(month_end_local)}
+    daily_params = {"month_start": _utc_aware(month_start_local), "month_end": _utc_aware(month_end_local)}
     if model:
         daily_sql += " AND model = :model"
         daily_params["model"] = model
@@ -619,10 +713,8 @@ async def get_usage(month: str | None = None, model: str | None = None,
             if entry["tokens_in"] else 0,
         })
 
-    # 最近 7 天独立于当前月，避免月初/月末查看时被月份边界截断。
-    recent_start_local = today_start_local - timedelta(days=6)
-    recent_end_local = today_start_local + timedelta(days=1)
-    recent_sql = f"""
+    # 周视图按自然周查询，不使用滚动的最近 N 天窗口。
+    week_sql = f"""
             SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
                    COALESCE(SUM({_effective_input_sql()}), 0) AS tokens_in,
@@ -630,42 +722,31 @@ async def get_usage(month: str | None = None, model: str | None = None,
                    COALESCE(SUM(cache_read), 0) AS cache_read,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
-            WHERE created_at >= :recent_start AND created_at < :recent_end
-              AND NOT is_byok
+            WHERE created_at >= :week_start AND created_at < :week_end
+              {agent_nd}
     """
-    recent_params = {
-        "recent_start": _utc_naive(recent_start_local),
-        "recent_end": _utc_naive(recent_end_local),
-    }
+    week_params = {"week_start": _utc_aware(week_start_local), "week_end": _utc_aware(week_end_local)}
     if model:
-        recent_sql += " AND model = :model"
-        recent_params["model"] = model
-    recent_sql += f" GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') ORDER BY day"
-    recent_rows = await db.execute(text(recent_sql), recent_params)
-    recent_map = {
-        r[0]: {
-            "calls": r[1], "tokens_in": r[2], "tokens_out": r[3],
-            "cache_read": r[4], "cache_write": r[5],
-        }
-        for r in recent_rows.all()
-    }
-    recent_daily = []
+        week_sql += " AND model = :model"
+        week_params["model"] = model
+    week_sql += f" GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') ORDER BY day"
+    week_rows = await db.execute(text(week_sql), week_params)  # orm-exempt: 管理员用量周聚合读取待 Service 收口
+    week_map = {r[0]: {"calls": r[1], "tokens_in": r[2], "tokens_out": r[3], "cache_read": r[4], "cache_write": r[5]} for r in week_rows.all()}
+    week_daily = []
     for offset in range(7):
-        key = (today - timedelta(days=6 - offset)).isoformat()
-        entry = recent_map.get(key, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0})
-        recent_daily.append({
-            "date": key,
-            **entry,
-            "cache_ratio": round(entry["cache_read"] / entry["tokens_in"], 6)
-            if entry["tokens_in"] else 0,
-        })
+        key = (week_start_date + timedelta(days=offset)).isoformat()
+        entry = week_map.get(key, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0})
+        week_daily.append({"date": key, **entry, "cache_ratio": round(entry["cache_read"] / entry["tokens_in"], 6) if entry["tokens_in"] else 0})
 
     return {
         "total":   {"calls": total_calls, "tokens_in": total_in, "tokens_out": total_out, "cache_read": total_cache_read, "cache_write": total_cache_write, "cache_ratio": round(total_cache_read / total_in, 6) if total_in else 0},
-        "today":   {"calls": today_calls, "tokens_in": today_in, "tokens_out": today_out, "cache_read": today_cache_read, "cache_write": today_cache_write, "cache_ratio": round(today_cache_read / today_in, 6) if today_in else 0},
+        "today":   {"date": today.isoformat(), "calls": today_calls, "tokens_in": today_in, "tokens_out": today_out, "cache_read": today_cache_read, "cache_write": today_cache_write, "cache_ratio": round(today_cache_read / today_in, 6) if today_in else 0},
+        "current_date": current_date.isoformat(),
+        "anchor_date": today.isoformat(),
         "by_model": by_model,
         "by_scenario": by_scenario,
-        "by_scenario_recent": by_scenario_recent,
+        "by_scenario_week": by_scenario_week,
+        "by_scenario_month": by_scenario_month,
         "mcp_summary": {
             "enabled_users": mcp_enabled_user_count or 0,
             "enabled_servers": mcp_server_count or 0,
@@ -675,9 +756,11 @@ async def get_usage(month: str | None = None, model: str | None = None,
         "months":   available_months,
         "month":    target_month,
         "daily":    daily,
-        "recent_daily": recent_daily,
+        "today_hourly": today_hourly,
+        "week_daily": week_daily,
+        "month_daily": daily,
         "timezone": getattr(user_tz, "key", None) or str(user_tz),
-        "usage_basis": "已落库的成功平台 LLM 调用（不含 BYOK）；输入 token 按完整输入统计，缓存命中率按完整输入加权",
+        "usage_basis": f"已落库的成功 LLM 调用（{'含 BYOK' if include_byok else '不含 BYOK'}）；输入 token 按完整输入统计，缓存命中率按完整输入加权",
     }
 
 
@@ -712,7 +795,7 @@ class StrategyUpdate(BaseModel):
 
 
 @router.post("/llm-presets/strategy")
-async def set_llm_strategy(body: StrategyUpdate):
+async def set_llm_strategy(body: StrategyUpdate, db: AsyncSession = Depends(get_db)):
     if body.strategy is not None and body.strategy not in ("active", "pool", "router"):
         raise HTTPException(400, "strategy 只能是 active / pool / router")
     if body.pool_mode is not None and body.pool_mode not in ("random", "round_robin", "least_loaded"):
@@ -724,6 +807,7 @@ async def set_llm_strategy(body: StrategyUpdate):
     if body.pool_mode is not None:
         presets["pool_mode"] = body.pool_mode
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {"strategy": presets.get("strategy", "active"), "pool_mode": presets.get("pool_mode", "random")}
 
 
@@ -773,7 +857,7 @@ class PresetCreate(BaseModel):
 
 
 @router.post("/llm-presets")
-async def create_llm_preset(body: PresetCreate):
+async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_db)):
     if body.max_tokens >= body.context_tokens:
         raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
     override = _read_override()
@@ -810,6 +894,7 @@ async def create_llm_preset(body: PresetCreate):
         presets["active_id"] = new_id
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
 
@@ -839,7 +924,7 @@ class PresetUpdate(BaseModel):
 
 
 @router.put("/llm-presets/{preset_id}")
-async def update_llm_preset(preset_id: str, body: PresetUpdate):
+async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -898,11 +983,12 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
 
 @router.delete("/llm-presets/{preset_id}")
-async def delete_llm_preset(preset_id: str):
+async def delete_llm_preset(preset_id: str, db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     if len(presets.get("items", [])) <= 1:
@@ -911,11 +997,12 @@ async def delete_llm_preset(preset_id: str):
         raise HTTPException(400, "无法删除当前激活的预设，请先切换到其他预设")
     presets["items"] = [it for it in presets["items"] if it["id"] != preset_id]
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {"deleted": preset_id}
 
 
 @router.post("/llm-presets/{preset_id}/activate")
-async def activate_llm_preset(preset_id: str):
+async def activate_llm_preset(preset_id: str, db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -924,6 +1011,7 @@ async def activate_llm_preset(preset_id: str):
     presets["active_id"] = preset_id
     override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {"active_id": preset_id}
 
 
@@ -1014,7 +1102,7 @@ async def _probe_local_capabilities(item: dict) -> dict:
 
 
 @router.post("/llm-presets/{preset_id}/capabilities")
-async def probe_llm_capabilities(preset_id: str):
+async def probe_llm_capabilities(preset_id: str, db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -1031,6 +1119,7 @@ async def probe_llm_capabilities(preset_id: str):
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     from types import SimpleNamespace
     from agent import providers
     return {"fingerprint": fingerprint, "checked_at": checked_at, "results": result,
@@ -1038,7 +1127,7 @@ async def probe_llm_capabilities(preset_id: str):
 
 
 @router.put("/llm-presets/{preset_id}/capability-overrides")
-async def update_capability_overrides(preset_id: str, body: dict[str, bool]):
+async def update_capability_overrides(preset_id: str, body: dict[str, bool], db: AsyncSession = Depends(get_db)):
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -1053,6 +1142,7 @@ async def update_capability_overrides(preset_id: str, body: dict[str, bool]):
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     return {"capability_overrides": body}
 
 
@@ -1380,7 +1470,7 @@ async def probe_vision_preview(body: VisionProbePreview, dim: str = "image"):
 
 
 @router.post("/llm-presets/{preset_id}/probe-vision")
-async def probe_vision_preset(preset_id: str, dim: str = ""):
+async def probe_vision_preset(preset_id: str, dim: str = "", db: AsyncSession = Depends(get_db)):
     """探测预设模型的多模态能力，并把明确结论写回对应字段。
 
     `dim`：image | video | audio，只测单维度；省略则依次测全部三维度。
@@ -1403,6 +1493,7 @@ async def probe_vision_preset(preset_id: str, dim: str = ""):
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)
+    await _invalidate_reasoning_states(db)
     if len(dims) == 1:
         d = dims[0]
         result = results[d]
