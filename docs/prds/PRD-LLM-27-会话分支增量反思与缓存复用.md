@@ -57,13 +57,13 @@
   ├─ 当前用户消息、工具轮次、助手回复
   └─ provider-only dynamic tail
 
-只读分支快照
+只读分支快照（同一主前缀上先后运行的 sibling branch）
   ├─ 复用同一 provider/model/API format
   ├─ 复用主 system prompt、tools 和稳定消息前缀
-  ├─ 追加 assistant 最终回复
-  └─ 追加临时 user 任务
-  ├─ Memory 反思任务（Web / 私聊 / 有回复的群聊 owner 回合）
-       └─ Knowledge 反思任务
+  ├─ 追加 assistant 最终回复 + 临时 user 任务
+  │    ├─ Memory 反思分支（Web / 私聊 / 有回复的群聊 owner 回合）
+  │    └─ Knowledge 反思分支（仅当 Memory 分支产出候选；不继承 Memory 的 JSON 输出）
+  └─ 分支结果不进入聊天历史，经领域 writer 写回
 
 分支结果
   ├─ Memory writer：profile/pattern/daily/summary
@@ -87,6 +87,13 @@
 - 快照是否包含附件、工具结果、RAG 或其它敏感内容的安全标记。
 
 快照只能作为进程内后台任务的短生命周期输入，不能把完整 provider 消息、工具参数、请求头或凭据写入 Redis、数据库、日志或 LoopScope 正文。若必须跨 worker 传递，应只传引用和可验证 revision，并从受权限保护的事实源重新构建。
+
+**执行拓扑必须先钉死（Phase 1 第一项）**。现状是双路径（见 `_queue_owner_reflection` / `_drain_owner_reflection_buffer`）：
+
+- **内联冲刷**：工具回合在主请求进程内 `rpush` 后立即 drain——同进程，可携带进程内快照；
+- **worker 扫描冲刷**：idle zset 由 worker 进程扫描 drain——跨进程，进程内快照不可达，只能降级 standalone。
+
+因此快照的传播范围按路径区分：内联冲刷路径允许把快照作为进程内参数传递（不落 Redis）；worker 扫描路径一律 standalone，不改造 Redis 队列载荷、不新增跨进程快照通道。凡「缓冲多回合合并后跨 session」「服务重启恢复」「worker 扫描」的任务都走 §6.5 的独立路径。
 
 ### 6.2 追加式分支
 
@@ -123,8 +130,8 @@ delta = 分支任务前缀 + 本次反思所需动态数据
 
 如果 owner 阈值缓冲包含多轮消息，不新增复杂的群聊批处理逻辑：
 
-- 当前回合有主请求快照：直接使用本回合快照做一次追加式反思；
-- 没有单一主请求快照，或缓冲跨 session：继续使用现有独立批处理反思，不强行拼接会话。
+- 当前回合有主请求快照且为内联冲刷路径：直接使用本回合快照做一次追加式反思；
+- 没有单一主请求快照、缓冲跨 session、或冲刷来自 worker 扫描路径：继续使用现有独立批处理反思，不强行拼接会话。
 
 ### 6.4 Knowledge 反思
 
@@ -166,7 +173,13 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 
 ### 6.7 Provider 兼容与回退
 
-只有当以下输入一致时，才标记为 `cache_reuse_eligible`：
+**第一关是 provider/模型的前缀缓存能力，其次才是输入一致性**。追加式会把反思输入放大到整个主会话历史：对支持跨调用前缀缓存的 provider（DeepSeek、显式 cache_control 的 OpenAI/Anthropic 兼容系）这是净收益；对**不跨调用缓存**的 provider（MiniMax 实测如此），append_reuse 意味着反思按全新 input 计费整个历史，比独立反思更贵。因此：
+
+- 维护「provider/模型/API format → 跨调用前缀缓存能力」白名单（以真实 A/B 实测为准，不凭文档推断）；
+- 不在白名单内的组合一律 standalone，即使输入完全一致也不走 append_reuse；
+- 白名单组合在运行中实测缓存率持续低于阈值时，自动摘出白名单并记录原因。
+
+以下输入一致时才标记为 `cache_reuse_eligible`（仅对白名单内组合有意义）：
 
 - provider 和模型一致；
 - API 协议格式一致；
@@ -203,7 +216,7 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 
 ### 8.2 功能验收
 
-- Memory 反思输出与现有 schema、字段边界和写回结果一致；
+- Memory 反思输出与现有 schema、字段边界和写回结果一致（含 profile、pattern、daily、summary、perception、feedback、knowledge_candidate 全部字段）；
 - Knowledge 反思的 create/update/conflict/ignore、去重和索引事件行为不变；
 - 反思请求和结果不出现在用户聊天历史、canonical batch 或下一轮普通上下文中；
 - 同一会话并发生成时，旧分支不能覆盖新结果；
@@ -213,10 +226,13 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 
 ### 8.3 缓存验收
 
-- 对支持前缀缓存的 provider，连续暖会话中符合条件的反思分支应能稳定复用主会话前缀；目标缓存率为 85% 以上，重点 provider 目标为 90% 以上；
-- 至少覆盖无工具、普通工具和 MCP 工具三种消息序列；
-- 至少覆盖 OpenAI 兼容协议和 Anthropic 协议；
-- 对不支持跨调用缓存或缓存口径不可观测的 provider，只验证功能和正确标记回落，不强行设缓存率门槛；
+- 缓存率门槛按 provider 分层，与 §6.7 白名单对齐，避免对无缓存 provider 设不可达目标：
+  - **门槛组**（实测支持跨调用前缀缓存的 provider，如 DeepSeek、显式 cache_control 的 OpenAI/Anthropic 兼容系）：连续暖会话中符合条件的反思分支应稳定复用主会话前缀，目标缓存率 85% 以上，重点 provider 90% 以上；
+  - **豁免组**（MiniMax 等实测不跨调用缓存的 provider）：不设缓存率门槛，只验证功能正确性与回落标记（`cache_reuse_reason` 应如实记录 provider 能力原因）；
+- 门槛组至少覆盖无工具、普通工具和 MCP 工具三种消息序列；
+- 门槛组至少覆盖 OpenAI 兼容协议和 Anthropic 协议；
+- 缓存口径不可观测的 provider 归入豁免组，不强行设门槛；
+- append_reuse 与 standalone 的同内容对照（各自 fresh input tokens）必须计入费用报告，用于验证白名单决策本身；
 - 费用报告必须同时给出反思调用自身和全站总量两个口径，不能只报告缓存率百分点。
 
 ## 9. 实施计划
@@ -231,10 +247,12 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 
 ### Phase 1：快照与公共追加入口
 
+- [ ] 钉死反思执行拓扑：内联冲刷与 worker 扫描双路径的进程归属，确定允许携带快照的路径清单（见 §6.1）。
 - [ ] 定义只读主会话快照结构和有效 revision。
 - [ ] 为 `ContextBranch` 增加 `append_reuse` 状态边界，避免误失效 reasoning state。
 - [ ] 将压缩的 `_branch_prefix_history()` 前缀准备逻辑提炼为共享 helper，压缩和反思共同调用。
 - [ ] 统一 provider-ready history、tools 和生成参数的捕获方式，不新增反思专用追加执行器。
+- [ ] 建立 provider/模型前缀缓存能力白名单及运行中自动摘出机制（§6.7 第一关），附 A/B 实测数据。
 - [ ] 增加快照过期、provider 切换、dynamic tail 和敏感字段测试。
 
 ### Phase 2：owner Memory 反思
@@ -268,6 +286,7 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 | 反思内容污染聊天历史 | 分支消息只读、只存在短生命周期快照，禁止进入 canonical writer |
 | 群聊批处理无法映射单 session | 保持 scope batch 路径，不强行套用追加式分支 |
 | 只看缓存率误判成本收益 | 同时统计 fresh/cache-read/cache-write/output 和调用量 |
+| 无缓存 provider 走 append_reuse 导致反思成本反而上涨 | §6.7 白名单作为 eligible 第一关，不满足一律 standalone；运行中实测缓存率不达标自动摘出 |
 | 快照携带工具结果中的敏感内容 | 不持久化完整快照，日志脱敏，按现有 provider 安全边界过滤 |
 
 ## 11. 关联文档
@@ -276,4 +295,5 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [`PRD-LLM-8-Prompt-Caching优化.md`](./【已完成】PRD-LLM-8-Prompt-Caching优化.md)
 - [`PRD-LLM-14-Batch单一事实源与Canonical History一致性.md`](./【已完成】PRD-LLM-14-Batch单一事实源与Canonical History一致性.md)
 - [`PRD-LLM-23-跨Provider推理状态持久化与续接.md`](./【已完成】PRD-LLM-23-跨Provider推理状态持久化与续接.md)
+- [`PRD-LLM-25-Agent主循环模块化拆分.md`](./【已完成】PRD-LLM-25-Agent主循环模块化拆分.md)——Phase 2 的快照捕获钩子落在 `loop/machine.py` 轮次收尾处，不得破坏 LLM-25 的模块边界
 - [`PRD-KNOWLEDGE-1-统一知识系统.md`](./【已完成】PRD-KNOWLEDGE-1-统一知识系统.md)
