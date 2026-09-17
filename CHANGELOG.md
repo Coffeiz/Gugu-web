@@ -9,6 +9,8 @@
 
 ### 改进
 
+- **Knowledge 写入边界与 Markdown 输出规范**：只有用户明确要求记住、保存或修改 Knowledge 时才允许写入；普通聊天和自动反思不再视为保存授权，同时按回复复杂度统一标题、粗体、代码块、列表、表格和分隔线的使用规则，并区分持续有效与一次性格式要求，减少格式异常。
+
 - **技能与 MCP 图标统一**：技能使用书本图标，MCP 使用连接器图标，侧边导航与空状态页面保持一致。
 - **web_download 连接清理**：修复下载超时后因 PostgreSQL 连接已关闭导致 `Transaction.rollback` 二次报错的问题；下载前结束文件夹校验事务，失效连接会被安全清理。
 - **OpenAI 接口格式可显式选择**：OpenAI、Qwen、GLM、DeepSeek、MiMo、Ollama 兼容模式和本地兼容服务支持在模型配置中选择 Chat Completions 或 Responses；Ollama 原生与 MiMo Anthropic 兼容模式继续保留。

@@ -415,7 +415,8 @@ watch(() => uiStore.pendingChatPrefill, async (prompt) => {
   if (!expanded.value) resetContentH()
   inputText.value = prompt
   await nextTick()
-  composerRef.value?.focus?.()
+  // 首次打开时编辑器刚完成挂载，明确把光标放到预填文本末尾。
+  composerRef.value?.focusEnd?.()
 }, { immediate: true })
 
 const visiblePendingQueue = computed(() => pendingQueue.value.filter(item => item.sessionId === sessionId.value))
