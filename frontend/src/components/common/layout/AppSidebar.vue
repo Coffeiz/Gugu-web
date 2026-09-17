@@ -18,7 +18,7 @@
         <NavItem to="/files" icon="file.folder">{{ t('navigation.files') }}</NavItem>
         <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">{{ t('navigation.terminals') }}</NavItem>
         <NavItem to="/skills" icon="resource.skill">{{ t('navigation.skills') }}</NavItem>
-        <NavItem v-if="mcpVisible" to="/mcp" icon="resource.skill">MCP</NavItem>
+        <NavItem v-if="mcpVisible" to="/mcp" icon="resource.mcp">MCP</NavItem>
       </div>
 
       <div class="nav-divider"></div>

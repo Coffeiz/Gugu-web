@@ -72,6 +72,7 @@ async def run_loop(
         ):
             initial_tool_names = list(runner.capability_context.select_for_messages(messages).tool_names)
         initial_tool_names = runner._provider_tool_names(initial_tool_names)
+        current_tool_names = list(initial_tool_names)
         client, ctx = driver.prepare(
             initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
         )
@@ -95,6 +96,8 @@ async def run_loop(
         _mutset = _core._mutating_tools([*runner.tool_names, *runner.dynamic_tools], tool_snapshot)
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
         any_tool_called = False
+        responses_fallback_used = False
+        pending_responses_capability_failure = None
         narration_retry = decision_retry = intent_retry = colon_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
         guard_retry_pending = False
@@ -466,41 +469,83 @@ async def run_loop(
                     and not getattr(runner.capability_context, "metadata_only", False)
                 ):
                     selected = runner.capability_context.select_for_messages(messages)
+                    current_tool_names = runner._provider_tool_names(list(selected.tool_names))
                     driver.update_tools(
-                        ctx, runner._provider_tool_names(list(selected.tool_names)),
+                        ctx, current_tool_names,
                         tool_snapshot=tool_snapshot,
                     )
                 # 注入 core 命名空间的 _core._stream_round：旧测试 monkeypatch 本模块属性仍生效。
-                _round_gen = driver.run_round(client, ctx, messages, stream_round=_core._stream_round)
-                async for _kind, _val in _round_gen:
-                    if _kind == "done":
-                        result = _val
+                while True:
+                    try:
+                        _round_gen = driver.run_round(client, ctx, messages, stream_round=_core._stream_round)
+                        async for _kind, _val in _round_gen:
+                            if _kind == "done":
+                                result = _val
+                                break
+                            if verify_mode:
+                                _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
+                            elif goal_mode:
+                                # 等待完成标记判定，避免把内部标记流给用户。
+                                pass
+                            elif guard_retry_pending:
+                                # 守卫追问后的正文先不展示；只有该轮真的发起工具调用时，
+                                # 才说明守卫生效并丢弃这段自我辩解。
+                                guard_retry_buf.append(_val)
+                            else:
+                                # 普通 draft 是用户可见的 round 正文，随 provider 流实时发送。
+                                # thinking/reasoning 不会从各 provider driver 作为 token 进入这里；
+                                # 核实和守卫文字仍由上面的专用分支隐藏。
+                                yield stream_event("token", content=_val, round_id=round_id)
+                            # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
+                            # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
+                            _tok += 1
+                            if _tok % _core._CANCEL_CHECK_EVERY == 0 and await _core._im_cancelled(session_id):
+                                yield f"data: {_core.json.dumps({'type': '_cancelled'})}\n\n"
+                                # 显式关掉 run_round 生成器：Python 3.14 下 async for 提前退出时
+                                # close 会被推迟到 GC，LoopScope 的 span 会一直挂着 running。
+                                # aclose() 立即注入 GeneratorExit，hooks.traced_round 同步把
+                                # span 标成 cancelled，不用等 GC 才收尾。
+                                await _round_gen.aclose()
+                                return
                         break
-                    if verify_mode:
-                        _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
-                    elif goal_mode:
-                        # 等待完成标记判定，避免把内部标记流给用户。
-                        pass
-                    elif guard_retry_pending:
-                        # 守卫追问后的正文先不展示；只有该轮真的发起工具调用时，
-                        # 才说明守卫生效并丢弃这段自我辩解。
-                        guard_retry_buf.append(_val)
-                    else:
-                        # 普通 draft 是用户可见的 round 正文，随 provider 流实时发送。
-                        # thinking/reasoning 不会从各 provider driver 作为 token 进入这里；
-                        # 核实和守卫文字仍由上面的专用分支隐藏。
-                        yield stream_event("token", content=_val, round_id=round_id)
-                    # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
-                    # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
-                    _tok += 1
-                    if _tok % _core._CANCEL_CHECK_EVERY == 0 and await _core._im_cancelled(session_id):
-                        yield f"data: {_core.json.dumps({'type': '_cancelled'})}\n\n"
-                        # 显式关掉 run_round 生成器：Python 3.14 下 async for 提前退出时
-                        # close 会被推迟到 GC，LoopScope 的 span 会一直挂着 running。
-                        # aclose() 立即注入 GeneratorExit，hooks.traced_round 同步把
-                        # span 标成 cancelled，不用等 GC 才收尾。
-                        await _round_gen.aclose()
-                        return
+                    except Exception as exc:
+                        from agent.providers.openai_responses import ResponsesCompatibilityError
+                        if not (
+                            isinstance(exc, ResponsesCompatibilityError)
+                            and driver.api_format == "responses"
+                            and _tok == 0
+                            and result is None
+                            and not responses_fallback_used
+                        ):
+                            raise
+                        responses_fallback_used = True
+                        # 先保留失败信息；只有 fallback 的 Chat Completions 请求成功，
+                        # 才能确认这是 Responses 兼容性问题并污染能力缓存。
+                        pending_responses_capability_failure = exc
+                        if reasoning_state is not None:
+                            await reasoning_state.failed("responses_incompatible")
+                        from agent.loop_drivers import OpenAIDriver
+                        driver = OpenAIDriver()
+                        client, ctx = driver.prepare(
+                            current_tool_names, ai, messages, system_text,
+                            tool_snapshot=tool_snapshot,
+                        )
+                        if runner.capability_context is not None:
+                            ctx.capability_context = runner.capability_context
+                        _core._log.warning(
+                            "Responses 完整请求不兼容，当前 run 回退 Chat Completions：status=%s",
+                            exc.status_code,
+                        )
+                if pending_responses_capability_failure is not None and result is not None:
+                    from app.services.provider_diagnostics import record_responses_capability_failure
+                    record_responses_capability_failure(
+                        provider=getattr(ai, "provider", "") or "",
+                        api_key=getattr(ai, "api_key", "") or "",
+                        base_url=getattr(ai, "base_url", "") or "",
+                        model=getattr(ai, "model", "") or "",
+                        status=pending_responses_capability_failure.status_code,
+                    )
+                    pending_responses_capability_failure = None
             except _core.RetryableError as e:
                 if reasoning_state is not None:
                     await reasoning_state.failed("provider_rejected")

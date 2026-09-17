@@ -127,6 +127,41 @@ async def test_coordinator_diagnostics_distinguish_state_lifecycle(monkeypatch):
     assert rejected.diagnostics()["invalidated_reason"] == "provider_rejected"
 
 
+@pytest.mark.asyncio
+async def test_responses_incompatible_invalidates_persisted_state(db, user_a, monkeypatch):
+    """Responses 回退必须真正失效旧 reasoning state，避免下一轮重复撞 Responses。"""
+    import app.byok.crypto as byok_crypto
+
+    monkeypatch.setattr(byok_crypto, "_master_key", lambda version=1: b"r" * 32)
+    session = await _session(db, user_a.id)
+    envelope = _envelope(user_a, session, provider="openai", state_kind="openai_responses")
+    await commit_state(db, user_id=user_a.id, session_id=session.id, envelope=envelope, expected_version=0)
+    await db.commit()
+
+    class _DbContext:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *_args):
+            return None
+
+    model = SimpleNamespace(provider="openai", model="gpt-test")
+    coordinator = ReasoningStateCoordinator(
+        user_id=user_a.id,
+        session_id=session.id,
+        model_cfg=model,
+        policy=ReasoningPersistencePolicy("continuation"),
+        session_factory=lambda: _DbContext(),
+    )
+
+    await coordinator.failed("responses_incompatible")
+
+    row = (await db.execute(select(ProviderReasoningState))).scalar_one()
+    assert row.status == "invalidated"
+    assert row.invalidated_reason == "responses_incompatible"
+    assert coordinator.diagnostics()["invalidated_reason"] == "responses_incompatible"
+
+
 def test_envelope_fingerprints_payload_but_metadata_excludes_it():
     # 这里只测纯对象边界；数据库加密回归在异步用例中覆盖。
     user = type("User", (), {"id": "user-a"})()

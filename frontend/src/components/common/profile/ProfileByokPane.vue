@@ -38,8 +38,7 @@
                 <ProviderSelect :model-value="editors[item.id].provider" :providers="providerOptionsFor(editors[item.id].capability)" @update:model-value="applyProvider(editors[item.id], $event)" />
                 <ProviderSelect v-if="childProviderOptionsFor(editors[item.id]).length" :model-value="childSelectionFor(editors[item.id])" :providers="childProviderOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.selectChild')" @update:model-value="applyProviderChild(editors[item.id], $event)" />
               </div>
-              <InterfaceTypeSelect v-if="editors[item.id].provider === 'mimo'" :label="t('profileByokUi.interfaceFormat')" :model-value="editors[item.id].api_format || 'openai'" :options="[{ key: 'openai', label: t('profileByokUi.openaiCompatible') }, { key: 'anthropic', label: t('profileByokUi.anthropicCompatible') }]" :hint="t('profileByokUi.anthropicHint')" @update:model-value="editors[item.id].api_format = String($event)" />
-              <InterfaceTypeSelect v-else-if="editors[item.id].provider === 'ollama'" :label="t('profileByokUi.interfaceType')" :model-value="editors[item.id].api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="editors[item.id].api_format = String($event)" />
+              <InterfaceTypeSelect v-if="interfaceOptionsFor(editors[item.id]).length" :label="t('profileByokUi.interfaceFormat')" :model-value="editors[item.id].api_format || defaultInterfaceFor(editors[item.id].provider)" :options="interfaceOptionsFor(editors[item.id])" :hint="editors[item.id].provider === 'mimo' ? t('profileByokUi.anthropicHint') : undefined" @update:model-value="editors[item.id].api_format = String($event)" />
               <input v-model="editors[item.id].base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
               <input v-model="editors[item.id].value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKeyKeep')" />
               <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="group.value === 'speech_to_text' ? t('profileByokUi.speechModelOptional') : t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
@@ -64,8 +63,7 @@
                 <ProviderSelect :model-value="newEditor.provider" :providers="providerOptionsFor(newEditor.capability)" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderTo(newEditor, $event)" />
                 <ProviderSelect v-if="childProviderOptionsFor(newEditor).length" :model-value="childSelectionFor(newEditor)" :providers="childProviderOptionsFor(newEditor)" :placeholder="t('profileByokUi.selectChild')" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderChild(newEditor, $event)" />
               </div>
-              <InterfaceTypeSelect v-if="newEditor.provider === 'mimo'" :label="t('profileByokUi.interfaceFormat')" :model-value="newEditor.api_format || 'openai'" :options="[{ key: 'openai', label: t('profileByokUi.openaiCompatible') }, { key: 'anthropic', label: t('profileByokUi.anthropicCompatible') }]" :hint="t('profileByokUi.anthropicHint')" @update:model-value="newEditor.api_format = String($event)" />
-              <InterfaceTypeSelect v-else-if="newEditor.provider === 'ollama'" :label="t('profileByokUi.interfaceType')" :model-value="newEditor.api_format || 'native'" :options="ollamaInterfaceOptions" @update:model-value="newEditor.api_format = String($event)" />
+              <InterfaceTypeSelect v-if="interfaceOptionsFor(newEditor).length" :label="t('profileByokUi.interfaceFormat')" :model-value="newEditor.api_format || defaultInterfaceFor(newEditor.provider)" :options="interfaceOptionsFor(newEditor)" :hint="newEditor.provider === 'mimo' ? t('profileByokUi.anthropicHint') : undefined" @update:model-value="newEditor.api_format = String($event)" />
               <input v-model="newEditor.base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
               <input v-model="newEditor.value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKey')" />
               <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
@@ -135,10 +133,26 @@ const providerEfforts: Record<string, ThinkingMode[]> = {
   deepseek: ['low', 'high', 'max'],
   ollama: ['low', 'medium', 'high', 'max'],
 }
+const openaiProtocolProviders = new Set(['openai', 'qwen', 'glm', 'deepseek', 'mimo', 'ollama', 'local'])
+const openaiInterfaceOptions = computed(() => [
+  { key: 'openai', label: t('profileByokUi.chatCompletions') },
+  { key: 'responses', label: t('profileByokUi.responses') },
+])
 const ollamaInterfaceOptions = computed(() => [
   { key: 'native', label: t('profileByokUi.ollamaNative') },
-  { key: 'openai', label: t('profileByokUi.openaiCompatible') },
+  ...openaiInterfaceOptions.value,
 ])
+const mimoInterfaceOptions = computed(() => [
+  ...openaiInterfaceOptions.value,
+  { key: 'anthropic', label: t('profileByokUi.anthropicCompatible') },
+])
+function interfaceOptionsFor(draft: Pick<Editor, 'provider'> | null) {
+  if (!draft) return []
+  if (draft.provider === 'ollama') return ollamaInterfaceOptions.value
+  if (draft.provider === 'mimo') return mimoInterfaceOptions.value
+  return openaiProtocolProviders.has(draft.provider) ? openaiInterfaceOptions.value : []
+}
+function defaultInterfaceFor(provider: string) { return provider === 'ollama' ? 'native' : provider === 'mimo' ? 'openai' : 'openai' }
 const { t } = useI18n()
 const props = defineProps({
   compact: { type: Boolean, default: false },
@@ -212,7 +226,7 @@ function applyProvider(draft: Editor, value: string) {
   draft.model = draft.capability === 'embedding'
     ? (embeddingModelSeeds[value] ?? '')
     : provider.model
-  draft.api_format = value === 'mimo' ? 'openai' : value === 'ollama' ? 'native' : ''
+  draft.api_format = openaiProtocolProviders.has(value) ? (value === 'ollama' ? 'native' : 'openai') : ''
   if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
 }
 function applyProviderChild(draft: Editor, value: string) {

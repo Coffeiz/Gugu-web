@@ -148,11 +148,15 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
     base_url = resolve_user_base_url(row.provider, row.base_url)
     if not base_url:
         return base
+    # 用户凭据复用统一的 api_format 字段；Ollama 另外需要显式区分原生
+    # /api 与 OpenAI-compatible /v1。Responses 仍属于 OpenAI-compatible
+    # 传输，因此不能让缺省的 native 模式把它误送进 Ollama 原生驱动。
+    ollama_api_mode = "native" if row.provider == "ollama" and row.api_format in {"", "native"} else "openai"
     updates = {"api_key": api_key, "provider": row.provider,
                "api_format": row.api_format, "base_url": base_url,
                "model": row.model or getattr(base, "model", ""), "vision": row.vision,
                "vision_video": row.vision_video, "vision_audio": row.vision_audio,
-               "vision_detail": row.vision_detail}
+               "vision_detail": row.vision_detail, "ollama_api_mode": ollama_api_mode}
     if capability == "llm":
         if getattr(row, "max_tokens", None) is not None:
             updates["max_tokens"] = row.max_tokens

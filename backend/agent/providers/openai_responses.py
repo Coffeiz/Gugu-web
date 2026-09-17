@@ -12,7 +12,50 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from agent.context.budget import is_context_overflow_error
 from agent.providers.message_utils import _openai_tool_result
+
+
+class ResponsesCompatibilityError(RuntimeError):
+    """完整 Responses 请求被兼容服务以协议错误拒绝。"""
+
+    def __init__(self, status_code: int):
+        self.status_code = int(status_code)
+        super().__init__(f"Responses 协议不兼容：HTTP {self.status_code}")
+
+
+def _raise_if_responses_compatibility_error(exc: Exception) -> None:
+    status_code = getattr(exc, "status_code", None)
+    # 上下文超限、模型不存在和普通参数错误不能被误判为协议不兼容；它们
+    # 应继续交给主循环的原有错误恢复/诊断路径处理。
+    if is_context_overflow_error(exc):
+        return
+    if status_code in {405, 415, 501}:
+        raise ResponsesCompatibilityError(status_code) from exc
+    if status_code not in {400, 404, 422}:
+        return
+
+    searchable = " ".join(
+        str(value) for value in (
+            str(exc),
+            getattr(exc, "code", None),
+            getattr(exc, "type", None),
+            getattr(exc, "param", None),
+            getattr(exc, "message", None),
+            getattr(exc, "body", None),
+        ) if value is not None
+    ).lower()
+    compatibility_markers = (
+        "json_parse_error",
+        "responseinput",
+        "response input",
+        "responses endpoint",
+        "responses api",
+        "does not support responses",
+        "unsupported responses",
+    )
+    if any(marker in searchable for marker in compatibility_markers):
+        raise ResponsesCompatibilityError(status_code) from exc
 
 
 # OpenAI Responses（独立于 Chat Completions 的 response chain）
@@ -147,8 +190,12 @@ class OpenAIResponsesDriver:
         # 时才关闭存储。该值会随 reasoning config fingerprint 参与状态匹配。
         request["store"] = bool(getattr(ctx.ai, "store", True))
 
-        stream = await client.responses.create(**{key: value for key, value in request.items()
-                                                  if value is not None})
+        try:
+            stream = await client.responses.create(**{key: value for key, value in request.items()
+                                                      if value is not None})
+        except Exception as exc:
+            _raise_if_responses_compatibility_error(exc)
+            raise
         content = ""
         response_id = None
         previous_response_id = ctx.previous_response_id
@@ -192,6 +239,9 @@ class OpenAIResponsesDriver:
                             if isinstance(item, dict):
                                 key = str(item.get("id") or item.get("call_id") or len(output_items))
                                 output_items[key] = copy.deepcopy(item)
+        except Exception as exc:
+            _raise_if_responses_compatibility_error(exc)
+            raise
         finally:
             try:
                 await stream.close()

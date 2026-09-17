@@ -419,6 +419,7 @@ function fitTextarea(_isExpanded = props.expanded) {
 
 defineExpose({
   focus: () => chatEditor.value?.commands.focus(),
+  focusEnd: () => chatEditor.value?.commands.focus('end'),
   fitTextarea,
   resetHeight: () => { if (chatEditor.value) chatEditor.value.view.dom.style.height = 'auto' },
 })

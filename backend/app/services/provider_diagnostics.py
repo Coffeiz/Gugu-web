@@ -17,7 +17,7 @@ def _responses_probe_ttl(result: dict) -> float:
     if result.get("ok"):
         return _RESPONSES_PROBE_SUCCESS_TTL_SECONDS
     status = result.get("status")
-    if status in {404, 405, 501}:
+    if status in {400, 404, 405, 415, 422, 501}:
         return _RESPONSES_PROBE_UNSUPPORTED_TTL_SECONDS
     return _RESPONSES_PROBE_TRANSIENT_TTL_SECONDS
 
@@ -87,6 +87,23 @@ async def probe_responses_capability(*, provider: str, api_key: str, base_url: s
     finally:
         if task.done() and _responses_probe_tasks.get(key) is task:
             _responses_probe_tasks.pop(key, None)
+
+
+def record_responses_capability_failure(*, provider: str, api_key: str, base_url: str,
+                                        model: str, status: int) -> None:
+    """记录真实 Responses 请求暴露出的协议不兼容。
+
+    最小 probe 成功不代表完整的 tools/stream/continuation 请求可用。真实请求
+    得到协议级 4xx 后，立即覆盖 probe 缓存，避免后续 run 在 TTL 内继续误选
+    Responses；凭据只参与缓存指纹，不进入结果或日志。
+    """
+    key = _responses_probe_key(
+        provider=provider, base_url=base_url, model=model, api_key=api_key,
+    )
+    _responses_probe_cache[key] = (
+        time.monotonic(),
+        {"ok": False, "status": int(status), "detail": "真实请求不支持 Responses 协议"},
+    )
 
 
 async def test_provider_credential(*, provider: str, api_key: str, base_url: str,

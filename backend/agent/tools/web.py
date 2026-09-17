@@ -27,6 +27,7 @@ import httpx
 from agent.tools.base import BaseSkill, Tool
 from app.core.redaction import diag_log, redact
 from app.core.url_security import resolve_pinned_ip
+from app.db.session import rollback_safely
 from app.services.files.browser import get_user_folder
 from app.services.storage.file_service import FileService
 
@@ -290,6 +291,9 @@ async def _web_download(db, user_id, args: dict):
             return {"error": "folder_id 不属于指定的 space"}
         project_id = inferred_project_id
         space = inferred_space
+        # 文件夹校验只读数据库；下载可能持续数十秒，先结束这个只读事务，
+        # 避免 idle_in_transaction_session_timeout 关闭连接后污染后续保存。
+        await db.commit()
     else:
         space = space or ("project" if project_id is not None else "personal")
 
@@ -324,7 +328,7 @@ async def _web_download(db, user_id, args: dict):
         )
         await db.commit()
     except Exception as e:
-        await db.rollback()
+        await rollback_safely(db, where="agent.tools.web.web_download.persist.rollback")
         diag_log("agent.tools.web.web_download.persist", e)
         return {"error": "下载成功但保存到文件库失败，请稍后重试"}
     db_file = result.file
