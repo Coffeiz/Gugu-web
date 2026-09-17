@@ -487,7 +487,9 @@ async def _run_collect_unlocked(
     rag_context = prepared.rag_context
     gen = runner.run(
         user_id,
-        system_prompt if use_anthropic else None,
+        # Responses 不把 system 消息放进 input；稳定 system prompt 必须进入
+        # instructions，否则人格、规则和工具行为约束都会丢失。
+        system_prompt,
         anthr_messages if use_anthropic else oa_messages,
         use_anthropic=use_anthropic,
         model_cfg=model_cfg,
@@ -929,7 +931,9 @@ async def _run_stream_unlocked(
     rag_context = prepared.rag_context
     gen = runner.run(
         user_id,
-        system_prompt if use_anthropic else None,
+        # Responses 不把 system 消息放进 input；稳定 system prompt 必须进入
+        # instructions，否则人格、规则和工具行为约束都会丢失。
+        system_prompt,
         anthr_messages if use_anthropic else oa_messages,
         use_anthropic=use_anthropic,
         model_cfg=model_cfg,

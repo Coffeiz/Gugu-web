@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+from agent.security.sanitize import strip_think_blocks
+
 # 这是 Web 内部动作协议，不是 IM 平台可发送的外链。IM 出站保留可读文案，
 # 由 Web 聊天继续保留原始 gugu:// href 并处理点击。
 _GUGU_MARKDOWN_LINK_RE = re.compile(
@@ -72,6 +74,9 @@ def sanitize_outbound(text: str) -> str:
     """
     if not text:
         return text
+    text = strip_think_blocks(text)
+    if not text:
+        return ""
     # 大泄露：系统提示词/规则被复述 → 整条换掉
     matched_anchors = tuple(a for a in _PROMPT_LEAK_ANCHORS if a in text)
     if matched_anchors:

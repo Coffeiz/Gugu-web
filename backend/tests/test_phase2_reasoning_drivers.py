@@ -13,7 +13,9 @@ from agent.providers.openai_responses import (
     ResponsesCompatibilityError,
     _ResponsesCtx,
     _ResponsesRaw,
+    _responses_instructions,
 )
+from agent.usage import normalize_responses_usage
 
 
 def _anthropic_result():
@@ -46,6 +48,31 @@ def test_chat_completions_does_not_claim_responses_continuation():
     assert OpenAIDriver().extract_provider_state(
         RoundResult(text="普通回复", raw=SimpleNamespace())
     ) is None
+
+
+def test_responses_instructions_keep_snapshot_separate_from_base_prompt():
+    instructions = _responses_instructions([
+        {"role": "system", "content": "基础人格"},
+        {"role": "system", "content": "[system-reminder]\nsession snapshot"},
+        {"role": "user", "content": "今天天气"},
+    ], "基础人格")
+
+    assert instructions == "基础人格\n\n---\n\n[system-reminder]\nsession snapshot"
+
+
+def test_responses_usage_normalizes_cached_input_tokens():
+    usage = normalize_responses_usage({
+        "input_tokens": 100,
+        "output_tokens": 8,
+        "input_tokens_details": {"cached_tokens": 60},
+    })
+
+    assert usage == {
+        "input": 40,
+        "output": 8,
+        "cache_read": 60,
+        "cache_write": 0,
+    }
 
 
 class _FakeResponsesStream:
@@ -85,6 +112,62 @@ async def _raise_status(status_code):
 
 
 @pytest.mark.asyncio
+async def test_responses_driver_retries_full_history_when_tool_call_chain_is_stale():
+    response = {
+        "id": "resp-recovered",
+        "output": [],
+        "usage": {"input_tokens": 12, "output_tokens": 3},
+    }
+    events = [
+        SimpleNamespace(type="response.output_text.delta", delta="已继续"),
+        SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: response)),
+    ]
+
+    class _StaleThenSuccessClient:
+        def __init__(self):
+            self.requests = []
+            self.responses = SimpleNamespace(create=self.create)
+
+        async def create(self, **kwargs):
+            self.requests.append(kwargs)
+            if len(self.requests) == 1:
+                error = _ResponsesStatusError(400)
+                error.body = {"error": {
+                    "code": "invalid_prompt",
+                    "message": "tool result's tool id(call-1) not found",
+                }}
+                raise error
+            return _FakeResponsesStream(list(events))
+
+    client = _StaleThenSuccessClient()
+    driver = OpenAIResponsesDriver()
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-1")
+    messages = [
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "call-1", "type": "function",
+            "function": {"name": "ask_user", "arguments": "{}"},
+        }]},
+        {"role": "tool", "tool_call_id": "call-1", "content": '{"option_id":"tech"}'},
+    ]
+
+    result = None
+    async for kind, value in driver.run_round(client, ctx, messages):
+        if kind == "done":
+            result = value
+
+    assert result.text == "已继续"
+    assert len(client.requests) == 2
+    assert client.requests[0]["previous_response_id"] == "resp-1"
+    assert "previous_response_id" not in client.requests[1]
+    assert client.requests[1]["input"] == [
+        {"type": "function_call", "call_id": "call-1", "name": "ask_user", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call-1", "output": '{"option_id":"tech"}'},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_responses_driver_uses_response_chain_and_function_call_items():
     response = {
         "id": "resp-2",
@@ -93,7 +176,11 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
             "type": "function_call", "id": "fc-1", "call_id": "call-1",
             "name": "calendar_list", "arguments": '{"date":"2026-09-05"}',
         }],
-        "usage": {"input_tokens": 12, "output_tokens": 7},
+        "usage": {
+            "input_tokens": 100,
+            "output_tokens": 7,
+            "input_tokens_details": {"cached_tokens": 60},
+        },
     }
     events = [
         SimpleNamespace(type="response.output_text.delta", delta="查一下"),
@@ -114,9 +201,13 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
 
     assert result.text == "查一下"
     assert result.tool_calls[0].id == "call-1"
+    assert result.usage_in == 40
+    assert result.cache_tokens == 60
+    assert result.usage_out == 7
     assert result.raw.response_id == "resp-2"
     assert client.requests[0]["input"] == [{"role": "user", "content": "请查日历"}]
     assert "previous_response_id" not in client.requests[0]
+    assert client.requests[0]["prompt_cache_key"].startswith("gugu-")
 
     state = driver.extract_provider_state(result)
     assert state["payload"] == {"response_id": "resp-2", "previous_response_id": "resp-1"}

@@ -227,6 +227,23 @@ def _cache_diagnostics(
         if anchors:
             last_anchor = max(anchors)
             anchor_token_estimate = _estimate_tokens(conversation[:last_anchor + 1], model)
+        protocol = (
+            getattr(getattr(ctx, "adapter", None), "protocol_format", lambda _ai: "")(
+                getattr(ctx, "ai", None)
+            )
+            if ctx is not None and getattr(ctx, "adapter", None) is not None
+            else ""
+        )
+        cache_payload = conversation[:max(anchors) + 1] if anchors else []
+        base_prefix = None
+        if protocol == "responses":
+            # Responses 把 system/snapshot 放到 instructions，并把 tools 放在
+            # 请求顶层；它们不在 conversation 中，但同样属于可缓存前缀。
+            base_prefix = {
+                "instructions": str(getattr(ctx, "instructions", "") or ""),
+                "tools": _jsonable(tools),
+            }
+            cache_payload = {"base": base_prefix, "conversation": cache_payload}
         return {
             "cache_supported": bool(getattr(ctx, "supports_active_cache", False)),
             "conversation_messages": len(conversation),
@@ -234,9 +251,8 @@ def _cache_diagnostics(
             "cache_anchor_indices": anchors,
             "cache_anchor_last_index": max(anchors) if anchors else None,
             "cache_anchor_tokens_estimate": anchor_token_estimate,
-            "cache_prefix_digest": _prompt_digest(
-                conversation[:max(anchors) + 1] if anchors else []
-            ),
+            "cache_prefix_digest": _prompt_digest(cache_payload),
+            "cache_base_prefix_digest": _prompt_digest(base_prefix) if base_prefix else None,
             "volatile_image_present": volatile_index is not None,
             "volatile_image_first_index": volatile_index,
             "stable_message_count": stable_message_count,

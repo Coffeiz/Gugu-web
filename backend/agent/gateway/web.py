@@ -723,7 +723,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         rag_context = prepared.rag_context
         gen = runner.run(
             user_id,
-            system_prompt if use_anthropic else None,
+            # Chat Completions 的 system 已在 oa_messages 中；Responses 还需要
+            # 通过 instructions 接收稳定 system prompt。
+            system_prompt,
             anthr_messages if use_anthropic else oa_messages,
             use_anthropic=use_anthropic,
             model_cfg=model_cfg,
