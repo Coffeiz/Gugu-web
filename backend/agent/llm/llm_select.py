@@ -143,6 +143,12 @@ def _reasoning_persistence_for_model(model) -> str:
     configured_format = str(getattr(model, "api_format", "") or "").strip().lower()
     if configured_format in {"openai", "chat", "chat_completions"}:
         return "off"
+    # 已知 OpenAI-compatible Provider 的空值按 Chat Completions 处理，不再保留
+    # 旧的 Auto/URL 猜测语义；只有未知 Provider 才由协议适配器继续自动判断。
+    provider = (getattr(model, "provider", "") or "").lower()
+    known_openai_providers = {"openai", "qwen", "glm", "glm-coding", "deepseek", "mimo", "ollama", "local"}
+    if not configured_format and provider in known_openai_providers:
+        return "off"
     if (getattr(model, "provider", "") or "").lower() == "ollama" and \
             getattr(model, "ollama_api_mode", "native") == "native":
         return "off"

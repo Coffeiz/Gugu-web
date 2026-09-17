@@ -33,6 +33,9 @@ def test_adapter_for_minimax_m2_vs_m3_cache():
 
 def test_adapter_for_qwen_keeps_known_openai_cache_capability():
     a = adapter_for(_ai(provider="qwen", model="qwen-max"))
+    assert a.protocol_format(_ai(provider="qwen", base_url="https://example.com/anthropic")) == "openai"
+    assert adapter_for(_ai(provider="openai")).protocol_format(
+        _ai(provider="openai", base_url="https://example.com/anthropic")) == "openai"
     assert a.name == "qwen"
     assert a.supports_active_cache("qwen-max")
 

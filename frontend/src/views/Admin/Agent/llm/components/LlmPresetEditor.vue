@@ -238,6 +238,8 @@ function interfaceValue(draft: LlmPresetDraft) {
 }
 function supportsReasoningPersistence(draft: LlmPresetDraft | null) {
   if (!draft) return false
+  // 已知 Provider 的空值按默认协议处理，不再保留旧的 Auto 语义。
+  if (!draft.api_format && openaiProtocolProviders.has(draft.provider)) return false
   const format = interfaceValue(draft)
   if (draft.provider === 'ollama' && format === 'native') return false
   if (openaiProtocolProviders.has(draft.provider)) return format === 'responses' || format === 'anthropic'

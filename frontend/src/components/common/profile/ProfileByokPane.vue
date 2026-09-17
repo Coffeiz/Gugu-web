@@ -16,7 +16,7 @@
               <div class="byok-card-head">
                 <div class="byok-card-main">
                   <div class="byok-name">{{ providerLabel(item.provider) }}<span v-if="item.model"> · {{ item.model }}</span><template v-if="item.capability === 'llm'"><span v-for="dim in visionDims.filter(entry => item[entry.field])" :key="dim.key" class="byok-capability-tag">{{ t(dim.labelKey) }}</span></template></div>
-                  <div class="byok-meta">{{ item.api_format || t('profileByokUi.autoProtocol') }} · {{ item.has_value ? t('profileByokUi.encrypted') : t('profileByokUi.noCredential') }}<template v-if="item.capability === 'llm' && supportsReasoningPersistence(item) && item.reasoning_persistence === 'summary'"> · {{ t('llmExtraUi.reasoningSummary') }}</template><template v-else-if="item.capability === 'llm' && supportsReasoningPersistence(item) && item.reasoning_persistence === 'continuation'"> · {{ t('llmExtraUi.reasoningContinuation') }}</template></div>
+                  <div class="byok-meta">{{ displayInterfaceFor(item) }} · {{ item.has_value ? t('profileByokUi.encrypted') : t('profileByokUi.noCredential') }}<template v-if="item.capability === 'llm' && supportsReasoningPersistence(item) && item.reasoning_persistence === 'summary'"> · {{ t('llmExtraUi.reasoningSummary') }}</template><template v-else-if="item.capability === 'llm' && supportsReasoningPersistence(item) && item.reasoning_persistence === 'continuation'"> · {{ t('llmExtraUi.reasoningContinuation') }}</template></div>
                 </div>
               </div>
               <div class="byok-card-actions">
@@ -153,11 +153,20 @@ function interfaceOptionsFor(draft: Pick<Editor, 'provider'> | null) {
   return openaiProtocolProviders.has(draft.provider) ? openaiInterfaceOptions.value : []
 }
 function defaultInterfaceFor(provider: string) { return provider === 'ollama' ? 'native' : provider === 'mimo' ? 'openai' : 'openai' }
+function displayInterfaceFor(item: Pick<Item, 'provider' | 'api_format'>) {
+  if (item.api_format) return item.api_format
+  if (item.provider === 'anthropic' || item.provider === 'minimax') return 'anthropic'
+  if (item.provider === 'ollama') return 'native'
+  if (openaiProtocolProviders.has(item.provider)) return 'openai'
+  return t('profileByokUi.autoProtocol')
+}
 function interfaceValueFor(draft: Pick<Editor, 'provider' | 'api_format'>) {
   return draft.api_format || defaultInterfaceFor(draft.provider)
 }
 function supportsReasoningPersistence(draft: Pick<Editor, 'provider' | 'api_format'> | null) {
   if (!draft) return false
+  // 已知 Provider 的空值按默认协议处理，不再保留旧的 Auto 语义。
+  if (!draft.api_format && openaiProtocolProviders.has(draft.provider)) return false
   const format = interfaceValueFor(draft)
   if (draft.provider === 'ollama' && format === 'native') return false
   if (openaiProtocolProviders.has(draft.provider)) return format === 'responses' || format === 'anthropic'

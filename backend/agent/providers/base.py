@@ -173,6 +173,13 @@ class ProviderAdapter:
             return "responses" if configured == "openai_responses" else configured
         if self.name in ("anthropic", "minimax"):
             return "anthropic"
+        # 已知 OpenAI-compatible Provider 的空配置代表其固定默认协议。
+        # 不能再从自定义 URL 中猜测协议，否则 Qwen 等 Provider 配置了包含
+        # ``anthropic`` 字样的地址时会被错误切到 Anthropic 请求体。
+        known_openai_providers = {"openai", "qwen", "glm", "glm-coding", "deepseek", "mimo", "ollama", "local"}
+        if self.name in known_openai_providers or \
+                (getattr(ai, "provider", "") or "").lower() in known_openai_providers:
+            return "openai"
         if "anthropic" in (getattr(ai, "base_url", "") or "").lower():
             return "anthropic"
         return "openai"
