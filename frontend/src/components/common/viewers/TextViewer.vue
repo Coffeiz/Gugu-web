@@ -55,7 +55,7 @@ import { filesApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
 import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
-import { usePreviewStore, isPreviewable, isTextMime } from '@/stores/preview'
+import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { resolveRelativeFileLink } from '@/utils/fileLinks'
 
@@ -572,6 +572,50 @@ async function processText(text: string, ext: string) {
   }
 }
 
+// ── md 相对路径图片 → 文件库 blob ─────────────────────────────
+// md 文件经 API 读出，`./docs/assets/x.png` 这类相对 src 只能对着页面 URL 解析
+// （/files/docs/assets/...），必然裂图。这里复用链接解析（resolveRelativeFileLink）
+// 把相对 src 定位到同库兄弟文件，换成 download 端点的 blob URL。
+// 外链（http/https）、协议链接和绝对路径不碰，交给浏览器原行为。
+const mdObjectUrls = new Set<string>()
+
+function releaseMdObjectUrls() {
+  for (const url of mdObjectUrls) URL.revokeObjectURL(url)
+  mdObjectUrls.clear()
+}
+
+async function resolveMdRelativeImages() {
+  const root = mdRoot.value
+  if (!root || !props.fileContext?.id || !isRealFile.value) return
+  if (!filesCache.loaded) await filesCache.load()
+  if (mdRoot.value !== root) return   // 等待期间文件已切走
+  const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+  const token    = localStorage.getItem('user_token') ?? ''
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  releaseMdObjectUrls()
+  for (const img of [...root.querySelectorAll<HTMLImageElement>('img[src]')]) {
+    const src = img.getAttribute('src') || ''
+    if (!src || src.startsWith('#') || src.startsWith('/') || src.startsWith('//')) continue
+    if (/^[a-z][a-z\d+.-]*:/i.test(src)) continue
+    const resolved = resolveRelativeFileLink(
+      src,
+      { folderId: props.fileContext.folderId, projectId: props.fileContext.projectId },
+      filesCache.allFiles,
+      filesCache.allFolders,
+    )
+    if (!resolved || resolved.kind !== 'file' || !isImageExt(resolved.file.ext)) continue
+    try {
+      const res = await fetch(`${BASE_URL}/files/${resolved.file.id}/download`, {
+        headers, credentials: 'include', cache: 'no-cache',
+      })
+      if (!res.ok) continue
+      const url = URL.createObjectURL(await res.blob())
+      mdObjectUrls.add(url)
+      if (img.isConnected) img.src = url
+    } catch { /* 单图加载失败不裂整个预览，也无需提示 */ }
+  }
+}
+
 watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sourceText]) => {
   if (!url && sourceText === null) return
   loading.value   = true
@@ -625,8 +669,12 @@ onMounted(() => {
 })
 
 // 文件加载期间 .tv-scroll 被 loading 分支暂时移出 DOM；等预览节点真正出现后再渲染图表。
+// 相对路径图片的 blob 替换也必须等节点挂载（flush: 'post'）后做，processText 阶段 mdRoot 还是 null。
 watch([mdHtml, loading], ([html, isLoading]) => {
-  if (html && !isLoading) renderMermaidBlocks()
+  if (html && !isLoading) {
+    renderMermaidBlocks()
+    resolveMdRelativeImages()
+  }
 }, { flush: 'post' })
 
 onBeforeUnmount(() => {
@@ -634,6 +682,7 @@ onBeforeUnmount(() => {
   themeObserver = null
   cleanupMermaidInteractions(mdRoot.value)
   mermaidRenderSequence += 1
+  releaseMdObjectUrls()
 })
 </script>
 
