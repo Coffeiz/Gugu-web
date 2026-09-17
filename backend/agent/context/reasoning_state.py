@@ -41,6 +41,7 @@ INVALIDATION_REASONS: frozenset[str] = frozenset(
         "baseline_changed",
         "branch_changed",
         "provider_rejected",
+        "responses_incompatible",
         "manual",
     }
 )

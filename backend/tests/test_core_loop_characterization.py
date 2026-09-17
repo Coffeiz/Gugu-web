@@ -25,6 +25,7 @@ import pytest
 
 import agent.core as core
 import agent.context.compaction as compaction
+from agent.loop_drivers import RoundResult
 from agent.core import (
     LLMRunner, MAX_ROUNDS, MAX_TOOL_CALLS, MAX_VERIFY, MAX_VERIFY_LLM_ROUNDS,
     _FINALIZE_PROMPT, _VERIFY_PROMPT,
@@ -972,6 +973,99 @@ async def test_openai_clean_pass_matches_anthropic(monkeypatch, dispatched):
     assert "核对中" not in text
     assert "get_project" in dispatched
     assert ev["_usage"] == 1 and ev["error"] == 0
+
+
+async def test_responses_failure_falls_back_with_current_tools_and_records_cache(monkeypatch):
+    """Responses 失败后同一轮回退 Chat Completions，不能丢动态工具或提前写缓存。"""
+    import agent.loop_drivers as loop_drivers
+    import agent.providers.openai_responses as responses
+    import app.services.provider_diagnostics as diagnostics
+
+    prepare_calls = []
+    events = []
+
+    class _CapabilityContext:
+        metadata_only = False
+        fixed_adapter = False
+
+        def select_for_messages(self, _messages):
+            return SimpleNamespace(tool_names=("dynamic_tool",))
+
+    class _ReasoningState:
+        def __init__(self):
+            self.failed_reasons = []
+
+        async def prepared(self, _driver, _ctx):
+            return None
+
+        async def failed(self, reason):
+            self.failed_reasons.append(reason)
+
+        async def round_finished(self, *_args):
+            return None
+
+        async def completed(self):
+            return None
+
+    class _ResponsesDriver:
+        api_format = "responses"
+        continuation_available = True
+
+        def prepare(self, tool_names, *_args, **_kwargs):
+            prepare_calls.append(("responses", list(tool_names)))
+            return object(), SimpleNamespace()
+
+        def update_tools(self, *_args, **_kwargs):
+            return None
+
+        async def run_round(self, *_args, **_kwargs):
+            raise responses.ResponsesCompatibilityError(400)
+            yield  # 保持这是一个异步生成器
+
+    class _ChatDriver:
+        api_format = "openai"
+        continuation_available = False
+
+        def prepare(self, tool_names, *_args, **_kwargs):
+            prepare_calls.append(("chat", list(tool_names)))
+            return object(), SimpleNamespace()
+
+        async def run_round(self, *_args, **_kwargs):
+            events.append("chat")
+            yield ("token", "fallback 成功")
+            yield ("done", RoundResult(text="fallback 成功", tool_calls=[], raw=[]))
+
+    recorded = []
+    monkeypatch.setattr(core, "OpenAIResponsesDriver", _ResponsesDriver)
+    monkeypatch.setattr(loop_drivers, "OpenAIDriver", _ChatDriver)
+    monkeypatch.setattr(
+        diagnostics,
+        "record_responses_capability_failure",
+        lambda **kwargs: (events.append("cache"), recorded.append(kwargs)),
+    )
+
+    ai = SimpleNamespace(**AI.__dict__, api_format="responses", context_tokens=1000)
+    runner = LLMRunner(
+        tool_names=["initial_tool"],
+        settings=SimpleNamespace(ai=ai),
+        capability_context=_CapabilityContext(),
+    )
+    state = _ReasoningState()
+    ev, text, errors = await drain(runner._run_responses(
+        "u", "sys", [{"role": "user", "content": "测试"}], ai,
+        reasoning_state=state,
+    ))
+
+    assert text == "fallback 成功"
+    assert errors == []
+    assert ev["error"] == 0
+    assert prepare_calls == [("responses", ["dynamic_tool"]), ("chat", ["dynamic_tool"])]
+    assert state.failed_reasons == ["responses_incompatible"]
+    assert events == ["chat", "cache"]
+    assert recorded == [{
+        "provider": "anthropic", "api_key": "dummy", "base_url": "http://local",
+        "model": "fake", "status": 400,
+    }]
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -72,6 +72,7 @@ async def run_loop(
         ):
             initial_tool_names = list(runner.capability_context.select_for_messages(messages).tool_names)
         initial_tool_names = runner._provider_tool_names(initial_tool_names)
+        current_tool_names = list(initial_tool_names)
         client, ctx = driver.prepare(
             initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
         )
@@ -96,6 +97,7 @@ async def run_loop(
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
         any_tool_called = False
         responses_fallback_used = False
+        pending_responses_capability_failure = None
         narration_retry = decision_retry = intent_retry = colon_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
         guard_retry_pending = False
@@ -467,8 +469,9 @@ async def run_loop(
                     and not getattr(runner.capability_context, "metadata_only", False)
                 ):
                     selected = runner.capability_context.select_for_messages(messages)
+                    current_tool_names = runner._provider_tool_names(list(selected.tool_names))
                     driver.update_tools(
-                        ctx, runner._provider_tool_names(list(selected.tool_names)),
+                        ctx, current_tool_names,
                         tool_snapshot=tool_snapshot,
                     )
                 # 注入 core 命名空间的 _core._stream_round：旧测试 monkeypatch 本模块属性仍生效。
@@ -516,20 +519,15 @@ async def run_loop(
                         ):
                             raise
                         responses_fallback_used = True
-                        from app.services.provider_diagnostics import record_responses_capability_failure
-                        record_responses_capability_failure(
-                            provider=getattr(ai, "provider", "") or "",
-                            api_key=getattr(ai, "api_key", "") or "",
-                            base_url=getattr(ai, "base_url", "") or "",
-                            model=getattr(ai, "model", "") or "",
-                            status=exc.status_code,
-                        )
+                        # 先保留失败信息；只有 fallback 的 Chat Completions 请求成功，
+                        # 才能确认这是 Responses 兼容性问题并污染能力缓存。
+                        pending_responses_capability_failure = exc
                         if reasoning_state is not None:
                             await reasoning_state.failed("responses_incompatible")
                         from agent.loop_drivers import OpenAIDriver
                         driver = OpenAIDriver()
                         client, ctx = driver.prepare(
-                            initial_tool_names, ai, messages, system_text,
+                            current_tool_names, ai, messages, system_text,
                             tool_snapshot=tool_snapshot,
                         )
                         if runner.capability_context is not None:
@@ -538,6 +536,16 @@ async def run_loop(
                             "Responses 完整请求不兼容，当前 run 回退 Chat Completions：status=%s",
                             exc.status_code,
                         )
+                if pending_responses_capability_failure is not None and result is not None:
+                    from app.services.provider_diagnostics import record_responses_capability_failure
+                    record_responses_capability_failure(
+                        provider=getattr(ai, "provider", "") or "",
+                        api_key=getattr(ai, "api_key", "") or "",
+                        base_url=getattr(ai, "base_url", "") or "",
+                        model=getattr(ai, "model", "") or "",
+                        status=pending_responses_capability_failure.status_code,
+                    )
+                    pending_responses_capability_failure = None
             except _core.RetryableError as e:
                 if reasoning_state is not None:
                     await reasoning_state.failed("provider_rejected")
