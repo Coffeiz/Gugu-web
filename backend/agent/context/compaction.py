@@ -532,26 +532,11 @@ def _branch_prefix_history(
     if last_index < 0:   # 调用方传入了非同一批对象：退回旧行为，不猜切片
         return list(compressible_msgs)
     prefix = list(messages[:fixed_prefix_size]) + list(message_history[:last_index + 1])
-    try:
-        from agent.providers import adapter_for
+    # 渲染口径（adapter.render_history + anthropic 消息角色投影）已提炼为共享
+    # helper，反思 append_reuse 分支共用同一出口（PRD-LLM-27 §6.2）。
+    from .prefix_history import render_branch_prefix
 
-        adapter = adapter_for(model_cfg)
-        rendered = list(adapter.render_history(prefix))
-        # anthropic 路由的主 run 在 render_history 之后还会把「消息级 system」投影成
-        # user（见 loop_drivers.AnthropicDriver.run_round）。少了这一步，快照那类
-        # system 消息的角色就和主 run 发过的不一致，前缀从那条消息起整段失配——
-        # 实测同一前缀只换角色：cache_read 3840 → 384。
-        from agent.llm.llm_select import use_anthropic_for
-
-        if use_anthropic_for(model_cfg):
-            from agent.context.provider_history import render_anthropic_message_roles
-
-            rendered = list(render_anthropic_message_roles(rendered, adapter))
-        return rendered
-    except Exception as exc:
-        from app.core.redaction import diag_log
-        diag_log("agent.context.compaction.branch_prefix", exc)
-        return prefix
+    return render_branch_prefix(prefix, model_cfg)
 
 
 def _load_compress_prompt() -> str:

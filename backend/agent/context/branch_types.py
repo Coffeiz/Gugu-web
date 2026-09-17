@@ -10,6 +10,10 @@ from typing import Any, Literal
 
 BranchName = Literal["compaction", "reflection", "knowledge"]
 OutputMode = Literal["text", "json"]
+# standalone：独立分支，带 session_id 时失效主会话 reasoning continuation（既有行为）；
+# append_reuse：只读 sibling branch（PRD-LLM-27 §6.6），复用主会话前缀但不修改
+# 主 continuation——分支响应不作为主会话下一轮的 Responses API 续接。
+BranchMode = Literal["standalone", "append_reuse"]
 
 
 @dataclass(frozen=True)
@@ -35,6 +39,9 @@ class BranchInput:
     # 前缀，缺了它连消息部分都命中不了（实测 100% → 15%）。分支只输出文本、不消费
     # 工具调用，也不要设置 tool_choice——实测那同样会让命中失效。
     tools: tuple[Any, ...] = ()
+    # 状态边界（§6.6）：append_reuse 只读复用主前缀，不得失效主会话 reasoning
+    # continuation；standalone 维持既有「带 session_id 即失效」行为。
+    branch_mode: BranchMode = "standalone"
 
 
 @dataclass(frozen=True)
