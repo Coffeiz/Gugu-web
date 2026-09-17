@@ -29,19 +29,12 @@
             </div>
 
             <InterfaceTypeSelect
-              v-if="draft.provider === 'mimo'"
+              v-if="interfaceOptionsFor(draft).length"
               :label="t('adminLlmUi.interfaceFormat')"
-              :model-value="String(draft.api_format || 'openai')"
-              :options="apiFormats"
-              :hint="t('llmExtraUi.multimodalHint')"
-              @update:model-value="$emit('pick-api-format', String($event))"
-            />
-            <InterfaceTypeSelect
-              v-else-if="draft.provider === 'ollama'"
-              :label="t('adminLlmUi.interfaceFormat')"
-              :model-value="String(draft.ollama_api_mode || 'native')"
-              :options="ollamaInterfaceOptions"
-              @update:model-value="draft.ollama_api_mode = String($event)"
+              :model-value="interfaceValue(draft)"
+              :options="interfaceOptionsFor(draft)"
+              :hint="draft.provider === 'mimo' ? t('llmExtraUi.multimodalHint') : undefined"
+              @update:model-value="pickInterface(draft, String($event))"
             />
 
             <div class="modal-field">
@@ -224,10 +217,34 @@ const childProviderOptions = computed(() => {
   const provider = providerGroups.value.find(item => item.key === props.draft?.provider)
   return (provider?.children || []).map(child => ({ key: child.key, label: child.label }))
 })
-const ollamaInterfaceOptions = [
+const openaiProtocolProviders = new Set(['openai', 'qwen', 'glm', 'deepseek', 'mimo', 'ollama', 'local'])
+const openaiInterfaceOptions = computed(() => [
+  { key: 'openai', label: t('adminAgentUi.formatOpenai') },
+  { key: 'responses', label: t('adminAgentUi.formatResponses') },
+])
+const ollamaInterfaceOptions = computed(() => [
   { key: 'native', label: t('adminAgentUi.ollamaNative') },
-  { key: 'openai', label: t('adminAgentUi.providerOpenai') },
-]
+  ...openaiInterfaceOptions.value,
+])
+function interfaceOptionsFor(draft: LlmPresetDraft | null) {
+  if (!draft) return []
+  if (draft.provider === 'ollama') return ollamaInterfaceOptions.value
+  if (draft.provider === 'mimo') return props.apiFormats
+  return openaiProtocolProviders.has(draft.provider) ? openaiInterfaceOptions.value : []
+}
+function interfaceValue(draft: LlmPresetDraft) {
+  if (draft.provider === 'ollama' && (draft.ollama_api_mode || 'native') === 'native') return 'native'
+  return String(draft.api_format || 'openai')
+}
+function pickInterface(draft: LlmPresetDraft, value: string) {
+  if (draft.provider === 'ollama') {
+    draft.ollama_api_mode = value === 'native' ? 'native' : 'openai'
+    draft.api_format = value === 'native' ? '' : value
+    return
+  }
+  draft.api_format = value
+  $emit('pick-api-format', value)
+}
 const reasoningPersistenceOptions = computed(() => [
   { key: 'off', label: t('llmExtraUi.reasoningOff') },
   { key: 'summary', label: t('llmExtraUi.reasoningSummary') },

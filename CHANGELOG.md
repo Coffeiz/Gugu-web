@@ -5,6 +5,13 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.1] - 2026-09-17
+
+### 改进
+
+- **OpenAI 接口格式可显式选择**：OpenAI、Qwen、GLM、DeepSeek、MiMo、Ollama 兼容模式和本地兼容服务支持在模型配置中选择 Chat Completions 或 Responses；Ollama 原生与 MiMo Anthropic 兼容模式继续保留。
+- **Responses API 驱动与兼容回退**：Responses 模式改用 OpenAI SDK 的 Responses 流式接口，支持工具调用和 response chain；第三方兼容服务不支持完整 Responses 协议时自动回退 Chat Completions，修复最小探测成功但实际 Agent 请求失败的问题（[#73](https://github.com/Coffeiz/Gugu-web/issues/73)）。
+
 ## [1.3.0] - 2026-09-17
 
 ### 新功能

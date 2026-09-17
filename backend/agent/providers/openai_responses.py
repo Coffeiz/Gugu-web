@@ -15,6 +15,20 @@ from typing import Any
 from agent.providers.message_utils import _openai_tool_result
 
 
+class ResponsesCompatibilityError(RuntimeError):
+    """完整 Responses 请求被兼容服务以协议错误拒绝。"""
+
+    def __init__(self, status_code: int):
+        self.status_code = int(status_code)
+        super().__init__(f"Responses 协议不兼容：HTTP {self.status_code}")
+
+
+def _raise_if_responses_compatibility_error(exc: Exception) -> None:
+    status_code = getattr(exc, "status_code", None)
+    if status_code in {400, 404, 405, 415, 422, 501}:
+        raise ResponsesCompatibilityError(status_code) from exc
+
+
 # OpenAI Responses（独立于 Chat Completions 的 response chain）
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -147,8 +161,12 @@ class OpenAIResponsesDriver:
         # 时才关闭存储。该值会随 reasoning config fingerprint 参与状态匹配。
         request["store"] = bool(getattr(ctx.ai, "store", True))
 
-        stream = await client.responses.create(**{key: value for key, value in request.items()
-                                                  if value is not None})
+        try:
+            stream = await client.responses.create(**{key: value for key, value in request.items()
+                                                      if value is not None})
+        except Exception as exc:
+            _raise_if_responses_compatibility_error(exc)
+            raise
         content = ""
         response_id = None
         previous_response_id = ctx.previous_response_id
@@ -192,6 +210,9 @@ class OpenAIResponsesDriver:
                             if isinstance(item, dict):
                                 key = str(item.get("id") or item.get("call_id") or len(output_items))
                                 output_items[key] = copy.deepcopy(item)
+        except Exception as exc:
+            _raise_if_responses_compatibility_error(exc)
+            raise
         finally:
             try:
                 await stream.close()
