@@ -26,6 +26,7 @@ _bg_tasks: set = set()
 # 感知遥测/误判 日志（与 agent.traj 同套：靠 logging 配置落 gugu.log / Debug 面板；脱敏，不写用户原文）
 _perc_log = logging.getLogger("agent.perc")
 _memdiff_log = logging.getLogger("agent.memdiff")
+_log = logging.getLogger("agent.memory.reflection")
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
@@ -325,6 +326,14 @@ async def _drain_owner_reflection_buffer(user_id, settings) -> None:
             return
         rows = [json.loads(raw) for raw in raw_rows]
         await redis.delete(key)
+        # §6.1 拓扑：快照只存捕获进程；本进程内联冲刷能窥到，worker 扫描查无
+        # 即 standalone，快照缺失不阻断反思。
+        snapshot = None
+        try:
+            from agent.context.reflection_snapshot import peek_reflection_snapshot
+            snapshot = peek_reflection_snapshot(user_id, rows[-1].get("session_id"))
+        except Exception:
+            snapshot = None
         ok = await reflect(
             user_id,
             rows[-1].get("user_name", ""),
@@ -333,6 +342,7 @@ async def _drain_owner_reflection_buffer(user_id, settings) -> None:
             settings,
             session_id=rows[-1].get("session_id"),
             turns=rows,
+            snapshot=snapshot,
         )
         if not ok:
             raise RuntimeError("owner_reflection_failed")
@@ -387,6 +397,14 @@ async def _drain_group_owner_buffer(user_id, settings) -> None:
         rows = [json.loads(raw) for raw in raw_rows]
         await redis.delete(_owner_group_buffer_key(user_id))
         await redis.zrem(_GROUP_OWNER_IDLE_KEY, str(user_id))
+        # §6.5：群主回合的 append_reuse 走同一资格门；worker 扫描（15 分钟 idle
+        # 收束）进程内查无快照，自动回落独立批处理。
+        snapshot = None
+        try:
+            from agent.context.reflection_snapshot import peek_reflection_snapshot
+            snapshot = peek_reflection_snapshot(user_id, rows[-1].get("session_id"))
+        except Exception:
+            snapshot = None
         ok = await reflect(
             user_id,
             rows[-1].get("user_name", ""),
@@ -395,6 +413,7 @@ async def _drain_group_owner_buffer(user_id, settings) -> None:
             settings,
             session_id=rows[-1].get("session_id"),
             turns=rows,
+            snapshot=snapshot,
         )
         if not ok:
             raise RuntimeError("owner_group_reflection_failed")
@@ -507,7 +526,7 @@ async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
 
 
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None,
-                  turns=None) -> bool:
+                  turns=None, snapshot=None) -> bool:
     out = None
     bound_model = None
     turns = turns or [{
@@ -524,8 +543,18 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         bound_model = await _bind_user_model(user_id, settings, session_id)
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
-        out = await _extract(user_name, user_msg, assistant_reply, mem["profile"], mem["pattern"], existing_summary,
-                             settings, prev_turn=prev_turn)
+        # §6.3/§6.7 资格门：快照 + 单 session 缓冲 + 能力白名单 + 模型身份一致，
+        # 全满足才走 append_reuse；否则独立提取，业务结果不受影响。
+        use_append, append_reason = _append_reuse_decision(snapshot, turns, settings, bound_model)
+        _log.info("[reflection] mode=%s reason=%s session=%s turns=%d",
+                  "append_reuse" if use_append else "standalone", append_reason,
+                  session_id, len(turns))
+        if use_append:
+            out = await _extract_append(snapshot, user_name, turns, mem["profile"], mem["pattern"],
+                                        existing_summary, settings, prev_turn=prev_turn)
+        else:
+            out = await _extract(user_name, user_msg, assistant_reply, mem["profile"], mem["pattern"],
+                                 existing_summary, settings, prev_turn=prev_turn)
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.memory.reflection.model_binding", exc)
@@ -638,9 +667,21 @@ def _explicit_knowledge_request(text: str) -> bool:
     return any(marker in (text or "") for marker in markers)
 
 
-async def _extract(user_name, user_msg, assistant_reply, existing_profile, existing_pattern, existing_summary,
-                   settings, prev_turn: dict | None = None) -> dict:
-    # 上一轮（判 feedback 的对照物）:有才注入,没有则 prompt 里已说明「没给上一轮 → 无信号」
+# 两条提取路径（standalone / append_reuse）共用的任务要求与存量上下文块：
+# 提示词单一份来源，防止两份副本漂移（PRD-LLM-27 Phase 4 清理规则的前置纪律）。
+_TASK_REQUIREMENTS = (
+    "请只报本轮 profile 的增删（profile_add 对象数组，type 只能是 name/address/pronoun/background/preference/note；profile_remove 字符串数组）"
+    "+ 本轮 pattern 的增删（pattern_add / pattern_remove，pattern_add 带 kind/importance）"
+    "——没变动就都给空数组、别重列旧内容"
+    "+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
+    "+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
+    "+ knowledge_candidate（明确、可复用的事实/规则、已验证的工具效率经验，或 owner 明确提供/确认的非敏感人物关系与人物资料才标 true，并给一个用于 Knowledge RAG 的短查询；单次工具调用、owner 画像/习惯、猜测、转述和敏感个人信息标 false）。"
+)
+
+
+def _reflection_context_block(existing_profile, existing_pattern, existing_summary,
+                              prev_turn: dict | None) -> str:
+    """日期 + 存量画像/模式/快照 + 上一轮：两条提取路径共用同一份组装。"""
     prev_part = ""
     if prev_turn:
         prev_part = (f"【上一轮】\n用户：{prev_turn.get('u', '')}\n咕咕：{prev_turn.get('a', '')}\n\n")
@@ -649,19 +690,21 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
     from app.core.tz import local_now
     _now = local_now()
     now_str = f"{_now.strftime('%Y-%m-%d')}（星期{'一二三四五六日'[_now.weekday()]}）{_now.strftime('%H:%M')}"
-    user = (
+    return (
         f"现在是 {now_str}。\n\n"
         f"已知的用户画像：\n{existing_profile or '（暂无）'}\n\n"
         f"已知的行为模式：\n{existing_pattern or '（暂无）'}\n\n"
         f"当前状态快照：\n{existing_summary or '（暂无）'}\n\n"
         f"{prev_part}"
-        f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
-        f"请只报本轮 profile 的增删（profile_add 对象数组，type 只能是 name/address/pronoun/background/preference/note；profile_remove 字符串数组）"
-        f"+ 本轮 pattern 的增删（pattern_add / pattern_remove，pattern_add 带 kind/importance）"
-        f"——没变动就都给空数组、别重列旧内容"
-        f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
-        f"+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
-        f"+ knowledge_candidate（明确、可复用的事实/规则、已验证的工具效率经验，或 owner 明确提供/确认的非敏感人物关系与人物资料才标 true，并给一个用于 Knowledge RAG 的短查询；单次工具调用、owner 画像/习惯、猜测、转述和敏感个人信息标 false）。"
+    )
+
+
+async def _extract(user_name, user_msg, assistant_reply, existing_profile, existing_pattern, existing_summary,
+                   settings, prev_turn: dict | None = None) -> dict:
+    user = (
+        _reflection_context_block(existing_profile, existing_pattern, existing_summary, prev_turn)
+        + f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
+        + _TASK_REQUIREMENTS
     )
     # 2b：反思只吐 profile/pattern 的增删（delta）+ daily/summary/perception，输出体量**不再随存量增长**，
     # 根治了「pattern 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
@@ -677,6 +720,83 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
             # 反思只提取小型结构化增量，不需要推理链。若继承当前模型的 adaptive
             # thinking，900 token 很容易被思考预算耗尽而没有最终 JSON，导致 pattern
             # 增量被 ContextBranch 判为 output_empty。
+            thinking="disabled",
+        ),
+        settings,
+    )
+    return result.output if result.ok and isinstance(result.output, dict) else {}
+
+
+def _append_reuse_decision(snapshot, turns, settings, bound_model) -> tuple[bool, str]:
+    """append_reuse 资格门（PRD-LLM-27 §6.3/§6.7）：任一不满足即回落 standalone。
+
+    - 快照存在（进程内登记；worker 扫描路径查无 → no_snapshot）；
+    - 反思缓冲单 session 且与快照同 session（跨 session 缓冲不强行拼接）；
+    - provider/模型在前缀缓存能力白名单内（第一关，无缓存 provider 走追加
+      式反而放大成本）；
+    - 反思实际使用的模型（BYOK 绑定结果）与捕获快照时的模型身份一致
+      （provider 切换后旧前缀必然失配）。
+    """
+    if snapshot is None:
+        return False, "no_snapshot"
+    if not turns:
+        return False, "no_turns"
+    last_sid = turns[-1].get("session_id")
+    if last_sid is None or snapshot.session_id != last_sid:
+        return False, "session_mismatch"
+    if any(t.get("session_id") != last_sid for t in turns):
+        return False, "buffer_spans_sessions"
+    from agent.context.cache_capability import prefix_cache_capable
+    from agent.context.reflection_snapshot import model_identity
+    if not prefix_cache_capable(snapshot.ai, settings):
+        return False, "provider_not_capable"
+    if bound_model is not None and model_identity(snapshot.ai) != model_identity(bound_model):
+        return False, "provider_switched"
+    return True, "eligible"
+
+
+async def _extract_append(snapshot, user_name, turns, existing_profile, existing_pattern,
+                          existing_summary, settings, prev_turn: dict | None = None) -> dict:
+    """append_reuse 提取（§6.2/§6.3）：复用主会话前缀，任务内容只出现在末尾。
+
+    - 前缀 = 快照 history（canonical 形态）经共享 helper 渲染成 wire 形态，
+      渲染与主 run 口径一致；delta 走 BranchInput 增量语义，不触碰 canonical
+      簿记（batch 封存/digest/sync_backing）；
+    - 专用规则（reflection.md）与存量画像/模式/快照不在主会话历史里，按 §6.2
+      全部进末尾任务消息；待反思回合用队列载荷的组装前原文标记引用，历史仅
+      用于理解指代，不为历史内容新建记忆；
+    - 输出 schema 与 _extract 完全一致（同一份 _TASK_REQUIREMENTS，无副本）。
+    """
+    from agent.context.prefix_history import render_branch_prefix
+
+    turns_block = "\n\n".join(
+        f"【回合 {index}】\n用户({row.get('user_name') or user_name})：{row.get('user_msg', '')}\n咕咕：{row.get('assistant_reply', '')}"
+        for index, row in enumerate(turns, 1)
+    )
+    user = (
+        "【内部记忆反思任务——本消息不属于对话内容，请勿回应】\n"
+        f"{_load_sys()}\n\n"
+        + _reflection_context_block(existing_profile, existing_pattern, existing_summary, prev_turn)
+        + "【待反思回合（只从这些回合提取；上面的会话历史仅用于理解指代，不要为历史内容新建记忆）】\n"
+        + f"{turns_block}\n\n"
+        + _TASK_REQUIREMENTS
+    )
+    _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
+    result = await ContextBranch().run(
+        BranchInput(
+            stable_system=snapshot.system_prompt,
+            delta=user,
+            scope="owner",
+            run_id=snapshot.run_id,
+            history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
+            tools=tuple(snapshot.tools),
+            branch_mode="append_reuse",
+        ),
+        BranchPolicy(
+            name="reflection",
+            output_mode="json",
+            max_tokens=min(_cap, 900),
+            max_retries=0,
             thinking="disabled",
         ),
         settings,

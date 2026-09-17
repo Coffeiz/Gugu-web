@@ -62,6 +62,9 @@ class ContextBranch:
         validated_ok = False
         error_type = "-"
         error_status = "-"
+        # append_reuse 的实际缓存观测（PRD-LLM-27 §6.7）：provider 归一化 usage
+        # 经旁路收集，成功后喂 ReuseMissTracker 驱动运行中摘出；不改返回契约。
+        usage_sink: list = []
         try:
             for attempts in range(1, max(0, policy.max_retries) + 2):
                 if attempts > 1:
@@ -79,6 +82,7 @@ class ContextBranch:
                             max_tokens=policy.max_tokens,
                             json_mode=policy.output_mode != "text",
                             tools=list(branch_input.tools) or None,
+                            usage_sink=usage_sink,
                         )
                         ok = bool(str(output or "").strip()) and (
                             not isinstance(output, dict) or bool(output))
@@ -122,6 +126,16 @@ class ContextBranch:
                     scenario=_prev_usage_ctx.scenario)
 
         output_fp = _fingerprint(output) if output else None
+        if branch_input.branch_mode == "append_reuse" and usage_sink:
+            usage = usage_sink[-1]
+            try:
+                from agent.llm.modelctx import effective_ai
+                from .cache_capability import record_reuse_outcome
+
+                record_reuse_outcome(effective_ai(settings),
+                                     cache_hit=bool(usage.get("cache_read")))
+            except Exception:
+                pass
         result = BranchResult(
             ok=validated_ok,
             output=output if validated_ok else None,
@@ -129,6 +143,7 @@ class ContextBranch:
             attempts=attempts,
             input_fingerprint=input_fp,
             output_fingerprint=output_fp,
+            provider_usage=(usage_sink[-1] if usage_sink else None),
             metadata={
                 "branch": policy.name,
                 "branch_mode": branch_input.branch_mode,

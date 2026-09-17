@@ -90,3 +90,10 @@ class ReuseMissTracker:
 
 
 _miss_tracker = ReuseMissTracker()
+
+
+def record_reuse_outcome(ai: Any, *, cache_hit: bool) -> None:
+    """喂真实观测（Phase 2 接入）：append_reuse 分支按 provider 返回的
+    cache_read 记 hit/miss，驱动运行中自动摘出（§6.7）。"""
+    _miss_tracker.record(ai, cache_hit=cache_hit)
+
