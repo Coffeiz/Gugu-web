@@ -545,14 +545,8 @@ async def run_loop(
                             exc.status_code,
                         )
                 if pending_responses_capability_failure is not None and result is not None:
-                    from app.services.provider_diagnostics import record_responses_capability_failure
-                    record_responses_capability_failure(
-                        provider=getattr(ai, "provider", "") or "",
-                        api_key=getattr(ai, "api_key", "") or "",
-                        base_url=getattr(ai, "base_url", "") or "",
-                        model=getattr(ai, "model", "") or "",
-                        status=pending_responses_capability_failure.status_code,
-                    )
+                    # 兼容性回退只在本次 run 内生效；不再写回任何能力探测缓存
+                    # （Chat API 下的自动协议切换已随推理接续策略一并移除）。
                     pending_responses_capability_failure = None
             except _core.RetryableError as e:
                 if reasoning_state is not None:

@@ -314,7 +314,6 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
             sent_at=user_message.sent_at, user_message=user_message,
             session=session, history_stats=history_stats, model_cfg=model_cfg,
-            reasoning_notice=run_config.reasoning_notice,
             locale=current_locale,
             strip_thinking=strip_thinking,
             owner_run_id=owner_run_id,
@@ -334,7 +333,6 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
         sent_at=user_message.sent_at, user_message=user_message,
         session=session, history_stats=history_stats, model_cfg=model_cfg,
-        reasoning_notice=run_config.reasoning_notice,
         locale=current_locale,
         strip_thinking=strip_thinking,
         owner_run_id=owner_run_id,
@@ -549,7 +547,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
                     history_stats=None, model_cfg=None, locale=None,
-                    owner_run_id=None, reasoning_notice=None) -> None:
+                    owner_run_id=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -577,10 +575,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     modelctx.mark_user_scope()
     run_config = resolve_run_config(settings, req) if model_cfg is None else None
     model_cfg = model_cfg or run_config.model
-    if reasoning_notice is None and run_config is not None:
-        reasoning_notice = run_config.reasoning_notice
-    if reasoning_notice:
-        await _pub({"type": "notice", "message": reasoning_notice})
     import app.db.session as _sess
 
     system_prompt = snapshot["system_prompt"]
@@ -1026,7 +1020,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
                     history_stats=None, model_cfg=None, locale=None,
-                    owner_run_id=None, reasoning_notice=None,
+                    owner_run_id=None,
                     begin_after_gate: bool = False) -> None:
     """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。
 
@@ -1095,7 +1089,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 user_tz=user_tz, sent_at=sent_at, user_message=user_message,
                 resume_interaction=resume_interaction, strip_thinking=strip_thinking,
                 session=session, history_stats=history_stats, model_cfg=model_cfg,
-                reasoning_notice=reasoning_notice,
                 locale=locale,
                 owner_run_id=claimed_owner_run_id or owner_run_id,
             )

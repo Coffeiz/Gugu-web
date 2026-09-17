@@ -975,7 +975,7 @@ async def test_openai_clean_pass_matches_anthropic(monkeypatch, dispatched):
     assert ev["_usage"] == 1 and ev["error"] == 0
 
 
-async def test_responses_failure_falls_back_with_current_tools_and_records_cache(monkeypatch):
+async def test_responses_failure_falls_back_with_current_tools(monkeypatch):
     """Responses 失败后同一轮回退 Chat Completions，不能丢动态工具或提前写缓存。"""
     import agent.loop_drivers as loop_drivers
     import agent.providers.openai_responses as responses
@@ -1035,14 +1035,8 @@ async def test_responses_failure_falls_back_with_current_tools_and_records_cache
             yield ("token", "fallback 成功")
             yield ("done", RoundResult(text="fallback 成功", tool_calls=[], raw=[]))
 
-    recorded = []
     monkeypatch.setattr(core, "OpenAIResponsesDriver", _ResponsesDriver)
     monkeypatch.setattr(loop_drivers, "OpenAIDriver", _ChatDriver)
-    monkeypatch.setattr(
-        diagnostics,
-        "record_responses_capability_failure",
-        lambda **kwargs: (events.append("cache"), recorded.append(kwargs)),
-    )
 
     ai = SimpleNamespace(**AI.__dict__, api_format="responses", context_tokens=1000)
     runner = LLMRunner(
@@ -1061,11 +1055,7 @@ async def test_responses_failure_falls_back_with_current_tools_and_records_cache
     assert ev["error"] == 0
     assert prepare_calls == [("responses", ["dynamic_tool"]), ("chat", ["dynamic_tool"])]
     assert state.failed_reasons == ["responses_incompatible"]
-    assert events == ["chat", "cache"]
-    assert recorded == [{
-        "provider": "anthropic", "api_key": "dummy", "base_url": "http://local",
-        "model": "fake", "status": 400,
-    }]
+    assert events == ["chat"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
