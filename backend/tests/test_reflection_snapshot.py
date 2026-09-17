@@ -139,8 +139,9 @@ def test_prefix_cache_capable_defaults():
     assert prefix_cache_capable(_ai("deepseek"))
     assert prefix_cache_capable(_ai("openai"))
     assert prefix_cache_capable(_ai("anthropic"))
-    # 实测不跨调用缓存的 provider 与未知 provider 默认关闭（保守侧）
-    assert not prefix_cache_capable(_ai("minimax"))
+    # MiniMax-M3 经 2026-09-18 AB 实测跨调用命中 ~80%（带显式 cache_control），已准入
+    assert prefix_cache_capable(_ai("minimax"))
+    # 未实测确认与未知 provider 默认关闭（保守侧）
     assert not prefix_cache_capable(_ai("qwen"))
     assert not prefix_cache_capable(_ai("new-provider"))
 
