@@ -273,11 +273,11 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [x] 保持原 Memory writer、事件、锁、重试和失败语义：`reflect()` 下游未动，drains 回滚逻辑未动；append 模式矛盾检测开放完整历史（remove-only，`_APPEND_HISTORY_DIRECTIVE`），新增仍限待反思回合（devserver 验证 remove 零误报、新增未抑制）。
 - [x] LoopScope 主 run/branch 关联：branch metadata 与日志带 branch_mode + source run_id + session；provider A/B 验证完成（`docs/reports/OPT-Cache-Strategy-LLM27-AB-*.md`：append 79.7% vs standalone 3.1%，MiniMax-M3 BYOK 真实配置 3 触发）。
 
-### Phase 3：Knowledge 反思
+### Phase 3：Knowledge 反思（已完成，2026-09-18）
 
-- [ ] Knowledge 候选触发后复用同一主会话快照。
-- [ ] 保持 Knowledge RAG 候选、操作校验、写入和索引事件不变。
-- [ ] 验证 Memory/Knowledge sibling branch 不互相污染上下文。
+- [x] Knowledge 候选触发后复用同一主会话快照：`reflect_if_candidate(snapshot=)`——Memory 资格门通过时作为 sibling branch 复用同一前缀（同渲染出口/tools/branch_mode=append_reuse/run_id 关联）；快照缺失、会话不一致、provider 切换、能力不满足一律回落独立分支。
+- [x] 保持 Knowledge RAG 候选、操作校验、写入和索引事件不变：search_knowledge→normalize_operations→KnowledgeStore 写入→RagIndexUpdated 链路未动。
+- [x] 验证 Memory/Knowledge sibling branch 不互相污染上下文：Memory JSON 输出只用于 candidate_request 判定，从不进入 Knowledge 分支 delta/system（测试以 marker 锚定）；Knowledge delta 带专用规则 + 完整历史边界指令（operations 只针对输入 JSON 的待反思回合与候选）。
 
 ### Phase 4：批处理与上线收口
 
