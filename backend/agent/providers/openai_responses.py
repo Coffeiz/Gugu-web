@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent.context.budget import is_context_overflow_error
+from agent.context.canonical_context import digest
 from agent.providers.message_utils import _openai_tool_result
 
 
@@ -91,6 +92,9 @@ class _ResponsesCtx:
     previous_response_id: str | None = None
     tool_state_digest: str = ""
     supports_active_cache: bool = False
+    base_instructions: str | None = None
+    snapshot_instructions: str | None = None
+    supports_prompt_cache_key: bool = False
 
 
 @dataclass
@@ -151,14 +155,16 @@ def _responses_input(messages: list[dict]) -> list[dict]:
     return items
 
 
-def _responses_instructions(messages: list[dict], system_text: str | None) -> str | None:
+def _responses_instruction_parts(
+    messages: list[dict], system_text: str | None,
+) -> tuple[str | None, str | None, str | None]:
     """合并稳定 system prompt 与 snapshot system 消息。
 
     Responses 的 ``input`` 投影不发送 system 消息；基础 system prompt 由
     ``instructions`` 承载，而 session snapshot 也使用 system role。若只传基础
     prompt，snapshot 会静默丢失；若把 snapshot 改成 user，又会破坏内部上下文边界。
     """
-    parts = [str(system_text).strip()] if system_text and str(system_text).strip() else []
+    base = str(system_text).strip() if system_text and str(system_text).strip() else None
     system_messages = [
         str(message.get("content") or "").strip()
         for message in messages
@@ -168,10 +174,38 @@ def _responses_instructions(messages: list[dict], system_text: str | None) -> st
     ]
     # goal mode 等运行时策略可能追加在 system_text 后面；只要首条消息是
     # instructions 的稳定前缀，就视为已经由调用方传入，避免重复拼接。
-    if parts and system_messages and parts[0].startswith(system_messages[0]):
+    if base and system_messages and base.startswith(system_messages[0]):
         system_messages.pop(0)
-    parts.extend(system_messages)
-    return "\n\n---\n\n".join(parts) or None
+    snapshot = "\n\n---\n\n".join(system_messages) or None
+    instructions = "\n\n---\n\n".join(
+        part for part in (base, snapshot) if part
+    ) or None
+    return base, snapshot, instructions
+
+
+def _responses_instructions(messages: list[dict], system_text: str | None) -> str | None:
+    """返回 Responses 请求使用的完整 instructions，保留旧调用方接口。"""
+    return _responses_instruction_parts(messages, system_text)[2]
+
+
+def _tool_state_digest(tools: list[dict]) -> str:
+    return digest(tools)
+
+
+def _set_tools(ctx: _ResponsesCtx, tools: list[dict]) -> None:
+    ctx.tools = tools
+    ctx.tool_state_digest = _tool_state_digest(tools)
+
+
+def _responses_prompt_cache_key(ctx: _ResponsesCtx) -> str | None:
+    if not ctx.supports_prompt_cache_key:
+        return None
+    cache_key_material = {
+        "model": ctx.model,
+        "base_instructions": ctx.base_instructions or ctx.instructions or "",
+        "tool_state_digest": ctx.tool_state_digest,
+    }
+    return "gugu-" + digest(cache_key_material, length=32)
 
 
 class OpenAIResponsesDriver:
@@ -192,20 +226,24 @@ class OpenAIResponsesDriver:
         chat_tools = schema_source.openai_schemas(tool_names)
         tools = _responses_tools(chat_tools)
         adapter = providers.adapter_for(ai)
+        base_instructions, snapshot_instructions, instructions = _responses_instruction_parts(
+            messages, system_text,
+        )
         return client, _ResponsesCtx(
             tools=tools, max_output_tokens=ai.max_tokens, model=ai.model,
-            instructions=_responses_instructions(messages, system_text),
+            instructions=instructions,
             adapter=adapter, ai=ai,
             supports_active_cache=adapter.supports_active_cache(ai.model),
-            tool_state_digest=hashlib.sha256(json.dumps(
-                tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")).hexdigest()[:16],
+            tool_state_digest=_tool_state_digest(tools),
+            base_instructions=base_instructions,
+            snapshot_instructions=snapshot_instructions,
+            supports_prompt_cache_key=adapter.supports_responses_prompt_cache_key(ai),
         )
 
     def update_tools(self, ctx, tool_names: list[str], tool_snapshot=None) -> None:
         from agent.tools import registry
         schema_source = tool_snapshot or registry.snapshot()
-        ctx.tools = _responses_tools(schema_source.openai_schemas(tool_names))
+        _set_tools(ctx, _responses_tools(schema_source.openai_schemas(tool_names)))
 
     async def run_round(self, client, ctx, messages, stream_round=None):
         # stream_round 仅 AnthropicDriver 使用；本驱动接收并忽略，保持统一调用签名。
@@ -238,14 +276,9 @@ class OpenAIResponsesDriver:
         request["store"] = bool(getattr(ctx.ai, "store", True))
         # Responses 的自动前缀缓存需要稳定的路由 key 才能跨 run 复用；key
         # 只由实际固定前缀身份组成，不包含本轮用户消息或动态工具结果。
-        cache_key_material = json.dumps({
-            "model": ctx.model,
-            "instructions": ctx.instructions or "",
-            "tool_state_digest": ctx.tool_state_digest,
-        }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        request["prompt_cache_key"] = (
-            "gugu-" + hashlib.sha256(cache_key_material.encode("utf-8")).hexdigest()[:32]
-        )
+        prompt_cache_key = _responses_prompt_cache_key(ctx)
+        if prompt_cache_key:
+            request["prompt_cache_key"] = prompt_cache_key
 
         wire_request = {key: value for key, value in request.items() if value is not None}
         try:

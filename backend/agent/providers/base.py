@@ -49,6 +49,10 @@ class ProviderAdapter:
     def supports_active_cache(self, model: str = "") -> bool:
         return self.capabilities(model).cache_mode == "active"
 
+    def supports_responses_prompt_cache_key(self, ai) -> bool:
+        """是否确认支持 Responses 的 ``prompt_cache_key`` 请求字段。"""
+        return False
+
     def supports_explicit_cache(self, model: str = "") -> bool:
         """是否在 OpenAI-compatible 请求中尝试发送显式缓存锚点。
 

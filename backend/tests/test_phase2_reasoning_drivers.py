@@ -13,6 +13,7 @@ from agent.providers.openai_responses import (
     ResponsesCompatibilityError,
     _ResponsesCtx,
     _ResponsesRaw,
+    _responses_prompt_cache_key,
     _responses_instructions,
 )
 from agent.usage import normalize_responses_usage
@@ -58,6 +59,33 @@ def test_responses_instructions_keep_snapshot_separate_from_base_prompt():
     ], "基础人格")
 
     assert instructions == "基础人格\n\n---\n\n[system-reminder]\nsession snapshot"
+
+
+def test_responses_cache_key_parts_exclude_snapshot():
+    from agent.providers.openai_responses import _responses_instruction_parts
+
+    base, snapshot, instructions = _responses_instruction_parts([
+        {"role": "system", "content": "基础人格"},
+        {"role": "system", "content": "[system-reminder]\n快照"},
+    ], "基础人格")
+
+    assert base == "基础人格"
+    assert snapshot == "[system-reminder]\n快照"
+    assert instructions == "基础人格\n\n---\n\n[system-reminder]\n快照"
+
+
+def test_responses_prompt_cache_key_ignores_snapshot_content():
+    ctx = _ResponsesCtx(
+        [], 100, "gpt-test", "基础人格\n\n---\n\n旧快照", SimpleNamespace(),
+        SimpleNamespace(), base_instructions="基础人格",
+        snapshot_instructions="旧快照", supports_prompt_cache_key=True,
+    )
+
+    first = _responses_prompt_cache_key(ctx)
+    ctx.instructions = "基础人格\n\n---\n\n新快照"
+    ctx.snapshot_instructions = "新快照"
+
+    assert _responses_prompt_cache_key(ctx) == first
 
 
 def test_responses_usage_normalizes_cached_input_tokens():
@@ -160,6 +188,7 @@ async def test_responses_driver_retries_full_history_when_tool_call_chain_is_sta
     assert result.text == "已继续"
     assert len(client.requests) == 2
     assert client.requests[0]["previous_response_id"] == "resp-1"
+    assert "prompt_cache_key" not in client.requests[0]
     assert "previous_response_id" not in client.requests[1]
     assert client.requests[1]["input"] == [
         {"type": "function_call", "call_id": "call-1", "name": "ask_user", "arguments": "{}"},
@@ -190,7 +219,10 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
     adapter = SimpleNamespace(render_history=lambda messages: list(messages))
-    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
+    ctx = _ResponsesCtx(
+        [], 100, "gpt-test", "system", adapter, ai,
+        supports_prompt_cache_key=True,
+    )
 
     result = None
     async for kind, value in driver.run_round(client, ctx, [
@@ -216,6 +248,25 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
 
     followup = driver.build_tool_round(result, [(result.tool_calls[0], "日历为空")])
     assert followup[1] == {"role": "tool", "tool_call_id": "call-1", "content": "日历为空"}
+
+
+def test_responses_update_tools_refreshes_tool_state_digest():
+    class Source:
+        @staticmethod
+        def openai_schemas(names):
+            return [{"function": {"name": name, "parameters": {"type": "object"}}} for name in names]
+
+    driver = OpenAIResponsesDriver()
+    ctx = _ResponsesCtx(
+        [{"type": "function", "name": "old", "parameters": {"type": "object"}}],
+        100, "gpt-test", "system", SimpleNamespace(), SimpleNamespace(),
+        tool_state_digest="old-digest",
+    )
+
+    driver.update_tools(ctx, ["new"], tool_snapshot=Source())
+
+    assert ctx.tools[0]["name"] == "new"
+    assert ctx.tool_state_digest != "old-digest"
 
 
 @pytest.mark.asyncio

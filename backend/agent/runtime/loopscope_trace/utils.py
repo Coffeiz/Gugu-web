@@ -240,7 +240,11 @@ def _cache_diagnostics(
             # Responses 把 system/snapshot 放到 instructions，并把 tools 放在
             # 请求顶层；它们不在 conversation 中，但同样属于可缓存前缀。
             base_prefix = {
-                "instructions": str(getattr(ctx, "instructions", "") or ""),
+                "instructions": str(
+                    getattr(ctx, "base_instructions", None)
+                    or getattr(ctx, "instructions", "")
+                    or ""
+                ),
                 "tools": _jsonable(tools),
             }
             cache_payload = {"base": base_prefix, "conversation": cache_payload}
