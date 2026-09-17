@@ -144,7 +144,7 @@ def _ensure_presets(override: dict) -> dict:
 
 router = APIRouter(prefix="/admin/agent", tags=["admin"])
 
-_DEV_USER_SQ = select(User.id).where(User.is_developer == True)
+_DEV_USER_SQ = select(User.id).where(User.is_developer == True)  # orm-exempt: 管理员统计跨用户筛选，Service 收口随 Admin 统计迁移
 
 
 def _usage_filters(*, include_byok: bool, exclude_dev: bool) -> list:
@@ -661,7 +661,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
     ]
     if model:
         hour_bounds.append(AgentUsage.model == model)
-    today_hour_rows = await db.execute(select(
+    today_hour_rows = await db.execute(select(  # orm-exempt: 管理员用量小时聚合读取待 Service 收口
         AgentUsage.created_at,
         _effective_input_expr(),
         AgentUsage.tokens_out,
@@ -730,7 +730,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
         week_sql += " AND model = :model"
         week_params["model"] = model
     week_sql += f" GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') ORDER BY day"
-    week_rows = await db.execute(text(week_sql), week_params)
+    week_rows = await db.execute(text(week_sql), week_params)  # orm-exempt: 管理员用量周聚合读取待 Service 收口
     week_map = {r[0]: {"calls": r[1], "tokens_in": r[2], "tokens_out": r[3], "cache_read": r[4], "cache_write": r[5]} for r in week_rows.all()}
     week_daily = []
     for offset in range(7):
