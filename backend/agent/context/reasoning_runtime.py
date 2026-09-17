@@ -133,11 +133,6 @@ class ReasoningStateCoordinator:
                 self._mark_unavailable("missing_session")
             self._publish_diagnostics("prepared")
             return
-        if self.policy.mode == "off":
-            # off 是默认/常见路径。旧状态在模型配置变更边界清理；普通 run
-            # 不再为了一次无意义的 lookup 额外打开数据库事务。
-            self._publish_diagnostics("prepared")
-            return
         if not self.policy.can_resume:
             # off/summary 不恢复 provider payload，但仍必须读取一次 state：
             # 这会失效旧的 active continuation，并返回正确的版本号供 summary
