@@ -548,7 +548,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         existing_summary = mem.get("summary", "")
         # §6.3/§6.7 资格门：快照 + 单 session 缓冲 + 能力白名单 + 模型身份一致，
         # 全满足才走 append_reuse；否则独立提取，业务结果不受影响。
-        use_append, append_reason = _append_reuse_decision(snapshot, turns, settings, bound_model)
+        use_append, append_reason = _append_reuse_decision(snapshot, turns, bound_model)
         _log.info("[reflection] mode=%s reason=%s session=%s turns=%d",
                   "append_reuse" if use_append else "standalone", append_reason,
                   session_id, len(turns))
@@ -743,15 +743,17 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
     return result.output if result.ok and isinstance(result.output, dict) else {}
 
 
-def _append_reuse_decision(snapshot, turns, settings, bound_model) -> tuple[bool, str]:
-    """append_reuse 资格门（PRD-LLM-27 §6.3/§6.7）：任一不满足即回落 standalone。
+def _append_reuse_decision(snapshot, turns, bound_model) -> tuple[bool, str]:
+    """append_reuse 资格门（PRD-LLM-27 §6.3）：任一不满足即回落 standalone。
 
     - 快照存在（进程内登记；worker 扫描路径查无 → no_snapshot）；
     - 反思缓冲单 session 且与快照同 session（跨 session 缓冲不强行拼接）；
-    - provider/模型在前缀缓存能力白名单内（第一关，无缓存 provider 走追加
-      式反而放大成本）；
     - 反思实际使用的模型（BYOK 绑定结果）与捕获快照时的模型身份一致
       （provider 切换后旧前缀必然失配）。
+
+    白名单已废止（2026-09-18）：实测五大主流 provider 均支持跨调用前缀缓存，
+    静态名单失去意义；命中观测降级为纯报告（cache_capability.reuse_hit_rate），
+    不再驱动资格判定。
     """
     if snapshot is None:
         return False, "no_snapshot"
@@ -762,10 +764,7 @@ def _append_reuse_decision(snapshot, turns, settings, bound_model) -> tuple[bool
         return False, "session_mismatch"
     if any(t.get("session_id") != last_sid for t in turns):
         return False, "buffer_spans_sessions"
-    from agent.context.cache_capability import prefix_cache_capable
     from agent.context.reflection_snapshot import model_identity
-    if not prefix_cache_capable(snapshot.ai, settings):
-        return False, "provider_not_capable"
     if bound_model is not None and model_identity(snapshot.ai) != model_identity(bound_model):
         return False, "provider_switched"
     return True, "eligible"

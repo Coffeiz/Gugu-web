@@ -180,15 +180,17 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 
 分支响应不能被当作主会话下一轮的 Responses API continuation。主会话后续请求仍以原 canonical history 和原 reasoning state 为准。
 
-### 6.7 Provider 兼容与回退
+### 6.7 Provider 兼容与回退（白名单已废止，2026-09-18 修订）
 
-**第一关是 provider/模型的前缀缓存能力，其次才是输入一致性**。追加式会把反思输入放大到整个主会话历史：对支持跨调用前缀缓存的 provider（DeepSeek、显式 cache_control 的 OpenAI/Anthropic 兼容系）这是净收益；对**不跨调用缓存**的 provider（MiniMax 实测如此），append_reuse 意味着反思按全新 input 计费整个历史，比独立反思更贵。因此：
+**原白名单机制已废止**。设计初版认为 MiniMax「不跨调用缓存」，因此维护 provider 能力白名单、不在白名单内一律 standalone。但 Phase 2 A/B 实测推翻了这一前提：MiniMax 走显式 cache_control 的追加分支缓存命中 79.7%（对照 standalone 3.1%），qwen 隐式缓存同样命中（66%）。**实测结论：对话能缓存，反思追加分支就能缓存**，无需静态白名单预先判定。
 
-- 维护「provider/模型/API format → 跨调用前缀缓存能力」白名单（以真实 A/B 实测为准，不凭文档推断）；
-- 不在白名单内的组合一律 standalone，即使输入完全一致也不走 append_reuse；
-- 白名单组合在运行中实测缓存率持续低于阈值时，自动摘出白名单并记录原因。
+现行机制：
 
-以下输入一致时才标记为 `cache_reuse_eligible`（仅对白名单内组合有意义）：
+- **资格门只看输入一致性**：快照存在、缓冲单 session、provider/model 身份一致；provider 能力不参与判定；
+- `cache_capability.py` 降级为**纯观测**：`record_reuse_outcome()` 记录每次 append_reuse 的真实缓存命中，`reuse_hit_rate()` 供诊断查询，观测不驱动任何资格拦截，也不再自动摘出；
+- 若未来某 provider 实测缓存率异常低，通过观测数据发现后再人工决策，不设自动摘出机制。
+
+以下输入一致时才标记为 `cache_reuse_eligible`：
 
 - provider 和模型一致；
 - API 协议格式一致；
@@ -235,13 +237,11 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 
 ### 8.3 缓存验收
 
-- 缓存率门槛按 provider 分层，与 §6.7 白名单对齐，避免对无缓存 provider 设不可达目标：
-  - **门槛组**（实测支持跨调用前缀缓存的 provider，如 DeepSeek、显式 cache_control 的 OpenAI/Anthropic 兼容系）：连续暖会话中符合条件的反思分支应稳定复用主会话前缀，目标缓存率 85% 以上，重点 provider 90% 以上；
-  - **豁免组**（MiniMax 等实测不跨调用缓存的 provider）：不设缓存率门槛，只验证功能正确性与回落标记（`cache_reuse_reason` 应如实记录 provider 能力原因）；
-- 门槛组至少覆盖无工具、普通工具和 MCP 工具三种消息序列；
-- 门槛组至少覆盖 OpenAI 兼容协议和 Anthropic 协议；
-- 缓存口径不可观测的 provider 归入豁免组，不强行设门槛；
-- append_reuse 与 standalone 的同内容对照（各自 fresh input tokens）必须计入费用报告，用于验证白名单决策本身；
+- 缓存率目标不再按 provider 分层设门槛（白名单已废止）：A/B 实测 MiniMax 显式 cache_control 追加分支命中 79.7%（standalone 对照 3.1%），qwen 隐式缓存 66%，DeepSeek/OpenAI/Anthropic 兼容系均命中——统一以 85% 为长期目标、重点 provider 90%，用 `reuse_hit_rate` 观测数据按 provider 复盘而非预先拦截；
+- 验收至少覆盖无工具、普通工具和 MCP 工具三种消息序列；
+- 验收至少覆盖 OpenAI 兼容协议和 Anthropic 协议；
+- 缓存口径不可观测的 provider 只验证功能正确性与回落标记（`cache_reuse_reason` 如实记录原因），不强行统计缓存率；
+- append_reuse 与 standalone 的同内容对照（各自 fresh input tokens）必须计入费用报告，用于持续验证追加式决策本身的收益；
 - 费用报告必须同时给出反思调用自身和全站总量两个口径，不能只报告缓存率百分点。
 
 ## 9. 实施计划
@@ -260,15 +260,13 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [x] 定义只读主会话快照结构和有效 revision：`ReflectionSnapshot`（user+session 键、system_prompt、ai 配置、tools、canonical history 含末尾 assistant 回复、digest revision、TTL 15min/LRU 64 条）。
 - [x] 为 `ContextBranch` 增加 `append_reuse` 状态边界，避免误失效 reasoning state（`BranchInput.branch_mode`，只读分支跳过 invalidate）。
 - [x] 将压缩的 `_branch_prefix_history()` 前缀准备逻辑提炼为共享 helper（`prefix_history.render_branch_prefix`），压缩已改调用；反思在 Phase 2 接入。
-- [x] 建立 provider/模型前缀缓存能力白名单及运行中自动摘出机制（§6.7 第一关）：deepseek/openai/anthropic 默认准入，minimax/qwen/未知默认关闭；ReuseMissTracker 连续零命中摘出+冷却恢复。A/B 实测数据随 Phase 2 链路接入后补录。
+- [x] ~~建立 provider/模型前缀缓存能力白名单及运行中自动摘出机制~~ **已废止（2026-09-18）**：A/B 实测 MiniMax/qwen 均可跨调用缓存命中，白名单前提不成立，改为 `cache_capability.py` 纯观测（§6.7 修订）。
 - [x] 统一 provider-ready history、tools 和生成参数的捕获方式：`loop/machine.py` 成功收尾处捕获（ctx.tools + 消息容器 + 最终回复），不新增反思专用追加执行器。
 - [x] 增加快照过期、provider 切换、dynamic tail 和敏感字段测试（`tests/test_reflection_snapshot.py` 14 条；敏感边界以「快照模块无 Redis/DB 依赖 + 日志无正文」锚定）。
 
-### Phase 2：owner Memory 反思
-
 ### Phase 2：owner Memory 反思（已完成，2026-09-18）
 
-- [x] Web/私聊 owner 反思接入公共追加分支：`reflect(snapshot=)` → `_append_reuse_decision` 四重资格门（快照/单 session 缓冲/能力白名单/模型身份一致）→ `_extract_append`（快照 history 经共享 helper 渲染成前缀；reflection.md 与存量数据进 delta；待反思回合用队列组装前原文标记引用）。
+- [x] Web/私聊 owner 反思接入公共追加分支：`reflect(snapshot=)` → `_append_reuse_decision` 资格门（快照/单 session 缓冲/模型身份一致，provider 能力门已随白名单废止删除）→ `_extract_append`（快照 history 经共享 helper 渲染成前缀；reflection.md 与存量数据进 delta；待反思回合用队列组装前原文标记引用）。
 - [x] 有实际助手回复的群聊 owner 回合复用同一公共追加分支（`_drain_group_owner_buffer` 同一资格门）；无快照的群聊任务（worker 15 分钟 idle 扫描跨进程查无快照）保留独立批处理。
 - [x] 保持原 Memory writer、事件、锁、重试和失败语义：`reflect()` 下游未动，drains 回滚逻辑未动；append 模式矛盾检测开放完整历史（remove-only，`_APPEND_HISTORY_DIRECTIVE`），新增仍限待反思回合（devserver 验证 remove 零误报、新增未抑制）。
 - [x] LoopScope 主 run/branch 关联：branch metadata 与日志带 branch_mode + source run_id + session；provider A/B 验证完成（`docs/reports/OPT-Cache-Strategy-LLM27-AB-*.md`：append 79.7% vs standalone 3.1%，MiniMax-M3 BYOK 真实配置 3 触发）。
@@ -297,7 +295,7 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 | 反思内容污染聊天历史 | 分支消息只读、只存在短生命周期快照，禁止进入 canonical writer |
 | 群聊批处理无法映射单 session | 保持 scope batch 路径，不强行套用追加式分支 |
 | 只看缓存率误判成本收益 | 同时统计 fresh/cache-read/cache-write/output 和调用量 |
-| 无缓存 provider 走 append_reuse 导致反思成本反而上涨 | §6.7 白名单作为 eligible 第一关，不满足一律 standalone；运行中实测缓存率不达标自动摘出 |
+| append_reuse 对某 provider 缓存率异常低导致成本上涨 | 资格门不再做 provider 预判（白名单已废止）；`cache_capability` 观测命中率，实测异常低时人工决策是否回落 standalone |
 | 快照携带工具结果中的敏感内容 | 不持久化完整快照，日志脱敏，按现有 provider 安全边界过滤 |
 
 ## 11. 关联文档

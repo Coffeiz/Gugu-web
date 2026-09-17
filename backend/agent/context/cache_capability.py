@@ -1,102 +1,77 @@
-"""provider 前缀缓存能力白名单（PRD-LLM-27 §6.7 第一关）。
+"""append_reuse 缓存命中观测（PRD-LLM-27 §6.7，2026-09-18 修订）。
 
-追加式分支会把反思输入放大到整个主会话历史：对支持跨调用前缀缓存的
-provider 这是净收益；对不支持的 provider（MiniMax/Qwen 实测不跨 HTTP 请求
-持久化缓存），append_reuse 意味着按全新 input 计费整个历史，比独立反思
-更贵。因此白名单是 eligible 判定的第一关：不在名单内一律 standalone，
-即使输入逐字节一致也不走追加复用。
+实测结论（docs/reports/OPT-Cache-Strategy-LLM27-AB-*.md）：deepseek /
+openai / anthropic / minimax / qwen 五个主流 provider 全部支持跨调用前缀
+缓存，静态白名单失去存在意义，已废止。本模块保留纯观测职责：
 
-白名单只收录实测确认跨调用缓存生效的 provider；未知 provider 默认关闭
-（保守侧），以真实 A/B 数据准入。运行中由 ReuseMissTracker 持续验证：
-缓存率持续不达标的组合自动摘出（§6.7），防止「文档说支持、实际不命中」
-的组合长期烧钱。
+- `record_reuse_outcome`：append_reuse 分支按 provider 返回的 cache_read
+  记录命中/未命中（脱敏：只记 provider/model 指纹与计数，不涉正文）；
+- `reuse_hit_rate`：查询近期命中率，供运行报告与成本分析。
+
+注意：观测不再驱动任何资格判定——若未来某个 provider 实测不命中，处理
+方式是回到本报告与 PRD 重新评估，而不是静默改变反思路径。
 """
 from __future__ import annotations
 
 import time
-
-# 实测确认跨调用前缀缓存生效的 provider（2026-09-18 AB 实测：
-# docs/reports/OPT-Cache-Strategy-LLM27-AB-*.md——MiniMax-M3 在带显式 cache_control
-# 的分支请求上稳定命中 ~80%；qwen3.8-flash（DashScope 兼容端）对任意稳定前缀
-# 隐式缓存，append 稳定命中、warm 命中 95.97%）。
-# deepseek 服务端自动缓存；openai 自动前缀缓存；anthropic ephemeral 断点跨请求生效。
-_DEFAULT_CAPABLE = frozenset({"deepseek", "openai", "anthropic", "minimax", "qwen"})
-
-# 运行中摘出：窗口内连续 N 次命中率为 0 即摘出，冷却后重新给机会。
-_MISS_THRESHOLD = 3
-_MISS_COOLDOWN_SECONDS = 1800.0
+from collections import OrderedDict
 
 
-def model_key(ai: Any) -> str:
-    """provider+model+api_format 的判定键；同键共享白名单与摘出状态。"""
+def model_key(ai) -> str:
+    """provider+model+api_format 的观测键。"""
     return f"{getattr(ai, 'provider', '')}:{getattr(ai, 'model', '')}:{getattr(ai, 'api_format', '')}"
 
 
-def prefix_cache_capable(ai: Any, settings=None) -> bool:
-    """该模型组合是否允许走 append_reuse（第一关，与输入一致性无关）。"""
-    provider = str(getattr(ai, "provider", "") or "")
-    if not provider:
-        return False
-    if _miss_tracker.blocked(model_key(ai)):
-        return False
-    if provider not in _DEFAULT_CAPABLE:
-        return False
-    # anthropic 依赖主动缓存断点；该能力关闭时前缀没有断点可命中，
-    # 跨调用复用无从谈起。
-    if provider == "anthropic":
-        from agent.llm.llm_select import supports_anthropic_active_cache
-        if not supports_anthropic_active_cache(ai):
-            return False
-    return True
+_WINDOW_SECONDS = 3600.0
+_MAX_KEYS = 64
 
 
-class ReuseMissTracker:
-    """运行中摘出机制：记录 append_reuse 的实际缓存命中，连续零命中即摘出。
+class _HitRateLedger:
+    """按 provider+model 记录近期命中窗口（纯观测，不驱动行为）。"""
 
-    Phase 1 只交付机制与测试；数据由 Phase 2 的分支执行链路喂入
-    （provider 返回 cache_read=0 记 miss，>0 记 hit 并清零计数）。
-    """
+    def __init__(self, *, window_seconds: float = _WINDOW_SECONDS, max_keys: int = _MAX_KEYS):
+        self._window = float(window_seconds)
+        self._max_keys = int(max_keys)
+        # key -> OrderedDict[timestamp_monotonic, hit_bool]
+        self._events: dict[str, OrderedDict] = {}
 
-    def __init__(self, *, threshold: int = _MISS_THRESHOLD,
-                 cooldown_seconds: float = _MISS_COOLDOWN_SECONDS) -> None:
-        self._threshold = max(1, int(threshold))
-        self._cooldown = float(cooldown_seconds)
-        # key -> [consecutive_misses, blocked_until_monotonic]
-        self._state: dict[str, list] = {}
+    def record(self, key: str, *, cache_hit: bool) -> None:
+        now = time.monotonic()
+        events = self._events.setdefault(key, OrderedDict())
+        events[now] = bool(cache_hit)
+        events.move_to_end(now)
+        self._evict(events, now)
+        while len(self._events) > self._max_keys:
+            self._events.popitem(last=False)
 
-    def record(self, ai: Any, *, cache_hit: bool) -> None:
-        key = model_key(ai)
-        entry = self._state.setdefault(key, [0, 0.0])
-        if cache_hit:
-            entry[0] = 0
-            entry[1] = 0.0
-            return
-        if entry[1] > time.monotonic():
-            return
-        entry[0] += 1
-        if entry[0] >= self._threshold:
-            entry[1] = time.monotonic() + self._cooldown
-            entry[0] = 0
+    def _evict(self, events: OrderedDict, now: float) -> None:
+        cutoff = now - self._window
+        while events:
+            oldest = next(iter(events))
+            if oldest >= cutoff:
+                break
+            events.pop(oldest)
 
-    def blocked(self, key: str) -> bool:
-        entry = self._state.get(key)
-        if not entry:
-            return False
-        if entry[1] > time.monotonic():
-            return True
-        if entry[1] > 0.0:
-            # 冷却结束：恢复候选资格，重新累计观测。只清理「曾有封锁」的条目，
-            # 未封锁状态的连击计数不能被查询副作用清零。
-            entry[0] = 0
-            entry[1] = 0.0
-        return False
+    def hit_rate(self, key: str) -> tuple[int, int]:
+        """返回 (命中数, 总数)；窗口外事件已自然淘汰。"""
+        events = self._events.get(key)
+        if not events:
+            return 0, 0
+        now = time.monotonic()
+        self._evict(events, now)
+        total = len(events)
+        hits = sum(1 for hit in events.values() if hit)
+        return hits, total
 
 
-_miss_tracker = ReuseMissTracker()
+_ledger = _HitRateLedger()
 
 
-def record_reuse_outcome(ai: Any, *, cache_hit: bool) -> None:
-    """喂真实观测（Phase 2 接入）：append_reuse 分支按 provider 返回的
-    cache_read 记 hit/miss，驱动运行中自动摘出（§6.7）。"""
-    _miss_tracker.record(ai, cache_hit=cache_hit)
+def record_reuse_outcome(ai, *, cache_hit: bool) -> None:
+    """append_reuse 分支回填真实观测：provider 返回的 cache_read>0 记命中。"""
+    _ledger.record(model_key(ai), cache_hit=cache_hit)
 
+
+def reuse_hit_rate(ai) -> tuple[int, int]:
+    """近期命中率 (命中数, 总数)，供报告与诊断；不影响任何资格判定。"""
+    return _ledger.hit_rate(model_key(ai))

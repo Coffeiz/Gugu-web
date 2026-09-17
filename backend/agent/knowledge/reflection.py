@@ -149,20 +149,18 @@ async def reflect_if_candidate(
         f"knowledge:{candidate_query}".encode("utf-8")
     ).hexdigest()[:16]
     # §6.4 sibling branch：Memory 资格门通过时复用同一主会话快照（同一前缀、
-    # 同一渲染出口）；专用规则与输入 JSON 按边界进 delta。资格任一不满足
-    # （含 provider 切换）即回落独立分支，写入语义不变。
+    # 同一渲染出口）；专用规则与输入 JSON 按边界进 delta。快照缺失/会话不一致/
+    # provider 切换即回落独立分支，写入语义不变。
     use_append = (
         snapshot is not None
         and isinstance(session_id, int)
         and snapshot.session_id == session_id
     )
     if use_append:
-        from agent.context.cache_capability import prefix_cache_capable
         from agent.context.reflection_snapshot import model_identity
         from agent.llm.modelctx import effective_ai
 
-        if (not prefix_cache_capable(snapshot.ai, settings)
-                or model_identity(snapshot.ai) != model_identity(effective_ai(settings))):
+        if model_identity(snapshot.ai) != model_identity(effective_ai(settings)):
             use_append = False
     if use_append:
         from agent.context.prefix_history import render_branch_prefix

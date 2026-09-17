@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.context import reflection_snapshot as rs
-from agent.context.cache_capability import ReuseMissTracker, model_key, prefix_cache_capable
+from agent.context.cache_capability import record_reuse_outcome, reuse_hit_rate
 from agent.context.branch_types import BranchInput, BranchPolicy
 from agent.context.reflection_snapshot import (
     capture_reflection_snapshot,
@@ -135,55 +135,17 @@ def test_capture_never_uses_redis_or_db():
 # ── provider 缓存能力白名单（§6.7 第一关）─────────────────────────────────
 
 
-def test_prefix_cache_capable_defaults():
-    assert prefix_cache_capable(_ai("deepseek"))
-    assert prefix_cache_capable(_ai("openai"))
-    assert prefix_cache_capable(_ai("anthropic"))
-    # MiniMax-M3 经 2026-09-18 AB 实测跨调用命中 ~80%（带显式 cache_control），已准入
-    assert prefix_cache_capable(_ai("minimax"))
-    # qwen3.8-flash 经 2026-09-18 AB 实测隐式前缀缓存命中（warm 95.97%），已准入
-    assert prefix_cache_capable(_ai("qwen"))
-    # 未实测的未知 provider 默认关闭（保守侧）
-    assert not prefix_cache_capable(_ai("new-provider"))
+def test_prefix_cache_hit_rate_observation():
+    """白名单已废止：cache_capability 只保留纯命中率观测，不驱动资格判定。"""
+    from agent.context.cache_capability import record_reuse_outcome, reuse_hit_rate
 
-
-def test_prefix_cache_capable_requires_anthropic_active_cache():
-    import agent.llm.llm_select as llm_select
-
-    original = llm_select.supports_anthropic_active_cache
-    llm_select.supports_anthropic_active_cache = lambda ai: False
-    try:
-        assert not prefix_cache_capable(_ai("anthropic"))
-    finally:
-        llm_select.supports_anthropic_active_cache = original
-
-
-def test_miss_tracker_blocks_after_consecutive_zero_hits():
-    tracker = ReuseMissTracker(threshold=3, cooldown_seconds=60.0)
     ai = _ai("deepseek")
-    assert not tracker.blocked(model_key(ai))
-    tracker.record(ai, cache_hit=False)
-    tracker.record(ai, cache_hit=False)
-    assert not tracker.blocked(model_key(ai))
-    tracker.record(ai, cache_hit=False)
-    assert tracker.blocked(model_key(ai))
-    # 命中即恢复资格
-    tracker.record(ai, cache_hit=True)
-    assert not tracker.blocked(model_key(ai))
-
-
-def test_miss_tracker_cooldown_restores_eligibility():
-    tracker = ReuseMissTracker(threshold=1, cooldown_seconds=60.0)
-    ai = _ai("deepseek")
-    tracker.record(ai, cache_hit=False)
-    assert tracker.blocked(model_key(ai))
-    # 冷却期内的 miss 不延长封锁
-    tracker.record(ai, cache_hit=False)
-    assert tracker.blocked(model_key(ai))
-    # 把封锁期拨到过去 → 恢复候选资格
-    key = model_key(ai)
-    tracker._state[key][1] = time.monotonic() - 1.0
-    assert not tracker.blocked(model_key(ai))
+    record_reuse_outcome(ai, cache_hit=True)
+    record_reuse_outcome(ai, cache_hit=False)
+    record_reuse_outcome(ai, cache_hit=True)
+    assert reuse_hit_rate(ai) == (2, 3)
+    # 不同模型键互不串扰
+    assert reuse_hit_rate(_ai("deepseek", model="other")) == (0, 0)
 
 
 # ── append_reuse 状态边界（§6.6）─────────────────────────────────────────

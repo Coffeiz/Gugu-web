@@ -49,38 +49,39 @@ def _turns(*sids):
 
 
 def test_decision_requires_snapshot():
-    assert reflection._append_reuse_decision(None, _turns(7), SimpleNamespace(), None) == \
+    assert reflection._append_reuse_decision(None, _turns(7), None) == \
         (False, "no_snapshot")
 
 
 def test_decision_rejects_session_mismatch():
     _capture(session_id=7)
     snapshot = peek_reflection_snapshot("u1", 7)
-    assert reflection._append_reuse_decision(snapshot, _turns(8), SimpleNamespace(), None) == \
+    assert reflection._append_reuse_decision(snapshot, _turns(8), None) == \
         (False, "session_mismatch")
-    assert reflection._append_reuse_decision(snapshot, _turns(None), SimpleNamespace(), None) == \
+    assert reflection._append_reuse_decision(snapshot, _turns(None), None) == \
         (False, "session_mismatch")
 
 
 def test_decision_rejects_cross_session_buffer():
     _capture(session_id=7)
     snapshot = peek_reflection_snapshot("u1", 7)
-    assert reflection._append_reuse_decision(snapshot, _turns(7, 8, 7), SimpleNamespace(), None) == \
+    assert reflection._append_reuse_decision(snapshot, _turns(7, 8, 7), None) == \
         (False, "buffer_spans_sessions")
 
 
-def test_decision_rejects_uncapable_provider():
+def test_decision_eligible_ignores_provider_capability():
+    """白名单已废止：provider 能力不再参与资格判定（观测只记录不拦截）。"""
     _capture(session_id=7, provider="unknown-llm")
     snapshot = peek_reflection_snapshot("u1", 7)
-    assert reflection._append_reuse_decision(snapshot, _turns(7), SimpleNamespace(), None) == \
-        (False, "provider_not_capable")
+    assert reflection._append_reuse_decision(snapshot, _turns(7), None) == \
+        (True, "eligible")
 
 
 def test_decision_rejects_provider_switch():
     _capture(session_id=7, provider="deepseek")
     snapshot = peek_reflection_snapshot("u1", 7)
     switched = _ai(provider="openai", model="gpt-x")
-    assert reflection._append_reuse_decision(snapshot, _turns(7), SimpleNamespace(), switched) == \
+    assert reflection._append_reuse_decision(snapshot, _turns(7), switched) == \
         (False, "provider_switched")
 
 
@@ -88,7 +89,7 @@ def test_decision_eligible_on_aligned_inputs():
     _capture(session_id=7, provider="deepseek")
     snapshot = peek_reflection_snapshot("u1", 7)
     same = _ai(provider="deepseek", model="deepseek-chat")
-    assert reflection._append_reuse_decision(snapshot, _turns(7), SimpleNamespace(), same) == \
+    assert reflection._append_reuse_decision(snapshot, _turns(7), same) == \
         (True, "eligible")
 
 

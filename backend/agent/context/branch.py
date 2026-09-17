@@ -63,7 +63,8 @@ class ContextBranch:
         error_type = "-"
         error_status = "-"
         # append_reuse 的实际缓存观测（PRD-LLM-27 §6.7）：provider 归一化 usage
-        # 经旁路收集，成功后喂 ReuseMissTracker 驱动运行中摘出；不改返回契约。
+        # 经旁路收集，成功后喂 cache_capability 纯观测记账（白名单已废止，观测
+        # 只记录不拦截）；不改返回契约。
         usage_sink: list = []
         try:
             for attempts in range(1, max(0, policy.max_retries) + 2):
