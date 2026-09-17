@@ -149,16 +149,14 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
 
 
 def test_task_requirements_single_source():
-    """append 反思与保留的群主批处理共用同一份任务要求常量。"""
+    """owner 与群业务 append 反思共用同一份任务要求常量。"""
     source = inspect.getsource(reflection)
     assert source.count("_TASK_REQUIREMENTS") >= 3   # 定义 + 两条路径各引用一次
 
 
-def test_history_directive_append_only():
-    """完整历史边界指令只进 append 路径；群主独立批处理不携带它。"""
-    extract_src = inspect.getsource(reflection._extract_group_owner)
+def test_history_directive_is_append_only():
+    """完整历史边界指令只进入 append 反思消息。"""
     append_src = inspect.getsource(reflection._extract_append)
-    assert "_APPEND_HISTORY_DIRECTIVE" not in extract_src
     assert "_APPEND_HISTORY_DIRECTIVE" in append_src
 
 
@@ -168,7 +166,7 @@ def test_history_directive_append_only():
 async def test_reflect_uses_append_when_eligible(monkeypatch):
     _capture(session_id=7)
     snapshot = peek_reflection_snapshot("u1", 7)
-    used = {"append": 0, "standalone": 0}
+    used = {"append": 0}
 
     async def fake_bind(user_id, settings, session_id=None):
         return _ai("deepseek")
@@ -191,22 +189,17 @@ async def test_reflect_uses_append_when_eligible(monkeypatch):
         used["append"] += 1
         return {}
 
-    async def fake_standalone(*a, **k):
-        used["standalone"] += 1
-        return {}
-
     monkeypatch.setattr(reflection, "_extract_append", fake_append)
-    monkeypatch.setattr(reflection, "_extract_group_owner", fake_standalone)
 
     turns = [{"user_msg": "m", "assistant_reply": "a", "user_name": "小北", "session_id": 7}]
     ok = await reflection.reflect("u1", "小北", "m", "a", SimpleNamespace(),
                                   session_id=7, turns=turns, snapshot=snapshot)
     assert ok is False            # 提取返回空 → 无记忆增量可写，短路返回
-    assert used == {"append": 1, "standalone": 0}
+    assert used == {"append": 1}
 
 
 async def test_reflect_defers_owner_without_snapshot(monkeypatch):
-    used = {"append": 0, "standalone": 0}
+    used = {"append": 0}
 
     async def fake_bind(user_id, settings, session_id=None):
         return _ai("deepseek")
@@ -229,18 +222,12 @@ async def test_reflect_defers_owner_without_snapshot(monkeypatch):
         used["append"] += 1
         return {}
 
-    async def fake_standalone(*a, **k):
-        used["standalone"] += 1
-        return {}
-
     monkeypatch.setattr(reflection, "_extract_append", fake_append)
-    monkeypatch.setattr(reflection, "_extract_group_owner", fake_standalone)
 
     turns = [{"user_msg": "m", "assistant_reply": "a", "user_name": "小北", "session_id": 7}]
     await reflection.reflect("u1", "小北", "m", "a", SimpleNamespace(),
-                             session_id=7, turns=turns, snapshot=None,
-                             allow_standalone=False)
-    assert used == {"append": 0, "standalone": 0}
+                             session_id=7, turns=turns, snapshot=None)
+    assert used == {"append": 0}
 
 
 # ── drain 路径传递快照（§6.1 拓扑）───────────────────────────────────
@@ -281,6 +268,9 @@ class _FakeRedis:
     async def zrem(self, key, member):
         return 1
 
+    async def zadd(self, key, values):
+        return 1
+
 
 async def test_owner_drain_peeks_snapshot_and_passes_to_reflect(monkeypatch):
     _capture(session_id=7)
@@ -306,8 +296,8 @@ async def test_owner_drain_peeks_snapshot_and_passes_to_reflect(monkeypatch):
     assert seen["turns"] == rows
 
 
-async def test_group_drain_without_snapshot_passes_none(monkeypatch):
-    """群业务 worker 查无快照时仍把任务交给保留的独立批处理。"""
+async def test_group_drain_without_snapshot_keeps_buffer(monkeypatch):
+    """群主 worker 查无快照时延迟，不创建没有主前缀的反思调用。"""
     seen = {}
 
     async def fake_reflect(user_id, user_name, user_msg, assistant_reply, settings, **kwargs):
@@ -329,7 +319,6 @@ async def test_group_drain_without_snapshot_passes_none(monkeypatch):
     monkeypatch.setattr("app.core.redis.get_redis", lambda: fake)
 
     await _drain_group_owner_buffer("u1", SimpleNamespace())
-    assert seen["snapshot"] is None          # 本进程从未捕获过 session 9 的快照
-    assert seen["turns"] == rows
-    assert (_owner_group_buffer_key("u1")) not in fake.store
+    assert seen == {}
+    assert fake.store[_owner_group_buffer_key("u1")] == [payload]
     assert fake.deleted and _GROUP_OWNER_IDLE_KEY not in fake.deleted

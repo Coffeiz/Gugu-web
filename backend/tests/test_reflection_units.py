@@ -196,6 +196,10 @@ async def test_drain_group_owner_buffer_happy_and_rollback(monkeypatch):
 
     redis = _FakeRedis()
     monkeypatch.setattr("app.core.redis.get_redis", lambda: redis)
+    monkeypatch.setattr(
+        "agent.context.reflection_snapshot.peek_reflection_snapshot",
+        lambda *_args: object(),
+    )
     key = reflection._owner_group_buffer_key("u1")
     _seed_rows(redis, key, rows)
     redis.zsets[reflection._GROUP_OWNER_IDLE_KEY] = {"u1": 1.0}

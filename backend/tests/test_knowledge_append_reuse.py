@@ -96,7 +96,7 @@ async def test_reflect_if_candidate_uses_append_with_snapshot(monkeypatch):
     assert policy.output_mode == "json"
 
 
-async def test_reflect_if_candidate_falls_back_without_snapshot(monkeypatch):
+async def test_reflect_if_candidate_defers_without_snapshot(monkeypatch):
     captured = _CaptureBranch(_knowledge_output())
     monkeypatch.setattr("agent.context.branch.ContextBranch", lambda: captured)
 
@@ -109,13 +109,10 @@ async def test_reflect_if_candidate_falls_back_without_snapshot(monkeypatch):
         "u1", "用户消息", "助手回复", SimpleNamespace(), "查询词",
         save_mode="automatic", session_id=7, snapshot=None,
     )
-    branch_input, _ = captured.calls[0]
-    assert branch_input.branch_mode == "standalone"
-    assert branch_input.stable_system == knowledge_reflection.load_prompt()
-    assert branch_input.history_messages == ()
+    assert captured.calls == []
 
 
-async def test_reflect_if_candidate_falls_back_on_provider_switch(monkeypatch):
+async def test_reflect_if_candidate_defers_on_provider_switch(monkeypatch):
     _capture(session_id=7)
     snapshot = rs._snapshots[("u1", 7)]
     captured = _CaptureBranch(_knowledge_output())
@@ -134,11 +131,10 @@ async def test_reflect_if_candidate_falls_back_on_provider_switch(monkeypatch):
         "u1", "用户消息", "助手回复", SimpleNamespace(), "查询词",
         save_mode="automatic", session_id=7, snapshot=snapshot,
     )
-    branch_input, _ = captured.calls[0]
-    assert branch_input.branch_mode == "standalone"
+    assert captured.calls == []
 
 
-async def test_reflect_if_candidate_rejects_session_mismatch(monkeypatch):
+async def test_reflect_if_candidate_defers_on_session_mismatch(monkeypatch):
     _capture(session_id=7)
     snapshot = rs._snapshots[("u1", 7)]
     captured = _CaptureBranch(_knowledge_output())
@@ -153,8 +149,7 @@ async def test_reflect_if_candidate_rejects_session_mismatch(monkeypatch):
         "u1", "用户消息", "助手回复", SimpleNamespace(), "查询词",
         save_mode="automatic", session_id=9, snapshot=snapshot,   # 会话不一致
     )
-    branch_input, _ = captured.calls[0]
-    assert branch_input.branch_mode == "standalone"
+    assert captured.calls == []
 
 
 async def test_sibling_isolation_memory_json_not_in_knowledge_context(monkeypatch):
@@ -242,9 +237,6 @@ async def test_memory_reflect_passes_snapshot_to_knowledge(monkeypatch):
 
     # 无快照：owner Memory 不再调用独立提取，也不会触发 Knowledge 反思
     seen.clear()
-
-    async def fake_extract_standalone(*a, **k):
-        return {"daily": "x", "perception": {"intent": "闲聊", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}
 
     await reflection.reflect("u1", "小北", "m", "a", settings,
                              session_id=7, turns=turns, snapshot=None)

@@ -45,6 +45,45 @@ GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference"
 _GROUP_INTERNAL_ID_RE = re.compile(r"(?:platform_user_id|user_openid|member_openid|group_openid)\s*=", re.I)
 
 
+def _append_history_message(message) -> dict:
+    """把已持久化 IM 消息投影成 append 分支可读的 canonical 消息。"""
+    if message.role == "assistant":
+        return {"role": "assistant", "content": message.content or "（无文字）"}
+    sender = message.platform_user_name or "未提供昵称"
+    return {
+        "role": "user",
+        "content": f"[{sender}] {message.content or '（无文字）'}",
+    }
+
+
+def _append_scope_system(user_name: str = "群友") -> str:
+    """取得 append 分支稳定 system；群业务规则放在末尾 delta，避免污染前缀。"""
+    from agent.capabilities.defaults import DEFAULT_PROMPT_NAME
+    from agent.context.session_system import build_static_prompt
+
+    return build_static_prompt(DEFAULT_PROMPT_NAME, user_name)
+
+
+def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
+                               current: dict, payload: str, messages: list) -> BranchInput:
+    """构造群/成员 append 分支：消息作为历史，反思规则和任务作为末尾增量。"""
+    reflection_current = {k: v for k, v in current.items() if k != "members"}
+    delta = (
+        f"{_scope_prompt(scope, task_type=task_type)}\n\n"
+        f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
+        f"本批待反思消息：\n{payload or '（无消息）'}"
+    )
+    return BranchInput(
+        stable_system=_append_scope_system(),
+        delta=delta,
+        scope="group-member-reflection" if task_type == "member-batch" else scope.scope_type,
+        scope_revision=str(job.idempotency_key),
+        run_id=f"im-reflection-job:{job.id}",
+        history_messages=tuple(_append_history_message(message) for message in messages),
+        branch_mode="append_reuse",
+    )
+
+
 def _log_reflection_failure(job, *, phase: str, exc: BaseException) -> None:
     """记录反思原始异常；正文/作用域标识不进入可见 worker 日志。"""
     from agent.security.logsafe import fingerprint
@@ -332,19 +371,10 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             # （见上面的 members.json 写入块），不该被当成"已有记忆"整份塞给 LLM：群成员
             # 越多，prompt 越大，纯粹是无意义的 token 开销；nicknames_add 判断用的是本批
             # 消息自带的 sender id，也不需要旧 members 全量做参照。
-            reflection_current = {k: v for k, v in current.items() if k != "members"}
-            user = (
-                f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
-                f"本批新增消息：\n{payload or '（无消息）'}"
-            )
             task_type = job.task_type or "group"
             phase = "reflection_provider"
             branch = await ContextBranch().run(
-                BranchInput(
-                    stable_system=_scope_prompt(scope, task_type=task_type),
-                    delta=user,
-                    scope="group-member-reflection" if task_type == "member-batch" else scope.scope_type,
-                ),
+                _build_append_branch_input(scope, job, task_type, current, payload, messages),
                 BranchPolicy(
                     name="reflection",
                     output_mode="json",

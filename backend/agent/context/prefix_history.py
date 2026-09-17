@@ -8,7 +8,7 @@
   追加路径，否则反思内容会被写进主会话事实源；
 - 渲染口径与主 run 的 render_history 完全一致（含 anthropic 路由的「消息级
   system 投影成 user」，见下方历史注释），前缀才能逐 token 对齐；
-- 渲染失败回退原列表：宁可缓存 miss（standalone 等价的多花一点），不可
+- 渲染失败回退原列表：宁可缓存 miss（无历史独立调用会多花一点），不可
   让分支调用直接失败影响业务结果。
 """
 from __future__ import annotations

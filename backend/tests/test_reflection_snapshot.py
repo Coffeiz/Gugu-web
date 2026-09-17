@@ -74,7 +74,7 @@ def test_peek_requires_same_user_and_session():
     assert peek_reflection_snapshot("u1", None) is None
 
 
-def test_ttl_expiry_falls_back_to_standalone():
+def test_ttl_expiry_blocks_append_reuse():
     capture_reflection_snapshot(
         user_id="u1", session_id=7, run_id=None, ai=_ai(), system_prompt="S",
         tools=(), messages=_messages("hi"), reply_text="好",
@@ -153,29 +153,6 @@ def test_prefix_cache_hit_rate_observation():
 
 async def test_append_reuse_does_not_invalidate_reasoning_state(monkeypatch):
     """只读 sibling branch 不得失效主会话 reasoning continuation。"""
-    invalidated = []
-
-    async def fake_invalidate(db, *, user_id, session_id, reason):
-        invalidated.append((user_id, session_id, reason))
-
-    class FakeDB:
-        async def commit(self):
-            return None
-
-    class FakeSessionFactory:
-        async def __aenter__(self):
-            return FakeDB()
-        async def __aexit__(self, *exc):
-            return False
-
-    # branch.run 里是函数内 lazy import（from X import Y 在每次调用时解析），
-    # patch 真实模块属性即可拦截。
-    import app.db.session as db_session_mod
-    import app.services.provider_reasoning_state as state_mod
-    monkeypatch.setattr(db_session_mod, "ensure_engine", lambda: None)
-    monkeypatch.setattr(db_session_mod, "_SessionLocal", FakeSessionFactory)
-    monkeypatch.setattr(state_mod, "invalidate_state", fake_invalidate)
-
     from agent.context.branch import ContextBranch
 
     async def fake_complete(system, history, user, settings, **kwargs):
@@ -190,24 +167,12 @@ async def test_append_reuse_does_not_invalidate_reasoning_state(monkeypatch):
     )
     settings = SimpleNamespace()
 
-    # append_reuse：不失效
     result = await ContextBranch().run(
-        BranchInput(**common, delta="任务", branch_mode="append_reuse"),
+        BranchInput(**common, delta="任务"),
         BranchPolicy(name="reflection"), settings,
     )
     assert result.ok
-    assert invalidated == []
     assert result.metadata["branch_mode"] == "append_reuse"
-
-    # standalone：维持既有失效行为
-    result = await ContextBranch().run(
-        BranchInput(**common, delta="任务", branch_mode="standalone"),
-        BranchPolicy(name="reflection"), settings,
-    )
-    assert result.ok
-    assert len(invalidated) == 1
-    assert invalidated[0][2] == "branch_changed"
-    assert result.metadata["branch_mode"] == "standalone"
 
 
 # ── 共享前缀渲染 helper（§6.2 契约）─────────────────────────────────────

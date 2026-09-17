@@ -124,9 +124,9 @@ async def reflect_if_candidate(
 ) -> int:
     """候选命中后执行一次 Knowledge RAG + 专用反思，并写入主数据。
 
-    snapshot（PRD-LLM-27 §6.4）：Memory 反思资格门通过时传入主会话快照，
-    Knowledge 作为 sibling branch 复用同一前缀（append_reuse）；不传或资格
-    不满足时走独立分支，写入与索引事件语义不变。
+    snapshot（PRD-LLM-27 §6.4）：Knowledge 只在有主会话快照且资格一致时
+    作为 sibling branch 复用同一前缀；没有可复用前缀时延迟本次反思，不创建
+    没有主会话历史的独立调用。
     """
     from agent.rag.service import search_knowledge
     from agent.knowledge.capture import build_entry
@@ -148,9 +148,9 @@ async def reflect_if_candidate(
     scope_revision = hashlib.sha256(
         f"knowledge:{candidate_query}".encode("utf-8")
     ).hexdigest()[:16]
-    # §6.4 sibling branch：Memory 资格门通过时复用同一主会话快照（同一前缀、
-    # 同一渲染出口）；专用规则与输入 JSON 按边界进 delta。快照缺失/会话不一致/
-    # provider 切换即回落独立分支，写入语义不变。
+    # §6.4 sibling branch：只复用同一主会话快照（同一前缀、同一渲染出口）；
+    # 专用规则与输入 JSON 按边界进 delta。快照缺失/会话不一致/provider 切换时
+    # 延迟本次 Knowledge 反思，避免恢复已断开的前缀。
     use_append = (
         snapshot is not None
         and isinstance(session_id, int)
@@ -162,32 +162,25 @@ async def reflect_if_candidate(
 
         if model_identity(snapshot.ai) != model_identity(effective_ai(settings)):
             use_append = False
-    if use_append:
-        from agent.context.prefix_history import render_branch_prefix
+    if not use_append:
+        return []
+    from agent.context.prefix_history import render_branch_prefix
 
-        branch_input = BranchInput(
-            stable_system=snapshot.system_prompt,
-            delta=(
-                load_prompt() + "\n\n"
-                + _KNOWLEDGE_HISTORY_DIRECTIVE + "\n\n"
-                + request
-            ),
-            scope="knowledge",
-            scope_revision=scope_revision,
-            session_id=int(session_id),
-            run_id=snapshot.run_id,
-            history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
-            tools=tuple(snapshot.tools),
-            branch_mode="append_reuse",
-        )
-    else:
-        branch_input = BranchInput(
-            stable_system=load_prompt(),
-            delta=request,
-            scope="knowledge",
-            scope_revision=scope_revision,
-            session_id=int(session_id) if isinstance(session_id, int) else None,
-        )
+    branch_input = BranchInput(
+        stable_system=snapshot.system_prompt,
+        delta=(
+            load_prompt() + "\n\n"
+            + _KNOWLEDGE_HISTORY_DIRECTIVE + "\n\n"
+            + request
+        ),
+        scope="knowledge",
+        scope_revision=scope_revision,
+        session_id=int(session_id),
+        run_id=snapshot.run_id,
+        history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
+        tools=tuple(snapshot.tools),
+        branch_mode="append_reuse",
+    )
     branch = await ContextBranch().run(
         branch_input,
         BranchPolicy(name="knowledge", output_mode="json", max_tokens=900),

@@ -34,7 +34,7 @@ async def test_context_branch_assembles_stable_order_and_json(monkeypatch):
     assert captured["user"] == "turn"
     assert result.metadata["branch"] == "reflection"
     assert result.metadata["session_id"] == 7
-    assert result.metadata["branch_mode"] == "standalone"
+    assert result.metadata["branch_mode"] == "append_reuse"
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from agent.knowledge.models import KnowledgeEntry, KnowledgeScope, KnowledgeSource
 from agent.knowledge.store import KnowledgeStore
 from app.services.storage import LocalStorageBackend
+
+
+def _append_reflection_fixture(session_id=7):
+    """为 Knowledge 反思测试提供合法的主会话追加快照。"""
+    ai = SimpleNamespace(provider="deepseek", model="deepseek-chat", api_format="")
+    snapshot = SimpleNamespace(
+        session_id=session_id,
+        run_id="run-knowledge-test",
+        system_prompt="测试系统提示",
+        ai=ai,
+        tools=(),
+        history=({"role": "user", "content": "历史问题"},),
+    )
+    return SimpleNamespace(ai=ai, max_tokens=900), snapshot
 
 
 @pytest.fixture
@@ -272,7 +288,6 @@ def test_knowledge_capture_normalizes_mode_and_rejects_silent_truncation():
 @pytest.mark.asyncio
 async def test_knowledge_reflection_runs_after_candidate_and_downgrades_automatic(
     monkeypatch, knowledge_storage):
-    from types import SimpleNamespace
     from agent.knowledge.reflection import reflect_if_candidate
 
     async def fake_search(*args, **kwargs):
@@ -285,11 +300,12 @@ async def test_knowledge_reflection_runs_after_candidate_and_downgrades_automati
         }]}
 
     monkeypatch.setattr("agent.rag.service.search_knowledge", fake_search)
-    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete)
-    settings = SimpleNamespace(ai=SimpleNamespace(max_tokens=900))
+    monkeypatch.setattr("agent.context.provider_runner.complete_messages", fake_complete)
+    settings, snapshot = _append_reflection_fixture()
 
     saved = await reflect_if_candidate(
         "user-a", "请记住新规则", "收到", settings, "规则",
+        session_id=7, snapshot=snapshot,
     )
     assert len(saved) == 1
     entries = await KnowledgeStore("user-a").list()
@@ -299,7 +315,6 @@ async def test_knowledge_reflection_runs_after_candidate_and_downgrades_automati
 
 @pytest.mark.asyncio
 async def test_knowledge_reflection_explicit_save_can_be_confirmed(monkeypatch, knowledge_storage):
-    from types import SimpleNamespace
     from agent.knowledge.reflection import reflect_if_candidate
 
     async def fake_search(*args, **kwargs):
@@ -312,11 +327,12 @@ async def test_knowledge_reflection_explicit_save_can_be_confirmed(monkeypatch, 
         }]}
 
     monkeypatch.setattr("agent.rag.service.search_knowledge", fake_search)
-    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete)
-    settings = SimpleNamespace(ai=SimpleNamespace(max_tokens=900))
+    monkeypatch.setattr("agent.context.provider_runner.complete_messages", fake_complete)
+    settings, snapshot = _append_reflection_fixture()
 
     await reflect_if_candidate(
         "user-a", "保存到知识库", "收到", settings, "规则", save_mode="explicit",
+        session_id=7, snapshot=snapshot,
     )
     entries = await KnowledgeStore("user-a").list()
     assert entries[0].confidence == "confirmed"
@@ -325,7 +341,6 @@ async def test_knowledge_reflection_explicit_save_can_be_confirmed(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_knowledge_reflection_conflict_keeps_parent_and_new_id(monkeypatch, knowledge_storage):
-    from types import SimpleNamespace
     from agent.knowledge.reflection import reflect_if_candidate
 
     original = KnowledgeEntry.create(
@@ -345,9 +360,11 @@ async def test_knowledge_reflection_conflict_keeps_parent_and_new_id(monkeypatch
         }]}
 
     monkeypatch.setattr("agent.rag.service.search_knowledge", fake_search)
-    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete)
+    monkeypatch.setattr("agent.context.provider_runner.complete_messages", fake_complete)
+    settings, snapshot = _append_reflection_fixture()
     await reflect_if_candidate(
-        "user-a", "发现另一种规则", "收到", SimpleNamespace(ai=SimpleNamespace(max_tokens=900)), "规则",
+        "user-a", "发现另一种规则", "收到", settings, "规则",
+        session_id=7, snapshot=snapshot,
     )
     entries = await KnowledgeStore("user-a").list()
     conflict = next(item for item in entries if item.parent_id == original.id)
