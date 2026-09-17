@@ -871,6 +871,33 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             # 者退出，无需重复补发。
             if cancelled:
                 await _pub({"type": "done", "cancelled": True})
+            # 取消/失败不再丢弃已产生的展示产物：run 中途的工具卡、文件卡、
+            # link_buttons 都已推给当前页面（live SSE），但不落库的话历史接口
+            # 拿不到——用户取消后整个 run 在任何端都消失（2026-09-18 实测）。
+            # canonical 不写：助手轮未完成，半截文本不能进 LLM 历史；
+            # display_timeline 单独成一条 assistant 展示行（text 为空）。
+            if display_timeline:
+                try:
+                    from agent.context.run_finalize import finalize_run
+                    await finalize_run(
+                        session_factory=_sess._SessionLocal,
+                        session_id=session_id,
+                        user_id=user_id,
+                        settings=settings,
+                        model_cfg=model_cfg,
+                        rag_context=None,
+                        messages=[],
+                        initial_len=0,
+                        text="",
+                        display_timeline=display_timeline,
+                        files=[],
+                        tokens_in=0,
+                        tokens_out=0,
+                        canonical_batches=[],
+                        run_id=current_run_id,
+                    )
+                except Exception:
+                    logger.exception("取消/失败路径的部分展示产物持久化失败 session=%s", session_id)
             return
 
         # 冲洗清洗器残留（未触发截断时的尾部）
