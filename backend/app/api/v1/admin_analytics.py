@@ -49,6 +49,7 @@ _ONBOARD_SQ = select(_seeded_pid).where(_seeded_pid.is_not(None))
 
 @router.get("/summary")
 async def get_summary(exclude_dev: bool = Query(False),
+                      include_byok: bool = Query(False),
                       timezone_name: str | None = Query(default=None, alias="timezone"),
                       db: AsyncSession = Depends(get_db)):
     now = now_utc()
@@ -76,7 +77,7 @@ async def get_summary(exclude_dev: bool = Query(False),
         chat_ids = set((await db.execute(_xd(
             select(distinct(AgentUsage.user_id)).where(
                 AgentUsage.created_at >= since,
-                AgentUsage.is_byok.is_(False),
+                *(() if include_byok else (AgentUsage.is_byok.is_(False),)),
             ),
             AgentUsage.user_id, xd)
         )).scalars().all())
@@ -127,7 +128,9 @@ async def get_summary(exclude_dev: bool = Query(False),
             func.count().label("calls"),
             func.coalesce(func.sum(AgentUsage.tokens_in), 0).label("tokens_in"),
             func.coalesce(func.sum(AgentUsage.tokens_out), 0).label("tokens_out"),
-        ).select_from(AgentUsage).where(AgentUsage.is_byok.is_(False))
+        ).select_from(AgentUsage).where(
+            *(() if include_byok else (AgentUsage.is_byok.is_(False),))
+        )
         if where is not None:
             s = s.where(where)
         return _xd(s, AgentUsage.user_id, xd)
@@ -155,7 +158,7 @@ async def get_summary(exclude_dev: bool = Query(False),
                   .where(
                       User.created_at < cutoff,
                       AgentUsage.created_at >= thresh,
-                      AgentUsage.is_byok.is_(False),
+                      *(() if include_byok else (AgentUsage.is_byok.is_(False),)),
                   ))
         if xd:
             web_s = web_s.where(User.is_developer == False)
@@ -258,6 +261,7 @@ async def get_summary(exclude_dev: bool = Query(False),
 @router.get("/trends")
 async def get_trends(days: int = Query(default=30, ge=7, le=90),
                      exclude_dev: bool = Query(False),
+                     include_byok: bool = Query(False),
                      timezone_name: str | None = Query(default=None, alias="timezone"),
                      db: AsyncSession = Depends(get_db)):
     user_tz, tz_expr = _analytics_timezone(timezone_name)
@@ -268,7 +272,7 @@ async def get_trends(days: int = Query(default=30, ge=7, le=90),
     labels = [(start_local + timedelta(days=i)).strftime("%-m/%-d") for i in range(days)]
 
     nd = _DEV_NOT_IN if exclude_dev else ""
-    agent_nd = nd + " AND NOT is_byok "
+    agent_nd = nd + ("" if include_byok else " AND NOT is_byok ")
 
     agent_rows = (await db.execute(text(f"""
         SELECT DATE(created_at AT TIME ZONE {tz_expr}) AS d,
@@ -365,10 +369,10 @@ async def get_chat_funnel(exclude_dev: bool = Query(False), db: AsyncSession = D
 
 
 @router.get("/tool-distribution")
-async def get_tool_distribution(exclude_dev: bool = Query(False), db: AsyncSession = Depends(get_db)):
+async def get_tool_distribution(exclude_dev: bool = Query(False), include_byok: bool = Query(False), db: AsyncSession = Depends(get_db)):
     """工具调用频次分布（按工具名聚合，降序 Top 20）。"""
     nd = _DEV_NOT_IN if exclude_dev else ""
-    agent_nd = nd + " AND NOT is_byok "
+    agent_nd = nd + ("" if include_byok else " AND NOT is_byok ")
     rows = (await db.execute(text(f"""
         SELECT elem AS tool_name, COUNT(*)::int AS calls
         FROM agent_usage,
@@ -419,7 +423,7 @@ async def get_session_depth(exclude_dev: bool = Query(False), db: AsyncSession =
 
 
 @router.get("/active-dimensions")
-async def get_active_dimensions(exclude_dev: bool = Query(False), db: AsyncSession = Depends(get_db)):
+async def get_active_dimensions(exclude_dev: bool = Query(False), include_byok: bool = Query(False), db: AsyncSession = Depends(get_db)):
     """周活跃维度（近 7 天，去重用户数）。口径 v1 = 「操作过」（服务器有记录的创建/更新/触发），
     纯浏览（查看）未埋点、不含——见 docs/development/design-admin.md 面板备注。"""
     d7 = now_utc() - timedelta(days=7)
@@ -429,11 +433,10 @@ async def get_active_dimensions(exclude_dev: bool = Query(False), db: AsyncSessi
         s = select(func.count(distinct(col))).where(*where)
         return (await db.execute(_xd(s, col, xd))).scalar() or 0
 
-    chat     = await _cnt(
-        AgentUsage.user_id,
-        AgentUsage.created_at >= d7,
-        AgentUsage.is_byok.is_(False),
-    )
+    chat_filters = [AgentUsage.created_at >= d7]
+    if not include_byok:
+        chat_filters.append(AgentUsage.is_byok.is_(False))
+    chat = await _cnt(AgentUsage.user_id, *chat_filters)
     project  = await _cnt(Project.user_id, Project.updated_at >= d7)
     calendar = await _cnt(CalendarEvent.user_id, CalendarEvent.created_at >= d7)
     file_    = await _cnt(File.user_id, File.updated_at >= d7, File.deleted_at.is_(None))

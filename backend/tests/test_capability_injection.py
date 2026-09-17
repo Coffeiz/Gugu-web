@@ -307,6 +307,33 @@ async def test_dynamic_mcp_metadata_context_truncates_description_without_name_e
     assert metadata.description_short == "x" * 100
 
 
+@pytest.mark.anyio
+async def test_dynamic_mcp_catalog_includes_compact_field_signature():
+    from agent.tools.base import Tool
+
+    dynamic = Tool(
+        name="mcp_demo_weather",
+        description="查询天气",
+        description_short="查询天气",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+                "units": {"type": "string", "enum": ["metric", "imperial"]},
+            },
+            "required": ["city"],
+        },
+        handler=lambda _db, _user, _args: None,
+    )
+    index = await CapabilityIndex.from_registries_for_user(
+        None, None, tool_names=[], skill_metadata=(), dynamic_tools=[dynamic],
+    )
+
+    block = catalog_block(index.snapshot(authorized_names=[dynamic.name]))
+
+    assert "mcp_demo_weather：查询天气；字段：city(string),必填、units(string[metric|imperial])" in block
+
+
 def test_catalog_rejects_long_description_instead_of_truncating():
     snapshot = CapabilitySnapshot(
         generation=1,

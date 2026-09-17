@@ -386,8 +386,13 @@ class LLMRunner:
         }
 
     def _provider_tool_names(self, names: list[str]) -> list[str]:
-        """无论能力目录模式如何，动态 MCP 都直接声明给 provider。"""
-        if not self.dynamic_tools:
+        """按工具注入模式决定是否把动态 MCP 直接声明给 provider。
+
+        简介/固定 Adapter 模式只通过能力目录发现 MCP，再由
+        ``get_tool_schema`` → ``call_tool`` 按需调用；全量 Schema 模式仍直接
+        声明动态 MCP 工具。
+        """
+        if not self.dynamic_tools or getattr(self.capability_context, "fixed_adapter", False):
             return list(dict.fromkeys(names))
         return list(dict.fromkeys([*names, *self.dynamic_tools]))
 

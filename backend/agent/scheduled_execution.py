@@ -242,7 +242,8 @@ async def run_scheduled_once(
             )
             gen = scheduled_runner.run(
                 user_id,
-                None,
+                # Responses 将 system prompt 放在 instructions，而不是 input。
+                system_prompt,
                 messages,
                 use_anthropic=False,
                 model_cfg=model_cfg,

@@ -1,4 +1,4 @@
-/** Analytics 两页（数据总览 / 使用分析）共用：图表配置、格式化、排除开发者开关。 */
+/** Admin 分析页面共用：图表配置、格式化、排除开发者与 BYOK 筛选。 */
 import { ref, watch } from 'vue'
 // fmtTok 实现在公共 utils（个人面板趋势图也用）；必须先 import 建立本地绑定再导出——
 // 纯 `export { x } from` 转发不创建本地绑定，本模块内部的引用会运行时 ReferenceError。
@@ -9,9 +9,20 @@ export { fmtTok }
 const _XD_KEY = 'admin_exclude_dev'
 export const excludeDev = ref(localStorage.getItem(_XD_KEY) === '1')
 watch(excludeDev, v => localStorage.setItem(_XD_KEY, v ? '1' : '0'))
+const _BYOK_KEY = 'admin_include_byok'
+export const includeByok = ref(localStorage.getItem(_BYOK_KEY) === '1')
+watch(includeByok, v => localStorage.setItem(_BYOK_KEY, v ? '1' : '0'))
 /** 拼到请求 query 上（首参用 ?，已有 query 用 &） */
 export function xdQuery(prefix: '?' | '&' = '?'): string {
   return excludeDev.value ? `${prefix}exclude_dev=true` : ''
+}
+
+export function usageQuery(prefix: '?' | '&' = '?'): string {
+  const params = new URLSearchParams()
+  if (excludeDev.value) params.set('exclude_dev', 'true')
+  if (includeByok.value) params.set('include_byok', 'true')
+  const query = params.toString()
+  return query ? `${prefix}${query}` : ''
 }
 
 // ── 颜色 ─────────────────────────────────────────────────────────────────────

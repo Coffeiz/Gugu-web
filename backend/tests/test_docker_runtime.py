@@ -887,6 +887,9 @@ def test_systemd_templates_pin_rootless_socket():
     start_script = (backend / "start.sh").read_text(encoding="utf-8")
     assert ('SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd '
             'gugu-backend gugu-worker gugu-gateway"' in start_script)
+    assert "ensure_systemd_runtime_dirs" in start_script
+    assert 'mkdir -p "$data_dir" "$LOG_DIR" "$rag_index_dir"' in start_script
+    assert 'systemctl show gugu-rag-sidecar -p User --value' in start_script
     assert 'id -u "$run_user"' in start_script
     assert 's#__RUN_UID__#${run_uid}#g' in start_script
     assert 's#__RUN_HOME__#${run_home}#g' in start_script

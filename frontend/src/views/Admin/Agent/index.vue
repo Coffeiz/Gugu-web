@@ -6,6 +6,18 @@
         <h2 class="page-title">{{ standaloneMode === 'behavior' ? t('agent.capabilityTitle') : standaloneMode === 'usage' ? t('agent.usageTitle') : t('agent.title') }}</h2>
         <p class="page-desc">{{ standaloneMode ? t('agent.standaloneDescription') : t('agent.description') }}</p>
       </div>
+      <div v-if="standaloneMode === 'usage'" class="page-header-actions">
+        <Checkbox class="data-header-control" :model-value="excludeDev" :aria-label="t('adminUsageUi.excludeDevelopers')" @update:model-value="excludeDev = $event">{{ t('adminUsageUi.excludeDevelopers') }}</Checkbox>
+        <Checkbox class="data-header-control" :model-value="includeByok" :aria-label="t('adminUsageUi.includeByok')" @update:model-value="includeByok = $event">{{ t('adminUsageUi.includeByok') }}</Checkbox>
+        <SegmentedTabs
+          :model-value="usagePeriod"
+          :tabs="usagePeriods"
+          size="compact"
+          class="data-header-control"
+          :aria-label="t('adminUsageUi.timezone')"
+          @update:model-value="setUsagePeriod"
+        />
+      </div>
     </div>
 
     <!-- 标签栏 -->
@@ -546,7 +558,7 @@
       <StateLabelsPanel v-if="activeTab === 'behavior' && behaviorTab === 'labels'" />
 
       <!-- ── 用量统计 ── -->
-      <UsagePanel v-if="activeTab === 'usage'" />
+      <UsagePanel v-if="activeTab === 'usage'" :period="usagePeriod" :exclude-dev="excludeDev" :include-byok="includeByok" />
 
     </div>
   </div>
@@ -569,18 +581,32 @@ import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from '../Config/components/ConfigField.vue'
 import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
 import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.vue'
 import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS } from '@/utils/modelProviders'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
+import { excludeDev, includeByok } from '../Analytics/_shared'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
 const route = useRoute()
 const { t } = useI18n()
 const standaloneMode = computed(() => route.path === '/agent-behavior' ? 'behavior' : route.path === '/agent-usage' ? 'usage' : '')
+type UsagePeriod = 'day' | 'week' | 'month'
+const usagePeriod = ref<UsagePeriod>('day')
+const usagePeriods = computed(() => [
+  { key: 'day', label: t('adminUsageUi.today') },
+  { key: 'week', label: t('adminUsageUi.recent7') },
+  { key: 'month', label: t('adminUsageUi.recent30') },
+])
+function setUsagePeriod(value: string) {
+  if (value === 'day' || value === 'week' || value === 'month') {
+    usagePeriod.value = value
+  }
+}
 const runtimeConfig = useAgentRuntimeConfig()
 const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
@@ -1054,7 +1080,12 @@ function resetPermissions() {
 .page-header {
   padding: 32px 36px 0;
   flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
 }
+.page-header-actions { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-top: 4px; }
+.page-header-actions > .data-header-control { height: 32px; box-sizing: border-box; }
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 

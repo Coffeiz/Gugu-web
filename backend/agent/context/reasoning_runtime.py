@@ -127,14 +127,30 @@ class ReasoningStateCoordinator:
             self.model_cfg, provider=self.provider, api_format=self.api_format,
             tool_digest=tool_digest,
         )
+        if self.session_id is None or self.session_factory is None:
+            if self.policy.can_resume:
+                self._diagnostic["continuation_attempted"] = True
+                self._mark_unavailable("missing_session")
+            self._publish_diagnostics("prepared")
+            return
         if not self.policy.can_resume:
+            # off/summary 不恢复 provider payload，但仍必须读取一次 state：
+            # 这会失效旧的 active continuation，并返回正确的版本号供 summary
+            # 本轮提交时使用，避免留下可被后续恢复的旧分支。即使模型池或
+            # router 在下一轮重新选回原 preset，也不能复活这条旧分支。
+            async with self.session_factory() as db:
+                lookup = await provider_reasoning_state.load_state(
+                    db, user_id=self.user_id, session_id=self.session_id, policy=self.policy,
+                    provider=self.provider, api_format=self.api_format,
+                    model_id=str(getattr(self.model_cfg, "model", "") or ""),
+                    config_digest=self.config_digest,
+                    reasoning_config_digest=self.reasoning_config_digest,
+                )
+                self.expected_version = lookup.expected_version
+                await db.commit()
             self._publish_diagnostics("prepared")
             return
         self._diagnostic["continuation_attempted"] = True
-        if self.session_id is None or self.session_factory is None:
-            self._mark_unavailable("missing_session")
-            self._publish_diagnostics("prepared")
-            return
         if not getattr(driver, "continuation_available", False):
             self._mark_unavailable("continuation_unavailable")
             self._publish_diagnostics("prepared")

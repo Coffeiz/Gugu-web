@@ -128,6 +128,73 @@ async def test_coordinator_diagnostics_distinguish_state_lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_coordinator_off_invalidates_state_before_pool_can_restore_it(monkeypatch):
+    calls = []
+
+    class _DbContext:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def commit(self):
+            return None
+
+    async def load_for_non_resumable(*_args, **kwargs):
+        calls.append(kwargs["policy"].mode)
+        return ProviderStateLookup(expected_version=7, unavailable_reason="disabled")
+
+    monkeypatch.setattr(reasoning_runtime.provider_reasoning_state, "load_state", load_for_non_resumable)
+    model = SimpleNamespace(provider="anthropic", model="claude-test", context_tokens=128000)
+    driver = SimpleNamespace(api_format="anthropic", continuation_available=False)
+    ctx = SimpleNamespace(tool_state_digest="tools-digest")
+
+    off = ReasoningStateCoordinator(
+        user_id="user-a", session_id=7, model_cfg=model,
+        policy=ReasoningPersistencePolicy("off"),
+        session_factory=lambda: _DbContext(),
+    )
+    await off.prepared(driver, ctx)
+    assert off.expected_version == 7
+    assert off.diagnostics()["state_status"] == "disabled"
+
+    summary = ReasoningStateCoordinator(
+        user_id="user-a", session_id=7, model_cfg=model,
+        policy=ReasoningPersistencePolicy("summary"),
+        session_factory=lambda: _DbContext(),
+    )
+    await summary.prepared(driver, ctx)
+    assert summary.expected_version == 7
+    assert summary.diagnostics()["state_status"] == "summary_only"
+
+    assert calls == ["off", "summary"]
+
+
+@pytest.mark.asyncio
+async def test_invalidate_user_states_clears_only_active_rows(db, user_a, monkeypatch):
+    import app.byok.crypto as byok_crypto
+    from app.services.provider_reasoning_state import invalidate_user_states
+
+    monkeypatch.setattr(byok_crypto, "_master_key", lambda version=1: b"r" * 32)
+    session = await _session(db, user_a.id)
+    envelope = _envelope(user_a, session)
+    await commit_state(db, user_id=user_a.id, session_id=session.id, envelope=envelope, expected_version=0)
+    await db.commit()
+    count = await invalidate_user_states(db, user_id=user_a.id)
+    assert count == 1
+    await db.commit()
+    row = (await db.execute(select(ProviderReasoningState))).scalar_one()
+    assert row.status == "invalidated"
+    assert row.invalidated_reason == "config_changed"
+
+    # 再次执行是幂等的，不会继续增加版本。
+    version = row.version
+    assert await invalidate_user_states(db, user_id=user_a.id) == 0
+    assert row.version == version
+
+
+@pytest.mark.asyncio
 async def test_responses_incompatible_invalidates_persisted_state(db, user_a, monkeypatch):
     """Responses 回退必须真正失效旧 reasoning state，避免下一轮重复撞 Responses。"""
     import app.byok.crypto as byok_crypto

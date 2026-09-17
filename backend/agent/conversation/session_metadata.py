@@ -48,6 +48,9 @@ async def generate_title(
     locale: str | None = None,
 ) -> str:
     """用 LLM 为新对话起标题；失败时回退到截断用户消息。"""
+    from agent.security.sanitize import strip_think_blocks
+
+    ai_reply = strip_think_blocks(ai_reply)
     prompt = build_title_prompt(user_msg, ai_reply, locale)
     from agent import providers
     from agent.llm.modelctx import effective_ai
@@ -71,7 +74,7 @@ async def generate_title(
                 for block in resp.content
                 if getattr(block, "type", "") == "text"
             )
-            return (text.strip()[:30]) or user_msg[:20]
+            return (strip_think_blocks(text).strip()[:30]) or user_msg[:20]
 
         import httpx
 
@@ -83,13 +86,17 @@ async def generate_title(
             max_tokens=40,
             **extra,
         )
-        return (resp.choices[0].message.content or "").strip()[:30] or user_msg[:20]
+        title = strip_think_blocks(resp.choices[0].message.content or "").strip()
+        return title[:30] or user_msg[:20]
     except Exception:
         return user_msg[:20]
 
 
 async def generate_summary(convo: str, settings, use_anthropic: bool) -> str:
     """用 LLM 给一段会话生成一句话总结，失败回空且不覆盖旧总结。"""
+    from agent.security.sanitize import strip_think_blocks
+
+    convo = strip_think_blocks(convo)
     prompt = (
         "用一句话（20字以内）概括下面这段对话主要在聊什么 / 在做什么，"
         "供日后检索和接着聊时一眼认出。只输出那句话，不要引号、不要解释。\n\n"
@@ -117,7 +124,7 @@ async def generate_summary(convo: str, settings, use_anthropic: bool) -> str:
                 for block in resp.content
                 if getattr(block, "type", "") == "text"
             )
-            return text.strip().strip('"「」')[:120]
+            return strip_think_blocks(text).strip().strip('"「」')[:120]
 
         import httpx
 
@@ -129,7 +136,8 @@ async def generate_summary(convo: str, settings, use_anthropic: bool) -> str:
             messages=[{"role": "user", "content": prompt}],
             **extra,
         )
-        return (resp.choices[0].message.content or "").strip().strip('"「」')[:120]
+        summary = strip_think_blocks(resp.choices[0].message.content or "").strip()
+        return summary.strip('"「」')[:120]
     except Exception:
         return ""
 

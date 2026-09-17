@@ -25,6 +25,7 @@ class CapabilityMeta:
     enabled: bool = True
     content_digest: str = ""
     owner_fingerprint: str = ""
+    field_signature: str = ""
 
 
 @dataclass(frozen=True)

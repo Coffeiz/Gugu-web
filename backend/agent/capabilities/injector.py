@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .index import CapabilityIndex
 from .models import CapabilitySnapshot, SelectedCapabilities, DESCRIPTION_SHORT_MAX_CHARS
+from .schema_signature import field_signature
 from .selector import CapabilitySelector
 
 
@@ -21,50 +22,6 @@ def _capability_tool_names(tool_names: list[str]) -> list[str]:
     return list(dict.fromkeys([*tool_names, *FIXED_ADAPTER_TOOL_NAMES, *ON_DEMAND_TOOL_NAMES]))
 
 
-def _field_signature_type(schema: dict, *, depth: int = 0) -> str:
-    """把工具字段转换成紧凑签名，嵌套对象最多展开一层，不复制 JSON Schema。"""
-    if not isinstance(schema, dict):
-        return "unknown"
-    schema_type = schema.get("type")
-    if schema_type == "array":
-        item = schema.get("items")
-        if isinstance(item, dict) and item.get("type") == "object":
-            if depth >= 2:
-                return "array<object>"
-            names = tuple(
-                f"{name}:{_field_signature_type(value, depth=depth + 1)}"
-                for name, value in (item.get("properties") or {}).items()
-            )
-            return f"array<object:{','.join(names)}>" if names else "array<object>"
-        return f"array<{_field_signature_type(item, depth=depth + 1)}>" if isinstance(item, dict) else "array"
-    if schema_type == "object":
-        if depth >= 2:
-            return "object"
-        names = tuple(
-            f"{name}:{_field_signature_type(value, depth=depth + 1)}"
-            for name, value in (schema.get("properties") or {}).items()
-        )
-        return f"object:{','.join(map(str, names))}" if names else "object"
-    if schema_type:
-        result = str(schema_type)
-        enum = schema.get("enum")
-        if (
-            isinstance(enum, list)
-            and enum
-            and len(enum) <= 8
-            and all(isinstance(item, (str, int, float, bool)) for item in enum)
-        ):
-            values = "|".join(str(item) for item in enum)
-            if len(values) <= 140:
-                result = f"{result}[{values}]"
-        return result
-    choices = schema.get("anyOf") or schema.get("oneOf")
-    if isinstance(choices, list):
-        types = tuple(_field_signature_type(item, depth=depth) for item in choices if isinstance(item, dict))
-        return "|".join(dict.fromkeys(types)) or "unknown"
-    return "unknown"
-
-
 def _tool_field_signature(name: str) -> str:
     """从唯一工具注册表生成字段签名，避免 description_short 再维护一份字段文案。"""
     try:
@@ -76,25 +33,15 @@ def _tool_field_signature(name: str) -> str:
         schema = None
     if not isinstance(schema, dict):
         return ""
-    properties = schema.get("properties") or {}
-    if not isinstance(properties, dict):
-        return ""
-    required = set(schema.get("required") or ())
-    fields = []
-    for field_name, field_schema in properties.items():
-        field = f"{field_name}({_field_signature_type(field_schema)})"
-        if field_name in required:
-            field += ",必填"
-        fields.append(field)
-    return "、".join(fields)
+    return field_signature(schema)
 
 
 class CapabilityToolContext:
     """Run 内的能力上下文。
 
-    固定 Adapter 模式只把内置业务工具的稳定入口注册给 Provider；动态 MCP 工具
-    由 runner 直接追加完整 Schema。metadata-only 模式只用于 Skill 目录和诊断，
-    不参与 Provider 工具选择。
+    固定 Adapter 模式只把内置业务工具和动态 MCP 的稳定入口注册给 Provider；
+    动态 MCP 的完整 Schema 通过 ``get_tool_schema`` 按需获取。metadata-only
+    模式只用于 Skill 目录和诊断，不参与 Provider 工具选择。
     """
 
     def __init__(
@@ -242,7 +189,7 @@ def catalog_block(
         ])
     else:
         lines.extend([
-            "固定 Adapter 模式下使用 `call_tool({name: 工具名, arguments: 业务参数对象})` 调用业务工具；"
+            "固定 Adapter 模式下使用 `call_tool({name: 工具名, arguments: 业务参数对象})` 调用已授权工具（包括 MCP）；"
             "禁止只传 name，也不要把目标工具参数省略成空对象。"
             "工具名必须逐字复用目录中的 canonical name，不得把自然语言翻译成自造的别名；"
             "字段签名只展示类型、简单枚举、必填状态和一层结构，复杂嵌套约束仍必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
@@ -281,7 +228,10 @@ def catalog_block(
                 raise ValueError(
                     f"能力 {item.name} 的 description_short 超过 {CATALOG_DESCRIPTION_MAX_CHARS} 字符"
                 )
-            fields = _tool_field_signature(item.name) if item.kind == "tool" else ""
+            fields = (
+                item.field_signature or _tool_field_signature(item.name)
+                if item.kind == "tool" else ""
+            )
             suffix = f"；字段：{fields}" if fields else ""
             lines.append(f"- {item.name}：{description}{suffix}")
     return "\n".join(lines)

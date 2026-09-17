@@ -16,6 +16,14 @@ from uuid import uuid4
 from agent import core as _core
 
 
+def _allow_tool_images(model_cfg: Any) -> bool:
+    """判断工具读回的图片能否继续交给本轮实际模型。"""
+    from app.core import chat_attach
+    # 与当前用户附件 resolve_for_message 使用同一套显式配置/能力判断，不能只看
+    # provider capability snapshot：用户手动开启 vision 时 snapshot 可能仍未探测。
+    return chat_attach.vision_ready(model_cfg)
+
+
 async def run_loop(
     runner: Any,
     driver: Any,
@@ -583,8 +591,21 @@ async def run_loop(
                 # 只根据 cause 类型挑一句降级文案给用户。
                 import anthropic
                 busy = isinstance(e.cause, getattr(anthropic, "RateLimitError", ()))
-                detail = "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏" if busy else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError' if not busy else 'chatUi.networkError'}, ensure_ascii=False)}\n\n"
+                from agent.providers.errors import is_provider_http_error
+                provider_error = is_provider_http_error(e)
+                detail = (
+                    "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏"
+                    if busy else
+                    "模型服务暂时拒绝或不可用，请稍后重试。"
+                    if provider_error else
+                    "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                )
+                message_key = (
+                    "chatUi.networkError" if busy else
+                    "chatUi.providerError" if provider_error else
+                    "chatUi.genericError"
+                )
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
                 if reasoning_state is not None:
@@ -626,8 +647,11 @@ async def run_loop(
                 _core.diag_log(f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
                          f"format={driver.api_format}", e)
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
-                detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError'}, ensure_ascii=False)}\n\n"
+                from agent.providers.errors import is_provider_http_error
+                provider_error = is_provider_http_error(e)
+                detail = "模型服务暂时拒绝或不可用，请稍后重试。" if provider_error else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                message_key = "chatUi.providerError" if provider_error else "chatUi.genericError"
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key}, ensure_ascii=False)}\n\n"
                 return
 
             total_in  += result.usage_in
@@ -1040,8 +1064,7 @@ async def run_loop(
                 # 工具结果里的图片块只能发给明确支持视觉输入的本轮模型。不能只看
                 # 工具本身是否成功，否则 GLM 等文本模型会收到 image_url 并被 provider
                 # 以 400 拒绝，导致工具结果已经返回却无法继续对话。
-                from agent import providers
-                allow_tool_images = bool(providers.capability_snapshot(ai).get("vision", False))
+                allow_tool_images = _allow_tool_images(ai)
                 provider_round = driver.build_tool_round(
                     result, dispatched, allow_images=allow_tool_images,
                 )

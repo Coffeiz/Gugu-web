@@ -119,7 +119,7 @@ async def test_mcp_tool_without_description_still_enters_dynamic_catalog(monkeyp
     assert "echo" in tools[0].description_short
 
 
-def test_dynamic_mcp_tools_are_declared_in_provider_in_fixed_adapter_mode():
+def test_dynamic_mcp_tools_use_adapter_in_fixed_adapter_mode():
     from types import SimpleNamespace
     from agent.tools.base import Tool
 
@@ -137,8 +137,27 @@ def test_dynamic_mcp_tools_are_declared_in_provider_in_fixed_adapter_mode():
     )
 
     assert runner._provider_tool_names(["call_tool", "get_tool_schema"]) == [
-        "call_tool", "get_tool_schema", "mcp_gaode_geocode",
+        "call_tool", "get_tool_schema",
     ]
+
+
+def test_dynamic_mcp_tools_remain_native_in_full_schema_mode():
+    from agent.tools.base import Tool
+
+    dynamic = Tool(
+        name="mcp_gaode_geocode",
+        description="高德地理编码",
+        input_schema={"type": "object", "properties": {"address": {"type": "string"}}},
+        handler=lambda _db, _user, _args: None,
+    )
+    settings = SimpleNamespace(state_labels=SimpleNamespace(overrides={}))
+    runner = LLMRunner(
+        ["ask_user"], settings,
+        capability_context=SimpleNamespace(fixed_adapter=False, metadata_only=True),
+        dynamic_tools=[dynamic],
+    )
+
+    assert runner._provider_tool_names(["ask_user"]) == ["ask_user", "mcp_gaode_geocode"]
 
 
 async def _configs(configs):

@@ -723,7 +723,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         rag_context = prepared.rag_context
         gen = runner.run(
             user_id,
-            system_prompt if use_anthropic else None,
+            # Chat Completions 的 system 已在 oa_messages 中；Responses 还需要
+            # 通过 instructions 接收稳定 system prompt。
+            system_prompt,
             anthr_messages if use_anthropic else oa_messages,
             use_anthropic=use_anthropic,
             model_cfg=model_cfg,
@@ -960,12 +962,18 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         generation_failed = True
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
         is_network_error = _is_network_error(e)
+        from agent.providers.errors import is_provider_http_error
+        provider_error = is_provider_http_error(e)
         msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
+               else "模型服务暂时拒绝或不可用，请稍后重试。" if provider_error
                else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
+        message_key = ("chatUi.networkError" if is_network_error
+                       else "chatUi.providerError" if provider_error
+                       else "chatUi.genericError")
         await _pub({
             "type": "error",
             "message": msg,
-            "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
+            "message_key": message_key,
         })
     finally:
         # LoopScope 正常由 genstream 的 done/error 事件收尾；事件发布前异常、
@@ -1138,13 +1146,19 @@ async def _finalize_preflight_failure(session_id, model_cfg=None, error=None,
             exc_info=(type(error), error, error.__traceback__),
         )
         is_network_error = _is_network_error(error)
+        from agent.providers.errors import is_provider_http_error
+        provider_error = is_provider_http_error(error)
         message = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
+                   else "模型服务暂时拒绝或不可用，请稍后重试。" if provider_error
                    else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
+        message_key = ("chatUi.networkError" if is_network_error
+                       else "chatUi.providerError" if provider_error
+                       else "chatUi.genericError")
         await genstream.publish(session_id, {
             "run_id": str(owner_run_id or ""),
             "type": "error",
             "message": message,
-            "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
+            "message_key": message_key,
         })
     elif cancelled:
         await genstream.publish(session_id, {

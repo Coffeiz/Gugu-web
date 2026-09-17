@@ -43,6 +43,45 @@ def normalize_openai_usage(usage) -> dict[str, int]:
         "cache_write": int(_usage_value(usage, "prompt_cache_creation_tokens") or 0),
     }
 
+
+def normalize_responses_usage(usage) -> dict[str, int]:
+    """把 Responses usage 归一为和 Chat Completions 相同的缓存口径。
+
+    Responses 的标准字段是 ``input_tokens_details.cached_tokens``，但兼容
+    服务常沿用 OpenAI Chat 的 ``prompt_cache_hit_tokens`` 或
+    ``prompt_tokens_details.cached_tokens``。这里集中兼容这些形态，避免
+    provider driver 和 LoopScope 各自维护一套不完整的解析逻辑。
+    """
+    input_tokens = int(
+        _usage_value(usage, "input_tokens")
+        or _usage_value(usage, "prompt_tokens")
+        or 0
+    )
+    cache_read = int(_usage_value(usage, "prompt_cache_hit_tokens") or 0)
+    if not cache_read:
+        details = _usage_value(usage, "input_tokens_details")
+        cache_read = int(_usage_value(details, "cached_tokens") or 0)
+    if not cache_read:
+        details = _usage_value(usage, "prompt_tokens_details")
+        cache_read = int(_usage_value(details, "cached_tokens") or 0)
+    if not cache_read:
+        cache_read = int(_usage_value(usage, "cached_tokens") or 0)
+    return {
+        "input": max(0, input_tokens - cache_read),
+        "output": int(
+            _usage_value(usage, "output_tokens")
+            or _usage_value(usage, "completion_tokens")
+            or 0
+        ),
+        "cache_read": cache_read,
+        "cache_write": int(
+            _usage_value(usage, "cache_creation_input_tokens")
+            or _usage_value(usage, "prompt_cache_creation_tokens")
+            or _usage_value(usage, "cache_write_tokens")
+            or 0
+        ),
+    }
+
 async def record_usage(
     user_id,
     settings,

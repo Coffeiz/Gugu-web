@@ -11809,6 +11809,9 @@ export interface operations {
             query?: {
                 month?: string | null;
                 model?: string | null;
+                exclude_dev?: boolean;
+                include_byok?: boolean;
+                date?: string | null;
                 timezone?: string | null;
             };
             header?: never;
@@ -13099,6 +13102,7 @@ export interface operations {
         parameters: {
             query?: {
                 exclude_dev?: boolean;
+                include_byok?: boolean;
                 timezone?: string | null;
             };
             header?: never;
@@ -13132,6 +13136,7 @@ export interface operations {
             query?: {
                 days?: number;
                 exclude_dev?: boolean;
+                include_byok?: boolean;
                 timezone?: string | null;
             };
             header?: never;
@@ -13195,6 +13200,7 @@ export interface operations {
         parameters: {
             query?: {
                 exclude_dev?: boolean;
+                include_byok?: boolean;
             };
             header?: never;
             path?: never;
@@ -13257,6 +13263,7 @@ export interface operations {
         parameters: {
             query?: {
                 exclude_dev?: boolean;
+                include_byok?: boolean;
             };
             header?: never;
             path?: never;

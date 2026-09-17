@@ -33,8 +33,24 @@ def test_adapter_for_minimax_m2_vs_m3_cache():
 
 def test_adapter_for_qwen_keeps_known_openai_cache_capability():
     a = adapter_for(_ai(provider="qwen", model="qwen-max"))
+    assert a.protocol_format(_ai(provider="qwen", base_url="https://example.com/anthropic")) == "openai"
+    assert adapter_for(_ai(provider="openai")).protocol_format(
+        _ai(provider="openai", base_url="https://example.com/anthropic")) == "openai"
     assert a.name == "qwen"
     assert a.supports_active_cache("qwen-max")
+
+
+def test_responses_prompt_cache_key_is_official_openai_only():
+    adapter = adapter_for(_ai(provider="openai", base_url="https://api.openai.com/v1"))
+    assert adapter.supports_responses_prompt_cache_key(
+        _ai(provider="openai", base_url="https://api.openai.com/v1")
+    )
+    assert not adapter.supports_responses_prompt_cache_key(
+        _ai(provider="openai", base_url="https://gateway.example.com/v1")
+    )
+    assert not adapter_for(_ai(provider="qwen")).supports_responses_prompt_cache_key(
+        _ai(provider="qwen")
+    )
 
 
 def test_bailian_qwen3_capabilities_and_thinking_toggle():

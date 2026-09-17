@@ -7,6 +7,7 @@ from types import MappingProxyType
 
 from agent.tools import registry as tool_registry
 from .models import CapabilityMeta, CapabilitySnapshot, DESCRIPTION_SHORT_MAX_CHARS
+from .schema_signature import field_signature
 from .skill_registry import SkillCapabilityRegistry
 from .tool_registry import ToolCapabilityRegistry
 from .errors import CapabilityReferenceError
@@ -82,6 +83,7 @@ class CapabilityIndex:
                 platforms=tuple(getattr(tool, "platforms", ()) or ()),
                 source="mcp",
                 enabled=True,
+                field_signature=field_signature(getattr(tool, "input_schema", None)),
             ))
         user_items = (
             tuple(skill_metadata)
