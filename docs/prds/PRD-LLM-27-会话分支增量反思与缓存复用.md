@@ -252,15 +252,15 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [x] 统计主聊天、Memory、Knowledge 和 compaction 的 usage/cache 基线。
 - [x] 确认 owner 单 session 与批处理/群组反思必须分流。
 
-### Phase 1：快照与公共追加入口
+### Phase 1：快照与公共追加入口（已完成，2026-09-18）
 
-- [ ] 钉死反思执行拓扑：内联冲刷与 worker 扫描双路径的进程归属，确定允许携带快照的路径清单（见 §6.1）。
-- [ ] 定义只读主会话快照结构和有效 revision。
-- [ ] 为 `ContextBranch` 增加 `append_reuse` 状态边界，避免误失效 reasoning state。
-- [ ] 将压缩的 `_branch_prefix_history()` 前缀准备逻辑提炼为共享 helper，压缩和反思共同调用。
-- [ ] 统一 provider-ready history、tools 和生成参数的捕获方式，不新增反思专用追加执行器。
-- [ ] 建立 provider/模型前缀缓存能力白名单及运行中自动摘出机制（§6.7 第一关），附 A/B 实测数据。
-- [ ] 增加快照过期、provider 切换、dynamic tail 和敏感字段测试。
+- [x] 钉死反思执行拓扑：内联冲刷与 worker 扫描双路径的进程归属，确定允许携带快照的路径清单（见 §6.1）。快照只存捕获进程（`reflection_snapshot.py` 进程内登记，无 Redis/DB 依赖），worker 扫描查无快照自然回落 standalone。
+- [x] 定义只读主会话快照结构和有效 revision：`ReflectionSnapshot`（user+session 键、system_prompt、ai 配置、tools、canonical history 含末尾 assistant 回复、digest revision、TTL 15min/LRU 64 条）。
+- [x] 为 `ContextBranch` 增加 `append_reuse` 状态边界，避免误失效 reasoning state（`BranchInput.branch_mode`，只读分支跳过 invalidate）。
+- [x] 将压缩的 `_branch_prefix_history()` 前缀准备逻辑提炼为共享 helper（`prefix_history.render_branch_prefix`），压缩已改调用；反思在 Phase 2 接入。
+- [x] 建立 provider/模型前缀缓存能力白名单及运行中自动摘出机制（§6.7 第一关）：deepseek/openai/anthropic 默认准入，minimax/qwen/未知默认关闭；ReuseMissTracker 连续零命中摘出+冷却恢复。A/B 实测数据随 Phase 2 链路接入后补录。
+- [x] 统一 provider-ready history、tools 和生成参数的捕获方式：`loop/machine.py` 成功收尾处捕获（ctx.tools + 消息容器 + 最终回复），不新增反思专用追加执行器。
+- [x] 增加快照过期、provider 切换、dynamic tail 和敏感字段测试（`tests/test_reflection_snapshot.py` 14 条；敏感边界以「快照模块无 Redis/DB 依赖 + 日志无正文」锚定）。
 
 ### Phase 2：owner Memory 反思
 
