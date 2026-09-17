@@ -129,18 +129,58 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
 
 @pytest.mark.asyncio
 async def test_responses_driver_marks_full_request_protocol_error():
+    compatibility_error = _ResponsesStatusError(400)
+    compatibility_error.body = {"error": {"code": "json_parse_error", "message": "invalid Responses input"}}
     client = SimpleNamespace(
-        responses=SimpleNamespace(create=lambda **kwargs: _raise_status(400)),
+        responses=SimpleNamespace(create=lambda **kwargs: _raise_error(compatibility_error)),
     )
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
     adapter = SimpleNamespace(render_history=lambda messages: list(messages))
     ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
 
-    with pytest.raises(ResponsesCompatibilityError) as error:
+    with pytest.raises(ResponsesCompatibilityError) as raised:
         async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
             pass
-    assert error.value.status_code == 400
+    assert raised.value.status_code == 400
+
+
+async def _raise_error(error):
+    raise error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_code,message,should_raise",
+    [
+        (400, "HTTP 400 bad request", False),
+        (400, "context_length_exceeded", False),
+        (404, "model not found", False),
+        (400, "json_parse_error: ResponseInput deserialize failed", True),
+        (405, "method not allowed", True),
+    ],
+)
+async def test_responses_driver_only_classifies_explicit_compatibility_errors(
+    status_code, message, should_raise,
+):
+    error = _ResponsesStatusError(status_code)
+    error.message = message
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **kwargs: _raise_error(error)),
+    )
+    driver = OpenAIResponsesDriver()
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
+
+    if should_raise:
+        with pytest.raises(ResponsesCompatibilityError):
+            async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
+                pass
+    else:
+        with pytest.raises(_ResponsesStatusError):
+            async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
+                pass
 
 
 def test_responses_driver_keeps_tool_images_as_input_image_items():

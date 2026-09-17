@@ -12,6 +12,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from agent.context.budget import is_context_overflow_error
 from agent.providers.message_utils import _openai_tool_result
 
 
@@ -25,7 +26,35 @@ class ResponsesCompatibilityError(RuntimeError):
 
 def _raise_if_responses_compatibility_error(exc: Exception) -> None:
     status_code = getattr(exc, "status_code", None)
-    if status_code in {400, 404, 405, 415, 422, 501}:
+    # 上下文超限、模型不存在和普通参数错误不能被误判为协议不兼容；它们
+    # 应继续交给主循环的原有错误恢复/诊断路径处理。
+    if is_context_overflow_error(exc):
+        return
+    if status_code in {405, 415, 501}:
+        raise ResponsesCompatibilityError(status_code) from exc
+    if status_code not in {400, 404, 422}:
+        return
+
+    searchable = " ".join(
+        str(value) for value in (
+            str(exc),
+            getattr(exc, "code", None),
+            getattr(exc, "type", None),
+            getattr(exc, "param", None),
+            getattr(exc, "message", None),
+            getattr(exc, "body", None),
+        ) if value is not None
+    ).lower()
+    compatibility_markers = (
+        "json_parse_error",
+        "responseinput",
+        "response input",
+        "responses endpoint",
+        "responses api",
+        "does not support responses",
+        "unsupported responses",
+    )
+    if any(marker in searchable for marker in compatibility_markers):
         raise ResponsesCompatibilityError(status_code) from exc
 
 
