@@ -88,12 +88,12 @@
 
 快照只能作为进程内后台任务的短生命周期输入，不能把完整 provider 消息、工具参数、请求头或凭据写入 Redis、数据库、日志或 LoopScope 正文。若必须跨 worker 传递，应只传引用和可验证 revision，并从受权限保护的事实源重新构建。
 
-**执行拓扑必须先钉死（Phase 1 第一项）**。现状是双路径（见 `_queue_owner_reflection` / `_drain_owner_reflection_buffer`）：
+**执行拓扑必须先钉死（Phase 1 第一项）**。owner Memory 反思只处理当前 session，缓冲按 session 隔离（见 `_queue_owner_reflection` / `_drain_owner_reflection_buffer`）：
 
 - **内联冲刷**：工具回合在主请求进程内 `rpush` 后立即 drain——同进程，可携带进程内快照；
-- **worker 扫描冲刷**：idle zset 由 worker 进程扫描 drain——跨进程，进程内快照不可达，只能降级 standalone。
+- **worker 扫描冲刷**：worker 进程只能在能够取得当前 session 有效快照时 drain；取不到时保留缓冲，等待下一次主会话完成后重试。
 
-因此快照的传播范围按路径区分：内联冲刷路径允许把快照作为进程内参数传递（不落 Redis）；worker 扫描路径一律 standalone，不改造 Redis 队列载荷、不新增跨进程快照通道。凡「缓冲多回合合并后跨 session」「服务重启恢复」「worker 扫描」的任务都走 §6.5 的独立路径。
+因此 owner Memory 不再设置 standalone 回退：快照缺失、过期、revision 不一致或模型切换时延迟本次反思，不用没有主会话前缀的独立调用。群业务相关的独立批处理仍按 §6.5 保留。
 
 ### 6.2 追加式分支
 
@@ -158,8 +158,8 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 群聊只做一层简单判断，不重构现有群组游标、scope 或批处理模型：
 
 - 群主在一次正常群聊回复结束后，沿用主请求快照走与私聊相同的 Memory 追加分支；
-- 群成员、群级记忆、被动群消息和没有助手回复的记录，继续走现有 scope snapshot + message batch 路径；
-- 群主反思缓冲如果没有可对应的单一主请求快照，直接走独立批处理，不做跨 session 合并。
+- 群成员、群级记忆、被动群消息和没有助手回复的记录，当前继续走现有 scope snapshot + message batch 路径；
+- 群主反思缓冲如果没有可对应的单一主请求快照，当前继续走群业务独立批处理，不做跨 session 合并。
 
 以下场景不做会话追加复用：
 
@@ -167,15 +167,15 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 - 被动群消息或没有助手回复的记录；
 - 跨 session 的阈值批处理；
 - 服务重启后从游标恢复的历史任务；
-- 主快照缺失、过期、revision 不一致或 provider 已切换的任务。
+- owner Memory 的主快照缺失、过期、revision 不一致或 provider 已切换的任务：保留缓冲并延迟，不再进入 standalone；群业务任务仍可使用独立批处理。
 
-这些场景继续使用现有 scope snapshot + message batch 的 `ContextBranch` 路径，不改变游标、锁、幂等和失败重试语义。群聊 owner 的追加分支只复用已有压缩分支能力，不额外建立群聊专用分支实现。
+这些场景当前继续使用现有 scope snapshot + message batch 的 `ContextBranch` 路径，不改变游标、锁、幂等和失败重试语义。群聊 owner 的追加分支只复用已有压缩分支能力，不额外建立群聊专用分支实现。群反思与群员反思全面迁移到 append、standalone 完全退出，列入 Phase 5，实施前不在本阶段预设提示词或技术方案。
 
 ### 6.6 Reasoning state 边界
 
 追加式只读分支不得修改主会话的 reasoning continuation state。`ContextBranch` 当前“带 session id 即失效 reasoning state”的行为需要拆分为：
 
-- `standalone`：独立分支，允许建立状态边界并失效旧 continuation；
+- `standalone`：当前仍被群成员、群组、被动消息和跨 session 批处理使用；owner 单 session Memory 不再使用。Phase 5 完成后，反思执行模型不再保留该模式；若公共 `ContextBranch` 仍有非反思调用，必须先拆出不依赖该模式名称和枚举的独立执行语义；
 - `append_reuse`：只读 sibling branch，记录 usage/session 归属，但不修改主 continuation。
 
 分支响应不能被当作主会话下一轮的 Responses API continuation。主会话后续请求仍以原 canonical history 和原 reasoning state 为准。
@@ -283,7 +283,29 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [ ] 完成 provider 差异、超时、重试、并发和回落回归。
 - [ ] 对比反思自身成本与全站成本，记录到 `docs/reports/OPT-Cache-Strategy-*.md`。
 - [ ] 更新相关 PRD、devlog 和运行观测字段。
-- [ ] **清理被追加分支替代的旧代码与提示词**（硬性要求）：owner 单 session 反思路径切换到 append_reuse 后，删除其原有的独立输入组装代码（画像/行为模式/summary/对话拼接）与对应的独立反思提示词文件，不得与新路径长期并存形成两套维护面；提示词内容若仍需复用，改为末尾任务消息引用同一份来源，不允许两份副本漂移。群成员、群级 scope 和跨 session 批处理仍使用独立路径与提示词，这部分不清理——清理边界以「只被新路径替代」为准。
+- [x] **清理 owner Memory 的 standalone 路径**：owner 缓冲按 session 隔离，只允许 append_reuse；无有效快照、快照漂移或模型切换时延迟，不再调用独立提取器。保留群主群聊、群成员、群组、被动消息和跨 session 批处理的独立路径与公共 `ContextBranch` 能力。`reflection.md` 仍作为 append 分支末尾任务规则保留，不删除共享提示词。
+
+### Phase 5：群反思全面追加化与 standalone 退出（待设计）
+
+**目标**：在 owner Memory 已完成追加化的基础上，将群主群聊反思、群成员反思、群级反思以及当前仍依赖独立批处理的群业务路径统一迁移到 `append_reuse`，最终从反思执行模型中完全清理 `standalone` 模式及其专用实现、测试和文档残留。
+
+本阶段当前只确定目标和验收边界，不预设具体提示词、消息组装方式或实现方案。开始实施前必须单独完成设计评审，至少明确：
+
+- 群消息、群成员消息与可追加 canonical history / session 的映射关系；
+- 群反思与群员反思的快照来源、跨进程回源、session/revision 校验和失效边界；
+- 多成员、群级批处理、被动消息、无助手回复等场景的 append 边界；
+- 群反思与群员反思的提示词、历史可见范围、待反思回合引用和记忆写回边界；
+- provider/model 切换、快照缺失、前缀失配时的延迟、重试或跳过策略；
+- append 分支与 reasoning state、工具声明、动态尾部和缓存前缀的一致性；
+- 删除 standalone 前的观测指标、回归测试、迁移顺序，以及代码、配置、测试和文档清理清单。
+
+验收目标：
+
+- 群主群聊、群成员和群级反思均可使用 `append_reuse`，不再依赖独立反思调用；
+- 反思域不再保留 `standalone` 分支、专用提取器及其专属提示词/测试依赖；
+- 群组游标、批处理幂等、锁、失败重试、写回和索引事件语义保持不变；
+- 主会话 canonical history、reasoning state、工具集合和缓存前缀不被反思分支污染；
+- 真实 provider 缓存、并发、多成员及跨进程恢复场景验证通过后，才可删除最后的 standalone 实现。
 
 ## 10. 主要风险
 

@@ -240,13 +240,12 @@ async def test_memory_reflect_passes_snapshot_to_knowledge(monkeypatch):
                              session_id=7, turns=turns, snapshot=snapshot)
     assert seen["snapshot"] is snapshot
 
-    # 无快照（standalone）：Knowledge 拿到 None
+    # 无快照：owner Memory 不再调用独立提取，也不会触发 Knowledge 反思
     seen.clear()
 
     async def fake_extract_standalone(*a, **k):
         return {"daily": "x", "perception": {"intent": "闲聊", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}
 
-    monkeypatch.setattr(reflection, "_extract", fake_extract_standalone)
     await reflection.reflect("u1", "小北", "m", "a", settings,
                              session_id=7, turns=turns, snapshot=None)
-    assert seen["snapshot"] is None
+    assert seen == {}

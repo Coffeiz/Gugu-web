@@ -149,14 +149,14 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
 
 
 def test_task_requirements_single_source():
-    """standalone 与 append 两条提取路径必须引用同一份任务要求常量。"""
+    """append 反思与保留的群主批处理共用同一份任务要求常量。"""
     source = inspect.getsource(reflection)
     assert source.count("_TASK_REQUIREMENTS") >= 3   # 定义 + 两条路径各引用一次
 
 
 def test_history_directive_append_only():
-    """完整历史边界指令只进 append 路径：standalone 无历史，不该多这段话。"""
-    extract_src = inspect.getsource(reflection._extract)
+    """完整历史边界指令只进 append 路径；群主独立批处理不携带它。"""
+    extract_src = inspect.getsource(reflection._extract_group_owner)
     append_src = inspect.getsource(reflection._extract_append)
     assert "_APPEND_HISTORY_DIRECTIVE" not in extract_src
     assert "_APPEND_HISTORY_DIRECTIVE" in append_src
@@ -196,7 +196,7 @@ async def test_reflect_uses_append_when_eligible(monkeypatch):
         return {}
 
     monkeypatch.setattr(reflection, "_extract_append", fake_append)
-    monkeypatch.setattr(reflection, "_extract", fake_standalone)
+    monkeypatch.setattr(reflection, "_extract_group_owner", fake_standalone)
 
     turns = [{"user_msg": "m", "assistant_reply": "a", "user_name": "小北", "session_id": 7}]
     ok = await reflection.reflect("u1", "小北", "m", "a", SimpleNamespace(),
@@ -205,7 +205,7 @@ async def test_reflect_uses_append_when_eligible(monkeypatch):
     assert used == {"append": 1, "standalone": 0}
 
 
-async def test_reflect_falls_back_to_standalone_without_snapshot(monkeypatch):
+async def test_reflect_defers_owner_without_snapshot(monkeypatch):
     used = {"append": 0, "standalone": 0}
 
     async def fake_bind(user_id, settings, session_id=None):
@@ -234,12 +234,13 @@ async def test_reflect_falls_back_to_standalone_without_snapshot(monkeypatch):
         return {}
 
     monkeypatch.setattr(reflection, "_extract_append", fake_append)
-    monkeypatch.setattr(reflection, "_extract", fake_standalone)
+    monkeypatch.setattr(reflection, "_extract_group_owner", fake_standalone)
 
     turns = [{"user_msg": "m", "assistant_reply": "a", "user_name": "小北", "session_id": 7}]
     await reflection.reflect("u1", "小北", "m", "a", SimpleNamespace(),
-                             session_id=7, turns=turns, snapshot=None)
-    assert used == {"append": 0, "standalone": 1}
+                             session_id=7, turns=turns, snapshot=None,
+                             allow_standalone=False)
+    assert used == {"append": 0, "standalone": 0}
 
 
 # ── drain 路径传递快照（§6.1 拓扑）───────────────────────────────────
@@ -297,16 +298,16 @@ async def test_owner_drain_peeks_snapshot_and_passes_to_reflect(monkeypatch):
     rows = [{"user_name": "小北", "user_msg": "m1", "assistant_reply": "a1", "session_id": 7}]
     payload = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
     monkeypatch.setattr("app.core.redis.get_redis",
-                        lambda: _FakeRedis(_owner_reflection_buffer_key("u1"), payload))
+                        lambda: _FakeRedis(_owner_reflection_buffer_key("u1", 7), payload))
 
-    await _drain_owner_reflection_buffer("u1", SimpleNamespace())
+    await _drain_owner_reflection_buffer("u1", SimpleNamespace(), 7)
     assert seen["snapshot"] is not None
     assert seen["snapshot"].session_id == 7
     assert seen["turns"] == rows
 
 
 async def test_group_drain_without_snapshot_passes_none(monkeypatch):
-    """worker 扫描进程查无快照：snapshot=None 传入 reflect → standalone。"""
+    """群业务 worker 查无快照时仍把任务交给保留的独立批处理。"""
     seen = {}
 
     async def fake_reflect(user_id, user_name, user_msg, assistant_reply, settings, **kwargs):

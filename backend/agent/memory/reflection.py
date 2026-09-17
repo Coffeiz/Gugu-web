@@ -91,7 +91,7 @@ def _now_ts() -> float:
 
 def _misperc_llm(user_id, corr) -> dict | None:
     """反思 LLM 判定的纠正 → misperc（带 kind=感知误读/数据或执行错，via=llm）。主信号。
-    corr 来自 _extract 的 out['correction']；非纠正或格式不对 → None（不记）。"""
+    corr 来自反思提取器的 out['correction']；非纠正或格式不对 → None（不记）。"""
     if not isinstance(corr, dict) or not corr.get("is_correction"):
         return None
     kind = corr.get("kind")
@@ -306,16 +306,18 @@ def _owner_reflection_threshold(settings) -> int:
         return 10
 
 
-def _owner_reflection_buffer_key(user_id) -> str:
-    return f"{_OWNER_REFLECTION_BUFFER_PREFIX}{user_id}"
+def _owner_reflection_buffer_key(user_id, session_id=None) -> str:
+    """返回 owner 当前 session 的反思缓冲键；不再合并跨 session 回合。"""
+    suffix = str(session_id) if session_id is not None else "legacy"
+    return f"{_OWNER_REFLECTION_BUFFER_PREFIX}{user_id}:{suffix}"
 
 
-async def _drain_owner_reflection_buffer(user_id, settings) -> None:
+async def _drain_owner_reflection_buffer(user_id, settings, session_id=None) -> None:
     """原子取走 owner 反思缓冲；失败时放回，避免丢失待反思回合。"""
     from app.core import redis as R
 
     redis = R.get_redis()
-    key = _owner_reflection_buffer_key(user_id)
+    key = _owner_reflection_buffer_key(user_id, session_id)
     lock = redis.lock(f"{_OWNER_REFLECTION_LOCK_PREFIX}{user_id}", timeout=180)
     if not await lock.acquire(blocking=False):
         return
@@ -326,14 +328,19 @@ async def _drain_owner_reflection_buffer(user_id, settings) -> None:
             return
         rows = [json.loads(raw) for raw in raw_rows]
         await redis.delete(key)
-        # §6.1 拓扑：快照只存捕获进程；本进程内联冲刷能窥到，worker 扫描查无
-        # 即 standalone，快照缺失不阻断反思。
+        # owner Memory 只接受当前 session 的 append_reuse；快照缺失时保留缓冲，
+        # 不调用没有主会话前缀的独立反思。
         snapshot = None
         try:
             from agent.context.reflection_snapshot import peek_reflection_snapshot
             snapshot = peek_reflection_snapshot(user_id, rows[-1].get("session_id"))
         except Exception:
             snapshot = None
+        if snapshot is None:
+            # owner Memory 不再有 standalone 兜底；没有当前 session 的有效快照时
+            # 保留缓冲，等待下一次主会话完成后重新尝试，避免静默丢记忆。
+            await redis.rpush(key, *raw_rows)
+            return
         ok = await reflect(
             user_id,
             rows[-1].get("user_name", ""),
@@ -343,6 +350,7 @@ async def _drain_owner_reflection_buffer(user_id, settings) -> None:
             session_id=rows[-1].get("session_id"),
             turns=rows,
             snapshot=snapshot,
+            allow_standalone=False,
         )
         if not ok:
             raise RuntimeError("owner_reflection_failed")
@@ -363,7 +371,7 @@ async def _queue_owner_reflection(
     from app.core import redis as R
 
     redis = R.get_redis()
-    key = _owner_reflection_buffer_key(user_id)
+    key = _owner_reflection_buffer_key(user_id, session_id)
     lock = redis.lock(f"{_OWNER_REFLECTION_LOCK_PREFIX}{user_id}", timeout=180)
     await lock.acquire()
     try:
@@ -377,7 +385,7 @@ async def _queue_owner_reflection(
     finally:
         await lock.release()
     if used_tools or count >= _owner_reflection_threshold(settings):
-        await _drain_owner_reflection_buffer(user_id, settings)
+        await _drain_owner_reflection_buffer(user_id, settings, session_id)
 
 
 async def _drain_group_owner_buffer(user_id, settings) -> None:
@@ -397,8 +405,7 @@ async def _drain_group_owner_buffer(user_id, settings) -> None:
         rows = [json.loads(raw) for raw in raw_rows]
         await redis.delete(_owner_group_buffer_key(user_id))
         await redis.zrem(_GROUP_OWNER_IDLE_KEY, str(user_id))
-        # §6.5：群主回合的 append_reuse 走同一资格门；worker 扫描（15 分钟 idle
-        # 收束）进程内查无快照，自动回落独立批处理。
+        # 群主群聊保留独立批处理能力；有同 session 快照时仍可复用 append_reuse。
         snapshot = None
         try:
             from agent.context.reflection_snapshot import peek_reflection_snapshot
@@ -528,10 +535,10 @@ async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
 
 
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None,
-                  turns=None, snapshot=None) -> bool:
+                  turns=None, snapshot=None, *, allow_standalone: bool = True) -> bool:
     out = None
     bound_model = None
-    use_append = False   # 异常路径下的安全默认：Knowledge 回落独立分支
+    use_append = False
     turns = turns or [{
         "user_msg": user_msg,
         "assistant_reply": assistant_reply,
@@ -546,18 +553,23 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         bound_model = await _bind_user_model(user_id, settings, session_id)
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
-        # §6.3/§6.7 资格门：快照 + 单 session 缓冲 + 能力白名单 + 模型身份一致，
-        # 全满足才走 append_reuse；否则独立提取，业务结果不受影响。
+        # §6.3/§6.7 资格门：快照 + 单 session 缓冲 + 模型身份一致，
+        # owner Memory 只接受 append_reuse；群业务调用方可保留独立路径。
         use_append, append_reason = _append_reuse_decision(snapshot, turns, bound_model)
         _log.info("[reflection] mode=%s reason=%s session=%s turns=%d",
-                  "append_reuse" if use_append else "standalone", append_reason,
+                  "append_reuse" if use_append else ("standalone" if allow_standalone else "deferred"), append_reason,
                   session_id, len(turns))
+        if not use_append and not allow_standalone:
+            _log.info("[reflection] owner append unavailable; deferred session=%s reason=%s",
+                      session_id, append_reason)
+            return False
         if use_append:
             out = await _extract_append(snapshot, user_name, turns, mem["profile"], mem["pattern"],
                                         existing_summary, settings, prev_turn=prev_turn)
         else:
-            out = await _extract(user_name, user_msg, assistant_reply, mem["profile"], mem["pattern"],
-                                 existing_summary, settings, prev_turn=prev_turn)
+            out = await _extract_group_owner(user_name, user_msg, assistant_reply,
+                                             mem["profile"], mem["pattern"], existing_summary,
+                                             settings, prev_turn=prev_turn)
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.memory.reflection.model_binding", exc)
@@ -673,8 +685,7 @@ def _explicit_knowledge_request(text: str) -> bool:
     return any(marker in (text or "") for marker in markers)
 
 
-# 两条提取路径（standalone / append_reuse）共用的任务要求与存量上下文块：
-# 提示词单一份来源，防止两份副本漂移（PRD-LLM-27 Phase 4 清理规则的前置纪律）。
+# append_reuse 反思共用的任务要求与存量上下文块。
 _TASK_REQUIREMENTS = (
     "请只报本轮 profile 的增删（profile_add 对象数组，type 只能是 name/address/pronoun/background/preference/note；profile_remove 字符串数组）"
     "+ 本轮 pattern 的增删（pattern_add / pattern_remove，pattern_add 带 kind/importance）"
@@ -715,36 +726,8 @@ def _reflection_context_block(existing_profile, existing_pattern, existing_summa
     )
 
 
-async def _extract(user_name, user_msg, assistant_reply, existing_profile, existing_pattern, existing_summary,
-                   settings, prev_turn: dict | None = None) -> dict:
-    user = (
-        _reflection_context_block(existing_profile, existing_pattern, existing_summary, prev_turn)
-        + f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
-        + _TASK_REQUIREMENTS
-    )
-    # 2b：反思只吐 profile/pattern 的增删（delta）+ daily/summary/perception，输出体量**不再随存量增长**，
-    # 根治了「pattern 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
-    # 故 max_tokens 给个稳妥固定值即可（不必再跟存量走）；仍按模型上限兜底。
-    _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
-    result = await ContextBranch().run(
-        BranchInput(stable_system=_load_sys(), delta=user, scope="owner"),
-        BranchPolicy(
-            name="reflection",
-            output_mode="json",
-            max_tokens=min(_cap, 900),
-            max_retries=0,
-            # 反思只提取小型结构化增量，不需要推理链。若继承当前模型的 adaptive
-            # thinking，900 token 很容易被思考预算耗尽而没有最终 JSON，导致 pattern
-            # 增量被 ContextBranch 判为 output_empty。
-            thinking="disabled",
-        ),
-        settings,
-    )
-    return result.output if result.ok and isinstance(result.output, dict) else {}
-
-
 def _append_reuse_decision(snapshot, turns, bound_model) -> tuple[bool, str]:
-    """append_reuse 资格门（PRD-LLM-27 §6.3）：任一不满足即回落 standalone。
+    """append_reuse 资格门（PRD-LLM-27 §6.3）。
 
     - 快照存在（进程内登记；worker 扫描路径查无 → no_snapshot）；
     - 反思缓冲单 session 且与快照同 session（跨 session 缓冲不强行拼接）；
@@ -770,6 +753,30 @@ def _append_reuse_decision(snapshot, turns, bound_model) -> tuple[bool, str]:
     return True, "eligible"
 
 
+async def _extract_group_owner(user_name, user_msg, assistant_reply, existing_profile,
+                               existing_pattern, existing_summary, settings,
+                               prev_turn: dict | None = None) -> dict:
+    """群主群聊独立批处理的提取器；owner 单 session 不再调用此路径。"""
+    user = (
+        _reflection_context_block(existing_profile, existing_pattern, existing_summary, prev_turn)
+        + f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
+        + _TASK_REQUIREMENTS
+    )
+    _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
+    result = await ContextBranch().run(
+        BranchInput(stable_system=_load_sys(), delta=user, scope="group-owner"),
+        BranchPolicy(
+            name="reflection",
+            output_mode="json",
+            max_tokens=min(_cap, 900),
+            max_retries=0,
+            thinking="disabled",
+        ),
+        settings,
+    )
+    return result.output if result.ok and isinstance(result.output, dict) else {}
+
+
 async def _extract_append(snapshot, user_name, turns, existing_profile, existing_pattern,
                           existing_summary, settings, prev_turn: dict | None = None) -> dict:
     """append_reuse 提取（§6.2/§6.3）：复用主会话前缀，任务内容只出现在末尾。
@@ -780,7 +787,7 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
     - 专用规则（reflection.md）与存量画像/模式/快照不在主会话历史里，按 §6.2
       全部进末尾任务消息；待反思回合用队列载荷的组装前原文标记引用，历史仅
       用于理解指代，不为历史内容新建记忆；
-    - 输出 schema 与 _extract 完全一致（同一份 _TASK_REQUIREMENTS，无副本）。
+    - 输出 schema 与群主独立批处理完全一致（同一份 _TASK_REQUIREMENTS，无副本）。
     """
     from agent.context.prefix_history import render_branch_prefix
 

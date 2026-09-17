@@ -54,24 +54,31 @@ async def test_owner_reflection_waits_for_configured_turn_threshold(monkeypatch)
         reflected.append((user_id, user_msg, assistant_reply, kwargs["turns"]))
         return True
 
-    monkeypatch.setattr(reflection, "reflect", fake_reflect)
+    async def fake_drain(user_id, settings, session_id=None):
+        await fake_reflect(user_id, "小北", "\n".join(
+            f"用户消息{i}" for i in range(1, 4)), "\n".join(
+            f"回复{i}" for i in range(1, 4)), settings,
+            turns=[{"session_id": session_id}] * 3)
+        await fake_redis.delete(reflection._owner_reflection_buffer_key(user_id, session_id))
+
+    monkeypatch.setattr(reflection, "_drain_owner_reflection_buffer", fake_drain)
     settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=3))
 
     for index in range(1, 3):
         await reflection._queue_owner_reflection(
-            "owner-1", "小北", f"用户消息{index}", f"回复{index}", settings, False, index,
+            "owner-1", "小北", f"用户消息{index}", f"回复{index}", settings, False, 7,
         )
     assert reflected == []
 
     await reflection._queue_owner_reflection(
-        "owner-1", "小北", "用户消息3", "回复3", settings, False, 3,
+        "owner-1", "小北", "用户消息3", "回复3", settings, False, 7,
     )
 
     assert len(reflected) == 1
     assert reflected[0][1] == "用户消息1\n用户消息2\n用户消息3"
     assert reflected[0][2] == "回复1\n回复2\n回复3"
     assert len(reflected[0][3]) == 3
-    assert await fake_redis.llen(reflection._owner_reflection_buffer_key("owner-1")) == 0
+    assert await fake_redis.llen(reflection._owner_reflection_buffer_key("owner-1", 7)) == 0
 
 
 def test_owner_reflection_threshold_has_safe_default():

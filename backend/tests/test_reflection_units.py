@@ -227,7 +227,7 @@ async def test_drain_owner_reflection_buffer_rollback_keeps_turns(monkeypatch):
     from agent.memory import reflection
 
     rows = [{"user_name": "小北", "user_msg": "m1", "assistant_reply": "r1", "session_id": "s1"},
-            {"user_name": "小北", "user_msg": "m2", "assistant_reply": "r2", "session_id": "s2"}]
+            {"user_name": "小北", "user_msg": "m2", "assistant_reply": "r2", "session_id": "s1"}]
     reflected = []
 
     async def fake_reflect(user_id, user_name, user_msg, assistant_reply, settings, **kw):
@@ -237,13 +237,15 @@ async def test_drain_owner_reflection_buffer_rollback_keeps_turns(monkeypatch):
     monkeypatch.setattr(reflection, "reflect", fake_reflect)
     redis = _FakeRedis()
     monkeypatch.setattr("app.core.redis.get_redis", lambda: redis)
-    key = reflection._owner_reflection_buffer_key("u1")
+    key = reflection._owner_reflection_buffer_key("u1", "s1")
     _seed_rows(redis, key, rows)
     settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=10))
 
-    await reflection._drain_owner_reflection_buffer("u1", settings)
+    monkeypatch.setattr(reflection, "_owner_reflection_buffer_key", lambda user_id, session_id=None: key)
+    monkeypatch.setattr("agent.context.reflection_snapshot.peek_reflection_snapshot", lambda *args: object())
+    await reflection._drain_owner_reflection_buffer("u1", settings, "s1")
     assert reflected[0][1] == "m1\nm2"
-    assert reflected[0][3] == "s2"                                   # 取最后一行的 session
+    assert reflected[0][3] == "s1"
     assert reflected[0][4] == rows
 
     async def failing_reflect(*a, **k):

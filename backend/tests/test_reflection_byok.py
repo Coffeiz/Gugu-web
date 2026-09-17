@@ -42,7 +42,7 @@ def test_independent_reflection_task_binds_user_model(monkeypatch):
         modelctx._user_scope.reset(token_scope)
 
 
-def test_reflection_extraction_disables_thinking_for_structured_delta(monkeypatch):
+def test_group_owner_reflection_extraction_disables_thinking(monkeypatch):
     from agent.memory import reflection
 
     captured = {}
@@ -55,7 +55,7 @@ def test_reflection_extraction_disables_thinking_for_structured_delta(monkeypatc
     monkeypatch.setattr(reflection.ContextBranch, "run", fake_run)
 
     async def exercise():
-        result = await reflection._extract(
+        result = await reflection._extract_group_owner(
             "小北", "你好", "你好！", "", "", "", SimpleNamespace(ai=SimpleNamespace(max_tokens=4096)),
         )
         assert result["pattern_add"] == []
