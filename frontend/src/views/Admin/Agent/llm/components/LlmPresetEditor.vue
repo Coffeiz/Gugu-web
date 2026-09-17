@@ -111,7 +111,7 @@
               </div>
             </div>
 
-            <div class="modal-field modal-field--row modal-field--persistence">
+            <div v-if="supportsReasoningPersistence(draft)" class="modal-field modal-field--row modal-field--persistence">
               <div class="thinking-label">
                 <span>{{ t('llmExtraUi.reasoningPersistence') }}</span>
                 <span class="thinking-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</span>
@@ -169,7 +169,7 @@
       </Teleport>
 </template>
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProviderSelect from '../../components/ProviderSelect.vue'
 import InterfaceTypeSelect from '../../components/InterfaceTypeSelect.vue'
@@ -236,13 +236,22 @@ function interfaceValue(draft: LlmPresetDraft) {
   if (draft.provider === 'ollama' && (draft.ollama_api_mode || 'native') === 'native') return 'native'
   return String(draft.api_format || 'openai')
 }
+function supportsReasoningPersistence(draft: LlmPresetDraft | null) {
+  if (!draft) return false
+  const format = interfaceValue(draft)
+  if (draft.provider === 'ollama' && format === 'native') return false
+  if (openaiProtocolProviders.has(draft.provider)) return format === 'responses' || format === 'anthropic'
+  return true
+}
 function pickInterface(draft: LlmPresetDraft, value: string) {
   if (draft.provider === 'ollama') {
     draft.ollama_api_mode = value === 'native' ? 'native' : 'openai'
     draft.api_format = value === 'native' ? '' : value
+    if (value === 'native' || value === 'openai') draft.reasoning_persistence = 'off'
     return
   }
   draft.api_format = value
+  if (value === 'openai') draft.reasoning_persistence = 'off'
   $emit('pick-api-format', value)
 }
 const reasoningPersistenceOptions = computed(() => [
@@ -255,6 +264,15 @@ const $emit = defineEmits<{
   (event: 'fetch-model-list'): void; (event: 'select-model', model: string): void; (event: 'pick-api-format', format: string): void
   (event: 'set-capability-override', key: string, enabled: boolean): void; (event: 'probe-capabilities', id: string): void; (event: 'probe-vision', id: string | number | undefined, dim: string): void
 }>()
+watch(
+  () => props.draft && `${props.draft.provider}|${interfaceValue(props.draft)}`,
+  () => {
+    if (props.draft && !supportsReasoningPersistence(props.draft)) {
+      props.draft.reasoning_persistence = 'off'
+    }
+  },
+  { immediate: true },
+)
 // 拖选文本时在弹窗外松开会把 click 派发到按下/释放目标的公共祖先（即遮罩），
 // 单看 click.self 会误关；只有按下也从遮罩开始才视为点外关闭。
 let maskPressStarted = false

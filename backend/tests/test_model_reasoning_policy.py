@@ -31,6 +31,14 @@ def test_missing_model_policy_defaults_to_off():
     assert resolve_run_config(SimpleNamespace(ai=model, ai_presets=None)).reasoning_persistence == "off"
 
 
+@pytest.mark.parametrize("mode", ["summary", "continuation"])
+def test_chat_completions_disables_reasoning_persistence(mode):
+    settings = _settings(mode)
+    settings.ai.api_format = "openai"
+
+    assert resolve_run_config(settings).reasoning_persistence == "off"
+
+
 @pytest.mark.asyncio
 async def test_continuation_probes_responses_before_switching(monkeypatch):
     calls = []
@@ -45,6 +53,21 @@ async def test_continuation_probes_responses_before_switching(monkeypatch):
     assert cfg.model.api_format == "responses"
     assert cfg.reasoning_notice is None
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_chat_does_not_probe_responses_for_stale_persistence(monkeypatch):
+    async def probe(**kwargs):
+        raise AssertionError("显式 Chat Completions 不应探测 Responses")
+
+    monkeypatch.setattr("app.services.provider_diagnostics.probe_responses_capability", probe)
+    settings = _settings("continuation")
+    settings.ai.api_format = "openai"
+
+    cfg = await llm_select.resolve_run_config_for_user(settings, None, "uid")
+
+    assert cfg.model.api_format == "openai"
+    assert cfg.reasoning_persistence == "off"
 
 
 @pytest.mark.asyncio

@@ -130,6 +130,25 @@ def pick_model(settings, ctx=None):
     return settings.ai
 
 
+def _reasoning_persistence_for_model(model) -> str:
+    """返回当前协议真正支持的推理状态策略。
+
+    Chat Completions 不会返回可恢复的 provider state；即使数据库里还留有
+    旧的 summary/continuation 配置，也不能让它继续触发 Responses 自动探测。
+    ``api_format`` 为空表示自动模式，仍保留原有自动探测行为。
+    """
+    mode = ReasoningPersistencePolicy.from_value(
+        getattr(model, "reasoning_persistence", "off")
+    ).mode
+    configured_format = str(getattr(model, "api_format", "") or "").strip().lower()
+    if configured_format in {"openai", "chat", "chat_completions"}:
+        return "off"
+    if (getattr(model, "provider", "") or "").lower() == "ollama" and \
+            getattr(model, "ollama_api_mode", "native") == "native":
+        return "off"
+    return mode
+
+
 def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
     """统一解析模型、协议、上下文预算和模型级推理状态策略。"""
     model = pick_model(settings, ctx)
@@ -137,9 +156,7 @@ def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
         model=model,
         use_anthropic=use_anthropic_for(model),
         context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
-        reasoning_persistence=ReasoningPersistencePolicy.from_value(
-            getattr(model, "reasoning_persistence", "off")
-        ).mode,
+        reasoning_persistence=_reasoning_persistence_for_model(model),
     )
 
 
@@ -236,7 +253,5 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
         model=model, use_anthropic=use_anthropic_for(model),
         context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
         is_byok=True,
-        reasoning_persistence=ReasoningPersistencePolicy.from_value(
-            getattr(model, "reasoning_persistence", "off")
-        ).mode,
+        reasoning_persistence=_reasoning_persistence_for_model(model),
     ))
