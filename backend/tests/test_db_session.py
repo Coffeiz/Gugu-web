@@ -63,3 +63,19 @@ async def test_get_db_rolls_back_before_close(monkeypatch):
     await generator.aclose()
 
     assert calls == ["rollback", "close"]
+
+
+@pytest.mark.asyncio
+async def test_rollback_safely_invalidates_closed_connection():
+    calls = []
+
+    class ClosedSession:
+        async def rollback(self):
+            calls.append("rollback")
+            raise RuntimeError("connection is closed")
+
+        async def invalidate(self):
+            calls.append("invalidate")
+
+    assert await db_session.rollback_safely(ClosedSession()) is False
+    assert calls == ["rollback", "invalidate"]

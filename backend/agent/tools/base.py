@@ -666,7 +666,7 @@ class SkillRegistry:
                 # 部分状态，统一 rollback 更安全；成功路径统一 commit。
                 if db is not None:
                     if isinstance(result, dict) and result.get("error"):
-                        await db.rollback()
+                        await _sess.rollback_safely(db, where=f"agent.tools.dispatch.{name}.rollback")
                     else:
                         await db.commit()
         except Exception as e:
