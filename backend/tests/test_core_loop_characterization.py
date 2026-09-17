@@ -1678,3 +1678,27 @@ async def test_budget_stop_does_not_spin_when_model_keeps_calling_tools(monkeypa
     # followup 只追一次，随后强制收束
     assert len([m for m in messages if m.get("content") == core._TOOL_BUDGET_STOP_PROMPT]) == 1
     assert ev["error"] == 0
+
+
+async def test_repeat_round_guard_nudges_then_force_stops(monkeypatch, dispatched):
+    """跨轮重复调用守卫：连续 3 轮完全相同的工具调用先提醒一次，
+    第 5 轮仍相同则强制收束——unlimited 模式的卡死形态不再依赖 100 轮保险丝。"""
+    identical_round = msg([TU("web_search", "t1", {"query": "同一个查询"})])
+    patch_anthropic(monkeypatch, [
+        identical_round,   # R1: count=1
+        identical_round,   # R2: count=2
+        identical_round,   # R3: count=3 → 注入提醒
+        identical_round,   # R4: count=4（已提醒过，不再重复提醒）
+        identical_round,   # R5: count=5 → 强制收束
+        identical_round,   # R6: 不应到达
+    ])
+    messages = [{"role": "user", "content": "帮我查一下"}]
+    ev, text, errors = await drain(make_runner()._run_anthropic(
+        "u", "sys", messages, AI,
+    ))
+
+    nudges = [m for m in messages if m.get("content") == core._REPEAT_ROUND_NUDGE]
+    assert len(nudges) == 1, "跨轮重复提醒只注入一次"
+    assert "连续多轮重复相同的工具调用" in "".join(text)
+    assert ev["error"] == 0
+    assert ev["round_start"] <= 5   # 轮数有界，不再空转到 100

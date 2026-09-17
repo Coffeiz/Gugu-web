@@ -163,6 +163,33 @@ _TOOL_BUDGET_STOP_PROMPT = (
 )
 
 
+_REPEAT_ROUND_NUDGE = (
+    "你已经连续多轮重复完全相同的工具调用，结果不会变化。请立即停止调用工具，"
+    "直接根据已经获得的结果，给用户一段最终文字回复。"
+)
+_REPEAT_ROUND_LIMIT = 5   # 连续相同轮数达到该值即强制收束（3 轮先提醒，5 轮硬停）
+
+
+def round_tool_signature(tool_calls) -> str | None:
+    """一轮内全部工具调用（含被跳过/占位的）的形态签名；空轮返回 None。
+
+    同轮内的重复调用经 sorted 去重后只影响一处——单轮多相同调用是合法
+    形态（2026-09-18 定稿）；跨轮形态完全一致才累积。
+    """
+    if not tool_calls:
+        return None
+    try:
+        entries = sorted(
+            (str(getattr(tc, "name", "") or ""),
+             json.dumps(getattr(tc, "input", None) or {}, sort_keys=True,
+                        ensure_ascii=False, default=str))
+            for tc in tool_calls
+        )
+        return json.dumps(entries, ensure_ascii=False)
+    except Exception:
+        return None
+
+
 def _goal_mode_enabled(session: Any) -> bool:
     """读取会话级长任务标记；缺失或旧数据一律按普通模式处理。"""
     context = getattr(session, "session_context", None)

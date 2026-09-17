@@ -109,6 +109,9 @@ async def run_loop(
         narration_retry = decision_retry = intent_retry = colon_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
         budget_stop_rounds = 0  # 预算停止后模型仍坚持调工具的连续轮数（止损用）
+        repeat_round_sig: str | None = None   # 跨轮重复调用守卫：上一轮形态签名
+        repeat_round_count = 0                # 连续相同形态的轮数
+        repeat_round_nudged = False           # 是否已注入过提醒（每段重复只提醒一次）
         guard_retry_pending = False
         colon_retry_pending = False
         guard_retry_buf: list[str] = []
@@ -1395,6 +1398,40 @@ async def run_loop(
                         return
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
+                # ── 跨轮重复调用守卫（unlimited 也可用，不挂在预算弹窗上）──
+                # 规律（2026-09-18 尸检）：run 卡死的形态是「每轮 ≥1 个工具调用、
+                # 且多轮形态完全一致」——run 只在无工具轮终结，重复轮永不结束。
+                if not verify_mode and not goal_mode:
+                    _rsig = _core.round_tool_signature(result.tool_calls)
+                    if _rsig is None or _rsig != repeat_round_sig:
+                        repeat_round_sig = _rsig
+                        repeat_round_count = 1 if _rsig else 0
+                        repeat_round_nudged = False
+                    else:
+                        repeat_round_count += 1
+                    if repeat_round_count >= _core._REPEAT_ROUND_LIMIT:
+                        _core._log.warning(
+                            "[core] 连续 %d 轮重复完全相同的工具调用，强制收束 run=%s",
+                            repeat_round_count, run_id,
+                        )
+                        stop_text = "检测到连续多轮重复相同的工具调用，我先停在这里；已完成的操作都保留。需要换一种做法的话，直接告诉我。"
+                        async for _line in _core.genstream.typed_stream(stop_text):
+                            yield _line
+                        if reasoning_state is not None:
+                            await reasoning_state.completed()
+                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+                        return
+                    if repeat_round_count >= 3 and not repeat_round_nudged:
+                        repeat_round_nudged = True
+                        _core._log.warning(
+                            "[core] 连续 %d 轮重复相同的工具调用，注入提醒 run=%s",
+                            repeat_round_count, run_id,
+                        )
+                        messages.append_batch(driver.build_guard_followup(
+                            result, _core._REPEAT_ROUND_NUDGE,
+                        ))
+                        yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
+                        continue
                 if tool_budget_stop_requested:
                     # 预算停止后模型仍反复输出工具调用：给一次 followup 让它收束；
                     # 若继续坚持（工具已被摘除，任何调用都是空转），强制终结而不是
