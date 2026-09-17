@@ -1138,13 +1138,19 @@ async def _finalize_preflight_failure(session_id, model_cfg=None, error=None,
             exc_info=(type(error), error, error.__traceback__),
         )
         is_network_error = _is_network_error(error)
+        from agent.providers.errors import is_provider_http_error
+        provider_error = is_provider_http_error(error)
         message = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
+                   else "模型服务暂时拒绝或不可用，请稍后重试。" if provider_error
                    else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
+        message_key = ("chatUi.networkError" if is_network_error
+                       else "chatUi.providerError" if provider_error
+                       else "chatUi.genericError")
         await genstream.publish(session_id, {
             "run_id": str(owner_run_id or ""),
             "type": "error",
             "message": message,
-            "message_key": "chatUi.networkError" if is_network_error else "chatUi.genericError",
+            "message_key": message_key,
         })
     elif cancelled:
         await genstream.publish(session_id, {

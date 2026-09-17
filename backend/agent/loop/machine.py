@@ -583,8 +583,21 @@ async def run_loop(
                 # 只根据 cause 类型挑一句降级文案给用户。
                 import anthropic
                 busy = isinstance(e.cause, getattr(anthropic, "RateLimitError", ()))
-                detail = "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏" if busy else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError' if not busy else 'chatUi.networkError'}, ensure_ascii=False)}\n\n"
+                from agent.providers.errors import is_provider_http_error
+                provider_error = is_provider_http_error(e)
+                detail = (
+                    "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏"
+                    if busy else
+                    "模型服务暂时拒绝或不可用，请稍后重试。"
+                    if provider_error else
+                    "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                )
+                message_key = (
+                    "chatUi.networkError" if busy else
+                    "chatUi.providerError" if provider_error else
+                    "chatUi.genericError"
+                )
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
                 if reasoning_state is not None:
@@ -626,8 +639,11 @@ async def run_loop(
                 _core.diag_log(f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
                          f"format={driver.api_format}", e)
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
-                detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': 'chatUi.genericError'}, ensure_ascii=False)}\n\n"
+                from agent.providers.errors import is_provider_http_error
+                provider_error = is_provider_http_error(e)
+                detail = "模型服务暂时拒绝或不可用，请稍后重试。" if provider_error else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                message_key = "chatUi.providerError" if provider_error else "chatUi.genericError"
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key}, ensure_ascii=False)}\n\n"
                 return
 
             total_in  += result.usage_in
