@@ -32,19 +32,26 @@ const chartData = computed(() => props.period === 'day'
   : (usage.value?.[props.period === 'week' ? 'week_daily' : 'month_daily'] || []))
 const chartValues = computed(() => chartData.value.map((day: any) => activeMetric.value === 'cache_ratio' ? Number(day.cache_ratio || 0) * 100 : Number(day[activeMetric.value] || 0)))
 const chartRangeLabel = computed(() => props.period === 'day' ? usage.value?.today?.date || '' : `${chartData.value[0]?.date || ''} – ${chartData.value.at(-1)?.date || ''}`)
-const canGoNext = computed(() => Boolean(usage.value?.anchor_date && usage.value.anchor_date < usage.value.current_date))
-function shiftAnchor(days: number) {
-  const base = selectedDate.value || usage.value?.anchor_date
-  if (!base) return
+function shiftedAnchor(base: string, offset: number) {
   const next = new Date(`${base}T00:00:00Z`)
-  if (props.period === 'week') next.setUTCDate(next.getUTCDate() + days * 7)
+  if (props.period === 'week') next.setUTCDate(next.getUTCDate() + offset * 7)
   else if (props.period === 'month') {
     // 先归一到月初，避免 5 月 31 日加一个月溢出到 7 月。
     next.setUTCDate(1)
-    next.setUTCMonth(next.getUTCMonth() + days)
+    next.setUTCMonth(next.getUTCMonth() + offset)
   }
-  else next.setUTCDate(next.getUTCDate() + days)
-  const nextDate = next.toISOString().slice(0, 10)
+  else next.setUTCDate(next.getUTCDate() + offset)
+  return next.toISOString().slice(0, 10)
+}
+const canGoNext = computed(() => {
+  const base = selectedDate.value || usage.value?.anchor_date
+  const current = usage.value?.current_date
+  return Boolean(base && current && shiftedAnchor(base, 1) <= current)
+})
+function shiftAnchor(offset: number) {
+  const base = selectedDate.value || usage.value?.anchor_date
+  if (!base) return
+  const nextDate = shiftedAnchor(base, offset)
   if (usage.value?.current_date && nextDate > usage.value.current_date) return
   selectedDate.value = nextDate
 }
