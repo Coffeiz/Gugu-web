@@ -98,9 +98,80 @@ async def test_minimax_attribute_error_retries_then_succeeds():
 
 
 async def test_minimax_attribute_error_exhausts_to_retryable():
-    client = _FakeClient(fail_times=99)   # 一直失败，超过 _RETRY_BACKOFF 长度
+    client = _FakeClient(fail_times=99)   # 一直失败，超过统一重试预算
     with pytest.raises(RetryableError):
         await _drain(_stream_round(client, {}, _MINIMAX_ADAPTER))
+
+
+async def test_overloaded_529_retries_up_to_shared_budget(monkeypatch):
+    """2026-09-18 MiniMax 高峰 529 连穿回归：OverloadedError 必须进重试循环，
+    节奏=共享 RetryPolicy（max_retries 次重试 → 共 max_retries+1 次尝试）。"""
+    import httpx
+    import anthropic
+
+    from app.core.retry import LLM_RETRY
+
+    def _overload_error():
+        resp = httpx.Response(529, request=httpx.Request("POST", "https://mcp.example"))
+        return anthropic.OverloadedError("529 overloaded", response=resp, body=None)
+
+    class _OverloadStreamCtx(_FakeStreamCtx):
+        async def _iter(self):
+            raise _overload_error()
+            yield ""   # pragma: no cover
+
+    class _OverloadMessages(_FakeMessages):
+        def stream(self, **kwargs):
+            self.calls += 1
+            return _OverloadStreamCtx(should_raise=True)
+
+    class _Client:
+        def __init__(self):
+            self.messages = _OverloadMessages(99)
+
+    import agent.loop.provider as provider_mod
+    from app.core.retry import RetryPolicy
+    monkeypatch.setattr(provider_mod, "LLM_RETRY", RetryPolicy(interval_seconds=0.0))
+    client = _Client()
+    with pytest.raises(RetryableError) as exc_info:
+        await _drain(_stream_round(client, {}, _MINIMAX_ADAPTER))
+    # 首次 + LLM_RETRY.max_retries 次重试
+    assert client.messages.calls == LLM_RETRY.max_retries + 1
+    assert isinstance(exc_info.value.cause, anthropic.OverloadedError)
+
+
+async def test_retry_wall_clock_cap_stops_before_attempt_budget(monkeypatch):
+    """超时类错误每次尝试烧满读超时：总墙钟上限先到为准，不再硬吃满次数。"""
+    import time as _time
+
+    import anthropic
+
+    from app.core.retry import LLM_RETRY
+
+    import agent.loop.provider as provider_mod
+    from app.core.retry import RetryPolicy
+    monkeypatch.setattr(provider_mod, "LLM_RETRY", RetryPolicy(interval_seconds=0.0))
+    real_monotonic = _time.monotonic
+    clock = {"t": real_monotonic()}
+    # 全局打点（app.core.retry 与 loop.provider 引用同一个 time 模块）：
+    # 每次失败推进 100s，模拟「每次尝试烧满一个读超时」
+    monkeypatch.setattr(_time, "monotonic", lambda: clock["t"])
+
+    class _TimeoutMessages(_FakeMessages):
+        def stream(self, **kwargs):
+            self.calls += 1
+            clock["t"] += 100.0
+            raise anthropic.APITimeoutError("read timed out")
+
+    class _Client:
+        def __init__(self):
+            self.messages = _TimeoutMessages(99)
+
+    client = _Client()
+    with pytest.raises(RetryableError):
+        await _drain(_stream_round(client, {}, _MINIMAX_ADAPTER))
+    # 第一次失败后墙钟即超限：尝试次数远少于满额
+    assert client.messages.calls < LLM_RETRY.max_retries + 1
 
 
 async def test_default_adapter_attribute_error_not_retried():

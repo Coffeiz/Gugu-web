@@ -9,16 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
+from app.core.retry import LLM_RETRY
 
 _log = logging.getLogger("agent.core.loop.provider")
 
-# ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx）退避重试——贴着并发上限跑时
-# 把偶发 429 吸收成短延迟、不丢消息。只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
-RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
+# ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx / 过载 529）统一按
+# app/core/retry.py 的节奏重试——固定 5s 间隔、最多 5 次、总墙钟 90s 先到为准。
+# 只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
+# OverloadedError（529）是 APIStatusError 的直接子类、不是 InternalServerError
+# 的子类（2026-09-18 MiniMax 高峰 529 连穿排查确认），必须显式列出。
 
 
 async def stream_round(client, kwargs, adapter=None):
@@ -36,15 +40,17 @@ async def stream_round(client, kwargs, adapter=None):
     """
     import anthropic
     transient = (anthropic.RateLimitError, anthropic.APITimeoutError,
-                 anthropic.APIConnectionError, anthropic.InternalServerError)
+                 anthropic.APIConnectionError, anthropic.InternalServerError,
+                 anthropic.OverloadedError)
     if adapter is not None:
         # 各 provider 专属的「流式响应跟 SDK 期望 schema 对不上」容错，只加给对应 provider——
         # 见 agent/providers.py 里每个适配器 transient_exceptions 的注释（MiniMax 的
         # IndexError/KeyError/AttributeError 是目前唯一非空的一份）。不全局放宽，避免把
         # 跟该 provider 无关的真实 bug 也当"重试就好"吞掉。
         transient = transient + adapter.transient_exceptions
-    last = None
-    for i in range(len(RETRY_BACKOFF) + 1):
+    started_at = time.monotonic()
+    retries_done = 0
+    while True:
         emitted = False
         try:
             async with client.messages.stream(**kwargs) as stream:
@@ -54,22 +60,21 @@ async def stream_round(client, kwargs, adapter=None):
                 yield ("final", await stream.get_final_message())
                 return
         except transient as e:
-            last = e
             if emitted:
                 raise   # 已吐 token，重试会重复输出——原样抛给上层当未知/中断处理
-            if i >= len(RETRY_BACKOFF):
+            if not LLM_RETRY.should_retry(retries_done, started_at):
                 # where 里带上 provider——上次这里崩溃排查时 diag_log 没记 provider，只能靠
                 # 静态代码分析猜是哪家（PRD-LLM-1「待确认问题」），这次直接把它写进日志，
                 # 下次同类问题不用再猜。
                 _provider = adapter.name if adapter is not None else "unknown"
                 diag_log(f"agent.core.stream_round provider={_provider}", e)   # 原始 → 受限诊断出口
-                _log.warning("LLM 流式调用重试 %d 次后仍失败：%s", i, type(e).__name__)
+                _log.warning("LLM 流式调用重试 %d 次后仍失败：%s", retries_done, type(e).__name__)
                 raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
-                                      cause=e, attempt=i) from e
-            _log.info("LLM 瞬时错误 %s，%ss 后重试(%d)", type(e).__name__, RETRY_BACKOFF[i], i + 1)
-            await asyncio.sleep(RETRY_BACKOFF[i])
-    if last:
-        raise last
+                                      cause=e, attempt=retries_done) from e
+            retries_done += 1
+            _log.info("LLM 瞬时错误 %s，%ss 后重试(%d)",
+                      type(e).__name__, LLM_RETRY.interval_seconds, retries_done)
+            await LLM_RETRY.pause()
 
 
 def provider_context_usage(driver: Any, result: Any) -> int:

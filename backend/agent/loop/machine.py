@@ -584,7 +584,10 @@ async def run_loop(
                 # _core._stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；
                 # 只根据 cause 类型挑一句降级文案给用户。
                 import anthropic
-                busy = isinstance(e.cause, getattr(anthropic, "RateLimitError", ()))
+                # 429 限流与 529 过载同属「上游忙」：529 此前不在重试名单连穿到用户
+                # （2026-09-18），现在统一重试后仍失败也按忙碌文案降级
+                busy = isinstance(e.cause, (getattr(anthropic, "RateLimitError", ()),
+                                            getattr(anthropic, "OverloadedError", ())))
                 from agent.providers.errors import is_provider_http_error
                 provider_error = is_provider_http_error(e)
                 detail = (
@@ -1539,6 +1542,19 @@ async def run_loop(
             if verify_mode and verify_queried and _final_text.strip():
                 async for _line in _core.genstream.typed_stream(_final_text):
                     yield _line
+
+            # 反思快照捕获（PRD-LLM-27 §6.1）：只在成功收尾处捕获，进程内登记供
+            # 内联冲刷的 append_reuse 反思消费；失败/异常静默跳过，快照缺失时
+            # 反思自然回落 standalone，绝不影响主流程。
+            try:
+                from agent.context.reflection_snapshot import capture_reflection_snapshot
+                capture_reflection_snapshot(
+                    user_id=user_id, session_id=session_id, run_id=run_id, ai=ai,
+                    system_prompt=system_text or "", tools=getattr(ctx, "tools", None),
+                    messages=messages, reply_text=_final_text,
+                )
+            except Exception as exc:
+                _core.diag_log("agent.context.reflection_snapshot.capture", exc)
 
             # 正文已经确定后立即结束本轮；90% 压缩已在 provider round 返回后同步完成。
             yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"

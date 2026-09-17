@@ -9,6 +9,7 @@ from .assembler import assemble_branch_user_input
 from .branch_types import BranchInput, BranchPolicy, BranchResult
 from . import provider_runner
 from app.core.redaction import diag_log
+from app.core.retry import BRANCH_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,11 @@ class ContextBranch:
         *,
         runner=None,
     ) -> BranchResult:
-        if branch_input.session_id is not None:
+        if branch_input.session_id is not None and branch_input.branch_mode == "standalone":
             # 分支输入与主会话历史不是同一条 provider response chain；有明确会话
             # 边界时先让主状态失效，避免分支结果完成后继续复用旧 chain。
+            # append_reuse（PRD-LLM-27 §6.6）是只读 sibling branch：复用主会话
+            # 前缀但不得触碰主 continuation，跳过失效。
             if branch_input.scope_owner_id is not None:
                 try:
                     from app.db import session as db_session
@@ -61,6 +64,10 @@ class ContextBranch:
         error_status = "-"
         try:
             for attempts in range(1, max(0, policy.max_retries) + 2):
+                if attempts > 1:
+                    # 尝试之间按共享节奏（BRANCH_RETRY）歇一下：此前零间隔连发，
+                    # 上游过载时两次尝试都打在同一个尖峰上（2026-09-18 529 实测）
+                    await BRANCH_RETRY.pause()
                 call_failed = False
                 try:
                     if branch_input.history_messages and runner is None:
@@ -124,6 +131,7 @@ class ContextBranch:
             output_fingerprint=output_fp,
             metadata={
                 "branch": policy.name,
+                "branch_mode": branch_input.branch_mode,
                 "scope": branch_input.scope,
                 "scope_revision": branch_input.scope_revision,
                 "session_id": branch_input.session_id,
@@ -131,8 +139,9 @@ class ContextBranch:
             },
         )
         logger.info(
-            "[context-branch] branch=%s scope=%s scope_revision=%s session_id=%s attempts=%d ok=%s reason=%s error_type=%s error_status=%s input_fp=%s output_fp=%s",
+            "[context-branch] branch=%s mode=%s scope=%s scope_revision=%s session_id=%s attempts=%d ok=%s reason=%s error_type=%s error_status=%s input_fp=%s output_fp=%s",
             policy.name,
+            branch_input.branch_mode,
             branch_input.scope or "-",
             branch_input.scope_revision or "-",
             branch_input.session_id,

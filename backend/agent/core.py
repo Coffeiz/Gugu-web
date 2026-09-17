@@ -35,7 +35,6 @@ _log = logging.getLogger("agent.core")
 # LLM25-003）；历史清洗、工具协议解析等 helper 也分别迁回各自的归属模块。
 # 这里保留兼容别名：旧测试 `monkeypatch.setattr(core, "_stream_round", ...)` 仍
 # 通过本模块属性查找生效（_run_loop 调用时把该名字注入 driver.run_round）。
-from agent.loop.provider import RETRY_BACKOFF as _RETRY_BACKOFF
 from agent.loop.provider import provider_context_usage as _provider_context_usage
 from agent.loop.provider import stream_round as _stream_round
 from agent.context.provider_history import sanitize_anthropic_history as _sanitize_anthropic_history
