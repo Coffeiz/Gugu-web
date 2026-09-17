@@ -653,11 +653,17 @@ async def run_loop(
                 _core.diag_log(f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
                          f"format={driver.api_format}", e)
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
-                from agent.providers.errors import is_provider_http_error
+                from agent.providers.errors import is_provider_http_error, upstream_status_tag
                 provider_error = is_provider_http_error(e)
-                detail = "模型服务暂时拒绝或不可用，请稍后重试。" if provider_error else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                message_key = "chatUi.providerError" if provider_error else "chatUi.genericError"
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key}, ensure_ascii=False)}\n\n"
+                if provider_error:
+                    tag = upstream_status_tag(e)
+                    detail = f"模型服务暂时不可用（上游 {tag}），请稍后重试。"
+                    message_key = "chatUi.providerUnavailable"
+                else:
+                    tag = ""
+                    detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                    message_key = "chatUi.genericError"
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key, 'message_params': {'tag': tag}}, ensure_ascii=False)}\n\n"
                 return
 
             total_in  += result.usage_in
