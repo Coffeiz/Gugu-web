@@ -135,7 +135,7 @@ def _reasoning_persistence_for_model(model) -> str:
 
     Chat Completions 不会返回可恢复的 provider state；即使数据库里还留有
     旧的 summary/continuation 配置，也不能让它继续触发 Responses 自动探测。
-    ``api_format`` 为空表示自动模式，仍保留原有自动探测行为。
+    未知 Provider 的空 ``api_format`` 才会保留自动探测；已知 Provider 按其默认协议处理。
     """
     mode = ReasoningPersistencePolicy.from_value(
         getattr(model, "reasoning_persistence", "off")

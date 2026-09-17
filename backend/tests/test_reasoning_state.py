@@ -128,6 +128,42 @@ async def test_coordinator_diagnostics_distinguish_state_lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_coordinator_off_and_summary_load_state_without_restoring(monkeypatch):
+    calls = []
+
+    class _DbContext:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def commit(self):
+            return None
+
+    async def load_for_non_resumable(*_args, **kwargs):
+        calls.append(kwargs["policy"].mode)
+        return ProviderStateLookup(expected_version=7, unavailable_reason="disabled")
+
+    monkeypatch.setattr(reasoning_runtime.provider_reasoning_state, "load_state", load_for_non_resumable)
+    model = SimpleNamespace(provider="anthropic", model="claude-test", context_tokens=128000)
+    driver = SimpleNamespace(api_format="anthropic", continuation_available=False)
+    ctx = SimpleNamespace(tool_state_digest="tools-digest")
+
+    for mode in ("off", "summary"):
+        coordinator = ReasoningStateCoordinator(
+            user_id="user-a", session_id=7, model_cfg=model,
+            policy=ReasoningPersistencePolicy(mode),
+            session_factory=lambda: _DbContext(),
+        )
+        await coordinator.prepared(driver, ctx)
+        assert coordinator.expected_version == 7
+        assert coordinator.diagnostics()["state_status"] in {"disabled", "summary_only"}
+
+    assert calls == ["off", "summary"]
+
+
+@pytest.mark.asyncio
 async def test_responses_incompatible_invalidates_persisted_state(db, user_a, monkeypatch):
     """Responses 回退必须真正失效旧 reasoning state，避免下一轮重复撞 Responses。"""
     import app.byok.crypto as byok_crypto
