@@ -16,6 +16,12 @@
 - **OpenAI 接口格式可显式选择**：OpenAI、Qwen、GLM、DeepSeek、MiMo、Ollama 兼容模式和本地兼容服务支持在模型配置中选择 Chat Completions 或 Responses；Ollama 原生与 MiMo Anthropic 兼容模式继续保留。
 - **Responses API 驱动与兼容回退**：Responses 模式改用 OpenAI SDK 的 Responses 流式接口，支持工具调用和 response chain；第三方兼容服务不支持完整 Responses 协议时自动回退 Chat Completions，修复最小探测成功但实际 Agent 请求失败的问题（[#73](https://github.com/Coffeiz/Gugu-web/issues/73)）。
 
+### 修复
+
+- **Responses 前缀缓存统计与跨 run 复用**：正确记录 Responses 返回的缓存命中量，并为固定 instructions 与工具 Schema 使用稳定的缓存路由键；LoopScope 现在能区分固定前缀、历史增长和真实 cache 命中，修复 Responses 模式长期显示 `0 cache` 的问题（[#73](https://github.com/Coffeiz/Gugu-web/issues/73)）。
+- **思考内容泄漏防护**：仅识别并清理明确的思考块标记，不再把普通文案中的 `thinking`、`think` 等词误判为隐藏思考内容；模型服务错误与内部异常提示也分开处理，避免把后端细节直接展示给用户。
+- **工具能力摘要注入**：统一工具字段签名和能力目录注入路径，减少重复 Schema 与无效上下文，MCP 动态工具在摘要模式下仍能保持可调用信息。
+
 ## [1.3.0] - 2026-09-17
 
 ### 新功能
