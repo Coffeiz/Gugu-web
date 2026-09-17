@@ -29,3 +29,21 @@ def is_provider_http_error(error: BaseException) -> bool:
         if isinstance(response_status, int) and 400 <= response_status <= 599:
             return True
     return False
+
+
+def upstream_status_tag(error: BaseException) -> str:
+    """脱敏技术标签：异常链里第一个带上游 HTTP 状态的异常 → 「状态码 类型名」。
+
+    只暴露状态码与 SDK 异常类名（如 "529 OverloadedError"），不带上游响应
+    正文、URL 或 provider 名——正文在 diag_log，标签随用户可见文案/前端
+    message_params 走。找不到状态码时退回最外层异常类型名。
+    """
+    for current in _exception_chain(error):
+        status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int):
+            return f"{status_code} {type(current).__name__}"
+        response = getattr(current, "response", None)
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int):
+            return f"{response_status} {type(current).__name__}"
+    return type(error).__name__

@@ -48,6 +48,21 @@ async def stream_round(client, kwargs, adapter=None):
         # IndexError/KeyError/AttributeError 是目前唯一非空的一份）。不全局放宽，避免把
         # 跟该 provider 无关的真实 bug 也当"重试就好"吞掉。
         transient = transient + adapter.transient_exceptions
+
+    def _error_kind(exc: BaseException) -> str:
+        """脱敏类别标签：随 retry 事件给前端状态行显示，不带上游正文。"""
+        if isinstance(exc, anthropic.RateLimitError):
+            return "rate_limited"
+        if isinstance(exc, anthropic.OverloadedError):
+            return "overloaded"
+        if isinstance(exc, anthropic.APITimeoutError):
+            return "timeout"
+        if isinstance(exc, anthropic.APIConnectionError):
+            return "network"
+        if isinstance(exc, anthropic.InternalServerError):
+            return "server_error"
+        return type(exc).__name__.lower()
+
     started_at = time.monotonic()
     retries_done = 0
     while True:
@@ -72,6 +87,13 @@ async def stream_round(client, kwargs, adapter=None):
                 raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
                                       cause=e, attempt=retries_done) from e
             retries_done += 1
+            # 重试对用户可见：UI 状态行就地显示「过载，Ns 后自动重试（n/max）」，不插消息气泡
+            yield ("retry", {
+                "attempt": retries_done,
+                "max_retries": LLM_RETRY.max_retries,
+                "next_retry_in": LLM_RETRY.interval_seconds,
+                "error_kind": _error_kind(e),
+            })
             _log.info("LLM 瞬时错误 %s，%ss 后重试(%d)",
                       type(e).__name__, LLM_RETRY.interval_seconds, retries_done)
             await LLM_RETRY.pause()

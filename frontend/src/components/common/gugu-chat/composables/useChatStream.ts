@@ -538,6 +538,19 @@ export function useChatStream(options: {
                 options.setStatus(options.thinkingItem())
               }
             }
+          } else if (evt.type === 'retry') {
+            // 模型瞬时空峰自动重试：状态行就地显示进度，拿到首个 token 即被 clearStatus 收起
+            if (live()) {
+              options.setStatus({
+                kind: 'text',
+                label: i18n.global.t('chatUi.retrying', {
+                  n: Number(evt.attempt) || 0,
+                  max: Number(evt.max_retries) || 0,
+                  seconds: Number(evt.next_retry_in) || 0,
+                }),
+              })
+              await options.scrollBottom()
+            }
           } else if (evt.type === 'notice') {
             if (live() && typeof evt.message === 'string' && evt.message.trim()) {
               options.setStatus({ kind: 'text', label: evt.message })
@@ -616,7 +629,10 @@ export function useChatStream(options: {
               options.clearStatus()
               playGuguSfx('error')
               const messageKey = typeof evt.message_key === 'string' ? evt.message_key : ''
-              const errorText = messageKey ? i18n.global.t(messageKey) : (evt.message || evt.detail || i18n.global.t('chatUi.genericError'))
+              const params = (evt.message_params && typeof evt.message_params === 'object') ? evt.message_params : undefined
+              const errorText = messageKey
+                ? i18n.global.t(messageKey, params)
+                : (evt.message || evt.detail || i18n.global.t('chatUi.genericError'))
               messages.value.push({ id: mkid(), role: 'ai', text: errorText, time: now() })
               aiIdx = messages.value.length - 1
               await options.scrollBottom()

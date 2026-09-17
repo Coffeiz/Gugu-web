@@ -490,6 +490,13 @@ async def run_loop(
                             if _kind == "done":
                                 result = _val
                                 break
+                            if _kind == "retry":
+                                # 重试状态行：任何模式都显示（它是状态不是正文，不进消息流）
+                                yield stream_event("retry", attempt=_val.get("attempt"),
+                                                   max_retries=_val.get("max_retries"),
+                                                   next_retry_in=_val.get("next_retry_in"),
+                                                   error_kind=_val.get("error_kind"))
+                                continue
                             if verify_mode:
                                 _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
                             elif goal_mode:
@@ -582,27 +589,29 @@ async def run_loop(
                     yield stream_event("_context_compaction", phase="completed", applied=False,
                                        reason="not_applied")
                 # _core._stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；
-                # 只根据 cause 类型挑一句降级文案给用户。
+                # 只根据 cause 类型挑一句降级文案给用户。文案带「上游 状态码 错误类型」的
+                # 脱敏技术标签（不含上游正文/provider 名，正文在 diag_log）——用户能一眼
+                # 看出是上游过载还是故障，而不是只收到一句 ack（2026-09-18 529 排查后定稿）。
                 import anthropic
                 # 429 限流与 529 过载同属「上游忙」：529 此前不在重试名单连穿到用户
                 # （2026-09-18），现在统一重试后仍失败也按忙碌文案降级
                 busy = isinstance(e.cause, (getattr(anthropic, "RateLimitError", ()),
                                             getattr(anthropic, "OverloadedError", ())))
-                from agent.providers.errors import is_provider_http_error
+                from agent.providers.errors import is_provider_http_error, upstream_status_tag
                 provider_error = is_provider_http_error(e)
-                detail = (
-                    "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏"
-                    if busy else
-                    "模型服务暂时拒绝或不可用，请稍后重试。"
-                    if provider_error else
-                    "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                )
-                message_key = (
-                    "chatUi.networkError" if busy else
-                    "chatUi.providerError" if provider_error else
-                    "chatUi.genericError"
-                )
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key}, ensure_ascii=False)}\n\n"
+                attempts_done = int(getattr(e, "attempt", 0) or 0)
+                tag = upstream_status_tag(e)
+                retried = f"已自动重试 {attempts_done} 次" if attempts_done > 0 else None
+                if busy:
+                    detail = f"模型服务过载（上游 {tag}）" + (f"，{retried}仍未恢复" if retried else "") + "，请稍后再试 🙏"
+                    message_key = "chatUi.providerBusyExhausted"
+                elif provider_error:
+                    detail = f"模型服务暂时不可用（上游 {tag}）" + (f"，{retried}" if retried else "") + "，请稍后重试。"
+                    message_key = "chatUi.providerUnavailable"
+                else:
+                    detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                    message_key = "chatUi.genericError"
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key, 'message_params': {'tag': tag, 'attempts': attempts_done}}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
                 if reasoning_state is not None:

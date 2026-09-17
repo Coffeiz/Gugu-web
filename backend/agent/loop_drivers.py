@@ -265,6 +265,10 @@ class AnthropicDriver:
             if kind == "final":
                 final = val
                 break
+            if kind == "retry":
+                # 重试状态事件：原样转发，主循环边界映射成 SSE 状态（不是正文 token）
+                yield ("retry", val)
+                continue
             yield ("token", val)
 
         # provider 已解析的 tool_use.name 仍可能混入内部流式尾标记或 XML 片段。
