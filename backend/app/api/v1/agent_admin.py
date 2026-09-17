@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
-from app.models import AgentUsage, UserMcpServer
+from app.models import AgentUsage, User, UserMcpServer
 
 # 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
 # tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
@@ -131,6 +131,17 @@ def _ensure_presets(override: dict) -> dict:
     return presets
 
 router = APIRouter(prefix="/admin/agent", tags=["admin"])
+
+_DEV_USER_SQ = select(User.id).where(User.is_developer == True)
+
+
+def _usage_filters(*, include_byok: bool, exclude_dev: bool) -> list:
+    filters = []
+    if not include_byok:
+        filters.append(AgentUsage.is_byok.is_(False))
+    if exclude_dev:
+        filters.append(AgentUsage.user_id.notin_(_DEV_USER_SQ))
+    return filters
 
 
 @router.get("/capabilities")
@@ -462,6 +473,7 @@ def _utc_naive(dt: datetime) -> datetime:
 
 @router.get("/usage")
 async def get_usage(month: str | None = None, model: str | None = None,
+                    exclude_dev: bool = Query(False), include_byok: bool = Query(False),
                     timezone_name: str | None = Query(default=None, alias="timezone"),
                     db: AsyncSession = Depends(get_db)):
     import calendar as cal
@@ -477,7 +489,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.is_byok.is_(False))
+        ).where(*_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev))
     )
     total_calls, total_in, total_out, total_cache_read, total_cache_write = total_row.one()
 
@@ -491,7 +503,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.created_at >= today_start, AgentUsage.is_byok.is_(False))
+        ).where(AgentUsage.created_at >= today_start, *_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev))
     )
     today_calls, today_in, today_out, today_cache_read, today_cache_write = today_row.one()
 
@@ -505,7 +517,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
             func.coalesce(func.sum(AgentUsage.cache_read), 0),
             func.coalesce(func.sum(AgentUsage.cache_write), 0),
-        ).where(AgentUsage.is_byok.is_(False))
+        ).where(*_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev))
         .group_by(AgentUsage.model, AgentUsage.provider)
         .order_by(func.count(AgentUsage.id).desc())
     )
@@ -527,7 +539,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
                 func.coalesce(func.sum(AgentUsage.tokens_out), 0),
                 func.coalesce(func.sum(AgentUsage.cache_read), 0),
                 func.coalesce(func.sum(AgentUsage.cache_write), 0),
-            ).where(AgentUsage.created_at >= since, AgentUsage.is_byok.is_(False))
+            ).where(AgentUsage.created_at >= since, *_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev))
             .group_by(AgentUsage.scenario)
             .order_by(func.count(AgentUsage.id).desc())
         )
@@ -549,11 +561,16 @@ async def get_usage(month: str | None = None, model: str | None = None,
         select(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
             func.count(UserMcpServer.id),
             func.count(func.distinct(UserMcpServer.user_id)),
-        ).where(UserMcpServer.scope == "user", UserMcpServer.enabled.is_(True))
+        ).where(
+            UserMcpServer.scope == "user",
+            UserMcpServer.enabled.is_(True),
+            *([UserMcpServer.user_id.notin_(_DEV_USER_SQ)] if exclude_dev else []),
+        )
     )
     mcp_server_count, mcp_enabled_user_count = mcp_server_row.one()
     mcp_call_count = await db.scalar(select(func.count(AgentUsage.id)).where(  # orm-exempt: Admin 概览的 MCP 聚合统计（只读 count），沿用本文件既有聚合查询口径待 Service 收口
-        AgentUsage.scenario == "mcp", AgentUsage.is_byok.is_(False),
+        AgentUsage.scenario == "mcp",
+        *_usage_filters(include_byok=include_byok, exclude_dev=exclude_dev),
     ))
 
     # 有数据的月份列表（最近 12 个月）
@@ -561,7 +578,8 @@ async def get_usage(month: str | None = None, model: str | None = None,
         text(f"""
             SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM') AS m
             FROM agent_usage
-            WHERE NOT is_byok
+            WHERE {"1=1" if include_byok else "NOT is_byok"}
+              {"AND user_id NOT IN (SELECT id FROM users WHERE is_developer)" if exclude_dev else ""}
             GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM')
             ORDER BY m DESC
             LIMIT 12
@@ -587,6 +605,11 @@ async def get_usage(month: str | None = None, model: str | None = None,
     days_in_month = cal.monthrange(year, mon)[1]
     month_end_local = month_start_local + timedelta(days=days_in_month)
 
+    agent_nd = ""
+    if not include_byok:
+        agent_nd += " AND NOT is_byok"
+    if exclude_dev:
+        agent_nd += " AND user_id NOT IN (SELECT id FROM users WHERE is_developer)"
     daily_sql = f"""
             SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
@@ -596,7 +619,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
             WHERE created_at >= :month_start AND created_at < :month_end
-              AND NOT is_byok
+              {agent_nd}
     """
     daily_params = {"month_start": _utc_naive(month_start_local), "month_end": _utc_naive(month_end_local)}
     if model:
@@ -631,7 +654,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
             WHERE created_at >= :recent_start AND created_at < :recent_end
-              AND NOT is_byok
+              {agent_nd}
     """
     recent_params = {
         "recent_start": _utc_naive(recent_start_local),
@@ -677,7 +700,7 @@ async def get_usage(month: str | None = None, model: str | None = None,
         "daily":    daily,
         "recent_daily": recent_daily,
         "timezone": getattr(user_tz, "key", None) or str(user_tz),
-        "usage_basis": "已落库的成功平台 LLM 调用（不含 BYOK）；输入 token 按完整输入统计，缓存命中率按完整输入加权",
+        "usage_basis": f"已落库的成功 LLM 调用（{'含 BYOK' if include_byok else '不含 BYOK'}）；输入 token 按完整输入统计，缓存命中率按完整输入加权",
     }
 
 

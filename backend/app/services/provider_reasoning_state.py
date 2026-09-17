@@ -285,6 +285,56 @@ async def invalidate_state(
     return True
 
 
+async def invalidate_user_states(
+    db: AsyncSession,
+    *,
+    user_id: Any,
+    reason: str = "config_changed",
+) -> int:
+    """在用户模型配置变更时一次性失效其仍 active 的推理状态。
+
+    这是配置边界上的清理操作，不应由每次 ``off`` run 触发数据库查询。
+    只按 user_id 取行并加锁；调用方负责在同一事务中提交配置变更。
+    """
+    if reason not in INVALIDATION_REASONS:
+        raise ValueError("无效的 provider state 失效原因")
+    rows = (await db.execute(
+        select(ProviderReasoningState)
+        .where(
+            ProviderReasoningState.user_id == user_id,
+            ProviderReasoningState.status == "active",
+        )
+        .with_for_update()
+    )).scalars().all()
+    if rows:
+        current = now_utc()
+        for row in rows:
+            _invalidate_row(row, reason, current)
+        await db.flush()
+    return len(rows)
+
+
+async def invalidate_all_states(
+    db: AsyncSession,
+    *,
+    reason: str = "config_changed",
+) -> int:
+    """在全局模型配置变更时失效所有 active 推理状态。"""
+    if reason not in INVALIDATION_REASONS:
+        raise ValueError("无效的 provider state 失效原因")
+    rows = (await db.execute(
+        select(ProviderReasoningState)
+        .where(ProviderReasoningState.status == "active")
+        .with_for_update()
+    )).scalars().all()
+    if rows:
+        current = now_utc()
+        for row in rows:
+            _invalidate_row(row, reason, current)
+        await db.flush()
+    return len(rows)
+
+
 async def delete_state(db: AsyncSession, *, user_id: Any, session_id: int) -> bool:
     """显式删除状态；会话/用户硬删除也由外键和 ORM cascade 覆盖。"""
     await _owned_session(db, user_id, session_id)

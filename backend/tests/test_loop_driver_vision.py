@@ -19,6 +19,7 @@ from agent.providers.message_utils import (
     _with_system_cache_control,
 )
 from agent.runtime.loopscope_trace.utils import _cache_diagnostics
+from agent.loop.machine import _allow_tool_images
 
 
 def _result():
@@ -118,6 +119,15 @@ def test_openai_tool_round_drops_images_for_text_only_model():
 
     assert len(messages) == 2
     assert messages[1]["content"] == "已读取候选图片。\n[图片结果已返回，但当前模型不支持视觉输入]"
+
+
+def test_tool_image_gate_uses_actual_model_vision_setting(monkeypatch):
+    """显式开启视觉时，即使 provider capability 尚未探测也不能丢掉图片。"""
+    from app.core import chat_attach
+
+    model = SimpleNamespace(provider="openai", vision=True)
+    monkeypatch.setattr(chat_attach, "vision_ready", lambda model_cfg=None: bool(model_cfg.vision))
+    assert _allow_tool_images(model) is True
 
 
 def test_deepseek_driver_keeps_system_message_plain_without_explicit_cache():

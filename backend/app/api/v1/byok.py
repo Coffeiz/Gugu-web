@@ -134,6 +134,10 @@ async def create_credential(body: CredentialCreate, user: User = Depends(get_cur
         dimensions=body.dimensions,
     )
     db.add(row)
+    if body.capability == "llm":
+        # 配置变更边界清理旧 continuation；普通 off run 不再做 DB lookup。
+        from app.services.provider_reasoning_state import invalidate_user_states
+        await invalidate_user_states(db, user_id=user.id)
     await db.commit()
     await db.refresh(row)
     return credential_view(row)
@@ -247,6 +251,10 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
         encrypted, nonce, wrapped = new_key_material
         row.encrypted_value, row.nonce, row.encrypted_data_key = encrypted, nonce, wrapped
         row.key_version = int(os.getenv("CREDENTIALS_MASTER_KEY_VERSION", "1"))
+    if row.capability == "llm":
+        # 任一 LLM 凭据字段变化都可能改变 provider/state 指纹或持久化策略。
+        from app.services.provider_reasoning_state import invalidate_user_states
+        await invalidate_user_states(db, user_id=user.id)
     await db.commit()
     await db.refresh(row)
     return credential_view(row)
@@ -259,6 +267,9 @@ async def delete_credential(credential_id: int, user: User = Depends(get_current
     if row is None:
         raise HTTPException(status_code=404, detail="凭据不存在")
     await db.delete(row)
+    if row.capability == "llm":
+        from app.services.provider_reasoning_state import invalidate_user_states
+        await invalidate_user_states(db, user_id=user.id)
     await db.commit()
 
 

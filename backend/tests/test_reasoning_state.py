@@ -128,7 +128,7 @@ async def test_coordinator_diagnostics_distinguish_state_lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_coordinator_off_and_summary_load_state_without_restoring(monkeypatch):
+async def test_coordinator_off_skips_state_lookup_but_summary_loads_it(monkeypatch):
     calls = []
 
     class _DbContext:
@@ -150,17 +150,48 @@ async def test_coordinator_off_and_summary_load_state_without_restoring(monkeypa
     driver = SimpleNamespace(api_format="anthropic", continuation_available=False)
     ctx = SimpleNamespace(tool_state_digest="tools-digest")
 
-    for mode in ("off", "summary"):
-        coordinator = ReasoningStateCoordinator(
-            user_id="user-a", session_id=7, model_cfg=model,
-            policy=ReasoningPersistencePolicy(mode),
-            session_factory=lambda: _DbContext(),
-        )
-        await coordinator.prepared(driver, ctx)
-        assert coordinator.expected_version == 7
-        assert coordinator.diagnostics()["state_status"] in {"disabled", "summary_only"}
+    off = ReasoningStateCoordinator(
+        user_id="user-a", session_id=7, model_cfg=model,
+        policy=ReasoningPersistencePolicy("off"),
+        session_factory=lambda: _DbContext(),
+    )
+    await off.prepared(driver, ctx)
+    assert off.expected_version == 0
+    assert off.diagnostics()["state_status"] == "disabled"
 
-    assert calls == ["off", "summary"]
+    summary = ReasoningStateCoordinator(
+        user_id="user-a", session_id=7, model_cfg=model,
+        policy=ReasoningPersistencePolicy("summary"),
+        session_factory=lambda: _DbContext(),
+    )
+    await summary.prepared(driver, ctx)
+    assert summary.expected_version == 7
+    assert summary.diagnostics()["state_status"] == "summary_only"
+
+    assert calls == ["summary"]
+
+
+@pytest.mark.asyncio
+async def test_invalidate_user_states_clears_only_active_rows(db, user_a, monkeypatch):
+    import app.byok.crypto as byok_crypto
+    from app.services.provider_reasoning_state import invalidate_user_states
+
+    monkeypatch.setattr(byok_crypto, "_master_key", lambda version=1: b"r" * 32)
+    session = await _session(db, user_a.id)
+    envelope = _envelope(user_a, session)
+    await commit_state(db, user_id=user_a.id, session_id=session.id, envelope=envelope, expected_version=0)
+    await db.commit()
+    count = await invalidate_user_states(db, user_id=user_a.id)
+    assert count == 1
+    await db.commit()
+    row = (await db.execute(select(ProviderReasoningState))).scalar_one()
+    assert row.status == "invalidated"
+    assert row.invalidated_reason == "config_changed"
+
+    # 再次执行是幂等的，不会继续增加版本。
+    version = row.version
+    assert await invalidate_user_states(db, user_id=user_a.id) == 0
+    assert row.version == version
 
 
 @pytest.mark.asyncio
