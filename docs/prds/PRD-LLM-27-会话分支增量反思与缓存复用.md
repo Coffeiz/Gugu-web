@@ -266,10 +266,12 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 
 ### Phase 2：owner Memory 反思
 
-- [ ] Web/私聊 owner 反思接入公共追加分支。
-- [ ] 有实际助手回复的群聊 owner 回合复用同一公共追加分支；无快照的群聊任务保留独立批处理。
-- [ ] 保持原 Memory writer、事件、锁、重试和失败语义。
-- [ ] 完成 LoopScope 主 run/branch 关联和 provider A/B 验证。
+### Phase 2：owner Memory 反思（已完成，2026-09-18）
+
+- [x] Web/私聊 owner 反思接入公共追加分支：`reflect(snapshot=)` → `_append_reuse_decision` 四重资格门（快照/单 session 缓冲/能力白名单/模型身份一致）→ `_extract_append`（快照 history 经共享 helper 渲染成前缀；reflection.md 与存量数据进 delta；待反思回合用队列组装前原文标记引用）。
+- [x] 有实际助手回复的群聊 owner 回合复用同一公共追加分支（`_drain_group_owner_buffer` 同一资格门）；无快照的群聊任务（worker 15 分钟 idle 扫描跨进程查无快照）保留独立批处理。
+- [x] 保持原 Memory writer、事件、锁、重试和失败语义：`reflect()` 下游未动，drains 回滚逻辑未动；append 模式矛盾检测开放完整历史（remove-only，`_APPEND_HISTORY_DIRECTIVE`），新增仍限待反思回合（devserver 验证 remove 零误报、新增未抑制）。
+- [x] LoopScope 主 run/branch 关联：branch metadata 与日志带 branch_mode + source run_id + session；provider A/B 验证完成（`docs/reports/OPT-Cache-Strategy-LLM27-AB-*.md`：append 79.7% vs standalone 3.1%，MiniMax-M3 BYOK 真实配置 3 触发）。
 
 ### Phase 3：Knowledge 反思
 
