@@ -592,12 +592,11 @@ async def run_loop(
                 # 只根据 cause 类型挑一句降级文案给用户。文案带「上游 状态码 错误类型」的
                 # 脱敏技术标签（不含上游正文/provider 名，正文在 diag_log）——用户能一眼
                 # 看出是上游过载还是故障，而不是只收到一句 ack（2026-09-18 529 排查后定稿）。
-                import anthropic
-                # 429 限流与 529 过载同属「上游忙」：529 此前不在重试名单连穿到用户
-                # （2026-09-18），现在统一重试后仍失败也按忙碌文案降级
-                busy = isinstance(e.cause, (getattr(anthropic, "RateLimitError", ()),
-                                            getattr(anthropic, "OverloadedError", ())))
-                from agent.providers.errors import is_provider_http_error, upstream_status_tag
+                # 429 限流与 529 过载同属「上游忙」，按状态码判定、与具体 SDK 解耦
+                # （anthropic/openai 两条链路的重试用尽都落到这里）
+                from agent.providers.errors import (is_provider_http_error, upstream_status_tag,
+                                                    upstream_busy_status)
+                busy = upstream_busy_status(e)
                 provider_error = is_provider_http_error(e)
                 attempts_done = int(getattr(e, "attempt", 0) or 0)
                 tag = upstream_status_tag(e)

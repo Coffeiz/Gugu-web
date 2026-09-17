@@ -189,3 +189,129 @@ async def test_no_adapter_attribute_error_not_retried():
     with pytest.raises(AttributeError):
         await _drain(_stream_round(client, {}))
     assert client.messages.calls == 1
+
+
+# ── OpenAIDriver：统一重试节奏覆盖 openai 兼容链路（2026-09-18 补齐）─────────────
+
+def _openai_ctx_stub():
+    from types import SimpleNamespace as _NS
+    return _NS(
+        model="deepseek-chat", max_tokens=100, think_kwargs={}, tools=[],
+        supports_active_cache=False, supports_explicit_cache=False,
+        adapter=_NS(
+            render_history=lambda messages: list(messages),
+            uses_single_history_cache_anchor=lambda _m: False,
+            build_tool_params=lambda ai, tools: {},
+            build_openai_cache_kwargs=lambda ai: {},
+        ),
+        ai=_NS(model="deepseek-chat", provider="deepseek"),
+    )
+
+
+def _openai_content_chunk(text: str):
+    return SimpleNamespace(
+        usage=None,
+        choices=[SimpleNamespace(delta=SimpleNamespace(
+            content=text, reasoning_content=None, tool_calls=[]))],
+    )
+
+
+def _openai_rate_limit_error():
+    import httpx
+    import openai
+    resp = httpx.Response(429, request=httpx.Request("POST", "https://api.example/v1"))
+    return openai.RateLimitError("429 rate limited", response=resp, body=None)
+
+
+class _FlakyOpenAIClient:
+    """create 前 N 次抛瞬时错误，之后返回正常流。"""
+
+    def __init__(self, fail_times: int):
+        self.fail_times = fail_times
+        self.calls = 0
+
+    async def _create(self, **_kwargs):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise _openai_rate_limit_error()
+        chunk = SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=1,
+                                  prompt_cache_hit_tokens=0,
+                                  prompt_tokens_details=None),
+            choices=[SimpleNamespace(delta=SimpleNamespace(
+                content="ok", reasoning_content=None, tool_calls=[]))],
+        )
+
+        class _Stream:
+            async def close(self):
+                pass
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if not getattr(self, "_done", False):
+                    self._done = True
+                    return chunk
+                raise StopAsyncIteration
+
+        return _Stream()
+
+    @property
+    def chat(self):
+        return SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+
+async def _drain_openai(client):
+    from agent.loop_drivers import OpenAIDriver
+
+    tokens = []
+    events = []
+    async for kind, val in OpenAIDriver().run_round(client, _openai_ctx_stub(), []):
+        if kind == "token":
+            tokens.append(val)
+        elif kind == "retry":
+            events.append(val)
+    return tokens, events
+
+
+async def test_openai_driver_retries_transient_then_succeeds(monkeypatch):
+    import agent.loop_drivers as drivers_mod
+    from app.core.retry import RetryPolicy
+
+    monkeypatch.setattr(drivers_mod, "LLM_RETRY", RetryPolicy(interval_seconds=0.0))
+    client = _FlakyOpenAIClient(fail_times=2)
+    tokens, events = await _drain_openai(client)
+    assert tokens == ["ok"]
+    assert client.calls == 3
+    assert [e["attempt"] for e in events] == [1, 2]
+    assert events[0]["error_kind"] == "rate_limited"
+
+
+async def test_openai_driver_exhausts_to_retryable(monkeypatch):
+    import agent.loop_drivers as drivers_mod
+    from app.core.retry import RetryPolicy
+    from app.core.errors import RetryableError
+
+    monkeypatch.setattr(drivers_mod, "LLM_RETRY", RetryPolicy(interval_seconds=0.0, max_retries=2))
+    client = _FlakyOpenAIClient(fail_times=99)
+    with pytest.raises(RetryableError) as exc_info:
+        await _drain_openai(client)
+    assert client.calls == 3   # 首次 + 2 次重试
+    assert isinstance(exc_info.value.cause, Exception)
+
+
+async def test_upstream_busy_status_matches_both_sdks():
+    """忙碌判定按状态码与 SDK 解耦：anthropic 529 与 openai 429 都算忙。"""
+    import httpx
+    import anthropic
+    import openai
+
+    from agent.providers.errors import upstream_busy_status
+
+    a_resp = httpx.Response(529, request=httpx.Request("POST", "https://x"))
+    assert upstream_busy_status(anthropic.OverloadedError("529", response=a_resp, body=None)) is True
+    o_resp = httpx.Response(429, request=httpx.Request("POST", "https://x"))
+    assert upstream_busy_status(openai.RateLimitError("429", response=o_resp, body=None)) is True
+    o_500 = httpx.Response(500, request=httpx.Request("POST", "https://x"))
+    assert upstream_busy_status(openai.InternalServerError("500", response=o_500, body=None)) is False

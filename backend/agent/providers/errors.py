@@ -47,3 +47,52 @@ def upstream_status_tag(error: BaseException) -> str:
         if isinstance(response_status, int):
             return f"{response_status} {type(current).__name__}"
     return type(error).__name__
+
+
+def openai_transient_error(exc: BaseException) -> bool:
+    """OpenAI 兼容链路的瞬时错误判定（与 app/core/retry.py 的统一节奏配套）。
+
+    标准 429/超时/网络/5xx 之外，非标准状态码（如 MiniMax 的 529 过载）会落进
+    通用 APIStatusError，按状态码 ≥500 认定瞬时。
+    """
+    import openai
+
+    if isinstance(exc, (openai.RateLimitError, openai.APITimeoutError,
+                        openai.APIConnectionError, openai.InternalServerError)):
+        return True
+    return (isinstance(exc, openai.APIStatusError)
+            and int(getattr(exc, "status_code", 0) or 0) >= 500)
+
+
+def openai_error_kind(exc: BaseException) -> str:
+    """脱敏类别标签：随 retry 事件给前端状态行显示，不带上游正文。"""
+    import openai
+
+    if isinstance(exc, openai.RateLimitError):
+        return "rate_limited"
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int) and status_code == 529:
+        return "overloaded"
+    if isinstance(exc, openai.APITimeoutError):
+        return "timeout"
+    if isinstance(exc, openai.APIConnectionError):
+        return "network"
+    if isinstance(exc, openai.InternalServerError):
+        return "server_error"
+    if isinstance(status_code, int):
+        return f"http_{status_code}"
+    return type(exc).__name__.lower()
+
+
+def upstream_busy_status(error: BaseException) -> bool:
+    """异常链里是否出现「provider 忙碌」状态（429 限流 / 529 过载）。
+
+    按状态码判定、与具体 SDK 解耦：anthropic 与 openai 两条链路的限流/过载
+    异常都带 status_code，用一套口径统一忙碌文案的归类。
+    """
+    busy_codes = {429, 529}
+    for current in _exception_chain(error):
+        status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int) and status_code in busy_codes:
+            return True
+    return False

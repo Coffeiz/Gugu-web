@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import time
 
 from dataclasses import dataclass
 from typing import Any
@@ -281,24 +282,47 @@ class OpenAIResponsesDriver:
             request["prompt_cache_key"] = prompt_cache_key
 
         wire_request = {key: value for key, value in request.items() if value is not None}
-        try:
-            stream = await client.responses.create(**wire_request)
-        except Exception as exc:
-            # 某些 OpenAI-compatible Responses 服务在 ask_user 等交互暂停期间
-            # 不保留原 response chain。恢复时本地历史仍完整，因此用无状态完整
-            # 历史重试一次，避免把可恢复的 tool-id 失效误报成通用模型错误。
-            if ctx.previous_response_id and _is_stale_response_tool_call_error(exc):
-                retry_request = dict(wire_request)
-                retry_request.pop("previous_response_id", None)
-                retry_request["input"] = _responses_input(full_rendered)
-                try:
-                    stream = await client.responses.create(**retry_request)
-                except Exception as retry_exc:
-                    _raise_if_responses_compatibility_error(retry_exc)
+        # create 阶段走统一重试节奏（app/core/retry.py）：529/429/瞬时 5xx 绝大多数
+        # 落在 create；流式消费阶段的断流仍按原样抛出（链路里有 store/续接语义，
+        # 盲目整轮重试可能重复产出 response chain，不在这里放宽）。
+        from app.core.errors import RetryableError
+        from app.core.retry import LLM_RETRY
+
+        started_at = time.monotonic()
+        retries_done = 0
+        while True:
+            try:
+                stream = await client.responses.create(**wire_request)
+                break
+            except Exception as exc:
+                # 某些 OpenAI-compatible Responses 服务在 ask_user 等交互暂停期间
+                # 不保留原 response chain。恢复时本地历史仍完整，因此用无状态完整
+                # 历史重试一次，避免把可恢复的 tool-id 失效误报成通用模型错误。
+                if ctx.previous_response_id and _is_stale_response_tool_call_error(exc):
+                    retry_request = dict(wire_request)
+                    retry_request.pop("previous_response_id", None)
+                    retry_request["input"] = _responses_input(full_rendered)
+                    try:
+                        stream = await client.responses.create(**retry_request)
+                        break
+                    except Exception as retry_exc:
+                        _raise_if_responses_compatibility_error(retry_exc)
+                        raise
+                from agent.providers.errors import openai_transient_error, openai_error_kind
+                if not openai_transient_error(exc):
+                    _raise_if_responses_compatibility_error(exc)
                     raise
-            else:
-                _raise_if_responses_compatibility_error(exc)
-                raise
+                if not LLM_RETRY.should_retry(retries_done, started_at):
+                    raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
+                                          cause=exc, attempt=retries_done) from exc
+                retries_done += 1
+                yield ("retry", {
+                    "attempt": retries_done,
+                    "max_retries": LLM_RETRY.max_retries,
+                    "next_retry_in": LLM_RETRY.interval_seconds,
+                    "error_kind": openai_error_kind(exc),
+                })
+                await LLM_RETRY.pause()
         content = ""
         response_id = None
         previous_response_id = ctx.previous_response_id

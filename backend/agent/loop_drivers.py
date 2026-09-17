@@ -39,10 +39,13 @@ import copy
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Protocol
 
 from app.core.errors import RetryableError
+from app.core.redaction import diag_log
+from app.core.retry import LLM_RETRY
 from app.core.redaction import diag_log
 from agent.context.canonical_tool_history import ToolCall
 from agent.providers.message_utils import (
@@ -446,62 +449,92 @@ class OpenAIDriver:
             messages = outbound
         tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
         cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
-        stream = await client.chat.completions.create(
-            model=ctx.model,
-            messages=messages,
-            max_tokens=ctx.max_tokens,
-            stream=True,
-            stream_options={"include_usage": True},
-            **ctx.think_kwargs,
-            **tool_params,
-            **cache_kwargs,
-        )
-        content = ""
-        reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400
-        tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
-        total_in = total_out = total_cache = 0
-        try:
-            async for chunk in stream:
-                if getattr(chunk, "usage", None):
-                    prompt_tokens = chunk.usage.prompt_tokens or 0
-                    total_out += chunk.usage.completion_tokens or 0
-                    # 缓存命中：DeepSeek 用 prompt_cache_hit_tokens；Qwen/阿里用 prompt_tokens_details.cached_tokens
-                    cache_hit = getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
-                    if not cache_hit:
-                        details = getattr(chunk.usage, "prompt_tokens_details", None)
-                        if details:
-                            cache_hit = getattr(details, "cached_tokens", 0) or 0
-                    total_cache += cache_hit
-                    # OpenAI 兼容语义里 prompt_tokens 已包含缓存命中（prompt = hit + miss），
-                    # 与 Anthropic 的 split 口径（input_tokens 不含 cache_read）不同；这里
-                    # 统一归一成「未命中输入」，否则统计层总量会重复计入命中部分。
-                    total_in += max(0, prompt_tokens - cache_hit)
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                _rc = getattr(delta, "reasoning_content", None)
-                if _rc:
-                    reasoning += _rc   # 思考分片（流式里先于 content 到）；只入历史回传，不流式发给用户
-                if delta.content:
-                    content += delta.content
-                    yield ("token", delta.content)
-                for tc in (delta.tool_calls or []):
-                    b = tool_buf.setdefault(tc.index, {"id": "", "name": "", "args": ""})
-                    if tc.id:
-                        b["id"] = tc.id
-                    if tc.function and tc.function.name:
-                        b["name"] = tc.function.name
-                    if tc.function and tc.function.arguments:
-                        b["args"] += tc.function.arguments
-        finally:
-            # 共享循环协作检查取消时会提前 return，不再继续消费这个 async generator——Python 关闭
-            # 生成器会在这里的挂起点（yield）抛 GeneratorExit，靠 finally 兜住确保底层流被关掉
-            # （原 _run_openai 在取消分支里显式 await stream.close()，这里换成 try/finally 达到
-            # 同样效果，且正常耗尽/异常路径也一并覆盖，不止取消这一种）。
+        # 与 AnthropicDriver 的 stream_round 同一套统一重试节奏（app/core/retry.py）：
+        # 固定 5s×5、墙钟 90s、只在吐出首个 token 前重试、重试事件对用户可见。
+        started_at = time.monotonic()
+        retries_done = 0
+        while True:
+            emitted = False
+            content = ""
+            reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400
+            tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
+            total_in = total_out = total_cache = 0
+            stream = None
             try:
-                await stream.close()
-            except Exception:
-                pass
+                stream = await client.chat.completions.create(
+                    model=ctx.model,
+                    messages=messages,
+                    max_tokens=ctx.max_tokens,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    **ctx.think_kwargs,
+                    **tool_params,
+                    **cache_kwargs,
+                )
+                async for chunk in stream:
+                    if getattr(chunk, "usage", None):
+                        prompt_tokens = chunk.usage.prompt_tokens or 0
+                        total_out += chunk.usage.completion_tokens or 0
+                        # 缓存命中：DeepSeek 用 prompt_cache_hit_tokens；Qwen/阿里用 prompt_tokens_details.cached_tokens
+                        cache_hit = getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
+                        if not cache_hit:
+                            details = getattr(chunk.usage, "prompt_tokens_details", None)
+                            if details:
+                                cache_hit = getattr(details, "cached_tokens", 0) or 0
+                        total_cache += cache_hit
+                        # OpenAI 兼容语义里 prompt_tokens 已包含缓存命中（prompt = hit + miss），
+                        # 与 Anthropic 的 split 口径（input_tokens 不含 cache_read）不同；这里
+                        # 统一归一成「未命中输入」，否则统计层总量会重复计入命中部分。
+                        total_in += max(0, prompt_tokens - cache_hit)
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    _rc = getattr(delta, "reasoning_content", None)
+                    if _rc:
+                        reasoning += _rc   # 思考分片（流式里先于 content 到）；只入历史回传，不流式发给用户
+                    if delta.content:
+                        content += delta.content
+                        emitted = True
+                        yield ("token", delta.content)
+                    for tc in (delta.tool_calls or []):
+                        b = tool_buf.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                        if tc.id:
+                            b["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            b["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            b["args"] += tc.function.arguments
+                break   # 本轮正常完成 → 退出重试循环
+            except Exception as exc:
+                from agent.providers.errors import openai_transient_error, openai_error_kind
+                if not openai_transient_error(exc):
+                    raise
+                if emitted:
+                    raise   # 已吐 token，重试会重复输出——原样抛给上层当未知/中断处理
+                if not LLM_RETRY.should_retry(retries_done, started_at):
+                    diag_log(f"agent.core.stream_round_openai "
+                             f"provider={getattr(ctx.ai, 'provider', '') or 'unknown'}", exc)
+                    _log.warning("LLM 流式调用重试 %d 次后仍失败：%s", retries_done, type(exc).__name__)
+                    raise RetryableError("llm.stream_exhausted", "LLM 调用重试后仍失败",
+                                          cause=exc, attempt=retries_done) from exc
+                retries_done += 1
+                yield ("retry", {
+                    "attempt": retries_done,
+                    "max_retries": LLM_RETRY.max_retries,
+                    "next_retry_in": LLM_RETRY.interval_seconds,
+                    "error_kind": openai_error_kind(exc),
+                })
+                await LLM_RETRY.pause()
+            finally:
+                # 共享循环协作检查取消时会提前 return，不再继续消费这个 async generator——Python 关闭
+                # 生成器会在这里的挂起点（yield）抛 GeneratorExit，靠 finally 兜住确保底层流被关掉
+                # （原 _run_openai 在取消分支里显式 await stream.close()，这里换成 try/finally 达到
+                # 同样效果，且正常耗尽/异常路径也一并覆盖，不止取消这一种）。
+                if stream is not None:
+                    try:
+                        await stream.close()
+                    except Exception:
+                        pass
 
         ordered = [tool_buf[i] for i in sorted(tool_buf)]
         tool_calls = []
