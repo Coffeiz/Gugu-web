@@ -106,11 +106,33 @@ check_systemd_services() {
 # 配置不完整时直接终止，避免先停止现有服务再暴露启动错误。
 validate_runtime_config() {
     detect_venv
+    ensure_systemd_runtime_dirs
     if ! (cd "$APP_DIR" && "$VENV_DIR/bin/python" -c 'from app.core.config import get_settings; get_settings()'); then
         err "运行配置预检失败，未执行 systemd 操作；请修复配置后重试。"
         return 1
     fi
     log "配置预检通过"
+}
+
+# systemd 的 ReadWritePaths 只接受已经存在的目录，不会替服务自动创建。
+# restart/start 也要执行这一步：目录可能被清理任务或人工清理误删，不能等到
+# systemd namespace 阶段才以 226/NAMESPACE 失败。
+ensure_systemd_runtime_dirs() {
+    if ! use_systemd || [ "$(id -u)" -ne 0 ]; then
+        return 0
+    fi
+
+    local run_user
+    run_user="$(systemctl show gugu-rag-sidecar -p User --value 2>/dev/null || true)"
+    if [ -z "$run_user" ] || [ "$run_user" = "root" ]; then
+        err "无法从 gugu-rag-sidecar 取得有效的非 root 服务用户，未初始化运行目录。"
+        return 1
+    fi
+
+    local data_dir="${APP_DIR}/../Gugu-data/users"
+    local rag_index_dir="${APP_DIR}/var/rag-index"
+    mkdir -p "$data_dir" "$LOG_DIR" "$rag_index_dir"
+    chown "$run_user:$run_user" "$data_dir" "$LOG_DIR" "$rag_index_dir"
 }
 
 wait_for_port() {
