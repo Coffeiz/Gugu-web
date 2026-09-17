@@ -57,7 +57,7 @@ import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mer
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
-import { resolveRelativeFileLink } from '@/utils/fileLinks'
+import { resolveRelativeFileLink, buildFileLinkIndex } from '@/utils/fileLinks'
 
 const { t } = useI18n()
 
@@ -593,16 +593,17 @@ async function resolveMdRelativeImages() {
   const token    = localStorage.getItem('user_token') ?? ''
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
   releaseMdObjectUrls()
+  // 索引一次构建 O(N)，每张图 O(1) 查找；逐图全量扫描在大文件库上会拖到秒级
+  const index = buildFileLinkIndex(filesCache.allFiles, filesCache.allFolders)
+  const resolve = (href: string) => index.resolve(href, {
+    folderId: props.fileContext.folderId,
+    projectId: props.fileContext.projectId,
+  })
   for (const img of [...root.querySelectorAll<HTMLImageElement>('img[src]')]) {
     const src = img.getAttribute('src') || ''
     if (!src || src.startsWith('#') || src.startsWith('/') || src.startsWith('//')) continue
     if (/^[a-z][a-z\d+.-]*:/i.test(src)) continue
-    const resolved = resolveRelativeFileLink(
-      src,
-      { folderId: props.fileContext.folderId, projectId: props.fileContext.projectId },
-      filesCache.allFiles,
-      filesCache.allFolders,
-    )
+    const resolved = resolve(src)
     if (!resolved || resolved.kind !== 'file' || !isImageExt(resolved.file.ext)) continue
     try {
       const res = await fetch(`${BASE_URL}/files/${resolved.file.id}/download`, {
