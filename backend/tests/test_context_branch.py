@@ -19,9 +19,7 @@ async def test_context_branch_assembles_stable_order_and_json(monkeypatch):
     result = await ContextBranch().run(
         BranchInput(
             stable_system="stable",
-            baseline="base",
             scope="owner",
-            dynamic_context="now",
             delta="turn",
             session_id=7,
             run_id="run-test",
@@ -32,11 +30,11 @@ async def test_context_branch_assembles_stable_order_and_json(monkeypatch):
 
     assert result.ok is True
     assert captured["system"] == "stable"
-    assert captured["user"] == (
-        "【baseline】\nbase\n\n【动态上下文】\nnow\n\n【本次增量】\nturn"
-    )
+    # scope/revision 只留审计元数据，绝不进入 provider user 正文
+    assert captured["user"] == "turn"
     assert result.metadata["branch"] == "reflection"
     assert result.metadata["session_id"] == 7
+    assert result.metadata["branch_mode"] == "standalone"
 
 
 @pytest.mark.asyncio

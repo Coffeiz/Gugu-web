@@ -21,14 +21,13 @@ class BranchInput:
     """分支请求的稳定前缀和本次增量。
 
     history_messages 非空时走「追加式」：直接复用主会话的 canonical 消息序列，
-    delta 作为末尾追加的 user 消息发送（baseline/dynamic_context 被忽略），
-    让分支请求与主对话共享前缀以命中 provider 的会话内缓存。
+    delta 作为末尾追加的 user 消息发送，让分支请求与主对话共享前缀以命中
+    provider 的会话内缓存。history_messages 为空时走独立分支：stable_system
+    为 system 参数，delta 即全部 user 输入。
     """
 
     stable_system: str
-    baseline: str = ""
     delta: str = ""
-    dynamic_context: str = ""
     scope: str = ""
     scope_revision: str | None = None
     session_id: int | None = None
@@ -53,7 +52,6 @@ class BranchPolicy:
     max_retries: int = 0
     max_tokens: int = 800
     thinking: str | None = None
-    preserve_prefix: bool = True
 
 
 @dataclass(frozen=True)
