@@ -725,6 +725,7 @@ async def run_loop(
                         yield _line
                 dispatched = []
                 pending_interaction = None
+                repeat_breaker.begin_round()   # 熔断按轮计数：同轮多相同调用合法，跨轮重复才累积
                 remaining_tool_calls = (
                     None if (goal_mode or unlimited_mode) else max(0, runner.max_tool_calls - tool_calls_used)
                 )
