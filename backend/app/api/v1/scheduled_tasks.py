@@ -21,7 +21,7 @@ from app.core.security import get_current_user
 from app.core.ownership import get_owned
 from app.core import events
 from app.db.session import get_db
-from app.models import FilesystemAuthorizationGrant, ScheduledTask, User
+from app.models import ConversationSession, FilesystemAuthorizationGrant, ScheduledTask, User, UserBot
 from app.services.calendar import find_event_reminder_by_cron
 from app.services.scheduled_tasks import validate_task_workspace
 from app.services.email.attachments import EmailAttachmentError, validate_email_attachment_file_ids
@@ -66,6 +66,83 @@ def _norm_channels(chs: list[str] | None) -> str:
 
 def _norm_authorized_tools(tools: list[str] | None) -> list[str]:
     return ["send_email"] if tools and "send_email" in tools else []
+
+
+async def _resolve_qq_delivery(db: AsyncSession, user: User, qq_delivery: dict | None) -> dict | None:
+    """网页端 QQ 投递目标解析：private=owner 私聊，group=指定群会话。
+
+    群目标字段与 agent 工具的 current_group 产物同构（platform/chat_type/chat_id/
+    puid/channel_id），投递层不需要区分来源。
+    """
+    mode = (qq_delivery or {}).get("mode")
+    if mode not in {"private", "group"}:
+        raise HTTPException(400, "qq_delivery.mode 只能是 private 或 group")
+    from app.scheduled_tasks import owner_private_targets
+
+    if mode == "private":
+        return await owner_private_targets(db, user.id, ["qq"])
+    chat_id = str((qq_delivery or {}).get("chat_id") or "").strip()
+    if not chat_id:
+        raise HTTPException(400, "群投递需要 chat_id")
+    # 会话归属校验：只允许投递到自己的 QQ 群会话，防越权填任意 group_openid
+    session = (
+        await db.execute(
+            select(ConversationSession)
+            .where(
+                ConversationSession.user_id == user.id,
+                ConversationSession.source == "qq",
+                ConversationSession.chat_type == "group",
+                ConversationSession.chat_id == chat_id,
+            )
+            .order_by(ConversationSession.id.desc())
+        )
+    ).scalars().first()
+    if session is None:
+        raise HTTPException(400, "找不到该 QQ 群会话，请先让咕咕在群里说过话")
+    bot = (
+        await db.execute(
+            select(UserBot)
+            .where(
+                UserBot.user_id == user.id,
+                UserBot.platform == "qq",
+                UserBot.enabled.is_(True),
+            )
+            .order_by(UserBot.id.asc())
+        )
+    ).scalars().first()
+    return {
+        "qq": {
+            "platform": "qq",
+            "chat_type": "group",
+            "chat_id": chat_id,
+            "puid": bot.owner_platform_user_id if bot else None,
+            "channel_id": str(bot.id) if bot else None,
+        }
+    }
+
+
+@router.get("/qq-targets")
+async def list_qq_targets(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """QQ 投递目标列表：私聊固定可用（有启用 bot 即可），群项来自本人的 QQ 群会话。
+
+    用 session title 展示（即用户在会话列表里看到的名字），不暴露平台 openid。
+    """
+    rows = (
+        await db.execute(
+            select(ConversationSession)
+            .where(
+                ConversationSession.user_id == user.id,
+                ConversationSession.source == "qq",
+                ConversationSession.chat_type == "group",
+                ConversationSession.chat_id.isnot(None),
+            )
+            .order_by(ConversationSession.id.desc())
+        )
+    ).scalars().all()
+    groups: dict[str, str] = {}
+    for row in rows:
+        groups.setdefault(row.chat_id, row.title or "未命名群会话")
+    return {"groups": [{"chat_id": chat_id, "title": title} for chat_id, title in groups.items()]}
 
 
 def _norm_script_authorization(value):
@@ -114,6 +191,9 @@ class TaskCreate(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     channels: list[str] = ["web"]
+    # QQ 投递目标：{"mode":"private"} 或 {"mode":"group","chat_id":群会话 chat_id}；
+    # 省略=沿用私聊默认。仅在 channels 含 qq 时生效。
+    qq_delivery: dict | None = None
     enabled: bool = True
     event_id: int | None = None   # 绑定到某日历事件（活动面板加的提醒）；省略=独立任务
     authorized_tools: list[str] = Field(default_factory=list)
@@ -131,6 +211,7 @@ class TaskUpdate(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     channels: list[str] | None = None
+    qq_delivery: dict | None = None
     enabled: bool | None = None
     authorized_tools: list[str] | None = None
     workspace_id: int | None = None
@@ -241,7 +322,10 @@ async def create_task(
         email_attachment_file_ids=email_attachment_file_ids,
     )
     from app.scheduled_tasks import owner_private_targets
-    t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
+    if body.qq_delivery is not None and "qq" in body.channels:
+        t.delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
+    else:
+        t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     db.add(t)
     try:
         await db.flush()
@@ -327,10 +411,15 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.name = body.name
     if body.payload is not None:
         t.payload = body.payload
-    if body.channels is not None:
-        t.channels = _norm_channels(body.channels)
-        from app.scheduled_tasks import owner_private_targets
-        t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
+    if body.channels is not None or "qq_delivery" in body.model_fields_set:
+        next_channels = body.channels if body.channels is not None else [c for c in (t.channels or "").split(",") if c]
+        if "qq" in next_channels and "qq_delivery" in body.model_fields_set and body.qq_delivery is not None:
+            t.channels = _norm_channels(next_channels)
+            t.delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
+        elif body.channels is not None:
+            t.channels = _norm_channels(body.channels)
+            from app.scheduled_tasks import owner_private_targets
+            t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     # 页面上的保存动作是用户重新确认任务意图；显式传授权时允许单独授予或撤销，
     # 内容或投递设置变更但未传授权时则自动撤销旧的持久权限。
     if body.authorized_tools is not None:
