@@ -17,7 +17,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 OVERRIDE_FILE = Path(
@@ -256,6 +256,24 @@ class AIPresets(BaseModel):
     strategy: str = "active"     # 选模型策略：active 单一激活 | pool 多 key 分流 | router 智能路由（未来）
     pool_mode: str = "random"    # pool 分流方式：random 随机 | round_robin 轮询 | least_loaded 最少在途
     items: list[AIPresetItem] = Field(default_factory=list)
+
+
+def _load_stored_preset(raw: dict) -> AIPresetItem:
+    """加载一个已落盘的 LLM 预设；校验失败时按原值保留，不连累整份 override。
+
+    强校验属于保存路径（Admin API 保存时返回 422）。这里面对的是旧版本写下的存量
+    数据：1.2.2 及更早没有「max_tokens < context_tokens」约束，若在加载期硬校验，
+    一个不合规预设会让整份 override 回落默认值——模型指回默认云端地址，而后台
+    列表和连通性测试直读文件、看起来一切正常。
+    """
+    fields = {k: v for k, v in raw.items() if k in AIPresetItem.model_fields}
+    try:
+        return AIPresetItem(**fields)
+    except ValidationError as exc:
+        # 只输出预设 id 和校验消息；ValidationError 的 str() 带 input_value，可能含 api_key。
+        reasons = "；".join(str(err.get("msg", "")) for err in exc.errors())
+        print(f"[config] LLM 预设 {fields.get('id', '')!r} 未通过校验，已按原值加载，请在管理后台修正：{reasons}")
+        return AIPresetItem.model_construct(**fields)
 
 
 class AgentBehaviorSettings(BaseModel):
@@ -610,10 +628,7 @@ class AppSettings(BaseSettings):
 
             if "ai_presets" in override:
                 raw = override["ai_presets"]
-                items = [
-                    AIPresetItem(**{k: v for k, v in it.items() if k in AIPresetItem.model_fields})
-                    for it in raw.get("items", [])
-                ]
+                items = [_load_stored_preset(it) for it in raw.get("items", [])]
                 updates["ai_presets"] = AIPresets.model_construct(
                     active_id=raw.get("active_id", ""),
                     strategy=raw.get("strategy", "active"),
