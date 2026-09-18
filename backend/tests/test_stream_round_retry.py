@@ -315,3 +315,85 @@ async def test_upstream_busy_status_matches_both_sdks():
     assert upstream_busy_status(openai.RateLimitError("429", response=o_resp, body=None)) is True
     o_500 = httpx.Response(500, request=httpx.Request("POST", "https://x"))
     assert upstream_busy_status(openai.InternalServerError("500", response=o_500, body=None)) is False
+
+
+# ── SDK 流式解析越界的降级兜底（2026-09-18 生产 anthropic 1.6.0 7 连发）──────────
+# accumulate_event content[index] 越界 IndexError 不是瞬时网络错误，重试同一流式通道
+# 大概率再崩；未吐 token 时应整轮降级 non-streaming 重发。
+
+class _IndexErrorStreamCtx(_FakeStreamCtx):
+    async def _iter(self):
+        raise IndexError("list index out of range")
+        yield ""   # pragma: no cover
+
+
+class _EmittedThenIndexCtx(_FakeStreamCtx):
+    async def _iter(self):
+        yield "hello"
+        raise IndexError("list index out of range")
+
+
+class _CreateMessages(_FakeMessages):
+    def __init__(self, fail_times: int):
+        super().__init__(fail_times)
+        self.create_calls = 0
+
+    def stream(self, **kwargs):
+        self.calls += 1
+        return _IndexErrorStreamCtx(should_raise=True)
+
+    async def create(self, **kwargs):
+        self.create_calls += 1
+        return _FakeFinalMessage()
+
+
+async def test_index_error_falls_back_to_non_streaming():
+    """无 adapter 时流式解析越界：不重试流式，降级 non-streaming 拿到完整消息。"""
+    client = SimpleNamespace(messages=_CreateMessages(fail_times=99))
+    tokens, final = await _drain(_stream_round(client, {}))
+    assert tokens == []
+    assert final is not None
+    assert client.messages.calls == 1
+    assert client.messages.create_calls == 1
+
+
+async def test_index_error_after_emitted_raises_through():
+    """已吐过 token 的解析越界不能降级重发（会重复输出），原样抛给上层。"""
+    class _Messages(_CreateMessages):
+        def stream(self, **kwargs):
+            self.calls += 1
+            return _EmittedThenIndexCtx(should_raise=False)
+
+    client = SimpleNamespace(messages=_Messages(fail_times=99))
+    with pytest.raises(IndexError):
+        await _drain(_stream_round(client, {}))
+    assert client.messages.create_calls == 0
+
+
+class _FlakyIndexMessages(_FakeMessages):
+    """前 fail_times 次抛 IndexError，之后正常吐 token；记录 create 调用次数。"""
+
+    def __init__(self, fail_times: int):
+        super().__init__(fail_times)
+        self.create_calls = 0
+
+    def stream(self, **kwargs):
+        should_raise = self.calls < self.fail_times
+        self.calls += 1
+        if should_raise:
+            return _IndexErrorStreamCtx(should_raise=True)
+        return _FakeStreamCtx(should_raise=False)
+
+    async def create(self, **kwargs):
+        self.create_calls += 1
+        return _FakeFinalMessage()
+
+
+async def test_minimax_index_error_keeps_transient_retry_semantics():
+    """adapter 已把 IndexError 声明为瞬时的（MiniMax）维持重试语义，不走降级分支。"""
+    client = SimpleNamespace(messages=_FlakyIndexMessages(fail_times=2))
+    tokens, final = await _drain(_stream_round(client, {}, _MINIMAX_ADAPTER))
+    assert tokens == ["hello"]
+    assert final is not None
+    assert client.messages.calls == 3
+    assert client.messages.create_calls == 0

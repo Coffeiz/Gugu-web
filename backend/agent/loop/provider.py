@@ -97,6 +97,26 @@ async def stream_round(client, kwargs, adapter=None):
             _log.info("LLM 瞬时错误 %s，%ss 后重试(%d)",
                       type(e).__name__, LLM_RETRY.interval_seconds, retries_done)
             await LLM_RETRY.pause()
+        except (IndexError, KeyError) as e:
+            # SDK 流式解析内部越界（anthropic 1.6.0 accumulate_event content[index]，
+            # 2026-09-18 生产 7 连发；PyPI 最新即 1.6.0 无修复版可升）。流式通道对该
+            # 响应不可信，重试同一通道大概率再崩：未吐 token 时整轮降级 non-streaming
+            # 重发一次，绕开流式解析器；已吐过 token 原样抛（重试会重复输出）。
+            # adapter 已声明为瞬时的同类异常（MiniMax）走上面分支，不在这里抢。
+            if emitted:
+                raise
+            _provider = adapter.name if adapter is not None else "unknown"
+            diag_log(f"agent.core.stream_round provider={_provider} fallback=non_streaming", e)
+            _log.warning("LLM 流式解析异常 %s，降级 non-streaming 重发", type(e).__name__)
+            try:
+                message = await client.messages.create(**kwargs)
+            except transient as ce:
+                diag_log(f"agent.core.stream_round provider={_provider} non_streaming_fallback_failed", ce)
+                raise RetryableError("llm.stream_parse_fallback_failed",
+                                     "LLM 流式解析失败且降级重发未成功",
+                                     cause=ce, attempt=retries_done) from ce
+            yield ("final", message)
+            return
 
 
 def provider_context_usage(driver: Any, result: Any) -> int:
