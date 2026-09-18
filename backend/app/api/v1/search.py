@@ -15,6 +15,7 @@ from app.core.security import get_current_user
 from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
     User, Project, File, Folder, CalendarEvent, Client, MindNode, UserSkill,
+    WorkspaceDirectory,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 from app.core.config import get_settings
@@ -28,6 +29,7 @@ from app.services.conversations import (
     search_session_titles,
 )
 from app.services.user_preferences import get_user_locale
+from app.services.storage.folders import resolve_folder_path
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -95,6 +97,32 @@ def _primary_rank(column, q: str):
         (func.lower(column).like(f"{normalized}%"), 1),
         else_=2,
     )
+
+
+async def _folder_location_subtitle(db: AsyncSession, user_id, folder: Folder) -> str:
+    """给全局搜索的文件夹结果补充空间与相对路径。"""
+    resolved = await resolve_folder_path(
+        db, user_id, folder.id, folder.project_id, folder.workspace_directory_id,
+    )
+    path = resolved[1] if resolved else folder.name
+
+    if folder.workspace_directory_id is not None:
+        name = await db.scalar(select(WorkspaceDirectory.name).where(
+            WorkspaceDirectory.id == folder.workspace_directory_id,
+            WorkspaceDirectory.user_id == user_id,
+            WorkspaceDirectory.deleted_at.is_(None),
+        ))
+        root = f"工作区 · {name or '工作区'}"
+    elif folder.project_id is not None:
+        name = await db.scalar(select(Project.name).where(
+            Project.id == folder.project_id,
+            Project.user_id == user_id,
+            Project.deleted_at.is_(None),
+        ))
+        root = f"项目 · {name or '项目'}"
+    else:
+        root = "个人"
+    return " · ".join(filter(None, [root, path]))
 
 
 async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
@@ -174,6 +202,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
     if wanted is None or "folder" in wanted:
         rows = list((await db.execute(
             select(Folder).where(Folder.user_id == uid,
+                                 Folder.deleted_at.is_(None),
                                  keyword_condition([Folder.name], search_queries, mode))
             .order_by(keyword_score([Folder.name], search_queries).desc(),
                       _primary_rank(Folder.name, q), Folder.created_at.desc()).limit(per_type)
@@ -181,7 +210,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if use_romaji and len(rows) < per_type:
             seen = {fo.id for fo in rows}
             scan = (await db.execute(
-                select(Folder).where(Folder.user_id == uid)
+                select(Folder).where(Folder.user_id == uid, Folder.deleted_at.is_(None))
                 .order_by(Folder.created_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for fo in scan:
@@ -191,7 +220,9 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                         break
         if rows:
             groups.append({"type": "folder", "label": "文件夹", "items": [
-                {"id": fo.id, "title": fo.name, "subtitle": "文件夹"} for fo in rows
+                {"id": fo.id, "title": fo.name,
+                 "subtitle": await _folder_location_subtitle(db, uid, fo)}
+                for fo in rows
             ]})
 
     # ── 日程/事件：标题/描述/客户 ──

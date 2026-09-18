@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from app.core.redaction import redact
+from app.services.projects import get_user_project
 from app.services.files.browser import (
     descendant_folder_ids,
     find_user_folders_by_name,
@@ -107,6 +108,8 @@ async def _resolve_target(db, user_id, target: dict):
     space="workspace" ＝ 当前绑定工作区的文件目录；与 create_file 一致，
     不暴露跨工作区写入，目录 id 一律取绑定落点。"""
     space = target.get("space")
+    if space not in (None, "", "personal", "project", "workspace"):
+        return None, None, None, None, {"error": "文件空间必须是 personal、project 或 workspace"}
     project_id = target.get("project_id")
     folder_id = target.get("folder_id")
     fname = target.get("folder")
@@ -234,6 +237,11 @@ async def _create_folder(db, user_id, args: dict):
     """绑定工作区只提供省略目标时的默认落点；显式 project_id/parent_id 按参数
     使用（围栏只约束 Shell，文件工具不受会话绑定限制）。"""
     workspace_target = await _bound_workspace_target(db, user_id)
+    space = args.get("space")
+    if space not in (None, "", "personal", "project", "workspace"):
+        return {"error": "space 必须是 personal、project 或 workspace"}
+    if space == "":
+        space = None
     project_id = args.get("project_id")
     parent_id = args.get("parent_id")
     workspace_directory_id = None
@@ -253,15 +261,45 @@ async def _create_folder(db, user_id, args: dict):
             parent = await get_user_folder(db, user_id, parent_id)
             if not parent:
                 return {"error": "目标父文件夹不存在"}
+            if space == "personal" and (parent.project_id is not None or parent.workspace_directory_id is not None):
+                return {"error": "personal 空间的父文件夹不能属于项目或工作区"}
+            if space == "project" and parent.project_id != project_id:
+                return {"error": "父文件夹不属于指定项目"}
             # 空间跟随父文件夹：项目文件夹→项目空间，工作区文件夹→工作区空间
             if project_id in (None, ""):
                 project_id = parent.project_id
                 workspace_directory_id = parent.workspace_directory_id
-        elif project_id in (None, "") and workspace_target is not None:
+        elif space is None and project_id in (None, "") and workspace_target is not None:
             # 只给了 name：绑定会话仍默认落绑定工作区
             project_id = workspace_target.get("project_id")
             parent_id = workspace_target.get("folder_id")
             workspace_directory_id = workspace_target.get("workspace_directory_id")
+    if space == "personal":
+        if project_id not in (None, ""):
+            return {"error": "personal 空间不能提供 project_id；个人根目录请使用 project_id=null"}
+        project_id = None
+        workspace_directory_id = None
+    elif space == "project":
+        if project_id in (None, ""):
+            return {"error": "project 空间必须提供 project_id"}
+        try:
+            project_id = int(project_id)
+        except (TypeError, ValueError):
+            return {"error": "project_id 必须是有效的项目 id"}
+        if await get_user_project(db, user_id, project_id) is None:
+            return {"error": "指定项目不存在"}
+        workspace_directory_id = None
+    elif space == "workspace":
+        if workspace_target is None or workspace_target.get("workspace_directory_id") is None:
+            return {"error": "space=workspace 需要当前会话绑定带文件目录的工作区"}
+        if project_id not in (None, ""):
+            return {"error": "workspace 空间不能提供 project_id"}
+        project_id = None
+        workspace_directory_id = workspace_target["workspace_directory_id"]
+        if parent_id not in (None, ""):
+            parent = await get_user_folder(db, user_id, parent_id)
+            if not parent or parent.workspace_directory_id != workspace_directory_id:
+                return {"error": "目标父文件夹不属于当前工作区"}
     try:
         fo = await FileService(db).create_folder(
             user_id, name=args["name"], parent_id=parent_id,
@@ -270,7 +308,24 @@ async def _create_folder(db, user_id, args: dict):
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
-    return {"success": True, "folder_id": fo.id, "name": fo.name}
+    actual_space = (
+        "workspace" if fo.workspace_directory_id is not None
+        else "project" if fo.project_id is not None
+        else "personal"
+    )
+    project_name = None
+    if fo.project_id is not None:
+        project = await get_user_project(db, user_id, fo.project_id)
+        project_name = project.name if project else None
+    return {
+        "success": True,
+        "folder_id": fo.id,
+        "name": fo.name,
+        "space": actual_space,
+        "project_id": fo.project_id,
+        "project_name": project_name,
+        "parent_id": fo.parent_id,
+    }
 
 
 

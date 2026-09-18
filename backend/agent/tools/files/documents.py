@@ -1062,7 +1062,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="move_items", label="移动文件/文件夹",
             description_short='移动文件或文件夹；批量传 files/folders，目标传 target；folder_id 优先，project 空间传 project_id',
-            description="批量移动文件或文件夹；源项传 files/folders，目标传 target。目标空间用 target.space（project/workspace/mind/asset/personal），workspace＝当前绑定工作区；项目目标用 project_id。",
+            description="批量移动文件或文件夹；源项传 files/folders，目标传 target。目标空间统一使用 target.space（personal/project/workspace），workspace＝当前绑定工作区；项目目标用 project_id。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1073,7 +1073,7 @@ class FilesSkill(BaseSkill):
                         "properties": {
                             "folder": {"type": "string"},
                             "folder_id": {"type": "integer"},
-                            "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
+                            "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                             "project_id": {"type": "integer"},
                         },
                     },
@@ -1097,7 +1097,7 @@ class FilesSkill(BaseSkill):
                         "type": "object",
                         "properties": {
                             "folder": {"type": "string"},
-                            "space": {"type": "string", "enum": ["project", "workspace", "mind", "asset", "personal"]},
+                            "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                             "project_id": {"type": "integer"},
                             "folder_id": {"type": "integer"},
                         },
@@ -1117,13 +1117,19 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="create_folder", label="新建文件夹",
-            description_short='新建文件夹。',
-            description="新建文件夹，可指定所属项目与父文件夹（支持嵌套）。",
+            description_short='新建文件夹，明确区分个人、项目或工作区。',
+            description=(
+                "新建文件夹，可指定 space=personal、space=project 或 space=workspace 与父文件夹（支持嵌套）。"
+                "个人空间必须使用 project_id=null；项目空间必须提供有效的 project_id。"
+                "workspace 空间使用当前会话绑定的工作区文件目录。未指定 space 时，显式 project_id 按项目空间处理；不传位置参数才使用当前绑定工作区或个人根目录默认落点。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "project_id": {"type": "integer"},
+                    "space": {"type": "string", "enum": ["personal", "project", "workspace"]},
+                    # personal 空间明确允许传 null；省略时仍按 description 的默认落点规则处理。
+                    "project_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
                     "parent_id": {"type": "integer"},
                 },
                 "required": ["name"],
@@ -1290,13 +1296,14 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="save_uploaded_file", label="保存上传文件",
-            description_short='保存聊天附件到文件库。',
-            description="保存对话附件到文件库；多个附件用 attach_ids，可指定项目或文件夹。",
+            description_short='保存聊天附件到文件库，支持个人、项目或工作区。',
+            description="保存对话附件到文件库；多个附件用 attach_ids，可用 space 指定 personal/project/workspace，也可指定项目或文件夹。workspace 使用当前会话绑定的工作区文件目录。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "attach_id": {"type": "string"},
                     "attach_ids": {"type": "array", "items": {"type": "string"}},
+                    "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                     "project_id": {"type": "integer"},
                     "folder_id": {"type": "integer"},
                     "source": {"type": "string", "enum": ["latest", "attach_id", "attach_ids"]},

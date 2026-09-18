@@ -92,6 +92,14 @@ def _coerce_loc(space, project_id, folder_id):
             return None   # 解析不出（如把项目名当 id 传进来）→ None，别回原串：否则非数字会流进整数主键查询 → asyncpg DataError 崩
     project_id = _as_int(project_id)
     folder_id = _as_int(folder_id)
+    if space not in {"personal", "project", "workspace"}:
+        return space, project_id, folder_id, json.dumps({
+            "error": "文件空间必须是 personal、project 或 workspace",
+        }, ensure_ascii=False)
+    if space in {"personal", "workspace"} and project_id is not None:
+        return space, project_id, folder_id, json.dumps({
+            "error": f"space={space} 不能提供 project_id",
+        }, ensure_ascii=False)
     if space == "project" and not project_id:
         return space, project_id, folder_id, json.dumps(
             {"error": "移动/复制到项目空间必须指定 target.project_id（具体哪个项目）。"
@@ -212,6 +220,18 @@ async def _resolve_create_location(db, user_id, args: dict):
                     "hint": "省略目标位置参数即可写入当前工作区落点。",
                 }, ensure_ascii=False)
         return space, project_id, folder_id, workspace_directory_id, None
+    explicit_folder_id = args.get("folder_id")
+    if explicit_folder_id not in (None, "") and args.get("space") in (None, "") and args.get("project_id") in (None, ""):
+        try:
+            folder = await get_user_folder(db, user_id, int(explicit_folder_id))
+        except (TypeError, ValueError):
+            folder = None
+        if folder is not None:
+            if folder.workspace_directory_id is not None:
+                return "workspace", None, folder.id, folder.workspace_directory_id, None
+            if folder.project_id is not None:
+                return "project", folder.project_id, folder.id, None, None
+            return "personal", None, folder.id, None, None
     space = args.get("space", "personal")
     space, project_id, folder_id, error = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
     if not error and space == "workspace":

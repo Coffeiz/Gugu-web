@@ -1,5 +1,7 @@
-from app.api.v1.search import run_global_search
-from app.models import File, MindNode, Project, UserSkill
+from datetime import datetime, timezone
+
+from app.api.v1.search import _run_ilike_search, run_global_search
+from app.models import File, Folder, MindNode, Project, UserSkill
 from agent.tools.global_search import _global_search
 import app.api.v1.search as search_api
 
@@ -38,6 +40,22 @@ async def test_global_search_can_fall_back_to_ilike_backend(db, user_a, monkeypa
     assert result["groups"][0]["type"] == "file"
     assert result["groups"][0]["items"][0]["title"] == "兼容查询.md"
 
+
+async def test_ilike_global_search_excludes_deleted_folders(db, user_a):
+    live = await _mk(db, Folder(user_id=user_a.id, name="音乐"))
+    await _mk(db, Folder(
+        user_id=user_a.id,
+        name="音乐",
+        deleted_at=datetime.now(timezone.utc),
+    ))
+
+    result = await _run_ilike_search(db, user_a.id, "音乐", types=["folder"])
+
+    assert result["total"] == 1
+    assert result["groups"][0]["type"] == "folder"
+    assert len(result["groups"][0]["items"]) == 1
+    assert result["groups"][0]["items"][0]["id"] == live.id
+    assert result["groups"][0]["items"][0]["subtitle"] == "个人 · 音乐"
 
 async def test_run_global_search_isolates_by_user(db, user_a, user_b):
     await _mk(db, File(user_id=user_b.id, display_name="secret", ext="md",

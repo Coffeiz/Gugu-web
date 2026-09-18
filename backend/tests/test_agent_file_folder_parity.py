@@ -8,7 +8,7 @@ from app.core.tz import now_utc
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 from app.services.storage.trash import move_file_to_trash
-from app.models import Folder, WorkspaceDirectory
+from app.models import Folder, Project, WorkspaceDirectory
 
 
 async def _wire_agent_storage(monkeypatch, root: Path):
@@ -46,6 +46,45 @@ async def test_agent_folder_create_rename_delete_matches_service(db, user_a, tmp
     trash = await agent_trash._list_trash(db, user_a.id, {})
     assert isinstance(trash, list)
     assert {item["folder_id"] for item in trash if item["kind"] == "folder"} == {folder_id}
+
+
+async def test_create_folder_reports_and_enforces_explicit_space(db, user_a, tmp_path, monkeypatch):
+    agent_files, _storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    project = Project(user_id=user_a.id, name="项目空间")
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+
+    personal = await agent_files._create_folder(
+        db, user_a.id, {"name": "个人目录", "space": "personal"},
+    )
+    assert personal["success"] is True
+    assert personal["space"] == "personal"
+    assert personal["project_id"] is None
+
+    rejected = await agent_files._create_folder(
+        db, user_a.id, {"name": "错误目录", "space": "personal", "project_id": project.id},
+    )
+    assert "不能提供 project_id" in rejected["error"]
+
+    project_folder = await agent_files._create_folder(
+        db, user_a.id, {"name": "项目目录", "space": "project", "project_id": project.id},
+    )
+    assert project_folder["success"] is True
+    assert project_folder["space"] == "project"
+    assert project_folder["project_id"] == project.id
+    assert project_folder["project_name"] == "项目空间"
+
+
+def test_create_folder_schema_allows_explicit_personal_null():
+    from agent.tools import registry
+    from agent.tools.tool_contract import build_validator, validate_input
+
+    schema = registry.get("create_folder").input_schema
+    assert schema["properties"]["space"]["enum"] == ["personal", "project", "workspace"]
+    assert validate_input(
+        build_validator(schema), {"name": "个人目录", "space": "personal", "project_id": None},
+    ) == []
 
 
 async def test_list_dir_folders_does_not_inherit_bound_workspace_directory(db, user_a, monkeypatch):
