@@ -23,20 +23,20 @@ async def test_send_file_accepts_workspace_logical_path(db, user_a, tmp_path, mo
     monkeypatch.setattr(file_transfer, "current_filesystem_policy", current_policy)
     monkeypatch.setattr("app.services.workspaces.resolve_shell_root", shell_root)
 
-    async def fake_stage(user_id, name, ext, mime, data, *, kind=None, **_kwargs):
+    async def fake_stage_stream(user_id, name, ext, mime, *, stream, size, kind=None, **_kwargs):
         assert user_id == user_a.id
-        assert (name, ext, mime, data, kind) == (
-            "F1蒙扎-正赛-长距离图-2x", "png", "image/png", b"png-bytes", "image",
+        assert (name, ext, mime, stream.read(), size, kind) == (
+            "F1蒙扎-正赛-长距离图-2x", "png", "image/png", b"png-bytes", 9, "image",
         )
         return {
             "attach_id": "attach-path",
             "name": name,
             "ext": ext,
             "kind": kind,
-            "size": len(data),
+            "size": size,
         }
 
-    monkeypatch.setattr("app.core.chat_attach.stage", fake_stage)
+    monkeypatch.setattr("app.core.chat_attach.stage_stream", fake_stage_stream)
     result = await files._send_file(
         db,
         user_a.id,
@@ -63,7 +63,7 @@ async def test_send_file_accepts_gugu_sandbox_prefix(db, user_a, tmp_path, monke
     async def fake_stage(*_args, **_kwargs):
         return {"attach_id": "attach-text", "name": "result", "ext": "txt", "kind": "text", "size": 4}
 
-    monkeypatch.setattr("app.core.chat_attach.stage", fake_stage)
+    monkeypatch.setattr("app.core.chat_attach.stage_stream", fake_stage)
     result = await files._send_file(db, user_a.id, {"file": "gugu-sandbox:/workspace/result.txt"})
 
     assert result["_artifact"]["attach_id"] == "attach-text"

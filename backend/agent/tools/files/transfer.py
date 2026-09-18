@@ -74,7 +74,6 @@ async def _extract_files(db, user_id, args: dict):
 # send_file 允许读取的逻辑沙盒根。这里刻意不接受宿主机绝对路径，避免模型
 # 把执行器日志里的本机路径当成可发送路径，越过用户沙箱边界。
 _SEND_PATH_ROOTS = frozenset({"personal", "project", "workspace"})
-_SEND_PATH_MAX_BYTES = 10 * 1024 * 1024
 
 def _normalize_send_path(value: str) -> tuple[str | None, PurePosixPath | None, str | None]:
     """解析 send_file 的逻辑路径，不把它解释成宿主机路径。"""
@@ -148,13 +147,6 @@ async def _stage_send_path(db, user_id, value: str):
         size = resolved.stat().st_size
     except OSError:
         return json.dumps({"error": "无法读取文件信息"}, ensure_ascii=False)
-    if size > _SEND_PATH_MAX_BYTES:
-        return json.dumps({"error": f"文件过大（超过 {_SEND_PATH_MAX_BYTES // 1048576}MB 上限）"}, ensure_ascii=False)
-    try:
-        data = resolved.read_bytes()
-    except OSError:
-        return json.dumps({"error": "无法读取文件内容"}, ensure_ascii=False)
-
     from app.core import chat_attach
     ext = resolved.suffix.lstrip(".").lower()[:10]
     name = resolved.stem or resolved.name
@@ -165,7 +157,15 @@ async def _stage_send_path(db, user_id, value: str):
     else:
         kind = "binary"
     mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
-    meta = await chat_attach.stage(user_id, name, ext, mime, data, kind=kind)
+    try:
+        with resolved.open("rb") as source:
+            meta = await chat_attach.stage_stream(
+                user_id, name, ext, mime, stream=source, size=size, kind=kind,
+            )
+    except OSError:
+        return json.dumps({"error": "无法读取文件内容"}, ensure_ascii=False)
+    except chat_attach.ChatAttachmentCapacityError as error:
+        return json.dumps({"error": str(error)}, ensure_ascii=False)
     return {
         "attach_id": meta["attach_id"],
         "name": name,
