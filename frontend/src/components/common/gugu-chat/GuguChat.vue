@@ -999,8 +999,9 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   border-radius: 14px; border-bottom-left-radius: 5px;
   box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight), var(--gugu-chat-file-shadow);
   /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
-     避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
-  transition: background 0.2s ease, border-color 0.2s ease,
+     避免两条规则的 transition 互相整体覆盖、丢掉其中一份。
+     box-shadow 必须在列：hover 换阴影（highlight/shadow 双 token），漏列=瞬跳。 */
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease,
     transform 0.15s ease, opacity 0.15s ease;
 }
 :deep(.msg-file.press-fx:hover) {
