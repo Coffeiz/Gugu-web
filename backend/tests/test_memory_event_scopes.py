@@ -57,7 +57,7 @@ async def test_group_compaction_failure_does_not_write_or_trim_daily(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_member_batch_reflection_updates_each_real_member(monkeypatch):
+async def test_member_batch_reflection_updates_each_real_member(db, monkeypatch):
     from agent.memory import im_reflection
     from agent.memory.scopes import MemoryScope
 
@@ -89,7 +89,10 @@ async def test_member_batch_reflection_updates_each_real_member(monkeypatch):
     monkeypatch.setattr("agent.rag.adapters.memory.MemoryAdapter.build_documents", fake_documents)
     monkeypatch.setattr("agent.rag.vector_cache.sync_memory_index_vectors", fake_sync)
 
-    scope = MemoryScope("00000000-0000-0000-0000-000000000001", "qq", "bot", "group", "group-1")
+    from uuid import UUID as _UUID
+    # owner_user_id 必须是 UUID 对象（列是 Uuid；生产里来自 DB 行天然是 UUID），
+    # 传字符串会在 Uuid 绑定时抛 'str' object has no attribute 'hex'。
+    scope = MemoryScope(_UUID("00000000-0000-0000-0000-000000000001"), "qq", "bot", "group", "group-1")
     await im_reflection._apply_member_batch_output(
         scope,
         {"members": [

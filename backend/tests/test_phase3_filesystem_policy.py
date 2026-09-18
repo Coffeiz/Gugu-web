@@ -167,9 +167,16 @@ async def test_web_download_not_blocked_by_workspace_binding(db, user_a):
 
     session = await _persist(db, ConversationSession(user_id=user_a.id, title="Phase3 下载测试"))
     token = set_dispatch_session(session.id, session, "phase3-web-download")
-    fetch = AsyncMock(return_value=(500, {}, b""))
+    # b841bd17 起 web_download 改为分块流式下载到 spool（_download_to_spool），
+    # mock 它返回 HTTP 500，验证请求真实发出且错误可回传。
+    import httpx as _httpx
+    class _Spool:
+        def close(self):
+            pass
+
+    fetch = AsyncMock(return_value=(500, _httpx.Headers({}), _Spool(), 0, ""))
     try:
-        with patch.object(web, "_download_bytes", new=fetch):
+        with patch.object(web, "_download_to_spool", new=fetch):
             result = await web._web_download(
                 db, user_a.id, {"url": "https://example.test/run.py"},
             )
