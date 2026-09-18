@@ -79,6 +79,14 @@ async def test_agent_file_create_defaults_to_workspace_without_full_sandbox_gran
 
         listed = await agent_files._list_dir(db, user_a.id, {"kind": "folder"})
         assert any(item["id"] == folder.id for item in listed["folders"])
+
+        explicit_workspace = await agent_files._create_folder(
+            db, user_a.id, {"name": "显式工作区目录", "space": "workspace"},
+        )
+        assert explicit_workspace["success"] is True
+        assert explicit_workspace["space"] == "workspace"
+        explicit_folder = await db.get(Folder, explicit_workspace["folder_id"])
+        assert explicit_folder.workspace_directory_id == default_directory.id
     finally:
         reset_dispatch_session(token)
 

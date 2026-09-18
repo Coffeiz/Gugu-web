@@ -121,10 +121,24 @@ async def test_copy_not_found(db, user_a):
 async def test_download_endpoint_reads_owned_file(db, user_a):
     uploaded = await _do_upload(db, user_a, b"download-body", "report.txt")
     response = await files_api.download_file(uploaded.id, current_user=user_a, db=db)
-    assert response.body == b"download-body"
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    assert body == b"download-body"
     # 图片预览会反复打开同一文件，响应必须带缓存头，浏览器才能免重复下载
     assert response.headers["cache-control"] == "private, max-age=300"
     assert response.media_type == "text/plain"
+
+
+async def test_stream_endpoint_serves_http_range_without_reading_whole_file(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"0123456789", "audio.mp3", content_type="audio/mpeg")
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    request = SimpleNamespace(headers={"range": "bytes=3-6"})
+    response = await files_api.stream_file(
+        uploaded.id, token="stream-token", request=request, db=db,
+    )
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    assert response.status_code == 206
+    assert response.headers["content-range"] == "bytes 3-6/10"
+    assert body == b"3456"
 
 
 # ── 分块流式上传（内存峰值与上限解耦）────────────────────────────────────────
@@ -140,8 +154,8 @@ async def test_upload_stream_writes_exact_content(db, user_a):
 
 
 async def test_upload_over_limit_rejects_without_artifacts(db, user_a, monkeypatch):
-    """超限必须在收流途中拒绝：不建 File 行、不落任何存储对象。"""
-    monkeypatch.setattr(files_api, "_MAX_UPLOAD_BYTES", 4)
+    """超过用户总容量必须在收流途中拒绝：不建 File 行、不落任何存储对象。"""
+    user_a.storage_limit_bytes = 4
     with pytest.raises(HTTPException) as ei:
         await _do_upload(db, user_a, b"0123456789", "大文件.txt")
     assert ei.value.status_code == 413
