@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
-import { isUnauthorizedResponse } from '@/services/authSession'
+import { filesApi } from '@/services/api'
 
 const AUDIO_FILE_KEY = 'gugu_audio_file'
 
@@ -22,7 +22,8 @@ export const useAudioStore = defineStore('audio', () => {
   })
 
   function revoke() {
-    if (blobUrl.value) { URL.revokeObjectURL(blobUrl.value); blobUrl.value = null }
+    if (blobUrl.value?.startsWith('blob:')) URL.revokeObjectURL(blobUrl.value)
+    blobUrl.value = null
   }
 
   // 其他 tab 开始播放时，停掉本 tab
@@ -38,16 +39,11 @@ export const useAudioStore = defineStore('audio', () => {
     error.value   = null
     const requestEpoch = getAccountBoundaryEpoch()
     try {
-      const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-      const token    = localStorage.getItem('user_token') ?? ''
-      const res = await fetch(`${BASE_URL}/files/${f.id}/download`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-      if (isUnauthorizedResponse(res)) return
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = await res.blob()
+      // 交给原生 audio 直接请求流地址，让浏览器自行使用 Range，避免把大文件
+      // 一次性聚合成 Blob 后才开始播放。
+      const { url } = await filesApi.getStreamUrl(f.id)
       if (requestEpoch !== getAccountBoundaryEpoch() || file.value?.id !== f.id) return
-      blobUrl.value = URL.createObjectURL(blob)
+      blobUrl.value = url
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {

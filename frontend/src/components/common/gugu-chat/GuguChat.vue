@@ -658,7 +658,7 @@ async function downloadFile(f: ChatFile) {
     // 聊天上传的暂存附件：走 /agent/attachment/{id}/download
     const token = getToken()
     const res = await fetch(`${API_BASE}/agent/attachment/${f.attach_id}/download`,
-      { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      { credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {} })
     if (isUnauthorizedResponse(res)) return
     if (!res.ok) { console.error('附件下载失败', res.status); return }
     const blob = await res.blob()
