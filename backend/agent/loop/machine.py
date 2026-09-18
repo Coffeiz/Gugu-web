@@ -14,6 +14,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
 from agent import core as _core
+from agent.loop import watchdog as _watchdog
 
 
 def _allow_tool_images(model_cfg: Any) -> bool:
@@ -101,8 +102,7 @@ async def run_loop(
             else (_run_conversation[-1] if _run_conversation else None)
         )
 
-        _mutset = _core._mutating_tools([*runner.tool_names, *runner.dynamic_tools], tool_snapshot)
-        did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
+        task_rounds = 0; verify_rounds = 0; empty_retry = 0
         any_tool_called = False
         responses_fallback_used = False
         pending_responses_capability_failure = None
@@ -129,7 +129,7 @@ async def run_loop(
         initial_volatile_indices = _core.loop_drivers._volatile_message_indices(messages)
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
-        verify_mode = False; verify_fixed = False; verify_queried = False
+        verify_mode = False; verify_queried = False
         finalize_pending = False
         # 破坏性工具的用户确认授权存在服务端（Redis）：确认后运行侧按原参数重投，
         # 确认门自动命中放行；运行时不做任何凭证续接，也不让模型再调用一次。
@@ -323,6 +323,19 @@ async def run_loop(
                 max_absolute_rounds=_core.MAX_ABSOLUTE_ROUNDS,
             )
             if _budget is _core.loop_rounds.RoundBudgetAction.ABSOLUTE_LIMIT:
+                _watchdog.record_stop(
+                    run_id=run_id,
+                    round_number=round_number,
+                    reason="absolute_round_limit",
+                    limit=_core.MAX_ABSOLUTE_ROUNDS,
+                    unlimited=unlimited_mode,
+                    goal=goal_mode,
+                    task_rounds=task_rounds,
+                    verify_rounds=verify_rounds,
+                    tool_calls_used=tool_calls_used,
+                    budget_stop_rounds=budget_stop_rounds,
+                    repeat_round_count=repeat_round_count,
+                )
                 _core._log.error(
                     "[core] Agent 触发绝对轮次安全上限：rounds=%s limit=%s run=%s",
                     round_number, _core.MAX_ABSOLUTE_ROUNDS, run_id,
@@ -496,6 +509,12 @@ async def run_loop(
                                 break
                             if _kind == "retry":
                                 # 重试状态行：任何模式都显示（它是状态不是正文，不进消息流）
+                                _watchdog.record_provider_retry(
+                                    run_id=run_id,
+                                    round_number=round_number,
+                                    attempt=_val.get("attempt"),
+                                    error_kind=_val.get("error_kind"),
+                                )
                                 yield stream_event("retry", attempt=_val.get("attempt"),
                                                    max_retries=_val.get("max_retries"),
                                                    next_retry_in=_val.get("next_retry_in"),
@@ -691,6 +710,18 @@ async def run_loop(
             _requires_tools = result.requires_tools
             if _requires_tools is None:
                 _requires_tools = bool(result.tool_calls)
+            _watchdog.record_round_result(
+                run_id=run_id,
+                round_number=round_number,
+                tool_calls=result.tool_calls,
+                requires_tools=_requires_tools,
+                verify_mode=verify_mode,
+                goal_mode=goal_mode,
+                unlimited_mode=unlimited_mode,
+                task_rounds=task_rounds,
+                verify_rounds=verify_rounds,
+                tool_calls_used=tool_calls_used,
+            )
             # 行动意图守卫判断的是当前模型轮次，而不是整个 run 是否曾经调用过工具。
             # 前面轮次可能已经查过数据，但本轮仍可能只输出“我继续处理：”而没有实际调用；
             # 这种情况下仍必须触发守卫，不能被 any_tool_called 这个历史状态挡住。
@@ -720,12 +751,6 @@ async def run_loop(
                     guard_retry_buf.clear()
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
-                if verify_mode and not verify_fixed and _verify_buf and any(
-                    _core._resolve_tool_call(tc.name, tc.input)[0] in _mutset
-                    for tc in result.tool_calls
-                ):
-                    async for _line in _core.genstream.typed_stream(''.join(_verify_buf)):   # 逐字流式，与正常回复一致
-                        yield _line
                 dispatched = []
                 pending_interaction = None
                 repeat_breaker.begin_round()   # 熔断按轮计数：同轮多相同调用合法，跨轮重复才累积
@@ -907,7 +932,7 @@ async def run_loop(
                         continue
                     if tc.parse_error:
                         # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
-                        # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。
+                        # tool_result 让模型精简参数后重发；不执行真实工具。
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                         yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
                                            name=effective_tool_name, label=label, input={}, verify=verify_mode,
@@ -1061,12 +1086,6 @@ async def run_loop(
                                            tool_call_id=tool_call_id, name=effective_tool_name, label=label,
                                            verify=verify_mode, status="waiting", result=res)
                         break
-                    if _core._call_requires_verification(effective_tool_name, dispatch_input, tool_snapshot, _mutset) and _core._is_successful_tool_result(res):
-                        did_mutate = True   # 本次成功做过增删改 → 立刻强制自我核实
-                        if verify_mode:
-                            verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
-                    elif verify_mode and _core._call_observes(effective_tool_name, dispatch_input, tool_snapshot):
-                        verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
                     yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
                                        name=effective_tool_name, label=label, verify=verify_mode,
                                        status="success" if _core._is_successful_tool_result(res) else "error",
@@ -1367,12 +1386,6 @@ async def run_loop(
                             result=replay_payload,
                         )
                         replay_ok = _core._is_successful_tool_result(replay_payload)
-                        if _core._call_requires_verification(replay_ctx["name"], replay_ctx["input"], tool_snapshot, _mutset) and replay_ok:
-                            did_mutate = True   # 确认后真的改了数据 → 照常进入自我核实
-                            if verify_mode:
-                                verify_fixed = True
-                        elif verify_mode and _core._call_observes(replay_ctx["name"], replay_ctx["input"], tool_snapshot):
-                            verify_queried = True
                         yield stream_event(
                             "tool_done", round_id=round_id, tool_call_id=pending_tool_call_id,
                             name=replay_ctx["name"], label=replay_ctx["label"],
@@ -1410,6 +1423,15 @@ async def run_loop(
                     else:
                         repeat_round_count += 1
                     if repeat_round_count >= _core._REPEAT_ROUND_LIMIT:
+                        _watchdog.record_stop(
+                            run_id=run_id,
+                            round_number=round_number,
+                            reason="repeated_round_signature",
+                            repeat_round_count=repeat_round_count,
+                            tool_calls_used=tool_calls_used,
+                            unlimited=unlimited_mode,
+                            goal=goal_mode,
+                        )
                         _core._log.warning(
                             "[core] 连续 %d 轮重复完全相同的工具调用，强制收束 run=%s",
                             repeat_round_count, run_id,
@@ -1439,6 +1461,15 @@ async def run_loop(
                     # 100 轮保险丝，期间每轮 ~3s 全是占位结果。
                     budget_stop_rounds += 1
                     if budget_stop_rounds >= 2:
+                        _watchdog.record_stop(
+                            run_id=run_id,
+                            round_number=round_number,
+                            reason="tool_budget_stop_loop",
+                            budget_stop_rounds=budget_stop_rounds,
+                            tool_calls_used=tool_calls_used,
+                            unlimited=unlimited_mode,
+                            goal=goal_mode,
+                        )
                         _core._log.warning(
                             "[core] 工具预算停止后模型连续 %d 轮仍尝试调用工具，强制收束 run=%s",
                             budget_stop_rounds, run_id,
@@ -1455,40 +1486,8 @@ async def run_loop(
                     ))
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
-                # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
-                # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
-                verify_cycle_allowed = (
-                    unlimited_mode
-                    or runner.max_verify_cycles is None
-                    or verify_count < runner.max_verify_cycles
-                )
-                if did_mutate and verify_cycle_allowed:
-                    verify_count += 1
-                    did_mutate = False
-                    verify_mode = True
-                    verify_queried = False
-                    messages.append_batch([{"role": "user", "content": _core._VERIFY_PROMPT}])
-                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
-                continue
-
-            # 自我核实：① 理论上工具结果后会立即注入核实 prompt；这里保留为轮次封顶等
-            # 边界状态的兜底；② 已进核实阶段却只嘴上确认、没真调过查询工具（verify_queried=False）→ 强制再追一轮真查。
-            # 普通模式受 _core.MAX_VERIFY 封顶防死循环；无限模式仍保留服务级停止保护。
-            # 补做会再置 did_mutate → 触发下一轮核实。
-            verify_cycle_allowed = (
-                unlimited_mode
-                or runner.max_verify_cycles is None
-                or verify_count < runner.max_verify_cycles
-            )
-            _need_verify = did_mutate and verify_cycle_allowed
-            _need_force  = verify_mode and not verify_queried and not did_mutate and verify_cycle_allowed
-            if _need_verify or _need_force:
-                verify_count += 1
-                did_mutate = False
-                verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
-                messages.append_batch(driver.build_followup(
-                    result, _core._VERIFY_FORCE_PROMPT if _need_force else _core._VERIFY_PROMPT,
-                ))
+                # 工具结果已经入历史，直接进入下一轮。增删改工具不再自动注入复查提示；
+                # 守卫（预算、重复调用、工具意图和失败回执）仍在本轮及下一轮生效。
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
@@ -1545,7 +1544,7 @@ async def run_loop(
                 yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
                 return
             # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
-            if not _final_text.strip() and not did_mutate and not verify_mode:
+            if not _final_text.strip() and not verify_mode:
                 if empty_retry < 1:
                     empty_retry += 1
                     messages.append_batch(driver.build_empty_retry(result))

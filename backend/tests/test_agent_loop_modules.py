@@ -139,3 +139,80 @@ def test_unlimited_resume_still_blocked_by_absolute_limit():
         unlimited_mode=True, max_rounds=None, max_verify_rounds=None,
         max_absolute_rounds=MAX_ABS,
     ) is rounds.RoundBudgetAction.ABSOLUTE_LIMIT
+
+
+def test_watchdog_round_summary_is_structured_and_does_not_log_tool_values(caplog):
+    """循环诊断要能串起工具轮次，但不能把参数正文带进可见轨迹。"""
+    import json
+    import logging
+    from types import SimpleNamespace
+
+    from agent.loop import watchdog
+
+    call = SimpleNamespace(name="shell", input={"command": "cat secret-token.txt", "cwd": "."})
+    with caplog.at_level(logging.INFO, logger="agent.traj"):
+        watchdog.record_round_result(
+            run_id="run-test",
+            round_number=7,
+            tool_calls=[call],
+            requires_tools=True,
+            verify_mode=False,
+            goal_mode=False,
+            unlimited_mode=True,
+            task_rounds=7,
+            verify_rounds=0,
+            tool_calls_used=6,
+        )
+
+    record = json.loads(caplog.records[-1].message)
+    assert record["t"] == "loop"
+    assert record["event"] == "round_result"
+    assert record["run"] == "run-test"
+    assert record["tools"] == ["shell"]
+    assert record["tool_input_fp"]
+    assert "secret-token.txt" not in caplog.records[-1].message
+    assert "cat secret-token.txt" not in caplog.records[-1].message
+
+
+def test_watchdog_stop_records_budget_loop_reason(caplog):
+    import json
+    import logging
+
+    from agent.loop import watchdog
+
+    with caplog.at_level(logging.INFO, logger="agent.traj"):
+        watchdog.record_stop(
+            run_id="run-test",
+            round_number=100,
+            reason="tool_budget_stop_loop",
+            budget_stop_rounds=2,
+            tool_calls_used=10,
+        )
+
+    record = json.loads(caplog.records[-1].message)
+    assert record["event"] == "stop"
+    assert record["reason"] == "tool_budget_stop_loop"
+    assert record["budget_stop_rounds"] == 2
+
+
+def test_watchdog_does_not_echo_polluted_tool_name(caplog):
+    import logging
+
+    from agent.loop import watchdog
+
+    with caplog.at_level(logging.INFO, logger="agent.traj"):
+        watchdog.record_round_result(
+            run_id="run-test",
+            round_number=1,
+            tool_calls=[type("Call", (), {"name": 'shell<正文泄漏>', "input": {}})()],
+            requires_tools=True,
+            verify_mode=False,
+            goal_mode=False,
+            unlimited_mode=False,
+            task_rounds=1,
+            verify_rounds=0,
+            tool_calls_used=1,
+        )
+
+    assert "正文泄漏" not in caplog.records[-1].message
+    assert '"tool_count":1' in caplog.records[-1].message
