@@ -170,7 +170,8 @@ async def _stage_send_path(db, user_id, value: str):
         "attach_id": meta["attach_id"],
         "name": name,
         "ext": ext,
-        "size_bytes": len(data),
+        # 分块流式改造后不再整读 data（stage_stream 边读边落盘），体积用 stat 的 size。
+        "size_bytes": size,
         "kind": meta.get("kind", kind),
         "img_width": meta.get("img_width"),
         "img_height": meta.get("img_height"),
