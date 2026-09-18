@@ -364,9 +364,9 @@ async def _drain_owner_reflection_buffer(user_id, settings, session_id=None) -> 
 
 
 async def _queue_owner_reflection(
-    user_id, user_name, user_msg, assistant_reply, settings, used_tools, session_id,
+    user_id, user_name, user_msg, assistant_reply, settings, session_id,
 ) -> None:
-    """按 owner 阈值累计回合；工具回合可立即冲刷缓冲。"""
+    """按 owner 阈值累计回合，到量统一冲刷；工具回合与普通回合同一口径计数。"""
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -383,7 +383,7 @@ async def _queue_owner_reflection(
         count = await redis.llen(key)
     finally:
         await lock.release()
-    if used_tools or count >= _owner_reflection_threshold(settings):
+    if count >= _owner_reflection_threshold(settings):
         await _drain_owner_reflection_buffer(user_id, settings, session_id)
 
 
@@ -460,11 +460,11 @@ async def flush_due_group_owner_reflections(settings, *, now: float | None = Non
 
 def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None,
              group_mode: bool = False) -> None:
-    """非阻塞累计 owner 反思回合。达到配置阈值后批量反思；工具回合立即冲刷。
+    """非阻塞累计 owner 反思回合；达到 admin 配置阈值后批量反思（工具与否不影响时机）。
 
-    琐碎应答（嗯/好的/谢谢…）默认跳过省调用——
-    但若这轮咕咕**用了工具**（如「要建项目吗？」→「嗯」→真建了），即便用户只说「嗯」也反思，
-    以记下这轮做了啥（daily/summary）。used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。
+    琐碎应答（嗯/好的/谢谢…）不入缓冲省一次计数——除非这轮咕咕用了工具
+    （如「要建项目吗？」→「嗯」→真建了），这类回合照常入缓冲，由阈值统一冲刷。
+    used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。
     session_id 供 feedback 判「是否延续同一对话」（换会话不跨比，见 _read_last_turn）。
     group_mode 只代表群主 owner 反思；群成员/群级反思走 reflection_jobs，不受此阈值影响。"""
     if not group_mode and not _worth_reflecting(user_msg) and not used_tools:
@@ -472,21 +472,21 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
     if group_mode:
         task = asyncio.create_task(_schedule_group_owner(
             user_id, user_name, user_msg, assistant_reply, settings,
-            bool(used_tools), session_id,
+            session_id,
         ))
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
         return
     task = asyncio.create_task(_queue_owner_reflection(
         user_id, user_name, user_msg, assistant_reply, settings,
-        bool(used_tools), session_id,
+        session_id,
     ))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
 
 
 async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, settings,
-                                used_tools: bool, session_id=None) -> None:
+                                session_id=None) -> None:
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -505,7 +505,7 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
         count = await redis.llen(key)
     finally:
         await lock.release()
-    if used_tools or count >= _owner_reflection_threshold(settings):
+    if count >= _owner_reflection_threshold(settings):
         await _drain_group_owner_buffer(user_id, settings)
 
 

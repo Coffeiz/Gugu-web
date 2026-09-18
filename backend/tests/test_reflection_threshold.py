@@ -66,12 +66,12 @@ async def test_owner_reflection_waits_for_configured_turn_threshold(monkeypatch)
 
     for index in range(1, 3):
         await reflection._queue_owner_reflection(
-            "owner-1", "小北", f"用户消息{index}", f"回复{index}", settings, False, 7,
+            "owner-1", "小北", f"用户消息{index}", f"回复{index}", settings, 7,
         )
     assert reflected == []
 
     await reflection._queue_owner_reflection(
-        "owner-1", "小北", "用户消息3", "回复3", settings, False, 7,
+        "owner-1", "小北", "用户消息3", "回复3", settings, 7,
     )
 
     assert len(reflected) == 1
@@ -106,11 +106,36 @@ async def test_group_owner_uses_owner_threshold_without_changing_group_scope(mon
 
     for index in range(1, 3):
         await reflection._schedule_group_owner(
-            "owner-2", "小北", f"群主消息{index}", "", settings, False, index,
+            "owner-2", "小北", f"群主消息{index}", "", settings, index,
         )
     assert drained == []
 
     await reflection._schedule_group_owner(
-        "owner-2", "小北", "群主消息3", "", settings, False, 3,
+        "owner-2", "小北", "群主消息3", "", settings, 3,
     )
     assert drained == [("owner-2", settings)]
+
+
+@pytest.mark.asyncio
+async def test_tool_turn_no_longer_flushes_before_threshold(monkeypatch):
+    """工具回合不再立即冲刷：与普通回合同一口径，只按 admin 阈值计数。"""
+    from agent.memory import reflection
+    import app.core.redis as redis_module
+
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(redis_module, "get_redis", lambda: fake_redis)
+    drained = []
+
+    async def fake_drain(user_id, settings, session_id=None):
+        drained.append(user_id)
+
+    monkeypatch.setattr(reflection, "_drain_owner_reflection_buffer", fake_drain)
+    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=5))
+
+    # 连续三个工具回合（旧逻辑会每次立即冲刷），阈值未到不应触发
+    for index in range(3):
+        await reflection._queue_owner_reflection(
+            "owner-3", "小北", f"工具回合{index}", "已执行", settings, 7,
+        )
+    assert drained == []
+    assert await fake_redis.llen(reflection._owner_reflection_buffer_key("owner-3", 7)) == 3

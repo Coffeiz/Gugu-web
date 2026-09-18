@@ -283,7 +283,7 @@ async def test_schedule_routes_trivial_tools_and_group(monkeypatch):
     reflection.schedule("u1", "小北", "嗯", "好的", settings)
     assert queued == [] and grouped == []
 
-    # 纯应答但用了工具 → 反思
+    # 纯应答但用了工具 → 照常入缓冲（工具与否只影响入队，不影响冲刷时机）
     reflection.schedule("u1", "小北", "嗯", "已建项目", settings, used_tools=["create_project"])
     reflection.schedule("u1", "小北", "嗯", "已建项目", settings, used_tools=True)   # bool 形态
     # 正常消息 → 反思
@@ -294,5 +294,6 @@ async def test_schedule_routes_trivial_tools_and_group(monkeypatch):
     await asyncio.gather(*list(reflection._bg_tasks))                # 后台任务落地
 
     assert len(queued) == 3
-    assert queued[0][5] is True and queued[1][5] is True and queued[2][5] is False
-    assert len(grouped) == 1 and grouped[0][5] is False and grouped[0][6] == "s1"
+    assert all(len(row) == 6 for row in queued)                      # used_tools 不再进队列参数
+    assert queued[0][5] is None and queued[1][5] is None and queued[2][5] is None
+    assert len(grouped) == 1 and grouped[0][5] == "s1"
