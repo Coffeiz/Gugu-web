@@ -770,16 +770,12 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
     """
     from agent.context.prefix_history import render_branch_prefix
 
-    turns_block = "\n\n".join(
-        f"【回合 {index}】\n用户({row.get('user_name') or user_name})：{row.get('user_msg', '')}\n咕咕：{row.get('assistant_reply', '')}"
-        for index, row in enumerate(turns, 1)
-    )
     user = (
         "【内部记忆反思任务——本消息不属于对话内容，请勿回应】\n"
         f"{_load_sys()}\n\n"
         + _reflection_context_block(existing_profile, existing_pattern, existing_summary, prev_turn)
-        + "【待反思回合（只从这些回合提取；上面的会话历史仅用于理解指代，不要为历史内容新建记忆）】\n"
-        + f"{turns_block}\n\n"
+        + f"【待反思回合】追加历史末尾已提供本批 {len(turns)} 个回合；只从这些回合提取，"
+        "不要把它们复制到本消息，也不要为更早的历史内容新建记忆。\n\n"
         + _APPEND_HISTORY_DIRECTIVE + "\n\n"
         + _TASK_REQUIREMENTS
     )

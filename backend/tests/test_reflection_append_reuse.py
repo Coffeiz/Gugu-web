@@ -134,12 +134,13 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
     assert tuple(branch_input.tools) == ({"name": "list_dir"},)
     # history = 快照 history（快照已含末尾 assistant 最终回复）
     assert list(branch_input.history_messages) == list(snapshot.history)
-    # delta：专用规则进末尾 + 待反思回合划范围 + 共享任务要求（无副本漂移）
+    # delta：只放专用规则、待反思回合范围和共享任务要求；回合正文已在 history 中，不能复制
     assert "内部记忆反思任务" in branch_input.delta
     assert reflection._load_sys()[:20] in branch_input.delta
     assert "待反思回合" in branch_input.delta
-    assert "我最喜欢骑自行车" in branch_input.delta
-    assert "不要为历史内容新建记忆" in branch_input.delta
+    assert "我最喜欢骑自行车" not in branch_input.delta
+    assert "好呀，记下了" not in branch_input.delta
+    assert "不要为历史内容新建 profile/pattern/daily/knowledge_candidate" in branch_input.delta
     # 完整历史边界指令：append 必含（矛盾检测开放给历史），且声明 remove 锚定存量原文
     assert reflection._APPEND_HISTORY_DIRECTIVE in branch_input.delta
     assert "照抄上面存量记忆里的原文字符串" in branch_input.delta

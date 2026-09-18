@@ -65,13 +65,14 @@ def _append_scope_system(user_name: str = "群友") -> str:
 
 
 def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
-                               current: dict, payload: str, messages: list) -> BranchInput:
+                               current: dict, messages: list) -> BranchInput:
     """构造群/成员 append 分支：消息作为历史，反思规则和任务作为末尾增量。"""
     reflection_current = {k: v for k, v in current.items() if k != "members"}
     delta = (
         f"{_scope_prompt(scope, task_type=task_type)}\n\n"
         f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
-        f"本批待反思消息：\n{payload or '（无消息）'}"
+        f"本批待反思消息已作为追加历史末尾的 {len(messages)} 条消息提供；"
+        "只从这些消息提取，不要把消息正文复制到本条任务指令中。"
     )
     return BranchInput(
         stable_system=_append_scope_system(),
@@ -363,10 +364,6 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                     diag_log("agent.memory.im_members.aggregate", exc)
             phase = "load_scope"
             current = await read_scope(scope)
-            payload = "\n".join(
-                f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
-                for m in messages
-            )
             # members.json 不进反思 prompt——它是 execute_job 里独立聚合写入的持久化文件
             # （见上面的 members.json 写入块），不该被当成"已有记忆"整份塞给 LLM：群成员
             # 越多，prompt 越大，纯粹是无意义的 token 开销；nicknames_add 判断用的是本批
@@ -374,7 +371,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             task_type = job.task_type or "group"
             phase = "reflection_provider"
             branch = await ContextBranch().run(
-                _build_append_branch_input(scope, job, task_type, current, payload, messages),
+                _build_append_branch_input(scope, job, task_type, current, messages),
                 BranchPolicy(
                     name="reflection",
                     output_mode="json",

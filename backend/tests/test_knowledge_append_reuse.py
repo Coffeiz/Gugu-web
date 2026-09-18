@@ -87,11 +87,14 @@ async def test_reflect_if_candidate_uses_append_with_snapshot(monkeypatch):
     assert branch_input.stable_system == "主会话SYS"
     assert branch_input.run_id == "run-x"
     assert tuple(branch_input.tools) == ({"name": "list_dir"},)
-    # delta：Knowledge 专用规则 + 完整历史边界指令 + 原样 JSON 载荷
+    # delta：Knowledge 专用规则 + 完整历史边界指令；目标回合正文已在 history 中
     assert knowledge_reflection.load_prompt()[:20] in branch_input.delta
     assert knowledge_reflection._KNOWLEDGE_HISTORY_DIRECTIVE in branch_input.delta
     assert '"knowledge_candidates"' in branch_input.delta
-    assert '"user_message"' in branch_input.delta
+    assert '"user_message":"（已在追加历史中提供）"' in branch_input.delta
+    assert '"assistant_message":"（已在追加历史中提供）"' in branch_input.delta
+    assert "用户消息" not in branch_input.delta
+    assert "助手回复" not in branch_input.delta
     assert policy.name == "knowledge"
     assert policy.output_mode == "json"
 

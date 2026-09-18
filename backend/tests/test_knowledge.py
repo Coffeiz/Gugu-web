@@ -231,11 +231,14 @@ async def test_knowledge_store_rejects_content_over_3000_characters(knowledge_st
 
 
 def test_knowledge_reflection_limits_candidates_and_validates_operations():
-    from agent.knowledge.reflection import build_request, candidate_request, normalize_operations
+    from agent.knowledge.reflection import build_append_request, candidate_request, normalize_operations
 
-    request = build_request("用户规则", "已收到", [{"source_id": str(index), "text": "x"} for index in range(8)])
+    request = build_append_request([{"source_id": str(index), "text": "x"} for index in range(8)])
     import json
-    assert len(json.loads(request)["knowledge_candidates"]) == 5
+    payload = json.loads(request)
+    assert len(payload["knowledge_candidates"]) == 5
+    assert payload["user_message"] == "（已在追加历史中提供）"
+    assert payload["assistant_message"] == "（已在追加历史中提供）"
     operations = normalize_operations({"operations": [
         {"action": "create", "title": "规则", "content": "内容", "confidence": "bad"},
         {"action": "update", "title": "", "content": "缺标题"},

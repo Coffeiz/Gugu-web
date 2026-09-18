@@ -13,14 +13,21 @@ def load_prompt() -> str:
     return _PROMPT.read_text(encoding="utf-8").strip()
 
 
-def build_request(
-    user_message: str,
-    assistant_message: str,
+def build_append_request(
     candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     *,
     save_mode: str = "automatic",
 ) -> str:
-    """构造脱敏边界内的反思输入，候选最多 5 条。"""
+    """构造追加分支请求；本轮正文已在 history_messages 中，不重复放入 delta。"""
+    return _serialize_request(candidates, save_mode=save_mode)
+
+
+def _serialize_request(
+    candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    *,
+    save_mode: str,
+) -> str:
+    """序列化反思请求的公共载荷。"""
     compact = []
     for item in list(candidates)[:5]:
         compact.append({
@@ -34,8 +41,8 @@ def build_request(
         })
     payload = {
         "save_mode": save_mode if save_mode in {"automatic", "explicit"} else "automatic",
-        "user_message": str(user_message or ""),
-        "assistant_message": str(assistant_message or ""),
+        "user_message": "（已在追加历史中提供）",
+        "assistant_message": "（已在追加历史中提供）",
         "knowledge_candidates": compact,
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -139,9 +146,7 @@ async def reflect_if_candidate(
         strategy="auto", limit=5, mode="reflection",
     )
     candidates = list(recall.get("results") or [])[:5]
-    request = build_request(
-        user_message, assistant_message, candidates, save_mode=save_mode,
-    )
+    request = build_append_request(candidates, save_mode=save_mode)
     # Knowledge 反思与 Memory 反思共用同一分支组装和重试审计；revision
     # 由本次候选查询稳定生成，避免 scope 更新时污染主对话 history。
     import hashlib
@@ -215,6 +220,6 @@ async def reflect_if_candidate(
 
 
 __all__ = [
-    "build_request", "candidate_request", "load_prompt",
+    "build_append_request", "candidate_request", "load_prompt",
     "normalize_operations", "reflect_if_candidate",
 ]

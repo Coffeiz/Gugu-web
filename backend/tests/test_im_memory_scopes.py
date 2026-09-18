@@ -594,7 +594,7 @@ def test_group_and_member_jobs_build_append_branches():
     for task_type, scope_name in (("group", "group"), ("member-batch", "group-member-reflection")):
         branch_input = _build_append_branch_input(
             scope, job, task_type, {"profile": "旧记忆", "members": {}},
-            "[成员甲] 本批消息", [message],
+            [message],
         )
         assert branch_input.branch_mode == "append_reuse"
         assert branch_input.scope == scope_name
@@ -602,3 +602,4 @@ def test_group_and_member_jobs_build_append_branches():
             {"role": "user", "content": "[成员甲] 本批消息"},
         )
         assert "本批待反思消息" in branch_input.delta
+        assert "[成员甲] 本批消息" not in branch_input.delta
