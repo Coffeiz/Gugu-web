@@ -28,7 +28,8 @@ import httpcore
 import httpx
 
 from agent.tools.base import BaseSkill, Tool
-from app.core.redaction import diag_log, redact
+from agent.security import logsafe
+from app.core.redaction import diag_log, diag_log_raw, redact
 from app.core.url_security import resolve_pinned_ip
 from app.db.session import rollback_safely
 from app.services.storage.file_service import FileService
@@ -134,6 +135,11 @@ async def _http_get_one(db, user_id, url: str, max_chars: int):
         import trafilatura
         extracted = trafilatura.extract(body_text, include_links=True, output_format="markdown", with_metadata=True)
         if not extracted or len(extracted) < _MIN_EXTRACTED:
+            # trafilatura 自己的 WARNING 继续进可见日志（用户要求保留）；这里把
+            # 失败上下文补进受限诊断出口，URL 只进指纹。
+            diag_log_raw("agent.tools.web.http_get.extract_empty",
+                         f"status={status_code} url_fp={logsafe.fingerprint(url)} "
+                         f"extracted_len={len(extracted or '')}")
             return {"status": status_code, "url": url,
                     "error": "抓到了但没读出正文——可能是空页/错误页，也可能是纯 JS 渲染页面（HTTP 抓不到"
                              "客户端渲染的内容）。先看 status 是否正常；status 正常但读不到正文的话，"

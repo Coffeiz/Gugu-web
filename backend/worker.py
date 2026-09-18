@@ -277,8 +277,14 @@ async def _reflection_loop():
                     if job_id is not None:
                         await execute_job(int(job_id), get_settings())
                 except Exception as exc:
+                    from app.core.errors import root_cause_name
+                    # 包装异常常只是表层症状（PendingRollbackError 掩盖 LLM 超时等真因）；
+                    # 可见日志只显示类型名（根因优先），原始 traceback 走 diag_log。
+                    cause = root_cause_name(exc)
+                    label = type(exc).__name__ if cause == type(exc).__name__ \
+                        else f"{type(exc).__name__}(根因 {cause})"
                     print(
-                        f"[worker] 记忆反思任务出错: {type(exc).__name__}",
+                        f"[worker] 记忆反思任务出错: {label}",
                         flush=True,
                     )
                 finally:

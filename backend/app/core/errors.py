@@ -73,3 +73,21 @@ class RetryableError(AppError):
 # 原始异常 → 受限诊断出口（app.core.redaction.diag_log）；
 # code + public_message + type(e).__name__ → 可见日志（ERROR 级）；
 # 脱敏摘要 → 外发给用户/模型（app.core.redaction.redact）。
+
+
+def root_cause_name(exc: BaseException) -> str:
+    """返回异常链（``__cause__``/``__context__``）最底层异常的类型名。
+
+    包装异常常只是表层症状（如 SQLAlchemy 的 PendingRollbackError 掩盖真正的
+    APITimeoutError）：可见日志展示根因类型名，原始 traceback 仍走 diag_log，
+    正文与敏感字段不进可见日志。
+    """
+    seen: set[int] = set()
+    current = exc
+    while id(current) not in seen:
+        seen.add(id(current))
+        nxt = current.__cause__ or current.__context__
+        if nxt is None:
+            break
+        current = nxt
+    return type(current).__name__

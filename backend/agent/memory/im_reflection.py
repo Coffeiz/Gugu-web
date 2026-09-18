@@ -88,8 +88,12 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
 def _log_reflection_failure(job, *, phase: str, exc: BaseException) -> None:
     """记录反思原始异常；正文/作用域标识不进入可见 worker 日志。"""
     from agent.security.logsafe import fingerprint
+    from app.core.errors import root_cause_name
     from app.core.redaction import diag_log
 
+    cause = root_cause_name(exc)
+    label = type(exc).__name__ if cause == type(exc).__name__ \
+        else f"{type(exc).__name__}(根因 {cause})"
     _reflection_log.error(
         "[memory-reflection-failed] job_id=%s phase=%s scope_type=%s "
         "scope_id_fp=%s source=%s task_type=%s error=%s",
@@ -99,7 +103,7 @@ def _log_reflection_failure(job, *, phase: str, exc: BaseException) -> None:
         fingerprint(getattr(job, "scope_id", "")),
         getattr(job, "platform", ""),
         getattr(job, "task_type", ""),
-        type(exc).__name__,
+        label,
     )
     # 原始 traceback 只进受限诊断文件，不进入 gugu.log/SystemLog/Debug 面板。
     diag_log(f"agent.memory.im_reflection.{phase}", exc)
