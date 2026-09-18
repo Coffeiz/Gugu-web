@@ -823,9 +823,15 @@ async def download_file(
     from urllib.parse import quote
 
     file = await get_owned(db, File, fid, current_user.id)
-    if file is None:
+    if file is None or file.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
     storage = get_storage()
+    # 流式响应的响应头先于读盘发出，Content-Length 必须取物理对象真实大小：
+    # 用库内 size_bytes 会在历史脏数据（0/与盘不符）上造成 Content-Length
+    # 失配，uvicorn 中途断连（浏览器表现为 Failed to fetch，无法转成状态码）。
+    info = await storage.stat(file.storage_key)
+    if info is None:
+        raise HTTPException(404, "物理文件丢失")
     filename = quote(f"{file.display_name}.{file.ext.lower()}")
     return StreamingResponse(
         storage.iter_chunks(file.storage_key),
@@ -833,7 +839,7 @@ async def download_file(
         # 图片等预览场景会反复打开同一文件；短 TTL 让浏览器缓存，避免每次全量重新下载。
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
                  "Cache-Control": "private, max-age=300",
-                 "Content-Length": str(file.size_bytes or 0)},
+                 "Content-Length": str(info.size)},
     )
 
 
@@ -920,10 +926,12 @@ async def get_stream_url(
 async def stream_file(
     fid: int,
     token: str = Query(...),
+    dl: int = 0,
     request: Request = None,
     db: AsyncSession = Depends(get_db),
 ):
     from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
 
     token_fid, user_id = verify_stream_token(token)
     if token_fid != fid:
@@ -948,6 +956,11 @@ async def stream_file(
         "Content-Length": str(end - start + 1),
         "Content-Disposition": "inline",
     }
+    if dl:
+        # dl=1 是「下载」语义：attachment 让浏览器直接写盘（前端大文件下载走
+        # stream-url 直下，不经 blob 进内存）；token 已校验归属，Range 保持可用。
+        download_name = quote(f"{result.file.display_name}.{result.file.ext.lower()}")
+        headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{download_name}"
     if partial:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
     return StreamingResponse(

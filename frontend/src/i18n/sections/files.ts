@@ -14,6 +14,7 @@ Object.assign(filesUi['zh-CN'], {
   archiveSameParent: '请选择同一目录中的文件和文件夹。', archiveInvalidName: '请输入压缩包名称。', archiveInvalidFolderName: '请输入解压文件夹名称。',
   archiveCreated: '已创建 {name}', archiveExtracting: '解压中…',
   archiveFailed: '操作失败，请稍后重试。',
+  downloadFailed: '下载失败，请稍后重试。',
 })
 Object.assign(filesUi['ja-JP'], {
   compress: '圧縮', extract: '解凍', archiveCompressTitle: '選択項目を圧縮', archiveExtractTitle: 'ファイルを解凍',
@@ -25,6 +26,7 @@ Object.assign(filesUi['ja-JP'], {
   archiveSameParent: '同じフォルダー内のファイルとフォルダーを選択してください。', archiveInvalidName: 'アーカイブ名を入力してください。', archiveInvalidFolderName: '展開先フォルダー名を入力してください。',
   archiveCreated: '{name} を作成しました', archiveExtracting: '解凍中…',
   archiveFailed: '処理に失敗しました。しばらくしてから再試行してください。',
+  downloadFailed: 'ダウンロードに失敗しました。しばらくしてから再試行してください。',
 })
 Object.assign(filesUi['en-US'], {
   compress: 'Compress', extract: 'Extract', archiveCompressTitle: 'Compress selected items', archiveExtractTitle: 'Extract archive',
@@ -36,6 +38,7 @@ Object.assign(filesUi['en-US'], {
   archiveSameParent: 'Select files and folders from the same directory.', archiveInvalidName: 'Enter an archive name.', archiveInvalidFolderName: 'Enter an extraction folder name.',
   archiveCreated: 'Created {name}', archiveExtracting: 'Extracting…',
   archiveFailed: 'The operation failed. Please try again later.',
+  downloadFailed: 'Download failed. Please try again later.',
 })
 export const filesViewUi = {
   'zh-CN': { name: '名称', type: '类型', deletedAt: '删除时间', remaining: '剩余', size: '大小', sort: '排列', collapse: '收起内容', view: '查看内容', folder: '文件夹', days: '{count} 天', fileCount: '{count} 个文件', restoreFolder: '恢复文件夹及其内容', permanentDeleteFolder: '永久删除文件夹及其内容', emptyFolder: '空文件夹', restore: '恢复', permanentDelete: '永久删除', emptyTrash: '回收站为空', emptyTrashTitle: '清空回收站', emptyTrashMessage: '所有文件将被永久删除，无法恢复。', deleteFileTitle: '移到回收站', deleteFileMessage: '确认将“{name}”移到回收站？', deleteFolderTitle: '移到回收站', deleteFolderMessage: '确认将文件夹“{name}”及其内容移到回收站？', deleteSelectedTitle: '移到回收站', deleteSelectedMessage: '确认将选中的 {count} 项移到回收站？', permanentDeleteFileTitle: '永久删除文件', permanentDeleteFileMessage: '确认永久删除“{name}”？此操作不可恢复。', permanentDeleteFolderTitle: '永久删除文件夹', permanentDeleteFolderMessage: '确认永久删除文件夹“{name}”及其内容？此操作不可恢复。', permanentDeleteSelectedTitle: '永久删除选中项', permanentDeleteSelectedMessage: '确认永久删除选中的 {count} 项？此操作不可恢复。', confirm: '确认', rename: '重命名', downloadZip: '下载为 ZIP', moveToTrash: '移到回收站', download: '下载', items: '{count} 项', storageUsed: '已用 {used}', storageUsedWithLimit: '已用 {used} / {limit}' },

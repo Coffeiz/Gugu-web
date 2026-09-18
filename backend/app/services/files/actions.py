@@ -60,6 +60,8 @@ async def resolve_local_file_stream(
     file = await get_owned(db, File, file_id, user_id)
     if file is None:
         return None
+    if file.deleted_at is not None:
+        raise FileStreamError(404, "文件已删除")
     path = storage.root / file.storage_key
     if not path.exists():
         raise FileStreamError(404, "文件不存在于存储")

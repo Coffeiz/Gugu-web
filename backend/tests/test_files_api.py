@@ -4,6 +4,7 @@
 FileService(db) 内部走 get_storage()，用 monkeypatch 指向 tmp_path 本地后端；事件广播 noop。
 """
 import io
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -126,6 +127,50 @@ async def test_download_endpoint_reads_owned_file(db, user_a):
     # 图片预览会反复打开同一文件，响应必须带缓存头，浏览器才能免重复下载
     assert response.headers["cache-control"] == "private, max-age=300"
     assert response.media_type == "text/plain"
+    # 流式响应头先于读盘发出，Content-Length 必须是物理对象真实大小（历史
+    # size_bytes 脏数据不能进头，否则 uvicorn 失配断连）
+    assert response.headers["content-length"] == "13"
+
+
+async def test_download_missing_on_disk_returns_404(db, user_a):
+    uploaded = await _do_upload(db, user_a, b"body", "gone.txt")
+    row = (await db.execute(select(File).where(File.id == uploaded.id))).scalar_one()
+    # 直接删物理文件，模拟「库里有记录、盘上没有」
+    storage = files_api.get_storage()
+    (storage.root / row.storage_key).unlink()
+    with pytest.raises(HTTPException) as exc:
+        await files_api.download_file(uploaded.id, current_user=user_a, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_download_deleted_file_returns_404(db, user_a):
+    uploaded = await _do_upload(db, user_a, b"body", "trashed.txt")
+    row = (await db.execute(select(File).where(File.id == uploaded.id))).scalar_one()
+    row.deleted_at = datetime.now(tz=timezone.utc)
+    await db.commit()
+    with pytest.raises(HTTPException) as exc:
+        await files_api.download_file(uploaded.id, current_user=user_a, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_stream_deleted_file_returns_404(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"0123456789", "audio.mp3", content_type="audio/mpeg")
+    row = (await db.execute(select(File).where(File.id == uploaded.id))).scalar_one()
+    row.deleted_at = datetime.now(tz=timezone.utc)
+    await db.commit()
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    with pytest.raises(HTTPException) as exc:
+        await files_api.stream_file(uploaded.id, token="stream-token", request=None, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_stream_dl_serves_attachment_disposition(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"0123456789", "audio.mp3", content_type="audio/mpeg")
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    response = await files_api.stream_file(
+        uploaded.id, token="stream-token", dl=1, request=None, db=db,
+    )
+    assert response.headers["content-disposition"].startswith("attachment; filename*=UTF-8''")
 
 
 async def test_stream_endpoint_serves_http_range_without_reading_whole_file(db, user_a, monkeypatch):
