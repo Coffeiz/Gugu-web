@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Path, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,9 +80,17 @@ class PendingQueueAttachment(BaseModel):
 class PendingQueueReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["project", "file", "event", "conversation"]
-    id: int = Field(gt=0)
+    # mcp 的 id 是 UUID 字符串（user_mcp_servers 主键），其余类型是 int 自增（>0）
+    type: Literal["project", "file", "event", "conversation", "skill", "mcp", "scheduled_task"]
+    id: int | UUID
     label: str = Field(max_length=512)
+
+    @field_validator("id")
+    @classmethod
+    def _validate_reference_id(cls, value):
+        if isinstance(value, int) and value < 1:
+            raise ValueError("id must be >= 1")
+        return value
 
 
 class PendingQueueItem(BaseModel):
@@ -527,7 +535,11 @@ async def cancel_stream(
         from agent.gateway.web import cancel_local_generation
         cancelled_locally = cancel_local_generation(session_id, owner_run_id or None)
         if not cancelled_locally:
-            await genstream.request_cancel(session_id)
+            # 标记带上快照 owner：跨 worker 兜底也只能杀掉用户看到正在跑的
+            # 这个 run。终止端点读快照与写标记之间，排队的 run 可能已经接管
+            # 会话（begin 清不掉这之后才落下的标记），会话级标记会把刚接管的
+            # 排队消息一起杀掉——用户消息已落库但永远等不到回复。
+            await genstream.request_cancel(session_id, owner_run_id or None)
     return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
 
 
