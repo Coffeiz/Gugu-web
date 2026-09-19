@@ -85,8 +85,9 @@ export const CHAT_REF_ACCEPTS = ['file-item', 'folder-item'] as const
 
 /** 用户在聊天输入中选中的业务对象引用。 */
 export interface ChatReference {
-  type: 'project' | 'file' | 'folder' | 'event' | 'conversation'
-  id: number
+  type: 'project' | 'file' | 'folder' | 'event' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
+  // mcp 引用的 id 是 UUID 字符串，其余是 int 自增
+  id: number | string
   label: string
 }
 

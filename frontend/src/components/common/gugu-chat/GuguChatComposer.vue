@@ -144,9 +144,9 @@ function insertReferenceChip(reference: ChatReference) {
     .some(item => item.type === reference.type && item.id === reference.id)) return
   let label: string
   if (reference.type === 'folder') {
-    label = filesCache.getFolder(reference.id)?.name ?? `Folder ${reference.id}`
+    label = filesCache.getFolder(Number(reference.id))?.name ?? `Folder ${reference.id}`
   } else {
-    label = filesCache.getFile(reference.id)?.displayName ?? `File ${reference.id}`
+    label = filesCache.getFile(Number(reference.id))?.displayName ?? `File ${reference.id}`
   }
   editor.chain().focus('end')
     .insertContent({ type: 'mindRef', attrs: { refType: reference.type, refId: reference.id, label } })
@@ -218,7 +218,10 @@ function referencesFromDoc(doc: MindDocNode | null | undefined): ChatReference[]
   for (const block of doc?.content ?? []) for (const node of block.content ?? []) {
     if (node.type !== 'mindRef') continue
     const attrs = node.attrs ?? {}
-    const reference = { type: attrs.refType as ChatReference['type'], id: Number(attrs.refId), label: String(attrs.label ?? '') }
+    // mcp 引用的 refId 是 UUID 字符串，Number() 会变 NaN——非纯数字 id 原样保留
+    const rawId = attrs.refId
+    const id = typeof rawId === 'string' && !/^\d+$/.test(rawId) ? rawId : Number(rawId)
+    const reference = { type: attrs.refType as ChatReference['type'], id, label: String(attrs.label ?? '') }
     if (reference.label && !result.some(item => item.type === reference.type && item.id === reference.id)) result.push(reference)
   }
   return result

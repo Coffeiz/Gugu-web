@@ -448,9 +448,11 @@ class MindNodeResponse(CamelModel):
 
 
 class MindRefSuggestItem(CamelModel):
-    """`[[` 补全的候选：type+id 是写进正文的稳定锚点，label 只作展示。"""
+    """`[[` 补全的候选：type+id 是写进正文的稳定锚点，label 只作展示。
+
+    mcp 的 id 是 UUID 字符串（user_mcp_servers 主键），其余类型是 int 自增。"""
     type: str
-    id: int
+    id: int | str
     label: str
     subtitle: Optional[str] = None
 

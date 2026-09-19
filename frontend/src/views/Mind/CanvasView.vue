@@ -465,7 +465,7 @@ async function createCanvasNote() {
 async function addRef(refItem: CanvasRefItem) {
   if (activeCanvasId.value == null) return
   const { x, y } = centerOfViewport()
-  await store.addRefToCanvas(activeCanvasId.value, refItem.type, refItem.id, x, y)
+  await store.addRefToCanvas(activeCanvasId.value, refItem.type, Number(refItem.id), x, y)
 }
 async function addProjectAtCenter(projectId: number) {
   if (activeCanvasId.value == null) return

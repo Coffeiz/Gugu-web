@@ -15,7 +15,7 @@ from app.core.security import get_current_user
 from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
     User, Project, File, Folder, CalendarEvent, Client, MindNode, UserSkill,
-    WorkspaceDirectory,
+    WorkspaceDirectory, UserMcpServer, ScheduledTask,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 from app.core.config import get_settings
@@ -38,7 +38,7 @@ MSG_PER_TYPE = 8      # 对话消息扫描条数（合并去重后仍受 per_typ
 SNIPPET_PAD = 24      # 消息片段命中词前后各取多少字
 ROMAJI_SCAN = 200     # 拼音/罗马音搜索时每类最多扫描条数
 
-ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note", "skill"]
+ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note", "skill", "mcp", "scheduled_task"]
 
 # 所有参与全局搜索的文本字段统一在这里登记；新增字段只需补这一张表。
 ROMAJI_FIELDS = {
@@ -322,6 +322,52 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                     "enabled": bool(skill.enabled),
                 }
                 for skill in rows
+            ]})
+
+    # ── 用户 MCP server：只搜名称/传输方式（不暴露 endpoint 与凭据）──
+    if wanted is None or "mcp" in wanted:
+        rows = list((await db.execute(
+            select(UserMcpServer).where(
+                or_(UserMcpServer.user_id == uid, UserMcpServer.scope == "platform"),
+                keyword_condition([UserMcpServer.name], search_queries, mode),
+            ).order_by(
+                keyword_score([UserMcpServer.name], search_queries).desc(),
+                _primary_rank(UserMcpServer.name, q),
+            ).limit(per_type)
+        )).scalars().all())
+        if rows:
+            groups.append({"type": "mcp", "label": "MCP", "items": [
+                {
+                    "id": str(server.id),
+                    "title": server.name,
+                    "subtitle": f"{server.transport} · {'已启用' if server.enabled else '已停用'}",
+                    "enabled": bool(server.enabled),
+                }
+                for server in rows
+            ]})
+
+    # ── 用户定时任务：搜任务名（已结束/系统级任务不出现）──
+    if wanted is None or "scheduled_task" in wanted:
+        rows = list((await db.execute(
+            select(ScheduledTask).where(
+                ScheduledTask.user_id == uid,
+                ScheduledTask.enabled.is_(True),
+                or_(ScheduledTask.end_at.is_(None), ScheduledTask.end_at > func.now()),
+                keyword_condition([ScheduledTask.name], search_queries, mode),
+            ).order_by(
+                keyword_score([ScheduledTask.name], search_queries).desc(),
+                _primary_rank(ScheduledTask.name, q),
+                ScheduledTask.updated_at.desc(),
+            ).limit(per_type)
+        )).scalars().all())
+        if rows:
+            groups.append({"type": "scheduled_task", "label": "定时任务", "items": [
+                {
+                    "id": task.id,
+                    "title": task.name,
+                    "subtitle": f"{task.schedule_kind} · {task.cron}" if task.schedule_kind == "cron" else (f"每 {task.interval_minutes} 分钟" if task.interval_minutes else "定时"),
+                }
+                for task in rows
             ]})
 
     # ── 思维便签：标题 + 正文（便签短，正文可以直接搜，不像文件那样只能搜名）──

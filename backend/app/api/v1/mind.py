@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.search import run_global_search, _snippet
@@ -58,7 +58,7 @@ from app.services.mind import (
 )
 from app.models import (
     CalendarEvent, ConversationMessage, ConversationSession, File, Folder, MindCanvasItem, Project,
-    MindMap, MindNode, MindRelation, User,
+    MindMap, MindNode, MindRelation, ScheduledTask, User, UserMcpServer, UserSkill,
 )
 from app.schemas import (
     MindCanvasCreate, MindCanvasItemBringToFront, MindCanvasItemCreate, MindCanvasItemResponse,
@@ -74,7 +74,7 @@ router = APIRouter(prefix="/mind", tags=["mind"])
 # 对话（客户不作为便签引用对象）单独查——@ 一段对话锚定的是具体某条消息（"准确的聊天
 # 位置"），不是整个会话，run_global_search 那边按 session 去重的逻辑在这里不适用，
 # 得自己按消息为粒度查，见 ref_suggest 下半段。
-_REF_TYPES = ["project", "file", "folder", "event"]
+_REF_TYPES = ["project", "file", "folder", "event", "skill", "mcp", "scheduled_task"]
 
 
 def _to_resp(n: MindNode) -> MindNodeResponse:
@@ -272,6 +272,22 @@ async def ref_suggest(
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
         recent.extend(MindRefSuggestItem(type="folder", id=x.id, label=x.name) for x in folders)
         recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
+        skills = (await db.scalars(select(UserSkill).where(
+            UserSkill.owner_id == current_user.id).order_by(UserSkill.updated_at.desc()).limit(limit))).all()
+        recent.extend(MindRefSuggestItem(type="skill", id=x.id, label=x.name,
+                                         subtitle=f"/{x.slug}") for x in skills)
+        mcp_servers = (await db.scalars(select(UserMcpServer).where(
+            or_(UserMcpServer.user_id == current_user.id, UserMcpServer.scope == "platform"),
+        ).order_by(UserMcpServer.name).limit(limit))).all()
+        recent.extend(MindRefSuggestItem(type="mcp", id=str(x.id), label=x.name,
+                                         subtitle=x.transport) for x in mcp_servers)
+        tasks = (await db.scalars(select(ScheduledTask).where(
+            ScheduledTask.user_id == current_user.id,
+            ScheduledTask.enabled.is_(True),
+            or_(ScheduledTask.end_at.is_(None), ScheduledTask.end_at > now_utc()),
+        ).order_by(ScheduledTask.updated_at.desc()).limit(limit))).all()
+        recent.extend(MindRefSuggestItem(type="scheduled_task", id=x.id, label=x.name,
+                                         subtitle=x.cron) for x in tasks)
         return recent[:limit * len(_REF_TYPES)]
     result = await run_global_search(db, current_user.id, q, per_type=limit, types=_REF_TYPES)
     items: list[MindRefSuggestItem] = []
