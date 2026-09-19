@@ -469,6 +469,27 @@ _gen_tasks: set = set()   # 持后台生成任务引用，防 GC（任务需脱�
 _session_gen_tasks: dict[int, dict[str, asyncio.Task]] = {}
 
 
+async def _close_running_tool_events(display_timeline: list, pub) -> None:
+    """给仍在 running/waiting 的工具事件补「已停止」终态。
+
+    工具执行中被取消时 CancelledError 直接打断派发，tool_done 永远不会发出；
+    不补终态的话，live 视图的工具气泡永远转圈，落库后刷新也恢复成「进行中」
+    （2026-09-19 实测）。对每个未完成条目：修正 display_timeline 状态 + 向
+    SSE 补发合成 tool_done，让实时与刷新两端都收敛。
+    """
+    for item in display_timeline:
+        if item.get("kind") != "tool" or item.get("toolStatus") not in ("running", "waiting"):
+            continue
+        item["toolStatus"] = "cancelled"
+        await pub({
+            "type": "tool_done",
+            "tool_call_id": item.get("toolCallId"),
+            "name": item.get("toolName"),
+            "label": item.get("toolLabel"),
+            "status": "cancelled",
+        })
+
+
 def cancel_local_generation(session_id: int, owner_run_id: str | None = None) -> bool:
     """同进程内直接取消该会话的后台生成任务；任务不在本进程时返回 False。
 
@@ -556,6 +577,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     """
     user_id = req.user_id
     set_ctx_tz(user_tz)   # 本任务内（含 build 与 tool dispatch）「今天」按用户时区算（Phase 3）
+    # 取消（task.cancel()）可能落在函数体任意 await 处——CancelledError 收尾要读
+    # display_timeline 做部分产物落库，所以这里先初始化，下方正式生成段再重置一次。
+    display_timeline: list[dict] = []
+    sent_files: list = []
     user_content = user_content if user_content is not None else req.message
     user_images = user_images or []
     attach_cards = attach_cards or []
@@ -655,7 +680,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         dynamic_tools=mcp_tools,
     )
     full_reply = ""
-    display_timeline: list[dict] = []
+    display_timeline = []   # 顶部已初始化（供 CancelledError 收尾读取），这里重置
     active_segment: dict | None = None
     current_run_id = ""
     current_round_id = ""
@@ -676,7 +701,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     anthr_initial_len: int = 0
     oa_messages: list = []
     oa_initial_len: int = 0
-    sent_files: list = []   # 咕咕本轮发的文件卡片，随助手消息持久化
+    sent_files = []   # 咕咕本轮发的文件卡片，随助手消息持久化（顶部已初始化）
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
 
     try:
@@ -869,6 +894,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             # done 的话，这条 SSE 会挂到 20s keepalive 兜底才结束，前端一直显示
             # 「输出中」，生成期间排队的消息也发不出去。error 事件本身就会让订阅
             # 者退出，无需重复补发。
+            # 被打断的工具先补「已停止」终态：必须在 done 之前发（订阅端收到
+            # done 即退出）；失败路径 error 事件后订阅端同样已退出，这里只需
+            # 修正 timeline 供落库，合成事件的 pub 是无害冗余。
+            await _close_running_tool_events(display_timeline, _pub)
             if cancelled:
                 await _pub({"type": "done", "cancelled": True})
             # 取消/失败不再丢弃已产生的展示产物：run 中途的工具卡、文件卡、
@@ -977,6 +1006,35 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         # except BaseException 吞掉的话，用户点「停止」会收到「咕咕开小差了」通用
         # 报错，且本轮持久化整体跳过。发取消终态让订阅端正常退出后 re-raise，
         # 交给外层 _generate 的取消分支清 active 快照。
+        # 与 in-band cancelled 分支同款：已产生的展示产物（工具卡/文件卡）部分落库，
+        # 否则 task.cancel() 这条路径取消后整个 run 在所有端消失（2026-09-19 实测：
+        # 12 轮工具调用的 run 终止后一条不剩）。canonical 不写——助手轮未完成，
+        # 半截文本不能进 LLM 历史。
+        # 被打断的工具先补「已停止」终态（live 合成 tool_done + timeline 修正），
+        # 否则工具气泡在实时与刷新两端都永远停在「进行中」。
+        try:
+            await _close_running_tool_events(display_timeline, _pub)
+            if display_timeline:
+                from agent.context.run_finalize import finalize_run
+                await finalize_run(
+                    session_factory=_sess._SessionLocal,
+                    session_id=session_id,
+                    user_id=user_id,
+                    settings=settings,
+                    model_cfg=model_cfg,
+                    rag_context=None,
+                    messages=[],
+                    initial_len=0,
+                    text="",
+                    display_timeline=display_timeline,
+                    files=sent_files,
+                    tokens_in=0,
+                    tokens_out=0,
+                    canonical_batches=[],
+                    run_id=current_run_id,
+                )
+        except Exception:
+            logger.exception("task.cancel 路径的部分展示产物持久化失败 session=%s", session_id)
         await _pub({"type": "done", "cancelled": True})
         raise
     except BaseException as e:

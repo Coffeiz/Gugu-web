@@ -83,11 +83,16 @@ export function useChatStream(options: {
   let _sessionTurn = 0                      // 当前 session 已发消息轮次（埋点用），切会话由 useChatSessions 调 resetSessionTurn 重置
   function resetSessionTurn() { _sessionTurn = 0 }
 
+  // ── 临时探针（定位排队不自动发送，验证后删除）──
+  const dbg = (...args: unknown[]) => {
+    try { (window as any).__pqLogs = (window as any).__pqLogs || []; (window as any).__pqLogs.push(args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')) } catch {}
+  }
   function stopStreaming() {
     // 停止=取消当前 run；排队中的消息保留，当前流收尾后由 finally 里的
     // drainPendingQueue 立即接续第一条（用户预期：停的是「正在说的这句」，
     // 排队的照样发，而不是一起被丢掉）。
     const id = activeSessionId ?? sessionId.value
+    dbg('stopStreaming id=', id, 'activeSessionId=', activeSessionId, 'sessionId=', sessionId.value, 'viewGen=', options.getViewGeneration())
     abortCtrl.value?.abort()
     if (id != null) agentApi.cancelSession(String(id)).catch(() => {})
   }
@@ -230,6 +235,7 @@ export function useChatStream(options: {
         if (streaming.value) return
         let dispatched = false
         const identity = queueIdentity(next)
+        dbg('drain: dispatch begin key=', next.key, 'item.viewGen=', next.viewGeneration, 'cur.viewGen=', options.getViewGeneration(), 'sessionId=', sessionId.value, 'item.sessionId=', next.sessionId, 'streaming=', streaming.value)
         dispatchingQueueKeys.add(identity)
         try {
           dispatched = await dispatchPendingQueueItem(next.queueId, next.key, {
@@ -259,11 +265,13 @@ export function useChatStream(options: {
             onDispatchError: error => options.onQueueDispatchError?.(error),
           })
         } catch {
+          dbg('drain: dispatch threw key=', next.key)
           return
         } finally {
           dispatchingQueueKeys.delete(identity)
           cancelledQueueKeys.delete(identity)
         }
+        dbg('drain: dispatch result=', dispatched, 'key=', next.key, 'stillInQueue=', pendingQueue.value.some(item => queueIdentity(item) === identity))
         if (!dispatched) {
           if (!drainViewIsCurrent()) return
           if (!pendingQueue.value.some(item => queueIdentity(item) === identity)) continue
@@ -675,7 +683,18 @@ export function useChatStream(options: {
               scheduleStreamScroll()
             }
           } else if (evt.type === 'done') {
-            if (live()) options.clearStatus()
+            if (live()) {
+              options.clearStatus()
+              // 取消收尾兜底：任何路径漏发个别 tool_done 终态时，把仍在转圈的
+              // 工具气泡统一翻成「已停止」，不允许出现永久「进行中」。
+              if (evt.cancelled) {
+                for (const item of messages.value) {
+                  if (item.role === 'tool' && (item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
+                    item.toolStatus = 'cancelled'
+                  }
+                }
+              }
+            }
           } else if (evt.type === 'error') {
             if (live()) {
               options.clearStatus()
@@ -858,6 +877,7 @@ export function useChatStream(options: {
         && (targetSessionId != null || invocationIsCurrent())
     }
     const mayContinue = () => (isQueuedDispatch || invocationIsCurrent()) && queuedItemIsCurrent()
+    dbg('send: enter key=', queuedItemKey, 'viewGen=', viewGeneration, 'cur.viewGen=', options.getViewGeneration(), 'targetSessionId=', targetSessionId, 'sessionId=', sessionId.value, 'streaming=', streaming.value, 'isQueuedDispatch=', isQueuedDispatch)
 
     // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
     const fromInput = forcedText === undefined
@@ -975,6 +995,7 @@ export function useChatStream(options: {
       let receivedSessionIdEvent = false
       const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, '', (_acceptedSessionId, timelineOrder) => {
         receivedSessionIdEvent = true
+        dbg('send: session_id cb key=', queuedItemKey, 'ownerSid=', ownerSid, 'sessionId=', sessionId.value, 'viewGen=', viewGeneration, 'cur.viewGen=', options.getViewGeneration())
         if (queuedItemKey === undefined || ownerSid !== sessionId.value || viewGeneration !== options.getViewGeneration()) return
         pendingQueue.value = pendingQueue.value.filter(item => queueIdentity(item) !== queuedIdentity)
         messages.value.push({
@@ -999,6 +1020,7 @@ export function useChatStream(options: {
         await options.scrollBottom()
       }
     } catch (e: any) {
+      dbg('send: catch name=', e?.name, 'key=', queuedItemKey, 'resolvedSid=', resolvedSid, 'sessionId=', sessionId.value, 'viewGen=', viewGeneration, 'cur.viewGen=', options.getViewGeneration())
       if (e?.name !== 'AbortError' && viewGeneration === options.getViewGeneration() && sessionId.value === resolvedSid) {
         // fetch 抛错=连不上咕咕后端，基本都是网络问题（仅在仍停在本会话时报）
         options.clearStatus()
