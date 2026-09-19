@@ -586,7 +586,8 @@ function releaseMdObjectUrls() {
 
 async function resolveMdRelativeImages() {
   const root = mdRoot.value
-  if (!root || !props.fileContext?.id || !isRealFile.value) return
+  const fileContext = props.fileContext
+  if (!root || !fileContext?.id || !isRealFile.value) return
   if (!filesCache.loaded) await filesCache.load()
   if (mdRoot.value !== root) return   // 等待期间文件已切走
   const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
@@ -596,8 +597,8 @@ async function resolveMdRelativeImages() {
   // 索引一次构建 O(N)，每张图 O(1) 查找；逐图全量扫描在大文件库上会拖到秒级
   const index = buildFileLinkIndex(filesCache.allFiles, filesCache.allFolders)
   const resolve = (href: string) => index.resolve(href, {
-    folderId: props.fileContext.folderId,
-    projectId: props.fileContext.projectId,
+    folderId: fileContext.folderId,
+    projectId: fileContext.projectId,
   })
   for (const img of [...root.querySelectorAll<HTMLImageElement>('img[src]')]) {
     const src = img.getAttribute('src') || ''
