@@ -15,7 +15,6 @@ from app.core.security import get_current_user
 from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
     User, Project, File, Folder, CalendarEvent, Client, MindNode, UserSkill,
-    WorkspaceDirectory, UserMcpServer, ScheduledTask,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 from app.core.config import get_settings
@@ -29,7 +28,9 @@ from app.services.conversations import (
     search_session_titles,
 )
 from app.services.user_preferences import get_user_locale
-from app.services.storage.folders import resolve_folder_path
+from app.services.files.browser import list_recent_folders_for_search, search_user_folders
+from app.services.search import search_global_mcp_servers, search_global_scheduled_tasks
+from app.services.storage.folders import folder_location_subtitle
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -97,32 +98,6 @@ def _primary_rank(column, q: str):
         (func.lower(column).like(f"{normalized}%"), 1),
         else_=2,
     )
-
-
-async def _folder_location_subtitle(db: AsyncSession, user_id, folder: Folder) -> str:
-    """给全局搜索的文件夹结果补充空间与相对路径。"""
-    resolved = await resolve_folder_path(
-        db, user_id, folder.id, folder.project_id, folder.workspace_directory_id,
-    )
-    path = resolved[1] if resolved else folder.name
-
-    if folder.workspace_directory_id is not None:
-        name = await db.scalar(select(WorkspaceDirectory.name).where(
-            WorkspaceDirectory.id == folder.workspace_directory_id,
-            WorkspaceDirectory.user_id == user_id,
-            WorkspaceDirectory.deleted_at.is_(None),
-        ))
-        root = f"工作区 · {name or '工作区'}"
-    elif folder.project_id is not None:
-        name = await db.scalar(select(Project.name).where(
-            Project.id == folder.project_id,
-            Project.user_id == user_id,
-            Project.deleted_at.is_(None),
-        ))
-        root = f"项目 · {name or '项目'}"
-    else:
-        root = "个人"
-    return " · ".join(filter(None, [root, path]))
 
 
 async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
@@ -200,19 +175,10 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
 
     # ── 文件夹：名 ──
     if wanted is None or "folder" in wanted:
-        rows = list((await db.execute(
-            select(Folder).where(Folder.user_id == uid,
-                                 Folder.deleted_at.is_(None),
-                                 keyword_condition([Folder.name], search_queries, mode))
-            .order_by(keyword_score([Folder.name], search_queries).desc(),
-                      _primary_rank(Folder.name, q), Folder.created_at.desc()).limit(per_type)
-        )).scalars().all())
+        rows = await search_user_folders(db, uid, search_queries, mode, q, per_type)
         if use_romaji and len(rows) < per_type:
             seen = {fo.id for fo in rows}
-            scan = (await db.execute(
-                select(Folder).where(Folder.user_id == uid, Folder.deleted_at.is_(None))
-                .order_by(Folder.created_at.desc()).limit(ROMAJI_SCAN)
-            )).scalars().all()
+            scan = await list_recent_folders_for_search(db, uid, ROMAJI_SCAN)
             for fo in scan:
                 if fo.id not in seen and _romaji_matches_object(fo, "folder", search_queries, language):
                     rows.append(fo); seen.add(fo.id)
@@ -221,7 +187,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         if rows:
             groups.append({"type": "folder", "label": "文件夹", "items": [
                 {"id": fo.id, "title": fo.name,
-                 "subtitle": await _folder_location_subtitle(db, uid, fo)}
+                 "subtitle": await folder_location_subtitle(db, uid, fo)}
                 for fo in rows
             ]})
 
@@ -326,15 +292,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
 
     # ── 用户 MCP server：只搜名称/传输方式（不暴露 endpoint 与凭据）──
     if wanted is None or "mcp" in wanted:
-        rows = list((await db.execute(
-            select(UserMcpServer).where(
-                or_(UserMcpServer.user_id == uid, UserMcpServer.scope == "platform"),
-                keyword_condition([UserMcpServer.name], search_queries, mode),
-            ).order_by(
-                keyword_score([UserMcpServer.name], search_queries).desc(),
-                _primary_rank(UserMcpServer.name, q),
-            ).limit(per_type)
-        )).scalars().all())
+        rows = await search_global_mcp_servers(db, uid, search_queries, mode, q, per_type)
         if rows:
             groups.append({"type": "mcp", "label": "MCP", "items": [
                 {
@@ -348,18 +306,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
 
     # ── 用户定时任务：搜任务名（已结束/系统级任务不出现）──
     if wanted is None or "scheduled_task" in wanted:
-        rows = list((await db.execute(
-            select(ScheduledTask).where(
-                ScheduledTask.user_id == uid,
-                ScheduledTask.enabled.is_(True),
-                or_(ScheduledTask.end_at.is_(None), ScheduledTask.end_at > func.now()),
-                keyword_condition([ScheduledTask.name], search_queries, mode),
-            ).order_by(
-                keyword_score([ScheduledTask.name], search_queries).desc(),
-                _primary_rank(ScheduledTask.name, q),
-                ScheduledTask.updated_at.desc(),
-            ).limit(per_type)
-        )).scalars().all())
+        rows = await search_global_scheduled_tasks(db, uid, search_queries, mode, q, per_type)
         if rows:
             groups.append({"type": "scheduled_task", "label": "定时任务", "items": [
                 {

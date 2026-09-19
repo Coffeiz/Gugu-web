@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.search import run_global_search, _snippet
@@ -22,7 +22,6 @@ from app.core.mind import (
 )
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
-from app.core.tz import now_utc
 from app.core import events
 from app.db.session import get_db
 from app.services.canvas.service import (
@@ -53,12 +52,13 @@ from app.services.mind import (
     create_note as create_note_service,
     delete_note as delete_note_service,
     get_live_note,
+    list_recent_reference_extras,
     list_notes as list_notes_service,
     update_note as update_note_service,
 )
 from app.models import (
     CalendarEvent, ConversationMessage, ConversationSession, File, Folder, MindCanvasItem, Project,
-    MindMap, MindNode, MindRelation, ScheduledTask, User, UserMcpServer, UserSkill,
+    MindMap, MindNode, MindRelation, User,
 )
 from app.schemas import (
     MindCanvasCreate, MindCanvasItemBringToFront, MindCanvasItemCreate, MindCanvasItemResponse,
@@ -272,20 +272,13 @@ async def ref_suggest(
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
         recent.extend(MindRefSuggestItem(type="folder", id=x.id, label=x.name) for x in folders)
         recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
-        skills = (await db.scalars(select(UserSkill).where(
-            UserSkill.owner_id == current_user.id).order_by(UserSkill.updated_at.desc()).limit(limit))).all()
+        skills, mcp_servers, tasks = await list_recent_reference_extras(
+            db, current_user.id, limit=limit,
+        )
         recent.extend(MindRefSuggestItem(type="skill", id=x.id, label=x.name,
                                          subtitle=f"/{x.slug}") for x in skills)
-        mcp_servers = (await db.scalars(select(UserMcpServer).where(
-            or_(UserMcpServer.user_id == current_user.id, UserMcpServer.scope == "platform"),
-        ).order_by(UserMcpServer.name).limit(limit))).all()
         recent.extend(MindRefSuggestItem(type="mcp", id=str(x.id), label=x.name,
                                          subtitle=x.transport) for x in mcp_servers)
-        tasks = (await db.scalars(select(ScheduledTask).where(
-            ScheduledTask.user_id == current_user.id,
-            ScheduledTask.enabled.is_(True),
-            or_(ScheduledTask.end_at.is_(None), ScheduledTask.end_at > now_utc()),
-        ).order_by(ScheduledTask.updated_at.desc()).limit(limit))).all()
         recent.extend(MindRefSuggestItem(type="scheduled_task", id=x.id, label=x.name,
                                          subtitle=x.cron) for x in tasks)
         return recent[:limit * len(_REF_TYPES)]

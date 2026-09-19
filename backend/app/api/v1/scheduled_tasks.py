@@ -21,9 +21,14 @@ from app.core.security import get_current_user
 from app.core.ownership import get_owned
 from app.core import events
 from app.db.session import get_db
-from app.models import ConversationSession, FilesystemAuthorizationGrant, ScheduledTask, User, UserBot
+from app.models import FilesystemAuthorizationGrant, ScheduledTask, User
 from app.services.calendar import find_event_reminder_by_cron
-from app.services.scheduled_tasks import validate_task_workspace
+from app.services.scheduled_tasks import (
+    find_qq_group_session,
+    get_enabled_user_bot,
+    list_qq_group_sessions,
+    validate_task_workspace,
+)
 from app.services.email.attachments import EmailAttachmentError, validate_email_attachment_file_ids
 from app.core.schedule_rules import (
     ScheduleValidationError,
@@ -85,31 +90,10 @@ async def _resolve_qq_delivery(db: AsyncSession, user: User, qq_delivery: dict |
     if not chat_id:
         raise HTTPException(400, "群投递需要 chat_id")
     # 会话归属校验：只允许投递到自己的 QQ 群会话，防越权填任意 group_openid
-    session = (
-        await db.execute(
-            select(ConversationSession)
-            .where(
-                ConversationSession.user_id == user.id,
-                ConversationSession.source == "qq",
-                ConversationSession.chat_type == "group",
-                ConversationSession.chat_id == chat_id,
-            )
-            .order_by(ConversationSession.id.desc())
-        )
-    ).scalars().first()
+    session = await find_qq_group_session(db, user.id, chat_id)
     if session is None:
         raise HTTPException(400, "找不到该 QQ 群会话，请先让咕咕在群里说过话")
-    bot = (
-        await db.execute(
-            select(UserBot)
-            .where(
-                UserBot.user_id == user.id,
-                UserBot.platform == "qq",
-                UserBot.enabled.is_(True),
-            )
-            .order_by(UserBot.id.asc())
-        )
-    ).scalars().first()
+    bot = await get_enabled_user_bot(db, user.id, "qq")
     return {
         "qq": {
             "platform": "qq",
@@ -127,18 +111,7 @@ async def list_qq_targets(user: User = Depends(get_current_user), db: AsyncSessi
 
     用 session title 展示（即用户在会话列表里看到的名字），不暴露平台 openid。
     """
-    rows = (
-        await db.execute(
-            select(ConversationSession)
-            .where(
-                ConversationSession.user_id == user.id,
-                ConversationSession.source == "qq",
-                ConversationSession.chat_type == "group",
-                ConversationSession.chat_id.isnot(None),
-            )
-            .order_by(ConversationSession.id.desc())
-        )
-    ).scalars().all()
+    rows = await list_qq_group_sessions(db, user.id)
     groups: dict[str, str] = {}
     for row in rows:
         groups.setdefault(row.chat_id, row.title or "未命名群会话")

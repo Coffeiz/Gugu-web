@@ -1,13 +1,13 @@
 import asyncio
 from typing import Optional
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, case, func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
-from app.search.query import keyword_condition, normalize_queries
+from app.search.query import keyword_condition, keyword_score, normalize_queries
 
 _VERSION_RETRY_BACKOFF = (0.05, 0.15)
 
@@ -369,6 +369,41 @@ async def list_user_folders(
     if parent_id is not None:
         stmt = stmt.where(Folder.parent_id == parent_id)
     return (await db.execute(stmt)).scalars().all()
+
+
+def _folder_primary_rank(query: str):
+    normalized = query.lower()
+    return case(
+        (func.lower(Folder.name) == normalized, 0),
+        (func.lower(Folder.name).like(f"{normalized}%"), 1),
+        else_=2,
+    )
+
+
+async def search_user_folders(db, user_id, queries, mode, primary_query: str, limit: int):
+    """按关键词相关度查询当前用户未删除的文件夹。"""
+    columns = [Folder.name]
+    return (await db.execute(
+        select(Folder).where(
+            Folder.user_id == user_id,
+            Folder.deleted_at.is_(None),
+            keyword_condition(columns, queries, mode),
+        ).order_by(
+            keyword_score(columns, queries).desc(),
+            _folder_primary_rank(primary_query),
+            Folder.created_at.desc(),
+        ).limit(limit)
+    )).scalars().all()
+
+
+async def list_recent_folders_for_search(db, user_id, limit: int):
+    """返回当前用户最近创建的存活文件夹，供拼音搜索扫描。"""
+    return (await db.execute(
+        select(Folder).where(
+            Folder.user_id == user_id,
+            Folder.deleted_at.is_(None),
+        ).order_by(Folder.created_at.desc()).limit(limit)
+    )).scalars().all()
 
 
 async def list_folder_rows_with_file_counts(

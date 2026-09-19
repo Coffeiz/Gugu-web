@@ -68,6 +68,23 @@ async def resolve_folder_path(
     return folder, "/".join(reversed(parts))
 
 
+async def folder_location_subtitle(db: AsyncSession, user_id, folder: Folder) -> str:
+    """返回搜索结果中的个人/项目/工作区根目录与相对文件夹路径。"""
+    resolved = await resolve_folder_path(
+        db, user_id, folder.id, folder.project_id, folder.workspace_directory_id,
+    )
+    path = resolved[1] if resolved else folder.name
+    if folder.workspace_directory_id is not None:
+        directory = await get_owned(db, WorkspaceDirectory, folder.workspace_directory_id, user_id)
+        root = f"工作区 · {directory.name if directory and directory.deleted_at is None else '工作区'}"
+    elif folder.project_id is not None:
+        project = await get_owned(db, Project, folder.project_id, user_id)
+        root = f"项目 · {project.name if project and project.deleted_at is None else '项目'}"
+    else:
+        root = "个人"
+    return " · ".join(filter(None, [root, path]))
+
+
 async def _descendant_folder_ids(
     db: AsyncSession,
     user_id,

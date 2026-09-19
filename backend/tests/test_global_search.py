@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.api.v1.search import _run_ilike_search, run_global_search
-from app.models import File, Folder, MindNode, Project, UserSkill
+from app.models import File, Folder, MindNode, Project, ScheduledTask, UserMcpServer, UserSkill
 from agent.tools.global_search import _global_search
 import app.api.v1.search as search_api
 
@@ -144,6 +144,27 @@ async def test_global_search_finds_owned_user_skill_without_exposing_body(db, us
     assert item["title"] == "F1 数据分析"
     assert item["slug"] == "f1-data"
     assert "body" not in item
+
+
+async def test_global_search_mcp_and_scheduled_task_queries_stay_owner_scoped(db, user_a, user_b):
+    await _mk(db, UserMcpServer(
+        user_id=user_a.id, scope="user", name="闲鱼服务", endpoint="https://example.test/mcp",
+    ))
+    await _mk(db, UserMcpServer(
+        user_id=user_b.id, scope="user", name="闲鱼私有服务", endpoint="https://example.test/private",
+    ))
+    await _mk(db, ScheduledTask(
+        user_id=user_a.id, name="闲鱼上新", payload="检查商品", cron="0 9 * * *", enabled=True,
+    ))
+    await _mk(db, ScheduledTask(
+        user_id=user_b.id, name="闲鱼私人任务", payload="不可见", cron="0 9 * * *", enabled=True,
+    ))
+
+    mcp_result = await _run_ilike_search(db, user_a.id, "闲鱼", types=["mcp"])
+    task_result = await _run_ilike_search(db, user_a.id, "闲鱼", types=["scheduled_task"])
+
+    assert [item["title"] for item in mcp_result["groups"][0]["items"]] == ["闲鱼服务"]
+    assert [item["title"] for item in task_result["groups"][0]["items"]] == ["闲鱼上新"]
 
 
 async def test_global_search_tool_requires_query(db, user_a):

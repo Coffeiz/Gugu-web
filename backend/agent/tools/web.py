@@ -297,18 +297,10 @@ async def _web_download(db, user_id, args: dict):
     max_bytes = None
     storage_limit = None
     try:
-        from sqlalchemy import func, select
-        from app.models import File, User
-        user = await db.get(User, user_id)  # ownership-exempt: User 主键即本人身份；orm-exempt: 读取本人配额设置
-        storage_limit = (getattr(user, "storage_limit_bytes", None)
-                         or get_settings().quota.default_storage_limit_bytes)
-        if storage_limit is not None:
-            used = (await db.execute(
-                select(func.coalesce(func.sum(File.size_bytes), 0)).where(
-                    File.user_id == user_id, File.deleted_at.is_(None),
-                )
-            )).scalar_one()
-            max_bytes = max(int(storage_limit) - int(used or 0), 0)
+        from app.services.storage.quota_ledger import get_file_library_download_budget
+        storage_limit, max_bytes = await get_file_library_download_budget(
+            db, user_id, get_settings().quota.default_storage_limit_bytes,
+        )
     except Exception:
         # 位置解析/下载本身不应因统计失败被伪装成成功；保存阶段仍会做最终配额校验。
         max_bytes = None
