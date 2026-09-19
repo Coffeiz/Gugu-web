@@ -64,7 +64,6 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     const segmentedRoot = cssBlock(filesCss, '.rename-sizer--segmented {')
     const renameSizer = cssBlock(filesCss, '.rename-sizer {')
     const sharedRenameInput = cssBlock(filesCss, '.rename-input-inline {')
-    const sizerRenameInput = cssBlock(filesCss, '.rename-sizer .rename-input-inline {')
     const segmentField = cssBlock(filesCss, '.rename-segment-field {')
     const renameSurface = cssBlock(surfacesAdoption, 'html[data-theme][data-family] .rename-input-inline {')
     const renameHover = cssBlock(surfacesAdoption, '.rename-input-inline:hover {')
@@ -80,7 +79,6 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(sharedRenameInput).not.toContain('height: 100%;')
     expect(sharedRenameInput).toContain('font: inherit;')
     expect(sharedRenameInput).not.toContain('line-height: normal;')
-    expect(sizerRenameInput).toContain('line-height: 1.15;')
     expect(filesCss).not.toContain('.rename-sizer--segmented .rename-input-inline')
     expect(sharedForms).toContain('line-height: var(--line-height-body);')
     expect(renameSurface).toContain('border-color: var(--input-border);')
@@ -100,6 +98,18 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(surfacesAdoption.match(/\.rename-input-inline/g)).toHaveLength(3)
     expect(filesCss).toContain('.rename-file-extension-field { flex: 0 0 5ch; width: 5ch; }')
     expect(filesCss).toContain('.rename-file-extension-input { text-align: center; }')
+  })
+
+  it('文件夹与文件 rename 保留完整下伸字形且绝对定位不撑高卡片', () => {
+    const sizerRenameInput = cssBlock(filesCss, '.rename-sizer .rename-input-inline {')
+    const sharedRenameInput = cssBlock(filesCss, '.rename-input-inline {')
+    expect(sizerRenameInput).toContain('line-height: inherit;')
+    expect(sizerRenameInput).toContain('top: -1px; bottom: -1px;')
+    expect(sizerRenameInput).not.toContain('line-height: 1.15;')
+    expect(sharedRenameInput).toContain('position: absolute;')
+    expect(filesCss).toContain('.rename-ghost {')
+    expect(cssBlock(filesCss, '.rename-ghost {')).toContain('display: block; visibility: hidden; white-space: pre;')
+    expect(sizerRenameInput).not.toMatch(/(?:^|[;{\s])height\s*:/)
   })
 
   it('共享重命名输入框自动聚焦与失焦提交会给标准焦点过渡留出时间', () => {
