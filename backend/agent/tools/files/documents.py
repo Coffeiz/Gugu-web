@@ -911,7 +911,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="edit_file", label="修改文件",
-            description_short='修改 UTF-8 文本文件；支持整体替换、追加和查找替换。',
+            description_short='修改 UTF-8 文本；单项编辑模式互斥，批量编辑时每个条目分别选择一种操作。',
             description="修改 UTF-8 文本文件；支持整体替换、追加、查找替换和按 target_lines 更新/删除指定行，多个文件用 edits 批量处理。target_lines 支持 8、8-11、8,11，content 为空表示删除；行号以最新 read_file 内容为准，多个范围不能重叠。",
             input_schema={
                 "type": "object",
@@ -942,14 +942,14 @@ class FilesSkill(BaseSkill):
                                     "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
                                     "then": {
                                         "required": ["content"],
-                                        "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
+                                        "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}, {"required": ["line_edits"]}]},
                                     },
                                 },
                                 {
                                     "if": {"required": ["mode"], "properties": {"mode": {"const": "find_replace"}}},
                                     "then": {
                                         "required": ["find", "replace"],
-                                        "not": {"required": ["content"]},
+                                        "not": {"anyOf": [{"required": ["content"]}, {"required": ["line_edits"]}]},
                                     },
                                 },
                                 {"if": {"required": ["mode"], "properties": {"mode": {"const": "line_edit"}}}, "then": {"required": ["line_edits"], "not": {"anyOf": [{"required": ["content"]}, {"required": ["find"]}, {"required": ["replace"]}]}}},
@@ -971,14 +971,14 @@ class FilesSkill(BaseSkill):
                         "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
                         "then": {
                             "required": ["content"],
-                            "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
+                            "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}, {"required": ["line_edits"]}]},
                         },
                     },
                     {
                         "if": {"required": ["mode"], "properties": {"mode": {"const": "find_replace"}}},
                         "then": {
                             "required": ["find", "replace"],
-                            "not": {"required": ["content"]},
+                            "not": {"anyOf": [{"required": ["content"]}, {"required": ["line_edits"]}]},
                         },
                     },
                 ],
