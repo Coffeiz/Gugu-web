@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.sandbox import docker_runtime
+from agent.sandbox.docker import _image_ref
 
 
 def test_probe_reports_missing_docker(monkeypatch):
@@ -79,6 +80,51 @@ def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
     assert docker_runtime.sandbox_readiness(settings)[0] is False
     assert docker_runtime.valid_image_digest("sha256:" + "f" * 64)
     assert not docker_runtime.valid_image_digest("sha256:" + "g" * 64)
+    assert docker_runtime.valid_image_digest("bundled")
+
+
+def test_bundled_image_is_verified_by_local_image_id(monkeypatch, tmp_path):
+    expected_id = "sha256:" + "a" * 64
+    image_id_file = tmp_path / "image-id"
+    image_id_file.write_text(expected_id, encoding="ascii")
+    monkeypatch.setattr(docker_runtime, "_BUNDLED_IMAGE_ID_FILE", image_id_file)
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda _name: "/usr/bin/docker")
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout=expected_id)
+
+    monkeypatch.setattr(docker_runtime.subprocess, "run", fake_run)
+
+    assert docker_runtime.image_available("coffeiz/gugu-sandbox:bundled", "bundled")
+    assert calls == [[
+        "/usr/bin/docker", "image", "inspect", "--format", "{{.Id}}",
+        "coffeiz/gugu-sandbox:bundled",
+    ]]
+
+
+def test_bundled_image_rejects_id_mismatch_and_invalid_manifest(monkeypatch, tmp_path):
+    image_id_file = tmp_path / "image-id"
+    image_id_file.write_text("sha256:" + "a" * 64, encoding="ascii")
+    monkeypatch.setattr(docker_runtime, "_BUNDLED_IMAGE_ID_FILE", image_id_file)
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        docker_runtime.subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="sha256:" + "b" * 64),
+    )
+    assert not docker_runtime.image_available("coffeiz/gugu-sandbox:bundled", "bundled")
+
+    image_id_file.write_text("not-an-image-id", encoding="ascii")
+    assert not docker_runtime.image_available("coffeiz/gugu-sandbox:bundled", "bundled")
+
+
+def test_bundled_image_ref_uses_local_tag_without_digest_pull_reference():
+    settings = SimpleNamespace(
+        image="coffeiz/gugu-sandbox:bundled",
+        image_digest="bundled",
+    )
+    assert _image_ref(settings) == "coffeiz/gugu-sandbox:bundled"
 
 
 def test_image_available_uses_current_docker_daemon(monkeypatch):

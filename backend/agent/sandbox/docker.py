@@ -152,11 +152,13 @@ def _image_ref(settings: SandboxSettings) -> str:
     if not digest:
         raise ValueError("尚未配置固定镜像 digest")
     if not valid_image_digest(digest):
-        raise ValueError("镜像 digest 必须是 sha256: 加 64 位摘要")
+        raise ValueError("镜像 digest 必须是 sha256: 加 64 位摘要或 bundled")
     image = settings.image.strip()
     if not image or any(char in image for char in "\r\n "):
         raise ValueError("沙盒镜像名称无效")
-    return f"{image}@{digest}"
+    # bundled 表示镜像由一体化镜像内嵌并由 sandbox-bootstrap 导入；启动前
+    # image_available 会将本地 image ID 与随包清单比对，运行时仍禁止自动 pull。
+    return image if digest == "bundled" else f"{image}@{digest}"
 
 
 class DockerSandboxExecutor:

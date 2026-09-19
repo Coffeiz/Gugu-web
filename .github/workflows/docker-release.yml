@@ -55,13 +55,95 @@ jobs:
           scripts/release/compose-update.test.mjs
           scripts/release/docker-release-tags.test.mjs
 
+  sandbox-build:
+    # Sandbox 单独构建/扫描一次，再把同一制品内嵌到一体化镜像，避免重复构建或发布未扫描内容。
+    name: Build & scan sandbox runtime
+    needs: compose-validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve sandbox image ref
+        id: img
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', env.SANDBOX_IMAGE_REPOSITORY, github.run_id) || 'gugu-sandbox:ci' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build sandbox runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/sandbox
+          file: docker/sandbox/Dockerfile
+          platforms: linux/amd64
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          load: true
+          tags: ${{ steps.img.outputs.ref }}
+          no-cache: true
+          build-args: |
+            APT_MIRROR=http://deb.debian.org
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
+
+      - name: Smoke test sandbox runtime
+        run: |
+          docker run --rm --entrypoint bash ${{ steps.img.outputs.ref }} -lc '
+            set -eu
+            python --version
+            node --version
+            npm --version
+            ffmpeg -version | head -n 1
+            git --version
+            python -c "import matplotlib, PIL; matplotlib.use(\"Agg\"); import matplotlib.pyplot as plt; plt.plot([0, 1], [0, 1]); plt.savefig(\"/tmp/sandbox-smoke.png\")"
+            test -s /tmp/sandbox-smoke.png
+          '
+
+      - name: Scan sandbox image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.img.outputs.ref }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Package sandbox image for the all-in-one image
+        run: |
+          docker tag "${{ steps.img.outputs.ref }}" coffeiz/gugu-sandbox:bundled
+          docker image inspect --format '{{.Id}}' coffeiz/gugu-sandbox:bundled > image-id
+          docker save coffeiz/gugu-sandbox:bundled | gzip -1 > sandbox-image.tar.gz
+
+      - name: Upload bundled sandbox runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundled-sandbox-runtime
+          path: |
+            sandbox-image.tar.gz
+            image-id
+          if-no-files-found: error
+          retention-days: 1
+
   docker-build:
-    # 四个镜像按 matrix 并行构建+扫描：墙钟时间 ≈ 最慢单镜像（原串行 ~19 分钟）。
+    # 三个业务镜像并行；app 等待 sandbox 制品，以便将已扫描镜像随一体化镜像交付。
     # CI 在 GitHub 托管 runner（海外）上直连官方源比默认 TUNA（国内镜像）快；
     # APT_MIRROR / PIP_INDEX_URL 只覆盖声明了这些 ARG 的镜像（backend/app/sandbox），
     # 未声明的自动忽略。本地/devserver 构建不传参数，仍走 TUNA 默认。
     name: Build & scan ${{ matrix.name }}
-    needs: compose-validate
+    needs: [compose-validate, sandbox-build]
     runs-on: ubuntu-latest
     # tag 触发时镜像推 :ci-<run_id>，publish 对该 digest 纯复制发布，需要 GHCR 写权限。
     permissions:
@@ -94,14 +176,6 @@ jobs:
             cache-scope: default-compose
             # python slim 自带 ca-certificates，可用 https 官方源
             apt_mirror: https://deb.debian.org
-          - name: sandbox
-            context: docker/sandbox
-            dockerfile: docker/sandbox/Dockerfile
-            tag: gugu-sandbox:ci
-            ci_image: ghcr.io/coffeiz/gugu-sandbox
-            cache-scope: sandbox
-            # bookworm-slim 内无 ca-certificates（在安装清单里），必须走 http
-            apt_mirror: http://deb.debian.org
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -118,6 +192,13 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Download bundled sandbox runtime
+        if: matrix.name == 'app'
+        uses: actions/download-artifact@v4
+        with:
+          name: bundled-sandbox-runtime
+          path: docker/sandbox/bundle
 
       # 本地镜像引用：tag 触发时 build 只带全限定 :ci-<run_id> 一个 tag（push+load
       # 双 exporter，本地名即限定名），非 tag 运行仍是非限定 :ci。下方 smoke 与
@@ -141,8 +222,7 @@ jobs:
           push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           load: true
           tags: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}
-          # 沙盒镜像必须每轮全新构建（见下方冒烟注释），其余镜像吃 gha 层缓存。
-          no-cache: ${{ matrix.name == 'sandbox' }}
+          no-cache: false
           # 版本 label 必须在构建期带真实 tag：publish 复制不改内容，updater 靠
           # org.opencontainers.image.version 识别当前版本。
           build-args: |
@@ -153,24 +233,6 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.cache-scope }}
           cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
 
-      # 沙盒镜像不走构建层缓存：apt 层一旦命中旧缓存，apt-get upgrade 不会真跑，
-      # 镜像里就是旧包，而 trivy 漏洞库每次都是最新，必然假红（linux-libc-dev
-      # 6.1.180-1 vs 6.1.187-1 案例 2026-09-10）。Dockerfile 内的 apt 下载 cache
-      # mount 不受此限：软件源索引每轮照拉、upgrade 照跑，只复用未变版本的 .deb 下载。
-      - name: Smoke test Shell sandbox runtime
-        if: matrix.name == 'sandbox'
-        run: |
-          docker run --rm --entrypoint bash ${{ steps.img.outputs.ref }} -lc '
-            set -eu
-            python --version
-            node --version
-            npm --version
-            ffmpeg -version | head -n 1
-            git --version
-            python -c "import matplotlib, PIL; matplotlib.use(\"Agg\"); import matplotlib.pyplot as plt; plt.plot([0, 1], [0, 1]); plt.savefig(\"/tmp/sandbox-smoke.png\")"
-            test -s /tmp/sandbox-smoke.png
-          '
-
       - name: Smoke test TS RAG worker
         if: matrix.name == 'app'
         run: docker run --rm --entrypoint node ${{ steps.img.outputs.ref }} bin/gugu-rag-ts-worker.mjs --version
@@ -180,6 +242,7 @@ jobs:
         run: |
           docker run --rm --entrypoint python3 ${{ steps.img.outputs.ref }} -c 'import updater.daemon'
           docker run --rm --entrypoint docker ${{ steps.img.outputs.ref }} compose version
+          docker run --rm --entrypoint sh ${{ steps.img.outputs.ref }} -c 'test -s /opt/gugu/sandbox/sandbox-image.tar.gz && grep -Eq "^sha256:[0-9a-f]{64}$" /opt/gugu/sandbox/image-id'
 
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
@@ -201,7 +264,7 @@ jobs:
   publish:
     name: Publish Docker Hub app and GHCR business images
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [compose-validate, docker-build]
+    needs: [compose-validate, sandbox-build, docker-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write

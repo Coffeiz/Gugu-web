@@ -161,7 +161,7 @@ class SandboxSettings(BaseModel):
     image: str = Field("debian:bookworm-slim", description="Shell 沙盒基础镜像")
     image_digest: str = Field(
         "sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171",
-        description="已验证的固定镜像 digest；必须与当前 daemon 已加载镜像一致",
+        description="已验证的镜像 digest；一体化部署使用 bundled 并校验内嵌 image ID",
     )
     rootless_required: bool = Field(True, description="是否要求 Rootless Docker")
     network_profile: Literal["none", "egress"] = Field("none", description="容器网络策略；默认断网，egress 仅在受控代理配置后可用")
