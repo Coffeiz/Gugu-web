@@ -82,6 +82,7 @@ import { useReferenceSuggest } from '@/composables/mind/useReferenceSuggest'
 import { loadChatCommands, type ChatCommandOption } from './chatCommands'
 import { mindExtensions, type MindDocNode } from '@/composables/mind/useMindEditor'
 import { chatTextFromDoc } from './chatDocText'
+import { parseChatClipboardText, pastePlainTextClipboard } from './chatPaste'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -366,6 +367,7 @@ const chatEditor = useEditor({
   enablePasteRules: false,
   editorProps: {
     attributes: { class: 'chat-prosemirror' },
+    clipboardTextParser: parseChatClipboardText,
     handleKeyDown: (_view, event) => {
       onKeydown(event)
       if (event.defaultPrevented) return true
@@ -378,7 +380,8 @@ const chatEditor = useEditor({
     },
     handlePaste: (_view, event) => {
       props.onPaste(event)
-      return false
+      if (event.defaultPrevented) return true
+      return pastePlainTextClipboard(event, _view)
     },
   },
   onUpdate: syncEditorState,
