@@ -21,18 +21,9 @@
             @error="($event.target as HTMLElement).style.display='none'" />
         </template>
         <template #name>
-          <span v-if="renamingId === f.id" class="rename-sizer" @click.stop>
-            <span class="rename-ghost">{{ renameText || ' ' }}</span>
-            <input
-              ref="renameInputRef"
-              class="rename-input-inline"
-              v-model="renameText"
-              v-enter.prevent="() => commitRename(f)"
-              @keydown.esc="renamingId = null"
-              @blur="commitRename(f)"
-              @focus="($event.target as HTMLInputElement).select()"
-            />
-          </span>
+          <RenameInput v-if="renamingId === f.id" v-model="renameText" v-model:extension="renameExtension"
+            :extension-required="f.ext.toUpperCase() !== 'FILE'"
+            @commit="commitRename(f)" @cancel="cancelRename" />
           <template v-else>{{ f.name }}</template>
         </template>
         <template #meta>
@@ -88,10 +79,12 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/shared/useThumbCache'
-import { isImageExt } from '@/utils/fileTypes'
+import { isImageExt, normalizeEditableExtension } from '@/utils/fileTypes'
 import { useI18n } from 'vue-i18n'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { showAppError } from '@/composables/core/useAppToast'
 import FileCard from '@/components/common/file-browser/FileCard.vue'
+import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 
@@ -110,7 +103,7 @@ const rawFiles      = computed(() => [...store.allFiles].sort((a, b) => b.id - a
 const thumbMap      = shallowRef<Record<number, { version?: number; tiny?: string | null; card?: string | null }>>({}) // id → 当前正文版本的缩略图，shallowRef 批量更新减少 trigger 次数
 const renamingId    = ref<number | string | null>(null)
 const renameText    = ref('')
-const renameInputRef = ref<any>(null)
+const renameExtension = ref('')
 const projectStore  = useProjectStore()
 const previewStore  = usePreviewStore()
 const projects      = computed(() => projectStore.projects)
@@ -186,24 +179,40 @@ function openFile(f: any) {
 async function startRename(f: any) {
   renamingId.value = f.id
   renameText.value = f.name
-  await nextTick()
-  const el = renameInputRef.value?.[0] ?? renameInputRef.value
-  el?.focus(); el?.select()
+  renameExtension.value = f.ext.toUpperCase() === 'FILE' ? '' : f.ext.toLowerCase()
 }
 
 async function commitRename(f: any) {
   const name = renameText.value.trim()
+  const normalizedExtension = normalizeEditableExtension(renameExtension.value)
+  if (!name) { cancelRename(); return }
+  if (normalizedExtension == null || (!normalizedExtension && f.ext.toUpperCase() !== 'FILE')) {
+    showAppError(t('filesUi.extensionInvalid'))
+    await nextTick()
+    panelRef.value?.querySelector<HTMLInputElement>('.rename-file-extension-input')?.focus()
+    return
+  }
+  const extension = normalizedExtension || undefined
+  const nextExtension = extension ?? f.ext
   renamingId.value = null
-  if (!name || name === f.name) return
+  renameText.value = ''
+  renameExtension.value = ''
+  if (name === f.name && nextExtension === f.ext) return
   const previous = store.getFile(f.id)
   try {
     await InteractionSync.execute({
       scope: 'file.dashboard-rename', entityKey: `file:${f.id}`,
-      apply: () => store.updateFile(f.id, { displayName: name }),
-      rollback: () => { if (previous) store.updateFile(f.id, { displayName: previous.displayName }) },
-      request: mutation => filesApi.update(f.id, { displayName: name }, { mutationId: mutation.mutationId }),
+      apply: () => store.updateFile(f.id, { displayName: name, ext: nextExtension }),
+      rollback: () => { if (previous) store.updateFile(f.id, { displayName: previous.displayName, ext: previous.ext }) },
+      request: mutation => filesApi.update(f.id, { displayName: name, ...(extension ? { ext: extension } : {}) }, { mutationId: mutation.mutationId }),
     })
   } catch { /* 统一事务已回滚 */ }
+}
+
+function cancelRename() {
+  renamingId.value = null
+  renameText.value = ''
+  renameExtension.value = ''
 }
 
 async function downloadFile(f: any) {

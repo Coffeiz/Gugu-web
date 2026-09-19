@@ -322,6 +322,7 @@ class FileCopyBody(CamelModel):
 
 class FileUpdate(CamelModel):
     display_name: Optional[str] = None
+    ext: Optional[str] = None
     stage_name: Optional[str] = None
     folder_id: Optional[int] = None
     project_id: Optional[int] = None
@@ -333,6 +334,16 @@ class FileUpdate(CamelModel):
         if v is None:
             return v
         return _validate_name(v)
+
+    @field_validator("ext")
+    @classmethod
+    def extension_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        normalized = v.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9_-]{1,10}", normalized) or normalized == "FILE":
+            raise ValueError("后缀仅支持 1 到 10 位字母、数字、下划线或连字符")
+        return normalized
 
 
 # ── Folder ────────────────────────────────────────────────────────────────────

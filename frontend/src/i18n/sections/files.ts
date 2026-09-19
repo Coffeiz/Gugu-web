@@ -5,6 +5,7 @@ export const filesUi = {
 } as const
 
 Object.assign(filesUi['zh-CN'], {
+  fileNameWithoutExtension: '文件名（不含后缀）', fileExtension: '文件后缀', extensionInvalid: '请输入 1 到 10 位字母、数字、下划线或连字符；不能使用 FILE。',
   compress: '压缩', extract: '解压', archiveCompressTitle: '压缩所选内容', archiveExtractTitle: '解压文件',
   archiveCompressHint: '所选文件与文件夹将在当前目录打包为 ZIP；源内容上限为 512 MB。',
   archiveExtractHint: '压缩包保留在当前目录，并在旁边新建文件夹解压；可修改文件夹名称。',
@@ -17,6 +18,7 @@ Object.assign(filesUi['zh-CN'], {
   downloadFailed: '下载失败，请稍后重试。',
 })
 Object.assign(filesUi['ja-JP'], {
+  fileNameWithoutExtension: 'ファイル名（拡張子なし）', fileExtension: 'ファイル拡張子', extensionInvalid: '拡張子は英数字、アンダースコア、ハイフンの 1～10 文字で入力してください。FILE は使用できません。',
   compress: '圧縮', extract: '解凍', archiveCompressTitle: '選択項目を圧縮', archiveExtractTitle: 'ファイルを解凍',
   archiveCompressHint: '選択したファイルとフォルダーを現在のフォルダーで ZIP にまとめます。元データの上限は 512 MB です。',
   archiveExtractHint: 'アーカイブを現在のフォルダーに残し、隣に新しいフォルダーを作成して展開します。フォルダー名は変更できます。',
@@ -29,6 +31,7 @@ Object.assign(filesUi['ja-JP'], {
   downloadFailed: 'ダウンロードに失敗しました。しばらくしてから再試行してください。',
 })
 Object.assign(filesUi['en-US'], {
+  fileNameWithoutExtension: 'File name without extension', fileExtension: 'File extension', extensionInvalid: 'Use 1–10 letters, numbers, underscores, or hyphens. FILE is reserved.',
   compress: 'Compress', extract: 'Extract', archiveCompressTitle: 'Compress selected items', archiveExtractTitle: 'Extract archive',
   archiveCompressHint: 'Selected files and folders will be packed into a ZIP in the current folder. Source content is limited to 512 MB.',
   archiveExtractHint: 'The archive stays here; its contents are extracted into a new folder beside it. You can edit the folder name.',

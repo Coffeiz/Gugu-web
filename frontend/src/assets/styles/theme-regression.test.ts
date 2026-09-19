@@ -415,7 +415,7 @@ describe('主题 CSS 回归契约', () => {
 
   it('文件卡亮色保持 0.20.4 多选层级，暗色只重映射 token 且没有 adoption paint 竞争', () => {
     // 0.20.4 light baseline：普通文件整卡 .14；图片在整卡层之上再加 .28 缩略图层。
-    expect(componentSurfacesCss).toContain('--file-card-bg: rgba(255,255,255,.72);')
+    expect(componentSurfacesCss).toContain('--file-card-bg: rgba(255,255,255,.75);')
     expect(componentSurfacesCss).toContain('--file-card-bg-hover: rgba(255,255,255,.86);')
     expect(componentSurfacesCss).toContain('--file-card-bg-selected: rgba(255,255,255,.92);')
     expect(componentSurfacesCss).toContain('--file-card-border-selected: rgba(123,127,178,.55);')

@@ -129,6 +129,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { useUiStore } from '@/stores/ui'
 import { workspacesApi } from '@/services/api'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { showAppError } from '@/composables/core/useAppToast'
 import { useFileSelection } from '@/composables/files/useFileSelection'
 import { useProjectFileWorkspace } from '@/composables/files/useProjectFileWorkspace'
 import { useFileActions } from '@/composables/files/useFileActions'
@@ -464,10 +465,12 @@ async function createFolder() {
 
 const {
   renamingFileId, renameText, startRename, cancelRename, commitRename,
+  renameExtension,
   renamingFolderId, folderRenameText, startRenameFolder, cancelFolderRename, commitFolderRename,
 } = useProjectFileRename({
-  renameFile: (id, name) => projectFileMutations.renameFile(id, name).catch(e => console.error('[ProjectModal] 重命名失败:', errMsg(e))),
+  renameFile: (id, name, extension) => projectFileMutations.renameFile(id, name, extension).catch(e => console.error('[ProjectModal] 重命名失败:', errMsg(e))),
   renameFolder: (id, name) => projectFileMutations.renameFolder(id, name).catch(e => console.error('[ProjectModal] 文件夹重命名失败:', errMsg(e))),
+  onInvalidExtension: () => showAppError(t('filesUi.extensionInvalid')),
 })
 
 // ── 删除 ─────────────────────────────────────────────────────────────────────
@@ -707,6 +710,7 @@ const filePanelContext = {
   startRename,
   commitRename,
   renameText,
+  renameExtension,
   cancelRename,
   thumbLoadedIds,
   downloadFile,

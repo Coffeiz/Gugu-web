@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException, UploadFile
+from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.datastructures import Headers
 
@@ -98,6 +99,24 @@ async def test_patch_rename_endpoint(db, user_a):
     r = await files_api.update_file(up.id, FileUpdate(display_name="new"),
                                     current_user=user_a, origin=None, db=db)
     assert r.display_name == "new"
+
+
+async def test_patch_extension_endpoint_updates_suffix_only(db, user_a):
+    up = await _do_upload(db, user_a, b"unchanged", "notes.txt")
+    file_row = await db.get(File, up.id)
+    r = await files_api.update_file(up.id, FileUpdate(ext="md"),
+                                    current_user=user_a, origin=None, db=db)
+    assert r.ext == "MD"
+    assert r.display_name == "notes"
+    assert r.mime_type == up.mime_type
+    await db.refresh(file_row)
+    assert await files_api.get_storage().get(file_row.storage_key) == b"unchanged"
+
+
+@pytest.mark.parametrize("extension", ["", "FILE", "waytoolonggg", "bad.ext", "坏"])
+def test_file_update_rejects_invalid_extension(extension):
+    with pytest.raises(ValidationError):
+        FileUpdate(ext=extension)
 
 
 async def test_patch_not_found(db, user_a):

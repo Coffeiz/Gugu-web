@@ -222,6 +222,7 @@ import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileLibraryContextActions } from '@/composables/files/useFileLibraryContextActions'
 import { useFileLibraryUpload } from '@/composables/files/useFileLibraryUpload'
 import { useFileLibraryRename } from '@/composables/files/useFileLibraryRename'
+import { showAppError } from '@/composables/core/useAppToast'
 import { useFileStorageUsage } from '@/composables/files/useFileStorageUsage'
 import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
 import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryFolderActions'
@@ -639,16 +640,17 @@ const rename = useFileLibraryRename({
   getFolder: id => cacheStore.getFolder(id),
   updateFile: (id, patch) => cacheStore.updateFile(id, patch),
   updateFolder: (id, patch) => cacheStore.updateFolder(id, patch),
-  renameFile: async (id, name) => { await fileActions.renameFile(id, name) },
+  renameFile: async (id, name, extension, meta) => { await fileActions.renameFile(id, name, meta, extension) },
   renameFolder: async (id, name, version) => {
     const updated = await fileActions.renameFolder(id, name, version)
     return { version: updated.version }
   },
   reload: loadContents,
+  onInvalidExtension: () => showAppError(t('filesUi.extensionInvalid')),
   onError: (scope, error) => console.error(`[Files] ${scope === 'file' ? '文件' : '文件夹'}重命名失败:`, (error as Error).message),
 })
 const {
-  renamingFileId, renamingFolderKey, renameText,
+  renamingFileId, renamingFolderKey, renameText, renameExtension,
   startFile: startRenameFile, startFolder: startRenameFolder,
   cancel: cancelRename, commit: commitRename,
 } = rename
@@ -823,7 +825,7 @@ const canCompressContextSelection = computed(() => {
 })
 const gridViewContext = {
   contents, sortedContents, selectedFolderKeys, previewFolderKeys, inSelectionMode,
-  openCtx, folderListIcon, folderAccentColor, handleFolderClick,
+  openCtx, folderListIcon, folderAccentColor, handleFolderClick, renameExtension,
   renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder,
   deleteFolder, selectedIds, previewFileIds, cbStore, handleFileClick,
   isExtractableArchive, extractFile,
@@ -838,7 +840,7 @@ const listViewContext = {
   folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
   startRenameFolder, downloadFolder, deleteFolder, inSelectionMode, selectedIds,
   previewFileIds, cbStore, handleFileClick,
-  isExtractableArchive, extractFile,
+  isExtractableArchive, extractFile, renameExtension,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
   deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
   folderLayoutKey, fileLayoutKey,

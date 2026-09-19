@@ -83,8 +83,8 @@ export function useFileActions(options: FileActionOptions = {}) {
     return foldersApi.download(id, name)
   }
 
-  function renameFile(id: number, displayName: string, meta?: RequestMeta) {
-    return filesApi.update(id, { displayName }, meta)
+  function renameFile(id: number, displayName: string, meta?: RequestMeta, extension?: string) {
+    return filesApi.update(id, { displayName, ...(extension !== undefined ? { ext: extension } : {}) }, meta)
   }
 
   function renameFolder(id: number, name: string, version: number, meta?: RequestMeta) {

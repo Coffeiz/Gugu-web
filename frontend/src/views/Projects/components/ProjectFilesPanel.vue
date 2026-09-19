@@ -96,11 +96,8 @@
                     <div class="fc-thumb-fade"></div>
                   </template>
                   <template #name>
-                    <span v-if="renamingFileId === file.id" class="rename-sizer" @click.stop>
-                      <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                      <input class="rename-input-inline" v-model="renameText"
-                        v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
-                    </span>
+                    <RenameInput v-if="renamingFileId === file.id" v-model="renameText" v-model:extension="renameExtension"
+                      :extension-required="file.ext.toUpperCase() !== 'FILE'" @commit="commitRename" @cancel="cancelRename" />
                     <template v-else>{{ file.displayName }}</template>
                   </template>
                   <template #meta>{{ file.stageName ? file.stageName + ' · ' : '' }}{{ file.size }}</template>
@@ -200,13 +197,10 @@
                   @click.stop="pmHandleFileClick(file, $event)"
                   >
                   <span class="lr-name-cell">
-                    <span class="lr-ext" :style="{ color: fileIconColor(file.ext), background: fileIconColor(file.ext) + '18' }">{{ file.ext }}</span>
+                    <span v-if="renamingFileId !== file.id" class="lr-ext" :style="{ color: fileIconColor(file.ext), background: fileIconColor(file.ext) + '18' }">{{ file.ext }}</span>
                     <span class="lr-filename" :title="file.displayName">
-                      <span v-if="renamingFileId === file.id" class="rename-sizer" @click.stop>
-                        <span class="rename-ghost">{{ renameText || ' ' }}</span>
-                        <input class="rename-input-inline" v-model="renameText"
-                          v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" />
-                      </span>
+                      <RenameInput v-if="renamingFileId === file.id" v-model="renameText" v-model:extension="renameExtension"
+                        :extension-required="file.ext.toUpperCase() !== 'FILE'" @commit="commitRename" @cancel="cancelRename" />
                       <template v-else>{{ file.displayName }}</template>
                     </span>
                   </span>
@@ -278,6 +272,7 @@ import { type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
+import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'
 import RuntimeFolderCard from '@/components/common/file-browser/RuntimeFolderCard.vue'
 import RuntimeListRow from '@/components/common/file-browser/RuntimeListRow.vue'
@@ -300,7 +295,7 @@ const {
   pmSelectedFolderIds, pmPreviewFolderIds, onPmFolderClick, runtimeScope,
   renamingFolderId, commitFolderRename, startRenameFolder, downloadFolderZip, deleteFolderCard,
   folderRenameText, cancelFolderRename, sortedCurrentFiles, isPmImageExt, pmSelectedFileIds,
-  pmPreviewFileIds, renamingFileId, startRename, commitRename, renameText,
+  pmPreviewFileIds, renamingFileId, startRename, commitRename, renameText, renameExtension,
   cancelRename, thumbLoadedIds, downloadFile, deleteFile, pmHandleFileClick,
   uploadingItems, dragging, handleFileDrop, handleFileInput, fileIconColor, pmDownloadingZip,
   downloadSelectedPm, pmSelCut, pmSelCopy, deleteSelectedPm, clearPmSelection, pmCbStore,

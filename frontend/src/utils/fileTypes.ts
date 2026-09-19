@@ -10,6 +10,13 @@ import {
   PhPresentationChart, PhArchive, PhCode, PhFileText,
 } from '@phosphor-icons/vue'
 
+/** 将用户编辑的文件后缀标准化；空值表示保留无后缀文件的 FILE 哨兵。 */
+export function normalizeEditableExtension(value: string): string | null {
+  const normalized = value.trim().toUpperCase()
+  if (!normalized) return ''
+  return /^[A-Z0-9_-]{1,10}$/.test(normalized) && normalized !== 'FILE' ? normalized : null
+}
+
 // 能出缩略图的图片类型（决定文件卡是否渲染 thumb 区）；与后端 thumb 生成支持的格式对齐
 const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
 

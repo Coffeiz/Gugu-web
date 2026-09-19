@@ -576,7 +576,7 @@ async def update_file(
     before = file_snapshot(previous) if previous else None
     result = await FileService(db).update_file(
         current_user.id, fid,
-        display_name=body.display_name, stage_name=body.stage_name,
+        display_name=body.display_name, ext=body.ext, stage_name=body.stage_name,
         folder_id=body.folder_id, project_id=body.project_id,
         folder_set='folder_id' in body.model_fields_set,
         project_set='project_id' in body.model_fields_set,
