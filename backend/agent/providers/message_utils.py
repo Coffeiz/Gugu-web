@@ -213,6 +213,18 @@ def render_openai_request_history(
     return (cleaned, diagnostics) if with_diagnostics else cleaned
 
 
+def strip_responses_item_ids(messages: list) -> list:
+    """从 Chat Completions 请求副本中剥离 Responses 专属历史元数据。"""
+    result = copy.deepcopy(messages)
+    for message in result:
+        if not isinstance(message, dict):
+            continue
+        for call in message.get("tool_calls") or ():
+            if isinstance(call, dict):
+                call.pop("responses_item_id", None)
+    return result
+
+
 def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
     """模型首轮消费图片后，把初始图片消息收敛为稳定文本。"""
     for index in indices:

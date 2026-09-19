@@ -60,12 +60,12 @@ def _raise_if_responses_compatibility_error(exc: Exception) -> None:
         raise ResponsesCompatibilityError(status_code) from exc
 
 
-def _is_stale_response_tool_call_error(exc: Exception) -> bool:
-    """识别 response chain 丢失工具调用 ID 的可恢复错误。
+def _is_stale_response_chain_error(exc: Exception) -> bool:
+    """识别服务端 response chain 丢失的可恢复错误。
 
     兼容服务可能在交互暂停后丢失服务端 response chain，但本地仍保留完整的
-    assistant/tool 往返。这里只匹配明确的 tool-id 错误，避免把普通 400 当成
-    Responses 不兼容或盲目重试。
+    assistant/tool 往返。只匹配明确的 tool-id 或 response-id not-found，避免把
+    普通模型/路由 404 当成 chain 失效或盲目重试。
     """
     searchable = " ".join(
         str(value) for value in (
@@ -76,7 +76,13 @@ def _is_stale_response_tool_call_error(exc: Exception) -> bool:
             getattr(exc, "body", None),
         ) if value is not None
     ).lower()
-    return "tool id" in searchable and "not found" in searchable
+    if "not found" not in searchable:
+        return False
+    return (
+        "tool id" in searchable
+        or "response with id" in searchable
+        or "response_id" in searchable
+    )
 
 
 # OpenAI Responses（独立于 Chat Completions 的 response chain）
@@ -123,6 +129,34 @@ def _responses_tools(tools: list[dict]) -> list[dict]:
     return result
 
 
+def _responses_content(content: Any) -> Any:
+    """把 Chat Completions 文本内容块转成 Responses input 内容块。"""
+    if not isinstance(content, list):
+        return content or ""
+    return [
+        {**part, "type": "input_text"}
+        if isinstance(part, dict) and part.get("type") == "text"
+        else part
+        for part in content
+    ]
+
+
+def _responses_content_is_empty(content: Any) -> bool:
+    """判断普通消息是否只有空文本；非文本结构块保持有效。"""
+    if content is None:
+        return True
+    if isinstance(content, str):
+        return not content.strip()
+    if isinstance(content, list):
+        return not any(
+            not isinstance(part, dict)
+            or part.get("type") not in {"text", "input_text"}
+            or str(part.get("text") or "").strip()
+            for part in content
+        )
+    return False
+
+
 def _responses_input(messages: list[dict]) -> list[dict]:
     """将现有 OpenAI 投影转换成 Responses input items。"""
     items: list[dict] = []
@@ -134,7 +168,10 @@ def _responses_input(messages: list[dict]) -> list[dict]:
             continue
         if role == "assistant" and message.get("tool_calls"):
             if message.get("content"):
-                items.append({"role": "assistant", "content": message["content"]})
+                items.append({
+                    "role": "assistant",
+                    "content": _responses_content(message["content"]),
+                })
             for call in message["tool_calls"]:
                 function = call.get("function") or {}
                 items.append({
@@ -142,6 +179,8 @@ def _responses_input(messages: list[dict]) -> list[dict]:
                     "call_id": call.get("id") or call.get("call_id") or "tool-call",
                     "name": function.get("name") or "unknown_tool",
                     "arguments": function.get("arguments") or "{}",
+                    **({"id": call["responses_item_id"]}
+                       if call.get("responses_item_id") else {}),
                 })
             continue
         if role == "tool":
@@ -152,7 +191,11 @@ def _responses_input(messages: list[dict]) -> list[dict]:
             })
             continue
         if role in {"user", "assistant"}:
-            items.append({"role": role, "content": message.get("content") or ""})
+            content = _responses_content(message.get("content"))
+            if _responses_content_is_empty(content):
+                # 丢弃空数组/空文本块，但保留图像等非文本输入块。
+                continue
+            items.append({"role": role, "content": content})
     return items
 
 
@@ -298,7 +341,7 @@ class OpenAIResponsesDriver:
                 # 某些 OpenAI-compatible Responses 服务在 ask_user 等交互暂停期间
                 # 不保留原 response chain。恢复时本地历史仍完整，因此用无状态完整
                 # 历史重试一次，避免把可恢复的 tool-id 失效误报成通用模型错误。
-                if ctx.previous_response_id and _is_stale_response_tool_call_error(exc):
+                if ctx.previous_response_id and _is_stale_response_chain_error(exc):
                     retry_request = dict(wire_request)
                     retry_request.pop("previous_response_id", None)
                     retry_request["input"] = _responses_input(full_rendered)
@@ -391,9 +434,12 @@ class OpenAIResponsesDriver:
             call_id = str(item.get("call_id") or item.get("id") or "tool-call")
             args_text = item.get("arguments") or tool_buf.get(str(item.get("id") or ""), {}).get("args") or "{}"
             name = str(item.get("name") or "unknown_tool")
-            tool_payload.append({"id": call_id, "type": "function", "function": {
+            payload = {"id": call_id, "type": "function", "function": {
                 "name": name, "arguments": args_text,
-            }})
+            }}
+            if item.get("id"):
+                payload["responses_item_id"] = str(item["id"])
+            tool_payload.append(payload)
             parse_error = False
             try:
                 args = json.loads(args_text)
@@ -404,6 +450,7 @@ class OpenAIResponsesDriver:
                 id=call_id, name=name, input=args,
                 parse_error=parse_error,
                 raw_arguments=args_text if not parse_error else None,
+                responses_item_id=(str(item["id"]) if item.get("id") else None),
             ))
         if response_id:
             # 先更新上下文再 yield；核心循环在拿到 done 后会结束当前 generator，

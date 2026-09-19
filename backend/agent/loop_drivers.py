@@ -436,6 +436,8 @@ class OpenAIDriver:
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
         outbound = render_openai_request_history(messages, ctx.adapter)
+        from agent.providers.message_utils import strip_responses_item_ids
+        outbound = strip_responses_item_ids(outbound)
         # OpenAI 兼容端点的原生 KV cache 不等于支持显式 cache_control。
         # DeepSeek 依赖服务端自动缓存；只有经过验证的 provider 才能在消息中
         # 插入显式锚点，避免把 DeepSeek 的自动缓存误走成 Anthropic/Qwen 策略。
