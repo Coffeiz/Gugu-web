@@ -1060,7 +1060,7 @@ async def get_session_messages(
         "timelineEvents": [
             {**item,
              "id": f"{m.id}:{index}",
-             "timelineOrder": m.id * 1000 + index + 1,
+             "timelineOrder": item.get("timelineOrder") or m.id * 1000 + index + 1,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
             for index, item in enumerate(m.display_timeline or [])

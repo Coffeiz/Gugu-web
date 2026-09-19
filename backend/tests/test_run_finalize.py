@@ -111,6 +111,10 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         messages=[{"role": "assistant", "content": "new"}],
         initial_len=0,
         text="reply",
+        display_timeline=[
+            {"kind": "tool", "toolCallId": "call-1", "toolName": "project_details"},
+            {"kind": "assistant", "text": "已查到项目详情"},
+        ],
         files=[],
         tokens_in=100,
         tokens_out=20,
@@ -118,11 +122,17 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         cache_write=5,
         tools_used=["test_tool"],
         compaction_applied=True,
+        user_message_id=321,
     )
 
     assert result.tokens_in == 12
     assert result.tokens_out == 3
     assert len(db.items) == 4  # RAG、tool turn、assistant、usage
+    assistant_row = next(
+        item for item in db.items
+        if isinstance(item, ConversationMessage) and item.role == "assistant" and item.display_timeline
+    )
+    assert [item["timelineOrder"] for item in assistant_row.display_timeline] == [321001, 321002]
     assert trim_calls == [7]
     assert baseline_calls == [(
         (7, "user-test", settings),

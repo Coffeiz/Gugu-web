@@ -923,6 +923,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                         tokens_in=0,
                         tokens_out=0,
                         canonical_batches=[],
+                        user_message_id=getattr(user_message, "id", None),
                         run_id=current_run_id,
                     )
                 except Exception:
@@ -1031,6 +1032,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     tokens_in=0,
                     tokens_out=0,
                     canonical_batches=[],
+                    user_message_id=getattr(user_message, "id", None),
                     run_id=current_run_id,
                 )
         except Exception:
