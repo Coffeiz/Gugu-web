@@ -7,7 +7,7 @@ import hashlib
 import json
 import secrets
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
@@ -759,6 +759,24 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
     if result:
         await db.commit()
     return result
+
+
+async def trim_finished_interactions(
+    db: AsyncSession, *, session_id: int, created_before=None,
+) -> int:
+    """物理删除会话里已完结（resolved/expired/cancelled）的交互卡。
+
+    trim_session_messages 裁掉消息时同步调用：交互卡只是展示数据，应伴随保留的
+    消息存在——不随消息裁切会无限累积挤占会话历史。active（待回复的确认门/选择卡）
+    一律保留（其生命周期由 expires_at 与消费流程负责）。返回删除行数。"""
+    conditions = [
+        InteractionPrompt.session_id == session_id,
+        InteractionPrompt.status.in_(("resolved", "expired", "cancelled")),
+    ]
+    if created_before is not None:
+        conditions.append(InteractionPrompt.created_at < created_before)
+    result = await db.execute(delete(InteractionPrompt).where(*conditions))
+    return result.rowcount or 0
 
 
 async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
