@@ -32,6 +32,11 @@ class RunOutcome:
 
     text: str = ""                       # 最终正文（错误时=错误文案，不入历史）
     round_texts: list = field(default_factory=list)   # 逐轮正文（strip 后，空轮剔除）
+    # 流式顺序的展示时间线（assistant 轮次 + tool 项交错，语义与 gateway/web.py 的
+    # display_timeline 一致）。收尾层优先用它持久化 display_timeline——此前 IM/定时
+    # 路径只存正文轮次，刷新后工具气泡只能走兼容 toolEvents 通道（按 canonical 行
+    # id 排序，全部早于末条 assistant 消息），导致工具气泡整体跳到该轮正文前面。
+    display_timeline_items: list = field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
     cache_read: int = 0
@@ -95,6 +100,23 @@ async def consume_agent_events(
     rounds: list[str] = []
     cur = ""
     continuation_pending = False
+    # 当前轮的展示时间线占位（首个 token 时创建）；工具项按流式顺序插在其后，
+    # 轮次冲刷时回填清洗后的正文——镜像 gateway/web.py 的 display_timeline 语义。
+    active_seg: dict | None = None
+
+    def _close_active_seg(display_round: str) -> None:
+        nonlocal active_seg
+        if active_seg is None:
+            return
+        if display_round:
+            active_seg["text"] = display_round
+        else:
+            # 纯工具轮（清洗后无正文）：占位段不落时间线
+            try:
+                outcome.display_timeline_items.remove(active_seg)
+            except ValueError:
+                pass
+        active_seg = None
 
     async def flush_current_round() -> None:
         """完成当前轮：出站清洗后通知展示 Sink，并按配置外发 ROUND_END。
@@ -108,11 +130,14 @@ async def consume_agent_events(
         completed = cur.strip()
         cur = ""
         san = sanitize.StreamSanitizer(adapter=provider_adapter)
+        display_round = ""
+        if completed:
+            from agent.outbound import sanitize_outbound
+            display_round = sanitize.strip_disallowed_emoji(sanitize_outbound(completed)).strip()
+        _close_active_seg(display_round)
         if not completed:
             return
         if sink.on_round is not None:
-            from agent.outbound import sanitize_outbound
-            display_round = sanitize.strip_disallowed_emoji(sanitize_outbound(completed)).strip()
             await _notify_round(sink.on_round, display_round)
         if sink.yield_round_ends:
             from agent.interactions.events import ROUND_END
@@ -146,19 +171,34 @@ async def consume_agent_events(
                 outcome.compaction_applied = bool(evt.get("applied")) or outcome.compaction_applied
             elif t == "token":
                 token = san.feed(evt.get("content", ""))
-                cur += token
-                if token and sink.yield_tokens:
-                    yield (EVENT_TOKEN, token)
+                if token:
+                    if active_seg is None:
+                        active_seg = {"kind": "assistant", "text": ""}
+                        outcome.display_timeline_items.append(active_seg)
+                    active_seg["text"] += token
+                    cur += token
+                    if sink.yield_tokens:
+                        yield (EVENT_TOKEN, token)
             elif t == "file" and evt.get("file"):
                 outcome.files.append(evt["file"])   # 咕咕用 send_file 工具要发的文件
             elif t in {"tool_call", "tool_done"}:
                 tool_event = dict(evt)
                 outcome.tool_events.append(tool_event)
                 await _notify_tool_event(sink.on_tool_event, tool_event)
+                name = str(evt.get("name") or "")
                 if t == "tool_call":
-                    name = str(evt.get("name") or "")
                     if name and name not in outcome.tool_names:
                         outcome.tool_names.append(name)
+                    # 展示时间线：tool 项按流式顺序插入（语义对齐 gateway/web.py）
+                    if name and not name.startswith("_"):
+                        outcome.display_timeline_items.append({
+                            "kind": "tool",
+                            "toolCallId": str(evt.get("tool_call_id") or ""),
+                            "toolName": name,
+                            "toolLabel": str(evt.get("label") or name),
+                            "toolInput": evt.get("input"),
+                            "toolStatus": str(evt.get("status") or "running"),
+                        })
                     # 按工具注册时显式声明的 mutates 判断，不再靠名字前缀猜——猜测式前缀匹配
                     # 会漏掉 remember（写长期记忆）、note_undo（删笔记）这类不落在
                     # create_/update_/delete_/... 词表里的写工具，导致失败后重跑整轮时
@@ -167,6 +207,14 @@ async def consume_agent_events(
                     tool = _tool_registry.snapshot().get(name)
                     if tool is not None and tool.mutates:
                         outcome.mutated = True
+                else:
+                    call_id = str(evt.get("tool_call_id") or "")
+                    for item in reversed(outcome.display_timeline_items):
+                        if item.get("kind") == "tool" and item.get("toolCallId") == call_id:
+                            item["toolStatus"] = str(evt.get("status") or "success")
+                            if "result" in evt:
+                                item["toolResult"] = evt.get("result")
+                            break
             elif t == "interaction_required":
                 # ask_user 的交互回调会在生成器产出此事件后展示选择卡，并等待用户输入。
                 # 若不先冲刷当前轮，前置说明会一直留在 cur，直到用户选择后核心循环才发
@@ -209,6 +257,7 @@ async def consume_agent_events(
         return
     cur += san.flush()
     rounds.append(cur)
+    _close_active_seg(cur.strip())
     outcome.round_texts = [r.strip() for r in rounds if r.strip()]
     outcome.text = ""
     for r in reversed(rounds):

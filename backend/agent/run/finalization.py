@@ -60,7 +60,10 @@ async def finalize_agent_run(
 
     # 逐轮展示时间线。canonical assistant.content 兼容旧历史，但刷新回放必须
     # 依赖 display_timeline，否则多轮输出只剩最后一轮。
-    display_timeline = [
+    # 优先用消费层按流式顺序记录的统一时间线（assistant 轮次 + tool 项交错，
+    # 与 gateway/web.py 的构造语义一致）——只存正文轮次会让刷新后的工具气泡
+    # 退化到兼容 toolEvents 通道（按 canonical 行 id 排序），整体跳到该轮正文前面。
+    display_timeline = outcome.display_timeline_items or [
         {"kind": "assistant", "text": round_text}
         for round_text in round_texts
     ]

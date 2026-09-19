@@ -2,6 +2,7 @@ import json
 import pytest
 
 from agent.runner import _collect
+from agent.run.execution import CollectSink
 from agent.scheduled_execution import _scheduled_collect_result
 from agent.im.replies import format_tool_event
 
@@ -254,3 +255,61 @@ def test_tool_event_waiting_explains_that_the_task_is_paused():
     }, markdown=False)
 
     assert text == "⏸️ 发送邮件：任务已暂停，等待确认"
+
+
+async def test_collect_builds_display_timeline_with_tools_in_stream_order():
+    """IM/定时收尾的 display_timeline 必须含 tool 项且按流式顺序交错——
+
+    只存正文轮次会让刷新后的工具气泡退化到兼容 toolEvents 通道（按 canonical
+    行 id 排序，整体跳到该轮正文前面）。
+    """
+    from agent.run.execution import RunOutcome, consume_agent_events
+
+    async def stream():
+        yield "data: " + json.dumps({"type": "token", "content": "我先看一眼"}) + "\n\n"
+        yield "data: " + json.dumps({
+            "type": "tool_call", "tool_call_id": "c1", "name": "shell",
+            "label": "执行 Shell 命令", "input": {"cmd": "ls"}, "status": "running",
+        }) + "\n\n"
+        yield "data: " + json.dumps({
+            "type": "tool_done", "tool_call_id": "c1", "name": "shell",
+            "status": "success", "result": {"ok": True},
+        }) + "\n\n"
+        yield "data: " + json.dumps({"type": "_new_round", "next_round": 2}) + "\n\n"
+        yield "data: " + json.dumps({"type": "token", "content": "看完了，结果如下"}) + "\n\n"
+
+    outcome = RunOutcome()
+    async for _ in consume_agent_events(stream(), model_cfg=None, outcome=outcome,
+                                        sink=CollectSink()):
+        pass
+
+    items = outcome.display_timeline_items
+    assert [item["kind"] for item in items] == ["assistant", "tool", "assistant"]
+    assert items[0]["text"] == "我先看一眼"
+    assert items[1]["toolName"] == "shell"
+    assert items[1]["toolStatus"] == "success"
+    assert items[1]["toolResult"] == {"ok": True}
+    assert items[2]["text"] == "看完了，结果如下"
+
+
+async def test_collect_display_timeline_drops_empty_placeholder_for_tool_only_round():
+    """纯工具轮（清洗后无正文）不落空的 assistant 占位段。"""
+    from agent.run.execution import RunOutcome, consume_agent_events
+
+    async def stream():
+        yield "data: " + json.dumps({
+            "type": "tool_call", "tool_call_id": "c1", "name": "list_dir",
+            "label": "浏览目录", "status": "running",
+        }) + "\n\n"
+        yield "data: " + json.dumps({
+            "type": "tool_done", "tool_call_id": "c1", "status": "success",
+        }) + "\n\n"
+        yield "data: " + json.dumps({"type": "_new_round", "next_round": 2}) + "\n\n"
+        yield "data: " + json.dumps({"type": "token", "content": "好了"}) + "\n\n"
+
+    outcome = RunOutcome()
+    async for _ in consume_agent_events(stream(), model_cfg=None, outcome=outcome,
+                                        sink=CollectSink()):
+        pass
+
+    assert [item["kind"] for item in outcome.display_timeline_items] == ["tool", "assistant"]
