@@ -61,11 +61,8 @@
                   </template>
                   <template #name>
                     <span :title="folder.name">
-                      <span v-if="renamingFolderId === folder.id" class="rename-sizer" @click.stop>
-                        <span class="rename-ghost">{{ folderRenameText || ' ' }}</span>
-                        <input class="rename-input-inline" v-model="folderRenameText"
-                          v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="($event.target as HTMLInputElement).select()" />
-                      </span>
+                      <RenameInput v-if="renamingFolderId === folder.id" v-model="folderRenameText"
+                        @commit="commitFolderRename" @cancel="cancelFolderRename" />
                       <template v-else>{{ folder.name }}</template>
                     </span>
                   </template>
@@ -153,11 +150,8 @@
                   <span class="lr-name-cell">
                     <Icon name="file.folder" class="lr-folder-icon" :size="16" :style="{ color: accentColor }" />
                     <span class="lr-filename" :title="folder.name">
-                      <span v-if="renamingFolderId === folder.id" class="rename-sizer" @click.stop>
-                        <span class="rename-ghost">{{ folderRenameText || ' ' }}</span>
-                        <input class="rename-input-inline" v-model="folderRenameText"
-                          v-enter="commitFolderRename" @keydown.esc="cancelFolderRename" @blur="commitFolderRename" @focus="($event.target as HTMLInputElement).select()" />
-                      </span>
+                      <RenameInput v-if="renamingFolderId === folder.id" v-model="folderRenameText"
+                        @commit="commitFolderRename" @cancel="cancelFolderRename" />
                       <template v-else>{{ folder.name }}</template>
                     </span>
                   </span>

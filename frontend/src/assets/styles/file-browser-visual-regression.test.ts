@@ -29,6 +29,7 @@ const browserPanel = load('../../components/common/file-browser/FileBrowserPanel
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
 const renameInput = load('../../components/common/file-browser/RenameInput.vue')
 const filesGridView = load('../../views/Files/components/FilesGridView.vue')
+const projectFilesPanel = load('../../views/Projects/components/ProjectFilesPanel.vue')
 const filesCss = load('./components/files.css')
 const sharedForms = load('./components/forms.css')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
@@ -120,6 +121,13 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(renameInput).toContain('window.clearTimeout(focusOutTimer)')
     expect(filesCss).toContain('border-color var(--motion-hover-control) var(--motion-ease-standard),')
     expect(filesCss).toContain('box-shadow var(--motion-hover-control) var(--motion-ease-standard);')
+  })
+
+  it('项目文件夹网格和列表重命名都复用自动聚焦并全选的输入组件', () => {
+    const folderRenameInput = '<RenameInput v-if="renamingFolderId === folder.id" v-model="folderRenameText"'
+    expect(projectFilesPanel.split(folderRenameInput)).toHaveLength(3)
+    expect(projectFilesPanel).toContain('@commit="commitFolderRename" @cancel="cancelFolderRename" />')
+    expect(projectFilesPanel).not.toContain('<input class="rename-input-inline" v-model="folderRenameText"')
   })
 
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
