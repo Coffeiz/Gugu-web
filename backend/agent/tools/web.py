@@ -299,7 +299,7 @@ async def _web_download(db, user_id, args: dict):
     try:
         from sqlalchemy import func, select
         from app.models import File, User
-        user = await db.get(User, user_id)
+        user = await db.get(User, user_id)  # ownership-exempt: User 主键即本人身份，模型无 user_id 归属列
         storage_limit = (getattr(user, "storage_limit_bytes", None)
                          or get_settings().quota.default_storage_limit_bytes)
         if storage_limit is not None:
