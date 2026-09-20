@@ -32,7 +32,6 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   .sel-mode-btn,
   .new-folder-btn,
   .sort-btn,
-  .close-btn,
   .select-all-btn,
   .empty-trash-btn,
   .btn-confirm-sm,
@@ -86,7 +85,6 @@ html[data-theme][data-family] .file-browser-toolbar :is(
 }
 html[data-theme][data-family] .file-browser-toolbar :is(
   .sel-mode-btn,
-  .close-btn,
   .btn-cancel-sm
 ) {
   display: inline-flex;
@@ -102,7 +100,6 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   .sel-mode-btn,
   .new-folder-btn,
   .sort-btn,
-  .close-btn,
   .select-all-btn,
   .empty-trash-btn,
   .btn-confirm-sm,
@@ -190,7 +187,6 @@ html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-h
 html[data-theme][data-family] .file-browser-toolbar .file-paste-button > svg,
 html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn > svg,
 html[data-theme][data-family] .file-browser-toolbar .new-folder-btn > svg,
-html[data-theme][data-family] .file-browser-toolbar .close-btn > svg,
 html[data-theme][data-family] .file-browser-toolbar .empty-trash-btn > svg,
 html[data-theme][data-family] .file-browser-toolbar .sort-btn > svg:not(.sort-dir-icon) {
   width: var(--file-toolbar-icon-size);
@@ -401,18 +397,4 @@ html[data-theme][data-family] .file-browser-toolbar .empty-trash-btn:hover:not(:
   color: var(--status-danger);
   background: color-mix(in srgb,var(--status-danger) 20%,transparent);
   border-color: var(--status-danger);
-}
-
-/* Project editor has later generic close-button adoption rules; this extra context keeps the
- * shared file-toolbar contract authoritative without !important. */
-html[data-theme][data-family] .project-modal-root .file-browser-toolbar .close-btn {
-  color: var(--file-toolbar-fg);
-  background: var(--file-toolbar-bg);
-  border-color: var(--file-toolbar-border);
-  box-shadow: none;
-}
-html[data-theme][data-family] .project-modal-root .file-browser-toolbar .close-btn:hover {
-  color: var(--file-toolbar-fg-hover);
-  background: var(--file-toolbar-bg-hover);
-  border-color: var(--file-toolbar-border-hover);
 }

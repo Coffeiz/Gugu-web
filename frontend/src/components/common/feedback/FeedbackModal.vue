@@ -1,9 +1,9 @@
 <template>
   <BaseModal :show="show" width="400px" background="var(--modal-card-bg)" @close="$emit('close')">
-    <div class="feedback-modal">
+    <div class="feedback-modal card-close-anchor">
           <div class="modal-header">
             <span class="modal-title">{{ t('feedback.title') }}</span>
-            <CloseButton :title="t('common.actions.close')" @click="emit('close')" />
+            <CloseButton card-corner :title="t('common.actions.close')" @click="emit('close')" />
           </div>
 
           <template v-if="!done">
@@ -116,9 +116,11 @@ async function submit() {
 </script>
 
 <style scoped>
-.feedback-modal { padding: 20px 28px 24px; }
+.feedback-modal { padding: 20px var(--space-xl) 24px; }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
+  min-height: var(--control-height-sm);
+  padding-right: calc(var(--card-close-safe-area) - var(--space-xl));
   margin-bottom: 16px;
 }
 .modal-title { font-size: 15px; font-weight: 700; color: var(--content-primary); }

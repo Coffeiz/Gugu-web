@@ -126,11 +126,11 @@
     </button>
     <span v-else class="card-advance card-advance-placeholder" aria-hidden="true"></span>
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
-  <PopupMenu ref="stagePopRef" :show="stagePopOpen" :style="stagePopStyle" popup-class="todo-pop-popup">
+  <PopupMenu ref="stagePopRef" :show="stagePopOpen" :style="stagePopStyle" popup-class="todo-pop-popup card-close-anchor">
       <div class="tp-header">
         <span class="tp-title">{{ currentStageLabel || t('projects.currentPhase') }}</span>
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
-        <button class="popup-close-btn" @click="closeStagePop" :title="t('common.actions.close')"><Icon name="action.close" :size="11" /></button>
+        <CloseButton card-corner compact @click="closeStagePop" :title="t('common.actions.close')" />
       </div>
       <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list scroll-surface scroll-surface--compact">
         <div v-for="(todo, i) in currentTodos" :key="todo.id" class="tp-item"
@@ -174,6 +174,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import Icon from '@/components/common/icons/Icon.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/controls/SegBar.vue'
@@ -555,10 +556,14 @@ async function setPriority(n: number) {
 
 /* 当前阶段待办弹层（Teleport 到 body，通用弹窗风格） */
 :global(.popup-menu-host.todo-pop-popup) {
-  padding: 14px 14px 12px; font-family: var(--font-sans); box-sizing: border-box;
+  --todo-pop-padding: 14px;
+  padding: var(--todo-pop-padding) var(--todo-pop-padding) 12px; font-family: var(--font-sans); box-sizing: border-box;
   display: flex; flex-direction: column; gap: 8px;
 }
-.tp-header { display: flex; align-items: center; gap: 6px; }
+.tp-header {
+  display: flex; align-items: center; gap: 6px;
+  padding-right: calc(var(--card-close-compact-safe-area) - var(--todo-pop-padding));
+}
 .tp-title { font-size: 13px; font-weight: 700; color: var(--content-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-count { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .tp-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }

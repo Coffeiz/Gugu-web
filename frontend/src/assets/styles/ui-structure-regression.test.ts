@@ -548,7 +548,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(dateSpanPicker).not.toContain('registerPopover')
 
     // 项目 Todo 与文件排序继续通过公共 PopupMenu/ContextMenu，不引入第二套 Transition。
-    expect(projectCard).toContain('popup-class="todo-pop-popup"')
+    expect(projectCard).toContain('popup-class="todo-pop-popup card-close-anchor"')
     expect(projectCard).not.toContain('<Transition name="todo-pop"')
     expect(sortMenu).toContain('<ContextMenu :show="sortMenuOpen"')
     expect(sortMenu).toContain('r.left + r.width / 2 - 80')

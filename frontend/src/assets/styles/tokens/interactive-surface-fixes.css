@@ -13,8 +13,7 @@ html[data-theme='dark'][data-family] .seg-control {
 html[data-theme][data-family] .files-toolbar .sel-mode-btn,
 html[data-theme][data-family] .files-toolbar .new-folder-btn,
 html[data-theme][data-family] .files-toolbar .btn-confirm-sm,
-html[data-theme][data-family] .files-toolbar .btn-cancel-sm,
-html[data-theme][data-family] .files-toolbar .close-btn {
+html[data-theme][data-family] .files-toolbar .btn-cancel-sm {
   transition:
     background-color var(--hover-motion-control),
     border-color var(--hover-motion-control),
