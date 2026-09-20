@@ -115,7 +115,15 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
     _capture(session_id=7, run_id="run-x")
     snapshot = peek_reflection_snapshot("u1", 7)
     captured = _CaptureBranch(output={"profile_add": []})
-    monkeypatch.setattr(reflection, "ContextBranch", lambda: captured)
+    async def capture_branch(branch_input, settings, **kwargs):
+        from agent.context.branch_types import BranchPolicy
+        policy = BranchPolicy(
+            name="reflection", output_mode="json", max_tokens=kwargs["max_tokens"],
+            max_retries=kwargs.get("max_retries", 0), thinking=kwargs.get("thinking"),
+        )
+        return await captured.run(branch_input, policy, settings)
+
+    monkeypatch.setattr(reflection, "run_reflection_branch", capture_branch)
     # 渲染桩：恒等映射，验证 history 原样进入 BranchInput
     import agent.context.prefix_history as ph
     monkeypatch.setattr(ph, "render_branch_prefix", lambda prefix, ai: list(prefix))
@@ -229,6 +237,133 @@ async def test_reflect_defers_owner_without_snapshot(monkeypatch):
     await reflection.reflect("u1", "小北", "m", "a", SimpleNamespace(),
                              session_id=7, turns=turns, snapshot=None)
     assert used == {"append": 0}
+
+
+@pytest.mark.asyncio
+async def test_idle_rebuild_uses_owned_idle_session_and_persisted_history(monkeypatch):
+    from app.db import session as db_session
+    from app.models import ConversationSession
+
+    class _Query:
+        def where(self, *conditions):
+            self.conditions = conditions
+            return self
+
+    class _Rows:
+        def __init__(self, value):
+            self.value = value
+
+        def scalars(self):
+            return self
+
+        def first(self):
+            return self.value
+
+    idle_session = SimpleNamespace(
+        id=7, user_id="u1", execution_state="idle", pending_message_count=0,
+        chat_id=None, platform_user_id=None, baseline_message_id=12,
+        session_context=None,
+    )
+
+    class _DB:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def execute(self, query):
+            assert len(query.conditions) == 2
+            return _Rows(idle_session)
+
+    monkeypatch.setattr(db_session, "ensure_engine", lambda: None)
+    monkeypatch.setattr(db_session, "_SessionLocal", _DB)
+    monkeypatch.setattr("sqlalchemy.select", lambda *_args: _Query())
+
+    import agent.context.session_history as session_history
+    import agent.context.session_snapshot as session_snapshot
+    import agent.context.loaders as loaders
+    import agent.context.history as history_builder
+    import agent.context.session_system as session_system
+    import agent.llm.llm_select as llm_select
+    monkeypatch.setattr(session_snapshot, "history_baseline", lambda _session: 12)
+    monkeypatch.setattr(session_history, "load_session_history", _load_history)
+    monkeypatch.setattr(loaders, "load_user_tz", _load_tz)
+    monkeypatch.setattr(loaders, "load_style_prefs", _load_style)
+    monkeypatch.setattr(history_builder, "build_history_parts", _build_history_parts)
+    monkeypatch.setattr(session_system, "build_static_prompt", lambda *a, **k: "stable-system")
+    monkeypatch.setattr(llm_select, "use_anthropic_for", lambda _cfg: False)
+
+    rebuilt = await reflection._rebuild_owner_reflection_snapshot(
+        "u1", 7, "小北", _ai(),
+    )
+    assert rebuilt.source == "persisted_history"
+    assert rebuilt.session_id == 7
+    assert rebuilt.system_prompt == "stable-system"
+    assert rebuilt.tools == ()
+    assert rebuilt.history == ({"role": "user", "content": "persisted"},)
+
+
+@pytest.mark.asyncio
+async def test_reflect_routes_idle_rebuilt_history_through_append(monkeypatch):
+    model = _ai()
+    rebuilt = SimpleNamespace(
+        session_id=7, run_id="idle", system_prompt="system", ai=model,
+        tools=(), history=(), source="persisted_history",
+    )
+    calls = []
+
+    async def fake_bind(*_args, **_kwargs):
+        return model
+
+    async def fake_rebuild(*_args, **_kwargs):
+        return rebuilt
+
+    async def fake_memory(_user_id):
+        return {"profile": "P", "pattern": "Q", "summary": "S"}
+
+    async def fake_extract(snapshot, *_args, **_kwargs):
+        calls.append(snapshot)
+        return {}
+
+    monkeypatch.setattr(reflection, "_bind_user_model", fake_bind)
+    monkeypatch.setattr(reflection, "_rebuild_owner_reflection_snapshot", fake_rebuild)
+    monkeypatch.setattr(reflection.store, "read_memory", fake_memory)
+    monkeypatch.setattr(reflection, "_read_last_turn", lambda *_args: _async_value(None))
+    monkeypatch.setattr(reflection, "_write_last_turn", lambda *_args, **_kwargs: _async_value(None))
+    monkeypatch.setattr(reflection, "_extract_append", fake_extract)
+
+    turns = [{"user_msg": "m", "assistant_reply": "a", "user_name": "小北", "session_id": 7}]
+    assert await reflection.reflect(
+        "u1", "小北", "m", "a", SimpleNamespace(), session_id=7,
+        turns=turns, snapshot=None, rebuild_from_history=True,
+    ) is False
+    assert calls == [rebuilt]
+
+
+async def _async_value(value):
+    return value
+
+
+async def _load_history(_db, session_id, baseline):
+    assert session_id == 7 and baseline == 12
+    return [SimpleNamespace(role="user", content="持久历史")]
+
+
+async def _load_tz(_db, user_id):
+    assert user_id == "u1"
+    return None
+
+
+async def _load_style(_db, user_id):
+    assert user_id == "u1"
+    return {"reply_tone": "warm"}
+
+
+def _build_history_parts(rows, request, *, use_anthropic, user_tz):
+    assert rows[0].content == "持久历史"
+    assert request.chat_id is None and use_anthropic is False and user_tz is None
+    return [{"role": "user", "content": "persisted"}]
 
 
 # ── drain 路径传递快照（§6.1 拓扑）───────────────────────────────────

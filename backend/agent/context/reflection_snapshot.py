@@ -2,9 +2,10 @@
 
 拓扑边界（§6.1 钉死的结论，落码即在此）：快照只存在于捕获它的进程内——
 登记表是模块级内存结构，不写 Redis、不落数据库、不打正文日志。因此只有
-「内联冲刷」路径（反思队列在主请求同进程内 drain）能直接拿到快照走
-append_reuse；owner Memory 查不到快照时延迟处理，群业务 worker 则从已持久化
-消息重建追加历史，不能创建没有主会话前缀的独立调用。
+「内联冲刷」路径（反思队列在主请求同进程内 drain）能直接拿到完整快照走
+append_reuse；快照缺失时 owner idle worker 与群业务 worker 都从已持久化消息
+重建追加历史，不创建独立提取器。重建只恢复最小历史与当前静态 system，不保留
+完整 provider tools/动态上下文，所以不承诺前缀缓存命中。
 
 快照内容是主请求实际发送的 provider 消息序列（canonical 形态），包含末尾
 assistant 回复、不含 dynamic tail（时间 reminder 每轮必变，进快照会把公共
@@ -117,8 +118,7 @@ def capture_reflection_snapshot(
 def peek_reflection_snapshot(user_id, session_id: int | None) -> ReflectionSnapshot | None:
     """按 user+session 取快照（非破坏性：Memory 与 Knowledge 是 sibling branch，
     先后共用同一份快照）。TTL 过期视为不存在——过期快照对应的主会话可能已经
-    前进，复用它有污染风险（§7），owner Memory 应延迟处理；群业务应改由持久化
-    消息重建追加历史或等待下一次具备追加条件的批次。
+    前进，复用它有污染风险（§7）；owner 与群业务改由持久化消息重建追加历史。
     """
     if session_id is None:
         return None

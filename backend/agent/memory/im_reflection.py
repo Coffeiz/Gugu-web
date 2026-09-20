@@ -19,6 +19,7 @@ from app.core.tz import now_utc
 from agent.context.branch import ContextBranch
 from agent.context.branch_types import BranchInput, BranchPolicy
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
+from agent.memory.reflection_branch import run_reflection_branch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
 from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
 from agent.memory.scoped_store import (
@@ -374,14 +375,10 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             # 消息自带的 sender id，也不需要旧 members 全量做参照。
             task_type = job.task_type or "group"
             phase = "reflection_provider"
-            branch = await ContextBranch().run(
+            branch = await run_reflection_branch(
                 _build_append_branch_input(scope, job, task_type, current, messages),
-                BranchPolicy(
-                    name="reflection",
-                    output_mode="json",
-                    max_tokens=5000 if task_type == "member-batch" else 2500,
-                ),
                 settings,
+                max_tokens=5000 if task_type == "member-batch" else 2500,
             )
             out = branch.output if branch.ok and isinstance(branch.output, dict) else {}
             if branch.return_reason == "provider_error":

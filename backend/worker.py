@@ -423,10 +423,10 @@ async def _reconcile_loop():
         except Exception:
             pass
         try:
-            from agent.memory.reflection import flush_due_group_owner_reflections
+            from agent.memory.reflection import flush_due_owner_reflections
             from app.core.config import get_settings
 
-            await flush_due_group_owner_reflections(get_settings())
+            await flush_due_owner_reflections(get_settings())
         except Exception as exc:
             print(f"[worker] owner 群记忆缓冲收束出错: {type(exc).__name__}", flush=True)
         try:
