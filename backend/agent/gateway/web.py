@@ -697,12 +697,48 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     run_completed = False
     cancelled = False
     generation_failed = False
+    rag_context: dict | None = None
+    stance_to_persist: str | None = None
     anthr_messages: list = []
     anthr_initial_len: int = 0
     oa_messages: list = []
     oa_initial_len: int = 0
     sent_files = []   # 咕咕本轮发的文件卡片，随助手消息持久化（顶部已初始化）
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
+
+    async def persist_interrupted_run() -> None:
+        """保存中止前已完成的历史；不把当前未提交工具批次写成完整往返。"""
+        history_messages = anthr_messages if use_anthropic else oa_messages
+        canonical_batches = persistable_canonical_batch_records(history_messages)
+        if not (display_timeline or full_reply or sent_files or canonical_batches):
+            return
+        from agent.context.run_finalize import finalize_run
+
+        await finalize_run(
+            session_factory=_sess._SessionLocal,
+            session_id=session_id,
+            user_id=user_id,
+            settings=settings,
+            model_cfg=model_cfg,
+            rag_context=rag_context,
+            messages=history_messages,
+            initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
+            text=full_reply,
+            display_timeline=display_timeline,
+            files=sent_files,
+            tokens_in=usage_tokens["input"],
+            tokens_out=usage_tokens["output"],
+            cache_read=usage_tokens["cache_read"],
+            cache_write=usage_tokens["cache_write"],
+            tools_used=used_tools,
+            compaction_applied=compaction_applied,
+            stance_text=stance_to_persist,
+            user_message_id=getattr(user_message, "id", None),
+            run_id=current_run_id,
+            canonical_batches=canonical_batches,
+            interrupted=True,
+            session_exists_required=True,
+        )
 
     try:
         image_only = bool(user_images) and not user_media and bool(attach_cards) and all(
@@ -740,6 +776,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         oa_messages = prepared.oa_messages
         oa_initial_len = prepared.oa_initial_len
         rag_context = prepared.rag_context
+        stance_to_persist = prepared.stance_to_persist
         gen = runner.run(
             user_id,
             # Chat Completions 的 system 已在 oa_messages 中；Responses 还需要
@@ -900,34 +937,14 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             await _close_running_tool_events(display_timeline, _pub)
             if cancelled:
                 await _pub({"type": "done", "cancelled": True})
-            # 取消/失败不再丢弃已产生的展示产物：run 中途的工具卡、文件卡、
-            # link_buttons 都已推给当前页面（live SSE），但不落库的话历史接口
-            # 拿不到——用户取消后整个 run 在任何端都消失（2026-09-18 实测）。
-            # canonical 不写：助手轮未完成，半截文本不能进 LLM 历史；
-            # display_timeline 单独成一条 assistant 展示行（text 为空）。
-            if display_timeline:
-                try:
-                    from agent.context.run_finalize import finalize_run
-                    await finalize_run(
-                        session_factory=_sess._SessionLocal,
-                        session_id=session_id,
-                        user_id=user_id,
-                        settings=settings,
-                        model_cfg=model_cfg,
-                        rag_context=None,
-                        messages=[],
-                        initial_len=0,
-                        text="",
-                        display_timeline=display_timeline,
-                        files=[],
-                        tokens_in=0,
-                        tokens_out=0,
-                        canonical_batches=[],
-                        user_message_id=getattr(user_message, "id", None),
-                        run_id=current_run_id,
-                    )
-                except Exception:
-                    logger.exception("取消/失败路径的部分展示产物持久化失败 session=%s", session_id)
+            # 中止只停止后续生成，不丢弃此前已经完成的对话历史。PromptMessages
+            # 只记录已提交的 canonical batch；当前未完成工具批次不会进入其中，
+            # 因而不会把悬空 tool_call 伪装成完整往返。已生成的文本另作为部分
+            # assistant 内容保存，供用户和下一轮上下文接续。
+            try:
+                await persist_interrupted_run()
+            except Exception:
+                logger.exception("取消/失败路径的部分历史持久化失败 session=%s", session_id)
             return
 
         # 冲洗清洗器残留（未触发截断时的尾部）
@@ -1007,34 +1024,13 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         # except BaseException 吞掉的话，用户点「停止」会收到「咕咕开小差了」通用
         # 报错，且本轮持久化整体跳过。发取消终态让订阅端正常退出后 re-raise，
         # 交给外层 _generate 的取消分支清 active 快照。
-        # 与 in-band cancelled 分支同款：已产生的展示产物（工具卡/文件卡）部分落库，
-        # 否则 task.cancel() 这条路径取消后整个 run 在所有端消失（2026-09-19 实测：
-        # 12 轮工具调用的 run 终止后一条不剩）。canonical 不写——助手轮未完成，
-        # 半截文本不能进 LLM 历史。
+        # 与 in-band cancelled 分支同款：保留已生成文本与已提交的 canonical
+        # 工具轮次；当前未完成的批次不在 canonical_batch_records 中，不会留下孤儿调用。
         # 被打断的工具先补「已停止」终态（live 合成 tool_done + timeline 修正），
         # 否则工具气泡在实时与刷新两端都永远停在「进行中」。
         try:
             await _close_running_tool_events(display_timeline, _pub)
-            if display_timeline:
-                from agent.context.run_finalize import finalize_run
-                await finalize_run(
-                    session_factory=_sess._SessionLocal,
-                    session_id=session_id,
-                    user_id=user_id,
-                    settings=settings,
-                    model_cfg=model_cfg,
-                    rag_context=None,
-                    messages=[],
-                    initial_len=0,
-                    text="",
-                    display_timeline=display_timeline,
-                    files=sent_files,
-                    tokens_in=0,
-                    tokens_out=0,
-                    canonical_batches=[],
-                    user_message_id=getattr(user_message, "id", None),
-                    run_id=current_run_id,
-                )
+            await persist_interrupted_run()
         except Exception:
             logger.exception("task.cancel 路径的部分展示产物持久化失败 session=%s", session_id)
         await _pub({"type": "done", "cancelled": True})
