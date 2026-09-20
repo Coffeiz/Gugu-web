@@ -3,6 +3,21 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const workflowPath = new URL('../../.github/workflows/docker-release.yml', import.meta.url)
+const composePath = new URL('../../docker-compose.yml', import.meta.url)
+const appDockerfilePath = new URL('../../Dockerfile', import.meta.url)
+
+test('一体化 Compose 使用随 app 镜像交付的 Sandbox bundle', async () => {
+  const [compose, dockerfile] = await Promise.all([
+    readFile(composePath, 'utf8'),
+    readFile(appDockerfilePath, 'utf8'),
+  ])
+  assert.equal((compose.match(/SANDBOX__IMAGE: \$\{GUGU_SANDBOX_IMAGE:-coffeiz\/gugu-sandbox:bundled\}/g) ?? []).length, 3,
+    'app、sandbox-bootstrap 与 sandboxd 应默认引用内嵌 Sandbox tag')
+  assert.equal((compose.match(/SANDBOX__IMAGE_DIGEST: \$\{GUGU_SANDBOX_IMAGE_DIGEST:-bundled\}/g) ?? []).length, 3,
+    '三处 Compose 配置都应启用 bundle image ID 校验')
+  assert.match(dockerfile, /COPY docker\/sandbox\/bundle\/sandbox-image\.tar\.gz \/opt\/gugu\/sandbox\/sandbox-image\.tar\.gz/)
+  assert.match(dockerfile, /COPY docker\/sandbox\/bundle\/image-id \/opt\/gugu\/sandbox\/image-id/)
+})
 
 test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元数据', async () => {
   const workflow = await readFile(workflowPath, 'utf8')
@@ -16,7 +31,7 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
   // 版本 tag 全部使用发布版本号变量，Git SHA 不允许进入任何 tag。
   assert.ok(copyLines.every(line => line.includes(':${VERSION}') && !line.includes('github.sha')),
     '发布 tag 必须来自版本号变量')
-  // 四个镜像在两个 registry 的 digest 都要解析，供签名与 updater manifest 使用。
+  // 四个发布镜像在两个 registry 的 digest 都要解析，供签名与 updater manifest 使用。
   for (const key of [
     'ghcr_backend', 'ghcr_frontend', 'ghcr_app', 'ghcr_sandbox',
     'hub_backend', 'hub_frontend', 'hub_app', 'hub_sandbox',
@@ -28,6 +43,10 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
     '稳定版需继续更新默认部署使用的 latest 别名')
   assert.match(workflow, /push: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/,
     ':ci 中间镜像只在 tag 触发时推送，main/dispatch 运行零额外推送')
+  assert.match(workflow, /name: bundled-sandbox-runtime[\s\S]*?path:[\s\S]*?sandbox-image\.tar\.gz[\s\S]*?image-id/,
+    '发布流水线必须把已扫描的 Sandbox 镜像归档和 image ID 传给 app 构建')
+  assert.match(workflow, /Download bundled sandbox runtime[\s\S]*?path: docker\/sandbox\/bundle/,
+    '一体化 app 构建必须消费 Sandbox bundle')
 
   assert.match(publishJob, /uses: sigstore\/cosign-installer@v4\.1\.2\s+with:\s+cosign-release: v3\.1\.3/)
   // cosign 3.x 的 oci-1-1 referrers 模式在实验开关后面，缺 env 直接报 invalid argument

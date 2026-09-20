@@ -119,6 +119,31 @@ async def test_finish_run_restores_final_response_from_last_llm_draft(monkeypatc
     await asyncio.gather(*list(trace_state._send_tasks), return_exceptions=True)
 
 
+@pytest.mark.asyncio
+async def test_finish_run_fills_empty_published_response_from_last_llm_draft(monkeypatch):
+    """done 已先建空 Final response 时，成功收尾仍须从 LLM draft 恢复正文。"""
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-empty-published-final", trace_id="trace-empty-published-final",
+        session_key="gugu:web:388", external_session_id="388",
+        source="web", started_at=_now(),
+    )
+    llm = run.span("llm", "LLM round 1")
+    llm.finish({"draft": "好，去吧。", "tool_calls": []})
+    final = run.span("output", "Final response", {"source": "genstream.publish"})
+    final.finish({"text": ""})
+
+    async def no_op_post(_snapshot):
+        return None
+    monkeypatch.setattr(trace_state, "_post_snapshot", no_op_post)
+    trace_state._finish_run(run, "success")
+
+    assert final.output == {"text": "好，去吧。"}
+    assert final.attributes == {"source": "trace.finish_run", "fallback": True}
+    assert final.token_impact["output_tokens_estimate"] > 0
+    await asyncio.gather(*list(trace_state._send_tasks), return_exceptions=True)
+
+
 def test_discard_run_does_not_close_or_publish(monkeypatch):
     monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
     run = _ScopeRun(

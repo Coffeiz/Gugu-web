@@ -12,7 +12,7 @@
       <FlipChevron :open="open" :size="11" class="select-popup-chevron" />
     </button>
 
-    <PopupMenu :show="open" :anchor="rootRef" :popup-class="popupClass ? `select-popup-host ${popupClass}` : 'select-popup-host'">
+    <PopupMenu :show="open" :anchor="rootRef" :placement="placement" :popup-class="popupClass ? `select-popup-host ${popupClass}` : 'select-popup-host'">
       <slot name="options" :select="select" :close="close" :open="open">
         <button
           v-for="option in options"
@@ -42,11 +42,13 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   triggerClass: { type: String, default: '' },
   popupClass: { type: String, default: '' },
+  autoFlip: { type: Boolean, default: false },
 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const rootRef = ref<HTMLElement | null>(null)
 const open = ref(false)
+const placement = ref<'bottom' | 'top'>('bottom')
 
 const selectedText = computed(() =>
   props.options.find(option => option.value === props.modelValue)?.label ?? props.placeholder,
@@ -55,7 +57,17 @@ const selectedLabel = computed(() => props.selectedLabel || selectedText.value)
 
 function toggle() {
   if (props.disabled) return
+  if (!open.value && props.autoFlip) placement.value = computePlacement()
   open.value = !open.value
+}
+
+/** 打开前按锚点下方剩余空间估算：放不下就向上展开，避免长列表朝视口外延伸。 */
+function computePlacement(): 'bottom' | 'top' {
+  const rect = rootRef.value?.getBoundingClientRect()
+  if (!rect) return 'bottom'
+  const estimated = props.options.length * 34 + 16
+  if (rect.bottom + estimated > window.innerHeight && rect.top > estimated) return 'top'
+  return 'bottom'
 }
 
 function close() {

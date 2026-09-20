@@ -11,7 +11,8 @@ from uuid import uuid4
 import pytest
 
 from app.core.schedule_rules import SCHEDULE_TZ
-from app.models import User, UserBot
+from app.models import ConversationSession, User, UserBot
+from app.services.scheduled_tasks import find_qq_group_session, get_enabled_user_bot, list_qq_group_sessions
 from app.scheduled_tasks import (
     _legacy_private_target,
     _reach_key,
@@ -92,6 +93,24 @@ async def test_owner_private_targets_resolves_enabled_bots(db, user_a):
     await _bot(db, user_a, "feishu", enabled=False, puid="disabled")
     targets = await owner_private_targets(db, user_a.id, {"feishu"})
     assert targets["feishu"]["puid"] is None                          # disabled 不采纳
+
+
+async def test_scheduled_task_group_target_queries_are_owner_scoped(db, user_a, user_b):
+    owned = ConversationSession(
+        user_id=user_a.id, source="qq", chat_type="group", chat_id="group-a", title="我的群",
+    )
+    db.add_all([
+        owned,
+        ConversationSession(user_id=user_b.id, source="qq", chat_type="group", chat_id="group-b"),
+        UserBot(user_id=user_a.id, platform="qq", name="启用", enabled=True),
+        UserBot(user_id=user_a.id, platform="qq", name="停用", enabled=False),
+    ])
+    await db.flush()
+
+    assert await find_qq_group_session(db, user_a.id, "group-a") is owned
+    assert await find_qq_group_session(db, user_a.id, "group-b") is None
+    assert await list_qq_group_sessions(db, user_a.id) == [owned]
+    assert (await get_enabled_user_bot(db, user_a.id, "qq")).name == "启用"
 
 
 # ── _legacy_private_target：旧任务兼容地址 ────────────────────────────────

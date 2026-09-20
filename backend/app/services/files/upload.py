@@ -262,7 +262,7 @@ async def confirm_oss_upload(
     stage_name: str,
     overwrite_file_id: Optional[int],
     storage_limit_bytes: Optional[int],
-    max_file_bytes: int,
+    max_file_bytes: Optional[int] = None,
 ) -> ConfirmUploadResult:
     """登记已完成的 OSS 上传，只 flush，不提交事务和发布事件。
 
@@ -278,7 +278,7 @@ async def confirm_oss_upload(
     """
     if not staging_key.startswith(f"{user_id}/.upload-staging/"):
         raise UploadTargetError(403, "无权限访问该存储路径")
-    if size_bytes > max_file_bytes:
+    if max_file_bytes is not None and size_bytes > max_file_bytes:
         raise UploadTargetError(413, "文件超过单文件大小限制")
     # 锁定用户行，避免两个并发 confirm 同时通过配额检查；即使全局不限额也要
     # 先对账，保证登记事件的基准不包含本次尚未落地的对象。

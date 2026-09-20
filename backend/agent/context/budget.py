@@ -189,6 +189,9 @@ class BudgetResult:
     after_tokens: int
     dropped_messages: int
     oversized_item: bool = False
+    protected_start_index: int | None = None
+    anchor_index: int | None = None
+    protected_source_start_index: int | None = None
 
 
 def estimate_tool_schema_tokens(tools) -> int:
@@ -452,6 +455,7 @@ def enforce_provider_overflow_fallback(
     context_tokens: int = 0,
     *,
     protected_from: int | None = None,
+    protected_anchor_index: int | None = None,
 ) -> BudgetResult:
     """provider 已明确返回超窗后的无估算兜底。
 
@@ -464,10 +468,83 @@ def enforce_provider_overflow_fallback(
     prefix = conversation[:prefix_size]
     body = conversation[prefix_size:]
     protected_tail: list[dict] = []
+    anchor_message = None
+    anchor_body_index = None
     if protected_from is not None:
         relative = max(0, int(protected_from) - prefix_size)
         protected_tail = body[relative:]
         body = body[:relative]
+    if protected_anchor_index is not None:
+        anchor_body_index = max(0, int(protected_anchor_index) - prefix_size)
+        if anchor_body_index >= len(conversation) - prefix_size:
+            return BudgetResult(False, 0, 0, 0)
+        anchor_message = conversation[prefix_size + anchor_body_index]
+        if protected_from is not None and protected_anchor_index >= protected_from:
+            return BudgetResult(False, 0, 0, 0)
+        body = [
+            message for index, message in enumerate(body)
+            if index != anchor_body_index
+        ]
+
+    if protected_anchor_index is not None and anchor_message is not None:
+        # 运行中滚动窗口兜底：保留已有压缩摘要、当前用户原文和预算容得下的
+        # 最新完整工具单元；若 10 轮本身过大，从最早轮开始缩窗。
+        from .summary_format import SUMMARY_OPEN
+
+        summaries = [
+            message for message in body
+            if message.get("role") == "summary"
+            or SUMMARY_OPEN in str(message.get("content") or "")
+        ]
+        anchor_result_index = len(prefix) + len(summaries)
+        fixed = prefix + summaries + [anchor_message]
+        safe_budget = max(1, int(max(1, context_tokens) * TRUNCATION_RATIO))
+        fixed_tokens = estimate_tokens(system_text) + sum(
+            estimate_tokens(message_text(message)) for message in fixed
+        )
+        available = max(1, safe_budget - fixed_tokens)
+        tail_units = _units(protected_tail)
+        kept_units: list[list[dict]] = []
+        kept_source_offsets: list[int] = []
+        kept_tokens = 0
+        oversized = False
+        for unit in reversed(tail_units):
+            unit_messages = [protected_tail[index] for index in unit]
+            unit_tokens = sum(estimate_tokens(message_text(message)) for message in unit_messages)
+            if kept_units and kept_tokens + unit_tokens > available:
+                break
+            if not kept_units and unit_tokens > available:
+                per_message_budget = max(1, available // max(1, len(unit_messages)))
+                unit_messages = [_fit_overflow_text_fields(message, per_message_budget)
+                                 for message in unit_messages]
+                unit_tokens = sum(estimate_tokens(message_text(message)) for message in unit_messages)
+                oversized = True
+                if unit_tokens > available:
+                    # 这一轮的非文本结构（例如不可拆分的工具参数）仍超预算，
+                    # 整轮丢弃比留下半个 tool exchange 安全。
+                    break
+            kept_units.append(unit_messages)
+            kept_source_offsets.append(unit[0])
+            kept_tokens += unit_tokens
+        kept_units.reverse()
+        kept = [message for unit in kept_units for message in unit]
+        result = fixed + kept
+        changed = result != conversation
+        if not changed:
+            return BudgetResult(False, 0, 0, 0, oversized_item=oversized)
+        replace = getattr(messages, "replace_conversation", None)
+        if replace is not None:
+            replace(result)
+        else:
+            messages[:] = result
+        return BudgetResult(
+            True, 0, 0, max(0, len(conversation) - len(result)), oversized,
+            protected_start_index=len(fixed), anchor_index=anchor_result_index,
+            protected_source_start_index=(
+                prefix_size + relative + min(kept_source_offsets)
+                if kept_source_offsets else prefix_size + relative + len(protected_tail)
+            ),
+        )
 
     units = _units(body)
     kept_units: list[list[dict]] = []
@@ -506,6 +583,46 @@ def enforce_provider_overflow_fallback(
     else:
         messages[:] = result
     return BudgetResult(True, 0, 0, max(0, len(conversation) - len(result)), oversized_item=oversized)
+
+
+def _fit_overflow_text_fields(message: dict, max_tokens: int) -> dict:
+    """只截工具往返中的文本结果，不改 tool_use id 或调用参数结构。"""
+    copy = dict(message)
+    content = copy.get("content")
+    if isinstance(content, str):
+        copy["content"] = _truncate_text(content, max_tokens)
+    elif isinstance(content, list):
+        blocks = []
+        for block in content:
+            if not isinstance(block, dict):
+                blocks.append(block)
+                continue
+            cloned = dict(block)
+            if block.get("type") == "tool_result":
+                cloned["content"] = _fit_tool_result_content(block.get("content"), max_tokens)
+            elif block.get("type") == "text" and isinstance(block.get("text"), str):
+                cloned["text"] = _truncate_text(block["text"], max_tokens)
+            blocks.append(cloned)
+        copy["content"] = blocks
+    return copy
+
+
+def _fit_tool_result_content(value, max_tokens: int):
+    """限制工具结果中的可读文本，保留图片、ID、类型等结构字段不变。"""
+    if isinstance(value, str):
+        return _truncate_text(value, max_tokens)
+    if isinstance(value, list):
+        result = []
+        for item in value:
+            if not isinstance(item, dict):
+                result.append(item)
+                continue
+            cloned = dict(item)
+            if item.get("type") == "text" and isinstance(item.get("text"), str):
+                cloned["text"] = _truncate_text(item["text"], max_tokens)
+            result.append(cloned)
+        return result
+    return value
 
 
 def is_context_overflow_error(error: BaseException) -> bool:

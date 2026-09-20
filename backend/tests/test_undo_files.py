@@ -1,12 +1,15 @@
 """统一撤销层 Phase 0–1：状态机、版本冲突和文件内容回滚。"""
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.models import File, UndoOperation
 from app.services.storage import LocalStorageBackend
+from app.services.storage.file_service import FileService
 from app.services.undo import UndoService
 from app.services.undo.files import file_snapshot, operation_state, ref_for, save_content_artifacts
+from app.services.undo.files import FileUndoAdapter
 from app.services.undo.service import UndoConflict, UndoError
 
 
@@ -137,3 +140,38 @@ async def test_file_content_undo_and_redo_restore_copy_on_write_artifacts(db, us
     await UndoService.apply(db, user_id=user_a.id, context_id="tab-a", operation_id=op.id, mode="redo")
     await db.commit()
     assert await storage.get(key) == "新正文".encode()
+
+
+@pytest.mark.asyncio
+async def test_file_extension_snapshot_restores_storage_key_for_undo_and_redo(db, user_a, monkeypatch, tmp_path: Path):
+    storage = LocalStorageBackend(tmp_path)
+    monkeypatch.setattr("app.services.undo.files.get_storage", lambda: storage)
+    monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
+    key = f"{user_a.id}/个人文件/内容.txt"
+    await storage.put(key, b"unchanged", "text/plain")
+    file = await _save(db, File(
+        user_id=user_a.id, display_name="内容", ext="TXT", space="personal",
+        storage_key=key, size="9 KB", size_bytes=9, mime_type="text/plain",
+    ))
+    before = file_snapshot(file)
+    changed = await FileService(db, storage=storage).update_file(
+        user_a.id, file.id, display_name=None, ext="MD", stage_name=None,
+        folder_id=None, project_id=None, folder_set=False, project_set=False,
+    )
+    await db.commit()
+    after = file_snapshot(changed.file)
+    adapter = FileUndoAdapter(db)
+    operation = SimpleNamespace(artifact_refs={})
+    ref = ref_for("file", file.id)
+
+    await adapter._restore_file(file, before, operation, ref, redo=False)
+    await db.commit()
+    assert file.ext == "TXT"
+    assert file.storage_key == key
+    assert await storage.get(key) == b"unchanged"
+
+    await adapter._restore_file(file, after, operation, ref, redo=True)
+    await db.commit()
+    assert file.ext == "MD"
+    assert file.storage_key.endswith("/个人文件/内容.md")
+    assert await storage.get(file.storage_key) == b"unchanged"

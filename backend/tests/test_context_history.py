@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from agent.context.history import build_chat_tool_events, build_history_parts, canonicalize_tool_messages
 
 
@@ -39,6 +41,35 @@ def test_user_message_time_is_a_stable_separate_reminder_in_history():
         "text": "[system-reminder]\n消息时间：2026-08-22 15:22\n[/system-reminder]",
     }
     assert result[1] == {"role": "user", "content": "测试"}
+
+
+@pytest.mark.parametrize("use_anthropic", [False, True])
+def test_history_skips_empty_assistant_display_only_row(use_anthropic):
+    from agent.models import AgentRequest
+
+    display_only = SimpleNamespace(
+        role="assistant",
+        content="",
+        content_json=None,
+        display_timeline=[
+            {"kind": "assistant", "text": "部分输出"},
+            {"kind": "tool", "toolStatus": "success"},
+        ],
+        files=None,
+        quoted_text=None,
+        sent_at=None,
+        chat_type=None,
+        platform_user_id=None,
+        platform_user_name=None,
+    )
+
+    result = build_history_parts(
+        [display_only],
+        AgentRequest(message="", user_id="owner", user_name="小北"),
+        use_anthropic=use_anthropic,
+    )
+
+    assert result == []
 
 
 def test_history_restores_quoted_text_without_rewriting_message_content():

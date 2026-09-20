@@ -69,7 +69,7 @@
           </div>
           <div class="fp-info-row">
             <span class="fp-info-label">{{ t('files.size') }}</span>
-            <span class="fp-info-val">{{ file.size }}</span>
+            <span class="fp-info-val">{{ file.sizeBytes != null ? fmtBytes(file.sizeBytes) : file.size }}</span>
           </div>
           <div class="fp-info-row">
             <span class="fp-info-label">{{ t('files.createdAt') }}</span>
@@ -113,6 +113,7 @@ import { isImageExt, isTextExt, isVideoExt, isAudioExt } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
+import { fmtBytes } from '@/utils/fileSize'
 
 const props = defineProps({
   show: Boolean,
@@ -290,6 +291,7 @@ async function handleDownload() {
       const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
       const token = localStorage.getItem('user_token') ?? ''
       const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
+        credentials: 'include',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (isUnauthorizedResponse(res)) return

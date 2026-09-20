@@ -1,17 +1,20 @@
 import { i18n } from '@/i18n'
 
-export type RepeatMode = 'once' | 'interval' | 'daily' | 'weekday' | 'weekend'
+export type RepeatMode = 'once' | 'interval' | 'daily' | 'weekly'
 
 export interface ParsedCron {
   mode: RepeatMode
   time: string
   intervalMinutes?: number
+  /** weekly 模式选中的周几（0=周日 … 6=周六），升序去重 */
+  weeklyDays?: number[]
 }
 
 export interface BuildCronInput {
   mode: Exclude<RepeatMode, 'once'>
   time: string
   intervalMinutes?: number
+  weeklyDays?: number[]
 }
 
 export interface ScheduleDateTimeParts {
@@ -30,6 +33,33 @@ function timeParts(time: string): [number, number] {
   return [hours, minutes]
 }
 
+/** 规整周几集合：去重、7 归并为 0（周日）、只保留 0-6、升序；全选 7 天视为每天。 */
+export function normalizeWeeklyDays(days: number[] | undefined | null): number[] | null {
+  const set = new Set((days || [])
+    .map(day => Number(day))
+    .filter(day => Number.isInteger(day))
+    .map(day => (day === 7 ? 0 : day))
+    .filter(day => day >= 0 && day <= 6))
+  if (set.size === 0 || set.size === 7) return null
+  return [...set].sort((a, b) => a - b)
+}
+
+function expandDayField(field: string): number[] {
+  const days: number[] = []
+  for (const part of field.split(',')) {
+    const range = part.match(/^(\d+)-(\d+)$/)
+    if (range) {
+      const [start, end] = [Number(range[1]), Number(range[2])]
+      for (let day = start; day <= end; day++) days.push(day)
+    } else if (/^\d+$/.test(part)) {
+      days.push(Number(part))
+    } else {
+      return []
+    }
+  }
+  return days
+}
+
 export function buildCron(input: BuildCronInput): string {
   if (input.mode === 'interval') {
     const minutes = Math.min(60, Math.max(1, Math.round(Number(input.intervalMinutes) || 5)))
@@ -37,12 +67,12 @@ export function buildCron(input: BuildCronInput): string {
   }
 
   const [hours, minutes] = timeParts(input.time)
-  const daysOfWeek: Record<Exclude<RepeatMode, 'interval' | 'once'>, string> = {
-    daily: '*',
-    weekday: '1-5',
-    weekend: '0,6',
+  if (input.mode === 'weekly') {
+    const days = normalizeWeeklyDays(input.weeklyDays)
+    if (days) return `${minutes} ${hours} * * ${days.join(',')}`
+    return `${minutes} ${hours} * * *`
   }
-  return `${minutes} ${hours} * * ${daysOfWeek[input.mode] ?? '*'}`
+  return `${minutes} ${hours} * * *`
 }
 
 export function parseCron(cron: string): ParsedCron {
@@ -62,12 +92,11 @@ export function parseCron(cron: string): ParsedCron {
   }
 
   const time = `${pad(Number(hour))}:${pad(Number(minute))}`
-  const mode: RepeatMode = dayOfWeek === '1-5' || dayOfWeek === '1,2,3,4,5'
-    ? 'weekday'
-    : dayOfWeek === '0,6' || dayOfWeek === '6,0'
-      ? 'weekend'
-      : 'daily'
-  return { mode, time }
+  if (dayOfWeek && dayOfWeek !== '*') {
+    const days = normalizeWeeklyDays(expandDayField(dayOfWeek))
+    if (days) return { mode: 'weekly', time, weeklyDays: days }
+  }
+  return { mode: 'daily', time }
 }
 
 /** 将 API 返回的 UTC 时间转换为定时任务表单使用的项目时区（Asia/Shanghai）。 */
@@ -102,16 +131,21 @@ export function scheduleDateTimeValue(date: string, time: string): number | null
   return Number.isFinite(value) ? value : null
 }
 
+function weekdayNames(): string[] {
+  const names = (i18n.global.tm as (key: string) => unknown)('sharedUi.weekdays')
+  return Array.isArray(names) ? names.map(name => String(name)) : []
+}
+
 export function cronLabel(cron: string): string {
   const t = i18n.global.t
   const parsed = parseCron(cron)
   if (parsed.mode === 'once') return t('schedules.once')
   if (parsed.mode === 'interval') return t('schedules.everyMinutes', { minutes: parsed.intervalMinutes })
 
-  const labels: Record<Exclude<RepeatMode, 'interval' | 'once'>, string> = {
-    daily: t('schedules.daily'),
-    weekday: t('schedules.weekday'),
-    weekend: t('schedules.weekend'),
+  if (parsed.mode === 'weekly' && parsed.weeklyDays?.length) {
+    const names = weekdayNames()
+    const label = parsed.weeklyDays.map(day => names[day] ?? String(day)).join('/')
+    return t('schedules.weeklyLabel', { days: label, time: parsed.time })
   }
-  return `${labels[parsed.mode] ?? t('schedules.daily')} ${parsed.time}`
+  return `${t('schedules.daily')} ${parsed.time}`
 }

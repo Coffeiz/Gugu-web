@@ -550,6 +550,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     "",
                     get_settings(),
                     group_mode=True,
+                    session_id=recorded_session_id,
                 )
         except Exception:
             # 记忆调度不能阻断消息落库和网页会话同步。

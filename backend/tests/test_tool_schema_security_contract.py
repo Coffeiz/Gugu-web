@@ -5,7 +5,12 @@ import json
 
 from agent.tools import registry
 from agent.tools.base import _compact_schema
-from agent.tools.tool_contract import build_validator, normalize_legacy_input, validate_input
+from agent.tools.tool_contract import (
+    build_validator,
+    invalid_input_payload,
+    normalize_legacy_input,
+    validate_input,
+)
 
 
 @pytest.mark.asyncio
@@ -250,6 +255,33 @@ def test_phase8_edit_modes_are_structural():
     assert _issues("edit_file", {"file_id": 1, "mode": "line_edit"})
     assert _issues("edit_file", {"file_id": 1, "mode": "append", "find": "旧", "replace": "新"})
     assert _issues("edit_file", {"file_id": 1, "mode": "find_replace", "content": "新内容"})
+    assert _issues("edit_file", {
+        "file_id": 1, "mode": "append", "content": "追加内容",
+        "line_edits": [{"target_lines": "1", "content": "覆盖"}],
+    })
+    assert _issues("edit_file", {
+        "file_id": 1, "mode": "find_replace", "find": "旧", "replace": "新",
+        "line_edits": [{"target_lines": "1", "content": "覆盖"}],
+    })
+
+
+def test_edit_file_not_error_explains_mode_field_combinations_without_echoing_values():
+    args = {
+        "file_id": 8782,
+        "mode": "replace",
+        "content": "完整的新正文",
+        "find": "不应出现在错误回执里的旧正文",
+    }
+    schema = registry.get("edit_file").input_schema
+    issues = validate_input(build_validator(schema), args)
+
+    payload = invalid_input_payload("edit_file", issues, schema=schema)
+    rendered = json.dumps(payload, ensure_ascii=False)
+
+    assert issues[0]["rule"] == "not"
+    assert "字段不能混用" in payload["next_action"]
+    assert any("replace" in hint and "只传 content" in hint for hint in payload["schema_hints"])
+    assert "不应出现在错误回执里的旧正文" not in rendered
 
 
 def test_phase3_legacy_event_adapter_is_explicit_and_value_preserving():

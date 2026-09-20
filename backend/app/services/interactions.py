@@ -7,7 +7,7 @@ import hashlib
 import json
 import secrets
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
@@ -761,6 +761,24 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
     return result
 
 
+async def trim_finished_interactions(
+    db: AsyncSession, *, session_id: int, created_before=None,
+) -> int:
+    """物理删除会话里已完结（resolved/expired/cancelled）的交互卡。
+
+    trim_session_messages 裁掉消息时同步调用：交互卡只是展示数据，应伴随保留的
+    消息存在——不随消息裁切会无限累积挤占会话历史。active（待回复的确认门/选择卡）
+    一律保留（其生命周期由 expires_at 与消费流程负责）。返回删除行数。"""
+    conditions = [
+        InteractionPrompt.session_id == session_id,
+        InteractionPrompt.status.in_(("resolved", "expired", "cancelled")),
+    ]
+    if created_before is not None:
+        conditions.append(InteractionPrompt.created_at < created_before)
+    result = await db.execute(delete(InteractionPrompt).where(*conditions))
+    return result.rowcount or 0
+
+
 async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
     """返回会话全部交互气泡；活动项轮换 token，已完成项只保留展示数据。"""
     now = now_utc()
@@ -832,19 +850,36 @@ async def create_tool_confirmation(
     """
     if session_id is None:
         return None
-    # 统一桥只接收工具注册表明确声明需要确认的工具，避免普通业务结果偶然带
-    # needs_confirm 字段时也被渲染成危险操作按钮。可撤销的创建/授权类操作不必
-    # 被错误归类为 destructive。
-    try:
-        from agent.tools import registry
-        tool = registry.snapshot().get(tool_name)
-        if tool is None or not (tool.destructive or tool.requires_confirmation):
-            return None
-    except Exception:
-        return None
+    # 载荷检查前置：绝大多数工具结果是普通业务数据（无 needs_confirm），在这里
+    # 零成本返回，不碰注册表/管理器。
     payload = confirmation_payload(result)
     if payload is None:
         return None
+    # 统一桥只接收两类工具：注册表里明确声明需要确认的工具（destructive /
+    # requires_confirmation），以及动态 MCP 工具（不在全局 registry，确认门在
+    # manager handler 内按 server confirm_mode 处理——结果里出现 needs_confirm
+    # 载荷即说明确认门真实触发）。普通业务结果偶然带 needs_confirm 字段的不会
+    # 被误渲染成按钮；可撤销的创建/授权类操作也不会被错误归类为 destructive。
+    try:
+        from agent.tools import registry
+        tool = registry.snapshot().get(tool_name)
+        if tool is not None and not (tool.destructive or tool.requires_confirmation):
+            tool = None
+    except Exception:
+        tool = None
+    if tool is not None:
+        tool_label = str(tool.label or tool_name)
+    else:
+        # 动态 MCP 工具：没有按钮桥时模型只能复读确认 JSON，用户回复「继续」
+        # 无法兑换确认码，确认门会无限循环（2026-09-18 search_image 实测）。
+        try:
+            from agent.mcp.manager import mcp_manager
+            meta = mcp_manager.meta_for_prefixed_tool(user_id, tool_name)
+        except Exception:
+            meta = None
+        if meta is None:
+            return None
+        tool_label = f"[{meta.server_name}] {meta.tool_name}"
 
     from app.db import session as db_session
     db_session.ensure_engine()
@@ -858,7 +893,6 @@ async def create_tool_confirmation(
         "confirm_code": confirm_code if isinstance(confirm_code, str) else None,
         "task_paused": True,
     }
-    tool_label = str(tool.label or tool_name)
     async with db_session._SessionLocal() as db:
         prompt, actions = await create_prompt(
             db,

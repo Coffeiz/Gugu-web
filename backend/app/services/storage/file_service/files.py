@@ -234,14 +234,15 @@ class FileOps:
     # ── 改名 / 移动（PATCH）─────────────────────────────────────────────────────
     async def update_file(self, user_id, fid, *, display_name, stage_name,
                           folder_id, project_id, folder_set, project_set,
-                          workspace_directory_id=None, workspace_directory_set=False) -> FileResult:
+                          workspace_directory_id=None, workspace_directory_set=False,
+                          ext=None) -> FileResult:
         f = await get_owned(self.db, File, fid, user_id)
         if not f:
             raise NotFound("file.not_found", "文件不存在")
         new_display = display_name if display_name is not None else f.display_name
+        new_ext = ext if ext is not None else f.ext
         new_stage = stage_name if stage_name is not None else f.stage_name
-        # folder_id/project_id 只在显式出现（含 null）时才更新，否则保持原值——纯改名 patch
-        # 不带这两字段，不能被当成「移到个人空间」。
+        # 仅显式提供 folder_id/project_id（含 null）时移动；纯改名不能隐式移回个人空间。
         new_fid = folder_id if folder_set else f.folder_id
         new_pid = project_id if project_set else f.project_id
         new_wid = workspace_directory_id if workspace_directory_set else f.workspace_directory_id
@@ -278,18 +279,18 @@ class FileOps:
             folder_name = fo.name
 
         new_key = self._build_key(
-            user_id, file_id=f.id, space=new_space, name=new_display, ext=f.ext,
+            user_id, file_id=f.id, space=new_space, name=new_display, ext=new_ext,
             project=project, project_id=new_pid,
             project_year=project_year, project_month=project_month, folder_path=folder_path,
             workspace_directory=workspace_directory)
         if new_key != f.storage_key:
-            resolved = await self.key_strategy.resolve_conflict(self.storage, new_key, new_display, f.ext)
+            resolved = await self.key_strategy.resolve_conflict(self.storage, new_key, new_display, new_ext)
             new_key, new_display = resolved.key, resolved.name
             await self.storage.rename_file(f.storage_key, new_key)
             f.storage_key = new_key
             # 不清旧祖先：源文件夹仍存活，其空目录须持久（P1.2）；孤儿由文件夹级清理 + 对账工具兜底
 
-        f.display_name = new_display
+        f.display_name, f.ext = new_display, new_ext
         f.stage_name = new_stage
         f.folder_id = new_fid
         f.project_id = new_pid

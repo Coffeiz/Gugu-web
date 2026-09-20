@@ -19,6 +19,7 @@ from app.core.tz import now_utc
 from agent.context.branch import ContextBranch
 from agent.context.branch_types import BranchInput, BranchPolicy
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
+from agent.memory.reflection_branch import run_reflection_branch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
 from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
 from agent.memory.scoped_store import (
@@ -45,11 +46,55 @@ GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference"
 _GROUP_INTERNAL_ID_RE = re.compile(r"(?:platform_user_id|user_openid|member_openid|group_openid)\s*=", re.I)
 
 
+def _append_history_message(message) -> dict:
+    """把已持久化 IM 消息投影成 append 分支可读的 canonical 消息。"""
+    if message.role == "assistant":
+        return {"role": "assistant", "content": message.content or "（无文字）"}
+    sender = message.platform_user_name or "未提供昵称"
+    return {
+        "role": "user",
+        "content": f"[{sender}] {message.content or '（无文字）'}",
+    }
+
+
+def _append_scope_system(user_name: str = "群友") -> str:
+    """取得 append 分支稳定 system；群业务规则放在末尾 delta，避免污染前缀。"""
+    from agent.capabilities.defaults import DEFAULT_PROMPT_NAME
+    from agent.context.session_system import build_static_prompt
+
+    return build_static_prompt(DEFAULT_PROMPT_NAME, user_name)
+
+
+def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
+                               current: dict, messages: list) -> BranchInput:
+    """构造群/成员 append 分支：消息作为历史，反思规则和任务作为末尾增量。"""
+    reflection_current = {k: v for k, v in current.items() if k != "members"}
+    delta = (
+        f"{_scope_prompt(scope, task_type=task_type)}\n\n"
+        f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
+        f"本批待反思消息已作为追加历史末尾的 {len(messages)} 条消息提供；"
+        "只从这些消息提取，不要把消息正文复制到本条任务指令中。"
+    )
+    return BranchInput(
+        stable_system=_append_scope_system(),
+        delta=delta,
+        scope="group-member-reflection" if task_type == "member-batch" else scope.scope_type,
+        scope_revision=str(job.idempotency_key),
+        run_id=f"im-reflection-job:{job.id}",
+        history_messages=tuple(_append_history_message(message) for message in messages),
+        branch_mode="append_reuse",
+    )
+
+
 def _log_reflection_failure(job, *, phase: str, exc: BaseException) -> None:
     """记录反思原始异常；正文/作用域标识不进入可见 worker 日志。"""
     from agent.security.logsafe import fingerprint
+    from app.core.errors import root_cause_name
     from app.core.redaction import diag_log
 
+    cause = root_cause_name(exc)
+    label = type(exc).__name__ if cause == type(exc).__name__ \
+        else f"{type(exc).__name__}(根因 {cause})"
     _reflection_log.error(
         "[memory-reflection-failed] job_id=%s phase=%s scope_type=%s "
         "scope_id_fp=%s source=%s task_type=%s error=%s",
@@ -59,7 +104,7 @@ def _log_reflection_failure(job, *, phase: str, exc: BaseException) -> None:
         fingerprint(getattr(job, "scope_id", "")),
         getattr(job, "platform", ""),
         getattr(job, "task_type", ""),
-        type(exc).__name__,
+        label,
     )
     # 原始 traceback 只进受限诊断文件，不进入 gugu.log/SystemLog/Debug 面板。
     diag_log(f"agent.memory.im_reflection.{phase}", exc)
@@ -324,33 +369,16 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                     diag_log("agent.memory.im_members.aggregate", exc)
             phase = "load_scope"
             current = await read_scope(scope)
-            payload = "\n".join(
-                f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
-                for m in messages
-            )
             # members.json 不进反思 prompt——它是 execute_job 里独立聚合写入的持久化文件
             # （见上面的 members.json 写入块），不该被当成"已有记忆"整份塞给 LLM：群成员
             # 越多，prompt 越大，纯粹是无意义的 token 开销；nicknames_add 判断用的是本批
             # 消息自带的 sender id，也不需要旧 members 全量做参照。
-            reflection_current = {k: v for k, v in current.items() if k != "members"}
-            user = (
-                f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
-                f"本批新增消息：\n{payload or '（无消息）'}"
-            )
             task_type = job.task_type or "group"
             phase = "reflection_provider"
-            branch = await ContextBranch().run(
-                BranchInput(
-                    stable_system=_scope_prompt(scope, task_type=task_type),
-                    delta=user,
-                    scope="group-member-reflection" if task_type == "member-batch" else scope.scope_type,
-                ),
-                BranchPolicy(
-                    name="reflection",
-                    output_mode="json",
-                    max_tokens=5000 if task_type == "member-batch" else 2500,
-                ),
+            branch = await run_reflection_branch(
+                _build_append_branch_input(scope, job, task_type, current, messages),
                 settings,
+                max_tokens=5000 if task_type == "member-batch" else 2500,
             )
             out = branch.output if branch.ok and isinstance(branch.output, dict) else {}
             if branch.return_reason == "provider_error":

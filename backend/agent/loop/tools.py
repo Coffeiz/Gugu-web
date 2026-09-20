@@ -125,17 +125,26 @@ class RepeatCallBreaker:
     联网读取结果可能变化，都不能拦）；任何非 repeat_safe 的调用（含 ask_user）
     都会打断「连续」语义，重置计数——中间穿插过一次别的调用就不算连续了。
     unlimited 模式下轮次上限不生效，这层是唯一的形态级护栏。
+
+    计数粒度是「轮」不是「次」：同一轮内并行发多个相同调用只记 1 次，
+    跨轮重复才累积——单轮多相同调用是合法形态，不拦（2026-09-18 定稿）。
+    每轮 dispatch 前由主循环调 begin_round()。
     """
 
     def __init__(self, limit: int):
         self._limit = limit
         self._sig: tuple[str, str] | None = None
         self._count = 0
+        self._counted_this_round = False
 
     @property
     def count(self) -> int:
-        """当前连续相同调用的次数（熔断日志沿用原 repeat_count 语义）。"""
+        """当前连续相同调用的轮数（熔断日志沿用原 repeat_count 语义）。"""
         return self._count
+
+    def begin_round(self) -> None:
+        """轮边界：同一轮内的后续相同调用不再累积计数。"""
+        self._counted_this_round = False
 
     def register(self, tool_snapshot, name: str, dispatch_input) -> bool:
         """记录一次调用；返回 True 表示本次应熔断跳过 dispatch。"""
@@ -154,7 +163,10 @@ class RepeatCallBreaker:
             # 签名都算不出来：保持既有计数语义（与原内联实现一致）。
             return self._count > self._limit
         if sig == self._sig:
-            self._count += 1
+            if not self._counted_this_round:
+                self._count += 1
+                self._counted_this_round = True
         else:
             self._sig, self._count = sig, 1
+            self._counted_this_round = True
         return self._count > self._limit

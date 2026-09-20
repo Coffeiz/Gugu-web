@@ -10,21 +10,24 @@ from typing import Any, Literal
 
 BranchName = Literal["compaction", "reflection", "knowledge"]
 OutputMode = Literal["text", "json"]
+# append_reuse：只读 sibling branch（PRD-LLM-27 §6.6），复用会话前缀但不修改
+# 主 continuation——分支响应不作为主会话下一轮的 Responses API 续接。
+# 没有 history_messages 的内部调用仍可执行，但不再携带独立分支模式。
+BranchMode = Literal["append_reuse"]
 
 
 @dataclass(frozen=True)
 class BranchInput:
     """分支请求的稳定前缀和本次增量。
 
-    history_messages 非空时走「追加式」：直接复用主会话的 canonical 消息序列，
-    delta 作为末尾追加的 user 消息发送（baseline/dynamic_context 被忽略），
-    让分支请求与主对话共享前缀以命中 provider 的会话内缓存。
+    history_messages 非空时走「追加式」：直接复用会话的 canonical 消息序列，
+    delta 作为末尾追加的 user 消息发送，让分支请求与主对话共享前缀以命中
+    provider 的会话内缓存。history_messages 为空时仍执行一次无历史的内部调用，
+    但不再引入独立分支模式语义。
     """
 
     stable_system: str
-    baseline: str = ""
     delta: str = ""
-    dynamic_context: str = ""
     scope: str = ""
     scope_revision: str | None = None
     session_id: int | None = None
@@ -35,6 +38,9 @@ class BranchInput:
     # 前缀，缺了它连消息部分都命中不了（实测 100% → 15%）。分支只输出文本、不消费
     # 工具调用，也不要设置 tool_choice——实测那同样会让命中失效。
     tools: tuple[Any, ...] = ()
+    # 状态边界（§6.6）：append_reuse 只读复用前缀，不得失效主会话 reasoning
+    # continuation。
+    branch_mode: BranchMode = "append_reuse"
 
 
 @dataclass(frozen=True)
@@ -46,7 +52,6 @@ class BranchPolicy:
     max_retries: int = 0
     max_tokens: int = 800
     thinking: str | None = None
-    preserve_prefix: bool = True
 
 
 @dataclass(frozen=True)

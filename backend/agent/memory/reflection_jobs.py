@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core import redis as R
 from app.core.tz import now_utc
+from agent.memory import reflection_idle
 from agent.memory.scopes import MemoryScope
 
 
@@ -16,7 +17,7 @@ REFLECTION_STREAM = "memory:reflection"
 REFLECTION_GROUP = "memory-reflection-workers"
 EXTRACTOR_VERSION = "im-memory-v1"
 ACTIVE_WINDOW = timedelta(hours=1)
-IDLE_WINDOW = timedelta(minutes=15)
+IDLE_WINDOW = reflection_idle.IDLE_WINDOW
 MAX_RETRIES = 5
 RETRY_BACKOFF_MINUTES = (1, 5, 30, 120, 360)
 GROUP_MESSAGE_THRESHOLD = 50
@@ -221,7 +222,7 @@ async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
     from app.models import MemoryReflectionCursor
 
     now = now or now_utc()
-    cutoff = now - IDLE_WINDOW
+    cutoff = reflection_idle.idle_cutoff(now)
     async with await _db_session() as db:
         rows = (await db.execute(
             select(MemoryReflectionCursor)

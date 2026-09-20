@@ -186,6 +186,7 @@ class FileUndoAdapter:
             row.user_id,
             row.id,
             display_name=snapshot.get("display_name"),
+            ext=snapshot.get("ext"),
             stage_name=snapshot.get("stage_name"),
             folder_id=snapshot.get("folder_id"),
             project_id=snapshot.get("project_id"),

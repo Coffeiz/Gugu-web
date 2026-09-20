@@ -160,7 +160,7 @@ import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isVideoExt, isTextExt, isOfficeExt, usePreviewStore } from '@/stores/preview'
+import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isPreviewReloadRequested, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useLiveStore } from '@/stores/live'
@@ -617,7 +617,14 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   }
 }
 
-watch(() => props.win.file, f => load(f), { immediate: true })
+watch(
+  () => [props.win.file, props.win.reloadToken] as const,
+  ([file, reloadToken], previous) => load(
+    file,
+    isPreviewReloadRequested(reloadToken, previous?.[1]),
+  ),
+  { immediate: true },
+)
 
 function onTextContentSaved(content: string, fileKey: string | number | null) {
   // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的

@@ -46,15 +46,33 @@ def test_verify_limit_has_independent_budget():
 
 # ── rounds.usage_compaction_due / overflow ───────────────────────────────────
 
-def test_usage_compaction_due_matches_original_semantics():
+def test_usage_compaction_due_uses_threshold_and_no_progress_guard():
     from agent.context.compress_conv import AUTO_COMPACTION_RATIO
     tokens = 1000
     threshold = int(tokens * AUTO_COMPACTION_RATIO)
-    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, compaction_applied=False) is True
-    assert rounds.usage_compaction_due(run_context_usage=threshold - 1, context_tokens=tokens, compaction_applied=False) is False
-    # 已压缩过不再触发；context_tokens 缺失按 1 处理不会除零
-    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, compaction_applied=True) is False
-    assert rounds.usage_compaction_due(run_context_usage=10**9, context_tokens=0, compaction_applied=False) is True
+    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens) is True
+    assert rounds.usage_compaction_due(run_context_usage=threshold - 1, context_tokens=tokens) is False
+    # 同一未变化 history 的失败尝试不会重复触发；新消息到来后调用方解除阻断。
+    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, no_progress=True) is False
+    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, no_progress=False) is True
+    # context_tokens 缺失按 1 处理不会除零
+    assert rounds.usage_compaction_due(run_context_usage=10**9, context_tokens=0) is True
+
+
+def test_rolling_compaction_window_keeps_last_ten_completed_rounds():
+    starts = [(number, number * 10) for number in range(1, 14)]
+
+    # 第 13 轮响应后尚未入 history，最近 10 个完整轮为第 3 至第 12 轮。
+    assert rounds.rolling_compaction_start_index(starts, current_round=13) == 30
+    assert rounds.rolling_compaction_start_index(starts, current_round=6) == 10
+
+
+def test_round_start_indices_follow_the_actually_retained_suffix():
+    starts = [(number, number * 10) for number in range(1, 14)]
+
+    assert rounds.remap_round_start_indices(starts, 5, 70) == [
+        (7, 5), (8, 15), (9, 25), (10, 35), (11, 45), (12, 55), (13, 65),
+    ]
 
 
 def test_overflow_recovery_plan_is_single_shot():
@@ -139,3 +157,80 @@ def test_unlimited_resume_still_blocked_by_absolute_limit():
         unlimited_mode=True, max_rounds=None, max_verify_rounds=None,
         max_absolute_rounds=MAX_ABS,
     ) is rounds.RoundBudgetAction.ABSOLUTE_LIMIT
+
+
+def test_watchdog_round_summary_is_structured_and_does_not_log_tool_values(caplog):
+    """循环诊断要能串起工具轮次，但不能把参数正文带进可见轨迹。"""
+    import json
+    import logging
+    from types import SimpleNamespace
+
+    from agent.loop import watchdog
+
+    call = SimpleNamespace(name="shell", input={"command": "cat secret-token.txt", "cwd": "."})
+    with caplog.at_level(logging.INFO, logger="agent.traj"):
+        watchdog.record_round_result(
+            run_id="run-test",
+            round_number=7,
+            tool_calls=[call],
+            requires_tools=True,
+            verify_mode=False,
+            goal_mode=False,
+            unlimited_mode=True,
+            task_rounds=7,
+            verify_rounds=0,
+            tool_calls_used=6,
+        )
+
+    record = json.loads(caplog.records[-1].message)
+    assert record["t"] == "loop"
+    assert record["event"] == "round_result"
+    assert record["run"] == "run-test"
+    assert record["tools"] == ["shell"]
+    assert record["tool_input_fp"]
+    assert "secret-token.txt" not in caplog.records[-1].message
+    assert "cat secret-token.txt" not in caplog.records[-1].message
+
+
+def test_watchdog_stop_records_budget_loop_reason(caplog):
+    import json
+    import logging
+
+    from agent.loop import watchdog
+
+    with caplog.at_level(logging.INFO, logger="agent.traj"):
+        watchdog.record_stop(
+            run_id="run-test",
+            round_number=100,
+            reason="tool_budget_stop_loop",
+            budget_stop_rounds=2,
+            tool_calls_used=10,
+        )
+
+    record = json.loads(caplog.records[-1].message)
+    assert record["event"] == "stop"
+    assert record["reason"] == "tool_budget_stop_loop"
+    assert record["budget_stop_rounds"] == 2
+
+
+def test_watchdog_does_not_echo_polluted_tool_name(caplog):
+    import logging
+
+    from agent.loop import watchdog
+
+    with caplog.at_level(logging.INFO, logger="agent.traj"):
+        watchdog.record_round_result(
+            run_id="run-test",
+            round_number=1,
+            tool_calls=[type("Call", (), {"name": 'shell<正文泄漏>', "input": {}})()],
+            requires_tools=True,
+            verify_mode=False,
+            goal_mode=False,
+            unlimited_mode=False,
+            task_rounds=1,
+            verify_rounds=0,
+            tool_calls_used=1,
+        )
+
+    assert "正文泄漏" not in caplog.records[-1].message
+    assert '"tool_count":1' in caplog.records[-1].message

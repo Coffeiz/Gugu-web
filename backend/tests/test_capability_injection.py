@@ -32,7 +32,7 @@ def test_catalog_contains_short_descriptions_only():
     assert "call_tool" in block
     assert "get_tool_schema" in block
     assert "紧凑字段签名" in block
-    assert "字段签名只展示类型、简单枚举、必填状态和一层结构" in block
+    assert "字段签名展示类型、简单枚举、必填状态、一层结构及可识别的模式条件约束" in block
     assert "权限和执行校验由代码完成" in block
 
 
@@ -177,12 +177,23 @@ def test_skill_lookup_rejects_tool_metadata_in_skill_map():
 def test_catalog_derives_compact_field_signature_from_tool_registry():
     snapshot = CapabilitySnapshot(
         generation=1,
-        tools={"list_dir": CapabilityMeta("list_dir", "tool", "浏览目录。")},
+        tools={
+            "list_dir": CapabilityMeta("list_dir", "tool", "浏览目录。"),
+            "edit_file": CapabilityMeta(
+                "edit_file", "tool", "修改 UTF-8 文本；单项编辑模式互斥，批量编辑时每个条目分别选择一种操作。"
+            ),
+        },
         skills={},
     )
     block = catalog_block(snapshot)
     assert "list_dir" in block
     assert "limit(integer" in block
+    assert "edit_file：修改 UTF-8 文本" in block
+    assert "模式互斥（顶层、edits[]" in block
+    assert "mode=append→content（不传find/replace/line_edits）" in block
+    assert "mode=replace→content（不传find/replace/line_edits）" in block
+    assert "mode=find_replace→find+replace（不传content/line_edits）" in block
+    assert "mode=line_edit→line_edits（不传content/find/replace）" in block
     assert "例如" not in block
     assert "input_schema" not in block
 

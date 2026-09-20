@@ -11,10 +11,8 @@ context_tokens/thinking/vision —— `AIPresetItem` 和 `AISettings` 都满足�
 """
 from __future__ import annotations
 
-import copy
 import random
 from dataclasses import dataclass
-from dataclasses import replace
 from sqlalchemy import select
 
 from agent import providers
@@ -134,8 +132,9 @@ def _reasoning_persistence_for_model(model) -> str:
     """返回当前协议真正支持的推理状态策略。
 
     Chat Completions 不会返回可恢复的 provider state；即使数据库里还留有
-    旧的 summary/continuation 配置，也不能让它继续触发 Responses 自动探测。
-    未知 Provider 的空 ``api_format`` 才会保留自动探测；已知 Provider 按其默认协议处理。
+    旧的 summary/continuation 配置，也一律回落 off，不再触发任何 Responses
+    协议自动探测/切换。continuation 只在显式 api_format=responses（或
+    Anthropic 等原生支持续接的协议）下生效。
     """
     mode = ReasoningPersistencePolicy.from_value(
         getattr(model, "reasoning_persistence", "off")
@@ -143,8 +142,8 @@ def _reasoning_persistence_for_model(model) -> str:
     configured_format = str(getattr(model, "api_format", "") or "").strip().lower()
     if configured_format in {"openai", "chat", "chat_completions"}:
         return "off"
-    # 已知 OpenAI-compatible Provider 的空值按 Chat Completions 处理，不再保留
-    # 旧的 Auto/URL 猜测语义；只有未知 Provider 才由协议适配器继续自动判断。
+    # 已知 OpenAI-compatible Provider 的空值按 Chat Completions 处理；
+    # 未知 Provider 交回协议适配器自行解释（不主动切换协议）。
     provider = (getattr(model, "provider", "") or "").lower()
     known_openai_providers = {"openai", "qwen", "glm", "glm-coding", "deepseek", "mimo", "ollama", "local"}
     if not configured_format and provider in known_openai_providers:
@@ -166,35 +165,6 @@ def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
     )
 
 
-async def _auto_select_responses(config: ModelRunConfig) -> ModelRunConfig:
-    """续接策略开启时，先探测 Responses，成功后才切换协议。"""
-    if config.reasoning_persistence != "continuation":
-        return config
-    model = config.model
-    adapter = providers.adapter_for(model)
-    if adapter.protocol_format(model) != "openai":
-        return config
-    if (getattr(model, "provider", "") or "").lower() == "ollama" and \
-            getattr(model, "ollama_api_mode", "native") == "native":
-        return config
-
-    from app.services.provider_diagnostics import probe_responses_capability
-    probe = await probe_responses_capability(
-        provider=getattr(model, "provider", "") or "",
-        api_key=getattr(model, "api_key", "") or "",
-        base_url=getattr(model, "base_url", "") or "",
-        model=getattr(model, "model", "") or "",
-    )
-    if probe.get("ok"):
-        if hasattr(model, "model_copy"):
-            model = model.model_copy(update={"api_format": "responses"})
-        else:
-            model = copy.copy(model)
-            model.api_format = "responses"
-        return replace(config, model=model, use_anthropic=False)
-    return replace(config, reasoning_notice="当前接口不支持推理续接")
-
-
 async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelRunConfig:
     """解析主模型并应用当前用户的 LLM BYOK 覆盖。"""
     config = resolve_run_config(settings, ctx)
@@ -206,12 +176,7 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
     )
     if not (getattr(settings, "byok", None) and
             (settings.byok.enabled or settings.ai.deployment_mode == "local")):
-        return await _auto_select_responses(ModelRunConfig(
-            model=config.model, use_anthropic=config.use_anthropic,
-            context_tokens=config.context_tokens,
-            is_byok=config.is_byok,
-            reasoning_persistence=config.reasoning_persistence,
-        ))
+        return config
     from app.byok.service import decrypt_value, resolve_user_base_url
     from app.models import UserProviderCredential
     rows = (await db.execute(select(UserProviderCredential).where(
@@ -221,23 +186,13 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
     ).order_by(UserProviderCredential.id))).scalars().all()
     row = next(iter(rows), None)
     if row is None:
-        return await _auto_select_responses(ModelRunConfig(
-            model=config.model, use_anthropic=config.use_anthropic,
-            context_tokens=config.context_tokens,
-            is_byok=config.is_byok,
-            reasoning_persistence=config.reasoning_persistence,
-        ))
+        return config
     # 目的地绑定（主 LLM）：用户 Key 的 base_url 只来自用户凭据本身，空串按
     # provider 官方默认端点解析；解析不出（目的地不明）→ 放弃覆盖回落平台配置。
     # 绝不继承平台 base_url——否则用户 DeepSeek Key 会被拼进平台 DashScope 端点。
     base_url = resolve_user_base_url(row.provider, row.base_url)
     if not base_url:
-        return await _auto_select_responses(ModelRunConfig(
-            model=config.model, use_anthropic=config.use_anthropic,
-            context_tokens=config.context_tokens,
-            is_byok=config.is_byok,
-            reasoning_persistence=config.reasoning_persistence,
-        ))
+        return config
     base = config.model
     updates = {"provider": row.provider, "api_format": row.api_format,
                "api_key": decrypt_value(row), "base_url": base_url,
@@ -255,9 +210,9 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
         updates["reasoning_effort"] = row.reasoning_effort
     updates["reasoning_persistence"] = getattr(row, "reasoning_persistence", "off")
     model = base.model_copy(update=updates) if hasattr(base, "model_copy") else base
-    return await _auto_select_responses(ModelRunConfig(
+    return ModelRunConfig(
         model=model, use_anthropic=use_anthropic_for(model),
         context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
         is_byok=True,
         reasoning_persistence=_reasoning_persistence_for_model(model),
-    ))
+    )

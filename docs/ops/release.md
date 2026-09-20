@@ -149,10 +149,13 @@ docker restart gugu-web-main-nginx-1
 - compose 项目名必须 `-p gugu-web-main`；`backend/.env`、`config.override.json` 属用户数据，流程中只读。
 - backend/frontend 镜像在 Docker Hub 与 GHCR 均公开，可匿名拉取；业务服务器优先使用 Docker Hub，也可改用 GHCR 同版本标签。
 - sandboxd 与 backend 共用镜像 tag，`up -d` 检测不到 tag 底层镜像变化，必须 `--force-recreate`。
-- **最后一步 `docker restart nginx-1` 不能省**（v1.1.4 教训）：`up -d` 重建 backend/frontend 后
-  容器 IP 会变，nginx 只在启动时解析上游地址，不重启就继续连旧 IP，公网整站 502
-  （日志特征 `connect() failed (111: Connection refused)`、upstream 指向失效的 172.21.0.x）。
-  重启后必须 curl 公网域名确认 200 再收工。
+- **`docker restart nginx-1` 保留为收尾保险动作**。`nginx/nginx.conf` 已带 Docker 内置 DNS
+  resolver（127.0.0.11，10s 重解析）+ 变量式 `proxy_pass`，上游 IP 变化会自动跟随；
+  但 `up -d` 后立即重启 nginx 时 backend/frontend 往往还没监听，会看到瞬时 502
+  （v1.3.1 教训）。正确收尾：等 `docker ps` 里 backend 显示 healthy 再 restart nginx，
+  然后 curl 公网域名确认 200；若仍 502，先分层定位——`curl 127.0.0.1:9595/health`
+  通了而公网 502，说明问题在外层 1Panel OpenResty（502 页脚的 nginx 版本可区分层级），
+  不要在容器层反复重启。
 
 ### Shell 沙盒前置（首次部署或迁移时）
 

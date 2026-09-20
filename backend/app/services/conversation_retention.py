@@ -1,10 +1,13 @@
 """跨平台会话消息保留策略。"""
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import desc, func, select
 
 from app.services.conversation_cleanup import remove_messages_with_attachments
 
+logger = logging.getLogger(__name__)
 
 # 所有会话类型共用这组物理保留边界；上下文读取窗口由各自的 history policy 单独决定。
 MESSAGE_RETENTION_LIMIT = 500
@@ -20,6 +23,9 @@ async def trim_session_messages(
 
     裁剪发生在一轮完整持久化之后，避免删除仍可能被当前 provider round 使用的
     历史。阈值和上限对 Web、IM、主动消息等会话来源一致。
+    交互卡（interaction_prompts）与消息分开存储、无独立裁切路径——这里按裁切
+    边界同步物理删除已完结（resolved/expired/cancelled）的卡片，active 的
+    待回复确认门一律保留。
     """
     if limit < 1:
         return
@@ -50,3 +56,16 @@ async def trim_session_messages(
             )
         )).scalars().all())
         await remove_messages_with_attachments(db, old_ids)
+
+        boundary = (await db.execute(
+            select(func.min(ConversationMessage.created_at)).where(
+                ConversationMessage.id.in_(keep_ids)
+            )
+        )).scalar_one()
+        if boundary is not None:
+            from app.services.interactions import trim_finished_interactions
+            removed = await trim_finished_interactions(db, session_id=session_id,
+                                                       created_before=boundary)
+            await db.commit()
+            if removed:
+                logger.info("[retention] session=%s 裁掉已完结交互卡 %d 张", session_id, removed)

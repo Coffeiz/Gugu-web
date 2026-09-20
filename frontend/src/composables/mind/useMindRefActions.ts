@@ -45,28 +45,30 @@ export function useMindRefActions() {
   }
 
   /** 本体删除后保留标题快照；网络异常不能误标成「已删除」。 */
-  async function resolveMindRef(refType: string, refId: number): Promise<MindRefState> {
+  async function resolveMindRef(refType: string, refId: number | string): Promise<MindRefState> {
+    // 历史类型的 id 都是数字；mcp 等字符串 id 的类型在上面 openMindRef 已短路处理
+    const numericId = Number(refId)
     if (refType === 'project') {
       if (!projectStore.projects.length && !projectStore.loading) await projectStore.fetchProjects()
       if (projectStore.loading && !projectStore.projects.length) return 'unknown'
       if (projectStore.error) return 'unknown'
-      return projectStore.projects.some(project => project.id === refId) ? 'available' : 'missing'
+      return projectStore.projects.some(project => project.id === numericId) ? 'available' : 'missing'
     }
     if (refType === 'file') {
       if (!filesCache.loaded) await filesCache.load()
       if (!filesCache.loaded) return 'unknown'
       await refreshFilesIfNeeded()
-      return filesCache.getFile(refId) ? 'available' : 'missing'
+      return filesCache.getFile(numericId) ? 'available' : 'missing'
 
     }
     if (refType === 'folder') {
       if (!filesCache.loaded) await filesCache.load()
       if (!filesCache.loaded) return 'unknown'
-      return filesCache.getFolder(refId) ? 'available' : 'missing'
+      return filesCache.getFolder(numericId) ? 'available' : 'missing'
     }
     if (refType === 'event') {
       try {
-        await eventsApi.get(refId)
+        await eventsApi.get(numericId)
         return 'available'
       } catch (error) {
         return isNotFound(error) ? 'missing' : 'unknown'
@@ -74,7 +76,7 @@ export function useMindRefActions() {
     }
     if (refType === 'conversation') {
       try {
-        await agentApi.getMessageLocation(refId)
+        await agentApi.getMessageLocation(numericId)
         return 'available'
       } catch (error) {
         return isNotFound(error) ? 'missing' : 'unknown'
@@ -110,18 +112,34 @@ export function useMindRefActions() {
     } catch { /* 消息已被删除/不可见：静默忽略，不弹错误打扰阅读 */ }
   }
 
-  async function openMindRef(refType: string, refId: number) {
+  async function openMindRef(refType: string, refId: number | string) {
+    // 技能/MCP/定时任务：chip 点击直接跳对应管理页（本体验不存在"详情弹窗"）；
+    // 引用存在性不在前端逐一校验，页面自身会展示列表与失效状态。
+    if (refType === 'skill') {
+      await router.push({ path: '/skills', query: { skill: String(refId) } })
+      return true
+    }
+    if (refType === 'mcp') {
+      await router.push({ path: '/mcp', query: { server: String(refId) } })
+      return true
+    }
+    if (refType === 'scheduled_task') {
+      await router.push({ path: '/schedules', query: { task: String(refId) } })
+      return true
+    }
     const state = await resolveMindRef(refType, refId)
     if (state === 'missing') {
       showAppNotice(i18n.global.t('mindUi.referenceMissing'))
       return false
     }
     if (state !== 'available') return false
-    if (refType === 'project') projectStore.openModal({ id: refId })
-    else if (refType === 'file') await openFile(refId)
-    else if (refType === 'folder') await openFolder(refId)
-    else if (refType === 'event') eventModalStore.openModal(refId)
-    else if (refType === 'conversation') await openConversationMessage(refId)
+    // 走到这里的历史类型 id 一定是数字（新类型在上面已短路）
+    const numericId = Number(refId)
+    if (refType === 'project') projectStore.openModal({ id: numericId })
+    else if (refType === 'file') await openFile(numericId)
+    else if (refType === 'folder') await openFolder(numericId)
+    else if (refType === 'event') eventModalStore.openModal(numericId)
+    else if (refType === 'conversation') await openConversationMessage(numericId)
     return true
   }
 

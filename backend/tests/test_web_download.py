@@ -33,8 +33,9 @@ async def test_web_download_saves_to_personal_root_by_default():
     fake_service = SimpleNamespace(create_file=AsyncMock(return_value=fake_result))
     db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
 
+    import io
     with (
-        patch.object(web, "_download_bytes", new=AsyncMock(return_value=(200, {"content-type": "text/markdown"}, b"hello"))),
+        patch.object(web, "_download_to_spool", new=AsyncMock(return_value=(200, {"content-type": "text/markdown"}, io.BytesIO(b"hello"), 5, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"))),
         patch.object(web, "FileService", return_value=fake_service),
     ):
         result = await web._web_download(
@@ -49,6 +50,7 @@ async def test_web_download_saves_to_personal_root_by_default():
     assert fake_service.create_file.await_args.kwargs["space"] == "personal"
     assert fake_service.create_file.await_args.kwargs["project_id"] is None
     assert fake_service.create_file.await_args.kwargs["folder_id"] is None
+    assert fake_service.create_file.await_args.kwargs["stream_size"] == 5
 
 
 @pytest.mark.asyncio
@@ -61,19 +63,22 @@ async def test_web_download_rejects_conflicting_location():
         {"url": "https://example.test/a.bin", "space": "personal", "project_id": 3},
     )
 
-    assert result == {"error": "space=personal 不能同时指定 project_id"}
+    assert result == {"error": "space=personal 不能提供 project_id"}
 
 
 @pytest.mark.asyncio
 async def test_web_download_ends_folder_read_transaction_before_network(monkeypatch):
     from agent.tools import web
 
-    folder = SimpleNamespace(deleted_at=None, project_id=None)
     db = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
-    monkeypatch.setattr(web, "get_user_folder", AsyncMock(return_value=folder))
     monkeypatch.setattr(
         web,
-        "_download_bytes",
+        "_resolve_create_location",
+        AsyncMock(return_value=("personal", None, 3, None, None)),
+    )
+    monkeypatch.setattr(
+        web,
+        "_download_to_spool",
         AsyncMock(return_value={"error": "下载失败：网络超时或连接失败"}),
     )
 

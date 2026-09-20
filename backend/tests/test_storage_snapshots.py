@@ -48,10 +48,11 @@ async def test_sql_snapshots_splits_draft_and_attached(db, user_a, storage, monk
     await db.flush()
     msg = ConversationMessage(session_id=session.id, role="user", content="hi")
     db.add(msg)
-    await db.flush()
+    await db.commit()   # stage 的独立 session 与单连接内存库共享事务，先落库再 stage
 
     attached_meta = await chat_attach.stage(user_a.id, "a.png", "png", "image/png", b"x" * 100)
     await chat_attach.claim_attachments(db, user_a.id, msg.id, [attached_meta["attach_id"]])
+    await db.commit()   # stage 的独立 session 与单连接内存库共享事务，claim 先落库再 stage 下一个
     await chat_attach.stage(user_a.id, "b.png", "png", "image/png", b"y" * 50)   # 仍是 draft
     await db.commit()
 

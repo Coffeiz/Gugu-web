@@ -30,6 +30,7 @@ async def complete_messages(
     max_tokens: int | None = 800,
     json_mode: bool = False,
     tools: list | None = None,
+    usage_sink: list | None = None,
 ) -> str:
     """追加式分支：复用主会话的 canonical 消息序列，delta 作为末尾 user 消息追加。
 
@@ -52,11 +53,11 @@ async def complete_messages(
     if use_anthropic:
         text = await _anthropic(sys, user, ai, max_tokens,
                                 settings=settings, history=history, tools=tools,
-                                align_with_main_run=True)
+                                align_with_main_run=True, usage_sink=usage_sink)
         return _parse_json(text) if json_mode else text
     text = await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
-                         tools=tools)
+                         tools=tools, usage_sink=usage_sink)
     return _parse_json(text) if json_mode else text
 
 
@@ -89,12 +90,13 @@ async def _anthropic(
     sys: str,
     user: str,
     ai,
-    max_tokens: int | None,
+    max_tokens: int,
     thinking: str | None = None,
     settings=None,
     history: list | None = None,
     tools: list | None = None,
     align_with_main_run: bool = False,
+    usage_sink: list | None = None,
 ) -> str:
     import httpx
     from agent import providers
@@ -144,7 +146,10 @@ async def _anthropic(
     resp = await client.messages.create(**kwargs)
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_anthropic_usage
-    await _record_usage(settings, ai, normalize_anthropic_usage(usage))
+    usage = normalize_anthropic_usage(usage)
+    if usage_sink is not None:
+        usage_sink.append(usage)
+    await _record_usage(settings, ai, usage)
     return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
 
 
@@ -171,6 +176,7 @@ async def _openai(
     settings=None,
     history: list | None = None,
     tools: list | None = None,
+    usage_sink: list | None = None,
 ) -> str:
     import httpx
     from agent import providers
@@ -206,7 +212,10 @@ async def _openai(
     resp = await client.chat.completions.create(**kwargs)
     usage = getattr(resp, "usage", None)
     from agent.usage import normalize_openai_usage
-    await _record_usage(settings, ai, normalize_openai_usage(usage))
+    usage = normalize_openai_usage(usage)
+    if usage_sink is not None:
+        usage_sink.append(usage)
+    await _record_usage(settings, ai, usage)
     return resp.choices[0].message.content or ""
 
 

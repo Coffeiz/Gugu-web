@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -66,6 +67,48 @@ async def _read_execution_state(session_id: int) -> str | None:
         return str(session.execution_state) if session is not None else None
 
 
+def _log_orphan_recovery(
+    session_id: int,
+    run_id: str | None,
+    execution_state: str,
+    status: dict,
+    baseline_lock_absent: bool,
+) -> None:
+    """记录孤儿回收的安全诊断字段，不记录快照正文。"""
+    snapshot = status.get("state") if isinstance(status.get("state"), dict) else {}
+    owner_run_id = str(snapshot.get("owner_run_id") or "") or None
+    reason = "heartbeat_missing" if status.get("stale") else "generation_state_absent"
+    if baseline_lock_absent:
+        reason = "baseline_lock_absent"
+    logger.warning(
+        "[compress_conv] 孤儿 run 已回收 session=%s run=%s owner_run=%s "
+        "execution_state=%s reason=%s redis_ok=%s active=%s stale=%s "
+        "has_owner=%s has_lease=%s has_beat=%s baseline_lock_absent=%s",
+        session_id,
+        run_id,
+        owner_run_id,
+        execution_state,
+        reason,
+        status.get("redis_ok"),
+        status.get("active"),
+        status.get("stale"),
+        status.get("has_owner"),
+        status.get("has_lease"),
+        status.get("has_beat"),
+        baseline_lock_absent,
+    )
+
+
+def _log_run_gate_event(event: str, session_id: int, run_id: str) -> None:
+    logger.info(
+        "[compress_conv] run %s session=%s run=%s pid=%s",
+        event,
+        session_id,
+        run_id,
+        os.getpid(),
+    )
+
+
 async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
     """回收进程退出后遗留的 ``running`` / ``baseline_updating`` 会话状态。
 
@@ -88,12 +131,16 @@ async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
         await genstream.reap(session_id)
 
     baseline_stuck = False
+    recovered_execution_state = ""
+    recovered_run_id = None
     async with _sess._SessionLocal() as db:
         session = await db.get(ConversationSession, session_id, with_for_update=True)
         if session is None or session.execution_state not in {"running", "baseline_updating"}:
             return False
         if user_id is not None and session.user_id != user_id:
             return False
+        recovered_execution_state = str(session.execution_state)
+        recovered_run_id = session.active_run_id
         if session.execution_state == "baseline_updating":
             # 压缩锁在 baseline_updating 之前取得（见 compress_session），锁消失
             # 才能证明写进程已不在；锁有 TTL，崩溃后最多 _COMPRESS_LOCK_TIMEOUT 秒。
@@ -115,7 +162,9 @@ async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
         session.active_run_id = None
         await db.commit()
 
-    logger.warning("[compress_conv] session=%s 回收进程退出遗留的生成状态", session_id)
+    _log_orphan_recovery(
+        session_id, recovered_run_id, recovered_execution_state, status, baseline_stuck,
+    )
     return True
 
 
@@ -310,9 +359,11 @@ async def session_run_gate(request, run_id: str | None = None):
     heartbeat = asyncio.create_task(
         keep_session_lease_alive(), name=f"session-lease:{session_id}"
     )
+    _log_run_gate_event("开始", session_id, run_id)
     try:
         yield run_id
     finally:
+        _log_run_gate_event("离开会话门", session_id, run_id)
         if gate_claimed:
             heartbeat.cancel()
             try:

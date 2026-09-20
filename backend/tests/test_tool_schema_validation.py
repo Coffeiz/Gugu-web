@@ -148,6 +148,40 @@ def test_note_tools_accept_legacy_text_inline_nodes_and_keep_strict_schema():
     assert len(adaptations) == 3
 
 
+def test_note_create_recovers_json_encoded_blocks_from_legacy_content_field():
+    raw = {
+        "content": json.dumps([
+            {"type": "heading", "content": [{"type": "text", "text": "镜头负责人表"}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "截止：2026-09-21"}]},
+        ], ensure_ascii=False),
+        "title": "镜头负责人表",
+    }
+
+    normalized, adaptations = normalize_legacy_input("note_create", raw)
+    issues = validate_input(build_validator({
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA},
+        },
+        "required": ["blocks"],
+    }), normalized)
+
+    assert issues == []
+    assert normalized["blocks"][0]["type"] == "heading"
+    assert "content" not in normalized
+    assert adaptations == ["note_create.content:json_string_to_blocks"]
+
+
+def test_note_create_does_not_guess_plain_markdown_content():
+    raw = {"content": "# 笔记标题\\n\\n普通正文"}
+
+    normalized, adaptations = normalize_legacy_input("note_create", raw)
+
+    assert normalized == raw
+    assert adaptations == []
+
+
 def test_note_tools_do_not_guess_missing_reference_type():
     raw = {"blocks": [{"type": "paragraph", "content": [{"label": "项目"}]}]}
 

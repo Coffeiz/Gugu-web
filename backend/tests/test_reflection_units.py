@@ -56,6 +56,9 @@ class _FakeRedis:
         for m in members:
             z.pop(m, None)
 
+    async def zscore(self, key, member):
+        return self.zsets.get(key, {}).get(member)
+
 
 def _seed_rows(redis, key, rows):
     redis.lists[key] = [json.dumps(r, ensure_ascii=False) for r in rows]
@@ -191,20 +194,25 @@ async def test_drain_group_owner_buffer_happy_and_rollback(monkeypatch):
     # 锁被占 → 直接放弃本轮
     busy_redis = _FakeRedis(acquirable=False)
     monkeypatch.setattr("app.core.redis.get_redis", lambda: busy_redis)
-    await reflection._drain_group_owner_buffer("u1", settings)
+    await reflection._drain_group_owner_buffer("u1", settings, "s1")
     assert reflected == []
 
     redis = _FakeRedis()
     monkeypatch.setattr("app.core.redis.get_redis", lambda: redis)
-    key = reflection._owner_group_buffer_key("u1")
+    monkeypatch.setattr(
+        "agent.context.reflection_snapshot.peek_reflection_snapshot",
+        lambda *_args: object(),
+    )
+    key = reflection._owner_group_buffer_key("u1", "s1")
     _seed_rows(redis, key, rows)
-    redis.zsets[reflection._GROUP_OWNER_IDLE_KEY] = {"u1": 1.0}
+    member = reflection._owner_idle_member("u1", "s1")
+    redis.zsets[reflection._GROUP_OWNER_IDLE_KEY] = {member: 1.0}
 
-    await reflection._drain_group_owner_buffer("u1", settings)
+    await reflection._drain_group_owner_buffer("u1", settings, "s1")
     assert reflected[0][2] == "帮我看下\n好了没"
     assert reflected[0][4] == rows
     assert key not in redis.lists                                    # 缓冲被原子取走
-    assert "u1" not in redis.zsets.get(reflection._GROUP_OWNER_IDLE_KEY, {})
+    assert member not in redis.zsets.get(reflection._GROUP_OWNER_IDLE_KEY, {})
     assert redis.lock_obj.released
 
     # reflect 失败 → 行放回 + 重新登记 idle
@@ -213,21 +221,21 @@ async def test_drain_group_owner_buffer_happy_and_rollback(monkeypatch):
 
     monkeypatch.setattr(reflection, "reflect", failing_reflect)
     _seed_rows(redis, key, rows)                                    # 首次 drain 已消费空，重新播种
-    await reflection._drain_group_owner_buffer("u1", settings)
+    await reflection._drain_group_owner_buffer("u1", settings, "s1")
     assert len(redis.lists[key]) == 2                                # 原样放回
-    assert redis.zsets[reflection._GROUP_OWNER_IDLE_KEY]["u1"] > 0
+    assert redis.zsets[reflection._GROUP_OWNER_IDLE_KEY][member] > 0
 
     # 空缓冲 → 只清 idle 登记
     redis.lists.pop(key, None)
-    await reflection._drain_group_owner_buffer("u1", settings)
-    assert "u1" not in redis.zsets.get(reflection._GROUP_OWNER_IDLE_KEY, {})
+    await reflection._drain_group_owner_buffer("u1", settings, "s1")
+    assert member not in redis.zsets.get(reflection._GROUP_OWNER_IDLE_KEY, {})
 
 
 async def test_drain_owner_reflection_buffer_rollback_keeps_turns(monkeypatch):
     from agent.memory import reflection
 
     rows = [{"user_name": "小北", "user_msg": "m1", "assistant_reply": "r1", "session_id": "s1"},
-            {"user_name": "小北", "user_msg": "m2", "assistant_reply": "r2", "session_id": "s2"}]
+            {"user_name": "小北", "user_msg": "m2", "assistant_reply": "r2", "session_id": "s1"}]
     reflected = []
 
     async def fake_reflect(user_id, user_name, user_msg, assistant_reply, settings, **kw):
@@ -237,13 +245,15 @@ async def test_drain_owner_reflection_buffer_rollback_keeps_turns(monkeypatch):
     monkeypatch.setattr(reflection, "reflect", fake_reflect)
     redis = _FakeRedis()
     monkeypatch.setattr("app.core.redis.get_redis", lambda: redis)
-    key = reflection._owner_reflection_buffer_key("u1")
+    key = reflection._owner_reflection_buffer_key("u1", "s1")
     _seed_rows(redis, key, rows)
     settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=10))
 
-    await reflection._drain_owner_reflection_buffer("u1", settings)
+    monkeypatch.setattr(reflection, "_owner_reflection_buffer_key", lambda user_id, session_id=None: key)
+    monkeypatch.setattr("agent.context.reflection_snapshot.peek_reflection_snapshot", lambda *args: object())
+    await reflection._drain_owner_reflection_buffer("u1", settings, "s1")
     assert reflected[0][1] == "m1\nm2"
-    assert reflected[0][3] == "s2"                                   # 取最后一行的 session
+    assert reflected[0][3] == "s1"
     assert reflected[0][4] == rows
 
     async def failing_reflect(*a, **k):
@@ -277,7 +287,7 @@ async def test_schedule_routes_trivial_tools_and_group(monkeypatch):
     reflection.schedule("u1", "小北", "嗯", "好的", settings)
     assert queued == [] and grouped == []
 
-    # 纯应答但用了工具 → 反思
+    # 纯应答但用了工具 → 照常入缓冲（工具与否只影响入队，不影响冲刷时机）
     reflection.schedule("u1", "小北", "嗯", "已建项目", settings, used_tools=["create_project"])
     reflection.schedule("u1", "小北", "嗯", "已建项目", settings, used_tools=True)   # bool 形态
     # 正常消息 → 反思
@@ -288,5 +298,6 @@ async def test_schedule_routes_trivial_tools_and_group(monkeypatch):
     await asyncio.gather(*list(reflection._bg_tasks))                # 后台任务落地
 
     assert len(queued) == 3
-    assert queued[0][5] is True and queued[1][5] is True and queued[2][5] is False
-    assert len(grouped) == 1 and grouped[0][5] is False and grouped[0][6] == "s1"
+    assert all(len(row) == 6 for row in queued)                      # used_tools 不再进队列参数
+    assert queued[0][5] is None and queued[1][5] is None and queued[2][5] is None
+    assert len(grouped) == 1 and grouped[0][5] == "s1"

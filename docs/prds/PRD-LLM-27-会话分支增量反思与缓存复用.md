@@ -1,13 +1,13 @@
 # PRD-LLM-27：会话分支增量反思与缓存复用
 
-状态：规划中（Phase 0 架构检查已完成）  
+状态：实施中（2026-09-20 增加 owner 闲置反思与共享 TTL）
 负责人：Agent Runtime / Memory  
 版本：v1  
 创建：2026-09-17
 
 ## 1. 背景
 
-当前记忆反思和 Knowledge 反思虽然已经统一使用 `ContextBranch`，但仍然是独立上下文调用：
+记忆反思和 Knowledge 反思已统一接入 `ContextBranch` 追加分支；本次补齐 owner 的闲置收束，并把反思分支执行入口与 TTL 策略进一步共享：
 
 - `agent/memory/reflection.py` 重新组装画像、行为模式、summary 和本轮对话；
 - `agent/knowledge/reflection.py` 先做 Knowledge RAG，再重新组装候选和对话；
@@ -19,17 +19,18 @@
 ## 2. 目标
 
 1. 让 Web/私聊 owner 反思优先复用刚完成的主会话 provider 前缀。
-2. 让 Knowledge 反思复用同一主会话前缀，而不是从独立 system prompt 冷启动。
-3. 不把内部反思请求或结果写入用户可见聊天历史。
-4. 不改变 Memory、Knowledge 的现有输出 schema、去重、权限、写回和 RAG 事件语义。
-5. 群聊采用最小复用范围：有实际助手回复的当前群聊回合复用本轮快照；被动消息、成员反思和跨 session 批处理继续走独立上下文。
-6. 用 LoopScope 和 AgentUsage 区分“可复用分支”和“独立分支”，验证实际缓存收益，而不是只依赖估算。
+2. 让 owner 缓冲在固定轮数触发之外，也能在最后一次对话后闲置 15 分钟自动反思。
+3. 让 Knowledge 反思复用同一主会话前缀，而不是从独立 system prompt 冷启动。
+4. 不把内部反思请求或结果写入用户可见聊天历史。
+5. 不改变 Memory、Knowledge 的现有输出 schema、去重、权限、写回和 RAG 事件语义。
+6. 群聊采用最小复用范围：有实际助手回复的当前群聊回合复用本轮快照；被动消息、成员反思和跨 session 批处理继续走独立上下文。
+7. 用 LoopScope 和 AgentUsage 区分“可复用分支”和“独立分支”，验证实际缓存收益，而不是只依赖估算。
 
 ## 3. 非目标
 
 - 不把反思提示词加入主会话 canonical history。
 - 不让反思结果成为下一轮 Responses API 的 reasoning continuation。
-- 不改变 owner 反思阈值、群组游标、Knowledge 自动/明确保存规则。
+- 不改变 owner 固定轮数阈值、群组游标、Knowledge 自动/明确保存规则；15 分钟闲置触发是额外收束条件。
 - 不保证所有 provider 都能跨调用命中缓存；缓存能力由 provider、模型和 API 格式决定。
 - 不以“缓存率提升”单独宣称整体费用降低；费用必须同时按 fresh input、cache read、cache write 和 output 统计。
 
@@ -57,13 +58,13 @@
   ├─ 当前用户消息、工具轮次、助手回复
   └─ provider-only dynamic tail
 
-只读分支快照
+只读分支快照（同一主前缀上先后运行的 sibling branch）
   ├─ 复用同一 provider/model/API format
   ├─ 复用主 system prompt、tools 和稳定消息前缀
-  ├─ 追加 assistant 最终回复
-  └─ 追加临时 user 任务
-  ├─ Memory 反思任务（Web / 私聊 / 有回复的群聊 owner 回合）
-       └─ Knowledge 反思任务
+  ├─ 追加 assistant 最终回复 + 临时 user 任务
+  │    ├─ Memory 反思分支（Web / 私聊 / 有回复的群聊 owner 回合）
+  │    └─ Knowledge 反思分支（仅当 Memory 分支产出候选；不继承 Memory 的 JSON 输出）
+  └─ 分支结果不进入聊天历史，经领域 writer 写回
 
 分支结果
   ├─ Memory writer：profile/pattern/daily/summary
@@ -88,6 +89,13 @@
 
 快照只能作为进程内后台任务的短生命周期输入，不能把完整 provider 消息、工具参数、请求头或凭据写入 Redis、数据库、日志或 LoopScope 正文。若必须跨 worker 传递，应只传引用和可验证 revision，并从受权限保护的事实源重新构建。
 
+**执行拓扑必须先钉死（Phase 1 第一项）**。owner Memory 反思只处理当前 session，缓冲按 session 隔离（见 `_queue_owner_reflection` / `_drain_owner_reflection_buffer`）：
+
+- **阈值冲刷**：阈值到达后立即 drain——同进程时优先携带完整快照；快照不可用时不创建独立调用，保留缓冲并重新计时；
+- **闲置冲刷**：owner worker 扫描最后活动满 15 分钟的 session；快照不可用时从已持久化历史重建最小 append 输入。群/群友游标扫描沿用同一 TTL 策略，既有 scope batch 仍按各自消息范围构建历史。
+
+因此反思不再设置独立提取器回退：即时冲刷优先使用进程内完整快照。owner 或群业务的闲置/跨进程路径查无快照时，先校验会话归属且会话已空闲，再从数据库 baseline 之后读取已持久化历史，重建最小 append 输入；反思规则和任务仍作为末尾增量。该恢复不保存完整 provider 请求体，也拿不到当时完整 tools 与动态业务上下文，因此功能复用同一 append 分支，但不保证缓存前缀命中。
+
 ### 6.2 追加式分支
 
 复用会话压缩已经验证的追加式能力，不新增 `ReflectionBranch`、`KnowledgeBranch` 或第二套 provider 调用器。实现上只允许有一个公共追加入口：
@@ -108,11 +116,18 @@ delta = 分支任务前缀 + 本次反思所需动态数据
 
 分支任务提示词必须放在末尾追加消息中，而不是替换 system prompt。Memory 和 Knowledge 的专用规则仍由各自领域模块加载，但作为末尾任务内容发送，以保留主会话 system 前缀。
 
+**delta 与 canonical history 的边界（前缀不断裂的硬约束）**。目标回合内容的两半位置天然不同：`user_msg` 与工具轮次已在主请求输入里（是 `history_messages` 前缀的末尾部分，不重复追加）；`assistant_reply` 是主请求输出、不在输入序列里，由分支在前缀之后追加。provider 前缀缓存按「与已缓存序列的最长公共逐字节前缀」命中——**尾部追加不影响前缀命中**，断裂只来自修改（中间插入、改写既有消息、混入每轮变化内容）。因此：
+
+- delta（`assistant_reply` + 反思任务消息，含标记包裹的原文引用）必须在分支本地拼接为临时普通列表：`list(history_messages) + [assistant_reply, task]`，直接交给 `provider_runner.complete_messages()`；
+- delta **禁止**走 `PromptMessages.append_batch()` 等 canonical 追加路径——该路径会封存 canonical batch、计算 `batch_digest` 并经 `_sync_backing()` 写回 backing，等价于把反思内容写进主会话事实源；
+- delta 里引用的原文一律取 Redis 队列载荷中的组装前原文，不得从 history 消息中反抠（history 中的 user 消息可能叠有组装层 system-reminder 等每轮变化内容）；`user_msg` 既在前缀末尾，delta 允许只下指令不重贴全文；
+- 该边界作为共享 helper 的契约条款固化：`_branch_prefix_history()` 提炼（见下）后的 helper 必须保证输出是脱离 canonical 簿记的普通列表，压缩与反思共用同一纪律。
+
 实现时必须区分 `PromptMessages.conversation` 和 `dynamic_tail`：不能简单把整个 `PromptMessages` 列表摊平后重放。动态尾缀是否纳入分支，必须按照主 provider 的实际缓存边界决定；内部时间 reminder 等每轮变化内容不能无意中破坏稳定前缀。
 
 ### 6.3 Memory 反思
 
-符合以下条件时使用会话追加分支：
+存在完整主会话快照时，符合以下条件就使用原前缀追加分支：
 
 - 反思来源能定位到刚完成的单一 session；
 - 主请求和反思使用同一 provider、模型及 API 格式；
@@ -121,10 +136,16 @@ delta = 分支任务前缀 + 本次反思所需动态数据
 
 反思 prompt 继续要求输出现有 JSON schema，但不再把主会话正文重新复制成独立输入。现有 profile、pattern、daily、summary、perception、feedback 和 Knowledge candidate 的解析与写回逻辑保持不变。
 
+append 模式对完整历史的使用边界（`_APPEND_HISTORY_DIRECTIVE`，仅 append 路径追加）：**新增方向**（profile_add/pattern_add/daily/knowledge_candidate）仍严格限待反思回合；**矛盾检测方向**开放完整历史——仅当历史与待反思回合或存量记忆明显矛盾/过时时提 profile_remove / pattern_remove（照抄存量记忆原文）或据此修正 summary。remove 依据锚定存量原文，模型引历史对话原文（从未入库）时 writer 按原文匹配自然 no-op。devserver 实测（session 387，MiniMax-M3，3 次重复）：schema 无退化、remove 零误报、新增未被抑制。
+
+owner 缓冲按 session 隔离，满足任一条件就收束：固定轮数阈值达到，或最后一次入队后闲置 15 分钟。阈值触发时优先使用同进程快照；worker 闲置触发时快照可能已过期，按 §6.1 从持久化历史重建最小 append 输入。活跃中的 session 不反思，延后重试。
+
 如果 owner 阈值缓冲包含多轮消息，不新增复杂的群聊批处理逻辑：
 
-- 当前回合有主请求快照：直接使用本回合快照做一次追加式反思；
-- 没有单一主请求快照，或缓冲跨 session：继续使用现有独立批处理反思，不强行拼接会话。
+- 当前回合有主请求快照且为内联冲刷路径：直接使用本回合快照做一次追加式反思；
+- 缓冲跨 session：禁止拼在同一分支，按 session 独立 drain。
+
+闲置 worker 重建的是 session 中已持久化的消息序列，不是 provider 原始快照；因此它不承诺原 system/tools 前缀逐字节相同。调用仍走 `append_reuse`，由共享执行入口记录真实 usage/cache 数据。
 
 ### 6.4 Knowledge 反思
 
@@ -142,31 +163,38 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 群聊只做一层简单判断，不重构现有群组游标、scope 或批处理模型：
 
 - 群主在一次正常群聊回复结束后，沿用主请求快照走与私聊相同的 Memory 追加分支；
-- 群成员、群级记忆、被动群消息和没有助手回复的记录，继续走现有 scope snapshot + message batch 路径；
-- 群主反思缓冲如果没有可对应的单一主请求快照，直接走独立批处理，不做跨 session 合并。
+- 群成员、群级记忆、被动群消息和没有助手回复的记录，走 scope snapshot + message batch 的 append 分支；
+- 群主 owner 缓冲按 session 隔离，并与普通 owner 共用闲置调度、drain 和失败恢复；即时冲刷使用同 session 快照，闲置冲刷可按 §6.1 重建历史。
 
 以下场景不做会话追加复用：
 
 - 群成员或群级 scope 的反思任务；
 - 被动群消息或没有助手回复的记录；
-- 跨 session 的阈值批处理；
-- 服务重启后从游标恢复的历史任务；
-- 主快照缺失、过期、revision 不一致或 provider 已切换的任务。
+- 跨 session 的阈值批处理：按群业务消息历史组装 append 分支，不把多个主会话伪装成同一 Responses continuation；
+- 服务重启后从游标恢复的历史任务：从已持久化消息重建 append history；
+- 即时 owner drain 遇到快照缺失或模型切换时保留缓冲并延迟；闲置任务只在当前模型绑定成功、会话归属有效且 session 空闲时重建。重建输入缺少完整 tools/动态上下文，缓存命中不作保证。
 
-这些场景继续使用现有 scope snapshot + message batch 的 `ContextBranch` 路径，不改变游标、锁、幂等和失败重试语义。群聊 owner 的追加分支只复用已有压缩分支能力，不额外建立群聊专用分支实现。
+这些场景继续使用现有 scope snapshot + message batch 的 `ContextBranch` append 路径，不改变游标、锁、幂等和失败重试语义。群聊 owner 的追加分支复用已有快照能力，不额外建立群聊专用分支实现。
 
 ### 6.6 Reasoning state 边界
 
 追加式只读分支不得修改主会话的 reasoning continuation state。`ContextBranch` 当前“带 session id 即失效 reasoning state”的行为需要拆分为：
 
-- `standalone`：独立分支，允许建立状态边界并失效旧 continuation；
-- `append_reuse`：只读 sibling branch，记录 usage/session 归属，但不修改主 continuation。
+- `append_reuse`：唯一反思分支模式，复用主会话或重建的 scope history，记录 usage/session 归属，但不修改主 continuation；没有可追加历史时延迟或跳过。
 
 分支响应不能被当作主会话下一轮的 Responses API continuation。主会话后续请求仍以原 canonical history 和原 reasoning state 为准。
 
-### 6.7 Provider 兼容与回退
+### 6.7 Provider 兼容与回退（白名单已废止，2026-09-18 修订）
 
-只有当以下输入一致时，才标记为 `cache_reuse_eligible`：
+**原白名单机制已废止**。设计初版认为 MiniMax「不跨调用缓存」，因此维护 provider 能力白名单、不在白名单内一律 standalone。但 Phase 2 A/B 实测推翻了这一前提：MiniMax 走显式 cache_control 的追加分支缓存命中 79.7%（对照 standalone 3.1%），qwen 隐式缓存同样命中（66%）。**实测结论：对话能缓存，反思追加分支就能缓存**，无需静态白名单预先判定。
+
+现行机制：
+
+- **资格门只看输入一致性**：快照存在、缓冲单 session、provider/model 身份一致；provider 能力不参与判定；
+- `cache_capability.py` 降级为**纯观测**：`record_reuse_outcome()` 记录每次 append_reuse 的真实缓存命中，`reuse_hit_rate()` 供诊断查询，观测不驱动任何资格拦截，也不再自动摘出；
+- 若未来某 provider 实测缓存率异常低，通过观测数据发现后再人工决策，不设自动摘出机制。
+
+以下输入一致时才标记为 `cache_reuse_eligible`：
 
 - provider 和模型一致；
 - API 协议格式一致；
@@ -175,7 +203,9 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 - history 消息角色、块结构和顺序一致；
 - provider 要求的 thinking、generation、cache-control 参数一致。
 
-不满足时不伪造缓存复用成功：记录原因并回落到独立反思调用。回落不能影响 Memory/Knowledge 的业务结果，也不能改变主会话。
+不满足时不伪造缓存复用成功：记录原因并延迟或跳过本次反思。延迟不能影响主会话，后续补偿仍沿用原游标、锁和幂等语义。
+
+闲置重建路径沿用同一 `ContextBranch` / `append_reuse` 执行器，但由于静态 system 是按当前配置重建、工具声明和动态业务上下文无法完整回放，不标记为“与原主 run 前缀完全一致”；其缓存效果单独观测，不纳入完整快照复用的成功率。
 
 ## 7. 数据、并发与安全约束
 
@@ -192,7 +222,7 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 
 新增脱敏字段：
 
-- `branch_mode`: `append_reuse` / `standalone`；
+- `branch_mode`: `append_reuse`；
 - `cache_reuse_eligible`: 是否满足复用条件；
 - `cache_reuse_reason`: 未复用原因枚举；
 - `source_run_id`、`session_revision`；
@@ -203,20 +233,21 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 
 ### 8.2 功能验收
 
-- Memory 反思输出与现有 schema、字段边界和写回结果一致；
+- Memory 反思输出与现有 schema、字段边界和写回结果一致（含 profile、pattern、daily、summary、perception、feedback、knowledge_candidate 全部字段）；
 - Knowledge 反思的 create/update/conflict/ignore、去重和索引事件行为不变；
 - 反思请求和结果不出现在用户聊天历史、canonical batch 或下一轮普通上下文中；
 - 同一会话并发生成时，旧分支不能覆盖新结果；
 - 主会话 Responses reasoning state 不因追加反思而失效；
-- provider 切换、快照过期、快照缺失和分支超时都能安全回落；
+- provider 切换、快照过期、快照缺失和分支超时都能安全延迟或跳过；
 - 群组、成员、跨 session 批处理仍能按原游标完成。
 
 ### 8.3 缓存验收
 
-- 对支持前缀缓存的 provider，连续暖会话中符合条件的反思分支应能稳定复用主会话前缀；目标缓存率为 85% 以上，重点 provider 目标为 90% 以上；
-- 至少覆盖无工具、普通工具和 MCP 工具三种消息序列；
-- 至少覆盖 OpenAI 兼容协议和 Anthropic 协议；
-- 对不支持跨调用缓存或缓存口径不可观测的 provider，只验证功能和正确标记回落，不强行设缓存率门槛；
+- 缓存率目标不再按 provider 分层设门槛（白名单已废止）：历史 A/B 证明追加分支具备跨调用缓存能力，用 `reuse_hit_rate` 观测数据按 provider 复盘而非预先拦截；
+- 验收至少覆盖无工具、普通工具和 MCP 工具三种消息序列；
+- 验收至少覆盖 OpenAI 兼容协议和 Anthropic 协议；
+- 缓存口径不可观测的 provider 只验证功能正确性与回落标记（`cache_reuse_reason` 如实记录原因），不强行统计缓存率；
+- 追加分支的 fresh input、cache-read、cache-write 和 output 必须计入费用报告，用于持续验证追加式决策本身的收益；
 - 费用报告必须同时给出反思调用自身和全站总量两个口径，不能只报告缓存率百分点。
 
 ## 9. 实施计划
@@ -229,26 +260,28 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [x] 统计主聊天、Memory、Knowledge 和 compaction 的 usage/cache 基线。
 - [x] 确认 owner 单 session 与批处理/群组反思必须分流。
 
-### Phase 1：快照与公共追加入口
+### Phase 1：快照与公共追加入口（已完成，2026-09-18）
 
-- [ ] 定义只读主会话快照结构和有效 revision。
-- [ ] 为 `ContextBranch` 增加 `append_reuse` 状态边界，避免误失效 reasoning state。
-- [ ] 将压缩的 `_branch_prefix_history()` 前缀准备逻辑提炼为共享 helper，压缩和反思共同调用。
-- [ ] 统一 provider-ready history、tools 和生成参数的捕获方式，不新增反思专用追加执行器。
-- [ ] 增加快照过期、provider 切换、dynamic tail 和敏感字段测试。
+- [x] 钉死反思执行拓扑：内联冲刷与 worker 扫描双路径的进程归属，确定允许携带快照的路径清单（见 §6.1）。主请求快照只存捕获进程；owner 查无快照延迟，群业务 worker 从已持久化消息重建 append history。
+- [x] 定义只读主会话快照结构和有效 revision：`ReflectionSnapshot`（user+session 键、system_prompt、ai 配置、tools、canonical history 含末尾 assistant 回复、digest revision、TTL 15min/LRU 64 条）。
+- [x] 为 `ContextBranch` 增加 `append_reuse` 状态边界，避免误失效 reasoning state（`BranchInput.branch_mode`，只读分支跳过 invalidate）。
+- [x] 将压缩的 `_branch_prefix_history()` 前缀准备逻辑提炼为共享 helper（`prefix_history.render_branch_prefix`），压缩已改调用；反思在 Phase 2 接入。
+- [x] ~~建立 provider/模型前缀缓存能力白名单及运行中自动摘出机制~~ **已废止（2026-09-18）**：A/B 实测 MiniMax/qwen 均可跨调用缓存命中，白名单前提不成立，改为 `cache_capability.py` 纯观测（§6.7 修订）。
+- [x] 统一 provider-ready history、tools 和生成参数的捕获方式：`loop/machine.py` 成功收尾处捕获（ctx.tools + 消息容器 + 最终回复），不新增反思专用追加执行器。
+- [x] 增加快照过期、provider 切换、dynamic tail 和敏感字段测试（`tests/test_reflection_snapshot.py` 14 条；敏感边界以「快照模块无 Redis/DB 依赖 + 日志无正文」锚定）。
 
-### Phase 2：owner Memory 反思
+### Phase 2：owner Memory 反思（已完成，2026-09-18）
 
-- [ ] Web/私聊 owner 反思接入公共追加分支。
-- [ ] 有实际助手回复的群聊 owner 回合复用同一公共追加分支；无快照的群聊任务保留独立批处理。
-- [ ] 保持原 Memory writer、事件、锁、重试和失败语义。
-- [ ] 完成 LoopScope 主 run/branch 关联和 provider A/B 验证。
+- [x] Web/私聊 owner 反思接入公共追加分支：`reflect(snapshot=)` → `_append_reuse_decision` 资格门（快照/单 session 缓冲/模型身份一致，provider 能力门已随白名单废止删除）→ `_extract_append`（快照 history 经共享 helper 渲染成前缀；reflection.md 与存量数据进 delta；待反思回合用队列组装前原文标记引用）。
+- [x] 有实际助手回复的群聊 owner 回合复用同一公共追加分支（`_drain_group_owner_buffer` 同一资格门）；无快照时保留缓冲并延迟，群 scope worker 从持久化消息构建 append 分支。
+- [x] 保持原 Memory writer、事件、锁、重试和失败语义：`reflect()` 下游未动，drains 回滚逻辑未动；append 模式矛盾检测开放完整历史（remove-only，`_APPEND_HISTORY_DIRECTIVE`），新增仍限待反思回合（devserver 验证 remove 零误报、新增未抑制）。
+- [x] LoopScope 主 run/branch 关联：branch metadata 与日志带 branch_mode + source run_id + session；provider A/B 验证完成（`docs/reports/OPT-Cache-Strategy-LLM27-AB-*.md`：append 79.7% vs standalone 3.1%，MiniMax-M3 BYOK 真实配置 3 触发）。
 
-### Phase 3：Knowledge 反思
+### Phase 3：Knowledge 反思（已完成，2026-09-18）
 
-- [ ] Knowledge 候选触发后复用同一主会话快照。
-- [ ] 保持 Knowledge RAG 候选、操作校验、写入和索引事件不变。
-- [ ] 验证 Memory/Knowledge sibling branch 不互相污染上下文。
+- [x] Knowledge 候选触发后复用同一主会话快照：`reflect_if_candidate(snapshot=)`——作为 sibling branch 复用同一前缀（同渲染出口/tools/branch_mode=append_reuse/run_id 关联）；快照缺失、会话不一致或 provider 切换时延迟，不创建独立分支。
+- [x] 保持 Knowledge RAG 候选、操作校验、写入和索引事件不变：search_knowledge→normalize_operations→KnowledgeStore 写入→RagIndexUpdated 链路未动。
+- [x] 验证 Memory/Knowledge sibling branch 不互相污染上下文：Memory JSON 输出只用于 candidate_request 判定，从不进入 Knowledge 分支 delta/system（测试以 marker 锚定）；Knowledge delta 带专用规则 + 完整历史边界指令（operations 只针对输入 JSON 的待反思回合与候选）。
 
 ### Phase 4：批处理与上线收口
 
@@ -256,18 +289,49 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [ ] 完成 provider 差异、超时、重试、并发和回落回归。
 - [ ] 对比反思自身成本与全站成本，记录到 `docs/reports/OPT-Cache-Strategy-*.md`。
 - [ ] 更新相关 PRD、devlog 和运行观测字段。
-- [ ] 清理只被新快照路径替代的重复输入组装，不删除仍服务批处理的独立路径。
+- [x] **清理 owner Memory 的独立回退路径**：owner 缓冲按 session 隔离，只允许 append_reuse；无有效快照、快照漂移或模型切换时延迟，不再调用独立提取器。`reflection.md` 作为 append 分支末尾任务规则保留。
+
+### Phase 5：群反思全面追加化与 standalone 退出（已完成，2026-09-18）
+
+**目标**：在 owner Memory 已完成追加化的基础上，将群主群聊反思、群成员反思、群级反思以及当前仍依赖独立批处理的群业务路径统一迁移到 `append_reuse`，最终从反思执行模型中完全清理 `standalone` 模式及其专用实现、测试和文档残留。
+
+本阶段已按既定 append 边界完成实现。群业务提示词与具体消息组装沿用现有 scope prompt 和统一 `ContextBranch`，不再保留独立提取器。设计约束和实现要点如下：
+
+- 群消息、群成员消息与可追加 canonical history / session 的映射关系；
+- 群反思与群员反思的快照来源、跨进程回源、session/revision 校验和失效边界；
+- 多成员、群级批处理、被动消息、无助手回复等场景的 append 边界；
+- 群反思与群员反思的提示词、历史可见范围、待反思回合引用和记忆写回边界；
+- provider/model 切换、快照缺失、前缀失配时的延迟、重试或跳过策略；
+- append 分支与 reasoning state、工具声明、动态尾部和缓存前缀的一致性；
+- [x] 完成删除 standalone 前的观测指标、回归测试、迁移顺序，以及代码、配置、测试和文档清理清单。
+
+验收目标：
+
+- [x] 群主群聊、群成员和群级反思均使用 `append_reuse`，不再依赖独立反思调用；
+- [x] 反思域不再保留 `standalone` 分支、专用提取器及其专属提示词/测试依赖；
+- [x] 群组游标、批处理幂等、锁、失败重试、写回和索引事件语义保持不变；
+- [x] 主会话 canonical history、reasoning state、工具集合和缓存前缀不被反思分支污染；
+- [x] 通过群/成员 append 分支回归与完整反思测试后，删除最后的 standalone 实现和 A/B 实验脚本。
+
+### Phase 6：共享闲置触发与 owner 历史重建（已完成本地验证，2026-09-20）
+
+- [x] 抽出统一 15 分钟 TTL 策略，供 owner、群主 owner 与群/群友游标共用。
+- [x] owner 私聊与群主缓冲按 session 标记活动时间；固定轮数阈值仍保留，worker 闲置扫描统一 drain。
+- [x] 快照过期后按用户归属和 session idle 状态从持久化历史重建最小 append 输入，不存储完整 provider 快照。
+- [x] Owner 与 IM 群/群友反思复用统一 `run_reflection_branch` 生命周期入口。
+- [x] 补齐完整反思回归、旧群主队列迁移与重试验证；记录重建路径缓存边界。
 
 ## 10. 主要风险
 
 | 风险 | 处理方式 |
 |---|---|
 | system/tools/参数不一致导致缓存全 miss | 捕获主请求实际 provider 参数，按条件标记 eligible，并做真实 A/B |
-| 延迟反思使用了过期会话 | 保存 session revision，写回前校验；失效则独立回落 |
-| 分支破坏 Responses reasoning state | `append_reuse` 与 standalone 明确分离，分支不接管主 continuation |
+| 延迟反思使用了过期会话 | 保存 session revision，写回前校验；失效则延迟或跳过 |
+| 分支破坏 Responses reasoning state | 唯一的 `append_reuse` 分支不接管主 continuation |
 | 反思内容污染聊天历史 | 分支消息只读、只存在短生命周期快照，禁止进入 canonical writer |
-| 群聊批处理无法映射单 session | 保持 scope batch 路径，不强行套用追加式分支 |
+| 群聊批处理无法映射单 session | 使用 scope batch 的持久化消息重建追加历史，不创建独立调用 |
 | 只看缓存率误判成本收益 | 同时统计 fresh/cache-read/cache-write/output 和调用量 |
+| append_reuse 对某 provider 缓存率异常低导致成本上涨 | 资格门不做 provider 预判；`cache_capability` 只观测命中率，异常时人工评估参数与缓存收益 |
 | 快照携带工具结果中的敏感内容 | 不持久化完整快照，日志脱敏，按现有 provider 安全边界过滤 |
 
 ## 11. 关联文档
@@ -276,4 +340,5 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 - [`PRD-LLM-8-Prompt-Caching优化.md`](./【已完成】PRD-LLM-8-Prompt-Caching优化.md)
 - [`PRD-LLM-14-Batch单一事实源与Canonical History一致性.md`](./【已完成】PRD-LLM-14-Batch单一事实源与Canonical History一致性.md)
 - [`PRD-LLM-23-跨Provider推理状态持久化与续接.md`](./【已完成】PRD-LLM-23-跨Provider推理状态持久化与续接.md)
+- [`PRD-LLM-25-AgentLoop核心职责拆分与模块化重构.md`](./PRD-LLM-25-AgentLoop核心职责拆分与模块化重构.md)——Phase 2 的快照捕获钩子落在 `loop/machine.py` 轮次收尾处，不得破坏 LLM-25 的模块边界
 - [`PRD-KNOWLEDGE-1-统一知识系统.md`](./【已完成】PRD-KNOWLEDGE-1-统一知识系统.md)

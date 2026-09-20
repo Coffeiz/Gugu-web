@@ -13,14 +13,21 @@ def load_prompt() -> str:
     return _PROMPT.read_text(encoding="utf-8").strip()
 
 
-def build_request(
-    user_message: str,
-    assistant_message: str,
+def build_append_request(
     candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     *,
     save_mode: str = "automatic",
 ) -> str:
-    """构造脱敏边界内的反思输入，候选最多 5 条。"""
+    """构造追加分支请求；本轮正文已在 history_messages 中，不重复放入 delta。"""
+    return _serialize_request(candidates, save_mode=save_mode)
+
+
+def _serialize_request(
+    candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    *,
+    save_mode: str,
+) -> str:
+    """序列化反思请求的公共载荷。"""
     compact = []
     for item in list(candidates)[:5]:
         compact.append({
@@ -34,8 +41,8 @@ def build_request(
         })
     payload = {
         "save_mode": save_mode if save_mode in {"automatic", "explicit"} else "automatic",
-        "user_message": str(user_message or ""),
-        "assistant_message": str(assistant_message or ""),
+        "user_message": "（已在追加历史中提供）",
+        "assistant_message": "（已在追加历史中提供）",
         "knowledge_candidates": compact,
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -101,6 +108,16 @@ def candidate_request(out: object) -> tuple[bool, str]:
     return bool(query), query
 
 
+# 仅 append_reuse 路径追加（PRD-LLM-27 §6.4）：完整历史只用于理解上下文，
+# operations 只针对输入 JSON 里的待反思回合与知识候选——Knowledge 与 Memory
+# 是共享同一前缀的 sibling branch，各自 delta 独立组装，互不继承对方输出。
+_KNOWLEDGE_HISTORY_DIRECTIVE = (
+    "【完整历史的使用边界】上面提供了本会话的完整历史，仅用于理解本次待反思回合的"
+    "指代与背景；operations 只针对输入 JSON 中的待反思回合与知识候选，"
+    "不要为历史内容新建任何操作。"
+)
+
+
 async def reflect_if_candidate(
     user_id: object,
     user_message: str,
@@ -110,8 +127,14 @@ async def reflect_if_candidate(
     *,
     save_mode: str = "automatic",
     session_id: object | None = None,
+    snapshot: object | None = None,
 ) -> int:
-    """候选命中后执行一次 Knowledge RAG + 专用反思，并写入主数据。"""
+    """候选命中后执行一次 Knowledge RAG + 专用反思，并写入主数据。
+
+    snapshot（PRD-LLM-27 §6.4）：Knowledge 只在有主会话快照且资格一致时
+    作为 sibling branch 复用同一前缀；没有可复用前缀时延迟本次反思，不创建
+    没有主会话历史的独立调用。
+    """
     from agent.rag.service import search_knowledge
     from agent.knowledge.capture import build_entry
     from agent.knowledge.store import KnowledgeStore
@@ -123,23 +146,48 @@ async def reflect_if_candidate(
         strategy="auto", limit=5, mode="reflection",
     )
     candidates = list(recall.get("results") or [])[:5]
-    request = build_request(
-        user_message, assistant_message, candidates, save_mode=save_mode,
-    )
+    request = build_append_request(candidates, save_mode=save_mode)
     # Knowledge 反思与 Memory 反思共用同一分支组装和重试审计；revision
     # 由本次候选查询稳定生成，避免 scope 更新时污染主对话 history。
     import hashlib
     scope_revision = hashlib.sha256(
         f"knowledge:{candidate_query}".encode("utf-8")
     ).hexdigest()[:16]
-    branch = await ContextBranch().run(
-        BranchInput(
-            stable_system=load_prompt(),
-            delta=request,
-            scope="knowledge",
-            scope_revision=scope_revision,
-            session_id=int(session_id) if isinstance(session_id, int) else None,
+    # §6.4 sibling branch：只复用同一主会话快照（同一前缀、同一渲染出口）；
+    # 专用规则与输入 JSON 按边界进 delta。快照缺失/会话不一致/provider 切换时
+    # 延迟本次 Knowledge 反思，避免恢复已断开的前缀。
+    use_append = (
+        snapshot is not None
+        and isinstance(session_id, int)
+        and snapshot.session_id == session_id
+    )
+    if use_append:
+        from agent.context.reflection_snapshot import model_identity
+        from agent.llm.modelctx import effective_ai
+
+        if model_identity(snapshot.ai) != model_identity(effective_ai(settings)):
+            use_append = False
+    if not use_append:
+        return []
+    from agent.context.prefix_history import render_branch_prefix
+
+    branch_input = BranchInput(
+        stable_system=snapshot.system_prompt,
+        delta=(
+            load_prompt() + "\n\n"
+            + _KNOWLEDGE_HISTORY_DIRECTIVE + "\n\n"
+            + request
         ),
+        scope="knowledge",
+        scope_revision=scope_revision,
+        session_id=int(session_id),
+        run_id=snapshot.run_id,
+        history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
+        tools=tuple(snapshot.tools),
+        branch_mode="append_reuse",
+    )
+    branch = await ContextBranch().run(
+        branch_input,
         BranchPolicy(name="knowledge", output_mode="json", max_tokens=900),
         settings,
     )
@@ -172,6 +220,6 @@ async def reflect_if_candidate(
 
 
 __all__ = [
-    "build_request", "candidate_request", "load_prompt",
+    "build_append_request", "candidate_request", "load_prompt",
     "normalize_operations", "reflect_if_candidate",
 ]

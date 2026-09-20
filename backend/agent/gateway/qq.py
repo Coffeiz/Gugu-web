@@ -1016,12 +1016,14 @@ def _qq_passive_reply_limited(exc: Exception) -> bool:
     return "40034128" in text or "被动回复时间或者次数超过限制" in text
 
 
-def _format_group_mention(text: str, user_id: str | None) -> str:
+def _format_group_mention(text: str, user_id: str | None,
+                          known_member_ids: frozenset[str] | set[str] = frozenset()) -> str:
     """把模型输出的当前群成员 ``@平台ID`` 转成 QQ 最新 mention 格式。
 
-    模型明确输出的旧式 mention 全部升级；普通 ``@ID`` 只转换当前消息发言人的
-    ID，避免普通 ``@文本`` 或猜测其他成员 ID 误触发平台 mention。QQ 官方当前格式是
-    ``<qqbot-at-user id=\"...\" />``；旧 ``<@ID>`` / ``<@!ID>`` 也统一升级。
+    模型明确输出的旧式 mention 全部升级；普通 ``@ID`` 只转换可信成员——当前消息
+    发言人，或该群 members.json 里登记过的成员（``known_member_ids``），避免普通
+    ``@文本`` 或猜测其他成员 ID 误触发平台 mention。QQ 官方当前格式是
+    ``<qqbot-at-user id="..." />``；旧 ``<@ID>`` / ``<@!ID>`` 也统一升级。
     """
     source = text or ""
 
@@ -1036,14 +1038,20 @@ def _format_group_mention(text: str, user_id: str | None) -> str:
     source = re.sub(r"<@!?([^>\s]+)>", replace_legacy, source)
 
     user_id = str(user_id or "").strip()
-    if not user_id or any(char in user_id for char in '<>"\''):
+    trusted = set(known_member_ids or ())
+    if user_id and not any(char in user_id for char in '<>"\''):
+        trusted.add(user_id)
+    if not trusted:
         return source
-    escaped_id = re.escape(user_id)
-    return re.sub(
-        rf"(?<![<@\w])[@＠]{escaped_id}(?!\w)",
-        f'<qqbot-at-user id="{user_id}" />',
-        source,
-    )
+    for member_id in trusted:
+        escaped_id = re.escape(member_id)
+        source = re.sub(
+            rf"(?<![<@\w])[@＠]{escaped_id}(?!\w)",
+            f'<qqbot-at-user id="{member_id}" />',
+            source,
+        )
+    return source
+
 
 
 def _has_qq_group_mention(text: str) -> bool:
@@ -1051,9 +1059,10 @@ def _has_qq_group_mention(text: str) -> bool:
     return bool(re.search(r"<qqbot-at-user\s+id=\"[^\"]+\"\s*/>", text or ""))
 
 
-def _split_qq_group_mention(text: str, user_id: str | None) -> tuple[str, str]:
+def _split_qq_group_mention(text: str, user_id: str | None,
+                            known_member_ids: frozenset[str] | set[str] = frozenset()) -> tuple[str, str]:
     """将群回复拆成独立 mention 消息和普通正文。"""
-    formatted = _format_group_mention(text, user_id)
+    formatted = _format_group_mention(text, user_id, known_member_ids)
     mention_re = re.compile(r"<qqbot-at-user\s+id=\"[^\"]+\"\s*/>")
     mentions = mention_re.findall(formatted)
     if not mentions:
@@ -1089,10 +1098,11 @@ async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
 
 async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str | None,
                       message_format: str | None = None,
-                      mention_user_id: str | None = None):
+                      mention_user_id: str | None = None,
+                      known_member_ids: frozenset[str] | set[str] = frozenset()):
     """群聊版文本发送：按会话格式选择纯文本或 Markdown。"""
     path = f"/v2/groups/{group_openid}/messages"
-    text = _format_group_mention(text, mention_user_id)
+    text = _format_group_mention(text, mention_user_id, known_member_ids)
     text = sanitize_im_links(text)
     msg_type = _message_type(text, message_format)
     # compat 默认是纯文本，但 QQ 只会在可解析的富文本消息中渲染 mention 标签。
@@ -1331,6 +1341,41 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
     return False
 
 
+async def _known_group_member_ids(channel_id: str, group_openid: str) -> frozenset[str]:
+    """读群记忆 members.json 拿已登记成员 openid，作为 @ID 升级白名单。
+
+    只在发送路径按需读一个 JSON；读不到（新群/存储故障）返回空集，
+    退回只转当前发言人的旧行为，不阻断发送。
+    """
+    try:
+        from uuid import UUID as _UUID
+        from sqlalchemy import select as _select
+        import app.db.session as _ss
+        from app.models import UserBot as _UserBot
+        from agent.memory.scopes import MemoryScope
+        from agent.memory.scoped_store import read_scope_json
+
+        _ss.ensure_engine()
+        async with _ss._SessionLocal() as db:
+            row = (await db.execute(
+                _select(_UserBot).where(_UserBot.id == int(channel_id))
+            )).scalars().first()
+            if row is None:
+                return frozenset()
+            scope = MemoryScope(
+                owner_user_id=str(row.user_id), platform="qq",
+                bot_id=str(channel_id), scope_type="group", scope_id=group_openid,
+            )
+        doc = await read_scope_json(scope, "members.json")
+        members = doc.get("members") if isinstance(doc, dict) else {}
+        if not isinstance(members, dict):
+            return frozenset()
+        return frozenset(str(key) for key in members.keys() if str(key).strip())
+    except Exception as exc:
+        diag_log("agent.gateway.qq.mention_members", exc)
+        return frozenset()
+
+
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                      channel_id: str | None = None, message_format: str | None = None,
                      mention_user_id: str | None = None) -> bool:
@@ -1342,24 +1387,33 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
         "has_channel_id": bool(channel_id),
         "has_msg_id": bool(msg_id),
     }, ensure_ascii=False), flush=True)
-    mention_text, body_text = _split_qq_group_mention(text, mention_user_id)
+    # 只有正文带 @ 时才值得查成员名单；其余发送零额外开销
+    known_member_ids: frozenset[str] = frozenset()
+    if "@" in text or "＠" in text:
+        known_member_ids = await _known_group_member_ids(str(channel_id or ""), group_openid)
+    mention_text, body_text = _split_qq_group_mention(text, mention_user_id, known_member_ids)
     mention_sent = False
     for attempt in (1, 2):
         try:
             if mention_text and not mention_sent:
                 # mention 单独使用 Markdown，避免兼容模式把标签当普通文本展示。
-                await _post_group(channel_id, group_openid, mention_text, msg_id, "markdown")
+                await _post_group(channel_id, group_openid, mention_text, msg_id, "markdown",
+                                  known_member_ids=known_member_ids)
                 mention_sent = True
             if mention_text and body_text:
                 if message_format is None:
-                    await _post_group(channel_id, group_openid, body_text, None)
+                    await _post_group(channel_id, group_openid, body_text, None,
+                                      known_member_ids=known_member_ids)
                 else:
-                    await _post_group(channel_id, group_openid, body_text, None, message_format)
+                    await _post_group(channel_id, group_openid, body_text, None, message_format,
+                                      known_member_ids=known_member_ids)
             elif not mention_text:
                 if message_format is None:
-                    await _post_group(channel_id, group_openid, text, msg_id)
+                    await _post_group(channel_id, group_openid, text, msg_id,
+                                      known_member_ids=known_member_ids)
                 else:
-                    await _post_group(channel_id, group_openid, text, msg_id, message_format)
+                    await _post_group(channel_id, group_openid, text, msg_id, message_format,
+                                      known_member_ids=known_member_ids)
             print(json.dumps({
                 "event": "send-group-ok",
                 "attempt": attempt,
@@ -1377,20 +1431,25 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 _log.warning("[qq] 群聊被动回复受限，降级为主动消息")
                 try:
                     if mention_text and not mention_sent:
-                        await _post_group(channel_id, group_openid, mention_text, None, "markdown")
+                        await _post_group(channel_id, group_openid, mention_text, None, "markdown",
+                                          known_member_ids=known_member_ids)
                         mention_sent = True
                     if mention_text and body_text:
                         if message_format is None:
-                            await _post_group(channel_id, group_openid, body_text, None)
+                            await _post_group(channel_id, group_openid, body_text, None,
+                                              known_member_ids=known_member_ids)
                         else:
                             await _post_group(
-                                channel_id, group_openid, body_text, None, message_format
+                                channel_id, group_openid, body_text, None, message_format,
+                                known_member_ids=known_member_ids,
                             )
                     elif not mention_text:
                         if message_format is None:
-                            await _post_group(channel_id, group_openid, text, None)
+                            await _post_group(channel_id, group_openid, text, None,
+                                              known_member_ids=known_member_ids)
                         else:
-                            await _post_group(channel_id, group_openid, text, None, message_format)
+                            await _post_group(channel_id, group_openid, text, None, message_format,
+                                              known_member_ids=known_member_ids)
                     return True
                 except Exception as fallback_error:
                     diag_log("agent.gateway.qq.send_group.active_fallback", fallback_error)

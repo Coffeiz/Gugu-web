@@ -36,6 +36,10 @@
           <button v-for="opt in REPEAT_OPTS" :key="opt.v" type="button" class="repeat-tab"
             :class="{ on: repeatMode === opt.v }" @click="setRepeatMode(opt.v)">{{ opt.label }}</button>
         </div>
+        <div v-if="repeatMode === 'weekly'" class="weekly-days" data-testid="schedule-weekly-days">
+          <button v-for="(name, day) in weekdayNames" :key="day" type="button" class="repeat-tab"
+            :class="{ on: weeklyDays.includes(day) }" @click="toggleWeeklyDay(day)">{{ name }}</button>
+        </div>
         <div v-if="repeatMode === 'interval'" class="interval-presets">
             <button v-for="minutes in INTERVAL_PRESETS" :key="minutes" type="button" class="interval-preset"
             :class="{ on: intervalPreset === String(minutes) }" @click="selectIntervalPreset(minutes)">{{ minutes }}{{ t('schedules.intervalUnit') }}</button>
@@ -111,6 +115,10 @@
             </Checkbox>
           </template>
         </div>
+        <div v-if="form.channels.includes('qq')" class="qq-delivery-field" data-testid="schedule-qq-delivery">
+          <SelectPopup :model-value="qqTarget" :options="qqTargetOptions" popup-class="qq-target-popup"
+            auto-flip @update:model-value="setQqTarget" />
+        </div>
       </div>
 
         <div v-if="formErr || props.externalError" class="form-err">{{ formErr || props.externalError }}</div>
@@ -132,6 +140,8 @@ import DatePicker from '@/components/common/controls/DatePicker.vue'
 import TimeInput from '@/components/common/controls/TimeInput.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
+import SelectPopup from '@/components/common/controls/SelectPopup.vue'
+import { scheduledTasksApi } from '@/services/api'
 import {
   buildCron,
   combineScheduleDateTime,
@@ -140,6 +150,7 @@ import {
   splitScheduleDateTime,
   type RepeatMode,
 } from '../utils/scheduleCron'
+import { buildQqDeliveryFields, buildQqTargetOptions } from '../utils/qqDelivery'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -155,11 +166,11 @@ const emit = defineEmits<{
   (event: 'close'): void
   (event: 'save', data: Record<string, any>): void
 }>()
-const { t } = useI18n()
+const { t, tm } = useI18n()
 
 const REPEAT_OPTS = computed<{ v: RepeatMode; label: string }[]>(() => [
   { v: 'once', label: t('schedules.once') }, { v: 'interval', label: t('schedules.minutes') }, { v: 'daily', label: t('schedules.daily') },
-  { v: 'weekday', label: t('schedules.weekday') }, { v: 'weekend', label: t('schedules.weekend') },
+  { v: 'weekly', label: t('schedules.weekly') },
 ])
 const INTERVAL_PRESETS = [1, 5, 10, 30, 60]
 const CHANNELS = computed(() => [
@@ -174,6 +185,16 @@ const workspaceOptions = computed(() => [
   ...props.workspaces.map(workspace => ({ value: String(workspace.id), label: workspace.name })),
 ])
 const repeatMode = ref<RepeatMode>('daily')
+const weeklyDays = ref<number[]>([1])
+const qqTarget = ref('private')
+const initialQqTarget = ref('private')
+const qqGroups = ref<{ chat_id: string; title: string }[]>([])
+const qqTargetOptions = computed(() => buildQqTargetOptions(
+  qqGroups.value,
+  qqTarget.value,
+  t('schedules.qqPrivate'),
+  chatId => t('scheduleUi.qqGroupUnavailable', { chatId }),
+))
 const intervalMinutes = ref(5)
 const intervalPreset = ref('5')
 const startDate = ref('')
@@ -227,6 +248,10 @@ function resetForm() {
   Object.assign(form, props.task
     ? { name: props.task.name, payload: props.task.payload, time: parsed.time, channels: filterChannels(channels) }
     : blankForm())
+  weeklyDays.value = parsed.weeklyDays?.length ? [...parsed.weeklyDays] : [new Date().getDay()]
+  const targets = props.task?.delivery_targets as Record<string, any> | undefined
+  qqTarget.value = targets?.qq?.chat_type === 'group' && targets.qq.chat_id ? String(targets.qq.chat_id) : 'private'
+  initialQqTarget.value = qqTarget.value
   repeatMode.value = taskKind === 'once' ? 'once' : (taskKind === 'interval' ? 'interval' : parsed.mode)
   intervalMinutes.value = parsed.intervalMinutes ?? 5
   intervalPreset.value = INTERVAL_PRESETS.includes(intervalMinutes.value) ? String(intervalMinutes.value) : 'custom'
@@ -241,7 +266,19 @@ function resetForm() {
   formErr.value = ''
   nextTick(() => { nameRef.value?.focus(); resizePayload() })
 }
-watch(() => props.show, show => { if (show) resetForm() })
+watch(() => props.show, show => { if (show) { resetForm(); void loadQqTargets() } })
+async function loadQqTargets() {
+  if (!props.imChannels.includes('qq')) return
+  try {
+    const res = await scheduledTasksApi.listQqTargets()
+    qqGroups.value = res.groups
+  } catch {
+    qqGroups.value = []
+  }
+}
+function setQqTarget(value: string) {
+  qqTarget.value = value
+}
 function resizePayload() {
   const element = payloadRef.value
   if (!element) return
@@ -267,6 +304,13 @@ function setRepeatMode(mode: RepeatMode) {
     startTime.value = ''
   }
   repeatMode.value = mode
+}
+const weekdayNames = computed(() => tm('sharedUi.weekdays') as string[])
+function toggleWeeklyDay(day: number) {
+  const days = new Set(weeklyDays.value)
+  if (days.has(day)) days.delete(day)
+  else days.add(day)
+  weeklyDays.value = [...days]
 }
 function setStartDate(value: string) {
   startDate.value = value
@@ -298,6 +342,11 @@ function toggleChannel(channel: string, checked: boolean) {
   else channels.delete(channel)
   form.channels = [...channels]
 }
+function qqDeliveryFields() {
+  return buildQqDeliveryFields(
+    Boolean(props.task), initialQqTarget.value, qqTarget.value, form.channels.includes('qq'),
+  )
+}
 function submit() {
   if (!form.name.trim()) { formErr.value = t('schedules.nameRequired'); return }
   if (!form.channels.length) { formErr.value = t('schedules.channelRequired'); return }
@@ -312,6 +361,7 @@ function submit() {
       schedule_kind: 'once', cron: null, interval_minutes: null,
       start_at: startAt, end_at: null,
       channels: [...form.channels], enabled: props.task ? props.task.enabled : true,
+      ...qqDeliveryFields(),
       workspace_id: form.workspaceId,
       filesystem_authorized: form.filesystemAuthorized,
     })
@@ -329,15 +379,20 @@ function submit() {
       return
     }
     formErr.value = ''
+    if (repeatMode.value === 'weekly' && !weeklyDays.value.length) {
+      formErr.value = t('schedules.weeklyDayRequired')
+      return
+    }
     const scheduleKind = repeatMode.value === 'interval' ? 'interval' : 'cron'
     emit('save', {
       name: form.name.trim(), payload: form.payload,
       schedule_kind: scheduleKind,
-      cron: scheduleKind === 'cron' ? buildCron({ mode: repeatMode.value, time: form.time }) : null,
+      cron: scheduleKind === 'cron' ? buildCron({ mode: repeatMode.value, time: form.time, weeklyDays: weeklyDays.value }) : null,
       interval_minutes: scheduleKind === 'interval' ? intervalMinutes.value : null,
       start_at: startAt,
       end_at: endAt,
       channels: [...form.channels], enabled: props.task ? props.task.enabled : true,
+      ...qqDeliveryFields(),
       workspace_id: form.workspaceId,
       filesystem_authorized: form.filesystemAuthorized,
     })
@@ -390,6 +445,8 @@ function submit() {
 .repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
 .repeat-tab:hover { border-color: var(--option-border-hover); }
 .repeat-tab.on { background: var(--action-primary-bg); color: var(--content-on-accent); border-color: transparent; }
+.weekly-days { display: flex; gap: 6px; margin-top: 8px; }
+.weekly-days .repeat-tab { height: 30px; font-size: 12px; }
 .time-field input { height: 34px; padding-top: 8px; padding-bottom: 8px; text-align: center; line-height: normal; font-size: 13px; }
 .interval-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
 .interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
@@ -398,6 +455,10 @@ function submit() {
 .chans { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .chans :deep(.app-checkbox) { min-width: 0; }
 .chans :deep(.app-checkbox__label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qq-delivery-field { margin-top: 8px; }
+.qq-delivery-field :deep(.select-popup) { display: block; }
+.qq-delivery-field :deep(.select-popup-trigger) { width: 100%; box-sizing: border-box; }
+:global(.qq-target-popup) { max-height: 260px; overflow-y: auto; }
 .form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
 .modal-actions > button { width: 64px; min-height: 34px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }

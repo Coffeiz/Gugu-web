@@ -56,8 +56,24 @@ export function useFileActions(options: FileActionOptions = {}) {
     if (message) throw new Error(message)
   }
 
-  function downloadFile(file: Pick<FileMeta, 'id' | 'displayName' | 'ext'>) {
-    return filesApi.download(file.id, `${file.displayName}.${file.ext.toLowerCase()}`)
+  async function downloadFile(file: Pick<FileMeta, 'id' | 'displayName' | 'ext'>) {
+    const filename = `${file.displayName}.${file.ext.toLowerCase()}`
+    try {
+      // 大文件直下：本地存储用 token 化的 stream 地址（dl=1 → attachment），
+      // 浏览器直接写盘，整个文件不进 JS 内存；OSS 等签名 URL 无 attachment
+      // 语义，回落 blob 下载。
+      const { url } = await filesApi.getStreamUrl(file.id)
+      if (url.startsWith('/')) {
+        const a = document.createElement('a')
+        a.href = `${url}&dl=1`
+        a.download = filename
+        a.click()
+        return
+      }
+    } catch {
+      // stream-url 不可用（权限/网络）时回落 blob 下载路径
+    }
+    return filesApi.download(file.id, filename)
   }
 
   function downloadFolder(folder: FolderTarget) {
@@ -67,8 +83,8 @@ export function useFileActions(options: FileActionOptions = {}) {
     return foldersApi.download(id, name)
   }
 
-  function renameFile(id: number, displayName: string, meta?: RequestMeta) {
-    return filesApi.update(id, { displayName }, meta)
+  function renameFile(id: number, displayName: string, meta?: RequestMeta, extension?: string) {
+    return filesApi.update(id, { displayName, ...(extension !== undefined ? { ext: extension } : {}) }, meta)
   }
 
   function renameFolder(id: number, name: string, version: number, meta?: RequestMeta) {

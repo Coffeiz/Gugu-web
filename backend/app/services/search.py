@@ -1,7 +1,46 @@
-"""搜索配额与用量写入边界。"""
-from sqlalchemy import func, select
+"""全局搜索数据查询、配额与用量写入边界。"""
+from sqlalchemy import case, func, or_, select
 
-from app.models import SearchUsage, User
+from app.models import ScheduledTask, SearchUsage, User, UserMcpServer
+from app.search.query import keyword_condition, keyword_score
+
+
+def _primary_rank(column, query: str):
+    normalized = query.lower()
+    return case(
+        (func.lower(column) == normalized, 0),
+        (func.lower(column).like(f"{normalized}%"), 1),
+        else_=2,
+    )
+
+
+async def search_global_mcp_servers(db, user_id, queries, mode, primary_query, limit):
+    """查询当前用户可见的 MCP 名称，不返回 endpoint 或凭据。"""
+    return (await db.execute(
+        select(UserMcpServer).where(
+            or_(UserMcpServer.user_id == user_id, UserMcpServer.scope == "platform"),
+            keyword_condition([UserMcpServer.name], queries, mode),
+        ).order_by(
+            keyword_score([UserMcpServer.name], queries).desc(),
+            _primary_rank(UserMcpServer.name, primary_query),
+        ).limit(limit)
+    )).scalars().all()
+
+
+async def search_global_scheduled_tasks(db, user_id, queries, mode, primary_query, limit):
+    """查询当前用户启用且未结束的定时任务。"""
+    return (await db.execute(
+        select(ScheduledTask).where(
+            ScheduledTask.user_id == user_id,
+            ScheduledTask.enabled.is_(True),
+            or_(ScheduledTask.end_at.is_(None), ScheduledTask.end_at > func.now()),
+            keyword_condition([ScheduledTask.name], queries, mode),
+        ).order_by(
+            keyword_score([ScheduledTask.name], queries).desc(),
+            _primary_rank(ScheduledTask.name, primary_query),
+            ScheduledTask.updated_at.desc(),
+        ).limit(limit)
+    )).scalars().all()
 
 
 async def get_user_daily_search_limit(db, user_id):

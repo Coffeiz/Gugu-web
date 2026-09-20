@@ -172,7 +172,7 @@ async def test_trim_session_messages_cleans_attachment_storage(db, user_a, monke
     messages = [ConversationMessage(session_id=session.id, role="user", content=f"消息 {i}")
                 for i in range(3)]
     db.add_all(messages)
-    await db.flush()
+    await db.commit()   # stage 的独立 session 与单连接内存库共享事务，先落库再 stage
     metas = [await chat_attach.stage(user_a.id, f"a{i}.txt", "txt", "text/plain", b"x")
              for i in range(3)]
     for message, meta in zip(messages, metas):
@@ -219,7 +219,7 @@ async def test_session_eviction_cleans_attachment_storage(db, user_a, monkeypatc
     await db.flush()
     old_message = ConversationMessage(session_id=oldest.id, role="user", content="旧消息")
     db.add(old_message)
-    await db.flush()
+    await db.commit()   # 同上：先落库再 stage
     old_meta = await chat_attach.stage(user_a.id, "old.txt", "txt", "text/plain", b"old")
     await chat_attach.claim_attachments(db, user_a.id, old_message.id, [old_meta["attach_id"]])
     await db.commit()

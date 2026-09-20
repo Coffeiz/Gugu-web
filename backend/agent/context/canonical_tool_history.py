@@ -122,6 +122,7 @@ class ToolCall:
     id: str
     name: str
     input: Any
+    responses_item_id: str | None = None
 
     @property
     def arguments(self) -> Any:
@@ -135,15 +136,22 @@ class ToolCall:
             id=str(block.get("id") or block.get("tool_call_id") or block.get("tool_use_id") or "tool-call"),
             name=str(block.get("name") or "unknown_tool"),
             input=value if isinstance(value, (dict, list, str)) else {},
+            responses_item_id=(
+                str(block["responses_item_id"])
+                if block.get("responses_item_id") else None
+            ),
         )
 
     def to_block(self) -> dict[str, Any]:
-        return {
+        block = {
             "type": "tool_call",
             "id": self.id,
             "name": self.name,
             "arguments": self.input,
         }
+        if self.responses_item_id:
+            block["responses_item_id"] = self.responses_item_id
+        return block
 
 
 @dataclass
@@ -246,6 +254,7 @@ def canonical_tool_round(result: Any, dispatched: list[tuple[Any, Any]]) -> list
             id=str(call.id),
             name=str(call.name),
             input=input_value,
+            responses_item_id=getattr(call, "responses_item_id", None),
         ).to_block())
 
     canonical: list[dict] = []

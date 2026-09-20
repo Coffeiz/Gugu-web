@@ -11,7 +11,9 @@
         </div>
         <button v-for="entry in group.entries" :key="`${group.type}-${entry.item.id}`"
                 class="reference-pick-item" :class="{ on: entry.index === active }"
-                type="button" @mousedown.prevent="$emit('choose', entry.item)">
+                type="button"
+                :title="entry.item.label + (entry.item.subtitle ? ` · ${entry.item.subtitle}` : '')"
+                @mousedown.prevent="$emit('choose', entry.item)">
           <component :is="TYPE_ICON[group.type]" class="reference-pick-icon" :size="14" weight="bold" />
           <span class="reference-pick-label">{{ entry.item.label }}</span>
           <span v-if="entry.item.subtitle" class="reference-pick-sub">{{ entry.item.subtitle }}</span>
@@ -25,7 +27,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PhCalendarBlank, PhChatCircle, PhFile, PhFolder, PhStack } from '@phosphor-icons/vue'
+import { PhBell, PhBook, PhCalendarBlank, PhChatCircle, PhFile, PhFolder, PhPlug, PhStack } from '@phosphor-icons/vue'
 import type { MindRefSuggestItem } from '@/services/api'
 import { nextZ, registerPopover } from '@/composables/core/windowz'
 
@@ -33,6 +35,7 @@ defineEmits<{ choose: [item: MindRefSuggestItem] }>()
 const { t } = useI18n()
 const TYPE_ICON: Record<MindRefSuggestItem['type'], typeof PhStack> = {
   project: PhStack, file: PhFile, folder: PhFolder, event: PhCalendarBlank, conversation: PhChatCircle,
+  skill: PhBook, mcp: PhPlug, scheduled_task: PhBell,
 }
 const props = defineProps<{
   show: boolean
@@ -134,6 +137,6 @@ const groups = computed(() => {
 .reference-pick-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--content-primary); text-align: left; cursor: pointer; }
 .reference-pick-item:hover, .reference-pick-item.on { background: var(--popup-item-bg-hover); }
 .reference-pick-icon { flex: 0 0 auto; color: var(--action-primary); }
-.reference-pick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.reference-pick-sub { margin-left: auto; overflow: hidden; color: var(--content-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.reference-pick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; /* 行高给足：Gugu Noto Sans SC 的下伸部（g/y）超出 em 框，行高不足时被 overflow 裁掉底部 */ line-height: 18px; }
+.reference-pick-sub { margin-left: auto; overflow: hidden; color: var(--content-tertiary); font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 </style>

@@ -38,7 +38,9 @@ async def _mk_session(db, user, **kw):
 async def _mk_message(db, session, **kw):
     msg = ConversationMessage(session_id=session.id, role="user", content="hi", **kw)
     db.add(msg)
-    await db.flush()
+    # commit 而非 flush：chat_attach.stage() 的 _record_draft 用独立 session，
+    # 在 StaticPool 单连接内存库上 close 时会回滚共享连接上未提交的事务。
+    await db.commit()
     return msg
 
 

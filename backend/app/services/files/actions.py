@@ -25,12 +25,6 @@ from app.services.filesync.protocol import record_canonical_file_change
 
 
 @dataclass(frozen=True)
-class FileDownload:
-    file: File
-    content: bytes
-
-
-@dataclass(frozen=True)
 class FileStream:
     file: File
     path: Path
@@ -54,14 +48,6 @@ class FileStreamError(ValueError):
         self.detail = detail
 
 
-async def read_file_download(db: AsyncSession, storage, user_id: int, file_id: int) -> FileDownload | None:
-    """读取当前用户文件及其内容；路由层负责把缺失映射为 HTTP 404。"""
-    file = await get_owned(db, File, file_id, user_id)
-    if file is None:
-        return None
-    return FileDownload(file=file, content=await storage.get(file.storage_key))
-
-
 async def resolve_local_file_stream(
     db: AsyncSession,
     storage,
@@ -74,6 +60,8 @@ async def resolve_local_file_stream(
     file = await get_owned(db, File, file_id, user_id)
     if file is None:
         return None
+    if file.deleted_at is not None:
+        raise FileStreamError(404, "文件已删除")
     path = storage.root / file.storage_key
     if not path.exists():
         raise FileStreamError(404, "文件不存在于存储")

@@ -67,6 +67,8 @@ const TYPE_ICON = {
   conversation: 'communication.chat',
   note: 'canvas.graph',
   skill: 'resource.skill',
+  mcp: 'resource.mcp',
+  scheduled_task: 'navigation.schedules',
 }
 
 const router       = useRouter()
@@ -74,8 +76,8 @@ const projectStore = useProjectStore()
 const uiStore      = useUiStore()
 const { t } = useI18n()
 
-interface SearchItem { id: number; title: string; subtitle?: string; date?: string; message_id?: number; slug?: string; enabled?: boolean }
-interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note' | 'skill'; label: string; items: SearchItem[] }
+interface SearchItem { id: number | string; title: string; subtitle?: string; date?: string; message_id?: number; slug?: string; enabled?: boolean }
+interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note' | 'skill' | 'mcp' | 'scheduled_task'; label: string; items: SearchItem[] }
 
 const wrapEl  = ref<HTMLElement | null>(null)
 const inputEl = ref<InstanceType<typeof SearchInput> | null>(null)
@@ -146,25 +148,32 @@ async function runSearch(text: string) {
 
 function go(type: string, it: SearchItem) {
   close()
+  // 历史类型（project/file/...）的 id 都是 number；mcp/scheduled_task 是字符串，
+  // 各自走专属分支，数字型消费方一律 Number() 收紧。
+  const numericId = Number(it.id)
   if (type === 'project') {
-    uiStore.pendingProjectHighlight = it.id   // 跳转后高亮项目卡，不打开编辑弹窗
+    uiStore.pendingProjectHighlight = numericId   // 跳转后高亮项目卡，不打开编辑弹窗
     router.push('/projects')
   } else if (type === 'file' || type === 'folder') {
-    uiStore.pendingFileTarget = { kind: type, id: it.id }   // 文件库监听后定位到对应目录
+    uiStore.pendingFileTarget = { kind: type, id: numericId }   // 文件库监听后定位到对应目录
     router.push('/files')
   } else if (type === 'event') {
-    uiStore.pendingCalendarEvent = { id: it.id, date: it.date }
+    uiStore.pendingCalendarEvent = { id: numericId, date: it.date }
     router.push('/calendar')
   } else if (type === 'conversation') {
     uiStore.pendingChatMessageId = it.message_id || null
-    uiStore.pendingChatSession = it.id   // GuguChat 监听后打开、切到会话、滚到匹配消息
+    uiStore.pendingChatSession = numericId   // GuguChat 监听后打开、切到会话、滚到匹配消息
   } else if (type === 'client') {
     Message.info('客户页面还在开发中，先在项目里看吧～')
   } else if (type === 'note') {
-    uiStore.pendingNoteId = it.id   // NotesView 监听后定位到对应日期并打开编辑态
+    uiStore.pendingNoteId = numericId   // NotesView 监听后定位到对应日期并打开编辑态
     router.push('/mind/notes')
   } else if (type === 'skill') {
     router.push({ path: '/skills', query: { skill: it.slug || String(it.id) } })
+  } else if (type === 'mcp') {
+    router.push({ path: '/mcp', query: { server: String(it.id) } })
+  } else if (type === 'scheduled_task') {
+    router.push({ path: '/schedules', query: { task: String(it.id) } })
   }
 }
 

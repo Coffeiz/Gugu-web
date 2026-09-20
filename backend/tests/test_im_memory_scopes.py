@@ -578,3 +578,28 @@ def test_owner_group_reflection_excludes_assistant_reply_and_other_members():
     assert user_text == "我喜欢简短一点"
     assert "查询到 owner 的项目结果" in private_text
     assert "群友说了不应进入 owner memory" not in private_text
+
+
+def test_group_and_member_jobs_build_append_branches():
+    """群级与成员级 worker 反思都必须把消息放入 append history。"""
+    from agent.memory.im_reflection import _build_append_branch_input
+    from agent.memory.scopes import MemoryScope
+
+    scope = MemoryScope("owner-1", "qq", "bot-1", "group", "group-1")
+    job = SimpleNamespace(id=12, idempotency_key="job-key")
+    message = SimpleNamespace(
+        role="user", content="本批消息", platform_user_name="成员甲",
+    )
+
+    for task_type, scope_name in (("group", "group"), ("member-batch", "group-member-reflection")):
+        branch_input = _build_append_branch_input(
+            scope, job, task_type, {"profile": "旧记忆", "members": {}},
+            [message],
+        )
+        assert branch_input.branch_mode == "append_reuse"
+        assert branch_input.scope == scope_name
+        assert branch_input.history_messages == (
+            {"role": "user", "content": "[成员甲] 本批消息"},
+        )
+        assert "本批待反思消息" in branch_input.delta
+        assert "[成员甲] 本批消息" not in branch_input.delta

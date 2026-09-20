@@ -42,6 +42,46 @@ describe('Markdown YAML frontmatter', () => {
     expect(splitYamlFrontmatter(source)).toEqual({ body: source, bodyStartLine: 0, entries: [] })
   })
 
+  it('只识别文件开头的 frontmatter，不吞正文分隔线之间的表格', () => {
+    const source = [
+      '# 项目镜头表',
+      '',
+      '**截止日期**：2026-09-21',
+      '',
+      '---',
+      '',
+      '## 镜头清单',
+      '',
+      '| 镜头 | 状态 |',
+      '|------|------|',
+      '| C1 | 已完成 |',
+      '',
+      '---',
+      '',
+      '## 下一步',
+    ].join('\n')
+
+    expect(splitYamlFrontmatter(source)).toEqual({ body: source, bodyStartLine: 0, entries: [] })
+  })
+
+  it('frontmatter 存在时只剥离文件开头的元数据，正文中的分隔线仍保留', () => {
+    const source = [
+      '---',
+      'title: demo',
+      '---',
+      '正文第一段',
+      '---',
+      '表格与后续正文',
+      '---',
+    ].join('\n')
+
+    expect(splitYamlFrontmatter(source)).toEqual({
+      body: '正文第一段\n---\n表格与后续正文\n---',
+      bodyStartLine: 3,
+      entries: [{ key: 'title', value: 'demo' }],
+    })
+  })
+
   it('将数组和多行描述整理为可读表格值', () => {
     const source = [
       '---',

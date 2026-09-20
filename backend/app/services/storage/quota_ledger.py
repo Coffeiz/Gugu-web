@@ -124,6 +124,27 @@ async def get_quota(db: AsyncSession, user_id: Any, category: str) -> StorageQuo
     return row
 
 
+async def get_file_library_download_budget(
+    db: AsyncSession, user_id: Any, default_limit_bytes: int | None,
+) -> tuple[int | None, int | None]:
+    """返回文件库容量上限与当前可用字节数，供下载在接收正文前限流。"""
+    user = await db.get(User, user_id)
+    limit_bytes = (
+        user.storage_limit_bytes
+        if user and user.storage_limit_bytes is not None
+        else default_limit_bytes
+    )
+    if limit_bytes is None:
+        return None, None
+    used_bytes = int((await db.execute(
+        select(func.coalesce(func.sum(File.size_bytes), 0)).where(
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+        )
+    )).scalar_one() or 0)
+    return int(limit_bytes), max(int(limit_bytes) - used_bytes, 0)
+
+
 async def record_usage(
     db: AsyncSession, user_id: Any, *, category: str, delta_bytes: int,
     operation: str, idempotency_key: str, resource_type: str | None = None,

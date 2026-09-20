@@ -109,18 +109,42 @@ async def begin(session_id, owner_run_id: str | None = None) -> None:
         pass
 
 
-async def request_cancel(session_id) -> None:
-    """请求停止后台生成，由生成 loop 在安全边界消费。"""
+async def request_cancel(session_id, owner_run_id: str | None = None) -> None:
+    """请求停止后台生成，由生成 loop 在安全边界消费。
+
+    标记按 owner run 归属：终止端点读快照与写入标记之间，排队的 run 可能已
+    接管会话（begin 清不掉这之后才落下的标记）。归属化之后，消费者只在标记
+    仍指向当前 run（或旧版万能值 "1"）时才认账，过期的标记自动失效——
+    「停止」只杀用户看到正在跑的那个 run，排队接管的 run 不被误伤。
+    """
     try:
-        await get_redis().set(_cancel_key(session_id), "1", ex=TTL)
+        await get_redis().set(_cancel_key(session_id), str(owner_run_id or "1"), ex=TTL)
     except Exception:
         pass
 
 
-async def is_cancelled(session_id) -> bool:
-    """读取 Web/跨请求生成取消标记；Redis 暂时不可用时保持 fail-open。"""
+async def is_cancelled(session_id, owner_run_id: str | None = None) -> bool:
+    """读取 Web/跨请求生成取消标记；Redis 暂时不可用时保持 fail-open。
+
+    带 ``owner_run_id`` 的调用方精确比对；不带的（loop 安全边界等拿不到 run
+    归属的调用点）与当前快照 owner 比对——标记指向的 run 已经不是活跃 owner
+    即为过期标记，顺手清掉，避免杀掉接管会话的排队 run。
+    """
     try:
-        return bool(await get_redis().get(_cancel_key(session_id)))
+        raw = await get_redis().get(_cancel_key(session_id))
+        if not raw:
+            return False
+        val = raw.decode() if isinstance(raw, bytes) else str(raw)
+        if val in ("", "1"):
+            return True
+        if owner_run_id is not None:
+            return val == owner_run_id
+        snap = await snapshot(session_id)
+        current_owner = str((snap or {}).get("owner_run_id") or "")
+        if current_owner and val != current_owner:
+            await get_redis().delete(_cancel_key(session_id))
+            return False
+        return True
     except Exception:
         return False
 

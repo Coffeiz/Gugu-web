@@ -1,4 +1,9 @@
-"""模型级推理状态策略回归。"""
+"""模型级推理状态策略回归。
+
+推理接续只在显式 Responses（或原生支持续接的协议）下生效；Chat API 下的
+自动协议探测/切换已随旧策略移除——数据库里的 summary/continuation 旧配置
+一律回落 off，不再发起任何探测请求。
+"""
 from types import SimpleNamespace
 
 import pytest
@@ -47,28 +52,29 @@ def test_known_openai_provider_empty_format_uses_chat_completions():
 
 
 @pytest.mark.asyncio
-async def test_continuation_probes_responses_before_switching(monkeypatch):
-    calls = []
+async def test_legacy_continuation_no_longer_switches_protocol(monkeypatch):
+    """旧配置（未知 Provider + continuation）不再触发任何协议探测/切换：
+    api_format 原样保留、无提示标记、provider_diagnostics 里已无探测入口。"""
+    import app.services.provider_diagnostics as diagnostics
 
-    async def probe(**kwargs):
-        calls.append(kwargs)
-        return {"ok": True, "status": 200}
+    assert not hasattr(diagnostics, "probe_responses_capability")
+    assert not hasattr(diagnostics, "record_responses_capability_failure")
 
-    monkeypatch.setattr("app.services.provider_diagnostics.probe_responses_capability", probe)
+    async def _fail_probe(**kwargs):
+        raise AssertionError("探测机械已移除，不应有任何协议探测调用")
+
+    monkeypatch.setattr("agent.providers.OpenAIAdapter.protocol_format",
+                        lambda self, ai: "openai", raising=False)
     cfg = await llm_select.resolve_run_config_for_user(
         _settings("continuation", provider="other", api_format=""), None, "uid")
 
-    assert cfg.model.api_format == "responses"
-    assert cfg.reasoning_notice is None
-    assert len(calls) == 1
+    assert cfg.model.api_format == ""            # 未被改成 responses
+    assert cfg.reasoning_notice is None          # 不再有探测失败提示
+    assert cfg.reasoning_persistence == "continuation"  # 交回协议适配器自行解释
 
 
 @pytest.mark.asyncio
-async def test_explicit_chat_does_not_probe_responses_for_stale_persistence(monkeypatch):
-    async def probe(**kwargs):
-        raise AssertionError("显式 Chat Completions 不应探测 Responses")
-
-    monkeypatch.setattr("app.services.provider_diagnostics.probe_responses_capability", probe)
+async def test_explicit_chat_keeps_off_for_stale_persistence():
     settings = _settings("continuation", provider="openai", api_format="openai")
     settings.ai.api_format = "openai"
 
@@ -76,92 +82,3 @@ async def test_explicit_chat_does_not_probe_responses_for_stale_persistence(monk
 
     assert cfg.model.api_format == "openai"
     assert cfg.reasoning_persistence == "off"
-
-
-@pytest.mark.asyncio
-async def test_failed_responses_probe_keeps_chat_completions_and_notifies(monkeypatch):
-    async def probe(**kwargs):
-        return {"ok": False, "status": 404}
-
-    monkeypatch.setattr("app.services.provider_diagnostics.probe_responses_capability", probe)
-    settings = _settings("continuation", provider="other", api_format="")
-    settings.ai.base_url = "https://unsupported-responses.example/v1"
-    cfg = await llm_select.resolve_run_config_for_user(settings, None, "uid")
-
-    assert cfg.model.api_format == ""
-    assert cfg.reasoning_notice == "当前接口不支持推理续接"
-
-
-@pytest.mark.asyncio
-async def test_failed_responses_probe_is_reused_for_same_configuration(monkeypatch):
-    import app.services.provider_diagnostics as diagnostics
-
-    diagnostics._responses_probe_cache.clear()
-    diagnostics._responses_probe_tasks.clear()
-    calls = 0
-
-    async def probe_once(**kwargs):
-        nonlocal calls
-        calls += 1
-        return {"ok": False, "status": 404}
-
-    monkeypatch.setattr(diagnostics, "_probe_responses_once", probe_once)
-    first = await diagnostics.probe_responses_capability(
-        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
-    )
-    second = await diagnostics.probe_responses_capability(
-        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
-    )
-
-    assert first == second == {"ok": False, "status": 404}
-    assert calls == 1
-
-
-@pytest.mark.asyncio
-async def test_transient_responses_probe_failure_expires(monkeypatch):
-    import app.services.provider_diagnostics as diagnostics
-
-    diagnostics._responses_probe_cache.clear()
-    diagnostics._responses_probe_tasks.clear()
-    clock = 100.0
-    monkeypatch.setattr(diagnostics.time, "monotonic", lambda: clock)
-    calls = 0
-
-    async def probe_once(**kwargs):
-        nonlocal calls
-        calls += 1
-        return {"ok": False, "status": 503}
-
-    monkeypatch.setattr(diagnostics, "_probe_responses_once", probe_once)
-    first = await diagnostics.probe_responses_capability(
-        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
-    )
-    clock = 150.0
-    second = await diagnostics.probe_responses_capability(
-        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
-    )
-    clock = 161.0
-    third = await diagnostics.probe_responses_capability(
-        provider="openai", api_key="sk-test", base_url="https://example.test/v1", model="gpt-test",
-    )
-
-    assert first == second == third == {"ok": False, "status": 503}
-    assert calls == 2
-
-
-def test_runtime_responses_failure_overrides_success_probe_cache():
-    import app.services.provider_diagnostics as diagnostics
-
-    diagnostics._responses_probe_cache.clear()
-    diagnostics.record_responses_capability_failure(
-        provider="openai", api_key="sk-test", base_url="https://example.test/v1",
-        model="gpt-test", status=400,
-    )
-
-    key = diagnostics._responses_probe_key(
-        provider="openai", api_key="sk-test", base_url="https://example.test/v1",
-        model="gpt-test",
-    )
-    assert diagnostics._responses_probe_cache[key][1] == {
-        "ok": False, "status": 400, "detail": "真实请求不支持 Responses 协议",
-    }

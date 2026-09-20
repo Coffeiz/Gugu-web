@@ -411,3 +411,55 @@ async def test_send_group_file_falls_back_to_active_message_when_msg_id_expired(
     assert calls[1][1]["msg_id"] == "expired-msg"
     assert "msg_id" not in calls[2][1]
     assert calls[2][1]["media"] == {"file_info": "group-media-token"}
+
+
+def test_group_mention_upgrades_known_members_only():
+    """群回复里的 @成员ID：发言人 + members.json 登记成员升级为平台 mention，陌生 ID 保持纯文本。"""
+    known = {"45D53D7EEF624A107AA60C89C266F896"}
+    text = "@45D53D7EEF624A107AA60C89C266F896 @BBFF2AB9B9062D2294CB8DAF5362F653 @EF9999 试试 @<@ABC>"
+    out = qq._format_group_mention(text, "BBFF2AB9B9062D2294CB8DAF5362F653", known)
+    assert '<qqbot-at-user id="45D53D7EEF624A107AA60C89C266F896" />' in out
+    assert '<qqbot-at-user id="BBFF2AB9B9062D2294CB8DAF5362F653" />' in out   # 发言人也保留
+    assert "@EF9999" in out                                                   # 陌生 ID 不转
+    assert '<qqbot-at-user id="ABC" />' in out                                # 旧式语法照旧升级
+
+
+async def test_send_group_loads_member_whitelist_from_group_scope(monkeypatch):
+    """send_group 带 @ 时按 channel_id + 群 openid 取 members.json 白名单并传入发送层。"""
+    captured = {}
+
+    async def fake_members(channel_id, group_openid):
+        captured["scope"] = (channel_id, group_openid)
+        return frozenset({"45D53D7EEF624A107AA60C89C266F896"})
+
+    async def fake_post(channel_id, group_openid, text, msg_id, message_format=None,
+                        mention_user_id=None, known_member_ids=frozenset()):
+        captured.setdefault("known", known_member_ids)
+        captured.setdefault("text", text)
+
+    monkeypatch.setattr(qq, "_known_group_member_ids", fake_members)
+    monkeypatch.setattr(qq, "_post_group", fake_post)
+
+    ok = await qq.send_group("g1", "@45D53D7EEF624A107AA60C89C266F896 hello", None, "bot-1")
+    assert ok is True
+    assert captured["scope"] == ("bot-1", "g1")
+    assert captured["known"] == frozenset({"45D53D7EEF624A107AA60C89C266F896"})
+    assert '<qqbot-at-user id="45D53D7EEF624A107AA60C89C266F896" />' in captured["text"]
+
+
+async def test_send_group_skips_member_lookup_without_mention(monkeypatch):
+    """没有 @ 的普通群消息不查成员名单，保持零额外开销。"""
+    called = []
+
+    async def fake_members(channel_id, group_openid):
+        called.append(1)
+        return frozenset()
+
+    async def fake_post(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(qq, "_known_group_member_ids", fake_members)
+    monkeypatch.setattr(qq, "_post_group", fake_post)
+
+    assert await qq.send_group("g1", "普通正文", None, "bot-1") is True
+    assert called == []

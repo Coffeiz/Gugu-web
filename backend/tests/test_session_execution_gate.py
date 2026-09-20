@@ -1,8 +1,8 @@
 """Phase 6：会话单任务 gate 与 pending 持久状态回归测试。"""
 
-import asyncio
-
 from types import SimpleNamespace
+import asyncio
+import logging
 
 import pytest
 
@@ -57,7 +57,10 @@ class _FakeRedis:
 
 
 @pytest.mark.asyncio
-async def test_session_gate_persists_pending_and_clears_active_state(db, user_a, monkeypatch):
+async def test_session_gate_persists_pending_and_clears_active_state(
+    db, user_a, monkeypatch, caplog,
+):
+    caplog.set_level(logging.INFO, logger="agent.context.compress_conv")
     session = ConversationSession(
         user_id=user_a.id,
         title="串行测试",
@@ -93,6 +96,9 @@ async def test_session_gate_persists_pending_and_clears_active_state(db, user_a,
     assert session.execution_state == "idle"
     assert session.active_run_id is None
     assert session.pending_message_count == 0
+    assert "run 开始 session=" in caplog.text
+    assert "run 离开会话门 session=" in caplog.text
+    assert "pid=" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -143,7 +149,7 @@ async def test_session_gate_skips_release_after_lock_lease_is_lost(db, user_a, m
 
 @pytest.mark.asyncio
 async def test_recover_orphaned_session_clears_running_state_when_redis_state_is_gone(
-    db, user_a, monkeypatch,
+    db, user_a, monkeypatch, caplog,
 ):
     session = ConversationSession(
         user_id=user_a.id,
@@ -164,6 +170,10 @@ async def test_recover_orphaned_session_clears_running_state_when_redis_state_is
     await db.refresh(session)
     assert session.execution_state == "idle"
     assert session.active_run_id is None
+    assert "孤儿 run 已回收" in caplog.text
+    assert "run=run-dead-worker" in caplog.text
+    assert "reason=generation_state_absent" in caplog.text
+    assert "execution_state=running" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -182,7 +192,9 @@ async def test_recover_orphaned_session_keeps_running_state_when_generation_is_a
     await db.refresh(session)
 
     fake_redis = _FakeRedis()
-    fake_redis.values["genstream:state:%s" % session.id] = '{"done": false}'
+    fake_redis.values["genstream:state:%s" % session.id] = (
+        '{"done": false, "owner_run_id": "run-live"}'
+    )
     # 活跃生成的标志：run 进程心跳仍在续期
     fake_redis.values["genstream:beat:%s" % session.id] = "1"
     monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
@@ -195,7 +207,7 @@ async def test_recover_orphaned_session_keeps_running_state_when_generation_is_a
 
 
 @pytest.mark.asyncio
-async def test_recover_orphaned_session_reaps_zombie_snapshot(db, user_a, monkeypatch):
+async def test_recover_orphaned_session_reaps_zombie_snapshot(db, user_a, monkeypatch, caplog):
     """快照非 done 但进程心跳已断：连同 Redis 残留一起回收。"""
     session = ConversationSession(
         user_id=user_a.id,
@@ -209,7 +221,9 @@ async def test_recover_orphaned_session_reaps_zombie_snapshot(db, user_a, monkey
     await db.refresh(session)
 
     fake_redis = _FakeRedis()
-    fake_redis.values["genstream:state:%s" % session.id] = '{"done": false}'
+    fake_redis.values["genstream:state:%s" % session.id] = (
+        '{"done": false, "owner_run_id": "run-dead"}'
+    )
     fake_redis.values["genstream:owner:%s" % session.id] = "run-dead"
     fake_redis.values["genstream:lease:%s" % session.id] = "run-dead"
     fake_redis.values["genstream:cancel:%s" % session.id] = "1"
@@ -225,6 +239,9 @@ async def test_recover_orphaned_session_reaps_zombie_snapshot(db, user_a, monkey
     assert "genstream:owner:%s" % session.id not in fake_redis.values
     assert "genstream:lease:%s" % session.id not in fake_redis.values
     assert "genstream:cancel:%s" % session.id not in fake_redis.values
+    assert "owner_run=run-dead" in caplog.text
+    assert "reason=heartbeat_missing" in caplog.text
+    assert "has_beat=False" in caplog.text
 
 
 @pytest.mark.asyncio

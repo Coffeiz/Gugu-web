@@ -292,6 +292,11 @@ async def test_web_generate_finalizes_preflight_failure_instead_of_sticking(monk
     monkeypatch.setattr(
         compress_conv, "session_run_gate", lambda _req, **_kwargs: _Gate(),
     )
+    # 8e34a7ff 起进门前会读执行状态（基线整理排队提示）；单测环境无 Redis，
+    # mock 掉让失败点保持在 gate 内的 preflight（_refresh_generation_history）。
+    async def _idle_state(_session_id):
+        return None
+    monkeypatch.setattr(compress_conv, "_read_execution_state", _idle_state)
     monkeypatch.setattr(web, "_refresh_generation_history", fail_refresh)
     monkeypatch.setattr(web.genstream, "snapshot", snapshot)
     monkeypatch.setattr(web.genstream, "publish", publish)

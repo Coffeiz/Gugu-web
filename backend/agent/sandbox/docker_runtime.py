@@ -5,16 +5,22 @@ DockerSandboxExecutor/sandboxd 统一管理，避免业务层直接依赖 Docker
 """
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import re
 import shutil
+import socket
 import subprocess
-from urllib.parse import urlparse
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlparse
 
 from app.core.config import SandboxSettings
+
+
+_BUNDLED_IMAGE_DIGEST = "bundled"
+_BUNDLED_IMAGE_ID_FILE = Path("/opt/gugu/sandbox/image-id")
 
 
 def docker_environment() -> dict[str, str]:
@@ -35,6 +41,8 @@ def docker_environment() -> dict[str, str]:
 
 def valid_image_digest(value: str) -> bool:
     digest = (value or "").strip()
+    if digest == _BUNDLED_IMAGE_DIGEST:
+        return True
     return digest.startswith("sha256:") and len(digest) == len("sha256:") + 64 and all(
         char in "0123456789abcdef" for char in digest[7:].lower()
     )
@@ -98,15 +106,26 @@ def cleanup_orphan_pty_containers(*, timeout_seconds: float = 5.0) -> int:
 
 
 def image_available(image: str, digest: str, *, timeout_seconds: float = 3.0) -> bool:
-    """确认固定 digest 已加载到当前 Docker daemon，避免执行时隐式拉取失败。"""
+    """确认固定 digest 或随一体化镜像内嵌的 image ID 已加载到目标 daemon。"""
     if not image or not valid_image_digest(digest):
         return False
     docker = shutil.which("docker")
     if not docker:
         return False
+    if digest == _BUNDLED_IMAGE_DIGEST:
+        try:
+            expected_image_id = _BUNDLED_IMAGE_ID_FILE.read_text(encoding="ascii").strip()
+        except OSError:
+            return False
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_image_id):
+            return False
+        inspect_args = [docker, "image", "inspect", "--format", "{{.Id}}", image]
+    else:
+        expected_image_id = ""
+        inspect_args = [docker, "image", "inspect", f"{image}@{digest}"]
     try:
         result = subprocess.run(
-            [docker, "image", "inspect", f"{image}@{digest}"],
+            inspect_args,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
@@ -115,7 +134,9 @@ def image_available(image: str, digest: str, *, timeout_seconds: float = 3.0) ->
         )
     except (OSError, subprocess.SubprocessError):
         return False
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False
+    return digest != _BUNDLED_IMAGE_DIGEST or result.stdout.strip() == expected_image_id
 
 
 def cleanup_running_sandboxes(*, timeout_seconds: float = 5.0) -> int:
@@ -225,12 +246,7 @@ def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
     )
 
 
-def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
-    """返回当前配置是否允许执行容器命令。
-
-    这里是执行前的三层门禁之一：沙盒关闭、Docker 不可用、Rootless 不满足或
-    镜像未固定 digest 时，都必须拒绝执行，不能回退到本机执行器。
-    """
+def _sandbox_configuration_readiness(settings: SandboxSettings) -> tuple[bool, str]:
     if not settings.enabled:
         return False, "Shell 沙盒未开启"
     if settings.network_profile == "egress":
@@ -240,6 +256,15 @@ def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
             return False, "受控 egress 网络尚未启用"
         if not valid_egress_network_name(settings.egress_network_name):
             return False, "egress 网络名无效"
+
+    return True, "Shell 沙盒配置有效"
+
+
+def docker_sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
+    """在 sandboxd 所在进程探测 Docker；调用方必须持有目标 Docker socket。"""
+    configured, reason = _sandbox_configuration_readiness(settings)
+    if not configured:
+        return False, reason
     status = probe_docker()
     if not status.installed:
         return False, status.message
@@ -252,3 +277,43 @@ def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
     if not image_available(settings.image, settings.image_digest):
         return False, "固定 Shell 沙盒镜像尚未加载到当前 Docker daemon"
     return True, "Docker 沙盒运行时已就绪"
+
+
+def sandboxd_readiness(socket_path: str, *, timeout_seconds: float = 6.0) -> tuple[bool, str]:
+    """向 sandboxd 查询其所管理的 Docker 运行时，不探测调用方自己的 daemon。"""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(timeout_seconds)
+            client.connect(socket_path)
+            client.sendall(b'{"operation":"status"}\n')
+            response = bytearray()
+            while b"\n" not in response and len(response) <= 4096:
+                chunk = client.recv(4097 - len(response))
+                if not chunk:
+                    break
+                response.extend(chunk)
+        if not response or len(response) > 4096:
+            return False, "sandboxd 未返回有效状态"
+        payload = json.loads(bytes(response).split(b"\n", 1)[0].decode("utf-8"))
+        if not isinstance(payload, dict) or payload.get("type") != "status":
+            return False, "sandboxd 状态响应无效"
+        if payload.get("ready") is True:
+            return True, str(payload.get("reason") or "sandboxd Docker 沙盒已就绪")
+        return False, str(payload.get("reason") or "sandboxd Docker 沙盒未就绪")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return False, "sandboxd 不可用，未执行命令"
+
+
+def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
+    """返回当前配置是否允许执行容器命令。
+
+    生产执行经 sandboxd 时只向其查询状态，避免误探测 Worker/Backend 自己的
+    Docker daemon；独立运行且未配置 sandboxd 时保留直接探测行为。
+    """
+    configured, reason = _sandbox_configuration_readiness(settings)
+    if not configured:
+        return False, reason
+    socket_path = str(getattr(settings, "sandboxd_socket", "") or "").strip()
+    if socket_path:
+        return sandboxd_readiness(socket_path)
+    return docker_sandbox_readiness(settings)

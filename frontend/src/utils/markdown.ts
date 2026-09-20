@@ -172,16 +172,21 @@ function parseFrontmatterEntries(yaml: string): MarkdownFrontmatterEntry[] {
 
 /** 拆出标准 YAML frontmatter，供预览显示元数据表格并只渲染 Markdown 正文。 */
 export function splitYamlFrontmatter(source: string): SplitMarkdownFrontmatterResult {
-  const match = /^(?:\uFEFF)?---[ \t]*\r?\n[\s\S]*?^(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/m.exec(source)
-  if (!match) return { body: source, bodyStartLine: 0, entries: [] }
+  // 开始标记必须位于文件第一行；若整个正则启用 multiline，正文里的 Markdown
+  // 分隔线也会被误认为 frontmatter 起点，导致两条 `---` 之间的正文被吞掉。
+  const opening = /^(?:\uFEFF)?---[ \t]*\r?\n/.exec(source)
+  if (!opening) return { body: source, bodyStartLine: 0, entries: [] }
 
-  const yaml = match[0]
-    .replace(/^(?:\uFEFF)?---[ \t]*\r?\n/, '')
-    .replace(/^(?:---|\.\.\.)[ \t]*(?:\r?\n|$)$/m, '')
+  const remainder = source.slice(opening[0].length)
+  const closing = /^(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/m.exec(remainder)
+  if (!closing) return { body: source, bodyStartLine: 0, entries: [] }
+
+  const end = opening[0].length + closing.index + closing[0].length
+  const yaml = remainder.slice(0, closing.index)
 
   return {
-    body: source.slice(match[0].length),
-    bodyStartLine: match[0].split(/\r\n|\r|\n/).length - 1,
+    body: source.slice(end),
+    bodyStartLine: source.slice(0, end).split(/\r\n|\r|\n/).length - 1,
     entries: parseFrontmatterEntries(yaml),
   }
 }

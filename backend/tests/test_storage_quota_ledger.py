@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
-from app.models import StorageQuotaEvent, StorageQuotaLedger
+from app.models import File, StorageQuotaEvent, StorageQuotaLedger
 from app.services.storage import quota_ledger
 from app.services.storage.quota_limits import UNLIMITED_BYTES, resolve_file_library_limit
 
@@ -19,6 +20,22 @@ from app.services.storage.quota_limits import UNLIMITED_BYTES, resolve_file_libr
 )
 def test_file_library_limit_uses_none_not_truthiness(user_limit, global_limit, expected):
     assert resolve_file_library_limit(user_limit, global_limit) == expected
+
+
+@pytest.mark.asyncio
+async def test_download_budget_uses_live_file_bytes_and_preserves_zero_limit(db, user_a):
+    db.add_all([
+        File(user_id=user_a.id, display_name="存活", ext="bin", storage_key="live", size_bytes=30),
+        File(user_id=user_a.id, display_name="回收", ext="bin", storage_key="deleted", size_bytes=90,
+             deleted_at=datetime.now(timezone.utc)),
+    ])
+    user_a.storage_limit_bytes = 100
+    await db.flush()
+
+    assert await quota_ledger.get_file_library_download_budget(db, user_a.id, 500) == (100, 70)
+    user_a.storage_limit_bytes = 0
+    await db.flush()
+    assert await quota_ledger.get_file_library_download_budget(db, user_a.id, 500) == (0, 0)
 
 
 def _settings(tmp_path):

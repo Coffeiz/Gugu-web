@@ -28,6 +28,9 @@ from app.services.conversations import (
     search_session_titles,
 )
 from app.services.user_preferences import get_user_locale
+from app.services.files.browser import list_recent_folders_for_search, search_user_folders
+from app.services.search import search_global_mcp_servers, search_global_scheduled_tasks
+from app.services.storage.folders import folder_location_subtitle
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -36,7 +39,7 @@ MSG_PER_TYPE = 8      # 对话消息扫描条数（合并去重后仍受 per_typ
 SNIPPET_PAD = 24      # 消息片段命中词前后各取多少字
 ROMAJI_SCAN = 200     # 拼音/罗马音搜索时每类最多扫描条数
 
-ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note", "skill"]
+ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note", "skill", "mcp", "scheduled_task"]
 
 # 所有参与全局搜索的文本字段统一在这里登记；新增字段只需补这一张表。
 ROMAJI_FIELDS = {
@@ -172,18 +175,10 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
 
     # ── 文件夹：名 ──
     if wanted is None or "folder" in wanted:
-        rows = list((await db.execute(
-            select(Folder).where(Folder.user_id == uid,
-                                 keyword_condition([Folder.name], search_queries, mode))
-            .order_by(keyword_score([Folder.name], search_queries).desc(),
-                      _primary_rank(Folder.name, q), Folder.created_at.desc()).limit(per_type)
-        )).scalars().all())
+        rows = await search_user_folders(db, uid, search_queries, mode, q, per_type)
         if use_romaji and len(rows) < per_type:
             seen = {fo.id for fo in rows}
-            scan = (await db.execute(
-                select(Folder).where(Folder.user_id == uid)
-                .order_by(Folder.created_at.desc()).limit(ROMAJI_SCAN)
-            )).scalars().all()
+            scan = await list_recent_folders_for_search(db, uid, ROMAJI_SCAN)
             for fo in scan:
                 if fo.id not in seen and _romaji_matches_object(fo, "folder", search_queries, language):
                     rows.append(fo); seen.add(fo.id)
@@ -191,7 +186,9 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                         break
         if rows:
             groups.append({"type": "folder", "label": "文件夹", "items": [
-                {"id": fo.id, "title": fo.name, "subtitle": "文件夹"} for fo in rows
+                {"id": fo.id, "title": fo.name,
+                 "subtitle": await folder_location_subtitle(db, uid, fo)}
+                for fo in rows
             ]})
 
     # ── 日程/事件：标题/描述/客户 ──
@@ -291,6 +288,33 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                     "enabled": bool(skill.enabled),
                 }
                 for skill in rows
+            ]})
+
+    # ── 用户 MCP server：只搜名称/传输方式（不暴露 endpoint 与凭据）──
+    if wanted is None or "mcp" in wanted:
+        rows = await search_global_mcp_servers(db, uid, search_queries, mode, q, per_type)
+        if rows:
+            groups.append({"type": "mcp", "label": "MCP", "items": [
+                {
+                    "id": str(server.id),
+                    "title": server.name,
+                    "subtitle": f"{server.transport} · {'已启用' if server.enabled else '已停用'}",
+                    "enabled": bool(server.enabled),
+                }
+                for server in rows
+            ]})
+
+    # ── 用户定时任务：搜任务名（已结束/系统级任务不出现）──
+    if wanted is None or "scheduled_task" in wanted:
+        rows = await search_global_scheduled_tasks(db, uid, search_queries, mode, q, per_type)
+        if rows:
+            groups.append({"type": "scheduled_task", "label": "定时任务", "items": [
+                {
+                    "id": task.id,
+                    "title": task.name,
+                    "subtitle": f"{task.schedule_kind} · {task.cron}" if task.schedule_kind == "cron" else (f"每 {task.interval_minutes} 分钟" if task.interval_minutes else "定时"),
+                }
+                for task in rows
             ]})
 
     # ── 思维便签：标题 + 正文（便签短，正文可以直接搜，不像文件那样只能搜名）──

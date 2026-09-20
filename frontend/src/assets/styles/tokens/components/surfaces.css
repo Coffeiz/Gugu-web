@@ -121,7 +121,7 @@
 
   /* File/folder card contract. Aero light intentionally reproduces v0.20.4. Theme/family variants
      below only remap values; FileCard.vue / FolderCard.vue remain the sole paint/state owners. */
-  --file-card-bg: rgba(255,255,255,.72);
+  --file-card-bg: rgba(255,255,255,.75);
   --file-card-border: rgba(255,255,255,.90);
   --file-card-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 5px rgba(80,90,110,.06);
   --file-card-bg-hover: rgba(255,255,255,.86);

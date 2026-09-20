@@ -2,14 +2,30 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from uuid import UUID
 
 from app.core.ownership import get_owned
-from app.models import CalendarEvent, ConversationMessage, ConversationSession, File, Folder, Project
+from app.models import CalendarEvent, ConversationMessage, ConversationSession, File, Folder, Project, ScheduledTask, UserMcpServer, UserSkill
 from sqlalchemy import func, select
 
 _MAX_REFERENCES = 6
 _MAX_REFERENCE_CHARS = 1200
 _FOLDER_CHAIN_MAX = 5
+_TASK_PAYLOAD_HEAD = 300
+
+
+def _parse_reference_id(kind: str, raw_id) -> int | str | None:
+    """按引用类型解析 id：mcp 是 UUID 字符串，其余是 int 自增；无效返回 None。"""
+    if kind == "mcp":
+        try:
+            return str(UUID(str(raw_id)))
+        except (TypeError, ValueError, AttributeError):
+            return None
+    try:
+        resource_id = int(raw_id)
+    except (TypeError, ValueError):
+        return None
+    return resource_id if resource_id >= 1 else None
 
 
 async def _folder_path(db, folder_id: int | None) -> str:
@@ -33,11 +49,8 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
         if not isinstance(raw, dict):
             continue
         kind = raw.get("type")
-        try:
-            resource_id = int(raw.get("id"))
-        except (TypeError, ValueError):
-            continue
-        if resource_id < 1:
+        resource_id = _parse_reference_id(kind, raw.get("id"))
+        if resource_id is None:
             continue
         if kind == "project":
             obj = await get_owned(db, Project, resource_id, user_id)
@@ -98,6 +111,36 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
                 latest = getattr(message, "content", "") if message else ""
                 detail = f"会话 id：{session.id}\n标题：{session.title}\n最近内容：{latest[:900]}"
                 blocks.append(f"[对话]\n{detail}")
+        elif kind == "skill":
+            obj = await db.get(UserSkill, resource_id) if isinstance(resource_id, int) else None
+            if obj is not None and getattr(obj, "owner_id", None) == user_id:
+                # 咕咕拿到 slug 即可 use_skill(skill_slug) 装载正文，不需要引用带正文。
+                detail = (
+                    f"技能 id：{obj.id}\n名称：{obj.name}\n标识：/{obj.slug}\n"
+                    f"状态：{'已启用' if obj.enabled else '已停用'}\n"
+                    f"简介：{obj.description_short or '无'}"
+                )
+                blocks.append(f"[技能]\n{detail}")
+        elif kind == "mcp":
+            obj = await db.get(UserMcpServer, resource_id) if isinstance(resource_id, UUID) else None
+            if obj is not None and (obj.user_id == user_id or obj.scope == "platform"):
+                # 不带 endpoint 与凭据字段：endpoint 可能含服务商 Key，模型不需要它。
+                allowlist = "、".join(obj.tool_allowlist) if getattr(obj, "tool_allowlist", None) else "全部工具"
+                detail = (
+                    f"MCP 服务 id：{obj.id}\n名称：{obj.name}\n"
+                    f"状态：{'已启用' if obj.enabled else '已停用'}\n"
+                    f"工具白名单：{allowlist}"
+                )
+                blocks.append(f"[MCP 服务]\n{detail}")
+        elif kind == "scheduled_task":
+            obj = await get_owned(db, ScheduledTask, resource_id, user_id)
+            if obj:
+                detail = (
+                    f"定时任务 id：{obj.id}\n名称：{obj.name}\n"
+                    f"状态：{'已启用' if obj.enabled else '已停用'}\n"
+                    f"计划：{obj.cron}\n任务指令：{(obj.payload or '')[:_TASK_PAYLOAD_HEAD]}"
+                )
+                blocks.append(f"[定时任务]\n{detail}")
     if not blocks:
         return ""
     context = "\n\n".join(blocks)

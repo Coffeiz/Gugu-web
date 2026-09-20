@@ -17,6 +17,8 @@ SOURCE_SOCKET=/var/run/docker.sock
 SOURCE="docker -H unix://$SOURCE_SOCKET"
 SANDBOX_IMAGE="${SANDBOX__IMAGE:-debian:bookworm-slim}"
 SANDBOX_IMAGE_DIGEST="${SANDBOX__IMAGE_DIGEST:-}"
+SANDBOX_BUNDLE=/opt/gugu/sandbox/sandbox-image.tar.gz
+SANDBOX_BUNDLE_IMAGE_ID=/opt/gugu/sandbox/image-id
 EGRESS_NETWORK="${SANDBOX__EGRESS_NETWORK_NAME:-gugu-sandbox-egress}"
 EGRESS_PROXY_URL="${SANDBOX__EGRESS_PROXY_URL:-http://egress-proxy:3128}"
 PROXY_IMAGE="${GUGU_EGRESS_PROXY_IMAGE:-ubuntu/squid:latest}"
@@ -79,10 +81,38 @@ elif ! proxy_running "$existing_proxy"; then
     $RD start "$existing_proxy"
 fi
 
-# 3) 沙盒基础镜像（配置校验用 tag@digest 引用，必须能被 inspect 到）
+# 3) 沙盒执行镜像。一体化部署从 app 镜像内导入，不再访问 registry；自定义镜像
+#    仍沿用固定 digest 并由目标 daemon 本地检查/拉取。
 ref="$SANDBOX_IMAGE"
-[ -n "$SANDBOX_IMAGE_DIGEST" ] && ref="$SANDBOX_IMAGE@$SANDBOX_IMAGE_DIGEST"
-load_image_if_missing "$ref"
+if [ "$SANDBOX_IMAGE_DIGEST" = bundled ]; then
+    expected_image_id="$(cat "$SANDBOX_BUNDLE_IMAGE_ID")"
+    case "$expected_image_id" in
+        sha256:*)
+            expected_image_hash="${expected_image_id#sha256:}"
+            if [ "${#expected_image_hash}" -ne 64 ]; then
+                echo "内嵌 Sandbox 镜像身份文件无效" >&2
+                exit 1
+            fi
+            case "$expected_image_hash" in
+                *[!0-9a-f]*) echo "内嵌 Sandbox 镜像身份文件无效" >&2; exit 1 ;;
+            esac
+            ;;
+        *) echo "内嵌 Sandbox 镜像身份文件无效" >&2; exit 1 ;;
+    esac
+    actual_image_id="$($RD image inspect --format '{{.Id}}' "$SANDBOX_IMAGE" 2>/dev/null || true)"
+    if [ "$actual_image_id" != "$expected_image_id" ]; then
+        echo "导入一体化镜像内嵌的 Sandbox 执行镜像"
+        gzip -dc "$SANDBOX_BUNDLE" | $RD load
+        actual_image_id="$($RD image inspect --format '{{.Id}}' "$SANDBOX_IMAGE" 2>/dev/null || true)"
+    fi
+    if [ "$actual_image_id" != "$expected_image_id" ]; then
+        echo "内嵌 Sandbox 镜像导入后身份不匹配" >&2
+        exit 1
+    fi
+else
+    [ -n "$SANDBOX_IMAGE_DIGEST" ] && ref="$SANDBOX_IMAGE@$SANDBOX_IMAGE_DIGEST"
+    load_image_if_missing "$ref"
+fi
 
 # 目标 daemon 启动的沙盒容器使用独立 UID；文件库目录由业务容器创建时通常是
 # 755/660，必须在同一条 Compose bootstrap 链中统一补上映射组 ACL。该步骤幂等，

@@ -323,18 +323,21 @@ async def test_create_file_in_project(db, user_a, tmp_path):
     assert r.project is not None and r.project.id == p.id
 
 
-async def test_update_file_rename(db, user_a, tmp_path):
+async def test_update_file_rename_and_extension_resolves_conflict(db, user_a, tmp_path):
     svc = _svc(db, tmp_path)
-    r = await _create(svc, user_a.id, "old", "TXT", data=b"1")
-    await db.commit()
+    r = await _create(svc, user_a.id, "old", "TXT", data=b"source")
+    existing = await _create(svc, user_a.id, "new", "MD", data=b"existing")
     old_key = r.file.storage_key
-    r2 = await svc.update_file(user_a.id, r.file.id, display_name="new", stage_name=None,
+    r2 = await svc.update_file(user_a.id, r.file.id, display_name="new", ext="MD", stage_name=None,
                                folder_id=None, project_id=None, folder_set=False, project_set=False)
     await db.commit()
-    assert r2.file.display_name == "new"
-    assert r2.file.storage_key.endswith("/个人文件/new.txt")
+    assert r2.file.display_name == "new(1)"
+    assert r2.file.ext == "MD"
+    assert r2.file.storage_key.endswith("/个人文件/new(1).md")
     assert await svc.storage.exists(r2.file.storage_key)
     assert not await svc.storage.exists(old_key)
+    assert await svc.storage.get(r2.file.storage_key) == b"source"
+    assert await svc.storage.get(existing.file.storage_key) == b"existing"
 
 
 async def test_update_file_not_found(db, user_a, tmp_path):

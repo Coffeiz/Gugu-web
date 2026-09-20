@@ -45,8 +45,7 @@ class RunState:
     hard_budget_retries: int = 0
     total_usage_out: int = 0
 
-    # ── 压缩与守卫 ────────────────────────────────────────────────────────
-    compaction_applied: bool = False
+    # ── 守卫 ───────────────────────────────────────────────────────────────
     guard_retry_count: int = 0
 
     # ── 交互现场（同一时刻至多一个 pending）──────────────────────────────

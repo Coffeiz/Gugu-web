@@ -386,8 +386,8 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="note_create", label="记录思维笔记",
-            description_short='创建时间流笔记；正文按段落等块类型组织，文本放在块内容中。',
-            description="按用户要求创建时间流笔记；普通文字使用 paragraph 块，text 只放在 content 内。blocks 使用受限块结构，需改写时先确认草稿。列表和待办只支持扁平结构，列表项内不能继续嵌套列表、content 或 paragraphs，也不能把数组包装成 item 对象。日记只按日期归档，同一天的先后顺序由系统按写入顺序自动决定。补录历史日记时传 captured_at 日期即可，支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
+            description_short='创建时间流笔记；必须传 blocks 数组，不能把正文放在 content 字符串。',
+            description="按用户要求创建时间流笔记。必须把内容块作为顶层 blocks 数组传入；不要把整篇 Markdown 或 JSON 字符串放在 content 字段。普通文字使用 paragraph 块，行内 text 放在块的 content 数组中。blocks 使用受限块结构，需改写时先确认草稿。列表和待办只支持扁平结构，列表项内不能继续嵌套列表、content 或 paragraphs，也不能把数组包装成 item 对象。日记只按日期归档，同一天的先后顺序由系统按写入顺序自动决定。补录历史日记时传 captured_at 日期即可，支持 MM-DD、MM/DD、YYYY-MM-DD、YYYY/MM/DD、年份前后和中文日期。",
             input_schema={
                 "type": "object",
                 "properties": {

@@ -14,6 +14,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
 from agent import core as _core
+from agent.loop import watchdog as _watchdog
 
 
 def _allow_tool_images(model_cfg: Any) -> bool:
@@ -95,19 +96,19 @@ async def run_loop(
         # 工具调用/结果追加后仍通过对象身份找到同一个起点。
         _run_conversation = getattr(messages, "conversation", messages)
         _run_start_index = _core.last_user_index(_run_conversation)
-        _run_start_message = (
-            _run_conversation[_run_start_index]
-            if _run_start_index is not None
-            else (_run_conversation[-1] if _run_conversation else None)
-        )
+        run_start_index = _run_start_index if _run_start_index is not None else max(0, len(_run_conversation) - 1)
+        run_round_start_indices: list[tuple[int, int]] = []
 
-        _mutset = _core._mutating_tools([*runner.tool_names, *runner.dynamic_tools], tool_snapshot)
-        did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
+        task_rounds = 0; verify_rounds = 0; empty_retry = 0
         any_tool_called = False
         responses_fallback_used = False
         pending_responses_capability_failure = None
         narration_retry = decision_retry = intent_retry = colon_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
+        budget_stop_rounds = 0  # 预算停止后模型仍坚持调工具的连续轮数（止损用）
+        repeat_round_sig: str | None = None   # 跨轮重复调用守卫：上一轮形态签名
+        repeat_round_count = 0                # 连续相同形态的轮数
+        repeat_round_nudged = False           # 是否已注入过提醒（每段重复只提醒一次）
         guard_retry_pending = False
         colon_retry_pending = False
         guard_retry_buf: list[str] = []
@@ -125,16 +126,16 @@ async def run_loop(
         initial_volatile_indices = _core.loop_drivers._volatile_message_indices(messages)
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
-        verify_mode = False; verify_fixed = False; verify_queried = False
+        verify_mode = False; verify_queried = False
         finalize_pending = False
         # 破坏性工具的用户确认授权存在服务端（Redis）：确认后运行侧按原参数重投，
         # 确认门自动命中放行；运行时不做任何凭证续接，也不让模型再调用一次。
         total_in = total_out = total_cache = total_cache_write = 0
-        # 一个 run 内 provider 每次返回的是该次请求的 context input；压缩判定使用
-        # 这个 run 观察到的最高值，不能把多次请求相加，否则工具轮数越多越会误触发。
+        # 压缩判定使用最近一次 provider 请求的 context input，不能跨轮累加或沿用高水位。
         run_context_usage = 0
+        run_context_usage_peak = 0
         hard_budget_retries = 0
-        compaction_applied = False
+        last_compaction_no_progress_length: int | None = None
         run_id = f"run-{_core.uuid4().hex[:16]}"
         round_number = 0
         event_seq = 0
@@ -152,7 +153,7 @@ async def run_loop(
 
         async def compact_context_now() -> bool:
             """压缩旧 history，并让当前 run 使用新的上下文边界。"""
-            nonlocal messages, compaction_applied
+            nonlocal messages, run_start_index, last_compaction_no_progress_length
             from agent.context import compaction
 
             async def keep_generation_alive() -> None:
@@ -175,17 +176,18 @@ async def run_loop(
                 item for item in conversation
                 if isinstance(item, dict) and "<compacted-summary>" in str(item.get("content") or "")
             ]
-            protected_from = next(
-                (index for index, item in enumerate(conversation)
-                 if item is _run_start_message),
-                max(0, len(conversation) - 1),
+            protected_from = _core.loop_rounds.rolling_compaction_start_index(
+                run_round_start_indices, round_number,
             )
+            if protected_from is None:
+                protected_from = run_start_index
             try:
                 try:
                     result = await compaction.compact_context(
                         list(conversation), session_id=session_id,
                         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
                         protected_from=protected_from,
+                        protected_anchor_index=run_start_index,
                         model_cfg=ai,
                         system_text=system_text,
                         # 分支要带上本 run 的工具声明，provider 才算得出同一份可缓存
@@ -236,7 +238,17 @@ async def run_loop(
                 messages.replace_conversation(compacted_messages)
             else:
                 messages = compacted_messages
-            compaction_applied = True
+            if getattr(result, "anchor_index", None) is not None:
+                run_start_index = result.anchor_index
+            protected_start_index = getattr(result, "protected_start_index", None)
+            if protected_start_index is not None:
+                protected_source_start = getattr(result, "protected_source_start_index", None)
+                if protected_source_start is None:
+                    protected_source_start = protected_from
+                run_round_start_indices[:] = _core.loop_rounds.remap_round_start_indices(
+                    run_round_start_indices, protected_start_index, protected_source_start,
+                )
+            last_compaction_no_progress_length = None
             if reasoning_state is not None:
                 await reasoning_state.boundary_changed("baseline_changed")
             yield_event = {"type": "_context_compaction", "phase": "completed", "applied": True,
@@ -247,22 +259,33 @@ async def run_loop(
 
         async def apply_deterministic_compaction_fallback(reason: str) -> bool:
             """摘要压缩未生效时立即裁切，避免继续把超大上下文送入 provider。"""
-            nonlocal messages, compaction_applied
+            nonlocal messages, run_start_index, last_compaction_no_progress_length
             from agent.context.budget import enforce_provider_overflow_fallback
 
             conversation = getattr(messages, "conversation", messages)
-            protected_from = next(
-                (index for index, item in enumerate(conversation)
-                 if item is _run_start_message),
-                max(0, len(conversation) - 1),
+            protected_from = _core.loop_rounds.rolling_compaction_start_index(
+                run_round_start_indices, round_number,
             )
+            if protected_from is None:
+                protected_from = run_start_index
             result = enforce_provider_overflow_fallback(
                 messages, system_text or "", getattr(ai, "context_tokens", 256000),
                 protected_from=protected_from,
+                protected_anchor_index=run_start_index,
             )
             if not result.changed:
                 return False
-            compaction_applied = True
+            if getattr(result, "anchor_index", None) is not None:
+                run_start_index = result.anchor_index
+            protected_start_index = getattr(result, "protected_start_index", None)
+            if protected_start_index is not None:
+                protected_source_start = getattr(result, "protected_source_start_index", None)
+                if protected_source_start is None:
+                    protected_source_start = protected_from
+                run_round_start_indices[:] = _core.loop_rounds.remap_round_start_indices(
+                    run_round_start_indices, protected_start_index, protected_source_start,
+                )
+            last_compaction_no_progress_length = None
             if reasoning_state is not None:
                 await reasoning_state.boundary_changed("baseline_changed")
             _context_compaction_event[0] = {
@@ -273,15 +296,16 @@ async def run_loop(
 
         def usage_compaction_due() -> bool:
             # 90% 阈值判定归 loop/rounds（PRD-LLM-25 LLM25-006）；压缩执行仍归 context 模块。
+            conversation = getattr(messages, "conversation", messages)
             return _core.loop_rounds.usage_compaction_due(
                 run_context_usage=run_context_usage,
                 context_tokens=int(getattr(ai, "context_tokens", 0) or 0),
-                compaction_applied=compaction_applied,
+                no_progress=last_compaction_no_progress_length == len(conversation),
             )
 
         async def compact_after_usage_threshold() -> bool:
             """统一在 provider usage 达到 90% 后压缩旧 history。"""
-            nonlocal messages, compaction_applied
+            nonlocal messages, last_compaction_no_progress_length
             # 90% 观察线只在 provider usage 层维护一份，避免 core 再复制预算语义。
             if not usage_compaction_due():
                 return False
@@ -290,6 +314,7 @@ async def run_loop(
             if await apply_deterministic_compaction_fallback("usage_threshold_fallback"):
                 _core._log.warning("[core] provider usage 达到 90% 但摘要压缩未生效，执行确定性裁切")
                 return True
+            last_compaction_no_progress_length = len(getattr(messages, "conversation", messages))
             _core._log.error("[core] provider usage 达到 90%，摘要和确定性裁切均未生效")
             return False
 
@@ -319,6 +344,19 @@ async def run_loop(
                 max_absolute_rounds=_core.MAX_ABSOLUTE_ROUNDS,
             )
             if _budget is _core.loop_rounds.RoundBudgetAction.ABSOLUTE_LIMIT:
+                _watchdog.record_stop(
+                    run_id=run_id,
+                    round_number=round_number,
+                    reason="absolute_round_limit",
+                    limit=_core.MAX_ABSOLUTE_ROUNDS,
+                    unlimited=unlimited_mode,
+                    goal=goal_mode,
+                    task_rounds=task_rounds,
+                    verify_rounds=verify_rounds,
+                    tool_calls_used=tool_calls_used,
+                    budget_stop_rounds=budget_stop_rounds,
+                    repeat_round_count=repeat_round_count,
+                )
                 _core._log.error(
                     "[core] Agent 触发绝对轮次安全上限：rounds=%s limit=%s run=%s",
                     round_number, _core.MAX_ABSOLUTE_ROUNDS, run_id,
@@ -466,6 +504,10 @@ async def run_loop(
             result = None
             round_number += 1
             round_id = f"round-{round_number}"
+            run_round_start_indices.append((
+                round_number,
+                len(getattr(messages, "conversation", messages)),
+            ))
             yield stream_event("round_start", round_id=round_id)
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
             try:
@@ -490,6 +532,19 @@ async def run_loop(
                             if _kind == "done":
                                 result = _val
                                 break
+                            if _kind == "retry":
+                                # 重试状态行：任何模式都显示（它是状态不是正文，不进消息流）
+                                _watchdog.record_provider_retry(
+                                    run_id=run_id,
+                                    round_number=round_number,
+                                    attempt=_val.get("attempt"),
+                                    error_kind=_val.get("error_kind"),
+                                )
+                                yield stream_event("retry", attempt=_val.get("attempt"),
+                                                   max_retries=_val.get("max_retries"),
+                                                   next_retry_in=_val.get("next_retry_in"),
+                                                   error_kind=_val.get("error_kind"))
+                                continue
                             if verify_mode:
                                 _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
                             elif goal_mode:
@@ -533,7 +588,10 @@ async def run_loop(
                         if reasoning_state is not None:
                             await reasoning_state.failed("responses_incompatible")
                         from agent.loop_drivers import OpenAIDriver
+                        round_wrapper = getattr(driver, "_loopscope_round_wrapper", None)
                         driver = OpenAIDriver()
+                        if callable(round_wrapper):
+                            driver.run_round = round_wrapper(driver, driver.run_round)
                         client, ctx = driver.prepare(
                             current_tool_names, ai, messages, system_text,
                             tool_snapshot=tool_snapshot,
@@ -545,14 +603,8 @@ async def run_loop(
                             exc.status_code,
                         )
                 if pending_responses_capability_failure is not None and result is not None:
-                    from app.services.provider_diagnostics import record_responses_capability_failure
-                    record_responses_capability_failure(
-                        provider=getattr(ai, "provider", "") or "",
-                        api_key=getattr(ai, "api_key", "") or "",
-                        base_url=getattr(ai, "base_url", "") or "",
-                        model=getattr(ai, "model", "") or "",
-                        status=pending_responses_capability_failure.status_code,
-                    )
+                    # 兼容性回退只在本次 run 内生效；不再写回任何能力探测缓存
+                    # （Chat API 下的自动协议切换已随推理接续策略一并移除）。
                     pending_responses_capability_failure = None
             except _core.RetryableError as e:
                 if reasoning_state is not None:
@@ -588,24 +640,28 @@ async def run_loop(
                     yield stream_event("_context_compaction", phase="completed", applied=False,
                                        reason="not_applied")
                 # _core._stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；
-                # 只根据 cause 类型挑一句降级文案给用户。
-                import anthropic
-                busy = isinstance(e.cause, getattr(anthropic, "RateLimitError", ()))
-                from agent.providers.errors import is_provider_http_error
+                # 只根据 cause 类型挑一句降级文案给用户。文案带「上游 状态码 错误类型」的
+                # 脱敏技术标签（不含上游正文/provider 名，正文在 diag_log）——用户能一眼
+                # 看出是上游过载还是故障，而不是只收到一句 ack（2026-09-18 529 排查后定稿）。
+                # 429 限流与 529 过载同属「上游忙」，按状态码判定、与具体 SDK 解耦
+                # （anthropic/openai 两条链路的重试用尽都落到这里）
+                from agent.providers.errors import (is_provider_http_error, upstream_status_tag,
+                                                    upstream_busy_status)
+                busy = upstream_busy_status(e)
                 provider_error = is_provider_http_error(e)
-                detail = (
-                    "咕咕这会儿有点忙（接口繁忙），过几秒再发一次试试 🙏"
-                    if busy else
-                    "模型服务暂时拒绝或不可用，请稍后重试。"
-                    if provider_error else
-                    "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                )
-                message_key = (
-                    "chatUi.networkError" if busy else
-                    "chatUi.providerError" if provider_error else
-                    "chatUi.genericError"
-                )
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key}, ensure_ascii=False)}\n\n"
+                attempts_done = int(getattr(e, "attempt", 0) or 0)
+                tag = upstream_status_tag(e)
+                retried = f"已自动重试 {attempts_done} 次" if attempts_done > 0 else None
+                if busy:
+                    detail = f"模型服务过载（上游 {tag}）" + (f"，{retried}仍未恢复" if retried else "") + "，请稍后再试 🙏"
+                    message_key = "chatUi.providerBusyExhausted"
+                elif provider_error:
+                    detail = f"模型服务暂时不可用（上游 {tag}）" + (f"，{retried}" if retried else "") + "，请稍后重试。"
+                    message_key = "chatUi.providerUnavailable"
+                else:
+                    detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                    message_key = "chatUi.genericError"
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key, 'message_params': {'tag': tag, 'attempts': attempts_done}}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
                 if reasoning_state is not None:
@@ -647,18 +703,25 @@ async def run_loop(
                 _core.diag_log(f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
                          f"format={driver.api_format}", e)
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
-                from agent.providers.errors import is_provider_http_error
+                from agent.providers.errors import is_provider_http_error, upstream_status_tag
                 provider_error = is_provider_http_error(e)
-                detail = "模型服务暂时拒绝或不可用，请稍后重试。" if provider_error else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                message_key = "chatUi.providerError" if provider_error else "chatUi.genericError"
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key}, ensure_ascii=False)}\n\n"
+                if provider_error:
+                    tag = upstream_status_tag(e)
+                    detail = f"模型服务暂时不可用（上游 {tag}），请稍后重试。"
+                    message_key = "chatUi.providerUnavailable"
+                else:
+                    tag = ""
+                    detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
+                    message_key = "chatUi.genericError"
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key, 'message_params': {'tag': tag}}, ensure_ascii=False)}\n\n"
                 return
 
             total_in  += result.usage_in
             total_out += result.usage_out
             total_cache += result.cache_tokens
             total_cache_write += result.cache_write_tokens
-            run_context_usage = max(run_context_usage, _core._provider_context_usage(driver, result))
+            run_context_usage = int(_core._provider_context_usage(driver, result) or 0)
+            run_context_usage_peak = max(run_context_usage_peak, run_context_usage)
             if reasoning_state is not None:
                 await reasoning_state.round_finished(driver, ctx, result, round_id)
             # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
@@ -676,6 +739,18 @@ async def run_loop(
             _requires_tools = result.requires_tools
             if _requires_tools is None:
                 _requires_tools = bool(result.tool_calls)
+            _watchdog.record_round_result(
+                run_id=run_id,
+                round_number=round_number,
+                tool_calls=result.tool_calls,
+                requires_tools=_requires_tools,
+                verify_mode=verify_mode,
+                goal_mode=goal_mode,
+                unlimited_mode=unlimited_mode,
+                task_rounds=task_rounds,
+                verify_rounds=verify_rounds,
+                tool_calls_used=tool_calls_used,
+            )
             # 行动意图守卫判断的是当前模型轮次，而不是整个 run 是否曾经调用过工具。
             # 前面轮次可能已经查过数据，但本轮仍可能只输出“我继续处理：”而没有实际调用；
             # 这种情况下仍必须触发守卫，不能被 any_tool_called 这个历史状态挡住。
@@ -705,14 +780,9 @@ async def run_loop(
                     guard_retry_buf.clear()
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
-                if verify_mode and not verify_fixed and _verify_buf and any(
-                    _core._resolve_tool_call(tc.name, tc.input)[0] in _mutset
-                    for tc in result.tool_calls
-                ):
-                    async for _line in _core.genstream.typed_stream(''.join(_verify_buf)):   # 逐字流式，与正常回复一致
-                        yield _line
                 dispatched = []
                 pending_interaction = None
+                repeat_breaker.begin_round()   # 熔断按轮计数：同轮多相同调用合法，跨轮重复才累积
                 remaining_tool_calls = (
                     None if (goal_mode or unlimited_mode) else max(0, runner.max_tool_calls - tool_calls_used)
                 )
@@ -891,7 +961,7 @@ async def run_loop(
                         continue
                     if tc.parse_error:
                         # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
-                        # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。
+                        # tool_result 让模型精简参数后重发；不执行真实工具。
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                         yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
                                            name=effective_tool_name, label=label, input={}, verify=verify_mode,
@@ -1045,12 +1115,6 @@ async def run_loop(
                                            tool_call_id=tool_call_id, name=effective_tool_name, label=label,
                                            verify=verify_mode, status="waiting", result=res)
                         break
-                    if _core._call_requires_verification(effective_tool_name, dispatch_input, tool_snapshot, _mutset) and _core._is_successful_tool_result(res):
-                        did_mutate = True   # 本次成功做过增删改 → 立刻强制自我核实
-                        if verify_mode:
-                            verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
-                    elif verify_mode and _core._call_observes(effective_tool_name, dispatch_input, tool_snapshot):
-                        verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
                     yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
                                        name=effective_tool_name, label=label, verify=verify_mode,
                                        status="success" if _core._is_successful_tool_result(res) else "error",
@@ -1351,12 +1415,6 @@ async def run_loop(
                             result=replay_payload,
                         )
                         replay_ok = _core._is_successful_tool_result(replay_payload)
-                        if _core._call_requires_verification(replay_ctx["name"], replay_ctx["input"], tool_snapshot, _mutset) and replay_ok:
-                            did_mutate = True   # 确认后真的改了数据 → 照常进入自我核实
-                            if verify_mode:
-                                verify_fixed = True
-                        elif verify_mode and _core._call_observes(replay_ctx["name"], replay_ctx["input"], tool_snapshot):
-                            verify_queried = True
                         yield stream_event(
                             "tool_done", round_id=round_id, tool_call_id=pending_tool_call_id,
                             name=replay_ctx["name"], label=replay_ctx["label"],
@@ -1382,46 +1440,83 @@ async def run_loop(
                         return
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
+                # ── 跨轮重复调用守卫（unlimited 也可用，不挂在预算弹窗上）──
+                # 规律（2026-09-18 尸检）：run 卡死的形态是「每轮 ≥1 个工具调用、
+                # 且多轮形态完全一致」——run 只在无工具轮终结，重复轮永不结束。
+                if not verify_mode and not goal_mode:
+                    _rsig = _core.round_tool_signature(result.tool_calls)
+                    if _rsig is None or _rsig != repeat_round_sig:
+                        repeat_round_sig = _rsig
+                        repeat_round_count = 1 if _rsig else 0
+                        repeat_round_nudged = False
+                    else:
+                        repeat_round_count += 1
+                    if repeat_round_count >= _core._REPEAT_ROUND_LIMIT:
+                        _watchdog.record_stop(
+                            run_id=run_id,
+                            round_number=round_number,
+                            reason="repeated_round_signature",
+                            repeat_round_count=repeat_round_count,
+                            tool_calls_used=tool_calls_used,
+                            unlimited=unlimited_mode,
+                            goal=goal_mode,
+                        )
+                        _core._log.warning(
+                            "[core] 连续 %d 轮重复完全相同的工具调用，强制收束 run=%s",
+                            repeat_round_count, run_id,
+                        )
+                        stop_text = "检测到连续多轮重复相同的工具调用，我先停在这里；已完成的操作都保留。需要换一种做法的话，直接告诉我。"
+                        async for _line in _core.genstream.typed_stream(stop_text):
+                            yield _line
+                        if reasoning_state is not None:
+                            await reasoning_state.completed()
+                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+                        return
+                    if repeat_round_count >= 3 and not repeat_round_nudged:
+                        repeat_round_nudged = True
+                        _core._log.warning(
+                            "[core] 连续 %d 轮重复相同的工具调用，注入提醒 run=%s",
+                            repeat_round_count, run_id,
+                        )
+                        messages.append_batch(driver.build_guard_followup(
+                            result, _core._REPEAT_ROUND_NUDGE,
+                        ))
+                        yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
+                        continue
                 if tool_budget_stop_requested:
+                    # 预算停止后模型仍反复输出工具调用：给一次 followup 让它收束；
+                    # 若继续坚持（工具已被摘除，任何调用都是空转），强制终结而不是
+                    # 空转到绝对轮次上限——2026-09-18 实测 MiniMax 连转 75 轮烧到
+                    # 100 轮保险丝，期间每轮 ~3s 全是占位结果。
+                    budget_stop_rounds += 1
+                    if budget_stop_rounds >= 2:
+                        _watchdog.record_stop(
+                            run_id=run_id,
+                            round_number=round_number,
+                            reason="tool_budget_stop_loop",
+                            budget_stop_rounds=budget_stop_rounds,
+                            tool_calls_used=tool_calls_used,
+                            unlimited=unlimited_mode,
+                            goal=goal_mode,
+                        )
+                        _core._log.warning(
+                            "[core] 工具预算停止后模型连续 %d 轮仍尝试调用工具，强制收束 run=%s",
+                            budget_stop_rounds, run_id,
+                        )
+                        stop_text = "工具调用额度已用完，我先停在这里；已完成的操作都保留。想继续的话，发「继续」让我接着做。"
+                        async for _line in _core.genstream.typed_stream(stop_text):
+                            yield _line
+                        if reasoning_state is not None:
+                            await reasoning_state.completed()
+                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+                        return
                     messages.append_batch(driver.build_followup(
                         result, _core._TOOL_BUDGET_STOP_PROMPT,
                     ))
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
-                # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
-                # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
-                verify_cycle_allowed = (
-                    unlimited_mode
-                    or runner.max_verify_cycles is None
-                    or verify_count < runner.max_verify_cycles
-                )
-                if did_mutate and verify_cycle_allowed:
-                    verify_count += 1
-                    did_mutate = False
-                    verify_mode = True
-                    verify_queried = False
-                    messages.append_batch([{"role": "user", "content": _core._VERIFY_PROMPT}])
-                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
-                continue
-
-            # 自我核实：① 理论上工具结果后会立即注入核实 prompt；这里保留为轮次封顶等
-            # 边界状态的兜底；② 已进核实阶段却只嘴上确认、没真调过查询工具（verify_queried=False）→ 强制再追一轮真查。
-            # 普通模式受 _core.MAX_VERIFY 封顶防死循环；无限模式仍保留服务级停止保护。
-            # 补做会再置 did_mutate → 触发下一轮核实。
-            verify_cycle_allowed = (
-                unlimited_mode
-                or runner.max_verify_cycles is None
-                or verify_count < runner.max_verify_cycles
-            )
-            _need_verify = did_mutate and verify_cycle_allowed
-            _need_force  = verify_mode and not verify_queried and not did_mutate and verify_cycle_allowed
-            if _need_verify or _need_force:
-                verify_count += 1
-                did_mutate = False
-                verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
-                messages.append_batch(driver.build_followup(
-                    result, _core._VERIFY_FORCE_PROMPT if _need_force else _core._VERIFY_PROMPT,
-                ))
+                # 工具结果已经入历史，直接进入下一轮。增删改工具不再自动注入复查提示；
+                # 守卫（预算、重复调用、工具意图和失败回执）仍在本轮及下一轮生效。
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
@@ -1475,10 +1570,10 @@ async def run_loop(
                 guard_retry_buf.clear()
                 if reasoning_state is not None:
                     await reasoning_state.completed()
-                yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+                yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
                 return
             # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
-            if not _final_text.strip() and not did_mutate and not verify_mode:
+            if not _final_text.strip() and not verify_mode:
                 if empty_retry < 1:
                     empty_retry += 1
                     messages.append_batch(driver.build_empty_retry(result))
@@ -1546,8 +1641,20 @@ async def run_loop(
                 async for _line in _core.genstream.typed_stream(_final_text):
                     yield _line
 
+            # 反思快照捕获（PRD-LLM-27 §6.1）：只在成功收尾处捕获，进程内登记供
+            # append_reuse 反思消费；失败/异常静默跳过，闲置 worker 可从持久历史重建最小输入。
+            try:
+                from agent.context.reflection_snapshot import capture_reflection_snapshot
+                capture_reflection_snapshot(
+                    user_id=user_id, session_id=session_id, run_id=run_id, ai=ai,
+                    system_prompt=system_text or "", tools=getattr(ctx, "tools", None),
+                    messages=messages, reply_text=_final_text,
+                )
+            except Exception as exc:
+                _core.diag_log("agent.context.reflection_snapshot.capture", exc)
+
             # 正文已经确定后立即结束本轮；90% 压缩已在 provider round 返回后同步完成。
-            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
             if reasoning_state is not None:
                 await reasoning_state.completed()
             return
@@ -1564,7 +1671,7 @@ async def run_loop(
             fallback = "已提交前面成功执行的调整；核实轮次已达到上限，未完成的步骤请重新发起。"
             async for _line in _core.genstream.typed_stream(fallback):
                 yield _line
-            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
             if reasoning_state is not None:
                 await reasoning_state.completed()
             return

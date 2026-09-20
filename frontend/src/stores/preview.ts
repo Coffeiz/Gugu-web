@@ -9,12 +9,19 @@ type PreviewFile = Partial<FileMeta>
 export interface PreviewWindow {
   id: number
   file: PreviewFile
+  /** 聊天气泡等要求读取最新内容的入口递增此值，通知现有窗口绕过 blob 缓存重载。 */
+  reloadToken: number
   siblings: PreviewFile[]
   x: number; y: number; w: number; h: number
   zIndex: number
   _idx: number
   sourceText?: string
   saveSource?: (content: string) => Promise<void> | void
+}
+
+/** 首次挂载的强刷标记仅消费一次；之后只有计数发生变化才代表新的强刷请求。 */
+export function isPreviewReloadRequested(currentToken: number, previousToken?: number): boolean {
+  return previousToken === undefined ? currentToken > 0 : currentToken !== previousToken
 }
 
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
@@ -70,17 +77,24 @@ export const usePreviewStore = defineStore('preview', () => {
 
   // siblings：调用方传同目录下的完整文件列表（可选），供图片预览左右切换用；
   // 只在图片间导航，siblings 里混着非图片文件会被 navigate() 自动跳过。
-  function open(f: PreviewFile, siblings: PreviewFile[] | null = null) {
+  function open(f: PreviewFile, siblings: PreviewFile[] | null = null, forceRefresh = false) {
     // Office（前端 HTML 渲染）与图片/视频/文本一样走浮动窗口；抽屉留给 PDF。
     if (isOfficeExt(f.ext)) {
       const existing = windows.value.find(w => w.file.id === f.id)
-      if (existing) { bringToFront(existing.id); return }
+      if (existing) {
+        existing.file = f
+        existing.siblings = siblings || []
+        if (forceRefresh) existing.reloadToken++
+        bringToFront(existing.id)
+        return
+      }
       const idx = windows.value.length
       const PW = Math.min(860, Math.round(window.innerWidth * 0.6))
       const PH = Math.min(680, Math.round(window.innerHeight * 0.72))
       windows.value.push({
         id:       _nextId++,
         file:     f,
+        reloadToken: forceRefresh ? 1 : 0,
         siblings: siblings || [],
         x:      Math.round((window.innerWidth  - PW) / 2) + idx * 30,
         y:      Math.round((window.innerHeight - PH) / 2) + idx * 30,
@@ -93,12 +107,19 @@ export const usePreviewStore = defineStore('preview', () => {
     }
     if (isImageExt(f.ext) || isSvgMime(f.mimeType) || isVideoExt(f.ext) || isTextExt(f.ext, f.mimeType)) {
       const existing = windows.value.find(w => w.file.id === f.id)
-      if (existing) { bringToFront(existing.id); return }
+      if (existing) {
+        existing.file = f
+        existing.siblings = siblings || []
+        if (forceRefresh) existing.reloadToken++
+        bringToFront(existing.id)
+        return
+      }
       const idx = windows.value.length
       const PW = 320, PH = 200
       windows.value.push({
         id:       _nextId++,
         file:     f,
+        reloadToken: forceRefresh ? 1 : 0,
         siblings: siblings || [],
         x:      Math.round((window.innerWidth  - PW) / 2) + idx * 30,
         y:      Math.round((window.innerHeight - PH) / 2) + idx * 30,
@@ -126,7 +147,7 @@ export const usePreviewStore = defineStore('preview', () => {
     }
     const idx = windows.value.length
     windows.value.push({
-      id: _nextId++, file: f, siblings: [], sourceText, saveSource,
+      id: _nextId++, file: f, reloadToken: 0, siblings: [], sourceText, saveSource,
       x: Math.round((window.innerWidth - 520) / 2) + idx * 30,
       y: Math.round((window.innerHeight - 620) / 2) + idx * 30,
       w: 520, h: 620, zIndex: nextZ(), _idx: idx,

@@ -111,6 +111,9 @@ backend/scripts/.bench_rag_embeddings.json
 # 部署打包产物
 backend.zip
 
+# 本地一体化镜像构建产生的嵌入式 Sandbox 制品
+/docker/sandbox/bundle/
+
 # macOS SMB AppleDouble 资源叉垃圾（在 SMB 上编辑会生成）
 ._*
 .AppleDouble/

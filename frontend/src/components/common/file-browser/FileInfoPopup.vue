@@ -18,9 +18,9 @@
             <span class="fp-info-label">{{ t('files.format') }}</span>
             <span class="fp-info-val">{{ file.ext?.toUpperCase() }}</span>
           </div>
-          <div v-if="file.size" class="fp-info-row">
+          <div v-if="file.sizeBytes != null || file.size" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.size') }}</span>
-            <span class="fp-info-val">{{ file.size }}</span>
+            <span class="fp-info-val">{{ file.sizeBytes != null ? fmtBytes(file.sizeBytes) : file.size }}</span>
           </div>
           <div v-if="file.createdAt" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.createdAt') }}</span>
@@ -54,6 +54,7 @@ const { t } = useI18n()
 import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { nextZ } from '@/composables/core/windowz'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
+import { fmtBytes } from '@/utils/fileSize'
 const props = defineProps({
   show: Boolean,
   file: Object,

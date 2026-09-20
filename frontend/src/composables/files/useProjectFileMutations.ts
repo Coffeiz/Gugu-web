@@ -29,15 +29,15 @@ export function useProjectFileMutations(options: ProjectFileMutationsOptions) {
     return created
   }
 
-  async function renameFile(fileId: number, name: string) {
+  async function renameFile(fileId: number, name: string, extension?: string) {
     const trimmed = name.trim()
     if (!trimmed) return
-    const oldName = fileCacheStore.getFile(fileId)?.displayName
-    fileCacheStore.updateFile(fileId, { displayName: trimmed })
+    const previous = fileCacheStore.getFile(fileId)
+    fileCacheStore.updateFile(fileId, { displayName: trimmed, ...(extension !== undefined ? { ext: extension } : {}) })
     try {
-      await fileActions.renameFile(fileId, trimmed)
+      await fileActions.renameFile(fileId, trimmed, undefined, extension)
     } catch (error) {
-      if (oldName != null) fileCacheStore.updateFile(fileId, { displayName: oldName })
+      if (previous) fileCacheStore.updateFile(fileId, { displayName: previous.displayName, ext: previous.ext })
       throw error
     }
   }

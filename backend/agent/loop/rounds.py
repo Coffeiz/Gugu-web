@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+RUN_COMPACTION_KEEP_ROUNDS = 10
+
 
 class RoundBudgetAction(str, Enum):
     CONTINUE = "continue"            # 允许进入下一轮
@@ -46,7 +48,7 @@ def usage_compaction_due(
     *,
     run_context_usage: int,
     context_tokens: int | None,
-    compaction_applied: bool,
+    no_progress: bool = False,
 ) -> bool:
     """provider usage 达到 90% 观察线时触发 90% 压缩（原 `usage_compaction_due` 闭包）。
 
@@ -56,7 +58,37 @@ def usage_compaction_due(
     from agent.context.compress_conv import AUTO_COMPACTION_RATIO
 
     tokens = max(1, int(context_tokens or 0))
-    return run_context_usage >= int(tokens * AUTO_COMPACTION_RATIO) and not compaction_applied
+    return run_context_usage >= int(tokens * AUTO_COMPACTION_RATIO) and not no_progress
+
+
+def rolling_compaction_start_index(
+    round_starts: list[tuple[int, int]],
+    current_round: int,
+    keep_rounds: int = RUN_COMPACTION_KEEP_ROUNDS,
+) -> int | None:
+    """返回保留最近完整执行轮次的 history 起点。
+
+    压缩发生在当前 provider round 返回后、该轮结果写入 history 前，因此窗口包含
+    最近 ``keep_rounds`` 个已完成轮次；当前用户消息由独立锚点保留。
+    """
+    target_round = max(1, int(current_round) - max(1, int(keep_rounds)))
+    return next(
+        (index for round_number, index in round_starts if round_number == target_round),
+        None,
+    )
+
+
+def remap_round_start_indices(
+    round_starts: list[tuple[int, int]],
+    protected_start_index: int,
+    protected_source_start_index: int,
+) -> list[tuple[int, int]]:
+    """按压缩后实际保留的 history 后缀重映射 round 起点。"""
+    return [
+        (round_number, protected_start_index + (source_index - protected_source_start_index))
+        for round_number, source_index in round_starts
+        if source_index >= protected_source_start_index
+    ]
 
 
 @dataclass(frozen=True)

@@ -135,11 +135,15 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
     await options.fileActions.batchDownload(fileIds, folderIds, `${name}.zip`)
   }
 
-  function rename() {
-    const file = state.value.target as FileMeta | null
+  function withTarget<T>(target: T | null, action: (target: T) => unknown) {
     close()
-    if (file) options.startRenameFile(file)
+    if (target) return action(target)
   }
+
+  const withFileTarget = (action: (file: FileMeta) => unknown) =>
+    () => withTarget(state.value.target as FileMeta | null, action)
+  const withFolderTarget = (action: (folder: FolderMeta) => unknown) =>
+    () => withTarget(state.value.target as FolderMeta | null, action)
 
   function cut() {
     const target = state.value.target
@@ -176,18 +180,6 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
     options.clearSelection()
   }
 
-  function downloadFolder() {
-    const folder = state.value.target as FolderMeta | null
-    close()
-    if (folder) options.downloadFolder(folder)
-  }
-
-  function renameFolder() {
-    const folder = state.value.target as FolderMeta | null
-    close()
-    if (folder) options.startRenameFolder(folder)
-  }
-
   function cutFolder() {
     const folder = state.value.target as FolderMeta | null
     options.clipboardStore.cut([], folder ? [folder.id] : [])
@@ -204,12 +196,12 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
     const actions: Record<string, () => unknown> = {
       info,
       download,
-      rename,
+      rename: withFileTarget(options.startRenameFile),
       cut,
       copy,
       delete: removeFile,
-      'download-folder': downloadFolder,
-      'rename-folder': renameFolder,
+      'download-folder': withFolderTarget(options.downloadFolder),
+      'rename-folder': withFolderTarget(options.startRenameFolder),
       'cut-folder': cutFolder,
       'delete-folder': removeFolder,
       'create-folder': () => { close(); options.showNewFolder.value = true },

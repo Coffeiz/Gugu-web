@@ -297,8 +297,8 @@ Compose 自带配置位于 `searxng/settings.yml`，已经包含 `search.formats
 
 #### Compose 沙箱
 
-沙箱不能仅靠 Compose 自动安装宿主机的 Rootless Docker daemon，但它依赖的运行时检查、固定
-digest 镜像、egress 资源和持久目录 ACL 都由 `sandbox-bootstrap` 统一初始化。Compose 已提供
+沙箱不能仅靠 Compose 自动安装宿主机的 Rootless Docker daemon，但它依赖的运行时检查、
+内嵌执行镜像、egress 资源和持久目录 ACL 都由 `sandbox-bootstrap` 统一初始化。Compose 已提供
 独立 `sandboxd` 服务，但默认不启动：
 
 ```bash
@@ -669,10 +669,12 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 
 然后在 Admin → Shell 沙盒打开总开关。若 Docker daemon、固定 digest 镜像或 `sandboxd` 不可用，Shell 会返回明确失败，**不会回退到本机执行器**。部署代码已包含 sandboxd 接入，但在 devserver/生产执行 `make install` 并完成真实容器验证前，不应把它宣称为已启用。
 
-#### 沙盒镜像（`backend/Dockerfile.sandbox`）
+#### 沙盒镜像（`docker/sandbox/Dockerfile`）
 
-默认沙盒镜像是官方 `debian:bookworm-slim`（仅基础工具）。生产/开发机推荐使用仓库维护的
-工具链镜像 `backend/Dockerfile.sandbox`（bookworm-slim + git / nodejs / python3 / ffmpeg /
+一体化 `gugu-web` 镜像内嵌仓库维护的工具链 Sandbox 执行镜像；启用 Compose sandbox profile 时
+bootstrap 自动导入，普通部署者不需要额外拉取或配置 Sandbox 镜像。独立 systemd 或拆分
+backend/frontend 部署仍可按需自行准备工具链镜像 `docker/sandbox/Dockerfile`
+（bookworm-slim + git / nodejs / python3 / ffmpeg /
 Noto CJK 字体等，运行用户 uid 65532）。镜像只放通用工具链：**不预置任何 git 凭据或用户
 身份**（`user.name`/`user.email` 由使用方在会话内设置），系统级 gitconfig 仅设置
 `init.defaultBranch=main` 和 `safe.directory=*`（沙盒 bind 目录属主是宿主机 uid，属预期）。
@@ -698,8 +700,8 @@ docker run --rm --network none --user 65532:65532 gugu-sandbox:<tag> \
 docker image inspect gugu-sandbox:<tag> --format '{{index .RepoDigests 0}}'
 ```
 
-然后把 `image` / `image_digest` 写入沙盒配置（`config.override.json` 的 `sandbox` 段或
-Admin → Shell 沙盒），**先备份配置、只改这两个字段、原子写回并校验 JSON**，再重启
+独立 systemd 或拆分 backend/frontend 部署，再把 `image` / `image_digest` 写入沙盒配置
+（`config.override.json` 的 `sandbox` 段或 Admin → Shell 沙盒），**先备份配置、只改这两个字段、原子写回并校验 JSON**，再重启
 `gugu-backend` / `gugu-worker`。运行时校验（digest 格式 + `docker image inspect
 <image>@<digest>` + `--pull=never`）不变；官方基础镜像有安全更新时，重建镜像并换 digest。
 

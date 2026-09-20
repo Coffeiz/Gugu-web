@@ -131,7 +131,7 @@ async def test_send_group_does_not_retry_permanent_4xx(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []
 
-    async def fake_post_group(channel_id, group_openid, text, msg_id):
+    async def fake_post_group(channel_id, group_openid, text, msg_id, *args, **kwargs):
         calls.append(1)
         raise qq.QQAPIError("POST", "/v2/groups/g1/messages", 403, {"message": "forbidden"})
 
@@ -146,7 +146,7 @@ async def test_send_group_does_not_retry_permanent_4xx(monkeypatch):
 async def test_send_group_falls_back_to_active_message_when_passive_limit_reached(monkeypatch):
     calls = []
 
-    async def fake_post_group(channel_id, group_openid, text, msg_id):
+    async def fake_post_group(channel_id, group_openid, text, msg_id, *args, **kwargs):
         calls.append(msg_id)
         if msg_id:
             raise qq.QQAPIError(
