@@ -74,8 +74,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 FROM python:3.14-slim-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
-ARG GUGU_VERSION=unknown
-ARG GUGU_REVISION=unknown
 
 RUN sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
@@ -133,8 +131,6 @@ WORKDIR /app
 ENV PATH=/opt/venv/bin:${PATH} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-LABEL org.opencontainers.image.version="${GUGU_VERSION}" \
-    org.opencontainers.image.revision="${GUGU_REVISION}"
 COPY --from=backend-deps /opt/venv /opt/venv
 
 # 只复制运行时所需的后端模块和迁移文件，明确排除 tests/、test_*.py、docs/ 等。
@@ -246,3 +242,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
 # 服务显式清空入口。
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
+
+# 版本号和提交 SHA 每次构建都会变化，只在最终镜像元数据中使用。
+# 放在所有文件系统层之后，避免每次提交都使运行时依赖和应用文件层失效。
+ARG GUGU_VERSION=unknown
+ARG GUGU_REVISION=unknown
+LABEL org.opencontainers.image.version="${GUGU_VERSION}" \
+    org.opencontainers.image.revision="${GUGU_REVISION}"

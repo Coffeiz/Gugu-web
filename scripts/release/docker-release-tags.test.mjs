@@ -19,6 +19,22 @@ test('一体化 Compose 使用随 app 镜像交付的 Sandbox bundle', async () 
   assert.match(dockerfile, /COPY docker\/sandbox\/bundle\/image-id \/opt\/gugu\/sandbox\/image-id/)
 })
 
+test('app 镜像的动态版本元数据不使文件系统层缓存失效', async () => {
+  const dockerfile = await readFile(appDockerfilePath, 'utf8')
+  const runtimeStage = dockerfile.slice(dockerfile.indexOf('# ── Stage 3'))
+  const filesystemInstructions = [...runtimeStage.matchAll(/^(?:RUN|COPY|ADD)\b/gm)]
+  const lastFilesystemInstruction = filesystemInstructions.at(-1)?.index ?? -1
+  const versionArg = runtimeStage.indexOf('ARG GUGU_VERSION=unknown')
+  const revisionArg = runtimeStage.indexOf('ARG GUGU_REVISION=unknown')
+  const labels = runtimeStage.indexOf('LABEL org.opencontainers.image.version=')
+
+  assert.ok(lastFilesystemInstruction >= 0, '运行时阶段应包含文件系统构建指令')
+  assert.ok(lastFilesystemInstruction < versionArg,
+    '动态版本参数必须放在所有 RUN/COPY/ADD 之后，避免提交 SHA 变化使文件层缓存失效')
+  assert.ok(versionArg < revisionArg && revisionArg < labels,
+    '版本参数应在最终镜像标签之前声明')
+})
+
 test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元数据', async () => {
   const workflow = await readFile(workflowPath, 'utf8')
   const publishJob = workflow.slice(workflow.indexOf('\n  publish:\n'))
