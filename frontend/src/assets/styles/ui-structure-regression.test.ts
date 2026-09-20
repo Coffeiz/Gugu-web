@@ -15,6 +15,7 @@ function cssBlock(source: string, selector: string) {
 }
 
 const filesView = load('../../views/Files/index.vue')
+const textViewer = load('../../components/common/viewers/TextViewer.vue')
 const projectModal = load('../../views/Projects/components/ProjectModal.vue')
 const floatPreview = load('../../components/common/layout/FloatPreviewWindow.vue')
 const popovers = load('./adoption/popovers.css')
@@ -86,6 +87,18 @@ const globalStyles = load('./global.css')
 const componentTokens = load('./tokens/components.css')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('Markdown 任务列表把复选框独立定位，行内代码和说明保持连续文本流', () => {
+    const taskItem = cssBlock(textViewer, '.tv-md :deep(li:has(> input[type="checkbox"]))')
+    const taskCheckbox = cssBlock(textViewer, '.tv-md :deep(li:has(> input[type="checkbox"]) > input[type="checkbox"])')
+    const taskInlineCode = cssBlock(textViewer, '.tv-md :deep(li:has(> input[type="checkbox"]) > code)')
+
+    expect(taskItem).toContain('position: relative;')
+    expect(taskItem).toContain('padding-left: calc(var(--control-checkbox-size) + var(--space-sm));')
+    expect(taskItem).not.toContain('display: flex;')
+    expect(taskCheckbox).toContain('position: absolute;')
+    expect(taskInlineCode).toContain('white-space: nowrap;')
+  })
+
   it('卡片 hover 不常驻合成层，且不连续插值阴影，避免快速移动时反复 paint', () => {
     const hoverCard = cssBlock(globalStyles, '.hover-card-fx')
     expect(hoverCard).not.toContain('will-change: transform')

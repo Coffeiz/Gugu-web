@@ -1029,19 +1029,24 @@ onBeforeUnmount(() => {
 .tv-md :deep(.hljs-strong)         { font-weight: bold; }
 
 /* task list */
-/* marked 18 不输出 task-list-item/contains-task-list class，故用 :has 选「含勾选框的 li」去 bullet + flex 对齐 */
+/* marked 18 不输出 task-list-item/contains-task-list class，故用 :has 识别任务项；复选框独立定位，正文维持正常文本流。 */
 .tv-md :deep(li:has(> input[type="checkbox"])) {
   list-style: none;
-  display: flex; align-items: baseline; gap: 8px;
+  position: relative;
+  padding-left: calc(var(--control-checkbox-size) + var(--space-sm));
+}
+.tv-md :deep(li:has(> input[type="checkbox"]) > input[type="checkbox"]) {
+  position: absolute;
+  left: 0;
+  top: 0.35em;
+  margin: 0;
 }
 /* 外观（边框/选中态/勾）已收进全局 input[type="checkbox"] 样式（src/assets/styles/global.css），
    这里只留 markdown 场景特有的布局/交互覆盖：跟文字对齐、非任务勾选框禁用手型。 */
 .tv-md :deep(input[type="checkbox"]) {
-  flex-shrink: 0;
-  position: relative;
-  top: 2px;
   cursor: default;
 }
+.tv-md :deep(li:has(> input[type="checkbox"]) > code) { white-space: nowrap; }
 /* 可交互勾选框（md + 真实文件）：手型 + hover 提示可点 */
 .tv-md :deep(input[type="checkbox"][data-task]) { cursor: pointer; }
 .tv-md :deep(input[type="checkbox"][data-task]:hover) { border-color: var(--action-outline); }
