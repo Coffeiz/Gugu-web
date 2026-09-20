@@ -117,6 +117,8 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      GUGU_UPDATE_DEPLOYMENT_MODE: split_compose
+      GUGU_UPDATER_RPC_SOCKET: /run/gugu-updater/updater.sock
       PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       GUGU_LOG_FILE: /app/logs/gugu.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
@@ -156,7 +158,35 @@ services:
       - *gugu-data-mount
       - gugu_config:/config
       - sandbox_socket:/run/gugu
+      - updater_socket:/run/gugu-updater
       - gugu_logs:/app/logs
+    restart: unless-stopped
+
+  # 受限更新边界：仅 updater sidecar 挂载 Docker socket；backend 通过私有 Unix socket RPC 调用。
+  updater:
+    logging: *json-file-logging
+    image: ${GUGU_UPDATER_IMAGE:-docker.io/coffeiz/gugu-web:latest}
+    entrypoint: ["python", "-m", "updater.rpc_server"]
+    healthcheck:
+      disable: true
+    environment:
+      GUGU_UPDATE_DEPLOYMENT_MODE: split_compose
+      GUGU_UPDATER_RPC_SERVER: "1"
+      GUGU_UPDATER_RPC_SOCKET: /run/gugu-updater/updater.sock
+      GUGU_UPDATER_COMPOSE_DIR: ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}
+      GUGU_UPDATER_COMPOSE_FILE: docker-compose.prod.yml
+      GUGU_UPDATER_STATE_DIR: /data/updater
+      GUGU_UPDATER_CODE_DIR: /opt/gugu-updater
+      GUGU_DOCKER_SOCKET: /var/run/docker.sock
+      GUGU_SELF_UPDATE: ${GUGU_SELF_UPDATE:-on}
+      DOCKER_HOST: unix:///var/run/docker.sock
+      GUGU_DB_USER: ${GUGU_DB_USER:-gugu}
+      GUGU_DB_NAME: ${GUGU_DB_NAME:-gugu}
+    volumes:
+      - ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:ro
+      - *gugu-data-mount
+      - updater_socket:/run/gugu-updater
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     restart: unless-stopped
 
   worker:
@@ -364,6 +394,7 @@ volumes:
   redisdata:
   gugu_config:
   sandbox_socket:
+  updater_socket:
   gugu_logs:
 
 networks:

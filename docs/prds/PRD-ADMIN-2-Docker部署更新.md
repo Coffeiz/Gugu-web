@@ -1,22 +1,24 @@
 # PRD-ADMIN-2：Docker 部署更新与版本分发
 
-> 状态：Phase 1、Phase 2 已完成（2026-09-16）。当前版本为 app 内置更新执行器、Docker Hub 主源、GHCR 同步发布；镜像签名使用 OCI 1.1 referrer。Phase 3 的离线/CDN manifest 与多架构支持仍待规划实施。
+> 状态：一体化 Docker Compose 更新已实现；本轮实施 Phase 4–6，Phase 3 暂缓。manifest v3 为唯一支持格式，不保留 v2 兼容。Docker Hub 为更新主源，GHCR 同步发布，镜像使用 OCI 1.1 referrer 签名。
 > 创建：2026-08-31
-> 最近更新：2026-09-16
-> 关联模块：`docker-compose.prod.yml`、`.github/workflows/`、`docs/ops/deploy.md`、`frontend/src/views/Admin/`、`backend/app/api/v1/`
+> 最近更新：2026-09-20
+> 关联模块：`docker-compose.yml`、`docker-compose.prod.yml`、`.github/workflows/`、`deploy/`、`scripts/release/`、`backend/updater/`、`frontend/src/views/Admin/Updates/`
 > 背景参考：`PRD-ADMIN-1-Admin咕咕球管理助手.md`、`docs/ops/deploy.md`
 
 ## 0. 实际状态
 
 | 能力 | 结果 | 状态 | 说明 |
 |---|---|---|---|
-| 普通用户 Compose 更新目标 | 已有一体化 Compose | ✅ 已确认 | 默认 `docker-compose.yml` 使用公开 `gugu-web` 镜像；拆分 backend/frontend 属业务部署路径。 |
+| 一体化 Compose 更新 | 已实现 | ✅ 已确认 | 默认 `docker-compose.yml` 更新 `app`；仅在运行中的 `sandboxd` 使用同一 app 镜像时同步更新。 |
 | 镜像发布策略 | 一体化与拆分业务镜像均双发 | ✅ 已确认 | 一体化 `gugu-web`、backend/frontend、sandbox 均发布到 Docker Hub 与 GHCR；只发布语义版本号标签，不发布 Git SHA 镜像标签；稳定版维护 `latest`。 |
-| GitHub Release 更新清单 | manifest v2 已实现 | ✅ 已确认 | manifest 记录 Docker Hub `gugu-web` 固定 digest；manifest 通过 HTTPS、SHA256、Schema 和镜像白名单校验，不单独发布 manifest 签名 bundle。 |
+| GitHub Release 更新清单 | manifest v3 | ✅ 已确认 | Schema、CI 发布清单、无依赖校验器与 updater 均只接受完整镜像组；v2 不再接受。 |
 | Docker 发布 CI | Workflow 已实现 | ✅ 已确认 | 版本 tag 构建并扫描四类镜像，使用 Cosign OCI 1.1 referrer 签名后发布到双仓；旧式 `.sig` 标签仅为历史遗留，不再新增。 |
-| Compose 安全更新入口 | 一体化脚本已实现 | ✅ 已确认 | 默认更新 `docker-compose.yml` 的 `app` 服务；仅在运行中的 `sandboxd` 使用同一 app 镜像时同步重建，拆分 `docker-compose.prod.yml` 不走该入口。 |
-| Admin 检查和执行更新 | 已实现 | ✅ 已确认 | Admin 更新页可检查版本、展示 Release、执行预检并通过一次性确认发起更新；API 受 Admin 权限保护。 |
-| 更新服务与回滚 | app 内置更新器已实现 | ✅ 已确认 | 更新执行器并入 app 进程，固定 Compose 文件/服务/镜像白名单，持久化任务状态并支持健康检查、失败恢复和管理员确认回滚。 |
+| 分体 Compose 更新 | 尚未实现 | 🔲 待实施 | `docker-compose.prod.yml` 多镜像组合没有对应 manifest 和更新适配器。 |
+| 纯 Docker 单容器更新 | 尚未实现 | 🔲 待实施 | 无 Compose 项目；需要容器配置快照、独立 helper、内嵌依赖与数据库迁移保护。 |
+| Admin 部署模式识别 | 尚未实现 | 🔲 待实施 | 更新页对所有部署显示同一文案；状态不能区分不支持、配置关闭、缺少 socket 与初始化失败。 |
+| Admin 检查和执行更新 | 一体化 Compose 已实现 | 🟡 部分完成 | 检查、预检、确认、审计和任务状态可用，但仅有一体化 Compose 执行路径。 |
+| 更新服务与回滚 | 部分实现 | 🟡 部分完成 | 一体化 Compose 路径有持久任务、健康检查和管理员回滚；分体和纯单容器无执行适配器。 |
 
 ## 1. 背景与目标
 
@@ -26,7 +28,7 @@
 
 目标：
 
-- 用户只需在 Admin 中检查和确认更新，不需要理解 Git、Node、Python 或 Docker build。
+- 对受支持的 Docker 部署，用户只需在 Admin 中检查和确认更新；暂不支持的部署必须说明原因和手动更新路径。
 - 更新使用固定版本和镜像 digest，不使用 `latest` 作为生产事实源。
 - 更新前自动检查磁盘、配置、数据库状态和当前运行版本。
 - 数据卷、`backend/.env`、`config.override.json`、PostgreSQL、Redis、用户文件和记忆数据不因更新被删除。
@@ -38,10 +40,10 @@
 一体化部署的产品定位是**个人用户自己下载、自己更新，简单易用优先**。当前实现采用 app 内置更新执行器：
 
 - updater sidecar 容器不作为一体化部署组件；更新执行器并入 app 进程，Admin 更新页进程内直调，无 IPC。
-- docker socket 挂载进一体化 compose 的 app 容器（默认挂载，`GUGU_SELF_UPDATE=off` 显式关闭；未挂载时更新页显示「此部署未启用一键更新」）。fnOS 等面板单容器用户补一条挂载即可获得一键更新。
+- 当前实现只支持标准一体化 Compose。`docker-compose.prod.yml` 分体部署和无 Compose 的纯 Docker 单容器，不能因挂载 Docker socket 就视为已支持。此前“fnOS 等单容器用户补挂 socket 即可一键更新”的说明与当前实现不符，需由本 PRD 补齐实际执行路径后再开放。
 - 明确接受的安全让步：docker socket 赋予宿主机容器控制权，app 进程一旦被 RCE 级打穿，暴露面从「咕咕数据」扩大到「宿主机容器」。缓解：更新能力不进入 Agent 工具注册表（模型与提示注入不可达）、子进程参数硬编码（固定项目目录/固定 compose 文件/白名单镜像）、Admin 权限 + 一次性确认门。
 - 保留：manifest 与 digest 白名单（仅允许官方 coffeiz/gugu-web 镜像）、预检、一键回滚、审计。发布端继续同步 Docker Hub 与 GHCR；manifest 本身不单独签名，目标镜像使用 Cosign OCI 1.1 referrer 签名，更新前由固定 Cosign verifier 校验。
-- 分体部署（docker-compose.prod.yml）本就不走 Admin 更新入口，不受影响。
+- 分体部署（`docker-compose.prod.yml`）当前不受既有一体化更新入口支持；本 PRD 将其列入目标部署模式，并要求使用独立的执行边界。
 
 本 PRD 不包含：
 
@@ -69,11 +71,15 @@ Release 同时关联一份 `update-manifest.json`，其中记录：
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "version": "0.4.0",
   "channel": "stable",
   "minimum_version": "0.3.0",
   "app_image": "docker.io/coffeiz/gugu-web@sha256:...",
+  "split_images": {
+    "backend_image": "docker.io/coffeiz/gugu-web-backend@sha256:...",
+    "frontend_image": "docker.io/coffeiz/gugu-web-frontend@sha256:..."
+  },
   "architectures": ["linux/amd64", "linux/arm64"],
   "database_migration": true,
   "release_notes_url": "https://github.com/Coffeiz/Gugu-web/releases/tag/v0.4.0",
@@ -81,7 +87,7 @@ Release 同时关联一份 `update-manifest.json`，其中记录：
 }
 ```
 
-GitHub Release 是版本和说明来源；Docker Hub 是公开一体化应用的更新主来源，GHCR 镜像同一个 `gugu-web`；拆分 backend/frontend 业务镜像同步发布到两个 registry。manifest v2 只包含一体化 app digest；更新器严格校验仓库白名单与不可变 digest，并在预检阶段校验目标镜像的 Cosign OCI 1.1 签名，不接受聊天消息或前端输入的任意镜像地址。旧版 v1 拆分镜像 manifest 不会被当作一体化更新目标。
+GitHub Release 是版本和说明来源；Docker Hub 是公开一体化应用的更新主来源，GHCR 镜像同一个 `gugu-web`；拆分 backend/frontend 业务镜像同步发布到两个 registry。manifest v3 是唯一可接受版本，统一包含 app 与 backend/frontend digest；更新器严格校验仓库白名单与不可变 digest，并在预检阶段校验目标镜像的 Cosign OCI 1.1 签名，不接受聊天消息或前端输入的任意镜像地址。v2 manifest 明确拒绝，不提供兼容读取。
 
 ### FR-UPD-003：更新预检
 
@@ -138,9 +144,41 @@ Admin 咕咕球和更新页面均可调用更新能力，但交互必须保持�
 
 ### FR-UPD-008：可选组件边界
 
-默认更新只拉取并重建一体化 `gugu-web` app；拆分 backend/frontend 镜像只用于业务部署，不属于普通用户更新目标。PostgreSQL、Redis、SearXNG 和其他基础服务只有在它们的版本被明确纳入一次发布且经过兼容性验证时才更新。
+现有一体化 Compose 更新只拉取并重建 `gugu-web` app；分体 backend/frontend 镜像由 FR-UPD-010 定义独立更新策略。PostgreSQL、Redis、SearXNG 和其他基础服务默认不随业务版本更新，只有它们被明确纳入发布且经过兼容性验证时才可更新。
 
 Shell sandbox 是可选 profile。普通更新不因为用户未开启 sandbox 而拉取 Debian 或 sandbox 运行镜像；只有管理员明确开启或更新 sandbox profile 时，才执行对应的镜像预检和拉取。
+
+### FR-UPD-009：部署模式识别与能力说明
+
+更新状态接口必须识别并返回当前部署模式、更新能力、不可用原因和推荐操作。至少区分 `integrated_compose`、`split_compose`、`standalone_container`、`unsupported`；能力状态至少区分 `available`、`manual_only`、`disabled`、`misconfigured`。部署识别依据必须来自经过校验的 Compose 服务集合、容器标签/运行配置和明确的部署标识，不能只根据镜像名或页面来源推测。
+
+Admin 页面必须按状态渲染：可更新部署展示检查/预检/确认操作；暂不支持自动更新的部署展示具体原因与对应手动更新说明；显式关闭更新、Docker socket 缺失、Compose 文件缺失/无效、更新器初始化失败分别给出不同状态。不得将 `sandboxd` 未运行解释为 app 更新不可用。
+
+页面文案必须与实际架构一致，不得把 app 内置执行器称为 sidecar。沙盒说明仅在相关部署确有可选 `sandboxd` 服务时展示，并明确它只决定是否联动更新沙盒服务，不是更新 app 的前置条件。
+
+### FR-UPD-010：分体 Compose 更新
+
+Admin 更新器必须支持本仓库标准 `docker-compose.prod.yml` 分体部署。更新前识别并校验 Compose 项目中的 `backend`、`frontend`、`worker`、`gateway`、`migrate`、`nginx` 及其依赖；缺少必需服务、镜像仓库不受信任、配置无法解析或项目状态不一致时阻止更新并说明原因。
+
+一次发布 manifest 必须提供该版本完整、不可变的分体镜像集合：backend 镜像供 backend、worker、gateway、migrate 和使用同一镜像的 sandboxd 使用；frontend 镜像供 frontend 使用。nginx、PostgreSQL、Redis、SearXNG、egress proxy 等基础镜像默认不随业务版本更新。可选 sandboxd 仅在运行中且其镜像确实跟随 backend 版本时联动重建。
+
+管理员确认后，更新器必须校验并拉取所有目标镜像，先备份数据库和必要配置，再执行迁移，按安全依赖顺序重建业务服务，并检查 API、静态页面、worker/gateway 进程以及数据库连通性。不得覆盖部署目录的 `.env`、`backend/.env`、Compose 文件或持久化数据。不得使用 `down -v`、无范围清理或擅自升级基础服务。
+
+### FR-UPD-011：纯 Docker 单容器自主更新
+
+Admin 更新器必须支持本仓库定义的纯 Docker 单容器部署，不要求 Compose 文件。只接受经过识别和校验的 Gugu 官方一体化容器；更新目标必须来自通过 schema、digest、签名、架构和版本兼容性校验的 manifest，不能接受用户或模型提供的任意镜像、命令、容器名或挂载路径。
+
+更新前必须从 Docker daemon 检查运行容器身份、镜像、数据/配置挂载、端口、网络、重启策略和启动参数是否满足受支持配置。必要配置缺失、匿名数据卷、配置无法安全复现、容器不属于受支持版本/布局或 daemon 不可用时，必须拒绝自动更新并给出面板手动更新/迁移指引。
+
+更新执行必须由独立于待替换 app 生命周期的 helper 完成交接；先完成数据库一致性检查与备份，再拉取新镜像，按原受支持配置创建替代容器并执行健康检查。只有新容器通过健康检查后才能确认成功；启动或健康检查失败时须恢复旧容器及原配置，并保留备份和诊断状态。不得删除或重建用户数据卷，不得把镜像更新误当作数据库回滚。
+
+对于数据库布局迁移、不可逆 Alembic 变更、旧版内嵌 PostgreSQL/Redis 或当前无法证明向后兼容的版本，必须在预检阻止自动更新，要求先按迁移文档完成迁移；不得以“可以启动旧镜像”推定旧数据库可安全回滚。
+
+### FR-UPD-012：共享更新契约与执行边界
+
+三种更新路径共享版本检查、manifest/schema 校验、镜像签名验证、版本策略、管理员身份与一次性确认、审计、任务状态展示和版本说明；部署检测与 Docker/Compose 操作由各自 adapter 负责。一个 adapter 失败不得静默回退到另一种部署策略。
+
+访问 Docker socket 等同授予宿主 Docker daemon 的高权限能力。只有专用更新执行边界可以访问 socket；分体部署不得为方便将 socket 加给公网 API、worker 或 gateway。执行器与 Admin API 间必须使用受限本地 IPC/等效认证通道，校验调用方、操作类型和任务确认令牌。
 
 ## 3. 技术方案
 
@@ -166,13 +204,13 @@ Shell sandbox 是可选 profile。普通更新不因为用户未开启 sandbox �
 
 更新器首先读取配置中的 manifest 地址。默认地址可以指向 GitHub Release 资产；当 GitHub API 不稳定或有速率限制时，改用固定 CDN/静态站点地址，内容仍由同一发布流水线生成。
 
-Manifest 必须通过 HTTPS 获取，并校验：JSON Schema、版本格式、镜像仓库白名单、digest 格式、最低版本、架构和有效期。manifest v2 只允许 `docker.io/coffeiz/gugu-web`（GHCR 一体化镜像引用只作为受控镜像源）；backend/frontend 不在普通更新白名单中。目标镜像签名由固定 digest 的 Cosign verifier 单独校验；旧式 `sha256-<digest>.sig` 普通 tag 不属于当前发布格式。更新器不得跟随未经校验的重定向。
+Manifest 必须通过 HTTPS 获取，并校验：JSON Schema、版本格式、镜像仓库白名单、digest 格式、最低版本、架构和有效期。仅接受 v3，必须包含 app 与 backend/frontend 完整镜像组；v2 明确拒绝。目标镜像签名由固定 digest 的 Cosign verifier 单独校验；旧式 `sha256-<digest>.sig` 普通 tag 不属于当前发布格式。更新器不得跟随未经校验的重定向。
 
 ### 3.3 更新执行器
 
-更新执行器位于 app 镜像的 `backend/updater/`，由 Admin API 通过进程内 client 调用，不再启用独立 updater sidecar 或 Unix Socket IPC。
+共享更新核心位于 `backend/updater/`，继续由 Admin API 通过受限 client 调用；部署专属 adapter 负责实际执行。已实现的一体化 Compose 路径保留 app 内置执行器与独立 helper handoff；分体 Compose 使用仅 updater 可访问 Docker socket 的受限执行服务；纯 Docker 单容器通过短生命周期 helper 在 app 生命周期之外完成替换。
 
-更新器只开放固定动作：检查状态、拉取指定 manifest、执行预检、开始更新、查看进度、查看结果、回滚指定上一版本。它不接受任意 Docker 命令、任意 Compose 文件、任意 registry 或任意宿主机路径。Docker Socket 仅在一体化 app 部署中按配置挂载，`GUGU_SELF_UPDATE=off` 可显式关闭。
+更新器只开放固定动作：检查状态、拉取已校验 manifest、执行预检、开始更新、查看进度、查看结果、回滚指定上一版本。它不接受任意 Docker 命令、任意 registry 或任意宿主机路径。每种 adapter 只能操作其白名单部署对象与服务集合。
 
 更新任务采用持久化状态机：`pending`、`prechecking`、`backing_up`、`pulling`、`migrating`、`recreating`、`health_checking`、`succeeded`、`failed`、`rollback_required`。每个阶段都写入开始时间、结束时间、结果和脱敏错误摘要。
 
@@ -182,65 +220,79 @@ Manifest 必须通过 HTTPS 获取，并校验：JSON Schema、版本格式、�
 
 所有更新、回滚、预检失败和校验失败均写入 Admin 审计日志。日志不包含密码、Token、Cookie、API Key、完整环境变量或用户聊天内容。
 
-### 3.5 Compose 与配置保护
+### 3.5 配置与数据保护
 
-更新器以默认一体化 `docker-compose.yml` 为普通用户更新模板，保留用户的 `backend/.env`、根目录 Compose `.env` 和持久化卷。拆分 `docker-compose.prod.yml` 是业务部署路径，不由该更新入口操作。更新前必须记录当前镜像引用；更新过程禁止自动执行 `docker compose down -v`、无范围 `docker system prune` 或删除卷。
+更新器只读解析部署配置，保留用户的 `.env`、`backend/.env`、Compose 文件、容器环境配置和持久化卷。不得将目标镜像写回用户配置；通过进程级受限覆盖值将通过验签的 digest 交给执行器。更新过程禁止自动执行 `docker compose down -v`、无范围 `docker system prune` 或删除卷。
 
-数据迁移任务使用新 `gugu-web` 镜像执行，并在 app 容器重建前完成。数据库迁移随应用启动执行；迁移文件必须幂等，向后兼容要求在发布说明中声明。
+Compose 数据库备份和迁移须在业务容器重建前完成；standalone 数据库备份须在停止旧 app 前完成且验证备份可读。迁移文件必须幂等，回滚兼容要求在发布元数据和说明中明确；任何数据库恢复都必须是显式、可审计的操作，不以切换镜像隐式还原数据库。
 
-### 3.6 相关文件与目录树
+### 3.6 多部署模式更新边界
+
+更新核心负责发布元数据/manifest 校验、签名验证、版本策略、确认令牌、审计和任务状态；按部署模式分派到专用 adapter。现有 `integrated_compose` adapter 保持默认 `docker-compose.yml` 的兼容行为，不通过隐式猜测改写 Compose 文件。
+
+分体 Compose 使用受限 updater 执行边界管理 `docker-compose.prod.yml` 项目；Docker socket 只挂载给该边界，backend API 通过带认证的内部 IPC 提交固定类型任务。部署目录、Compose 文件和 env 文件由用户持有且只读检查；镜像 digest 通过临时进程环境或受限覆盖配置传入，不原地改写用户 `.env`。
+
+纯 Docker 单容器由 app 在确认后启动短生命周期 helper；helper 必须先持久化任务交接状态，再替换旧 app，不能依赖旧容器内进程完成自身重建。helper 仅获得完成更新所需的 Docker socket、受保护的状态/备份目录和被明确识别的数据挂载；不得挂载整个宿主根目录或将原始容器环境变量写入可见日志。敏感启动配置按最小暴露原则传递，并在任务结束后清除临时副本。
+
+### 3.7 Manifest 兼容与镜像集合
+
+仅接受 v3 manifest，至少表达 unified app digest、split backend/frontend digest、支持架构、最低版本、数据库迁移兼容声明、发布说明和回滚能力。v2 不保留兼容。每个可执行镜像均须独立校验官方仓库白名单、不可变 digest、发布工作流身份签名和目标架构。缺少当前部署所需任一镜像时，不得部分更新。
+
+纯 Docker 单容器使用 unified app 镜像产物，但其运行方式、数据库布局和升级兼容性由 standalone adapter 判定；相同镜像不代表相同迁移或回滚策略。
+
+### 3.8 相关文件与目录树
 
 ```text
 Gugu-web/
 ├── .github/
 │   └── workflows/
-│       └── docker-release.yml                         # 新增：构建、扫描、双仓库推送，manifest 默认 Docker Hub
+│       └── docker-release.yml                         # 【修改】发布 unified/split 镜像 digest 并生成新 manifest
 ├── backend/
 │   ├── app/
 │   │   ├── api/v1/
-│   │   │   └── admin_update.py                         # 新增：Admin 更新检查、预检、任务状态 API
-│   │   └── services/                                  # 业务服务
-│   └── updater/                                       # app 内置更新执行器
-│       ├── __init__.py
-│       ├── client.py                                  # Admin API 进程内调用入口
-│       ├── daemon.py                                  # 更新状态机、预检、Compose、健康检查与回滚
-│       └── database_check.py                          # 数据库迁移 head 检查
-├── docker-compose.prod.yml                            # 修改：更新器连接、健康检查和最小权限配置
+│   │   │   └── admin_update.py                        # 【修改】返回部署能力与明确原因，统一 Admin 更新入口
+│   └── updater/
+│       ├── daemon.py                                  # 【修改】共享状态机与 adapter 调度
+│       ├── client.py                                  # 【修改】按部署形态连接受限执行边界
+│       ├── deployment.py                              # 【新增】识别、校验部署形态
+│       ├── manifest.py                                # 【新增】多镜像 manifest 校验与目标选择
+│       └── adapters/
+│           ├── integrated_compose.py                  # 【新增】从现有流程抽取一体化 Compose adapter
+│           ├── split_compose.py                       # 【新增】分体 Compose 更新和恢复
+│           └── standalone_docker.py                  # 【新增】单容器快照、handoff 与回滚
+├── backend/tests/
+│   ├── test_updater_deployment.py                    # 【新增】部署识别与能力状态
+│   ├── test_updater_split_compose.py                 # 【新增】分体更新失败边界与配置保护
+│   └── test_updater_standalone.py                    # 【新增】容器重建、挂载保留和回滚
+├── docker-compose.prod.yml                            # 【修改】新增受限 updater 与内部 IPC，不给业务容器 Docker socket
+├── docker-compose.yml                                 # 【条件】仅在 adapter 抽取要求调整接线时修改，保持兼容
 ├── deploy/
-│   └── update-manifest.schema.json                    # 新增：manifest JSON Schema
+│   └── update-manifest.schema.json                    # 【修改】仅接受 v3 并校验多部署镜像组
+├── scripts/release/
+│   ├── compose-update.sh                              # 【修改】保持旧入口兼容或委托 adapter
+│   ├── standalone-update.sh                            # 【新增】helper 内固定单容器替换流程
+│   └── validate-update-manifest.mjs                   # 【修改】校验多镜像集合及各 digest
 ├── frontend/src/
-│   ├── services/
-│   │   └── adminUpdate.ts                             # 新增：Admin 更新 API 封装
-│   ├── components/admin-update/
-│   │   ├── AdminUpdatePanel.vue                       # 新增：版本、变更和更新状态面板
-│   │   ├── UpdatePreflightCard.vue                    # 新增：更新预检结果
-│   │   ├── UpdateConfirmDialog.vue                    # 新增：影响说明和确认门
-│   │   └── UpdateProgressCard.vue                     # 新增：阶段进度、成功和失败状态
-│   └── views/Admin/
-│       └── Updates/
-│           └── index.vue                              # 新增：Admin 更新页面编排
-├── backend/Dockerfile.prod                            # 现有：backend 生产镜像构建入口
-├── frontend/Dockerfile.prod                           # 现有：frontend 生产镜像构建入口
-├── docs/
-│   ├── ops/deploy.md                                  # 修改：补充标准镜像更新和回滚操作
-│   └── prds/
-│       ├── PRD-ADMIN-1-Admin咕咕球管理助手.md          # 关联：Admin 助手工具边界
-│       └── PRD-ADMIN-2-Docker部署更新.md              # 本文档
-└── release/
-    └── update-manifest.json                           # 发布产物：由 CI 生成并上传到 Release
+│   ├── services/adminUpdate.ts                        # 【修改】部署能力状态类型与 API
+│   └── views/Admin/Updates/                           # 【修改】按 mode/capability 显示操作与指引
+└── docs/ops/deploy.md                                 # 【修改】记录三种部署模式的更新、限制和恢复
 ```
 
-文件职责边界：GitHub Actions 只负责构建、扫描和发布；`backend/updater/` 负责固定范围的 Compose 更新、预检、健康检查和回滚；`backend/app/api/v1/admin_update.py` 只负责 Admin 鉴权、调度和状态展示；`scripts/release/validate-update-manifest.mjs` 负责 manifest 校验。`docker-compose.prod.yml`、生产配置和持久化卷仍由部署环境持有，更新器不得自行覆盖用户配置。
+文件职责边界：CI 负责构建、签名、发布镜像组和 manifest；共享 updater 负责版本/任务/权限契约，各 adapter 只操作已识别的部署对象；Admin API 负责鉴权、调度和状态。部署文件与用户配置由部署环境持有，更新器不得反向覆盖。文件树是实施边界，不要求为满足树形结构而新增可由既有模块承担的文件。
 
 ## 4. 验证与上线
 
 验收重点：
 
-- 从 GitHub Release 获取 manifest v2，并能匿名按 digest 从 Docker Hub 拉取 `gugu-web` 一体化镜像；该镜像的 GHCR 镜像也通过 Cosign 验签。
+- 从 GitHub Release 获取 manifest v3；v2 必须被拒绝，v3 的每个部署镜像组均能按 digest 拉取并通过 Cosign 验签。
 - 使用旧版本 Compose 配置更新到新版本，用户配置、数据库、文件和记忆数据保持不变。
 - 一体化 app 更新后，API、页面、SSE、worker、gateway 和 Admin 均恢复正常。
 - 预检能拦截磁盘不足、架构不匹配、manifest 无效、digest 不匹配、迁移异常和并发更新。
 - 未开启 sandbox 的部署不会拉取或启动 sandbox profile 镜像。
+- 三种部署模式均被正确识别；不支持或配置错误时展示具体原因，不把 `sandboxd` 状态当作 app 更新能力。
+- 分体更新验证全部目标镜像签名和 digest；迁移失败时不重建业务服务，且不修改用户 Compose/env 文件。
+- 单容器更新验证 Docker socket 缺失、匿名卷、非官方容器、配置无法复现、备份失败、helper 中断、新容器启动失败和健康检查失败；失败路径恢复旧容器且保留数据卷。
+- 不支持的数据库迁移/版本组合在任何镜像替换前被预检拦截。
 - 更新失败可以保留现场并给出可执行恢复建议；支持回滚的版本能恢复上一组业务镜像。
 - 普通用户无法访问更新接口；Admin 更新操作可在审计日志中完整追踪。
 
@@ -254,6 +306,10 @@ Gugu-web/
 | 镜像 tag 被覆盖 | 回滚到错误构建 | 生产只消费 digest，tag 仅用于展示和检索。 |
 | 数据库迁移不可逆 | 新镜像回滚后数据不兼容 | 发布前检查迁移策略，manifest 标注回滚能力，必要时阻止回滚。 |
 | app 拥有 Docker Socket 权限 | app 被 RCE 后可能控制宿主机容器 | 默认仅一体化 app 挂载；可用 `GUGU_SELF_UPDATE=off` 关闭；更新能力不进入 Agent 工具注册表，并使用 Admin 权限、一次性确认、命令/镜像/路径白名单。 |
+| 部署类型识别错误 | 使用错误镜像集合或 Compose 服务范围，可能造成停机或数据风险 | 以明确部署标识和完整运行拓扑交叉验证；存在歧义时只读展示，不允许更新。 |
+| 分体更新组件获得 Docker Socket | backend/API 漏洞可能扩展为宿主容器控制 | socket 只进入受限 updater 执行边界；通过内部认证 IPC 调用，不挂载给 backend、worker、gateway。 |
+| standalone 更新时 handoff 失败 | 更新中断或新旧容器争抢端口 | 先持久化 handoff 和受支持配置快照；helper 独立运行；验证状态机恢复及旧容器恢复路径。 |
+| 单容器数据库迁移不可逆或布局不兼容 | 回滚镜像后数据结构无法被旧版读取 | 发布兼容矩阵；不满足兼容承诺时预检拒绝自动升级，要求先完成文档化迁移。 |
 | 新旧镜像同时占用磁盘 | 更新中途空间不足 | 预检估算空间，成功后只清理明确确认的旧业务镜像，不清理数据卷。 |
 | sandbox 可选依赖被误拉取 | 用户磁盘和下载时间增加 | sandbox 使用独立 Compose profile，普通更新不处理。 |
 
@@ -264,6 +320,9 @@ Gugu-web/
 - 更新 manifest 后续是否同步到独立 CDN。
 - 失败后是否首版自动回滚，还是先停在 `rollback_required` 由管理员确认。
 - Admin 更新是否允许跨环境操作，还是每个部署实例只能更新自身环境。
+- standalone helper 的最小镜像构成、Docker API 最低版本及可复现容器配置白名单。
+- 分体服务更新的停机策略：默认滚动/分批重建是否可行，或首版接受短暂停机并明确窗口。
+- 当前单容器版本中内嵌 PostgreSQL/Redis 的可自动升级范围，以及不兼容旧版的明确切断版本。
 
 ## 6. 唯一实施 TODO
 
@@ -271,7 +330,7 @@ Gugu-web/
 
 - [x] `UPD2-001` 固定版本、镜像命名、架构和 manifest Schema；验收：manifest Schema 与无依赖校验器已实现，能表达版本、最低版本、镜像 digest、迁移和回滚字段，并通过本地校验。
 - [x] `UPD2-002` 建立 GitHub Actions Docker 发布流水线；验收：Workflow 版本 tag 构建一体化 app、backend/frontend 和 sandbox 镜像，全部推送 Docker Hub 和 GHCR，不发布 Git SHA 镜像 tag，镜像使用 OCI 1.1 referrer 签名（不额外生成 `.sig` 普通 tag），生成 Docker Hub app digest 和 GitHub Release。
-- [x] `UPD2-003` 增加镜像签名、manifest 白名单和 digest 校验；验收：发布 Workflow 对镜像生成 Cosign OCI 1.1 referrer 签名，更新器校验 manifest v2、镜像 digest、发布者身份和一体化镜像白名单，不接受拆分 backend/frontend 镜像。
+- [x] `UPD2-003` 增加镜像签名、manifest 白名单和 digest 校验；验收：发布 Workflow 对镜像生成 Cosign OCI 1.1 referrer 签名，更新器校验 manifest v3、镜像 digest、发布者身份和完整镜像组；不接受 v2 或非白名单镜像。
 - [x] `UPD2-004` 补齐 Docker Compose 升级、迁移和配置保护脚本；验收：更新脚本备份配置和数据库，保留 PostgreSQL、Redis、用户文件、记忆、工作区和 Admin 配置卷，并明确禁止 `down -v` 和无范围清理。
 
 ### Phase 2：Admin 检查与受限执行
@@ -283,6 +342,23 @@ Gugu-web/
 
 > Phase 1/2 验证完成：updater 单元测试、manifest/Compose 更新脚本测试、前端类型检查、i18n 测试、生产构建，以及 devserver 旧版本 Compose 升级、权限、审计和 sandbox 边界验证均已通过。Docker Hub/GHCR 发布镜像的 OCI 1.1 referrer 签名已在 v1.2.3 发布中核验；历史 `.sig` 普通 tag 不再作为新发布产物。
 
-### Phase 3：可靠性增强
+### Phase 3：可靠性增强（暂缓）
 
-- [ ] `UPD2-009` 增加离线/CDN manifest、架构多平台构建和可选自动回滚；验收：更新源短暂不可用时显示明确状态，多架构镜像按宿主机选择，回滚策略经过失败迁移场景验证。
+- 暂不实施 `UPD2-009`：离线/CDN manifest、多平台构建与可选自动回滚单独排期，不阻塞 Phase 4–6。本期架构范围以当前发布产物和 CI 实测为准。
+
+### Phase 4：部署识别与状态纠正
+
+- [x] `UPD2-010` 建立部署模式识别与结构化更新能力状态；验收：标准一体化 Compose、分体 Compose、纯 Docker 单容器、缺 socket、更新关闭、Compose 缺失/损坏均返回唯一且可测试的 mode/capability/reason，不再把初始化异常统一伪装为“未启用”。
+- [x] `UPD2-011` 修正 Admin 更新页面与部署文档；验收：页面按部署能力显示操作或明确手动路径，删除过时 sidecar 描述，`sandboxd` 说明仅在相关场景显示且明确不是更新 app 的依赖。
+
+### Phase 5：分体 Compose 更新
+
+- [x] `UPD2-012` 扩展签名 manifest 与发布产物组；验收：新 manifest 同时携带 unified app 和 split backend/frontend 不可变 digest；v2 manifest 被拒绝；缺失/不匹配任一目标镜像时拒绝更新。
+- [x] `UPD2-013` 实现分体 Compose 专用 updater adapter 与受限执行边界；验收：备份、迁移、拉取全量目标镜像、按依赖重建 backend/frontend/worker/gateway 及符合条件的 sandboxd、健康检查、状态恢复全链路通过临时 Compose 集成测试；业务容器不挂 Docker socket，用户配置与数据卷不被改写。
+
+### Phase 6：纯 Docker 单容器更新
+
+- [x] `UPD2-014` 实现 standalone Docker helper 更新与容器恢复；验收：helper 在 app 停止后继续运行，能复现白名单容器配置并保留绑定数据卷；备份、数据库兼容预检、替换、健康检查失败恢复、helper 异常恢复均通过临时 Docker daemon 测试；匿名卷/不受支持配置/不兼容迁移一律在替换前拒绝。
+- [x] `UPD2-015` 完成三种部署模式灰度验收与运维文档；验收：在独立测试项目分别完成 integrated、split、standalone 升级及故障演练，核实审计、socket 权限边界、数据库/文件/BYOK 数据保持和人工恢复指引；发布说明明确支持矩阵。
+
+> Phase 5/6 验收完成：devserver 独立 Docker 项目实测分体 Compose 成功更新、健康检查失败自动恢复、一体化 Compose 更新、standalone 容器替换/失败恢复及短期 helper 接管；5 项 Docker 集成测试通过。updater 后端聚焦测试 42 项、完整 backend 测试 3400 项、发布更新 Node 测试 18 项通过；前端类型检查、生产构建及 CSS/确认弹窗回归检查通过。生产灰度仍需按部署文档另行执行；本次未触发 GitHub CI。

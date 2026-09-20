@@ -941,12 +941,11 @@ sudo journalctl -u gugu-gateway -f                    # 看频道起停日志
 
 ### 7.0.1 Docker Compose 生产镜像更新
 
-一体化 Docker Compose 部署不需要下载 Git 源码或在用户服务器重新构建。正式版本由 GitHub Actions 构建 `gugu-web` 并推送到公开 Docker Hub（GHCR 保留镜像），GitHub Release 附带 `update-manifest.json` 和签名 bundle。新 manifest 固定 Docker Hub 的一体化应用 digest；拆分 backend/frontend 镜像不参与此更新。更新前先下载这两个资产，再使用仓库内的安全入口：
+一体化 Docker Compose 部署不需要下载 Git 源码或在用户服务器重新构建。正式版本由 GitHub Actions 构建 `gugu-web`、backend、frontend 镜像并推送到 Docker Hub 与 GHCR。manifest v3 同时携带一体化和分体镜像的不可变 digest；v2 不再受支持。当前发布的架构列表仍以实际构建结果为准，不得据此假定 arm64 已受支持。更新前下载 GitHub Release 的 `update-manifest.json`，再使用仓库内的安全入口：
 
 ```bash
 scripts/release/compose-update.sh \
   --manifest /path/to/update-manifest.json \
-  --bundle /path/to/update-manifest.json.bundle \
   --confirm
 ```
 
@@ -954,11 +953,13 @@ scripts/release/compose-update.sh \
 
 普通更新仅拉取 `app` 和数据迁移服务所需的一体化镜像，不会拉取 egress proxy 或其他沙盒专用镜像。若 `sandboxd` 正在运行且配置为使用 `gugu-web` 同一镜像，脚本会同步更新它；自定义 sandboxd 镜像保持不变，也不会改变沙盒开关。
 
-#### Admin 在线更新与旧部署首次接入
+#### Admin 在线更新与部署模式支持状态
 
-一体化 Compose 部署后（更新执行器已并入 app 容器，PRD-ADMIN-2 §1.1），管理员可在 **Admin → 运维 → Docker 更新**检查稳定版、查看 GitHub Release 说明、预检并确认更新。预检包含当前 Alembic 迁移是否与应用唯一 head 一致、`/data` 与 `/config` 卷是否已挂载且可写、Docker socket 是否已挂载等项目。启用条件：app 容器挂载 Docker socket（compose 默认挂载）且未设置 `GUGU_SELF_UPDATE=off`；未启用时更新页显示「此部署未启用一键更新」。更新任务状态保存在 `/data/updater`（持久卷）中；浏览器关闭或 Admin 页面重新打开不会中断任务。普通账号不能访问对应 Admin API。更新和回滚都需要再次确认；回滚只恢复应用镜像，不会反向执行数据库迁移。安全边界：更新能力不进入 Agent 工具注册表（模型与提示注入不可达），子进程参数全部硬编码。
+更新页会先显示识别到的部署模式与能力原因。一体化 `docker-compose.yml` 在 app 挂载 Docker socket 且未设置 `GUGU_SELF_UPDATE=off` 时可一键更新。分体 `docker-compose.prod.yml` 由独立 updater sidecar 执行，Docker socket 只挂载给 updater，backend 通过私有 Unix socket RPC 调用；更新器备份数据库与配置、校验迁移状态、拉取 backend/frontend digest，再按固定服务顺序重建业务服务。纯 Docker 单容器模式由短期 helper 接管：仅支持官方 unified 镜像、嵌入式依赖、可写持久 `/data` 挂载、Docker socket 和受支持的容器配置；先拉取镜像并校验数据库备份，再替换容器，健康检查失败时恢复旧容器。状态及备份保存在 `/data/updater`，不会自动回滚数据库。
 
-已有部署首次接入时，先把版本化发布物中的 `docker-compose.yml` 放到部署目录，**不要覆盖**根目录 `.env`、`backend/.env`、`Gugu-data` 或任何 Docker 数据卷。用新版 Compose 文件做一次手动升级（`docker compose -p <项目名> -f docker-compose.yml up -d`）；升级后 app 容器自带更新执行器与 Docker socket 挂载，Admin 一键更新即可用。更新流程只备份配置与数据库、拉取 manifest 指定的官方一体化镜像 digest 并重建 app，不做全局清理。
+三种模式都要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表，镜像必须来自签名 manifest 中的官方 digest。分体业务容器不会挂 Docker socket；standalone helper 会短暂获得 Docker socket 权限，只有在受支持的单容器拓扑中才启用。缺少 socket、设置 `GUGU_SELF_UPDATE=off`、容器配置不受支持或数据卷不符合要求时，Admin 页明确显示手动路径。`sandboxd` 是可选沙盒运行组件，不是一体化或分体 app 更新的前置条件；仅当它正在运行且与 backend 使用同一镜像引用时，分体更新才同步重建它。自定义 sandboxd 镜像保持不变。
+
+启用自动更新的旧一体化部署，首次需先用新版 Compose 文件手动升级一次（`docker compose -p <项目名> -f docker-compose.yml up -d`）；不要覆盖根目录 `.env`、`backend/.env`、`Gugu-data` 或 Docker 数据卷。之后 Admin 在线更新才可用。
 
 如果更新脚本不在部署目录内，应显式指定部署路径和校验器路径；在部署目录执行，并从受保护的环境注入数据库密码（不要把密码写进命令参数或 shell 历史）：
 
@@ -974,7 +975,7 @@ GUGU_DB_PASSWORD="$GUGU_DB_PASSWORD" \
     --confirm
 ```
 
-宿主机需有 Docker Compose 插件、Node.js、Cosign，且 `backend/.env` 已配置管理员密码。自动更新功能目前只支持一体化 `docker-compose.yml`；拆分 `docker-compose.prod.yml` 和源码/systemd 部署不适用。尚未在 dev/staging 完成灰度验收前，不应把 Admin 在线更新用于生产升级。
+一体化脚本宿主机需有 Docker Compose 插件、Node.js、Cosign；分体更新侧车使用镜像内固定校验器。纯 Docker standalone 需使用官方 unified 镜像并挂载 Docker socket 与一个可写的持久 `/data` 卷；匿名卷、自定义 hostname、host 网络、特权/自动删除容器和未知 Docker 配置会被 fail-closed 拒绝。源码/systemd 部署仍不适用 Admin 在线镜像更新。尚未在 dev/staging 完成灰度验收前，不应把 Admin 在线更新用于生产升级。
 
 部署安全约束：Compose 文件统一固定 project name 为 `gugu-web-compose`，从而保证数据库始终使用同一个 `gugu-web-compose_pgdata` 卷。不要通过改 project name、`-p` 参数或 `docker compose down -v` 启动/清理生产环境；更新前应先确认 `docker inspect gugu-web-compose-postgres-1` 的挂载卷仍为该卷。systemd/源码部署使用 `backend/deploy.sh` 时，会在迁移前生成包含 PostgreSQL custom-format dump 的完整备份，并在迁移后检查关键表和 Alembic 版本；数据库备份失败会直接中止部署。
 

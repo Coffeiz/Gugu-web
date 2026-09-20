@@ -54,6 +54,7 @@ jobs:
           scripts/release/validate-update-manifest.test.mjs
           scripts/release/compose-update.test.mjs
           scripts/release/docker-release-tags.test.mjs
+          scripts/release/prune-container-tags.test.mjs
 
   sandbox-build:
     # Sandbox 单独构建/扫描一次，再把同一制品内嵌到一体化镜像，避免重复构建或发布未扫描内容。
@@ -416,11 +417,15 @@ jobs:
 
           version = os.environ['VERSION']
           manifest = {
-              'schema_version': 2,
+              'schema_version': 3,
               'version': version,
               'channel': 'stable',
               'minimum_version': '0.22.0',
               'app_image': f"docker.io/coffeiz/gugu-web@{os.environ['APP_DIGEST']}",
+              'split_images': {
+                  'backend_image': f"docker.io/coffeiz/gugu-web-backend@{os.environ['BACKEND_DIGEST']}",
+                  'frontend_image': f"docker.io/coffeiz/gugu-web-frontend@{os.environ['FRONTEND_DIGEST']}",
+              },
               'architectures': ['linux/amd64'],
               'database_migration': True,
               'release_notes_url': f"https://github.com/Coffeiz/Gugu-web/releases/tag/{version}",
@@ -450,6 +455,16 @@ jobs:
               --title "$TAG" \
               --generate-notes
           fi
+
+      - name: Prune old stable container tags
+        if: steps.version.outputs.is_stable == 'true'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          KEEP_LAST_STABLE_VERSIONS: '10'
+        run: node scripts/release/prune-container-tags.mjs
 
       - name: Write release summary
         env:

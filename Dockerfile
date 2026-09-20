@@ -172,9 +172,10 @@ RUN mkdir -p /usr/local/libexec/docker/cli-plugins /opt/gugu-updater/scripts/rel
     && chmod 0755 /usr/local/libexec/docker/cli-plugins/docker-compose \
     && docker compose version
 COPY scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/compose-update.sh
+COPY scripts/release/split-compose-update.sh /opt/gugu-updater/scripts/release/split-compose-update.sh
 COPY scripts/release/validate-update-manifest.mjs /opt/gugu-updater/scripts/release/validate-update-manifest.mjs
 COPY deploy/update-manifest.schema.json /opt/gugu-updater/deploy/update-manifest.schema.json
-RUN chmod 0755 /opt/gugu-updater/scripts/release/compose-update.sh
+RUN chmod 0755 /opt/gugu-updater/scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/split-compose-update.sh
 RUN cd /app && python3 -c "import updater.daemon, updater.client"
 
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。

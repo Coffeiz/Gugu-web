@@ -34,6 +34,10 @@ export interface UpdateTask {
 
 export interface UpdateStatus {
   enabled: boolean
+  mode: 'integrated_compose' | 'split_compose' | 'standalone_docker' | 'unknown'
+  capability: 'one_click' | 'manual'
+  reason_code: string
+  reason: string
   current: { version: string } | null
   candidate: UpdateCandidate | null
   has_update: boolean

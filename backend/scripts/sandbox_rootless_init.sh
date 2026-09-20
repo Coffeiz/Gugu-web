@@ -117,7 +117,8 @@ fi
 # 目标 daemon 启动的沙盒容器使用独立 UID；文件库目录由业务容器创建时通常是
 # 755/660，必须在同一条 Compose bootstrap 链中统一补上映射组 ACL。该步骤幂等，
 # 也会验证真实沙盒 UID 能创建并删除文件，避免“挂载 RW 但首次写入才失败”。
-python /usr/local/bin/prepare_rootless_storage.py "$USERS_ROOT" \
+PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
+    python /usr/local/bin/prepare_rootless_storage.py "$USERS_ROOT" \
     --docker-socket "$RD_SOCKET" --image "$ref" --probe
 
 echo "沙盒环境就绪：网络 $EGRESS_NETWORK、代理 $proxy_host、镜像 $ref"

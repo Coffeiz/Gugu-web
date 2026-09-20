@@ -91,11 +91,15 @@ function createFixture() {
   fs.writeFileSync(path.join(root, '.env'), 'GUGU_DB_PASSWORD=test-only-value\n')
   fs.writeFileSync(path.join(root, 'docker-compose.yml'), 'services: {}\n')
   fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
-    schema_version: 2,
+    schema_version: 3,
     version: 'v1.2.2',
     channel: 'stable',
     minimum_version: 'v1.2.1',
     app_image: appImage,
+    split_images: {
+      backend_image: `docker.io/coffeiz/gugu-web-backend@sha256:${'b'.repeat(64)}`,
+      frontend_image: `docker.io/coffeiz/gugu-web-frontend@sha256:${'c'.repeat(64)}`,
+    },
     architectures: ['linux/amd64'],
     database_migration: true,
     release_notes_url: 'https://github.com/Coffeiz/Gugu-web/releases/tag/v1.2.2',
@@ -165,7 +169,7 @@ test('独立 helper 只在旧 app 持久化 handoff 后继续更新', () => {
       GUGU_UPDATE_HELPER: '1',
       GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE: `${manifestPath}.handoff`,
     })
-    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${fs.existsSync(fixture.dockerLog) ? fs.readFileSync(fixture.dockerLog, 'utf8') : ''}`)
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
     assert.match(log, /compose .* stop app/)
     assert.doesNotMatch(log, /docker run/)
@@ -188,7 +192,7 @@ test('更新器从独立代码目录运行时仍使用部署目录和固定校�
       COMPOSE_FILE: path.join(fixture.root, 'docker-compose.yml'),
       UPDATE_VALIDATOR: path.join(updaterCode, 'scripts', 'release', 'validate-update-manifest.mjs'),
     }, updaterScript)
-    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${fs.readFileSync(fixture.dockerLog, 'utf8')}`)
     assert.match(fs.readFileSync(fixture.dockerLog, 'utf8'), /pull app sandboxd/)
     const backupRoot = path.join(fixture.root, 'backup')
     assert.equal(fs.readdirSync(backupRoot).length, 1)

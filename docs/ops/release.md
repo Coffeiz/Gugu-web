@@ -126,6 +126,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
   ```
 
 - tag 触发 publish job：构建公开的一体化 `gugu-web`、updater、sandbox 和拆分 backend/frontend 镜像，并同步推送 Docker Hub 与 GHCR；业务镜像只发布语义版本号标签，不发布 Git SHA 镜像标签。稳定版的一体化 `gugu-web`、updater、sandbox 仍维护 `latest` 别名；镜像均以 Cosign OCI 1.1 referrer 方式签名，签名不会创建 `sha256-<digest>.sig` 普通镜像 tag。此前已发布的旧式 `.sig` tag 保留，不做清理。update manifest 使用 `docker.io/coffeiz/gugu-web@sha256:...`，不引用拆分镜像。
+- 稳定版发布完成后，CI 会在 GHCR 与 Docker Hub 的四个镜像仓库中保留最新 10 个 `v主.次.补丁` 正式版本 tag；预发布、`latest`、`dev` 和其他非版本 tag 不清理。GHCR 仅删除不含别名或保留版本 tag 的旧 package version；`GITHUB_TOKEN` 必须对 GHCR package 有 admin 权限，`DOCKERHUB_TOKEN` 必须具备删除 tag 的权限。若 registry 权限或平台限制导致清理失败，只记录告警，不回滚或阻断已完成的发布。
 - Docker Hub 首次推送会按 `coffeiz` 命名空间的默认可见性创建 backend/frontend 仓库；首次发布前确认这两个仓库为 Public，确保业务服务器可匿名拉取。
 
 ### 发布失败处理
