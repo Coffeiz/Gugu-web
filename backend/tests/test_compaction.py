@@ -729,6 +729,27 @@ class TestAppendModeCompaction:
         # openai 协议路由（默认）不注入分支 system，run 的 system 已在 history 前缀里
         assert captured["append_system"] == ""
 
+    def test_compact_context_forwards_system_for_responses_protocol(self, monkeypatch):
+        captured = {}
+
+        async def fake_summary(history, previous=None, **kwargs):
+            captured.update(kwargs)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+        monkeypatch.setattr(
+            "agent.providers.adapter_for",
+            lambda _model: SimpleNamespace(protocol_format=lambda _ai: "responses"),
+        )
+        messages = [
+            _make_msg("user", "旧历史" * 20) for _ in range(40)
+        ] + [_make_msg("user", "当前消息")]
+        asyncio.get_event_loop().run_until_complete(
+            compact_context(messages, model_cfg=_model_cfg(1000, 80), system_text="主系统")
+        )
+
+        assert captured["append_system"] == "主系统"
+
 
 class TestCompleteMessagesShape:
     """complete_messages：追加式分支的消息形状与 system 缺省行为。"""

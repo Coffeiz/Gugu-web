@@ -209,3 +209,61 @@ async def test_complete_messages_merges_main_run_generation_params(monkeypatch):
         settings=SimpleNamespace(ai=ai))
     assert fake.kwargs["thinking"] == {"type": "enabled"}
     assert fake.kwargs["metadata"] == {"x": 1}
+
+
+@pytest.mark.asyncio
+async def test_complete_messages_uses_responses_protocol_and_native_tool_schema(monkeypatch):
+    class _FakeResponses:
+        def __init__(self):
+            self.kwargs = None
+
+        @property
+        def responses(self):
+            return self
+
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                output_text='{"summary": "ok"}',
+                output=[],
+                usage=SimpleNamespace(
+                    input_tokens=12,
+                    output_tokens=3,
+                    input_tokens_details=SimpleNamespace(cached_tokens=7),
+                ),
+            )
+
+    fake = _FakeResponses()
+    monkeypatch.setattr(providers, "build_openai_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(
+            protocol_format=lambda ai: "responses",
+            supports_responses_prompt_cache_key=lambda ai: False,
+            build_structured_output=lambda ai: {},
+        ))
+    ai = SimpleNamespace(
+        model="qwen-test", provider="qwen", api_format="responses",
+        reasoning_effort="low", store=False,
+    )
+    tools = [{"type": "function", "name": "read_file", "parameters": {"type": "object"}}]
+    usage = []
+
+    result = await provider_runner.complete_messages(
+        "stable system", [{"role": "user", "content": "历史"}], "压缩指令",
+        settings=SimpleNamespace(ai=ai), max_tokens=100, json_mode=True,
+        tools=tools, usage_sink=usage,
+    )
+
+    assert result == {"summary": "ok"}
+    assert fake.kwargs["instructions"] == "stable system"
+    assert fake.kwargs["input"] == [
+        {"role": "user", "content": "历史"},
+        {"role": "user", "content": "压缩指令"},
+    ]
+    assert fake.kwargs["tools"] == tools
+    assert fake.kwargs["max_output_tokens"] == 100
+    assert fake.kwargs["store"] is False
+    assert fake.kwargs["reasoning"] == {"effort": "low"}
+    assert "previous_response_id" not in fake.kwargs
+    assert usage == [{"input": 5, "output": 3, "cache_read": 7, "cache_write": 0}]

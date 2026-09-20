@@ -46,6 +46,7 @@ async def complete_messages(
     """
     from agent.llm.llm_select import use_anthropic_for
     from agent.llm.modelctx import effective_ai
+    from agent import providers
 
     ai = effective_ai(settings)
     use_anthropic = use_anthropic_for(ai)
@@ -54,6 +55,17 @@ async def complete_messages(
         text = await _anthropic(sys, user, ai, max_tokens,
                                 settings=settings, history=history, tools=tools,
                                 align_with_main_run=True, usage_sink=usage_sink)
+        return _parse_json(text) if json_mode else text
+    if providers.adapter_for(ai).protocol_format(ai) == "responses":
+        from agent.providers.openai_responses import complete_branch
+
+        text = await complete_branch(
+            sys, history, user, ai, settings,
+            max_output_tokens=max_tokens,
+            tools=tools,
+            json_mode=json_mode,
+            usage_sink=usage_sink,
+        )
         return _parse_json(text) if json_mode else text
     text = await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
