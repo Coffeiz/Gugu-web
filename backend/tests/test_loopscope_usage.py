@@ -289,6 +289,68 @@ async def test_usage_lands_before_done_break(monkeypatch, loopscope_hooks):
     assert assembly["messages"]["count"] == 1
 
 
+async def test_responses_fallback_round_keeps_loopscope_usage(monkeypatch, loopscope_hooks):
+    """Responses 不兼容后新建的 Chat driver 仍须记录实际 usage/cache。"""
+    import agent.loop_drivers as loop_drivers
+    import agent.providers.openai_responses as responses
+    from agent.loop_drivers import RoundResult
+
+    class FakeResponsesDriver:
+        api_format = "responses"
+
+        def prepare(self, *_args, **_kwargs):
+            return object(), SimpleNamespace(tools=[], adapter=None)
+
+        async def run_round(self, *_args, **_kwargs):
+            if False:
+                yield None
+            raise responses.ResponsesCompatibilityError(400)
+
+    class FakeChatDriver:
+        api_format = "openai"
+
+        def prepare(self, *_args, **_kwargs):
+            return object(), SimpleNamespace(tools=[], adapter=None)
+
+        async def run_round(self, *_args, **_kwargs):
+            yield "token", "回退成功"
+            yield "done", RoundResult(
+                text="回退成功", tool_calls=[], usage_in=10, usage_out=5,
+                cache_tokens=3,
+            )
+
+    monkeypatch.setattr(core, "OpenAIResponsesDriver", FakeResponsesDriver)
+    monkeypatch.setattr(loop_drivers, "OpenAIDriver", FakeChatDriver)
+    ai = SimpleNamespace(
+        provider="openai", api_format="responses", model="fake",
+        base_url="http://local", api_key="dummy", max_tokens=100,
+        temperature=0.7, context_tokens=1000,
+    )
+    run = _ScopeRun(
+        id="run-test-responses-fallback", trace_id="trace-test",
+        session_key="gugu:web:test-session", external_session_id="test-session",
+        source="web", started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    try:
+        runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=ai))
+        ev, text, errors = await drain(runner._run_responses(
+            "u", "sys", [{"role": "user", "content": "测试回退埋点"}], ai,
+            session_id=388,
+        ))
+    finally:
+        _scope_run.reset(token)
+
+    assert text == "回退成功"
+    assert errors == []
+    assert ev["error"] == 0
+    assert run.usage == EXPECTED_USAGE
+    llm = [span for span in run.spans if span.kind == "llm"]
+    assert [span.status for span in llm] == ["error", "success"]
+    assert llm[1].usage == EXPECTED_USAGE
+    assert llm[1].token_impact["prompt_tokens_source"] == "provider"
+
+
 async def test_loopscope_wrapper_without_active_run_accepts_session_id(monkeypatch, loopscope_hooks):
     """没有 active LoopScope run 的 IM 路径也必须能透传 session_id 和 reasoning_state。"""
     final = SimpleNamespace(

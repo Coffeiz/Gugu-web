@@ -9,6 +9,7 @@ from agent.loop_drivers import (
     RoundResult,
     NormalizedToolCall,
 )
+from agent.context.canonical_context import digest
 from agent.providers.openai_responses import (
     OpenAIResponsesDriver,
     ResponsesCompatibilityError,
@@ -87,7 +88,11 @@ def test_responses_input_converts_text_blocks_on_assistant_tool_call_messages():
         }],
     }]) == [
         {"role": "assistant", "content": [{"type": "input_text", "text": "准备调用工具"}]},
-        {"type": "function_call", "call_id": "call-1", "name": "probe", "arguments": "{}"},
+        {
+            "type": "function_call",
+            "id": "fc_legacy_" + digest({"call_id": "call-1", "occurrence": 0}, length=24),
+            "call_id": "call-1", "name": "probe", "arguments": "{}",
+        },
     ]
 
 
@@ -110,6 +115,22 @@ def test_responses_input_replays_output_item_id_separately_from_call_id():
         "type": "function_call", "id": "fc_456", "call_id": "call_123",
         "name": "probe", "arguments": "{}",
     }]
+
+
+def test_responses_input_assigns_stable_unique_ids_to_legacy_tool_calls():
+    messages = [{"role": "assistant", "tool_calls": [
+        {"id": "legacy-call-1", "function": {"name": "probe", "arguments": "{}"}},
+        {"id": "legacy-call-2", "function": {"name": "probe", "arguments": "{}"}},
+        {"id": "legacy-call-1", "function": {"name": "probe", "arguments": "{}"}},
+    ]}]
+
+    first = _responses_input(messages)
+    second = _responses_input(messages)
+    item_ids = [item["id"] for item in first]
+
+    assert first == second
+    assert len(item_ids) == len(set(item_ids)) == 3
+    assert all(item_id.startswith("fc_legacy_") for item_id in item_ids)
 
 
 def test_chat_completions_projection_strips_responses_item_metadata():
@@ -252,7 +273,11 @@ async def _raise_status(status_code):
                 {"role": "tool", "tool_call_id": "call-1", "content": '{"option_id":"tech"}'},
             ],
             [
-                {"type": "function_call", "call_id": "call-1", "name": "ask_user", "arguments": "{}"},
+                {
+                    "type": "function_call",
+                    "id": "fc_legacy_" + digest({"call_id": "call-1", "occurrence": 0}, length=24),
+                    "call_id": "call-1", "name": "ask_user", "arguments": "{}",
+                },
                 {"type": "function_call_output", "call_id": "call-1", "output": '{"option_id":"tech"}'},
             ],
         ),

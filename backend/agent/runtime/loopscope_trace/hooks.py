@@ -369,6 +369,8 @@ def ensure_hooks() -> None:
                 run.session_key = f"gugu:web:{session_id}"
             run.external_session_id = str(session_id)
         original_round = getattr(driver, "run_round")
+        active_round_driver = driver
+        active_round_callable = original_round
         round_index = 0
         previous_prompt_estimate = 0
         tool_schema_context_recorded = False
@@ -478,7 +480,8 @@ def ensure_hooks() -> None:
 
         async def traced_round(client, ctx, round_messages, stream_round=None):
             # stream_round 由 core 注入（PRD-LLM-25）：转发给被包裹的原 run_round。
-
+            round_driver = active_round_driver
+            round_callable = active_round_callable
             nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded, previous_round_messages
             round_index += 1
             # LoopScope 的 round input、cache digest 和上一轮对比都必须基于
@@ -494,7 +497,7 @@ def ensure_hooks() -> None:
             }
             if adapter is None:
                 round_wire_messages = round_messages
-            elif getattr(driver, "api_format", "") == "openai":
+            elif getattr(round_driver, "api_format", "") == "openai":
                 from agent.providers.message_utils import render_openai_request_history
 
                 round_wire_messages, provider_history_sanitization = (
@@ -527,7 +530,7 @@ def ensure_hooks() -> None:
                 tools=list(getattr(ctx, "tools", None) or ()),
                 adapter=adapter,
                 model=model_name,
-                api_format=str(getattr(driver, "api_format", "unknown") or "unknown"),
+                api_format=str(getattr(round_driver, "api_format", "unknown") or "unknown"),
                 previous_messages=previous_round_messages,
             ) if getattr(ctx, "adapter", None) is not None else {"available": False}
             if run:
@@ -535,7 +538,7 @@ def ensure_hooks() -> None:
                 record_adapter_call(
                     run,
                     provider=str(getattr(ai, "provider", "") or "unknown"),
-                    api_format=str(getattr(driver, "api_format", "") or "unknown"),
+                    api_format=str(getattr(round_driver, "api_format", "") or "unknown"),
                     canonical_event_count=int(canonical_stats.get("count", 0) or 0),
                 )
             if run and not tool_schema_context_recorded:
@@ -564,13 +567,13 @@ def ensure_hooks() -> None:
                         "mcp_tool_names": mcp_tool_names,
                     },
                     parent_span_id=ctx_span.id,
-                    code=_code_ref(original_round),
+                    code=_code_ref(round_callable),
                     token_impact={
                         "included_tokens": schema_tokens,
                         "estimate_source": "loopscope_tokenizer",
                     },
                     context_source="tool_schema",
-                    api_format=getattr(driver, "api_format", ""),
+                    api_format=getattr(round_driver, "api_format", ""),
                 )
                 tool_context.finish({
                     "tool_count": cache_diag.get("tool_count", 0),
@@ -587,7 +590,7 @@ def ensure_hooks() -> None:
                         "Capability catalog injected",
                         capability_injection_diagnostics(capability_context),
                         parent_span_id=ctx_span.id,
-                        code=_code_ref(original_round),
+                        code=_code_ref(round_callable),
                         context_source="capability_catalog",
                     )
                     capability_context_span.finish(
@@ -615,12 +618,12 @@ def ensure_hooks() -> None:
                         "canonical_events": canonical_stats,
                         "adapter": {
                             "provider": getattr(ai, "provider", ""),
-                            "api_format": getattr(driver, "api_format", ""),
+                            "api_format": getattr(round_driver, "api_format", ""),
                         },
                         "canonical_context": canonical_diagnostics,
                     },
                 },
-                code=_code_ref(original_round),
+                code=_code_ref(round_callable),
                 token_impact={
                     "prompt_tokens_estimate": round_prompt_est,
                     "prompt_growth_estimate": growth,
@@ -637,13 +640,15 @@ def ensure_hooks() -> None:
             previous_round_messages = list(round_wire_messages)
             final = None
             try:
-                async for kind, value in original_round(client, ctx, round_messages, stream_round=stream_round):
+                async for kind, value in round_callable(
+                    client, ctx, round_messages, stream_round=stream_round,
+                ):
                     if kind == "done":
                         final = value
                         # 外层主循环收到 ("done", …) 会立即 break、不再消费本生成器,
                         # 所以 usage 必须在这里（yield 之前）就落地,不能放在循环结束后。
                         if span:
-                            details = _round_result(final, getattr(driver, "api_format", ""))
+                            details = _round_result(final, getattr(round_driver, "api_format", ""))
                             for call in getattr(final, "tool_calls", None) or ():
                                 if bool(getattr(call, "parse_error", False)):
                                     _record_schema_error(
@@ -686,7 +691,32 @@ def ensure_hooks() -> None:
                     record_adapter_result(run, "error")
                 raise
 
+        def wrap_round(round_driver, round_callable):
+            """把本轮 LoopScope 观测器复用到兼容性回退创建的 driver。"""
+            async def wrapped_round(client, ctx, round_messages, stream_round=None):
+                nonlocal active_round_driver, active_round_callable
+                previous_driver = active_round_driver
+                previous_callable = active_round_callable
+                active_round_driver = round_driver
+                active_round_callable = round_callable
+                traced = traced_round(
+                    client, ctx, round_messages, stream_round=stream_round,
+                )
+                try:
+                    async for item in traced:
+                        yield item
+                finally:
+                    try:
+                        await traced.aclose()
+                    finally:
+                        active_round_driver = previous_driver
+                        active_round_callable = previous_callable
+            return wrapped_round
+
         try:
+            # 使用 driver 实例级工厂，避免全局 monkeypatch 在并发 run 间串线；
+            # machine.py 创建 fallback driver 时会把同一观测器绑定到新实例。
+            driver._loopscope_round_wrapper = wrap_round
             driver.run_round = traced_round
             async for line in original_run_loop(
                 self, driver, user_id, messages, ai, system_text, session_id=session_id,
@@ -714,6 +744,8 @@ def ensure_hooks() -> None:
                 driver.run_round = original_round
             except Exception:
                 pass
+            if hasattr(driver, "_loopscope_round_wrapper"):
+                del driver._loopscope_round_wrapper
 
     genstream.begin = begin
     genstream.publish = publish

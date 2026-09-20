@@ -7,6 +7,7 @@
 ### 2026-09-20
 
 - [Owner 反思共享闲置 TTL 与持久历史重建](./2026-09-20-Owner反思共享闲置TTL与持久历史重建.md)
+- [SESSION #388 Responses 回退 400 与 LoopScope 用量归零](./2026-09-20-Responses-SESSION-388工具回放400与LoopScope用量归零.md)
 
 ### 2026-09-19
 

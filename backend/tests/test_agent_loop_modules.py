@@ -46,15 +46,33 @@ def test_verify_limit_has_independent_budget():
 
 # ── rounds.usage_compaction_due / overflow ───────────────────────────────────
 
-def test_usage_compaction_due_matches_original_semantics():
+def test_usage_compaction_due_uses_threshold_and_no_progress_guard():
     from agent.context.compress_conv import AUTO_COMPACTION_RATIO
     tokens = 1000
     threshold = int(tokens * AUTO_COMPACTION_RATIO)
-    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, compaction_applied=False) is True
-    assert rounds.usage_compaction_due(run_context_usage=threshold - 1, context_tokens=tokens, compaction_applied=False) is False
-    # 已压缩过不再触发；context_tokens 缺失按 1 处理不会除零
-    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, compaction_applied=True) is False
-    assert rounds.usage_compaction_due(run_context_usage=10**9, context_tokens=0, compaction_applied=False) is True
+    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens) is True
+    assert rounds.usage_compaction_due(run_context_usage=threshold - 1, context_tokens=tokens) is False
+    # 同一未变化 history 的失败尝试不会重复触发；新消息到来后调用方解除阻断。
+    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, no_progress=True) is False
+    assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, no_progress=False) is True
+    # context_tokens 缺失按 1 处理不会除零
+    assert rounds.usage_compaction_due(run_context_usage=10**9, context_tokens=0) is True
+
+
+def test_rolling_compaction_window_keeps_last_ten_completed_rounds():
+    starts = [(number, number * 10) for number in range(1, 14)]
+
+    # 第 13 轮响应后尚未入 history，最近 10 个完整轮为第 3 至第 12 轮。
+    assert rounds.rolling_compaction_start_index(starts, current_round=13) == 30
+    assert rounds.rolling_compaction_start_index(starts, current_round=6) == 10
+
+
+def test_round_start_indices_follow_the_actually_retained_suffix():
+    starts = [(number, number * 10) for number in range(1, 14)]
+
+    assert rounds.remap_round_start_indices(starts, 5, 70) == [
+        (7, 5), (8, 15), (9, 25), (10, 35), (11, 45), (12, 55), (13, 65),
+    ]
 
 
 def test_overflow_recovery_plan_is_single_shot():

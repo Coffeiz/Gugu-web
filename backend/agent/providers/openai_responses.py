@@ -160,6 +160,7 @@ def _responses_content_is_empty(content: Any) -> bool:
 def _responses_input(messages: list[dict]) -> list[dict]:
     """将现有 OpenAI 投影转换成 Responses input items。"""
     items: list[dict] = []
+    legacy_call_occurrences: dict[str, int] = {}
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -174,13 +175,25 @@ def _responses_input(messages: list[dict]) -> list[dict]:
                 })
             for call in message["tool_calls"]:
                 function = call.get("function") or {}
+                call_id = call.get("id") or call.get("call_id") or "tool-call"
+                responses_item_id = call.get("responses_item_id")
+                if not responses_item_id:
+                    # Chat Completions 历史没有 Responses output item id。兼容服务
+                    # 回放 function_call 时仍要求该字段；按 call_id 与重复序号生成
+                    # 稳定 ID，不把工具参数或会话正文带入 ID，也不改写持久历史。
+                    occurrence_key = str(call_id)
+                    occurrence = legacy_call_occurrences.get(occurrence_key, 0)
+                    legacy_call_occurrences[occurrence_key] = occurrence + 1
+                    responses_item_id = "fc_legacy_" + digest(
+                        {"call_id": occurrence_key, "occurrence": occurrence},
+                        length=24,
+                    )
                 items.append({
                     "type": "function_call",
-                    "call_id": call.get("id") or call.get("call_id") or "tool-call",
+                    "id": responses_item_id,
+                    "call_id": call_id,
                     "name": function.get("name") or "unknown_tool",
                     "arguments": function.get("arguments") or "{}",
-                    **({"id": call["responses_item_id"]}
-                       if call.get("responses_item_id") else {}),
                 })
             continue
         if role == "tool":

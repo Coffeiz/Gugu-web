@@ -96,11 +96,8 @@ async def run_loop(
         # 工具调用/结果追加后仍通过对象身份找到同一个起点。
         _run_conversation = getattr(messages, "conversation", messages)
         _run_start_index = _core.last_user_index(_run_conversation)
-        _run_start_message = (
-            _run_conversation[_run_start_index]
-            if _run_start_index is not None
-            else (_run_conversation[-1] if _run_conversation else None)
-        )
+        run_start_index = _run_start_index if _run_start_index is not None else max(0, len(_run_conversation) - 1)
+        run_round_start_indices: list[tuple[int, int]] = []
 
         task_rounds = 0; verify_rounds = 0; empty_retry = 0
         any_tool_called = False
@@ -134,11 +131,11 @@ async def run_loop(
         # 破坏性工具的用户确认授权存在服务端（Redis）：确认后运行侧按原参数重投，
         # 确认门自动命中放行；运行时不做任何凭证续接，也不让模型再调用一次。
         total_in = total_out = total_cache = total_cache_write = 0
-        # 一个 run 内 provider 每次返回的是该次请求的 context input；压缩判定使用
-        # 这个 run 观察到的最高值，不能把多次请求相加，否则工具轮数越多越会误触发。
+        # 压缩判定使用最近一次 provider 请求的 context input，不能跨轮累加或沿用高水位。
         run_context_usage = 0
+        run_context_usage_peak = 0
         hard_budget_retries = 0
-        compaction_applied = False
+        last_compaction_no_progress_length: int | None = None
         run_id = f"run-{_core.uuid4().hex[:16]}"
         round_number = 0
         event_seq = 0
@@ -156,7 +153,7 @@ async def run_loop(
 
         async def compact_context_now() -> bool:
             """压缩旧 history，并让当前 run 使用新的上下文边界。"""
-            nonlocal messages, compaction_applied
+            nonlocal messages, run_start_index, last_compaction_no_progress_length
             from agent.context import compaction
 
             async def keep_generation_alive() -> None:
@@ -179,17 +176,18 @@ async def run_loop(
                 item for item in conversation
                 if isinstance(item, dict) and "<compacted-summary>" in str(item.get("content") or "")
             ]
-            protected_from = next(
-                (index for index, item in enumerate(conversation)
-                 if item is _run_start_message),
-                max(0, len(conversation) - 1),
+            protected_from = _core.loop_rounds.rolling_compaction_start_index(
+                run_round_start_indices, round_number,
             )
+            if protected_from is None:
+                protected_from = run_start_index
             try:
                 try:
                     result = await compaction.compact_context(
                         list(conversation), session_id=session_id,
                         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
                         protected_from=protected_from,
+                        protected_anchor_index=run_start_index,
                         model_cfg=ai,
                         system_text=system_text,
                         # 分支要带上本 run 的工具声明，provider 才算得出同一份可缓存
@@ -240,7 +238,17 @@ async def run_loop(
                 messages.replace_conversation(compacted_messages)
             else:
                 messages = compacted_messages
-            compaction_applied = True
+            if getattr(result, "anchor_index", None) is not None:
+                run_start_index = result.anchor_index
+            protected_start_index = getattr(result, "protected_start_index", None)
+            if protected_start_index is not None:
+                protected_source_start = getattr(result, "protected_source_start_index", None)
+                if protected_source_start is None:
+                    protected_source_start = protected_from
+                run_round_start_indices[:] = _core.loop_rounds.remap_round_start_indices(
+                    run_round_start_indices, protected_start_index, protected_source_start,
+                )
+            last_compaction_no_progress_length = None
             if reasoning_state is not None:
                 await reasoning_state.boundary_changed("baseline_changed")
             yield_event = {"type": "_context_compaction", "phase": "completed", "applied": True,
@@ -251,22 +259,33 @@ async def run_loop(
 
         async def apply_deterministic_compaction_fallback(reason: str) -> bool:
             """摘要压缩未生效时立即裁切，避免继续把超大上下文送入 provider。"""
-            nonlocal messages, compaction_applied
+            nonlocal messages, run_start_index, last_compaction_no_progress_length
             from agent.context.budget import enforce_provider_overflow_fallback
 
             conversation = getattr(messages, "conversation", messages)
-            protected_from = next(
-                (index for index, item in enumerate(conversation)
-                 if item is _run_start_message),
-                max(0, len(conversation) - 1),
+            protected_from = _core.loop_rounds.rolling_compaction_start_index(
+                run_round_start_indices, round_number,
             )
+            if protected_from is None:
+                protected_from = run_start_index
             result = enforce_provider_overflow_fallback(
                 messages, system_text or "", getattr(ai, "context_tokens", 256000),
                 protected_from=protected_from,
+                protected_anchor_index=run_start_index,
             )
             if not result.changed:
                 return False
-            compaction_applied = True
+            if getattr(result, "anchor_index", None) is not None:
+                run_start_index = result.anchor_index
+            protected_start_index = getattr(result, "protected_start_index", None)
+            if protected_start_index is not None:
+                protected_source_start = getattr(result, "protected_source_start_index", None)
+                if protected_source_start is None:
+                    protected_source_start = protected_from
+                run_round_start_indices[:] = _core.loop_rounds.remap_round_start_indices(
+                    run_round_start_indices, protected_start_index, protected_source_start,
+                )
+            last_compaction_no_progress_length = None
             if reasoning_state is not None:
                 await reasoning_state.boundary_changed("baseline_changed")
             _context_compaction_event[0] = {
@@ -277,15 +296,16 @@ async def run_loop(
 
         def usage_compaction_due() -> bool:
             # 90% 阈值判定归 loop/rounds（PRD-LLM-25 LLM25-006）；压缩执行仍归 context 模块。
+            conversation = getattr(messages, "conversation", messages)
             return _core.loop_rounds.usage_compaction_due(
                 run_context_usage=run_context_usage,
                 context_tokens=int(getattr(ai, "context_tokens", 0) or 0),
-                compaction_applied=compaction_applied,
+                no_progress=last_compaction_no_progress_length == len(conversation),
             )
 
         async def compact_after_usage_threshold() -> bool:
             """统一在 provider usage 达到 90% 后压缩旧 history。"""
-            nonlocal messages, compaction_applied
+            nonlocal messages, last_compaction_no_progress_length
             # 90% 观察线只在 provider usage 层维护一份，避免 core 再复制预算语义。
             if not usage_compaction_due():
                 return False
@@ -294,6 +314,7 @@ async def run_loop(
             if await apply_deterministic_compaction_fallback("usage_threshold_fallback"):
                 _core._log.warning("[core] provider usage 达到 90% 但摘要压缩未生效，执行确定性裁切")
                 return True
+            last_compaction_no_progress_length = len(getattr(messages, "conversation", messages))
             _core._log.error("[core] provider usage 达到 90%，摘要和确定性裁切均未生效")
             return False
 
@@ -483,6 +504,10 @@ async def run_loop(
             result = None
             round_number += 1
             round_id = f"round-{round_number}"
+            run_round_start_indices.append((
+                round_number,
+                len(getattr(messages, "conversation", messages)),
+            ))
             yield stream_event("round_start", round_id=round_id)
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
             try:
@@ -563,7 +588,10 @@ async def run_loop(
                         if reasoning_state is not None:
                             await reasoning_state.failed("responses_incompatible")
                         from agent.loop_drivers import OpenAIDriver
+                        round_wrapper = getattr(driver, "_loopscope_round_wrapper", None)
                         driver = OpenAIDriver()
+                        if callable(round_wrapper):
+                            driver.run_round = round_wrapper(driver, driver.run_round)
                         client, ctx = driver.prepare(
                             current_tool_names, ai, messages, system_text,
                             tool_snapshot=tool_snapshot,
@@ -692,7 +720,8 @@ async def run_loop(
             total_out += result.usage_out
             total_cache += result.cache_tokens
             total_cache_write += result.cache_write_tokens
-            run_context_usage = max(run_context_usage, _core._provider_context_usage(driver, result))
+            run_context_usage = int(_core._provider_context_usage(driver, result) or 0)
+            run_context_usage_peak = max(run_context_usage_peak, run_context_usage)
             if reasoning_state is not None:
                 await reasoning_state.round_finished(driver, ctx, result, round_id)
             # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
@@ -1441,7 +1470,7 @@ async def run_loop(
                             yield _line
                         if reasoning_state is not None:
                             await reasoning_state.completed()
-                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
                         return
                     if repeat_round_count >= 3 and not repeat_round_nudged:
                         repeat_round_nudged = True
@@ -1479,7 +1508,7 @@ async def run_loop(
                             yield _line
                         if reasoning_state is not None:
                             await reasoning_state.completed()
-                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
                         return
                     messages.append_batch(driver.build_followup(
                         result, _core._TOOL_BUDGET_STOP_PROMPT,
@@ -1541,7 +1570,7 @@ async def run_loop(
                 guard_retry_buf.clear()
                 if reasoning_state is not None:
                     await reasoning_state.completed()
-                yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+                yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
                 return
             # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
             if not _final_text.strip() and not verify_mode:
@@ -1625,7 +1654,7 @@ async def run_loop(
                 _core.diag_log("agent.context.reflection_snapshot.capture", exc)
 
             # 正文已经确定后立即结束本轮；90% 压缩已在 provider round 返回后同步完成。
-            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
             if reasoning_state is not None:
                 await reasoning_state.completed()
             return
@@ -1642,7 +1671,7 @@ async def run_loop(
             fallback = "已提交前面成功执行的调整；核实轮次已达到上限，未完成的步骤请重新发起。"
             async for _line in _core.genstream.typed_stream(fallback):
                 yield _line
-            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
+            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
             if reasoning_state is not None:
                 await reasoning_state.completed()
             return
