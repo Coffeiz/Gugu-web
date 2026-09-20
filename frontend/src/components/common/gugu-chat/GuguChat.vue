@@ -687,7 +687,7 @@ function openFileFromChat(f: ChatFile) {
       // 真实像素尺寸（有的话）：预览窗口直接按此定尺，不用再靠缩略图猜大小
       imgWidth: f.img_width ?? null,
       imgHeight: f.img_height ?? null,
-    })
+    }, null, true)
     return
   }
   downloadFile(f)

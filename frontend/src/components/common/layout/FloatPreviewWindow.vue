@@ -617,7 +617,11 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   }
 }
 
-watch(() => props.win.file, f => load(f), { immediate: true })
+watch(
+  () => [props.win.file, props.win.reloadToken] as const,
+  ([file, reloadToken]) => load(file, reloadToken > 0),
+  { immediate: true },
+)
 
 function onTextContentSaved(content: string, fileKey: string | number | null) {
   // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
