@@ -9,6 +9,7 @@ from .assembler import assemble_branch_user_input
 from .branch_types import BranchInput, BranchPolicy, BranchResult
 from . import provider_runner
 from app.core.redaction import diag_log
+from app.core.retry import BRANCH_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -28,22 +29,6 @@ class ContextBranch:
         *,
         runner=None,
     ) -> BranchResult:
-        if branch_input.session_id is not None:
-            # 分支输入与主会话历史不是同一条 provider response chain；有明确会话
-            # 边界时先让主状态失效，避免分支结果完成后继续复用旧 chain。
-            if branch_input.scope_owner_id is not None:
-                try:
-                    from app.db import session as db_session
-                    from app.services.provider_reasoning_state import invalidate_state
-                    db_session.ensure_engine()
-                    async with db_session._SessionLocal() as db:
-                        await invalidate_state(
-                            db, user_id=branch_input.scope_owner_id,
-                            session_id=branch_input.session_id, reason="branch_changed",
-                        )
-                        await db.commit()
-                except Exception as exc:
-                    diag_log("agent.context.branch.state_boundary", exc)
         user = assemble_branch_user_input(branch_input)
         input_fp = _fingerprint(f"{branch_input.stable_system}\n{user}")
         # 分支调用的用量按场景落库（reflection/compaction/knowledge）：
@@ -59,8 +44,16 @@ class ContextBranch:
         validated_ok = False
         error_type = "-"
         error_status = "-"
+        # append_reuse 的实际缓存观测（PRD-LLM-27 §6.7）：provider 归一化 usage
+        # 经旁路收集，成功后喂 cache_capability 纯观测记账（白名单已废止，观测
+        # 只记录不拦截）；不改返回契约。
+        usage_sink: list = []
         try:
             for attempts in range(1, max(0, policy.max_retries) + 2):
+                if attempts > 1:
+                    # 尝试之间按共享节奏（BRANCH_RETRY）歇一下：此前零间隔连发，
+                    # 上游过载时两次尝试都打在同一个尖峰上（2026-09-18 529 实测）
+                    await BRANCH_RETRY.pause()
                 call_failed = False
                 try:
                     if branch_input.history_messages and runner is None:
@@ -72,6 +65,7 @@ class ContextBranch:
                             max_tokens=policy.max_tokens,
                             json_mode=policy.output_mode != "text",
                             tools=list(branch_input.tools) or None,
+                            usage_sink=usage_sink,
                         )
                         ok = bool(str(output or "").strip()) and (
                             not isinstance(output, dict) or bool(output))
@@ -115,6 +109,16 @@ class ContextBranch:
                     scenario=_prev_usage_ctx.scenario)
 
         output_fp = _fingerprint(output) if output else None
+        if branch_input.branch_mode == "append_reuse" and usage_sink:
+            usage = usage_sink[-1]
+            try:
+                from agent.llm.modelctx import effective_ai
+                from .cache_capability import record_reuse_outcome
+
+                record_reuse_outcome(effective_ai(settings),
+                                     cache_hit=bool(usage.get("cache_read")))
+            except Exception:
+                pass
         result = BranchResult(
             ok=validated_ok,
             output=output if validated_ok else None,
@@ -122,8 +126,10 @@ class ContextBranch:
             attempts=attempts,
             input_fingerprint=input_fp,
             output_fingerprint=output_fp,
+            provider_usage=(usage_sink[-1] if usage_sink else None),
             metadata={
                 "branch": policy.name,
+                "branch_mode": branch_input.branch_mode,
                 "scope": branch_input.scope,
                 "scope_revision": branch_input.scope_revision,
                 "session_id": branch_input.session_id,
@@ -131,8 +137,9 @@ class ContextBranch:
             },
         )
         logger.info(
-            "[context-branch] branch=%s scope=%s scope_revision=%s session_id=%s attempts=%d ok=%s reason=%s error_type=%s error_status=%s input_fp=%s output_fp=%s",
+            "[context-branch] branch=%s mode=%s scope=%s scope_revision=%s session_id=%s attempts=%d ok=%s reason=%s error_type=%s error_status=%s input_fp=%s output_fp=%s",
             policy.name,
+            branch_input.branch_mode,
             branch_input.scope or "-",
             branch_input.scope_revision or "-",
             branch_input.session_id,

@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Path, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +38,6 @@ from agent.context.history import build_chat_tool_events
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-_MAX_ATTACH_BYTES = 512 * 1024 * 1024   # 单个聊天附件上限 512MB（与 nginx client_max_body_size 对齐）
 # 音频候选（voice/audio mime/转码候选扩展名）materialize 成整字节的独立上限：
 # 转码与时长探测无法流式，超限按原样流式暂存（voice 录音直接拒）。
 _AUDIO_MATERIALIZE_CAP = 64 * 1024 * 1024
@@ -81,9 +80,17 @@ class PendingQueueAttachment(BaseModel):
 class PendingQueueReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["project", "file", "event", "conversation"]
-    id: int = Field(gt=0)
+    # mcp 的 id 是 UUID 字符串（user_mcp_servers 主键），其余类型是 int 自增（>0）
+    type: Literal["project", "file", "event", "conversation", "skill", "mcp", "scheduled_task"]
+    id: int | UUID
     label: str = Field(max_length=512)
+
+    @field_validator("id")
+    @classmethod
+    def _validate_reference_id(cls, value):
+        if isinstance(value, int) and value < 1:
+            raise ValueError("id must be >= 1")
+        return value
 
 
 class PendingQueueItem(BaseModel):
@@ -140,7 +147,6 @@ class SandboxClearRequest(BaseModel):
 @router.post("/sandbox/restart")
 async def restart_my_sandbox(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
     root = await resolve_sandbox_root(db, current_user.id)
     if root is None:
@@ -297,6 +303,7 @@ async def upload_attachment(
     file: UploadFile = FastAPIFile(...),
     voice: bool = Form(False),   # 网页录音传 voice=true → 渲染成语音条 + 独立 30 天存储 + 「让我听听」语气
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """聊天附件上传：暂存（不进文件库），返回 attach_id。咕咕可看内容/可保存。"""
     from app.core import media_transcode
@@ -304,9 +311,12 @@ async def upload_attachment(
     from app.core.upload_stream import spool_upload
     from agent import providers
     # 分块收流：内存峰值与附件上限解耦；只有转码/语音路径才 materialize 成字节。
+    # 不再按单个附件拒绝；本次请求最多消费当前用户暂存总容量的剩余部分。
+    # stage/stage_stream 还会在写入前复核，避免并发上传绕过总容量。
+    staging_remaining = await chat_attach.staging_capacity_remaining(current_user.id)
     spool, size, _sha = await spool_upload(
-        file, limit=_MAX_ATTACH_BYTES, status_code=400,
-        message=f"文件太大（聊天附件上限 {_MAX_ATTACH_BYTES // 1048576}MB）")
+        file, limit=staging_remaining, status_code=413,
+        message="聊天附件暂存空间已满，请先清理旧附件后再试")
     parts = (file.filename or "file").rsplit(".", 1)
     name = parts[0] or "file"
     ext = parts[1] if len(parts) > 1 else ""
@@ -352,6 +362,8 @@ async def upload_attachment(
             meta = await chat_attach.stage_stream(
                 current_user.id, name, ext, mime, stream=spool, size=size, platform="web")
         return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height", "qq_face")}
+    except chat_attach.ChatAttachmentCapacityError as error:
+        raise HTTPException(413, str(error)) from error
     finally:
         spool.close()
 
@@ -403,22 +415,23 @@ async def attachment_download(
     current_user: User = Depends(get_current_user),
 ):
     """下载暂存聊天附件原文件（用户自己发的附件，6h 内有效）。"""
-    from fastapi.responses import Response
+    from fastapi.responses import StreamingResponse
     from urllib.parse import quote
+    from app.services.storage import get_storage
     meta = await chat_attach.get_meta(current_user.id, attach_id)
     if not meta:
         raise HTTPException(404, "附件不存在或已过期")
-    try:
-        data = await chat_attach.read_bytes(meta)
-    except FileNotFoundError:
-        raise HTTPException(404, "附件已过期或物理文件丢失")
     filename = f"{meta.get('name', 'file')}.{meta.get('ext', '')}"
     encoded = quote(filename)
-    return Response(
-        content=data,
+    storage = get_storage()
+    if not await storage.exists(meta["storage_key"]):
+        raise HTTPException(404, "附件已过期或物理文件丢失")
+    return StreamingResponse(
+        storage.iter_chunks(meta["storage_key"]),
         media_type=meta.get("mime") or "application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
-                 "Cache-Control": "private, max-age=300"},
+                 "Cache-Control": "private, max-age=300",
+                 "Content-Length": str(meta.get("size") or 0)},
     )
 
 
@@ -522,7 +535,11 @@ async def cancel_stream(
         from agent.gateway.web import cancel_local_generation
         cancelled_locally = cancel_local_generation(session_id, owner_run_id or None)
         if not cancelled_locally:
-            await genstream.request_cancel(session_id)
+            # 标记带上快照 owner：跨 worker 兜底也只能杀掉用户看到正在跑的
+            # 这个 run。终止端点读快照与写标记之间，排队的 run 可能已经接管
+            # 会话（begin 清不掉这之后才落下的标记），会话级标记会把刚接管的
+            # 排队消息一起杀掉——用户消息已落库但永远等不到回复。
+            await genstream.request_cancel(session_id, owner_run_id or None)
     return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
 
 
@@ -1043,7 +1060,7 @@ async def get_session_messages(
         "timelineEvents": [
             {**item,
              "id": f"{m.id}:{index}",
-             "timelineOrder": m.id * 1000 + index + 1,
+             "timelineOrder": item.get("timelineOrder") or m.id * 1000 + index + 1,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
             for index, item in enumerate(m.display_timeline or [])

@@ -39,6 +39,13 @@ describe('文件库右键菜单归档操作', () => {
     menu.host.remove()
   })
 
+  it('文件菜单不再提供独立后缀入口，后缀与普通重命名一同编辑', () => {
+    const menu = renderMenu({ type: 'file' })
+    expect(menu.host.querySelector('[data-testid="context-change-extension"]')).toBeNull()
+    menu.app.unmount()
+    menu.host.remove()
+  })
+
   it('单个已选文件的右键菜单也提供压缩入口', () => {
     const menu = renderMenu({ type: 'file', canCompressSelection: true })
     expect(menu.host.querySelector('[data-testid="context-compress-selection"]')).not.toBeNull()

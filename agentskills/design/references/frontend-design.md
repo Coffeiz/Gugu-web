@@ -200,7 +200,7 @@ function darkenHex(hex, amount = 0.60) {
 
 **重命名按钮交互**：进入重命名状态后，铅笔图标（`PhPencilSimple`）切换为勾图标（`PhCheck`），再次点击执行确认提交，`title` 同步变为"确认"。按钮加 `@mousedown.prevent` 阻止 input blur 先于 click 触发导致状态重置。点击后自动全选文件名（`startRename` 内 `el.focus(); el.select()`，以及 input 上 `@focus="$event.target.select()"`）。
 
-**卡片重命名输入框**：使用 ghost sizer 技术（隐藏的 `rename-ghost` span 撑开布局空间，`rename-input` 绝对定位覆盖其上），确保输入时卡片高度不变。输入框样式：`rgba(255,255,255,0.9)` 白底 + `1px solid rgba(123,127,178,0.4)` 紫色边框，`border-radius: 4px`，字体完全继承父元素（`font: inherit`）。三处页面（Dashboard FilePanel、文件库、ProjectModal）统一该样式。
+**卡片重命名输入框**：使用共享 ghost sizer（隐藏的 `rename-ghost` 撑开名称行，输入框覆盖其上），确保进入编辑时卡片高度不变。单输入模式沿用自然行盒尺寸：ghost 决定 sizer 高度，input 绝对定位覆盖其上；不要给共享单输入 sizer 强制 `1lh` 高度或 `appearance: none`。文件夹、文件名与后缀输入继承名称行行高；若输入内容盒不足，只扩展绝对定位 input 到名称行预留留白（当前上下各 1px），不得压低 `line-height`，也不得改变 ghost/sizer 的流式高度。分段布局只增加容器规则，禁止只给文件输入另设输入外观。文件与文件夹必须复用同一输入框基础 class、外观规则与 `--rename-input-*` / `--input-*` token；文件名分段只负责名称/后缀布局，不得叠画第二层焦点光晕。输入框不得覆盖元信息或撑高卡片；焦点态只使用标准描边与光晕。验收时用含下伸字母的值（如 `gg`）检查文件与文件夹的字形、文字基线、输入框高度和相邻元信息间距。
 
 ### 图标
 

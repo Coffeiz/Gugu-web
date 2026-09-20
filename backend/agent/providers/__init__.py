@@ -102,10 +102,13 @@ def build_anthropic_client(ai, timeout):
     # Timeout 对象，否则请求阶段会出现 float 与 Timeout 相加的 TypeError。
     if timeout is not None and not isinstance(timeout, (int, float)):
         timeout = getattr(timeout, "read", timeout)
+    # max_retries=0：SDK 内建的立即重试收掉，退避节奏统一交给 app/core/retry.py
+    # （否则应用层每次尝试内部还会偷偷打 3 发，过载窗口里全是无效请求）
     return AsyncAnthropic(
         api_key=normalize_ascii_api_key(getattr(ai, "api_key", "") or "dummy", label="模型 API Key"),
         base_url=adapter_for(ai).resolve_base_url(ai),
         timeout=timeout,
+        max_retries=0,
         default_headers=adapter_for(ai).auth_headers(ai),
     )
 
@@ -120,10 +123,12 @@ def build_openai_client(ai, timeout):
         getattr(ai, "api_key", "") or ("ollama" if adapter.name == "ollama" else "dummy"),
         label="模型 API Key",
     )
+    # 同上：SDK 内建重试收零，节奏统一在 app/core/retry.py
     return AsyncOpenAI(
         api_key=api_key,
         base_url=adapter.resolve_base_url(ai),
         timeout=timeout,
+        max_retries=0,
         default_headers=adapter.auth_headers(ai),
     )
 

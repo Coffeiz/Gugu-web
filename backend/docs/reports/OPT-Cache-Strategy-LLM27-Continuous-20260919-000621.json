@@ -1,0 +1,216 @@
+{
+  "owner": "已脱敏",
+  "session_id": null,
+  "provider": "已脱敏",
+  "model": "已脱敏 BYOK 模型",
+  "turns": 9,
+  "reflect_every": 3,
+  "prefix_head_exchanges": 50,
+  "timeline": [
+    {
+      "turn": 1,
+      "kind": "main",
+      "prefix_exchanges": 40,
+      "usage": {
+        "fresh_input": 6363,
+        "cache_read": 8064,
+        "cache_write": 0,
+        "output": 37,
+        "cache_rate": 0.559
+      }
+    },
+    {
+      "turn": 2,
+      "kind": "main",
+      "prefix_exchanges": 41,
+      "usage": {
+        "fresh_input": 487,
+        "cache_read": 14336,
+        "cache_write": 0,
+        "output": 114,
+        "cache_rate": 0.9671
+      }
+    },
+    {
+      "turn": 3,
+      "kind": "main",
+      "prefix_exchanges": 42,
+      "usage": {
+        "fresh_input": 147,
+        "cache_read": 14720,
+        "cache_write": 0,
+        "output": 256,
+        "cache_rate": 0.9901
+      }
+    },
+    {
+      "turn": 3,
+      "kind": "reflection",
+      "prefix_exchanges": 43,
+      "ok": true,
+      "usage": {
+        "fresh_input": 4600,
+        "cache_read": 14720,
+        "cache_write": 0,
+        "output": 329,
+        "cache_rate": 0.7619
+      }
+    },
+    {
+      "turn": 4,
+      "kind": "main",
+      "prefix_exchanges": 43,
+      "usage": {
+        "fresh_input": 248,
+        "cache_read": 15232,
+        "cache_write": 0,
+        "output": 256,
+        "cache_rate": 0.984
+      }
+    },
+    {
+      "turn": 5,
+      "kind": "main",
+      "prefix_exchanges": 44,
+      "usage": {
+        "fresh_input": 564,
+        "cache_read": 15360,
+        "cache_write": 0,
+        "output": 192,
+        "cache_rate": 0.9646
+      }
+    },
+    {
+      "turn": 6,
+      "kind": "main",
+      "prefix_exchanges": 45,
+      "usage": {
+        "fresh_input": 111,
+        "cache_read": 15872,
+        "cache_write": 0,
+        "output": 52,
+        "cache_rate": 0.9931
+      }
+    },
+    {
+      "turn": 6,
+      "kind": "reflection",
+      "prefix_exchanges": 46,
+      "ok": true,
+      "usage": {
+        "fresh_input": 3812,
+        "cache_read": 15872,
+        "cache_write": 0,
+        "output": 389,
+        "cache_rate": 0.8063
+      }
+    },
+    {
+      "turn": 7,
+      "kind": "main",
+      "prefix_exchanges": 46,
+      "usage": {
+        "fresh_input": 151,
+        "cache_read": 15872,
+        "cache_write": 0,
+        "output": 16,
+        "cache_rate": 0.9906
+      }
+    },
+    {
+      "turn": 8,
+      "kind": "main",
+      "prefix_exchanges": 47,
+      "usage": {
+        "fresh_input": 204,
+        "cache_read": 15872,
+        "cache_write": 0,
+        "output": 18,
+        "cache_rate": 0.9873
+      }
+    },
+    {
+      "turn": 9,
+      "kind": "main",
+      "prefix_exchanges": 48,
+      "usage": {
+        "fresh_input": 108,
+        "cache_read": 16000,
+        "cache_write": 0,
+        "output": 14,
+        "cache_rate": 0.9933
+      }
+    },
+    {
+      "turn": 9,
+      "kind": "reflection",
+      "prefix_exchanges": 49,
+      "ok": true,
+      "usage": {
+        "fresh_input": 3765,
+        "cache_read": 16000,
+        "cache_write": 0,
+        "output": 155,
+        "cache_rate": 0.8095
+      }
+    }
+  ],
+  "totals": {
+    "main": {
+      "fresh_input": 8383,
+      "cache_read": 131328,
+      "cache_rate": 0.94
+    },
+    "reflection": {
+      "fresh_input": 12177,
+      "cache_read": 46592,
+      "cache_rate": 0.7928
+    }
+  },
+  "reflection_points": [
+    {
+      "reflection_turn": 3,
+      "reflection_cache_rate": 0.7619,
+      "main_cache_rate_before": [
+        0.559,
+        0.9671,
+        0.9901
+      ],
+      "main_cache_rate_after": [
+        0.984,
+        0.9646,
+        0.9931
+      ],
+      "main_avg_before": 0.8387,
+      "main_avg_after": 0.9806
+    },
+    {
+      "reflection_turn": 6,
+      "reflection_cache_rate": 0.8063,
+      "main_cache_rate_before": [
+        0.984,
+        0.9646,
+        0.9931
+      ],
+      "main_cache_rate_after": [
+        0.9906,
+        0.9873,
+        0.9933
+      ],
+      "main_avg_before": 0.9806,
+      "main_avg_after": 0.9904
+    },
+    {
+      "reflection_turn": 9,
+      "reflection_cache_rate": 0.8095,
+      "main_cache_rate_before": [
+        0.9906,
+        0.9873,
+        0.9933
+      ],
+      "main_cache_rate_after": [],
+      "main_avg_before": 0.9904,
+      "main_avg_after": null
+    }
+  ]
+}

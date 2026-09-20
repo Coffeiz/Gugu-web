@@ -183,6 +183,9 @@ def _log_traj(name: str, user_id, args: Any, ok: bool, note: str, t0: float) -> 
             summary = {"_input_type": type(args).__name__}
         _ms = int((time.monotonic() - t0) * 1000)
         rec = {"t": "tool", "tool": name, "user": str(user_id)[:8], "ok": ok, "ms": _ms, "args": summary}
+        run_id = current_dispatch_run_id()
+        if run_id:
+            rec["run"] = run_id
         from agent.runtime.trace import get_trace
         if get_trace():
             rec["trace"] = get_trace()   # 全链路 trace：与网关「收到」行、worker 回复行同 id 可 grep 串联

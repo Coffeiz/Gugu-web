@@ -414,12 +414,14 @@ class TestCompactContext:
         assert "工具结果" in "\n".join(captured)
         assert "当前问题" in kept_text
 
-    def test_protected_current_run_is_not_sent_to_summary(self, monkeypatch):
-        """运行中压缩只整理本轮开始前的历史，当前 tool 链保持完整。"""
+    def test_protected_current_run_preserves_anchor_and_tool_chain(self, monkeypatch):
+        """运行中压缩需分开保留用户锚点和执行后缀，不再走旧的整轮保护分支。"""
         captured = []
+        preserve_user = []
 
-        async def fake_summary(items, previous=None, **_kwargs):
+        async def fake_summary(items, previous=None, **kwargs):
             captured.extend(message_text(m) for m in items)
+            preserve_user.append(kwargs.get("preserve_latest_user_separately"))
             return "历史摘要"
 
         monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
@@ -429,11 +431,13 @@ class TestCompactContext:
             "content": [{"type": "tool_use", "id": "call-1", "name": "search", "input": {}}],
         }
         tool_result = _make_tool_result("本轮工具结果")
-        messages = [_make_msg("user", "旧历史" * 3000), current, tool_use, tool_result]
+        prior_round = _make_msg("assistant", "本轮较早执行轮")
+        messages = [_make_msg("user", "旧历史" * 3000), current, prior_round, tool_use, tool_result]
         result = asyncio.get_event_loop().run_until_complete(
             compact_context(
                 messages,
-                protected_from=1,
+                protected_from=3,
+                protected_anchor_index=1,
                 model_cfg=_model_cfg(80),
             )
         )
@@ -441,11 +445,86 @@ class TestCompactContext:
         assert result.changed
         captured_text = "\n".join(captured)
         assert "旧历史" in captured_text
-        assert "本轮问题" not in captured_text
-        assert "本轮工具结果" not in captured_text
+        assert "本轮较早执行轮" in captured_text
+        # append-reuse 的前缀必须包含原始用户消息，但摘要提示要求单独保留它。
+        assert "本轮问题" in captured_text
+        assert preserve_user == [True]
         result_text = "\n".join(message_text(item) for item in result.messages)
         assert "本轮问题" in result_text
         assert "本轮工具结果" in result_text
+        assert result.messages[result.anchor_index] == current
+        assert result.messages[result.protected_start_index:] == [tool_use, tool_result]
+
+    def test_rolling_run_compaction_keeps_anchor_and_latest_round_window(self, monkeypatch):
+        captured = []
+        preserved_user_separately = []
+
+        async def fake_summary(items, previous=None, **_kwargs):
+            captured.extend(message_text(message) for message in items)
+            preserved_user_separately.append(_kwargs.get("preserve_latest_user_separately"))
+            return "滚动摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+        messages = [
+            _make_msg("user", "之前 run 的历史"),
+            _make_msg("user", "当前 run 用户原文"),
+            *[_make_msg("assistant", f"执行轮 {number}") for number in range(1, 13)],
+        ]
+
+        result = asyncio.get_event_loop().run_until_complete(
+            compact_context(
+                messages,
+                protected_from=4,  # 第 3 轮起，保留最近 10 个完整轮。
+                protected_anchor_index=1,
+                model_cfg=_model_cfg(80),
+            )
+        )
+
+        assert result.changed
+        summary_input = "\n".join(captured)
+        assert "之前 run 的历史" in summary_input
+        assert "执行轮 1" in summary_input and "执行轮 2" in summary_input
+        assert preserved_user_separately == [True]
+        assert "当前 run 用户原文" in summary_input  # append 缓存前缀必须保持连续
+        assert "执行轮 3" not in summary_input
+        assert result.messages[result.anchor_index]["content"] == "当前 run 用户原文"
+        tail = result.messages[result.protected_start_index:]
+        assert result.protected_source_start_index == 4
+        assert [item["content"] for item in tail] == [
+            f"执行轮 {number}" for number in range(3, 13)
+        ]
+        assert result.messages.index(result.messages[result.anchor_index]) < result.protected_start_index
+
+    def test_rolling_compaction_fallback_preserves_user_anchor_and_recent_window(self):
+        from agent.context.budget import enforce_provider_overflow_fallback
+
+        messages = [
+            _make_msg("user", "旧历史" * 200),
+            _make_msg("user", "当前 run 用户原文"),
+            *[_make_msg("assistant", f"执行轮 {number}" + "x" * 1000)
+              for number in range(1, 13)],
+        ]
+        result = enforce_provider_overflow_fallback(
+            messages,
+            context_tokens=1200,
+            protected_from=4,
+            protected_anchor_index=1,
+        )
+
+        assert result.changed
+        assert any(item.get("content") == "当前 run 用户原文" for item in messages)
+        assert messages[result.anchor_index]["content"] == "当前 run 用户原文"
+        assert all(
+            not str(item.get("content") or "").startswith(("执行轮 1x", "执行轮 2x"))
+            for item in messages
+        )
+        assert len(messages[result.protected_start_index:]) < 10
+        retained = messages[result.protected_start_index:]
+        if retained:
+            first_round = int(retained[0]["content"].split("执行轮 ", 1)[1].split("x", 1)[0])
+            # 原输入中 round N 的 message index 为 N + 1；裁掉窗口左侧后，
+            # 映射起点也必须随之右移，不能仍按旧 protected_from 计算。
+            assert result.protected_source_start_index == first_round + 1
 
     def test_provider_threshold_is_the_single_automatic_trigger(self):
         """自动压缩阈值固定为 provider 实际上下文的 90%。"""

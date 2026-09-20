@@ -79,6 +79,14 @@ async def test_agent_file_create_defaults_to_workspace_without_full_sandbox_gran
 
         listed = await agent_files._list_dir(db, user_a.id, {"kind": "folder"})
         assert any(item["id"] == folder.id for item in listed["folders"])
+
+        explicit_workspace = await agent_files._create_folder(
+            db, user_a.id, {"name": "显式工作区目录", "space": "workspace"},
+        )
+        assert explicit_workspace["success"] is True
+        assert explicit_workspace["space"] == "workspace"
+        explicit_folder = await db.get(Folder, explicit_workspace["folder_id"])
+        assert explicit_folder.workspace_directory_id == default_directory.id
     finally:
         reset_dispatch_session(token)
 
@@ -159,9 +167,16 @@ async def test_web_download_not_blocked_by_workspace_binding(db, user_a):
 
     session = await _persist(db, ConversationSession(user_id=user_a.id, title="Phase3 下载测试"))
     token = set_dispatch_session(session.id, session, "phase3-web-download")
-    fetch = AsyncMock(return_value=(500, {}, b""))
+    # b841bd17 起 web_download 改为分块流式下载到 spool（_download_to_spool），
+    # mock 它返回 HTTP 500，验证请求真实发出且错误可回传。
+    import httpx as _httpx
+    class _Spool:
+        def close(self):
+            pass
+
+    fetch = AsyncMock(return_value=(500, _httpx.Headers({}), _Spool(), 0, ""))
     try:
-        with patch.object(web, "_download_bytes", new=fetch):
+        with patch.object(web, "_download_to_spool", new=fetch):
             result = await web._web_download(
                 db, user_a.id, {"url": "https://example.test/run.py"},
             )

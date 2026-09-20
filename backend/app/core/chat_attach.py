@@ -26,6 +26,34 @@ from app.services.storage import get_storage
 from agent.providers.mimo import MimoAdapter
 
 DRAFT_TTL = 48 * 3600   # 草稿（未发送）暂存 TTL，见 PRD-STORAGE-1 §4；草稿孤儿清理按这个值扫
+# 聊天暂存是短期文件区，不再限制单个附件大小；只限制同一用户的总暂存容量。
+# 大文件通过 StorageBackend.put_stream 分块写入，避免一次性占满进程内存。
+STAGING_TOTAL_BYTES = 1024 * 1024 * 1024
+
+
+class ChatAttachmentCapacityError(ValueError):
+    """聊天暂存总容量不足。"""
+
+
+async def staging_capacity_remaining(user_id) -> int:
+    from sqlalchemy import func, select
+    from app.models import ChatAttachment
+    import app.db.session as db_session
+
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        used = (await db.execute(
+            select(func.coalesce(func.sum(ChatAttachment.size), 0)).where(
+                ChatAttachment.user_id == user_id,
+                ChatAttachment.state.in_(("draft", "attached")),
+            )
+        )).scalar_one()
+    return max(STAGING_TOTAL_BYTES - int(used or 0), 0)
+
+
+async def _ensure_staging_capacity(user_id, incoming_size: int) -> None:
+    if int(incoming_size) > await staging_capacity_remaining(user_id):
+        raise ChatAttachmentCapacityError("聊天附件暂存空间已满，请先清理旧附件后再试")
 
 
 class AttachmentClaimError(Exception):
@@ -420,6 +448,7 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
     `ttl` 参数保留只为兼容旧调用签名（`stage_voice` 等仍会传），**不再控制任何行为**——
     草稿的存活期统一由 `DRAFT_TTL` 常量 + 草稿 GC 任务管理，不区分 `.chat_staging`/`.voice`；
     这里不再写 Redis 元数据（DB 是所有权真相来源，见模块顶部说明）。"""
+    await _ensure_staging_capacity(user_id, len(data))
     attach_id = uuid.uuid4().hex[:16]
     ext_l = (ext or "").lower()[:10]
     storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
@@ -458,6 +487,7 @@ async def stage_stream(user_id, name: str, ext: str, mime: str | None, *,
     stream 须可 seek(0)，由调用方负责 close。图片仍会把内容读进内存探真实
     尺寸（图片实际都很小）；语音转码等需要整字节的路由继续走 stage(data)。
     """
+    await _ensure_staging_capacity(user_id, size)
     attach_id = uuid.uuid4().hex[:16]
     ext_l = (ext or "").lower()[:10]
     storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"

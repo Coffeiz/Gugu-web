@@ -3,7 +3,7 @@
 正常路径由 provider 的实际响应决定是否发生溢出；溢出后压缩旧 history 并重试当前
 round。run 收尾时，provider 实际输入达到模型预算的 90% 才异步更新 baseline，避免
 用本地估算提前改变上下文。压缩只保留最近一段完整 history，其余旧 history
-按当前模型输入/输出预算滚动合并为摘要；system 前缀和当前 run 后缀始终保留。
+按当前模型输入/输出预算滚动合并为摘要；固定前缀、当前 run 的用户原文和最近完整执行轮保留。
 """
 from __future__ import annotations
 
@@ -65,6 +65,9 @@ class CompactionResult:
     return_reason: str
     before_tokens: int | None
     after_tokens: int | None
+    protected_start_index: int | None = None
+    anchor_index: int | None = None
+    protected_source_start_index: int | None = None
 
 
 def _result(messages: list, changed: bool, reason: str,
@@ -115,6 +118,7 @@ async def compact_context(
     session_id: int | None = None,
     fixed_prefix_size: int = 0,
     protected_from: int | None = None,
+    protected_anchor_index: int | None = None,
     *,
     model_cfg,
     system_text: str | None = None,
@@ -141,14 +145,20 @@ async def compact_context(
     # snapshot/system-info 是固定前缀，不属于可压缩的 message history。
     # 普通 list 调用保持 fixed_prefix_size=0，兼容旧历史和单测。
     fixed_prefix_size = max(0, min(int(fixed_prefix_size), len(messages)))
+    if protected_from is not None and protected_anchor_index is None:
+        raise ValueError("运行中滚动压缩必须同时提供当前用户消息锚点")
     fixed_prefix = list(messages[:fixed_prefix_size])
-    message_history = _drop_orphan_tool_results(list(messages[fixed_prefix_size:]))
+    message_history, source_indexes = _drop_orphan_tool_results_with_indexes(
+        list(messages[fixed_prefix_size:])
+    )
+    source_indexes = [index + fixed_prefix_size for index in source_indexes]
 
     # 分离消息类型
     summary_msg = None
     normal_msgs = []
+    normal_source_indexes = []
 
-    for msg in message_history:
+    for index, msg in enumerate(message_history):
         content = msg.get("content", "")
         is_summary = msg.get("role") == "summary" or (
             isinstance(content, str) and SUMMARY_OPEN in content
@@ -157,13 +167,34 @@ async def compact_context(
             summary_msg = msg
         else:
             normal_msgs.append(msg)
+            normal_source_indexes.append(source_indexes[index])
 
-    # 当前 run 模式下，protected_from 之后的消息是本轮用户输入、工具调用和结果，
-    # 必须整体保留；摘要只处理它之前的历史。普通调用保持旧的“从最新往回保留”语义。
+    # 当前 run 模式下，用户消息锚点与最近执行轮窗口分别保留；更早内容滚动进入摘要。
     protected_messages: list[dict] | None = None
+    protected_start = None
     if protected_from is not None:
-        protected_relative = max(0, int(protected_from) - fixed_prefix_size)
+        protected_relative = next(
+            (index for index, source_index in enumerate(normal_source_indexes)
+             if source_index >= int(protected_from)),
+            len(normal_msgs),
+        )
+        protected_start = protected_relative
         protected_messages = list(normal_msgs[protected_relative:])
+
+    anchor_relative = None
+    anchor_message = None
+    if protected_anchor_index is not None:
+        anchor_relative = next(
+            (index for index, source_index in enumerate(normal_source_indexes)
+             if source_index == int(protected_anchor_index)),
+            None,
+        )
+        if anchor_relative is not None:
+            anchor_message = normal_msgs[anchor_relative]
+        else:
+            return _result(messages, False, "protected_anchor_missing", None)
+        if protected_start is not None and anchor_relative is not None and anchor_relative >= protected_start:
+            raise ValueError("当前用户消息锚点必须位于保留轮次窗口之前")
 
     # 计算保留的消息数量（从最新往回保留）
     # 系统上下文注入不计入保留预算（它总是第一个消息）
@@ -176,30 +207,19 @@ async def compact_context(
     # 当前 run 的受保护后缀不参与历史保留窗口计算，直接原样带回；
     # 其之前最近约 20k 字符的完整 history 也保留。这里使用字符上限，
     # 不把本地 token 估算混入上下文决策。
-    if protected_messages is not None:
-        protected_start = max(0, len(normal_msgs) - len(protected_messages))
-        prior_units = _atomic_message_units(normal_msgs[:protected_start],
-                                            system_injection_idx if system_injection_idx < protected_start else -1)
-        kept_prior_units = []
-        prior_chars = 0
-        for unit in reversed(prior_units):
-            unit_chars = sum(len(message_text(normal_msgs[i])) for i in unit)
-            if prior_chars + unit_chars > recent_char_limit:
-                if not kept_prior_units:
-                    continue
-                break
-            kept_prior_units.append(unit)
-            prior_chars += unit_chars
-        kept_prior_units.reverse()
-        kept_prior_indices = [i for unit in kept_prior_units for i in unit]
-        kept_indices = set(kept_prior_indices) | set(range(protected_start, len(normal_msgs)))
-        kept_msgs = [normal_msgs[i] for i in kept_prior_indices] + protected_messages
-        compressible_msgs = [
-            msg for i, msg in enumerate(normal_msgs)
-            if i != system_injection_idx and i not in kept_indices
-        ]
+    if protected_anchor_index is not None:
+        # 当前 run 的用户原文单独保留，旧历史与较早执行轮均滚动进入摘要；
+        # 最近执行轮由 protected_from 界定，不再把整个 run 当成不可压缩尾缀。
+        kept_msgs = []
         kept_units = []
-        used_chars = sum(len(message_text(msg)) for msg in kept_msgs)
+        used_chars = 0
+        protected_indexes = set(range(protected_start or 0, len(normal_msgs)))
+        compressible_msgs = [
+            message for index, message in enumerate(normal_msgs)
+            if index != system_injection_idx
+            and index != anchor_relative
+            and index not in protected_indexes
+        ]
     else:
         kept_msgs = []
         compressible_msgs = []
@@ -209,7 +229,7 @@ async def compact_context(
     # 从最新往回保留消息。工具调用和工具结果是 provider 语义上的一个原子单元，
     # 不能只按单条 message 切预算，否则会把 tool_result 留下而把对应 tool_use
     # 压进摘要，下一轮就会产生非法的孤儿工具消息。
-    if protected_messages is None:
+    if protected_anchor_index is None:
         kept_units = []
         used_chars = 0
         units = _atomic_message_units(normal_msgs, system_injection_idx)
@@ -270,6 +290,7 @@ async def compact_context(
         model_cfg=model_cfg,
         append_system=append_system,
         tools=branch_tools,
+        preserve_latest_user_separately=protected_anchor_index is not None,
     )
 
     if not compact_summary.strip():
@@ -316,8 +337,16 @@ async def compact_context(
     }
     new_messages.append(compact_summary_msg)
 
+    anchor_result_index = None
+    if anchor_message is not None:
+        anchor_result_index = len(new_messages)
+        new_messages.append(anchor_message)
+
     # 保留最近约 20k 字符的完整消息单元
     new_messages.extend(kept_msgs)
+    protected_start_result = len(new_messages)
+    if protected_messages is not None:
+        new_messages.extend(protected_messages)
 
     logger.info("[compaction] session=%s 压缩完成：%d 条 → %d 条，保留 %d 字符",
                 session_id, len(normal_msgs), len(new_messages), used_chars)
@@ -330,7 +359,21 @@ async def compact_context(
         return result
 
     # provider usage 不会在这里重新调用；下一次请求由 provider 作为唯一裁判。
-    result = _result(new_messages, True, "compacted", None, None)
+    result = CompactionResult(
+        messages=new_messages,
+        changed=True,
+        return_reason="compacted",
+        before_tokens=None,
+        after_tokens=None,
+        protected_start_index=(protected_start_result if protected_anchor_index is not None else None),
+        anchor_index=anchor_result_index,
+        protected_source_start_index=(
+            normal_source_indexes[protected_start]
+            if protected_anchor_index is not None and protected_start is not None
+            and protected_start < len(normal_source_indexes)
+            else None
+        ),
+    )
     return result
 
 
@@ -366,9 +409,16 @@ def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
     这是压缩前的兼容清理，不负责把 provider wire format 重新渲染；它只处理
     已知非法的孤儿结果，避免结果被最新窗口保留并在下一次请求中触发 400。
     """
+    cleaned, _source_indexes = _drop_orphan_tool_results_with_indexes(messages)
+    return cleaned
+
+
+def _drop_orphan_tool_results_with_indexes(messages: list[dict]) -> tuple[list[dict], list[int]]:
+    """清理孤儿工具结果，同时保留每条消息在输入列表中的原始位置。"""
     cleaned: list[dict] = []
+    source_indexes: list[int] = []
     pending_call_ids: frozenset[str] = frozenset()
-    for message in messages:
+    for index, message in enumerate(messages):
         current = dict(message)
         result_ids = tool_result_ids(current)
         call_ids = tool_call_ids(current)
@@ -404,13 +454,14 @@ def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
                     )
                 ]
         cleaned.append(current)
+        source_indexes.append(index)
         if result_ids:
             # 一个 assistant 可以并行发起多个调用，连续 result 必须共享同一
             # pending 集合；不能在第一个 result 后用空的 call_ids 覆盖它。
             pending_call_ids = pending_call_ids - matched
         else:
             pending_call_ids = call_ids
-    return cleaned
+    return cleaned, source_indexes
 
 
 def _is_system_injection(content: str) -> bool:
@@ -532,26 +583,11 @@ def _branch_prefix_history(
     if last_index < 0:   # 调用方传入了非同一批对象：退回旧行为，不猜切片
         return list(compressible_msgs)
     prefix = list(messages[:fixed_prefix_size]) + list(message_history[:last_index + 1])
-    try:
-        from agent.providers import adapter_for
+    # 渲染口径（adapter.render_history + anthropic 消息角色投影）已提炼为共享
+    # helper，反思 append_reuse 分支共用同一出口（PRD-LLM-27 §6.2）。
+    from .prefix_history import render_branch_prefix
 
-        adapter = adapter_for(model_cfg)
-        rendered = list(adapter.render_history(prefix))
-        # anthropic 路由的主 run 在 render_history 之后还会把「消息级 system」投影成
-        # user（见 loop_drivers.AnthropicDriver.run_round）。少了这一步，快照那类
-        # system 消息的角色就和主 run 发过的不一致，前缀从那条消息起整段失配——
-        # 实测同一前缀只换角色：cache_read 3840 → 384。
-        from agent.llm.llm_select import use_anthropic_for
-
-        if use_anthropic_for(model_cfg):
-            from agent.context.provider_history import render_anthropic_message_roles
-
-            rendered = list(render_anthropic_message_roles(rendered, adapter))
-        return rendered
-    except Exception as exc:
-        from app.core.redaction import diag_log
-        diag_log("agent.context.compaction.branch_prefix", exc)
-        return prefix
+    return render_branch_prefix(prefix, model_cfg)
 
 
 def _load_compress_prompt() -> str:
@@ -569,6 +605,7 @@ async def _generate_append_summary(
     model_cfg,
     append_system: str = "",
     tools: list | None = None,
+    preserve_latest_user_separately: bool = False,
 ) -> str:
     """追加式压缩：复用主会话 canonical 消息序列，压缩指令只出现在末尾追加的
     user 消息里，保证分支请求与主对话最后一帧共享前缀（含 run 的 system 与工具
@@ -582,6 +619,11 @@ async def _generate_append_summary(
 
     limits = resolve_compaction_limits(model_cfg=model_cfg)
     instruction = _APPEND_TASK_PREFACE + _load_compress_prompt()
+    if preserve_latest_user_separately:
+        instruction += (
+            "\n\n当前 run 的最新用户消息会在摘要后原文保留；摘要不要重复复述该条请求，"
+            "只整理它之前的历史和执行过程。"
+        )
 
     from app.core.config import get_settings
     from agent.context.branch import ContextBranch

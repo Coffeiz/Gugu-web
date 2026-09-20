@@ -5399,6 +5399,8 @@ export interface components {
         FileUpdate: {
             /** Displayname */
             displayName?: string | null;
+            /** Ext */
+            ext?: string | null;
             /** Stagename */
             stageName?: string | null;
             /** Folderid */

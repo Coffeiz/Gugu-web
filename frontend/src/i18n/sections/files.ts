@@ -5,6 +5,7 @@ export const filesUi = {
 } as const
 
 Object.assign(filesUi['zh-CN'], {
+  fileNameWithoutExtension: '文件名（不含后缀）', fileExtension: '文件后缀', extensionInvalid: '请输入 1 到 10 位字母、数字、下划线或连字符；不能使用 FILE。',
   compress: '压缩', extract: '解压', archiveCompressTitle: '压缩所选内容', archiveExtractTitle: '解压文件',
   archiveCompressHint: '所选文件与文件夹将在当前目录打包为 ZIP；源内容上限为 512 MB。',
   archiveExtractHint: '压缩包保留在当前目录，并在旁边新建文件夹解压；可修改文件夹名称。',
@@ -14,8 +15,10 @@ Object.assign(filesUi['zh-CN'], {
   archiveSameParent: '请选择同一目录中的文件和文件夹。', archiveInvalidName: '请输入压缩包名称。', archiveInvalidFolderName: '请输入解压文件夹名称。',
   archiveCreated: '已创建 {name}', archiveExtracting: '解压中…',
   archiveFailed: '操作失败，请稍后重试。',
+  downloadFailed: '下载失败，请稍后重试。',
 })
 Object.assign(filesUi['ja-JP'], {
+  fileNameWithoutExtension: 'ファイル名（拡張子なし）', fileExtension: 'ファイル拡張子', extensionInvalid: '拡張子は英数字、アンダースコア、ハイフンの 1～10 文字で入力してください。FILE は使用できません。',
   compress: '圧縮', extract: '解凍', archiveCompressTitle: '選択項目を圧縮', archiveExtractTitle: 'ファイルを解凍',
   archiveCompressHint: '選択したファイルとフォルダーを現在のフォルダーで ZIP にまとめます。元データの上限は 512 MB です。',
   archiveExtractHint: 'アーカイブを現在のフォルダーに残し、隣に新しいフォルダーを作成して展開します。フォルダー名は変更できます。',
@@ -25,8 +28,10 @@ Object.assign(filesUi['ja-JP'], {
   archiveSameParent: '同じフォルダー内のファイルとフォルダーを選択してください。', archiveInvalidName: 'アーカイブ名を入力してください。', archiveInvalidFolderName: '展開先フォルダー名を入力してください。',
   archiveCreated: '{name} を作成しました', archiveExtracting: '解凍中…',
   archiveFailed: '処理に失敗しました。しばらくしてから再試行してください。',
+  downloadFailed: 'ダウンロードに失敗しました。しばらくしてから再試行してください。',
 })
 Object.assign(filesUi['en-US'], {
+  fileNameWithoutExtension: 'File name without extension', fileExtension: 'File extension', extensionInvalid: 'Use 1–10 letters, numbers, underscores, or hyphens. FILE is reserved.',
   compress: 'Compress', extract: 'Extract', archiveCompressTitle: 'Compress selected items', archiveExtractTitle: 'Extract archive',
   archiveCompressHint: 'Selected files and folders will be packed into a ZIP in the current folder. Source content is limited to 512 MB.',
   archiveExtractHint: 'The archive stays here; its contents are extracted into a new folder beside it. You can edit the folder name.',
@@ -36,6 +41,7 @@ Object.assign(filesUi['en-US'], {
   archiveSameParent: 'Select files and folders from the same directory.', archiveInvalidName: 'Enter an archive name.', archiveInvalidFolderName: 'Enter an extraction folder name.',
   archiveCreated: 'Created {name}', archiveExtracting: 'Extracting…',
   archiveFailed: 'The operation failed. Please try again later.',
+  downloadFailed: 'Download failed. Please try again later.',
 })
 export const filesViewUi = {
   'zh-CN': { name: '名称', type: '类型', deletedAt: '删除时间', remaining: '剩余', size: '大小', sort: '排列', collapse: '收起内容', view: '查看内容', folder: '文件夹', days: '{count} 天', fileCount: '{count} 个文件', restoreFolder: '恢复文件夹及其内容', permanentDeleteFolder: '永久删除文件夹及其内容', emptyFolder: '空文件夹', restore: '恢复', permanentDelete: '永久删除', emptyTrash: '回收站为空', emptyTrashTitle: '清空回收站', emptyTrashMessage: '所有文件将被永久删除，无法恢复。', deleteFileTitle: '移到回收站', deleteFileMessage: '确认将“{name}”移到回收站？', deleteFolderTitle: '移到回收站', deleteFolderMessage: '确认将文件夹“{name}”及其内容移到回收站？', deleteSelectedTitle: '移到回收站', deleteSelectedMessage: '确认将选中的 {count} 项移到回收站？', permanentDeleteFileTitle: '永久删除文件', permanentDeleteFileMessage: '确认永久删除“{name}”？此操作不可恢复。', permanentDeleteFolderTitle: '永久删除文件夹', permanentDeleteFolderMessage: '确认永久删除文件夹“{name}”及其内容？此操作不可恢复。', permanentDeleteSelectedTitle: '永久删除选中项', permanentDeleteSelectedMessage: '确认永久删除选中的 {count} 项？此操作不可恢复。', confirm: '确认', rename: '重命名', downloadZip: '下载为 ZIP', moveToTrash: '移到回收站', download: '下载', items: '{count} 项', storageUsed: '已用 {used}', storageUsedWithLimit: '已用 {used} / {limit}' },

@@ -35,7 +35,6 @@ _log = logging.getLogger("agent.core")
 # LLM25-003）；历史清洗、工具协议解析等 helper 也分别迁回各自的归属模块。
 # 这里保留兼容别名：旧测试 `monkeypatch.setattr(core, "_stream_round", ...)` 仍
 # 通过本模块属性查找生效（_run_loop 调用时把该名字注入 driver.run_round）。
-from agent.loop.provider import RETRY_BACKOFF as _RETRY_BACKOFF
 from agent.loop.provider import provider_context_usage as _provider_context_usage
 from agent.loop.provider import stream_round as _stream_round
 from agent.context.provider_history import sanitize_anthropic_history as _sanitize_anthropic_history
@@ -162,6 +161,33 @@ _TOOL_BUDGET_STOP_PROMPT = (
     "用户选择不继续执行超出工具额度的请求。请不要再调用工具，"
     "直接根据已经获得的结果，清楚说明已完成内容和未执行内容。"
 )
+
+
+_REPEAT_ROUND_NUDGE = (
+    "你已经连续多轮重复完全相同的工具调用，结果不会变化。请立即停止调用工具，"
+    "直接根据已经获得的结果，给用户一段最终文字回复。"
+)
+_REPEAT_ROUND_LIMIT = 5   # 连续相同轮数达到该值即强制收束（3 轮先提醒，5 轮硬停）
+
+
+def round_tool_signature(tool_calls) -> str | None:
+    """一轮内全部工具调用（含被跳过/占位的）的形态签名；空轮返回 None。
+
+    同轮内的重复调用经 sorted 去重后只影响一处——单轮多相同调用是合法
+    形态（2026-09-18 定稿）；跨轮形态完全一致才累积。
+    """
+    if not tool_calls:
+        return None
+    try:
+        entries = sorted(
+            (str(getattr(tc, "name", "") or ""),
+             json.dumps(getattr(tc, "input", None) or {}, sort_keys=True,
+                        ensure_ascii=False, default=str))
+            for tc in tool_calls
+        )
+        return json.dumps(entries, ensure_ascii=False)
+    except Exception:
+        return None
 
 
 def _goal_mode_enabled(session: Any) -> bool:

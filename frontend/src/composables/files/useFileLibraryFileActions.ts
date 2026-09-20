@@ -1,8 +1,10 @@
 import type { Ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { FileMeta } from '@/stores/filesCache'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { showAppError } from '@/composables/core/useAppToast'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
 
 interface FileActionsOptions {
@@ -16,12 +18,14 @@ interface FileActionsOptions {
 /** 文件库单文件动作适配；项目文件区保留自己的项目缓存和刷新策略。 */
 export function useFileLibraryFileActions(options: FileActionsOptions) {
   const { cacheStore, fileActions, selectedIds, loadContents, fetchStorage } = options
+  const { t } = useI18n()
 
   async function downloadFile(file: FileMeta) {
     try {
       await fileActions.downloadFile(file)
     } catch (error) {
       console.error('[Files] 下载失败:', (error as Error).message)
+      showAppError(t('filesUi.downloadFailed'))
     }
   }
 

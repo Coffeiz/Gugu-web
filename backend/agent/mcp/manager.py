@@ -521,6 +521,23 @@ class McpToolManager:
                 closed += 1
         return closed
 
+    def meta_for_prefixed_tool(self, user_id, prefixed_name: str) -> McpToolMeta | None:
+        """按本轮运行时缓存反查动态 MCP 工具元数据。
+
+        确认桥（create_tool_confirmation）需要它识别「不在全局 registry 的动态
+        工具」的确认结果——registry 查不到不代表工具不存在。只查运行时缓存：
+        能产出 needs_confirm 结果的调用必然刚在本进程装载过。
+        """
+        user_key = self._user_key(user_id)
+        for runtime in self._runtimes.values():
+            config = runtime.config
+            if config is None or self._user_key(config.user_id) != user_key:
+                continue
+            meta = runtime.metas.get(prefixed_name)
+            if meta is not None:
+                return meta
+        return None
+
     def _make_handler(self, server_id: UUID, meta: McpToolMeta):
         """Tool.handler（async (db, user_id, args)）：走同一条 dispatch 契约。"""
         async def _handler(_db, user_id, args):

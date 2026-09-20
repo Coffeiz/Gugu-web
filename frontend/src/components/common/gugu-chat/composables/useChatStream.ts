@@ -86,7 +86,8 @@ export function useChatStream(options: {
   function stopStreaming() {
     // 停止=取消当前 run；排队中的消息保留，当前流收尾后由 finally 里的
     // drainPendingQueue 立即接续第一条（用户预期：停的是「正在说的这句」，
-    // 排队的照样发，而不是一起被丢掉）。
+    // 排队的照样发，而不是一起被丢掉）。终止收口前后端会短暂仍报 active，
+    // 排水的 claim 重试负责等它结束。
     const id = activeSessionId ?? sessionId.value
     abortCtrl.value?.abort()
     if (id != null) agentApi.cancelSession(String(id)).catch(() => {})
@@ -222,6 +223,10 @@ export function useChatStream(options: {
     drainingView = { sessionId: drainSessionId, viewGeneration: drainViewGeneration }
     const drainViewIsCurrent = () =>
       drainViewGeneration === options.getViewGeneration() && sessionId.value === drainSessionId
+    // 终止 run 后立即排水，会撞上后端 cancel 尚未收口的窗口（claim 返回
+    // session_active）。按固定节奏重试同一条，重试期不把整条队列卡死。
+    let sessionActiveRetries = 0
+    let claimReason = ''
     try {
       while (pendingQueue.value.length) {
         if (!drainViewIsCurrent()) return
@@ -238,6 +243,7 @@ export function useChatStream(options: {
             claim: async item => {
               if (item.sessionId == null) return null
               const response = await agentApi.claimPendingQueueItem(item.queueId, item.sessionId, item.key)
+              claimReason = response.reason || ''
               return response.claim_token
             },
             release: async (item, claimToken) => {
@@ -267,6 +273,12 @@ export function useChatStream(options: {
         if (!dispatched) {
           if (!drainViewIsCurrent()) return
           if (!pendingQueue.value.some(item => queueIdentity(item) === identity)) continue
+          // claim 因会话仍在生成（含终止收口窗口）被拒：等待后重试同一条。
+          if (claimReason === 'session_active' && ++sessionActiveRetries <= 8) {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+            if (!drainViewIsCurrent() || streaming.value) return
+            continue
+          }
           return
         }
         // 队列项保留到后端与用户消息同一事务确认；请求失败或刷新不会提前丢失。
@@ -327,7 +339,7 @@ export function useChatStream(options: {
   ) {
     const streamStartedAt = Date.now()
     const decoder = new TextDecoder()
-    let buf = '', aiIdx = -1, aborted = false, interactionPaused = false
+    let buf = '', aiIdx = -1, aiMessageId: number | null = null, aborted = false, interactionPaused = false
     // token 到达速度由 Provider 决定；滚动只是展示副作用，不能让每个 token 等待一次
     // nextTick。按帧合并滚动请求，避免把快速到达的 token 人为变成固定打字速度。
     let streamScrollRaf: number | null = null
@@ -350,12 +362,20 @@ export function useChatStream(options: {
     const usedTools = new Set<string>()
     let currentRoundId = ''
     let currentRunId = ''
-    const toolMessageIndexes = new Map<string, number>()
+    // 工具消息会随着多轮正文持续排序/插入，不能缓存数组下标；只保存稳定的消息 id，
+    // 每次事件到达时重新定位，避免 tool_done 更新到错误的卡片或找不到卡片。
+    const toolMessageIds = new Map<string, number>()
     let timelineOrder = messages.value.reduce(
       (max, message) => Math.max(max, message._timelineOrder ?? 0),
       0,
     )
     const nextTimelineOrder = () => ++timelineOrder
+    const syncAiIndex = () => {
+      aiIdx = aiMessageId == null
+        ? -1
+        : messages.value.findIndex(item => item.id === aiMessageId)
+      return aiIdx
+    }
     const sortLiveTimeline = () => {
       messages.value.sort((a, b) => {
         if (a._timelineOrder == null || b._timelineOrder == null) return 0
@@ -365,10 +385,12 @@ export function useChatStream(options: {
     // 每个 round 的正文必须是独立气泡。工具调用前的草稿属于上一轮，
     // 下一轮 token 不能继续写入同一个 aiIdx，否则 UI 会把多轮正文拼成一条消息。
     const finishRoundMessage = () => {
+      syncAiIndex()
       if (aiIdx === -1 || !messages.value[aiIdx]) return
       const message = messages.value[aiIdx]
       message.streaming = false
       if (message.text.trim()) message.html = renderMd(message.text)
+      aiMessageId = null
       aiIdx = -1
     }
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
@@ -420,7 +442,7 @@ export function useChatStream(options: {
           } else if (evt.type === 'round_start') {
             finishRoundMessage()
             currentRunId = String(evt.run_id || currentRunId)
-            currentRoundId = String(evt.round_id || `round-${toolMessageIndexes.size + 1}`)
+            currentRoundId = String(evt.round_id || `round-${toolMessageIds.size + 1}`)
           } else if (evt.type === '_new_round') {
             // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
             finishRoundMessage()
@@ -428,10 +450,13 @@ export function useChatStream(options: {
             if (evt.round_id) currentRoundId = String(evt.round_id)
           } else if (evt.type === 'tool_call') {
             if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)
-            const toolCallId = String(evt.tool_call_id || `${evt.round_id || currentRoundId || 'round'}-tool-${toolMessageIndexes.size + 1}`)
+            const toolCallId = String(evt.tool_call_id || `${evt.round_id || currentRoundId || 'round'}-tool-${toolMessageIds.size + 1}`)
             if (live() && !evt.name?.startsWith('_')) {
-              const existingIndex = toolMessageIndexes.get(toolCallId)
-              if (existingIndex !== undefined && messages.value[existingIndex]) {
+              const existingId = toolMessageIds.get(toolCallId)
+              const existingIndex = existingId == null
+                ? messages.value.findIndex(item => item.role === 'tool' && item.toolCallId === toolCallId)
+                : messages.value.findIndex(item => item.id === existingId)
+              if (existingIndex >= 0 && messages.value[existingIndex]) {
                 const existing = messages.value[existingIndex]
                 existing.runId = evt.run_id || existing.runId
                 existing.roundId = evt.round_id || existing.roundId
@@ -450,7 +475,7 @@ export function useChatStream(options: {
                   _toolStartedAt: Date.now(),
                 })
                 sortLiveTimeline()
-                toolMessageIndexes.set(toolCallId, messages.value.findIndex(item => item.id === messageId))
+                toolMessageIds.set(toolCallId, messageId)
                 await options.scrollBottom()
               }
             }
@@ -466,12 +491,40 @@ export function useChatStream(options: {
               else if (MCP_TOOLS.has(evt.name)) notifyResourceChanged('mcp')
             }
             const toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : ''
-            const toolIndex = toolCallId ? toolMessageIndexes.get(toolCallId) : undefined
-            if (toolIndex !== undefined && messages.value[toolIndex]) {
+            const mappedMessageId = toolCallId ? toolMessageIds.get(toolCallId) : undefined
+            let toolIndex = mappedMessageId == null
+              ? (toolCallId
+                ? messages.value.findIndex(item => item.role === 'tool' && item.toolCallId === toolCallId)
+                : -1)
+              : messages.value.findIndex(item => item.id === mappedMessageId)
+            // 兼容极少数旧/代理事件缺少 tool_call_id 的情况：按当前 round 和工具名
+            // 绑定最近一张仍在运行的卡片，避免完成事件丢失导致永久“进行中”。
+            if (toolIndex < 0 && evt.name) {
+              toolIndex = messages.value.findLastIndex(item =>
+                item.role === 'tool'
+                && item.toolStatus === 'running'
+                && (!evt.round_id || item.roundId === evt.round_id)
+                && (!item.toolName || item.toolName === evt.name),
+              )
+            }
+            if (toolIndex >= 0 && messages.value[toolIndex]) {
               messages.value[toolIndex].toolStatus = evt.status || 'success'
               if (evt.result !== undefined) messages.value[toolIndex].toolResult = evt.result
               const startedAt = (messages.value[toolIndex] as ChatMessage & { _toolStartedAt?: number })._toolStartedAt
               if (startedAt) messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
+            } else if (live() && evt.name) {
+              // tool_done 先于 tool_call 到达时也要落一张终态卡，不能等刷新才补齐。
+              const messageId = mkid()
+              messages.value.push({
+                id: messageId, role: 'tool', text: '', time: now(),
+                _timelineOrder: nextTimelineOrder(), runId: evt.run_id,
+                roundId: evt.round_id || currentRoundId, toolCallId: toolCallId || undefined,
+                toolName: evt.name, toolLabel: evt.label, toolStatus: evt.status || 'success',
+                toolResult: evt.result,
+              })
+              if (toolCallId) toolMessageIds.set(toolCallId, messageId)
+              sortLiveTimeline()
+              await options.scrollBottom()
             }
             // 任一工具结束都回到思考态；下一轮工具调用会继续替换文字，不能让气泡闪退。
             if (live()) options.setStatus(options.thinkingItem())
@@ -538,21 +591,40 @@ export function useChatStream(options: {
                 options.setStatus(options.thinkingItem())
               }
             }
+          } else if (evt.type === 'retry') {
+            // 模型瞬时空峰自动重试：状态行就地显示进度，拿到首个 token 即被 clearStatus 收起
+            if (live()) {
+              options.setStatus({
+                kind: 'text',
+                label: i18n.global.t('chatUi.retrying', {
+                  n: Number(evt.attempt) || 0,
+                  max: Number(evt.max_retries) || 0,
+                  seconds: Number(evt.next_retry_in) || 0,
+                }),
+              })
+              await options.scrollBottom()
+            }
           } else if (evt.type === 'notice') {
             if (live() && typeof evt.message === 'string' && evt.message.trim()) {
               options.setStatus({ kind: 'text', label: evt.message })
             }
           } else if (evt.type === 'token') {
             if (live()) {
-              if (String(evt.content || '').trim()) receivedAssistantContent = true
+              const tokenContent = String(evt.content || '')
+              if (tokenContent.trim()) receivedAssistantContent = true
+              // Provider 偶尔会先发空白 token。没有正文时不要先创建只有时间的助手行；
+              // 等第一个实际字符到达后再创建，避免最终收尾和工具排序竞态留下空气泡。
+              if (!tokenContent && aiMessageId === null) continue
+              if (!tokenContent.trim() && aiMessageId === null) continue
               // 切回会话时，历史接口可能已经拿到完整助手消息，而 active 标记
               // 尚未来得及清掉。resume 的首个 token 是同一段 Redis snapshot，
               // 这时跳过它；真正后续新增 token 仍正常创建/追加流式气泡。
-              if (!replaySuppressed && replayText && String(evt.content || '').trim() === replayText) {
+              if (!replaySuppressed && replayText && tokenContent.trim() === replayText) {
                 replaySuppressed = true
                 continue
               }
               options.clearStatus()   // 真回复开始 → 打断状态队列、收起指示，让位给流式正文
+              syncAiIndex()
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
                 const messageId = mkid()
@@ -563,15 +635,17 @@ export function useChatStream(options: {
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
-                aiIdx = messages.value.findIndex(item => item.id === messageId)
+                aiMessageId = messageId
+                syncAiIndex()
               }
-              messages.value[aiIdx].text += evt.content
+              messages.value[aiIdx].text += tokenContent
               scheduleStreamScroll()
             }
           } else if (evt.type === 'file') {
             if (live()) {
               receivedAssistantContent = true
               options.clearStatus()
+              syncAiIndex()
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
                 const messageId = mkid()
@@ -582,7 +656,8 @@ export function useChatStream(options: {
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
-                aiIdx = messages.value.findIndex(item => item.id === messageId)
+                aiMessageId = messageId
+                syncAiIndex()
               }
               const m = messages.value[aiIdx]
               if (!m.files) m.files = []
@@ -593,6 +668,7 @@ export function useChatStream(options: {
             if (live()) {
               receivedAssistantContent = true
               options.clearStatus()
+              syncAiIndex()
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
                 const messageId = mkid()
@@ -603,22 +679,38 @@ export function useChatStream(options: {
                   _timelineOrder: nextTimelineOrder(),
                 })
                 sortLiveTimeline()
-                aiIdx = messages.value.findIndex(item => item.id === messageId)
+                aiMessageId = messageId
+                syncAiIndex()
               }
               const m = messages.value[aiIdx]
               if (evt.link_buttons) m.linkButtons = evt.link_buttons
               scheduleStreamScroll()
             }
           } else if (evt.type === 'done') {
-            if (live()) options.clearStatus()
+            if (live()) {
+              options.clearStatus()
+              // 取消收尾兜底：任何路径漏发个别 tool_done 终态时，把仍在转圈的
+              // 工具气泡统一翻成「已停止」，不允许出现永久「进行中」。
+              if (evt.cancelled) {
+                for (const item of messages.value) {
+                  if (item.role === 'tool' && (item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
+                    item.toolStatus = 'cancelled'
+                  }
+                }
+              }
+            }
           } else if (evt.type === 'error') {
             if (live()) {
               options.clearStatus()
               playGuguSfx('error')
               const messageKey = typeof evt.message_key === 'string' ? evt.message_key : ''
-              const errorText = messageKey ? i18n.global.t(messageKey) : (evt.message || evt.detail || i18n.global.t('chatUi.genericError'))
+              const params = (evt.message_params && typeof evt.message_params === 'object') ? evt.message_params : undefined
+              const errorText = messageKey
+                ? i18n.global.t(messageKey, params)
+                : (evt.message || evt.detail || i18n.global.t('chatUi.genericError'))
               messages.value.push({ id: mkid(), role: 'ai', text: errorText, time: now() })
-              aiIdx = messages.value.length - 1
+              aiMessageId = messages.value[messages.value.length - 1]?.id ?? null
+              syncAiIndex()
               await options.scrollBottom()
             }
           }
@@ -629,6 +721,7 @@ export function useChatStream(options: {
         window.cancelAnimationFrame(streamScrollRaf)
         streamScrollRaf = null
       }
+      syncAiIndex()
       if (!detached && viewGeneration === options.getViewGeneration() && aiIdx !== -1 && messages.value[aiIdx]) {
         const m = messages.value[aiIdx]
         // 新会话打开时默认问候已经展示在列表里。若模型仍原样复述，
@@ -638,6 +731,8 @@ export function useChatStream(options: {
         m.html = renderMd(m.text)
         if (duplicateGreeting || (!m.text?.trim() && !m.files?.length)) {
           messages.value.splice(aiIdx, 1)
+          aiMessageId = null
+          aiIdx = -1
         }
       }
     }

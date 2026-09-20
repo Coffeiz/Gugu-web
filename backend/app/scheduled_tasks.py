@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid as _uuid
 from datetime import datetime, timedelta
 
@@ -25,6 +26,56 @@ from app.core.tz import local_now, now_utc
 
 _synced: dict[str, str] = {}   # job_id -> 上次同步用的 updated_at，变了才重挂
 logger = logging.getLogger(__name__)
+
+_CRONTAB_WEEKDAY_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+_CRONTAB_WEEKDAY_NUMBERS = {name: day for day, name in enumerate(_CRONTAB_WEEKDAY_NAMES)}
+
+
+def _crontab_weekday_number(value: str) -> int:
+    if value.isdigit():
+        return int(value)
+    return _CRONTAB_WEEKDAY_NUMBERS[value]
+
+
+def _apscheduler_weekday_field(crontab_field: str) -> str:
+    """把标准 crontab 的周字段（0=周日）转换成 APScheduler（mon=0）的名称。"""
+    translated: list[str] = []
+    for item in crontab_field.lower().split(","):
+        base, separator, step_text = item.partition("/")
+        if base == "*":
+            if not separator:
+                translated.append("*")
+                continue
+            step = int(step_text)
+            values = range(0, 7, step)
+        else:
+            match = re.fullmatch(
+                r"(\d+|sun|mon|tue|wed|thu|fri|sat)(?:-(\d+|sun|mon|tue|wed|thu|fri|sat))?",
+                base,
+            )
+            if match is None:
+                # 其余复杂表达式交由 APScheduler 原样解析。
+                translated.append(item)
+                continue
+            start = _crontab_weekday_number(match.group(1))
+            end_text = match.group(2)
+            end = _crontab_weekday_number(end_text) if end_text is not None else (6 if separator else start)
+            step = int(step_text) if separator else 1
+            values = range(start, end + 1, step)
+        translated.extend(_CRONTAB_WEEKDAY_NAMES[value % 7] for value in values)
+    return ",".join(dict.fromkeys(translated))
+
+
+def _apscheduler_cron(cron: str):
+    """解析标准五段 crontab，同时保留其周字段编号语义。"""
+    from apscheduler.triggers.cron import CronTrigger
+
+    fields = cron.split()
+    if len(fields) != 5:
+        # 规范化阶段会给出面向用户的校验错误；这里避免静默接受非标准表达式。
+        return CronTrigger.from_crontab(cron, timezone=SCHEDULE_TZ)
+    fields[4] = _apscheduler_weekday_field(fields[4])
+    return CronTrigger.from_crontab(" ".join(fields), timezone=SCHEDULE_TZ)
 
 
 def _as_uuid(v):
@@ -55,7 +106,7 @@ def build_trigger(
             raise ValueError("interval 任务缺少 interval_minutes")
         anchor = start_at or created_at or local_now()
         return _interval_trigger(interval_minutes, anchor, end_at)
-    parsed = CronTrigger.from_crontab(cron, timezone=SCHEDULE_TZ)
+    parsed = _apscheduler_cron(cron)
     if start_at is None and end_at is None:
         return parsed
     # APScheduler 3.11 的 from_crontab 只接受 expr 和 timezone；时间窗口属于

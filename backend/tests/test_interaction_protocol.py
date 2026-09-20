@@ -570,6 +570,76 @@ async def test_unmarked_scheduled_task_tool_does_not_bridge_confirmation_payload
     assert interaction is None
 
 
+async def test_dynamic_mcp_tool_confirmation_is_bridged(db, user_a, monkeypatch):
+    """动态 MCP 工具不在全局 registry：确认结果也必须桥接成统一按钮卡。
+
+    回归 2026-09-18 search_image 确认循环——桥当时只认 registry 工具，MCP
+    工具的 needs_confirm 结果没有按钮，模型复读 JSON、用户回「继续」也无法
+    兑换确认码，确认门无限循环。
+    """
+    from types import SimpleNamespace
+
+    from agent.mcp.manager import mcp_manager
+    from agent.mcp.models import McpToolMeta
+    from uuid import uuid4
+
+    server_id = uuid4()
+    meta = McpToolMeta(
+        server_id=server_id, server_name="zhipu_image_search", tool_name="search_image",
+        prefixed_name="mcp_zhipu_image_search_search_image",
+        description_short="搜图", input_schema={"type": "object", "properties": {}},
+    )
+    def _fake_meta(uid, name):
+        return meta if name == meta.prefixed_name else None
+    monkeypatch.setattr(mcp_manager, "meta_for_prefixed_tool", _fake_meta)
+
+    session = ConversationSession(user_id=user_a.id, title="MCP 确认", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name="mcp_zhipu_image_search_search_image",
+        tool_call_id="call-mcp-search",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "调用 MCP 工具 [zhipu_image_search] search_image",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+    assert interaction is not None
+    assert interaction["kind"] == "confirm"
+    assert interaction["task_paused"] is True
+    assert "zhipu_image_search" in interaction["title"]
+    assert [item["id"] for item in interaction["options"]] == ["confirm", "cancel"]
+    # 确认码只进 context 供兑换，不进事件外发字段
+    assert "opaque-confirm-code" not in json.dumps(
+        {k: v for k, v in interaction.items() if k != "context"}, ensure_ascii=False)
+
+
+async def test_dynamic_mcp_unknown_tool_does_not_bridge(db, user_a):
+    """registry 与 MCP 运行时都查不到的工具：伪造 needs_confirm 不桥接。"""
+    session = ConversationSession(user_id=user_a.id, title="未知工具", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name="mcp_unknown_server_do_things",
+        tool_call_id="call-unknown",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "不应桥接",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+    assert interaction is None
+
+
 async def test_confirm_text_fallback_resolves_confirm_prompt(db, user_a):
     """确认按钮发送失败后的序号/文字回退，必须消费 confirm Prompt。"""
     from app.services.interactions import consume_choice_text

@@ -1,6 +1,8 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { isPreviewable, isTextExt } from './preview'
+import { isPreviewReloadRequested, usePreviewStore } from './preview'
 
 describe('文件预览类型判断', () => {
   it('允许未知扩展名通过文本 MIME 预览和编辑', () => {
@@ -35,5 +37,51 @@ describe('文件预览类型判断', () => {
     expect(isTextExt('PDF', null)).toBe(false)
     expect(isPreviewable('PDF', null)).toBe(true)  // PDF 走白名单，但不是文本
     expect(isTextExt('PDF', null)).toBe(false)
+  })
+})
+
+describe('预览窗口复用', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('window', { innerWidth: 1280, innerHeight: 800 })
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('强刷标记只在首次消费或计数变化时触发', () => {
+    expect(isPreviewReloadRequested(1)).toBe(true)
+    expect(isPreviewReloadRequested(1, 1)).toBe(false)
+    expect(isPreviewReloadRequested(2, 1)).toBe(true)
+    expect(isPreviewReloadRequested(0, 1)).toBe(true)
+  })
+
+  it('聊天文件再次打开时更新同 ID 窗口并递增强制重载标记', () => {
+    const store = usePreviewStore()
+    store.open({ id: 321, ext: 'TXT', displayName: '旧内容' })
+
+    store.open({ id: 321, ext: 'TXT', displayName: '最新内容' }, null, true)
+
+    expect(store.windows).toHaveLength(1)
+    expect(store.windows[0].file.displayName).toBe('最新内容')
+    expect(store.windows[0].reloadToken).toBe(1)
+
+    store.open({ id: 321, ext: 'TXT', displayName: '再打开' }, null, true)
+    expect(store.windows[0].reloadToken).toBe(2)
+
+    // 普通入口只更新元数据，token 不变；watch 不应继续把历史强刷当成新请求。
+    store.open({ id: 321, ext: 'TXT', displayName: '普通更新' })
+    expect(store.windows[0].file.displayName).toBe('普通更新')
+    expect(store.windows[0].reloadToken).toBe(2)
+  })
+
+  it('普通入口复用窗口时不强制绕过缓存', () => {
+    const store = usePreviewStore()
+    store.open({ id: 654, ext: 'TXT', displayName: '旧名称' })
+
+    store.open({ id: 654, ext: 'TXT', displayName: '新名称' })
+
+    expect(store.windows).toHaveLength(1)
+    expect(store.windows[0].file.displayName).toBe('新名称')
+    expect(store.windows[0].reloadToken).toBe(0)
   })
 })

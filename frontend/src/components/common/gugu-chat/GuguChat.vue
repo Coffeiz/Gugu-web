@@ -658,7 +658,7 @@ async function downloadFile(f: ChatFile) {
     // 聊天上传的暂存附件：走 /agent/attachment/{id}/download
     const token = getToken()
     const res = await fetch(`${API_BASE}/agent/attachment/${f.attach_id}/download`,
-      { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      { credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {} })
     if (isUnauthorizedResponse(res)) return
     if (!res.ok) { console.error('附件下载失败', res.status); return }
     const blob = await res.blob()
@@ -687,7 +687,7 @@ function openFileFromChat(f: ChatFile) {
       // 真实像素尺寸（有的话）：预览窗口直接按此定尺，不用再靠缩略图猜大小
       imgWidth: f.img_width ?? null,
       imgHeight: f.img_height ?? null,
-    })
+    }, null, true)
     return
   }
   downloadFile(f)
@@ -999,8 +999,9 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   border-radius: 14px; border-bottom-left-radius: 5px;
   box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight), var(--gugu-chat-file-shadow);
   /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
-     避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
-  transition: background 0.2s ease, border-color 0.2s ease,
+     避免两条规则的 transition 互相整体覆盖、丢掉其中一份。
+     box-shadow 必须在列：hover 换阴影（highlight/shadow 双 token），漏列=瞬跳。 */
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease,
     transform 0.15s ease, opacity 0.15s ease;
 }
 :deep(.msg-file.press-fx:hover) {

@@ -311,7 +311,7 @@ def test_initial_runtime_context_batch_is_persisted_without_rag_duplicates():
     )
 
 
-def test_replayed_knowledge_context_keeps_standalone_boundary_across_runs():
+def test_replayed_knowledge_context_keeps_message_boundary_across_runs():
     """回放的 RAG canonical event 必须保持独立消息边界。
 
     回归背景：_anthropic_history_blocks 曾把 knowledge-context 提前摊平成

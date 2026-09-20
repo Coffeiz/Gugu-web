@@ -22,7 +22,6 @@ from app.core.mind import (
 )
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
-from app.core.tz import now_utc
 from app.core import events
 from app.db.session import get_db
 from app.services.canvas.service import (
@@ -53,6 +52,7 @@ from app.services.mind import (
     create_note as create_note_service,
     delete_note as delete_note_service,
     get_live_note,
+    list_recent_reference_extras,
     list_notes as list_notes_service,
     update_note as update_note_service,
 )
@@ -74,7 +74,7 @@ router = APIRouter(prefix="/mind", tags=["mind"])
 # 对话（客户不作为便签引用对象）单独查——@ 一段对话锚定的是具体某条消息（"准确的聊天
 # 位置"），不是整个会话，run_global_search 那边按 session 去重的逻辑在这里不适用，
 # 得自己按消息为粒度查，见 ref_suggest 下半段。
-_REF_TYPES = ["project", "file", "folder", "event"]
+_REF_TYPES = ["project", "file", "folder", "event", "skill", "mcp", "scheduled_task"]
 
 
 def _to_resp(n: MindNode) -> MindNodeResponse:
@@ -272,6 +272,15 @@ async def ref_suggest(
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
         recent.extend(MindRefSuggestItem(type="folder", id=x.id, label=x.name) for x in folders)
         recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
+        skills, mcp_servers, tasks = await list_recent_reference_extras(
+            db, current_user.id, limit=limit,
+        )
+        recent.extend(MindRefSuggestItem(type="skill", id=x.id, label=x.name,
+                                         subtitle=f"/{x.slug}") for x in skills)
+        recent.extend(MindRefSuggestItem(type="mcp", id=str(x.id), label=x.name,
+                                         subtitle=x.transport) for x in mcp_servers)
+        recent.extend(MindRefSuggestItem(type="scheduled_task", id=x.id, label=x.name,
+                                         subtitle=x.cron) for x in tasks)
         return recent[:limit * len(_REF_TYPES)]
     result = await run_global_search(db, current_user.id, q, per_type=limit, types=_REF_TYPES)
     items: list[MindRefSuggestItem] = []

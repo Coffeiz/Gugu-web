@@ -53,7 +53,13 @@ async def test_create_event_shapes_and_inline_reminders(db, user_a):
 
 # ── _list_events：活动 + 提醒一次聚合 ──────────────────────────────────────
 
-async def test_list_events_groups_reminders_and_omits_empty(db, user_a):
+async def test_list_events_groups_reminders_and_omits_empty(db, user_a, monkeypatch):
+    from app.services import calendar as calendar_service
+
+    monkeypatch.setattr(
+        calendar_service, "local_now",
+        lambda: datetime(2026, 9, 1, tzinfo=SCHEDULE_TZ),
+    )
     e1 = await _mk_event(db, user_a, "有提醒")
     await _mk_event(db, user_a, "没提醒", date="2026-09-21")
     await create_event_reminders(db, user_a.id, e1, [30], ["qq", "web"], commit=True)
@@ -125,8 +131,13 @@ async def test_update_event_validations_and_apply(db, user_a):
 # ── _delete_event：确认门 + 单/批量 ───────────────────────────────────────
 
 async def test_delete_event_single_blocked_then_confirmed(db, user_a, monkeypatch):
+    from app.services import calendar as calendar_service
     from app.services.calendar import list_event_reminders
 
+    monkeypatch.setattr(
+        calendar_service, "local_now",
+        lambda: datetime(2026, 9, 1, tzinfo=SCHEDULE_TZ),
+    )
     e = await _mk_event(db, user_a, "要删的")
     await create_event_reminders(db, user_a.id, e, [30], ["qq"], commit=True)
 

@@ -202,6 +202,7 @@ export const iconRegistry = {
   'navigation.grid': RiLayoutGridLine,
   'navigation.list': RiListUnordered,
   'navigation.sidebar': RiSidebarUnfoldLine,
+  'navigation.schedules': RiTimeLine,
   'status.check-circle': RiCheckboxCircleLine,
   'status.check-square': RiCheckboxLine,
   'status.info': RiInformationLine,

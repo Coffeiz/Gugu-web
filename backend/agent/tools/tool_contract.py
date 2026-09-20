@@ -18,6 +18,7 @@ MAX_VALIDATION_ISSUES = 5
 _INTEGER_TEXT = re.compile(r"^[+-]?\d+$")
 _NOTE_SCHEMA_HINTS = [
     "请重新生成完整的 blocks/append_blocks 数组，不要只改报错字段。",
+    "note_create 必须把块数组作为顶层 blocks 数组传入；不要把 Markdown 正文或 JSON 字符串放在 content 字段。",
     "paragraph/heading 使用 content 数组；bullet_list/ordered_list/task_list 使用 items 数组；blockquote 使用 paragraphs 数组。",
     "列表和待办只支持扁平项：列表项只能是 {content:[{type:text/reference,...}]}，待办项只能是 {checked:boolean,content:[{type:text/reference,...}]}。",
     "note_update 的 line_edits 使用 {target_lines,expected,content}：数字 target_lines 必须匹配 note_get.numbered_content 的原始物理行，整篇才使用 all；content 为空表示删除指定行；不要与 append_blocks 同时传。",
@@ -35,6 +36,17 @@ def normalize_tool_name(value: Any) -> str | None:
         return None
     name = value.strip()
     return name or None
+
+
+def _decode_json_array(value: Any) -> list[Any] | None:
+    """仅解析明确编码为 JSON 数组的字符串，不猜测或转换其他文本。"""
+    if not isinstance(value, str):
+        return None
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return decoded if isinstance(decoded, list) else None
 
 
 def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -96,6 +108,16 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
                     pass  # 交给当前工具 Schema 返回脱敏的格式错误
 
     if tool_name in {"note_create", "note_update"}:
+        if tool_name == "note_create" and "blocks" not in normalized:
+            # 部分模型把已经正确生成的块数组再次 JSON 序列化，并误放进 content。
+            # 仅在它能无歧义解析为数组时恢复；解析后的结构仍经过当前 JSON Schema
+            # 和 mind_content 校验，普通 Markdown 字符串不会被猜测/静默写入。
+            decoded = _decode_json_array(normalized.get("content"))
+            if decoded is not None:
+                normalized["blocks"] = decoded
+                normalized.pop("content")
+                adaptations.append("note_create.content:json_string_to_blocks")
+
         # 旧版笔记调用把纯文本行内节点写成 {"text": "..."}。type 只有
         # text/reference 两种可能，且存在 text 时只能无歧义地归一成 text；引用
         # 节点没有 type 时仍然拒绝，避免把业务数据猜成另一种引用。
@@ -120,6 +142,10 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
 
         for field in ("blocks", "append_blocks"):
             if field in normalized:
+                decoded = _decode_json_array(normalized[field])
+                if decoded is not None:
+                    normalized[field] = decoded
+                    adaptations.append(f"{tool_name}.{field}:json_string_to_array")
                 normalized[field] = normalize_note_nodes(normalized[field], field)
     return normalized, adaptations
 
@@ -543,6 +569,17 @@ def invalid_input_payload(
         "next_action": _invalid_input_next_action(bounded),
     }
     hints = _schema_repair_hints(schema, bounded)
+    if tool_name == "edit_file" and any(item.get("rule") == "not" for item in bounded):
+        payload["next_action"] = (
+            "edit_file 的编辑模式字段不能混用；根据 mode 只保留对应的一组字段，"
+            "再按 issues 修正后调用。"
+        )
+        hints = [
+            *hints,
+            "mode=replace（整份替换）或 append（末尾追加）：只传 content；",
+            "mode=find_replace（局部替换）：只传 find 和 replace；",
+            "mode=line_edit（按行编辑）：只传 line_edits。不要把不同模式的字段放在同一次编辑里。",
+        ]
     if tool_name in {"note_create", "note_update"}:
         payload["next_action"] = "笔记结构错误，请按 schema_hints 重建完整 blocks；不要沿用原来的嵌套结构或 item 包装。"
         hints = [*hints, *_NOTE_SCHEMA_HINTS]

@@ -142,7 +142,10 @@ GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 docker compose --profile sandbox up -d
 ```
 
-沙盒会运行在独立的受控环境中。不要把宿主机敏感目录挂载给沙盒容器。
+沙盒会运行在独立的受控环境中。Sandbox 执行镜像已随一体化 `gugu-web` 镜像交付，
+启用 profile 时 bootstrap 会自动导入到实际执行沙盒的 Docker daemon；无需另行拉取或部署
+`gugu-sandbox` 镜像。不要把宿主机敏感目录挂载给沙盒容器。
+若自行覆盖 `GUGU_SANDBOX_IMAGE`，也必须同时提供与该镜像匹配的 `GUGU_SANDBOX_IMAGE_DIGEST`。
 
 ## 配置模型和功能
 
@@ -213,7 +216,7 @@ Compose 首次启动会自动创建目录；自定义目录需要保证运行 Do
 > 部署必须先按上面的迁移步骤完成一次数据复制。已经迁移过的部署后续直接执行
 > `docker compose up -d`，不再执行旧的 named volume 迁移。启用 sandbox profile 时 compose 还会跑一次性
 > `sandbox-bootstrap`，自动在沙盒实际运行的 daemon（含 rootless）上准备 egress 网络、
-> squid 代理、沙盒镜像和用户 `shell`/文件目录 ACL，并用真实沙盒 UID 做写入探针；rootful
+> squid 代理、随一体化镜像交付的 Sandbox 执行镜像和用户 `shell`/文件目录 ACL，并用真实沙盒 UID 做写入探针；rootful
 > 单 daemon 部署下自动使用容器 UID/GID。详见 docs/ops/deploy.md。
 
 ## 开发环境

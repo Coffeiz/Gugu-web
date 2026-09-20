@@ -16,7 +16,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import tempfile
 from mimetypes import guess_extension
 from pathlib import PurePosixPath
 from urllib.parse import unquote, urlparse
@@ -25,18 +28,18 @@ import httpcore
 import httpx
 
 from agent.tools.base import BaseSkill, Tool
-from app.core.redaction import diag_log, redact
+from agent.security import logsafe
+from app.core.redaction import diag_log, diag_log_raw, redact
 from app.core.url_security import resolve_pinned_ip
 from app.db.session import rollback_safely
-from app.services.files.browser import get_user_folder
 from app.services.storage.file_service import FileService
+from agent.tools.files.locations import _resolve_create_location
 
 _log = logging.getLogger("agent.tools.web")
 
 _MAX_BODY = 4000          # 默认返回字符数（模型可通过 max_chars 参数调整）
 _MAX_BODY_HARD = 40000    # 硬上限：即使模型请求更多也不超过此值（~10k tokens，不撑爆上下文）
 _MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024
-_MAX_FILE_DOWNLOAD_BYTES = 50 * 1024 * 1024
 _ALLOW_HOSTS: set[str] = set()   # 非空时只放行这些主机；空 = 放行所有公网
 _MIN_EXTRACTED = 100    # trafilatura 提取结果短于此视为「没读到正文」（空页/错误页/纯 JS 渲染）
 
@@ -132,6 +135,11 @@ async def _http_get_one(db, user_id, url: str, max_chars: int):
         import trafilatura
         extracted = trafilatura.extract(body_text, include_links=True, output_format="markdown", with_metadata=True)
         if not extracted or len(extracted) < _MIN_EXTRACTED:
+            # trafilatura 自己的 WARNING 继续进可见日志（用户要求保留）；这里把
+            # 失败上下文补进受限诊断出口，URL 只进指纹。
+            diag_log_raw("agent.tools.web.http_get.extract_empty",
+                         f"status={status_code} url_fp={logsafe.fingerprint(url)} "
+                         f"extracted_len={len(extracted or '')}")
             return {"status": status_code, "url": url,
                     "error": "抓到了但没读出正文——可能是空页/错误页，也可能是纯 JS 渲染页面（HTTP 抓不到"
                              "客户端渲染的内容）。先看 status 是否正常；status 正常但读不到正文的话，"
@@ -212,8 +220,8 @@ def _content_disposition_name(value: str | None) -> str | None:
     return unquote((match.group(1) or match.group(2) or "").strip()) or None
 
 
-async def _download_bytes(url: str) -> tuple[int, httpx.Headers, bytes] | dict:
-    """安全下载文件正文；校验和 socket 连接固定在同一公网 IP。"""
+async def _download_to_spool(url: str, *, max_bytes: int | None = None) -> tuple[int, httpx.Headers, object, int, str] | dict:
+    """安全分块下载到临时文件；大小只受调用方提供的总容量余量约束。"""
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
@@ -233,16 +241,24 @@ async def _download_bytes(url: str) -> tuple[int, httpx.Headers, bytes] | dict:
             ) as client:
                 async with client.stream("GET", url, headers={"User-Agent": "Gugu-web/1.0"}) as response:
                     length = response.headers.get("content-length")
-                    if length and length.isdigit() and int(length) > _MAX_FILE_DOWNLOAD_BYTES:
-                        return {"error": f"文件过大，下载上限为 {_MAX_FILE_DOWNLOAD_BYTES // 1024 // 1024}MB"}
-                    chunks: list[bytes] = []
+                    if max_bytes is not None and length and length.isdigit() and int(length) > max_bytes:
+                        return {"error": "下载内容超过当前用户可用存储空间"}
+                    spool = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+                    digest = hashlib.sha256()
                     total = 0
-                    async for chunk in response.aiter_bytes():
-                        total += len(chunk)
-                        if total > _MAX_FILE_DOWNLOAD_BYTES:
-                            return {"error": f"文件过大，下载上限为 {_MAX_FILE_DOWNLOAD_BYTES // 1024 // 1024}MB"}
-                        chunks.append(chunk)
-                    return response.status_code, response.headers, b"".join(chunks)
+                    try:
+                        async for chunk in response.aiter_bytes():
+                            total += len(chunk)
+                            if max_bytes is not None and total > max_bytes:
+                                spool.close()
+                                return {"error": "下载内容超过当前用户可用存储空间"}
+                            digest.update(chunk)
+                            spool.write(chunk)
+                        spool.seek(0)
+                        return response.status_code, response.headers, spool, total, digest.hexdigest()
+                    except BaseException:
+                        spool.close()
+                        raise
         except _TRANSIENT_HTTPX as e:
             if i >= len(_HTTP_GET_RETRY_BACKOFF):
                 diag_log("agent.tools.web.web_download", e)
@@ -253,58 +269,47 @@ async def _download_bytes(url: str) -> tuple[int, httpx.Headers, bytes] | dict:
             return {"error": f"下载失败：{type(e).__name__}"}
     return {"error": "下载失败"}
 
-
 async def _web_download(db, user_id, args: dict):
     """下载公网文件并保存到文件库；不把下载内容注入上下文。"""
     url = args.get("url")
     if not isinstance(url, str) or not url.strip():
         return {"error": "缺少 url"}
 
-    space = args.get("space")
-    project_id = args.get("project_id")
-    folder_id = args.get("folder_id")
-    try:
-        project_id = int(project_id) if project_id not in (None, "") else None
-        folder_id = int(folder_id) if folder_id not in (None, "") else None
-    except (TypeError, ValueError):
-        return {"error": "project_id 和 folder_id 必须是整数"}
-    if space not in (None, "project", "mind", "asset", "personal"):
-        return {"error": "space 必须是 project/mind/asset/personal 之一"}
-    if space == "personal" and project_id is not None:
-        return {"error": "space=personal 不能同时指定 project_id"}
-    if project_id is not None:
-        if space not in (None, "project"):
-            return {"error": "project_id 只能用于 project 空间"}
-        space = "project"
-    if space == "project" and project_id is None:
-        return {"error": "space=project 时必须指定 project_id"}
-
+    space, project_id, folder_id, workspace_directory_id, loc_err = await _resolve_create_location(
+        db, user_id, args,
+    )
+    if loc_err:
+        try:
+            return json.loads(loc_err)
+        except (TypeError, json.JSONDecodeError):
+            return {"error": str(loc_err)}
+    if space not in {"personal", "project", "workspace"}:
+        return {"error": "文件下载只支持 personal/project/workspace 空间"}
+    # 文件夹校验只读数据库；下载可能持续数十秒，先结束这个只读事务，
+    # 避免 idle_in_transaction_session_timeout 关闭连接后污染后续保存。
     if folder_id is not None:
-        folder = await get_user_folder(db, user_id, folder_id)
-        if not folder or folder.deleted_at is not None:
-            return {"error": "目标文件夹不存在，或已被移入回收站"}
-        inferred_project_id = folder.project_id
-        inferred_space = "project" if inferred_project_id is not None else "personal"
-        if project_id is not None and project_id != inferred_project_id:
-            return {"error": "folder_id 不属于指定的 project_id"}
-        if space is not None and space != inferred_space:
-            return {"error": "folder_id 不属于指定的 space"}
-        project_id = inferred_project_id
-        space = inferred_space
-        # 文件夹校验只读数据库；下载可能持续数十秒，先结束这个只读事务，
-        # 避免 idle_in_transaction_session_timeout 关闭连接后污染后续保存。
         await db.commit()
-    else:
-        space = space or ("project" if project_id is not None else "personal")
 
     normalized_url = url.strip()
     if not normalized_url.startswith(("http://", "https://")):
         normalized_url = "https://" + normalized_url
-    downloaded = await _download_bytes(normalized_url)
+    # 只把当前用户文件库的剩余容量作为下载上限，不再人为限制单个文件大小。
+    max_bytes = None
+    storage_limit = None
+    try:
+        from app.services.storage.quota_ledger import get_file_library_download_budget
+        storage_limit, max_bytes = await get_file_library_download_budget(
+            db, user_id, get_settings().quota.default_storage_limit_bytes,
+        )
+    except Exception:
+        # 位置解析/下载本身不应因统计失败被伪装成成功；保存阶段仍会做最终配额校验。
+        max_bytes = None
+    downloaded = await _download_to_spool(normalized_url, max_bytes=max_bytes)
     if isinstance(downloaded, dict):
         return downloaded
-    status, headers, data = downloaded
+    status, headers, spool, size_bytes, content_sha256 = downloaded
     if status < 200 or status >= 300:
+        spool.close()
         return {"error": f"下载失败：远端返回 HTTP {status}"}
     content_type = (headers.get("content-type") or "application/octet-stream").split(";", 1)[0].strip().lower()
     name, ext = _download_filename(
@@ -318,12 +323,16 @@ async def _web_download(db, user_id, args: dict):
             space=space,
             project_id=project_id if space == "project" else None,
             folder_id=folder_id,
+            workspace_directory_id=workspace_directory_id,
             stage_name="",
             mind_map_id=None,
             display_name=name,
             ext=ext,
             mime_type=content_type,
-            data=data,
+            stream=spool,
+            stream_size=size_bytes,
+            stream_sha256=content_sha256,
+            storage_limit_bytes=storage_limit,
             ledger_operation="web_download",
         )
         await db.commit()
@@ -331,6 +340,8 @@ async def _web_download(db, user_id, args: dict):
         await rollback_safely(db, where="agent.tools.web.web_download.persist.rollback")
         diag_log("agent.tools.web.web_download.persist", e)
         return {"error": "下载成功但保存到文件库失败，请稍后重试"}
+    finally:
+        spool.close()
     db_file = result.file
     return {
         "success": True,
@@ -377,14 +388,14 @@ class WebSkill(BaseSkill):
         Tool(
             name="web_download",
             label="下载到文件库",
-            description_short='下载公网文件到文件库；默认保存到个人文件库。',
-            description="按用户提供的公网 URL 下载或导入文件；不用于读取网页或发送已有文件。",
+            description_short='下载公网文件到个人、项目或工作区。',
+            description="按用户提供的公网 URL 下载或导入文件；space 统一使用 personal/project/workspace，workspace 使用当前会话绑定的工作区文件目录；不用于读取网页或发送已有文件。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "minLength": 1},
                     "name": {"type": ["string", "null"]},
-                    "space": {"type": ["string", "null"], "enum": ["project", "mind", "asset", "personal", None]},
+                    "space": {"type": ["string", "null"], "enum": ["project", "workspace", "personal", None]},
                     "project_id": {"type": ["integer", "null"]},
                     "folder_id": {"type": ["integer", "null"]},
                 },

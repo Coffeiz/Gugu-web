@@ -88,7 +88,40 @@ def test_cron_trigger_supports_start_and_end_window():
     assert trigger.end_date == datetime(2026, 10, 1, 7, 59, tzinfo=SCHEDULE_TZ)
     assert trigger.get_next_fire_time(
         None, datetime(2026, 9, 6, 0, tzinfo=timezone.utc)
-    ) == datetime(2026, 9, 8, 1, tzinfo=timezone.utc)
+    ) == datetime(2026, 9, 7, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "weekday,expected_day",
+    [(0, 20), (1, 21), (2, 22), (3, 23), (4, 24), (5, 18), (6, 19)],
+)
+def test_cron_trigger_uses_standard_crontab_weekday_numbers(weekday, expected_day):
+    """标准 cron 的 0=周日、5=周五不能被 APScheduler 当成周一基准。"""
+    from app.core.schedule_rules import SCHEDULE_TZ
+    from app.scheduled_tasks import build_trigger
+
+    trigger = build_trigger(f"0 20 * * {weekday}", schedule_kind="cron")
+    next_fire = trigger.get_next_fire_time(
+        None, datetime(2026, 9, 18, 11, tzinfo=timezone.utc)  # 周五 19:00 上海时间
+    )
+
+    assert next_fire == datetime(2026, 9, expected_day, 20, tzinfo=SCHEDULE_TZ)
+
+
+def test_cron_trigger_preserves_standard_weekday_ranges_and_lists():
+    from app.core.schedule_rules import SCHEDULE_TZ
+    from app.scheduled_tasks import build_trigger
+
+    now = datetime(2026, 9, 18, 11, tzinfo=timezone.utc)  # 周五 19:00 上海时间
+    weekdays = build_trigger("0 20 * * 1-5", schedule_kind="cron")
+    weekend = build_trigger("0 20 * * 0,6", schedule_kind="cron")
+    named_weekdays = build_trigger("0 20 * * mon-fri", schedule_kind="cron")
+    stepped = build_trigger("0 20 * * */2", schedule_kind="cron")
+
+    assert weekdays.get_next_fire_time(None, now) == datetime(2026, 9, 18, 20, tzinfo=SCHEDULE_TZ)
+    assert weekend.get_next_fire_time(None, now) == datetime(2026, 9, 19, 20, tzinfo=SCHEDULE_TZ)
+    assert named_weekdays.get_next_fire_time(None, now) == datetime(2026, 9, 18, 20, tzinfo=SCHEDULE_TZ)
+    assert stepped.get_next_fire_time(None, now) == datetime(2026, 9, 19, 20, tzinfo=SCHEDULE_TZ)
 
 
 def test_schedule_status_distinguishes_ended_from_disabled():

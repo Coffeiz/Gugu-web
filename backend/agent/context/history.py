@@ -151,6 +151,17 @@ def _blocks(value) -> list[dict]:
     return []
 
 
+def _has_assistant_history_payload(message, content_json) -> bool:
+    """空的展示外壳不算 assistant 历史；canonical/tool 或附件引用仍算内容。"""
+    if content_json is None:
+        return bool(
+            str(getattr(message, "content", "") or "").strip()
+            or getattr(message, "files", None)
+            or getattr(message, "quoted_text", None)
+        )
+    return bool(content_text(content_json).strip())
+
+
 def _tool_result_is_error(block: dict) -> bool:
     """识别 canonical/tool wire 中的失败结果，兼容旧数据未保存 is_error 的情况。"""
     if "is_error" in block:
@@ -174,7 +185,7 @@ def _openai_tool_call(block: dict) -> dict:
     arguments = block.get("arguments", block.get("input", {}))
     if not isinstance(arguments, str):
         arguments = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
-    return {
+    rendered = {
         "id": str(block.get("id") or block.get("tool_use_id") or "tool-call"),
         "type": "function",
         "function": {
@@ -182,6 +193,11 @@ def _openai_tool_call(block: dict) -> dict:
             "arguments": arguments,
         },
     }
+    if block.get("responses_item_id"):
+        # 这是 Responses 输出项的 item id，与调用链 call_id 不同；只供 Responses
+        # 历史重放使用，Chat Completions driver 会在发送边界移除此内部字段。
+        rendered["responses_item_id"] = str(block["responses_item_id"])
+    return rendered
 
 
 def _canonical_block(block: dict) -> dict | None:
@@ -422,6 +438,11 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                 str(getattr(message, "role", "user") or "user"), content_json
             )
         blocks = _blocks(content_json)
+        if getattr(message, "role", None) == "assistant":
+            # 失败/取消时为 UI 保存的 display_timeline 外壳不是模型回答；空正文且无
+            # canonical/tool 内容的 assistant 行不能成为 provider history。
+            if not _has_assistant_history_payload(message, content_json):
+                continue
         is_tool_message = any(block.get("type") == "tool_result" for block in blocks)
         # canonical event 是上一条真实用户 turn 的附属上下文，不是新用户发言。
         # 如果把它们当成 user，会在每个 schema/RAG/runtime block 前重复插入 sent_at，

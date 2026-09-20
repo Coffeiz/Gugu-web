@@ -46,8 +46,8 @@ x-app-environment: &app-environment
   # 仅 profile sandbox 实际提供 sandboxd；未启用时 Shell 探测会保持不可用。
   SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
   SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
-  SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
-  SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
+  SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-coffeiz/gugu-sandbox:bundled}
+  SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-bundled}
   SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
   SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
   SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
@@ -156,10 +156,13 @@ services:
     logging: *json-file-logging
     entrypoint: []
     command: ["sh", "/usr/local/bin/gugu-sandbox-init.sh"]
+    # 一次性引导任务不提供 Web 服务，不能沿用一体化镜像的 HTTP 健康检查。
+    healthcheck:
+      disable: true
     environment:
       DOCKER_HOST: unix:///run/gugu/docker.sock
-      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
-      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-coffeiz/gugu-sandbox:bundled}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-bundled}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SQUID_CONF_PATH: /opt/gugu/egress.conf
@@ -184,17 +187,21 @@ services:
     # sandboxd 不是 web 服务，不应进入默认 Compose 的数据库迁移/worker 入口。
     entrypoint: []
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
-    # 该镜像默认 healthcheck 探测 9595，sandboxd 不提供 HTTP 服务，不能沿用该检查。
+    # sandboxd 通过 Unix socket 提供服务，不使用一体化 Web 镜像的 HTTP 健康检查。
     healthcheck:
-      disable: true
+      test: ["CMD-SHELL", "test -S \"$${GUGU_SANDBOXD_SOCKET}\""]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
     environment:
       DOCKER_HOST: unix:///run/gugu/docker.sock
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
       SANDBOX__ENABLED: "true"
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
-      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
-      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889fe64d6990e4b07ea4171}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-coffeiz/gugu-sandbox:bundled}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-bundled}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"

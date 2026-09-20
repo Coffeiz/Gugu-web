@@ -38,18 +38,6 @@
   max-width: 100%; vertical-align: top;
   user-select: text;
 }
-.rename-sizer::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  border-radius: var(--rename-input-radius);
-  box-shadow: var(--input-focus-shadow);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
-}
-.rename-sizer:focus-within::after { opacity: 1; }
 .rename-ghost {
   display: block; visibility: hidden; white-space: pre;
   overflow: hidden; text-overflow: clip;
@@ -69,10 +57,39 @@
               border-color var(--motion-hover-control) var(--motion-ease-standard),
               box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
+/* 输入文字继承名称行行高；上下各借 1px 名称行预留留白扩展绝对定位控件的内容盒，
+   不能压低 line-height，也不改变 ghost sizer 的自然高度或撑高卡片。 */
+.rename-sizer .rename-input-inline {
+  top: -1px; bottom: -1px;
+  line-height: inherit;
+}
+.rename-sizer--segmented {
+  display: flex; align-items: center; gap: var(--space-xs);
+  width: 100%; min-width: 0; max-width: 100%; height: 1lh; box-sizing: border-box;
+  color: var(--rename-input-fg);
+}
+.rename-sizer--segmented .rename-ghost { display: none; }
+.rename-segment-field {
+  position: relative; display: block; min-width: 0; max-width: 100%; height: 100%;
+}
+.rename-file-name-field { flex: 1 1 0; width: 0; }
+.rename-file-extension-field { flex: 0 0 5ch; width: 5ch; }
+.rename-file-extension-input { text-align: center; }
+.rename-segment-dot { flex: 0 0 auto; color: var(--content-secondary); }
 .fc-name:has(.rename-input-inline),
-.fd-name:has(.rename-input-inline) { overflow: visible; text-overflow: clip; }
+.fd-name:has(.rename-input-inline),
+.fc-name:has(.rename-sizer--segmented),
+.fd-name:has(.rename-sizer--segmented) { overflow: visible; text-overflow: clip; }
 .fc-name:has(.rename-input-inline) .rename-sizer,
-.fd-name:has(.rename-input-inline) .rename-sizer {
+.fd-name:has(.rename-input-inline) .rename-sizer,
+.fc-name:has(.rename-sizer--segmented) .rename-sizer,
+.fd-name:has(.rename-sizer--segmented) .rename-sizer {
   /* 输入框铺满名称栏内容区；超长名称由 input 自己横向滚动，不能把卡片撑出边界。 */
   display: block; width: 100%; max-width: 100%; min-width: 0; z-index: 3;
+}
+.fc-name:has(.rename-sizer--segmented) .rename-sizer--segmented,
+.fd-name:has(.rename-sizer--segmented) .rename-sizer--segmented { display: flex; }
+.lr-filename:has(.rename-sizer--segmented) { overflow: visible; text-overflow: clip; }
+.lr-filename:has(.rename-sizer--segmented) .rename-sizer--segmented {
+  display: flex; width: 100%; min-width: 0; max-width: 100%;
 }

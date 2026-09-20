@@ -11,6 +11,9 @@
   --surface-glass-hover: var(--theme-glass-hover);
   --surface-card: var(--theme-glass);
   --surface-card-solid: var(--theme-card-solid);
+  /* Canvas reference cards need an opaque paint over the gradient canvas; the theme's chat body
+     surface already provides a flat, palette-aware color with no transparency. */
+  --surface-canvas-card: var(--theme-chat-main-bg);
   --surface-soft: var(--theme-soft);
   --surface-soft-hover: var(--theme-soft-hover);
   --surface-raised: var(--theme-raised);

@@ -15,10 +15,12 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from agent.memory import store
-from agent.context.branch import ContextBranch
-from agent.context.branch_types import BranchInput, BranchPolicy
+from agent.context.branch_types import BranchInput
+from agent.memory import reflection_idle
+from agent.memory.reflection_branch import run_reflection_branch
 
 # 保持后台任务引用，防止被 GC（fire-and-forget 必须）
 _bg_tasks: set = set()
@@ -26,6 +28,7 @@ _bg_tasks: set = set()
 # 感知遥测/误判 日志（与 agent.traj 同套：靠 logging 配置落 gugu.log / Debug 面板；脱敏，不写用户原文）
 _perc_log = logging.getLogger("agent.perc")
 _memdiff_log = logging.getLogger("agent.memdiff")
+_log = logging.getLogger("agent.memory.reflection")
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
@@ -76,11 +79,11 @@ _PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin
 _PERC_CAP = 20000
 _MISREAD_KEY = "perc:misread_cases"   # 错读需求案例收集（带脱敏 miss 诊断，便于翻「具体原因」）
 _MISREAD_CAP = 500
-GROUP_OWNER_IDLE_SECONDS = 15 * 60
+GROUP_OWNER_IDLE_SECONDS = reflection_idle.IDLE_WINDOW_SECONDS
 _OWNER_REFLECTION_BUFFER_PREFIX = "memory:owner-reflection:"
 _OWNER_REFLECTION_LOCK_PREFIX = "memory:owner-reflection-lock:"
 _GROUP_OWNER_BUFFER_PREFIX = "memory:owner-group-reflection:"
-_GROUP_OWNER_IDLE_KEY = "memory:owner-group-reflection-idle"
+_GROUP_OWNER_IDLE_KEY = reflection_idle.GROUP_OWNER_IDLE_KEY
 
 
 def _now_ts() -> float:
@@ -90,7 +93,7 @@ def _now_ts() -> float:
 
 def _misperc_llm(user_id, corr) -> dict | None:
     """反思 LLM 判定的纠正 → misperc（带 kind=感知误读/数据或执行错，via=llm）。主信号。
-    corr 来自 _extract 的 out['correction']；非纠正或格式不对 → None（不记）。"""
+    corr 来自反思提取器的 out['correction']；非纠正或格式不对 → None（不记）。"""
     if not isinstance(corr, dict) or not corr.get("is_correction"):
         return None
     kind = corr.get("kind")
@@ -188,6 +191,80 @@ async def _bind_user_model(user_id, settings, session_id=None):
     modelctx.set_model_cfg(run_config.model)
     modelctx.set_usage_context(user_id, session_id)
     return run_config.model
+
+
+async def _load_owner_reflection_history(db, user_id, session_id, user_name, model_cfg):
+    """加载归属正确且已空闲 session 的最小 system 与 provider history。"""
+    from sqlalchemy import select
+    from app.models import ConversationSession
+    from agent.capabilities.defaults import DEFAULT_PROMPT_NAME
+    from agent.context.dynamic_tail import current_date_text
+    from agent.context.history import build_history_parts
+    from agent.context.loaders import load_style_prefs, load_user_tz
+    from agent.context.session_history import load_session_history
+    from agent.context.session_snapshot import history_baseline
+    from agent.context.session_system import build_static_prompt
+    from agent.llm.llm_select import use_anthropic_for
+
+    session = (await db.execute(
+        select(ConversationSession).where(
+            ConversationSession.id == int(session_id),
+            ConversationSession.user_id == user_id,
+        )
+    )).scalars().first()
+    if session is None or session.execution_state not in (None, "idle"):
+        return None
+    if int(session.pending_message_count or 0) > 0:
+        return None
+    history = await load_session_history(db, int(session_id), history_baseline(session))
+    if not history:
+        return None
+    user_tz = await load_user_tz(db, user_id)
+    system_prompt = build_static_prompt(
+        DEFAULT_PROMPT_NAME,
+        user_name or "",
+        style_prefs=await load_style_prefs(db, user_id),
+        current_date=current_date_text(user_tz),
+    )
+    request = SimpleNamespace(
+        chat_id=session.chat_id,
+        user_name=user_name or "",
+        platform_user_id=session.platform_user_id,
+        platform_user_name=user_name or "",
+        im_role="owner",
+    )
+    history_parts = build_history_parts(
+        history, request, use_anthropic=use_anthropic_for(model_cfg), user_tz=user_tz,
+    )
+    return system_prompt, history_parts
+
+
+async def _rebuild_owner_reflection_snapshot(user_id, session_id, user_name, model_cfg):
+    """快照过期时从 DB 恢复临时 append 输入，不保存完整 provider 请求体。"""
+    if session_id is None:
+        return None
+    from app.db import session as db_session
+
+    db_session.ensure_engine()
+    if db_session._SessionLocal is None:
+        return None
+    async with db_session._SessionLocal() as db:
+        rebuilt = await _load_owner_reflection_history(
+            db, user_id, session_id, user_name, model_cfg,
+        )
+    if rebuilt is None:
+        return None
+    system_prompt, history_parts = rebuilt
+    return SimpleNamespace(
+        user_id=str(user_id),
+        session_id=int(session_id),
+        run_id=f"owner-reflection-idle:{session_id}",
+        system_prompt=system_prompt,
+        ai=model_cfg,
+        tools=(),
+        history=tuple(history_parts),
+        source="persisted_history",
+    )
 
 
 async def _write_last_turn(user_id, user_msg: str, assistant_reply: str, session_id=None) -> None:
@@ -293,8 +370,13 @@ def _merge_daily_note(daily_note: str, staged_events: list[str]) -> str:
     return "；".join(events)
 
 
-def _owner_group_buffer_key(user_id) -> str:
-    return f"{_GROUP_OWNER_BUFFER_PREFIX}{user_id}"
+def _owner_group_buffer_key(user_id, session_id=None) -> str:
+    suffix = str(session_id) if session_id is not None else "legacy"
+    return f"{_GROUP_OWNER_BUFFER_PREFIX}{user_id}:{suffix}"
+
+
+def _owner_idle_member(user_id, session_id) -> str:
+    return f"{user_id}:{session_id}"
 
 
 def _owner_reflection_threshold(settings) -> int:
@@ -305,58 +387,66 @@ def _owner_reflection_threshold(settings) -> int:
         return 10
 
 
-def _owner_reflection_buffer_key(user_id) -> str:
-    return f"{_OWNER_REFLECTION_BUFFER_PREFIX}{user_id}"
+def _owner_reflection_buffer_key(user_id, session_id=None) -> str:
+    """返回 owner 当前 session 的反思缓冲键；不再合并跨 session 回合。"""
+    suffix = str(session_id) if session_id is not None else "legacy"
+    return f"{_OWNER_REFLECTION_BUFFER_PREFIX}{user_id}:{suffix}"
 
 
-async def _drain_owner_reflection_buffer(user_id, settings) -> None:
-    """原子取走 owner 反思缓冲；失败时放回，避免丢失待反思回合。"""
-    from app.core import redis as R
-
-    redis = R.get_redis()
-    key = _owner_reflection_buffer_key(user_id)
-    lock = redis.lock(f"{_OWNER_REFLECTION_LOCK_PREFIX}{user_id}", timeout=180)
-    if not await lock.acquire(blocking=False):
-        return
-    rows = []
+async def _migrate_legacy_owner_reflection_buffer(redis, user_id) -> bool:
+    """首次活跃时把旧版按 user 合并的私聊缓冲拆分到 session 键。"""
+    legacy_key = f"{_OWNER_REFLECTION_BUFFER_PREFIX}{user_id}"
+    raw_rows = await redis.lrange(legacy_key, 0, -1)
+    if not raw_rows:
+        return True
     try:
-        raw_rows = await redis.lrange(key, 0, -1)
-        if not raw_rows:
-            return
         rows = [json.loads(raw) for raw in raw_rows]
-        await redis.delete(key)
-        ok = await reflect(
-            user_id,
-            rows[-1].get("user_name", ""),
-            "\n".join(row.get("user_msg", "") for row in rows),
-            "\n".join(row.get("assistant_reply", "") for row in rows),
-            settings,
-            session_id=rows[-1].get("session_id"),
-            turns=rows,
+    except (TypeError, ValueError) as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.owner_buffer_migration", exc)
+        return False
+    if any(not isinstance(row, dict) or row.get("session_id") is None for row in rows):
+        # 缺少 session_id 的旧行不能安全猜归属；保留原队列，避免跨会话合并或丢失。
+        return False
+
+    grouped: dict[str, list[str]] = {}
+    for raw, row in zip(raw_rows, rows):
+        grouped.setdefault(str(row["session_id"]), []).append(raw)
+    migrated_at = time.time()
+    for session_text, payloads in grouped.items():
+        await redis.rpush(
+            _owner_reflection_buffer_key(user_id, session_text), *payloads,
         )
-        if not ok:
-            raise RuntimeError("owner_reflection_failed")
-    except Exception:
-        if rows:
-            await redis.rpush(key, *[json.dumps(row, ensure_ascii=False) for row in rows])
-    finally:
-        try:
-            await lock.release()
-        except Exception:
-            pass
+        await redis.zadd(
+            reflection_idle.OWNER_IDLE_KEY,
+            {_owner_idle_member(user_id, session_text): migrated_at},
+        )
+    await redis.delete(legacy_key)
+    return True
+
+
+async def _drain_owner_reflection_buffer(
+    user_id, settings, session_id=None, *, allow_rebuild: bool = False,
+) -> None:
+    """原子取走 owner 反思缓冲；失败时放回，避免丢失待反思回合。"""
+    await _drain_reflection_buffer(
+        user_id, settings, session_id=session_id, group_mode=False,
+        allow_rebuild=allow_rebuild,
+    )
 
 
 async def _queue_owner_reflection(
-    user_id, user_name, user_msg, assistant_reply, settings, used_tools, session_id,
+    user_id, user_name, user_msg, assistant_reply, settings, session_id,
 ) -> None:
-    """按 owner 阈值累计回合；工具回合可立即冲刷缓冲。"""
+    """按 owner 阈值累计回合，到量统一冲刷；工具回合与普通回合同一口径计数。"""
     from app.core import redis as R
 
     redis = R.get_redis()
-    key = _owner_reflection_buffer_key(user_id)
+    key = _owner_reflection_buffer_key(user_id, session_id)
     lock = redis.lock(f"{_OWNER_REFLECTION_LOCK_PREFIX}{user_id}", timeout=180)
     await lock.acquire()
     try:
+        await _migrate_legacy_owner_reflection_buffer(redis, user_id)
         await redis.rpush(key, json.dumps({
             "user_name": user_name,
             "user_msg": user_msg,
@@ -364,74 +454,190 @@ async def _queue_owner_reflection(
             "session_id": session_id,
         }, ensure_ascii=False))
         count = await redis.llen(key)
+        if session_id is not None:
+            await reflection_idle.mark_active(
+                redis, reflection_idle.OWNER_IDLE_KEY,
+                _owner_idle_member(user_id, session_id),
+            )
     finally:
         await lock.release()
-    if used_tools or count >= _owner_reflection_threshold(settings):
-        await _drain_owner_reflection_buffer(user_id, settings)
+    if count >= _owner_reflection_threshold(settings):
+        await _drain_owner_reflection_buffer(user_id, settings, session_id)
 
 
-async def _drain_group_owner_buffer(user_id, settings) -> None:
-    """原子取走一批 owner 群聊反思，失败时把消息放回 Redis。"""
+def _buffer_session_id(rows, session_id):
+    candidate = session_id if session_id is not None else rows[-1].get("session_id")
+    if candidate is None or any(row.get("session_id") != candidate for row in rows):
+        return None
+    return candidate
+
+
+async def _reflect_buffer_rows(user_id, settings, rows, session_id, snapshot):
+    ok = await reflect(
+        user_id,
+        rows[-1].get("user_name", ""),
+        "\n".join(row.get("user_msg", "") for row in rows),
+        "\n".join(row.get("assistant_reply", "") for row in rows),
+        settings,
+        session_id=session_id,
+        turns=rows,
+        snapshot=snapshot,
+        rebuild_from_history=snapshot is None,
+    )
+    if not ok:
+        raise RuntimeError("owner_reflection_failed")
+
+
+async def _restore_reflection_rows(redis, key, idle_key, member, rows) -> None:
+    await redis.rpush(key, *[json.dumps(row, ensure_ascii=False) for row in rows])
+    await reflection_idle.defer(redis, idle_key, member)
+
+
+async def _release_reflection_lock(lock) -> None:
+    try:
+        await lock.release()
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.lock_release", exc)
+
+
+async def _drain_reflection_buffer(
+    user_id, settings, *, session_id=None, group_mode: bool,
+    allow_rebuild: bool = False,
+) -> None:
+    """统一 drain owner 私聊/群聊缓冲，避免两套重试与快照逻辑漂移。"""
     from app.core import redis as R
 
     redis = R.get_redis()
-    lock = redis.lock(f"{_GROUP_OWNER_BUFFER_PREFIX}lock:{user_id}", timeout=180)
+    idle_key = _GROUP_OWNER_IDLE_KEY if group_mode else reflection_idle.OWNER_IDLE_KEY
+    member = _owner_idle_member(user_id, session_id) if session_id is not None else str(user_id)
+    key = (_owner_group_buffer_key(user_id, session_id) if group_mode
+           else _owner_reflection_buffer_key(user_id, session_id))
+    lock_prefix = f"{_GROUP_OWNER_BUFFER_PREFIX}lock:{user_id}" if group_mode else f"{_OWNER_REFLECTION_LOCK_PREFIX}{user_id}"
+    lock = redis.lock(lock_prefix, timeout=180)
     if not await lock.acquire(blocking=False):
         return
     rows = []
     try:
-        raw_rows = await redis.lrange(_owner_group_buffer_key(user_id), 0, -1)
+        if allow_rebuild and not await reflection_idle.is_due(redis, idle_key, member):
+            return
+        raw_rows = await redis.lrange(key, 0, -1)
         if not raw_rows:
-            await redis.zrem(_GROUP_OWNER_IDLE_KEY, str(user_id))
+            await reflection_idle.clear_active(redis, idle_key, member)
             return
         rows = [json.loads(raw) for raw in raw_rows]
-        await redis.delete(_owner_group_buffer_key(user_id))
-        await redis.zrem(_GROUP_OWNER_IDLE_KEY, str(user_id))
-        ok = await reflect(
-            user_id,
-            rows[-1].get("user_name", ""),
-            "\n".join(row.get("user_msg", "") for row in rows),
-            "\n".join(row.get("assistant_reply", "") for row in rows),
-            settings,
-            session_id=rows[-1].get("session_id"),
-            turns=rows,
-        )
-        if not ok:
-            raise RuntimeError("owner_group_reflection_failed")
-    except Exception:
-        if rows:
-            await redis.rpush(
-                _owner_group_buffer_key(user_id),
-                *[json.dumps(row, ensure_ascii=False) for row in rows],
-            )
-            await redis.zadd(_GROUP_OWNER_IDLE_KEY, {str(user_id): time.time()})
-    finally:
+        session_id = _buffer_session_id(rows, session_id)
+        if session_id is None:
+            # 旧格式/损坏队列不能跨会话拼接；保留消息并稍后再试。
+            await reflection_idle.defer(redis, idle_key, member)
+            return
+        member = _owner_idle_member(user_id, session_id)
+        await redis.delete(key)
+        await reflection_idle.clear_active(redis, idle_key, member)
         try:
-            await lock.release()
-        except Exception:
-            pass
+            from agent.context.reflection_snapshot import peek_reflection_snapshot
+            snapshot = peek_reflection_snapshot(user_id, session_id)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+            diag_log("agent.memory.reflection.snapshot_lookup", exc)
+            snapshot = None
+        if snapshot is None and not allow_rebuild:
+            await redis.rpush(key, *raw_rows)
+            await reflection_idle.mark_active(redis, idle_key, member)
+            return
+        await _reflect_buffer_rows(user_id, settings, rows, session_id, snapshot)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.drain", exc)
+        if rows:
+            await _restore_reflection_rows(redis, key, idle_key, member, rows)
+    finally:
+        await _release_reflection_lock(lock)
 
 
-async def flush_due_group_owner_reflections(settings, *, now: float | None = None, limit: int = 50) -> int:
-    """收束连续 15 分钟没有新群消息的 owner 反思缓冲。"""
+async def _drain_group_owner_buffer(user_id, settings, session_id=None, *, allow_rebuild=False) -> None:
+    """原子取走一批 owner 群聊反思；与私聊共用 drain 和错误恢复逻辑。"""
+    await _drain_reflection_buffer(
+        user_id, settings, session_id=session_id, group_mode=True,
+        allow_rebuild=allow_rebuild,
+    )
+
+
+async def _migrate_legacy_group_owner_buffer(redis, user_id, *, last_active=None) -> bool:
+    """把旧版按 user 合并的群主缓冲拆回各 session，保留已有闲置时长。"""
+    legacy_key = f"{_GROUP_OWNER_BUFFER_PREFIX}{user_id}"
+    lock = redis.lock(f"{_GROUP_OWNER_BUFFER_PREFIX}lock:{user_id}", timeout=180)
+    if not await lock.acquire(blocking=False):
+        return False
+    try:
+        raw_rows = await redis.lrange(legacy_key, 0, -1)
+        if not raw_rows:
+            return True
+        rows = [json.loads(raw) for raw in raw_rows]
+        if any(row.get("session_id") is None for row in rows):
+            return False
+        grouped: dict[str, list[str]] = {}
+        for raw, row in zip(raw_rows, rows):
+            grouped.setdefault(str(row["session_id"]), []).append(raw)
+        for session_text, payloads in grouped.items():
+            await redis.rpush(
+                _owner_group_buffer_key(user_id, session_text), *payloads,
+            )
+            await redis.zadd(
+                _GROUP_OWNER_IDLE_KEY,
+                {_owner_idle_member(user_id, session_text): float(last_active or time.time())},
+            )
+        await redis.delete(legacy_key)
+        return True
+    finally:
+        await _release_reflection_lock(lock)
+
+
+async def flush_due_owner_reflections(settings, *, now: float | None = None, limit: int = 100) -> int:
+    """收束 owner 私聊/群聊中连续闲置 15 分钟的反思缓冲。"""
     from app.core import redis as R
 
-    cutoff = (now if now is not None else time.time()) - GROUP_OWNER_IDLE_SECONDS
-    users = await R.get_redis().zrangebyscore(_GROUP_OWNER_IDLE_KEY, 0, cutoff, start=0, num=limit)
-    for user_id in users:
-        task = asyncio.create_task(_drain_group_owner_buffer(user_id, settings))
+    redis = R.get_redis()
+    due = []
+    for idle_key in (reflection_idle.OWNER_IDLE_KEY, _GROUP_OWNER_IDLE_KEY):
+        due.extend((idle_key, member) for member in await reflection_idle.due_members(
+            redis, idle_key, now=now, limit=limit,
+        ))
+    for idle_key, member in due[:max(1, int(limit))]:
+        if ":" not in member:
+            # 旧版群主 idle member 只有 user_id；读取其最后活动分数并拆开 session。
+            score = await redis.zscore(idle_key, member)
+            migrated = await _migrate_legacy_group_owner_buffer(
+                redis, member, last_active=score,
+            ) if idle_key == _GROUP_OWNER_IDLE_KEY else False
+            if migrated:
+                await redis.zrem(idle_key, member)
+            else:
+                await reflection_idle.defer(redis, idle_key, member, now=now)
+            continue
+        user_id, session_text = member.rsplit(":", 1)
+        try:
+            session_id = int(session_text)
+        except ValueError:
+            await reflection_idle.defer(redis, idle_key, member, now=now)
+            continue
+        group_mode = idle_key == _GROUP_OWNER_IDLE_KEY
+        drain = _drain_group_owner_buffer if group_mode else _drain_owner_reflection_buffer
+        task = asyncio.create_task(drain(
+            user_id, settings, session_id, allow_rebuild=True,
+        ))
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
-    return len(users)
+    return len(due)
 
 
 def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None,
              group_mode: bool = False) -> None:
-    """非阻塞累计 owner 反思回合。达到配置阈值后批量反思；工具回合立即冲刷。
+    """非阻塞累计 owner 反思回合；达到 admin 配置阈值后批量反思（工具与否不影响时机）。
 
-    琐碎应答（嗯/好的/谢谢…）默认跳过省调用——
-    但若这轮咕咕**用了工具**（如「要建项目吗？」→「嗯」→真建了），即便用户只说「嗯」也反思，
-    以记下这轮做了啥（daily/summary）。used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。
+    琐碎应答（嗯/好的/谢谢…）不入缓冲省一次计数——除非这轮咕咕用了工具
+    （如「要建项目吗？」→「嗯」→真建了），这类回合照常入缓冲，由阈值统一冲刷。
+    used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。
     session_id 供 feedback 判「是否延续同一对话」（换会话不跨比，见 _read_last_turn）。
     group_mode 只代表群主 owner 反思；群成员/群级反思走 reflection_jobs，不受此阈值影响。"""
     if not group_mode and not _worth_reflecting(user_msg) and not used_tools:
@@ -439,25 +645,25 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
     if group_mode:
         task = asyncio.create_task(_schedule_group_owner(
             user_id, user_name, user_msg, assistant_reply, settings,
-            bool(used_tools), session_id,
+            session_id,
         ))
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
         return
     task = asyncio.create_task(_queue_owner_reflection(
         user_id, user_name, user_msg, assistant_reply, settings,
-        bool(used_tools), session_id,
+        session_id,
     ))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
 
 
 async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, settings,
-                                used_tools: bool, session_id=None) -> None:
+                                session_id=None) -> None:
     from app.core import redis as R
 
     redis = R.get_redis()
-    key = _owner_group_buffer_key(user_id)
+    key = _owner_group_buffer_key(user_id, session_id)
     row = {
         "user_name": user_name,
         "user_msg": user_msg,
@@ -468,21 +674,26 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
     await lock.acquire()
     try:
         await redis.rpush(key, json.dumps(row, ensure_ascii=False))
-        await redis.zadd(_GROUP_OWNER_IDLE_KEY, {str(user_id): time.time()})
+        if session_id is not None:
+            await reflection_idle.mark_active(
+                redis, _GROUP_OWNER_IDLE_KEY, _owner_idle_member(user_id, session_id),
+            )
         count = await redis.llen(key)
     finally:
         await lock.release()
-    if used_tools or count >= _owner_reflection_threshold(settings):
-        await _drain_group_owner_buffer(user_id, settings)
+    if count >= _owner_reflection_threshold(settings):
+        await _drain_group_owner_buffer(user_id, settings, session_id)
 
 
 async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
-                             *, session_id=None) -> None:
+                             *, session_id=None, snapshot=None) -> None:
     """Memory 反思末尾追加的 Knowledge 沉淀；落库成功后补发索引重建事件。
 
     这条链路不经 save_knowledge 工具，没人替它发 RagIndexUpdated，漏发会让
     持久索引投影缺行（主数据存在但检索不到）。source_id 留空即按
     (user, source_type) 整源重建，与 rebuild 粒度一致。
+    snapshot 仅在 Memory 资格门通过时传入：Knowledge 作为 sibling branch
+    复用同一主会话快照（§6.4）；Memory 的 JSON 输出不进入 Knowledge 上下文。
     """
     try:
         from agent.knowledge.reflection import candidate_request, reflect_if_candidate
@@ -491,7 +702,7 @@ async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
             mode = "explicit" if _explicit_knowledge_request(user_msg) else "automatic"
             saved = await reflect_if_candidate(
                 user_id, user_msg, assistant_reply, settings, query,
-                save_mode=mode, session_id=session_id,
+                save_mode=mode, session_id=session_id, snapshot=snapshot,
             )
             if saved:
                 from agent import events
@@ -507,9 +718,10 @@ async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
 
 
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None,
-                  turns=None) -> bool:
+                  turns=None, snapshot=None, rebuild_from_history: bool = False) -> bool:
     out = None
     bound_model = None
+    use_append = False
     turns = turns or [{
         "user_msg": user_msg,
         "assistant_reply": assistant_reply,
@@ -518,14 +730,33 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
     }]
     prev_turn = await _read_last_turn(user_id, session_id)   # 上一轮（判 feedback），换会话/过期 → None
     try:
-        # 反思既可能由主 Runner 派生，也可能由 IM 被动消息/延迟批处理独立创建。
+        # 反思既可能由主 Runner 派生，也可能由 IM 被动消息/延迟批处理任务执行。
         # 后者不能依赖父任务的 ContextVar 继承；在真正调用分支模型前按用户重新解析
         # 并绑定 BYOK，解析失败则跳过本次反思，不能静默烧平台额度。
         bound_model = await _bind_user_model(user_id, settings, session_id)
+        rebuilt = False
+        if snapshot is None and rebuild_from_history:
+            snapshot = await _rebuild_owner_reflection_snapshot(
+                user_id, session_id, user_name, bound_model,
+            )
+            rebuilt = snapshot is not None
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
-        out = await _extract(user_name, user_msg, assistant_reply, mem["profile"], mem["pattern"], existing_summary,
-                             settings, prev_turn=prev_turn)
+        # §6.3/§6.7 资格门：快照 + 单 session 缓冲 + 模型身份一致；
+        # 反思统一只接受 append_reuse。
+        use_append, append_reason = _append_reuse_decision(snapshot, turns, bound_model)
+        if use_append and rebuilt:
+            append_reason = "persisted_history_rebuilt"
+        _log.info("[reflection] mode=%s reason=%s session=%s turns=%d",
+                  "append_reuse" if use_append else "deferred", append_reason,
+                  session_id, len(turns))
+        if not use_append:
+            _log.info("[reflection] append unavailable; deferred session=%s reason=%s",
+                      session_id, append_reason)
+            return False
+        if use_append:
+            out = await _extract_append(snapshot, user_name, turns, mem["profile"], mem["pattern"],
+                                        existing_summary, settings, prev_turn=prev_turn)
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.memory.reflection.model_binding", exc)
@@ -611,8 +842,11 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         from agent.memory import periodic
         await periodic.maybe_schedule(user_id, settings)
         # Knowledge 复用本轮 Memory 反思时机；只有 Memory 反思明确标记候选时才追加一次调用。
+        # snapshot 仅在 Memory 资格门通过时传入（§6.4 sibling branch），否则 None
+        # → Knowledge 本轮延迟，不创建没有主会话前缀的调用。
         await _reflect_knowledge(
             user_id, user_msg, assistant_reply, settings, out, session_id=session_id,
+            snapshot=snapshot if use_append else None,
         )
         try:
             from agent.security.logsafe import fingerprint
@@ -638,9 +872,30 @@ def _explicit_knowledge_request(text: str) -> bool:
     return any(marker in (text or "") for marker in markers)
 
 
-async def _extract(user_name, user_msg, assistant_reply, existing_profile, existing_pattern, existing_summary,
-                   settings, prev_turn: dict | None = None) -> dict:
-    # 上一轮（判 feedback 的对照物）:有才注入,没有则 prompt 里已说明「没给上一轮 → 无信号」
+# 反思共用的任务要求与存量上下文块。
+_TASK_REQUIREMENTS = (
+    "请只报本轮 profile 的增删（profile_add 对象数组，type 只能是 name/address/pronoun/background/preference/note；profile_remove 字符串数组）"
+    "+ 本轮 pattern 的增删（pattern_add / pattern_remove，pattern_add 带 kind/importance）"
+    "——没变动就都给空数组、别重列旧内容"
+    "+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
+    "+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
+    "+ knowledge_candidate（明确、可复用的事实/规则、已验证的工具效率经验，或 owner 明确提供/确认的非敏感人物关系与人物资料才标 true，并给一个用于 Knowledge RAG 的短查询；单次工具调用、owner 画像/习惯、猜测、转述和敏感个人信息标 false）。"
+)
+
+# 追加反思路径的完整历史使用边界（PRD-LLM-27 §6.3）。
+# 新增方向仍严格限待反思回合；只开放「矛盾检测」给完整历史——remove 的依据
+# 锚定在存量记忆条目原文上，模型若引历史对话原文（从未入库），writer 按原文
+# 匹配自然 no-op，误删风险双重兜底（提示词 + writer 匹配）。
+_APPEND_HISTORY_DIRECTIVE = (
+    "【完整历史的使用边界】上面提供了本会话的完整历史，仅限两种用法：\n"
+    "① 理解待反思回合中的指代与背景——不要为历史内容新建 profile/pattern/daily/knowledge_candidate，新增只来自【待反思回合】；\n"
+    "② 矛盾检测：仅当完整历史与待反思回合或【已知的用户画像】【已知的行为模式】明显矛盾、被推翻或已过时，才提 profile_remove / pattern_remove（照抄上面存量记忆里的原文字符串，不要引历史对话原文）或据此修正 summary——宁缺毋滥，拿不准就不提。"
+)
+
+
+def _reflection_context_block(existing_profile, existing_pattern, existing_summary,
+                              prev_turn: dict | None) -> str:
+    """日期 + 存量画像/模式/快照 + 上一轮：两条提取路径共用同一份组装。"""
     prev_part = ""
     if prev_turn:
         prev_part = (f"【上一轮】\n用户：{prev_turn.get('u', '')}\n咕咕：{prev_turn.get('a', '')}\n\n")
@@ -649,36 +904,79 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
     from app.core.tz import local_now
     _now = local_now()
     now_str = f"{_now.strftime('%Y-%m-%d')}（星期{'一二三四五六日'[_now.weekday()]}）{_now.strftime('%H:%M')}"
-    user = (
+    return (
         f"现在是 {now_str}。\n\n"
         f"已知的用户画像：\n{existing_profile or '（暂无）'}\n\n"
         f"已知的行为模式：\n{existing_pattern or '（暂无）'}\n\n"
         f"当前状态快照：\n{existing_summary or '（暂无）'}\n\n"
         f"{prev_part}"
-        f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
-        f"请只报本轮 profile 的增删（profile_add 对象数组，type 只能是 name/address/pronoun/background/preference/note；profile_remove 字符串数组）"
-        f"+ 本轮 pattern 的增删（pattern_add / pattern_remove，pattern_add 带 kind/importance）"
-        f"——没变动就都给空数组、别重列旧内容"
-        f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
-        f"+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
-        f"+ knowledge_candidate（明确、可复用的事实/规则、已验证的工具效率经验，或 owner 明确提供/确认的非敏感人物关系与人物资料才标 true，并给一个用于 Knowledge RAG 的短查询；单次工具调用、owner 画像/习惯、猜测、转述和敏感个人信息标 false）。"
     )
-    # 2b：反思只吐 profile/pattern 的增删（delta）+ daily/summary/perception，输出体量**不再随存量增长**，
-    # 根治了「pattern 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
-    # 故 max_tokens 给个稳妥固定值即可（不必再跟存量走）；仍按模型上限兜底。
+
+
+def _append_reuse_decision(snapshot, turns, bound_model) -> tuple[bool, str]:
+    """append_reuse 资格门（PRD-LLM-27 §6.3）。
+
+    - 输入是同 session 的进程内快照，或已完成归属/idle 校验的持久历史重建快照；
+    - 反思缓冲单 session 且与快照同 session（跨 session 缓冲不强行拼接）；
+    - 反思实际使用的模型（BYOK 绑定结果）与捕获快照时的模型身份一致
+      （provider 切换后旧前缀必然失配）。
+
+    白名单已废止（2026-09-18）：实测五大主流 provider 均支持跨调用前缀缓存，
+    静态名单失去意义；命中观测降级为纯报告（cache_capability.reuse_hit_rate），
+    不再驱动资格判定。
+    """
+    if snapshot is None:
+        return False, "no_snapshot"
+    if not turns:
+        return False, "no_turns"
+    last_sid = turns[-1].get("session_id")
+    if last_sid is None or snapshot.session_id != last_sid:
+        return False, "session_mismatch"
+    if any(t.get("session_id") != last_sid for t in turns):
+        return False, "buffer_spans_sessions"
+    from agent.context.reflection_snapshot import model_identity
+    if bound_model is not None and model_identity(snapshot.ai) != model_identity(bound_model):
+        return False, "provider_switched"
+    return True, "eligible"
+
+
+async def _extract_append(snapshot, user_name, turns, existing_profile, existing_pattern,
+                          existing_summary, settings, prev_turn: dict | None = None) -> dict:
+    """append_reuse 提取（§6.2/§6.3）：复用主会话前缀，任务内容只出现在末尾。
+
+    - 前缀 = 快照 history（canonical 形态）经共享 helper 渲染成 wire 形态，
+      渲染与主 run 口径一致；delta 走 BranchInput 增量语义，不触碰 canonical
+      簿记（batch 封存/digest/sync_backing）；
+    - 专用规则（reflection.md）与存量画像/模式/快照不在主会话历史里，按 §6.2
+      全部进末尾任务消息；待反思回合用队列载荷的组装前原文标记引用，历史仅
+      用于理解指代，不为历史内容新建记忆；
+    - 输出 schema 与群主批处理完全一致（同一份 _TASK_REQUIREMENTS，无副本）。
+    """
+    from agent.context.prefix_history import render_branch_prefix
+
+    user = (
+        "【内部记忆反思任务——本消息不属于对话内容，请勿回应】\n"
+        f"{_load_sys()}\n\n"
+        + _reflection_context_block(existing_profile, existing_pattern, existing_summary, prev_turn)
+        + f"【待反思回合】追加历史末尾已提供本批 {len(turns)} 个回合；只从这些回合提取，"
+        "不要把它们复制到本消息，也不要为更早的历史内容新建记忆。\n\n"
+        + _APPEND_HISTORY_DIRECTIVE + "\n\n"
+        + _TASK_REQUIREMENTS
+    )
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
-    result = await ContextBranch().run(
-        BranchInput(stable_system=_load_sys(), delta=user, scope="owner"),
-        BranchPolicy(
-            name="reflection",
-            output_mode="json",
-            max_tokens=min(_cap, 900),
-            max_retries=0,
-            # 反思只提取小型结构化增量，不需要推理链。若继承当前模型的 adaptive
-            # thinking，900 token 很容易被思考预算耗尽而没有最终 JSON，导致 pattern
-            # 增量被 ContextBranch 判为 output_empty。
-            thinking="disabled",
+    result = await run_reflection_branch(
+        BranchInput(
+            stable_system=snapshot.system_prompt,
+            delta=user,
+            scope="owner",
+            run_id=snapshot.run_id,
+            history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
+            tools=tuple(snapshot.tools),
+            branch_mode="append_reuse",
         ),
         settings,
+        max_tokens=min(_cap, 900),
+        max_retries=0,
+        thinking="disabled",
     )
     return result.output if result.ok and isinstance(result.output, dict) else {}

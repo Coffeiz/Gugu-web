@@ -5,6 +5,7 @@
 #
 # 产物只含生产运行时：不含前端源码、前端 node_modules、pnpm 缓存、测试代码与 docs/；
 # 仅保留 TS RAG worker 所需的 Linux x64 native node_modules。
+# 本地构建前先运行 `sh scripts/release/build-sandbox-bundle.sh`；发布流水线自动注入该归档。
 # 平台：linux/amd64（多架构暂不支持，见 PRD-DEPLOY-1）。
 
 # ── Stage 1：前端构建 ────────────────────────────────────────────────────────
@@ -149,6 +150,9 @@ COPY backend/compose_bootstrap.py ./compose_bootstrap.py
 COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 COPY squid/egress.conf /opt/gugu/egress.conf
+# 发布流水线把已扫描的 Sandbox 执行镜像随一体化镜像打包；bootstrap 会导入目标 daemon。
+COPY docker/sandbox/bundle/sandbox-image.tar.gz /opt/gugu/sandbox/sandbox-image.tar.gz
+COPY docker/sandbox/bundle/image-id /opt/gugu/sandbox/image-id
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs

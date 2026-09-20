@@ -36,7 +36,6 @@ from app.services.files.actions import (
     build_stream_url,
     delete_file as delete_file_service,
     delete_files,
-    read_file_download,
     resolve_local_file_stream,
     update_file_content as update_file_content_service,
 )
@@ -74,11 +73,59 @@ class UnarchiveRequest(CamelModel):
     folder_name: Optional[str] = None
     format: Optional[str] = None
 
-# 单文件上传硬上限（字节）——独立于存储配额；端点分块收流，内存峰值与上限解耦。
-_MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+
+def _parse_range_header(value: str | None, size: int) -> tuple[int, int, bool] | None:
+    """解析单段 HTTP Range；返回 (start, end, partial)，非法范围返回 None。"""
+    if not value:
+        return 0, size - 1, False
+    import re
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip())
+    if not match or (not match.group(1) and not match.group(2)):
+        return None
+    if match.group(1):
+        start = int(match.group(1))
+        end = int(match.group(2)) if match.group(2) else size - 1
+    else:
+        start = max(size - int(match.group(2)), 0)
+        end = size - 1
+    if start >= size or start > end:
+        return None
+    return start, min(end, size - 1), True
+
+
+def _iter_local_file(path, start: int, end: int):
+    async def body():
+        import asyncio
+        remaining = end - start + 1
+        source = await asyncio.to_thread(path.open, "rb")
+        try:
+            await asyncio.to_thread(source.seek, start)
+            while remaining > 0:
+                chunk = await asyncio.to_thread(source.read, min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+        finally:
+            await asyncio.to_thread(source.close)
+    return body()
+
 # undo 内容备份上限：覆盖上传的撤销要同时留存新旧两份正文，超过该大小的文件
 # 不记撤销操作（否则一次 512MB 覆盖就是三份全量拷贝，撤销本身变成磁盘炸弹）。
 _UNDO_CONTENT_MAX = 64 * 1024 * 1024
+
+
+async def _upload_capacity(db, current_user, on_conflict: str, overwrite_file_id: int | None):
+    """返回实际总配额与本次请求可消费的剩余空间。"""
+    limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    if limit is None:
+        return None, 2**63 - 1
+    used = await get_storage_usage(db, current_user.id)
+    reclaimable = 0
+    if on_conflict == "overwrite" and overwrite_file_id is not None:
+        existing = await get_owned(db, File, overwrite_file_id, current_user.id)
+        reclaimable = int(existing.size_bytes or 0) if existing else 0
+    return limit, max(int(limit) - int(used) + reclaimable, 0)
 
 # 版本摘要是无副作用查询，遇到迁移/对账等 DDL 造成的短暂死锁时可以安全重试。
 # ── GET /files ────────────────────────────────────────────────────────────────
@@ -287,12 +334,14 @@ async def upload_file(
     display_name, ext = parse_upload_filename(original_name)
     mime_type = file.content_type
 
-    # 单文件硬上限：分块收流（1MB 块 + spool 自动滚盘），超限立刻 413，内存峰值
-    # 与上限解耦。属请求体传输约束（413），留在端点；语义校验（项目/文件夹/配额/
-    # 覆盖）在 FileService。spool 交给 create_file 流式落盘，用完即关。
+    _storage_limit, upload_limit = await _upload_capacity(
+        db, current_user, on_conflict, overwrite_file_id,
+    )
+    # 不再设置单文件硬上限：请求体仍按 1MB 分块进入临时文件，最多消费当前用户
+    # 文件库总容量的剩余空间；最终写入由 FileService 再次按总配额校验。
     spool, size_bytes, content_sha = await spool_upload(
-        file, limit=_MAX_UPLOAD_BYTES, status_code=413,
-        message=f"文件过大（单文件上限 {_MAX_UPLOAD_BYTES // 1048576}MB）")
+        file, limit=upload_limit, status_code=413,
+        message="存储空间已满，无法上传")
 
     _is_img = bool(mime_type) and mime_type.lower() in IMAGE_MIMES and mime_type.lower() != "image/svg+xml"
     img_width = img_height = None
@@ -300,7 +349,6 @@ async def upload_file(
         # Pillow 只读 header 拿尺寸；mime 是用户可控输入，探宽高不能整包进内存。
         img_width, img_height = read_image_dimensions(spool, mime_type)
 
-    _storage_limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
     undo_content = size_bytes <= _UNDO_CONTENT_MAX
     before_file = None
     before_content = None
@@ -474,7 +522,7 @@ async def confirm_upload(
             stage_name=body.stage_name,
             overwrite_file_id=body.overwrite_file_id,
             storage_limit_bytes=current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
-            max_file_bytes=_MAX_UPLOAD_BYTES,
+        max_file_bytes=None,
         )
     except UploadTargetError as error:
         raise HTTPException(error.status_code, error.detail) from error
@@ -528,7 +576,7 @@ async def update_file(
     before = file_snapshot(previous) if previous else None
     result = await FileService(db).update_file(
         current_user.id, fid,
-        display_name=body.display_name, stage_name=body.stage_name,
+        display_name=body.display_name, ext=body.ext, stage_name=body.stage_name,
         folder_id=body.folder_id, project_id=body.project_id,
         folder_set='folder_id' in body.model_fields_set,
         project_set='project_id' in body.model_fields_set,
@@ -771,19 +819,27 @@ async def download_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from fastapi.responses import Response
+    from fastapi.responses import StreamingResponse
     from urllib.parse import quote
 
-    result = await read_file_download(db, get_storage(), current_user.id, fid)
-    if result is None:
+    file = await get_owned(db, File, fid, current_user.id)
+    if file is None or file.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
-    filename = quote(f"{result.file.display_name}.{result.file.ext.lower()}")
-    return Response(
-        content=result.content,
-        media_type=result.file.mime_type or "application/octet-stream",
+    storage = get_storage()
+    # 流式响应的响应头先于读盘发出，Content-Length 必须取物理对象真实大小：
+    # 用库内 size_bytes 会在历史脏数据（0/与盘不符）上造成 Content-Length
+    # 失配，uvicorn 中途断连（浏览器表现为 Failed to fetch，无法转成状态码）。
+    info = await storage.stat(file.storage_key)
+    if info is None:
+        raise HTTPException(404, "物理文件丢失")
+    filename = quote(f"{file.display_name}.{file.ext.lower()}")
+    return StreamingResponse(
+        storage.iter_chunks(file.storage_key),
+        media_type=file.mime_type or "application/octet-stream",
         # 图片等预览场景会反复打开同一文件；短 TTL 让浏览器缓存，避免每次全量重新下载。
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
-                 "Cache-Control": "private, max-age=300"},
+                 "Cache-Control": "private, max-age=300",
+                 "Content-Length": str(info.size)},
     )
 
 
@@ -870,9 +926,12 @@ async def get_stream_url(
 async def stream_file(
     fid: int,
     token: str = Query(...),
+    dl: int = 0,
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
 ):
-    from fastapi.responses import FileResponse
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
 
     token_fid, user_id = verify_stream_token(token)
     if token_fid != fid:
@@ -885,8 +944,28 @@ async def stream_file(
     if result is None:
         raise HTTPException(404, "文件不存在")
 
-    return FileResponse(
-        path=str(result.path),
+    size = result.path.stat().st_size
+    parsed = _parse_range_header(request.headers.get("range") if request else None, size)
+    if parsed is None:
+        return StreamingResponse(iter(()), status_code=416,
+                                 headers={"Content-Range": f"bytes */{size}"})
+    start, end, partial = parsed
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(end - start + 1),
+        "Content-Disposition": "inline",
+    }
+    if dl:
+        # dl=1 是「下载」语义：attachment 让浏览器直接写盘（前端大文件下载走
+        # stream-url 直下，不经 blob 进内存）；token 已校验归属，Range 保持可用。
+        download_name = quote(f"{result.file.display_name}.{result.file.ext.lower()}")
+        headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{download_name}"
+    if partial:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(
+        _iter_local_file(result.path, start, end),
+        status_code=206 if partial else 200,
         media_type=result.file.mime_type or "application/octet-stream",
-        filename=f"{result.file.display_name}.{result.file.ext.lower()}",
+        headers=headers,
     )

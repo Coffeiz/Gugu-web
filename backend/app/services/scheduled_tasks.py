@@ -1,9 +1,10 @@
 """独立定时任务的查询与写入边界。"""
-from sqlalchemy import select
 from pathlib import PurePosixPath
 
+from sqlalchemy import select
+
 from app.core.ownership import get_owned
-from app.models import ScheduledTask, Workspace
+from app.models import ConversationSession, ScheduledTask, UserBot, Workspace
 
 
 def normalize_script_authorization(value):
@@ -62,6 +63,47 @@ async def list_tasks(db, user_id):
     return (await db.execute(select(ScheduledTask).where(
         ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None),
     ).order_by(ScheduledTask.id.desc()))).scalars().all()
+
+
+async def find_qq_group_session(db, user_id, chat_id: str):
+    """只在当前用户的 QQ 群会话中解析投递目标。"""
+    return (await db.execute(
+        select(ConversationSession)
+        .where(
+            ConversationSession.user_id == user_id,
+            ConversationSession.source == "qq",
+            ConversationSession.chat_type == "group",
+            ConversationSession.chat_id == chat_id,
+        )
+        .order_by(ConversationSession.id.desc())
+    )).scalars().first()
+
+
+async def list_qq_group_sessions(db, user_id):
+    """列出当前用户已出现过的 QQ 群会话，按最近会话优先。"""
+    return (await db.execute(
+        select(ConversationSession)
+        .where(
+            ConversationSession.user_id == user_id,
+            ConversationSession.source == "qq",
+            ConversationSession.chat_type == "group",
+            ConversationSession.chat_id.isnot(None),
+        )
+        .order_by(ConversationSession.id.desc())
+    )).scalars().all()
+
+
+async def get_enabled_user_bot(db, user_id, platform: str):
+    """返回当前用户指定平台最早创建的启用 Bot。"""
+    return (await db.execute(
+        select(UserBot)
+        .where(
+            UserBot.user_id == user_id,
+            UserBot.platform == platform,
+            UserBot.enabled.is_(True),
+        )
+        .order_by(UserBot.id.asc())
+    )).scalars().first()
 
 
 async def create_task(db, user_id, *, commit=False, **fields):

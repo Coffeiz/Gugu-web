@@ -213,6 +213,7 @@ export interface ScheduledTaskInput {
   payload?: string
   channels?: string[]
   enabled?: boolean
+  qq_delivery?: { mode: 'private' } | { mode: 'group'; chat_id: string } | null
   event_id?: number | null
   authorized_tools?: string[]
   email_attachment_file_ids?: number[]
@@ -236,6 +237,7 @@ export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedul
 
 export const scheduledTasksApi = {
   list:         ()                  => get<{ tasks: ScheduledTaskResponse[] }>('/scheduled-tasks'),
+  listQqTargets: ()                 => get<{ groups: { chat_id: string; title: string }[] }>('/scheduled-tasks/qq-targets'),
   listForEvent: (eventId: number)   => get(`/scheduled-tasks?event_id=${eventId}`),   // 某日历活动绑定的提醒
   create:       (data: Partial<ScheduledTaskInput>)         => post<ScheduledTaskResponse>('/scheduled-tasks', data),
   update:       (id: number, data: Partial<ScheduledTaskInput>, meta?: RequestMeta) => patch<ScheduledTaskResponse>(`/scheduled-tasks/${id}`, data, meta),
@@ -508,8 +510,9 @@ export interface MindNoteUpdate {
 }
 /** `[[` 补全候选：type+id 是写进正文的稳定锚点，label 只作展示 */
 export interface MindRefSuggestItem {
-  type: 'project' | 'file' | 'folder' | 'event' | 'conversation'
-  id: number
+  type: 'project' | 'file' | 'folder' | 'event' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
+  // mcp 引用的 id 是 UUID 字符串（user_mcp_servers 主键），其余是 int 自增
+  id: number | string
   label: string
   subtitle?: string | null
 }

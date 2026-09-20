@@ -92,7 +92,9 @@ Shell 沙盒执行服务。生产普通用户的 Shell 请求通过 Docker 执�
 
 ### 4.2 Agent orchestration
 
-位置：`backend/agent/runner.py`、`backend/agent/core.py`、`backend/agent/router.py`。
+位置：`backend/agent/run/`（唯一生命周期实现）、`backend/agent/runner.py`（collect/stream 的 Sink 适配层与兼容再导出）、`backend/agent/core.py`、`backend/agent/router.py`。
+
+`agent/run/` 按 PRD-LLM-18 承载统一 run 生命周期：`preparation.prepare_agent_run`（第一段准备：会话/snapshot/history/附件/配额/能力装配）、`execution.consume_agent_events`（事件流消费，CollectSink/WebStreamSink 两种 Sink 形态）、`finalization.finalize_agent_run`（统一收尾：持久化先于渠道广播）。
 
 负责：
 

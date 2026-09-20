@@ -236,13 +236,25 @@ async def finalize_run(
                                 ),
                                 canonical_batch_id=batch_row.id,
                             ))
-            if text or files or display_timeline:
+            persisted_timeline = display_timeline or None
+            if persisted_timeline and user_message_id:
+                # 展示时间线可能在取消收尾时才落库，而下一条用户消息已先提交。
+                # 用发起本 run 的用户消息锚定其顺序，避免刷新后按 assistant 行的
+                # 晚到自增 id 把旧 run 的工具卡排到后续用户消息之后。
+                persisted_timeline = [
+                    {
+                        **item,
+                        "timelineOrder": item.get("timelineOrder") or user_message_id * 1000 + index + 1,
+                    }
+                    for index, item in enumerate(persisted_timeline)
+                ]
+            if text or files or persisted_timeline:
                 db.add(ConversationMessage(
                     session_id=session_id,
                     role="assistant",
                     content=text,
                     files=files or None,
-                    display_timeline=display_timeline or None,
+                    display_timeline=persisted_timeline,
                 ))
 
         from agent.usage import record_usage

@@ -622,20 +622,33 @@ async def _post_snapshot(snapshot: dict[str, Any]) -> None:
 def _finish_run(run: _ScopeRun, status: str) -> None:
     if run.ended_at is not None:
         return
-    if status == "success" and not any(
-        span.kind == "output" and span.name == "Final response"
-        for span in run.spans
-    ):
+    if status == "success":
+        final_span = next((
+            span for span in run.spans
+            if span.kind == "output" and span.name == "Final response"
+        ), None)
         final_text = run.output_text
-        if not final_text:
+        if not final_text.strip():
             for span in reversed(run.spans):
                 if span.kind != "llm" or not isinstance(span.output, dict):
                     continue
                 draft = span.output.get("draft")
-                if isinstance(draft, str) and draft:
+                if isinstance(draft, str) and draft.strip():
                     final_text = draft
                     break
-        if final_text:
+        if final_span is not None:
+            recorded_text = (
+                final_span.output.get("text")
+                if isinstance(final_span.output, dict) else None
+            )
+            if not isinstance(recorded_text, str) or not recorded_text.strip():
+                if final_text.strip():
+                    # genstream 的 done 可能先于/没有对应 token 被观测到；不能让
+                    # 已创建的空 Final response span 阻止从最后一轮 LLM draft 恢复。
+                    final_span.output = _jsonable({"text": final_text})
+                    final_span.attributes.update({"source": "trace.finish_run", "fallback": True})
+                    final_span.token_impact["output_tokens_estimate"] = _estimate_tokens(final_text)
+        elif final_text.strip():
             final = run.span(
                 "output",
                 "Final response",

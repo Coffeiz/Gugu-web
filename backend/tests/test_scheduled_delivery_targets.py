@@ -69,6 +69,37 @@ async def test_rest_task_update_can_change_authorized_tools_alone(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("channels", [["qq", "web"], ["web"]])
+async def test_rest_task_channel_update_without_qq_delivery_preserves_existing_group_target(
+    db, user_a, monkeypatch, channels,
+):
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    from app.models import ScheduledTask
+
+    original_target = {
+        "qq": {
+            "platform": "qq", "chat_type": "group", "chat_id": "legacy-group",
+            "puid": "owner-platform-user", "channel_id": "bot-1",
+        }
+    }
+    task = ScheduledTask(
+        user_id=user_a.id, name="旧群提醒", payload="保持群目标",
+        cron="0 9 * * *", channels="qq,web", delivery_targets=original_target,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    monkeypatch.setattr(scheduled_api.events, "publish", AsyncMock())
+
+    await scheduled_api.update_task(
+        task.id, scheduled_api.TaskUpdate(channels=channels), user_a, db,
+    )
+
+    await db.refresh(task)
+    assert task.delivery_targets["qq"] == original_target["qq"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("initial", "requested", "expected"),
     [([], ["send_email"], ["send_email"]), (["send_email"], [], [])],
@@ -115,7 +146,7 @@ async def test_group_delivery_mode_captures_current_qq_group():
         "group",
     )
     try:
-        targets, error = await _resolve_delivery_targets(
+        channels, targets, error = await _resolve_delivery_targets(
             None, "user-1", ["qq"], "current_group"
         )
     finally:
@@ -137,9 +168,10 @@ async def test_group_delivery_mode_captures_current_qq_group():
 async def test_group_delivery_mode_rejects_web_context():
     from agent.tools.scheduled_tasks import _resolve_delivery_targets
 
-    targets, error = await _resolve_delivery_targets(
+    channels, targets, error = await _resolve_delivery_targets(
         None, "user-1", ["qq"], "current_group"
     )
+    assert channels == ["qq"]
 
     assert targets is None
     assert "只有在 QQ 群聊中" in error
@@ -808,3 +840,29 @@ async def test_persist_push_im_private_missing_puid_returns_early(monkeypatch, d
     )).scalar_one()
     assert sess_count == 0
     assert msg_count == 0
+
+
+# ── 工具层：delivery_mode=current_group 必须带 qq 渠道 ─────────────────────
+
+@pytest.mark.asyncio
+async def test_current_group_without_qq_channel_auto_adds_qq():
+    """回归：创建任务传 channels=["web"] + delivery_mode=current_group 曾被静默接受，
+    落成 web 渠道、delivery_targets 为空，用户以为会发群。现在自动补上 qq 渠道（只发群，
+    不激活私聊），并继续走群绑定流程；非群聊上下文中明确报错而不是静默成功。"""
+    import json
+
+    from agent.tools.scheduled_tasks import _resolve_delivery_targets
+
+    channels, targets, error = await _resolve_delivery_targets(None, "user-1", ["web"], "current_group")
+    assert "qq" in channels
+    assert targets is None
+    assert json.loads(error)["error"] == "只有在 QQ 群聊中才能把定时任务绑定到当前群"
+
+
+@pytest.mark.asyncio
+async def test_non_group_mode_does_not_add_qq():
+    from agent.tools.scheduled_tasks import _resolve_delivery_targets
+
+    channels, targets, error = await _resolve_delivery_targets(None, "user-1", ["web"], "owner_private")
+    assert channels == ["web"]
+    assert targets is None and error is None

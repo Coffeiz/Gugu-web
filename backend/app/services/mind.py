@@ -7,7 +7,8 @@ from app.core.mind import (
     update_mind_note,
 )
 from app.core.ownership import get_owned
-from app.models import MindNode, MindRelation
+from app.core.tz import now_utc
+from app.models import MindNode, MindRelation, ScheduledTask, UserMcpServer, UserSkill
 from app.search.query import keyword_condition
 
 
@@ -103,3 +104,24 @@ async def latest_gugu_note(db, user_id):
         MindNode.user_id == user_id, MindNode.kind == "note", MindNode.origin == "gugu",
         MindNode.deleted_at.is_(None),
     ).order_by(MindNode.created_at.desc(), MindNode.id.desc()).limit(1))
+
+
+async def list_recent_reference_extras(db, user_id, *, limit: int):
+    """读取 @ 引用补全中的 Skill、MCP 与有效定时任务候选。"""
+    skills = (await db.scalars(
+        select(UserSkill).where(UserSkill.owner_id == user_id)
+        .order_by(UserSkill.updated_at.desc()).limit(limit)
+    )).all()
+    mcp_servers = (await db.scalars(
+        select(UserMcpServer).where(
+            or_(UserMcpServer.user_id == user_id, UserMcpServer.scope == "platform"),
+        ).order_by(UserMcpServer.name).limit(limit)
+    )).all()
+    tasks = (await db.scalars(
+        select(ScheduledTask).where(
+            ScheduledTask.user_id == user_id,
+            ScheduledTask.enabled.is_(True),
+            or_(ScheduledTask.end_at.is_(None), ScheduledTask.end_at > now_utc()),
+        ).order_by(ScheduledTask.updated_at.desc()).limit(limit)
+    )).all()
+    return skills, mcp_servers, tasks
