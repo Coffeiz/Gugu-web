@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -244,3 +245,34 @@ async def test_legacy_group_owner_queue_migrates_by_session(monkeypatch):
         '{"user_name":"小北","user_msg":"乙","assistant_reply":"","session_id":32}'
     ]
     assert "owner-old" not in fake_redis.zsets[reflection._GROUP_OWNER_IDLE_KEY]
+
+
+@pytest.mark.asyncio
+async def test_legacy_owner_private_queue_migrates_by_session_on_next_activity(monkeypatch):
+    from agent.memory import reflection
+    import app.core.redis as redis_module
+
+    fake_redis = _FakeRedis()
+    legacy_key = f"{reflection._OWNER_REFLECTION_BUFFER_PREFIX}owner-old"
+    legacy_rows = [
+        '{"user_name":"小北","user_msg":"旧私聊一","assistant_reply":"回复一","session_id":31}',
+        '{"user_name":"小北","user_msg":"旧私聊二","assistant_reply":"回复二","session_id":32}',
+    ]
+    fake_redis.lists[legacy_key] = list(legacy_rows)
+    monkeypatch.setattr(redis_module, "get_redis", lambda: fake_redis)
+    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=10))
+
+    await reflection._queue_owner_reflection(
+        "owner-old", "小北", "当前私聊", "当前回复", settings, 31,
+    )
+
+    session_31 = reflection._owner_reflection_buffer_key("owner-old", 31)
+    session_32 = reflection._owner_reflection_buffer_key("owner-old", 32)
+    assert legacy_key not in fake_redis.lists
+    assert len(fake_redis.lists[session_31]) == 2
+    assert fake_redis.lists[session_31][0] == legacy_rows[0]
+    assert json.loads(fake_redis.lists[session_31][1])["user_msg"] == "当前私聊"
+    assert fake_redis.lists[session_32] == [legacy_rows[1]]
+    idle_members = fake_redis.zsets[reflection.reflection_idle.OWNER_IDLE_KEY]
+    assert reflection._owner_idle_member("owner-old", 31) in idle_members
+    assert reflection._owner_idle_member("owner-old", 32) in idle_members

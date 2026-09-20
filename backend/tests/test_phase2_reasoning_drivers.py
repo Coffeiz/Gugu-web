@@ -348,6 +348,64 @@ async def test_responses_driver_retries_full_history_when_response_chain_is_stal
 
 
 @pytest.mark.asyncio
+async def test_stale_response_fallback_retries_transient_error_before_success(monkeypatch):
+    from app.core import retry as retry_module
+    from app.core.retry import RetryPolicy
+
+    monkeypatch.setattr(retry_module, "LLM_RETRY", RetryPolicy(interval_seconds=0.0))
+    response = {
+        "id": "resp-recovered",
+        "output": [],
+        "usage": {"input_tokens": 12, "output_tokens": 3},
+    }
+    events = [
+        SimpleNamespace(type="response.output_text.delta", delta="已恢复"),
+        SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: response)),
+    ]
+
+    class _StaleThenRateLimitClient:
+        def __init__(self):
+            self.requests = []
+            self.responses = SimpleNamespace(create=self.create)
+
+        async def create(self, **kwargs):
+            self.requests.append(kwargs)
+            if len(self.requests) == 1:
+                error = _ResponsesStatusError(404)
+                error.body = {"error": {"param": "response_id", "message": "Response not found"}}
+                raise error
+            if len(self.requests) == 2:
+                import httpx
+                import openai
+
+                response = httpx.Response(
+                    429, request=httpx.Request("POST", "https://api.example/v1/responses"),
+                )
+                raise openai.RateLimitError("429 rate limited", response=response, body=None)
+            return _FakeResponsesStream(list(events))
+
+    client = _StaleThenRateLimitClient()
+    driver = OpenAIResponsesDriver()
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    messages = [{"role": "user", "content": "继续"}]
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-stale")
+
+    emitted = []
+    async for kind, value in driver.run_round(client, ctx, messages):
+        emitted.append((kind, value))
+
+    retry_events = [value for kind, value in emitted if kind == "retry"]
+    results = [value for kind, value in emitted if kind == "done"]
+    assert len(client.requests) == 3
+    assert client.requests[0]["previous_response_id"] == "resp-stale"
+    assert all("previous_response_id" not in request for request in client.requests[1:])
+    assert client.requests[1]["input"] == client.requests[2]["input"]
+    assert [event["attempt"] for event in retry_events] == [1]
+    assert results[0].text == "已恢复"
+
+
+@pytest.mark.asyncio
 async def test_responses_driver_uses_response_chain_and_function_call_items():
     response = {
         "id": "resp-2",

@@ -354,16 +354,14 @@ class OpenAIResponsesDriver:
                 # 某些 OpenAI-compatible Responses 服务在 ask_user 等交互暂停期间
                 # 不保留原 response chain。恢复时本地历史仍完整，因此用无状态完整
                 # 历史重试一次，避免把可恢复的 tool-id 失效误报成通用模型错误。
-                if ctx.previous_response_id and _is_stale_response_chain_error(exc):
-                    retry_request = dict(wire_request)
-                    retry_request.pop("previous_response_id", None)
-                    retry_request["input"] = _responses_input(full_rendered)
-                    try:
-                        stream = await client.responses.create(**retry_request)
-                        break
-                    except Exception as retry_exc:
-                        _raise_if_responses_compatibility_error(retry_exc)
-                        raise
+                if ("previous_response_id" in wire_request
+                        and _is_stale_response_chain_error(exc)):
+                    # 切换到无状态完整历史后留在同一重试循环；fallback 自身遇到
+                    # 429/529/5xx/timeout 时也必须经过共享的瞬时错误重试策略。
+                    wire_request = dict(wire_request)
+                    wire_request.pop("previous_response_id", None)
+                    wire_request["input"] = _responses_input(full_rendered)
+                    continue
                 from agent.providers.errors import openai_transient_error, openai_error_kind
                 if not openai_transient_error(exc):
                     _raise_if_responses_compatibility_error(exc)

@@ -18,6 +18,7 @@
 
 ### 修复
 
+- 修复空文件流式下载的长度声明、Responses stale-chain 回退的瞬时重试、定时任务更新时 QQ 群目标被静默改写，以及旧版 owner 私聊反思缓冲未迁移的问题。
 - 修复 Responses 工具调用跨轮历史缺少输出项 ID，以及失败轮次的空 assistant 展示行污染后续上下文。
 - 修复 Responses 兼容回退后 LoopScope 未记录成功轮 usage/cache，避免实际请求成功但后台统计显示为 0；旧工具调用历史在出站时稳定补齐 Responses item ID。
 - 修复沙盒状态检查误探测 Backend/Worker 的 Docker daemon，改为由 sandboxd 检查其实际管理的 Rootless runtime；修正 sandboxd 与一次性容器继承错误 HTTP 健康检查的问题。

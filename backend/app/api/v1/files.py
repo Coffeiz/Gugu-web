@@ -77,7 +77,7 @@ class UnarchiveRequest(CamelModel):
 def _parse_range_header(value: str | None, size: int) -> tuple[int, int, bool] | None:
     """解析单段 HTTP Range；返回 (start, end, partial)，非法范围返回 None。"""
     if not value:
-        return 0, max(size - 1, 0), False
+        return 0, size - 1, False
     import re
     match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip())
     if not match or (not match.group(1) and not match.group(2)):

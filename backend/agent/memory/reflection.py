@@ -393,6 +393,38 @@ def _owner_reflection_buffer_key(user_id, session_id=None) -> str:
     return f"{_OWNER_REFLECTION_BUFFER_PREFIX}{user_id}:{suffix}"
 
 
+async def _migrate_legacy_owner_reflection_buffer(redis, user_id) -> bool:
+    """首次活跃时把旧版按 user 合并的私聊缓冲拆分到 session 键。"""
+    legacy_key = f"{_OWNER_REFLECTION_BUFFER_PREFIX}{user_id}"
+    raw_rows = await redis.lrange(legacy_key, 0, -1)
+    if not raw_rows:
+        return True
+    try:
+        rows = [json.loads(raw) for raw in raw_rows]
+    except (TypeError, ValueError) as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.owner_buffer_migration", exc)
+        return False
+    if any(not isinstance(row, dict) or row.get("session_id") is None for row in rows):
+        # 缺少 session_id 的旧行不能安全猜归属；保留原队列，避免跨会话合并或丢失。
+        return False
+
+    grouped: dict[str, list[str]] = {}
+    for raw, row in zip(raw_rows, rows):
+        grouped.setdefault(str(row["session_id"]), []).append(raw)
+    migrated_at = time.time()
+    for session_text, payloads in grouped.items():
+        await redis.rpush(
+            _owner_reflection_buffer_key(user_id, session_text), *payloads,
+        )
+        await redis.zadd(
+            reflection_idle.OWNER_IDLE_KEY,
+            {_owner_idle_member(user_id, session_text): migrated_at},
+        )
+    await redis.delete(legacy_key)
+    return True
+
+
 async def _drain_owner_reflection_buffer(
     user_id, settings, session_id=None, *, allow_rebuild: bool = False,
 ) -> None:
@@ -414,6 +446,7 @@ async def _queue_owner_reflection(
     lock = redis.lock(f"{_OWNER_REFLECTION_LOCK_PREFIX}{user_id}", timeout=180)
     await lock.acquire()
     try:
+        await _migrate_legacy_owner_reflection_buffer(redis, user_id)
         await redis.rpush(key, json.dumps({
             "user_name": user_name,
             "user_msg": user_msg,

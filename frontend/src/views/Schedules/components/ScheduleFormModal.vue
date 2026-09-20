@@ -116,7 +116,8 @@
           </template>
         </div>
         <div v-if="form.channels.includes('qq')" class="qq-delivery-field" data-testid="schedule-qq-delivery">
-          <SelectPopup v-model="qqTarget" :options="qqTargetOptions" popup-class="qq-target-popup" auto-flip />
+          <SelectPopup :model-value="qqTarget" :options="qqTargetOptions" popup-class="qq-target-popup"
+            auto-flip @update:model-value="setQqTarget" />
         </div>
       </div>
 
@@ -149,6 +150,7 @@ import {
   splitScheduleDateTime,
   type RepeatMode,
 } from '../utils/scheduleCron'
+import { buildQqDeliveryFields, buildQqTargetOptions } from '../utils/qqDelivery'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -185,11 +187,14 @@ const workspaceOptions = computed(() => [
 const repeatMode = ref<RepeatMode>('daily')
 const weeklyDays = ref<number[]>([1])
 const qqTarget = ref('private')
+const initialQqTarget = ref('private')
 const qqGroups = ref<{ chat_id: string; title: string }[]>([])
-const qqTargetOptions = computed(() => [
-  { value: 'private', label: t('schedules.qqPrivate') },
-  ...qqGroups.value.map(group => ({ value: group.chat_id, label: group.title })),
-])
+const qqTargetOptions = computed(() => buildQqTargetOptions(
+  qqGroups.value,
+  qqTarget.value,
+  t('schedules.qqPrivate'),
+  chatId => t('scheduleUi.qqGroupUnavailable', { chatId }),
+))
 const intervalMinutes = ref(5)
 const intervalPreset = ref('5')
 const startDate = ref('')
@@ -246,6 +251,7 @@ function resetForm() {
   weeklyDays.value = parsed.weeklyDays?.length ? [...parsed.weeklyDays] : [new Date().getDay()]
   const targets = props.task?.delivery_targets as Record<string, any> | undefined
   qqTarget.value = targets?.qq?.chat_type === 'group' && targets.qq.chat_id ? String(targets.qq.chat_id) : 'private'
+  initialQqTarget.value = qqTarget.value
   repeatMode.value = taskKind === 'once' ? 'once' : (taskKind === 'interval' ? 'interval' : parsed.mode)
   intervalMinutes.value = parsed.intervalMinutes ?? 5
   intervalPreset.value = INTERVAL_PRESETS.includes(intervalMinutes.value) ? String(intervalMinutes.value) : 'custom'
@@ -266,13 +272,12 @@ async function loadQqTargets() {
   try {
     const res = await scheduledTasksApi.listQqTargets()
     qqGroups.value = res.groups
-    // 当前选中的群可能已被删除/不存在，回落到私聊
-    if (qqTarget.value !== 'private' && !res.groups.some(group => group.chat_id === qqTarget.value)) {
-      qqTarget.value = 'private'
-    }
   } catch {
     qqGroups.value = []
   }
+}
+function setQqTarget(value: string) {
+  qqTarget.value = value
 }
 function resizePayload() {
   const element = payloadRef.value
@@ -337,11 +342,10 @@ function toggleChannel(channel: string, checked: boolean) {
   else channels.delete(channel)
   form.channels = [...channels]
 }
-function qqDeliveryPayload() {
-  if (!form.channels.includes('qq')) return null
-  return qqTarget.value === 'private'
-    ? { mode: 'private' as const }
-    : { mode: 'group' as const, chat_id: qqTarget.value }
+function qqDeliveryFields() {
+  return buildQqDeliveryFields(
+    Boolean(props.task), initialQqTarget.value, qqTarget.value, form.channels.includes('qq'),
+  )
 }
 function submit() {
   if (!form.name.trim()) { formErr.value = t('schedules.nameRequired'); return }
@@ -357,7 +361,7 @@ function submit() {
       schedule_kind: 'once', cron: null, interval_minutes: null,
       start_at: startAt, end_at: null,
       channels: [...form.channels], enabled: props.task ? props.task.enabled : true,
-      qq_delivery: qqDeliveryPayload(),
+      ...qqDeliveryFields(),
       workspace_id: form.workspaceId,
       filesystem_authorized: form.filesystemAuthorized,
     })
@@ -388,7 +392,7 @@ function submit() {
       start_at: startAt,
       end_at: endAt,
       channels: [...form.channels], enabled: props.task ? props.task.enabled : true,
-      qq_delivery: qqDeliveryPayload(),
+      ...qqDeliveryFields(),
       workspace_id: form.workspaceId,
       filesystem_authorized: form.filesystemAuthorized,
     })

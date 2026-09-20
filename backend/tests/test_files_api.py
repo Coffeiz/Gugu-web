@@ -205,6 +205,20 @@ async def test_stream_endpoint_serves_http_range_without_reading_whole_file(db, 
     assert body == b"3456"
 
 
+async def test_stream_empty_file_returns_zero_length_body(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"", "empty.txt")
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+
+    response = await files_api.stream_file(
+        uploaded.id, token="stream-token", request=None, db=db,
+    )
+    body = b"".join([chunk async for chunk in response.body_iterator])
+
+    assert response.status_code == 200
+    assert response.headers["content-length"] == "0"
+    assert body == b""
+
+
 # ── 分块流式上传（内存峰值与上限解耦）────────────────────────────────────────
 
 async def test_upload_stream_writes_exact_content(db, user_a):

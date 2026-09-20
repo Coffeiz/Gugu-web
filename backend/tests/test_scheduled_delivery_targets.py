@@ -69,6 +69,37 @@ async def test_rest_task_update_can_change_authorized_tools_alone(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("channels", [["qq", "web"], ["web"]])
+async def test_rest_task_channel_update_without_qq_delivery_preserves_existing_group_target(
+    db, user_a, monkeypatch, channels,
+):
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    from app.models import ScheduledTask
+
+    original_target = {
+        "qq": {
+            "platform": "qq", "chat_type": "group", "chat_id": "legacy-group",
+            "puid": "owner-platform-user", "channel_id": "bot-1",
+        }
+    }
+    task = ScheduledTask(
+        user_id=user_a.id, name="旧群提醒", payload="保持群目标",
+        cron="0 9 * * *", channels="qq,web", delivery_targets=original_target,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    monkeypatch.setattr(scheduled_api.events, "publish", AsyncMock())
+
+    await scheduled_api.update_task(
+        task.id, scheduled_api.TaskUpdate(channels=channels), user_a, db,
+    )
+
+    await db.refresh(task)
+    assert task.delivery_targets["qq"] == original_target["qq"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("initial", "requested", "expected"),
     [([], ["send_email"], ["send_email"]), (["send_email"], [], [])],

@@ -386,13 +386,19 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.payload = body.payload
     if body.channels is not None or "qq_delivery" in body.model_fields_set:
         next_channels = body.channels if body.channels is not None else [c for c in (t.channels or "").split(",") if c]
+        t.channels = _norm_channels(next_channels)
         if "qq" in next_channels and "qq_delivery" in body.model_fields_set and body.qq_delivery is not None:
-            t.channels = _norm_channels(next_channels)
             t.delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
-        elif body.channels is not None:
-            t.channels = _norm_channels(body.channels)
+        elif "qq_delivery" in body.model_fields_set or body.channels is not None:
             from app.scheduled_tasks import owner_private_targets
-            t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
+            next_targets = await owner_private_targets(db, user.id, next_channels)
+            if "qq_delivery" not in body.model_fields_set:
+                # 旧客户端只改渠道时不能静默把已绑定群覆盖成 owner 私聊。
+                existing_targets = t.delivery_targets if isinstance(t.delivery_targets, dict) else {}
+                existing_qq_target = existing_targets.get("qq")
+                if existing_qq_target is not None:
+                    next_targets = {**(next_targets or {}), "qq": existing_qq_target}
+            t.delivery_targets = next_targets
     # 页面上的保存动作是用户重新确认任务意图；显式传授权时允许单独授予或撤销，
     # 内容或投递设置变更但未传授权时则自动撤销旧的持久权限。
     if body.authorized_tools is not None:
