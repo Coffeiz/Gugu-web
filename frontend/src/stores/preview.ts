@@ -19,6 +19,11 @@ export interface PreviewWindow {
   saveSource?: (content: string) => Promise<void> | void
 }
 
+/** 首次挂载的强刷标记仅消费一次；之后只有计数发生变化才代表新的强刷请求。 */
+export function isPreviewReloadRequested(currentToken: number, previousToken?: number): boolean {
+  return previousToken === undefined ? currentToken > 0 : currentToken !== previousToken
+}
+
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
 const TEXT_EXTS   = new Set(['TXT', 'MD', 'JSON', 'CSV', 'JS', 'TS', 'CSS', 'HTML', 'PY', 'YAML', 'XML', 'SH'])
 const VIDEO_EXTS  = new Set(['MP4', 'WEBM', 'MOV', 'M4V', 'OGV'])
