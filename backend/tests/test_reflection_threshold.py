@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -102,6 +103,30 @@ def test_owner_reflection_threshold_has_safe_default():
     assert reflection._owner_reflection_threshold(SimpleNamespace(agent=SimpleNamespace(reflection_threshold=7))) == 7
     assert reflection._owner_reflection_threshold(SimpleNamespace(agent=SimpleNamespace(reflection_threshold=0))) == 1
     assert reflection._owner_reflection_threshold(SimpleNamespace()) == 10
+
+
+@pytest.mark.asyncio
+async def test_reflection_idle_window_flushes_after_three_minutes_for_owner_and_group():
+    from agent.memory import reflection_idle
+
+    fake_redis = _FakeRedis()
+    now = 10_000.0
+    due_member = "idle-exactly-three-minutes"
+    active_member = "idle-two-minutes-fifty-nine-seconds"
+    for key in (reflection_idle.OWNER_IDLE_KEY, reflection_idle.GROUP_OWNER_IDLE_KEY):
+        fake_redis.zsets[key] = {
+            due_member: now - 180,
+            active_member: now - 179,
+        }
+
+        assert await reflection_idle.due_members(fake_redis, key, now=now) == [due_member]
+        assert await reflection_idle.is_due(fake_redis, key, due_member, now=now)
+        assert not await reflection_idle.is_due(fake_redis, key, active_member, now=now)
+
+    cutoff_input = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+    assert reflection_idle.idle_cutoff(cutoff_input) == datetime(
+        2026, 9, 20, 11, 57, tzinfo=timezone.utc,
+    )
 
 
 @pytest.mark.asyncio

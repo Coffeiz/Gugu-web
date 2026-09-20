@@ -218,7 +218,7 @@ async def observe_group_message(
 
 
 async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
-    """扫描 15 分钟无新消息且未收束的 scope，每轮只投递一次。"""
+    """扫描 3 分钟无新消息且未收束的 scope，每轮只投递一次。"""
     from app.models import MemoryReflectionCursor
 
     now = now or now_utc()

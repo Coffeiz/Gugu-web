@@ -594,7 +594,7 @@ async def _migrate_legacy_group_owner_buffer(redis, user_id, *, last_active=None
 
 
 async def flush_due_owner_reflections(settings, *, now: float | None = None, limit: int = 100) -> int:
-    """收束 owner 私聊/群聊中连续闲置 15 分钟的反思缓冲。"""
+    """收束 owner 私聊/群聊中连续闲置 3 分钟的反思缓冲。"""
     from app.core import redis as R
 
     redis = R.get_redis()
