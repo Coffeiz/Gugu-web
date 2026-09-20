@@ -75,6 +75,9 @@ services:
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
     command: ["python", "-c", "from pathlib import Path; Path('/data/users').mkdir(parents=True, exist_ok=True)"]
+    # 一次性任务不提供 Web 服务，不能继承后端镜像的 HTTP 健康检查。
+    healthcheck:
+      disable: true
     env_file:
       - ./backend/.env
     environment:
@@ -160,6 +163,9 @@ services:
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
     command: ["python", "-m", "worker"]
+    # Worker 没有 HTTP 健康端点，避免继承 backend 镜像的 /health 探针。
+    healthcheck:
+      disable: true
     env_file:
       - ./backend/.env
     environment:
@@ -183,6 +189,7 @@ services:
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
+      SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -204,6 +211,9 @@ services:
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
     command: ["python", "-m", "agent.gateway.gateway"]
+    # Gateway 没有 HTTP 健康端点，避免继承 backend 镜像的 /health 探针。
+    healthcheck:
+      disable: true
     env_file:
       - ./backend/.env
     environment:
@@ -246,6 +256,9 @@ services:
     # 服务并发有竞态；bootstrap 只准备沙盒 daemon 资源、不碰数据库，直接执行脚本。
     entrypoint: []
     command: ["sh", "/usr/local/bin/gugu-sandbox-init.sh"]
+    # 一次性引导任务不提供 Web 服务。
+    healthcheck:
+      disable: true
     env_file:
       - ./backend/.env
     environment:
@@ -281,6 +294,13 @@ services:
     # 工具执行随 backend/worker 镜像提供；sandboxd 是按需开启的可选沙盒执行层。
     image: ${GUGU_SANDBOXD_IMAGE:-${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}}
     command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
+    # 检查 sandboxd 实际提供的 Unix socket，不使用 backend 镜像的 HTTP 健康检查。
+    healthcheck:
+      test: ["CMD-SHELL", "test -S \"$${GUGU_SANDBOXD_SOCKET}\""]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
     env_file:
       - ./backend/.env
     environment:

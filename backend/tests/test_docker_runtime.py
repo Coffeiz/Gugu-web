@@ -1,7 +1,11 @@
 """Docker 沙盒运行时探测测试。"""
 
 import json
+import re
+import socket
 import subprocess
+import threading
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -81,6 +85,142 @@ def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
     assert docker_runtime.valid_image_digest("sha256:" + "f" * 64)
     assert not docker_runtime.valid_image_digest("sha256:" + "g" * 64)
     assert docker_runtime.valid_image_digest("bundled")
+
+
+def test_sandbox_readiness_queries_sandboxd_instead_of_worker_docker(monkeypatch):
+    settings = SimpleNamespace(
+        enabled=True,
+        rootless_required=True,
+        network_profile="none",
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+        sandboxd_socket="/run/gugu/sandboxd.sock",
+    )
+    monkeypatch.setattr(
+        docker_runtime, "probe_docker",
+        lambda: (_ for _ in ()).throw(AssertionError("worker 不应探测本地 Docker")),
+    )
+    monkeypatch.setattr(
+        docker_runtime, "sandboxd_readiness",
+        lambda path: (path == settings.sandboxd_socket, "sandboxd Docker 沙盒已就绪"),
+    )
+
+    assert docker_runtime.sandbox_readiness(settings) == (True, "sandboxd Docker 沙盒已就绪")
+
+
+def test_sandboxd_readiness_uses_status_socket_protocol():
+    socket_path = Path("/tmp") / f"gugu-sd-{uuid.uuid4().hex[:8]}.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(1)
+    received = []
+
+    def serve_one_status_request():
+        connection, _ = server.accept()
+        with connection:
+            received.append(connection.recv(128))
+            connection.sendall(
+                '{"type":"status","ready":false,"reason":"当前 Docker 不是 Rootless 模式"}\n'.encode("utf-8")
+            )
+        server.close()
+
+    thread = threading.Thread(target=serve_one_status_request)
+    thread.start()
+    try:
+        assert docker_runtime.sandboxd_readiness(str(socket_path)) == (
+            False, "当前 Docker 不是 Rootless 模式",
+        )
+    finally:
+        thread.join(timeout=2)
+        server.close()
+        socket_path.unlink(missing_ok=True)
+
+    assert received == [b'{"operation":"status"}\n']
+
+
+def test_docker_sandbox_readiness_rejects_rootful_daemon_before_image_check(monkeypatch):
+    settings = SimpleNamespace(
+        enabled=True,
+        rootless_required=True,
+        network_profile="none",
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+    )
+    monkeypatch.setattr(
+        docker_runtime, "probe_docker",
+        lambda: docker_runtime.DockerRuntimeStatus(True, True, False),
+    )
+    monkeypatch.setattr(
+        docker_runtime, "image_available",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("rootful daemon 不应继续检查镜像")),
+    )
+
+    assert docker_runtime.docker_sandbox_readiness(settings) == (
+        False, "当前 Docker 不是 Rootless 模式",
+    )
+
+
+@pytest.mark.asyncio
+async def test_sandboxd_refuses_to_start_when_docker_is_not_ready(monkeypatch, tmp_path):
+    from agent.sandbox import sandboxd as sandboxd_module
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    server = sandboxd_module.SandboxdServer(tmp_path / "sandboxd.sock", allowed)
+    monkeypatch.setattr(
+        sandboxd_module, "docker_sandbox_readiness",
+        lambda _settings: (False, "当前 Docker 不是 Rootless 模式"),
+    )
+    monkeypatch.setattr(
+        sandboxd_module, "cleanup_orphan_pty_containers",
+        lambda: (_ for _ in ()).throw(AssertionError("未通过 Rootless 检查前不能操作 Docker")),
+    )
+
+    with pytest.raises(RuntimeError, match="当前 Docker 不是 Rootless 模式"):
+        await server.serve()
+
+
+@pytest.mark.asyncio
+async def test_sandboxd_rejects_execute_before_executor_when_runtime_is_not_ready(monkeypatch, tmp_path):
+    import asyncio
+    from agent.sandbox import sandboxd as sandboxd_module
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    server = sandboxd_module.SandboxdServer(tmp_path / "sandboxd.sock", allowed)
+    monkeypatch.setattr(server, "_validate_peer", lambda _writer: None)
+
+    async def reject_runtime():
+        raise ValueError("当前 Docker 不是 Rootless 模式")
+
+    monkeypatch.setattr(server, "_require_runtime_ready", reject_runtime)
+    reader = asyncio.StreamReader()
+    reader.feed_data(b'{"operation":"execute"}\n')
+    reader.feed_eof()
+
+    class Writer:
+        def __init__(self):
+            self.data = bytearray()
+            self.closed = False
+
+        def write(self, data):
+            self.data.extend(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            pass
+
+    writer = Writer()
+    await server.handle(reader, writer)
+
+    response = json.loads(bytes(writer.data).decode("utf-8"))
+    assert response["error"] == "当前 Docker 不是 Rootless 模式"
+    assert writer.closed
 
 
 def test_bundled_image_is_verified_by_local_image_id(monkeypatch, tmp_path):
@@ -889,6 +1029,43 @@ def test_compose_sandbox_bootstrap_has_shared_storage_acl_contract():
         assert "/etc/subgid:/host/etc/subgid:ro" in block
         assert "sandbox_socket:/run/gugu" in block
         assert "condition: service_completed_successfully" in block
+
+
+def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
+    repo = Path(__file__).parents[2]
+
+    def service_block(compose_name, service_name):
+        text = (repo / compose_name).read_text(encoding="utf-8")
+        services = text.split("services:\n", 1)[1]
+        match = re.search(
+            rf"(?ms)^  {re.escape(service_name)}:\n(.*?)(?=^  [a-zA-Z0-9_-]+:\n|\Z)",
+            services,
+        )
+        assert match is not None, f"{compose_name} 缺少 {service_name} 服务"
+        return match.group(1)
+
+    for compose_name in ("docker-compose.dev.yml", "docker-compose.prod.yml"):
+        for service_name in ("worker", "gateway", "migrate", "sandbox-bootstrap"):
+            block = service_block(compose_name, service_name)
+            assert re.search(r"(?m)^    healthcheck:\n      disable: true$", block)
+
+        sandboxd = service_block(compose_name, "sandboxd")
+        assert 'test: ["CMD-SHELL", "test -S \\"$${GUGU_SANDBOXD_SOCKET}\\""]' in sandboxd
+
+        for service_name in ("backend", "worker", "sandboxd"):
+            block = service_block(compose_name, service_name)
+            assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in block
+
+    integrated = (repo / "docker-compose.yml").read_text(encoding="utf-8")
+    assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in integrated
+    assert 'http://127.0.0.1:9595/health' in integrated
+    assert 'HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \\\n    CMD curl -sf http://127.0.0.1:9595/health' in (repo / "Dockerfile").read_text(encoding="utf-8")
+
+    sandboxd = service_block("docker-compose.yml", "sandboxd")
+    assert 'test: ["CMD-SHELL", "test -S \\"$${GUGU_SANDBOXD_SOCKET}\\""]' in sandboxd
+    assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in sandboxd
+    bootstrap = service_block("docker-compose.yml", "sandbox-bootstrap")
+    assert re.search(r"(?m)^    healthcheck:\n      disable: true$", bootstrap)
 
 
 def test_permission_plan_rejects_root_directory(tmp_path):

@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -245,12 +246,7 @@ def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
     )
 
 
-def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
-    """返回当前配置是否允许执行容器命令。
-
-    这里是执行前的三层门禁之一：沙盒关闭、Docker 不可用、Rootless 不满足或
-    镜像未固定 digest 时，都必须拒绝执行，不能回退到本机执行器。
-    """
+def _sandbox_configuration_readiness(settings: SandboxSettings) -> tuple[bool, str]:
     if not settings.enabled:
         return False, "Shell 沙盒未开启"
     if settings.network_profile == "egress":
@@ -260,6 +256,15 @@ def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
             return False, "受控 egress 网络尚未启用"
         if not valid_egress_network_name(settings.egress_network_name):
             return False, "egress 网络名无效"
+
+    return True, "Shell 沙盒配置有效"
+
+
+def docker_sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
+    """在 sandboxd 所在进程探测 Docker；调用方必须持有目标 Docker socket。"""
+    configured, reason = _sandbox_configuration_readiness(settings)
+    if not configured:
+        return False, reason
     status = probe_docker()
     if not status.installed:
         return False, status.message
@@ -272,3 +277,43 @@ def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
     if not image_available(settings.image, settings.image_digest):
         return False, "固定 Shell 沙盒镜像尚未加载到当前 Docker daemon"
     return True, "Docker 沙盒运行时已就绪"
+
+
+def sandboxd_readiness(socket_path: str, *, timeout_seconds: float = 6.0) -> tuple[bool, str]:
+    """向 sandboxd 查询其所管理的 Docker 运行时，不探测调用方自己的 daemon。"""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(timeout_seconds)
+            client.connect(socket_path)
+            client.sendall(b'{"operation":"status"}\n')
+            response = bytearray()
+            while b"\n" not in response and len(response) <= 4096:
+                chunk = client.recv(4097 - len(response))
+                if not chunk:
+                    break
+                response.extend(chunk)
+        if not response or len(response) > 4096:
+            return False, "sandboxd 未返回有效状态"
+        payload = json.loads(bytes(response).split(b"\n", 1)[0].decode("utf-8"))
+        if not isinstance(payload, dict) or payload.get("type") != "status":
+            return False, "sandboxd 状态响应无效"
+        if payload.get("ready") is True:
+            return True, str(payload.get("reason") or "sandboxd Docker 沙盒已就绪")
+        return False, str(payload.get("reason") or "sandboxd Docker 沙盒未就绪")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return False, "sandboxd 不可用，未执行命令"
+
+
+def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
+    """返回当前配置是否允许执行容器命令。
+
+    生产执行经 sandboxd 时只向其查询状态，避免误探测 Worker/Backend 自己的
+    Docker daemon；独立运行且未配置 sandboxd 时保留直接探测行为。
+    """
+    configured, reason = _sandbox_configuration_readiness(settings)
+    if not configured:
+        return False, reason
+    socket_path = str(getattr(settings, "sandboxd_socket", "") or "").strip()
+    if socket_path:
+        return sandboxd_readiness(socket_path)
+    return docker_sandbox_readiness(settings)
