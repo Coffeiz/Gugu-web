@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -33,6 +34,18 @@ async def get_workspace(db: AsyncSession, user_id, workspace_id: int) -> Workspa
     if not workspace_shell_supported():
         return None
     return await get_owned(db, Workspace, workspace_id, user_id)
+
+
+async def get_workspace_by_directory(
+    db: AsyncSession, user_id, directory_id: int,
+) -> Workspace | None:
+    """读取顶层目录创建时同步建立的 Shell 绑定。"""
+    if not workspace_shell_supported():
+        return None
+    return await db.scalar(select(Workspace).where(
+        Workspace.user_id == user_id,
+        Workspace.directory_id == directory_id,
+    ).order_by(Workspace.id).limit(1))
 
 
 def _workspace_directory_root(user_id, directory_name: str) -> Path:
@@ -213,6 +226,8 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
 
 
 async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: int) -> tuple[list[str], Path]:
+    if get_settings().storage.backend != "local":
+        raise ValueError("当前存储后端不支持本地 Workspace")
     row = await get_owned(db, WorkspaceDirectory, directory_id, user_id)
     if row is None or row.deleted_at is not None:
         raise LookupError("Workspace 不存在")
@@ -268,6 +283,34 @@ async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: in
     # commit 成功后清理失败只留下可回收 orphan 目录，不会出现"DB 说文件健在而
     # 磁盘已消失"的破坏性状态，也不会在重试删除时遗留墓碑。
     return terminal_ids, root
+
+
+async def delete_workspace_directory_with_cleanup(
+    db: AsyncSession, user_id, directory_id: int,
+) -> None:
+    """按统一的 fail-closed 顺序删除目录及物理根目录。API 与 Agent 共用此流程。"""
+    terminal_ids, root = await delete_workspace_directory(db, user_id, directory_id)
+    from agent.terminal.runtime import get_pty_manager
+
+    manager = get_pty_manager()
+    try:
+        for terminal_id in terminal_ids:
+            if manager.get(terminal_id) is not None:
+                await manager.terminate(terminal_id, force=True)
+    except Exception:
+        await db.rollback()
+        raise
+
+    await db.commit()
+    if root.exists():
+        tombstone = root.with_name(
+            f".{root.name}.deleted-{now_utc().strftime('%Y%m%d%H%M%S')}"
+        )
+        try:
+            root.rename(tombstone)
+            shutil.rmtree(tombstone, ignore_errors=True)
+        except OSError:
+            pass
 
 
 async def scan_legacy_shell_directories(db: AsyncSession, user_id=None) -> list[WorkspaceMigrationReport]:
@@ -417,7 +460,14 @@ async def update_workspace(
         normalized = name.strip()
         if not normalized:
             raise ValueError("工作区名称不能为空")
-        workspace.name = normalized
+        if workspace.kind == "directory":
+            if workspace.directory_id is None:
+                raise LookupError("工作区目录不存在")
+            await update_workspace_directory(
+                db, user_id, workspace.directory_id, name=normalized,
+            )
+        else:
+            workspace.name = normalized
     if enabled is not None:
         workspace.enabled = enabled
     await db.flush()

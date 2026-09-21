@@ -163,6 +163,16 @@ def test_phase3_project_requires_explicit_date_range():
     assert _issues("create_project", {"name": "项目"})
 
 
+def test_create_workspace_directory_kind_rejects_folder_and_project_ids():
+    assert _issues("create_workspace", {"name": "资料区", "kind": "directory"}) == []
+    assert _issues("create_workspace", {
+        "name": "资料区", "kind": "directory", "folder_id": 3,
+    })
+    assert _issues("create_workspace", {
+        "name": "资料区", "kind": "directory", "project_id": 4,
+    })
+
+
 def test_phase8_migrated_tools_are_source_canonical_schema():
     for name in (
         "create_project", "create_event", "update_event", "save_uploaded_file",
@@ -173,8 +183,9 @@ def test_phase8_migrated_tools_are_source_canonical_schema():
         "add_stage", "get_workspace", "get_upcoming", "create_client",
         "global_search", "canvas_search", "canvas_search_placeable",
         "copy_file", "delete_file", "send_file",
-        "update_workspace",
+        "update_workspace", "unlink_workspace",
         "update_client", "create_workspace", "react", "send_email",
+        "delete_workspace_directory",
         "canvas_create_note", "canvas_update_note", "canvas_batch",
         "create_file",
         "update_stage", "rename_file", "edit_file", "search_memory", "save_knowledge", "update_knowledge", "remember",
