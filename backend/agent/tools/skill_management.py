@@ -11,6 +11,26 @@ import json
 from agent.tools.base import BaseSkill, Tool
 
 
+def _skill_tool_context():
+    """读取当前 Run 已授权的 MCP 工具，供 Skill 创建与更新共用。"""
+    from agent.capabilities.defaults import all_system_tool_names
+    from agent.im import imctx
+    from agent.tools.base import current_dispatch_tool_snapshot
+
+    current_im = imctx.get_im()
+    allowed = current_im.get("allowed_tool_names") if current_im else None
+    snapshot = current_dispatch_tool_snapshot()
+    dynamic_tools = []
+    if snapshot is not None:
+        dynamic_tools = [
+            tool for name in snapshot.all_tool_names()
+            if (tool := snapshot.get(name)) is not None and tool.source == "mcp"
+        ]
+    if allowed is None:
+        allowed = [*all_system_tool_names(), *(tool.name for tool in dynamic_tools)]
+    return list(allowed), dynamic_tools
+
+
 async def _list_skills(db, user_id, args: dict):
     """列出内置技能和当前账号的用户 Skill 元数据，不返回正文。"""
     from agent import skills as builtin_skills
@@ -60,20 +80,18 @@ async def _list_skills(db, user_id, args: dict):
 async def _create_skill(db, user_id, args: dict):
     """通过统一注册服务创建用户 Prompt Skill，不开放任何可执行代码。"""
     from agent.capabilities.skill_registry import SkillCapabilityRegistry
-    from agent.im import imctx
-    from agent.capabilities.defaults import all_system_tool_names
     from agent.tools import registry
 
     name = str(args.get("name") or "").strip()
     slug = str(args.get("slug") or "").strip().lower()
     if not slug:
         slug = f"user-skill-{hashlib.sha256(name.encode('utf-8')).hexdigest()[:10]}"
-    current_im = imctx.get_im()
-    allowed = current_im.get("allowed_tool_names") if current_im else None
-    allowed = list(allowed) if allowed is not None else all_system_tool_names()
+    allowed, dynamic_tools = _skill_tool_context()
     related = [str(item).strip() for item in (args.get("related_tools") or ()) if str(item).strip()]
     tool_snapshot = registry.snapshot()
-    missing = [item for item in related if tool_snapshot.get(item) is None]
+    dynamic_names = {tool.name for tool in dynamic_tools}
+    missing = [item for item in related
+               if tool_snapshot.get(item) is None and item not in dynamic_names]
     if missing:
         return {"error": f"Skill 关联了未知工具：{', '.join(missing)}"}
     unauthorized = [item for item in related if item not in set(allowed)]
@@ -98,6 +116,7 @@ async def _create_skill(db, user_id, args: dict):
             description_long=args.get("description_long"),
             category=args.get("category") or "personal",
             related_tools=related, body=args.get("body") or "",
+            dynamic_tools=dynamic_tools,
         )
         await db.commit()
         return {
@@ -119,8 +138,6 @@ async def _create_skill(db, user_id, args: dict):
 async def _update_skill(db, user_id, args: dict):
     """更新当前用户的 Prompt Skill；slug 是稳定标识，不允许通过更新改名。"""
     from agent.capabilities.skill_registry import SkillCapabilityRegistry
-    from agent.im import imctx
-    from agent.capabilities.defaults import all_system_tool_names
 
     slug = str(args.get("slug") or "").strip().lower()
     if not slug:
@@ -135,12 +152,11 @@ async def _update_skill(db, user_id, args: dict):
     }
     if not fields:
         return {"error": "至少提供一个要更新的字段"}
-    current_im = imctx.get_im()
-    allowed = current_im.get("allowed_tool_names") if current_im else None
-    allowed = list(allowed) if allowed is not None else all_system_tool_names()
+    allowed, dynamic_tools = _skill_tool_context()
     try:
         row = await SkillCapabilityRegistry().update_user_skill(
-            db, user_id, slug, allowed_tool_names=allowed, **fields,
+            db, user_id, slug, allowed_tool_names=allowed,
+            dynamic_tools=dynamic_tools, **fields,
         )
         if row is None:
             return {"error": "技能不存在或不属于当前用户"}

@@ -95,6 +95,10 @@ class CapabilityIndex:
         # 先用全局 registry 判断关联名是否真实存在，再单独按本轮授权集收窄；
         # 历史 Skill 关联到后来关闭的工具时，不能把整个会话构建打成 500。
         known_tools = set(tool_snapshot._tools) | {item.name for item in dynamic_items}
+        known_tools.update(
+            name for item in user_items for name in item.related_tools
+            if name.startswith("mcp_")
+        )
         for item in user_items:
             missing = [name for name in item.related_tools if name not in known_tools]
             if missing:
