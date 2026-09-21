@@ -138,6 +138,75 @@ def test_sandboxd_readiness_uses_status_socket_protocol():
     assert received == [b'{"operation":"status"}\n']
 
 
+def test_sandboxd_runtime_status_reads_the_executor_daemon_snapshot():
+    socket_path = Path("/tmp") / f"gugu-sd-runtime-{uuid.uuid4().hex[:8]}.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(1)
+    received = []
+    payload = {
+        "type": "status",
+        "ready": True,
+        "reason": "Docker 沙盒运行时已就绪",
+        "runtime": {
+            "installed": True,
+            "daemon_ready": True,
+            "rootless": True,
+            "server_version": "29.8.0",
+            "message": "Docker daemon 已就绪",
+            "image_ready": True,
+        },
+    }
+
+    def serve_one_runtime_request():
+        connection, _ = server.accept()
+        with connection:
+            received.append(connection.recv(128))
+            connection.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        server.close()
+
+    thread = threading.Thread(target=serve_one_runtime_request)
+    thread.start()
+    try:
+        snapshot = docker_runtime.sandboxd_runtime_status(str(socket_path))
+    finally:
+        thread.join(timeout=2)
+        server.close()
+        socket_path.unlink(missing_ok=True)
+
+    assert snapshot is not None
+    assert snapshot.docker == docker_runtime.DockerRuntimeStatus(
+        True, True, True, server_version="29.8.0", message="Docker daemon 已就绪",
+    )
+    assert snapshot.image_ready is True
+    assert received == [b'{"operation":"status"}\n']
+
+
+def test_sandboxd_runtime_status_fails_closed_for_legacy_status_payload():
+    socket_path = Path("/tmp") / f"gugu-sd-legacy-{uuid.uuid4().hex[:8]}.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(1)
+
+    def serve_one_legacy_status_request():
+        connection, _ = server.accept()
+        with connection:
+            connection.recv(128)
+            connection.sendall(b'{"type":"status","ready":true,"reason":"ready"}\n')
+        server.close()
+
+    thread = threading.Thread(target=serve_one_legacy_status_request)
+    thread.start()
+    try:
+        snapshot = docker_runtime.sandboxd_runtime_status(str(socket_path))
+    finally:
+        thread.join(timeout=2)
+        server.close()
+        socket_path.unlink(missing_ok=True)
+
+    assert snapshot is None
+
+
 def test_docker_sandbox_readiness_rejects_rootful_daemon_before_image_check(monkeypatch):
     settings = SimpleNamespace(
         enabled=True,
@@ -158,6 +227,73 @@ def test_docker_sandbox_readiness_rejects_rootful_daemon_before_image_check(monk
     assert docker_runtime.docker_sandbox_readiness(settings) == (
         False, "当前 Docker 不是 Rootless 模式",
     )
+
+
+@pytest.mark.asyncio
+async def test_sandboxd_status_includes_its_actual_runtime_snapshot(monkeypatch, tmp_path):
+    import asyncio
+    from agent.sandbox import sandboxd as sandboxd_module
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    sandbox_settings = SimpleNamespace(
+        stdio_max_sessions=8,
+        stdio_max_sessions_per_user=4,
+    )
+    monkeypatch.setattr(
+        sandboxd_module, "get_settings",
+        lambda: SimpleNamespace(sandbox=sandbox_settings),
+    )
+    snapshot = docker_runtime.SandboxRuntimeSnapshot(
+        docker=docker_runtime.DockerRuntimeStatus(
+            True, True, True, server_version="29.8.0", message="Docker daemon 已就绪",
+        ),
+        image_ready=True,
+    )
+    monkeypatch.setattr(sandboxd_module, "probe_sandbox_runtime", lambda _settings: snapshot)
+    monkeypatch.setattr(
+        sandboxd_module,
+        "docker_sandbox_readiness",
+        lambda _settings, *, runtime_snapshot: (runtime_snapshot is snapshot, "已就绪"),
+    )
+
+    server = sandboxd_module.SandboxdServer(tmp_path / "sandboxd.sock", allowed)
+    monkeypatch.setattr(server, "_validate_peer", lambda _writer: None)
+    reader = asyncio.StreamReader()
+    reader.feed_data(b'{"operation":"status"}\n')
+    reader.feed_eof()
+
+    class Writer:
+        def __init__(self):
+            self.data = bytearray()
+            self.closed = False
+
+        def write(self, data):
+            self.data.extend(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            pass
+
+    writer = Writer()
+    await server.handle(reader, writer)
+
+    response = json.loads(bytes(writer.data).decode("utf-8"))
+    assert response["ready"] is True
+    assert response["runtime"] == {
+        "installed": True,
+        "daemon_ready": True,
+        "rootless": True,
+        "server_version": "29.8.0",
+        "message": "Docker daemon 已就绪",
+        "image_ready": True,
+    }
+    assert writer.closed
 
 
 @pytest.mark.asyncio
@@ -635,7 +771,7 @@ def test_admin_executor_readiness_is_independent_of_enabled_switch(monkeypatch):
     from app.api.v1 import sandbox_admin
     from app.core.config import SandboxSettings
 
-    settings = SandboxSettings(enabled=False)
+    settings = SandboxSettings(enabled=False, sandboxd_socket="")
     monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
     monkeypatch.setattr(
         sandbox_admin,
@@ -651,12 +787,64 @@ def test_admin_executor_readiness_is_independent_of_enabled_switch(monkeypatch):
     assert response["code_execution_enabled"] is True
 
 
+def test_admin_sandbox_status_uses_sandboxd_runtime_not_backend_docker(monkeypatch):
+    from app.api.v1 import sandbox_admin
+    from app.core.config import SandboxSettings
+
+    settings = SandboxSettings(enabled=True, sandboxd_socket="/run/gugu/sandboxd.sock")
+    snapshot = docker_runtime.SandboxRuntimeSnapshot(
+        docker=docker_runtime.DockerRuntimeStatus(True, True, True, server_version="29.8.0"),
+        image_ready=True,
+    )
+    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    monkeypatch.setattr(sandbox_admin, "sandboxd_runtime_status", lambda path: snapshot)
+    monkeypatch.setattr(
+        sandbox_admin,
+        "probe_docker",
+        lambda: (_ for _ in ()).throw(AssertionError("不能探测 backend 的 Docker daemon")),
+    )
+    monkeypatch.setattr(
+        sandbox_admin,
+        "image_available",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("不能检查 backend daemon 的镜像")),
+    )
+
+    response = sandbox_admin._response()
+
+    assert response["rootless"] is True
+    assert response["image_ready"] is True
+    assert response["executor_ready"] is True
+    assert response["state"] == "ready"
+
+
+def test_admin_sandbox_status_does_not_fall_back_when_sandboxd_status_is_missing(monkeypatch):
+    from app.api.v1 import sandbox_admin
+    from app.core.config import SandboxSettings
+
+    settings = SandboxSettings(sandboxd_socket="/run/gugu/sandboxd.sock")
+    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    monkeypatch.setattr(sandbox_admin, "sandboxd_runtime_status", lambda _path: None)
+    monkeypatch.setattr(
+        sandbox_admin,
+        "probe_docker",
+        lambda: (_ for _ in ()).throw(AssertionError("sandboxd 不可用时不能退回 backend Docker")),
+    )
+
+    response = sandbox_admin._response()
+
+    assert response["rootless"] is None
+    assert response["executor_ready"] is False
+    assert response["state"] == "docker_unavailable"
+    assert "sandboxd" in response["message"]
+
+
 def test_admin_sandbox_status_does_not_echo_invalid_proxy(monkeypatch):
     from app.api.v1 import sandbox_admin
     from app.core.config import SandboxSettings
 
     settings = SandboxSettings(
         enabled=False,
+        sandboxd_socket="",
         egress_proxy_url="http://user:secret@proxy.example:3128",
         egress_isolation_enabled=True,
     )

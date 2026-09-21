@@ -22,6 +22,7 @@ from .docker_runtime import (
     cleanup_orphan_pty_containers,
     docker_network_available,
     docker_sandbox_readiness,
+    probe_sandbox_runtime,
     valid_egress_proxy,
     valid_egress_network_name,
 )
@@ -97,10 +98,24 @@ class SandboxdServer:
                 raise ValueError("sandboxd operation 无效")
             operation = value.get("operation")
             if operation == "status":
+                settings = get_settings().sandbox
+                runtime = await asyncio.to_thread(probe_sandbox_runtime, settings)
                 ready, reason = await asyncio.to_thread(
-                    docker_sandbox_readiness, get_settings().sandbox,
+                    docker_sandbox_readiness, settings, runtime_snapshot=runtime,
                 )
-                response = {"type": "status", "ready": ready, "reason": reason}
+                response = {
+                    "type": "status",
+                    "ready": ready,
+                    "reason": reason,
+                    "runtime": {
+                        "installed": runtime.docker.installed,
+                        "daemon_ready": runtime.docker.daemon_ready,
+                        "rootless": runtime.docker.rootless,
+                        "server_version": runtime.docker.server_version,
+                        "message": runtime.docker.message,
+                        "image_ready": runtime.image_ready,
+                    },
+                }
             elif operation == "pty_open":
                 await self._require_runtime_ready()
                 await self._handle_pty(value, reader, writer)

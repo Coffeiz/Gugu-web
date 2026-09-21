@@ -209,6 +209,12 @@ class DockerRuntimeStatus:
         return self.installed and self.daemon_ready
 
 
+@dataclass(frozen=True)
+class SandboxRuntimeSnapshot:
+    docker: DockerRuntimeStatus
+    image_ready: bool
+
+
 def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
     """探测 Docker CLI、daemon 和 Rootless 能力，不泄露命令输出到日志。"""
     docker = shutil.which("docker")
@@ -246,6 +252,18 @@ def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
     )
 
 
+def probe_sandbox_runtime(settings: SandboxSettings) -> SandboxRuntimeSnapshot:
+    """在当前进程持有的 daemon 上采集执行器状态。"""
+    docker = probe_docker()
+    image_ready = (
+        docker.daemon_ready
+        and (not settings.rootless_required or docker.rootless is True)
+        and valid_image_digest(settings.image_digest)
+        and image_available(settings.image, settings.image_digest)
+    )
+    return SandboxRuntimeSnapshot(docker=docker, image_ready=image_ready)
+
+
 def _sandbox_configuration_readiness(settings: SandboxSettings) -> tuple[bool, str]:
     if not settings.enabled:
         return False, "Shell 沙盒未开启"
@@ -260,12 +278,17 @@ def _sandbox_configuration_readiness(settings: SandboxSettings) -> tuple[bool, s
     return True, "Shell 沙盒配置有效"
 
 
-def docker_sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
+def docker_sandbox_readiness(
+    settings: SandboxSettings,
+    *,
+    runtime_snapshot: SandboxRuntimeSnapshot | None = None,
+) -> tuple[bool, str]:
     """在 sandboxd 所在进程探测 Docker；调用方必须持有目标 Docker socket。"""
     configured, reason = _sandbox_configuration_readiness(settings)
     if not configured:
         return False, reason
-    status = probe_docker()
+    snapshot = runtime_snapshot or probe_sandbox_runtime(settings)
+    status = snapshot.docker
     if not status.installed:
         return False, status.message
     if not status.daemon_ready:
@@ -274,13 +297,12 @@ def docker_sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
         return False, "当前 Docker 不是 Rootless 模式"
     if not valid_image_digest(settings.image_digest):
         return False, "尚未配置有效的固定镜像 digest"
-    if not image_available(settings.image, settings.image_digest):
+    if not snapshot.image_ready:
         return False, "固定 Shell 沙盒镜像尚未加载到当前 Docker daemon"
     return True, "Docker 沙盒运行时已就绪"
 
 
-def sandboxd_readiness(socket_path: str, *, timeout_seconds: float = 6.0) -> tuple[bool, str]:
-    """向 sandboxd 查询其所管理的 Docker 运行时，不探测调用方自己的 daemon。"""
+def _sandboxd_status_payload(socket_path: str, *, timeout_seconds: float) -> tuple[dict | None, str | None]:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(timeout_seconds)
@@ -293,15 +315,61 @@ def sandboxd_readiness(socket_path: str, *, timeout_seconds: float = 6.0) -> tup
                     break
                 response.extend(chunk)
         if not response or len(response) > 4096:
-            return False, "sandboxd 未返回有效状态"
+            return None, "sandboxd 未返回有效状态"
         payload = json.loads(bytes(response).split(b"\n", 1)[0].decode("utf-8"))
         if not isinstance(payload, dict) or payload.get("type") != "status":
-            return False, "sandboxd 状态响应无效"
-        if payload.get("ready") is True:
-            return True, str(payload.get("reason") or "sandboxd Docker 沙盒已就绪")
-        return False, str(payload.get("reason") or "sandboxd Docker 沙盒未就绪")
+            return None, "sandboxd 状态响应无效"
+        return payload, None
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        return False, "sandboxd 不可用，未执行命令"
+        return None, "sandboxd 不可用，未执行命令"
+
+
+def sandboxd_runtime_status(
+    socket_path: str,
+    *,
+    timeout_seconds: float = 6.0,
+) -> SandboxRuntimeSnapshot | None:
+    """读取 sandboxd 实际持有的 daemon 与镜像状态；旧协议或连接失败时返回未知。"""
+    payload, _error = _sandboxd_status_payload(socket_path, timeout_seconds=timeout_seconds)
+    runtime = payload.get("runtime") if payload is not None else None
+    if not isinstance(runtime, dict):
+        return None
+
+    installed = runtime.get("installed")
+    daemon_ready = runtime.get("daemon_ready")
+    rootless = runtime.get("rootless")
+    server_version = runtime.get("server_version")
+    message = runtime.get("message")
+    image_ready = runtime.get("image_ready")
+    if (
+        not isinstance(installed, bool)
+        or not isinstance(daemon_ready, bool)
+        or (rootless is not None and not isinstance(rootless, bool))
+        or not isinstance(server_version, str)
+        or not isinstance(message, str)
+        or not isinstance(image_ready, bool)
+    ):
+        return None
+    return SandboxRuntimeSnapshot(
+        docker=DockerRuntimeStatus(
+            installed=installed,
+            daemon_ready=daemon_ready,
+            rootless=rootless,
+            server_version=server_version,
+            message=message,
+        ),
+        image_ready=image_ready,
+    )
+
+
+def sandboxd_readiness(socket_path: str, *, timeout_seconds: float = 6.0) -> tuple[bool, str]:
+    """向 sandboxd 查询其所管理的 Docker 运行时，不探测调用方自己的 daemon。"""
+    payload, error = _sandboxd_status_payload(socket_path, timeout_seconds=timeout_seconds)
+    if payload is None:
+        return False, error or "sandboxd 状态响应无效"
+    if payload.get("ready") is True:
+        return True, str(payload.get("reason") or "sandboxd Docker 沙盒已就绪")
+    return False, str(payload.get("reason") or "sandboxd Docker 沙盒未就绪")
 
 
 def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:

@@ -1,9 +1,11 @@
 """Admin Shell 容器沙盒管理接口。"""
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from urllib.parse import urlparse
+
+import logging
+import shutil
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -16,6 +18,7 @@ from agent.sandbox.docker_runtime import (
     cleanup_sandboxes_for_root,
     image_available,
     probe_docker,
+    sandboxd_runtime_status,
     valid_egress_network_name,
     valid_egress_proxy,
     valid_image_digest,
@@ -92,12 +95,30 @@ def _response():
         else ""
     )
     egress_error = _egress_proxy_error(cfg)
-    runtime = probe_docker()
-    image_ready = (
-        runtime.daemon_ready
-        and valid_image_digest(cfg.image_digest)
-        and image_available(cfg.image, cfg.image_digest)
-    )
+    sandboxd_socket = str(getattr(cfg, "sandboxd_socket", "") or "").strip()
+    if sandboxd_socket:
+        snapshot = sandboxd_runtime_status(sandboxd_socket)
+        if snapshot is None:
+            # sandboxd 是实际执行器。其状态无法读取时不能退回探测 backend
+            # 容器挂载的另一套 Docker daemon，否则会把执行器误报成 rootful。
+            runtime = DockerRuntimeStatus(
+                installed=shutil.which("docker") is not None,
+                daemon_ready=False,
+                rootless=None,
+                message="sandboxd 状态不可用",
+            )
+            image_ready = False
+        else:
+            runtime = snapshot.docker
+            image_ready = snapshot.image_ready
+    else:
+        # 未配置 sandboxd 的独立部署仍探测当前进程直接管理的 Docker。
+        runtime = probe_docker()
+        image_ready = (
+            runtime.daemon_ready
+            and valid_image_digest(cfg.image_digest)
+            and image_available(cfg.image, cfg.image_digest)
+        )
     state, message = _state(
         runtime,
         enabled=cfg.enabled,
