@@ -212,6 +212,43 @@ async def test_complete_messages_merges_main_run_generation_params(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_anthropic_append_branch_sanitizes_history_before_appending_delta(monkeypatch):
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(
+            protocol_format=lambda ai: "anthropic",
+            supports_active_cache=lambda model: False,
+            build_anthropic_thinking_params=lambda ai: {},
+            build_anthropic_generation_params=lambda ai: {},
+        ))
+    history = [
+        {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
+        {"role": "assistant", "content": [
+            {"type": "reasoning_content", "text": "unsupported"},
+            {"type": "text", "text": "旧回答"},
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "stale", "content": "orphan"},
+        ]},
+    ]
+    ai = SimpleNamespace(model="m-test", provider="anthropic")
+
+    await provider_runner.complete_messages(
+        "stable system", history, "追加反思任务", settings=SimpleNamespace(ai=ai),
+    )
+
+    assert fake.kwargs["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
+        {"role": "assistant", "content":[
+            {"type": "text", "text": "旧回答", "cache_control": {"type": "ephemeral"}},
+        ]},
+        {"role": "user", "content": "追加反思任务"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_complete_messages_uses_responses_protocol_and_native_tool_schema(monkeypatch):
     class _FakeResponses:
         def __init__(self):

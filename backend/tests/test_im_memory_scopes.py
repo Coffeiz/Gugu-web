@@ -231,10 +231,11 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
         last_message_id=42,
         last_reflected_message_id=40,
         last_member_reflected_message_id=40,
-        last_message_at=now - timedelta(minutes=16),
+        last_message_at=now - timedelta(minutes=4),
         active_started_at=now - timedelta(minutes=20),
         settled_at=None,
         scope_version=3,
+        pending_passive_count=2,
         created_at=now,
         updated_at=now,
     )
@@ -243,7 +244,7 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
 
     calls = []
 
-    async def fake_enqueue(scope, first, last, reason, *, task_type="group", now=None):
+    async def fake_enqueue(scope, first, last, reason, *, task_type="group", defer_dispatch=False, now=None):
         calls.append((scope, first, last, reason, task_type))
         return 99
 
@@ -258,6 +259,10 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
 
     await db.refresh(cursor)
     assert cursor.settled_at is not None
+    assert cursor.pending_passive_count == 0
+
+    assert await reflection_jobs.settle_idle_scopes(now=now) == 0
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio
@@ -310,7 +315,7 @@ async def test_group_reflection_threshold_is_fifty(db, user_a, monkeypatch):
     now = now_utc()
     calls = []
 
-    async def fake_enqueue(scope, first, last, reason, *, task_type="group", now=None):
+    async def fake_enqueue(scope, first, last, reason, *, task_type="group", defer_dispatch=False, now=None):
         calls.append((scope, first, last, reason, task_type))
         return 104
 
@@ -321,54 +326,242 @@ async def test_group_reflection_threshold_is_fifty(db, user_a, monkeypatch):
         assert await reflection_jobs.observe_group_message(scope, message_id, now, now=now) is None
     assert calls == []
     assert await reflection_jobs.observe_group_message(scope, 50, now, now=now) == 104
-    assert calls == [(scope, 1, 50, "message-threshold", "member-batch")]
+    assert calls == [
+        (scope, 1, 50, "message-threshold", "group"),
+        (scope, 1, 50, "message-threshold", "member-batch"),
+    ]
+
+
+@pytest.mark.parametrize("im_role", ["owner", "member"])
+@pytest.mark.asyncio
+async def test_group_threshold_event_flushes_group_owner_buffer(db, user_a, monkeypatch, im_role):
+    from app.models import ConversationSession
+    from agent.im import loop
+    from agent.memory import reflection, reflection_jobs
+
+    settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=10))
+    monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
+
+    async def fake_observe(*_args, **_kwargs):
+        return 209
+
+    async def fake_publish(*_args, **_kwargs):
+        return None
+
+    async def fake_trim(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(reflection_jobs, "observe_group_message", fake_observe)
+    monkeypatch.setattr("app.core.events.publish", fake_publish)
+    monkeypatch.setattr(loop, "trim_session_messages", fake_trim)
+    scheduled = []
+    flushed = []
+
+    def fake_schedule(*_args, **kwargs):
+        scheduled.append(kwargs)
+
+    def fake_flush(*args):
+        flushed.append(args)
+
+    monkeypatch.setattr(reflection, "schedule", fake_schedule)
+    monkeypatch.setattr(reflection, "flush_group_owner_buffer", fake_flush, raising=False)
+    session = ConversationSession(
+        user_id=user_a.id,
+        source="qq",
+        bot_id="bot-a",
+        chat_id="group-threshold",
+        chat_type="group",
+    )
+    db.add(session)
+    await db.commit()
+    request = SimpleNamespace(
+        attachments=[],
+        user_id=user_a.id,
+        source="qq",
+        platform_bot_id="bot-a",
+        chat_id="group-threshold",
+        platform_user_id="member-1",
+        platform_user_name="成员甲",
+        platform_bot_user_id=None,
+        message="群消息",
+        quoted_text=None,
+        im_group_memory_enabled=True,
+        im_role=im_role,
+        user_name="小北",
+    )
+
+    assert await loop.record_passive_im_message(request, session.id) == session.id
+    if im_role == "owner":
+        assert scheduled == [{"group_mode": True, "session_id": session.id, "flush_now": True}]
+        assert flushed == []
+    else:
+        assert scheduled == []
+        assert len(flushed) == 1
+        assert flushed[0][0] == user_a.id
+        assert flushed[0][1] is settings
+        assert flushed[0][2] == session.id
 
 
 @pytest.mark.asyncio
-async def test_member_agent_activity_does_not_schedule_member_reflection(db, user_a, monkeypatch):
+async def test_private_member_reflection_batches_completed_turns_at_configured_threshold(
+    db, user_a, monkeypatch,
+):
+    from sqlalchemy import select
+
+    from app.models import ConversationMessage, ConversationSession, MemoryReflectionCursor
+    from agent.memory import reflection_jobs
+    from agent.memory.scopes import MemoryScope
+
+    threshold = 3
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=threshold)),
+    )
+    monkeypatch.setattr(
+        "agent.context.reflection_snapshot.peek_reflection_snapshot",
+        lambda *_args: None,
+    )
+    calls = []
+
+    async def fake_enqueue(scope, first, last, reason, *, task_type="group", defer_dispatch=False, now=None):
+        calls.append((scope, first, last, reason, task_type, defer_dispatch))
+        return 207
+
+    monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-a")
+    session = ConversationSession(
+        user_id=user_a.id,
+        source="qq",
+        bot_id="bot-a",
+        chat_type="c2c",
+        platform_user_id="member-a",
+    )
+    db.add(session)
+    await db.flush()
+    message_ids = []
+
+    for index in range(threshold):
+        message = ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"私聊第 {index + 1} 轮",
+            platform_user_id="member-a",
+            chat_type="c2c",
+        )
+        db.add(message)
+        await db.flush()
+        message_ids.append(message.id)
+        await db.commit()
+
+        job_id = await reflection_jobs.observe_private_member_activity(
+            scope, session.id, "member-a", now=now_utc(),
+        )
+
+        if index < threshold - 1:
+            assert job_id is None
+            assert calls == []
+        else:
+            assert job_id == 207
+
+    assert calls == [(scope, message_ids[0], message_ids[-1], "message-threshold", "private-owner", True)]
+    cursor = (await db.execute(
+        select(MemoryReflectionCursor).where(
+            MemoryReflectionCursor.scope_type == "platform-user",
+            MemoryReflectionCursor.scope_id == "member-a",
+        )
+    )).scalars().one()
+    assert cursor.pending_agent_count == 0
+
+    other_scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-b")
+    other_session = ConversationSession(
+        user_id=user_a.id,
+        source="qq",
+        bot_id="bot-a",
+        chat_type="c2c",
+        platform_user_id="member-b",
+    )
+    db.add(other_session)
+    await db.flush()
+    db.add(ConversationMessage(
+        session_id=other_session.id,
+        role="user",
+        content="另一位联系人的消息",
+        platform_user_id="member-b",
+        chat_type="c2c",
+    ))
+    await db.commit()
+    assert await reflection_jobs.observe_private_member_activity(
+        other_scope, other_session.id, "member-b", now=now_utc(),
+    ) is None
+    assert calls == [(scope, message_ids[0], message_ids[-1], "message-threshold", "private-owner", True)]
+
+
+@pytest.mark.asyncio
+async def test_private_member_idle_settlement_flushes_partial_batch_once(db, user_a, monkeypatch):
+    from sqlalchemy import select
+
+    from app.models import ConversationMessage, ConversationSession, MemoryReflectionCursor
     from agent.memory import reflection_jobs
     from agent.memory.scopes import MemoryScope
 
     now = now_utc()
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=10)),
+    )
+    monkeypatch.setattr(
+        "agent.context.reflection_snapshot.peek_reflection_snapshot",
+        lambda *_args: None,
+    )
     calls = []
 
-    async def fake_enqueue(scope, first, last, reason, *, now=None):
-        calls.append((scope, first, last, reason))
-        return 101
+    async def fake_enqueue(scope, first, last, reason, *, task_type="group", defer_dispatch=False, now=None):
+        calls.append((scope, first, last, reason, task_type))
+        return 208
 
     monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
-    scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-1")
-
-    for message_id in range(1, 10):
-        assert await reflection_jobs.observe_group_message(
-            scope, message_id, now, now=now, trigger_mode="agent", force=False,
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-idle")
+    session = ConversationSession(
+        user_id=user_a.id,
+        source="qq",
+        bot_id="bot-a",
+        chat_type="c2c",
+        platform_user_id="member-idle",
+    )
+    db.add(session)
+    await db.flush()
+    message_ids = []
+    for index in range(2):
+        message = ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"闲置前第 {index + 1} 轮",
+            platform_user_id="member-idle",
+            chat_type="c2c",
+            created_at=now - timedelta(minutes=4 - index),
+        )
+        db.add(message)
+        await db.flush()
+        message_ids.append(message.id)
+        await db.commit()
+        assert await reflection_jobs.observe_private_member_activity(
+            scope, session.id, "member-idle", now=now,
         ) is None
+
     assert calls == []
-    assert await reflection_jobs.observe_group_message(
-        scope, 10, now, now=now, trigger_mode="agent", force=False,
-    ) is None
-    assert calls == []
+    assert await reflection_jobs.settle_idle_scopes(now=now) == 1
+    assert calls == [(scope, message_ids[0], message_ids[-1], "idle", "private-owner")]
+    cursor = (await db.execute(
+        select(MemoryReflectionCursor).where(
+            MemoryReflectionCursor.scope_type == "platform-user",
+            MemoryReflectionCursor.scope_id == "member-idle",
+        )
+    )).scalars().one()
+    assert cursor.pending_agent_count == 0
+    assert cursor.settled_at is not None
 
-
-@pytest.mark.asyncio
-async def test_member_tool_message_does_not_reflect_immediately(db, user_a, monkeypatch):
-    from agent.memory import reflection_jobs
-    from agent.memory.scopes import MemoryScope
-
-    now = now_utc()
-    calls = []
-
-    async def fake_enqueue(scope, first, last, reason, *, now=None):
-        calls.append((scope, first, last, reason))
-        return 103
-
-    monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
-    scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-tool")
-
-    assert await reflection_jobs.observe_group_message(
-        scope, 1, now, now=now, trigger_mode="agent", force=True,
-    ) is None
-    assert calls == []
+    assert await reflection_jobs.settle_idle_scopes(now=now) == 0
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio
@@ -589,7 +782,7 @@ def test_group_and_member_jobs_build_append_branches():
     job = SimpleNamespace(id=12, idempotency_key="job-key")
     message = SimpleNamespace(
         role="user", content="本批消息", platform_user_name="成员甲",
-        session_id=77,
+        platform_user_id="member-1", session_id=77,
     )
 
     for task_type, scope_name in (("group", "group"), ("member-batch", "group-member-reflection")):

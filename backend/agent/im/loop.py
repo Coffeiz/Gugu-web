@@ -522,6 +522,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
         recorded_session_id = session.id
         recorded_message_id = message_row.id
     if request.chat_id and recorded_message_id:
+        group_threshold_reached = False
         try:
             from agent.memory.reflection_jobs import observe_group_message
             from agent.memory.scopes import MemoryScope
@@ -532,13 +533,14 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     str(request.platform_bot_id or ""),
                     "group",
                     str(request.chat_id),
-                )
+            )
             if request.im_group_memory_enabled:
-                await observe_group_message(
+                group_job_id = await observe_group_message(
                     group_scope,
                     recorded_message_id,
                     message_row.created_at,
                 )
+                group_threshold_reached = group_job_id is not None
             if request.im_role == "owner":
                 from app.core.config import get_settings
                 from agent.memory import reflection
@@ -551,6 +553,14 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     get_settings(),
                     group_mode=True,
                     session_id=recorded_session_id,
+                    flush_now=group_threshold_reached,
+                )
+            elif group_threshold_reached:
+                from app.core.config import get_settings
+                from agent.memory import reflection
+
+                reflection.flush_group_owner_buffer(
+                    request.user_id, get_settings(), recorded_session_id,
                 )
         except Exception:
             # 记忆调度不能阻断消息落库和网页会话同步。

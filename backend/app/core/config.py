@@ -284,10 +284,24 @@ class AgentBehaviorSettings(BaseModel):
     shell_autopilot_enabled: bool = Field(False, description="是否允许用户开启 Shell Autopilot，跳过确认门（默认关闭）")
     personality_preference_enabled: bool = Field(True, description="是否启用用户人格偏好（托管服务由后台权益开关控制，本地默认开启）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
-    reflection_threshold: int = Field(10, description="Owner 反思触发的对话回合数；不影响群成员与群级反思")
+    web_private_reflection_threshold: int = Field(
+        10, ge=1, le=100, description="网页和私聊反思触发的对话回合数；群聊反思固定为 50 条消息",
+    )
     worker_concurrency: int = Field(16, description="IM worker 同时跑几条 agent（实测单 MiniMax key 安全上限≈16；worker 每 30s 热读）")
     conv_compress_enabled: bool = Field(True, description="允许手动对话压缩；正常请求按实际组装上下文预算判断，不按数据库累计消息量后台压缩")
     im_progress_announce_enabled: bool = Field(False, description="IM 慢工具进度声明：多步工具循环期间（IM 非流式、用户容易觉得沉默）可先发一句「我去查一下」这类声明再执行；默认关闭以避免与每轮 draft 重复，文案来自工具自身登记的 start_message（不是模型现场生成，见 docs/agent/proposals/IM慢工具进度声明-设计.md）；只在 IM 生效，网页不受影响")
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_reflection_threshold(cls, value):
+        """兼容旧版 Owner 阈值配置；运行配置只读，不在加载期回写。"""
+        if not isinstance(value, dict) or "reflection_threshold" not in value:
+            return value
+        if "web_private_reflection_threshold" in value:
+            return value
+        migrated = dict(value)
+        migrated["web_private_reflection_threshold"] = migrated["reflection_threshold"]
+        return migrated
 
 
 class QuotaSettings(BaseModel):

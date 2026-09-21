@@ -105,7 +105,7 @@ export const useConfigStore = defineStore('config', () => {
       shell_dangerous_enabled: false,
       shell_autopilot_enabled: false,
       memory_enabled: true,
-      reflection_threshold: 10,
+      web_private_reflection_threshold: 10,
       worker_concurrency: 16,
       conv_compress_enabled: true,
       im_progress_announce_enabled: false,

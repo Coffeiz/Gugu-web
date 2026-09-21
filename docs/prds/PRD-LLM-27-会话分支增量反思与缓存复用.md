@@ -19,7 +19,7 @@
 ## 2. 目标
 
 1. 让 Web/私聊 owner 反思优先复用刚完成的主会话 provider 前缀。
-2. 让 owner 缓冲在固定轮数触发之外，也能在最后一次对话后闲置 3 分钟自动反思。
+2. 让网页和所有私聊共用配置轮数阈值，并在最后一次对话后闲置 3 分钟收束未满阈值的缓冲。
 3. 让 Knowledge 反思复用同一主会话前缀，而不是从独立 system prompt 冷启动。
 4. 不把内部反思请求或结果写入用户可见聊天历史。
 5. 不改变 Memory、Knowledge 的现有输出 schema、去重、权限、写回和 RAG 事件语义。
@@ -30,7 +30,7 @@
 
 - 不把反思提示词加入主会话 canonical history。
 - 不让反思结果成为下一轮 Responses API 的 reasoning continuation。
-- 不改变 owner 固定轮数阈值、群组游标、Knowledge 自动/明确保存规则；3 分钟闲置触发是额外收束条件。
+- 触发轮数和群消息阈值遵循 [PRD-IM-11](./【已完成】PRD-IM-11-群成员长期记忆.md)；本 PRD 不定义另一套反思阈值。Knowledge 自动/明确保存规则保持不变。
 - 不保证所有 provider 都能跨调用命中缓存；缓存能力由 provider、模型和 API 格式决定。
 - 不以“缓存率提升”单独宣称整体费用降低；费用必须同时按 fresh input、cache read、cache write 和 output 统计。
 
@@ -42,7 +42,7 @@
 | owner Memory 反思 | 独立 `reflection.md` + 拼接画像/对话 | 不能复用主会话前缀 |
 | Knowledge 反思 | 独立 `knowledge-reflection.md` + RAG 候选 | 不能复用主会话前缀 |
 | Web 调度 | 只传用户消息、助手回复、设置和 session id | 后台任务缺少主请求快照 |
-| owner 阈值缓冲 | 多轮累计后一次反思，可能跨 session | 不能无条件使用某一个 session 分支 |
+| 网页/私聊阈值缓冲 | 多轮累计后一次反思，可能跨 session | 不能无条件使用某一个 session 分支 |
 | IM 群/成员反思 | 按 scope、游标和消息窗口批量反思 | 通常不存在单一主会话前缀 |
 | `ContextBranch` | 带 `session_id` 时默认使 reasoning state 失效 | 追加式只读分支需要新的状态边界 |
 
@@ -138,7 +138,7 @@ delta = 分支任务前缀 + 本次反思所需动态数据
 
 append 模式对完整历史的使用边界（`_APPEND_HISTORY_DIRECTIVE`，仅 append 路径追加）：**新增方向**（profile_add/pattern_add/daily/knowledge_candidate）仍严格限待反思回合；**矛盾检测方向**开放完整历史——仅当历史与待反思回合或存量记忆明显矛盾/过时时提 profile_remove / pattern_remove（照抄存量记忆原文）或据此修正 summary。remove 依据锚定存量原文，模型引历史对话原文（从未入库）时 writer 按原文匹配自然 no-op。devserver 实测（session 387，MiniMax-M3，3 次重复）：schema 无退化、remove 零误报、新增未被抑制。
 
-owner 缓冲按 session 隔离，满足任一条件就收束：固定轮数阈值达到，或最后一次入队后闲置 3 分钟。阈值触发时优先使用同进程快照；worker 闲置触发时快照可能已过期，按 §6.1 从持久化历史重建最小 append 输入。活跃中的 session 不反思，延后重试。
+网页/私聊 Owner 缓冲按 session 隔离，达到共享配置阈值或最后一次入队后闲置 3 分钟时收束。群内 Owner 缓冲跟随同群累计 50 条消息事件冲刷，未到边界时也会在 3 分钟空闲后收束。阈值触发时优先使用同进程快照；worker 闲置触发时快照可能已过期，按 §6.1 从持久化历史重建最小 append 输入。活跃中的 session 不反思，延后重试。
 
 如果 owner 阈值缓冲包含多轮消息，不新增复杂的群聊批处理逻辑：
 
@@ -316,7 +316,7 @@ LoopScope 必须能按 `chat`、`reflection`、`knowledge`、`compaction` 区分
 ### Phase 6：共享闲置触发与 owner 历史重建（已完成本地验证，2026-09-20）
 
 - [x] 抽出统一 3 分钟 TTL 策略，供 owner、群主 owner 与群/群友游标共用。
-- [x] owner 私聊与群主缓冲按 session 标记活动时间；固定轮数阈值仍保留，worker 闲置扫描统一 drain。
+- [x] 网页/私聊 Owner 缓冲与群内 Owner 缓冲按 session 标记活动时间；前者使用网页/私聊共享阈值，后者跟随群消息 50 条事件，worker 闲置扫描统一 drain。
 - [x] 快照过期后按用户归属和 session idle 状态从持久化历史重建最小 append 输入，不存储完整 provider 快照。
 - [x] Owner 与 IM 群/群友反思复用统一 `run_reflection_branch` 生命周期入口。
 - [x] 补齐完整反思回归、旧群主队列迁移与重试验证；记录重建路径缓存边界。

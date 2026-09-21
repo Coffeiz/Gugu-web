@@ -385,10 +385,10 @@ def _owner_idle_member(user_id, session_id) -> str:
     return f"{user_id}:{session_id}"
 
 
-def _owner_reflection_threshold(settings) -> int:
-    """读取 owner 反思阈值；不影响群成员/群级反思游标。"""
+def _web_private_reflection_threshold(settings) -> int:
+    """读取网页与私聊共用的反思轮数阈值。"""
     try:
-        return max(1, int(settings.agent.reflection_threshold))
+        return max(1, min(100, int(settings.agent.web_private_reflection_threshold)))
     except (AttributeError, TypeError, ValueError):
         return 10
 
@@ -467,7 +467,7 @@ async def _queue_owner_reflection(
             )
     finally:
         await lock.release()
-    if count >= _owner_reflection_threshold(settings):
+    if count >= _web_private_reflection_threshold(settings):
         await _drain_owner_reflection_buffer(user_id, settings, session_id)
 
 
@@ -671,7 +671,7 @@ async def flush_due_owner_reflections(settings, *, now: float | None = None, lim
 
 
 def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None,
-             group_mode: bool = False) -> None:
+             group_mode: bool = False, flush_now: bool = False) -> None:
     """非阻塞累计 owner 反思回合；达到 admin 配置阈值后批量反思（工具与否不影响时机）。
 
     琐碎应答（嗯/好的/谢谢…）不入缓冲省一次计数——除非这轮咕咕用了工具
@@ -684,7 +684,7 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
     if group_mode:
         task = asyncio.create_task(_schedule_group_owner(
             user_id, user_name, user_msg, assistant_reply, settings,
-            session_id,
+            session_id, flush_now=flush_now,
         ))
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
@@ -698,7 +698,7 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
 
 
 async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, settings,
-                                session_id=None) -> None:
+                                session_id=None, *, flush_now: bool = False) -> None:
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -717,11 +717,17 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
             await reflection_idle.mark_active(
                 redis, _GROUP_OWNER_IDLE_KEY, _owner_idle_member(user_id, session_id),
             )
-        count = await redis.llen(key)
     finally:
         await lock.release()
-    if count >= _owner_reflection_threshold(settings):
+    if flush_now:
         await _drain_group_owner_buffer(user_id, settings, session_id)
+
+
+def flush_group_owner_buffer(user_id, settings, session_id=None) -> None:
+    """群消息达到共享阈值时冲刷此前累计的群内 Owner 回合。"""
+    task = asyncio.create_task(_drain_group_owner_buffer(user_id, settings, session_id))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 
 async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,

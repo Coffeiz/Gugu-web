@@ -2,7 +2,7 @@
 
 > 状态：🟡 实现与自动化回归完成，待真实多人群人工验收
 > 创建：2026-08-29
-> 最近更新：2026-08-29
+> 最近更新：2026-09-22
 > 关联：[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
 
 ## 1. 目标与边界
@@ -12,29 +12,29 @@
 - `group reflection` 只维护群本身的 `profile`、`daily`、`summary` 和 `memory`，不向群友 scope 写入个人记忆。
 - 被动群消息累计 50 条后，创建一次 `member-batch` 反思任务。
 - `member-batch` 使用这 50 条消息的完整群聊上下文，一次性维护本批出现的多个群友的 `profile`、`pattern`、`summary` 和高价值 `memory`。
-- 主动 @ 消息不再触发成员个人反思；它可以继续参与群级活跃窗口和群本身的反思。
-- 私聊仍按对象 ID 隔离存储，但复用 owner 的即时反思组件和 Prompt，不属于群友批量反思。
+- 群内所有反思共用群消息阈值 50：群级、群友批量和群内 Owner 反思均在累计 50 条群消息后触发；不足 50 条时，最后一条群消息后空闲 3 分钟收束。
+- 网页和所有私聊对象（Owner 与非 Owner）共用可配置的“网页/私聊反思触发阈值”；不足阈值时在最后一轮后空闲 3 分钟收束。
 - 群友没有独立 `daily.md`，长期事件直接整理到成员 scope 的 `memory.md`。
 
 核心原则：**群级 scope 决定群本身记什么，批量成员反思再按语义主体把同一批上下文分发到各成员 scope。**
 
 ## 2. 触发和任务模型
 
-### 2.1 两条独立任务
+### 2.1 任务类型与触发条件
 
 两类任务共用 `memory:reflection` Stream、worker 和 group scope 锁，但通过 `task_type` 和独立游标分开：
 
 | task_type | 来源 | 写入对象 | 游标 |
 |---|---|---|---|
-| `group` | 群级活跃窗口、15 分钟空闲收束 | 当前群 scope | `last_reflected_message_id` |
-| `member-batch` | 被动群消息累计 50 条；空闲收束补偿未处理消息 | 本批出现的 platform-user scopes | `last_member_reflected_message_id` |
-| `private-owner` | 每个私聊 Agent 回合完成后立即复用 owner 反思组件；空闲收束用于补偿未处理回合 | 当前私聊对象 platform-user scope | `last_reflected_message_id` |
+| `group` | 群消息累计 50 条；3 分钟空闲收束补偿未处理消息 | 当前群 scope | `last_reflected_message_id` |
+| `member-batch` | 群消息累计 50 条；3 分钟空闲收束补偿未处理消息 | 本批出现的 platform-user scopes | `last_member_reflected_message_id` |
+| `private-owner` | 私聊对象累计达到网页/私聊反思触发阈值；3 分钟空闲收束补偿未处理回合 | 当前私聊对象 platform-user scope | `last_reflected_message_id` |
 
 同一批消息可以同时存在两种任务，不能用同一 idempotency range 合并。数据库任务唯一约束因此包含 `task_type`，游标也分别保存两条进度。
 
 ### 2.2 上下文
 
-私聊不使用独立的成员反思阈值，但保留 `private_reflection.md` 作为专用 Prompt。它沿用 owner 的 profile、pattern、summary、daily 判断标准和 JSON 契约，并明确当前私聊对象是唯一记忆主体；仅通过 platform-user scope 隔离私聊对象的存储。
+私聊共享网页 Owner 的反思触发阈值，但保留 `private_reflection.md` 作为专用 Prompt。它沿用 Owner 的 profile、pattern、summary、daily 判断标准和 JSON 契约，并明确当前私聊对象是唯一记忆主体；仅通过 platform-user scope 隔离私聊对象的存储。旧配置 `reflection_threshold` 加载时映射为新字段 `web_private_reflection_threshold`，不回写运行配置文件。
 
 成员批反思读取当前群消息范围内的完整用户消息，保留每条消息的时间、昵称和稳定 `platform_user_id`。它不按成员预先过滤消息，也不为每个成员单独调用模型。
 
@@ -102,7 +102,7 @@ backend/tests/test_memory_event_scopes.py
 
 - [x] 群反思和成员批反思使用独立任务类型和游标。
 - [x] 被动群消息累计 50 条创建 `member-batch` 任务。
-- [x] 群聊主动 Agent 回合不再单独触发 platform-user 反思；私聊回合复用 owner 反思组件即时调度。
+- [x] 群内 Owner 反思遵循群聊 50 条消息阈值；Owner 和非 Owner 私聊统一累计阈值，3 分钟空闲时收束未达阈值的内容。
 - [x] 成员批反思一次读取完整群聊上下文并批量输出多个成员。
 - [x] 群级 prompt 不再输出 `member_memory_add`。
 - [x] 成员 profile、pattern、summary、memory 按真实消息成员校验后分别落库。

@@ -11,6 +11,37 @@ from agent.providers.message_utils import render_openai_request_history
 from agent.rag import context as rag_context
 
 
+def test_current_message_time_reminder_uses_message_timestamp_and_user_timezone():
+    from zoneinfo import ZoneInfo
+
+    reminder_message = dynamic_tail.current_message_time_reminder(
+        datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc),
+        ZoneInfo("Asia/Shanghai"),
+    )
+
+    assert reminder_message == {
+        "role": "user",
+        "content": (
+            "[system-reminder]\n"
+            "当前时间：2026-08-29（星期六）18:00\n"
+            "[/system-reminder]"
+        ),
+    }
+
+
+def test_historical_message_time_reminder_keeps_historical_label():
+    assert dynamic_tail.message_time_reminder(
+        datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc), timezone.utc,
+    ) == {
+        "role": "user",
+        "content": (
+            "[system-reminder]\n"
+            "消息时间：2026-08-29 10:00\n"
+            "[/system-reminder]"
+        ),
+    }
+
+
 def test_time_message_marks_timestamp_as_reference_not_user_content(monkeypatch):
     class FixedDatetime(datetime):
         @classmethod
@@ -32,11 +63,10 @@ def test_time_message_marks_timestamp_as_reference_not_user_content(monkeypatch)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_anthropic", [True, False])
-async def test_prepare_run_binds_rag_watermark_and_keeps_message_time_in_batch(
+async def test_prepare_run_binds_rag_watermark_and_uses_current_message_time(
     monkeypatch, use_anthropic,
 ):
     observed_watermarks = []
-    current_time = reminder("当前时间：2026-08-29（星期六）10:01")
 
     async def fake_rag(_req, _query, *, history, snapshot_text):
         observed_watermarks.append(rag_context.get_conversation_before_message_id())
@@ -46,11 +76,6 @@ async def test_prepare_run_binds_rag_watermark_and_keeps_message_time_in_batch(
 
     audit_calls = []
     monkeypatch.setattr("agent.rag.injection.build_automatic_rag_context", fake_rag)
-    monkeypatch.setattr(
-        run_context.dynamic_tail,
-        "time_message",
-        lambda _user_tz: current_time,
-    )
     monkeypatch.setattr(
         audit,
         "context_layout_audit",
@@ -83,9 +108,12 @@ async def test_prepare_run_binds_rag_watermark_and_keeps_message_time_in_batch(
     messages = prepared.anthr_messages if use_anthropic else prepared.oa_messages
     assert observed_watermarks == [11]
     assert rag_context.get_conversation_before_message_id() is None
-    assert messages.dynamic_tail == [current_time]
-    assert "消息时间：" in str(messages.conversation)
-    assert "当前时间：" not in str(messages.conversation)
+    assert messages.dynamic_tail == []
+    conversation_text = str(messages.conversation)
+    current_time_text = "当前时间：2026-08-29（星期六）10:00"
+    assert conversation_text.count(current_time_text) == 1
+    assert conversation_text.index(current_time_text) < conversation_text.index("当前文本")
+    assert "消息时间：" not in conversation_text
     assert "当前时间：" not in str(messages.canonical_batches)
     assert (prepared.anthr_initial_len if use_anthropic else prepared.oa_initial_len) == len(messages.conversation)
     provider_messages = (
@@ -97,5 +125,5 @@ async def test_prepare_run_binds_rag_watermark_and_keeps_message_time_in_batch(
             )),
         )
     )
-    assert provider_messages.dynamic_tail == [current_time]
+    assert provider_messages.dynamic_tail == []
     assert audit_calls[0]["history"] == []

@@ -126,6 +126,12 @@ async def _anthropic(
         system = [{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}]
     messages = list(history or [])
     if messages:
+        from agent.context.provider_history import sanitize_anthropic_branch_history
+
+        # 主对话在 Anthropic driver 入口清理历史；后台追加分支不会经过该入口，
+        # 因此在这里复用同一套边界清洗，避免 reasoning_content 和不配对工具事件触发 400。
+        messages = sanitize_anthropic_branch_history(messages)
+    if messages:
         # 追加式分支在「历史末尾 + 追加指令之前」打第二个断点：与主 run 的
         # 「固定前缀 + 末尾断点」口径一致，前缀部分才能整段命中。
         messages[-1] = _with_trailing_cache_anchor(messages[-1])

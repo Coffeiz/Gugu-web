@@ -55,7 +55,7 @@ class _FakeRedis:
 
 
 @pytest.mark.asyncio
-async def test_owner_reflection_waits_for_configured_turn_threshold(monkeypatch):
+async def test_web_owner_reflection_uses_web_private_turn_threshold(monkeypatch):
     from agent.memory import reflection
     import app.core.redis as redis_module
 
@@ -75,7 +75,7 @@ async def test_owner_reflection_waits_for_configured_turn_threshold(monkeypatch)
         await fake_redis.delete(reflection._owner_reflection_buffer_key(user_id, session_id))
 
     monkeypatch.setattr(reflection, "_drain_owner_reflection_buffer", fake_drain)
-    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=3))
+    settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=3))
 
     for index in range(1, 3):
         await reflection._queue_owner_reflection(
@@ -97,12 +97,39 @@ async def test_owner_reflection_waits_for_configured_turn_threshold(monkeypatch)
     assert await fake_redis.llen(reflection._owner_reflection_buffer_key("owner-1", 7)) == 0
 
 
-def test_owner_reflection_threshold_has_safe_default():
+def test_web_private_reflection_threshold_has_safe_default():
     from agent.memory import reflection
 
-    assert reflection._owner_reflection_threshold(SimpleNamespace(agent=SimpleNamespace(reflection_threshold=7))) == 7
-    assert reflection._owner_reflection_threshold(SimpleNamespace(agent=SimpleNamespace(reflection_threshold=0))) == 1
-    assert reflection._owner_reflection_threshold(SimpleNamespace()) == 10
+    assert reflection._web_private_reflection_threshold(
+        SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=7))
+    ) == 7
+    assert reflection._web_private_reflection_threshold(
+        SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=0))
+    ) == 1
+    assert reflection._web_private_reflection_threshold(SimpleNamespace()) == 10
+
+
+def test_web_private_reflection_threshold_keeps_legacy_config_compatibility():
+    from app.core.config import AgentBehaviorSettings
+
+    assert AgentBehaviorSettings.model_validate({}).web_private_reflection_threshold == 10
+    assert AgentBehaviorSettings.model_validate(
+        {"reflection_threshold": 7}
+    ).web_private_reflection_threshold == 7
+    assert AgentBehaviorSettings.model_validate({
+        "reflection_threshold": 7,
+        "web_private_reflection_threshold": 4,
+    }).web_private_reflection_threshold == 4
+
+
+@pytest.mark.parametrize("value", [0, 101])
+def test_web_private_reflection_threshold_rejects_values_outside_admin_range(value):
+    from pydantic import ValidationError
+
+    from app.core.config import AgentBehaviorSettings
+
+    with pytest.raises(ValidationError):
+        AgentBehaviorSettings.model_validate({"web_private_reflection_threshold": value})
 
 
 @pytest.mark.asyncio
@@ -130,7 +157,7 @@ async def test_reflection_idle_window_flushes_after_three_minutes_for_owner_and_
 
 
 @pytest.mark.asyncio
-async def test_group_owner_uses_owner_threshold_without_changing_group_scope(monkeypatch):
+async def test_group_owner_uses_group_threshold_not_private_threshold(monkeypatch):
     from agent.memory import reflection
     import app.core.redis as redis_module
 
@@ -142,16 +169,16 @@ async def test_group_owner_uses_owner_threshold_without_changing_group_scope(mon
         drained.append((user_id, settings, session_id))
 
     monkeypatch.setattr(reflection, "_drain_group_owner_buffer", fake_drain)
-    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=3))
+    settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=3))
 
-    for index in range(1, 3):
+    for index in range(1, 51):
         await reflection._schedule_group_owner(
             "owner-2", "小北", f"群主消息{index}", "", settings, 7,
         )
     assert drained == []
 
     await reflection._schedule_group_owner(
-        "owner-2", "小北", "群主消息3", "", settings, 7,
+        "owner-2", "小北", "群主消息51", "", settings, 7, flush_now=True,
     )
     assert drained == [("owner-2", settings, 7)]
 
@@ -170,7 +197,7 @@ async def test_tool_turn_no_longer_flushes_before_threshold(monkeypatch):
         drained.append(user_id)
 
     monkeypatch.setattr(reflection, "_drain_owner_reflection_buffer", fake_drain)
-    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=5))
+    settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=5))
 
     # 连续三个工具回合（旧逻辑会每次立即冲刷），阈值未到不应触发
     for index in range(3):
@@ -285,7 +312,7 @@ async def test_legacy_owner_private_queue_migrates_by_session_on_next_activity(m
     ]
     fake_redis.lists[legacy_key] = list(legacy_rows)
     monkeypatch.setattr(redis_module, "get_redis", lambda: fake_redis)
-    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=10))
+    settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=10))
 
     await reflection._queue_owner_reflection(
         "owner-old", "小北", "当前私聊", "当前回复", settings, 31,

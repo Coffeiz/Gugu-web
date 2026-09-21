@@ -12,9 +12,9 @@ MAX_CURRENT_HIT_RATIO = 0.05
 MIN_DROP_RATIO = 0.80
 LONG_GAP_SECONDS = 300.0
 _REFLECTION_TRIGGER_SOURCES = frozenset({
-    "threshold", "idle", "background_job", "direct", "unknown",
+    "threshold", "idle", "background_job", "session_snapshot", "direct", "unknown",
 })
-_REFLECTION_SCOPES = frozenset({"owner", "group", "member", "unknown"})
+_REFLECTION_SCOPES = frozenset({"owner", "private", "group", "member", "unknown"})
 
 
 def context_digests(messages: Any, run: Any) -> dict[str, Any]:

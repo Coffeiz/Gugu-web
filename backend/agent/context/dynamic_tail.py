@@ -19,10 +19,25 @@ def _as_tz(user_tz):
 
 
 def current_time_text(user_tz=None) -> str:
-    """生成每轮 provider-only 时间提醒，只含日期与时分。"""
+    """生成当前墙钟日期与时分文本。"""
     current = datetime.now(_as_tz(user_tz))
-    weekday = "一二三四五六日"[current.weekday()]
-    return f"{current:%Y-%m-%d}（星期{weekday}）{current:%H:%M}"
+    return _format_time(current)
+
+
+def _format_time(value: datetime) -> str:
+    """按统一格式输出本地日期、星期与时分。"""
+    weekday = "一二三四五六日"[value.weekday()]
+    return f"{value:%Y-%m-%d}（星期{weekday}）{value:%H:%M}"
+
+
+def current_message_time_reminder(sent_at, user_tz=None) -> dict | None:
+    """把当前用户消息的发送时间作为当前时间，放在该消息正文之前。"""
+    if sent_at is None:
+        return None
+    if sent_at.tzinfo is None:
+        sent_at = sent_at.replace(tzinfo=timezone.utc)
+    local_time = sent_at.astimezone(_as_tz(user_tz))
+    return reminder_message(f"当前时间：{_format_time(local_time)}")
 
 
 def current_date_text(user_tz=None) -> str:
@@ -37,7 +52,7 @@ def reminder_message(content: str) -> dict:
 
 
 def message_time_reminder(sent_at, user_tz=None) -> dict | None:
-    """把用户消息时间作为不可变的独立 reminder，按用户时区格式化。"""
+    """把历史用户消息时间作为不可变的独立 reminder，按用户时区格式化。"""
     if sent_at is None:
         return None
     if sent_at.tzinfo is None:
@@ -47,7 +62,7 @@ def message_time_reminder(sent_at, user_tz=None) -> dict | None:
 
 
 def time_message(user_tz=None) -> dict:
-    """生成每轮唯一变化的尾部时间消息。"""
+    """为没有用户消息的定时执行生成当前时间尾部提醒。"""
     return reminder_message(
         f"仅供时间参考，不属于用户正文，请勿复述。\n当前时间：{current_time_text(user_tz)}"
     )
