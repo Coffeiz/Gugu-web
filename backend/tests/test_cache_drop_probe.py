@@ -186,6 +186,43 @@ def test_reflection_cache_observation_records_usage_and_only_prefix_fingerprints
     assert "secret_tool" not in repr(observation)
 
 
+def test_reflection_cache_ratio_uses_fresh_read_and_write_input_tokens():
+    from agent.usage import (
+        normalize_anthropic_usage,
+        normalize_openai_usage,
+        normalize_responses_usage,
+    )
+
+    branch_input, ai, adapter = _reflection_observation_input()
+    normalized_samples = (
+        normalize_openai_usage({
+            "prompt_tokens": 20_000,
+            "prompt_cache_hit_tokens": 10_000,
+            "prompt_cache_creation_tokens": 2_000,
+        }),
+        normalize_anthropic_usage({
+            "input_tokens": 8_000,
+            "cache_read_input_tokens": 10_000,
+            "cache_creation_input_tokens": 2_000,
+        }),
+        normalize_responses_usage({
+            "input_tokens": 20_000,
+            "input_tokens_details": {"cached_tokens": 10_000},
+            "cache_creation_input_tokens": 2_000,
+        }),
+    )
+
+    for usage in normalized_samples:
+        observation = cache_probe.build_reflection_sample(
+            branch_input, ai, adapter, usage,
+        )
+        assert observation["input_tokens"] == 20_000
+        assert observation["fresh_input_tokens"] == 8_000
+        assert observation["cache_read_tokens"] == 10_000
+        assert observation["cache_write_tokens"] == 2_000
+        assert observation["cache_hit_ratio"] == 0.5
+
+
 def test_reflection_observation_flags_low_hit_only_for_supported_long_prefix(monkeypatch):
     monkeypatch.setattr(cache_probe, "_estimate_tokens", lambda _value, _model: 32_000)
     usage = {"input": 20_000, "cache_read": 100, "cache_ratio": 0.005}
@@ -281,6 +318,9 @@ def test_idle_reflection_without_active_trace_emits_a_detached_observation(monke
     assert snapshot["session_key"] == "gugu:reflection:31"
     assert snapshot["attributes"]["scenario"] == "reflection"
     assert snapshot["attributes"]["reflection_scope"] == "unknown"
+    assert snapshot["usage"]["input"] == 20_000
+    assert snapshot["usage"]["fresh_input"] == 19_800
+    assert snapshot["usage"]["cache_ratio"] == 0.01
     span = snapshot["spans"][-1]
     assert span["name"] == "Reflection cache observation"
     probe = span["input"]["reflection_cache_probe"]

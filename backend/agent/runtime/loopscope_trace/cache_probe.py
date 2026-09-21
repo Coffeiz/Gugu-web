@@ -213,17 +213,17 @@ def build_reflection_sample(
         "history": history_messages or (),
         "tools": tools or (),
     }
-    input_tokens = _nonnegative_int(usage.get("input"))
     cache_read = _nonnegative_int(usage.get("cache_read"))
     cache_write = _nonnegative_int(usage.get("cache_write"))
-    fresh_input = _nonnegative_int(usage.get("fresh_input"))
-    try:
-        ratio = float(usage.get("cache_ratio", 0) or 0)
-    except (TypeError, ValueError):
-        ratio = 0.0
-    if input_tokens and not ratio:
-        ratio = cache_read / input_tokens
-    ratio = min(max(ratio, 0.0), 1.0)
+    if "fresh_input" in usage:
+        # Provider normalizers expose uncached, non-write tokens explicitly.
+        fresh_input = _nonnegative_int(usage.get("fresh_input"))
+        input_tokens = fresh_input + cache_read + cache_write
+    else:
+        # Legacy/manual samples use input as the complete prompt total.
+        input_tokens = _nonnegative_int(usage.get("input"))
+        fresh_input = max(0, input_tokens - cache_read - cache_write)
+    ratio = cache_read / input_tokens if input_tokens else 0.0
     prefix_tokens = _estimate_tokens(prefix, model)
     supported = bool(adapter.supports_active_cache(model))
     eligible = supported and prefix_tokens >= MIN_PREFIX_TOKENS
@@ -391,6 +391,7 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
     """对写入 trace 的分支样本再做字段白名单，防止正文混入探针。"""
     if value.get("scenario") != "reflection":
         return {}
+    has_fresh_input = value.get("fresh_input_tokens") is not None
     allowed = (
         "schema_version", "scenario", "provider", "model", "api_format",
         "cache_supported", "input_tokens", "fresh_input_tokens", "cache_read_tokens",
@@ -416,10 +417,20 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
         "tool_count", "attempt_index",
     ):
         safe[key] = _nonnegative_int(safe.get(key))
-    try:
-        safe["cache_hit_ratio"] = min(max(float(safe.get("cache_hit_ratio", 0) or 0), 0), 1)
-    except (TypeError, ValueError):
-        safe["cache_hit_ratio"] = 0.0
+    if not has_fresh_input:
+        safe["fresh_input_tokens"] = max(
+            0,
+            safe["input_tokens"] - safe["cache_read_tokens"] - safe["cache_write_tokens"],
+        )
+    input_total = (
+        safe["fresh_input_tokens"]
+        + safe["cache_read_tokens"]
+        + safe["cache_write_tokens"]
+    )
+    safe["input_tokens"] = input_total
+    safe["cache_hit_ratio"] = (
+        round(safe["cache_read_tokens"] / input_total, 6) if input_total else 0.0
+    )
     try:
         gap = safe.get("origin_gap_seconds")
         safe["origin_gap_seconds"] = round(max(float(gap), 0), 3) if gap is not None else None
@@ -427,5 +438,9 @@ def _safe_reflection_observation(value: dict[str, Any]) -> dict[str, Any]:
         safe["origin_gap_seconds"] = None
     for key in ("cache_supported", "probe_eligible", "cache_low_hit"):
         safe[key] = bool(safe.get(key))
+    safe["cache_low_hit"] = (
+        safe["probe_eligible"]
+        and safe["cache_hit_ratio"] <= MAX_CURRENT_HIT_RATIO
+    )
     safe["scenario"] = "reflection"
     return safe

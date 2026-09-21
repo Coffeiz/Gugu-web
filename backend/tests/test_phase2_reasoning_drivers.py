@@ -214,6 +214,7 @@ def test_responses_usage_normalizes_cached_input_tokens():
 
     assert usage == {
         "input": 40,
+        "fresh_input": 40,
         "output": 8,
         "cache_read": 60,
         "cache_write": 0,

@@ -303,4 +303,7 @@ async def test_complete_messages_uses_responses_protocol_and_native_tool_schema(
     assert fake.kwargs["store"] is False
     assert fake.kwargs["reasoning"] == {"effort": "low"}
     assert "previous_response_id" not in fake.kwargs
-    assert usage == [{"input": 5, "output": 3, "cache_read": 7, "cache_write": 0}]
+    assert usage == [{
+        "input": 5, "fresh_input": 5, "output": 3,
+        "cache_read": 7, "cache_write": 0,
+    }]
