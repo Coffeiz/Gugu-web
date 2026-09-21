@@ -195,6 +195,7 @@ async def _resolve_folder_path(db, user_id, raw: str, space, project_id, workspa
                 db, user_id, space=space, project_id=project_id,
                 parent_id=parent_id,
                 workspace_directory_id=workspace_directory_id,
+                filter_parent=True,
             )
             where = "「{}」下".format(segments[depth - 1]) if depth else "根目录"
             return None, json.dumps({
@@ -213,8 +214,9 @@ async def _resolve_folder_path(db, user_id, raw: str, space, project_id, workspa
 async def _list_dir(db, user_id, args: dict):
     """统一目录浏览：一次返回目录内的子文件夹与文件（取代 list_files/list_folders）。
 
-    folder 不传=当前用户所有可访问空间；传了（id 或名字）=该目录的子文件夹与直属文件。
-    parent_id 是 folder 的纯 id 形式。limit 只约束 files，folders 恒全量。
+    folder 不传时 folders 只含各空间根目录；传了（id 或名字）时 folders 为该目录的子文件夹、files 为直属文件。
+    文件夹只返回当前层的直属子目录，不递归展开。parent_id 是 folder 的纯 id 形式。
+    limit 只约束 files，folders 恒全量。
     """
     kind = args.get("kind") if args.get("kind") in ("both", "file", "folder") else "both"
 
@@ -298,6 +300,7 @@ async def _list_dir(db, user_id, args: dict):
             project_id=args.get("project_id"),
             parent_id=scope_folder_id,
             workspace_directory_id=args.get("workspace_directory_id"),
+            filter_parent=True,
         )
         counts: dict[int, int] = {}
         folder_ids = [folder.id for folder in folder_rows]
@@ -329,7 +332,7 @@ async def _list_dir(db, user_id, args: dict):
             })
         out_folders.sort(key=lambda item: (item["depth"], item["path"]))
 
-    # shown/total 只统计 files（folders 恒全量、无截断语义）：shown<total 说明被
+    # shown/total 只统计 files（folders 只含当前层且恒全量、无截断语义）：shown<total 说明被
     # limit 截断，必须加大 limit 重查或加过滤条件，不能把前 N 条当全量下结论。
     return {"shown": len(out_files), "total": total, "files": out_files, "folders": out_folders}
 
@@ -843,14 +846,15 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_dir", label="浏览目录",
-            description_short='浏览目录：一次列出子文件夹和文件；默认覆盖当前用户可访问的所有空间。',
-            description="列出子文件夹与文件，可按空间、项目、工作区或目录筛选；不传位置条件时覆盖当前用户所有可访问空间。"
+            description_short='浏览目录：文件夹只列当前层直属子目录，不递归；未指定目录时列根级文件夹。',
+            description="列出文件与当前层直属子文件夹，可按空间、项目、工作区或目录筛选；文件仍按传入条件过滤，不传位置条件时覆盖当前用户所有可访问空间。"
                         "folder 传目录名（支持 a/b/c 式路径，也可用 folder_id/parent_id 传 id），限定该目录的子文件夹与直属文件。"
+                        "folders 只返回当前层的直属子目录，不递归展开；未传目录时只返回各空间根目录下的文件夹。需要深入时，再对目标子目录传 folder_id 调用。"
                         "返回 {shown, total, files, folders}：total/shown 只统计文件——shown<total 说明未取完，"
                         "加大 limit、加 offset 翻页或改用更精确的过滤条件，不能把部分结果当全量下结论；确认「全部/清空/还剩几个」类问题时务必核对 total。"
                         "limit 只约束 files（上限 200）；folders 恒全量，每项带 file_count（直属文件数）。kind=file/folder 可只看其中一种。"
                         "超大目录看全量：sort=\"name\" + limit=200 + offset 递增分页拉完（名字序翻页稳定不漏重）。"
-                        "按关键词找文件时优先一次传 queries（默认 OR）；决定新文件落点时先看 folders 的 path/depth 审视一级和相关二级目录。",
+                        "按关键词找文件时优先一次传 queries（默认 OR）；决定新文件落点时先看当前层，需要确认更深位置时对候选子目录继续浏览。",
             input_schema={
                 "type": "object",
                 "properties": {

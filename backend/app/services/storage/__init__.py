@@ -281,7 +281,7 @@ class LocalStorageBackend(StorageBackend):
                 os.unlink(temporary)
 
     async def get(self, key: str) -> bytes:
-        return (self.root / key).read_bytes()
+        return await asyncio.to_thread((self.root / key).read_bytes)
 
     async def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024):
         stream = await asyncio.to_thread((self.root / key).open, "rb")

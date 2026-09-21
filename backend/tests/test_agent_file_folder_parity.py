@@ -112,6 +112,57 @@ async def test_list_dir_folders_does_not_inherit_bound_workspace_directory(db, u
     assert {item["id"] for item in rows["folders"]} == {personal.id, workspace.id}
 
 
+async def test_list_dir_workspace_root_returns_only_root_folders(db, user_a):
+    root = await _mk_workspace_folder(db, user_a.id)
+    child = Folder(
+        user_id=user_a.id,
+        name="子目录",
+        parent_id=root.id,
+        workspace_directory_id=root.workspace_directory_id,
+    )
+    db.add(child)
+    await db.commit()
+
+    import agent.tools.files as agent_files
+
+    rows = await agent_files._list_dir(db, user_a.id, {
+        "kind": "folder",
+        "workspace_directory_id": root.workspace_directory_id,
+    })
+
+    assert [item["id"] for item in rows["folders"]] == [root.id]
+
+
+async def test_list_dir_selected_folder_returns_only_direct_subfolders(db, user_a):
+    root = await _mk_workspace_folder(db, user_a.id)
+    child = Folder(
+        user_id=user_a.id,
+        name="子目录",
+        parent_id=root.id,
+        workspace_directory_id=root.workspace_directory_id,
+    )
+    db.add(child)
+    await db.commit()
+    grandchild = Folder(
+        user_id=user_a.id,
+        name="孙目录",
+        parent_id=child.id,
+        workspace_directory_id=root.workspace_directory_id,
+    )
+    db.add(grandchild)
+    await db.commit()
+
+    import agent.tools.files as agent_files
+
+    rows = await agent_files._list_dir(db, user_a.id, {
+        "kind": "folder",
+        "folder_id": root.id,
+        "workspace_directory_id": root.workspace_directory_id,
+    })
+
+    assert [item["id"] for item in rows["folders"]] == [child.id]
+
+
 async def _mk_workspace_folder(db, user_id):
     workspace_directory = WorkspaceDirectory(
         user_id=user_id, name="F1 工作区", directory_name="f1-folders",
