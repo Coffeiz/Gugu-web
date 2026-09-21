@@ -89,7 +89,8 @@ def _has_assignment(path: Path, name: str) -> bool:
 def _write_generated_env_value(path: Path, name: str, value: str) -> None:
     """在锁内写入一次性生成的配置值，保留已有配置和注释。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+", encoding="utf-8") as handle:
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(descriptor, "r+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.seek(0)
         content = handle.read()
@@ -127,6 +128,23 @@ def ensure_secret_key(*, env_file: Path, env_file_values: Mapping[str, str]) -> 
     if _config_value("SECRET_KEY", env_file_values):
         return
     _write_generated_env_value(env_file, "SECRET_KEY", secrets.token_urlsafe(48))
+
+
+def ensure_database_password(
+    *, env_file: Path, env_file_values: Mapping[str, str], embedded: bool
+) -> None:
+    """内置数据库首次启动时生成并持久化连接密码；外部数据库仍要求显式配置。"""
+    if not embedded:
+        return
+    if _config_value("DB__PASSWORD", env_file_values):
+        return
+    configured_password = _config_value("GUGU_DB_PASSWORD", env_file_values)
+    if configured_password:
+        if not os.environ.get("DB__PASSWORD", "").strip():
+            _write_generated_env_value(env_file, "DB__PASSWORD", configured_password)
+        return
+    _write_generated_env_value(env_file, "DB__PASSWORD", secrets.token_urlsafe(32))
+    print("内置 PostgreSQL 连接密码已随机生成并保存到持久化配置。")
 
 
 def ensure_admin_password(*, env_file: Path, env_file_values: Mapping[str, str]) -> None:
@@ -169,6 +187,12 @@ def main() -> int:
     try:
         values = _read_env_file(env_file)
         ensure_secret_key(env_file=env_file, env_file_values=values)
+        ensure_database_password(
+            env_file=env_file,
+            env_file_values=values,
+            embedded=os.environ.get("GUGU_EMBEDDED_DEPS", "0") == "1",
+        )
+        values = _read_env_file(env_file)
         values = validate_required_config(
             env_file=env_file,
             data_dir=data_dir,

@@ -20,6 +20,18 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ]; then
     if [ -z "${SECRET_KEY:-}" ]; then
         unset SECRET_KEY
     fi
+    # 一体化单容器允许内置 PostgreSQL 密码留空；bootstrap 会首次生成并写入
+    # 持久化 dotenv。清除镜像/面板注入的空值，避免它覆盖 dotenv 中的生成值。
+    if [ -z "${DB__PASSWORD:-}" ]; then
+        if [ -n "${GUGU_DB_PASSWORD:-}" ]; then
+            export DB__PASSWORD="$GUGU_DB_PASSWORD"
+        else
+            unset DB__PASSWORD
+        fi
+    fi
+    if [ -z "${GUGU_DB_PASSWORD:-}" ]; then
+        unset GUGU_DB_PASSWORD
+    fi
     python compose_bootstrap.py
 fi
 
@@ -89,15 +101,13 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
             echo "  （999 是镜像内 postgres 用户的 uid；容器重启即可继续初始化）" >&2
             exit 1
         fi
-        cat >> "$EMBED_DATA/postgres/pg_hba.conf" <<'HBA'
-host all all 127.0.0.1/32 trust
-host all all ::1/128 trust
-HBA
         printf "\nlisten_addresses = '127.0.0.1'\n" >> "$EMBED_DATA/postgres/postgresql.conf"
         # 只服务本机回环 + trust 认证，无需 TLS；镜像里删掉了 snakeoil 示例证书，
         # 不显式关掉 Debian 默认的 ssl=on 会让 postgres 因证书缺失起不来。
         printf "\nssl = off\n" >> "$EMBED_DATA/postgres/postgresql.conf"
     fi
+    # 数据目录可能来自旧版本；每次启动都幂等补齐内置实例的本机认证规则，避免只修新库。
+    python /usr/local/bin/ensure_embedded_pg_hba.py "$EMBED_DATA/postgres/pg_hba.conf"
     cat > "$EMBED_RUN/supervisord.conf" <<EOF
 [supervisord]
 nodaemon=false
@@ -165,6 +175,9 @@ EOF
         fi
         sleep 1
     done
+    # Redis 的 TCP 端口可能早于 AOF/RDB 恢复完成而开放；在它返回 PONG 前不启动
+    # Alembic、worker 或 gateway，避免 BusyLoadingError 让关键进程提前退出。
+    /usr/local/bin/gugu-wait-embedded-redis.sh
     # 建应用库（幂等：已存在时忽略报错）。
     su -s /bin/bash postgres -c "\"$PG_BIN/createdb\" -h 127.0.0.1 -U '$EMBED_DB_USER' '$EMBED_DB_NAME'" >/dev/null 2>&1 || true
 fi
@@ -176,7 +189,7 @@ echo "[entrypoint] 等待数据库 ${DB_HOST}:${DB_PORT} 就绪..."
 DB_READY=0
 for _ in $(seq 1 30); do
     if python -c "import socket; socket.create_connection(('${DB_HOST}', ${DB_PORT}), timeout=1)" 2>/dev/null; then
-        echo "[entrypoint] 数据库已就绪"
+        echo "[entrypoint] 数据库 TCP 端口已开放"
         DB_READY=1
         break
     fi
