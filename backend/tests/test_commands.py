@@ -100,9 +100,17 @@ async def test_each_command_supports_help(text):
 @pytest.mark.asyncio
 async def test_compact_forces_compression_instead_of_using_threshold(monkeypatch):
     captured = {}
+    from agent.llm import modelctx
+    previous_usage_context = modelctx.get_usage_context()
 
     async def fake_compact(*_args, **_kwargs):
         captured.update(_kwargs)
+        usage_context = modelctx.get_usage_context()
+        captured["usage_context"] = (
+            usage_context.user_id,
+            usage_context.session_id,
+            usage_context.scenario,
+        ) if usage_context else None
         return False
 
     monkeypatch.setattr("agent.context.compress_conv.compress_if_needed", fake_compact)
@@ -114,8 +122,15 @@ async def test_compact_forces_compression_instead_of_using_threshold(monkeypatch
         ai = AI()
 
     monkeypatch.setattr("app.core.config.get_settings", lambda: Settings())
-    result = await commands.handle("user-1", "/compact", session_id=12)
-    assert captured == {"force": True}
+    with modelctx.usage_context_scope("outer-user", 99):
+        outer_usage_context = modelctx.get_usage_context()
+        result = await commands.handle("user-1", "/compact", session_id=12)
+        assert modelctx.get_usage_context() is outer_usage_context
+    assert captured == {
+        "force": True,
+        "usage_context": ("user-1", 12, "compaction"),
+    }
+    assert modelctx.get_usage_context() is previous_usage_context
     assert result == "当前历史还不够长，暂时无需整理上下文。"
 
 
