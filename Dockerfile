@@ -146,6 +146,7 @@ COPY backend/compose_bootstrap.py ./compose_bootstrap.py
 COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 COPY backend/scripts/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py
+COPY backend/scripts/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
 COPY backend/scripts/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
 COPY squid/egress.conf /opt/gugu/egress.conf
 # 发布流水线把已扫描的 Sandbox 执行镜像随一体化镜像打包；bootstrap 会导入目标 daemon。
@@ -186,7 +187,7 @@ COPY nginx/compose.conf /etc/nginx/nginx.conf
 RUN mkdir -p logs \
     && find ./static -type d -exec chmod 755 {} + \
     && find ./static -type f -exec chmod 644 {} + \
-    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py /usr/local/bin/gugu-wait-embedded-redis.sh \
+    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py /usr/local/bin/gugu-wait-embedded-postgres.sh /usr/local/bin/gugu-wait-embedded-redis.sh \
     && test ! -e /app/.venv \
     && test ! -e /app/ts \
     && test ! -e /app/tests \

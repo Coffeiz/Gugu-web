@@ -168,13 +168,8 @@ EOF
     case "${REDIS__HOST:-redis}" in
         redis|127.0.0.1|localhost) export REDIS__HOST=127.0.0.1 REDIS__PORT=6379 ;;
     esac
-    for _ in $(seq 1 30); do
-        if su -s /bin/bash postgres -c "$PG_BIN/pg_isready -h 127.0.0.1 -p 5432" >/dev/null 2>&1; then
-            echo "[entrypoint] 内置 PostgreSQL 已就绪"
-            break
-        fi
-        sleep 1
-    done
+    # TCP 监听可能早于 crash recovery 完成；等待器超时会非零退出，不能退回 TCP 探测。
+    /usr/local/bin/gugu-wait-embedded-postgres.sh "$PG_BIN/pg_isready"
     # Redis 的 TCP 端口可能早于 AOF/RDB 恢复完成而开放；在它返回 PONG 前不启动
     # Alembic、worker 或 gateway，避免 BusyLoadingError 让关键进程提前退出。
     /usr/local/bin/gugu-wait-embedded-redis.sh
