@@ -13,6 +13,8 @@ import json
 import logging
 import re
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,10 @@ _bg_tasks: set = set()
 _perc_log = logging.getLogger("agent.perc")
 _memdiff_log = logging.getLogger("agent.memdiff")
 _log = logging.getLogger("agent.memory.reflection")
+
+_reflection_probe_context_var: ContextVar[dict | None] = ContextVar(
+    "reflection_probe_context", default=None,
+)
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
@@ -501,6 +507,36 @@ async def _release_reflection_lock(lock) -> None:
         diag_log("agent.memory.reflection.lock_release", exc)
 
 
+@contextmanager
+def _reflection_probe_context(snapshot, trigger_source, *, only_if_missing=False):
+    """通过 task-local 上下文传递来源，避免扩大反思公共调用签名。"""
+    current = _reflection_probe_context_var.get()
+    if only_if_missing and current is not None:
+        yield current
+        return
+    token = _reflection_probe_context_var.set(
+        _reflection_probe_metadata(snapshot, trigger_source),
+    )
+    try:
+        yield
+    finally:
+        _reflection_probe_context_var.reset(token)
+
+
+def _reflection_probe_metadata(snapshot, trigger_source):
+    gap = None
+    if snapshot is not None:
+        created_at = getattr(snapshot, "created_at", None)
+        if isinstance(created_at, (int, float)):
+            gap = max(time.monotonic() - created_at, 0.0)
+    return {
+        "reflection_scope": "owner",
+        "trigger_source": trigger_source,
+        "origin_run_id": getattr(snapshot, "run_id", "") if snapshot else "",
+        "origin_gap_seconds": gap,
+    }
+
+
 async def _drain_reflection_buffer(
     user_id, settings, *, session_id=None, group_mode: bool,
     allow_rebuild: bool = False,
@@ -545,7 +581,10 @@ async def _drain_reflection_buffer(
             await redis.rpush(key, *raw_rows)
             await reflection_idle.mark_active(redis, idle_key, member)
             return
-        await _reflect_buffer_rows(user_id, settings, rows, session_id, snapshot)
+        with _reflection_probe_context(
+            snapshot, ("threshold", "idle")[allow_rebuild],
+        ):
+            await _reflect_buffer_rows(user_id, settings, rows, session_id, snapshot)
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.memory.reflection.drain", exc)
@@ -720,6 +759,7 @@ async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None,
                   turns=None, snapshot=None, rebuild_from_history: bool = False) -> bool:
     out = None
+    probe_snapshot = snapshot
     bound_model = None
     use_append = False
     turns = turns or [{
@@ -755,8 +795,13 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                       session_id, append_reason)
             return False
         if use_append:
-            out = await _extract_append(snapshot, user_name, turns, mem["profile"], mem["pattern"],
-                                        existing_summary, settings, prev_turn=prev_turn)
+            with _reflection_probe_context(
+                probe_snapshot, "direct", only_if_missing=True,
+            ):
+                out = await _extract_append(
+                    snapshot, user_name, turns, mem["profile"], mem["pattern"],
+                    existing_summary, settings, prev_turn=prev_turn,
+                )
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.memory.reflection.model_binding", exc)
@@ -964,6 +1009,9 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
         + _TASK_REQUIREMENTS
     )
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
+    probe_context = _reflection_probe_context_var.get()
+    if probe_context is None:
+        probe_context = _reflection_probe_metadata(snapshot, "direct")
     result = await run_reflection_branch(
         BranchInput(
             stable_system=snapshot.system_prompt,
@@ -972,6 +1020,8 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
             run_id=snapshot.run_id,
             history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
             tools=tuple(snapshot.tools),
+            session_id=snapshot.session_id,
+            cache_probe_context=probe_context,
             branch_mode="append_reuse",
         ),
         settings,

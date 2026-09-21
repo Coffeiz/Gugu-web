@@ -214,3 +214,67 @@ async def test_scope_revision_is_audit_only_and_preserves_prefix(monkeypatch):
     assert captured == ["same", "same"]
     assert first.input_fingerprint == second.input_fingerprint
     assert second.metadata["scope_revision"] == "r2"
+
+
+@pytest.mark.asyncio
+async def test_reflection_provider_usage_is_added_to_active_trace_without_prompt_text(monkeypatch):
+    from agent.runtime.loopscope_trace import state
+
+    async def fake_complete_messages(*args, usage_sink=None, **kwargs):
+        usage_sink.append({
+            "input": 20_000,
+            "fresh_input": 2_000,
+            "cache_read": 17_000,
+            "cache_write": 1_000,
+            "cache_ratio": 0.85,
+        })
+        return {"ok": True}
+
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    monkeypatch.setattr(provider_runner, "complete_messages", fake_complete_messages)
+    monkeypatch.setattr(
+        "agent.context.cache_capability.record_reuse_outcome",
+        lambda *args, **kwargs: None,
+    )
+    settings = SimpleNamespace(ai=SimpleNamespace(
+        provider="minimax", model="MiniMax-M3", api_format="anthropic",
+    ))
+    run = state._ScopeRun(
+        id="run-reflection-test",
+        trace_id="trace-reflection-test",
+        session_key="gugu:web:31",
+        external_session_id="31",
+        source="web",
+        started_at=1.0,
+    )
+    token = state._scope_run.set(run)
+    try:
+        result = await ContextBranch().run(
+            BranchInput(
+                stable_system="私密 system 正文",
+                delta="私密反思指令",
+                session_id=31,
+                run_id="run-origin-31",
+                history_messages=({"role": "user", "content": "私密历史正文"},),
+                cache_probe_context={
+                    "reflection_scope": "owner",
+                    "trigger_source": "idle",
+                    "origin_run_id": "run-origin-31",
+                    "origin_gap_seconds": 180.0,
+                },
+            ),
+            BranchPolicy(name="reflection"),
+            settings,
+        )
+    finally:
+        state._scope_run.reset(token)
+
+    assert result.ok is True
+    span = next(item for item in run.spans if item.name == "Reflection cache observation")
+    probe = span.input["reflection_cache_probe"]
+    assert probe["reflection_scope"] == "owner"
+    assert probe["cache_hit_ratio"] == 0.85
+    assert probe["cache_read_tokens"] == 17_000
+    assert probe["trigger_source"] == "idle"
+    assert probe["origin_gap_seconds"] == 180.0
+    assert "私密" not in repr(span.input)

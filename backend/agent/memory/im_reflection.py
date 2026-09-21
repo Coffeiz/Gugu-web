@@ -80,9 +80,14 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         delta=delta,
         scope="group-member-reflection" if task_type == "member-batch" else scope.scope_type,
         scope_revision=str(job.idempotency_key),
+        session_id=getattr(messages[-1], "session_id", None) if messages else None,
         run_id=f"im-reflection-job:{job.id}",
         history_messages=tuple(_append_history_message(message) for message in messages),
         branch_mode="append_reuse",
+        cache_probe_context={
+            "reflection_scope": "member" if task_type == "member-batch" else "group",
+            "trigger_source": "background_job",
+        },
     )
 
 

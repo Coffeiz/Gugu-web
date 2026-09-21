@@ -201,7 +201,10 @@ async def test_memory_reflect_passes_snapshot_to_knowledge(monkeypatch):
     async def fake_write_last_turn(*a, **k):
         return None
 
-    async def fake_extract_append(snapshot, user_name, turns, profile, pattern, summary, settings, prev_turn=None):
+    async def fake_extract_append(
+        snapshot, user_name, turns, profile, pattern, summary, settings,
+        prev_turn=None,
+    ):
         # 非空输出让 reflect 走完 writer 段直到 _reflect_knowledge
         return {"daily": "x", "perception": {"intent": "闲聊", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}
 

@@ -136,6 +136,11 @@ class ContextBranch:
                                      cache_hit=bool(usage.get("cache_read")))
             except Exception:
                 pass
+            from agent.runtime.loopscope_trace.cache_probe import record_reflection_usage
+
+            record_reflection_usage(
+                policy.name, branch_input, settings, usage_sink,
+            )
         result = BranchResult(
             ok=validated_ok,
             output=output if validated_ok else None,

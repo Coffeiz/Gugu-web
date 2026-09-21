@@ -589,6 +589,7 @@ def test_group_and_member_jobs_build_append_branches():
     job = SimpleNamespace(id=12, idempotency_key="job-key")
     message = SimpleNamespace(
         role="user", content="本批消息", platform_user_name="成员甲",
+        session_id=77,
     )
 
     for task_type, scope_name in (("group", "group"), ("member-batch", "group-member-reflection")):
@@ -597,6 +598,11 @@ def test_group_and_member_jobs_build_append_branches():
             [message],
         )
         assert branch_input.branch_mode == "append_reuse"
+        assert branch_input.session_id == 77
+        assert branch_input.cache_probe_context["reflection_scope"] == (
+            "member" if task_type == "member-batch" else "group"
+        )
+        assert branch_input.cache_probe_context["trigger_source"] == "background_job"
         assert branch_input.scope == scope_name
         assert branch_input.history_messages == (
             {"role": "user", "content": "[成员甲] 本批消息"},
