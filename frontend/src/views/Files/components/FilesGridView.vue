@@ -26,7 +26,7 @@
       :data-file-id="f.id" data-layout-role="card" :data-layout-key="fileLayoutKey(f)" @contextmenu.prevent.stop="openCtx('file', f, $event)" @click.stop="handleFileClick(f, $event)">
       <template #thumb><img class="fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny', revision: f.thumbRevision ?? f.version }" decoding="async" draggable="false" alt="" /><img class="fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card', revision: f.thumbRevision ?? f.version }" :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }" decoding="async" draggable="false" alt="" @load="cardBlobReadyIds.add(f.id)" @error="($event.target as HTMLElement).style.display='none'" /><div class="fc-thumb-fade"></div></template>
       <template #name><RenameInput v-if="renamingFileId === f.id" v-model="renameText" v-model:extension="renameExtension" :extension-required="f.ext.toUpperCase() !== 'FILE'" @commit="commitRename" @cancel="cancelRename" /><template v-else>{{ f.displayName }}</template></template>
-      <template #meta>{{ fmtBytes(f.sizeBytes) }} · {{ f.createdAt }}</template>
+      <template #meta>{{ fmtBytes(f.sizeBytes) }} · {{ formatFileCreatedDate(f.createdAt) }}</template>
       <div v-if="!inSelectionMode" class="fc-hover-actions"><button class="file-card-btn" :title="renamingFileId === f.id ? t('sharedUi.confirm') : t('sharedUi.rename')" @pointerdown.stop @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)"><Icon name="status.success" v-if="renamingFileId === f.id" :size="11" /><Icon name="action.edit" v-else :size="11" /></button><button v-if="isExtractableArchive(f)" class="file-card-btn" :title="t('filesViewUi.extractTo')" @pointerdown.stop @click.stop="extractFile(f)"><Icon name="action.archive" :size="11" /></button><button class="file-card-btn" :title="t('sharedUi.download')" @pointerdown.stop @click.stop="downloadFile(f)"><Icon name="action.download" :size="11" /></button><button class="file-card-btn del" :title="t('sharedUi.moveToTrash')" @pointerdown.stop @click.stop="deleteSingleFile(f)"><Icon name="action.delete" :size="11" /></button></div>
     </RuntimeFileCard>
     <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress" :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" :status-text="g.statusText" :indeterminate="g.indeterminate" data-flip-target />
@@ -47,6 +47,7 @@ import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhos
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/shared/useLazyThumb'
 import { fmtBytes } from '@/utils/fileSize'
+import { formatFileCreatedDate } from '@/utils/fileDate'
 import { useI18n } from 'vue-i18n'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { t } = useI18n()

@@ -124,7 +124,7 @@
           </div>
           <div class="fpw-info-row">
             <span class="fpw-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fpw-info-val">{{ win.file.createdAt }}</span>
+            <span class="fpw-info-val">{{ formatFileCreatedDate(win.file.createdAt) }}</span>
           </div>
           <div v-if="win.file.projectName" class="fpw-info-row">
             <span class="fpw-info-label">{{ t('files.project') }}</span>
@@ -165,6 +165,7 @@ import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useLiveStore } from '@/stores/live'
 import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
+import { formatFileCreatedDate } from '@/utils/fileDate'
 
 // 类型见下
 const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })

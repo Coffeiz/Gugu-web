@@ -24,7 +24,7 @@
           </div>
           <div v-if="file.createdAt" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fp-info-val">{{ file.createdAt }}</span>
+            <span class="fp-info-val">{{ formatFileCreatedDate(file.createdAt) }}</span>
           </div>
           <div v-if="file.projectName" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.project') }}</span>
@@ -55,6 +55,7 @@ import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { nextZ } from '@/composables/core/windowz'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { fmtBytes } from '@/utils/fileSize'
+import { formatFileCreatedDate } from '@/utils/fileDate'
 const props = defineProps({
   show: Boolean,
   file: Object,
