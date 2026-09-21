@@ -109,13 +109,13 @@ def test_web_private_reflection_threshold_has_safe_default():
     assert reflection._web_private_reflection_threshold(SimpleNamespace()) == 10
 
 
-def test_web_private_reflection_threshold_keeps_legacy_config_compatibility():
+def test_web_private_reflection_threshold_ignores_legacy_config_key():
     from app.core.config import AgentBehaviorSettings
 
     assert AgentBehaviorSettings.model_validate({}).web_private_reflection_threshold == 10
     assert AgentBehaviorSettings.model_validate(
         {"reflection_threshold": 7}
-    ).web_private_reflection_threshold == 7
+    ).web_private_reflection_threshold == 10
     assert AgentBehaviorSettings.model_validate({
         "reflection_threshold": 7,
         "web_private_reflection_threshold": 4,

@@ -598,7 +598,7 @@ async def test_idle_tombstoned_scope_is_not_marked_settled(db, user_a, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_reflection_snapshot_excludes_assistant_and_tool_messages(db, user_a):
+async def test_group_reflection_job_filters_non_user_and_unidentified_messages(db, user_a):
     from app.models import ConversationMessage, ConversationSession, MemoryReflectionJob
     from agent.memory.im_reflection import _messages_for_job
 
@@ -794,29 +794,30 @@ def test_group_and_member_jobs_do_not_duplicate_batch_body_in_delta(monkeypatch)
     )
 
     for task_type, scope_name in (("group", "group"), ("member-batch", "group-member-reflection")):
-        branch_input = _build_append_branch_input(
-            scope, job, task_type, {"profile": "旧记忆", "members": {}},
-            [message],
-        )
-        assert branch_input.branch_mode == "append_reuse"
-        assert branch_input.session_id == 77
-        assert branch_input.cache_probe_context["reflection_scope"] == (
-            "member" if task_type == "member-batch" else "group"
-        )
-        assert branch_input.cache_probe_context["trigger_source"] == "background_job"
-        assert branch_input.scope == scope_name
-        assert branch_input.history_messages == (
-            {"role": "user", "content": "[成员甲] 仅用于回归断言的正文标记"},
-        )
-        assert "仅用于回归断言的正文标记" not in branch_input.delta
-        assert "本批" in branch_input.delta
         snapshot_input = _build_append_branch_input(
             scope, job, task_type, {"profile": "旧记忆", "members": {}},
             [message], snapshot=snapshot,
         )
+        assert snapshot_input.scope == scope_name
         assert snapshot_input.history_messages == full_history
         assert marker not in snapshot_input.delta
         assert snapshot_input.cache_probe_context["trigger_source"] == "session_snapshot"
+
+
+def test_append_branch_input_requires_full_session_snapshot():
+    from agent.memory.im_reflection import _build_append_branch_input
+    from agent.memory.scopes import MemoryScope
+
+    with pytest.raises(TypeError, match="snapshot"):
+        _build_append_branch_input(
+            MemoryScope("owner-1", "qq", "bot-1", "group", "group-1"),
+            SimpleNamespace(id=12, idempotency_key="job-key"), "group", {}, [],
+        )
+    with pytest.raises(ValueError, match="主会话快照"):
+        _build_append_branch_input(
+            MemoryScope("owner-1", "qq", "bot-1", "group", "group-1"),
+            SimpleNamespace(id=12, idempotency_key="job-key"), "group", {}, [], snapshot=None,
+        )
 
 
 def test_private_reflection_snapshot_keeps_batch_body_only_in_history(monkeypatch):

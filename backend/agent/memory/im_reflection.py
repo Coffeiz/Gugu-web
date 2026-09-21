@@ -46,29 +46,13 @@ GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference"
 _GROUP_INTERNAL_ID_RE = re.compile(r"(?:platform_user_id|user_openid|member_openid|group_openid)\s*=", re.I)
 
 
-def _append_history_message(message) -> dict:
-    """把已持久化 IM 消息投影成 append 分支可读的 canonical 消息。"""
-    if message.role == "assistant":
-        return {"role": "assistant", "content": message.content or "（无文字）"}
-    sender = message.platform_user_name or "未提供昵称"
-    return {
-        "role": "user",
-        "content": f"[{sender}] {message.content or '（无文字）'}",
-    }
-
-
-def _append_scope_system(user_name: str = "群友") -> str:
-    """取得 append 分支稳定 system；群业务规则放在末尾 delta，避免污染前缀。"""
-    from agent.capabilities.defaults import DEFAULT_PROMPT_NAME
-    from agent.context.session_system import build_static_prompt
-
-    return build_static_prompt(DEFAULT_PROMPT_NAME, user_name)
-
-
 def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
-                               current: dict, messages: list, *, snapshot=None) -> BranchInput:
+                               current: dict, messages: list, *, snapshot) -> BranchInput:
     """在完整主会话前缀后追加 scope 反思任务。"""
     from agent.context.prefix_history import render_branch_prefix
+
+    if snapshot is None:
+        raise ValueError("IM 记忆反思必须提供主会话快照")
 
     reflection_current = {k: v for k, v in current.items() if k != "members"}
     target_senders = []
@@ -95,35 +79,25 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         "只从追加历史末尾与本批范围对应的用户消息提取新增记忆，不要在任务中寻找重复正文，"
         "也不得把更早历史中的内容重新提取为新增记忆。"
     )
-    use_snapshot = snapshot is not None
-    history = (
-        tuple(render_branch_prefix(list(snapshot.history), snapshot.ai))
-        if use_snapshot else tuple(_append_history_message(message) for message in messages)
-    )
+    history = tuple(render_branch_prefix(list(snapshot.history), snapshot.ai))
     reflection_scope = (
         "member" if task_type == "member-batch" else
         "private" if task_type == "private-owner" else "group"
     )
     probe_context = {
         "reflection_scope": reflection_scope,
-        "trigger_source": "background_job",
+        "origin_run_id": snapshot.run_id,
+        "trigger_source": "session_snapshot",
     }
-    if use_snapshot:
-        probe_context.update({
-            "origin_run_id": snapshot.run_id,
-            "trigger_source": "session_snapshot",
-        })
     return BranchInput(
-        stable_system=snapshot.system_prompt if use_snapshot else _append_scope_system(),
+        stable_system=snapshot.system_prompt,
         delta=delta,
         scope="group-member-reflection" if task_type == "member-batch" else scope.scope_type,
         scope_revision=str(job.idempotency_key),
-        session_id=snapshot.session_id if use_snapshot else (
-            getattr(messages[-1], "session_id", None) if messages else None
-        ),
-        run_id=snapshot.run_id if use_snapshot else f"im-reflection-job:{job.id}",
+        session_id=snapshot.session_id,
+        run_id=snapshot.run_id,
         history_messages=history,
-        tools=tuple(snapshot.tools) if use_snapshot else (),
+        tools=tuple(snapshot.tools),
         branch_mode="append_reuse",
         cache_probe_context=probe_context,
     )

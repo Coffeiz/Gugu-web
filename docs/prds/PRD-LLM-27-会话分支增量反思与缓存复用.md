@@ -160,21 +160,15 @@ Memory 和 Knowledge 是两个共享主前缀的 sibling branch，不把 Memory 
 
 ### 6.5 群聊与独立反思边界
 
-群聊只做一层简单判断，不重构现有群组游标、scope 或批处理模型：
+群级、群成员批量和群内 Owner 反思都以对应群 session 的主对话历史作为前缀，再追加本次反思任务：
 
-- 群主在一次正常群聊回复结束后，沿用主请求快照走与私聊相同的 Memory 追加分支；
-- 群成员、群级记忆、被动群消息和没有助手回复的记录，走 scope snapshot + message batch 的 append 分支；
-- 群主 owner 缓冲按 session 隔离，并与普通 owner 共用闲置调度、drain 和失败恢复；即时冲刷使用同 session 快照，闲置冲刷可按 §6.1 重建历史。
+- 有可复用主请求快照时使用该快照；
+- 闲置 worker、重启恢复等没有运行时快照的任务，按 session 从持久化消息重建完整历史，并使用重建出的 system、tools 和 session 归属；
+- 本批消息范围只用于限定要反思的用户消息，不代替主对话历史，也不把同一正文重复追加到任务 delta；
+- 若无法确认唯一、空闲且可重建的主 session，则延迟任务，不退化为仅含本批消息的独立上下文；
+- 跨 session 的批处理不得伪装成同一 Responses continuation，应按 session 拆分或延迟。
 
-以下场景不做会话追加复用：
-
-- 群成员或群级 scope 的反思任务；
-- 被动群消息或没有助手回复的记录；
-- 跨 session 的阈值批处理：按群业务消息历史组装 append 分支，不把多个主会话伪装成同一 Responses continuation；
-- 服务重启后从游标恢复的历史任务：从已持久化消息重建 append history；
-- 即时 owner drain 遇到快照缺失或模型切换时保留缓冲并延迟；闲置任务只在当前模型绑定成功、会话归属有效且 session 空闲时重建。重建输入缺少完整 tools/动态上下文，缓存命中不作保证。
-
-这些场景继续使用现有 scope snapshot + message batch 的 `ContextBranch` append 路径，不改变游标、锁、幂等和失败重试语义。群聊 owner 的追加分支复用已有快照能力，不额外建立群聊专用分支实现。
+以上规则适用于主动回复、被动群消息、群级和群成员 scope，不改变现有游标、锁、幂等和失败重试语义。追加反思分支不得修改主会话 reasoning continuation state。
 
 ### 6.6 Reasoning state 边界
 
