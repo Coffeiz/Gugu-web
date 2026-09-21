@@ -773,16 +773,24 @@ def test_owner_group_reflection_excludes_assistant_reply_and_other_members():
     assert "群友说了不应进入 owner memory" not in private_text
 
 
-def test_group_and_member_jobs_build_append_branches():
-    """群级与成员级 worker 反思都必须把消息放入 append history。"""
+def test_group_and_member_jobs_do_not_duplicate_batch_body_in_delta(monkeypatch):
+    """群级与成员级 worker 反思正文只进入 append history，不在 delta 重复。"""
+    from agent.context import prefix_history
     from agent.memory.im_reflection import _build_append_branch_input
     from agent.memory.scopes import MemoryScope
 
+    marker = "仅用于回归断言的正文标记"
+    full_history = ({"role": "user", "content": marker},)
+    monkeypatch.setattr(prefix_history, "render_branch_prefix", lambda prefix, ai: list(prefix))
     scope = MemoryScope("owner-1", "qq", "bot-1", "group", "group-1")
     job = SimpleNamespace(id=12, idempotency_key="job-key")
     message = SimpleNamespace(
-        role="user", content="本批消息", platform_user_name="成员甲",
+        role="user", content=marker, platform_user_name="成员甲",
         platform_user_id="member-1", session_id=77,
+    )
+    snapshot = SimpleNamespace(
+        history=full_history, ai=object(), system_prompt="静态系统提示词", tools=(),
+        session_id=77, run_id="group-main-run",
     )
 
     for task_type, scope_name in (("group", "group"), ("member-batch", "group-member-reflection")):
@@ -798,7 +806,44 @@ def test_group_and_member_jobs_build_append_branches():
         assert branch_input.cache_probe_context["trigger_source"] == "background_job"
         assert branch_input.scope == scope_name
         assert branch_input.history_messages == (
-            {"role": "user", "content": "[成员甲] 本批消息"},
+            {"role": "user", "content": "[成员甲] 仅用于回归断言的正文标记"},
         )
-        assert "本批待反思消息" in branch_input.delta
-        assert "[成员甲] 本批消息" not in branch_input.delta
+        assert "仅用于回归断言的正文标记" not in branch_input.delta
+        assert "本批" in branch_input.delta
+        snapshot_input = _build_append_branch_input(
+            scope, job, task_type, {"profile": "旧记忆", "members": {}},
+            [message], snapshot=snapshot,
+        )
+        assert snapshot_input.history_messages == full_history
+        assert marker not in snapshot_input.delta
+        assert snapshot_input.cache_probe_context["trigger_source"] == "session_snapshot"
+
+
+def test_private_reflection_snapshot_keeps_batch_body_only_in_history(monkeypatch):
+    """私聊快照反思复用完整主历史，delta 只声明反思范围。"""
+    from agent.context import prefix_history
+    from agent.memory.im_reflection import _build_append_branch_input
+    from agent.memory.scopes import MemoryScope
+
+    marker = "仅用于验证快照前缀的正文标记"
+    history = ({"role": "user", "content": marker},)
+    monkeypatch.setattr(prefix_history, "render_branch_prefix", lambda prefix, ai: list(prefix))
+    scope = MemoryScope("owner-1", "qq", "bot-1", "platform-user", "user-1")
+    job = SimpleNamespace(id=13, idempotency_key="private-job")
+    message = SimpleNamespace(
+        role="user", content=marker, platform_user_name="私聊用户",
+        platform_user_id="user-1", session_id=78,
+    )
+    snapshot = SimpleNamespace(
+        history=history, ai=object(), system_prompt="静态系统提示词", tools=(),
+        session_id=78, run_id="main-run",
+    )
+
+    branch_input = _build_append_branch_input(
+        scope, job, "private-owner", {"profile": "旧记忆"}, [message], snapshot=snapshot,
+    )
+
+    assert branch_input.history_messages == history
+    assert marker not in branch_input.delta
+    assert "共 1 条用户消息" in branch_input.delta
+    assert "platform_user_id" not in branch_input.delta

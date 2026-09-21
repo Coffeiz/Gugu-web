@@ -71,13 +71,29 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
     from agent.context.prefix_history import render_branch_prefix
 
     reflection_current = {k: v for k, v in current.items() if k != "members"}
+    target_senders = []
+    seen_senders = set()
+    if task_type != "private-owner":
+        for message in messages:
+            sender_id = getattr(message, "platform_user_id", None)
+            if message.role != "user" or not sender_id or sender_id in seen_senders:
+                continue
+            seen_senders.add(sender_id)
+            target_senders.append({
+                "platform_user_id": sender_id,
+                "platform_user_name": getattr(message, "platform_user_name", None),
+            })
+    target_scope = {
+        "user_message_count": sum(1 for message in messages if message.role == "user"),
+        "senders": target_senders,
+    }
     delta = (
         f"{_scope_prompt(scope, task_type=task_type)}\n\n"
         f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
-        f"【本批待反思消息】共 {len(messages)} 条：\n"
-        f"{json.dumps([_message_text(message) for message in messages], ensure_ascii=False)}\n\n"
-        "仅从【本批待反思消息】提取新增记忆；主会话历史只用于理解上下文，"
-        "不得把更早历史中的内容重新提取为新增记忆。"
+        f"【本批反思范围】\n{json.dumps(target_scope, ensure_ascii=False)}\n\n"
+        f"本批正文已在追加历史中，共 {target_scope['user_message_count']} 条用户消息；"
+        "只从追加历史末尾与本批范围对应的用户消息提取新增记忆，不要在任务中寻找重复正文，"
+        "也不得把更早历史中的内容重新提取为新增记忆。"
     )
     use_snapshot = snapshot is not None
     history = (
