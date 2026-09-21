@@ -10,6 +10,8 @@ export interface ChatMessage {
   _createdAt?: string
   /** 持久化/实时统一的时间线顺序；旧消息缺失时回退到 createdAt。 */
   _timelineOrder?: number
+  /** 持久化消息/事件的去重身份，仅用于跨端增量同步。 */
+  _syncKey?: string
   dbId?: number
   role: string
   text: string

@@ -811,7 +811,13 @@ export const agentApi = {
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
   greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
-  getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  getMessages:     (sessionId: string, afterId?: number, limit?: number) => {
+    const params = new URLSearchParams()
+    if (afterId != null) params.set('after_id', String(afterId))
+    if (limit != null) params.set('limit', String(limit))
+    const query = params.toString()
+    return get(`/agent/sessions/${sessionId}/messages${query ? `?${query}` : ''}`)
+  },
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
   updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>

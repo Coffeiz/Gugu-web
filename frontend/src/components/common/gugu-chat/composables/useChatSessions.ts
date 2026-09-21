@@ -5,6 +5,7 @@ import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePa
 import { displayQQFaces } from '../messageDisplay'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { effectiveTimezone } from '@/utils/userTimezone'
+import { createSessionMessageSynchronizer, sortSessionTimelineMessages } from './sessionMessageSync'
 
 interface RawSessionMessage {
   id: number
@@ -50,23 +51,6 @@ interface RawTimelineEvent {
   toolStatus?: ChatMessage['toolStatus']
   timelineOrder: number
   createdAt: string
-}
-
-function sortTimelineMessages(items: ChatMessage[]) {
-  const isPairedInteraction = (a: ChatMessage, b: ChatMessage) =>
-    a.role === 'interaction' && b.role === 'tool' &&
-    Boolean(a.interaction?.toolCallId) && a.interaction?.toolCallId === b.toolCallId
-
-  // 工具和 interaction 分属两个接口恢复。即使数据库时间精度相同，
-  // 同一工具调用也必须保持实时展示顺序，避免刷新后交互卡片跑到工具卡前面。
-  return items.sort((a, b) => {
-    if (a._timelineOrder != null && b._timelineOrder != null && a._timelineOrder !== b._timelineOrder) {
-      return a._timelineOrder - b._timelineOrder
-    }
-    if (isPairedInteraction(a, b)) return 1
-    if (isPairedInteraction(b, a)) return -1
-    return String(a._createdAt || '').localeCompare(String(b._createdAt || ''))
-  })
 }
 
 /**
@@ -116,6 +100,9 @@ export function useChatSessions(options: {
   const { messages, mkid, sessionId, sessions } = options
 
   let baselinePollTimer: ReturnType<typeof setTimeout> | null = null
+  const messageSync = createSessionMessageSynchronizer({
+    messages, sessionId, mkid, resolveSpeaker: options.resolveSpeaker, scrollBottom: options.scrollBottom,
+  })
 
   // 组件卸载后 tick 不能再起下一轮：仅靠 sessionId/viewGeneration 守卫是
   // 「空转不生效」，定时器本身仍会按 4s 醒一次，属于有界泄漏。
@@ -196,6 +183,7 @@ export function useChatSessions(options: {
         return {
           id: mkid(),
           dbId: m.id,
+          _syncKey: `message:${m.id}`,
           role: speaker.role,
           speakerLabel: speaker.speakerLabel,
           platformUserId: m.platformUserId || null,
@@ -212,7 +200,7 @@ export function useChatSessions(options: {
         }
       })
       const loadedTools = ((data.toolEvents || []) as RawToolEvent[]).map((event) => ({
-        id: mkid(), role: 'tool', text: '', time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
+        id: mkid(), role: 'tool', text: '', _syncKey: `tool:${event.id}`, time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
         toolCallId: event.toolCallId, toolName: event.toolName,
         toolLabel: event.toolLabel,
         _timelineOrder: event.timelineOrder,
@@ -222,7 +210,7 @@ export function useChatSessions(options: {
       const loadedTimeline = ((data.timelineEvents || []) as RawTimelineEvent[]).map((event) =>
         event.kind === 'assistant'
           ? {
-              id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null,
+              id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null, _syncKey: `timeline:${event.id}`,
               files: event.files && event.files.length ? event.files : undefined,
               linkButtons: event.linkButtons,
               time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
@@ -230,7 +218,7 @@ export function useChatSessions(options: {
               _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
             }
           : {
-              id: mkid(), role: 'tool', text: '',
+              id: mkid(), role: 'tool', text: '', _syncKey: `timeline:${event.id}`,
               toolCallId: event.toolCallId, toolName: event.toolName, toolLabel: event.toolLabel,
               toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
               toolInput: event.toolInput, toolResult: event.toolResult,
@@ -265,12 +253,13 @@ export function useChatSessions(options: {
           })
         }
       } catch { /* 交互恢复失败不阻断历史会话加载 */ }
-      messages.value = sortTimelineMessages([
+      messages.value = sortSessionTimelineMessages([
         ...loadedMessages,
         ...loadedTimeline,
         ...loadedTools,
         ...loadedInteractions,
       ])
+      messageSync.setCursor(id, data.pagination?.newestId)
       options.onContentReset(); options.resetSessionTurn()
       await nextTick()
       options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度
@@ -351,6 +340,6 @@ export function useChatSessions(options: {
   return {
     webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
     currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
-    loadSession, newSession, deleteSession, renameSession,
+    loadSession, newSession, deleteSession, renameSession, refreshSessionMessages: messageSync.refresh,
   }
 }

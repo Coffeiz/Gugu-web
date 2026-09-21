@@ -205,16 +205,6 @@ export function useChatConversation(options: {
     return { role: 'member', speakerLabel: platformUserName || platformUserId }
   }
 
-  function replaceMentionIdsForDisplay(text: string, names: Record<string, string>): string {
-    let result = text || ''
-    for (const [platformUserId, name] of Object.entries(names)) {
-      if (!platformUserId || !name) continue
-      const escaped = platformUserId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      result = result.replace(new RegExp(`<@!?${escaped}>|@${escaped}`, 'g'), () => `@${name}`)
-    }
-    return result
-  }
-
   // 会话 id 存入 sessionStorage：刷新页面保留当前对话，关闭浏览器/标签页才清空。
   // 同时把「最后一段对话」存进 localStorage（跨浏览器重开仍在）——重开浏览器是否接续上次，
   // 由设置 reopenResume 控制（见侧栏开关）；默认关＝重开开新对话（与历史行为一致）。
@@ -432,7 +422,7 @@ export function useChatConversation(options: {
     waitForStableScrollLayout,
     setSessionSettling: (value: boolean) => { sessionSettling.value = value },
   })
-  const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession } = sessionsApi
+  const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession, refreshSessionMessages } = sessionsApi
 
   // 队列正文仍以服务端为准：跨浏览器通过用户级 SSE 通知后读取一次快照；
   // 断线重连时也补读当前会话，避免错过 Pub/Sub 不回放的事件。
@@ -467,7 +457,10 @@ export function useChatConversation(options: {
   }
 
   watch(() => liveStore.connected, (connected) => {
-    if (connected) void refreshSessionPendingQueue()
+    if (connected) {
+      void refreshSessionPendingQueue()
+      if (sessionId.value != null) void refreshSessionMessages(sessionId.value)
+    }
   }, { immediate: true })
 
   watch(() => liveStore.resourceEvent, (event) => {
@@ -481,49 +474,25 @@ export function useChatConversation(options: {
     void refreshSessionPendingQueue()
   })
 
-  // 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
-  watch(() => liveStore.rev.sessions, () => fetchSessions())
+  // 实时：会话变更刷新列表。消息正文由带 origin 的事件处理器增量补取；重连补取由
+  // connected watcher 执行，避免本标签页自己的乐观消息被 rev 触发重复补回。
+  watch(() => liveStore.rev.sessions, () => {
+    void fetchSessions()
+  })
 
-  // 消息级实时：若这条 IM 消息属于当前打开的会话，直接把「这一来一回」追加进气泡，
-  // 不必整列表/整会话 refetch（只传增量）。非当前会话则上面刷新列表即可。
-  // origin === 本标签页时是自己发起这轮对话的回声：token 流已经把气泡画出来了，这里跳过，
-  // 只让别的标签页/端补上（同一 client-id 每个标签页独立生成，见 services/api.ts）。
-  watch(() => liveStore.resourceEvent, async (event) => {
-    if (!event || event.resource !== 'sessions' || String(event.entity_id) !== String(sessionId.value)) return
+  // 跨端事件只作为失效通知；正文从数据库按 after_id 拉取，避免漏回放和重复追加。
+  watch(() => liveStore.resourceEvent, (event) => {
+    if (!event || event.resource !== 'sessions') return
     const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : {}
     const e = { ...payload, session_id: event.entity_id, origin: event.origin } as any
+    const matchesCurrentSession = sessionId.value != null && String(event.entity_id) === String(sessionId.value)
+    const appendedCount = Array.isArray(e.appended) ? e.appended.length : 0
+    const isOwnOrigin = Boolean(e.origin && e.origin === CLIENT_ID)
+    if (!matchesCurrentSession) return
     const session = sessions.value.find(item => item.id === Number(e.session_id))
     if (session && e.title) session.title = e.title
-    if (!e.appended?.length) return
-    if (e.origin && e.origin === CLIENT_ID) return
-    for (const m of e.appended) {
-      const isAi = m.role === 'assistant'
-      const speaker = resolveSpeaker(m.role || 'user', m.platform_user_id, m.platform_user_name)
-      const latestNames: Record<string, string> = {}
-      for (const existing of messages.value) {
-        if (existing.platformUserId && existing.speakerLabel) {
-          latestNames[existing.platformUserId] = existing.speakerLabel
-        }
-      }
-      if (m.platform_user_id && m.platform_user_name) {
-        latestNames[m.platform_user_id] = m.platform_user_name
-      }
-      if (m.platform_bot_user_id) {
-        latestNames[m.platform_bot_user_id] = '咕咕'
-      }
-      messages.value.push({
-        id: mkid(),
-        role: speaker.role,
-        speakerLabel: speaker.speakerLabel,
-        platformUserId: m.platform_user_id || null,
-        text: displayQQFaces(replaceMentionIdsForDisplay(m.text || '', latestNames)),
-        html: isAi ? renderMd(displayQQFaces(replaceMentionIdsForDisplay(m.text || '', latestNames))) : null,
-        files: (m.files && m.files.length) ? m.files as ChatFile[] : undefined,
-        quotedText: m.quoted_text || undefined,
-        time: now(),
-      })
-    }
-    await nextTick(); await scrollBottom()
+    if (!appendedCount || isOwnOrigin) return
+    void refreshSessionMessages(Number(e.session_id))
   })
 
   return {

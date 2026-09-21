@@ -20,6 +20,7 @@ from app.core import chat_attach
 from app.core.tz import set_ctx_tz
 from app.models import ConversationMessage, ConversationSession
 from agent.security import sanitize
+from agent.security.logsafe import fingerprint
 from agent.llm import genstream
 from agent import quota
 from agent.context import builder, dynamic_tail, loaders, session_snapshot, session_history, run_context, session_system
@@ -39,6 +40,27 @@ def _is_network_error(e: BaseException) -> bool:
     blob = f"{type(e).__module__}.{type(e).__name__} {e}".lower()
     return any(k in blob for k in ("timeout", "connect", "network", "ssl",
                                    "econnreset", "read operation"))
+
+
+async def _publish_session_append(req: AgentRequest, session_id: int,
+                                  appended: list[dict]) -> None:
+    """消息持久化后通知其他标签页从数据库增量补取。"""
+    try:
+        from app.core import events
+        await events.publish(
+            req.user_id,
+            "sessions",
+            session_id=session_id,
+            origin=getattr(req, "origin", None),
+            appended=appended,
+        )
+    except Exception as exc:
+        # 实时通知是 best-effort，不能反向使已提交的聊天失败。
+        logger.warning(
+            "Web 会话消息实时通知异常 user_fp=%s session_fp=%s error_type=%s",
+            fingerprint(str(req.user_id)), fingerprint(str(session_id)),
+            type(exc).__name__,
+        )
 
 
 async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
@@ -188,6 +210,12 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 后台生成任务需要用真实 session id 建立跨 worker gate；新会话在这里才拿到 id。
         req.session_id = session_id
 
+    await _publish_session_append(req, session_id, [{
+        "role": "user",
+        "text": req.message,
+        "files": attach_cards or None,
+        "references": req.references or None,
+    }])
     yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
 
     # 记忆控制命令（/memory /forget）：确定性短路，零 LLM、不计精力、不反思；先于配额（命令免费）
@@ -220,6 +248,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             if await db2.get(ConversationSession, session_id) is not None:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant", content=cmd_reply))
                 await db2.commit()
+                await _publish_session_append(req, session_id, [{"role": "assistant", "text": cmd_reply}])
                 from app.services.conversation_retention import trim_session_messages
                 await trim_session_messages(session_id)
         async for line in genstream.immediate_stream(cmd_reply):
@@ -238,6 +267,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             if await db2.get(ConversationSession, session_id) is not None:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant", content=block_msg))
                 await db2.commit()
+                await _publish_session_append(req, session_id, [{"role": "assistant", "text": block_msg}])
                 from app.services.conversation_retention import trim_session_messages
                 await trim_session_messages(session_id)
         async for line in genstream.typed_stream(block_msg):   # 逐字流式：复用 SSE token 动画，咕咕「打字」感
@@ -260,6 +290,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 if await db2.get(ConversationSession, session_id) is not None:
                     db2.add(ConversationMessage(session_id=session_id, role="assistant", content=block_msg))
                     await db2.commit()
+                    await _publish_session_append(req, session_id, [{"role": "assistant", "text": block_msg}])
                     from app.services.conversation_retention import trim_session_messages
                     await trim_session_messages(session_id)
             async for line in genstream.typed_stream(block_msg):
@@ -739,6 +770,11 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             interrupted=True,
             session_exists_required=True,
         )
+        await _publish_session_append(req, session_id, [{
+            "role": "assistant",
+            "text": full_reply,
+            "files": sent_files or None,
+        }])
 
     try:
         image_only = bool(user_images) and not user_media and bool(attach_cards) and all(
@@ -987,6 +1023,11 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 compaction_applied=compaction_applied,
                 session_exists_required=True,
             )
+            await _publish_session_append(req, session_id, [{
+                "role": "assistant",
+                "text": full_reply,
+                "files": sent_files or None,
+            }])
         except IntegrityError:
             logger.warning("会话 %s 在生成期间被删除，跳过本次持久化", session_id)
 
