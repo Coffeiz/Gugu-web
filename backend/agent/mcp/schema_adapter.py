@@ -201,7 +201,7 @@ def validate_input_schema(schema: Any) -> str | None:
 def build_mcp_tool(meta: McpToolMeta, handler) -> Tool:
     """把 server 工具包装为内部 Tool 对象（不进 SkillRegistry）。
 
-    元数据默认值按 FR-MCP-2：source=mcp、repeat_safe=False（外部状态不进熔断白名单）、
+    元数据默认值按 FR-MCP-2：source=mcp、
     mutates=True（无法证明只读，定时任务不得自动重放）。确认门在 handler 内按
     server 的 confirm_mode 处理，不走 Tool.requires_confirmation（那是 registry 工具的机制）。
     """
@@ -218,7 +218,6 @@ def build_mcp_tool(meta: McpToolMeta, handler) -> Tool:
         description_short=meta.description_short,
         category="mcp",
         source="mcp",
-        repeat_safe=False,
     )
     tool.provider_description = meta.provider_description or meta.description_short
     # LoopScope 需要区分动态 MCP 工具与同名的内置工具；这里只挂载服务和工具

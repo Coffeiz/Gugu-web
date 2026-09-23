@@ -679,7 +679,7 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
+  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; automaticModeGlobalEnabled: boolean; userAutomaticModeEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
   create: (data: { name: string; kind: 'folder' | 'project' | 'directory'; folderId?: number; projectId?: number; directoryId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
@@ -810,7 +810,7 @@ export const agentApi = {
   listSessions:    ()                  => get('/agent/sessions'),
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
-  greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
+  greeting:        (locale: SupportedLocale = getLocale()) => get<{ text?: string; enabled?: boolean }>(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string, afterId?: number, limit?: number) => {
     const params = new URLSearchParams()
     if (afterId != null) params.set('after_id', String(afterId))

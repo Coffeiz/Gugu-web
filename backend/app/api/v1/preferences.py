@@ -106,11 +106,10 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         pmStagesExpanded=data.get("pm_stages_expanded", False),
         calendarWeekStart=data.get("calendar_week_start", "monday") if data.get("calendar_week_start", "monday") in {"monday", "sunday"} else "monday",
         defaultView=data.get("default_view", "projects") if data.get("default_view", "projects") in _DEFAULT_VIEWS else "projects",
-        shellEnabled=bool(data.get("shell_enabled", False)),
+        shellEnabled=bool(data.get("shell_enabled", True)),
         shellSystemEnabled=bool(data.get("shell_system_enabled", False)),
-        shellDangerousEnabled=bool(data.get("shell_dangerous_enabled", False)),
-        shellAutopilotEnabled=bool(data.get("shell_autopilot_enabled", False)),
-        unlimitedMode=bool(data.get("unlimited_mode", False)),
+        shellDangerousEnabled=bool(data.get("shell_dangerous_enabled", True)),
+        automaticModeEnabled=bool(data.get("automatic_mode_enabled", False)),
         showToolInteractions=bool(data.get("show_tool_interactions", False)),
         showIntermediateReplies=bool(data.get("show_intermediate_replies", True)),
         toolInjectionMode=(
@@ -240,10 +239,9 @@ async def update_preferences(
         data["shell_system_enabled"] = body.shellSystemEnabled
     if body.shellDangerousEnabled is not None:
         data["shell_dangerous_enabled"] = body.shellDangerousEnabled
-    if body.shellAutopilotEnabled is not None:
-        data["shell_autopilot_enabled"] = body.shellAutopilotEnabled
-    if body.unlimitedMode is not None:
-        data["unlimited_mode"] = body.unlimitedMode
+    data.pop("shell_autopilot_enabled", None)
+    if body.automaticModeEnabled is not None:
+        data["automatic_mode_enabled"] = body.automaticModeEnabled
     if body.showToolInteractions is not None:
         data["show_tool_interactions"] = body.showToolInteractions
     if body.showIntermediateReplies is not None:
@@ -257,7 +255,7 @@ async def update_preferences(
     shell_changed = any(
         field in body.model_fields_set
         for field in {
-            "shellEnabled", "shellSystemEnabled", "shellDangerousEnabled", "shellAutopilotEnabled",
+            "shellEnabled", "shellSystemEnabled", "shellDangerousEnabled",
         }
     )
     if shell_changed:

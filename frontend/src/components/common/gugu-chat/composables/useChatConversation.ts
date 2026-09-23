@@ -2,7 +2,7 @@ import { ref, computed, nextTick, onUnmounted, watch, type Ref } from 'vue'
 import { CLIENT_ID, agentApi } from '@/services/api'
 import { i18n } from '@/i18n'
 import { useLiveStore } from '@/stores/live'
-import { getGreeting } from '@/composables/shared/useGreeting'
+import { getGreeting, prefetchGreeting } from '@/composables/shared/useGreeting'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatTypes'
 import { renderMd } from '../markdown'
 import { displayQQFaces } from '../messageDisplay'
@@ -286,13 +286,19 @@ export function useChatConversation(options: {
 
   // 打开对话框时让默认问候像回复一样「打字机」冒出来（生成版 / 兜底都走这套）。每条问候只播一次。
   let _greetTimer: ReturnType<typeof setInterval> | null = null
-  function animateGreeting() {
+  async function animateGreeting() {
     const m = messages.value
     if (!(m.length === 1 && m[0]._greeting)) return   // 已有真实对话 → 不动
     const msg = m[0]
     if (msg._greetAnimated) return
+    await prefetchGreeting()
+    if (messages.value.length !== 1 || messages.value[0] !== msg) return
+    const full = getGreeting()
+    if (!full) {
+      messages.value = []
+      return
+    }
     msg._greetAnimated = true
-    const full = getGreeting()                        // 此刻取最新（生成好就用生成版，否则兜底）
     msg._greetFull = full                             // 记下定稿文案：用户回复时随首条消息把它入库（见 send）
     msg.text = ''; msg.html = ''; msg.streaming = true
     let i = 0

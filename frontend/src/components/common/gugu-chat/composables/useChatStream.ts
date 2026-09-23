@@ -1099,8 +1099,8 @@ export function useChatStream(options: {
         // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
         await options.scrollBottom()
       }
-      // 目标/工具限制命令会修改 session_context；刷新会话元数据，让标题旁的状态胶囊即时同步。
-      if (ownsCurrentView() && /^\/(?:goal|unlimited)(?:\s|$)/i.test(text)) {
+      // 目标命令会修改 session_context；刷新会话元数据，让标题旁的状态胶囊即时同步。
+      if (ownsCurrentView() && /^\/goal(?:\s|$)/i.test(text)) {
         await options.fetchSessions()
       }
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面

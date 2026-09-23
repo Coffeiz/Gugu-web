@@ -132,21 +132,11 @@ class SandboxSettings(BaseModel):
     enabled 只表示 Admin 请求启用沙盒；是否真的可执行还必须经过 Docker
     运行时探测和执行器就绪检查，不能由配置值单独推断。
     """
-    enabled: bool = Field(False, description="是否启用 Docker Shell 沙盒（默认关闭）")
-    filesystem_authorization_enabled: bool = Field(
-        False,
-        description="是否开放完整用户沙箱读写授权入口（默认关闭，需灰度开启）",
-    )
-    code_execution_enabled: bool = Field(
+    enabled: bool = Field(True, description="是否启用 Docker Shell 沙盒（默认开启；运行时仍需 Docker 就绪）")
+    full_user_sandbox_authorization_enabled: bool = Field(
         True,
-        description="是否允许沙盒使用 Python、Node 等代码运行时（默认开启，关闭后仍可使用基础 Shell）",
-    )
-    shell_direct_runtime_enabled: bool = Field(
-        False,
         description=(
-            "自部署便捷开关：允许普通 Shell 在沙盒内直接执行 Python/Node/npm 等运行时，"
-            "无需经由 run_script（默认关闭；code_execution_enabled 关闭时无效）。"
-            "危险命令确认门与沙盒边界不受影响"
+            "是否开放完整用户沙箱能力，包括用户工作区授权、代码运行时和 Shell 直跑运行时"
         ),
     )
     terminal_mode: Literal["auto", "pty_disabled", "entry_disabled"] = Field(
@@ -155,16 +145,22 @@ class SandboxSettings(BaseModel):
     )
     host_data_root: str | None = Field(
         None,
-        description="宿主 Docker daemon 视角的数据根目录（compose 注入 GUGU_DATA_HOST_DIR/users）；"
-                    "bind src 需把容器内逻辑路径翻译成它。本机直跑不注入即不翻译",
+        description="宿主 Docker daemon 视角的数据根目录；未配置时由 sandboxd 从当前容器的 /data 挂载自动解析。"
+                    "本机直跑且无法解析宿主挂载时不做路径翻译",
     )
     image: str = Field("debian:bookworm-slim", description="Shell 沙盒基础镜像")
     image_digest: str = Field(
         "sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171",
-        description="已验证的镜像 digest；一体化部署使用 bundled 并校验内嵌 image ID",
+        description="已验证的镜像 digest；Compose 可使用 resolved 引用 bootstrap 固定的 registry digest",
     )
-    rootless_required: bool = Field(True, description="是否要求 Rootless Docker")
-    network_profile: Literal["none", "egress"] = Field("none", description="容器网络策略；默认断网，egress 仅在受控代理配置后可用")
+    rootless_required: bool = Field(
+        False,
+        description=(
+            "是否强制要求 Rootless Docker；默认部署允许 Rootful Docker，"
+            "生产环境可显式设为 true"
+        ),
+    )
+    network_profile: Literal["none", "egress"] = Field("egress", description="容器网络策略；默认允许通过受控代理临时访问公网")
     egress_proxy_url: str = Field("", description="受控 egress HTTP(S) 代理地址；为空时禁止临时联网")
     egress_network_name: str = Field("gugu-sandbox-egress", description="仅供沙盒容器使用的内部 Docker 网络名")
     egress_ttl_seconds: int = Field(600, ge=60, le=1800, description="单次 egress 授权最长有效期")
@@ -280,10 +276,11 @@ class AgentBehaviorSettings(BaseModel):
     # 默认开放受沙盒隔离的 Shell 工具；宿主机 system 范围仍单独关闭。
     shell_enabled: bool = Field(True, description="是否启用 Shell 工具（默认开启）")
     shell_system_enabled: bool = Field(False, description="是否允许 Shell 访问系统范围（高风险，默认关闭）")
-    shell_dangerous_enabled: bool = Field(False, description="是否开放全部 Shell 命令（危险操作仍需确认，默认关闭）")
-    shell_autopilot_enabled: bool = Field(False, description="是否允许用户开启 Shell Autopilot，跳过确认门（默认关闭）")
+    shell_dangerous_enabled: bool = Field(True, description="是否开放全部 Shell 命令（仍受沙盒边界约束，默认开启）")
+    automatic_mode_enabled: bool = Field(True, description="是否允许用户开启自动模式，自动通过操作确认（默认开启）")
     personality_preference_enabled: bool = Field(True, description="是否启用用户人格偏好（托管服务由后台权益开关控制，本地默认开启）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
+    greeting_enabled: bool = Field(True, description="是否在新对话中自动生成默认问候")
     web_private_reflection_threshold: int = Field(
         10, ge=1, le=100, description="网页和私聊反思触发的对话回合数；群聊反思固定为 50 条消息",
     )
@@ -579,8 +576,11 @@ class AppSettings(BaseSettings):
                 updates["mcp"] = McpSettings.model_construct(**merged)
 
             if "sandbox" in override:
+                raw_sandbox = override["sandbox"] or {}
+                if not isinstance(raw_sandbox, dict):
+                    raise ValueError("sandbox 配置必须是对象")
                 merged = {**self.sandbox.model_dump(), **{
-                    k: v for k, v in (override["sandbox"] or {}).items()
+                    k: v for k, v in raw_sandbox.items()
                     if k in SandboxSettings.model_fields
                 }}
                 updates["sandbox"] = SandboxSettings.model_construct(**merged)
@@ -621,10 +621,7 @@ class AppSettings(BaseSettings):
                 updates["security"] = SecuritySettings.model_validate(merged)
 
             if "agent" in override:
-                merged = {**self.agent.model_dump(), **{
-                    k: v for k, v in override["agent"].items()
-                    if k in AgentBehaviorSettings.model_fields
-                }}
+                merged = _merge_agent_override(self.agent.model_dump(), override["agent"])
                 updates["agent"] = AgentBehaviorSettings.model_construct(**merged)
 
             if "ai_presets" in override:
@@ -657,6 +654,44 @@ class AppSettings(BaseSettings):
         except Exception as e:
             print(f"[config] override 加载失败: {e}")
             return self
+
+
+def _merge_agent_override(base: dict, raw_agent: object) -> dict:
+    """只读取当前 Agent 字段，并一次性兼容旧管理员自动模式键。"""
+    raw = raw_agent if isinstance(raw_agent, dict) else {}
+    filtered = {
+        key: value for key, value in raw.items()
+        if key in AgentBehaviorSettings.model_fields
+    }
+    if "automatic_mode_enabled" not in filtered and "shell_autopilot_enabled" in raw:
+        filtered["automatic_mode_enabled"] = raw["shell_autopilot_enabled"]
+    return {**base, **filtered}
+
+
+def _remove_legacy_automatic_mode_key(existing: dict, patch: dict) -> None:
+    """写入新管理员开关时清除旧字段，避免旧值再次覆盖新语义。"""
+    agent_patch = patch.get("agent")
+    if not isinstance(agent_patch, dict) or "automatic_mode_enabled" not in agent_patch:
+        return
+    old_agent = existing.get("agent")
+    if isinstance(old_agent, dict):
+        old_agent.pop("shell_autopilot_enabled", None)
+
+
+def _merge_override_patch(existing: dict, patch: dict) -> None:
+    """迁移自动模式旧键、过滤沙盒遗留项并合并待保存配置。"""
+    _remove_legacy_automatic_mode_key(existing, patch)
+    sandbox_patch = patch.get("sandbox")
+    if isinstance(sandbox_patch, dict):
+        old_sandbox = existing.get("sandbox", {})
+        if not isinstance(old_sandbox, dict):
+            raise ValueError("sandbox 配置必须是对象")
+        # 沙盒配置保存时按当前模型字段清理遗留的未知项，不保留过时设置。
+        existing["sandbox"] = {
+            key: value for key, value in old_sandbox.items()
+            if key in SandboxSettings.model_fields
+        }
+    _deep_merge(existing, patch)
 
 
 def _deep_merge(base: dict, override: dict) -> None:
@@ -763,7 +798,9 @@ async def save_override(patch: dict) -> AppSettings:
     existing = {}
     if OVERRIDE_FILE.exists():
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
-    _deep_merge(existing, patch)
+        if not isinstance(existing, dict):
+            raise ValueError("配置文件根节点必须是对象")
+    _merge_override_patch(existing, patch)
     write_override_json(existing)
     invalidate_settings_cache()
     new_settings = get_settings()

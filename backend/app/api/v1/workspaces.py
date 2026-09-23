@@ -20,7 +20,6 @@ from app.services.workspaces import (
     create_workspace,
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
-    effective_shell_autopilot_enabled,
     effective_shell_system_enabled,
     get_workspace,
     delete_workspace,
@@ -32,6 +31,7 @@ from app.services.workspaces import (
     workspace_directory_payload,
     workspace_shell_supported,
 )
+from app.services.user_preferences import effective_automatic_mode_enabled
 from agent.sandbox.docker_runtime import sandbox_readiness
 from agent.terminal.policy import configured_terminal_mode, terminal_capabilities
 
@@ -142,11 +142,11 @@ async def list_workspaces(
         "sandboxEnabled": sandbox_ready,
         "systemGlobalEnabled": bool(settings.agent.shell_system_enabled),
         "dangerousGlobalEnabled": bool(settings.agent.shell_dangerous_enabled),
-        "autopilotGlobalEnabled": bool(settings.agent.shell_autopilot_enabled),
+        "automaticModeGlobalEnabled": bool(settings.agent.automatic_mode_enabled),
         "userEnabled": await effective_shell_enabled(db, user.id),
         "userSystemEnabled": await effective_shell_system_enabled(db, user.id),
         "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
-        "userAutopilotEnabled": await effective_shell_autopilot_enabled(db, user.id),
+        "userAutomaticModeEnabled": await effective_automatic_mode_enabled(db, user.id),
         "filesystemAuthorizationEnabled": filesystem_authorization_enabled(),
         "workspaceSupported": workspace_shell_supported(),
         "storageBackend": settings.storage.backend,

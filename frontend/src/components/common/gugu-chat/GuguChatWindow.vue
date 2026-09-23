@@ -118,7 +118,10 @@
         :pending-att="pendingAtt" :att-uploading="attUploading"
         :recording="recording" :record-secs="recordSecs"
         :expanded="expanded" :streaming="streaming" :vw="vw"
-        :unlimited-mode="unlimitedMode" :on-toggle-unlimited="onToggleUnlimited"
+        :automatic-mode-enabled="automaticModeEnabled"
+        :automatic-mode-available="automaticModeAvailable"
+        :automatic-mode-saving="automaticModeSaving"
+        :on-toggle-automatic-mode="onToggleAutomaticMode"
         :on-remove-att="onRemoveAtt"
         :on-start-record="onStartRecord" :on-cancel-record="onCancelRecord" :on-stop-record="onStopRecord"
         :on-file-picked="onFilePicked" :on-paste="onPaste"
@@ -157,8 +160,10 @@ const props = defineProps<{
   expanded: boolean
   resizing: boolean
   streaming: boolean
-  unlimitedMode: boolean
-  onToggleUnlimited: () => void
+  automaticModeEnabled: boolean
+  automaticModeAvailable: boolean
+  automaticModeSaving: boolean
+  onToggleAutomaticMode: () => void
   isChatDragging: boolean
   currentSessionTitle: string
   currentSessionWorkspaceName: string | null

@@ -104,6 +104,7 @@ async def _create_skill(db, user_id, args: dict):
     from agent.security import confirm
     blocked = confirm.needs_confirmation(
         args, "创建一个新的用户自定义 Skill，并保存到当前账号", user_id,
+        purpose=confirm.ACTION,
         identity=f"create_user_skill:{slug or name}:{body_digest}",
     )
     if blocked:
@@ -202,6 +203,7 @@ async def _delete_skill(db, user_id, args: dict):
         args,
         f"将删除技能「{row.name}」（{row.slug}），此操作不可恢复",
         user_id,
+        purpose=confirm.ACTION,
         identity=f"delete_user_skill:slug={row.slug}",
     )
     if blocked:
@@ -228,7 +230,6 @@ SKILL_MANAGEMENT_TOOLS = [
             "additionalProperties": False,
         },
         handler=_list_skills,
-        repeat_safe=True,
     ),
     Tool(
         name="create_skill",

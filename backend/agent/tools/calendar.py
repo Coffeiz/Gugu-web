@@ -135,6 +135,7 @@ async def _delete_event(db, user_id, args: dict):
             args,
             f"将删除日历事件：{names}，共 {len(events)} 个，并连带删除 {reminder_count} 条提醒，且无法恢复",
             user_id,
+            purpose=confirm.ACTION,
             action="delete_calendar_event",
             targets={"event_id": event_ids},
         )
@@ -161,6 +162,7 @@ async def _delete_event(db, user_id, args: dict):
     summary = f"将删除日历事件「{etitle}」（{e.date}）{_r}，事件无回收站，删除后不可恢复"
     blocked = confirm.needs_target_confirmation(
         args, summary, user_id,
+        purpose=confirm.ACTION,
         action="delete_calendar_event",
         targets={"event_id": [eid]},
     )
@@ -287,7 +289,6 @@ class CalendarSkill(BaseSkill):
                     "type": {"type": "string", "enum": ["event", "deadline"]},
                 },
             },
-            repeat_safe=True,
             handler=_list_events,
         ),
         Tool(
@@ -384,7 +385,6 @@ class CalendarSkill(BaseSkill):
                 },
                 "required": [],
             },
-            repeat_safe=True,
             handler=_list_event_reminders,
         ),
         Tool(

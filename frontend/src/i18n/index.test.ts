@@ -26,6 +26,21 @@ describe('i18n locale policy', () => {
     expect(messages['ja-JP'].layout.followSystemOption).toBe('システムに従う')
     expect(messages['en-US'].layout.followSystemOption).toBe('Follow system')
   })
+  it('自动模式名称在各语言界面中保持一致', () => {
+    const zhProfile = (messages['zh-CN'] as unknown as {
+      profileWorkspacesUi: { automaticMode: string }
+    }).profileWorkspacesUi
+    const zhChat = (messages['zh-CN'] as unknown as {
+      chat: { automaticMode: string; automaticModeOn: string; automaticModeOff: string }
+    }).chat
+    expect(messages['zh-CN'].agent.automaticMode).toBe('自动模式')
+    expect(zhProfile.automaticMode).toBe('自动模式')
+    expect(zhChat).toMatchObject({ automaticMode: '自动模式', automaticModeOn: '关闭自动模式', automaticModeOff: '开启自动模式' })
+    expect(messages['ja-JP'].agent.automaticMode).toBe('自動モード')
+    expect((messages['ja-JP'] as unknown as { chat: { automaticMode: string } }).chat.automaticMode).toBe('自動モード')
+    expect(messages['en-US'].agent.automaticMode).toBe('Automatic mode')
+    expect((messages['en-US'] as unknown as { chat: { automaticMode: string } }).chat.automaticMode).toBe('Automatic mode')
+  })
 
   // 用例要对三个语言包全量路径逐一编译解析，空跑就要数秒；CI 与其他套件并行时
   // 默认 5s 超时会误报（devserver 全量 CI 实测 5.6s 超时、单独跑 0.3s 通过）。

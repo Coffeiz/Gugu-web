@@ -875,7 +875,6 @@ class FilesSkill(BaseSkill):
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                 },
             },
-            repeat_safe=True,
             handler=_list_dir,
         ),
         Tool(
@@ -891,7 +890,6 @@ class FilesSkill(BaseSkill):
                 },
                 "required": [],
             },
-            repeat_safe=True,
             handler=_read_file,
         ),
         Tool(
@@ -910,7 +908,6 @@ class FilesSkill(BaseSkill):
                 "required": ["query"],
                 "additionalProperties": False,
             },
-            repeat_safe=True,
             handler=_grep_files,
         ),
         Tool(
@@ -1295,7 +1292,6 @@ class FilesSkill(BaseSkill):
             description_short='查最近暂存的附件；用于找回近期图片或文件',
             description="列出当前仍在暂存区的聊天附件；可用于找回近期图片或文件，再发送或保存。",
             input_schema={"type": "object", "properties": {}},
-            repeat_safe=True,
             handler=_list_recent_attachments,
         ),
         Tool(

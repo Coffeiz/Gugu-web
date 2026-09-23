@@ -49,6 +49,7 @@ async def _delete_workspace_directory(db, user_id, args: dict):
         args,
         summary,
         user_id,
+        purpose=confirm.ACTION,
         identity=f"delete_workspace_directory:directory_id={row.id}",
     )
     if blocked is not None:
@@ -129,6 +130,7 @@ async def _unlink_workspace(db, user_id, args: dict):
         args,
         f"解除工作区「{row.name}」的 Shell 绑定及会话绑定，不删除项目、文件夹或文件",
         user_id,
+        purpose=confirm.ACTION,
         identity=f"unlink_workspace:workspace_id={row.id}",
     )
     if blocked is not None:
@@ -165,7 +167,7 @@ class WorkspacesSkill(BaseSkill):
                 "type": "object", "properties": {
                     "workspace_id": {"type": "integer"},
                 }, "required": ["workspace_id"], "additionalProperties": False,
-            }, repeat_safe=True, handler=_get_workspace,
+            }, handler=_get_workspace,
         ),
         Tool(
             name="create_workspace", label="新建工作区",

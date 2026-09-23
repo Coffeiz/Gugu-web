@@ -58,7 +58,7 @@ def _prepare_workspace_root(root: Path) -> None:
 
     rootless docker 下沙盒进程映射 uid 与宿主机部署用户不同，仅 chmod 0777 只
     解决「写」：文件库侧写入的 0660 文件（other 位为 0）沙盒仍读不到。这里
-    优先套用与一次性 sandbox-bootstrap 相同的 ACL 授权（含递归补齐存量文件、
+    优先套用与 sandboxd 初始化相同的 ACL 授权（含递归补齐存量文件、
     每级目录 default ACL，后续新建文件自动继承），让沙盒映射身份获得读写；
     环境不支持时（无 setfacl，或 rootless 开发环境缺少 subordinate 映射）退回与
     ensure_sandbox_root 一致的全员可写兼容取舍，目录内条目仍受容器权限约束。
@@ -527,7 +527,7 @@ async def effective_shell_enabled(db: AsyncSession, user_id) -> bool:
     prefs = (await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )).scalar_one_or_none()
-    return bool(prefs and prefs.data.get("shell_enabled", False))
+    return bool(prefs.data.get("shell_enabled", True)) if prefs else True
 
 
 async def effective_shell_system_enabled(db: AsyncSession, user_id) -> bool:
@@ -543,15 +543,7 @@ async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )
     prefs = result.scalar_one_or_none()
-    return bool(prefs and prefs.data.get("shell_dangerous_enabled", False))
-
-
-async def effective_shell_autopilot_enabled(db: AsyncSession, user_id) -> bool:
-    """读取用户 Autopilot 开关；管理员总开关由调用方同时校验。"""
-    prefs = (await db.execute(
-        select(UserPreferences).where(UserPreferences.user_id == user_id)
-    )).scalar_one_or_none()
-    return bool(prefs and prefs.data.get("shell_autopilot_enabled", False))
+    return bool(prefs.data.get("shell_dangerous_enabled", True)) if prefs else True
 
 
 async def describe_session(db: AsyncSession, user_id, session_id: int) -> Workspace | None:

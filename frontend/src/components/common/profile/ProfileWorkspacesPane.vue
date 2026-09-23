@@ -1,5 +1,11 @@
 <template>
   <div class="pm-workspaces-pane">
+    <div v-if="automaticModeGlobalEnabled" class="pm-section">
+      <div class="pm-section-label">{{ t('profileWorkspacesUi.automaticMode') }}</div>
+      <div class="pm-tool-rows">
+        <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.automaticMode') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.automaticModeHint') }}</span></div><ToggleSwitch :model-value="prefsStore.automaticModeEnabled" :aria-label="t('profileWorkspacesUi.toggleAutomaticMode')" @update:model-value="prefsStore.saveAutomaticModeEnabled($event)" /></div>
+      </div>
+    </div>
     <template v-if="shellLoading || (globalEnabled && sandboxEnabled)">
     <div class="pm-section pm-shell-section">
       <div class="pm-section-label">{{ t('profileWorkspacesUi.shellAccess') }}</div>
@@ -10,7 +16,6 @@
           <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.shellSandbox') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.shellSandboxHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellEnabled" :aria-label="t('profileWorkspacesUi.toggleShellSandbox')" @update:model-value="prefsStore.saveShellEnabled($event)" /></div>
           <div v-if="systemGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.systemShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.systemShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellSystemEnabled" :aria-label="t('profileWorkspacesUi.toggleSystemShell')" @update:model-value="prefsStore.saveShellSystemEnabled($event)" /></div>
           <div v-if="dangerousGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.allShell') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.allShellHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellDangerousEnabled" :aria-label="t('profileWorkspacesUi.toggleAllShell')" @update:model-value="prefsStore.saveShellDangerousEnabled($event)" /></div>
-          <div v-if="autopilotGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell Autopilot</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.autopilotHint') }}</span></div><ToggleSwitch :model-value="prefsStore.shellAutopilotEnabled" :aria-label="t('profileWorkspacesUi.toggleAutopilot')" @update:model-value="prefsStore.saveShellAutopilotEnabled($event)" /></div>
         </div>
         <div class="pm-shell-reset-row">
           <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileWorkspacesUi.resetTerminalEnvironment') }}</span><span class="pm-field-hint">{{ t('profileWorkspacesUi.resetTerminalHint') }}</span></div>
@@ -79,7 +84,7 @@ const sandboxEnabled = ref(false)
 const globalEnabled = ref(false)
 const systemGlobalEnabled = ref(false)
 const dangerousGlobalEnabled = ref(false)
-const autopilotGlobalEnabled = ref(false)
+const automaticModeGlobalEnabled = ref(false)
 const workspaceSupported = ref(false)
 const resetting = ref(false)
 const rebuilding = ref(false)
@@ -101,7 +106,7 @@ async function load() {
     globalEnabled.value = response.globalEnabled
     systemGlobalEnabled.value = response.systemGlobalEnabled
     dangerousGlobalEnabled.value = response.dangerousGlobalEnabled
-    autopilotGlobalEnabled.value = response.autopilotGlobalEnabled === true
+    automaticModeGlobalEnabled.value = response.automaticModeGlobalEnabled === true
     workspaceSupported.value = response.workspaceSupported === true
     items.value = response.items as WorkspaceItem[]
   } catch (cause) {

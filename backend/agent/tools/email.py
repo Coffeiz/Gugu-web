@@ -117,6 +117,7 @@ async def _send_email(db, user_id, args: dict):
     if not automation_tool_allowed("send_email"):
         blocked = confirm.needs_confirmation(
             args, summary, user_id,
+            purpose=confirm.ACTION,
             identity=_confirmation_identity(
                 recipient=recipient, subject=subject, body=body, html=html,
                 template=template, title=title, preheader=preheader,

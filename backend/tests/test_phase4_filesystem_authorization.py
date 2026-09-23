@@ -1,9 +1,12 @@
 """PRD-SHELL-4 Phase 4：授权开关、审计和拒绝指标。"""
 
 import pytest
+import json
+from types import SimpleNamespace
 from sqlalchemy import select
 
-from app.core.config import SandboxSettings
+from app.core import config
+from app.core.config import AppSettings, DatabaseSettings, SandboxSettings
 from app.models import ConversationSession, FilesystemAuthorizationGrant, SecurityEvent
 from app.services.filesystem_authorization import (
     grant_session_filesystem_access,
@@ -20,12 +23,61 @@ async def _session(db, user):
     return row
 
 
-def test_filesystem_authorization_is_off_by_default():
-    assert SandboxSettings().filesystem_authorization_enabled is False
+def test_full_user_sandbox_authorization_is_on_by_default():
+    assert SandboxSettings().full_user_sandbox_authorization_enabled is True
+
+
+def test_unknown_sandbox_settings_are_not_loaded(tmp_path, monkeypatch):
+    override = tmp_path / "config.override.json"
+    override.write_text(json.dumps({
+        "sandbox": {
+            "retired_authorization_toggle": False,
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(config, "OVERRIDE_FILE", override)
+
+    settings = AppSettings(db=DatabaseSettings(password="test-db-password")).apply_override()
+
+    assert settings.sandbox.full_user_sandbox_authorization_enabled is True
+
+    assert not hasattr(settings.sandbox, "retired_authorization_toggle")
 
 
 @pytest.mark.asyncio
-async def test_disabled_flag_ignores_existing_grant_and_blocks_new_grant(db, user_a):
+async def test_saving_sandbox_settings_cleans_unknown_override_keys(tmp_path, monkeypatch):
+    override = tmp_path / "config.override.json"
+    override.write_text(json.dumps({
+        "sandbox": {
+            "retired_authorization_toggle": False,
+            "image": "debian:bookworm-slim",
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(config, "OVERRIDE_FILE", override)
+    monkeypatch.setattr(config, "get_settings", lambda: AppSettings(db=DatabaseSettings(password="test-db-password")))
+
+    await config.save_override({
+        "sandbox": {"full_user_sandbox_authorization_enabled": True},
+    })
+
+    saved = json.loads(override.read_text(encoding="utf-8"))
+    assert saved["sandbox"] == {
+        "image": "debian:bookworm-slim",
+        "full_user_sandbox_authorization_enabled": True,
+    }
+
+
+def test_rootless_is_not_required_by_default_for_user_facing_sandbox():
+    assert SandboxSettings().rootless_required is False
+
+
+@pytest.mark.asyncio
+async def test_disabled_flag_ignores_existing_grant_and_blocks_new_grant(db, user_a, monkeypatch):
+    import app.services.filesystem_authorization as authorization
+
+    monkeypatch.setattr(authorization, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(backend="local"),
+        sandbox=SimpleNamespace(full_user_sandbox_authorization_enabled=False),
+    ))
     session = await _session(db, user_a)
     grant = FilesystemAuthorizationGrant(
         user_id=user_a.id, subject_type="session", subject_id=str(session.id),
@@ -43,7 +95,13 @@ async def test_disabled_flag_ignores_existing_grant_and_blocks_new_grant(db, use
 
 
 @pytest.mark.asyncio
-async def test_disabled_flag_does_not_offer_model_authorization_prompt(user_a):
+async def test_disabled_flag_does_not_offer_model_authorization_prompt(user_a, monkeypatch):
+    import app.services.filesystem_authorization as authorization
+
+    monkeypatch.setattr(authorization, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(backend="local"),
+        sandbox=SimpleNamespace(full_user_sandbox_authorization_enabled=False),
+    ))
     from agent.tools.meta import _ask_user
 
     result = await _ask_user(None, user_a.id, {"authorization": "user_sandbox"})
