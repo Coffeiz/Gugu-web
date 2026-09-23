@@ -276,6 +276,12 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(terminalPty).toContain('event.code === 4401 || event.code === 4403')
   })
 
+  it('交互终端的 fit 测量会扣除终端内边距并跟随容器尺寸重算', () => {
+    expect(terminalPty).toContain('terminalResizeObserver = new ResizeObserver(scheduleResize)')
+    expect(terminalPty).toContain('.pty-terminal { height:100%; padding:0; box-sizing:border-box; }')
+    expect(terminalPty).toContain('.pty-terminal :deep(.xterm) { height:100%; padding:14px 16px; box-sizing:border-box; }')
+  })
+
   it('Shell 未启用时不显示文件库工作区按钮', () => {
     expect(filesView).toContain(':show-new-workspace-button="preferencesStore.shellEnabled && currentType === \'folder\'')
     expect(filesView).toContain("import { usePreferencesStore } from '@/stores/preferences'")
