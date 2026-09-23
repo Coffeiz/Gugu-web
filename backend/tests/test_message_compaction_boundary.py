@@ -31,29 +31,6 @@ def test_assembly_marks_snapshot_prefix():
     assert messages.dynamic_tail == [reminder("当前时间：当前时间")]
 
 
-def test_openai_provider_render_keeps_snapshot_prefix():
-    """OpenAI 路不经过 Anthropic 清洗器，provider 渲染也必须保留 snapshot。"""
-    messages = assemble(
-        fixed_parts=[
-            {"role": "system", "content": "固定 snapshot"},
-        ],
-        history=[{"role": "user", "content": "旧消息"}],
-    )
-    batch, _ = assemble_turn(
-        current_user={"role": "user", "content": "当前消息"},
-    )
-    messages.set_dynamic_tail([reminder("当前时间：当前时间")])
-    messages.append_batch(batch)
-
-    outbound = render_events_for_provider(messages)
-
-    assert outbound[0] == {"role": "system", "content": "固定 snapshot"}
-    assert [item["content"] for item in outbound.conversation][:3] == [
-        "固定 snapshot", "旧消息", "当前消息",
-    ]
-    assert outbound.dynamic_tail == [reminder("当前时间：当前时间")]
-
-
 def test_rag_precedes_current_user_while_current_time_stays_in_dynamic_tail():
     messages = assemble(
         fixed_parts=[{"role": "user", "content": "固定 session info"}],

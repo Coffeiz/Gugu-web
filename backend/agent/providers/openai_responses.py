@@ -15,7 +15,7 @@ from typing import Any
 
 from agent.context.budget import is_context_overflow_error
 from agent.context.canonical_context import digest
-from agent.providers.message_utils import _openai_tool_result
+from agent.providers.message_utils import _openai_tool_result, render_provider_history
 
 
 class ResponsesCompatibilityError(RuntimeError):
@@ -410,7 +410,8 @@ class OpenAIResponsesDriver:
 
     async def run_round(self, client, ctx, messages, stream_round=None):
         # stream_round 仅 AnthropicDriver 使用；本驱动接收并忽略，保持统一调用签名。
-        full_rendered = ctx.adapter.render_history(messages)
+        projection = render_provider_history(messages, ctx.adapter)
+        full_rendered = projection.messages
         rendered = full_rendered
         if ctx.previous_response_id:
             # response chain 已经包含旧历史；只发送上一个 response 之后的增量，

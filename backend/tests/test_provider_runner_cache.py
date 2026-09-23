@@ -83,11 +83,18 @@ async def test_openai_branch_marks_system_cache_control_when_explicit(monkeypatc
             build_structured_output=lambda ai: {},
             build_openai_thinking_kwargs=lambda ai, thinking=None: {},
         ))
-    await provider_runner._openai("stable system", "user", _openai_ai(), 100)
+    await provider_runner._openai(
+        "stable system", "user", _openai_ai(), 100,
+        history=[{"role": "system", "content": "session snapshot"}],
+    )
     system, user = fake.kwargs["messages"]
     assert system["role"] == "system"
     assert system["content"] == [
-        {"type": "text", "text": "stable system", "cache_control": {"type": "ephemeral"}},
+        {
+            "type": "text",
+            "text": "stable system\n\n---\n\nsession snapshot",
+            "cache_control": {"type": "ephemeral"},
+        },
     ]
     # user 消息不打断点（内容含时间戳每轮必变，锚定无意义）。
     assert user == {"role": "user", "content": "user"}

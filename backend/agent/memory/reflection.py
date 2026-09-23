@@ -786,6 +786,30 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                 user_id, session_id, user_name, bound_model,
             )
             rebuilt = snapshot is not None
+        if snapshot is not None and session_id is not None:
+            # 静默群消息/延迟 owner 反思没有普通 run 的 provider usage 事件，
+            # 这里先按全局 context_tokens 做预检；超阈值时只走正式 baseline
+            # 压缩，压缩后必须从 DB 重建历史，不能继续使用旧快照。
+            snapshot, compaction_status = await _compact_reflection_snapshot(
+                user_id,
+                user_name,
+                settings,
+                session_id,
+                snapshot,
+                turns,
+                bound_model,
+            )
+            if compaction_status == "blocked":
+                _log.info(
+                    "[reflection] over-budget session deferred session=%s",
+                    session_id,
+                )
+                return False
+            if compaction_status == "compacted":
+                if snapshot is None:
+                    return False
+                rebuilt = True
+                probe_snapshot = snapshot
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
         # §6.3/§6.7 资格门：快照 + 单 session 缓冲 + 模型身份一致；
@@ -989,6 +1013,40 @@ def _append_reuse_decision(snapshot, turns, bound_model) -> tuple[bool, str]:
     if bound_model is not None and model_identity(snapshot.ai) != model_identity(bound_model):
         return False, "provider_switched"
     return True, "eligible"
+
+
+async def _compact_reflection_snapshot(
+    user_id, user_name, settings, session_id, snapshot, turns, model_cfg,
+):
+    """反思快照超预算时压缩正式 baseline，并从持久历史重新装载。"""
+    if snapshot is None or session_id is None:
+        return snapshot, "not_needed"
+    from agent.context import compress_conv
+
+    reflection_delta = json.dumps(
+        [
+            {
+                "user_msg": turn.get("user_msg", ""),
+                "assistant_reply": turn.get("assistant_reply", ""),
+            }
+            for turn in turns
+        ],
+        ensure_ascii=False,
+    )
+    status = await compress_conv.compact_for_reflection(
+        int(session_id),
+        user_id,
+        settings,
+        snapshot=snapshot,
+        extra_text=reflection_delta,
+        model_cfg=model_cfg,
+    )
+    if status != "compacted":
+        return snapshot, status
+    refreshed = await _rebuild_owner_reflection_snapshot(
+        user_id, session_id, user_name, model_cfg,
+    )
+    return refreshed, status
 
 
 async def _extract_append(snapshot, user_name, turns, existing_profile, existing_pattern,

@@ -332,6 +332,17 @@ async def _mark_failure(db, job, exc: BaseException) -> None:
     await db.commit()
 
 
+async def _defer_job(db, job, now) -> None:
+    """把暂时不能执行的反思任务交回 idle 队列。"""
+    from datetime import timedelta
+
+    job.status = "pending"
+    job.locked_at = None
+    job.next_attempt_at = now + max(IDLE_WINDOW, timedelta(minutes=1))
+    job.updated_at = now
+    await db.commit()
+
+
 async def execute_job(job_id: int, settings, *, snapshot=None) -> bool:
     """在 scope 分布式锁内执行任务，确保同一 scope 严格串行。"""
     from app.models import MemoryReflectionJob
@@ -463,14 +474,33 @@ async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
             if resolved_snapshot is None:
                 # Match Web owner reflection: if the main session is still active, keep the
                 # task pending; the idle settlement path will retry with persisted history.
-                from datetime import timedelta
-
-                job.status = "pending"
-                job.locked_at = None
-                job.next_attempt_at = now + max(IDLE_WINDOW, timedelta(minutes=1))
-                job.updated_at = now
-                await db.commit()
+                await _defer_job(db, job, now)
                 return False
+            from agent.context import compress_conv
+
+            reflection_delta = "\n".join(
+                str(getattr(message, "content", "") or "") for message in messages
+            )
+            compaction_status = await compress_conv.compact_for_reflection(
+                session_id,
+                scope.owner_user_id,
+                settings,
+                snapshot=resolved_snapshot,
+                extra_text=reflection_delta,
+                model_cfg=run_config.model,
+            )
+            if compaction_status == "blocked":
+                # 超预算但当前 session 不是可安全写 baseline 的空闲态时，
+                # 不能把旧快照直接送给 provider；交回 idle 队列等待主会话收口。
+                await _defer_job(db, job, now)
+                return False
+            if compaction_status == "compacted":
+                resolved_snapshot = await _rebuild_session_snapshot(
+                    db, scope, session_id, run_config.model, messages,
+                )
+                if resolved_snapshot is None:
+                    await _defer_job(db, job, now)
+                    return False
             if scope.scope_type == "group":
                 # members.json 的 DB 字段独立于下面的 LLM 调用是否成功，见 _merge_members 注释。
                 try:

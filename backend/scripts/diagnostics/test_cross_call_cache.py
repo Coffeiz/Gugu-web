@@ -98,7 +98,6 @@ async def test_cross_call_cache():
         r = client.messages.create(
             model="minimax-m3-7b-beta",
             max_tokens=20,
-            temperature=0.7,
             system=system,
             messages=[{"role": "user", "content": user_msg}]
         )

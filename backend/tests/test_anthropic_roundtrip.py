@@ -1,6 +1,17 @@
+import json
+from types import SimpleNamespace
+
+import pytest
+
 from agent.loop_drivers import AnthropicDriver, NormalizedToolCall, RoundResult
 from agent.context.canonical_tool_history import canonical_tool_round
-from agent.runtime.loopscope_trace.state import _anthropic_structure
+from agent.runtime.loopscope_trace.state import (
+    _ScopeRun,
+    _anthropic_structure,
+    _now,
+    _scope_run,
+    record_anthropic_request_failure,
+)
 
 
 def test_anthropic_tool_round_preserves_all_response_blocks_and_signature():
@@ -72,3 +83,122 @@ def test_anthropic_structure_digest_detects_non_identical_roundtrip():
     original = [{"type": "thinking", "thinking": "a", "signature": "sig"}]
     changed = [{"type": "thinking", "thinking": "b", "signature": "sig"}]
     assert _anthropic_structure(original)[1] != _anthropic_structure(changed)[1]
+
+
+def test_anthropic_request_failure_trace_records_structure_without_payload(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-test-provider-request-failure", trace_id="trace-test",
+        session_key="gugu:web:test-session", external_session_id="test-session",
+        source="web", started_at=_now(),
+    )
+    messages = [
+        {"role": "assistant", "content": [{
+            "type": "tool_use", "id": "private-call-id", "name": "test_tool",
+            "input": {"secret": "must-not-be-recorded"},
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_use_id": "private-call-id",
+            "content": "private result body",
+        }]},
+        {"role": "assistant", "content": [{
+            "type": "tool_use", "id": "private-call-id", "name": "test_tool", "input": {},
+        }]},
+        {"role": "user", "content": "private user text"},
+    ]
+
+    class ProviderError(Exception):
+        status_code = 400
+        type = "invalid_request_error"
+        message = "invalid params (2013)"
+
+    token = _scope_run.set(run)
+    try:
+        record_anthropic_request_failure(
+            provider="minimax", model="MiniMax-M3", messages=messages,
+            error=ProviderError("must-not-be-recorded"),
+            restored_blocks=[{
+                "type": "tool_use", "id": "private-call-id", "name": "test_tool",
+                "input": {"secret": "must-not-be-recorded"},
+            }],
+            restored_insert_index=3,
+            canonical_digest="a" * 64,
+            wire_digest="b" * 64,
+        )
+    finally:
+        _scope_run.reset(token)
+
+    diagnostic = run.attributes["provider_request_failures"]["last"]
+    assert diagnostic["error_status"] == 400
+    assert diagnostic["error_type"] == "invalid_request_error"
+    assert diagnostic["provider_code"] == "2013"
+    assert diagnostic["restored_state"]["insert_index"] == 3
+    restored_tool = diagnostic["restored_state"]["blocks"][0]
+    assert restored_tool["type"] == "tool_use"
+    assert restored_tool["tool_id_fp"] == diagnostic["tool_pairing"]["tool_uses"][0]["tool_id_fp"]
+    assert restored_tool["tool_name_present"] is True
+    assert diagnostic["tool_pairing"]["tool_uses"][0]["duplicate_id"] is True
+    assert diagnostic["tool_pairing"]["tool_uses"][0]["immediate_result"] is False
+    assert diagnostic["tool_pairing"]["tool_results"][0]["follows_matching_tool_use"] is True
+
+    serialized = json.dumps(diagnostic, ensure_ascii=False)
+    for private_value in (
+        "private-call-id", "private user text", "private result body",
+        "must-not-be-recorded",
+    ):
+        assert private_value not in serialized
+
+
+@pytest.mark.asyncio
+async def test_anthropic_driver_records_failure_trace_only_when_scoped(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-test-provider-request-failure", trace_id="trace-test",
+        session_key="gugu:web:test-session", external_session_id="test-session",
+        source="web", started_at=_now(),
+    )
+
+    class ProviderError(Exception):
+        status_code = 400
+        type = "invalid_request_error"
+
+        @property
+        def message(self):
+            return "invalid request (2013)"
+
+    async def failing_stream(_client, _kwargs, _adapter):
+        raise ProviderError("private provider detail")
+        yield  # pragma: no cover - makes this an async generator
+
+    ctx = SimpleNamespace(
+        model="MiniMax-M3", max_tokens=32, tools=[], system_param="",
+        thinking_param={}, generation_param={}, supports_active_cache=False,
+        adapter=SimpleNamespace(
+            name="minimax", api_format="anthropic",
+            render_history=lambda value: list(value),
+        ),
+    )
+    messages = [{
+        "role": "user", "content": [{"type": "text", "text": "private user prompt"}],
+    }]
+
+    token = _scope_run.set(run)
+    try:
+        with pytest.raises(ProviderError):
+            async for _ in AnthropicDriver().run_round(
+                object(), ctx, messages, stream_round=failing_stream,
+            ):
+                pass
+    finally:
+        _scope_run.reset(token)
+
+    diagnostic = run.attributes["provider_request_failures"]["last"]
+    assert diagnostic["provider"] == "minimax"
+    assert diagnostic["protocol"] == "anthropic"
+    assert diagnostic["error_status"] == 400
+    assert diagnostic["provider_code"] == "2013"
+    assert diagnostic["canonical_history_digest"]
+    assert diagnostic["rendered_history_digest"]
+    serialized = json.dumps(diagnostic, ensure_ascii=False)
+    assert "private user prompt" not in serialized
+    assert "private provider detail" not in serialized

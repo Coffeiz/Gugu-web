@@ -300,7 +300,6 @@ async def _run_rerank_mode(
         json.dumps({"query": query, "candidates": candidate_payload}, ensure_ascii=False),
         model_settings,
         max_tokens=max(600, len(candidates) * 35),
-        temperature=0.0,
         thinking="disabled",
     )
     rerank_ms = (time.perf_counter() - started) * 1000
@@ -359,7 +358,6 @@ async def _run_mode(
             query,
             settings,
             max_tokens=220,
-            temperature=0.1,
             thinking="disabled",
         )
         intent_ms = (time.perf_counter() - started) * 1000
@@ -418,7 +416,6 @@ async def _run_bm25_mode(
             query,
             settings,
             max_tokens=220,
-            temperature=0.1,
             thinking="disabled",
         )
         intent_ms = (time.perf_counter() - started) * 1000

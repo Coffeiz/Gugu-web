@@ -125,7 +125,6 @@ async def call_text(settings, system: str, user: str, max_tokens: int = 800) -> 
                 system=system,
                 messages=[{"role": "user", "content": user}],
                 max_tokens=max_tokens,
-                temperature=0.2,
             )
             text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
         finally:
@@ -137,7 +136,6 @@ async def call_text(settings, system: str, user: str, max_tokens: int = 800) -> 
                 model=ai.model,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
                 max_tokens=max_tokens,
-                temperature=0.2,
             )
             text = response.choices[0].message.content or ""
         finally:

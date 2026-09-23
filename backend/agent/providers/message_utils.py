@@ -8,7 +8,31 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import dataclass
 from typing import Any
+
+from agent.context.canonical_context import digest
+from agent.context.cache_state import CachePlan, CacheState
+
+
+@dataclass(frozen=True)
+class ProviderHistoryProjection:
+    """Provider 出站历史及其脱敏身份指纹。"""
+
+    messages: Any
+    canonical_digest: str
+    wire_digest: str
+
+
+def render_provider_history(messages: list, adapter) -> ProviderHistoryProjection:
+    """生成带 canonical/wire 身份的 Provider 历史投影。"""
+    canonical = getattr(messages, "conversation", messages)
+    rendered = adapter.render_history(messages)
+    return ProviderHistoryProjection(
+        messages=rendered,
+        canonical_digest=digest(canonical),
+        wire_digest=digest(rendered),
+    )
 
 
 def _contains_volatile_image(value: Any) -> bool:
@@ -177,11 +201,6 @@ def _sanitize_openai_tool_history(messages: list) -> tuple[list, dict[str, Any]]
     if cleaned_tail:
         result.set_dynamic_tail(cleaned_tail)
     old_to_new = {old: new for new, old in enumerate(retained)}
-    result._cache_anchor_indices = [
-        old_to_new[index]
-        for index in getattr(messages, "cache_anchor_indices", ())
-        if index in old_to_new
-    ]
     for name in ("canonical_context", "_canonical_batches", "_canonical_batch_digests"):
         if hasattr(messages, name):
             value = getattr(messages, name)
@@ -197,6 +216,124 @@ def sanitize_openai_tool_history(messages: list) -> list:
     return cleaned
 
 
+def _merge_system_content(messages: list[dict]) -> Any:
+    """按出站顺序合并多条 system 内容，兼容字符串和内容块。"""
+    contents = [message.get("content") for message in messages]
+    if all(isinstance(content, str) for content in contents):
+        return "\n\n---\n\n".join(contents)
+
+    merged: list[Any] = []
+    for index, content in enumerate(contents):
+        if index:
+            merged.append({"type": "text", "text": "\n\n---\n\n"})
+        if isinstance(content, list):
+            merged.extend(copy.deepcopy(content))
+        elif content is not None:
+            merged.append({"type": "text", "text": str(content)})
+    return merged
+
+
+def _merge_prompt_messages(messages, merged_system: dict):
+    """合并 PromptMessages 后恢复其 provider-only 边界和缓存元数据。"""
+    from agent.context.assembly import PromptMessages
+
+    conversation = list(messages.conversation)
+    dynamic_tail = list(messages.dynamic_tail)
+    conversation_system_indices = {
+        index for index, message in enumerate(conversation)
+        if isinstance(message, dict) and message.get("role") == "system"
+    }
+    all_system_indices = {
+        index for index in conversation_system_indices
+    }
+    all_system_indices.update(
+        len(conversation) + index
+        for index, message in enumerate(dynamic_tail)
+        if isinstance(message, dict) and message.get("role") == "system"
+    )
+    normalized_conversation = [merged_system]
+    normalized_conversation.extend(
+        copy.deepcopy(message)
+        for message in conversation
+        if not (isinstance(message, dict) and message.get("role") == "system")
+    )
+    normalized_tail = [
+        copy.deepcopy(message)
+        for message in dynamic_tail
+        if not (isinstance(message, dict) and message.get("role") == "system")
+    ]
+
+    old_fixed_size = int(getattr(messages, "fixed_prefix_size", 0) or 0)
+    merged_system_is_fixed = all(
+        index < old_fixed_size for index in all_system_indices
+    )
+    fixed_prefix_size = (
+        1 + sum(
+            index < old_fixed_size
+            and index not in conversation_system_indices
+            for index in range(len(conversation))
+        )
+        if merged_system_is_fixed
+        else 0
+    )
+    result = PromptMessages(
+        normalized_conversation,
+        fixed_prefix_size=fixed_prefix_size,
+    )
+    if normalized_tail:
+        result.set_dynamic_tail(normalized_tail)
+
+    old_to_new = {index: 0 for index in all_system_indices}
+    next_index = 1
+    for index in range(len(conversation)):
+        if index in conversation_system_indices:
+            continue
+        old_to_new[index] = next_index
+        next_index += 1
+    if hasattr(messages, "canonical_context"):
+        result.canonical_context = messages.canonical_context
+    result._canonical_batches = list(getattr(messages, "_canonical_batches", ()))
+    result._canonical_batch_digests = list(
+        getattr(messages, "_canonical_batch_digests", ())
+    )
+    result._canonical_batch_metadata = copy.deepcopy(list(
+        getattr(messages, "_canonical_batch_metadata", ())
+    ))
+    return result
+
+
+def merge_openai_system_messages(messages: list) -> list:
+    """把 Chat Completions 出站请求中的 system 合并为一个置顶消息。
+
+    部分 OpenAI 兼容服务（例如 llama.cpp 的 chat template）只接受位于
+    首位的一条 system。这里仅处理 provider 请求副本，不改变 canonical
+    history；合并顺序与 Responses 的 instructions 拼接保持一致。
+    """
+    system_indices = [
+        index for index, message in enumerate(messages)
+        if isinstance(message, dict) and message.get("role") == "system"
+    ]
+    if len(system_indices) <= 1 and (
+        not system_indices or system_indices[0] == 0
+    ):
+        return messages
+
+    system_messages = [messages[index] for index in system_indices]
+    merged_system = copy.deepcopy(system_messages[0])
+    merged_system["role"] = "system"
+    merged_system["content"] = _merge_system_content(system_messages)
+    if not hasattr(messages, "fixed_prefix_size"):
+        normalized = [merged_system]
+        normalized.extend(
+            copy.deepcopy(message)
+            for message in messages
+            if not (isinstance(message, dict) and message.get("role") == "system")
+        )
+        return normalized
+
+    return _merge_prompt_messages(messages, merged_system)
+
+
 def render_openai_request_history(
     messages: list,
     adapter,
@@ -210,6 +347,7 @@ def render_openai_request_history(
     """
     rendered = adapter.render_history(messages)
     cleaned, diagnostics = _sanitize_openai_tool_history(rendered)
+    cleaned = merge_openai_system_messages(cleaned)
     return (cleaned, diagnostics) if with_diagnostics else cleaned
 
 
@@ -242,12 +380,21 @@ def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
         message["content"] = "\n".join(text_parts) or "[图片已查看]"
 
 
-def _history_cache_state(messages: list) -> tuple[int, set[int]]:
-    """计算实际请求会使用的稳定边界和缓存断点。"""
+def _history_cache_state(messages: list, state: CacheState | None = None, *,
+                         provider: str = "", api_format: str = "",
+                         model: str = "", single_anchor: bool = False) -> CachePlan:
+    """基于 canonical 消息 digest 计算一次请求的缓存计划。
+
+    这里不再读取或修改 PromptMessages 的隐藏字段。跨轮身份由 ``CacheState``
+    保存，当前请求只把 digest 映射为临时 wire 下标。
+    """
     conversation = getattr(messages, "conversation", messages)
     cache_limit = len(conversation)
     if cache_limit <= 0:
-        return 0, set()
+        empty = CacheState(provider, api_format, model,
+                           "single" if single_anchor else "multi",
+                           revision=(state.revision + 1 if state else 1))
+        return CachePlan(0, (), "", "", empty)
 
     volatile_index = next(
         (index for index, message in enumerate(conversation[:cache_limit])
@@ -255,34 +402,67 @@ def _history_cache_state(messages: list) -> tuple[int, set[int]]:
         None,
     )
     stable_limit = volatile_index if volatile_index is not None else cache_limit
-    anchor_indices = {
-        index for index in getattr(messages, "cache_anchor_indices", [])
-        if 0 <= index < stable_limit
-    }
+    strategy = "single" if single_anchor else "multi"
+    state = state or CacheState()
+    digests = [_cache_message_digest(message)
+               for message in conversation[:stable_limit]]
+    baseline_index = _cache_baseline_index(
+        conversation, digests, stable_limit, state,
+        provider=provider, api_format=api_format, model=model,
+        strategy=strategy,
+    )
     latest_anchor = stable_limit - 1
-    if anchor_indices:
-        # 续轮只保留最早 baseline 和当前尾部；不要把中间普通 user 消息提升为断点。
-        anchor_indices = {min(anchor_indices)}
-    else:
-        if latest_anchor >= 0:
-            anchor_indices.add(latest_anchor)
-        # 新请求需要从稳定 conversation 中找到 baseline；工具结果不能作为 baseline。
-        for index in range(stable_limit - 2, -1, -1):
-            message = conversation[index]
-            if message.get("role") != "user":
-                continue
-            content = message.get("content")
-            blocks = content if isinstance(content, list) else []
-            if blocks and all(
-                isinstance(block, dict) and block.get("type") == "tool_result"
-                for block in blocks
-            ):
-                continue
-            anchor_indices.add(index)
-            break
-    if latest_anchor >= 0:
-        anchor_indices.add(latest_anchor)
-    return stable_limit, anchor_indices
+    anchors = ({latest_anchor} if single_anchor else {baseline_index, latest_anchor})
+    anchors = tuple(sorted(index for index in anchors if 0 <= index < stable_limit))
+    next_state = CacheState(
+        provider=provider,
+        api_format=api_format,
+        model=model,
+        strategy=strategy,
+        baseline_digest=digests[baseline_index] if 0 <= baseline_index < stable_limit else "",
+        latest_digest=digests[latest_anchor] if latest_anchor >= 0 else "",
+        revision=state.revision + 1,
+    )
+    return CachePlan(
+        stable_limit=stable_limit,
+        anchor_indices=anchors,
+        baseline_digest=next_state.baseline_digest,
+        latest_digest=next_state.latest_digest,
+        next_state=next_state,
+    )
+
+
+def _cache_message_digest(message: dict) -> str:
+    """返回不包含出站 cache marker 的 canonical 消息身份。"""
+    return digest(_without_cache_control(message))
+
+
+def _cache_baseline_index(conversation: list[dict], digests: list[str],
+                          stable_limit: int, state: CacheState, *,
+                          provider: str, api_format: str, model: str,
+                          strategy: str) -> int:
+    """按旧状态定位 baseline，找不到时从当前稳定历史重建。"""
+    if state.baseline_digest and state.compatible_with(
+        provider=provider, api_format=api_format, model=model, strategy=strategy,
+    ):
+        for index, item in enumerate(digests):
+            if item == state.baseline_digest:
+                return index
+
+    latest = stable_limit - 1
+    for index in range(stable_limit - 2, -1, -1):
+        message = conversation[index]
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else []
+        if blocks and all(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in blocks
+        ):
+            continue
+        return index
+    return latest
 
 
 def _without_cache_control(value: Any) -> Any:
@@ -317,7 +497,6 @@ def _cache_message_copy(messages: list, rendered: list[dict]):
             _without_cache_control(message)
             for message in rendered[conversation_count:]
         ])
-    result._cache_anchor_indices = list(getattr(messages, "cache_anchor_indices", ()))
     for name in (
         "canonical_context", "_canonical_batches", "_canonical_batch_digests",
         "_canonical_batch_metadata",
@@ -327,25 +506,13 @@ def _cache_message_copy(messages: list, rendered: list[dict]):
     return result
 
 
-def _with_history_cache(messages: list) -> list:
-    """给稳定历史添加 cache_control，不修改原始会话消息。"""
-    if not messages:
-        return messages
-
-    # 动态尾部每轮都会变化，缓存断点必须落在固定 conversation 的末尾。
-    stable_limit, anchor_indices = _history_cache_state(messages)
-    if stable_limit <= 0:
-        return _cache_message_copy(messages, list(messages))
-    remember_anchor = getattr(messages, "remember_cache_anchor", None)
-    if remember_anchor is not None:
-        for index in sorted(anchor_indices):
-            remember_anchor(index)
-
+def _apply_history_cache(messages: list, plan: CachePlan, *, single_anchor: bool):
+    """按计划构造出站缓存副本，不改变输入消息或缓存状态。"""
     new_messages = []
     for index, message in enumerate(messages):
         clone = dict(message)
         content = clone.get("content")
-        is_anchor = index in anchor_indices and index < stable_limit
+        is_anchor = index in plan.anchor_indices and index < plan.stable_limit
         if isinstance(content, list) and is_anchor and content:
             clone["content"] = content[:-1] + [
                 {**content[-1], "cache_control": {"type": "ephemeral"}}
@@ -355,54 +522,41 @@ def _with_history_cache(messages: list) -> list:
                 "type": "text", "text": content,
                 "cache_control": {"type": "ephemeral"},
             }]
-        new_messages.append(clone)
-
-    return _cache_message_copy(messages, new_messages)
-
-
-def _with_single_history_cache(messages: list) -> list:
-    """给稳定 conversation 只保留一个最新历史锚点。
-
-    Qwen 的 OpenAI 兼容端点对多个历史 ``cache_control`` 锚点命中不稳定；
-    system 前缀由调用方单独标记，这里不能再把 baseline 和最新尾部同时标记。
-    """
-    stable_limit, anchor_indices = _history_cache_state(messages)
-    if stable_limit <= 0:
-        return _cache_message_copy(messages, list(messages))
-    # _history_cache_state 还会返回旧 baseline，供其它 provider 跨续轮使用；
-    # Qwen 只能发送最新一个历史锚点，避免 provider 在工具续轮中回退到旧短前缀。
-    latest_history_anchor = max(anchor_indices) if anchor_indices else None
-    if latest_history_anchor is not None:
-        anchor_indices = {latest_history_anchor}
-    remember_anchor = getattr(messages, "remember_cache_anchor", None)
-    replace_anchors = getattr(messages, "replace_cache_anchors", None)
-    if replace_anchors is not None:
-        replace_anchors(anchor_indices)
-    elif remember_anchor is not None:
-        for index in sorted(anchor_indices):
-            remember_anchor(index)
-    new_messages = []
-    for index, message in enumerate(messages):
-        clone = dict(message)
-        content = clone.get("content")
-        if index in anchor_indices and index < stable_limit:
-            if isinstance(content, list) and content:
-                clone["content"] = content[:-1] + [
-                    {**content[-1], "cache_control": {"type": "ephemeral"}}
-                ]
-            elif isinstance(content, str):
-                clone["content"] = [{
-                    "type": "text", "text": content,
-                    "cache_control": {"type": "ephemeral"},
-                }]
-        elif message.get("role") != "system" and isinstance(content, list):
+        elif single_anchor and message.get("role") != "system" and isinstance(content, list):
             clone["content"] = [
                 {key: value for key, value in block.items() if key != "cache_control"}
                 if isinstance(block, dict) else block
                 for block in content
             ]
         new_messages.append(clone)
-    return _cache_message_copy(messages, new_messages)
+
+    return _cache_message_copy(messages, new_messages), plan.next_state
+
+
+def _with_history_cache(messages: list, state: CacheState | None = None, *,
+                        provider: str = "", api_format: str = "",
+                        model: str = "", single_anchor: bool = False):
+    """生成带缓存标记的出站副本和下一状态。"""
+    plan = _history_cache_state(
+        messages, state, provider=provider, api_format=api_format,
+        model=model, single_anchor=single_anchor,
+    )
+    return _apply_history_cache(messages, plan, single_anchor=single_anchor)
+
+
+def _with_single_history_cache(messages: list, state: CacheState | None = None, *,
+                               provider: str = "", api_format: str = "",
+                               model: str = ""):
+    """给稳定 conversation 只保留一个最新历史锚点。
+
+    Qwen 的 OpenAI 兼容端点对多个历史 ``cache_control`` 锚点命中不稳定；
+    system 前缀由调用方单独标记，这里不能再把 baseline 和最新尾部同时标记。
+    """
+    plan = _history_cache_state(
+        messages, state, provider=provider, api_format=api_format,
+        model=model, single_anchor=True,
+    )
+    return _apply_history_cache(messages, plan, single_anchor=True)
 
 
 def _with_system_cache_control(messages: list) -> list:

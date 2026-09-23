@@ -244,6 +244,57 @@ async def test_reflect_uses_append_when_eligible(monkeypatch):
     assert used == {"append": 1}
 
 
+@pytest.mark.asyncio
+async def test_reflect_reloads_persisted_history_after_compaction(monkeypatch):
+    _capture(session_id=7)
+    original = peek_reflection_snapshot("u1", 7)
+    refreshed = replace(original, history=({"role": "user", "content": "压缩后"},))
+    calls = []
+
+    async def fake_bind(user_id, settings, session_id=None):
+        return _ai("deepseek")
+
+    async def fake_rebuild(*args, **kwargs):
+        calls.append(True)
+        return refreshed
+
+    async def fake_read_memory(uid):
+        return {"profile": "P", "pattern": "Q", "summary": "S"}
+
+    async def fake_read_last_turn(uid, sid):
+        return None
+
+    async def fake_write_last_turn(*args, **kwargs):
+        return None
+
+    async def fake_compact(*args, **kwargs):
+        return "compacted"
+
+    used = []
+
+    async def fake_append(snapshot, *args, **kwargs):
+        used.append(snapshot)
+        return {}
+
+    monkeypatch.setattr(reflection, "_bind_user_model", fake_bind)
+    monkeypatch.setattr(reflection, "_rebuild_owner_reflection_snapshot", fake_rebuild)
+    monkeypatch.setattr(reflection.store, "read_memory", fake_read_memory)
+    monkeypatch.setattr(reflection, "_read_last_turn", fake_read_last_turn)
+    monkeypatch.setattr(reflection, "_write_last_turn", fake_write_last_turn)
+    monkeypatch.setattr(reflection, "_extract_append", fake_append)
+    monkeypatch.setattr(
+        "agent.context.compress_conv.compact_for_reflection", fake_compact,
+    )
+
+    turns = [{"user_msg": "m", "assistant_reply": "a", "session_id": 7}]
+    assert await reflection.reflect(
+        "u1", "小北", "m", "a", SimpleNamespace(), session_id=7,
+        turns=turns, snapshot=original,
+    ) is False
+    assert calls == [True]
+    assert used == [refreshed]
+
+
 async def test_reflect_defers_owner_without_snapshot(monkeypatch):
     used = {"append": 0}
 

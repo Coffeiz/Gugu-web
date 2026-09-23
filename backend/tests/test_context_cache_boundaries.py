@@ -6,7 +6,10 @@ from agent.loop_drivers import (
     _with_history_cache,
     _with_single_history_cache,
 )
-from agent.providers.message_utils import _with_system_cache_control
+from agent.providers.message_utils import (
+    _with_system_cache_control,
+    merge_openai_system_messages,
+)
 from agent.context.assembly import PromptMessages, reminder
 
 
@@ -30,6 +33,26 @@ def test_first_diff_is_structural_and_diagnostics_are_digest_only():
     before = [{"role": "user", "content": "old"}, {"role": "system", "content": "time"}]
     after = [{"role": "user", "content": "old"}, {"role": "system", "content": "new"}]
     assert first_diff_index(before, after) == 1
+
+
+def test_provider_projection_keeps_cache_state_outside_prompt_messages():
+    source = PromptMessages([
+        {"role": "user", "content": [{"type": "text", "text": "历史"}]},
+        {"role": "user", "content": [{"type": "text", "text": "本轮请求"}]},
+    ])
+
+    first_projection = render_events_for_provider(source)
+    first_cached, state = _with_history_cache(first_projection)
+    assert not hasattr(source, "cache_anchor_indices")
+
+    source.append({"role": "assistant", "content": [{"type": "tool_use", "name": "weather"}]})
+    source.append({"role": "user", "content": [{"type": "tool_result", "content": "ok"}]})
+    second_projection = render_events_for_provider(source)
+    second_cached, next_state = _with_history_cache(second_projection, state)
+
+    assert state.baseline_digest
+    assert next_state.baseline_digest == state.baseline_digest
+    assert next_state.latest_digest
     messages = build_messages(
         fixed_parts=[{"role": "system", "content": "stable"}],
         history=[],
@@ -43,10 +66,10 @@ def test_first_diff_is_structural_and_diagnostics_are_digest_only():
         api_format="openai",
     )
     assert result["first_diff_index"] is None
-    assert result["wire_message_count"] == 3
-    assert len(result["wire_message_diagnostics"]) == 3
+    assert result["wire_message_count"] == 2
+    assert len(result["wire_message_diagnostics"]) == 2
     assert result["wire_role_sequence_digest"]
-    assert result["wire_conversation_message_count"] == 3
+    assert result["wire_conversation_message_count"] == 2
     assert result["wire_turn_batch_count"] == 0
     assert result["wire_total_token_estimate"] >= 3
     assert result["wire_message_diagnostics"][-1]["cumulative_token_estimate"] == result[
@@ -204,7 +227,6 @@ def test_tool_continuation_promotes_tail_without_reordering_cache_prefix():
     )
     first_wire = render_events_for_provider(messages)
     old_prefix = [dict(item) for item in first_wire[:3]]
-    messages.remember_cache_anchor(2)
 
     # 模拟工具续轮：新增消息必须追加到当前 batch 后面。
     messages.append({
@@ -218,7 +240,6 @@ def test_tool_continuation_promotes_tail_without_reordering_cache_prefix():
     second_wire = render_events_for_provider(messages)
 
     assert second_wire[:3] == old_prefix
-    assert messages.cache_anchor_indices == [2]
     assert messages.newly_appended(3) == second_wire[3:]
 
 
@@ -231,15 +252,15 @@ def test_history_cache_copy_preserves_dynamic_tail_boundary():
         reminder("当前时间：2026-08-30（星期日）"),
     ])
 
-    cached = _with_single_history_cache(render_events_for_provider(prompt))
+    cached, state = _with_single_history_cache(render_events_for_provider(prompt))
 
     assert isinstance(cached, PromptMessages)
     assert cached.dynamic_tail == prompt.dynamic_tail
     assert cached.conversation[0] == prompt.conversation[0]
     assert cached.conversation[1]["content"][0]["text"] == "上一轮问题"
-    stable_limit, anchors = _history_cache_state(cached)
-    assert stable_limit == 2
-    assert all(index < stable_limit for index in anchors)
+    plan = _history_cache_state(cached, state)
+    assert plan.stable_limit == 2
+    assert all(index < plan.stable_limit for index in plan.anchor_indices)
     assert not any("cache_control" in block
                    for message in cached.dynamic_tail
                    for block in (message.get("content") or [])
@@ -286,12 +307,12 @@ def _assert_dynamic_tail_is_uncached(cached, original):
 def test_anthropic_history_cache_keeps_conversation_after_cache_cutoff_and_excludes_tail():
     prompt = _prompt_with_volatile_image_and_dynamic_tail()
 
-    cached = _with_history_cache(render_events_for_provider(prompt))
+    cached, state = _with_history_cache(render_events_for_provider(prompt))
 
     _assert_dynamic_tail_is_uncached(cached, prompt)
-    stable_limit, anchors = _history_cache_state(cached)
-    assert stable_limit == 2
-    assert all(index < stable_limit for index in anchors)
+    plan = _history_cache_state(cached, state)
+    assert plan.stable_limit == 2
+    assert all(index < plan.stable_limit for index in plan.anchor_indices)
     assert "cache_control" in cached.conversation[1]["content"][0]
 
 
@@ -300,12 +321,12 @@ def test_openai_cache_markers_stay_in_conversation_and_are_removed_from_tail():
 
     projected = render_events_for_provider(prompt)
     system_cached = _with_system_cache_control(projected)
-    cached = _with_single_history_cache(system_cached)
+    cached, state = _with_single_history_cache(system_cached)
 
     _assert_dynamic_tail_is_uncached(cached, prompt)
-    stable_limit, anchors = _history_cache_state(cached)
-    assert stable_limit == 2
-    assert all(index < stable_limit for index in anchors)
+    plan = _history_cache_state(cached, state, single_anchor=True)
+    assert plan.stable_limit == 2
+    assert all(index < plan.stable_limit for index in plan.anchor_indices)
     assert "cache_control" in cached.conversation[0]["content"][0]
     assert "cache_control" in cached.conversation[1]["content"][0]
 
@@ -319,9 +340,9 @@ def test_single_history_cache_replaces_old_anchor_instead_of_emitting_two():
         {"role": "user", "content": "latest"},
     ])
 
-    cached = _with_single_history_cache(messages)
+    cached, state = _with_single_history_cache(messages)
 
-    assert messages.cache_anchor_indices == [4]
+    assert state.latest_digest
     assert "cache_control" in cached[4]["content"][0]
     assert not isinstance(cached[1].get("content"), list)
 
@@ -336,3 +357,40 @@ def test_system_cache_control_does_not_mutate_history():
 
     assert "cache_control" not in messages[0]["content"][0]
     assert outbound[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_openai_system_messages_merge_at_request_boundary_without_mutating_history():
+    messages = PromptMessages([
+        {"role": "system", "content": "基础人格"},
+        {"role": "system", "content": "session snapshot"},
+        {"role": "user", "content": "当前问题"},
+    ], fixed_prefix_size=2)
+    messages.set_dynamic_tail([reminder("当前时间：当前时间")])
+
+    outbound = merge_openai_system_messages(messages)
+
+    assert isinstance(outbound, PromptMessages)
+    assert outbound.conversation == [
+        {"role": "system", "content": "基础人格\n\n---\n\nsession snapshot"},
+        {"role": "user", "content": "当前问题"},
+    ]
+    assert outbound.dynamic_tail == messages.dynamic_tail
+    assert outbound.fixed_prefix_size == 1
+    assert list(messages) == [
+        {"role": "system", "content": "基础人格"},
+        {"role": "system", "content": "session snapshot"},
+        {"role": "user", "content": "当前问题"},
+        *messages.dynamic_tail,
+    ]
+
+
+def test_openai_system_messages_after_user_are_moved_into_one_leading_system():
+    outbound = merge_openai_system_messages([
+        {"role": "system", "content": "基础人格"},
+        {"role": "user", "content": "历史问题"},
+        {"role": "system", "content": "工具守卫"},
+        {"role": "user", "content": "继续"},
+    ])
+
+    assert [message["role"] for message in outbound] == ["system", "user", "user"]
+    assert outbound[0]["content"] == "基础人格\n\n---\n\n工具守卫"

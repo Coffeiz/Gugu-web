@@ -462,7 +462,7 @@ def test_history_cache_boundary_uses_batch_messages():
         {"role": "user", "content": [{"type": "text", "text": "stance"}]},
         {"role": "user", "content": [{"type": "text", "text": "time"}]},
     ]))
-    cached = _with_history_cache(messages)
+    cached, _state = _with_history_cache(messages)
     assert "cache_control" in cached[2]["content"][0]
     assert newly_appended([{"role": "user", "content": "old"}, {"role": "assistant", "content": "new"}], 1)[0]["content"] == "new"
 
@@ -475,10 +475,10 @@ def test_history_cache_keeps_previous_checkpoint_across_round_append():
         ],
     )
 
-    first = _with_history_cache(messages)
+    first, state = _with_history_cache(messages)
     messages.append({"role": "assistant", "content": [{"type": "text", "text": "tool call"}]})
     messages.append({"role": "user", "content": [{"type": "text", "text": "tool result"}]})
-    second = _with_history_cache(messages)
+    second, _next_state = _with_history_cache(messages, state)
 
     assert "cache_control" in second[3]["content"][0]
     assert "cache_control" in second[0]["content"][0]
@@ -492,12 +492,11 @@ def test_history_cache_keeps_baseline_when_tool_continuation_appends():
         {"role": "user", "content": [{"type": "text", "text": "本轮请求"}]},
     ])
 
-    _with_history_cache(messages)
+    _first, state = _with_history_cache(messages)
     messages.append({"role": "assistant", "content": [{"type": "tool_use", "name": "ask_user"}]})
     messages.append({"role": "user", "content": [{"type": "tool_result", "content": "已选择"}]})
-    cached = _with_history_cache(messages)
+    cached, _next_state = _with_history_cache(messages, state)
 
-    assert messages.cache_anchor_indices == [0, 3]
     assert "cache_control" in cached[0]["content"][0]
     assert "cache_control" in cached[3]["content"][0]
     assert "cache_control" not in cached[1]["content"][0]
@@ -534,7 +533,7 @@ def test_single_history_cache_keeps_only_latest_history_anchor():
             {"role": "user", "content": "最新锚点"},
         ],
     )
-    cached = _with_single_history_cache(messages)
+    cached, _state = _with_single_history_cache(messages)
 
     assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}

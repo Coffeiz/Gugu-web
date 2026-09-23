@@ -28,6 +28,29 @@ def test_admin_im_preview_maps_scope_to_reflection_task_type():
     assert _im_preview_task_type("platform-user") == "member-batch"
 
 
+def test_private_platform_user_reflection_is_not_scheduled_for_owner():
+    """owner 私聊保留统一 owner 反思，不重复进入成员私聊记忆任务。"""
+    from agent.im.loop import _should_observe_private_member_activity
+    from agent.models import AgentRequest
+
+    def request(role, *, enabled=True, chat_id=None):
+        return AgentRequest(
+            message="你好",
+            user_id="test-user",
+            user_name="小北",
+            im_role=role,
+            platform_user_id="platform-user-1",
+            im_member_memory_enabled=enabled,
+            chat_id=chat_id,
+        )
+
+    assert _should_observe_private_member_activity(request("member"))
+    assert not _should_observe_private_member_activity(request("owner"))
+    assert not _should_observe_private_member_activity(request("unknown"))
+    assert not _should_observe_private_member_activity(request("member", enabled=False))
+    assert not _should_observe_private_member_activity(request("member", chat_id="group-1"))
+
+
 def test_memory_scope_rejects_path_traversal():
     from agent.memory.scopes import MemoryScope
 

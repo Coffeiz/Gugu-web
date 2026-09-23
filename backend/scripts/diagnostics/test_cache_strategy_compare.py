@@ -79,7 +79,6 @@ async def make_llm_request(messages, system_text, mark_all_cache=False):
         client.messages.create,
         model="minimax-m3-7b-beta",
         max_tokens=100,
-        temperature=0.7,
         system=system_blocks,
         messages=prepared_messages
     )

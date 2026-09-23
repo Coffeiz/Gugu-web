@@ -212,6 +212,8 @@ async def _openai(
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     adapter = providers.adapter_for(ai)
+    from agent.providers.message_utils import merge_openai_system_messages
+    kwargs["messages"] = merge_openai_system_messages(kwargs["messages"])
     if tools:
         # 与主 run 同款：OpenAI 兼容端要把工具声明一起发，才能命中同一份前缀缓存。
         kwargs.update(adapter.build_tool_params(ai, tools))
