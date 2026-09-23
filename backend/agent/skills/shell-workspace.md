@@ -39,7 +39,7 @@ related_tools: shell, run_script, list_workspaces, create_workspace, unlink_work
 - `run_script` 不接受 positional `args` 数组；脚本应读取执行器注入的环境变量：
   `GUGU_SCRIPT_ROOT`、`GUGU_SCRIPT_PATH`、`GUGU_WORKSPACE`，以及权限允许时的
   `GUGU_PERSONAL`、`GUGU_PROJECT`。这些变量只描述本轮可见挂载点，不包含密钥。
-- Autopilot 开启且执行器判定当前沙盒权限满足时，`run_script` 可跳过交互确认；这不扩大
+- 自动模式开启且执行器判定当前沙盒权限满足时，`run_script` 可跳过交互确认；这不扩大
   沙盒范围，也不绕过脚本路径、解释器、配额、审计和执行器校验。未满足条件时仍需确认。
 - system 范围使用宿主机执行器，开启后可访问宿主机路径和本机已有运行时；危险命令仍必须
   经过确认，system 开关不等于危险操作预授权。
