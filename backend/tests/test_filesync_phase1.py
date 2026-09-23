@@ -692,9 +692,9 @@ async def test_reconcile_stat_cache_skips_rehash(db, user_a, monkeypatch, tmp_pa
     calls = {"count": 0}
     real_fingerprint = reconcile._fingerprint
 
-    def counting_fingerprint(path):
+    def counting_fingerprint(path, **kwargs):
         calls["count"] += 1
-        return real_fingerprint(path)
+        return real_fingerprint(path, **kwargs)
 
     monkeypatch.setattr(reconcile, "_fingerprint", counting_fingerprint)
     second = await reconcile.reconcile_local_directory(db, user_a.id, use_stat_cache=True)
