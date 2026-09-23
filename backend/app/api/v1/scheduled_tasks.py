@@ -479,6 +479,7 @@ async def request_task_filesystem_authorization(
     pending = confirm.needs_confirmation(
         args, summary, user.id, identity=f"scheduled-task:filesystem:{task.id}", ttl_minutes=10,
         instruction="确认后，该定时任务每次运行都可读写用户沙箱；不包含宿主机目录。",
+        purpose=confirm.AUTHORIZATION,
     )
     if pending is None:
         return {"status": "authorized", "task_id": task.id}
@@ -517,6 +518,7 @@ async def confirm_task_filesystem_authorization(
     pending = confirm.needs_confirmation(
         args, _task_authorization_summary(task), user.id,
         identity=f"scheduled-task:filesystem:{task.id}", ttl_minutes=10,
+        purpose=confirm.AUTHORIZATION,
     )
     if pending is not None:
         raise HTTPException(400, "授权确认不匹配，请重新确认")

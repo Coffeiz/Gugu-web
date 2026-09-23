@@ -17,9 +17,7 @@ from app.services.interactions import (
     consume_custom_text,
     consume_text,
     create_agent_prompt,
-    create_goal_mode_prompt,
     create_tool_confirmation,
-    create_tool_budget_prompt,
     create_prompt,
     CUSTOM_REPLY_OPTION_ID,
     list_history,
@@ -412,40 +410,6 @@ async def test_system_prompt_cannot_enable_custom_reply(db, user_a):
     assert prompt.schema_json["allow_text_input"] is False
     with pytest.raises(ValueError, match="不接受文本回答"):
         await consume_text(db, user_id=user_a.id, prompt_id=prompt.id, text="绕过确认")
-
-
-async def test_round_limit_prompt_only_resumes_current_run_without_persisting_unlimited(db, user_a):
-    session = ConversationSession(user_id=user_a.id, title="轮次上限交互", source="web")
-    db.add(session)
-    await db.commit()
-
-    prompt, actions = await create_goal_mode_prompt(user_id=user_a.id, session_id=session.id)
-    assert prompt.kind == "choice"
-    assert [item["id"] for item in actions] == ["continue", "cancel"]
-    assert all("tool_call_id" not in item for item in actions)
-
-    result = await consume_action(
-        db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-goal"
-    )
-    await db.refresh(session)
-    assert result["context"] == {"run_unlimited": True}
-    assert session.session_context is None
-
-
-async def test_tool_budget_prompt_enables_unlimited_without_goal_loop(db, user_a):
-    session = ConversationSession(user_id=user_a.id, title="步骤上限交互", source="web")
-    db.add(session)
-    await db.commit()
-
-    prompt, actions = await create_tool_budget_prompt(user_id=user_a.id, session_id=session.id)
-    assert [item["id"] for item in actions] == ["continue", "cancel"]
-    await consume_action(
-        db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-budget"
-    )
-    await db.refresh(session)
-    assert "unlimited_mode" not in (session.session_context or {})
-    expires_at = session.session_context["tool_budget_unlimited_until"]
-    assert now_utc() + timedelta(minutes=29) < datetime.fromisoformat(expires_at)
 
 
 async def test_confirmation_button_grants_server_side_authorization(db, user_a):

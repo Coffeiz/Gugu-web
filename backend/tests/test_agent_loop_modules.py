@@ -8,42 +8,6 @@ from agent.loop.events import EventSequencer, artifact_sse
 from agent.loop.models import PendingInteraction, RoundOutcome, RunState
 
 
-MAX_ABS = 100
-
-
-# ── rounds.round_budget_action ────────────────────────────────────────────────
-
-def _budget(**overrides):
-    kwargs = dict(
-        round_number=1, verify_mode=False, task_rounds=0, verify_rounds=0,
-        unlimited_mode=False, max_rounds=3, max_verify_rounds=2,
-        max_absolute_rounds=MAX_ABS,
-    )
-    kwargs.update(overrides)
-    return rounds.round_budget_action(**kwargs)
-
-
-def test_absolute_limit_cannot_be_lifted_by_unlimited_mode():
-    """FR-LLM25-008：绝对安全上限不受 unlimited 影响。"""
-    assert _budget(round_number=100, unlimited_mode=True) is rounds.RoundBudgetAction.ABSOLUTE_LIMIT
-    assert _budget(round_number=99, unlimited_mode=True) is rounds.RoundBudgetAction.CONTINUE
-
-
-def test_task_limit_only_in_normal_mode():
-    assert _budget(task_rounds=3) is rounds.RoundBudgetAction.TASK_LIMIT
-    assert _budget(task_rounds=3, unlimited_mode=True) is rounds.RoundBudgetAction.CONTINUE
-    assert _budget(task_rounds=2) is rounds.RoundBudgetAction.CONTINUE
-    assert _budget(task_rounds=5, max_rounds=None) is rounds.RoundBudgetAction.CONTINUE
-
-
-def test_verify_limit_has_independent_budget():
-    assert _budget(verify_mode=True, verify_rounds=2) is rounds.RoundBudgetAction.VERIFY_LIMIT
-    assert _budget(verify_mode=True, verify_rounds=2, unlimited_mode=True) is rounds.RoundBudgetAction.CONTINUE
-    assert _budget(verify_mode=True, verify_rounds=5, max_verify_rounds=None) is rounds.RoundBudgetAction.CONTINUE
-    # verify 与 task 计数互不干扰
-    assert _budget(verify_mode=True, task_rounds=99, verify_rounds=0) is rounds.RoundBudgetAction.CONTINUE
-
-
 # ── rounds.usage_compaction_due / overflow ───────────────────────────────────
 
 def test_usage_compaction_due_uses_threshold_and_no_progress_guard():
@@ -83,11 +47,6 @@ def test_overflow_recovery_plan_is_single_shot():
     assert plan.should_retry and plan.reason == "deterministic_fallback"
     plan = rounds.overflow_recovery_plan(hard_budget_retries=0, compaction_succeeded=False, fallback_succeeded=False)
     assert not plan.should_retry and plan.reason == "exhausted"
-
-
-def test_retry_rounds_delta_by_mode():
-    assert rounds.retry_rounds_delta(True) == (-1, 0)
-    assert rounds.retry_rounds_delta(False) == (0, -1)
 
 
 # ── models ────────────────────────────────────────────────────────────────────
@@ -144,19 +103,10 @@ def test_classifier_aborted_without_option_id():
 
 def test_classifier_expired_and_resume_and_resolved():
     assert classify_interaction_answer(None) == "expired"
-    assert classify_interaction_answer({"option_id": "continue"}) == "resume_unlimited"
-    assert classify_interaction_answer({"option_id": "goal"}) == "resume_unlimited"
+    assert classify_interaction_answer({"option_id": "continue"}) == "resolved"
+    assert classify_interaction_answer({"option_id": "goal"}) == "resolved"
     assert classify_interaction_answer({"option_id": "answer", "text": "x"}) == "resolved"
     assert classify_interaction_answer("文本回答") == "resolved"
-
-
-def test_unlimited_resume_still_blocked_by_absolute_limit():
-    """LLM25-011：resume_unlimited 只清业务计数；绝对上限判定独立于 unlimited。"""
-    assert rounds.round_budget_action(
-        round_number=100, verify_mode=False, task_rounds=0, verify_rounds=0,
-        unlimited_mode=True, max_rounds=None, max_verify_rounds=None,
-        max_absolute_rounds=MAX_ABS,
-    ) is rounds.RoundBudgetAction.ABSOLUTE_LIMIT
 
 
 def test_watchdog_round_summary_is_structured_and_does_not_log_tool_values(caplog):
@@ -176,7 +126,6 @@ def test_watchdog_round_summary_is_structured_and_does_not_log_tool_values(caplo
             requires_tools=True,
             verify_mode=False,
             goal_mode=False,
-            unlimited_mode=True,
             task_rounds=7,
             verify_rounds=0,
             tool_calls_used=6,
@@ -192,27 +141,6 @@ def test_watchdog_round_summary_is_structured_and_does_not_log_tool_values(caplo
     assert "cat secret-token.txt" not in caplog.records[-1].message
 
 
-def test_watchdog_stop_records_budget_loop_reason(caplog):
-    import json
-    import logging
-
-    from agent.loop import watchdog
-
-    with caplog.at_level(logging.INFO, logger="agent.traj"):
-        watchdog.record_stop(
-            run_id="run-test",
-            round_number=100,
-            reason="tool_budget_stop_loop",
-            budget_stop_rounds=2,
-            tool_calls_used=10,
-        )
-
-    record = json.loads(caplog.records[-1].message)
-    assert record["event"] == "stop"
-    assert record["reason"] == "tool_budget_stop_loop"
-    assert record["budget_stop_rounds"] == 2
-
-
 def test_watchdog_does_not_echo_polluted_tool_name(caplog):
     import logging
 
@@ -226,7 +154,6 @@ def test_watchdog_does_not_echo_polluted_tool_name(caplog):
             requires_tools=True,
             verify_mode=False,
             goal_mode=False,
-            unlimited_mode=False,
             task_rounds=1,
             verify_rounds=0,
             tool_calls_used=1,

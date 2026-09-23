@@ -11,7 +11,6 @@
 | `/status` | 查看当前执行状态 | 否 | 否 |
 | `/compact` | 立即整理当前会话上下文 | 否 | 是，会写入压缩结果 |
 | `/goal <目标>` | 创建或管理持续推进的目标任务 | 创建目标后进入 Agent | 是 |
-| `/unlimited` | 开启或关闭当前会话的无限工具调用模式 | 否 | 是 |
 | `/new` | 清空当前会话上下文并开始新对话 | 否 | 是 |
 | `/memory` | 查看个人长期记忆 | 否 | 否 |
 | `/forget <内容>` | 删除匹配的个人记忆 | 否 | 是 |
@@ -53,17 +52,6 @@
 /goal pause
 /goal resume
 /goal cancel
-```
-
-### `/unlimited`
-
-切换当前会话的无限工具调用模式。它只解除普通任务的工具调用次数限制，仍保留 `/stop`、上下文预算和服务超时保护。
-
-```text
-/unlimited
-/unlimited on
-/unlimited off
-/unlimited status
 ```
 
 ### `/new`
@@ -138,7 +126,7 @@ Shell 工具默认关闭。要让咕咕执行工作区命令，必须同时满�
 
 命令分为两层：
 
-- **确定性控制命令**：`/stop`、`/status`、`/help`、`/compact`、`/memory`、`/forget`、`/workspace`、`/unlimited`、`/new`，在主 Agent Loop 前处理；
+- **确定性控制命令**：`/stop`、`/status`、`/help`、`/compact`、`/memory`、`/forget`、`/workspace`、`/new`，在主 Agent Loop 前处理；
 - **目标命令**：`/goal <目标>` 会先写入会话目标状态，再进入正常 Agent runner；其状态管理子命令仍由命令处理器直接处理。
 
 这些命令都不会把命令文本交给模型。普通文本、未知的斜杠文本和不完整命令会继续走正常对话流程。

@@ -19,6 +19,7 @@ from app.core.config import get_settings
 from app.core import chat_attach
 from app.core.tz import set_ctx_tz
 from app.models import ConversationMessage, ConversationSession
+from agent.errors import describe_llm_error
 from agent.security import sanitize
 from agent.security.logsafe import fingerprint
 from agent.llm import genstream
@@ -30,16 +31,6 @@ from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user
-
-
-def _is_network_error(e: BaseException) -> bool:
-    """LLM 服务商连接/超时类错误（与逻辑性 bug 区分，给"网络不好"文案）。
-    用类型+字符串双判，免得为各家 SDK 一一导入异常类。"""
-    if isinstance(e, (ConnectionError, TimeoutError)):
-        return True
-    blob = f"{type(e).__module__}.{type(e).__name__} {e}".lower()
-    return any(k in blob for k in ("timeout", "connect", "network", "ssl",
-                                   "econnreset", "read operation"))
 
 
 async def _publish_session_append(req: AgentRequest, session_id: int,
@@ -231,7 +222,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     )
     if command_name == "compact":
         yield f"data: {json.dumps({'type': '_context_compaction', 'phase': 'completed', 'reason': 'manual_compact'})}\n\n"
-    if command_name in {"goal", "unlimited"}:
+    if command_name == "goal":
         async with _sess._SessionLocal() as state_db:
             state_session = await state_db.get(ConversationSession, session_id)
             state_context = state_session.session_context if state_session and isinstance(state_session.session_context, dict) else {}
@@ -1079,22 +1070,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     except BaseException as e:
         generation_failed = True
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
-        is_network_error = _is_network_error(e)
-        from agent.providers.errors import is_provider_http_error, upstream_status_tag
-        provider_error = is_provider_http_error(e)
-        provider_tag = upstream_status_tag(e) if provider_error else ""
-        msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
-               else f"模型服务暂时不可用（上游 {provider_tag}），请稍后重试。" if provider_error
-               else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
-        message_key = ("chatUi.networkError" if is_network_error
-                       else "chatUi.providerUnavailable" if provider_error
-                       else "chatUi.genericError")
-        await _pub({
-            "type": "error",
-            "message": msg,
-            "message_key": message_key,
-            "message_params": {"tag": provider_tag},
-        })
+        await _pub(describe_llm_error(e).as_event())
     finally:
         # LoopScope 正常由 genstream 的 done/error 事件收尾；事件发布前异常、
         # Redis 发布失败或后台任务被提前终止时，仍需提交一个终态，避免该 run
@@ -1264,23 +1240,10 @@ async def _finalize_preflight_failure(session_id, model_cfg=None, error=None,
             session_id, type(error).__name__,
             exc_info=(type(error), error, error.__traceback__),
         )
-        is_network_error = _is_network_error(error)
-        from agent.providers.errors import is_provider_http_error, upstream_status_tag
-        provider_error = is_provider_http_error(error)
-        provider_tag = upstream_status_tag(error) if provider_error else ""
-        message = ("咕咕网络不太好 📡 可以再发一遍吗？" if is_network_error
-                   else f"模型服务暂时不可用（上游 {provider_tag}），请稍后重试。" if provider_error
-                   else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
-        message_key = ("chatUi.networkError" if is_network_error
-                       else "chatUi.providerUnavailable" if provider_error
-                       else "chatUi.genericError")
-        await genstream.publish(session_id, {
-            "run_id": str(owner_run_id or ""),
-            "type": "error",
-            "message": message,
-            "message_key": message_key,
-            "message_params": {"tag": provider_tag},
-        })
+        await genstream.publish(
+            session_id,
+            {"run_id": str(owner_run_id or ""), **describe_llm_error(error).as_event()},
+        )
     elif cancelled:
         await genstream.publish(session_id, {
             "run_id": str(owner_run_id or ""),

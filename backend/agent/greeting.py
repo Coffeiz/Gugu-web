@@ -212,6 +212,8 @@ async def _generate_uncached(db: AsyncSession, user_id, settings, *, locale: str
 
 async def generate(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:
     """生成问候；同一用户同一语言十分钟内复用结果，失败 / 空 → ''。"""
+    if not getattr(getattr(settings, "agent", None), "greeting_enabled", True):
+        return ""
     locale = locale if locale in _LOCALE_INSTRUCTIONS else "zh-CN"
     cache_key = _cache_key(user_id, locale)
     try:

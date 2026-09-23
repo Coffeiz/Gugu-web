@@ -9,7 +9,6 @@ COMMAND_HELP: dict[str, str] = {
     "status": "/status　查看当前任务状态；发送 /status help 查看说明",
     "compact": "/compact　整理当前会话上下文；发送 /compact help 查看说明",
     "goal": "/goal <目标>　创建目标任务；发送 /goal help 查看说明",
-    "unlimited": "/unlimited　开启或关闭用户级无限工具调用模式；发送 /unlimited help 查看说明",
     "new": "/new　清空当前对话上下文并开始新对话；发送 /new help 查看说明",
     "memory": "/memory　查看咕咕记住的内容；发送 /memory help 查看说明",
     "forget": "/forget <text>　忘记匹配的记忆；发送 /forget help 查看说明",
@@ -41,15 +40,6 @@ COMMAND_DETAILS: dict[str, str] = {
         "/goal resume　恢复目标任务\n"
         "/goal cancel　取消目标任务\n"
         "别名：无"
-    ),
-    "unlimited": (
-        "切换当前会话的无限工具调用模式。开启后不受普通任务的工具调用次数限制，仍保留 /stop、"
-        "上下文预算和服务超时保护。\n"
-        "/unlimited　切换用户级无限工具调用\n"
-        "/unlimited on　开启无限工具调用\n"
-        "/unlimited off　关闭无限工具调用\n"
-        "/unlimited status　查看当前状态\n"
-        "无别名"
     ),
     "new": (
         "清空当前会话的消息、摘要、快照和已加载能力，开始一段新的对话。"
@@ -93,7 +83,6 @@ COMMAND_HELP_EN = {
     "status": "/status - View the current task status; send /status help for details",
     "compact": "/compact - Compact the current conversation; send /compact help for details",
     "goal": "/goal <goal> - Create a goal task; send /goal help for details",
-    "unlimited": "/unlimited - Toggle unlimited tool calls; send /unlimited help for details",
     "new": "/new - Start a new conversation; send /new help for details",
     "memory": "/memory - View saved memories; send /memory help for details",
     "forget": "/forget <text> - Forget matching memories; send /forget help for details",
@@ -106,7 +95,6 @@ COMMAND_HELP_JA = {
     "status": "/status - 現在のタスク状態を確認。詳しくは /status help",
     "compact": "/compact - 現在の会話を整理。詳しくは /compact help",
     "goal": "/goal <目標> - 目標タスクを作成。詳しくは /goal help",
-    "unlimited": "/unlimited - ツール呼び出し無制限モードを切替。詳しくは /unlimited help",
     "new": "/new - 新しい会話を開始。詳しくは /new help",
     "memory": "/memory - 保存したメモリを確認。詳しくは /memory help",
     "forget": "/forget <内容> - 一致するメモリを削除。詳しくは /forget help",
@@ -119,7 +107,6 @@ COMMAND_DETAILS_EN = {
     "status": "View the current task stage.\n/status - View the current task status\nNo aliases",
     "compact": "Compact old conversation history without creating a new session.\n/compact - Compact the current conversation\nNo aliases",
     "goal": "Create and manage a goal task.\n/goal <goal> - Create a goal\n/goal status - View the goal\n/goal pause - Pause the goal\n/goal resume - Resume the goal\n/goal cancel - Cancel the goal",
-    "unlimited": "Toggle unlimited tool calls. Stop, context budget, and service timeouts still apply.\n/unlimited - Toggle unlimited calls\n/unlimited on - Enable\n/unlimited off - Disable\n/unlimited status - View status",
     "new": "Clear messages, summaries, snapshots, and loaded capabilities, then start a new conversation.\n/new - Start a new conversation\nNo aliases",
     "memory": "View saved personal long-term memories.\n/memory - View saved memories\nAlias: /mem",
     "forget": "Delete personal memories matching the given content.\n/forget <text> - Delete matching memories\nExample: /forget I like coffee",
@@ -132,7 +119,6 @@ COMMAND_DETAILS_JA = {
     "status": "現在のタスク段階を確認します。\n/status - 現在のタスク状態を確認\n別名なし",
     "compact": "新しいセッションを作らず、古い会話履歴を整理します。\n/compact - 現在の会話を整理\n別名なし",
     "goal": "目標タスクを作成・管理します。\n/goal <目標> - 目標を作成\n/goal status - 目標を確認\n/goal pause - 一時停止\n/goal resume - 再開\n/goal cancel - キャンセル",
-    "unlimited": "ツール呼び出し無制限モードを切り替えます。停止、コンテキスト予算、タイムアウトは適用されます。\n/unlimited - 無制限モードを切替\n/unlimited on - 有効化\n/unlimited off - 無効化\n/unlimited status - 状態確認",
     "new": "メッセージ、要約、スナップショット、読み込み済み機能を消去して新しい会話を開始します。\n/new - 新しい会話を開始\n別名なし",
     "memory": "保存した個人メモリを確認します。\n/memory - 保存したメモリを確認\n別名: /mem",
     "forget": "指定内容に一致する個人メモリを削除します。\n/forget <内容> - 一致するメモリを削除",
@@ -155,7 +141,6 @@ COMMAND_MENU: dict[str, tuple[str, str, str]] = {
     "status": ("查看进度", "查看当前任务状态", "/status"),
     "compact": ("整理上下文", "压缩当前会话的旧对话", "/compact"),
     "goal": ("目标任务", "创建一个持续推进的目标", "/goal "),
-    "unlimited": ("解除工具限制", "解除当前任务的工具调用次数限制", "/unlimited"),
     "new": ("开启新对话", "清空当前对话上下文", "/new"),
     "memory": ("查看记忆", "查看咕咕记住的内容", "/memory"),
     "forget": ("忘记一条记忆", "输入要忘记的内容", "/forget "),
@@ -181,7 +166,7 @@ def all_help_text(locale: str | None = None) -> str:
     catalog = COMMAND_HELP_EN if locale_key == "en-US" else COMMAND_HELP_JA if locale_key == "ja-JP" else COMMAND_HELP
     title = "🤖 Available commands (deterministic and immediate):" if locale_key == "en-US" else "🤖 利用可能なコマンド（確定的・即時実行）:" if locale_key == "ja-JP" else "🤖 可用命令（确定性、立即生效）："
     lines = [title]
-    lines.extend(catalog[name] for name in ("stop", "status", "compact", "goal", "unlimited", "new", "memory", "forget", "workspace", "help"))
+    lines.extend(catalog[name] for name in ("stop", "status", "compact", "goal", "new", "memory", "forget", "workspace", "help"))
     return "\n".join(lines)
 
 

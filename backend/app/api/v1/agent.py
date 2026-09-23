@@ -664,6 +664,7 @@ async def request_session_filesystem_authorization(
         {}, _session_authorization_summary(session), current_user.id,
         identity=f"session:filesystem:{session.id}", ttl_minutes=10,
         instruction="确认后，该会话中的 Shell 每次运行都可读写用户沙箱；不包含宿主机目录。",
+        purpose=confirm.AUTHORIZATION,
     )
     if pending is None:
         return {"status": "authorized", "session_id": session.id}
@@ -703,6 +704,7 @@ async def confirm_session_filesystem_authorization(
     pending = confirm.needs_confirmation(
         {}, _session_authorization_summary(session), current_user.id,
         identity=f"session:filesystem:{session.id}", ttl_minutes=10,
+        purpose=confirm.AUTHORIZATION,
     )
     if pending is not None:
         raise HTTPException(400, "授权确认不匹配，请重新确认")
@@ -765,13 +767,15 @@ async def get_greeting(
     db: AsyncSession = Depends(get_db),
     locale: str = Query(default="zh-CN", pattern="^(zh-CN|ja-JP|en-US)$"),
 ):
-    """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。失败/空 → text=''，前端兜底池接手。"""
+    """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。"""
     from app.core.config import get_settings
     from app.core.tz import set_ctx_tz, user_tz
     from agent import greeting
+    settings = get_settings()
     set_ctx_tz(user_tz(current_user))
-    text = await greeting.generate(db, current_user.id, get_settings(), locale=locale)
-    return {"text": text}
+    enabled = bool(getattr(settings.agent, "greeting_enabled", True))
+    text = await greeting.generate(db, current_user.id, settings, locale=locale)
+    return {"text": text if enabled else "", "enabled": enabled}
 
 
 @router.get("/pending-queues/{queue_id}")
@@ -1010,6 +1014,15 @@ async def get_session_messages(
         # 只替换当前会话已知的成员和 Bot ID，未知 mention 保留原样。
         return replace_mention_ids(text, mention_names)
 
+    def timeline_items(message: ConversationMessage) -> list[dict]:
+        """兼容旧消息：把未写入时间线的 assistant 附件补成展示事件。"""
+        items = list(message.display_timeline or [])
+        if message.files and not any(
+            isinstance(item, dict) and item.get("files") for item in items
+        ):
+            items.append({"kind": "assistant", "text": "", "files": message.files})
+        return items
+
     workspace = await get_owned(db, Workspace, session.workspace_id, current_user.id) if session.workspace_id else None
     session_context = session.session_context if isinstance(session.session_context, dict) else {}
     active_filesystem_grant = await get_active_grant(
@@ -1063,7 +1076,7 @@ async def get_session_messages(
              "timelineOrder": item.get("timelineOrder") or m.id * 1000 + index + 1,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
-            for index, item in enumerate(m.display_timeline or [])
+            for index, item in enumerate(timeline_items(m))
         ],
         "toolEvents": [
             {**event, "timelineOrder": int(event.get("timelineOrder") or 0) * 1000,

@@ -703,6 +703,16 @@ async def prepare_request(
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
 
 
+def _should_observe_private_member_activity(request: AgentRequest) -> bool:
+    """私聊平台用户记忆只属于成员；owner 由统一 owner 反思链路处理。"""
+    return bool(
+        request.im_role == "member"
+        and not request.chat_id
+        and request.im_member_memory_enabled
+        and request.platform_user_id
+    )
+
+
 async def dispatch_im_message(payload: dict):
     """处理一条已入队 IM 消息的完整业务编排。
 
@@ -1047,14 +1057,11 @@ async def dispatch_im_message(payload: dict):
                 on_round=_show_round,
             )
             reply_text = ""
-    except BaseException:
+    except BaseException as exc:
         web_stream_failed = True
         if web_stream_started:
-            await _publish_web_event({
-                "type": "error",
-                "message": "IM 运行失败，请稍后重试。",
-                "message_key": "chatUi.genericError",
-            })
+            from agent.errors import describe_llm_error
+            await _publish_web_event(describe_llm_error(exc).as_event())
         trace.finish_run("error")
         raise
     finally:
@@ -1093,7 +1100,7 @@ async def dispatch_im_message(payload: dict):
         except Exception:
             # 记忆调度失败不影响当前回复已经完成。
             pass
-    if not req.chat_id and resp.session_id and req.im_member_memory_enabled and req.platform_user_id:
+    if resp.session_id and _should_observe_private_member_activity(req):
         try:
             from agent.memory.reflection_jobs import observe_private_member_activity
             from agent.memory.scopes import MemoryScope

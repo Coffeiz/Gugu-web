@@ -1,47 +1,14 @@
 """Round 生命周期的纯决策函数（PRD-LLM-25 LLM25-006 / FR-LLM25-008）。
 
-这里只做预算与轮次的状态**判定**，不做 IO、不 yield SSE、不读数据库；
-`core._run_loop` 把判定结果转成对应的状态转移（弹窗、收尾、继续）。
-绝对轮次安全上限在任何模式下都不可解除（FR-LLM25-008）。
+这里只做上下文压缩窗口与 provider 溢出恢复的纯**判定**，不做 IO、不 yield SSE、
+不读数据库；本模块只处理轮次压缩与溢出恢复。普通对话没有产品级轮次/工具次数上限；
+定时任务由 runner 单独限制为 100 个模型轮次和 30 次工具调用，超限交给外层重试。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 
 RUN_COMPACTION_KEEP_ROUNDS = 10
-
-
-class RoundBudgetAction(str, Enum):
-    CONTINUE = "continue"            # 允许进入下一轮
-    ABSOLUTE_LIMIT = "absolute_limit"  # 绝对轮次安全上限（不可解除）
-    VERIFY_LIMIT = "verify_limit"    # 核实轮达到业务封顶（弹窗可解除）
-    TASK_LIMIT = "task_limit"        # 普通任务轮达到业务封顶（弹窗可解除）
-
-
-def round_budget_action(
-    *,
-    round_number: int,
-    verify_mode: bool,
-    task_rounds: int,
-    verify_rounds: int,
-    unlimited_mode: bool,
-    max_rounds: int | None,
-    max_verify_rounds: int | None,
-    max_absolute_rounds: int,
-) -> RoundBudgetAction:
-    """判定当前应执行的轮次预算动作；与原 `_run_loop` 循环头逐条对应。"""
-    if round_number >= max_absolute_rounds:
-        return RoundBudgetAction.ABSOLUTE_LIMIT
-    if verify_mode:
-        if (not unlimited_mode
-                and max_verify_rounds is not None
-                and verify_rounds >= max_verify_rounds):
-            return RoundBudgetAction.VERIFY_LIMIT
-        return RoundBudgetAction.CONTINUE
-    if not unlimited_mode and max_rounds is not None and task_rounds >= max_rounds:
-        return RoundBudgetAction.TASK_LIMIT
-    return RoundBudgetAction.CONTINUE
 
 
 def usage_compaction_due(
@@ -112,8 +79,3 @@ def overflow_recovery_plan(*, hard_budget_retries: int, compaction_succeeded: bo
     if fallback_succeeded:
         return OverflowRecoveryPlan(True, "deterministic_fallback")
     return OverflowRecoveryPlan(False, "exhausted")
-
-
-def retry_rounds_delta(verify_mode: bool) -> tuple[int, int]:
-    """溢出恢复重试当前 round 时，被扣减的轮次计数增量：(verify_delta, task_delta)。"""
-    return (-1, 0) if verify_mode else (0, -1)

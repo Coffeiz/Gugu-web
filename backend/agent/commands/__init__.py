@@ -9,7 +9,6 @@ from __future__ import annotations
 from agent.commands.compact import handle as handle_compact
 from agent.commands.help import all_help_text, command_help, is_help_arg
 from agent.commands.goal import handle as handle_goal
-from agent.commands.unlimited import handle as handle_unlimited
 from agent.commands.memory import forget, show_memory
 from agent.commands.new import handle as handle_new
 from agent.commands.text import normalize_command_text
@@ -22,7 +21,6 @@ _COMMANDS: dict[str, str] = {
     "forget": "forget",
     "compact": "compact",
     "goal": "goal",
-    "unlimited": "unlimited",
     "new": "new",
     "workspace": "workspace",
     "help": "help", "h": "help",
@@ -70,8 +68,6 @@ async def handle(user_id, text: str, *, session_id: int | None = None,
         return await handle_compact(user_id, session_id, arg, locale)
     if name == "goal":
         return await handle_goal(user_id, session_id, arg, locale)
-    if name == "unlimited":
-        return await handle_unlimited(user_id, session_id, arg, locale)
     if name == "new":
         return await handle_new(user_id, session_id, arg, locale)
     if name == "workspace":
