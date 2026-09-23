@@ -14,17 +14,6 @@ const appImage = `docker.io/coffeiz/gugu-web@sha256:${'a'.repeat(64)}`
 const dockerMock = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$MOCK_DOCKER_LOG"
-if [[ "$1" == inspect ]]; then
-  if [[ "$*" == *'/var/run/docker.sock'* ]]; then
-    printf '%s\\n' "\${MOCK_SOCKET_SOURCE:-/tmp/docker.sock}"
-  else
-    printf '%s\\n' "\${MOCK_DATA_SOURCE:-/tmp}"
-  fi
-  exit 0
-fi
-if [[ "$1" == run ]]; then
-  exit 0
-fi
 if [[ "$1" == image && "$2" == inspect ]]; then
   printf '%s\\n' 'coffeiz/gugu-web@sha256:${'b'.repeat(64)}'
   exit 0
@@ -142,43 +131,6 @@ function runUpdate(
   })
 }
 
-test('app 更新会把 stop/recreate 交给独立 helper，避免 self-stop 截断脚本', () => {
-  const fixture = createFixture()
-  try {
-    const result = runUpdate(fixture, { GUGU_UPDATE_HELPER_IMAGE: appImage })
-    assert.equal(result.status, 75, result.stderr)
-    const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /run .*--label com\.coffeiz\.gugu\.update-helper=true/)
-    assert.match(log, /--entrypoint \/bin\/bash/)
-    assert.match(log, /--env GUGU_DB_PASSWORD/)
-    assert.match(log, /--env GUGU_DB_USER/)
-    assert.match(log, /--env GUGU_DB_NAME/)
-    assert.match(log, /source=\/run\/user\/1000\/docker\.sock,target=\/var\/run\/docker\.sock/)
-    assert.doesNotMatch(log, /compose stop app/)
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true })
-  }
-})
-
-test('独立 helper 只在旧 app 持久化 handoff 后继续更新', () => {
-  const fixture = createFixture()
-  const manifestPath = path.join(fixture.root, 'manifest.json')
-  fs.writeFileSync(`${manifestPath}.handoff`, 'ready\n')
-  try {
-    const result = runUpdate(fixture, {
-      GUGU_UPDATE_HELPER: '1',
-      GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE: `${manifestPath}.handoff`,
-    })
-    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${fs.existsSync(fixture.dockerLog) ? fs.readFileSync(fixture.dockerLog, 'utf8') : ''}`)
-    const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /compose .* stop app/)
-    assert.doesNotMatch(log, /docker run/)
-    assert.equal(fs.existsSync(`${manifestPath}.handoff`), false)
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true })
-  }
-})
-
 test('更新器从独立代码目录运行时仍使用部署目录和固定校验器', () => {
   const fixture = createFixture()
   const updaterCode = fs.mkdtempSync(path.join(os.tmpdir(), 'gugu-updater-code-'))
@@ -205,11 +157,15 @@ test('更新器从独立代码目录运行时仍使用部署目录和固定校�
 test('只更新一体化 app，并在同镜像 sandboxd 运行时同步更新', () => {
   const fixture = createFixture()
   try {
-    const result = runUpdate(fixture)
+    // 即使旧环境残留 helper 配置，RPC updater 也必须直接执行 Compose 更新主体。
+    const result = runUpdate(fixture, { GUGU_UPDATE_HELPER_IMAGE: appImage })
     assert.equal(result.status, 0, result.stderr)
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
     assert.match(log, /pull app sandboxd/)
     assert.match(log, /up -d --no-deps --force-recreate app sandboxd/)
+    assert.match(log, /compose .* stop app sandboxd/)
+    assert.doesNotMatch(log, /docker run/)
+    assert.doesNotMatch(log, /docker inspect/)
     assert.doesNotMatch(log, /gugu-web-(?:backend|frontend)/)
 
     const backupRoot = path.join(fixture.root, 'backup')

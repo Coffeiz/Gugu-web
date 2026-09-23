@@ -265,7 +265,6 @@ test('隔离 Compose 栈完成一体化 app 更新并保留数据库、配置与
       BACKUP_ROOT: path.join(root, 'backup'),
       UPDATE_VALIDATOR: path.join(releaseDir, 'validate-update-manifest.mjs'),
       UPDATE_SCHEMA: path.join(repositoryRoot, 'deploy/update-manifest.schema.json'),
-      GUGU_UPDATE_HELPER: '1',
       GUGU_DB_PASSWORD: 'synthetic',
       GUGU_DB_USER: 'e2e',
       GUGU_DB_NAME: 'e2e',

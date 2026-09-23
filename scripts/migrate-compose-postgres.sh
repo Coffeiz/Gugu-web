@@ -34,6 +34,10 @@ if [[ -e "$destination" || -e "$redis_destination" ]]; then
     exit 1
 fi
 
+# 先迁旧应用配置，确保配置合并失败时不会留下数据库导出物并阻断后续重试。
+bash "$(dirname "$0")/migrate-compose-env.sh" \
+    "$project_dir/backend/.env" "$data_source/.env"
+
 temporary="$(mktemp "$(dirname "$destination")/.legacy-postgres.XXXXXX")"
 redis_temporary="$(mktemp "$(dirname "$destination")/.legacy-redis.XXXXXX")"
 trap 'rm -f "$temporary" "$redis_temporary"' EXIT

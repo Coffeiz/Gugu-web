@@ -1089,8 +1089,6 @@ class UpdateDaemon:
                 "UPDATE_SCHEMA": str(self.manifest_schema),
                 # Compose 脚本先记录旧镜像，再从签名 manifest 切换到新 digest。
                 "GUGU_WEB_IMAGE": str(self.state["task"]["previous_image"]),
-                # 用 manifest 已校验的目标镜像启动 helper；helper 必须包含 handoff 等待逻辑。
-                "GUGU_UPDATE_HELPER_IMAGE": str(candidate["app_image"]),
             })
             manifest_path = temp_dir / MANIFEST_NAME
             manifest_path.write_bytes(manifest_bytes)

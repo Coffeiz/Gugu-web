@@ -205,7 +205,7 @@ async def _dispatch(msg_id: str, payload: dict):
     except Exception:
         fresh = True
     if not fresh:
-        await _ack_inbound(msg_id)
+        # imseen 在首次派发时即创建；重复 claim 不代表原处理已完成，不能提前 XACK。
         return
     key = conversation_key(payload)
     if not key.scope_id:
@@ -279,6 +279,9 @@ async def run_once(block_ms: int = 5000) -> int:
         return 0
     # 先回收崩溃 worker 的遗留（>60s 未 ack），再收新消息，合计不超过空闲槽
     msgs = list(await R.claim_stale(STREAM, GROUP, CONSUMER, min_idle_ms=60000, count=free))
+    # XAUTOCLAIM 也可能返回本进程仍在处理的长任务。它们继续占用准入槽，
+    # 但不应重复派发；过滤后空出的槽可用于读取新的消息。
+    msgs = [item for item in msgs if item[0] not in _pending_message_ids]
     need = free - len(msgs)
     if need > 0:
         msgs += await R.consume(STREAM, GROUP, CONSUMER, count=need, block_ms=block_ms)

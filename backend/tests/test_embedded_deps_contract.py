@@ -55,6 +55,16 @@ def test_legacy_compose_migration_script_requires_quiesced_app_and_exports_both_
     assert "docker compose" in script
     assert "down -v" not in script
     assert "volume rm" not in script
+    assert "migrate-compose-env.sh" in script, "旧 Compose 迁移必须同时迁移 backend/.env"
+
+
+def test_failed_legacy_postgres_import_is_transactional_and_retryable():
+    entrypoint = (REPO_ROOT / "backend" / "docker-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "legacy-postgres.importing" in entrypoint
+    assert "LEGACY_PG_IMPORTING" in entrypoint
+    assert "--single-transaction" in entrypoint
+    assert 'rm -f -- "$LEGACY_PG_IMPORTING"' in entrypoint
 
 
 def test_single_image_entrypoint_lets_persisted_database_password_win_over_empty_image_env():

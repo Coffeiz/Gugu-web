@@ -102,6 +102,10 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
     fi
     LEGACY_PG_DUMP="$EMBED_DATA/updater/legacy-postgres.dump"
     LEGACY_PG_IMPORTED="$EMBED_DATA/updater/legacy-postgres.imported"
+    LEGACY_PG_IMPORTING="$EMBED_DATA/updater/legacy-postgres.importing"
+    if [ -s "$LEGACY_PG_IMPORTED" ] && [ -e "$LEGACY_PG_IMPORTING" ]; then
+        rm -f -- "$LEGACY_PG_IMPORTING"
+    fi
     LEGACY_REDIS_ROOT="${GUGU_LEGACY_REDISDATA_ROOT:-/legacy-redisdata}"
     LEGACY_REDIS_FOUND=0
     if [ -d "$LEGACY_REDIS_ROOT" ] && find "$LEGACY_REDIS_ROOT" -maxdepth 3 -type f -print -quit 2>/dev/null | grep -q .; then
@@ -111,10 +115,20 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
     LEGACY_REDIS_IMPORTED="$EMBED_DATA/updater/legacy-redis.imported"
     PG_INITIALIZED_NOW=0
     if [ ! -s "$EMBED_DATA/postgres/PG_VERSION" ]; then
+        if [ -s "$LEGACY_PG_IMPORTED" ]; then
+            echo "[entrypoint] 拒绝初始化空数据库：存在旧库迁移完成标记，但内置 PostgreSQL 数据目录缺失。" >&2
+            exit 1
+        fi
         if [ "$LEGACY_PGDATA_FOUND" = 1 ] && [ ! -s "$LEGACY_PG_DUMP" ]; then
             echo "[entrypoint] 拒绝初始化空数据库：检测到旧 Compose PostgreSQL 数据卷，但没有迁移备份。" >&2
             echo "  请先按 docs/quick-deploy.md 的旧 Compose 数据迁移步骤导出数据库，再启动新版 Compose。" >&2
             exit 1
+        fi
+        if [ -s "$LEGACY_PG_DUMP" ] && [ ! -s "$LEGACY_PG_IMPORTED" ]; then
+            mkdir -p "$(dirname "$LEGACY_PG_IMPORTING")"
+            date -u +%FT%TZ > "$LEGACY_PG_IMPORTING.tmp"
+            chmod 600 "$LEGACY_PG_IMPORTING.tmp"
+            mv "$LEGACY_PG_IMPORTING.tmp" "$LEGACY_PG_IMPORTING"
         fi
         echo "[entrypoint] 首次启动：初始化内置 PostgreSQL（数据目录 $EMBED_DATA/postgres）..."
         if ! su -s /bin/bash postgres -c "\"$PG_BIN/initdb\" -D '$EMBED_DATA/postgres' --username='$EMBED_DB_USER' --encoding=UTF8"; then
@@ -128,6 +142,11 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
         # 只服务本机回环 + trust 认证，无需 TLS；镜像里删掉了 snakeoil 示例证书，
         # 不显式关掉 Debian 默认的 ssl=on 会让 postgres 因证书缺失起不来。
         printf "\nssl = off\n" >> "$EMBED_DATA/postgres/postgresql.conf"
+        PG_INITIALIZED_NOW=1
+    elif [ -s "$LEGACY_PG_DUMP" ] && [ ! -s "$LEGACY_PG_IMPORTED" ] \
+        && [ -s "$LEGACY_PG_IMPORTING" ]; then
+        # 导入开始标记仅由首次初始化旧库迁移目标时写入；失败导入为单事务，
+        # 因此可在重启后安全重试，不会覆盖已有业务数据。
         PG_INITIALIZED_NOW=1
     elif [ "$LEGACY_PGDATA_FOUND" = 1 ] && [ ! -s "$LEGACY_PG_IMPORTED" ]; then
         echo "[entrypoint] 拒绝启动：/data 已有数据库，但旧 Compose PostgreSQL 数据尚未标记迁移完成。" >&2
@@ -225,7 +244,8 @@ SUPERVISEOF
         fi
         echo "[entrypoint] 正在将旧 Compose PostgreSQL 备份导入内置数据库..."
         if ! "$PG_BIN/psql" --host=127.0.0.1 --username="$EMBED_DB_USER" \
-            --dbname="$EMBED_DB_NAME" --set=ON_ERROR_STOP=1 --file="$LEGACY_PG_DUMP"; then
+            --dbname="$EMBED_DB_NAME" --set=ON_ERROR_STOP=1 --single-transaction \
+            --file="$LEGACY_PG_DUMP"; then
             echo "[entrypoint] 旧 PostgreSQL 备份导入失败；保留备份并拒绝启动应用。" >&2
             exit 1
         fi
@@ -233,6 +253,7 @@ SUPERVISEOF
         date -u +%FT%TZ > "$LEGACY_PG_IMPORTED.tmp"
         chmod 600 "$LEGACY_PG_IMPORTED.tmp"
         mv "$LEGACY_PG_IMPORTED.tmp" "$LEGACY_PG_IMPORTED"
+        rm -f -- "$LEGACY_PG_IMPORTING"
         echo "[entrypoint] 旧 PostgreSQL 数据导入完成；原数据卷和备份均未删除。"
     fi
 fi

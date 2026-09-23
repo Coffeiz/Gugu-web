@@ -96,3 +96,55 @@ async def test_run_once_keeps_unacked_backlog_out_of_process(monkeypatch):
         worker._inflight.clear()
         worker._pending_message_ids.clear()
         worker._buffered_message_ids.clear()
+
+
+async def test_run_once_does_not_redispatch_local_pending_claim_and_uses_free_slot(monkeypatch):
+    queued = [("new-msg", {"text": "synthetic"})]
+    dispatched = []
+
+    async def claim_stale(*_args, **_kwargs):
+        return [("active-msg", {"text": "already running"})]
+
+    async def consume(*_args, count, **_kwargs):
+        batch = queued[:count]
+        del queued[:count]
+        return batch
+
+    async def dispatch(msg_id, _payload):
+        dispatched.append(msg_id)
+
+    monkeypatch.setattr(worker, "R", SimpleNamespace(claim_stale=claim_stale, consume=consume))
+    monkeypatch.setattr(worker, "_max_concurrency", 1)
+    monkeypatch.setattr(worker, "_dispatch", dispatch)
+    worker._inflight.clear()
+    worker._pending_message_ids.clear()
+    worker._pending_message_ids.add("active-msg")
+    worker._buffered_message_ids.clear()
+
+    try:
+        assert await worker.run_once(block_ms=0) == 1
+        await asyncio.gather(*list(worker._inflight))
+        assert dispatched == ["new-msg"]
+        assert "active-msg" in worker._pending_message_ids
+    finally:
+        worker._inflight.clear()
+        worker._pending_message_ids.clear()
+        worker._buffered_message_ids.clear()
+
+
+async def test_imseen_duplicate_is_not_acked_while_original_handler_may_still_run(monkeypatch):
+    acknowledged = []
+
+    class Redis:
+        async def set(self, *_args, **_kwargs):
+            return False
+
+    async def ack(msg_id):
+        acknowledged.append(msg_id)
+
+    monkeypatch.setattr(worker.R, "get_redis", lambda: Redis())
+    monkeypatch.setattr(worker, "_ack_inbound", ack)
+
+    await worker._dispatch("duplicate-msg", {"text": "synthetic"})
+
+    assert acknowledged == []

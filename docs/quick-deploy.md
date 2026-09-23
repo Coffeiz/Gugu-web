@@ -68,6 +68,8 @@ COMPOSE_FILE=docker-compose.legacy.yml bash scripts/migrate-compose-postgres.sh
 
 完成后再换成新版 `docker-compose.yml` 并启动。app 首次启动会把 `Gugu-data/updater/legacy-postgres.dump` 导入新数据库，并让内置 Redis 加载 `legacy-redis.rdb`（包含快照时刻尚未处理的 Stream 消息）；任一导入失败都会保留备份并拒绝启动。请先验证账号、数据及迁移状态，再自行归档或删除敏感备份和旧卷。若旧 Compose 项目使用自定义卷名，在根目录 `.env` 分别指定 `GUGU_LEGACY_PGDATA_VOLUME` 与 `GUGU_LEGACY_REDISDATA_VOLUME`。迁移过程不会自动删除任何旧卷或备份。
 
+迁移脚本也会把旧 `backend/.env` 中新版 `Gugu-data/.env` 尚未配置的应用键补入持久化配置；新版已有值优先保留。若目标配置原已存在，脚本会先在同目录创建权限为 `0600` 的带时间戳备份。PostgreSQL 导入采用单事务，导入失败后重启会从干净事务状态重试，不需要手工删除内置数据库目录。
+
 **管理员密码不设默认值**：首次启动未设置 `ADMIN_PASSWORD` 时，会生成随机密码并写入 `Gugu-data/.env`，同时在容器日志打印一次。公网部署务必在根目录 `.env` 设置自己的强密码。
 
 fnOS、群晖等支持 Compose 项目的面板，请导入仓库根目录的 `docker-compose.yml` 并在同一项目中更新服务。数据目录仍可通过 `GUGU_DATA_HOST_DIR` 指定，但不要求填写宿主机绝对路径；sandboxd 启动时会从当前 `/data` 挂载自动解析实际路径。
