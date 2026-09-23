@@ -17,24 +17,23 @@
 git clone https://github.com/Coffeiz/Gugu-web.git
 cd Gugu-web
 cp .env.example .env
-mkdir -p backend && touch backend/.env
 ```
 
 编辑根目录 `.env`，至少修改 `GUGU_DB_PASSWORD`；`SECRET_KEY` 可以留空，首次启动会自动生成并持久化：
 
 ```dotenv
-# SECRET_KEY 可省略；首次启动自动生成并保存到 backend/.env
+# SECRET_KEY 可省略；首次启动自动生成并保存到 Gugu-data/.env
 GUGU_DB_PASSWORD=请替换为数据库密码
 ```
 
-管理员账号和密码可以写入 `backend/.env`；不设置密码时首次启动自动生成随机密码（写入 `backend/.env` 并打印在容器日志里），镜像不内置任何公开默认密码：
+管理员账号和密码可在根目录 `.env` 设置；不设置密码时首次启动自动生成随机密码（写入 `Gugu-data/.env` 并打印在容器日志里），镜像不内置任何公开默认密码：
 
 ```dotenv
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=请替换为管理员密码
 ```
 
-根目录 `.env` 只放 Compose 编排变量，例如 `GUGU_DB_PASSWORD`、端口和镜像地址；不要在根目录重复配置管理员账号密码。
+根目录 `.env` 用于 Compose 变量替换，包括数据库密码、管理员账号密码、端口和镜像地址。
 
 拉取并启动服务：
 
@@ -42,7 +41,7 @@ ADMIN_PASSWORD=请替换为管理员密码
 docker compose up -d
 ```
 
-默认 Compose 拉取包含前端、Nginx、Uvicorn、worker、IM gateway、PostgreSQL 和 Redis 的统一应用镜像；它不挂载源码，也不运行开发服务器。SearXNG、egress-proxy 和 sandboxd 由同一 Compose 项目提供。首次启动会初始化数据库并执行迁移。
+默认 Compose 拉取包含前端、Nginx、Uvicorn、worker、IM gateway、PostgreSQL 和 Redis 的统一应用镜像；它不挂载源码，也不运行开发服务器。SearXNG、egress-proxy、sandboxd 和仅持有 Docker Socket 的 updater 由同一 Compose 项目提供。app 本身不接触 Docker Socket。首次启动会初始化数据库并执行迁移。
 
 打开：<http://localhost:9595>
 
@@ -50,7 +49,26 @@ docker compose up -d
 
 升级请在同一部署目录执行 `docker compose pull && docker compose up -d`。不要删除 `Gugu-data` 和配置卷；PostgreSQL、Redis 数据也保存在 `Gugu-data` 中。
 
-**管理员密码不设默认值**：首次启动未设置 `ADMIN_PASSWORD` 时，会生成随机密码并写入 `backend/.env`，同时在容器日志打印一次。公网部署务必在 `backend/.env` 设置自己的强密码。
+### 从旧版默认 Compose（独立 PostgreSQL 服务）升级
+
+旧默认 Compose 的 PostgreSQL 与 Redis 分别在 named volume `pgdata`、`redisdata`，新版改为 app 内置数据库。Redis AOF 还保存 IM 入站 Stream，因此升级时必须同时迁移数据库和 Redis 快照；新版 Compose 会只读检查旧卷，没有迁移备份时拒绝启动，不会静默切换到空库。
+
+在替换旧 Compose 文件之前，先保存旧配置并从新版代码取得迁移脚本：
+
+```bash
+cp docker-compose.yml docker-compose.legacy.yml
+```
+
+先暂停旧 app，确保 worker/gateway 不再消费或接收消息，同时让旧 `postgres`、`redis` 保持运行；再对旧 Compose 配置执行导出（脚本要求 app 已停止，并把权限为 `0600` 的备份写入旧 app 的 `/data/updater/`）：
+
+```bash
+docker compose -f docker-compose.legacy.yml stop app
+COMPOSE_FILE=docker-compose.legacy.yml bash scripts/migrate-compose-postgres.sh
+```
+
+完成后再换成新版 `docker-compose.yml` 并启动。app 首次启动会把 `Gugu-data/updater/legacy-postgres.dump` 导入新数据库，并让内置 Redis 加载 `legacy-redis.rdb`（包含快照时刻尚未处理的 Stream 消息）；任一导入失败都会保留备份并拒绝启动。请先验证账号、数据及迁移状态，再自行归档或删除敏感备份和旧卷。若旧 Compose 项目使用自定义卷名，在根目录 `.env` 分别指定 `GUGU_LEGACY_PGDATA_VOLUME` 与 `GUGU_LEGACY_REDISDATA_VOLUME`。迁移过程不会自动删除任何旧卷或备份。
+
+**管理员密码不设默认值**：首次启动未设置 `ADMIN_PASSWORD` 时，会生成随机密码并写入 `Gugu-data/.env`，同时在容器日志打印一次。公网部署务必在根目录 `.env` 设置自己的强密码。
 
 fnOS、群晖等支持 Compose 项目的面板，请导入仓库根目录的 `docker-compose.yml` 并在同一项目中更新服务。数据目录仍可通过 `GUGU_DATA_HOST_DIR` 指定，但不要求填写宿主机绝对路径；sandboxd 启动时会从当前 `/data` 挂载自动解析实际路径。
 
@@ -86,7 +104,7 @@ docker run -d --name gugu \
 
 ## Compose 配置
 
-Compose 会读取项目根目录的 `.env` 和当前 Shell 环境变量。`backend/.env` 是唯一的应用运行配置，容器通过 `env_file` 读取；根目录 `.env` 只用于 Compose 变量替换和基础设施配置。
+默认一体化 Compose 从项目根目录 `.env` 读取编排变量，并把运行配置持久化到 `Gugu-data/.env`（挂载到容器 `/data`）。分体生产部署仍使用 `backend/.env`。两种拓扑都可由 Admin 面板的 `config.override.json`（优先级最高，运行时热合并）补充或覆盖。
 
 可以直接在项目根目录创建 `.env`，按需填写下面的 Compose 配置：
 
@@ -122,7 +140,7 @@ GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 
 默认 Compose 使用 `GUGU_WEB_IMAGE` 和 `GUGU_DB_PASSWORD`。只有需要分别管理前后端时才使用 `docker-compose.prod.yml`；从源码开发并热更新时使用 `docker-compose.dev.yml`。
 
-完整的应用配置仍放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)；根目录 `.env.example` 只包含 Compose 编排变量。
+默认一体化部署的持久化运行配置为 `Gugu-data/.env`；分体部署的应用配置放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)。根目录 `.env.example` 提供 Compose 编排变量模板。
 
 `GUGU_PUBLIC_APP_URL` 是 Nginx 公开入口与后端外部链接生成共用的配置。邮箱验证、密码重置等邮件链接都使用它；不要填写 `backend:8000`、`localhost:9595` 等容器内部地址。Nginx 会向后端转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Port` 和 `X-Forwarded-Proto`。
 
@@ -138,7 +156,9 @@ GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 
 常用配置文件：
 
-- `backend/.env`：部署环境变量和敏感配置
+- `.env`：默认 Compose 编排变量，包括可选的管理员初始账号密码
+- `Gugu-data/.env`：默认一体化部署生成并持久化的运行配置
+- `backend/.env`：分体生产部署配置
 - `docker-compose.yml`：默认一体化应用部署入口，推荐用于常规部署
 - `docker-compose.dev.yml`：源码开发 Compose 服务
 - `docker-compose.prod.yml`：生产环境前后端分体部署
@@ -155,7 +175,7 @@ export GUGU_DB_PASSWORD='请设置数据库密码'
 docker compose up -d
 ```
 
-数据库、镜像地址和标签等 Compose 变量可以写入项目根目录的 `.env`，管理员密码仍只写入 `backend/.env`。
+数据库、镜像地址、标签和管理员账号密码等 Compose 变量可以写入项目根目录 `.env`；一体化镜像生成的密钥和随机密码保存在 `Gugu-data/.env`。
 
 需要 Shell 沙盒时：
 
@@ -182,7 +202,7 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml --profile sandbox up -d
 ```
 
-拆分路径与一体化镜像共享同一份数据卷和 `backend/.env`，可在两种部署间互切（前提是同一版本号）。
+拆分路径与一体化镜像共享同一份用户数据目录；切换前必须按部署文档处理两种拓扑的运行配置和数据库，不可直接互换 `.env` 文件。
 
 如需把用户数据放到其他宿主机目录，在项目根目录 `.env` 设置绝对路径；默认、Dev、Prod
 三份 Compose 都使用同一个变量：

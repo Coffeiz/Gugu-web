@@ -1,4 +1,4 @@
-"""split Compose updater 守护进程入口；Docker socket 只存在于此容器。"""
+"""Compose updater 守护进程入口；Docker socket 只存在于此容器。"""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from updater.rpc import serve_unix
 
 
 async def _run() -> None:
-    if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") != "split_compose":
-        raise RuntimeError("updater RPC server 只允许 split_compose 模式")
+    if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") not in {"split_compose", "integrated_compose"}:
+        raise RuntimeError("updater RPC server 只允许受支持的 Compose 模式")
     daemon = UpdateDaemon()
     daemon.start_pending_restart_resume()
     socket_path = os.getenv("GUGU_UPDATER_RPC_SOCKET", "/run/gugu-updater/updater.sock")

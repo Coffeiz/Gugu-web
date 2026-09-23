@@ -8,6 +8,9 @@ set -euo pipefail
 # 默认一体化应用模式在等待数据库和 Alembic 之前给出可操作的中文配置提示；
 # 常规 backend/frontend 分离部署不启用这段逻辑。
 if [ "${GUGU_UNIFIED_APP:-0}" = "1" ]; then
+    if [ -z "${ADMIN_USERNAME:-}" ]; then
+        unset ADMIN_USERNAME
+    fi
     # 镜像 ENV 里 ADMIN_PASSWORD="" 只是占位声明，但 Pydantic Settings 默认把空
     # 环境变量当真实值、且 process env 优先于 .env——不清掉它，首启生成的随机密码
     # 和用户在 .env 里配置的强密码都会被这个空串压掉（admin 登录 503）。
@@ -92,7 +95,27 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
     # 初始化若硬编码 gugu，用户改了变量反而会把自己配坏。
     EMBED_DB_USER="${DB__USER:-gugu}"
     EMBED_DB_NAME="${DB__NAME:-gugu}"
+    LEGACY_PGDATA_ROOT="${GUGU_LEGACY_PGDATA_ROOT:-/legacy-pgdata}"
+    LEGACY_PGDATA_FOUND=0
+    if [ -d "$LEGACY_PGDATA_ROOT" ] && find "$LEGACY_PGDATA_ROOT" -maxdepth 5 -type f -name PG_VERSION -print -quit 2>/dev/null | grep -q .; then
+        LEGACY_PGDATA_FOUND=1
+    fi
+    LEGACY_PG_DUMP="$EMBED_DATA/updater/legacy-postgres.dump"
+    LEGACY_PG_IMPORTED="$EMBED_DATA/updater/legacy-postgres.imported"
+    LEGACY_REDIS_ROOT="${GUGU_LEGACY_REDISDATA_ROOT:-/legacy-redisdata}"
+    LEGACY_REDIS_FOUND=0
+    if [ -d "$LEGACY_REDIS_ROOT" ] && find "$LEGACY_REDIS_ROOT" -maxdepth 3 -type f -print -quit 2>/dev/null | grep -q .; then
+        LEGACY_REDIS_FOUND=1
+    fi
+    LEGACY_REDIS_DUMP="$EMBED_DATA/updater/legacy-redis.rdb"
+    LEGACY_REDIS_IMPORTED="$EMBED_DATA/updater/legacy-redis.imported"
+    PG_INITIALIZED_NOW=0
     if [ ! -s "$EMBED_DATA/postgres/PG_VERSION" ]; then
+        if [ "$LEGACY_PGDATA_FOUND" = 1 ] && [ ! -s "$LEGACY_PG_DUMP" ]; then
+            echo "[entrypoint] 拒绝初始化空数据库：检测到旧 Compose PostgreSQL 数据卷，但没有迁移备份。" >&2
+            echo "  请先按 docs/quick-deploy.md 的旧 Compose 数据迁移步骤导出数据库，再启动新版 Compose。" >&2
+            exit 1
+        fi
         echo "[entrypoint] 首次启动：初始化内置 PostgreSQL（数据目录 $EMBED_DATA/postgres）..."
         if ! su -s /bin/bash postgres -c "\"$PG_BIN/initdb\" -D '$EMBED_DATA/postgres' --username='$EMBED_DB_USER' --encoding=UTF8"; then
             echo "[entrypoint] 内置 PostgreSQL 初始化失败。" >&2
@@ -105,6 +128,32 @@ if [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
         # 只服务本机回环 + trust 认证，无需 TLS；镜像里删掉了 snakeoil 示例证书，
         # 不显式关掉 Debian 默认的 ssl=on 会让 postgres 因证书缺失起不来。
         printf "\nssl = off\n" >> "$EMBED_DATA/postgres/postgresql.conf"
+        PG_INITIALIZED_NOW=1
+    elif [ "$LEGACY_PGDATA_FOUND" = 1 ] && [ ! -s "$LEGACY_PG_IMPORTED" ]; then
+        echo "[entrypoint] 拒绝启动：/data 已有数据库，但旧 Compose PostgreSQL 数据尚未标记迁移完成。" >&2
+        echo "  为避免覆盖任一数据库，请先完成旧数据迁移并检查 Gugu-data/updater/。" >&2
+        exit 1
+    fi
+    if [ "$LEGACY_REDIS_FOUND" = 1 ] && [ ! -s "$LEGACY_REDIS_DUMP" ] && [ ! -s "$LEGACY_REDIS_IMPORTED" ]; then
+        echo "[entrypoint] 拒绝启动：检测到旧 Compose Redis 持久数据，但没有迁移快照。" >&2
+        echo "  请停止旧 app（暂停 worker/gateway），按 docs/quick-deploy.md 导出 PostgreSQL 和 Redis，再启动新版 Compose。" >&2
+        exit 1
+    fi
+    if [ -s "$LEGACY_REDIS_DUMP" ] && [ ! -s "$LEGACY_REDIS_IMPORTED" ]; then
+        if [ -s "$EMBED_DATA/redis/dump.rdb" ] && cmp -s "$LEGACY_REDIS_DUMP" "$EMBED_DATA/redis/dump.rdb"; then
+            : # 上次启动已复制快照但 Redis 尚未就绪；安全重试加载。
+        elif find "$EMBED_DATA/redis" -maxdepth 2 -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "[entrypoint] 拒绝导入旧 Redis 快照：目标 Redis 已有数据，不能覆盖。" >&2
+            exit 1
+        else
+            cp "$LEGACY_REDIS_DUMP" "$EMBED_DATA/redis/dump.rdb"
+            chown redis:redis "$EMBED_DATA/redis/dump.rdb"
+            chmod 600 "$EMBED_DATA/redis/dump.rdb"
+            echo "[entrypoint] 已准备旧 Compose Redis 快照；将由内置 Redis 在启动时加载。"
+        fi
+    elif [ "$LEGACY_REDIS_FOUND" = 1 ] && [ ! -s "$LEGACY_REDIS_IMPORTED" ]; then
+        echo "[entrypoint] 拒绝启动：旧 Redis 数据尚未标记迁移完成；请检查迁移快照与内置 Redis 状态。" >&2
+        exit 1
     fi
     # 数据目录可能来自旧版本；每次启动都幂等补齐内置实例的本机认证规则，避免只修新库。
     python /usr/local/bin/ensure_embedded_pg_hba.py "$EMBED_DATA/postgres/pg_hba.conf"
@@ -160,8 +209,32 @@ SUPERVISEOF
     # Redis 的 TCP 端口可能早于 AOF/RDB 恢复完成而开放；在它返回 PONG 前不启动
     # Alembic、worker 或 gateway，避免 BusyLoadingError 让关键进程提前退出。
     /usr/local/bin/gugu-wait-embedded-redis.sh
+    if [ -s "$LEGACY_REDIS_DUMP" ] && [ ! -s "$LEGACY_REDIS_IMPORTED" ]; then
+        mkdir -p "$(dirname "$LEGACY_REDIS_IMPORTED")"
+        date -u +%FT%TZ > "$LEGACY_REDIS_IMPORTED.tmp"
+        chmod 600 "$LEGACY_REDIS_IMPORTED.tmp"
+        mv "$LEGACY_REDIS_IMPORTED.tmp" "$LEGACY_REDIS_IMPORTED"
+        echo "[entrypoint] 旧 Compose Redis 快照已加载；旧数据卷与快照均未删除。"
+    fi
     # 建应用库（幂等：已存在时忽略报错）。
     su -s /bin/bash postgres -c "\"$PG_BIN/createdb\" -h 127.0.0.1 -U '$EMBED_DB_USER' '$EMBED_DB_NAME'" >/dev/null 2>&1 || true
+    if [ -s "$LEGACY_PG_DUMP" ] && [ ! -s "$LEGACY_PG_IMPORTED" ]; then
+        if [ "$PG_INITIALIZED_NOW" != 1 ]; then
+            echo "[entrypoint] 拒绝导入旧数据库备份：目标 PostgreSQL 并非本次新建，不能覆盖现有数据。" >&2
+            exit 1
+        fi
+        echo "[entrypoint] 正在将旧 Compose PostgreSQL 备份导入内置数据库..."
+        if ! "$PG_BIN/psql" --host=127.0.0.1 --username="$EMBED_DB_USER" \
+            --dbname="$EMBED_DB_NAME" --set=ON_ERROR_STOP=1 --file="$LEGACY_PG_DUMP"; then
+            echo "[entrypoint] 旧 PostgreSQL 备份导入失败；保留备份并拒绝启动应用。" >&2
+            exit 1
+        fi
+        mkdir -p "$(dirname "$LEGACY_PG_IMPORTED")"
+        date -u +%FT%TZ > "$LEGACY_PG_IMPORTED.tmp"
+        chmod 600 "$LEGACY_PG_IMPORTED.tmp"
+        mv "$LEGACY_PG_IMPORTED.tmp" "$LEGACY_PG_IMPORTED"
+        echo "[entrypoint] 旧 PostgreSQL 数据导入完成；原数据卷和备份均未删除。"
+    fi
 fi
 
 DB_HOST="${DB__HOST:-postgres}"

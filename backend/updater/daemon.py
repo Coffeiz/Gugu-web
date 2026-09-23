@@ -635,6 +635,42 @@ class UpdateDaemon:
         logger.info("cosign verify failed rc=%s", returncode)
         return {"ok": False, "skipped": False, "detail": "签名校验未通过，已阻断更新"}
 
+    async def _preflight_compose_services(self) -> tuple[list[str], bool, list[dict[str, Any]]]:
+        results: list[dict[str, Any]] = []
+        app_ids: list[str] = []
+        embedded = False
+
+        def add(key: str, ok: bool, detail: str) -> None:
+            results.append({"key": key, "ok": bool(ok), "detail": detail})
+
+        try:
+            config = await self._compose(["config", "--format", "json"])
+            services = config.get("services", {})
+            app_service = services.get("app", {}) if isinstance(services, dict) else {}
+            app_environment = app_service.get("environment", {}) if isinstance(app_service, dict) else {}
+            embedded = isinstance(app_environment, dict) and str(app_environment.get("GUGU_EMBEDDED_DEPS", "0")) == "1"
+            required = {"app", "updater"} | (set() if embedded else {"postgres", "redis"})
+            topology_ok = isinstance(services, dict) and required.issubset(services)
+            add("compose", topology_ok, "一体化 Compose 服务定义完整" if topology_ok else "Compose 缺少必需服务")
+            app_ids = (await self._compose_text(["ps", "-q", "app"])).strip().splitlines()
+            add("app", bool(app_ids), "一体化 app 容器正在运行" if app_ids else "一体化 app 容器未运行")
+            updater_ids = (await self._compose_text(["ps", "-q", "updater"])).strip().splitlines()
+            rpc_path = Path(os.getenv("GUGU_UPDATER_RPC_SOCKET", "/run/gugu-updater/updater.sock"))
+            updater_ok = bool(updater_ids) and rpc_path.is_socket()
+            add("updater", updater_ok, "受限 updater 服务与 RPC socket 正常" if updater_ok else "受限 updater 服务未运行或 RPC socket 不可用")
+            if embedded:
+                await self._compose_text(["exec", "-T", "app", "pg_isready", "-h", "127.0.0.1", "-p", "5432"])
+                await self._compose_text(["exec", "-T", "app", "redis-cli", "-h", "127.0.0.1", "ping"])
+                add("dependencies", True, "app 内置 PostgreSQL 和 Redis 健康")
+            else:
+                await self._compose_text(["exec", "-T", "postgres", "sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'])
+                await self._compose_text(["exec", "-T", "redis", "sh", "-c", 'if [ -n "$GUGU_REDIS_PASSWORD" ]; then redis-cli -a "$GUGU_REDIS_PASSWORD" ping; else redis-cli ping; fi'])
+                add("dependencies", True, "PostgreSQL 和 Redis 健康")
+        except Exception:
+            app_ids = []
+            add("dependencies", False, "Compose、数据库或 Redis 健康检查失败")
+        return app_ids, embedded, results
+
     async def _preflight_checks(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
         if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker":
             return await self._standalone_preflight_checks(candidate)
@@ -652,22 +688,8 @@ class UpdateDaemon:
             platform = ""
             add("docker", False, "无法连接 Docker daemon")
 
-        try:
-            config = await self._compose(["config", "--format", "json"])
-            services = config.get("services", {})
-            required = {"app", "postgres", "redis"}
-            add("compose", required.issubset(services), "一体化 Compose 服务定义完整" if required.issubset(services) else "Compose 缺少必需服务")
-            app_ids = (await self._compose_text(["ps", "-q", "app"])).strip().splitlines()
-            add("app", bool(app_ids), "一体化 app 容器正在运行" if app_ids else "一体化 app 容器未运行")
-            # 定位修订（§1.1）：更新执行器并入 app 进程；socket 挂载即启用。
-            socket_path = Path(os.getenv("GUGU_DOCKER_SOCKET", "/var/run/docker.sock"))
-            add("updater", socket_path.exists(), "Docker socket 已挂载，自更新可用" if socket_path.exists() else "未检测到 Docker socket 挂载；此部署未启用一键更新")
-            await self._compose_text(["exec", "-T", "postgres", "sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'])
-            await self._compose_text(["exec", "-T", "redis", "sh", "-c", 'if [ -n "$GUGU_REDIS_PASSWORD" ]; then redis-cli -a "$GUGU_REDIS_PASSWORD" ping; else redis-cli ping; fi'])
-            add("dependencies", True, "PostgreSQL 和 Redis 健康")
-        except Exception:
-            app_ids = []
-            add("dependencies", False, "Compose、数据库或 Redis 健康检查失败")
+        app_ids, embedded, compose_results = await self._preflight_compose_services()
+        results.extend(compose_results)
 
         try:
             if not app_ids:
@@ -690,15 +712,26 @@ class UpdateDaemon:
         except Exception:
             add("database_migrations", False, "数据库迁移版本未达到当前应用唯一 head")
 
-        backend_env = self.project_dir / "backend/.env"
-        config_ok = backend_env.is_file() and not backend_env.is_symlink()
-        if config_ok:
+        if embedded:
             try:
-                config_text = backend_env.read_text(encoding="utf-8")
-                config_ok = bool(re.search(r"(?m)^\s*ADMIN_PASSWORD\s*=\s*\S", config_text))
-            except OSError:
+                await self._compose_text([
+                    "exec", "-T", "app", "sh", "-c",
+                    'test -s "${GUGU_ENV_FILE:-/data/.env}" && grep -Eq "^ADMIN_PASSWORD=.+" "${GUGU_ENV_FILE:-/data/.env}"',
+                ], timeout=10)
+                config_ok = True
+            except Exception:
                 config_ok = False
-        add("configuration", config_ok, "运行配置文件存在" if config_ok else "backend/.env 缺失或未配置管理员密码")
+            add("configuration", config_ok, "持久化运行配置存在" if config_ok else "持久化运行配置缺失或管理员密码未设置")
+        else:
+            backend_env = self.project_dir / "backend/.env"
+            config_ok = backend_env.is_file() and not backend_env.is_symlink()
+            if config_ok:
+                try:
+                    config_text = backend_env.read_text(encoding="utf-8")
+                    config_ok = bool(re.search(r"(?m)^\s*ADMIN_PASSWORD\s*=\s*\S", config_text))
+                except OSError:
+                    config_ok = False
+            add("configuration", config_ok, "运行配置文件存在" if config_ok else "backend/.env 缺失或未配置管理员密码")
 
         images = [str(candidate.get("app_image") or "")]
         split_images = candidate.get("split_images")
@@ -1314,16 +1347,25 @@ class UpdateDaemon:
         for _ in range(30):
             try:
                 split_mode = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "split_compose"
+                embedded_mode = os.getenv("GUGU_EMBEDDED_DEPS", "0").strip() == "1"
                 service = "backend" if split_mode else "app"
                 port = "8000" if split_mode else "9595"
                 await self._compose_text(
                     ["exec", "-T", service, "curl", "-fsS", f"http://127.0.0.1:{port}/health"],
                     timeout=5,
                 )
-                await self._compose_text([
-                    "exec", "-T", "postgres", "sh", "-c",
-                    'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
-                ], timeout=5)
+                if embedded_mode:
+                    await self._compose_text(
+                        ["exec", "-T", "app", "pg_isready", "-h", "127.0.0.1", "-p", "5432"], timeout=5,
+                    )
+                    await self._compose_text(
+                        ["exec", "-T", "app", "redis-cli", "-h", "127.0.0.1", "ping"], timeout=5,
+                    )
+                else:
+                    await self._compose_text([
+                        "exec", "-T", "postgres", "sh", "-c",
+                        'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+                    ], timeout=5)
                 if split_mode:
                     frontend_ids = await self._compose_text(
                         ["ps", "--status", "running", "-q", "frontend"], timeout=5,

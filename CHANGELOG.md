@@ -31,6 +31,8 @@
 - 修复停止或中止 run 时的流状态竞态及执行历史未完整持久化。
 - 修复 Responses 分支请求协议及 system instructions 不匹配，确保压缩等分支调用使用对应 API 格式。
 - 修复内置 PostgreSQL / Redis 就绪检查竞态，以及会话消息持久化同步问题。
+- 修复旧默认 Compose 切换到内置 PostgreSQL/Redis 时可能丢失数据或队列的问题；迁移备份缺失会拒绝启动，并提供受控导入流程。
+- 修复默认 Compose 在线更新错误要求独立 PostgreSQL/Redis 服务的问题；Docker Socket 改由受限 updater 服务持有。
 - 修复用户技能与 MCP 工具关联、反思内容重复注入、QQ 手动压缩用量统计及用量面板模型行标识问题。
 - 修复 Admin 将应用容器 Docker 状态误报为 Shell Rootless 执行器状态。
 - 修复 Markdown 任务列表行内代码布局、文件创建日期时区显示及新手引导模型列表弹层交互。

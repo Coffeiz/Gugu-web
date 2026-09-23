@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,8 +22,15 @@ def test_unified_image_defaults_to_embedded_deps():
 
 
 def test_integrated_compose_uses_embedded_deps():
-    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    assert 'GUGU_EMBEDDED_DEPS: "1"' in compose, "一体化 Compose 必须显式启用内置依赖"
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    assert services["app"]["environment"]["GUGU_EMBEDDED_DEPS"] == "1"
+    assert "updater" in services, "一体化 Compose 必须包含受限 updater"
+    app_mounts = services["app"]["volumes"]
+    assert not any("docker.sock" in str(mount) for mount in app_mounts), "Web app 不得挂载 Docker Socket"
+    assert any("docker.sock" in str(mount) for mount in services["updater"]["volumes"])
+    assert any("legacy_pgdata:/legacy-pgdata:ro" == mount for mount in app_mounts)
+    assert any("legacy_redisdata:/legacy-redisdata:ro" == mount for mount in app_mounts)
 
 
 def test_entrypoint_embedded_block_refuses_overlay_data_dir():
@@ -32,6 +40,21 @@ def test_entrypoint_embedded_block_refuses_overlay_data_dir():
     assert "/var/lib/docker/volumes/" in entrypoint, "匿名卷模式必须默认拒绝启动（绑定宿主机目录），仅显式开关放行"
     assert "GUGU_ALLOW_ANONYMOUS_DATA:-0" in entrypoint, "匿名卷放行必须走显式环境变量，不能静默"
     assert "EMBEDDED_SUPERVISORD_PID" in entrypoint, "内置依赖进程必须纳入关键进程托管"
+    assert "LEGACY_PGDATA_FOUND" in entrypoint, "必须探测旧 Compose PostgreSQL 数据卷"
+    assert "LEGACY_REDIS_FOUND" in entrypoint, "必须探测旧 Compose Redis 持久数据"
+    assert "拒绝初始化空数据库" in entrypoint, "旧库尚未迁移时必须 fail-closed"
+    assert "legacy-postgres.imported" in entrypoint, "旧库成功导入后必须记录幂等标记"
+
+
+def test_legacy_compose_migration_script_requires_quiesced_app_and_exports_both_stores():
+    script = (REPO_ROOT / "scripts" / "migrate-compose-postgres.sh").read_text(encoding="utf-8")
+    assert "pg_dump --no-owner --no-privileges" in script
+    assert "ps --all -q app" in script and "ps --status running -q app" in script
+    assert "--rdb" in script and "legacy-redis.rdb" in script
+    assert "chmod 600" in script
+    assert "docker compose" in script
+    assert "down -v" not in script
+    assert "volume rm" not in script
 
 
 def test_single_image_entrypoint_lets_persisted_database_password_win_over_empty_image_env():

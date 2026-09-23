@@ -7,12 +7,16 @@ from pathlib import Path
 from updater.deployment import detect_deployment
 
 
-def test_detect_integrated_compose_requires_socket_and_switch(tmp_path, monkeypatch):
-    (tmp_path / "docker-compose.yml").write_text("services: {app: {}, postgres: {}, redis: {}}\n", encoding="utf-8")
-    socket_path = tmp_path / "docker.sock"
-    socket_path.touch()
+def test_detect_integrated_compose_uses_updater_rpc_and_switch(tmp_path, monkeypatch):
+    (tmp_path / "docker-compose.yml").write_text(
+        "services: {app: {environment: {GUGU_EMBEDDED_DEPS: '1'}}, updater: {}}\n",
+        encoding="utf-8",
+    )
+    socket_path = Path("/tmp") / f"gugu-updater-{uuid.uuid4().hex[:10]}.sock"
+    rpc_server = socket.socket(socket.AF_UNIX)
+    rpc_server.bind(str(socket_path))
     monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(tmp_path))
-    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
+    monkeypatch.setenv("GUGU_UPDATER_RPC_SOCKET", str(socket_path))
     monkeypatch.setenv("GUGU_UNIFIED_APP", "1")
     monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "0")
     monkeypatch.setenv("GUGU_SELF_UPDATE", "on")
@@ -21,11 +25,26 @@ def test_detect_integrated_compose_requires_socket_and_switch(tmp_path, monkeypa
 
     assert result == {
         "mode": "integrated_compose", "enabled": True, "capability": "one_click",
-        "reason_code": "ready", "reason": "一体化 Compose 更新已就绪。",
+        "reason_code": "ready", "reason": "一体化 Compose 受限更新服务已就绪。",
     }
 
     monkeypatch.setenv("GUGU_SELF_UPDATE", "off")
     assert detect_deployment()["reason_code"] == "self_update_disabled"
+    rpc_server.close()
+    socket_path.unlink()
+
+
+def test_integrated_compose_reads_configured_filename_and_requires_external_dependencies(tmp_path, monkeypatch):
+    (tmp_path / "custom-compose.yml").write_text(
+        "services: {app: {}, updater: {}}\n", encoding="utf-8",
+    )
+    monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(tmp_path))
+    monkeypatch.setenv("GUGU_UPDATER_COMPOSE_FILE", "custom-compose.yml")
+    monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
+    monkeypatch.setenv("GUGU_UNIFIED_APP", "1")
+    monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "0")
+
+    assert detect_deployment()["reason_code"] == "compose_invalid"
 
 
 def test_detect_split_and_standalone_report_their_capabilities(tmp_path, monkeypatch):

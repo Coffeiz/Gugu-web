@@ -1,5 +1,5 @@
-# Gugu 默认一键部署：一体化应用镜像（前后端 + worker + gateway + PostgreSQL + Redis）与搜索、沙盒服务。
-# 默认启动完整应用与 Shell 沙盒；Docker Socket 必须可用且具备访问权限。
+# Gugu 默认一键部署：一体化应用镜像、搜索与沙盒服务。
+# Docker Socket 仅授予 sandboxd 和受限 updater，不直接暴露给 Web app。
 
 name: gugu-web-compose
 
@@ -65,6 +65,8 @@ x-app-environment: &app-environment
   # 用于启动失败时生成宿主机侧可执行的目录修复提示；实际挂载仍由 x-gugu-data-mount 控制。
   GUGU_DATA_HOST_DIR: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}
   SECRET_KEY: ${SECRET_KEY:-}
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
   GUGU_DB_PASSWORD: ${GUGU_DB_PASSWORD:-}
   DB__PASSWORD: ${GUGU_DB_PASSWORD:-}
   DB__HOST: 127.0.0.1
@@ -110,29 +112,62 @@ services:
     ports:
       - "${GUGU_HTTP_PORT:-9595}:9595"
     # 首次启动生成的密钥、数据库密码和管理员密码保存到 Gugu-data/.env。
-    # 自更新（PRD-ADMIN-2 §1.1）：执行器并入 app 进程，socket 默认挂载；
-    # GUGU_SELF_UPDATE=off 显式关闭（也可配合 override 删掉 socket 挂载）。
+    # 自更新通过独立 updater RPC 执行；app 不持有 Docker Socket。
     environment:
       <<: *app-environment
       GUGU_SELF_UPDATE: ${GUGU_SELF_UPDATE:-on}
-      GUGU_UPDATER_COMPOSE_DIR: ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}
+      GUGU_UPDATE_DEPLOYMENT_MODE: integrated_compose
+      GUGU_UPDATER_RPC_SOCKET: /run/gugu-updater/updater.sock
+      GUGU_UPDATER_COMPOSE_DIR: /workspace
+      GUGU_UPDATER_COMPOSE_FILE: docker-compose.yml
       GUGU_UPDATER_STATE_DIR: ${GUGU_UPDATER_STATE_DIR:-/data/updater}
-      DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - *gugu-data-mount
+      - legacy_pgdata:/legacy-pgdata:ro
+      - legacy_redisdata:/legacy-redisdata:ro
       - gugu_config:/config
       - gugu_logs:/app/logs
       - sandbox_socket:/run/gugu
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
-      - ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:ro
+      - updater_socket:/run/gugu-updater
+      - ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:/workspace:ro
     depends_on:
       searxng:
         condition: service_started
+      updater:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:9595/health"]
       interval: 30s
       timeout: 5s
       start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  updater:
+    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
+    logging: *json-file-logging
+    entrypoint: ["python", "-m", "updater.rpc_server"]
+    environment:
+      GUGU_UPDATE_DEPLOYMENT_MODE: integrated_compose
+      GUGU_UNIFIED_APP: "1"
+      GUGU_EMBEDDED_DEPS: "1"
+      GUGU_SELF_UPDATE: ${GUGU_SELF_UPDATE:-on}
+      GUGU_UPDATER_COMPOSE_DIR: ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}
+      GUGU_UPDATER_COMPOSE_FILE: docker-compose.yml
+      GUGU_UPDATER_STATE_DIR: /data/updater
+      GUGU_UPDATER_RPC_SOCKET: /run/gugu-updater/updater.sock
+      GUGU_DOCKER_SOCKET: /run/gugu-updater/docker.sock
+      DOCKER_HOST: unix:///run/gugu-updater/docker.sock
+    volumes:
+      - *gugu-data-mount
+      - updater_socket:/run/gugu-updater
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu-updater/docker.sock
+      - ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/gugu-updater/updater.sock"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
       retries: 3
     restart: unless-stopped
 
@@ -193,6 +228,14 @@ volumes:
   gugu_config:
   gugu_logs:
   sandbox_socket:
+  updater_socket:
+  # 保留旧默认 Compose 的卷名，仅只读挂载以识别尚未迁移的 PostgreSQL 数据。
+  # 自定义过旧项目名/卷名的部署可通过 GUGU_LEGACY_PGDATA_VOLUME 指定原卷名。
+  legacy_pgdata:
+    name: ${GUGU_LEGACY_PGDATA_VOLUME:-gugu-web-compose_pgdata}
+  # 旧默认 Compose 的 Redis AOF 卷，迁移时只读探测，防止丢弃未处理的 IM Stream。
+  legacy_redisdata:
+    name: ${GUGU_LEGACY_REDISDATA_VOLUME:-gugu-web-compose_redisdata}
 
 networks:
   egress_internal:

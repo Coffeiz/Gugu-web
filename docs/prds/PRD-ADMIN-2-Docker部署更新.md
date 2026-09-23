@@ -1,6 +1,6 @@
 # PRD-ADMIN-2：Docker 部署更新与版本分发
 
-> 状态：一体化 Docker Compose 更新已实现；本轮实施 Phase 4–6，Phase 3 暂缓。manifest v3 为唯一支持格式，不保留 v2 兼容。Docker Hub 为更新主源，GHCR 同步发布，镜像使用 OCI 1.1 referrer 签名。
+> 状态：一体化 Compose、分体 Compose 与纯 Docker 单容器更新均已实现；manifest v3 为唯一支持格式，不保留 v2 兼容。Docker Hub 为更新主源，GHCR 同步发布，镜像使用 OCI 1.1 referrer 签名。默认 Compose 使用 app 内置 PostgreSQL/Redis，旧拓扑迁移必须同时保留数据库和 Redis Stream 状态。
 > 创建：2026-08-31
 > 最近更新：2026-09-20
 > 关联模块：`docker-compose.yml`、`docker-compose.prod.yml`、`.github/workflows/`、`deploy/`、`scripts/release/`、`backend/updater/`、`frontend/src/views/Admin/Updates/`
@@ -10,21 +10,21 @@
 
 | 能力 | 结果 | 状态 | 说明 |
 |---|---|---|---|
-| 一体化 Compose 更新 | 已实现 | ✅ 已确认 | 默认 `docker-compose.yml` 更新 `app`；仅在运行中的 `sandboxd` 使用同一 app 镜像时同步更新。 |
+| 一体化 Compose 更新 | 已实现 | ✅ 已确认 | 默认 `docker-compose.yml` 由受限 updater RPC 更新 `app`；仅在运行中的 `sandboxd` 使用同一 app 镜像时同步更新。 |
 | 镜像发布策略 | 一体化与拆分业务镜像均双发 | ✅ 已确认 | 一体化 `gugu-web`、backend/frontend、sandbox 均发布到 Docker Hub 与 GHCR；只发布语义版本号标签，不发布 Git SHA 镜像标签；稳定版维护 `latest`。 |
 | GitHub Release 更新清单 | manifest v3 | ✅ 已确认 | Schema、CI 发布清单、无依赖校验器与 updater 均只接受完整镜像组；v2 不再接受。 |
 | Docker 发布 CI | Workflow 已实现 | ✅ 已确认 | 版本 tag 构建并扫描四类镜像，使用 Cosign OCI 1.1 referrer 签名后发布到双仓；旧式 `.sig` 标签仅为历史遗留，不再新增。 |
-| 分体 Compose 更新 | 尚未实现 | 🔲 待实施 | `docker-compose.prod.yml` 多镜像组合没有对应 manifest 和更新适配器。 |
-| 纯 Docker 单容器更新 | 尚未实现 | 🔲 待实施 | 无 Compose 项目；需要容器配置快照、独立 helper、内嵌依赖与数据库迁移保护。 |
-| Admin 部署模式识别 | 尚未实现 | 🔲 待实施 | 更新页对所有部署显示同一文案；状态不能区分不支持、配置关闭、缺少 socket 与初始化失败。 |
-| Admin 检查和执行更新 | 一体化 Compose 已实现 | 🟡 部分完成 | 检查、预检、确认、审计和任务状态可用，但仅有一体化 Compose 执行路径。 |
-| 更新服务与回滚 | 部分实现 | 🟡 部分完成 | 一体化 Compose 路径有持久任务、健康检查和管理员回滚；分体和纯单容器无执行适配器。 |
+| 分体 Compose 更新 | 已实现 | ✅ 已确认 | `docker-compose.prod.yml` 由独立 updater RPC 服务执行；业务容器不挂 Docker Socket。 |
+| 纯 Docker 单容器更新 | 已实现 | ✅ 已确认 | 无 Compose 项目时由短期 helper 执行，要求受支持的一体化镜像、内嵌依赖和持久数据挂载。 |
+| Admin 部署模式识别 | 已实现 | ✅ 已确认 | 识别 integrated/split Compose 与 standalone Docker，并说明配置关闭、RPC 不可用及拓扑无效等原因。 |
+| Admin 检查和执行更新 | 已实现 | ✅ 已确认 | 检查、预检、确认、审计和任务状态覆盖受支持的三类部署。 |
+| 更新服务与回滚 | 已实现 | ✅ 已确认 | Compose updater sidecar 与单容器短期 helper 按各自拓扑执行；回滚范围不包含不可逆数据库迁移。 |
 
 ## 1. 背景与目标
 
 咕咕的普通用户不应该下载 Git 源码、安装前端/后端依赖或在本机重新构建镜像。对于 Docker Compose 部署，更新应当直接获取经过 CI 构建和验证的业务镜像，以降低安装门槛、减少本地磁盘消耗，并保证所有用户使用一致的构建产物。
 
-本 PRD 定义咕咕普通用户 Docker 部署的标准更新链路：GitHub 负责代码、Release 和更新说明，Docker Hub 的公开一体化 `gugu-web` 是更新主来源，GHCR 镜像该应用；拆分 backend/frontend 业务镜像同步发布到 Docker Hub 与 GHCR，供业务服务器按语义版本号拉取。Admin 负责展示和确认，独立更新服务负责在服务器执行默认一体化 Compose 更新。
+本 PRD 定义咕咕普通用户 Docker 部署的标准更新链路：GitHub 负责代码、Release 和更新说明，Docker Hub 的公开一体化 `gugu-web` 是更新主来源，GHCR 镜像该应用；拆分 backend/frontend 业务镜像同步发布到 Docker Hub 与 GHCR，供业务服务器按语义版本号拉取。Admin 负责展示和确认，Compose updater 服务负责在服务器执行一体化或分体更新，单容器部署则使用短期 helper。
 
 目标：
 
@@ -37,18 +37,19 @@
 
 ### 1.1 定位修订（2026-09-14）
 
-一体化部署的产品定位是**个人用户自己下载、自己更新，简单易用优先**。当前实现采用 app 内置更新执行器：
+一体化部署的产品定位是**个人用户自己下载、自己更新，简单易用优先**。当前实现由同镜像的受限 updater 服务持有 Docker Socket：
 
-- updater sidecar 容器不作为一体化部署组件；更新执行器并入 app 进程，Admin 更新页进程内直调，无 IPC。
-- 当前实现只支持标准一体化 Compose。`docker-compose.prod.yml` 分体部署和无 Compose 的纯 Docker 单容器，不能因挂载 Docker socket 就视为已支持。此前“fnOS 等单容器用户补挂 socket 即可一键更新”的说明与当前实现不符，需由本 PRD 补齐实际执行路径后再开放。
-- 明确接受的安全让步：docker socket 赋予宿主机容器控制权，app 进程一旦被 RCE 级打穿，暴露面从「咕咕数据」扩大到「宿主机容器」。缓解：更新能力不进入 Agent 工具注册表（模型与提示注入不可达）、子进程参数硬编码（固定项目目录/固定 compose 文件/白名单镜像）、Admin 权限 + 一次性确认门。
+- 一体化与分体 Compose 均通过私有 Unix Socket RPC 调用 updater；业务 app/backend 不挂载 Docker Socket。updater 只接收固定 RPC 方法，并由服务端执行 manifest、签名、部署拓扑和预检校验。
+- 默认一体化 Compose 的 PostgreSQL/Redis 在 app 镜像内运行，避免额外依赖容器。由旧默认 Compose 升级时，必须先停止旧 app，再导出 PostgreSQL 和 Redis RDB 快照；新 app 对旧卷只读探测，缺少备份时 fail-closed，绝不悄悄创建空数据库或丢弃旧 Stream 队列。
+- `docker-compose.prod.yml` 分体部署与无 Compose 的纯 Docker 单容器也有各自受限执行路径；不能仅因挂载 Docker Socket 就视为受支持。单容器 helper 只在操作期间持有 Socket。
+- Docker Socket 仍可控制宿主机容器，因此只授予 updater/sandboxd 等确有需要的服务；更新能力不进入 Agent 工具注册表，必须由管理员授权并通过一次性确认门。
 - 保留：manifest 与 digest 白名单（仅允许官方 coffeiz/gugu-web 镜像）、预检、一键回滚、审计。发布端继续同步 Docker Hub 与 GHCR；manifest 本身不单独签名，目标镜像使用 Cosign OCI 1.1 referrer 签名，更新前由固定 Cosign verifier 校验。
 - 分体部署（`docker-compose.prod.yml`）当前不受既有一体化更新入口支持；本 PRD 将其列入目标部署模式，并要求使用独立的执行边界。
 
 本 PRD 不包含：
 
 - 不支持普通用户从 GitHub 下载源码后自动构建。
-- Docker Socket 不进入 Agent 工具注册表与模型可见能力（2026-09-14 修订：一体化 app 容器按 §1.1 挂载 socket 用于自更新，属部署配置而非 Agent 能力；worker/gateway 仍不挂载）。
+- Docker Socket 不进入 Agent 工具注册表与模型可见能力；一体化/分体 app 容器不直接挂载 socket，受限 updater sidecar 或短期单容器 helper 按拓扑执行更新。
 - 不允许更新助手执行任意 Shell、任意 Compose 文件或任意镜像地址。
 - 不在首版覆盖源码开发模式、桌面安装包、Kubernetes 或非 Docker 部署。
 - 不允许更新过程中删除业务数据卷或自动清理所有旧镜像。
@@ -152,7 +153,7 @@ Shell sandbox 是可选 profile。普通更新不因为用户未开启 sandbox �
 
 更新状态接口必须识别并返回当前部署模式、更新能力、不可用原因和推荐操作。至少区分 `integrated_compose`、`split_compose`、`standalone_container`、`unsupported`；能力状态至少区分 `available`、`manual_only`、`disabled`、`misconfigured`。部署识别依据必须来自经过校验的 Compose 服务集合、容器标签/运行配置和明确的部署标识，不能只根据镜像名或页面来源推测。
 
-Admin 页面必须按状态渲染：可更新部署展示检查/预检/确认操作；暂不支持自动更新的部署展示具体原因与对应手动更新说明；显式关闭更新、Docker socket 缺失、Compose 文件缺失/无效、更新器初始化失败分别给出不同状态。不得将 `sandboxd` 未运行解释为 app 更新不可用。
+Admin 页面必须按状态渲染：可更新部署展示检查/预检/确认操作；暂不支持自动更新的部署展示具体原因与对应手动更新说明；显式关闭更新、受限 updater/RPC 不可用、Compose 文件缺失/无效、更新器初始化失败分别给出不同状态。不得将 `sandboxd` 未运行解释为 app 更新不可用。
 
 页面文案必须与实际架构一致，不得把 app 内置执行器称为 sidecar。沙盒说明仅在相关部署确有可选 `sandboxd` 服务时展示，并明确它只决定是否联动更新沙盒服务，不是更新 app 的前置条件。
 
@@ -208,7 +209,7 @@ Manifest 必须通过 HTTPS 获取，并校验：JSON Schema、版本格式、�
 
 ### 3.3 更新执行器
 
-共享更新核心位于 `backend/updater/`，继续由 Admin API 通过受限 client 调用；部署专属 adapter 负责实际执行。已实现的一体化 Compose 路径保留 app 内置执行器与独立 helper handoff；分体 Compose 使用仅 updater 可访问 Docker socket 的受限执行服务；纯 Docker 单容器通过短生命周期 helper 在 app 生命周期之外完成替换。
+共享更新核心位于 `backend/updater/`，继续由 Admin API 通过受限 client 调用；部署专属 adapter 负责实际执行。一体化与分体 Compose 均使用仅 updater 可访问 Docker socket 的受限执行服务，app/backend 通过受限 Unix socket RPC 调用；纯 Docker 单容器通过短生命周期 helper 在 app 生命周期之外完成替换。
 
 更新器只开放固定动作：检查状态、拉取已校验 manifest、执行预检、开始更新、查看进度、查看结果、回滚指定上一版本。它不接受任意 Docker 命令、任意 registry 或任意宿主机路径。每种 adapter 只能操作其白名单部署对象与服务集合。
 
@@ -228,7 +229,7 @@ Compose 数据库备份和迁移须在业务容器重建前完成；standalone �
 
 ### 3.6 多部署模式更新边界
 
-更新核心负责发布元数据/manifest 校验、签名验证、版本策略、确认令牌、审计和任务状态；按部署模式分派到专用 adapter。现有 `integrated_compose` adapter 保持默认 `docker-compose.yml` 的兼容行为，不通过隐式猜测改写 Compose 文件。
+更新核心负责发布元数据/manifest 校验、签名验证、版本策略、确认令牌、审计和任务状态；按部署模式分派到专用 adapter。`integrated_compose` adapter 按 app 内嵌依赖或外置依赖拓扑执行预检，并从配置的 Compose 文件名读取项目；不得假定所有一体化部署都存在 `postgres`、`redis` 服务。
 
 分体 Compose 使用受限 updater 执行边界管理 `docker-compose.prod.yml` 项目；Docker socket 只挂载给该边界，backend API 通过带认证的内部 IPC 提交固定类型任务。部署目录、Compose 文件和 env 文件由用户持有且只读检查；镜像 digest 通过临时进程环境或受限覆盖配置传入，不原地改写用户 `.env`。
 

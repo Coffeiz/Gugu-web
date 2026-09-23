@@ -60,23 +60,8 @@ def _error_code(exc: Exception) -> str:
 async def call_updater(method: str, **params: Any) -> dict[str, Any]:
     """按部署模式选择独立 updater RPC 或进程内执行器。"""
     deployment = detect_deployment()
-    if deployment["mode"] == "split_compose":
-        try:
-            return await call_rpc(method, params)
-        except UpdaterRpcError as exc:
-            if method == "status":
-                deployment.update({
-                    "enabled": False,
-                    "capability": "manual",
-                    "reason_code": "split_updater_unavailable",
-                    "reason": str(exc),
-                })
-                return {
-                    **deployment,
-                    "current": None, "candidate": None, "has_update": False,
-                    "task": None, "history": [],
-                }
-            raise UpdaterClientError(exc.code, str(exc)) from exc
+    if deployment["mode"] in {"split_compose", "integrated_compose"} and deployment["enabled"]:
+        return await _call_compose_updater(method, params, deployment)
     if method == "status" and not deployment["enabled"]:
         return {
             **deployment,
@@ -114,3 +99,26 @@ async def call_updater(method: str, **params: Any) -> dict[str, Any]:
         raise UpdaterClientError("operation_failed", "更新命令超时") from exc
     except Exception as exc:
         raise UpdaterClientError(_error_code(exc), str(exc)[:240]) from exc
+
+
+async def _call_compose_updater(
+    method: str, params: dict[str, Any], deployment: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        return await call_rpc(method, params)
+    except UpdaterRpcError as exc:
+        if method != "status":
+            raise UpdaterClientError(exc.code, str(exc)) from exc
+        mode = deployment["mode"]
+        unavailable_code = "integrated_updater_unavailable" if mode == "integrated_compose" else "split_updater_unavailable"
+        deployment.update({
+            "enabled": False,
+            "capability": "manual",
+            "reason_code": unavailable_code,
+            "reason": str(exc),
+        })
+        return {
+            **deployment,
+            "current": None, "candidate": None, "has_update": False,
+            "task": None, "history": [],
+        }

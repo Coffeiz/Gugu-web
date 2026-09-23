@@ -137,9 +137,9 @@ python3 -m venv .venv                 # 建虚拟环境（脚本/Makefile 默认
 
 ### 3.3 配置
 
-Compose 部署使用两份环境文件：项目根目录 `.env` 仅保存 Compose 编排变量，`backend/.env` 保存后端应用运行配置；两者都由 Admin 面板写入的 `config.override.json`（优先级最高，运行时热合并）补充或覆盖。
+分体 Compose 使用两份环境文件：项目根目录 `.env` 保存编排变量，`backend/.env` 保存后端应用运行配置；默认一体化 Compose 则从根目录 `.env` 读取编排变量，并将生成/运行配置持久化到 `Gugu-data/.env`。两种拓扑都可由 Admin 面板写入的 `config.override.json`（优先级最高，运行时热合并）补充或覆盖。
 
-最小可跑：建 `backend/.env`（嵌套用双下划线 `__`）：
+分体部署最小可跑：建 `backend/.env`（嵌套用双下划线 `__`）：
 
 ```
 # 数据库（也可在 Admin 配）
@@ -954,11 +954,11 @@ scripts/release/compose-update.sh \
 
 #### Admin 在线更新与部署模式支持状态
 
-更新页会先显示识别到的部署模式与能力原因。一体化 `docker-compose.yml` 在 app 挂载 Docker socket 且未设置 `GUGU_SELF_UPDATE=off` 时可一键更新。分体 `docker-compose.prod.yml` 由独立 updater sidecar 执行，Docker socket 只挂载给 updater，backend 通过私有 Unix socket RPC 调用；更新器备份数据库与配置、校验迁移状态、拉取 backend/frontend digest，再按固定服务顺序重建业务服务。纯 Docker 单容器模式由短期 helper 接管：仅支持官方 unified 镜像、嵌入式依赖、可写持久 `/data` 挂载、Docker socket 和受支持的容器配置；先拉取镜像并校验数据库备份，再替换容器，健康检查失败时恢复旧容器。状态及备份保存在 `/data/updater`，不会自动回滚数据库。
+更新页会先显示识别到的部署模式与能力原因。一体化 `docker-compose.yml` 和分体 `docker-compose.prod.yml` 都由独立 updater sidecar 执行，Docker socket 只挂载给 updater，app/backend 通过私有 Unix socket RPC 调用。更新器按各自拓扑检查数据库、备份数据与配置、校验迁移状态、拉取已签名 digest，再按固定服务顺序重建业务服务。纯 Docker 单容器模式由短期 helper 接管：仅支持官方 unified 镜像、嵌入式依赖、可写持久 `/data` 挂载、Docker socket 和受支持的容器配置；先拉取镜像并校验数据库备份，再替换容器，健康检查失败时恢复旧容器。状态及备份保存在 `/data/updater`，不会自动回滚数据库。
 
-三种模式都要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表，镜像必须来自签名 manifest 中的官方 digest。分体业务容器不会挂 Docker socket；standalone helper 会短暂获得 Docker socket 权限，只有在受支持的单容器拓扑中才启用。缺少 socket、设置 `GUGU_SELF_UPDATE=off`、容器配置不受支持或数据卷不符合要求时，Admin 页明确显示手动路径。`sandboxd` 是可选沙盒运行组件，不是一体化或分体 app 更新的前置条件；仅当它正在运行且与 backend 使用同一镜像引用时，分体更新才同步重建它。自定义 sandboxd 镜像保持不变。
+三种模式都要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表，镜像必须来自签名 manifest 中的官方 digest。一体化/分体业务容器均不挂 Docker socket；standalone helper 会短暂获得 Docker socket 权限，只有在受支持的单容器拓扑中才启用。缺少受限 updater/RPC、设置 `GUGU_SELF_UPDATE=off`、容器配置不受支持或数据卷不符合要求时，Admin 页明确显示手动路径。`sandboxd` 是独立沙盒运行组件，不是一体化或分体 app 更新的前置条件；仅当它正在运行且与 app/backend 使用同一镜像引用时，更新才同步重建它。自定义 sandboxd 镜像保持不变。
 
-启用自动更新的旧一体化部署，首次需先用新版 Compose 文件手动升级一次（`docker compose -p <项目名> -f docker-compose.yml up -d`）；不要覆盖根目录 `.env`、`backend/.env`、`Gugu-data` 或 Docker 数据卷。之后 Admin 在线更新才可用。
+从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须先按 `docs/quick-deploy.md` 停止旧 app（暂停 worker/gateway），并执行 `scripts/migrate-compose-postgres.sh`，将 PostgreSQL 与 Redis RDB 快照导出到 `/data/updater/`。新版 app 会只读挂载旧卷并检查迁移备份：旧数据仍在而备份缺失时 fail-closed，不会静默切换到空数据库/队列；备份只会导入全新的内置数据目录，成功加载后写入各自完成标记。原卷和备份都保留，需人工核验后再清理。首次升级时保留根目录 `.env`、`Gugu-data` 和旧数据卷；默认一体化 Compose 已包含受限 updater sidecar，启动后 Admin 在线更新可用。
 
 如果更新脚本不在部署目录内，应显式指定部署路径和校验器路径；在部署目录执行，并从受保护的环境注入数据库密码（不要把密码写进命令参数或 shell 历史）：
 

@@ -5,6 +5,9 @@ import hashlib
 import re
 import json
 import secrets
+import socket
+import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,9 +19,14 @@ from updater.database_check import validate_revision_state
 def make_daemon(tmp_path, monkeypatch, state=None, *, self_update="on"):
     project = tmp_path / "deployment"
     project.mkdir()
-    (project / "docker-compose.yml").write_text("services: {app: {}, postgres: {}, redis: {}}\n", encoding="utf-8")
-    socket_path = project / "docker.sock"
-    socket_path.touch()
+    (project / "docker-compose.yml").write_text(
+        "services: {app: {environment: {GUGU_EMBEDDED_DEPS: '0'}}, updater: {}, postgres: {}, redis: {}}\n",
+        encoding="utf-8",
+    )
+    socket_path = Path("/tmp") / f"gugu-updater-test-{uuid.uuid4().hex[:10]}.sock"
+    rpc_socket = socket.socket(socket.AF_UNIX)
+    rpc_socket.bind(str(socket_path))
+    rpc_socket.close()
     state_dir = tmp_path / "updater-state"
     state_dir.mkdir()
     monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(project))
@@ -26,6 +34,7 @@ def make_daemon(tmp_path, monkeypatch, state=None, *, self_update="on"):
     monkeypatch.setenv("GUGU_UPDATER_CODE_DIR", str(tmp_path / "updater-code"))
     monkeypatch.setenv("GUGU_SELF_UPDATE", self_update)
     monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
+    monkeypatch.setenv("GUGU_UPDATER_RPC_SOCKET", str(socket_path))
     monkeypatch.setenv("GUGU_UNIFIED_APP", "1")
     monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "0")
     if state is not None:
@@ -37,7 +46,7 @@ def make_daemon(tmp_path, monkeypatch, state=None, *, self_update="on"):
 async def test_initial_state_status_handles_null_task(tmp_path, monkeypatch):
     daemon, _ = make_daemon(tmp_path, monkeypatch)
     async def compose(_args):
-        return {"services": {"app": {}, "postgres": {}, "redis": {}}}
+        return {"services": {"app": {}, "updater": {}, "postgres": {}, "redis": {}}}
     monkeypatch.setattr(daemon, "_compose", compose)
 
     status = await daemon.dispatch({"method": "status", "params": {}})
@@ -123,8 +132,7 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
 
     async def compose(_args):
         return {"services": {
-            "app": {}, "postgres": {}, "redis": {},
-            "updater": {"image": "docker.io/coffeiz/gugu-web:latest"},
+            "app": {}, "updater": {}, "postgres": {}, "redis": {},
         }}
 
     async def compose_text(args, *, env=None, timeout=30):
@@ -152,9 +160,12 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
 
     monkeypatch.setattr(daemon, "_verify_signature", signature_ok)
 
-    socket_path = daemon.project_dir / "docker.sock"
-    socket_path.write_bytes(b"")
-    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
+    socket_path = Path("/tmp") / f"gugu-updater-preflight-{uuid.uuid4().hex[:10]}.sock"
+    if not socket_path.exists():
+        rpc_socket = socket.socket(socket.AF_UNIX)
+        rpc_socket.bind(str(socket_path))
+        rpc_socket.close()
+    monkeypatch.setenv("GUGU_UPDATER_RPC_SOCKET", str(socket_path))
     checks = await daemon._preflight_checks({
         "version": "v1.2.2",
         "minimum_version": "v1.2.1",
@@ -168,7 +179,7 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
     assert by_key["storage"]["ok"] is True
     assert by_key["database_migrations"]["ok"] is True
 
-    # socket 未挂载（路径不存在）→ 自更新不可用
+    # updater RPC socket 不存在 → 自更新不可用
     socket_path.unlink()
     checks = await daemon._preflight_checks({
         "version": "v1.2.2",
@@ -176,6 +187,61 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
         "architectures": ["linux/amd64"],
     })
     assert next(item for item in checks if item["key"] == "updater")["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_embedded_compose_preflight_checks_database_inside_app(tmp_path, monkeypatch):
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+    daemon.state["current"] = {"version": "unknown"}
+    monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "1")
+    monkeypatch.setattr("updater.daemon.shutil.disk_usage", lambda _path: SimpleNamespace(free=5 * 1024**3))
+    calls = []
+
+    async def command(_args, *, timeout, env=None):
+        return b"x86_64"
+
+    async def compose(_args):
+        return {"services": {
+            "app": {"environment": {"GUGU_EMBEDDED_DEPS": "1"}},
+            "updater": {},
+        }}
+
+    async def compose_text(args, *, env=None, timeout=30):
+        calls.append(args)
+        if args[:2] == ["ps", "-q"] and args[-1] == "app":
+            return "app-container\n"
+        if args[:2] == ["ps", "-q"] and args[-1] == "updater":
+            return "updater-container\n"
+        return "ok"
+
+    async def docker_json(args, *, timeout=30):
+        if args[:1] == ["inspect"]:
+            return [{"Mounts": [
+                {"Destination": "/data", "RW": True},
+                {"Destination": "/config", "RW": True},
+            ]}]
+        return []
+
+    async def signature_ok(_image):
+        return {"ok": True, "skipped": False, "detail": "发布签名校验通过"}
+
+    monkeypatch.setattr(daemon, "_command", command)
+    monkeypatch.setattr(daemon, "_compose", compose)
+    monkeypatch.setattr(daemon, "_compose_text", compose_text)
+    monkeypatch.setattr(daemon, "_docker_json", docker_json)
+    monkeypatch.setattr(daemon, "_verify_signature", signature_ok)
+
+    checks = await daemon._preflight_checks({
+        "version": "v1.2.2", "minimum_version": "v1.2.1", "architectures": ["linux/amd64"],
+    })
+
+    by_key = {item["key"]: item for item in checks}
+    assert by_key["compose"]["ok"] is True
+    assert by_key["dependencies"]["ok"] is True
+    assert by_key["configuration"]["ok"] is True
+    assert ["exec", "-T", "app", "pg_isready", "-h", "127.0.0.1", "-p", "5432"] in calls
+    assert ["exec", "-T", "app", "redis-cli", "-h", "127.0.0.1", "ping"] in calls
+    assert not any(args[:3] == ["exec", "-T", "postgres"] for args in calls)
 
 
 @pytest.mark.asyncio
@@ -598,7 +664,7 @@ async def test_failing_signature_blocks_update_start(tmp_path, monkeypatch):
         return b"x86_64"
 
     async def compose(_args):
-        return {"services": {"app": {}, "postgres": {}, "redis": {}}}
+        return {"services": {"app": {}, "updater": {}, "postgres": {}, "redis": {}}}
 
     async def compose_text(args, *, env=None, timeout=30):
         if args[:2] == ["ps", "-q"] and args[-1] == "app":

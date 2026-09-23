@@ -44,10 +44,17 @@ def detect_deployment() -> dict[str, Any]:
         return _result(mode, False, "compose_missing", "未找到一体化 Compose 文件；为避免误操作，自动更新已关闭。")
     if mode == "integrated_compose":
         try:
-            compose_config = yaml.safe_load((project / "docker-compose.yml").read_text(encoding="utf-8"))
+            compose_config = yaml.safe_load((project / compose_name).read_text(encoding="utf-8"))
             services = compose_config.get("services") if isinstance(compose_config, dict) else None
-            if not isinstance(services, dict) or not {"app", "postgres", "redis"}.issubset(services):
+            if not isinstance(services, dict) or not {"app", "updater"}.issubset(services):
                 raise ValueError("required service missing")
+            app_service = services["app"]
+            if not isinstance(app_service, dict):
+                raise ValueError("app service is malformed")
+            app_environment = app_service.get("environment") or {}
+            embedded = isinstance(app_environment, dict) and str(app_environment.get("GUGU_EMBEDDED_DEPS", "0")) == "1"
+            if not embedded and not {"postgres", "redis"}.issubset(services):
+                raise ValueError("external database services missing")
         except (OSError, UnicodeError, yaml.YAMLError, ValueError):
             return _result(mode, False, "compose_invalid", "一体化 Compose 文件无法解析或缺少必需服务；自动更新已关闭。")
     if mode == "split_compose":
@@ -74,11 +81,12 @@ def detect_deployment() -> dict[str, Any]:
             return _result(mode, False, "self_update_disabled", "GUGU_SELF_UPDATE 已关闭；请按单容器部署文档手动更新。")
         return _result(mode, True, "ready", "纯 Docker 单容器 helper 更新已就绪。")
     if mode == "integrated_compose":
-        if not socket_mounted:
-            return _result(mode, False, "docker_socket_missing", "未挂载 Docker socket；请按一体化 Compose 文档手动更新。")
         if not enabled_by_config:
             return _result(mode, False, "self_update_disabled", "GUGU_SELF_UPDATE 已关闭；请按一体化 Compose 文档手动更新。")
-        return _result(mode, True, "ready", "一体化 Compose 更新已就绪。")
+        rpc_socket = Path(os.getenv("GUGU_UPDATER_RPC_SOCKET", ""))
+        if rpc_socket.is_socket():
+            return _result(mode, True, "ready", "一体化 Compose 受限更新服务已就绪。")
+        return _result(mode, False, "integrated_updater_unavailable", "未连接一体化 Compose 受限更新服务；请检查 updater 服务状态。")
     return _result("unknown", False, "deployment_unrecognized", "无法可靠识别部署拓扑；为避免误操作，自动更新已关闭。")
 
 
