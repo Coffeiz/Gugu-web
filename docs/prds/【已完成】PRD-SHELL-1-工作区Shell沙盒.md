@@ -7,11 +7,11 @@
 - 首版平台：devserver/Linux 本机执行
 - 后续平台：macOS、Windows 复用执行器接口，暂不承诺相同隔离强度
 
-### Autopilot 授权模式
+### 自动模式授权
 
-- Admin 通过 `shell_autopilot_enabled` 控制总开关；关闭时个人设置隐藏用户级 Autopilot 选项。
+- Admin 通过 `shell_autopilot_enabled` 控制总开关；关闭时个人设置隐藏用户级“自动模式”选项。
 - 用户开启后，当前用户的 Shell 危险命令跳过确认门；仍必须经过执行范围、沙盒、配额、超时、进程清理和审计校验。
-- Autopilot 不授予 root，不解除 Docker/Rootless 隔离，也不改变 system executor 的独立权限开关。
+- 自动模式不授予 root，不解除 Docker/Rootless 隔离，也不改变 system executor 的独立权限开关。
 - 默认关闭；关闭 Admin 总开关或用户开关后立即失效。
 - 相关能力：Agent 工具、用户设置、会话绑定、文件库工作区
 
@@ -185,7 +185,7 @@ SANDBOX_ACL=1 make compose-up ROOTLESS_LOGIN=gugu-sandbox
 
 未传入 `SANDBOX_ACL=1` 时，非 Compose 的 `make start`、`make restart`、`make install` 均跳过 ACL 修改；
 `make compose-up SANDBOX_ACL=1` 只负责选择 `sandbox` profile，ACL 由 Compose 的
-`sandbox-bootstrap` 自动处理。直接执行 `docker compose up` 不启动沙盒；执行
+`sandboxd` 启动前的初始化流程自动处理。直接执行 `docker compose up` 不启动沙盒；执行
 `docker compose --profile sandbox up` 会自动为每个用户的 `shell`、`个人文件`、`项目文件`
 设置 ACL 并用真实沙盒 UID 验证写入。初始化不会修改业务容器、镜像或数据库目录。
 
@@ -845,7 +845,7 @@ Phase 6 不把当前的每命令临时容器伪装成常驻容器。当前 `Dock
 - [x] 完成 OSS 模式用户沙盒目录创建、Rootless ACL 计划和配额记录/审计入口；真实生产 ACL apply 验收移入 Phase 6。
 - [x] 完成 Docker 运行态清理策略；清理限定 sandbox 标签资源，不触碰 Gugu 业务容器。镜像/卷长期保留策略移入 Phase 6。
 - [x] 增加可选 Rootless ACL 初始化入口：`sandbox-acl-plan` 默认 dry-run，`SANDBOX_ACL=1` 才允许 `sandbox-acl-apply`；非 Compose 的 `start`、`restart`、`install` 共用同一宿主机初始化路径。
-- [x] Compose sandbox profile 改由 `sandbox-bootstrap` 统一初始化所有用户的 Shell/文件库 ACL，并在 sandboxd 启动前执行真实写入探针；`make compose-up` 不再重复执行旧的 Shell-only ACL。
+- [x] Compose sandbox profile 改由 `sandboxd` 启动前的初始化流程统一处理所有用户的 Shell/文件库 ACL，并执行真实写入探针；`make compose-up` 不再重复执行旧的 Shell-only ACL。
 - [x] 完成多租户部署的 system executor 禁用门禁，并保留本地自托管显式开启能力。
 - [x] 完成绝对路径、软链接、挂载边界、用户切换、容器重建、取消和异常恢复的核心回归测试；旧 scope 不再参与运行时授权。
 - [x] 为每个存活用户创建 `Gugu-data/users/<user-id>/shell` 持久目录，并登记 `file_library`、`shell_persistent`、`shell_ephemeral` 三类账本。
@@ -874,7 +874,7 @@ Phase 6 不把当前的每命令临时容器伪装成常驻容器。当前 `Dock
 
 ### 13.1 本机执行器验收
 
-- 默认配置下后台 Shell 总开关为开启，但仍需用户开关和 Docker 沙盒运行时就绪后才可调用；system 范围、危险命令和 Autopilot 仍不可用。
+- 默认配置下后台 Shell 总开关为开启，但仍需用户开关和 Docker 沙盒运行时就绪后才可调用；system 范围、危险命令和自动模式仍不可用。
 - Admin 关闭开关后，旧请求也会被 dispatch 拒绝。
 - Admin 和用户 Shell 权限满足时，sandbox 工具即可注册并执行；本地存储模式下 workspace 只决定默认 cwd，OSS 模式不提供 workspace。
 - sandbox 只能在沙盒根目录或本地存储模式下的当前 workspace 挂载目录内工作，不会回退到任意宿主机目录。

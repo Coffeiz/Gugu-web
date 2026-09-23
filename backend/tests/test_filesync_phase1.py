@@ -176,7 +176,7 @@ async def test_oss_session_workspace_is_rejected_by_shell_policy(db, user_a, mon
     settings = SimpleNamespace(
         storage=SimpleNamespace(backend="oss"),
         agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False),
-        sandbox=SimpleNamespace(enabled=True, code_execution_enabled=True),
+        sandbox=SimpleNamespace(enabled=True, full_user_sandbox_authorization_enabled=True),
     )
     monkeypatch.setattr(policy, "get_settings", lambda: settings)
     monkeypatch.setattr(policy, "workspace_shell_supported", lambda: False)

@@ -28,6 +28,13 @@ from urllib.parse import quote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from updater.deployment import detect_deployment
+from updater.sandbox_signature import (
+    COSIGN_IDENTITY_REGEXP,
+    COSIGN_OIDC_ISSUER,
+    COSIGN_VERIFY_TIMEOUT_SECONDS,
+    COSIGN_VERIFIER_IMAGE,
+    cosign_verify_command,
+)
 from updater.standalone import DockerEngine, DockerReplaceRecovered, StandaloneConfigError, snapshot_standalone_container, write_sensitive_json
 
 
@@ -62,19 +69,6 @@ STAGE_BY_LINE = (
 MIN_FREE_BYTES = 3 * 1024**3
 CHALLENGE_TTL_SECONDS = 600
 UPDATE_PROCESS_TIMEOUT_SECONDS = 90 * 60
-# 发布签名校验（供应链真实性）：更新前用固定 digest 的官方 Cosign verifier 校验
-# 目标镜像签名，identity 锚定 tag 触发的 docker-release.yml 发布工作流。
-# verifier 与被验镜像都按 digest 引用，两边都不可漂移；升级 verifier 必须
-# 显式修改这里的 digest（digest 对应 ghcr.io/sigstore/cosign/cosign:v3.1.3）。
-COSIGN_VERIFIER_IMAGE = (
-    "ghcr.io/sigstore/cosign/cosign@sha256:"
-    "9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8"
-)
-COSIGN_IDENTITY_REGEXP = (
-    r"^https://github\.com/Coffeiz/Gugu-web/\.github/workflows/docker-release\.yml@refs/tags/v.*$"
-)
-COSIGN_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
-COSIGN_VERIFY_TIMEOUT_SECONDS = 300
 COSIGN_CACHE_DIRNAME = "sigstore-cache"
 logger = logging.getLogger("gugu.updater")
 
@@ -596,15 +590,7 @@ class UpdateDaemon:
         并在不支持时回落 legacy tag；发布端已用 --registry-referrers-mode=oci-1-1
         钉死签名形态，验证端按 digest 查询即可命中 referrers artifact。
         """
-        return [
-            "docker", "run", "--rm",
-            "-v", f"{cache_dir}:/root/.sigstore",
-            COSIGN_VERIFIER_IMAGE,
-            "verify",
-            "--certificate-identity-regexp", COSIGN_IDENTITY_REGEXP,
-            "--certificate-oidc-issuer", COSIGN_OIDC_ISSUER,
-            image,
-        ]
+        return cosign_verify_command(image, cache_dir=cache_dir)
 
     async def _cosign_run(self, command: list[str]) -> tuple[int | None, str]:
         """运行 verifier 并返回 (returncode, stderr)；不把 stderr 写入可见日志。"""

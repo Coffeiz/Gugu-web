@@ -19,8 +19,9 @@ from urllib.parse import urlparse
 from app.core.config import SandboxSettings
 
 
-_BUNDLED_IMAGE_DIGEST = "bundled"
-_BUNDLED_IMAGE_ID_FILE = Path("/opt/gugu/sandbox/image-id")
+_RESOLVED_IMAGE_DIGEST = "resolved"
+_LOCAL_IMAGE_DIGEST = "local"
+_RESOLVED_IMAGE_DIGEST_FILE = Path("/run/gugu/sandbox-image-digest")
 
 
 def docker_environment() -> dict[str, str]:
@@ -39,13 +40,68 @@ def docker_environment() -> dict[str, str]:
     return env
 
 
+def docker_container_mount_source(
+    destination: str = "/data", *, timeout_seconds: float = 2.0,
+) -> Path | None:
+    """读取当前 sandboxd 容器挂载到 destination 的宿主机源路径。"""
+    docker = shutil.which("docker")
+    if not docker or not destination.startswith("/"):
+        return None
+    try:
+        result = subprocess.run(
+            [docker, "inspect", "--format={{json .Mounts}}", socket.gethostname()],
+            capture_output=True, text=True, timeout=timeout_seconds,
+            env=docker_environment(), check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        mounts = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(mounts, list):
+        return None
+    for mount in mounts:
+        if not isinstance(mount, dict) or mount.get("Destination") != destination:
+            continue
+        source = mount.get("Source")
+        if not isinstance(source, str) or not source.startswith("/") or source.startswith("//"):
+            continue
+        return Path(source).resolve()
+    return None
+
+
 def valid_image_digest(value: str) -> bool:
     digest = (value or "").strip()
-    if digest == _BUNDLED_IMAGE_DIGEST:
+    if digest in {_RESOLVED_IMAGE_DIGEST, _LOCAL_IMAGE_DIGEST}:
         return True
     return digest.startswith("sha256:") and len(digest) == len("sha256:") + 64 and all(
         char in "0123456789abcdef" for char in digest[7:].lower()
     )
+
+
+def resolved_image_digest() -> str | None:
+    """读取 Compose bootstrap 从 registry 解析并固定的沙盒镜像 digest。"""
+    path = Path(os.environ.get("GUGU_SANDBOX_IMAGE_DIGEST_FILE", str(_RESOLVED_IMAGE_DIGEST_FILE)))
+    try:
+        digest = path.read_text(encoding="ascii").strip()
+    except OSError:
+        return None
+    if digest.startswith("sha256:") and len(digest) == len("sha256:") + 64 and all(
+        char in "0123456789abcdef" for char in digest[7:].lower()
+    ):
+        return digest
+    return None
+
+
+def valid_resolved_image_digest() -> bool:
+    return resolved_image_digest() is not None
+
+
+def _effective_image_digest(digest: str) -> str | None:
+    return resolved_image_digest() if digest == _RESOLVED_IMAGE_DIGEST else digest
 
 
 def valid_egress_proxy(value: str) -> bool:
@@ -106,23 +162,19 @@ def cleanup_orphan_pty_containers(*, timeout_seconds: float = 5.0) -> int:
 
 
 def image_available(image: str, digest: str, *, timeout_seconds: float = 3.0) -> bool:
-    """确认固定 digest 或随一体化镜像内嵌的 image ID 已加载到目标 daemon。"""
+    """确认固定 digest 或 Compose bootstrap 解析的 digest 已加载到目标 daemon。"""
     if not image or not valid_image_digest(digest):
         return False
     docker = shutil.which("docker")
     if not docker:
         return False
-    if digest == _BUNDLED_IMAGE_DIGEST:
-        try:
-            expected_image_id = _BUNDLED_IMAGE_ID_FILE.read_text(encoding="ascii").strip()
-        except OSError:
-            return False
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_image_id):
-            return False
-        inspect_args = [docker, "image", "inspect", "--format", "{{.Id}}", image]
+    if os.environ.get("GUGU_SANDBOX_OFFLINE") == "1" or digest == _LOCAL_IMAGE_DIGEST:
+        inspect_args = [docker, "image", "inspect", image]
     else:
-        expected_image_id = ""
-        inspect_args = [docker, "image", "inspect", f"{image}@{digest}"]
+        effective_digest = _effective_image_digest(digest)
+        if effective_digest is None:
+            return False
+        inspect_args = [docker, "image", "inspect", f"{image}@{effective_digest}"]
     try:
         result = subprocess.run(
             inspect_args,
@@ -136,7 +188,7 @@ def image_available(image: str, digest: str, *, timeout_seconds: float = 3.0) ->
         return False
     if result.returncode != 0:
         return False
-    return digest != _BUNDLED_IMAGE_DIGEST or result.stdout.strip() == expected_image_id
+    return True
 
 
 def cleanup_running_sandboxes(*, timeout_seconds: float = 5.0) -> int:

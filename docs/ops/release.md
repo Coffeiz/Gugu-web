@@ -163,8 +163,8 @@ docker restart gugu-web-main-nginx-1
 沙盒容器由 backend 通过 docker.sock 作为**兄弟容器**启动，`--mount src=.../users/<uid>/shell`
 由**宿主机 daemon** 解析，所以宿主机需要看到与容器内一致的 `Gugu-data` 路径。Compose
 会把 `GUGU_DATA_HOST_DIR` 直接 bind 到容器的 `/data`，未设置时按 Compose 文件目录解析为
-`Gugu-data`，首次启动会自动创建。启用 `sandbox` profile 时，`sandbox-bootstrap` 会在
-`sandbox-bootstrap` 成功后自动为每个用户的 `shell`、`个人文件`、`项目文件` 根目录及已有子目录
+`Gugu-data`，首次启动会自动创建。启用 `sandbox` profile 时，`sandboxd` 会在启动前自动为每个用户的
+`shell`、`个人文件`、`项目文件` 根目录及已有子目录
 设置 Rootless UID/GID ACL，并用真实沙盒 UID 做写入探针；不需要手工 chmod/chown：
 
 ```bash
@@ -173,7 +173,7 @@ docker -H unix:///run/user/1001/docker.sock pull debian@sha256:88200866dfff7ea7f
 ```
 
 - 沙盒镜像 `--pull=never`，必须提前拉进 rootless daemon 的镜像库，否则报 image not found。
-- rootless 下沙盒进程使用目标 daemon 的 subordinate UID/GID 映射；bootstrap 会从宿主机的
+- rootless 下沙盒进程使用目标 daemon 的 subordinate UID/GID 映射；sandboxd 启动前会从宿主机的
   `/etc/passwd`、`/etc/subuid`、`/etc/subgid` 读取映射并写入 ACL。若探针失败，bootstrap
   会失败并在日志中给出权限错误，不能等到用户第一次执行 Shell 才发现。
 - 从旧单容器升级：必须先执行 `scripts/migrate-single-container-to-compose.sh` 完成一次数据库、

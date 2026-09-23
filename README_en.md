@@ -186,11 +186,7 @@ The first run initializes the database and applies migrations. If `ADMIN_PASSWOR
 
 See the [Deployment Guide](docs/quick-deploy.md) for the complete Compose parameters and configuration locations.
 
-To enable the Shell sandbox:
-
-```bash
-docker compose --profile sandbox up -d
-```
+The default Compose setup also starts sandboxd and the controlled egress proxy, and pulls the separate `gugu-sandbox` execution image with a pinned digest when online. For offline deployments, import the single `gugu-compose-bundle.tar` release artifact and use `docker-compose.offline.yml`; no external registry is contacted. The host Docker socket must be available to Compose (default: `/var/run/docker.sock`). For Rootless Docker, set `GUGU_DOCKER_SOCKET` in the project `.env`. To omit sandbox containers, set `GUGU_SANDBOX_ENABLED=false` and stop sandboxd and egress-proxy.
 
 Developers who need source mounts and Vite should use [Dev Compose](docker-compose.dev.yml):
 

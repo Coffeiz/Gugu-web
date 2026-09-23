@@ -78,6 +78,16 @@ def test_embedded_database_password_fills_existing_empty_assignment(tmp_path: Pa
     assert "OTHER_SETTING=preserve" in values
 
 
+def test_embedded_database_password_fails_when_persistence_did_not_take_effect(tmp_path: Path, monkeypatch):
+    env_file = tmp_path / ".env"
+    monkeypatch.delenv("GUGU_DB_PASSWORD", raising=False)
+    monkeypatch.delenv("DB__PASSWORD", raising=False)
+    monkeypatch.setattr(compose_bootstrap, "_write_generated_env_value", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(OSError, match="数据库密码未能写入配置文件"):
+        _ensure_database_password(env_file=env_file, env_file_values={}, embedded=True)
+
+
 def test_embedded_database_password_preserves_explicit_value_and_external_mode(tmp_path: Path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text("DB__PASSWORD=configured-secret\n", encoding="utf-8")
@@ -198,3 +208,18 @@ def test_ensure_admin_password_appends_once_and_preserves_existing_field(tmp_pat
     env_file.write_text("ADMIN_PASSWORD=keep-me\n", encoding="utf-8")
     ensure_admin_password(env_file=env_file, env_file_values={"ADMIN_PASSWORD": "keep-me"})
     assert env_file.read_text(encoding="utf-8") == "ADMIN_PASSWORD=keep-me\n"
+
+
+def test_ensure_admin_password_replaces_empty_assignment(tmp_path: Path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("ADMIN_USERNAME=synthetic-admin\nADMIN_PASSWORD=\n", encoding="utf-8")
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("ADMIN_USERNAME", raising=False)
+
+    ensure_admin_password(
+        env_file=env_file,
+        env_file_values={"ADMIN_USERNAME": "synthetic-admin", "ADMIN_PASSWORD": ""},
+    )
+
+    password_line = next(line for line in env_file.read_text(encoding="utf-8").splitlines() if line.startswith("ADMIN_PASSWORD="))
+    assert len(password_line.removeprefix("ADMIN_PASSWORD=")) >= 32

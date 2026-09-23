@@ -107,19 +107,21 @@ if [[ "${GUGU_UPDATE_HELPER:-0}" == 1 ]]; then
   trap 'rm -f -- "$MANIFEST"' EXIT
 fi
 [[ -f "$COMPOSE_FILE" ]] || { echo 'Compose 文件不存在' >&2; exit 1; }
-[[ -f "$ROOT_DIR/backend/.env" ]] || { echo 'backend/.env 不存在，停止更新以保护运行配置' >&2; exit 1; }
 command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }
 command -v node >/dev/null || { echo '未找到 Node.js，无法校验 manifest' >&2; exit 1; }
-[[ -n "${GUGU_DB_PASSWORD:-}" ]] || { echo '未设置 GUGU_DB_PASSWORD，停止更新' >&2; exit 1; }
-grep -Eq '^[[:space:]]*ADMIN_PASSWORD[[:space:]]*=[^[:space:]]' "$ROOT_DIR/backend/.env" \
-  || { echo 'backend/.env 未设置 ADMIN_PASSWORD，停止更新' >&2; exit 1; }
 
 COMPOSE=(docker compose -f "$COMPOSE_FILE" --profile sandbox)
 COMPOSE_SERVICES=$("${COMPOSE[@]}" config --services)
-for required_service in app postgres; do
+for required_service in app; do
   grep -qx "$required_service" <<<"$COMPOSE_SERVICES" \
     || { echo "Compose 文件不支持一体化更新：缺少 $required_service 服务" >&2; exit 1; }
 done
+if grep -qx postgres <<<"$COMPOSE_SERVICES"; then
+  DATABASE_SERVICE=postgres
+else
+  # 默认 Compose 将 PostgreSQL 托管在 app 容器内，密码和管理员配置保存在 /data/.env。
+  DATABASE_SERVICE=app
+fi
 
 PREVIOUS_IMAGES=$("${COMPOSE[@]}" config --images)
 SANDBOXD_WAS_RUNNING=false
@@ -156,19 +158,29 @@ mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 
 # 备份只写入带时间戳目录，不写回仓库配置，也不在终端输出敏感内容。
-cp "$ROOT_DIR/backend/.env" "$BACKUP_DIR/backend.env"
-chmod 600 "$BACKUP_DIR/backend.env"
+if [[ -f "$ROOT_DIR/backend/.env" ]]; then
+  cp "$ROOT_DIR/backend/.env" "$BACKUP_DIR/backend.env"
+  chmod 600 "$BACKUP_DIR/backend.env"
+fi
 if [[ -f "$ROOT_DIR/.env" ]]; then
   cp "$ROOT_DIR/.env" "$BACKUP_DIR/compose.env"
   chmod 600 "$BACKUP_DIR/compose.env"
 fi
 printf '%s\n' "$PREVIOUS_IMAGES" > "$BACKUP_DIR/previous-images.txt"
 
-if "${COMPOSE[@]}" ps --status running --services | grep -qx postgres; then
-  "${COMPOSE[@]}" exec -T postgres pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_DIR/postgres.sql"
+if "${COMPOSE[@]}" ps --status running --services | grep -qx "$DATABASE_SERVICE"; then
+  if [[ "$DATABASE_SERVICE" == postgres ]]; then
+    [[ -n "${GUGU_DB_PASSWORD:-}" ]] || { echo '外置 PostgreSQL 更新前必须设置 GUGU_DB_PASSWORD' >&2; exit 1; }
+    "${COMPOSE[@]}" exec -T postgres pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_DIR/postgres.sql"
+  else
+    # app 的 entrypoint 已将 /data/.env 中的密码放入 DB__PASSWORD；密码只经进程环境传递。
+    "${COMPOSE[@]}" exec -T app sh -lc \
+      'PGPASSWORD="${DB__PASSWORD:-${GUGU_DB_PASSWORD:-}}" pg_dump -h 127.0.0.1 -U "${DB__USER:-gugu}" "${DB__NAME:-gugu}"' \
+      > "$BACKUP_DIR/postgres.sql"
+  fi
   chmod 600 "$BACKUP_DIR/postgres.sql"
 else
-  echo 'postgres 未运行，停止更新；未创建数据库备份' >&2
+  echo "$DATABASE_SERVICE 未运行，停止更新；未创建数据库备份" >&2
   exit 1
 fi
 

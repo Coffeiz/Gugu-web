@@ -144,14 +144,15 @@ def ensure_database_password(
             _write_generated_env_value(env_file, "DB__PASSWORD", configured_password)
         return
     _write_generated_env_value(env_file, "DB__PASSWORD", secrets.token_urlsafe(32))
-    print("内置 PostgreSQL 连接密码已随机生成并保存到持久化配置。")
+    saved_password = _read_env_file(env_file).get("DB__PASSWORD", "").strip()
+    if not saved_password:
+        raise OSError(f"数据库密码未能写入配置文件：{env_file}")
+    print(f"内置 PostgreSQL 连接密码已随机生成并保存到 {env_file}。")
 
 
 def ensure_admin_password(*, env_file: Path, env_file_values: Mapping[str, str]) -> None:
-    """首次启动追加随机密码；已有字段（包括空字段）绝不覆盖。"""
+    """首次启动写入随机密码；空字段视为未配置并会被填充。"""
     if os.environ.get("ADMIN_PASSWORD", "").strip() or str(env_file_values.get("ADMIN_PASSWORD", "")).strip():
-        return
-    if _has_assignment(env_file, "ADMIN_PASSWORD"):
         return
 
     username = (
@@ -160,30 +161,21 @@ def ensure_admin_password(*, env_file: Path, env_file_values: Mapping[str, str])
         or "admin"
     )
     password = secrets.token_urlsafe(24)
-    env_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_generated_env_value(env_file, "ADMIN_PASSWORD", password)
+    saved_password = _read_env_file(env_file).get("ADMIN_PASSWORD", "").strip()
+    if not saved_password:
+        raise OSError(f"管理员密码未能写入配置文件：{env_file}")
 
-    with env_file.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        handle.seek(0)
-        if _has_assignment(env_file, "ADMIN_PASSWORD"):
-            return
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() > 0:
-            handle.write("\n")
-        handle.write(f"ADMIN_PASSWORD={password}\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-    print("管理员账号/密码（已保存到 backend/.env）：")
+    print(f"管理员账号/密码（已保存到 {env_file}）：")
     print(f"  账号：{username}")
-    print(f"  密码：{password}")
+    print(f"  密码：{saved_password}")
 
 
 def main() -> int:
     env_file = Path(os.environ.get("GUGU_ENV_FILE", "/app/.env"))
     data_dir = Path(os.environ.get("GUGU_DATA_DIR", "/data"))
     host_data_dir = os.environ.get("GUGU_DATA_HOST_DIR", "/data")
+    print(f"[entrypoint] 使用持久化配置文件：{env_file}")
     try:
         values = _read_env_file(env_file)
         ensure_secret_key(env_file=env_file, env_file_values=values)

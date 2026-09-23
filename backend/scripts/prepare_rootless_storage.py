@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """初始化 Compose 沙盒可写存储的 Rootless ACL。
 
-该脚本只由 Compose 的 sandbox-bootstrap 一次性服务调用。它处理所有用户的
+该脚本由 Compose 的 sandboxd 启动前初始化流程调用。它处理所有用户的
 ``shell``、``个人文件``、``项目文件``根目录，现有目录递归补 ACL，并给每一级
 目录设置 default ACL；同时将目标 daemon 的 UID/GID 映射写入共享运行时卷，供
 Web/Worker 为后续动态创建的 workspace 复用。
@@ -13,6 +13,7 @@ import json
 import os
 import pwd
 import shutil
+import socket
 import subprocess
 import tempfile
 import uuid
@@ -90,6 +91,33 @@ def _host_subordinate_ranges(login: str) -> tuple[tuple[SubordinateRange, ...], 
     return read_subordinate_ranges(subuid_path, login), read_subordinate_ranges(subgid_path, login)
 
 
+def _container_data_mount_source(docker: str, docker_socket: str) -> Path | None:
+    """解析 sandboxd 容器自身 /data 的宿主机源路径。"""
+    try:
+        result = subprocess.run(
+            [docker, "-H", f"unix://{docker_socket}", "inspect", "--format={{json .Mounts}}", socket.gethostname()],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        mounts = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(mounts, list):
+        return None
+    for mount in mounts:
+        if not isinstance(mount, dict) or mount.get("Destination") != "/data":
+            continue
+        source = mount.get("Source")
+        if not isinstance(source, str) or not source.startswith("/") or source.startswith("//"):
+            continue
+        return Path(source).resolve()
+    return None
+
+
 def _write_runtime_identity(
     path: str | Path,
     *,
@@ -136,7 +164,11 @@ def _probe_root(
     relative = root.relative_to(users_root)
     host_data_root_value = os.environ.get("SANDBOX__HOST_DATA_ROOT", "").strip()
     if not host_data_root_value:
-        raise RuntimeError("SANDBOX__HOST_DATA_ROOT 未配置，无法验证目标 daemon 的 bind mount")
+        data_source = _container_data_mount_source(docker, docker_socket)
+        if data_source is not None:
+            host_data_root_value = str(data_source / "users")
+    if not host_data_root_value:
+        raise RuntimeError("无法解析当前 sandboxd 的 /data 宿主挂载，无法验证目标 daemon 的 bind mount")
     host_data_root = Path(host_data_root_value).expanduser()
     if not host_data_root.is_absolute():
         raise RuntimeError("SANDBOX__HOST_DATA_ROOT 必须是宿主机可见的绝对路径")

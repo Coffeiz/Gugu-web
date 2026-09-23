@@ -1,22 +1,24 @@
 # 一体化应用镜像与一键部署
 
-> 状态：🟡 Phase 2 实施完成（003–006）；本轮按用户要求只执行普通测试，不执行 E2E/Trivy；Trivy 改为合并前单独扫描，文档与发布衔接部分已实施（2026-09-04）
+> 状态：🟡 一键部署实现已完成；2026-09-22 默认 Compose 沙盒调整已实施，尚待 Docker Compose 环境执行最终配置/运行验证
 > 创建：2026-09-04
-> 最近更新：2026-09-04
+> 最近更新：2026-09-22
 > 关联模块：`Dockerfile`、`backend/Dockerfile.prod`、`frontend/Dockerfile.prod`、`docker-compose.yml`、`.env.example`、`frontend`（vite 构建链）、`backend/app/main.py`（静态托管）、`.github/workflows`（Docker release）、`README.md`、`README_en.md`、`docs/quick-deploy.md`
 > 背景参考：`PRD-ADMIN-2-Docker部署更新.md`（现有发布流水线）、`PRD-ARCH-6-轻量单机部署模式.md`（应用层 SQLite/无 Redis 轻量模式，与本文档的打包交付简化互补，不重叠）、`docs/ops/release.md` §5（现生产部署路径）
 
 ## 0. 实际状态
+
+> **2026-09-22 部署策略调整**：默认根目录 Compose 直接启用独立 sandboxd 与 egress-proxy；在线模式拉取 `coffeiz/gugu-sandbox` 并固定 RepoDigest，离线发布包则把应用、执行镜像、代理和搜索镜像打进一个 tar，并由离线 Compose 只使用本地镜像。`gugu-web` 镜像不托管 sandboxd。无 Compose 的单容器部署默认关闭沙盒；Compose 沙盒要求宿主机 Docker Socket 可访问。Dev/Prod 分体 Compose 仍保留各自的显式 sandbox profile。
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
 | backend/frontend 分离镜像发布 | ✅ 已完成 | CI 推送 `coffeiz/gugu-web-{backend,frontend}`，tag 为 `v1.0.x` 与 commit sha，仅 linux/amd64；现生产使用中。 |
 | 源码开发部署（Dev Compose） | ✅ 已完成 | `docker-compose.dev.yml` 保留源码挂载与热更新路径，供开发者使用。 |
 | 一体化应用镜像（前端+后端单镜像，仅生产运行时） | ✅ 已完成 | 根目录 `Dockerfile` 已通过 devserver linux/amd64 构建，镜像内含 Nginx + Uvicorn + worker + IM gateway。 |
-| 一键 Compose（app+postgres+redis 单文件） | ✅ 已完成 | 根目录 `docker-compose.yml` 提供默认一体化应用服务与 `sandbox` profile；PostgreSQL/Redis 作为独立服务运行，依赖版本为 `postgres:18` / `redis:latest`，PostgreSQL 18 持久卷挂载父目录。 |
-| Docker Hub `latest` 滚动 tag | 🔲 待实施 | 用户拍板随 v1.0.6 发布流水线一起加。 |
+| 一键 Compose（app 内置 PG/Redis + 默认沙盒） | ✅ 已完成 | 根目录 `docker-compose.yml` 默认启动 app、egress-proxy 和 sandboxd；SearXNG 保持独立服务，离线 bundle 一次导入所有运行镜像。 |
+| Docker Hub `latest` 滚动 tag | ✅ 已完成 | 正式发布 workflow 将稳定版本镜像标记为 `latest`。 |
 | 多架构镜像（arm64） | 🔲 待评估 | 本期明确不做，README 标注 amd64-only。 |
-| README/DEPLOY 一键部署章节 | 🔲 待实施 | 留到 Phase 3。 |
+| README/DEPLOY 一键部署章节 | ✅ 已完成 | 中英文 README、快速部署与运维文档均包含默认 Compose 路径。 |
 
 ## 1. 背景与目标
 
@@ -33,7 +35,7 @@
 
 1. **一键部署**：用户侧从「clone 仓库 → 配两套 env → 本地构建」变成「下载一个 compose 文件和一体化镜像 → 配最少变量 → `docker compose up -d`」，根目录 Compose 默认使用一体化应用服务。
 2. **单一应用镜像**：前端 dist 与后端运行时合并为一个 `gugu-web:<tag>` 镜像，只含生产运行时，不含源码仓库、前端 node_modules、pnpm 缓存等构建期内容；保留 TS RAG worker 所需的 Linux x64 native 运行依赖。
-3. **数据安全边界**：PostgreSQL 与 Redis 为独立容器，用户数据全部在显式持久卷；升级 = 拉新镜像重建 app 容器，数据库与文件卷不动。
+3. **数据安全边界**：PostgreSQL 与 Redis 由 app 内置进程托管，用户数据全部在显式 `Gugu-data` 目录；升级 = 拉新镜像重建 app 容器，数据库与文件数据不动。
 4. **配置两条路径**：启动前用 compose 变量配置；未配项（模型 API Key 等）启动后在界面配置。缺了无法启动的关键项必须给人话提示。
 5. **管理员账号无默认密码**：首次启动自动生成随机密码，打印一次并落盘 `backend/.env`，不引入公开默认密码（与 README「不会使用公开默认密码」约定一致）。
 
@@ -58,7 +60,7 @@
 
 ### FR-DEPLOY-003：一键 compose
 
-根目录 `docker-compose.yml` 直接提供默认一体化应用配置与 `.env.example`：`docker compose up -d` 一条命令拉起 `app + postgres + redis` 服务；Shell 沙盒经 `--profile sandbox` 显式启用（searxng/squid/bootstrap 策略与 Dev/Prod Compose 一致）。
+根目录 `docker-compose.yml` 直接提供默认一体化应用配置与 `.env.example`：`docker compose up -d` 一条命令拉起内置 PostgreSQL/Redis 的 app、SearXNG 及默认启用的 Shell 沙盒服务。在线模式自动准备独立沙盒执行镜像；离线发布包一次导入所有运行镜像。应用镜像不在入口脚本中启动 sandboxd。Docker Socket 是沙盒运行前置条件。
 
 ### FR-DEPLOY-004：启动前置检查
 
@@ -70,7 +72,7 @@ app 容器入口在启动前校验关键条件，失败时输出中文提示与�
 
 ### FR-DEPLOY-006：文档更新
 
-`README.md` / `README_en.md` 快速开始以一键部署为主（标注 amd64-only、依赖前置 Docker 20+/Compose v2、外网拉镜像、`Gugu-data` 目录创建、国内镜像源备注、随机密码说明与启动前自定义 `ADMIN_USERNAME/ADMIN_PASSWORD` 的方法），并保留 Dev Compose 源码开发说明。`docs/quick-deploy.md` 增补默认 Compose 章节（变量表、升级、备份、沙盒 profile）。
+`README.md` / `README_en.md` 快速开始以一键部署为主（标注 amd64-only、依赖前置 Docker 20+/Compose v2、外网拉镜像、`Gugu-data` 目录创建、国内镜像源备注、随机密码说明与启动前自定义 `ADMIN_USERNAME/ADMIN_PASSWORD` 的方法），并保留 Dev Compose 源码开发说明。`docs/quick-deploy.md` 增补默认 Compose 章节（变量表、升级、备份、默认沙盒前置条件）。
 
 ## 3. 技术方案
 
@@ -106,8 +108,20 @@ Compose 用户数据默认 bind 到仓库同级 `Gugu-data`。v1.0.6 的 `data-m
 - Trivy：按用户要求不纳入本轮验收，合并前通过 devserver 用户代理 `192.168.110.50:7890` 单独执行 HIGH/CRITICAL 扫描；
 - 前置检查触发：逐项去掉 `SECRET_KEY`/`GUGU_DB_PASSWORD`/数据目录，确认中文提示与修复命令；
 - 升级场景：更换 `GUGU_WEB_IMAGE` tag 重建 app 容器，数据库与文件卷数据保留，BYOK 密钥不丢；
-- 沙盒：`--profile sandbox` 后 Shell 沙盒可用，egress 行为与 Dev/Prod Compose 一致；
+- 沙盒：默认 Compose 自动启动 Shell 沙盒服务并拉取独立执行镜像；实际执行需 Docker Socket 与 bootstrap 成功；
 - 发布范围：合入 dev 后随 v1.0.6 流水线首次对外推送；回滚方式 = `.env` 指回旧 tag 重建 app 容器。
+
+### 默认沙盒调整（2026-09-22）
+
+- 根目录默认 Compose 不再要求 `--profile sandbox`，默认启动 `sandboxd` 和 egress 代理；sandboxd 启动前拉取独立 `gugu-sandbox:latest` 并将 RepoDigest 写入共享运行卷，运行时按固定 digest 启动。
+- `resolved` 默认路径在写入 digest 标记前，用固定 digest 的官方 Cosign verifier 检查 OCI 签名与 GitHub Actions release workflow 身份；验签失败先清除旧标记并阻止 sandboxd 就绪。更新器与 bootstrap 共用同一验签身份、issuer 和 verifier digest。
+- `gugu-web` 不再打包 Sandbox tar/image-id，也不再由单容器入口探测 Docker Socket 后托管 sandboxd；单容器镜像默认 `SANDBOX__ENABLED=false`。
+- 删除 `scripts/release/build-sandbox-bundle.sh`、CI bundle artifact 上传/下载步骤以及旧 bundled digest/image-id 分支和对应回归。
+- 已通过：验签 / updater / Compose bootstrap 定向测试 31 项、bootstrap shell 语法、Python updater 编译、Compose YAML 解析。
+- 全量后端测试：3472 项通过、2 项失败；失败为既有日历提醒数量断言与反思重复调度断言，单独重跑仍失败，与沙盒签名链路无关。
+- 当前本地 Docker CLI 未安装 Compose 插件且无 Docker daemon，无法运行 `docker compose config` 或真实容器验签；需在具备 Docker Compose / daemon 的环境补做部署验收。
+- 已通过：Docker/sandbox 相关 Python 测试 105 项、Docker 发布静态测试 3 项、入口脚本 `sh -n`、Compose YAML 解析。
+- 未通过本地 Docker Compose 插件执行 `docker compose config`，也未在此轮部署/运行完整容器；最终部署验收仍需在装有 Compose 插件和 Docker daemon 的环境完成。
 
 ### Phase 2 实测记录（2026-09-04）
 

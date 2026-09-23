@@ -234,7 +234,6 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
             root = await resolve_shell_root(auth_db, user_id, row.shell_mode, row.workspace_id)
             personal_root = await resolve_user_personal_root(auth_db, user_id) if row.shell_mode == "sandbox" else None
             project_root = await resolve_project_root(auth_db, user_id) if row.shell_mode == "sandbox" else None
-            code_execution_enabled = bool(get_settings().sandbox.code_execution_enabled)
             filesystem_policy = (
                 await resolve_filesystem_policy(auth_db, user_id, subject_id=row.session_id)
                 if row.shell_mode == "sandbox" and row.session_id is not None
@@ -256,7 +255,6 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
             project_root=str(project_root) if project_root else None,
             personal_read_only=not bool(filesystem_policy and filesystem_policy.full_user_sandbox),
             project_read_only=not bool(filesystem_policy and filesystem_policy.full_user_sandbox),
-            code_execution_enabled=code_execution_enabled,
             network_profile=row_network_profile, cols=120, rows=32,
         )
         session = manager.get(row_id)

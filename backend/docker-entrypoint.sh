@@ -140,19 +140,6 @@ priority=15
 autorestart=true
 SUPERVISEOF
     fi
-    # 沙盒需要能创建隔离容器：仅当用户显式挂载了 docker socket 才把 sandboxd 纳入托管，
-    # 否则不启动（Shell 能力保持不可用，不影响其余功能）。
-    if [ -S /var/run/docker.sock ]; then
-        echo "[entrypoint] 检测到 docker socket：本次启动加入 sandboxd 托管（Shell 沙盒可用）。"
-        cat >> "$EMBED_RUN/supervisord.conf" <<EOF
-
-[program:sandboxd]
-directory=/app
-command=python -m agent.sandbox.sandboxd --socket /run/gugu/sandboxd.sock --allowed-root $EMBED_DATA/users
-priority=20
-autorestart=true
-EOF
-    fi
     echo "[entrypoint] 启动内置 PostgreSQL / Redis（supervisord 托管）..."
     supervisord -c "$EMBED_RUN/supervisord.conf"
     EMBEDDED_SUPERVISORD_PID="$(cat "$EMBED_RUN/supervisord.pid" 2>/dev/null || true)"

@@ -5,7 +5,6 @@
 #
 # 产物只含生产运行时：不含前端源码、前端 node_modules、pnpm 缓存、测试代码与 docs/；
 # 仅保留 TS RAG worker 所需的 Linux x64 native node_modules。
-# 本地构建前先运行 `sh scripts/release/build-sandbox-bundle.sh`；发布流水线自动注入该归档。
 # 平台：linux/amd64（多架构暂不支持，见 PRD-DEPLOY-1）。
 
 # ── Stage 1：前端构建 ────────────────────────────────────────────────────────
@@ -70,7 +69,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 # ── Stage 3：后端生产运行时 + 前端静态产物 ──────────────────────────────────
-# 钉住明确版本；sandbox-bootstrap/sandboxd 仍需要 Docker CLI，应用服务本身不挂载 Docker socket。
+# Docker CLI 供受控更新器及 Compose 沙盒服务使用；单容器部署不启动 sandboxd，沙盒由独立 Compose 服务提供。
 FROM python:3.14-slim-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
@@ -149,9 +148,6 @@ COPY backend/scripts/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg
 COPY backend/scripts/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
 COPY backend/scripts/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
 COPY squid/egress.conf /opt/gugu/egress.conf
-# 发布流水线把已扫描的 Sandbox 执行镜像随一体化镜像打包；bootstrap 会导入目标 daemon。
-COPY docker/sandbox/bundle/sandbox-image.tar.gz /opt/gugu/sandbox/sandbox-image.tar.gz
-COPY docker/sandbox/bundle/image-id /opt/gugu/sandbox/image-id
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
@@ -185,6 +181,7 @@ RUN cd /app && python3 -c "import updater.daemon, updater.client"
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf
 RUN mkdir -p logs \
+    && find /app -type f -name '._*' -delete \
     && find ./static -type d -exec chmod 755 {} + \
     && find ./static -type f -exec chmod 644 {} + \
     && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py /usr/local/bin/gugu-wait-embedded-postgres.sh /usr/local/bin/gugu-wait-embedded-redis.sh \
@@ -231,6 +228,8 @@ ENV DB__HOST=postgres \
     CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
     GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
     GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
+    SANDBOX__ROOTLESS_REQUIRED=false \
+    SANDBOX__ENABLED=false \
     # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
     GUGU_EMBEDDED_DEPS=1
 
@@ -242,8 +241,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD curl -sf http://127.0.0.1:9595/health || exit 1
 
 # 复用与 Dockerfile.prod 相同的入口：等数据库就绪 → 迁移 → 执行传入命令。
-# 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway；sandboxd
-# 服务显式清空入口。
+# 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway。
+# 沙盒执行服务只由 Compose 单独启动；直接运行一体化镜像不会托管 sandboxd。
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
 

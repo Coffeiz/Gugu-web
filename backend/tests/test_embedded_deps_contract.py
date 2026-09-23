@@ -20,9 +20,9 @@ def test_unified_image_defaults_to_embedded_deps():
     assert "/data" in dockerfile and "VOLUME" in dockerfile, "必须声明 /data 卷兜底持久化"
 
 
-def test_compose_explicitly_disables_embedded_deps():
+def test_integrated_compose_uses_embedded_deps():
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    assert 'GUGU_EMBEDDED_DEPS: "0"' in compose, "默认 Compose 必须显式关闭内置依赖"
+    assert 'GUGU_EMBEDDED_DEPS: "1"' in compose, "一体化 Compose 必须显式启用内置依赖"
 
 
 def test_entrypoint_embedded_block_refuses_overlay_data_dir():

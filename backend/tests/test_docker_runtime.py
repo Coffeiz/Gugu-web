@@ -36,6 +36,91 @@ def test_docker_environment_respects_explicit_host(monkeypatch):
     assert env["DOCKER_HOST"] == "unix:///custom/docker.sock"
 
 
+def test_docker_container_mount_source_reads_current_container_mount(monkeypatch):
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(docker_runtime.socket, "gethostname", lambda: "sandboxd-id")
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps([{
+            "Type": "bind",
+            "Source": "/vol1/1000/tenant/Gugu-data",
+            "Destination": "/data",
+        }])
+        stderr = ""
+
+    calls = []
+    monkeypatch.setattr(
+        docker_runtime.subprocess, "run",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or Completed(),
+    )
+    assert docker_runtime.docker_container_mount_source() == Path("/vol1/1000/tenant/Gugu-data")
+    assert calls[0][0][0][-1] == "sandboxd-id"
+
+
+def test_docker_container_mount_source_rejects_non_host_source(monkeypatch):
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(docker_runtime.socket, "gethostname", lambda: "sandboxd-id")
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps([{"Source": "//Gugu-data", "Destination": "/data"}])
+        stderr = ""
+
+    monkeypatch.setattr(docker_runtime.subprocess, "run", lambda *args, **kwargs: Completed())
+    assert docker_runtime.docker_container_mount_source() is None
+
+
+def test_sandboxd_resolves_host_data_root_once_at_startup(monkeypatch):
+    from agent.sandbox import sandboxd
+
+    settings = SimpleNamespace(sandbox=SimpleNamespace(host_data_root="//Gugu-data/users"))
+    monkeypatch.setattr(sandboxd, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        sandboxd, "docker_container_mount_source",
+        lambda: Path("/srv/compose/project/Gugu-data"),
+    )
+
+    sandboxd._resolve_host_data_root_once()
+    assert settings.sandbox.host_data_root == "/srv/compose/project/Gugu-data/users"
+
+
+def test_docker_executor_uses_resolved_host_data_root_for_workspace(monkeypatch, tmp_path):
+    from agent.sandbox import docker as docker_module
+    from agent.sandbox.docker import DockerSandboxExecutor
+    from app.core import config
+
+    logical_root = tmp_path / "data" / "users"
+    workspace = logical_root / "user-1" / "workspace"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(
+        docker_module, "docker_container_mount_source",
+        lambda: Path("/srv/compose/project/Gugu-data"),
+    )
+    monkeypatch.setattr(
+        config, "get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(local_path=str(logical_root))),
+    )
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+        host_data_root="//Gugu-data/users",
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1,
+        memory_limit_bytes=128 * 1024 * 1024,
+        ephemeral_quota_bytes=128 * 1024 * 1024,
+        egress_proxy_url="",
+        egress_isolation_enabled=False,
+    )
+
+    argv = DockerSandboxExecutor(workspace, settings, docker_path="/usr/bin/docker").build_argv("pwd")
+    assert (
+        "--mount=type=bind,src=/srv/compose/project/Gugu-data/users/user-1/workspace,dst=/workspace"
+        in argv
+    )
+
+
 def test_probe_reports_rootless_daemon(monkeypatch):
     monkeypatch.setattr(docker_runtime.shutil, "which", lambda _: "/usr/bin/docker")
 
@@ -84,7 +169,23 @@ def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
     assert docker_runtime.sandbox_readiness(settings)[0] is False
     assert docker_runtime.valid_image_digest("sha256:" + "f" * 64)
     assert not docker_runtime.valid_image_digest("sha256:" + "g" * 64)
-    assert docker_runtime.valid_image_digest("bundled")
+    assert docker_runtime.valid_image_digest("resolved")
+    assert docker_runtime.valid_image_digest("local")
+    assert not docker_runtime.valid_image_digest("latest")
+
+
+def test_sandbox_readiness_allows_rootful_daemon_by_default(monkeypatch):
+    settings = SimpleNamespace(
+        enabled=True,
+        rootless_required=False,
+        network_profile="none",
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+    )
+    monkeypatch.setattr(docker_runtime, "probe_docker", lambda: docker_runtime.DockerRuntimeStatus(True, True, False))
+    monkeypatch.setattr(docker_runtime, "image_available", lambda *_args, **_kwargs: True)
+
+    assert docker_runtime.sandbox_readiness(settings)[0] is True
 
 
 def test_sandbox_readiness_queries_sandboxd_instead_of_worker_docker(monkeypatch):
@@ -359,48 +460,63 @@ async def test_sandboxd_rejects_execute_before_executor_when_runtime_is_not_read
     assert writer.closed
 
 
-def test_bundled_image_is_verified_by_local_image_id(monkeypatch, tmp_path):
-    expected_id = "sha256:" + "a" * 64
-    image_id_file = tmp_path / "image-id"
-    image_id_file.write_text(expected_id, encoding="ascii")
-    monkeypatch.setattr(docker_runtime, "_BUNDLED_IMAGE_ID_FILE", image_id_file)
+def test_resolved_image_digest_is_loaded_from_compose_shared_volume(monkeypatch, tmp_path):
+    digest = "sha256:" + "a" * 64
+    digest_file = tmp_path / "sandbox-image-digest"
+    digest_file.write_text(digest + "\n", encoding="ascii")
+    monkeypatch.setenv("GUGU_SANDBOX_IMAGE_DIGEST_FILE", str(digest_file))
     monkeypatch.setattr(docker_runtime.shutil, "which", lambda _name: "/usr/bin/docker")
     calls = []
 
     def fake_run(argv, **_kwargs):
         calls.append(argv)
-        return SimpleNamespace(returncode=0, stdout=expected_id)
+        return SimpleNamespace(returncode=0, stdout="")
 
     monkeypatch.setattr(docker_runtime.subprocess, "run", fake_run)
 
-    assert docker_runtime.image_available("coffeiz/gugu-sandbox:bundled", "bundled")
-    assert calls == [[
-        "/usr/bin/docker", "image", "inspect", "--format", "{{.Id}}",
-        "coffeiz/gugu-sandbox:bundled",
-    ]]
+    assert docker_runtime.image_available("coffeiz/gugu-sandbox:latest", "resolved")
+    assert calls == [["/usr/bin/docker", "image", "inspect", f"coffeiz/gugu-sandbox:latest@{digest}"]]
 
 
-def test_bundled_image_rejects_id_mismatch_and_invalid_manifest(monkeypatch, tmp_path):
-    image_id_file = tmp_path / "image-id"
-    image_id_file.write_text("sha256:" + "a" * 64, encoding="ascii")
-    monkeypatch.setattr(docker_runtime, "_BUNDLED_IMAGE_ID_FILE", image_id_file)
-    monkeypatch.setattr(docker_runtime.shutil, "which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr(
-        docker_runtime.subprocess, "run",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="sha256:" + "b" * 64),
-    )
-    assert not docker_runtime.image_available("coffeiz/gugu-sandbox:bundled", "bundled")
-
-    image_id_file.write_text("not-an-image-id", encoding="ascii")
-    assert not docker_runtime.image_available("coffeiz/gugu-sandbox:bundled", "bundled")
-
-
-def test_bundled_image_ref_uses_local_tag_without_digest_pull_reference():
+def test_resolved_image_ref_uses_digest_written_by_compose_bootstrap(monkeypatch, tmp_path):
+    digest = "sha256:" + "b" * 64
+    digest_file = tmp_path / "sandbox-image-digest"
+    digest_file.write_text(digest, encoding="ascii")
+    monkeypatch.setenv("GUGU_SANDBOX_IMAGE_DIGEST_FILE", str(digest_file))
     settings = SimpleNamespace(
-        image="coffeiz/gugu-sandbox:bundled",
-        image_digest="bundled",
+        image="coffeiz/gugu-sandbox:latest",
+        image_digest="resolved",
     )
-    assert _image_ref(settings) == "coffeiz/gugu-sandbox:bundled"
+    assert _image_ref(settings) == f"coffeiz/gugu-sandbox:latest@{digest}"
+
+
+def test_offline_bundle_image_ref_uses_verified_local_tag(monkeypatch, tmp_path):
+    digest_file = tmp_path / "sandbox-image-digest"
+    digest_file.write_text("sha256:" + "b" * 64, encoding="ascii")
+    monkeypatch.setenv("GUGU_SANDBOX_IMAGE_DIGEST_FILE", str(digest_file))
+    monkeypatch.setenv("GUGU_SANDBOX_OFFLINE", "1")
+    settings = SimpleNamespace(
+        image="coffeiz/gugu-sandbox:latest",
+        image_digest="resolved",
+    )
+    assert _image_ref(settings) == "coffeiz/gugu-sandbox:latest"
+
+
+def test_local_image_ref_uses_local_tag_without_digest(monkeypatch):
+    settings = SimpleNamespace(
+        image="coffeiz/gugu-sandbox:native-fnos-20260922-r1",
+        image_digest="local",
+    )
+    assert _image_ref(settings) == settings.image
+
+
+def test_resolved_image_digest_fails_closed_when_missing_or_invalid(monkeypatch, tmp_path):
+    digest_file = tmp_path / "sandbox-image-digest"
+    monkeypatch.setenv("GUGU_SANDBOX_IMAGE_DIGEST_FILE", str(digest_file))
+    assert not docker_runtime.valid_resolved_image_digest()
+
+    digest_file.write_text("latest", encoding="ascii")
+    assert not docker_runtime.valid_resolved_image_digest()
 
 
 def test_image_available_uses_current_docker_daemon(monkeypatch):
@@ -417,6 +533,35 @@ def test_image_available_uses_current_docker_daemon(monkeypatch):
     assert docker_runtime.image_available("debian:bookworm-slim", digest)
     assert calls[0][0][0][0:3] == ["/usr/bin/docker", "image", "inspect"]
     assert calls[0][0][0][3] == f"debian:bookworm-slim@{digest}"
+
+
+def test_offline_image_available_checks_local_tag(monkeypatch):
+    monkeypatch.setenv("GUGU_SANDBOX_OFFLINE", "1")
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda _: "/usr/bin/docker")
+
+    class Completed:
+        returncode = 0
+        stdout = "{}"
+        stderr = ""
+
+    calls = []
+    monkeypatch.setattr(docker_runtime.subprocess, "run", lambda *args, **kwargs: calls.append(args) or Completed())
+    assert docker_runtime.image_available("coffeiz/gugu-sandbox:latest", "resolved")
+    assert calls[0][0][3] == "coffeiz/gugu-sandbox:latest"
+
+
+def test_local_image_available_checks_local_tag(monkeypatch):
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda _: "/usr/bin/docker")
+
+    class Completed:
+        returncode = 0
+        stdout = "{}"
+        stderr = ""
+
+    calls = []
+    monkeypatch.setattr(docker_runtime.subprocess, "run", lambda *args, **kwargs: calls.append(args) or Completed())
+    assert docker_runtime.image_available("coffeiz/gugu-sandbox:local", "local")
+    assert calls[0][0][3] == "coffeiz/gugu-sandbox:local"
 
 
 def test_image_available_rejects_invalid_digest(monkeypatch):
@@ -767,6 +912,16 @@ def test_admin_sandbox_state_ready_only_when_image_is_loaded():
     )
 
 
+def test_admin_sandbox_state_allows_rootful_when_not_required():
+    from app.api.v1.sandbox_admin import _state
+
+    runtime = docker_runtime.DockerRuntimeStatus(True, True, False)
+    assert _state(runtime, enabled=True, rootless_required=False, image_ready=True) == (
+        "ready",
+        "Docker 沙盒运行时已就绪",
+    )
+
+
 def test_admin_executor_readiness_is_independent_of_enabled_switch(monkeypatch):
     from app.api.v1 import sandbox_admin
     from app.core.config import SandboxSettings
@@ -783,8 +938,7 @@ def test_admin_executor_readiness_is_independent_of_enabled_switch(monkeypatch):
     response = sandbox_admin._response()
     assert response["state"] == "disabled"
     assert response["executor_ready"] is True
-    assert response["filesystem_authorization_enabled"] is False
-    assert response["code_execution_enabled"] is True
+    assert response["full_user_sandbox_authorization_enabled"] is True
 
 
 def test_admin_sandbox_status_uses_sandboxd_runtime_not_backend_docker(monkeypatch):
@@ -986,7 +1140,7 @@ def test_docker_executor_builds_fixed_interactive_pty_argv(tmp_path):
     assert "--network=none" in argv
 
 
-def test_docker_executor_pty_does_not_offer_runtime_gate_as_security_boundary(tmp_path):
+def test_docker_executor_pty_obeys_full_user_sandbox_authorization(tmp_path):
     from agent.sandbox.docker import DockerSandboxExecutor
 
     settings = SimpleNamespace(
@@ -999,9 +1153,9 @@ def test_docker_executor_pty_does_not_offer_runtime_gate_as_security_boundary(tm
         ephemeral_quota_bytes=64 * 1024 * 1024,
         timeout_seconds=30,
         output_limit_bytes=12_000,
-        code_execution_enabled=False,
+        full_user_sandbox_authorization_enabled=False,
     )
-    with pytest.raises(ValueError, match="交互式 PTY 不可用"):
+    with pytest.raises(ValueError, match="完整用户沙箱授权已关闭"):
         DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker").build_pty_argv()
 
 
@@ -1206,17 +1360,19 @@ def test_prepare_storage_publishes_rootful_identity_without_subordinate_ranges(t
     assert identity["mapped_gid"] == 65532
 
 
-def test_compose_sandbox_bootstrap_has_shared_storage_acl_contract():
+def test_compose_sandboxd_owns_initialization_contract():
     repo = Path(__file__).parents[2]
     for name in ("docker-compose.yml", "docker-compose.dev.yml", "docker-compose.prod.yml"):
         text = (repo / name).read_text(encoding="utf-8")
-        block = text.split("  sandbox-bootstrap:", 1)[1]
+        assert "  sandbox-bootstrap:" not in text
+        block = text.split("  sandboxd:", 1)[1]
         assert "- *gugu-data-mount" in block
         assert "/etc/passwd:/host/etc/passwd:ro" in block
         assert "/etc/subuid:/host/etc/subuid:ro" in block
         assert "/etc/subgid:/host/etc/subgid:ro" in block
         assert "sandbox_socket:/run/gugu" in block
-        assert "condition: service_completed_successfully" in block
+        assert "/usr/local/bin/gugu-sandbox-init.sh" in block
+        assert "exec python -m agent.sandbox.sandboxd" in block
 
 
 def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
@@ -1233,7 +1389,7 @@ def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
         return match.group(1)
 
     for compose_name in ("docker-compose.dev.yml", "docker-compose.prod.yml"):
-        for service_name in ("worker", "gateway", "migrate", "sandbox-bootstrap"):
+        for service_name in ("worker", "gateway", "migrate"):
             block = service_block(compose_name, service_name)
             assert re.search(r"(?m)^    healthcheck:\n      disable: true$", block)
 
@@ -1252,8 +1408,7 @@ def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
     sandboxd = service_block("docker-compose.yml", "sandboxd")
     assert 'test: ["CMD-SHELL", "test -S \\"$${GUGU_SANDBOXD_SOCKET}\\""]' in sandboxd
     assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in sandboxd
-    bootstrap = service_block("docker-compose.yml", "sandbox-bootstrap")
-    assert re.search(r"(?m)^    healthcheck:\n      disable: true$", bootstrap)
+    assert "sandbox-bootstrap" not in integrated
 
 
 def test_permission_plan_rejects_root_directory(tmp_path):

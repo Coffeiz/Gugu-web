@@ -205,11 +205,7 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 首次运行会初始化数据库并执行迁移。未设置 `ADMIN_PASSWORD` 时会生成随机密码并保存到 `backend/.env`，终端只打印一次；不会使用公开默认密码。
 
-需要 Shell 沙盒时，再显式启用：
-
-```bash
-docker compose --profile sandbox up -d
-```
+默认 Compose 会同时启动 Shell 沙盒所需的 sandboxd 和受控 egress 代理，并在在线模式自动拉取固定 digest 的独立 `gugu-sandbox` 执行镜像。离线部署可导入发布包中的单个 `gugu-compose-bundle.tar`，再使用 `docker-compose.offline.yml`，无需访问外部 registry。默认允许使用宿主机 Rootful Docker，适合开箱即用部署；生产环境建议在根目录 `.env` 设置 `GUGU_SANDBOX_ROOTLESS_REQUIRED=true` 强制使用 Rootless Docker。需要将宿主机 Docker Socket（默认 `/var/run/docker.sock`）提供给 Compose；若使用 Rootless Docker，请在根目录 `.env` 设置对应的 `GUGU_DOCKER_SOCKET`。不需要沙盒时，在 `.env` 设置 `GUGU_SANDBOX_ENABLED=false`，并停止 sandboxd 与 egress-proxy。
 
 开发者需要源码挂载和 Vite 开发服务器时，使用 [Dev Compose](docker-compose.dev.yml)：
 

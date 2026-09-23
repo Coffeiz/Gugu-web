@@ -128,9 +128,7 @@ def _response():
     terminal_entry_enabled, pty_enabled = terminal_capabilities(settings, sandbox_ready=state == "ready")
     return {
         "enabled": bool(cfg.enabled),
-        "filesystem_authorization_enabled": bool(cfg.filesystem_authorization_enabled),
-        "code_execution_enabled": bool(cfg.code_execution_enabled),
-        "shell_direct_runtime_enabled": bool(getattr(cfg, "shell_direct_runtime_enabled", False)),
+        "full_user_sandbox_authorization_enabled": bool(cfg.full_user_sandbox_authorization_enabled),
         "terminal_mode": configured_terminal_mode(settings),
         "terminal_entry_enabled": terminal_entry_enabled,
         "pty_enabled": pty_enabled,
@@ -260,7 +258,7 @@ async def disable_sandbox(db: AsyncSession = Depends(get_db)):
     sandbox = override.setdefault("sandbox", {})
     sandbox["enabled"] = False
     agent = override.setdefault("agent", {})
-    for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled"):
+    for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled"):
         agent[field] = False
     write_override_json(override)
     invalidate_settings_cache()

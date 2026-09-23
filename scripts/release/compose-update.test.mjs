@@ -46,11 +46,11 @@ case "$command_name" in
         if [[ "\${MOCK_SPLIT:-false}" == true ]]; then
           printf '%s\\n' postgres backend worker gateway frontend migrate
         else
-          printf '%s\\n' postgres redis searxng app sandboxd
+          printf '%s\\n' searxng app sandboxd
           if [[ "\${MOCK_UPDATER_SERVICE:-false}" == true ]]; then printf '%s\\n' updater; fi
         fi
         ;;
-      --images) printf '%s\\n' postgres:18 redis:latest coffeiz/gugu-web:old ;;
+      --images) printf '%s\\n' searxng:latest ubuntu/squid:latest coffeiz/gugu-web:old ;;
       --format)
         image="$GUGU_WEB_IMAGE"
         if printenv GUGU_SANDBOXD_IMAGE >/dev/null 2>&1; then image="$GUGU_SANDBOXD_IMAGE"; fi
@@ -62,7 +62,7 @@ case "$command_name" in
     ;;
   ps)
     if [[ "\${MOCK_SANDBOXD_RUNNING:-true}" == true ]]; then
-      printf '%s\\n' postgres app sandboxd
+      printf '%s\\n' app sandboxd
     else
       printf '%s\\n' postgres app
     fi
@@ -71,7 +71,7 @@ case "$command_name" in
     [[ "$1" == -T ]] && shift
     service="$1"
     shift
-    if [[ "$service" == postgres ]]; then printf 'fake database dump\\n'; fi
+    if [[ "$service" == app ]]; then printf 'fake database dump\\n'; fi
     ;;
   *) ;;
 esac
