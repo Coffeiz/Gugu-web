@@ -13,14 +13,20 @@ function pickFallback() {
 
 // 生成好的问候（响应式，仅本次页面生命周期；跨刷新复用由后端缓存负责）
 export const greeting = ref('')
+export const greetingEnabled = ref(true)
 let greetingOwnerToken = ''
 let greetingRequestVersion = 0
+let greetingLoaded = false
+let greetingRequest: Promise<void> | null = null
 
 /** 切换账号时清掉内存中的账号专属问候，并使旧请求失效。 */
 export function clearGreeting() {
   greeting.value = ''
+  greetingEnabled.value = true
   greetingOwnerToken = ''
   greetingRequestVersion += 1
+  greetingLoaded = false
+  greetingRequest = null
 }
 
 // 挂载时后台预取一次（fire-and-forget，不阻塞）
@@ -32,20 +38,42 @@ export async function prefetchGreeting() {
   }
   if (greetingOwnerToken !== token) {
     greeting.value = ''
+    greetingEnabled.value = true
     greetingOwnerToken = token
     greetingRequestVersion += 1
+    greetingLoaded = false
   }
+  if (greetingLoaded) return
+  if (greetingRequest) return greetingRequest
+  const requestVersion = greetingRequestVersion
+  const currentRequest = greetingRequest = (async () => {
+    try {
+      const response = await agentApi.greeting()
+      if (getToken() !== token || greetingRequestVersion !== requestVersion) return
+      greetingEnabled.value = response.enabled !== false
+      greetingLoaded = true
+      if (!greetingEnabled.value) {
+        greeting.value = ''
+        return
+      }
+      const t = (response.text || '').trim()
+      if (t) greeting.value = t
+    } catch {
+      // 后端不可用时保留静态兜底，但不覆盖服务端明确下发的关闭状态。
+      if (getToken() === token && greetingRequestVersion === requestVersion) {
+        greetingEnabled.value = true
+        greetingLoaded = true
+      }
+    }
+  })()
   try {
-    if (greeting.value) return
-    const requestVersion = greetingRequestVersion
-    const { text } = await agentApi.greeting()
-    if (getToken() !== token || greetingRequestVersion !== requestVersion) return
-    const t = (text || '').trim()
-    if (t) greeting.value = t
-  } catch { /* 静默：取问候时走兜底 */ }
+    await greetingRequest
+  } finally {
+    if (greetingRequest === currentRequest) greetingRequest = null
+  }
 }
 
-// 取问候：有生成版用生成版，否则随机兜底（永不空）
+// 取问候：有生成版用生成版，否则随机兜底；管理员关闭时返回空文本。
 export function getGreeting() {
-  return greeting.value || pickFallback()
+  return greetingEnabled.value ? (greeting.value || pickFallback()) : ''
 }
