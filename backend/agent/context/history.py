@@ -6,7 +6,7 @@ import re
 from typing import Iterable
 
 from .tokens import content_text
-from .canonical_tool_history import ToolCall, ToolResult
+from .canonical_tool_history import ToolCall, ToolResult, _tool_result_is_error
 from .canonical_context import (
     HistoryEnvelope,
     canonicalize_time_context_blocks,
@@ -160,25 +160,6 @@ def _has_assistant_history_payload(message, content_json) -> bool:
             or getattr(message, "quoted_text", None)
         )
     return bool(content_text(content_json).strip())
-
-
-def _tool_result_is_error(block: dict) -> bool:
-    """识别 canonical/tool wire 中的失败结果，兼容旧数据未保存 is_error 的情况。"""
-    if "is_error" in block:
-        return bool(block["is_error"])
-    content = block.get("content", "")
-    values = content if isinstance(content, list) else [content]
-    for value in values:
-        if isinstance(value, dict) and value.get("error"):
-            return True
-        if isinstance(value, str):
-            try:
-                payload = json.loads(value)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(payload, dict) and payload.get("error"):
-                return True
-    return False
 
 
 def _openai_tool_call(block: dict) -> dict:
