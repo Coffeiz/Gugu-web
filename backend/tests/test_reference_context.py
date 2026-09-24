@@ -161,6 +161,24 @@ async def test_old_message_replays_reference_context_from_references_json(
     assert f"文件 id：{file.id}" in rendered
     assert "更新下文档" in rendered
 
+    time_index = next(
+        index for index, item in enumerate(parts)
+        if item["role"] == "user"
+        and isinstance(item["content"], list)
+        and item["content"]
+        and item["content"][0].get("type") == "time-context"
+    )
+    reference_index = next(
+        index for index, item in enumerate(parts)
+        if item["role"] == "user"
+        and isinstance(item["content"], list)
+        and any(block.get("scope") == "explicit-reference" for block in item["content"])
+    )
+    assert time_index < reference_index
+    reference_user = parts[reference_index]
+    assert reference_user["content"][0]["scope"] == "explicit-reference"
+    assert reference_user["content"][1] == {"type": "text", "text": "更新下文档"}
+
 
 def test_inline_reference_history_keeps_reference_before_user_text():
     message = type("Message", (), {

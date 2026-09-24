@@ -158,6 +158,13 @@ def test_tool_permission_filter_and_dispatch_gate_share_the_same_rule():
     assert can_use_tool("files", None) is True
 
 
+def test_safe_time_tool_is_available_to_restricted_group_members():
+    from agent.im.permissions import can_use_tool, filter_tool_names
+
+    assert can_use_tool("get_current_time", []) is True
+    assert filter_tool_names(["web_search", "get_current_time"], []) == ["get_current_time"]
+
+
 def test_member_display_name_does_not_use_owner_account_name():
     from agent.im.identity import ImIdentity, display_name_for_message
 

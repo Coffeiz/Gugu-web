@@ -437,7 +437,11 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             # role=summary 发送，也不应被放入动态 reminder 尾部。
             parts.append({"role": "user", "content": _summary_content(message)})
             continue
-        content_json = getattr(message, "content_json", None)
+        # 旧 references_json 消息由 session_history 挂载临时 canonical 内容。
+        # 优先使用它，使旧数据和新消息共用同一套顺序与 provider 重建逻辑。
+        content_json = getattr(message, "_reference_content_json", None)
+        if content_json is None:
+            content_json = getattr(message, "content_json", None)
         if isinstance(content_json, list):
             # 旧数据可能把时间 reminder 存成 text；在 provider 分支前统一恢复
             # canonical 类型，确保跨 run 的消息结构不会漂移。
@@ -471,19 +475,6 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             and not is_tool_message
             and not is_canonical_event
         )
-
-        # 旧消息的 references_json 没有随历史正文一起持久化 canonical block；
-        # session_history 会为这类消息挂载临时解析结果，恢复时放在正文之前。
-        reference_context = str(getattr(message, "_reference_context_text", "") or "").strip()
-        if is_user_message and reference_context:
-            parts.append({
-                "role": "user",
-                "content": [{
-                    "type": "knowledge-context",
-                    "scope": "explicit-reference",
-                    "text": reference_context,
-                }],
-            })
 
         # 时间 reminder 固定放在对应 user 之前。当前请求也遵循同一顺序，避免
         # 本轮末尾的时间在下一 run 恢复时移动到 assistant/tool 结果之后。

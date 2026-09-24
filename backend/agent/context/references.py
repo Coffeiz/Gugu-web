@@ -205,7 +205,13 @@ async def hydrate_reference_history(db, user_id, history: Iterable) -> None:
             cache[key] = await build_reference_context(db, user_id, raw)
         text = cache[key]
         if text:
-            setattr(message, "_reference_context_text", text)
+            # 旧消息只把引用元数据存进 references_json。回放时构造与新消息
+            # 相同的临时 canonical 内容，交给统一 history 路径处理时间顺序、
+            # provider 转换和附件边界；不回写 ORM 字段，避免读历史产生持久化副作用。
+            setattr(message, "_reference_content_json", [
+                reference_context_block(text),
+                {"type": "text", "text": str(message.content or "")},
+            ])
 
 
 __all__ = [
