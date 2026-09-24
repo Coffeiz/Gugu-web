@@ -153,8 +153,10 @@ export function useChatSessions(options: {
     !sessionId.value ? false : Boolean(sessions.value.find(s => s.id === sessionId.value)?.filesystemAuthorizationEnabled)
   )
 
-  async function loadSession(id: number) {
-    if (id === sessionId.value) return
+  async function loadSession(id: number, force = false) {
+    // 刷新恢复时 sessionId 会先从 sessionStorage 恢复；即使 id 相同，消息内存仍是空的，
+    // 必须继续请求历史。普通侧栏重复点击仍保持无操作。
+    if (!force && id === sessionId.value) return
     const viewGeneration = options.bumpViewGeneration()
     const previousMessages = messages.value
     options.setSessionSettling(true)

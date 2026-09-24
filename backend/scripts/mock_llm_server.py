@@ -44,7 +44,9 @@ async def _stream():
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     body = await request.json()
-    if not body.get("stream", True):
+    # OpenAI SDK 的标题/问候请求通常省略 stream，默认应返回普通 JSON；只有聊天
+    # 流式请求显式传 stream=true 时才走 SSE。
+    if not body.get("stream", False):
         return {
             "id": "chatcmpl-e2e-fixed",
             "object": "chat.completion",

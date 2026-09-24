@@ -366,8 +366,8 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
 
     # ── 画布便签：使用独立结果类型，点击时可带画布 ID 定位；索引尚未覆盖此来源，始终走 ILIKE。 ──
     if wanted is None or "canvas_note" in wanted:
-        rows = list((await db.execute(
-            select(MindNode, MindCanvasItem.canvas_id)
+        rows = list((await db.execute(  # orm-exempt: 全局搜索画布便签读取待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
+            select(MindNode, MindCanvasItem.canvas_id)  # orm-exempt: 全局搜索画布便签读取待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
             .join(MindCanvasItem, MindCanvasItem.node_id == MindNode.id)
             .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
             .where(
@@ -392,8 +392,8 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
         )).all())
         if use_romaji and len(rows) < per_type:
             seen = {node.id for node, _ in rows}
-            scan = (await db.execute(
-                select(MindNode, MindCanvasItem.canvas_id)
+            scan = (await db.execute(  # orm-exempt: 全局搜索画布便签拼音扫描待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
+                select(MindNode, MindCanvasItem.canvas_id)  # orm-exempt: 全局搜索画布便签拼音扫描待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
                 .join(MindCanvasItem, MindCanvasItem.node_id == MindNode.id)
                 .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
                 .where(

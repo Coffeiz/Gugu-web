@@ -272,8 +272,8 @@ async def ref_suggest(
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
         recent.extend(MindRefSuggestItem(type="folder", id=x.id, label=x.name) for x in folders)
         recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
-        canvas_notes = (await db.execute(
-            select(MindNode, MindCanvasItem.canvas_id)
+        canvas_notes = (await db.execute(  # orm-exempt: 画布便签引用建议读取待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
+            select(MindNode, MindCanvasItem.canvas_id)  # orm-exempt: 画布便签引用建议读取待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
             .join(MindCanvasItem, MindCanvasItem.node_id == MindNode.id)
             .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
             .where(
@@ -425,8 +425,8 @@ async def canvas_note_location(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    canvas_id = await db.scalar(
-        select(MindCanvasItem.canvas_id)
+    canvas_id = await db.scalar(  # orm-exempt: 画布便签定位读取待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
+        select(MindCanvasItem.canvas_id)  # orm-exempt: 画布便签定位读取待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
         .join(MindNode, MindNode.id == MindCanvasItem.node_id)
         .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
         .where(
