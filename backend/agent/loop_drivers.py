@@ -154,7 +154,7 @@ class AnthropicDriver:
         blocks = [b.model_dump() if hasattr(b, "model_dump") else dict(b)
                   for b in (result.raw or [])]
         state_blocks = [block for block in blocks if block.get("type") in {
-            "thinking", "redacted_thinking", "tool_use",
+            "thinking", "redacted_thinking",
         }]
         if not state_blocks:
             return None
@@ -164,11 +164,11 @@ class AnthropicDriver:
             counts[block_type] = counts.get(block_type, 0) + 1
         return {
             "state_kind": "anthropic_thinking_blocks",
-            # 保存完整 content blocks，而不是只保存 thinking 正文；signature、
-            # redacted_thinking 和 tool_use 的字段顺序由原始响应决定。
-            "payload": {"blocks": copy.deepcopy(blocks)},
+            # 只保存 provider 专属的 thinking 块。普通文本和 tool_use 已经
+            # 进入 canonical history，跨请求恢复它们会重复插入旧工具调用。
+            "payload": {"blocks": copy.deepcopy(state_blocks)},
             "summary": {
-                "state_block_count": len(blocks),
+                "state_block_count": len(state_blocks),
                 "thinking_block_count": sum(counts.get(t, 0) for t in ("thinking", "redacted_thinking")),
                 "tool_use_block_count": counts.get("tool_use", 0),
             },
@@ -181,7 +181,18 @@ class AnthropicDriver:
             for block in blocks
         ):
             return False
-        ctx.restored_blocks = copy.deepcopy(blocks)
+        # tool_use 已经随上一轮的 assistant/tool_result 写入 canonical history。
+        # 跨请求恢复时再次插入它会复用旧 id，且当前 user 消息后没有对应
+        # tool_result，MiniMax 会以 2013 拒绝整次请求。跨请求只需恢复
+        # provider 专属的 thinking 签名块；普通文本和工具调用都由历史提供。
+        thinking_blocks = [
+            copy.deepcopy(block)
+            for block in blocks
+            if block.get("type") in {"thinking", "redacted_thinking"}
+        ]
+        if not thinking_blocks:
+            return False
+        ctx.restored_blocks = thinking_blocks
         return True
 
     def prepare(self, tool_names, ai, messages, system_text, tool_snapshot=None):
@@ -275,6 +286,15 @@ class AnthropicDriver:
             )
         else:
             _msgs = outbound
+        from agent.runtime.loopscope_trace.state import record_anthropic_request_diagnostics
+
+        record_anthropic_request_diagnostics(
+            messages=_msgs,
+            context=ctx,
+            restored_blocks=restored_blocks_for_trace,
+            restored_insert_index=restored_insert_index,
+            projection=projection,
+        )
         kwargs = dict(
             model=ctx.model, system=ctx.system_param, messages=_msgs,
             tools=ctx.tools, max_tokens=ctx.max_tokens,

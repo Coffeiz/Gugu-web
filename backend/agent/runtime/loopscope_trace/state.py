@@ -18,6 +18,7 @@ from .utils import _code_ref, _estimate_tokens, _jsonable
 
 _trace: ContextVar[str] = ContextVar("trace_id", default="")
 _scope_run: ContextVar["_ScopeRun | None"] = ContextVar("loopscope_run", default=None)
+_active_llm_span: ContextVar["_Span | None"] = ContextVar("loopscope_active_llm_span", default=None)
 _send_tasks: set[asyncio.Task] = set()
 _layout_logger = logging.getLogger("agent.core")
 
@@ -247,6 +248,125 @@ def _anthropic_request_message_structure(messages: Any) -> list[dict[str, Any]]:
             "blocks_truncated": len(blocks) > 64,
         })
     return summaries
+
+
+def activate_llm_span(span: Any):
+    """把当前 provider round span 绑定到执行上下文，供 driver 记录最终请求摘要。"""
+    return _active_llm_span.set(span)
+
+
+def deactivate_llm_span(token) -> None:
+    """恢复进入当前 provider round 前的 span 上下文。"""
+    try:
+        _active_llm_span.reset(token)
+    except ValueError:
+        # async generator 的 GC/athrow 可能在不同 Context 中执行 finally。
+        # 原 Context 已结束时 token 无法 reset；观测收尾不能因此产生
+        # "Task exception was never retrieved"，也不能在错误 Context 写入状态。
+        return
+
+
+def record_anthropic_request_diagnostics(
+    *,
+    messages: Any,
+    context: Any,
+    restored_blocks: Any = None,
+    restored_insert_index: int | None = None,
+    projection: Any = None,
+) -> None:
+    """把状态注入及 cache 标记后的 Anthropic 请求结构写入当前 LLM span。"""
+    if not _enabled():
+        return
+    span = _active_llm_span.get()
+    if span is None or span.ended_at is not None:
+        return
+    try:
+        from .utils import _cache_diagnostics
+
+        cache_diagnostics = _cache_diagnostics(
+            messages, context, str(getattr(context, "model", "")), provider_projected=True,
+        )
+        structure = _anthropic_request_message_structure(messages)
+        structure_json = json.dumps(
+            structure, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        restored_structure = _anthropic_request_message_structure([
+            {"role": "assistant", "content": restored_blocks}
+        ])[0]["blocks"] if isinstance(restored_blocks, list) else []
+        restored_json = json.dumps(
+            restored_blocks or [], ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        cache_keys = (
+            "cache_supported", "conversation_messages", "cache_anchor_count",
+            "cache_anchor_indices", "cache_anchor_last_index",
+            "cache_anchor_tokens_estimate", "cache_state_revision",
+            "cache_baseline_digest", "cache_latest_digest", "cache_prefix_digest",
+            "cache_base_prefix_digest", "stable_message_count", "stable_prefix_digest",
+            "tool_schema_digest",
+        )
+        actual_cache = {
+            key: cache_diagnostics[key]
+            for key in cache_keys
+            if key in cache_diagnostics
+        }
+        actual_cache["cache_control_message_indices"] = [
+            message["index"] for message in structure
+            if any(block.get("cache_control") for block in message.get("blocks", []))
+        ]
+        system_param = getattr(context, "system_param", None)
+        system_blocks = system_param if isinstance(system_param, list) else [system_param]
+        system_text = "".join(
+            str(block.get("text") or "")
+            for block in system_blocks if isinstance(block, dict)
+        )
+        system_digest_source = json.dumps(
+            system_param, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            default=str,
+        )
+        actual_request = {
+            "schema_version": 1,
+            "message_count": len(structure),
+            "messages_truncated": len(messages) > 256 if isinstance(messages, list) else False,
+            "message_structure": structure,
+            "structure_digest": hashlib.sha256(structure_json.encode("utf-8")).hexdigest()[:16],
+            "wire_digest": hashlib.sha256(
+                json.dumps(
+                    messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()[:16],
+            "canonical_history_digest": str(getattr(projection, "canonical_digest", ""))[:64],
+            "rendered_history_digest": str(getattr(projection, "wire_digest", ""))[:64],
+            "system": {
+                "type": "blocks" if isinstance(system_param, list) else (
+                    "text" if isinstance(system_param, str) else "empty"
+                ),
+                "text_chars": len(system_text) if isinstance(system_param, list) else len(system_param or ""),
+                "block_types": [
+                    str(block.get("type") or "other") if isinstance(block, dict) else "text"
+                    for block in system_blocks
+                ],
+                "cache_control_block_indices": [
+                    index for index, block in enumerate(system_blocks)
+                    if isinstance(block, dict) and "cache_control" in block
+                ],
+                "digest": hashlib.sha256(system_digest_source.encode("utf-8")).hexdigest()[:16],
+            },
+            "restored_state": {
+                "insert_index": restored_insert_index,
+                "block_count": len(restored_structure),
+                "blocks": restored_structure,
+                "digest": hashlib.sha256(restored_json.encode("utf-8")).hexdigest()[:16]
+                if restored_structure else "",
+            },
+            "cache": actual_cache,
+        }
+        assembly = span.input.get("assembly") if isinstance(span.input, dict) else None
+        cache = assembly.get("cache") if isinstance(assembly, dict) else None
+        if isinstance(cache, dict):
+            cache["actual_request"] = actual_request
+    except Exception:
+        pass
 
 
 def _anthropic_request_pairing(messages: list[dict[str, Any]]) -> dict[str, Any]:

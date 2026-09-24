@@ -1,15 +1,19 @@
 import json
+from contextvars import copy_context
 from types import SimpleNamespace
 
 import pytest
 
-from agent.loop_drivers import AnthropicDriver, NormalizedToolCall, RoundResult
+from agent.context.assembly import PromptMessages
 from agent.context.canonical_tool_history import canonical_tool_round
+from agent.loop_drivers import AnthropicDriver, NormalizedToolCall, RoundResult
 from agent.runtime.loopscope_trace.state import (
     _ScopeRun,
     _anthropic_structure,
     _now,
     _scope_run,
+    activate_llm_span,
+    deactivate_llm_span,
     record_anthropic_request_failure,
 )
 
@@ -33,6 +37,16 @@ def test_anthropic_tool_round_preserves_all_response_blocks_and_signature():
     assert messages[0]["content"][0]["type"] == "thinking"
     assert messages[0]["content"][0]["signature"] == "sig-1"
     assert messages[0]["content"][2]["type"] == "tool_use"
+
+
+def test_deactivate_llm_span_ignores_late_async_generator_context():
+    """异步生成器延迟 aclose 到其他 Context 时不能产生未捕获异常。"""
+    span = SimpleNamespace()
+    token = activate_llm_span(span)
+    try:
+        copy_context().run(deactivate_llm_span, token)
+    finally:
+        deactivate_llm_span(token)
 
 
 def test_anthropic_tool_round_drops_unprocessed_parallel_tool_uses():
@@ -202,3 +216,71 @@ async def test_anthropic_driver_records_failure_trace_only_when_scoped(monkeypat
     serialized = json.dumps(diagnostic, ensure_ascii=False)
     assert "private user prompt" not in serialized
     assert "private provider detail" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_anthropic_driver_records_final_cached_request_structure(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-test-final-anthropic-request", trace_id="trace-test",
+        session_key="gugu:web:test-session", external_session_id="test-session",
+        source="web", started_at=_now(),
+    )
+    span = run.span("llm", "LLM round 1", {"assembly": {"cache": {}}})
+    captured = {}
+
+    async def successful_stream(_client, kwargs, _adapter):
+        captured.update(kwargs)
+        yield ("final", SimpleNamespace(
+            content=[{"type": "text", "text": "完成"}],
+            usage=SimpleNamespace(
+                input_tokens=10, output_tokens=1,
+                cache_read_input_tokens=0, cache_creation_input_tokens=0,
+            ),
+        ))
+
+    restored = [{
+        "type": "thinking", "thinking": "不可写入 trace 的状态正文",
+        "signature": "sig-private",
+    }]
+    ctx = SimpleNamespace(
+        model="MiniMax-M3", max_tokens=32, tools=[], system_param=[{
+            "type": "text", "text": "不可写入 trace 的 system 正文",
+            "cache_control": {"type": "ephemeral"},
+        }],
+        thinking_param={}, generation_param={}, supports_active_cache=True,
+        restored_blocks=restored,
+        adapter=SimpleNamespace(
+            name="minimax", api_format="anthropic",
+            render_history=lambda value: value,
+        ),
+    )
+    messages = PromptMessages([
+        {"role": "user", "content": "历史用户消息"},
+        {"role": "assistant", "content": "历史回复"},
+        {"role": "user", "content": "本轮问题"},
+    ])
+
+    run_token = _scope_run.set(run)
+    span_token = activate_llm_span(span)
+    try:
+        result = [item async for item in AnthropicDriver().run_round(
+            object(), ctx, messages, stream_round=successful_stream,
+        )]
+    finally:
+        deactivate_llm_span(span_token)
+        _scope_run.reset(run_token)
+
+    assert result[-1][0] == "done"
+    actual = span.input["assembly"]["cache"]["actual_request"]
+    assert actual["restored_state"]["insert_index"] == 2
+    assert actual["restored_state"]["block_count"] == 1
+    assert actual["restored_state"]["digest"]
+    assert actual["cache"]["cache_anchor_indices"] == [0, 3]
+    assert actual["cache"]["cache_control_message_indices"] == [0, 3]
+    assert actual["system"]["cache_control_block_indices"] == [0]
+    assert actual["message_count"] == len(captured["messages"]) == 4
+    serialized = json.dumps(actual, ensure_ascii=False)
+    assert "不可写入 trace 的状态正文" not in serialized
+    assert "不可写入 trace 的 system 正文" not in serialized
+    assert "sig-private" not in serialized

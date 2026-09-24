@@ -44,6 +44,34 @@ PRIVATE_DAILY_KEEP_RECENT = 50
 _DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
 GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference", "note"}
 _GROUP_INTERNAL_ID_RE = re.compile(r"(?:platform_user_id|user_openid|member_openid|group_openid)\s*=", re.I)
+_REFLECTION_MEDIA_PLACEHOLDERS = {
+    "image": "[图片已省略]",
+    "image_url": "[图片已省略]",
+    "input_audio": "[音频已省略]",
+    "audio": "[音频已省略]",
+    "video": "[视频已省略]",
+    "video_url": "[视频已省略]",
+}
+
+
+def _replace_reflection_media(history: list) -> list:
+    """将反思前缀中的多媒体块替换为文本，避免 provider 重新审核媒体内容。"""
+    replaced = []
+    for message in history:
+        if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+            replaced.append(message)
+            continue
+        content = []
+        for block in message["content"]:
+            if isinstance(block, dict) and block.get("type") in _REFLECTION_MEDIA_PLACEHOLDERS:
+                content.append({
+                    "type": "text",
+                    "text": _REFLECTION_MEDIA_PLACEHOLDERS[block["type"]],
+                })
+            else:
+                content.append(block)
+        replaced.append({**message, "content": content})
+    return replaced
 
 
 def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
@@ -79,7 +107,9 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         "只从追加历史末尾与本批范围对应的用户消息提取新增记忆，不要在任务中寻找重复正文，"
         "也不得把更早历史中的内容重新提取为新增记忆。"
     )
-    history = tuple(render_branch_prefix(list(snapshot.history), snapshot.ai))
+    history = tuple(_replace_reflection_media(
+        render_branch_prefix(list(snapshot.history), snapshot.ai),
+    ))
     reflection_scope = (
         "member" if task_type == "member-batch" else
         "private" if task_type == "private-owner" else "group"

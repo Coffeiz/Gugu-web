@@ -827,6 +827,39 @@ def test_group_and_member_jobs_do_not_duplicate_batch_body_in_delta(monkeypatch)
         assert snapshot_input.cache_probe_context["trigger_source"] == "session_snapshot"
 
 
+def test_reflection_snapshot_replaces_image_audio_and_video_blocks(monkeypatch):
+    from agent.context import prefix_history
+    from agent.memory.im_reflection import _build_append_branch_input
+    from agent.memory.scopes import MemoryScope
+
+    history = ({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "保留这段文字"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,secret"}},
+            {"type": "input_audio", "input_audio": {"data": "secret"}},
+            {"type": "video", "source": {"type": "url", "url": "https://example.invalid/video"}},
+        ],
+    },)
+    monkeypatch.setattr(prefix_history, "render_branch_prefix", lambda prefix, ai: list(prefix))
+    snapshot = SimpleNamespace(
+        history=history, ai=object(), system_prompt="静态系统提示词", tools=(),
+        session_id=77, run_id="group-main-run",
+    )
+    branch_input = _build_append_branch_input(
+        MemoryScope("owner-1", "qq", "bot-1", "group", "group-1"),
+        SimpleNamespace(id=12, idempotency_key="job-key"), "group", {}, [], snapshot=snapshot,
+    )
+
+    content = branch_input.history_messages[0]["content"]
+    assert content == [
+        {"type": "text", "text": "保留这段文字"},
+        {"type": "text", "text": "[图片已省略]"},
+        {"type": "text", "text": "[音频已省略]"},
+        {"type": "text", "text": "[视频已省略]"},
+    ]
+
+
 def test_append_branch_input_requires_full_session_snapshot():
     from agent.memory.im_reflection import _build_append_branch_input
     from agent.memory.scopes import MemoryScope

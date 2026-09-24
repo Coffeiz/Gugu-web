@@ -10,7 +10,8 @@ from typing import Any
 from .cache_probe import build_cache_round, context_digests, prefix_unchanged, record_cache_drop
 from .context import install_context_hooks
 from .state import (
-    _ScopeRun, _enabled, _finish_run, _now, _scope_run, get_trace,
+    _ScopeRun, _enabled, _finish_run, _now, _scope_run, activate_llm_span,
+    deactivate_llm_span, get_trace,
     record_adapter_call, record_adapter_result, record_canonical_event_stats,
     record_context_layout, record_tool_schema_error,
 )
@@ -642,6 +643,7 @@ def ensure_hooks() -> None:
             # 不能保存未渲染的 canonical PromptMessages。
             previous_round_messages = list(round_wire_messages)
             final = None
+            active_span_token = activate_llm_span(span)
             try:
                 async for kind, value in round_callable(
                     client, ctx, round_messages, stream_round=stream_round,
@@ -710,6 +712,8 @@ def ensure_hooks() -> None:
                 if run:
                     record_adapter_result(run, "error")
                 raise
+            finally:
+                deactivate_llm_span(active_span_token)
 
         def wrap_round(round_driver, round_callable):
             """把本轮 LoopScope 观测器复用到兼容性回退创建的 driver。"""
