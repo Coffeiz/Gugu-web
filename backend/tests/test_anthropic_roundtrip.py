@@ -37,6 +37,33 @@ def test_anthropic_tool_round_preserves_all_response_blocks_and_signature():
     assert messages[0]["content"][0]["type"] == "thinking"
     assert messages[0]["content"][0]["signature"] == "sig-1"
     assert messages[0]["content"][2]["type"] == "tool_use"
+    assert messages[1]["content"] == [{
+        "type": "tool_result", "tool_use_id": "call-1", "content": "ok",
+    }]
+
+
+def test_anthropic_error_tool_result_matches_canonical_error_state():
+    """实时工具轮和 canonical 回放都应保留相同的错误标记及正文。"""
+    call = NormalizedToolCall("call-1", "grep", {"path": "relative/path"})
+    error_content = json.dumps({"error": "path 必须使用逻辑路径"}, ensure_ascii=False)
+    result = RoundResult(
+        text="",
+        tool_calls=[call],
+        requires_tools=True,
+        raw=[{"type": "tool_use", "id": "call-1", "name": "grep", "input": call.input}],
+    )
+
+    provider_messages = AnthropicDriver().build_tool_round(result, [(call, error_content)])
+    canonical_messages = canonical_tool_round(result, [(call, error_content)])
+    provider_result = provider_messages[1]["content"][0]
+    canonical_result = canonical_messages[1]["content"][0]
+
+    assert provider_result == {
+        "type": "tool_result", "tool_use_id": "call-1",
+        "content": error_content, "is_error": True,
+    }
+    assert canonical_result["content"] == error_content
+    assert canonical_result["is_error"] is provider_result["is_error"] is True
 
 
 def test_deactivate_llm_span_ignores_late_async_generator_context():

@@ -47,7 +47,7 @@ from app.core.errors import RetryableError
 from app.core.redaction import diag_log
 from app.core.retry import LLM_RETRY
 from app.core.redaction import diag_log
-from agent.context.canonical_tool_history import ToolCall
+from agent.context.canonical_tool_history import ToolCall, ToolResult
 from agent.context.cache_state import CacheState
 from agent.providers.message_utils import (
     _collapse_volatile_messages,
@@ -389,7 +389,13 @@ class AnthropicDriver:
             "role": "assistant",
             "content": self._content_dicts(result, tool_ids=dispatched_ids),
         }]
-        tool_results = [{"type": "tool_result", "tool_use_id": tc.id, "content": res} for tc, res in dispatched]
+        tool_results = []
+        for tc, res in dispatched:
+            result = ToolResult.from_block({"tool_use_id": tc.id, "content": res})
+            block = {"type": "tool_result", "tool_use_id": tc.id, "content": res}
+            if result.is_error:
+                block["is_error"] = True
+            tool_results.append(block)
         messages.append({"role": "user", "content": tool_results})
         return messages
 
