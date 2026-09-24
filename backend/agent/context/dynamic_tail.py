@@ -30,16 +30,6 @@ def _format_time(value: datetime) -> str:
     return f"{value:%Y-%m-%d}（星期{weekday}）{value:%H:%M}"
 
 
-def current_message_time_reminder(sent_at, user_tz=None) -> dict | None:
-    """把当前用户消息的发送时间作为当前时间，放在该消息正文之前。"""
-    if sent_at is None:
-        return None
-    if sent_at.tzinfo is None:
-        sent_at = sent_at.replace(tzinfo=timezone.utc)
-    local_time = sent_at.astimezone(_as_tz(user_tz))
-    return reminder_message(f"当前时间：{_format_time(local_time)}")
-
-
 def current_date_text(user_tz=None) -> str:
     """生成只按日期变化的当前日期文本，不包含时分秒。"""
     current = datetime.now(_as_tz(user_tz))

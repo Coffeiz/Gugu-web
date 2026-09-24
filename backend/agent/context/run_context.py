@@ -130,7 +130,7 @@ async def prepare_run(
     )
     message_time = None
     if user_message is not None and not resume_interaction:
-        message_time = dynamic_tail.current_message_time_reminder(
+        message_time = dynamic_tail.message_time_reminder(
             user_message.sent_at, user_tz,
         )
 

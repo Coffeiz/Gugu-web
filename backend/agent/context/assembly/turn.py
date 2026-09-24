@@ -46,8 +46,8 @@ def assemble_turn(*, stance: str | None = None,
     """把本轮新增内容一次性组装为 batch。
 
     姿态只有在摘要变化时才追加；历史中的旧姿态不会被删除或替换。
-    当前轮时间由当前用户消息的 ``sent_at`` 生成，放在正文前并只进入 provider
-    投影，不写入 canonical history；下一 run 会按历史语义重建为“消息时间”。
+    当前轮消息时间由当前用户消息的 ``sent_at`` 生成，放在正文前并只进入 provider
+    投影，不写入 canonical history；实时当前时间由 ``get_current_time`` 按需获取。
     runtime reminder 进入 canonical history，保证跨 run 能在原位置重放。
     """
     current_digest = stance_digest(stance)

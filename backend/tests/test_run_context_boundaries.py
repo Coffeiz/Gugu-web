@@ -11,10 +11,10 @@ from agent.providers.message_utils import render_openai_request_history
 from agent.rag import context as rag_context
 
 
-def test_current_message_time_reminder_uses_message_timestamp_and_user_timezone():
+def test_message_time_reminder_uses_message_timestamp_and_user_timezone():
     from zoneinfo import ZoneInfo
 
-    reminder_message = dynamic_tail.current_message_time_reminder(
+    reminder_message = dynamic_tail.message_time_reminder(
         datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc),
         ZoneInfo("Asia/Shanghai"),
     )
@@ -23,7 +23,7 @@ def test_current_message_time_reminder_uses_message_timestamp_and_user_timezone(
         "role": "user",
         "content": (
             "[system-reminder]\n"
-            "当前时间：2026-08-29（星期六）18:00\n"
+            "消息时间：2026-08-29 18:00\n"
             "[/system-reminder]"
         ),
     }
@@ -63,7 +63,7 @@ def test_time_message_marks_timestamp_as_reference_not_user_content(monkeypatch)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_anthropic", [True, False])
-async def test_prepare_run_binds_rag_watermark_and_uses_current_message_time(
+async def test_prepare_run_binds_rag_watermark_and_uses_message_time(
     monkeypatch, use_anthropic,
 ):
     observed_watermarks = []
@@ -110,10 +110,10 @@ async def test_prepare_run_binds_rag_watermark_and_uses_current_message_time(
     assert rag_context.get_conversation_before_message_id() is None
     assert messages.dynamic_tail == []
     conversation_text = str(messages.conversation)
-    current_time_text = "当前时间：2026-08-29（星期六）10:00"
+    current_time_text = "消息时间：2026-08-29 10:00"
     assert conversation_text.count(current_time_text) == 1
     assert conversation_text.index(current_time_text) < conversation_text.index("当前文本")
-    assert "消息时间：" not in conversation_text
+    assert "当前时间：" not in conversation_text
     assert "当前时间：" not in str(messages.canonical_batches)
     assert (prepared.anthr_initial_len if use_anthropic else prepared.oa_initial_len) == len(messages.conversation)
     provider_messages = (
