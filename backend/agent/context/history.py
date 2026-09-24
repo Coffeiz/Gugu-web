@@ -309,6 +309,32 @@ def _anthropic_history_blocks(content_json, *, strip_thinking: bool = False) -> 
     return converted
 
 
+def _ordered_canonical_content(
+    blocks: list[dict], *, quote_prefix: str = "", attachment_refs: str = "",
+) -> list[dict]:
+    """按原 block 顺序恢复 OpenAI 历史，避免引用块与正文交换位置。"""
+    event_types = {
+        "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+        "stance-context", "time-context", "runtime-context",
+    }
+    content: list[dict] = []
+    for block in blocks:
+        block_type = block.get("type")
+        if block_type in event_types:
+            content.append(dict(block))
+        elif block_type == "text" and block.get("text"):
+            content.append({"type": "text", "text": str(block["text"])})
+        elif block_type not in {"reasoning_content", "thinking"}:
+            rendered = content_text(block)
+            if rendered:
+                content.append({"type": "text", "text": rendered})
+    if quote_prefix:
+        content.insert(0, {"type": "text", "text": quote_prefix})
+    if attachment_refs:
+        content.append({"type": "text", "text": attachment_refs})
+    return content
+
+
 def _openai_history_message(message, request, *, strip_thinking: bool = False,
                             content_json=None) -> list[dict]:
     if content_json is None:
@@ -361,6 +387,7 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
             if rendered:
                 text_parts.append(rendered)
 
+    quote_prefix = ""
     if message.role == "user" and not tool_results:
         from agent.im.context_loader import quoted_context_prefix
 
@@ -374,10 +401,9 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
         text_parts.append(attachment_refs)
 
     if canonical_events and not tool_calls and not tool_results:
-        content_blocks = ([{"type": "text", "text": "\n".join(text_parts)}]
-                          if text_parts else [])
-        content_blocks.extend(canonical_events)
-        return [{"role": message.role, "content": content_blocks}]
+        return [{"role": message.role, "content": _ordered_canonical_content(
+            blocks, quote_prefix=quote_prefix, attachment_refs=attachment_refs,
+        )}]
 
     result: list[dict] = []
     if message.role == "assistant" or tool_calls:
@@ -428,15 +454,36 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         # canonical event 是上一条真实用户 turn 的附属上下文，不是新用户发言。
         # 如果把它们当成 user，会在每个 schema/RAG/runtime block 前重复插入 sent_at，
         # 让跨 run 的消息边界与上一轮请求不一致，直接打断 provider cache 前缀。
-        is_canonical_event = any(block.get("type") in (
+        canonical_event_types = {
             "knowledge-context", "tool-schema", "skill-schema", "tool-discovery",
             "stance-context", "time-context", "runtime-context",
-        ) for block in blocks)
+        }
+        has_inline_reference = any(
+            block.get("type") == "knowledge-context"
+            and block.get("scope") == "explicit-reference"
+            for block in blocks
+        ) and any(block.get("type") == "text" for block in blocks)
+        is_canonical_event = any(
+            block.get("type") in canonical_event_types for block in blocks
+        ) and not has_inline_reference
         is_user_message = (
             getattr(message, "role", None) == "user"
             and not is_tool_message
             and not is_canonical_event
         )
+
+        # 旧消息的 references_json 没有随历史正文一起持久化 canonical block；
+        # session_history 会为这类消息挂载临时解析结果，恢复时放在正文之前。
+        reference_context = str(getattr(message, "_reference_context_text", "") or "").strip()
+        if is_user_message and reference_context:
+            parts.append({
+                "role": "user",
+                "content": [{
+                    "type": "knowledge-context",
+                    "scope": "explicit-reference",
+                    "text": reference_context,
+                }],
+            })
 
         # 时间 reminder 固定放在对应 user 之前。当前请求也遵循同一顺序，避免
         # 本轮末尾的时间在下一 run 恢复时移动到 assistant/tool 结果之后。

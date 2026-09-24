@@ -11,6 +11,7 @@ from typing import Any
 from agent.context import audit, compress_conv, assembly
 from agent.context import dynamic_tail, session_snapshot
 from agent.context.history import build_history_parts
+from agent.context.references import prepend_reference_context
 from agent.security import sanitize
 from app.core.chat_attach import build_user_content
 
@@ -160,9 +161,12 @@ async def prepare_run(
 
     current_user = None if resume_interaction else {
         "role": "user",
-        "content": build_user_content(
-            current_text, images, use_anthropic, media=media,
-            image_detail=getattr(model_cfg, "vision_detail", "auto"),
+        "content": prepend_reference_context(
+            build_user_content(
+                current_text, images, use_anthropic, media=media,
+                image_detail=getattr(model_cfg, "vision_detail", "auto"),
+            ),
+            getattr(req, "reference_context", None),
         ),
     }
     current_stance_digest = assembly.stance_digest(stance_text)

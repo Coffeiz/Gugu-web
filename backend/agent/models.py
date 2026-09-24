@@ -28,6 +28,7 @@ class AgentRequest:
     source: str = "web"           # "web" | "qq" | "openclaw"
     attachments: list = field(default_factory=list)   # 聊天附件 attach_id（仅 web）
     references: list = field(default_factory=list)    # 网页聊天中用户明确选择的业务对象引用
+    reference_context: Optional[str] = None           # 已解析的网页引用上下文（仅当前 Web run）
     greeting: Optional[str] = None   # 新会话首条用户消息携带的「已显示默认问候」，落为本会话首条 assistant 消息（仅 web）
     locale: Optional[str] = None     # 网页当前界面语言；优先于数据库偏好，避免浏览器语言与 Agent 语言分离
     origin: Optional[str] = None   # 发起请求的浏览器标签页 client-id（仅 web，来自 X-Client-Id）：

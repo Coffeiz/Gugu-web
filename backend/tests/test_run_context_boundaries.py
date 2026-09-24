@@ -127,3 +127,43 @@ async def test_prepare_run_binds_rag_watermark_and_uses_message_time(
     )
     assert provider_messages.dynamic_tail == []
     assert audit_calls[0]["history"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_anthropic", [True, False])
+async def test_prepare_run_keeps_reference_context_before_current_text(
+    monkeypatch, use_anthropic,
+):
+    async def fake_rag(_req, _query, *, history, snapshot_text):
+        return {"tail": [], "blocks": []}
+
+    monkeypatch.setattr("agent.rag.injection.build_automatic_rag_context", fake_rag)
+    req = SimpleNamespace(
+        message="更新下文档",
+        reference_context="以下是用户明确引用的文件：文件 id：123",
+    )
+    prepared = await run_context.prepare_run(
+        system_prompt="stable system",
+        snapshot_context="snapshot",
+        history=[],
+        req=req,
+        user_tz=timezone.utc,
+        strip_thinking=False,
+        use_anthropic=use_anthropic,
+        current_text="更新下文档",
+        images=[],
+        media=[],
+        model_cfg=SimpleNamespace(vision_detail="auto"),
+        stance_text=None,
+        snapshot_injection=None,
+        user_message=SimpleNamespace(
+            id=12,
+            sent_at=datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc),
+        ),
+    )
+    messages = prepared.anthr_messages if use_anthropic else prepared.oa_messages
+    current = messages.conversation[-1]["content"]
+    assert isinstance(current, list)
+    assert current[0]["type"] == "knowledge-context"
+    assert current[0]["scope"] == "explicit-reference"
+    assert current[1] == {"type": "text", "text": "更新下文档"}
