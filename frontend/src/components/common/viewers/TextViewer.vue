@@ -14,7 +14,7 @@
     <template v-else-if="isCodeExt">
       <div class="tv-edit-cm-wrap">
         <Codemirror
-          v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument" :indent-with-tab="true"
+          v-model="editText" :extensions="cmExtensions" :disabled="!canEditContent" :indent-with-tab="true"
           @ready="onCmReady" @change="scheduleAutoSave"
         />
       </div>
@@ -24,7 +24,7 @@
       <div class="tv-edit-cm-wrap">
         <Codemirror
           v-if="mdEditorReady"
-          v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument"
+          v-model="editText" :extensions="cmExtensions" :disabled="!canEditContent"
           @ready="onCmReady"
         />
         <div v-else class="tv-editor-loading">{{ t('viewerUi.markdownHighlighting') }}</div>
@@ -81,6 +81,7 @@ const props = defineProps({
   // 虚拟文档（例如用户人格文件）不属于文件库，但复用同一套 Markdown 预览/编辑器。
   sourceText: { type: String, default: null },
   saveSource: { type: Function as PropType<(content: string) => Promise<void> | void>, default: null },
+  readOnly: { type: Boolean, default: false },
 })
 
 const emit = defineEmits<{
@@ -129,7 +130,13 @@ const LANG_LOADERS: Record<string, () => Promise<any>> = {
 const EDITABLE_EXTS = new Set([
   'md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'ts', 'tsx', 'jsx',
   'vue', 'html', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh',
-  'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex',
+  'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex', 'lrc', 'srt', 'ass', 'ssa', 'vtt',
+  'sub', 'sbv', 'smi', 'ttml', 'dfxp', 'scc', 'cue', 'm3u', 'm3u8', 'pls',
+])
+// 新增的歌词/字幕与未知扩展名支持只读预览；后端正文保存接口尚未开放这些扩展名。
+const READ_ONLY_TEXT_EXTS = new Set([
+  'lrc', 'srt', 'ass', 'ssa', 'vtt', 'sub', 'sbv', 'smi', 'ttml', 'dfxp', 'scc',
+  'cue', 'm3u', 'm3u8', 'pls',
 ])
 
 // 扩展名 → CodeMirror 语言扩展的按需 loader（编辑用，跟 highlight.js 的语言加载器是两套独立映射：
@@ -196,6 +203,7 @@ let markdownBodyStartLine = 0
 const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
 const isVirtualDocument = computed(() => props.sourceText !== null && !!props.saveSource)
 const isEditableDocument = computed(() => isRealFile.value || isVirtualDocument.value)
+const canEditContent = computed(() => isEditableDocument.value && !props.readOnly && !READ_ONLY_TEXT_EXTS.has((props.ext || '').toLowerCase()))
 // 可交互勾选 = md 文件 + 真实文件
 const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
 // 可编辑 = 后端认得的文本类扩展名 + 真实文件（md 走「编辑」按钮切换态用得到；txt/代码类扩展名
@@ -204,7 +212,7 @@ const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRe
 const isTextDocument = computed(() =>
   !(props.ext || '').trim() ||
   EDITABLE_EXTS.has((props.ext || '').toLowerCase()) || isTextMime(props.fileContext?.mimeType))
-const editable = computed(() => isTextDocument.value && isEditableDocument.value)
+const editable = computed(() => isTextDocument.value && canEditContent.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
 // 代码/纯文本扩展名（txt 并入 CodeMirror 路径，见 2026-09-03：txt 没有预览价值，还顺带拿到
 // 行号、撤销栈和自动保存）：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror。
@@ -276,7 +284,7 @@ function onCmReady({ view }: { view: any }) {
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleAutoSave(content = editText.value) {
-  if (!isEditableDocument.value || !isRealFile.value) return
+  if (!canEditContent.value || !isRealFile.value) return
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
   const targetKey = props.fileKey
   autoSaveTimer = setTimeout(() => { autoSaveTimer = null; doAutoSave(targetKey, content) }, 800)

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { isPreviewable, isTextExt } from './preview'
+import { isPreviewable, isTextExt, isTextFallbackCandidate, isCsvExt, normalizeTextBlob } from './preview'
 import { isPreviewReloadRequested, usePreviewStore } from './preview'
 
 describe('文件预览类型判断', () => {
@@ -10,9 +10,42 @@ describe('文件预览类型判断', () => {
     expect(isPreviewable('custom', 'text/plain')).toBe(true)
   })
 
-  it('不把未知二进制文件误判为文本', () => {
+  it('未知格式不直接判成文本，但允许预览链路后续探测实际内容', () => {
     expect(isTextExt('custom', 'application/octet-stream')).toBe(false)
-    expect(isPreviewable('custom', 'application/octet-stream')).toBe(false)
+    expect(isTextFallbackCandidate('custom', 'application/octet-stream')).toBe(true)
+    expect(isPreviewable('custom', 'application/octet-stream')).toBe(true)
+  })
+
+  it('字幕文件按扩展名作为文本预览，不受上传 MIME 影响', () => {
+    expect(isTextExt('srt', 'application/octet-stream')).toBe(true)
+    expect(isPreviewable('SRT', 'application/octet-stream')).toBe(true)
+    for (const ext of ['lrc', 'ass', 'ssa', 'vtt', 'sub', 'sbv', 'smi', 'ttml', 'dfxp', 'cue', 'm3u8']) {
+      expect(isTextExt(ext, 'application/octet-stream'), ext).toBe(true)
+      expect(isPreviewable(ext, 'application/octet-stream'), ext).toBe(true)
+    }
+  })
+
+  it('CSV 保持文本属性，同时可由 Office 表格预览单独分流', () => {
+    expect(isTextExt('csv', 'application/octet-stream')).toBe(true)
+    expect(isCsvExt('CSV')).toBe(true)
+    expect(isCsvExt('txt')).toBe(false)
+  })
+
+  it('未知扩展名可尝试内容探测，明确的二进制/媒体类型不走文本兜底', () => {
+    expect(isTextFallbackCandidate('custom', 'application/octet-stream')).toBe(true)
+    expect(isPreviewable('custom', 'application/octet-stream')).toBe(true)
+    expect(isTextFallbackCandidate('exe', null)).toBe(false)
+    expect(isTextFallbackCandidate('custom', 'video/x-custom')).toBe(false)
+    expect(isTextFallbackCandidate('', null)).toBe(false)
+  })
+
+  it('文本内容探测接受 UTF-8、UTF-16 BOM，拒绝无效编码与二进制控制字符', async () => {
+    expect(await normalizeTextBlob(new Blob(['歌词文本\n']))).not.toBeNull()
+    expect(await normalizeTextBlob(new Blob([new Uint8Array([0xff, 0xfe, 0x61, 0x00])]))).not.toBeNull()
+    const legacyText = await normalizeTextBlob(new Blob([new Uint8Array([0xb8, 0xe8, 0xb4, 0xca])]))
+    expect(await legacyText?.text()).toBe('歌词')
+    expect(await normalizeTextBlob(new Blob([new Uint8Array([0x00, 0x01, 0x02, 0xff])]))).toBeNull()
+    expect(await normalizeTextBlob(new Blob([new Uint8Array([0xc3, 0x28])]))).toBeNull()
   })
 
   it('无扩展名文件默认按文本预览（.gitignore/.env 等点文件与裸文件名）', () => {

@@ -17,7 +17,13 @@
       <span class="fpw-ext" :style="{ color: extColor, background: extColor + '22' }">{{ win.file.ext }}</span>
       <span class="fpw-name" :title="win.file.displayName">{{ win.file.displayName }}</span>
       <div class="fpw-actions" @dblclick.stop>
-        <template v-if="isText">
+        <button
+          v-if="isCsv"
+          class="fpw-btn fpw-csv-toggle"
+          :title="csvTextMode ? t('viewerUi.csvShowTable') : t('viewerUi.csvShowText')"
+          @click.stop="toggleCsvView"
+        >{{ csvTextMode ? t('viewerUi.csvShowTable') : t('viewerUi.csvShowText') }}</button>
+        <template v-if="isText && (!isCsv || csvTextMode)">
           <button class="fpw-btn" :title="t('sharedUi.decreaseFontSize')" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><Icon name="action.subtract" :size="12" /></button>
           <span class="fpw-font-size">{{ textFontSize }}</span>
           <button class="fpw-btn" :title="t('sharedUi.increaseFontSize')" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><Icon name="action.add" :size="12" /></button>
@@ -43,8 +49,8 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
-      <OfficeViewer v-else-if="isOffice && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" />
-      <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
+      <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
+      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
@@ -160,7 +166,7 @@ import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isPreviewReloadRequested, usePreviewStore } from '@/stores/preview'
+import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useLiveStore } from '@/stores/live'
@@ -193,9 +199,13 @@ const h = ref(isPptx.value ? Math.round(window.innerHeight * 0.64) : props.win.h
 // ── 文件类型 ──────────────────────────────────────────────────────────────────
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
-const isText = computed(() => isTextExt(props.win.file.ext, props.win.file.mimeType))
-const isOffice = computed(() => isOfficeExt(props.win.file.ext))
+const isText = computed(() => !!props.win.textFallback || isTextExt(props.win.file.ext, props.win.file.mimeType))
+const isCsv = computed(() => isCsvExt(props.win.file.ext))
+const isOffice = computed(() => isOfficeExt(props.win.file.ext) || isCsv.value)
 const isXlsx = computed(() => (props.win.file.ext ?? '').toLowerCase() === 'xlsx')
+const isSpreadsheet = computed(() => isXlsx.value || isCsv.value)
+const csvTextMode = ref(false)
+watch(() => [props.win.file.id, props.win.file.ext, props.win.reloadToken], () => { csvTextMode.value = false })
 const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
 const _SVG_EXTS = new Set(['SVG'])
 // 矢量图放大无损：开窗尺寸与内部适配都允许超过折算 natural 尺寸
@@ -384,7 +394,7 @@ function fitSpreadsheetWindow(contentW: number, contentH: number) {
 }
 
 function onOfficeContentSize(width: number, height: number) {
-  if (isXlsx.value) {
+  if (isSpreadsheet.value) {
     fitSpreadsheetWindow(width, height)
     contentSize.value = `${width} × ${height}`
     return
@@ -392,6 +402,17 @@ function onOfficeContentSize(width: number, height: number) {
   // pptx：按真实幻灯片宽高比适配窗口（首屏高度，多页靠滚动）。
   fitWindow(width, height)
   contentSize.value = `${width} × ${height}`
+}
+
+function toggleCsvView() {
+  csvTextMode.value = !csvTextMode.value
+  if (csvTextMode.value) fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+  else ready.value = false
+}
+
+function onCsvRenderFailed() {
+  csvTextMode.value = true
+  fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
 }
 
 function onImageLoaded() {
@@ -428,7 +449,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   error.value          = null
   // XLSX 的窗口尺寸要等后端表格结构渲染完成后才能确定，先隐藏窗口，
   // 避免先按默认尺寸显示再突然跳到自然尺寸。
-  if (isXlsx.value && f.id != null && !f.attach_id) ready.value = false
+  if (isSpreadsheet.value && f.id != null && !f.attach_id) ready.value = false
   placeholderReady.value = false
   imageReady.value       = false
   placeholderSrc.value   = null
@@ -480,7 +501,8 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         vid.src = url
       })
       if (sequence !== loadSequence) return
-    } else if (isTextExt(f.ext, f.mimeType) || isOfficeExt(f.ext)) {
+    } else if (isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType) || isOfficeExt(f.ext)) {
+      const expectsText = !isOfficeExt(f.ext) && (isTextExt(f.ext, f.mimeType) || !!props.win.textFallback)
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
       const key = previewBlobCache.keyOf(f)
       currentCacheKey.value = bust ? '' : key
@@ -490,13 +512,23 @@ async function load(f: Partial<FileMeta>, refresh = false) {
           try {
             const cachedResponse = await fetch(cached)
             if (cachedResponse.ok) {
-              blobUrl.value = cached
-              // DOCX 使用预览器初始几何，避免下载完成时被通用窗口适配先撑成高窗。
-              if (isDocx.value) ready.value = true
-              else if (!ready.value && !isPptx.value && !isOffice.value) {
-                fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+              const cachedBlob = await cachedResponse.blob()
+              const textBlob = expectsText ? await normalizeTextBlob(cachedBlob) : cachedBlob
+              if (textBlob) {
+                let cachedUrl = cached
+                if (textBlob !== cachedBlob) {
+                  cachedUrl = URL.createObjectURL(textBlob)
+                  previewBlobCache.put(key, cachedUrl)
+                }
+                if (expectsText) f.mimeType = 'text/plain'
+                blobUrl.value = cachedUrl
+                // DOCX 使用预览器初始几何，避免下载完成时被通用窗口适配先撑成高窗。
+                if (isDocx.value) ready.value = true
+                else if (!ready.value && !isPptx.value && !isOffice.value) {
+                  fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
+                }
+                return
               }
-              return
             }
           } catch {
             // blob URL 可能在热更新或窗口销毁后失效，丢弃后重新下载原文件。
@@ -526,7 +558,11 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (sequence !== loadSequence) return
       if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const url = URL.createObjectURL(await res.blob())
+      const downloadedBlob = await res.blob()
+      const textBlob = expectsText ? await normalizeTextBlob(downloadedBlob) : downloadedBlob
+      if (!textBlob) throw new Error(t('viewerUi.notTextFile'))
+      if (expectsText) f.mimeType = 'text/plain'
+      const url = URL.createObjectURL(textBlob)
       if (sequence !== loadSequence) return
       blobUrl.value = url
       // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
@@ -848,6 +884,13 @@ onUnmounted(() => {
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+}
+.fpw-csv-toggle {
+  width: auto;
+  min-width: 26px;
+  padding: 0 6px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 .fpw-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
 .fpw-close:hover { background: rgba(200,90,90,0.12); color: rgba(200,90,90,0.9); }
