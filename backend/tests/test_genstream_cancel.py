@@ -103,6 +103,18 @@ async def test_active_generation_does_not_depend_on_lease(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_publish_repairs_missing_heartbeat(monkeypatch):
+    redis = _FakeRedis()
+    monkeypatch.setattr(genstream, "get_redis", lambda: redis)
+
+    await genstream.begin(484, owner_run_id="run-live")
+    await redis.delete(genstream._beat_key(484))
+    await genstream.publish(484, {"type": "token", "content": "继续"})
+
+    assert genstream._beat_key(484) in redis.values
+
+
+@pytest.mark.asyncio
 async def test_subscribe_finishes_when_no_generation_snapshot_exists(monkeypatch):
     redis = _FakeRedisWithPubSub()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)
@@ -120,8 +132,7 @@ async def test_subscribe_reaps_zombie_snapshot_and_finishes(monkeypatch):
     redis = _FakeRedisWithPubSub()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)
     redis.values[genstream._state_key(483)] = json.dumps({"done": False, "text": "半截"})
-    redis.values[genstream._owner_key(483)] = "run-dead"
-    # 没有 beat 键 = 心跳已断（crash 残留）
+    # 没有 beat、owner、lease 键 = 进程已退出后的僵尸快照。
 
     stream = genstream.subscribe(483)
     line = await anext(stream)

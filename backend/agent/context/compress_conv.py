@@ -116,9 +116,10 @@ async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
     生成任务正常结束会在 genstream 和会话行上分别收口；worker 被杀死或重启
     时，任务的 ``finally`` 不会执行，数据库可能永久停在 ``running``。两种情况
     允许修复：① Redis 明确可用且生成快照、owner、lease 全部消失；② 快照仍在
-    但 run 进程心跳已断（probe.stale，crash 后 TTL 内的僵尸快照）——此时同时
-    清掉 Redis 残留，否则 is_active 会在整个 TTL 窗口内挡住新消息、让终止按钮
-    和续看全部空转。``baseline_updating`` 是基线提交被打断后的孤儿态：只有
+    但心跳、owner、lease 都已失效（probe.stale，crash 后 TTL 内的僵尸快照）——
+    此时同时清掉 Redis 残留，否则 is_active 会在整个 TTL 窗口内挡住新消息、让
+    终止按钮和续看全部空转。心跳单键短暂丢失但 owner/lease 仍有效时必须等待，
+    不能回收正在执行的 run。``baseline_updating`` 是基线提交被打断后的孤儿态：只有
     压缩锁（带 TTL）也已消失时才认定写进程不在了，锁还在就仍在提交中。
     """
     from agent.llm import genstream

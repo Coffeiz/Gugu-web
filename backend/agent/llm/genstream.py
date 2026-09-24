@@ -98,15 +98,31 @@ async def begin(session_id, owner_run_id: str | None = None) -> None:
     }
     try:
         r = get_redis()
-        # owner 先于 state 写入，旧任务的延迟 finally 在整个切换窗口内
-        # 都会因 owner 不匹配而拒绝清理新一轮状态。
-        await r.set(_owner_key(session_id), owner_run_id, ex=LEASE_TTL)
-        await r.delete(_cancel_key(session_id))
-        await r.delete(_lease_key(session_id))
-        await r.set(_beat_key(session_id), "1", ex=BEAT_TTL)
-        await r.set(_state_key(session_id), json.dumps(state, ensure_ascii=False), ex=TTL)
-    except Exception:
-        pass
+        payload = json.dumps(state, ensure_ascii=False)
+        try:
+            # 真实 Redis 用事务一次性建立 owner/beat/state，避免中途失败留下
+            # 「有 owner、无 beat」的半初始化快照。测试替身和旧客户端没有
+            # pipeline 时才退回顺序写入。
+            pipe = r.pipeline(transaction=True)
+        except AttributeError:
+            pipe = None
+        if pipe is not None:
+            pipe.set(_owner_key(session_id), owner_run_id, ex=LEASE_TTL)
+            pipe.delete(_cancel_key(session_id))
+            pipe.delete(_lease_key(session_id))
+            pipe.set(_beat_key(session_id), "1", ex=BEAT_TTL)
+            pipe.set(_state_key(session_id), payload, ex=TTL)
+            await pipe.execute()
+        else:
+            await r.set(_owner_key(session_id), owner_run_id, ex=LEASE_TTL)
+            await r.delete(_cancel_key(session_id))
+            await r.delete(_lease_key(session_id))
+            await r.set(_beat_key(session_id), "1", ex=BEAT_TTL)
+            await r.set(_state_key(session_id), payload, ex=TTL)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.genstream.begin", exc)
+        raise
 
 
 async def request_cancel(session_id, owner_run_id: str | None = None) -> None:
@@ -234,7 +250,9 @@ async def publish(session_id, event: dict) -> None:
     except Exception:
         pass
     try:
-        await r.expire(_beat_key(session_id), BEAT_TTL)
+        # expire 只会续期已有键；Redis 短暂抖动或 begin 的部分写入失败后，
+        # beat 可能已经消失。每次事件都重新写入，避免活跃 run 被误判为僵尸。
+        await r.set(_beat_key(session_id), "1", ex=BEAT_TTL)
         await r.publish(_ch(session_id), json.dumps(event, ensure_ascii=False))
     except Exception:
         return
@@ -286,18 +304,17 @@ async def touch(session_id) -> None:
     """续期活跃快照；交互等待期间没有普通事件，也不能让 Run 变成离线。"""
     try:
         r = get_redis()
+        # 心跳是独立的存活证明，先补回它；即使快照续期因 Redis 短暂异常失败，
+        # 也不能让下一次恢复检查把仍在运行的任务认成僵尸。
+        await r.set(_beat_key(session_id), "1", ex=BEAT_TTL)
         await r.expire(_state_key(session_id), TTL)
-        await r.expire(_beat_key(session_id), BEAT_TTL)
         await r.expire(_owner_key(session_id), LEASE_TTL)
     except Exception:
         pass
 
 
 async def beat_alive(session_id) -> bool:
-    """run 进程心跳是否仍在；快照非 done 但心跳已断 = crash 留下的僵尸快照。
-
-    Redis 不可用时保持 fail-open（视为存活），避免把正常生成误判成僵尸。
-    """
+    """读取底层心跳键；孤儿回收应使用 ``probe`` 的完整归属判定。"""
     try:
         return bool(await get_redis().exists(_beat_key(session_id)))
     except Exception:
@@ -352,9 +369,10 @@ async def probe(session_id) -> dict:
     # 收口竞态中抢先回收。state 缺失且三类 Redis 状态都没有，才是进程退出
     # 后 finally 未执行留下的孤儿 run。
     active = bool((state and not state.get("done")) or has_owner or has_lease)
-    # 僵尸快照：非 done 的 state / 归属键还在，但 run 进程心跳已断——
-    # crash 后 TTL 内残留的状态，任何等待它的事件都是无限卡死。
-    stale = active and not has_beat
+    # beat 是进程存活探针，但不是唯一的归属证明。Redis 写入短暂失败时，
+    # beat 可能丢失而 owner/lease 仍有效；此时不能回收活跃 run。等归属租约
+    # 也过期后，才把非终态快照认定为 crash 残留。
+    stale = active and not has_beat and not has_owner and not has_lease
     return {
         "redis_ok": True,
         "active": active,
@@ -487,10 +505,11 @@ async def subscribe(session_id, pubsub=None):
                     # 推断成业务失败。实际失败必须由后台任务发布 error 事件。
                     yield "data: " + json.dumps({"type": "done", "idle": True}) + "\n\n"
                     return
-                if not await beat_alive(session_id):
-                    # 快照非 done 但 run 进程心跳已断：crash 留下的僵尸快照，
-                    # 永远等不到后续事件。回收残留并让前端走正常 DB 加载，
-                    # 否则这条流会一直空转（重启后「会话卡死」的根源）。
+                status = await probe(session_id)
+                if status.get("stale"):
+                    # 只有心跳、owner、lease 都失效时才确认是 crash 残留。
+                    # owner/lease 仍有效时继续等待，避免一次 Redis 写入抖动
+                    # 把正在执行的工具调用收口成 idle。
                     await reap(session_id)
                     yield "data: " + json.dumps({"type": "done", "idle": True}) + "\n\n"
                     return
