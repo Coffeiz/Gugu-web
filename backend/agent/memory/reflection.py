@@ -90,6 +90,11 @@ _OWNER_REFLECTION_BUFFER_PREFIX = "memory:owner-reflection:"
 _OWNER_REFLECTION_LOCK_PREFIX = "memory:owner-reflection-lock:"
 _GROUP_OWNER_BUFFER_PREFIX = "memory:owner-group-reflection:"
 _GROUP_OWNER_IDLE_KEY = reflection_idle.GROUP_OWNER_IDLE_KEY
+_LOCAL_IDLE_MARKER_PREFIX = "memory:owner-reflection-local-idle:"
+_LOCAL_IDLE_MARKER_GRACE_SECONDS = 90
+_LOCAL_IDLE_MARKER_REFRESH_SECONDS = 30
+_local_idle_tasks: dict[tuple[bool, str, int], asyncio.Task] = {}
+_local_idle_draining: dict[tuple[bool, str, int], int] = {}
 
 
 def _now_ts() -> float:
@@ -385,6 +390,136 @@ def _owner_idle_member(user_id, session_id) -> str:
     return f"{user_id}:{session_id}"
 
 
+def _local_idle_marker_key(user_id, session_id, *, group_mode: bool) -> str:
+    """仅标记本机持有完整快照；绝不在 Redis 中传递快照正文。"""
+    mode = "group" if group_mode else "private"
+    return f"{_LOCAL_IDLE_MARKER_PREFIX}{mode}:{user_id}:{session_id}"
+
+
+def _schedule_local_idle_drain(user_id, settings, session_id, *, group_mode: bool) -> None:
+    """在捕获主快照的进程内做 TTL 冲刷，避免 idle worker 冷启动压缩前缀。"""
+    key = (group_mode, str(user_id), int(session_id))
+    previous = _local_idle_tasks.get(key)
+    if previous is not None and not previous.done() and not _local_idle_draining.get(key):
+        previous.cancel()
+
+    async def drain_after_idle():
+        marker_task = None
+        try:
+            await asyncio.sleep(reflection_idle.IDLE_WINDOW_SECONDS)
+            from app.core.redis import get_redis
+
+            redis = get_redis()
+            marker = _local_idle_marker_key(
+                user_id, session_id, group_mode=group_mode,
+            )
+
+            async def refresh_marker():
+                while True:
+                    await asyncio.sleep(_LOCAL_IDLE_MARKER_REFRESH_SECONDS)
+                    try:
+                        await redis.set(
+                            marker,
+                            "1",
+                            ex=_LOCAL_IDLE_MARKER_REFRESH_SECONDS * 3,
+                        )
+                    except Exception as exc:
+                        from app.core.redaction import diag_log
+                        diag_log("agent.memory.reflection.local_idle_marker", exc)
+
+            marker_task = asyncio.create_task(refresh_marker())
+            drain = _drain_group_owner_buffer if group_mode else _drain_owner_reflection_buffer
+            _local_idle_draining[key] = _local_idle_draining.get(key, 0) + 1
+            try:
+                await drain(user_id, settings, session_id, allow_rebuild=False)
+            finally:
+                remaining = _local_idle_draining.get(key, 1) - 1
+                if remaining > 0:
+                    _local_idle_draining[key] = remaining
+                else:
+                    _local_idle_draining.pop(key, None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            from app.core.redaction import diag_log
+            diag_log("agent.memory.reflection.local_idle_drain", exc)
+        finally:
+            if marker_task is not None:
+                marker_task.cancel()
+                try:
+                    await marker_task
+                except asyncio.CancelledError:
+                    pass
+            current = asyncio.current_task()
+            if _local_idle_tasks.get(key) is current:
+                _local_idle_tasks.pop(key, None)
+                try:
+                    from app.core.redis import get_redis
+                    await get_redis().delete(_local_idle_marker_key(
+                        user_id, session_id, group_mode=group_mode,
+                    ))
+                except Exception:
+                    pass
+
+    task = asyncio.create_task(drain_after_idle())
+    _local_idle_tasks[key] = task
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+async def _arm_local_idle_drain(redis, user_id, settings, session_id, *, group_mode: bool) -> bool:
+    """只有当前进程仍持有快照时才预约本机 drain；标记仅作 worker 协调。"""
+    if session_id is None:
+        return False
+    try:
+        from agent.context.reflection_snapshot import peek_reflection_snapshot
+
+        snapshot = peek_reflection_snapshot(user_id, session_id)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.local_snapshot_lookup", exc)
+        return False
+    if snapshot is None:
+        return False
+    marker = _local_idle_marker_key(user_id, session_id, group_mode=group_mode)
+    try:
+        await redis.set(
+            marker,
+            "1",
+            ex=reflection_idle.IDLE_WINDOW_SECONDS + _LOCAL_IDLE_MARKER_GRACE_SECONDS,
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.local_idle_marker", exc)
+        return False
+    _schedule_local_idle_drain(
+        user_id, settings, session_id, group_mode=group_mode,
+    )
+    return True
+
+
+async def _cancel_local_idle_drain(redis, user_id, session_id, *, group_mode: bool) -> None:
+    if session_id is None:
+        return
+    key = (group_mode, str(user_id), int(session_id))
+    # In-flight drain owns the coordination marker until its finally block. Removing
+    # it here lets the worker race the active process and the refresher can recreate
+    # a marker after this function returns.
+    if _local_idle_draining.get(key):
+        return
+    task = _local_idle_tasks.pop(key, None)
+    if task is not None and not task.done():
+        task.cancel()
+    await redis.delete(_local_idle_marker_key(
+        user_id, session_id, group_mode=group_mode,
+    ))
+
+
+async def _local_idle_drain_pending(redis, user_id, session_id, *, group_mode: bool) -> bool:
+    marker = _local_idle_marker_key(user_id, session_id, group_mode=group_mode)
+    return bool(await redis.get(marker))
+
+
 def _web_private_reflection_threshold(settings) -> int:
     """读取网页与私聊共用的反思轮数阈值。"""
     try:
@@ -468,7 +603,14 @@ async def _queue_owner_reflection(
     finally:
         await lock.release()
     if count >= _web_private_reflection_threshold(settings):
+        await _cancel_local_idle_drain(
+            redis, user_id, session_id, group_mode=False,
+        )
         await _drain_owner_reflection_buffer(user_id, settings, session_id)
+    else:
+        await _arm_local_idle_drain(
+            redis, user_id, settings, session_id, group_mode=False,
+        )
 
 
 def _buffer_session_id(rows, session_id):
@@ -632,8 +774,41 @@ async def _migrate_legacy_group_owner_buffer(redis, user_id, *, last_active=None
         await _release_reflection_lock(lock)
 
 
+async def _flush_due_owner_reflection_member(redis, settings, idle_key, member, now) -> None:
+    if ":" not in member:
+        # 旧版群主 idle member 只有 user_id；读取其最后活动分数并拆开 session。
+        score = await redis.zscore(idle_key, member)
+        migrated = await _migrate_legacy_group_owner_buffer(
+            redis, member, last_active=score,
+        ) if idle_key == _GROUP_OWNER_IDLE_KEY else False
+        if migrated:
+            await redis.zrem(idle_key, member)
+        else:
+            await reflection_idle.defer(redis, idle_key, member, now=now)
+        return
+    user_id, session_text = member.rsplit(":", 1)
+    try:
+        session_id = int(session_text)
+    except ValueError:
+        await reflection_idle.defer(redis, idle_key, member, now=now)
+        return
+    group_mode = idle_key == _GROUP_OWNER_IDLE_KEY
+    if await _local_idle_drain_pending(
+        redis, user_id, session_id, group_mode=group_mode,
+    ):
+        # 快照只在接收会话的进程内；等待本机 drain。若该进程退出，标记会过期，
+        # worker 随后仍可从持久化历史重建并接管缓冲。
+        return
+    drain = _drain_group_owner_buffer if group_mode else _drain_owner_reflection_buffer
+    task = asyncio.create_task(drain(
+        user_id, settings, session_id, allow_rebuild=True,
+    ))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
 async def flush_due_owner_reflections(settings, *, now: float | None = None, limit: int = 100) -> int:
-    """收束 owner 私聊/群聊中连续闲置 3 分钟的反思缓冲。"""
+    """收束 owner 私聊/群聊中连续闲置 4 分 30 秒的反思缓冲。"""
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -643,30 +818,9 @@ async def flush_due_owner_reflections(settings, *, now: float | None = None, lim
             redis, idle_key, now=now, limit=limit,
         ))
     for idle_key, member in due[:max(1, int(limit))]:
-        if ":" not in member:
-            # 旧版群主 idle member 只有 user_id；读取其最后活动分数并拆开 session。
-            score = await redis.zscore(idle_key, member)
-            migrated = await _migrate_legacy_group_owner_buffer(
-                redis, member, last_active=score,
-            ) if idle_key == _GROUP_OWNER_IDLE_KEY else False
-            if migrated:
-                await redis.zrem(idle_key, member)
-            else:
-                await reflection_idle.defer(redis, idle_key, member, now=now)
-            continue
-        user_id, session_text = member.rsplit(":", 1)
-        try:
-            session_id = int(session_text)
-        except ValueError:
-            await reflection_idle.defer(redis, idle_key, member, now=now)
-            continue
-        group_mode = idle_key == _GROUP_OWNER_IDLE_KEY
-        drain = _drain_group_owner_buffer if group_mode else _drain_owner_reflection_buffer
-        task = asyncio.create_task(drain(
-            user_id, settings, session_id, allow_rebuild=True,
-        ))
-        _bg_tasks.add(task)
-        task.add_done_callback(_bg_tasks.discard)
+        await _flush_due_owner_reflection_member(
+            redis, settings, idle_key, member, now,
+        )
     return len(due)
 
 
@@ -720,7 +874,14 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
     finally:
         await lock.release()
     if flush_now:
+        await _cancel_local_idle_drain(
+            redis, user_id, session_id, group_mode=True,
+        )
         await _drain_group_owner_buffer(user_id, settings, session_id)
+    else:
+        await _arm_local_idle_drain(
+            redis, user_id, settings, session_id, group_mode=True,
+        )
 
 
 def flush_group_owner_buffer(user_id, settings, session_id=None) -> None:

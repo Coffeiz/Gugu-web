@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 网页和所有私聊共用可配置反思阈值；所有群聊反思共用 50 条群消息阈值，并保留 3 分钟闲置收束。
+**Goal:** 网页和所有私聊共用可配置反思阈值；所有群聊反思共用 50 条群消息阈值，并保留 4 分 30 秒闲置收束。
 
 **Architecture:** 用 `web_private_reflection_threshold` 替换 Owner 专属配置名；旧 `reflection_threshold` 不再支持，缺少新字段时使用默认值 10。私聊 IM 成员任务按持久 cursor 的 `pending_agent_count` 聚合，达到阈值后创建持久反思任务；群 scope、member-batch 和群内 Owner 缓冲统一使用 `GROUP_MESSAGE_THRESHOLD=50`，移除群级 1 小时单独触发。闲置扫描继续补齐未反思范围，主会话完整历史前缀和幂等任务保持不变。
 
@@ -15,9 +15,9 @@
 > 状态：本计划对应的阈值统一、完整 session 历史反思、统计口径修正和死代码清理均已完成；以下任务清单为实施记录。
 
 - 网页和所有私聊对象（Owner 与非 Owner）共用一个可配置阈值。
-- 达到私聊阈值时反思；未达到时，最后一轮后空闲 3 分钟则收束待处理内容。
+- 达到私聊阈值时反思；未达到时，最后一轮后空闲 4 分 30 秒则收束待处理内容。
 - 所有群聊反思（群级、群友批量、群内 Owner）统一走 50 条群消息阈值。
-- 群内未到 50 轮的剩余内容在最后一条群消息后空闲 3 分钟时收束。
+- 群内未到 50 轮的剩余内容在最后一条群消息后空闲 4 分 30 秒时收束。
 - 反思继续使用对应主对话的完整历史前缀；保留持久任务的幂等和失败重试语义。
 - 旧字段 `reflection_threshold` 不再映射；缺少新字段时使用默认值 10。
 - 运行配置文件属于用户数据，不由本功能直接改写。
@@ -28,10 +28,10 @@
 ## Review Focus
 
 - 旧配置只提供 `reflection_threshold`：该键被忽略，新字段使用默认值 10；由 Task 1 的旧键忽略测试覆盖。
-- 私聊消息未达阈值但过了 3 分钟：只反思一次且只覆盖尚未反思范围；由 Task 2 的闲置收束与重复扫描测试覆盖。
+- 私聊消息未达阈值但过了 4 分 30 秒：只反思一次且只覆盖尚未反思范围；由 Task 2 的闲置收束与重复扫描测试覆盖。
 - 私聊 scope 之间隔离：一个联系人的轮数不能帮另一个联系人达到阈值；由 Task 2 的 scope 隔离测试覆盖。
 - 群级、群友与群内 Owner 三条路径在第 50 条前后必须使用同一阈值；由 Task 3 的边界测试覆盖。
-- 群消息不足 50 条时仍需在 3 分钟空闲后收束；由 Task 3 的 idle 测试覆盖。
+- 群消息不足 50 条时仍需在 4 分 30 秒空闲后收束；由 Task 3 的 idle 测试覆盖。
 
 ---
 
@@ -123,7 +123,7 @@ Expected before implementation: the new tests fail because private activity curr
 
 - [x] **Step 4: Implement persistent pending-turn aggregation**
 
-Update the `MemoryReflectionCursor` under its existing row lock, increment `pending_agent_count`, and reserve one batch by subtracting the configured threshold when reached. Enqueue a durable task for the full unreflected range. If enqueue fails after counter reservation, the 3-minute idle scan still recovers the range from `last_reflected_message_id`. When an idle task is created, clear any leftover private pending count only if the cursor still points at the settled message. Preserve cursor advancement, scope locks, job idempotency and retry behavior. Keep `last_message_at` current so idle settlement still occurs after 3 minutes.
+Update the `MemoryReflectionCursor` under its existing row lock, increment `pending_agent_count`, and reserve one batch by subtracting the configured threshold when reached. Enqueue a durable task for the full unreflected range. If enqueue fails after counter reservation, the 4-minute-30-second idle scan still recovers the range from `last_reflected_message_id`. When an idle task is created, clear any leftover private pending count only if the cursor still points at the settled message. Preserve cursor advancement, scope locks, job idempotency and retry behavior. Keep `last_message_at` current so idle settlement still occurs after 4 minutes 30 seconds.
 
 - [x] **Step 5: Use the renamed setting in the web/Owner buffer**
 
@@ -146,7 +146,7 @@ Run the command from Step 3. Expected: threshold, isolation, idle fallback and d
 - `GROUP_MESSAGE_THRESHOLD` remains the single constant with value 50.
 - `observe_group_message(...)` schedules both group and member-batch work at the 50th eligible group message.
 - Group-owner buffer is flushed by the same group-scope 50-message event, never by a separate Owner-only counter or the web/private setting.
-- Three-minute idle settlement remains the partial-batch fallback for group and member scopes.
+- Four-minute-30-second idle settlement remains the partial-batch fallback for group and member scopes.
 
 - [x] **Step 1: Add failing group threshold boundary tests**
 
@@ -158,7 +158,7 @@ Add a routing test for `record_passive_im_message`: group threshold from an Owne
 
 - [x] **Step 3: Add failing group idle settlement test**
 
-Assert that a group with fewer than 50 messages still produces only the pending group/member task(s) after 3 minutes idle and that repeated settlement does not duplicate completed ranges.
+Assert that a group with fewer than 50 messages still produces only the pending group/member task(s) after 4 minutes 30 seconds idle and that repeated settlement does not duplicate completed ranges.
 
 - [x] **Step 4: Run focused group tests and verify expected failures**
 

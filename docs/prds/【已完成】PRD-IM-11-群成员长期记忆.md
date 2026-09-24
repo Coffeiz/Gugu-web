@@ -12,8 +12,8 @@
 - `group reflection` 只维护群本身的 `profile`、`daily`、`summary` 和 `memory`，不向群友 scope 写入个人记忆。
 - 被动群消息累计 50 条后，创建一次 `member-batch` 反思任务。
 - `member-batch` 使用这 50 条消息的完整群聊上下文，一次性维护本批出现的多个群友的 `profile`、`pattern`、`summary` 和高价值 `memory`。
-- 群内所有反思共用群消息阈值 50：群级、群友批量和群内 Owner 反思均在累计 50 条群消息后触发；不足 50 条时，最后一条群消息后空闲 3 分钟收束。
-- 网页和所有私聊对象（Owner 与非 Owner）共用可配置的“网页/私聊反思触发阈值”；不足阈值时在最后一轮后空闲 3 分钟收束。
+- 群内所有反思共用群消息阈值 50：群级、群友批量和群内 Owner 反思均在累计 50 条群消息后触发；不足 50 条时，最后一条群消息后空闲 4 分 30 秒收束。
+- 网页和所有私聊对象（Owner 与非 Owner）共用可配置的“网页/私聊反思触发阈值”；不足阈值时在最后一轮后空闲 4 分 30 秒收束。
 - 群友没有独立 `daily.md`，长期事件直接整理到成员 scope 的 `memory.md`。
 
 核心原则：**群级 scope 决定群本身记什么，批量成员反思再按语义主体把同一批上下文分发到各成员 scope。**
@@ -28,7 +28,7 @@
 |---|---|---|---|
 | `group` | 群消息累计 50 条；3 分钟空闲收束补偿未处理消息 | 当前群 scope | `last_reflected_message_id` |
 | `member-batch` | 群消息累计 50 条；3 分钟空闲收束补偿未处理消息 | 本批出现的 platform-user scopes | `last_member_reflected_message_id` |
-| `private-owner` | 私聊对象累计达到网页/私聊反思触发阈值；3 分钟空闲收束补偿未处理回合 | 当前私聊对象 platform-user scope | `last_reflected_message_id` |
+| `private-owner` | 私聊对象累计达到网页/私聊反思触发阈值；4 分 30 秒空闲收束补偿未处理回合 | 当前私聊对象 platform-user scope | `last_reflected_message_id` |
 
 同一批消息可以同时存在两种任务，不能用同一 idempotency range 合并。数据库任务唯一约束因此包含 `task_type`，游标也分别保存两条进度。
 
@@ -102,7 +102,7 @@ backend/tests/test_memory_event_scopes.py
 
 - [x] 群反思和成员批反思使用独立任务类型和游标。
 - [x] 被动群消息累计 50 条创建 `member-batch` 任务。
-- [x] 群内 Owner 反思遵循群聊 50 条消息阈值；Owner 和非 Owner 私聊统一累计阈值，3 分钟空闲时收束未达阈值的内容。
+- [x] 群内 Owner 反思遵循群聊 50 条消息阈值；Owner 和非 Owner 私聊统一累计阈值，4 分 30 秒空闲时收束未达阈值的内容。
 - [x] 成员批反思一次读取完整群聊上下文并批量输出多个成员。
 - [x] 群级 prompt 不再输出 `member_memory_add`。
 - [x] 成员 profile、pattern、summary、memory 按真实消息成员校验后分别落库。

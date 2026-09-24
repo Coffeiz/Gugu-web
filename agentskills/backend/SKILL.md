@@ -49,6 +49,8 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 **实现位置**：`backend/agent/runner.py` 组装段 + `backend/agent/context/builder.py` 的 `build_split()`。
 
+owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同一进程内执行；worker 仅在短 TTL 协调标记过期后作为进程退出时的接管路径。压缩复用快照前缀必须逐条验证模型身份、持久化行边界和消息序列，不能精确对齐时安全回退到数据库重建路径。完整快照不得写入 Redis/数据库/日志；该路径改善前缀一致性，但不承诺特定 provider 的缓存命中率。
+
 **修改缓存策略前必须**：
 1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
 2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`

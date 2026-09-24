@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -133,17 +134,18 @@ def test_web_private_reflection_threshold_rejects_values_outside_admin_range(val
 
 
 @pytest.mark.asyncio
-async def test_reflection_idle_window_flushes_after_three_minutes_for_owner_and_group():
+async def test_reflection_idle_window_flushes_after_four_and_a_half_minutes_for_owner_and_group():
     from agent.memory import reflection_idle
 
     fake_redis = _FakeRedis()
     now = 10_000.0
-    due_member = "idle-exactly-three-minutes"
-    active_member = "idle-two-minutes-fifty-nine-seconds"
+    due_member = "idle-exactly-four-and-a-half-minutes"
+    active_member = "idle-four-minutes-twenty-nine-seconds"
+    idle_seconds = reflection_idle.IDLE_WINDOW_SECONDS
     for key in (reflection_idle.OWNER_IDLE_KEY, reflection_idle.GROUP_OWNER_IDLE_KEY):
         fake_redis.zsets[key] = {
-            due_member: now - 180,
-            active_member: now - 179,
+            due_member: now - idle_seconds,
+            active_member: now - idle_seconds + 1,
         }
 
         assert await reflection_idle.due_members(fake_redis, key, now=now) == [due_member]
@@ -152,7 +154,7 @@ async def test_reflection_idle_window_flushes_after_three_minutes_for_owner_and_
 
     cutoff_input = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
     assert reflection_idle.idle_cutoff(cutoff_input) == datetime(
-        2026, 9, 20, 11, 57, tzinfo=timezone.utc,
+        2026, 9, 20, 11, 55, 30, tzinfo=timezone.utc,
     )
 
 
@@ -216,6 +218,7 @@ async def test_owner_idle_scanner_rebuilds_only_due_session_buffers(monkeypatch)
     now = 10_000.0
     due_score = now - reflection_idle.IDLE_WINDOW_SECONDS - 1
     fake_redis = _FakeRedis()
+    fake_redis.get = AsyncMock(return_value=None)
     fake_redis.zsets[reflection_idle.OWNER_IDLE_KEY] = {
         reflection._owner_idle_member("owner-a", 7): due_score,
         reflection._owner_idle_member("owner-b", 8): now - 30,
@@ -271,6 +274,114 @@ async def test_idle_drain_rechecks_activity_after_acquiring_lock(monkeypatch):
     )
     assert calls == []
     assert fake_redis.lists[key] == ['{"session_id":17,"user_msg":"新消息"}']
+
+
+@pytest.mark.asyncio
+async def test_idle_worker_leaves_buffer_for_process_holding_full_snapshot(monkeypatch):
+    from agent.memory import reflection, reflection_idle
+    import app.core.redis as redis_module
+
+    now = 50_000.0
+    fake_redis = _FakeRedis()
+    fake_redis.set = AsyncMock()
+    fake_redis.get = AsyncMock(return_value="1")
+    user_id, session_id = "owner-local", 41
+    member = reflection._owner_idle_member(user_id, session_id)
+    fake_redis.zsets[reflection_idle.OWNER_IDLE_KEY] = {member: now - 1000}
+    monkeypatch.setattr(redis_module, "get_redis", lambda: fake_redis)
+    scheduled = []
+    drained = []
+    monkeypatch.setattr(
+        "agent.context.reflection_snapshot.peek_reflection_snapshot",
+        lambda *_args: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        reflection, "_schedule_local_idle_drain",
+        lambda *args, **kwargs: scheduled.append((args, kwargs)),
+    )
+    async def fake_drain(*args, **kwargs):
+        drained.append((args, kwargs))
+
+    monkeypatch.setattr(reflection, "_drain_owner_reflection_buffer", fake_drain)
+    assert await reflection._arm_local_idle_drain(
+        fake_redis, user_id, SimpleNamespace(), session_id, group_mode=False,
+    )
+    assert scheduled
+    assert await reflection._local_idle_drain_pending(
+        fake_redis, user_id, session_id, group_mode=False,
+    )
+
+    await reflection.flush_due_owner_reflections(SimpleNamespace(), now=now)
+    tasks = list(reflection._bg_tasks)
+    if tasks:
+        await __import__("asyncio").gather(*tasks)
+    assert drained == []
+
+
+@pytest.mark.asyncio
+async def test_local_idle_drain_marker_expires_after_process_handoff_window():
+    from agent.memory import reflection
+
+    redis = SimpleNamespace(get=AsyncMock(return_value=None))
+    assert not await reflection._local_idle_drain_pending(
+        redis, "owner-no-marker", 42, group_mode=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_idle_drain_falls_back_when_coordination_marker_fails(monkeypatch):
+    from agent.memory import reflection
+
+    monkeypatch.setattr(
+        "agent.context.reflection_snapshot.peek_reflection_snapshot",
+        lambda *_args: SimpleNamespace(),
+    )
+    redis = SimpleNamespace(set=AsyncMock(side_effect=RuntimeError("redis unavailable")))
+    scheduled = []
+    monkeypatch.setattr(
+        reflection, "_schedule_local_idle_drain",
+        lambda *args, **kwargs: scheduled.append((args, kwargs)),
+    )
+
+    assert not await reflection._arm_local_idle_drain(
+        redis, "owner-marker-failure", SimpleNamespace(), 44, group_mode=False,
+    )
+    assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_local_idle_drain_keeps_marker_while_drain_is_active():
+    import asyncio
+
+    from agent.memory import reflection
+
+    redis = SimpleNamespace(
+        set=AsyncMock(), get=AsyncMock(return_value="1"), delete=AsyncMock(),
+    )
+    user_id, session_id = "owner-active", 43
+    marker = reflection._local_idle_marker_key(
+        user_id, session_id, group_mode=False,
+    )
+    await redis.set(marker, "1", ex=90)
+    key = (False, str(user_id), session_id)
+    task = asyncio.create_task(asyncio.Event().wait())
+    reflection._local_idle_tasks[key] = task
+    reflection._local_idle_draining[key] = 1
+    try:
+        await reflection._cancel_local_idle_drain(
+            redis, user_id, session_id, group_mode=False,
+        )
+        assert reflection._local_idle_tasks[key] is task
+        assert await reflection._local_idle_drain_pending(
+            redis, user_id, session_id, group_mode=False,
+        )
+        assert await redis.get(marker) == "1"
+    finally:
+        reflection._local_idle_tasks.pop(key, None)
+        reflection._local_idle_draining.pop(key, None)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 @pytest.mark.asyncio

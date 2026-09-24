@@ -254,7 +254,7 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
         last_message_id=42,
         last_reflected_message_id=40,
         last_member_reflected_message_id=40,
-        last_message_at=now - timedelta(minutes=4),
+        last_message_at=now - reflection_jobs.IDLE_WINDOW - timedelta(minutes=1),
         active_started_at=now - timedelta(minutes=20),
         settled_at=None,
         scope_version=3,
@@ -561,7 +561,7 @@ async def test_private_member_idle_settlement_flushes_partial_batch_once(db, use
             content=f"闲置前第 {index + 1} 轮",
             platform_user_id="member-idle",
             chat_type="c2c",
-            created_at=now - timedelta(minutes=4 - index),
+            created_at=now - reflection_jobs.IDLE_WINDOW - timedelta(minutes=1 - index),
         )
         db.add(message)
         await db.flush()
