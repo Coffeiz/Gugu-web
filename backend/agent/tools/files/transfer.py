@@ -125,6 +125,10 @@ async def _stage_send_path(db, user_id, value: str):
     if root is None:
         return json.dumps({"error": f"/{root_name} 当前不支持本地文件发送"}, ensure_ascii=False)
 
+    # 策略和根目录解析只读当前工具事务。后续会从本地文件流式写入暂存存储，
+    # 可能耗时较长；先结束只读事务，避免连接在 I/O 期间触发 idle-in-transaction 超时。
+    await db.rollback()
+
     root = Path(root).resolve()
     candidate = root.joinpath(*relative.parts)
     try:
