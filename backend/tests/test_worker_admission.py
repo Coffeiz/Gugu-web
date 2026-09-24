@@ -4,6 +4,9 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+import fakeredis.aioredis
+
 import worker
 from app.core import config
 
@@ -132,19 +135,58 @@ async def test_run_once_does_not_redispatch_local_pending_claim_and_uses_free_sl
         worker._buffered_message_ids.clear()
 
 
-async def test_imseen_duplicate_is_not_acked_while_original_handler_may_still_run(monkeypatch):
+async def test_processing_and_completed_claims_have_distinct_ack_behavior(monkeypatch):
     acknowledged = []
+    claim_result = {"value": 0}
 
     class Redis:
-        async def set(self, *_args, **_kwargs):
-            return False
+        async def eval(self, script, _key_count, *_args):
+            if script == worker._CLAIM_MESSAGE_SCRIPT:
+                return claim_result["value"]
+            raise AssertionError("unexpected Redis script")
 
     async def ack(msg_id):
         acknowledged.append(msg_id)
 
     monkeypatch.setattr(worker.R, "get_redis", lambda: Redis())
     monkeypatch.setattr(worker, "_ack_inbound", ack)
+    monkeypatch.setattr(worker, "handle", lambda *_args: pytest.fail("completed message reprocessed"))
 
     await worker._dispatch("duplicate-msg", {"text": "synthetic"})
-
     assert acknowledged == []
+
+    claim_result["value"] = 2
+    await worker._dispatch("completed-msg", {"text": "synthetic"})
+    assert acknowledged == ["completed-msg"]
+
+
+@pytest.mark.asyncio
+async def test_message_lease_completion_and_expiry_allow_reclaim(monkeypatch):
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    acknowledged = []
+
+    async def ack(_stream, _group, msg_id):
+        acknowledged.append(msg_id)
+
+    monkeypatch.setattr(worker.R, "get_redis", lambda: redis)
+    monkeypatch.setattr(worker.R, "ack", ack)
+    worker._pending_message_ids.clear()
+    worker._buffered_message_ids.clear()
+    worker._stop_message_lease("lease-msg")
+    try:
+        state = await worker._claim_message("lease-msg")
+        assert state == "claimed"
+        assert "lease-msg" in worker._message_leases
+
+        await worker._ack_inbound("lease-msg")
+        assert await redis.get(worker._message_state_key("lease-msg")) == "completed"
+        assert acknowledged == ["lease-msg"]
+
+        # 模拟 processing 租约自然过期后的重领；新 owner 可以接管该 stream 条目。
+        await redis.delete(worker._message_state_key("lease-msg"))
+        state = await worker._claim_message("lease-msg")
+        assert state == "claimed"
+    finally:
+        worker._stop_message_lease("lease-msg")
+        worker._pending_message_ids.clear()
+        worker._buffered_message_ids.clear()

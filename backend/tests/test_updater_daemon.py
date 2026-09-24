@@ -107,6 +107,86 @@ def test_recreating_pending_restart_is_resumed_not_marked_failed(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_integrated_updater_handoff_pulls_and_runs_helper_with_target_image(tmp_path, monkeypatch):
+    daemon, state_dir = make_daemon(tmp_path, monkeypatch, {
+        "schema": 1,
+        "candidate": None,
+        "task": {
+            "id": "12345678-1234-1234-1234-123456789abc",
+            "status": "health_checking", "stage": "health_checking",
+            "version": "v1.2.3",
+            "app_image": "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64,
+            "events": [],
+        },
+        "history": [{"id": "12345678-1234-1234-1234-123456789abc", "status": "health_checking"}],
+        "challenges": [],
+    })
+    monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
+    calls = []
+
+    async def compose(args, *, env=None, timeout=30, **_kwargs):
+        calls.append((args, env, timeout))
+        if args == ["config", "--format", "json"]:
+            target_image = env["GUGU_WEB_IMAGE"]
+            return json.dumps({"services": {"updater": {"image": target_image}}})
+        return ""
+
+    monkeypatch.setattr(daemon, "_compose_text", compose)
+    target = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
+
+    await daemon._start_integrated_updater_handoff("12345678-1234-1234-1234-123456789abc", target)
+
+    assert daemon.state["task"]["status"] == "recreating_pending_restart"
+    assert daemon.state["task"]["updater_image"] == target
+    assert json.loads((state_dir / "state.json").read_text(encoding="utf-8"))["task"]["updater_image"] == target
+    assert calls[0][0] == ["config", "--format", "json"]
+    assert calls[0][1]["GUGU_WEB_IMAGE"] == target
+    assert calls[1][0] == ["pull", "updater"]
+    assert calls[1][1]["GUGU_WEB_IMAGE"] == target
+    assert calls[2][0][0] == "run"
+    assert calls[2][0][-3:] == ["updater", "-m", "updater.compose_updater_helper"]
+    assert f"GUGU_UPDATER_HANDOFF_TASK_ID=12345678-1234-1234-1234-123456789abc" in calls[2][0]
+    assert daemon._public_task().get("updater_image") is None
+
+
+@pytest.mark.asyncio
+async def test_integrated_restart_retries_updater_handoff_if_old_image_restarts(tmp_path, monkeypatch):
+    target = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
+    daemon, _ = make_daemon(tmp_path, monkeypatch, {
+        "schema": 1,
+        "candidate": None,
+        "task": {
+            "id": "handoff-task", "status": "recreating_pending_restart",
+            "stage": "recreating_pending_restart", "version": "v1.2.3",
+            "app_image": target, "updater_image": target, "events": [],
+        },
+        "history": [{
+            "id": "handoff-task", "status": "recreating_pending_restart",
+            "version": "v1.2.3", "app_image": target, "updater_image": target,
+        }], "challenges": [],
+    })
+    monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
+    monkeypatch.setattr(daemon, "_wait_app_healthy", lambda: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(daemon, "_wait_current_updater_healthy", lambda: asyncio.sleep(0, result=True))
+    observed_images = iter(["docker.io/coffeiz/gugu-web@sha256:" + "b" * 64, target])
+    monkeypatch.setattr(daemon, "_current_updater_image", lambda: asyncio.sleep(0, result=next(observed_images)))
+    handoffs = []
+
+    async def handoff(task_id, image):
+        handoffs.append((task_id, image))
+
+    monkeypatch.setattr(daemon, "_start_integrated_updater_handoff", handoff)
+    recorded = []
+    monkeypatch.setattr(daemon, "_record_current_release", lambda version, image: asyncio.sleep(0, result=recorded.append((version, image))))
+
+    await daemon._resume_after_restart_task()
+
+    assert handoffs == [("handoff-task", target)]
+    assert recorded == [("v1.2.3", target)]
+    assert daemon.state["task"]["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
 async def test_manifest_v2_is_rejected_without_compatibility_fallback(tmp_path, monkeypatch):
     daemon, _ = make_daemon(tmp_path, monkeypatch)
     manifest = {

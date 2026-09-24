@@ -251,8 +251,109 @@ class UpdateDaemon:
         if not healthy:
             await self._finish_task(task_id, "rollback_required", "health_check_failed", "新版本未通过健康检查；上一版本已保留，可执行回滚。")
             return
+        expected_updater_image = str(task.get("updater_image") or "")
+        if expected_updater_image and os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "integrated_compose":
+            try:
+                handoff_failure = await self._resume_integrated_updater(task_id, expected_updater_image)
+            except Exception as exc:
+                logger.warning("integrated updater handoff failed task_id=%s error_type=%s", task_id, type(exc).__name__)
+                handoff_failure = "updater_handoff_failed"
+            if handoff_failure:
+                messages = {
+                    "updater_handoff_incomplete": "应用已更新，但更新器未切换到目标版本；请检查 Compose 服务后重试。",
+                    "updater_health_check_failed": "应用已更新，但新 updater 未通过健康检查；请检查 Compose 服务后重试。",
+                    "updater_handoff_failed": "应用已更新，但更新器升级未完成；请检查 Compose 服务后重试。",
+                }
+                await self._finish_task(task_id, "rollback_required", handoff_failure, messages[handoff_failure])
+                return
         await self._record_current_release(str(task.get("version") or "unknown"), str(task.get("app_image") or ""))
         await self._finish_task(task_id, "succeeded", None, "更新完成，应用健康检查通过。")
+
+    async def _resume_integrated_updater(self, task_id: str, target_image: str) -> str | None:
+        """确认当前 updater 已切到目标镜像；若机器重启打断 handoff，则继续交接。"""
+        running_image = await self._current_updater_image()
+        if running_image != target_image:
+            await self._start_integrated_updater_handoff(task_id, target_image)
+            # force-recreate normally terminates this process; mismatch means Compose did not.
+            if await self._current_updater_image() != target_image:
+                return "updater_handoff_incomplete"
+        if not await self._wait_current_updater_healthy():
+            return "updater_health_check_failed"
+        return None
+
+    async def _current_updater_image(self) -> str:
+        """读取当前 updater 容器配置的镜像引用，供自升级恢复时验证 handoff。"""
+        try:
+            container_id = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError("无法确定当前 updater 容器") from exc
+        if not re.fullmatch(r"[0-9a-f]{12,64}", container_id):
+            raise RuntimeError("当前 updater 容器标识无效")
+        return (await self._command(
+            ["docker", "inspect", "--format", "{{.Config.Image}}", container_id], timeout=15,
+        )).decode("utf-8", errors="replace").strip()
+
+    async def _wait_current_updater_healthy(self) -> bool:
+        try:
+            container_id = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError:
+            return False
+        if not re.fullmatch(r"[0-9a-f]{12,64}", container_id):
+            return False
+        last_error_type: str | None = None
+        for _ in range(60):
+            try:
+                health = (await self._command(
+                    ["docker", "inspect", "--format", "{{.State.Health.Status}}", container_id],
+                    timeout=15,
+                )).decode("utf-8", errors="replace").strip()
+                if health == "healthy":
+                    return True
+            except Exception as exc:
+                last_error_type = type(exc).__name__
+            await asyncio.sleep(2)
+        if last_error_type:
+            logger.info("integrated updater health probe exhausted error_type=%s", last_error_type)
+        return False
+
+    async def _start_integrated_updater_handoff(self, task_id: str, target_image: str) -> None:
+        """用目标镜像启动一次性 helper，再由 helper 重建 privileged updater 服务。"""
+        if not _safe_image(target_image):
+            raise ValueError("更新器目标镜像无效")
+        env = os.environ.copy()
+        env["GUGU_WEB_IMAGE"] = target_image
+        compose_config = json.loads(await self._compose_text(["config", "--format", "json"], env=env))
+        updater_image = str((compose_config.get("services", {}).get("updater") or {}).get("image") or "")
+        if updater_image != target_image:
+            raise RuntimeError("Compose updater 服务未配置为跟随应用镜像")
+        async with self._lock:
+            task = self.state.get("task")
+            if not isinstance(task, dict) or task.get("id") != task_id:
+                raise RuntimeError("更新任务状态已变化")
+            task["updater_image"] = target_image
+            task.update({
+            "status": RECREATING_PENDING_RESTART,
+                "stage": RECREATING_PENDING_RESTART,
+                "progress": 80,
+                "message": "应用已健康，正在移交一次性 helper 升级 updater。",
+                "updated_at": _utc_now(),
+            })
+            task.setdefault("events", []).append({"stage": RECREATING_PENDING_RESTART, "at": _utc_now()})
+            history = self.state.setdefault("history", [])
+            for index, row in enumerate(history):
+                if isinstance(row, dict) and row.get("id") == task_id:
+                    history[index] = dict(task)
+                    break
+            self._save()
+
+        await self._compose_text(["pull", "updater"], env=env, timeout=UPDATE_PROCESS_TIMEOUT_SECONDS)
+        await self._compose_text([
+            "run", "--rm", "--no-deps", "--pull", "never",
+            "--entrypoint", "python",
+            "-e", f"GUGU_WEB_IMAGE={target_image}",
+            "-e", f"GUGU_UPDATER_HANDOFF_TASK_ID={task_id}",
+            "updater", "-m", "updater.compose_updater_helper",
+        ], env=env, timeout=UPDATE_PROCESS_TIMEOUT_SECONDS)
 
     def _save(self) -> None:
         tmp = self.state_file.with_suffix(".tmp")
@@ -270,7 +371,7 @@ class UpdateDaemon:
             return None
         return {
             key: value for key, value in task.items()
-            if key not in {"previous_image", "previous_sandboxd_image", "helper_name", "handoff_file"}
+            if key not in {"previous_image", "previous_sandboxd_image", "helper_name", "handoff_file", "updater_image"}
         }
 
     def _public_candidate(self) -> dict[str, Any] | None:
@@ -340,7 +441,7 @@ class UpdateDaemon:
     def _public_history_row(row: dict[str, Any]) -> dict[str, Any]:
         return {
             key: value for key, value in row.items()
-            if key not in {"previous_image", "previous_sandboxd_image", "helper_name", "handoff_file"}
+            if key not in {"previous_image", "previous_sandboxd_image", "helper_name", "handoff_file", "updater_image"}
         }
 
     async def _read_url(self, url: str, *, limit: int = 1_500_000) -> bytes:
@@ -1150,6 +1251,9 @@ class UpdateDaemon:
             if not healthy:
                 logger.warning("update failed task_id=%s stage=health_checking reason=health_check_failed", task_id)
                 await self._finish_task(task_id, "rollback_required", "health_check_failed", "新版本未通过健康检查；上一版本已保留，可执行回滚。")
+                return
+            if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "integrated_compose":
+                await self._start_integrated_updater_handoff(task_id, str(candidate["app_image"]))
                 return
             await self._record_current_release(candidate["version"], candidate["app_image"])
             await self._finish_task(task_id, "succeeded", None, "更新完成，应用健康检查通过。")

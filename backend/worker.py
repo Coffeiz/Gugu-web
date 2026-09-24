@@ -16,6 +16,7 @@ import asyncio
 import os
 import signal
 import socket
+import uuid
 
 from app.core import redis as R
 from agent.im.session import ImConversationKey, conversation_key
@@ -45,8 +46,41 @@ _passive_locks: dict[ImConversationKey, asyncio.Lock] = {}
 _inflight: set = set()                         # 派发任务集：优雅 drain
 _pending_message_ids: set[str] = set()         # 已读入进程但尚未 ack 的消息，作为真实准入背压
 _buffered_message_ids: set[str] = set()        # 已转入会话缓冲/flush 的消息
+_message_leases: dict[str, tuple[str, asyncio.Task]] = {}
+_MESSAGE_LEASE_SECONDS = 120
+_MESSAGE_LEASE_HEARTBEAT_SECONDS = 30
+_MESSAGE_COMPLETED_SECONDS = 3600
 _run_active = 0                                # 当前拿到 agent 执行槽的任务数
 _run_condition = asyncio.Condition()           # 热调并发上限时唤醒等待中的 flush loop
+
+_CLAIM_MESSAGE_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == 'completed' then return 2 end
+if current then return 0 end
+local stored = redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2], 'NX')
+if stored then return 1 end
+return 0
+"""
+_RENEW_MESSAGE_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
+_COMPLETE_MESSAGE_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == ARGV[1] then
+  redis.call('SET', KEYS[1], 'completed', 'EX', ARGV[2])
+  return 1
+end
+if current == 'completed' then return 1 end
+return 0
+"""
+
+
+def _message_state_key(msg_id: str) -> str:
+    # Redis Cluster hash tag 为后续同消息多 key 状态留在同一 slot。
+    return f"imstate:{{{msg_id}}}"
 
 
 @asynccontextmanager
@@ -103,11 +137,67 @@ def _pending_capacity() -> int:
 
 
 async def _ack_inbound(msg_id: str) -> None:
+    lease = _message_leases.pop(msg_id, None)
+    should_ack = True
+    if lease:
+        owner, heartbeat = lease
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+        try:
+            completed = await R.get_redis().eval(
+                _COMPLETE_MESSAGE_SCRIPT, 1, _message_state_key(msg_id), owner,
+                _MESSAGE_COMPLETED_SECONDS,
+            )
+            should_ack = bool(completed)
+        except Exception as exc:
+            print(f"[worker] 消息完成状态写入失败，保留待重领: {type(exc).__name__}", flush=True)
+            should_ack = False
     try:
-        await R.ack(STREAM, GROUP, msg_id)
+        if should_ack:
+            await R.ack(STREAM, GROUP, msg_id)
     finally:
         _pending_message_ids.discard(msg_id)
         _buffered_message_ids.discard(msg_id)
+
+
+async def _renew_message_lease(msg_id: str, owner: str) -> None:
+    try:
+        while True:
+            await asyncio.sleep(_MESSAGE_LEASE_HEARTBEAT_SECONDS)
+            await R.get_redis().eval(
+                _RENEW_MESSAGE_SCRIPT, 1, _message_state_key(msg_id), owner,
+                _MESSAGE_LEASE_SECONDS,
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(f"[worker] 消息租约续期失败: {type(exc).__name__}", flush=True)
+
+
+async def _claim_message(msg_id: str) -> str:
+    """返回 claimed/completed/busy；Redis 不可用时保留原有 fail-open 行为。"""
+    owner = uuid.uuid4().hex
+    try:
+        result = int(await R.get_redis().eval(
+            _CLAIM_MESSAGE_SCRIPT, 1, _message_state_key(msg_id), owner,
+            _MESSAGE_LEASE_SECONDS,
+        ))
+    except Exception as exc:
+        print(f"[worker] 消息租约领取失败，继续处理: {type(exc).__name__}", flush=True)
+        return "claimed"
+    if result == 2:
+        return "completed"
+    if result != 1:
+        return "busy"
+    heartbeat = asyncio.create_task(_renew_message_lease(msg_id, owner))
+    _message_leases[msg_id] = (owner, heartbeat)
+    return "claimed"
+
+
+def _stop_message_lease(msg_id: str) -> None:
+    lease = _message_leases.pop(msg_id, None)
+    if lease:
+        lease[1].cancel()
 
 
 async def handle(msg_id: str, payload: dict):
@@ -199,13 +289,14 @@ async def _flush_loop(key: ImConversationKey):
 
 async def _dispatch(msg_id: str, payload: dict):
     """幂等去重 → 投入「防抖缓冲」（不立即处理）。同一会话 1s 内连发的消息攒成一轮、只回一次。"""
-    # 幂等：同一 stream 条目被 claim_stale（60s）重投时跳过，防重复（在投缓冲前就丢）
-    try:
-        fresh = await R.get_redis().set(f"imseen:{msg_id}", "1", ex=3600, nx=True)
-    except Exception:
-        fresh = True
-    if not fresh:
-        # imseen 在首次派发时即创建；重复 claim 不代表原处理已完成，不能提前 XACK。
+    # processing 租约由心跳维持；worker 崩溃后最多等待租约过期即可重新处理。
+    # completed 才能安全 ACK 重复 claim；新状态 key 不受旧版 imseen TTL 阻塞。
+    claim = await _claim_message(msg_id)
+    if claim == "completed":
+        await _ack_inbound(msg_id)
+        return
+    if claim == "busy":
+        # 另一个 worker 仍持有有效租约；不能 ACK 尚未完成的原处理。
         return
     key = conversation_key(payload)
     if not key.scope_id:
@@ -302,6 +393,7 @@ async def _dispatch_tracked(msg_id: str, payload: dict) -> None:
         print(f"[worker] 消息派发出错（保留待重领）: {type(exc).__name__}", flush=True)
     finally:
         if msg_id not in _buffered_message_ids:
+            _stop_message_lease(msg_id)
             _pending_message_ids.discard(msg_id)
 
 
