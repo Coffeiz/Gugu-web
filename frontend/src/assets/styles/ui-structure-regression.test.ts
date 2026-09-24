@@ -87,6 +87,14 @@ const globalStyles = load('./global.css')
 const componentTokens = load('./tokens/components.css')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('GuguChat 用透明全窗锚点接收 Runtime 落地，不把聊天窗口本体作为 morph 目标', () => {
+    expect(chatWindow).toContain('ref="chatRefTargetEl" class="chat-ref-target"')
+    expect(chatWindow).toMatch(/watch\(chatRefTargetEl,\s*\(element, previous\)\s*=>[\s\S]*?runtime\.targets\.setElement\(`\$\{CHAT_REF_SURFACE_ID\}:target`, element\)/)
+    const target = cssBlock(chatWindow, '.chat-ref-target')
+    expect(target).toContain('background: transparent;')
+    expect(target).toContain('pointer-events: none;')
+  })
+
   it('Markdown 任务列表把复选框独立定位，行内代码和说明保持连续文本流', () => {
     const taskItem = cssBlock(textViewer, '.tv-md :deep(li:has(> input[type="checkbox"]))')
     const taskCheckbox = cssBlock(textViewer, '.tv-md :deep(li:has(> input[type="checkbox"]) > input[type="checkbox"])')

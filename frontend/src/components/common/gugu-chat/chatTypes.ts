@@ -83,11 +83,13 @@ export interface ChatFile {
 
 /** 拖文件卡进聊天 = @ 引用：Runtime 投放目标的共享契约（Window 注册，Composer 消费）。 */
 export const CHAT_REF_SURFACE_ID = 'gugu-chat:composer-ref'
-export const CHAT_REF_ACCEPTS = ['file-item', 'folder-item'] as const
+export const CHAT_REF_ACCEPTS = [
+  'project-card', 'file-item', 'folder-item', 'mind-canvas-object', 'mind-project-object',
+] as const
 
 /** 用户在聊天输入中选中的业务对象引用。 */
 export interface ChatReference {
-  type: 'project' | 'file' | 'folder' | 'event' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
+  type: 'project' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
   // mcp 引用的 id 是 UUID 字符串，其余是 int 自增
   id: number | string
   label: string

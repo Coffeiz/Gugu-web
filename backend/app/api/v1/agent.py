@@ -76,7 +76,7 @@ class PendingQueueReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # mcp 的 id 是 UUID 字符串（user_mcp_servers 主键），其余类型是 int 自增（>0）
-    type: Literal["project", "file", "event", "conversation", "skill", "mcp", "scheduled_task"]
+    type: Literal["project", "file", "event", "conversation", "canvas_note", "skill", "mcp", "scheduled_task"]
     id: int | UUID
     label: str = Field(max_length=512)
 

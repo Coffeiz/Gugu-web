@@ -9,7 +9,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { useRouter } from 'vue-router'
-import { filesApi, agentApi, eventsApi } from '@/services/api'
+import { filesApi, agentApi, eventsApi, mindApi } from '@/services/api'
 import { showAppNotice } from '@/composables/core/useAppToast'
 import { i18n } from '@/i18n'
 
@@ -113,6 +113,17 @@ export function useMindRefActions() {
   }
 
   async function openMindRef(refType: string, refId: number | string) {
+    if (refType === 'canvas_note') {
+      try {
+        const location = await mindApi.canvasNoteLocation(Number(refId))
+        uiStore.pendingCanvasTarget = { canvasId: location.canvasId, nodeId: Number(refId) }
+        await router.push('/mind/canvases')
+        return true
+      } catch (error) {
+        if (isNotFound(error)) showAppNotice(i18n.global.t('mindUi.referenceMissing'))
+        return false
+      }
+    }
     // 技能/MCP/定时任务：chip 点击直接跳对应管理页（本体验不存在"详情弹窗"）；
     // 引用存在性不在前端逐一校验，页面自身会展示列表与失效状态。
     if (refType === 'skill') {

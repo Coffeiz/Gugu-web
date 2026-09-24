@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from agent.context.references import build_reference_context
-from app.models import File, Folder
+from app.models import File, Folder, MindNode
 
 
 @pytest.fixture
@@ -53,6 +53,24 @@ async def test_file_reference_without_folder_reports_space_root(db, user_a):
     )
     assert f"文件 id：{file.id}" in context
     assert "空间根目录" in context
+
+
+async def test_canvas_note_reference_includes_owned_note_content(db, user_a):
+    note = MindNode(
+        user_id=user_a.id, kind="canvas_note", title="调度逻辑",
+        content_md="worker.py 负责消费队列", content_plain="worker.py 负责消费队列",
+    )
+    db.add(note)
+    await db.commit()
+    await db.refresh(note)
+
+    context = await build_reference_context(
+        db, user_a.id, [{"type": "canvas_note", "id": note.id, "label": note.title}],
+    )
+
+    assert "[画布便签]" in context
+    assert f"便签 id：{note.id}" in context
+    assert "worker.py 负责消费队列" in context
 
 
 async def test_deleted_file_reference_is_ignored(db, user_a, folder_with_file):

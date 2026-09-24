@@ -27,14 +27,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PhBell, PhBook, PhCalendarBlank, PhChatCircle, PhFile, PhFolder, PhPlug, PhStack } from '@phosphor-icons/vue'
+import { PhBell, PhBook, PhCalendarBlank, PhChatCircle, PhFile, PhFolder, PhNote, PhPlug, PhStack } from '@phosphor-icons/vue'
 import type { MindRefSuggestItem } from '@/services/api'
 import { nextZ, registerPopover } from '@/composables/core/windowz'
 
 defineEmits<{ choose: [item: MindRefSuggestItem] }>()
 const { t } = useI18n()
 const TYPE_ICON: Record<MindRefSuggestItem['type'], typeof PhStack> = {
-  project: PhStack, file: PhFile, folder: PhFolder, event: PhCalendarBlank, conversation: PhChatCircle,
+  project: PhStack, file: PhFile, folder: PhFolder, event: PhCalendarBlank, canvas_note: PhNote, conversation: PhChatCircle,
   skill: PhBook, mcp: PhPlug, scheduled_task: PhBell,
 }
 const props = defineProps<{

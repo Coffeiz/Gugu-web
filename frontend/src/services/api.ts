@@ -510,7 +510,7 @@ export interface MindNoteUpdate {
 }
 /** `[[` 补全候选：type+id 是写进正文的稳定锚点，label 只作展示 */
 export interface MindRefSuggestItem {
-  type: 'project' | 'file' | 'folder' | 'event' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
+  type: 'project' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
   // mcp 引用的 id 是 UUID 字符串（user_mcp_servers 主键），其余是 int 自增
   id: number | string
   label: string
@@ -573,6 +573,7 @@ export const mindApi = {
   deleteNote: (id: number, meta?: RequestMeta)                       => del(`/mind/notes/${id}`, meta),
   refSuggest: (q: string, limit = 6) =>
     get<MindRefSuggestItem[]>(`/mind/ref-suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
+  canvasNoteLocation: (nodeId: number) => get<{ canvasId: number }>(`/mind/nodes/${nodeId}/canvas-location`),
   listCanvases: () => get<MindCanvas[]>('/mind/canvases'),
   createCanvas: (data: { title?: string; projectId?: number | null } = {}) =>
     post<MindCanvas>('/mind/canvases', data),

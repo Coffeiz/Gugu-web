@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from uuid import UUID
 
 from app.core.ownership import get_owned
-from app.models import CalendarEvent, ConversationMessage, ConversationSession, File, Folder, Project, ScheduledTask, UserMcpServer, UserSkill
+from app.models import CalendarEvent, ConversationMessage, ConversationSession, File, Folder, MindNode, Project, ScheduledTask, UserMcpServer, UserSkill
 from sqlalchemy import func, select
 
 _MAX_REFERENCES = 6
@@ -99,6 +99,11 @@ async def build_reference_context(db, user_id, references: Iterable[dict] | None
             if obj:
                 detail = f"日程 id：{obj.id}\n标题：{obj.title}\n日期：{obj.date}\n时间：{obj.time or '全天'}\n描述：{obj.description or '无'}"
                 blocks.append(f"[日程]\n{detail}")
+        elif kind == "canvas_note":
+            obj = await get_owned(db, MindNode, resource_id, user_id)
+            if obj and obj.kind == "canvas_note" and obj.deleted_at is None:
+                detail = f"便签 id：{obj.id}\n标题：{obj.title or '无标题'}\n正文：{(obj.content_plain or '')[:900]}"
+                blocks.append(f"[画布便签]\n{detail}")
         elif kind == "conversation":
             session = await get_owned(db, ConversationSession, resource_id, user_id)
             if session:

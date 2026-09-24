@@ -74,7 +74,7 @@ router = APIRouter(prefix="/mind", tags=["mind"])
 # 对话（客户不作为便签引用对象）单独查——@ 一段对话锚定的是具体某条消息（"准确的聊天
 # 位置"），不是整个会话，run_global_search 那边按 session 去重的逻辑在这里不适用，
 # 得自己按消息为粒度查，见 ref_suggest 下半段。
-_REF_TYPES = ["project", "file", "folder", "event", "skill", "mcp", "scheduled_task"]
+_REF_TYPES = ["project", "file", "folder", "event", "canvas_note", "skill", "mcp", "scheduled_task"]
 
 
 def _to_resp(n: MindNode) -> MindNodeResponse:
@@ -272,6 +272,29 @@ async def ref_suggest(
         recent.extend(MindRefSuggestItem(type="file", id=x.id, label=f"{x.display_name}.{x.ext}", subtitle=x.space) for x in files)
         recent.extend(MindRefSuggestItem(type="folder", id=x.id, label=x.name) for x in folders)
         recent.extend(MindRefSuggestItem(type="event", id=x.id, label=x.title, subtitle=x.date) for x in events)
+        canvas_notes = (await db.execute(
+            select(MindNode, MindCanvasItem.canvas_id)
+            .join(MindCanvasItem, MindCanvasItem.node_id == MindNode.id)
+            .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
+            .where(
+                MindNode.user_id == current_user.id,
+                MindNode.kind == "canvas_note",
+                MindNode.deleted_at.is_(None),
+                MindCanvasItem.user_id == current_user.id,
+                MindCanvasItem.deleted_at.is_(None),
+                MindMap.user_id == current_user.id,
+            )
+            .order_by(MindNode.updated_at.desc(), MindNode.id.desc())
+            .limit(limit)
+        )).all()
+        recent.extend(
+            MindRefSuggestItem(
+                type="canvas_note", id=node.id,
+                label=node.title or "无标题画布便签",
+                subtitle=f"画布 {canvas_id}",
+            )
+            for node, canvas_id in canvas_notes
+        )
         skills, mcp_servers, tasks = await list_recent_reference_extras(
             db, current_user.id, limit=limit,
         )
@@ -394,6 +417,32 @@ async def list_canvases(
         db, current_user.id, project_id=project_id, limit=200, offset=0,
     )
     return [_canvas_resp(canvas) for canvas in rows]
+
+
+@router.get("/nodes/{nid}/canvas-location")
+async def canvas_note_location(
+    nid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    canvas_id = await db.scalar(
+        select(MindCanvasItem.canvas_id)
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
+        .where(
+            MindNode.id == nid,
+            MindNode.user_id == current_user.id,
+            MindNode.kind == "canvas_note",
+            MindNode.deleted_at.is_(None),
+            MindCanvasItem.user_id == current_user.id,
+            MindCanvasItem.deleted_at.is_(None),
+            MindMap.user_id == current_user.id,
+        )
+        .limit(1)
+    )
+    if canvas_id is None:
+        raise HTTPException(404, "画布便签不存在")
+    return {"canvasId": canvas_id}
 
 
 @router.post("/canvases", response_model=MindCanvasResponse, status_code=201)

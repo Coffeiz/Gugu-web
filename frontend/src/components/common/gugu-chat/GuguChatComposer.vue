@@ -87,6 +87,9 @@ import { parseChatClipboardText, pastePlainTextClipboard } from './chatPaste'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { useFilesCacheStore } from '@/stores/filesCache'
+import { useMindStore } from '@/stores/mind'
+import { useProjectStore } from '@/stores/projects'
+import { parseChatRuntimeReference, parseMindCanvasChatReference } from './chatRuntimeReference'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -133,12 +136,8 @@ const inputRowEl = ref<HTMLElement | null>(null)
 // 这里只消费 Runtime 的 move action：解析 objectIds 还原文件/文件夹 id，插入
 // mindRef chip——references 数组是文档派生物，自动带上且天然去重。
 const filesCache = useFilesCacheStore()
-
-function parseDroppedRef(objectId: string): ChatReference | null {
-  const match = /(?:^|:)(file|folder):(\d+)$/.exec(objectId)
-  if (!match) return null
-  return { type: match[1] as ChatReference['type'], id: Number(match[2]), label: '' }
-}
+const mindStore = useMindStore()
+const projectStore = useProjectStore()
 
 function insertReferenceChip(reference: ChatReference) {
   const editor = chatEditor.value
@@ -149,6 +148,10 @@ function insertReferenceChip(reference: ChatReference) {
   let label: string
   if (reference.type === 'folder') {
     label = filesCache.getFolder(Number(reference.id))?.name ?? `Folder ${reference.id}`
+  } else if (reference.type === 'project') {
+    label = projectStore.projects.find(project => project.id === Number(reference.id))?.name ?? `Project ${reference.id}`
+  } else if (reference.type === 'event' || reference.type === 'canvas_note') {
+    label = reference.label || `${reference.type === 'event' ? 'Activity' : 'Canvas note'} ${reference.id}`
   } else {
     label = filesCache.getFile(Number(reference.id))?.displayName ?? `File ${reference.id}`
   }
@@ -162,9 +165,19 @@ useRuntimeAction(async action => {
   if (action.type !== 'move' && action.type !== 'move-group') return
   if (action.toSurfaceId !== CHAT_REF_SURFACE_ID) return
   const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
-  const references = objectIds.map(parseDroppedRef).filter((item): item is ChatReference => item !== null)
+  const references = objectIds.map(objectId => {
+    const element = runtime.objects.get(objectId)?.element
+    const nodeId = Number(element?.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId)
+    const node = Number.isInteger(nodeId)
+      ? mindStore.canvasItems.find(item => item.nodeId === nodeId)?.node
+      : undefined
+    return parseMindCanvasChatReference(node) ?? parseChatRuntimeReference(objectId)
+  }).filter((item): item is ChatReference => item !== null)
   if (!references.length) return
   if (!filesCache.loaded) await filesCache.load().catch(() => {})
+  if (references.some(reference => reference.type === 'project') && !projectStore.projectsLoaded) {
+    await projectStore.fetchProjects()
+  }
   for (const reference of references) insertReferenceChip(reference)
   // 落地动画结束后源卡片是瞬间显形的；给它补一段「从松手位置缩放淡入回归」的
   // 入场动画，等 Runtime 结束对该对象的视觉接管后播放。

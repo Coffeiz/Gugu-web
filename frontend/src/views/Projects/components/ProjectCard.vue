@@ -191,7 +191,7 @@ const props = defineProps({
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
-const projectId = String(props.project.id)
+const projectId = `project:${props.project.id}`
 const cardRef = ref<HTMLElement | null>(null)
 const projectGeneration = runtime.objects.register({
   id: projectId,
