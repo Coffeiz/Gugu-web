@@ -400,6 +400,11 @@ async def run_loop(
                                 # span 标成 cancelled，不用等 GC 才收尾。
                                 await _round_gen.aclose()
                                 return
+                        # async for 在收到 done 后会提前退出；在当前 Task 中显式
+                        # 关闭生成器，避免 Python 把 aclose 延迟到另一个 Context 的
+                        # async_generator_athrow 任务。
+                        await _round_gen.aclose()
+                        _round_gen = None
                         break
                     except Exception as exc:
                         from agent.providers.openai_responses import ResponsesCompatibilityError
