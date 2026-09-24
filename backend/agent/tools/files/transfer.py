@@ -248,7 +248,7 @@ async def _list_recent_attachments(db, user_id, args: dict):
     return {"count": len(items), "items": items}
 
 
-async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True):
+async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True, max_bytes: int | None = None):
     """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
 
     下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
@@ -308,9 +308,10 @@ async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = Tr
                 return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
             # Content-Length 提前拒绝：声明体积就超限的，不用读 body。
             clen = resp.headers.get("content-length")
-            if clen and clen.isdigit() and int(clen) > _SEND_URL_MAX_BYTES:
+            byte_limit = min(_SEND_URL_MAX_BYTES, max_bytes) if max_bytes is not None else _SEND_URL_MAX_BYTES
+            if clen and clen.isdigit() and int(clen) > byte_limit:
                 await resp.aclose()
-                return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
+                return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过本次读取上限 {byte_limit // 1048576}MB"}, ensure_ascii=False)
 
             # 流式读取 + 累计限流：chunked/无 Content-Length 时在读取过程中累计，超限立即中止，
             # 不把整个响应消费完（防 DoS）。
@@ -319,8 +320,8 @@ async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = Tr
             try:
                 async for chunk in resp.aiter_bytes():
                     total += len(chunk)
-                    if total > _SEND_URL_MAX_BYTES:
-                        return json.dumps({"error": f"图片过大（超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限）"}, ensure_ascii=False)
+                    if total > byte_limit:
+                        return json.dumps({"error": f"图片过大（超过本次读取上限 {byte_limit // 1048576}MB）"}, ensure_ascii=False)
                     chunks.append(chunk)
             finally:
                 await resp.aclose()
@@ -353,22 +354,21 @@ async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = Tr
     }
 
 
-async def inspect_image_url(url: str):
+async def inspect_image_url(url: str, *, max_bytes: int | None = None):
     """安全下载网络图片并转换成视觉输入，不把图片发送到对话附件区。"""
-    from app.core import chat_attach
+    from agent.tools.media_reader import build_image_block, image_capability_error
 
-    if not chat_attach.vision_ready():
-        return {"error": "当前模型/通道不支持直接读取网络图片"}
-    result = await _send_file_from_url(None, url, "", stage=False)
+    error = image_capability_error()
+    if error:
+        return {"error": error}
+    result = await _send_file_from_url(None, url, "", stage=False, max_bytes=max_bytes)
     if not isinstance(result, dict) or not result.get("data"):
         return {"error": "网络图片下载失败，无法读取"}
     ext = result.get("ext")
-    if ext not in chat_attach.VISION_EXTS:
-        return {"error": f"图片格式 {ext} 暂不支持识别"}
-    block = chat_attach.vision_block(result["data"], ext)
-    if not block:
-        return {"error": "图片无法解析"}
-    return {"block": block}
+    block = build_image_block(result["data"], ext)
+    if "block" in block:
+        block["_source_size_bytes"] = len(result["data"])
+    return block
 
 
 def _apply_title(artifact: dict, title: str | None) -> dict:

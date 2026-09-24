@@ -15,14 +15,14 @@ BACKEND = Path(__file__).resolve().parents[1]
 
 # 允许直读 settings.ai 的模块（相对 agent/、app/ 路径）：
 # - llm_select/modelctx：解析与兜底本身
-# - core/file_readers/run_finalize：主循环模型缺失时的兜底与 context_tokens 读取
+# - media_reader/run_finalize：主循环模型缺失时的兜底与 context_tokens 读取
 # - chat_attach/byok/policy：能力开关判断，不选模型
 # - email_admin/agent_admin：管理端指定/平台预设按设计
 ALLOWLIST = {
     "agent/llm/llm_select.py",
     "agent/llm/modelctx.py",
     "agent/core.py",
-    "agent/tools/file_readers.py",
+    "agent/tools/media_reader.py",
     "agent/context/run_finalize.py",
     "app/core/chat_attach.py",
     "app/byok/policy.py",

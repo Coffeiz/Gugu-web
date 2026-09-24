@@ -64,7 +64,7 @@ async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
     access = await resolve_qq_group_access(db, bot.id, user_a.id, "member-1")
 
     assert access.role == "unknown"
-    assert access.allowed_tool_names == ["web_search", "http_get", "image_search", "inspect_images", "send_file"]
+    assert access.allowed_tool_names == ["web_search", "http_get", "image_search", "read_file", "send_file"]
 
 
 async def test_group_context_search_only_reads_current_group(db, user_a, monkeypatch):
@@ -235,7 +235,7 @@ async def test_non_qq_group_defaults_to_unknown_minimal_access(monkeypatch):
 
     assert prepared.actor.role == "unknown"
     assert prepared.request.im_role == "unknown"
-    assert prepared.request.allowed_tool_names == ["web_search", "http_get", "image_search", "inspect_images", "send_file"]
+    assert prepared.request.allowed_tool_names == ["web_search", "http_get", "image_search", "read_file", "send_file"]
     assert prepared.request.user_name == "群友"
     assert prepared.request.chat_id == "wx-group-1"
 
@@ -545,3 +545,11 @@ def test_im_identity_context_marks_group_and_compares_history():
     assert "会话类型：群聊" in block
     assert "当前权限角色：群成员" in block
     assert "member-a" in block
+
+
+def test_legacy_group_image_permission_maps_to_restricted_read_file():
+    from app.services.im_identity import normalize_group_allowed_tools
+
+    assert normalize_group_allowed_tools([
+        "web_search", "image_search", "inspect_images", "send_file",
+    ]) == ["web_search", "http_get", "image_search", "read_file", "send_file"]

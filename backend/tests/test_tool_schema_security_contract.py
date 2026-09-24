@@ -189,7 +189,7 @@ def test_phase8_migrated_tools_are_source_canonical_schema():
         "canvas_create_note", "canvas_update_note", "canvas_batch",
         "create_file",
         "update_stage", "rename_file", "edit_file", "search_memory", "save_knowledge", "update_knowledge", "remember",
-        "image_search", "inspect_images", "move_items", "archive_project", "use_skill", "call_tool",
+        "image_search", "move_items", "archive_project", "use_skill", "call_tool",
         "run_script",
     ):
         tool = registry.get(name)

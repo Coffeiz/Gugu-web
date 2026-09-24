@@ -1,4 +1,4 @@
-"""agent/tools/base.py SkillRegistry.dispatch() 的 `_video_media` 特殊键回归测试。
+"""agent/tools/base.py SkillRegistry.dispatch() 的 `_media_block` 特殊键回归测试。
 
 这是 read_file 读视频最终把真正的 video content block 交给模型的唯一路径——
 跟已有的 `_vision_image`（看图）走同一套机制，只是键名和内容块类型不同。
@@ -10,7 +10,7 @@ from agent.tools.base import Tool, registry
 
 async def _video_handler(db, user_id, args: dict):
     return {
-        "_video_media": {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "AAAA"}},
+        "_media_block": {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "AAAA"}},
         "note": "已读取视频《clip.mp4》。",
     }
 
@@ -29,7 +29,7 @@ def video_tool():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_converts_video_media_key_to_content_blocks(video_tool):
+async def test_dispatch_converts_media_block_key_to_content_blocks(video_tool):
     content, artifact = await registry.dispatch("user-1", "_test_video_tool", {})
 
     assert artifact is None
@@ -40,17 +40,16 @@ async def test_dispatch_converts_video_media_key_to_content_blocks(video_tool):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_flattens_multiple_inspected_images():
+async def test_dispatch_forwards_read_file_batch_content_blocks():
     name = "_test_image_search_inspection"
 
     async def handler(db, user_id, args):
-        return {
-            "_vision_images": [
-                {"title": "候选一", "block": {"type": "image", "source": {"type": "base64", "data": "A"}}},
-                {"title": "候选二", "block": {"type": "image", "source": {"type": "base64", "data": "B"}}},
-            ],
-            "inspection_note": "已读取 2 张候选图片。",
-        }
+        return {"_media_content": [
+            {"type": "text", "text": "【候选一】图片内容："},
+            {"type": "image", "source": {"type": "base64", "data": "A"}},
+            {"type": "text", "text": "【候选二】图片内容："},
+            {"type": "image", "source": {"type": "base64", "data": "B"}},
+        ]}
 
     tool = Tool(name=name, description="仅供测试用", input_schema={"type": "object", "properties": {}}, handler=handler)
     registry.add(tool)
@@ -60,6 +59,6 @@ async def test_dispatch_flattens_multiple_inspected_images():
         registry._tools.pop(name, None)
 
     assert artifact is None
-    assert [block["type"] for block in content] == ["text", "text", "image", "text", "image"]
-    assert content[1]["text"] == "候选一"
-    assert content[3]["text"] == "候选二"
+    assert [block["type"] for block in content] == ["text", "image", "text", "image"]
+    assert content[0]["text"] == "【候选一】图片内容："
+    assert content[2]["text"] == "【候选二】图片内容："

@@ -29,6 +29,8 @@ DRAFT_TTL = 48 * 3600   # 草稿（未发送）暂存 TTL，见 PRD-STORAGE-1 §
 # 聊天暂存是短期文件区，不再限制单个附件大小；只限制同一用户的总暂存容量。
 # 大文件通过 StorageBackend.put_stream 分块写入，避免一次性占满进程内存。
 STAGING_TOTAL_BYTES = 1024 * 1024 * 1024
+# 只有需要转码、探时长等整字节处理的音频才受此内存门限制；超限文件仍可流式暂存。
+AUDIO_MATERIALIZE_CAP = 64 * 1024 * 1024
 
 
 class ChatAttachmentCapacityError(ValueError):
@@ -827,10 +829,8 @@ def _vision_enabled(model_cfg=None) -> bool:
 
 
 def _video_enabled(model_cfg=None) -> bool:
-    """视频理解是否开启：主模型 vision_video 开，且走 OpenAI 兼容媒体块（mimo / 百炼 qwen 等）。
-    MiniMax M3 走 Anthropic 原生 video 块，单独由 _minimax_video_enabled 判定。"""
+    """视频理解是否开启：产品开关打开，且适配器为当前请求协议声明了视频能力。"""
     try:
-        from agent.llm.llm_select import use_anthropic_for
         if model_cfg is not None:
             if not getattr(model_cfg, "vision_video", False):
                 return False
@@ -845,25 +845,25 @@ def _video_enabled(model_cfg=None) -> bool:
 
 
 def _audio_enabled(model_cfg=None) -> bool:
-    """音频理解是否开启：主模型 vision_audio 开，且走 OpenAI 兼容 input_audio 块。
+    """音频理解是否开启：主模型 vision_audio 开，且当前请求走 OpenAI Chat 格式。
     独立语音识别模型（ASR 转写）由 _voice_recognition_enabled 单独判定，两者解耦。"""
     try:
         from agent import providers
         if model_cfg is not None:
-            from agent.llm.llm_select import use_anthropic_for
             if not getattr(model_cfg, "vision_audio", False):
                 return False
-            if use_anthropic_for(model_cfg):
+            adapter = providers.adapter_for(model_cfg)
+            if adapter.protocol_format(model_cfg) != "openai":
                 return False
             # vision_audio 是产品开关，不能越过 provider 的协议能力；否则 GLM
             # 等文本端点会收到 input_audio，并以 content.type 400 拒绝请求。
             return bool(providers.capability_snapshot(model_cfg).get("audio", False))
         from app.core.config import get_settings
-        from agent.llm.llm_select import use_anthropic_for
         ai = get_settings().ai
         if not getattr(ai, "vision_audio", False):
             return False
-        if use_anthropic_for(ai):
+        adapter = providers.adapter_for(ai)
+        if adapter.protocol_format(ai) != "openai":
             return False
         return bool(providers.capability_snapshot(ai).get("audio", False))
     except Exception:
@@ -891,7 +891,19 @@ def video_transport_for(model_cfg) -> str:
     """返回当前模型的视频块协议；供聊天附件和 read_file 共用。"""
     from agent import providers
     adapter = providers.adapter_for(model_cfg)
-    return adapter.media_transport(getattr(model_cfg, "model", "") or "")
+    model = getattr(model_cfg, "model", "") or ""
+    declared = adapter.capabilities(model)
+    # 媒体块跟随本轮实际请求协议，而非适配器默认协议。Responses 目前没有视频
+    # 输入块；协议被显式切换时也不能把另一种协议的媒体结构塞进请求。
+    protocol = adapter.protocol_format(model_cfg)
+    if protocol == "responses" or protocol != declared.api_format:
+        return "none"
+    overrides = getattr(model_cfg, "capability_overrides", None) or {}
+    declared_video = overrides.get("video") if isinstance(overrides.get("video"), bool) \
+        else adapter.supports_video(model)
+    if not declared_video:
+        return "none"
+    return "anthropic" if protocol == "anthropic" else "openai"
 
 
 # ── 视频探测 / 压缩 / mm_file 上传 ───────────────────────────────────────────
@@ -1185,7 +1197,7 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg,
     的最终 content block）。
 
     这是视频理解能力唯一的一份决策逻辑：`resolve_for_message`（聊天附件）和
-    `agent/tools/file_readers.py` 的 `read_video`（文件库 read_file 读视频）都必须
+    `agent/tools/media_reader.py` 的 `read_video`（文件库 read_file 读视频）都必须
     调用这里，不能各自维护一份阈值判断——「视频怎么才算能被模型看到」只应该有
     一处真相来源。
 
@@ -1274,6 +1286,28 @@ def video_media_to_anthropic_block(m: dict) -> dict | None:
         return {"type": "video", "source": {"type": "url", "url": f"mm_file://{m['file_id']}"}, "fps": 1}
     if m.get("b64"):
         return {"type": "video", "source": {"type": "base64", "media_type": m["mime"], "data": m["b64"]}}
+    return None
+
+
+def video_media_to_openai_block(m: dict) -> dict | None:
+    """把视频媒体项转成 OpenAI Chat Completions 的 video_url 内容块。"""
+    if m.get("b64"):
+        mime = m.get("mime") or "video/mp4"
+        return {"type": "video_url", "video_url": {
+            "url": f"data:{mime};base64,{m['b64']}"},
+            "fps": 2, "media_resolution": "default"}
+    return None
+
+
+def media_item_to_content_block(m: dict, *, use_anthropic: bool) -> dict | None:
+    """按当前 provider 协议把聊天/文件库音视频媒体描述转成内容块。"""
+    if m.get("type") == "video":
+        return (video_media_to_anthropic_block(m) if use_anthropic
+                else video_media_to_openai_block(m))
+    if m.get("type") == "audio" and not use_anthropic and m.get("b64"):
+        mime = m.get("mime") or "audio/mpeg"
+        return {"type": "input_audio", "input_audio": {
+            "data": f"data:{mime};base64,{m['b64']}"}}
     return None
 
 
@@ -1511,7 +1545,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                     raw = await read_bytes(meta)
                     if is_video:
                         # 视频决策（压缩阈值/base64 vs mm_file/大小上限）全部在 prepare_video_media
-                        # 里——read_file 读文件库视频（file_readers.py 的 read_video）复用同一份逻辑，
+                        # 里——read_file 读文件库视频（media_reader.py 的 read_video）复用同一份逻辑，
                         # 这里不重复维护一套阈值判断。
                         video_cfg = model_cfg
                         if video_cfg is None:
@@ -1570,11 +1604,10 @@ def build_user_content(text: str, images: list, use_anthropic: bool, media: list
             parts.append({"type": "image", "source": {
                 "type": "base64", "media_type": im["media_type"], "data": im["b64"]}})
         for m in media:
-            if m["type"] == "video":
-                block = video_media_to_anthropic_block(m)
-                if block:
-                    parts.append(block)
-                # 两者都缺（数据异常）→ 跳过该块，不崩
+            block = media_item_to_content_block(m, use_anthropic=True)
+            if block:
+                parts.append(block)
+            # 数据异常 / 当前协议不支持该媒体 → 跳过该块，不崩
         return parts
     parts = [{"type": "text", "text": text}] if text else []
     for im in images:
@@ -1582,10 +1615,7 @@ def build_user_content(text: str, images: list, use_anthropic: bool, media: list
             "url": f"data:{im['media_type']};base64,{im['b64']}",
             "detail": image_detail}})
     for m in media:
-        data_url = f"data:{m['mime']};base64,{m['b64']}"
-        if m["type"] == "audio":
-            parts.append({"type": "input_audio", "input_audio": {"data": data_url}})
-        else:  # video
-            parts.append({"type": "video_url", "video_url": {"url": data_url},
-                          "fps": 2, "media_resolution": "default"})
+        block = media_item_to_content_block(m, use_anthropic=False)
+        if block:
+            parts.append(block)
     return parts

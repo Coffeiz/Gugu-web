@@ -26,7 +26,7 @@ def _result():
     return RoundResult(
         text="",
         raw=_OpenAIRaw(content="", reasoning="", tool_calls_payload=[
-            {"id": "call-1", "name": "inspect_images", "args": "{}"},
+            {"id": "call-1", "name": "read_file", "args": "{}"},
         ]),
     )
 
@@ -54,6 +54,50 @@ def test_openai_tool_round_converts_anthropic_image_block():
         "type": "image_url",
         "image_url": {"url": "data:image/png;base64,AAAA", "detail": "auto"},
     }
+
+
+def test_openai_tool_round_forwards_native_audio_and_video_blocks():
+    dispatched = [(
+        SimpleNamespace(id="call-1"),
+        [
+            {"type": "text", "text": "已读取媒体。"},
+            {"type": "input_audio", "input_audio": {"data": "data:audio/mpeg;base64,AAAA"}},
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,BBBB"}, "fps": 2},
+        ],
+    )]
+
+    messages = OpenAIDriver().build_tool_round(_result(), dispatched)
+
+    assert messages[1]["content"] == "已读取媒体。"
+    assert messages[2]["role"] == "user"
+    assert [part["type"] for part in messages[2]["content"]] == [
+        "text", "input_audio", "video_url",
+    ]
+
+
+def test_responses_tool_round_does_not_forward_unsupported_audio_video_blocks():
+    from agent.providers.openai_responses import OpenAIResponsesDriver, _ResponsesRaw
+
+    result = RoundResult(
+        text="",
+        raw=_ResponsesRaw(content="", response_id=None, previous_response_id=None,
+                          tool_calls_payload=[{"id": "call-1", "name": "read_file", "args": "{}"}],
+                          output_items=[]),
+    )
+    dispatched = [(
+        SimpleNamespace(id="call-1"),
+        [
+            {"type": "text", "text": "已读取媒体。"},
+            {"type": "input_audio", "input_audio": {"data": "data:audio/mpeg;base64,AAAA"}},
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,BBBB"}},
+        ],
+    )]
+
+    messages = OpenAIResponsesDriver().build_tool_round(result, dispatched)
+
+    assert len(messages) == 2
+    assert "当前 API 协议不支持原生音频输入" in messages[1]["content"]
+    assert "当前 API 协议不支持原生视频输入" in messages[1]["content"]
 
 
 def test_openai_tool_round_keeps_text_result_shape():

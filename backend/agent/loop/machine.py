@@ -56,9 +56,9 @@ async def run_loop(
         if not hasattr(messages, "append_batch"):
             from agent.context.assembly import PromptMessages
             messages = PromptMessages(messages)
-        # 每轮对话只允许 inspect_images 对网络图片发起一次读取；历史附件不占用该额度。
-        from agent.tools import search as search_tools
-        search_tools.reset_image_inspection_budget()
+        # 每轮对话最多允许三次 read_file 调用包含网络图片；历史附件不占用该额度。
+        from agent.tools.media_reader import reset_remote_image_read_budget
+        reset_remote_image_read_budget()
         goal_mode = _core._goal_mode_enabled(session)
         if goal_mode:
             if system_text:

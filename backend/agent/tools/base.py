@@ -759,28 +759,19 @@ class SkillRegistry:
 
         # 工具想让模型「看图」：返回统一的视觉内容块（文字说明 + 图），由各 Provider
         # 在 continuation 边界转换成自己的消息格式。
+        if isinstance(result, dict) and "_media_content" in result:
+            return result.pop("_media_content"), None
+
         if isinstance(result, dict) and "_vision_image" in result:
             block = result.pop("_vision_image")
             note = result.get("note", "")
             content = ([{"type": "text", "text": note}] if note else []) + [block]
             return content, None
 
-        if isinstance(result, dict) and "_vision_images" in result:
-            images = result.pop("_vision_images")
-            note = result.pop("inspection_note", "")
-            content = ([{"type": "text", "text": note}] if note else [])
-            for item in images:
-                if isinstance(item, dict) and item.get("block"):
-                    content.append({"type": "text", "text": item.get("title", "候选图片")})
-                    content.append(item["block"])
-            return content, None
-
-        # 工具想让模型「看视频」：同上，真正的 video content block（不是代表帧/转写），
-        # 目前只有 read_file 读文件库视频（file_readers.py 的 read_video）会产生，且仅限
-        # MiniMax M3 这种 Anthropic 通道原生支持视频块的 provider——OpenAI 路工具结果只能
-        # 是纯文本，走不到这里。
-        if isinstance(result, dict) and "_video_media" in result:
-            block = result.pop("_video_media")
+        # 工具想把原生音视频送给模型：与图片相同，由 provider driver 在续轮边界
+        # 转成对应协议的多模态消息，避免把媒体 base64 序列化进纯文本工具结果。
+        if isinstance(result, dict) and "_media_block" in result:
+            block = result.pop("_media_block")
             note = result.get("note", "")
             content = ([{"type": "text", "text": note}] if note else []) + [block]
             return content, None

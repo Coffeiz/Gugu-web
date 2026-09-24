@@ -581,15 +581,39 @@ def _with_system_cache_control(messages: list) -> list:
     return _cache_message_copy(messages, result)
 
 
-def _openai_tool_result(res: Any, *, allow_images: bool = True) -> tuple[str, list[dict]]:
-    """把工具返回的 Anthropic 视觉块转换成 OpenAI 可接受的消息。"""
+def _openai_tool_media_part(block: dict, *, allow_images: bool,
+                            allow_audio_video: bool) -> tuple[dict | None, str | None]:
+    """转换/筛选一个工具结果媒体块；返回 (可续传块, 不支持时的短提示)。"""
+    kind = block.get("type")
+    if kind == "image":
+        if not allow_images:
+            return None, "[图片结果已返回，但当前模型不支持视觉输入]"
+        source = block.get("source") or {}
+        if source.get("type") != "base64" or not source.get("data"):
+            return None, None
+        media = source.get("media_type") or "image/jpeg"
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{media};base64,{source['data']}", "detail": "auto"},
+        }, None
+    if kind in {"input_audio", "video_url"}:
+        if allow_audio_video:
+            return block, None
+        label = "音频" if kind == "input_audio" else "视频"
+        return None, f"[{label}内容已返回，但当前 API 协议不支持原生{label}输入]"
+    return None, None
+
+
+def _openai_tool_result(res: Any, *, allow_images: bool = True,
+                        allow_audio_video: bool = False) -> tuple[str, list[dict]]:
+    """提取工具返回的多模态块，留给支持该模态的驱动作为独立用户消息续传。"""
     if not isinstance(res, list):
         if isinstance(res, str):
             return res, []
         return json.dumps(res, ensure_ascii=False), []
 
     text_parts: list[str] = []
-    image_parts: list[dict] = []
+    media_parts: list[dict] = []
     for block in res:
         if not isinstance(block, dict):
             text_parts.append(str(block))
@@ -599,22 +623,16 @@ def _openai_tool_result(res: Any, *, allow_images: bool = True) -> tuple[str, li
             if value:
                 text_parts.append(str(value))
             continue
-        if block.get("type") == "image":
-            if not allow_images:
-                text_parts.append("[图片结果已返回，但当前模型不支持视觉输入]")
-                continue
-            source = block.get("source") or {}
-            if source.get("type") == "base64" and source.get("data"):
-                media = source.get("media_type") or "image/jpeg"
-                image_parts.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{media};base64,{source['data']}",
-                        "detail": "auto",
-                    },
-                })
-                continue
+        media, notice = _openai_tool_media_part(
+            block, allow_images=allow_images, allow_audio_video=allow_audio_video,
+        )
+        if media:
+            media_parts.append(media)
+            continue
+        if notice:
+            text_parts.append(notice)
+            continue
         # 未知块不要直接丢失，保留不会破坏 OpenAI schema 的摘要。
         text_parts.append(json.dumps(block, ensure_ascii=False))
 
-    return "\n".join(text_parts) or "工具已执行。", image_parts
+    return "\n".join(text_parts) or "工具已执行。", media_parts

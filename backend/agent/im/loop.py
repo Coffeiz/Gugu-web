@@ -737,16 +737,24 @@ async def dispatch_im_message(payload: dict):
         # 系统表情可能只有 emoji_refs，没有 QQ 原始附件；两者都要经过媒体入口，
         # 否则 QFace 无法补图，最终只会保留网关的占位文本。
         if any(isinstance(item, dict) for item in raw_attachments) or payload.get("emoji_refs"):
-            from agent.im.media_ingress import ingest_qq_media
+            from agent.im.media_ingress import IM_SIZE_LIMIT_NOTICE, ingest_qq_media
 
             payload = dict(payload)
-            payload["attachments"] = await ingest_qq_media(
+            media_result = await ingest_qq_media(
                 raw_attachments,
                 str(payload.get("owner_user_id") or ""),
                 str(payload.get("message_id") or ""),
                 payload.get("emoji_refs") or [],
                 str(payload.get("platform_message_id") or ""),
             )
+            payload["attachments"] = media_result.attachment_ids
+            if media_result.size_limit_exceeded:
+                await send_text(
+                    payload,
+                    IM_SIZE_LIMIT_NOTICE,
+                )
+                if not payload["attachments"] and not str(payload.get("text") or "").strip():
+                    return None
             # faceType=3 的 ext 可能带一个文字标签；QFace 成功补图后，纯表情消息
             # 不应同时展示标签和图片。未匹配到资源时保留网关的兜底文字。
             if payload.get("emoji_refs") and not any(

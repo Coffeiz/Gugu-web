@@ -638,15 +638,17 @@ class OpenAIDriver:
         )]
         visual_parts: list[dict] = []
         for tc, res in dispatched:
-            content, images = _openai_tool_result(res, allow_images=allow_images)
+            content, media_parts = _openai_tool_result(
+                res, allow_images=allow_images, allow_audio_video=True,
+            )
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
-            visual_parts.extend(images)
+            visual_parts.extend(media_parts)
         if visual_parts:
             messages.append({
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": "工具返回了以下图片，请结合工具文字结果继续处理。",
+                    "text": "工具返回了以下多模态内容，请结合工具文字结果继续处理。",
                 }, *visual_parts],
             })
 
