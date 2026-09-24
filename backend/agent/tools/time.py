@@ -8,7 +8,7 @@ from app.core.tz import now_ctx
 _WEEKDAYS = "一二三四五六日"
 
 
-def _get_current_time(_db, _user_id, _args: dict) -> dict:
+async def _get_current_time(_db, _user_id, _args: dict) -> dict:
     """按当前请求绑定的用户时区返回实时日期、星期和时间。"""
     current = now_ctx()
     return {
