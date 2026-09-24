@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { resolveProjectDropStatus } from '@/utils/projectDrop'
+import { projectIdFromRuntimeObjectId, resolveProjectDropStatus } from '@/utils/projectDrop'
 
 const columns = [
   { status: 'pending', left: 0, right: 300 },
@@ -24,5 +24,17 @@ describe('resolveProjectDropStatus', () => {
 
   it('指针落在列外时不改变状态', () => {
     expect(resolveProjectDropStatus(columns, { pointerX: 310, pointerVelocityX: 0, isLandingRegrab: false })).toBeNull()
+  })
+})
+
+describe('projectIdFromRuntimeObjectId', () => {
+  it('解析带命名空间的项目对象 id', () => {
+    expect(projectIdFromRuntimeObjectId('project:42')).toBe(42)
+  })
+
+  it('兼容旧的纯数字对象 id，并拒绝其他对象类型', () => {
+    expect(projectIdFromRuntimeObjectId('42')).toBe(42)
+    expect(projectIdFromRuntimeObjectId('mind:42')).toBeNull()
+    expect(projectIdFromRuntimeObjectId('project:not-a-number')).toBeNull()
   })
 })

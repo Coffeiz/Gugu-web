@@ -10,6 +10,14 @@ export interface ProjectDropIntent {
   isLandingRegrab: boolean
 }
 
+/** 从 Runtime 的项目对象 id 还原后端项目主键。 */
+export function projectIdFromRuntimeObjectId(objectId: string): number | null {
+  const rawId = objectId.startsWith('project:') ? objectId.slice('project:'.length) : objectId
+  if (!/^\d+$/.test(rawId)) return null
+  const projectId = Number(rawId)
+  return Number.isSafeInteger(projectId) && projectId > 0 ? projectId : null
+}
+
 const THROW_SPEED = 260
 const THROW_SECONDS = 0.1
 const THROW_MAX_OFFSET = 150
