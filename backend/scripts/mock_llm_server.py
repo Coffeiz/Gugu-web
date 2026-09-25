@@ -44,9 +44,10 @@ async def _stream():
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     body = await request.json()
-    # OpenAI SDK 的标题/问候请求通常省略 stream，默认应返回普通 JSON；只有聊天
-    # 流式请求显式传 stream=true 时才走 SSE。
-    if not body.get("stream", False):
+    # E2E 的 agent /chat 路径走这里，GuguChat 发消息那一条需要流式回复（前端
+    # SSE handler 只识别 data: {...}\\n\\n 增量），所以 stream 缺省时按 True 走 SSE。
+    # 标题/问候这类非流式调用实际由 /v1/responses 承担，不会经过这条 endpoint。
+    if not body.get("stream", True):
         return {
             "id": "chatcmpl-e2e-fixed",
             "object": "chat.completion",
