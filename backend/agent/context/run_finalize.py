@@ -238,12 +238,15 @@ async def finalize_run(
                                 "session_id": session_id,
                                 "role": message["role"],
                                 "content": message.get("content") if isinstance(message.get("content"), str) else "",
-                                "content_json": (
-                                    chat_attach.strip_vision_for_history(message["content"])
-                                    if not isinstance(message.get("content"), str) else None
-                                ),
                                 "canonical_batch_id": batch_row.id,
                             }
+                            # content_json 不能显式传 None：SQLAlchemy JSON 列会把
+                            # 显式 None 序列化成 jsonb 'null'（≠ SQL NULL），正文行
+                            # 会被消息端点的 content_json IS NULL 过滤吞掉。str 正文
+                            # 省略该字段走列默认值，落成真正的 SQL NULL。
+                            if not isinstance(message.get("content"), str):
+                                values["content_json"] = chat_attach.strip_vision_for_history(
+                                    message["content"])
                             if created_at is not None:
                                 values["created_at"] = created_at
                             db.add(ConversationMessage(**values))

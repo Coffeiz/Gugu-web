@@ -168,10 +168,15 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             [reference_context_block(reference_text), {"type": "text", "text": req.message}]
             if reference_text else None
         )
+        # content_json 不能显式传 None：SQLAlchemy JSON 列会把显式 None 序列化成
+        # jsonb 'null' 字符串（≠ SQL NULL），导致消息端点按 content_json IS NULL
+        # 过滤正文时把这条用户消息整条吞掉（刷新/切会话后气泡消失）。无引用时
+        # 省略该字段，走列默认值落成真正的 SQL NULL。
         user_message = ConversationMessage(session_id=session.id, role="user", content=req.message,
                                            files=attach_cards or None,
-                                           content_json=reference_content,
                                            references_json=req.references or None)
+        if reference_content is not None:
+            user_message.content_json = reference_content
         db.add(user_message)
         await db.flush()
         # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3）：只 claim
