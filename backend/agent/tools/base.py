@@ -637,7 +637,13 @@ class SkillRegistry:
                 pass   # 非标准 UUID 串：原样传，交给下游 SQL 比较
 
         import app.db.session as _sess
-        if _sess._engine is None:
+        # dispatch() 可能被没装 db fixture 的工具测试调用（test_tool_schema_validation
+        # / test_tool_video_media_dispatch 等）：上一个测试 fixture 拆掉时 monkeypatch
+        # 应该把 _engine/_SessionLocal/_engine_loop 一起还原成 None，但 pytest-asyncio
+        # 跨测试换 loop 后偶发只清掉一半的状态（_engine 留旧值、_SessionLocal 是 None），
+        # 这里只判 _engine 会绕过重建、下一步直接 `_sess._SessionLocal()` 撞 NoneType
+        # 异常。改成 OR 一起判，任一缺失就走 _build_engine() 重建。
+        if _sess._engine is None or _sess._SessionLocal is None:
             _sess._build_engine()
 
         # 工具异常不能冲垮整个对话：捕获后当作错误结果回给 LLM（它可解释/换路）。
