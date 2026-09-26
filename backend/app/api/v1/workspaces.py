@@ -1,8 +1,6 @@
 """工作区与会话绑定 API（Phase 0-2）。"""
 from __future__ import annotations
 
-import shutil
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
-from app.core.tz import now_utc
 from app.db.session import get_db
 from app.models import ConversationSession, User, Workspace, WorkspaceDirectory
 from app.schemas import (
@@ -23,20 +20,20 @@ from app.services.workspaces import (
     create_workspace,
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
-    effective_shell_autopilot_enabled,
     effective_shell_system_enabled,
     get_workspace,
     delete_workspace,
     delete_workspace_directory,
+    delete_workspace_directory_with_cleanup,
     update_workspace,
     update_workspace_directory,
     list_workspace_directories,
     workspace_directory_payload,
     workspace_shell_supported,
 )
+from app.services.user_preferences import effective_automatic_mode_enabled
 from agent.sandbox.docker_runtime import sandbox_readiness
 from agent.terminal.policy import configured_terminal_mode, terminal_capabilities
-from agent.terminal.runtime import get_pty_manager
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -99,32 +96,11 @@ async def delete_workspace_directory_view(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
     try:
-        terminal_ids, root = await delete_workspace_directory(db, user.id, directory_id)
+        await delete_workspace_directory_with_cleanup(db, user.id, directory_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    # fail-closed 顺序：DB 暂存 → 断开活 PTY（可能握着挂载点）→ commit → 原子改名
-    # → rmtree。terminate 失败（沙盒 RPC 出错）时回滚事务返回 500，不让 DB 权限
-    # 已撤销而旧 PTY 还能继续写；PTY 被提前关闭的代价只是用户重开终端。
-    # commit 成功后磁盘清理失败只留下可回收 orphan。
-    manager = get_pty_manager()
-    try:
-        for terminal_id in terminal_ids:
-            if manager.get(terminal_id) is not None:
-                await manager.terminate(terminal_id, force=True)
-    except Exception:
-        await db.rollback()
-        raise
-    await db.commit()
-    if root.exists():
-        tombstone = root.with_name(
-            f".{root.name}.deleted-{now_utc().strftime('%Y%m%d%H%M%S')}")
-        try:
-            root.rename(tombstone)
-            shutil.rmtree(tombstone, ignore_errors=True)
-        except OSError:
-            pass
     return {"ok": True, "workspaceDirectoryId": directory_id}
 
 
@@ -166,11 +142,11 @@ async def list_workspaces(
         "sandboxEnabled": sandbox_ready,
         "systemGlobalEnabled": bool(settings.agent.shell_system_enabled),
         "dangerousGlobalEnabled": bool(settings.agent.shell_dangerous_enabled),
-        "autopilotGlobalEnabled": bool(settings.agent.shell_autopilot_enabled),
+        "automaticModeGlobalEnabled": bool(settings.agent.automatic_mode_enabled),
         "userEnabled": await effective_shell_enabled(db, user.id),
         "userSystemEnabled": await effective_shell_system_enabled(db, user.id),
         "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
-        "userAutopilotEnabled": await effective_shell_autopilot_enabled(db, user.id),
+        "userAutomaticModeEnabled": await effective_automatic_mode_enabled(db, user.id),
         "filesystemAuthorizationEnabled": filesystem_authorization_enabled(),
         "workspaceSupported": workspace_shell_supported(),
         "storageBackend": settings.storage.backend,

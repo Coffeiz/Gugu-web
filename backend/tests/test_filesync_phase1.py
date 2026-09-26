@@ -176,7 +176,7 @@ async def test_oss_session_workspace_is_rejected_by_shell_policy(db, user_a, mon
     settings = SimpleNamespace(
         storage=SimpleNamespace(backend="oss"),
         agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=False),
-        sandbox=SimpleNamespace(enabled=True, code_execution_enabled=True),
+        sandbox=SimpleNamespace(enabled=True, full_user_sandbox_authorization_enabled=True),
     )
     monkeypatch.setattr(policy, "get_settings", lambda: settings)
     monkeypatch.setattr(policy, "workspace_shell_supported", lambda: False)
@@ -692,9 +692,9 @@ async def test_reconcile_stat_cache_skips_rehash(db, user_a, monkeypatch, tmp_pa
     calls = {"count": 0}
     real_fingerprint = reconcile._fingerprint
 
-    def counting_fingerprint(path):
+    def counting_fingerprint(path, **kwargs):
         calls["count"] += 1
-        return real_fingerprint(path)
+        return real_fingerprint(path, **kwargs)
 
     monkeypatch.setattr(reconcile, "_fingerprint", counting_fingerprint)
     second = await reconcile.reconcile_local_directory(db, user_a.id, use_stat_cache=True)

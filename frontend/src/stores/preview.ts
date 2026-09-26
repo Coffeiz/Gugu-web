@@ -11,6 +11,8 @@ export interface PreviewWindow {
   file: PreviewFile
   /** 聊天气泡等要求读取最新内容的入口递增此值，通知现有窗口绕过 blob 缓存重载。 */
   reloadToken: number
+  /** 未知扩展名：下载后再按内容判定是否进入文本查看器。 */
+  textFallback?: boolean
   siblings: PreviewFile[]
   x: number; y: number; w: number; h: number
   zIndex: number
@@ -25,11 +27,21 @@ export function isPreviewReloadRequested(currentToken: number, previousToken?: n
 }
 
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
-const TEXT_EXTS   = new Set(['TXT', 'MD', 'JSON', 'CSV', 'JS', 'TS', 'CSS', 'HTML', 'PY', 'YAML', 'XML', 'SH'])
+const TEXT_EXTS   = new Set([
+  'TXT', 'MD', 'JSON', 'CSV', 'JS', 'TS', 'CSS', 'HTML', 'PY', 'YAML', 'XML', 'SH',
+  'LRC', 'SRT', 'ASS', 'SSA', 'VTT', 'SUB', 'SBV', 'SMI', 'TTML', 'DFXP', 'SCC',
+  'CUE', 'M3U', 'M3U8', 'PLS',
+])
 const VIDEO_EXTS  = new Set(['MP4', 'WEBM', 'MOV', 'M4V', 'OGV'])
 const OFFICE_EXTS = new Set(['DOC', 'DOCX', 'XLS', 'XLSX', 'PPT', 'PPTX'])
 const AUDIO_EXTS  = new Set(['MP3', 'WAV', 'OGG', 'FLAC', 'M4A', 'AAC', 'OPUS'])
 const PREVIEWABLE = new Set(['PDF', ...IMAGE_EXTS, ...TEXT_EXTS, ...VIDEO_EXTS, ...OFFICE_EXTS, ...AUDIO_EXTS])
+const BINARY_EXTS = new Set([
+  '7Z', 'APK', 'BIN', 'BZ2', 'CLASS', 'DEB', 'DLL', 'DMG', 'DOC', 'DOCX', 'EXE', 'FLAC',
+  'GIF', 'GZ', 'HEIC', 'ICO', 'ISO', 'JAR', 'JPEG', 'JPG', 'MKV', 'MP3', 'MP4', 'M4A', 'M4V',
+  'MOV', 'OGG', 'PDF', 'PNG', 'PPT', 'PPTX', 'RAR', 'SO', 'TAR', 'WAV', 'WEBM', 'WEBP',
+  'XLS', 'XLSX', 'XZ', 'ZIP',
+])
 const TEXT_MIME_PREFIXES = ['text/']
 const TEXT_MIMES = new Set([
   'application/json', 'application/xml', 'application/javascript', 'application/typescript',
@@ -58,12 +70,63 @@ export function isTextExt(ext?: string | null, mime?: string | null) {
   // （聊天里的 image/* 等）仍走媒体分支，不落到文本。
   return !ext && !isMediaMime(mime)
 }
+/** 未知扩展名也允许尝试预览，最终是否为文本由下载内容探测决定。 */
+export function isTextFallbackCandidate(ext?: string | null, mime?: string | null) {
+  const normalizedExt = (ext ?? '').trim().replace(/^\./, '').toUpperCase()
+  if (!normalizedExt || PREVIEWABLE.has(normalizedExt) || BINARY_EXTS.has(normalizedExt)) return false
+  if (isImageExt(ext) || isSvgMime(mime) || isMediaMime(mime)) return false
+  return !isTextMime(mime) // 已有文本 MIME 走常规文本预览
+}
+
+/** 检查文本预览器实际会显示的内容；支持 UTF-8 与带 BOM 的 UTF-16。 */
+export async function normalizeTextBlob(blob: Blob): Promise<Blob | null> {
+  let bytes = new Uint8Array(await blob.slice(0, 512 * 1024).arrayBuffer())
+  let encoding: 'utf-8' | 'utf-16le' | 'utf-16be' | 'gbk' = 'utf-8'
+  let offset = 0
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) { encoding = 'utf-16le'; offset = 2 }
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) { encoding = 'utf-16be'; offset = 2 }
+  else if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) offset = 3
+  if ((encoding === 'utf-16le' || encoding === 'utf-16be') && bytes.length % 2) bytes = bytes.subarray(0, bytes.length - 1)
+  const sampleIsComplete = blob.size <= bytes.length
+  const decodeSample = (label: string) => {
+    const decoder = new TextDecoder(label, { fatal: true })
+    const sample = decoder.decode(bytes.subarray(offset), { stream: !sampleIsComplete })
+    return sampleIsComplete ? sample + decoder.decode() : sample
+  }
+
+  try {
+    let text: string
+    if (encoding === 'utf-8' && !offset) {
+      try {
+        text = decodeSample('utf-8')
+      } catch {
+        encoding = 'gbk'
+        text = decodeSample('gbk')
+      }
+    } else {
+      text = decodeSample(encoding)
+    }
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text)) return null
+    if (encoding === 'gbk' && !/[\u3400-\u9fff]/u.test(text)) return null
+    if (encoding !== 'utf-8' || offset > 0) {
+      const fullBytes = new Uint8Array(await blob.arrayBuffer())
+      const fullText = new TextDecoder(encoding, { fatal: true }).decode(fullBytes.subarray(offset))
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(fullText)) return null
+      return new Blob([fullText], { type: 'text/plain;charset=utf-8' })
+    }
+    return blob
+  } catch {
+    return null
+  }
+}
 export function isVideoExt(ext?: string | null)  { return VIDEO_EXTS.has((ext ?? '').toUpperCase()) }
 export function isOfficeExt(ext?: string | null) { return OFFICE_EXTS.has((ext ?? '').toUpperCase()) }
+export function isCsvExt(ext?: string | null) { return (ext ?? '').toUpperCase() === 'CSV' }
 export function isAudioExt(ext?: string | null)  { return AUDIO_EXTS.has((ext ?? '').toUpperCase()) }
 
 export function isPreviewable(ext?: string | null, mime?: string | null) {
   return PREVIEWABLE.has((ext ?? '').toUpperCase()) || isTextMime(mime) || isTextExt(ext, mime)
+    || isTextFallbackCandidate(ext, mime)
 }
 
 export const usePreviewStore = defineStore('preview', () => {
@@ -105,10 +168,11 @@ export const usePreviewStore = defineStore('preview', () => {
       })
       return
     }
-    if (isImageExt(f.ext) || isSvgMime(f.mimeType) || isVideoExt(f.ext) || isTextExt(f.ext, f.mimeType)) {
+    if (isImageExt(f.ext) || isSvgMime(f.mimeType) || isVideoExt(f.ext) || isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType)) {
       const existing = windows.value.find(w => w.file.id === f.id)
       if (existing) {
         existing.file = f
+        existing.textFallback = isTextFallbackCandidate(f.ext, f.mimeType)
         existing.siblings = siblings || []
         if (forceRefresh) existing.reloadToken++
         bringToFront(existing.id)
@@ -119,6 +183,7 @@ export const usePreviewStore = defineStore('preview', () => {
       windows.value.push({
         id:       _nextId++,
         file:     f,
+        textFallback: isTextFallbackCandidate(f.ext, f.mimeType),
         reloadToken: forceRefresh ? 1 : 0,
         siblings: siblings || [],
         x:      Math.round((window.innerWidth  - PW) / 2) + idx * 30,

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { preferencesApi } from '@/services/api'
 import { isSupportedLocale, setLocale, type SupportedLocale } from '@/i18n'
 import { applyServerTheme } from '@/composables/core/useTheme'
@@ -15,11 +15,10 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const calendarWeekStart = ref('monday') // 'monday' 或 'sunday'
   const calendarDoneMode  = ref('done') // 'done' = 已完成项目显示到完成日；'deadline' = 显示到截止日
   const defaultView       = ref(localStorage.getItem('gugu-default-view') ?? 'projects')
-  const shellEnabled      = ref(false)
+  const shellEnabled      = ref(true)
   const shellSystemEnabled = ref(false)
-  const shellDangerousEnabled = ref(false)
-  const shellAutopilotEnabled = ref(false)
-  const unlimitedMode = ref(false)
+  const shellDangerousEnabled = ref(true)
+  const automaticModeEnabled = ref(false)
   const showToolInteractions = ref(false)
   const showIntermediateReplies = ref(true)
   const toolInjectionMode = ref<'description' | 'full'>('full')
@@ -45,6 +44,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
     }
   }
 
+  async function savePreferenceValue<T>(key: string, target: Ref<T>, value: T) {
+    const previous = target.value
+    await saveOptimistically(key, { [key]: value }, () => { target.value = value }, () => { target.value = previous })
+  }
+
   async function fetch() {
     try {
       const data = await preferencesApi.get()
@@ -56,11 +60,10 @@ export const usePreferencesStore = defineStore('preferences', () => {
       calendarWeekStart.value = (data as any).calendarWeekStart ?? 'monday'
       calendarDoneMode.value = (data as any).calendarDoneMode ?? 'done'   // 类型待后端 calendarDoneMode 入 OpenAPI 后 gen:types 收回
       defaultView.value      = (data as any).defaultView ?? 'projects'
-      shellEnabled.value     = (data as any).shellEnabled ?? false
+      shellEnabled.value     = (data as any).shellEnabled ?? true
       shellSystemEnabled.value = (data as any).shellSystemEnabled ?? false
-      shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? false
-      shellAutopilotEnabled.value = (data as any).shellAutopilotEnabled ?? false
-      unlimitedMode.value = (data as any).unlimitedMode ?? false
+      shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? true
+      automaticModeEnabled.value = (data as any).automaticModeEnabled === true
       showToolInteractions.value = (data as any).showToolInteractions ?? false
       showIntermediateReplies.value = (data as any).showIntermediateReplies ?? true
       toolInjectionMode.value = (data as any).toolInjectionMode === 'description' ? 'description' : 'full'
@@ -90,13 +93,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function savePmStagesExpanded(v: boolean) {
-    const previous = pmStagesExpanded.value
-    await saveOptimistically('pmStagesExpanded', { pmStagesExpanded: v }, () => { pmStagesExpanded.value = v }, () => { pmStagesExpanded.value = previous })
+    await savePreferenceValue('pmStagesExpanded', pmStagesExpanded, v)
   }
 
   async function saveCalendarDoneMode(v: string) {
-    const previous = calendarDoneMode.value
-    await saveOptimistically('calendarDoneMode', { calendarDoneMode: v }, () => { calendarDoneMode.value = v }, () => { calendarDoneMode.value = previous })
+    await savePreferenceValue('calendarDoneMode', calendarDoneMode, v)
   }
 
   async function saveCalendarWeekStart(v: string) {
@@ -117,38 +118,27 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   async function saveShellEnabled(v: boolean) {
-    const previous = shellEnabled.value
-    await saveOptimistically('shellEnabled', { shellEnabled: v }, () => { shellEnabled.value = v }, () => { shellEnabled.value = previous })
+    await savePreferenceValue('shellEnabled', shellEnabled, v)
   }
 
   async function saveShellSystemEnabled(v: boolean) {
-    const previous = shellSystemEnabled.value
-    await saveOptimistically('shellSystemEnabled', { shellSystemEnabled: v }, () => { shellSystemEnabled.value = v }, () => { shellSystemEnabled.value = previous })
+    await savePreferenceValue('shellSystemEnabled', shellSystemEnabled, v)
   }
 
   async function saveShellDangerousEnabled(v: boolean) {
-    const previous = shellDangerousEnabled.value
-    await saveOptimistically('shellDangerousEnabled', { shellDangerousEnabled: v }, () => { shellDangerousEnabled.value = v }, () => { shellDangerousEnabled.value = previous })
+    await savePreferenceValue('shellDangerousEnabled', shellDangerousEnabled, v)
   }
 
-  async function saveShellAutopilotEnabled(v: boolean) {
-    const previous = shellAutopilotEnabled.value
-    await saveOptimistically('shellAutopilotEnabled', { shellAutopilotEnabled: v }, () => { shellAutopilotEnabled.value = v }, () => { shellAutopilotEnabled.value = previous })
-  }
-
-  async function saveUnlimitedMode(v: boolean) {
-    const previous = unlimitedMode.value
-    await saveOptimistically('unlimitedMode', { unlimitedMode: v }, () => { unlimitedMode.value = v }, () => { unlimitedMode.value = previous })
+  async function saveAutomaticModeEnabled(v: boolean) {
+    await savePreferenceValue('automaticModeEnabled', automaticModeEnabled, v)
   }
 
   async function saveShowToolInteractions(v: boolean) {
-    const previous = showToolInteractions.value
-    await saveOptimistically('showToolInteractions', { showToolInteractions: v }, () => { showToolInteractions.value = v }, () => { showToolInteractions.value = previous })
+    await savePreferenceValue('showToolInteractions', showToolInteractions, v)
   }
 
   async function saveShowIntermediateReplies(v: boolean) {
-    const previous = showIntermediateReplies.value
-    await saveOptimistically('showIntermediateReplies', { showIntermediateReplies: v }, () => { showIntermediateReplies.value = v }, () => { showIntermediateReplies.value = previous })
+    await savePreferenceValue('showIntermediateReplies', showIntermediateReplies, v)
   }
 
   async function saveToolInjectionMode(v: 'description' | 'full') {
@@ -201,7 +191,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, unlimitedMode, showToolInteractions, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveUnlimitedMode, saveShowToolInteractions, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, showToolInteractions, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveShowToolInteractions, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })

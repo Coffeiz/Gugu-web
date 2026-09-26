@@ -272,11 +272,11 @@ async def compact_context(
     # 追加式压缩：把待压缩的 canonical 消息原样交给分支，压缩指令只在末尾追加——
     # 分支请求与主对话最后一帧共享前缀，才能命中 provider 会话内缓存。
     try:
-        from agent.llm.llm_select import use_anthropic_for
-        # anthropic 路由 system 独立于 messages，需要带上 run 的 system_text 才能
-        # 前缀对齐；openai 路由的 run system 已在 fixed prefix 消息里，传空串让
-        # 分支请求不再注入第二个 system。
-        append_system = (system_text or "") if use_anthropic_for(model_cfg) else ""
+        from agent import providers
+        protocol = providers.adapter_for(model_cfg).protocol_format(model_cfg)
+        # Anthropic system 与 Responses instructions 都是独立请求字段；
+        # Chat Completions 的 system 已在渲染后的固定历史前缀中。
+        append_system = (system_text or "") if protocol in {"anthropic", "responses"} else ""
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.context.compaction.append_mode", exc)

@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 import urllib.request
 import uuid
@@ -17,6 +18,7 @@ from .utils import _code_ref, _estimate_tokens, _jsonable
 
 _trace: ContextVar[str] = ContextVar("trace_id", default="")
 _scope_run: ContextVar["_ScopeRun | None"] = ContextVar("loopscope_run", default=None)
+_active_llm_span: ContextVar["_Span | None"] = ContextVar("loopscope_active_llm_span", default=None)
 _send_tasks: set[asyncio.Task] = set()
 _layout_logger = logging.getLogger("agent.core")
 
@@ -180,6 +182,333 @@ def record_anthropic_structure_probe(
         bucket = _diagnostic_bucket(run, "anthropic_structure_probe", {
             "count": 0, "last": {},
         })
+        bucket["count"] = int(bucket.get("count", 0) or 0) + 1
+        bucket["last"] = summary
+    except Exception:
+        pass
+
+
+def _anthropic_request_message_structure(messages: Any) -> list[dict[str, Any]]:
+    """生成只含消息结构与工具 ID 指纹的 Anthropic 请求摘要。"""
+    if not isinstance(messages, list):
+        return []
+
+    def id_fingerprint(value: Any) -> str | None:
+        if not isinstance(value, (str, int)) or not str(value):
+            return None
+        return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+
+    known_types = {
+        "text", "image", "image_url", "tool_use", "tool_result", "tool_call",
+        "thinking", "redacted_thinking", "reasoning_content", "document", "video",
+        "audio", "file",
+    }
+    summaries: list[dict[str, Any]] = []
+    for message_index, message in enumerate(messages[:256]):
+        if not isinstance(message, dict):
+            summaries.append({"index": message_index, "role": "other", "blocks": []})
+            continue
+        role = message.get("role")
+        role = role if isinstance(role, str) and role in {"system", "user", "assistant", "tool"} else "other"
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else [content]
+        block_summaries = []
+        for block in blocks[:64]:
+            if not isinstance(block, dict):
+                block_summaries.append({"type": "text" if isinstance(block, str) else "other"})
+                continue
+            block_type = block.get("type")
+            block_type = block_type if isinstance(block_type, str) and block_type in known_types else "other"
+            summary: dict[str, Any] = {"type": block_type}
+            if block_type == "tool_use":
+                summary["tool_id_fp"] = id_fingerprint(block.get("id"))
+                summary["tool_name_present"] = bool(block.get("name"))
+            elif block_type in {"tool_result", "tool_call"}:
+                raw_id = (
+                    block.get("tool_use_id") or block.get("tool_call_id")
+                    if block_type == "tool_result"
+                    else block.get("id") or block.get("tool_call_id")
+                )
+                summary["tool_id_fp"] = id_fingerprint(raw_id)
+                if block_type == "tool_result":
+                    summary["tool_id_field"] = (
+                        "tool_use_id" if block.get("tool_use_id")
+                        else "tool_call_id" if block.get("tool_call_id") else "missing"
+                    )
+                    summary["is_error"] = bool(block.get("is_error"))
+            if "cache_control" in block:
+                summary["cache_control"] = True
+            if block_type in {"thinking", "redacted_thinking"}:
+                summary["has_signature"] = bool(block.get("signature"))
+            block_summaries.append(summary)
+        summaries.append({
+            "index": message_index,
+            "role": role,
+            "blocks": block_summaries,
+            "blocks_truncated": len(blocks) > 64,
+        })
+    return summaries
+
+
+def activate_llm_span(span: Any):
+    """把当前 provider round span 绑定到执行上下文，供 driver 记录最终请求摘要。"""
+    return _active_llm_span.set(span)
+
+
+def deactivate_llm_span(token) -> None:
+    """恢复进入当前 provider round 前的 span 上下文。"""
+    try:
+        _active_llm_span.reset(token)
+    except ValueError:
+        # async generator 的 GC/athrow 可能在不同 Context 中执行 finally。
+        # 原 Context 已结束时 token 无法 reset；观测收尾不能因此产生
+        # "Task exception was never retrieved"，也不能在错误 Context 写入状态。
+        return
+
+
+def record_anthropic_request_diagnostics(
+    *,
+    messages: Any,
+    context: Any,
+    restored_blocks: Any = None,
+    restored_insert_index: int | None = None,
+    projection: Any = None,
+) -> None:
+    """把状态注入及 cache 标记后的 Anthropic 请求结构写入当前 LLM span。"""
+    if not _enabled():
+        return
+    span = _active_llm_span.get()
+    if span is None or span.ended_at is not None:
+        return
+    try:
+        from .utils import _cache_diagnostics
+
+        cache_diagnostics = _cache_diagnostics(
+            messages, context, str(getattr(context, "model", "")), provider_projected=True,
+        )
+        structure = _anthropic_request_message_structure(messages)
+        structure_json = json.dumps(
+            structure, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        restored_structure = _anthropic_request_message_structure([
+            {"role": "assistant", "content": restored_blocks}
+        ])[0]["blocks"] if isinstance(restored_blocks, list) else []
+        restored_json = json.dumps(
+            restored_blocks or [], ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        cache_keys = (
+            "cache_supported", "conversation_messages", "cache_anchor_count",
+            "cache_anchor_indices", "cache_anchor_last_index",
+            "cache_anchor_tokens_estimate", "cache_state_revision",
+            "cache_baseline_digest", "cache_latest_digest", "cache_prefix_digest",
+            "cache_base_prefix_digest", "stable_message_count", "stable_prefix_digest",
+            "tool_schema_digest",
+        )
+        actual_cache = {
+            key: cache_diagnostics[key]
+            for key in cache_keys
+            if key in cache_diagnostics
+        }
+        actual_cache["cache_control_message_indices"] = [
+            message["index"] for message in structure
+            if any(block.get("cache_control") for block in message.get("blocks", []))
+        ]
+        system_param = getattr(context, "system_param", None)
+        system_blocks = system_param if isinstance(system_param, list) else [system_param]
+        system_text = "".join(
+            str(block.get("text") or "")
+            for block in system_blocks if isinstance(block, dict)
+        )
+        system_digest_source = json.dumps(
+            system_param, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            default=str,
+        )
+        actual_request = {
+            "schema_version": 1,
+            "message_count": len(structure),
+            "messages_truncated": len(messages) > 256 if isinstance(messages, list) else False,
+            "message_structure": structure,
+            "structure_digest": hashlib.sha256(structure_json.encode("utf-8")).hexdigest()[:16],
+            "wire_digest": hashlib.sha256(
+                json.dumps(
+                    messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()[:16],
+            "canonical_history_digest": str(getattr(projection, "canonical_digest", ""))[:64],
+            "rendered_history_digest": str(getattr(projection, "wire_digest", ""))[:64],
+            "system": {
+                "type": "blocks" if isinstance(system_param, list) else (
+                    "text" if isinstance(system_param, str) else "empty"
+                ),
+                "text_chars": len(system_text) if isinstance(system_param, list) else len(system_param or ""),
+                "block_types": [
+                    str(block.get("type") or "other") if isinstance(block, dict) else "text"
+                    for block in system_blocks
+                ],
+                "cache_control_block_indices": [
+                    index for index, block in enumerate(system_blocks)
+                    if isinstance(block, dict) and "cache_control" in block
+                ],
+                "digest": hashlib.sha256(system_digest_source.encode("utf-8")).hexdigest()[:16],
+            },
+            "restored_state": {
+                "insert_index": restored_insert_index,
+                "block_count": len(restored_structure),
+                "blocks": restored_structure,
+                "digest": hashlib.sha256(restored_json.encode("utf-8")).hexdigest()[:16]
+                if restored_structure else "",
+            },
+            "cache": actual_cache,
+        }
+        assembly = span.input.get("assembly") if isinstance(span.input, dict) else None
+        cache = assembly.get("cache") if isinstance(assembly, dict) else None
+        if isinstance(cache, dict):
+            cache["actual_request"] = actual_request
+    except Exception:
+        pass
+
+
+def _anthropic_request_pairing(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """按 Anthropic 的相邻消息规则分析工具往返，不保留原始工具 ID。"""
+    uses: dict[str, list[int]] = {}
+    results: list[tuple[int, str]] = []
+    blocks_truncated = 0
+    for message_index, message in enumerate(messages[:256]):
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else [content]
+        if len(blocks) > 64:
+            blocks_truncated += 1
+        for block in blocks[:64]:
+            if not isinstance(block, dict):
+                continue
+            if role == "assistant" and block.get("type") == "tool_use":
+                tool_id = block.get("id")
+                if isinstance(tool_id, (str, int)) and str(tool_id):
+                    uses.setdefault(str(tool_id), []).append(message_index)
+            elif role == "user" and block.get("type") == "tool_result":
+                tool_id = block.get("tool_use_id") or block.get("tool_call_id")
+                if isinstance(tool_id, (str, int)) and str(tool_id):
+                    results.append((message_index, str(tool_id)))
+
+    by_message: dict[int, set[str]] = {}
+    for message_index, tool_id in results:
+        by_message.setdefault(message_index, set()).add(tool_id)
+    use_records = []
+    for tool_id, indices in uses.items():
+        last_index = indices[-1]
+        next_message = messages[last_index + 1] if last_index + 1 < min(len(messages), 256) else {}
+        next_ids = by_message.get(last_index + 1, set()) if isinstance(next_message, dict) else set()
+        use_records.append({
+            "tool_id_fp": hashlib.sha256(tool_id.encode("utf-8")).hexdigest()[:12],
+            "message_indices": indices,
+            "duplicate_id": len(indices) > 1,
+            "immediate_result": (
+                next_message.get("role") == "user" and tool_id in next_ids
+                if isinstance(next_message, dict) else False
+            ),
+        })
+
+    result_records = []
+    for message_index, tool_id in results:
+        previous = messages[message_index - 1] if message_index else {}
+        previous_content = previous.get("content") if isinstance(previous, dict) else None
+        previous_blocks = previous_content[:64] if isinstance(previous_content, list) else [previous_content]
+        previous_ids = {
+            str(block.get("id")) for block in previous_blocks
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id")
+        }
+        result_records.append({
+            "message_index": message_index,
+            "tool_id_fp": hashlib.sha256(tool_id.encode("utf-8")).hexdigest()[:12],
+            "follows_matching_tool_use": (
+                isinstance(previous, dict) and previous.get("role") == "assistant"
+                and tool_id in previous_ids
+            ),
+        })
+    return {
+        "tool_use_count": sum(len(indices) for indices in uses.values()),
+        "tool_result_count": len(results),
+        "analysis_truncated": len(messages) > 256,
+        "messages_with_truncated_blocks": blocks_truncated,
+        "tool_uses": use_records[:128],
+        "tool_results": result_records[:128],
+    }
+
+
+def record_anthropic_request_failure(
+    *,
+    provider: str,
+    model: str,
+    messages: Any,
+    error: BaseException,
+    restored_blocks: Any = None,
+    restored_insert_index: int | None = None,
+    canonical_digest: str = "",
+    wire_digest: str = "",
+) -> None:
+    """仅在 Anthropic 请求失败时记录出站结构，不记录正文、参数或原始 ID。"""
+    if not _enabled():
+        return
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    try:
+        message_structure = _anthropic_request_message_structure(messages)
+        structure_json = json.dumps(message_structure, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        status = getattr(error, "status_code", None)
+        if not isinstance(status, int) or isinstance(status, bool):
+            status = None
+        body = getattr(error, "body", None)
+        provider_error = body.get("error") if isinstance(body, dict) else None
+        provider_error = provider_error if isinstance(provider_error, dict) else {}
+        error_type = provider_error.get("type") or getattr(error, "type", None) or type(error).__name__
+        if not isinstance(error_type, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", error_type):
+            error_type = type(error).__name__
+        provider_code = provider_error.get("code")
+        if provider_code is None:
+            message = getattr(error, "message", "")
+            if isinstance(message, str):
+                match = re.search(r"\(([0-9]{3,8})\)\s*$", message)
+                provider_code = match.group(1) if match else None
+        if not isinstance(provider_code, (str, int)) or not re.fullmatch(
+            r"[A-Za-z0-9_.-]{1,32}", str(provider_code)
+        ):
+            provider_code = None
+
+        restored_structure = _anthropic_request_message_structure([
+            {"role": "assistant", "content": restored_blocks}
+        ])[0]["blocks"] if isinstance(restored_blocks, list) else []
+        summary = {
+            "schema_version": 1,
+            "provider": (
+                provider if isinstance(provider, str)
+                and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", provider) else "unknown"
+            ),
+            "protocol": "anthropic",
+            "model": (
+                model if isinstance(model, str)
+                and re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", model) else "unknown"
+            ),
+            "error_type": error_type,
+            "error_status": status,
+            "provider_code": str(provider_code) if provider_code is not None else None,
+            "message_count": len(message_structure),
+            "messages_truncated": len(messages) > 256 if isinstance(messages, list) else False,
+            "message_structure": message_structure,
+            "tool_pairing": _anthropic_request_pairing(messages if isinstance(messages, list) else []),
+            "restored_state": {
+                "insert_index": restored_insert_index,
+                "blocks": restored_structure,
+            },
+            "canonical_history_digest": canonical_digest[:64],
+            "rendered_history_digest": wire_digest[:64],
+            "structure_digest": hashlib.sha256(structure_json.encode("utf-8")).hexdigest()[:16],
+        }
+        bucket = _diagnostic_bucket(run, "provider_request_failures", {"count": 0, "last": {}})
         bucket["count"] = int(bucket.get("count", 0) or 0) + 1
         bucket["last"] = summary
     except Exception:

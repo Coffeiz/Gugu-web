@@ -21,6 +21,26 @@ _last_history_stats: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 
 
+async def _hydrate_loaded_reference_contexts(db, session_id: int, history: list) -> None:
+    """为旧消息恢复引用上下文；新消息已把 canonical block 写入 content_json。"""
+    referenced_messages = [
+        message for message in history
+        if getattr(message, "role", None) == "user"
+        and isinstance(getattr(message, "references_json", None), list)
+        and getattr(message, "references_json", None)
+    ]
+    if not referenced_messages:
+        return
+    from app.models import ConversationSession
+    from agent.context.references import hydrate_reference_history
+
+    owner_id = await db.scalar(
+        select(ConversationSession.user_id).where(ConversationSession.id == session_id)
+    )
+    if owner_id is not None:
+        await hydrate_reference_history(db, owner_id, history)
+
+
 async def load_session_history(
     db,
     session_id: int,
@@ -77,6 +97,7 @@ async def load_session_history(
     # 不在数据库读取阶段使用本地 token 估算。历史只受非 token 的条数安全上限
     # 保护；真正的预算、压缩和重试统一由 provider 边界处理。
     history = list(reversed(newest))
+    await _hydrate_loaded_reference_contexts(db, session_id, history)
     _last_history_stats.set({
         "history_loaded_count": len(newest),
         "history_selected_count": len(history) + len(summary),

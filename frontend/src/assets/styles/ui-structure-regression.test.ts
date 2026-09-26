@@ -15,6 +15,7 @@ function cssBlock(source: string, selector: string) {
 }
 
 const filesView = load('../../views/Files/index.vue')
+const textViewer = load('../../components/common/viewers/TextViewer.vue')
 const projectModal = load('../../views/Projects/components/ProjectModal.vue')
 const floatPreview = load('../../components/common/layout/FloatPreviewWindow.vue')
 const popovers = load('./adoption/popovers.css')
@@ -86,6 +87,26 @@ const globalStyles = load('./global.css')
 const componentTokens = load('./tokens/components.css')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('GuguChat 用透明全窗锚点接收 Runtime 落地，不把聊天窗口本体作为 morph 目标', () => {
+    expect(chatWindow).toContain('ref="chatRefTargetEl" class="chat-ref-target"')
+    expect(chatWindow).toMatch(/watch\(chatRefTargetEl,\s*\(element, previous\)\s*=>[\s\S]*?runtime\.targets\.setElement\(`\$\{CHAT_REF_SURFACE_ID\}:target`, element\)/)
+    const target = cssBlock(chatWindow, '.chat-ref-target')
+    expect(target).toContain('background: transparent;')
+    expect(target).toContain('pointer-events: none;')
+  })
+
+  it('Markdown 任务列表把复选框独立定位，行内代码和说明保持连续文本流', () => {
+    const taskItem = cssBlock(textViewer, '.tv-md :deep(li:has(> input[type="checkbox"]))')
+    const taskCheckbox = cssBlock(textViewer, '.tv-md :deep(li:has(> input[type="checkbox"]) > input[type="checkbox"])')
+    const taskInlineCode = cssBlock(textViewer, '.tv-md :deep(li:has(> input[type="checkbox"]) > code)')
+
+    expect(taskItem).toContain('position: relative;')
+    expect(taskItem).toContain('padding-left: calc(var(--control-checkbox-size) + var(--space-sm));')
+    expect(taskItem).not.toContain('display: flex;')
+    expect(taskCheckbox).toContain('position: absolute;')
+    expect(taskInlineCode).toContain('white-space: nowrap;')
+  })
+
   it('卡片 hover 不常驻合成层，且不连续插值阴影，避免快速移动时反复 paint', () => {
     const hoverCard = cssBlock(globalStyles, '.hover-card-fx')
     expect(hoverCard).not.toContain('will-change: transform')
@@ -135,8 +156,15 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatComposer).toContain('.chat-input-row > .att-btn,')
     expect(chatComposer).toContain('.chat-input-row > .send-btn { align-self: center; }')
     expect(chatComposer).toContain('display: flex; align-items: center; gap: 8px;')
-    expect(chatComposer).toContain(":name=\"unlimitedMode ? 'action.speed-fill' : 'action.speed'\"")
+    expect(chatComposer).toContain('automaticModeEnabled')
+    expect(chatComposer).toContain('automaticModeAvailable')
+    expect(chatComposer).toContain(':aria-pressed="automaticModeEnabled"')
+    expect(chatComposer).not.toContain('unlimitedMode')
     expect(chatComposer).not.toContain('action.infinity')
+    expect(guguChat).toContain('workspacesApi.status()')
+    expect(guguChat).toContain('automaticModeGlobalEnabled.value')
+    expect(guguChat).toContain('preferencesStore.saveAutomaticModeEnabled')
+    expect(guguChat).not.toContain('toggleUnlimitedMode')
     expect(chatWindow).not.toContain('chat-main:not(.is-expanded) :deep(.chat-input-row)')
     expect(chatWindow).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
     expect(guguChat).not.toContain('.chat-main.is-expanded :deep(.chat-input-row)')
@@ -254,6 +282,12 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(terminalsRouter).toContain('canAccessTerminals(status)')
     expect(terminalsView).toContain('if (status === 401 || status === 403)')
     expect(terminalPty).toContain('event.code === 4401 || event.code === 4403')
+  })
+
+  it('交互终端的 fit 测量会扣除终端内边距并跟随容器尺寸重算', () => {
+    expect(terminalPty).toContain('terminalResizeObserver = new ResizeObserver(scheduleResize)')
+    expect(terminalPty).toContain('.pty-terminal { height:100%; padding:0; box-sizing:border-box; }')
+    expect(terminalPty).toContain('.pty-terminal :deep(.xterm) { height:100%; padding:14px 16px; box-sizing:border-box; }')
   })
 
   it('Shell 未启用时不显示文件库工作区按钮', () => {
@@ -535,7 +569,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(dateSpanPicker).not.toContain('registerPopover')
 
     // 项目 Todo 与文件排序继续通过公共 PopupMenu/ContextMenu，不引入第二套 Transition。
-    expect(projectCard).toContain('popup-class="todo-pop-popup"')
+    expect(projectCard).toContain('popup-class="todo-pop-popup card-close-anchor"')
     expect(projectCard).not.toContain('<Transition name="todo-pop"')
     expect(sortMenu).toContain('<ContextMenu :show="sortMenuOpen"')
     expect(sortMenu).toContain('r.left + r.width / 2 - 80')

@@ -10,13 +10,16 @@
       </button>
     </header>
 
-    <div class="scope-note">{{ t('adminUpdateUi.sandboxNote') }}</div>
+    <div v-if="status" class="scope-note deployment-note" role="status">
+      <strong>{{ t(`adminUpdateUi.modes.${status.mode}`) }}</strong>
+      <span>{{ t(`adminUpdateUi.reasons.${status.reason_code}`) }}</span>
+    </div>
+    <div v-if="status?.mode === 'integrated_compose' && status.enabled" class="scope-note">{{ t('adminUpdateUi.sandboxNote') }}</div>
     <div v-if="error" class="error-note" role="status">
       <strong>{{ t('adminUpdateUi.updateUnavailable') }}</strong>
       <span>{{ error }}</span>
     </div>
     <div v-if="!status && error" class="error-note secondary" role="note">{{ t('adminUpdateUi.updaterUnavailable') }}</div>
-    <div v-if="status && !status.enabled" class="error-note secondary" role="note">{{ t('adminUpdateUi.selfUpdateDisabled') }}</div>
 
     <UpdateOverview
       v-if="!status || status.enabled"
@@ -100,6 +103,8 @@ async function confirmAndStartRollback() {
 .icon-refresh { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-glass); color: var(--content-secondary); cursor: pointer; }
 .icon-refresh:disabled { opacity: .5; cursor: default; }
 .scope-note, .error-note { padding: 11px 14px; border: 1px solid var(--panel-glass-border); border-radius: var(--radius-md); background: var(--panel-glass-bg); color: var(--content-secondary); font-size: 12px; line-height: 1.55; }
+.deployment-note { display: flex; flex-direction: column; gap: 4px; }
+.deployment-note strong { color: var(--content-primary); }
 .error-note { display: flex; flex-direction: column; gap: 4px; border-color: color-mix(in srgb, var(--status-danger) 32%, transparent); background: color-mix(in srgb, var(--status-danger) 8%, var(--panel-glass-bg)); color: var(--status-danger); }
 .error-note span { color: var(--content-secondary); overflow-wrap: anywhere; }
 .error-note.secondary { display: block; }

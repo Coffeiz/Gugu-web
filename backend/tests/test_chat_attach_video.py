@@ -616,7 +616,7 @@ def test_resolve_video_45_to_90mb_uses_mmfile_on_success(monkeypatch):
 
 
 # ── prepare_video_media / video_media_to_anthropic_block：read_file 复用的公共入口 ──
-# 这是 resolve_for_message（聊天附件）和 file_readers.read_video（文件库 read_file）
+# 这是 resolve_for_message（聊天附件）和 media_reader.read_video（文件库 read_file）
 # 唯一共用的一份视频决策逻辑，直接单测覆盖，不要求每个调用方各自重复验证阈值。
 
 

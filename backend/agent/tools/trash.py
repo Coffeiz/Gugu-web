@@ -94,6 +94,7 @@ async def _permanent_delete(db, user_id, args: dict):
             args,
             f"将永久删除回收站里全部 {deleted_count} 个文件和 {len(folders)} 个文件夹，删除后无法恢复",
             user_id,
+            purpose=confirm.ACTION,
             action="permanent_delete_trash",
             targets={
                 **({"file_id": trash_file_ids} if trash_file_ids else {}),
@@ -160,6 +161,7 @@ async def _permanent_delete(db, user_id, args: dict):
         args,
         f"将永久删除 {preview}，共 {len(names)} 项，删除后无法恢复",
         user_id,
+        purpose=confirm.ACTION,
         action="permanent_delete_trash",
         targets={
             **({"file_id": file_ids} if file_ids else {}),
@@ -199,7 +201,6 @@ class TrashSkill(BaseSkill):
             description_short='查看回收站文件和顶层文件夹；无需参数',
             description="列出回收站里的独立文件和顶层文件夹（软删除、30 天内可还原）；文件夹内的文件随文件夹整体恢复，不重复列出。",
             input_schema={"type": "object", "properties": {}},
-            repeat_safe=True,
             handler=_list_trash,
         ),
         Tool(

@@ -24,6 +24,7 @@ from redis.exceptions import LockNotOwnedError
 from sqlalchemy import delete, select
 
 from agent.context import session_snapshot
+from agent.context.budget import ContextBudget
 from agent.context.tokens import content_text, estimate_tokens
 from agent.context.audit import session_scope, summary_change
 
@@ -115,9 +116,10 @@ async def recover_orphaned_session(session_id: int, user_id=None) -> bool:
     生成任务正常结束会在 genstream 和会话行上分别收口；worker 被杀死或重启
     时，任务的 ``finally`` 不会执行，数据库可能永久停在 ``running``。两种情况
     允许修复：① Redis 明确可用且生成快照、owner、lease 全部消失；② 快照仍在
-    但 run 进程心跳已断（probe.stale，crash 后 TTL 内的僵尸快照）——此时同时
-    清掉 Redis 残留，否则 is_active 会在整个 TTL 窗口内挡住新消息、让终止按钮
-    和续看全部空转。``baseline_updating`` 是基线提交被打断后的孤儿态：只有
+    但心跳、owner、lease 都已失效（probe.stale，crash 后 TTL 内的僵尸快照）——
+    此时同时清掉 Redis 残留，否则 is_active 会在整个 TTL 窗口内挡住新消息、让
+    终止按钮和续看全部空转。心跳单键短暂丢失但 owner/lease 仍有效时必须等待，
+    不能回收正在执行的 run。``baseline_updating`` 是基线提交被打断后的孤儿态：只有
     压缩锁（带 TTL）也已消失时才认定写进程不在了，锁还在就仍在提交中。
     """
     from agent.llm import genstream
@@ -197,23 +199,35 @@ async def _wait_for_baseline_idle(session_id: int) -> None:
         await asyncio.sleep(min(_BASELINE_WAIT_INTERVAL, remaining))
 
 
-async def _claim_session_run(session_id: int, run_id: str, marked_pending: bool) -> bool:
-    """在会话行锁内确认 baseline 已空闲并认领生成状态。"""
+async def _update_session_row(session_id: int, update, *, missing_result: bool) -> bool:
+    """在同一会话行锁事务内执行状态更新，统一跨 worker 的状态边界。"""
     import app.db.session as _sess
     from app.models import ConversationSession
 
     async with _sess._SessionLocal() as db:
         session = await db.get(ConversationSession, session_id, with_for_update=True)
         if session is None:
-            return True
+            return missing_result
+        result = update(session)
+        if result is False:
+            return False
+        await db.commit()
+        return bool(result)
+
+
+async def _claim_session_run(session_id: int, run_id: str, marked_pending: bool) -> bool:
+    """在会话行锁内确认 baseline 已空闲并认领生成状态。"""
+
+    def claim(session) -> bool:
         if session.execution_state == "baseline_updating":
             return False
         if marked_pending:
             session.pending_message_count = max(0, int(session.pending_message_count or 0) - 1)
         session.execution_state = "running"
         session.active_run_id = run_id
-        await db.commit()
         return True
+
+    return await _update_session_row(session_id, claim, missing_result=True)
 
 
 @asynccontextmanager
@@ -405,8 +419,10 @@ async def compress_if_needed(
     settings,
     *,
     force: bool = False,
+    only_if_idle: bool = False,
     reuse_summary: str | None = None,
     reuse_before_message_id: int | None = None,
+    cache_snapshot=None,
 ) -> bool:
     """按 session 串行执行压缩，避免后台任务与手动命令覆盖 baseline。
 
@@ -416,6 +432,9 @@ async def compress_if_needed(
     baseline 水位。``reuse_before_message_id``（通常是本轮用户消息 id）用来把
     可压缩范围限制在本 run 开始之前——run 内摘要不覆盖本轮自身的消息，复用时
     水位绝不能推进到它们之上。
+
+    ``only_if_idle`` 只供无普通 run usage 事件的被动反思使用：必须在会话行锁内
+    看到 idle 且没有 pending 消息后才能切换到 baseline_updating。
     """
     from app.core import redis as redis_core
 
@@ -428,13 +447,23 @@ async def compress_if_needed(
     if not await lock.acquire(blocking=force, blocking_timeout=15 if force else None):
         logger.info("[compress_conv] session=%s 已有压缩任务运行，跳过重复任务", session_id)
         return False
-    await _set_baseline_state(session_id, "baseline_updating")
+    claimed = await _set_baseline_state(
+        session_id, "baseline_updating", require_idle=only_if_idle,
+    )
+    if not claimed:
+        logger.info(
+            "[compress_conv] session=%s 非空闲或有待处理消息，跳过后台压缩",
+            session_id,
+        )
+        await lock.release()
+        return False
     persisted = False
     try:
         result = await _compress_if_needed_unlocked(
             session_id, user_id, settings, force=force,
             reuse_summary=reuse_summary,
             reuse_before_message_id=reuse_before_message_id,
+            cache_snapshot=cache_snapshot,
         )
         persisted = bool(result)
         return result
@@ -451,17 +480,209 @@ async def compress_if_needed(
         await lock.release()
 
 
-async def _set_baseline_state(session_id: int, state: str) -> None:
-    """把 baseline 更新状态写入 session，避免只依赖进程内 task。"""
-    import app.db.session as _sess
-    from app.models import ConversationSession
+async def _set_baseline_state(
+    session_id: int, state: str, *, require_idle: bool = False,
+) -> bool:
+    """把 baseline 更新状态写入 session，避免只依赖进程内 task。
 
-    async with _sess._SessionLocal() as db:
-        session = await db.get(ConversationSession, session_id, with_for_update=True)
-        if session is None:
-            return
+    ``require_idle`` 用于被动反思：检查和切换在同一行锁事务内完成，避免反思
+    先看到 idle、主会话随后认领 run，两个任务同时读取旧 baseline。
+    """
+    def update(session) -> bool:
+        if require_idle and (
+            session.execution_state not in (None, "idle")
+            or int(session.pending_message_count or 0) > 0
+        ):
+            return False
         session.execution_state = state
-        await db.commit()
+        return True
+
+    return await _update_session_row(session_id, update, missing_result=False)
+
+
+async def compact_for_reflection(
+    session_id: int,
+    user_id: int,
+    settings,
+    *,
+    snapshot,
+    extra_text: str = "",
+    model_cfg=None,
+    cache_snapshot=None,
+) -> str:
+    """反思前优先按主请求实际用量检查，并复用正式 baseline 压缩。
+
+    同进程快照带有最近一轮 provider context input；无快照用量的静默群消息
+    或重启接管才使用本地估算。历史裁剪、摘要和持久化仍统一委托给
+    ``compress_if_needed``。返回 ``compacted``、``not_needed`` 或
+    ``blocked``；超预算但会话当前不适合后台写 baseline 时，调用方必须跳过
+    provider，不得退回另一套反思专用截断逻辑。
+    """
+    if session_id is None:
+        return "not_needed"
+    from agent.llm.modelctx import effective_ai
+
+    model_cfg = model_cfg or effective_ai(settings)
+    context_tokens = int(getattr(model_cfg, "context_tokens", 0) or 0)
+    if context_tokens <= 0:
+        return "not_needed"
+    soft_limit = int(context_tokens * AUTO_COMPACTION_RATIO)
+    if getattr(snapshot, "provider_compacted", False):
+        return "not_needed"
+    provider_input = getattr(snapshot, "provider_context_input", None)
+    if provider_input is not None and int(provider_input) > 0:
+        # 同进程主 run 已按 provider usage 完成每轮 90% 判定；快照可能在压缩后
+        # 才捕获，不能拿压缩前的 usage 对新历史重复压缩。
+        if int(provider_input) < soft_limit:
+            return "not_needed"
+        observed_tokens = int(provider_input)
+        source = "provider"
+    else:
+        # 静默群消息、重启接管或 provider 未上报正数 usage，只能做保守预检。
+        output_reserve = min(max(1, int(getattr(model_cfg, "max_tokens", 900) or 900)), 900)
+        budget = ContextBudget.from_messages(
+            context_tokens,
+            getattr(snapshot, "history", ()) or (),
+            system_text=getattr(snapshot, "system_prompt", "") or "",
+            current_turn_tokens=estimate_tokens(extra_text or ""),
+            output_reserve_tokens=output_reserve,
+        )
+        if budget.total_tokens < budget.soft_limit_tokens:
+            return "not_needed"
+        observed_tokens = budget.total_tokens
+        source = "estimate"
+    logger.info(
+        "[reflection-compaction] session=%s source=%s total_tokens=%s soft_limit_tokens=%s context_tokens=%s",
+        session_id, source, observed_tokens, soft_limit, context_tokens,
+    )
+    compacted = await compress_if_needed(
+        session_id,
+        user_id,
+        settings,
+        force=True,
+        only_if_idle=True,
+        cache_snapshot=cache_snapshot or snapshot,
+    )
+    return "compacted" if compacted else "blocked"
+
+
+def _same_history_message(left: dict, right: dict) -> bool:
+    """验证回放语义，允许纯文本在字符串与单 text block 间转换。"""
+    if left == right:
+        return True
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+
+    def plain_text(value):
+        if isinstance(value, str):
+            return value
+        if (isinstance(value, list) and len(value) == 1
+                and isinstance(value[0], dict)
+                and value[0].get("type") == "text"
+                and isinstance(value[0].get("text"), str)
+                and set(value[0]) <= {"type", "text", "cache_control"}
+                and ("cache_control" not in value[0]
+                     or value[0]["cache_control"] == {"type": "ephemeral"})):
+            return value[0]["text"]
+        return None
+
+    left_text = plain_text(left.get("content"))
+    right_text = plain_text(right.get("content"))
+    if left_text is None or left_text != right_text:
+        return False
+    return ({key: value for key, value in left.items() if key != "content"}
+            == {key: value for key, value in right.items() if key != "content"})
+
+
+async def _snapshot_cache_prefix(
+    snapshot,
+    session,
+    rows: list,
+    user_id: int,
+    model_cfg,
+    baseline_id: int,
+    compressed_message_ids: set[int],
+) -> list[dict] | None:
+    """仅当持久化历史能逐条精确对齐时，返回原 provider 请求的同前缀。"""
+    if snapshot is None or not getattr(snapshot, "history", None):
+        return None
+    try:
+        from types import SimpleNamespace
+
+        from agent.context.history import build_history_parts
+        from agent.llm.llm_select import use_anthropic_for
+        from agent.context.reflection_snapshot import model_identity
+        import app.db.session as db_session
+        from agent.context.loaders import load_user_tz
+        from app.models import User
+
+        if model_identity(snapshot.ai) != model_identity(model_cfg):
+            return None
+        db_session.ensure_engine()
+        async with db_session._SessionLocal() as db:
+            user = await db.get(User, user_id)
+            user_tz = await load_user_tz(db, user_id)
+        user_name = ((getattr(user, "display_name", None) or getattr(user, "username", ""))
+                     if user is not None else "")
+        request = SimpleNamespace(
+            chat_id=getattr(session, "chat_id", None),
+            user_name=user_name,
+            platform_user_id=getattr(session, "platform_user_id", None),
+            platform_user_name=user_name,
+            im_role="owner",
+        )
+        summaries = [row for row in rows if row.role == "summary"]
+        latest_summary = max(
+            summaries,
+            key=lambda row: (getattr(row, "created_at", None), int(row.id)),
+            default=None,
+        )
+        effective_baseline = max(
+            int(baseline_id or 0),
+            int(getattr(latest_summary, "covers_until_id", 0) or 0),
+        )
+        source_rows = ([latest_summary] if latest_summary is not None else []) + [
+            row for row in rows
+            if row.role != "summary" and int(row.id) > effective_baseline
+        ]
+        selected_ids = sorted(int(value) for value in compressed_message_ids)
+        if not selected_ids:
+            return None
+        # 只验证将要压缩的连续前缀。保留尾部可能包含本 run 的工具结果或
+        # provider-only 形态，不能因尾部重建差异放弃已经对齐的缓存前缀。
+        selected_rows = [
+            row for row in source_rows
+            if row.role != "summary" and int(row.id) <= selected_ids[-1]
+        ]
+        if [int(row.id) for row in selected_rows] != selected_ids:
+            return None
+        # 主会话 session_history 按 (created_at, id) 装载；并发持久化时
+        # 自增 id 与创建时间可能交错，压缩前缀必须重放主会话的顺序。
+        selected_rows.sort(key=lambda row: (row.created_at, int(row.id)))
+        prefix_rows = ([latest_summary] if latest_summary is not None else []) + selected_rows
+        parts: list[dict] = []
+        use_anthropic = use_anthropic_for(model_cfg)
+        for row in prefix_rows:
+            row_parts = build_history_parts(
+                [row], request, use_anthropic=use_anthropic, user_tz=user_tz,
+            )
+            parts.extend(row_parts)
+        if not parts:
+            return None
+        start_at = next(
+            (index for index in range(len(snapshot.history) - len(parts) + 1)
+             if all(_same_history_message(actual, persisted)
+                    for actual, persisted in zip(
+                        snapshot.history[index:index + len(parts)], parts))),
+            None,
+        )
+        if start_at is None:
+            return None
+        return list(snapshot.history[:start_at + len(parts)])
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.context.compress_conv.snapshot_prefix", exc)
+        return None
 
 
 async def _compress_if_needed_unlocked(
@@ -472,6 +693,7 @@ async def _compress_if_needed_unlocked(
     force: bool = False,
     reuse_summary: str | None = None,
     reuse_before_message_id: int | None = None,
+    cache_snapshot=None,
 ) -> bool:
     """检查并执行压缩，返回是否实际执行了压缩。
 
@@ -524,6 +746,41 @@ async def _compress_if_needed_unlocked(
     if not to_compress:
         return False
 
+    from agent.llm.modelctx import effective_ai
+
+    model_cfg = effective_ai(settings)
+    cache_prefix = None
+    if not reuse_summary and cache_snapshot is not None:
+        # 持久化工具轮次可能与主 run 的最后几条消息结构不同；把未对齐的
+        # 截点留在近期尾部，优先使用已经精确验证过的主请求前缀。
+        backtracked_chars = 0
+        for count in range(split_idx, max(0, split_idx - 8), -1):
+            candidate = all_msgs[:count]
+            cache_prefix = await _snapshot_cache_prefix(
+                cache_snapshot,
+                session,
+                rows,
+                user_id,
+                model_cfg,
+                baseline_id,
+                {int(message.id) for message in candidate},
+            )
+            if cache_prefix is not None:
+                to_compress = candidate
+                if count != split_idx:
+                    logger.info(
+                        "[compress_conv] session=%s 缓存前缀截点前移 %s 条",
+                        session_id, split_idx - count,
+                    )
+                break
+            if count <= 1:
+                break
+            removed = all_msgs[count - 1]
+            raw = removed.content_json if removed.content_json is not None else removed.content
+            backtracked_chars += len(content_text(raw))
+            if backtracked_chars > _RECENT_HISTORY_KEEP_CHARS:
+                break
+
     # 统一读取普通正文和 content_json，工具轮次不能因为正文不在 content 而丢失。
     # content_items 给本地有界兜底用；history_messages 重建出角色序列给追加式摘要用。
     content_items: list[str] = []
@@ -545,9 +802,6 @@ async def _compress_if_needed_unlocked(
         _generate_append_summary,
         resolve_compaction_limits,
     )
-    from agent.llm.modelctx import effective_ai
-    model_cfg = effective_ai(settings)
-
     limits = resolve_compaction_limits(model_cfg=model_cfg)
     if reuse_summary:
         # run 内压缩刚生成过同一批历史的摘要（且那次分支请求命中了缓存），
@@ -555,14 +809,31 @@ async def _compress_if_needed_unlocked(
         summary = reuse_summary
         compression_mode = "run-reuse"
     else:
-        # 手动 /compact 等无 run 摘要可复用的场景：从 DB 行重建消息序列走追加式，
-        # 与 run 内压缩同一条摘要生成路径（超预算自动分块滚动）。该请求不带
-        # 主 run 的 system/工具声明，不指望命中前缀缓存——冷是已知边界，
-        # 换来的是全站只剩一条摘要生成路径。
-        summary = await _generate_append_summary(
-            history_messages, prev_summary, model_cfg=model_cfg,
-        )
-        compression_mode = "append-replay"
+        if cache_prefix is not None:
+            from agent.context.prefix_history import render_branch_prefix
+            from agent import providers
+
+            adapter = providers.adapter_for(model_cfg)
+            protocol = adapter.protocol_format(model_cfg)
+            append_system = (
+                getattr(cache_snapshot, "system_prompt", "") or ""
+                if protocol in {"anthropic", "responses"} else ""
+            )
+            summary = await _generate_append_summary(
+                render_branch_prefix(cache_prefix, model_cfg),
+                prev_summary,
+                model_cfg=model_cfg,
+                append_system=append_system,
+                tools=list(getattr(cache_snapshot, "tools", ()) or ()),
+            )
+            compression_mode = "snapshot-prefix"
+        else:
+            # 没有同进程快照或持久化历史无法逐条对齐时，安全回退到 DB 重建；
+            # 该路径保持原有摘要范围与落库语义，但不保证前缀缓存命中。
+            summary = await _generate_append_summary(
+                history_messages, prev_summary, model_cfg=model_cfg,
+            )
+            compression_mode = "append-replay"
     from agent.context.compaction import validate_compact_summary
 
     summary_ok, summary_reason = validate_compact_summary(

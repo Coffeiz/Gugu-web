@@ -11,6 +11,7 @@ from typing import Any
 from agent.context import audit, compress_conv, assembly
 from agent.context import dynamic_tail, session_snapshot
 from agent.context.history import build_history_parts
+from agent.context.references import prepend_reference_context
 from agent.security import sanitize
 from app.core.chat_attach import build_user_content
 
@@ -130,7 +131,9 @@ async def prepare_run(
     )
     message_time = None
     if user_message is not None and not resume_interaction:
-        message_time = dynamic_tail.message_time_reminder(user_message.sent_at, user_tz)
+        message_time = dynamic_tail.message_time_reminder(
+            user_message.sent_at, user_tz,
+        )
 
     # 当前用户消息在进入 Agent 前已经落库。自动 conversation RAG 必须以它的 id
     # 作为排他水位，只允许召回本轮之前的消息；ContextVar 会随自动召回创建的
@@ -158,9 +161,12 @@ async def prepare_run(
 
     current_user = None if resume_interaction else {
         "role": "user",
-        "content": build_user_content(
-            current_text, images, use_anthropic, media=media,
-            image_detail=getattr(model_cfg, "vision_detail", "auto"),
+        "content": prepend_reference_context(
+            build_user_content(
+                current_text, images, use_anthropic, media=media,
+                image_detail=getattr(model_cfg, "vision_detail", "auto"),
+            ),
+            getattr(req, "reference_context", None),
         ),
     }
     current_stance_digest = assembly.stance_digest(stance_text)
@@ -191,7 +197,6 @@ async def prepare_run(
         clean = sanitize.sanitize_messages(assembled.conversation)
         merged_cross_segment = merged_cross_segment and len(clean) < before
         assembled.replace_conversation(clean)
-        assembled.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
         audit.context_layout_audit(
             phase="assembled", session=session, snapshot=snapshot,
             history=effective_history, messages=assembled,
@@ -223,7 +228,6 @@ async def prepare_run(
         extra_reminder=extra_reminder,
     )
     assembled.append_batch(turn_batch)
-    assembled.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
     audit.context_layout_audit(
         phase="assembled", session=session, snapshot=snapshot,
         history=effective_history, messages=assembled,

@@ -15,7 +15,7 @@ from typing import Any
 
 from agent.context.budget import is_context_overflow_error
 from agent.context.canonical_context import digest
-from agent.providers.message_utils import _openai_tool_result
+from agent.providers.message_utils import _openai_tool_result, render_provider_history
 
 
 class ResponsesCompatibilityError(RuntimeError):
@@ -265,6 +265,112 @@ def _responses_prompt_cache_key(ctx: _ResponsesCtx) -> str | None:
     return "gugu-" + digest(cache_key_material, length=32)
 
 
+def _responses_output_text(response: Any) -> str:
+    """从 Responses 对象中提取文本，兼容 SDK 对象与 OpenAI-compatible 返回体。"""
+    text = getattr(response, "output_text", None)
+    if text is None and isinstance(response, dict):
+        text = response.get("output_text")
+    if isinstance(text, str):
+        return text
+    raw_output = getattr(response, "output", None)
+    if raw_output is None and isinstance(response, dict):
+        raw_output = response.get("output")
+    parts: list[str] = []
+    for item in raw_output or ():
+        item = item.model_dump() if hasattr(item, "model_dump") else item
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for content in item.get("content") or ():
+            content = content.model_dump() if hasattr(content, "model_dump") else content
+            if (isinstance(content, dict)
+                    and content.get("type") in {"output_text", "text"}
+                    and isinstance(content.get("text"), str)):
+                parts.append(content["text"])
+    return "".join(parts)
+
+
+async def complete_branch(
+    system_text: str,
+    history: list[dict],
+    user: str,
+    ai: Any,
+    settings,
+    *,
+    max_output_tokens: int | None,
+    tools: list[dict] | None = None,
+    json_mode: bool = False,
+    usage_sink: list | None = None,
+) -> str:
+    """以无状态 Responses 请求执行只读分支，不接入主 run 的 response chain。"""
+    import httpx
+    from agent import providers
+
+    client = providers.build_openai_client(
+        ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0),
+    )
+    adapter = providers.adapter_for(ai)
+    base_instructions, snapshot_instructions, instructions = _responses_instruction_parts(
+        history, system_text,
+    )
+    branch_tools = list(tools or ())
+    request = {
+        "model": ai.model,
+        "input": _responses_input([
+            *history,
+            {"role": "user", "content": user},
+        ]),
+        "max_output_tokens": max_output_tokens,
+        "tools": branch_tools,
+        "store": bool(getattr(ai, "store", True)),
+    }
+    if instructions:
+        request["instructions"] = instructions
+    effort = getattr(ai, "reasoning_effort", "") or ""
+    if effort:
+        request["reasoning"] = {"effort": effort}
+    if json_mode:
+        response_format = adapter.build_structured_output(ai).get("response_format")
+        if isinstance(response_format, dict):
+            format_type = response_format.get("type")
+            if format_type == "json_object":
+                request["text"] = {"format": {"type": "json_object"}}
+            elif format_type == "json_schema":
+                schema = response_format.get("json_schema")
+                if isinstance(schema, dict) and schema.get("name") and isinstance(schema.get("schema"), dict):
+                    request["text"] = {"format": {
+                        "type": "json_schema",
+                        **schema,
+                    }}
+
+    cache_ctx = _ResponsesCtx(
+        tools=branch_tools,
+        max_output_tokens=max_output_tokens or 0,
+        model=ai.model,
+        instructions=instructions,
+        adapter=adapter,
+        ai=ai,
+        tool_state_digest=_tool_state_digest(branch_tools),
+        base_instructions=base_instructions,
+        snapshot_instructions=snapshot_instructions,
+        supports_prompt_cache_key=adapter.supports_responses_prompt_cache_key(ai),
+    )
+    prompt_cache_key = _responses_prompt_cache_key(cache_ctx)
+    if prompt_cache_key:
+        request["prompt_cache_key"] = prompt_cache_key
+
+    response = await client.responses.create(**request)
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+    from agent.usage import normalize_responses_usage, record_current_usage
+
+    normalized_usage = normalize_responses_usage(usage)
+    if usage_sink is not None:
+        usage_sink.append(normalized_usage)
+    await record_current_usage(settings, ai, normalized_usage)
+    return _responses_output_text(response)
+
+
 class OpenAIResponsesDriver:
     """OpenAI Responses API 驱动；不复用 Chat Completions 的 continuation 语义。"""
 
@@ -304,7 +410,8 @@ class OpenAIResponsesDriver:
 
     async def run_round(self, client, ctx, messages, stream_round=None):
         # stream_round 仅 AnthropicDriver 使用；本驱动接收并忽略，保持统一调用签名。
-        full_rendered = ctx.adapter.render_history(messages)
+        projection = render_provider_history(messages, ctx.adapter)
+        full_rendered = projection.messages
         rendered = full_rendered
         if ctx.previous_response_id:
             # response chain 已经包含旧历史；只发送上一个 response 之后的增量，

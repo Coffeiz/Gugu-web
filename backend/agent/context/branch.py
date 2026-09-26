@@ -18,6 +18,17 @@ def _fingerprint(value: object) -> str:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:16]
 
 
+def _log_run_id(value: str | None) -> str:
+    """限制日志关联 ID 字符，避免意外换行注入或无限长字段。"""
+    if not value:
+        return "-"
+    safe = "".join(
+        char if char.isascii() and (char.isalnum() or char in "_.:-") else "_"
+        for char in value
+    )
+    return safe[:120] or "-"
+
+
 class ContextBranch:
     """统一执行 provider 分支，不持有任何跨请求状态。"""
 
@@ -91,7 +102,13 @@ class ContextBranch:
                     response = getattr(exc, "response", None)
                     status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
                     error_status = str(status) if isinstance(status, int) else "-"
-                    diag_log("agent.context.branch.provider", exc)
+                    run_id = _log_run_id(branch_input.run_id)
+                    diag_log(
+                        "agent.context.branch.provider "
+                        f"branch={policy.name} run_id={run_id} "
+                        f"attempt={attempts} status={error_status}",
+                        exc,
+                    )
                 validated_ok = ok
                 if ok:
                     reason = "completed"
@@ -119,6 +136,11 @@ class ContextBranch:
                                      cache_hit=bool(usage.get("cache_read")))
             except Exception:
                 pass
+            from agent.runtime.loopscope_trace.cache_probe import record_reflection_usage
+
+            record_reflection_usage(
+                policy.name, branch_input, settings, usage_sink,
+            )
         result = BranchResult(
             ok=validated_ok,
             output=output if validated_ok else None,
@@ -136,6 +158,18 @@ class ContextBranch:
                 "run_id": branch_input.run_id,
             },
         )
+        if result.return_reason == "provider_error":
+            run_id = _log_run_id(branch_input.run_id)
+            logger.warning(
+                "[context-branch-provider-failed] branch=%s run_id=%s attempts=%d "
+                "error_type=%s error_status=%s input_fp=%s",
+                policy.name,
+                run_id,
+                result.attempts,
+                error_type,
+                error_status,
+                result.input_fingerprint,
+            )
         logger.info(
             "[context-branch] branch=%s mode=%s scope=%s scope_revision=%s session_id=%s attempts=%d ok=%s reason=%s error_type=%s error_status=%s input_fp=%s output_fp=%s",
             policy.name,

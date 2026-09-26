@@ -1,5 +1,5 @@
 import { runtime } from './index'
-import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_CANVAS_DRAG_Z_INDEX, MIND_CANVAS_LANDING_Z_INDEX, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
+import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, MIND_PROJECT_DRAWER_SURFACE_ID, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
 import { TOP_Z } from '@/composables/core/windowz'
 
 let initialized = false
@@ -15,6 +15,9 @@ export function setupInteractionRuntime(): void {
     affordances: { selector: '[data-card-affordances]' },
     groupVisual: 'default',
     motion: { enabled: true },
+    // 项目卡投放到 GuguChat 等浮动窗口时，代理必须高于窗口层级。
+    proxyZIndex: TOP_Z,
+    landingProxyZIndex: TOP_Z,
     // 抓取对齐沿用看板卡片既有的
     // centerGrab:true 手感：卡片几何中心对齐指针，再往下偏 12px 做出
     // "被拎着"的悬垂感，不是简单的居中或按点击位置对齐。
@@ -128,12 +131,9 @@ export function setupInteractionRuntime(): void {
   })
   const registerMindObjectType = (objectType: string) => runtime.registerObjectType(objectType, {
     defaultVisualMode: 'detach',
-    proxyZIndex: MIND_CANVAS_DRAG_Z_INDEX,
-    landingProxyZIndex: ({ sourceSurfaceId, destinationSurfaceId }) => {
-      if (destinationSurfaceId === MIND_PROJECT_DRAWER_SURFACE_ID) return MIND_CANVAS_DRAG_Z_INDEX
-      if (sourceSurfaceId === MIND_PROJECT_DRAWER_SURFACE_ID) return MIND_CANVAS_DRAG_Z_INDEX
-      return MIND_CANVAS_LANDING_Z_INDEX
-    },
+    // 画布卡拖动到 GuguChat 时必须覆盖聊天窗，并在落地动画期间保持同一顶层。
+    proxyZIndex: TOP_Z,
+    landingProxyZIndex: TOP_Z,
     affordances: { selector: '[data-card-affordances]' },
     // 画布和抽屉使用同一份项目卡结构。跨 Surface landing 需要保留源卡和目标卡两层，
     // 让内容、卡面和边框一起交叉淡化，避免落地结束时从源代理瞬间切换到目标卡。

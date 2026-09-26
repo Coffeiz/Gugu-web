@@ -43,16 +43,17 @@
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
     </button>
     <button
-      v-if="!recording"
-      class="att-btn unlimited-btn"
-      :class="{ active: unlimitedMode }"
+      v-if="!recording && automaticModeAvailable"
+      class="att-btn automatic-mode-btn"
+      :class="{ active: automaticModeEnabled }"
       type="button"
-      :title="unlimitedMode ? t('chat.unlimitedOn') : t('chat.unlimitedOff')"
-      :aria-label="unlimitedMode ? t('chat.unlimitedOn') : t('chat.unlimitedOff')"
-      :aria-pressed="unlimitedMode"
-      @click="onToggleUnlimited"
+      :disabled="automaticModeSaving"
+      :title="automaticModeEnabled ? t('chat.automaticModeOn') : t('chat.automaticModeOff')"
+      :aria-label="t('chat.automaticMode')"
+      :aria-pressed="automaticModeEnabled"
+      @click="onToggleAutomaticMode"
     >
-      <Icon :name="unlimitedMode ? 'action.speed-fill' : 'action.speed'" :size="16" />
+      <Icon :name="automaticModeEnabled ? 'action.speed-fill' : 'action.speed'" :size="16" />
     </button>
     <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
     <div v-if="!recording" class="chat-input-editor">
@@ -86,6 +87,9 @@ import { parseChatClipboardText, pastePlainTextClipboard } from './chatPaste'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { useFilesCacheStore } from '@/stores/filesCache'
+import { useMindStore } from '@/stores/mind'
+import { useProjectStore } from '@/stores/projects'
+import { parseChatRuntimeReference, parseMindCanvasChatReference } from './chatRuntimeReference'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -106,7 +110,10 @@ const props = defineProps<{
   expanded: boolean
   ownerZ: number
   streaming: boolean
-  unlimitedMode: boolean
+  automaticModeEnabled: boolean
+  automaticModeAvailable: boolean
+  automaticModeSaving: boolean
+  onToggleAutomaticMode: () => void
   vw: number
   onRemoveAtt: (a: ChatFile) => void
   onStartRecord: () => void
@@ -116,7 +123,6 @@ const props = defineProps<{
   onPaste: (e: ClipboardEvent) => void
   onSend: () => void
   onStopStreaming: () => void
-  onToggleUnlimited: () => void
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:references': [value: ChatReference[]] }>()
@@ -130,12 +136,8 @@ const inputRowEl = ref<HTMLElement | null>(null)
 // 这里只消费 Runtime 的 move action：解析 objectIds 还原文件/文件夹 id，插入
 // mindRef chip——references 数组是文档派生物，自动带上且天然去重。
 const filesCache = useFilesCacheStore()
-
-function parseDroppedRef(objectId: string): ChatReference | null {
-  const match = /(?:^|:)(file|folder):(\d+)$/.exec(objectId)
-  if (!match) return null
-  return { type: match[1] as ChatReference['type'], id: Number(match[2]), label: '' }
-}
+const mindStore = useMindStore()
+const projectStore = useProjectStore()
 
 function insertReferenceChip(reference: ChatReference) {
   const editor = chatEditor.value
@@ -146,6 +148,10 @@ function insertReferenceChip(reference: ChatReference) {
   let label: string
   if (reference.type === 'folder') {
     label = filesCache.getFolder(Number(reference.id))?.name ?? `Folder ${reference.id}`
+  } else if (reference.type === 'project') {
+    label = projectStore.projects.find(project => project.id === Number(reference.id))?.name ?? `Project ${reference.id}`
+  } else if (reference.type === 'event' || reference.type === 'canvas_note') {
+    label = reference.label || `${reference.type === 'event' ? 'Activity' : 'Canvas note'} ${reference.id}`
   } else {
     label = filesCache.getFile(Number(reference.id))?.displayName ?? `File ${reference.id}`
   }
@@ -159,9 +165,19 @@ useRuntimeAction(async action => {
   if (action.type !== 'move' && action.type !== 'move-group') return
   if (action.toSurfaceId !== CHAT_REF_SURFACE_ID) return
   const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
-  const references = objectIds.map(parseDroppedRef).filter((item): item is ChatReference => item !== null)
+  const references = objectIds.map(objectId => {
+    const element = runtime.objects.get(objectId)?.element
+    const nodeId = Number(element?.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId)
+    const node = Number.isInteger(nodeId)
+      ? mindStore.canvasItems.find(item => item.nodeId === nodeId)?.node
+      : undefined
+    return parseMindCanvasChatReference(node) ?? parseChatRuntimeReference(objectId)
+  }).filter((item): item is ChatReference => item !== null)
   if (!references.length) return
   if (!filesCache.loaded) await filesCache.load().catch(() => {})
+  if (references.some(reference => reference.type === 'project') && !projectStore.projectsLoaded) {
+    await projectStore.fetchProjects()
+  }
   for (const reference of references) insertReferenceChip(reference)
   // 落地动画结束后源卡片是瞬间显形的；给它补一段「从松手位置缩放淡入回归」的
   // 入场动画，等 Runtime 结束对该对象的视觉接管后播放。
@@ -445,7 +461,8 @@ defineExpose({
   display: flex; align-items: center; justify-content: center; height: 28px; padding: 0;
   opacity: 0.7; transition: opacity 0.15s, color 0.15s; }   /* 与发送按钮(28)等高，底对齐时中心也对齐 */
 .att-btn:hover { opacity: 1; color: var(--color-primary); }
-.unlimited-btn.active { color: var(--color-primary); opacity: 1; }
+.automatic-mode-btn.active { color: var(--color-primary); opacity: 1; }
+.automatic-mode-btn:disabled { cursor: default; opacity: 0.45; }
 .chat-input-row > .att-btn,
 .chat-input-row > .send-btn { align-self: center; }
 .chat-input-row {

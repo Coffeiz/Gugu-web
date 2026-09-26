@@ -25,7 +25,6 @@ def test_help_lists_all_commands():
     assert result["action"] == "reply"
     for command in ("/stop", "/status", "/compact", "/new", "/memory", "/forget", "/workspace"):
         assert command in result["reply"]
-    assert "/unlimited" in result["reply"]
 
 
 def test_help_lists_subcommands_on_separate_lines():
@@ -46,8 +45,8 @@ def test_goal_help_lists_each_subcommand_on_its_own_line():
 
 @pytest.mark.asyncio
 async def test_help_follows_requested_locale():
-    result = await commands.handle("user-1", "/unlimited help", locale="en-US")
-    assert "/unlimited on - Enable" in result
+    result = await commands.handle("user-1", "/help", locale="en-US")
+    assert "/compact" in result
     assert "Subcommand:" not in result
 
 
@@ -100,9 +99,17 @@ async def test_each_command_supports_help(text):
 @pytest.mark.asyncio
 async def test_compact_forces_compression_instead_of_using_threshold(monkeypatch):
     captured = {}
+    from agent.llm import modelctx
+    previous_usage_context = modelctx.get_usage_context()
 
     async def fake_compact(*_args, **_kwargs):
         captured.update(_kwargs)
+        usage_context = modelctx.get_usage_context()
+        captured["usage_context"] = (
+            usage_context.user_id,
+            usage_context.session_id,
+            usage_context.scenario,
+        ) if usage_context else None
         return False
 
     monkeypatch.setattr("agent.context.compress_conv.compress_if_needed", fake_compact)
@@ -114,8 +121,15 @@ async def test_compact_forces_compression_instead_of_using_threshold(monkeypatch
         ai = AI()
 
     monkeypatch.setattr("app.core.config.get_settings", lambda: Settings())
-    result = await commands.handle("user-1", "/compact", session_id=12)
-    assert captured == {"force": True}
+    with modelctx.usage_context_scope("outer-user", 99):
+        outer_usage_context = modelctx.get_usage_context()
+        result = await commands.handle("user-1", "/compact", session_id=12)
+        assert modelctx.get_usage_context() is outer_usage_context
+    assert captured == {
+        "force": True,
+        "usage_context": ("user-1", 12, "compaction"),
+    }
+    assert modelctx.get_usage_context() is previous_usage_context
     assert result == "当前历史还不够长，暂时无需整理上下文。"
 
 
@@ -307,39 +321,3 @@ async def test_goal_mode_is_persisted_and_can_be_disabled(db, user_a):
     assert "已取消" in await commands.handle(user_a.id, "/goal cancel", session_id=session.id)
     await db.refresh(session)
     assert session.session_context == {"goal_mode": False}
-
-
-@pytest.mark.asyncio
-async def test_unlimited_mode_does_not_enable_goal_loop(db, user_a):
-    session = ConversationSession(user_id=user_a.id, title="无限工具测试", source="web")
-    db.add(session)
-    await db.commit()
-    await db.refresh(session)
-
-    assert "已开启用户级无限工具调用模式" in await commands.handle(
-        user_a.id, "/unlimited", session_id=session.id,
-    )
-    await db.refresh(session)
-    assert session.session_context is None
-    from sqlalchemy import select
-    prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_a.id))
-    assert prefs is not None and prefs.data["unlimited_mode"] is True
-
-
-@pytest.mark.asyncio
-async def test_unlimited_mode_is_shared_by_user_not_session(db, user_a, user_b):
-    first = ConversationSession(user_id=user_a.id, title="第一会话", source="web")
-    second = ConversationSession(user_id=user_a.id, title="第二会话", source="web")
-    other = ConversationSession(user_id=user_b.id, title="其他用户会话", source="web")
-    db.add_all([first, second, other])
-    await db.commit()
-    await db.refresh(first)
-    await db.refresh(second)
-    await db.refresh(other)
-
-    await commands.handle(user_a.id, "/unlimited on", session_id=first.id)
-    assert "已开启" in await commands.handle(user_a.id, "/unlimited status", session_id=second.id)
-    assert "未开启" in await commands.handle(user_b.id, "/unlimited status", session_id=other.id)
-
-    await commands.handle(user_a.id, "/unlimited off", session_id=second.id)
-    assert "未开启" in await commands.handle(user_a.id, "/unlimited status", session_id=first.id)

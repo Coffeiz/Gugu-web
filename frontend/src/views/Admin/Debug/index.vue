@@ -17,6 +17,15 @@
       <button class="icon-btn" @click="clearLines" :title="t('adminLogs.clear')" :aria-label="t('adminLogs.clear')">
         <Icon name="action.clear" size="sm" />
       </button>
+      <div class="page-nav">
+        <button class="page-btn" :disabled="pageLoading || !canGoPrevious" @click="goPrevious">
+          {{ t('adminLogs.previousPage') }}
+        </button>
+        <span class="page-label">{{ t('adminLogs.page', { page: currentPage }) }}</span>
+        <button class="page-btn" :disabled="pageLoading || !canGoNext" @click="goNext">
+          {{ pageLoading ? t('adminLogs.loading') : t('adminLogs.nextPage') }}
+        </button>
+      </div>
       <span class="live-dot" :class="{ connected }"></span>
       <span class="toolbar-count">{{ connected ? t('adminLogs.live') : t('adminLogs.disconnected') }}</span>
     </div>
@@ -43,7 +52,7 @@
                 <span class="src-tag" :class="`src-${row.source}`">{{ row.source }}</span>
               </span>
               <span class="col-time">{{ row.time }}</span>
-              <span class="col-msg">{{ row.line }}</span>
+              <span class="col-msg">{{ row.message }}</span>
             </div>
           </div>
         </template>
@@ -65,16 +74,26 @@ const { t } = useI18n()
 const adminStore = useAdminStore()
 
 const lines      = ref<any[]>([])
+const searchResults = ref<any[] | null>(null)
 const filterSource = ref('')
 const filterLevel  = ref('')
 const filterText   = ref('')
 const autoScroll   = ref(true)
 const connected    = ref(false)
+const pageLoading = ref(false)
 const tableWrap    = ref<HTMLElement | null>(null)
 let   streamAbort: AbortController | null = null
 let   streamRetry: ReturnType<typeof setTimeout> | null = null
 let   streamRunning = true
 let   uid          = 0
+type LogPage = { rows: any[]; nextCursor: string | null; hasMore: boolean }
+const historyPages = ref<LogPage[]>([])
+const searchPages = ref<LogPage[]>([])
+const pageIndex = ref(0)
+const searchPageIndex = ref(0)
+const latestNextCursor = ref<string | null>(null)
+const latestHasMore = ref(false)
+let   searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const sourceOptions = [
   { label: t('adminLogs.allSources'),   value: '' },
@@ -94,8 +113,18 @@ function rowLevel(line: any) {
   return level ? `lvl-${level}` : ''
 }
 
+const currentPage = computed(() =>
+  searchResults.value !== null ? searchPageIndex.value + 1 : pageIndex.value + 1,
+)
+
+const currentRows = computed(() => {
+  if (searchResults.value !== null) return searchPages.value[searchPageIndex.value]?.rows ?? []
+  if (pageIndex.value === 0) return lines.value
+  return historyPages.value[pageIndex.value - 1]?.rows ?? []
+})
+
 const filtered = computed(() => {
-  let list = lines.value
+  let list = currentRows.value
   if (filterSource.value) list = list.filter(r => r.source === filterSource.value)
   if (filterLevel.value) list = list.filter(r => rowLevel(r.line) === `lvl-${filterLevel.value}`)
   const q = filterText.value.trim().toLowerCase()
@@ -103,22 +132,38 @@ const filtered = computed(() => {
   return list
 })
 
+const canGoPrevious = computed(() =>
+  searchResults.value !== null ? searchPageIndex.value > 0 : pageIndex.value > 0,
+)
+
+const canGoNext = computed(() => {
+  if (searchResults.value !== null) return searchPages.value[searchPageIndex.value]?.hasMore === true
+  if (pageIndex.value === 0) return latestHasMore.value
+  return historyPages.value[pageIndex.value - 1]?.hasMore === true
+})
+
 const liveCount = computed(() => filtered.value.length)
 
 function clearLines() { lines.value = [] }
 
 function parseTime(line: any) {
-  // app logger 格式：06-26 08:03:21 INFO ...  → 取 HH:MM:SS；无行内时间戳返回空（不再用 new Date 当接收时间）
-  const m = line.match(/^\d{2}-\d{2} (\d{2}:\d{2}:\d{2})/)
+  // app logger 格式：06-26 08:03:21 INFO ...  → 保留 MM-DD HH:MM:SS；无行内时间戳返回空
+  const m = line.match(/^(\d{2}-\d{2} \d{2}:\d{2}:\d{2})/)
   return m ? m[1] : ''
+}
+
+function displayMessage(line: string) {
+  // 时间已经单独展示；正文去掉行首时间戳，避免出现“时间列 + 正文时间”重叠。
+  return line.replace(/^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s*/, '')
 }
 
 let lastLogTime = ''   // 续行 / uvicorn / print / traceback 无时间戳 → 沿用上一条 emit 时间，绝不用接收时间
 function addLine(source: string, line: string, time: any) {
+  if (searchResults.value !== null || pageIndex.value !== 0) return
   // 优先用后端给的 emit 时间（已解析+继承+归并排序）；退到行内解析；再退到上一条；都没有才空
   const t = time || parseTime(line) || lastLogTime
   if (t) lastLogTime = t
-  lines.value.push({ id: uid++, source, line, time: t })
+  lines.value.push({ id: uid++, source, line, message: displayMessage(line), time: t })
   if (lines.value.length > 2000) lines.value.splice(0, 200)
   if (autoScroll.value) {
     nextTick(() => {
@@ -131,9 +176,86 @@ async function loadTail() {
   try {
     const res = await adminStore.authFetch('/api/v1/admin/debug/logs/tail?lines=200')
     const data = await res.json()
+    searchResults.value = null
+    historyPages.value = []
+    pageIndex.value = 0
+    latestNextCursor.value = data.next_cursor ?? null
+    latestHasMore.value = data.has_more === true
     lastLogTime = ''
+    lines.value = []
     for (const { source, line, time } of (data.lines ?? [])) addLine(source, line, time)
   } catch {}
+}
+
+function toRows(rows: any[]) {
+  return rows.map(({ source, line, time }: any) => ({
+    id: uid++, source, line, message: displayMessage(line), time,
+  }))
+}
+
+async function goPrevious() {
+  if (pageLoading.value || !canGoPrevious.value) return
+  if (searchResults.value !== null) searchPageIndex.value -= 1
+  else pageIndex.value -= 1
+}
+
+async function goNext() {
+  if (pageLoading.value || !canGoNext.value) return
+  const searching = searchResults.value !== null
+  const current = searching
+    ? searchPages.value[searchPageIndex.value]
+    : pageIndex.value === 0
+      ? { nextCursor: latestNextCursor.value }
+      : historyPages.value[pageIndex.value - 1]
+  if (!current?.nextCursor) return
+  pageLoading.value = true
+  try {
+    const params = new URLSearchParams({ lines: '200', cursor: current.nextCursor })
+    if (searching) params.set('query', filterText.value.trim())
+    const res = await adminStore.authFetch(`/api/v1/admin/debug/logs/tail?${params}`)
+    const data = await res.json()
+    const nextPage: LogPage = {
+      rows: toRows(data.lines ?? []),
+      nextCursor: data.next_cursor ?? null,
+      hasMore: data.has_more === true,
+    }
+    if (searching) {
+      searchPages.value = [...searchPages.value.slice(0, searchPageIndex.value + 1), nextPage]
+      searchPageIndex.value += 1
+    } else {
+      historyPages.value = [...historyPages.value.slice(0, pageIndex.value), nextPage]
+      pageIndex.value += 1
+    }
+  } finally {
+    pageLoading.value = false
+  }
+}
+
+async function searchHistory() {
+  const query = filterText.value.trim()
+  if (!query) {
+    searchResults.value = null
+    searchPages.value = []
+    searchPageIndex.value = 0
+    void loadTail()
+    return
+  }
+  try {
+    const params = new URLSearchParams({ lines: '200', query })
+    const res = await adminStore.authFetch(`/api/v1/admin/debug/logs/tail?${params}`)
+    const data = await res.json()
+    searchResults.value = []
+    searchPages.value = [{
+      rows: toRows(data.lines ?? []),
+      nextCursor: data.next_cursor ?? null,
+      hasMore: data.has_more === true,
+    }]
+    searchPageIndex.value = 0
+  } catch {
+    searchResults.value = []
+    searchPages.value = [{ rows: [], nextCursor: null, hasMore: false }]
+    searchPageIndex.value = 0
+  }
 }
 
 async function startSSE() {
@@ -194,6 +316,11 @@ watch(autoScroll, (v) => {
   if (v && tableWrap.value) tableWrap.value.scrollTop = tableWrap.value.scrollHeight
 })
 
+watch(filterText, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { void searchHistory() }, 300)
+})
+
 onMounted(async () => {
   await loadTail()
   startSSE()
@@ -202,6 +329,7 @@ onMounted(async () => {
 onUnmounted(() => {
   streamRunning = false
   if (streamRetry) clearTimeout(streamRetry)
+  if (searchTimer) clearTimeout(searchTimer)
   streamAbort?.abort()
 })
 </script>
@@ -227,6 +355,10 @@ onUnmounted(() => {
 
 /* .icon-btn 基础用 Admin 全局样式（AdminApp.vue）；本页保留 active 变体（实时开关） */
 .icon-btn.active { background: rgba(100,200,160,0.12); border-color: rgba(100,200,160,0.3); color: rgba(100,200,160,0.9); }
+.page-nav { display: flex; align-items: center; gap: 6px; }
+.page-btn { height: 34px; padding: 0 10px; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.65); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.page-btn:disabled { opacity: 0.4; cursor: default; }
+.page-label { min-width: 48px; text-align: center; font-size: 12px; color: rgba(255,255,255,0.45); white-space: nowrap; }
 
 .live-dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
@@ -244,7 +376,7 @@ onUnmounted(() => {
 }
 
 .lt-head {
-  display: grid; grid-template-columns: 96px 72px 1fr;
+  display: grid; grid-template-columns: 72px 128px 1fr;
   padding: 10px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
@@ -260,7 +392,7 @@ onUnmounted(() => {
 .lt-row:last-child { border-bottom: none; }
 
 .lt-main {
-  display: grid; grid-template-columns: 96px 72px 1fr;
+  display: grid; grid-template-columns: 72px 128px 1fr;
   padding: 6px 16px; align-items: baseline; gap: 0;
   font-size: 12px; font-family: var(--font-family-mono);
 }
@@ -268,7 +400,7 @@ onUnmounted(() => {
 .lt-row.lvl-error   .col-msg { color: rgba(240,120,120,0.9); }
 .lt-row.lvl-warning .col-msg { color: rgba(230,180,80,0.9); }
 .lt-row.lvl-info    .col-msg { color: rgba(255,255,255,0.7); }
-.col-time { font-size: 11px; color: rgba(255,255,255,0.25); white-space: nowrap; padding-top: 1px; }
+.col-time { font-size: 11px; color: rgba(255,255,255,0.25); white-space: nowrap; overflow: hidden; padding-top: 1px; }
 .col-msg { color: rgba(255,255,255,0.45); word-break: break-all; white-space: pre-wrap; line-height: 1.55; }
 
 .src-tag {

@@ -12,7 +12,6 @@ MANIFEST=""
 BACKUP_ROOT="${BACKUP_ROOT:-$ROOT_DIR/backup}"
 VALIDATOR="${UPDATE_VALIDATOR:-$SCRIPT_DIR/validate-update-manifest.mjs}"
 CONFIRMED=false
-HANDOFF_EXIT_CODE=75
 
 usage() {
   cat <<'EOF'
@@ -53,73 +52,22 @@ done
 [[ "$CONFIRMED" == true ]] || { echo '更新必须显式传入 --confirm' >&2; exit 2; }
 [[ -f "$MANIFEST" ]] || { echo 'manifest 文件不存在' >&2; exit 1; }
 
-# app 内的更新器不能在自己的容器里执行 stop app；否则后续 up 无法保证执行。
-# 使用当前 app 镜像启动一次性 helper，helper 与 app 生命周期解耦，再由它完成整个 Compose 更新。
-if [[ "${GUGU_UPDATE_HELPER:-0}" != 1 && -n "${GUGU_UPDATE_HELPER_IMAGE:-}" ]]; then
-  command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }
-  HELPER_IMAGE="$GUGU_UPDATE_HELPER_IMAGE"
-  [[ "$HELPER_IMAGE" =~ ^(docker\.io|ghcr\.io)/coffeiz/gugu-web(@sha256:[a-f0-9]{64}|:[A-Za-z0-9_.-]{1,128})$ ]] \
-    || { echo 'helper 镜像不在固定白名单内' >&2; exit 1; }
-  APP_CONTAINER="$(cat /etc/hostname 2>/dev/null || true)"
-  DATA_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
-  # inspect 返回的是宿主机 namespace 的 source；不要在 app 容器内用 -d/-e 检查它。
-  # 后续 docker run --mount 会由 Docker daemon 在宿主机 namespace 校验该路径。
-  [[ -n "$DATA_SOURCE" ]] || { echo '无法定位 /data 宿主机挂载，停止更新' >&2; exit 1; }
-  DOCKER_SOCKET_SOURCE="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/run/docker.sock"}}{{.Source}}{{end}}{{end}}' "$APP_CONTAINER" 2>/dev/null || true)"
-  [[ -n "$DOCKER_SOCKET_SOURCE" ]] || { echo '无法定位 Docker socket 宿主机挂载，停止更新' >&2; exit 1; }
-  HELPER_NAME="gugu-update-helper-${RANDOM}-${RANDOM}"
-  docker run --rm --detach \
-    --name "$HELPER_NAME" \
-    --label com.coffeiz.gugu.update-helper=true \
-    --entrypoint /bin/bash \
-    --workdir "$ROOT_DIR" \
-    --env GUGU_UPDATE_HELPER=1 \
-    --env COMPOSE_PROJECT_DIR="$ROOT_DIR" \
-    --env COMPOSE_FILE="$COMPOSE_FILE" \
-    --env BACKUP_ROOT="$BACKUP_ROOT" \
-    --env GUGU_UPDATER_CODE_DIR=/opt/gugu-updater \
-    --env UPDATE_VALIDATOR=/opt/gugu-updater/scripts/release/validate-update-manifest.mjs \
-    --env GUGU_WEB_IMAGE="${GUGU_WEB_IMAGE:-}" \
-    --env GUGU_DB_PASSWORD \
-    --env GUGU_DB_USER \
-    --env GUGU_DB_NAME \
-    --env DB__PASSWORD \
-    --env DB__USER \
-    --env DB__NAME \
-    --env GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE="${MANIFEST}.handoff" \
-    --mount "type=bind,source=$ROOT_DIR,target=$ROOT_DIR,readonly" \
-    --mount "type=bind,source=$DATA_SOURCE,target=/data" \
-    --mount "type=bind,source=$DOCKER_SOCKET_SOURCE,target=/var/run/docker.sock" \
-    "$HELPER_IMAGE" \
-    /opt/gugu-updater/scripts/release/compose-update.sh --manifest "$MANIFEST" --confirm >/dev/null
-  echo '更新任务已移交给独立 helper，当前 app 将按预期重启。'
-  exit "$HANDOFF_EXIT_CODE"
-fi
-if [[ "${GUGU_UPDATE_HELPER:-0}" == 1 ]]; then
-  if [[ -n "${GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE:-}" ]]; then
-    for _ in $(seq 1 600); do
-      [[ -f "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE" ]] && break
-      sleep 0.1
-    done
-    [[ -f "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE" ]] || { echo '更新 handoff 状态未确认，停止 helper' >&2; exit 1; }
-    rm -f -- "$GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE"
-  fi
-  trap 'rm -f -- "$MANIFEST"' EXIT
-fi
 [[ -f "$COMPOSE_FILE" ]] || { echo 'Compose 文件不存在' >&2; exit 1; }
-[[ -f "$ROOT_DIR/backend/.env" ]] || { echo 'backend/.env 不存在，停止更新以保护运行配置' >&2; exit 1; }
 command -v docker >/dev/null || { echo '未找到 Docker CLI' >&2; exit 1; }
 command -v node >/dev/null || { echo '未找到 Node.js，无法校验 manifest' >&2; exit 1; }
-[[ -n "${GUGU_DB_PASSWORD:-}" ]] || { echo '未设置 GUGU_DB_PASSWORD，停止更新' >&2; exit 1; }
-grep -Eq '^[[:space:]]*ADMIN_PASSWORD[[:space:]]*=[^[:space:]]' "$ROOT_DIR/backend/.env" \
-  || { echo 'backend/.env 未设置 ADMIN_PASSWORD，停止更新' >&2; exit 1; }
 
 COMPOSE=(docker compose -f "$COMPOSE_FILE" --profile sandbox)
 COMPOSE_SERVICES=$("${COMPOSE[@]}" config --services)
-for required_service in app postgres; do
+for required_service in app; do
   grep -qx "$required_service" <<<"$COMPOSE_SERVICES" \
     || { echo "Compose 文件不支持一体化更新：缺少 $required_service 服务" >&2; exit 1; }
 done
+if grep -qx postgres <<<"$COMPOSE_SERVICES"; then
+  DATABASE_SERVICE=postgres
+else
+  # 默认 Compose 将 PostgreSQL 托管在 app 容器内，密码和管理员配置保存在 /data/.env。
+  DATABASE_SERVICE=app
+fi
 
 PREVIOUS_IMAGES=$("${COMPOSE[@]}" config --images)
 SANDBOXD_WAS_RUNNING=false
@@ -156,19 +104,29 @@ mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 
 # 备份只写入带时间戳目录，不写回仓库配置，也不在终端输出敏感内容。
-cp "$ROOT_DIR/backend/.env" "$BACKUP_DIR/backend.env"
-chmod 600 "$BACKUP_DIR/backend.env"
+if [[ -f "$ROOT_DIR/backend/.env" ]]; then
+  cp "$ROOT_DIR/backend/.env" "$BACKUP_DIR/backend.env"
+  chmod 600 "$BACKUP_DIR/backend.env"
+fi
 if [[ -f "$ROOT_DIR/.env" ]]; then
   cp "$ROOT_DIR/.env" "$BACKUP_DIR/compose.env"
   chmod 600 "$BACKUP_DIR/compose.env"
 fi
 printf '%s\n' "$PREVIOUS_IMAGES" > "$BACKUP_DIR/previous-images.txt"
 
-if "${COMPOSE[@]}" ps --status running --services | grep -qx postgres; then
-  "${COMPOSE[@]}" exec -T postgres pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_DIR/postgres.sql"
+if "${COMPOSE[@]}" ps --status running --services | grep -qx "$DATABASE_SERVICE"; then
+  if [[ "$DATABASE_SERVICE" == postgres ]]; then
+    [[ -n "${GUGU_DB_PASSWORD:-}" ]] || { echo '外置 PostgreSQL 更新前必须设置 GUGU_DB_PASSWORD' >&2; exit 1; }
+    "${COMPOSE[@]}" exec -T postgres pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_DIR/postgres.sql"
+  else
+    # app 的 entrypoint 已将 /data/.env 中的密码放入 DB__PASSWORD；密码只经进程环境传递。
+    "${COMPOSE[@]}" exec -T app sh -lc \
+      'PGPASSWORD="${DB__PASSWORD:-${GUGU_DB_PASSWORD:-}}" pg_dump -h 127.0.0.1 -U "${DB__USER:-gugu}" "${DB__NAME:-gugu}"' \
+      > "$BACKUP_DIR/postgres.sql"
+  fi
   chmod 600 "$BACKUP_DIR/postgres.sql"
 else
-  echo 'postgres 未运行，停止更新；未创建数据库备份' >&2
+  echo "$DATABASE_SERVICE 未运行，停止更新；未创建数据库备份" >&2
   exit 1
 fi
 

@@ -224,10 +224,8 @@ async def test_recover_orphaned_session_reaps_zombie_snapshot(db, user_a, monkey
     fake_redis.values["genstream:state:%s" % session.id] = (
         '{"done": false, "owner_run_id": "run-dead"}'
     )
-    fake_redis.values["genstream:owner:%s" % session.id] = "run-dead"
-    fake_redis.values["genstream:lease:%s" % session.id] = "run-dead"
     fake_redis.values["genstream:cancel:%s" % session.id] = "1"
-    # 没有 beat 键 = 心跳已断
+    # 心跳、owner、lease 都不存在 = 进程已退出后留下的僵尸快照。
     monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
 
     assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is True
@@ -242,6 +240,39 @@ async def test_recover_orphaned_session_reaps_zombie_snapshot(db, user_a, monkey
     assert "owner_run=run-dead" in caplog.text
     assert "reason=heartbeat_missing" in caplog.text
     assert "has_beat=False" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_session_keeps_owner_lease_when_beat_is_missing(
+    db, user_a, monkeypatch,
+):
+    """心跳单键丢失时，仍有归属租约的活跃 run 不能被回收。"""
+    session = ConversationSession(
+        user_id=user_a.id,
+        title="心跳短暂丢失测试",
+        source="web",
+        execution_state="running",
+        active_run_id="run-live",
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    fake_redis = _FakeRedis()
+    fake_redis.values["genstream:state:%s" % session.id] = (
+        '{"done": false, "owner_run_id": "run-live"}'
+    )
+    fake_redis.values["genstream:owner:%s" % session.id] = "run-live"
+    fake_redis.values["genstream:lease:%s" % session.id] = "run-live"
+    # beat 键暂时不存在，但 owner/lease 仍证明 run 尚未失去归属。
+    monkeypatch.setattr("agent.llm.genstream.get_redis", lambda: fake_redis)
+
+    assert await compress_conv.recover_orphaned_session(session.id, user_a.id) is False
+
+    await db.refresh(session)
+    assert session.execution_state == "running"
+    assert session.active_run_id == "run-live"
+    assert "genstream:state:%s" % session.id in fake_redis.values
 
 
 @pytest.mark.asyncio

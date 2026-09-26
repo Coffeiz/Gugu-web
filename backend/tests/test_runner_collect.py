@@ -21,7 +21,13 @@ def test_non_streaming_runner_has_conversation_lifecycle_hooks():
 
 
 async def _error_stream(field: str):
-    yield "data: " + json.dumps({"type": "error", field: "上游暂时繁忙"}, ensure_ascii=False) + "\n\n"
+    async for chunk in _json_stream({"type": "error", field: "上游暂时繁忙"}):
+        yield chunk
+
+
+async def _json_stream(*events: dict):
+    for event in events:
+        yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
 
 
 async def test_collect_reads_core_error_detail():
@@ -313,3 +319,32 @@ async def test_collect_display_timeline_drops_empty_placeholder_for_tool_only_ro
         pass
 
     assert [item["kind"] for item in outcome.display_timeline_items] == ["tool", "assistant"]
+
+
+async def test_collect_persists_file_events_in_display_timeline():
+    """回归：文件已发送到 IM 后，刷新 Web 仍必须能从时间线恢复文件卡。"""
+    from agent.run.execution import RunOutcome, consume_agent_events
+
+    attachment = {
+        "attach_id": "attachment-1", "name": "结果.png", "ext": "png",
+        "kind": "image", "size_bytes": 128,
+    }
+
+    stream = _json_stream({
+        "type": "file", "run_id": "run-1", "round_id": "round-1",
+        "file": attachment,
+    })
+
+    outcome = RunOutcome()
+    async for _ in consume_agent_events(stream, model_cfg=None, outcome=outcome,
+                                        sink=CollectSink()):
+        pass
+
+    assert outcome.files == [attachment]
+    assert outcome.display_timeline_items == [{
+        "kind": "assistant",
+        "runId": "run-1",
+        "roundId": "round-1",
+        "text": "",
+        "files": [attachment],
+    }]

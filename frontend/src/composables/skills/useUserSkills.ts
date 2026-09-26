@@ -1,6 +1,7 @@
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { userSkillsApi, type SkillToolItem, type UserSkillItem, type UserSkillWrite } from '@/services/api'
+import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 
 export function useUserSkills() {
   const { t } = useI18n()
@@ -9,6 +10,10 @@ export function useUserSkills() {
   const loading = ref(false)
   const saving = ref(false)
   const error = ref('')
+
+  const onMcpChanged = () => { void load() }
+  onMounted(() => window.addEventListener(RESOURCE_REFRESH_EVENTS.mcp, onMcpChanged))
+  onBeforeUnmount(() => window.removeEventListener(RESOURCE_REFRESH_EVENTS.mcp, onMcpChanged))
 
   async function load() {
     loading.value = true

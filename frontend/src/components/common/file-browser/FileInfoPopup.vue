@@ -1,13 +1,13 @@
 <template>
   <Teleport to="body">
     <Transition name="info-pop">
-      <div v-if="show && file" ref="el" class="fp-info-win"
+      <div v-if="show && file" ref="el" class="fp-info-win card-close-anchor"
         :style="{ left: posX + 'px', top: posY + 'px', zIndex: myZ }"
         @mousedown.stop
       >
         <div class="fp-info-title" @mousedown.prevent="startDrag">
           <span>{{ t('files.info') }}</span>
-          <CloseButton :title="t('common.actions.close')" @click="$emit('close')" />
+          <CloseButton card-corner :title="t('common.actions.close')" @click="$emit('close')" />
         </div>
         <div class="fp-info-body">
           <div class="fp-info-row">
@@ -24,7 +24,7 @@
           </div>
           <div v-if="file.createdAt" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fp-info-val">{{ file.createdAt }}</span>
+            <span class="fp-info-val">{{ formatFileCreatedDate(file.createdAt) }}</span>
           </div>
           <div v-if="file.projectName" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.project') }}</span>
@@ -55,6 +55,7 @@ import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { nextZ } from '@/composables/core/windowz'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { fmtBytes } from '@/utils/fileSize'
+import { formatFileCreatedDate } from '@/utils/fileDate'
 const props = defineProps({
   show: Boolean,
   file: Object,
@@ -122,10 +123,12 @@ onUnmounted(() => {
   /* z-index 由 :style 动态(每次弹出盖当前最顶窗口) */
 }
 .fp-info-title {
+  box-sizing: border-box;
+  min-height: var(--card-close-safe-area);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 10px 9px 14px;
+  padding: 9px var(--card-close-safe-area) 9px 14px;
   background: rgba(255, 255, 255, 0.55);
   border-bottom: 1px solid rgba(0, 0, 0, 0.07);
   cursor: grab;

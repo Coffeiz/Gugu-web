@@ -14,10 +14,16 @@ from contextvars import ContextVar
 from types import MappingProxyType
 from typing import Any, Callable
 
+from sqlalchemy.exc import StatementError
+
 from app.core.redaction import diag_log, diag_log_raw, redact as sanitize_error
 from agent.interactions.confirmations import (
     confirmation_payload,
     normalize_confirmation_result,
+)
+from agent.interactions.automatic_mode import (
+    reset_automatic_mode_enabled,
+    set_automatic_mode_enabled,
 )
 from agent.tools.tool_contract import (
     SchemaError,
@@ -305,7 +311,6 @@ class Tool:
                  platforms: tuple[str, ...] = (),
                  related_skills: tuple[str, ...] = (),
                  source: str = "builtin", schema_version: int = 1,
-                 repeat_safe: bool = False,
                  batch_confirmation: bool = False):
         self.name = name
         self.description = description
@@ -337,11 +342,6 @@ class Tool:
         # 复合工具可以按实际参数声明本次调用是否提供状态观察。例如管理类工具的
         # list/test_connection 分支可以结束写入后的复查；未提供时沿用工具名判断。
         self.observes_for_input = observes_for_input
-        # 纯观察类工具（同参数重复调用只读同一内部状态、无副作用且结果确定）才允许
-        # 进入主循环的「连续相同调用熔断」。默认 False：写工具（create_event 每调一次
-        # 都真产生副作用）和联网/外部状态读取（结果随时可能变化）都不算 repeat-safe，
-        # 熔断误杀它们等于 runtime 静默改变用户请求。
-        self.repeat_safe = repeat_safe
         # IM 慢工具进度声明用（仅 IM、每个 Busy Session 最多发一次，见 dispatch）：固定文案或
         # 按调用参数变化措辞的函数——只能读 dispatch 时已知的参数，不能猜返回结果（见设计文档 §2.3
         # 的边界：像 http_get 这种响应类型要等结果才知道的工具，就别细分，用统一粗粒度文案）。
@@ -637,7 +637,13 @@ class SkillRegistry:
                 pass   # 非标准 UUID 串：原样传，交给下游 SQL 比较
 
         import app.db.session as _sess
-        if _sess._engine is None:
+        # dispatch() 可能被没装 db fixture 的工具测试调用（test_tool_schema_validation
+        # / test_tool_video_media_dispatch 等）：上一个测试 fixture 拆掉时 monkeypatch
+        # 应该把 _engine/_SessionLocal/_engine_loop 一起还原成 None，但 pytest-asyncio
+        # 跨测试换 loop 后偶发只清掉一半的状态（_engine 留旧值、_SessionLocal 是 None），
+        # 这里只判 _engine 会绕过重建、下一步直接 `_sess._SessionLocal()` 撞 NoneType
+        # 异常。改成 OR 一起判，任一缺失就走 _build_engine() 重建。
+        if _sess._engine is None or _sess._SessionLocal is None:
             _sess._build_engine()
 
         # 工具异常不能冲垮整个对话：捕获后当作错误结果回给 LLM（它可解释/换路）。
@@ -647,17 +653,32 @@ class SkillRegistry:
         # 只说人话，类名与原始消息只留在 gugu-diag.log。
         try:
             async with _sess._SessionLocal() as db:
+                # 只有真实 Web/IM 交互会话可继承个人自动模式；后台/定时任务和
+                # 无会话调用显式绑定为 False，且在 finally 中恢复 ContextVar。
+                automatic_mode = False
+                session_id = current_dispatch_session_id()
+                if session_id is not None:
+                    from app.core.config import get_settings
+                    from app.services.user_preferences import effective_automatic_mode_enabled
+                    automatic_mode = (
+                        bool(get_settings().agent.automatic_mode_enabled)
+                        and await effective_automatic_mode_enabled(db, user_id)
+                    )
+                automatic_mode_token = set_automatic_mode_enabled(automatic_mode)
                 handler_args = args
                 if name in {"shell", "run_script"}:
                     handler_args = dict(args)
-                    handler_args["_session_id"] = current_dispatch_session_id()
-                result: Any = await tool.handler(db, user_id, handler_args)
-                # 少数由服务端明确授权的执行路径（当前是 Shell Autopilot）不会携带
+                    handler_args["_session_id"] = session_id
+                try:
+                    result: Any = await tool.handler(db, user_id, handler_args)
+                finally:
+                    reset_automatic_mode_enabled(automatic_mode_token)
+                # 少数由服务端明确授权的执行路径不会携带
                 # confirm 参数。授权事实只允许通过内部标记传到 dispatch，随后立即移除，
                 # 不能进入模型结果或轨迹；普通 destructive handler 不能借此跳过绊线。
-                autopilot_authorized = (
+                confirmation_gate_authorized = (
                     isinstance(result, dict)
-                    and result.pop("_confirm_gate_authorized", None) == "shell_autopilot"
+                    and result.pop("_confirm_gate_authorized", None) == "confirmation_gate"
                 )
                 dispatch_risk = (
                     result.pop("_dispatch_risk", None)
@@ -674,7 +695,13 @@ class SkillRegistry:
                         await db.commit()
         except Exception as e:
             diag_log(f"agent.tools.dispatch.{name}", e)          # 原始 → 受限诊断出口
-            _safe = sanitize_error(f"{type(e).__name__}: {e}")
+            # SQLAlchemy StatementError 会把 SQL、参数和值（Shell 场景可能含完整
+            # 命令及 stdout）拼进 str(e)。这些细节仅允许留在受限诊断日志。
+            _safe = (
+                f"{type(e).__name__}: 数据库操作失败"
+                if isinstance(e, StatementError)
+                else sanitize_error(f"{type(e).__name__}: {e}")
+            )
             # 已登记的内部异常：模型和用户只看到人话，实现细节（类名、原始消息）
             # 只留在 diag 出口。未登记的仍透出脱敏摘要，类名是模型判断是否重试的线索。
             _visible = internal_error_text(e)
@@ -724,7 +751,7 @@ class SkillRegistry:
         if (tool.destructive and _ok
                 and dispatch_risk in (None, "dangerous")
                 and not automation_tool_allowed(name)
-                and not autopilot_authorized
+                and not confirmation_gate_authorized
                 and not _confirm.is_confirmed(args) and not _confirm.is_block(result)):
             print(f"[skill] ⚠️ confirm-gate.bypassed 工具 {name} 未经确认执行了不可逆操作！", flush=True)
             _traj_log.critical("confirm-gate.bypassed tool=%s user=%s", name, str(user_id)[:8])
@@ -738,28 +765,19 @@ class SkillRegistry:
 
         # 工具想让模型「看图」：返回统一的视觉内容块（文字说明 + 图），由各 Provider
         # 在 continuation 边界转换成自己的消息格式。
+        if isinstance(result, dict) and "_media_content" in result:
+            return result.pop("_media_content"), None
+
         if isinstance(result, dict) and "_vision_image" in result:
             block = result.pop("_vision_image")
             note = result.get("note", "")
             content = ([{"type": "text", "text": note}] if note else []) + [block]
             return content, None
 
-        if isinstance(result, dict) and "_vision_images" in result:
-            images = result.pop("_vision_images")
-            note = result.pop("inspection_note", "")
-            content = ([{"type": "text", "text": note}] if note else [])
-            for item in images:
-                if isinstance(item, dict) and item.get("block"):
-                    content.append({"type": "text", "text": item.get("title", "候选图片")})
-                    content.append(item["block"])
-            return content, None
-
-        # 工具想让模型「看视频」：同上，真正的 video content block（不是代表帧/转写），
-        # 目前只有 read_file 读文件库视频（file_readers.py 的 read_video）会产生，且仅限
-        # MiniMax M3 这种 Anthropic 通道原生支持视频块的 provider——OpenAI 路工具结果只能
-        # 是纯文本，走不到这里。
-        if isinstance(result, dict) and "_video_media" in result:
-            block = result.pop("_video_media")
+        # 工具想把原生音视频送给模型：与图片相同，由 provider driver 在续轮边界
+        # 转成对应协议的多模态消息，避免把媒体 base64 序列化进纯文本工具结果。
+        if isinstance(result, dict) and "_media_block" in result:
+            block = result.pop("_media_block")
             note = result.get("note", "")
             content = ([{"type": "text", "text": note}] if note else []) + [block]
             return content, None

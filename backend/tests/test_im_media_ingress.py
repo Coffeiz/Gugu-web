@@ -86,7 +86,8 @@ async def test_qq_media_ingress_stages_raw_attachment_with_source_message(monkey
         "message-1",
     )
 
-    assert result == ["attach-1"]
+    assert result.attachment_ids == ["attach-1"]
+    assert not result.size_limit_exceeded
     assert staged[0][0] == "owner-1"
     assert staged[0][4] == b"image-bytes"
     assert staged[0][5] == {
@@ -115,7 +116,8 @@ async def test_qq_face_media_ingress_persists_face_marker(monkeypatch):
         "message-2",
     )
 
-    assert result == ["face-1"]
+    assert result.attachment_ids == ["face-1"]
+    assert not result.size_limit_exceeded
     assert staged == [{
         "kind": "image",
         "platform": "qq",
@@ -152,7 +154,7 @@ async def test_qq_quoted_media_reuses_source_without_download(monkeypatch):
         "owner-1",
     )
 
-    assert result == ["reused-1"]
+    assert result.attachment_ids == ["reused-1"]
     assert downloaded == []
     assert reused == [(
         "owner-1",
@@ -194,7 +196,7 @@ async def test_qq_quoted_media_falls_back_to_download_when_not_reusable(monkeypa
         platform_message_id="current-msg",
     )
 
-    assert result == ["downloaded-1"]
+    assert result.attachment_ids == ["downloaded-1"]
     assert staged == [{
         "platform": "qq",
         "extra": None,
@@ -209,15 +211,19 @@ async def test_qq_media_ingress_does_not_stage_without_owner(monkeypatch):
 
     monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
 
-    assert await ingest_qq_media([{"url": "https://example.test/a.png"}], "") == []
+    result = await ingest_qq_media([{"url": "https://example.test/a.png"}], "")
+    assert result.attachment_ids == []
+    assert not result.size_limit_exceeded
 
 
 @pytest.mark.asyncio
-async def test_qq_media_ingress_rejects_attachment_over_limit(monkeypatch):
+async def test_qq_media_ingress_rejects_attachment_over_message_limit(monkeypatch):
     from agent.im import media_ingress
 
+    monkeypatch.setattr(media_ingress, "MAX_IM_MESSAGE_BYTES", 10)
+
     class _TooLargeResponse(_FakeResponse):
-        headers = {"Content-Length": str(media_ingress.MAX_IM_ATTACHMENT_BYTES + 1)}
+        headers = {"Content-Length": "11"}
 
     class _TooLargeSession(_FakeSession):
         def get(self, url, **kwargs):
@@ -229,23 +235,28 @@ async def test_qq_media_ingress_rejects_attachment_over_limit(monkeypatch):
     monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
     monkeypatch.setattr("app.core.chat_attach.stage", lambda *a, **k: staged.append(1))
 
-    assert await media_ingress.ingest_qq_media(
+    result = await media_ingress.ingest_qq_media(
         [{"url": "https://example.test/large.bin", "filename": "large.bin"}],
         "owner-1",
-    ) == []
+    )
+    assert result.attachment_ids == []
+    assert result.size_limit_exceeded
     assert staged == []
 
 
 @pytest.mark.asyncio
-async def test_qq_media_ingress_rejects_stream_without_content_length(monkeypatch):
+async def test_qq_media_ingress_rejects_stream_over_message_limit_without_content_length(monkeypatch):
     from agent.im import media_ingress
+
+    monkeypatch.setattr(media_ingress, "MAX_IM_MESSAGE_BYTES", 10)
 
     class _StreamingTooLargeResponse(_FakeResponse):
         headers = {}
 
         class _Content:
             async def iter_chunked(self, _size):
-                yield b"x" * (media_ingress.MAX_IM_ATTACHMENT_BYTES + 1)
+                yield b"x" * 8
+                yield b"x" * 3
 
         content = _Content()
 
@@ -259,10 +270,12 @@ async def test_qq_media_ingress_rejects_stream_without_content_length(monkeypatc
     monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
     monkeypatch.setattr("app.core.chat_attach.stage", lambda *a, **k: staged.append(1))
 
-    assert await media_ingress.ingest_qq_media(
+    result = await media_ingress.ingest_qq_media(
         [{"url": "https://example.test/stream.bin", "filename": "stream.bin"}],
         "owner-1",
-    ) == []
+    )
+    assert result.attachment_ids == []
+    assert result.size_limit_exceeded
     assert staged == []
 
 
@@ -270,7 +283,6 @@ async def test_qq_media_ingress_rejects_stream_without_content_length(monkeypatc
 async def test_qq_media_ingress_enforces_message_total_limit(monkeypatch):
     from agent.im import media_ingress
 
-    monkeypatch.setattr(media_ingress, "MAX_IM_ATTACHMENT_BYTES", 20)
     monkeypatch.setattr(media_ingress, "MAX_IM_MESSAGE_BYTES", 15)
     staged = []
 
@@ -290,5 +302,76 @@ async def test_qq_media_ingress_enforces_message_total_limit(monkeypatch):
         "owner-1",
     )
 
-    assert result == ["attach-1"]
+    assert result.attachment_ids == ["attach-1"]
+    assert result.size_limit_exceeded
     assert len(staged) == 1
+
+
+@pytest.mark.asyncio
+async def test_qq_large_media_uses_stream_staging_without_materializing(monkeypatch):
+    from agent.im import media_ingress
+
+    monkeypatch.setattr("app.core.chat_attach.AUDIO_MATERIALIZE_CAP", 8)
+    staged = []
+
+    async def fail_stage(*_args, **_kwargs):
+        raise AssertionError("large attachments must not be materialized")
+
+    async def fake_stage_stream(owner, name, ext, mime, *, stream, size, **kwargs):
+        stream.seek(0)
+        staged.append((owner, name, ext, mime, size, stream.read(), kwargs))
+        return {"attach_id": "large-attachment"}
+
+    monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
+    monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
+    monkeypatch.setattr("app.core.chat_attach.stage", fail_stage)
+    monkeypatch.setattr("app.core.chat_attach.stage_stream", fake_stage_stream)
+
+    result = await media_ingress.ingest_qq_media(
+        [{"url": "https://example.test/large.bin", "filename": "large.bin"}],
+        "owner-1",
+        message_id="message-1",
+    )
+
+    assert result.attachment_ids == ["large-attachment"]
+    assert not result.size_limit_exceeded
+    assert staged == [(
+        "owner-1",
+        "large",
+        "bin",
+        None,
+        11,
+        b"image-bytes",
+        {"platform": "qq", "extra": {"source_message_id": "message-1"}},
+    )]
+
+
+@pytest.mark.asyncio
+async def test_im_loop_reports_oversized_only_attachment_without_sending_empty_agent_reply(monkeypatch):
+    from agent.im.loop import dispatch_im_message
+    from agent.im.media_ingress import MediaIngressResult
+
+    sent = []
+
+    async def fake_ingest(*_args, **_kwargs):
+        return MediaIngressResult([], size_limit_exceeded=True)
+
+    async def fake_send_text(payload, text):
+        sent.append((payload, text))
+        return True
+
+    monkeypatch.setattr("agent.im.media_ingress.ingest_qq_media", fake_ingest)
+    monkeypatch.setattr("agent.im.replies.send_text", fake_send_text)
+
+    result = await dispatch_im_message({
+        "platform": "qq",
+        "chat_type": "private",
+        "owner_user_id": "owner-1",
+        "text": "",
+        "attachments": [{"url": "https://example.test/large.flac", "filename": "large.flac"}],
+    })
+
+    assert result is None
+    assert len(sent) == 1
+    assert "文件大小超过限制" in sent[0][1]
+    assert "512 MiB" in sent[0][1]

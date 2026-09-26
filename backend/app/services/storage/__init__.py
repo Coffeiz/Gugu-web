@@ -281,7 +281,7 @@ class LocalStorageBackend(StorageBackend):
                 os.unlink(temporary)
 
     async def get(self, key: str) -> bytes:
-        return (self.root / key).read_bytes()
+        return await asyncio.to_thread((self.root / key).read_bytes)
 
     async def iter_chunks(self, key: str, *, chunk_size: int = 1024 * 1024):
         stream = await asyncio.to_thread((self.root / key).open, "rb")
@@ -547,7 +547,7 @@ class OSSStorageBackend(StorageBackend):
 
     async def stat(self, key: str) -> StorageObjectInfo | None:
         """查元信息，不下载对象本体（P1.1 默认实现是 exists+get，大文件光是查大小
-        就要整个下载一遍——`read_audio`（`agent/tools/file_readers.py` 的
+        就要整个下载一遍——`read_audio`（`agent/tools/media_reader.py` 的
         `_media_size_error`）在读取前先 `stat()` 一次判断是否超限，默认实现会让
         这次判断本身就要拉一次完整对象）。
 

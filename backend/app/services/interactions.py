@@ -14,7 +14,6 @@ from app.core.tz import now_utc
 from app.models import ConversationSession, InteractionAction, InteractionPrompt
 from agent.interactions.confirmations import confirmation_payload
 
-TOOL_BUDGET_WINDOW = timedelta(minutes=30)
 CUSTOM_REPLY_OPTION_ID = "__custom_reply__"
 CUSTOM_REPLY_LABEL = "自定义回复"
 
@@ -221,60 +220,6 @@ async def create_agent_prompt(
         return prompt, rendered
 
 
-async def create_goal_mode_prompt(*, user_id, session_id: int | None) -> tuple[InteractionPrompt, list[dict]] | None:
-    """创建轮次达到上限后的当前 Run 继续选择。"""
-    if session_id is None:
-        return None
-    from app.db import session as db_session
-
-    db_session.ensure_engine()
-    if db_session._SessionLocal is None:
-        return None
-    async with db_session._SessionLocal() as db:
-        prompt, rendered = await create_prompt(
-            db,
-            user_id=user_id,
-            session_id=session_id,
-            kind="choice",
-            title="要继续这个长任务吗？",
-            body="本次已经达到轮次上限。解除本轮限制后会继续当前任务；仍可随时发送 /stop。",
-            options=[
-                {"id": "continue", "label": "解除本轮调用限制", "action_type": "run_unlimited"},
-                {"id": "cancel", "label": "先停在这里", "action_type": "cancel"},
-            ],
-            context={"run_unlimited": True},
-        )
-        await db.commit()
-        return prompt, rendered
-
-
-async def create_tool_budget_prompt(*, user_id, session_id: int | None) -> tuple[InteractionPrompt, list[dict]] | None:
-    """工具步骤达到普通 run 上限时，询问是否仅解除本轮工具次数限制。"""
-    if session_id is None:
-        return None
-    from app.db import session as db_session
-
-    db_session.ensure_engine()
-    if db_session._SessionLocal is None:
-        return None
-    async with db_session._SessionLocal() as db:
-        prompt, rendered = await create_prompt(
-            db,
-            user_id=user_id,
-            session_id=session_id,
-            kind="choice",
-            title="步骤较多，要继续吗？",
-            body="本轮已达到普通工具调用次数。选择继续只解除当前会话的工具次数限制，不会创建持续目标任务；也可以先停在这里。",
-            options=[
-                {"id": "continue", "label": "继续执行", "action_type": "tool_budget_window"},
-                {"id": "cancel", "label": "先停在这里", "action_type": "cancel"},
-            ],
-            context={"tool_budget_window_seconds": int(TOOL_BUDGET_WINDOW.total_seconds())},
-        )
-        await db.commit()
-        return prompt, rendered
-
-
 async def wait_for_resolution(
     *, user_id, prompt_id: int, timeout_seconds: float = 600, heartbeat=None,
     cancel_check=None,
@@ -436,19 +381,6 @@ async def consume_action(
             ),
             action.option_id,
         )
-    if context.get("tool_budget_window_seconds") and action.option_id == "continue":
-        session = await db.scalar(select(ConversationSession).where(
-            ConversationSession.id == prompt.session_id,
-            ConversationSession.user_id == user_id,
-        ))
-        if session is None:
-            raise LookupError("会话不存在")
-        session_context = dict(session.session_context or {})
-        # 这是固定窗口：每次对话只读取过期时间，不在使用时续期。
-        session_context["tool_budget_unlimited_until"] = (
-            now + TOOL_BUDGET_WINDOW
-        ).isoformat()
-        session.session_context = session_context
     result = {
         "kind": prompt.kind,
         "status": result_status,

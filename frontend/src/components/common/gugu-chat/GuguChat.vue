@@ -51,7 +51,10 @@
       :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
       :owner-z="chatZ"
       :streaming="streaming" :is-chat-dragging="isChatDragging"
-      :unlimited-mode="preferencesStore.unlimitedMode" :on-toggle-unlimited="toggleUnlimitedMode"
+      :automatic-mode-enabled="preferencesStore.automaticModeEnabled"
+      :automatic-mode-available="automaticModeButtonVisible"
+      :automatic-mode-saving="automaticModeSaving"
+      :on-toggle-automatic-mode="toggleAutomaticMode"
       :current-session-title="currentSessionTitle"
       :current-session-workspace-name="currentSessionWorkspaceName"
       :current-session-goal-active="currentSessionGoalActive"
@@ -121,7 +124,7 @@ import { useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, authApi, getToken } from '@/services/api'
+import { agentApi, filesApi, trackApi, authApi, getToken, workspacesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { prefetchGreeting } from '@/composables/shared/useGreeting'
 import GuguChatFab from './GuguChatFab.vue'
@@ -157,6 +160,22 @@ const audioStore    = useAudioStore()
 const uiStore       = useUiStore()
 const preferencesStore = usePreferencesStore()
 const router        = useRouter()
+const automaticModeGlobalEnabled = ref(false)
+const automaticModeStatusLoaded = ref(false)
+const automaticModeSaving = ref(false)
+const automaticModeButtonVisible = computed(() =>
+  preferencesStore.loaded && automaticModeStatusLoaded.value && automaticModeGlobalEnabled.value,
+)
+
+async function toggleAutomaticMode() {
+  if (!automaticModeButtonVisible.value || automaticModeSaving.value) return
+  automaticModeSaving.value = true
+  try {
+    await preferencesStore.saveAutomaticModeEnabled(!preferencesStore.automaticModeEnabled)
+  } finally {
+    automaticModeSaving.value = false
+  }
+}
 
 // 顶栏全局搜索点「对话」结果 / 笔记里点「@对话」引用卡片：打开聊天面板并切到该会话。
 // 不强制展开大窗——默认保持小窗，用户已经开着大窗才维持大窗；对话引用现在锚定的是
@@ -322,6 +341,13 @@ async function exitExpanded() {
 
 onMounted(() => {
   if (!preferencesStore.loaded) void preferencesStore.fetch()
+  void workspacesApi.status().then(status => {
+    automaticModeGlobalEnabled.value = status.automaticModeGlobalEnabled === true
+  }).catch(() => {
+    automaticModeGlobalEnabled.value = false
+  }).finally(() => {
+    automaticModeStatusLoaded.value = true
+  })
   window.addEventListener('gugu-quota-changed', onQuotaChanged)
   window.addEventListener('beforeunload', saveProgress)
   // 小窗也需要会话权限摘要，避免只有展开聊天窗口后才知道当前 Session 的授权状态。
@@ -339,7 +365,7 @@ onMounted(() => {
               || (reopenResume.value ? localStorage.getItem(LAST_SESSION_KEY) : null)
   if (saved) {
     messages.value = []   // 续聊：立刻清掉默认问候占位，避免 loadSession 异步加载期间 animateGreeting 闪问候
-    loadSession(Number(saved)).then(() => {
+    loadSession(Number(saved), true).then(() => {
       if (sessionId.value !== Number(saved)) {   // 那段会话没了（删了/无权限）→ 清存档、恢复问候、当新对话
         sessionStorage.removeItem(SESSION_KEY)
         localStorage.removeItem(LAST_SESSION_KEY)
@@ -354,10 +380,6 @@ onMounted(() => {
     prefetchGreeting()
   }
 })
-function toggleUnlimitedMode() {
-  void preferencesStore.saveUnlimitedMode(!preferencesStore.unlimitedMode)
-}
-
 onUnmounted(() => {
   stopPendingQueueRecovery = true
   window.removeEventListener('gugu-quota-changed', onQuotaChanged)

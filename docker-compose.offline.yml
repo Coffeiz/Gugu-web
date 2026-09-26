@@ -1,0 +1,31 @@
+# 离线 bundle 覆盖层：与 docker-compose.yml 一起使用。
+# docker compose -f docker-compose.yml -f docker-compose.offline.yml up -d
+
+x-offline-environment: &offline-environment
+  GUGU_SANDBOX_OFFLINE: "1"
+  GUGU_SANDBOX_BUNDLE_MANIFEST: /bundle/sandbox-bundle-manifest.json
+
+services:
+  app:
+    image: ${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}
+    pull_policy: never
+    environment:
+      <<: *offline-environment
+    volumes:
+      - ${GUGU_SANDBOX_BUNDLE_MANIFEST_HOST:-./sandbox-bundle-manifest.json}:/bundle/sandbox-bundle-manifest.json:ro
+
+  egress-proxy:
+    image: ${GUGU_EGRESS_PROXY_IMAGE:-ubuntu/squid:latest}
+    pull_policy: never
+
+  sandboxd:
+    image: ${GUGU_SANDBOXD_IMAGE:-${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}}
+    pull_policy: never
+    environment:
+      <<: *offline-environment
+    volumes:
+      - ${GUGU_SANDBOX_BUNDLE_MANIFEST_HOST:-./sandbox-bundle-manifest.json}:/bundle/sandbox-bundle-manifest.json:ro
+
+  searxng:
+    image: ${GUGU_SEARCH_IMAGE:-searxng/searxng:latest}
+    pull_policy: never

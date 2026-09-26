@@ -3,7 +3,7 @@ name: 工作区 Shell
 description_short: 用户要在已授权 Shell 范围运行检查、构建或整理命令时使用。
 description_long: 用户要求运行命令且系统提供 Shell 工具时使用
 category: shell
-related_tools: shell, run_script
+related_tools: shell, run_script, list_workspaces, create_workspace, unlink_workspace, delete_workspace_directory
 ---
 # 工作区 Shell
 
@@ -11,6 +11,13 @@ related_tools: shell, run_script
 
 - 只在系统提示明确提供 `shell` 工具时使用。
 - Shell 的可用范围、权限与确认要求由执行器决定；不要自行切换范围、猜测路径或扩大权限。工具不可用时直接说明并停止。
+- `list_workspaces` 统一列出工作区目标：`kind=directory` 是顶层物理工作区，
+  `kind=folder` 是文件库普通文件夹，`kind=project` 是项目绑定；各自的
+  `workspace_id`、`directory_id`、`folder_id`、`project_id` 不可混用。
+- `create_workspace(kind="directory", name=...)` 创建顶层目录及其唯一工作区；
+  `kind=folder/project` 则绑定已有资源。`unlink_workspace` 只解除 Shell 绑定；
+  物理删除顶层目录必须调用 `delete_workspace_directory` 并经过用户确认。
+  不要用文件夹 CRUD 工具代替顶层工作区目录操作。
 
 ## 调用规则
 
@@ -32,7 +39,7 @@ related_tools: shell, run_script
 - `run_script` 不接受 positional `args` 数组；脚本应读取执行器注入的环境变量：
   `GUGU_SCRIPT_ROOT`、`GUGU_SCRIPT_PATH`、`GUGU_WORKSPACE`，以及权限允许时的
   `GUGU_PERSONAL`、`GUGU_PROJECT`。这些变量只描述本轮可见挂载点，不包含密钥。
-- Autopilot 开启且执行器判定当前沙盒权限满足时，`run_script` 可跳过交互确认；这不扩大
+- 自动模式开启且执行器判定当前沙盒权限满足时，`run_script` 可跳过交互确认；这不扩大
   沙盒范围，也不绕过脚本路径、解释器、配额、审计和执行器校验。未满足条件时仍需确认。
 - system 范围使用宿主机执行器，开启后可访问宿主机路径和本机已有运行时；危险命令仍必须
   经过确认，system 开关不等于危险操作预授权。

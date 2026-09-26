@@ -1,7 +1,7 @@
 """LLM 主循环的 provider 驱动层（PRD-LLM-1 Phase 2）。
 
 `agent/core.py` 的 `_run_anthropic`/`_run_openai` 曾经是两条完整独立的循环，控制流
-（工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限）逐字复制了约 90%，
+（工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底）逐字复制了约 90%，
 真正不同的只是"怎么跟这个 provider 打交道"这几件事：
 
 1. 流式事件形状——Anthropic SDK 给的是已解析好的 `final.content` 块列表；OpenAI
@@ -47,7 +47,8 @@ from app.core.errors import RetryableError
 from app.core.redaction import diag_log
 from app.core.retry import LLM_RETRY
 from app.core.redaction import diag_log
-from agent.context.canonical_tool_history import ToolCall
+from agent.context.canonical_tool_history import ToolCall, ToolResult
+from agent.context.cache_state import CacheState
 from agent.providers.message_utils import (
     _collapse_volatile_messages,
     _contains_volatile_image,
@@ -58,6 +59,7 @@ from agent.providers.message_utils import (
     _with_history_cache,
     _with_system_cache_control,
     _with_single_history_cache,
+    render_provider_history,
 )
 
 _log = logging.getLogger("agent.core")
@@ -140,6 +142,7 @@ class _AnthropicCtx:
     generation_param: dict
     restored_blocks: list[dict] | None = None
     tool_state_digest: str = ""
+    cache_state: CacheState = field(default_factory=CacheState)
 
 
 class AnthropicDriver:
@@ -151,7 +154,7 @@ class AnthropicDriver:
         blocks = [b.model_dump() if hasattr(b, "model_dump") else dict(b)
                   for b in (result.raw or [])]
         state_blocks = [block for block in blocks if block.get("type") in {
-            "thinking", "redacted_thinking", "tool_use",
+            "thinking", "redacted_thinking",
         }]
         if not state_blocks:
             return None
@@ -161,11 +164,11 @@ class AnthropicDriver:
             counts[block_type] = counts.get(block_type, 0) + 1
         return {
             "state_kind": "anthropic_thinking_blocks",
-            # 保存完整 content blocks，而不是只保存 thinking 正文；signature、
-            # redacted_thinking 和 tool_use 的字段顺序由原始响应决定。
-            "payload": {"blocks": copy.deepcopy(blocks)},
+            # 只保存 provider 专属的 thinking 块。普通文本和 tool_use 已经
+            # 进入 canonical history，跨请求恢复它们会重复插入旧工具调用。
+            "payload": {"blocks": copy.deepcopy(state_blocks)},
             "summary": {
-                "state_block_count": len(blocks),
+                "state_block_count": len(state_blocks),
                 "thinking_block_count": sum(counts.get(t, 0) for t in ("thinking", "redacted_thinking")),
                 "tool_use_block_count": counts.get("tool_use", 0),
             },
@@ -178,7 +181,18 @@ class AnthropicDriver:
             for block in blocks
         ):
             return False
-        ctx.restored_blocks = copy.deepcopy(blocks)
+        # tool_use 已经随上一轮的 assistant/tool_result 写入 canonical history。
+        # 跨请求恢复时再次插入它会复用旧 id，且当前 user 消息后没有对应
+        # tool_result，MiniMax 会以 2013 拒绝整次请求。跨请求只需恢复
+        # provider 专属的 thinking 签名块；普通文本和工具调用都由历史提供。
+        thinking_blocks = [
+            copy.deepcopy(block)
+            for block in blocks
+            if block.get("type") in {"thinking", "redacted_thinking"}
+        ]
+        if not thinking_blocks:
+            return False
+        ctx.restored_blocks = thinking_blocks
         return True
 
     def prepare(self, tool_names, ai, messages, system_text, tool_snapshot=None):
@@ -231,13 +245,16 @@ class AnthropicDriver:
         # ② 给发出去的 messages 打一个滚动缓存断点（每条 message 的最后一个块）：多轮工具循环里
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
         #    绝不能混入 cache_control，否则下次加载历史会带着旧断点、累积超过 4 个上限）。
-        outbound = ctx.adapter.render_history(messages)
+        projection = render_provider_history(messages, ctx.adapter)
+        outbound = projection.messages
         # 历史已在 LLMRunner._run_loop 进入时按 canonical 结构清洗一次。这里
         # 只能做 provider 投影，不能对渲染后的普通文本再次清洗，否则
         # time-context 等 canonical 边界会丢失并在每轮被误合并。
         from agent.context.provider_history import render_anthropic_message_roles
         outbound = render_anthropic_message_roles(outbound, ctx.adapter)
         restored_blocks = getattr(ctx, "restored_blocks", None)
+        restored_blocks_for_trace = copy.deepcopy(restored_blocks) if restored_blocks else None
+        restored_insert_index = None
         if restored_blocks:
             restored = {"role": "assistant", "content": copy.deepcopy(restored_blocks)}
             # 当前请求的 user 消息仍由业务历史提供；状态只在 provider boundary
@@ -250,13 +267,34 @@ class AnthropicDriver:
                 insert_at = len(conversation)
                 if conversation and conversation[-1].get("role") == "user":
                     insert_at -= 1
+                restored_insert_index = insert_at
                 outbound.insert(insert_at, restored)
             elif outbound and outbound[-1].get("role") == "user":
+                restored_insert_index = len(outbound) - 1
                 outbound = outbound[:-1] + [restored, outbound[-1]]
             else:
+                restored_insert_index = len(outbound)
                 outbound.append(restored)
             ctx.restored_blocks = None
-        _msgs = _with_history_cache(outbound) if ctx.supports_active_cache else outbound
+        pending_cache_state = None
+        if ctx.supports_active_cache:
+            _msgs, pending_cache_state = _with_history_cache(
+                outbound, getattr(ctx, "cache_state", None),
+                provider=str(getattr(ctx.adapter, "name", "unknown")),
+                api_format=str(getattr(ctx.adapter, "api_format", "anthropic")),
+                model=ctx.model,
+            )
+        else:
+            _msgs = outbound
+        from agent.runtime.loopscope_trace.state import record_anthropic_request_diagnostics
+
+        record_anthropic_request_diagnostics(
+            messages=_msgs,
+            context=ctx,
+            restored_blocks=restored_blocks_for_trace,
+            restored_insert_index=restored_insert_index,
+            projection=projection,
+        )
         kwargs = dict(
             model=ctx.model, system=ctx.system_param, messages=_msgs,
             tools=ctx.tools, max_tokens=ctx.max_tokens,
@@ -264,15 +302,32 @@ class AnthropicDriver:
             **ctx.generation_param,
         )
         final = None
-        async for kind, val in stream_round(client, kwargs, ctx.adapter):
-            if kind == "final":
-                final = val
-                break
-            if kind == "retry":
-                # 重试状态事件：原样转发，主循环边界映射成 SSE 状态（不是正文 token）
-                yield ("retry", val)
-                continue
-            yield ("token", val)
+        try:
+            async for kind, val in stream_round(client, kwargs, ctx.adapter):
+                if kind == "final":
+                    final = val
+                    break
+                if kind == "retry":
+                    # 重试状态事件：原样转发，主循环边界映射成 SSE 状态（不是正文 token）
+                    yield ("retry", val)
+                    continue
+                yield ("token", val)
+        except Exception as exc:
+            try:
+                from agent.runtime.loopscope_trace.state import record_anthropic_request_failure
+                record_anthropic_request_failure(
+                    provider=str(getattr(ctx.adapter, "name", "unknown")),
+                    model=str(ctx.model),
+                    messages=_msgs,
+                    error=exc,
+                    restored_blocks=restored_blocks_for_trace,
+                    restored_insert_index=restored_insert_index,
+                    canonical_digest=projection.canonical_digest,
+                    wire_digest=projection.wire_digest,
+                )
+            except Exception:
+                pass
+            raise
 
         # provider 已解析的 tool_use.name 仍可能混入内部流式尾标记或 XML 片段。
         # 统一在驱动边界清洗，并让同一份 block 同时进入 RoundResult 与历史，避免
@@ -293,6 +348,9 @@ class AnthropicDriver:
             salvaged = salvage_tool_name(block.get("name"))
             if salvaged is not None:
                 block["name"] = salvaged
+
+        if pending_cache_state is not None:
+            ctx.cache_state = pending_cache_state
 
         tool_blocks = [b for b in raw_blocks if b.get("type") == "tool_use"]
         text = "".join(str(b.get("text") or "") for b in raw_blocks if b.get("type") == "text")
@@ -331,7 +389,13 @@ class AnthropicDriver:
             "role": "assistant",
             "content": self._content_dicts(result, tool_ids=dispatched_ids),
         }]
-        tool_results = [{"type": "tool_result", "tool_use_id": tc.id, "content": res} for tc, res in dispatched]
+        tool_results = []
+        for tc, res in dispatched:
+            result = ToolResult.from_block({"tool_use_id": tc.id, "content": res})
+            block = {"type": "tool_result", "tool_use_id": tc.id, "content": res}
+            if result.is_error:
+                block["is_error"] = True
+            tool_results.append(block)
         messages.append({"role": "user", "content": tool_results})
         return messages
 
@@ -373,6 +437,7 @@ class _OpenAICtx:
     adapter: Any
     ai: Any
     tool_state_digest: str = ""
+    cache_state: CacheState = field(default_factory=CacheState)
 
 
 @dataclass
@@ -435,7 +500,9 @@ class OpenAIDriver:
         # stream_round 仅 AnthropicDriver 使用；接收并忽略，保持统一调用签名。
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
-        outbound = render_openai_request_history(messages, ctx.adapter)
+        projection = render_provider_history(messages, ctx.adapter)
+        outbound = projection.messages
+        outbound = render_openai_request_history(outbound, ctx.adapter)
         from agent.providers.message_utils import strip_responses_item_ids
         outbound = strip_responses_item_ids(outbound)
         # OpenAI 兼容端点的原生 KV cache 不等于支持显式 cache_control。
@@ -444,11 +511,22 @@ class OpenAIDriver:
         if ctx.supports_explicit_cache:
             outbound = _with_system_cache_control(outbound)
             if ctx.adapter.uses_single_history_cache_anchor(ctx.model):
-                messages = _with_single_history_cache(outbound)
+                messages, pending_cache_state = _with_single_history_cache(
+                    outbound, getattr(ctx, "cache_state", None),
+                    provider=str(getattr(ctx.adapter, "name", "unknown")),
+                    api_format=str(getattr(ctx.adapter, "api_format", "openai")),
+                    model=ctx.model,
+                )
             else:
-                messages = _with_history_cache(outbound)
+                messages, pending_cache_state = _with_history_cache(
+                    outbound, getattr(ctx, "cache_state", None),
+                    provider=str(getattr(ctx.adapter, "name", "unknown")),
+                    api_format=str(getattr(ctx.adapter, "api_format", "openai")),
+                    model=ctx.model,
+                )
         else:
             messages = outbound
+            pending_cache_state = None
         tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
         cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
         # 与 AnthropicDriver 的 stream_round 同一套统一重试节奏（app/core/retry.py）：
@@ -553,6 +631,9 @@ class OpenAIDriver:
                       f"len={len(b['args'])} 尾部={b['args'][-120:]!r}", flush=True)
                 tool_calls.append(NormalizedToolCall(id=b["id"], name=b["name"], input={}, parse_error=True))
 
+        if pending_cache_state is not None:
+            ctx.cache_state = pending_cache_state
+
         yield ("done", RoundResult(
             text=content, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=total_in, usage_out=total_out, cache_tokens=total_cache,
@@ -583,15 +664,17 @@ class OpenAIDriver:
         )]
         visual_parts: list[dict] = []
         for tc, res in dispatched:
-            content, images = _openai_tool_result(res, allow_images=allow_images)
+            content, media_parts = _openai_tool_result(
+                res, allow_images=allow_images, allow_audio_video=True,
+            )
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
-            visual_parts.extend(images)
+            visual_parts.extend(media_parts)
         if visual_parts:
             messages.append({
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": "工具返回了以下图片，请结合工具文字结果继续处理。",
+                    "text": "工具返回了以下多模态内容，请结合工具文字结果继续处理。",
                 }, *visual_parts],
             })
 

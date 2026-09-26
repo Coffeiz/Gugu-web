@@ -109,6 +109,7 @@ blocked = confirm.needs_target_confirmation(
     args,
     "将对以下项目执行不可逆操作（共 2 项）",
     user_id,
+    purpose=confirm.ACTION,
     action="delete_example",
     targets={"item_id": item_ids},
     context={"parent_id": parent_id},  # 有父级/容器边界时必须纳入

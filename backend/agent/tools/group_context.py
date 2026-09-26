@@ -234,7 +234,6 @@ class GroupContextSkill(BaseSkill):
                     "limit": {"type": "integer"},
                 },
             },
-            repeat_safe=True,
             handler=_group_context_search,
         ),
     ]

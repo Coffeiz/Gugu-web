@@ -366,7 +366,6 @@ class MindSkill(BaseSkill):
                 # q / queries 至少传一个；具体校验由 handler 统一完成，兼容 queries-only 调用。
                 "required": [],
             },
-            repeat_safe=True,
             handler=_note_search,
         ),
         Tool(
@@ -381,7 +380,6 @@ class MindSkill(BaseSkill):
                 },
                 "required": ["node_id"],
             },
-            repeat_safe=True,
             handler=_note_get,
         ),
         Tool(

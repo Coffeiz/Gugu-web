@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 
-DEFAULT_GROUP_TOOLS = ["web_search", "http_get", "image_search", "inspect_images", "send_file"]
+DEFAULT_GROUP_TOOLS = ["web_search", "http_get", "image_search", "read_file", "send_file"]
+
+# 纯时间查询不读取用户数据，也不产生外部副作用；它属于系统 utility，
+# 不应因为群成员的业务工具白名单而无法发现或执行。
+SAFE_ALWAYS_ALLOWED_TOOLS = frozenset({"get_current_time"})
 
 
 def _parse_bot_db_id(value: Optional[str]) -> Optional[int]:
@@ -32,12 +36,20 @@ def filter_tool_names(system_tool_names: List[str], allowed_tool_names: Optional
     """按请求权限裁剪模型可见工具，保留白名单顺序。"""
     if allowed_tool_names is None:
         return system_tool_names
-    return [name for name in allowed_tool_names if name in system_tool_names]
+    result = [name for name in allowed_tool_names if name in system_tool_names]
+    for name in system_tool_names:
+        if name in SAFE_ALWAYS_ALLOWED_TOOLS and name not in result:
+            result.append(name)
+    return result
 
 
 def can_use_tool(name: str, allowed_tool_names: Optional[List[str]]) -> bool:
     """dispatch 层的第二道权限门；None 表示完整工具集。"""
-    return allowed_tool_names is None or name in allowed_tool_names
+    return (
+        name in SAFE_ALWAYS_ALLOWED_TOOLS
+        or allowed_tool_names is None
+        or name in allowed_tool_names
+    )
 
 
 async def resolve_access(

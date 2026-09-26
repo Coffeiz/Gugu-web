@@ -82,7 +82,6 @@ def model_state_fingerprints(ai: Any, *, provider: str, api_format: str,
         "model": str(getattr(ai, "model", "") or ""),
         "context_tokens": int(getattr(ai, "context_tokens", 0) or 0),
         "max_tokens": int(getattr(ai, "max_tokens", 0) or 0),
-        "temperature": getattr(ai, "temperature", None),
         "tool_digest": str(tool_digest or ""),
     }
     reasoning_config = {

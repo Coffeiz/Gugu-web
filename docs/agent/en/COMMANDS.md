@@ -4,7 +4,7 @@ This document describes the shared slash-command behavior. Commands use either A
 
 ## Command Groups
 
-- /help, /stop, /status, /compact, /memory, /forget, /workspace, /unlimited, and /new are deterministic control commands handled before the main Agent loop.
+- /help, /stop, /status, /compact, /memory, /forget, /workspace, and /new are deterministic control commands handled before the main Agent loop.
 - /goal <objective> creates or manages a persistent task and then enters the normal Agent runner.
 - Shell remains unavailable unless the administrator enables it, the user grants it in tool permissions, and the session is bound to an enabled workspace.
 

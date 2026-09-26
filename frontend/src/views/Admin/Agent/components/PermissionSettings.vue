@@ -36,6 +36,19 @@
       </section>
 
       <section class="permission-group">
+        <h4>{{ t('agent.automaticModeGroup') }}</h4>
+        <div class="permission-list">
+          <div class="permission-item">
+            <div class="permission-label">
+              <span>{{ t('agent.automaticMode') }}</span>
+              <span class="permission-desc">{{ t('agent.automaticModeHint') }}</span>
+            </div>
+            <ToggleSwitch :model-value="agent.automatic_mode_enabled !== false" :aria-label="t('agent.automaticMode')" @update:model-value="setAgentFlag('automatic_mode_enabled', $event)" />
+          </div>
+        </div>
+      </section>
+
+      <section class="permission-group">
         <h4>{{ t('agent.shell') }}</h4>
         <div class="permission-list">
           <div class="permission-item">
@@ -44,14 +57,6 @@
               <span class="permission-desc">{{ t('agent.shellHint') }}</span>
             </div>
             <ToggleSwitch :model-value="sandboxEnabled && agent.shell_enabled === true" :disabled="!sandboxEnabled" :aria-label="t('agent.shell')" @update:model-value="setAgentFlag('shell_enabled', $event)" />
-          </div>
-
-          <div class="permission-item">
-            <div class="permission-label">
-              <span>{{ t('agent.autopilot') }}</span>
-              <span class="permission-desc">{{ t('agent.autopilotHint') }}</span>
-            </div>
-            <ToggleSwitch :model-value="sandboxEnabled && agent.shell_autopilot_enabled === true" :disabled="!sandboxEnabled || agent.shell_enabled !== true" :aria-label="t('agent.autopilot')" @update:model-value="setAgentFlag('shell_autopilot_enabled', $event)" />
           </div>
 
           <div class="permission-item">

@@ -28,6 +28,7 @@ from agent.tools.link_buttons import LinkButtonsSkill
 from agent.tools.skill_management import SkillManagementSkill
 from agent.tools.shell import ShellSkill
 from agent.tools.workspaces import WorkspacesSkill
+from agent.tools.time import TimeSkill
 
 __all__ = [
     "BaseSkill", "registry",
@@ -37,5 +38,5 @@ __all__ = [
     "MindSkill",
     "MindCanvasSkill",
     "ConversationsSkill", "IMSkill", "ScheduledTasksSkill",
-    "WebSkill", "MetaSkill", "McpSkill", "LinkButtonsSkill", "SkillManagementSkill", "ShellSkill", "WorkspacesSkill",
+    "WebSkill", "MetaSkill", "McpSkill", "LinkButtonsSkill", "SkillManagementSkill", "ShellSkill", "WorkspacesSkill", "TimeSkill",
 ]

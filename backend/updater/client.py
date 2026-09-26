@@ -1,8 +1,4 @@
-"""Admin 更新端点 → 进程内更新执行器（PRD-ADMIN-2 §1.1）。
-
-执行器与 backend 同进程，无 Unix Socket IPC；GUGU_SELF_UPDATE=off 或 Docker
-socket 未挂载时调用抛 self_update_disabled，更新页据此显示「未启用一键更新」。
-"""
+"""Admin 更新入口：分体部署走受限 Unix Socket RPC，其余拓扑使用进程内执行器。"""
 
 from __future__ import annotations
 
@@ -11,6 +7,8 @@ import os
 from typing import Any
 
 from updater.daemon import UpdateDaemon, self_update_enabled
+from updater.deployment import detect_deployment
+from updater.rpc import UpdaterRpcError, call_rpc
 
 _executor: UpdateDaemon | None = None
 _executor_failed = False
@@ -60,16 +58,36 @@ def _error_code(exc: Exception) -> str:
 
 
 async def call_updater(method: str, **params: Any) -> dict[str, Any]:
-    """进程内直调执行器；错误码语义与旧 sidecar RPC 完全一致。"""
+    """按部署模式选择独立 updater RPC 或进程内执行器。"""
+    deployment = detect_deployment()
+    if deployment["mode"] in {"split_compose", "integrated_compose"} and deployment["enabled"]:
+        return await _call_compose_updater(method, params, deployment)
+    if method == "status" and not deployment["enabled"]:
+        return {
+            **deployment,
+            "current": None, "candidate": None, "has_update": False,
+            "task": None, "history": [],
+        }
+    if method != "status" and not deployment["enabled"]:
+        raise UpdaterClientError(deployment["reason_code"], deployment["reason"])
     if method != "status" and not self_update_enabled():
         raise UpdaterClientError("self_update_disabled", "此部署未启用一键更新")
     try:
         executor = _get_executor()
     except UpdaterClientError:
         if method == "status":
-            # 未启用时 status 仍返回结构化结果，前端据此渲染「未启用」面板。
-            return {"enabled": False, "current": None, "candidate": None,
-                    "has_update": False, "task": None, "history": []}
+            deployment = detect_deployment()
+            deployment.update({
+                "enabled": False,
+                "capability": "manual",
+                "reason_code": "updater_initialization_failed",
+                "reason": "更新器初始化失败；为避免误操作，自动更新已关闭。",
+            })
+            return {
+                **deployment,
+                "current": None, "candidate": None, "has_update": False,
+                "task": None, "history": [],
+            }
         raise
     try:
         return await asyncio.wait_for(
@@ -81,3 +99,26 @@ async def call_updater(method: str, **params: Any) -> dict[str, Any]:
         raise UpdaterClientError("operation_failed", "更新命令超时") from exc
     except Exception as exc:
         raise UpdaterClientError(_error_code(exc), str(exc)[:240]) from exc
+
+
+async def _call_compose_updater(
+    method: str, params: dict[str, Any], deployment: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        return await call_rpc(method, params)
+    except UpdaterRpcError as exc:
+        if method != "status":
+            raise UpdaterClientError(exc.code, str(exc)) from exc
+        mode = deployment["mode"]
+        unavailable_code = "integrated_updater_unavailable" if mode == "integrated_compose" else "split_updater_unavailable"
+        deployment.update({
+            "enabled": False,
+            "capability": "manual",
+            "reason_code": unavailable_code,
+            "reason": str(exc),
+        })
+        return {
+            **deployment,
+            "current": None, "candidate": None, "has_update": False,
+            "task": None, "history": [],
+        }

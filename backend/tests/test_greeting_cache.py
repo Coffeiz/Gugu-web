@@ -53,3 +53,23 @@ async def test_greeting_reuses_cached_text_for_ten_minutes(monkeypatch):
     assert first == second == "欢迎回来，今天也慢慢来。"
     assert calls == 1
     assert redis.set_calls == [("agent:greeting:7:zh-CN", 600)]
+
+
+@pytest.mark.asyncio
+async def test_greeting_can_be_disabled_before_cache_or_model_call(monkeypatch):
+    calls = 0
+
+    async def generate_uncached(*args, **kwargs) -> str:
+        nonlocal calls
+        calls += 1
+        return "不应生成"
+
+    monkeypatch.setattr(greeting, "_generate_uncached", generate_uncached)
+    settings = type("Settings", (), {
+        "agent": type("Agent", (), {"greeting_enabled": False})(),
+    })()
+
+    result = await greeting.generate(None, 7, settings, locale="zh-CN")
+
+    assert result == ""
+    assert calls == 0

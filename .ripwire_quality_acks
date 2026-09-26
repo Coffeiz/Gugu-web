@@ -1,8 +1,12 @@
 # ripwire quality acks v1 — written by --quality-ack; a finding stays suppressed until it worsens past its acked magnitude
 # format: ack <kind> <16-hex-key> <ackNow> [cid=<16-hex-content-id>] [by=<scope that acked it>] <reason to end of line> — one per line, kept SORTED by (kind,key) on every write (merge-friendly)
+ack duplication 3c136f6514f80e64 23 by=backend/agent/runtime/loopscope_trace/cache_probe.py 缓存 usage 解析保留本地防御转换，避免引入跨层依赖
 ack duplication 9283ea91a78c91a4 151 by=diff 新增的回归测试分别验证不同边界，保持独立 Arrange 结构比抽取共享测试夹具更清晰
 ack duplication 94251be221669bfe 116 by=diff 新增的回归测试分别验证不同边界，保持独立 Arrange 结构比抽取共享测试夹具更清晰
+ack duplication ebca564dee47f1a8 30 by=backend/agent/runtime/loopscope_trace/cache_probe.py 缓存 usage 解析保留本地防御转换，避免引入跨层依赖
 ack duplication fb14041b0cffdca7 18 by=diff 新增的回归测试分别验证不同边界，保持独立 Arrange 结构比抽取共享测试夹具更清晰
+ack new-clone-of-reused-helper 3c136f6514f80e64 3 by=backend/agent/runtime/loopscope_trace/cache_probe.py 缓存 usage 解析保留本地防御转换，避免引入跨层依赖
+ack new-clone-of-reused-helper ebca564dee47f1a8 3 by=backend/agent/runtime/loopscope_trace/cache_probe.py 缓存 usage 解析保留本地防御转换，避免引入跨层依赖
 ack short-horizon-churn 5759313d2b3299a9 5 cid=4cd06c986beaec17 by=diff 本次是在当前 PR head 的近期实现上按审查意见补齐缺陷，短期重复修改是必要的 review follow-up
 ack short-horizon-churn 9be2759e6d6e3348 15 cid=241900b32650f86b by=diff 本次是在当前 PR head 的近期实现上按审查意见补齐缺陷，短期重复修改是必要的 review follow-up
 ack short-horizon-churn ceb2c930a962d819 8 cid=4b0f7cca7f14f741 by=diff 本次是在当前 PR head 的近期实现上按审查意见补齐缺陷，短期重复修改是必要的 review follow-up

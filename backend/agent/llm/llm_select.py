@@ -1,7 +1,7 @@
 """模型解析层：统一的「选哪个模型」决策点。
 
 调用层（runner / core）只对接 `pick_model`，未来 Router、多 key 分流都插这里，
-core 一行不动。返回的对象带 provider/api_key/base_url/model/max_tokens/temperature/
+core 一行不动。返回的对象带 provider/api_key/base_url/model/max_tokens/
 context_tokens/thinking/vision —— `AIPresetItem` 和 `AISettings` 都满足，调用层统一读。
 
 策略（`ai_presets.strategy`）：

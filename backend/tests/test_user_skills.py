@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from agent.capabilities.errors import CapabilityRegistrationError
@@ -10,6 +11,7 @@ from agent.tools import registry as tool_registry
 from agent.tools.skill_management import _create_skill, _list_skills
 from agent.tools.meta import _use_skill
 from agent.interactions.confirmations import confirmation_payload, redeem_confirmation
+from agent.tools.base import Tool, reset_dispatch_session, set_dispatch_session
 from app.models import UserSkill
 
 
@@ -232,3 +234,124 @@ async def test_create_skill_adapter_rejects_unavailable_tool(db, user_a):
         "body": "只是一段指导文本。",
     })
     assert "error" in result
+
+
+def _mcp_tool(name="mcp_notes_search"):
+    async def handler(db, user_id, args):
+        return {"ok": True}
+
+    return Tool(
+        name=name, description="搜索笔记", description_short="搜索用户笔记",
+        input_schema={"type": "object", "properties": {}}, handler=handler,
+        category="mcp", source="mcp",
+    )
+
+
+@pytest.mark.asyncio
+async def test_skill_tools_list_tracks_mcp_disable_and_reenable(db, user_a, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.api.v1 import user_skills
+    from agent.mcp.manager import mcp_manager
+
+    state = SimpleNamespace(enabled=True)
+    import app.core.config as config
+    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(mcp=state))
+    calls = []
+
+    async def list_user_tools(user_id):
+        calls.append(user_id)
+        return [_mcp_tool()]
+
+    monkeypatch.setattr(mcp_manager, "list_user_tools", list_user_tools)
+
+    enabled = await user_skills.list_skills(user_a, db)
+    assert any(tool["name"] == "mcp_notes_search" for tool in enabled["tools"])
+
+    state.enabled = False
+    disabled = await user_skills.list_skills(user_a, db)
+    assert not any(tool["name"] == "mcp_notes_search" for tool in disabled["tools"])
+    assert calls == [user_a.id]
+
+    state.enabled = True
+    reopened = await user_skills.list_skills(user_a, db)
+    assert any(tool["name"] == "mcp_notes_search" for tool in reopened["tools"])
+    assert calls == [user_a.id, user_a.id]
+
+
+@pytest.mark.asyncio
+async def test_skill_api_accepts_active_mcp_and_preserves_link_while_disabled(db, user_a, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.api.v1 import user_skills
+    from agent.mcp.manager import mcp_manager
+
+    state = SimpleNamespace(enabled=True)
+    import app.core.config as config
+    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(mcp=state))
+
+    async def list_user_tools(user_id):
+        return [_mcp_tool()]
+
+    monkeypatch.setattr(mcp_manager, "list_user_tools", list_user_tools)
+    payload = user_skills.UserSkillPayload(
+        **_payload(slug="mcp-skill", related_tools=["mcp_notes_search"]),
+    )
+    created = await user_skills.create_skill(payload, user_a, db)
+    assert created["related_tools"] == ["mcp_notes_search"]
+
+    state.enabled = False
+    updated = await user_skills.update_skill(
+        "mcp-skill",
+        user_skills.UserSkillPatch(name="更新名称", related_tools=["mcp_notes_search"]),
+        user_a, db,
+    )
+    assert updated["name"] == "更新名称"
+    assert updated["related_tools"] == ["mcp_notes_search"]
+    with pytest.raises(HTTPException) as exc_info:
+        await user_skills.update_skill(
+            "mcp-skill",
+            user_skills.UserSkillPatch(related_tools=["mcp_notes_search", "mcp_unavailable_tool"]),
+            user_a, db,
+        )
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_skill_mcp_related_tools_are_only_injected_when_dynamic_tool_is_available(db, user_a):
+    tool = _mcp_tool()
+    row = await SkillCapabilityRegistry().create_user_skill(
+        db, user_a.id, allowed_tool_names={tool.name}, dynamic_tools=[tool],
+        **_payload(slug="mcp-skill", related_tools=[tool.name]),
+    )
+    await db.commit()
+
+    disabled = await CapabilityIndex.from_registries_for_user(db, user_a.id)
+    assert disabled._skills[row.slug].related_tools == ()
+
+    enabled = await CapabilityIndex.from_registries_for_user(
+        db, user_a.id, dynamic_tools=[tool],
+    )
+    assert enabled._skills[row.slug].related_tools == (tool.name,)
+
+
+@pytest.mark.asyncio
+async def test_agent_skill_creation_accepts_only_mcp_tools_in_current_run_snapshot(db, user_a):
+    tool = _mcp_tool()
+    snapshot = tool_registry.snapshot_with_extras([tool])
+    token = set_dispatch_session(None, tool_snapshot=snapshot)
+    try:
+        args = {
+            "slug": "mcp-agent-skill", "name": "MCP 技能",
+            "description_short": "通过 MCP 搜索笔记",
+            "related_tools": [tool.name], "body": "搜索相关笔记并总结。",
+        }
+        blocked = await _create_skill(db, user_a.id, args)
+        confirmation = confirmation_payload(blocked)
+        assert confirmation is not None
+        redeem_confirmation(user_a.id, confirmation["confirm_code"])
+        created = await _create_skill(db, user_a.id, args)
+        assert created["success"] is True
+        assert created["skill"]["related_tools"] == [tool.name]
+    finally:
+        reset_dispatch_session(token)

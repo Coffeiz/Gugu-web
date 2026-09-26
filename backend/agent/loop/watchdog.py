@@ -71,7 +71,6 @@ def record_round_result(
     requires_tools: bool | None,
     verify_mode: bool,
     goal_mode: bool,
-    unlimited_mode: bool,
     task_rounds: int,
     verify_rounds: int,
     tool_calls_used: int,
@@ -90,7 +89,6 @@ def record_round_result(
         requires_tools=requires_tools,
         verify=verify_mode,
         goal=goal_mode,
-        unlimited=unlimited_mode,
         task_rounds=task_rounds,
         verify_rounds=verify_rounds,
         tool_calls_used=tool_calls_used,
@@ -108,9 +106,4 @@ def record_provider_retry(*, run_id: str, round_number: int, attempt: Any, error
     )
 
 
-def record_stop(*, run_id: str, round_number: int, reason: str, **fields: Any) -> None:
-    """记录一次主动收束/熔断/安全上限停止。"""
-    _emit("stop", run_id=run_id, round_number=round_number, reason=reason, **fields)
-
-
-__all__ = ["record_round_result", "record_provider_retry", "record_stop"]
+__all__ = ["record_round_result", "record_provider_retry"]

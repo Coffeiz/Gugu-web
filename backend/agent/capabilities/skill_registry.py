@@ -179,6 +179,7 @@ class SkillCapabilityRegistry:
 
     async def create_user_skill(self, db, owner_id: object, *,
                                 allowed_tool_names: set[str] | list[str] | tuple[str, ...],
+                                dynamic_tools=(),
                                 **payload):
         """创建用户 Skill；所有入口必须经过这里，不允许直接写表。"""
         from app.models import UserSkill
@@ -186,7 +187,9 @@ class SkillCapabilityRegistry:
 
         values = validate_user_skill(owner_id=owner_id, **payload)
         tool_snapshot = tool_registry.snapshot()
-        missing = [name for name in values["related_tools"] if tool_snapshot.get(name) is None]
+        dynamic_names = {tool.name for tool in dynamic_tools}
+        missing = [name for name in values["related_tools"]
+                   if tool_snapshot.get(name) is None and name not in dynamic_names]
         if missing:
             raise CapabilityRegistrationError(f"Skill 关联了未知工具：{', '.join(missing)}")
         unauthorized = [name for name in values["related_tools"] if name not in set(allowed_tool_names)]
@@ -204,6 +207,7 @@ class SkillCapabilityRegistry:
 
     async def update_user_skill(self, db, owner_id: object, slug: str, *,
                                 allowed_tool_names: set[str] | list[str] | tuple[str, ...],
+                                dynamic_tools=(),
                                 enabled: bool | None = None, **payload):
         """更新当前用户 Skill；slug 不变，正文变化时重新计算 digest。"""
         from app.models import UserSkill
@@ -223,10 +227,20 @@ class SkillCapabilityRegistry:
         normalized = validate_user_skill(owner_id=owner_id, **values)
         from agent.tools import registry as tool_registry
         tool_snapshot = tool_registry.snapshot()
-        missing = [name for name in normalized["related_tools"] if tool_snapshot.get(name) is None]
+        dynamic_names = {tool.name for tool in dynamic_tools}
+        retained_unavailable_mcp = {
+            name for name in row.related_tools or ()
+            if name.startswith("mcp_") and name in normalized["related_tools"]
+        }
+        missing = [name for name in normalized["related_tools"]
+                   if tool_snapshot.get(name) is None
+                   and name not in dynamic_names
+                   and name not in retained_unavailable_mcp]
         if missing:
             raise CapabilityRegistrationError(f"Skill 关联了未知工具：{', '.join(missing)}")
-        unauthorized = [name for name in normalized["related_tools"] if name not in set(allowed_tool_names)]
+        unauthorized = [name for name in normalized["related_tools"]
+                        if name not in set(allowed_tool_names)
+                        and name not in retained_unavailable_mcp]
         if unauthorized:
             raise CapabilityRegistrationError(f"Skill 关联了当前不可用的工具：{', '.join(unauthorized)}")
         for key in ("name", "description_short", "description_long", "category",

@@ -20,14 +20,33 @@ from app.core.config import get_settings
 from .docker import DockerSandboxExecutor
 from .docker_runtime import (
     cleanup_orphan_pty_containers,
+    docker_container_mount_source,
     docker_network_available,
     docker_sandbox_readiness,
+    probe_sandbox_runtime,
     valid_egress_proxy,
     valid_egress_network_name,
 )
 from .protocol import ExecuteRequest, encode_response
 
 logger = logging.getLogger("agent.sandbox.sandboxd")
+
+
+def _resolve_host_data_root_once() -> None:
+    """sandboxd 启动时解析一次宿主机数据根，避免每次 Shell 重复探测。"""
+    settings = get_settings().sandbox
+    configured = str(getattr(settings, "host_data_root", "") or "").strip()
+    if configured.startswith("/") and not configured.startswith("//"):
+        return
+    source = docker_container_mount_source()
+    if source is not None:
+        settings.host_data_root = str(source / "users")
+        logger.info("sandboxd 已解析宿主数据根（来源为当前容器 /data 挂载）")
+        return
+    # 清掉 Compose 面板生成的相对/双斜杠坏值；DockerSandboxExecutor 在
+    # 独立运行或 daemon 尚未就绪时仍保留一次性的兼容探测机会。
+    settings.host_data_root = None
+    logger.warning("sandboxd 未能解析当前容器 /data 的宿主挂载，Shell bind mount 可能不可用")
 
 
 class SandboxdServer:
@@ -97,10 +116,24 @@ class SandboxdServer:
                 raise ValueError("sandboxd operation 无效")
             operation = value.get("operation")
             if operation == "status":
+                settings = get_settings().sandbox
+                runtime = await asyncio.to_thread(probe_sandbox_runtime, settings)
                 ready, reason = await asyncio.to_thread(
-                    docker_sandbox_readiness, get_settings().sandbox,
+                    docker_sandbox_readiness, settings, runtime_snapshot=runtime,
                 )
-                response = {"type": "status", "ready": ready, "reason": reason}
+                response = {
+                    "type": "status",
+                    "ready": ready,
+                    "reason": reason,
+                    "runtime": {
+                        "installed": runtime.docker.installed,
+                        "daemon_ready": runtime.docker.daemon_ready,
+                        "rootless": runtime.docker.rootless,
+                        "server_version": runtime.docker.server_version,
+                        "message": runtime.docker.message,
+                        "image_ready": runtime.image_ready,
+                    },
+                }
             elif operation == "pty_open":
                 await self._require_runtime_ready()
                 await self._handle_pty(value, reader, writer)
@@ -288,7 +321,6 @@ class SandboxdServer:
         handle = await executor.open_pty(
             cwd=".", network_profile=str(value.get("network_profile") or "none"),
             container_name=container_name,
-            code_execution_enabled=bool(settings.code_execution_enabled),
         )
         await handle.resize(cols, rows)
         writer.write((json.dumps({"type": "ready", "pid": handle.pid, "sandbox_id": handle.sandbox_id}) + "\n").encode())
@@ -344,6 +376,7 @@ class SandboxdServer:
             await handle.close(force=True)
 
     async def serve(self) -> None:
+        await asyncio.to_thread(_resolve_host_data_root_once)
         ready, reason = await asyncio.to_thread(docker_sandbox_readiness, get_settings().sandbox)
         if not ready:
             raise RuntimeError(f"sandboxd 启动被拒绝：{reason}")

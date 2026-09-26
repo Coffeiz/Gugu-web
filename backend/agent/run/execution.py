@@ -19,6 +19,7 @@ import json
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
+from agent.errors import LLMErrorPresentation
 from agent.security import sanitize
 from agent.models import AgentResponse
 
@@ -50,6 +51,7 @@ class RunOutcome:
     cancelled: bool = False
     errored: bool = False
     errored_text: str = ""
+    error_info: LLMErrorPresentation | None = None
     compaction_applied: bool = False
 
     @property
@@ -180,7 +182,17 @@ async def consume_agent_events(
                     if sink.yield_tokens:
                         yield (EVENT_TOKEN, token)
             elif t == "file" and evt.get("file"):
-                outcome.files.append(evt["file"])   # 咕咕用 send_file 工具要发的文件
+                file = evt["file"]
+                outcome.files.append(file)   # 咕咕用 send_file 工具要发的文件
+                # 带 display_timeline 的 assistant 行会从 messages 中隐藏，附件必须
+                # 同步落入时间线，否则 QQ 虽已收到文件，Web 刷新后无法恢复文件卡。
+                outcome.display_timeline_items.append({
+                    "kind": "assistant",
+                    "runId": evt.get("run_id"),
+                    "roundId": evt.get("round_id"),
+                    "text": "",
+                    "files": [file],
+                })
             elif t in {"tool_call", "tool_done"}:
                 tool_event = dict(evt)
                 outcome.tool_events.append(tool_event)
@@ -232,6 +244,7 @@ async def consume_agent_events(
                 interrupted = True
                 break
             elif t == "error":
+                outcome.error_info = LLMErrorPresentation.from_event(evt)
                 outcome.errored_text = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
                 outcome.errored = True
                 interrupted = True

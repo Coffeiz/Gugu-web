@@ -3,7 +3,7 @@
     <div class="modal">
 
       <!-- 头部 -->
-      <div class="modal-header">
+      <div class="modal-header card-close-anchor">
         <button class="status-ball" :class="'sb-' + form.status" @click.stop="cycleStatus" :title="t(projectStatusLabelKey(form.status))"></button>
         <input
           ref="nameInputRef"
@@ -14,7 +14,7 @@
           @input="errors.name = ''"
         />
         <span v-if="errors.name" class="name-error">{{ errors.name }}</span>
-        <CloseButton @click="$emit('close')" />
+        <CloseButton card-corner @click="$emit('close')" />
       </div>
 
       <!-- 主体：单列 -->
@@ -529,7 +529,7 @@ function handleCreate() {
 /* ── 头部 ── */
 .modal-header {
   display: flex; align-items: center;
-  gap: 12px; padding: 0 20px 0 16px; flex-shrink: 0;
+  gap: 12px; padding: 0 var(--card-close-safe-area) 0 16px; flex-shrink: 0;
   height: 52px; box-sizing: border-box;
   border-bottom: 1px solid rgba(0,0,0,0.07);
 }

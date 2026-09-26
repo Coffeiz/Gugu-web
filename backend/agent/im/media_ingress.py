@@ -5,10 +5,12 @@ Gateway 只传平台原始附件；下载、转码和暂存由 worker 侧统一�
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from urllib.parse import urljoin
 import asyncio
 import ipaddress
 import socket
-from urllib.parse import urljoin
+import tempfile
 
 import aiohttp
 from aiohttp.abc import AbstractResolver
@@ -17,9 +19,23 @@ from app.core.redaction import diag_log, redact
 from app.core.url_security import is_blocked_ip, url_is_safe
 
 
-MAX_IM_ATTACHMENT_BYTES = 50 * 1024 * 1024
-MAX_IM_MESSAGE_BYTES = 100 * 1024 * 1024
+MAX_IM_MESSAGE_BYTES = 512 * 1024 * 1024
+MAX_IM_MESSAGE_MIB = MAX_IM_MESSAGE_BYTES // (1024 * 1024)
+IM_SIZE_LIMIT_NOTICE = (
+    f"文件大小超过限制：单条消息的附件总大小不能超过 {MAX_IM_MESSAGE_MIB} MiB，超限附件未接收。"
+)
 _DOWNLOAD_CHUNK_BYTES = 64 * 1024
+_SPOOL_RAM_MAX_BYTES = 8 * 1024 * 1024
+
+
+class MediaSizeLimitError(ValueError):
+    """IM 消息附件总量超过允许上限。"""
+
+
+@dataclass(frozen=True)
+class MediaIngressResult:
+    attachment_ids: list[str]
+    size_limit_exceeded: bool = False
 
 
 class _SafeResolver(AbstractResolver):
@@ -65,7 +81,7 @@ async def ingest_qq_media(
     message_id: str = "",
     emoji_refs: list[dict] | None = None,
     platform_message_id: str = "",
-) -> list:
+) -> MediaIngressResult:
     """下载 QQ 附件和可解析的系统表情，并返回当前消息的 attach_id 列表。"""
     raw = [item for item in attachments if isinstance(item, dict)]
     cached_attach_ids: list[str] = []
@@ -93,11 +109,12 @@ async def ingest_qq_media(
                     "qq_face_id": str(ref.get("face_id") or ""),
                 })
     if (not raw and not cached_attach_ids) or not owner:
-        return []
+        return MediaIngressResult([])
 
-    from agent.im import files as im_attachments
+    from app.core import chat_attach
 
     out: list[str] = list(cached_attach_ids)
+    size_limit_exceeded = False
     message_bytes = 0
     connector = aiohttp.TCPConnector(resolver=_SafeResolver())
     async with aiohttp.ClientSession(connector=connector) as sess:
@@ -133,8 +150,9 @@ async def ingest_qq_media(
                 mime_ext = str(mime or "").split("/", 1)[-1].split(";", 1)[0]
                 ext = ext or (mime_ext if mime_ext in {"jpeg", "jpg", "png", "gif", "webp"} else "png")
                 name = "QQ表情"
+            spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_RAM_MAX_BYTES)
             try:
-                data = b""
+                size = 0
                 for _ in range(4):
                     reason = url_is_safe(url)
                     if reason:
@@ -154,21 +172,17 @@ async def ingest_qq_media(
                         if resp.status != 200:
                             break
                         content_length = resp.headers.get("Content-Length")
-                        if content_length and int(content_length) > MAX_IM_ATTACHMENT_BYTES:
-                            raise ValueError("IM 附件超过单文件大小限制")
-                        chunks = []
-                        total = 0
+                        remaining = MAX_IM_MESSAGE_BYTES - message_bytes
+                        if content_length and int(content_length) > remaining:
+                            raise MediaSizeLimitError(IM_SIZE_LIMIT_NOTICE)
                         async for chunk in resp.content.iter_chunked(_DOWNLOAD_CHUNK_BYTES):
-                            total += len(chunk)
+                            size += len(chunk)
                             message_bytes += len(chunk)
-                            if total > MAX_IM_ATTACHMENT_BYTES or message_bytes > MAX_IM_MESSAGE_BYTES:
-                                raise ValueError("IM 消息附件超过大小限制")
-                            chunks.append(chunk)
-                        data = b"".join(chunks)
+                            if message_bytes > MAX_IM_MESSAGE_BYTES:
+                                raise MediaSizeLimitError(IM_SIZE_LIMIT_NOTICE)
+                            spool.write(chunk)
                         break
-                else:
-                    data = b""
-                if not data:
+                if size == 0:
                     continue
 
                 from app.core import media_transcode
@@ -176,12 +190,17 @@ async def ingest_qq_media(
                 from agent import providers
 
                 is_voice = False
+                data = None
+                if size <= chat_attach.AUDIO_MATERIALIZE_CAP:
+                    spool.seek(0)
+                    data = spool.read()
                 if ext not in ("mp3", "wav", "flac", "m4a", "ogg"):
-                    converted = media_transcode.to_provider_audio(
-                        data, ext, mime, providers.adapter_for(get_settings().ai))
-                    if converted is not None:
-                        data, ext, mime, name = converted, "mp3", "audio/mpeg", (name or "语音")
-                        is_voice = True
+                    if data is not None:
+                        converted = media_transcode.to_provider_audio(
+                            data, ext, mime, providers.adapter_for(get_settings().ai))
+                        if converted is not None:
+                            data, ext, mime, name = converted, "mp3", "audio/mpeg", (name or "语音")
+                            is_voice = True
 
                 extra = {}
                 if message_id:
@@ -204,8 +223,6 @@ async def ingest_qq_media(
                         attachment_index=item_index,
                     )
                 else:
-                    from app.core import chat_attach
-
                     stage_kwargs = {"platform": "qq", "extra": extra or None}
                     if platform_message_id:
                         stage_kwargs.update({
@@ -214,7 +231,12 @@ async def ingest_qq_media(
                         })
                     if is_qq_face:
                         stage_kwargs["kind"] = "image"
-                    meta = await chat_attach.stage(owner, name, ext, mime, data, **stage_kwargs)
+                    if data is None:
+                        meta = await chat_attach.stage_stream(
+                            owner, name, ext, mime, stream=spool, size=size, **stage_kwargs,
+                        )
+                    else:
+                        meta = await chat_attach.stage(owner, name, ext, mime, data, **stage_kwargs)
                 out.append(meta["attach_id"])
                 if is_qq_face and item.get("qq_face_type") and item.get("qq_face_id"):
                     from app.core import chat_attach
@@ -224,10 +246,15 @@ async def ingest_qq_media(
                         str(item["qq_face_id"]),
                         meta["attach_id"],
                     )
+            except MediaSizeLimitError as exc:
+                size_limit_exceeded = True
+                diag_log("agent.im.media_ingress.ingest_qq_media", exc)
             except Exception as exc:
                 diag_log("agent.im.media_ingress.ingest_qq_media", exc)
                 print(
                     f"[qq] 暂存附件出错: {redact(f'{type(exc).__name__}: {exc}')}",
                     flush=True,
                 )
-    return out
+            finally:
+                spool.close()
+    return MediaIngressResult(out, size_limit_exceeded)

@@ -517,6 +517,7 @@ async def _canvas_delete(db, user_id, args: dict):
             args,
             f"将删除画布：{names}，共 {len(canvases)} 个，包含便签、引用节点和连接关系",
             user_id,
+            purpose=confirm.ACTION,
             action="delete_canvas",
             targets={"canvas_id": canvas_ids},
         )
@@ -538,6 +539,7 @@ async def _canvas_delete(db, user_id, args: dict):
         args,
         f"将删除画布「{title}」（含所有便签、引用节点和连接关系）",
         user_id,
+        purpose=confirm.ACTION,
         action="delete_canvas",
         targets={"canvas_id": [canvas_id]},
     )
@@ -744,6 +746,7 @@ async def _canvas_delete_note(db, user_id, args: dict):
         args,
         message,
         user_id,
+        purpose=confirm.ACTION,
         action="delete_canvas_note",
         targets={"node_id": note_ids},
         context={"canvas_id": args.get("canvas_id")},
@@ -870,6 +873,7 @@ async def _canvas_disconnect(db, user_id, args: dict):
             args,
             f"将删除 {len(relations)} 条节点关联",
             user_id,
+            purpose=confirm.ACTION,
             action="delete_canvas_relation",
             targets={"relation_id": relation_ids},
             context={"canvas_id": canvas_id},
@@ -890,6 +894,7 @@ async def _canvas_disconnect(db, user_id, args: dict):
         args,
         f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}",
         user_id,
+        purpose=confirm.ACTION,
         action="delete_canvas_relation",
         targets={"relation_id": [relation_id]},
         context={"canvas_id": canvas_id},
@@ -938,6 +943,7 @@ async def _canvas_batch(db, user_id, args: dict):
             args,
             f"将删除 {len(batch_note_ids)} 条画布便签，并从画布移除其视图项",
             user_id,
+            purpose=confirm.ACTION,
             action="delete_canvas_note",
             targets={"node_id": batch_note_ids},
             context={"canvas_id": canvas_id},
@@ -965,7 +971,6 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": [],
             },
-            repeat_safe=True,
             handler=_canvas_list,
         ),
         Tool(
@@ -990,7 +995,6 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
-            repeat_safe=True,
             handler=_canvas_get,
         ),
         Tool(
@@ -1011,7 +1015,6 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
-            repeat_safe=True,
             handler=_canvas_search,
         ),
         Tool(
@@ -1032,7 +1035,6 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": [],
             },
-            repeat_safe=True,
             handler=_canvas_search_placeable,
         ),
         Tool(

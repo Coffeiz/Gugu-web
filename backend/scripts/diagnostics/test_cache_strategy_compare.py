@@ -79,7 +79,6 @@ async def make_llm_request(messages, system_text, mark_all_cache=False):
         client.messages.create,
         model="minimax-m3-7b-beta",
         max_tokens=100,
-        temperature=0.7,
         system=system_blocks,
         messages=prepared_messages
     )
@@ -278,8 +277,83 @@ async def main():
     print(f"  - 关键看 cache_write_tokens（第一轮）vs cache_read_tokens（后续轮）的比例")
 
 
-if __name__ == "__main__":
-    print("🚀 缓存策略对比测试")
-    print("="*60)
+async def run_compaction_ab(session_id: int) -> dict:
+    """用指定会话的模型配置、合成正文对比重放与追加前缀；不写业务数据。"""
+    from sqlalchemy import select
 
-    asyncio.run(main())
+    from agent.context import provider_runner
+    from agent.llm import modelctx
+    from agent.llm.llm_select import resolve_run_config_for_user
+    from app.core.config import get_settings
+    from app.db import session as db_session
+    from app.models import ConversationSession
+
+    settings = get_settings()
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        session = (await db.execute(
+            select(ConversationSession).where(ConversationSession.id == session_id)
+        )).scalar_one()
+        run_config = await resolve_run_config_for_user(
+            settings, db, session.user_id, None,
+        )
+    ai = run_config.model
+    modelctx.mark_user_scope()
+    modelctx.set_model_cfg(ai)
+    # 合成正文固定，不读取或打印会话消息；三次请求的模型、system 和工具一致。
+    filler = "用于对比追加式缓存的固定合成文本。" * 320
+    history = []
+    for index in range(18):
+        history.extend((
+            {"role": "user", "content": f"第{index}段：{filler}"},
+            {"role": "assistant", "content": "已记录。"},
+        ))
+    system = "缓存策略诊断：只回复收到。"
+    results = {}
+    for label, request_history in (
+        ("warm_main", history),
+        ("replay", history[12:]),
+        ("append", history),
+    ):
+        sink = []
+        await provider_runner.complete_messages(
+            system, request_history, "请只回复收到。", settings,
+            max_tokens=16, usage_sink=sink,
+        )
+        usage = sink[-1]
+        fresh = int(usage.get("input") or 0)
+        cached = int(usage.get("cache_read") or 0)
+        results[label] = {
+            "fresh_input": fresh,
+            "cache_read": cached,
+            "total_input": fresh + cached,
+            "cache_ratio": round(cached / (fresh + cached), 4) if fresh + cached else None,
+        }
+    return {
+        "session_id": session_id,
+        "provider": ai.provider,
+        "model": ai.model,
+        "synthetic_messages": len(history),
+        "usage_recorded": False,
+        "results": results,
+    }
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="真实模型缓存策略对比")
+    parser.add_argument("--allow-real-llm", action="store_true")
+    parser.add_argument("--compaction-ab", action="store_true")
+    parser.add_argument("--session-id", type=int)
+    args = parser.parse_args()
+    if not args.allow_real_llm:
+        parser.error("真实模型请求可能计费，必须明确传入 --allow-real-llm")
+    if args.compaction_ab:
+        if args.session_id is None:
+            parser.error("--compaction-ab 需要 --session-id")
+        print(json.dumps(asyncio.run(run_compaction_ab(args.session_id)), ensure_ascii=False))
+    else:
+        print("🚀 缓存策略对比测试")
+        print("="*60)
+        asyncio.run(main())

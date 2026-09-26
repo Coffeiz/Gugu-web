@@ -245,166 +245,10 @@ async def test_image_search_only_returns_candidates_without_visual_inspection(mo
     monkeypatch.setattr(search_tools, "get_settings", lambda: _settings())
     monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: _FakeClient(payload))
 
-    result = await search_tools._searxng_image_search(None, None, {"query": "cat", "inspect_images": True})
+    result = await search_tools._searxng_image_search(None, None, {"query": "cat"})
 
     assert "_vision_images" not in result
     assert result["results"][0]["img_src"] == "https://example.com/cat.jpg"
-
-
-async def test_inspect_images_reads_only_model_selected_results(monkeypatch):
-    search_tools.reset_image_inspection_budget()
-    seen = []
-
-    async def _inspect(url):
-        seen.append(url)
-        return {"block": {"type": "image", "source": {"type": "base64", "data": url}}}
-
-    monkeypatch.setattr("agent.tools.files.inspect_image_url", _inspect)
-    result = await search_tools._inspect_images(None, None, {
-        "images": [
-            {"result_id": "image-2", "img_src": "https://example.com/two.jpg", "title": "第二张"},
-            {"result_id": "image-5", "img_src": "https://example.com/five.jpg", "title": "第五张"},
-        ],
-    })
-
-    assert seen == ["https://example.com/two.jpg", "https://example.com/five.jpg"]
-    assert [item["result_id"] for item in result["_vision_images"]] == ["image-2", "image-5"]
-
-    for index in range(2):
-        result = await search_tools._inspect_images(None, None, {
-            "images": [{"result_id": f"image-{index + 9}", "img_src": f"https://example.com/{index + 9}.jpg"}],
-        })
-        assert result["inspected_count"] == 1
-
-    fourth = await search_tools._inspect_images(None, None, {
-        "images": [{"result_id": "image-11", "img_src": "https://example.com/eleven.jpg"}],
-    })
-    assert "达到 3 次上限" in fourth["error"]
-
-
-async def test_similar_image_url_counts_toward_three_call_budget(monkeypatch):
-    search_tools.reset_image_inspection_budget()
-
-    async def _inspect(url):
-        return {"block": {"type": "image", "source": {"type": "base64", "data": url}}}
-
-    monkeypatch.setattr("agent.tools.files.inspect_image_url", _inspect)
-    for index in range(3):
-        result = await search_tools._inspect_images(None, None, {
-            "images": [{"result_id": str(index), "image_url": f"https://example.com/{index}.jpg"}],
-        })
-        assert result["inspected_count"] == 1
-
-    blocked = await search_tools._inspect_images(None, None, {
-        "images": [{"result_id": "4", "image_url": "https://example.com/4.jpg"}],
-    })
-    assert "达到 3 次上限" in blocked["error"]
-
-
-async def test_inspect_images_accepts_similar_image_result_url(monkeypatch):
-    search_tools.reset_image_inspection_budget()
-    seen = []
-
-    async def _inspect(url):
-        seen.append(url)
-        return {"block": {"type": "image", "source": {"type": "base64", "data": "x"}}}
-
-    monkeypatch.setattr("agent.tools.files.inspect_image_url", _inspect)
-    result = await search_tools._inspect_images(None, None, {
-        "images": [{
-            "result_id": "similar-1",
-            "image_url": "https://example.com/similar.jpg",
-            "title": "相似候选",
-        }],
-    })
-
-    assert seen == ["https://example.com/similar.jpg"]
-    assert result["inspected_count"] == 1
-    assert result["_vision_images"][0]["result_id"] == "similar-1"
-
-
-async def test_inspect_images_rejects_more_than_twenty_targets():
-    result = await search_tools._inspect_images(None, None, {
-        "images": [{"result_id": str(index), "img_src": "https://example.com/x.jpg"} for index in range(21)],
-    })
-
-    assert "最多读取 20 张" in result["error"]
-
-
-async def test_inspect_images_can_read_historical_attachment(monkeypatch):
-    search_tools.reset_image_inspection_budget()
-    from app.core import chat_attach
-
-    async def _get_meta(user_id, attach_id):
-        return {"attach_id": attach_id, "ext": "jpeg", "storage_key": "u/.chat_staging/x.jpeg"}
-
-    async def _read_bytes(meta):
-        return b"image-bytes"
-
-    monkeypatch.setattr(chat_attach, "get_meta", _get_meta)
-    monkeypatch.setattr(chat_attach, "read_bytes", _read_bytes)
-    monkeypatch.setattr(chat_attach, "vision_block", lambda data, ext: {
-        "type": "image", "source": {"type": "base64", "data": "x"},
-    })
-
-    result = await search_tools._inspect_images(None, "user-1", {
-        "images": [{"attach_id": "abc123", "title": "历史图片"}],
-    })
-
-    assert result["_vision_images"][0]["attach_id"] == "abc123"
-
-
-async def test_inspect_images_can_read_owned_file_id(monkeypatch):
-    search_tools.reset_image_inspection_budget()
-    from app.core import chat_attach
-
-    image_file = SimpleNamespace(
-        id=2872,
-        ext="png",
-        size_bytes=4,
-        storage_key="user-a/personal/F1/quali.png",
-        display_name="quali",
-    )
-
-    async def _get_user_file(db, user_id, file_id):
-        assert db == "db"
-        assert user_id == "user-a"
-        assert file_id == 2872
-        return image_file
-
-    class _Storage:
-        async def get(self, key):
-            assert key == image_file.storage_key
-            return b"image"
-
-    monkeypatch.setattr(search_tools, "get_user_file", _get_user_file)
-    monkeypatch.setattr(search_tools, "get_storage", lambda: _Storage())
-    monkeypatch.setattr(chat_attach, "vision_ready", lambda: True)
-    monkeypatch.setattr(chat_attach, "vision_block", lambda data, ext: {
-        "type": "image", "source": {"type": "base64", "data": "x"},
-    })
-
-    result = await search_tools._inspect_images("db", "user-a", {
-        "images": [{"file_id": 2872, "title": "蒙扎排位图"}],
-    })
-
-    assert result["inspected_count"] == 1
-    assert result["_vision_images"][0]["file_id"] == 2872
-    assert result["_vision_images"][0]["title"] == "蒙扎排位图"
-
-
-async def test_inspect_images_file_id_keeps_ownership_boundary(monkeypatch):
-    async def _get_user_file(db, user_id, file_id):
-        return None
-
-    monkeypatch.setattr(search_tools, "get_user_file", _get_user_file)
-
-    result = await search_tools._inspect_images("db", "user-a", {
-        "images": [{"file_id": 999}],
-    })
-
-    assert result["inspected_count"] == 0
-    assert result["failed"] == [{"result_id": "", "file_id": 999, "error": "文件不存在"}]
 
 
 def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
@@ -421,18 +265,17 @@ def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
     assert image_properties["mode"]["enum"] == ["text", "image"]
     assert image_properties["max_results"]["minimum"] == 1
     assert image_properties["max_results"]["maximum"] == 20
-    assert "inspect_images" not in image_properties
-    assert tools["inspect_images"].input_schema["properties"]["images"]["maxItems"] == 20
-    image_item = tools["inspect_images"].input_schema["properties"]["images"]["items"]
-    assert image_item["properties"]["file_id"] == {"type": "integer"}
-    assert {"required": ["file_id"]} in image_item["anyOf"]
+    assert "inspect_images" not in tools
 
     from agent.tools.files import FilesSkill
 
     read_file = next(tool for tool in FilesSkill.tools if tool.name == "read_file")
-    assert "位图会直接交给视觉模型查看" in read_file.description
-    assert "SVG 按源码文本读取" in read_file.description
-    assert "file:///" in read_file.description
+    assert "最多 20 项" in read_file.description
+    assert "64 MiB" in read_file.description
+    assert "URL 仅允许网络图片" in read_file.description
+    assert read_file.input_schema["properties"]["attach_id"] == {"type": "string"}
+    assert "image_url" in read_file.input_schema["properties"]
+    assert read_file.input_schema["properties"]["items"]["maxItems"] == 20
 
     deep_max = tools["deep_research"].input_schema["properties"]["max_results"]
     assert deep_max["minimum"] == 1

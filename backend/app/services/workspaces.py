@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -35,6 +36,18 @@ async def get_workspace(db: AsyncSession, user_id, workspace_id: int) -> Workspa
     return await get_owned(db, Workspace, workspace_id, user_id)
 
 
+async def get_workspace_by_directory(
+    db: AsyncSession, user_id, directory_id: int,
+) -> Workspace | None:
+    """读取顶层目录创建时同步建立的 Shell 绑定。"""
+    if not workspace_shell_supported():
+        return None
+    return await db.scalar(select(Workspace).where(
+        Workspace.user_id == user_id,
+        Workspace.directory_id == directory_id,
+    ).order_by(Workspace.id).limit(1))
+
+
 def _workspace_directory_root(user_id, directory_name: str) -> Path:
     settings = get_settings()
     return (Path(settings.storage.local_path).expanduser().resolve() / str(user_id) / directory_name).resolve()
@@ -45,7 +58,7 @@ def _prepare_workspace_root(root: Path) -> None:
 
     rootless docker 下沙盒进程映射 uid 与宿主机部署用户不同，仅 chmod 0777 只
     解决「写」：文件库侧写入的 0660 文件（other 位为 0）沙盒仍读不到。这里
-    优先套用与一次性 sandbox-bootstrap 相同的 ACL 授权（含递归补齐存量文件、
+    优先套用与 sandboxd 初始化相同的 ACL 授权（含递归补齐存量文件、
     每级目录 default ACL，后续新建文件自动继承），让沙盒映射身份获得读写；
     环境不支持时（无 setfacl，或 rootless 开发环境缺少 subordinate 映射）退回与
     ensure_sandbox_root 一致的全员可写兼容取舍，目录内条目仍受容器权限约束。
@@ -213,6 +226,8 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
 
 
 async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: int) -> tuple[list[str], Path]:
+    if get_settings().storage.backend != "local":
+        raise ValueError("当前存储后端不支持本地 Workspace")
     row = await get_owned(db, WorkspaceDirectory, directory_id, user_id)
     if row is None or row.deleted_at is not None:
         raise LookupError("Workspace 不存在")
@@ -268,6 +283,34 @@ async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: in
     # commit 成功后清理失败只留下可回收 orphan 目录，不会出现"DB 说文件健在而
     # 磁盘已消失"的破坏性状态，也不会在重试删除时遗留墓碑。
     return terminal_ids, root
+
+
+async def delete_workspace_directory_with_cleanup(
+    db: AsyncSession, user_id, directory_id: int,
+) -> None:
+    """按统一的 fail-closed 顺序删除目录及物理根目录。API 与 Agent 共用此流程。"""
+    terminal_ids, root = await delete_workspace_directory(db, user_id, directory_id)
+    from agent.terminal.runtime import get_pty_manager
+
+    manager = get_pty_manager()
+    try:
+        for terminal_id in terminal_ids:
+            if manager.get(terminal_id) is not None:
+                await manager.terminate(terminal_id, force=True)
+    except Exception:
+        await db.rollback()
+        raise
+
+    await db.commit()
+    if root.exists():
+        tombstone = root.with_name(
+            f".{root.name}.deleted-{now_utc().strftime('%Y%m%d%H%M%S')}"
+        )
+        try:
+            root.rename(tombstone)
+            shutil.rmtree(tombstone, ignore_errors=True)
+        except OSError:
+            pass
 
 
 async def scan_legacy_shell_directories(db: AsyncSession, user_id=None) -> list[WorkspaceMigrationReport]:
@@ -417,7 +460,14 @@ async def update_workspace(
         normalized = name.strip()
         if not normalized:
             raise ValueError("工作区名称不能为空")
-        workspace.name = normalized
+        if workspace.kind == "directory":
+            if workspace.directory_id is None:
+                raise LookupError("工作区目录不存在")
+            await update_workspace_directory(
+                db, user_id, workspace.directory_id, name=normalized,
+            )
+        else:
+            workspace.name = normalized
     if enabled is not None:
         workspace.enabled = enabled
     await db.flush()
@@ -477,7 +527,7 @@ async def effective_shell_enabled(db: AsyncSession, user_id) -> bool:
     prefs = (await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )).scalar_one_or_none()
-    return bool(prefs and prefs.data.get("shell_enabled", False))
+    return bool(prefs.data.get("shell_enabled", True)) if prefs else True
 
 
 async def effective_shell_system_enabled(db: AsyncSession, user_id) -> bool:
@@ -493,15 +543,7 @@ async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )
     prefs = result.scalar_one_or_none()
-    return bool(prefs and prefs.data.get("shell_dangerous_enabled", False))
-
-
-async def effective_shell_autopilot_enabled(db: AsyncSession, user_id) -> bool:
-    """读取用户 Autopilot 开关；管理员总开关由调用方同时校验。"""
-    prefs = (await db.execute(
-        select(UserPreferences).where(UserPreferences.user_id == user_id)
-    )).scalar_one_or_none()
-    return bool(prefs and prefs.data.get("shell_autopilot_enabled", False))
+    return bool(prefs.data.get("shell_dangerous_enabled", True)) if prefs else True
 
 
 async def describe_session(db: AsyncSession, user_id, session_id: int) -> Workspace | None:

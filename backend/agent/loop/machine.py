@@ -3,8 +3,7 @@
 `run_loop` 是 `core.LLMRunner._run_loop` 的实现体；core 保留同名方法做兼容
 转发（LoopScope hooks 按类属性替换 `LLMRunner._run_loop`，签名不变）。循环体
 经 `_core.` 前缀引用 core 命名空间里的常量与兼容别名——这保证旧测试
-`monkeypatch.setattr(core, "_stream_round"/"MAX_TOOL_CALLS"/...)` 在迁移后
-仍然生效；Phase 6 清理时按实际引用收窄。
+`monkeypatch.setattr(core, "_stream_round")` 在迁移后仍然生效。
 """
 from __future__ import annotations
 
@@ -14,8 +13,8 @@ from typing import Any, AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
 from agent import core as _core
+from agent.errors import describe_llm_error
 from agent.loop import watchdog as _watchdog
-
 
 def _allow_tool_images(model_cfg: Any) -> bool:
     """判断工具读回的图片能否继续交给本轮实际模型。"""
@@ -38,7 +37,7 @@ async def run_loop(
     on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     reasoning_state: Any = None,
 ) -> AsyncGenerator[str, None]:
-        """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限——Anthropic 和
+        """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底——Anthropic 和
         OpenAI 两条格式共用同一份控制流，只在"怎么跑一轮/怎么把这轮结果写回历史"这几处
         调用 `driver`（`agent/_core.loop_drivers.py` 的 `AnthropicDriver`/`OpenAIDriver`）。
 
@@ -57,11 +56,10 @@ async def run_loop(
         if not hasattr(messages, "append_batch"):
             from agent.context.assembly import PromptMessages
             messages = PromptMessages(messages)
-        # 每轮对话只允许 inspect_images 对网络图片发起一次读取；历史附件不占用该额度。
-        from agent.tools import search as search_tools
-        search_tools.reset_image_inspection_budget()
+        # 每轮对话最多允许三次 read_file 调用包含网络图片；历史附件不占用该额度。
+        from agent.tools.media_reader import reset_remote_image_read_budget
+        reset_remote_image_read_budget()
         goal_mode = _core._goal_mode_enabled(session)
-        unlimited_mode = _core._unlimited_mode_enabled(session) or await _core._user_unlimited_mode_enabled(user_id)
         if goal_mode:
             if system_text:
                 system_text = f"{system_text}{_core._GOAL_POLICY}"
@@ -105,16 +103,10 @@ async def run_loop(
         pending_responses_capability_failure = None
         narration_retry = decision_retry = intent_retry = colon_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
-        budget_stop_rounds = 0  # 预算停止后模型仍坚持调工具的连续轮数（止损用）
-        repeat_round_sig: str | None = None   # 跨轮重复调用守卫：上一轮形态签名
-        repeat_round_count = 0                # 连续相同形态的轮数
-        repeat_round_nudged = False           # 是否已注入过提醒（每段重复只提醒一次）
         guard_retry_pending = False
         colon_retry_pending = False
         guard_retry_buf: list[str] = []
         tool_calls_used = 0
-        # 连续相同调用熔断状态：signature = (工具名, 归一化参数 JSON)，跨任务轮与核实轮计数
-        repeat_breaker = _core.RepeatCallBreaker(_core.MAX_IDENTICAL_CONSECUTIVE_TOOL_CALLS)
         _request_conversation = getattr(messages, "conversation", messages)
         _request_user_index = _core.last_user_index(_request_conversation)
         _user_req = (
@@ -134,6 +126,7 @@ async def run_loop(
         # 压缩判定使用最近一次 provider 请求的 context input，不能跨轮累加或沿用高水位。
         run_context_usage = 0
         run_context_usage_peak = 0
+        provider_compacted = False
         hard_budget_retries = 0
         last_compaction_no_progress_length: int | None = None
         run_id = f"run-{_core.uuid4().hex[:16]}"
@@ -153,7 +146,7 @@ async def run_loop(
 
         async def compact_context_now() -> bool:
             """压缩旧 history，并让当前 run 使用新的上下文边界。"""
-            nonlocal messages, run_start_index, last_compaction_no_progress_length
+            nonlocal messages, run_start_index, last_compaction_no_progress_length, provider_compacted
             from agent.context import compaction
 
             async def keep_generation_alive() -> None:
@@ -234,6 +227,7 @@ async def run_loop(
                 pass
             if not changed:
                 return False
+            provider_compacted = True
             if hasattr(messages, "replace_conversation"):
                 messages.replace_conversation(compacted_messages)
             else:
@@ -259,7 +253,7 @@ async def run_loop(
 
         async def apply_deterministic_compaction_fallback(reason: str) -> bool:
             """摘要压缩未生效时立即裁切，避免继续把超大上下文送入 provider。"""
-            nonlocal messages, run_start_index, last_compaction_no_progress_length
+            nonlocal messages, run_start_index, last_compaction_no_progress_length, provider_compacted
             from agent.context.budget import enforce_provider_overflow_fallback
 
             conversation = getattr(messages, "conversation", messages)
@@ -275,6 +269,7 @@ async def run_loop(
             )
             if not result.changed:
                 return False
+            provider_compacted = True
             if getattr(result, "anchor_index", None) is not None:
                 run_start_index = result.anchor_index
             protected_start_index = getattr(result, "protected_start_index", None)
@@ -320,180 +315,18 @@ async def run_loop(
 
         _context_compaction_event = [None]
 
-        async def notify_interaction(prompt, options, *, round_id_value=None) -> None:
-            """在进入等待前通知 IM 展示层；Web 仍只消费下方的流事件。"""
-            if on_interaction is None:
-                return
-            await on_interaction({
-                "prompt_id": prompt.id,
-                "kind": prompt.kind,
-                "title": prompt.title,
-                "body": prompt.body,
-                "options": options,
-                "expires_at": prompt.expires_at.isoformat(),
-                "round_id": round_id_value,
-                "force_display": True,
-            })
-
         while True:
-            _budget = _core.loop_rounds.round_budget_action(
-                round_number=round_number, verify_mode=verify_mode,
-                task_rounds=task_rounds, verify_rounds=verify_rounds,
-                unlimited_mode=unlimited_mode,
-                max_rounds=runner.max_rounds, max_verify_rounds=runner.max_verify_rounds,
-                max_absolute_rounds=_core.MAX_ABSOLUTE_ROUNDS,
-            )
-            if _budget is _core.loop_rounds.RoundBudgetAction.ABSOLUTE_LIMIT:
-                _watchdog.record_stop(
-                    run_id=run_id,
-                    round_number=round_number,
-                    reason="absolute_round_limit",
-                    limit=_core.MAX_ABSOLUTE_ROUNDS,
-                    unlimited=unlimited_mode,
-                    goal=goal_mode,
-                    task_rounds=task_rounds,
-                    verify_rounds=verify_rounds,
-                    tool_calls_used=tool_calls_used,
-                    budget_stop_rounds=budget_stop_rounds,
-                    repeat_round_count=repeat_round_count,
+            scheduled_round_limit = getattr(runner, "round_limit_per_run", None)
+            if scheduled_round_limit is not None and round_number >= scheduled_round_limit:
+                _core._log.warning(
+                    "[core] 定时任务模型轮次达到上限：used=%s limit=%s",
+                    round_number, scheduled_round_limit,
                 )
-                _core._log.error(
-                    "[core] Agent 触发绝对轮次安全上限：rounds=%s limit=%s run=%s",
-                    round_number, _core.MAX_ABSOLUTE_ROUNDS, run_id,
-                )
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': '本次任务执行轮次过多，已安全停止；请重新发起任务。'}, ensure_ascii=False)}\n\n"
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': f'定时任务达到模型轮次上限（{scheduled_round_limit} 轮）'}, ensure_ascii=False)}\n\n"
                 return
-            # 普通模式下，核实轮拥有独立预算；无限模式跳过该业务封顶。
-            # 最后一轮额外留给模型输出核实后的收束文本。
             if verify_mode:
-                if _budget is _core.loop_rounds.RoundBudgetAction.VERIFY_LIMIT:
-                    if runner.stop_on_budget:
-                        break
-                    # 与任务轮上限同款弹窗：询问是否解除本轮限制继续，
-                    # 而不是直接用兜底文案硬停止。拿不到交互通道（无
-                    # session/DB）时退回循环后的兜底文案。
-                    from app.services.interactions import create_goal_mode_prompt, wait_for_resolution
-
-                    interaction = await create_goal_mode_prompt(
-                        user_id=user_id, session_id=session_id,
-                    )
-                    if interaction is None:
-                        break
-                    prompt, options = interaction
-                    yield stream_event(
-                        "interaction_required",
-                        round_id=round_id if round_number else None,
-                        prompt_id=prompt.id,
-                        kind=prompt.kind,
-                        title=prompt.title,
-                        body=prompt.body,
-                        options=options,
-                        expires_at=prompt.expires_at.isoformat(),
-                        force_display=True,
-                    )
-                    await notify_interaction(
-                        prompt, options,
-                        round_id_value=round_id if round_number else None,
-                    )
-                    answer = await wait_for_resolution(
-                        user_id=user_id,
-                        prompt_id=prompt.id,
-                        heartbeat=lambda: _core.genstream.touch(session_id),
-                        cancel_check=lambda: _core._im_cancelled(session_id),
-                    )
-                    _answer_kind = _core.classify_interaction_answer(answer)
-                    if _answer_kind == "user_cancelled":
-                        # 用户在弹窗上主动点取消＝正常收尾：补一段收尾正文走正常
-                        # 持久化+done，不留 SSE 黑洞，也不把终止当异常。
-                        for _frame in _core._closing_frames(
-                            _core._PAUSE_CLOSE_TEXT, next_round=round_number + 1,
-                        ):
-                            yield _frame
-                        return
-                    if _answer_kind == "aborted":
-                        yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
-                        return
-                    if _answer_kind == "expired":
-                        # 弹窗过期不另造文案：落到循环后的兜底，把已完成
-                        # 内容和"请重新发起"一并交代清楚。
-                        break
-                    if _answer_kind == "resume_unlimited":
-                        # 该按钮的语义是解除本次 run 的轮次限制；核实与任务
-                        # 轮次都清零后回到同一主循环继续执行。
-                        unlimited_mode = True
-                        verify_rounds = 0
-                        task_rounds = 0
-                        yield stream_event(
-                            "_new_round",
-                            round_id=round_id if round_number else "round-0",
-                            next_round=round_number + 1,
-                        )
-                        continue
-                    break
                 verify_rounds += 1
             else:
-                if _budget is _core.loop_rounds.RoundBudgetAction.TASK_LIMIT:
-                    if runner.stop_on_budget:
-                        _core._log.warning("[core] 自动任务 LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, runner.max_rounds)
-                        yield f"data: {_core.json.dumps({'type': 'error', 'detail': f'定时任务达到模型轮次上限（{runner.max_rounds} 轮）'}, ensure_ascii=False)}\n\n"
-                        return
-                    from app.services.interactions import create_goal_mode_prompt
-
-                    interaction = await create_goal_mode_prompt(
-                        user_id=user_id, session_id=session_id,
-                    )
-                    if interaction is None:
-                        yield f"data: {_core.json.dumps({'type': 'token', 'content': f'本次已达到 {runner.max_rounds} 轮。想继续的话，请发送 /unlimited 开启无限工具调用模式，再发送“继续”。'}, ensure_ascii=False)}\n\n"
-                        return
-                    prompt, options = interaction
-                    yield stream_event(
-                        "interaction_required",
-                        round_id=round_id if round_number else None,
-                        prompt_id=prompt.id,
-                        kind=prompt.kind,
-                        title=prompt.title,
-                        body=prompt.body,
-                        options=options,
-                        expires_at=prompt.expires_at.isoformat(),
-                        force_display=True,
-                    )
-                    await notify_interaction(
-                        prompt, options,
-                        round_id_value=round_id if round_number else None,
-                    )
-                    from app.services.interactions import wait_for_resolution
-                    answer = await wait_for_resolution(
-                        user_id=user_id,
-                        prompt_id=prompt.id,
-                        heartbeat=lambda: _core.genstream.touch(session_id),
-                        cancel_check=lambda: _core._im_cancelled(session_id),
-                    )
-                    _answer_kind = _core.classify_interaction_answer(answer)
-                    if _answer_kind == "user_cancelled":
-                        # 用户主动点取消＝正常收尾：补收尾正文走正常持久化+done。
-                        for _frame in _core._closing_frames(
-                            _core._PAUSE_CLOSE_TEXT, next_round=round_number + 1,
-                        ):
-                            yield _frame
-                        return
-                    if _answer_kind == "aborted":
-                        yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
-                        return
-                    if _answer_kind == "expired":
-                        yield f"data: {_core.json.dumps({'type': 'error', 'detail': '这次继续操作已过期，请重新发起任务。'}, ensure_ascii=False)}\n\n"
-                        return
-                    if _answer_kind == "resume_unlimited":
-                        # 该按钮的语义是解除本次 run 的工具调用限制，不创建 goal
-                        # 目标任务；清零轮次后回到同一主循环继续执行。
-                        unlimited_mode = True
-                        task_rounds = 0
-                        yield stream_event(
-                            "_new_round",
-                            round_id=round_id if round_number else "round-0",
-                            next_round=round_number + 1,
-                        )
-                        continue
-                    return
                 task_rounds += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
             if await _core._im_cancelled(session_id):
@@ -570,6 +403,11 @@ async def run_loop(
                                 # span 标成 cancelled，不用等 GC 才收尾。
                                 await _round_gen.aclose()
                                 return
+                        # async for 在收到 done 后会提前退出；在当前 Task 中显式
+                        # 关闭生成器，避免 Python 把 aclose 延迟到另一个 Context 的
+                        # async_generator_athrow 任务。
+                        await _round_gen.aclose()
+                        _round_gen = None
                         break
                     except Exception as exc:
                         from agent.providers.openai_responses import ResponsesCompatibilityError
@@ -645,23 +483,9 @@ async def run_loop(
                 # 看出是上游过载还是故障，而不是只收到一句 ack（2026-09-18 529 排查后定稿）。
                 # 429 限流与 529 过载同属「上游忙」，按状态码判定、与具体 SDK 解耦
                 # （anthropic/openai 两条链路的重试用尽都落到这里）
-                from agent.providers.errors import (is_provider_http_error, upstream_status_tag,
-                                                    upstream_busy_status)
-                busy = upstream_busy_status(e)
-                provider_error = is_provider_http_error(e)
                 attempts_done = int(getattr(e, "attempt", 0) or 0)
-                tag = upstream_status_tag(e)
-                retried = f"已自动重试 {attempts_done} 次" if attempts_done > 0 else None
-                if busy:
-                    detail = f"模型服务过载（上游 {tag}）" + (f"，{retried}仍未恢复" if retried else "") + "，请稍后再试 🙏"
-                    message_key = "chatUi.providerBusyExhausted"
-                elif provider_error:
-                    detail = f"模型服务暂时不可用（上游 {tag}）" + (f"，{retried}" if retried else "") + "，请稍后重试。"
-                    message_key = "chatUi.providerUnavailable"
-                else:
-                    detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                    message_key = "chatUi.genericError"
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key, 'message_params': {'tag': tag, 'attempts': attempts_done}}, ensure_ascii=False)}\n\n"
+                error_info = describe_llm_error(e, attempts=attempts_done)
+                yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
                 if reasoning_state is not None:
@@ -703,17 +527,8 @@ async def run_loop(
                 _core.diag_log(f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
                          f"format={driver.api_format}", e)
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
-                from agent.providers.errors import is_provider_http_error, upstream_status_tag
-                provider_error = is_provider_http_error(e)
-                if provider_error:
-                    tag = upstream_status_tag(e)
-                    detail = f"模型服务暂时不可用（上游 {tag}），请稍后重试。"
-                    message_key = "chatUi.providerUnavailable"
-                else:
-                    tag = ""
-                    detail = "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-                    message_key = "chatUi.genericError"
-                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail, 'message_key': message_key, 'message_params': {'tag': tag}}, ensure_ascii=False)}\n\n"
+                error_info = describe_llm_error(e)
+                yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
 
             total_in  += result.usage_in
@@ -746,7 +561,6 @@ async def run_loop(
                 requires_tools=_requires_tools,
                 verify_mode=verify_mode,
                 goal_mode=goal_mode,
-                unlimited_mode=unlimited_mode,
                 task_rounds=task_rounds,
                 verify_rounds=verify_rounds,
                 tool_calls_used=tool_calls_used,
@@ -774,6 +588,18 @@ async def run_loop(
                                        reason="not_applied")
 
             if result.tool_calls:
+                scheduled_tool_limit = getattr(runner, "tool_call_limit_per_run", None)
+                if (
+                    getattr(runner, "fail_on_tool_call_limit", False)
+                    and scheduled_tool_limit is not None
+                    and tool_calls_used + len(result.tool_calls) > scheduled_tool_limit
+                ):
+                    _core._log.warning(
+                        "[core] 定时任务工具调用达到上限：used=%s limit=%s",
+                        tool_calls_used, scheduled_tool_limit,
+                    )
+                    yield f"data: {_core.json.dumps({'type': 'error', 'detail': f'定时任务达到工具调用上限（{scheduled_tool_limit} 次）'}, ensure_ascii=False)}\n\n"
+                    return
                 if guard_retry_pending:
                     guard_retry_pending = False
                     colon_retry_pending = False
@@ -782,105 +608,6 @@ async def run_loop(
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 dispatched = []
                 pending_interaction = None
-                repeat_breaker.begin_round()   # 熔断按轮计数：同轮多相同调用合法，跨轮重复才累积
-                remaining_tool_calls = (
-                    None if (goal_mode or unlimited_mode) else max(0, runner.max_tool_calls - tool_calls_used)
-                )
-                round_limit_exceeded = (
-                    not (goal_mode or unlimited_mode)
-                    and runner.max_rounds is not None
-                    and task_rounds >= runner.max_rounds
-                )
-                tool_budget_exceeded = (
-                    remaining_tool_calls is not None
-                    and len(result.tool_calls) > remaining_tool_calls
-                )
-                tool_budget_stop_requested = False
-                if round_limit_exceeded or tool_budget_exceeded:
-                    if runner.stop_on_budget:
-                        reason = (
-                            f"定时任务达到模型轮次上限（{runner.max_rounds} 轮）"
-                            if round_limit_exceeded
-                            else f"定时任务达到工具调用上限（{runner.max_tool_calls} 次）"
-                        )
-                        _core._log.warning("[core] 自动任务预算达到上限：%s", reason)
-                        yield f"data: {_core.json.dumps({'type': 'error', 'detail': reason}, ensure_ascii=False)}\n\n"
-                        return
-                    # 两种限制都必须在 dispatch 前暂停整批待执行请求。用户点击继续后，
-                    # 先放行这批请求，再解除对应的后续上限，避免模型看到“工具结果已失败”
-                    # 后直接总结，或把同一批工具重新规划一遍。
-                    if round_limit_exceeded:
-                        _core._log.warning("[core] LLM 轮次达到上限：rounds=%s limit=%s", task_rounds, runner.max_rounds)
-                        from app.services.interactions import create_goal_mode_prompt
-                        interaction = await create_goal_mode_prompt(
-                            user_id=user_id, session_id=session_id,
-                        )
-                    else:
-                        _core._log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, runner.max_tool_calls)
-                        from app.services.interactions import create_tool_budget_prompt
-                        interaction = await create_tool_budget_prompt(
-                            user_id=user_id, session_id=session_id,
-                        )
-                    if interaction is None:
-                        detail = (
-                            "本次已达到 30 轮。想继续的话，请发送 /unlimited 开启无限工具调用模式，再发送“继续”。"
-                            if round_limit_exceeded
-                            else "这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。"
-                        )
-                        event_type = "token" if round_limit_exceeded else "error"
-                        yield f"data: {_core.json.dumps({'type': event_type, 'content' if event_type == 'token' else 'detail': detail}, ensure_ascii=False)}\n\n"
-                        return
-                    prompt, options = interaction
-                    yield stream_event(
-                        "interaction_required",
-                        round_id=round_id,
-                        prompt_id=prompt.id,
-                        kind=prompt.kind,
-                        title=prompt.title,
-                        body=prompt.body,
-                        options=options,
-                        expires_at=prompt.expires_at.isoformat(),
-                        force_display=True,
-                    )
-                    await notify_interaction(prompt, options, round_id_value=round_id)
-                    from app.services.interactions import wait_for_resolution
-                    answer = await wait_for_resolution(
-                        user_id=user_id,
-                        prompt_id=prompt.id,
-                        heartbeat=lambda: _core.genstream.touch(session_id),
-                        cancel_check=lambda: _core._im_cancelled(session_id),
-                    )
-                    if (
-                        isinstance(answer, dict)
-                        and answer.get("status") == "cancelled"
-                        and not _core._user_cancel(answer)
-                    ):
-                        yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
-                        return
-                    if answer is None:
-                        yield f"data: {_core.json.dumps({'type': 'error', 'detail': '这次继续操作已过期，请重新发起任务。'}, ensure_ascii=False)}\n\n"
-                        return
-                    if answer.get("option_id") == "continue":
-                        # 继续执行同一批原始 tool call，不重新交给模型判断是否总结；
-                        # 同时解除轮次和工具调用上限，保持“继续”语义一致。
-                        unlimited_mode = True
-                        task_rounds = 0
-                        remaining_tool_calls = None
-                        round_limit_exceeded = False
-                        tool_budget_exceeded = False
-                    elif round_limit_exceeded:
-                        # 轮次限制下用户选择停止时，当前工具批次尚未写入历史，直接收尾；
-                        # 不再额外请求模型，避免把“停止”变成一次新的空续轮。
-                        yield f"data: {_core.json.dumps({'type': 'token', 'content': '已先停在这里，前面成功执行的调整仍然有效。'}, ensure_ascii=False)}\n\n"
-                        return
-                    else:
-                        # 拒绝时阻止这整批尚未执行的请求，并让模型在无工具模式下
-                        # 基于已取得的结果生成说明，而不是静默结束。
-                        tool_budget_stop_requested = True
-                        task_rounds = 0
-                        remaining_tool_calls = 0
-                        tool_budget_exceeded = False
-                        driver.update_tools(ctx, [], tool_snapshot=tool_snapshot)
                 for call_index, tc in enumerate(result.tool_calls):
                     raw_call_name = getattr(tc, "name", None)
                     dispatch_target, dispatch_input, protocol_error = _core._resolve_tool_call(
@@ -889,7 +616,7 @@ async def run_loop(
                     effective_tool_name = dispatch_target
                     # 工具名污染全局兜底：模型偶发把 JSON 参数写成 XML 片段拼进工具名
                     # （如 create_file"><target>…）。在名字定稿处统一抢救一次；适配器
-                    # 保留 provider 原始调用用于历史配对，UI、熔断与 dispatch 使用干净名；
+                    # 保留 provider 原始调用用于历史配对，UI 与 dispatch 使用干净名；
                     # dispatch 层另有同款兜底，覆盖
                     # use_skill 委托等不经本循环的入口。
                     if (
@@ -909,43 +636,9 @@ async def run_loop(
                     label = runner._label(effective_tool_name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
                         label = runner._label("_verify_prefix", "复查 · ") + label
-                    if tool_budget_stop_requested or (
-                        remaining_tool_calls is not None and call_index >= remaining_tool_calls
-                    ):
-                        # 仍然为 provider 的每个 tool call 补一个结果，避免留下孤儿 tool_call；
-                        # 但不再执行真实工具，随后直接结束本轮，防止模型继续扩张搜索。
-                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
-                        yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=effective_tool_name, label=label, input=dispatch_input, verify=verify_mode,
-                                           status="skipped")
-                        yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=effective_tool_name, label=label, verify=verify_mode,
-                                           status="skipped", result=_core._TOOL_BUDGET_EXHAUSTED)
-                        dispatched.append((tc, _core._TOOL_BUDGET_EXHAUSTED))
-                        continue
-                    # 连续相同调用熔断：只对显式声明 repeat_safe 的观察类工具生效
-                    # （写工具每次调用都有真实副作用、联网读取结果可能变化，都不能拦）。
-                    # 任何非 repeat_safe 的调用（含 ask_user）都会打断「连续」语义，
-                    # 重置计数——中间穿插过一次别的调用就不算连续了。
-                    if protocol_error is None and not tc.parse_error:
-                        # 连续相同调用熔断判定归 loop/tools（PRD-LLM-25 LLM25-008）。
-                        if repeat_breaker.register(tool_snapshot, effective_tool_name, dispatch_input):
-                                tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
-                                _core._log.warning(
-                                    "[core] 连续相同工具调用熔断：%s x%d（run=%s）",
-                                    effective_tool_name, repeat_breaker.count, run_id,
-                                )
-                                yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
-                                                   name=effective_tool_name, label=label, input=dispatch_input, verify=verify_mode,
-                                                   status="skipped")
-                                yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
-                                                   name=effective_tool_name, label=label, verify=verify_mode,
-                                                   status="skipped", result=_core._REPEAT_CALL_STOP_RESULT)
-                                dispatched.append((tc, _core._REPEAT_CALL_STOP_RESULT))
-                                continue
+                    tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                     tool_calls_used += 1
                     if protocol_error is not None:
-                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                         yield stream_event(
                             "tool_call", round_id=round_id, tool_call_id=tool_call_id,
                             name=effective_tool_name, label=label, input={}, verify=verify_mode,
@@ -962,7 +655,6 @@ async def run_loop(
                     if tc.parse_error:
                         # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
                         # tool_result 让模型精简参数后重发；不执行真实工具。
-                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                         yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
                                            name=effective_tool_name, label=label, input={}, verify=verify_mode,
                                            status="invalid")
@@ -1302,8 +994,7 @@ async def run_loop(
                         # 某些确认型工具是两阶段交互：确认后先完成写入，再返回
                         # ``_interaction: ask_user`` 让用户补充安全信息（例如 MCP
                         # server 凭据）。重放结果不能直接交给模型，否则模型会把
-                        # waiting_input 当成普通工具结果，重新规划同一个调用；在
-                        # unlimited 模式下这会演变成无界的 provider 请求循环。
+                            # waiting_input 当成普通工具结果，重新规划同一个调用。
                         if (
                             isinstance(replay_payload, dict)
                             and replay_payload.get("_interaction") == "ask_user"
@@ -1440,83 +1131,8 @@ async def run_loop(
                         return
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
-                # ── 跨轮重复调用守卫（unlimited 也可用，不挂在预算弹窗上）──
-                # 规律（2026-09-18 尸检）：run 卡死的形态是「每轮 ≥1 个工具调用、
-                # 且多轮形态完全一致」——run 只在无工具轮终结，重复轮永不结束。
-                if not verify_mode and not goal_mode:
-                    _rsig = _core.round_tool_signature(result.tool_calls)
-                    if _rsig is None or _rsig != repeat_round_sig:
-                        repeat_round_sig = _rsig
-                        repeat_round_count = 1 if _rsig else 0
-                        repeat_round_nudged = False
-                    else:
-                        repeat_round_count += 1
-                    if repeat_round_count >= _core._REPEAT_ROUND_LIMIT:
-                        _watchdog.record_stop(
-                            run_id=run_id,
-                            round_number=round_number,
-                            reason="repeated_round_signature",
-                            repeat_round_count=repeat_round_count,
-                            tool_calls_used=tool_calls_used,
-                            unlimited=unlimited_mode,
-                            goal=goal_mode,
-                        )
-                        _core._log.warning(
-                            "[core] 连续 %d 轮重复完全相同的工具调用，强制收束 run=%s",
-                            repeat_round_count, run_id,
-                        )
-                        stop_text = "检测到连续多轮重复相同的工具调用，我先停在这里；已完成的操作都保留。需要换一种做法的话，直接告诉我。"
-                        async for _line in _core.genstream.typed_stream(stop_text):
-                            yield _line
-                        if reasoning_state is not None:
-                            await reasoning_state.completed()
-                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
-                        return
-                    if repeat_round_count >= 3 and not repeat_round_nudged:
-                        repeat_round_nudged = True
-                        _core._log.warning(
-                            "[core] 连续 %d 轮重复相同的工具调用，注入提醒 run=%s",
-                            repeat_round_count, run_id,
-                        )
-                        messages.append_batch(driver.build_guard_followup(
-                            result, _core._REPEAT_ROUND_NUDGE,
-                        ))
-                        yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
-                        continue
-                if tool_budget_stop_requested:
-                    # 预算停止后模型仍反复输出工具调用：给一次 followup 让它收束；
-                    # 若继续坚持（工具已被摘除，任何调用都是空转），强制终结而不是
-                    # 空转到绝对轮次上限——2026-09-18 实测 MiniMax 连转 75 轮烧到
-                    # 100 轮保险丝，期间每轮 ~3s 全是占位结果。
-                    budget_stop_rounds += 1
-                    if budget_stop_rounds >= 2:
-                        _watchdog.record_stop(
-                            run_id=run_id,
-                            round_number=round_number,
-                            reason="tool_budget_stop_loop",
-                            budget_stop_rounds=budget_stop_rounds,
-                            tool_calls_used=tool_calls_used,
-                            unlimited=unlimited_mode,
-                            goal=goal_mode,
-                        )
-                        _core._log.warning(
-                            "[core] 工具预算停止后模型连续 %d 轮仍尝试调用工具，强制收束 run=%s",
-                            budget_stop_rounds, run_id,
-                        )
-                        stop_text = "工具调用额度已用完，我先停在这里；已完成的操作都保留。想继续的话，发「继续」让我接着做。"
-                        async for _line in _core.genstream.typed_stream(stop_text):
-                            yield _line
-                        if reasoning_state is not None:
-                            await reasoning_state.completed()
-                        yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
-                        return
-                    messages.append_batch(driver.build_followup(
-                        result, _core._TOOL_BUDGET_STOP_PROMPT,
-                    ))
-                    yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
-                    continue
                 # 工具结果已经入历史，直接进入下一轮。增删改工具不再自动注入复查提示；
-                # 守卫（预算、重复调用、工具意图和失败回执）仍在本轮及下一轮生效。
+                # 工具意图和失败回执守卫仍在本轮及下一轮生效。
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
@@ -1649,28 +1265,13 @@ async def run_loop(
                     user_id=user_id, session_id=session_id, run_id=run_id, ai=ai,
                     system_prompt=system_text or "", tools=getattr(ctx, "tools", None),
                     messages=messages, reply_text=_final_text,
+                    provider_context_input=run_context_usage or None,
+                    provider_compacted=provider_compacted,
                 )
             except Exception as exc:
                 _core.diag_log("agent.context.reflection_snapshot.capture", exc)
 
             # 正文已经确定后立即结束本轮；90% 压缩已在 provider round 返回后同步完成。
-            yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
-            if reasoning_state is not None:
-                await reasoning_state.completed()
-            return
-
-        # 核实预算耗尽的兜底收尾：无交互通道、弹窗过期或用户未选继续时落到这里。
-        # 最后一轮可能刚完成工具调用，还没有机会生成自然语言收尾；不能让 runner
-        # 把这个正常的安全停止误判成“工具结果已返回，但后续回复没有完成”。
-        # 核实阶段的过程文字仍然只留在缓冲区，不能在这里泄漏给用户。
-        if (
-            not unlimited_mode
-            and runner.max_verify_rounds is not None
-            and verify_rounds >= runner.max_verify_rounds
-        ):
-            fallback = "已提交前面成功执行的调整；核实轮次已达到上限，未完成的步骤请重新发起。"
-            async for _line in _core.genstream.typed_stream(fallback):
-                yield _line
             yield f"data: {_core.json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage_peak, 'output': total_out, 'cache_read': total_cache, 'cache_write': total_cache_write})}\n\n"
             if reasoning_state is not None:
                 await reasoning_state.completed()

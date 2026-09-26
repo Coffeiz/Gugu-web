@@ -1,9 +1,9 @@
 <template>
   <BaseModal :show="show" width="520px" background="var(--file-dialog-modal-bg)" @close="handleClose">
       <div class="modal">
-        <div class="modal-header">
+        <div class="modal-header card-close-anchor">
           <h2>{{ t('filesUi.uploadTitle') }}</h2>
-          <CloseButton @click="handleClose" />
+          <CloseButton card-corner @click="handleClose" />
         </div>
 
         <div class="modal-body">
@@ -443,7 +443,7 @@ async function handleUpload() {
 .modal { display: contents; color: var(--content-primary); }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 20px 24px 16px; border-bottom: 1px solid var(--file-dialog-divider); flex-shrink: 0;
+  padding: 20px var(--card-close-safe-area) 16px 24px; border-bottom: 1px solid var(--file-dialog-divider); flex-shrink: 0;
 }
 .modal-header h2 { font-size: 16px; font-weight: 700; color: var(--content-primary); }
 .modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }

@@ -510,7 +510,7 @@ export interface MindNoteUpdate {
 }
 /** `[[` 补全候选：type+id 是写进正文的稳定锚点，label 只作展示 */
 export interface MindRefSuggestItem {
-  type: 'project' | 'file' | 'folder' | 'event' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
+  type: 'project' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
   // mcp 引用的 id 是 UUID 字符串（user_mcp_servers 主键），其余是 int 自增
   id: number | string
   label: string
@@ -573,6 +573,7 @@ export const mindApi = {
   deleteNote: (id: number, meta?: RequestMeta)                       => del(`/mind/notes/${id}`, meta),
   refSuggest: (q: string, limit = 6) =>
     get<MindRefSuggestItem[]>(`/mind/ref-suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
+  canvasNoteLocation: (nodeId: number) => get<{ canvasId: number }>(`/mind/nodes/${nodeId}/canvas-location`),
   listCanvases: () => get<MindCanvas[]>('/mind/canvases'),
   createCanvas: (data: { title?: string; projectId?: number | null } = {}) =>
     post<MindCanvas>('/mind/canvases', data),
@@ -679,7 +680,7 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
+  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; automaticModeGlobalEnabled: boolean; userAutomaticModeEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
   create: (data: { name: string; kind: 'folder' | 'project' | 'directory'; folderId?: number; projectId?: number; directoryId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
@@ -810,8 +811,14 @@ export const agentApi = {
   listSessions:    ()                  => get('/agent/sessions'),
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get<{ thinking?: string[]; contextCompacting?: string[] }>('/agent/ui-labels'),
-  greeting:        (locale: SupportedLocale = getLocale()) => get(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
-  getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  greeting:        (locale: SupportedLocale = getLocale()) => get<{ text?: string; enabled?: boolean }>(`/agent/greeting?locale=${encodeURIComponent(locale)}`), // 对话框默认问候（咕咕据近期记忆生成）
+  getMessages:     (sessionId: string, afterId?: number, limit?: number) => {
+    const params = new URLSearchParams()
+    if (afterId != null) params.set('after_id', String(afterId))
+    if (limit != null) params.set('limit', String(limit))
+    const query = params.toString()
+    return get(`/agent/sessions/${sessionId}/messages${query ? `?${query}` : ''}`)
+  },
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
   updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>

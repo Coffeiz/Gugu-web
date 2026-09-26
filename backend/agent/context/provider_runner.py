@@ -46,6 +46,7 @@ async def complete_messages(
     """
     from agent.llm.llm_select import use_anthropic_for
     from agent.llm.modelctx import effective_ai
+    from agent import providers
 
     ai = effective_ai(settings)
     use_anthropic = use_anthropic_for(ai)
@@ -54,6 +55,17 @@ async def complete_messages(
         text = await _anthropic(sys, user, ai, max_tokens,
                                 settings=settings, history=history, tools=tools,
                                 align_with_main_run=True, usage_sink=usage_sink)
+        return _parse_json(text) if json_mode else text
+    if providers.adapter_for(ai).protocol_format(ai) == "responses":
+        from agent.providers.openai_responses import complete_branch
+
+        text = await complete_branch(
+            sys, history, user, ai, settings,
+            max_output_tokens=max_tokens,
+            tools=tools,
+            json_mode=json_mode,
+            usage_sink=usage_sink,
+        )
         return _parse_json(text) if json_mode else text
     text = await _openai(sys, user, ai, max_tokens, json_mode=json_mode,
                          thinking=thinking, settings=settings, history=history,
@@ -113,6 +125,12 @@ async def _anthropic(
     if supports_anthropic_active_cache(ai) and sys:
         system = [{"type": "text", "text": sys, "cache_control": {"type": "ephemeral"}}]
     messages = list(history or [])
+    if messages:
+        from agent.context.provider_history import sanitize_anthropic_branch_history
+
+        # 主对话在 Anthropic driver 入口清理历史；后台追加分支不会经过该入口，
+        # 因此在这里复用同一套边界清洗，避免 reasoning_content 和不配对工具事件触发 400。
+        messages = sanitize_anthropic_branch_history(messages)
     if messages:
         # 追加式分支在「历史末尾 + 追加指令之前」打第二个断点：与主 run 的
         # 「固定前缀 + 末尾断点」口径一致，前缀部分才能整段命中。
@@ -194,6 +212,8 @@ async def _openai(
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     adapter = providers.adapter_for(ai)
+    from agent.providers.message_utils import merge_openai_system_messages
+    kwargs["messages"] = merge_openai_system_messages(kwargs["messages"])
     if tools:
         # 与主 run 同款：OpenAI 兼容端要把工具声明一起发，才能命中同一份前缀缓存。
         kwargs.update(adapter.build_tool_params(ai, tools))

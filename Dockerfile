@@ -5,7 +5,6 @@
 #
 # 产物只含生产运行时：不含前端源码、前端 node_modules、pnpm 缓存、测试代码与 docs/；
 # 仅保留 TS RAG worker 所需的 Linux x64 native node_modules。
-# 本地构建前先运行 `sh scripts/release/build-sandbox-bundle.sh`；发布流水线自动注入该归档。
 # 平台：linux/amd64（多架构暂不支持，见 PRD-DEPLOY-1）。
 
 # ── Stage 1：前端构建 ────────────────────────────────────────────────────────
@@ -70,12 +69,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 # ── Stage 3：后端生产运行时 + 前端静态产物 ──────────────────────────────────
-# 钉住明确版本；sandbox-bootstrap/sandboxd 仍需要 Docker CLI，应用服务本身不挂载 Docker socket。
+# Docker CLI 供受控更新器及 Compose 沙盒服务使用；单容器部署不启动 sandboxd，沙盒由独立 Compose 服务提供。
 FROM python:3.14-slim-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
-ARG GUGU_VERSION=unknown
-ARG GUGU_REVISION=unknown
 
 RUN sed -i \
         -e "s|https\?://deb.debian.org/debian|${APT_MIRROR}/debian|g" \
@@ -133,8 +130,6 @@ WORKDIR /app
 ENV PATH=/opt/venv/bin:${PATH} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-LABEL org.opencontainers.image.version="${GUGU_VERSION}" \
-    org.opencontainers.image.revision="${GUGU_REVISION}"
 COPY --from=backend-deps /opt/venv /opt/venv
 
 # 只复制运行时所需的后端模块和迁移文件，明确排除 tests/、test_*.py、docs/ 等。
@@ -149,10 +144,10 @@ COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY backend/compose_bootstrap.py ./compose_bootstrap.py
 COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
+COPY backend/scripts/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py
+COPY backend/scripts/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
+COPY backend/scripts/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
 COPY squid/egress.conf /opt/gugu/egress.conf
-# 发布流水线把已扫描的 Sandbox 执行镜像随一体化镜像打包；bootstrap 会导入目标 daemon。
-COPY docker/sandbox/bundle/sandbox-image.tar.gz /opt/gugu/sandbox/sandbox-image.tar.gz
-COPY docker/sandbox/bundle/image-id /opt/gugu/sandbox/image-id
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
@@ -176,18 +171,20 @@ RUN mkdir -p /usr/local/libexec/docker/cli-plugins /opt/gugu-updater/scripts/rel
     && chmod 0755 /usr/local/libexec/docker/cli-plugins/docker-compose \
     && docker compose version
 COPY scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/compose-update.sh
+COPY scripts/release/split-compose-update.sh /opt/gugu-updater/scripts/release/split-compose-update.sh
 COPY scripts/release/validate-update-manifest.mjs /opt/gugu-updater/scripts/release/validate-update-manifest.mjs
 COPY deploy/update-manifest.schema.json /opt/gugu-updater/deploy/update-manifest.schema.json
-RUN chmod 0755 /opt/gugu-updater/scripts/release/compose-update.sh
+RUN chmod 0755 /opt/gugu-updater/scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/split-compose-update.sh
 RUN cd /app && python3 -c "import updater.daemon, updater.client"
 
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf
 RUN mkdir -p logs \
+    && find /app -type f -name '._*' -delete \
     && find ./static -type d -exec chmod 755 {} + \
     && find ./static -type f -exec chmod 644 {} + \
-    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py \
+    && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py /usr/local/bin/gugu-wait-embedded-postgres.sh /usr/local/bin/gugu-wait-embedded-redis.sh \
     && test ! -e /app/.venv \
     && test ! -e /app/ts \
     && test ! -e /app/tests \
@@ -231,6 +228,8 @@ ENV DB__HOST=postgres \
     CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
     GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
     GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
+    SANDBOX__ROOTLESS_REQUIRED=false \
+    SANDBOX__ENABLED=false \
     # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
     GUGU_EMBEDDED_DEPS=1
 
@@ -242,7 +241,14 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD curl -sf http://127.0.0.1:9595/health || exit 1
 
 # 复用与 Dockerfile.prod 相同的入口：等数据库就绪 → 迁移 → 执行传入命令。
-# 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway；sandboxd
-# 服务显式清空入口。
+# 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway。
+# 沙盒执行服务只由 Compose 单独启动；直接运行一体化镜像不会托管 sandboxd。
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
+
+# 版本号和提交 SHA 每次构建都会变化，只在最终镜像元数据中使用。
+# 放在所有文件系统层之后，避免每次提交都使运行时依赖和应用文件层失效。
+ARG GUGU_VERSION=unknown
+ARG GUGU_REVISION=unknown
+LABEL org.opencontainers.image.version="${GUGU_VERSION}" \
+    org.opencontainers.image.revision="${GUGU_REVISION}"

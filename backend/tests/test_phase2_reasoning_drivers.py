@@ -149,16 +149,28 @@ def test_chat_completions_projection_strips_responses_item_metadata():
     assert messages[0]["tool_calls"][0]["responses_item_id"] == "fc_456"
 
 
-def test_anthropic_state_extract_restore_is_exact_and_provider_only():
+def test_anthropic_state_extract_restore_keeps_thinking_blocks_only():
     driver = AnthropicDriver()
     state = driver.extract_provider_state(_anthropic_result())
     assert state["state_kind"] == "anthropic_thinking_blocks"
-    assert state["payload"]["blocks"] == _anthropic_result().raw
+    assert state["payload"]["blocks"] == _anthropic_result().raw[:2]
     assert state["summary"]["thinking_block_count"] == 2
 
     ctx = SimpleNamespace(restored_blocks=None)
     assert driver.restore_provider_state(ctx, state["payload"])
-    assert ctx.restored_blocks == _anthropic_result().raw
+    assert ctx.restored_blocks == _anthropic_result().raw[:2]
+    assert all(block["type"] != "tool_use" for block in ctx.restored_blocks)
+
+
+def test_anthropic_state_restore_drops_persisted_tool_use_only_payload():
+    """跨请求恢复不能把已写入历史的 tool_use 再插入当前请求。"""
+    ctx = SimpleNamespace(restored_blocks=None)
+    assert not AnthropicDriver().restore_provider_state(ctx, {
+        "blocks": [{
+            "type": "tool_use", "id": "call-duplicate", "name": "probe", "input": {},
+        }],
+    })
+    assert ctx.restored_blocks is None
 
 
 def test_chat_completions_does_not_claim_responses_continuation():
@@ -214,6 +226,7 @@ def test_responses_usage_normalizes_cached_input_tokens():
 
     assert usage == {
         "input": 40,
+        "fresh_input": 40,
         "output": 8,
         "cache_read": 60,
         "cache_write": 0,
@@ -552,7 +565,7 @@ async def test_responses_driver_only_classifies_explicit_compatibility_errors(
 
 
 def test_responses_driver_keeps_tool_images_as_input_image_items():
-    """Responses continuation 不能丢掉 read_file/inspect_images 返回的图片。"""
+    """Responses continuation 不能丢掉 read_file 返回的图片。"""
     result = RoundResult(
         text="",
         raw=_ResponsesRaw(
