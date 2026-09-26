@@ -583,6 +583,86 @@ class TestCompactContext:
         assert called is False
 
     @pytest.mark.asyncio
+    async def test_reflection_uses_provider_usage_instead_of_early_local_estimate(self, monkeypatch):
+        """主请求实际输入未到 90% 时，反思估算偏高也不能提前压缩。"""
+        calls = []
+
+        async def fake_compact(*args, **kwargs):
+            calls.append((args, kwargs))
+            return True
+
+        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compact)
+        monkeypatch.setattr(
+            compress_conv.ContextBudget, "from_messages",
+            classmethod(lambda *_args, **_kwargs: pytest.fail("有实际用量时不应调用本地估算")),
+        )
+        model = _model_cfg(context_tokens=128_000, max_tokens=16_000)
+        snapshot = SimpleNamespace(
+            provider_context_input=81_515,
+            provider_compacted=False,
+            system_prompt="系统提示" * 5000,
+            history=[{"role": "user", "content": "旧对话" * 40000}],
+        )
+        kwargs = dict(snapshot=snapshot, extra_text="待反思消息" * 3000, model_cfg=model)
+
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
+        ) == "not_needed"
+        assert calls == []
+
+        snapshot.provider_context_input = 115_200
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
+        ) == "compacted"
+        assert len(calls) == 1
+
+        snapshot.provider_compacted = True
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
+        ) == "not_needed"
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider_input", [None, 0])
+    async def test_reflection_estimates_only_when_provider_usage_is_unavailable(
+        self, monkeypatch, provider_input,
+    ):
+        """没有有效 provider 输入量才走本地兜底；已压缩快照不能重复触发。"""
+        estimated = []
+        compacted = []
+
+        def fake_budget(_cls, context_tokens, messages, **kwargs):
+            estimated.append((context_tokens, messages, kwargs))
+            return SimpleNamespace(total_tokens=115_200, soft_limit_tokens=115_200)
+
+        async def fake_compact(*args, **kwargs):
+            compacted.append((args, kwargs))
+            return True
+
+        monkeypatch.setattr(
+            compress_conv.ContextBudget, "from_messages", classmethod(fake_budget),
+        )
+        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compact)
+        snapshot = SimpleNamespace(
+            provider_context_input=provider_input, provider_compacted=False,
+            system_prompt="系统提示", history=[{"role": "user", "content": "旧对话"}],
+        )
+        model = _model_cfg(context_tokens=128_000, max_tokens=16_000)
+
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()),
+            snapshot=snapshot, model_cfg=model,
+        ) == "compacted"
+        assert len(estimated) == len(compacted) == 1
+
+        snapshot.provider_compacted = True
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()),
+            snapshot=snapshot, model_cfg=model,
+        ) == "not_needed"
+        assert len(estimated) == len(compacted) == 1
+
+    @pytest.mark.asyncio
     async def test_reflection_compaction_never_claims_running_session(self, db, user_a):
         session = ConversationSession(
             user_id=user_a.id,

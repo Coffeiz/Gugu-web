@@ -64,6 +64,20 @@ def test_capture_and_peek_roundtrip_excludes_dynamic_tail():
     assert snapshot.revision
 
 
+def test_capture_preserves_provider_usage_for_reflection_threshold():
+    """主请求实际用量和已压缩状态必须进入同进程反思快照。"""
+    snapshot = capture_reflection_snapshot(
+        user_id="u1", session_id=7, run_id="run-x", ai=_ai(),
+        system_prompt="SYS", tools=(), messages=_messages("合成提问"),
+        reply_text="合成回复", provider_context_input=81_515,
+        provider_compacted=True,
+    )
+    assert snapshot is not None
+    assert snapshot.provider_context_input == 81_515
+    assert snapshot.provider_compacted is True
+    assert peek_reflection_snapshot("u1", 7) is snapshot
+
+
 def test_peek_requires_same_user_and_session():
     capture_reflection_snapshot(
         user_id="u1", session_id=7, run_id=None, ai=_ai(), system_prompt="S",

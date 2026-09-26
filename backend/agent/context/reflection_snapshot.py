@@ -44,6 +44,10 @@ class ReflectionSnapshot:
     # digest(history)：快照自洽指纹；消费前重算比对可发现进程内篡改/损坏。
     revision: str
     created_at: float
+    # 主 run 最后一轮 provider 返回的完整输入量；反思预检以此作为权威阈值依据。
+    provider_context_input: int | None = None
+    # 本轮已经完成压缩时，快照的历史是新边界，旧 usage 不得再次触发压缩。
+    provider_compacted: bool = False
 
 
 _snapshots: "OrderedDict[tuple[str, int], ReflectionSnapshot]" = OrderedDict()
@@ -72,6 +76,8 @@ def capture_reflection_snapshot(
     tools,
     messages: Any,
     reply_text: str,
+    provider_context_input: int | None = None,
+    provider_compacted: bool = False,
 ) -> ReflectionSnapshot | None:
     """主 run 成功收尾时捕获快照；任何异常都不能打断主流程（调用方亦应兜底）。"""
     try:
@@ -102,6 +108,8 @@ def capture_reflection_snapshot(
             history=history,
             revision=digest({"history": history}),
             created_at=time.monotonic(),
+            provider_context_input=provider_context_input,
+            provider_compacted=provider_compacted,
         )
         _snapshots[(snapshot.user_id, snapshot.session_id)] = snapshot
         _snapshots.move_to_end((snapshot.user_id, snapshot.session_id))

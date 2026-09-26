@@ -510,11 +510,11 @@ async def compact_for_reflection(
     model_cfg=None,
     cache_snapshot=None,
 ) -> str:
-    """反思前按全局模型预算检查，并复用正式 baseline 压缩。
+    """反思前优先按主请求实际用量检查，并复用正式 baseline 压缩。
 
-    反思可能由静默群消息触发，期间没有普通 run 帮它按 provider usage 触发
-    压缩。因此这里只做一个保守的本地预检；真正的历史裁剪、摘要和持久化仍
-    统一委托给 ``compress_if_needed``。返回 ``compacted``、``not_needed`` 或
+    同进程快照带有最近一轮 provider context input；无快照用量的静默群消息
+    或重启接管才使用本地估算。历史裁剪、摘要和持久化仍统一委托给
+    ``compress_if_needed``。返回 ``compacted``、``not_needed`` 或
     ``blocked``；超预算但会话当前不适合后台写 baseline 时，调用方必须跳过
     provider，不得退回另一套反思专用截断逻辑。
     """
@@ -526,19 +526,34 @@ async def compact_for_reflection(
     context_tokens = int(getattr(model_cfg, "context_tokens", 0) or 0)
     if context_tokens <= 0:
         return "not_needed"
-    output_reserve = min(max(1, int(getattr(model_cfg, "max_tokens", 900) or 900)), 900)
-    budget = ContextBudget.from_messages(
-        context_tokens,
-        getattr(snapshot, "history", ()) or (),
-        system_text=getattr(snapshot, "system_prompt", "") or "",
-        current_turn_tokens=estimate_tokens(extra_text or ""),
-        output_reserve_tokens=output_reserve,
-    )
-    if budget.total_tokens < budget.soft_limit_tokens:
+    soft_limit = int(context_tokens * AUTO_COMPACTION_RATIO)
+    if getattr(snapshot, "provider_compacted", False):
         return "not_needed"
+    provider_input = getattr(snapshot, "provider_context_input", None)
+    if provider_input is not None and int(provider_input) > 0:
+        # 同进程主 run 已按 provider usage 完成每轮 90% 判定；快照可能在压缩后
+        # 才捕获，不能拿压缩前的 usage 对新历史重复压缩。
+        if int(provider_input) < soft_limit:
+            return "not_needed"
+        observed_tokens = int(provider_input)
+        source = "provider"
+    else:
+        # 静默群消息、重启接管或 provider 未上报正数 usage，只能做保守预检。
+        output_reserve = min(max(1, int(getattr(model_cfg, "max_tokens", 900) or 900)), 900)
+        budget = ContextBudget.from_messages(
+            context_tokens,
+            getattr(snapshot, "history", ()) or (),
+            system_text=getattr(snapshot, "system_prompt", "") or "",
+            current_turn_tokens=estimate_tokens(extra_text or ""),
+            output_reserve_tokens=output_reserve,
+        )
+        if budget.total_tokens < budget.soft_limit_tokens:
+            return "not_needed"
+        observed_tokens = budget.total_tokens
+        source = "estimate"
     logger.info(
-        "[reflection-compaction] session=%s total_tokens=%s soft_limit_tokens=%s context_tokens=%s",
-        session_id, budget.total_tokens, budget.soft_limit_tokens, context_tokens,
+        "[reflection-compaction] session=%s source=%s total_tokens=%s soft_limit_tokens=%s context_tokens=%s",
+        session_id, source, observed_tokens, soft_limit, context_tokens,
     )
     compacted = await compress_if_needed(
         session_id,
@@ -549,6 +564,34 @@ async def compact_for_reflection(
         cache_snapshot=cache_snapshot or snapshot,
     )
     return "compacted" if compacted else "blocked"
+
+
+def _same_history_message(left: dict, right: dict) -> bool:
+    """验证回放语义，允许纯文本在字符串与单 text block 间转换。"""
+    if left == right:
+        return True
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+
+    def plain_text(value):
+        if isinstance(value, str):
+            return value
+        if (isinstance(value, list) and len(value) == 1
+                and isinstance(value[0], dict)
+                and value[0].get("type") == "text"
+                and isinstance(value[0].get("text"), str)
+                and set(value[0]) <= {"type", "text", "cache_control"}
+                and ("cache_control" not in value[0]
+                     or value[0]["cache_control"] == {"type": "ephemeral"})):
+            return value[0]["text"]
+        return None
+
+    left_text = plain_text(left.get("content"))
+    right_text = plain_text(right.get("content"))
+    if left_text is None or left_text != right_text:
+        return False
+    return ({key: value for key, value in left.items() if key != "content"}
+            == {key: value for key, value in right.items() if key != "content"})
 
 
 async def _snapshot_cache_prefix(
@@ -602,39 +645,40 @@ async def _snapshot_cache_prefix(
             row for row in rows
             if row.role != "summary" and int(row.id) > effective_baseline
         ]
+        selected_ids = sorted(int(value) for value in compressed_message_ids)
+        if not selected_ids:
+            return None
+        # 只验证将要压缩的连续前缀。保留尾部可能包含本 run 的工具结果或
+        # provider-only 形态，不能因尾部重建差异放弃已经对齐的缓存前缀。
+        selected_rows = [
+            row for row in source_rows
+            if row.role != "summary" and int(row.id) <= selected_ids[-1]
+        ]
+        if [int(row.id) for row in selected_rows] != selected_ids:
+            return None
+        # 主会话 session_history 按 (created_at, id) 装载；并发持久化时
+        # 自增 id 与创建时间可能交错，压缩前缀必须重放主会话的顺序。
+        selected_rows.sort(key=lambda row: (row.created_at, int(row.id)))
+        prefix_rows = ([latest_summary] if latest_summary is not None else []) + selected_rows
         parts: list[dict] = []
-        row_ends: dict[int, int] = {}
         use_anthropic = use_anthropic_for(model_cfg)
-        for row in source_rows:
+        for row in prefix_rows:
             row_parts = build_history_parts(
                 [row], request, use_anthropic=use_anthropic, user_tz=user_tz,
             )
             parts.extend(row_parts)
-            if row.role != "summary":
-                row_ends[int(row.id)] = len(parts)
-
-        selected_ids = sorted(int(value) for value in compressed_message_ids)
-        if not parts or not selected_ids or any(value not in row_ends for value in selected_ids):
-            return None
-        # baseline 只能覆盖一段连续的持久化前缀；遇到缺口或被截断历史就退回旧路径。
-        selected_id_set = set(selected_ids)
-        selected_rows = [
-            row for row in source_rows
-            if row.role != "summary" and int(row.id) in selected_id_set
-        ]
-        if [int(row.id) for row in selected_rows] != selected_ids:
+        if not parts:
             return None
         start_at = next(
             (index for index in range(len(snapshot.history) - len(parts) + 1)
-             if list(snapshot.history[index:index + len(parts)]) == parts),
+             if all(_same_history_message(actual, persisted)
+                    for actual, persisted in zip(
+                        snapshot.history[index:index + len(parts)], parts))),
             None,
         )
         if start_at is None:
             return None
-        end_at = row_ends[selected_ids[-1]]
-        if end_at <= 0 or end_at > len(parts):
-            return None
-        return list(snapshot.history[:start_at + end_at])
+        return list(snapshot.history[:start_at + len(parts)])
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.context.compress_conv.snapshot_prefix", exc)
@@ -702,6 +746,41 @@ async def _compress_if_needed_unlocked(
     if not to_compress:
         return False
 
+    from agent.llm.modelctx import effective_ai
+
+    model_cfg = effective_ai(settings)
+    cache_prefix = None
+    if not reuse_summary and cache_snapshot is not None:
+        # 持久化工具轮次可能与主 run 的最后几条消息结构不同；把未对齐的
+        # 截点留在近期尾部，优先使用已经精确验证过的主请求前缀。
+        backtracked_chars = 0
+        for count in range(split_idx, max(0, split_idx - 8), -1):
+            candidate = all_msgs[:count]
+            cache_prefix = await _snapshot_cache_prefix(
+                cache_snapshot,
+                session,
+                rows,
+                user_id,
+                model_cfg,
+                baseline_id,
+                {int(message.id) for message in candidate},
+            )
+            if cache_prefix is not None:
+                to_compress = candidate
+                if count != split_idx:
+                    logger.info(
+                        "[compress_conv] session=%s 缓存前缀截点前移 %s 条",
+                        session_id, split_idx - count,
+                    )
+                break
+            if count <= 1:
+                break
+            removed = all_msgs[count - 1]
+            raw = removed.content_json if removed.content_json is not None else removed.content
+            backtracked_chars += len(content_text(raw))
+            if backtracked_chars > _RECENT_HISTORY_KEEP_CHARS:
+                break
+
     # 统一读取普通正文和 content_json，工具轮次不能因为正文不在 content 而丢失。
     # content_items 给本地有界兜底用；history_messages 重建出角色序列给追加式摘要用。
     content_items: list[str] = []
@@ -723,9 +802,6 @@ async def _compress_if_needed_unlocked(
         _generate_append_summary,
         resolve_compaction_limits,
     )
-    from agent.llm.modelctx import effective_ai
-    model_cfg = effective_ai(settings)
-
     limits = resolve_compaction_limits(model_cfg=model_cfg)
     if reuse_summary:
         # run 内压缩刚生成过同一批历史的摘要（且那次分支请求命中了缓存），
@@ -733,15 +809,6 @@ async def _compress_if_needed_unlocked(
         summary = reuse_summary
         compression_mode = "run-reuse"
     else:
-        cache_prefix = await _snapshot_cache_prefix(
-            cache_snapshot,
-            session,
-            rows,
-            user_id,
-            model_cfg,
-            baseline_id,
-            {int(message.id) for message in to_compress},
-        )
         if cache_prefix is not None:
             from agent.context.prefix_history import render_branch_prefix
             from agent import providers

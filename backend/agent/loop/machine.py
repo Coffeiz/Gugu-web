@@ -126,6 +126,7 @@ async def run_loop(
         # 压缩判定使用最近一次 provider 请求的 context input，不能跨轮累加或沿用高水位。
         run_context_usage = 0
         run_context_usage_peak = 0
+        provider_compacted = False
         hard_budget_retries = 0
         last_compaction_no_progress_length: int | None = None
         run_id = f"run-{_core.uuid4().hex[:16]}"
@@ -145,7 +146,7 @@ async def run_loop(
 
         async def compact_context_now() -> bool:
             """压缩旧 history，并让当前 run 使用新的上下文边界。"""
-            nonlocal messages, run_start_index, last_compaction_no_progress_length
+            nonlocal messages, run_start_index, last_compaction_no_progress_length, provider_compacted
             from agent.context import compaction
 
             async def keep_generation_alive() -> None:
@@ -226,6 +227,7 @@ async def run_loop(
                 pass
             if not changed:
                 return False
+            provider_compacted = True
             if hasattr(messages, "replace_conversation"):
                 messages.replace_conversation(compacted_messages)
             else:
@@ -251,7 +253,7 @@ async def run_loop(
 
         async def apply_deterministic_compaction_fallback(reason: str) -> bool:
             """摘要压缩未生效时立即裁切，避免继续把超大上下文送入 provider。"""
-            nonlocal messages, run_start_index, last_compaction_no_progress_length
+            nonlocal messages, run_start_index, last_compaction_no_progress_length, provider_compacted
             from agent.context.budget import enforce_provider_overflow_fallback
 
             conversation = getattr(messages, "conversation", messages)
@@ -267,6 +269,7 @@ async def run_loop(
             )
             if not result.changed:
                 return False
+            provider_compacted = True
             if getattr(result, "anchor_index", None) is not None:
                 run_start_index = result.anchor_index
             protected_start_index = getattr(result, "protected_start_index", None)
@@ -1262,6 +1265,8 @@ async def run_loop(
                     user_id=user_id, session_id=session_id, run_id=run_id, ai=ai,
                     system_prompt=system_text or "", tools=getattr(ctx, "tools", None),
                     messages=messages, reply_text=_final_text,
+                    provider_context_input=run_context_usage or None,
+                    provider_compacted=provider_compacted,
                 )
             except Exception as exc:
                 _core.diag_log("agent.context.reflection_snapshot.capture", exc)

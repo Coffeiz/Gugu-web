@@ -1,9 +1,12 @@
 """agent/loop 模块纯单元测试（PRD-LLM-25 §3.1 / LLM25-005/006）。"""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from agent.loop import rounds
+from agent.loop.provider import provider_context_usage
 from agent.loop.events import EventSequencer, artifact_sse
 from agent.loop.models import PendingInteraction, RoundOutcome, RunState
 
@@ -21,6 +24,25 @@ def test_usage_compaction_due_uses_threshold_and_no_progress_guard():
     assert rounds.usage_compaction_due(run_context_usage=threshold, context_tokens=tokens, no_progress=False) is True
     # context_tokens 缺失按 1 处理不会除零
     assert rounds.usage_compaction_due(run_context_usage=10**9, context_tokens=0) is True
+
+
+def test_provider_full_input_controls_128k_compaction_threshold():
+    """缓存读取也占上下文；只有本次完整输入达到 115,200 才触发。"""
+    driver = SimpleNamespace(api_format="anthropic")
+    below = SimpleNamespace(
+        usage_in=20_000, cache_tokens=95_199, cache_write_tokens=0,
+    )
+    at_threshold = SimpleNamespace(
+        usage_in=20_000, cache_tokens=95_200, cache_write_tokens=0,
+    )
+    assert rounds.usage_compaction_due(
+        run_context_usage=provider_context_usage(driver, below),
+        context_tokens=128_000,
+    ) is False
+    assert rounds.usage_compaction_due(
+        run_context_usage=provider_context_usage(driver, at_threshold),
+        context_tokens=128_000,
+    ) is True
 
 
 def test_rolling_compaction_window_keeps_last_ten_completed_rounds():

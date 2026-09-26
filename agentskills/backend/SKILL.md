@@ -43,6 +43,13 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 ## LLM Prompt 缓存策略
 
+### Token 用量与压缩触发口径
+
+- 触发上下文压缩、判断模型上下文占用时，**优先使用同一模型、同一请求最近一次 provider 返回的实际输入量**；缓存读取和缓存写入的输入 token 都属于上下文，须按 provider adapter 归一化后的 `fresh input + cache read + cache write` 计算。不得使用累计多轮用量或仅用未命中缓存的 input 代替当前请求的完整输入。
+- 已有有效 provider 用量时，禁止再用 `estimate_tokens()`、字符数或 `ContextBudget.from_messages()` 覆盖、相加或重新判定 90% 触发点。模型切换、压缩改变历史边界后，旧用量不可继续代表新请求；每次成功请求都更新其实际用量。
+- 本地 token 算法只在**尚无可用 provider 用量**时兜底，例如首次请求前的安全预检、静默反思、进程重启后的持久化接管，以及 provider 溢出后的受控裁剪。估算结果必须标记为 `estimate`，不得记录或展示成 provider 实际用量；一旦取得实际用量，后续判定立即改用实际值。
+- 修改任何预算、反思或压缩路径时，增加回归用例覆盖：实际用量与本地估算冲突时实际值优先、缓存命中输入计入阈值、恰好到达 90% 才触发，以及 provider 用量缺失时兜底生效。真实模型 A/B 用 provider 返回的 usage 验证缓存率，不能以估算命中率代替。
+
 **当前策略（2026-08-24）**：system prompt 只包含静态内容（persona/skills/policy），动态内容（beh/memory/projects/time）通过带 `[system-reminder]` 的 `role=system` 消息注入 conversation。内部上下文与真实 user message 分离；原生 Anthropic adapter 在 wire 边界把消息级 system reminder 转成允许的 user message，MiniMax/百炼按已验证能力保留 system role。system prefix 跨 call 完全一致，MiniMax 前缀匹配缓存稳定命中 90%+。
 
 **为什么把动态内容移到 conversation**：测试验证 behavior block（相处姿态）在不同 call 间变化（Query 430 chars → Companion 705 chars），导致 system prefix 断裂，缓存命中率从 99%+ 降到 0.4%。移到 conversation 后，静态 system 完全不变；再用 role=system 表达其语义，避免模型把动态上下文误当成用户发言。
@@ -50,6 +57,8 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 **实现位置**：`backend/agent/runner.py` 组装段 + `backend/agent/context/builder.py` 的 `build_split()`。
 
 owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同一进程内执行；worker 仅在短 TTL 协调标记过期后作为进程退出时的接管路径。压缩复用快照前缀必须逐条验证模型身份、持久化行边界和消息序列，不能精确对齐时安全回退到数据库重建路径。完整快照不得写入 Redis/数据库/日志；该路径改善前缀一致性，但不承诺特定 provider 的缓存命中率。
+
+反思前的 90% 判定遵循上述统一口径：同进程主请求快照携带的最近一轮 provider `context_input` 优先；没有有效实际用量时才估算。压缩前缀允许纯文本字符串与单个 text block 等价，工具块和其他结构必须严格对齐；对齐成功后发送原始主请求前缀。2026-09-26 的合成 MiniMax-M3 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-09-26.md`。
 
 **修改缓存策略前必须**：
 1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试

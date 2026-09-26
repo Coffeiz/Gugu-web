@@ -278,6 +278,60 @@ async def test_reflection_compaction_reuses_only_an_exact_persisted_prefix(db, u
     ]
     assert prefix == [captured_prefix, *expected_selected]
 
+    # MiniMax 主请求把普通文本包装为单个 text block；持久化回放仍是字符串。
+    # 对齐时承认语义等价，但返回的必须是原快照对象以保留缓存锚点。
+    block_history = [
+        {**part, "content": [{"type": "text", "text": part["content"]}]}
+        if isinstance(part.get("content"), str) else part
+        for part in history
+    ]
+    block_snapshot = SimpleNamespace(
+        ai=model_cfg,
+        history=(captured_prefix, *block_history),
+    )
+    block_prefix = await compress_conv._snapshot_cache_prefix(
+        block_snapshot, session, rows, user_a.id, model_cfg, 0,
+        {rows[0].id, rows[1].id},
+    )
+    assert block_prefix == [captured_prefix, *block_history[:len(expected_selected)]]
+    assert block_prefix[1]["content"] is block_history[0]["content"]
+
+    from datetime import timedelta
+
+    original_created_at = rows[0].created_at
+    rows[0].created_at = rows[1].created_at + timedelta(seconds=1)
+    reordered_prefix = [
+        part for row in (rows[1], rows[0])
+        for part in build_history_parts(
+            [row], request, use_anthropic=use_anthropic_for(model_cfg), user_tz=user_tz,
+        )
+    ]
+    reordered_snapshot = SimpleNamespace(
+        ai=model_cfg, history=(captured_prefix, *reordered_prefix, *history[-1:]),
+    )
+    assert await compress_conv._snapshot_cache_prefix(
+        reordered_snapshot, session, rows, user_a.id, model_cfg, 0,
+        {rows[0].id, rows[1].id},
+    ) == [captured_prefix, *reordered_prefix]
+    rows[0].created_at = original_created_at
+
+    tail_mismatch = SimpleNamespace(
+        ai=model_cfg,
+        history=(captured_prefix, *block_history[:-1],
+                 {"role": "user", "content": "尚未持久化的尾部"}),
+    )
+    assert await compress_conv._snapshot_cache_prefix(
+        tail_mismatch, session, rows, user_a.id, model_cfg, 0,
+        {rows[0].id, rows[1].id},
+    ) == [captured_prefix, *block_history[:len(expected_selected)]]
+
+    # 多块内容和工具事件必须继续逐项严格比较，不能用抽取的正文代替边界校验。
+    assert not compress_conv._same_history_message(
+        {"role": "user", "content": [{"type": "text", "text": "相同"},
+                                      {"type": "tool_result", "content": "结果"}]},
+        {"role": "user", "content": "相同\n结果"},
+    )
+
     mismatched_snapshot = SimpleNamespace(
         ai=model_cfg,
         history=(captured_prefix, {"role": "user", "content": "不匹配"}, *history[1:]),
@@ -384,3 +438,80 @@ async def test_reflection_baseline_summary_uses_snapshot_system_tools_and_cutoff
     assert calls[0][1] is None
     assert calls[0][2]["append_system"] == ""
     assert calls[0][2]["tools"] == list(tools)
+
+
+@pytest.mark.asyncio
+async def test_reflection_compaction_moves_unmatched_cutoff_into_recent_tail(
+    db, user_a, monkeypatch,
+):
+    """截点工具消息无法回放时前移水位，继续复用已验证的主请求前缀。"""
+    from agent.context import compress_conv
+    from agent.context.history import build_history_parts
+    from agent.context.loaders import load_user_tz
+
+    session = ConversationSession(user_id=user_a.id, title="截点前移", source="web")
+    db.add(session)
+    await db.flush()
+    rows = [
+        ConversationMessage(
+            session_id=session.id,
+            role="user" if index % 2 == 0 else "assistant",
+            content=f"历史消息{index}：" + "细节" * 3000,
+        )
+        for index in range(4)
+    ]
+    db.add_all(rows)
+    await db.flush()
+    user_tz = await load_user_tz(db, user_a.id)
+    user_name = user_a.display_name or user_a.username
+    request = SimpleNamespace(
+        chat_id=session.chat_id, user_name=user_name,
+        platform_user_id=session.platform_user_id,
+        platform_user_name=user_name, im_role="owner",
+    )
+    model_cfg = SimpleNamespace(
+        provider="openai", model="cache-test-model", api_format="openai",
+        context_tokens=120_000, max_tokens=8_000,
+    )
+    history = [
+        part for row in rows for part in build_history_parts(
+            [row], request, use_anthropic=False, user_tz=user_tz,
+        )
+    ]
+    first_end = len(build_history_parts(
+        [rows[0]], request, use_anthropic=False, user_tz=user_tz,
+    ))
+    snapshot = SimpleNamespace(
+        ai=model_cfg, system_prompt="稳定 system", tools=(),
+        history=({"role": "system", "content": "稳定 system"},
+                 *history[:first_end],
+                 {"role": "assistant", "content": "未对齐的截点"},
+                 *history[first_end + 1:]),
+    )
+    calls = []
+
+    async def capture_summary(history_messages, previous, **kwargs):
+        calls.append(list(history_messages))
+        return "合成摘要"
+
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
+    monkeypatch.setattr("agent.context.compaction._generate_append_summary", capture_summary)
+    monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 13_000)
+    monkeypatch.setattr(
+        "agent.context.prefix_history.render_branch_prefix",
+        lambda prefix, _ai: list(prefix),
+    )
+    from agent import providers
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda _ai: SimpleNamespace(protocol_format=lambda _cfg: "openai"),
+    )
+
+    assert await compress_conv.compress_if_needed(
+        session.id, user_a.id, SimpleNamespace(ai=model_cfg),
+        force=True, cache_snapshot=snapshot,
+    )
+    await db.refresh(session)
+    assert session.baseline_message_id == rows[0].id
+    assert calls[0] == [{"role": "system", "content": "稳定 system"},
+                        *history[:first_end]]
