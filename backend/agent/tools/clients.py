@@ -87,6 +87,7 @@ async def _delete_client(db, user_id, args: dict):
             args,
             f"将删除客户：{names}，共 {len(clients)} 个，此操作不可恢复",
             user_id,
+            purpose=confirm.ACTION,
             action="delete_client",
             targets={"client_id": client_ids},
         )
@@ -104,6 +105,7 @@ async def _delete_client(db, user_id, args: dict):
     summary = f"将删除客户「{c.name}」，此操作不可恢复"
     blocked = confirm.needs_target_confirmation(
         args, summary, user_id,
+        purpose=confirm.ACTION,
         action="delete_client",
         targets={"client_id": [c.id]},
     )
@@ -121,7 +123,6 @@ class ClientsSkill(BaseSkill):
             description_short='查询当前用户的客户列表；无需参数',
             description="列出当前用户的所有客户。",
             input_schema={"type": "object", "properties": {}},
-            repeat_safe=True,
             handler=_list_clients,
         ),
         Tool(

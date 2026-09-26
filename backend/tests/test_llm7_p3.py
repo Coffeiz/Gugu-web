@@ -65,7 +65,6 @@ def _ollama_ai(**extra):
         "thinking": "disabled",
         "reasoning_effort": "medium",
         "max_tokens": 32,
-        "temperature": 0,
         "ollama_keep_alive": "5m",
     }
     values.update(extra)

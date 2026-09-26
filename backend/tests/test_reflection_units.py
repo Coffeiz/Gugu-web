@@ -189,7 +189,7 @@ async def test_drain_group_owner_buffer_happy_and_rollback(monkeypatch):
         return True
 
     monkeypatch.setattr(reflection, "reflect", fake_reflect)
-    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=10))
+    settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=10))
 
     # 锁被占 → 直接放弃本轮
     busy_redis = _FakeRedis(acquirable=False)
@@ -247,7 +247,7 @@ async def test_drain_owner_reflection_buffer_rollback_keeps_turns(monkeypatch):
     monkeypatch.setattr("app.core.redis.get_redis", lambda: redis)
     key = reflection._owner_reflection_buffer_key("u1", "s1")
     _seed_rows(redis, key, rows)
-    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=10))
+    settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=10))
 
     monkeypatch.setattr(reflection, "_owner_reflection_buffer_key", lambda user_id, session_id=None: key)
     monkeypatch.setattr("agent.context.reflection_snapshot.peek_reflection_snapshot", lambda *args: object())
@@ -276,12 +276,12 @@ async def test_schedule_routes_trivial_tools_and_group(monkeypatch):
     async def fake_queue(*args):
         queued.append(args)
 
-    async def fake_group(*args):
-        grouped.append(args)
+    async def fake_group(*args, **kwargs):
+        grouped.append((args, kwargs))
 
     monkeypatch.setattr(reflection, "_queue_owner_reflection", fake_queue)
     monkeypatch.setattr(reflection, "_schedule_group_owner", fake_group)
-    settings = SimpleNamespace(agent=SimpleNamespace(reflection_threshold=10))
+    settings = SimpleNamespace(agent=SimpleNamespace(web_private_reflection_threshold=10))
 
     # 纯应答 + 无工具 → 完全跳过
     reflection.schedule("u1", "小北", "嗯", "好的", settings)
@@ -300,4 +300,4 @@ async def test_schedule_routes_trivial_tools_and_group(monkeypatch):
     assert len(queued) == 3
     assert all(len(row) == 6 for row in queued)                      # used_tools 不再进队列参数
     assert queued[0][5] is None and queued[1][5] is None and queued[2][5] is None
-    assert len(grouped) == 1 and grouped[0][5] == "s1"
+    assert len(grouped) == 1 and grouped[0][0][5] == "s1"

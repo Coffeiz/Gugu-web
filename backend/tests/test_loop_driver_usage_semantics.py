@@ -51,9 +51,11 @@ class _FakeOpenAIStream:
 class _FakeOpenAIClient:
     def __init__(self, chunks):
         self._chunks = chunks
+        self.kwargs = None
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
-    async def _create(self, **_kwargs):
+    async def _create(self, **kwargs):
+        self.kwargs = kwargs
         return _FakeOpenAIStream(self._chunks)
 
 
@@ -107,6 +109,36 @@ async def test_openai_no_cache_keeps_prompt_tokens():
     result = await _collect_openai([chunk])
     assert result.usage_in == 100
     assert result.cache_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_openai_driver_merges_system_messages_before_sending():
+    chunk = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=1,
+                              prompt_cache_hit_tokens=0,
+                              prompt_tokens_details=None),
+        choices=[],
+    )
+    client = _FakeOpenAIClient([chunk])
+    messages = [
+        {"role": "system", "content": "基础人格"},
+        {"role": "system", "content": "session snapshot"},
+        {"role": "user", "content": "当前问题"},
+    ]
+
+    async for _kind, _value in OpenAIDriver().run_round(
+        client, _openai_ctx(), messages,
+    ):
+        pass
+
+    assert client.kwargs["messages"] == [
+        {
+            "role": "system",
+            "content": "基础人格\n\n---\n\nsession snapshot",
+        },
+        {"role": "user", "content": "当前问题"},
+    ]
+    assert messages[1]["role"] == "system"
 
 
 @pytest.mark.asyncio

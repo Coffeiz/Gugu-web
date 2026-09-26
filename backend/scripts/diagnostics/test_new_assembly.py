@@ -76,7 +76,6 @@ async def test_new_assembly():
         r = client.messages.create(
             model="minimax-m3-7b-beta",
             max_tokens=10,
-            temperature=0.7,
             system=[{"type": "text", "text": static_text, "cache_control": {"type": "ephemeral"}}],
             messages=messages
         )

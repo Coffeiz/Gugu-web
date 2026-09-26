@@ -13,6 +13,8 @@ import json
 import logging
 import re
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,10 @@ _bg_tasks: set = set()
 _perc_log = logging.getLogger("agent.perc")
 _memdiff_log = logging.getLogger("agent.memdiff")
 _log = logging.getLogger("agent.memory.reflection")
+
+_reflection_probe_context_var: ContextVar[dict | None] = ContextVar(
+    "reflection_probe_context", default=None,
+)
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
@@ -84,6 +90,11 @@ _OWNER_REFLECTION_BUFFER_PREFIX = "memory:owner-reflection:"
 _OWNER_REFLECTION_LOCK_PREFIX = "memory:owner-reflection-lock:"
 _GROUP_OWNER_BUFFER_PREFIX = "memory:owner-group-reflection:"
 _GROUP_OWNER_IDLE_KEY = reflection_idle.GROUP_OWNER_IDLE_KEY
+_LOCAL_IDLE_MARKER_PREFIX = "memory:owner-reflection-local-idle:"
+_LOCAL_IDLE_MARKER_GRACE_SECONDS = 90
+_LOCAL_IDLE_MARKER_REFRESH_SECONDS = 30
+_local_idle_tasks: dict[tuple[bool, str, int], asyncio.Task] = {}
+_local_idle_draining: dict[tuple[bool, str, int], int] = {}
 
 
 def _now_ts() -> float:
@@ -379,10 +390,140 @@ def _owner_idle_member(user_id, session_id) -> str:
     return f"{user_id}:{session_id}"
 
 
-def _owner_reflection_threshold(settings) -> int:
-    """读取 owner 反思阈值；不影响群成员/群级反思游标。"""
+def _local_idle_marker_key(user_id, session_id, *, group_mode: bool) -> str:
+    """仅标记本机持有完整快照；绝不在 Redis 中传递快照正文。"""
+    mode = "group" if group_mode else "private"
+    return f"{_LOCAL_IDLE_MARKER_PREFIX}{mode}:{user_id}:{session_id}"
+
+
+def _schedule_local_idle_drain(user_id, settings, session_id, *, group_mode: bool) -> None:
+    """在捕获主快照的进程内做 TTL 冲刷，避免 idle worker 冷启动压缩前缀。"""
+    key = (group_mode, str(user_id), int(session_id))
+    previous = _local_idle_tasks.get(key)
+    if previous is not None and not previous.done() and not _local_idle_draining.get(key):
+        previous.cancel()
+
+    async def drain_after_idle():
+        marker_task = None
+        try:
+            await asyncio.sleep(reflection_idle.IDLE_WINDOW_SECONDS)
+            from app.core.redis import get_redis
+
+            redis = get_redis()
+            marker = _local_idle_marker_key(
+                user_id, session_id, group_mode=group_mode,
+            )
+
+            async def refresh_marker():
+                while True:
+                    await asyncio.sleep(_LOCAL_IDLE_MARKER_REFRESH_SECONDS)
+                    try:
+                        await redis.set(
+                            marker,
+                            "1",
+                            ex=_LOCAL_IDLE_MARKER_REFRESH_SECONDS * 3,
+                        )
+                    except Exception as exc:
+                        from app.core.redaction import diag_log
+                        diag_log("agent.memory.reflection.local_idle_marker", exc)
+
+            marker_task = asyncio.create_task(refresh_marker())
+            drain = _drain_group_owner_buffer if group_mode else _drain_owner_reflection_buffer
+            _local_idle_draining[key] = _local_idle_draining.get(key, 0) + 1
+            try:
+                await drain(user_id, settings, session_id, allow_rebuild=False)
+            finally:
+                remaining = _local_idle_draining.get(key, 1) - 1
+                if remaining > 0:
+                    _local_idle_draining[key] = remaining
+                else:
+                    _local_idle_draining.pop(key, None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            from app.core.redaction import diag_log
+            diag_log("agent.memory.reflection.local_idle_drain", exc)
+        finally:
+            if marker_task is not None:
+                marker_task.cancel()
+                try:
+                    await marker_task
+                except asyncio.CancelledError:
+                    pass
+            current = asyncio.current_task()
+            if _local_idle_tasks.get(key) is current:
+                _local_idle_tasks.pop(key, None)
+                try:
+                    from app.core.redis import get_redis
+                    await get_redis().delete(_local_idle_marker_key(
+                        user_id, session_id, group_mode=group_mode,
+                    ))
+                except Exception:
+                    pass
+
+    task = asyncio.create_task(drain_after_idle())
+    _local_idle_tasks[key] = task
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+async def _arm_local_idle_drain(redis, user_id, settings, session_id, *, group_mode: bool) -> bool:
+    """只有当前进程仍持有快照时才预约本机 drain；标记仅作 worker 协调。"""
+    if session_id is None:
+        return False
     try:
-        return max(1, int(settings.agent.reflection_threshold))
+        from agent.context.reflection_snapshot import peek_reflection_snapshot
+
+        snapshot = peek_reflection_snapshot(user_id, session_id)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.local_snapshot_lookup", exc)
+        return False
+    if snapshot is None:
+        return False
+    marker = _local_idle_marker_key(user_id, session_id, group_mode=group_mode)
+    try:
+        await redis.set(
+            marker,
+            "1",
+            ex=reflection_idle.IDLE_WINDOW_SECONDS + _LOCAL_IDLE_MARKER_GRACE_SECONDS,
+        )
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.memory.reflection.local_idle_marker", exc)
+        return False
+    _schedule_local_idle_drain(
+        user_id, settings, session_id, group_mode=group_mode,
+    )
+    return True
+
+
+async def _cancel_local_idle_drain(redis, user_id, session_id, *, group_mode: bool) -> None:
+    if session_id is None:
+        return
+    key = (group_mode, str(user_id), int(session_id))
+    # In-flight drain owns the coordination marker until its finally block. Removing
+    # it here lets the worker race the active process and the refresher can recreate
+    # a marker after this function returns.
+    if _local_idle_draining.get(key):
+        return
+    task = _local_idle_tasks.pop(key, None)
+    if task is not None and not task.done():
+        task.cancel()
+    await redis.delete(_local_idle_marker_key(
+        user_id, session_id, group_mode=group_mode,
+    ))
+
+
+async def _local_idle_drain_pending(redis, user_id, session_id, *, group_mode: bool) -> bool:
+    marker = _local_idle_marker_key(user_id, session_id, group_mode=group_mode)
+    return bool(await redis.get(marker))
+
+
+def _web_private_reflection_threshold(settings) -> int:
+    """读取网页与私聊共用的反思轮数阈值。"""
+    try:
+        return max(1, min(100, int(settings.agent.web_private_reflection_threshold)))
     except (AttributeError, TypeError, ValueError):
         return 10
 
@@ -461,8 +602,15 @@ async def _queue_owner_reflection(
             )
     finally:
         await lock.release()
-    if count >= _owner_reflection_threshold(settings):
+    if count >= _web_private_reflection_threshold(settings):
+        await _cancel_local_idle_drain(
+            redis, user_id, session_id, group_mode=False,
+        )
         await _drain_owner_reflection_buffer(user_id, settings, session_id)
+    else:
+        await _arm_local_idle_drain(
+            redis, user_id, settings, session_id, group_mode=False,
+        )
 
 
 def _buffer_session_id(rows, session_id):
@@ -499,6 +647,36 @@ async def _release_reflection_lock(lock) -> None:
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.memory.reflection.lock_release", exc)
+
+
+@contextmanager
+def _reflection_probe_context(snapshot, trigger_source, *, only_if_missing=False):
+    """通过 task-local 上下文传递来源，避免扩大反思公共调用签名。"""
+    current = _reflection_probe_context_var.get()
+    if only_if_missing and current is not None:
+        yield current
+        return
+    token = _reflection_probe_context_var.set(
+        _reflection_probe_metadata(snapshot, trigger_source),
+    )
+    try:
+        yield
+    finally:
+        _reflection_probe_context_var.reset(token)
+
+
+def _reflection_probe_metadata(snapshot, trigger_source):
+    gap = None
+    if snapshot is not None:
+        created_at = getattr(snapshot, "created_at", None)
+        if isinstance(created_at, (int, float)):
+            gap = max(time.monotonic() - created_at, 0.0)
+    return {
+        "reflection_scope": "owner",
+        "trigger_source": trigger_source,
+        "origin_run_id": getattr(snapshot, "run_id", "") if snapshot else "",
+        "origin_gap_seconds": gap,
+    }
 
 
 async def _drain_reflection_buffer(
@@ -545,7 +723,10 @@ async def _drain_reflection_buffer(
             await redis.rpush(key, *raw_rows)
             await reflection_idle.mark_active(redis, idle_key, member)
             return
-        await _reflect_buffer_rows(user_id, settings, rows, session_id, snapshot)
+        with _reflection_probe_context(
+            snapshot, ("threshold", "idle")[allow_rebuild],
+        ):
+            await _reflect_buffer_rows(user_id, settings, rows, session_id, snapshot)
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.memory.reflection.drain", exc)
@@ -593,8 +774,41 @@ async def _migrate_legacy_group_owner_buffer(redis, user_id, *, last_active=None
         await _release_reflection_lock(lock)
 
 
+async def _flush_due_owner_reflection_member(redis, settings, idle_key, member, now) -> None:
+    if ":" not in member:
+        # 旧版群主 idle member 只有 user_id；读取其最后活动分数并拆开 session。
+        score = await redis.zscore(idle_key, member)
+        migrated = await _migrate_legacy_group_owner_buffer(
+            redis, member, last_active=score,
+        ) if idle_key == _GROUP_OWNER_IDLE_KEY else False
+        if migrated:
+            await redis.zrem(idle_key, member)
+        else:
+            await reflection_idle.defer(redis, idle_key, member, now=now)
+        return
+    user_id, session_text = member.rsplit(":", 1)
+    try:
+        session_id = int(session_text)
+    except ValueError:
+        await reflection_idle.defer(redis, idle_key, member, now=now)
+        return
+    group_mode = idle_key == _GROUP_OWNER_IDLE_KEY
+    if await _local_idle_drain_pending(
+        redis, user_id, session_id, group_mode=group_mode,
+    ):
+        # 快照只在接收会话的进程内；等待本机 drain。若该进程退出，标记会过期，
+        # worker 随后仍可从持久化历史重建并接管缓冲。
+        return
+    drain = _drain_group_owner_buffer if group_mode else _drain_owner_reflection_buffer
+    task = asyncio.create_task(drain(
+        user_id, settings, session_id, allow_rebuild=True,
+    ))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
 async def flush_due_owner_reflections(settings, *, now: float | None = None, limit: int = 100) -> int:
-    """收束 owner 私聊/群聊中连续闲置 15 分钟的反思缓冲。"""
+    """收束 owner 私聊/群聊中连续闲置 4 分 30 秒的反思缓冲。"""
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -604,35 +818,14 @@ async def flush_due_owner_reflections(settings, *, now: float | None = None, lim
             redis, idle_key, now=now, limit=limit,
         ))
     for idle_key, member in due[:max(1, int(limit))]:
-        if ":" not in member:
-            # 旧版群主 idle member 只有 user_id；读取其最后活动分数并拆开 session。
-            score = await redis.zscore(idle_key, member)
-            migrated = await _migrate_legacy_group_owner_buffer(
-                redis, member, last_active=score,
-            ) if idle_key == _GROUP_OWNER_IDLE_KEY else False
-            if migrated:
-                await redis.zrem(idle_key, member)
-            else:
-                await reflection_idle.defer(redis, idle_key, member, now=now)
-            continue
-        user_id, session_text = member.rsplit(":", 1)
-        try:
-            session_id = int(session_text)
-        except ValueError:
-            await reflection_idle.defer(redis, idle_key, member, now=now)
-            continue
-        group_mode = idle_key == _GROUP_OWNER_IDLE_KEY
-        drain = _drain_group_owner_buffer if group_mode else _drain_owner_reflection_buffer
-        task = asyncio.create_task(drain(
-            user_id, settings, session_id, allow_rebuild=True,
-        ))
-        _bg_tasks.add(task)
-        task.add_done_callback(_bg_tasks.discard)
+        await _flush_due_owner_reflection_member(
+            redis, settings, idle_key, member, now,
+        )
     return len(due)
 
 
 def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None,
-             group_mode: bool = False) -> None:
+             group_mode: bool = False, flush_now: bool = False) -> None:
     """非阻塞累计 owner 反思回合；达到 admin 配置阈值后批量反思（工具与否不影响时机）。
 
     琐碎应答（嗯/好的/谢谢…）不入缓冲省一次计数——除非这轮咕咕用了工具
@@ -645,7 +838,7 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
     if group_mode:
         task = asyncio.create_task(_schedule_group_owner(
             user_id, user_name, user_msg, assistant_reply, settings,
-            session_id,
+            session_id, flush_now=flush_now,
         ))
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
@@ -659,7 +852,7 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
 
 
 async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, settings,
-                                session_id=None) -> None:
+                                session_id=None, *, flush_now: bool = False) -> None:
     from app.core import redis as R
 
     redis = R.get_redis()
@@ -678,11 +871,24 @@ async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, s
             await reflection_idle.mark_active(
                 redis, _GROUP_OWNER_IDLE_KEY, _owner_idle_member(user_id, session_id),
             )
-        count = await redis.llen(key)
     finally:
         await lock.release()
-    if count >= _owner_reflection_threshold(settings):
+    if flush_now:
+        await _cancel_local_idle_drain(
+            redis, user_id, session_id, group_mode=True,
+        )
         await _drain_group_owner_buffer(user_id, settings, session_id)
+    else:
+        await _arm_local_idle_drain(
+            redis, user_id, settings, session_id, group_mode=True,
+        )
+
+
+def flush_group_owner_buffer(user_id, settings, session_id=None) -> None:
+    """群消息达到共享阈值时冲刷此前累计的群内 Owner 回合。"""
+    task = asyncio.create_task(_drain_group_owner_buffer(user_id, settings, session_id))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 
 async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
@@ -720,6 +926,7 @@ async def _reflect_knowledge(user_id, user_msg, assistant_reply, settings, out,
 async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None,
                   turns=None, snapshot=None, rebuild_from_history: bool = False) -> bool:
     out = None
+    probe_snapshot = snapshot
     bound_model = None
     use_append = False
     turns = turns or [{
@@ -740,6 +947,30 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                 user_id, session_id, user_name, bound_model,
             )
             rebuilt = snapshot is not None
+        if snapshot is not None and session_id is not None:
+            # 静默群消息/延迟 owner 反思没有普通 run 的 provider usage 事件，
+            # 这里先按全局 context_tokens 做预检；超阈值时只走正式 baseline
+            # 压缩，压缩后必须从 DB 重建历史，不能继续使用旧快照。
+            snapshot, compaction_status = await _compact_reflection_snapshot(
+                user_id,
+                user_name,
+                settings,
+                session_id,
+                snapshot,
+                turns,
+                bound_model,
+            )
+            if compaction_status == "blocked":
+                _log.info(
+                    "[reflection] over-budget session deferred session=%s",
+                    session_id,
+                )
+                return False
+            if compaction_status == "compacted":
+                if snapshot is None:
+                    return False
+                rebuilt = True
+                probe_snapshot = snapshot
         mem = await store.read_memory(user_id)
         existing_summary = mem.get("summary", "")
         # §6.3/§6.7 资格门：快照 + 单 session 缓冲 + 模型身份一致；
@@ -755,8 +986,13 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
                       session_id, append_reason)
             return False
         if use_append:
-            out = await _extract_append(snapshot, user_name, turns, mem["profile"], mem["pattern"],
-                                        existing_summary, settings, prev_turn=prev_turn)
+            with _reflection_probe_context(
+                probe_snapshot, "direct", only_if_missing=True,
+            ):
+                out = await _extract_append(
+                    snapshot, user_name, turns, mem["profile"], mem["pattern"],
+                    existing_summary, settings, prev_turn=prev_turn,
+                )
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.memory.reflection.model_binding", exc)
@@ -940,6 +1176,40 @@ def _append_reuse_decision(snapshot, turns, bound_model) -> tuple[bool, str]:
     return True, "eligible"
 
 
+async def _compact_reflection_snapshot(
+    user_id, user_name, settings, session_id, snapshot, turns, model_cfg,
+):
+    """反思快照超预算时压缩正式 baseline，并从持久历史重新装载。"""
+    if snapshot is None or session_id is None:
+        return snapshot, "not_needed"
+    from agent.context import compress_conv
+
+    reflection_delta = json.dumps(
+        [
+            {
+                "user_msg": turn.get("user_msg", ""),
+                "assistant_reply": turn.get("assistant_reply", ""),
+            }
+            for turn in turns
+        ],
+        ensure_ascii=False,
+    )
+    status = await compress_conv.compact_for_reflection(
+        int(session_id),
+        user_id,
+        settings,
+        snapshot=snapshot,
+        extra_text=reflection_delta,
+        model_cfg=model_cfg,
+    )
+    if status != "compacted":
+        return snapshot, status
+    refreshed = await _rebuild_owner_reflection_snapshot(
+        user_id, session_id, user_name, model_cfg,
+    )
+    return refreshed, status
+
+
 async def _extract_append(snapshot, user_name, turns, existing_profile, existing_pattern,
                           existing_summary, settings, prev_turn: dict | None = None) -> dict:
     """append_reuse 提取（§6.2/§6.3）：复用主会话前缀，任务内容只出现在末尾。
@@ -964,6 +1234,9 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
         + _TASK_REQUIREMENTS
     )
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
+    probe_context = _reflection_probe_context_var.get()
+    if probe_context is None:
+        probe_context = _reflection_probe_metadata(snapshot, "direct")
     result = await run_reflection_branch(
         BranchInput(
             stable_system=snapshot.system_prompt,
@@ -972,6 +1245,8 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
             run_id=snapshot.run_id,
             history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
             tools=tuple(snapshot.tools),
+            session_id=snapshot.session_id,
+            cache_probe_context=probe_context,
             branch_mode="append_reuse",
         ),
         settings,

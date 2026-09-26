@@ -14,17 +14,6 @@ const appImage = `docker.io/coffeiz/gugu-web@sha256:${'a'.repeat(64)}`
 const dockerMock = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$MOCK_DOCKER_LOG"
-if [[ "$1" == inspect ]]; then
-  if [[ "$*" == *'/var/run/docker.sock'* ]]; then
-    printf '%s\\n' "\${MOCK_SOCKET_SOURCE:-/tmp/docker.sock}"
-  else
-    printf '%s\\n' "\${MOCK_DATA_SOURCE:-/tmp}"
-  fi
-  exit 0
-fi
-if [[ "$1" == run ]]; then
-  exit 0
-fi
 if [[ "$1" == image && "$2" == inspect ]]; then
   printf '%s\\n' 'coffeiz/gugu-web@sha256:${'b'.repeat(64)}'
   exit 0
@@ -46,11 +35,11 @@ case "$command_name" in
         if [[ "\${MOCK_SPLIT:-false}" == true ]]; then
           printf '%s\\n' postgres backend worker gateway frontend migrate
         else
-          printf '%s\\n' postgres redis searxng app sandboxd
+          printf '%s\\n' searxng app sandboxd
           if [[ "\${MOCK_UPDATER_SERVICE:-false}" == true ]]; then printf '%s\\n' updater; fi
         fi
         ;;
-      --images) printf '%s\\n' postgres:18 redis:latest coffeiz/gugu-web:old ;;
+      --images) printf '%s\\n' searxng:latest ubuntu/squid:latest coffeiz/gugu-web:old ;;
       --format)
         image="$GUGU_WEB_IMAGE"
         if printenv GUGU_SANDBOXD_IMAGE >/dev/null 2>&1; then image="$GUGU_SANDBOXD_IMAGE"; fi
@@ -62,7 +51,7 @@ case "$command_name" in
     ;;
   ps)
     if [[ "\${MOCK_SANDBOXD_RUNNING:-true}" == true ]]; then
-      printf '%s\\n' postgres app sandboxd
+      printf '%s\\n' app sandboxd
     else
       printf '%s\\n' postgres app
     fi
@@ -71,7 +60,7 @@ case "$command_name" in
     [[ "$1" == -T ]] && shift
     service="$1"
     shift
-    if [[ "$service" == postgres ]]; then printf 'fake database dump\\n'; fi
+    if [[ "$service" == app ]]; then printf 'fake database dump\\n'; fi
     ;;
   *) ;;
 esac
@@ -91,11 +80,15 @@ function createFixture() {
   fs.writeFileSync(path.join(root, '.env'), 'GUGU_DB_PASSWORD=test-only-value\n')
   fs.writeFileSync(path.join(root, 'docker-compose.yml'), 'services: {}\n')
   fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
-    schema_version: 2,
+    schema_version: 3,
     version: 'v1.2.2',
     channel: 'stable',
     minimum_version: 'v1.2.1',
     app_image: appImage,
+    split_images: {
+      backend_image: `docker.io/coffeiz/gugu-web-backend@sha256:${'b'.repeat(64)}`,
+      frontend_image: `docker.io/coffeiz/gugu-web-frontend@sha256:${'c'.repeat(64)}`,
+    },
     architectures: ['linux/amd64'],
     database_migration: true,
     release_notes_url: 'https://github.com/Coffeiz/Gugu-web/releases/tag/v1.2.2',
@@ -138,43 +131,6 @@ function runUpdate(
   })
 }
 
-test('app 更新会把 stop/recreate 交给独立 helper，避免 self-stop 截断脚本', () => {
-  const fixture = createFixture()
-  try {
-    const result = runUpdate(fixture, { GUGU_UPDATE_HELPER_IMAGE: appImage })
-    assert.equal(result.status, 75, result.stderr)
-    const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /run .*--label com\.coffeiz\.gugu\.update-helper=true/)
-    assert.match(log, /--entrypoint \/bin\/bash/)
-    assert.match(log, /--env GUGU_DB_PASSWORD/)
-    assert.match(log, /--env GUGU_DB_USER/)
-    assert.match(log, /--env GUGU_DB_NAME/)
-    assert.match(log, /source=\/run\/user\/1000\/docker\.sock,target=\/var\/run\/docker\.sock/)
-    assert.doesNotMatch(log, /compose stop app/)
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true })
-  }
-})
-
-test('独立 helper 只在旧 app 持久化 handoff 后继续更新', () => {
-  const fixture = createFixture()
-  const manifestPath = path.join(fixture.root, 'manifest.json')
-  fs.writeFileSync(`${manifestPath}.handoff`, 'ready\n')
-  try {
-    const result = runUpdate(fixture, {
-      GUGU_UPDATE_HELPER: '1',
-      GUGU_UPDATE_WAIT_FOR_HANDOFF_FILE: `${manifestPath}.handoff`,
-    })
-    assert.equal(result.status, 0, result.stderr)
-    const log = fs.readFileSync(fixture.dockerLog, 'utf8')
-    assert.match(log, /compose .* stop app/)
-    assert.doesNotMatch(log, /docker run/)
-    assert.equal(fs.existsSync(`${manifestPath}.handoff`), false)
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true })
-  }
-})
-
 test('更新器从独立代码目录运行时仍使用部署目录和固定校验器', () => {
   const fixture = createFixture()
   const updaterCode = fs.mkdtempSync(path.join(os.tmpdir(), 'gugu-updater-code-'))
@@ -188,7 +144,7 @@ test('更新器从独立代码目录运行时仍使用部署目录和固定校�
       COMPOSE_FILE: path.join(fixture.root, 'docker-compose.yml'),
       UPDATE_VALIDATOR: path.join(updaterCode, 'scripts', 'release', 'validate-update-manifest.mjs'),
     }, updaterScript)
-    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${fs.readFileSync(fixture.dockerLog, 'utf8')}`)
     assert.match(fs.readFileSync(fixture.dockerLog, 'utf8'), /pull app sandboxd/)
     const backupRoot = path.join(fixture.root, 'backup')
     assert.equal(fs.readdirSync(backupRoot).length, 1)
@@ -201,11 +157,15 @@ test('更新器从独立代码目录运行时仍使用部署目录和固定校�
 test('只更新一体化 app，并在同镜像 sandboxd 运行时同步更新', () => {
   const fixture = createFixture()
   try {
-    const result = runUpdate(fixture)
+    // 即使旧环境残留 helper 配置，RPC updater 也必须直接执行 Compose 更新主体。
+    const result = runUpdate(fixture, { GUGU_UPDATE_HELPER_IMAGE: appImage })
     assert.equal(result.status, 0, result.stderr)
     const log = fs.readFileSync(fixture.dockerLog, 'utf8')
     assert.match(log, /pull app sandboxd/)
     assert.match(log, /up -d --no-deps --force-recreate app sandboxd/)
+    assert.match(log, /compose .* stop app sandboxd/)
+    assert.doesNotMatch(log, /docker run/)
+    assert.doesNotMatch(log, /docker inspect/)
     assert.doesNotMatch(log, /gugu-web-(?:backend|frontend)/)
 
     const backupRoot = path.join(fixture.root, 'backup')

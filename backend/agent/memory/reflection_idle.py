@@ -7,7 +7,7 @@ import time
 from app.core.tz import now_utc
 
 
-IDLE_WINDOW = timedelta(minutes=15)
+IDLE_WINDOW = timedelta(minutes=4, seconds=30)
 IDLE_WINDOW_SECONDS = int(IDLE_WINDOW.total_seconds())
 OWNER_IDLE_KEY = "memory:owner-reflection-idle"
 GROUP_OWNER_IDLE_KEY = "memory:owner-group-reflection-idle"

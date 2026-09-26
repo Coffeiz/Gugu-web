@@ -10,6 +10,8 @@
     @mousedown.capture="onRaiseChat"
     @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
     @pointerover="onRefPointerOver" @pointerleave="refDropHover = false">
+    <!-- 用透明全窗锚点接收 Runtime 落地，避免把聊天窗口自身当作项目卡的 morph 目标。 -->
+    <div ref="chatRefTargetEl" class="chat-ref-target" aria-hidden="true"></div>
 
     <!-- 拖入遮罩（覆盖整个窗口，大小窗通用）-->
     <Transition name="chat-drop-fade">
@@ -118,7 +120,10 @@
         :pending-att="pendingAtt" :att-uploading="attUploading"
         :recording="recording" :record-secs="recordSecs"
         :expanded="expanded" :streaming="streaming" :vw="vw"
-        :unlimited-mode="unlimitedMode" :on-toggle-unlimited="onToggleUnlimited"
+        :automatic-mode-enabled="automaticModeEnabled"
+        :automatic-mode-available="automaticModeAvailable"
+        :automatic-mode-saving="automaticModeSaving"
+        :on-toggle-automatic-mode="onToggleAutomaticMode"
         :on-remove-att="onRemoveAtt"
         :on-start-record="onStartRecord" :on-cancel-record="onCancelRecord" :on-stop-record="onStopRecord"
         :on-file-picked="onFilePicked" :on-paste="onPaste"
@@ -157,8 +162,10 @@ const props = defineProps<{
   expanded: boolean
   resizing: boolean
   streaming: boolean
-  unlimitedMode: boolean
-  onToggleUnlimited: () => void
+  automaticModeEnabled: boolean
+  automaticModeAvailable: boolean
+  automaticModeSaving: boolean
+  onToggleAutomaticMode: () => void
   isChatDragging: boolean
   currentSessionTitle: string
   currentSessionWorkspaceName: string | null
@@ -233,6 +240,7 @@ const inputTextModel = computed({
 })
 
 const windowEl = ref<HTMLElement | null>(null)
+const chatRefTargetEl = ref<HTMLElement | null>(null)
 
 // ── 拖文件卡进聊天 = @ 引用（Runtime 投放目标：整个窗口都是判定区）──
 // 消费动作在 GuguChatComposer（插 chip），这里只负责目标注册与悬停遮罩。
@@ -254,7 +262,7 @@ const chatRefTargetGeneration = runtime.targets.register({
   priority: 5,
   element: null,
 })
-watch(windowEl, (element, previous) => {
+watch(chatRefTargetEl, (element, previous) => {
   if (element === null && previous) return
   runtime.targets.setElement(`${CHAT_REF_SURFACE_ID}:target`, element)
 }, { flush: 'post' })
@@ -301,6 +309,14 @@ defineExpose({
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(255,255,255,0.3);
   pointer-events: none;
   z-index: 100;
+}
+.chat-ref-target {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
 }
 
 /* 主区域使用静态主题面，不采样页面背后的内容；聊天窗口覆盖项目页时避免大面积重绘。 */

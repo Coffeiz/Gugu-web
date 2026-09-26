@@ -5,6 +5,7 @@ from agent.context.provider_history import (
     clean_persisted_history,
     prepare_session,
     render_anthropic_message_roles,
+    sanitize_anthropic_branch_history,
     strip_thinking_blocks,
 )
 
@@ -72,3 +73,65 @@ def test_clean_persisted_history_removes_old_blocks_once():
     assert clean_persisted_history([message]) == 1
     assert message.content_json == [{"type": "text", "text": "保留"}]
     assert clean_persisted_history([message]) == 0
+
+
+def test_anthropic_branch_history_removes_reasoning_and_orphan_tool_results():
+    history = [
+        {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "回答"},
+            {"type": "reasoning_content", "text": "provider-specific"},
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "orphan", "content": "旧结果"},
+            {"type": "text", "text": "继续"},
+        ]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "paired", "name": "demo", "input": {}},
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "paired", "content": "ok"},
+        ]},
+    ]
+    original = [dict(message) for message in history]
+
+    cleaned = sanitize_anthropic_branch_history(history)
+
+    assert cleaned == [
+        {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "回答"}]},
+        {"role": "user", "content": [{"type": "text", "text": "继续"}]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "paired", "name": "demo", "input": {}},
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "paired", "content": "ok"},
+        ]},
+    ]
+    assert history == original
+
+
+def test_anthropic_branch_history_drops_unanswered_tool_use():
+    history = [
+        {"role": "user", "content": [{"type": "text", "text": "请求"}]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "unfinished", "name": "demo", "input": {}},
+        ]},
+    ]
+
+    assert sanitize_anthropic_branch_history(history) == [
+        {"role": "user", "content": [{"type": "text", "text": "请求"}]},
+    ]
+
+
+def test_anthropic_branch_history_drops_messages_that_only_contain_reasoning():
+    history = [
+        {"role": "user", "content": "问题"},
+        {"role": "assistant", "content": [
+            {"type": "reasoning_content", "text": "provider-specific"},
+        ]},
+    ]
+
+    assert sanitize_anthropic_branch_history(history) == [
+        {"role": "user", "content": "问题"},
+    ]

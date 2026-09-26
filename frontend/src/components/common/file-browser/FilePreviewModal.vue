@@ -73,7 +73,7 @@
           </div>
           <div class="fp-info-row">
             <span class="fp-info-label">{{ t('files.createdAt') }}</span>
-            <span class="fp-info-val">{{ file.createdAt }}</span>
+            <span class="fp-info-val">{{ formatFileCreatedDate(file.createdAt) }}</span>
           </div>
           <div v-if="file.projectName" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.project') }}</span>
@@ -106,6 +106,7 @@ import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { useLiveStore } from '@/stores/live'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
+import { formatFileCreatedDate } from '@/utils/fileDate'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'

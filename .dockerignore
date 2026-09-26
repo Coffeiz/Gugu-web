@@ -27,3 +27,5 @@ frontend/playwright-report
 node_modules
 *.log
 .DS_Store
+._*
+**/._*

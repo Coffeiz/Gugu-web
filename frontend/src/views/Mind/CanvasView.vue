@@ -55,9 +55,10 @@ import { useI18n } from 'vue-i18n'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import { showAppError } from '@/composables/core/useAppToast'
-import type { RelationAnchorSides } from '@/composables/mind/useMindCanvas'
+import { itemSize, type RelationAnchorSides } from '@/composables/mind/useMindCanvas'
 import { useMindStore } from '@/stores/mind'
 import { useProjectStore } from '@/stores/projects'
+import { useUiStore } from '@/stores/ui'
 import { runtime, type NodeConnectionEndpoint } from '@/interaction/runtime'
 import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import CanvasSidebar from './components/CanvasSidebar.vue'
@@ -74,6 +75,7 @@ import {
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
 const store = useMindStore()
+const uiStore = useUiStore()
 const route = useRoute()
 const router = useRouter()
 // 用完即清：object_id 留在地址栏的话，刷新/重进会强制跳回那张画布；
@@ -166,7 +168,9 @@ onMounted(async () => {
   ])
   const requestedId = await consumeObjectId()
   await ensureCanvas(requestedId)
+  await consumePendingCanvasTarget()
 })
+watch(() => uiStore.pendingCanvasTarget, () => { void consumePendingCanvasTarget() })
 // 聊天卡片点击：已在画布页时组件不重新挂载（query 相同时 push 还是 no-op，
 // GuguChat 派发 gugu:open-object 事件），watch query + 自定义事件都接同一处理。
 watch(() => route.query.object_id, async () => {
@@ -196,6 +200,20 @@ async function ensureCanvas(requestedId?: number) {
     id = canvas.id
   }
   await activateCanvas(id)
+}
+
+async function consumePendingCanvasTarget() {
+  const target = uiStore.pendingCanvasTarget
+  if (!target) return
+  if (activeCanvasId.value !== target.canvasId) await activateCanvas(target.canvasId)
+  await nextTick()
+  if (uiStore.pendingCanvasTarget !== target) return
+  const item = store.canvasItems.find(current => current.nodeId === target.nodeId && current.canvasId === target.canvasId)
+  if (item) {
+    const { w, h } = itemSize(item)
+    canvasRef.value?.centerOn(item.x + w / 2, item.y + h / 2)
+  }
+  uiStore.pendingCanvasTarget = null
 }
 
 let activationSeq = 0

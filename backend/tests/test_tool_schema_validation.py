@@ -608,15 +608,36 @@ async def test_dispatch_hides_registered_internal_exception_from_model(monkeypat
     assert diag and isinstance(diag[0][1], TsSidecarUnavailable)
 
 
-async def test_dispatch_keeps_class_name_for_unregistered_exception(db, user_a):
-    """未登记异常保持原格式：类名是模型判断「改参数还是等恢复」的唯一线索。"""
+@pytest.mark.parametrize("exception_kind", ["runtime", "database"])
+async def test_dispatch_sanitizes_unregistered_exception_and_keeps_type(monkeypatch, user_a, exception_kind):
+    """保留异常类型；SQLAlchemy 异常不得把 SQL 参数带进模型/普通日志。"""
+    from sqlalchemy.exc import InterfaceError
+
+    import agent.tools.base as tool_base
+
+    diag = []
+    monkeypatch.setattr(tool_base, "diag_log", lambda *args: diag.append(args))
 
     async def handler(db, user_id, args):
+        if exception_kind == "database":
+            raise InterfaceError(
+                "INSERT INTO terminal_events (stdout) VALUES (?)",
+                {"stdout": "private-shell-output"},
+                RuntimeError("connection closed"),
+            )
         raise RuntimeError("测试事务失败")
 
     reg, _ = _make_registry({"type": "object"}, handler)
     raw, _ = await reg.dispatch(user_a.id, "schema_test_tool", {})
-    assert "RuntimeError" in json.loads(raw)["error"]
+    visible = json.loads(raw)["error"]
+    if exception_kind == "database":
+        assert "InterfaceError" in visible
+        assert "数据库操作失败" in visible
+        assert "terminal_events" not in visible
+        assert "private-shell-output" not in visible
+        assert diag and isinstance(diag[0][1], InterfaceError)
+    else:
+        assert "RuntimeError" in visible
 
 
 async def test_explicit_additional_properties_false_rejected():

@@ -341,9 +341,9 @@ async def find_user_folders_by_name(
 
 async def list_user_folders(
     db: AsyncSession, user_id, *, project_id=None, parent_id=None,
-    workspace_directory_id=None, space=None,
+    workspace_directory_id=None, space=None, filter_parent: bool = False,
 ):
-    """查询当前用户存活文件夹。"""
+    """查询当前用户存活文件夹；filter_parent 可将 parent_id=None 明确解释为根目录。"""
     stmt = select(Folder).where(
         Folder.user_id == user_id,
         Folder.deleted_at.is_(None),
@@ -366,7 +366,7 @@ async def list_user_folders(
         )
     elif workspace_directory_id is not None:
         stmt = stmt.where(Folder.workspace_directory_id == workspace_directory_id)
-    if parent_id is not None:
+    if filter_parent or parent_id is not None:
         stmt = stmt.where(Folder.parent_id == parent_id)
     return (await db.execute(stmt)).scalars().all()
 

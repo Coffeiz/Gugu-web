@@ -3,7 +3,7 @@ name: 联网搜索
 description_short: 用户要查资料、新闻、官网事实或搜索图片时使用。
 description_long: "决定怎么获取外部信息：普通查找 / 深度研究 / 图片搜索。使用场景：用户要查资料、找官网文档事实新闻、要研究总结比较某件事、要找一张图/配图，或要根据已有图片找同款和相似图片。"
 category: search
-related_tools: web_search, image_search, inspect_images, deep_research
+related_tools: web_search, image_search, read_file, deep_research
 emoji: 🔎
 ---
 
@@ -16,7 +16,7 @@ emoji: 🔎
 | `web_search` | 自建 SearXNG 通用网页搜索：找官网/文档/GitHub/某个事实/新闻标题/下载地址 | 免费、无配额 |
 | `deep_research` | 管理员选择的 Tavily / 百度搜索 / You.com：Tavily/You.com 返回研究答案，百度返回普通搜索引用，适合"读+总结/比较/研究/给引用" | 有每日次数配额（`SearchUsage`） |
 | `image_search` | 统一图片搜索：`mode=text` 按关键词找图，`mode=image` 以图搜图找同款/相似图 | 文字模式免费；图片模式按独立日额度限制 |
-| `inspect_images` | 读取 image_search 选中的图片、聊天附件或文件库图片，交给视觉模型分析/比较 | 最多 20 张/次；文件库图片传 `file_id` |
+| `read_file` | 读取文件、历史附件或图片搜索选中的网络图片；支持混合批量并交给多模态模型分析 | `items` 最多 20 项、源文件总量最多 64 MiB；网络 URL 仅限图片 |
 
 需要判断或比较图片内容时，详细的分析维度和输出规范见 [`image-analysis.md`](image-analysis.md)；本技能只负责搜索、选图和调用工具。
 
@@ -114,17 +114,17 @@ SearXNG 搜索结果会带 `search_status.state`，不要把所有 `results=[]` 
 多个候选且用户没指定要哪张时，挑最匹配关键词的第一条发；用户明确想多看几张再多发几张（IM 端一次发太多张会很吵，建议 1~3 张为宜）。
 
 如果用户要求快速辨认、比较或核对搜索到的图片，先调用 `image_search(mode="text")` 或
-`image_search(mode="image")`，再单独调用 `inspect_images`。关键词搜图候选填写
-`result_id`、`img_src`、`title`；以图搜图候选填写 `result_id`、`image_url`、
-`title`；文件库图片直接填写 `file_id`，聊天附件填写 `attach_id`。一轮对话最多发起 3 次网络图片读取，每次最多读取 20 张；文件库图片和历史附件不占网络图片额度。不需要看图时不要读取，避免额外下载和视觉输入成本。
+`image_search(mode="image")`，再单独调用 `read_file(items=[...])`。关键词搜图候选在 item 中填写
+`url: img_src`、`result_id`、`title`；以图搜图候选填写 `url: image_url`、`result_id`、
+`title`；文件库图片填写 `file_id`，聊天附件填写 `attach_id`。一轮对话最多发起 3 次含网络图片的读取，每批最多 20 项且源文件总量不超过 64 MiB；文件库图片和历史附件不占网络图片额度。不需要看图时不要读取，避免额外下载和视觉输入成本。
 
 ## image_search(mode="image") 找同款后怎么处理
 
 用户说“找同款”“找相似图”“这张图还有哪些类似图片”时，调用
 `image_search(mode="image")`。当前消息图片填写上下文中的 `attach_id`；如果目标是网络图片，填写可靠的
-`image_url`。工具返回的是相似候选列表；用户还要求辨认角色、核对同款或比较候选内容时，必须从候选中挑选 2～5 张调用 `inspect_images`，结合图像内容判断，不能只按 similarity、标题或来源下结论。
+`image_url`。工具返回的是相似候选列表；用户还要求辨认角色、核对同款或比较候选内容时，必须从候选中挑选 2～5 张调用 `read_file(items=[{url: image_url, title, result_id}, ...])`，结合图像内容判断，不能只按 similarity、标题或来源下结论。
 
-相似图结果返回后，优先用候选标题、来源页 URL、页面正文线索和实体关键词调用 `web_search`，检查候选是否包含有效角色名、作品名、出处或商品信息；再按需要调用 `inspect_images` 比较候选图像细节。不要把上一轮对话中的猜测直接当作当前图片搜索结论，也不要把图片直链本身当作搜索词。
+相似图结果返回后，优先用候选标题、来源页 URL、页面正文线索和实体关键词调用 `web_search`，检查候选是否包含有效角色名、作品名、出处或商品信息；再按需要调用 `read_file(items=[...])` 比较候选图像细节。不要把上一轮对话中的猜测直接当作当前图片搜索结论，也不要把图片直链本身当作搜索词。
 
 `image_search(mode="image")` 的 `similarity` / `score` 仅用于服务端排序，不能当成百分比、置信度或“相似度 X/5”。`score >= 2` 的候选应作为重要参考，但仍需通过网页内容或图像细节核对；不要因分值较低就主动否定候选。用户只要结果时，直接列出标题、来源和 URL，不读取候选图。
 

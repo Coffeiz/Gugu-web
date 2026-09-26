@@ -230,7 +230,6 @@ async def call_anthropic(target: Target, system: str, messages: list[dict], tool
         return await client.messages.create(
             model=getattr(target.ai, "model", ""),
             max_tokens=min(int(getattr(target.ai, "max_tokens", 512) or 512), 512),
-            temperature=float(getattr(target.ai, "temperature", 0.2) or 0.2),
             system=system_payload,
             messages=messages,
             tools=tools,
@@ -270,7 +269,6 @@ async def call_openai(target: Target, system: str, messages: list[dict], tools: 
         stream = await client.chat.completions.create(
             model=getattr(target.ai, "model", ""),
             max_tokens=min(int(getattr(target.ai, "max_tokens", 512) or 512), 512),
-            temperature=float(getattr(target.ai, "temperature", 0.2) or 0.2),
             messages=[system_message, *messages],
             stream=True,
             stream_options={"include_usage": True},
@@ -366,9 +364,9 @@ async def run_target(target: Target, session, snapshot: dict, history: list, req
                 and not os.environ.get("GUGU_DIAG_SKIP_OPENAI_HISTORY_CACHE")
                 and not os.environ.get("GUGU_DIAG_OPENAI_ONLY")):
             if adapter.uses_single_history_cache_anchor(getattr(target.ai, "model", "") or ""):
-                outbound = _with_single_history_cache(outbound)
+                outbound, _cache_state = _with_single_history_cache(outbound)
             else:
-                outbound = _with_history_cache(outbound)
+                outbound, _cache_state = _with_history_cache(outbound)
         started = time.perf_counter()
         try:
             response = (

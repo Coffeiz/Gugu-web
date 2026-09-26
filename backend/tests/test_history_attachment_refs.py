@@ -16,7 +16,7 @@ def test_history_keeps_lightweight_image_attachment_reference():
     content = format_history_content(message, request)
 
     assert "abc123" in content
-    assert "inspect_images" in content
+    assert "read_file(items=" in content
     assert "base64" not in content
 
 
@@ -53,10 +53,10 @@ def test_history_mixed_image_and_file_refs_split_channels():
 
     refs = format_attachment_refs(message)
 
-    assert "inspect_images" in refs
+    assert "read_file(items=" in refs
     assert "img1" in refs
     assert "save_uploaded_file" in refs
     assert "bin1" in refs
-    # 图片指引不能把二进制文件也归进 inspect_images 通道
+    # 图片指引不能把二进制文件也归进图片回读通道
     image_section = refs.split("save_uploaded_file")[0]
     assert "bin1" not in image_section

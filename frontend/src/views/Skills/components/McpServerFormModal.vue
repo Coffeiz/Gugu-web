@@ -1,9 +1,9 @@
 <template>
   <BaseModal :show="show" width="620px" background="var(--panel-bg)" @close="emit('close')">
-    <div class="skill-form">
+    <div class="skill-form card-close-anchor">
       <div class="form-head">
         <div><h2>{{ server ? t('skillsMcpUi.editTitle') : t('skillsMcpUi.addTitle') }}</h2><p>{{ t('skillsMcpUi.hint') }}</p></div>
-        <CloseButton @click="emit('close')" />
+        <CloseButton card-corner @click="emit('close')" />
       </div>
 
       <div class="form-field"><span class="field-label">{{ t('skillsMcpUi.name') }}</span><input v-model.trim="form.name" class="form-input" maxlength="64" autocomplete="off" :aria-label="t('skillsMcpUi.name')" /></div>
@@ -145,7 +145,7 @@ function submit() {
 
 <style scoped>
 .skill-form { position:relative; z-index:1; isolation:isolate; padding:24px; color:var(--content-primary); max-height:calc(100vh - 48px); overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--scrollbar-thumb) transparent; }
-.form-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }.form-head h2 { margin:0; font-size:20px; }.form-head p { margin:6px 0 0; color:var(--content-secondary); font-size:12px; }.form-row { display:grid; grid-template-columns:minmax(0,1fr) 130px; gap:12px; }
+.form-head { display:flex; justify-content:space-between; align-items:flex-start; padding-right:calc(var(--card-close-safe-area) - var(--space-xl)); margin-bottom:20px; }.form-head h2 { margin:0; font-size:20px; }.form-head p { margin:6px 0 0; color:var(--content-secondary); font-size:12px; }.form-row { display:grid; grid-template-columns:minmax(0,1fr) 130px; gap:12px; }
 .form-field { display:flex; flex-direction:column; gap:6px; margin-top:13px; color:var(--content-secondary); font-size:12px; }.field-label { display:block; line-height:var(--line-height-ui); }.form-field :deep(.select-popup) { width:100%; }.form-field :deep(.select-popup-trigger) { width:100%; }
 .form-input { box-sizing:border-box; width:100%; min-height:var(--control-height-md); padding:6px 12px; border:1px solid var(--input-border); border-radius:var(--radius-sm); background:var(--input-bg); color:var(--input-fg); font:var(--font-weight-regular) var(--font-size-body)/var(--line-height-body) var(--font-sans); outline:none; box-shadow:var(--input-hover-shadow); transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }.form-input:hover { background:var(--input-bg-hover); border-color:var(--input-border-hover); }.form-input:focus { background:var(--input-bg-focus); border-color:var(--input-border-focus); box-shadow:var(--input-hover-shadow), var(--input-focus-shadow); }.credential-slots-input { min-height:140px; }.form-hint { margin:6px 0 0; color:var(--content-tertiary); font-size:11px; }.form-error { margin:12px 0 0; color:var(--status-danger); font-size:12px; }
 .form-actions { display:flex; align-items:center; gap:10px; margin-top:22px; }.form-action-spacer { flex:1; }

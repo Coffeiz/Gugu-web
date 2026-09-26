@@ -11,10 +11,12 @@
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import asyncio
 import os
 import signal
 import socket
+import uuid
 
 from app.core import redis as R
 from agent.im.session import ImConversationKey, conversation_key
@@ -35,13 +37,65 @@ _stop = asyncio.Event()
 # ── P1-① 有界并发（worker 基本在等 LLM，IO 密集，串行白白浪费事件循环）──────────
 # 并发上限由 Admin 配置 agent.worker_concurrency 控制，worker 每 30s（reconcile 时）热读、无需重启。
 # 实测单 MiniMax key 安全上限≈16（带工具 sem=20 全 429）；要更大吞吐 = 多备 key，不是调大此数。
-_max_concurrency = 16                          # 当前生效值（_refresh_concurrency 热更新；run_once 据此留空闲槽）
+_max_concurrency = 16                          # 当前生效值（_refresh_concurrency 热更新）
 # user_gate：同一会话串行保序、不同会话并发。key 是 ImConversationKey（platform+bot_id+
 # chat_type+scope_id），不是裸 platform_user_id——同一用户跨 bot、跨群或私聊/群聊同时
 # 发消息，用 puid 当 key 会被误合并到同一轮/同一把锁（PRD-IM-2 Phase 5 §1 P1）。
 _user_locks: dict[ImConversationKey, asyncio.Lock] = {}
 _passive_locks: dict[ImConversationKey, asyncio.Lock] = {}
-_inflight: set = set()                         # 在跑任务集：背压计数 + 优雅 drain
+_inflight: set = set()                         # 派发任务集：优雅 drain
+_pending_message_ids: set[str] = set()         # 已读入进程但尚未 ack 的消息，作为真实准入背压
+_buffered_message_ids: set[str] = set()        # 已转入会话缓冲/flush 的消息
+_message_leases: dict[str, tuple[str, asyncio.Task]] = {}
+_MESSAGE_LEASE_SECONDS = 120
+_MESSAGE_LEASE_HEARTBEAT_SECONDS = 30
+_MESSAGE_COMPLETED_SECONDS = 3600
+_run_active = 0                                # 当前拿到 agent 执行槽的任务数
+_run_condition = asyncio.Condition()           # 热调并发上限时唤醒等待中的 flush loop
+
+_CLAIM_MESSAGE_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == 'completed' then return 2 end
+if current then return 0 end
+local stored = redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2], 'NX')
+if stored then return 1 end
+return 0
+"""
+_RENEW_MESSAGE_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
+_COMPLETE_MESSAGE_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == ARGV[1] then
+  redis.call('SET', KEYS[1], 'completed', 'EX', ARGV[2])
+  return 1
+end
+if current == 'completed' then return 1 end
+return 0
+"""
+
+
+def _message_state_key(msg_id: str) -> str:
+    # Redis Cluster hash tag 为后续同消息多 key 状态留在同一 slot。
+    return f"imstate:{{{msg_id}}}"
+
+
+@asynccontextmanager
+async def _run_slot():
+    """取得一个 Agent 执行槽；并发限制可在运行中调整。"""
+    global _run_active
+    async with _run_condition:
+        await _run_condition.wait_for(lambda: _run_active < _max_concurrency)
+        _run_active += 1
+    try:
+        yield
+    finally:
+        async with _run_condition:
+            _run_active -= 1
+            _run_condition.notify_all()
 
 # ── 输入防抖：QQ 等平台「一张图一条消息」，连发的图 + 后面的指令本是一次表达。
 #    不立即处理，攒进缓冲；同一会话每来一条就把「截止时刻」推后；静默到期才把缓冲里所有消息
@@ -55,10 +109,7 @@ _user_deadline: dict[ImConversationKey, float] = {} # key -> 防抖截止时刻�
 _user_flush: dict[ImConversationKey, asyncio.Task] = {}  # key -> 正在跑的 flush loop（每会话至多一个）
 _buffer_lock = asyncio.Lock()                  # 保护缓冲注册，避免并发 _dispatch 重复创建 flush loop
 _flush_tasks: set = set()                       # 所有 flush loop：供优雅 drain 等它们跑完
-_run_sem = asyncio.Semaphore(_max_concurrency)  # flush 阶段真正跑 agent 的全局并发上限
-
-
-def _refresh_concurrency():
+async def _refresh_concurrency():
     """从 config.override.json 直接热读并发上限（隔离读，不动全局 settings 缓存）。"""
     global _max_concurrency
     val = 16
@@ -75,7 +126,78 @@ def _refresh_concurrency():
     new = max(1, min(64, val))
     if new != _max_concurrency:
         print(f"[worker] 并发上限 {_max_concurrency} → {new}", flush=True)
-    _max_concurrency = new
+        _max_concurrency = new
+        async with _run_condition:
+            _run_condition.notify_all()
+
+
+def _pending_capacity() -> int:
+    """最多在进程内保留两倍并发的未确认消息，其余留在 Redis stream。"""
+    return min(128, max(1, _max_concurrency * 2))
+
+
+async def _ack_inbound(msg_id: str) -> None:
+    lease = _message_leases.pop(msg_id, None)
+    should_ack = True
+    if lease:
+        owner, heartbeat = lease
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+        try:
+            completed = await R.get_redis().eval(
+                _COMPLETE_MESSAGE_SCRIPT, 1, _message_state_key(msg_id), owner,
+                _MESSAGE_COMPLETED_SECONDS,
+            )
+            should_ack = bool(completed)
+        except Exception as exc:
+            print(f"[worker] 消息完成状态写入失败，保留待重领: {type(exc).__name__}", flush=True)
+            should_ack = False
+    try:
+        if should_ack:
+            await R.ack(STREAM, GROUP, msg_id)
+    finally:
+        _pending_message_ids.discard(msg_id)
+        _buffered_message_ids.discard(msg_id)
+
+
+async def _renew_message_lease(msg_id: str, owner: str) -> None:
+    try:
+        while True:
+            await asyncio.sleep(_MESSAGE_LEASE_HEARTBEAT_SECONDS)
+            await R.get_redis().eval(
+                _RENEW_MESSAGE_SCRIPT, 1, _message_state_key(msg_id), owner,
+                _MESSAGE_LEASE_SECONDS,
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(f"[worker] 消息租约续期失败: {type(exc).__name__}", flush=True)
+
+
+async def _claim_message(msg_id: str) -> str:
+    """返回 claimed/completed/busy；Redis 不可用时保留原有 fail-open 行为。"""
+    owner = uuid.uuid4().hex
+    try:
+        result = int(await R.get_redis().eval(
+            _CLAIM_MESSAGE_SCRIPT, 1, _message_state_key(msg_id), owner,
+            _MESSAGE_LEASE_SECONDS,
+        ))
+    except Exception as exc:
+        print(f"[worker] 消息租约领取失败，继续处理: {type(exc).__name__}", flush=True)
+        return "claimed"
+    if result == 2:
+        return "completed"
+    if result != 1:
+        return "busy"
+    heartbeat = asyncio.create_task(_renew_message_lease(msg_id, owner))
+    _message_leases[msg_id] = (owner, heartbeat)
+    return "claimed"
+
+
+def _stop_message_lease(msg_id: str) -> None:
+    lease = _message_leases.pop(msg_id, None)
+    if lease:
+        lease[1].cancel()
 
 
 async def handle(msg_id: str, payload: dict):
@@ -153,27 +275,28 @@ async def _flush_loop(key: ImConversationKey):
                     return
                 merged = _merge_payloads([p for _, p in batch])
                 rep_msg_id = batch[-1][0]
-                async with _run_sem:     # 多会话同时活跃时，跑 agent 的全局并发上限
+                async with _run_slot():     # 多会话同时活跃时，跑 agent 的全局并发上限
                     try:
                         await handle(rep_msg_id, merged)
                     except Exception as e:
                         print(f"[worker] flush handle 出错（已 ack 丢弃，避免毒消息循环）: {type(e).__name__}: {e}", flush=True)
                     finally:
                         for mid, _ in batch:
-                            await R.ack(STREAM, GROUP, mid)
+                            await _ack_inbound(mid)
     finally:
         _user_flush.pop(key, None)
 
 
 async def _dispatch(msg_id: str, payload: dict):
     """幂等去重 → 投入「防抖缓冲」（不立即处理）。同一会话 1s 内连发的消息攒成一轮、只回一次。"""
-    # 幂等：同一 stream 条目被 claim_stale（60s）重投时跳过，防重复（在投缓冲前就丢）
-    try:
-        fresh = await R.get_redis().set(f"imseen:{msg_id}", "1", ex=3600, nx=True)
-    except Exception:
-        fresh = True
-    if not fresh:
-        await R.ack(STREAM, GROUP, msg_id)
+    # processing 租约由心跳维持；worker 崩溃后最多等待租约过期即可重新处理。
+    # completed 才能安全 ACK 重复 claim；新状态 key 不受旧版 imseen TTL 阻塞。
+    claim = await _claim_message(msg_id)
+    if claim == "completed":
+        await _ack_inbound(msg_id)
+        return
+    if claim == "busy":
+        # 另一个 worker 仍持有有效租约；不能 ACK 尚未完成的原处理。
         return
     key = conversation_key(payload)
     if not key.scope_id:
@@ -205,7 +328,7 @@ async def _dispatch(msg_id: str, payload: dict):
             except Exception as exc:
                 print(f"[worker] 交互快速通道处理出错（已 ack）: {type(exc).__name__}: {exc}", flush=True)
             finally:
-                await R.ack(STREAM, GROUP, msg_id)
+                await _ack_inbound(msg_id)
             return
 
     # 静默记录/未被 @ 的群消息不应该排队等当前 LLM 任务结束；否则用户在咕咕
@@ -219,7 +342,7 @@ async def _dispatch(msg_id: str, payload: dict):
         except Exception as e:
             print(f"[worker] 被动群消息处理出错（已 ack 丢弃）: {type(e).__name__}: {e}", flush=True)
         finally:
-            await R.ack(STREAM, GROUP, msg_id)
+            await _ack_inbound(msg_id)
         return
 
     # 投缓冲 + 把截止时刻推后；**不在这里 ack**，留到 flush（崩了未 ack → claim_stale 60s 重投兜底）。
@@ -227,6 +350,7 @@ async def _dispatch(msg_id: str, payload: dict):
     # 一个临界区，否则两个 task 都可能看到空的 _user_flush，从而把同一群拆成多条 session。
     async with _buffer_lock:
         _user_buffers.setdefault(key, []).append((msg_id, payload))
+        _buffered_message_ids.add(msg_id)
         has_text = bool((payload.get("text") or "").strip())   # 这条带文字 = 短窗口；纯附件 = 长窗口等指令
         window = DEBOUNCE_SEC if has_text else DEBOUNCE_ATT_SEC
         _user_deadline[key] = asyncio.get_event_loop().time() + window
@@ -239,22 +363,38 @@ async def _dispatch(msg_id: str, payload: dict):
 
 
 async def run_once(block_ms: int = 5000) -> int:
-    """消费一批并发派发（不阻塞等处理）。按在跑数留空闲槽，防任务无界堆积。返回派发条数。"""
-    free = _max_concurrency - len(_inflight)
+    """有界消费并派发；未 ack 消息达到准入上限时留在 Redis，不堆在进程内。"""
+    free = _pending_capacity() - len(_pending_message_ids)
     if free <= 0:
         await asyncio.sleep(0.1)
         return 0
     # 先回收崩溃 worker 的遗留（>60s 未 ack），再收新消息，合计不超过空闲槽
     msgs = list(await R.claim_stale(STREAM, GROUP, CONSUMER, min_idle_ms=60000, count=free))
+    # XAUTOCLAIM 也可能返回本进程仍在处理的长任务。它们继续占用准入槽，
+    # 但不应重复派发；过滤后空出的槽可用于读取新的消息。
+    msgs = [item for item in msgs if item[0] not in _pending_message_ids]
     need = free - len(msgs)
     if need > 0:
         msgs += await R.consume(STREAM, GROUP, CONSUMER, count=need, block_ms=block_ms)
     for msg_id, payload in msgs:
-        t = asyncio.create_task(_dispatch(msg_id, payload))
+        _pending_message_ids.add(msg_id)
+        t = asyncio.create_task(_dispatch_tracked(msg_id, payload))
         _inflight.add(t)
         t.add_done_callback(_inflight.discard)
     handled = len(msgs)
     return handled
+
+
+async def _dispatch_tracked(msg_id: str, payload: dict) -> None:
+    """遇到未预期异常时释放内存准入名额，消息保留在 Redis 等待 stale reclaim。"""
+    try:
+        await _dispatch(msg_id, payload)
+    except Exception as exc:
+        print(f"[worker] 消息派发出错（保留待重领）: {type(exc).__name__}", flush=True)
+    finally:
+        if msg_id not in _buffered_message_ids:
+            _stop_message_lease(msg_id)
+            _pending_message_ids.discard(msg_id)
 
 
 async def _reflection_loop():
@@ -347,7 +487,7 @@ async def serve():
     # worker 启动时预热一次数据库引擎，后续 IM 请求复用同一连接池。
     from app.db import session as db_session
     db_session.ensure_engine()
-    _refresh_concurrency()
+    await _refresh_concurrency()
     try:
         n = await R.cleanup_dead_consumers(STREAM, GROUP, CONSUMER)
         if n:
@@ -416,7 +556,7 @@ async def _reconcile_loop():
             if _stop.is_set():
                 return
             await asyncio.sleep(1)
-        _refresh_concurrency()                   # 顺带热读并发上限（Admin 改了 ≤30s 生效）
+        await _refresh_concurrency()             # 顺带热读并发上限（Admin 改了 ≤30s 生效）
         try:
             from app.core.config import get_settings
             get_settings.cache_clear()           # 清缓存 → worker 也热读 Admin 配置（模型策略/分流/行为等，≤30s 生效）

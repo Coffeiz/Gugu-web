@@ -13,11 +13,15 @@ const digestB = 'b'.repeat(64)
 
 function makeManifest(registry = 'docker.io') {
   return {
-    schema_version: 2,
+    schema_version: 3,
     version: 'v1.2.2',
     channel: 'stable',
     minimum_version: 'v1.2.1',
     app_image: `${registry}/coffeiz/gugu-web@sha256:${digestA}`,
+    split_images: {
+      backend_image: `docker.io/coffeiz/gugu-web-backend@sha256:${digestB}`,
+      frontend_image: `docker.io/coffeiz/gugu-web-frontend@sha256:${digestA}`,
+    },
     architectures: ['linux/amd64'],
     database_migration: true,
     release_notes_url: 'https://github.com/Coffeiz/Gugu-web/releases/tag/v1.2.2',
@@ -41,14 +45,37 @@ test('Schema 与校验器允许 Docker Hub 主源和 GHCR 镜像的一体化应�
   assert.equal(result.status, 0, result.stderr)
 })
 
-test('接受以 Docker Hub digest 为主的一体化应用 manifest', () => {
+test('接受带完整镜像组的 Docker Hub manifest', () => {
   const result = runManifestCheck(makeManifest('docker.io'))
   assert.equal(result.status, 0, result.stderr)
 })
 
-test('接受 GHCR 一体化应用镜像作为镜像源', () => {
+test('接受 GHCR app 镜像及完整分体镜像组', () => {
   const result = runManifestCheck(makeManifest('ghcr.io'))
   assert.equal(result.status, 0, result.stderr)
+})
+
+test('接受同时携带不可变 backend/frontend digest 的 v3 manifest', () => {
+  const manifest = {
+    ...makeManifest(),
+    split_images: {
+      backend_image: `docker.io/coffeiz/gugu-web-backend@sha256:${digestB}`,
+      frontend_image: `ghcr.io/coffeiz/gugu-web-frontend@sha256:${digestA}`,
+    },
+  }
+  const result = runManifestCheck(manifest)
+  assert.equal(result.status, 0, result.stderr)
+})
+
+test('v3 拆分镜像组缺失、使用 tag 或出现未知字段时拒绝 manifest', () => {
+  const base = makeManifest()
+  const invalid = [
+    { ...base, split_images: undefined },
+    { ...base, split_images: { backend_image: `docker.io/coffeiz/gugu-web-backend@sha256:${digestB}` } },
+    { ...base, split_images: { backend_image: 'docker.io/coffeiz/gugu-web-backend:v1.2.2', frontend_image: `docker.io/coffeiz/gugu-web-frontend@sha256:${digestA}` } },
+    { ...base, split_images: { backend_image: `docker.io/coffeiz/gugu-web-backend@sha256:${digestB}`, frontend_image: `docker.io/coffeiz/gugu-web-frontend@sha256:${digestA}`, extra: true } },
+  ]
+  for (const manifest of invalid) assert.notEqual(runManifestCheck(manifest).status, 0)
 })
 
 test('拒绝非白名单仓库、镜像 tag、拆分业务镜像和错误仓库', () => {
@@ -58,7 +85,8 @@ test('拒绝非白名单仓库、镜像 tag、拆分业务镜像和错误仓库'
     { ...makeManifest(), app_image: 'docker.io/coffeiz/gugu-web:v1.2.2' },
     { ...makeManifest(), app_image: `docker.io/coffeiz/gugu-web-backend@sha256:${digestA}` },
     { ...makeManifest(), app_image: `docker.io/coffeiz/gugu-web-worker@sha256:${digestA}` },
-    { ...makeManifest(), schema_version: 1, backend_image: `ghcr.io/coffeiz/gugu-web-backend@sha256:${digestA}`, frontend_image: `ghcr.io/coffeiz/gugu-web-frontend@sha256:${digestB}` },
+    { ...makeManifest(), schema_version: 2 },
+    { ...makeManifest(), schema_version: 1 },
   ]
 
   for (const manifest of invalidManifests) {

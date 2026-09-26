@@ -1,5 +1,6 @@
 import re
 
+from app.core.tz import iso_utc
 from app.models import File, Project
 from app.schemas import FileResponse
 
@@ -33,7 +34,8 @@ def to_file_response(
         size=file.size,
         size_bytes=file.size_bytes,
         mime_type=file.mime_type,
-        created_at=file.created_at.strftime("%Y-%m-%d"),
+        # 保留绝对时刻，前端才能按查看者时区归属到正确自然日。
+        created_at=iso_utc(file.created_at),
         deleted_at=file.deleted_at.strftime("%Y-%m-%dT%H:%M:%S") if file.deleted_at else None,
         img_width=file.img_width,
         img_height=file.img_height,

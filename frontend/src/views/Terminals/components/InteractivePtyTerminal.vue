@@ -31,6 +31,8 @@ let outputDecoder: TextDecoder | null = null
 let suppressPasteSubmitUntil = 0
 let promptRecoveryTimer: number | null = null
 let hasEstablishedConnection = false
+let terminalResizeObserver: ResizeObserver | null = null
+let resizeFrame: number | null = null
 
 function socketUrl(id: string): string {
   const configured = import.meta.env.VITE_API_URL ?? '/api/v1'
@@ -116,6 +118,13 @@ function hasWorkspacePrompt(): boolean {
   return false
 }
 function handleResize() { resize() }
+function scheduleResize() {
+  if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = null
+    resize()
+  })
+}
 function handlePaste(event: ClipboardEvent) {
   const text = event.clipboardData?.getData('text/plain')
   if (!text) return
@@ -154,6 +163,8 @@ onMounted(() => {
   terminal.loadAddon(fitAddon)
   terminal.open(terminalRef.value as HTMLElement)
   terminal.focus()
+  terminalResizeObserver = new ResizeObserver(scheduleResize)
+  terminalResizeObserver.observe(terminalRef.value as HTMLElement)
   terminalRef.value?.addEventListener('click', () => terminal?.focus())
   terminalRef.value?.addEventListener('paste', handlePaste, true)
   terminal.onData(data => {
@@ -195,6 +206,10 @@ onUnmounted(() => {
   if (current?.readyState === WebSocket.OPEN) current.send(JSON.stringify({ type: 'detach' }))
   current?.close()
   window.removeEventListener('resize', handleResize)
+  terminalResizeObserver?.disconnect()
+  terminalResizeObserver = null
+  if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+  resizeFrame = null
   themeObserver?.disconnect()
   themeObserver = null
   terminalRef.value?.removeEventListener('paste', handlePaste, true)
@@ -204,8 +219,8 @@ onUnmounted(() => {
 
 <style scoped>
 .pty-terminal-shell { position:relative; min-height:0; flex:1; overflow:hidden; background:var(--terminal-bg,#101319); }
-.pty-terminal { height:100%; padding:14px 16px; box-sizing:border-box; }
-.pty-terminal :deep(.xterm) { height:100%; }
+.pty-terminal { height:100%; padding:0; box-sizing:border-box; }
+.pty-terminal :deep(.xterm) { height:100%; padding:14px 16px; box-sizing:border-box; }
 .pty-terminal :deep(.xterm-viewport) { background:var(--terminal-bg,#101319) !important; }
 .pty-terminal :deep(.xterm-screen) { padding:0; }
 .pty-terminal-shell { --terminal-bg:#101319; }

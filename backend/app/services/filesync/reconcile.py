@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redaction import diag_log
 from app.core.tz import now_utc
 from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project, User, WorkspaceDirectory
 from app.core.ownership import get_owned
@@ -53,18 +55,49 @@ class SyncSummary:
     entity_ids: tuple[int, ...] = ()
 
 
-def _fingerprint(path: Path) -> str:
+_HASH_CHUNK_BYTES = 1024 * 1024
+_CACHE_ADVISE_THRESHOLD_BYTES = 8 * 1024 * 1024
+_CACHE_ADVISE_INTERVAL_BYTES = 8 * 1024 * 1024
+
+
+def _advise_drop_cache(fd: int, offset: int, length: int, advice: int) -> bool:
+    fadvise = getattr(os, "posix_fadvise", None)
+    if fadvise is None:
+        return False
+    try:
+        fadvise(fd, offset, length, advice)
+    except OSError as exc:
+        # 缓存提示失败不能中断文件同步；记录诊断后停止本文件后续提示。
+        diag_log("filesync.cache_advice_failed", exc)
+        return False
+    return True
+
+
+def _fingerprint(path: Path, *, discard_cache: bool = False) -> str:
     digest = hashlib.sha256()
+    fadvise = getattr(os, "posix_fadvise", None)
+    dontneed = getattr(os, "POSIX_FADV_DONTNEED", None)
+    advise_cache = discard_cache and fadvise is not None and dontneed is not None
+    offset = 0
+    advised_offset = 0
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        while chunk := stream.read(_HASH_CHUNK_BYTES):
             digest.update(chunk)
+            offset += len(chunk)
+            if advise_cache and offset - advised_offset >= _CACHE_ADVISE_INTERVAL_BYTES:
+                if not _advise_drop_cache(stream.fileno(), advised_offset, offset - advised_offset, dontneed):
+                    advise_cache = False
+                advised_offset = offset
+        if advise_cache and offset > advised_offset:
+            _advise_drop_cache(stream.fileno(), advised_offset, offset - advised_offset, dontneed)
     return digest.hexdigest()
 
 
-def _stable_fingerprint(path: Path) -> str:
+def _stable_fingerprint(path: Path, *, discard_cache: bool = False) -> str:
     """只接受一次完整、稳定的读取，避免把正在复制的文件写成半成品。"""
     before = path.stat()
-    digest = _fingerprint(path)
+    should_discard_cache = discard_cache and before.st_size >= _CACHE_ADVISE_THRESHOLD_BYTES
+    digest = _fingerprint(path, discard_cache=should_discard_cache)
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise ValueError("文件仍在写入")
@@ -352,6 +385,7 @@ async def reconcile_local_directory(
     # 快路径：size+mtime 未变直接复用上次内容指纹，跳过整文件哈希；
     # 日级补偿扫描传 use_stat_cache=False 强制全量哈希自愈统计漂移。
     stat_cache = StatCache(user_id, binding.id) if use_stat_cache and not dry_run else None
+    discard_hash_cache = not use_stat_cache and not dry_run
     physical = []
     physical_folders: dict[str, Path] = {}
     rejected = 0
@@ -507,7 +541,7 @@ async def reconcile_local_directory(
                 validate_sync_path(root, relative)
                 observed = stat_cache.lookup(relative, path) if stat_cache else None
                 if observed is None:
-                    observed = _stable_fingerprint(path)
+                    observed = _stable_fingerprint(path, discard_cache=discard_hash_cache)
                     if stat_cache:
                         stat_cache.store(relative, path, observed)
                 planned_fingerprints[key] = observed
@@ -551,7 +585,7 @@ async def reconcile_local_directory(
             if observed is None:
                 observed = stat_cache.lookup(relative, path) if stat_cache else None
             if observed is None:
-                observed = _stable_fingerprint(path)
+                observed = _stable_fingerprint(path, discard_cache=discard_hash_cache)
                 if stat_cache:
                     stat_cache.store(relative, path, observed)
         except (OSError, ValueError):
@@ -641,7 +675,7 @@ async def reconcile_local_directory(
         try:
             observed = stat_cache.lookup(relative, path) if stat_cache else None
             if observed is None:
-                observed = _stable_fingerprint(path)
+                observed = _stable_fingerprint(path, discard_cache=discard_hash_cache)
                 if stat_cache:
                     stat_cache.store(relative, path, observed)
         except (OSError, ValueError):

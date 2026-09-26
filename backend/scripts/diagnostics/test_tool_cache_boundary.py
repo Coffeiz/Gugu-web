@@ -53,7 +53,6 @@ async def _call(client: Any, model: str, messages: list[dict[str, Any]]) -> Usag
         }],
         tool_choice="auto",
         max_tokens=8,
-        temperature=0,
         stream=True,
         stream_options={"include_usage": True},
     )

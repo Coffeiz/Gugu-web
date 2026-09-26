@@ -34,9 +34,9 @@
       </div>
 
       <div class="pm-content">
-        <div class="pm-content-header">
+        <div class="pm-content-header card-close-anchor">
           <span class="pm-content-title">{{ currentNavLabel }}</span>
-          <CloseButton :title="t('common.actions.close')" @click="$emit('close')" />
+          <CloseButton card-corner :title="t('common.actions.close')" @click="$emit('close')" />
         </div>
         <div class="pm-content-body" ref="pmBodyRef">
           <KeepAlive>
@@ -278,7 +278,7 @@ async function doDeleteAccount() {
 .btn-cancel:hover { background: var(--control-bg-hover); border-color: var(--control-border-hover); color: var(--control-fg-strong); }
 
 .pm-content { display: flex; flex-direction: column; min-height: 0; background: var(--panel-content-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: inset 0 1px 0 var(--panel-glass-highlight); }
-.pm-content-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 26px 16px; border-bottom: 1px solid var(--panel-divider); flex-shrink: 0; }
+.pm-content-header { display: flex; align-items: center; justify-content: space-between; padding: 20px var(--card-close-safe-area) 16px 26px; border-bottom: 1px solid var(--panel-divider); flex-shrink: 0; }
 .pm-content-title { font-size: 16px; font-weight: 700; color: var(--content-primary); }
 .pm-content-body { flex: 1; overflow-y: auto; padding: 6px 0; scrollbar-gutter: auto; }
 .pm-section { padding: 20px 26px; display: flex; flex-direction: column; gap: 14px; }

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import inspect
 import json
+import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -111,6 +113,29 @@ class _CaptureBranch:
                             metadata={"branch_mode": branch_input.branch_mode})
 
 
+@pytest.mark.asyncio
+async def test_owner_probe_context_survives_reflection_await(monkeypatch):
+    captured = {}
+
+    async def fake_reflect(*args, **kwargs):
+        captured.update(kwargs)
+        captured["probe_context"] = reflection._reflection_probe_context_var.get()
+        return True
+
+    monkeypatch.setattr(reflection, "reflect", fake_reflect)
+    with reflection._reflection_probe_context(None, "idle"):
+        await reflection._reflect_buffer_rows(
+            "synthetic-owner", SimpleNamespace(),
+            [{"user_name": "小北", "user_msg": "问题", "assistant_reply": "回答"}],
+            7, None,
+        )
+
+    assert captured["probe_context"]["trigger_source"] == "idle"
+    assert captured["probe_context"]["origin_run_id"] == ""
+    assert captured["probe_context"]["origin_gap_seconds"] is None
+    assert captured["rebuild_from_history"] is True
+
+
 async def test_extract_append_builds_reuse_input(monkeypatch):
     _capture(session_id=7, run_id="run-x")
     snapshot = peek_reflection_snapshot("u1", 7)
@@ -130,15 +155,24 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
 
     turns = [{"user_name": "小北", "user_msg": "我最喜欢骑自行车",
               "assistant_reply": "好呀，记下了", "session_id": 7}]
-    out = await reflection._extract_append(snapshot, "小北", turns,
-                                           "画像P", "模式Q", "摘要R",
-                                           SimpleNamespace(), prev_turn=None)
+    snapshot = replace(snapshot, created_at=time.monotonic() - 180.0)
+    with reflection._reflection_probe_context(snapshot, "idle"):
+        out = await reflection._extract_append(snapshot, "小北", turns,
+                                               "画像P", "模式Q", "摘要R",
+                                               SimpleNamespace(), prev_turn=None)
     assert out == {"profile_add": []}
     assert len(captured.calls) == 1
     branch_input, policy = captured.calls[0]
     assert branch_input.branch_mode == "append_reuse"
     assert branch_input.stable_system == "主会话SYS"
     assert branch_input.run_id == "run-x"
+    assert branch_input.session_id == 7
+    assert branch_input.cache_probe_context == {
+        "reflection_scope": "owner",
+        "trigger_source": "idle",
+        "origin_run_id": "run-x",
+        "origin_gap_seconds": pytest.approx(180.0, abs=0.01),
+    }
     assert tuple(branch_input.tools) == ({"name": "list_dir"},)
     # history = 快照 history（快照已含末尾 assistant 最终回复）
     assert list(branch_input.history_messages) == list(snapshot.history)
@@ -194,7 +228,10 @@ async def test_reflect_uses_append_when_eligible(monkeypatch):
     monkeypatch.setattr(reflection, "_read_last_turn", fake_read_last_turn)
     monkeypatch.setattr(reflection, "_write_last_turn", fake_write_last_turn)
 
-    async def fake_append(snapshot, user_name, turns, profile, pattern, summary, settings, prev_turn=None):
+    async def fake_append(
+        snapshot, user_name, turns, profile, pattern, summary, settings,
+        prev_turn=None,
+    ):
         used["append"] += 1
         return {}
 
@@ -205,6 +242,57 @@ async def test_reflect_uses_append_when_eligible(monkeypatch):
                                   session_id=7, turns=turns, snapshot=snapshot)
     assert ok is False            # 提取返回空 → 无记忆增量可写，短路返回
     assert used == {"append": 1}
+
+
+@pytest.mark.asyncio
+async def test_reflect_reloads_persisted_history_after_compaction(monkeypatch):
+    _capture(session_id=7)
+    original = peek_reflection_snapshot("u1", 7)
+    refreshed = replace(original, history=({"role": "user", "content": "压缩后"},))
+    calls = []
+
+    async def fake_bind(user_id, settings, session_id=None):
+        return _ai("deepseek")
+
+    async def fake_rebuild(*args, **kwargs):
+        calls.append(True)
+        return refreshed
+
+    async def fake_read_memory(uid):
+        return {"profile": "P", "pattern": "Q", "summary": "S"}
+
+    async def fake_read_last_turn(uid, sid):
+        return None
+
+    async def fake_write_last_turn(*args, **kwargs):
+        return None
+
+    async def fake_compact(*args, **kwargs):
+        return "compacted"
+
+    used = []
+
+    async def fake_append(snapshot, *args, **kwargs):
+        used.append(snapshot)
+        return {}
+
+    monkeypatch.setattr(reflection, "_bind_user_model", fake_bind)
+    monkeypatch.setattr(reflection, "_rebuild_owner_reflection_snapshot", fake_rebuild)
+    monkeypatch.setattr(reflection.store, "read_memory", fake_read_memory)
+    monkeypatch.setattr(reflection, "_read_last_turn", fake_read_last_turn)
+    monkeypatch.setattr(reflection, "_write_last_turn", fake_write_last_turn)
+    monkeypatch.setattr(reflection, "_extract_append", fake_append)
+    monkeypatch.setattr(
+        "agent.context.compress_conv.compact_for_reflection", fake_compact,
+    )
+
+    turns = [{"user_msg": "m", "assistant_reply": "a", "session_id": 7}]
+    assert await reflection.reflect(
+        "u1", "小北", "m", "a", SimpleNamespace(), session_id=7,
+        turns=turns, snapshot=original,
+    ) is False
+    assert calls == [True]
+    assert used == [refreshed]
 
 
 async def test_reflect_defers_owner_without_snapshot(monkeypatch):

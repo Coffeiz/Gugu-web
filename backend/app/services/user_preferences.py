@@ -9,25 +9,22 @@ from sqlalchemy import select
 from app.models import UserPreferences
 
 
+async def read_user_preference_data(db, user_id) -> dict:
+    data_json = await db.scalar(
+        select(UserPreferences.data_json).where(UserPreferences.user_id == user_id)
+    )
+    try:
+        data = json.loads(data_json or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 async def get_user_locale(db, user_id) -> str | None:
     """读取用户保存的界面语言；配置损坏时返回空值交给调用方采用默认值。"""
-    data_json = await db.scalar(
-        select(UserPreferences.data_json).where(UserPreferences.user_id == user_id)
-    )
-    try:
-        data = json.loads(data_json or "{}")
-    except (TypeError, ValueError):
-        return None
-    return data.get("locale") if isinstance(data, dict) else None
+    return (await read_user_preference_data(db, user_id)).get("locale")
 
 
-async def get_user_unlimited_mode(db, user_id) -> bool:
-    """读取用户级无限工具调用开关；缺失或损坏的偏好按关闭处理。"""
-    data_json = await db.scalar(
-        select(UserPreferences.data_json).where(UserPreferences.user_id == user_id)
-    )
-    try:
-        data = json.loads(data_json or "{}")
-    except (TypeError, ValueError):
-        return False
-    return bool(data.get("unlimited_mode")) if isinstance(data, dict) else False
+async def effective_automatic_mode_enabled(db, user_id) -> bool:
+    """新语义默认关闭；不继承历史 Shell 自动模式偏好。"""
+    return bool((await read_user_preference_data(db, user_id)).get("automatic_mode_enabled", False))

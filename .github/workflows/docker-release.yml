@@ -43,6 +43,7 @@ jobs:
           GUGU_WEB_IMAGE=coffeiz/gugu-web:ci \
             GUGU_DATA_HOST_DIR=/tmp/gugu-data \
             docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.offline.yml config --quiet
           docker compose -f docker-compose.prod.yml config --quiet
 
       - name: Validate update manifest schema
@@ -54,9 +55,10 @@ jobs:
           scripts/release/validate-update-manifest.test.mjs
           scripts/release/compose-update.test.mjs
           scripts/release/docker-release-tags.test.mjs
+          scripts/release/prune-container-tags.test.mjs
 
   sandbox-build:
-    # Sandbox 单独构建/扫描一次，再把同一制品内嵌到一体化镜像，避免重复构建或发布未扫描内容。
+    # Sandbox 执行镜像作为独立制品构建、扫描与发布，不打包进一体化应用镜像。
     name: Build & scan sandbox runtime
     needs: compose-validate
     runs-on: ubuntu-latest
@@ -121,29 +123,13 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
 
-      - name: Package sandbox image for the all-in-one image
-        run: |
-          docker tag "${{ steps.img.outputs.ref }}" coffeiz/gugu-sandbox:bundled
-          docker image inspect --format '{{.Id}}' coffeiz/gugu-sandbox:bundled > image-id
-          docker save coffeiz/gugu-sandbox:bundled | gzip -1 > sandbox-image.tar.gz
-
-      - name: Upload bundled sandbox runtime
-        uses: actions/upload-artifact@v4
-        with:
-          name: bundled-sandbox-runtime
-          path: |
-            sandbox-image.tar.gz
-            image-id
-          if-no-files-found: error
-          retention-days: 1
-
   docker-build:
-    # 三个业务镜像并行；app 等待 sandbox 制品，以便将已扫描镜像随一体化镜像交付。
+    # 三个业务镜像并行；sandbox 执行镜像作为独立制品发布，不打包进一体化 app。
     # CI 在 GitHub 托管 runner（海外）上直连官方源比默认 TUNA（国内镜像）快；
     # APT_MIRROR / PIP_INDEX_URL 只覆盖声明了这些 ARG 的镜像（backend/app/sandbox），
     # 未声明的自动忽略。本地/devserver 构建不传参数，仍走 TUNA 默认。
     name: Build & scan ${{ matrix.name }}
-    needs: [compose-validate, sandbox-build]
+    needs: compose-validate
     runs-on: ubuntu-latest
     # tag 触发时镜像推 :ci-<run_id>，publish 对该 digest 纯复制发布，需要 GHCR 写权限。
     permissions:
@@ -193,13 +179,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Download bundled sandbox runtime
-        if: matrix.name == 'app'
-        uses: actions/download-artifact@v4
-        with:
-          name: bundled-sandbox-runtime
-          path: docker/sandbox/bundle
-
       # 本地镜像引用：tag 触发时 build 只带全限定 :ci-<run_id> 一个 tag（push+load
       # 双 exporter，本地名即限定名），非 tag 运行仍是非限定 :ci。下方 smoke 与
       # trivy 统一从这里取名字。
@@ -242,7 +221,7 @@ jobs:
         run: |
           docker run --rm --entrypoint python3 ${{ steps.img.outputs.ref }} -c 'import updater.daemon'
           docker run --rm --entrypoint docker ${{ steps.img.outputs.ref }} compose version
-          docker run --rm --entrypoint sh ${{ steps.img.outputs.ref }} -c 'test -s /opt/gugu/sandbox/sandbox-image.tar.gz && grep -Eq "^sha256:[0-9a-f]{64}$" /opt/gugu/sandbox/image-id'
+          docker run --rm --entrypoint sh ${{ steps.img.outputs.ref }} -c 'test ! -d /opt/gugu/sandbox'
 
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
@@ -416,11 +395,15 @@ jobs:
 
           version = os.environ['VERSION']
           manifest = {
-              'schema_version': 2,
+              'schema_version': 3,
               'version': version,
               'channel': 'stable',
               'minimum_version': '0.22.0',
               'app_image': f"docker.io/coffeiz/gugu-web@{os.environ['APP_DIGEST']}",
+              'split_images': {
+                  'backend_image': f"docker.io/coffeiz/gugu-web-backend@{os.environ['BACKEND_DIGEST']}",
+                  'frontend_image': f"docker.io/coffeiz/gugu-web-frontend@{os.environ['FRONTEND_DIGEST']}",
+              },
               'architectures': ['linux/amd64'],
               'database_migration': True,
               'release_notes_url': f"https://github.com/Coffeiz/Gugu-web/releases/tag/{version}",
@@ -451,6 +434,16 @@ jobs:
               --generate-notes
           fi
 
+      - name: Prune old stable container tags
+        if: steps.version.outputs.is_stable == 'true'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          KEEP_LAST_STABLE_VERSIONS: '10'
+        run: node scripts/release/prune-container-tags.mjs
+
       - name: Write release summary
         env:
           TAG: ${{ steps.version.outputs.version }}
@@ -469,4 +462,52 @@ jobs:
             echo '- 架构：linux/amd64'
             echo '- 镜像来源：docker-build 推送的 :ci-<run_id> digest 纯复制（扫的即发的）'
             echo '- manifest：GitHub Release 资产'
-          } >> "$GITHUB_STEP_SUMMARY"
+              } >> "$GITHUB_STEP_SUMMARY"
+
+  offline-bundle:
+    name: Build offline Compose bundle
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Pull published runtime images
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker pull "docker.io/coffeiz/gugu-web:${VERSION}"
+          docker pull "docker.io/coffeiz/gugu-sandbox:${VERSION}"
+          docker pull ubuntu/squid:latest
+          docker pull searxng/searxng:latest
+          docker tag "docker.io/coffeiz/gugu-web:${VERSION}" coffeiz/gugu-web:latest
+          docker tag "docker.io/coffeiz/gugu-sandbox:${VERSION}" coffeiz/gugu-sandbox:latest
+
+      - name: Build one-file offline bundle
+        run: |
+          mkdir -p release/offline
+          scripts/release/build-offline-sandbox-bundle.sh \
+            --output release/offline/gugu-compose-bundle.tar \
+            --manifest release/offline/sandbox-bundle-manifest.json \
+            --image coffeiz/gugu-web:latest \
+            --image coffeiz/gugu-sandbox:latest \
+            --image ubuntu/squid:latest \
+            --image searxng/searxng:latest
+
+      - name: Upload offline Compose bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: gugu-compose-bundle-${{ github.ref_name }}
+          path: |
+            release/offline/gugu-compose-bundle.tar
+            release/offline/sandbox-bundle-manifest.json
+            docker-compose.yml
+            docker-compose.offline.yml
+            searxng/settings.yml
+          if-no-files-found: error

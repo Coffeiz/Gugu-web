@@ -83,11 +83,18 @@ async def test_openai_branch_marks_system_cache_control_when_explicit(monkeypatc
             build_structured_output=lambda ai: {},
             build_openai_thinking_kwargs=lambda ai, thinking=None: {},
         ))
-    await provider_runner._openai("stable system", "user", _openai_ai(), 100)
+    await provider_runner._openai(
+        "stable system", "user", _openai_ai(), 100,
+        history=[{"role": "system", "content": "session snapshot"}],
+    )
     system, user = fake.kwargs["messages"]
     assert system["role"] == "system"
     assert system["content"] == [
-        {"type": "text", "text": "stable system", "cache_control": {"type": "ephemeral"}},
+        {
+            "type": "text",
+            "text": "stable system\n\n---\n\nsession snapshot",
+            "cache_control": {"type": "ephemeral"},
+        },
     ]
     # user 消息不打断点（内容含时间戳每轮必变，锚定无意义）。
     assert user == {"role": "user", "content": "user"}
@@ -209,3 +216,101 @@ async def test_complete_messages_merges_main_run_generation_params(monkeypatch):
         settings=SimpleNamespace(ai=ai))
     assert fake.kwargs["thinking"] == {"type": "enabled"}
     assert fake.kwargs["metadata"] == {"x": 1}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_append_branch_sanitizes_history_before_appending_delta(monkeypatch):
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(
+            protocol_format=lambda ai: "anthropic",
+            supports_active_cache=lambda model: False,
+            build_anthropic_thinking_params=lambda ai: {},
+            build_anthropic_generation_params=lambda ai: {},
+        ))
+    history = [
+        {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
+        {"role": "assistant", "content": [
+            {"type": "reasoning_content", "text": "unsupported"},
+            {"type": "text", "text": "旧回答"},
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "stale", "content": "orphan"},
+        ]},
+    ]
+    ai = SimpleNamespace(model="m-test", provider="anthropic")
+
+    await provider_runner.complete_messages(
+        "stable system", history, "追加反思任务", settings=SimpleNamespace(ai=ai),
+    )
+
+    assert fake.kwargs["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
+        {"role": "assistant", "content":[
+            {"type": "text", "text": "旧回答", "cache_control": {"type": "ephemeral"}},
+        ]},
+        {"role": "user", "content": "追加反思任务"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_complete_messages_uses_responses_protocol_and_native_tool_schema(monkeypatch):
+    class _FakeResponses:
+        def __init__(self):
+            self.kwargs = None
+
+        @property
+        def responses(self):
+            return self
+
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                output_text='{"summary": "ok"}',
+                output=[],
+                usage=SimpleNamespace(
+                    input_tokens=12,
+                    output_tokens=3,
+                    input_tokens_details=SimpleNamespace(cached_tokens=7),
+                ),
+            )
+
+    fake = _FakeResponses()
+    monkeypatch.setattr(providers, "build_openai_client", lambda ai, timeout: fake)
+    monkeypatch.setattr(
+        providers, "adapter_for",
+        lambda ai: SimpleNamespace(
+            protocol_format=lambda ai: "responses",
+            supports_responses_prompt_cache_key=lambda ai: False,
+            build_structured_output=lambda ai: {},
+        ))
+    ai = SimpleNamespace(
+        model="qwen-test", provider="qwen", api_format="responses",
+        reasoning_effort="low", store=False,
+    )
+    tools = [{"type": "function", "name": "read_file", "parameters": {"type": "object"}}]
+    usage = []
+
+    result = await provider_runner.complete_messages(
+        "stable system", [{"role": "user", "content": "历史"}], "压缩指令",
+        settings=SimpleNamespace(ai=ai), max_tokens=100, json_mode=True,
+        tools=tools, usage_sink=usage,
+    )
+
+    assert result == {"summary": "ok"}
+    assert fake.kwargs["instructions"] == "stable system"
+    assert fake.kwargs["input"] == [
+        {"role": "user", "content": "历史"},
+        {"role": "user", "content": "压缩指令"},
+    ]
+    assert fake.kwargs["tools"] == tools
+    assert fake.kwargs["max_output_tokens"] == 100
+    assert fake.kwargs["store"] is False
+    assert fake.kwargs["reasoning"] == {"effort": "low"}
+    assert "previous_response_id" not in fake.kwargs
+    assert usage == [{
+        "input": 5, "fresh_input": 5, "output": 3,
+        "cache_read": 7, "cache_write": 0,
+    }]

@@ -48,7 +48,6 @@ class PtyLaunchSpec:
     project_root: str | None = None
     personal_read_only: bool = True
     project_read_only: bool = True
-    code_execution_enabled: bool = True
     cols: int = 120
     rows: int = 32
 

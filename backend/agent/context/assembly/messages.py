@@ -38,7 +38,6 @@ class PromptMessages(list):
         conversation = list(conversation)
         self._fixed_prefix_size = max(0, min(int(fixed_prefix_size), len(conversation)))
         self._tail_size = 0
-        self._cache_anchor_indices: list[int] = []
         self._canonical_batches: list[tuple[dict, ...]] = []
         self._canonical_batch_digests: list[str] = []
         self._canonical_batch_metadata: list[dict] = []
@@ -159,38 +158,11 @@ class PromptMessages(list):
         conversation = list(messages)
         super().__setitem__(slice(None), conversation + tail)
         self._tail_size = len(tail)
-        self._cache_anchor_indices = []
         self._sync_backing()
 
     @property
     def fixed_prefix_size(self) -> int:
         return self._fixed_prefix_size
-
-    @property
-    def cache_anchor_indices(self) -> list[int]:
-        return list(self._cache_anchor_indices)
-
-    def remember_cache_anchor(self, index: int, *, limit: int = 2) -> None:
-        conversation_len = len(self.conversation)
-        if index < 0 or index >= conversation_len:
-            return
-        anchors = sorted({item for item in self._cache_anchor_indices
-                          if 0 <= item < conversation_len})
-        if index not in anchors:
-            anchors.append(index)
-        if len(anchors) <= limit:
-            self._cache_anchor_indices = anchors
-            return
-        # 第一个锚点是本轮 baseline，必须跨工具续轮保留；只替换最新尾部锚点。
-        self._cache_anchor_indices = [anchors[0], anchors[-1]][:limit]
-
-    def replace_cache_anchors(self, indices: Iterable[int]) -> None:
-        """替换 provider 缓存锚点，不把旧的历史锚点带入下一次请求。"""
-        conversation_len = len(self.conversation)
-        self._cache_anchor_indices = sorted({
-            int(index) for index in indices
-            if 0 <= int(index) < conversation_len
-        })
 
     def newly_appended(self, initial_conversation_len: int) -> list[dict]:
         return self.conversation[initial_conversation_len:]

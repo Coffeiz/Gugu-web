@@ -25,6 +25,7 @@ from agent.interactions.confirmations import (
     needs_confirmation,
     target_confirmation_identity,
 )
+from agent.interactions.automatic_mode import ACTION
 from agent.mcp.client import McpClient
 from agent.mcp.models import McpServerConfig, McpToolMeta, SCOPE_USER
 from agent.mcp.schema_adapter import (
@@ -167,7 +168,7 @@ class McpToolManager:
             identity = target_confirmation_identity(
                 "mcp.call", {"server": [str(config.id)], "tool": [tool_name]},
             )
-            gate = needs_confirmation(args, summary, user_id, identity=identity)
+            gate = needs_confirmation(args, summary, user_id, identity=identity, purpose=ACTION)
             if gate is not None:
                 _log_traj(tool_name, user_id, args, False, "mcp:等待确认", t0)
                 return gate, None

@@ -5,10 +5,13 @@
 """
 
 from agent.interactions.confirmations import (
+    ACTION,
+    AUTHORIZATION,
+    ConfirmationPurpose,
     is_block,
     is_confirmed,
     needs_confirmation,
     needs_target_confirmation,
 )
 
-__all__ = ["is_block", "is_confirmed", "needs_confirmation", "needs_target_confirmation"]
+__all__ = ["ACTION", "AUTHORIZATION", "ConfirmationPurpose", "is_block", "is_confirmed", "needs_confirmation", "needs_target_confirmation"]

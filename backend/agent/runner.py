@@ -112,7 +112,8 @@ async def _run_collect_unlocked(
         return AgentResponse(text=outcome.text, round_texts=list(outcome.round_texts),
                              session_id=session_id, tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out,
                              cache_read=outcome.cache_read, cache_write=outcome.cache_write,
-                             files=outcome.files, errored=True, used_tools=False,
+                             files=outcome.files, errored=True, error_info=outcome.error_info,
+                             used_tools=False,
                              interactions=outcome.interactions,
                              tool_events=outcome.tool_events,
                              compaction_applied=outcome.compaction_applied)
@@ -124,7 +125,8 @@ async def _run_collect_unlocked(
     return AgentResponse(text=outcome.text, round_texts=list(outcome.round_texts),
                          session_id=session_id, tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out,
                          cache_read=outcome.cache_read, cache_write=outcome.cache_write,
-                         files=outcome.files, errored=outcome.errored, used_tools=im_used_tools,
+                         files=outcome.files, errored=outcome.errored, error_info=outcome.error_info,
+                         used_tools=im_used_tools,
                          interactions=outcome.interactions,
                          tool_events=outcome.tool_events,
                          compaction_applied=outcome.compaction_applied)
@@ -213,7 +215,7 @@ async def _run_stream_unlocked(
         yield ("final", AgentResponse(text=outcome.text, round_texts=list(outcome.round_texts),
                                       session_id=session_id, tokens_in=outcome.tokens_in,
                                       tokens_out=outcome.tokens_out, files=outcome.files,
-                                      cancelled=False, errored=True,
+                                      cancelled=False, errored=True, error_info=outcome.error_info,
                                       used_tools=False, interactions=outcome.interactions,
                                       tool_events=outcome.tool_events,
                                       compaction_applied=outcome.compaction_applied))
@@ -226,7 +228,7 @@ async def _run_stream_unlocked(
     yield ("final", AgentResponse(text=outcome.text, round_texts=list(outcome.round_texts),
                                   session_id=session_id, tokens_in=outcome.tokens_in,
                                   tokens_out=outcome.tokens_out, files=outcome.files,
-                                  cancelled=False, errored=outcome.errored,
+                                  cancelled=False, errored=outcome.errored, error_info=outcome.error_info,
                                   used_tools=im_used_tools, interactions=outcome.interactions,
                                   tool_events=outcome.tool_events,
                                   compaction_applied=outcome.compaction_applied))

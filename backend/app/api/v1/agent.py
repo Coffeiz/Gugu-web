@@ -38,11 +38,6 @@ from agent.context.history import build_chat_tool_events
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-# 音频候选（voice/audio mime/转码候选扩展名）materialize 成整字节的独立上限：
-# 转码与时长探测无法流式，超限按原样流式暂存（voice 录音直接拒）。
-_AUDIO_MATERIALIZE_CAP = 64 * 1024 * 1024
-
-
 class ChatRequest(BaseModel):
     message: str
     locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
@@ -81,7 +76,7 @@ class PendingQueueReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # mcp 的 id 是 UUID 字符串（user_mcp_servers 主键），其余类型是 int 自增（>0）
-    type: Literal["project", "file", "event", "conversation", "skill", "mcp", "scheduled_task"]
+    type: Literal["project", "file", "event", "conversation", "canvas_note", "skill", "mcp", "scheduled_task"]
     id: int | UUID
     label: str = Field(max_length=512)
 
@@ -332,10 +327,10 @@ async def upload_attachment(
     try:
         # 音频候选的转码/时长探测都要整字节，单独给 materialize 上限（分钟级录音
         # 不可能超过它；mime 和扩展名都是用户可控输入，不能放任 500MB「音频」整读）。
-        if needs_audio_processing and size > _AUDIO_MATERIALIZE_CAP:
+        if needs_audio_processing and size > chat_attach.AUDIO_MATERIALIZE_CAP:
             if voice:
                 raise HTTPException(
-                    400, f"语音录音过大（上限 {_AUDIO_MATERIALIZE_CAP // 1048576}MB），请分段录制后再发送")
+                    400, f"语音录音过大（上限 {chat_attach.AUDIO_MATERIALIZE_CAP // 1048576}MB），请分段录制后再发送")
             # 非 voice 的大音频不做进程内转码，按原样流式暂存（转码留给小文件）。
             mime = "audio/mpeg" if ext_l == "mp3" else file.content_type
             meta = await chat_attach.stage_stream(
@@ -664,6 +659,7 @@ async def request_session_filesystem_authorization(
         {}, _session_authorization_summary(session), current_user.id,
         identity=f"session:filesystem:{session.id}", ttl_minutes=10,
         instruction="确认后，该会话中的 Shell 每次运行都可读写用户沙箱；不包含宿主机目录。",
+        purpose=confirm.AUTHORIZATION,
     )
     if pending is None:
         return {"status": "authorized", "session_id": session.id}
@@ -703,6 +699,7 @@ async def confirm_session_filesystem_authorization(
     pending = confirm.needs_confirmation(
         {}, _session_authorization_summary(session), current_user.id,
         identity=f"session:filesystem:{session.id}", ttl_minutes=10,
+        purpose=confirm.AUTHORIZATION,
     )
     if pending is not None:
         raise HTTPException(400, "授权确认不匹配，请重新确认")
@@ -765,13 +762,15 @@ async def get_greeting(
     db: AsyncSession = Depends(get_db),
     locale: str = Query(default="zh-CN", pattern="^(zh-CN|ja-JP|en-US)$"),
 ):
-    """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。失败/空 → text=''，前端兜底池接手。"""
+    """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。"""
     from app.core.config import get_settings
     from app.core.tz import set_ctx_tz, user_tz
     from agent import greeting
+    settings = get_settings()
     set_ctx_tz(user_tz(current_user))
-    text = await greeting.generate(db, current_user.id, get_settings(), locale=locale)
-    return {"text": text}
+    enabled = bool(getattr(settings.agent, "greeting_enabled", True))
+    text = await greeting.generate(db, current_user.id, settings, locale=locale)
+    return {"text": text if enabled else "", "enabled": enabled}
 
 
 @router.get("/pending-queues/{queue_id}")
@@ -1010,6 +1009,15 @@ async def get_session_messages(
         # 只替换当前会话已知的成员和 Bot ID，未知 mention 保留原样。
         return replace_mention_ids(text, mention_names)
 
+    def timeline_items(message: ConversationMessage) -> list[dict]:
+        """兼容旧消息：把未写入时间线的 assistant 附件补成展示事件。"""
+        items = list(message.display_timeline or [])
+        if message.files and not any(
+            isinstance(item, dict) and item.get("files") for item in items
+        ):
+            items.append({"kind": "assistant", "text": "", "files": message.files})
+        return items
+
     workspace = await get_owned(db, Workspace, session.workspace_id, current_user.id) if session.workspace_id else None
     session_context = session.session_context if isinstance(session.session_context, dict) else {}
     active_filesystem_grant = await get_active_grant(
@@ -1063,7 +1071,7 @@ async def get_session_messages(
              "timelineOrder": item.get("timelineOrder") or m.id * 1000 + index + 1,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
-            for index, item in enumerate(m.display_timeline or [])
+            for index, item in enumerate(timeline_items(m))
         ],
         "toolEvents": [
             {**event, "timelineOrder": int(event.get("timelineOrder") or 0) * 1000,

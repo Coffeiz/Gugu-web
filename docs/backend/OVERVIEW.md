@@ -256,7 +256,7 @@ POST /api/v1/agent/upload                聊天内联上传（走暂存，见 ST
 GET  /api/v1/agent/attachment/{id}/thumb|download|preview-pdf
 DELETE /api/v1/agent/attachments | /memory | /sessions/{id}
 ```
-Agent 主循环上限是 `MAX_ROUNDS = 8`、工具调用上限是 `MAX_TOOL_CALLS = 10`；写操作另有最多 `MAX_VERIFY = 5` 的验证轮预算。`agent/tools/` 当前由多个 Skill 注册业务工具，能力注册层再按用户权限、Profile 和当前上下文生成 `CapabilitySnapshot`。固定入口包括 `call_tool`、`use_skill`、`ask_user`，按需能力通过 selector 注入；`canonical_tool_history.py` 将工具调用、结果、工具 schema 和 Skill schema 统一成 provider-neutral 历史，再由 Anthropic/OpenAI adapter 转换。
+普通交互式 Agent Loop 不设产品级轮次或工具调用次数上限，用户可随时通过 `/stop` 中断。定时任务单次最多执行 100 个模型轮次、调用 30 次工具；超限产生失败事件，由外层执行器在未产生写副作用时重试一次，若已产生写副作用则不重跑。上下文压缩仍按模型上下文预算触发，工具本身的授权、确认、配额和执行时限仍由各自安全边界控制。`agent/tools/` 当前由多个 Skill 注册业务工具，能力注册层再按用户权限、Profile 和当前上下文生成 `CapabilitySnapshot`。固定入口包括 `call_tool`、`use_skill`、`ask_user`，按需能力通过 selector 注入；`canonical_tool_history.py` 将工具调用、结果、工具 schema 和 Skill schema 统一成 provider-neutral 历史，再由 Anthropic/OpenAI adapter 转换。
 
 工具覆盖项目/阶段/待办/优先级、文件/文件夹/回收站、日历/定时任务、客户、画布、记忆、联网搜索/深度研究、图片/附件、IM 和对话历史等。当前统一通过固定 `call_tool`、`use_skill`、`ask_user` 入口注入；业务 Schema 和工具往返使用 canonical history。
 

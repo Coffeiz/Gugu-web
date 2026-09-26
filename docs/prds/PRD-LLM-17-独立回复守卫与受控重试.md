@@ -255,7 +255,7 @@ retry hint 不得带守卫完整输出，不得写入持久化历史。为避免
 第一阶段复用当前有效模型路由，但使用独立请求配置：
 
 - 无工具 Schema；
-- `temperature=0` 或 provider 等价设置；
+- 不传 `temperature` 等采样参数，遵循 provider 默认设置；
 - 输出预算建议 128～256 token；
 - 独立超时，建议 3～8 秒；
 - 不复用主模型的完整 `ContextBranch`、session history 或动态注入；

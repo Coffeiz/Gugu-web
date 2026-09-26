@@ -206,6 +206,10 @@ async def test_list_dir_resolves_slash_path(db, user_a):
     assert "路径解析失败" in miss["error"]
     assert miss["available_folders"] == ["方案"]
 
+    root_miss = json.loads(await _list_dir(db, user_a.id, {"folder": "个人文件/不存在"}))
+    assert "路径解析失败" in root_miss["error"]
+    assert root_miss["available_folders"] == ["参考素材"]
+
 
 async def test_list_dir_path_ambiguous_segment_reports_candidates(db, user_a):
     root = await _mk(db, Folder(user_id=user_a.id, name="素材"))

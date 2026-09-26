@@ -143,7 +143,6 @@ def test_build_mcp_tool_wraps_with_contract_defaults():
     assert tool.source == "mcp"
     assert tool.mutates is True
     assert tool.verify_after_call is False
-    assert tool.repeat_safe is False
     assert tool.requires_confirmation is False
     assert tool.input_schema["type"] == "object"
     assert tool.name == "mcp_weather_get_forecast"

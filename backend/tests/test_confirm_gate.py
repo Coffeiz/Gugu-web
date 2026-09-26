@@ -54,6 +54,57 @@ def test_confirm_flag_accepts_only_boolean_true_or_documented_strings(value, exp
     assert is_confirmed({"confirm": value}) is expected
 
 
+def test_automatic_mode_skips_action_without_redis_but_never_skips_authorization(monkeypatch, caplog):
+    from agent.interactions import confirmations
+    from agent.interactions.automatic_mode import (
+        ACTION, AUTHORIZATION, reset_automatic_mode_enabled,
+        set_automatic_mode_enabled,
+    )
+
+    def redis_must_not_be_touched():
+        raise AssertionError("自动通过的操作确认不应访问 Redis")
+
+    monkeypatch.setattr(confirmations, "get_redis_sync", redis_must_not_be_touched)
+    token = set_automatic_mode_enabled(True)
+    try:
+        action_args = {}
+        with caplog.at_level(logging.INFO, logger="agent.automatic_mode"):
+            assert confirmations.needs_confirmation(
+                action_args, "私密操作摘要", "user-1", purpose=ACTION,
+            ) is None
+        assert action_args["confirm"] is True
+        assert "私密操作摘要" not in caplog.text
+        assert "confirmation_skipped purpose=action" in caplog.text
+
+        authorization_args = {}
+        result = confirmations.needs_confirmation(
+            authorization_args, "完整用户沙箱授权", "user-1", purpose=AUTHORIZATION,
+        )
+        payload = json.loads(result)
+        assert payload["status"] == "confirmation_unavailable"
+        assert "confirm" not in authorization_args
+    finally:
+        reset_automatic_mode_enabled(token)
+
+
+def test_automatic_mode_is_context_local_and_defaults_off():
+    from agent.interactions.automatic_mode import (
+        ACTION, AUTHORIZATION, is_automatic_mode_enabled,
+        reset_automatic_mode_enabled, set_automatic_mode_enabled,
+        should_skip_confirmation,
+    )
+
+    assert not is_automatic_mode_enabled()
+    assert not should_skip_confirmation(ACTION)
+    token = set_automatic_mode_enabled(True)
+    try:
+        assert should_skip_confirmation(ACTION)
+        assert not should_skip_confirmation(AUTHORIZATION)
+    finally:
+        reset_automatic_mode_enabled(token)
+    assert not is_automatic_mode_enabled()
+
+
 async def _mk(db, obj):
     db.add(obj)
     await db.commit()
@@ -375,8 +426,8 @@ async def test_dispatch_tripwire_silent_when_gated(user_a, monkeypatch, caplog):
         base_mod.registry._tools.pop(good.name, None)
 
 
-async def test_dispatch_tripwire_silent_for_server_authorized_autopilot(user_a, monkeypatch, caplog):
-    """Autopilot 是服务端授权放行，不应被误记为确认门绕过。"""
+async def test_dispatch_tripwire_silent_for_server_authorized_confirmation_gate(user_a, monkeypatch, caplog):
+    """经服务端确认门放行的 destructive 工具不应被误记为绕过。"""
     from agent.tools import base as base_mod
     import app.db.session as sess_mod
 
@@ -389,24 +440,24 @@ async def test_dispatch_tripwire_silent_for_server_authorized_autopilot(user_a, 
     monkeypatch.setattr(sess_mod, "_engine", object())
     monkeypatch.setattr(sess_mod, "_SessionLocal", lambda: _FakeSession())
 
-    async def _autopilot_handler(db, user_id, args):
-        return {"success": True, "_confirm_gate_authorized": "shell_autopilot"}
+    async def _authorized_handler(db, user_id, args):
+        return {"success": True, "_confirm_gate_authorized": "confirmation_gate"}
 
-    autopilot = base_mod.Tool(
-        name="_test_autopilot_delete", label="测试 Autopilot 删除",
+    authorized = base_mod.Tool(
+        name="_test_confirmed_delete", label="测试已确认删除",
         description="test", input_schema={"type": "object", "properties": {}},
-        handler=_autopilot_handler, destructive=True,
+        handler=_authorized_handler, destructive=True,
     )
-    base_mod.registry._tools[autopilot.name] = autopilot
+    base_mod.registry._tools[authorized.name] = authorized
     try:
         with caplog.at_level(logging.CRITICAL, logger="agent.traj"):
-            result, _ = await base_mod.registry.dispatch(user_a.id, autopilot.name, {})
+            result, _ = await base_mod.registry.dispatch(user_a.id, authorized.name, {})
         payload = json.loads(result)
         assert payload.get("success") is True
         assert "_confirm_gate_authorized" not in payload
         assert not any("confirm-gate.bypassed" in r.message for r in caplog.records)
     finally:
-        base_mod.registry._tools.pop(autopilot.name, None)
+        base_mod.registry._tools.pop(authorized.name, None)
 
 
 async def test_dispatch_normalizes_wrapped_confirmation_result(user_a, monkeypatch):

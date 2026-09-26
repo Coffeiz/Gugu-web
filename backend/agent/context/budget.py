@@ -2,7 +2,8 @@
 
 正常请求不使用本地 token 估算决定压缩；provider 的实际响应是预算触发的权威来源。
 本模块只保留统一分项诊断，以及 provider 溢出后摘要失败时的本地截断兜底，避免
-错误信息再次触发同一上游请求。
+错误信息再次触发同一上游请求。静默反思没有普通 provider usage 事件时，可用
+它做保守预检，预检命中后仍必须调用正式 baseline 压缩。
 """
 from __future__ import annotations
 
@@ -24,8 +25,9 @@ class ContextBudget:
     """一次模型请求的唯一预算计划。
 
     这是 provider 边界的配置/诊断结构，不参与数据库历史读取。``history_tokens``
-    只用于记录 provider 返回的实际分项或兼容诊断；入口不得用本地估算值决定
-    历史窗口、压缩触发或重试。
+    只用于记录 provider 返回的实际分项或兼容诊断；正常入口不得用本地估算值决定
+    历史窗口、压缩触发或重试。静默反思预检是没有 usage 事件时的明确例外，命中
+    后仍由正式 baseline 压缩负责历史处理。
     """
 
     model_context_tokens: int

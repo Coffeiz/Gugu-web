@@ -2,7 +2,7 @@
 
 Rootless 容器中的非 root UID/GID 会映射到宿主机的 subordinate UID/GID。
 本模块负责解析映射、生成权限命令，并在 workspace 初始化时应用 ACL。Compose
-运行时映射由 sandbox-bootstrap 探测后共享；本机开发环境可从 subordinate ID 推导。
+运行时映射由 sandboxd 启动前初始化流程探测后共享；本机开发环境可从 subordinate ID 推导。
 """
 from __future__ import annotations
 
@@ -202,7 +202,7 @@ def _read_runtime_identity() -> tuple[int, int] | None:
 def ensure_sandbox_acl(root: str | Path) -> bool:
     """运行时为单棵沙盒挂载根补齐 rootless ACL；成功返回 True。
 
-    与 sandbox-bootstrap 一次性脚本（prepare_rootless_storage.py）使用同一套
+    与 sandboxd 启动前脚本（prepare_rootless_storage.py）使用同一套
     权限计划。Compose 中优先读取 bootstrap 按目标 daemon 检测并共享的 UID/GID；
     非 Compose 的原生开发环境则按当前用户的 subordinate ID 推导。环境不满足
     （无 setfacl、映射不可用、命令执行失败）时返回 False，由调用方处理权限兜底。

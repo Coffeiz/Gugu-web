@@ -19,7 +19,6 @@ from app.models import ConversationSession, Workspace
 from app.services.workspaces import (
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
-    effective_shell_autopilot_enabled,
     effective_shell_system_enabled,
     workspace_shell_supported,
     resolve_workspace_target,
@@ -52,7 +51,6 @@ class ShellDecision:
     needs_confirmation: bool = False
     workspace_id: int | None = None
     scope: ShellScope = ShellScope.OFF
-    autopilot_enabled: bool = False
     full_user_sandbox_write: bool = False
 
 
@@ -177,10 +175,10 @@ async def evaluate(
     if scope is ShellScope.SANDBOX:
         if sandbox is not None and not getattr(sandbox, "enabled", False):
             return ShellDecision(False, "Shell 沙盒未开启", risk)
-        if sandbox is not None and not getattr(sandbox, "code_execution_enabled", True):
+        if sandbox is not None and not getattr(sandbox, "full_user_sandbox_authorization_enabled", True):
             runtime = blocked_runtime(command)
             if runtime is not None:
-                return ShellDecision(False, f"管理员未开启代码运行环境，禁止使用 {runtime} 运行时", risk, scope=scope)
+                return ShellDecision(False, f"管理员未开启完整用户沙箱授权，禁止使用 {runtime} 运行时", risk, scope=scope)
     if subject_id is None and subject_type == SUBJECT_SESSION:
         subject_id = session_id
     if session_id and session is None:
@@ -263,16 +261,12 @@ async def evaluate(
                 # 授权事实源不可读时拒绝执行，不能把数据库故障解释为默认放行。
                 return ShellDecision(False, "用户沙箱授权状态暂时不可用", risk, scope=scope)
             full_user_sandbox_write = filesystem_policy.full_user_sandbox
-    autopilot_enabled = (
-        bool(getattr(settings.agent, "shell_autopilot_enabled", False))
-        and await effective_shell_autopilot_enabled(db, user_id)
-    )
     if risk is ShellRisk.DANGEROUS:
         if not get_settings().agent.shell_dangerous_enabled:
             return ShellDecision(False, "管理员未开放全部 Shell 命令", risk, scope=scope)
         if not await effective_shell_dangerous_enabled(db, user_id):
             return ShellDecision(False, "用户未开放全部 Shell 命令", risk, scope=scope)
-        if not confirm and not autopilot_enabled:
+        if not confirm:
             return ShellDecision(
                 True, "危险命令需要用户确认", risk, True,
                 workspace.id if workspace else None, scope,
@@ -280,8 +274,7 @@ async def evaluate(
             )
     return ShellDecision(
         True, f"允许在 {scope.value} 范围执行", risk, False,
-        workspace.id if workspace else None, scope, autopilot_enabled,
-        full_user_sandbox_write,
+        workspace.id if workspace else None, scope, full_user_sandbox_write,
     )
 
 
@@ -375,18 +368,19 @@ async def build_dynamic_prompt(
             "- 全部 Shell 命令：未开放；只允许读取、检查和普通安全命令，禁止删除、覆盖、移动、"
             "提权、服务控制、网络下载等危险操作，也不要向用户索要确认后继续。"
         )
-    if safe.autopilot_enabled:
+    from agent.interactions.automatic_mode import is_automatic_mode_enabled
+    if is_automatic_mode_enabled():
         lines.append(
-            "- Autopilot：已开启；仅当执行器明确判定满足条件时才可能跳过确认门，"
+            "- 自动模式：已开启；仅当执行器明确判定满足条件时才可能跳过确认门，"
             "仍受沙盒、范围、配额和审计限制，不能视为无限权限。"
         )
     else:
         lines.append(
-            "- Autopilot：未开启；危险操作不能跳过执行器确认门。"
+            "- 自动模式：未开启；危险操作不能跳过执行器确认门。"
         )
     if subject_type == SUBJECT_SCHEDULED_TASK:
         lines.append("- 当前是定时任务；不支持交互式确认，需要确认的危险操作不得执行。")
-    if getattr(getattr(settings, "sandbox", None), "shell_direct_runtime_enabled", False):
+    if getattr(getattr(settings, "sandbox", None), "full_user_sandbox_authorization_enabled", False):
         lines.append(
             "- 代码运行时：沙盒内可直接执行 python3/node/npm 等命令，无需改走 run_script；"
             "危险命令确认门与沙盒边界照常生效。"

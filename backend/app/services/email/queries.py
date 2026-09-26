@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
-
 from sqlalchemy import select
 
 from app.models import Client, User, UserPreferences, UserSmtpConfig
+from app.services.user_preferences import read_user_preference_data
 
 
 async def get_owned_client(db, user_id, client_id):
@@ -29,14 +28,7 @@ async def get_enabled_user_smtp(db, user_id):
 
 
 async def get_user_email_preferences(db, user_id) -> dict:
-    data_json = await db.scalar(
-        select(UserPreferences.data_json).where(UserPreferences.user_id == user_id)
-    )
-    try:
-        data = json.loads(data_json or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return await read_user_preference_data(db, user_id)
 
 
 async def get_active_recipient_rows(db):

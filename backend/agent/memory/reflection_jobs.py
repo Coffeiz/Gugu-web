@@ -1,6 +1,7 @@
-"""IM 记忆反思任务、游标和活跃窗口状态机。"""
+"""IM 记忆反思任务、群消息游标和闲置收束状态机。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Any, List, Optional
 
@@ -16,11 +17,11 @@ from agent.memory.scopes import MemoryScope
 REFLECTION_STREAM = "memory:reflection"
 REFLECTION_GROUP = "memory-reflection-workers"
 EXTRACTOR_VERSION = "im-memory-v1"
-ACTIVE_WINDOW = timedelta(hours=1)
 IDLE_WINDOW = reflection_idle.IDLE_WINDOW
 MAX_RETRIES = 5
 RETRY_BACKOFF_MINUTES = (1, 5, 30, 120, 360)
 GROUP_MESSAGE_THRESHOLD = 50
+_LOCAL_SNAPSHOT_TASKS: set[asyncio.Task] = set()
 
 
 def _scope_filters(model, scope: MemoryScope) -> List[Any]:
@@ -52,9 +53,10 @@ async def enqueue_scope(
     reason: str,
     *,
     task_type: str = "group",
+    defer_dispatch: bool = False,
     now=None,
 ) -> Optional[int]:
-    """创建一个幂等反思任务并投递 Stream；没有新消息时不创建任务。"""
+    """创建幂等任务；可暂缓投递，让主会话快照先被同进程分支复用。"""
     if first_message_id is None or last_message_id is None or first_message_id > last_message_id:
         return None
     from agent.memory.scope_lifecycle import is_tombstoned
@@ -65,6 +67,7 @@ async def enqueue_scope(
 
     now = now or now_utc()
     key = _idempotency_key(scope, first_message_id, last_message_id, task_type)
+    next_attempt = now + IDLE_WINDOW if defer_dispatch else now
     async with await _db_session() as db:
         existing = (await db.execute(
             select(MemoryReflectionJob).where(MemoryReflectionJob.idempotency_key == key)
@@ -74,48 +77,69 @@ async def enqueue_scope(
                 existing.status = "pending"
                 existing.retry_count = 0
                 existing.dead_at = None
-                existing.next_attempt_at = now
+                existing.next_attempt_at = next_attempt
                 existing.updated_at = now
                 await db.commit()
-            return existing.id
-        job = MemoryReflectionJob(
-            owner_user_id=scope.owner_user_id,
-            platform=scope.platform,
-            bot_id=scope.bot_id,
-            scope_type=scope.scope_type,
-            scope_id=scope.scope_id,
-            from_message_id=first_message_id,
-            to_message_id=last_message_id,
-            idempotency_key=key,
-            extractor_version=EXTRACTOR_VERSION,
-            task_type=task_type,
-            reason=reason,
-            next_attempt_at=now,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(job)
-        try:
-            await db.flush()
-            job_id = job.id
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()
-            existing = (await db.execute(
-                select(MemoryReflectionJob.id).where(
-                    MemoryReflectionJob.idempotency_key == key
-                )
-            )).scalar_one_or_none()
-            if existing is None:
-                raise
-            job_id = existing
+            else:
+                if reason == "idle" and existing.status in {"pending", "retry"}:
+                    existing.reason = "idle"
+                    existing.next_attempt_at = now
+                    existing.updated_at = now
+                    await db.commit()
+                elif defer_dispatch and existing.status in {"pending", "retry"}:
+                    existing.next_attempt_at = next_attempt
+                    existing.updated_at = now
+                    await db.commit()
+                elif existing.status in {"pending", "retry"}:
+                    existing.next_attempt_at = now
+                    existing.updated_at = now
+                    await db.commit()
+            job_id = existing.id
+        else:
+            job = MemoryReflectionJob(
+                owner_user_id=scope.owner_user_id,
+                platform=scope.platform,
+                bot_id=scope.bot_id,
+                scope_type=scope.scope_type,
+                scope_id=scope.scope_id,
+                from_message_id=first_message_id,
+                to_message_id=last_message_id,
+                idempotency_key=key,
+                extractor_version=EXTRACTOR_VERSION,
+                task_type=task_type,
+                reason=reason,
+                next_attempt_at=next_attempt,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(job)
+            try:
+                await db.flush()
+                job_id = job.id
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                existing_id = (await db.execute(
+                    select(MemoryReflectionJob.id).where(
+                        MemoryReflectionJob.idempotency_key == key
+                    )
+                )).scalar_one_or_none()
+                if existing_id is None:
+                    raise
+                job_id = existing_id
+    if defer_dispatch:
+        return job_id
+    await _dispatch_job(job_id)
+    return job_id
+
+
+async def _dispatch_job(job_id: int) -> None:
     try:
         await R.ensure_group(REFLECTION_STREAM, REFLECTION_GROUP)
         await R.produce(REFLECTION_STREAM, {"job_id": job_id}, maxlen=10000)
     except Exception:
-        # DB 任务保留 pending，补偿扫描会再次投递；不让 Redis 瞬时故障丢记忆任务。
-        return job_id
-    return job_id
+        # DB 任务保留 pending，补偿扫描会再次投递。
+        return
 
 
 async def observe_group_message(
@@ -124,11 +148,9 @@ async def observe_group_message(
     message_at,
     *,
     now=None,
-    trigger_mode: str = "passive",
-    force: bool = False,
     member_batch: bool = True,
 ) -> Optional[int]:
-    """推进群级游标；成员记忆由群消息累计 50 条触发批量任务。"""
+    """推进群级游标；群级和群友记忆都由群消息累计 50 条触发。"""
     from app.models import MemoryReflectionCursor
     from agent.memory.scope_lifecycle import is_tombstoned
 
@@ -184,16 +206,13 @@ async def observe_group_message(
         cursor.scope_version += 1
         if member_batch:
             cursor.pending_passive_count += 1
-        should_hourly = bool(
-            cursor.active_started_at and now - cursor.active_started_at >= ACTIVE_WINDOW
-        )
         should_threshold = (
             member_batch and cursor.pending_passive_count >= GROUP_MESSAGE_THRESHOLD
         )
         group_first = (cursor.last_reflected_message_id or 0) + 1
         member_first = (cursor.last_member_reflected_message_id or 0) + 1
         last = cursor.last_message_id
-        should_group = should_hourly
+        should_group = should_threshold
         if should_group or should_threshold:
             cursor.active_started_at = message_at or now
             if should_threshold:
@@ -205,12 +224,15 @@ async def observe_group_message(
             return None
     job_ids = []
     if should_group:
-        job_id = await enqueue_scope(scope, group_first, last, "active-window", now=now)
+        job_id = await enqueue_scope(
+            scope, group_first, last, "message-threshold", defer_dispatch=True, now=now,
+        )
         if job_id is not None:
             job_ids.append(job_id)
     if should_threshold:
         job_id = await enqueue_scope(
-            scope, member_first, last, "message-threshold", task_type="member-batch", now=now,
+            scope, member_first, last, "message-threshold", task_type="member-batch",
+            defer_dispatch=True, now=now,
         )
         if job_id is not None:
             job_ids.append(job_id)
@@ -218,7 +240,7 @@ async def observe_group_message(
 
 
 async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
-    """扫描 15 分钟无新消息且未收束的 scope，每轮只投递一次。"""
+    """扫描 4 分 30 秒无新消息且未收束的 scope，每轮只投递一次。"""
     from app.models import MemoryReflectionCursor
 
     now = now or now_utc()
@@ -267,6 +289,10 @@ async def settle_idle_scopes(*, now=None, limit: int = 100) -> int:
             cursor = await db.get(MemoryReflectionCursor, cursor_id)
             if cursor and cursor.last_message_id == last and cursor.settled_at is None:
                 cursor.settled_at = now
+                if scope.scope_type == "group":
+                    cursor.pending_passive_count = 0
+                elif scope.scope_type == "platform-user":
+                    cursor.pending_agent_count = 0
                 cursor.updated_at = now
                 await db.commit()
                 settled += 1
@@ -340,9 +366,56 @@ async def observe_session_activity(
         )).scalars().first()
     if message is None:
         return None
-    return await observe_group_message(
+    job_id = await observe_group_message(
         scope, message.id, message.created_at or now, now=now, member_batch=member_batch,
     )
+    await _schedule_scope_jobs_with_snapshot(scope, session_id)
+    return job_id
+
+
+async def _schedule_scope_jobs_with_snapshot(scope: MemoryScope, session_id: int) -> int:
+    """在主会话进程用刚完成的真实快照处理同 session 的待运行 IM 反思。"""
+    from app.models import MemoryReflectionJob
+
+    from agent.context.reflection_snapshot import peek_reflection_snapshot
+
+    snapshot = peek_reflection_snapshot(scope.owner_user_id, session_id)
+    if snapshot is None:
+        return 0
+    async with await _db_session() as db:
+        jobs = (await db.execute(
+            select(MemoryReflectionJob).where(
+                *_scope_filters(MemoryReflectionJob, scope),
+                MemoryReflectionJob.status == "pending",
+            ).order_by(MemoryReflectionJob.id)
+        )).scalars().all()
+        from agent.memory.im_reflection import _messages_for_job
+
+        job_ids = []
+        for job in jobs:
+            messages = await _messages_for_job(db, job)
+            if messages and all(int(message.session_id) == int(session_id) for message in messages):
+                job_ids.append(job.id)
+    if not job_ids:
+        return 0
+
+    from app.core.config import get_settings
+    from agent.memory.im_reflection import execute_job
+
+    settings = get_settings()
+
+    async def run_snapshot_jobs() -> None:
+        for job_id in job_ids:
+            try:
+                await execute_job(job_id, settings, snapshot=snapshot)
+            except Exception as exc:
+                from app.core.redaction import diag_log
+                diag_log("agent.memory.im_reflection.snapshot_job", exc)
+
+    task = asyncio.create_task(run_snapshot_jobs())
+    _LOCAL_SNAPSHOT_TASKS.add(task)
+    task.add_done_callback(_LOCAL_SNAPSHOT_TASKS.discard)
+    return len(job_ids)
 
 
 async def observe_private_member_activity(
@@ -353,16 +426,17 @@ async def observe_private_member_activity(
     now=None,
     force: bool = False,
 ) -> Optional[int]:
-    """私聊完成一个回合后立即复用 owner 反思策略，写入隔离的 platform-user scope。
-
-    私聊不再有独立的成员计数阈值；scope 只用于隔离目标用户的记忆文件，反思的
-    触发时机、Prompt 和 JSON 契约与 owner 保持一致。
-    """
+    """按网页/私聊共享阈值累计私聊 Agent 回合，写入隔离的 platform-user scope。"""
     from app.models import MemoryReflectionCursor, ConversationMessage
+    from app.core.config import get_settings
 
     if scope.scope_type != "platform-user":
         return None
     now = now or now_utc()
+    threshold = max(1, min(100, int(get_settings().agent.web_private_reflection_threshold)))
+    from agent.context.reflection_snapshot import peek_reflection_snapshot
+
+    snapshot = peek_reflection_snapshot(scope.owner_user_id, session_id)
     async with await _db_session() as db:
         message = (await db.execute(
             select(ConversationMessage)
@@ -391,23 +465,33 @@ async def observe_private_member_activity(
                 active_started_at=message.created_at or now,
                 last_message_at=message.created_at or now,
                 last_message_id=message.id,
+                pending_agent_count=1,
                 scope_version=1,
                 created_at=now,
                 updated_at=now,
             )
             db.add(cursor)
-            await db.commit()
-            await db.close()
-            return await enqueue_scope(
-                scope, message.id, message.id, "active-turn", task_type="private-owner", now=now,
-            )
-        cursor.last_message_id = message.id
-        cursor.last_message_at = message.created_at or now
-        cursor.scope_version += 1
+            await db.flush()
+        else:
+            cursor.pending_agent_count += 1
+            cursor.last_message_id = message.id
+            cursor.last_message_at = message.created_at or now
+            cursor.scope_version += 1
+            cursor.active_started_at = message.created_at or now
+            cursor.settled_at = None
         first = (cursor.last_reflected_message_id or 0) + 1
-        cursor.active_started_at = message.created_at or now
+        last = cursor.last_message_id
+        should_reflect = cursor.pending_agent_count >= threshold
+        if should_reflect:
+            # 预留本批轮数；若后续任务入队失败，idle 扫描仍会按反思游标补齐消息范围。
+            cursor.pending_agent_count -= threshold
         await db.commit()
-    return await enqueue_scope(
-        scope, first, message.id, "active-turn" if not force else "tool",
-        task_type="private-owner", now=now,
+    if not should_reflect:
+        return None
+    job_id = await enqueue_scope(
+        scope, first, last, "message-threshold" if not force else "tool",
+        task_type="private-owner", defer_dispatch=True, now=now,
     )
+    if job_id is not None and snapshot is not None:
+        await _schedule_scope_jobs_with_snapshot(scope, session_id)
+    return job_id

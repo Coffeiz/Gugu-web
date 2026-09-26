@@ -148,7 +148,6 @@ async def test_minimax_with_null_fields():
                 client.messages.create,
                 model="minimax-m3-7b-beta",  # 或者其他可用的模型
                 max_tokens=100,
-                temperature=0.7,
                 messages=messages_with_null
             )
 
@@ -184,7 +183,6 @@ async def test_minimax_with_null_fields():
             client.messages.create,
             model="minimax-m3-7b-beta",
             max_tokens=100,
-            temperature=0.7,
             messages=messages_without_null
         )
 

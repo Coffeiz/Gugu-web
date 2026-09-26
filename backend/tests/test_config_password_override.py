@@ -105,6 +105,50 @@ def test_apply_override_accepts_real_password(tmp_path, monkeypatch):
     assert "RealSecret_abc123" in s.db.url
 
 
+def test_apply_override_reads_legacy_admin_automatic_mode_once(tmp_path, monkeypatch):
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({
+        "agent": {"shell_autopilot_enabled": False},
+    }), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+
+    settings = cfg.AppSettings(db=cfg.DatabaseSettings(password="Test_db_password_123")).apply_override()
+
+    assert settings.agent.automatic_mode_enabled is False
+    assert not hasattr(settings.agent, "shell_autopilot_enabled")
+
+
+def test_apply_override_prefers_new_admin_automatic_mode_over_legacy(tmp_path, monkeypatch):
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({
+        "agent": {
+            "shell_autopilot_enabled": True,
+            "automatic_mode_enabled": False,
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+
+    settings = cfg.AppSettings(db=cfg.DatabaseSettings(password="Test_db_password_123")).apply_override()
+
+    assert settings.agent.automatic_mode_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_saving_new_admin_setting_removes_legacy_key(tmp_path, monkeypatch):
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({"agent": {"shell_autopilot_enabled": True}}), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+    monkeypatch.setattr(
+        cfg, "get_settings",
+        lambda: cfg.AppSettings(db=cfg.DatabaseSettings(password="Test_db_password_123")),
+    )
+
+    await cfg.save_override({"agent": {"automatic_mode_enabled": False}})
+
+    saved = json.loads(fake.read_text(encoding="utf-8"))
+    assert saved["agent"] == {"automatic_mode_enabled": False}
+
+
 def test_apply_override_accepts_password_from_environment(tmp_path, monkeypatch):
     """override.json 只覆盖连接信息时，允许使用受保护环境变量中的密码。"""
     fake = tmp_path / "config.override.json"

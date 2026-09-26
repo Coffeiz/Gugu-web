@@ -62,18 +62,6 @@ html[data-theme][data-family] .bm-card {
               inset 1px 0 0 var(--modal-card-side-highlight);
 }
 
-/* UploadModal still owns close-button geometry locally. Keep its paint identical to the shared modal
-   close control in both light and dark; the previous file-dialog-specific mapping made this one card
-   visibly diverge from the other bm-card/project close buttons. */
-html[data-theme][data-family] .bm-card:has(.drop-zone) .modal-header .close-btn {
-  background: var(--control-bg);
-  color: var(--control-fg);
-}
-html[data-theme][data-family] .bm-card:has(.drop-zone) .modal-header .close-btn:hover {
-  background: var(--control-bg-hover);
-  color: var(--control-fg-strong);
-}
-
 html[data-theme][data-family] .popup-menu {
   background: var(--popup-background);
   border-color: var(--popup-border);

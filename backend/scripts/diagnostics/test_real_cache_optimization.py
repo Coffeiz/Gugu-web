@@ -68,7 +68,6 @@ async def test_cross_call_cache_with_optimization():
         r = client.messages.create(
             model="minimax-m3-7b-beta",
             max_tokens=10,
-            temperature=0.7,
             system=[{"type": "text", "text": static_system, "cache_control": {"type": "ephemeral"}}],
             messages=messages
         )

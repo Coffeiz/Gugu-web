@@ -21,8 +21,10 @@ def _usage_value(value, key: str):
 
 def normalize_anthropic_usage(usage) -> dict[str, int]:
     """把 Anthropic 返回的用量字段归一为账本字段。"""
+    input_tokens = int(_usage_value(usage, "input_tokens") or 0)
     return {
-        "input": int(_usage_value(usage, "input_tokens") or 0),
+        "input": input_tokens,
+        "fresh_input": input_tokens,
         "output": int(_usage_value(usage, "output_tokens") or 0),
         "cache_read": int(_usage_value(usage, "cache_read_input_tokens") or 0),
         "cache_write": int(_usage_value(usage, "cache_creation_input_tokens") or 0),
@@ -36,11 +38,13 @@ def normalize_openai_usage(usage) -> dict[str, int]:
     if not cache_read:
         details = _usage_value(usage, "prompt_tokens_details")
         cache_read = int(_usage_value(details, "cached_tokens") or 0)
+    cache_write = int(_usage_value(usage, "prompt_cache_creation_tokens") or 0)
     return {
         "input": max(0, prompt_tokens - cache_read),
+        "fresh_input": max(0, prompt_tokens - cache_read - cache_write),
         "output": int(_usage_value(usage, "completion_tokens") or 0),
         "cache_read": cache_read,
-        "cache_write": int(_usage_value(usage, "prompt_cache_creation_tokens") or 0),
+        "cache_write": cache_write,
     }
 
 
@@ -66,20 +70,22 @@ def normalize_responses_usage(usage) -> dict[str, int]:
         cache_read = int(_usage_value(details, "cached_tokens") or 0)
     if not cache_read:
         cache_read = int(_usage_value(usage, "cached_tokens") or 0)
+    cache_write = int(
+        _usage_value(usage, "cache_creation_input_tokens")
+        or _usage_value(usage, "prompt_cache_creation_tokens")
+        or _usage_value(usage, "cache_write_tokens")
+        or 0
+    )
     return {
         "input": max(0, input_tokens - cache_read),
+        "fresh_input": max(0, input_tokens - cache_read - cache_write),
         "output": int(
             _usage_value(usage, "output_tokens")
             or _usage_value(usage, "completion_tokens")
             or 0
         ),
         "cache_read": cache_read,
-        "cache_write": int(
-            _usage_value(usage, "cache_creation_input_tokens")
-            or _usage_value(usage, "prompt_cache_creation_tokens")
-            or _usage_value(usage, "cache_write_tokens")
-            or 0
-        ),
+        "cache_write": cache_write,
     }
 
 async def record_usage(

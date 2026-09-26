@@ -77,7 +77,6 @@ class SandboxdPtyClient:
                 "project_root": spec.project_root,
                 "personal_read_only": spec.personal_read_only,
                 "project_read_only": spec.project_read_only,
-                "code_execution_enabled": spec.code_execution_enabled,
                 "network_profile": spec.network_profile, "cols": spec.cols, "rows": spec.rows,
             }) + "\n").encode())
             await writer.drain()

@@ -47,7 +47,7 @@ export const MIND_REF_RE = /\[\[([a-z_]+):(\d+)\|([^\]]*)\]\]/
 
 /** 引用 chip 的类型文案（无障碍 title/下拉分组标题用），跟 NoteEditor.vue 补全下拉的
  *  TYPE_LABEL、顶栏 GlobalSearch.vue 的分组标题是同一套。 */
-export const MIND_REF_TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动', conversation: '对话', skill: '技能', mcp: 'MCP', scheduled_task: '定时任务' }
+export const MIND_REF_TYPE_LABEL: Record<string, string> = { project: '项目', file: '文件', event: '活动', canvas_note: '画布便签', conversation: '对话', skill: '技能', mcp: 'MCP', scheduled_task: '定时任务' }
 function mindRefTypeLabel(type: string): string {
   return String(i18n.global.t(`mindEditorUi.referenceTypes.${type}`, MIND_REF_TYPE_LABEL[type] ?? type))
 }
@@ -60,6 +60,7 @@ export const MIND_REF_TYPE_ICON_PATH: Record<string, string> = {
   project: 'M234.36,170A12,12,0,0,1,230,186.37l-96,56a12,12,0,0,1-12.1,0l-96-56a12,12,0,0,1,12.09-20.74l90,52.48L218,165.63A12,12,0,0,1,234.36,170ZM218,117.63,128,170.11,38.05,117.63A12,12,0,0,0,26,138.37l96,56a12,12,0,0,0,12.1,0l96-56A12,12,0,0,0,218,117.63ZM20,80a12,12,0,0,1,6-10.37l96-56a12.06,12.06,0,0,1,12.1,0l96,56a12,12,0,0,1,0,20.74l-96,56a12,12,0,0,1-12.1,0l-96-56A12,12,0,0,1,20,80Zm35.82,0L128,122.11,200.18,80,128,37.89Z',
   file: 'M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Z',
   event: 'M208,28H188V24a12,12,0,0,0-24,0v4H92V24a12,12,0,0,0-24,0v4H48A20,20,0,0,0,28,48V208a20,20,0,0,0,20,20H208a20,20,0,0,0,20-20V48A20,20,0,0,0,208,28ZM68,52a12,12,0,0,0,24,0h72a12,12,0,0,0,24,0h16V76H52V52ZM52,204V100H204V204Z',
+  canvas_note: 'M216,36H40A20,20,0,0,0,20,56V200a20,20,0,0,0,20,20H216a20,20,0,0,0,20-20V56A20,20,0,0,0,216,36ZM44,60H212V84H44ZM44,196V108H212v88ZM68,132h48v16H68Zm0,32h88v16H68Z',
   conversation: 'M128,20A108,108,0,0,0,31.85,177.23L21,209.66A20,20,0,0,0,46.34,235l32.43-10.81A108,108,0,1,0,128,20Zm0,192a84,84,0,0,1-42.06-11.27,12,12,0,0,0-6-1.62,12.1,12.1,0,0,0-3.8.62l-29.79,9.93,9.93-29.79a12,12,0,0,0-1-9.81A84,84,0,1,1,128,212Z',
   folder: 'M216,68H133.39l-26-29.29a20,20,0,0,0-15-6.71H40A20,20,0,0,0,20,52V200.62A19.41,19.41,0,0,0,39.38,220H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68ZM44,56H90.61l10.67,12H44ZM212,196H44V92H212Z',
   // skill/mcp/scheduled_task：PhBook/PhPlug/PhBell 的 bold 权重 path（与上面同一批 phosphor 图标）

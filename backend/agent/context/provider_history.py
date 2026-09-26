@@ -44,10 +44,6 @@ def render_anthropic_message_roles(messages: list[dict], adapter) -> list[dict]:
     result._canonical_batch_metadata = copy.deepcopy(list(
         getattr(messages, "_canonical_batch_metadata", ())
     ))
-    remember_anchor = getattr(result, "remember_cache_anchor", None)
-    if remember_anchor is not None:
-        for index in getattr(messages, "cache_anchor_indices", ()):
-            remember_anchor(index)
     return result
 
 
@@ -106,6 +102,62 @@ def strip_thinking_blocks(value: Any) -> Any:
             return None
         return dict(value)
     return value
+
+
+def _anthropic_tool_ids(message: dict, block_type: str) -> set:
+    content = message.get("content")
+    blocks = content if isinstance(content, list) else [content]
+    if block_type == "tool_use":
+        return {
+            block["id"] for block in blocks
+            if isinstance(block, dict) and block.get("type") == block_type and block.get("id")
+        }
+    return {
+        block.get("tool_use_id") or block.get("tool_call_id") for block in blocks
+        if isinstance(block, dict) and block.get("type") == block_type
+        and (block.get("tool_use_id") or block.get("tool_call_id"))
+    }
+
+
+def _has_unpaired_anthropic_tool_events(messages: list[dict]) -> bool:
+    for index, message in enumerate(messages):
+        previous = messages[index - 1] if index else {}
+        following = messages[index + 1] if index + 1 < len(messages) else {}
+        if message.get("role") == "assistant" and (
+            _anthropic_tool_ids(message, "tool_use")
+            - _anthropic_tool_ids(following, "tool_result")
+        ):
+            return True
+        if message.get("role") == "user" and (
+            _anthropic_tool_ids(message, "tool_result")
+            - _anthropic_tool_ids(previous, "tool_use")
+        ):
+            return True
+    return False
+
+
+def sanitize_anthropic_branch_history(messages: list[dict]) -> list[dict]:
+    """清洗追加式分支的 Anthropic 历史，不改调用方持有的 canonical/wire 数据。
+
+    持久化历史可能包含 OpenAI 专属 reasoning_content，也可能因历史窗口裁剪
+    留下孤立 tool_result 或未完成 tool_use。主对话在 Anthropic driver 入口做
+    同类配对清洗；reflection/compaction 的追加分支也必须在请求边界执行。
+    """
+    without_thinking = []
+    for message in messages:
+        cloned = dict(message)
+        cloned["content"] = strip_thinking_blocks(cloned.get("content"))
+        if cloned["content"] is None or cloned["content"] == []:
+            continue
+        without_thinking.append(cloned)
+
+    # 常见历史无需经过通用 sanitizer，避免把合法字符串 content 重写成 text block，
+    # 造成缓存前缀变化。只有存在未配对工具事件时才走主对话使用的完整归一化器。
+    if _has_unpaired_anthropic_tool_events(without_thinking):
+        from agent.security.sanitize import sanitize_messages
+
+        return sanitize_messages(without_thinking)
+    return without_thinking
 
 
 def clean_persisted_history(messages: list[Any]) -> int:

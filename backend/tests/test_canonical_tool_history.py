@@ -33,7 +33,7 @@ def test_schema_event_has_stable_digest_and_is_deduplicated():
 
 def test_canonical_events_render_as_text_without_provider_wire_blocks():
     messages = []
-    append_event(messages, SkillSchemaEvent("image-analysis", ("image_search", "inspect_images")))
+    append_event(messages, SkillSchemaEvent("image-analysis", ("image_search", "read_file")))
     rendered = render_events_for_provider(messages)
     assert rendered[0]["role"] == "user"
     assert isinstance(rendered[0]["content"], list)

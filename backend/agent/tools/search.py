@@ -5,7 +5,7 @@
 - `deep_research`：按 Admin 选择的 Provider 查询外部资料。Tavily / You.com 返回研究答案；百度使用普通百度搜索并返回网页引用，适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
 - `image_search`：统一图片搜索入口。`mode=text` 按关键词走 SearXNG，`mode=image` 根据已有图片以图搜图，返回相似候选。
-  默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时单独调用 `inspect_images`。
+  默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时用 `read_file(items=[...])` 批量读取选中的图片。
   真要把图发进对话/IM，接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
 成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research（Admin 选择的 Provider）。
@@ -18,7 +18,6 @@ from datetime import datetime
 import asyncio
 import base64
 from collections import Counter
-from contextvars import ContextVar
 import io
 import json
 import logging
@@ -27,8 +26,6 @@ from urllib.parse import urlencode
 
 from app.core.tz import local_day_start_utc
 from app.core.credentials import normalize_ascii_api_key
-from app.services.files.browser import get_user_file
-from app.services.storage import get_storage
 
 import httpx
 from app.core.config import get_settings
@@ -44,15 +41,6 @@ from app.services.search import (
 from agent.tools.base import BaseSkill, Tool
 
 _search_log = logging.getLogger("agent.search")
-
-# 每次模型工具循环独立计数，避免并发会话互相影响；单次调用仍最多读取 20 张。
-_MAX_URL_INSPECTION_CALLS = 3
-_url_inspection_count: ContextVar[int] = ContextVar("url_inspection_count", default=0)
-
-
-def reset_image_inspection_budget() -> None:
-    """开始一轮对话工具循环时重置网络图片读取额度。"""
-    _url_inspection_count.set(0)
 
 _SEARCH_QUERY_DESCRIPTION = (
     "简短检索词；保留实体名、产品名、版本号、日期和关键术语，不要复制完整问题。"
@@ -340,117 +328,6 @@ async def _searxng_image_search(db, user_id, args: dict):
     return response
 
 
-async def _inspect_images(db, user_id, args: dict):
-    """读取候选图片、聊天附件或文件库图片，最多 20 张。"""
-    items = args.get("images")
-    if not isinstance(items, list) or not items:
-        return {"error": "需要提供 images 数组，填写 file_id、attach_id 或 img_src/image_url"}
-    if len(items) > 20:
-        return {"error": "一次最多读取 20 张图片，请拆成多次调用"}
-
-    has_url = any(
-        isinstance(item, dict)
-        and not str(item.get("attach_id") or "").strip()
-        and not str(item.get("file_id") or "").strip()
-        and str(item.get("img_src") or item.get("image_url") or item.get("url") or "").strip()
-        for item in items
-    )
-    if has_url and _url_inspection_count.get() >= _MAX_URL_INSPECTION_CALLS:
-        return {"error": "本轮对话读取网络图片已达到 3 次上限，请先根据已有图片结果继续分析；下一轮再读取新的网络图片"}
-    if has_url:
-        _url_inspection_count.set(_url_inspection_count.get() + 1)
-
-    from agent.tools.files import inspect_image_url
-
-    inspected = []
-    failed = []
-    for item in items:
-        if not isinstance(item, dict):
-            failed.append({"result_id": "", "error": "图片项必须是对象"})
-            continue
-        result_id = str(item.get("result_id") or "").strip()
-        file_id = item.get("file_id")
-        file_id_text = str(file_id).strip() if file_id is not None else ""
-        attach_id = str(item.get("attach_id") or "").strip()
-        url = str(item.get("img_src") or item.get("image_url") or item.get("url") or "").strip()
-        if not url and not attach_id and not file_id_text:
-            failed.append({"result_id": result_id, "error": "缺少 file_id、img_src、image_url 或 attach_id"})
-            continue
-        if file_id_text:
-            try:
-                normalized_file_id = int(file_id)
-            except (TypeError, ValueError):
-                failed.append({"result_id": result_id, "file_id": file_id, "error": "file_id 必须是整数"})
-                continue
-            if isinstance(file_id, bool):
-                failed.append({"result_id": result_id, "file_id": file_id, "error": "file_id 必须是整数"})
-                continue
-            file = await get_user_file(db, user_id, normalized_file_id)
-            if not file:
-                failed.append({"result_id": result_id, "file_id": normalized_file_id, "error": "文件不存在"})
-                continue
-            ext = str(file.ext or "").lower()
-            if ext not in chat_attach.VISION_EXTS:
-                failed.append({"result_id": result_id, "file_id": normalized_file_id,
-                               "error": f"文件格式 {ext or '未知'} 暂不支持识别"})
-                continue
-            if not chat_attach.vision_ready():
-                failed.append({"result_id": result_id, "file_id": normalized_file_id,
-                               "error": "当前模型/通道无法识别图像内容"})
-                continue
-            if (file.size_bytes or 0) > chat_attach.VISION_READ_MAX:
-                failed.append({"result_id": result_id, "file_id": normalized_file_id,
-                               "error": "图片过大，超出可看上限"})
-                continue
-            try:
-                data = await get_storage().get(file.storage_key)
-                block = chat_attach.vision_block(data, ext)
-                result = {"block": block} if block else {"error": "图片无法解析"}
-            except Exception:
-                result = {"error": "文件库图片读取失败"}
-            source_file_id = normalized_file_id
-        elif attach_id:
-            meta = await chat_attach.get_meta(user_id, attach_id)
-            if not meta:
-                failed.append({"result_id": result_id, "attach_id": attach_id, "error": "找不到这个历史附件，可能已被清理"})
-                continue
-            ext = str(meta.get("ext") or "").lower()
-            if ext not in chat_attach.VISION_EXTS:
-                failed.append({"result_id": result_id, "attach_id": attach_id, "error": f"附件格式 {ext or '未知'} 暂不支持识别"})
-                continue
-            try:
-                block = chat_attach.vision_block(await chat_attach.read_bytes(meta), ext)
-                result = {"block": block} if block else {"error": "附件无法解析"}
-            except Exception:
-                result = {"error": "历史附件读取失败"}
-        else:
-            result = await inspect_image_url(url)
-        if not file_id_text:
-            source_file_id = None
-        if result.get("block"):
-            inspected.append({
-                "result_id": result_id,
-                "file_id": source_file_id,
-                "attach_id": attach_id or None,
-                "title": item.get("title") or (f"文件 {source_file_id}" if source_file_id else None) or result_id or attach_id or "候选图片",
-                "block": result["block"],
-            })
-        else:
-            failed.append({"result_id": result_id, "error": result.get("error", "图片无法读取")})
-
-    response = {
-        "requested_count": len(items),
-        "inspected_count": len(inspected),
-        "failed": failed,
-    }
-    if inspected:
-        response["_vision_images"] = inspected
-        response["inspection_note"] = f"已读取 {len(inspected)} 张指定图片，请基于图像内容分析。"
-    elif not failed:
-        response["inspection_note"] = "没有成功读取图片。"
-    return response
-
-
 # ── deep_research：可配置 Provider（深度、有配额）────────────────────────────
 async def _deep_research(db, user_id, args: dict):
     settings = get_settings()
@@ -679,7 +556,7 @@ class SearchSkill(BaseSkill):
         Tool(
             name="image_search", label="图片搜索",
             description_short='搜索图片候选；支持文字搜索和以图搜图。',
-            description="搜索图片或以图搜图，只返回候选；需要分析用 inspect_images，需要发送用 send_file。",
+            description="搜索图片或以图搜图，只返回候选；需要分析时用 read_file 的 items 批量读取图片 URL，需要发送时用 send_file。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -696,41 +573,6 @@ class SearchSkill(BaseSkill):
             },
             handler=_image_search,
             start_message=lambda args: random.choice(["我去找张图。", "我搜搜看有没有合适的图。"]),
-        ),
-        Tool(
-            name="inspect_images", label="读取图片",
-            description_short='读取图片并交给视觉模型；最多 20 张',
-            description="读取图片候选、历史附件或文件库图片并交给视觉模型分析；文件库图片填写 file_id，聊天附件填写 attach_id；一次最多 20 张。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "images": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 20,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "result_id": {"type": "string"},
-                                "img_src": {"type": "string"},
-                                "image_url": {"type": "string"},
-                                "attach_id": {"type": "string"},
-                                "file_id": {"type": "integer"},
-                                "title": {"type": "string"},
-                            },
-                            "anyOf": [
-                                {"required": ["img_src"]},
-                                {"required": ["image_url"]},
-                                {"required": ["attach_id"]},
-                                {"required": ["file_id"]},
-                            ],
-                        },
-                    },
-                },
-                "required": ["images"],
-            },
-            handler=_inspect_images,
-            start_message=lambda args: random.choice(["我读取选中的图片对比一下。", "我看看这些图片。"]),
         ),
         Tool(
             name="deep_research", label="深度研究",

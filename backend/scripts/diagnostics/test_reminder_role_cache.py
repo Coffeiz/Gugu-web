@@ -164,7 +164,6 @@ async def call_anthropic(target: Target, system: str, messages: list[dict]) -> d
         response = await client.messages.create(
             model=getattr(target.ai, "model", ""),
             max_tokens=160,
-            temperature=0.2,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=messages,
         )
@@ -184,7 +183,6 @@ async def call_openai(target: Target, system: str, messages: list[dict]) -> dict
         response = await client.chat.completions.create(
             model=getattr(target.ai, "model", ""),
             max_tokens=160,
-            temperature=0.2,
             messages=[{"role": "system", "content": system}] + messages,
         )
         return {"ok": True, "usage": usage_values(response.usage)}

@@ -170,7 +170,6 @@ def test_active_cache(session_id: int = 1):
     payload = {
         "model": minimax_model,
         "messages": messages_active,
-        "temperature": 0.7,
         "max_tokens": 500,
         "stream": True,
     }
@@ -252,7 +251,6 @@ def test_passive_cache(session_id: int = 1):
     payload = {
         "model": minimax_model,
         "messages": messages_passive,
-        "temperature": 0.7,
         "max_tokens": 500,
         "stream": True,
     }
@@ -333,7 +331,6 @@ def test_long_conversation_active(session_id: int = 1):
     payload = {
         "model": minimax_model,
         "messages": messages,
-        "temperature": 0.7,
         "max_tokens": 500,
         "stream": True,
     }
@@ -408,7 +405,6 @@ def test_long_conversation_passive(session_id: int = 1):
     payload = {
         "model": minimax_model,
         "messages": messages,
-        "temperature": 0.7,
         "max_tokens": 500,
         "stream": True,
     }

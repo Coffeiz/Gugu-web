@@ -19,7 +19,7 @@ from app.services.workspaces import (
 def _oss_settings(tmp_path, *, authorization=True):
     return SimpleNamespace(
         storage=SimpleNamespace(backend="oss", local_path=str(tmp_path)),
-        sandbox=SimpleNamespace(filesystem_authorization_enabled=authorization),
+        sandbox=SimpleNamespace(full_user_sandbox_authorization_enabled=authorization),
         filesync=SimpleNamespace(enabled=True),
     )
 

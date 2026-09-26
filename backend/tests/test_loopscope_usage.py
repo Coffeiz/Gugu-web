@@ -35,8 +35,7 @@ from agent.runtime.loopscope_trace.state import (
 from agent.runtime.loopscope_trace.utils import _extract_last_user, _usage_payload
 
 AI = SimpleNamespace(model="fake", base_url="http://local", api_key="dummy",
-                     provider="anthropic", max_tokens=100, temperature=0.7,
-                     thinking="disabled")
+                     provider="anthropic", max_tokens=100, thinking="disabled")
 
 # anthropic 口径（utils._usage_payload）：usage_in=10 / output=5 / cache_read=3
 #   input = 10 + 3 + 0 = 13，fresh_input = usage_in = 10，total = 18，cache_ratio = 3/13
@@ -324,7 +323,7 @@ async def test_responses_fallback_round_keeps_loopscope_usage(monkeypatch, loops
     ai = SimpleNamespace(
         provider="openai", api_format="responses", model="fake",
         base_url="http://local", api_key="dummy", max_tokens=100,
-        temperature=0.7, context_tokens=1000,
+        context_tokens=1000,
     )
     run = _ScopeRun(
         id="run-test-responses-fallback", trace_id="trace-test",

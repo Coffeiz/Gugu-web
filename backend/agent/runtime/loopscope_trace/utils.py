@@ -170,6 +170,13 @@ def _cache_diagnostics(
     URL、图片或用户正文。诊断失败时返回空值，不影响模型请求。
     """
     try:
+        adapter = getattr(ctx, "adapter", None)
+        ai = getattr(ctx, "ai", None)
+        protocol = (
+            adapter.protocol_format(ai)
+            if adapter is not None and ai is not None
+            else getattr(adapter, "api_format", "")
+        )
         # 缓存指纹必须按 provider 实际投影计算。OpenAI 的 tool-call 清洗也属于
         # 投影步骤，必须先于 anchor 选择；否则孤儿结果会进入 digest，却不会进入请求。
         if provider_projected:
@@ -177,13 +184,6 @@ def _cache_diagnostics(
         else:
             from agent.context.canonical_tool_history import render_events_for_provider
 
-            adapter = getattr(ctx, "adapter", None)
-            ai = getattr(ctx, "ai", None)
-            protocol = (
-                adapter.protocol_format(ai)
-                if adapter is not None and ai is not None
-                else getattr(adapter, "api_format", None)
-            )
             if adapter is not None and protocol == "openai":
                 from agent.providers.message_utils import render_openai_request_history
 
@@ -205,8 +205,19 @@ def _cache_diagnostics(
             conversation = []
         from agent.loop_drivers import _history_cache_state
 
-        stable_message_count, effective_anchors = _history_cache_state(projected)
-        anchors = sorted(int(index) for index in effective_anchors if isinstance(index, int))
+        cache_plan = _history_cache_state(
+            projected,
+            getattr(ctx, "cache_state", None),
+            provider=str(getattr(getattr(ctx, "adapter", None), "name", "unknown")),
+            api_format=str(protocol or "unknown"),
+            model=model,
+            single_anchor=bool(
+                getattr(getattr(ctx, "adapter", None),
+                        "uses_single_history_cache_anchor", lambda _model: False)(model)
+            ),
+        )
+        stable_message_count = cache_plan.stable_limit
+        anchors = list(cache_plan.anchor_indices)
         tools = getattr(ctx, "tools", None) or []
         tool_json = json.dumps(
             _jsonable(tools), ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -227,13 +238,6 @@ def _cache_diagnostics(
         if anchors:
             last_anchor = max(anchors)
             anchor_token_estimate = _estimate_tokens(conversation[:last_anchor + 1], model)
-        protocol = (
-            getattr(getattr(ctx, "adapter", None), "protocol_format", lambda _ai: "")(
-                getattr(ctx, "ai", None)
-            )
-            if ctx is not None and getattr(ctx, "adapter", None) is not None
-            else ""
-        )
         cache_payload = conversation[:max(anchors) + 1] if anchors else []
         base_prefix = None
         if protocol == "responses":
@@ -255,6 +259,9 @@ def _cache_diagnostics(
             "cache_anchor_indices": anchors,
             "cache_anchor_last_index": max(anchors) if anchors else None,
             "cache_anchor_tokens_estimate": anchor_token_estimate,
+            "cache_state_revision": cache_plan.next_state.revision,
+            "cache_baseline_digest": cache_plan.baseline_digest,
+            "cache_latest_digest": cache_plan.latest_digest,
             "cache_prefix_digest": _prompt_digest(cache_payload),
             "cache_base_prefix_digest": _prompt_digest(base_prefix) if base_prefix else None,
             "volatile_image_present": volatile_index is not None,

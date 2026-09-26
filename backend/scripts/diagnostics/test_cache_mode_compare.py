@@ -87,7 +87,6 @@ async def test_cache_modes():
     response1 = client.messages.create(
         model="minimax-m3-7b-beta",
         max_tokens=100,
-        temperature=0.7,
         system=system_blocks_active,
         messages=messages_active
     )
@@ -102,7 +101,6 @@ async def test_cache_modes():
     response2 = client.messages.create(
         model="minimax-m3-7b-beta",
         max_tokens=100,
-        temperature=0.7,
         system=system_blocks_active,
         messages=messages_active
     )
@@ -126,7 +124,6 @@ async def test_cache_modes():
     response3 = client.messages.create(
         model="minimax-m3-7b-beta",
         max_tokens=100,
-        temperature=0.7,
         system=system_text_plain,  # 普通字符串，无 cache_control
         messages=messages_passive
     )
@@ -141,7 +138,6 @@ async def test_cache_modes():
     response4 = client.messages.create(
         model="minimax-m3-7b-beta",
         max_tokens=100,
-        temperature=0.7,
         system=system_text_plain,
         messages=messages_passive
     )

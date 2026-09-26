@@ -60,6 +60,12 @@ async def _run_profile_compact(user_id, settings, count: int) -> bool:
 
 async def maybe_schedule(user_id, settings) -> bool:
     """按条目数和 7 天冷却判断是否异步启动维护。"""
+    # 在读取水位前先拦截已排队任务。读取 profile/pattern 期间会让出事件循环，
+    # 后台任务可能恰好完成并清掉 pending 标记；入口守卫确保同一活跃链路不会
+    # 因此在本次调用中再次入队。
+    key = str(user_id)
+    if key in _pending_users:
+        return False
     patterns = await store.read_pattern_list(user_id)
     profile = await store.read_profile_list(user_id)
     pattern_count = len(patterns)
@@ -86,7 +92,6 @@ async def maybe_schedule(user_id, settings) -> bool:
     if not pattern_due and not profile_due:
         return False
 
-    key = str(user_id)
     lock = _lock_for(user_id)
     if lock.locked() or key in _pending_users:
         return False

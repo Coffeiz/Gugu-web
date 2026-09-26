@@ -89,7 +89,8 @@ def _has_assignment(path: Path, name: str) -> bool:
 def _write_generated_env_value(path: Path, name: str, value: str) -> None:
     """在锁内写入一次性生成的配置值，保留已有配置和注释。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+", encoding="utf-8") as handle:
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(descriptor, "r+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.seek(0)
         content = handle.read()
@@ -129,11 +130,29 @@ def ensure_secret_key(*, env_file: Path, env_file_values: Mapping[str, str]) -> 
     _write_generated_env_value(env_file, "SECRET_KEY", secrets.token_urlsafe(48))
 
 
-def ensure_admin_password(*, env_file: Path, env_file_values: Mapping[str, str]) -> None:
-    """首次启动追加随机密码；已有字段（包括空字段）绝不覆盖。"""
-    if os.environ.get("ADMIN_PASSWORD", "").strip() or str(env_file_values.get("ADMIN_PASSWORD", "")).strip():
+def ensure_database_password(
+    *, env_file: Path, env_file_values: Mapping[str, str], embedded: bool
+) -> None:
+    """内置数据库首次启动时生成并持久化连接密码；外部数据库仍要求显式配置。"""
+    if not embedded:
         return
-    if _has_assignment(env_file, "ADMIN_PASSWORD"):
+    if _config_value("DB__PASSWORD", env_file_values):
+        return
+    configured_password = _config_value("GUGU_DB_PASSWORD", env_file_values)
+    if configured_password:
+        if not os.environ.get("DB__PASSWORD", "").strip():
+            _write_generated_env_value(env_file, "DB__PASSWORD", configured_password)
+        return
+    _write_generated_env_value(env_file, "DB__PASSWORD", secrets.token_urlsafe(32))
+    saved_password = _read_env_file(env_file).get("DB__PASSWORD", "").strip()
+    if not saved_password:
+        raise OSError(f"数据库密码未能写入配置文件：{env_file}")
+    print(f"内置 PostgreSQL 连接密码已随机生成并保存到 {env_file}。")
+
+
+def ensure_admin_password(*, env_file: Path, env_file_values: Mapping[str, str]) -> None:
+    """首次启动写入随机密码；空字段视为未配置并会被填充。"""
+    if os.environ.get("ADMIN_PASSWORD", "").strip() or str(env_file_values.get("ADMIN_PASSWORD", "")).strip():
         return
 
     username = (
@@ -142,33 +161,30 @@ def ensure_admin_password(*, env_file: Path, env_file_values: Mapping[str, str])
         or "admin"
     )
     password = secrets.token_urlsafe(24)
-    env_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_generated_env_value(env_file, "ADMIN_PASSWORD", password)
+    saved_password = _read_env_file(env_file).get("ADMIN_PASSWORD", "").strip()
+    if not saved_password:
+        raise OSError(f"管理员密码未能写入配置文件：{env_file}")
 
-    with env_file.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        handle.seek(0)
-        if _has_assignment(env_file, "ADMIN_PASSWORD"):
-            return
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() > 0:
-            handle.write("\n")
-        handle.write(f"ADMIN_PASSWORD={password}\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-    print("管理员账号/密码（已保存到 backend/.env）：")
+    print(f"管理员账号/密码（已保存到 {env_file}）：")
     print(f"  账号：{username}")
-    print(f"  密码：{password}")
+    print(f"  密码：{saved_password}")
 
 
 def main() -> int:
     env_file = Path(os.environ.get("GUGU_ENV_FILE", "/app/.env"))
     data_dir = Path(os.environ.get("GUGU_DATA_DIR", "/data"))
     host_data_dir = os.environ.get("GUGU_DATA_HOST_DIR", "/data")
+    print(f"[entrypoint] 使用持久化配置文件：{env_file}")
     try:
         values = _read_env_file(env_file)
         ensure_secret_key(env_file=env_file, env_file_values=values)
+        ensure_database_password(
+            env_file=env_file,
+            env_file_values=values,
+            embedded=os.environ.get("GUGU_EMBEDDED_DEPS", "0") == "1",
+        )
+        values = _read_env_file(env_file)
         values = validate_required_config(
             env_file=env_file,
             data_dir=data_dir,

@@ -5,6 +5,9 @@ import hashlib
 import re
 import json
 import secrets
+import socket
+import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,13 +19,24 @@ from updater.database_check import validate_revision_state
 def make_daemon(tmp_path, monkeypatch, state=None, *, self_update="on"):
     project = tmp_path / "deployment"
     project.mkdir()
-    (project / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (project / "docker-compose.yml").write_text(
+        "services: {app: {environment: {GUGU_EMBEDDED_DEPS: '0'}}, updater: {}, postgres: {}, redis: {}}\n",
+        encoding="utf-8",
+    )
+    socket_path = Path("/tmp") / f"gugu-updater-test-{uuid.uuid4().hex[:10]}.sock"
+    rpc_socket = socket.socket(socket.AF_UNIX)
+    rpc_socket.bind(str(socket_path))
+    rpc_socket.close()
     state_dir = tmp_path / "updater-state"
     state_dir.mkdir()
     monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(project))
     monkeypatch.setenv("GUGU_UPDATER_STATE_DIR", str(state_dir))
     monkeypatch.setenv("GUGU_UPDATER_CODE_DIR", str(tmp_path / "updater-code"))
     monkeypatch.setenv("GUGU_SELF_UPDATE", self_update)
+    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
+    monkeypatch.setenv("GUGU_UPDATER_RPC_SOCKET", str(socket_path))
+    monkeypatch.setenv("GUGU_UNIFIED_APP", "1")
+    monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "0")
     if state is not None:
         (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
     return UpdateDaemon(), state_dir
@@ -31,6 +45,9 @@ def make_daemon(tmp_path, monkeypatch, state=None, *, self_update="on"):
 @pytest.mark.asyncio
 async def test_initial_state_status_handles_null_task(tmp_path, monkeypatch):
     daemon, _ = make_daemon(tmp_path, monkeypatch)
+    async def compose(_args):
+        return {"services": {"app": {}, "updater": {}, "postgres": {}, "redis": {}}}
+    monkeypatch.setattr(daemon, "_compose", compose)
 
     status = await daemon.dispatch({"method": "status", "params": {}})
 
@@ -38,6 +55,21 @@ async def test_initial_state_status_handles_null_task(tmp_path, monkeypatch):
     assert status["task"] is None
     assert status["candidate"] is None
     assert status["has_update"] is False
+
+
+@pytest.mark.asyncio
+async def test_status_disables_updates_when_compose_interpolation_is_invalid(tmp_path, monkeypatch):
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+
+    async def invalid_compose(_args):
+        raise RuntimeError("compose config failed")
+
+    monkeypatch.setattr(daemon, "_compose", invalid_compose)
+    status = await daemon.dispatch({"method": "status", "params": {}})
+
+    assert status["mode"] == "integrated_compose"
+    assert status["enabled"] is False
+    assert status["reason_code"] == "compose_invalid"
 
 
 def test_restart_converts_interrupted_task_to_recoverable_state(tmp_path, monkeypatch):
@@ -75,6 +107,99 @@ def test_recreating_pending_restart_is_resumed_not_marked_failed(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_integrated_updater_handoff_pulls_and_runs_helper_with_target_image(tmp_path, monkeypatch):
+    daemon, state_dir = make_daemon(tmp_path, monkeypatch, {
+        "schema": 1,
+        "candidate": None,
+        "task": {
+            "id": "12345678-1234-1234-1234-123456789abc",
+            "status": "health_checking", "stage": "health_checking",
+            "version": "v1.2.3",
+            "app_image": "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64,
+            "events": [],
+        },
+        "history": [{"id": "12345678-1234-1234-1234-123456789abc", "status": "health_checking"}],
+        "challenges": [],
+    })
+    monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
+    calls = []
+
+    async def compose(args, *, env=None, timeout=30, **_kwargs):
+        calls.append((args, env, timeout))
+        if args == ["config", "--format", "json"]:
+            target_image = env["GUGU_WEB_IMAGE"]
+            return json.dumps({"services": {"updater": {"image": target_image}}})
+        return ""
+
+    monkeypatch.setattr(daemon, "_compose_text", compose)
+    target = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
+
+    await daemon._start_integrated_updater_handoff("12345678-1234-1234-1234-123456789abc", target)
+
+    assert daemon.state["task"]["status"] == "recreating_pending_restart"
+    assert daemon.state["task"]["updater_image"] == target
+    assert json.loads((state_dir / "state.json").read_text(encoding="utf-8"))["task"]["updater_image"] == target
+    assert calls[0][0] == ["config", "--format", "json"]
+    assert calls[0][1]["GUGU_WEB_IMAGE"] == target
+    assert calls[1][0] == ["pull", "updater"]
+    assert calls[1][1]["GUGU_WEB_IMAGE"] == target
+    assert calls[2][0][0] == "run"
+    assert calls[2][0][-3:] == ["updater", "-m", "updater.compose_updater_helper"]
+    assert f"GUGU_UPDATER_HANDOFF_TASK_ID=12345678-1234-1234-1234-123456789abc" in calls[2][0]
+    assert daemon._public_task().get("updater_image") is None
+
+
+@pytest.mark.asyncio
+async def test_integrated_restart_retries_updater_handoff_if_old_image_restarts(tmp_path, monkeypatch):
+    target = "docker.io/coffeiz/gugu-web@sha256:" + "a" * 64
+    daemon, _ = make_daemon(tmp_path, monkeypatch, {
+        "schema": 1,
+        "candidate": None,
+        "task": {
+            "id": "handoff-task", "status": "recreating_pending_restart",
+            "stage": "recreating_pending_restart", "version": "v1.2.3",
+            "app_image": target, "updater_image": target, "events": [],
+        },
+        "history": [{
+            "id": "handoff-task", "status": "recreating_pending_restart",
+            "version": "v1.2.3", "app_image": target, "updater_image": target,
+        }], "challenges": [],
+    })
+    monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
+    monkeypatch.setattr(daemon, "_wait_app_healthy", lambda: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(daemon, "_wait_current_updater_healthy", lambda: asyncio.sleep(0, result=True))
+    observed_images = iter(["docker.io/coffeiz/gugu-web@sha256:" + "b" * 64, target])
+    monkeypatch.setattr(daemon, "_current_updater_image", lambda: asyncio.sleep(0, result=next(observed_images)))
+    handoffs = []
+
+    async def handoff(task_id, image):
+        handoffs.append((task_id, image))
+
+    monkeypatch.setattr(daemon, "_start_integrated_updater_handoff", handoff)
+    recorded = []
+    monkeypatch.setattr(daemon, "_record_current_release", lambda version, image: asyncio.sleep(0, result=recorded.append((version, image))))
+
+    await daemon._resume_after_restart_task()
+
+    assert handoffs == [("handoff-task", target)]
+    assert recorded == [("v1.2.3", target)]
+    assert daemon.state["task"]["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_manifest_v2_is_rejected_without_compatibility_fallback(tmp_path, monkeypatch):
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+    manifest = {
+        "schema_version": 2,
+        "version": "v1.2.3",
+        "channel": "stable",
+    }
+
+    with pytest.raises(ValueError, match="仅接受 v3"):
+        await daemon._verify_assets(json.dumps(manifest).encode())
+
+
+@pytest.mark.asyncio
 async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
     daemon, _ = make_daemon(tmp_path, monkeypatch)
     (daemon.project_dir / "backend").mkdir()
@@ -87,8 +212,7 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
 
     async def compose(_args):
         return {"services": {
-            "app": {}, "postgres": {}, "redis": {},
-            "updater": {"image": "docker.io/coffeiz/gugu-web:latest"},
+            "app": {}, "updater": {}, "postgres": {}, "redis": {},
         }}
 
     async def compose_text(args, *, env=None, timeout=30):
@@ -116,9 +240,12 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
 
     monkeypatch.setattr(daemon, "_verify_signature", signature_ok)
 
-    socket_path = daemon.project_dir / "docker.sock"
-    socket_path.write_bytes(b"")
-    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
+    socket_path = Path("/tmp") / f"gugu-updater-preflight-{uuid.uuid4().hex[:10]}.sock"
+    if not socket_path.exists():
+        rpc_socket = socket.socket(socket.AF_UNIX)
+        rpc_socket.bind(str(socket_path))
+        rpc_socket.close()
+    monkeypatch.setenv("GUGU_UPDATER_RPC_SOCKET", str(socket_path))
     checks = await daemon._preflight_checks({
         "version": "v1.2.2",
         "minimum_version": "v1.2.1",
@@ -132,7 +259,7 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
     assert by_key["storage"]["ok"] is True
     assert by_key["database_migrations"]["ok"] is True
 
-    # socket 未挂载（路径不存在）→ 自更新不可用
+    # updater RPC socket 不存在 → 自更新不可用
     socket_path.unlink()
     checks = await daemon._preflight_checks({
         "version": "v1.2.2",
@@ -140,6 +267,135 @@ async def test_preflight_rejects_unknown_current_version(tmp_path, monkeypatch):
         "architectures": ["linux/amd64"],
     })
     assert next(item for item in checks if item["key"] == "updater")["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_embedded_compose_preflight_checks_database_inside_app(tmp_path, monkeypatch):
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+    daemon.state["current"] = {"version": "unknown"}
+    monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "1")
+    monkeypatch.setattr("updater.daemon.shutil.disk_usage", lambda _path: SimpleNamespace(free=5 * 1024**3))
+    calls = []
+
+    async def command(_args, *, timeout, env=None):
+        return b"x86_64"
+
+    async def compose(_args):
+        return {"services": {
+            "app": {"environment": {"GUGU_EMBEDDED_DEPS": "1"}},
+            "updater": {},
+        }}
+
+    async def compose_text(args, *, env=None, timeout=30):
+        calls.append(args)
+        if args[:2] == ["ps", "-q"] and args[-1] == "app":
+            return "app-container\n"
+        if args[:2] == ["ps", "-q"] and args[-1] == "updater":
+            return "updater-container\n"
+        return "ok"
+
+    async def docker_json(args, *, timeout=30):
+        if args[:1] == ["inspect"]:
+            return [{"Mounts": [
+                {"Destination": "/data", "RW": True},
+                {"Destination": "/config", "RW": True},
+            ]}]
+        return []
+
+    async def signature_ok(_image):
+        return {"ok": True, "skipped": False, "detail": "发布签名校验通过"}
+
+    monkeypatch.setattr(daemon, "_command", command)
+    monkeypatch.setattr(daemon, "_compose", compose)
+    monkeypatch.setattr(daemon, "_compose_text", compose_text)
+    monkeypatch.setattr(daemon, "_docker_json", docker_json)
+    monkeypatch.setattr(daemon, "_verify_signature", signature_ok)
+
+    checks = await daemon._preflight_checks({
+        "version": "v1.2.2", "minimum_version": "v1.2.1", "architectures": ["linux/amd64"],
+    })
+
+    by_key = {item["key"]: item for item in checks}
+    assert by_key["compose"]["ok"] is True
+    assert by_key["dependencies"]["ok"] is True
+    assert by_key["configuration"]["ok"] is True
+    assert ["exec", "-T", "app", "pg_isready", "-h", "127.0.0.1", "-p", "5432"] in calls
+    assert ["exec", "-T", "app", "redis-cli", "-h", "127.0.0.1", "ping"] in calls
+    assert not any(args[:3] == ["exec", "-T", "postgres"] for args in calls)
+
+
+@pytest.mark.asyncio
+async def test_shared_release_preflight_checks_common_limits_and_all_images(tmp_path, monkeypatch):
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+    daemon.state["current"] = {"version": "v1.2.3"}
+    monkeypatch.setattr(
+        "updater.daemon.shutil.disk_usage",
+        lambda _path: SimpleNamespace(free=4 * 1024**3 + 17),
+    )
+    verified_images = []
+
+    async def verify_signature(image):
+        verified_images.append(image)
+        return {"ok": image != "bad-image"}
+
+    monkeypatch.setattr(daemon, "_verify_signature", verify_signature)
+
+    result = await daemon._shared_release_preflight(
+        {"architectures": ["linux/amd64"], "minimum_version": "v1.2.2"},
+        "linux/amd64",
+        tmp_path,
+        ["backend-image", "frontend-image"],
+    )
+
+    assert result == {
+        "disk_ok": True,
+        "disk_free_gib": 4,
+        "architecture_ok": True,
+        "signatures_ok": True,
+        "current_version_known": True,
+        "minimum_version_ok": True,
+    }
+    assert verified_images == ["backend-image", "frontend-image"]
+
+    daemon.state["current"] = {"version": "unknown"}
+    monkeypatch.setattr(
+        "updater.daemon.shutil.disk_usage",
+        lambda _path: SimpleNamespace(free=1024**3),
+    )
+    result = await daemon._shared_release_preflight(
+        {"architectures": [], "minimum_version": "not-a-version"},
+        "linux/arm64",
+        tmp_path,
+        ["bad-image"],
+    )
+    assert result == {
+        "disk_ok": False,
+        "disk_free_gib": 1,
+        "architecture_ok": False,
+        "signatures_ok": False,
+        "current_version_known": False,
+        "minimum_version_ok": False,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("architecture", "expected"),
+    [(b"x86_64", "linux/amd64"), (b"aarch64", "linux/arm64"), (b"mips", "")],
+)
+async def test_docker_host_platform_normalizes_supported_architectures(
+    tmp_path, monkeypatch, architecture, expected,
+):
+    daemon, _ = make_daemon(tmp_path, monkeypatch)
+
+    async def command(args, *, timeout, env=None):
+        assert args == ["docker", "info", "--format", "{{.Architecture}}"]
+        assert timeout == 12
+        return architecture
+
+    monkeypatch.setattr(daemon, "_command", command)
+
+    assert await daemon._docker_host_platform() == expected
 
 
 def test_database_revision_requires_exactly_one_current_head():
@@ -488,7 +744,7 @@ async def test_failing_signature_blocks_update_start(tmp_path, monkeypatch):
         return b"x86_64"
 
     async def compose(_args):
-        return {"services": {"app": {}, "postgres": {}, "redis": {}}}
+        return {"services": {"app": {}, "updater": {}, "postgres": {}, "redis": {}}}
 
     async def compose_text(args, *, env=None, timeout=30):
         if args[:2] == ["ps", "-q"] and args[-1] == "app":

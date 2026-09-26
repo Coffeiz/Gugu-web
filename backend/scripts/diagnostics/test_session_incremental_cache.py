@@ -103,7 +103,6 @@ async def test_session_incremental():
         r = client.messages.create(
             model="minimax-m3-7b-beta",
             max_tokens=20,
-            temperature=0.7,
             system=system,
             messages=messages
         )

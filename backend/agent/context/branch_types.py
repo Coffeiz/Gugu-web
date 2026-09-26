@@ -38,6 +38,8 @@ class BranchInput:
     # 前缀，缺了它连消息部分都命中不了（实测 100% → 15%）。分支只输出文本、不消费
     # 工具调用，也不要设置 tool_choice——实测那同样会让命中失效。
     tools: tuple[Any, ...] = ()
+    # 仅供无正文缓存探针关联来源与触发方式；不参与 provider prompt 组装。
+    cache_probe_context: dict[str, Any] = field(default_factory=dict)
     # 状态边界（§6.6）：append_reuse 只读复用前缀，不得失效主会话 reasoning
     # continuation。
     branch_mode: BranchMode = "append_reuse"

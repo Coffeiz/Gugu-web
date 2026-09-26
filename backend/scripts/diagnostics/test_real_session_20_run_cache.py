@@ -227,7 +227,6 @@ async def call_minimax(ai, system: str, messages: list[dict], tools: list[dict])
         return await client.messages.create(
             model=getattr(ai, "model", ""),
             max_tokens=min(int(getattr(ai, "max_tokens", 512) or 512), 512),
-            temperature=float(getattr(ai, "temperature", 0.2) or 0.2),
             system=system_payload,
             messages=messages,
             tools=tools,
@@ -283,7 +282,7 @@ async def run(args) -> int:
             current_user=current_user,
         )
         request_messages.append_batch(turn_batch)
-        outbound = _with_history_cache(request_messages)
+        outbound, _cache_state = _with_history_cache(request_messages)
         started = time.perf_counter()
         try:
             response = await call_minimax(ai, str(snapshot["system_prompt"]), outbound, tools)

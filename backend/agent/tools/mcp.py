@@ -130,9 +130,10 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         if len(count) >= settings.mcp.max_servers_per_user:
             return {"error": f"每个用户最多添加 {settings.mcp.max_servers_per_user} 个 MCP server"}
         from agent.interactions.confirmations import needs_confirmation, target_confirmation_identity
+        from agent.interactions.automatic_mode import ACTION
 
         summary = f"添加 MCP server [{name}]"
-        gate = needs_confirmation(args, summary, user_id, identity=target_confirmation_identity("mcp.add", {"server": [name]}))
+        gate = needs_confirmation(args, summary, user_id, identity=target_confirmation_identity("mcp.add", {"server": [name]}), purpose=ACTION)
         if gate is not None:
             return gate
         endpoint_ciphertext = endpoint_nonce = endpoint_wrapped_key = ""
@@ -258,9 +259,10 @@ async def _manage_mcp_servers(db, user_id, args: dict):
 
     if action == "remove":
         from agent.interactions.confirmations import needs_confirmation, target_confirmation_identity
+        from agent.interactions.automatic_mode import ACTION
 
         summary = f"删除 MCP server [{server.name}]"
-        gate = needs_confirmation(args, summary, user_id, identity=target_confirmation_identity("mcp.remove", {"server": [str(server.id)]}))
+        gate = needs_confirmation(args, summary, user_id, identity=target_confirmation_identity("mcp.remove", {"server": [str(server.id)]}), purpose=ACTION)
         if gate is not None:
             return gate
         server_id = server.id

@@ -6,19 +6,18 @@
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import PurePosixPath
 
-from app.core.ownership import get_owned
-from app.models import Project, WorkspaceDirectory
-from app.services.files.corpus import list_grep_candidates
+from app.services.files.corpus import list_grep_candidates, resolve_grep_candidate_paths
 from app.services.storage import get_storage
-from app.services.storage.folders import resolve_folder_path
 
 _SEARCH_SPACES = ("personal", "project", "workspace")
 _MAX_QUERY_CHARS = 500
 _MAX_CONTEXT_LINES = 20
 _MAX_FILE_BYTES = 4 * 1024 * 1024
 _DEFAULT_LIMIT = 50
+_READ_CONCURRENCY = 8
 
 
 def _normalise_path(value: str | None) -> str | None:
@@ -34,53 +33,6 @@ def _normalise_path(value: str | None) -> str | None:
     if any(part in {"", ".", ".."} for part in parts[2:]):
         raise ValueError("path 不能包含 . 或 ..")
     return "/" + "/".join(parts[1:])
-
-
-def _safe_component(value: object) -> str:
-    return str(value or "").replace("/", "_").replace("\\", "_").strip()
-
-
-async def _logical_path(
-    db,
-    user_id,
-    *,
-    space: str,
-    project_id: int | None = None,
-    folder_id: int | None = None,
-    workspace_directory_id: int | None = None,
-    file_name: str | None = None,
-) -> str | None:
-    """把 File 元数据映射成不含用户绝对路径的逻辑路径。"""
-    if space == "personal":
-        parts = ["personal"]
-    elif space == "project":
-        project = await get_owned(db, Project, project_id, user_id)
-        if project is None:
-            return None
-        parts = ["project", _safe_component(project.name)]
-    elif space == "workspace":
-        directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, user_id)
-        if directory is None or directory.deleted_at is not None:
-            return None
-        parts = ["workspace", _safe_component(directory.directory_name)]
-    else:
-        return None
-
-    if folder_id is not None:
-        resolved = await resolve_folder_path(
-            db,
-            user_id,
-            folder_id,
-            project_id if space == "project" else None,
-            workspace_directory_id if space == "workspace" else None,
-        )
-        if resolved is None:
-            return None
-        _, folder_path = resolved
-        parts.extend(_safe_component(part) for part in folder_path.split("/") if part)
-    if file_name:
-        parts.append(_safe_component(file_name))
-    return "/" + "/".join(parts)
 
 
 def _path_is_under(path: str, prefix: str | None) -> bool:
@@ -109,42 +61,17 @@ def _parse_options(args: dict) -> tuple[str, str | None, int, int, bool]:
     return query, path, context_lines, limit, case_sensitive
 
 
-async def _grep_files(db, user_id, args: dict):
-    try:
-        query, requested_path, context_lines, limit, case_sensitive = _parse_options(args)
-    except ValueError as exc:
-        return {"error": str(exc)}
-
-    # 只读检索默认覆盖当前用户所有可访问空间；Workspace 是写入默认落点，
-    # 不是文件库查询的隐式目录。需要收窄范围时使用显式 path。
+def _prepare_candidates(rows, logical_paths: dict[int, str | None], requested_path: str | None):
     from agent.tools.files import _is_text_file_record
 
-    scope_prefix = None
-
-    rows = await list_grep_candidates(db, user_id=user_id, spaces=_SEARCH_SPACES)
-
-    needle = query if case_sensitive else query.casefold()
-    storage = get_storage()
-    scanned_files = 0
-    skipped_files = 0
-    total_matches = 0
-    truncated = False
-    grouped: list[dict] = []
-
+    candidates: list[tuple[object, str]] = []
+    scanned_files = skipped_files = 0
     for file in rows:
         if not _is_text_file_record(file):
             skipped_files += 1
             continue
-        logical_path = await _logical_path(
-            db,
-            user_id,
-            space=file.space,
-            project_id=file.project_id,
-            folder_id=file.folder_id,
-            workspace_directory_id=file.workspace_directory_id,
-            file_name=f"{file.display_name}.{file.ext}" if file.ext else file.display_name,
-        )
-        if logical_path is None or not _path_is_under(logical_path, scope_prefix):
+        logical_path = logical_paths.get(file.id)
+        if logical_path is None:
             continue
         if requested_path and not _path_is_under(logical_path, requested_path):
             continue
@@ -153,57 +80,112 @@ async def _grep_files(db, user_id, args: dict):
         if (file.size_bytes or 0) > _MAX_FILE_BYTES:
             skipped_files += 1
             continue
-        try:
-            text = (await storage.get(file.storage_key)).decode("utf-8")
-        except (UnicodeDecodeError, OSError, ValueError):
-            skipped_files += 1
-            continue
-        except Exception:
-            # 不把底层存储异常暴露给模型；本次检索继续扫描其它文件。
-            skipped_files += 1
-            continue
+        candidates.append((file, logical_path))
+    return candidates, scanned_files, skipped_files
 
-        lines = text.splitlines()
-        haystack = lines if case_sensitive else [line.casefold() for line in lines]
-        hits = [index for index, line in enumerate(haystack) if needle in line]
-        if not hits:
-            continue
+async def _read_candidate_text(storage, file) -> str | None:
+    try:
+        return (await storage.get(file.storage_key)).decode("utf-8")
+    except (UnicodeDecodeError, OSError, ValueError):
+        return None
+    except Exception:
+        # 不把底层存储异常暴露给模型；本次检索继续扫描其它文件。
+        return None
 
-        available = max(0, limit - total_matches)
-        selected_hits = hits[:available]
-        total_matches += len(selected_hits)
-        if len(selected_hits) < len(hits):
-            truncated = True
-        if not selected_hits:
-            truncated = True
-            break
 
-        grouped.append({
-            "file_id": file.id,
-            "name": f"{file.display_name}.{file.ext}" if file.ext else file.display_name,
-            "space": file.space,
-            "path": logical_path,
-            "project_id": file.project_id,
-            "folder_id": file.folder_id,
-            "workspace_directory_id": file.workspace_directory_id,
-            "matches": [
-                {
-                    "line": index + 1,
-                    "text": lines[index],
-                    "context": [
-                        {"line": context_index + 1, "text": lines[context_index]}
-                        for context_index in range(
-                            max(0, index - context_lines),
-                            min(len(lines), index + context_lines + 1),
-                        )
-                    ],
-                }
-                for index in selected_hits
-            ],
-        })
+def _matching_lines(lines: list[str], needle: str, case_sensitive: bool, remaining: int) -> list[int]:
+    """最多找出剩余预算 + 1 个命中，足以判断截断且避免收集整篇所有命中行。"""
+    hits = []
+    for index, line in enumerate(lines):
+        searchable_line = line if case_sensitive else line.casefold()
+        if needle in searchable_line:
+            hits.append(index)
+            if len(hits) > remaining:
+                break
+    return hits
+
+
+def _format_result(file, logical_path: str, lines: list[str], hits: list[int], context_lines: int) -> dict:
+    return {
+        "file_id": file.id,
+        "name": f"{file.display_name}.{file.ext}" if file.ext else file.display_name,
+        "space": file.space,
+        "path": logical_path,
+        "project_id": file.project_id,
+        "folder_id": file.folder_id,
+        "workspace_directory_id": file.workspace_directory_id,
+        "matches": [
+            {
+                "line": index + 1,
+                "text": lines[index],
+                "context": [
+                    {"line": context_index + 1, "text": lines[context_index]}
+                    for context_index in range(
+                        max(0, index - context_lines),
+                        min(len(lines), index + context_lines + 1),
+                    )
+                ],
+            }
+            for index in hits
+        ],
+    }
+
+
+async def _scan_candidates(candidates, storage, needle, context_lines, limit, case_sensitive):
+    grouped: list[dict] = []
+    skipped_files = total_matches = 0
+    truncated = False
+    for offset in range(0, len(candidates), _READ_CONCURRENCY):
+        batch = candidates[offset:offset + _READ_CONCURRENCY]
+        texts = await asyncio.gather(*(
+            _read_candidate_text(storage, file)
+            for file, _ in batch
+        ))
+        for (file, logical_path), text in zip(batch, texts):
+            if text is None:
+                skipped_files += 1
+                continue
+
+            lines = text.splitlines()
+            hits = _matching_lines(lines, needle, case_sensitive, limit - total_matches)
+            if not hits:
+                continue
+
+            available = limit - total_matches
+            selected_hits = hits[:available]
+            total_matches += len(selected_hits)
+            truncated = truncated or len(selected_hits) < len(hits)
+            if not selected_hits:
+                break
+
+            grouped.append(_format_result(file, logical_path, lines, selected_hits, context_lines))
+            if total_matches >= limit:
+                break
+
         if total_matches >= limit:
-            truncated = truncated or len(hits) > len(selected_hits)
             break
+
+    return grouped, skipped_files, total_matches, truncated
+
+
+async def _grep_files(db, user_id, args: dict):
+    try:
+        query, requested_path, context_lines, limit, case_sensitive = _parse_options(args)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    # 默认覆盖三个用户文件空间；显式 path 至少先在 SQL 层收窄到对应空间。
+    spaces = (requested_path.split("/")[1],) if requested_path else _SEARCH_SPACES
+    rows = await list_grep_candidates(db, user_id=user_id, spaces=spaces)
+    logical_paths = await resolve_grep_candidate_paths(db, user_id=user_id, files=rows)
+    candidates, scanned_files, skipped_files = _prepare_candidates(
+        rows, logical_paths, requested_path,
+    )
+    needle = query if case_sensitive else query.casefold()
+    grouped, read_skipped, total_matches, truncated = await _scan_candidates(
+        candidates, get_storage(), needle, context_lines, limit, case_sensitive,
+    )
+    skipped_files += read_skipped
 
     return {
         "success": True,

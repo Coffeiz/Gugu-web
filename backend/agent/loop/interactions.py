@@ -2,8 +2,7 @@
 
 交互的创建、等待、消费和确认授权事实源仍在 `app.services.interactions` 与
 `agent.interactions.confirmations`；本模块只做答案分类和取消收尾帧这类
-纯判定/编码，供 `_run_loop` 的两个交互门（核实封顶/任务封顶）共用，
-避免两条门各自实现一套答案解释。
+纯判定/编码，供 `_run_loop` 的确认、用户回答与取消路径共用。
 """
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ def user_cancel(answer) -> bool:
 
     交互服务把用户点击的取消动作标成 ``option_id="cancel"``；IM 侧 cancel_check
     关单不带 option_id，属于真正的异常终止。两者在调用方的收尾语义完全不同，
-    判定只此一处，避免三个 gate 各写一份后漂移。
+    判定只此一处，避免各交互路径重复实现后漂移。
     """
     return (
         isinstance(answer, dict)
@@ -35,8 +34,7 @@ def classify_interaction_answer(answer) -> str:
 
     - ``user_cancelled``：用户在弹窗点取消＝正常收尾（补收尾正文、正常持久化）；
     - ``aborted``：IM/Web 侧取消或关单＝异常终止（发 _cancelled 事件）；
-    - ``expired``：等待超时/过期（核实门 break 走兜底，任务门直接 error 返回）；
-    - ``resume_unlimited``：解除本次 run 的轮次限制，计数清零后继续；
+    - ``expired``：等待超时/过期，由调用方按交互场景结束等待；
     - ``resolved``：普通回答，恢复 run 继续执行。
     """
     if user_cancel(answer):
@@ -45,8 +43,6 @@ def classify_interaction_answer(answer) -> str:
         return "aborted"
     if answer is None:
         return "expired"
-    if isinstance(answer, dict) and answer.get("option_id") in {"continue", "goal"}:
-        return "resume_unlimited"
     return "resolved"
 
 

@@ -2,7 +2,7 @@
 # 非 Compose 部署的 Rootless Docker egress 引导。
 #
 # systemd 直接运行 uvicorn/sandboxd 时，没有 Compose 的 egress-proxy 和
-# sandbox-bootstrap 服务。本脚本在 sandboxd 启动前幂等准备同等资源：
+# sandboxd 启动前初始化流程。本脚本幂等准备同等资源：
 #   1. 仅供沙盒使用的 internal Docker 网络；
 #   2. 连接 internal 网络和默认 bridge 的 Squid 代理；
 #   3. 使用固定容器名，避免把 Docker 动态 IP 写进运行配置。

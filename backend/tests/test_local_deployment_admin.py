@@ -70,6 +70,6 @@ def test_local_without_tool_capability_does_not_send_tool_schemas(monkeypatch):
     monkeypatch.setattr(providers, "build_openai_client", lambda ai, timeout: object())
     ai = SimpleNamespace(
         provider="local", local_runtime="vllm", base_url="http://127.0.0.1:8000/v1",
-        model="demo", max_tokens=32, temperature=0)
+        model="demo", max_tokens=32)
     _, context = OpenAIDriver().prepare(["web_search"], ai, [], None)
     assert context.tools == []

@@ -1,12 +1,12 @@
 <template>
   <BaseModal :show="show" width="520px" background="var(--panel-bg)" @close="emit('close')">
-    <div class="support-modal">
+    <div class="support-modal card-close-anchor">
       <div class="support-header">
         <div>
           <h2>{{ t('layout.support') }}</h2>
           <p>{{ t('layout.supportHint') }}</p>
         </div>
-        <CloseButton :title="t('common.actions.close')" @click="emit('close')" />
+        <CloseButton card-corner :title="t('common.actions.close')" @click="emit('close')" />
       </div>
       <div class="support-grid">
         <button v-if="SUPPORT_KOFI_URL" class="support-card" type="button" @click="openLink(SUPPORT_KOFI_URL)">
@@ -48,7 +48,7 @@ function toggleQr(channel: 'alipay' | 'wechat') { expandedQr.value = expandedQr.
 
 <style scoped>
 .support-modal { padding:24px; color:var(--content-primary); }
-.support-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:20px; }
+.support-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding-right:calc(var(--card-close-safe-area) - var(--space-xl)); margin-bottom:20px; }
 .support-header h2 { margin:0; font-size:18px; line-height:1.35; }
 .support-header p { margin:6px 0 0; color:var(--content-secondary); font-size:12px; }
 .support-header :deep(.app-close-button) { flex:0 0 30px; }

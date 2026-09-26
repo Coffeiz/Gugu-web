@@ -117,6 +117,7 @@ async def finalize_run(
     user_message_id: int | None = None,
     run_id: str | None = None,
     canonical_batches: list[dict] | tuple[dict, ...] | None = None,
+    interrupted: bool = False,
 ) -> FinalizeResult:
     """用一个契约完成 canonical turn、展示时间线、trim 与压缩边界持久化。
 
@@ -135,6 +136,7 @@ async def finalize_run(
             from app.models import ConversationSession
             session_alive = await db.get(ConversationSession, session_id) is not None
         if session_alive:
+            history_order = 0
             stance_persisted = False
             user_message = (
                 await db.get(ConversationMessage, user_message_id)
@@ -226,16 +228,28 @@ async def finalize_run(
                     )
                     if is_new_batch:
                         for message in canonical_messages:
-                            db.add(ConversationMessage(
-                                session_id=session_id,
-                                role=message["role"],
-                                content=message.get("content") if isinstance(message.get("content"), str) else "",
-                                content_json=(
-                                    chat_attach.strip_vision_for_history(message["content"])
-                                    if not isinstance(message.get("content"), str) else None
-                                ),
-                                canonical_batch_id=batch_row.id,
-                            ))
+                            created_at = None
+                            if interrupted and user_message is not None:
+                                history_order += 1
+                                created_at = user_message.created_at + timedelta(
+                                    microseconds=history_order,
+                                )
+                            values = {
+                                "session_id": session_id,
+                                "role": message["role"],
+                                "content": message.get("content") if isinstance(message.get("content"), str) else "",
+                                "canonical_batch_id": batch_row.id,
+                            }
+                            # content_json 不能显式传 None：SQLAlchemy JSON 列会把
+                            # 显式 None 序列化成 jsonb 'null'（≠ SQL NULL），正文行
+                            # 会被消息端点的 content_json IS NULL 过滤吞掉。str 正文
+                            # 省略该字段走列默认值，落成真正的 SQL NULL。
+                            if not isinstance(message.get("content"), str):
+                                values["content_json"] = chat_attach.strip_vision_for_history(
+                                    message["content"])
+                            if created_at is not None:
+                                values["created_at"] = created_at
+                            db.add(ConversationMessage(**values))
             persisted_timeline = display_timeline or None
             if persisted_timeline and user_message_id:
                 # 展示时间线可能在取消收尾时才落库，而下一条用户消息已先提交。
@@ -249,13 +263,24 @@ async def finalize_run(
                     for index, item in enumerate(persisted_timeline)
                 ]
             if text or files or persisted_timeline:
-                db.add(ConversationMessage(
+                assistant_created_at = None
+                if interrupted and user_message is not None:
+                    assistant_created_at = user_message.created_at + timedelta(
+                        microseconds=history_order + 1,
+                    )
+                assistant_content = text
+                if interrupted and assistant_content:
+                    assistant_content += "\n\n[本轮已中止，以上内容未完成]"
+                assistant_values = dict(
                     session_id=session_id,
                     role="assistant",
-                    content=text,
+                    content=assistant_content,
                     files=files or None,
                     display_timeline=persisted_timeline,
-                ))
+                )
+                if assistant_created_at is not None:
+                    assistant_values["created_at"] = assistant_created_at
+                db.add(ConversationMessage(**assistant_values))
 
         from agent.usage import record_usage
         # BYOK 不参与平台配额封顶，但仍记录实际 token，供用户查看自己的模型用量。

@@ -433,8 +433,4 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
     result._canonical_batch_metadata = copy.deepcopy(list(
         getattr(messages, "_canonical_batch_metadata", ())
     ))
-    remember_anchor = getattr(result, "remember_cache_anchor", None)
-    if remember_anchor is not None:
-        for index in getattr(messages, "cache_anchor_indices", ()):
-            remember_anchor(index)
     return result

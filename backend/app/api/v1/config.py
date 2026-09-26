@@ -60,6 +60,19 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         agent_patch = body.patch.get("agent")
         sandbox_patch = body.patch.get("sandbox")
         filesync_patch = body.patch.get("filesync")
+        if isinstance(sandbox_patch, dict):
+            from app.core.config import SandboxSettings
+            unknown_sandbox_fields = set(sandbox_patch) - SandboxSettings.model_fields.keys()
+            if unknown_sandbox_fields:
+                raise HTTPException(status_code=400, detail="包含不支持的沙盒配置项")
+            if (
+                "full_user_sandbox_authorization_enabled" in sandbox_patch
+                and type(sandbox_patch["full_user_sandbox_authorization_enabled"]) is not bool
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="sandbox.full_user_sandbox_authorization_enabled 必须是布尔值",
+                )
         if isinstance(filesync_patch, dict):
             if "enabled" in filesync_patch and type(filesync_patch["enabled"]) is not bool:
                 raise HTTPException(status_code=400, detail="filesync.enabled 必须是布尔值")
@@ -73,7 +86,7 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
             raise HTTPException(status_code=400, detail="filesync 配置必须是对象")
         if isinstance(agent_patch, dict) and any(
             agent_patch.get(field) is True
-            for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled")
+            for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled")
         ):
             sandbox_enabled = (
                 sandbox_patch.get("enabled")
@@ -90,12 +103,12 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         username = getattr(request.state, "admin_username", "admin")
         await write_log(db, username, "config", f"修改配置：{sections}", request)
         shell_fields = {
-            "shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled",
+            "shell_enabled", "shell_system_enabled", "shell_dangerous_enabled",
         }
         if (
             isinstance(agent_patch, dict) and shell_fields.intersection(agent_patch)
         ) or (
-            isinstance(sandbox_patch, dict) and ({"enabled", "terminal_mode"} & sandbox_patch.keys())
+            isinstance(sandbox_patch, dict) and ({"enabled", "terminal_mode", "full_user_sandbox_authorization_enabled"} & sandbox_patch.keys())
         ):
             from app.core import events
             from app.models import User

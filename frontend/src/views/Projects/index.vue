@@ -35,6 +35,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
 import { useProjectColumnViews } from '@/composables/projects/useProjectColumnViews'
 import type { Project } from '@/types/project'
+import { projectIdFromRuntimeObjectId } from '@/utils/projectDrop'
 import KanbanColumn from './components/KanbanColumn.vue'
 import DoneColumn   from './components/DoneColumn.vue'
 import ArchivedProjectsModal from './components/ArchivedProjectsModal.vue'
@@ -86,8 +87,8 @@ useRuntimeAction(action => {
   const projectSurfaces = new Set(['pending', 'active', 'done'])
   if (object?.type !== 'project-card') return
   if (!projectSurfaces.has(move.fromSurfaceId) || !projectSurfaces.has(move.toSurfaceId)) return
-  const projectId = Number(move.objectId)
-  if (!Number.isFinite(projectId) || move.fromSurfaceId === move.toSurfaceId) return
+  const projectId = projectIdFromRuntimeObjectId(move.objectId)
+  if (projectId == null || move.fromSurfaceId === move.toSurfaceId) return
   if (!projectStore.projects.some(project => project.id === projectId)) return
   void projectStore.moveProject(projectId, move.toSurfaceId)
 })

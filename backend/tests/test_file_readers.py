@@ -2,12 +2,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.tools import file_readers
+from app.core import chat_attach
+from agent.tools import media_reader as file_readers, media_reader
 
 
 class _Storage:
-    def __init__(self, size):
+    def __init__(self, size, data=b"media"):
         self.size = size
+        self.data = data
         self.get_called = False
 
     async def stat(self, key):
@@ -15,11 +17,12 @@ class _Storage:
 
     async def get(self, key):
         self.get_called = True
-        return b"media"
+        return self.data
 
 
 def _minimax_m3_ai():
-    return SimpleNamespace(provider="minimax", model="abab-m3", base_url="https://api.minimaxi.com/anthropic")
+    return SimpleNamespace(provider="minimax", model="abab-m3", base_url="https://api.minimaxi.com/anthropic",
+                           vision_video=True)
 
 
 def _mimo_ai():
@@ -27,16 +30,31 @@ def _mimo_ai():
 
 
 @pytest.mark.asyncio
-async def test_media_reader_uses_physical_size_before_get(monkeypatch):
-    """read_audio 超限直接拒绝、不下载。"""
-    storage = _Storage(file_readers.MEDIA_READ_MAX_BYTES + 1)
-    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
-    file = SimpleNamespace(storage_key="u/media.mp3", size_bytes=0, size="0 B", ext="mp3")
-
-    result = await file_readers.read_audio(file)
-
-    assert "超出读取上限" in result["error"]
-    assert storage.get_called is False
+@pytest.mark.parametrize(
+    ("reader", "physical_size", "data", "read_expected"),
+    [
+        ("audio", file_readers.MEDIA_READ_MAX_BYTES + 1, b"media", False),
+        ("image", chat_attach.VISION_READ_MAX + 1, b"media", False),
+        ("image", 5, b"x" * (chat_attach.VISION_READ_MAX + 1), True),
+    ],
+)
+async def test_media_readers_enforce_physical_and_actual_size(
+    monkeypatch, reader, physical_size, data, read_expected
+):
+    """音频和图片先查物理大小，并防止 stat/get 之间文件变大绕过限制。"""
+    storage = _Storage(physical_size, data)
+    if reader == "audio":
+        monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+        file = SimpleNamespace(storage_key="u/media.mp3", size_bytes=0, size="0 B", ext="mp3")
+        result = await file_readers.read_audio(file)
+        assert "超出读取上限" in result["error"]
+    else:
+        monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
+        monkeypatch.setattr(chat_attach, "vision_ready", lambda: True)
+        monkeypatch.setattr(media_reader, "get_storage", lambda: storage)
+        result = await media_reader.read_stored_image("u/image.png", "png")
+        assert "过大" in result["error"]
+    assert storage.get_called is read_expected
 
 
 @pytest.mark.asyncio
@@ -57,7 +75,7 @@ async def test_media_reader_rejects_missing_physical_object(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_video_returns_native_video_block_for_minimax_m3(monkeypatch):
     """核心验收：read_file 读视频最终必须产出真正的 video content block（走
-    `_video_media` 特殊键，由 agent/tools/base.py dispatch 转成 tool_result 里的
+    `_media_block` 特殊键，由 agent/tools/base.py dispatch 转成 tool_result 里的
     video block），而不是代表帧图片或 ASR 转写文本。"""
     storage = _Storage(90 * 1024 * 1024)  # 故意超过旧的 36MB 门禁，验证视频不再受它限制
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
@@ -77,8 +95,8 @@ async def test_read_video_returns_native_video_block_for_minimax_m3(monkeypatch)
     file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
-    assert "_video_media" in result
-    block = result["_video_media"]
+    assert "_media_block" in result
+    block = result["_media_block"]
     assert block == {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "ZmFrZQ=="}}
     assert "_vision_image" not in result
     assert "content" not in result
@@ -88,18 +106,41 @@ async def test_read_video_returns_native_video_block_for_minimax_m3(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_read_video_rejects_when_provider_not_minimax_m3(monkeypatch):
-    """视频 tool_result 只有 Anthropic 通道（MiniMax M3）能承载原生 video block——
-    其它 provider 明确返回不支持，而不是退化成代表帧/ASR 这类近似方案。"""
+async def test_read_video_supports_openai_compatible_video_model(monkeypatch):
+    """支持视频输入的 OpenAI 兼容模型直接接收 video_url 块，不限于 MiniMax。"""
     storage = _Storage(1024)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
-    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_mimo_ai()))
+    ai = _mimo_ai()
+    ai.vision_video = True
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
+
+    async def fake_prepare_video_media(raw, mime, name, model_cfg, **kwargs):
+        return {"type": "video", "mode": "base64", "mime": "video/mp4", "b64": "ZmFrZQ=="}
+
+    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
 
     file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
-    assert "不支持" in result["error"]
-    assert storage.get_called is False   # 能力不够时不该白读一次文件
+    assert result["_media_block"]["type"] == "video_url"
+    assert "data:video/mp4;base64,ZmFrZQ==" in result["_media_block"]["video_url"]["url"]
+    assert storage.get_called is True
+
+
+@pytest.mark.asyncio
+async def test_read_video_rejects_responses_protocol_before_loading_file(monkeypatch):
+    storage = _Storage(1024)
+    ai = _mimo_ai()
+    ai.vision_video = True
+    ai.api_format = "responses"
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+
+    result = await file_readers.read_video(file)
+
+    assert "API 协议" in result["error"]
+    assert storage.get_called is False
 
 
 @pytest.mark.asyncio
@@ -198,5 +239,63 @@ async def test_read_video_uses_running_model_cfg_not_static_settings(monkeypatch
     finally:
         modelctx._model_cfg.reset(token)
 
-    assert "_video_media" in result
+    assert "_media_block" in result
     assert captured["model_cfg"] is real_ai
+
+
+@pytest.mark.asyncio
+async def test_read_audio_prefers_native_audio_when_enabled(monkeypatch):
+    storage = _Storage(1024, b"audio")
+    ai = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", base_url="https://api.xiaomimimo.com/v1",
+                         vision_audio=True)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
+
+    async def should_not_transcribe(*args):
+        raise AssertionError("native audio must not fall back to ASR")
+
+    monkeypatch.setattr(file_readers, "_transcribe_audio", should_not_transcribe)
+    file = SimpleNamespace(storage_key="u/audio.mp3", ext="mp3", id=2, display_name="recording")
+
+    result = await file_readers.read_audio(file)
+
+    assert result["_media_block"]["type"] == "input_audio"
+    assert result["_media_block"]["input_audio"]["data"].startswith("data:audio/mpeg;base64,")
+
+
+@pytest.mark.asyncio
+async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkeypatch):
+    storage = _Storage(1024, b"audio")
+    ai = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", base_url="https://api.xiaomimimo.com/v1",
+                         vision_audio=False)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
+    async def transcribe(*_):
+        return "转写内容"
+
+    monkeypatch.setattr(file_readers, "_transcribe_audio", transcribe)
+    file = SimpleNamespace(storage_key="u/audio.mp3", ext="mp3", id=2, display_name="recording")
+
+    result = await file_readers.read_audio(file)
+
+    assert result["content"] == "转写内容"
+    assert "_media_block" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("api_format", "ext"), [("responses", "mp3"), ("", "aac")])
+async def test_read_audio_falls_back_when_protocol_or_format_is_unsupported(monkeypatch, api_format, ext):
+    storage = _Storage(1024, b"audio")
+    ai = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", base_url="https://api.xiaomimimo.com/v1",
+                         vision_audio=True, api_format=api_format)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
+    async def transcribe(*_):
+        return "转写内容"
+
+    monkeypatch.setattr(file_readers, "_transcribe_audio", transcribe)
+    file = SimpleNamespace(storage_key=f"u/audio.{ext}", ext=ext, id=2, display_name="recording")
+
+    result = await file_readers.read_audio(file)
+
+    assert result["content"] == "转写内容"

@@ -1,6 +1,6 @@
 <template>
   <div class="office-viewer-root" :class="{ 'pptx-fit-mode': isPptx && pptxFitMode === 'contain', 'pptx-zooming': pptxZooming }">
-    <div v-if="sheetTabs.length" class="sheet-tabs">
+    <div v-if="sheetTabs.length && !isCsv" class="sheet-tabs">
       <button
         v-for="tab in sheetTabs" :key="tab" class="sheet-tab"
         :class="{ active: tab === activeSheet }"
@@ -55,9 +55,22 @@
       @zoom-in="changePptxZoom(10)"
       @fit="fitPptx"
     />
+    <ViewerToolbar
+      v-if="isSpreadsheet && (sheetTabs.length || isCsv)"
+      :ariaLabel="t('viewerUi.spreadsheetToolbar')"
+      :zoom-percent="sheetZoom"
+      :previous-page-label="t('viewerUi.previousPage')"
+      :next-page-label="t('viewerUi.nextPage')"
+      :zoom-out-label="t('viewerUi.zoomOut')"
+      :reset-zoom-label="t('viewerUi.resetZoom')"
+      :zoom-in-label="t('viewerUi.zoomIn')"
+      @zoom-out="changeSheetZoom(-10)"
+      @reset-zoom="sheetZoom = 100"
+      @zoom-in="changeSheetZoom(10)"
+    />
     <div class="office-container">
       <div v-if="isPptx" ref="pptxContainerRef" class="pptx-render-surface"></div>
-      <div v-else ref="containerRef" class="office-content-surface"></div>
+      <div v-else ref="containerRef" class="office-content-surface" :style="isSpreadsheet ? { zoom: sheetZoom / 100 } : undefined"></div>
     </div>
     <div v-if="notice" class="office-notice" role="note">{{ notice }}</div>
   </div>
@@ -74,13 +87,17 @@ import { filesApi } from '@/services/api'
 import ViewerToolbar from './ViewerToolbar.vue'
 
 const props = defineProps<{ blobUrl?: string; ext: string; fileId?: number; fileVersion?: number }>()
-const emit = defineEmits<{ (e: 'content-size', width: number, height: number): void }>()
+const emit = defineEmits<{
+  (e: 'content-size', width: number, height: number): void
+  (e: 'csv-render-failed'): void
+}>()
 const { t } = useI18n()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const pptxContainerRef = ref<HTMLDivElement | null>(null)
 const sheetTabs = ref<string[]>([])
 const activeSheet = ref('')
+const sheetZoom = ref(100)
 const notice = ref('')
 const DOCX_VIEW_MODE_KEY = 'gugu-docx-view-mode'
 type DocxViewMode = 'fit-width' | 'fit-page' | 'actual'
@@ -424,9 +441,15 @@ function changeDocxScale(delta: number) {
 
 const XLSX_MAX_ROWS = 500
 const XLSX_MAX_COLS = 60
+const isCsv = computed(() => props.ext.toLowerCase() === 'csv')
+const isSpreadsheet = computed(() => ['csv', 'xls', 'xlsx'].includes(props.ext.toLowerCase()))
+
+function changeSheetZoom(delta: number) {
+  sheetZoom.value = Math.max(25, Math.min(300, sheetZoom.value + delta))
+}
 
 async function renderXlsx(buffer: ArrayBuffer | null, container: HTMLElement) {
-  const cacheKey = props.fileId != null ? `file:${props.fileId}:${props.fileVersion ?? 0}` : props.blobUrl
+  const cacheKey = `${props.ext.toLowerCase()}:${props.fileId != null ? `file:${props.fileId}:${props.fileVersion ?? 0}` : props.blobUrl}`
   const cached = xlsxRenderCache.get(cacheKey)
   if (cached) {
     sheetHtml = cached.sheetHtml
@@ -434,7 +457,7 @@ async function renderXlsx(buffer: ArrayBuffer | null, container: HTMLElement) {
     if (!activeSheet.value || !cached.tabs.includes(activeSheet.value)) activeSheet.value = cached.tabs[0] ?? ''
     return
   }
-  const preview = props.fileId != null ? await filesApi.xlsxPreview(props.fileId) : null
+  const preview = props.fileId != null && !isCsv.value ? await filesApi.xlsxPreview(props.fileId) : null
   const previewData = preview?.sheets.map(sheet => sheet.data)
   if (previewData?.some(data => data?.cells)) {
     sheetHtml = {}
@@ -449,7 +472,9 @@ async function renderXlsx(buffer: ArrayBuffer | null, container: HTMLElement) {
   }
   if (!buffer) throw new Error('empty-workbook')
   const XLSX = await import('xlsx')
-  const workbook = XLSX.read(buffer, { type: 'array', cellStyles: true })
+  const workbook = isCsv.value
+    ? (await import('@/utils/csvPreview')).readCsvWorkbook(XLSX, buffer)
+    : XLSX.read(buffer, { type: 'array', cellStyles: true })
   sheetHtml = {}
   const tabs: string[] = []
   for (const [index, name] of workbook.SheetNames.entries()) {
@@ -871,8 +896,9 @@ async function render() {
   try {
     if (ext === 'docx') {
       await renderDocx(await fetchBuffer(), container)
-    } else if (ext === 'xlsx' || ext === 'xls') {
-      await renderXlsx(props.fileId != null ? null : await fetchBuffer(), container)
+    } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+      await renderXlsx(props.fileId != null && ext !== 'csv' ? null : await fetchBuffer(), container)
+      if (ext === 'csv') sheetTabs.value = []
       renderSheet(activeSheet.value, container)
     } else if (ext === 'pptx') {
       const scrollContainer = container.parentElement ?? container
@@ -884,12 +910,19 @@ async function render() {
   } catch (cause) {
     if (sequence !== renderSequence) return
     console.warn('[office-viewer] render failed', cause)
+    if (props.ext.toLowerCase() === 'csv') {
+      emit('csv-render-failed')
+      return
+    }
     notice.value = t('files.officeRenderFailed')
   }
 }
 
 // immediate watch 在挂载前触发时 containerRef 还是 null；挂载后再渲染一次。
-watch(() => [props.blobUrl, props.ext] as const, () => { void render() })
+watch(() => [props.blobUrl, props.ext] as const, () => {
+  sheetZoom.value = 100
+  void render()
+})
 onMounted(() => { void render() })
 watch(activeSheet, (name) => {
   const container = containerRef.value

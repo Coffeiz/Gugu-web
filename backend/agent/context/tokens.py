@@ -1,8 +1,8 @@
 """上下文正文规范化与诊断估算工具。
 
-本地估算只允许用于诊断、回归测试和 provider overflow 后的兼容旧接口，
-不得用于正常历史组装、预算触发、压缩触发或重试决定。真实请求预算以
-provider 返回的 usage/overflow 为准。
+本地估算只允许用于诊断、回归测试、provider overflow 后的兼容旧接口，以及
+没有普通 provider usage 事件的静默反思预检；不得替代正常 run 的 provider
+权威预算或决定普通历史组装/重试。正式压缩仍由统一的 baseline 压缩入口执行。
 """
 from __future__ import annotations
 

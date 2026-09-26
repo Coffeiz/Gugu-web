@@ -1,7 +1,7 @@
 """LLM 主循环（迁自原 agent.py 的 _loop_anthropic / _loop_openai）。
 
 `LLMRunner._run_loop`（PRD-LLM-1 Phase 2）：工具调用/核实阶段状态机/三条防幻觉守卫/
-空回复兜底/轮次上限——这套控制流对 Anthropic 块格式和 OpenAI 格式完全一样，原来是
+空回复兜底——这套控制流对 Anthropic 块格式和 OpenAI 格式完全一样，原来是
 两条逐字复制的循环（`_run_anthropic`/`_run_openai`），现在收成一条共享循环，"怎么跟
 这个 provider 打交道"（流式事件形状/工具参数解析/历史消息格式/缓存记账）收进
 `agent/loop_drivers.py` 的 `AnthropicDriver`/`OpenAIDriver`。`_run_anthropic`/
@@ -14,7 +14,6 @@ import json
 import logging
 import random
 import re as _re_mod
-from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any, AsyncGenerator, Awaitable, Callable, NamedTuple
 
@@ -24,7 +23,6 @@ from agent.providers.openai_responses import OpenAIResponsesDriver
 from agent.tools import registry
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
-from app.core.tz import now_utc
 from agent.interactions.stream_events import encode_event
 from agent.tools.tool_contract import invalid_tool_call_payload, normalize_tool_name
 from agent.context.message_roles import last_user_index, user_text_from_message
@@ -55,7 +53,6 @@ from agent.loop.tools import (
     dispatch_in_session as _dispatch_in_session,
     is_read_tool as _is_read_tool,
     pending_tool_signal as _pending_tool_signal,
-    RepeatCallBreaker,
     tool_result_payload as _tool_result_payload,
 )
 from agent.loop.events import artifact_sse as _artifact_sse
@@ -72,11 +69,6 @@ from agent.loop import provider as _loop_provider
 _loop_provider.set_driver_stream_round_resolver(lambda: _stream_round)
 
 
-# 工具循环最大轮次。普通任务和核实轮分开计数，核实预算不能放大普通任务的上限。
-MAX_ROUNDS = 30
-# unlimited 只解除产品层的普通轮次额度，不能解除服务级安全边界；任何状态机异常
-# 都必须在有限请求内收束，避免持续消耗 provider 配额并把 429 放大成后台风暴。
-MAX_ABSOLUTE_ROUNDS = 100
 from agent.loop.guards import _GOAL_DONE_MARKER, goal_completed as _goal_completed, \
     is_verify_placeholder as _is_verify_placeholder, strip_goal_marker as _strip_goal_marker
 
@@ -138,56 +130,11 @@ _GOAL_POLICY = (
     f"{_GOAL_DONE_MARKER}；未完成时不要输出该标记，并继续推进剩余工作。"
     "不要向用户解释这个内部标记。"
 )
-# 一个 run 内模型实际请求的工具调用总数。工具自身仍可有更细的专用额度。
-MAX_TOOL_CALLS = 10
-# 同名工具 + 完全相同参数的连续调用熔断阈值：允许前 3 次真实执行，第 4 次起不再
-# dispatch，直接回一条引导收束的结果。治「核实阶段反复重读同一资源找确认」的行为
-# 死循环（unlimited 模式下轮次上限不生效，这层是唯一的形态级护栏）。
-MAX_IDENTICAL_CONSECUTIVE_TOOL_CALLS = 3
-_REPEAT_CALL_STOP_RESULT = (
-    "检测到你已连续多次以完全相同的参数调用同一工具，结果不会再发生变化。"
-    "请不要重复这一调用：基于已经获得的信息执行下一步操作，或直接总结回复用户。"
-)
-_DEFAULT_BUDGET = object()
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
-# ── 自我核实：成功做了增删改后，立刻跑一轮核实（用查询工具查证真生效/完整），
-# 没做成/不完整就补做；最多 MAX_VERIFY 轮（每次对话回合计，非整 session），避免仅凭操作回执遗漏部分结果。
-MAX_VERIFY = 5
-# 最后一轮核实允许模型在完成最后一次查询后输出收束文本。
-MAX_VERIFY_LLM_ROUNDS = MAX_VERIFY + 1
-_TOOL_BUDGET_EXHAUSTED = "工具调用额度已用完。请不要再调用工具，直接根据已经获得的结果回复用户。"
-_TOOL_BUDGET_STOP_PROMPT = (
-    "用户选择不继续执行超出工具额度的请求。请不要再调用工具，"
-    "直接根据已经获得的结果，清楚说明已完成内容和未执行内容。"
-)
+# ── 自我核实：成功做了增删改后，持续用查询工具核实结果；没做成/不完整就补做。
 
 
-_REPEAT_ROUND_NUDGE = (
-    "你已经连续多轮重复完全相同的工具调用，结果不会变化。请立即停止调用工具，"
-    "直接根据已经获得的结果，给用户一段最终文字回复。"
-)
-_REPEAT_ROUND_LIMIT = 5   # 连续相同轮数达到该值即强制收束（3 轮先提醒，5 轮硬停）
-
-
-def round_tool_signature(tool_calls) -> str | None:
-    """一轮内全部工具调用（含被跳过/占位的）的形态签名；空轮返回 None。
-
-    同轮内的重复调用经 sorted 去重后只影响一处——单轮多相同调用是合法
-    形态（2026-09-18 定稿）；跨轮形态完全一致才累积。
-    """
-    if not tool_calls:
-        return None
-    try:
-        entries = sorted(
-            (str(getattr(tc, "name", "") or ""),
-             json.dumps(getattr(tc, "input", None) or {}, sort_keys=True,
-                        ensure_ascii=False, default=str))
-            for tc in tool_calls
-        )
-        return json.dumps(entries, ensure_ascii=False)
-    except Exception:
-        return None
 
 
 def _goal_mode_enabled(session: Any) -> bool:
@@ -199,39 +146,6 @@ def _goal_mode_enabled(session: Any) -> bool:
         and context.get("goal_status", "active") != "paused"
         and bool(context.get("goal_mode", False))
     )
-
-
-def _unlimited_mode_enabled(session: Any) -> bool:
-    """读取会话内临时额度窗口；持久化无限开关统一由用户偏好提供。"""
-    context = getattr(session, "session_context", None)
-    if not isinstance(context, dict):
-        return False
-    until = context.get("tool_budget_unlimited_until")
-    if isinstance(until, str):
-        try:
-            expires_at = datetime.fromisoformat(until.replace("Z", "+00:00"))
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-            if expires_at > now_utc():
-                return True
-        except ValueError:
-            pass
-    # 兼容早期 goal 命令留下的无正文控制状态；正式的 /unlimited 开关不再写入会话。
-    return bool(context.get("goal_mode") and not context.get("goal_text"))
-
-
-async def _user_unlimited_mode_enabled(user_id) -> bool:
-    """读取用户级无限工具调用开关，供 Web 与 IM 共用。"""
-    try:
-        from app.db import session as db_session
-        from app.services.user_preferences import get_user_unlimited_mode
-        if db_session._engine is None:
-            db_session._build_engine()
-        async with db_session._SessionLocal() as db:
-            return await get_user_unlimited_mode(db, user_id)
-    except Exception:
-        # 偏好读取失败不能阻断普通对话；会话临时额度仍由原逻辑处理。
-        return False
 
 
 def _pick_label(raw: str) -> str:
@@ -382,12 +296,7 @@ class LLMRunner:
 
 
     def __init__(self, tool_names: list[str], settings, capability_context=None, locale: str | None = None,
-                 dynamic_tools=None,
-                 max_rounds: int | None | object = _DEFAULT_BUDGET,
-                 max_tool_calls: int | None | object = _DEFAULT_BUDGET,
-                 max_verify_rounds: int | None | object = _DEFAULT_BUDGET,
-                 max_verify_cycles: int | None | object = _DEFAULT_BUDGET,
-                 stop_on_budget: bool = False):
+                 dynamic_tools=None):
         self.tool_names = tool_names
         self.settings = settings
         self.capability_context = capability_context
@@ -396,11 +305,6 @@ class LLMRunner:
             tool.name: tool for tool in (dynamic_tools or ())
             if getattr(tool, "name", None)
         }
-        self.max_rounds = MAX_ROUNDS if max_rounds is _DEFAULT_BUDGET else max_rounds
-        self.max_tool_calls = MAX_TOOL_CALLS if max_tool_calls is _DEFAULT_BUDGET else max_tool_calls
-        self.max_verify_rounds = MAX_VERIFY_LLM_ROUNDS if max_verify_rounds is _DEFAULT_BUDGET else max_verify_rounds
-        self.max_verify_cycles = MAX_VERIFY if max_verify_cycles is _DEFAULT_BUDGET else max_verify_cycles
-        self.stop_on_budget = stop_on_budget
         # 状态显示名 = 特殊状态默认 ← 各工具 label ← 用户在后台「状态命名」面板的覆盖（热读）。
         # 未覆盖的 key 自动回退默认，所以「保留默认」天然成立。
         _ov = getattr(getattr(settings, "state_labels", None), "overrides", None) or {}

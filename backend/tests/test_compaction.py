@@ -532,6 +532,159 @@ class TestCompactContext:
         assert not hasattr(compress_conv, "schedule_baseline_update")
         assert not hasattr(compress_conv, "wait_for_baseline_update")
 
+    @pytest.mark.asyncio
+    async def test_reflection_preflight_uses_global_budget_and_idle_compaction(self, monkeypatch):
+        calls = []
+
+        async def fake_compact(*args, **kwargs):
+            calls.append((args, kwargs))
+            return True
+
+        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compact)
+        status = await compress_conv.compact_for_reflection(
+            7,
+            11,
+            SimpleNamespace(ai=SimpleNamespace()),
+            snapshot=SimpleNamespace(
+                system_prompt="系统提示",
+                history=[{"role": "user", "content": "中" * 100}],
+            ),
+            extra_text="本轮反思",
+            model_cfg=_model_cfg(context_tokens=100, max_tokens=20),
+        )
+
+        assert status == "compacted"
+        assert calls[0][0][:2] == (7, 11)
+        assert calls[0][1]["force"] is True
+        assert calls[0][1]["only_if_idle"] is True
+
+    @pytest.mark.asyncio
+    async def test_reflection_preflight_does_not_compact_below_global_budget(self, monkeypatch):
+        called = False
+
+        async def fake_compact(*args, **kwargs):
+            nonlocal called
+            called = True
+            return True
+
+        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compact)
+        status = await compress_conv.compact_for_reflection(
+            7,
+            11,
+            SimpleNamespace(ai=SimpleNamespace()),
+            snapshot=SimpleNamespace(
+                system_prompt="",
+                history=[{"role": "user", "content": "short"}],
+            ),
+            model_cfg=_model_cfg(context_tokens=1000, max_tokens=20),
+        )
+
+        assert status == "not_needed"
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_reflection_uses_provider_usage_instead_of_early_local_estimate(self, monkeypatch):
+        """主请求实际输入未到 90% 时，反思估算偏高也不能提前压缩。"""
+        calls = []
+
+        async def fake_compact(*args, **kwargs):
+            calls.append((args, kwargs))
+            return True
+
+        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compact)
+        monkeypatch.setattr(
+            compress_conv.ContextBudget, "from_messages",
+            classmethod(lambda *_args, **_kwargs: pytest.fail("有实际用量时不应调用本地估算")),
+        )
+        model = _model_cfg(context_tokens=128_000, max_tokens=16_000)
+        snapshot = SimpleNamespace(
+            provider_context_input=81_515,
+            provider_compacted=False,
+            system_prompt="系统提示" * 5000,
+            history=[{"role": "user", "content": "旧对话" * 40000}],
+        )
+        kwargs = dict(snapshot=snapshot, extra_text="待反思消息" * 3000, model_cfg=model)
+
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
+        ) == "not_needed"
+        assert calls == []
+
+        snapshot.provider_context_input = 115_200
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
+        ) == "compacted"
+        assert len(calls) == 1
+
+        snapshot.provider_compacted = True
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()), **kwargs,
+        ) == "not_needed"
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider_input", [None, 0])
+    async def test_reflection_estimates_only_when_provider_usage_is_unavailable(
+        self, monkeypatch, provider_input,
+    ):
+        """没有有效 provider 输入量才走本地兜底；已压缩快照不能重复触发。"""
+        estimated = []
+        compacted = []
+
+        def fake_budget(_cls, context_tokens, messages, **kwargs):
+            estimated.append((context_tokens, messages, kwargs))
+            return SimpleNamespace(total_tokens=115_200, soft_limit_tokens=115_200)
+
+        async def fake_compact(*args, **kwargs):
+            compacted.append((args, kwargs))
+            return True
+
+        monkeypatch.setattr(
+            compress_conv.ContextBudget, "from_messages", classmethod(fake_budget),
+        )
+        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compact)
+        snapshot = SimpleNamespace(
+            provider_context_input=provider_input, provider_compacted=False,
+            system_prompt="系统提示", history=[{"role": "user", "content": "旧对话"}],
+        )
+        model = _model_cfg(context_tokens=128_000, max_tokens=16_000)
+
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()),
+            snapshot=snapshot, model_cfg=model,
+        ) == "compacted"
+        assert len(estimated) == len(compacted) == 1
+
+        snapshot.provider_compacted = True
+        assert await compress_conv.compact_for_reflection(
+            7, 11, SimpleNamespace(ai=SimpleNamespace()),
+            snapshot=snapshot, model_cfg=model,
+        ) == "not_needed"
+        assert len(estimated) == len(compacted) == 1
+
+    @pytest.mark.asyncio
+    async def test_reflection_compaction_never_claims_running_session(self, db, user_a):
+        session = ConversationSession(
+            user_id=user_a.id,
+            title="反思压缩竞态",
+            source="web",
+            execution_state="running",
+        )
+        db.add(session)
+        await db.commit()
+
+        ok = await compress_conv.compress_if_needed(
+            session.id,
+            user_a.id,
+            SimpleNamespace(ai=SimpleNamespace(context_tokens=1000, max_tokens=20)),
+            force=True,
+            only_if_idle=True,
+        )
+
+        assert ok is False
+        await db.refresh(session)
+        assert session.execution_state == "running"
+
     def test_claim_session_run_rechecks_baseline_state_under_row_lock(self, db, user_a):
         """拿到会话锁后 baseline 才切换为 updating 时，不能认领新 run。"""
         session = ConversationSession(
@@ -728,6 +881,27 @@ class TestAppendModeCompaction:
         assert all(isinstance(m, dict) and m.get("role") for m in captured["history_messages"])
         # openai 协议路由（默认）不注入分支 system，run 的 system 已在 history 前缀里
         assert captured["append_system"] == ""
+
+    def test_compact_context_forwards_system_for_responses_protocol(self, monkeypatch):
+        captured = {}
+
+        async def fake_summary(history, previous=None, **kwargs):
+            captured.update(kwargs)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
+        monkeypatch.setattr(
+            "agent.providers.adapter_for",
+            lambda _model: SimpleNamespace(protocol_format=lambda _ai: "responses"),
+        )
+        messages = [
+            _make_msg("user", "旧历史" * 20) for _ in range(40)
+        ] + [_make_msg("user", "当前消息")]
+        asyncio.get_event_loop().run_until_complete(
+            compact_context(messages, model_cfg=_model_cfg(1000, 80), system_text="主系统")
+        )
+
+        assert captured["append_system"] == "主系统"
 
 
 class TestCompleteMessagesShape:

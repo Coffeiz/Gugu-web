@@ -1,5 +1,5 @@
 """统一 run 收尾契约的回归测试。"""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -484,6 +484,94 @@ async def test_finalize_run_persists_rag_before_user_and_restores_provider_histo
             assert restored[2]["content"] == [{"type": "text", "text": "当前问题"}]
         else:
             assert restored[2]["content"] == "当前问题"
+
+
+@pytest.mark.asyncio
+async def test_interrupted_run_persists_completed_history_before_followup(
+    db, user_a, monkeypatch,
+):
+    """取消收尾晚到时，部分 assistant 与已完成工具轮仍排在后续用户消息之前。"""
+    session = ConversationSession(user_id=user_a.id, title="中止历史顺序")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    started_at = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+    current_user = ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="先检查文件",
+        created_at=started_at,
+    )
+    followup_user = ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="继续",
+        created_at=started_at + timedelta(seconds=1),
+    )
+    db.add_all([current_user, followup_user])
+    await db.commit()
+    await db.refresh(current_user)
+
+    async def fake_record_usage(*args, **kwargs):
+        from agent.usage import UsageResult
+
+        return UsageResult()
+
+    monkeypatch.setattr("agent.usage.record_usage", fake_record_usage)
+    monkeypatch.setattr(
+        "app.services.conversation_retention.trim_session_messages",
+        lambda *_args, **_kwargs: _async_none(),
+    )
+
+    session_factory = async_sessionmaker(
+        db.bind, class_=AsyncSession, expire_on_commit=False,
+    )
+    settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
+    model = SimpleNamespace(model="test-model", provider="test", context_tokens=80000)
+    completed_batch = {
+        "messages": [
+            {"role": "assistant", "content": [{
+                "type": "tool_call", "id": "call-complete", "name": "read_file",
+                "arguments": {"path": "notes.txt"},
+            }]},
+            {"role": "user", "content": [{
+                "type": "tool_result", "tool_call_id": "call-complete", "content": "已读取",
+            }]},
+        ],
+        "digest": "completed-tool-round",
+        "metadata": {"round_id": "round-1"},
+    }
+
+    await run_finalize.finalize_run(
+        session_factory=session_factory,
+        session_id=session.id,
+        user_id=str(user_a.id),
+        settings=settings,
+        model_cfg=model,
+        rag_context=None,
+        messages=[],
+        initial_len=0,
+        text="已经读到文件开头，后续检查被中止。",
+        display_timeline=[{"kind": "tool", "toolCallId": "call-complete"}],
+        files=[],
+        tokens_in=20,
+        tokens_out=8,
+        user_message_id=current_user.id,
+        canonical_batches=[completed_batch],
+        interrupted=True,
+    )
+
+    async with session_factory() as check_db:
+        rows = await load_session_history(check_db, session.id, max_messages=20)
+
+    assert [row.content for row in rows] == [
+        "先检查文件", "", "", "已经读到文件开头，后续检查被中止。\n\n[本轮已中止，以上内容未完成]", "继续",
+    ]
+    assert [row.role for row in rows] == ["user", "assistant", "user", "assistant", "user"]
+    assert rows[1].created_at < rows[2].created_at < rows[3].created_at < rows[4].created_at
+    assert rows[1].content_json[0]["type"] == "tool_call"
+    assert rows[2].content_json[0]["type"] == "tool_result"
 
 
 async def _async_none():

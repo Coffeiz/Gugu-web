@@ -25,7 +25,7 @@ def filesystem_authorization_enabled() -> bool:
     # 下必须整体关闭，避免旧授权记录重新打开 /personal 或 /project 语义。
     return bool(
         settings.storage.backend == "local"
-        and settings.sandbox.filesystem_authorization_enabled
+        and settings.sandbox.full_user_sandbox_authorization_enabled
     )
 
 

@@ -6,17 +6,42 @@ const workflowPath = new URL('../../.github/workflows/docker-release.yml', impor
 const composePath = new URL('../../docker-compose.yml', import.meta.url)
 const appDockerfilePath = new URL('../../Dockerfile', import.meta.url)
 
-test('一体化 Compose 使用随 app 镜像交付的 Sandbox bundle', async () => {
+test('一体化镜像不内嵌 Sandbox，默认 Compose 启动独立沙盒并解析镜像 digest', async () => {
   const [compose, dockerfile] = await Promise.all([
     readFile(composePath, 'utf8'),
     readFile(appDockerfilePath, 'utf8'),
   ])
-  assert.equal((compose.match(/SANDBOX__IMAGE: \$\{GUGU_SANDBOX_IMAGE:-coffeiz\/gugu-sandbox:bundled\}/g) ?? []).length, 3,
-    'app、sandbox-bootstrap 与 sandboxd 应默认引用内嵌 Sandbox tag')
-  assert.equal((compose.match(/SANDBOX__IMAGE_DIGEST: \$\{GUGU_SANDBOX_IMAGE_DIGEST:-bundled\}/g) ?? []).length, 3,
-    '三处 Compose 配置都应启用 bundle image ID 校验')
-  assert.match(dockerfile, /COPY docker\/sandbox\/bundle\/sandbox-image\.tar\.gz \/opt\/gugu\/sandbox\/sandbox-image\.tar\.gz/)
-  assert.match(dockerfile, /COPY docker\/sandbox\/bundle\/image-id \/opt\/gugu\/sandbox\/image-id/)
+  assert.equal((compose.match(/SANDBOX__IMAGE: \$\{GUGU_SANDBOX_IMAGE:-coffeiz\/gugu-sandbox:latest\}/g) ?? []).length, 2,
+    'app 与 sandboxd 应默认使用已发布沙盒镜像')
+  assert.equal((compose.match(/SANDBOX__IMAGE_DIGEST: \$\{GUGU_SANDBOX_IMAGE_DIGEST:-resolved\}/g) ?? []).length, 2,
+    'app 与 sandboxd 应使用 sandboxd 初始化解析的固定 digest')
+  assert.doesNotMatch(compose, /profiles:\s*\[sandbox\]/,
+    '默认 Compose 必须启动 egress-proxy 和 sandboxd')
+  assert.doesNotMatch(dockerfile, /docker\/sandbox\/bundle|\/opt\/gugu\/sandbox\//,
+    '一体化镜像不得包含 Sandbox bundle')
+})
+
+test('正式发布提供单 tar 离线沙盒 bundle', async () => {
+  const workflow = await readFile(workflowPath, 'utf8')
+  assert.match(workflow, /offline-bundle:/)
+  assert.match(workflow, /build-offline-sandbox-bundle\.sh/)
+  assert.match(workflow, /actions\/upload-artifact@v4/)
+})
+
+test('app 镜像的动态版本元数据不使文件系统层缓存失效', async () => {
+  const dockerfile = await readFile(appDockerfilePath, 'utf8')
+  const runtimeStage = dockerfile.slice(dockerfile.indexOf('# ── Stage 3'))
+  const filesystemInstructions = [...runtimeStage.matchAll(/^(?:RUN|COPY|ADD)\b/gm)]
+  const lastFilesystemInstruction = filesystemInstructions.at(-1)?.index ?? -1
+  const versionArg = runtimeStage.indexOf('ARG GUGU_VERSION=unknown')
+  const revisionArg = runtimeStage.indexOf('ARG GUGU_REVISION=unknown')
+  const labels = runtimeStage.indexOf('LABEL org.opencontainers.image.version=')
+
+  assert.ok(lastFilesystemInstruction >= 0, '运行时阶段应包含文件系统构建指令')
+  assert.ok(lastFilesystemInstruction < versionArg,
+    '动态版本参数必须放在所有 RUN/COPY/ADD 之后，避免提交 SHA 变化使文件层缓存失效')
+  assert.ok(versionArg < revisionArg && revisionArg < labels,
+    '版本参数应在最终镜像标签之前声明')
 })
 
 test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元数据', async () => {
@@ -43,10 +68,8 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
     '稳定版需继续更新默认部署使用的 latest 别名')
   assert.match(workflow, /push: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/,
     ':ci 中间镜像只在 tag 触发时推送，main/dispatch 运行零额外推送')
-  assert.match(workflow, /name: bundled-sandbox-runtime[\s\S]*?path:[\s\S]*?sandbox-image\.tar\.gz[\s\S]*?image-id/,
-    '发布流水线必须把已扫描的 Sandbox 镜像归档和 image ID 传给 app 构建')
-  assert.match(workflow, /Download bundled sandbox runtime[\s\S]*?path: docker\/sandbox\/bundle/,
-    '一体化 app 构建必须消费 Sandbox bundle')
+  assert.doesNotMatch(workflow, /bundled-sandbox-runtime|sandbox-image\.tar\.gz|Download bundled sandbox runtime/,
+    '发布流水线不得把 Sandbox bundle 注入一体化 app')
 
   assert.match(publishJob, /uses: sigstore\/cosign-installer@v4\.1\.2\s+with:\s+cosign-release: v3\.1\.3/)
   // cosign 3.x 的 oci-1-1 referrers 模式在实验开关后面，缺 env 直接报 invalid argument

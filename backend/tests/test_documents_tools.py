@@ -116,10 +116,10 @@ async def test_read_file_image_and_media_branches(db, user_a, storage, monkeypat
     block = await documents._read_file(db, user_a.id, {"file_id": png.id})
     assert block["_vision_image"] == {"type": "image"} and "已打开图片" in block["note"]
 
-    async def fake_read_media(f):
+    async def fake_read_media(f, **kwargs):
         return {"media": f.id}
 
-    monkeypatch.setattr("agent.tools.file_readers.read_media", fake_read_media)
+    monkeypatch.setattr("agent.tools.media_reader.read_media", fake_read_media)
     audio = await _mk_file(db, user_a, storage, name="语音.mp3", content="x",
                            mime_type="audio/mpeg")
     assert await documents._read_file(db, user_a.id, {"file_id": audio.id}) == {"media": audio.id}

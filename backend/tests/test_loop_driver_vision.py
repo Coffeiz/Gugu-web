@@ -26,7 +26,7 @@ def _result():
     return RoundResult(
         text="",
         raw=_OpenAIRaw(content="", reasoning="", tool_calls_payload=[
-            {"id": "call-1", "name": "inspect_images", "args": "{}"},
+            {"id": "call-1", "name": "read_file", "args": "{}"},
         ]),
     )
 
@@ -54,6 +54,50 @@ def test_openai_tool_round_converts_anthropic_image_block():
         "type": "image_url",
         "image_url": {"url": "data:image/png;base64,AAAA", "detail": "auto"},
     }
+
+
+def test_openai_tool_round_forwards_native_audio_and_video_blocks():
+    dispatched = [(
+        SimpleNamespace(id="call-1"),
+        [
+            {"type": "text", "text": "已读取媒体。"},
+            {"type": "input_audio", "input_audio": {"data": "data:audio/mpeg;base64,AAAA"}},
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,BBBB"}, "fps": 2},
+        ],
+    )]
+
+    messages = OpenAIDriver().build_tool_round(_result(), dispatched)
+
+    assert messages[1]["content"] == "已读取媒体。"
+    assert messages[2]["role"] == "user"
+    assert [part["type"] for part in messages[2]["content"]] == [
+        "text", "input_audio", "video_url",
+    ]
+
+
+def test_responses_tool_round_does_not_forward_unsupported_audio_video_blocks():
+    from agent.providers.openai_responses import OpenAIResponsesDriver, _ResponsesRaw
+
+    result = RoundResult(
+        text="",
+        raw=_ResponsesRaw(content="", response_id=None, previous_response_id=None,
+                          tool_calls_payload=[{"id": "call-1", "name": "read_file", "args": "{}"}],
+                          output_items=[]),
+    )
+    dispatched = [(
+        SimpleNamespace(id="call-1"),
+        [
+            {"type": "text", "text": "已读取媒体。"},
+            {"type": "input_audio", "input_audio": {"data": "data:audio/mpeg;base64,AAAA"}},
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,BBBB"}},
+        ],
+    )]
+
+    messages = OpenAIResponsesDriver().build_tool_round(result, dispatched)
+
+    assert len(messages) == 2
+    assert "当前 API 协议不支持原生音频输入" in messages[1]["content"]
+    assert "当前 API 协议不支持原生视频输入" in messages[1]["content"]
 
 
 def test_openai_tool_round_keeps_text_result_shape():
@@ -206,8 +250,6 @@ def test_openai_history_drops_only_unpaired_parallel_calls_and_keeps_prompt_meta
         {"role": "tool", "tool_call_id": "unrequested", "content": "另一个孤儿"},
         {"role": "user", "content": "继续"},
     ], fixed_prefix_size=1)
-    messages.remember_cache_anchor(5)
-
     cleaned = sanitize_openai_tool_history(messages)
 
     assert cleaned == [
@@ -218,7 +260,6 @@ def test_openai_history_drops_only_unpaired_parallel_calls_and_keeps_prompt_meta
     ]
     assert [call["id"] for call in cleaned[1]["tool_calls"]] == ["present"]
     assert cleaned.fixed_prefix_size == 1
-    assert cleaned.cache_anchor_indices == [3]
 
 
 def test_openai_history_is_cleaned_before_cache_anchors_and_diagnostics():
@@ -245,7 +286,7 @@ def test_openai_history_is_cleaned_before_cache_anchors_and_diagnostics():
     }
     assert [message["role"] for message in messages] == ["system", "user", "tool", "user"]
 
-    cached = _with_history_cache(_with_system_cache_control(projected))
+    cached, _state = _with_history_cache(_with_system_cache_control(projected))
     assert [message["role"] for message in cached] == ["system", "user", "user"]
     assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
@@ -373,7 +414,7 @@ def test_inline_image_stops_cache_checkpoint_before_image():
     ]
 
     assert _contains_volatile_image(messages[2])
-    cached = _with_history_cache(messages)
+    cached, _state = _with_history_cache(messages)
 
     assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert "cache_control" not in cached[2]["content"][0]
@@ -408,7 +449,7 @@ def test_cache_checkpoint_recovers_after_image_round():
         {"role": "assistant", "content": "下一轮稳定回复"},
     ]
 
-    cached = _with_history_cache(messages)
+    cached, _state = _with_history_cache(messages)
 
     assert cached[-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
 
@@ -420,7 +461,7 @@ def test_cache_checkpoint_rebuilds_previous_turn_for_new_request():
         {"role": "user", "content": "本轮用户消息"},
     ]
 
-    cached = _with_history_cache(messages)
+    cached, _state = _with_history_cache(messages)
 
     assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
@@ -434,7 +475,6 @@ def test_cache_diagnostics_only_exposes_sizes_and_digests():
                 "type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"},
             }]},
         ]
-        cache_anchor_indices = [0]
 
     class Context:
         tools = [{"name": "secret_tool", "description": "私有工具定义"}]
@@ -444,7 +484,7 @@ def test_cache_diagnostics_only_exposes_sizes_and_digests():
 
     assert diagnostics["cache_supported"] is True
     assert diagnostics["conversation_messages"] == 2
-    assert diagnostics["cache_anchor_indices"] == [0]
+    assert diagnostics["cache_anchor_indices"]
     assert diagnostics["cache_anchor_last_index"] == 0
     assert diagnostics["cache_prefix_digest"]
     assert diagnostics["stable_prefix_digest"]

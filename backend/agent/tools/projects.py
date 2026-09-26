@@ -276,6 +276,7 @@ async def _delete_project(db, user_id, args: dict):
             args,
             f"将删除项目：{names}，共 {len(projects)} 个，连同其中文件移入回收站（30 天内可恢复）",
             user_id,
+            purpose=confirm.ACTION,
             action="delete_project",
             targets={"project_id": project_ids},
         )
@@ -302,6 +303,7 @@ async def _delete_project(db, user_id, args: dict):
     summary = f"将删除项目「{p.name}」" + (f"及其 {file_cnt} 个文件" if file_cnt else "") + "移入回收站（30 天内可恢复）"
     blocked = confirm.needs_target_confirmation(
         args, summary, user_id,
+        purpose=confirm.ACTION,
         action="delete_project",
         targets={"project_id": [p.id]},
     )
@@ -469,7 +471,6 @@ class ProjectsSkill(BaseSkill):
                     },
                 },
             },
-            repeat_safe=True,
             handler=_list_projects,
         ),
         Tool(
@@ -589,7 +590,6 @@ class ProjectsSkill(BaseSkill):
                 },
                 "required": [],
             },
-            repeat_safe=True,
             handler=_get_project,
         ),
         Tool(

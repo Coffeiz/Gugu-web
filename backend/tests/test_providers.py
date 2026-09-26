@@ -195,15 +195,14 @@ def test_deepseek_thinking_uses_official_openai_parameter_split():
 
 
 def test_minimax_temperature_is_not_sent_at_all():
-    # temperature 已全局下线：anthropic SDK 1.x 的 stream()/create() 不再接受该参数，
-    # MiniMax 也不应通过 extra_body 继续携带。
+    # Anthropic SDK 1.x 不再接受额外的顶层采样参数，MiniMax 也不应通过 extra_body 携带。
     adapter = adapter_for(_ai(provider="minimax"))
-    assert adapter.build_anthropic_generation_params(SimpleNamespace(temperature=0.3)) == {}
+    assert adapter.build_anthropic_generation_params(SimpleNamespace()) == {}
 
 
 def test_anthropic_temperature_is_not_sent_to_sdk_stream():
     adapter = adapter_for(_ai(provider="anthropic"))
-    assert adapter.build_anthropic_generation_params(SimpleNamespace(temperature=0.3)) == {}
+    assert adapter.build_anthropic_generation_params(SimpleNamespace()) == {}
 
 
 def test_adapter_for_ollama_local_and_cloud_defaults():

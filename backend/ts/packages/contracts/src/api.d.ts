@@ -5336,10 +5336,10 @@ export interface components {
              */
             shellDangerousEnabled: boolean;
             /**
-             * Shellautopilotenabled
+             * Automaticmodeenabled
              * @default false
              */
-            shellAutopilotEnabled: boolean;
+            automaticModeEnabled: boolean;
             /**
              * Showtoolinteractions
              * @default false
@@ -5396,8 +5396,8 @@ export interface components {
             shellSystemEnabled?: boolean | null;
             /** Shelldangerousenabled */
             shellDangerousEnabled?: boolean | null;
-            /** Shellautopilotenabled */
-            shellAutopilotEnabled?: boolean | null;
+            /** Automaticmodeenabled */
+            automaticModeEnabled?: boolean | null;
             /** Showtoolinteractions */
             showToolInteractions?: boolean | null;
             /** Toolinjectionmode */
@@ -5433,11 +5433,6 @@ export interface components {
              * @default 4000
              */
             max_tokens: number;
-            /**
-             * Temperature
-             * @default 0.7
-             */
-            temperature: number;
             /**
              * Context Tokens
              * @default 120000
@@ -5534,8 +5529,6 @@ export interface components {
             model?: string | null;
             /** Max Tokens */
             max_tokens?: number | null;
-            /** Temperature */
-            temperature?: number | null;
             /** Context Tokens */
             context_tokens?: number | null;
             /** Thinking */
@@ -13039,6 +13032,8 @@ export interface operations {
             query?: {
                 lines?: number;
                 source?: string | null;
+                cursor?: string | null;
+                query?: string | null;
             };
             header?: never;
             path?: never;

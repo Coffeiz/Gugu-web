@@ -7,9 +7,11 @@ import json
 import uuid
 from typing import Any
 
+from .cache_probe import build_cache_round, context_digests, prefix_unchanged, record_cache_drop
 from .context import install_context_hooks
 from .state import (
-    _ScopeRun, _enabled, _finish_run, _now, _scope_run, get_trace,
+    _ScopeRun, _enabled, _finish_run, _now, _scope_run, activate_llm_span,
+    deactivate_llm_span, get_trace,
     record_adapter_call, record_adapter_result, record_canonical_event_stats,
     record_context_layout, record_tool_schema_error,
 )
@@ -376,6 +378,7 @@ def ensure_hooks() -> None:
         tool_schema_context_recorded = False
         capability_context_recorded = False
         previous_round_messages = None
+        previous_cache_round = None
 
         initial_user = _extract_last_user(messages)
         # 这些值同时用于有/无 LoopScope run 的路径。IM 可能尚未建立 web trace，
@@ -482,8 +485,9 @@ def ensure_hooks() -> None:
             # stream_round 由 core 注入（PRD-LLM-25）：转发给被包裹的原 run_round。
             round_driver = active_round_driver
             round_callable = active_round_callable
-            nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded, previous_round_messages
+            nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded, previous_round_messages, previous_cache_round
             round_index += 1
+            round_started_at = _now()
             # LoopScope 的 round input、cache digest 和上一轮对比都必须基于
             # provider 实际收到的 projection；内部 canonical event 只用于
             # canonical_events 统计，不能混入跨 run 前缀比较。
@@ -639,6 +643,7 @@ def ensure_hooks() -> None:
             # 不能保存未渲染的 canonical PromptMessages。
             previous_round_messages = list(round_wire_messages)
             final = None
+            active_span_token = activate_llm_span(span)
             try:
                 async for kind, value in round_callable(
                     client, ctx, round_messages, stream_round=stream_round,
@@ -673,6 +678,23 @@ def ensure_hooks() -> None:
                             span.finish(details)
                             run.add_usage(span.usage)
                             record_adapter_result(run, "success")
+                            usage = details.get("usage") or {}
+                            prefix_integrity = prefix_unchanged(
+                                previous_cache_round, canonical_diagnostics,
+                            )
+                            current_cache_round = build_cache_round(
+                                at=round_started_at,
+                                provider=str(getattr(ai, "provider", "") or "unknown"),
+                                model=model_name,
+                                api_format=str(getattr(round_driver, "api_format", "unknown") or "unknown"),
+                                cache_diag=cache_diag,
+                                usage=usage,
+                                system_digest=str(system_assembly.get("digest", "") or ""),
+                                context=context_digests(round_wire_messages, run),
+                                prefix_unchanged=prefix_integrity,
+                            )
+                            record_cache_drop(run, span, previous_cache_round, current_cache_round)
+                            previous_cache_round = current_cache_round
                     yield kind, value
             except (GeneratorExit, asyncio.CancelledError):
                 # 外层提前 break/取消时生成器在此被关闭——不是本轮失败,不标 error。
@@ -690,6 +712,8 @@ def ensure_hooks() -> None:
                 if run:
                     record_adapter_result(run, "error")
                 raise
+            finally:
+                deactivate_llm_span(active_span_token)
 
         def wrap_round(round_driver, round_callable):
             """把本轮 LoopScope 观测器复用到兼容性回退创建的 driver。"""

@@ -43,7 +43,7 @@ def _envelope(user, session, *, run_id="run-1", provider="anthropic", mode="cont
         api_format="anthropic",
         model_id="claude-test",
         reasoning_persistence=mode,
-        config_digest=configuration_fingerprint({"temperature": 0}),
+        config_digest=configuration_fingerprint({}),
         reasoning_config_digest=configuration_fingerprint({"thinking": True}),
         source_run_id=run_id,
         source_round_id="round-1",
@@ -68,7 +68,7 @@ def test_policy_has_single_safe_boundary():
 async def test_coordinator_diagnostics_distinguish_state_lifecycle(monkeypatch):
     model = SimpleNamespace(
         provider="anthropic", model="claude-test", context_tokens=128000,
-        max_tokens=8000, temperature=0.2, thinking="adaptive",
+        max_tokens=8000, thinking="adaptive",
     )
     driver = SimpleNamespace(api_format="anthropic", continuation_available=True)
     ctx = SimpleNamespace(tool_state_digest="tools-digest")

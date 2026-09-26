@@ -19,15 +19,18 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
 import json
+import logging
 import secrets
 
 from app.core.redis import get_redis_sync
+from agent.interactions.automatic_mode import ConfirmationPurpose, should_skip_confirmation
 
 
 _TOKEN_TTL_MINUTES = 5
 _GRANT_PREFIX = "agent:confirm-grant"
 _REQ_PREFIX = "agent:confirm-req"
 _CODE_PREFIX = "agent:confirm-code"
+_automatic_mode_log = logging.getLogger("agent.automatic_mode")
 
 
 def _truthy(value) -> bool:
@@ -152,6 +155,7 @@ def needs_target_confirmation(
     ttl_minutes: int = _TOKEN_TTL_MINUTES,
     instruction: str | None = None,
     consume_grant: bool = False,
+    purpose: ConfirmationPurpose = ConfirmationPurpose.AUTHORIZATION,
 ) -> str | None:
     """单项和批量动作的统一确认入口；一次确认只覆盖本次精确目标集合。"""
     try:
@@ -166,6 +170,7 @@ def needs_target_confirmation(
         ttl_minutes=ttl_minutes,
         instruction=instruction,
         consume_grant=consume_grant,
+        purpose=purpose,
     )
 
 
@@ -277,13 +282,24 @@ def needs_confirmation(
     ttl_minutes: int = _TOKEN_TTL_MINUTES,
     instruction: str | None = None,
     consume_grant: bool = False,
+    purpose: ConfirmationPurpose = ConfirmationPurpose.AUTHORIZATION,
 ) -> str | None:
-    """返回 None=已确认可执行（授权命中时自动注入 confirm）；否则返回需确认结果。
+    """返回 None=已确认可执行（授权命中或 ACTION 自动模式会注入 confirm）；否则返回待确认结果。
 
     授权按（用户, 摘要, 身份范围）记录。默认在 TTL 内复用；consume_grant=True
     时用原子删除消费单次授权。确认码只用于网页/IM/终端把"用户已同意"传达回服务端，
-    不参与模型上下文校验。
+    不参与模型上下文校验。未显式标注的确认类别按 AUTHORIZATION 保守处理。
     """
+    if should_skip_confirmation(purpose):
+        args["confirm"] = True
+        _automatic_mode_log.info(
+            "confirmation_skipped purpose=%s user_fp=%s summary_fp=%s identity_fp=%s",
+            purpose.value,
+            sha256(str(user_id).encode("utf-8")).hexdigest()[:12],
+            _summary_hash(summary)[:12],
+            _identity_hash(identity)[:12],
+        )
+        return None
     if consume_grant:
         consumed = consume_confirmation(user_id, summary, identity)
         if consumed:
@@ -319,8 +335,12 @@ def needs_confirmation(
 
 
 __all__ = [
+    "ConfirmationPurpose", "ACTION", "AUTHORIZATION",
     "confirmation_payload", "is_block", "is_confirmed", "needs_confirmation",
     "normalize_confirmation_result",
     "consume_confirmation", "grant_confirmation", "revoke_confirmation",
     "redeem_confirmation",
 ]
+
+ACTION = ConfirmationPurpose.ACTION
+AUTHORIZATION = ConfirmationPurpose.AUTHORIZATION

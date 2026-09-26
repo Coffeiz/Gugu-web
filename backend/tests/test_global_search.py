@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.api.v1.search import _run_ilike_search, run_global_search
-from app.models import File, Folder, MindNode, Project, ScheduledTask, UserMcpServer, UserSkill
+from app.models import File, Folder, MindCanvasItem, MindMap, MindNode, Project, ScheduledTask, UserMcpServer, UserSkill
 from agent.tools.global_search import _global_search
 import app.api.v1.search as search_api
 
@@ -76,6 +76,44 @@ async def test_run_global_search_types_filter_narrows_result(db, user_a):
 
     assert {g["type"] for g in all_result["groups"]} == {"project", "file"}
     assert {g["type"] for g in file_only["groups"]} == {"file"}
+
+
+async def test_global_search_returns_canvas_note_and_canvas_location(db, user_a):
+    canvas = await _mk(db, MindMap(user_id=user_a.id, title="工作画布"))
+    note = await _mk(db, MindNode(
+        user_id=user_a.id, kind="canvas_note", title="Worker 调度逻辑",
+        content_md="worker.py 消费 im:inbound 调 Agent 回 IM",
+        content_plain="worker.py 消费 im:inbound 调 Agent 回 IM",
+    ))
+    await _mk(db, MindCanvasItem(user_id=user_a.id, canvas_id=canvas.id, node_id=note.id, x=12, y=34))
+
+    result = await _run_ilike_search(db, user_a.id, "Worker", types=["canvas_note"])
+
+    assert result["total"] == 1
+    assert result["groups"][0]["type"] == "canvas_note"
+    assert result["groups"][0]["items"][0]["id"] == note.id
+    assert result["groups"][0]["items"][0]["canvas_id"] == canvas.id
+
+
+async def test_global_search_canvas_note_respects_user_and_soft_delete(db, user_a, user_b):
+    own_canvas = await _mk(db, MindMap(user_id=user_a.id, title="我的画布"))
+    other_canvas = await _mk(db, MindMap(user_id=user_b.id, title="他人画布"))
+    own_note = await _mk(db, MindNode(
+        user_id=user_a.id, kind="canvas_note", title="检索词便签", content_plain="检索词正文",
+    ))
+    private_note = await _mk(db, MindNode(
+        user_id=user_b.id, kind="canvas_note", title="检索词私密", content_plain="检索词正文",
+    ))
+    deleted_note = await _mk(db, MindNode(
+        user_id=user_a.id, kind="canvas_note", title="检索词已删除", content_plain="检索词正文",
+        deleted_at=datetime.now(timezone.utc),
+    ))
+    for canvas, note in ((own_canvas, own_note), (other_canvas, private_note), (own_canvas, deleted_note)):
+        await _mk(db, MindCanvasItem(user_id=canvas.user_id, canvas_id=canvas.id, node_id=note.id))
+
+    result = await _run_ilike_search(db, user_a.id, "检索词", types=["canvas_note"])
+
+    assert [item["id"] for item in result["groups"][0]["items"]] == [own_note.id]
 
 
 async def test_run_global_search_per_type_limit_applies(db, user_a):

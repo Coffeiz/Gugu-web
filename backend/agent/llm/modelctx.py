@@ -11,6 +11,8 @@ MiniMax M3），不能靠重新读 `get_settings().ai`——pool/router 场景�
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
@@ -50,6 +52,20 @@ def get_model_cfg():
 def set_usage_context(user_id, session_id: int | None = None, scenario: str = "chat") -> None:
     """绑定当前用户链路，供非对话 provider 调用统一记录用量。"""
     _usage_context.set(UsageContext(user_id=user_id, session_id=session_id, scenario=scenario))
+
+
+@contextmanager
+def usage_context_scope(
+    user_id, session_id: int | None = None, scenario: str = "chat",
+) -> Iterator[None]:
+    """在独立用户链路中临时绑定用量归属，并在退出时恢复外层上下文。"""
+    token = _usage_context.set(
+        UsageContext(user_id=user_id, session_id=session_id, scenario=scenario),
+    )
+    try:
+        yield
+    finally:
+        _usage_context.reset(token)
 
 
 def get_usage_context() -> UsageContext | None:

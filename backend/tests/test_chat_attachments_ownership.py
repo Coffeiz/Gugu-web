@@ -682,10 +682,9 @@ async def test_oversized_voice_recording_rejected(db, user_a, storage, monkeypat
     import io
     from fastapi import HTTPException, UploadFile
     from starlette.datastructures import Headers
-    from app.api.v1 import agent as _agent_api
     from app.api.v1.agent import upload_attachment
 
-    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 8)
+    monkeypatch.setattr(chat_attach, "AUDIO_MATERIALIZE_CAP", 8)
     upload = UploadFile(file=io.BytesIO(b"wav-bytes-here" * 2), filename="rec.mp3",
                         headers=Headers({"content-type": "audio/mpeg"}))
     with pytest.raises(HTTPException) as ei:
@@ -700,13 +699,12 @@ async def test_oversized_audio_attachment_staged_raw_via_stream(db, user_a, stor
     import io
     from fastapi import UploadFile
     from starlette.datastructures import Headers
-    from app.api.v1 import agent as _agent_api
     from app.api.v1.agent import upload_attachment
 
     async def _must_not_materialize(*a, **k):
         raise AssertionError("超限大音频不应走 stage() 整包字节路径")
 
-    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 8)
+    monkeypatch.setattr(chat_attach, "AUDIO_MATERIALIZE_CAP", 8)
     monkeypatch.setattr(chat_attach, "stage", _must_not_materialize)
     body = b"aac-audio-bytes" * 4
     upload = UploadFile(file=io.BytesIO(body), filename="big.aac",
@@ -725,10 +723,9 @@ async def test_small_webm_still_transcodes_under_cap(db, user_a, storage, monkey
     import io
     from fastapi import UploadFile
     from starlette.datastructures import Headers
-    from app.api.v1 import agent as _agent_api
     from app.api.v1.agent import upload_attachment
 
-    monkeypatch.setattr(_agent_api, "_AUDIO_MATERIALIZE_CAP", 1024 * 1024)
+    monkeypatch.setattr(chat_attach, "AUDIO_MATERIALIZE_CAP", 1024 * 1024)
     monkeypatch.setattr("app.core.media_transcode.to_provider_audio", lambda *a, **k: b"converted-mp3")
     upload = UploadFile(file=io.BytesIO(b"webm-recording"), filename="rec.webm",
                         headers=Headers({"content-type": "audio/webm"}))
@@ -813,4 +810,3 @@ async def test_resolve_oversized_text_gates_before_read(db, user_a, storage, mon
         user_a.id, [meta["attach_id"]], "你好")
     assert "未直接读取" in parts and "read_file 读取" not in parts   # 不再承诺 read_file 能读到全文
     assert "```" not in parts   # 没有把任何正文注入上下文
-

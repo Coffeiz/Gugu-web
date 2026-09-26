@@ -168,6 +168,7 @@ async def _delete_knowledge(db, user_id, args: dict):
         return {"error": "知识条目不存在"}
     blocked = confirm.needs_confirmation(
         args, f"将删除知识条目「{entry.title}」，保留历史但停止检索", user_id,
+        purpose=confirm.ACTION,
         identity=f"delete_knowledge:knowledge_id={entry_id}",
     )
     if blocked:
@@ -205,7 +206,6 @@ class KnowledgeSkill(BaseSkill):
                     "limit": {"type": "integer", "minimum": 1, "maximum": _LIST_MAX_LIMIT},
                 },
             },
-            repeat_safe=True,
             handler=_read_knowledge,
         ),
         Tool(

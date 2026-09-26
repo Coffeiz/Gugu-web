@@ -15,15 +15,17 @@ async def handle(user_id, session_id: int | None, arg: str, locale: str | None =
         return "当前还没有可压缩的对话。"
     from app.core.config import get_settings
     from agent.context import compress_conv
+    from agent.llm.modelctx import usage_context_scope
 
     settings = get_settings()
     try:
-        compacted = await compress_conv.compress_if_needed(
-            session_id,
-            user_id,
-            settings,
-            force=True,
-        )
+        with usage_context_scope(user_id, session_id, scenario="compaction"):
+            compacted = await compress_conv.compress_if_needed(
+                session_id,
+                user_id,
+                settings,
+                force=True,
+            )
     except Exception:
         logger.exception("手动压缩会话失败 session=%s", session_id)
         return "这次压缩没有完成，请稍后再试。"

@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 
 from app.api.v1.mind import (
     add_canvas_item, create_canvas, create_note, create_ref_node, create_relation,
-    create_canvas_note, delete_canvas, delete_note, list_canvas_items, list_canvas_relations,
+    canvas_note_location, create_canvas_note, delete_canvas, delete_note, list_canvas_items, list_canvas_relations,
     list_canvases, list_notes,
     ref_suggest, remove_canvas_item, update_canvas, update_canvas_item, update_canvas_note, update_note,
 )
@@ -351,6 +351,25 @@ async def test_canvas_item_keeps_note_global_and_duplicate_add_is_idempotent(db,
     removed_row = await db.scalar(select(MindCanvasItem).where(MindCanvasItem.id == first.id))
     assert removed_row is not None and removed_row.deleted_at is not None
     assert await _row(db, note.id) is not None  # 移出画布绝不删除原记录
+
+
+@pytest.mark.asyncio
+async def test_canvas_note_location_only_returns_owned_active_placement(db, user_a, user_b):
+    canvas = await create_canvas(MindCanvasCreate(title="方案桌面"), current_user=user_a, db=db)
+    item = await create_canvas_note(
+        canvas.id, MindCanvasNoteCreate(title="待跳转便签", content_md="内容"),
+        request=None, current_user=user_a, db=db,
+    )
+
+    assert await canvas_note_location(item.node_id, current_user=user_a, db=db) == {"canvasId": canvas.id}
+    with pytest.raises(HTTPException) as exc:
+        await canvas_note_location(item.node_id, current_user=user_b, db=db)
+    assert exc.value.status_code == 404
+
+    await remove_canvas_item(canvas.id, item.id, request=None, current_user=user_a, db=db)
+    with pytest.raises(HTTPException) as exc:
+        await canvas_note_location(item.node_id, current_user=user_a, db=db)
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio

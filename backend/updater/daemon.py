@@ -27,9 +27,27 @@ from urllib.error import URLError
 from urllib.parse import quote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from updater.deployment import detect_deployment
+from updater.sandbox_signature import (
+    COSIGN_IDENTITY_REGEXP,
+    COSIGN_OIDC_ISSUER,
+    COSIGN_VERIFY_TIMEOUT_SECONDS,
+    COSIGN_VERIFIER_IMAGE,
+    cosign_verify_command,
+)
+from updater.standalone import DockerEngine, DockerReplaceRecovered, StandaloneConfigError, snapshot_standalone_container, write_sensitive_json
+
 
 VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+]([0-9A-Za-z.-]+))?$")
 IMAGE_RE = re.compile(r"^(?:docker\.io|ghcr\.io)/coffeiz/gugu-web@sha256:[0-9a-f]{64}$")
+SPLIT_IMAGE_PATTERNS = {
+    "backend_image": re.compile(r"^(?:docker\.io|ghcr\.io)/coffeiz/gugu-web-backend@sha256:[0-9a-f]{64}$"),
+    "frontend_image": re.compile(r"^(?:docker\.io|ghcr\.io)/coffeiz/gugu-web-frontend@sha256:[0-9a-f]{64}$"),
+}
+SPLIT_TAG_PATTERNS = {
+    "backend_image": re.compile(r"^(?:(?:docker\.io|index\.docker\.io)/)?coffeiz/gugu-web-backend:[A-Za-z0-9_.-]{1,128}$|^ghcr\.io/coffeiz/gugu-web-backend:[A-Za-z0-9_.-]{1,128}$"),
+    "frontend_image": re.compile(r"^(?:(?:docker\.io|index\.docker\.io)/)?coffeiz/gugu-web-frontend:[A-Za-z0-9_.-]{1,128}$|^ghcr\.io/coffeiz/gugu-web-frontend:[A-Za-z0-9_.-]{1,128}$"),
+}
 TAG_IMAGE_RE = re.compile(r"^(?:docker\.io/)?coffeiz/gugu-web:[A-Za-z0-9_.-]{1,128}$|^ghcr\.io/coffeiz/gugu-web:[A-Za-z0-9_.-]{1,128}$")
 # 执行器并入 app 容器后，官方发布位即应用镜像白名单（tag/digest 二选一）。
 ALLOWED_REDIRECT_HOSTS = {
@@ -51,19 +69,6 @@ STAGE_BY_LINE = (
 MIN_FREE_BYTES = 3 * 1024**3
 CHALLENGE_TTL_SECONDS = 600
 UPDATE_PROCESS_TIMEOUT_SECONDS = 90 * 60
-# 发布签名校验（供应链真实性）：更新前用固定 digest 的官方 Cosign verifier 校验
-# 目标镜像签名，identity 锚定 tag 触发的 docker-release.yml 发布工作流。
-# verifier 与被验镜像都按 digest 引用，两边都不可漂移；升级 verifier 必须
-# 显式修改这里的 digest（digest 对应 ghcr.io/sigstore/cosign/cosign:v3.1.3）。
-COSIGN_VERIFIER_IMAGE = (
-    "ghcr.io/sigstore/cosign/cosign@sha256:"
-    "9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8"
-)
-COSIGN_IDENTITY_REGEXP = (
-    r"^https://github\.com/Coffeiz/Gugu-web/\.github/workflows/docker-release\.yml@refs/tags/v.*$"
-)
-COSIGN_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
-COSIGN_VERIFY_TIMEOUT_SECONDS = 300
 COSIGN_CACHE_DIRNAME = "sigstore-cache"
 logger = logging.getLogger("gugu.updater")
 
@@ -109,11 +114,15 @@ class SafeRedirectHandler(HTTPRedirectHandler):
 
 class UpdateDaemon:
     def __init__(self) -> None:
+        standalone_mode = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker"
         project = os.getenv("GUGU_UPDATER_COMPOSE_DIR", "")
         self.project_dir = Path(project).resolve() if project else Path.cwd().resolve()
-        if not self.project_dir.is_absolute() or not (self.project_dir / "docker-compose.yml").is_file():
+        compose_name = os.getenv("GUGU_UPDATER_COMPOSE_FILE", "docker-compose.yml")
+        if Path(compose_name).name != compose_name or not compose_name.endswith((".yml", ".yaml")):
+            raise RuntimeError("Compose 文件名无效")
+        if not self.project_dir.is_absolute() or (not standalone_mode and not (self.project_dir / compose_name).is_file()):
             raise RuntimeError("Compose 项目目录无效")
-        self.compose_file = self.project_dir / "docker-compose.yml"
+        self.compose_file = self.project_dir / compose_name
         state_default = "/data/updater" if Path("/data").is_dir() else "/var/lib/gugu-updater"
         self.state_dir = Path(os.getenv("GUGU_UPDATER_STATE_DIR", state_default)).resolve()
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -121,6 +130,7 @@ class UpdateDaemon:
         self.validator = self.code_dir / "scripts/release/validate-update-manifest.mjs"
         self.manifest_schema = self.code_dir / "deploy/update-manifest.schema.json"
         self.compose_update_script = self.code_dir / "scripts/release/compose-update.sh"
+        self.split_compose_update_script = self.code_dir / "scripts/release/split-compose-update.sh"
         self.manifest_latest_url = "https://github.com/Coffeiz/Gugu-web/releases/latest/download/"
         self.state_file = self.state_dir / "state.json"
         self._lock = asyncio.Lock()
@@ -142,7 +152,8 @@ class UpdateDaemon:
         task = value.get("task")
         interrupted = False
         resumed = False
-        if isinstance(task, dict) and task.get("status") == RECREATING_PENDING_RESTART:
+        standalone_handoff = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker"
+        if isinstance(task, dict) and task.get("status") == RECREATING_PENDING_RESTART and not standalone_handoff:
             task.update({
                 "status": "health_checking",
                 "stage": "health_checking",
@@ -152,7 +163,10 @@ class UpdateDaemon:
             })
             self._resume_after_restart = True
             resumed = True
-        elif isinstance(task, dict) and task.get("status") in ACTIVE:
+        elif (
+            isinstance(task, dict) and task.get("status") in ACTIVE
+            and not (standalone_handoff and task.get("status") == RECREATING_PENDING_RESTART)
+        ):
             old = task
             old.update({
                 "status": "rollback_required" if old.get("previous_image") else "failed",
@@ -185,10 +199,46 @@ class UpdateDaemon:
 
     def start_pending_restart_resume(self) -> None:
         """在新 app 启动后接管 helper 已完成的重建任务。"""
+        if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker":
+            asyncio.create_task(self._cleanup_standalone_helper())
+            return
         if not self._resume_after_restart:
             return
         self._resume_after_restart = False
         asyncio.create_task(self._resume_after_restart_task())
+
+    async def _cleanup_standalone_helper(self) -> None:
+        """新 app 启动后清理由前一版本交接的已退出 helper 容器。"""
+        for _ in range(180):
+            try:
+                value = json.loads(self.state_file.read_text(encoding="utf-8"))
+                task = value.get("task") if isinstance(value, dict) else None
+                if not isinstance(task, dict) or not task.get("helper_name"):
+                    return
+                if isinstance(task, dict) and task.get("status") in TERMINAL:
+                    await self._remove_standalone_helper(str(task.get("helper_name") or ""))
+                    return
+                if task.get("status") not in ACTIVE:
+                    return
+            except Exception:
+                # 清理只影响退出的短期 helper，不影响 app 启动或更新结果。
+                pass
+            await asyncio.sleep(5)
+
+    async def _remove_standalone_helper(self, name: str) -> None:
+        if not re.fullmatch(r"gugu-updater-[0-9a-f-]{12}", name):
+            return
+        for _ in range(30):
+            try:
+                running = await self._command(
+                    ["docker", "inspect", "--format", "{{.State.Running}}", name], timeout=10,
+                )
+                if running.strip().lower() == b"false":
+                    await self._command(["docker", "rm", name], timeout=15)
+                    return
+            except Exception:
+                return
+            await asyncio.sleep(2)
 
     async def _resume_after_restart_task(self) -> None:
         task = self.state.get("task")
@@ -201,8 +251,109 @@ class UpdateDaemon:
         if not healthy:
             await self._finish_task(task_id, "rollback_required", "health_check_failed", "新版本未通过健康检查；上一版本已保留，可执行回滚。")
             return
+        expected_updater_image = str(task.get("updater_image") or "")
+        if expected_updater_image and os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "integrated_compose":
+            try:
+                handoff_failure = await self._resume_integrated_updater(task_id, expected_updater_image)
+            except Exception as exc:
+                logger.warning("integrated updater handoff failed task_id=%s error_type=%s", task_id, type(exc).__name__)
+                handoff_failure = "updater_handoff_failed"
+            if handoff_failure:
+                messages = {
+                    "updater_handoff_incomplete": "应用已更新，但更新器未切换到目标版本；请检查 Compose 服务后重试。",
+                    "updater_health_check_failed": "应用已更新，但新 updater 未通过健康检查；请检查 Compose 服务后重试。",
+                    "updater_handoff_failed": "应用已更新，但更新器升级未完成；请检查 Compose 服务后重试。",
+                }
+                await self._finish_task(task_id, "rollback_required", handoff_failure, messages[handoff_failure])
+                return
         await self._record_current_release(str(task.get("version") or "unknown"), str(task.get("app_image") or ""))
         await self._finish_task(task_id, "succeeded", None, "更新完成，应用健康检查通过。")
+
+    async def _resume_integrated_updater(self, task_id: str, target_image: str) -> str | None:
+        """确认当前 updater 已切到目标镜像；若机器重启打断 handoff，则继续交接。"""
+        running_image = await self._current_updater_image()
+        if running_image != target_image:
+            await self._start_integrated_updater_handoff(task_id, target_image)
+            # force-recreate normally terminates this process; mismatch means Compose did not.
+            if await self._current_updater_image() != target_image:
+                return "updater_handoff_incomplete"
+        if not await self._wait_current_updater_healthy():
+            return "updater_health_check_failed"
+        return None
+
+    async def _current_updater_image(self) -> str:
+        """读取当前 updater 容器配置的镜像引用，供自升级恢复时验证 handoff。"""
+        try:
+            container_id = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError("无法确定当前 updater 容器") from exc
+        if not re.fullmatch(r"[0-9a-f]{12,64}", container_id):
+            raise RuntimeError("当前 updater 容器标识无效")
+        return (await self._command(
+            ["docker", "inspect", "--format", "{{.Config.Image}}", container_id], timeout=15,
+        )).decode("utf-8", errors="replace").strip()
+
+    async def _wait_current_updater_healthy(self) -> bool:
+        try:
+            container_id = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError:
+            return False
+        if not re.fullmatch(r"[0-9a-f]{12,64}", container_id):
+            return False
+        last_error_type: str | None = None
+        for _ in range(60):
+            try:
+                health = (await self._command(
+                    ["docker", "inspect", "--format", "{{.State.Health.Status}}", container_id],
+                    timeout=15,
+                )).decode("utf-8", errors="replace").strip()
+                if health == "healthy":
+                    return True
+            except Exception as exc:
+                last_error_type = type(exc).__name__
+            await asyncio.sleep(2)
+        if last_error_type:
+            logger.info("integrated updater health probe exhausted error_type=%s", last_error_type)
+        return False
+
+    async def _start_integrated_updater_handoff(self, task_id: str, target_image: str) -> None:
+        """用目标镜像启动一次性 helper，再由 helper 重建 privileged updater 服务。"""
+        if not _safe_image(target_image):
+            raise ValueError("更新器目标镜像无效")
+        env = os.environ.copy()
+        env["GUGU_WEB_IMAGE"] = target_image
+        compose_config = json.loads(await self._compose_text(["config", "--format", "json"], env=env))
+        updater_image = str((compose_config.get("services", {}).get("updater") or {}).get("image") or "")
+        if updater_image != target_image:
+            raise RuntimeError("Compose updater 服务未配置为跟随应用镜像")
+        async with self._lock:
+            task = self.state.get("task")
+            if not isinstance(task, dict) or task.get("id") != task_id:
+                raise RuntimeError("更新任务状态已变化")
+            task["updater_image"] = target_image
+            task.update({
+            "status": RECREATING_PENDING_RESTART,
+                "stage": RECREATING_PENDING_RESTART,
+                "progress": 80,
+                "message": "应用已健康，正在移交一次性 helper 升级 updater。",
+                "updated_at": _utc_now(),
+            })
+            task.setdefault("events", []).append({"stage": RECREATING_PENDING_RESTART, "at": _utc_now()})
+            history = self.state.setdefault("history", [])
+            for index, row in enumerate(history):
+                if isinstance(row, dict) and row.get("id") == task_id:
+                    history[index] = dict(task)
+                    break
+            self._save()
+
+        await self._compose_text(["pull", "updater"], env=env, timeout=UPDATE_PROCESS_TIMEOUT_SECONDS)
+        await self._compose_text([
+            "run", "--rm", "--no-deps", "--pull", "never",
+            "--entrypoint", "python",
+            "-e", f"GUGU_WEB_IMAGE={target_image}",
+            "-e", f"GUGU_UPDATER_HANDOFF_TASK_ID={task_id}",
+            "updater", "-m", "updater.compose_updater_helper",
+        ], env=env, timeout=UPDATE_PROCESS_TIMEOUT_SECONDS)
 
     def _save(self) -> None:
         tmp = self.state_file.with_suffix(".tmp")
@@ -218,7 +369,10 @@ class UpdateDaemon:
         task = self.state.get("task")
         if not isinstance(task, dict):
             return None
-        return {key: value for key, value in task.items() if key not in {"previous_image", "previous_sandboxd_image"}}
+        return {
+            key: value for key, value in task.items()
+            if key not in {"previous_image", "previous_sandboxd_image", "helper_name", "handoff_file", "updater_image"}
+        }
 
     def _public_candidate(self) -> dict[str, Any] | None:
         candidate = self.state.get("candidate")
@@ -227,7 +381,7 @@ class UpdateDaemon:
         fields = (
             "version", "channel", "minimum_version", "app_image", "architectures",
             "database_migration", "release_notes_url", "rollback_supported", "git_sha",
-            "published_at", "manifest_sha256", "checked_at",
+            "published_at", "manifest_sha256", "checked_at", "split_images",
         )
         return {key: candidate[key] for key in fields if key in candidate}
 
@@ -254,6 +408,17 @@ class UpdateDaemon:
         return {"healthy": True}
 
     async def _status(self, _params: dict[str, Any]) -> dict[str, Any]:
+        deployment = detect_deployment()
+        if deployment["mode"] == "integrated_compose" and deployment["enabled"]:
+            try:
+                await self._compose(["config", "--format", "json"])
+            except Exception:
+                deployment.update({
+                    "enabled": False,
+                    "capability": "manual",
+                    "reason_code": "compose_invalid",
+                    "reason": "一体化 Compose 配置校验失败；自动更新已关闭。",
+                })
         async with self._lock:
             current = self.state.get("current")
             candidate = self.state.get("candidate")
@@ -264,7 +429,7 @@ class UpdateDaemon:
                 or _version_key(candidate_version) > _version_key(current_version)
             )
             return {
-                "enabled": self_update_enabled(),
+                **deployment,
                 "current": {"version": current_version} if isinstance(current, dict) else None,
                 "candidate": self._public_candidate(),
                 "has_update": has_update,
@@ -274,7 +439,10 @@ class UpdateDaemon:
 
     @staticmethod
     def _public_history_row(row: dict[str, Any]) -> dict[str, Any]:
-        return {key: value for key, value in row.items() if key not in {"previous_image", "previous_sandboxd_image"}}
+        return {
+            key: value for key, value in row.items()
+            if key not in {"previous_image", "previous_sandboxd_image", "helper_name", "handoff_file", "updater_image"}
+        }
 
     async def _read_url(self, url: str, *, limit: int = 1_500_000) -> bytes:
         parsed = urlparse(url)
@@ -313,8 +481,16 @@ class UpdateDaemon:
         version = manifest["version"]
         if manifest.get("channel") != "stable" or not VERSION_RE.fullmatch(version):
             raise ValueError("Release 不是受支持的 stable 版本")
+        schema_version = manifest.get("schema_version")
+        if schema_version != 3:
+            raise ValueError("Release manifest 版本不受支持；仅接受 v3")
         if not IMAGE_RE.fullmatch(str(manifest.get("app_image") or "")):
             raise ValueError("Release 镜像不在一体化镜像白名单内")
+        split_images = manifest.get("split_images")
+        if not isinstance(split_images, dict) or set(split_images) != set(SPLIT_IMAGE_PATTERNS):
+            raise ValueError("Release 分体镜像组不完整")
+        if any(not pattern.fullmatch(str(split_images.get(key) or "")) for key, pattern in SPLIT_IMAGE_PATTERNS.items()):
+            raise ValueError("Release 分体镜像不在白名单内")
 
         asset_dir = self.state_dir / "assets" / version
         asset_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -357,7 +533,37 @@ class UpdateDaemon:
         }
 
     async def _current_release(self) -> dict[str, Any]:
+        if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker":
+            return await self._current_standalone_release()
         config = await self._compose(["config", "--format", "json"])
+        if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "split_compose":
+            return await self._current_split_release(config)
+        return await self._current_integrated_release(config)
+
+    async def _current_standalone_release(self) -> dict[str, Any]:
+        container_id = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        inspected = DockerEngine().inspect_container(container_id)
+        snapshot = snapshot_standalone_container(inspected)
+        labels = snapshot["config"].get("Labels") or {}
+        image = str(snapshot.get("image") or "")
+        try:
+            info = await self._docker_json(["image", "inspect", str(inspected.get("Image") or "")], timeout=15)
+            digest_ref = next((
+                self._normalize_digest_ref(ref)
+                for ref in info[0].get("RepoDigests", [])
+                if self._normalize_digest_ref(ref)
+            ), None)
+            image = digest_ref or image
+        except Exception:
+            logger.info("standalone release digest unavailable")
+        version = str(labels.get("org.opencontainers.image.version") or self._version_from_ref(image) or "unknown")
+        return {
+            "version": version, "image": image,
+            "image_id": str(inspected.get("Image") or ""),
+            "container_name": snapshot["container_name"],
+        }
+
+    async def _current_integrated_release(self, config: dict[str, Any]) -> dict[str, Any]:
         app_image = str(config.get("services", {}).get("app", {}).get("image") or "")
         if not _safe_image(app_image):
             # 本地项目的旧 Compose 可用可识别 tag；非白名单镜像禁止更新，不允许 UI 覆盖。
@@ -382,6 +588,48 @@ class UpdateDaemon:
             "version": version, "image": image_ref, "image_id": image_id,
             "compose_app_image": app_image, "compose_sandboxd_image": sandbox_image,
         }
+
+    async def _current_split_release(self, config: dict[str, Any]) -> dict[str, Any]:
+        services = config.get("services", {})
+        images: dict[str, str] = {}
+        for key, service in (("backend_image", "backend"), ("frontend_image", "frontend")):
+            image = str(services.get(service, {}).get("image") or "")
+            normalized = image.replace("index.docker.io/", "docker.io/")
+            if not (SPLIT_IMAGE_PATTERNS[key].fullmatch(normalized) or SPLIT_TAG_PATTERNS[key].fullmatch(normalized)):
+                raise ValueError("当前分体 Compose 镜像不符合更新白名单")
+            images[key] = normalized
+        containers: dict[str, dict[str, Any]] = {}
+        for service in ("backend", "frontend"):
+            ids = (await self._compose_text(["ps", "-q", service])).strip().splitlines()
+            if not ids:
+                raise RuntimeError(f"分体 {service} 容器未运行")
+            inspect = (await self._docker_json(["inspect", ids[0]]))[0]
+            containers[service] = inspect
+        labels = containers["backend"].get("Config", {}).get("Labels") or {}
+        version = str(labels.get("org.opencontainers.image.version") or self._version_from_ref(images["backend_image"]) or "unknown")
+        backend_id = str(containers["backend"].get("Image") or "")
+        backend_info = await self._docker_json(["image", "inspect", backend_id])
+        backend_digest = next((self._normalize_split_digest_ref(item, "backend_image") for item in backend_info[0].get("RepoDigests", [])), None)
+        frontend_id = str(containers["frontend"].get("Image") or "")
+        frontend_info = await self._docker_json(["image", "inspect", frontend_id])
+        frontend_digest = next((self._normalize_split_digest_ref(item, "frontend_image") for item in frontend_info[0].get("RepoDigests", [])), None)
+        return {
+            "version": version,
+            "image": backend_digest or images["backend_image"],
+            "frontend_image": frontend_digest or images["frontend_image"],
+            "image_id": backend_id,
+            "compose_backend_image": images["backend_image"],
+            "compose_frontend_image": images["frontend_image"],
+            "compose_sandboxd_image": str(services.get("sandboxd", {}).get("image") or ""),
+        }
+
+    @staticmethod
+    def _normalize_split_digest_ref(value: str, key: str) -> str | None:
+        normalized = value.replace("index.docker.io/", "docker.io/")
+        if normalized.startswith("coffeiz/"):
+            normalized = "docker.io/" + normalized
+        pattern = SPLIT_IMAGE_PATTERNS[key]
+        return normalized if pattern.fullmatch(normalized) else None
 
     @staticmethod
     def _normalize_digest_ref(value: str) -> str | None:
@@ -443,15 +691,7 @@ class UpdateDaemon:
         并在不支持时回落 legacy tag；发布端已用 --registry-referrers-mode=oci-1-1
         钉死签名形态，验证端按 digest 查询即可命中 referrers artifact。
         """
-        return [
-            "docker", "run", "--rm",
-            "-v", f"{cache_dir}:/root/.sigstore",
-            COSIGN_VERIFIER_IMAGE,
-            "verify",
-            "--certificate-identity-regexp", COSIGN_IDENTITY_REGEXP,
-            "--certificate-oidc-issuer", COSIGN_OIDC_ISSUER,
-            image,
-        ]
+        return cosign_verify_command(image, cache_dir=cache_dir)
 
     async def _cosign_run(self, command: list[str]) -> tuple[int | None, str]:
         """运行 verifier 并返回 (returncode, stderr)；不把 stderr 写入可见日志。"""
@@ -496,37 +736,61 @@ class UpdateDaemon:
         logger.info("cosign verify failed rc=%s", returncode)
         return {"ok": False, "skipped": False, "detail": "签名校验未通过，已阻断更新"}
 
+    async def _preflight_compose_services(self) -> tuple[list[str], bool, list[dict[str, Any]]]:
+        results: list[dict[str, Any]] = []
+        app_ids: list[str] = []
+        embedded = False
+
+        def add(key: str, ok: bool, detail: str) -> None:
+            results.append({"key": key, "ok": bool(ok), "detail": detail})
+
+        try:
+            config = await self._compose(["config", "--format", "json"])
+            services = config.get("services", {})
+            app_service = services.get("app", {}) if isinstance(services, dict) else {}
+            app_environment = app_service.get("environment", {}) if isinstance(app_service, dict) else {}
+            embedded = isinstance(app_environment, dict) and str(app_environment.get("GUGU_EMBEDDED_DEPS", "0")) == "1"
+            required = {"app", "updater"} | (set() if embedded else {"postgres", "redis"})
+            topology_ok = isinstance(services, dict) and required.issubset(services)
+            add("compose", topology_ok, "一体化 Compose 服务定义完整" if topology_ok else "Compose 缺少必需服务")
+            app_ids = (await self._compose_text(["ps", "-q", "app"])).strip().splitlines()
+            add("app", bool(app_ids), "一体化 app 容器正在运行" if app_ids else "一体化 app 容器未运行")
+            updater_ids = (await self._compose_text(["ps", "-q", "updater"])).strip().splitlines()
+            rpc_path = Path(os.getenv("GUGU_UPDATER_RPC_SOCKET", "/run/gugu-updater/updater.sock"))
+            updater_ok = bool(updater_ids) and rpc_path.is_socket()
+            add("updater", updater_ok, "受限 updater 服务与 RPC socket 正常" if updater_ok else "受限 updater 服务未运行或 RPC socket 不可用")
+            if embedded:
+                await self._compose_text(["exec", "-T", "app", "pg_isready", "-h", "127.0.0.1", "-p", "5432"])
+                await self._compose_text(["exec", "-T", "app", "redis-cli", "-h", "127.0.0.1", "ping"])
+                add("dependencies", True, "app 内置 PostgreSQL 和 Redis 健康")
+            else:
+                await self._compose_text(["exec", "-T", "postgres", "sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'])
+                await self._compose_text(["exec", "-T", "redis", "sh", "-c", 'if [ -n "$GUGU_REDIS_PASSWORD" ]; then redis-cli -a "$GUGU_REDIS_PASSWORD" ping; else redis-cli ping; fi'])
+                add("dependencies", True, "PostgreSQL 和 Redis 健康")
+        except Exception:
+            app_ids = []
+            add("dependencies", False, "Compose、数据库或 Redis 健康检查失败")
+        return app_ids, embedded, results
+
     async def _preflight_checks(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
+        if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker":
+            return await self._standalone_preflight_checks(candidate)
+        if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "split_compose":
+            return await self._split_preflight_checks(candidate)
         results: list[dict[str, Any]] = []
 
         def add(key: str, ok: bool, detail: str) -> None:
             results.append({"key": key, "ok": bool(ok), "detail": detail})
 
         try:
-            info = await self._command(["docker", "info", "--format", "{{.Architecture}}"], timeout=12)
-            architecture = info.decode().strip()
-            platform = "linux/arm64" if architecture in {"aarch64", "arm64"} else "linux/amd64" if architecture in {"x86_64", "amd64"} else ""
+            platform = await self._docker_host_platform()
             add("docker", bool(platform), "Docker daemon 可用" if platform else "宿主机架构不受支持")
         except Exception:
             platform = ""
             add("docker", False, "无法连接 Docker daemon")
 
-        try:
-            config = await self._compose(["config", "--format", "json"])
-            services = config.get("services", {})
-            required = {"app", "postgres", "redis"}
-            add("compose", required.issubset(services), "一体化 Compose 服务定义完整" if required.issubset(services) else "Compose 缺少必需服务")
-            app_ids = (await self._compose_text(["ps", "-q", "app"])).strip().splitlines()
-            add("app", bool(app_ids), "一体化 app 容器正在运行" if app_ids else "一体化 app 容器未运行")
-            # 定位修订（§1.1）：更新执行器并入 app 进程；socket 挂载即启用。
-            socket_path = Path(os.getenv("GUGU_DOCKER_SOCKET", "/var/run/docker.sock"))
-            add("updater", socket_path.exists(), "Docker socket 已挂载，自更新可用" if socket_path.exists() else "未检测到 Docker socket 挂载；此部署未启用一键更新")
-            await self._compose_text(["exec", "-T", "postgres", "sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'])
-            await self._compose_text(["exec", "-T", "redis", "sh", "-c", 'if [ -n "$GUGU_REDIS_PASSWORD" ]; then redis-cli -a "$GUGU_REDIS_PASSWORD" ping; else redis-cli ping; fi'])
-            add("dependencies", True, "PostgreSQL 和 Redis 健康")
-        except Exception:
-            app_ids = []
-            add("dependencies", False, "Compose、数据库或 Redis 健康检查失败")
+        app_ids, embedded, compose_results = await self._preflight_compose_services()
+        results.extend(compose_results)
 
         try:
             if not app_ids:
@@ -549,40 +813,238 @@ class UpdateDaemon:
         except Exception:
             add("database_migrations", False, "数据库迁移版本未达到当前应用唯一 head")
 
-        backend_env = self.project_dir / "backend/.env"
-        config_ok = backend_env.is_file() and not backend_env.is_symlink()
-        if config_ok:
+        if embedded:
             try:
-                config_text = backend_env.read_text(encoding="utf-8")
-                config_ok = bool(re.search(r"(?m)^\s*ADMIN_PASSWORD\s*=\s*\S", config_text))
-            except OSError:
+                await self._compose_text([
+                    "exec", "-T", "app", "sh", "-c",
+                    'test -s "${GUGU_ENV_FILE:-/data/.env}" && grep -Eq "^ADMIN_PASSWORD=.+" "${GUGU_ENV_FILE:-/data/.env}"',
+                ], timeout=10)
+                config_ok = True
+            except Exception:
                 config_ok = False
-        add("configuration", config_ok, "运行配置文件存在" if config_ok else "backend/.env 缺失或未配置管理员密码")
+            add("configuration", config_ok, "持久化运行配置存在" if config_ok else "持久化运行配置缺失或管理员密码未设置")
+        else:
+            backend_env = self.project_dir / "backend/.env"
+            config_ok = backend_env.is_file() and not backend_env.is_symlink()
+            if config_ok:
+                try:
+                    config_text = backend_env.read_text(encoding="utf-8")
+                    config_ok = bool(re.search(r"(?m)^\s*ADMIN_PASSWORD\s*=\s*\S", config_text))
+                except OSError:
+                    config_ok = False
+            add("configuration", config_ok, "运行配置文件存在" if config_ok else "backend/.env 缺失或未配置管理员密码")
 
-        try:
-            free_bytes = shutil.disk_usage(self.project_dir).free
-            enough = free_bytes >= MIN_FREE_BYTES
-            add("disk", enough, f"部署目录所在磁盘剩余 {free_bytes // 1024**3} GiB" if enough else "部署目录所在磁盘空间不足 3 GiB")
-        except OSError:
-            add("disk", False, "无法检查部署目录磁盘空间")
-
-        add("architecture", platform in candidate.get("architectures", []), "镜像架构与宿主机匹配" if platform in candidate.get("architectures", []) else "发布镜像不包含宿主机架构")
+        images = [str(candidate.get("app_image") or "")]
+        split_images = candidate.get("split_images")
+        if isinstance(split_images, dict):
+            images.extend(str(split_images.get(key) or "") for key in SPLIT_IMAGE_PATTERNS)
+        shared = await self._shared_release_preflight(candidate, platform, self.project_dir, images)
+        free_gib = shared["disk_free_gib"]
+        add(
+            "disk", shared["disk_ok"],
+            f"部署目录所在磁盘剩余 {free_gib} GiB" if shared["disk_ok"]
+            else "部署目录所在磁盘空间不足 3 GiB" if free_gib is not None
+            else "无法检查部署目录磁盘空间",
+        )
+        add(
+            "architecture", shared["architecture_ok"],
+            "镜像架构与宿主机匹配" if shared["architecture_ok"] else "发布镜像不包含宿主机架构",
+        )
         # integrity = 运输完整性（manifest 摘要 TOCTOU + namespace/digest 格式）；
         # signature = 真实性（Cosign 验发布工作流身份），失败即 fail-closed。
         add("integrity", True, "manifest 摘要校验与镜像 namespace/digest 格式校验通过")
-        signature = await self._verify_signature(str(candidate.get("app_image") or ""))
-        add("signature", signature["ok"], signature["detail"])
-        current = self.state.get("current") or {}
-        current_version = str(current.get("version") or "unknown")
-        minimum_version = str(candidate.get("minimum_version") or "")
-        if current_version == "unknown":
+        signatures_ok = shared["signatures_ok"]
+        add(
+            "signature", signatures_ok,
+            "所有更新产物均通过发布签名校验" if signatures_ok
+            else "至少一个更新产物签名无效，已阻断更新",
+        )
+        if not shared["current_version_known"]:
             add("current_version", False, "无法识别当前镜像版本；请先通过部署脚本完成一次性升级")
             add("minimum_version", False, "当前版本未知，无法验证 manifest 的最低升级版本要求")
         else:
             add("current_version", True, "当前应用版本标签可识别")
-            minimum_ok = bool(VERSION_RE.fullmatch(minimum_version)) and _version_key(current_version) >= _version_key(minimum_version)
+            minimum_ok = shared["minimum_version_ok"]
             add("minimum_version", minimum_ok, "当前版本满足最低升级版本要求" if minimum_ok else "当前版本低于最低支持版本，需先按部署文档手动升级")
         return results
+
+    async def _standalone_preflight_checks(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+
+        def add(key: str, ok: bool, detail: str) -> None:
+            results.append({"key": key, "ok": bool(ok), "detail": detail})
+
+        platform = ""
+        try:
+            platform = await self._docker_host_platform()
+            add("docker", bool(platform), "Docker daemon 可用" if platform else "宿主机架构不受支持")
+        except Exception:
+            add("docker", False, "无法连接 Docker daemon")
+
+        snapshot = None
+        try:
+            container_id = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+            inspected = DockerEngine().inspect_container(container_id)
+            snapshot = snapshot_standalone_container(inspected)
+            env = snapshot["config"]["Env"]
+            if env.get("DB__HOST", "postgres") not in {"postgres", "localhost", "127.0.0.1"}:
+                raise StandaloneConfigError("当前数据库位于容器外，自动备份暂不支持")
+            add("container", True, "官方 standalone 容器配置与持久数据挂载符合更新白名单")
+            socket_dest = os.getenv("GUGU_DOCKER_SOCKET", "/var/run/docker.sock")
+            socket_mount = next((item for item in inspected.get("Mounts", []) if item.get("Destination") == socket_dest and item.get("Type") == "bind"), None)
+            data_mount = next((item for item in inspected.get("Mounts", []) if item.get("Destination") == "/data"), None)
+            add("updater", bool(socket_mount and data_mount), "Docker socket 与 /data 可供短期 helper 使用" if socket_mount and data_mount else "无法安全挂载 Docker socket 或持久数据到 helper")
+            try:
+                await self._command(["docker", "exec", container_id, "pg_isready", "-h", "127.0.0.1", "-p", "5432"], timeout=10)
+                db_ok = True
+            except Exception:
+                db_ok = False
+            add("database", db_ok, "内嵌 PostgreSQL 正常，可在停止旧容器前备份" if db_ok else "内嵌 PostgreSQL 未就绪，无法验证数据库备份")
+        except Exception as exc:
+            add("container", False, str(exc) if isinstance(exc, StandaloneConfigError) else "无法安全检查当前 standalone 容器配置")
+            add("updater", False, "当前容器无法满足 helper handoff 条件")
+            add("database", False, "当前容器无法确认内嵌 PostgreSQL 状态")
+
+        migration_ok = candidate.get("database_migration") is False or candidate.get("rollback_supported") is True
+        app_image = str(candidate.get("app_image") or "")
+        integrity_ok = bool(IMAGE_RE.fullmatch(app_image))
+        shared = await self._shared_release_preflight(
+            candidate, platform, Path("/data"), [app_image],
+        )
+        free_gib = shared["disk_free_gib"]
+        add(
+            "disk", shared["disk_ok"],
+            f"/data 剩余 {free_gib} GiB" if shared["disk_ok"]
+            else "/data 空间不足 3 GiB" if free_gib is not None
+            else "无法检查 /data 磁盘空间",
+        )
+        add(
+            "architecture", shared["architecture_ok"],
+            "镜像架构与宿主机匹配" if shared["architecture_ok"] else "发布镜像不包含宿主机架构",
+        )
+        add("database_migrations", migration_ok, "发布元数据声明迁移后可回滚" if migration_ok else "该版本包含数据库迁移但未声明兼容回滚，拒绝单容器自动更新")
+        add("integrity", integrity_ok, "一体化镜像 digest 白名单校验通过" if integrity_ok else "一体化镜像 digest 无效")
+        add("signature", shared["signatures_ok"], "目标镜像发布签名校验通过" if shared["signatures_ok"] else "目标镜像签名无效，已阻断更新")
+        add("minimum_version", shared["minimum_version_ok"], "当前版本满足最低升级版本要求" if shared["minimum_version_ok"] else "当前版本未知或低于最低支持版本")
+        return results
+
+    async def _split_preflight_checks(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+
+        def add(key: str, ok: bool, detail: str) -> None:
+            results.append({"key": key, "ok": bool(ok), "detail": detail})
+
+        try:
+            platform = await self._docker_host_platform()
+            add("docker", bool(platform), "Docker daemon 可用" if platform else "宿主机架构不受支持")
+        except Exception:
+            platform = ""
+            add("docker", False, "无法连接受限 updater 的 Docker daemon")
+
+        service_ids: dict[str, list[str]] = {}
+        try:
+            config = await self._compose(["config", "--format", "json"])
+            services = config.get("services", {})
+            required = {"postgres", "redis", "migrate", "backend", "worker", "gateway", "frontend", "nginx"}
+            add("compose", required.issubset(services), "分体 Compose 服务定义完整" if required.issubset(services) else "分体 Compose 缺少必需服务")
+            for service in ("backend", "worker", "gateway", "frontend", "postgres", "redis"):
+                service_ids[service] = (await self._compose_text(["ps", "-q", service])).strip().splitlines()
+            all_running = all(service_ids[name] for name in ("backend", "worker", "gateway", "frontend", "postgres", "redis"))
+            add("services", all_running, "分体业务与数据库服务均在运行" if all_running else "分体业务或数据库服务未运行")
+            await self._compose_text(["exec", "-T", "postgres", "sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'])
+            await self._compose_text(["exec", "-T", "redis", "sh", "-c", 'if [ -n "$GUGU_REDIS_PASSWORD" ]; then redis-cli -a "$GUGU_REDIS_PASSWORD" ping; else redis-cli ping; fi'])
+            add("dependencies", True, "PostgreSQL 和 Redis 健康")
+        except Exception:
+            add("dependencies", False, "Compose、数据库或 Redis 健康检查失败")
+
+        try:
+            backend = (await self._docker_json(["inspect", service_ids["backend"][0]]))[0]
+            mounts = {item.get("Destination"): item for item in backend.get("Mounts", []) if isinstance(item, dict)}
+            storage_ok = mounts.get("/data", {}).get("RW") is True and mounts.get("/config", {}).get("RW") is True
+            await self._compose_text(["exec", "-T", "backend", "sh", "-c", "test -w /data && test -w /config"], timeout=10)
+            add("storage", storage_ok, "分体用户数据与配置卷均已挂载且可写" if storage_ok else "用户数据或配置卷缺失、只读")
+        except Exception:
+            add("storage", False, "无法确认分体用户数据与配置卷")
+
+        try:
+            await self._compose_text(["exec", "-T", "backend", "python", "-m", "updater.database_check"], timeout=30)
+            add("database_migrations", True, "当前数据库迁移状态正常")
+        except Exception:
+            add("database_migrations", False, "数据库迁移状态异常或检查失败")
+
+        backend_env = self.project_dir / "backend/.env"
+        config_ok = backend_env.is_file() and not backend_env.is_symlink()
+        if config_ok:
+            try:
+                config_ok = bool(re.search(r"(?m)^\s*ADMIN_PASSWORD\s*=\s*\S", backend_env.read_text(encoding="utf-8")))
+            except OSError:
+                config_ok = False
+        add("configuration", config_ok, "backend/.env 存在且管理员配置有效" if config_ok else "backend/.env 缺失或管理员密码未设置")
+
+        split_images = candidate.get("split_images")
+        valid_split = isinstance(split_images, dict) and all(
+            SPLIT_IMAGE_PATTERNS[key].fullmatch(str(split_images.get(key) or ""))
+            for key in SPLIT_IMAGE_PATTERNS
+        )
+        images = [str(candidate.get("app_image") or "")]
+        if valid_split:
+            images.extend(str(split_images[key]) for key in SPLIT_IMAGE_PATTERNS)
+        shared = await self._shared_release_preflight(candidate, platform, self.project_dir, images)
+        free_gib = shared["disk_free_gib"]
+        add(
+            "disk", shared["disk_ok"],
+            f"部署目录所在磁盘剩余 {free_gib} GiB" if shared["disk_ok"]
+            else "部署目录所在磁盘空间不足 3 GiB" if free_gib is not None
+            else "无法检查部署目录磁盘空间",
+        )
+        add(
+            "architecture", shared["architecture_ok"],
+            "镜像架构与宿主机匹配" if shared["architecture_ok"] else "发布镜像不包含宿主机架构",
+        )
+        add("integrity", bool(valid_split), "backend/frontend 固定 digest 白名单校验通过" if valid_split else "backend/frontend 镜像组无效")
+        add("signature", shared["signatures_ok"], "所有发布镜像均通过签名校验" if shared["signatures_ok"] else "至少一个发布镜像签名无效，已阻断更新")
+        add("minimum_version", shared["minimum_version_ok"], "当前版本满足最低升级版本要求" if shared["minimum_version_ok"] else "当前版本未知或低于最低支持版本")
+        return results
+
+    async def _shared_release_preflight(
+        self, candidate: dict[str, Any], platform: str, disk_path: Path, images: list[str],
+    ) -> dict[str, Any]:
+        try:
+            free_bytes = shutil.disk_usage(disk_path).free
+            disk_ok = free_bytes >= MIN_FREE_BYTES
+            disk_free_gib = free_bytes // 1024**3
+        except OSError:
+            disk_ok = False
+            disk_free_gib = None
+
+        current = self.state.get("current") or {}
+        current_version = str(current.get("version") or "unknown")
+        minimum_version = str(candidate.get("minimum_version") or "")
+        minimum_ok = (
+            current_version != "unknown"
+            and bool(VERSION_RE.fullmatch(minimum_version))
+            and _version_key(current_version) >= _version_key(minimum_version)
+        )
+        signatures = [await self._verify_signature(image) for image in images]
+        return {
+            "disk_ok": disk_ok,
+            "disk_free_gib": disk_free_gib,
+            "architecture_ok": platform in candidate.get("architectures", []),
+            "signatures_ok": all(item["ok"] for item in signatures),
+            "current_version_known": current_version != "unknown",
+            "minimum_version_ok": minimum_ok,
+        }
+
+    async def _docker_host_platform(self) -> str:
+        info = await self._command(
+            ["docker", "info", "--format", "{{.Architecture}}"], timeout=12,
+        )
+        architecture = info.decode().strip()
+        if architecture in {"aarch64", "arm64"}:
+            return "linux/arm64"
+        if architecture in {"x86_64", "amd64"}:
+            return "linux/amd64"
+        return ""
 
     async def _start(self, params: dict[str, Any]) -> dict[str, Any]:
         challenge = self._validate_token(params.get("challenge"))
@@ -608,22 +1070,12 @@ class UpdateDaemon:
             raise ValueError("当前版本低于最低支持版本，需先按部署文档手动升级")
         if _version_key(candidate["version"]) <= _version_key(current_version):
             raise ValueError("当前版本已达到或高于目标版本，请重新检查更新")
-        if not _safe_image(current["image"]):
-            raise ValueError("无法安全记录当前版本镜像，已拒绝更新")
-        sandboxd_running = bool((await self._compose_text(["ps", "--status", "running", "-q", "sandboxd"])).strip())
-        sandboxd_tracks_app = bool(
-            sandboxd_running
-            and current.get("compose_sandboxd_image")
-            and current.get("compose_sandboxd_image") == current.get("compose_app_image")
+        mode = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE", "")
+        sandbox_state = await self._capture_previous_deployment_state(
+            current,
+            split_mode=mode == "split_compose",
+            standalone_mode=mode == "standalone_docker",
         )
-        sandboxd_image = ""
-        if sandboxd_running:
-            sandboxd_id = (await self._compose_text(["ps", "-q", "sandboxd"])).strip().splitlines()[0]
-            sandboxd_inspect = (await self._docker_json(["inspect", sandboxd_id]))[0]
-            sandboxd_image = str(sandboxd_inspect.get("Config", {}).get("Image") or "")
-            if not _safe_image(sandboxd_image):
-                sandboxd_running = False
-                sandboxd_image = ""
 
         task = {
             "id": str(uuid.uuid4()), "operation": "update", "version": candidate["version"],
@@ -632,9 +1084,10 @@ class UpdateDaemon:
             "message": "更新任务已排队", "failure_code": None,
             "requested_by": operator, "created_at": _utc_now(), "updated_at": _utc_now(),
             "previous_image": current["image"], "previous_version": current["version"],
-            "previous_sandboxd_image": sandboxd_image if sandboxd_running else None,
-            "sandboxd_was_running": sandboxd_running,
-            "sandboxd_updated": sandboxd_tracks_app,
+            "previous_frontend_image": current.get("frontend_image"),
+            "previous_sandboxd_image": sandbox_state["image"] if sandbox_state["running"] else None,
+            "sandboxd_was_running": sandbox_state["running"],
+            "sandboxd_updated": sandbox_state["tracks_app"],
             "signature_verification": "skipped" if not signature_verification_enabled() else "verified",
             "events": [{"stage": "pending", "at": _utc_now()}],
             "rollback_supported": bool(candidate.get("rollback_supported")),
@@ -649,6 +1102,57 @@ class UpdateDaemon:
         asyncio.create_task(self._run_update(task["id"], candidate))
         return {"accepted": True, "task": self._public_task()}
 
+    async def _capture_previous_deployment_state(
+        self, current: dict[str, Any], *, split_mode: bool, standalone_mode: bool,
+    ) -> dict[str, Any]:
+        if split_mode:
+            self._validate_split_previous_images(current)
+            return await self._capture_split_sandbox_state(current)
+
+        if not _safe_image(str(current.get("image") or "")):
+            deployment = "standalone" if standalone_mode else "版本"
+            raise ValueError(f"无法安全记录当前{deployment}镜像，已拒绝更新")
+        if standalone_mode:
+            return {"running": False, "image": "", "tracks_app": False}
+        return await self._capture_compose_sandbox_state(current)
+
+    @staticmethod
+    def _validate_split_previous_images(current: dict[str, Any]) -> None:
+        for key, image_key, label in (
+            ("backend_image", "image", "backend"),
+            ("frontend_image", "frontend_image", "frontend"),
+        ):
+            image = str(current.get(image_key) or "")
+            if not (SPLIT_TAG_PATTERNS[key].fullmatch(image) or SPLIT_IMAGE_PATTERNS[key].fullmatch(image)):
+                raise ValueError(f"无法安全记录当前分体 {label} 镜像，已拒绝更新")
+
+    async def _capture_split_sandbox_state(self, current: dict[str, Any]) -> dict[str, Any]:
+        ids = (await self._compose_text(["ps", "--status", "running", "-q", "sandboxd"])).strip().splitlines()
+        if not ids:
+            return {"running": False, "image": "", "tracks_app": False}
+        inspected = (await self._docker_json(["inspect", ids[0]]))[0]
+        image = str(inspected.get("Config", {}).get("Image") or "")
+        running = _safe_image(image) or bool(SPLIT_TAG_PATTERNS["backend_image"].fullmatch(image))
+        tracks_app = bool(
+            running and current.get("compose_sandboxd_image")
+            and current.get("compose_sandboxd_image") == current.get("compose_backend_image")
+            and image == current.get("compose_backend_image")
+        )
+        return {"running": running, "image": image if running else "", "tracks_app": tracks_app}
+
+    async def _capture_compose_sandbox_state(self, current: dict[str, Any]) -> dict[str, Any]:
+        ids = (await self._compose_text(["ps", "--status", "running", "-q", "sandboxd"])).strip().splitlines()
+        if not ids:
+            return {"running": False, "image": "", "tracks_app": False}
+        inspected = (await self._docker_json(["inspect", ids[0]]))[0]
+        image = str(inspected.get("Config", {}).get("Image") or "")
+        running = _safe_image(image)
+        tracks_app = bool(
+            running and current.get("compose_sandboxd_image")
+            and current.get("compose_sandboxd_image") == current.get("compose_app_image")
+        )
+        return {"running": running, "image": image if running else "", "tracks_app": tracks_app}
+
     async def _run_update(self, task_id: str, candidate: dict[str, Any]) -> None:
         await asyncio.sleep(3)
         async with self._lock:
@@ -662,6 +1166,10 @@ class UpdateDaemon:
             task["events"].append({"stage": "prechecking", "at": _utc_now()})
             self._save()
 
+        if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker":
+            await self._run_standalone_handoff(task_id, candidate)
+            return
+
         temp_dir = Path(tempfile.mkdtemp(prefix="update-", dir=self.state_dir))
         process: asyncio.subprocess.Process | None = None
         stderr_drain: asyncio.Task[bytes] | None = None
@@ -672,23 +1180,26 @@ class UpdateDaemon:
             backup_root = self.state_dir / "backups"
             backup_root.mkdir(parents=True, exist_ok=True, mode=0o700)
             env = os.environ.copy()
+            split_mode = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "split_compose"
             env.update({
                 "COMPOSE_PROJECT_DIR": str(self.project_dir),
                 "COMPOSE_FILE": str(self.compose_file),
                 "BACKUP_ROOT": str(backup_root),
                 "GUGU_UPDATER_CODE_DIR": str(self.code_dir),
                 "UPDATE_VALIDATOR": str(self.validator),
+                "UPDATE_SCHEMA": str(self.manifest_schema),
                 # Compose 脚本先记录旧镜像，再从签名 manifest 切换到新 digest。
                 "GUGU_WEB_IMAGE": str(self.state["task"]["previous_image"]),
-                # 用 manifest 已校验的目标镜像启动 helper；helper 必须包含 handoff 等待逻辑。
-                "GUGU_UPDATE_HELPER_IMAGE": str(candidate["app_image"]),
             })
             manifest_path = temp_dir / MANIFEST_NAME
             manifest_path.write_bytes(manifest_bytes)
             os.chmod(manifest_path, 0o600)
+            update_script = self.split_compose_update_script if split_mode else self.compose_update_script
+            command = ["bash", str(update_script), str(manifest_path)] if split_mode else [
+                "bash", str(update_script), "--manifest", str(manifest_path), "--confirm",
+            ]
             process = await asyncio.create_subprocess_exec(
-                "bash", str(self.compose_update_script),
-                "--manifest", str(manifest_path), "--confirm",
+                *command,
                 cwd=self.project_dir, env=env,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
@@ -721,6 +1232,16 @@ class UpdateDaemon:
                 await self._set_stage(task_id, RECREATING_PENDING_RESTART)
                 Path(f"{manifest_path}.handoff").touch()
                 return
+            if process.returncode == 76 and split_mode:
+                await self._record_current_release(
+                    str(self.state["task"].get("previous_version") or "unknown"),
+                    str(self.state["task"].get("previous_image") or ""),
+                )
+                await self._finish_task(
+                    task_id, "failed", "update_rolled_back",
+                    "更新未完成，已自动恢复上一组业务镜像；数据库未自动回滚。",
+                )
+                return
             if process.returncode != 0:
                 logger.warning("update failed task_id=%s stage=%s reason=compose_exit", task_id, self._task_status())
                 await self._finish_task(task_id, "rollback_required", "update_failed", "更新未完成，上一版本已保留；可检查日志或执行回滚。")
@@ -730,6 +1251,9 @@ class UpdateDaemon:
             if not healthy:
                 logger.warning("update failed task_id=%s stage=health_checking reason=health_check_failed", task_id)
                 await self._finish_task(task_id, "rollback_required", "health_check_failed", "新版本未通过健康检查；上一版本已保留，可执行回滚。")
+                return
+            if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "integrated_compose":
+                await self._start_integrated_updater_handoff(task_id, str(candidate["app_image"]))
                 return
             await self._record_current_release(candidate["version"], candidate["app_image"])
             await self._finish_task(task_id, "succeeded", None, "更新完成，应用健康检查通过。")
@@ -743,6 +1267,122 @@ class UpdateDaemon:
         finally:
             if not handed_off:
                 shutil.rmtree(temp_dir, ignore_errors=True)
+
+    @staticmethod
+    def _standalone_host_mount(mount: dict[str, Any], target: str) -> str:
+        mount_type = mount.get("Type")
+        if mount_type == "bind":
+            source = str(mount.get("Source") or "")
+            if not source.startswith("/") or any(char in source for char in ",:\n\r"):
+                raise StandaloneConfigError("helper 绑定目录无法安全复用")
+            return f"type=bind,source={source},target={target}"
+        if mount_type == "volume":
+            name = str(mount.get("Name") or "")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
+                raise StandaloneConfigError("helper 数据卷名称无效")
+            return f"type=volume,source={name},target={target}"
+        raise StandaloneConfigError("helper 数据挂载类型不受支持")
+
+    async def _run_standalone_handoff(
+        self, task_id: str, candidate: dict[str, Any] | None = None,
+        *, target_image: str | None = None, target_version: str | None = None,
+    ) -> None:
+        try:
+            if candidate is not None:
+                manifest_bytes = await self._read_url(self._asset_url(candidate["version"], MANIFEST_NAME))
+                await self._verify_assets(manifest_bytes, expected_sha=candidate["manifest_sha256"])
+                target_image = str(candidate["app_image"])
+                target_version = str(candidate["version"])
+            if not _safe_image(str(target_image or "")) or not VERSION_RE.fullmatch(str(target_version or "")):
+                raise ValueError("standalone 更新目标无效")
+            if candidate is not None:
+                await self._set_stage(task_id, "pulling")
+                await self._command(["docker", "pull", str(target_image)], timeout=UPDATE_PROCESS_TIMEOUT_SECONDS)
+            await self._set_stage(task_id, "backing_up")
+            container_id = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+            inspected = await self._docker_json(["inspect", container_id], timeout=15)
+            snapshot = snapshot_standalone_container(inspected[0])
+            mounts = inspected[0].get("Mounts") or []
+            data_mount = next((item for item in mounts if item.get("Destination") == "/data"), None)
+            socket_path = os.getenv("GUGU_DOCKER_SOCKET", "/var/run/docker.sock")
+            socket_mount = next((item for item in mounts if item.get("Destination") == socket_path and item.get("Type") == "bind"), None)
+            if not data_mount or not socket_mount:
+                raise StandaloneConfigError("无法确定 helper 的数据目录或 Docker socket")
+            data_mount_arg = self._standalone_host_mount(data_mount, "/data")
+            socket_source = str(socket_mount.get("Source") or "")
+            if not socket_source.startswith("/") or any(char in socket_source for char in ",:\n\r"):
+                raise StandaloneConfigError("Docker socket 宿主路径无法安全复用")
+
+            handoff_dir = Path("/data/updater/handoffs") / task_id
+            handoff_path = handoff_dir / "handoff.json"
+            backup_path = Path("/data/updater/backups") / f"standalone-{task_id}.sql"
+            write_sensitive_json(handoff_path, {
+                "task_id": task_id, "version": target_version,
+                "image": target_image, "snapshot": snapshot,
+                "database_backup": str(backup_path),
+                # 更新目标已由 updater 验签并拉取；回滚目标由预检确认存在于本机。
+                "pull_image": False,
+            })
+
+            helper_name = f"gugu-updater-{task_id[:12]}"
+            async with self._lock:
+                task = self.state.get("task")
+                if not isinstance(task, dict) or task.get("id") != task_id:
+                    return
+                task["helper_name"] = helper_name
+                task["handoff_file"] = str(handoff_path)
+                task["message"] = "已写入权限受限的更新快照，正在启动独立 helper。"
+                task["updated_at"] = _utc_now()
+                self._save()
+
+            command = [
+                "docker", "run", "--detach", "--name", helper_name,
+                "--restart", "on-failure:5",
+                "--label", "com.coffeiz.gugu.updater=true",
+                "--label", f"com.coffeiz.gugu.updater-task={task_id}",
+                "--mount", data_mount_arg,
+                "--mount", f"type=bind,source={socket_source},target=/var/run/docker.sock",
+                "--env", f"GUGU_UPDATER_HANDOFF_FILE={handoff_path}",
+                "--env", "GUGU_UPDATER_STATE_DIR=/data/updater",
+                "--env", "GUGU_DOCKER_SOCKET=/var/run/docker.sock",
+                "--entrypoint", "python", str(target_image),
+                "-m", "updater.standalone_helper",
+            ]
+            # 先落盘 pending，避免短命 helper 在这里之前完成后被旧进程的阶段写入覆盖。
+            await self._set_stage(task_id, RECREATING_PENDING_RESTART)
+            await self._command(command, timeout=60)
+            await self._follow_standalone_handoff(task_id)
+        except Exception as exc:
+            # docker run 超时可能发生在 helper 已创建之后；先检查固定 helper 名称，
+            # 避免把仍在接管的任务误判失败。
+            task = self.state.get("task") or {}
+            helper_name = str(task.get("helper_name") or "")
+            if helper_name:
+                try:
+                    found = await self._docker_json(["inspect", helper_name], timeout=10)
+                    if found:
+                        await self._follow_standalone_handoff(task_id)
+                        return
+                except Exception:
+                    pass
+            logger.warning("standalone update handoff failed task_id=%s error_type=%s", task_id, type(exc).__name__)
+            await self._finish_task(task_id, "failed", "handoff_failed", "独立 helper 未能启动；原容器未停止，可检查后重试。")
+
+    async def _follow_standalone_handoff(self, task_id: str) -> None:
+        """跟随共享状态文件，避免旧 app 进程用内存中的 pending 覆盖 helper 终态。"""
+        for _ in range(1800):
+            try:
+                value = json.loads(self.state_file.read_text(encoding="utf-8"))
+                disk_task = value.get("task") if isinstance(value, dict) else None
+                if isinstance(disk_task, dict) and disk_task.get("id") == task_id:
+                    async with self._lock:
+                        self.state = value
+                    if disk_task.get("status") in TERMINAL:
+                        await self._remove_standalone_helper(str(disk_task.get("helper_name") or ""))
+                        return
+            except (OSError, json.JSONDecodeError):
+                pass
+            await asyncio.sleep(1)
 
     @staticmethod
     async def _terminate_process_group(process: asyncio.subprocess.Process) -> None:
@@ -808,11 +1448,32 @@ class UpdateDaemon:
     async def _wait_app_healthy(self) -> bool:
         for _ in range(30):
             try:
-                await self._compose_text(["exec", "-T", "app", "curl", "-fsS", "http://127.0.0.1:9595/health"], timeout=5)
-                await self._compose_text([
-                    "exec", "-T", "postgres", "sh", "-c",
-                    'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
-                ], timeout=5)
+                split_mode = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "split_compose"
+                embedded_mode = os.getenv("GUGU_EMBEDDED_DEPS", "0").strip() == "1"
+                service = "backend" if split_mode else "app"
+                port = "8000" if split_mode else "9595"
+                await self._compose_text(
+                    ["exec", "-T", service, "curl", "-fsS", f"http://127.0.0.1:{port}/health"],
+                    timeout=5,
+                )
+                if embedded_mode:
+                    await self._compose_text(
+                        ["exec", "-T", "app", "pg_isready", "-h", "127.0.0.1", "-p", "5432"], timeout=5,
+                    )
+                    await self._compose_text(
+                        ["exec", "-T", "app", "redis-cli", "-h", "127.0.0.1", "ping"], timeout=5,
+                    )
+                else:
+                    await self._compose_text([
+                        "exec", "-T", "postgres", "sh", "-c",
+                        'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+                    ], timeout=5)
+                if split_mode:
+                    frontend_ids = await self._compose_text(
+                        ["ps", "--status", "running", "-q", "frontend"], timeout=5,
+                    )
+                    if not frontend_ids.strip():
+                        raise RuntimeError("frontend is not running")
                 return True
             except Exception:
                 await asyncio.sleep(2)
@@ -836,41 +1497,71 @@ class UpdateDaemon:
             task = self.state.get("task")
             if not isinstance(task, dict) or task.get("status") not in TERMINAL:
                 raise ValueError("当前没有可回滚的完成任务")
-            if not task.get("rollback_supported") or not _safe_image(str(task.get("previous_image") or "")):
-                raise ValueError("当前任务没有受支持的上一版本镜像")
-            if task.get("operation") == "rollback":
-                raise ValueError("上一版本已经执行过回滚")
-            target = task["previous_image"]
-            try:
-                await self._docker_json(["image", "inspect", target], timeout=15)
-                present = True
-            except Exception:
-                present = False
-            # 更新中断后 app 可能停止、甚至容器被整体删除，而这正是最需要回滚的时刻；
-            # 只要 Compose 项目里 app 服务定义还在、旧镜像在本机，up -d 就能从零重建，
-            # 因此检查的是服务定义而非容器存在或运行状态。
-            try:
-                compose_config = await self._compose(["config", "--format", "json"])
-                app_defined = "app" in (compose_config.get("services") or {})
-            except Exception:
-                app_defined = False
+            split_mode = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "split_compose"
+            standalone_mode = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker"
+            target = str(task.get("previous_image") or "")
+            frontend_target = str(task.get("previous_frontend_image") or "")
+            self._validate_rollback_task(task, target, frontend_target, split_mode)
+            targets = [target, frontend_target] if split_mode else [target]
+            present = await self._rollback_images_present(targets)
+            app_defined = await self._rollback_deployment_ready(split_mode, standalone_mode)
             ready = present and app_defined
             result: dict[str, Any] = {
                 "ready": ready, "task_id": task["id"], "target_image": target,
+                "target_frontend_image": frontend_target if split_mode else None,
                 "target_version": task.get("previous_version", "unknown"),
-                "detail": "上一版本镜像仍在本机，可安全恢复" if ready else "上一版本镜像不存在或 Compose app 服务定义不可用",
+                "detail": "上一版本镜像仍在本机，可安全恢复" if ready else "上一版本镜像不存在或 Compose 服务定义不可用",
             }
             if ready:
                 token = secrets.token_urlsafe(48)
                 self.state["challenges"].append({
                     "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
                     "operator": operator, "action": "rollback", "version": task["id"],
-                    "manifest_sha256": hashlib.sha256(target.encode()).hexdigest(),
+                    "manifest_sha256": hashlib.sha256(
+                        (target + ("\n" + frontend_target if split_mode else "")).encode()
+                    ).hexdigest(),
                     "expires_at": time.time() + CHALLENGE_TTL_SECONDS,
                 })
                 self._save()
                 result["challenge"] = token
             return result
+
+    @staticmethod
+    def _validate_rollback_task(
+        task: dict[str, Any], target: str, frontend_target: str, split_mode: bool,
+    ) -> None:
+        valid_targets = (
+            bool(SPLIT_IMAGE_PATTERNS["backend_image"].fullmatch(target))
+            and bool(SPLIT_IMAGE_PATTERNS["frontend_image"].fullmatch(frontend_target))
+            if split_mode else _safe_image(target)
+        )
+        if not task.get("rollback_supported") or not valid_targets:
+            raise ValueError("当前任务没有受支持的上一版本镜像")
+        if task.get("operation") == "rollback":
+            raise ValueError("上一版本已经执行过回滚")
+
+    async def _rollback_images_present(self, images: list[str]) -> bool:
+        for image in images:
+            try:
+                await self._docker_json(["image", "inspect", image], timeout=15)
+            except Exception:
+                return False
+        return True
+
+    async def _rollback_deployment_ready(self, split_mode: bool, standalone_mode: bool) -> bool:
+        if standalone_mode:
+            try:
+                container_id = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+                snapshot_standalone_container(DockerEngine().inspect_container(container_id))
+                return True
+            except Exception:
+                return False
+        try:
+            config = await self._compose(["config", "--format", "json"])
+        except Exception:
+            return False
+        required = {"backend", "frontend"} if split_mode else {"app"}
+        return required.issubset(config.get("services") or {})
 
     async def _rollback(self, params: dict[str, Any]) -> dict[str, Any]:
         token = self._validate_token(params.get("challenge"))
@@ -880,8 +1571,13 @@ class UpdateDaemon:
             if not isinstance(task, dict) or task.get("status") not in TERMINAL:
                 raise ValueError("当前没有可回滚的完成任务")
             target = str(task.get("previous_image") or "")
+            split_mode = os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "split_compose"
+            frontend_target = str(task.get("previous_frontend_image") or "")
+            challenge_digest = hashlib.sha256(
+                (target + ("\n" + frontend_target if split_mode else "")).encode()
+            ).hexdigest()
             self._consume_challenge(
-                token, operator, "rollback", task["id"], hashlib.sha256(target.encode()).hexdigest()
+                token, operator, "rollback", task["id"], challenge_digest
             )
             if self._task_status() in ACTIVE:
                 raise RuntimeError("已有 Docker 更新任务正在执行")
@@ -900,7 +1596,9 @@ class UpdateDaemon:
                 "message": "回滚任务已排队", "failure_code": None,
                 "requested_by": operator, "created_at": _utc_now(), "updated_at": _utc_now(),
                 "previous_image": current["image"], "previous_version": current["version"],
+                "previous_frontend_image": current.get("frontend_image"),
                 "rollback_target_image": target,
+                "rollback_target_frontend_image": frontend_target if split_mode else None,
                 "rollback_supported": True,
                 "sandboxd_was_running": bool(task.get("sandboxd_was_running")),
                 "sandboxd_updated": bool(task.get("sandboxd_updated")),
@@ -918,29 +1616,81 @@ class UpdateDaemon:
         await self._set_stage(task_id, "rolling_back")
         try:
             # 仅恢复本机已存在、且来源为允许仓库的上一版本 digest；不拉取未知 tag。
-            if not _safe_image(target_image):
-                raise ValueError("回滚镜像不受支持")
-            await self._command(["docker", "image", "inspect", target_image], timeout=15)
             task = self.state.get("task")
             task_state = task if isinstance(task, dict) else {}
-            sandboxd = bool(task_state.get("sandboxd_updated"))
             restored_version = str(task_state.get("version") or "unknown")
-            services = ["app"]
-            if sandboxd:
-                services.append("sandboxd")
-            for service in services:
-                await self._compose_text(["stop", service], timeout=45)
-            env = os.environ.copy()
-            env["GUGU_WEB_IMAGE"] = target_image
-            await self._compose_text(["up", "-d", "--no-deps", "--force-recreate", *services], env=env, timeout=180)
-            if await self._wait_app_healthy():
-                await self._record_current_release(restored_version, target_image)
-                await self._finish_task(task_id, "succeeded", None, "已恢复上一版本，健康检查通过。")
-            else:
-                await self._finish_task(task_id, "rollback_required", "rollback_health_check_failed", "回滚后的健康检查未通过；保留当前容器和备份。")
+            if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "standalone_docker":
+                await self._run_standalone_handoff(
+                    task_id, target_image=target_image, target_version=restored_version,
+                )
+                return
+            if os.getenv("GUGU_UPDATE_DEPLOYMENT_MODE") == "split_compose":
+                await self._run_split_rollback(task_id, target_image, task_state, restored_version)
+                return
+            await self._run_integrated_rollback(task_id, target_image, task_state, restored_version)
         except Exception as exc:
             logger.warning("rollback failed task_id=%s error_type=%s", task_id, type(exc).__name__)
             await self._finish_task(task_id, "rollback_required", "rollback_failed", "回滚未完成；请检查更新器日志和 Compose 服务状态。")
+
+    async def _run_split_rollback(
+        self, task_id: str, target_image: str, task_state: dict[str, Any], restored_version: str,
+    ) -> None:
+        frontend_target = str(task_state.get("rollback_target_frontend_image") or "")
+        if not SPLIT_IMAGE_PATTERNS["backend_image"].fullmatch(target_image):
+            raise ValueError("回滚 backend 镜像不受支持")
+        if not SPLIT_IMAGE_PATTERNS["frontend_image"].fullmatch(frontend_target):
+            raise ValueError("回滚 frontend 镜像不受支持")
+        await self._docker_json(["image", "inspect", target_image], timeout=15)
+        await self._docker_json(["image", "inspect", frontend_target], timeout=15)
+        override = self.state_dir / f"rollback-{task_id}.json"
+        override.write_text(json.dumps({"services": {
+            "migrate": {"image": target_image}, "backend": {"image": target_image},
+            "worker": {"image": target_image}, "gateway": {"image": target_image},
+            "frontend": {"image": frontend_target},
+            **({"sandboxd": {"image": target_image}} if task_state.get("sandboxd_updated") else {}),
+        }}), encoding="utf-8")
+        os.chmod(override, 0o600)
+        try:
+            services = ["backend", "worker", "gateway", "frontend"]
+            if task_state.get("sandboxd_updated"):
+                services.append("sandboxd")
+            for service in services:
+                await self._compose_text(["stop", service], timeout=45)
+            await self._compose_text(
+                ["up", "-d", "--no-deps", "--force-recreate", *services],
+                timeout=240, compose_files=[self.compose_file, override],
+            )
+            await self._finish_compose_rollback(task_id, target_image, restored_version)
+        finally:
+            override.unlink(missing_ok=True)
+
+    async def _run_integrated_rollback(
+        self, task_id: str, target_image: str, task_state: dict[str, Any], restored_version: str,
+    ) -> None:
+        if not _safe_image(target_image):
+            raise ValueError("回滚镜像不受支持")
+        await self._command(["docker", "image", "inspect", target_image], timeout=15)
+        services = ["app"]
+        if task_state.get("sandboxd_updated"):
+            services.append("sandboxd")
+        for service in services:
+            await self._compose_text(["stop", service], timeout=45)
+        env = os.environ.copy()
+        env["GUGU_WEB_IMAGE"] = target_image
+        await self._compose_text(
+            ["up", "-d", "--no-deps", "--force-recreate", *services], env=env, timeout=180,
+        )
+        await self._finish_compose_rollback(task_id, target_image, restored_version)
+
+    async def _finish_compose_rollback(self, task_id: str, target_image: str, version: str) -> None:
+        if await self._wait_app_healthy():
+            await self._record_current_release(version, target_image)
+            await self._finish_task(task_id, "succeeded", None, "已恢复上一版本，健康检查通过。")
+            return
+        await self._finish_task(
+            task_id, "rollback_required", "rollback_health_check_failed",
+            "回滚后的健康检查未通过；保留当前容器和备份。",
+        )
 
     def _consume_challenge(self, token: str, operator: str, action: str, version: str, digest: str) -> None:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -973,15 +1723,21 @@ class UpdateDaemon:
             raise ValueError("管理员身份无效")
         return value
 
-    async def _compose(self, args: list[str]) -> dict[str, Any]:
-        raw = await self._compose_text(args)
+    async def _compose(self, args: list[str], *, compose_files: list[Path] | None = None) -> dict[str, Any]:
+        raw = await self._compose_text(args, compose_files=compose_files)
         result = json.loads(raw)
         if not isinstance(result, dict):
             raise ValueError("Compose 配置格式无效")
         return result
 
-    async def _compose_text(self, args: list[str], *, env: dict[str, str] | None = None, timeout: int = 30) -> str:
-        command = ["docker", "compose", "--project-directory", str(self.project_dir), "-f", str(self.compose_file), "--profile", "sandbox", *args]
+    async def _compose_text(
+        self, args: list[str], *, env: dict[str, str] | None = None,
+        timeout: int = 30, compose_files: list[Path] | None = None,
+    ) -> str:
+        command = ["docker", "compose", "--project-directory", str(self.project_dir)]
+        for compose_file in compose_files or [self.compose_file]:
+            command.extend(["-f", str(compose_file)])
+        command.extend(["--profile", "sandbox", *args])
         return (await self._command(command, timeout=timeout, env=env)).decode("utf-8", errors="replace")
 
     async def _docker_json(self, args: list[str], *, timeout: int = 30) -> Any:

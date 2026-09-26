@@ -54,25 +54,6 @@ html[data-theme][data-family] .bm-card:has(.status-ball) .header-name-input.erro
   color: var(--status-warning);
 }
 
-html[data-theme][data-family] :is(
-  .project-modal-root .close-btn,
-  .bm-card:has(.status-ball) .close-btn,
-  .proj-close-btn
-) {
-  color: var(--control-fg);
-  background: var(--control-bg);
-  transition:
-    color var(--motion-hover-control) var(--motion-ease-standard),
-    background-color var(--motion-hover-control) var(--motion-ease-standard);
-}
-html[data-theme][data-family] :is(
-  .project-modal-root .close-btn,
-  .bm-card:has(.status-ball) .close-btn,
-  .proj-close-btn
-):hover {
-  color: var(--control-fg-strong);
-  background: var(--control-bg-hover);
-}
 html[data-theme][data-family] .btn-create {
   color: var(--content-on-accent);
   background: var(--action-primary-bg);

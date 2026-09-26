@@ -13,7 +13,7 @@ from .documents import (
     _is_text_file_record, _split_create_name, _strip_ext, _resolve_file,
     _list_dir, _read_file, _edit_one, _edit_file, _create_file,
     _save_one_attach, _save_uploaded_file, _rename_one, _rename_file,
-    _delete_file, _copy_file, FilesSkill,
+    _delete_file, _copy_file,
 )
 from .folders import (
     _as_dict, _descendant_folder_ids, _resolve_target, _move_one,
@@ -25,6 +25,7 @@ from .transfer import (
     _send_file, _present_file, _list_recent_attachments, inspect_image_url,
     _build_pinned_request, _url_is_safe, _SEND_URL_MAX_BYTES, _SEND_URL_IMAGE_EXT,
 )
+from .skill import FilesSkill
 
 
 async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True):

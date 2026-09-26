@@ -24,7 +24,14 @@ async def _mk_event(db, user, title="评审", date="2026-09-20", time_="09:00", 
 
 # ── _create_event ─────────────────────────────────────────────────────────
 
-async def test_create_event_shapes_and_inline_reminders(db, user_a):
+async def test_create_event_shapes_and_inline_reminders(db, user_a, monkeypatch):
+    # 固定在事件之前，避免真实日期推进后提醒被服务层按设计跳过。
+    from app.services import calendar as calendar_service
+    monkeypatch.setattr(
+        calendar_service,
+        "local_now",
+        lambda: datetime(2026, 9, 1, tzinfo=SCHEDULE_TZ),
+    )
     missing = json.loads(await cal._create_event(db, user_a.id, {
         "title": "评审", "date": "2026-09-20", "project_id": 987654}))
     assert missing["error"] == "项目不存在"

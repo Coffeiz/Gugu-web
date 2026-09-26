@@ -66,9 +66,27 @@ export function useChatStream(options: {
   const streaming = ref(false)
   const abortCtrl = ref<AbortController | null>(null)
   const draftPendingQueueId = getDraftPendingQueueId()
-  // 新会话首轮在 session_id SSE 到达前仍是 null；记录后台生成归属，
-  // 让中断按钮不会因为前端尚未切换 sessionId 而漏发取消请求。
-  let activeSessionId: number | null = null
+  // 每条流各自绑定会话 ID，避免切换会话后旧 SSE 的迟到事件覆盖新流归属。
+  const runSessionIds = new WeakMap<AbortController, number | null>()
+  const runTerminalControllers = new WeakSet<AbortController>()
+  function sessionIdForRun(controller: AbortController): number | null {
+    return runSessionIds.has(controller) ? (runSessionIds.get(controller) ?? null) : sessionId.value
+  }
+  // 停止时不能先 abort SSE：取消终态（tool_done/done）正由这条流返回。
+  // AbortController 作为 run 身份，避免切会话后旧流的回调污染新流状态。
+  const cancelRequestedControllers = new WeakSet<AbortController>()
+  const stopWaitingForSessionId = new WeakSet<AbortController>()
+  function requestRunCancellation(id: number, controller: AbortController) {
+    if (runTerminalControllers.has(controller) || cancelRequestedControllers.has(controller)) return
+    cancelRequestedControllers.add(controller)
+    options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.cancelling') })
+    void agentApi.cancelSession(String(id)).catch(() => {
+      cancelRequestedControllers.delete(controller)
+      if (abortCtrl.value === controller && !runTerminalControllers.has(controller)) {
+        options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.cancelFailed') })
+      }
+    })
+  }
   // 当前页面缓存已恢复的会话队列；其权威数据在服务端，跨浏览器按 session_id 聚合。
   // 切换会话只过滤展示/消费目标，不清空其他会话的队列。
   const pendingQueue = ref<QueuedMessage[]>([])
@@ -88,9 +106,16 @@ export function useChatStream(options: {
     // drainPendingQueue 立即接续第一条（用户预期：停的是「正在说的这句」，
     // 排队的照样发，而不是一起被丢掉）。终止收口前后端会短暂仍报 active，
     // 排水的 claim 重试负责等它结束。
-    const id = activeSessionId ?? sessionId.value
-    abortCtrl.value?.abort()
-    if (id != null) agentApi.cancelSession(String(id)).catch(() => {})
+    const controller = abortCtrl.value
+    if (!controller || controller.signal.aborted || runTerminalControllers.has(controller)) return
+    const id = sessionIdForRun(controller)
+    if (id == null) {
+      // 新会话尚未收到 session_id 时保留 SSE；拿到 id 后再取消后台 run。
+      stopWaitingForSessionId.add(controller)
+      options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.cancelling') })
+      return
+    }
+    requestRunCancellation(id, controller)
   }
 
   function enqueuePendingQueueWrite(task: () => Promise<void>) {
@@ -336,6 +361,7 @@ export function useChatStream(options: {
     viewGeneration: number,
     replayText = '',
     onSessionId?: (id: number, timelineOrder: number) => void,
+    runController?: AbortController,
   ) {
     const streamStartedAt = Date.now()
     const decoder = new TextDecoder()
@@ -399,6 +425,10 @@ export function useChatStream(options: {
         detached = true
         return false
       }
+      if (runController && abortCtrl.value !== runController) {
+        detached = true
+        return false
+      }
       if (sessionId.value !== (sid ?? ownerSid)) { detached = true; return false }
       return true
     }
@@ -416,7 +446,9 @@ export function useChatStream(options: {
           const raw = line.slice(6).trim(); if (!raw) continue
           let evt; try { evt = JSON.parse(raw) } catch { continue }
           if (evt.type === 'session_id') {
-            onSessionId?.(Number(evt.session_id), onSessionId ? nextTimelineOrder() : 0)
+            const acceptedSessionId = Number(evt.session_id)
+            if (runController) runSessionIds.set(runController, acceptedSessionId)
+            onSessionId?.(acceptedSessionId, onSessionId ? nextTimelineOrder() : 0)
             const isNew = sessionId.value !== evt.session_id
             // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话。
             // 走 bindNewSessionId：身份落地要保留当前输入并记为新会话草稿（普通赋值
@@ -428,7 +460,6 @@ export function useChatStream(options: {
             // 入队代次绑定旧消息；不能把它们交给当前选中的另一个会话。
             resolvePendingSession(evt.session_id, viewGeneration)
             sid = evt.session_id
-            activeSessionId = evt.session_id
             if (isNew) await options.fetchSessions()
           } else if (evt.type === 'session_title') {
             const s = sessions.value.find(s => s.id === sid)   // 按本流会话更新标题，与当前视图无关
@@ -464,6 +495,7 @@ export function useChatStream(options: {
                 existing.toolLabel = evt.label || existing.toolLabel
                 existing.toolStatus = evt.status || existing.toolStatus || 'running'
                 if (evt.input !== undefined) existing.toolInput = evt.input
+                toolMessageIds.set(toolCallId, existing.id)
               } else {
                 const messageId = mkid()
                 messages.value.push({
@@ -687,13 +719,16 @@ export function useChatStream(options: {
               scheduleStreamScroll()
             }
           } else if (evt.type === 'done') {
+            if (runController) runTerminalControllers.add(runController)
             if (live()) {
               options.clearStatus()
               // 取消收尾兜底：任何路径漏发个别 tool_done 终态时，把仍在转圈的
               // 工具气泡统一翻成「已停止」，不允许出现永久「进行中」。
               if (evt.cancelled) {
-                for (const item of messages.value) {
-                  if (item.role === 'tool' && (item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
+                aborted = true // 取消是正常终态，不应再补「没有收到回复」兜底气泡。
+                for (const messageId of toolMessageIds.values()) {
+                  const item = messages.value.find(message => message.id === messageId)
+                  if (item?.role === 'tool' && (item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
                     item.toolStatus = 'cancelled'
                   }
                 }
@@ -775,31 +810,32 @@ export function useChatStream(options: {
   async function resumeStream(id: number) {
     if (streaming.value) return            // 本地正在发/看，不重复连
     const viewGeneration = options.getViewGeneration()
-    activeSessionId = id
     const token = getToken()
-    abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
+    const controller = new AbortController()
+    runSessionIds.set(controller, id)
+    abortCtrl.value = controller             // 让下次切会话能 abort 掉这条续看
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
     try {
       const res = await fetch(`${API_BASE}/agent/sessions/${id}/stream`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
-        signal: abortCtrl.value.signal,
+        signal: controller.signal,
       })
       if (isUnauthorizedResponse(res)) return
       if (!res.ok) return
-      if (viewGeneration !== options.getViewGeneration() || sessionId.value !== id) return   // 期间又切走了，丢弃
+      if (viewGeneration !== options.getViewGeneration() || sessionId.value !== id || abortCtrl.value !== controller) return   // 期间又切走/被新流接管，丢弃
       if (!res.body) return
       const replayText = [...messages.value].reverse()
         .find(m => m.role === 'ai' && m.text?.trim())?.text.trim() || ''
-      const r = await consumeStream(res.body.getReader(), id, viewGeneration, replayText)
+      const r = await consumeStream(res.body.getReader(), id, viewGeneration, replayText, undefined, controller)
       options.refreshAfterTools(r.usedTools)
     } catch { /* 续看失败/被切走中断都不打扰 */ }
     finally {
-      const ownsResumedView = viewGeneration === options.getViewGeneration() && sessionId.value === id
+      const ownsResumedView = viewGeneration === options.getViewGeneration()
+        && sessionId.value === id && abortCtrl.value === controller
       // 仍停在本会话才收尾全局指示，避免切走后清掉新会话续看的状态
       if (ownsResumedView) {
         options.clearStatus(); streaming.value = false; abortCtrl.value = null
       }
-      if (activeSessionId === id) activeSessionId = null
       // 续看期间排队的消息必须在这里接续发送：之前漏了这一步，续看流结束后
       // 队列永远无人消费，排队的消息显示着「已发出」却从未 POST（2026-09-11 修复）。
       if (ownsResumedView) await drainPendingQueue()
@@ -811,16 +847,17 @@ export function useChatStream(options: {
   // 查询失败则保留原状态，避免 Redis 短暂不可用时与正在运行的任务并发。
   async function reconcileStaleStreaming(expectedViewGeneration: number): Promise<void> {
     if (!streaming.value) return
-    const sid = activeSessionId ?? sessionId.value
+    const controller = abortCtrl.value
+    const sid = controller ? sessionIdForRun(controller) : sessionId.value
     if (sid == null) return
     try {
       const state = await agentApi.getMessages(String(sid)) as { active?: boolean }
       if (expectedViewGeneration !== options.getViewGeneration()) return
-      if ((activeSessionId ?? sessionId.value) !== sid) return
+      if (abortCtrl.value !== controller) return
+      if ((controller ? sessionIdForRun(controller) : sessionId.value) !== sid) return
       if (state.active !== false) return
-      abortCtrl.value?.abort()
+      controller?.abort()
       abortCtrl.value = null
-      if (activeSessionId === sid) activeSessionId = null
       options.clearStatus()
       streaming.value = false
     } catch {
@@ -970,7 +1007,7 @@ export function useChatStream(options: {
     }
     const token = getToken()
     const ownerSid = targetSessionId   // 队列项显式归属的 session；普通发送取当前会话
-    activeSessionId = ownerSid
+    runSessionIds.set(requestController, ownerSid)
     let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
     let aiIdx = -1
     const usedTools = new Set<string>()
@@ -997,6 +1034,11 @@ export function useChatStream(options: {
 
       let receivedSessionIdEvent = false
       const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, '', (_acceptedSessionId, timelineOrder) => {
+        runSessionIds.set(requestController, _acceptedSessionId)
+        if (stopWaitingForSessionId.has(requestController)) {
+          stopWaitingForSessionId.delete(requestController)
+          requestRunCancellation(_acceptedSessionId, requestController)
+        }
         receivedSessionIdEvent = true
         if (queuedItemKey === undefined || ownerSid !== sessionId.value || viewGeneration !== options.getViewGeneration()) return
         pendingQueue.value = pendingQueue.value.filter(item => queueIdentity(item) !== queuedIdentity)
@@ -1006,7 +1048,7 @@ export function useChatStream(options: {
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
           _timelineOrder: timelineOrder,
         })
-      })
+      }, requestController)
       resolvedSid = r.sid
       // session_id 事件可能在浏览器切换/重连的边界丢失；流本身已经返回真实
       // id，补回会话身份并迁移仍带草稿归属的队列项。
@@ -1022,7 +1064,8 @@ export function useChatStream(options: {
         await options.scrollBottom()
       }
     } catch (e: any) {
-      if (e?.name !== 'AbortError' && viewGeneration === options.getViewGeneration() && sessionId.value === resolvedSid) {
+      if (e?.name !== 'AbortError' && viewGeneration === options.getViewGeneration()
+        && sessionId.value === resolvedSid && abortCtrl.value === requestController) {
         // fetch 抛错=连不上咕咕后端，基本都是网络问题（仅在仍停在本会话时报）
         options.clearStatus()
         messages.value.push({ id: mkid(), role: 'ai', text: i18n.global.t('chatUi.networkError'), time: now() })
@@ -1039,20 +1082,25 @@ export function useChatStream(options: {
       }
     } finally {
       // 仍停在本次发送的会话才收尾全局状态；切走后这些状态归新会话的续看流管，别清掉
-      const ownsCurrentView = () => viewGeneration === options.getViewGeneration() && sessionId.value === resolvedSid
+      let releasedOwnController = false
+      const ownsCurrentView = () => viewGeneration === options.getViewGeneration()
+        && sessionId.value === resolvedSid
+        && (abortCtrl.value === requestController || (releasedOwnController && abortCtrl.value === null))
       if (ownsCurrentView()) {
         // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
         if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
         options.clearStatus(); streaming.value = false
-        if (abortCtrl.value === requestController) abortCtrl.value = null
+        if (abortCtrl.value === requestController) {
+          abortCtrl.value = null
+          releasedOwnController = true
+        }
         options.loadQuota()   // 回复消耗精力，刷新一次——耗尽时顶部状态即时变「休息中」（不 await，原逻辑就是 fire-and-forget）
         // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，
         // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
         await options.scrollBottom()
       }
-      if (activeSessionId === resolvedSid) activeSessionId = null
-      // 目标/工具限制命令会修改 session_context；刷新会话元数据，让标题旁的状态胶囊即时同步。
-      if (ownsCurrentView() && /^\/(?:goal|unlimited)(?:\s|$)/i.test(text)) {
+      // 目标命令会修改 session_context；刷新会话元数据，让标题旁的状态胶囊即时同步。
+      if (ownsCurrentView() && /^\/goal(?:\s|$)/i.test(text)) {
         await options.fetchSessions()
       }
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面

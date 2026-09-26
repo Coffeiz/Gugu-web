@@ -2,7 +2,7 @@
   <div ref="elementRef" class="list-row" :class="{ selected: selectedIds.has(item.id), 'pre-selected': previewFileIds.has(item.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(item.id) }" :data-file-id="item.id" data-layout-role="card" :data-layout-key="runtimeId" @contextmenu.prevent.stop="openCtx('file', item, $event)" @click.stop="handleFileClick(item, $event)">
     <span class="lr-name-cell"><component :is="fileListIcon(item.ext)" class="lr-file-icon" :size="16" :style="{ color: fileIconColor(item.ext) }" /><span class="lr-filename" :title="item.displayName"><RenameInput v-if="renamingFileId === item.id" v-model="renameText" v-model:extension="renameExtension" :extension-required="item.ext.toUpperCase() !== 'FILE'" @commit="commitRename" @cancel="cancelRename" /><template v-else>{{ item.displayName }}</template></span></span>
     <span class="lr-type-cell"><span class="lr-ext" :style="{ color: fileIconColor(item.ext), background: fileIconColor(item.ext) + '18' }">{{ item.ext }}</span></span>
-    <span class="lr-proj-cell"><span v-if="item.projectColor" class="lr-dot" :style="{ background: item.projectColor || '' }"></span><span class="lr-projname">{{ item.projectName || item.stageName || '—' }}</span></span><span class="lr-text">{{ item.size }}</span><span class="lr-text">{{ item.createdAt }}</span>
+    <span class="lr-proj-cell"><span v-if="item.projectColor" class="lr-dot" :style="{ background: item.projectColor || '' }"></span><span class="lr-projname">{{ item.projectName || item.stageName || '—' }}</span></span><span class="lr-text">{{ fmtBytes(item.sizeBytes) }}</span><span class="lr-text">{{ formatFileCreatedDate(item.createdAt) }}</span>
     <span class="lr-actions"><Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(item.id) }"><svg v-if="selectedIds.has(item.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition><template v-if="!inSelectionMode"><button class="file-list-btn" :title="renamingFileId === item.id ? t('filesViewUi.confirm') : t('filesViewUi.rename')" @mousedown.prevent @click.stop="renamingFileId === item.id ? commitRename() : startRenameFile(item)"><Icon name="status.success" v-if="renamingFileId === item.id" :size="11" /><Icon name="action.edit" v-else :size="11" /></button><button v-if="isExtractableArchive(item)" class="file-list-btn" :title="t('filesViewUi.extractTo')" @click.stop="extractFile(item)"><Icon name="action.archive" :size="11" /></button><button class="file-list-btn" :title="t('filesViewUi.download')" @click.stop="downloadFile(item)"><Icon name="action.download" :size="11" /></button><button class="file-list-btn del" :title="t('filesViewUi.moveToTrash')" @click.stop="deleteSingleFile(item)"><Icon name="action.delete" :size="11" /></button></template></span>
   </div>
 </template>
@@ -12,6 +12,8 @@ import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
+import { fmtBytes } from '@/utils/fileSize'
+import { formatFileCreatedDate } from '@/utils/fileDate'
 import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
 import type { FileMeta } from '@/stores/filesCache'
 

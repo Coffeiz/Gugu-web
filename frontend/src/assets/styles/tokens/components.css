@@ -1,6 +1,9 @@
 :root {
   /* Generic cards / popups */
   --card-radius: var(--radius-md);
+  --card-close-inset: var(--space-md);
+  --card-close-safe-area: calc(var(--card-close-inset) + var(--control-height-sm) + var(--space-md));
+  --card-close-compact-safe-area: calc(var(--card-close-inset) + var(--control-height-xs) + var(--space-md));
   --card-shadow: var(--elevation-card);
   --card-shadow-hover: var(--elevation-card-hover);
   /* One motion contract for project/file/folder/schedule card surfaces. Hover tint is a separate
@@ -32,6 +35,7 @@
   --popup-shadow: var(--elevation-popup);
 
   /* Controls */
+  --control-xs: var(--control-height-xs);
   --control-sm: var(--control-height-sm);
   --control-md: var(--control-height-md);
   --control-lg: var(--control-height-lg);

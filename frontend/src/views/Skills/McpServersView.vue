@@ -54,7 +54,7 @@ import { mcpApi, type McpServerItem } from '@/services/api'
 import McpCard from './components/McpCard.vue'
 import McpServerFormModal from './components/McpServerFormModal.vue'
 import type { McpServerDraft } from './components/mcp-types'
-import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
+import { notifyResourceChanged, RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 
 const { t } = useI18n()
 const props = defineProps<{ createRequest?: number }>()
@@ -127,6 +127,7 @@ async function save(draft: McpServerDraft) {
     const saved = editing.value
       ? await mcpApi.update(editing.value.id, payload)
       : await mcpApi.create(payload)
+    notifyResourceChanged('mcp')
     let runtime: { ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string } | null = null
     if (draft.enabled) {
       runtime = await mcpApi.reconnect(saved.id)
@@ -174,6 +175,7 @@ async function reconnect(item: McpServerItem) {
   busyId.value = item.id
   try {
     const result = await mcpApi.reconnect(item.id)
+    notifyResourceChanged('mcp')
     if (result.ok) showAppSuccess(t('skillsMcpUi.reconnectSuccess', { count: result.tool_count }))
     else showAppError(result.error || t('skillsMcpUi.testFailed'))
     await load()
@@ -194,6 +196,7 @@ async function toggle(item: McpServerItem) {
   busyId.value = item.id
   try {
     await mcpApi.update(item.id, { enabled: !item.enabled })
+    notifyResourceChanged('mcp')
     if (!item.enabled) {
       const result = await mcpApi.reconnect(item.id)
       if (!result.ok) showAppError(result.error || t('skillsMcpUi.testFailed'))
@@ -225,6 +228,7 @@ async function remove(item: McpServerItem) {
   busyId.value = item.id
   try {
     await mcpApi.remove(item.id)
+    notifyResourceChanged('mcp')
     showAppSuccess(t('skillsMcpUi.deleted'))
     await load()
   } catch (cause) {

@@ -23,7 +23,15 @@ from collections.abc import Awaitable, Callable
 
 from app.core.config import SandboxSettings
 
-from .docker_runtime import docker_environment, sandbox_root_label, valid_egress_network_name, valid_egress_proxy, valid_image_digest
+from .docker_runtime import (
+    docker_environment,
+    docker_container_mount_source,
+    resolved_image_digest,
+    sandbox_root_label,
+    valid_egress_network_name,
+    valid_egress_proxy,
+    valid_image_digest,
+)
 from .local_executor import LocalWorkspaceExecutor, ShellResult
 from .quota import measure_directory
 
@@ -152,13 +160,19 @@ def _image_ref(settings: SandboxSettings) -> str:
     if not digest:
         raise ValueError("尚未配置固定镜像 digest")
     if not valid_image_digest(digest):
-        raise ValueError("镜像 digest 必须是 sha256: 加 64 位摘要或 bundled")
+        raise ValueError("镜像 digest 必须是 sha256: 加 64 位摘要或 Compose 已解析的 digest")
     image = settings.image.strip()
     if not image or any(char in image for char in "\r\n "):
         raise ValueError("沙盒镜像名称无效")
-    # bundled 表示镜像由一体化镜像内嵌并由 sandbox-bootstrap 导入；启动前
-    # image_available 会将本地 image ID 与随包清单比对，运行时仍禁止自动 pull。
-    return image if digest == "bundled" else f"{image}@{digest}"
+    if os.environ.get("GUGU_SANDBOX_OFFLINE") == "1":
+        return image
+    if digest == "local":
+        return image
+    if digest == "resolved":
+        digest = resolved_image_digest() or ""
+        if not digest:
+            raise ValueError("Compose 尚未解析沙盒镜像 digest")
+    return f"{image}@{digest}"
 
 
 class DockerSandboxExecutor:
@@ -193,16 +207,29 @@ class DockerSandboxExecutor:
         if not self.docker_path:
             raise ValueError("未安装 Docker CLI")
         self.image = _image_ref(settings)
+        self._daemon_host_data_root: str | None = None
+        self._daemon_host_data_root_resolved = False
 
     def _daemon_mount_src_for(self, path: Path) -> Path:
         """按目标 Docker daemon 的宿主机视角解析 bind mount 源路径。"""
-        host_root = getattr(self.settings, "host_data_root", None)
-        if not host_root:
+        if not self._daemon_host_data_root_resolved:
+            host_root = getattr(self.settings, "host_data_root", None)
+            host_root_text = str(host_root or "").strip()
+            # Compose UI（尤其 FNOS）不一定设置 PWD，导致旧模板把 `${PWD}`
+            # 展开成 `//Gugu-data`。正常的显式绝对路径继续优先；缺失或异常
+            # 时从当前 sandboxd 容器的 /data bind mount 自动解析。
+            if not host_root_text or not host_root_text.startswith("/") or host_root_text.startswith("//"):
+                data_source = docker_container_mount_source()
+                if data_source is not None:
+                    host_root_text = str(data_source / "users")
+            self._daemon_host_data_root = host_root_text or None
+            self._daemon_host_data_root_resolved = True
+        if not self._daemon_host_data_root:
             return path
         from app.core.config import get_settings
         logical_root = Path(get_settings().storage.local_path).resolve()
         try:
-            return Path(host_root) / path.relative_to(logical_root)
+            return Path(self._daemon_host_data_root) / path.relative_to(logical_root)
         except ValueError:
             return path
 
@@ -332,16 +359,14 @@ class DockerSandboxExecutor:
         cwd: str = ".",
         network_profile: str | None = None,
         container_name: str | None = None,
-        code_execution_enabled: bool | None = None,
     ) -> list[str]:
         """生成交互式 PTY 的固定启动参数，不接受用户自定义 Shell argv。"""
         # 交互式终端需要 readline；Debian 的 /bin/sh 通常是 dash，Tab 只会被
         # 当作制表符回显，无法提供传统 CLI 的命令和路径补全。
         # --norc 会跳过用户配置；临时 inputrc 放在容器 tmpfs 中，确保 Bash
         # 真正开启 bracketed paste，避免浏览器粘贴多行内容时逐行执行。
-        runtime_enabled = getattr(self.settings, "code_execution_enabled", True) if code_execution_enabled is None else code_execution_enabled
-        if not runtime_enabled:
-            raise ValueError("代码运行环境已关闭，交互式 PTY 不可用")
+        if not getattr(self.settings, "full_user_sandbox_authorization_enabled", True):
+            raise ValueError("完整用户沙箱授权已关闭，交互式 PTY 不可用")
         shell_command = r'''
 printf '%s\n' '$if Bash' 'set enable-bracketed-paste on' '$endif' > /tmp/gugu-inputrc
 export INPUTRC=/tmp/gugu-inputrc
@@ -479,12 +504,10 @@ exec bash --noprofile --norc -i
         cwd: str = ".",
         network_profile: str | None = None,
         container_name: str | None = None,
-        code_execution_enabled: bool | None = None,
     ) -> DockerPtyHandle:
         """在固定安全参数的 Docker 容器内启动交互式 PTY。"""
         docker_argv = self.build_pty_argv(
             cwd=cwd, network_profile=network_profile, container_name=container_name,
-            code_execution_enabled=code_execution_enabled,
         )
         master_fd, slave_fd = pty.openpty()
         try:

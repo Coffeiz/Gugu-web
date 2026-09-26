@@ -21,7 +21,7 @@ from agent.context.branch_types import BranchInput, BranchPolicy
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
 from agent.memory.reflection_branch import run_reflection_branch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
-from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
+from agent.memory.reflection_jobs import IDLE_WINDOW, MAX_RETRIES, RETRY_BACKOFF_MINUTES
 from agent.memory.scoped_store import (
     merge_scope_event_memory,
     read_scope,
@@ -44,45 +44,167 @@ PRIVATE_DAILY_KEEP_RECENT = 50
 _DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
 GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference", "note"}
 _GROUP_INTERNAL_ID_RE = re.compile(r"(?:platform_user_id|user_openid|member_openid|group_openid)\s*=", re.I)
+_REFLECTION_MEDIA_PLACEHOLDERS = {
+    "image": "[图片已省略]",
+    "image_url": "[图片已省略]",
+    "input_audio": "[音频已省略]",
+    "audio": "[音频已省略]",
+    "video": "[视频已省略]",
+    "video_url": "[视频已省略]",
+}
 
 
-def _append_history_message(message) -> dict:
-    """把已持久化 IM 消息投影成 append 分支可读的 canonical 消息。"""
-    if message.role == "assistant":
-        return {"role": "assistant", "content": message.content or "（无文字）"}
-    sender = message.platform_user_name or "未提供昵称"
-    return {
-        "role": "user",
-        "content": f"[{sender}] {message.content or '（无文字）'}",
-    }
-
-
-def _append_scope_system(user_name: str = "群友") -> str:
-    """取得 append 分支稳定 system；群业务规则放在末尾 delta，避免污染前缀。"""
-    from agent.capabilities.defaults import DEFAULT_PROMPT_NAME
-    from agent.context.session_system import build_static_prompt
-
-    return build_static_prompt(DEFAULT_PROMPT_NAME, user_name)
+def _replace_reflection_media(history: list) -> list:
+    """将反思前缀中的多媒体块替换为文本，避免 provider 重新审核媒体内容。"""
+    replaced = []
+    for message in history:
+        if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+            replaced.append(message)
+            continue
+        content = []
+        for block in message["content"]:
+            if isinstance(block, dict) and block.get("type") in _REFLECTION_MEDIA_PLACEHOLDERS:
+                content.append({
+                    "type": "text",
+                    "text": _REFLECTION_MEDIA_PLACEHOLDERS[block["type"]],
+                })
+            else:
+                content.append(block)
+        replaced.append({**message, "content": content})
+    return replaced
 
 
 def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
-                               current: dict, messages: list) -> BranchInput:
-    """构造群/成员 append 分支：消息作为历史，反思规则和任务作为末尾增量。"""
+                               current: dict, messages: list, *, snapshot) -> BranchInput:
+    """在完整主会话前缀后追加 scope 反思任务。"""
+    from agent.context.prefix_history import render_branch_prefix
+
+    if snapshot is None:
+        raise ValueError("IM 记忆反思必须提供主会话快照")
+
     reflection_current = {k: v for k, v in current.items() if k != "members"}
+    target_senders = []
+    seen_senders = set()
+    if task_type != "private-owner":
+        for message in messages:
+            sender_id = getattr(message, "platform_user_id", None)
+            if message.role != "user" or not sender_id or sender_id in seen_senders:
+                continue
+            seen_senders.add(sender_id)
+            target_senders.append({
+                "platform_user_id": sender_id,
+                "platform_user_name": getattr(message, "platform_user_name", None),
+            })
+    target_scope = {
+        "user_message_count": sum(1 for message in messages if message.role == "user"),
+        "senders": target_senders,
+    }
     delta = (
         f"{_scope_prompt(scope, task_type=task_type)}\n\n"
         f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
-        f"本批待反思消息已作为追加历史末尾的 {len(messages)} 条消息提供；"
-        "只从这些消息提取，不要把消息正文复制到本条任务指令中。"
+        f"【本批反思范围】\n{json.dumps(target_scope, ensure_ascii=False)}\n\n"
+        f"本批正文已在追加历史中，共 {target_scope['user_message_count']} 条用户消息；"
+        "只从追加历史末尾与本批范围对应的用户消息提取新增记忆，不要在任务中寻找重复正文，"
+        "也不得把更早历史中的内容重新提取为新增记忆。"
     )
+    history = tuple(_replace_reflection_media(
+        render_branch_prefix(list(snapshot.history), snapshot.ai),
+    ))
+    reflection_scope = (
+        "member" if task_type == "member-batch" else
+        "private" if task_type == "private-owner" else "group"
+    )
+    probe_context = {
+        "reflection_scope": reflection_scope,
+        "origin_run_id": snapshot.run_id,
+        "trigger_source": "session_snapshot",
+    }
     return BranchInput(
-        stable_system=_append_scope_system(),
+        stable_system=snapshot.system_prompt,
         delta=delta,
         scope="group-member-reflection" if task_type == "member-batch" else scope.scope_type,
         scope_revision=str(job.idempotency_key),
-        run_id=f"im-reflection-job:{job.id}",
-        history_messages=tuple(_append_history_message(message) for message in messages),
+        session_id=snapshot.session_id,
+        run_id=snapshot.run_id,
+        history_messages=history,
+        tools=tuple(snapshot.tools),
         branch_mode="append_reuse",
+        cache_probe_context=probe_context,
+    )
+
+
+async def _rebuild_session_snapshot(db, scope: MemoryScope, session_id: int, model_cfg, messages):
+    """无可复用运行时快照时，按 Web idle 重建规则恢复完整 session 前缀。"""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from agent.capabilities.defaults import DEFAULT_PROMPT_NAME
+    from agent.context.dynamic_tail import current_date_text
+    from agent.context.history import build_history_parts
+    from agent.context.loaders import load_style_prefs, load_user_tz
+    from agent.context.session_history import load_session_history
+    from agent.context.session_snapshot import history_baseline
+    from agent.context.session_system import build_static_prompt
+    from agent.llm.llm_select import use_anthropic_for
+    from app.models import ConversationSession, User
+
+    session = (await db.execute(
+        select(ConversationSession).where(
+            ConversationSession.id == int(session_id),
+            ConversationSession.user_id == scope.owner_user_id,
+            ConversationSession.source == scope.platform,
+            ConversationSession.bot_id == scope.bot_id,
+        )
+    )).scalars().first()
+    if session is None or session.execution_state not in (None, "idle"):
+        return None
+    if int(session.pending_message_count or 0) > 0:
+        return None
+    if scope.scope_type == "group":
+        if session.chat_type != "group" or session.chat_id != scope.scope_id:
+            return None
+    else:
+        from agent.memory.scopes import split_member_scope_id
+
+        group_id, member_id = split_member_scope_id(scope.scope_id)
+        if group_id:
+            if session.chat_type != "group" or session.chat_id != group_id:
+                return None
+        elif session.chat_type == "group" or session.platform_user_id != member_id:
+            return None
+
+    history = await load_session_history(db, int(session_id), history_baseline(session))
+    if not history:
+        return None
+    owner = await db.get(User, scope.owner_user_id)
+    owner_name = (owner.display_name or owner.username) if owner else ""
+    user_name = (messages[-1].platform_user_name if messages else "") or owner_name
+    user_tz = await load_user_tz(db, scope.owner_user_id)
+    system_prompt = build_static_prompt(
+        DEFAULT_PROMPT_NAME,
+        user_name,
+        style_prefs=await load_style_prefs(db, scope.owner_user_id),
+        current_date=current_date_text(user_tz),
+    )
+    request = SimpleNamespace(
+        chat_id=session.chat_id,
+        user_name=user_name,
+        platform_user_id=session.platform_user_id,
+        platform_user_name=user_name,
+        im_role="owner",
+    )
+    history_parts = build_history_parts(
+        history, request, use_anthropic=use_anthropic_for(model_cfg), user_tz=user_tz,
+    )
+    return SimpleNamespace(
+        user_id=str(scope.owner_user_id),
+        session_id=int(session_id),
+        run_id=f"im-reflection-idle:{session_id}",
+        system_prompt=system_prompt,
+        ai=model_cfg,
+        tools=(),
+        history=tuple(history_parts),
     )
 
 
@@ -240,7 +362,18 @@ async def _mark_failure(db, job, exc: BaseException) -> None:
     await db.commit()
 
 
-async def execute_job(job_id: int, settings) -> bool:
+async def _defer_job(db, job, now) -> None:
+    """把暂时不能执行的反思任务交回 idle 队列。"""
+    from datetime import timedelta
+
+    job.status = "pending"
+    job.locked_at = None
+    job.next_attempt_at = now + max(IDLE_WINDOW, timedelta(minutes=1))
+    job.updated_at = now
+    await db.commit()
+
+
+async def execute_job(job_id: int, settings, *, snapshot=None) -> bool:
     """在 scope 分布式锁内执行任务，确保同一 scope 严格串行。"""
     from app.models import MemoryReflectionJob
 
@@ -259,7 +392,7 @@ async def execute_job(job_id: int, settings) -> bool:
     if not await lock.acquire(blocking=False):
         return False
     try:
-        return await _execute_job_locked(job_id, settings)
+        return await _execute_job_locked(job_id, settings, snapshot=snapshot)
     finally:
         try:
             await lock.release()
@@ -267,7 +400,7 @@ async def execute_job(job_id: int, settings) -> bool:
             pass
 
 
-async def _execute_job_locked(job_id: int, settings) -> bool:
+async def _execute_job_locked(job_id: int, settings, *, snapshot=None) -> bool:
     """执行单个反思任务；成功返回 True，失败按协议转 retry/dead。"""
     from app.models import MemoryReflectionCursor, MemoryReflectionJob, MemoryEntry, MemorySource
 
@@ -276,7 +409,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
         if not job or job.status in {"completed", "dead"}:
             return False
         now = now_utc()
-        if job.next_attempt_at and job.next_attempt_at > now:
+        if job.next_attempt_at and job.next_attempt_at > now and snapshot is None:
             return False
         job.status = "running"
         job.locked_at = now
@@ -347,6 +480,57 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                     job.from_message_id = max(job.from_message_id or 0, reflected_id + 1)
             phase = "load_messages"
             messages = await _messages_for_job(db, job)
+            if not messages:
+                raise RuntimeError("memory_reflection_empty_scope_messages")
+            phase = "load_session_prefix"
+            session_id = int(messages[-1].session_id)
+            resolved_snapshot = snapshot
+            try:
+                from agent.context.reflection_snapshot import model_identity, peek_reflection_snapshot
+
+                candidate = resolved_snapshot or peek_reflection_snapshot(scope.owner_user_id, session_id)
+                if (candidate and candidate.user_id == str(scope.owner_user_id)
+                        and candidate.session_id == session_id
+                        and model_identity(candidate.ai) == model_identity(run_config.model)):
+                    resolved_snapshot = candidate
+                else:
+                    resolved_snapshot = None
+            except Exception:
+                resolved_snapshot = None
+            if resolved_snapshot is None:
+                resolved_snapshot = await _rebuild_session_snapshot(
+                    db, scope, session_id, run_config.model, messages,
+                )
+            if resolved_snapshot is None:
+                # Match Web owner reflection: if the main session is still active, keep the
+                # task pending; the idle settlement path will retry with persisted history.
+                await _defer_job(db, job, now)
+                return False
+            from agent.context import compress_conv
+
+            reflection_delta = "\n".join(
+                str(getattr(message, "content", "") or "") for message in messages
+            )
+            compaction_status = await compress_conv.compact_for_reflection(
+                session_id,
+                scope.owner_user_id,
+                settings,
+                snapshot=resolved_snapshot,
+                extra_text=reflection_delta,
+                model_cfg=run_config.model,
+            )
+            if compaction_status == "blocked":
+                # 超预算但当前 session 不是可安全写 baseline 的空闲态时，
+                # 不能把旧快照直接送给 provider；交回 idle 队列等待主会话收口。
+                await _defer_job(db, job, now)
+                return False
+            if compaction_status == "compacted":
+                resolved_snapshot = await _rebuild_session_snapshot(
+                    db, scope, session_id, run_config.model, messages,
+                )
+                if resolved_snapshot is None:
+                    await _defer_job(db, job, now)
+                    return False
             if scope.scope_type == "group":
                 # members.json 的 DB 字段独立于下面的 LLM 调用是否成功，见 _merge_members 注释。
                 try:
@@ -376,7 +560,9 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             task_type = job.task_type or "group"
             phase = "reflection_provider"
             branch = await run_reflection_branch(
-                _build_append_branch_input(scope, job, task_type, current, messages),
+                _build_append_branch_input(
+                    scope, job, task_type, current, messages, snapshot=resolved_snapshot,
+                ),
                 settings,
                 max_tokens=5000 if task_type == "member-batch" else 2500,
             )

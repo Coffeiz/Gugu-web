@@ -153,13 +153,9 @@ async def _run_shell(db, user_id, args: dict):
     # 自部署便捷开关：管理员放行普通 Shell 直接执行运行时。只放宽执行器的
     # 解释器限制，不等价于 run_script 的确认门授权——定时任务「仅免确认
     # 命令」的拦截仍按 script_authorized 判定，不能被本开关绕过。
-    direct_runtime_allowed = bool(getattr(sandbox_settings, "shell_direct_runtime_enabled", False))
-    # Autopilot 是服务端确认门授权，不是模型传入的 confirm。提前记录这份
-    # 授权事实，确保危险命令即使没有进入 needs_confirmation 分支，返回到
-    # dispatch 时也不会被运行时绊线误记为 bypassed。
-    confirm_gate_authorized = (
-        decision.autopilot_enabled and decision.risk.value == "dangerous"
-    )
+    direct_runtime_allowed = bool(getattr(sandbox_settings, "full_user_sandbox_authorization_enabled", False))
+    # 只有通过共享确认门后才标记；自动模式同样先经过该门并由门注入 confirm。
+    confirm_gate_authorized = False
     if subject_type == "scheduled_task" and decision.needs_confirmation and not script_authorized:
         return {
             "error": "定时任务只能执行无需交互确认的 sandbox 命令",
@@ -196,6 +192,7 @@ async def _run_shell(db, user_id, args: dict):
             args,
             confirmation_summary,
             user_id,
+            purpose=confirm.ACTION,
             identity=confirmation_identity,
             ttl_minutes=30 if shell_lease else 5,
             instruction=(
@@ -292,6 +289,12 @@ async def _run_shell(db, user_id, args: dict):
             except Exception:
                 await auth_db.rollback()
                 return False
+    # 进程执行可能持续数分钟；不要让工具 dispatcher 的事务和数据库连接
+    # 在等待 sandboxd/宿主机进程期间保持打开。工具 dispatcher 为每次调用创建
+    # 独立 session，因此这里提交的是本次 Shell 的预检状态（如终端 running
+    # 状态和配额对账）；执行完成后的用量与结果事件会开启新的短事务。
+    if db is not None:
+        await db.commit()
     try:
         sandbox_settings = get_settings().sandbox
         if decision.scope.value == "sandbox":
@@ -400,7 +403,7 @@ async def _run_shell(db, user_id, args: dict):
         "_workspace_id": decision.workspace_id,
         "_scope": decision.scope.value,
         "_audit_event": "permission_revoked" if result.permission_revoked else "completed",
-        **({"_confirm_gate_authorized": "shell_autopilot"}
+        **({"_confirm_gate_authorized": "confirmation_gate"}
            if confirm_gate_authorized else {}),
     }
 
@@ -516,9 +519,8 @@ async def _run_script(db, user_id, args: dict):
         # dispatch 的 destructive 绊线误判为未经确认。
         confirm_gate_authorized = True
     else:
-        # run_script 的脚本内容不会进入 Shell 风险分类；使用同一套有效权限
-        # 判定读取 Autopilot。Autopilot 只跳过交互确认，路径、沙盒、配额和
-        # 执行器校验仍由后续 _run_shell 完整执行。
+        # 脚本内容不会进入 Shell 风险分类；仍走共享操作确认门，自动模式只
+        # 自动通过这道门，路径、沙盒、配额和执行器校验仍由后续 _run_shell 完整执行。
         execution_policy = await evaluate(
             db,
             user_id,
@@ -533,18 +535,18 @@ async def _run_script(db, user_id, args: dict):
         )
         if not execution_policy.allowed:
             return {"error": execution_policy.reason, "_audit_event": "denied"}
-        if not execution_policy.autopilot_enabled:
-            blocked = confirm.needs_confirmation(
-                args,
-                f"允许当前会话执行沙盒脚本：{root_name}/{relative.as_posix()}",
-                user_id,
-                identity=f"run-script:{current_dispatch_session_id()}:{root_name}",
-                ttl_minutes=5,
-                instruction="脚本可能修改沙盒文件；用户确认后才会执行，届时服务端会继续执行本次调用，你无需再次调用本工具。",
-            )
-            if blocked is not None:
-                return {"error": blocked, "_audit_event": "confirmation_required"}
-        # 用户确认或服务端 Autopilot 均已通过 run_script 自己的确认门；
+        blocked = confirm.needs_confirmation(
+            args,
+            f"允许当前会话执行沙盒脚本：{root_name}/{relative.as_posix()}",
+            user_id,
+            purpose=confirm.ACTION,
+            identity=f"run-script:{current_dispatch_session_id()}:{root_name}",
+            ttl_minutes=5,
+            instruction="脚本可能修改沙盒文件；用户确认后才会执行，届时服务端会继续执行本次调用，你无需再次调用本工具。",
+        )
+        if blocked is not None:
+            return {"error": blocked, "_audit_event": "confirmation_required"}
+        # 用户确认或自动模式均已通过 run_script 自己的确认门；
         # 该状态需要传回外层 dispatch，避免内部复制的 args 导致误报。
         confirm_gate_authorized = True
     environment = {
@@ -568,7 +570,7 @@ async def _run_script(db, user_id, args: dict):
         "_session_id": args.get("_session_id") or current_dispatch_session_id(),
     })
     if isinstance(result, dict) and confirm_gate_authorized:
-        result["_confirm_gate_authorized"] = "shell_autopilot"
+        result["_confirm_gate_authorized"] = "confirmation_gate"
     return result
 
 

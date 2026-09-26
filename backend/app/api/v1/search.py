@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.core.security import get_current_user
 from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
-    User, Project, File, Folder, CalendarEvent, Client, MindNode, UserSkill,
+    User, Project, File, Folder, CalendarEvent, Client, MindCanvasItem, MindMap, MindNode, UserSkill,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 from app.core.config import get_settings
@@ -39,7 +39,7 @@ MSG_PER_TYPE = 8      # 对话消息扫描条数（合并去重后仍受 per_typ
 SNIPPET_PAD = 24      # 消息片段命中词前后各取多少字
 ROMAJI_SCAN = 200     # 拼音/罗马音搜索时每类最多扫描条数
 
-ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note", "skill", "mcp", "scheduled_task"]
+ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "note", "canvas_note", "skill", "mcp", "scheduled_task"]
 
 # 所有参与全局搜索的文本字段统一在这里登记；新增字段只需补这一张表。
 ROMAJI_FIELDS = {
@@ -49,6 +49,7 @@ ROMAJI_FIELDS = {
     "event": ("title", "description", "client"),
     "client": ("name", "contact", "email", "phone", "notes"),
     "note": ("title", "content_plain"),
+    "canvas_note": ("title", "content_plain"),
     "conversation": ("title",),
     "message": ("content",),
     "skill": ("name", "slug", "description_short", "description_long"),
@@ -361,6 +362,63 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                  # 不能逼调用方猜 version 或先用失败请求探测版本。
                  "version": n.version}
                 for n in rows
+            ]})
+
+    # ── 画布便签：使用独立结果类型，点击时可带画布 ID 定位；索引尚未覆盖此来源，始终走 ILIKE。 ──
+    if wanted is None or "canvas_note" in wanted:
+        rows = list((await db.execute(  # orm-exempt: 全局搜索画布便签读取待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
+            select(MindNode, MindCanvasItem.canvas_id)  # orm-exempt: 全局搜索画布便签读取待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
+            .join(MindCanvasItem, MindCanvasItem.node_id == MindNode.id)
+            .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
+            .where(
+                MindNode.user_id == uid,
+                MindNode.kind == "canvas_note",
+                MindNode.deleted_at.is_(None),
+                MindCanvasItem.user_id == uid,
+                MindCanvasItem.deleted_at.is_(None),
+                MindMap.user_id == uid,
+                keyword_condition([MindNode.title, MindNode.content_plain], search_queries, mode),
+            )
+            .order_by(
+                keyword_score([MindNode.title, MindNode.content_plain], search_queries).desc(),
+                case(
+                    (func.lower(MindNode.title) == q.lower(), 0),
+                    (func.lower(MindNode.title).like(f"{q.lower()}%"), 1),
+                    (MindNode.title.ilike(f"%{q}%"), 2),
+                    else_=3,
+                ),
+                MindNode.updated_at.desc(), MindNode.id.desc(),
+            ).limit(per_type)
+        )).all())
+        if use_romaji and len(rows) < per_type:
+            seen = {node.id for node, _ in rows}
+            scan = (await db.execute(  # orm-exempt: 全局搜索画布便签拼音扫描待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
+                select(MindNode, MindCanvasItem.canvas_id)  # orm-exempt: 全局搜索画布便签拼音扫描待 Mind service 收口（当前用户过滤）（1.1.2 遗留）
+                .join(MindCanvasItem, MindCanvasItem.node_id == MindNode.id)
+                .join(MindMap, MindMap.id == MindCanvasItem.canvas_id)
+                .where(
+                    MindNode.user_id == uid, MindNode.kind == "canvas_note",
+                    MindNode.deleted_at.is_(None), MindCanvasItem.user_id == uid,
+                    MindCanvasItem.deleted_at.is_(None),
+                    MindMap.user_id == uid,
+                )
+                .order_by(MindNode.updated_at.desc(), MindNode.id.desc())
+                .limit(ROMAJI_SCAN)
+            )).all()
+            for node, canvas_id in scan:
+                if node.id not in seen and _romaji_matches_object(node, "canvas_note", search_queries, language):
+                    rows.append((node, canvas_id)); seen.add(node.id)
+                    if len(rows) >= per_type:
+                        break
+        if rows:
+            groups.append({"type": "canvas_note", "label": "画布便签", "items": [
+                {
+                    "id": node.id,
+                    "title": node.title or _snippet_for_queries(node.content_plain, search_queries) or "无标题便签",
+                    "subtitle": _snippet_for_queries(node.content_plain, search_queries),
+                    "canvas_id": canvas_id,
+                }
+                for node, canvas_id in rows
             ]})
 
     # ── 对话：会话标题 + 消息正文（合并去重，正文命中给片段）──

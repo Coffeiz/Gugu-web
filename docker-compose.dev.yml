@@ -21,6 +21,43 @@ x-json-file-logging: &json-file-logging
     max-size: "50m"
     max-file: "3"
 
+x-squid-config-command: &squid-config-command
+  - |
+    cat > /etc/squid/squid.conf <<'SQUID_CONF'
+    http_port 3128
+    cache deny all
+    acl SSL_ports port 443
+    acl Safe_ports port 80 443
+    acl CONNECT method CONNECT
+    acl private_dst dst 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 0.0.0.0/8
+    acl private_dst6 dst ::1/128 fc00::/7 fe80::/10
+    http_access deny !Safe_ports
+    http_access deny CONNECT !SSL_ports
+    http_access deny private_dst
+    http_access deny private_dst6
+    http_access allow all
+    via off
+    forwarded_for delete
+    request_header_access X-Forwarded-For deny all
+    request_header_access Via deny all
+    SQUID_CONF
+    exec /usr/sbin/squid -N -d 1
+
+configs:
+  searxng-settings:
+    content: |
+      # Compose 内置 SearXNG 配置；JSON 是 Gugu web_search/image_search 的必需格式。
+      use_default_settings: true
+
+      server:
+        secret_key: "gugu-compose-dev-change-me"
+        limiter: false
+
+      search:
+        formats:
+          - html
+          - json
+
 x-gugu-data-mount: &gugu-data-mount
   type: bind
   source: ${GUGU_DATA_HOST_DIR:-./Gugu-data}
@@ -70,8 +107,9 @@ services:
     image: searxng/searxng:latest
     ports:
       - "127.0.0.1:8888:8080"
-    volumes:
-      - ./searxng:/etc/searxng:rw
+    configs:
+      - source: searxng-settings
+        target: /etc/searxng/settings.yml
     environment:
       SEARXNG_BASE_URL: http://localhost:8888/
       UWSGI_WORKERS: 1
@@ -85,8 +123,8 @@ services:
     profiles: [sandbox]
     logging: *json-file-logging
     image: ubuntu/squid:latest
-    volumes:
-      - ./squid/egress.conf:/etc/squid/squid.conf:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: *squid-config-command
     networks:
       - default
       - egress_internal
@@ -190,8 +228,6 @@ services:
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
-      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
-      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
       LOOPSCOPE_ENABLED: "1"
       LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
@@ -248,8 +284,6 @@ services:
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
-      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
-      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
       LOOPSCOPE_ENABLED: "1"
       LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
@@ -323,7 +357,11 @@ services:
       args:
         - PIP_INDEX_URL
         - GUGU_INSTALL_DOCKER_CLI=true
-    command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        sh /usr/local/bin/gugu-sandbox-init.sh
+        exec python -m agent.sandbox.sandboxd --socket /run/gugu/sandboxd.sock --allowed-root /data/users
     # sandboxd 通过 Unix socket 提供服务，不是监听 HTTP 的 backend。
     healthcheck:
       test: ["CMD-SHELL", "test -S \"$${GUGU_SANDBOXD_SOCKET}\""]
@@ -347,65 +385,20 @@ services:
       SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
-      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
-      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
+      GUGU_SANDBOX_IMAGE_DIGEST_FILE: /run/gugu/sandbox-image-digest
     volumes:
       - *gugu-data-mount
-      - sandbox_socket:/run/gugu
-    depends_on:
-      sandbox-bootstrap:
-        condition: service_completed_successfully
-      migrate:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  # 一次性引导：沙盒兄弟容器实际运行在 GUGU_DOCKER_SOCKET 指向的 daemon，compose 建
-  # 的网络/容器在该 daemon 是别的 daemon 时不可见（典型：rootless docker）。此服务确保
-  # 目标 daemon 上有沙盒所需镜像、egress 内部网络与 squid 代理；默认 rootful 单 daemon
-  # 部署下各项已由 compose 提供，脚本自动全部跳过；已有 bootstrap marker 时也会跳过。
-  sandbox-bootstrap:
-    profiles: [sandbox]
-    logging: *json-file-logging
-    build:
-      context: ./backend
-      args:
-        - PIP_INDEX_URL
-        - GUGU_INSTALL_DOCKER_CLI=true
-    # 清空镜像 entrypoint：backend 的 docker-entrypoint.sh 会等库+跑迁移，与 migrate
-    # 服务并发有竞态；bootstrap 只准备沙盒 daemon 资源、不碰数据库，直接执行脚本。
-    entrypoint: []
-    command: ["sh", "/usr/local/bin/gugu-sandbox-init.sh"]
-    # 一次性引导任务不提供 Web 服务。
-    healthcheck:
-      disable: true
-    env_file:
-      - ./backend/.env
-    environment:
-      DOCKER_HOST: unix:///run/gugu/docker.sock
-      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
-      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
-      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
-      # 宿主 daemon 视角的数据根：沙盒 bind src 按它把容器内 /data/users 翻译成宿主路径
-      SANDBOX__HOST_DATA_ROOT: ${GUGU_DATA_HOST_DIR:-${PWD}/Gugu-data}/users
-    # 故意不默认挂宿主 rootful socket：rootless-only 主机没有 /var/run/docker.sock，
-    # 挂了会让 compose 直接起不来；镜像缺失时脚本退化为 rootless 直接 pull。
-    # rootless 无法拉镜像的机器可自行在 override 里把 rootful socket 只读挂进
-    # /var/run/docker.sock，脚本会自动改走 save|load 搬运。
-    volumes:
       - sandbox_socket:/run/gugu
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
-      - ./squid/egress.conf:/config/squid/egress.conf:ro
       - ./backend/scripts/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
-      - *gugu-data-mount
       - /etc/passwd:/host/etc/passwd:ro
       - /etc/subuid:/host/etc/subuid:ro
       - /etc/subgid:/host/etc/subgid:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
-    restart: "no"
+    restart: unless-stopped
 
   frontend:
     logging: *json-file-logging

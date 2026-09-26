@@ -29,6 +29,7 @@
         <div><span>{{ t('adminSandbox.executor') }}</span><strong>{{ status.executor_ready ? t('adminSandbox.canUse') : t('adminSandbox.cannotUse') }}</strong></div>
       </div>
       <p v-if="!canEnable && !status.enabled" class="status-note">{{ t('adminSandbox.cannotEnable') }}</p>
+      <p v-if="status.rootless === false && !status.rootless_required" class="status-note">{{ t('adminSandbox.configHint') }}</p>
       <p v-if="status.enabled" class="status-note">{{ t('adminSandbox.stoppedNotice') }}</p>
       </div>
     </section>
@@ -45,16 +46,8 @@
       <div class="config-row"><span>{{ t('adminSandbox.ephemeralQuota') }}</span><strong>{{ formatBytes(status.ephemeral_quota_bytes) }}</strong></div>
       <div class="config-row"><span>{{ t('adminSandbox.networkPolicy') }}</span><strong>{{ status.network_profile === 'none' ? t('adminSandbox.offline') : status.network_profile }}</strong></div>
       <div class="config-row config-row-switch">
-        <div class="config-row-copy"><span>{{ t('adminSandbox.codeExecution') }}</span><small>{{ t('adminSandbox.codeExecutionHint') }}</small></div>
-        <ToggleSwitch :model-value="status.code_execution_enabled" :disabled="codeExecutionSaving" :aria-label="t('adminSandbox.codeExecution')" @update:model-value="toggleCodeExecution" />
-      </div>
-      <div class="config-row config-row-switch">
-        <div class="config-row-copy"><span>{{ t('adminSandbox.shellDirectRuntime') }}</span><small>{{ t('adminSandbox.shellDirectRuntimeHint') }}</small></div>
-        <ToggleSwitch :model-value="status.shell_direct_runtime_enabled" :disabled="shellDirectRuntimeSaving" :aria-label="t('adminSandbox.shellDirectRuntime')" @update:model-value="toggleShellDirectRuntime" />
-      </div>
-      <div class="config-row config-row-switch">
-        <div class="config-row-copy"><span>{{ t('adminSandbox.filesystemAuthorization') }}</span><small>{{ t('adminSandbox.filesystemAuthorizationHint') }}</small></div>
-        <ToggleSwitch :model-value="status.filesystem_authorization_enabled" :disabled="filesystemAuthorizationSaving" :aria-label="t('adminSandbox.filesystemAuthorization')" @update:model-value="toggleFilesystemAuthorization" />
+        <div class="config-row-copy"><span>{{ t('adminSandbox.fullUserSandboxAuthorization') }}</span><small>{{ t('adminSandbox.fullUserSandboxAuthorizationHint') }}</small></div>
+        <ToggleSwitch :model-value="status.full_user_sandbox_authorization_enabled" :disabled="fullUserSandboxAuthorizationSaving" :aria-label="t('adminSandbox.fullUserSandboxAuthorization')" @update:model-value="toggleFullUserSandboxAuthorization" />
       </div>
       <div class="config-row terminal-mode-row">
         <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint') }}</small></div>
@@ -109,15 +102,14 @@ import { useI18n } from 'vue-i18n'
 
 type SandboxStatus = {
   enabled: boolean
-  filesystem_authorization_enabled: boolean
-  code_execution_enabled: boolean
-  shell_direct_runtime_enabled: boolean
+  full_user_sandbox_authorization_enabled: boolean
   terminal_mode: 'auto' | 'pty_disabled' | 'entry_disabled'
   terminal_entry_enabled: boolean
   pty_enabled: boolean
   docker_installed: boolean
   docker_daemon_ready: boolean
   rootless: boolean | null
+  rootless_required: boolean
   image_ready: boolean
   executor_ready: boolean
   state: string
@@ -141,14 +133,12 @@ const { t } = useI18n()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
-const status = reactive<SandboxStatus>({ enabled: false, filesystem_authorization_enabled: false, code_execution_enabled: true, shell_direct_runtime_enabled: false, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 0, network_profile: 'none', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
+const status = reactive<SandboxStatus>({ enabled: true, full_user_sandbox_authorization_enabled: true, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, rootless_required: false, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 1073741824, network_profile: 'egress', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
 const quotaDraft = reactive({ persistentMb: 512, ephemeralMb: 1024 })
 const quotaSaving = ref(false)
 const quotaMessage = ref('')
 const quotaError = ref(false)
-const filesystemAuthorizationSaving = ref(false)
-const codeExecutionSaving = ref(false)
-const shellDirectRuntimeSaving = ref(false)
+const fullUserSandboxAuthorizationSaving = ref(false)
 const terminalModeSaving = ref(false)
 const terminalModeDraft = ref<SandboxStatus['terminal_mode']>('auto')
 const terminalModeOptions = computed(() => [
@@ -161,7 +151,7 @@ const egressTesting = ref(false)
 const proxyDraft = ref('')
 const egressMessage = ref('')
 const egressError = ref(false)
-const canEnable = computed(() => status.docker_installed && status.docker_daemon_ready && status.rootless === true && status.image_ready)
+const canEnable = computed(() => status.docker_installed && status.docker_daemon_ready && (!status.rootless_required || status.rootless === true) && status.image_ready)
 const egressHint = computed(() => {
   if (status.egress_config_error) return status.egress_config_error
   if (!status.egress_proxy_configured) return t('adminSandbox.proxyNotConfigured')
@@ -202,51 +192,21 @@ async function toggleEgress(enabled: boolean) {
   } finally { egressSaving.value = false }
 }
 
-async function toggleFilesystemAuthorization(enabled: boolean) {
-  const previousValue = status.filesystem_authorization_enabled
-  status.filesystem_authorization_enabled = enabled
-  filesystemAuthorizationSaving.value = true
+async function toggleFullUserSandboxAuthorization(enabled: boolean) {
+  const previousValue = status.full_user_sandbox_authorization_enabled
+  status.full_user_sandbox_authorization_enabled = enabled
+  fullUserSandboxAuthorizationSaving.value = true
   try {
-    await configStore.saveConfig({ sandbox: { filesystem_authorization_enabled: enabled } })
+    await configStore.saveConfig({ sandbox: {
+      full_user_sandbox_authorization_enabled: enabled,
+    } })
     if (configStore.saveError) throw new Error(configStore.saveError)
     await loadStatus()
   } catch (cause) {
-    status.filesystem_authorization_enabled = previousValue
+    status.full_user_sandbox_authorization_enabled = previousValue
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
-    filesystemAuthorizationSaving.value = false
-  }
-}
-
-async function toggleCodeExecution(enabled: boolean) {
-  const previousValue = status.code_execution_enabled
-  status.code_execution_enabled = enabled
-  codeExecutionSaving.value = true
-  try {
-    await configStore.saveConfig({ sandbox: { code_execution_enabled: enabled } })
-    if (configStore.saveError) throw new Error(configStore.saveError)
-    await loadStatus()
-  } catch (cause) {
-    status.code_execution_enabled = previousValue
-    error.value = cause instanceof Error ? cause.message : String(cause)
-  } finally {
-    codeExecutionSaving.value = false
-  }
-}
-
-async function toggleShellDirectRuntime(enabled: boolean) {
-  const previousValue = status.shell_direct_runtime_enabled
-  status.shell_direct_runtime_enabled = enabled
-  shellDirectRuntimeSaving.value = true
-  try {
-    await configStore.saveConfig({ sandbox: { shell_direct_runtime_enabled: enabled } })
-    if (configStore.saveError) throw new Error(configStore.saveError)
-    await loadStatus()
-  } catch (cause) {
-    status.shell_direct_runtime_enabled = previousValue
-    error.value = cause instanceof Error ? cause.message : String(cause)
-  } finally {
-    shellDirectRuntimeSaving.value = false
+    fullUserSandboxAuthorizationSaving.value = false
   }
 }
 

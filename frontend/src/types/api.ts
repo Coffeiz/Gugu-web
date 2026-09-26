@@ -5981,12 +5981,10 @@ export interface components {
              */
             shellDangerousEnabled: boolean;
             /**
-             * Shellautopilotenabled
+             * Automaticmodeenabled
              * @default false
              */
-            shellAutopilotEnabled: boolean;
-            /** Unlimitedmode */
-            unlimitedMode: boolean;
+            automaticModeEnabled: boolean;
             /**
              * Showtoolinteractions
              * @default false
@@ -6059,10 +6057,8 @@ export interface components {
             shellSystemEnabled?: boolean | null;
             /** Shelldangerousenabled */
             shellDangerousEnabled?: boolean | null;
-            /** Shellautopilotenabled */
-            shellAutopilotEnabled?: boolean | null;
-            /** Unlimitedmode */
-            unlimitedMode?: boolean | null;
+            /** Automaticmodeenabled */
+            automaticModeEnabled?: boolean | null;
             /** Showtoolinteractions */
             showToolInteractions?: boolean | null;
             showIntermediateReplies?: boolean | null;
@@ -14467,6 +14463,8 @@ export interface operations {
             query?: {
                 lines?: number;
                 source?: string | null;
+                cursor?: string | null;
+                query?: string | null;
             };
             header?: never;
             path?: never;

@@ -200,7 +200,7 @@
                   </span>
                   <span class="lr-text">{{ file.stageName || '—' }}</span>
                   <span class="lr-text">{{ file.size }}</span>
-                  <span class="lr-text">{{ file.createdAt }}</span>
+                  <span class="lr-text">{{ formatFileCreatedDate(file.createdAt) }}</span>
                   <span class="lr-actions">
                     <Transition name="sel-cb">
                       <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
@@ -278,6 +278,7 @@ import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vu
 import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.vue'
 import ProjectFileToolbar from '@/views/Projects/components/ProjectFileToolbar.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/shared/useLazyThumb'
+import { formatFileCreatedDate } from '@/utils/fileDate'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { t } = useI18n()

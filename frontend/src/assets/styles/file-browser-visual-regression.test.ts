@@ -22,8 +22,10 @@ const componentRefinements = load('./component-theme-refinements.css')
 const componentSurfaces = load('./tokens/components/surfaces.css')
 const productCss = load('./tokens/product.css')
 const surfacesAdoption = load('./adoption/surfaces.css')
+const interactiveSurfaceFixes = load('./tokens/interactive-surface-fixes.css')
 const formsAdoption = load('./adoption/forms.css')
 const projectAdoption = load('./adoption/project.css')
+const closeButton = load('../../components/common/overlays/CloseButton.vue')
 const runtimeAdoption = load('./adoption/runtime.css')
 const browserPanel = load('../../components/common/file-browser/FileBrowserPanel.vue')
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
@@ -341,12 +343,16 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(fileToolbar).toContain('width: 13px;')
   })
 
-  it('项目 stage 亮色只重映射局部 option token，上传关闭按钮复用通用 control paint', () => {
+  it('共享弹窗关闭按钮使用一致且可见的主题 surface，旧弹窗 paint 规则已移除', () => {
     expect(projectAdoption).toContain("html[data-theme='light'][data-family] .project-modal-root .stages-section .node-circle")
     expect(projectAdoption).toContain("html[data-theme='light'][data-family] .project-modal-root .stages-section .todo-check")
     expect(projectAdoption).toContain("html[data-theme='light'][data-family] .project-modal-root .stages-section .todo-add-btn")
-    expect(surfacesAdoption).toContain('.bm-card:has(.drop-zone) .modal-header .close-btn')
-    expect(surfacesAdoption).toContain('background: var(--control-bg);')
-    expect(surfacesAdoption).toContain('background: var(--control-bg-hover);')
+    expect(closeButton).toContain('background: var(--surface-card-solid);')
+    expect(closeButton).toContain('border: 1px solid var(--content-divider);')
+    expect(closeButton).toContain('background: var(--surface-glass-hover);')
+    expect(projectAdoption).not.toContain('.proj-close-btn')
+    for (const stylesheet of [surfacesAdoption, projectAdoption, fileToolbar, interactiveSurfaceFixes]) {
+      expect(stylesheet).not.toContain('.close-btn')
+    }
   })
 })

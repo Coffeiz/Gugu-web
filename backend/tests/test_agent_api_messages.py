@@ -114,6 +114,24 @@ async def test_get_session_messages_emits_timeline_and_suppresses_tool_events(db
     assert payload["toolEvents"] == []       # timeline 已含工具项，抑制兼容 toolEvents
 
 
+async def test_get_session_messages_backfills_legacy_timeline_files(db, user_a):
+    """旧版只写 assistant.files 的消息也要在时间线中恢复附件卡。"""
+    session = await _mk_session(db, user_a)
+    await _mk_message(db, session.id, "user", "发图")
+    await _mk_message(
+        db, session.id, "assistant", "", display_timeline=[
+            {"kind": "assistant", "text": "图片已发送"},
+        ], files=[{
+            "attach_id": "attachment-1", "name": "结果.png", "ext": "png",
+            "kind": "image",
+        }])
+    await db.commit()
+
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+
+    assert payload["timelineEvents"][-1]["files"][0]["attach_id"] == "attachment-1"
+
+
 async def test_get_session_messages_pairs_tool_events_within_window(db, user_a):
     session = await _mk_session(db, user_a)
     await _mk_message(db, session.id, "user", "帮我抓个网页")
