@@ -384,6 +384,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           APP_DIGEST: ${{ steps.digests.outputs.hub_app }}
+          BACKEND_DIGEST: ${{ steps.digests.outputs.hub_backend }}
+          FRONTEND_DIGEST: ${{ steps.digests.outputs.hub_frontend }}
           GIT_SHA: ${{ github.sha }}
         run: |
           mkdir -p release
