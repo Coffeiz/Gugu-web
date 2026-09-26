@@ -160,7 +160,8 @@ docker restart gugu-web-main-nginx-1
 
 ### Shell 沙盒前置（首次部署或迁移时）
 
-沙盒容器由 backend 通过 docker.sock 作为**兄弟容器**启动，`--mount src=.../users/<uid>/shell`
+沙盒容器由 `sandboxd` 通过 Docker socket 作为**兄弟容器**启动；backend 只通过受限 Unix
+socket IPC 请求沙盒执行，不直接持有 Docker socket。`--mount src=.../users/<uid>/shell`
 由**宿主机 daemon** 解析，所以宿主机需要看到与容器内一致的 `Gugu-data` 路径。Compose
 会把 `GUGU_DATA_HOST_DIR` 直接 bind 到容器的 `/data`，未设置时按 Compose 文件目录解析为
 `Gugu-data`，首次启动会自动创建。启用 `sandbox` profile 时，`sandboxd` 会在启动前自动为每个用户的

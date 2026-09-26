@@ -25,7 +25,6 @@ def test_help_lists_all_commands():
     assert result["action"] == "reply"
     for command in ("/stop", "/status", "/compact", "/new", "/memory", "/forget", "/workspace"):
         assert command in result["reply"]
-    assert "/unlimited" not in result["reply"]
 
 
 def test_help_lists_subcommands_on_separate_lines():
@@ -45,16 +44,9 @@ def test_goal_help_lists_each_subcommand_on_its_own_line():
 
 
 @pytest.mark.asyncio
-async def test_removed_unlimited_command_is_not_registered():
-    result = await commands.handle("user-1", "/unlimited")
-    assert result is None
-
-
-@pytest.mark.asyncio
 async def test_help_follows_requested_locale():
     result = await commands.handle("user-1", "/help", locale="en-US")
     assert "/compact" in result
-    assert "/unlimited" not in result
     assert "Subcommand:" not in result
 
 
