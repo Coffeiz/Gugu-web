@@ -82,4 +82,10 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
   assert.match(publishJob, /cosign sign --yes --registry-referrers-mode=oci-1-1 "\$\{DOCKERHUB_BACKEND_IMAGE_REPOSITORY\}@\$\{BACKEND_DIGEST\}"/)
   assert.match(publishJob, /cosign sign --yes --registry-referrers-mode=oci-1-1 "\$\{DOCKERHUB_FRONTEND_IMAGE_REPOSITORY\}@\$\{FRONTEND_DIGEST\}"/)
   assert.match(publishJob, /GIT_SHA:\s*\$\{\{\s*github\.sha\s*\}\}/, 'manifest 仍应记录构建 commit SHA')
+
+  const manifestStep = publishJob.split('- name: Generate update manifest')[1]?.split('\n      - name:')[0] ?? ''
+  assert.match(manifestStep, /BACKEND_DIGEST:\s*\$\{\{\s*steps\.digests\.outputs\.hub_backend\s*\}\}/,
+    '生成更新清单必须注入 Docker Hub backend digest')
+  assert.match(manifestStep, /FRONTEND_DIGEST:\s*\$\{\{\s*steps\.digests\.outputs\.hub_frontend\s*\}\}/,
+    '生成更新清单必须注入 Docker Hub frontend digest')
 })
