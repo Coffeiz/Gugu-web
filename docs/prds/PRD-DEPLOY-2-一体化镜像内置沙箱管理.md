@@ -61,7 +61,7 @@ Shell、PTY 与 MCP stdio 按现有协议经 `sandboxd` 创建临时子容器，
 
 | 模式 | 管理器位置 | Docker 权限 | Rootless 要求 | Shell 不可用时 |
 |---|---|---|---|---|
-| `embedded`（一体化） | `gugu-web` 容器内的独立 `sandboxd` 进程 | 一体化容器需要宿主 Docker Socket；默认可用 Rootful Docker | 默认不强制；状态中明确展示 Rootful/Rootless | 返回明确未就绪状态，绝不回退本地执行 |
+| `embedded`（一体化） | `gugu-web` 容器内的独立 `sandboxd` 进程 | 一体化容器需要宿主 Docker Socket | Rootful 是首发验收基线；单容器 Rootless 不作为本期要求 | 返回明确未就绪状态，绝不回退本地执行 |
 | `external`（分体业务） | 独立 `sandboxd` 服务/进程 | 仅 `sandboxd` 持有 Rootless Docker Socket；backend/worker/gateway 仅访问窄 Unix Socket | 强制 Rootless | 拒绝执行，不回退到 backend Docker 或本机执行器 |
 | `disabled` | 不启动 | 不提供 | 不适用 | Shell 显示管理员关闭或沙箱未配置 |
 
@@ -69,7 +69,7 @@ Shell、PTY 与 MCP stdio 按现有协议经 `sandboxd` 创建临时子容器，
 
 ### FR-DEPLOY2-005：单容器一体化部署前置条件与状态
 
-官方 `docker run` 单容器部署只要求提供 Gugu-web 镜像、端口、持久 `/data`（及用户选择的配置挂载）和宿主 Docker Socket；启动模板负责设置 `GUGU_SANDBOX_MANAGER_MODE=embedded`、`SANDBOX__ENABLED=true` 和 `DOCKER_HOST`，用户不需要编写额外 Compose 文件。启动后无需另行部署或拉取 sandboxd、egress 服务或 Sandbox runtime 镜像即可使用 Shell。需要 SearXNG 等附加服务时，Compose 只负责这些可选服务的编排/打包；Shell 在没有 Compose 或所有附加服务关闭时也必须可用。Rootless Socket 可作为进阶选项，Rootful Docker 是便捷默认并明确承担 Docker Socket 的高权限风险。缺少 Socket、daemon 不可达、Rootless 策略不满足、bundle 校验失败、网络初始化失败或镜像未加载时，站点及数据库不因此被破坏；Admin 沙箱状态必须区分运行模式、daemon/rootless 状态、执行镜像加载状态和可操作失败原因。
+官方 `docker run` 单容器部署只要求提供 Gugu-web 镜像、端口、持久 `/data`（及用户选择的配置挂载）和宿主 Docker Socket；启动模板负责设置 `GUGU_SANDBOX_MANAGER_MODE=embedded`、`SANDBOX__ENABLED=true` 和 `DOCKER_HOST`，用户不需要编写额外 Compose 文件。启动后无需另行部署或拉取 sandboxd、egress 服务或 Sandbox runtime 镜像即可使用 Shell。需要 SearXNG 等附加服务时，Compose 只负责这些可选服务的编排/打包；Shell 在没有 Compose 或所有附加服务关闭时也必须可用。Rootful Docker 是单容器模式的首发支持基线，明确承担 Docker Socket 的高权限风险；单容器 Rootless 不作为本期验收要求。缺少 Socket、daemon 不可达、bundle 校验失败、网络初始化失败或镜像未加载时，站点及数据库不因此被破坏；Admin 沙箱状态必须区分运行模式、daemon 状态、执行镜像加载状态和可操作失败原因。
 
 `network=none` 不依赖外置服务。`network=egress` 继续走现有隔离网络与受控代理，不因容器部署位置改变而直接连接默认 bridge；代理或网络未就绪时拒绝 egress，不能静默放通网络。
 
@@ -171,7 +171,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 - 发布验证：最慢的 app Docker build 与 Sandbox build 并行；轻量组装不重建 app；最终发布 tag 的 config/入口/架构正确，沙箱与代理 manifest 对应 CI 已扫描 artifact，最终 app 被签名，更新清单中的 app digest 与发布 digest 一致。CI 未经用户明确授权不得手动触发。
 - 版本回退：只保证仍支持 `embedded` 的版本之间按常规镜像回退；回退到不含内置管理器的旧拓扑不在兼容承诺内。任何版本回退都不得自动清理宿主 Sandbox 镜像/网络或 `/data`。
 
-## 5. 风险与待确认问题
+## 5. 风险与决策边界
 
 | 风险 | 影响 | 对策 |
 |---|---|---|
@@ -184,6 +184,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 ### 已定决策
 
 - 一体化模式面向个人用户自部署，采用 Rootful Docker 是可接受的易用性取舍；Docker Socket 相当于宿主 Docker 高权限，文档仍须醒目披露。
+- 单容器首发以 Rootful Docker 为验收基线；分体业务部署仍强制 Rootless，单容器 Rootless 不阻塞本期交付。
 - App 镜像体积增加可接受；记录增量但不作为发布阻断条件。
 - 新一体化拓扑由容器内管理器管理 sandbox 与 egress helper；Compose 只打包 SearXNG 等可选附加服务。
 - 不考虑旧 Compose 沙箱拓扑兼容，不实现自动迁移、旧服务接管或跨拓扑回滚。
@@ -202,9 +203,9 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 - [ ] `DEPLOY2-005` 扩展 bundle manifest 并实现 app 内的镜像导入/验证；验收：缺失镜像才导入，校验 digest/image ID，重复启动幂等；错误 bundle 使 Shell 未就绪且绝不在线拉取替代镜像。
 - [ ] `DEPLOY2-006` 将已扫描的 Sandbox 与 egress runtime artifact 嵌入一体化 app 镜像；验收：无独立镜像 pull 也能完成 Shell smoke；最终镜像 metadata、entrypoint 与平台保持原样，记录体积增量。
 - [ ] `DEPLOY2-007` 改造 Docker release pipeline，在 app/Sandbox 构建保持并行的前提下组装最终镜像；验收：发布与 updater manifest 指向含 bundle 的最终 digest；扫描对象、签名对象与发布对象可验证对应。
-- [ ] `DEPLOY2-008` 调整离线发布包、可选附加服务 Compose 与旧版 Compose 迁移；验收：离线包不重复打包 runtime；新 Compose 不再定义 sandboxd/egress-proxy；旧部署升级先停旧 sandboxd 再启动 embedded manager；回滚旧版本可恢复独立服务。
+- [ ] `DEPLOY2-008` 调整离线发布包和可选附加服务 Compose；验收：离线包不重复打包 runtime；新 Compose 不定义 sandboxd/egress-proxy，Shell 不依赖 Compose；不实现旧 Compose 拓扑自动迁移或回滚。
 
 ### Phase 3：安全验收和用户文档
 
 - [ ] `DEPLOY2-009` 补齐 embedded/external 安全与运行回归测试；验收：Rootful integrated 成功、Rootless business 成功、Rootful business 拒绝、Docker 不可用时无本地回退、network none/egress 隔离测试通过。
-- [ ] `DEPLOY2-010` 更新 DEPLOY-1、Shell 部署文档和中英文快速开始；验收：复制官方单容器命令即可用 Shell，无 Compose/sandboxd/egress 服务依赖；明确 Docker Socket、Rootful 风险、Rootless 可选项、无 Socket 故障表现、附加服务 Compose、升级回滚和业务分体严格边界。
+- [ ] `DEPLOY2-010` 更新 DEPLOY-1、Shell 部署文档和中英文快速开始；验收：复制官方单容器命令即可用 Shell，无 Compose/sandboxd/egress 服务依赖；明确 Docker Socket、Rootful 风险、无 Socket 故障表现、附加服务 Compose、旧拓扑不兼容，以及业务分体严格边界。
