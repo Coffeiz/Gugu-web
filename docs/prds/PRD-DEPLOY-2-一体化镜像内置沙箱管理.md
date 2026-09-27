@@ -202,8 +202,8 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 #### Phase 1.2：Docker 执行链与 egress
 
-- [ ] `DEPLOY2-003` 为一体化配置宿主 Docker Socket 和工作区路径映射；验收：Rootful daemon 可创建只挂 `/data/users` 授权路径的 Sandbox 子容器，Socket 不挂入执行容器。
-- [ ] `DEPLOY2-004` 将现有隔离网络、代理初始化接入 embedded 目标 daemon；验收：network none/egress 行为与 PRD-SHELL-1 一致，代理或 internal network 不可用时 egress 拒绝执行。
+- [x] `DEPLOY2-003` 为一体化配置宿主 Docker Socket 和工作区路径映射；验收：Rootful daemon 从当前容器 `/data` 挂载反查宿主路径，只映射授权数据目录；映射缺失或越界时 fail-closed，Socket 不挂入执行容器。
+- [x] `DEPLOY2-004` 将现有隔离网络、代理初始化接入 embedded 目标 daemon；验收：Shell/PTY 的 `network=none` 与受控 egress 策略保持一致；egress 按需初始化 internal 网络和代理，只接管带 Gugu 标签且安全属性符合预期的资源，初始化/代理/network 不可用时拒绝执行。Sandbox/egress runtime 的离线内置与禁止在线替代拉取由 Phase 1.3 完成。
 
 #### Phase 1.3：内置运行镜像与导入校验
 
