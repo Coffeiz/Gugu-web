@@ -3,5 +3,4 @@
 ARG APP_IMAGE
 FROM ${APP_IMAGE}
 
-COPY --chmod=0444 release/embedded-bundle/runtime-images.tar /opt/gugu/sandbox-bundle/runtime-images.tar
-COPY --chmod=0444 release/embedded-bundle/manifest.json /opt/gugu/sandbox-bundle/manifest.json
+COPY --chmod=0444 runtime-images.tar manifest.json /opt/gugu/sandbox-bundle/

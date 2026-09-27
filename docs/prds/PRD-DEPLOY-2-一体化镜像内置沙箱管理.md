@@ -147,15 +147,16 @@ docker-compose.offline.yml                               【修改】只覆盖�
 docker-compose.prod.yml                                  【修改】显式 external 模式；继续使用独立 Rootless sandboxd 和 sandbox profile
 .github/workflows/docker-release.yml                     【修改】并行构建后组装、校验、发布含 bundle 的最终 app
 .github/actions/package-embedded-sandbox-bundle/action.yml 【新增】从已扫描 digest 生成并上传短期 runtime artifact
+.github/actions/assemble-embedded-app-candidate/action.yml 【新增】从已有 app 基础镜像组装并验证候选 app
 scripts/release/build-offline-sandbox-bundle.sh          【修改】离线发布包不重复存储 app 已内嵌的 Sandbox/代理镜像
 scripts/release/build_embedded_sandbox_bundle.py         【新增】从已验证的本地镜像生成内置 runtime bundle 和 manifest
 scripts/release/verify_embedded_app_image.py             【新增】验证候选 app 保留配置/平台并只追加 bundle 层
-backend/tests/test_unified_image_sandbox_boundary.py     【修改】反转当前“app 不内置 Sandbox”的旧断言
+backend/tests/test_unified_image_sandbox_boundary.py     【修改】清理过时的“app 不内置 Sandbox”发布断言
 backend/tests/test_docker_runtime.py                     【修改】覆盖 embedded/external 模式、镜像完整性和 fail-closed
 backend/tests/test_offline_bundle.py                     【修改】覆盖内置包缺失、摘要错误、镜像 ID 错误和幂等导入
 scripts/release/test_build_embedded_sandbox_bundle.py    【新增】验证 runtime bundle 镜像/摘要绑定与损坏输入拒绝
 scripts/release/test_verify_embedded_app_image.py        【新增】验证候选镜像配置、层和离线 bundle smoke 的 fail-closed 行为
-scripts/release/embedded-sandbox-image.test.mjs          【新增】验证候选组装层定义及 CI runtime artifact 交接顺序
+scripts/release/embedded-sandbox-image.test.mjs          【新增】验证候选组装定义、镜像验证和 CI runtime artifact 交接
 scripts/release/docker-release-tags.test.mjs              【修改】验证最终带 bundle 镜像签名、tag 和 manifest
 scripts/release/offline-bundle.test.mjs                   【修改】验证离线包不重复附带 Sandbox/代理镜像
 README.md / README_en.md                                 【修改】说明单容器 Shell 前置条件、docker run 模板和 Rootful 风险
@@ -226,7 +227,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 - [x] `DEPLOY2-007a` 增加轻量 app 镜像组装定义，仅从传入的既有 app 镜像追加 Phase 1.4 的只读 bundle 文件；验收：不重跑 app 依赖构建，不改动应用配置、entrypoint、labels 或工作目录。
 
-#### Phase 1.5.2：CI 产物交接与候选镜像验证
+#### Phase 1.5.2：CI runtime artifact 生成与交接
 
 - [x] `DEPLOY2-007b` 将同轮构建且通过 Smoke/Trivy 的 Sandbox 镜像以不可变 digest 传给独立 bundle job；该 job 固定 egress-proxy digest，生成含归档 SHA-256 和镜像 ID 的 Phase 1.4 bundle 并上传短期 CI artifact。验收：app 构建继续与 Sandbox 构建并行；bundle job 仅在 Sandbox job 成功后启动；来源 digest 与被扫描镜像一致；代理扫描、bundle 生成和 artifact 上传均成功。该子阶段不组装或发布 app 镜像。
 
@@ -234,9 +235,13 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 - [ ] `DEPLOY2-007c` 将 Phase 1.5.2 的 artifact 追加到已构建 app 镜像并验证候选；验收：不重跑 app 依赖构建；最终镜像 config、entrypoint、labels、平台不变且只新增 bundle 层；bundle 摘要/image ID 校验及无网络 Shell smoke 通过；记录体积增量；正式 tag/发布动作留到 Phase 4。
 
+#### Phase 1.5.4：正式发布接入已验证候选
+
+- [ ] `DEPLOY2-007d` 让 tag 发布只复制 Phase 1.5.3 已验证的 bundled app 候选；验收：正式版本、签名、updater manifest 均指向同一候选 digest；普通 main 构建不增加临时镜像推送；手动候选不触发正式发布。
+
 #### Phase 1.6：Compose 拓扑收敛
 
-- [ ] `DEPLOY2-008` 调整可选附加服务 Compose；验收：Compose 只编排 SearXNG 等可选附加服务，不定义 `sandboxd`/`egress-proxy`，Shell 不依赖 Compose；不实现旧 Compose 拓扑自动迁移或回滚。
+- [ ] `DEPLOY2-008` 将默认、离线和生产 Compose 一起调整为新拓扑；验收：三份 Compose 只编排 SearXNG 等可选附加服务，生产分体模式显式使用 external manager，不定义 `sandboxd`/`egress-proxy` 生命周期；Shell 不依赖 Compose；不实现旧 Compose 拓扑自动迁移或回滚。三个文件必须作为同一提交更新，避免中间提交留下不一致的部署拓扑。
 
 #### Phase 1.7：离线分发包收敛
 
@@ -244,7 +249,13 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 #### Phase 1.8：集成回归
 
-- [ ] `DEPLOY2-010` 补齐自动化安全与运行回归测试；验收：Rootful embedded、Rootless external、Rootful external 拒绝、Docker 不可用时无本地回退、`network=none`/受控 egress、bundle 校验和容器清理测试通过。
+##### Phase 1.8.1：模式矩阵与启动故障回归
+
+- [ ] `DEPLOY2-010a` 补齐 embedded/external/disabled 模式矩阵、入口生命周期和 fail-closed 回归；验收：Rootful embedded、Rootless external 正常；Rootful external 拒绝；Docker/socket/bundle 不可用时无本地回退，并保持 Web/数据库健康。
+
+##### Phase 1.8.2：执行隔离与资源清理回归
+
+- [ ] `DEPLOY2-010b` 补齐 Sandbox 执行与 egress 安全边界回归；验收：`network=none`、受控 egress、bundle digest/image ID、临时容器清理，以及执行容器不可访问 Docker Socket 的测试通过。
 
 ### Phase 2：在 fnOS 部署测试候选一体化容器
 

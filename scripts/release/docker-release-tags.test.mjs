@@ -6,7 +6,7 @@ const workflowPath = new URL('../../.github/workflows/docker-release.yml', impor
 const composePath = new URL('../../docker-compose.yml', import.meta.url)
 const appDockerfilePath = new URL('../../Dockerfile', import.meta.url)
 
-test('一体化镜像不内嵌 Sandbox，默认 Compose 启动独立沙盒并解析镜像 digest', async () => {
+test('app 基础镜像保持轻量，默认 Compose 启动独立沙盒并解析镜像 digest', async () => {
   const [compose, dockerfile] = await Promise.all([
     readFile(composePath, 'utf8'),
     readFile(appDockerfilePath, 'utf8'),
@@ -47,6 +47,10 @@ test('app 镜像的动态版本元数据不使文件系统层缓存失效', asyn
 test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元数据', async () => {
   const workflow = await readFile(workflowPath, 'utf8')
   const publishJob = workflow.slice(workflow.indexOf('\n  publish:\n'))
+  const dockerBuildJob = workflow.slice(
+    workflow.indexOf('\n  docker-build:\n'),
+    workflow.indexOf('\n  assemble-candidate:\n'),
+  )
 
   // 发布不再重建镜像：publish 从 docker-build 推送的 :ci-<run_id> 纯复制，
   // 保证 trivy 扫过的 digest 与发布的 digest 一致。
@@ -66,10 +70,12 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
   // 稳定版 latest 别名改由 crane tag 打点。
   assert.match(publishJob, /crane tag "\$\{IMAGE_REPOSITORY\}:\$\{VERSION\}" latest/,
     '稳定版需继续更新默认部署使用的 latest 别名')
-  assert.match(workflow, /push: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/,
-    ':ci 中间镜像只在 tag 触发时推送，main/dispatch 运行零额外推送')
-  assert.doesNotMatch(workflow, /bundled-sandbox-runtime|sandbox-image\.tar\.gz|Download bundled sandbox runtime/,
-    '发布流水线不得把 Sandbox bundle 注入一体化 app')
+  assert.match(dockerBuildJob, /push: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \|\| \(github\.event_name == 'workflow_dispatch' && matrix\.name == 'app'\) \}\}/,
+    'tag 构建推送发布候选；手动候选只额外推送 app 基础镜像')
+  assert.match(workflow, /assemble-candidate:/,
+    '候选组装必须独立等待 app 与 bundle 两条流水线完成')
+  assert.match(publishJob, /gugu-web:\$\{CI_SUFFIX\}/,
+    '候选组装阶段先不改变正式发布来源，待下一阶段切换至已验证候选')
 
   assert.match(publishJob, /uses: sigstore\/cosign-installer@v4\.1\.2\s+with:\s+cosign-release: v3\.1\.3/)
   // cosign 3.x 的 oci-1-1 referrers 模式在实验开关后面，缺 env 直接报 invalid argument

@@ -35,14 +35,6 @@ def test_default_compose_starts_sandbox_services_without_profile_and_resolves_di
     assert compose.count("/run/gugu/sandbox-image-digest") >= 2
 
 
-def test_release_pipeline_no_longer_packages_sandbox_into_unified_image():
-    workflow = (REPO_ROOT / ".github" / "workflows" / "docker-release.yml").read_text(encoding="utf-8")
-
-    assert "bundled-sandbox-runtime" not in workflow
-    assert "Package sandbox image for the all-in-one image" not in workflow
-    assert "docker save" not in workflow
-
-
 def test_compose_bootstrap_resolves_latest_to_an_immutable_digest():
     bootstrap = (REPO_ROOT / "backend" / "scripts" / "runtime" / "sandbox_rootless_init.sh").read_text(encoding="utf-8")
 

@@ -55,6 +55,7 @@ jobs:
           scripts/release/validate-update-manifest.test.mjs
           scripts/release/compose-update.test.mjs
           scripts/release/docker-release-tags.test.mjs
+          scripts/release/embedded-sandbox-image.test.mjs
           scripts/release/prune-container-tags.test.mjs
 
   sandbox-build:
@@ -203,7 +204,7 @@ jobs:
           persist-credentials: false
 
       - name: Log in to GHCR
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && matrix.name == 'app')
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -213,10 +214,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # tag 触发时使用 :ci-<run_id>，普通分支/手动运行使用本地 tag。
+      # tag 推 :ci；手动候选只推 app 基础镜像，普通 main 不额外推送。
       - name: Resolve local image ref
         id: img
-        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}" >> "$GITHUB_OUTPUT"
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || (github.event_name == 'workflow_dispatch' && matrix.name == 'app' && format('{0}:candidate-base-{1}', matrix.ci_image, github.run_id)) || matrix.tag }}" >> "$GITHUB_OUTPUT"
 
       - name: Build ${{ matrix.name }} image
         uses: docker/build-push-action@v6
@@ -230,9 +231,9 @@ jobs:
           # push 模式下 tags 只能放全限定名：非限定名（gugu-web:ci）会被 buildx 推到
           # docker.io/library，而本 job 只登录 GHCR，401 insufficient scopes
           # （v1.2.3 重打 tag 发布事故 2026-09-16）。
-          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && matrix.name == 'app') }}
           load: true
-          tags: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}
+          tags: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || (github.event_name == 'workflow_dispatch' && matrix.name == 'app' && format('{0}:candidate-base-{1}', matrix.ci_image, github.run_id)) || matrix.tag }}
           no-cache: false
           # 版本 label 必须在构建期带真实 tag：publish 复制不改内容，updater 靠
           # org.opencontainers.image.version 识别当前版本。
@@ -271,6 +272,50 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           skip-files: ${{ (matrix.name == 'backend' || matrix.name == 'app') && '/opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json' || '' }}
+
+  assemble-candidate:
+    name: Assemble and verify bundled app candidate
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [docker-build, sandbox-bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_digest: ${{ steps.assemble.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve base and candidate refs
+        id: refs
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            base_ref="${IMAGE_REPOSITORY}:ci-${GITHUB_RUN_ID}"
+            candidate_ref="${IMAGE_REPOSITORY}:bundled-ci-${GITHUB_RUN_ID}"
+          else
+            base_ref="${IMAGE_REPOSITORY}:candidate-base-${GITHUB_RUN_ID}"
+            candidate_ref="${IMAGE_REPOSITORY}:candidate-${GITHUB_RUN_ID}"
+          fi
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          echo "candidate_ref=$candidate_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble and verify candidate
+        id: assemble
+        uses: ./.github/actions/assemble-embedded-app-candidate
+        with:
+          base-image: ${{ steps.refs.outputs.base_ref }}
+          candidate-image: ${{ steps.refs.outputs.candidate_ref }}
+          bundle-artifact: embedded-runtime-bundle-${{ github.run_id }}
 
   publish:
     name: Publish Docker Hub app and GHCR business images
