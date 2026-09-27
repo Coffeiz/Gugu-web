@@ -11,13 +11,12 @@ from dataclasses import dataclass
 import json
 from typing import Iterable
 
+from .retention import protected_unit_offset
 from .tokens import estimate_tokens, message_text
 
 
 SAFE_BUDGET_RATIO = 0.90
 TRUNCATION_RATIO = 0.95
-RECENT_MESSAGE_FALLBACK_COUNT = 20
-FALLBACK_RECENT_CHARS = 20_000
 
 
 @dataclass(frozen=True)
@@ -194,6 +193,7 @@ class BudgetResult:
     protected_start_index: int | None = None
     anchor_index: int | None = None
     protected_source_start_index: int | None = None
+    previous_protected_start_index: int | None = None
 
 
 def estimate_tool_schema_tokens(tools) -> int:
@@ -296,19 +296,14 @@ def _fit_oversized_message(message: dict, max_tokens: int) -> dict:
 
 
 def _recent_fallback_selection(body: list[dict], fixed_tokens: int, safe_budget: int):
-    """LLM 压缩失败或压缩请求本身超限时，先保留最近 20 条完整消息。
+    """LLM 压缩失败或压缩请求本身超限时，按统一策略保留最近完整单元。
 
     只有这段仍放不进安全预算，才进入更激进的 token 截断；返回 (消息列表, 截断后
     总量)，没有可用的回退时返回 (None, 0)。
     """
-    recent_units: list[list[dict]] = []
-    recent_count = 0
-    for unit in reversed(_units(body)):
-        recent_units.append([body[index] for index in unit])
-        recent_count += len(unit)
-        if recent_count >= RECENT_MESSAGE_FALLBACK_COUNT:
-            break
-    recent_units.reverse()
+    units = _units(body)
+    unit_offset = protected_unit_offset(units)
+    recent_units = [[body[index] for index in unit] for unit in units[unit_offset:]]
     recent = [message for unit in recent_units for message in unit]
     recent_total = fixed_tokens + sum(estimate_tokens(message_text(message)) for message in recent)
     if recent and recent_total <= safe_budget:
@@ -373,7 +368,9 @@ def truncate_messages(
         turn_batch_tokens=extra_tokens,
     )
     before = budget.total_tokens
-    safe_budget = budget.truncation_limit_tokens
+    # provider overflow 已证明当前 payload 不可接受；回退按正常软预算收紧，
+    # 并把工具 schema 等 provider 固定开销计入同一预算，避免仅满足 95% 硬线。
+    safe_budget = min(budget.truncation_limit_tokens, budget.soft_limit_tokens)
     if before <= safe_budget:
         return original, BudgetResult(False, before, before, 0)
 
@@ -390,14 +387,16 @@ def truncate_messages(
         # 仅允许调用方进一步收紧上限，不允许恢复超过 50% 的旧目标。
         ratio = min(0.5, max(0.0, float(target_ratio)))
         target = max(1, int(budget.model_context_tokens * ratio))
-    fixed_tokens = extra_tokens + estimate_tokens(system_text) + sum(
+    fixed_tokens = extra_tokens + max(0, int(overhead_tokens or 0)) + estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in prefix
     )
     fixed_tokens += sum(estimate_tokens(message_text(message)) for message in protected_tail)
 
-    # LLM 压缩失败或压缩请求本身超限时，先保留最近 20 条完整消息；
+    # LLM 压缩失败或压缩请求本身超限时，先按统一策略保留最近 10 个完整单元；
     # 只有这段仍放不进安全预算，才进入下面更激进的 token 截断。
-    recent, recent_total = _recent_fallback_selection(body, fixed_tokens, safe_budget)
+    recent, recent_total = _recent_fallback_selection(
+        body, fixed_tokens, min(safe_budget, target),
+    )
     if recent is not None:
         return prefix + recent + protected_tail, BudgetResult(
             True,
@@ -406,7 +405,9 @@ def truncate_messages(
             max(0, len(original) - len(prefix) - len(recent)),
         )
 
-    available = max(1, min(safe_budget - fixed_tokens, target - fixed_tokens))
+    available = max(1, safe_budget - fixed_tokens)
+    if target > fixed_tokens:
+        available = min(available, target - fixed_tokens)
     kept, oversized = _select_kept_units(body, available)
 
     result = prefix + kept + protected_tail
@@ -458,11 +459,12 @@ def enforce_provider_overflow_fallback(
     *,
     protected_from: int | None = None,
     protected_anchor_index: int | None = None,
+    protected_previous_from: int | None = None,
 ) -> BudgetResult:
     """provider 已明确返回超窗后的无估算兜底。
 
-    这里不把 context_tokens 转换成 token/字符比例，也不估算 system、工具 schema
-    或动态尾部；只按完整工具单元保留最近消息，并限制最近正文的字符数。它仅在
+    这里不估算 system、工具 schema 或动态尾部；保护窗口沿用共享的完整 round
+    单元数量策略，再按 token 硬预算从最旧完整单元开始缩窗。它仅在
     provider overflow 且 LLM 压缩无结果时执行，正常请求不会经过此路径。
     """
     conversation = list(getattr(messages, "conversation", messages))
@@ -470,12 +472,13 @@ def enforce_provider_overflow_fallback(
     prefix = conversation[:prefix_size]
     body = conversation[prefix_size:]
     protected_tail: list[dict] = []
+    previous_protected_tail: list[dict] = []
     anchor_message = None
     anchor_body_index = None
+    relative = len(body)
     if protected_from is not None:
         relative = max(0, int(protected_from) - prefix_size)
         protected_tail = body[relative:]
-        body = body[:relative]
     if protected_anchor_index is not None:
         anchor_body_index = max(0, int(protected_anchor_index) - prefix_size)
         if anchor_body_index >= len(conversation) - prefix_size:
@@ -483,10 +486,15 @@ def enforce_provider_overflow_fallback(
         anchor_message = conversation[prefix_size + anchor_body_index]
         if protected_from is not None and protected_anchor_index >= protected_from:
             return BudgetResult(False, 0, 0, 0)
-        body = [
-            message for index, message in enumerate(body)
-            if index != anchor_body_index
-        ]
+        previous_relative = None
+        if protected_previous_from is not None:
+            previous_relative = max(0, int(protected_previous_from) - prefix_size)
+            if previous_relative < anchor_body_index:
+                previous_protected_tail = body[previous_relative:anchor_body_index]
+        before_previous = previous_relative if previous_protected_tail else anchor_body_index
+        body = body[:before_previous] + body[anchor_body_index + 1:relative]
+    elif protected_from is not None:
+        body = body[:relative]
 
     if protected_anchor_index is not None and anchor_message is not None:
         # 运行中滚动窗口兜底：保留已有压缩摘要、当前用户原文和预算容得下的
@@ -498,8 +506,9 @@ def enforce_provider_overflow_fallback(
             if message.get("role") == "summary"
             or SUMMARY_OPEN in str(message.get("content") or "")
         ]
-        anchor_result_index = len(prefix) + len(summaries)
-        fixed = prefix + summaries + [anchor_message]
+        previous_protected_start_index = len(prefix) + len(summaries)
+        anchor_result_index = previous_protected_start_index + len(previous_protected_tail)
+        fixed = prefix + summaries + previous_protected_tail + [anchor_message]
         safe_budget = max(1, int(max(1, context_tokens) * TRUNCATION_RATIO))
         fixed_tokens = estimate_tokens(system_text) + sum(
             estimate_tokens(message_text(message)) for message in fixed
@@ -546,22 +555,15 @@ def enforce_provider_overflow_fallback(
                 prefix_size + relative + min(kept_source_offsets)
                 if kept_source_offsets else prefix_size + relative + len(protected_tail)
             ),
+            previous_protected_start_index=(
+                previous_protected_start_index if previous_protected_tail else None
+            ),
         )
 
     units = _units(body)
     kept_units: list[list[dict]] = []
-    kept_chars = 0
-    kept_count = 0
-    for unit in reversed(units):
-        unit_messages = [body[index] for index in unit]
-        unit_chars = sum(len(message_text(item)) for item in unit_messages)
-        if kept_units and (kept_count + len(unit_messages) > RECENT_MESSAGE_FALLBACK_COUNT
-                           or kept_chars + unit_chars > FALLBACK_RECENT_CHARS):
-            break
-        kept_units.append(unit_messages)
-        kept_chars += unit_chars
-        kept_count += len(unit_messages)
-    kept_units.reverse()
+    unit_offset = protected_unit_offset(units)
+    kept_units = [[body[index] for index in unit] for unit in units[unit_offset:]]
     kept = [item for unit in kept_units for item in unit]
     result = prefix + kept + protected_tail
     changed = len(result) < len(conversation)
@@ -569,12 +571,11 @@ def enforce_provider_overflow_fallback(
     if not changed and result:
         # 单条巨大消息也必须能退出 overflow 重试；只裁正文，不改工具结构。
         latest = result[-1]
-        if isinstance(latest, dict) and isinstance(latest.get("content"), str):
+        if context_tokens > 0 and isinstance(latest, dict) and isinstance(latest.get("content"), str):
             text = latest["content"]
-            if len(text) > FALLBACK_RECENT_CHARS:
-                copy = dict(latest)
-                copy["content"] = text[:FALLBACK_RECENT_CHARS] + "\n[内容因 provider 超窗被截断]"
-                result[-1] = copy
+            max_tokens = max(1, int(max(1, context_tokens) * TRUNCATION_RATIO))
+            if estimate_tokens(text) > max_tokens:
+                result[-1] = _fit_oversized_message(latest, max_tokens)
                 changed = True
                 oversized = True
     if not changed:

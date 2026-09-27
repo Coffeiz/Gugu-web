@@ -41,6 +41,7 @@ class PromptMessages(list):
         self._canonical_batches: list[tuple[dict, ...]] = []
         self._canonical_batch_digests: list[str] = []
         self._canonical_batch_metadata: list[dict] = []
+        self.protected_history_start: int | None = None
         super().__init__(conversation)
 
     def _sync_backing(self) -> None:
