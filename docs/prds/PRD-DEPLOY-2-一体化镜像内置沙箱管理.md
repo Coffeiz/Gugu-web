@@ -146,9 +146,11 @@ docker-compose.offline.yml                               【修改】只覆盖�
 docker-compose.prod.yml                                  【修改】显式 external 模式；继续使用独立 Rootless sandboxd 和 sandbox profile
 .github/workflows/docker-release.yml                     【修改】并行构建后组装、校验、发布含 bundle 的最终 app
 scripts/release/build-offline-sandbox-bundle.sh          【修改】离线发布包不重复存储 app 已内嵌的 Sandbox/代理镜像
+scripts/release/build_embedded_sandbox_bundle.py         【新增】从已验证的本地镜像生成内置 runtime bundle 和 manifest
 backend/tests/test_unified_image_sandbox_boundary.py     【修改】反转当前“app 不内置 Sandbox”的旧断言
 backend/tests/test_docker_runtime.py                     【修改】覆盖 embedded/external 模式、镜像完整性和 fail-closed
 backend/tests/test_offline_bundle.py                     【修改】覆盖内置包缺失、摘要错误、镜像 ID 错误和幂等导入
+scripts/release/test_build_embedded_sandbox_bundle.py    【新增】验证 runtime bundle 镜像/摘要绑定与损坏输入拒绝
 scripts/release/docker-release-tags.test.mjs              【修改】验证最终带 bundle 镜像签名、tag 和 manifest
 scripts/release/offline-bundle.test.mjs                   【修改】验证离线包不重复附带 Sandbox/代理镜像
 README.md / README_en.md                                 【修改】说明单容器 Shell 前置条件、docker run 模板和 Rootful 风险
@@ -161,6 +163,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 ## 4. 验证与上线
 
 - Python 定向测试：`cd backend && PYTHONPATH=. .venv/bin/pytest -q tests/test_unified_image_sandbox_boundary.py tests/test_docker_runtime.py tests/test_offline_bundle.py tests/test_terminal_streaming.py tests/test_mcp_stdio.py`。
+- 内置 runtime bundle 生成器测试：`backend/.venv/bin/pytest -q scripts/release/test_build_embedded_sandbox_bundle.py`。
 - 发布脚本测试：`node --test scripts/release/docker-release-tags.test.mjs scripts/release/offline-bundle.test.mjs scripts/release/compose-update.test.mjs`。
 - 配置校验：分别执行 `docker compose -f docker-compose.yml config --quiet`、`docker compose -f docker-compose.yml -f docker-compose.offline.yml config --quiet`、`docker compose -f docker-compose.prod.yml config --quiet`。
 - fnOS 实测：用尚未正式发布的候选 `gugu-web` 镜像，在 fnOS 的单容器入口只部署 Gugu-web，挂载持久 `/data` 和 Rootful Docker Socket，不启动 Compose；Admin 显示 `embedded` 与 Rootful 状态；Shell 命令、PTY、MCP stdio 能创建临时 Sandbox 子容器；受控 egress 按需拉起镜像内置代理；重启后无需用户另行 pull runtime 镜像或部署 sandboxd/egress 服务。
@@ -209,13 +212,13 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 - [x] `DEPLOY2-005` 扩展 bundle manifest 并实现 app 内的镜像导入/验证；验收：缺失镜像才导入，校验 digest/image ID，重复启动幂等；错误 bundle 使 Shell 未就绪且绝不在线拉取替代镜像。
 
-#### Phase 1.4：可复现的 runtime bundle 产物
+#### Phase 1.4：runtime bundle 生成器
 
-- [ ] `DEPLOY2-006` 从已扫描的 Sandbox 与 egress-proxy 构建产出 runtime bundle；验收：manifest 同时记录 RepoDigest、导入后 image ID 与归档 SHA-256，可离线校验，构建过程不发布正式镜像。
+- [x] `DEPLOY2-006` 实现专用生成器，将调用方提供的固定引用/摘要和本地已构建 Sandbox、egress-proxy 镜像导出为 runtime bundle；验收：manifest 同时记录 RepoDigest、docker-save 后的 image ID 与归档 SHA-256；有 RepoDigest 时必须匹配输入摘要；bundle 可离线校验；生成器不 pull、不发布。下一阶段负责把它接在同轮镜像 Smoke/Trivy 之后，绑定被扫描的确切产物。
 
 #### Phase 1.5：候选 app 镜像组装
 
-- [ ] `DEPLOY2-007` 改造候选镜像流水线，在 app/Sandbox 构建保持并行的前提下，将 Phase 1.4 产物嵌入 app 镜像；验收：最终镜像 metadata、entrypoint 与平台不变，bundle 摘要和 image ID 可验证，无独立 runtime pull 可完成 Shell smoke，记录体积增量；正式 tag/发布动作留到 Phase 4。
+- [ ] `DEPLOY2-007` 改造候选镜像流水线，在 app/Sandbox 构建保持并行的前提下，仅从同轮完成 Smoke/Trivy 的确切镜像生成 Phase 1.4 产物并嵌入 app 镜像；验收：最终镜像 metadata、entrypoint 与平台不变，bundle 摘要和 image ID 可验证，无独立 runtime pull 可完成 Shell smoke，记录体积增量；正式 tag/发布动作留到 Phase 4。
 
 #### Phase 1.6：Compose 拓扑收敛
 
