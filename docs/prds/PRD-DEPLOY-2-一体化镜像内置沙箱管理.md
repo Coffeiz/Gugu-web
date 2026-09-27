@@ -135,6 +135,7 @@ egress 继续复用 `backend/scripts/runtime/sandbox_rootless_init.sh` 已有的
 
 ```text
 Dockerfile                                               【修改】内置 bundle 文件层和运行时默认模式
+Dockerfile.sandbox-bundle                                【新增】从既有 app 镜像追加只读 runtime bundle 层
 backend/docker-entrypoint.sh                             【修改】embedded sandboxd 启动、监控与降级状态
 backend/app/core/config.py                               【修改】部署模式单一事实源及模式校验
 backend/agent/sandbox/sandboxd.py                        【条件】仅在发现生命周期/启动边界缺口时修改
@@ -151,6 +152,7 @@ backend/tests/test_unified_image_sandbox_boundary.py     【修改】反转当�
 backend/tests/test_docker_runtime.py                     【修改】覆盖 embedded/external 模式、镜像完整性和 fail-closed
 backend/tests/test_offline_bundle.py                     【修改】覆盖内置包缺失、摘要错误、镜像 ID 错误和幂等导入
 scripts/release/test_build_embedded_sandbox_bundle.py    【新增】验证 runtime bundle 镜像/摘要绑定与损坏输入拒绝
+scripts/release/embedded-sandbox-image.test.mjs          【新增】验证组装 Dockerfile 不重建或更改 app 配置
 scripts/release/docker-release-tags.test.mjs              【修改】验证最终带 bundle 镜像签名、tag 和 manifest
 scripts/release/offline-bundle.test.mjs                   【修改】验证离线包不重复附带 Sandbox/代理镜像
 README.md / README_en.md                                 【修改】说明单容器 Shell 前置条件、docker run 模板和 Rootful 风险
@@ -216,9 +218,13 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 - [x] `DEPLOY2-006` 实现专用生成器，将调用方提供的固定引用/摘要和本地已构建 Sandbox、egress-proxy 镜像导出为 runtime bundle；验收：manifest 同时记录 RepoDigest、docker-save 后的 image ID 与归档 SHA-256；有 RepoDigest 时必须匹配输入摘要；bundle 可离线校验；生成器不 pull、不发布。下一阶段负责把它接在同轮镜像 Smoke/Trivy 之后，绑定被扫描的确切产物。
 
-#### Phase 1.5：候选 app 镜像组装
+#### Phase 1.5.1：候选 app 镜像层定义
 
-- [ ] `DEPLOY2-007` 改造候选镜像流水线，在 app/Sandbox 构建保持并行的前提下，仅从同轮完成 Smoke/Trivy 的确切镜像生成 Phase 1.4 产物并嵌入 app 镜像；验收：最终镜像 metadata、entrypoint 与平台不变，bundle 摘要和 image ID 可验证，无独立 runtime pull 可完成 Shell smoke，记录体积增量；正式 tag/发布动作留到 Phase 4。
+- [ ] `DEPLOY2-007a` 增加轻量 app 镜像组装定义，仅从传入的既有 app 镜像追加 Phase 1.4 的只读 bundle 文件；验收：不重跑 app 依赖构建，不改动应用配置、entrypoint、labels 或工作目录。
+
+#### Phase 1.5.2：CI 产物交接与候选镜像验证
+
+- [ ] `DEPLOY2-007b` 改造候选镜像流水线，在 app/Sandbox 构建保持并行的前提下，仅从同轮完成 Smoke/Trivy 的确切镜像生成并交接 Phase 1.4 产物，再组装候选 app 镜像；验收：最终镜像 config 的应用字段、entrypoint、labels 与平台保持原值，bundle 摘要和 image ID 可验证，无独立 runtime pull 可完成 Shell smoke，记录体积增量；正式 tag/发布动作留到 Phase 4。
 
 #### Phase 1.6：Compose 拓扑收敛
 
