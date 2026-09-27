@@ -134,6 +134,7 @@ export const usePreviewStore = defineStore('preview', () => {
   const windows    = ref<PreviewWindow[]>([])
   // 其余类型（PDF、文本、音频）→ 原侧边 modal
   const singleFile = ref<PreviewFile | null>(null)
+  const singleSiblings = ref<PreviewFile[]>([])
 
   let _nextId = 1
   // z 统一走 windowz.nextZ()（窗口带 20000+，点谁谁上；见 composables/core/windowz.ts）
@@ -195,6 +196,7 @@ export const usePreviewStore = defineStore('preview', () => {
       })
     } else {
       singleFile.value = f
+      singleSiblings.value = siblings || []
     }
   }
 
@@ -241,7 +243,10 @@ export const usePreviewStore = defineStore('preview', () => {
 
   // 兼容旧调用 previewStore.file / previewStore.close()
   const file  = singleFile
-  function close() { singleFile.value = null }
+  function close() {
+    singleFile.value = null
+    singleSiblings.value = []
+  }
 
-  return { windows, singleFile, file, open, openVirtual, close, closeWindow, bringToFront, navigate }
+  return { windows, singleFile, singleSiblings, file, open, openVirtual, close, closeWindow, bringToFront, navigate }
 })

@@ -26,6 +26,13 @@ export function useChatAudio(options: {
   const audioCurrent  = ref(0)
   const audioDuration = ref(0)
 
+  function onAudioDurationChange() {
+    const duration = audioEl.value?.duration || 0
+    audioDuration.value = duration
+    const fileId = audioStore.file?.id
+    if (fileId != null) audioStore.updateDuration(fileId, duration)
+  }
+
   function progKey() { return audioStore.file ? `audio_prog_${audioStore.file.id}` : null }
   function saveProgress() {
     const key = progKey()
@@ -43,7 +50,11 @@ export function useChatAudio(options: {
   }
 
   const needsRestore = ref(false)
-  watch(() => audioStore.file?.id, () => { needsRestore.value = true })
+  watch(() => audioStore.file?.id, () => {
+    needsRestore.value = true
+    audioCurrent.value = 0
+    audioDuration.value = 0
+  })
 
   const audioSeekPct = computed(() =>
     audioDuration.value ? (audioCurrent.value / audioDuration.value) * 100 : 0
@@ -97,9 +108,6 @@ export function useChatAudio(options: {
     if (!audioEl.value || !audioDuration.value) return
     audioEl.value.currentTime = ((clientX - rect.left) / rect.width) * audioDuration.value
   }
-  function audioSeek(e: MouseEvent) {
-    seekTo(e.clientX, (e.currentTarget as HTMLElement).getBoundingClientRect())
-  }
   function audioStartDrag(e: MouseEvent) {
     // 拖拽期间用 window 级 mousemove/mouseup 跟手（鼠标移出进度条也要继续跟）；
     // 这两个事件的 currentTarget 是 window 本身，取不到进度条的 rect，必须在
@@ -142,8 +150,9 @@ export function useChatAudio(options: {
 
   return {
     audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct,
+    onAudioDurationChange,
     saveProgress, onCanPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
-    audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioSeek, audioStartDrag, fmtTime,
+    audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioStartDrag, fmtTime,
     voicePlayingId, toggleVoice,
   }
 }

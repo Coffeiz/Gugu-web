@@ -3,3 +3,16 @@ export const chatUi = {
   'ja-JP': { gugu: 'Gugu', im: 'インスタントメッセージ', recent: '最近の会話', noWebSessions: 'Web 会話はまだありません', newConversation: '新しい会話', group: 'グループ', submitted: '送信済み', expired: '期限切れです。もう一度操作してください', confirmationSubmitting: '確認中…', confirmationConfirmed: '確認済み。タスクを続行します', confirmationCancelled: 'キャンセルしました。タスクを停止しました', customReply: '自由回答', customReplyHint: '下のチャット入力欄に回答を入力して送信してください。', interactionSubmitFailed: '回答の送信に失敗しました。もう一度お試しください。', input: '入力', result: '結果', quoteEmoji: '引用 QQ 絵文字' },
   'en-US': { gugu: 'Gugu', im: 'Instant messaging', recent: 'Recent conversations', noWebSessions: 'No web conversations yet', newConversation: 'New conversation', group: 'Group', submitted: 'Submitted', expired: 'Expired. Please start the operation again', confirmationSubmitting: 'Confirming…', confirmationConfirmed: 'Confirmed; continuing the task', confirmationCancelled: 'Cancelled; the task has stopped', customReply: 'Custom reply', customReplyHint: 'Type your reply in the chat box below and send it.', interactionSubmitFailed: 'Failed to submit the reply. Please try again.', input: 'Input', result: 'Result', quoteEmoji: 'Quoted QQ emoji' },
 } as const
+
+Object.assign(chatUi['zh-CN'], {
+  playlist: '播放列表', previousTrack: '上一首', nextTrack: '下一首',
+  playAudio: '播放', pauseAudio: '暂停',
+})
+Object.assign(chatUi['ja-JP'], {
+  playlist: 'プレイリスト', previousTrack: '前の曲', nextTrack: '次の曲',
+  playAudio: '再生', pauseAudio: '一時停止',
+})
+Object.assign(chatUi['en-US'], {
+  playlist: 'Playlist', previousTrack: 'Previous track', nextTrack: 'Next track',
+  playAudio: 'Play', pauseAudio: 'Pause',
+})

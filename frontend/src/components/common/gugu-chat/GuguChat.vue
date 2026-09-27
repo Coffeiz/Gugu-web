@@ -5,18 +5,21 @@
     :visible="!!audioStore.file && (miniPinned || open)"
     :style="miniPlayerStyle" :bars-playing="barsPlaying"
     :file-name="audioStore.file ? `${audioStore.file.displayName}.${audioStore.file.ext?.toLowerCase()}` : ''"
+    :playlist="audioStore.playlist" :current-track-id="audioStore.file?.id ?? null"
     :pinned="miniPinned" @update:pinned="miniPinned = $event"
     :current="audioCurrent" :duration="audioDuration" :seek-pct="audioSeekPct"
     :playing="audioPlaying" :muted="audioMuted" :volume="audioVolume"
-    :fmt-time="fmtTime" :on-stop="audioStop" :on-seek="audioSeek" :on-start-drag="audioStartDrag"
+    :fmt-time="fmtTime" :on-stop="audioStop" :on-start-drag="audioStartDrag"
     :on-toggle="audioToggle" :on-toggle-mute="audioToggleMute" :on-set-volume="audioSetVolume"
+    :on-previous="audioStore.previousTrack" :on-next="audioStore.nextTrack"
+    :on-select-track="selectAudioTrack" @load-playlist-durations="audioStore.loadPlaylistDurations"
   />
 
   <audio
     ref="audioEl"
     :src="audioStore.blobUrl ?? undefined"
     @timeupdate="audioCurrent = audioEl?.currentTime ?? 0"
-    @durationchange="audioDuration = audioEl?.duration || 0"
+    @durationchange="onAudioDurationChange"
     @play="audioPlaying = true"
     @pause="onAudioPause"
     @ended="onAudioEnded"
@@ -121,6 +124,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAudioStore } from '@/stores/audio'
+import type { AudioTrack } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
@@ -211,7 +215,8 @@ let rippleTimeout: ReturnType<typeof setTimeout> | null = null
 const {
   audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct,
   saveProgress, onCanPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
-  audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioSeek, audioStartDrag, fmtTime,
+  onAudioDurationChange,
+  audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioStartDrag, fmtTime,
   voicePlayingId, toggleVoice,
 } = useChatAudio({
   onTip: (text) => _chatTip(text),
@@ -231,6 +236,10 @@ const {
     setTimeout(() => { svgEl.style.transform = ''; svgEl.style.transition = ''; spinningBack.value = false }, 750)
   },
 })
+
+function selectAudioTrack(track: AudioTrack) {
+  void audioStore.play(track)
+}
 
 watch(audioPlaying, (playing) => {
   if (playing) {
