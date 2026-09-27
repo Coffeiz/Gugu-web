@@ -958,7 +958,7 @@ scripts/release/compose-update.sh \
 
 三种模式都要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表，镜像必须来自签名 manifest 中的官方 digest。一体化/分体业务容器均不挂 Docker socket；standalone helper 会短暂获得 Docker socket 权限，只有在受支持的单容器拓扑中才启用。缺少受限 updater/RPC、设置 `GUGU_SELF_UPDATE=off`、容器配置不受支持或数据卷不符合要求时，Admin 页明确显示手动路径。`sandboxd` 是独立沙盒运行组件，不是一体化或分体 app 更新的前置条件；仅当它正在运行且与 app/backend 使用同一镜像引用时，更新才同步重建它。自定义 sandboxd 镜像保持不变。
 
-从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须先按 `docs/quick-deploy.md` 停止旧 app（暂停 worker/gateway），并执行 `scripts/migrate-compose-postgres.sh`，将 PostgreSQL 与 Redis RDB 快照导出到 `/data/updater/`。新版 app 会只读挂载旧卷并检查迁移备份：旧数据仍在而备份缺失时 fail-closed，不会静默切换到空数据库/队列；备份只会导入全新的内置数据目录，成功加载后写入各自完成标记。原卷和备份都保留，需人工核验后再清理。首次升级时保留根目录 `.env`、`Gugu-data` 和旧数据卷；默认一体化 Compose 已包含受限 updater sidecar，启动后 Admin 在线更新可用。
+从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须先停止旧 app（暂停 worker/gateway），并执行 `scripts/migrate-compose-postgres.sh`，将 PostgreSQL 与 Redis RDB 快照导出到 `/data/updater/`。新版 app 会只读挂载旧卷并检查迁移备份：旧数据仍在而备份缺失时 fail-closed，不会静默切换到空数据库/队列；备份只会导入全新的内置数据目录，成功加载后写入各自完成标记。原卷和备份都保留，需人工核验后再清理。首次升级时保留根目录 `.env`、`Gugu-data` 和旧数据卷；默认一体化 Compose 已包含受限 updater sidecar，启动后 Admin 在线更新可用。
 
 如果更新脚本不在部署目录内，应显式指定部署路径和校验器路径；在部署目录执行，并从受保护的环境注入数据库密码（不要把密码写进命令参数或 shell 历史）：
 

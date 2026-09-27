@@ -139,7 +139,7 @@
 
 - Docker 20+ 和 Docker Compose v2.20+
 - 模型提供商 API Key（BYOK）
-- 首次启动需要 PostgreSQL、Redis 和网络访问
+- 首次启动需要访问 Docker Hub 等镜像仓库；默认一体化镜像内置 PostgreSQL 和 Redis
 
 ### 国内网络环境
 
@@ -162,30 +162,28 @@ PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
 ### 一键部署（推荐，linux/amd64）
 
 ```bash
-git clone https://github.com/Coffeiz/Gugu-web.git
-cd Gugu-web
+mkdir -p gugu && cd gugu
+curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/.env.example -o .env.example
 cp .env.example .env
-mkdir -p backend && touch backend/.env
-# 编辑根目录 .env，填写 GUGU_DB_PASSWORD 和模型相关变量；SECRET_KEY 留空时首次启动自动生成并持久化
-# 模型、管理员账号等应用配置也可以写入 backend/.env；未设置管理员密码时首次启动自动生成
-# 用户数据目录默认在仓库根目录 Gugu-data，Compose 首次启动会自动创建。
+# 编辑 .env，至少填写 GUGU_DB_PASSWORD；SECRET_KEY 留空时首次启动自动生成并持久化
+# 模型配置可在启动后通过 Admin 页面设置；未设置管理员密码时首次启动自动生成
+# 用户数据目录默认在当前部署目录的 Gugu-data，Compose 首次启动会自动创建。
 # 如使用自定义绝对路径，写入 .env：GUGU_DATA_HOST_DIR=/srv/gugu-data
 docker compose up -d
 ```
+
+无需克隆源码：部署目录只需保留 `docker-compose.yml` 和自己的 `.env`。Compose 会自动从 Docker Hub 拉取应用镜像及所需服务镜像。fnOS 等 NAS 面板支持直接粘贴 YAML 时，可使用[快速部署指南中的 Compose 示例](docs/quick-deploy.md)。
 
 基础变量可以这样配置：
 
 ```dotenv
 # 根目录 .env：默认 Compose 配置
-# SECRET_KEY 可省略；首次启动自动生成并保存到 backend/.env
+# SECRET_KEY 可省略；首次启动自动生成并保存到 Gugu-data/.env
 GUGU_DB_PASSWORD=请替换为数据库密码
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 
-# backend/.env：可选应用配置
-AI__PROVIDER=qwen
-AI__API_KEY=请填写模型服务商密钥
-
-# backend/.env：可选管理员配置；不填写 ADMIN_PASSWORD 时由首次启动生成并保存
+# 可选管理员配置；不填写 ADMIN_PASSWORD 时由首次启动生成并保存
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=请替换为管理员密码
 # 用户可访问的公开站点根地址，用于邮箱验证和密码重置链接
@@ -194,16 +192,16 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 如果通过域名或 Nginx 反向代理部署，请将 `GUGU_PUBLIC_APP_URL` 改为用户实际访问的完整地址，例如 `https://gugu.example.com`。Nginx 负责统一入口和转发，后端使用同一配置生成外部链接，不会把 `localhost:8001` 等容器内部地址写入邮件。
 
-管理员账号和密码必须写入 `backend/.env`；修改后重启对应服务。完整的 Compose 参数和配置位置见 [部署指南](docs/quick-deploy.md)。
+默认一体化 Compose 从根目录 `.env` 读取部署参数，模型 Provider 和 API Key 可在启动后通过 Admin 页面配置；完整参数和配置位置见[部署指南](docs/quick-deploy.md)。
 
-默认 Compose 使用统一的 Gugu 应用镜像，包含前端、Nginx、Uvicorn、worker 和 IM gateway；PostgreSQL、Redis、SearXNG 由 Compose 中的独立服务提供。部署及更新请始终使用仓库根目录的 [`docker-compose.yml`](docker-compose.yml)，数据挂载由该编排文件固定管理。prod/dev Compose 用于需要分开管理前后端的场景。详见[快速部署指南](docs/quick-deploy.md)。
+默认 Compose 使用统一的 Gugu 应用镜像，包含前端、Nginx、Uvicorn、worker、IM gateway、PostgreSQL 和 Redis；SearXNG 由 Compose 中的独立服务提供。部署使用本地部署目录中的 `docker-compose.yml`，数据挂载由该编排文件固定管理。prod/dev Compose 用于需要分开管理前后端的场景。详见[快速部署指南](docs/quick-deploy.md)。
 
 启动后访问：
 
 - 咕咕：<http://localhost:9595>
 - Admin：<http://localhost:9595/admin/>
 
-首次运行会初始化数据库并执行迁移。未设置 `ADMIN_PASSWORD` 时会生成随机密码并保存到 `backend/.env`，终端只打印一次；不会使用公开默认密码。
+首次运行会初始化数据库并执行迁移。未设置 `ADMIN_PASSWORD` 时会生成随机密码并保存到 `Gugu-data/.env`，终端只打印一次；不会使用公开默认密码。
 
 默认 Compose 会同时启动 Shell 沙盒所需的 sandboxd 和受控 egress 代理，并在在线模式自动拉取固定 digest 的独立 `gugu-sandbox` 执行镜像。离线部署可导入发布包中的单个 `gugu-compose-bundle.tar`，再使用 `docker-compose.offline.yml`，无需访问外部 registry。默认允许使用宿主机 Rootful Docker，适合开箱即用部署；生产环境建议在根目录 `.env` 设置 `GUGU_SANDBOX_ROOTLESS_REQUIRED=true` 强制使用 Rootless Docker。需要将宿主机 Docker Socket（默认 `/var/run/docker.sock`）提供给 Compose；若使用 Rootless Docker，请在根目录 `.env` 设置对应的 `GUGU_DOCKER_SOCKET`。不需要沙盒时，在 `.env` 设置 `GUGU_SANDBOX_ENABLED=false`，并停止 sandboxd 与 egress-proxy。
 
