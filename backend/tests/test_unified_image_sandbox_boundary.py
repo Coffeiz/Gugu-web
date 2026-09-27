@@ -33,7 +33,7 @@ def test_release_pipeline_no_longer_packages_sandbox_into_unified_image():
 
 
 def test_compose_bootstrap_resolves_latest_to_an_immutable_digest():
-    bootstrap = (REPO_ROOT / "backend" / "scripts" / "sandbox_rootless_init.sh").read_text(encoding="utf-8")
+    bootstrap = (REPO_ROOT / "backend" / "scripts" / "runtime" / "sandbox_rootless_init.sh").read_text(encoding="utf-8")
 
     assert "SANDBOX_BUNDLE_DIR" not in bootstrap
     assert '"$SANDBOX_IMAGE_DIGEST" = resolved' in bootstrap

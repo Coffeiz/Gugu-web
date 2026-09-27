@@ -6,7 +6,7 @@
    重投这次调用即可执行——模型不携带、不复述凭证，也不必自己再调用一次；
 3. dispatch 层绊线：假造一个漏接确认门的 destructive 工具，无 confirm 的调用返回了
    "成功执行" → 必须触发 confirm-gate.bypassed CRITICAL 日志（运行时兜底的行为契约）。
-4. 静态守卫 scripts/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
+4. 静态守卫 scripts/checks/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
 """
 import json
 import logging
@@ -508,7 +508,7 @@ async def test_dispatch_normalizes_wrapped_confirmation_result(user_a, monkeypat
 def test_static_confirm_gate_guard_passes():
     import sys
     from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+    sys.path.insert(0, str(Path(__file__).parent.parent / "scripts" / "checks"))
     try:
         import check_confirm_gate
         assert check_confirm_gate.check() == []

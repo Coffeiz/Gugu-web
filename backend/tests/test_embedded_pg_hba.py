@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ENSURE_HBA_SCRIPT = REPO_ROOT / "backend" / "scripts" / "ensure_embedded_pg_hba.py"
+ENSURE_HBA_SCRIPT = REPO_ROOT / "backend" / "scripts" / "runtime" / "ensure_embedded_pg_hba.py"
 
 
 def test_existing_hba_gets_idempotent_loopback_rules_without_rewriting_existing_rules(tmp_path):
@@ -38,4 +38,4 @@ def test_embedded_entrypoint_reconciles_hba_before_starting_postgres():
     assert entrypoint.index(helper_call) < entrypoint.index('echo "[entrypoint] 启动内置 PostgreSQL / Redis')
 
     dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert "COPY backend/scripts/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py" in dockerfile
+    assert "COPY backend/scripts/runtime/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py" in dockerfile

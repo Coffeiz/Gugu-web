@@ -64,7 +64,7 @@ def test_sandbox_signature_verification_fails_closed_on_bad_signature(monkeypatc
 
 
 def test_sandbox_init_has_explicit_offline_bundle_path():
-    script = Path(__file__).parents[1] / "scripts" / "sandbox_rootless_init.sh"
+    script = Path(__file__).parents[1] / "scripts" / "runtime" / "sandbox_rootless_init.sh"
     source = script.read_text(encoding="utf-8")
     assert "GUGU_SANDBOX_OFFLINE" in source
     assert "GUGU_SANDBOX_BUNDLE_MANIFEST" in source

@@ -117,7 +117,7 @@ def test_embedded_redis_readiness_helper_is_called_before_app_start():
     [("redis", "内置 Redis 已就绪"), ("postgres", "内置 PostgreSQL 已就绪")],
 )
 def test_embedded_service_readiness_waits_until_ready(tmp_path: Path, service: str, ready_message: str):
-    helper = REPO_ROOT / "backend" / "scripts" / f"wait_embedded_{service}.sh"
+    helper = REPO_ROOT / "backend" / "scripts" / "runtime" / f"wait_embedded_{service}.sh"
     call_count = tmp_path / f"{service}-readiness-calls"
     ready_output = "printf 'PONG\\n'" if service == "redis" else ":"
     result = _run_readiness_helper(
@@ -153,7 +153,7 @@ def test_embedded_service_readiness_fails_clearly_on_timeout(
     service: str,
     timeout_message: str,
 ):
-    helper = REPO_ROOT / "backend" / "scripts" / f"wait_embedded_{service}.sh"
+    helper = REPO_ROOT / "backend" / "scripts" / "runtime" / f"wait_embedded_{service}.sh"
     result = _run_readiness_helper(
         tmp_path,
         helper=helper,
@@ -175,7 +175,7 @@ def test_embedded_postgres_readiness_guard_runs_before_createdb_and_app_start():
 
     assert wait_call < createdb_call < app_start
     assert (
-        "COPY backend/scripts/wait_embedded_postgres.sh "
+        "COPY backend/scripts/runtime/wait_embedded_postgres.sh "
         "/usr/local/bin/gugu-wait-embedded-postgres.sh" in dockerfile
     )
     assert "chmod 755" in dockerfile

@@ -1273,7 +1273,7 @@ def test_permission_plan_maps_container_id_and_is_non_destructive(tmp_path):
 
 
 def test_prepare_storage_discovers_all_compose_writable_roots(tmp_path):
-    from scripts.prepare_rootless_storage import discover_writable_roots
+    from scripts.runtime.prepare_rootless_storage import discover_writable_roots
 
     users_root = tmp_path / "users"
     (users_root / "user-a").mkdir(parents=True)
@@ -1294,7 +1294,7 @@ def test_prepare_storage_discovers_all_compose_writable_roots(tmp_path):
 
 
 def test_prepare_storage_applies_target_daemon_mapping_and_probes(tmp_path, monkeypatch):
-    from scripts import prepare_rootless_storage
+    from scripts.runtime import prepare_rootless_storage
     from agent.sandbox.rootless_permissions import SubordinateRange
 
     users_root = tmp_path / "users"
@@ -1335,7 +1335,7 @@ def test_prepare_storage_applies_target_daemon_mapping_and_probes(tmp_path, monk
 
 
 def test_prepare_storage_publishes_rootful_identity_without_subordinate_ranges(tmp_path, monkeypatch):
-    from scripts import prepare_rootless_storage
+    from scripts.runtime import prepare_rootless_storage
 
     users_root = tmp_path / "users"
     (users_root / "user-a").mkdir(parents=True)
@@ -1426,7 +1426,7 @@ def test_permission_plan_rejects_root_directory(tmp_path):
 
 
 def test_discover_writable_roots_only_scans_user_directories(tmp_path):
-    from scripts.prepare_rootless_users import discover_writable_roots
+    from scripts.runtime.prepare_rootless_users import discover_writable_roots
 
     (tmp_path / "user-a").mkdir()
     (tmp_path / "user-b").mkdir()
@@ -1461,7 +1461,7 @@ def test_systemd_templates_pin_rootless_socket():
     assert 's#__RUN_HOME__#${run_home}#g' in start_script
     egress = (backend / "gugu-sandbox-egress.service").read_text(encoding="utf-8")
     assert "sandbox_egress_init.sh" in egress
-    assert 'ExecStart=/bin/sh "__APP_DIR__/scripts/sandbox_egress_init.sh"' in egress
+    assert 'ExecStart=/bin/sh "__APP_DIR__/scripts/runtime/sandbox_egress_init.sh"' in egress
     assert "GUGU_EGRESS_PROXY_URL=http://egress-proxy:3128" in egress
     assert "DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock" in egress
     assert 'chmod 755 "$egress_script"' in start_script
@@ -1477,7 +1477,7 @@ def test_non_compose_egress_bootstrap_uses_isolated_network_and_stable_proxy():
     from pathlib import Path
 
     backend = Path(__file__).parents[1]
-    script = (backend / "scripts/sandbox_egress_init.sh").read_text(encoding="utf-8")
+    script = (backend / "scripts/runtime/sandbox_egress_init.sh").read_text(encoding="utf-8")
     assert 'docker_cli network create --internal "$EGRESS_NETWORK"' in script
     assert 'PROXY_CONTAINER_NAME="${GUGU_EGRESS_PROXY_CONTAINER_NAME:-egress-proxy}"' in script
     assert 'GUGU_EGRESS_PROXY_URL:-http://egress-proxy:3128' in script
