@@ -1,0 +1,210 @@
+# PRD-DEPLOY-2：一体化镜像内置沙箱管理
+
+> 状态：提案；当前一体化镜像不自带沙箱管理，默认 Compose 通过独立 `sandboxd` 服务提供 Shell
+> 创建：2026-09-27
+> 最近更新：2026-09-27
+> 关联模块：`Dockerfile`、`backend/docker-entrypoint.sh`、`backend/agent/sandbox/`、`docker-compose.yml`、`docker-compose.prod.yml`、`.github/workflows/docker-release.yml`
+> 背景参考：`docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md`、`docs/prds/【已完成】PRD-SHELL-1-工作区Shell沙盒.md`、`docs/superpowers/specs/2026-09-22-offline-sandbox-bundle-design.md`
+
+## 0. 当前代码基线（改造前，不是目标态）
+
+| 能力/结果 | 状态 | 说明 |
+|---|---|---|
+| 单容器部署提供 Shell 沙箱 | 🔲 待实施 | **当前行为**：直接运行一个 `gugu-web` 容器时，`Dockerfile` 默认关闭 Sandbox，入口也不启动 `sandboxd`，因此单容器部署暂时不能使用 Shell。当前需要通过 Compose 额外启动独立 `sandboxd`；本 PRD 的目标正是取消这个依赖。 |
+| 默认一键 Compose 的 Shell 沙箱 | ✅ 已有能力 | `docker-compose.yml` 启动独立 `sandboxd` 与 `egress-proxy`；`sandboxd` 从 Docker Hub 拉取并验签独立 `gugu-sandbox` 镜像。 |
+| 分体业务部署的严格沙箱边界 | ✅ 已有能力 | `docker-compose.prod.yml` 以 `sandbox` profile 启动独立 `sandboxd`；backend/worker 通过 Unix Socket 请求，不挂 Docker Socket；配置要求 Rootless Docker。 |
+| 离线分发 | 🟡 部分完成 | 离线发布包包含 app、`gugu-sandbox`、egress 代理和搜索镜像；镜像包与 Gugu-web 镜像是两次独立导入。 |
+
+## 1. 背景与目标
+
+### 1.1 背景
+
+当前代码已经把执行器和管理协议拆开：Agent Shell 经 `SandboxdClient` 调用窄接口，`sandboxd` 使用 `DockerSandboxExecutor` 创建每次命令对应的临时执行容器。但一体化镜像没有托管 `sandboxd`，用户还需要启动一个长期 `sandboxd` 服务，并单独拉取 `gugu-sandbox` 执行镜像；这与“部署一个 Gugu-web 容器即可使用 Shell”的体验不符。
+
+2026-09-22 的一体化部署调整有意删除了应用镜像内的 Sandbox bundle，并把 Docker Socket 从 app 移到 `sandboxd`。因此本方案不能把 Shell 改成在 Web 进程内直接执行，也不能悄悄恢复到“任意 app 进程直接操作 Docker”的旧拓扑而不标注其信任边界。
+
+### 1.2 目标
+
+- 用户只启动一个 `gugu-web` 容器即可使用 Shell：沙箱管理进程、执行镜像和受控 egress 代理镜像均由 Gugu-web 镜像携带并在运行时管理，不需要单独部署沙箱服务、egress 服务或手动拉取 Sandbox 相关镜像。Docker Compose 不是 Shell 的前置条件，只用于同时编排 SearXNG 等可选附加服务。
+- 命令仍在独立、短生命周期的 `gugu-sandbox` 容器中运行，复用现有权限判定、确认门、配额、路径校验、网络策略、输出限制、超时和清理逻辑。
+- 一体化模式可采用更易部署的宿主 Rootful Docker，但必须明确其 Docker Socket 信任边界，定位为用户自管、可信单管理员部署。
+- 业务分体部署继续使用独立 `sandboxd` 和 Rootless Docker；backend、worker、gateway 不得获得 Docker Socket，且不得在沙箱服务故障时回退到本地执行。
+- CI 继续并行构建 app 与沙箱运行镜像；通过轻量制品组装步骤把已扫描的沙箱镜像嵌入 app，不让耗时的 app 构建等待 Sandbox 构建。
+
+### 1.3 明确不做
+
+- 不在 Gugu-web、Worker、Gateway 进程内直接运行用户 Shell 命令；不将 `LocalWorkspaceExecutor` 用作 Docker 不可用时的回退。
+- 不改变 `DockerSandboxExecutor` 的逐命令容器隔离与固定安全参数；Agent/模型不能获得通用 Docker API、宿主机挂载或容器创建配置权。
+- 不把内置 Socket 模式作为多租户、公网或业务分体部署的安全边界；分体业务部署的现有拓扑不放宽。
+- 不把 `gugu-sandbox` 执行容器变成常驻服务。每次执行、PTY、MCP stdio 仍由现有管理器按需创建和回收临时容器。
+- 不将数据库、用户文件或 Shell 持久目录迁入执行镜像，也不因升级清除宿主机 Docker 镜像、网络或用户数据。
+
+## 2. 功能需求
+
+### FR-DEPLOY2-001：一体化镜像内启动沙箱管理器
+
+一体化运行模式启动时，由镜像入口托管 `python -m agent.sandbox.sandboxd`，监听现有 `GUGU_SANDBOXD_SOCKET` Unix Socket，并沿用 `SandboxdClient`、`SandboxdServer` 和 `DockerSandboxExecutor` 协议。backend/worker 调用路径不新增第二套执行 API。管理器初始化失败不得触发本机 Shell 回退；Web 站点可继续服务，并通过现有沙箱状态接口明确显示不可用原因。
+
+### FR-DEPLOY2-002：应用镜像内含已验证的沙箱运行制品
+
+发布版一体化 `gugu-web` 镜像必须包含固定版本的 `gugu-sandbox` 执行镜像、egress 代理镜像及可校验 manifest。运行时只在目标 Docker daemon 缺少对应镜像时导入内置归档；校验失败、导入失败或本地镜像 ID/digest 不匹配时拒绝启用 Sandbox，不访问未声明的镜像源，也不改用其他镜像。
+
+归档内的执行镜像必须与 CI 中完成 Smoke、Trivy 检查的镜像为同一 digest/image ID。egress 代理镜像固定版本/digest并纳入供应链检查。对外正式发布的一体化镜像仍由现有发布流程签名；最终应用镜像层中的 manifest 绑定所含运行镜像的引用与摘要。
+
+### FR-DEPLOY2-003：一体化模式创建真正隔离的命令容器
+
+Shell、PTY 与 MCP stdio 按现有协议经 `sandboxd` 创建临时子容器，不得在 app 容器直接执行。保留只读根文件系统、非 root 容器用户、`cap_drop=ALL`、`no-new-privileges`、默认断网、受控 egress、CPU/内存/PID/临时目录配额、超时、输出上限、权限撤销清理和带标签孤儿回收。用户只能访问现有 `/data/users` 归属校验允许的工作区挂载，不能指定宿主路径或 Docker 参数。
+
+### FR-DEPLOY2-004：明确区分一体化与业务分体模式
+
+部署模式由受信部署配置明确指定，不由模型参数决定，也不通过探测 Socket/管理器缺失来暗中切换。官方单容器启动模板显式写入 `GUGU_SANDBOX_MANAGER_MODE=embedded`；分体部署显式写入 `external`：
+
+| 模式 | 管理器位置 | Docker 权限 | Rootless 要求 | Shell 不可用时 |
+|---|---|---|---|---|
+| `embedded`（一体化） | `gugu-web` 容器内的独立 `sandboxd` 进程 | 一体化容器需要宿主 Docker Socket；默认可用 Rootful Docker | 默认不强制；状态中明确展示 Rootful/Rootless | 返回明确未就绪状态，绝不回退本地执行 |
+| `external`（分体业务） | 独立 `sandboxd` 服务/进程 | 仅 `sandboxd` 持有 Rootless Docker Socket；backend/worker/gateway 仅访问窄 Unix Socket | 强制 Rootless | 拒绝执行，不回退到 backend Docker 或本机执行器 |
+| `disabled` | 不启动 | 不提供 | 不适用 | Shell 显示管理员关闭或沙箱未配置 |
+
+`docker run` 单容器模板同时设置 `SANDBOX__ENABLED=true`；Shell 的现有管理员开关、用户授权和危险操作确认仍然生效。普通旧版 Compose 升级必须先停止旧 `sandboxd` 再切换到 `embedded`，禁止两个管理器同时持有同一 Socket。`docker-compose.prod.yml` 的 backend、worker 显式设置为 `external`，仅在管理员启用现有 `sandbox` profile 时运行独立 Rootless `sandboxd`，边界不变。裸镜像未配置模式时按安全默认关闭 Shell，而不是根据 Socket 是否存在自动选模式。
+
+### FR-DEPLOY2-005：单容器一体化部署前置条件与状态
+
+官方 `docker run` 单容器部署只要求提供 Gugu-web 镜像、端口、持久 `/data`（及用户选择的配置挂载）和宿主 Docker Socket；启动模板负责设置 `GUGU_SANDBOX_MANAGER_MODE=embedded`、`SANDBOX__ENABLED=true` 和 `DOCKER_HOST`，用户不需要编写额外 Compose 文件。启动后无需另行部署或拉取 sandboxd、egress 服务或 Sandbox runtime 镜像即可使用 Shell。需要 SearXNG 等附加服务时，Compose 只负责这些可选服务的编排/打包；Shell 在没有 Compose 或所有附加服务关闭时也必须可用。Rootless Socket 可作为进阶选项，Rootful Docker 是便捷默认并明确承担 Docker Socket 的高权限风险。缺少 Socket、daemon 不可达、Rootless 策略不满足、bundle 校验失败、网络初始化失败或镜像未加载时，站点及数据库不因此被破坏；Admin 沙箱状态必须区分运行模式、daemon/rootless 状态、执行镜像加载状态和可操作失败原因。
+
+`network=none` 不依赖外置服务。`network=egress` 继续走现有隔离网络与受控代理，不因容器部署位置改变而直接连接默认 bridge；代理或网络未就绪时拒绝 egress，不能静默放通网络。
+
+### FR-DEPLOY2-006：Compose、离线包和升级一并支持内置模式
+
+Compose 只用于可选的 SearXNG 等附加服务，不再承担 Shell 沙箱编排，也不声明 `sandboxd` 或 `egress-proxy`，不单独 pull `gugu-sandbox`/egress 镜像；app 容器内管理器自行初始化需要的 Docker 网络、按需执行容器，并在用户启用受控 egress 时按需创建代理 helper 容器。该 helper 是管理器管理的运行时依赖，不是用户要部署、配置或升级的 Compose 服务。Compose 关闭或不存在时，单容器模式仍可提供 Shell。附加服务若需与 Gugu-web 通信，部署说明提供加入同一用户定义网络的方式；它们不能成为 Shell readiness 的依赖。离线发布包中也不重复附带已经内嵌于 app 镜像的沙箱/代理镜像。
+
+从当前旧版 Compose 升级时，更新器必须先识别旧 `sandboxd` 服务并停止它，再切换 app 到 `embedded` 并启动新版，避免旧/新管理器争用 Unix Socket。升级步骤应显式执行“停止旧 sandboxd → 更新 app 配置与镜像 → 启动并健康检查 app 内管理器”，不能只依赖 Compose 默认 orphan 行为，也不能先启动 embedded 管理器再清理旧服务。更新流程不得删除用户数据卷、非 Gugu 管理的镜像或网络；仅清理有 Gugu 所有权标签且确认不再使用的旧 egress helper。Shell 执行容器和 PTY 在应用重建期间可以中断，持久用户文件不得丢失。回滚到旧版时先停止 embedded 管理器，再使用旧 Compose 和旧 app 镜像恢复独立 `sandboxd` 路径。
+
+## 3. 技术方案
+
+### 3.1 目标运行拓扑
+
+```text
+单容器一体化（可信单管理员、自管 Docker；无需 Compose）
+宿主 Docker daemon
+├── gugu-web 容器
+│   ├── Web / Worker / Gateway / 内置 PostgreSQL / Redis
+│   └── sandboxd（镜像内启动，持有 Docker Socket）
+├── egress-proxy helper（sandboxd 按需创建；不由用户单独部署）
+└── gugu-sandbox-*（按需创建、每次执行后清理）
+
+可选附加服务（Compose，仅在用户需要时；通过用户定义网络连接 app）
+└── SearXNG 等可选集成（不参与 Shell 创建/egress）
+
+业务分体（多服务/更严格边界）
+宿主 Rootless Docker daemon
+├── backend / worker / gateway（没有 Docker Socket）
+├── 独立 sandboxd（持 Rootless Socket，仅提供窄 Unix API）
+├── egress-proxy（由 sandbox profile 提供）
+└── gugu-sandbox-*（按需创建、每次执行后清理）
+```
+
+这里的“一体化”是**一个 Gugu-web 容器内置管理器和运行镜像**，不是把命令塞进 app 进程，也不意味着运行时不会创建执行容器。核心应用由单个 `gugu-web` 容器启动；若用户需要 SearXNG 等附加能力，再单独用 Compose 编排这些服务并按文档接入网络。应用可访问的宿主 Docker daemon 是创建临时沙箱的底层依赖，但 `sandboxd` 与 egress proxy 都由 app 内置管理器负责，不是 Compose 服务。
+
+### 3.2 复用现有执行链，不新建执行器
+
+Shell 工具继续通过 `SandboxdClient` 发起 `execute`、`pty_open`、`stdio_open`、`cancel` 请求；`SandboxdServer` 继续负责请求校验、并发槽、活动任务和状态探测；`DockerSandboxExecutor` 继续负责 argv 构造、路径映射、资源限制、容器生命周期和异常清理。主要改造是将管理器进程按 `embedded` / `external` 两种部署拓扑启动，并将其使用的运行制品随一体化镜像分发。
+
+当前 `SandboxSettings` 已有 `enabled`、`rootless_required`、`image`、`image_digest`、`egress_*` 和 `sandboxd_socket` 配置；新增模式字段时必须只有一个配置事实源，并在 `/admin/.../sandbox` 状态中回报有效模式。不得用 `sandboxd_socket` 是否存在隐式推断部署模式。
+
+### 3.3 内置运行镜像与启动导入
+
+发布构建从同一轮已完成测试和扫描的 `gugu-sandbox` 镜像生成压缩归档及 manifest；egress 代理使用固定引用的镜像并纳入同一 manifest。manifest 至少记录 schema、镜像引用、RepoDigest、docker-save 后的 image ID 和归档摘要。`backend/agent/sandbox/offline_bundle.py` 的 schema/digest/image-ID 校验逻辑作为基础复用；现有离线发布包的“预先 docker load”行为不能直接当作容器内导入已经完成。
+
+一体化入口在 `embedded` 模式下调用幂等初始化：确认 `/data/users` 与 Socket 可用；检查目标 daemon 中的精确镜像 ID；缺失时通过受限管理进程从只读镜像归档执行 `docker load`；再次 inspect 并匹配 manifest；仅在有效镜像存在后报告 Shell ready。不得使用浮动 `latest` 作为执行参数，命令仍按已验证 digest/image ID 固定运行。
+
+egress 继续复用 `backend/scripts/runtime/sandbox_rootless_init.sh` 已有的隔离网络与 Squid 初始化逻辑，但将“一体化内置 bundle”作为独立的受信输入源；不可直接复用其当前在线 pull/验签路径而跳过 digest 校验。Rootless 目标 daemon 与 Socket 路径映射仍按显式配置处理。
+
+### 3.4 进程生命周期与 Socket 信任边界
+
+一体化 `docker-entrypoint.sh` 需要托管内部 `sandboxd` 生命周期，并将它纳入沙箱就绪状态与退出清理。沙箱管理器初始化失败不能导致 Web/数据库反复重启；Web 可用而 Shell 不可用时，应返回结构化原因。容器停止或升级时撤销活动请求并清理带 `com.gugu.sandbox=true` 标签的执行容器；不得以全局 `docker prune` 清理。
+
+内嵌模式必须挂载 Docker Socket。当前根目录 `Dockerfile` 未声明非 root `USER`，容器进程默认以 root 运行；若沿用此进程模型，容器内的 Web/Worker/Gateway 进程也能访问挂入的 Socket。对 Rootful Docker，该 Socket 等价于宿主机高权限控制面；同一 app 容器中的代码漏洞可能进一步取得宿主 Docker 控制权。该风险是此便捷模式的明确代价，不得声称窄 `sandboxd` API 能消除容器内 Docker Socket 的权限。模式限定为可信单管理员自托管；多用户、公网及业务服务器继续使用独立 Rootless `sandboxd`。Socket 只进入一体化 app 服务，绝不挂入 `gugu-sandbox` 执行容器、业务分体 app 或 Agent 可写入的工作区。
+
+### 3.5 发布流水线与镜像体积
+
+昂贵的 app 构建与 `sandbox-build` 保持并行。沙箱构建继续执行 Smoke 与 Trivy；成功后导出准确的 OCI/Docker image archive 和 manifest artifact。轻量组装阶段将归档和 manifest 作为 OCI 文件系统层追加到已构建 app 镜像，必须验证原 app 的 config、入口、平台和现有层不变；最终 `gugu-web` 的版本 tag、签名、updater manifest 和 Docker Hub/GHCR digest 一律引用**带内置 bundle 的最终镜像**。执行镜像和代理镜像仍可独立发布，但一体化用户不再需要单独 pull。
+
+独立 Trivy 扫描覆盖 app 基础镜像、沙箱执行镜像和代理镜像；bundle manifest 校验三者关系。组装层不执行不可信脚本。CI 增加对最终 app manifest/config、压缩包摘要和被嵌入镜像 ID 的检查。记录最终压缩下载体积与相对当前 app 镜像的增量；若增量不适合 Docker Hub 默认一体化分发，在发布前调整 sandbox runtime 体积，而不能通过启动时静默下载来掩盖。
+
+### 3.6 文件范围与职责
+
+```text
+Dockerfile                                               【修改】内置 bundle 文件层和运行时默认模式
+backend/docker-entrypoint.sh                             【修改】embedded sandboxd 启动、监控与降级状态
+backend/app/core/config.py                               【修改】部署模式单一事实源及模式校验
+backend/agent/sandbox/sandboxd.py                        【条件】仅在发现生命周期/启动边界缺口时修改
+backend/agent/sandbox/docker_runtime.py                  【修改】bundle 镜像验证与模式感知就绪状态
+backend/agent/sandbox/offline_bundle.py                  【修改】复用/扩展 manifest 校验，避免重复解析逻辑
+backend/scripts/runtime/sandbox_rootless_init.sh         【修改】支持内置镜像导入和现有 egress 初始化
+docker-compose.yml                                       【修改】将默认 Compose 收敛为可选附加服务栈；app 的 Shell 不依赖其中任何服务
+docker-compose.offline.yml                               【修改】只覆盖可选附加服务，不再重复携带内嵌 runtime 镜像
+docker-compose.prod.yml                                  【修改】显式 external 模式；继续使用独立 Rootless sandboxd 和 sandbox profile
+.github/workflows/docker-release.yml                     【修改】并行构建后组装、校验、发布含 bundle 的最终 app
+scripts/release/build-offline-sandbox-bundle.sh          【修改】离线发布包不重复存储 app 已内嵌的 Sandbox/代理镜像
+backend/tests/test_unified_image_sandbox_boundary.py     【修改】反转当前“app 不内置 Sandbox”的旧断言
+backend/tests/test_docker_runtime.py                     【修改】覆盖 embedded/external 模式、镜像完整性和 fail-closed
+backend/tests/test_offline_bundle.py                     【修改】覆盖内置包缺失、摘要错误、镜像 ID 错误和幂等导入
+scripts/release/docker-release-tags.test.mjs              【修改】验证最终带 bundle 镜像签名、tag 和 manifest
+scripts/release/offline-bundle.test.mjs                   【修改】验证离线包不重复附带 Sandbox/代理镜像
+scripts/release/compose-update.sh                         【修改】升级时先停旧 sandboxd，再启 embedded app；回滚反向切换
+scripts/release/compose-update.test.mjs                   【修改】验证切换顺序、旧服务停止与回滚，不依赖 Compose orphan 清理
+README.md / README_en.md                                 【修改】说明单容器 Shell 前置条件、docker run 模板和 Rootful 风险
+docs/quick-deploy.md / docs/quick-deploy_en.md            【修改】单容器安装、可选附加服务 Compose、Socket、离线和升级回滚说明
+docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改】同步一体化沙箱拓扑的现状与引用
+```
+
+责任边界：Agent 工具仍只依赖 Sandbox client/protocol；runtime manifest 负责不可变镜像身份；Dockerfile/release workflow 负责携带经过扫描的制品；`docker-entrypoint.sh` 负责一体化进程生命周期；Compose 只声明可选附加服务，不拥有沙箱和 egress 生命周期。不要新建第二个 Docker executor，也不要把 updater RPC、updater Docker Socket 权限和 Sandbox RPC 混为一个通用代理。
+
+## 4. 验证与上线
+
+- Python 定向测试：`cd backend && PYTHONPATH=. .venv/bin/pytest -q tests/test_unified_image_sandbox_boundary.py tests/test_docker_runtime.py tests/test_offline_bundle.py tests/test_terminal_streaming.py tests/test_mcp_stdio.py`。
+- 发布脚本测试：`node --test scripts/release/docker-release-tags.test.mjs scripts/release/offline-bundle.test.mjs scripts/release/compose-update.test.mjs`。
+- 配置校验：分别执行 `docker compose -f docker-compose.yml config --quiet`、`docker compose -f docker-compose.yml -f docker-compose.offline.yml config --quiet`、`docker compose -f docker-compose.prod.yml config --quiet`。
+- Rootful 一体化实测：按更新后的官方 `docker run` 模板，只启动 Gugu-web 并提供持久 `/data` 和 Docker Socket，不启动 Compose；Admin 显示 `embedded` 与 Rootful 状态；Shell 命令、PTY、MCP stdio 能创建临时 Sandbox 子容器；受控 egress 按需拉起已内置代理；重启后不要求用户另行 pull runtime 镜像。
+- 故障与安全实测：分别移除 Socket、损坏/替换 bundle、停止 daemon、阻断 egress 网络，确认应用健康、Shell 明确未就绪、没有本机回退、没有创建超出 Gugu 沙箱标签范围的容器；检查 Sandbox 执行容器内不可访问 Docker Socket。
+- 网络隔离实测：`none` 无外网；`egress` 仅经 Squid 代理出网，访问 loopback、LAN、metadata、数据库、Redis 和 Docker API 均失败。
+- 分体业务回归：开启 `sandbox` profile 后 Rootless 正常运行；把 daemon 改为 Rootful 必须被拒绝；backend/worker/gateway 容器中不存在宿主 Docker Socket；暂停 `sandboxd` 时 Agent Shell 不发生本地回退。
+- 升级与回滚：从旧 Compose 升级时确认独立 `sandboxd` 先停止、内嵌 daemon 独占 Socket；`/data`、数据库、配置、BYOK 和用户文件不变。回滚旧 app + 旧 Compose 后，独立 sandboxd 恢复并可继续执行。
+- 发布验证：最慢的 app Docker build 与 Sandbox build 并行；轻量组装不重建 app；最终发布 tag 的 config/入口/架构正确，沙箱与代理 manifest 对应 CI 已扫描 artifact，最终 app 被签名，更新清单中的 app digest 与发布 digest 一致。CI 未经用户明确授权不得手动触发。
+- 回滚：使用更新前镜像和 `docker-compose.yml` 备份恢复旧独立 `sandboxd` 拓扑；不自动删除宿主 Docker 中的 Sandbox 镜像或网络，也不回滚/清理 `/data`。
+
+## 5. 风险与待确认问题
+
+| 风险 | 影响 | 对策 |
+|---|---|---|
+| 一体化 app 必须挂 Docker Socket | Rootful Socket 接近宿主 root 权限；app 容器被攻破可能控制宿主 Docker | 仅面向可信单管理员自托管；界面和部署文档明确警告；业务分体继续隔离 Socket 并强制 Rootless |
+| App 镜像包含完整沙箱/代理归档 | 下载体积和 Docker 存储增加，镜像更新会重新分发对应层 | 测量最终压缩层增量；sandbox 镜像保持精简；不把重复运行时依赖复制进 app 文件系统 |
+| 旧 Compose 由独立 sandboxd 升级至内嵌管理器 | 新旧 daemon 争用 Unix Socket，旧 PTY/任务会中断 | updater 显式 stop 旧 sandboxd 后再重建 app；不并行启动；升级中断仅影响活动执行，不动持久数据 |
+| `egress-proxy` 从 Compose 服务变为 daemon 管理的 helper 容器 | 网络名、标签、重启和残留生命周期可能与旧资源冲突 | 复用现有固定网络名和代理探测；只管理带 Gugu 标签的对象；不删未标记资源；缺少配置时 egress fail-closed |
+| 仅运行时镜像归档摘要正确但来源链不清 | 恶意/过期镜像随 app 发布 | 同轮 CI 扫描后导出；manifest 固定 RepoDigest 与 image ID；最终 app 签名覆盖 bundle 层；发布和离线包均验证摘要 |
+
+### 待确认
+
+- `gugu-sandbox` 及 Squid 镜像嵌入后的实测体积增量是否可以接受；以 CI 构建数据为准，不先假定镜像大小。
+- `embedded` 是否允许 Rootless host daemon：配置和路径映射链路已有基础，但验收需覆盖 NAS/Rootless Socket；Rootful 保持一体化默认以降低配置成本。
+
+## 6. 唯一实施 TODO
+
+### Phase 1：运行模式与复用链路
+
+- [ ] `DEPLOY2-001` 定义并实现 `GUGU_SANDBOX_MANAGER_MODE=embedded|external|disabled` 唯一部署模式字段；验收：官方单容器模板显式设为 `embedded` 并开启 Sandbox，分体模板显式设为 `external`，Shell、Admin 状态和 entrypoint 解释一致，未配置/无效时不根据 Socket 自动切换。
+- [ ] `DEPLOY2-002` 将现有 `sandboxd` 纳入一体化入口的独立子进程生命周期；验收：内嵌 manager 与 Web 同启停，manager 不健康不导致数据库/Web 重启，Shell 显示真实不可用原因且无本地 fallback。
+- [ ] `DEPLOY2-003` 为一体化配置宿主 Docker Socket 和工作区路径映射；验收：Rootful daemon 可创建只挂 `/data/users` 授权路径的 Sandbox 子容器，Socket 不挂入执行容器。
+- [ ] `DEPLOY2-004` 将现有隔离网络、代理初始化接入 embedded 目标 daemon；验收：network none/egress 行为与 PRD-SHELL-1 一致，代理或 internal network 不可用时 egress 拒绝执行。
+
+### Phase 2：镜像制品与发布
+
+- [ ] `DEPLOY2-005` 扩展 bundle manifest 并实现 app 内的镜像导入/验证；验收：缺失镜像才导入，校验 digest/image ID，重复启动幂等；错误 bundle 使 Shell 未就绪且绝不在线拉取替代镜像。
+- [ ] `DEPLOY2-006` 将已扫描的 Sandbox 与 egress runtime artifact 嵌入一体化 app 镜像；验收：无独立镜像 pull 也能完成 Shell smoke；最终镜像 metadata、entrypoint 与平台保持原样，记录体积增量。
+- [ ] `DEPLOY2-007` 改造 Docker release pipeline，在 app/Sandbox 构建保持并行的前提下组装最终镜像；验收：发布与 updater manifest 指向含 bundle 的最终 digest；扫描对象、签名对象与发布对象可验证对应。
+- [ ] `DEPLOY2-008` 调整离线发布包、可选附加服务 Compose 与旧版 Compose 迁移；验收：离线包不重复打包 runtime；新 Compose 不再定义 sandboxd/egress-proxy；旧部署升级先停旧 sandboxd 再启动 embedded manager；回滚旧版本可恢复独立服务。
+
+### Phase 3：安全验收和用户文档
+
+- [ ] `DEPLOY2-009` 补齐 embedded/external 安全与运行回归测试；验收：Rootful integrated 成功、Rootless business 成功、Rootful business 拒绝、Docker 不可用时无本地回退、network none/egress 隔离测试通过。
+- [ ] `DEPLOY2-010` 更新 DEPLOY-1、Shell 部署文档和中英文快速开始；验收：复制官方单容器命令即可用 Shell，无 Compose/sandboxd/egress 服务依赖；明确 Docker Socket、Rootful 风险、Rootless 可选项、无 Socket 故障表现、附加服务 Compose、升级回滚和业务分体严格边界。
