@@ -1,6 +1,6 @@
 """新用户播种冒烟测试：建临时用户 → 播种 → 幂等 → 清理。
 
-跑：在 backend/ 下 `.venv/bin/python scripts/smoke_onboarding.py`
+跑：在 backend/ 下 `.venv/bin/python scripts/smoke/smoke_onboarding.py`
 不污染数据：用临时用户，结束删除（级联清掉项目/文件/事件/状态）。
 """
 import asyncio

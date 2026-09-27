@@ -14,7 +14,7 @@
 
 跑法（参数见下方 `--help`，或环境变量也行）：
 
-  cd backend && .venv/bin/python scripts/verify_wechat_typing.py \
+  cd backend && .venv/bin/python scripts/smoke/verify_wechat_typing.py \
       --bot-token "$BOT_TOKEN" \
       --from-user-id "o9cq800kum_xxx@im.wechat" \
       --context-token "AARzJWAFAAABAAAAAAAp..." \

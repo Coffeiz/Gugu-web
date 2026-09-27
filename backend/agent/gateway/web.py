@@ -766,6 +766,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             stance_text=stance_to_persist,
             user_message_id=getattr(user_message, "id", None),
             run_id=current_run_id,
+            round_id=current_round_id,
             canonical_batches=canonical_batches,
             interrupted=True,
             session_exists_required=True,
@@ -882,6 +883,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 await _pub(evt)
                 continue
             if etype == "_new_round":
+                current_run_id = str(evt.get("run_id") or current_run_id)
+                current_round_id = str(evt.get("round_id") or current_round_id)
                 last_round = round_buf            # 上一轮完整文本
                 round_buf  = ""
                 dedup      = bool(last_round)     # 有上一轮才需去重
@@ -1003,6 +1006,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
                 stance_text=prepared.stance_to_persist,
                 user_message_id=getattr(user_message, "id", None),
+                run_id=current_run_id,
+                round_id=current_round_id,
                 canonical_batches=persistable_canonical_batch_records(anthr_messages if use_anthropic else oa_messages),
                 text=full_reply,
                 display_timeline=[
@@ -1148,8 +1153,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     # run 级进程心跳：长工具调用/交互等待期间没有 token 事件，快照 TTL 得不到
     # 刷新；这个心跳让「快照非 done 但心跳已断」可以安全判定为 crash 僵尸
     # （见 genstream.beat_alive / reap 与 recover_orphaned_session）。
-    # 每 5s 还会检查取消标记：终止端点在另一 worker 进程时只能写 Redis 标记，
-    # 由这里发现并直接 cancel 生成任务，而不是等 token/轮边界的协作检查。
+    # 取消信号由共享策略模块判定；这条 run 心跳负责跨 worker 时唤醒挂起中的
+    # 生成/工具任务，工具执行本身也会通过同一策略更快地响应信号。
     # 排队任务（begin_after_gate）在拿到门、begin 清掉旧标记之前必须忽略取消
     # 标记——那可能是给上一个 run 的「停止」，不该连带杀掉排队的这条消息。
     generate_task = asyncio.current_task()
@@ -1159,8 +1164,11 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         nonlocal run_begun
         loop = asyncio.get_running_loop()
         last_touch = 0.0
+        from agent.runtime.cancellation import RunCancellation
+
+        cancellation = RunCancellation(session_id, owner_run_id)
         while True:
-            if run_begun and await genstream.is_cancelled(session_id):
+            if run_begun and await cancellation.is_requested():
                 if generate_task is not None:
                     generate_task.cancel()
                 return

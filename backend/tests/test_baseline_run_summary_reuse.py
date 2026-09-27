@@ -40,6 +40,8 @@ async def test_compress_if_needed_reuses_run_summary_without_llm(db, user_a, mon
             session_id=session.id,
             role="user" if index % 2 == 0 else "assistant",
             content=f"历史消息{index}：" + "细节" * 6000,   # 每条约 1.2 万字符
+            run_id="recent-run" if index == 3 else None,
+            round_id="round-1" if index == 3 else None,
         )
         db.add(row)
         await db.flush()
@@ -56,7 +58,6 @@ async def test_compress_if_needed_reuses_run_summary_without_llm(db, user_a, mon
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
     monkeypatch.setattr("agent.context.compaction._generate_append_summary", no_llm)
-    monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 15_000)
 
     ok = await compress_conv.compress_if_needed(
         session.id, user_a.id,
@@ -68,7 +69,7 @@ async def test_compress_if_needed_reuses_run_summary_without_llm(db, user_a, mon
     assert ok is True
     assert llm_calls == []
     await db.refresh(session)
-    # 保留窗口 1.5 万字符：最新 1 条（1.2 万字符）保留，前 3 条进入摘要，
+    # 最近完整 run 的 round-1 原样保留，较早的三个历史行进入摘要，
     # 水位停在它们的最后一条上，绝不越过本轮用户消息。
     assert session.baseline_message_id == pre_ids[2]
     assert session.baseline_message_id < current_row.id
@@ -94,6 +95,8 @@ async def test_compress_if_needed_reuse_replaces_previous_summary_and_advances(d
             session_id=session.id,
             role="user" if index % 2 == 0 else "assistant",
             content=f"历史消息{index}：" + "细节" * 6000,
+            run_id="latest-run" if index >= 3 else "older-run",
+            round_id=f"round-{index - 2}" if index >= 3 else f"round-{index + 1}",
         )
         db.add(row)
         await db.flush()
@@ -111,7 +114,6 @@ async def test_compress_if_needed_reuse_replaces_previous_summary_and_advances(d
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
     monkeypatch.setattr(
         "agent.context.compaction._generate_append_summary", lambda *a, **k: "不应调用")
-    monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 15_000)
 
     ok = await compress_conv.compress_if_needed(
         session.id, user_a.id,
@@ -178,6 +180,8 @@ async def test_compress_if_needed_force_replays_history_through_append_summary(d
             session_id=session.id,
             role="user" if index % 2 == 0 else "assistant",
             content=f"历史消息{index}：" + "细节" * 6000,
+            run_id="latest-run" if index == 2 else None,
+            round_id="round-1" if index == 2 else None,
         ))
     await db.commit()
 
@@ -190,7 +194,6 @@ async def test_compress_if_needed_force_replays_history_through_append_summary(d
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
     monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
-    monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 15_000)
 
     ok = await compress_conv.compress_if_needed(
         session.id, user_a.id,
@@ -199,8 +202,7 @@ async def test_compress_if_needed_force_replays_history_through_append_summary(d
     )
 
     assert ok is True
-    # 保留窗口（1.5 万字符）之外的历史按角色重建进追加式请求：
-    # 最新 1 条保留，前 2 条以 user/assistant 序列进入摘要请求。
+    # 最近 run 之外的两条历史按角色重建进追加式请求。
     roles = [m["role"] for m in captured["history"]]
     assert roles == ["user", "assistant"]
     assert captured["history"][0]["content"].startswith("历史消息0")
@@ -358,10 +360,12 @@ async def test_reflection_baseline_summary_uses_snapshot_system_tools_and_cutoff
     db.add(session)
     await db.flush()
     rows = [
-        ConversationMessage(
-            session_id=session.id,
-            role="user" if index % 2 == 0 else "assistant",
-            content=f"历史消息{index}：" + "细节" * 3000,
+            ConversationMessage(
+                session_id=session.id,
+                role="user" if index % 2 == 0 else "assistant",
+                content=f"历史消息{index}：" + "细节" * 3000,
+                run_id="latest-run" if index >= 2 else None,
+                round_id=f"round-{index - 1}" if index >= 2 else None,
         )
         for index in range(4)
     ]
@@ -404,7 +408,6 @@ async def test_reflection_baseline_summary_uses_snapshot_system_tools_and_cutoff
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
     monkeypatch.setattr("agent.context.compaction._generate_append_summary", capture_summary)
-    monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 13_000)
     monkeypatch.setattr(
         "agent.context.prefix_history.render_branch_prefix",
         lambda prefix, _ai: list(prefix),
@@ -453,10 +456,12 @@ async def test_reflection_compaction_moves_unmatched_cutoff_into_recent_tail(
     db.add(session)
     await db.flush()
     rows = [
-        ConversationMessage(
-            session_id=session.id,
-            role="user" if index % 2 == 0 else "assistant",
-            content=f"历史消息{index}：" + "细节" * 3000,
+            ConversationMessage(
+                session_id=session.id,
+                role="user" if index % 2 == 0 else "assistant",
+                content=f"历史消息{index}：" + "细节" * 3000,
+                run_id="latest-run" if index == 3 else None,
+                round_id="round-2" if index == 3 else None,
         )
         for index in range(4)
     ]
@@ -496,7 +501,6 @@ async def test_reflection_compaction_moves_unmatched_cutoff_into_recent_tail(
 
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
     monkeypatch.setattr("agent.context.compaction._generate_append_summary", capture_summary)
-    monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 13_000)
     monkeypatch.setattr(
         "agent.context.prefix_history.render_branch_prefix",
         lambda prefix, _ai: list(prefix),

@@ -1,7 +1,7 @@
 """IM 慢工具进度声明 · 冒烟测试（agent/tools/base.py::_maybe_announce_progress + agent/imctx.py）。
 
 跑法：
-    cd backend && .venv/bin/python scripts/smoke_im_progress_announce.py   # 退出码 0=全绿，1=有失败
+    cd backend && .venv/bin/python scripts/smoke/smoke_im_progress_announce.py   # 退出码 0=全绿，1=有失败
 
 覆盖：
   · 没有 start_message 的工具：任何路径都不发声明

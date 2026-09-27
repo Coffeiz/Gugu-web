@@ -1,6 +1,6 @@
 """sanitize_messages · 冒烟（tool_use/tool_result 相邻配对）。
 
-跑法：cd backend && .venv/bin/python scripts/smoke_sanitize.py   # 0=全绿
+跑法：cd backend && .venv/bin/python scripts/smoke/smoke_sanitize.py   # 0=全绿
 
 锁死一个真实线上 bug：token 窗口截断 / 删空消息 / 合并同角色会破坏
 「assistant(tool_use X) 紧接 user(tool_result X)」相邻配对，留下孤儿 tool_result，

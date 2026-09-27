@@ -59,6 +59,29 @@ def test_send_email_normalizes_json_string_arrays_without_widening_schema():
     ]
 
 
+@pytest.mark.parametrize("tool_name", ["save_knowledge", "update_knowledge"])
+def test_knowledge_keywords_accept_delimited_string(tool_name):
+    normalized, adaptations = normalize_legacy_input(tool_name, {
+        "keywords": "AlphaStar，DeepMind; StarCraft II\nLeague",
+    })
+
+    assert normalized["keywords"] == ["AlphaStar", "DeepMind", "StarCraft II", "League"]
+    assert adaptations == [f"{tool_name}.keywords:delimited_string_to_array"]
+
+
+def test_knowledge_keywords_keep_native_array_and_other_tools_remain_strict():
+    keywords = ["AlphaStar", "DeepMind"]
+    normalized, adaptations = normalize_legacy_input("save_knowledge", {"keywords": keywords})
+    unrelated, unrelated_adaptations = normalize_legacy_input("other_tool", {
+        "keywords": "AlphaStar, DeepMind",
+    })
+
+    assert normalized["keywords"] == keywords
+    assert adaptations == []
+    assert unrelated["keywords"] == "AlphaStar, DeepMind"
+    assert unrelated_adaptations == []
+
+
 def test_unwrap_arguments_wrapper_only_when_inner_fields_match_schema():
     schema = {
         "type": "object",

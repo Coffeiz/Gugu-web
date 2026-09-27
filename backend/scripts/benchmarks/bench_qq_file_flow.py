@@ -1,7 +1,7 @@
 """诊断 QQ 文件发送链路的阶段耗时。
 
 开发环境使用：
-  .venv/bin/python scripts/bench_qq_file_flow.py --file-id 123 \
+  .venv/bin/python scripts/benchmarks/bench_qq_file_flow.py --file-id 123 \
     --channel-id 1 --target-id 2
 
 默认只测数据库/存储读取和 base64 编码；加 ``--send`` 才会调用 QQ API。
@@ -22,7 +22,7 @@ import time
 from typing import Any
 
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 

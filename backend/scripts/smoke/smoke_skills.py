@@ -1,7 +1,7 @@
 """Prompt skills 系统 · 冒烟测试。
 
 跑法：
-    cd backend && .venv/bin/python scripts/smoke_skills.py   # 退出码 0=全绿，1=有失败
+    cd backend && .venv/bin/python scripts/smoke/smoke_skills.py   # 退出码 0=全绿，1=有失败
 
 覆盖：
   · skills 加载器：frontmatter 解析、按 slug / name 取正文、未知返回 None

@@ -592,7 +592,7 @@ Provider adapter 重建当前模型所需的合法消息
 压测脚本位于：
 
 ```text
-backend/scripts/bench_rag_virtual.py
+backend/scripts/benchmarks/bench_rag_virtual.py
 ```
 
 脚本从 `backend/` 目录执行，使用当前后端配置中的 AI 和 Embedding 模型。虚拟文档默认使用随机向量，仅适合测试排序耗时；要测试真实召回质量，必须先为全部测试文档生成真实向量。
@@ -601,7 +601,7 @@ backend/scripts/bench_rag_virtual.py
 
 ```bash
 cd /home/coffeiz/文档/Workspace/Gugu-web/backend
-PYTHONPATH=. .venv/bin/Python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/Python scripts/benchmarks/bench_rag_virtual.py \
   --docs 30 \
   --embed-docs 30 \
   --top-k 20 \
@@ -618,7 +618,7 @@ backend/scripts/.bench_rag_embeddings.json
 后续测试直接复用缓存，不重复生成文档向量：
 
 ```bash
-PYTHONPATH=. .venv/bin/Python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/Python scripts/benchmarks/bench_rag_virtual.py \
   --docs 30 \
   --embed-docs 0 \
   --top-k 20 \
@@ -644,7 +644,7 @@ PYTHONPATH=. .venv/bin/Python scripts/bench_rag_virtual.py \
 召回延迟测试示例：
 
 ```bash
-PYTHONPATH=. .venv/bin/Python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/Python scripts/benchmarks/bench_rag_virtual.py \
   --docs 1000 \
   --embed-docs 0 \
   --top-k 100
@@ -748,10 +748,10 @@ backend/tests/test_rag_scope.py             # owner、项目、群组、平台�
 backend/tests/test_rag_index.py             # 幂等更新、删除、旧版本失效、重试
 backend/tests/test_rag_service.py           # 服务输出、预算、空结果和回退
 backend/tests/test_rag_adapters.py          # 首个来源 adapter 的摘要/分块契约
-backend/scripts/bench_rag_<pilot_source>.py # 真实试点数据的脱敏评估脚本（可选）
+backend/scripts/benchmarks/bench_rag_<pilot_source>.py # 真实试点数据的脱敏评估脚本（可选）
 ```
 
-`backend/scripts/bench_rag_virtual.py` 继续作为离线虚拟压测工具，不改造成生产服务；新建真实评估脚本也不能写入用户正文、附件名或可识别身份。
+`backend/scripts/benchmarks/bench_rag_virtual.py` 继续作为离线虚拟压测工具，不改造成生产服务；新建真实评估脚本也不能写入用户正文、附件名或可识别身份。
 
 ### 预计需要修改的现有文件
 

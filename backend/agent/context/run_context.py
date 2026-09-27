@@ -125,9 +125,13 @@ async def prepare_run(
         getattr(user_message, "id", None)
         if user_message is not None and not resume_interaction else None
     )
-    history_parts = build_history_parts(
+    from agent.context.retention import protected_message_ids
+    prior_run_message_ids = protected_message_ids(effective_history)
+    history_parts, prior_run_parts_start = build_history_parts(
         effective_history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking,
+        protected_message_ids=prior_run_message_ids,
+        return_protected_start=True,
     )
     message_time = None
     if user_message is not None and not resume_interaction:
@@ -197,6 +201,11 @@ async def prepare_run(
         clean = sanitize.sanitize_messages(assembled.conversation)
         merged_cross_segment = merged_cross_segment and len(clean) < before
         assembled.replace_conversation(clean)
+        if prior_run_parts_start is not None:
+            assembled.protected_history_start = max(
+                assembled.fixed_prefix_size,
+                assembled.fixed_prefix_size + prior_run_parts_start - (before - len(clean)),
+            )
         audit.context_layout_audit(
             phase="assembled", session=session, snapshot=snapshot,
             history=effective_history, messages=assembled,
@@ -219,6 +228,10 @@ async def prepare_run(
         history=history_parts,
         system_text=system_prompt,
     )
+    if prior_run_parts_start is not None:
+        assembled.protected_history_start = (
+            assembled.fixed_prefix_size + prior_run_parts_start
+        )
     turn_batch, current_stance_digest = assembly.assemble_turn(
         stance=stance_text,
         previous_stance_digest=previous_stance_digest,

@@ -5,7 +5,7 @@ Python 负责当前真实的数据库/存储读取，TS 负责同一批 canonica
 构建和索引，输出阶段耗时以便判断下一步优化边界。
 
 用法（在 devserver backend 目录执行）：
-    PYTHONPATH=. .venv/bin/python scripts/benchmark_rag_read_ab.py \
+    PYTHONPATH=. .venv/bin/python scripts/benchmarks/benchmark_rag_read_ab.py \
         --owner-user-id <UUID>
 """
 from __future__ import annotations

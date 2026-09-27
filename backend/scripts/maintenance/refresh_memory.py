@@ -22,14 +22,14 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
   画像层，而应迁去 memory.md；这个操作负责一次性把这批条目从 profile 挪到长期叙事层。
 
 跑法：
-    cd backend && .venv/bin/python scripts/refresh_memory.py --patterns            # 真的写（默认 3 次投票）
-    cd backend && .venv/bin/python scripts/refresh_memory.py --patterns --dry-run  # 只看会删什么，不写
-    cd backend && .venv/bin/python scripts/refresh_memory.py --patterns --user <uuid> --trials 5  # 调试/调参
+    cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --patterns            # 真的写（默认 3 次投票）
+    cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --patterns --dry-run  # 只看会删什么，不写
+    cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --patterns --user <uuid> --trials 5  # 调试/调参
     兼容性：`--facts` 是旧命令别名，仍可用，但新脚本请使用 `--patterns`。
-    cd backend && .venv/bin/python scripts/refresh_memory.py --cleanup-legacy --dry-run
-    cd backend && .venv/bin/python scripts/refresh_memory.py --split-profile --dry-run
-    cd backend && .venv/bin/python scripts/refresh_memory.py --migrate-daily --dry-run
-    cd backend && .venv/bin/python scripts/refresh_memory.py --migrate-profile-events --dry-run
+    cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --cleanup-legacy --dry-run
+    cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --split-profile --dry-run
+    cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --migrate-daily --dry-run
+    cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --migrate-profile-events --dry-run
 """
 from __future__ import annotations
 

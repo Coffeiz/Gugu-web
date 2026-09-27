@@ -445,8 +445,8 @@ PYTHONPATH=. .venv/bin/pytest -q \
 
 PYTHONPATH=. .venv/bin/pytest -q
 python -m compileall -q app agent
-python scripts/check_ownership.py
-python scripts/check_confirm_gate.py
+python scripts/checks/check_ownership.py
+python scripts/checks/check_confirm_gate.py
 ```
 
 ### 4.2 必须覆盖的行为

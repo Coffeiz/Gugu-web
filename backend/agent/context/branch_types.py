@@ -64,6 +64,7 @@ class BranchResult:
     output: Any = None
     return_reason: str = "completed"
     provider_usage: Any = None
+    context_overflow: bool = False
     attempts: int = 1
     input_fingerprint: str = ""
     output_fingerprint: str | None = None

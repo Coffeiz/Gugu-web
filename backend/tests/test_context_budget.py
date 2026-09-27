@@ -1,7 +1,6 @@
 """上下文超量时的确定性截断测试。"""
 
 from agent.context.budget import (
-    FALLBACK_RECENT_CHARS,
     ContextBudget,
     _fit_oversized_message,
     _truncate_value,
@@ -113,13 +112,13 @@ def test_valid_history_is_not_trimmed():
     assert not stats.changed
 
 
-def test_over_budget_first_keeps_recent_twenty_messages():
+def test_over_budget_first_keeps_recent_ten_complete_units():
     messages = [{"role": "user", "content": f"消息 {index} " + "x" * 200} for index in range(22)]
 
     result, stats = truncate_messages(messages, context_tokens=1200)
 
     assert stats.changed
-    assert [item["content"].split()[1] for item in result] == [str(index) for index in range(2, 22)]
+    assert [item["content"].split()[1] for item in result] == [str(index) for index in range(12, 22)]
 
 
 def test_tool_schema_reservation_is_included_in_hard_budget():
@@ -185,34 +184,33 @@ def test_truncate_messages_target_ratio_tightens_cap():
 def test_provider_overflow_noop_when_within_limits():
     messages = [{"role": "user", "content": "短消息"} for _ in range(3)]
 
-    result = enforce_provider_overflow_fallback(messages)
+    result = enforce_provider_overflow_fallback(messages, context_tokens=100)
 
     assert not result.changed
     assert result.oversized_item is False
     assert len(messages) == 3
 
 
-def test_provider_overflow_keeps_recent_messages_in_place():
+def test_provider_overflow_keeps_last_ten_complete_units_in_place():
     messages = [{"role": "user", "content": f"消息{i}" + "x" * 100} for i in range(40)]
 
     result = enforce_provider_overflow_fallback(messages)
 
     assert result.changed
-    assert result.dropped_messages == 20
-    assert len(messages) == 20
-    assert messages[0]["content"].startswith("消息20")
+    assert result.dropped_messages == 30
+    assert len(messages) == 10
+    assert messages[0]["content"].startswith("消息30")
     assert messages[-1]["content"].startswith("消息39")
 
 
-def test_provider_overflow_respects_char_budget():
-    messages = [{"role": "user", "content": "y" * 9_000} for _ in range(3)]
+def test_provider_overflow_keeps_last_ten_complete_units():
+    messages = [{"role": "user", "content": f"m{index}" + "y" * 900} for index in range(30)]
 
     result = enforce_provider_overflow_fallback(messages)
 
     assert result.changed
-    assert len(messages) == 2
-    kept_chars = sum(len(item["content"]) for item in messages)
-    assert kept_chars <= FALLBACK_RECENT_CHARS
+    assert len(messages) == 10
+    assert messages[0]["content"].startswith("m20")
 
 
 def test_provider_overflow_keeps_tool_round_atomic():
@@ -260,19 +258,18 @@ def test_provider_overflow_uses_replace_conversation_when_available():
 
     assert result.changed
     assert history.replaced is not None
-    assert len(history.replaced) == 20
+    assert len(history.replaced) == 10
     assert len(history.conversation) == 40  # 原列表不被原地改写
 
 
 def test_provider_overflow_truncates_single_giant_message():
-    messages = [{"role": "user", "content": "z" * (FALLBACK_RECENT_CHARS + 1_000)}]
+    messages = [{"role": "user", "content": "z" * 30_000}]
 
-    result = enforce_provider_overflow_fallback(messages)
+    result = enforce_provider_overflow_fallback(messages, context_tokens=100)
 
     assert result.changed
     assert result.oversized_item is True
-    assert messages[0]["content"].endswith("\n[内容因 provider 超窗被截断]")
-    assert len(messages[0]["content"]) < FALLBACK_RECENT_CHARS + 100
+    assert len(messages[0]["content"]) < 30_000
 
 
 def test_truncate_value_traverses_nested_structures():

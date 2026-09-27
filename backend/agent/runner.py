@@ -42,8 +42,28 @@ from agent.run.preparation import (   # 兼容再导出（web.py/scheduled_execu
 )
 
 
+async def _cancelled_run_response(
+    req: AgentRequest,
+    exec_,
+    outcome: RunOutcome,
+    *,
+    session_id: int | None,
+    persist_interrupted: bool,
+    publish_assistant,
+) -> AgentResponse:
+    """按渠道显式选择是否保存取消前已完成的进度。"""
+    if outcome.cancelled and persist_interrupted:
+        await finalize_agent_run(
+            req, exec_, outcome,
+            publish_assistant=publish_assistant,
+            interrupted=True,
+        )
+    return cancelled_response(outcome, session_id)
+
+
 async def _run_collect_unlocked(
-    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None
+    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None,
+    persist_interrupted: bool = False,
 ) -> AgentResponse:
     """共享准备 → 跑工具循环 → 攒完整回复 + 存盘 + 反思。"""
     exec_ = await prepare_agent_run(req, non_streaming=True)
@@ -103,9 +123,15 @@ async def _run_collect_unlocked(
         from agent.llm.llm_select import release as _release_model
         _release_model(exec_.model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
 
-    # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发/不入历史/不反思（已执行的工具效果保留）
+    # 用户中途「算了」：默认不写历史；IM 可显式保存已完成的进度，Web 仍由
+    # gateway 自己收尾，避免同一 run 重复持久化。
     if outcome.cancelled:
-        return cancelled_response(outcome, session_id)
+        return await _cancelled_run_response(
+            req, exec_, outcome,
+            session_id=session_id,
+            persist_interrupted=persist_interrupted,
+            publish_assistant=_publish_assistant,
+        )
 
     # 生成失败：错误文案不入历史/不反思，直接以 errored 终态返回
     if outcome.errored:
@@ -133,13 +159,14 @@ async def _run_collect_unlocked(
 
 
 async def run_collect(
-    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None
+    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None,
+    persist_interrupted: bool = False,
 ) -> AgentResponse:
     """同一 session 串行生成；不同 session 仍可并行。"""
     async with compress_conv.session_run_gate(req):
         return await _run_collect_unlocked(
             req, on_interaction=on_interaction, on_tool_event=on_tool_event,
-            on_round=on_round,
+            on_round=on_round, persist_interrupted=persist_interrupted,
         )
 
 
@@ -158,6 +185,7 @@ async def _run_stream_unlocked(
     *,
     on_interaction=None,
     on_tool_event=None,
+    persist_interrupted: bool = False,
 ) -> AsyncIterator[tuple[str, object]]:
     """共享准备 → 逐字 yield token + 轮结束 + 末尾 yield AgentResponse。"""
     exec_ = await prepare_agent_run(req, non_streaming=False)
@@ -207,7 +235,12 @@ async def _run_stream_unlocked(
         _release_model(exec_.model_cfg)
 
     if outcome.cancelled:
-        yield ("final", cancelled_response(outcome, session_id))
+        yield ("final", await _cancelled_run_response(
+            req, exec_, outcome,
+            session_id=session_id,
+            persist_interrupted=persist_interrupted,
+            publish_assistant=_publish_assistant,
+        ))
         return
 
     # 生成失败：错误文案不入历史/不反思，直接以 errored 终态返回
@@ -239,11 +272,13 @@ async def run_stream(
     *,
     on_interaction=None,
     on_tool_event=None,
+    persist_interrupted: bool = False,
 ) -> AsyncIterator[tuple[str, object]]:
     """流式生成也复用同一 session gate，避免和普通生成并行。"""
     async with compress_conv.session_run_gate(req):
         async for item in _run_stream_unlocked(
             req, on_interaction=on_interaction, on_tool_event=on_tool_event,
+            persist_interrupted=persist_interrupted,
         ):
             yield item
 

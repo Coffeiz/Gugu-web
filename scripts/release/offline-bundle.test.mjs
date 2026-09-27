@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const scriptPath = new URL('./build-offline-sandbox-bundle.sh', import.meta.url)
 const composePath = new URL('../../docker-compose.offline.yml', import.meta.url)
+const workflowPath = new URL('../../.github/workflows/docker-release.yml', import.meta.url)
 
 test('offline bundle builder saves declared runtime images and writes a manifest', async () => {
   const script = await readFile(scriptPath, 'utf8')
@@ -21,4 +22,10 @@ test('offline compose never pulls and enables local bundle validation', async ()
   assert.match(compose, /GUGU_SANDBOX_OFFLINE:\s*["']?1/)
   assert.match(compose, /GUGU_SANDBOX_BUNDLE_MANIFEST/)
   assert.doesNotMatch(compose, /sandbox-bootstrap/)
+})
+
+test('Docker release invokes the offline bundle builder through bash', async () => {
+  const workflow = await readFile(workflowPath, 'utf8')
+  assert.match(workflow, /bash scripts\/release\/build-offline-sandbox-bundle\.sh/,
+    'bundle builder must not depend on executable file mode in the checkout')
 })

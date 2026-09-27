@@ -355,7 +355,7 @@ PYTHONPATH=. .venv/bin/pytest -q tests/test_context_assembly.py tests/test_run_c
 python -m compileall -q app agent
 ```
 
-完整依赖环境回归按 backend skill 在 devserver 执行 `PYTHONPATH=. .venv/bin/pytest -q`。另运行 `git diff --check`、`python scripts/check_ownership.py`、`python scripts/check_confirm_gate.py`。测试不得连接真实 `.env`、override config、用户数据目录或真实 LLM；真实模型/真实 run 对比若需要，另开显式授权的探针任务并使用用户许可的上下文。
+完整依赖环境回归按 backend skill 在 devserver 执行 `PYTHONPATH=. .venv/bin/pytest -q`。另运行 `git diff --check`、`python scripts/checks/check_ownership.py`、`python scripts/checks/check_confirm_gate.py`。测试不得连接真实 `.env`、override config、用户数据目录或真实 LLM；真实模型/真实 run 对比若需要，另开显式授权的探针任务并使用用户许可的上下文。
 
 ### 4.3 观测与灰度
 

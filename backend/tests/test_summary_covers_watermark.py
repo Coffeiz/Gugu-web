@@ -52,10 +52,13 @@ async def test_compress_writes_covers_until_id_with_summary(db, user_a, monkeypa
     from agent.context import compress_conv
 
     session, ids = await _seed(db, user_a)
+    prior_run_row = await db.get(ConversationMessage, ids[2])
+    prior_run_row.run_id = "legacy-test-run"
+    prior_run_row.round_id = "round-1"
+    await db.commit()
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
     monkeypatch.setattr(
         "agent.context.compaction._generate_append_summary", lambda *a, **k: "不应调用")
-    monkeypatch.setattr(compress_conv, "_RECENT_HISTORY_KEEP_CHARS", 15_000)
 
     ok = await compress_conv.compress_if_needed(
         session.id, user_a.id,
@@ -72,7 +75,7 @@ async def test_compress_writes_covers_until_id_with_summary(db, user_a, monkeypa
             ConversationMessage.role == "summary",
         ))).scalars().all()
     assert len(summaries) == 1
-    assert summaries[0].covers_until_id == session.baseline_message_id == ids[2]
+    assert summaries[0].covers_until_id == session.baseline_message_id == ids[1]
 
 
 @pytest.mark.asyncio

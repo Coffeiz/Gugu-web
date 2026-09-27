@@ -745,7 +745,7 @@ class SkillRegistry:
         # destructive 绊线：不可逆工具在「未带 confirm」的调用里，合法结果只有两种——
         # needs_confirm 拦截（handler 内 confirm.needs_confirmation 返回）或业务错误。
         # 返回了"成功执行" = 该 handler 漏接确认门、无确认就做了不可逆操作——已无法撤销，
-        # 但必须响亮地被看见（静态守卫 scripts/check_confirm_gate.py 在提交前拦同类问题，
+        # 但必须响亮地被看见（静态守卫 scripts/checks/check_confirm_gate.py 在提交前拦同类问题，
         # 这里是运行时兜底，抓静态分析覆盖不到的动态路径）。
         from agent.security import confirm as _confirm
         if (tool.destructive and _ok

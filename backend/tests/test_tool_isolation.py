@@ -7,7 +7,7 @@ _resolve_* / 带归属校验的 handler。几乎所有按 id 操作的工具都�
 隔离层写得过严把自己人也挡了。
 
 新增领域/工具时：给它的 resolver 补一组 A→B 用例是**默认动作**（商用就绪评审
-P0-2 的 CI 红线，scripts/check_ownership.py 静态守卫 + 本文件动态验证成对出现）。
+P0-2 的 CI 红线，scripts/checks/check_ownership.py 静态守卫 + 本文件动态验证成对出现）。
 """
 import json
 import types

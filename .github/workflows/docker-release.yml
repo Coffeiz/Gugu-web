@@ -494,7 +494,7 @@ jobs:
       - name: Build one-file offline bundle
         run: |
           mkdir -p release/offline
-          scripts/release/build-offline-sandbox-bundle.sh \
+          bash scripts/release/build-offline-sandbox-bundle.sh \
             --output release/offline/gugu-compose-bundle.tar \
             --manifest release/offline/sandbox-bundle-manifest.json \
             --image coffeiz/gugu-web:latest \

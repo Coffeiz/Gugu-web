@@ -8,7 +8,7 @@
 确有理由的例外，在该行行尾加标记豁免：
     x = datetime.utcnow()   # utcnow-exempt: 为什么
 
-用法：python scripts/check_utcnow.py   （干净退出 0；有违规打印清单退出 1）。接 CI 门禁。
+用法：python scripts/checks/check_utcnow.py   （干净退出 0；有违规打印清单退出 1）。接 CI 门禁。
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import re
 import sys
 from pathlib import Path
 
-BACKEND = Path(__file__).parent.parent
+BACKEND = Path(__file__).resolve().parents[2]
 GUARDED_DIRS = [BACKEND / "app", BACKEND / "agent", BACKEND / "onboarding"]
 # tz.py 是时钟出口本身，docstring 里合法引用 utcnow 名字；tests/ 不在守卫范围（fixture 另清）
 EXEMPT_FILES = {"tz.py"}

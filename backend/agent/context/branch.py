@@ -55,6 +55,7 @@ class ContextBranch:
         validated_ok = False
         error_type = "-"
         error_status = "-"
+        context_overflow = False
         # append_reuse 的实际缓存观测（PRD-LLM-27 §6.7）：provider 归一化 usage
         # 经旁路收集，成功后喂 cache_capability 纯观测记账（白名单已废止，观测
         # 只记录不拦截）；不改返回契约。
@@ -99,6 +100,9 @@ class ContextBranch:
                     call_failed = True
                     reason = "provider_error"
                     error_type = type(exc).__name__
+                    from .budget import is_context_overflow_error
+
+                    context_overflow = is_context_overflow_error(exc)
                     response = getattr(exc, "response", None)
                     status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
                     error_status = str(status) if isinstance(status, int) else "-"
@@ -112,6 +116,9 @@ class ContextBranch:
                 validated_ok = ok
                 if ok:
                     reason = "completed"
+                    break
+                if call_failed and context_overflow and policy.name == "compaction":
+                    # 相同超限请求重试不会成功；交给调用方裁切旧历史。
                     break
                 if not call_failed:
                     reason = (
@@ -149,6 +156,7 @@ class ContextBranch:
             input_fingerprint=input_fp,
             output_fingerprint=output_fp,
             provider_usage=(usage_sink[-1] if usage_sink else None),
+            context_overflow=context_overflow,
             metadata={
                 "branch": policy.name,
                 "branch_mode": branch_input.branch_mode,

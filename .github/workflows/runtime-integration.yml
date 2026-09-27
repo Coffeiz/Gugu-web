@@ -262,10 +262,10 @@ jobs:
           fi
 
       - name: Ownership guard
-        run: python backend/scripts/check_ownership.py
+        run: python backend/scripts/checks/check_ownership.py
 
       - name: Confirmation gate guard
-        run: python backend/scripts/check_confirm_gate.py
+        run: python backend/scripts/checks/check_confirm_gate.py
 
       - name: ORM boundary ratchet
         env:
@@ -281,7 +281,7 @@ jobs:
           fi
           base="${base:-$(git rev-parse HEAD^)}"
           echo "ORM ratchet base: $base"
-          python backend/scripts/check_orm_boundaries.py --diff-base "$base"
+          python backend/scripts/checks/check_orm_boundaries.py --diff-base "$base"
 
       - name: Failure classification summary
         if: failure()
@@ -296,7 +296,7 @@ jobs:
   # E2E 基线：只接入数据隔离、行为确定的关键路径（文件生命周期与 Runtime
   # 拖拽、日历、定时任务 UI/立即运行、GuguChat、Mind 画布），环境全部确定化——真实
   # Postgres/Redis + 本地存储后端 + 假 LLM
-  # （scripts/mock_llm_server.py 固定回复，不接外部网络/不花钱/不受限流影响）。
+  # （scripts/testing/mock_llm_server.py 固定回复，不接外部网络/不花钱/不受限流影响）。
   # 现有 Playwright 用例（filesystem-phases.spec.ts 等）大量依赖长期测试账号的
   # 既有数据、用 test.skip() 兜底，会出现"全绿但什么都没测"，仍不接入 CI；
   # OSS staging key 校验、Redis 锁续租超 TTL、崩溃恢复等后端安全/竞态场景继续
@@ -405,7 +405,7 @@ jobs:
       - name: Seed E2E test user
         working-directory: backend
         run: |
-          PYTHONPATH=. python scripts/seed_e2e_user.py \
+          PYTHONPATH=. python scripts/testing/seed_e2e_user.py \
             http://127.0.0.1:8000 "$PLAYWRIGHT_USERNAME" "$PLAYWRIGHT_PASSWORD"
 
       - name: Setup Node

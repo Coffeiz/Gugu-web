@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from agent.knowledge.models import KnowledgeEntry, KnowledgeScope, KnowledgeSource
-from agent.knowledge.store import KnowledgeStore
+from agent.knowledge.store import KnowledgeStore, _path, _serialize
+from agent.knowledge.timestamp_migration import migrate_user_knowledge_timestamps
 from app.services.storage import LocalStorageBackend
 
 
@@ -52,6 +53,66 @@ async def test_knowledge_store_upserts_same_topic_and_increments_version(knowled
     assert entries[0].id == first.id
     assert len(entries[0].history) == 1
     assert entries[0].history[0]["content"] == "第一版规则"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_storage_uses_iso_utc_for_all_timestamp_fields(knowledge_storage):
+    entry = KnowledgeEntry.create(
+        title="时间格式", content="正文", scope=KnowledgeScope(owner_user_id="user-a"),
+        source=KnowledgeSource("web", checked_at=3000),
+    )
+    entry.created_at = 1000
+    entry.updated_at = 2000
+    entry.history = [{"updated_at": 4000}]
+
+    await KnowledgeStore("user-a").save(entry)
+    stored = await knowledge_storage.get(_path("user-a", entry.id))
+
+    assert b"created_at: 1970-01-01T00:16:40.000000Z" in stored
+    assert b"updated_at: 1970-01-01T00:33:20.000000Z" in stored
+    assert b'"checked_at":"1970-01-01T00:50:00.000000Z"' in stored
+    assert b'"updated_at":"1970-01-01T01:06:40.000000Z"' in stored
+    loaded = await KnowledgeStore("user-a").get(entry.id)
+    assert loaded is not None
+    assert loaded.created_at == 1000
+    assert loaded.updated_at == 2000
+    assert loaded.source.checked_at == 3000
+    assert loaded.history[0]["updated_at"] == 4000
+
+
+@pytest.mark.asyncio
+async def test_knowledge_legacy_timestamp_migration_is_idempotent_and_preserves_document(knowledge_storage):
+    entry = KnowledgeEntry.create(
+        title="旧时间格式", content="保留这段正文", topic="迁移",
+        scope=KnowledgeScope(owner_user_id="user-a"),
+        source=KnowledgeSource("web", checked_at=3000),
+    )
+    entry.created_at = 1000
+    entry.updated_at = 2000
+    entry.history = [{"updated_at": 4000, "content": "历史正文"}]
+    legacy = _serialize(entry).replace(
+        b"created_at: 1970-01-01T00:16:40.000000Z", b"created_at: 1000.0"
+    ).replace(
+        b"updated_at: 1970-01-01T00:33:20.000000Z", b"updated_at: 2000.0"
+    ).replace(
+        b'"checked_at":"1970-01-01T00:50:00.000000Z"', b'"checked_at":3000'
+    ).replace(
+        b'"updated_at":"1970-01-01T01:06:40.000000Z"', b'"updated_at":4000'
+    )
+    await knowledge_storage.put(_path("user-a", entry.id), legacy)
+
+    loaded_entries = await KnowledgeStore("user-a").list()
+    assert len(loaded_entries) == 1
+    assert await migrate_user_knowledge_timestamps("user-a", storage=knowledge_storage) == 0
+    stored = await knowledge_storage.get(_path("user-a", entry.id))
+    assert b"created_at: 1970-01-01T00:16:40.000000Z" in stored
+    assert b"updated_at: 1970-01-01T00:33:20.000000Z" in stored
+    assert b'"checked_at":"1970-01-01T00:50:00.000000Z"' in stored
+    assert b'"updated_at":"1970-01-01T01:06:40.000000Z"' in stored
+    loaded = loaded_entries[0]
+    assert loaded is not None
+    assert loaded.content == "保留这段正文"
+    assert loaded.history[0]["content"] == "历史正文"
 
 
 @pytest.mark.asyncio
@@ -212,8 +273,10 @@ async def test_knowledge_store_uses_one_markdown_file_per_entry(knowledge_storag
     await store.save(entry)
 
     keys = await knowledge_storage.list_keys()
-    assert keys == [f"user-a/.agent/knowledge/entries/{entry.id}.md"]
-    raw = await knowledge_storage.get(keys[0])
+    entry_keys = [key for key in keys if key.endswith(".md")]
+    assert entry_keys == [f"user-a/.agent/knowledge/entries/{entry.id}.md"]
+    assert any(key.endswith("/.agent/knowledge/.timestamps-iso-v1") for key in keys)
+    raw = await knowledge_storage.get(entry_keys[0])
     assert raw.startswith(b"---\n")
     assert "短知识".encode() in raw
 

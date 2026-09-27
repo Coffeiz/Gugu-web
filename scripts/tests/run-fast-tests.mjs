@@ -13,9 +13,9 @@ function run(label, command, args, cwd) {
 }
 
 run('Python compileall', python, ['-m', 'compileall', '-q', 'app', 'agent'], path.join(root, 'backend'))
-run('ownership 守卫', python, ['scripts/check_ownership.py'], path.join(root, 'backend'))
-run('确认门守卫', python, ['scripts/check_confirm_gate.py'], path.join(root, 'backend'))
-run('Agent ORM 严格边界守卫', python, ['scripts/check_orm_boundaries.py', '--agent-strict'], path.join(root, 'backend'))
+run('ownership 守卫', python, ['scripts/checks/check_ownership.py'], path.join(root, 'backend'))
+run('确认门守卫', python, ['scripts/checks/check_confirm_gate.py'], path.join(root, 'backend'))
+run('Agent ORM 严格边界守卫', python, ['scripts/checks/check_orm_boundaries.py', '--agent-strict'], path.join(root, 'backend'))
 run(
   '后端快速 pytest',
   python,

@@ -4,7 +4,7 @@ CI 每次跑 E2E 都是全新的 Postgres，直接调用后端真实跑着的 HT
 Playwright auth.setup.ts 期望的 PLAYWRIGHT_USERNAME/PLAYWRIGHT_PASSWORD，
 不复用任何长期账号。
 
-用法：PYTHONPATH=. python scripts/seed_e2e_user.py <backend_base_url> <username> <password>
+用法：PYTHONPATH=. python scripts/testing/seed_e2e_user.py <backend_base_url> <username> <password>
 """
 from __future__ import annotations
 

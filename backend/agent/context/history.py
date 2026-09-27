@@ -421,7 +421,9 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
 
 
 def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
-                        user_tz=None, strip_thinking: bool = False) -> list[dict]:
+                        user_tz=None, strip_thinking: bool = False,
+                        protected_message_ids: set[int] | None = None,
+                        return_protected_start: bool = False) -> list[dict] | tuple[list[dict], int | None]:
     """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。
 
     用户消息的时间 reminder 固定放在该用户消息之前。
@@ -431,7 +433,11 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
     from .dynamic_tail import message_time_reminder
 
     parts: list[dict] = []
+    protected_start = None
     for message in history:
+        if (protected_start is None and protected_message_ids
+                and getattr(message, "id", None) in protected_message_ids):
+            protected_start = len(parts)
         if getattr(message, "role", None) == "summary":
             # summary 是唯一 baseline 的历史起点，不应作为 provider 不认识的
             # role=summary 发送，也不应被放入动态 reminder 尾部。
@@ -532,4 +538,4 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                 content_json=content_json,
             ))
 
-    return parts
+    return (parts, protected_start) if return_protected_start else parts

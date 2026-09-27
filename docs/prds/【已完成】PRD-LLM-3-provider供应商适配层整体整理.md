@@ -217,8 +217,8 @@ Qwen 不应再通过 `if provider == "qwen"` 分散到循环驱动、记忆和�
 ```bash
 cd backend
 PYTHONPATH=. .venv/bin/pytest -q
-python scripts/check_ownership.py
-python scripts/check_confirm_gate.py
+python scripts/checks/check_ownership.py
+python scripts/checks/check_confirm_gate.py
 python -m compileall -q app agent
 ```
 

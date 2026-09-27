@@ -73,8 +73,8 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 ```bash
 cd backend
 PYTHONPATH=. .venv/bin/pytest -q                    # 单元测试
-python scripts/check_ownership.py                    # 归属校验
-python scripts/check_confirm_gate.py                 # 确认门校验
+python scripts/checks/check_ownership.py             # 归属校验
+python scripts/checks/check_confirm_gate.py          # 确认门校验
 python -m compileall -q app agent                    # 语法检查
 ```
 

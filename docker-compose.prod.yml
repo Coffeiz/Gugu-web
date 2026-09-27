@@ -364,7 +364,7 @@ services:
       - gugu_config:/config
       - sandbox_socket:/run/gugu
       - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
-      - ./backend/scripts/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
+      - ./backend/scripts/runtime/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
       - /etc/passwd:/host/etc/passwd:ro
       - /etc/subuid:/host/etc/subuid:ro
       - /etc/subgid:/host/etc/subgid:ro

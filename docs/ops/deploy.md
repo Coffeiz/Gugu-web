@@ -88,7 +88,7 @@ sudo apt install -y python3-venv python3-dev build-essential \
 # Node 用 nvm 或 nodesource 装 18+
 
 # 部署后只读检查 PDF 转换器和中文字体
-python3 backend/scripts/check_pdf_fonts.py
+python3 backend/scripts/checks/check_pdf_fonts.py
 ```
 
 检查结果应能看到 LibreOffice 版本，并且中文字体匹配到 CJK 字体；如果只匹配到
@@ -401,7 +401,7 @@ docker network inspect gugu-sandbox-egress
 > 动态的 `172.20.x.x` 写进代理配置。代理地址应在 Admin 中保存为
 > `http://egress-proxy:3128`，网络名保存为 `gugu-sandbox-egress`。
 >
-> 非 Compose 部署仍需手动运行 `backend/scripts/prepare_rootless_storage.py`（或对应安装
+> 非 Compose 部署仍需手动运行 `backend/scripts/runtime/prepare_rootless_storage.py`（或对应安装
 > 流程）应用 ACL；不要把 `SANDBOX_ACL` 之类手工开关当作 Compose 的替代品。systemd 的
 > egress 引导只负责 Docker 网络和代理，不会擅自改写 `config.override.json` 或用户数据。
 > 配置中的 egress 代理必须先在 Admin 保存一次，之后 `gugu-sandbox-egress.service` 才能让
