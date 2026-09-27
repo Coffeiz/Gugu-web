@@ -62,6 +62,8 @@ emoji: 📝
 - 文本：`{"type":"text","text":"...","marks":[{"type":"bold"}]}`（`marks` 可省略；可选 `bold`/`italic`/`strike`/`code`/`link`，`link` 要带 `{"type":"link","href":"https://..."}`）
 - 引用：`{"type":"reference","ref_type":"project"|"file"|"event","ref_id":123,"label":"显示名"}`——**`ref_id` 必填，三种 `ref_type` 都要**，漏传会被拦（`file`/`event` 类型尤其容易漏，因为用得少）。
 
+用户说在笔记里 **@/引用文件、项目或活动**时，先搜索并确认对象 ID，再插入 `reference`；不要只写普通的 `@名称`。笔记中会显示成可点击的 @ 标签。
+
 ## 常见 Schema 错误
 
 1. **`bullet_list`/`ordered_list` 的 `items`、`blockquote` 的 `paragraphs`，每一项必须是 `{"content":[行内...]}` 这种对象，不能直接是 `[行内...]` 这种裸数组**。跟 `task_list` 的 `{"checked":...,"content":[...]}` 是同一个套路。
