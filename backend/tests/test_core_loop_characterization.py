@@ -417,6 +417,35 @@ async def test_goal_mode_popup_system_cancel_still_emits_cancelled(monkeypatch, 
     assert errors == []
 
 
+async def test_run_cancel_stops_remaining_calls_in_same_tool_batch(monkeypatch, dispatched):
+    """Web/IM 共用取消信号命中后，同一 provider 批次的后续工具不会启动。"""
+    from agent.llm import genstream
+
+    original_dispatch = registry.dispatch
+
+    async def cancel_after_first_tool(uid, name, inp):
+        result = await original_dispatch(uid, name, inp)
+        if len(dispatched) == 1:
+            await genstream.request_cancel(774)
+        return result
+
+    monkeypatch.setattr(registry, "dispatch", cancel_after_first_tool)
+    monkeypatch.setattr(registry, "get", lambda name: None)
+    patch_anthropic(monkeypatch, [msg([
+        TU("read_file", "read-1", {"path": "a.txt"}),
+        TU("read_file", "read-2", {"path": "b.txt"}),
+    ])])
+
+    events, _text, errors = await drain(make_runner()._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "读取两个文件"}], AI,
+        session_id=774,
+    ))
+
+    assert dispatched == ["read_file"]
+    assert events["_cancelled"] == 1
+    assert errors == []
+
+
 async def test_tool_confirmation_cancel_replaces_tool_result_and_finalizes(monkeypatch, dispatched):
     """确认卡点「取消」：取消结果落进工具往返并补收尾正文，不留 dangling 工具调用。"""
     async def fake_create_tool_confirmation(**_kwargs):

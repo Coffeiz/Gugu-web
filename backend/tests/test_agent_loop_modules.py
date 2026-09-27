@@ -27,7 +27,7 @@ def test_usage_compaction_due_uses_threshold_and_no_progress_guard():
 
 
 def test_provider_full_input_controls_128k_compaction_threshold():
-    """缓存读取也占上下文；只有本次完整输入达到 115,200 才触发。"""
+    """缓存读取也占上下文；128k 的 90% 为 115,200。"""
     driver = SimpleNamespace(api_format="anthropic")
     below = SimpleNamespace(
         usage_in=20_000, cache_tokens=95_199, cache_write_tokens=0,

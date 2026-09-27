@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-RUN_COMPACTION_KEEP_ROUNDS = 10
+from agent.context.retention import PROTECTED_ROUNDS_PER_RUN, rolling_round_start
+
+RUN_COMPACTION_KEEP_ROUNDS = PROTECTED_ROUNDS_PER_RUN
 
 
 def usage_compaction_due(
@@ -17,15 +19,11 @@ def usage_compaction_due(
     context_tokens: int | None,
     no_progress: bool = False,
 ) -> bool:
-    """provider usage 达到 90% 观察线时触发 90% 压缩（原 `usage_compaction_due` 闭包）。
-
-    90% 观察线只在 provider usage 层维护一份语义；阈值取
-    `context.compress_conv.AUTO_COMPACTION_RATIO`，预算算法本身归 context 模块。
-    """
-    from agent.context.compress_conv import AUTO_COMPACTION_RATIO
+    """provider 实际输入达到上下文窗口的 90% 时触发压缩。"""
+    from agent.context.compaction import compaction_trigger_tokens
 
     tokens = max(1, int(context_tokens or 0))
-    return run_context_usage >= int(tokens * AUTO_COMPACTION_RATIO) and not no_progress
+    return run_context_usage >= compaction_trigger_tokens(tokens) and not no_progress
 
 
 def rolling_compaction_start_index(
@@ -38,11 +36,7 @@ def rolling_compaction_start_index(
     压缩发生在当前 provider round 返回后、该轮结果写入 history 前，因此窗口包含
     最近 ``keep_rounds`` 个已完成轮次；当前用户消息由独立锚点保留。
     """
-    target_round = max(1, int(current_round) - max(1, int(keep_rounds)))
-    return next(
-        (index for round_number, index in round_starts if round_number == target_round),
-        None,
-    )
+    return rolling_round_start(round_starts, current_round, keep_rounds)
 
 
 def remap_round_start_indices(

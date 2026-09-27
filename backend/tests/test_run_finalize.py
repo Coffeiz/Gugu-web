@@ -558,6 +558,8 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         tokens_in=20,
         tokens_out=8,
         user_message_id=current_user.id,
+        run_id="run-test-interrupted",
+        round_id="round-2",
         canonical_batches=[completed_batch],
         interrupted=True,
     )
@@ -572,6 +574,10 @@ async def test_interrupted_run_persists_completed_history_before_followup(
     assert rows[1].created_at < rows[2].created_at < rows[3].created_at < rows[4].created_at
     assert rows[1].content_json[0]["type"] == "tool_call"
     assert rows[2].content_json[0]["type"] == "tool_result"
+    assert [row.run_id for row in rows[2:4]] == ["run-test-interrupted"] * 2
+    assert [row.round_id for row in rows[2:4]] == ["round-1", "round-2"]
+    assert rows[0].run_id == "run-test-interrupted"
+    assert rows[0].round_id == "round-1"
 
 
 async def _async_none():

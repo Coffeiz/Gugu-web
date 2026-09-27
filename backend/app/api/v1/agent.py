@@ -510,9 +510,8 @@ async def cancel_stream(
 ):
     """终止该用户会话的后台 Web 生成。
 
-    三条路径按序兜底：先回收重启遗留的僵尸状态；同进程内登记的生成任务按
-    快照 owner_run_id 精确 cancel（立即生效）；跨 worker / 任务未登记时退回
-    Redis 取消标记，由 run 心跳在 5s 内自取消。
+    写入归属到当前 owner_run_id 的共享取消信号，再尝试同进程快速 cancel；
+    跨 worker 时由 Agent 统一取消检查器接管。
     """
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if session is None:
@@ -527,14 +526,13 @@ async def cancel_stream(
         # 任务而真正在跑的 run 继续；本进程没有该任务时回退取消标记（跨 worker）。
         snap = await genstream.snapshot(session_id)
         owner_run_id = str((snap or {}).get("owner_run_id") or "")
+        from agent.runtime.cancellation import request_cancel
+        if owner_run_id:
+            await request_cancel(session_id=session_id, owner_run_id=owner_run_id)
         from agent.gateway.web import cancel_local_generation
         cancelled_locally = cancel_local_generation(session_id, owner_run_id or None)
-        if not cancelled_locally:
-            # 标记带上快照 owner：跨 worker 兜底也只能杀掉用户看到正在跑的
-            # 这个 run。终止端点读快照与写标记之间，排队的 run 可能已经接管
-            # 会话（begin 清不掉这之后才落下的标记），会话级标记会把刚接管的
-            # 排队消息一起杀掉——用户消息已落库但永远等不到回复。
-            await genstream.request_cancel(session_id, owner_run_id or None)
+        if not cancelled_locally and not owner_run_id:
+            await request_cancel(session_id=session_id)
     return {"ok": True, "active": active, "recovered": recovered, "cancelled_locally": cancelled_locally}
 
 

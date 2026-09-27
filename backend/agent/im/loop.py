@@ -85,18 +85,22 @@ class OwnerAgentLoop:
     """Web/owner IM 共用的完整 Agent Loop 门面。"""
 
     async def run_collect(self, request: AgentRequest, *, on_interaction=None,
-                          on_tool_event=None, on_round=None):
+                          on_tool_event=None, on_round=None,
+                          persist_interrupted: bool = False):
         from agent.runner import run_collect
         kwargs = {"on_interaction": on_interaction}
         if on_tool_event is not None:
             kwargs["on_tool_event"] = on_tool_event
         if on_round is not None:
             kwargs["on_round"] = on_round
+        if persist_interrupted:
+            kwargs["persist_interrupted"] = True
         return await run_collect(request, **kwargs)
 
-    def run_stream(self, request: AgentRequest, *, on_interaction=None, on_tool_event=None):
+    def run_stream(self, request: AgentRequest, *, on_interaction=None, on_tool_event=None,
+                   persist_interrupted: bool = False):
         from agent.runner import run_stream
-        if on_interaction is None and on_tool_event is None:
+        if on_interaction is None and on_tool_event is None and not persist_interrupted:
             # 保持旧的测试/扩展实现兼容：未使用交互回调时不强行传新关键字。
             return run_stream(request)
         kwargs = {}
@@ -104,6 +108,8 @@ class OwnerAgentLoop:
             kwargs["on_interaction"] = on_interaction
         if on_tool_event is not None:
             kwargs["on_tool_event"] = on_tool_event
+        if persist_interrupted:
+            kwargs["persist_interrupted"] = True
         # 旧的外部 Loop 替身/扩展可能还没有其中一个回调；只对明确的
         # 关键字不兼容回退，不能吞掉生成器内部的 TypeError。
         while kwargs:
@@ -111,7 +117,8 @@ class OwnerAgentLoop:
                 return run_stream(request, **kwargs)
             except TypeError as exc:
                 unsupported = next(
-                    (name for name in ("on_interaction", "on_tool_event") if name in str(exc)),
+                    (name for name in ("on_interaction", "on_tool_event")
+                     if name in str(exc)),
                     None,
                 )
                 if unsupported is None:
@@ -121,6 +128,38 @@ class OwnerAgentLoop:
 
 class MemberAgentLoop(OwnerAgentLoop):
     """member/unknown 的轻量入口，权限和上下文由 request policy 收紧。"""
+
+
+def _decide_im_shortcut_from_state(
+    platform: str,
+    platform_user_id: str,
+    text: str,
+    state: str,
+    awaiting: bool,
+    active_puid: set[str],
+    *,
+    allow_leading_mention: bool,
+    sync: bool = False,
+) -> dict:
+    from agent import router
+
+    decision = router.decide(
+        text, state, awaiting,
+        current_puid=platform_user_id,
+        active_puid=active_puid,
+        allow_leading_mention=allow_leading_mention,
+    )
+    if decision.get("action") == "cancel":
+        from agent.security.logsafe import fingerprint
+        from app.core.redaction import diag_log_raw
+
+        suffix = "_sync" if sync else ""
+        diag_log_raw(
+            f"agent.im.shortcut.cancel_decided{suffix}",
+            f"platform={platform} puid={fingerprint(platform_user_id)} "
+            f"state={state} awaiting={awaiting}",
+        )
+    return decision
 
 
 async def decide_im_shortcut(
@@ -136,7 +175,6 @@ async def decide_im_shortcut(
     """根据当前 IM 状态判断是否需要在入队前短路。"""
     if has_attachments:
         return {"action": "run"}
-    from agent import router
     from agent.runtime import runtime_state
 
     try:
@@ -155,23 +193,10 @@ async def decide_im_shortcut(
         diag_log("agent.im.shortcut.read", exc)
         print(f"[im] shortcut 状态读取失败，继续入队: {redact(type(exc).__name__)}", flush=True)
         return {"action": "run"}
-    dec = router.decide(
-        text, state, awaiting,
-        current_puid=platform_user_id,
-        active_puid=active_puid,
+    return _decide_im_shortcut_from_state(
+        platform, platform_user_id, text, state, awaiting, active_puid,
         allow_leading_mention=allow_leading_mention,
     )
-    if dec.get("action") == "cancel":
-        # 取消是实时控制信号，这里记录「谁在什么状态下发起了取消」，便于排查取消未生效
-        # （busy=False 时 router 不会返回 cancel，会当普通消息入队）。puid 用指纹脱敏。
-        from agent.security.logsafe import fingerprint
-        from app.core.redaction import diag_log_raw
-        diag_log_raw(
-            "agent.im.shortcut.cancel_decided",
-            f"platform={platform} puid={fingerprint(platform_user_id)} "
-            f"state={state} awaiting={awaiting}",
-        )
-    return dec
 
 
 def decide_im_shortcut_sync(
@@ -187,7 +212,6 @@ def decide_im_shortcut_sync(
     """同步 Gateway 回调使用的 intent shortcut 决策。"""
     if has_attachments:
         return {"action": "run"}
-    from agent import router
     from agent.runtime import runtime_state
 
     try:
@@ -204,21 +228,31 @@ def decide_im_shortcut_sync(
         diag_log("agent.im.shortcut.read_sync", exc)
         print(f"[im] shortcut 状态读取失败，继续入队: {redact(type(exc).__name__)}", flush=True)
         return {"action": "run"}
-    dec = router.decide(
-        text, state, awaiting,
-        current_puid=platform_user_id,
-        active_puid=active_puid,
+    return _decide_im_shortcut_from_state(
+        platform, platform_user_id, text, state, awaiting, active_puid,
         allow_leading_mention=allow_leading_mention,
+        sync=True,
     )
-    if dec.get("action") == "cancel":
-        from agent.security.logsafe import fingerprint
-        from app.core.redaction import diag_log_raw
-        diag_log_raw(
-            "agent.im.shortcut.cancel_decided_sync",
-            f"platform={platform} puid={fingerprint(platform_user_id)} "
-            f"state={state} awaiting={awaiting}",
-        )
-    return dec
+
+
+def _log_im_cancel_write(
+    platform: str,
+    platform_user_id: str,
+    bot_id: str,
+    scope_id: str,
+    written: bool,
+    *,
+    sync: bool = False,
+) -> None:
+    from agent.security.logsafe import fingerprint
+    from app.core.redaction import diag_log_raw
+
+    suffix = "_sync" if sync else ""
+    event = "cancel_written" if written else "cancel_noop_missing_scope"
+    details = f"platform={platform} puid={fingerprint(platform_user_id)}"
+    if not written:
+        details += f" has_bot_id={bool(bot_id)} has_scope_id={bool(scope_id)}"
+    diag_log_raw(f"agent.im.shortcut.{event}{suffix}", details)
 
 
 async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decision: dict,
@@ -228,61 +262,41 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
     bot_id/scope_id 与活跃集合同作用域：取消标志按会话隔离，避免跨群误取消。
     """
     if decision.get("action") == "cancel":
-        from agent.runtime import runtime_state
+        from agent.runtime.cancellation import request_cancel
         try:
-            written = await runtime_state.request_cancel(
-                platform, bot_id or "", scope_id or platform_user_id, platform_user_id
+            written = await request_cancel(
+                platform=platform,
+                bot_id=bot_id or "",
+                scope_id=scope_id or platform_user_id,
+                puid=platform_user_id,
             )
         except Exception as exc:
             from app.core.redaction import diag_log, redact
             diag_log("agent.im.shortcut.cancel", exc)
             print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
             return
-        # 只有真的 SET 成功才记"取消已生效"——request_cancel 在 bot_id/scope_id 缺失时
-        # 会静默 no-op 返回 False，之前这里不检查返回值，会打出「写成功」的假日志
-        # （code review 发现：调用方漏传 scope 时，日志会撒谎）。
-        from agent.security.logsafe import fingerprint
-        from app.core.redaction import diag_log_raw
-        if written:
-            diag_log_raw(
-                "agent.im.shortcut.cancel_written",
-                f"platform={platform} puid={fingerprint(platform_user_id)}",
-            )
-        else:
-            diag_log_raw(
-                "agent.im.shortcut.cancel_noop_missing_scope",
-                f"platform={platform} puid={fingerprint(platform_user_id)} "
-                f"has_bot_id={bool(bot_id)} has_scope_id={bool(scope_id)}",
-            )
+        # 只有真的 SET 成功才记「取消已生效」；缺少作用域时底层会安全 no-op。
+        _log_im_cancel_write(platform, platform_user_id, bot_id, scope_id, written)
 
 
 def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision: dict,
                                   *, bot_id: str = "", scope_id: str = "") -> None:
     """同步 Gateway 回调使用的取消动作。"""
     if decision.get("action") == "cancel":
-        from agent.runtime import runtime_state
+        from agent.runtime.cancellation import request_cancel_sync
         try:
-            written = runtime_state.request_cancel_sync(
-                platform, bot_id or "", scope_id or platform_user_id, platform_user_id
+            written = request_cancel_sync(
+                platform=platform,
+                bot_id=bot_id or "",
+                scope_id=scope_id or platform_user_id,
+                puid=platform_user_id,
             )
         except Exception as exc:
             from app.core.redaction import diag_log, redact
             diag_log("agent.im.shortcut.cancel_sync", exc)
             print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
             return
-        from agent.security.logsafe import fingerprint
-        from app.core.redaction import diag_log_raw
-        if written:
-            diag_log_raw(
-                "agent.im.shortcut.cancel_written_sync",
-                f"platform={platform} puid={fingerprint(platform_user_id)}",
-            )
-        else:
-            diag_log_raw(
-                "agent.im.shortcut.cancel_noop_missing_scope_sync",
-                f"platform={platform} puid={fingerprint(platform_user_id)} "
-                f"has_bot_id={bool(bot_id)} has_scope_id={bool(scope_id)}",
-            )
+        _log_im_cancel_write(platform, platform_user_id, bot_id, scope_id, written, sync=True)
 
 
 async def start_im_activity(payload: dict, platform: str, platform_user_id: str) -> ImActivity:
@@ -1030,6 +1044,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=_show_tool_event,
+                persist_interrupted=True,
             )
             stream_sent, resp = await feishu.send_text_stream(
                 str(receive_id or ""), _mirror_stream(token_iter),
@@ -1044,6 +1059,7 @@ async def dispatch_im_message(payload: dict):
                     on_interaction=_show_im_interaction,
                     on_tool_event=_show_tool_event,
                     on_round=_show_round,
+                    persist_interrupted=True,
                 )
             reply_text = ""
         elif qq_private_streaming:
@@ -1052,6 +1068,7 @@ async def dispatch_im_message(payload: dict):
                 req,
                 on_interaction=_show_im_interaction,
                 on_tool_event=_show_tool_event,
+                persist_interrupted=True,
             )
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
                 payload, _mirror_stream(token_iter),
@@ -1063,6 +1080,7 @@ async def dispatch_im_message(payload: dict):
                 on_interaction=_show_im_interaction,
                 on_tool_event=_show_tool_event,
                 on_round=_show_round,
+                persist_interrupted=True,
             )
             reply_text = ""
     except BaseException as exc:

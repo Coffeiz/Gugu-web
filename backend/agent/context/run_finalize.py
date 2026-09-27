@@ -116,6 +116,7 @@ async def finalize_run(
     stance_text: str | None = None,
     user_message_id: int | None = None,
     run_id: str | None = None,
+    round_id: str | None = None,
     canonical_batches: list[dict] | tuple[dict, ...] | None = None,
     interrupted: bool = False,
 ) -> FinalizeResult:
@@ -129,6 +130,7 @@ async def finalize_run(
     from app.models import ConversationMessage, ConversationSession
     from app.core import chat_attach
     from app.services.conversation_retention import trim_session_messages
+    persisted_round_id = round_id or "round-1"
 
     async with session_factory() as db:
         session_alive = True
@@ -142,6 +144,9 @@ async def finalize_run(
                 await db.get(ConversationMessage, user_message_id)
                 if user_message_id else None
             )
+            if user_message is not None and run_id:
+                user_message.run_id = run_id
+                user_message.round_id = "round-1"
             rag_blocks = [
                 block for block in (rag_context or {}).get("blocks", [])
                 if isinstance(block, dict)
@@ -161,6 +166,8 @@ async def finalize_run(
                             "digest": assembly.stance_digest(stance_text),
                             "text": f"[system-reminder]\n{stance_text}\n[/system-reminder]",
                         }],
+                        run_id=run_id,
+                        round_id="round-1" if run_id else None,
                         created_at=user_message.created_at - timedelta(microseconds=stance_offset),
                     ))
                     stance_persisted = True
@@ -180,6 +187,8 @@ async def finalize_run(
                     "content": "",
                     "content_json": [block],
                 }
+                if run_id:
+                    values.update(run_id=run_id, round_id="round-1")
                 if user_message is not None:
                     values["created_at"] = user_message.created_at - timedelta(
                         microseconds=len(rag_blocks) - index,
@@ -196,6 +205,8 @@ async def finalize_run(
                         role=tm["role"],
                         content="",
                         content_json=chat_attach.strip_vision_for_history(tm["content"]),
+                        run_id=run_id,
+                            round_id=persisted_round_id if run_id else None,
                     ))
             else:
                 from app.models import ConversationBatch
@@ -208,7 +219,14 @@ async def finalize_run(
                         continue
                     digest = str(record.get("digest") or "")
                     metadata = record.get("metadata") or {}
-                    if not digest:
+                    if run_id:
+                        from agent.context.canonical_context import digest as canonical_digest
+
+                        digest = canonical_digest({
+                            "messages": canonical_messages,
+                            "metadata": {**metadata, "run_id": run_id},
+                        })
+                    elif not digest:
                         from agent.context.canonical_context import digest as canonical_digest
 
                         digest = canonical_digest({
@@ -239,6 +257,8 @@ async def finalize_run(
                                 "role": message["role"],
                                 "content": message.get("content") if isinstance(message.get("content"), str) else "",
                                 "canonical_batch_id": batch_row.id,
+                                "run_id": run_id or str(metadata.get("run_id") or "") or None,
+                                "round_id": str(metadata.get("round_id") or persisted_round_id or "") or None,
                             }
                             # content_json 不能显式传 None：SQLAlchemy JSON 列会把
                             # 显式 None 序列化成 jsonb 'null'（≠ SQL NULL），正文行
@@ -277,6 +297,8 @@ async def finalize_run(
                     content=assistant_content,
                     files=files or None,
                     display_timeline=persisted_timeline,
+                    run_id=run_id,
+                    round_id=persisted_round_id if run_id else None,
                 )
                 if assistant_created_at is not None:
                     assistant_values["created_at"] = assistant_created_at
