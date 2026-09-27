@@ -69,7 +69,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 # ── Stage 3：后端生产运行时 + 前端静态产物 ──────────────────────────────────
-# Docker CLI 供受控更新器及 Compose 沙盒服务使用；单容器部署不启动 sandboxd，沙盒由独立 Compose 服务提供。
+# Docker CLI 供受控更新器和显式启用的内嵌 sandbox manager 使用。
 FROM python:3.14-slim-trixie
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
@@ -228,6 +228,7 @@ ENV DB__HOST=postgres \
     CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
     GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
     GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
+    GUGU_SANDBOX_MANAGER_MODE=disabled \
     SANDBOX__ROOTLESS_REQUIRED=false \
     SANDBOX__ENABLED=false \
     # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
@@ -242,7 +243,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
 
 # 复用与 Dockerfile.prod 相同的入口：等数据库就绪 → 迁移 → 执行传入命令。
 # 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway。
-# 沙盒执行服务只由 Compose 单独启动；直接运行一体化镜像不会托管 sandboxd。
+# 只有显式设置 GUGU_SANDBOX_MANAGER_MODE=embedded 才由入口另行托管 sandboxd；
+# 未配置时保持关闭，绝不根据 Docker Socket 是否挂载而自动切换模式。
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
 

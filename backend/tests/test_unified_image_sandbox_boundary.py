@@ -1,18 +1,29 @@
-"""一体化 gugu-web 不托管沙盒；默认 Compose 拉取并启动独立沙盒服务。"""
+"""一体化部署的 Sandbox 管理模式与进程边界。"""
 
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_unified_image_does_not_bundle_sandbox_runtime_or_start_sandboxd():
+def test_unified_image_requires_explicit_manager_mode_and_supervises_embedded_manager():
     dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
     entrypoint = (REPO_ROOT / "backend" / "docker-entrypoint.sh").read_text(encoding="utf-8")
 
-    assert "sandbox-image.tar.gz" not in dockerfile
-    assert "sandbox-bundle-manifest.json" not in dockerfile
-    assert "[program:sandboxd]" not in entrypoint
-    assert "检测到 docker socket" not in entrypoint
+    assert "GUGU_SANDBOX_MANAGER_MODE=disabled" in dockerfile
+    assert 'GUGU_SANDBOX_MANAGER_MODE:-disabled' in entrypoint
+    assert "[program:sandboxd]" in entrypoint
+    assert "EMBEDDED_SANDBOX_SUPERVISORD_PID" in entrypoint
+    assert "monitored_pids+=(\"$EMBEDDED_SANDBOX_SUPERVISORD_PID\")" not in entrypoint
+    assert "其未就绪不会重启 Web/数据库" in entrypoint
+
+
+def test_manager_mode_is_explicit_and_disabled_by_default():
+    config = (REPO_ROOT / "backend" / "app" / "core" / "config.py").read_text(encoding="utf-8")
+    runtime = (REPO_ROOT / "backend" / "agent" / "sandbox" / "docker_runtime.py").read_text(encoding="utf-8")
+
+    assert 'Literal["embedded", "external", "disabled"]' in config
+    assert '"disabled"' in config[config.index("manager_mode:"):config.index("manager_mode:") + 300]
+    assert "未配置管理器或 Socket 不可用时 fail-closed" in runtime
 
 
 def test_default_compose_starts_sandbox_services_without_profile_and_resolves_digest():

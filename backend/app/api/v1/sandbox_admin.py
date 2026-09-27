@@ -16,8 +16,6 @@ from agent.sandbox.docker_runtime import (
     DockerRuntimeStatus,
     cleanup_running_sandboxes,
     cleanup_sandboxes_for_root,
-    image_available,
-    probe_docker,
     sandboxd_runtime_status,
     valid_egress_network_name,
     valid_egress_proxy,
@@ -83,6 +81,56 @@ def _state(
     return "ready", "Docker 沙盒运行时已就绪"
 
 
+def _sandbox_manager_snapshot(cfg):
+    """读取显式配置的管理器状态；绝不探测 API 进程自己的 Docker daemon。"""
+    manager_mode = str(getattr(cfg, "manager_mode", "disabled") or "disabled")
+    if manager_mode == "disabled":
+        return manager_mode, None, "沙盒部署模式已禁用"
+    if manager_mode not in {"embedded", "external"}:
+        return manager_mode, None, "沙盒部署模式无效"
+    socket_path = str(getattr(cfg, "sandboxd_socket", "") or "").strip()
+    if not socket_path:
+        return manager_mode, None, "sandboxd Socket 未配置，未执行命令"
+    snapshot = sandboxd_runtime_status(socket_path)
+    if snapshot is None:
+        return manager_mode, None, "sandboxd 状态不可用"
+    return manager_mode, snapshot, snapshot.manager_message
+
+
+def _sandbox_status_state(cfg, manager_status, runtime, image_ready):
+    """统一计算沙盒状态与可启用条件，保持 API 展示和开关校验一致。"""
+    manager_mode, snapshot, manager_message = manager_status
+    manager_available = snapshot is not None
+    manager_runtime_ready = snapshot.runtime_ready if snapshot else None
+    rootless_required = bool(cfg.rootless_required)
+    if manager_mode == "disabled":
+        state, message = "disabled", "沙盒部署模式已禁用"
+    elif manager_mode not in {"embedded", "external"}:
+        state, message = "manager_mode_invalid", "沙盒部署模式无效"
+        manager_message = message
+    else:
+        state, message = _state(
+            runtime,
+            enabled=cfg.enabled,
+            rootless_required=rootless_required,
+            image_ready=image_ready,
+        )
+        if cfg.enabled and manager_runtime_ready is False and state == "ready":
+            state, message = "manager_unavailable", manager_message or "沙盒管理器未就绪"
+    executor_ready = bool(
+        runtime.executor_ready
+        and manager_mode in {"embedded", "external"}
+        and manager_available
+        and (not rootless_required or runtime.rootless is True)
+        and image_ready
+        and (
+            manager_runtime_ready is True
+            or (not cfg.enabled and manager_message == "Shell 沙盒未开启")
+        )
+    )
+    return state, message, manager_message, manager_available, executor_ready, rootless_required
+
+
 def _response():
     settings = get_settings()
     cfg = settings.sandbox
@@ -95,39 +143,22 @@ def _response():
         else ""
     )
     egress_error = _egress_proxy_error(cfg)
-    sandboxd_socket = str(getattr(cfg, "sandboxd_socket", "") or "").strip()
-    if sandboxd_socket:
-        snapshot = sandboxd_runtime_status(sandboxd_socket)
-        if snapshot is None:
-            # sandboxd 是实际执行器。其状态无法读取时不能退回探测 backend
-            # 容器挂载的另一套 Docker daemon，否则会把执行器误报成 rootful。
-            runtime = DockerRuntimeStatus(
-                installed=shutil.which("docker") is not None,
-                daemon_ready=False,
-                rootless=None,
-                message="sandboxd 状态不可用",
-            )
-            image_ready = False
-        else:
-            runtime = snapshot.docker
-            image_ready = snapshot.image_ready
-    else:
-        # 未配置 sandboxd 的独立部署仍探测当前进程直接管理的 Docker。
-        runtime = probe_docker()
-        image_ready = (
-            runtime.daemon_ready
-            and valid_image_digest(cfg.image_digest)
-            and image_available(cfg.image, cfg.image_digest)
-        )
-    state, message = _state(
-        runtime,
-        enabled=cfg.enabled,
-        rootless_required=cfg.rootless_required,
-        image_ready=image_ready,
+    manager_status = _sandbox_manager_snapshot(cfg)
+    manager_mode, snapshot, manager_message = manager_status
+    runtime = snapshot.docker if snapshot else DockerRuntimeStatus(
+        installed=shutil.which("docker") is not None,
+        daemon_ready=False,
+        rootless=None,
+        message=manager_message,
+    )
+    image_ready = snapshot.image_ready if snapshot else False
+    state, message, manager_message, manager_available, executor_ready, rootless_required = (
+        _sandbox_status_state(cfg, manager_status, runtime, image_ready)
     )
     terminal_entry_enabled, pty_enabled = terminal_capabilities(settings, sandbox_ready=state == "ready")
     return {
         "enabled": bool(cfg.enabled),
+        "manager_mode": manager_mode,
         "full_user_sandbox_authorization_enabled": bool(cfg.full_user_sandbox_authorization_enabled),
         "terminal_mode": configured_terminal_mode(settings),
         "terminal_entry_enabled": terminal_entry_enabled,
@@ -136,13 +167,11 @@ def _response():
         "docker_daemon_ready": runtime.daemon_ready,
         "rootless": runtime.rootless,
         "image_ready": image_ready,
+        "manager_ready": manager_available,
+        "manager_message": manager_message,
         # 执行器前置条件与全局开关分开显示：关闭沙盒时仍应显示 Docker
         # 执行器是否已经准备好，否则 Admin 无法判断为什么可以/不能开启。
-        "executor_ready": bool(
-            runtime.executor_ready
-            and (not cfg.rootless_required or runtime.rootless is True)
-            and image_ready
-        ),
+        "executor_ready": executor_ready,
         "state": state,
         "message": message,
         "image": cfg.image,
@@ -158,7 +187,7 @@ def _response():
         "egress_available": egress_error is None,
         "egress_enabled": cfg.network_profile == "egress",
         "lifecycle_mode": "ephemeral",
-        "rootless_required": cfg.rootless_required,
+        "rootless_required": rootless_required,
         "updated_at": None,
     }
 
@@ -227,20 +256,11 @@ async def validate_egress_proxy():
 @router.post("/enable")
 async def enable_sandbox(db: AsyncSession = Depends(get_db)):
     cfg = get_settings().sandbox
-    runtime = probe_docker()
-    image_ready = (
-        runtime.daemon_ready
-        and valid_image_digest(cfg.image_digest)
-        and image_available(cfg.image, cfg.image_digest)
-    )
-    state, message = _state(
-        runtime,
-        enabled=True,
-        rootless_required=cfg.rootless_required,
-        image_ready=image_ready,
-    )
-    if state != "ready":
-        raise HTTPException(status_code=409, detail=message)
+    current = _response()
+    if current["manager_mode"] == "disabled":
+        raise HTTPException(status_code=409, detail="沙盒部署模式已禁用")
+    if not current["executor_ready"]:
+        raise HTTPException(status_code=409, detail=current["message"])
     if not valid_image_digest(cfg.image_digest):
         raise HTTPException(status_code=409, detail="尚未配置有效的固定镜像 digest，不能开启生产沙盒")
     override = _read_override()

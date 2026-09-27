@@ -163,7 +163,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 - Python 定向测试：`cd backend && PYTHONPATH=. .venv/bin/pytest -q tests/test_unified_image_sandbox_boundary.py tests/test_docker_runtime.py tests/test_offline_bundle.py tests/test_terminal_streaming.py tests/test_mcp_stdio.py`。
 - 发布脚本测试：`node --test scripts/release/docker-release-tags.test.mjs scripts/release/offline-bundle.test.mjs scripts/release/compose-update.test.mjs`。
 - 配置校验：分别执行 `docker compose -f docker-compose.yml config --quiet`、`docker compose -f docker-compose.yml -f docker-compose.offline.yml config --quiet`、`docker compose -f docker-compose.prod.yml config --quiet`。
-- Rootful 一体化实测：按更新后的官方 `docker run` 模板，只启动 Gugu-web 并提供持久 `/data` 和 Docker Socket，不启动 Compose；Admin 显示 `embedded` 与 Rootful 状态；Shell 命令、PTY、MCP stdio 能创建临时 Sandbox 子容器；受控 egress 按需拉起已内置代理；重启后不要求用户另行 pull runtime 镜像。
+- fnOS 实测：用尚未正式发布的候选 `gugu-web` 镜像，在 fnOS 的单容器入口只部署 Gugu-web，挂载持久 `/data` 和 Rootful Docker Socket，不启动 Compose；Admin 显示 `embedded` 与 Rootful 状态；Shell 命令、PTY、MCP stdio 能创建临时 Sandbox 子容器；受控 egress 按需拉起镜像内置代理；重启后无需用户另行 pull runtime 镜像或部署 sandboxd/egress 服务。
 - 故障与安全实测：分别移除 Socket、损坏/替换 bundle、停止 daemon、阻断 egress 网络，确认应用健康、Shell 明确未就绪、没有本机回退、没有创建超出 Gugu 沙箱标签范围的容器；检查 Sandbox 执行容器内不可访问 Docker Socket。
 - 网络隔离实测：`none` 无外网；`egress` 仅经 Squid 代理出网，访问 loopback、LAN、metadata、数据库、Redis 和 Docker API 均失败。
 - 分体业务回归：开启 `sandbox` profile 后 Rootless 正常运行；把 daemon 改为 Rootful 必须被拒绝；backend/worker/gateway 容器中不存在宿主 Docker Socket；暂停 `sandboxd` 时 Agent Shell 不发生本地回退。
@@ -191,21 +191,46 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 ## 6. 唯一实施 TODO
 
-### Phase 1：运行模式与复用链路
+### Phase 1：完成实现与自动化验收
 
-- [ ] `DEPLOY2-001` 定义并实现 `GUGU_SANDBOX_MANAGER_MODE=embedded|external|disabled` 唯一部署模式字段；验收：官方单容器模板显式设为 `embedded` 并开启 Sandbox，分体模板显式设为 `external`，Shell、Admin 状态和 entrypoint 解释一致，未配置/无效时不根据 Socket 自动切换。
-- [ ] `DEPLOY2-002` 将现有 `sandboxd` 纳入一体化入口的独立子进程生命周期；验收：内嵌 manager 与 Web 同启停，manager 不健康不导致数据库/Web 重启，Shell 显示真实不可用原因且无本地 fallback。
+本阶段拆成可独立验收的里程碑。实现时每个子阶段聚焦测试通过后单独提交，作为可回退的调试点；子阶段内的任务合并为一个提交，不按每个 checkbox 再拆提交。后续子阶段以此前已通过的提交为基线。
+
+#### Phase 1.1：部署模式与管理器生命周期
+
+- [x] `DEPLOY2-001` 定义并实现 `GUGU_SANDBOX_MANAGER_MODE=embedded|external|disabled` 唯一部署模式字段；验收：模式只由部署环境指定，分体 Compose 显式设为 `external`，Shell、Admin 状态和 entrypoint 解释一致，未配置时默认禁用、无效值 fail-closed；单容器官方启动模板待 Phase 3 完成 fnOS 验收后同步更新，避免提前发布未验证的命令。
+- [x] `DEPLOY2-002` 将现有 `sandboxd` 纳入一体化入口的独立子进程生命周期；验收：内嵌 manager 与 Web 同启停，manager 不健康不导致数据库/Web 重启，Shell 显示真实不可用原因且无本地 fallback。
+
+#### Phase 1.2：Docker 执行链与 egress
+
 - [ ] `DEPLOY2-003` 为一体化配置宿主 Docker Socket 和工作区路径映射；验收：Rootful daemon 可创建只挂 `/data/users` 授权路径的 Sandbox 子容器，Socket 不挂入执行容器。
 - [ ] `DEPLOY2-004` 将现有隔离网络、代理初始化接入 embedded 目标 daemon；验收：network none/egress 行为与 PRD-SHELL-1 一致，代理或 internal network 不可用时 egress 拒绝执行。
 
-### Phase 2：镜像制品与发布
+#### Phase 1.3：内置运行镜像与导入校验
 
 - [ ] `DEPLOY2-005` 扩展 bundle manifest 并实现 app 内的镜像导入/验证；验收：缺失镜像才导入，校验 digest/image ID，重复启动幂等；错误 bundle 使 Shell 未就绪且绝不在线拉取替代镜像。
 - [ ] `DEPLOY2-006` 将已扫描的 Sandbox 与 egress runtime artifact 嵌入一体化 app 镜像；验收：无独立镜像 pull 也能完成 Shell smoke；最终镜像 metadata、entrypoint 与平台保持原样，记录体积增量。
-- [ ] `DEPLOY2-007` 改造 Docker release pipeline，在 app/Sandbox 构建保持并行的前提下组装最终镜像；验收：发布与 updater manifest 指向含 bundle 的最终 digest；扫描对象、签名对象与发布对象可验证对应。
-- [ ] `DEPLOY2-008` 调整离线发布包和可选附加服务 Compose；验收：离线包不重复打包 runtime；新 Compose 不定义 sandboxd/egress-proxy，Shell 不依赖 Compose；不实现旧 Compose 拓扑自动迁移或回滚。
 
-### Phase 3：安全验收和用户文档
+#### Phase 1.4：候选镜像构建流水线
 
-- [ ] `DEPLOY2-009` 补齐 embedded/external 安全与运行回归测试；验收：Rootful integrated 成功、Rootless business 成功、Rootful business 拒绝、Docker 不可用时无本地回退、network none/egress 隔离测试通过。
-- [ ] `DEPLOY2-010` 更新 DEPLOY-1、Shell 部署文档和中英文快速开始；验收：复制官方单容器命令即可用 Shell，无 Compose/sandboxd/egress 服务依赖；明确 Docker Socket、Rootful 风险、无 Socket 故障表现、附加服务 Compose、旧拓扑不兼容，以及业务分体严格边界。
+- [ ] `DEPLOY2-007` 改造 Docker release pipeline，在 app/Sandbox 构建保持并行的前提下组装候选镜像；验收：构建产物含 bundle，摘要和 image ID 可验证，正式 tag/发布动作留到 Phase 4。
+
+#### Phase 1.5：Compose 与离线分发
+
+- [ ] `DEPLOY2-008` 调整可选附加服务 Compose；验收：Compose 只编排 SearXNG 等可选附加服务，不定义 `sandboxd`/`egress-proxy`，Shell 不依赖 Compose；不实现旧 Compose 拓扑自动迁移或回滚。
+- [ ] `DEPLOY2-009` 调整离线分发包；验收：app 已内嵌的 sandbox/egress runtime 不再重复打包，离线导入后仍可完成 bundle 摘要与镜像 ID 校验。
+
+#### Phase 1.6：集成回归
+
+- [ ] `DEPLOY2-010` 补齐自动化安全与运行回归测试；验收：Rootful embedded、Rootless external、Rootful external 拒绝、Docker 不可用时无本地回退、`network=none`/受控 egress、bundle 校验和容器清理测试通过。
+
+### Phase 2：在 fnOS 部署测试候选一体化容器
+
+- [ ] `DEPLOY2-011` 使用尚未正式发布的候选镜像，在 fnOS 单容器入口部署并验收；验收：只需 Gugu-web 主容器、持久 `/data` 和 Docker Socket；无需 Compose、独立 `sandboxd`、egress 服务或手动拉取 runtime；Shell 命令、PTY、MCP stdio、受控 egress、重启后恢复及 Admin 状态均按 FR-DEPLOY2-005 工作，且用户数据不丢失。记录实际问题并先修复、复测，通过后再进入文档阶段。
+
+### Phase 3：根据 fnOS 实测结果更新文档
+
+- [ ] `DEPLOY2-012` 更新 DEPLOY-1、Shell 部署文档、中英文快速开始及简短 changelog；验收：文档命令与 fnOS 实测一致，单容器 `docker run` 模板显式设置 `GUGU_SANDBOX_MANAGER_MODE=embedded`、`SANDBOX__ENABLED=true`、`DOCKER_HOST` 并挂载 Docker Socket；明确 Rootful 风险、无需 Compose/sandboxd/egress、可选附加服务 Compose、旧拓扑不兼容，以及分体业务部署仍要求 Rootless；changelog 只写用户可感知变化。
+
+### Phase 4：正式发布
+
+- [ ] `DEPLOY2-013` 执行正式 CI 与镜像/版本发布；验收：Phase 1 自动化测试、Phase 2 fnOS 验收和 Phase 3 文档均完成后才发布；发布镜像、签名、manifest 和更新清单都指向含内置 bundle 的同一最终 digest，记录正式版本与镜像摘要。
