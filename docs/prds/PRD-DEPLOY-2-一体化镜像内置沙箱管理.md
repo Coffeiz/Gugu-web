@@ -205,21 +205,27 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 - [x] `DEPLOY2-003` 为一体化配置宿主 Docker Socket 和工作区路径映射；验收：Rootful daemon 从当前容器 `/data` 挂载反查宿主路径，只映射授权数据目录；映射缺失或越界时 fail-closed，Socket 不挂入执行容器。
 - [x] `DEPLOY2-004` 将现有隔离网络、代理初始化接入 embedded 目标 daemon；验收：Shell/PTY 的 `network=none` 与受控 egress 策略保持一致；egress 按需初始化 internal 网络和代理，只接管带 Gugu 标签且安全属性符合预期的资源，初始化/代理/network 不可用时拒绝执行。Sandbox/egress runtime 的离线内置与禁止在线替代拉取由 Phase 1.3 完成。
 
-#### Phase 1.3：内置运行镜像与导入校验
+#### Phase 1.3：bundle 契约与运行时导入
 
-- [ ] `DEPLOY2-005` 扩展 bundle manifest 并实现 app 内的镜像导入/验证；验收：缺失镜像才导入，校验 digest/image ID，重复启动幂等；错误 bundle 使 Shell 未就绪且绝不在线拉取替代镜像。
-- [ ] `DEPLOY2-006` 将已扫描的 Sandbox 与 egress runtime artifact 嵌入一体化 app 镜像；验收：无独立镜像 pull 也能完成 Shell smoke；最终镜像 metadata、entrypoint 与平台保持原样，记录体积增量。
+- [x] `DEPLOY2-005` 扩展 bundle manifest 并实现 app 内的镜像导入/验证；验收：缺失镜像才导入，校验 digest/image ID，重复启动幂等；错误 bundle 使 Shell 未就绪且绝不在线拉取替代镜像。
 
-#### Phase 1.4：候选镜像构建流水线
+#### Phase 1.4：可复现的 runtime bundle 产物
 
-- [ ] `DEPLOY2-007` 改造 Docker release pipeline，在 app/Sandbox 构建保持并行的前提下组装候选镜像；验收：构建产物含 bundle，摘要和 image ID 可验证，正式 tag/发布动作留到 Phase 4。
+- [ ] `DEPLOY2-006` 从已扫描的 Sandbox 与 egress-proxy 构建产出 runtime bundle；验收：manifest 同时记录 RepoDigest、导入后 image ID 与归档 SHA-256，可离线校验，构建过程不发布正式镜像。
 
-#### Phase 1.5：Compose 与离线分发
+#### Phase 1.5：候选 app 镜像组装
+
+- [ ] `DEPLOY2-007` 改造候选镜像流水线，在 app/Sandbox 构建保持并行的前提下，将 Phase 1.4 产物嵌入 app 镜像；验收：最终镜像 metadata、entrypoint 与平台不变，bundle 摘要和 image ID 可验证，无独立 runtime pull 可完成 Shell smoke，记录体积增量；正式 tag/发布动作留到 Phase 4。
+
+#### Phase 1.6：Compose 拓扑收敛
 
 - [ ] `DEPLOY2-008` 调整可选附加服务 Compose；验收：Compose 只编排 SearXNG 等可选附加服务，不定义 `sandboxd`/`egress-proxy`，Shell 不依赖 Compose；不实现旧 Compose 拓扑自动迁移或回滚。
+
+#### Phase 1.7：离线分发包收敛
+
 - [ ] `DEPLOY2-009` 调整离线分发包；验收：app 已内嵌的 sandbox/egress runtime 不再重复打包，离线导入后仍可完成 bundle 摘要与镜像 ID 校验。
 
-#### Phase 1.6：集成回归
+#### Phase 1.8：集成回归
 
 - [ ] `DEPLOY2-010` 补齐自动化安全与运行回归测试；验收：Rootful embedded、Rootless external、Rootful external 拒绝、Docker 不可用时无本地回退、`network=none`/受控 egress、bundle 校验和容器清理测试通过。
 

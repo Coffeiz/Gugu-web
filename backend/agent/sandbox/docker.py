@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 
 from app.core.config import SandboxSettings
 
+from .bundle_runtime import bundle_directory
 from .docker_runtime import (
     docker_environment,
     docker_container_mount_source,
@@ -35,6 +36,7 @@ from .docker_runtime import (
 )
 from .local_executor import LocalWorkspaceExecutor, ShellResult
 from .quota import measure_directory
+from .offline_bundle import load_bundle_manifest
 
 
 _MAX_TIMEOUT = 300
@@ -157,6 +159,15 @@ def _tmpfs_spec(settings: SandboxSettings) -> str:
 
 
 def _image_ref(settings: SandboxSettings) -> str:
+    if getattr(settings, "manager_mode", "disabled") == "embedded":
+        manifest = load_bundle_manifest(bundle_directory() / "manifest.json")
+        if manifest.schema_version != 2:
+            raise ValueError("内置沙盒 bundle manifest 版本不受支持")
+        image_id = manifest.image_for_role("sandbox").image_id
+        if image_id is None:
+            raise ValueError("内置沙盒 bundle 未声明执行镜像 ID")
+        return image_id
+
     digest = settings.image_digest.strip()
     if not digest:
         raise ValueError("尚未配置固定镜像 digest")
