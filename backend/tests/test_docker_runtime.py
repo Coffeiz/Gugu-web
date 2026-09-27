@@ -1459,9 +1459,13 @@ def test_systemd_templates_pin_rootless_socket():
     assert 'id -u "$run_user"' in start_script
     assert 's#__RUN_UID__#${run_uid}#g' in start_script
     assert 's#__RUN_HOME__#${run_home}#g' in start_script
+    assert 's#__SQUID_CONF_PATH__#${squid_conf_path}#g' in start_script
+    assert 'squid_conf_path="$(realpath "$squid_conf")"' in start_script
     egress = (backend / "gugu-sandbox-egress.service").read_text(encoding="utf-8")
     assert "sandbox_egress_init.sh" in egress
     assert 'ExecStart=/bin/sh "__APP_DIR__/scripts/runtime/sandbox_egress_init.sh"' in egress
+    assert 'Environment="SQUID_CONF_PATH=__SQUID_CONF_PATH__"' in egress
+    assert "ReadOnlyPaths=__SQUID_CONF_PATH__" in egress
     assert "GUGU_EGRESS_PROXY_URL=http://egress-proxy:3128" in egress
     assert "DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock" in egress
     assert 'chmod 755 "$egress_script"' in start_script

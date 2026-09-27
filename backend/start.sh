@@ -451,11 +451,14 @@ cmd_install() {
         err "请将项目放在该用户可访问的目录，或使用项目目录所属用户作为 RUN_USER。"
         exit 1
     fi
+    local squid_conf_path
+    squid_conf_path="$(realpath "$squid_conf")"
 
     # 按实际安装目录 / 用户填占位符，生成 egress + 四个核心单元
     for s in $services; do
         log "生成 systemd 单元 → /etc/systemd/system/${s}.service"
         sed -e "s#__APP_DIR__#${APP_DIR}#g" \
+            -e "s#__SQUID_CONF_PATH__#${squid_conf_path}#g" \
             -e "s#__RUN_USER__#${run_user}#g" \
             -e "s#__RUN_UID__#${run_uid}#g" \
             -e "s#__RUN_HOME__#${run_home}#g" \
