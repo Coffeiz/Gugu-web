@@ -146,13 +146,16 @@ docker-compose.yml                                       【修改】将默认 C
 docker-compose.offline.yml                               【修改】只覆盖可选附加服务，不再重复携带内嵌 runtime 镜像
 docker-compose.prod.yml                                  【修改】显式 external 模式；继续使用独立 Rootless sandboxd 和 sandbox profile
 .github/workflows/docker-release.yml                     【修改】并行构建后组装、校验、发布含 bundle 的最终 app
+.github/actions/package-embedded-sandbox-bundle/action.yml 【新增】从已扫描 digest 生成并上传短期 runtime artifact
 scripts/release/build-offline-sandbox-bundle.sh          【修改】离线发布包不重复存储 app 已内嵌的 Sandbox/代理镜像
 scripts/release/build_embedded_sandbox_bundle.py         【新增】从已验证的本地镜像生成内置 runtime bundle 和 manifest
+scripts/release/verify_embedded_app_image.py             【新增】验证候选 app 保留配置/平台并只追加 bundle 层
 backend/tests/test_unified_image_sandbox_boundary.py     【修改】反转当前“app 不内置 Sandbox”的旧断言
 backend/tests/test_docker_runtime.py                     【修改】覆盖 embedded/external 模式、镜像完整性和 fail-closed
 backend/tests/test_offline_bundle.py                     【修改】覆盖内置包缺失、摘要错误、镜像 ID 错误和幂等导入
 scripts/release/test_build_embedded_sandbox_bundle.py    【新增】验证 runtime bundle 镜像/摘要绑定与损坏输入拒绝
-scripts/release/embedded-sandbox-image.test.mjs          【新增】验证组装 Dockerfile 不重建或更改 app 配置
+scripts/release/test_verify_embedded_app_image.py        【新增】验证候选镜像配置、层和离线 bundle smoke 的 fail-closed 行为
+scripts/release/embedded-sandbox-image.test.mjs          【新增】验证候选组装层定义及 CI runtime artifact 交接顺序
 scripts/release/docker-release-tags.test.mjs              【修改】验证最终带 bundle 镜像签名、tag 和 manifest
 scripts/release/offline-bundle.test.mjs                   【修改】验证离线包不重复附带 Sandbox/代理镜像
 README.md / README_en.md                                 【修改】说明单容器 Shell 前置条件、docker run 模板和 Rootful 风险
@@ -166,6 +169,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 - Python 定向测试：`cd backend && PYTHONPATH=. .venv/bin/pytest -q tests/test_unified_image_sandbox_boundary.py tests/test_docker_runtime.py tests/test_offline_bundle.py tests/test_terminal_streaming.py tests/test_mcp_stdio.py`。
 - 内置 runtime bundle 生成器测试：`backend/.venv/bin/pytest -q scripts/release/test_build_embedded_sandbox_bundle.py`。
+- 候选 app 镜像验证器测试：`backend/.venv/bin/pytest -q scripts/release/test_verify_embedded_app_image.py`。
 - 发布脚本测试：`node --test scripts/release/docker-release-tags.test.mjs scripts/release/offline-bundle.test.mjs scripts/release/compose-update.test.mjs`。
 - 配置校验：分别执行 `docker compose -f docker-compose.yml config --quiet`、`docker compose -f docker-compose.yml -f docker-compose.offline.yml config --quiet`、`docker compose -f docker-compose.prod.yml config --quiet`。
 - fnOS 实测：用尚未正式发布的候选 `gugu-web` 镜像，在 fnOS 的单容器入口只部署 Gugu-web，挂载持久 `/data` 和 Rootful Docker Socket，不启动 Compose；Admin 显示 `embedded` 与 Rootful 状态；Shell 命令、PTY、MCP stdio 能创建临时 Sandbox 子容器；受控 egress 按需拉起镜像内置代理；重启后无需用户另行 pull runtime 镜像或部署 sandboxd/egress 服务。
@@ -220,11 +224,15 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 #### Phase 1.5.1：候选 app 镜像层定义
 
-- [ ] `DEPLOY2-007a` 增加轻量 app 镜像组装定义，仅从传入的既有 app 镜像追加 Phase 1.4 的只读 bundle 文件；验收：不重跑 app 依赖构建，不改动应用配置、entrypoint、labels 或工作目录。
+- [x] `DEPLOY2-007a` 增加轻量 app 镜像组装定义，仅从传入的既有 app 镜像追加 Phase 1.4 的只读 bundle 文件；验收：不重跑 app 依赖构建，不改动应用配置、entrypoint、labels 或工作目录。
 
 #### Phase 1.5.2：CI 产物交接与候选镜像验证
 
-- [ ] `DEPLOY2-007b` 改造候选镜像流水线，在 app/Sandbox 构建保持并行的前提下，仅从同轮完成 Smoke/Trivy 的确切镜像生成并交接 Phase 1.4 产物，再组装候选 app 镜像；验收：最终镜像 config 的应用字段、entrypoint、labels 与平台保持原值，bundle 摘要和 image ID 可验证，无独立 runtime pull 可完成 Shell smoke，记录体积增量；正式 tag/发布动作留到 Phase 4。
+- [x] `DEPLOY2-007b` 将同轮构建且通过 Smoke/Trivy 的 Sandbox 镜像以不可变 digest 传给独立 bundle job；该 job 固定 egress-proxy digest，生成含归档 SHA-256 和镜像 ID 的 Phase 1.4 bundle 并上传短期 CI artifact。验收：app 构建继续与 Sandbox 构建并行；bundle job 仅在 Sandbox job 成功后启动；来源 digest 与被扫描镜像一致；代理扫描、bundle 生成和 artifact 上传均成功。该子阶段不组装或发布 app 镜像。
+
+#### Phase 1.5.3：候选 app 镜像组装与验证
+
+- [ ] `DEPLOY2-007c` 将 Phase 1.5.2 的 artifact 追加到已构建 app 镜像并验证候选；验收：不重跑 app 依赖构建；最终镜像 config、entrypoint、labels、平台不变且只新增 bundle 层；bundle 摘要/image ID 校验及无网络 Shell smoke 通过；记录体积增量；正式 tag/发布动作留到 Phase 4。
 
 #### Phase 1.6：Compose 拓扑收敛
 

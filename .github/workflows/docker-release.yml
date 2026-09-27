@@ -58,13 +58,15 @@ jobs:
           scripts/release/prune-container-tags.test.mjs
 
   sandbox-build:
-    # Sandbox 执行镜像作为独立制品构建、扫描与发布，不打包进一体化应用镜像。
+    # Sandbox 构建与 app 并行；完成 smoke/Trivy 后输出本轮不可变镜像 digest。
     name: Build & scan sandbox runtime
     needs: compose-validate
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      image_digest: ${{ steps.runtime-image.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,7 +74,7 @@ jobs:
           persist-credentials: false
 
       - name: Log in to GHCR
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -84,15 +86,16 @@ jobs:
 
       - name: Resolve sandbox image ref
         id: img
-        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', env.SANDBOX_IMAGE_REPOSITORY, github.run_id) || 'gugu-sandbox:ci' }}" >> "$GITHUB_OUTPUT"
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', env.SANDBOX_IMAGE_REPOSITORY, github.run_id) || (github.event_name == 'workflow_dispatch' && format('{0}:candidate-{1}', env.SANDBOX_IMAGE_REPOSITORY, github.run_id)) || 'gugu-sandbox:ci' }}" >> "$GITHUB_OUTPUT"
 
       - name: Build sandbox runtime image
+        id: sandbox-image
         uses: docker/build-push-action@v6
         with:
           context: docker/sandbox
           file: docker/sandbox/Dockerfile
           platforms: linux/amd64
-          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
           load: true
           tags: ${{ steps.img.outputs.ref }}
           no-cache: true
@@ -101,9 +104,16 @@ jobs:
           cache-from: type=gha,scope=sandbox
           cache-to: type=gha,mode=max,scope=sandbox
 
-      - name: Smoke test sandbox runtime
+      - name: Resolve immutable sandbox image
+        id: runtime-image
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         run: |
-          docker run --rm --entrypoint bash ${{ steps.img.outputs.ref }} -lc '
+          echo "ref=${SANDBOX_IMAGE_REPOSITORY}@${{ steps.sandbox-image.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "digest=${{ steps.sandbox-image.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test immutable sandbox runtime
+        run: |
+          docker run --rm --entrypoint bash ${{ steps.runtime-image.outputs.ref || steps.img.outputs.ref }} -lc '
             set -eu
             python --version
             node --version
@@ -114,17 +124,41 @@ jobs:
             test -s /tmp/sandbox-smoke.png
           '
 
-      - name: Scan sandbox image
+      - name: Scan immutable sandbox image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ steps.img.outputs.ref }}
+          image-ref: ${{ steps.runtime-image.outputs.ref || steps.img.outputs.ref }}
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
 
+  sandbox-bundle:
+    # Bundle 只消费已完成 sandbox Smoke/Trivy 的不可变摘要，不延长/串行化 app 构建。
+    name: Package scanned sandbox runtime
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: sandbox-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and upload embedded runtime bundle
+        uses: ./.github/actions/package-embedded-sandbox-bundle
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          sandbox-image-repository: ${{ env.SANDBOX_IMAGE_REPOSITORY }}
+          sandbox-image-digest: ${{ needs.sandbox-build.outputs.image_digest }}
+
   docker-build:
-    # 三个业务镜像并行；sandbox 执行镜像作为独立制品发布，不打包进一体化 app。
+    # 三个业务镜像保持并行构建；sandbox runtime 在独立 job 构建与扫描。
     # CI 在 GitHub 托管 runner（海外）上直连官方源比默认 TUNA（国内镜像）快；
     # APT_MIRROR / PIP_INDEX_URL 只覆盖声明了这些 ARG 的镜像（backend/app/sandbox），
     # 未声明的自动忽略。本地/devserver 构建不传参数，仍走 TUNA 默认。
@@ -179,9 +213,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 本地镜像引用：tag 触发时 build 只带全限定 :ci-<run_id> 一个 tag（push+load
-      # 双 exporter，本地名即限定名），非 tag 运行仍是非限定 :ci。下方 smoke 与
-      # trivy 统一从这里取名字。
+      # tag 触发时使用 :ci-<run_id>，普通分支/手动运行使用本地 tag。
       - name: Resolve local image ref
         id: img
         run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}" >> "$GITHUB_OUTPUT"
@@ -296,7 +328,6 @@ jobs:
 
       # 不再重建镜像：docker-build 已把本轮被 trivy 扫描过的镜像推到
       # :ci-<run_id>，这里对同一 digest 纯复制到发布 tag——扫的就是发的。
-      # 同仓（GHCR）blob 已存在、秒级完成；跨仓到 Docker Hub 只传层不执行构建。
       - name: Copy CI images to release tags
         env:
           VERSION: ${{ steps.version.outputs.version }}
