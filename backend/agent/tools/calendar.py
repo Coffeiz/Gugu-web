@@ -4,29 +4,49 @@
 """
 import json
 
-_DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
-_TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
-
+from agent.security import confirm
+from agent.tools.base import BaseSkill, Tool
+from app.core.schedule_rules import SCHEDULE_TZ
 from app.services.calendar import (
     create_event,
+    event_base_datetime,
     find_events_by_title,
     get_event,
     get_project,
-    create_event_reminders,
-    delete_event_reminder,
     delete_event_with_reminders,
-    get_event_reminder,
     list_event_reminders,
     list_events_with_reminders,
+    normalize_reminder_channels,
+    refresh_event_reminder_metadata,
+    replace_event_reminders,
 )
-from app.core.schedule_rules import SCHEDULE_TZ
-from agent.security import confirm
-from agent.tools.base import BaseSkill, Tool
+
+_DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
+_TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
+_REMINDER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "lead_minutes": {"type": "integer", "minimum": 0},
+        "channels": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]},
+            "minItems": 1,
+            "uniqueItems": True,
+        },
+        "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"]},
+        "enabled": {"type": "boolean"},
+    },
+    "required": ["lead_minutes"],
+    "additionalProperties": False,
+}
 
 
 async def _create_event(db, user_id, args: dict):
     pid = args.get("project_id")
     all_day = bool(args.get("all_day"))
+    reminders, error = await _resolve_reminder_specs(db, user_id, args.get("reminders", []))
+    if error:
+        return {"error": error}
     ev = await create_event(
         db, user_id,
         title=args["title"],
@@ -37,16 +57,13 @@ async def _create_event(db, user_id, args: dict):
         project_id=pid,
     )
     if ev is None:
-        return json.dumps({"error": "项目不存在"})
+        return {"error": "项目不存在"}
     resp = {"success": True, "event_id": ev.id, "title": ev.title, "date": ev.date,
             "time": ev.time, "end_time": ev.end_time}
-    # 顺手把提醒也建了，省得再单独调 add_event_reminder（一次工具调用搞定「建活动+提醒」）
-    leads = _lead_list(args)
-    if leads:
-        added, skipped = await _add_reminders_for(db, user_id, ev, leads, args.get("reminder_channels"))
-        resp["reminders_added"] = added
-        if skipped:
-            resp["reminders_skipped"] = skipped
+    rows, error = await replace_event_reminders(db, user_id, ev, reminders)
+    if error:
+        return {"error": error}
+    resp["reminders"] = [_reminder_brief(task, event_base_datetime(ev)) for task in rows]
     return resp
 
 
@@ -58,14 +75,13 @@ async def _list_events(db, user_id, args: dict):
         event_type=args.get("type"),
         limit=args.get("limit", 50),
     )
-    # 一并把这些活动的提醒查出来分组挂上，省得模型再逐个 list_event_reminders（一次调用拿全）
+    # 活动与提醒作为同一对象返回，修改时由 update_event(reminders) 一次整体对账。
     out = []
     for e in rows:
         d = {"id": e.id, "title": e.title, "date": e.date, "time": e.time, "end_time": e.end_time, "type": e.type,
              "project_id": e.project_id, "description": e.description}
-        rs = rem_by_event.get(e.id)
-        if rs:   # 有提醒才带 reminders 字段，无则省略（保持输出精简）
-            d["reminders"] = [_reminder_brief(t, _event_base_dt(e.date, e.time)) for t in rs]
+        rs = rem_by_event.get(e.id, [])
+        d["reminders"] = [_reminder_brief(t, event_base_datetime(e)) for t in rs]
         out.append(d)
     return out
 
@@ -97,23 +113,72 @@ async def _update_event(db, user_id, args: dict):
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
         return _err
-    fields = ("title", "date", "time", "end_time", "type", "project_id", "description")
+    fields = ("title", "date", "time", "end_time", "type", "project_id", "description", "reminders")
     if "all_day" in args:
         if args["all_day"]:
             args = {**args, "time": None, "end_time": None}
         elif "time" not in args:
-            return json.dumps({"error": "all_day=false 时必须提供 time"})
+            return {"error": "all_day=false 时必须提供 time"}
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
-        return json.dumps({"error": "没提供要修改的字段（title/date/time/end_time/type/project_id/description），未改动。"})
+        return {"error": "没提供要修改的字段（title/date/time/end_time/type/project_id/description/reminders），未改动。"}
     if args.get("project_id") is not None:
         proj = await get_project(db, user_id, args["project_id"])
         if not proj:
-            return json.dumps({"error": "关联项目不存在"})
+            return {"error": "关联项目不存在"}
+
+    timing_changed = "date" in args or "time" in args
+    existing_reminders = (
+        await list_event_reminders(db, user_id, e.id)
+        if timing_changed and "reminders" not in args else []
+    )
+    resolved_reminders = None
+    if "reminders" in args:
+        resolved_reminders, error = await _resolve_reminder_specs(db, user_id, args["reminders"])
+        if error:
+            return {"error": error}
+
+    old_base = event_base_datetime(e)
+    preserved_enabled_reminders = []
+    for reminder in existing_reminders:
+        if not reminder.enabled:
+            continue
+        fire_at = reminder.start_at
+        if fire_at.tzinfo is not None:
+            fire_at = fire_at.astimezone(SCHEDULE_TZ).replace(tzinfo=None)
+        lead_minutes = round((old_base - fire_at).total_seconds() / 60)
+        preserved_enabled_reminders.append({
+            "lead_minutes": lead_minutes,
+            "channels": [channel for channel in (reminder.channels or "web").split(",") if channel],
+            "delivery_targets": reminder.delivery_targets,
+            "enabled": True,
+        })
+
     for field in fields:
+        if field == "reminders":
+            continue
         if field in args:
             setattr(e, field, args[field])
-    await db.commit()
-    return {"success": True, "event_id": e.id}
+
+    if resolved_reminders is not None:
+        rows, error = await replace_event_reminders(db, user_id, e, resolved_reminders)
+        if error:
+            return {"error": error}
+    elif timing_changed and existing_reminders:
+        rows, error = await replace_event_reminders(
+            db, user_id, e, preserved_enabled_reminders, preserve_disabled=True,
+        )
+        if error:
+            return {"error": error}
+    elif "title" in args:
+        rows = await refresh_event_reminder_metadata(db, user_id, e)
+    else:
+        rows = await list_event_reminders(db, user_id, e.id)
+
+    return {
+        "success": True,
+        "event_id": e.id,
+        "reminders": [_reminder_brief(task, event_base_datetime(e)) for task in rows],
+    }
 
 
 async def _delete_event(db, user_id, args: dict):
@@ -173,73 +238,65 @@ async def _delete_event(db, user_id, args: dict):
     return {"success": True, "deleted_event_id": eid, "title": etitle, "deleted_reminders": len(reminders)}
 
 
-# ── 活动提醒（绑定到事件的 @once 定时任务，event_id 非空）──────────────────────
-# 与独立定时任务完全分开：这些提醒只归活动管，不出现在 list_scheduled_tasks，
-# 删活动时连带删；在网页活动卡里也能看到/改。
-def _event_base_dt(date_s, time_s):
-    """活动开始的本地 naive datetime；无时间的活动按 09:00 计。"""
-    from datetime import datetime
-    hh, mm = (time_s or "09:00").split(":")
-    return datetime.fromisoformat(f"{date_s}T{int(hh):02d}:{int(mm):02d}:00")
-
-
+# ── 活动提醒（活动字段的聚合视图；底层绑定 @once ScheduledTask）───────────────
 def _reminder_brief(t, base):
-    """ScheduledTask → 给模型看的精简提醒视图（含提前量、触发时刻、渠道、启用）。"""
-    lead = fire_at = None
+    """ScheduledTask → 可直接放回 event.reminders 的字段视图。"""
+    lead = None
     if t.schedule_kind == "once" and t.start_at:
-        fire = t.start_at.astimezone(SCHEDULE_TZ).replace(tzinfo=None)
-        fire_at = fire.strftime("%Y-%m-%d %H:%M")
+        fire = t.start_at
+        if fire.tzinfo is not None:
+            fire = fire.astimezone(SCHEDULE_TZ).replace(tzinfo=None)
         lead = round((base - fire).total_seconds() / 60)
-    return {"reminder_id": t.id, "fire_at": fire_at, "lead_minutes": lead,
-            "channels": [c for c in (t.channels or "").split(",") if c], "enabled": t.enabled}
+    channels = [c for c in (t.channels or "").split(",") if c]
+    result = {"lead_minutes": lead, "channels": channels, "enabled": t.enabled}
+    if "qq" in channels:
+        qq_target = (t.delivery_targets or {}).get("qq") if isinstance(t.delivery_targets, dict) else None
+        result["delivery_mode"] = (
+            "current_group" if isinstance(qq_target, dict) and qq_target.get("chat_type") == "group"
+            else "owner_private"
+        )
+    return result
 
 
-def _lead_list(args):
-    """取提前量列表：支持 reminders=[30,1440] 批量，或单个 lead_minutes。"""
-    rs = args.get("reminders")
-    if isinstance(rs, list) and rs:
-        return rs
-    if args.get("lead_minutes") is not None:
-        return [args["lead_minutes"]]
-    return []
+async def _resolve_reminder_delivery(db, user_id, channels, delivery_mode):
+    """复用独立定时任务的 QQ 目标解析与群聊位置确认规则。"""
+    if delivery_mode not in (None, "owner_private", "current_group"):
+        return None, None, json.dumps({
+            "error": "delivery_mode 只能是 owner_private 或 current_group",
+        }, ensure_ascii=False)
+    from agent.tools.scheduled_tasks import (
+        _delivery_mode_confirmation_error,
+        _group_delivery_mode_required,
+        _resolve_delivery_targets,
+    )
+
+    requested_channels = normalize_reminder_channels(channels).split(",")
+    if _group_delivery_mode_required(requested_channels, delivery_mode):
+        return None, None, _delivery_mode_confirmation_error()
+    resolved_channels, targets, error = await _resolve_delivery_targets(
+        db, user_id, requested_channels, delivery_mode or "owner_private",
+    )
+    return normalize_reminder_channels(resolved_channels), targets, error
 
 
-async def _add_reminders_for(db, user_id, e, leads, channels):
-    """给活动 e 批量建提醒并 commit；返回 (added_briefs, skipped_msgs)。"""
-    base = _event_base_dt(e.date, e.time)
-    created, skipped = await create_event_reminders(db, user_id, e, leads, channels)
-    return [_reminder_brief(t, base) for t in created], skipped
-
-
-async def _add_event_reminder(db, user_id, args: dict):
-    e, _err = await _resolve_event(db, user_id, args)
-    if _err:
-        return _err
-    leads = _lead_list(args) or [30]
-    added, skipped = await _add_reminders_for(db, user_id, e, leads, args.get("channels"))
-    return {"success": True, "event_id": e.id, "title": e.title,
-            "added": added, "skipped": skipped,
-            "note": "已绑定到该活动；最多 30 秒后开始按时触发"}
-
-
-async def _list_event_reminders(db, user_id, args: dict):
-    e, _err = await _resolve_event(db, user_id, args)
-    if _err:
-        return _err
-    rows = await list_event_reminders(db, user_id, e.id)
-    base = _event_base_dt(e.date, e.time)
-    return {"event_id": e.id, "title": e.title, "reminders": [_reminder_brief(t, base) for t in rows]}
-
-
-async def _remove_event_reminder(db, user_id, args: dict):
-    rid = args.get("reminder_id")
-    if not rid:
-        return json.dumps({"error": "需提供 reminder_id（用 list_event_reminders 查）"}, ensure_ascii=False)
-    t = await get_event_reminder(db, user_id, rid)
-    if t is None:
-        return json.dumps({"error": "活动提醒不存在"}, ensure_ascii=False)
-    tid = await delete_event_reminder(db, user_id, rid)
-    return {"success": True, "removed_reminder_id": tid}
+async def _resolve_reminder_specs(db, user_id, reminders):
+    """解析 event.reminders 中各项的通知渠道与投递目标。"""
+    if not isinstance(reminders, list):
+        return None, "reminders 必须是提醒配置数组"
+    resolved = []
+    for reminder in reminders:
+        channels, delivery_targets, error = await _resolve_reminder_delivery(
+            db, user_id, reminder.get("channels"), reminder.get("delivery_mode"),
+        )
+        if error:
+            return None, error
+        resolved.append({
+            "lead_minutes": reminder["lead_minutes"],
+            "channels": channels.split(","),
+            "delivery_targets": delivery_targets,
+            "enabled": reminder.get("enabled", True),
+        })
+    return resolved, None
 
 
 class CalendarSkill(BaseSkill):
@@ -250,7 +307,8 @@ class CalendarSkill(BaseSkill):
             label="新建日历事件",
             description_short='创建活动或截止提醒；日期传字符串，可设置提醒。',
             description=("在日历上创建事件或截止提醒。date 使用日期字符串（支持常见年月日格式，系统归一为 YYYY-MM-DD），"
-                         "time/end_time 使用带双引号的 HH:MM；可一次把提醒也带上（reminders），不用再单独调 add_event_reminder。"),
+                         "time/end_time 使用 HH:MM；reminders 是提醒配置数组，每项包含 lead_minutes，可选 channels、delivery_mode。"
+                         "QQ 投递到私聊用 owner_private，投递到当前群用 current_group；在 QQ 群中配置 QQ 提醒时必须明确选择。"),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -260,9 +318,7 @@ class CalendarSkill(BaseSkill):
                     "end_time":   {"type": "string", "pattern": _TIME_PATTERN},
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
                     "project_id": {"type": "integer"},
-                    "reminders":  {"type": "array", "items": {"type": "integer"},
-                                   },
-                    "reminder_channels": {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]}},
+                    "reminders":  {"type": "array", "items": _REMINDER_SCHEMA, "maxItems": 20},
                     "all_day":   {"type": "boolean"},
                 },
                 "required": ["title", "date", "all_day"],
@@ -280,7 +336,7 @@ class CalendarSkill(BaseSkill):
             name="list_events",
             label="查询日历事件",
             description_short='查询日历事件；支持按日期范围和类型筛选。',
-            description="查询日历事件，可按日期范围和类型筛选；from/to 传日期字符串。每个活动会**连同它自己的提醒**一起返回（reminders 字段，无提醒则不带），不用再逐个查提醒。",
+            description="查询日历事件，可按日期范围和类型筛选；from/to 传日期字符串。每个活动都会带 reminders 数组，元素可直接用于 update_event 的完整提醒配置。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -294,8 +350,11 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="update_event",
             label="更新日历事件",
-            description_short='修改活动字段；提醒请用 add_event_reminder',
-            description="修改日历事件的标题、日期、类型、关联项目、描述；date/on_date 传日期字符串，time/end_time 传 HH:MM。",
+            description_short='修改日历活动及其提醒配置。',
+            description=("修改日历事件的标题、日期、时间、类型、关联项目、描述和提醒；date/on_date 传日期字符串，time/end_time 传 HH:MM。"
+                         "reminders 省略表示不改提醒，传完整提醒配置数组表示整体替换，传 [] 会清除全部提醒。"
+                         "活动日期或开始时间变化且 reminders 省略时，启用的提醒会保留原提前分钟数并随活动重排。"
+                         "QQ 投递到私聊用 owner_private，投递到当前群用 current_group；在 QQ 群中配置 QQ 提醒时必须明确选择。"),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -309,6 +368,7 @@ class CalendarSkill(BaseSkill):
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
                     "project_id": {"type": "integer"},
                     "description": {"type": "string"},
+                    "reminders": {"type": "array", "items": _REMINDER_SCHEMA, "maxItems": 20},
                     "all_day":   {"type": "boolean"},
                 },
                 "anyOf": [
@@ -344,63 +404,6 @@ class CalendarSkill(BaseSkill):
             mutates=True,
             destructive=True,
             batch_confirmation=True,
-        ),
-        Tool(
-            name="add_event_reminder",
-            label="给活动加提醒",
-            description_short='给活动加提醒；支持设置提醒时间和通知渠道。',
-            description="给已有日历活动添加提醒；提醒绑定活动，不同于独立定时任务。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "event_id":     {"type": "integer"},
-                    "event":        {"type": "string"},
-                    "on_date":      {"type": "string", "pattern": _DATE_PATTERN},
-                    "reminders":    {"type": "array", "items": {"type": "integer"}},
-                    "lead_minutes": {"type": "integer"},
-                    "channels":     {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]}},
-                },
-                "oneOf": [
-                    {"required": ["event_id"], "not": {"required": ["event"]}},
-                    {"required": ["event"], "not": {"required": ["event_id"]}},
-                ],
-                "allOf": [
-                    {"not": {"required": ["reminders", "lead_minutes"]}},
-                ],
-            },
-            handler=_add_event_reminder,
-            mutates=True,
-        ),
-        Tool(
-            name="list_event_reminders",
-            label="查看活动提醒",
-            description_short='查看活动提醒；先取 reminder_id 再修改或删除',
-            description="列出某个日历活动的全部提醒（reminder_id、触发时间、提前量、渠道、是否启用）。改/删提醒前先用它拿 reminder_id。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "event_id": {"type": "integer"},
-                    "event":    {"type": "string"},
-                    "on_date":  {"type": "string", "pattern": _DATE_PATTERN},
-                },
-                "required": [],
-            },
-            handler=_list_event_reminders,
-        ),
-        Tool(
-            name="remove_event_reminder",
-            label="删除活动提醒",
-            description_short='删除活动提醒。',
-            description="删除某个活动提醒（用 list_event_reminders 拿到的 reminder_id）。只删活动提醒，不影响独立定时任务。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "reminder_id": {"type": "integer"},
-                },
-                "required": ["reminder_id"],
-            },
-            handler=_remove_event_reminder,
-            mutates=True,
         ),
     ]
 

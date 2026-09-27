@@ -1,7 +1,7 @@
 """agent/tools/calendar.py 单元补测（CRAP 治理 P1）。
 
-覆盖：事件创建（含顺手建提醒）、列表聚合、event 解析阶梯、更新校验、
-单/批量删除（确认门拦截 + 放行）、提醒精简视图与提前量列表。
+覆盖：事件创建、提醒聚合及整体更新、event 解析阶梯、更新校验、
+单/批量删除（确认门拦截 + 放行）、提醒字段视图。
 DB 走 conftest 内存库；确认门用 monkeypatch 归零验证放行路径。
 """
 import json
@@ -12,7 +12,7 @@ import pytest
 
 from agent.tools import calendar as cal
 from app.core.schedule_rules import SCHEDULE_TZ
-from app.services.calendar import create_event, create_event_reminders
+from app.services.calendar import create_event, replace_event_reminders
 
 
 async def _mk_event(db, user, title="评审", date="2026-09-20", time_="09:00", **kw):
@@ -32,8 +32,8 @@ async def test_create_event_shapes_and_inline_reminders(db, user_a, monkeypatch)
         "local_now",
         lambda: datetime(2026, 9, 1, tzinfo=SCHEDULE_TZ),
     )
-    missing = json.loads(await cal._create_event(db, user_a.id, {
-        "title": "评审", "date": "2026-09-20", "project_id": 987654}))
+    missing = await cal._create_event(db, user_a.id, {
+        "title": "评审", "date": "2026-09-20", "project_id": 987654})
     assert missing["error"] == "项目不存在"
 
     all_day = await cal._create_event(db, user_a.id, {"title": "截止", "date": "2026-09-21", "all_day": True})
@@ -43,24 +43,27 @@ async def test_create_event_shapes_and_inline_reminders(db, user_a, monkeypatch)
         "title": "评审", "date": "2026-09-20", "time": "10:00", "end_time": "11:30", "type": "deadline"})
     assert timed["time"] == "10:00" and timed["end_time"] == "11:30" and timed["date"] == "2026-09-20"
 
-    # 顺手建提醒：批量 reminders + 渠道
+    # reminders 是事件的完整字段，每项可以有自己的渠道和投递目标。
     with_rem = await cal._create_event(db, user_a.id, {
         "title": "带提醒", "date": "2026-09-22", "time": "09:00",
-        "reminders": [30, 1440], "reminder_channels": ["qq"]})
-    assert with_rem["reminders_added"] and len(with_rem["reminders_added"]) == 2
-    leads = {r["lead_minutes"] for r in with_rem["reminders_added"]}
+        "reminders": [
+            {"lead_minutes": 30, "channels": ["web"]},
+            {"lead_minutes": 1440, "channels": ["web"]},
+        ]})
+    assert len(with_rem["reminders"]) == 2
+    leads = {r["lead_minutes"] for r in with_rem["reminders"]}
     assert leads == {30, 1440}
-    assert all(r["channels"] == ["qq"] for r in with_rem["reminders_added"])
+    assert all(r["channels"] == ["web"] for r in with_rem["reminders"])
 
-    # 单个 lead_minutes 形态
+    # 新活动无提醒时仍返回空的聚合字段。
     single = await cal._create_event(db, user_a.id, {
-        "title": "单提醒", "date": "2026-09-23", "time": "09:00", "lead_minutes": 15})
-    assert len(single["reminders_added"]) == 1 and single["reminders_added"][0]["lead_minutes"] == 15
+        "title": "无提醒", "date": "2026-09-23", "time": "09:00"})
+    assert single["reminders"] == []
 
 
 # ── _list_events：活动 + 提醒一次聚合 ──────────────────────────────────────
 
-async def test_list_events_groups_reminders_and_omits_empty(db, user_a, monkeypatch):
+async def test_list_events_groups_reminders_and_includes_empty(db, user_a, monkeypatch):
     from app.services import calendar as calendar_service
 
     monkeypatch.setattr(
@@ -69,13 +72,16 @@ async def test_list_events_groups_reminders_and_omits_empty(db, user_a, monkeypa
     )
     e1 = await _mk_event(db, user_a, "有提醒")
     await _mk_event(db, user_a, "没提醒", date="2026-09-21")
-    await create_event_reminders(db, user_a.id, e1, [30], ["qq", "web"], commit=True)
+    await replace_event_reminders(db, user_a.id, e1, [
+        {"lead_minutes": 30, "channels": ["web"]},
+    ])
+    await db.commit()
 
     rows = await cal._list_events(db, user_a.id, {"from": "2026-09-01", "to": "2026-09-30"})
     by_title = {r["title"]: r for r in rows}
     assert "reminders" in by_title["有提醒"]
-    assert by_title["有提醒"]["reminders"][0]["channels"] == ["qq", "web"]
-    assert "reminders" not in by_title["没提醒"]                      # 无提醒省略字段
+    assert by_title["有提醒"]["reminders"][0]["channels"] == ["web"]
+    assert by_title["没提醒"]["reminders"] == []
 
     only = await cal._list_events(db, user_a.id, {"type": "deadline"})
     assert all(r["type"] == "deadline" for r in only)
@@ -110,19 +116,19 @@ async def test_resolve_event_ladder(db, user_a):
 async def test_update_event_validations_and_apply(db, user_a):
     e = await _mk_event(db, user_a, "原题", time_="09:00")
 
-    err = json.loads(await cal._update_event(db, user_a.id, {"event_id": e.id}))
+    err = await cal._update_event(db, user_a.id, {"event_id": e.id})
     assert "没提供要修改的字段" in err["error"]
 
-    err = json.loads(await cal._update_event(db, user_a.id, {"event_id": e.id, "all_day": False}))
+    err = await cal._update_event(db, user_a.id, {"event_id": e.id, "all_day": False})
     assert "all_day=false 时必须提供 time" in err["error"]
 
-    err = json.loads(await cal._update_event(
-        db, user_a.id, {"event_id": e.id, "title": "新题", "project_id": 987654}))
+    err = await cal._update_event(
+        db, user_a.id, {"event_id": e.id, "title": "新题", "project_id": 987654})
     assert "关联项目不存在" in err["error"]
 
     ok = await cal._update_event(db, user_a.id, {
         "event_id": e.id, "title": "新题", "description": "改一下"})
-    assert ok == {"success": True, "event_id": e.id}
+    assert ok == {"success": True, "event_id": e.id, "reminders": []}
     await db.refresh(e)
     assert e.title == "新题" and e.description == "改一下"
 
@@ -146,7 +152,10 @@ async def test_delete_event_single_blocked_then_confirmed(db, user_a, monkeypatc
         lambda: datetime(2026, 9, 1, tzinfo=SCHEDULE_TZ),
     )
     e = await _mk_event(db, user_a, "要删的")
-    await create_event_reminders(db, user_a.id, e, [30], ["qq"], commit=True)
+    await replace_event_reminders(db, user_a.id, e, [
+        {"lead_minutes": 30, "channels": ["web"]},
+    ])
+    await db.commit()
 
     blocked = await cal._delete_event(db, user_a.id, {"event_id": e.id})
     assert "success" not in blocked                                   # 未确认必须被拦截
@@ -178,21 +187,15 @@ async def test_delete_event_batch_validation_and_confirmed(db, user_a, monkeypat
 
 # ── 纯函数：提醒精简视图与提前量列表 ────────────────────────────────────────
 
-def test_reminder_brief_and_lead_list():
+def test_reminder_brief_is_an_event_field_value():
     base = datetime(2026, 9, 20, 9, 0)
-    once = SimpleNamespace(id=7, schedule_kind="once",
+    once = SimpleNamespace(schedule_kind="once",
                            start_at=datetime(2026, 9, 20, 8, 0, tzinfo=SCHEDULE_TZ),
-                           channels="qq,web", enabled=True)
+                           channels="web", enabled=True, delivery_targets=None)
     brief = cal._reminder_brief(once, base)
-    assert brief == {"reminder_id": 7, "fire_at": "2026-09-20 08:00",
-                     "lead_minutes": 60, "channels": ["qq", "web"], "enabled": True}
+    assert brief == {"lead_minutes": 60, "channels": ["web"], "enabled": True}
 
     cron = cal._reminder_brief(SimpleNamespace(
-        id=8, schedule_kind="cron", start_at=None, channels=None, enabled=False), base)
-    assert cron["fire_at"] is None and cron["lead_minutes"] is None
+        schedule_kind="cron", start_at=None, channels=None, enabled=False, delivery_targets=None), base)
+    assert cron["lead_minutes"] is None
     assert cron["channels"] == [] and cron["enabled"] is False
-
-    assert cal._lead_list({"reminders": [30, 1440]}) == [30, 1440]
-    assert cal._lead_list({"lead_minutes": 10}) == [10]
-    assert cal._lead_list({}) == []
-    assert cal._lead_list({"reminders": []}) == []                    # 空列表不采纳

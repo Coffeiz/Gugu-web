@@ -562,7 +562,8 @@ def test_scheduled_tasks_skill_routes_calendar_reminders_to_event():
     content = load_skill("scheduled-tasks")
     assert content is not None
     assert "create_event" in content
-    assert "add_event_reminder" in content
+    assert "update_event" in content
+    assert "add_event_reminder" not in content
     assert "不要再调用 `create_scheduled_task`" in content
     assert "日历事件本身不会主动提醒" not in content
 

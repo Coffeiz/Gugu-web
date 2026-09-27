@@ -61,7 +61,7 @@ def _issues(name: str, payload: dict) -> list[dict]:
     [
         ("copy_file", {"file_id": 1}, {}),
         ("send_file", {"file_id": 1}, {}),
-        ("add_event_reminder", {"event_id": 1}, {}),
+        ("update_event", {"event_id": 1, "reminders": [{"lead_minutes": 30}]}, {"reminders": [{"lead_minutes": 30}]}),
     ],
 )
 def test_phase1_requires_a_single_source_or_event(name, valid, invalid):
@@ -75,9 +75,10 @@ def test_send_file_rejects_multiple_sources_and_orphan_title():
     assert _issues("send_file", {"url": "https://example.com/a.png", "title": "图片"}) == []
 
 
-def test_add_event_reminder_rejects_ambiguous_reminder_inputs():
-    assert _issues("add_event_reminder", {"event_id": 1, "reminders": [30], "lead_minutes": 60})
-    assert _issues("add_event_reminder", {"event": "评审", "lead_minutes": 60}) == []
+def test_update_event_accepts_full_reminder_config_and_requires_event_target():
+    assert _issues("update_event", {"event_id": 1, "reminders": [{"lead_minutes": 30, "channels": ["web"]}]}) == []
+    assert _issues("update_event", {"event": "评审", "reminders": []}) == []
+    assert _issues("update_event", {"reminders": [{"lead_minutes": 30}]})
 
 
 def test_update_stage_batch_todos_schema():
@@ -176,7 +177,7 @@ def test_create_workspace_directory_kind_rejects_folder_and_project_ids():
 def test_phase8_migrated_tools_are_source_canonical_schema():
     for name in (
         "create_project", "create_event", "update_event", "save_uploaded_file",
-        "list_events", "list_projects", "list_event_reminders", "remove_event_reminder",
+        "list_events", "list_projects",
         "list_dir", "set_stages", "read_file",
         "note_get", "note_delete", "note_restore",
         "get_project", "read_conversation", "bind_web_session",

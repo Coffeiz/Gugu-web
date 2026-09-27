@@ -21,7 +21,7 @@ from app.models import (
 
 from agent.tools.files import _list_dir, _resolve_file, _resolve_key, _resolve_target
 from agent.tools.projects import _resolve_project, _update_project
-from agent.tools.calendar import _resolve_event, _remove_event_reminder
+from agent.tools.calendar import _resolve_event
 from agent.tools.clients import _resolve_client
 from agent.tools.scheduled_tasks import _resolve_task
 from agent.tools.conversations import _read_conversation
@@ -316,13 +316,6 @@ async def test_event_resolve_owner_ok(db, user_b):
     e = await _mk(db, CalendarEvent(user_id=user_b.id, title="我的活动", date="2026-07-02"))
     got, err = await _resolve_event(db, user_b.id, {"event_id": e.id})
     assert err is None and got.id == e.id
-
-
-async def test_remove_event_reminder_cross_user(db, user_a, user_b):
-    t = await _mk(db, ScheduledTask(user_id=user_b.id, event_id=1, name="B的提醒", cron="0 9 * * *"))
-    res = await _remove_event_reminder(db, user_a.id, {"reminder_id": t.id})
-    assert _is_err(res)
-    assert await db.get(ScheduledTask, t.id) is not None   # B 的提醒必须还在
 
 
 # ── clients ───────────────────────────────────────────────────────────────────

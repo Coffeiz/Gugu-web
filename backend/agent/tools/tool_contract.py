@@ -96,9 +96,6 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
         "list_events": ("from", "to"),
         "update_event": ("date", "on_date"),
         "delete_event": ("on_date",),
-        "add_event_reminder": ("on_date",),
-        "list_event_reminders": ("on_date",),
-        "remove_event_reminder": ("on_date",),
         "create_project": ("start_date", "deadline"),
         "update_project": ("start_date", "deadline"),
     }.get(tool_name, ())

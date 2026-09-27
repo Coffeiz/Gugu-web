@@ -6711,8 +6711,11 @@ export interface components {
             /**
              * Name
              * @default 活动提醒
-             */
+            */
             name: string;
+            qq_delivery?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** TokenResponse */
         TokenResponse: {

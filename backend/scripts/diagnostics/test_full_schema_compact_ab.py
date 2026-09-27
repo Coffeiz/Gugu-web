@@ -33,7 +33,7 @@ CASES = [
     ("send_file", "把文件 42 发给我。", {"file_id": 42}),
     ("save_uploaded_file", "把我刚刚上传且唯一的附件保存到个人文件区。", {"source": "latest"}),
     ("update_stage", "把项目‘网站重构’准备阶段的待办‘补充接口文档’和‘联调环境’一次勾完。", {"project": "网站重构", "stage": "准备", "todos": [{"text": "补充接口文档", "done": True}, {"text": "联调环境", "done": True}]}),
-    ("add_event_reminder", "给标题为‘活动 11’的活动添加提前 60 分钟的网页提醒。", {"event": "活动 11", "lead_minutes": 60, "channels": ["web"]}),
+    ("update_event", "给标题为‘活动 11’的活动设置提前 60 分钟的网页提醒。", {"event": "活动 11", "reminders": [{"lead_minutes": 60, "channels": ["web"]}]}),
     ("web_search", "搜索公开网页‘TypeScript 5.9 release notes’，返回 3 条结果。", {"query": "TypeScript 5.9 release notes", "max_results": 3}),
     ("image_search", "按关键词搜索‘低饱和配色’，找图片候选。", {"query": "低饱和配色"}),
     ("http_get", "读取 https://example.com 的网页内容。", {"url": "https://example.com"}),
@@ -273,10 +273,6 @@ def matches_expected(tool_name: str, actual: Any, expected: dict[str, Any]) -> b
     if tool_name == "note_create":
         expected_text = _text_in_blocks(expected.get("blocks"))
         return bool(expected_text) and expected_text in _text_in_blocks(actual.get("blocks"))
-    if tool_name == "add_event_reminder":
-        event_ok = actual.get("event_id") == 11 or actual.get("event") == expected.get("event")
-        lead_ok = actual.get("lead_minutes") == 60 or actual.get("reminders") == [60]
-        return event_ok and lead_ok and actual.get("channels") == expected.get("channels")
     return all(actual.get(key) == value for key, value in expected.items())
 
 
@@ -286,12 +282,6 @@ def schema_mismatch(tool_name: str, actual: Any, expected: dict[str, Any]) -> di
         return {"kind": "invalid_input", "actual_type": type(actual).__name__}
     if tool_name == "create_file" and actual.get("files"):
         expected = {**expected, "format": actual["format"]}
-    if tool_name == "add_event_reminder":
-        event_ok = actual.get("event_id") == 11 or actual.get("event") == expected.get("event")
-        lead_ok = actual.get("lead_minutes") == 60 or actual.get("reminders") == [60]
-        if event_ok and lead_ok and actual.get("channels") == expected.get("channels"):
-            return None
-        return {"kind": "field_mismatch", "missing": [], "mismatched": {"reminder_target_or_lead": {"expected": "event 11 + 60 minutes"}}}
     missing = sorted(key for key in expected if key not in actual)
     mismatched = {
         key: {"expected_type": type(value).__name__, "actual_type": type(actual[key]).__name__}

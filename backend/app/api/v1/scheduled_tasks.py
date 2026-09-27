@@ -556,6 +556,7 @@ async def delete_task(task_id: int, user: User = Depends(get_current_user), db: 
 class TestNotify(BaseModel):
     channels: list[str] = ["web"]
     name: str = "活动提醒"
+    qq_delivery: dict | None = None
 
 
 @router.post("/test-notify")
@@ -567,10 +568,15 @@ async def test_notify(body: TestNotify, user: User = Depends(get_current_user), 
     chans = {c for c in (body.channels or []) if c in _CHANNELS} or {"web"}
     name = (body.name or "活动提醒").strip()
     text = f"这是一条测试提醒——「{name}」。如果你收到了这条消息，说明提醒渠道工作正常。"
+    delivery_targets = None
+    if "qq" in chans and body.qq_delivery is not None:
+        delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
     # 渠道投递可能等待外部 IM 接口，不能让认证用的请求会话跨越整个投递过程。
     await db.close()
     from app import scheduled_tasks as ST
-    result = await ST.deliver_to_channels(user.id, f"{name}（测试）", text, chans)
+    result = await ST.deliver_to_channels(
+        user.id, f"{name}（测试）", text, chans, delivery_targets,
+    )
     if not result:
         return {"ok": True, "msg": "已发送（未选任何投递渠道）"}
     msg = "测试发送结果：\n" + "\n".join(f"· {k}：{v}" for k, v in result.items())

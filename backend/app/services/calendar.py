@@ -2,8 +2,6 @@
 from datetime import timedelta, timezone
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.ownership import get_owned
 from app.core.schedule_rules import SCHEDULE_TZ
@@ -95,7 +93,7 @@ async def list_event_reminders(db, user_id, event_id):
 
 
 async def find_event_reminder_by_cron(db, user_id, event_id, cron, *, exclude_id=None):
-    """查找活动在指定触发时刻的提醒，统一承接提醒唯一性查询。"""
+    """查找活动在指定触发时刻的提醒，供 API 幂等处理重复提交。"""
     stmt = select(ScheduledTask).where(
         ScheduledTask.user_id == user_id,
         ScheduledTask.event_id == event_id,
@@ -119,7 +117,7 @@ def event_base_datetime(event):
     return datetime.fromisoformat(f"{event.date}T{int(hh):02d}:{int(mm):02d}:00")
 
 
-def build_reminder(user_id, event, lead_minutes, channels):
+def build_reminder(user_id, event, lead_minutes, channels, delivery_targets=None, *, enabled=True):
     """构造一条绑定事件的提醒，不写库；返回 (task, error)。"""
     try:
         lead_minutes = int(lead_minutes)
@@ -128,7 +126,7 @@ def build_reminder(user_id, event, lead_minutes, channels):
     if lead_minutes < 0:
         return None, "lead_minutes 不能为负"
     fire = event_base_datetime(event) - timedelta(minutes=lead_minutes)
-    if fire <= local_now().replace(tzinfo=None):
+    if enabled and fire <= local_now().replace(tzinfo=None):
         return None, f"提前 {lead_minutes} 分钟（{fire.strftime('%Y-%m-%d %H:%M')}）已过，跳过"
     when = event.date + (f" {event.time}" if event.time else "")
     start_at = fire.replace(tzinfo=SCHEDULE_TZ)
@@ -140,81 +138,69 @@ def build_reminder(user_id, event, lead_minutes, channels):
         schedule_kind="once",
         start_at=start_at,
         channels=normalize_reminder_channels(channels),
-        enabled=True,
+        enabled=enabled,
         event_id=event.id,
+        delivery_targets=delivery_targets,
     ), None
 
 
-async def create_event_reminders(db, user_id, event, leads, channels, *, commit=False):
-    """批量创建事件提醒；按活动和触发时刻幂等，默认只 flush，由 API/任务边界提交。"""
-    created, skipped = [], []
-    candidates = []
-    seen_crons = set()
-    for lead in leads or []:
-        task, error = build_reminder(user_id, event, lead, channels)
+async def replace_event_reminders(db, user_id, event, reminders, *, preserve_disabled=False):
+    """按活动的完整提醒字段对账，失败时在写库前返回错误。"""
+    candidates = {}
+    for reminder in reminders:
+        task, error = build_reminder(
+            user_id,
+            event,
+            reminder["lead_minutes"],
+            reminder.get("channels"),
+            reminder.get("delivery_targets"),
+            enabled=reminder.get("enabled", True),
+        )
         if error:
-            skipped.append(error)
-        elif task.cron in seen_crons:
-            skipped.append("同一触发时刻的活动提醒在本次请求中重复，已跳过")
-        else:
-            seen_crons.add(task.cron)
-            candidates.append(task)
+            return None, error
+        if task.cron in candidates:
+            return None, "reminders 中存在相同的触发时刻，请删除重复项"
+        candidates[task.cron] = task
 
-    created_ids = []
-    if candidates:
-        existing = set((await db.execute(
-            select(ScheduledTask.cron).where(
-                ScheduledTask.user_id == user_id,
-                ScheduledTask.event_id == event.id,
-                ScheduledTask.cron.in_([task.cron for task in candidates]),
-            )
-        )).scalars().all())
-        pending = []
-        for task in candidates:
-            if task.cron in existing:
-                skipped.append("同一触发时刻的活动提醒已存在，已跳过")
-            else:
-                pending.append(task)
+    existing = await list_event_reminders(db, user_id, event.id)
+    by_cron = {task.cron: task for task in existing if not (preserve_disabled and not task.enabled)}
+    preserved_disabled = [task for task in existing if preserve_disabled and not task.enabled]
+    matched = []
 
-        # 预查询负责常规路径；数据库冲突写入负责并发请求，避免两个请求同时通过预查询。
-        dialect = db.get_bind().dialect.name
-        insert_factory = {"postgresql": pg_insert, "sqlite": sqlite_insert}.get(dialect)
-        if insert_factory is not None:
-            for task in pending:
-                stmt = insert_factory(ScheduledTask).values(
-                    user_id=task.user_id,
-                    event_id=task.event_id,
-                    name=task.name,
-                    payload=task.payload,
-                    cron=task.cron,
-                    schedule_kind=task.schedule_kind,
-                    start_at=task.start_at,
-                    channels=task.channels,
-                    enabled=task.enabled,
-                ).on_conflict_do_nothing().returning(ScheduledTask.id)
-                inserted_id = (await db.execute(stmt)).scalar_one_or_none()
-                if inserted_id is None:
-                    skipped.append("同一触发时刻的活动提醒已存在，已跳过")
-                else:
-                    created_ids.append(inserted_id)
-        else:
-            for task in pending:
-                db.add(task)
-            await db.flush()
-            created_ids = [task.id for task in pending]
+    # 先删掉不再属于活动字段的提醒并 flush，避免触发 event + fire 唯一索引冲突。
+    for task in by_cron.values():
+        if task.cron not in candidates:
+            await db.delete(task)
+    await db.flush()
 
-    if commit:
-        await db.commit()
-    else:
-        await db.flush()
-
-    for task_id in created_ids:
-        task = await db.get(ScheduledTask, task_id)
-        if task is None:
+    for cron, candidate in candidates.items():
+        current = by_cron.get(cron)
+        if current is None:
+            db.add(candidate)
+            matched.append(candidate)
             continue
-        await db.refresh(task)
-        created.append(task)
-    return created, skipped
+        current.name = candidate.name
+        current.payload = candidate.payload
+        current.schedule_kind = candidate.schedule_kind
+        current.start_at = candidate.start_at
+        current.channels = candidate.channels
+        current.delivery_targets = candidate.delivery_targets
+        current.enabled = candidate.enabled
+        matched.append(current)
+
+    await db.flush()
+    return [*matched, *preserved_disabled], None
+
+
+async def refresh_event_reminder_metadata(db, user_id, event):
+    """活动标题更新后同步提醒任务的人类可读标题和正文。"""
+    when = event.date + (f" {event.time}" if event.time else "")
+    reminders = await list_event_reminders(db, user_id, event.id)
+    for reminder in reminders:
+        reminder.name = f"{event.title} 提醒"
+        reminder.payload = f"提醒：{event.title}（{when}）"
+    await db.flush()
+    return reminders
 
 
 async def delete_event_with_reminders(db, user_id, event, *, commit=False):
@@ -228,23 +214,3 @@ async def delete_event_with_reminders(db, user_id, event, *, commit=False):
     else:
         await db.flush()
     return len(reminders)
-
-
-async def get_event_reminder(db, user_id, reminder_id):
-    reminder = await get_owned(db, ScheduledTask, reminder_id, user_id)
-    if not reminder or reminder.event_id is None:
-        return None
-    return reminder
-
-
-async def delete_event_reminder(db, user_id, reminder_id, *, commit=False):
-    reminder = await get_event_reminder(db, user_id, reminder_id)
-    if reminder is None:
-        return None
-    reminder_id = reminder.id
-    await db.delete(reminder)
-    if commit:
-        await db.commit()
-    else:
-        await db.flush()
-    return reminder_id

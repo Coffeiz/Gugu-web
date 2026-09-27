@@ -246,7 +246,7 @@ export const scheduledTasksApi = {
   requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/scheduled-tasks/${id}/filesystem-authorization/request`),
   confirmFilesystemAuthorization: (id: number, confirmCode: string) => post(`/scheduled-tasks/${id}/filesystem-authorization`, { confirm_code: confirmCode }),
   revokeFilesystemAuthorization: (id: number) => del(`/scheduled-tasks/${id}/filesystem-authorization`),
-  testNotify:   (data: any)         => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
+  testNotify:   (data: Partial<Schemas['TestNotify']>) => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
 }
 
 // ── 用户 BYOK ────────────────────────────────────────────────────────────────
