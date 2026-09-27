@@ -53,7 +53,7 @@ CI 目前只跑：`file-lifecycle`、`scheduled-task-run`、`chat`、`calendar`�
 
 新增用例接 CI 的标准：
 - 不依赖测试账号的既有数据（每轮 CI 全新数据库）。
-- 不接真实模型——CI 用 `backend/scripts/mock_llm_server.py`。断言只验证"收到了 AI 回复"，不抠固定文字。
+- 不接真实模型——CI 用 `backend/scripts/testing/mock_llm_server.py`。断言只验证"收到了 AI 回复"，不抠固定文字。
 - 不需要真实设备权限或第三方账号绑定。
 
 新增 CI 用例需同时改 `.spec.ts` 文件和 workflow 中的 `npx playwright test` 文件列表。

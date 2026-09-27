@@ -4,7 +4,7 @@
 
 跑法：
     cd backend
-    .venv/bin/python scripts/smoke_real_llm_tool_reliability.py --allow-real-llm
+    .venv/bin/python scripts/smoke/smoke_real_llm_tool_reliability.py --allow-real-llm
 
 默认只启用只读的 ``web_search``，不会创建、修改或删除任何业务数据。
 没有显式传 ``--allow-real-llm`` 时直接退出，避免本地测试或 CI 意外产生模型费用。

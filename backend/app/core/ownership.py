@@ -5,7 +5,7 @@ if obj.user_id != user_id」，属约定而非机制——少写一行 if 就是
 和「行不存在」混在同一句错误里，无法被运维感知。本模块把这层判断收敛成唯一入口：
 
 - **业务代码禁止再裸调 db.get() 取有归属的行**，一律走 get_owned()。
-  `scripts/check_ownership.py` 静态守卫强制此规则（agent/tools/ 下裸 db.get 直接报错；
+  `scripts/checks/check_ownership.py` 静态守卫强制此规则（agent/tools/ 下裸 db.get 直接报错；
   确无归属语义的例外行加 `# ownership-exempt` 标记）。
 - 对调用方，「不存在」与「存在但不属于你」是同一个结果（None）——错误文案统一
   「不存在」，不向模型/用户泄露「存在但不是你的」（防资源枚举）。

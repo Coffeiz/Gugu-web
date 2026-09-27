@@ -434,7 +434,7 @@ cmd_install() {
 
     # egress 引导脚本由 systemd 通过 /bin/sh 调用，安装时仍规范化为公共只读可执行，
     # 避免 Git/归档/同步工具丢失 mode 后再次出现 203/EXEC，也允许服务用户与部署者不同。
-    local egress_script="${APP_DIR}/scripts/sandbox_egress_init.sh"
+    local egress_script="${APP_DIR}/scripts/runtime/sandbox_egress_init.sh"
     local squid_conf="${APP_DIR}/../squid/egress.conf"
     chmod 755 "$egress_script"
     if ! command -v runuser >/dev/null 2>&1; then

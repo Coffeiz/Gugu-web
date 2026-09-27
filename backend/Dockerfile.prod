@@ -122,11 +122,11 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py
 COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY backend/compose_bootstrap.py ./compose_bootstrap.py
-COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
+COPY backend/scripts/runtime/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
 COPY --from=rag-runtime /rag/node_modules ./bin/node_modules
-COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
+COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs \
     && chmod 755 docker-entrypoint.sh /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py \
     && test ! -e /app/.venv \

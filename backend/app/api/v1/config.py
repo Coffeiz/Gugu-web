@@ -1302,7 +1302,7 @@ async def index_rebuild_status():
 
 
 # ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 画像事件迁 memory + daily 改格式 + 清遗留文件
-# （2026-07-09，见 scripts/refresh_memory.py）────────────────────────────────────
+# （2026-07-09，见 scripts/maintenance/refresh_memory.py）────────────────────────────────────
 # 预览(preview) 和真删(apply) 分两步：预览只跑一次 LLM 判断（review + split，各 3 次投票，
 # dry_run），结果连同具体 fact id 存 Redis；apply 直接按存下来的 id 执行，**不重新调用 LLM**——
 # 同一批数据前后两次调用结果可能差很多（今天踩过：40%→94%），"预览看到的" 必须等于 "真删的"，

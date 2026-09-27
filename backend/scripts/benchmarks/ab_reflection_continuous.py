@@ -13,7 +13,7 @@ cache_read/fresh），每满 --reflect-every 轮插入一次 append_reuse 反思
 - usage 经 usage_sink 旁路采集，主对话/反思分开记账。
 
 用法（devserver backend 目录执行）：
-    PYTHONPATH=. .venv/bin/python scripts/ab_reflection_continuous.py \
+    PYTHONPATH=. .venv/bin/python scripts/benchmarks/ab_reflection_continuous.py \
         --owner-user-id <UUID> [--session-id <int>] [--reflect-every 3] \
         [--turns 9] [--list-sessions]
 
@@ -34,7 +34,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.models import ConversationMessage, ConversationSession, User
 
-REPORTS_DIR = Path(__file__).resolve().parents[2] / "docs" / "reports"
+REPORTS_DIR = Path(__file__).resolve().parents[3] / "docs" / "reports"
 
 
 def _db_session_factory():
@@ -330,7 +330,7 @@ def _render_report(result: dict) -> str:
         "主对话经 complete_messages 直发。",
         "- 主对话与反思共享同一份渲染前缀（render_branch_prefix 同口径），"
         "理论上前缀命中互不干扰；本报告用数据验证。",
-        f"- 报告生成脚本：`backend/scripts/ab_reflection_continuous.py`。",
+        f"- 报告生成脚本：`backend/scripts/benchmarks/ab_reflection_continuous.py`。",
     ]
     return "\n".join(lines) + "\n"
 

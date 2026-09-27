@@ -8,7 +8,7 @@ if 校验——那种模式少一行 if 就是越权漏洞。本脚本抓的就�
 确实无归属语义的行（如按本人 id 取本人 User 行）在该行行尾加标记豁免：
     obj = await db.get(User, user_id)   # ownership-exempt: 为什么豁免
 
-用法：python scripts/check_ownership.py   （干净退出 0；有违规打印清单退出 1）
+用法：python scripts/checks/check_ownership.py   （干净退出 0；有违规打印清单退出 1）
 接 CI 后作为门禁；本地提交前跑一次也行。
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ import re
 import sys
 from pathlib import Path
 
-BACKEND = Path(__file__).parent.parent
+BACKEND = Path(__file__).resolve().parents[2]
 # 受守卫的目录：agent 工具层 + 用户态 REST 层
 GUARDED_DIRS = [BACKEND / "agent" / "tools", BACKEND / "app" / "api" / "v1"]
 # REST 层里整文件豁免的（管理员合法跨用户访问 / 无归属语义的模型）：

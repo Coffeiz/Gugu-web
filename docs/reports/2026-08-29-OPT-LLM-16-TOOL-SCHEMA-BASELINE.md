@@ -23,7 +23,7 @@ Phase 3-4 定向回归在 devserver 通过 13 项；能力注入、LoopScope tra
 
 ## Phase 5 description 优化
 
-通过 `backend/scripts/audit_tool_descriptions.py` 对 devserver 的 101 个注册工具进行审计，并压缩第一批高成本工具的顶层说明：`move_items`、定时任务、`call_tool`、`create_skill`、画布创建/更新工具。工具级 description 当前均不超过 100 字符；字段 description 保留日期格式、清空语义、资源边界和确认要求等不可由 Schema 结构推断的信息。下一阶段进入 Phase 6 A/B，比较完整 Schema 的 token 与工具准确性。
+通过 `backend/scripts/checks/audit_tool_descriptions.py` 对 devserver 的 101 个注册工具进行审计，并压缩第一批高成本工具的顶层说明：`move_items`、定时任务、`call_tool`、`create_skill`、画布创建/更新工具。工具级 description 当前均不超过 100 字符；字段 description 保留日期格式、清空语义、资源边界和确认要求等不可由 Schema 结构推断的信息。下一阶段进入 Phase 6 A/B，比较完整 Schema 的 token 与工具准确性。
 
 ## 后续边界
 
@@ -145,7 +145,7 @@ Phase 3-4 定向回归在 devserver 通过 13 项；能力注入、LoopScope tra
 `properties` 上下文，字段名为 `title` 或 `description` 时不会被误删。
 
 迁移前审计为 101 个工具、394 个字段级 `description`；截至本轮已删除 394 个冗余字段说明，必要安全语义已移到工具级短描述。
-审计入口：[audit_tool_schemas.py](../../backend/scripts/audit_tool_schemas.py)；注册级一致性和
+审计入口：[audit_tool_schemas.py](../../backend/scripts/checks/audit_tool_schemas.py)；注册级一致性和
 日期/时间结构约束测试位于 [test_tool_schema_security_contract.py](../../backend/tests/test_tool_schema_security_contract.py)。
 
 第二批覆盖日历查询/提醒及项目查询、日期和阶段/待办结构；保留默认值、清除语义和确认门等

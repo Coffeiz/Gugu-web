@@ -1,7 +1,7 @@
 """重建一个用户的统一知识索引。
 
 用法：
-    PYTHONPATH=. .venv/bin/python scripts/rebuild_knowledge_index.py --user-id <UUID>
+    PYTHONPATH=. .venv/bin/python scripts/maintenance/rebuild_knowledge_index.py --user-id <UUID>
 """
 from __future__ import annotations
 

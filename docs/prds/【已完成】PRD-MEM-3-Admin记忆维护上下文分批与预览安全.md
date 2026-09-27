@@ -241,7 +241,7 @@ backend/agent/memory/
 ├── reflection_jobs.py                                # 修改：暴露稳定消息范围和批次元数据
 └── store.py                                          # 修改：提供稳定 memory/profile/pattern revision
 
-backend/scripts/refresh_memory.py                    # 修改：普通 pattern 维护接入 batcher
+backend/scripts/maintenance/refresh_memory.py        # 修改：普通 pattern 维护接入 batcher
 backend/app/api/v1/config.py                         # 修改：普通维护 preview/apply 使用批次计划
 backend/app/api/v1/agent_admin.py                   # 修改：IM model-preview 使用批次计划和状态
 

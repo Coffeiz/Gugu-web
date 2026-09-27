@@ -142,11 +142,11 @@ COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py
 COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY backend/compose_bootstrap.py ./compose_bootstrap.py
-COPY backend/scripts/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
-COPY backend/scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
-COPY backend/scripts/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py
-COPY backend/scripts/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
-COPY backend/scripts/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
+COPY backend/scripts/runtime/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
+COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
+COPY backend/scripts/runtime/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py
+COPY backend/scripts/runtime/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
+COPY backend/scripts/runtime/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
 COPY squid/egress.conf /opt/gugu/egress.conf
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs

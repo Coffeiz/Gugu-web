@@ -5,8 +5,8 @@
 迁移清单；不要为了让报告变少而给存量代码做无关格式化。
 
 用法：
-    python scripts/check_orm_boundaries.py
-    python scripts/check_orm_boundaries.py --json
+    python scripts/checks/check_orm_boundaries.py
+    python scripts/checks/check_orm_boundaries.py --json
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-BACKEND = Path(__file__).resolve().parent.parent
+BACKEND = Path(__file__).resolve().parents[2]
 SCAN_ROOTS = {
     "api": BACKEND / "app" / "api" / "v1",
     "agent": BACKEND / "agent" / "tools",

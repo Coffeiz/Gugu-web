@@ -113,7 +113,7 @@ asyncio.run(asyncio.wait_for(t(), timeout=3))
     ./start.sh stop
     "$VENV_BIN/alembic" upgrade head
     ok "迁移完成"
-    "$VENV_BIN/python" scripts/verify_database_integrity.py
+    "$VENV_BIN/python" scripts/runtime/verify_database_integrity.py
     ok "数据库完整性校验通过"
 else
     warn "数据库暂不可达（3s 超时），跳过迁移。服务起来后用 admin 后台配 DB，重启再跑迁移。"

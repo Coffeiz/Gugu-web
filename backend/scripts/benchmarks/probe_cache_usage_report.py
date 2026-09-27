@@ -13,7 +13,7 @@
 record_current_usage 静默跳过），不污染 Gugu 的用量统计。
 
 用法（devserver backend 目录执行）：
-    PYTHONPATH=. .venv/bin/python scripts/probe_cache_usage_report.py \
+    PYTHONPATH=. .venv/bin/python scripts/benchmarks/probe_cache_usage_report.py \
         --allow-real-llm [--owner-user-id <UUID>] [--turns 5] \
         [--filler-chars 4000]
 

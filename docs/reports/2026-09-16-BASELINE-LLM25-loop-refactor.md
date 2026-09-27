@@ -24,8 +24,8 @@
 | PRD §4.1 七个关键测试文件（characterization / loop_driver_usage / stream_round_retry / interaction_protocol / mcp_e2e / canonical_tool_history） | **132 passed** |
 | 后端全量 `pytest -q` | **3152 passed** |
 | `python -m compileall -q app agent` | 通过 |
-| `scripts/check_ownership.py` | ✅ 通过 |
-| `scripts/check_confirm_gate.py` | ✅ 通过 |
+| `scripts/checks/check_ownership.py` | ✅ 通过 |
+| `scripts/checks/check_confirm_gate.py` | ✅ 通过 |
 | LoopScope | LOOPSCOPE_ENABLED=1 于 dev-restart 启动；hooks 直接包裹 `LLMRunner._run_loop`（hooks.py:221 起，保存/替换/逐 round 转发，见 §2 迁移清单） |
 
 Provider 行为基线由上述测试锁定：Anthropic（characterization + usage_semantics）、OpenAI/Responses（characterization）、Ollama（usage_semantics）、工具成功/失败/确认/两阶段（interaction_protocol + mcp_e2e）、canonical 顺序（canonical_tool_history）。Phase 2+ 每步迁移后须以同组测试对比。
@@ -42,7 +42,7 @@ Provider 行为基线由上述测试锁定：Anthropic（characterization + usag
 | `agent/runtime/loopscope_trace/hooks.py:212` | `from agent.core import LLMRunner`，**保存并替换 `LLMRunner._run_loop`**（221 行起，逐 round 转发原函数） | Phase 2+ 每步必须验证 hook 包裹仍生效（monkeypatch 的是类属性，迁移后 `_run_loop` 必须仍挂在 `LLMRunner` 类上） |
 | `agent/loop_drivers.py:221` | **反向依赖** `from agent.core import _stream_round`（run_round 内延迟 import） | LLM25-003 的首要目标：消除反向 import，`core.py` 留兼容别名 |
 | `app/api/v1/agent.py:723`、`app/api/v1/agent_admin.py:1430/1446` | `from agent.core import SPECIAL_STATE_LABELS` | 保留兼容导出 |
-| `scripts/smoke_real_llm_tool_reliability.py:25`、`scripts/smoke_memory_boundary.py:24`、`scripts/diagnostics/test_locale_continuous.py:52`、`scripts/diagnostics/test_full_schema_compact_ab.py`（3 处） | `from agent.core import LLMRunner` | 只用公共入口，零成本兼容 |
+| `scripts/smoke/smoke_real_llm_tool_reliability.py:25`、`scripts/smoke/smoke_memory_boundary.py:24`、`scripts/diagnostics/test_locale_continuous.py:52`、`scripts/diagnostics/test_full_schema_compact_ab.py`（3 处） | `from agent.core import LLMRunner` | 只用公共入口，零成本兼容 |
 
 ### 2.2 测试 monkeypatch 面（Phase 2+ 不得破坏的符号）
 

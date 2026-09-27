@@ -6,7 +6,7 @@
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 MACHINE = ROOT / "agent" / "loop" / "machine.py"
 ROUNDS = ROOT / "agent" / "loop" / "rounds.py"
 FINALIZE = ROOT / "agent" / "context" / "run_finalize.py"

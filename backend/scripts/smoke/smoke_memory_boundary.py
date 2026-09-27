@@ -8,7 +8,7 @@
 你喜欢"式断言都是虚构。红旗正则只做初筛，最终看打印的全文人工判定（承认不知道时也
 可能含这些词，不算脑补）。
 
-跑法：cd backend && .venv/bin/python scripts/smoke_memory_boundary.py
+跑法：cd backend && .venv/bin/python scripts/smoke/smoke_memory_boundary.py
 """
 import asyncio
 import os

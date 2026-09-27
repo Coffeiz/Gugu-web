@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 /**
  * CI 关键路径之三：GuguChat 悬浮窗——发消息收到回复、大窗会话列表、
  * 新建会话、收起/关闭。跟另外两条关键路径同一个原则：CI 里接
- * scripts/mock_llm_server.py 的固定回复，不接真实模型、不受限流/网络
+ * scripts/testing/mock_llm_server.py 的固定回复，不接真实模型、不受限流/网络
  * 影响。但断言只认"生成了一条新的 AI 回复气泡"，不死抠固定回复的具体
  * 文字——这样本地/devserver 用真实模型跑也一样有效（只是不如 CI 那么
  * 快，回复内容也不确定，但"发了消息、收到回复"这个核心行为一样能测）。

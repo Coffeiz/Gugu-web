@@ -610,7 +610,7 @@ Docker/Podman 不属于当前首版交付。后续只实现 `ShellSandbox` 的�
 - 与 `DockerSandboxExecutor` 相同的参数已完成 smoke test：容器 UID `65532`、workspace 可写、根文件系统不可写、`network=none` 生效，rootful Gugu 三个服务保持 active。
 - Rootless bind mount 的写权限依赖 subordinate group 映射；用户沙盒目录初始化必须设置对应 group/默认 ACL，不能只创建普通用户目录。该初始化仍是生产启用前的待办。
 
-权限初始化采用显式部署步骤：`backend/scripts/prepare_rootless_workspace.py` 默认只输出
+权限初始化采用显式部署步骤：`backend/scripts/runtime/prepare_rootless_workspace.py` 默认只输出
 计划，只有部署人员明确传入 `--apply` 才会创建目录并设置 ACL。脚本从 `/etc/subuid`
 和 `/etc/subgid` 解析 Rootless 登录用户的映射，把容器 `65532:65532` 映射到宿主机
 subordinate UID/GID；宿主机登录用户继续保留目录 owner，映射组通过 ACL 获得读写执行权限，
@@ -793,8 +793,8 @@ backend/tests/test_workspace_binding.py
 - [x] 生成固定 Debian 镜像的第三方包清单 `licenses/sandbox-debian-bookworm-slim.txt`，保留镜像 digest、包版本和许可证查阅位置。
 - [x] OSS 模式下为每个用户创建独立本地 Shell 持久空间，默认配额 512 MB，并接入 Admin 配额管理；OSS 对象存储不作为容器 bind mount。
 - [x] 初始化 Rootless bind mount 的 subordinate group/default ACL 计划脚本和部署入口；真实生产 apply 验收移入 Phase 6。
-- [x] 增加 `prepare_rootless_workspace.py` 权限计划脚本：默认 dry-run，显式 `--apply` 才设置 subordinate group/default ACL；补充 subuid/subgid 映射与根目录拒绝测试。
-- [x] 增加 `prepare_rootless_users.py` 批量权限初始化脚本：只扫描专门用户数据根目录下的用户目录，默认 dry-run，显式 `--apply` 才应用 ACL。
+- [x] 增加 `backend/scripts/runtime/prepare_rootless_workspace.py` 权限计划脚本：默认 dry-run，显式 `--apply` 才设置 subordinate group/default ACL；补充 subuid/subgid 映射与根目录拒绝测试。
+- [x] 增加 `backend/scripts/runtime/prepare_rootless_users.py` 批量权限初始化脚本：只扫描专门用户数据根目录下的用户目录，默认 dry-run，显式 `--apply` 才应用 ACL。
 - [x] 增加独立临时构建/cache 空间，默认配额 1 GB，并将配额落实为每个临时容器 `/tmp` 的 tmpfs 上限；容器销毁后自动回收。
 - [x] 统一 Shell 配额计量入口，覆盖 Shell 根目录创建、启动前检查、运行中 sandboxd 监测和清空后的空间回收；文件库上传/下载与构建产物账本统一收口移入 Phase 6。
 - [x] 将本机执行器的实现文件和类型正式重命名为 `LocalWorkspaceExecutor`，明确其仅用于可信本机执行；生产普通用户不允许使用。

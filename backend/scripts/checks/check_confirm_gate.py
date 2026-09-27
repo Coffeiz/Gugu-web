@@ -10,7 +10,7 @@
   `needs_target_confirmation`。没引用 = 违规退出 1。
 
 运行时另有 dispatch 层绊线兜底（无 confirm 的调用返回了"成功执行" → CRITICAL 日志），
-两层配合：静态防提交、动态抓漏网。用法：python scripts/check_confirm_gate.py
+两层配合：静态防提交、动态抓漏。用法：python scripts/checks/check_confirm_gate.py
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import ast
 import sys
 from pathlib import Path
 
-TOOLS_DIR = Path(__file__).parent.parent / "agent" / "tools"
+TOOLS_DIR = Path(__file__).resolve().parents[2] / "agent" / "tools"
 
 
 def _kw(call: ast.Call, name: str):

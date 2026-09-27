@@ -130,17 +130,17 @@ rootless-workspace-plan: ## 输出 Rootless Docker workspace ACL 计划（默认
 	@if [ -z "$(ROOTLESS_WORKSPACE)" ]; then \
 		echo "ERROR: 请传入 ROOTLESS_WORKSPACE=/path/to/workspace"; exit 1; \
 	fi
-	@$(VENV_BIN)/python scripts/prepare_rootless_workspace.py "$(ROOTLESS_WORKSPACE)" $(if $(ROOTLESS_LOGIN),--login "$(ROOTLESS_LOGIN)",)
+	@$(VENV_BIN)/python scripts/runtime/prepare_rootless_workspace.py "$(ROOTLESS_WORKSPACE)" $(if $(ROOTLESS_LOGIN),--login "$(ROOTLESS_LOGIN)",)
 
 rootless-workspace-apply: ## 显式应用 Rootless Docker workspace ACL（需部署权限）
 	@if [ -z "$(ROOTLESS_WORKSPACE)" ]; then \
 		echo "ERROR: 请传入 ROOTLESS_WORKSPACE=/path/to/workspace"; exit 1; \
 	fi
-	@$(VENV_BIN)/python scripts/prepare_rootless_workspace.py "$(ROOTLESS_WORKSPACE)" $(if $(ROOTLESS_LOGIN),--login "$(ROOTLESS_LOGIN)",) --apply
+	@$(VENV_BIN)/python scripts/runtime/prepare_rootless_workspace.py "$(ROOTLESS_WORKSPACE)" $(if $(ROOTLESS_LOGIN),--login "$(ROOTLESS_LOGIN)",) --apply
 
 sandbox-acl-plan: ## 输出所有用户 Shell 目录的 Rootless ACL 计划（默认不修改权限）
 	@if [ -z "$(VENV_BIN)" ]; then echo "ERROR: 未找到 venv，请先创建 .venv"; exit 1; fi
-	@$(VENV_BIN)/python scripts/prepare_rootless_users.py "$(ROOTLESS_USERS_ROOT)" --login "$(ROOTLESS_LOGIN)"
+	@$(VENV_BIN)/python scripts/runtime/prepare_rootless_users.py "$(ROOTLESS_USERS_ROOT)" --login "$(ROOTLESS_LOGIN)"
 
 sandbox-acl-apply: ## 显式应用所有用户 Shell 目录的 Rootless ACL（需部署权限）
 	@if [ "$(SANDBOX_ACL)" != "1" ]; then \
@@ -148,7 +148,7 @@ sandbox-acl-apply: ## 显式应用所有用户 Shell 目录的 Rootless ACL（�
 		exit 1; \
 	fi
 	@if [ -z "$(VENV_BIN)" ]; then echo "ERROR: 未找到 venv，请先创建 .venv"; exit 1; fi
-	@$(VENV_BIN)/python scripts/prepare_rootless_users.py "$(ROOTLESS_USERS_ROOT)" --login "$(ROOTLESS_LOGIN)" --apply
+	@$(VENV_BIN)/python scripts/runtime/prepare_rootless_users.py "$(ROOTLESS_USERS_ROOT)" --login "$(ROOTLESS_LOGIN)" --apply
 
 sandbox-acl-prepare: ## 按 SANDBOX_ACL 选择是否在启动前应用 ACL（默认跳过）
 	@if [ "$(SANDBOX_ACL)" = "1" ]; then \
@@ -166,7 +166,7 @@ compose-up: ## 启动 Compose 轻量模式；SANDBOX_ACL=1 时启用 sandbox pro
 
 check-context-compaction: ## 检查 90% 自动压缩策略和旧入口
 	@if [ -z "$(VENV_BIN)" ]; then echo "ERROR: 未找到 venv，请先创建 .venv"; exit 1; fi
-	@$(VENV_BIN)/python scripts/check_context_compaction.py
+	@$(VENV_BIN)/python scripts/checks/check_context_compaction.py
 
 migrate:     ## 跑数据库迁移（用 venv 绝对路径，不踩 PEP 668）
 	@if [ -z "$(VENV_BIN)" ]; then \
