@@ -135,6 +135,6 @@
 
 ## 7. 原始数据与脚本
 
-- devserver 原始 JSON：`backend/docs/reports/TEST-Cache-MiniMax-GLM-20run-20260826.json`（MiniMax/GLM）。
-- DeepSeek 原始 JSON：`backend/docs/reports/TEST-Cache-DeepSeek-20run-20260826.json`。
+- devserver 原始 JSON：[MiniMax/GLM](./backend/TEST-Cache-MiniMax-GLM-20run-20260826.json)。
+- DeepSeek 原始 JSON：[DeepSeek](./backend/TEST-Cache-DeepSeek-20run-20260826.json)。
 - 执行脚本：`backend/scripts/diagnostics/test_real_session_20_run_cache_matrix.py`。

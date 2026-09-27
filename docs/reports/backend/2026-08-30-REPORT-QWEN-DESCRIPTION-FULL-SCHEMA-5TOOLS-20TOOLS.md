@@ -206,5 +206,5 @@ full 失败：
 
 - 20 工具：`/tmp/qwen-20tools-description-full-20260830.json`
 - 5 工具：`/tmp/qwen-5tools-description-full-20260830.json`
-- [`test_full_schema_compact_ab.py`](../../scripts/diagnostics/test_full_schema_compact_ab.py)
-- [`test_schema_accumulation_5tools.py`](../../scripts/diagnostics/test_schema_accumulation_5tools.py)
+- [`test_full_schema_compact_ab.py`](../../../backend/scripts/diagnostics/test_full_schema_compact_ab.py)
+- [`test_schema_accumulation_5tools.py`](../../../backend/scripts/diagnostics/test_schema_accumulation_5tools.py)
