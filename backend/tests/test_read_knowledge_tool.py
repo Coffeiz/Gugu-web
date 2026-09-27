@@ -4,11 +4,13 @@
 列举/scope/keyword 过滤；跨用户不可见。
 """
 import pytest
+from zoneinfo import ZoneInfo
 
 from agent.knowledge.models import KnowledgeEntry, KnowledgeScope, KnowledgeSource
 from agent.knowledge.store import KnowledgeStore
 from agent.tools.knowledge import _read_knowledge
 from app.services.storage import LocalStorageBackend
+from app.core.tz import set_ctx_tz
 
 
 @pytest.fixture
@@ -31,7 +33,15 @@ async def _save(db_user, title: str, content: str, *, topic: str = "", descripti
 
 @pytest.mark.asyncio
 async def test_read_by_id_returns_full_content(knowledge_storage):
-    saved = await _save("user-a", "部署规范", "发布前必须跑完 CI 双工作流", topic="运维")
+    saved = KnowledgeEntry.create(
+        title="部署规范", content="发布前必须跑完 CI 双工作流", topic="运维",
+        scope=KnowledgeScope(owner_user_id="user-a"),
+        source=KnowledgeSource("user", label="测试"),
+    )
+    saved.created_at = 1790451656
+    saved.updated_at = 1790451656
+    set_ctx_tz(ZoneInfo("Asia/Shanghai"))
+    await KnowledgeStore("user-a").save(saved)
 
     result = await _read_knowledge(None, "user-a", {"knowledge_id": saved.id})
 
@@ -39,6 +49,8 @@ async def test_read_by_id_returns_full_content(knowledge_storage):
     assert result["entry"]["content"] == "发布前必须跑完 CI 双工作流"
     assert result["entry"]["title"] == "部署规范"
     assert result["entry"]["knowledge_id"] == saved.id
+    assert result["entry"]["created_at"] == "2026-09-27T03:40:56+08:00"
+    assert result["entry"]["updated_at"] == "2026-09-27T03:40:56+08:00"
 
 
 @pytest.mark.asyncio

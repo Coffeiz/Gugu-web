@@ -11,6 +11,10 @@ from typing import Iterable
 from app.services.storage import get_storage
 
 from .models import KnowledgeEntry, KnowledgeScope, KnowledgeSource
+from .timestamp_migration import (
+    _epoch_timestamp, _iso_timestamp, _map_timestamps,
+    migrate_user_knowledge_timestamps,
+)
 
 
 _PREFIX = "/.agent/knowledge/entries/"
@@ -57,14 +61,14 @@ def _serialize(entry: KnowledgeEntry) -> bytes:
         "keywords_json": entry.keywords,
         "description": entry.description,
         "scope_json": entry.scope.__dict__,
-        "source_json": entry.source.to_dict(),
+        "source_json": _map_timestamps(entry.source.to_dict(), _iso_timestamp),
         "confidence": entry.confidence,
         "version": entry.version,
         "parent_id": entry.parent_id or "",
-        "created_at": entry.created_at,
-        "updated_at": entry.updated_at,
+        "created_at": _iso_timestamp(entry.created_at),
+        "updated_at": _iso_timestamp(entry.updated_at),
         "active": entry.active,
-        "history_json": entry.history,
+        "history_json": _map_timestamps(entry.history, _iso_timestamp),
     }
     lines = ["---"]
     for key, value in metadata.items():
@@ -104,14 +108,14 @@ def _parse(raw: bytes) -> KnowledgeEntry:
         "description": fields.get("description", ""),
         "content": content,
         "scope": obj("scope_json", {}),
-        "source": obj("source_json", {}),
+        "source": _map_timestamps(obj("source_json", {}), _epoch_timestamp),
         "confidence": fields.get("confidence", "confirmed"),
         "version": fields.get("version", "1"),
         "parent_id": fields.get("parent_id") or None,
-        "created_at": fields.get("created_at"),
-        "updated_at": fields.get("updated_at"),
+        "created_at": _epoch_timestamp(fields.get("created_at")),
+        "updated_at": _epoch_timestamp(fields.get("updated_at")),
         "active": fields.get("active", "true").lower() == "true",
-        "history": obj("history_json", []),
+        "history": _map_timestamps(obj("history_json", []), _epoch_timestamp),
     })
 
 
@@ -145,10 +149,14 @@ class KnowledgeStore:
     def __init__(self, user_id: object):
         self.user_id = user_id
 
+    async def _ensure_timestamp_format(self) -> None:
+        await migrate_user_knowledge_timestamps(self.user_id, storage=get_storage())
+
     async def get(self, entry_id: str, *, active_only: bool = True) -> KnowledgeEntry | None:
         """按 ID 直读单个条目，不遍历整个知识库（PRD-RAG-9 文档级增量入口）。"""
         if not entry_id:
             return None
+        await self._ensure_timestamp_format()
         storage = get_storage()
         try:
             entry = _parse(await storage.get(_path(self.user_id, str(entry_id))))
@@ -159,6 +167,7 @@ class KnowledgeStore:
         return entry
 
     async def list(self, *, scope: KnowledgeScope | None = None, active_only: bool = True) -> list[KnowledgeEntry]:
+        await self._ensure_timestamp_format()
         storage = get_storage()
         try:
             keys = await storage.list_keys()
