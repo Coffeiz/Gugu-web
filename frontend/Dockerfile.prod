@@ -3,7 +3,7 @@
 FROM node:latest AS build
 
 WORKDIR /workspace
-RUN npm install --global pnpm@latest
+RUN npm install --global pnpm@10.15.0
 
 # 先复制稳定的 workspace 元数据，保证依赖层可复用；pnpm store 走 cache mount，
 # lockfile 变更时只下载增量。

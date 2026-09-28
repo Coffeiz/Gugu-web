@@ -356,8 +356,8 @@ Gugu bridge   --结构化 trace--> LoopScope Collector（开发数据写入）
 
 ```bash
 cd loopscope
-pnpm test
-pnpm --filter @loopscope/collector build
+corepack pnpm test
+corepack pnpm --filter @loopscope/collector build
 ```
 
 重点验证：Trace payload Zod 校验、超大 payload 拒绝、sessions/runs/spans 分页、SQLite migration、CORS 和关闭时 store 正常释放。

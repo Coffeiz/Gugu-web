@@ -57,7 +57,7 @@
 | SearXNG        | 自建通用搜索（`web_search`，省 Tavily 配额）   | Docker / 1Panel                                 | 可选     |
 
 
-> 前端：开发用 `npm run dev`（:5173）；生产 `npm run build` 出 `dist/`，由 nginx 托管。
+> 前端：开发用 `corepack pnpm --filter gugu-web run dev`（:5173）；生产用 `corepack pnpm --filter gugu-web run build` 生成 `dist/`，由 nginx 托管。前端依赖使用根 `pnpm-lock.yaml`，其中 `gugu-interaction-runtime` 是从 npm registry 获取的外部包。
 > 不接 IM（飞书/QQ/微信）时，worker / gateway / Redis 可以不跑。
 >
 > 💡 **「咕咕的大脑跑在 worker，不在 web」**——记住这条，能省掉一半运维困惑（改大脑代码要重启 worker 而非 backend，详见 §6.1）。
@@ -326,7 +326,7 @@ docker compose -f docker-compose.prod.yml up -d
 混用同一份环境变量或数据卷。若使用一体化 Compose，请按前面的章节使用 `GUGU_DATA_HOST_DIR`
 持久化 `/data`，应用镜像会在容器内托管 PostgreSQL/Redis，并把连接固定到回环地址。
 
-构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）。正式版本由发布 workflow 同步推送 Docker Hub 与 GHCR，业务服务器可直接拉取 Docker Hub 版本标签；以下命令展示如何手动构建并推送到 GHCR：
+构建镜像示例（在仓库根目录执行）。正式版本由发布 workflow 同步推送 Docker Hub 与 GHCR，业务服务器可直接拉取 Docker Hub 版本标签；以下命令展示如何手动构建并推送到 GHCR：
 
 ```bash
 docker build -f backend/Dockerfile.prod \
@@ -562,7 +562,7 @@ sudo nginx -t && sudo systemctl reload nginx
   location /admin { try_files $uri $uri/ /admin/index.html; }
   location /      { try_files $uri $uri/ /index.html; }
   ```
-  > 后台路由 base 为 `/admin`，所有 admin 页面 URL 形如 `/admin/config`、`/admin/login`，刷新时命中第一条规则。本地 admin dev server（`npm run dev:admin`）也需从 `localhost:5174/admin/` 访问。
+  > 后台路由 base 为 `/admin`，所有 admin 页面 URL 形如 `/admin/config`、`/admin/login`，刷新时命中第一条规则。本地 admin dev server（`corepack pnpm --filter gugu-web run dev:admin`）也需从 `localhost:5174/admin/` 访问。
 
 **踩过的坑（按出现频率）：**
 
@@ -834,7 +834,7 @@ sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
 | 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | 开发：`make dev-worker`；生产：`systemctl restart gugu-worker`   |
 | IM 网关代码：`agent/gateway/`（feishu / qq / wechat）、`router.py`        | **gateway**（连带重起所有网关子进程）            | `systemctl restart gugu-gateway` |
 | Shell 沙盒：`agent/sandbox/`、固定镜像或 sandboxd 配置                  | **sandboxd + worker**                         | `systemctl restart gugu-sandboxd gugu-worker` |
-| 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `cd frontend && npm run build`    |
+| 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `corepack pnpm --filter gugu-web run build` |
 | 配置 `.env`（含 `SECRET_KEY` / 管理员账号）                                 | **backend**                            | `systemctl restart gugu-backend`  |
 | **新增了模型字段 / 数据库列**                                                | **不是重启，是迁移！**                          | `make migrate`（见 §7）              |
 | 启用 / 停用 / 增删某个 IM bot                                             | 都不用重启                                  | Admin 面板即时生效（见 §6.4）             |

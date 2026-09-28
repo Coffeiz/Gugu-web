@@ -25,7 +25,7 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ## 前端单测（vitest）
 
-- 跑法：`npm run test:run`（一次性）或 `npm run test`（watch）。
+- 跑法：`corepack pnpm --filter gugu-web run test:run`（一次性）或 `corepack pnpm --filter gugu-web run test`（watch）。
 - 改完纯逻辑/composable 之后必须跑。
 - 测试失败时先定位实现、夹具和调用链，**不得直接改断言、删除用例、增加 `skip` 或放宽校验来恢复绿色**。
 - 只有产品契约明确改变并完成记录后才调整预期。
@@ -56,7 +56,7 @@ CI 目前只跑：`file-lifecycle`、`scheduled-task-run`、`chat`、`calendar`�
 - 不接真实模型——CI 用 `backend/scripts/testing/mock_llm_server.py`。断言只验证"收到了 AI 回复"，不抠固定文字。
 - 不需要真实设备权限或第三方账号绑定。
 
-新增 CI 用例需同时改 `.spec.ts` 文件和 workflow 中的 `npx playwright test` 文件列表。
+新增 CI 用例需同时改 `.spec.ts` 文件、`frontend/package.json` 的稳定 E2E 列表，并确认 workflow 调用 `pnpm --filter gugu-web run test:e2e:stable`。
 
 ### 选择器约定
 

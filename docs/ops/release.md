@@ -22,7 +22,7 @@
 
 ```bash
 # 1) 前端回归：确认弹窗/提醒组件契约与玻璃样式没被破坏
-cd frontend && npm run typecheck && npm run test:css-glass && npm run test:ui-dialogs
+corepack pnpm --filter gugu-web run typecheck && corepack pnpm --filter gugu-web run test:css-glass && corepack pnpm --filter gugu-web run test:ui-dialogs
 
 # 2) 后端测试
 cd backend && PYTHONPATH=. python -m pytest -q -n auto

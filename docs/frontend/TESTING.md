@@ -10,14 +10,13 @@
 ## 常用命令
 
 ```bash
-cd frontend
-npm run typecheck
-npm run typecheck:strict
-npm run test:run
-npm run test:css-glass
-npm run test:ui-dialogs
-npm run build
-npm run test:e2e:stable
+corepack pnpm --filter gugu-web run typecheck
+corepack pnpm --filter gugu-web run typecheck:strict
+corepack pnpm --filter gugu-web run test:run
+corepack pnpm --filter gugu-web run test:css-glass
+corepack pnpm --filter gugu-web run test:ui-dialogs
+corepack pnpm --filter gugu-web run build
+corepack pnpm --filter gugu-web run test:e2e:stable
 ```
 
 按改动范围运行最小集合，但提交前应完成 typecheck；涉及公共组件、主题或同步层时补充对应回归测试。
