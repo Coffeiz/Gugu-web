@@ -15,59 +15,71 @@ test('候选 app 镜像只从既有 app 追加只读 bundle 文件层', async ()
   assert.doesNotMatch(dockerfile, /^RUN\b|^ENV\b|^ENTRYPOINT\b|^CMD\b|^LABEL\b|^USER\b|^WORKDIR\b|^EXPOSE\b/m)
 })
 
-test('bundle job 只交接通过扫描的 runtime artifact，不串行化 app 构建', async () => {
+test('Sandbox 从当前提交构建、扫描后就地打包并记录提交身份', async () => {
   const [workflow, bundleAction] = await Promise.all([
     readFile(workflowPath, 'utf8'),
     readFile(bundleActionPath, 'utf8'),
   ])
-  const sandboxJob = workflow.slice(workflow.indexOf('\n  sandbox-build:'), workflow.indexOf('\n  sandbox-bundle:'))
-  const bundleJob = workflow.slice(workflow.indexOf('\n  sandbox-bundle:'), workflow.indexOf('\n  docker-build:'))
-  const appJob = workflow.slice(workflow.indexOf('\n  docker-build:'), workflow.indexOf('\n  assemble-candidate:'))
+  const normalizedWorkflow = workflow.replace(/\r\n/g, '\n')
+  const sandboxJob = normalizedWorkflow.slice(normalizedWorkflow.indexOf('\n  sandbox-build:'), normalizedWorkflow.indexOf('\n  docker-build:'))
+  const appJob = normalizedWorkflow.slice(normalizedWorkflow.indexOf('\n  docker-build:'), normalizedWorkflow.indexOf('\n  publish:'))
 
-  assert.match(sandboxJob, /Scan immutable sandbox image/)
-  assert.match(sandboxJob, /image_digest: \$\{\{ steps\.runtime-image\.outputs\.digest \}\}/)
-  assert.match(bundleJob, /needs: sandbox-build/)
-  assert.match(bundleJob, /uses: \.\/\.github\/actions\/package-embedded-sandbox-bundle/)
-  assert.match(bundleJob, /sandbox-image-digest: \$\{\{ needs\.sandbox-build\.outputs\.image_digest \}\}/)
-  assert.match(bundleAction, /SANDBOX_DIGEST: \$\{\{ inputs\.sandbox-image-digest \}\}/)
+  assert.match(sandboxJob, /Smoke test sandbox runtime[\s\S]*Scan sandbox image[\s\S]*Package same-commit embedded runtime bundle/)
+  assert.match(sandboxJob, /docker image inspect --format '\{\{\.Id\}\}'/)
+  assert.match(bundleAction, /inputs\.sandbox-image-id/)
+  assert.match(bundleAction, /crane digest --platform linux\/amd64 ubuntu\/squid:latest/,
+    'egress proxy digest 必须解析成与执行镜像相同平台的不可变子 manifest')
+  assert.match(bundleAction, /FROM ubuntu\/squid@%s[\s\S]*type=docker,dest=\$\{proxy_archive\}[\s\S]*docker load --input/,
+    '固定 digest 必须通过 BuildKit 直接导出完整 Docker archive，再导入目标 daemon')
+  assert.match(bundleAction, /docker image tag "\$SANDBOX_ID" gugu-sandbox:embedded/,
+    'bundle 应按通过 smoke/scan 的 sandbox image ID 打 tag')
+  assert.match(bundleAction, /docker image inspect --format '\{\{\.Id\}\}' gugu-egress-proxy:embedded/,
+    'bundle 应从通过固定 digest 导入的镜像取得 image ID')
+  assert.match(bundleAction, /--sandbox-digest "\$SANDBOX_ID"/)
+  assert.match(bundleAction, /--source-revision "\$SOURCE_REVISION"/)
   assert.match(bundleAction, /Scan immutable egress proxy image[\s\S]*Build embedded runtime bundle/)
+  assert.match(bundleAction, /--egress-proxy-digest "\$EGRESS_PROXY_ID"/)
   assert.match(bundleAction, /Upload embedded runtime bundle[\s\S]*actions\/upload-artifact@v4/)
   assert.ok(bundleAction.indexOf('Scan immutable egress proxy image') < bundleAction.indexOf('Build embedded runtime bundle'))
   assert.ok(bundleAction.indexOf('Build embedded runtime bundle') < bundleAction.indexOf('Upload embedded runtime bundle'))
-  assert.match(appJob, /needs: compose-validate/)
-  assert.doesNotMatch(appJob, /needs:.*sandbox-bundle/)
+  assert.match(appJob, /needs: \[compose-validate, sandbox-build\]/)
 })
 
-test('候选 app 从已构建基础镜像追加 bundle 并验证配置与运行内容', async () => {
+test('候选 app 在同一源码提交上组装、校验、扫描后才推 tag 临时引用', async () => {
   const [workflow, candidateAction, verifier] = await Promise.all([
     readFile(workflowPath, 'utf8'),
     readFile(candidateActionPath, 'utf8'),
     readFile(verifierPath, 'utf8'),
   ])
-  const candidateJob = workflow.slice(workflow.indexOf('\n  assemble-candidate:'), workflow.indexOf('\n  publish:'))
+  const normalizedWorkflow = workflow.replace(/\r\n/g, '\n')
+  const appJob = normalizedWorkflow.slice(normalizedWorkflow.indexOf('\n  docker-build:'), normalizedWorkflow.indexOf('\n  publish:'))
 
-  assert.match(candidateJob, /needs: \[docker-build, sandbox-bundle\]/)
-  assert.match(candidateJob, /uses: \.\/\.github\/actions\/assemble-embedded-app-candidate/)
-  assert.match(candidateAction, /context: release\/embedded-bundle/)
-  assert.match(candidateAction, /APP_IMAGE=\$\{\{ inputs\.base-image \}\}/)
-  assert.match(candidateAction, /verify_embedded_app_image\.py/)
+  assert.match(appJob, /uses: \.\/\.github\/actions\/assemble-embedded-app-candidate/)
+  assert.match(appJob, /source-revision: \$\{\{ github\.sha \}\}/)
+  assert.match(appJob, /Scan \$\{\{ matrix\.name \}\} image[\s\S]*steps\.candidate\.outputs\.ref/)
+  assert.match(appJob, /Scan \$\{\{ matrix\.name \}\} image[\s\S]*Push verified bundled app candidate/)
+  assert.ok(appJob.indexOf('Scan ${{ matrix.name }} image') < appJob.indexOf('Push verified bundled app candidate'),
+    '候选必须完成安全扫描后才推送临时 tag')
+  assert.match(appJob, /crane manifest --platform linux\/amd64/)
+  assert.match(candidateAction, /docker build --platform linux\/amd64[\s\S]*release\/embedded-bundle/)
+  assert.match(candidateAction, /--build-arg "APP_IMAGE=\$BASE_IMAGE"/)
+  assert.match(candidateAction, /verify_embedded_app_image\.py[\s\S]*--expected-source-revision/)
   assert.match(verifier, /"--network", "none"/)
-  assert.match(candidateAction, /crane manifest --platform linux\/amd64/)
 })
 
-test('正式 tag 发布只消费已验证候选 app 的不可变 digest', async () => {
-  const workflow = await readFile(workflowPath, 'utf8')
+test('正式 tag 发布只消费已验证的 bundled app，并继续发布独立分体 Sandbox', async () => {
+  const workflow = (await readFile(workflowPath, 'utf8')).replace(/\r\n/g, '\n')
   const publishJob = workflow.slice(workflow.indexOf('\n  publish:\n'))
 
-  assert.match(publishJob, /needs: \[[^\]]*assemble-candidate[^\]]*\]/,
-    '正式发布必须等待候选 app 完成验证')
-  assert.match(publishJob, /APP_CANDIDATE_DIGEST: \$\{\{\s*needs\.assemble-candidate\.outputs\.image_digest\s*\}\}/,
-    '发布步骤必须绑定候选组装产生的 digest')
+  assert.match(publishJob, /BUNDLED_APP_SUFFIX: bundled-ci-\$\{\{ github\.run_id \}\}/,
+    '正式发布必须读取同次构建的已验证候选 app')
   assert.equal(
-    publishJob.split('\n').filter(line => line.includes('crane copy') && line.includes('APP_CANDIDATE_DIGEST')).length,
+    publishJob.split('\n').filter(line => line.includes('crane copy') && line.includes('BUNDLED_APP_SUFFIX')).length,
     2,
-    'GHCR 与 Docker Hub 的 app tag 均必须从相同候选 digest 复制',
+    'GHCR 与 Docker Hub 的 app tag 均必须从同一个 bundled candidate 复制',
   )
+  assert.match(publishJob, /crane copy "\$\{REGISTRY\}\/coffeiz\/gugu-sandbox:\$\{CI_SUFFIX\}"/,
+    '分体部署的独立 Sandbox 版本仍须发布')
   assert.doesNotMatch(publishJob, /crane copy "\$\{REGISTRY\}\/coffeiz\/gugu-web:\$\{CI_SUFFIX\}"/,
     '不得将未打包的 CI app 基础镜像发布为正式版本')
 })

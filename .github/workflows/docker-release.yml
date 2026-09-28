@@ -56,18 +56,17 @@ jobs:
           scripts/release/compose-update.test.mjs
           scripts/release/docker-release-tags.test.mjs
           scripts/release/embedded-sandbox-image.test.mjs
+          scripts/release/offline-bundle.test.mjs
           scripts/release/prune-container-tags.test.mjs
 
   sandbox-build:
-    # Sandbox 构建与 app 并行；完成 smoke/Trivy 后输出本轮不可变镜像 digest。
+    # 每次从当前提交构建；同轮扫描后直接打包供 app 镜像内置，tag 发布另保留分体镜像。
     name: Build & scan sandbox runtime
     needs: compose-validate
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    outputs:
-      image_digest: ${{ steps.runtime-image.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,7 +74,7 @@ jobs:
           persist-credentials: false
 
       - name: Log in to GHCR
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -87,16 +86,15 @@ jobs:
 
       - name: Resolve sandbox image ref
         id: img
-        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', env.SANDBOX_IMAGE_REPOSITORY, github.run_id) || (github.event_name == 'workflow_dispatch' && format('{0}:candidate-{1}', env.SANDBOX_IMAGE_REPOSITORY, github.run_id)) || 'gugu-sandbox:ci' }}" >> "$GITHUB_OUTPUT"
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', env.SANDBOX_IMAGE_REPOSITORY, github.run_id) || 'gugu-sandbox:ci' }}" >> "$GITHUB_OUTPUT"
 
       - name: Build sandbox runtime image
-        id: sandbox-image
         uses: docker/build-push-action@v6
         with:
           context: docker/sandbox
           file: docker/sandbox/Dockerfile
           platforms: linux/amd64
-          push: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           load: true
           tags: ${{ steps.img.outputs.ref }}
           no-cache: true
@@ -105,16 +103,9 @@ jobs:
           cache-from: type=gha,scope=sandbox
           cache-to: type=gha,mode=max,scope=sandbox
 
-      - name: Resolve immutable sandbox image
-        id: runtime-image
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+      - name: Smoke test sandbox runtime
         run: |
-          echo "ref=${SANDBOX_IMAGE_REPOSITORY}@${{ steps.sandbox-image.outputs.digest }}" >> "$GITHUB_OUTPUT"
-          echo "digest=${{ steps.sandbox-image.outputs.digest }}" >> "$GITHUB_OUTPUT"
-
-      - name: Smoke test immutable sandbox runtime
-        run: |
-          docker run --rm --entrypoint bash ${{ steps.runtime-image.outputs.ref || steps.img.outputs.ref }} -lc '
+          docker run --rm --entrypoint bash ${{ steps.img.outputs.ref }} -lc '
             set -eu
             python --version
             node --version
@@ -125,46 +116,32 @@ jobs:
             test -s /tmp/sandbox-smoke.png
           '
 
-      - name: Scan immutable sandbox image
+      - name: Scan sandbox image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ steps.runtime-image.outputs.ref || steps.img.outputs.ref }}
+          image-ref: ${{ steps.img.outputs.ref }}
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
 
-  sandbox-bundle:
-    # Bundle 只消费已完成 sandbox Smoke/Trivy 的不可变摘要，不延长/串行化 app 构建。
-    name: Package scanned sandbox runtime
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: sandbox-build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Resolve scanned Sandbox image ID
+        id: sandbox-id
+        run: echo "value=$(docker image inspect --format '{{.Id}}' '${{ steps.img.outputs.ref }}')" >> "$GITHUB_OUTPUT"
 
-      - name: Build and upload embedded runtime bundle
+      - name: Package same-commit embedded runtime bundle
         uses: ./.github/actions/package-embedded-sandbox-bundle
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          sandbox-image-repository: ${{ env.SANDBOX_IMAGE_REPOSITORY }}
-          sandbox-image-digest: ${{ needs.sandbox-build.outputs.image_digest }}
+          sandbox-image-id: ${{ steps.sandbox-id.outputs.value }}
+          source-revision: ${{ github.sha }}
 
   docker-build:
-    # 三个业务镜像保持并行构建；sandbox runtime 在独立 job 构建与扫描。
+    # 基础业务镜像并行；app 在同一 runner 组装、校验并扫描本次 sandbox bundle。
     # CI 在 GitHub 托管 runner（海外）上直连官方源比默认 TUNA（国内镜像）快；
     # APT_MIRROR / PIP_INDEX_URL 只覆盖声明了这些 ARG 的镜像（backend/app/sandbox），
     # 未声明的自动忽略。本地/devserver 构建不传参数，仍走 TUNA 默认。
     name: Build & scan ${{ matrix.name }}
-    needs: compose-validate
+    needs: [compose-validate, sandbox-build]
     runs-on: ubuntu-latest
     # tag 触发时镜像推 :ci-<run_id>，publish 对该 digest 纯复制发布，需要 GHCR 写权限。
     permissions:
@@ -204,7 +181,7 @@ jobs:
           persist-credentials: false
 
       - name: Log in to GHCR
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && matrix.name == 'app')
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -214,10 +191,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # tag 推 :ci；手动候选只推 app 基础镜像，普通 main 不额外推送。
+      # tag 触发时临时推送基础镜像供同一 job 的本地候选组装；非 tag 运行不推送。
       - name: Resolve local image ref
         id: img
-        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || (github.event_name == 'workflow_dispatch' && matrix.name == 'app' && format('{0}:candidate-base-{1}', matrix.ci_image, github.run_id)) || matrix.tag }}" >> "$GITHUB_OUTPUT"
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}" >> "$GITHUB_OUTPUT"
 
       - name: Build ${{ matrix.name }} image
         uses: docker/build-push-action@v6
@@ -231,9 +208,9 @@ jobs:
           # push 模式下 tags 只能放全限定名：非限定名（gugu-web:ci）会被 buildx 推到
           # docker.io/library，而本 job 只登录 GHCR，401 insufficient scopes
           # （v1.2.3 重打 tag 发布事故 2026-09-16）。
-          push: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && matrix.name == 'app') }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           load: true
-          tags: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || (github.event_name == 'workflow_dispatch' && matrix.name == 'app' && format('{0}:candidate-base-{1}', matrix.ci_image, github.run_id)) || matrix.tag }}
+          tags: ${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}
           no-cache: false
           # 版本 label 必须在构建期带真实 tag：publish 复制不改内容，updater 靠
           # org.opencontainers.image.version 识别当前版本。
@@ -256,6 +233,20 @@ jobs:
           docker run --rm --entrypoint docker ${{ steps.img.outputs.ref }} compose version
           docker run --rm --entrypoint sh ${{ steps.img.outputs.ref }} -c 'test ! -d /opt/gugu/sandbox'
 
+      - name: Resolve bundled app candidate ref
+        if: matrix.name == 'app'
+        id: candidate
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:bundled-ci-{1}', env.IMAGE_REPOSITORY, github.run_id) || format('gugu-web:candidate-{0}', github.run_id) }}" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble and verify bundled app candidate
+        if: matrix.name == 'app'
+        uses: ./.github/actions/assemble-embedded-app-candidate
+        with:
+          base-image: ${{ steps.img.outputs.ref }}
+          candidate-image: ${{ steps.candidate.outputs.ref }}
+          bundle-artifact: embedded-runtime-bundle-${{ github.run_id }}
+          source-revision: ${{ github.sha }}
+
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
       # SBOM 会导致误报已修复的漏洞（v1.0.2 曾因此报 msgpack 1.1.2/setuptools 70.3.0，
@@ -266,61 +257,62 @@ jobs:
       - name: Scan ${{ matrix.name }} image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ steps.img.outputs.ref }}
+          image-ref: ${{ matrix.name == 'app' && steps.candidate.outputs.ref || steps.img.outputs.ref }}
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
           skip-files: ${{ (matrix.name == 'backend' || matrix.name == 'app') && '/opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json' || '' }}
 
-  assemble-candidate:
-    name: Assemble and verify bundled app candidate
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: [docker-build, sandbox-bundle]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      image_digest: ${{ steps.assemble.outputs.digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Push verified bundled app candidate
+        if: matrix.name == 'app' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.ref }}
+        run: docker push "$CANDIDATE_IMAGE"
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve base and candidate refs
-        id: refs
+      - name: Record bundled candidate compressed size
+        if: matrix.name == 'app' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          BASE_IMAGE: ${{ steps.img.outputs.ref }}
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.ref }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            base_ref="${IMAGE_REPOSITORY}:ci-${GITHUB_RUN_ID}"
-            candidate_ref="${IMAGE_REPOSITORY}:bundled-ci-${GITHUB_RUN_ID}"
-          else
-            base_ref="${IMAGE_REPOSITORY}:candidate-base-${GITHUB_RUN_ID}"
-            candidate_ref="${IMAGE_REPOSITORY}:candidate-${GITHUB_RUN_ID}"
-          fi
-          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
-          echo "candidate_ref=$candidate_ref" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          version="v0.20.3"
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${version}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin crane
+          crane manifest --platform linux/amd64 "$BASE_IMAGE" > /tmp/gugu-base-manifest.json
+          crane manifest --platform linux/amd64 "$CANDIDATE_IMAGE" > /tmp/gugu-candidate-manifest.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
 
-      - name: Assemble and verify candidate
-        id: assemble
-        uses: ./.github/actions/assemble-embedded-app-candidate
-        with:
-          base-image: ${{ steps.refs.outputs.base_ref }}
-          candidate-image: ${{ steps.refs.outputs.candidate_ref }}
-          bundle-artifact: embedded-runtime-bundle-${{ github.run_id }}
+          def compressed_bytes(path):
+              manifest = json.loads(Path(path).read_text(encoding='utf-8'))
+              return int(manifest['config']['size']) + sum(int(layer['size']) for layer in manifest['layers'])
+
+          base = compressed_bytes('/tmp/gugu-base-manifest.json')
+          candidate = compressed_bytes('/tmp/gugu-candidate-manifest.json')
+          delta = candidate - base
+          if delta < 0:
+              raise SystemExit('候选镜像压缩体积小于基础镜像，manifest 对比异常')
+          print(f'基础 app 压缩镜像：{base} bytes')
+          print(f'内置 bundle 压缩增量：{delta} bytes')
+          with open('/tmp/gugu-bundle-size.txt', 'w', encoding='utf-8') as output:
+              output.write(f'{base}\t{delta}\n')
+          PY
+          read -r base_bytes delta_bytes < /tmp/gugu-bundle-size.txt
+          {
+            echo '### 内置 Sandbox 候选镜像'
+            echo "- 候选镜像：$CANDIDATE_IMAGE"
+            echo "- digest：$(crane digest "$CANDIDATE_IMAGE")"
+            echo "- 基础 app 压缩体积：$base_bytes bytes"
+            echo "- bundle 压缩增量：$delta_bytes bytes"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish Docker Hub app and GHCR business images
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [compose-validate, sandbox-build, docker-build, assemble-candidate]
+    needs: [compose-validate, sandbox-build, docker-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -371,21 +363,22 @@ jobs:
             | tar -xz -C /usr/local/bin crane
           crane version
 
-      # 不再重建镜像：backend/frontend/sandbox 复制本轮被 Trivy 扫描的 CI 镜像；
-      # app 必须复制已验证候选的不可变 digest，不能回退到未打 bundle 的基础镜像。
+      # 不再重建镜像：docker-build 已把本轮被 trivy 扫描过的镜像推到
+      # :ci-<run_id>，这里对同一 digest 纯复制到发布 tag——扫的就是发的。
+      # 同仓（GHCR）blob 已存在、秒级完成；跨仓到 Docker Hub 只传层不执行构建。
       - name: Copy CI images to release tags
         env:
           VERSION: ${{ steps.version.outputs.version }}
           CI_SUFFIX: ci-${{ github.run_id }}
-          APP_CANDIDATE_DIGEST: ${{ needs.assemble-candidate.outputs.image_digest }}
+          BUNDLED_APP_SUFFIX: bundled-ci-${{ github.run_id }}
         run: |
           set -euo pipefail
           crane copy "${REGISTRY}/coffeiz/gugu-web-backend:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web-backend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-backend:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web-backend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-frontend:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web-frontend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-frontend:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web-frontend:${VERSION}"
-          crane copy "${IMAGE_REPOSITORY}@${APP_CANDIDATE_DIGEST}" "${IMAGE_REPOSITORY}:${VERSION}"
-          crane copy "${IMAGE_REPOSITORY}@${APP_CANDIDATE_DIGEST}" "${DOCKERHUB_IMAGE_REPOSITORY}:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web:${BUNDLED_APP_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web:${BUNDLED_APP_SUFFIX}" "docker.io/coffeiz/gugu-web:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-sandbox:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-sandbox:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-sandbox:${CI_SUFFIX}" "docker.io/coffeiz/gugu-sandbox:${VERSION}"
 
@@ -539,7 +532,7 @@ jobs:
             echo "- default Compose app digest：$APP_DIGEST"
             echo "- sandbox digest：$SANDBOX_DIGEST"
             echo '- 架构：linux/amd64'
-            echo '- 镜像来源：app 使用已验证 bundled 候选 digest；backend/frontend/sandbox 使用本轮扫描的 CI 镜像'
+            echo '- app 镜像：同轮构建并扫描的 Sandbox bundle 已内置并验证；backend/frontend/sandbox 从本轮 CI 镜像复制'
             echo '- manifest：GitHub Release 资产'
               } >> "$GITHUB_STEP_SUMMARY"
 
@@ -568,7 +561,7 @@ jobs:
       - name: Build one-file offline bundle
         run: |
           mkdir -p release/offline
-          bash scripts/release/build-offline-sandbox-bundle.sh \
+          scripts/release/build-offline-sandbox-bundle.sh \
             --output release/offline/gugu-compose-bundle.tar \
             --image coffeiz/gugu-web:latest \
             --image searxng/searxng:latest

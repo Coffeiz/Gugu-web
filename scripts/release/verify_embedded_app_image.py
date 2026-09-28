@@ -13,12 +13,13 @@ from typing import Callable
 
 
 _BUNDLE_SMOKE = (
-    "import json; "
+    "import json; from pathlib import Path; "
     "from agent.sandbox.bundle_runtime import EmbeddedBundleRuntime; "
     "m = EmbeddedBundleRuntime().load_verified_manifest(); "
     "assert m.schema_version == 2; "
     "assert {i.role for i in m.images} == {'sandbox', 'egress-proxy'}; "
-    "print(json.dumps([{'name': i.name, 'digest': i.digest, 'image_id': i.image_id, 'role': i.role} for i in m.images]))"
+    "raw = json.loads(Path('/opt/gugu/sandbox-bundle/manifest.json').read_text()); "
+    "print(json.dumps({'images': [{'name': i.name, 'digest': i.digest, 'image_id': i.image_id, 'role': i.role} for i in m.images], 'source_revision': raw.get('source_revision')}))"
 )
 
 _BUNDLE_DIRECTORY = "/opt/gugu/sandbox-bundle"
@@ -56,7 +57,7 @@ def _docker_call(docker: str, args: list[str], run: Callable):
     )
 
 
-def _candidate_images(candidate_image: str, docker: str, run: Callable) -> list[dict]:
+def _candidate_images(candidate_image: str, docker: str, run: Callable) -> tuple[list[dict], str | None]:
     smoke = _docker_call(
         docker,
         ["run", "--rm", "--network", "none", "--read-only", "--entrypoint", "python3",
@@ -66,16 +67,23 @@ def _candidate_images(candidate_image: str, docker: str, run: Callable) -> list[
     if smoke.returncode != 0:
         raise ImageVerificationError("候选 app 内的 bundle 摘要校验失败")
     try:
-        images = json.loads(smoke.stdout)
+        payload = json.loads(smoke.stdout)
     except (TypeError, json.JSONDecodeError) as exc:
         raise ImageVerificationError("候选 app bundle smoke 输出无效") from exc
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("images"), list)
+        or (payload.get("source_revision") is not None and not isinstance(payload.get("source_revision"), str))
+    ):
+        raise ImageVerificationError("候选 app bundle smoke 输出无效")
+    images = payload["images"]
     if (
         not isinstance(images, list)
         or any(not isinstance(image, dict) or not isinstance(image.get("role"), str) for image in images)
         or {image["role"] for image in images} != {"sandbox", "egress-proxy"}
     ):
         raise ImageVerificationError("候选 app bundle smoke 未返回完整镜像清单")
-    return images
+    return images, payload.get("source_revision")
 
 
 def _load_and_verify_images(archive_path: str, images: list[dict], docker: str, run: Callable) -> None:
@@ -137,7 +145,12 @@ def _run_offline_shell(image: str, docker: str, run: Callable) -> None:
         raise ImageVerificationError("内置沙箱离线 Shell smoke 失败")
 
 
-def _run_bundle_smoke(candidate_image: str, docker: str, run: Callable) -> None:
+def _run_bundle_smoke(
+    candidate_image: str,
+    docker: str,
+    run: Callable,
+    expected_source_revision: str | None,
+) -> None:
     container_name = f"gugu-candidate-verify-{uuid.uuid4().hex}"
     created = _docker_call(docker, ["create", "--name", container_name, candidate_image], run)
     if created.returncode != 0:
@@ -152,7 +165,9 @@ def _run_bundle_smoke(candidate_image: str, docker: str, run: Callable) -> None:
             )
             if copied.returncode != 0:
                 raise ImageVerificationError("无法从候选 app 提取内置 runtime bundle")
-            images = _candidate_images(candidate_image, docker, run)
+            images, source_revision = _candidate_images(candidate_image, docker, run)
+            if expected_source_revision is not None and source_revision != expected_source_revision:
+                raise ImageVerificationError("候选 app 内置 Sandbox bundle 不属于本次源码提交")
             _load_and_verify_images(archive_path, images, docker, run)
             sandbox_image = next(image["name"] for image in images if image["role"] == "sandbox")
             _run_offline_shell(sandbox_image, docker, run)
@@ -160,7 +175,13 @@ def _run_bundle_smoke(candidate_image: str, docker: str, run: Callable) -> None:
         _docker_call(docker, ["rm", container_name], run)
 
 
-def verify_embedded_app_image(base_image: str, candidate_image: str, *, run: Callable = subprocess.run) -> None:
+def verify_embedded_app_image(
+    base_image: str,
+    candidate_image: str,
+    *,
+    expected_source_revision: str | None = None,
+    run: Callable = subprocess.run,
+) -> None:
     docker = shutil.which("docker")
     if docker is None:
         raise ImageVerificationError("未找到 Docker CLI")
@@ -186,7 +207,7 @@ def verify_embedded_app_image(base_image: str, candidate_image: str, *, run: Cal
         raise ImageVerificationError("候选 app 必须保留原镜像层并且只追加一个 bundle 层")
 
     try:
-        _run_bundle_smoke(candidate_image, docker, run)
+        _run_bundle_smoke(candidate_image, docker, run, expected_source_revision)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ImageVerificationError("候选 app 内的离线沙箱 Shell smoke 失败") from exc
 
@@ -195,9 +216,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, help="bundle 组装前的 app 镜像引用")
     parser.add_argument("--candidate", required=True, help="组装后的候选 app 镜像引用")
+    parser.add_argument("--expected-source-revision", help="要求 bundle 绑定到此源码提交 SHA")
     args = parser.parse_args(argv)
     try:
-        verify_embedded_app_image(args.base, args.candidate)
+        verify_embedded_app_image(
+            args.base,
+            args.candidate,
+            expected_source_revision=args.expected_source_revision,
+        )
     except ImageVerificationError as exc:
         parser.exit(1, f"错误：{exc}\n")
     print("候选 app 镜像配置、平台、bundle 与离线沙箱 Shell smoke 校验通过")

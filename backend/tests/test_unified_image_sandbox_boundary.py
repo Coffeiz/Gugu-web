@@ -9,12 +9,16 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_unified_image_requires_explicit_manager_mode_and_supervises_embedded_manager():
+def test_unified_image_defaults_to_enabled_embedded_manager_and_supervises_it():
     dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
     entrypoint = (REPO_ROOT / "backend" / "docker-entrypoint.sh").read_text(encoding="utf-8")
     manager_start = (REPO_ROOT / "backend/scripts/runtime/start_embedded_sandbox_manager.sh").read_text(encoding="utf-8")
 
-    assert "GUGU_SANDBOX_MANAGER_MODE=disabled" in dockerfile
+    assert "GUGU_SANDBOX_MANAGER_MODE=embedded" in dockerfile
+    assert "SANDBOX__ENABLED=true" in dockerfile
+    assert "SANDBOX__EGRESS_ISOLATION_ENABLED=true" in dockerfile
+    assert "SANDBOX__EGRESS_PROXY_URL=http://egress-proxy:3128" in dockerfile
+    assert "DOCKER_HOST=unix:///var/run/docker.sock" in dockerfile
     assert "gugu-start-embedded-sandbox-manager.sh" in dockerfile
     assert 'GUGU_SANDBOX_MANAGER_MODE:-disabled' in entrypoint
     assert "[program:sandboxd]" in manager_start
@@ -91,6 +95,7 @@ def test_manager_mode_is_explicit_and_disabled_by_default():
     runtime = (REPO_ROOT / "backend" / "agent" / "sandbox" / "docker_runtime.py").read_text(encoding="utf-8")
 
     assert 'Literal["embedded", "external", "disabled"]' in config
+    # 通用 settings 保持 fail-closed；官方一体化镜像由 Dockerfile 显式开启 embedded。
     assert '"disabled"' in config[config.index("manager_mode:"):config.index("manager_mode:") + 300]
     assert "未配置管理器或 Socket 不可用时 fail-closed" in runtime
 
@@ -111,6 +116,7 @@ def test_compose_deployment_modes_match_embedded_and_external_manager_contracts(
     integrated_services = integrated["services"]
     app = integrated_services["app"]
     assert app["environment"]["GUGU_SANDBOX_MANAGER_MODE"] == "embedded"
+    assert app["environment"]["SANDBOX__ENABLED"] == "true"
     assert app["environment"]["DOCKER_HOST"] == "unix:///var/run/docker.sock"
     assert any("docker.sock" in str(mount) for mount in app["volumes"])
     assert "sandboxd" not in integrated_services

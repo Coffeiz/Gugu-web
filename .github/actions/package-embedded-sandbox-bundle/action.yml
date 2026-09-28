@@ -1,71 +1,52 @@
 name: Package embedded Sandbox bundle
 description: 从同轮扫描的不可变镜像生成并上传内置 Sandbox bundle
 inputs:
-  registry:
-    description: 镜像仓库地址
+  sandbox-image-id:
+    description: 本次本地 Sandbox 镜像的不可变 image ID
     required: true
-  username:
-    description: 镜像仓库用户名
-    required: true
-  password:
-    description: 镜像仓库读取凭据
-    required: true
-  sandbox-image-repository:
-    description: Sandbox 镜像仓库
-    required: true
-  sandbox-image-digest:
-    description: 已完成 smoke 和 Trivy 的 Sandbox 镜像 digest
+  source-revision:
+    description: 构建本次 Sandbox 的源码提交 SHA
     required: true
 runs:
   using: composite
   steps:
-    - name: Log in to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ inputs.registry }}
-        username: ${{ inputs.username }}
-        password: ${{ inputs.password }}
-
-    - name: Install crane for immutable proxy lookup
+    - name: Resolve and export fixed egress proxy image
+      id: runtime-images
       shell: bash
       run: |
+        set -euo pipefail
         version="v0.20.3"
         curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${version}/go-containerregistry_Linux_x86_64.tar.gz" \
           | tar -xz -C /usr/local/bin crane
         crane version
-
-    - name: Pull exact scanned Sandbox image and resolve egress proxy
-      id: runtime-images
-      shell: bash
-      env:
-        SANDBOX_IMAGE_REPOSITORY: ${{ inputs.sandbox-image-repository }}
-        SANDBOX_DIGEST: ${{ inputs.sandbox-image-digest }}
-      run: |
-        set -euo pipefail
-        [[ "$SANDBOX_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-          echo '::error::sandbox job 未提供有效的不可变 digest'; exit 1;
-        }
-        sandbox_ref="${SANDBOX_IMAGE_REPOSITORY}:embedded-${GITHUB_RUN_ID}"
-        docker pull "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}"
-        docker image tag "${SANDBOX_IMAGE_REPOSITORY}@${SANDBOX_DIGEST}" "$sandbox_ref"
-
-        proxy_digest="$(crane digest ubuntu/squid:latest)"
+        # 最终 app 与执行镜像只支持 linux/amd64；固定平台子 manifest，避免把
+        # 多架构 index digest 当作可直接导入的单平台镜像身份。
+        proxy_digest="$(crane digest --platform linux/amd64 ubuntu/squid:latest)"
         [[ "$proxy_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
           echo '::error::egress-proxy registry digest 无效'; exit 1;
         }
-        docker pull "ubuntu/squid@${proxy_digest}"
-        proxy_ref="ubuntu/squid:embedded-${GITHUB_RUN_ID}"
-        docker image tag "ubuntu/squid@${proxy_digest}" "$proxy_ref"
-        {
-          echo "sandbox_ref=$sandbox_ref"
-          echo "proxy_ref=$proxy_ref"
-          echo "proxy_digest=$proxy_digest"
-        } >> "$GITHUB_OUTPUT"
+        # 直接由 BuildKit 导出完整 Docker archive，避免 containerd snapshotter
+        # 对 lazy-pulled registry 镜像执行 docker save 时遗漏 config/layer blob。
+        proxy_archive="/tmp/gugu-egress-proxy-${GITHUB_RUN_ID}.tar"
+        printf 'FROM ubuntu/squid@%s\n' "$proxy_digest" \
+          | docker buildx build \
+              --platform linux/amd64 \
+              --tag gugu-egress-proxy:embedded \
+              --output "type=docker,dest=${proxy_archive}" \
+              --file - -
+        docker load --input "$proxy_archive"
+        rm -f "$proxy_archive"
+        proxy_image_id="$(docker image inspect --format '{{.Id}}' gugu-egress-proxy:embedded)"
+        [[ "$proxy_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+          echo '::error::egress-proxy image ID 无效'; exit 1;
+        }
+        docker image tag "$SANDBOX_ID" gugu-sandbox:embedded
+        echo "proxy_image_id=$proxy_image_id" >> "$GITHUB_OUTPUT"
 
     - name: Scan immutable egress proxy image
       uses: aquasecurity/trivy-action@v0.36.0
       with:
-        image-ref: ${{ steps.runtime-images.outputs.proxy_ref }}
+        image-ref: gugu-egress-proxy:embedded
         format: table
         severity: CRITICAL,HIGH
         ignore-unfixed: true
@@ -74,19 +55,19 @@ runs:
     - name: Build embedded runtime bundle
       shell: bash
       env:
-        SANDBOX_REF: ${{ steps.runtime-images.outputs.sandbox_ref }}
-        SANDBOX_DIGEST: ${{ inputs.sandbox-image-digest }}
-        EGRESS_PROXY_REF: ${{ steps.runtime-images.outputs.proxy_ref }}
-        EGRESS_PROXY_DIGEST: ${{ steps.runtime-images.outputs.proxy_digest }}
+        SANDBOX_ID: ${{ inputs.sandbox-image-id }}
+        EGRESS_PROXY_ID: ${{ steps.runtime-images.outputs.proxy_image_id }}
+        SOURCE_REVISION: ${{ inputs.source-revision }}
       run: |
         mkdir -p release/embedded-bundle
         python3 scripts/release/build_embedded_sandbox_bundle.py \
           --output release/embedded-bundle/runtime-images.tar \
           --manifest release/embedded-bundle/manifest.json \
-          --sandbox-image "$SANDBOX_REF" \
-          --sandbox-digest "$SANDBOX_DIGEST" \
-          --egress-proxy-image "$EGRESS_PROXY_REF" \
-          --egress-proxy-digest "$EGRESS_PROXY_DIGEST"
+          --sandbox-image gugu-sandbox:embedded \
+          --sandbox-digest "$SANDBOX_ID" \
+          --egress-proxy-image gugu-egress-proxy:embedded \
+          --egress-proxy-digest "$EGRESS_PROXY_ID" \
+          --source-revision "$SOURCE_REVISION"
 
     - name: Upload embedded runtime bundle
       uses: actions/upload-artifact@v4

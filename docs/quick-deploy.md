@@ -312,7 +312,7 @@ networks:
     internal: true
 ```
 
-如果不需要联网搜索和 Shell 沙盒，可参考下方的纯 Docker 单容器部署方式。
+如果不需要联网搜索，可参考下方的纯 Docker 单容器部署方式。单容器镜像内置并默认启用 Shell 沙盒，但需要挂载宿主 Docker Socket。
 ## 纯 Docker 单容器部署（镜像内置数据库）
 
 不想用 Compose 的用户（fnOS、群晖等面板只有单容器部署入口）可以直接拉一体化镜像：镜像内置 PostgreSQL 与 Redis（默认 `GUGU_EMBEDDED_DEPS=1`，只监听容器内 127.0.0.1），数据落在挂载的数据卷里，一条命令即可启动完整站点：
@@ -322,9 +322,14 @@ docker run -d --name gugu \
   -p 9595:9595 \
   -v /你的数据目录:/data \
   -v /你的配置目录:/config \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -e GUGU_DB_PASSWORD=请替换为数据库密码 \
   coffeiz/gugu-web:latest
 ```
+
+镜像默认以 embedded 模式启动沙盒管理器，并已内置经过校验的沙盒与 egress 运行镜像；不需要额外部署 Compose、sandboxd 或手动导入镜像。Docker Socket 必须指向宿主机 Docker daemon，缺少挂载或 daemon 不可达时，Shell 会保持不可用且不会退回到 app 容器内执行。
+
+> **安全提示：**挂载 `/var/run/docker.sock` 会让容器获得高权限 Docker daemon 控制能力，效果接近宿主机 root。只在信任该应用及其管理员的设备上启用；这也是单容器内置沙盒模式的 Rootful 安全边界。
 
 打开 <http://localhost:9595> 即可使用。**请绑定宿主机目录**：`/data` 保存数据库、用户文件与记忆，`/config` 保存 Admin 配置。绑定目录可在容器重建后保留数据；匿名卷可能随容器替换而变成空卷，使站点看起来像回到初始状态。因此入口默认**拒绝在匿名卷上启动**，并给出绑定目录指引；只想先临时试用可加环境变量 `GUGU_ALLOW_ANONYMOUS_DATA=1` 显式放行（日志会持续警告）。完全未挂卷（数据落在容器临时层）时无论任何配置都拒绝启动。
 
@@ -333,7 +338,7 @@ docker run -d --name gugu \
 注意事项：
 
 - **联网搜索不内置**：SearXNG 依赖较多、内置会显著增大镜像体积并带来依赖冲突风险，单容器模式下搜索相关工具不可用；需要搜索请改用上面的 Compose 方式。
-- **不提供 Shell 沙盒**：纯 Docker 单容器不会启动 sandboxd，也不包含沙盒执行镜像。需要 Shell 沙盒时必须使用上面的默认 Compose 部署。
+- **Shell 沙盒需要 Docker Socket**：请按上面的示例挂载宿主 Docker Socket。FNOS 等面板部署时，将宿主机 `/var/run/docker.sock` 绑定到容器相同路径；如果 Docker daemon 不可用，Admin 沙盒状态会显示原因。
 - 默认 Compose 设置 `GUGU_EMBEDDED_DEPS=1`，PostgreSQL/Redis 由 app 内置托管；SearXNG、egress-proxy 和 sandboxd 仍保持独立运行边界。
 - 已在用 Compose 的部署应继续使用 Compose，并保留现有数据目录。
 

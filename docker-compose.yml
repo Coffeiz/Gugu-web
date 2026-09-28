@@ -62,6 +62,7 @@ x-app-environment: &app-environment
   GUGU_LOG_FILE: /app/logs/gugu.log
   # 个人一体化部署由 app 内的独立 manager 管理短生命周期沙箱。
   SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-false}
+  SANDBOX__ENABLED: "true"
   SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
   SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
   SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
