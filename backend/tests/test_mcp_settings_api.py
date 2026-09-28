@@ -112,6 +112,43 @@ async def test_update_invalidates_cache(db, user_a, monkeypatch):
     assert row.enabled is False
 
 
+async def test_list_servers_does_not_connect_and_returns_existing_runtime_state(
+    db, user_a, monkeypatch,
+):
+    from agent.mcp.manager import mcp_manager
+
+    unloaded = await api.create_server(
+        api.McpServerCreate(name="not_loaded", endpoint="https://m.example.com/one"),
+        user=user_a, db=db,
+    )
+    loaded = await api.create_server(
+        api.McpServerCreate(name="already_loaded", endpoint="https://m.example.com/two"),
+        user=user_a, db=db,
+    )
+
+    async def unexpected_connection(_user_id):
+        raise AssertionError("GET /mcp/servers 不应连接 MCP server")
+
+    monkeypatch.setattr(mcp_manager, "list_user_tools", unexpected_connection)
+    monkeypatch.setattr(mcp_manager, "server_states", lambda _user_id: [{
+        "server_id": loaded["id"],
+        "state": "ok",
+        "tool_count": 2,
+        "tool_names": ["mcp_already_loaded_one", "mcp_already_loaded_two"],
+    }])
+
+    result = await api.list_servers(user=user_a, db=db)
+    items = {item["id"]: item for item in result["items"]}
+
+    assert items[unloaded["id"]]["state"] == "unloaded"
+    assert items[unloaded["id"]]["loaded_tool_count"] == 0
+    assert items[loaded["id"]]["state"] == "ok"
+    assert items[loaded["id"]]["loaded_tool_count"] == 2
+    assert items[loaded["id"]]["loaded_tool_names"] == [
+        "mcp_already_loaded_one", "mcp_already_loaded_two",
+    ]
+
+
 async def test_delete_removes_row(db, user_a):
     created = await api.create_server(api.McpServerCreate(name="gone", endpoint="https://m.example.com"),
                                       user=user_a, db=db)

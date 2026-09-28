@@ -46,8 +46,6 @@ def _credential_prompt(server, action: str, slots: list[dict[str, str]]) -> dict
 
 
 async def _manage_mcp_servers(db, user_id, args: dict):
-    from sqlalchemy import select
-
     from agent.mcp.manager import McpToolManager, mcp_manager
     from app.api.v1.mcp_settings import (
         _check_endpoint,
@@ -58,17 +56,21 @@ async def _manage_mcp_servers(db, user_id, args: dict):
     )
     from app.core.config import get_settings
     from app.byok.crypto import encrypt_envelope
-    from app.models import UserMcpServer
+    from app.services.mcp_servers import (
+        add_user_mcp_server,
+        count_user_mcp_servers,
+        get_user_mcp_server,
+        list_user_mcp_servers,
+        remove_user_mcp_server,
+        save_user_mcp_server,
+        set_user_mcp_server_enabled,
+        user_mcp_server_name_exists,
+    )
 
     action = str(args.get("action") or "").strip()
     if action == "list":
         settings = get_settings()
-        rows = (await db.execute(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-            select(UserMcpServer).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-                UserMcpServer.user_id == user_id,
-                UserMcpServer.scope == "user",
-            ).order_by(UserMcpServer.created_at)
-        )).scalars().all()
+        rows = await list_user_mcp_servers(db, user_id)
         if settings.mcp.enabled:
             await mcp_manager.list_user_tools(user_id)
         states = {item["server_id"]: item for item in mcp_manager.server_states(user_id)}
@@ -88,19 +90,11 @@ async def _manage_mcp_servers(db, user_id, args: dict):
                 server_id = _server_id(server_id_value)
             except ValueError as exc:
                 return {"error": str(exc)}
-            server = await db.scalar(select(UserMcpServer).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-                UserMcpServer.id == server_id,
-                UserMcpServer.user_id == user_id,
-                UserMcpServer.scope == "user",
-            ))
+            server = await get_user_mcp_server(db, user_id, server_id=server_id)
         elif server_name:
             # list 返回的 id 是最可靠的定位方式，但名称在用户范围内唯一；
             # 接受名称可以让模型直接复用刚刚列出的结果，避免把 name 误塞进 UUID。
-            server = await db.scalar(select(UserMcpServer).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-                UserMcpServer.name == server_name,
-                UserMcpServer.user_id == user_id,
-                UserMcpServer.scope == "user",
-            ))
+            server = await get_user_mcp_server(db, user_id, name=server_name)
         else:
             return {"error": "需要提供 server_id 或 name"}
 
@@ -119,15 +113,10 @@ async def _manage_mcp_servers(db, user_id, args: dict):
             int(args.get("timeout_seconds") or settings.mcp.default_timeout_seconds),
             list(args.get("tool_allowlist") or []),
         )
-        existing = (await db.execute(select(UserMcpServer.id).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-            UserMcpServer.user_id == user_id, UserMcpServer.scope == "user", UserMcpServer.name == name,
-        ))).scalar_one_or_none()
-        if existing is not None:
+        if await user_mcp_server_name_exists(db, user_id, name):
             return {"error": f"名称 {name} 已存在"}
-        count = (await db.execute(select(UserMcpServer.id).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-            UserMcpServer.user_id == user_id, UserMcpServer.scope == "user",
-        ))).scalars().all()
-        if len(count) >= settings.mcp.max_servers_per_user:
+        count = await count_user_mcp_servers(db, user_id)
+        if count >= settings.mcp.max_servers_per_user:
             return {"error": f"每个用户最多添加 {settings.mcp.max_servers_per_user} 个 MCP server"}
         from agent.interactions.confirmations import needs_confirmation, target_confirmation_identity
         from agent.interactions.automatic_mode import ACTION
@@ -147,7 +136,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
             credential_slots = normalize_slots(args.get("credential_slots"))
         except ValueError as exc:
             return {"error": str(exc)}
-        row = UserMcpServer(
+        row = await add_user_mcp_server(db,
             user_id=user_id, scope="user", name=name, transport=transport, endpoint="",
             encrypted_endpoint=endpoint_ciphertext, endpoint_nonce=endpoint_nonce,
             encrypted_endpoint_key=endpoint_wrapped_key,
@@ -158,9 +147,6 @@ async def _manage_mcp_servers(db, user_id, args: dict):
             timeout_seconds=int(args.get("timeout_seconds") or settings.mcp.default_timeout_seconds),
             tool_allowlist=list(args.get("tool_allowlist") or []),
         )
-        db.add(row)  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-        await db.commit()
-        await db.refresh(row)
         result = {"success": True, "server": agent_safe_server_view(row)}
         if credential_slots:
             result.update(_credential_prompt(row, "添加", credential_slots))
@@ -171,17 +157,12 @@ async def _manage_mcp_servers(db, user_id, args: dict):
 
     if action == "update":
         settings = get_settings()
+        fields = {}
         if "name" in args and args.get("name") and str(args["name"]).strip() != server.name:
             new_name = _validate_name(str(args["name"]))
-            conflict = (await db.execute(select(UserMcpServer.id).where(  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-                UserMcpServer.user_id == user_id,
-                UserMcpServer.scope == "user",
-                UserMcpServer.name == new_name,
-                UserMcpServer.id != server.id,
-            ))).scalar_one_or_none()
-            if conflict is not None:
+            if await user_mcp_server_name_exists(db, user_id, new_name, exclude_id=server.id):
                 return {"error": f"名称 {new_name} 已存在"}
-            server.name = new_name
+            fields["name"] = new_name
 
         next_transport = str(args.get("transport") or server.transport)
         if next_transport not in {"http", "stdio"}:
@@ -197,28 +178,36 @@ async def _manage_mcp_servers(db, user_id, args: dict):
                 if not command:
                     return {"error": "stdio MCP server 必须填写启动命令"}
                 endpoint = ""
-            server.transport, server.command = next_transport, command
+            fields["transport"], fields["command"] = next_transport, command
             if next_transport == "http":
                 try:
-                    server.encrypted_endpoint, server.endpoint_nonce, server.encrypted_endpoint_key = encrypt_envelope(endpoint, allow_empty=False)
+                    ciphertext, nonce, wrapped_key = encrypt_envelope(endpoint, allow_empty=False)
                 except ValueError:
                     return {"error": "endpoint 加密失败"}
-                server.endpoint_key_version = 1
+                fields.update(
+                    encrypted_endpoint=ciphertext,
+                    endpoint_nonce=nonce,
+                    encrypted_endpoint_key=wrapped_key,
+                    endpoint_key_version=1,
+                )
             else:
-                server.endpoint = ""
-                server.encrypted_endpoint = ""
-                server.endpoint_nonce = ""
-                server.encrypted_endpoint_key = ""
+                fields.update(
+                    endpoint="", encrypted_endpoint="", endpoint_nonce="",
+                    encrypted_endpoint_key="",
+                )
 
         if "confirm_mode" in args or "timeout_seconds" in args or "tool_allowlist" in args:
             confirm_mode = str(args.get("confirm_mode")) if "confirm_mode" in args else server.confirm_mode
             timeout_seconds = int(args.get("timeout_seconds")) if "timeout_seconds" in args else server.timeout_seconds
             tool_allowlist = list(args.get("tool_allowlist")) if "tool_allowlist" in args else list(server.tool_allowlist or [])
             _validate_common(confirm_mode, timeout_seconds, tool_allowlist)
-            server.confirm_mode, server.timeout_seconds = confirm_mode, timeout_seconds
-            server.tool_allowlist = tool_allowlist
+            fields.update(
+                confirm_mode=confirm_mode,
+                timeout_seconds=timeout_seconds,
+                tool_allowlist=tool_allowlist,
+            )
         if "enabled" in args:
-            server.enabled = bool(args["enabled"])
+            fields["enabled"] = bool(args["enabled"])
         credential_slots = None
         if "credential_slots" in args:
             try:
@@ -226,14 +215,15 @@ async def _manage_mcp_servers(db, user_id, args: dict):
                 credential_slots = normalize_slots(args.get("credential_slots"))
             except ValueError as exc:
                 return {"error": str(exc)}
-            server.credential_slots = credential_slots
-            server.encrypted_credentials = ""
-            server.credentials_nonce = ""
-            server.encrypted_credentials_key = ""
-            server.credentials_key_version = 1
+            fields.update(
+                credential_slots=credential_slots,
+                encrypted_credentials="",
+                credentials_nonce="",
+                encrypted_credentials_key="",
+                credentials_key_version=1,
+            )
 
-        await db.commit()
-        await db.refresh(server)
+        server = await save_user_mcp_server(db, server, fields)
         mcp_manager.invalidate_server(user_id, server.id)
         result = {"success": True, "server": agent_safe_server_view(server)}
         if credential_slots:
@@ -241,8 +231,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         return result
 
     if action in {"enable", "disable"}:
-        server.enabled = action == "enable"
-        await db.flush()
+        await set_user_mcp_server_enabled(db, server, action == "enable")
         mcp_manager.invalidate_server(user_id, server.id)
         if server.enabled:
             config = McpToolManager._config_from_row(server)
@@ -266,8 +255,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         if gate is not None:
             return gate
         server_id = server.id
-        await db.delete(server)  # orm-exempt: MCP 用户服务为单表(UserMcpServer)按当前用户读写，PRD-MCP-1 阶段 1 口径，Service 收口随 MCP 后续迭代
-        await db.flush()
+        await remove_user_mcp_server(db, server)
         mcp_manager.invalidate_server(user_id, server_id)
         return {"success": True, "server_id": str(server_id), "message": "MCP server 已删除。"}
 
