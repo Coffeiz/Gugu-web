@@ -417,14 +417,12 @@ async def _update_scheduled_task(db, user_id, args: dict):
                 await grant_scheduled_task_filesystem_access(
                     db, user_id, task.id, granted_by="askuser",
                 )
-            await db.flush()
             changed_ids = [task_id for task_id in task_ids if task_id not in active]
         else:
             changed_ids = []
             for task in tasks:
                 if await revoke_scheduled_task_filesystem_access(db, user_id, task.id):
                     changed_ids.append(task.id)
-        await db.flush()
         return {
             "success": True,
             "filesystem_authorized": authorize,

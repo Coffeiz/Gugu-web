@@ -34,18 +34,12 @@ def _skill_tool_context():
 async def _list_skills(db, user_id, args: dict):
     """列出内置技能和当前账号的用户 Skill 元数据，不返回正文。"""
     from agent import skills as builtin_skills
-    from app.models import UserSkill
-    from sqlalchemy import select
+    from app.services.mind import list_user_prompt_skills
 
     if db is None or user_id is None:
         return {"error": "列出技能需要当前账号上下文"}
 
-    rows = (await db.execute(  # orm-exempt: 只读自有人格技能清单，owner 过滤单用户作用域，待技能域 Service 收口
-        select(UserSkill).where(  # orm-exempt: 同上，与上行同一查询
-            UserSkill.owner_id == user_id,
-            UserSkill.source == "user",
-        ).order_by(UserSkill.name, UserSkill.slug)
-    )).scalars().all()
+    rows = await list_user_prompt_skills(db, user_id)
     visible_skills = [
         {
             "slug": row["slug"],
@@ -186,17 +180,12 @@ async def _delete_skill(db, user_id, args: dict):
     """删除当前用户的 Prompt Skill；删除前必须通过统一确认门。"""
     from agent.capabilities.skill_registry import SkillCapabilityRegistry
     from agent.security import confirm
-    from app.models import UserSkill
-    from sqlalchemy import select
+    from app.services.mind import get_user_prompt_skill
 
     slug = str(args.get("slug") or "").strip().lower()
     if not slug:
         return {"error": "缺少技能 slug"}
-    row = (await db.execute(select(UserSkill).where(
-        UserSkill.owner_id == user_id,
-        UserSkill.slug == slug,
-        UserSkill.source == "user",
-    ))).scalar_one_or_none()
+    row = await get_user_prompt_skill(db, user_id, slug)
     if row is None:
         return {"error": "技能不存在或不属于当前用户"}
     blocked = confirm.needs_confirmation(

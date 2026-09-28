@@ -6,6 +6,7 @@
 
 ### 2026-09-28
 
+- [Agent ORM 存量收口并恢复严格守卫](./2026-09-28-Agent-ORM存量收口与严格守卫.md)
 - [PRD-DEPLOY-2 Phase 1.8.3：执行隔离与资源清理回归](./2026-09-28-DEPLOY2-Phase1.8.3-执行隔离与资源清理.md)
 - [PRD-DEPLOY-2 Phase 1.8.2：内置管理器入口生命周期与故障隔离](./2026-09-28-DEPLOY2-Phase1.8.2-内置管理器生命周期.md)
 - [PRD-DEPLOY-2 Phase 1.8.1：部署模式矩阵与 external Rootless 强制](./2026-09-28-DEPLOY2-Phase1.8.1-部署模式矩阵.md)

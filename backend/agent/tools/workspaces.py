@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
-from app.core.ownership import get_owned
-from app.models import Workspace, WorkspaceDirectory
 from app.services.workspaces import (
     create_workspace,
     create_workspace_directory,
@@ -16,6 +14,7 @@ from app.services.workspaces import (
     delete_workspace_directory_with_cleanup,
     get_workspace_by_directory,
     get_workspace,
+    get_live_workspace_directory,
     list_workspaces_for_management,
     update_workspace,
     workspace_directory_payload,
@@ -34,8 +33,8 @@ async def _delete_workspace_directory(db, user_id, args: dict):
     """经确认删除物理工作区目录，并复用 API 的完整清理生命周期。"""
     if not workspace_shell_supported():
         return {"error": "当前存储后端不支持本地工作区目录"}
-    row = await get_owned(db, WorkspaceDirectory, args["directory_id"], user_id)
-    if row is None or row.deleted_at is not None:
+    row = await get_live_workspace_directory(db, user_id, args["directory_id"])
+    if row is None:
         return {"error": "Workspace 目录不存在"}
     if row.is_default or row.is_system:
         return {"error": "默认工作区不可删除"}
@@ -71,7 +70,7 @@ async def _get_workspace(db, user_id, args: dict):
 
 async def _create_directory_workspace(
     db, user_id, *, name: str, enabled: bool,
-) -> Workspace:
+):
     """新建顶层目录并返回创建服务同步生成的唯一工作区绑定。"""
     directory = await create_workspace_directory(db, user_id, name=name)
     row = await get_workspace_by_directory(db, user_id, directory.id)

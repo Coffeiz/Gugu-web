@@ -12,7 +12,6 @@ from app.services.files.browser import (
     list_user_folders,
 )
 from app.services.projects import get_user_project
-from app.core.ownership import get_owned
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key
 from agent.tools.base import current_dispatch_session
@@ -33,10 +32,10 @@ async def _resolve_key(db, user_id, space, display_name, ext,
     if space == "workspace":
         # workspace 文件落在绑定工作区目录下：key 前缀用 directory_name，
         # 文件夹归属校验也必须带 directory id，否则 workspace 文件夹一律判不匹配。
-        from app.models import WorkspaceDirectory
+        from app.services.workspaces import get_live_workspace_directory
         if workspace_directory_id is None:
             raise ValueError("workspace 空间需要 workspace_directory_id")
-        workspace_directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, user_id)
+        workspace_directory = await get_live_workspace_directory(db, user_id, workspace_directory_id)
         if workspace_directory is None:
             raise ValueError("目标工作区目录不存在")
     if folder_id:
