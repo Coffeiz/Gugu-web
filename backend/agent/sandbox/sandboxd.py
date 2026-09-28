@@ -378,14 +378,11 @@ class SandboxdServer:
     async def serve(self) -> None:
         await asyncio.to_thread(_resolve_host_data_root_once)
         ready, reason = await asyncio.to_thread(docker_sandbox_readiness, get_settings().sandbox)
-        if ready:
-            cleaned = await asyncio.to_thread(cleanup_orphan_pty_containers)
-            if cleaned:
-                logger.info("sandboxd 已清理 %d 个遗留 PTY 容器", cleaned)
-        else:
-            # 管理器持续提供状态查询；Docker 暂时不可用时 Web/数据库照常运行，
-            # Shell 请求由 _require_runtime_ready 拒绝，不退回本机执行。
-            logger.warning("sandboxd 已启动但执行器未就绪：%s", reason)
+        if not ready:
+            raise RuntimeError(f"sandboxd 启动被拒绝：{reason}")
+        cleaned = await asyncio.to_thread(cleanup_orphan_pty_containers)
+        if cleaned:
+            logger.info("sandboxd 已清理 %d 个遗留 PTY 容器", cleaned)
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self.socket_path.unlink()

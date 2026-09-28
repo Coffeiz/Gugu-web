@@ -91,7 +91,6 @@ x-app-environment: &app-environment
   SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
   SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
   GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-  GUGU_SANDBOX_MANAGER_MODE: external
 
 services:
   searxng:
@@ -204,7 +203,6 @@ services:
       DOCKER_HOST: unix:///run/gugu/docker.sock
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-      GUGU_SANDBOX_MANAGER_MODE: external
       SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-false}
       SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-coffeiz/gugu-sandbox:latest}
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-resolved}

@@ -338,55 +338,6 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
     # 在同一服务中运行。任一启用的关键进程退出都让服务退出，避免健康检查看似正常但后台消息
     # 或 IM 长连接已经无人消费。
     monitored_pids=()
-    EMBEDDED_SANDBOX_SUPERVISORD_PID=""
-    if [ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" = "embedded" ]; then
-        # 沙盒管理器由独立 supervisord 托管，故障/未就绪只影响 Shell，不进入
-        # app 的关键 monitored_pids；Web 和数据库不因 Docker Socket/daemon 故障重启。
-        EMBEDDED_DATA_DIR="${GUGU_DATA_DIR:-/data}"
-        EMBEDDED_SANDBOX_SOCKET="${GUGU_SANDBOXD_SOCKET:-/run/gugu/sandboxd.sock}"
-        mkdir -p /run/gugu "$EMBEDDED_DATA_DIR/users"
-        SANDBOX_SUPERVISOR_DIR=/run/gugu/sandbox-supervisor
-        mkdir -p "$SANDBOX_SUPERVISOR_DIR"
-        cat > "$SANDBOX_SUPERVISOR_DIR/supervisord.conf" <<SUPERVISOR_EOF
-[unix_http_server]
-file=$SANDBOX_SUPERVISOR_DIR/supervisor.sock
-chmod=0700
-
-[supervisord]
-nodaemon=false
-logfile=$SANDBOX_SUPERVISOR_DIR/supervisord.log
-pidfile=$SANDBOX_SUPERVISOR_DIR/supervisord.pid
-childlogdir=$SANDBOX_SUPERVISOR_DIR
-
-[supervisorctl]
-serverurl=unix://$SANDBOX_SUPERVISOR_DIR/supervisor.sock
-
-[program:sandboxd]
-directory=/app
-command=python -m agent.sandbox.sandboxd --socket $EMBEDDED_SANDBOX_SOCKET --allowed-root $EMBEDDED_DATA_DIR/users
-autostart=true
-autorestart=true
-startsecs=0
-startretries=0
-stopsignal=TERM
-stopasgroup=true
-killasgroup=true
-stopwaitsecs=30
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-SUPERVISOR_EOF
-        if supervisord -c "$SANDBOX_SUPERVISOR_DIR/supervisord.conf"; then
-            EMBEDDED_SANDBOX_SUPERVISORD_PID="$(cat "$SANDBOX_SUPERVISOR_DIR/supervisord.pid" 2>/dev/null || true)"
-            echo "[entrypoint] 已启动独立 sandbox manager supervisor；其未就绪不会重启 Web/数据库。"
-        else
-            echo "[entrypoint] sandbox manager supervisor 启动失败；Web 继续启动，Shell 将显示未就绪。" >&2
-        fi
-    elif [ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" != "external" ] \
-        && [ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" != "disabled" ]; then
-        echo "[entrypoint] 沙盒管理模式无效；Web 继续启动，Shell 保持关闭。" >&2
-    fi
     if [ "${GUGU_ENABLE_RAG_SIDECAR:-1}" = "1" ]; then
         mkdir -p /run/gugu
         export SEARCH__TS_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
@@ -416,10 +367,6 @@ SUPERVISOR_EOF
         for pid in "${monitored_pids[@]}"; do
             kill "$pid" 2>/dev/null || true
         done
-        if [ -n "$EMBEDDED_SANDBOX_SUPERVISORD_PID" ]; then
-            # 独立 manager 接收 TERM 后由 supervisord 回收其 sandboxd 子进程。
-            kill -TERM "$EMBEDDED_SANDBOX_SUPERVISORD_PID" 2>/dev/null || true
-        fi
     }
     trap stop_children TERM INT
 

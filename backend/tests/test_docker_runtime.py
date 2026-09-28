@@ -155,7 +155,6 @@ def test_probe_does_not_treat_daemon_failure_as_ready(monkeypatch):
 
 def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
     settings = SimpleNamespace(
-        manager_mode="embedded",
         enabled=True,
         rootless_required=True,
         network_profile="none",
@@ -164,10 +163,10 @@ def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
     )
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: docker_runtime.DockerRuntimeStatus(True, True, True))
     monkeypatch.setattr(docker_runtime, "image_available", lambda *_args, **_kwargs: True)
-    assert docker_runtime.docker_sandbox_readiness(settings)[0]
+    assert docker_runtime.sandbox_readiness(settings)[0]
 
     settings.image_digest = ""
-    assert docker_runtime.docker_sandbox_readiness(settings)[0] is False
+    assert docker_runtime.sandbox_readiness(settings)[0] is False
     assert docker_runtime.valid_image_digest("sha256:" + "f" * 64)
     assert not docker_runtime.valid_image_digest("sha256:" + "g" * 64)
     assert docker_runtime.valid_image_digest("resolved")
@@ -175,21 +174,8 @@ def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
     assert not docker_runtime.valid_image_digest("latest")
 
 
-def test_sandbox_manager_mode_comes_from_deployment_environment_not_override(monkeypatch, tmp_path):
-    from app.core import config
-
-    monkeypatch.setenv("GUGU_SANDBOX_MANAGER_MODE", "embedded")
-    monkeypatch.setattr(config, "OVERRIDE_FILE", tmp_path / "config.override.json")
-    (tmp_path / "config.override.json").write_text(
-        '{"sandbox":{"manager_mode":"external"}}', encoding="utf-8",
-    )
-
-    assert config.AppSettings().apply_override().sandbox.manager_mode == "embedded"
-
-
 def test_sandbox_readiness_allows_rootful_daemon_by_default(monkeypatch):
     settings = SimpleNamespace(
-        manager_mode="embedded",
         enabled=True,
         rootless_required=False,
         network_profile="none",
@@ -199,12 +185,11 @@ def test_sandbox_readiness_allows_rootful_daemon_by_default(monkeypatch):
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: docker_runtime.DockerRuntimeStatus(True, True, False))
     monkeypatch.setattr(docker_runtime, "image_available", lambda *_args, **_kwargs: True)
 
-    assert docker_runtime.docker_sandbox_readiness(settings)[0] is True
+    assert docker_runtime.sandbox_readiness(settings)[0] is True
 
 
 def test_sandbox_readiness_queries_sandboxd_instead_of_worker_docker(monkeypatch):
     settings = SimpleNamespace(
-        manager_mode="external",
         enabled=True,
         rootless_required=True,
         network_profile="none",
@@ -295,8 +280,6 @@ def test_sandboxd_runtime_status_reads_the_executor_daemon_snapshot():
         True, True, True, server_version="29.8.0", message="Docker daemon 已就绪",
     )
     assert snapshot.image_ready is True
-    assert snapshot.runtime_ready is True
-    assert snapshot.manager_message == "Docker 沙盒运行时已就绪"
     assert received == [b'{"operation":"status"}\n']
 
 
@@ -327,7 +310,6 @@ def test_sandboxd_runtime_status_fails_closed_for_legacy_status_payload():
 
 def test_docker_sandbox_readiness_rejects_rootful_daemon_before_image_check(monkeypatch):
     settings = SimpleNamespace(
-        manager_mode="embedded",
         enabled=True,
         rootless_required=True,
         network_profile="none",
@@ -416,47 +398,23 @@ async def test_sandboxd_status_includes_its_actual_runtime_snapshot(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_sandboxd_serves_status_when_docker_is_not_ready(monkeypatch, tmp_path):
-    import asyncio
-    from agent.sandbox.docker_runtime import _sandboxd_status_payload
+async def test_sandboxd_refuses_to_start_when_docker_is_not_ready(monkeypatch, tmp_path):
     from agent.sandbox import sandboxd as sandboxd_module
 
     allowed = tmp_path / "allowed"
     allowed.mkdir()
-    socket_path = Path("/tmp") / f"gugu-sd-{uuid.uuid4().hex[:10]}.sock"
-    server = sandboxd_module.SandboxdServer(socket_path, allowed)
-    monkeypatch.setattr(server, "_validate_peer", lambda _writer: None)
+    server = sandboxd_module.SandboxdServer(tmp_path / "sandboxd.sock", allowed)
     monkeypatch.setattr(
         sandboxd_module, "docker_sandbox_readiness",
-        lambda _settings, **_kwargs: (False, "当前 Docker 不是 Rootless 模式"),
-    )
-    monkeypatch.setattr(
-        sandboxd_module,
-        "probe_sandbox_runtime",
-        lambda _settings: docker_runtime.SandboxRuntimeSnapshot(
-            docker=docker_runtime.DockerRuntimeStatus(True, False, None, message="Docker daemon 不可用"),
-            image_ready=False,
-        ),
+        lambda _settings: (False, "当前 Docker 不是 Rootless 模式"),
     )
     monkeypatch.setattr(
         sandboxd_module, "cleanup_orphan_pty_containers",
         lambda: (_ for _ in ()).throw(AssertionError("未通过 Rootless 检查前不能操作 Docker")),
     )
 
-    task = asyncio.create_task(server.serve())
-    try:
-        for _ in range(100):
-            if socket_path.exists():
-                break
-            await asyncio.sleep(0.01)
-        payload, error = await asyncio.to_thread(_sandboxd_status_payload, str(socket_path), timeout_seconds=1)
-        assert error is None
-        assert payload["ready"] is False
-        assert payload["reason"] == "当前 Docker 不是 Rootless 模式"
-    finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-        socket_path.unlink(missing_ok=True)
+    with pytest.raises(RuntimeError, match="当前 Docker 不是 Rootless 模式"):
+        await server.serve()
 
 
 @pytest.mark.asyncio
@@ -895,28 +853,16 @@ def test_sandbox_override_includes_sandboxd_socket(monkeypatch, tmp_path):
 
 
 def test_sandbox_readiness_rejects_disabled(monkeypatch):
-    settings = SimpleNamespace(manager_mode="embedded", enabled=False, rootless_required=True, image_digest="sha256:" + "a" * 64)
+    settings = SimpleNamespace(enabled=False, rootless_required=True, image_digest="sha256:" + "a" * 64)
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: (_ for _ in ()).throw(AssertionError("不应探测关闭的沙盒")))
     ready, reason = docker_runtime.sandbox_readiness(settings)
     assert not ready
     assert reason == "Shell 沙盒未开启"
 
 
-def test_sandbox_readiness_does_not_probe_local_docker_when_manager_disabled(monkeypatch):
-    from app.core.config import SandboxSettings
-
-    settings = SandboxSettings(manager_mode="disabled", sandboxd_socket="")
-    monkeypatch.setattr(
-        docker_runtime, "probe_docker",
-        lambda: (_ for _ in ()).throw(AssertionError("disabled 模式不得探测 Docker")),
-    )
-    assert docker_runtime.sandbox_readiness(settings) == (False, "沙盒部署模式已禁用")
-
-
 def test_sandbox_readiness_rejects_invalid_egress_configuration(monkeypatch):
     settings = SimpleNamespace(
         enabled=True,
-        manager_mode="embedded",
         rootless_required=True,
         network_profile="egress",
         egress_proxy_url="",
@@ -976,110 +922,74 @@ def test_admin_sandbox_state_allows_rootful_when_not_required():
     )
 
 
-def _mock_admin_sandbox_status(monkeypatch, settings, snapshot):
+def test_admin_executor_readiness_is_independent_of_enabled_switch(monkeypatch):
     from app.api.v1 import sandbox_admin
-
-    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
-    monkeypatch.setattr(sandbox_admin, "sandboxd_runtime_status", lambda _path: snapshot)
-    return sandbox_admin
-
-
-def _sandbox_admin_snapshot(*, rootless=True, runtime_ready=True, message="Docker 沙盒运行时已就绪", server_version=None):
-    return docker_runtime.SandboxRuntimeSnapshot(
-        docker=docker_runtime.DockerRuntimeStatus(True, True, rootless, server_version=server_version),
-        image_ready=True,
-        runtime_ready=runtime_ready,
-        manager_message=message,
-    )
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        {
-            "manager_mode": "external",
-            "enabled": True,
-            "snapshot": {"rootless": True, "runtime_ready": True, "message": "Docker 沙盒运行时已就绪"},
-            "expected_state": "ready",
-            "expected_message": "Docker 沙盒运行时已就绪",
-            "expected_executor_ready": True,
-            "expected_manager_ready": True,
-        },
-        {
-            "manager_mode": "embedded",
-            "enabled": True,
-            "snapshot": {"rootless": False, "runtime_ready": False, "message": "egress 隔离网络不可用"},
-            "expected_state": "manager_unavailable",
-            "expected_message": "egress 隔离网络不可用",
-            "expected_executor_ready": False,
-            "expected_manager_ready": True,
-        },
-        {
-            "manager_mode": "embedded",
-            "enabled": False,
-            "snapshot": {"rootless": True, "runtime_ready": False, "message": "Shell 沙盒未开启"},
-            "expected_state": "disabled",
-            "expected_message": "沙盒已关闭",
-            "expected_executor_ready": True,
-            "expected_manager_ready": True,
-        },
-        {
-            "manager_mode": "external",
-            "enabled": True,
-            "snapshot": None,
-            "expected_state": "docker_unavailable",
-            "expected_message": "sandboxd 状态不可用",
-            "expected_executor_ready": False,
-            "expected_manager_ready": False,
-        },
-    ],
-)
-def test_admin_sandbox_status_uses_sandboxd_runtime_not_backend_docker(monkeypatch, case):
     from app.core.config import SandboxSettings
 
-    settings = SandboxSettings(
-        enabled=case["enabled"],
-        manager_mode=case["manager_mode"],
-        rootless_required=False,
-        sandboxd_socket="/run/gugu/sandboxd.sock",
+    settings = SandboxSettings(enabled=False, sandboxd_socket="")
+    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    monkeypatch.setattr(
+        sandbox_admin,
+        "probe_docker",
+        lambda: docker_runtime.DockerRuntimeStatus(True, True, True),
     )
-    snapshot_config = case["snapshot"]
-    snapshot = _sandbox_admin_snapshot(**snapshot_config) if snapshot_config else None
-    sandbox_admin = _mock_admin_sandbox_status(monkeypatch, settings, snapshot)
-    if snapshot is None:
-        monkeypatch.setattr(docker_runtime, "probe_docker", lambda: pytest.fail("不应回退探测 API 进程的 Docker"))
+    monkeypatch.setattr(sandbox_admin, "valid_image_digest", lambda value: True)
+    monkeypatch.setattr(sandbox_admin, "image_available", lambda *_args, **_kwargs: True)
+    response = sandbox_admin._response()
+    assert response["state"] == "disabled"
+    assert response["executor_ready"] is True
+    assert response["full_user_sandbox_authorization_enabled"] is True
+
+
+def test_admin_sandbox_status_uses_sandboxd_runtime_not_backend_docker(monkeypatch):
+    from app.api.v1 import sandbox_admin
+    from app.core.config import SandboxSettings
+
+    settings = SandboxSettings(enabled=True, sandboxd_socket="/run/gugu/sandboxd.sock")
+    snapshot = docker_runtime.SandboxRuntimeSnapshot(
+        docker=docker_runtime.DockerRuntimeStatus(True, True, True, server_version="29.8.0"),
+        image_ready=True,
+    )
+    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    monkeypatch.setattr(sandbox_admin, "sandboxd_runtime_status", lambda path: snapshot)
+    monkeypatch.setattr(
+        sandbox_admin,
+        "probe_docker",
+        lambda: (_ for _ in ()).throw(AssertionError("不能探测 backend 的 Docker daemon")),
+    )
+    monkeypatch.setattr(
+        sandbox_admin,
+        "image_available",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("不能检查 backend daemon 的镜像")),
+    )
 
     response = sandbox_admin._response()
 
-    expected_snapshot = case["snapshot"]
-    assert response["rootless"] == (expected_snapshot["rootless"] if expected_snapshot else None)
-    assert response["image_ready"] is bool(expected_snapshot)
-    assert response["executor_ready"] is case["expected_executor_ready"]
-    assert response["state"] == case["expected_state"]
-    assert response["manager_ready"] is case["expected_manager_ready"]
-    assert response["message"] == case["expected_message"]
+    assert response["rootless"] is True
+    assert response["image_ready"] is True
+    assert response["executor_ready"] is True
+    assert response["state"] == "ready"
 
 
-@pytest.mark.asyncio
-async def test_enable_sandbox_rejects_unready_manager(monkeypatch):
-    from fastapi import HTTPException
-
+def test_admin_sandbox_status_does_not_fall_back_when_sandboxd_status_is_missing(monkeypatch):
     from app.api.v1 import sandbox_admin
     from app.core.config import SandboxSettings
 
-    settings = SandboxSettings(
-        manager_mode="embedded",
-        rootless_required=False,
-        sandboxd_socket="/run/gugu/sandboxd.sock",
+    settings = SandboxSettings(sandboxd_socket="/run/gugu/sandboxd.sock")
+    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    monkeypatch.setattr(sandbox_admin, "sandboxd_runtime_status", lambda _path: None)
+    monkeypatch.setattr(
+        sandbox_admin,
+        "probe_docker",
+        lambda: (_ for _ in ()).throw(AssertionError("sandboxd 不可用时不能退回 backend Docker")),
     )
-    snapshot = _sandbox_admin_snapshot(rootless=False, runtime_ready=False, message="Docker 沙盒运行时未就绪")
-    _mock_admin_sandbox_status(monkeypatch, settings, snapshot)
 
-    with pytest.raises(HTTPException) as error:
-        await sandbox_admin.enable_sandbox(db=None)
+    response = sandbox_admin._response()
 
-    assert error.value.status_code == 409
-    assert error.value.detail == "Docker 沙盒运行时未就绪"
+    assert response["rootless"] is None
+    assert response["executor_ready"] is False
+    assert response["state"] == "docker_unavailable"
+    assert "sandboxd" in response["message"]
 
 
 def test_admin_sandbox_status_does_not_echo_invalid_proxy(monkeypatch):
@@ -1088,12 +998,19 @@ def test_admin_sandbox_status_does_not_echo_invalid_proxy(monkeypatch):
 
     settings = SandboxSettings(
         enabled=False,
-        manager_mode="disabled",
         sandboxd_socket="",
         egress_proxy_url="http://user:secret@proxy.example:3128",
         egress_isolation_enabled=True,
     )
     monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    monkeypatch.setattr(
+        sandbox_admin,
+        "probe_docker",
+        lambda: docker_runtime.DockerRuntimeStatus(True, True, True),
+    )
+    monkeypatch.setattr(sandbox_admin, "valid_image_digest", lambda value: True)
+    monkeypatch.setattr(sandbox_admin, "image_available", lambda *_args, **_kwargs: True)
+
     response = sandbox_admin._response()
     assert response["egress_proxy_url"] == ""
     assert response["egress_available"] is False

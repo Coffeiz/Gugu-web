@@ -171,8 +171,6 @@ services:
       # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
       CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-      GUGU_SANDBOX_MANAGER_MODE: external
-      SANDBOX__ROOTLESS_REQUIRED: "true"
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
@@ -250,15 +248,11 @@ services:
       # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
       CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-      GUGU_SANDBOX_MANAGER_MODE: external
-      SANDBOX__ROOTLESS_REQUIRED: "true"
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
-      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -350,7 +344,6 @@ services:
       # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
       CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-      GUGU_SANDBOX_MANAGER_MODE: external
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}

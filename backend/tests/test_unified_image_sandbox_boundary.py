@@ -13,6 +13,16 @@ def test_unified_image_includes_entrypoint_runtime_migrations():
     assert "python -m scripts.migrations.migrate_knowledge_timestamps" in entrypoint
 
 
+def test_unified_image_does_not_bundle_sandbox_runtime_or_start_sandboxd():
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    entrypoint = (REPO_ROOT / "backend" / "docker-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "sandbox-image.tar.gz" not in dockerfile
+    assert "sandbox-bundle-manifest.json" not in dockerfile
+    assert "[program:sandboxd]" not in entrypoint
+    assert "检测到 docker socket" not in entrypoint
+
+
 def test_default_compose_starts_sandbox_services_without_profile_and_resolves_digest():
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 

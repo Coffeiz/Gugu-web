@@ -265,8 +265,6 @@ class DockerRuntimeStatus:
 class SandboxRuntimeSnapshot:
     docker: DockerRuntimeStatus
     image_ready: bool
-    runtime_ready: bool | None = None
-    manager_message: str = ""
 
 
 def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
@@ -319,11 +317,6 @@ def probe_sandbox_runtime(settings: SandboxSettings) -> SandboxRuntimeSnapshot:
 
 
 def _sandbox_configuration_readiness(settings: SandboxSettings) -> tuple[bool, str]:
-    manager_mode = str(getattr(settings, "manager_mode", "disabled") or "disabled")
-    if manager_mode == "disabled":
-        return False, "沙盒部署模式已禁用"
-    if manager_mode not in {"embedded", "external"}:
-        return False, "沙盒部署模式无效"
     if not settings.enabled:
         return False, "Shell 沙盒未开启"
     if settings.network_profile == "egress":
@@ -400,8 +393,6 @@ def sandboxd_runtime_status(
     server_version = runtime.get("server_version")
     message = runtime.get("message")
     image_ready = runtime.get("image_ready")
-    runtime_ready = payload.get("ready")
-    manager_message = payload.get("reason")
     if (
         not isinstance(installed, bool)
         or not isinstance(daemon_ready, bool)
@@ -409,8 +400,6 @@ def sandboxd_runtime_status(
         or not isinstance(server_version, str)
         or not isinstance(message, str)
         or not isinstance(image_ready, bool)
-        or not isinstance(runtime_ready, bool)
-        or not isinstance(manager_message, str)
     ):
         return None
     return SandboxRuntimeSnapshot(
@@ -422,8 +411,6 @@ def sandboxd_runtime_status(
             message=message,
         ),
         image_ready=image_ready,
-        runtime_ready=runtime_ready,
-        manager_message=manager_message,
     )
 
 
@@ -440,16 +427,13 @@ def sandboxd_readiness(socket_path: str, *, timeout_seconds: float = 6.0) -> tup
 def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
     """返回当前配置是否允许执行容器命令。
 
-    embedded/external 均只通过显式配置的 sandboxd socket 查询实际执行器；
-    未配置管理器或 Socket 不可用时 fail-closed，不探测调用方自己的 Docker。
+    生产执行经 sandboxd 时只向其查询状态，避免误探测 Worker/Backend 自己的
+    Docker daemon；独立运行且未配置 sandboxd 时保留直接探测行为。
     """
     configured, reason = _sandbox_configuration_readiness(settings)
     if not configured:
         return False, reason
-    manager_mode = str(getattr(settings, "manager_mode", "disabled") or "disabled")
-    if manager_mode not in {"embedded", "external"}:
-        return False, "沙盒部署模式无效"
     socket_path = str(getattr(settings, "sandboxd_socket", "") or "").strip()
-    if not socket_path:
-        return False, "sandboxd Socket 未配置，未执行命令"
-    return sandboxd_readiness(socket_path)
+    if socket_path:
+        return sandboxd_readiness(socket_path)
+    return docker_sandbox_readiness(settings)
