@@ -18,7 +18,6 @@ PROXY_IMAGE="${GUGU_EGRESS_PROXY_IMAGE:-ubuntu/squid:latest}"
 SQUID_CONF="${SQUID_CONF_PATH:-$(CDPATH= cd -- "$(dirname "$0")/../../squid" && pwd)/egress.conf}"
 USE_CONFIG_FILE="${GUGU_EGRESS_USE_CONFIG_FILE:-1}"
 REQUIRE_LABELS="${GUGU_EGRESS_REQUIRE_LABELS:-0}"
-REQUIRE_LOCAL_IMAGE="${GUGU_EGRESS_REQUIRE_LOCAL_IMAGE:-0}"
 
 log() { printf '[sandbox-egress] %s\n' "$*"; }
 error() { printf '[sandbox-egress] ERROR: %s\n' "$*" >&2; }
@@ -109,10 +108,6 @@ else
 fi
 
 if ! docker_cli image inspect "$PROXY_IMAGE" >/dev/null 2>&1; then
-    if [ "$REQUIRE_LOCAL_IMAGE" = "1" ]; then
-        error "内置 egress 代理镜像未加载，拒绝在线拉取"
-        exit 1
-    fi
     log "拉取 egress 代理镜像：$PROXY_IMAGE"
     docker_cli pull "$PROXY_IMAGE" >/dev/null
 fi

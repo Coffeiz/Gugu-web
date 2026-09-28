@@ -144,14 +144,6 @@ async def test_embedded_egress_initialization_targets_rootful_daemon_and_fails_c
     allowed_root = tmp_path / "users"
     allowed_root.mkdir()
     manager = sandboxd.SandboxdServer(tmp_path / "sandboxd.sock", allowed_root)
-    proxy_image_id = "sha256:" + "c" * 64
-    manager._embedded_bundle_runtime = SimpleNamespace(
-        load_verified_manifest=lambda: SimpleNamespace(
-            image_for_role=lambda role: SimpleNamespace(
-                image_id=proxy_image_id if role == "egress-proxy" else None,
-            ),
-        ),
-    )
 
     manager._validate_egress_network()
 
@@ -159,8 +151,6 @@ async def test_embedded_egress_initialization_targets_rootful_daemon_and_fails_c
     assert args[0] == [str(script)]
     assert kwargs["env"]["DOCKER_HOST"] == "unix:///var/run/docker.sock"
     assert kwargs["env"]["GUGU_EGRESS_REQUIRE_LABELS"] == "1"
-    assert kwargs["env"]["GUGU_EGRESS_REQUIRE_LOCAL_IMAGE"] == "1"
-    assert kwargs["env"]["GUGU_EGRESS_PROXY_IMAGE"] == proxy_image_id
     assert kwargs["env"]["GUGU_EGRESS_USE_CONFIG_FILE"] == "0"
     assert kwargs["env"]["GUGU_EGRESS_PROXY_URL"] == "http://egress-proxy:3128"
 
@@ -266,18 +256,6 @@ def test_docker_executor_resolves_authorized_host_workspace(
         egress_proxy_url="",
         egress_isolation_enabled=False,
     )
-    if manager_mode == "embedded":
-        bundle_dir = tmp_path / "sandbox-bundle"
-        bundle_dir.mkdir()
-        (bundle_dir / "manifest.json").write_text(json.dumps({
-            "schema_version": 2,
-            "archive_sha256": "sha256:" + "d" * 64,
-            "images": [
-                {"role": "sandbox", "name": "coffeiz/gugu-sandbox:embedded", "digest": "sha256:" + "a" * 64, "image_id": "sha256:" + "c" * 64},
-                {"role": "egress-proxy", "name": "ubuntu/squid:embedded", "digest": "sha256:" + "b" * 64, "image_id": "sha256:" + "e" * 64},
-            ],
-        }), encoding="utf-8")
-        monkeypatch.setenv("GUGU_SANDBOX_BUNDLE_DIR", str(bundle_dir))
 
     executor = DockerSandboxExecutor(workspace, settings, docker_path="/usr/bin/docker")
     if case.get("error"):
@@ -323,7 +301,7 @@ def test_probe_does_not_treat_daemon_failure_as_ready(monkeypatch):
     assert status.executor_ready is False
 
 
-def test_embedded_sandbox_readiness_uses_verified_bundle_not_configured_image_digest(monkeypatch):
+def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
     settings = SimpleNamespace(
         manager_mode="embedded",
         enabled=True,
@@ -333,14 +311,11 @@ def test_embedded_sandbox_readiness_uses_verified_bundle_not_configured_image_di
         image_digest="sha256:" + "a" * 64,
     )
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: docker_runtime.DockerRuntimeStatus(True, True, True))
-    snapshot = docker_runtime.SandboxRuntimeSnapshot(
-        docker=docker_runtime.DockerRuntimeStatus(True, True, True),
-        image_ready=True,
-    )
-    assert docker_runtime.docker_sandbox_readiness(settings, runtime_snapshot=snapshot)[0]
+    monkeypatch.setattr(docker_runtime, "image_available", lambda *_args, **_kwargs: True)
+    assert docker_runtime.docker_sandbox_readiness(settings)[0]
 
     settings.image_digest = ""
-    assert docker_runtime.docker_sandbox_readiness(settings, runtime_snapshot=snapshot)[0] is True
+    assert docker_runtime.docker_sandbox_readiness(settings)[0] is False
     assert docker_runtime.valid_image_digest("sha256:" + "f" * 64)
     assert not docker_runtime.valid_image_digest("sha256:" + "g" * 64)
     assert docker_runtime.valid_image_digest("resolved")
@@ -370,11 +345,9 @@ def test_sandbox_readiness_allows_rootful_daemon_by_default(monkeypatch):
         image_digest="sha256:" + "a" * 64,
     )
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: docker_runtime.DockerRuntimeStatus(True, True, False))
-    snapshot = docker_runtime.SandboxRuntimeSnapshot(
-        docker=docker_runtime.DockerRuntimeStatus(True, True, False),
-        image_ready=True,
-    )
-    assert docker_runtime.docker_sandbox_readiness(settings, runtime_snapshot=snapshot)[0] is True
+    monkeypatch.setattr(docker_runtime, "image_available", lambda *_args, **_kwargs: True)
+
+    assert docker_runtime.docker_sandbox_readiness(settings)[0] is True
 
 
 def test_sandbox_readiness_queries_sandboxd_instead_of_worker_docker(monkeypatch):
@@ -586,7 +559,6 @@ async def test_sandboxd_status_includes_its_actual_runtime_snapshot(monkeypatch,
         "server_version": "29.8.0",
         "message": "Docker daemon 已就绪",
         "image_ready": True,
-        "image_error": "",
     }
     assert writer.closed
 
@@ -629,67 +601,6 @@ async def test_sandboxd_serves_status_when_docker_is_not_ready(monkeypatch, tmp_
         assert error is None
         assert payload["ready"] is False
         assert payload["reason"] == "当前 Docker 不是 Rootless 模式"
-    finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-        socket_path.unlink(missing_ok=True)
-
-
-@pytest.mark.asyncio
-async def test_sandboxd_keeps_status_socket_available_when_embedded_bundle_is_invalid(monkeypatch, tmp_path):
-    import asyncio
-    from agent.sandbox.docker_runtime import _sandboxd_status_payload
-    from agent.sandbox import sandboxd as sandboxd_module
-
-    allowed = tmp_path / "allowed"
-    allowed.mkdir()
-    socket_path = Path("/tmp") / f"gugu-sd-bundle-{uuid.uuid4().hex[:8]}.sock"
-    settings = SimpleNamespace(
-        manager_mode="embedded",
-        enabled=True,
-        rootless_required=False,
-        network_profile="none",
-        image="debian:bookworm-slim",
-        image_digest="sha256:" + "a" * 64,
-        stdio_max_sessions=8,
-        stdio_max_sessions_per_user=4,
-    )
-    snapshot = docker_runtime.SandboxRuntimeSnapshot(
-        docker=docker_runtime.DockerRuntimeStatus(True, True, False, message="Docker daemon 已就绪"),
-        image_ready=False,
-        image_error="内置沙盒运行镜像归档摘要不匹配",
-    )
-    monkeypatch.setattr(sandboxd_module, "get_settings", lambda: SimpleNamespace(sandbox=settings))
-    monkeypatch.setattr(sandboxd_module, "_resolve_host_data_root_once", lambda: None)
-    monkeypatch.setattr(sandboxd_module, "probe_sandbox_runtime", lambda *_args, **_kwargs: snapshot)
-    monkeypatch.setattr(
-        sandboxd_module,
-        "docker_sandbox_readiness",
-        lambda _settings, *, runtime_snapshot: (False, runtime_snapshot.image_error),
-    )
-    monkeypatch.setattr(
-        sandboxd_module,
-        "cleanup_orphan_pty_containers",
-        lambda: pytest.fail("bundle 无效时不能进行容器清理"),
-    )
-    server = sandboxd_module.SandboxdServer(socket_path, allowed)
-    monkeypatch.setattr(server, "_validate_peer", lambda _writer: None)
-
-    task = asyncio.create_task(server.serve())
-    try:
-        for _ in range(100):
-            if socket_path.exists():
-                break
-            await asyncio.sleep(0.01)
-        payload, error = await asyncio.to_thread(
-            _sandboxd_status_payload,
-            str(socket_path),
-            timeout_seconds=1,
-        )
-        assert error is None
-        assert payload["ready"] is False
-        assert payload["reason"] == "内置沙盒运行镜像归档摘要不匹配"
-        assert payload["runtime"]["image_error"] == payload["reason"]
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -767,65 +678,6 @@ def test_resolved_image_ref_uses_digest_written_by_compose_bootstrap(monkeypatch
         image_digest="resolved",
     )
     assert _image_ref(settings) == f"coffeiz/gugu-sandbox:latest@{digest}"
-
-
-def test_embedded_image_ref_uses_manifest_image_id(monkeypatch, tmp_path):
-    image_id = "sha256:" + "c" * 64
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "schema_version": 2,
-        "archive_sha256": "sha256:" + "d" * 64,
-        "images": [
-            {"role": "sandbox", "name": "coffeiz/gugu-sandbox:embedded", "digest": "sha256:" + "a" * 64, "image_id": image_id},
-            {"role": "egress-proxy", "name": "ubuntu/squid:embedded", "digest": "sha256:" + "b" * 64, "image_id": "sha256:" + "e" * 64},
-        ],
-    }), encoding="utf-8")
-    monkeypatch.setenv("GUGU_SANDBOX_BUNDLE_DIR", str(tmp_path))
-    settings = SimpleNamespace(
-        manager_mode="embedded",
-        image="debian:bookworm-slim",
-        image_digest="sha256:" + "f" * 64,
-    )
-
-    assert _image_ref(settings) == image_id
-
-
-def test_embedded_runtime_probe_surfaces_bundle_failure_and_never_checks_configured_image(monkeypatch):
-    from agent.sandbox.offline_bundle import BundleManifestError
-
-    settings = SimpleNamespace(
-        manager_mode="embedded",
-        enabled=True,
-        rootless_required=False,
-        network_profile="none",
-        image="debian:bookworm-slim",
-        image_digest="sha256:" + "a" * 64,
-    )
-    monkeypatch.setattr(
-        docker_runtime,
-        "probe_docker",
-        lambda: docker_runtime.DockerRuntimeStatus(True, True, False),
-    )
-    monkeypatch.setattr(
-        docker_runtime,
-        "image_available",
-        lambda *_args: pytest.fail("embedded 不应检查 Admin 配置的浮动镜像"),
-    )
-
-    class InvalidBundle:
-        def ensure_images(self):
-            raise BundleManifestError("内置沙盒运行镜像归档摘要不匹配")
-
-    snapshot = docker_runtime.probe_sandbox_runtime(
-        settings,
-        embedded_bundle_runtime=InvalidBundle(),
-    )
-
-    assert snapshot.image_ready is False
-    assert snapshot.image_error == "内置沙盒运行镜像归档摘要不匹配"
-    assert docker_runtime.docker_sandbox_readiness(settings, runtime_snapshot=snapshot) == (
-        False,
-        "内置沙盒运行镜像归档摘要不匹配",
-    )
 
 
 def test_offline_bundle_image_ref_uses_verified_local_tag(monkeypatch, tmp_path):
@@ -1864,8 +1716,6 @@ def test_non_compose_egress_bootstrap_uses_isolated_network_and_stable_proxy():
     assert "docker_cli network create --internal" in script
     assert "--label gugu.managed=egress-network" in script
     assert 'GUGU_EGRESS_REQUIRE_LABELS:-0' in script
-    assert 'GUGU_EGRESS_REQUIRE_LOCAL_IMAGE:-0' in script
-    assert '内置 egress 代理镜像未加载，拒绝在线拉取' in script
     assert 'GUGU_EGRESS_USE_CONFIG_FILE:-1' in script
     assert "同名 Docker 网络不属于 Gugu egress 管理器，拒绝接管" in script
     assert "同名容器不属于 Gugu egress 管理器，拒绝接管" in script

@@ -17,7 +17,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from app.core.config import SandboxSettings
-from .offline_bundle import BundleManifestError
 
 
 _RESOLVED_IMAGE_DIGEST = "resolved"
@@ -280,7 +279,6 @@ class SandboxRuntimeSnapshot:
     image_ready: bool
     runtime_ready: bool | None = None
     manager_message: str = ""
-    image_error: str = ""
 
 
 def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
@@ -320,45 +318,16 @@ def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
     )
 
 
-def probe_sandbox_runtime(
-    settings: SandboxSettings,
-    *,
-    embedded_bundle_runtime=None,
-) -> SandboxRuntimeSnapshot:
+def probe_sandbox_runtime(settings: SandboxSettings) -> SandboxRuntimeSnapshot:
     """在当前进程持有的 daemon 上采集执行器状态。"""
     docker = probe_docker()
-    can_inspect_images = (
+    image_ready = (
         docker.daemon_ready
         and (not settings.rootless_required or docker.rootless is True)
+        and valid_image_digest(settings.image_digest)
+        and image_available(settings.image, settings.image_digest)
     )
-    if getattr(settings, "manager_mode", "disabled") == "embedded":
-        image_ready, image_error = _probe_embedded_images(
-            can_inspect_images, embedded_bundle_runtime,
-        )
-    else:
-        image_ready = (
-            can_inspect_images
-            and valid_image_digest(settings.image_digest)
-            and image_available(settings.image, settings.image_digest)
-        )
-        image_error = ""
-    return SandboxRuntimeSnapshot(
-        docker=docker,
-        image_ready=image_ready,
-        image_error=image_error,
-    )
-
-
-def _probe_embedded_images(can_inspect: bool, bundle_runtime) -> tuple[bool, str]:
-    if not can_inspect:
-        return False, ""
-    if bundle_runtime is None:
-        return False, "内置沙盒 bundle 运行时未初始化"
-    try:
-        bundle_runtime.ensure_images()
-    except BundleManifestError as exc:
-        return False, str(exc)
-    return True, ""
+    return SandboxRuntimeSnapshot(docker=docker, image_ready=image_ready)
 
 
 def _sandbox_configuration_readiness(settings: SandboxSettings) -> tuple[bool, str]:
@@ -397,12 +366,10 @@ def docker_sandbox_readiness(
         return False, status.message
     if settings.rootless_required and status.rootless is not True:
         return False, "当前 Docker 不是 Rootless 模式"
-    manager_mode = str(getattr(settings, "manager_mode", "disabled") or "disabled")
-    embedded = manager_mode == "embedded"
-    if not embedded and not valid_image_digest(settings.image_digest):
+    if not valid_image_digest(settings.image_digest):
         return False, "尚未配置有效的固定镜像 digest"
     if not snapshot.image_ready:
-        return False, snapshot.image_error or "固定 Shell 沙盒镜像尚未加载到当前 Docker daemon"
+        return False, "固定 Shell 沙盒镜像尚未加载到当前 Docker daemon"
     return True, "Docker 沙盒运行时已就绪"
 
 
@@ -445,7 +412,6 @@ def sandboxd_runtime_status(
     server_version = runtime.get("server_version")
     message = runtime.get("message")
     image_ready = runtime.get("image_ready")
-    image_error = runtime.get("image_error", "")
     runtime_ready = payload.get("ready")
     manager_message = payload.get("reason")
     if (
@@ -455,7 +421,6 @@ def sandboxd_runtime_status(
         or not isinstance(server_version, str)
         or not isinstance(message, str)
         or not isinstance(image_ready, bool)
-        or not isinstance(image_error, str)
         or not isinstance(runtime_ready, bool)
         or not isinstance(manager_message, str)
     ):
@@ -471,7 +436,6 @@ def sandboxd_runtime_status(
         image_ready=image_ready,
         runtime_ready=runtime_ready,
         manager_message=manager_message,
-        image_error=image_error,
     )
 
 

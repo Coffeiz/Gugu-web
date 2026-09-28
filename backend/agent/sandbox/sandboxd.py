@@ -19,7 +19,6 @@ from pathlib import Path
 
 from app.core.config import get_settings
 
-from .bundle_runtime import EmbeddedBundleRuntime
 from .docker import DockerSandboxExecutor
 from .docker_runtime import (
     cleanup_orphan_pty_containers,
@@ -79,11 +78,6 @@ class SandboxdServer:
         # stdio MCP 是长驻连接，绝不能和一次性 execute 共用 4 个槽：
         # 否则几个长连接就能把普通沙盒执行饿死。独立配额 + 按用户上限。
         sandbox_settings = get_settings().sandbox
-        self._embedded_bundle_runtime = (
-            EmbeddedBundleRuntime()
-            if getattr(sandbox_settings, "manager_mode", "disabled") == "embedded"
-            else None
-        )
         self._stdio_slots = asyncio.Semaphore(max(1, int(sandbox_settings.stdio_max_sessions)))
         self._stdio_per_user_limit = max(1, int(sandbox_settings.stdio_max_sessions_per_user))
         self._stdio_counts: dict[str, int] = {}
@@ -101,43 +95,11 @@ class SandboxdServer:
             raise ValueError("sandboxd root 必须是目录")
         return path
 
-    def _probe_runtime(self, settings):
-        if self._embedded_bundle_runtime is None:
-            return probe_sandbox_runtime(settings)
-        return probe_sandbox_runtime(
-            settings,
-            embedded_bundle_runtime=self._embedded_bundle_runtime,
-        )
-
-    async def _runtime_readiness(self, settings):
-        runtime = await asyncio.to_thread(self._probe_runtime, settings)
-        ready, reason = await asyncio.to_thread(
-            docker_sandbox_readiness, settings, runtime_snapshot=runtime,
-        )
-        return runtime, ready, reason
-
     async def _require_runtime_ready(self) -> None:
         """在唯一持有 Docker socket 的进程内复核执行器与 Rootless 边界。"""
-        _runtime, ready, reason = await self._runtime_readiness(get_settings().sandbox)
+        ready, reason = await asyncio.to_thread(docker_sandbox_readiness, get_settings().sandbox)
         if not ready:
             raise ValueError(reason)
-
-    async def _status_response(self, settings) -> dict:
-        runtime, ready, reason = await self._runtime_readiness(settings)
-        return {
-            "type": "status",
-            "ready": ready,
-            "reason": reason,
-            "runtime": {
-                "installed": runtime.docker.installed,
-                "daemon_ready": runtime.docker.daemon_ready,
-                "rootless": runtime.docker.rootless,
-                "server_version": runtime.docker.server_version,
-                "message": runtime.docker.message,
-                "image_ready": runtime.image_ready,
-                "image_error": runtime.image_error,
-            },
-        }
 
     def _validate_egress_network(self) -> None:
         settings = get_settings().sandbox
@@ -172,18 +134,10 @@ class SandboxdServer:
                 "GUGU_EGRESS_USE_CONFIG_FILE": "0",
                 "GUGU_EGRESS_PROXY_URL": settings.egress_proxy_url,
                 "GUGU_EGRESS_REQUIRE_LABELS": "1",
-                "GUGU_EGRESS_REQUIRE_LOCAL_IMAGE": "1",
                 "SANDBOX__NETWORK_PROFILE": "egress",
                 "SANDBOX__EGRESS_NETWORK_NAME": settings.egress_network_name,
                 "SQUID_CONF_PATH": os.environ.get("SQUID_CONF_PATH", "/opt/gugu/egress.conf"),
             })
-            if self._embedded_bundle_runtime is None:
-                raise ValueError("内置 egress 镜像 bundle 未就绪")
-            manifest = self._embedded_bundle_runtime.load_verified_manifest()
-            proxy_image = manifest.image_for_role("egress-proxy")
-            if proxy_image.image_id is None:
-                raise ValueError("内置 egress 代理镜像 ID 未配置")
-            env["GUGU_EGRESS_PROXY_IMAGE"] = proxy_image.image_id
             try:
                 result = subprocess.run(
                     [str(script)], stdin=subprocess.DEVNULL,
@@ -220,7 +174,24 @@ class SandboxdServer:
                 raise ValueError("sandboxd operation 无效")
             operation = value.get("operation")
             if operation == "status":
-                response = await self._status_response(get_settings().sandbox)
+                settings = get_settings().sandbox
+                runtime = await asyncio.to_thread(probe_sandbox_runtime, settings)
+                ready, reason = await asyncio.to_thread(
+                    docker_sandbox_readiness, settings, runtime_snapshot=runtime,
+                )
+                response = {
+                    "type": "status",
+                    "ready": ready,
+                    "reason": reason,
+                    "runtime": {
+                        "installed": runtime.docker.installed,
+                        "daemon_ready": runtime.docker.daemon_ready,
+                        "rootless": runtime.docker.rootless,
+                        "server_version": runtime.docker.server_version,
+                        "message": runtime.docker.message,
+                        "image_ready": runtime.image_ready,
+                    },
+                }
             elif operation == "pty_open":
                 await self._require_runtime_ready()
                 await self._handle_pty(value, reader, writer)
@@ -467,8 +438,7 @@ class SandboxdServer:
 
     async def serve(self) -> None:
         await asyncio.to_thread(_resolve_host_data_root_once)
-        settings = get_settings().sandbox
-        _runtime, ready, reason = await self._runtime_readiness(settings)
+        ready, reason = await asyncio.to_thread(docker_sandbox_readiness, get_settings().sandbox)
         if ready:
             cleaned = await asyncio.to_thread(cleanup_orphan_pty_containers)
             if cleaned:
