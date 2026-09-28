@@ -500,46 +500,27 @@ def test_sandboxd_runtime_status_fails_closed_for_legacy_status_payload():
     assert snapshot is None
 
 
-@pytest.mark.parametrize(
-    ("manager_mode", "configured_rootless_required", "daemon_rootless", "expected_ready"),
-    [
-        ("embedded", False, False, True),
-        ("embedded", True, False, False),
-        ("external", False, False, False),
-        ("external", True, False, False),
-        ("external", False, True, True),
-    ],
-)
-def test_docker_sandbox_readiness_enforces_mode_rootless_matrix(
-    monkeypatch, manager_mode, configured_rootless_required, daemon_rootless, expected_ready,
-):
+def test_docker_sandbox_readiness_rejects_rootful_daemon_before_image_check(monkeypatch):
     settings = SimpleNamespace(
-        manager_mode=manager_mode,
+        manager_mode="embedded",
         enabled=True,
-        rootless_required=configured_rootless_required,
+        rootless_required=True,
         network_profile="none",
         image="debian:bookworm-slim",
         image_digest="sha256:" + "a" * 64,
     )
     monkeypatch.setattr(
         docker_runtime, "probe_docker",
-        lambda: docker_runtime.DockerRuntimeStatus(True, True, daemon_rootless),
+        lambda: docker_runtime.DockerRuntimeStatus(True, True, False),
     )
-    monkeypatch.setattr(docker_runtime, "_probe_embedded_images", lambda can_inspect, _bundle: (can_inspect, ""))
-    image_checks = []
     monkeypatch.setattr(
-        docker_runtime,
-        "image_available",
-        lambda *_args: image_checks.append(True) or True,
+        docker_runtime, "image_available",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("rootful daemon 不应继续检查镜像")),
     )
 
-    ready, reason = docker_runtime.docker_sandbox_readiness(settings)
-
-    assert ready is expected_ready
-    assert reason == (
-        "Docker 沙盒运行时已就绪" if expected_ready else "当前 Docker 不是 Rootless 模式"
+    assert docker_runtime.docker_sandbox_readiness(settings) == (
+        False, "当前 Docker 不是 Rootless 模式",
     )
-    assert bool(image_checks) is (manager_mode == "external" and daemon_rootless)
 
 
 @pytest.mark.asyncio
@@ -1321,21 +1302,12 @@ def _sandbox_admin_snapshot(*, rootless=True, runtime_ready=True, message="Docke
             "expected_manager_ready": True,
         },
         {
-            "manager_mode": "external",
-            "enabled": True,
-            "snapshot": {"rootless": False, "runtime_ready": True, "message": "Docker 沙盒运行时已就绪"},
-            "expected_state": "rootless_required",
-            "expected_message": "当前 Docker 不是 Rootless 模式",
-            "expected_executor_ready": False,
-            "expected_manager_ready": True,
-        },
-        {
             "manager_mode": "embedded",
             "enabled": True,
-            "snapshot": {"rootless": False, "runtime_ready": True, "message": "Docker 沙盒运行时已就绪"},
-            "expected_state": "ready",
-            "expected_message": "Docker 沙盒运行时已就绪",
-            "expected_executor_ready": True,
+            "snapshot": {"rootless": False, "runtime_ready": False, "message": "egress 隔离网络不可用"},
+            "expected_state": "manager_unavailable",
+            "expected_message": "egress 隔离网络不可用",
+            "expected_executor_ready": False,
             "expected_manager_ready": True,
         },
         {
@@ -1381,7 +1353,6 @@ def test_admin_sandbox_status_uses_sandboxd_runtime_not_backend_docker(monkeypat
     assert response["executor_ready"] is case["expected_executor_ready"]
     assert response["state"] == case["expected_state"]
     assert response["manager_ready"] is case["expected_manager_ready"]
-    assert response["rootless_required"] is (case["manager_mode"] == "external")
     assert response["message"] == case["expected_message"]
 
 
@@ -1768,18 +1739,19 @@ def test_prepare_storage_publishes_rootful_identity_without_subordinate_ranges(t
     assert identity["mapped_gid"] == 65532
 
 
-def test_dev_compose_sandboxd_owns_initialization_contract():
+def test_compose_sandboxd_owns_initialization_contract():
     repo = Path(__file__).parents[2]
-    text = (repo / "docker-compose.dev.yml").read_text(encoding="utf-8")
-    assert "  sandbox-bootstrap:" not in text
-    block = text.split("  sandboxd:", 1)[1]
-    assert "- *gugu-data-mount" in block
-    assert "/etc/passwd:/host/etc/passwd:ro" in block
-    assert "/etc/subuid:/host/etc/subuid:ro" in block
-    assert "/etc/subgid:/host/etc/subgid:ro" in block
-    assert "sandbox_socket:/run/gugu" in block
-    assert "/usr/local/bin/gugu-sandbox-init.sh" in block
-    assert "exec python -m agent.sandbox.sandboxd" in block
+    for name in ("docker-compose.yml", "docker-compose.dev.yml", "docker-compose.prod.yml"):
+        text = (repo / name).read_text(encoding="utf-8")
+        assert "  sandbox-bootstrap:" not in text
+        block = text.split("  sandboxd:", 1)[1]
+        assert "- *gugu-data-mount" in block
+        assert "/etc/passwd:/host/etc/passwd:ro" in block
+        assert "/etc/subuid:/host/etc/subuid:ro" in block
+        assert "/etc/subgid:/host/etc/subgid:ro" in block
+        assert "sandbox_socket:/run/gugu" in block
+        assert "/usr/local/bin/gugu-sandbox-init.sh" in block
+        assert "exec python -m agent.sandbox.sandboxd" in block
 
 
 def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
@@ -1795,7 +1767,7 @@ def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
         assert match is not None, f"{compose_name} 缺少 {service_name} 服务"
         return match.group(1)
 
-    for compose_name in ("docker-compose.dev.yml",):
+    for compose_name in ("docker-compose.dev.yml", "docker-compose.prod.yml"):
         for service_name in ("worker", "gateway", "migrate"):
             block = service_block(compose_name, service_name)
             assert re.search(r"(?m)^    healthcheck:\n      disable: true$", block)
@@ -1807,21 +1779,15 @@ def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
             block = service_block(compose_name, service_name)
             assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in block
 
-    for service_name in ("worker", "gateway", "migrate"):
-        block = service_block("docker-compose.prod.yml", service_name)
-        assert re.search(r"(?m)^    healthcheck:\n      disable: true$", block)
-    for service_name in ("backend", "worker"):
-        block = service_block("docker-compose.prod.yml", service_name)
-        assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in block
-
     integrated = (repo / "docker-compose.yml").read_text(encoding="utf-8")
     assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in integrated
     assert 'http://127.0.0.1:9595/health' in integrated
     assert 'HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \\\n    CMD curl -sf http://127.0.0.1:9595/health' in (repo / "Dockerfile").read_text(encoding="utf-8")
 
-    assert 'GUGU_SANDBOX_MANAGER_MODE: embedded' in integrated
-    assert 'DOCKER_HOST: unix:///var/run/docker.sock' in integrated
-    assert "docker.sock" in integrated
+    sandboxd = service_block("docker-compose.yml", "sandboxd")
+    assert 'test: ["CMD-SHELL", "test -S \\"$${GUGU_SANDBOXD_SOCKET}\\""]' in sandboxd
+    assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in sandboxd
+    assert "sandbox-bootstrap" not in integrated
 
 
 def test_permission_plan_rejects_root_directory(tmp_path):

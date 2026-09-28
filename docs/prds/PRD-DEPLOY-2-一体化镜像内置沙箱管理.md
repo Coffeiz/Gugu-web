@@ -250,17 +250,13 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 #### Phase 1.8：集成回归
 
-##### Phase 1.8.1：部署模式矩阵
+##### Phase 1.8.1：模式矩阵与启动故障回归
 
-- [x] `DEPLOY2-010a` 补齐 embedded/external/disabled 的模式判定与就绪状态回归；验收：Rootful embedded、Rootless external 正常；Rootful external 拒绝；disabled 不探测或启动管理器；Admin/运行时对模式的解释一致。external 现在由运行时与 Admin 共同强制 Rootless，不再只依赖 Compose 传入开关；三套 Compose 拓扑断言已更新为当前设计。114 项定向 pytest 通过。
+- [ ] `DEPLOY2-010a` 补齐 embedded/external/disabled 模式矩阵、入口生命周期和 fail-closed 回归；验收：Rootful embedded、Rootless external 正常；Rootful external 拒绝；Docker/socket/bundle 不可用时无本地回退，并保持 Web/数据库健康。
 
-##### Phase 1.8.2：入口生命周期与故障隔离
+##### Phase 1.8.2：执行隔离与资源清理回归
 
-- [ ] `DEPLOY2-010b` 补齐 embedded manager 入口生命周期和启动故障回归；验收：manager 随入口启停；manager、Docker Socket 或 bundle 不可用时 Shell fail-closed、无本地回退，且 manager 故障不导致 Web/数据库被重启。
-
-##### Phase 1.8.3：执行隔离与资源清理
-
-- [ ] `DEPLOY2-010c` 补齐 Sandbox 执行与 egress 安全边界回归；验收：`network=none`、受控 egress、bundle digest/image ID、临时容器清理，以及执行容器不可访问 Docker Socket 的测试通过。
+- [ ] `DEPLOY2-010b` 补齐 Sandbox 执行与 egress 安全边界回归；验收：`network=none`、受控 egress、bundle digest/image ID、临时容器清理，以及执行容器不可访问 Docker Socket 的测试通过。
 
 ### Phase 2：在 fnOS 部署测试候选一体化容器
 

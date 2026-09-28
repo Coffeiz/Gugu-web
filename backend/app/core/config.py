@@ -161,8 +161,8 @@ class SandboxSettings(BaseModel):
     rootless_required: bool = Field(
         False,
         description=(
-            "是否额外强制要求 Rootless Docker；external 管理器始终强制，"
-            "embedded 模式默认允许 Rootful Docker"
+            "是否强制要求 Rootless Docker；默认部署允许 Rootful Docker，"
+            "生产环境可显式设为 true"
         ),
     )
     network_profile: Literal["none", "egress"] = Field("egress", description="容器网络策略；默认允许通过受控代理临时访问公网")

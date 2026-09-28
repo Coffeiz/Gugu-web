@@ -329,7 +329,7 @@ def probe_sandbox_runtime(
     docker = probe_docker()
     can_inspect_images = (
         docker.daemon_ready
-        and (not sandbox_requires_rootless(settings) or docker.rootless is True)
+        and (not settings.rootless_required or docker.rootless is True)
     )
     if getattr(settings, "manager_mode", "disabled") == "embedded":
         image_ready, image_error = _probe_embedded_images(
@@ -359,11 +359,6 @@ def _probe_embedded_images(can_inspect: bool, bundle_runtime) -> tuple[bool, str
     except BundleManifestError as exc:
         return False, str(exc)
     return True, ""
-
-
-def sandbox_requires_rootless(settings: SandboxSettings) -> bool:
-    """分体部署固定要求 Rootless；一体化部署允许按部署配置选择。"""
-    return settings.manager_mode == "external" or settings.rootless_required
 
 
 def _sandbox_configuration_readiness(settings: SandboxSettings) -> tuple[bool, str]:
@@ -400,7 +395,7 @@ def docker_sandbox_readiness(
         return False, status.message
     if not status.daemon_ready:
         return False, status.message
-    if sandbox_requires_rootless(settings) and status.rootless is not True:
+    if settings.rootless_required and status.rootless is not True:
         return False, "当前 Docker 不是 Rootless 模式"
     manager_mode = str(getattr(settings, "manager_mode", "disabled") or "disabled")
     embedded = manager_mode == "embedded"

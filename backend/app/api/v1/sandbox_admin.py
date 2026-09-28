@@ -16,7 +16,6 @@ from agent.sandbox.docker_runtime import (
     DockerRuntimeStatus,
     cleanup_running_sandboxes,
     cleanup_sandboxes_for_root,
-    sandbox_requires_rootless,
     sandboxd_runtime_status,
     valid_egress_network_name,
     valid_egress_proxy,
@@ -103,7 +102,7 @@ def _sandbox_status_state(cfg, manager_status, runtime, image_ready):
     manager_mode, snapshot, manager_message = manager_status
     manager_available = snapshot is not None
     manager_runtime_ready = snapshot.runtime_ready if snapshot else None
-    rootless_required = sandbox_requires_rootless(cfg)
+    rootless_required = bool(cfg.rootless_required)
     if manager_mode == "disabled":
         state, message = "disabled", "沙盒部署模式已禁用"
     elif manager_mode not in {"embedded", "external"}:
