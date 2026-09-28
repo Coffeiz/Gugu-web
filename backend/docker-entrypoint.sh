@@ -342,19 +342,6 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
     if [ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" = "embedded" ]; then
         # 沙盒管理器由独立 supervisord 托管，故障/未就绪只影响 Shell，不进入
         # app 的关键 monitored_pids；Web 和数据库不因 Docker Socket/daemon 故障重启。
-        # 一体化模式明确绑定传入的 Rootful Docker Socket；分体部署仍由 Compose
-        # 显式提供自己的 Docker Host，不受这里影响。
-        export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
-        if [ "${SANDBOX__EGRESS_PROXY_URL+x}" != "x" ]; then
-            export SANDBOX__EGRESS_PROXY_URL="http://egress-proxy:3128"
-        fi
-        if [ "${SANDBOX__EGRESS_NETWORK_NAME+x}" != "x" ]; then
-            export SANDBOX__EGRESS_NETWORK_NAME="gugu-sandbox-egress"
-        fi
-        if [ "${SANDBOX__EGRESS_ISOLATION_ENABLED+x}" != "x" ]; then
-            export SANDBOX__EGRESS_ISOLATION_ENABLED="true"
-        fi
-        export SQUID_CONF_PATH="${SQUID_CONF_PATH:-/opt/gugu/egress.conf}"
         EMBEDDED_DATA_DIR="${GUGU_DATA_DIR:-/data}"
         EMBEDDED_SANDBOX_SOCKET="${GUGU_SANDBOXD_SOCKET:-/run/gugu/sandboxd.sock}"
         mkdir -p /run/gugu "$EMBEDDED_DATA_DIR/users"

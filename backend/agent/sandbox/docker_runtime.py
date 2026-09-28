@@ -73,18 +73,6 @@ def docker_container_mount_source(
     return None
 
 
-def docker_container_storage_root(local_path: str | Path, data_dir: str | Path = "/data") -> Path | None:
-    """把容器内持久数据目录映射为目标 Docker daemon 可见的宿主机路径。"""
-    container_data = Path(data_dir).resolve()
-    storage_path = Path(local_path).resolve()
-    try:
-        relative = storage_path.relative_to(container_data)
-    except ValueError as exc:
-        raise ValueError("内置沙盒的数据目录必须位于持久化 /data 挂载内") from exc
-    source = docker_container_mount_source(str(container_data))
-    return source / relative if source is not None else None
-
-
 def valid_image_digest(value: str) -> bool:
     digest = (value or "").strip()
     if digest in {_RESOLVED_IMAGE_DIGEST, _LOCAL_IMAGE_DIGEST}:

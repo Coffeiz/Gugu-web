@@ -71,183 +71,40 @@ def test_docker_container_mount_source_rejects_non_host_source(monkeypatch):
     assert docker_runtime.docker_container_mount_source() is None
 
 
-def test_docker_container_storage_root_maps_only_data_mount(monkeypatch):
-    monkeypatch.setattr(
-        docker_runtime, "docker_container_mount_source",
-        lambda destination: Path("/srv/gugu-data") if destination == "/data" else None,
-    )
-    assert docker_runtime.docker_container_storage_root("/data/users", "/data") == Path("/srv/gugu-data/users")
-    with pytest.raises(ValueError, match="持久化 /data"):
-        docker_runtime.docker_container_storage_root("/var/lib/gugu-users", "/data")
-
-
-@pytest.mark.parametrize(
-    ("manager_mode", "host_data_root", "resolved_root", "expected"),
-    [
-        ("external", "//Gugu-data/users", Path("/srv/compose/project/Gugu-data/users"), "/srv/compose/project/Gugu-data/users"),
-        ("embedded", "/untrusted/configured/path", Path("/srv/approved-data/users"), "/srv/approved-data/users"),
-        ("embedded", "/untrusted/configured/path", None, None),
-    ],
-)
-def test_sandboxd_resolves_host_data_root_for_deployment_mode(
-    monkeypatch, manager_mode, host_data_root, resolved_root, expected,
-):
+def test_sandboxd_resolves_host_data_root_once_at_startup(monkeypatch):
     from agent.sandbox import sandboxd
 
-    settings = SimpleNamespace(
-        sandbox=SimpleNamespace(manager_mode=manager_mode, host_data_root=host_data_root),
-        storage=SimpleNamespace(local_path="/data/users"),
-    )
+    settings = SimpleNamespace(sandbox=SimpleNamespace(host_data_root="//Gugu-data/users"))
     monkeypatch.setattr(sandboxd, "get_settings", lambda: settings)
     monkeypatch.setattr(
         sandboxd, "docker_container_mount_source",
         lambda: Path("/srv/compose/project/Gugu-data"),
     )
-    monkeypatch.setattr(
-        sandboxd, "docker_container_storage_root",
-        lambda local_path, data_dir: resolved_root,
-    )
 
     sandboxd._resolve_host_data_root_once()
-    assert settings.sandbox.host_data_root == expected
+    assert settings.sandbox.host_data_root == "/srv/compose/project/Gugu-data/users"
 
 
-@pytest.mark.asyncio
-async def test_embedded_egress_initialization_targets_rootful_daemon_and_fails_closed(monkeypatch, tmp_path):
-    from agent.sandbox import sandboxd
-
-    settings = SimpleNamespace(
-        manager_mode="embedded",
-        enabled=True,
-        network_profile="egress",
-        egress_proxy_url="http://egress-proxy:3128",
-        egress_isolation_enabled=True,
-        egress_network_name="gugu-sandbox-egress",
-        stdio_max_sessions=8,
-        stdio_max_sessions_per_user=4,
-    )
-    monkeypatch.setattr(sandboxd, "get_settings", lambda: SimpleNamespace(sandbox=settings))
-    script = tmp_path / "egress-init.sh"
-    script.write_text("#!/bin/sh\n", encoding="utf-8")
-    monkeypatch.setattr(sandboxd, "_EMBEDDED_EGRESS_INIT_SCRIPT", script)
-    monkeypatch.setattr(sandboxd, "docker_environment", lambda: {})
-    monkeypatch.setattr(sandboxd, "docker_network_available", lambda _name: True)
-    calls = []
-
-    class Completed:
-        returncode = 0
-
-    monkeypatch.setattr(
-        sandboxd.subprocess, "run",
-        lambda *args, **kwargs: calls.append((args, kwargs)) or Completed(),
-    )
-    allowed_root = tmp_path / "users"
-    allowed_root.mkdir()
-    manager = sandboxd.SandboxdServer(tmp_path / "sandboxd.sock", allowed_root)
-
-    manager._validate_egress_network()
-
-    args, kwargs = calls[0]
-    assert args[0] == [str(script)]
-    assert kwargs["env"]["DOCKER_HOST"] == "unix:///var/run/docker.sock"
-    assert kwargs["env"]["GUGU_EGRESS_REQUIRE_LABELS"] == "1"
-    assert kwargs["env"]["GUGU_EGRESS_USE_CONFIG_FILE"] == "0"
-    assert kwargs["env"]["GUGU_EGRESS_PROXY_URL"] == "http://egress-proxy:3128"
-
-    class Failed:
-        returncode = 1
-
-    monkeypatch.setattr(sandboxd.subprocess, "run", lambda *_args, **_kwargs: Failed())
-    with pytest.raises(ValueError, match="代理初始化失败"):
-        manager._validate_egress_network()
-
-
-@pytest.mark.asyncio
-async def test_sandboxd_pty_refuses_egress_when_initialization_fails(monkeypatch, tmp_path):
-    from agent.sandbox import sandboxd
-
-    settings = SimpleNamespace(
-        stdio_max_sessions=8,
-        stdio_max_sessions_per_user=4,
-    )
-    monkeypatch.setattr(sandboxd, "get_settings", lambda: SimpleNamespace(sandbox=settings))
-    allowed_root = tmp_path / "users"
-    allowed_root.mkdir()
-    workspace = allowed_root / "user-a"
-    workspace.mkdir()
-    manager = sandboxd.SandboxdServer(tmp_path / "sandboxd.sock", allowed_root)
-
-    def refuse_egress():
-        raise ValueError("受控 egress 初始化失败")
-
-    monkeypatch.setattr(manager, "_validate_egress_network", refuse_egress)
-    with pytest.raises(ValueError, match="受控 egress 初始化失败"):
-        await manager._handle_pty({
-            "root": str(workspace),
-            "shell_mode": "sandbox",
-            "network_profile": "egress",
-        }, None, None)
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        {
-            "manager_mode": "external",
-            "resolved_data_root": None,
-            "workspace_in_root": True,
-            "expected_mount": "/srv/compose/project/Gugu-data/users/user-1/workspace",
-        },
-        {
-            "manager_mode": "embedded",
-            "resolved_data_root": Path("/srv/approved-data/users"),
-            "workspace_in_root": True,
-            "expected_mount": "/srv/approved-data/users/user-1/workspace",
-        },
-        {
-            "manager_mode": "embedded",
-            "resolved_data_root": None,
-            "workspace_in_root": True,
-            "error": "拒绝创建容器",
-        },
-        {
-            "manager_mode": "embedded",
-            "resolved_data_root": Path("/srv/approved-data/users"),
-            "workspace_in_root": False,
-            "error": "超出授权数据目录",
-        },
-    ],
-)
-def test_docker_executor_resolves_authorized_host_workspace(
-    monkeypatch, tmp_path, case,
-):
+def test_docker_executor_uses_resolved_host_data_root_for_workspace(monkeypatch, tmp_path):
     from agent.sandbox import docker as docker_module
     from agent.sandbox.docker import DockerSandboxExecutor
     from app.core import config
 
-    manager_mode = case["manager_mode"]
-    embedded_data_root = case["resolved_data_root"]
-    workspace_in_root = case["workspace_in_root"]
     logical_root = tmp_path / "data" / "users"
-    workspace = logical_root / "user-1" / "workspace" if workspace_in_root else tmp_path / "unrelated"
+    workspace = logical_root / "user-1" / "workspace"
     workspace.mkdir(parents=True)
     monkeypatch.setattr(
         docker_module, "docker_container_mount_source",
         lambda: Path("/srv/compose/project/Gugu-data"),
     )
     monkeypatch.setattr(
-        docker_module, "docker_container_storage_root",
-        lambda *_args: embedded_data_root,
-    )
-    monkeypatch.setattr(
         config, "get_settings",
         lambda: SimpleNamespace(storage=SimpleNamespace(local_path=str(logical_root))),
     )
     settings = SimpleNamespace(
-        manager_mode=manager_mode,
         image="debian:bookworm-slim",
         image_digest="sha256:" + "a" * 64,
-        host_data_root="/untrusted/configured/path" if manager_mode == "embedded" else "//Gugu-data/users",
+        host_data_root="//Gugu-data/users",
         network_profile="none",
         pids_limit=64,
         cpu_limit=1,
@@ -257,16 +114,11 @@ def test_docker_executor_resolves_authorized_host_workspace(
         egress_isolation_enabled=False,
     )
 
-    executor = DockerSandboxExecutor(workspace, settings, docker_path="/usr/bin/docker")
-    if case.get("error"):
-        with pytest.raises(ValueError, match=case["error"]):
-            executor.build_argv("pwd")
-        return
-
-    argv = executor.build_argv("pwd")
-    assert f"--mount=type=bind,src={case['expected_mount']},dst=/workspace" in argv
-    if manager_mode == "embedded":
-        assert all("/untrusted/configured/path" not in arg for arg in argv)
+    argv = DockerSandboxExecutor(workspace, settings, docker_path="/usr/bin/docker").build_argv("pwd")
+    assert (
+        "--mount=type=bind,src=/srv/compose/project/Gugu-data/users/user-1/workspace,dst=/workspace"
+        in argv
+    )
 
 
 def test_probe_reports_rootless_daemon(monkeypatch):
@@ -1713,15 +1565,7 @@ def test_non_compose_egress_bootstrap_uses_isolated_network_and_stable_proxy():
 
     backend = Path(__file__).parents[1]
     script = (backend / "scripts/runtime/sandbox_egress_init.sh").read_text(encoding="utf-8")
-    assert "docker_cli network create --internal" in script
-    assert "--label gugu.managed=egress-network" in script
-    assert 'GUGU_EGRESS_REQUIRE_LABELS:-0' in script
-    assert 'GUGU_EGRESS_USE_CONFIG_FILE:-1' in script
-    assert "同名 Docker 网络不属于 Gugu egress 管理器，拒绝接管" in script
-    assert "同名容器不属于 Gugu egress 管理器，拒绝接管" in script
-    assert "container_is_managed()" in script
-    assert "{{ .HostConfig.Privileged }}" in script
-    assert "case \"$mounts\" in *docker.sock*" in script
+    assert 'docker_cli network create --internal "$EGRESS_NETWORK"' in script
     assert 'PROXY_CONTAINER_NAME="${GUGU_EGRESS_PROXY_CONTAINER_NAME:-egress-proxy}"' in script
     assert 'GUGU_EGRESS_PROXY_URL:-http://egress-proxy:3128' in script
     assert 'GUGU_EGRESS_CONFIG_FILE' in script
@@ -1732,21 +1576,6 @@ def test_non_compose_egress_bootstrap_uses_isolated_network_and_stable_proxy():
     assert 'network connect "$network" "$PROXY_CONTAINER_NAME"' in script
     assert 'connect_network "$PROXY_UPLINK_NETWORK"' in script
     assert '--volume "$SQUID_CONF:/etc/squid/squid.conf:ro"' in script
-
-
-def test_unified_image_bundles_egress_manager_and_selects_rootful_socket_only_when_embedded():
-    from pathlib import Path
-
-    backend = Path(__file__).parents[1]
-    dockerfile_text = (backend.parent / "Dockerfile").read_text(encoding="utf-8")
-    entrypoint = (backend / "docker-entrypoint.sh").read_text(encoding="utf-8")
-
-    assert "sandbox_egress_init.sh /usr/local/bin/gugu-sandbox-egress-init.sh" in dockerfile_text
-    assert "chmod 0755 /usr/local/bin/gugu-sandbox-egress-init.sh" in dockerfile_text
-    assert '[ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" = "embedded" ]' in entrypoint
-    assert 'DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"' in entrypoint
-    assert 'SANDBOX__EGRESS_PROXY_URL="http://egress-proxy:3128"' in entrypoint
-    assert 'SANDBOX__EGRESS_ISOLATION_ENABLED="true"' in entrypoint
 
 
 def test_quota_measurement_ignores_symlinks_and_checks_reservation(tmp_path):

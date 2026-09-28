@@ -1,4 +1,4 @@
-"""Docker 沙盒执行器。
+"""Rootless Docker 沙盒执行器。
 
 Docker 是普通用户 Shell 的真正隔离边界。单条 argv 命令按参数直跑；含
 shell 元字符的复合命令整体交给容器内 /bin/sh -c 解释（跳过逐参数路径
@@ -26,7 +26,6 @@ from app.core.config import SandboxSettings
 from .docker_runtime import (
     docker_environment,
     docker_container_mount_source,
-    docker_container_storage_root,
     resolved_image_digest,
     sandbox_root_label,
     valid_egress_network_name,
@@ -177,7 +176,7 @@ def _image_ref(settings: SandboxSettings) -> str:
 
 
 class DockerSandboxExecutor:
-    """使用固定安全基线执行一条 Docker 工作区命令。"""
+    """使用固定 Rootless Docker 基线执行一条工作区命令。"""
 
     def __init__(
         self, workspace_root: str | Path, settings: SandboxSettings, *,
@@ -213,47 +212,26 @@ class DockerSandboxExecutor:
 
     def _daemon_mount_src_for(self, path: Path) -> Path:
         """按目标 Docker daemon 的宿主机视角解析 bind mount 源路径。"""
-        from app.core.config import get_settings
-
-        app_settings = get_settings()
         if not self._daemon_host_data_root_resolved:
-            self._daemon_host_data_root = (
-                self._resolve_embedded_host_data_root(app_settings)
-                if getattr(self.settings, "manager_mode", "disabled") == "embedded"
-                else self._resolve_external_host_data_root()
-            )
+            host_root = getattr(self.settings, "host_data_root", None)
+            host_root_text = str(host_root or "").strip()
+            # Compose UI（尤其 FNOS）不一定设置 PWD，导致旧模板把 `${PWD}`
+            # 展开成 `//Gugu-data`。正常的显式绝对路径继续优先；缺失或异常
+            # 时从当前 sandboxd 容器的 /data bind mount 自动解析。
+            if not host_root_text or not host_root_text.startswith("/") or host_root_text.startswith("//"):
+                data_source = docker_container_mount_source()
+                if data_source is not None:
+                    host_root_text = str(data_source / "users")
+            self._daemon_host_data_root = host_root_text or None
             self._daemon_host_data_root_resolved = True
         if not self._daemon_host_data_root:
-            if getattr(self.settings, "manager_mode", "disabled") == "embedded":
-                raise ValueError("内置沙盒宿主机路径未就绪，已拒绝创建容器")
             return path
-        logical_root = Path(app_settings.storage.local_path).resolve()
+        from app.core.config import get_settings
+        logical_root = Path(get_settings().storage.local_path).resolve()
         try:
             return Path(self._daemon_host_data_root) / path.relative_to(logical_root)
-        except ValueError as exc:
-            if getattr(self.settings, "manager_mode", "disabled") == "embedded":
-                raise ValueError("内置沙盒挂载路径超出授权数据目录，已拒绝创建容器") from exc
+        except ValueError:
             return path
-
-    @staticmethod
-    def _resolve_embedded_host_data_root(app_settings) -> str:
-        """embedded 只接受由目标 daemon inspect 得到的持久化数据挂载。"""
-        data_root = docker_container_storage_root(
-            app_settings.storage.local_path,
-            os.environ.get("GUGU_DATA_DIR", "/data"),
-        )
-        if data_root is None:
-            raise ValueError("无法解析内置沙盒 /data 的宿主机挂载，已拒绝创建容器")
-        return str(data_root)
-
-    def _resolve_external_host_data_root(self) -> str | None:
-        """保留分体部署显式路径及旧 Compose 展开错误值的兼容解析。"""
-        host_root = getattr(self.settings, "host_data_root", None)
-        host_root_text = str(host_root or "").strip()
-        if host_root_text.startswith("/") and not host_root_text.startswith("//"):
-            return host_root_text
-        data_source = docker_container_mount_source()
-        return str(data_source / "users") if data_source is not None else None
 
     def _resolve_cwd(self, cwd: str | Path) -> Path:
         # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
@@ -509,7 +487,7 @@ exec bash --noprofile --norc -i
         self, command: str, *, cwd: str = ".", network_profile: str | None = None,
         container_name: str | None = None,
     ) -> DockerStdioHandle:
-        """在固定 Docker 安全参数内启动长驻 MCP stdio server。"""
+        """在固定 Rootless Docker 参数内启动长驻 MCP stdio server。"""
         docker_argv = self.build_stdio_argv(
             command, cwd=cwd, network_profile=network_profile, container_name=container_name,
         )

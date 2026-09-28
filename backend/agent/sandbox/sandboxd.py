@@ -13,8 +13,6 @@ import struct
 import logging
 import uuid
 import json
-import subprocess
-import threading
 from pathlib import Path
 
 from app.core.config import get_settings
@@ -23,8 +21,6 @@ from .docker import DockerSandboxExecutor
 from .docker_runtime import (
     cleanup_orphan_pty_containers,
     docker_container_mount_source,
-    docker_container_storage_root,
-    docker_environment,
     docker_network_available,
     docker_sandbox_readiness,
     probe_sandbox_runtime,
@@ -34,28 +30,11 @@ from .docker_runtime import (
 from .protocol import ExecuteRequest, encode_response
 
 logger = logging.getLogger("agent.sandbox.sandboxd")
-_EMBEDDED_EGRESS_INIT_SCRIPT = Path("/usr/local/bin/gugu-sandbox-egress-init.sh")
 
 
 def _resolve_host_data_root_once() -> None:
-    """启动时预解析宿主机数据根；embedded 执行器会再次校验目标挂载。"""
-    app_settings = get_settings()
-    settings = app_settings.sandbox
-    if getattr(settings, "manager_mode", "disabled") == "embedded":
-        try:
-            storage_root = docker_container_storage_root(
-                app_settings.storage.local_path,
-                os.environ.get("GUGU_DATA_DIR", "/data"),
-            )
-        except ValueError:
-            storage_root = None
-        settings.host_data_root = str(storage_root) if storage_root is not None else None
-        if storage_root is None:
-            logger.warning("sandboxd 未能解析内置模式的 /data 宿主挂载，Shell 将拒绝创建容器")
-        else:
-            logger.info("sandboxd 已解析内置模式的宿主数据根")
-        return
-
+    """sandboxd 启动时解析一次宿主机数据根，避免每次 Shell 重复探测。"""
+    settings = get_settings().sandbox
     configured = str(getattr(settings, "host_data_root", "") or "").strip()
     if configured.startswith("/") and not configured.startswith("//"):
         return
@@ -85,7 +64,6 @@ class SandboxdServer:
         self._active: dict[str, str] = {}
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._active_lock = asyncio.Lock()
-        self._egress_init_lock = threading.Lock()
 
     def _validate_root(self, root: str) -> Path:
         path = Path(root).expanduser().resolve(strict=True)
@@ -110,44 +88,8 @@ class SandboxdServer:
         network_name = getattr(settings, "egress_network_name", "")
         if not valid_egress_network_name(network_name):
             raise ValueError("egress 网络名无效")
-        if getattr(settings, "manager_mode", "disabled") == "embedded":
-            self._initialize_embedded_egress(settings)
         if not docker_network_available(network_name):
             raise ValueError("受控 egress Docker 网络不存在")
-
-    def _initialize_embedded_egress(self, settings) -> None:
-        """按需初始化由内置管理器独占管理的受控网络与代理容器。"""
-        with self._egress_init_lock:
-            script = _EMBEDDED_EGRESS_INIT_SCRIPT
-            if not script.is_file():
-                # 开发环境直接运行仓库代码时使用同一脚本；发布镜像固定使用
-                # /usr/local/bin 副本，避免依赖任意工作目录。
-                script = Path(__file__).resolve().parents[2] / "scripts/runtime/sandbox_egress_init.sh"
-            if not script.is_file():
-                raise ValueError("内置 egress 初始化程序不可用")
-
-            env = docker_environment()
-            # 内置部署的管理器目标是挂载进来的 Rootful daemon，不能误选镜像里
-            # 当前 uid 的 Rootless socket。
-            env.setdefault("DOCKER_HOST", "unix:///var/run/docker.sock")
-            env.update({
-                "GUGU_EGRESS_USE_CONFIG_FILE": "0",
-                "GUGU_EGRESS_PROXY_URL": settings.egress_proxy_url,
-                "GUGU_EGRESS_REQUIRE_LABELS": "1",
-                "SANDBOX__NETWORK_PROFILE": "egress",
-                "SANDBOX__EGRESS_NETWORK_NAME": settings.egress_network_name,
-                "SQUID_CONF_PATH": os.environ.get("SQUID_CONF_PATH", "/opt/gugu/egress.conf"),
-            })
-            try:
-                result = subprocess.run(
-                    [str(script)], stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    env=env, timeout=120, check=False,
-                )
-            except (OSError, subprocess.SubprocessError) as exc:
-                raise ValueError("内置 egress 代理初始化失败") from exc
-            if result.returncode != 0:
-                raise ValueError("内置 egress 代理初始化失败")
 
     @staticmethod
     def _validate_peer(writer: asyncio.StreamWriter) -> None:
@@ -241,7 +183,7 @@ class SandboxdServer:
                     project_read_only=request.project_read_only,
                 )
                 if request.network_profile == "egress":
-                    await asyncio.to_thread(self._validate_egress_network)
+                    self._validate_egress_network()
                 output_lock = asyncio.Lock()
 
                 async def emit_output(stream: str, data: str) -> None:
@@ -280,7 +222,7 @@ class SandboxdServer:
         }
 
     async def _handle_stdio(self, value: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        """在受控 Docker 沙盒内桥接一个长驻 MCP stdio server。"""
+        """在 Rootless Docker 内桥接一个长驻 MCP stdio server。"""
         root = self._validate_root(str(value.get("root") or ""))
         command = str(value.get("command") or "").strip()
         cwd = str(value.get("cwd") or ".")
@@ -371,16 +313,13 @@ class SandboxdServer:
         if not 20 <= cols <= 500 or not 5 <= rows <= 200:
             raise ValueError("sandboxd PTY 尺寸无效")
         settings = get_settings().sandbox
-        network_profile = str(value.get("network_profile") or "none")
-        if network_profile == "egress":
-            await asyncio.to_thread(self._validate_egress_network)
         executor = DockerSandboxExecutor(
             root, settings, personal_root=personal_root, project_root=project_root,
             personal_read_only=personal_read_only, project_read_only=project_read_only,
         )
         container_name = f"gugu-pty-{uuid.uuid4().hex}"
         handle = await executor.open_pty(
-            cwd=".", network_profile=network_profile,
+            cwd=".", network_profile=str(value.get("network_profile") or "none"),
             container_name=container_name,
         )
         await handle.resize(cols, rows)
@@ -459,7 +398,7 @@ class SandboxdServer:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Gugu Docker sandboxd")
+    parser = argparse.ArgumentParser(description="Gugu Rootless Docker sandboxd")
     parser.add_argument("--socket", required=True)
     parser.add_argument("--allowed-root", required=True)
     args = parser.parse_args()

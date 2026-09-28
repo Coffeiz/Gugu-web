@@ -53,7 +53,7 @@ async def test_terminal_page_hidden_when_sandbox_is_disabled(db, user_a, monkeyp
         "get_settings",
         lambda: SimpleNamespace(
             agent=SimpleNamespace(shell_enabled=True, shell_system_enabled=True),
-            sandbox=SimpleNamespace(enabled=False, manager_mode="external"),
+            sandbox=SimpleNamespace(enabled=False),
         ),
     )
     monkeypatch.setattr(terminal_access, "effective_shell_enabled", _async_true)
