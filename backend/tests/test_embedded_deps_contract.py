@@ -25,9 +25,10 @@ def test_integrated_compose_uses_embedded_deps():
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
     assert services["app"]["environment"]["GUGU_EMBEDDED_DEPS"] == "1"
+    assert services["app"]["environment"]["GUGU_SANDBOX_MANAGER_MODE"] == "embedded"
     assert "updater" in services, "一体化 Compose 必须包含受限 updater"
     app_mounts = services["app"]["volumes"]
-    assert not any("docker.sock" in str(mount) for mount in app_mounts), "Web app 不得挂载 Docker Socket"
+    assert any("docker.sock" in str(mount) for mount in app_mounts), "内置 manager 必须访问宿主 Docker Socket"
     assert any("docker.sock" in str(mount) for mount in services["updater"]["volumes"])
     assert any("legacy_pgdata:/legacy-pgdata:ro" == mount for mount in app_mounts)
     assert any("legacy_redisdata:/legacy-redisdata:ro" == mount for mount in app_mounts)

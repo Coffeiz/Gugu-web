@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -26,13 +28,33 @@ def test_manager_mode_is_explicit_and_disabled_by_default():
     assert "未配置管理器或 Socket 不可用时 fail-closed" in runtime
 
 
-def test_default_compose_starts_sandbox_services_without_profile_and_resolves_digest():
-    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+def test_compose_deployment_modes_match_embedded_and_external_manager_contracts():
+    integrated = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    offline = yaml.safe_load((REPO_ROOT / "docker-compose.offline.yml").read_text(encoding="utf-8"))
+    split = yaml.safe_load((REPO_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8"))
 
-    assert "profiles: [sandbox]" not in compose
-    assert "SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-coffeiz/gugu-sandbox:latest}" in compose
-    assert "SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-resolved}" in compose
-    assert compose.count("/run/gugu/sandbox-image-digest") >= 2
+    integrated_services = integrated["services"]
+    app = integrated_services["app"]
+    assert app["environment"]["GUGU_SANDBOX_MANAGER_MODE"] == "embedded"
+    assert app["environment"]["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+    assert any("docker.sock" in str(mount) for mount in app["volumes"])
+    assert "sandboxd" not in integrated_services
+    assert "egress-proxy" not in integrated_services
+    assert "sandbox_socket" not in integrated.get("volumes", {})
+
+    assert set(offline["services"]) == {"app", "searxng"}
+    assert "sandboxd" not in offline["services"]
+    assert "egress-proxy" not in offline["services"]
+
+    split_services = split["services"]
+    for name in ("backend", "worker"):
+        environment = split_services[name]["environment"]
+        assert environment["GUGU_SANDBOX_MANAGER_MODE"] == "external"
+        assert environment["SANDBOX__ROOTLESS_REQUIRED"] == "true"
+        assert not any("docker.sock" in str(mount) for mount in split_services[name]["volumes"])
+    assert "sandboxd" not in split_services
+    assert "egress-proxy" not in split_services
+    assert split["volumes"]["sandbox_socket"]["external"] is True
 
 
 def test_compose_bootstrap_resolves_latest_to_an_immutable_digest():

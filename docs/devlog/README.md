@@ -6,6 +6,7 @@
 
 ### 2026-09-28
 
+- [PRD-DEPLOY-2 Phase 1.8.1：部署模式矩阵与 external Rootless 强制](./2026-09-28-DEPLOY2-Phase1.8.1-部署模式矩阵.md)
 - [PRD-DEPLOY-2 Phase 1.7：离线包移除重复沙箱镜像](./2026-09-28-DEPLOY2-Phase1.7-离线包移除重复沙箱镜像.md)
 - [PRD-DEPLOY-2 Phase 1.6：Compose 沙箱拓扑收敛](./2026-09-28-DEPLOY2-Phase1.6-Compose沙箱拓扑收敛.md)
 - [PRD-DEPLOY-2 Phase 1.5.3：候选镜像离线 Shell 验证](./2026-09-28-DEPLOY2-Phase1.5.3候选镜像离线Shell验证.md)
