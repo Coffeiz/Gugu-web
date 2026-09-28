@@ -145,10 +145,12 @@ async def test_embedded_egress_initialization_targets_rootful_daemon_and_fails_c
     allowed_root.mkdir()
     manager = sandboxd.SandboxdServer(tmp_path / "sandboxd.sock", allowed_root)
     proxy_image_id = "sha256:" + "c" * 64
+    proxy_image_name = "ubuntu/squid:embedded"
     manager._embedded_bundle_runtime = SimpleNamespace(
         load_verified_manifest=lambda: SimpleNamespace(
             image_for_role=lambda role: SimpleNamespace(
                 image_id=proxy_image_id if role == "egress-proxy" else None,
+                local_ref=proxy_image_name if role == "egress-proxy" else None,
             ),
         ),
     )
@@ -158,9 +160,10 @@ async def test_embedded_egress_initialization_targets_rootful_daemon_and_fails_c
     args, kwargs = calls[0]
     assert args[0] == [str(script)]
     assert kwargs["env"]["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+    assert kwargs["env"]["GUGU_EGRESS_CONFIG_FROM_CLIENT"] == "1"
     assert kwargs["env"]["GUGU_EGRESS_REQUIRE_LABELS"] == "1"
     assert kwargs["env"]["GUGU_EGRESS_REQUIRE_LOCAL_IMAGE"] == "1"
-    assert kwargs["env"]["GUGU_EGRESS_PROXY_IMAGE"] == proxy_image_id
+    assert kwargs["env"]["GUGU_EGRESS_PROXY_IMAGE"] == proxy_image_name
     assert kwargs["env"]["GUGU_EGRESS_USE_CONFIG_FILE"] == "0"
     assert kwargs["env"]["GUGU_EGRESS_PROXY_URL"] == "http://egress-proxy:3128"
 
@@ -788,7 +791,7 @@ def test_resolved_image_ref_uses_digest_written_by_compose_bootstrap(monkeypatch
     assert _image_ref(settings) == f"coffeiz/gugu-sandbox:latest@{digest}"
 
 
-def test_embedded_image_ref_uses_manifest_image_id(monkeypatch, tmp_path):
+def test_embedded_image_ref_uses_manifest_local_tag(monkeypatch, tmp_path):
     image_id = "sha256:" + "c" * 64
     (tmp_path / "manifest.json").write_text(json.dumps({
         "schema_version": 2,
@@ -805,7 +808,7 @@ def test_embedded_image_ref_uses_manifest_image_id(monkeypatch, tmp_path):
         image_digest="sha256:" + "f" * 64,
     )
 
-    assert _image_ref(settings) == image_id
+    assert _image_ref(settings) == "coffeiz/gugu-sandbox:embedded"
 
 
 def test_embedded_runtime_probe_surfaces_bundle_failure_and_never_checks_configured_image(monkeypatch):
@@ -1971,6 +1974,9 @@ def test_non_compose_egress_bootstrap_uses_isolated_network_and_stable_proxy():
     assert 'GUGU_EGRESS_REQUIRE_LOCAL_IMAGE:-0' in script
     assert '内置 egress 代理镜像未加载，拒绝在线拉取' in script
     assert 'GUGU_EGRESS_USE_CONFIG_FILE:-1' in script
+    assert 'GUGU_EGRESS_CONFIG_FROM_CLIENT:-0' in script
+    assert 'docker_cli cp "$SQUID_CONF" "$PROXY_CONTAINER_NAME:/etc/squid/squid.conf"' in script
+    assert 'gugu.egress.config-mode' in script
     assert "同名 Docker 网络不属于 Gugu egress 管理器，拒绝接管" in script
     assert "同名容器不属于 Gugu egress 管理器，拒绝接管" in script
     assert "container_is_managed()" in script

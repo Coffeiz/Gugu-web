@@ -24,6 +24,11 @@ class BundleImage:
     image_id: str | None = None
     role: str | None = None
 
+    @property
+    def local_ref(self) -> str:
+        """返回 docker load 保留的本地标签；image_id 不保证能作为 daemon 引用。"""
+        return self.name
+
 
 @dataclass(frozen=True)
 class BundleManifest:

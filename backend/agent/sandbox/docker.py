@@ -163,10 +163,10 @@ def _image_ref(settings: SandboxSettings) -> str:
         manifest = load_bundle_manifest(bundle_directory() / "manifest.json")
         if manifest.schema_version != 2:
             raise ValueError("内置沙盒 bundle manifest 版本不受支持")
-        image_id = manifest.image_for_role("sandbox").image_id
-        if image_id is None:
+        image = manifest.image_for_role("sandbox")
+        if image.image_id is None:
             raise ValueError("内置沙盒 bundle 未声明执行镜像 ID")
-        return image_id
+        return image.local_ref
 
     digest = settings.image_digest.strip()
     if not digest:

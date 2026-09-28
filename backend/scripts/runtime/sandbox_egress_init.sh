@@ -19,6 +19,9 @@ SQUID_CONF="${SQUID_CONF_PATH:-$(CDPATH= cd -- "$(dirname "$0")/../../squid" && 
 USE_CONFIG_FILE="${GUGU_EGRESS_USE_CONFIG_FILE:-1}"
 REQUIRE_LABELS="${GUGU_EGRESS_REQUIRE_LABELS:-0}"
 REQUIRE_LOCAL_IMAGE="${GUGU_EGRESS_REQUIRE_LOCAL_IMAGE:-0}"
+CONFIG_FROM_CLIENT="${GUGU_EGRESS_CONFIG_FROM_CLIENT:-0}"
+CONFIG_MODE=host-bind
+[ "$CONFIG_FROM_CLIENT" = "1" ] && CONFIG_MODE=client-copy
 
 log() { printf '[sandbox-egress] %s\n' "$*"; }
 error() { printf '[sandbox-egress] ERROR: %s\n' "$*" >&2; }
@@ -124,15 +127,40 @@ container_exists() {
 container_is_managed() {
     managed_label="$(docker_cli container inspect --format '{{ index .Config.Labels "gugu.managed" }}' "$PROXY_CONTAINER_NAME" 2>/dev/null || true)"
     network_label="$(docker_cli container inspect --format '{{ index .Config.Labels "gugu.egress.network" }}' "$PROXY_CONTAINER_NAME" 2>/dev/null || true)"
+    config_mode_label="$(docker_cli container inspect --format '{{ index .Config.Labels "gugu.egress.config-mode" }}' "$PROXY_CONTAINER_NAME" 2>/dev/null || true)"
     configured_image="$(docker_cli container inspect --format '{{ .Config.Image }}' "$PROXY_CONTAINER_NAME" 2>/dev/null || true)"
     privileged="$(docker_cli container inspect --format '{{ .HostConfig.Privileged }}' "$PROXY_CONTAINER_NAME" 2>/dev/null || true)"
     mounts="$(docker_cli container inspect --format '{{range .Mounts}}{{.Source}}={{.Destination}} {{end}}' "$PROXY_CONTAINER_NAME" 2>/dev/null || true)"
     [ "$managed_label" = "egress-proxy" ] \
         && [ "$network_label" = "$EGRESS_NETWORK" ] \
+        && [ "$config_mode_label" = "$CONFIG_MODE" ] \
         && [ "$configured_image" = "$PROXY_IMAGE" ] \
         && [ "$privileged" = "false" ] || return 1
     case "$mounts" in *docker.sock*) return 1 ;; esac
+    if [ "$CONFIG_FROM_CLIENT" = "1" ]; then
+        case "$mounts" in *"/etc/squid/squid.conf"*) return 1 ;; esac
+    fi
     return 0
+}
+
+sync_client_config() {
+    [ "$CONFIG_FROM_CLIENT" = "1" ] || return 0
+    desired_hash="$(sha256sum "$SQUID_CONF" | awk '{print $1}')"
+    running="$(docker_cli container inspect -f '{{.State.Running}}' "$PROXY_CONTAINER_NAME" 2>/dev/null || true)"
+    current_hash=""
+    if [ "$running" = "true" ]; then
+        current_hash="$(docker_cli exec "$PROXY_CONTAINER_NAME" sha256sum /etc/squid/squid.conf 2>/dev/null | awk '{print $1}' || true)"
+    fi
+    if [ "$current_hash" != "$desired_hash" ]; then
+        if ! docker_cli cp "$SQUID_CONF" "$PROXY_CONTAINER_NAME:/etc/squid/squid.conf" >/dev/null; then
+            error "无法将内置 egress 配置复制到代理容器"
+            return 1
+        fi
+        if [ "$running" = "true" ] && ! docker_cli exec "$PROXY_CONTAINER_NAME" squid -k reconfigure >/dev/null 2>&1; then
+            error "无法重新加载内置 egress 配置"
+            return 1
+        fi
+    fi
 }
 
 network_has_container() {
@@ -158,10 +186,14 @@ if ! container_exists; then
     set -- create \
         --name "$PROXY_CONTAINER_NAME" \
         --label gugu.managed=egress-proxy \
+        --label "gugu.egress.config-mode=$CONFIG_MODE" \
         --label gugu.egress.network="$EGRESS_NETWORK" \
         --network "$EGRESS_NETWORK" \
-        --restart unless-stopped \
-        --volume "$SQUID_CONF:/etc/squid/squid.conf:ro"
+        --restart unless-stopped
+
+    if [ "$CONFIG_FROM_CLIENT" != "1" ]; then
+        set -- "$@" --volume "$SQUID_CONF:/etc/squid/squid.conf:ro"
+    fi
 
     # 兼容旧的非 Compose 配置：如果 Admin 里暂时保存的是独立网络 IP，
     # 首次创建时固定该 IP；新部署默认走 egress-proxy DNS，不再依赖动态 IP。
@@ -185,6 +217,8 @@ elif [ "$REQUIRE_LABELS" = "1" ] && ! container_is_managed; then
     error "同名容器不属于 Gugu egress 管理器，拒绝接管"
     exit 1
 fi
+
+sync_client_config
 
 # 代理必须能出网；沙盒只能看到 internal 网络，不能连接 bridge。
 connect_network "$EGRESS_NETWORK"
