@@ -7,16 +7,21 @@ import argparse
 import json
 import shutil
 import subprocess
+import tempfile
+import uuid
 from typing import Callable
 
 
 _BUNDLE_SMOKE = (
+    "import json; "
     "from agent.sandbox.bundle_runtime import EmbeddedBundleRuntime; "
     "m = EmbeddedBundleRuntime().load_verified_manifest(); "
     "assert m.schema_version == 2; "
     "assert {i.role for i in m.images} == {'sandbox', 'egress-proxy'}; "
-    "print('内置 runtime bundle 校验通过')"
+    "print(json.dumps([{'name': i.name, 'digest': i.digest, 'image_id': i.image_id, 'role': i.role} for i in m.images]))"
 )
+
+_BUNDLE_DIRECTORY = "/opt/gugu/sandbox-bundle"
 
 
 class ImageVerificationError(ValueError):
@@ -39,6 +44,97 @@ def _inspect(image: str, docker: str, run: Callable) -> dict:
     if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
         raise ImageVerificationError("Docker image inspect 响应无效")
     return payload[0]
+
+
+def _docker_call(docker: str, args: list[str], run: Callable):
+    return run(
+        [docker, *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=900,
+    )
+
+
+def _candidate_images(candidate_image: str, docker: str, run: Callable) -> list[dict]:
+    smoke = _docker_call(
+        docker,
+        ["run", "--rm", "--network", "none", "--read-only", "--entrypoint", "python3",
+         candidate_image, "-c", _BUNDLE_SMOKE],
+        run,
+    )
+    if smoke.returncode != 0:
+        raise ImageVerificationError("候选 app 内的 bundle 摘要校验失败")
+    try:
+        images = json.loads(smoke.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ImageVerificationError("候选 app bundle smoke 输出无效") from exc
+    if (
+        not isinstance(images, list)
+        or any(not isinstance(image, dict) or not isinstance(image.get("role"), str) for image in images)
+        or {image["role"] for image in images} != {"sandbox", "egress-proxy"}
+    ):
+        raise ImageVerificationError("候选 app bundle smoke 未返回完整镜像清单")
+    return images
+
+
+def _load_and_verify_images(archive_path: str, images: list[dict], docker: str, run: Callable) -> None:
+    loaded = _docker_call(docker, ["load", "--input", archive_path], run)
+    if loaded.returncode != 0:
+        raise ImageVerificationError("无法从候选 app bundle 导入运行镜像")
+
+    for image in images:
+        if not isinstance(image.get("name"), str) or not isinstance(image.get("image_id"), str):
+            raise ImageVerificationError("候选 app bundle 镜像信息无效")
+        inspected = _docker_call(docker, ["image", "inspect", image["name"]], run)
+        if inspected.returncode != 0:
+            raise ImageVerificationError("bundle 导入后运行镜像不可用")
+        try:
+            payload = json.loads(inspected.stdout)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ImageVerificationError("bundle 导入后的镜像信息无效") from exc
+        if (
+            not isinstance(payload, list)
+            or len(payload) != 1
+            or not isinstance(payload[0], dict)
+            or payload[0].get("Id") != image["image_id"]
+        ):
+            raise ImageVerificationError("bundle 导入后的镜像 ID 与 manifest 不一致")
+
+
+def _run_offline_shell(image: str, docker: str, run: Callable) -> None:
+    result = _docker_call(
+        docker,
+        ["run", "--rm", "--network", "none", "--read-only", "--cap-drop=ALL",
+         "--security-opt=no-new-privileges", "--pids-limit=64", "--memory=256m", "--cpus=1",
+         "--entrypoint", "/bin/sh", image, "-lc", "printf shell-smoke-ok"],
+        run,
+    )
+    if result.returncode != 0 or result.stdout.strip() != "shell-smoke-ok":
+        raise ImageVerificationError("内置沙箱离线 Shell smoke 失败")
+
+
+def _run_bundle_smoke(candidate_image: str, docker: str, run: Callable) -> None:
+    container_name = f"gugu-candidate-verify-{uuid.uuid4().hex}"
+    created = _docker_call(docker, ["create", "--name", container_name, candidate_image], run)
+    if created.returncode != 0:
+        raise ImageVerificationError("无法创建候选 app 临时容器")
+    try:
+        with tempfile.TemporaryDirectory(prefix="gugu-candidate-bundle-") as temporary_directory:
+            archive_path = f"{temporary_directory}/runtime-images.tar"
+            copied = _docker_call(
+                docker,
+                ["cp", f"{container_name}:{_BUNDLE_DIRECTORY}/runtime-images.tar", archive_path],
+                run,
+            )
+            if copied.returncode != 0:
+                raise ImageVerificationError("无法从候选 app 提取内置 runtime bundle")
+            images = _candidate_images(candidate_image, docker, run)
+            _load_and_verify_images(archive_path, images, docker, run)
+            sandbox_image = next(image["name"] for image in images if image["role"] == "sandbox")
+            _run_offline_shell(sandbox_image, docker, run)
+    finally:
+        _docker_call(docker, ["rm", container_name], run)
 
 
 def verify_embedded_app_image(base_image: str, candidate_image: str, *, run: Callable = subprocess.run) -> None:
@@ -67,19 +163,9 @@ def verify_embedded_app_image(base_image: str, candidate_image: str, *, run: Cal
         raise ImageVerificationError("候选 app 必须保留原镜像层并且只追加一个 bundle 层")
 
     try:
-        smoke = run(
-            [
-                docker, "run", "--rm", "--network", "none", "--read-only",
-                "--entrypoint", "python3", candidate_image, "-c", _BUNDLE_SMOKE,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        _run_bundle_smoke(candidate_image, docker, run)
     except (OSError, subprocess.SubprocessError) as exc:
-        raise ImageVerificationError("候选 app 内的 bundle smoke 失败") from exc
-    if smoke.returncode != 0:
-        raise ImageVerificationError("候选 app 内的 bundle smoke 失败")
+        raise ImageVerificationError("候选 app 内的离线沙箱 Shell smoke 失败") from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         verify_embedded_app_image(args.base, args.candidate)
     except ImageVerificationError as exc:
         parser.exit(1, f"错误：{exc}\n")
-    print("候选 app 镜像配置、平台与内置 bundle 校验通过")
+    print("候选 app 镜像配置、平台、bundle 与离线沙箱 Shell smoke 校验通过")
     return 0
 
 

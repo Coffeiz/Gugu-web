@@ -233,7 +233,8 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 #### Phase 1.5.3：候选 app 镜像组装与验证
 
-- [ ] `DEPLOY2-007c` 将 Phase 1.5.2 的 artifact 追加到已构建 app 镜像并验证候选；验收：不重跑 app 依赖构建；最终镜像 config、entrypoint、labels、平台不变且只新增 bundle 层；bundle 摘要/image ID 校验及无网络 Shell smoke 通过；记录体积增量；正式 tag/发布动作留到 Phase 4。
+- [x] `DEPLOY2-007c` 实现候选 app 组装与自动验证；验收逻辑覆盖不重跑 app 依赖构建、最终镜像 config/entrypoint/labels/平台不变且只新增 bundle 层、bundle 摘要/image ID 校验、无网络 Shell smoke 和体积增量记录；正式 tag/发布动作留到 Phase 1.5.4。
+- [ ] `DEPLOY2-007c-ci` 运行一次授权的候选 workflow，确认真实 artifact、候选 app 与宿主侧离线 Shell smoke 全链路通过，并记录 registry 压缩体积增量。代码和单测已完成；devserver 当前无法访问 Docker Hub 元数据，本机无 Docker daemon，尚未触发 GitHub CI。
 
 #### Phase 1.5.4：正式发布接入已验证候选
 
