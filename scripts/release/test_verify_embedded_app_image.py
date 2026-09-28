@@ -56,12 +56,7 @@ class DockerRunner:
         elif name == "candidate:ci":
             payload = self.candidate
         else:
-            role = "sandbox" if "sandbox" in name else "proxy"
-            digest = "sha256:wrong-digest" if self.fail_at == "image" else "sha256:digest"
-            payload = {
-                "Id": f"sha256:runtime-{role}",
-                "RepoDigests": [f"{name.rsplit(':', 1)[0]}@{digest}"],
-            }
+            payload = {"Id": "sha256:sandbox" if "sandbox" in name else "sha256:proxy"}
         return SimpleNamespace(returncode=0, stdout=json.dumps([payload]), stderr="")
 
     @staticmethod
@@ -93,7 +88,7 @@ class DockerRunner:
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
 
-def test_verifier_accepts_loaded_images_by_repo_digest_when_daemon_id_differs(monkeypatch):
+def test_verifier_accepts_same_app_config_platform_and_single_bundle_layer(monkeypatch):
     monkeypatch.setattr(verifier.shutil, "which", lambda _name: "/usr/bin/docker")
     runner = DockerRunner()
 
@@ -125,15 +120,3 @@ def test_verifier_rejects_invalid_candidate_or_smoke(candidate, fail_at, message
 
     with pytest.raises(verifier.ImageVerificationError, match=message):
         verifier.verify_embedded_app_image("base:ci", "candidate:ci", run=runner)
-
-
-def test_verifier_rejects_loaded_image_when_id_and_repo_digest_mismatch():
-    runner = DockerRunner(fail_at="image")
-
-    with pytest.raises(verifier.ImageVerificationError, match="镜像 digest 与 manifest 不一致"):
-        verifier._load_and_verify_images(
-            "bundle.tar",
-            [{"name": "sandbox:test", "digest": "sha256:digest", "image_id": "sha256:config"}],
-            "/usr/bin/docker",
-            runner,
-        )

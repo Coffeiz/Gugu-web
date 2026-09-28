@@ -84,11 +84,7 @@ def _load_and_verify_images(archive_path: str, images: list[dict], docker: str, 
         raise ImageVerificationError("无法从候选 app bundle 导入运行镜像")
 
     for image in images:
-        if (
-            not isinstance(image.get("name"), str)
-            or not isinstance(image.get("digest"), str)
-            or not isinstance(image.get("image_id"), str)
-        ):
+        if not isinstance(image.get("name"), str) or not isinstance(image.get("image_id"), str):
             raise ImageVerificationError("候选 app bundle 镜像信息无效")
         inspected = _docker_call(docker, ["image", "inspect", image["name"]], run)
         if inspected.returncode != 0:
@@ -97,32 +93,13 @@ def _load_and_verify_images(archive_path: str, images: list[dict], docker: str, 
             payload = json.loads(inspected.stdout)
         except (TypeError, json.JSONDecodeError) as exc:
             raise ImageVerificationError("bundle 导入后的镜像信息无效") from exc
-        if isinstance(payload, dict):
-            payload = [payload]
         if (
             not isinstance(payload, list)
             or len(payload) != 1
             or not isinstance(payload[0], dict)
+            or payload[0].get("Id") != image["image_id"]
         ):
-            raise ImageVerificationError("bundle 导入后的镜像信息无效")
-
-        local_image = payload[0]
-        repo_digests = local_image.get("RepoDigests") or []
-        matches_digest = (
-            isinstance(repo_digests, list)
-            and any(
-                isinstance(repo_digest, str)
-                and repo_digest.endswith("@" + image["digest"])
-                for repo_digest in repo_digests
-            )
-        )
-        local_image_id = local_image.get("Id")
-        matches_image_id = (
-            isinstance(local_image_id, str)
-            and local_image_id in {image["digest"], image["image_id"]}
-        )
-        if not (matches_digest or matches_image_id):
-            raise ImageVerificationError("bundle 导入后的镜像 digest 与 manifest 不一致")
+            raise ImageVerificationError("bundle 导入后的镜像 ID 与 manifest 不一致")
 
 
 def _run_offline_shell(image: str, docker: str, run: Callable) -> None:

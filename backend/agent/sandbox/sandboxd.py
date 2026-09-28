@@ -170,7 +170,6 @@ class SandboxdServer:
             env.setdefault("DOCKER_HOST", "unix:///var/run/docker.sock")
             env.update({
                 "GUGU_EGRESS_USE_CONFIG_FILE": "0",
-                "GUGU_EGRESS_CONFIG_FROM_CLIENT": "1",
                 "GUGU_EGRESS_PROXY_URL": settings.egress_proxy_url,
                 "GUGU_EGRESS_REQUIRE_LABELS": "1",
                 "GUGU_EGRESS_REQUIRE_LOCAL_IMAGE": "1",
@@ -184,7 +183,7 @@ class SandboxdServer:
             proxy_image = manifest.image_for_role("egress-proxy")
             if proxy_image.image_id is None:
                 raise ValueError("内置 egress 代理镜像 ID 未配置")
-            env["GUGU_EGRESS_PROXY_IMAGE"] = proxy_image.local_ref
+            env["GUGU_EGRESS_PROXY_IMAGE"] = proxy_image.image_id
             try:
                 result = subprocess.run(
                     [str(script)], stdin=subprocess.DEVNULL,

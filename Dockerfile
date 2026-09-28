@@ -12,7 +12,7 @@ FROM node:22-trixie AS frontend-build
 
 WORKDIR /workspace
 
-RUN npm install --global pnpm@10.15.0
+RUN npm install --global pnpm@latest
 
 # 依赖单独一层：workspace 元数据和 manifest 未变时改代码不重装；
 # pnpm store 走 cache mount，lockfile 变更时只下载增量。
@@ -137,7 +137,6 @@ COPY backend/app ./app
 COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY backend/onboarding ./onboarding
-COPY backend/scripts/migrations ./scripts/migrations
 COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py
