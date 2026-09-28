@@ -78,17 +78,6 @@ def test_validate_local_image_accepts_bundle_image_id_after_docker_load():
     )
 
 
-def test_validate_local_image_accepts_manifest_digest_as_docker_image_id():
-    digest = _digest()
-
-    validate_local_image(
-        "coffeiz/gugu-sandbox:latest",
-        digest,
-        json.dumps({"Id": digest, "RepoDigests": []}),
-        expected_image_id=_digest("c"),
-    )
-
-
 def test_load_embedded_bundle_manifest_requires_fixed_roles_ids_and_archive_digest(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(

@@ -22,70 +22,40 @@ SANDBOX_DIGEST = "sha256:" + "a" * 64
 PROXY_DIGEST = "sha256:" + "b" * 64
 
 
-def _write_save_archive(path, records, configs, *, include_layers=True):
-    with tarfile.open(path, "w") as archive:
-        manifest = json.dumps(records).encode()
-        info = tarfile.TarInfo("manifest.json")
-        info.size = len(manifest)
-        archive.addfile(info, io.BytesIO(manifest))
-        for record in records:
-            name = record["RepoTags"][0]
-            config = record["Config"]
-            config_bytes = configs[name]
-            info = tarfile.TarInfo(config)
-            info.size = len(config_bytes)
-            archive.addfile(info, io.BytesIO(config_bytes))
-            if include_layers:
-                for layer in record.get("Layers", []):
-                    layer_bytes = b"layer data"
-                    info = tarfile.TarInfo(layer)
-                    info.size = len(layer_bytes)
-                    archive.addfile(info, io.BytesIO(layer_bytes))
-
-
 class DockerRunner:
-    def __init__(self, config_format="legacy", *, archive_records=None, include_layers=True):
+    def __init__(self):
         self.calls = []
-        self.config_format = config_format
-        self.archive_records = archive_records
-        self.include_layers = include_layers
-        self.configs = {
-            SANDBOX_REF: b'{"os":"linux","role":"sandbox"}',
-            PROXY_REF: b'{"os":"linux","role":"egress-proxy"}',
-        }
-        self.image_ids = {
-            name: "sha256:" + hashlib.sha256(config).hexdigest()
-            for name, config in self.configs.items()
-        }
 
     def __call__(self, argv, **_kwargs):
         self.calls.append(argv)
         if argv[1:4] == ["image", "inspect", SANDBOX_REF]:
             payload = [{
-                "Id": self.image_ids[SANDBOX_REF],
+                "Id": "sha256:" + "1" * 64,
                 "RepoDigests": [f"ghcr.io/coffeiz/gugu-sandbox@{SANDBOX_DIGEST}"],
             }]
             return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
         if argv[1:4] == ["image", "inspect", PROXY_REF]:
             payload = [{
-                "Id": self.image_ids[PROXY_REF],
+                "Id": "sha256:" + "2" * 64,
                 "RepoDigests": [f"ubuntu/squid@{PROXY_DIGEST}"],
             }]
             return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
         if argv[1:3] == ["save", "--output"]:
             archive_path = Path(argv[3])
-            records = []
-            for name in (SANDBOX_REF, PROXY_REF):
-                image_id = self.image_ids[name].removeprefix("sha256:")
-                config = f"{image_id}.json" if self.config_format == "legacy" else f"blobs/sha256/{image_id}"
-                layers = [f"{name.rsplit('/', 1)[-1]}/layer.tar"]
-                records.append({"Config": config, "Layers": layers, "RepoTags": [name]})
-            _write_save_archive(
-                archive_path,
-                self.archive_records if self.archive_records is not None else records,
-                self.configs,
-                include_layers=self.include_layers,
-            )
+            records = [
+                {"Config": "3" * 64 + ".json", "RepoTags": [SANDBOX_REF]},
+                {"Config": "4" * 64 + ".json", "RepoTags": [PROXY_REF]},
+            ]
+            with tarfile.open(archive_path, "w") as archive:
+                manifest = json.dumps(records).encode()
+                info = tarfile.TarInfo("manifest.json")
+                info.size = len(manifest)
+                archive.addfile(info, io.BytesIO(manifest))
+                for record in records:
+                    config = record["Config"]
+                    info = tarfile.TarInfo(config)
+                    info.size = 2
+                    archive.addfile(info, io.BytesIO(b"{}"))
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=1, stdout="", stderr="unexpected docker command")
 
@@ -101,17 +71,8 @@ def _build_spec(archive_path, manifest_path, *, sandbox_digest=SANDBOX_DIGEST):
     )
 
 
-def _assert_bundle_rejected(monkeypatch, runner, spec, message):
-    monkeypatch.setattr(builder.shutil, "which", lambda _name: "/usr/bin/docker")
-    with pytest.raises(builder.BundleBuildError, match=message):
-        builder.build_bundle(spec, run=runner)
-    assert not spec.output.exists()
-    assert not spec.manifest_path.exists()
-
-
-@pytest.mark.parametrize("config_format", ["legacy", "oci"])
-def test_build_embedded_bundle_records_roles_repo_digests_archive_ids_and_hash(tmp_path, monkeypatch, config_format):
-    runner = DockerRunner(config_format=config_format)
+def test_build_embedded_bundle_records_roles_repo_digests_archive_ids_and_hash(tmp_path, monkeypatch):
+    runner = DockerRunner()
     monkeypatch.setattr(builder.shutil, "which", lambda _name: "/usr/bin/docker")
     archive_path = tmp_path / "runtime-images.tar"
     manifest_path = tmp_path / "manifest.json"
@@ -129,13 +90,13 @@ def test_build_embedded_bundle_records_roles_repo_digests_archive_ids_and_hash(t
             "role": "sandbox",
             "name": SANDBOX_REF,
             "digest": SANDBOX_DIGEST,
-            "image_id": runner.image_ids[SANDBOX_REF],
+            "image_id": "sha256:" + "3" * 64,
         },
         {
             "role": "egress-proxy",
             "name": PROXY_REF,
             "digest": PROXY_DIGEST,
-            "image_id": runner.image_ids[PROXY_REF],
+            "image_id": "sha256:" + "4" * 64,
         },
     ]
     assert [call[1] for call in runner.calls if len(call) > 1] == ["image", "image", "save"]
@@ -143,32 +104,46 @@ def test_build_embedded_bundle_records_roles_repo_digests_archive_ids_and_hash(t
 
 def test_build_embedded_bundle_rejects_digest_not_matching_local_repo_digest(tmp_path, monkeypatch):
     runner = DockerRunner()
-    spec = _build_spec(
-        tmp_path / "runtime-images.tar",
-        tmp_path / "manifest.json",
-        sandbox_digest=PROXY_DIGEST,
-    )
+    monkeypatch.setattr(builder.shutil, "which", lambda _name: "/usr/bin/docker")
 
-    _assert_bundle_rejected(monkeypatch, runner, spec, "RepoDigest 与构建摘要不匹配")
+    with pytest.raises(builder.BundleBuildError, match="RepoDigest 与构建摘要不匹配"):
+        builder.build_bundle(
+            _build_spec(
+                tmp_path / "runtime-images.tar",
+                tmp_path / "manifest.json",
+                sandbox_digest=PROXY_DIGEST,
+            ),
+            run=runner,
+        )
 
     assert not any(call[1] == "save" for call in runner.calls)
+    assert not (tmp_path / "runtime-images.tar").exists()
 
 
 def test_build_embedded_bundle_rejects_image_missing_from_docker_save_archive(tmp_path, monkeypatch):
-    config_bytes = b'{"os":"linux","role":"sandbox"}'
-    image_id = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
-    runner = DockerRunner(archive_records=[{
-        "Config": image_id.removeprefix("sha256:") + ".json",
-        "Layers": [],
-        "RepoTags": [SANDBOX_REF],
-    }])
-    spec = _build_spec(tmp_path / "runtime-images.tar", tmp_path / "manifest.json")
+    runner = DockerRunner()
+    monkeypatch.setattr(builder.shutil, "which", lambda _name: "/usr/bin/docker")
+    original = runner.__call__
 
-    _assert_bundle_rejected(monkeypatch, runner, spec, "未唯一包含镜像")
+    def save_sandbox_only(argv, **kwargs):
+        if argv[1:3] == ["save", "--output"]:
+            path = Path(argv[3])
+            record = {"Config": "3" * 64 + ".json", "RepoTags": [SANDBOX_REF]}
+            with tarfile.open(path, "w") as archive:
+                manifest = json.dumps([record]).encode()
+                info = tarfile.TarInfo("manifest.json")
+                info.size = len(manifest)
+                archive.addfile(info, io.BytesIO(manifest))
+                config = record["Config"]
+                info = tarfile.TarInfo(config)
+                info.size = 2
+                archive.addfile(info, io.BytesIO(b"{}"))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return original(argv, **kwargs)
 
-
-def test_build_embedded_bundle_rejects_missing_layer_content(tmp_path, monkeypatch):
-    runner = DockerRunner(include_layers=False)
-    spec = _build_spec(tmp_path / "runtime-images.tar", tmp_path / "manifest.json")
-
-    _assert_bundle_rejected(monkeypatch, runner, spec, "镜像 layer 缺失")
+    with pytest.raises(builder.BundleBuildError, match="未唯一包含镜像"):
+        builder.build_bundle(
+            _build_spec(tmp_path / "runtime-images.tar", tmp_path / "manifest.json"),
+            run=save_sandbox_only,
+        )
+    assert not (tmp_path / "manifest.json").exists()

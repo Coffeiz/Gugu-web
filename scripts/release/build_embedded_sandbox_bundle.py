@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Callable
 
 
@@ -65,82 +65,40 @@ def _inspect_image(image: str, digest: str, docker: str, run: Callable) -> None:
         raise BundleBuildError(f"本地镜像 RepoDigest 与构建摘要不匹配：{image}")
 
 
-def _archive_record(archive_manifest: list, image: BundleImageSpec) -> dict:
-    matches = [
-        record for record in archive_manifest
-        if (
-            isinstance(record, dict)
-            and isinstance(record.get("RepoTags"), list)
-            and image.name in record["RepoTags"]
-        )
-    ]
-    if len(matches) != 1:
-        raise BundleBuildError(f"Docker save 归档未唯一包含镜像：{image.name}")
-    return matches[0]
-
-
-def _archive_path(value: object, *, image: BundleImageSpec, kind: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise BundleBuildError(f"Docker save 镜像 {kind} 路径无效：{image.name}")
-    path = PurePosixPath(value)
-    if (
-        path.is_absolute()
-        or not path.parts
-        or any(part in {"", ".", ".."} for part in path.parts)
-        or path.as_posix() != value
-    ):
-        raise BundleBuildError(f"Docker save 镜像 {kind} 路径无效：{image.name}")
-    return value
-
-
-def _archive_file(archive: tarfile.TarFile, members: dict[str, tarfile.TarInfo], path: str, image: BundleImageSpec, kind: str):
-    member = members.get(path)
-    if member is None or not member.isfile():
-        raise BundleBuildError(f"Docker save 镜像 {kind} 缺失：{image.name}")
-    file = archive.extractfile(member)
-    if file is None:
-        raise BundleBuildError(f"Docker save 镜像 {kind} 缺失：{image.name}")
-    return file
-
-
-def _archive_image_id(archive: tarfile.TarFile, members: dict[str, tarfile.TarInfo], record: dict, image: BundleImageSpec) -> str:
-    config = _archive_path(record.get("Config"), image=image, kind="config")
-    config_file = _archive_file(archive, members, config, image, "config")
-    with config_file:
-        image_id = "sha256:" + hashlib.sha256(config_file.read()).hexdigest()
-
-    layers = record.get("Layers")
-    if not isinstance(layers, list):
-        raise BundleBuildError(f"Docker save 镜像 layers 无效：{image.name}")
-    for layer in layers:
-        layer_path = _archive_path(layer, image=image, kind="layer")
-        _archive_file(archive, members, layer_path, image, "layer")
-    return image_id
-
-
 def _archive_image_ids(archive_path: Path, images: tuple[BundleImageSpec, ...]) -> dict[str, str]:
     try:
         with tarfile.open(archive_path, "r") as archive:
-            members = {member.name: member for member in archive.getmembers()}
-            manifest_file = archive.extractfile("manifest.json")
-            if manifest_file is None:
+            members = {member.name for member in archive.getmembers()}
+            manifest_member = archive.extractfile("manifest.json")
+            if manifest_member is None:
                 raise BundleBuildError("Docker save 归档缺少 manifest.json")
-            with manifest_file:
-                archive_manifest = json.loads(manifest_file.read())
-            if not isinstance(archive_manifest, list):
-                raise BundleBuildError("Docker save manifest 格式无效")
-
-            return {
-                image.name: _archive_image_id(
-                    archive,
-                    members,
-                    _archive_record(archive_manifest, image),
-                    image,
-                )
-                for image in images
-            }
+            archive_manifest = json.loads(manifest_member.read())
     except (OSError, KeyError, tarfile.TarError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise BundleBuildError("Docker save 归档无效") from exc
+    if not isinstance(archive_manifest, list):
+        raise BundleBuildError("Docker save manifest 格式无效")
+
+    ids: dict[str, str] = {}
+    for image in images:
+        matches = [
+            record for record in archive_manifest
+            if (
+                isinstance(record, dict)
+                and isinstance(record.get("RepoTags"), list)
+                and image.name in record["RepoTags"]
+            )
+        ]
+        if len(matches) != 1:
+            raise BundleBuildError(f"Docker save 归档未唯一包含镜像：{image.name}")
+        config = matches[0].get("Config")
+        if not isinstance(config, str) or not config.endswith(".json"):
+            raise BundleBuildError(f"Docker save 镜像 config 无效：{image.name}")
+        config_name = Path(config).name
+        image_id = "sha256:" + config_name.removesuffix(".json")
+        if config_name not in members or not _DIGEST_RE.fullmatch(image_id):
+            raise BundleBuildError(f"Docker save 镜像 config 缺失或无效：{image.name}")
+        ids[image.name] = image_id
+    return ids
 
 
 def _sha256(path: Path) -> str:

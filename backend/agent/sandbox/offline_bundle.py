@@ -148,11 +148,8 @@ def validate_local_image(
         and any(isinstance(item, str) and item.endswith("@" + expected) for item in value.get("RepoDigests", []))
         for value in repo_digests
     ) if isinstance(repo_digests, list) else False
-    accepted_image_ids = {expected}
-    if expected_image_id:
-        accepted_image_ids.add(expected_image_id)
-    matches_image_id = any(
-        isinstance(value, dict) and value.get("Id") in accepted_image_ids for value in repo_digests
+    matches_image_id = bool(expected_image_id) and any(
+        isinstance(value, dict) and value.get("Id") == expected_image_id for value in repo_digests
     ) if isinstance(repo_digests, list) else False
     if not (matches_digest or matches_image_id):
         raise BundleManifestError(f"镜像 digest 不匹配：{image}")
