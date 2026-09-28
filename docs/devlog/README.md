@@ -7,6 +7,7 @@
 ### 2026-09-28
 
 - [PRD-DEPLOY-2 Phase 1.5.3：候选镜像离线 Shell 验证](./2026-09-28-DEPLOY2-Phase1.5.3候选镜像离线Shell验证.md)
+- [PRD-DEPLOY-2 Phase 1.5.4：正式发布绑定候选 digest](./2026-09-28-DEPLOY2-Phase1.5.4正式发布绑定候选digest.md)
 
 ### 2026-09-26
 

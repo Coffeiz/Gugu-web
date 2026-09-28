@@ -320,7 +320,7 @@ jobs:
   publish:
     name: Publish Docker Hub app and GHCR business images
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [compose-validate, sandbox-build, docker-build]
+    needs: [compose-validate, sandbox-build, docker-build, assemble-candidate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -371,20 +371,21 @@ jobs:
             | tar -xz -C /usr/local/bin crane
           crane version
 
-      # 不再重建镜像：docker-build 已把本轮被 trivy 扫描过的镜像推到
-      # :ci-<run_id>，这里对同一 digest 纯复制到发布 tag——扫的就是发的。
+      # 不再重建镜像：backend/frontend/sandbox 复制本轮被 Trivy 扫描的 CI 镜像；
+      # app 必须复制已验证候选的不可变 digest，不能回退到未打 bundle 的基础镜像。
       - name: Copy CI images to release tags
         env:
           VERSION: ${{ steps.version.outputs.version }}
           CI_SUFFIX: ci-${{ github.run_id }}
+          APP_CANDIDATE_DIGEST: ${{ needs.assemble-candidate.outputs.image_digest }}
         run: |
           set -euo pipefail
           crane copy "${REGISTRY}/coffeiz/gugu-web-backend:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web-backend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-backend:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web-backend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-frontend:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web-frontend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-frontend:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web-frontend:${VERSION}"
-          crane copy "${REGISTRY}/coffeiz/gugu-web:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web:${VERSION}"
-          crane copy "${REGISTRY}/coffeiz/gugu-web:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web:${VERSION}"
+          crane copy "${IMAGE_REPOSITORY}@${APP_CANDIDATE_DIGEST}" "${IMAGE_REPOSITORY}:${VERSION}"
+          crane copy "${IMAGE_REPOSITORY}@${APP_CANDIDATE_DIGEST}" "${DOCKERHUB_IMAGE_REPOSITORY}:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-sandbox:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-sandbox:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-sandbox:${CI_SUFFIX}" "docker.io/coffeiz/gugu-sandbox:${VERSION}"
 
@@ -538,7 +539,7 @@ jobs:
             echo "- default Compose app digest：$APP_DIGEST"
             echo "- sandbox digest：$SANDBOX_DIGEST"
             echo '- 架构：linux/amd64'
-            echo '- 镜像来源：docker-build 推送的 :ci-<run_id> digest 纯复制（扫的即发的）'
+            echo '- 镜像来源：app 使用已验证 bundled 候选 digest；backend/frontend/sandbox 使用本轮扫描的 CI 镜像'
             echo '- manifest：GitHub Release 资产'
               } >> "$GITHUB_STEP_SUMMARY"
 

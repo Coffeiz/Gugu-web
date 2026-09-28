@@ -54,3 +54,20 @@ test('候选 app 从已构建基础镜像追加 bundle 并验证配置与运行�
   assert.match(verifier, /"--network", "none"/)
   assert.match(candidateAction, /crane manifest --platform linux\/amd64/)
 })
+
+test('正式 tag 发布只消费已验证候选 app 的不可变 digest', async () => {
+  const workflow = await readFile(workflowPath, 'utf8')
+  const publishJob = workflow.slice(workflow.indexOf('\n  publish:\n'))
+
+  assert.match(publishJob, /needs: \[[^\]]*assemble-candidate[^\]]*\]/,
+    '正式发布必须等待候选 app 完成验证')
+  assert.match(publishJob, /APP_CANDIDATE_DIGEST: \$\{\{\s*needs\.assemble-candidate\.outputs\.image_digest\s*\}\}/,
+    '发布步骤必须绑定候选组装产生的 digest')
+  assert.equal(
+    publishJob.split('\n').filter(line => line.includes('crane copy') && line.includes('APP_CANDIDATE_DIGEST')).length,
+    2,
+    'GHCR 与 Docker Hub 的 app tag 均必须从相同候选 digest 复制',
+  )
+  assert.doesNotMatch(publishJob, /crane copy "\$\{REGISTRY\}\/coffeiz\/gugu-web:\$\{CI_SUFFIX\}"/,
+    '不得将未打包的 CI app 基础镜像发布为正式版本')
+})

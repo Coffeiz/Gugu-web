@@ -238,7 +238,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 #### Phase 1.5.4：正式发布接入已验证候选
 
-- [ ] `DEPLOY2-007d` 让 tag 发布只复制 Phase 1.5.3 已验证的 bundled app 候选；验收：正式版本、签名、updater manifest 均指向同一候选 digest；普通 main 构建不增加临时镜像推送；手动候选不触发正式发布。
+- [x] `DEPLOY2-007d` 让 tag 发布只复制 Phase 1.5.3 已验证的 bundled app 候选；验收：正式版本、签名、updater manifest 均指向同一候选 digest；普通 main 构建不增加临时镜像推送；手动候选不触发正式发布。publish 等待候选组装并从其不可变 digest 复制 app；版本 tag 后解析的 digest 继续供签名与 updater manifest 使用。自动化回归确认普通 main 不推临时候选、手动候选不触发正式发布。
 
 #### Phase 1.6：Compose 拓扑收敛
 

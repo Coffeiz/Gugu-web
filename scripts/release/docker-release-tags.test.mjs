@@ -52,14 +52,26 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
     workflow.indexOf('\n  assemble-candidate:\n'),
   )
 
-  // 发布不再重建镜像：publish 从 docker-build 推送的 :ci-<run_id> 纯复制，
-  // 保证 trivy 扫过的 digest 与发布的 digest 一致。
+  // 发布不再重建镜像：业务镜像从本轮 CI tag 复制，app 则必须来自已验证候选 digest。
+  assert.match(publishJob, /if: startsWith\(github\.ref, 'refs\/tags\/v'\)/,
+    '只有版本 tag 发布可创建正式 tag/Release；手动候选运行不得发布')
   assert.match(publishJob, /CI_SUFFIX: ci-\$\{\{\s*github\.run_id\s*\}\}/)
+  assert.match(publishJob, /needs: \[compose-validate, sandbox-build, docker-build, assemble-candidate\]/,
+    '正式发布必须等待 bundled app 候选组装与验证完成')
+  assert.match(publishJob, /APP_CANDIDATE_DIGEST: \$\{\{\s*needs\.assemble-candidate\.outputs\.image_digest\s*\}\}/,
+    '正式发布必须消费候选组装 job 输出的不可变 digest')
   const copyLines = publishJob.split('\n').filter(line => line.trim().startsWith('crane copy '))
   assert.equal(copyLines.length, 8, 'backend、frontend、app、sandbox 各复制到 GHCR 与 Docker Hub 共八次')
   // 版本 tag 全部使用发布版本号变量，Git SHA 不允许进入任何 tag。
   assert.ok(copyLines.every(line => line.includes(':${VERSION}') && !line.includes('github.sha')),
     '发布 tag 必须来自版本号变量')
+  const appCopyLines = copyLines.filter(line => line.includes('${APP_CANDIDATE_DIGEST}'))
+  assert.equal(appCopyLines.length, 2, 'app 候选应分别复制到 GHCR 与 Docker Hub')
+  assert.ok(appCopyLines.every(line => line.includes('${IMAGE_REPOSITORY}@${APP_CANDIDATE_DIGEST}') && !line.includes('${CI_SUFFIX}')),
+    '两个 registry 的 app 发布 tag 必须由已验证候选 digest 复制')
+  assert.ok(copyLines.filter(line => line.includes('gugu-web-backend') || line.includes('gugu-web-frontend') || line.includes('gugu-sandbox'))
+    .every(line => line.includes('${CI_SUFFIX}')),
+  'backend、frontend 和 sandbox 继续复制本轮已扫描的 CI 镜像')
   // 四个发布镜像在两个 registry 的 digest 都要解析，供签名与 updater manifest 使用。
   for (const key of [
     'ghcr_backend', 'ghcr_frontend', 'ghcr_app', 'ghcr_sandbox',
@@ -74,8 +86,8 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
     'tag 构建推送发布候选；手动候选只额外推送 app 基础镜像')
   assert.match(workflow, /assemble-candidate:/,
     '候选组装必须独立等待 app 与 bundle 两条流水线完成')
-  assert.match(publishJob, /gugu-web:\$\{CI_SUFFIX\}/,
-    '候选组装阶段先不改变正式发布来源，待下一阶段切换至已验证候选')
+  assert.doesNotMatch(publishJob, /\$\{IMAGE_REPOSITORY\}:\$\{CI_SUFFIX\}/,
+    '正式发布不得退回未打包的 app 基础镜像')
 
   assert.match(publishJob, /uses: sigstore\/cosign-installer@v4\.1\.2\s+with:\s+cosign-release: v3\.1\.3/)
   // cosign 3.x 的 oci-1-1 referrers 模式在实验开关后面，缺 env 直接报 invalid argument
@@ -94,4 +106,6 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
     '生成更新清单必须注入 Docker Hub backend digest')
   assert.match(manifestStep, /FRONTEND_DIGEST:\s*\$\{\{\s*steps\.digests\.outputs\.hub_frontend\s*\}\}/,
     '生成更新清单必须注入 Docker Hub frontend digest')
+  assert.match(manifestStep, /APP_DIGEST:\s*\$\{\{\s*steps\.digests\.outputs\.hub_app\s*\}\}/,
+    '更新清单必须使用从候选 app 正式 tag 解析的 Docker Hub digest')
 })
