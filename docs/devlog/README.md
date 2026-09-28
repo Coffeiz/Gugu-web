@@ -11,7 +11,6 @@
 ### 2026-09-28
 
 - [Agent ORM 存量收口并恢复严格守卫](./2026-09-28-Agent-ORM存量收口与严格守卫.md)
-- [PRD-DEPLOY-2 Phase 1.7：离线包移除重复沙箱镜像](./2026-09-28-DEPLOY2-Phase1.7-离线包移除重复沙箱镜像.md)
 - [PRD-DEPLOY-2 Phase 1.6：Compose 沙箱拓扑收敛](./2026-09-28-DEPLOY2-Phase1.6-Compose沙箱拓扑收敛.md)
 - [PRD-DEPLOY-2 Phase 1.5.3：候选镜像离线 Shell 验证](./2026-09-28-DEPLOY2-Phase1.5.3候选镜像离线Shell验证.md)
 - [PRD-DEPLOY-2 Phase 1.5.4：正式发布绑定候选 digest](./2026-09-28-DEPLOY2-Phase1.5.4正式发布绑定候选digest.md)
