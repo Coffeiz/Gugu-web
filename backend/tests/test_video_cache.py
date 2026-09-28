@@ -66,7 +66,7 @@ class _FakeRedis:
 
 
 MODEL_CFG = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
-                            model="MiniMax-M3", vision_video=True)
+                            model="MiniMax-M3", video=True)
 
 
 def _probe():

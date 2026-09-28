@@ -2,7 +2,7 @@
 
 调用层（runner / core）只对接 `pick_model`，未来 Router、多 key 分流都插这里，
 core 一行不动。返回的对象带 provider/api_key/base_url/model/max_tokens/
-context_tokens/thinking/vision —— `AIPresetItem` 和 `AISettings` 都满足，调用层统一读。
+context_tokens/thinking/image —— `AIPresetItem` 和 `AISettings` 都满足，调用层统一读。
 
 策略（`ai_presets.strategy`）：
   active 单一激活（默认，= 当前激活预设，行为不变）
@@ -197,6 +197,10 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
     updates = {"provider": row.provider, "api_format": row.api_format,
                "api_key": decrypt_value(row), "base_url": base_url,
                "model": row.model or getattr(base, "model", ""),
+               "image": row.image,
+               "video": row.video,
+               "audio": row.audio,
+               "image_detail": row.image_detail,
                # is_byok 必须落在模型副本上随 run 走：finalize_run 拿到的是 run_config.model，
                # 只读 ModelRunConfig.is_byok 会在落库时丢失标记（历史 bug：BYOK 用量全记成平台用量）。
                "is_byok": True}

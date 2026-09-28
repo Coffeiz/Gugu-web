@@ -12,7 +12,10 @@ from types import SimpleNamespace
 import pytest
 
 import agent.llm.llm_select as llm_select
+from agent.llm import modelctx
+from agent.tools import media_reader
 import app.byok.service as byok_service
+from app.core import chat_attach
 from agent.llm.llm_select import ModelRunConfig, resolve_run_config_for_user
 from app.core.config import AIPresetItem
 
@@ -48,7 +51,9 @@ class _Db:
 def _user_row(**overrides):
     row = SimpleNamespace(provider="deepseek", api_format="openai", base_url="",
                           model="deepseek-v4", context_tokens=None, max_tokens=None,
-                          thinking=None, reasoning_effort=None, reasoning_persistence="off")
+                          thinking=None, reasoning_effort=None, reasoning_persistence="off",
+                          image=False, video=False, audio=False,
+                          image_detail="auto")
     for key, value in overrides.items():
         setattr(row, key, value)
     return [row]
@@ -96,6 +101,31 @@ async def test_user_empty_base_url_resolves_provider_default(monkeypatch, harnes
     assert cfg.is_byok is True
     assert cfg.model.api_key == "sk-deepseek-secret"
     assert cfg.model.base_url == "https://open.bigmodel.cn/api/paas/v4"
+
+
+@pytest.mark.asyncio
+async def test_byok_multimodal_flags_reach_the_runtime_model(monkeypatch, harness):
+    """BYOK 主对话配置应保留图片/视频/音频开关，供 read_file 按本轮模型判断能力。"""
+    db = _Db(_user_row(
+        provider="minimax", api_format="anthropic",
+        base_url="https://api.minimax.example/anthropic", model="MiniMax-M3",
+        image=True, video=True, audio=True, image_detail="high",
+    ))
+
+    cfg = await resolve_run_config_for_user(harness, db, "uid")
+
+    assert cfg.is_byok is True
+    assert cfg.model.image is True
+    assert cfg.model.video is True
+    assert cfg.model.audio is True
+    assert cfg.model.image_detail == "high"
+    assert chat_attach.image_ready(cfg.model) is True
+    assert chat_attach.video_transport_for(cfg.model) == "anthropic"
+    modelctx.set_model_cfg(cfg.model)
+    try:
+        assert media_reader.image_capability_error("png") is None
+    finally:
+        modelctx.set_model_cfg(None)
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 """聊天附件暂存：用户在对话里发给咕咕的文件**先暂存**（不进文件库）。
 
-- 咕咕能「看」：文本类读内容注入上下文；图片给提示（看内容需 vision 模型）。
+- 咕咕能「看」：文本类读内容注入上下文；图片给提示（看内容需支持 image 的模型）。
 - 咕咕能「存」：用户说存时，`save_uploaded_file` 工具把暂存字节落成正式文件库记录。
 
 字节走 StorageBackend（key 放 `.chat_staging/` 下）；**元数据以 `chat_attachments`
@@ -120,15 +120,15 @@ VIDEO_BASE64_MAX = 45 * 1024 * 1024    # ③ 走 base64 的最终 payload 上限
 VIDEO_MMFILE_MAX = 90 * 1024 * 1024    # ②③ 触发转码的源文件大小阈值，同时也是③走 mm_file 的最终 payload 上限（留安全余量）
 VIDEO_MMFILE_PURPOSE = "video_understanding"   # Files API 上传 purpose
 
-# 能喂给 vision 模型的扩展名。png/jpeg/gif/webp 是 API 原生格式（达标即原样发）；
-# heic/bmp/tiff 等先经 Pillow 转码成 JPEG 再发（见 _fit_image_for_vision）。svg
+# 作为 image 输入的扩展名。png/jpeg/gif/webp 是 API 原生格式（达标即原样发）；
+# heic/bmp/tiff 等先经 Pillow 转码成 JPEG 再发（见 _fit_image）。svg
 # 保留为源码文件，由文件工具按 UTF-8 文本读取；不伪造为视觉图片。
-VISION_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif"}
+IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif"}
 _VISION_PASSTHROUGH = {"png", "jpg", "jpeg", "gif", "webp"}   # API 原生收，达标免重编码
 _VISION_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                 "gif": "image/gif", "webp": "image/webp"}
 VISION_IMG_MAX = 5 * 1024 * 1024   # 单张图喂模型的字节上限（超了自动降采样压缩，不再直接丢）
-VISION_IMG_COUNT = 6               # 单条消息最多带几张图
+IMAGE_COUNT = 6               # 单条消息最多带几张图
 VISION_MAX_DIM = 3840              # 喂模型前长边降采样到此像素，保留高分辨率细节
 VISION_TARGET_BYTES = 8 * 1024 * 1024  # 压缩目标字节（留 API 余量）
 
@@ -808,8 +808,8 @@ async def read_text(meta: dict) -> str:
         return ""
 
 
-def _vision_enabled(model_cfg=None) -> bool:
-    """当前模型是否支持多模态。
+def _image_enabled(model_cfg=None) -> bool:
+    """当前模型是否支持图片输入。
 
     保留后台探测/手动开关和能力覆写，同时信任适配器已登记的模型能力，
     避免新建预设还没点检测时把图片误当普通附件。
@@ -820,10 +820,10 @@ def _vision_enabled(model_cfg=None) -> bool:
         ai = model_cfg or get_settings().ai
         capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
         overrides = getattr(ai, "capability_overrides", None) or {}
-        vision_capability = overrides.get("vision")
-        if not isinstance(vision_capability, bool):
-            vision_capability = capabilities.vision
-        return bool(getattr(ai, "vision", False)) or vision_capability
+        image_capability = overrides.get("image")
+        if not isinstance(image_capability, bool):
+            image_capability = capabilities.image
+        return bool(getattr(ai, "image", False)) or image_capability
     except Exception:
         return False
 
@@ -832,12 +832,12 @@ def _video_enabled(model_cfg=None) -> bool:
     """视频理解是否开启：产品开关打开，且适配器为当前请求协议声明了视频能力。"""
     try:
         if model_cfg is not None:
-            if not getattr(model_cfg, "vision_video", False):
+            if not getattr(model_cfg, "video", False):
                 return False
             return video_transport_for(model_cfg) != "none"
         from app.core.config import get_settings
         ai = get_settings().ai
-        if not getattr(ai, "vision_video", False):
+        if not getattr(ai, "video", False):
             return False
         return video_transport_for(ai) != "none"
     except Exception:
@@ -845,22 +845,22 @@ def _video_enabled(model_cfg=None) -> bool:
 
 
 def _audio_enabled(model_cfg=None) -> bool:
-    """音频理解是否开启：主模型 vision_audio 开，且当前请求走 OpenAI Chat 格式。
+    """音频理解是否开启：主模型 audio 开，且当前请求走 OpenAI Chat 格式。
     独立语音识别模型（ASR 转写）由 _voice_recognition_enabled 单独判定，两者解耦。"""
     try:
         from agent import providers
         if model_cfg is not None:
-            if not getattr(model_cfg, "vision_audio", False):
+            if not getattr(model_cfg, "audio", False):
                 return False
             adapter = providers.adapter_for(model_cfg)
             if adapter.protocol_format(model_cfg) != "openai":
                 return False
-            # vision_audio 是产品开关，不能越过 provider 的协议能力；否则 GLM
+            # audio 是产品开关，不能越过 provider 的协议能力；否则 GLM
             # 等文本端点会收到 input_audio，并以 content.type 400 拒绝请求。
             return bool(providers.capability_snapshot(model_cfg).get("audio", False))
         from app.core.config import get_settings
         ai = get_settings().ai
-        if not getattr(ai, "vision_audio", False):
+        if not getattr(ai, "audio", False):
             return False
         adapter = providers.adapter_for(ai)
         if adapter.protocol_format(ai) != "openai":
@@ -1322,8 +1322,8 @@ def _voice_recognition_enabled() -> bool:
         return False
 
 
-def _fit_image_for_vision(raw: bytes, ext: str):
-    """把图调整到适合喂 vision 模型的体积/尺寸，返回 (bytes, media_type)；失败返回 None。
+def _fit_image(raw: bytes, ext: str):
+    """把图调整到适合模型输入的体积/尺寸，返回 (bytes, media_type)；失败返回 None。
 
     只作用于「喂给模型的副本」——存进文件库 / storage 的原图不受影响。
     - 体积 ≤ 上限且长边 ≤ VISION_MAX_DIM → 原样用（不重编码，保真省 CPU）
@@ -1368,7 +1368,7 @@ def _fit_image_for_vision(raw: bytes, ext: str):
         return None
 
 
-def vision_ready(model_cfg=None) -> bool:
+def image_ready(model_cfg=None) -> bool:
     """当前实际运行模型已开启视觉能力。
 
     工具结果内部仍使用统一的 Anthropic 图片块；OpenAI 兼容驱动会在发送前
@@ -1386,21 +1386,21 @@ def vision_ready(model_cfg=None) -> bool:
             from agent.llm import modelctx
             model_cfg = modelctx.get_model_cfg()
         ai = model_cfg or s.ai
-        return _vision_enabled(ai)
+        return _image_enabled(ai)
     except Exception:
         return False
 
 
-VISION_READ_MAX = 30 * 1024 * 1024   # read_file 看图时从存储拉取的硬上限（压缩前），挡住超大文件
+IMAGE_READ_MAX = 30 * 1024 * 1024   # read_file 看图时从存储拉取的硬上限（压缩前），挡住超大文件
 TEXT_READ_MAX = 32 * 1024 * 1024   # 消息注入文本类附件（含 doctext 可提取的 PDF/Office）的读取硬上限：
                                    # 最终只注入 32K 字符，32MB 原文绰绰有余；超大文档留给按需 read_file
 
 
-def vision_block(raw: bytes, ext: str):
+def image_block(raw: bytes, ext: str):
     """把图压好封成 Anthropic image 内容块 {"type":"image",...}；不支持/失败返回 None。"""
-    if (ext or "").lower() not in VISION_EXTS:
+    if (ext or "").lower() not in IMAGE_EXTS:
         return None
-    fitted = _fit_image_for_vision(raw, (ext or "").lower())
+    fitted = _fit_image(raw, (ext or "").lower())
     if not fitted:
         return None
     import base64
@@ -1409,7 +1409,7 @@ def vision_block(raw: bytes, ext: str):
         "type": "base64", "media_type": media, "data": base64.b64encode(data).decode()}}
 
 
-def strip_vision_for_history(content):
+def strip_image_for_history(content):
     """持久化前把 tool_result 里的图片块换成占位文字。
 
     图片 base64 很大，若原样存进对话历史，会撑大 DB 且每轮都重新喂给模型（token 爆炸）。
@@ -1436,26 +1436,26 @@ def strip_vision_for_history(content):
 
 async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, model_cfg=None) -> tuple[str, list, list, list]:
     """把附件解析成：① 注入给模型的增广文本（文本读内容、图片/二进制给提示）
-    ② 给前端气泡的附件卡片列表 ③ 图片块列表（仅 vision 模型，喂给模型「看」）。
+    ② 给前端气泡的附件卡片列表 ③ 图片块列表（仅 image 模型能力开启时提供）。
     失效/过期的 attach_id 跳过。
 
     `model_cfg`：**这轮真正要跑的模型**（IM 走 pick_model 选 pool/router，可能 ≠ 顶层 ai）。
-    传了就按它判 vision / media，避免「门控用静态 ai、实跑用别的模型」→ 喂图却看不了 / 不喂却能看
+    传了就按它判 image / media，避免「门控用静态 ai、实跑用别的模型」→ 喂图却看不了 / 不喂却能看
     的不一致（图时好时坏的根因）。没传则退回顶层 settings.ai（web 路一直用激活模型，一致）。"""
     if not attach_ids:
         return base_message, [], [], []
     if model_cfg is not None:
-        vision = _vision_enabled(model_cfg)
+        image = _image_enabled(model_cfg)
         video_ok = _video_enabled(model_cfg)
         audio_ok = _audio_enabled(model_cfg)
     else:
-        vision = _vision_enabled()
+        image = _image_enabled()
         video_ok = _video_enabled()
         audio_ok = _audio_enabled()
     voice_ok = _voice_recognition_enabled()   # 配了独立语音识别模型 → 音频/语音也构建 media 交 transcribe
     parts = [base_message] if base_message else []
     cards = []
-    images: list = []   # [{media_type, b64}]，仅 vision 时填
+    images: list = []   # [{media_type, b64}]，仅 image 能力开启时填
     media: list = []    # [{type:'audio'|'video', mime, b64}]，仅对应维度开启时填
     for aid in attach_ids:
         meta = await get_meta(user_id, aid)
@@ -1485,16 +1485,16 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
         elif meta["kind"] == "image":
             ext = (meta.get("ext") or "").lower()
             img_why = None
-            # vision 模型 + 受支持格式 + 没超张数 → 喂给模型真看（超体积/超大尺寸自动压缩）
-            if vision and ext in VISION_EXTS and len(images) < VISION_IMG_COUNT:
+            # image 能力开启 + 受支持格式 + 没超张数 → 喂给模型真看（超体积/超大尺寸自动压缩）
+            if image and ext in IMAGE_EXTS and len(images) < IMAGE_COUNT:
                 try:
                     import base64
-                    # 消费侧硬门：图片同样按 meta["size"] 读前拒绝（VISION_READ_MAX 与
+                    # 消费侧硬门：图片同样按 meta["size"] 读前拒绝（IMAGE_READ_MAX 与
                     # read_file 看图同一口径），超限走下方「没法直接看」文字提示。
-                    if meta["size"] > VISION_READ_MAX:
-                        raise ValueError(f"文件超过 {VISION_READ_MAX // 1048576}MB 读取上限")
+                    if meta["size"] > IMAGE_READ_MAX:
+                        raise ValueError(f"文件超过 {IMAGE_READ_MAX // 1048576}MB 读取上限")
                     raw = await read_bytes(meta)
-                    fitted = _fit_image_for_vision(raw, ext)
+                    fitted = _fit_image(raw, ext)
                     if fitted:
                         data, img_media_type = fitted   # 别用 `media`——那是音视频列表，会被覆盖成字符串 → aug_media 变 str → transcribe 崩
                         images.append({"media_type": img_media_type,
@@ -1507,14 +1507,14 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                     img_why = str(e)
                 except Exception:
                     pass   # 读图/压缩失败 → 退回文字提示
-            if not vision:
+            if not image:
                 # 没有任何能看图的模型 → **当普通文件处理**：正常收下、按需保存，
                 # 别向用户抱怨「看不了图 / 看不到内容」（那样体验很差，用户只是想发个文件）。
                 parts.append(f"\n\n📎 用户发来图片{tag}（图片文件；当前没有能看图的模型，"
                              f"**就当普通文件正常处理**——别说「看不了图 / 看不到内容」，正常回应；"
                              f"用户要存就 save_uploaded_file(attach_id) 存进文件库）。")
             else:
-                # vision 开着但这张没喂成（格式不支持 / 超限 / 读图失败）
+                # image 能力开启但这张没喂成（格式不支持 / 超限 / 读图失败）
                 parts.append(f"\n\n📎 用户上传了图片{tag}（这张没法直接看：{img_why or '格式不支持'}）；"
                              f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
         elif meta["kind"] in ("audio", "video", "voice"):
@@ -1523,7 +1523,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             noun = "语音" if is_voice else ("视频" if is_video else "音频")
             ext = (meta.get("ext") or "").lower()
             native = ext in (VIDEO_EXTS if is_video else AUDIO_EXTS)   # 语音转码后是 mp3，按音频判原生
-            # 能喂 base64 给模型的条件：① 主模型对应维度开启（视频→vision_video，音频→vision_audio，
+            # 能喂 base64 给模型的条件：① 主模型对应维度开启（视频→video，音频→audio，
             # 走 OpenAI 兼容媒体块 / MiniMax M3 原生块）；② 配了独立语音识别模型（仅音频/语音，
             # 交 transcribe 转文字）。视频仍只走 ①（ASR 听不了画面）。
             can_feed = (video_ok if is_video else audio_ok) or (voice_ok and not is_video)

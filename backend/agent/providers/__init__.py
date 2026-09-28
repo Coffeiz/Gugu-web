@@ -52,7 +52,7 @@ def capability_snapshot(ai) -> dict[str, object]:
     overrides = getattr(ai, "capability_overrides", None) or {}
     values = {field: getattr(capabilities, field) for field in (
         "thinking", "structured_json", "structured_schema", "tools", "parallel_tools",
-        "vision", "audio", "video")}
+        "image", "audio", "video")}
     for field, value in overrides.items():
         if field in values and isinstance(value, bool):
             values[field] = value
@@ -66,7 +66,7 @@ def capability_snapshot(ai) -> dict[str, object]:
         "structured_schema": values["structured_schema"],
         "tools": values["tools"],
         "parallel_tools": values["parallel_tools"],
-        "vision": values["vision"],
+        "image": values["image"],
         "audio": values["audio"],
         "video": values["video"],
         "overrides": {k: v for k, v in overrides.items() if k in values and isinstance(v, bool)},

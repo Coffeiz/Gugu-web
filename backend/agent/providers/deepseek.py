@@ -13,13 +13,13 @@ class DeepSeekAdapter(ProviderAdapter):
 
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         # 当前 deepseek-flash 支持图片输入；旧 Vision Exp 名称仍由服务端兼容承接。
-        # 普通文本模型仍保持 vision=False，避免把图片误发给不支持多模态的模型。
-        vision = model.strip().lower() in {
+        # 普通文本模型仍保持 image=False，避免把图片误发给不支持多模态的模型。
+        image = model.strip().lower() in {
             "deepseek-flash",
             "deepseek-v4-flash-vision-exp",
         }
         return ProviderCapabilities(api_format="openai", cache_mode="active", thinking=True,
-                                    structured_json=True, tools=True, vision=vision)
+                                    structured_json=True, tools=True, image=image)
 
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         value = thinking if thinking is not None else getattr(ai, "thinking", "disabled")

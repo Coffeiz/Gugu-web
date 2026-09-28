@@ -84,7 +84,7 @@ def test_master_key_status_does_not_require_key_without_credentials(monkeypatch)
 async def test_decrypt_failure_does_not_fall_back_to_platform_config(db, user_a, monkeypatch):
     row = SimpleNamespace(
         provider="user-provider", api_format="openai", base_url="", model="user-model",
-        vision=False, vision_video=False, vision_audio=False, vision_detail="auto",
+        image=False, video=False, audio=False, image_detail="auto",
     )
     async def active_credential(*_args):
         return row
@@ -118,12 +118,12 @@ async def test_capability_settings_never_inherit_platform_base_url(db, user_a, m
         return _get
     platform = _Cfg(provider="platform", api_key="platform-secret", model="platform-model",
                     base_url="https://platform-stt.example/v1", api_format="openai",
-                    vision=False, vision_video=False, vision_audio=False, vision_detail="auto")
+                    image=False, video=False, audio=False, image_detail="auto")
 
     # provider 解析不出默认端点 + 用户没填 base_url → 覆盖整体放弃，用户 Key 不启用
     row = SimpleNamespace(provider="user-provider", api_format="openai", base_url="",
-                          model="user-model", vision=False, vision_video=False,
-                          vision_audio=False, vision_detail="auto")
+                          model="user-model", image=False, video=False,
+                          audio=False, image_detail="auto")
     monkeypatch.setattr(service, "get_active_credential", active_credential(row))
     monkeypatch.setattr(service, "decrypt_value", lambda _row: "user-secret")
     vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
@@ -132,8 +132,8 @@ async def test_capability_settings_never_inherit_platform_base_url(db, user_a, m
 
     # 有官方默认端点的 provider：空 base_url 落到 provider 默认端点，不继承平台 URL
     row = SimpleNamespace(provider="glm", api_format="openai", base_url="",
-                          model="user-model", vision=False, vision_video=False,
-                          vision_audio=False, vision_detail="auto")
+                          model="user-model", image=False, video=False,
+                          audio=False, image_detail="auto")
     monkeypatch.setattr(service, "get_active_credential", active_credential(row))
     vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
     assert vm.api_key == "user-secret"
@@ -142,8 +142,8 @@ async def test_capability_settings_never_inherit_platform_base_url(db, user_a, m
     # 显式 base_url：原样作为目的地
     row = SimpleNamespace(provider="user-provider", api_format="openai",
                           base_url="https://user-stt.example/v1", model="user-model",
-                          vision=False, vision_video=False, vision_audio=False,
-                          vision_detail="auto")
+                          image=False, video=False, audio=False,
+                          image_detail="auto")
     monkeypatch.setattr(service, "get_active_credential", active_credential(row))
     vm = await service.resolve_capability_settings(db, user_a.id, "speech_to_text", platform)
     assert vm.api_key == "user-secret"
@@ -162,8 +162,8 @@ def test_disabled_policy_blocks_all_byok_entry_points(monkeypatch):
 def test_credential_view_contains_metadata_but_not_encrypted_fields():
     row = SimpleNamespace(
         id=1, provider="test-provider", api_format="openai", capability="llm",
-        base_url="https://example.test", model="test-model", vision=False,
-        vision_video=False, vision_audio=False, vision_detail="auto", enabled=True,
+        base_url="https://example.test", model="test-model", image=False,
+        video=False, audio=False, image_detail="auto", enabled=True,
         encrypted_value="ciphertext", last_verified_at=None, created_at=None, updated_at=None,
     )
 

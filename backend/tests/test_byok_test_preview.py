@@ -1,4 +1,4 @@
-"""BYOK 草稿试呼：test-preview / models-preview / vision-probe 的目的地绑定 Key 裁决。
+"""BYOK 草稿试呼：test-preview / models-preview / media-capability-probe 的目的地绑定 Key 裁决。
 
 旧 Key 只属于它保存时的目的地：草稿 provider 或 effective origin（经 provider
 adapter 解析后的 scheme+host+port，空串会落 provider 默认端点）与存量凭据不一致时
@@ -207,30 +207,30 @@ async def test_models_preview_reuses_key_for_same_destination(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_vision_probe_refuses_cross_provider_reuse():
+async def test_media_capability_probe_refuses_cross_provider_reuse():
     row = SimpleNamespace(user_id="me", provider="minimax", base_url="https://api.minimax.example/v1")
-    body = byok_api.CredentialVisionProbe(provider="deepseek", base_url="https://api.deepseek.example/v1",
+    body = byok_api.MediaCapabilityProbe(provider="deepseek", base_url="https://api.deepseek.example/v1",
                                           api_key="", credential_id=7, dim="image")
     with pytest.raises(HTTPException) as exc:
-        await byok_api.probe_vision(body, user=SimpleNamespace(id="me"), db=_db_with(row))
+        await byok_api.probe_media(body, user=SimpleNamespace(id="me"), db=_db_with(row))
     assert exc.value.status_code == 422
     assert "重新填写" in exc.value.detail
 
 
 @pytest.mark.asyncio
-async def test_vision_probe_reuses_key_for_same_destination(monkeypatch):
+async def test_media_capability_probe_reuses_key_for_same_destination(monkeypatch):
     captured = {}
 
-    async def fake_probe(provider, api_key, base_url, model, api_format, dim):
-        captured.update(api_key=api_key, provider=provider, dim=dim)
+    async def fake_probe(target, *, dim):
+        captured.update(api_key=target.api_key, provider=target.provider, dim=dim)
         return True, 200, "ok"
 
-    monkeypatch.setattr("app.api.v1.agent_admin._do_vision_probe", fake_probe)
+    monkeypatch.setattr("app.services.multimodal_probe.probe_multimodal_capability", fake_probe)
     monkeypatch.setattr(byok_api, "decrypt_value", lambda row: "sk-stored")
     row = SimpleNamespace(user_id="me", provider="deepseek", base_url="https://api.deepseek.example/v1")
-    body = byok_api.CredentialVisionProbe(provider="deepseek", base_url="https://api.deepseek.example/v1",
+    body = byok_api.MediaCapabilityProbe(provider="deepseek", base_url="https://api.deepseek.example/v1",
                                           api_key="", credential_id=7, dim="image")
-    result = await byok_api.probe_vision(body, user=SimpleNamespace(id="me"), db=_db_with(row))
+    result = await byok_api.probe_media(body, user=SimpleNamespace(id="me"), db=_db_with(row))
     assert result["supported"] is True
     assert captured["api_key"] == "sk-stored" and captured["dim"] == "image"
 

@@ -12,7 +12,7 @@
       <button type="button" :class="variant === 'admin' ? 'pca-btn pca-btn--sm' : 'pm-style-chip'" :disabled="probing !== null && probing !== dim.key" @click="$emit('probe', dim.key)">
         {{ probing === dim.key ? probingLabel : probeLabel }}
       </button>
-      <ToggleSwitch :model-value="Boolean(model[dim.field || (dim.key === 'image' ? 'vision' : `vision_${dim.key}`)])" :aria-label="`切换${dim.label}`" @update:model-value="model[dim.field || (dim.key === 'image' ? 'vision' : `vision_${dim.key}`)] = $event" />
+      <ToggleSwitch :model-value="Boolean(model[dim.key])" :aria-label="`切换${dim.label}`" @update:model-value="model[dim.key] = $event" />
     </div>
   </div>
 </template>
@@ -20,7 +20,7 @@
 <script setup lang="ts">
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 
-type Dimension = { key: string; label: string; hint?: string; field?: string }
+type Dimension = { key: string; label: string; hint?: string }
 withDefaults(defineProps<{
   model: any
   dims: readonly Dimension[]

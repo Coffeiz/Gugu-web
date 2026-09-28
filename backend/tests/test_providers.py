@@ -152,7 +152,7 @@ def test_adapter_for_glm_coding_plan_uses_dedicated_endpoint():
     assert adapter.resolve_base_url(SimpleNamespace(provider="glm-coding", base_url="")) == \
         "https://open.bigmodel.cn/api/coding/paas/v4"
     assert adapter.capabilities("glm-5.2").tools
-    assert not adapter.capabilities("glm-5.2").vision
+    assert not adapter.capabilities("glm-5.2").image
     assert adapter_for(_ai(base_url="https://open.bigmodel.cn/api/coding/paas/v4")).name == "glm-coding"
 
 
@@ -172,10 +172,10 @@ def test_adapter_for_deepseek_by_base_url_fallback():
 
 def test_deepseek_vision_capability_includes_current_and_legacy_vision_models():
     adapter = adapter_for(_ai(provider="deepseek"))
-    assert adapter.capabilities("deepseek-flash").vision
-    assert adapter.capabilities("deepseek-v4-flash-vision-exp").vision
-    assert not adapter.capabilities("deepseek-v4-flash").vision
-    assert not adapter.capabilities("deepseek-chat").vision
+    assert adapter.capabilities("deepseek-flash").image
+    assert adapter.capabilities("deepseek-v4-flash-vision-exp").image
+    assert not adapter.capabilities("deepseek-v4-flash").image
+    assert not adapter.capabilities("deepseek-chat").image
 
 
 def test_deepseek_thinking_uses_official_openai_parameter_split():

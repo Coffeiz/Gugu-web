@@ -168,7 +168,7 @@ async def prepare_run(
         "content": prepend_reference_context(
             build_user_content(
                 current_text, images, use_anthropic, media=media,
-                image_detail=getattr(model_cfg, "vision_detail", "auto"),
+                image_detail=getattr(model_cfg, "image_detail", "auto"),
             ),
             getattr(req, "reference_context", None),
         ),

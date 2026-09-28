@@ -95,6 +95,14 @@ def test_manager_mode_is_explicit_and_disabled_by_default():
     assert "未配置管理器或 Socket 不可用时 fail-closed" in runtime
 
 
+def test_unified_image_includes_entrypoint_runtime_migrations():
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    entrypoint = (REPO_ROOT / "backend" / "docker-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "COPY backend/scripts/migrations ./scripts/migrations" in dockerfile
+    assert "python -m scripts.migrations.migrate_knowledge_timestamps" in entrypoint
+
+
 def test_compose_deployment_modes_match_embedded_and_external_manager_contracts():
     integrated = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     offline = yaml.safe_load((REPO_ROOT / "docker-compose.offline.yml").read_text(encoding="utf-8"))

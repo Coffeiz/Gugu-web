@@ -204,7 +204,7 @@ async def finalize_run(
                         session_id=session_id,
                         role=tm["role"],
                         content="",
-                        content_json=chat_attach.strip_vision_for_history(tm["content"]),
+                        content_json=chat_attach.strip_image_for_history(tm["content"]),
                         run_id=run_id,
                             round_id=persisted_round_id if run_id else None,
                     ))
@@ -265,7 +265,7 @@ async def finalize_run(
                             # 会被消息端点的 content_json IS NULL 过滤吞掉。str 正文
                             # 省略该字段走列默认值，落成真正的 SQL NULL。
                             if not isinstance(message.get("content"), str):
-                                values["content_json"] = chat_attach.strip_vision_for_history(
+                                values["content_json"] = chat_attach.strip_image_for_history(
                                     message["content"])
                             if created_at is not None:
                                 values["created_at"] = created_at

@@ -2,7 +2,7 @@
 
 覆盖：QQ 表情缓存、同步暂存 stage_sync（线程 + 回滚）、reuse_attachment 引用复用、
 get_meta_many 双通道读取、clear_staged 三路清理、resolve_attach 匹配阶梯、
-vision 图片适配/封块、_audio_enabled 能力判定、build_user_content 内容块拼装。
+image 图片适配/封块、_audio_enabled 能力判定、build_user_content 内容块拼装。
 DB 走 conftest 内存库，Redis 走 fakeredis，embedding/PIL 探针按需打桩。
 """
 import base64
@@ -270,45 +270,45 @@ async def test_resolve_attach_fuzzy_and_ambiguity_ladder(storage, db, user_a, mo
     assert "候选：" in note and "aabb000000000001" in note
 
 
-# ── vision：图片适配与封块 ────────────────────────────────────────────────
+# ── image：图片适配与封块 ────────────────────────────────────────────────
 
 def test_fit_image_for_vision_passthrough_reencode_and_failure():
     from app.core import chat_attach as ca
 
     small = _png_bytes()
-    assert ca._fit_image_for_vision(small, "png") == (small, "image/png")   # 达标原样
+    assert ca._fit_image(small, "png") == (small, "image/png")   # 达标原样
 
     # 非原生格式（bmp）→ 一律重编码 JPEG
     buf = io.BytesIO()
     from PIL import Image
     Image.new("RGB", (2, 2)).save(buf, format="BMP")
-    out, media = ca._fit_image_for_vision(buf.getvalue(), "bmp")
+    out, media = ca._fit_image(buf.getvalue(), "bmp")
     assert media == "image/jpeg" and out[:2] == b"\xff\xd8"
 
     # 超长边 → 降采样
     big = _png_bytes(size=(4000, 4))
-    out, media = ca._fit_image_for_vision(big, "png")
+    out, media = ca._fit_image(big, "png")
     assert media == "image/jpeg"
     with Image.open(io.BytesIO(out)) as im:
         assert max(im.size) <= ca.VISION_MAX_DIM
 
     # 透明通道 → 铺白底转 RGB 后重编码
     rgba = _png_bytes(size=(4000, 4), mode="RGBA")
-    out, media = ca._fit_image_for_vision(rgba, "png")
+    out, media = ca._fit_image(rgba, "png")
     assert media == "image/jpeg"
 
     # 坏字节 → None
-    assert ca._fit_image_for_vision(b"not-an-image", "png") is None
+    assert ca._fit_image(b"not-an-image", "png") is None
 
 
-def test_vision_block_building():
+def test_image_block_building():
     from app.core import chat_attach as ca
 
-    assert ca.vision_block(b"x", "mp4") is None          # 非 vision 扩展名
-    assert ca.vision_block(b"broken", "png") is None     # 压缩失败
+    assert ca.image_block(b"x", "mp4") is None          # 非 image 扩展名
+    assert ca.image_block(b"broken", "png") is None     # 压缩失败
 
     raw = _png_bytes()
-    block = ca.vision_block(raw, "png")
+    block = ca.image_block(raw, "png")
     assert block["type"] == "image"
     assert block["source"]["media_type"] == "image/png"
     assert base64.b64decode(block["source"]["data"]) == raw
@@ -320,9 +320,9 @@ def test_audio_enabled_decision_matrix(monkeypatch):
     from app.core import chat_attach as ca
 
     assert ca._audio_enabled(SimpleNamespace()) is False                    # 缺开关
-    assert ca._audio_enabled(SimpleNamespace(vision_audio=False)) is False
+    assert ca._audio_enabled(SimpleNamespace(audio=False)) is False
 
-    cfg = SimpleNamespace(vision_audio=True)
+    cfg = SimpleNamespace(audio=True)
     monkeypatch.setattr("agent.llm.llm_select.use_anthropic_for", lambda _c: True)
     assert ca._audio_enabled(cfg) is False                                  # Anthropic 路不吃 input_audio
 

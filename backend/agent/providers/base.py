@@ -23,7 +23,7 @@ class ProviderCapabilities:
     structured_schema: bool = False
     tools: bool = True
     parallel_tools: bool = False
-    vision: bool = False
+    image: bool = False
     audio: bool = False
     video: bool = False
 

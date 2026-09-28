@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import fcntl
 import json
 import os
 import re
@@ -88,10 +89,10 @@ class AISettings(BaseModel):
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
     reasoning_persistence: Literal["off", "summary", "continuation"] = Field("off", description="跨请求推理状态: off | summary | continuation")
-    vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
-    vision_detail: str = Field("auto", description="图片细节级别: auto | low | high | original")
-    vision_video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
-    vision_audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
+    image: bool = Field(False, description="模型是否支持图片输入。后台「检测」按钮探测后写入，亦可手动改")
+    image_detail: str = Field("auto", description="图片细节级别: auto | low | high | original")
+    video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
+    audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
     api_format: str = Field("", description="API 格式: openai | responses | anthropic | 空=按 provider/base_url 自动判（Responses 与 Chat Completions 分开）")
     ollama_mode: str = Field("local", description="Ollama 连接模式: local | cloud")
     ollama_api_mode: str = Field("native", description="Ollama 接口模式: native | openai")
@@ -226,10 +227,10 @@ class AIPresetItem(BaseModel):
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
     reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
-    vision: bool = False
-    vision_detail: str = "auto"
-    vision_video: bool = False
-    vision_audio: bool = False
+    image: bool = False
+    image_detail: str = "auto"
+    video: bool = False
+    audio: bool = False
     api_format: str = ""         # API 格式: openai | responses | anthropic | 空=自动
     ollama_mode: str = "local"   # Ollama 连接模式: local | cloud
     ollama_api_mode: str = "native"  # Ollama 接口模式: native | openai
@@ -775,6 +776,7 @@ _settings_mtime: float = -1.0
 
 def get_settings() -> AppSettings:
     global _settings_cache, _settings_mtime
+    _migrate_multimodal_override()
     try:
         current_mtime = OVERRIDE_FILE.stat().st_mtime if OVERRIDE_FILE.exists() else -1.0
     except OSError:
@@ -784,6 +786,119 @@ def get_settings() -> AppSettings:
     _settings_cache = AppSettings().apply_override()
     _settings_mtime = current_mtime
     return _settings_cache
+
+
+_MULTIMODAL_CONFIG_RENAMES = {
+    "vision": "image",
+    "vision_video": "video",
+    "vision_audio": "audio",
+    "vision_detail": "image_detail",
+}
+_multimodal_override_migration_signature: tuple[str, int, int] | None = None
+
+
+def _multimodal_override_backup_dir() -> Path:
+    """运行配置备份放在用户数据目录，不进入 Git/Mutagen 工作区。"""
+    return Path.home() / ".local" / "share" / "gugu" / "config-backups"
+
+
+def _rename_multimodal_config_fields(value: dict) -> bool:
+    """迁移一个 AI 配置对象中的能力字段；新旧键冲突时拒绝猜测。"""
+    changed = False
+    for old_name, new_name in _MULTIMODAL_CONFIG_RENAMES.items():
+        if old_name not in value:
+            continue
+        if new_name in value and value[new_name] != value[old_name]:
+            raise ValueError(f"多模态配置字段 {old_name} 与 {new_name} 值冲突")
+        value.setdefault(new_name, value[old_name])
+        del value[old_name]
+        changed = True
+
+    overrides = value.get("capability_overrides")
+    if isinstance(overrides, dict) and "vision" in overrides:
+        if "image" in overrides and overrides["image"] != overrides["vision"]:
+            raise ValueError("多模态能力覆盖项 vision 与 image 值冲突")
+        overrides.setdefault("image", overrides["vision"])
+        del overrides["vision"]
+        changed = True
+    return changed
+
+
+def _migrate_multimodal_override() -> None:
+    """首次加载时将已保存的旧能力键原位迁移，并在写入前备份原文件。"""
+    global _multimodal_override_migration_signature
+    try:
+        stat = OVERRIDE_FILE.stat()
+    except FileNotFoundError:
+        return
+    signature = (str(OVERRIDE_FILE.resolve()), stat.st_mtime_ns, stat.st_size)
+    if signature == _multimodal_override_migration_signature:
+        return
+    backup_dir = _multimodal_override_backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(backup_dir, 0o700)
+    lock_path = backup_dir / f".{OVERRIDE_FILE.name}.multimodal-migration.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            stat = OVERRIDE_FILE.stat()
+        except FileNotFoundError:
+            return
+        signature = (str(OVERRIDE_FILE.resolve()), stat.st_mtime_ns, stat.st_size)
+        if signature == _multimodal_override_migration_signature:
+            return
+        original = OVERRIDE_FILE.read_bytes()
+        override = json.loads(original)
+        if not isinstance(override, dict):
+            raise ValueError("配置文件根节点必须是对象")
+
+        changed = False
+        ai = override.get("ai")
+        if ai is not None:
+            if not isinstance(ai, dict):
+                raise ValueError("ai 配置必须是对象")
+            changed |= _rename_multimodal_config_fields(ai)
+
+        presets = override.get("ai_presets")
+        if presets is not None:
+            if not isinstance(presets, dict) or not isinstance(presets.get("items", []), list):
+                raise ValueError("ai_presets 配置格式无效")
+            for item in presets.get("items", []):
+                if not isinstance(item, dict):
+                    raise ValueError("ai_presets.items 项必须是对象")
+                changed |= _rename_multimodal_config_fields(item)
+
+        if not changed:
+            _multimodal_override_migration_signature = signature
+            return
+
+        # 先校验迁移后的相关配置段，再备份并替换；任何异常都不会把损坏配置写回。
+        if ai is not None:
+            AISettings.model_validate(ai)
+        if presets is not None:
+            for item in presets.get("items", []):
+                AIPresetItem.model_validate(item)
+
+        from datetime import datetime, timezone
+        backup_path = backup_dir / (
+            f"{OVERRIDE_FILE.name}.backup-multimodal-"
+            f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}"
+        )
+        backup_fd = os.open(backup_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(backup_fd, "wb") as backup:
+            backup.write(original)
+            backup.flush()
+            os.fsync(backup.fileno())
+        write_override_json(override)
+        stat = OVERRIDE_FILE.stat()
+        _multimodal_override_migration_signature = (
+            str(OVERRIDE_FILE.resolve()), stat.st_mtime_ns, stat.st_size
+        )
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 def invalidate_settings_cache() -> None:

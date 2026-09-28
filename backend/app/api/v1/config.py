@@ -9,10 +9,8 @@ POST  /api/v1/admin/config/init-db           → 手动初始化数据库（建�
 import asyncio
 import base64
 import hashlib
-import io
 import json
 import time
-import wave
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -23,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import FileSyncSettings, get_settings, save_override
 from app.core.redaction import diag_log, redact
 from app.db.session import create_all_tables, reset_engine, get_db
+from app.services.multimodal_probe import make_silent_wav
 from agent.sandbox.docker_runtime import sandbox_readiness
 
 router = APIRouter(prefix="/admin/config", tags=["admin"])
@@ -1019,19 +1018,6 @@ class VoiceTestRequest(BaseModel):
     model: str = ""
 
 
-def _voice_test_wav() -> bytes:
-    """生成短静音 WAV，只用于探测接口，不写入存储。"""
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(16000)
-        # 1 秒有效 PCM，比极短的 0.1 秒静音更容易通过上游音频预检；
-        # 测试只验证请求能被模型接收，不要求返回可识别文本。
-        wav.writeframes(b"\x00\x00" * 16000)
-    return buf.getvalue()
-
-
 @router.post("/test-voice")
 async def test_voice(body: VoiceTestRequest):
     """按当前输入测试语音模型，不保存配置、不写聊天记录。"""
@@ -1050,7 +1036,7 @@ async def test_voice(body: VoiceTestRequest):
     try:
         from agent.voice import transcribe
 
-        audio = base64.b64encode(_voice_test_wav()).decode()
+        audio = base64.b64encode(make_silent_wav(sample_rate=16000, duration_seconds=1)).decode()
         text = await transcribe(
             [{"type": "audio", "mime": "audio/wav", "b64": audio}],
             {"voice": {
@@ -1331,7 +1317,7 @@ async def _memory_cleanup_revision(user_id: str, storage) -> str:
 
 
 async def _mem_cleanup_worker(user_ids: list[str]) -> None:
-    from scripts.refresh_memory import _migrate_daily, _migrate_profile_events, _review_patterns, _split_profile
+    from scripts.maintenance.refresh_memory import _migrate_daily, _migrate_profile_events, _review_patterns, _split_profile
     from agent.memory.store import _key, PATTERN_FILE
     from app.services.storage import get_storage
     from app.core.redis import get_redis
@@ -1436,7 +1422,7 @@ async def memory_cleanup_apply():
     from agent.memory import store
     from agent.memory.store import _key
     from app.services.storage import get_storage
-    from scripts.refresh_memory import _migrate_profile_events
+    from scripts.maintenance.refresh_memory import _migrate_profile_events
     r = get_redis()
     storage = get_storage()
     raw = await r.get(_MEM_CLEANUP_KEY)

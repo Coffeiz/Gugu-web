@@ -17,10 +17,10 @@ class CredentialCreate(BaseModel):
     thinking: Literal["disabled", "adaptive"] | None = None
     reasoning_effort: Literal["", "low", "medium", "high", "max"] | None = None
     reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
-    vision: bool = False
-    vision_video: bool = False
-    vision_audio: bool = False
-    vision_detail: Literal["auto", "low", "high", "original"] = "auto"
+    image: bool = False
+    video: bool = False
+    audio: bool = False
+    image_detail: Literal["auto", "low", "high", "original"] = "auto"
 
 
 class CredentialPatch(BaseModel):
@@ -37,10 +37,10 @@ class CredentialPatch(BaseModel):
     thinking: Literal["disabled", "adaptive"] | None = None
     reasoning_effort: Literal["", "low", "medium", "high", "max"] | None = None
     reasoning_persistence: Literal["off", "summary", "continuation"] | None = None
-    vision: bool | None = None
-    vision_video: bool | None = None
-    vision_audio: bool | None = None
-    vision_detail: Literal["auto", "low", "high", "original"] | None = None
+    image: bool | None = None
+    video: bool | None = None
+    audio: bool | None = None
+    image_detail: Literal["auto", "low", "high", "original"] | None = None
     enabled: bool | None = None
 
 
@@ -53,7 +53,7 @@ class CredentialModelsPreview(BaseModel):
     credential_id: int | None = None
 
 
-class CredentialVisionProbe(CredentialModelsPreview):
+class MediaCapabilityProbe(CredentialModelsPreview):
     dim: Literal["image", "video", "audio"]
 
 

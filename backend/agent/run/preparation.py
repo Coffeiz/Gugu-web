@@ -218,8 +218,8 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     modelctx.mark_user_scope()
     run_config = resolve_run_config(settings, req)
     context_policy = policy_for(req)
-    # 不强切 vision 模型：这轮 pick 到的模型看得了图就识图、看不了就当普通文件存。
-    # 避免硬切到「标了 vision 实则不收图片块」的模型（如 MiniMax 兼容口）。
+    # 不强切模型：这轮 pick 到的模型看得了图就识图、看不了就当普通文件存。
+    # 避免硬切到「声明支持图片、实际不收图片块」的模型（如 MiniMax 兼容口）。
 
     import app.db.session as _sess
     if _sess._engine is None:

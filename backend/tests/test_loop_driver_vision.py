@@ -169,8 +169,8 @@ def test_tool_image_gate_uses_actual_model_vision_setting(monkeypatch):
     """显式开启视觉时，即使 provider capability 尚未探测也不能丢掉图片。"""
     from app.core import chat_attach
 
-    model = SimpleNamespace(provider="openai", vision=True)
-    monkeypatch.setattr(chat_attach, "vision_ready", lambda model_cfg=None: bool(model_cfg.vision))
+    model = SimpleNamespace(provider="openai", image=True)
+    monkeypatch.setattr(chat_attach, "image_ready", lambda model_cfg=None: bool(model_cfg.image))
     assert _allow_tool_images(model) is True
 
 

@@ -21,7 +21,7 @@ class GlmAdapter(ProviderAdapter):
         return model_l.startswith(("glm-4.5", "glm-4.6", "glm-4.7", "glm-5"))
 
     @staticmethod
-    def _supports_vision(model: str) -> bool:
+    def _supports_image(model: str) -> bool:
         model_l = (model or "").strip().lower()
         return model_l.startswith(("glm-4v", "glm-4.1v", "glm-5v"))
 
@@ -32,7 +32,7 @@ class GlmAdapter(ProviderAdapter):
             thinking=self._supports_thinking(model),
             structured_json=True,
             tools=True,
-            vision=self._supports_vision(model),
+            image=self._supports_image(model),
         )
 
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
@@ -56,6 +56,6 @@ class GlmCodingAdapter(GlmAdapter):
     name = "glm-coding"
     default_base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
 
-    def _supports_vision(self, model: str) -> bool:
+    def _supports_image(self, model: str) -> bool:
         # 官方 Coding Plan 接入示例要求关闭图片能力，保持保守声明。
         return False

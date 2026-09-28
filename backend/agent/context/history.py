@@ -344,8 +344,8 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
 
         return [{"role": message.role, "content": format_history_content(message, request)}]
 
-    from app.core.chat_attach import strip_vision_for_history
-    content_json = strip_vision_for_history(content_json)
+    from app.core.chat_attach import strip_image_for_history
+    content_json = strip_image_for_history(content_json)
     blocks = _blocks(content_json)
     if strip_thinking:
         blocks = [block for block in blocks if block.get("type") not in {"thinking", "reasoning_content"}]
@@ -500,8 +500,8 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         if use_anthropic:
             if content_json is not None:
                 from agent.im.context_loader import format_attachment_refs
-                from app.core.chat_attach import strip_vision_for_history
-                content_json = strip_vision_for_history(content_json)
+                from app.core.chat_attach import strip_image_for_history
+                content_json = strip_image_for_history(content_json)
                 attachment_refs = format_attachment_refs(message)
                 blocks = _blocks(content_json)
                 if any(block.get("type") in (

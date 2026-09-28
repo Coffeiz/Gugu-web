@@ -3398,7 +3398,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/agent/llm-presets/probe-vision-preview": {
+    "/api/v1/admin/agent/llm-presets/probe-media-preview": {
         parameters: {
             query?: never;
             header?: never;
@@ -3408,17 +3408,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Probe Vision Preview
+         * Probe Media Preview
          * @description 检测尚未保存的预设草稿，不写入服务端配置。
          */
-        post: operations["probe_vision_preview_api_v1_admin_agent_llm_presets_probe_vision_preview_post"];
+        post: operations["probe_media_preview_api_v1_admin_agent_llm_presets_probe_media_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/agent/llm-presets/{preset_id}/probe-vision": {
+    "/api/v1/admin/agent/llm-presets/{preset_id}/probe-media": {
         parameters: {
             query?: never;
             header?: never;
@@ -3428,13 +3428,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Probe Vision Preset
+         * Probe Media Preset
          * @description 探测预设模型的多模态能力，并把明确结论写回对应字段。
          *
          *     `dim`：image | video | audio，只测单维度；省略则依次测全部三维度。
          *     返回：单维度 → {supported,status,detail,dim}；全维度 → {results:{image:{...},video:{...},audio:{...}}}。
          */
-        post: operations["probe_vision_preset_api_v1_admin_agent_llm_presets__preset_id__probe_vision_post"];
+        post: operations["probe_media_preset_api_v1_admin_agent_llm_presets__preset_id__probe_media_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4494,7 +4494,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/byok/vision-probe": {
+    "/api/v1/byok/media-capability-probe": {
         parameters: {
             query?: never;
             header?: never;
@@ -4504,10 +4504,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Probe Vision
+         * Probe Media Capability
          * @description 检测用户模型的单项多模态能力，不修改配置。
          */
-        post: operations["probe_vision_api_v1_byok_vision_probe_post"];
+        post: operations["probe_media_api_v1_byok_media_capability_probe_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4908,26 +4908,26 @@ export interface components {
              */
             reasoning_persistence: "off" | "summary" | "continuation";
             /**
-             * Vision
+             * Image
              * @default false
              */
-            vision: boolean;
+            image: boolean;
             /**
-             * Vision Video
+             * Video
              * @default false
              */
-            vision_video: boolean;
+            video: boolean;
             /**
-             * Vision Audio
+             * Audio
              * @default false
              */
-            vision_audio: boolean;
+            audio: boolean;
             /**
-             * Vision Detail
+             * Image Detail
              * @default auto
              * @enum {string}
              */
-            vision_detail: "auto" | "low" | "high" | "original";
+            image_detail: "auto" | "low" | "high" | "original";
         };
         /** CredentialModelsPreview */
         CredentialModelsPreview: {
@@ -4978,14 +4978,14 @@ export interface components {
             reasoning_effort?: ("" | "low" | "medium" | "high" | "max") | null;
             /** Reasoning Persistence */
             reasoning_persistence?: ("off" | "summary" | "continuation") | null;
-            /** Vision */
-            vision?: boolean | null;
-            /** Vision Video */
-            vision_video?: boolean | null;
-            /** Vision Audio */
-            vision_audio?: boolean | null;
-            /** Vision Detail */
-            vision_detail?: ("auto" | "low" | "high" | "original") | null;
+            /** Image */
+            image?: boolean | null;
+            /** Video */
+            video?: boolean | null;
+            /** Audio */
+            audio?: boolean | null;
+            /** Image Detail */
+            image_detail?: ("auto" | "low" | "high" | "original") | null;
             /** Enabled */
             enabled?: boolean | null;
         };
@@ -5001,8 +5001,8 @@ export interface components {
             /** Value */
             value: string;
         };
-        /** CredentialVisionProbe */
-        CredentialVisionProbe: {
+        /** MediaCapabilityProbe */
+        MediaCapabilityProbe: {
             /** Provider */
             provider: string;
             /**
@@ -6117,25 +6117,25 @@ export interface components {
              */
             reasoning_persistence: "off" | "summary" | "continuation";
             /**
-             * Vision
+             * Image
              * @default false
              */
-            vision: boolean;
+            image: boolean;
             /**
-             * Vision Detail
+             * Image Detail
              * @default auto
              */
-            vision_detail: string;
+            image_detail: string;
             /**
-             * Vision Video
+             * Video
              * @default false
              */
-            vision_video: boolean;
+            video: boolean;
             /**
-             * Vision Audio
+             * Audio
              * @default false
              */
-            vision_audio: boolean;
+            audio: boolean;
             /**
              * Api Format
              * @default
@@ -6203,14 +6203,14 @@ export interface components {
             reasoning_effort?: string | null;
             /** Reasoning Persistence */
             reasoning_persistence?: ("off" | "summary" | "continuation") | null;
-            /** Vision */
-            vision?: boolean | null;
-            /** Vision Detail */
-            vision_detail?: string | null;
-            /** Vision Video */
-            vision_video?: boolean | null;
-            /** Vision Audio */
-            vision_audio?: boolean | null;
+            /** Image */
+            image?: boolean | null;
+            /** Image Detail */
+            image_detail?: string | null;
+            /** Video */
+            video?: boolean | null;
+            /** Audio */
+            audio?: boolean | null;
             /** Api Format */
             api_format?: string | null;
             /** Ollama Mode */
@@ -7039,8 +7039,8 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
-        /** VisionProbePreview */
-        VisionProbePreview: {
+        /** MediaProbePreview */
+        MediaProbePreview: {
             /** Provider */
             provider: string;
             /**
@@ -13613,7 +13613,7 @@ export interface operations {
             };
         };
     };
-    probe_vision_preview_api_v1_admin_agent_llm_presets_probe_vision_preview_post: {
+    probe_media_preview_api_v1_admin_agent_llm_presets_probe_media_preview_post: {
         parameters: {
             query?: {
                 dim?: string;
@@ -13624,7 +13624,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["VisionProbePreview"];
+                "application/json": components["schemas"]["MediaProbePreview"];
             };
         };
         responses: {
@@ -13648,7 +13648,7 @@ export interface operations {
             };
         };
     };
-    probe_vision_preset_api_v1_admin_agent_llm_presets__preset_id__probe_vision_post: {
+    probe_media_preset_api_v1_admin_agent_llm_presets__preset_id__probe_media_post: {
         parameters: {
             query?: {
                 dim?: string;
@@ -15434,7 +15434,7 @@ export interface operations {
             };
         };
     };
-    probe_vision_api_v1_byok_vision_probe_post: {
+    probe_media_api_v1_byok_media_capability_probe_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -15443,7 +15443,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CredentialVisionProbe"];
+                "application/json": components["schemas"]["MediaCapabilityProbe"];
             };
         };
         responses: {

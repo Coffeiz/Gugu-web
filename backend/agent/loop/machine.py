@@ -20,8 +20,8 @@ def _allow_tool_images(model_cfg: Any) -> bool:
     """判断工具读回的图片能否继续交给本轮实际模型。"""
     from app.core import chat_attach
     # 与当前用户附件 resolve_for_message 使用同一套显式配置/能力判断，不能只看
-    # provider capability snapshot：用户手动开启 vision 时 snapshot 可能仍未探测。
-    return chat_attach.vision_ready(model_cfg)
+    # provider capability snapshot：用户手动开启 image 时 snapshot 可能仍未探测。
+    return chat_attach.image_ready(model_cfg)
 
 
 async def run_loop(

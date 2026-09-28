@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage, User, UserMcpServer
-from app.services import provider_reasoning_state
+from app.services import multimodal_probe, provider_reasoning_state
 
 # 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
 # tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
@@ -814,12 +814,12 @@ async def set_llm_strategy(body: StrategyUpdate, db: AsyncSession = Depends(get_
 # 同步到 `ai`（当前激活段）的字段 + 默认值——create/update/activate 三处共用，**单一来源**：
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
 _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens",
-                 "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "vision", "vision_video",
-                 "vision_detail", "vision_audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
+                 "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "image", "video",
+                 "image_detail", "audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
 _AI_DEFAULTS = {"max_tokens": 8000, "context_tokens": 128000,
-                "thinking": "disabled", "reasoning_effort": "", "reasoning_persistence": "off", "vision": False,
-                "vision_detail": "auto", "vision_video": False, "vision_audio": False, "api_format": "",
+                "thinking": "disabled", "reasoning_effort": "", "reasoning_persistence": "off", "image": False,
+                "image_detail": "auto", "video": False, "audio": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
                 "deployment_mode": "cloud", "local_runtime": "other", "capability_overrides": {},
                 "capability_checked_at": "", "capability_fingerprint": ""}
@@ -841,10 +841,10 @@ class PresetCreate(BaseModel):
     thinking: str = "disabled"
     reasoning_effort: str = ""
     reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
-    vision: bool = False
-    vision_detail: str = "auto"
-    vision_video: bool = False
-    vision_audio: bool = False
+    image: bool = False
+    image_detail: str = "auto"
+    video: bool = False
+    audio: bool = False
     api_format: str = ""
     ollama_mode: str = "local"
     ollama_api_mode: str = "native"
@@ -875,10 +875,10 @@ async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_d
         "thinking": body.thinking,
         "reasoning_effort": body.reasoning_effort,
         "reasoning_persistence": body.reasoning_persistence,
-        "vision": body.vision,
-        "vision_detail": body.vision_detail if body.vision_detail in ("auto", "low", "high", "original") else "auto",
-        "vision_video": body.vision_video,
-        "vision_audio": body.vision_audio,
+        "image": body.image,
+        "image_detail": body.image_detail if body.image_detail in ("auto", "low", "high", "original") else "auto",
+        "video": body.video,
+        "audio": body.audio,
         "api_format": body.api_format,
         "ollama_mode": body.ollama_mode,
         "ollama_api_mode": body.ollama_api_mode,
@@ -909,10 +909,10 @@ class PresetUpdate(BaseModel):
     thinking: str | None = None
     reasoning_effort: str | None = None
     reasoning_persistence: Literal["off", "summary", "continuation"] | None = None
-    vision: bool | None = None
-    vision_detail: str | None = None
-    vision_video: bool | None = None
-    vision_audio: bool | None = None
+    image: bool | None = None
+    image_detail: str | None = None
+    video: bool | None = None
+    audio: bool | None = None
     api_format: str | None = None
     ollama_mode: str | None = None
     ollama_api_mode: str | None = None
@@ -954,14 +954,14 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession
         item["reasoning_effort"] = body.reasoning_effort
     if body.reasoning_persistence is not None:
         item["reasoning_persistence"] = body.reasoning_persistence
-    if body.vision is not None:
-        item["vision"] = body.vision
-    if body.vision_detail is not None:
-        item["vision_detail"] = body.vision_detail if body.vision_detail in ("auto", "low", "high", "original") else "auto"
-    if body.vision_video is not None:
-        item["vision_video"] = body.vision_video
-    if body.vision_audio is not None:
-        item["vision_audio"] = body.vision_audio
+    if body.image is not None:
+        item["image"] = body.image
+    if body.image_detail is not None:
+        item["image_detail"] = body.image_detail if body.image_detail in ("auto", "low", "high", "original") else "auto"
+    if body.video is not None:
+        item["video"] = body.video
+    if body.audio is not None:
+        item["audio"] = body.audio
     if body.api_format is not None:
         item["api_format"] = body.api_format
     if body.ollama_mode is not None:
@@ -1133,7 +1133,7 @@ async def update_capability_overrides(preset_id: str, body: dict[str, bool], db:
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
     if not item:
         raise HTTPException(404, "预设不存在")
-    allowed = {"thinking", "structured_json", "structured_schema", "tools", "parallel_tools", "vision", "audio", "video"}
+    allowed = {"thinking", "structured_json", "structured_schema", "tools", "parallel_tools", "image", "audio", "video"}
     if any(key not in allowed or not isinstance(value, bool) for key, value in body.items()):
         raise HTTPException(400, "能力覆盖字段或值无效")
     item["capability_overrides"] = body
@@ -1217,221 +1217,7 @@ async def preview_llm_preset_models(body: ModelsPreview):
     return {"models": models, "source": "provider"}
 
 
-def _probe_png_b64() -> str:
-    """纯 stdlib 造一张 64×64 实色 PNG 的 base64，用作多模态探测图（不依赖 Pillow）。
-
-    尺寸选择：百炼 qwen 等 OpenAI 兼容厂商对图片有最小尺寸限制（如百炼要求宽/高 >10px），
-    8×8 会被误判成"模型不支持多模态"。64×64 同时满足各家常见下限，又不增加带宽负担。"""
-    import base64
-    import struct
-    import zlib
-    w = h = 64
-    row = b"\x00" + b"\xe0\x40\x40" * w          # 每行：filter 0 + 64 像素(RGB 暗红)
-    idat = zlib.compress(row * h)
-    def _chunk(typ: bytes, data: bytes) -> bytes:
-        body = typ + data
-        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xffffffff)
-    png = (b"\x89PNG\r\n\x1a\n"
-           + _chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))   # 8bit, RGB
-           + _chunk(b"IDAT", idat)
-           + _chunk(b"IEND", b""))
-    return base64.b64encode(png).decode()
-
-
-def _probe_wav_b64() -> str:
-    """纯 stdlib 造一段 0.1s 静音 16bit/8kHz 单声道 WAV 的 base64，用作音频探测（不依赖 ffmpeg）。
-
-    只含 WAV 头 + 静音 PCM，体积极小；用于探测主模型是否接受 input_audio 音频块。"""
-    import base64
-    import struct
-    import wave
-    import io
-    rate = 8000
-    frames = rate // 10                       # 0.1s
-    pcm = b"\x00\x00" * frames                # 静音
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(rate)
-        w.writeframes(pcm)
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-_PROBE_MP4_B64_CACHE: str | None = None
-
-
-def _probe_mp4_b64() -> str:
-    """用 ffmpeg 生成一段 3 秒 320×240 的动态测试视频（testsrc 彩条）并返回 base64，
-    用作视频探测的真实样本（不依赖 PIL/Pillow）。
-
-    缓存到模块级：同一进程内只生成一次。ffmpeg 不可用时抛 RuntimeError，由探测函数降级。
-    百炼/千问等视频理解模型对「图像列表」形式（4 张 PNG）会返回极慢（80s+）且识别不出内容，
-    必须发真实 mp4 才能正确探测视频能力。"""
-    global _PROBE_MP4_B64_CACHE
-    if _PROBE_MP4_B64_CACHE is not None:
-        return _PROBE_MP4_B64_CACHE
-    import base64
-    import os
-    import shutil
-    import subprocess
-    import tempfile
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise RuntimeError("ffmpeg 未安装，无法生成视频探测样本")
-    # 3s / 320x240 / 10fps / libx264 / yuv420p / +faststart，约 16KB。
-    # 百炼/千问要求视频 ≥2s，1s 会被拒（"The video file is too short"）；3s 更稳妥。
-    # mp4 muxer 不支持非 seekable 输出，必须写临时文件再读回。
-    fd, tmp = tempfile.mkstemp(suffix=".mp4")
-    os.close(fd)
-    try:
-        cmd = [ffmpeg, "-y", "-loglevel", "error",
-               "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10",
-               "-c:v", "libx264", "-pix_fmt", "yuv420p",
-               "-movflags", "+faststart", tmp]
-        proc = subprocess.run(cmd, capture_output=True, timeout=30)
-        if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg 生成探测视频失败：{proc.stderr.decode(errors='ignore')[:200]}")
-        with open(tmp, "rb") as f:
-            data = f.read()
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    if not data:
-        raise RuntimeError("ffmpeg 生成的探测视频为空")
-    _PROBE_MP4_B64_CACHE = base64.b64encode(data).decode()
-    return _PROBE_MP4_B64_CACHE
-
-
-async def _do_vision_probe(provider, api_key, base_url, model, api_format="", dim="image") -> tuple:
-    """发一个极小媒体给模型，看接不接受。用真正的 SDK 客户端（与 runner 同款），
-    路径/鉴权头由 SDK 拼，避免手写 URL 在 minimax 这种 base_url 上猜错。
-
-    `dim`：image | video | audio，决定探测哪种媒体块。
-    返回 (supported, status, detail)：True=支持 / False=纯文本 / None=测不准。"""
-    import httpx
-    import inspect
-    from types import SimpleNamespace
-    from agent import providers
-    dim_label = {"image": "图片", "video": "视频", "audio": "音频"}.get(dim, dim)
-    # 适配器解析和客户端构造也放进统一诊断边界。此前这里任一配置/依赖异常
-    # 会在 BYOK 路由被统一改写成 502「检测失败」，用户看不到可行动原因。
-    client = None
-
-    async def close_probe_client() -> None:
-        close = getattr(client, "close", None)
-        if close is not None:
-            try:
-                result = close()
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:
-                pass
-
-    try:
-        _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key,
-                              model=model, api_format=api_format)
-        adapter = providers.adapter_for(_ns)
-        is_anthropic = adapter.protocol_format(_ns) == "anthropic"
-        # 视频理解耗时明显更长，单独放宽 read 超时，避免前端误判为失败。
-        read_timeout = 90.0 if dim == "video" else 25.0
-        timeout = httpx.Timeout(connect=10.0, read=read_timeout, write=10.0, pool=5.0)
-    except Exception as exc:
-        from app.core.redaction import diag_log
-        diag_log("admin.vision_probe.setup", exc)
-        return None, 0, f"检测初始化失败（{type(exc).__name__}），请检查 Provider、协议和 Base URL"
-
-    # 视频在 Anthropic 路（MiniMax M3）是硬编码已知能力，无需探测；其余 Anthropic 路不支持视频块
-    if dim == "video" and is_anthropic:
-        if adapter.supports_video(model):
-            return True, 200, "MiniMax M3 原生支持视频块"
-        return False, 200, "Anthropic 路当前仅 MiniMax M3 支持视频块"
-
-    # MiMo 的 OpenAI 扩展块（video_url / input_audio）是已知能力，直接判定，避免探测格式不匹配误判
-    if not is_anthropic and dim in ("video", "audio"):
-        if (dim == "video" and adapter.supports_video(model)) or (dim == "audio" and adapter.supports_audio(model)):
-            return True, 200, f"MiMo 原生支持{dim_label}输入"
-
-    try:
-        if is_anthropic:
-            client = providers.build_anthropic_client(_ns, timeout)
-            if dim == "image":
-                content = [
-                    {"type": "text", "text": "这张图是什么颜色？用一个词回答。"},
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                                 "data": _probe_png_b64()}},
-                ]
-            elif dim == "audio":
-                content = [
-                    {"type": "text", "text": "这段音频说了什么？用一个词回答。"},
-                    {"type": "input_audio", "source": {"type": "base64", "media_type": "audio/wav",
-                                                       "data": _probe_wav_b64()}},
-                ]
-            else:  # video（Anthropic 路已在上方拦截，这里兜底）
-                return False, 200, "Anthropic 路不支持视频探测"
-            await client.messages.create(model=model, max_tokens=16,
-                                         messages=[{"role": "user", "content": content}])
-        else:
-            client = providers.build_openai_client(_ns, timeout)
-            if dim == "image":
-                content = [
-                    {"type": "text", "text": "这张图是什么颜色？用一个词回答。"},
-                    {"type": "image_url", "image_url": {
-                        "url": f"data:image/png;base64,{_probe_png_b64()}", "detail": "auto"}},
-                ]
-            elif dim == "video":
-                # 用真实 mp4（video_url 块）探测视频理解。百炼/千问等对「图像列表」形式
-                # （type=video + 4 张 PNG）会返回极慢（80s+）且识别不出内容，必须发真实视频。
-                # ffmpeg 不可用时降级为纯文本判定（返回 None，提示无法生成样本）。
-                # 首次生成会同步跑 ffmpeg（最长 30s），丢线程池避免阻塞事件循环。
-                try:
-                    mp4_b64 = await asyncio.to_thread(_probe_mp4_b64)
-                except RuntimeError as e:
-                    return None, 200, f"无法生成视频探测样本：{e}"
-                content = [
-                    {"type": "text", "text": "这段视频里发生了什么？用一个词回答。"},
-                    {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{mp4_b64}"},
-                     "fps": 2},
-                ]
-            else:  # audio
-                content = [
-                    {"type": "text", "text": "这段音频说了什么？用一个词回答。"},
-                    {"type": "input_audio", "input_audio": {
-                        "data": f"data:audio/wav;base64,{_probe_wav_b64()}"}},
-                ]
-            await client.chat.completions.create(model=model, max_tokens=16,
-                                                 messages=[{"role": "user", "content": content}])
-        await close_probe_client()
-        return True, 200, f"模型接受了{dim_label}输入"
-    except Exception as e:
-        await close_probe_client()
-        sc = getattr(e, "status_code", None) or 0
-        msg = str(e)[:200]
-        if sc in (400, 422):
-            # 400/422 不一定是「不支持媒体」——也可能来自块格式差异、参数名不兼容、视频长度/格式
-            # 问题、模型服务临时校验错误。只有错误文本明确表达「不支持这种媒体」才判定为纯文本模型；
-            # 无法确定时返回 None（测不准），**不写回配置**，避免把本来支持视频的模型误标成不支持。
-            low = msg.lower()
-            unsupported_hints = (
-                "not support", "unsupported", "does not support", "don't support",
-                "invalid image", "invalid video", "invalid audio",
-                "image not", "video not", "audio not",
-                "media type", "content type", "unrecognized", "unknown field",
-                "image_url", "video_url", "input_audio", "image_urls",
-            )
-            if any(h in low for h in unsupported_hints):
-                return False, sc, f"模型拒绝了{dim_label}输入，应为纯文本模型：{msg}"
-            return None, sc, f"未能判定（{sc}）：{msg}"
-        if sc in (401, 403):
-            return None, sc, f"鉴权失败（{sc}），先确认 Key/连通性再测"
-        if sc == 404:
-            return None, sc, f"模型名或地址不对（{sc}）：{msg}"
-        return None, sc, f"未能判定：{msg}"
-
-
-class VisionProbePreview(BaseModel):
+class MediaProbePreview(BaseModel):
     provider: str
     api_key: str = ""
     base_url: str = ""
@@ -1439,38 +1225,41 @@ class VisionProbePreview(BaseModel):
     api_format: str = ""
 
 
-async def _run_vision_probe(item: dict, dims: list[str]) -> dict:
+async def _run_multimodal_probe(item: dict, dims: list[str]) -> dict:
+    target = multimodal_probe.MultimodalProbeTarget(
+        provider=item.get("provider", "openai"), api_key=item.get("api_key", ""),
+        base_url=item.get("base_url", "").rstrip("/"), model=item.get("model", ""),
+        api_format=item.get("api_format", ""),
+    )
     results = {}
     for d in dims:
-        supported, sc, detail = await _do_vision_probe(
-            item.get("provider", "openai"), item.get("api_key", ""),
-            item.get("base_url", "").rstrip("/"), item.get("model", ""),
-            item.get("api_format", ""), dim=d)
+        supported, sc, detail = await multimodal_probe.probe_multimodal_capability(
+            target, dim=d,
+        )
         results[d] = {"supported": supported, "status": sc, "detail": detail}
     return results
 
 
-def _apply_vision_probe(item: dict, results: dict) -> None:
+def _apply_multimodal_probe(item: dict, results: dict) -> None:
     """只把明确的 True/False 写回能力字段，测不准时保留原值。"""
     for dim, result in results.items():
         supported = result.get("supported")
         if supported is None:
             continue
-        field = "vision" if dim == "image" else f"vision_{dim}"
-        item[field] = bool(supported)
+        item[dim] = bool(supported)
 
 
-@router.post("/llm-presets/probe-vision-preview")
-async def probe_vision_preview(body: VisionProbePreview, dim: str = "image"):
+@router.post("/llm-presets/probe-media-preview")
+async def probe_media_preview(body: MediaProbePreview, dim: str = "image"):
     """检测尚未保存的预设草稿，不写入服务端配置。"""
     if dim not in ("image", "video", "audio"):
         raise HTTPException(400, "dim 仅支持 image/video/audio")
-    results = await _run_vision_probe(body.model_dump(), [dim])
+    results = await _run_multimodal_probe(body.model_dump(), [dim])
     return {"dim": dim, **results[dim]}
 
 
-@router.post("/llm-presets/{preset_id}/probe-vision")
-async def probe_vision_preset(preset_id: str, dim: str = "", db: AsyncSession = Depends(get_db)):
+@router.post("/llm-presets/{preset_id}/probe-media")
+async def probe_media_preset(preset_id: str, dim: str = "", db: AsyncSession = Depends(get_db)):
     """探测预设模型的多模态能力，并把明确结论写回对应字段。
 
     `dim`：image | video | audio，只测单维度；省略则依次测全部三维度。
@@ -1488,8 +1277,8 @@ async def probe_vision_preset(preset_id: str, dim: str = "", db: AsyncSession = 
     from agent.providers import capability_snapshot
     declared_capabilities = capability_snapshot(SimpleNamespace(**item))
 
-    results = await _run_vision_probe(item, dims)
-    _apply_vision_probe(item, results)
+    results = await _run_multimodal_probe(item, dims)
+    _apply_multimodal_probe(item, results)
     if presets.get("active_id") == preset_id:
         override["ai"] = _ai_segment(item)
     _write_override(override)

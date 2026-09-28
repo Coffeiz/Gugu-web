@@ -130,8 +130,8 @@
               </div>
               <div class="option-button-row">
                 <button v-for="detail in imageDetailLevels" :key="detail.key" type="button" class="toggle-btn"
-                  :class="{ active: (draft.vision_detail || 'auto') === detail.key }"
-                  @click="draft.vision_detail = detail.key">{{ detail.label }}</button>
+                  :class="{ active: (draft.image_detail || 'auto') === detail.key }"
+                  @click="draft.image_detail = detail.key">{{ detail.label }}</button>
               </div>
             </div>
 
@@ -154,7 +154,7 @@
               />
             </div>
 
-            <MultimodalCapabilities :model="draft" :dims="visionDims" variant="admin" :probing="probingDim" :probe-label="t('adminLlmUi.detect')" :probing-label="t('adminLlmUi.detecting')" :title="t('adminLlmUi.capabilities')" :hint="t('llmExtraUi.multimodalHint')" @probe="$emit('probe-vision', draft.id, $event)" />
+            <MultimodalCapabilities :model="draft" :dims="mediaDimensions" variant="admin" :probing="probingDim" :probe-label="t('adminLlmUi.detect')" :probing-label="t('adminLlmUi.detecting')" :title="t('adminLlmUi.capabilities')" :hint="t('llmExtraUi.multimodalHint')" @probe="$emit('probe-media', draft.id, $event)" />
             <div class="modal-actions">
               <span class="save-hint" :class="{ error: !!error }">{{ error }}</span>
               <button class="btn-ghost" @click="$emit('close')">{{ t('adminLlmUi.cancel') }}</button>
@@ -182,13 +182,13 @@ interface Option { key: string; label: string; hint?: string }
 interface LlmPresetDraft {
   id?: string | number; name: string; provider: string; api_key: string; base_url: string; model: string
   max_tokens: number; context_tokens: number; thinking: string; reasoning_persistence: 'off' | 'summary' | 'continuation'
-  vision: boolean; vision_video: boolean; vision_audio: boolean
+  image: boolean; video: boolean; audio: boolean
   capability_checked_at?: string
   [key: string]: unknown
 }
 const props = defineProps<{
   draft: LlmPresetDraft | null; visible: boolean; isNew: boolean; saving: boolean; error: string
-  providers: Provider[]; apiFormats: Option[]; deepseekEfforts: Option[]; imageDetailLevels: Option[]; visionDims: Option[]
+  providers: Provider[]; apiFormats: Option[]; deepseekEfforts: Option[]; imageDetailLevels: Option[]; mediaDimensions: Option[]
   capabilityLoading: boolean; capabilityResults: Record<string, { status?: string; detail?: string }>; modelLoading: boolean; modelError: string
   modelMenuOpen: boolean; modelOptions: string[]; filteredModels: string[]; probingDim: string | null
 }>()
@@ -264,7 +264,7 @@ const reasoningPersistenceOptions = computed(() => [
 const $emit = defineEmits<{
   (event: 'close'): void; (event: 'after-close'): void; (event: 'save'): void; (event: 'set-provider', key: string): void; (event: 'open-model-menu'): void
   (event: 'fetch-model-list'): void; (event: 'select-model', model: string): void; (event: 'pick-api-format', format: string): void
-  (event: 'set-capability-override', key: string, enabled: boolean): void; (event: 'probe-capabilities', id: string): void; (event: 'probe-vision', id: string | number | undefined, dim: string): void
+  (event: 'set-capability-override', key: string, enabled: boolean): void; (event: 'probe-capabilities', id: string): void; (event: 'probe-media', id: string | number | undefined, dim: string): void
 }>()
 watch(
   () => props.draft && `${props.draft.provider}|${interfaceValue(props.draft)}`,

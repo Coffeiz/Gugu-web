@@ -12,8 +12,9 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import User, UserProviderCredential
 from app.byok.policy import require_byok_enabled
-from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialTestPreview, CredentialVisionProbe
+from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialTestPreview, MediaCapabilityProbe
 from app.byok.service import credential_view, decrypt_value, encrypt_value, get_owned_credential, list_credentials, master_key_status_for_credentials
+from app.services import multimodal_probe
 
 router = APIRouter(prefix="/byok", tags=["byok"])
 
@@ -75,7 +76,7 @@ def _effective_origin(provider: str, base_url: str) -> tuple[str, str, int | Non
 def resolve_preview_key(row: UserProviderCredential | None, *, supplied_key: str,
                         target_provider: str, target_base_url: str,
                         allow_keyless: bool = False) -> str:
-    """草稿试呼（test-preview / models-preview / vision-probe 共用）的 Key 来源裁决。
+    """草稿试呼（test-preview / models-preview / media-capability-probe 共用）的 Key 来源裁决。
 
     已存 Key 只属于它保存时的目的地：显式填写的新 Key 永远优先；目标是无鉴权
     自托管 Embedding 时直接用空串；否则仅当 provider 一致、且经 adapter 解析后的
@@ -128,9 +129,9 @@ async def create_credential(body: CredentialCreate, user: User = Depends(get_cur
         context_tokens=body.context_tokens,
         thinking=body.thinking, reasoning_effort=body.reasoning_effort,
         reasoning_persistence=body.reasoning_persistence,
-        vision=body.vision,
-        vision_video=body.vision_video, vision_audio=body.vision_audio,
-        vision_detail=body.vision_detail,
+        image=body.image,
+        video=body.video, audio=body.audio,
+        image_detail=body.image_detail,
         dimensions=body.dimensions,
     )
     db.add(row)
@@ -167,8 +168,8 @@ async def preview_models(body: CredentialModelsPreview, user: User = Depends(get
     return {"models": models}
 
 
-@router.post("/vision-probe")
-async def probe_vision(body: CredentialVisionProbe, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@router.post("/media-capability-probe")
+async def probe_media(body: MediaCapabilityProbe, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """检测用户模型的单项多模态能力，不修改配置。"""
     _gate()
     row = None
@@ -183,13 +184,16 @@ async def probe_vision(body: CredentialVisionProbe, user: User = Depends(get_cur
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not api_key:
         raise HTTPException(status_code=422, detail="请先填写 API Key 或保存后再检测")
-    from app.api.v1.agent_admin import _do_vision_probe
     try:
-        supported, status, detail = await _do_vision_probe(body.provider, api_key, body.base_url.rstrip("/"), body.model, body.api_format, body.dim)
+        target = multimodal_probe.MultimodalProbeTarget(
+            provider=body.provider, api_key=api_key, base_url=body.base_url.rstrip("/"),
+            model=body.model, api_format=body.api_format,
+        )
+        supported, status, detail = await multimodal_probe.probe_multimodal_capability(target, dim=body.dim)
     except Exception as exc:
         # 只写入受限诊断日志；响应仅暴露异常类型，不泄漏 URL、Key 或上游正文。
         from app.core.redaction import diag_log
-        diag_log("byok.vision_probe", exc)
+        diag_log("byok.media_capability_probe", exc)
         raise HTTPException(status_code=502, detail=f"多模态能力检测失败（{type(exc).__name__}），请检查配置") from exc
     return {"dim": body.dim, "supported": supported, "status": status, "detail": detail}
 
@@ -243,7 +247,7 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
         ))).scalars().all()
         for item in siblings:
             item.enabled = False
-    for field in ("provider", "api_format", "base_url", "model", "dimensions", "max_tokens", "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "vision", "vision_video", "vision_audio", "vision_detail", "enabled"):
+    for field in ("provider", "api_format", "base_url", "model", "dimensions", "max_tokens", "context_tokens", "thinking", "reasoning_effort", "reasoning_persistence", "image", "video", "audio", "image_detail", "enabled"):
         value = getattr(body, field)
         if value is not None:
             setattr(row, field, value)

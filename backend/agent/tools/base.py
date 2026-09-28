@@ -768,8 +768,8 @@ class SkillRegistry:
         if isinstance(result, dict) and "_media_content" in result:
             return result.pop("_media_content"), None
 
-        if isinstance(result, dict) and "_vision_image" in result:
-            block = result.pop("_vision_image")
+        if isinstance(result, dict) and "_image_block" in result:
+            block = result.pop("_image_block")
             note = result.get("note", "")
             content = ([{"type": "text", "text": note}] if note else []) + [block]
             return content, None
