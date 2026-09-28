@@ -12,10 +12,10 @@
 
     <SandboxRuntimeStatus :status="status" :can-enable="canEnable" />
 
-    <section class="section-wrap">
-      <div class="section-head">
-        <span class="section-label">{{ t('adminSandbox.config') }}</span>
-        <span class="section-desc">{{ t('adminSandbox.configHint') }}</span>
+    <section class="sandbox-config-section">
+      <div class="sandbox-config-section__head">
+        <span class="sandbox-config-section__label">{{ t('adminSandbox.config') }}</span>
+        <span class="sandbox-config-section__desc">{{ t('adminSandbox.configHint') }}</span>
       </div>
       <div class="panel-card">
       <div class="config-row"><span>{{ t('adminSandbox.image') }}</span><code>{{ status.image }}</code></div>
@@ -278,6 +278,10 @@ onMounted(async () => {
 .page-title-block { display: flex; flex-direction: column; }
 .page-title { margin: 0; color: var(--content-primary); font-size: 22px; font-weight: 700; line-height: 1.2; }
 .page-desc { margin-top: 6px; color: var(--content-tertiary); font-size: 12px; }
+.sandbox-config-section { min-width: 0; padding: 20px 36px 0; }
+.sandbox-config-section__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; min-width: 0; margin-bottom: 10px; }
+.sandbox-config-section__label { flex: 0 0 auto; color: var(--content-primary); font-size: 13px; font-weight: 600; }
+.sandbox-config-section__desc { flex: 1 1 280px; min-width: 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .panel-card { padding: 22px 24px; border: 1px solid var(--panel-glass-border); border-radius: var(--radius-lg); background: var(--panel-glass-bg); box-shadow: var(--elevation-card); color: var(--content-primary); backdrop-filter: var(--panel-glass-blur); -webkit-backdrop-filter: var(--panel-glass-blur); }
 .section-note { margin: 10px 0 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.6; }
 .config-row span { display: block; color: var(--content-tertiary); font-size: 12px; }
@@ -305,7 +309,7 @@ onMounted(async () => {
 .action-message { margin-right: auto; color: var(--status-success); font-size: 12px; }
 .action-message.error { color: var(--status-danger); }
 .error-message { margin: 16px 36px 0; color: var(--status-danger); font-size: 12px; }
-@media (max-width: 760px) { .page-header { padding-left: 20px; padding-right: 20px; } .section-wrap { padding-left: 20px; padding-right: 20px; } .error-message { margin-left: 20px; margin-right: 20px; } }
+@media (max-width: 760px) { .page-header { padding-left: 20px; padding-right: 20px; } .section-wrap, .sandbox-config-section { padding-left: 20px; padding-right: 20px; } .error-message { margin-left: 20px; margin-right: 20px; } }
 @media (max-width: 520px) { .page-header { flex-direction: column; gap: 12px; } .page-header .app-action-button { align-self: flex-start; } }
 @media (max-width: 620px) { .egress-input-row { align-items: stretch; flex-wrap: wrap; } .egress-input { flex-basis: 100%; } }
 </style>
