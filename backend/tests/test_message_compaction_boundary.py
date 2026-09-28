@@ -14,6 +14,16 @@ from agent.context.canonical_tool_history import render_events_for_provider
 MODEL_CFG = SimpleNamespace(context_tokens=100, max_tokens=20)
 
 
+def _history_beyond_protected_window():
+    history = []
+    for index in range(12):
+        history.extend([
+            {"role": "user", "content": f"旧消息{index}" * 80},
+            {"role": "assistant", "content": f"旧回复{index}" * 80},
+        ])
+    return history
+
+
 def test_assembly_marks_snapshot_prefix():
     messages = assemble(
         fixed_parts=[{"role": "system", "content": "固定系统"},
@@ -58,8 +68,7 @@ def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
     messages = [
         {"role": "system", "content": "固定系统"},
         {"role": "user", "content": "固定 session info"},
-        {"role": "user", "content": "旧消息" * 80},
-        {"role": "assistant", "content": "旧回复" * 80},
+        *_history_beyond_protected_window(),
         {"role": "user", "content": "当前消息"},
     ]
 
@@ -174,8 +183,7 @@ def test_inline_and_persisted_summary_keep_identical_provider_prefix(monkeypatch
     messages = [
         {"role": "system", "content": "固定系统"},
         {"role": "user", "content": "固定 snapshot"},
-        {"role": "user", "content": "旧消息" * 80},
-        {"role": "assistant", "content": "旧回复" * 80},
+        *_history_beyond_protected_window(),
         {"role": "user", "content": "当前消息"},
     ]
 
