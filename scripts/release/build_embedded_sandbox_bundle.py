@@ -36,7 +36,6 @@ class BundleBuildSpec:
     output: Path
     manifest_path: Path
     images: tuple[BundleImageSpec, ...]
-    source_revision: str | None = None
 
 
 def _inspect_image(image: str, digest: str, docker: str, run: Callable) -> None:
@@ -62,9 +61,8 @@ def _inspect_image(image: str, digest: str, docker: str, run: Callable) -> None:
     repo_digests = image_info.get("RepoDigests") or []
     if not isinstance(repo_digests, list) or any(not isinstance(item, str) for item in repo_digests):
         raise BundleBuildError(f"本地镜像 RepoDigest 无效：{image}")
-    matches_repo_digest = any(item.endswith("@" + digest) for item in repo_digests)
-    if not matches_repo_digest and image_info["Id"] != digest:
-        raise BundleBuildError(f"本地镜像摘要与 RepoDigest/image ID 不匹配：{image}")
+    if repo_digests and not any(item.endswith("@" + digest) for item in repo_digests):
+        raise BundleBuildError(f"本地镜像 RepoDigest 与构建摘要不匹配：{image}")
 
 
 def _archive_record(archive_manifest: list, image: BundleImageSpec) -> dict:
@@ -179,8 +177,6 @@ def build_bundle(
         or len({image.name for image in images}) != len(images)
     ):
         raise BundleBuildError("bundle 镜像引用无效或重复")
-    if spec.source_revision is not None and not re.fullmatch(r"[0-9a-f]{40,64}", spec.source_revision):
-        raise BundleBuildError("bundle 源码提交 SHA 无效")
 
     for image in images:
         _inspect_image(image.name, image.digest, docker, run)
@@ -200,7 +196,6 @@ def build_bundle(
         payload = {
             "schema_version": 2,
             "archive_sha256": _sha256(archive_tmp),
-            **({"source_revision": spec.source_revision} if spec.source_revision else {}),
             "images": [
                 {
                     "role": image.role,
@@ -232,7 +227,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sandbox-digest", required=True)
     parser.add_argument("--egress-proxy-image", required=True)
     parser.add_argument("--egress-proxy-digest", required=True)
-    parser.add_argument("--source-revision")
     args = parser.parse_args(argv)
     try:
         build_bundle(
@@ -243,7 +237,6 @@ def main(argv: list[str] | None = None) -> int:
                     BundleImageSpec("sandbox", args.sandbox_image, args.sandbox_digest),
                     BundleImageSpec("egress-proxy", args.egress_proxy_image, args.egress_proxy_digest),
                 ),
-                source_revision=args.source_revision,
             ),
         )
     except BundleBuildError as exc:

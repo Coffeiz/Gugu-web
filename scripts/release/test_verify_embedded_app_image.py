@@ -31,7 +31,6 @@ class DockerRunner:
         self.candidate = candidate or _image(["sha256:base-layer", "sha256:bundle-layer"])
         self.fail_at = fail_at
         self.calls = []
-        self.source_revision = "a" * 40
 
     def __call__(self, argv, **_kwargs):
         self.calls.append(argv)
@@ -81,11 +80,7 @@ class DockerRunner:
                 {"name": "proxy:test", "digest": "sha256:digest", "image_id": "sha256:proxy", "role": "egress-proxy"},
             ]
             code = 1 if self.fail_at == "manifest" else 0
-            return SimpleNamespace(
-                returncode=code,
-                stdout=json.dumps({"images": images, "source_revision": self.source_revision}),
-                stderr="",
-            )
+            return SimpleNamespace(returncode=code, stdout=json.dumps(images), stderr="")
         code = 1 if self.fail_at == "shell" else 0
         return SimpleNamespace(returncode=code, stdout="shell-smoke-ok", stderr="")
 
@@ -141,17 +136,4 @@ def test_verifier_rejects_loaded_image_when_id_and_repo_digest_mismatch():
             [{"name": "sandbox:test", "digest": "sha256:digest", "image_id": "sha256:config"}],
             "/usr/bin/docker",
             runner,
-        )
-
-
-def test_verifier_rejects_bundle_from_another_source_revision(monkeypatch):
-    monkeypatch.setattr(verifier.shutil, "which", lambda _name: "/usr/bin/docker")
-    runner = DockerRunner()
-
-    with pytest.raises(verifier.ImageVerificationError, match="不属于本次源码提交"):
-        verifier.verify_embedded_app_image(
-            "base:ci",
-            "candidate:ci",
-            expected_source_revision="b" * 40,
-            run=runner,
         )

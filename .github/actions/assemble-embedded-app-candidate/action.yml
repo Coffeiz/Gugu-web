@@ -10,16 +10,16 @@ inputs:
   bundle-artifact:
     description: runtime bundle artifact 名称
     required: true
-  source-revision:
-    description: runtime bundle 必须关联的源码提交 SHA
-    required: true
 outputs:
-  image:
-    description: 已验证候选 app 本地引用
-    value: ${{ inputs.candidate-image }}
+  digest:
+    description: 已验证候选 app 镜像 digest
+    value: ${{ steps.assemble.outputs.digest }}
 runs:
   using: composite
   steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
     - name: Download scanned runtime bundle
       uses: actions/download-artifact@v4
       with:
@@ -27,25 +27,71 @@ runs:
         path: release/embedded-bundle
 
     - name: Assemble bundle layer onto the prebuilt app
+      id: assemble
+      uses: docker/build-push-action@v6
+      with:
+        context: release/embedded-bundle
+        file: Dockerfile.sandbox-bundle
+        platforms: linux/amd64
+        push: true
+        load: true
+        tags: ${{ inputs.candidate-image }}
+        build-args: |
+          APP_IMAGE=${{ inputs.base-image }}
+
+    - name: Pull base image for exact config comparison
       shell: bash
       env:
         BASE_IMAGE: ${{ inputs.base-image }}
-        CANDIDATE_IMAGE: ${{ inputs.candidate-image }}
-      run: >-
-        docker build --platform linux/amd64
-        --file Dockerfile.sandbox-bundle
-        --build-arg "APP_IMAGE=$BASE_IMAGE"
-        --tag "$CANDIDATE_IMAGE"
-        release/embedded-bundle
+      run: docker pull "$BASE_IMAGE"
 
     - name: Verify candidate preserves app config and bundle integrity
       shell: bash
       env:
         BASE_IMAGE: ${{ inputs.base-image }}
         CANDIDATE_IMAGE: ${{ inputs.candidate-image }}
-        SOURCE_REVISION: ${{ inputs.source-revision }}
-      run: >-
-        python3 scripts/release/verify_embedded_app_image.py
-        --base "$BASE_IMAGE"
-        --candidate "$CANDIDATE_IMAGE"
-        --expected-source-revision "$SOURCE_REVISION"
+      run: python3 scripts/release/verify_embedded_app_image.py --base "$BASE_IMAGE" --candidate "$CANDIDATE_IMAGE"
+
+    - name: Install crane for compressed size measurement
+      shell: bash
+      run: |
+        version="v0.20.3"
+        curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${version}/go-containerregistry_Linux_x86_64.tar.gz" \
+          | tar -xz -C /usr/local/bin crane
+        crane version
+
+    - name: Record candidate digest and compressed size delta
+      shell: bash
+      env:
+        BASE_IMAGE: ${{ inputs.base-image }}
+        CANDIDATE_IMAGE: ${{ inputs.candidate-image }}
+      run: |
+        set -euo pipefail
+        crane manifest --platform linux/amd64 "$BASE_IMAGE" > /tmp/gugu-base-manifest.json
+        crane manifest --platform linux/amd64 "$CANDIDATE_IMAGE" > /tmp/gugu-candidate-manifest.json
+        python3 - <<'PY'
+        import json
+        from pathlib import Path
+
+        def compressed_bytes(path):
+            manifest = json.loads(Path(path).read_text(encoding='utf-8'))
+            return int(manifest['config']['size']) + sum(int(layer['size']) for layer in manifest['layers'])
+
+        base = compressed_bytes('/tmp/gugu-base-manifest.json')
+        candidate = compressed_bytes('/tmp/gugu-candidate-manifest.json')
+        delta = candidate - base
+        if delta < 0:
+            raise SystemExit('候选镜像压缩体积小于基础镜像，manifest 对比异常')
+        print(f'基础 app 压缩镜像：{base} bytes')
+        print(f'内置 bundle 增量：{delta} bytes')
+        with open('/tmp/gugu-bundle-size.txt', 'w', encoding='utf-8') as output:
+            output.write(f'{base}\t{delta}\n')
+        PY
+        read -r base_bytes delta_bytes < /tmp/gugu-bundle-size.txt
+        {
+          echo '### 内置 Sandbox 候选镜像'
+          echo "- 候选镜像：$CANDIDATE_IMAGE"
+          echo "- digest：${{ steps.assemble.outputs.digest }}"
+          echo "- 基础 app 压缩体积：$base_bytes bytes"
+          echo "- bundle 压缩增量：$delta_bytes bytes"
+        } >> "$GITHUB_STEP_SUMMARY"

@@ -310,20 +310,15 @@ docker run -d --name gugu \
   -p 9595:9595 \
   -v /absolute/path/on/your/nas/Gugu-data:/data \
   -v /absolute/path/on/your/nas/Gugu-config:/config \
-  -v /var/run/docker.sock:/var/run/docker.sock \
   -e GUGU_DB_PASSWORD=replace-with-a-long-random-password \
   coffeiz/gugu-web:latest
 ```
-
-The unified image starts its embedded sandbox manager by default and includes verified sandbox and egress runtime images. You do not need Compose, a separate `sandboxd`, or a manual image import. The Docker socket must point to the host Docker daemon; without it, Shell remains unavailable and never falls back to executing commands inside the app container.
-
-> **Security:** Mounting `/var/run/docker.sock` grants the container high-privilege control of the host Docker daemon, effectively close to host-root access. Enable this single-container Rootful mode only on a device where the application and its administrators are trusted.
 
 Open <http://localhost:9595>. Bind host directories for `/data` and `/config` so data persists when the container is recreated. `/data` stores the database, user files, and memory; `/config` stores Admin configuration. The container refuses to start without persistent data storage. For temporary evaluation only, `GUGU_ALLOW_ANONYMOUS_DATA=1` explicitly permits an anonymous volume, with a warning in the logs. It always refuses to run with data only in the container's writable layer.
 
 If `SECRET_KEY` is omitted, the image creates a strong random key on first startup and saves it in persistent configuration. If `ADMIN_PASSWORD` is omitted, it generates a random password, stores it in `/data/.env`, and prints it once in the container logs (`docker logs gugu`). Set a strong `ADMIN_PASSWORD` explicitly for an Internet-facing deployment.
 
-The single-container option does not include SearXNG. Its Shell sandbox is enabled by default and requires the host Docker socket mount shown above. In FNOS and similar panels, bind the host `/var/run/docker.sock` to the same path inside the container; if the daemon is unavailable, the Admin sandbox status reports the reason.
+The single-container option does not include SearXNG or the Shell sandbox. Use the integrated Compose setup above when you need web search or sandboxed Shell execution.
 
 ## Configuration locations
 

@@ -232,12 +232,9 @@ ENV DB__HOST=postgres \
     CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
     GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
     GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
-    GUGU_SANDBOX_MANAGER_MODE=embedded \
+    GUGU_SANDBOX_MANAGER_MODE=disabled \
     SANDBOX__ROOTLESS_REQUIRED=false \
-    SANDBOX__ENABLED=true \
-    SANDBOX__EGRESS_ISOLATION_ENABLED=true \
-    SANDBOX__EGRESS_PROXY_URL=http://egress-proxy:3128 \
-    DOCKER_HOST=unix:///var/run/docker.sock \
+    SANDBOX__ENABLED=false \
     # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
     GUGU_EMBEDDED_DEPS=1
 
@@ -250,8 +247,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
 
 # 复用与 Dockerfile.prod 相同的入口：等数据库就绪 → 迁移 → 执行传入命令。
 # 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway。
-# 一体化镜像默认托管 embedded sandboxd；没有宿主 Docker Socket 时保持未就绪并拒绝 Shell，
-# 不回退到应用容器本机执行。分体镜像使用独立 Dockerfile 与显式 external 配置。
+# 只有显式设置 GUGU_SANDBOX_MANAGER_MODE=embedded 才由入口另行托管 sandboxd；
+# 未配置时保持关闭，绝不根据 Docker Socket 是否挂载而自动切换模式。
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
 

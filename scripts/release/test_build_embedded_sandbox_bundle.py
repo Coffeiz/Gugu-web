@@ -90,7 +90,7 @@ class DockerRunner:
         return SimpleNamespace(returncode=1, stdout="", stderr="unexpected docker command")
 
 
-def _build_spec(archive_path, manifest_path, *, sandbox_digest=SANDBOX_DIGEST, source_revision="a" * 40):
+def _build_spec(archive_path, manifest_path, *, sandbox_digest=SANDBOX_DIGEST):
     return builder.BundleBuildSpec(
         output=archive_path,
         manifest_path=manifest_path,
@@ -98,7 +98,6 @@ def _build_spec(archive_path, manifest_path, *, sandbox_digest=SANDBOX_DIGEST, s
             builder.BundleImageSpec("sandbox", SANDBOX_REF, sandbox_digest),
             builder.BundleImageSpec("egress-proxy", PROXY_REF, PROXY_DIGEST),
         ),
-        source_revision=source_revision,
     )
 
 
@@ -124,7 +123,6 @@ def test_build_embedded_bundle_records_roles_repo_digests_archive_ids_and_hash(t
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 2
-    assert manifest["source_revision"] == "a" * 40
     assert manifest["archive_sha256"] == "sha256:" + hashlib.sha256(archive_path.read_bytes()).hexdigest()
     assert manifest["images"] == [
         {
@@ -151,24 +149,9 @@ def test_build_embedded_bundle_rejects_digest_not_matching_local_repo_digest(tmp
         sandbox_digest=PROXY_DIGEST,
     )
 
-    _assert_bundle_rejected(monkeypatch, runner, spec, "摘要与 RepoDigest/image ID 不匹配")
+    _assert_bundle_rejected(monkeypatch, runner, spec, "RepoDigest 与构建摘要不匹配")
 
     assert not any(call[1] == "save" for call in runner.calls)
-
-
-def test_build_embedded_bundle_accepts_same_run_local_sandbox_image_id(tmp_path, monkeypatch):
-    runner = DockerRunner()
-    spec = _build_spec(
-        tmp_path / "runtime-images.tar",
-        tmp_path / "manifest.json",
-        sandbox_digest=runner.image_ids[SANDBOX_REF],
-    )
-    monkeypatch.setattr(builder.shutil, "which", lambda _name: "/usr/bin/docker")
-
-    builder.build_bundle(spec, run=runner)
-
-    manifest = json.loads(spec.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["images"][0]["digest"] == runner.image_ids[SANDBOX_REF]
 
 
 def test_build_embedded_bundle_rejects_image_missing_from_docker_save_archive(tmp_path, monkeypatch):
