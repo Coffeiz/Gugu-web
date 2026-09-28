@@ -53,8 +53,6 @@ class RunOutcome:
     errored_text: str = ""
     error_info: LLMErrorPresentation | None = None
     compaction_applied: bool = False
-    run_id: str | None = None
-    round_id: str | None = None
 
     @property
     def interrupted(self) -> bool:
@@ -156,8 +154,6 @@ async def consume_agent_events(
                 continue
             t = evt.get("type")
             if t == "_new_round":
-                outcome.run_id = str(evt.get("run_id") or outcome.run_id or "") or None
-                outcome.round_id = str(evt.get("round_id") or outcome.round_id or "") or None
                 # 这个事件由核心循环在工具结果写回后发出，表示下一轮 LLM
                 # 请求已经被承诺。若生成器随后异常结束，不能把前面已流出的
                 # 工具前置说明误当作最终回复。
@@ -165,8 +161,6 @@ async def consume_agent_events(
                     yield _
                 continuation_pending = True
             elif t == "round_start":
-                outcome.run_id = str(evt.get("run_id") or outcome.run_id or "") or None
-                outcome.round_id = str(evt.get("round_id") or outcome.round_id or "") or None
                 continuation_pending = False
             elif t == "_usage":
                 outcome.tokens_in = evt.get("input", 0)
@@ -262,30 +256,7 @@ async def consume_agent_events(
         raise
 
     if interrupted:
-        # 取消路径需将已生成正文和展示时间线交给渠道持久化收尾；错误路径仍只
-        # 保留错误状态，不能把未完成输出写进对话历史。
-        if outcome.cancelled:
-            cur += san.flush()
-            rounds.append(cur)
-            partial_round = cur.strip()
-            if partial_round:
-                from agent.outbound import sanitize_outbound
-
-                display_round = sanitize.strip_disallowed_emoji(
-                    sanitize_outbound(partial_round)
-                ).strip()
-            else:
-                display_round = ""
-            _close_active_seg(display_round)
-            outcome.text = "\n\n".join(
-                round_text.strip() for round_text in rounds if round_text.strip()
-            )
-            for item in outcome.display_timeline_items:
-                if item.get("kind") == "tool" and item.get("toolStatus") == "running":
-                    item["toolStatus"] = "stopped"
-            for item in outcome.tool_events:
-                if item.get("status") == "running":
-                    item["status"] = "stopped"
+        # 错误/取消终态：保留当前进度供响应装配，不做最终轮拼接。
         outcome.round_texts = [r.strip() for r in rounds if r.strip()]
         if outcome.errored:
             outcome.text = outcome.errored_text

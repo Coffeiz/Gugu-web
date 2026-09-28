@@ -415,8 +415,7 @@ async def test_mid_stream_abort_marks_span_cancelled(monkeypatch, loopscope_hook
         calls["n"] += 1
         return calls["n"] >= 2
 
-    from agent.runtime.cancellation import RunCancellation
-    monkeypatch.setattr(RunCancellation, "is_requested", fake_cancel)
+    monkeypatch.setattr(core, "_im_cancelled", fake_cancel)
 
     run = _ScopeRun(
         id="run-test-cancel", trace_id="trace-test",

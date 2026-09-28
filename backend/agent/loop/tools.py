@@ -113,11 +113,6 @@ async def dispatch_in_session(
         skill_state=skill_state,
     )
     try:
-        from agent.runtime.cancellation import RunCancellation
-
-        return await RunCancellation(session_id).dispatch(
-            lambda: registry.dispatch(user_id, target, dispatch_input),
-            request_id=run_id,
-        )
+        return await registry.dispatch(user_id, target, dispatch_input)
     finally:
         reset_dispatch_session(_dispatch_token)

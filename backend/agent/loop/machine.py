@@ -71,9 +71,6 @@ async def run_loop(
                 _core._log.warning("[anthropic] 请求历史已归一化：消息数 %s -> %s",
                               before_count, after_count)
         from agent.tools import registry as tool_registry
-        from agent.runtime.cancellation import RunCancellation, RunCancellationRequested
-
-        cancellation = RunCancellation(session_id)
         tool_snapshot = tool_registry.snapshot_with_extras(tuple(runner.dynamic_tools.values()))
         initial_tool_names = runner.tool_names
         if (
@@ -184,7 +181,6 @@ async def run_loop(
                         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
                         protected_from=protected_from,
                         protected_anchor_index=run_start_index,
-                        protected_previous_from=getattr(messages, "protected_history_start", None),
                         model_cfg=ai,
                         system_text=system_text,
                         # 分支要带上本 run 的工具声明，provider 才算得出同一份可缓存
@@ -234,8 +230,6 @@ async def run_loop(
             provider_compacted = True
             if hasattr(messages, "replace_conversation"):
                 messages.replace_conversation(compacted_messages)
-                if hasattr(result, "previous_protected_start_index"):
-                    messages.protected_history_start = result.previous_protected_start_index
             else:
                 messages = compacted_messages
             if getattr(result, "anchor_index", None) is not None:
@@ -272,13 +266,10 @@ async def run_loop(
                 messages, system_text or "", getattr(ai, "context_tokens", 256000),
                 protected_from=protected_from,
                 protected_anchor_index=run_start_index,
-                protected_previous_from=getattr(messages, "protected_history_start", None),
             )
             if not result.changed:
                 return False
             provider_compacted = True
-            if hasattr(messages, "replace_conversation") and result.previous_protected_start_index is not None:
-                messages.protected_history_start = result.previous_protected_start_index
             if getattr(result, "anchor_index", None) is not None:
                 run_start_index = result.anchor_index
             protected_start_index = getattr(result, "protected_start_index", None)
@@ -299,7 +290,7 @@ async def run_loop(
             return True
 
         def usage_compaction_due() -> bool:
-            # 触发阈值判定归 loop/rounds；压缩执行仍归 context 模块。
+            # 90% 阈值判定归 loop/rounds（PRD-LLM-25 LLM25-006）；压缩执行仍归 context 模块。
             conversation = getattr(messages, "conversation", messages)
             return _core.loop_rounds.usage_compaction_due(
                 run_context_usage=run_context_usage,
@@ -308,18 +299,18 @@ async def run_loop(
             )
 
         async def compact_after_usage_threshold() -> bool:
-            """统一在 provider 实际输入达到压缩触发线后压缩旧 history。"""
+            """统一在 provider usage 达到 90% 后压缩旧 history。"""
             nonlocal messages, last_compaction_no_progress_length
-            # 触发线只在 provider usage 层维护一份，避免 core 复制预算语义。
+            # 90% 观察线只在 provider usage 层维护一份，避免 core 再复制预算语义。
             if not usage_compaction_due():
                 return False
             if await compact_context_now():
                 return True
             if await apply_deterministic_compaction_fallback("usage_threshold_fallback"):
-                _core._log.warning("[core] provider usage 达到压缩触发线但摘要压缩未生效，执行确定性裁切")
+                _core._log.warning("[core] provider usage 达到 90% 但摘要压缩未生效，执行确定性裁切")
                 return True
             last_compaction_no_progress_length = len(getattr(messages, "conversation", messages))
-            _core._log.error("[core] provider usage 达到压缩触发线，摘要和确定性裁切均未生效")
+            _core._log.error("[core] provider usage 达到 90%，摘要和确定性裁切均未生效")
             return False
 
         _context_compaction_event = [None]
@@ -338,7 +329,7 @@ async def run_loop(
             else:
                 task_rounds += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
-            if await cancellation.is_requested():
+            if await _core._im_cancelled(session_id):
                 yield f"data: {_core.json.dumps({'type': '_cancelled'})}\n\n"
                 return
 
@@ -404,7 +395,7 @@ async def run_loop(
                             # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
                             # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
                             _tok += 1
-                            if _tok % _core._CANCEL_CHECK_EVERY == 0 and await cancellation.is_requested():
+                            if _tok % _core._CANCEL_CHECK_EVERY == 0 and await _core._im_cancelled(session_id):
                                 yield f"data: {_core.json.dumps({'type': '_cancelled'})}\n\n"
                                 # 显式关掉 run_round 生成器：Python 3.14 下 async for 提前退出时
                                 # close 会被推迟到 GC，LoopScope 的 span 会一直挂着 running。
@@ -617,11 +608,7 @@ async def run_loop(
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 dispatched = []
                 pending_interaction = None
-                cancelled_during_batch = False
                 for call_index, tc in enumerate(result.tool_calls):
-                    if await cancellation.is_requested():
-                        cancelled_during_batch = True
-                        break
                     raw_call_name = getattr(tc, "name", None)
                     dispatch_target, dispatch_input, protocol_error = _core._resolve_tool_call(
                         raw_call_name, getattr(tc, "input", None)
@@ -714,26 +701,11 @@ async def run_loop(
                         }, ensure_ascii=False)
                         artifact = None
                     else:
-                        try:
-                            res, artifact = await _core._dispatch_in_session(
-                                user_id, dispatch_target, dispatch_input,
-                                session_id=session_id, session=session, run_id=run_id,
-                                tool_snapshot=tool_snapshot, skill_state=loaded_skill_slugs,
-                            )
-                        except RunCancellationRequested:
-                            cancelled_during_batch = True
-                            res = _core.json.dumps(
-                                {"status": "cancelled", "message": "用户已中断当前操作。"},
-                                ensure_ascii=False,
-                            )
-                            artifact = None
-                            yield stream_event(
-                                "tool_done", round_id=round_id, tool_call_id=tool_call_id,
-                                name=effective_tool_name, label=label, verify=verify_mode,
-                                status="stopped", result=res,
-                            )
-                            dispatched.append((tc, res))
-                            break
+                        res, artifact = await _core._dispatch_in_session(
+                            user_id, dispatch_target, dispatch_input,
+                            session_id=session_id, session=session, run_id=run_id,
+                            tool_snapshot=tool_snapshot, skill_state=loaded_skill_slugs,
+                        )
                         if skill_slug and _core._is_successful_tool_result(res):
                             try:
                                 payload = _core.json.loads(res) if isinstance(res, str) else res
@@ -956,16 +928,13 @@ async def run_loop(
                             if tool is not None:
                                 add_event(tool_schema_event(tool))
                 messages.append_batch(batch)
-                if cancelled_during_batch:
-                    yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
-                    return
                 if pending_interaction is not None:
                     from app.services.interactions import wait_for_resolution
                     pending_tool_call_id = pending_interaction.tool_call_id
                     answer = await wait_for_resolution(
                         user_id=user_id, prompt_id=pending_interaction.prompt_id,
                         heartbeat=lambda: _core.genstream.touch(session_id),
-                        cancel_check=cancellation.is_requested,
+                        cancel_check=lambda: _core._im_cancelled(session_id),
                     )
                     if _core._user_cancel(answer):
                         # 用户在交互卡上主动点「取消」＝正常收尾，不是异常终止。先把取消
@@ -1013,19 +982,6 @@ async def run_loop(
                                 session_id=session_id, session=session, run_id=run_id,
                                 tool_snapshot=tool_snapshot, skill_state=loaded_skill_slugs,
                             )
-                        except RunCancellationRequested:
-                            replay_payload = {"status": "cancelled"}
-                            _core._replace_tool_result(
-                                messages,
-                                tool_call_id=pending_interaction.tool_call_id,
-                                result=replay_payload,
-                            )
-                            yield stream_event("tool_done", **_core._pending_tool_signal(
-                                "stopped", replay_payload, pending_interaction,
-                                verify=verify_mode,
-                            ))
-                            yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
-                            return
                         except Exception as exc:
                             _core.diag_log("agent.core.confirm_replay", exc)
                             executed, artifact = {"status": "error", "text": "确认后执行失败，请重新发起操作。"}, None
@@ -1104,7 +1060,7 @@ async def run_loop(
                                     user_id=user_id,
                                     prompt_id=prompt.id,
                                     heartbeat=lambda: _core.genstream.touch(session_id),
-                                    cancel_check=cancellation.is_requested,
+                                    cancel_check=lambda: _core._im_cancelled(session_id),
                                 )
                                 if _core._user_cancel(answer) or (
                                     isinstance(answer, dict) and answer.get("status") == "cancelled"

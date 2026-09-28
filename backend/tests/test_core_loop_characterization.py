@@ -1,11 +1,20 @@
-"""Agent Loop 统一状态机的行为回归测试。
+"""`LLMRunner._run_anthropic`/`_run_openai` 主循环特征测试（characterization tests）。
 
-当前主循环由 `agent.loop.machine.run_loop` 执行，`LLMRunner` 保留兼容入口，
-各 provider 的请求轮次由 LoopDriver 驱动。本文件覆盖工具续轮、核验守卫、取消、
-压缩与空回复处理等关键行为，防止后续调整状态机或 provider 边界时引入回归。
+PRD-LLM-1 Phase 2 前置：这两条循环各自完整实现工具调用/核实轮/防幻觉守卫控制流，
+重复约 90%，是下一步"合并成一条循环 + provider 适配器提供标准化流"的目标，但现状
+**没有任何端到端测试**——贸然合并的风险跟"修一个 bug"不对等。这份测试先把现有行为
+钉死，给后续合并提供回归安全网；不改任何主循环代码。
 
-部分用例由原手动冒烟场景迁入；测试通过 `monkeypatch.setattr` 临时替换依赖，
-由 pytest 在用例结束时恢复，避免共享模块状态污染其他测试。
+现有场景（`test_verify_*`/`test_readonly_*`/`test_openai_clean_pass_matches_anthropic`）
+移植自原 `scripts/smoke_self_verify.py`（手动冒烟脚本，原本只能手跑、不进 CI，场景已
+完整迁到这里后已删除，避免两份资产分叉维护）——移植时注意：原脚本直接对模块全局赋值
+（`core._stream_round = fake_stream_round`、`registry.dispatch = fake_dispatch` 等）
+不会自动撤销，混进 pytest 一个进程里跑会污染其它测试文件；这里全部改用
+`monkeypatch.setattr`，测试结束自动复原。
+
+后续场景覆盖三条防幻觉守卫（叙事/意图播报/决策拒绝）、句末冒号续写和空回复兜底——
+这几处正是合并时最容易被悄悄改坏的分支，因为两条循环里
+是逐字复制的同一段判断，合并时任何一次「顺手改一下措辞/顺序」都可能让两路从此不同步。
 """
 import asyncio
 import collections
@@ -414,35 +423,6 @@ async def test_goal_mode_popup_system_cancel_still_emits_cancelled(monkeypatch, 
     assert ev["_cancelled"] == 0
     assert "已完成" in text
     assert n_verify(messages) == 0
-    assert errors == []
-
-
-async def test_run_cancel_stops_remaining_calls_in_same_tool_batch(monkeypatch, dispatched):
-    """Web/IM 共用取消信号命中后，同一 provider 批次的后续工具不会启动。"""
-    from agent.llm import genstream
-
-    original_dispatch = registry.dispatch
-
-    async def cancel_after_first_tool(uid, name, inp):
-        result = await original_dispatch(uid, name, inp)
-        if len(dispatched) == 1:
-            await genstream.request_cancel(774)
-        return result
-
-    monkeypatch.setattr(registry, "dispatch", cancel_after_first_tool)
-    monkeypatch.setattr(registry, "get", lambda name: None)
-    patch_anthropic(monkeypatch, [msg([
-        TU("read_file", "read-1", {"path": "a.txt"}),
-        TU("read_file", "read-2", {"path": "b.txt"}),
-    ])])
-
-    events, _text, errors = await drain(make_runner()._run_anthropic(
-        "u", "sys", [{"role": "user", "content": "读取两个文件"}], AI,
-        session_id=774,
-    ))
-
-    assert dispatched == ["read_file"]
-    assert events["_cancelled"] == 1
     assert errors == []
 
 

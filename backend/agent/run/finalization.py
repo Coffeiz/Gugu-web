@@ -28,13 +28,11 @@ async def finalize_agent_run(
     outcome: RunOutcome,
     *,
     publish_assistant: Callable | None = None,
-    interrupted: bool = False,
 ) -> bool:
     """持久化 + 标题/摘要调度 + 渠道广播 + 反思；返回 im_used_tools 供响应装配。
 
-    正常出口执行完整收尾；显式 ``interrupted=True`` 时只保存中断前已完成的
-    canonical batch、部分正文、展示时间线和用量，不调度标题/摘要/反思。
-    错误出口不应调用本函数。
+    仅在 outcome 未中断（无错误、未取消）时执行；调用方在此之前自行处理
+    取消/错误的终态响应。
     """
     from agent.context.run_finalize import finalize_run
 
@@ -81,8 +79,6 @@ async def finalize_agent_run(
         initial_len=initial_len,
         stance_text=prepared.stance_to_persist,
         user_message_id=getattr(exec_.user_message, "id", None),
-        run_id=outcome.run_id,
-        round_id=outcome.round_id,
         canonical_batches=persistable_canonical_batch_records(messages),
         text=text,
         display_timeline=display_timeline or None,
@@ -92,12 +88,7 @@ async def finalize_agent_run(
         cache_read=outcome.cache_read,
         cache_write=outcome.cache_write,
         compaction_applied=outcome.compaction_applied,
-        interrupted=interrupted,
-        session_exists_required=interrupted,
     )
-
-    if interrupted:
-        return False
 
     # 新会话标题：移出关键路径，后台生成（会话已有首句截断做临时标题，好了再异步升级+推事件）。
     if exec_.is_new_session and text:

@@ -141,43 +141,6 @@ async def test_errored_and_cancelled_exits_skip_persistence(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("entrypoint", ["collect", "stream"])
-async def test_opted_in_interrupted_run_persists_before_cancel_response(monkeypatch, entrypoint):
-    """IM opt-in keeps partial history for both collect and stream without changing defaults."""
-    from agent import runner
-
-    async def fake_prepare(req, *, non_streaming):
-        return _stub_exec(_StubRunner([
-            _sse({"type": "token", "content": "部分正文"}),
-            _sse({"type": "_cancelled"}),
-        ]))
-
-    persisted = []
-
-    async def fake_finalize(*args, interrupted=False, **_kwargs):
-        outcome = args[2]
-        persisted.append((interrupted, outcome.text, list(outcome.round_texts)))
-
-    monkeypatch.setattr(runner, "prepare_agent_run", fake_prepare)
-    monkeypatch.setattr(runner, "finalize_agent_run", fake_finalize)
-    monkeypatch.setattr("agent.llm.llm_select.release", lambda _model: None)
-
-    request = AgentRequest(message="hi", user_id="u1", user_name="小北")
-    if entrypoint == "collect":
-        response = await runner._run_collect_unlocked(request, persist_interrupted=True)
-    else:
-        events = [
-            item async for item in runner._run_stream_unlocked(
-                request, persist_interrupted=True,
-            )
-        ]
-        response = events[-1][1]
-
-    assert response.cancelled is True and response.text == ""
-    assert persisted == [(True, "部分正文", ["部分正文"])]
-
-
-@pytest.mark.asyncio
 async def test_stream_entry_skips_persistence_on_interrupted_continuation(monkeypatch):
     """工具续轮被截断：流式出口同样不得把前置说明伪装成成功回复并持久化。"""
     from agent import runner

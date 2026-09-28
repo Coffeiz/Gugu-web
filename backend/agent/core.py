@@ -223,6 +223,37 @@ def _is_verify_placeholder(text: str) -> bool:
     return len(normalized) <= 16 and any(phrase in normalized for phrase in process_phrases)
 
 
+async def _im_cancelled(session_id: int | None = None) -> bool:
+    """检查 IM 与 Web 的生成取消标记。
+
+    Web 生成脱离 HTTP 请求运行，不能依赖请求断开来取消；它通过 genstream 的
+    session cancel key 在 round/token 边界协作停止。IM 仍保留原有取消来源。
+    """
+    from agent.im import imctx
+    from agent.runtime import runtime_state as rt
+    im = imctx.get_im()
+    cancelled = False
+    if im and im.get("puid"):
+        await rt.refresh_activity(
+            im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
+        )
+        cancelled = await rt.is_cancelled(
+            im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
+        )
+    if cancelled:
+        # 取消标志命中、即将掐断 loop：记录确认（puid 指纹脱敏），供排查「取消是否真的
+        # 中断了生成」。只在真正命中时打，不会刷屏。
+        from agent.security.logsafe import fingerprint
+        from app.core.redaction import diag_log_raw
+        diag_log_raw(
+            "agent.core.im_cancelled_hit",
+            f"platform={im['platform']} puid={fingerprint(im['puid'])}",
+        )
+    if cancelled or session_id is None:
+        return cancelled
+    return await genstream.is_cancelled(session_id)
+
+
 async def _im_set_tool_state(tool_name: str) -> None:
     """据工具名打细粒度状态（web_search→SEARCHING、create_file→GENERATING），
     让网关「还在吗」答得更准。web 路无 imctx 时 no-op。"""
