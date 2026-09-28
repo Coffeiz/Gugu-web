@@ -260,7 +260,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 ##### Phase 1.8.3：执行隔离与资源清理
 
-- [ ] `DEPLOY2-010c` 补齐 Sandbox 执行与 egress 安全边界回归；验收：`network=none`、受控 egress、bundle digest/image ID、临时容器清理，以及执行容器不可访问 Docker Socket 的测试通过。
+- [x] `DEPLOY2-010c` 补齐 Sandbox 执行与 egress 安全边界回归；验收：`network=none`、受控 egress、bundle digest/image ID、临时容器清理，以及执行容器不可访问 Docker Socket 的测试通过。新增真实执行超时回归，验证超时会按本次唯一容器名调用 `docker rm --force`；既有测试覆盖网络、bundle 归档摘要与镜像身份、孤儿容器清理和执行容器不挂 Docker Socket。189 项定向 pytest 通过；本地无 Docker 集成环境，真实容器行为留待 fnOS 阶段验收。
 
 ### Phase 2：在 fnOS 部署测试候选一体化容器
 

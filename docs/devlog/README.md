@@ -6,6 +6,7 @@
 
 ### 2026-09-28
 
+- [PRD-DEPLOY-2 Phase 1.8.3：执行隔离与资源清理回归](./2026-09-28-DEPLOY2-Phase1.8.3-执行隔离与资源清理.md)
 - [PRD-DEPLOY-2 Phase 1.8.2：内置管理器入口生命周期与故障隔离](./2026-09-28-DEPLOY2-Phase1.8.2-内置管理器生命周期.md)
 - [PRD-DEPLOY-2 Phase 1.8.1：部署模式矩阵与 external Rootless 强制](./2026-09-28-DEPLOY2-Phase1.8.1-部署模式矩阵.md)
 - [PRD-DEPLOY-2 Phase 1.7：离线包移除重复沙箱镜像](./2026-09-28-DEPLOY2-Phase1.7-离线包移除重复沙箱镜像.md)
