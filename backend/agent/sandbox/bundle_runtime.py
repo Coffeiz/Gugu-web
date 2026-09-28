@@ -95,21 +95,14 @@ class EmbeddedBundleRuntime:
                 raise BundleManifestError("Docker daemon 不可用，内置沙盒镜像未就绪")
 
             inspected = {image.role: self._inspect_image_id(image) for image in manifest.images}
-            mismatched = [
-                image for image in manifest.images
-                if inspected[image.role] is not None and inspected[image.role] != image.image_id
-            ]
-            if mismatched:
-                raise BundleManifestError("Docker daemon 中的内置沙盒镜像 ID 与 manifest 不匹配")
-
             if any(value is None for value in inspected.values()):
                 archive_path = self.directory / _ARCHIVE_NAME
                 loaded = self._run(("load", "--input", str(archive_path)), timeout_seconds=timeout_seconds)
                 if loaded.returncode != 0:
                     raise BundleManifestError("无法从内置归档导入沙盒运行镜像")
                 for image in manifest.images:
-                    if self._inspect_image_id(image) != image.image_id:
-                        raise BundleManifestError("导入后的沙盒镜像 ID 与 manifest 不匹配")
+                    if self._inspect_image_id(image) is None:
+                        raise BundleManifestError("导入后的沙盒镜像未就绪")
             return manifest
 
     def _run(self, args: tuple[str, ...], *, timeout_seconds: float):

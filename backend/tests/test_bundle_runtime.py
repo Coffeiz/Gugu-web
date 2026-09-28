@@ -41,8 +41,9 @@ def _write_bundle(tmp_path, *, archive=b"verified runtime archive"):
 
 
 class DockerRunner:
-    def __init__(self, image_ids=None):
+    def __init__(self, image_ids=None, *, loaded_image_ids=None):
         self.image_ids = image_ids or {}
+        self.loaded_image_ids = loaded_image_ids or {}
         self.loaded = False
         self.calls = []
 
@@ -59,7 +60,10 @@ class DockerRunner:
             }.get(name)
             image_id = self.image_ids.get(image) if image else None
             if self.loaded and image:
-                image_id = _digest("1" if image == "sandbox" else "2")
+                image_id = self.loaded_image_ids.get(
+                    image,
+                    _digest("1" if image == "sandbox" else "2"),
+                )
             if image_id is None:
                 return SimpleNamespace(returncode=1, stdout="", stderr="not found")
             return SimpleNamespace(
@@ -99,6 +103,16 @@ def test_embedded_bundle_skips_import_when_both_exact_image_ids_are_present(tmp_
 
     assert runner.loaded is False
     assert not any(command[:1] == ("load",) for command in runner.calls)
+
+
+def test_embedded_bundle_accepts_docker29_image_ids_after_archive_import(tmp_path):
+    _write_bundle(tmp_path)
+    runner = DockerRunner(loaded_image_ids={"sandbox": _digest("a"), "egress-proxy": _digest("b")})
+    runtime = EmbeddedBundleRuntime(tmp_path, docker_path="docker", runner=runner)
+
+    runtime.ensure_images()
+
+    assert runner.loaded
 
 
 def test_embedded_bundle_rejects_corrupt_archive_before_docker_access(tmp_path):
