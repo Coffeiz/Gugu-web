@@ -246,7 +246,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 #### Phase 1.7：离线分发包收敛
 
-- [ ] `DEPLOY2-009` 调整离线分发包；验收：app 已内嵌的 sandbox/egress runtime 不再重复打包，离线导入后仍可完成 bundle 摘要与镜像 ID 校验。
+- [x] `DEPLOY2-009` 调整离线分发包；验收：离线 Compose tar 只重复分发 app 与可选 SearXNG，不再额外携带已内嵌于 app 的 sandbox/egress runtime 或外置 manifest；app 首次启动仍通过镜像内部 manifest 校验归档摘要和 image ID，再按需导入目标 daemon。builder、发布 workflow 和回归测试同一提交收敛。
 
 #### Phase 1.8：集成回归
 

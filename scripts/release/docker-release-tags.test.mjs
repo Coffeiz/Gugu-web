@@ -47,11 +47,14 @@ test('默认和离线 Compose 使用内置沙箱，生产分体 Compose 只连�
     'app 基础镜像仍不包含 bundle；它由候选组装层单独追加')
 })
 
-test('正式发布提供单 tar 离线沙盒 bundle', async () => {
+test('正式发布的离线 Compose bundle 不重复携带 app 内置沙箱镜像', async () => {
   const workflow = await readFile(workflowPath, 'utf8')
-  assert.match(workflow, /offline-bundle:/)
-  assert.match(workflow, /build-offline-sandbox-bundle\.sh/)
-  assert.match(workflow, /actions\/upload-artifact@v4/)
+  const offlineJob = workflow.slice(workflow.indexOf('\n  offline-bundle:'))
+  assert.match(offlineJob, /build-offline-sandbox-bundle\.sh/)
+  assert.match(offlineJob, /--image coffeiz\/gugu-web:latest/)
+  assert.match(offlineJob, /--image searxng\/searxng:latest/)
+  assert.doesNotMatch(offlineJob, /gugu-sandbox:latest|ubuntu\/squid|sandbox-bundle-manifest\.json/)
+  assert.match(offlineJob, /actions\/upload-artifact@v4/)
 })
 
 test('app 镜像的动态版本元数据不使文件系统层缓存失效', async () => {

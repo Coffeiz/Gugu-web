@@ -556,27 +556,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Pull published runtime images
+      - name: Pull published app and optional search image
         env:
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
           set -euo pipefail
           docker pull "docker.io/coffeiz/gugu-web:${VERSION}"
-          docker pull "docker.io/coffeiz/gugu-sandbox:${VERSION}"
-          docker pull ubuntu/squid:latest
           docker pull searxng/searxng:latest
           docker tag "docker.io/coffeiz/gugu-web:${VERSION}" coffeiz/gugu-web:latest
-          docker tag "docker.io/coffeiz/gugu-sandbox:${VERSION}" coffeiz/gugu-sandbox:latest
 
       - name: Build one-file offline bundle
         run: |
           mkdir -p release/offline
           bash scripts/release/build-offline-sandbox-bundle.sh \
             --output release/offline/gugu-compose-bundle.tar \
-            --manifest release/offline/sandbox-bundle-manifest.json \
             --image coffeiz/gugu-web:latest \
-            --image coffeiz/gugu-sandbox:latest \
-            --image ubuntu/squid:latest \
             --image searxng/searxng:latest
 
       - name: Upload offline Compose bundle
@@ -585,7 +579,6 @@ jobs:
           name: gugu-compose-bundle-${{ github.ref_name }}
           path: |
             release/offline/gugu-compose-bundle.tar
-            release/offline/sandbox-bundle-manifest.json
             docker-compose.yml
             docker-compose.offline.yml
             searxng/settings.yml
