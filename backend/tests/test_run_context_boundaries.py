@@ -96,7 +96,7 @@ async def test_prepare_run_binds_rag_watermark_and_uses_message_time(
         current_text="当前文本",
         images=[],
         media=[],
-        model_cfg=SimpleNamespace(vision_detail="auto"),
+        model_cfg=SimpleNamespace(image_detail="auto"),
         stance_text=None,
         snapshot_injection=None,
         user_message=SimpleNamespace(
@@ -153,7 +153,7 @@ async def test_prepare_run_keeps_reference_context_before_current_text(
         current_text="更新下文档",
         images=[],
         media=[],
-        model_cfg=SimpleNamespace(vision_detail="auto"),
+        model_cfg=SimpleNamespace(image_detail="auto"),
         stance_text=None,
         snapshot_injection=None,
         user_message=SimpleNamespace(
