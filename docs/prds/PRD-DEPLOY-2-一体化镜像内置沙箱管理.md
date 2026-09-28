@@ -256,7 +256,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 ##### Phase 1.8.2：入口生命周期与故障隔离
 
-- [x] `DEPLOY2-010b` 补齐 embedded manager 入口生命周期和启动故障回归；验收：manager 随入口启停；manager、Docker Socket 或 bundle 不可用时 Shell fail-closed、无本地回退，且 manager 故障不导致 Web/数据库被重启。将 supervisor 配置/启动抽为可执行 helper，使用临时目录与 mock supervisor 验证 PID、自动拉起策略和启动失败；入口继续 Web 而不把 manager 纳入关键进程；Shell 回归拒绝本机 fallback，并覆盖 Docker daemon 与 bundle image ID 就绪检查失败。153 项定向 pytest 与 Bash 语法检查通过。
+- [ ] `DEPLOY2-010b` 补齐 embedded manager 入口生命周期和启动故障回归；验收：manager 随入口启停；manager、Docker Socket 或 bundle 不可用时 Shell fail-closed、无本地回退，且 manager 故障不导致 Web/数据库被重启。
 
 ##### Phase 1.8.3：执行隔离与资源清理
 
