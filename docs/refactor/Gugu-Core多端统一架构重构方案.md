@@ -23,7 +23,7 @@
 - Agent Runtime 与业务用例、Provider、工具、交互协议之间的协作边界。
 - Repository / Unit of Work、任务队列、事件通知、对象存储和沙盒等 Port 与 Host Adapter。
 - Web Host 对现有 PostgreSQL、Redis、API、存储及进程的装配。
-- 桌面 Host 的可行性验证，包括本地数据库、存储、队列、认证与运行时打包。
+- 桌面 Host 的可行性验证，包括本地数据库候选方案（PGlite、SQLite）、存储、队列、认证与运行时打包。
 - 协议契约、能力协商、Core/Host/Schema 兼容与测试策略。
 
 ### 本次不做
@@ -64,7 +64,7 @@ API 端点、Web SSE/IM 消息格式、数据库迁移和 Worker 启停属于 Ho
 | --- | --- | --- |
 | 领域与用例 | 领域规则、用例编排、输入/结果语义 | HTTP/IM/UI 请求转换与响应传输 |
 | 身份与授权 | 领域授权规则、资源所有权校验所需的明确上下文 | 登录、凭据验证、Principal 建立及认证会话生命周期 |
-| Repository | 聚合/实体的持久化契约、用例需要的查询语义 | PostgreSQL/SQLite 实现、事务、迁移、连接池 |
+| Repository | 聚合/实体的持久化契约、用例需要的查询语义 | 数据库运行时、事务、迁移、连接与连接池；桌面数据库选型须先经过复杂度验证 |
 | 任务与事件 | 任务/事件的业务语义、重试后果和幂等要求 | Redis Streams、SQLite 队列、本地通知等具体交付机制 |
 | Storage | 文件/对象操作的领域语义 | 本地目录、对象存储、流传输、权限与生命周期 |
 | Agent Runtime | 模型调用与工具循环的编排契约 | Provider/模型客户端、执行进程、资源限制及宿主配置 |
@@ -83,7 +83,9 @@ Repository 契约不能只是一组 CRUD 函数。至少明确：
 
 - 一个用例的事务边界及 Unit of Work 所有者；
 - 唯一约束、并发写入、锁、排序和分页语义；
-- SQLite 与 PostgreSQL 对 JSON、全文搜索、向量查询及隔离级别的差异；
+- SQLite 与 PostgreSQL 的 JSON、全文搜索、向量查询、迁移和并发语义差异；
+- PGlite 对当前 PostgreSQL schema、SQLAlchemy/asyncpg、Alembic 与真实并发工作负载的兼容边界；
+- 同一组代表性用例在 PGlite 与 SQLite 路径上的实现、测试、打包和维护复杂度；
 - 失败/回滚、幂等和数据所有权过滤的统一要求。
 
 领域逻辑不应依赖 ORM 实体；Adapter 将数据库模型转换为 Core 的领域/应用模型。若某查询依赖 PostgreSQL 专有能力，应由明确的查询 Port 表达，不伪装成所有 Adapter 都具备的通用 CRUD。
@@ -110,14 +112,15 @@ Protocol 是 Host 对外的传输契约。需指定 Schema 的唯一事实来源
 
 ### 5.5 桌面运行时
 
-桌面端目标是可独立运行，但 Core 当前属于 Python/Agent 体系，因此需要先完成运行时分发验证：
+桌面端若需要本地优先或离线运行，Core 当前属于 Python/Agent 体系，因此需要先完成运行时与数据库候选方案验证。云客户端 MVP 若仍完全使用云端数据，不以本地数据库选型作为前置条件：
 
 - 采用随应用打包的 Python/sidecar，还是其他运行形态；
+- PGlite（Electron/Node 内嵌运行，并由 Python sidecar 通过受限 socket 访问）与 SQLite（Python/SQLAlchemy 本地文件）的端到端复杂度；
 - macOS 与 Windows 的构建、签名、升级、崩溃恢复和诊断方式；
-- SQLite 文件锁、备份、迁移和多进程访问约束；
+- 本地数据库的持久化、备份、迁移、多进程访问和崩溃恢复约束；
 - 本地身份、密钥保存、文件权限及本机沙盒边界。
 
-该验证是架构可行性门槛，不应留到桌面功能完成后才处理。
+该验证只在桌面范围包含本地数据时构成架构门槛，不应留到本地优先功能完成后才处理；不能仅凭数据库名称或 SQL 表面兼容就认定可以复用现有实现。
 
 ## 6. 迁移原则
 
@@ -139,32 +142,38 @@ Protocol 是 Host 对外的传输契约。需指定 Schema 的唯一事实来源
 
 **闸门**：首个切片边界明确，行为测试能在重构前通过；数据和权限不变量有可验证的测试。
 
-### Phase 1：验证桌面承载方式与冻结基础契约
+### Phase 1：验证桌面承载方式、比较本地数据库复杂度并冻结基础契约
 
-- 完成 Python/Core 运行时在目标桌面平台上的最小启动、通信、日志脱敏、终止和升级 PoC。
+- 先确认目标桌面阶段是否需要本地业务数据库；纯云客户端不因此引入本地数据库。
+- 若需要本地数据库，完成 Python/Core 运行时在目标桌面平台上的最小启动、通信、日志脱敏、终止和升级 PoC。
+- 对 PGlite 与 SQLite 使用同一组代表性业务切片和数据库能力做复杂度验证，不预设选型：
+  - PGlite：验证 Electron/Node 内嵌实例、本地持久化、Python sidecar 到 PGlite Socket Server 的连接、现有驱动与 Alembic 迁移、连接复用和并发事务、扩展、异常退出恢复及跨平台打包。
+  - SQLite：验证 SQLAlchemy/aiosqlite、现有迁移的方言改造、PostgreSQL 专有查询/类型/索引的替代方案、事务与并发限制、备份恢复及跨平台打包。
+  - 两条路径使用同一份能力清单和验收用例；记录改动范围、需维护的专用代码、测试负担、未通过项和实测运行成本。代码行数或“通过测试比例”不能单独作为选型依据。
+- 对照原生 PostgreSQL 作为行为兼容基线；若 PGlite 与 SQLite 均不满足关键语义，再单独评估桌面随包 PostgreSQL 的分发成本。
 - 明确 Repository/Unit of Work、任务队列与事件通知、Principal/tenant、Protocol/Schema 版本契约。
 - 形成 Adapter contract test 的运行方式和本地测试 fixture；测试不读取或覆盖用户运行配置。
 
-**闸门**：桌面运行时可以由干净环境重复构建和启动；契约能区分当前 Web 与桌面实现的语义差异。
+**闸门**：桌面运行时可以由干净环境重复构建和启动；PGlite 与 SQLite 的同口径复杂度验证有可复现结果，关键语义、兼容缺口、维护成本和打包/运行指标均有记录；只有明确选定桌面数据库后，Phase 2 才按所选方案实施。若桌面阶段仍为纯云客户端，则记录本地数据库选型延期，不阻塞云客户端。
 
 ### Phase 2：首个跨 Host 垂直切片
 
 优先选择低风险、持久化边界清晰的项目元数据用例（列出、创建、改名或归档中的最小集合），覆盖：
 
 ```text
-Web API ─┐                         ┌─ PostgreSQL Adapter
+Web API ─┐                         ┌─ PostgreSQL（现有 Web 存储）
          ├─ 同一 Application UseCase
-Desktop ─┘                         └─ SQLite Adapter
+Desktop ─┘                         └─ 已通过 Phase 1 选型闸门的本地持久化路径
 ```
 
-- 提取该用例所需的 Domain/Application 类型和 Repository/Unit of Work Port。
+- 提取该用例所需的 Domain/Application 类型和 Repository/Unit of Work Port；Port 仅表达该用例需要的持久化语义，不为候选数据库预先设计通用 CRUD。
 - Web 保留既有 API DTO 与 PostgreSQL schema，通过 Web Adapter 调用用例。
-- Desktop 通过独立 Host/SQLite Adapter 调用同一用例，不把 SQLAlchemy/Web API 搬进 Core。
-- 为两种 Adapter 跑相同的契约测试，并补权限、事务回滚、并发冲突和重启持久化测试。
+- Desktop 通过所选本地数据库路径调用同一用例，不把 Web API 搬进 Core；是否复用 SQLAlchemy 由 Phase 1 验证结果决定。
+- 为 Web 和所选桌面实现跑相同的业务契约测试，并补权限、事务回滚、并发冲突和重启持久化测试；候选方案未选定前不维护两套生产 Adapter。
 
 若产品优先级不支持该切片在桌面端形成真实可用路径，应先重新选择切片；不得为了证明“多端”而造一个无用户价值的桌面壳。
 
-**闸门**：相同业务输入产生一致领域结果；Web 行为和数据不回归；SQLite 的事务/并发局限得到明示，未被假装等同 PostgreSQL。
+**闸门**：相同业务输入产生一致领域结果；Web 行为和数据不回归；所选本地存储路径的事务、并发、迁移和恢复保证已明确验证，未被假装等同 PostgreSQL。
 
 ### Phase 3：Core 包与渐进依赖治理
 
@@ -227,7 +236,7 @@ Desktop ─┘                         └─ SQLite Adapter
 ### 行为与数据
 
 - 重构前后的 Web 权限、所有权、确认门、事务、响应、任务投递与错误语义有回归覆盖。
-- PostgreSQL/SQLite Adapter 契约测试覆盖创建/查询/更新、事务回滚、并发约束、重启持久化和越权隔离。
+- 桌面存储选型通过后，针对 Web PostgreSQL 与所选桌面路径运行相同的业务契约测试，覆盖创建/查询/更新、事务回滚、并发约束、重启持久化和越权隔离；未选中的候选方案不作为长期兼容承诺。
 - Schema 迁移只由相应 Host 执行；升级、备份和恢复有故障路径测试。
 
 ### 任务、存储与沙盒
@@ -247,7 +256,8 @@ Desktop ─┘                         └─ SQLite Adapter
 | 风险 | 控制措施 |
 | --- | --- |
 | 迁移遗漏 IM、Worker 或 Scheduler 调用方 | 每个切片先做调用入口清单，合并前搜索旧实现引用并跑对应入口回归 |
-| SQLite/PostgreSQL 语义不等价 | 收紧契约、显式声明能力差异，不为“通用”而降低 Web 一致性 |
+| PGlite socket 并发/协议行为与原生 PostgreSQL 有差异 | Phase 1 使用真实 Python 驱动和 Agent 并发负载验证连接复用、事务、断连与恢复；不通过时不选 PGlite |
+| SQLite/PostgreSQL 语义不等价 | 在同口径 PoC 中登记迁移、查询、类型和事务缺口；只在满足产品语义且维护成本可接受时选择 SQLite |
 | 授权上下文丢失或伪造 | Host 建立可信 Principal；Core 用显式 tenant/ownership context；契约测试越权拒绝 |
 | 任务队列可靠性下降 | 保留现有投递行为基线，故障注入验证 ack/retry/idempotency 后再切流 |
 | Core 与 Schema 升级错序 | Host 负责迁移和备份，兼容检查失败时拒绝启动或更新 |
@@ -265,13 +275,15 @@ Desktop ─┘                         └─ SQLite Adapter
 | 是否统一 Web/桌面队列实现 | 不要求统一实现，要求明确且可测的交付契约 | 队列 Port 细节由 ADR 冻结 |
 | Web/桌面是否同步升级 | 不要求同时发布；要求兼容矩阵和失败关闭 | Protocol/Core/Schema 版本策略由 ADR 冻结 |
 | 首个跨 Host 切片 | 建议项目元数据最小用例 | 开始实施前确认产品价值及目标桌面场景 |
+| 桌面本地数据库 | 未定；若桌面阶段需要本地数据，先对 PGlite 与 SQLite 做同口径复杂度验证 | Phase 1 完成迁移/查询/并发/恢复/打包验证后再决定；纯云客户端阶段可延期 |
 | Core 运行时 | 尚未定；先做 Python 运行时打包 PoC | PoC 通过后选择发布形态 |
 
 ## 12. 当前实施状态
 
 - [x] 整理 v2 方案并核对当前仓库依赖形态。
 - [ ] 确认首个桌面产品场景和切片价值。
-- [ ] 完成 Core 运行时分发 PoC。
+- [ ] 确认桌面阶段是否需要本地业务数据库。
+- [ ] 若需要本地数据库，完成 Python/Core 运行时分发 PoC，并对 PGlite 与 SQLite 完成同口径复杂度验证及选型记录。
 - [ ] 冻结 Repository/Unit of Work、队列、身份授权及 Protocol ADR。
 - [ ] 建立首个切片的行为基线与 Adapter contract tests。
 - [ ] 实施 Phase 0–2。
