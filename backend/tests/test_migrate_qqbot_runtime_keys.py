@@ -52,7 +52,7 @@ class FakeRedis:
 
 @pytest.fixture
 def fake_redis(monkeypatch):
-    import scripts.migrate_qqbot_runtime_keys as migrate_mod
+    import scripts.migrations.migrate_qqbot_runtime_keys as migrate_mod
 
     redis = FakeRedis()
     monkeypatch.setattr(migrate_mod, "get_redis", lambda: redis)
@@ -62,7 +62,7 @@ def fake_redis(monkeypatch):
 @pytest.mark.asyncio
 async def test_imreach_platform_suffixed_key_migrates_without_data_loss(fake_redis):
     """imreach:<uid>:qqbot 这类 key 迁移后必须真的搬到 imreach:<uid>:qq，不能被删掉。"""
-    from scripts.migrate_qqbot_runtime_keys import migrate
+    from scripts.migrations.migrate_qqbot_runtime_keys import migrate
 
     payload = json.dumps({"platform": "qqbot", "channel_id": "1", "chat_id": "g1", "puid": "u1"})
     await fake_redis.set("imreach:42:qqbot", payload, ex=1000)
@@ -79,8 +79,8 @@ async def test_imreach_platform_suffixed_key_migrates_without_data_loss(fake_red
 
 @pytest.mark.asyncio
 async def test_imsession_key_migrates():
-    from scripts.migrate_qqbot_runtime_keys import migrate
-    import scripts.migrate_qqbot_runtime_keys as migrate_mod
+    from scripts.migrations.migrate_qqbot_runtime_keys import migrate
+    import scripts.migrations.migrate_qqbot_runtime_keys as migrate_mod
 
     redis = FakeRedis()
     migrate_mod.get_redis = lambda: redis
@@ -96,7 +96,7 @@ async def test_imsession_key_migrates():
 @pytest.mark.asyncio
 async def test_bare_imreach_key_platform_field_rewritten_in_place(fake_redis):
     """无平台后缀的兜底 imreach:<uid> 不改 key，只在 JSON 里把 platform 字段改掉。"""
-    from scripts.migrate_qqbot_runtime_keys import migrate
+    from scripts.migrations.migrate_qqbot_runtime_keys import migrate
 
     payload = json.dumps({"platform": "qqbot", "channel_id": "1"})
     await fake_redis.set("imreach:99", payload, ex=500)
@@ -113,7 +113,7 @@ async def test_bare_imreach_key_platform_field_rewritten_in_place(fake_redis):
 @pytest.mark.asyncio
 async def test_bare_imreach_key_untouched_when_not_qq(fake_redis):
     """兜底 key 如果最近一次触达是别的平台，不能被这个脚本动。"""
-    from scripts.migrate_qqbot_runtime_keys import migrate
+    from scripts.migrations.migrate_qqbot_runtime_keys import migrate
 
     payload = json.dumps({"platform": "feishu", "channel_id": "1"})
     await fake_redis.set("imreach:7", payload)
@@ -126,7 +126,7 @@ async def test_bare_imreach_key_untouched_when_not_qq(fake_redis):
 
 @pytest.mark.asyncio
 async def test_dry_run_does_not_modify_redis(fake_redis):
-    from scripts.migrate_qqbot_runtime_keys import migrate
+    from scripts.migrations.migrate_qqbot_runtime_keys import migrate
 
     payload = json.dumps({"platform": "qqbot"})
     await fake_redis.set("imreach:1:qqbot", payload)
@@ -142,7 +142,7 @@ async def test_dry_run_does_not_modify_redis(fake_redis):
 @pytest.mark.asyncio
 async def test_move_key_skips_instead_of_deleting_when_old_equals_new(fake_redis):
     """防御性回归：即便未来又出现一次 old_key == new_key，也必须跳过而不是删数据。"""
-    from scripts.migrate_qqbot_runtime_keys import _move_key
+    from scripts.migrations.migrate_qqbot_runtime_keys import _move_key
 
     await fake_redis.set("imreach:5:qq", "payload")
 
