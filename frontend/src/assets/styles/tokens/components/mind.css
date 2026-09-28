@@ -37,6 +37,8 @@
   --note-highlight: rgba(255,255,255,.9);
   --note-shadow: var(--card-shadow);
   --note-shadow-hover: var(--card-shadow-hover);
+  --mind-note-border-selected: var(--action-outline);
+  --mind-note-shadow-selected: 0 0 0 2px var(--selection-bg), var(--elevation-card);
   --note-divider: color-mix(in srgb,var(--content-primary) 10%,transparent);
   --note-hover-overlay: var(--card-hover-overlay);
   --note-new-highlight: color-mix(in srgb,var(--action-primary) 20%,var(--note-surface));
