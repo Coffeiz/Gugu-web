@@ -7,12 +7,18 @@ export const chatUi = {
 Object.assign(chatUi['zh-CN'], {
   playlist: '播放列表', previousTrack: '上一首', nextTrack: '下一首',
   playAudio: '播放', pauseAudio: '暂停',
+  playbackModeLabel: '播放模式：{mode}（点击切换）',
+  playbackMode: { none: '无循环', single: '单曲循环', list: '列表循环', shuffle: '随机播放' },
 })
 Object.assign(chatUi['ja-JP'], {
   playlist: 'プレイリスト', previousTrack: '前の曲', nextTrack: '次の曲',
   playAudio: '再生', pauseAudio: '一時停止',
+  playbackModeLabel: '再生モード：{mode}（クリックで切替）',
+  playbackMode: { none: 'リピートなし', single: '1曲リピート', list: '全曲リピート', shuffle: 'シャッフル' },
 })
 Object.assign(chatUi['en-US'], {
   playlist: 'Playlist', previousTrack: 'Previous track', nextTrack: 'Next track',
   playAudio: 'Play', pauseAudio: 'Pause',
+  playbackModeLabel: 'Playback mode: {mode} (click to cycle)',
+  playbackMode: { none: 'No repeat', single: 'Repeat one', list: 'Repeat playlist', shuffle: 'Shuffle' },
 })

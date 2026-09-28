@@ -9,6 +9,7 @@
     :pinned="miniPinned" @update:pinned="miniPinned = $event"
     :current="audioCurrent" :duration="audioDuration" :seek-pct="audioSeekPct"
     :playing="audioPlaying" :muted="audioMuted" :volume="audioVolume"
+    :playback-mode="audioStore.playbackMode" :on-cycle-playback-mode="audioStore.cyclePlaybackMode"
     :fmt-time="fmtTime" :on-stop="audioStop" :on-start-drag="audioStartDrag"
     :on-toggle="audioToggle" :on-toggle-mute="audioToggleMute" :on-set-volume="audioSetVolume"
     :on-previous="audioStore.previousTrack" :on-next="audioStore.nextTrack"

@@ -4,6 +4,10 @@ import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { filesApi } from '@/services/api'
 
 const AUDIO_FILE_KEY = 'gugu_audio_file'
+const AUDIO_PLAYBACK_MODE_KEY = 'gugu_audio_playback_mode'
+const PLAYBACK_MODES = ['none', 'single', 'list', 'shuffle'] as const
+
+export type AudioPlaybackMode = typeof PLAYBACK_MODES[number]
 
 const bc = new BroadcastChannel('gugu_audio')
 
@@ -35,6 +39,12 @@ export const useAudioStore = defineStore('audio', () => {
   const blobUrl = ref<string | null>(null)
   const loading = ref(false)
   const error   = ref<string | null>(null)
+  const savedMode = localStorage.getItem(AUDIO_PLAYBACK_MODE_KEY)
+  const playbackMode = ref<AudioPlaybackMode>(
+    PLAYBACK_MODES.includes(savedMode as AudioPlaybackMode)
+      ? savedMode as AudioPlaybackMode
+      : 'none',
+  )
   const durationLoads = new Map<string, Promise<void>>()
 
   // 持久化当前文件信息（blob URL 不可持久化，只存元数据）
@@ -42,6 +52,7 @@ export const useAudioStore = defineStore('audio', () => {
     if (f) localStorage.setItem(AUDIO_FILE_KEY, JSON.stringify(f))
     else   localStorage.removeItem(AUDIO_FILE_KEY)
   })
+  watch(playbackMode, mode => localStorage.setItem(AUDIO_PLAYBACK_MODE_KEY, mode))
 
   function revoke() {
     if (blobUrl.value?.startsWith('blob:')) URL.revokeObjectURL(blobUrl.value)
@@ -187,8 +198,31 @@ export const useAudioStore = defineStore('audio', () => {
     void play(playlist.value[nextIndex])
   }
 
+  function playRandomTrack() {
+    if (playlist.value.length < 2 || file.value?.id == null) return
+    const candidates = playlist.value.filter(track => track.id !== file.value?.id)
+    const next = candidates[Math.floor(Math.random() * candidates.length)]
+    if (next) void play(next)
+  }
+
+  function cyclePlaybackMode(): AudioPlaybackMode {
+    const currentIndex = PLAYBACK_MODES.indexOf(playbackMode.value)
+    playbackMode.value = PLAYBACK_MODES[(currentIndex + 1) % PLAYBACK_MODES.length]
+    return playbackMode.value
+  }
+
   function previousTrack() { stepTrack(-1) }
-  function nextTrack() { stepTrack(1) }
+  function nextTrack() {
+    if (playbackMode.value === 'shuffle') playRandomTrack()
+    else stepTrack(1)
+  }
+
+  function handleTrackEnded(): 'stop' | 'repeat' | 'next' {
+    if (playbackMode.value === 'none') return 'stop'
+    if (playbackMode.value === 'single' || playlist.value.length < 2) return 'repeat'
+    nextTrack()
+    return 'next'
+  }
 
   function stop() {
     revoke()
@@ -198,5 +232,9 @@ export const useAudioStore = defineStore('audio', () => {
     loading.value = false
   }
 
-  return { file, playlist, blobUrl, loading, error, play, stop, restore, updateDuration, loadPlaylistDurations, previousTrack, nextTrack }
+  return {
+    file, playlist, blobUrl, loading, error, playbackMode,
+    play, stop, restore, updateDuration, loadPlaylistDurations,
+    previousTrack, nextTrack, cyclePlaybackMode, handleTrackEnded,
+  }
 })

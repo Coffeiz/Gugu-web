@@ -78,6 +78,11 @@ export function useChatAudio(options: {
   function onAudioEnded() {
     audioPlaying.value = false
     const key = progKey(); if (key) localStorage.removeItem(key)
+    const action = audioStore.handleTrackEnded()
+    if (action === 'repeat' && audioEl.value) {
+      audioEl.value.currentTime = 0
+      playMainAudio()
+    }
   }
   function audioToggle() {
     if (!audioEl.value) return
