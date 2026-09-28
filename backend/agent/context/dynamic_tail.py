@@ -6,9 +6,9 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
-from app.core.tz import LOCAL_TZ, resolve_tz
+from app.core.tz import LOCAL_TZ, fmt_local, resolve_tz
 
 
 def _as_tz(user_tz):
@@ -43,12 +43,15 @@ def reminder_message(content: str) -> dict:
 
 def message_time_reminder(sent_at, user_tz=None) -> dict | None:
     """把历史用户消息时间作为不可变的独立 reminder，按用户时区格式化。"""
+    text = message_time_text(sent_at, user_tz)
+    return reminder_message(text) if text else None
+
+
+def message_time_text(sent_at, user_tz=None) -> str | None:
+    """按用户时区格式化消息发生时间，供历史消息和 RAG 来源共同使用。"""
     if sent_at is None:
         return None
-    if sent_at.tzinfo is None:
-        sent_at = sent_at.replace(tzinfo=timezone.utc)
-    local_time = sent_at.astimezone(_as_tz(user_tz))
-    return reminder_message(local_time.strftime("消息时间：%Y-%m-%d %H:%M"))
+    return f"消息时间：{fmt_local(sent_at, tz=_as_tz(user_tz))}"
 
 
 def time_message(user_tz=None) -> dict:
