@@ -242,7 +242,7 @@ docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md   【修改
 
 #### Phase 1.6：Compose 拓扑收敛
 
-- [x] `DEPLOY2-008` 将默认、离线和生产 Compose 一起调整为新拓扑；默认/离线 Compose 的 app 显式使用内置 manager 并挂载宿主 Docker Socket，不再编排独立 `sandboxd`/`egress-proxy`；生产分体 Compose 保留 backend/worker 等业务服务，显式使用 external manager 与 Rootless，并只连接外部管理的 socket volume，不定义 `sandboxd`/`egress-proxy` 生命周期；离线 Compose 不重复挂载 app 镜像内已有的 bundle manifest。Shell 不依赖 Compose；不实现旧 Compose 拓扑自动迁移或回滚。三份 Compose、对应断言和开发记录作为同一提交更新，避免中间提交留下不一致的部署拓扑。Node 定向测试和 YAML 解析通过；因本机缺少 Compose 插件，完整 `docker compose config` 留待授权 CI 复核。
+- [ ] `DEPLOY2-008` 将默认、离线和生产 Compose 一起调整为新拓扑；验收：三份 Compose 只编排 SearXNG 等可选附加服务，生产分体模式显式使用 external manager，不定义 `sandboxd`/`egress-proxy` 生命周期；Shell 不依赖 Compose；不实现旧 Compose 拓扑自动迁移或回滚。三个文件必须作为同一提交更新，避免中间提交留下不一致的部署拓扑。
 
 #### Phase 1.7：离线分发包收敛
 

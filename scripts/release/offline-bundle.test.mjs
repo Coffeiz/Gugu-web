@@ -16,12 +16,12 @@ test('offline bundle builder saves declared runtime images and writes a manifest
   assert.match(script, /if not digest:/)
 })
 
-test('offline compose never pulls and relies on the app-bundled sandbox runtime', async () => {
+test('offline compose never pulls and enables local bundle validation', async () => {
   const compose = await readFile(composePath, 'utf8')
   assert.match(compose, /pull_policy:\s*never/)
-  assert.doesNotMatch(compose, /GUGU_SANDBOX_OFFLINE|GUGU_SANDBOX_BUNDLE_MANIFEST/)
+  assert.match(compose, /GUGU_SANDBOX_OFFLINE:\s*["']?1/)
+  assert.match(compose, /GUGU_SANDBOX_BUNDLE_MANIFEST/)
   assert.doesNotMatch(compose, /sandbox-bootstrap/)
-  assert.doesNotMatch(compose, /^  (?:sandboxd|egress-proxy):/m)
 })
 
 test('Docker release invokes the offline bundle builder through bash', async () => {

@@ -1,5 +1,5 @@
-# Gugu 默认一键部署：一体化应用镜像与可选搜索服务。
-# 一体化 app 内部托管 sandbox manager，因此需要显式挂载宿主 Docker Socket。
+# Gugu 默认一键部署：一体化应用镜像、搜索与沙盒服务。
+# Docker Socket 仅授予 sandboxd 和受限 updater，不直接暴露给 Web app。
 
 name: gugu-web-compose
 
@@ -8,6 +8,28 @@ x-json-file-logging: &json-file-logging
   options:
     max-size: "50m"
     max-file: "3"
+
+x-squid-config-command: &squid-config-command
+  - |
+    cat > /etc/squid/squid.conf <<'SQUID_CONF'
+    http_port 3128
+    cache deny all
+    acl SSL_ports port 443
+    acl Safe_ports port 80 443
+    acl CONNECT method CONNECT
+    acl private_dst dst 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 0.0.0.0/8
+    acl private_dst6 dst ::1/128 fc00::/7 fe80::/10
+    http_access deny !Safe_ports
+    http_access deny CONNECT !SSL_ports
+    http_access deny private_dst
+    http_access deny private_dst6
+    http_access allow all
+    via off
+    forwarded_for delete
+    request_header_access X-Forwarded-For deny all
+    request_header_access Via deny all
+    SQUID_CONF
+    exec /usr/sbin/squid -N -d 1
 
 configs:
   searxng-settings:
@@ -60,14 +82,16 @@ x-app-environment: &app-environment
   GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
   SEARCH__SEARXNG_URL: http://searxng:8080
   GUGU_LOG_FILE: /app/logs/gugu.log
-  # 个人一体化部署由 app 内的独立 manager 管理短生命周期沙箱。
+  # 默认 Compose 同时启动独立 sandboxd；单容器镜像本身不托管它。
   SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-false}
+  SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-coffeiz/gugu-sandbox:latest}
+  SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-resolved}
+  GUGU_SANDBOX_IMAGE_DIGEST_FILE: /run/gugu/sandbox-image-digest
   SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
   SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
   SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
   GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-  GUGU_SANDBOX_MANAGER_MODE: embedded
-  DOCKER_HOST: unix:///var/run/docker.sock
+  GUGU_SANDBOX_MANAGER_MODE: external
 
 services:
   searxng:
@@ -89,7 +113,7 @@ services:
     ports:
       - "${GUGU_HTTP_PORT:-9595}:9595"
     # 首次启动生成的密钥、数据库密码和管理员密码保存到 Gugu-data/.env。
-    # 自更新通过独立 updater RPC 执行；沙箱 manager 使用 app 内的受限执行接口。
+    # 自更新通过独立 updater RPC 执行；app 不持有 Docker Socket。
     environment:
       <<: *app-environment
       GUGU_SELF_UPDATE: ${GUGU_SELF_UPDATE:-on}
@@ -104,7 +128,7 @@ services:
       - legacy_redisdata:/legacy-redisdata:ro
       - gugu_config:/config
       - gugu_logs:/app/logs
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - sandbox_socket:/run/gugu
       - updater_socket:/run/gugu-updater
       - ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:/workspace:ro
     depends_on:
@@ -148,9 +172,64 @@ services:
       retries: 3
     restart: unless-stopped
 
+  egress-proxy:
+    image: ubuntu/squid:latest
+    logging: *json-file-logging
+    # 配置内联生成，避免 NAS 面板未同步 squid/egress.conf 时把缺失文件创建成目录。
+    entrypoint: ["/bin/sh", "-c"]
+    command: *squid-config-command
+    networks:
+      - default
+      - egress_internal
+    restart: unless-stopped
+
+  sandboxd:
+    image: ${GUGU_SANDBOXD_IMAGE:-${GUGU_WEB_IMAGE:-coffeiz/gugu-web:latest}}
+    logging: *json-file-logging
+    pid: "host"
+    # sandboxd 不是 web 服务，不应进入默认 Compose 的数据库迁移/worker 入口。
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        sh /usr/local/bin/gugu-sandbox-init.sh
+        exec python -m agent.sandbox.sandboxd --socket /run/gugu/sandboxd.sock --allowed-root /data/users
+    # sandboxd 通过 Unix socket 提供服务，不使用一体化 Web 镜像的 HTTP 健康检查。
+    healthcheck:
+      test: ["CMD-SHELL", "test -S \"$${GUGU_SANDBOXD_SOCKET}\""]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    environment:
+      DOCKER_HOST: unix:///run/gugu/docker.sock
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_SANDBOX_MANAGER_MODE: external
+      SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-false}
+      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-coffeiz/gugu-sandbox:latest}
+      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-resolved}
+      GUGU_SANDBOX_IMAGE_DIGEST_FILE: /run/gugu/sandbox-image-digest
+      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
+      SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
+      SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
+      SQUID_CONF_PATH: /opt/gugu/egress.conf
+    volumes:
+      - *gugu-data-mount
+      - gugu_config:/config
+      - sandbox_socket:/run/gugu
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/subuid:/host/etc/subuid:ro
+      - /etc/subgid:/host/etc/subgid:ro
+    depends_on:
+      egress-proxy:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   gugu_config:
   gugu_logs:
+  sandbox_socket:
   updater_socket:
   # 保留旧默认 Compose 的卷名，仅只读挂载以识别尚未迁移的 PostgreSQL 数据。
   # 自定义过旧项目名/卷名的部署可通过 GUGU_LEGACY_PGDATA_VOLUME 指定原卷名。
@@ -159,3 +238,8 @@ volumes:
   # 旧默认 Compose 的 Redis AOF 卷，迁移时只读探测，防止丢弃未处理的 IM Stream。
   legacy_redisdata:
     name: ${GUGU_LEGACY_REDISDATA_VOLUME:-gugu-web-compose_redisdata}
+
+networks:
+  egress_internal:
+    name: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
+    internal: true

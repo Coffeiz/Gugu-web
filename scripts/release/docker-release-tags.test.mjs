@@ -4,47 +4,21 @@ import test from 'node:test'
 
 const workflowPath = new URL('../../.github/workflows/docker-release.yml', import.meta.url)
 const composePath = new URL('../../docker-compose.yml', import.meta.url)
-const offlineComposePath = new URL('../../docker-compose.offline.yml', import.meta.url)
-const productionComposePath = new URL('../../docker-compose.prod.yml', import.meta.url)
 const appDockerfilePath = new URL('../../Dockerfile', import.meta.url)
 
-test('默认和离线 Compose 使用内置沙箱，生产分体 Compose 只连接外部 Rootless manager', async () => {
-  const [compose, offlineCompose, productionCompose, dockerfile] = await Promise.all([
+test('app 基础镜像保持轻量，默认 Compose 启动独立沙盒并解析镜像 digest', async () => {
+  const [compose, dockerfile] = await Promise.all([
     readFile(composePath, 'utf8'),
-    readFile(offlineComposePath, 'utf8'),
-    readFile(productionComposePath, 'utf8'),
     readFile(appDockerfilePath, 'utf8'),
   ])
-  assert.match(compose, /GUGU_SANDBOX_MANAGER_MODE: embedded/)
-  assert.match(compose, /DOCKER_HOST: unix:\/\/\/var\/run\/docker\.sock/)
-  const appService = compose.slice(compose.indexOf('\n  app:'), compose.indexOf('\n  updater:'))
-  assert.match(appService, /\$\{GUGU_DOCKER_SOCKET:-\/var\/run\/docker\.sock\}:\/var\/run\/docker\.sock/,
-    '一体化 app 应显式访问宿主 daemon，供镜像内 manager 使用')
-  assert.doesNotMatch(compose, /^  (?:sandboxd|egress-proxy):/m,
-    '默认 Compose 不得拥有 sandboxd 或 egress-proxy 生命周期')
-  assert.doesNotMatch(compose, /SANDBOX__IMAGE: \$\{GUGU_SANDBOX_IMAGE/,
-    '一体化执行镜像应从 app 内置 bundle 加载，而非单独引用外部镜像')
-
-  assert.doesNotMatch(offlineCompose, /^  (?:sandboxd|egress-proxy):/m,
-    '离线覆盖层不应再定义独立 sandboxd/egress 服务')
-  assert.doesNotMatch(offlineCompose, /GUGU_SANDBOX_BUNDLE_MANIFEST|GUGU_SANDBOX_OFFLINE/,
-    '离线 Compose 应使用 app 镜像内的 bundle，不挂载第二份 manifest')
-
-  assert.doesNotMatch(productionCompose, /^  (?:sandboxd|egress-proxy):/m,
-    '生产分体 Compose 不得管理外部 sandbox manager 或 egress proxy')
-  assert.equal((productionCompose.match(/GUGU_SANDBOX_MANAGER_MODE: external/g) ?? []).length, 2,
-    'backend 与 worker 必须显式使用 external manager')
-  assert.equal((productionCompose.match(/SANDBOX__ROOTLESS_REQUIRED: "true"/g) ?? []).length, 2,
-    'backend 与 worker 必须继续强制 Rootless')
-  assert.match(productionCompose, /sandbox_socket:\n\s+external: true\n\s+name: \$\{GUGU_SANDBOX_SOCKET_VOLUME:-gugu-web-compose_sandbox_socket\}/,
-    '分体服务只能连接由外部 manager 管理的 socket volume')
-  const backendService = productionCompose.slice(productionCompose.indexOf('\n  backend:'), productionCompose.indexOf('\n  updater:'))
-  const workerService = productionCompose.slice(productionCompose.indexOf('\n  worker:'), productionCompose.indexOf('\n  gateway:'))
-  assert.doesNotMatch(`${backendService}\n${workerService}`, /docker\.sock|DOCKER_HOST/,
-    'backend/worker 不得获得 Docker Socket')
-
+  assert.equal((compose.match(/SANDBOX__IMAGE: \$\{GUGU_SANDBOX_IMAGE:-coffeiz\/gugu-sandbox:latest\}/g) ?? []).length, 2,
+    'app 与 sandboxd 应默认使用已发布沙盒镜像')
+  assert.equal((compose.match(/SANDBOX__IMAGE_DIGEST: \$\{GUGU_SANDBOX_IMAGE_DIGEST:-resolved\}/g) ?? []).length, 2,
+    'app 与 sandboxd 应使用 sandboxd 初始化解析的固定 digest')
+  assert.doesNotMatch(compose, /profiles:\s*\[sandbox\]/,
+    '默认 Compose 必须启动 egress-proxy 和 sandboxd')
   assert.doesNotMatch(dockerfile, /docker\/sandbox\/bundle|\/opt\/gugu\/sandbox\//,
-    'app 基础镜像仍不包含 bundle；它由候选组装层单独追加')
+    '一体化镜像不得包含 Sandbox bundle')
 })
 
 test('正式发布提供单 tar 离线沙盒 bundle', async () => {
