@@ -24,7 +24,6 @@ from agent.tools.filesystem_policy import current_filesystem_policy
 from agent.sandbox import LocalWorkspaceExecutor
 from agent.sandbox.local_executor import ShellResult
 from agent.sandbox.docker_runtime import sandbox_readiness, valid_egress_network_name, valid_egress_proxy
-from agent.sandbox.quota import measure_directory, snapshot_quota
 from agent.sandbox.client import SandboxdClient, SandboxdUnavailable
 from agent.sandbox.protocol import ExecuteRequest
 from app.core.config import get_settings
@@ -35,7 +34,12 @@ from app.services.workspaces import (
     resolve_user_personal_root,
     workspace_shell_supported,
 )
-from app.services.storage.quota_ledger import SHELL_PERSISTENT, record_usage, reconcile_user_storage
+from app.services.storage.quota_ledger import (
+    SHELL_PERSISTENT,
+    measure_shell_persistent_usage,
+    record_usage,
+    reconcile_user_storage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,10 +227,9 @@ async def _run_shell(db, user_id, args: dict):
         # 文件库/项目工作区沿用文件服务自己的存储配额；只有未绑定 workspace
         # 时才检查独立 Shell 持久目录，避免把项目文件误计入 Shell 配额。
         if decision.workspace_id is None:
-            await reconcile_user_storage(db, user_id)
-            quota = snapshot_quota(root, sandbox_settings.persistent_quota_bytes)
-            quota_before = quota.used_bytes
-            if quota.exceeded:
+            measured = await reconcile_user_storage(db, user_id)
+            quota_before = measured[SHELL_PERSISTENT]
+            if quota_before > sandbox_settings.persistent_quota_bytes:
                 return {
                     "error": "Shell 持久空间已超过配额，请先清理文件后再执行命令",
                     "_risk": decision.risk.value,
@@ -352,7 +355,7 @@ async def _run_shell(db, user_id, args: dict):
             timed_out=False, cwd=str(requested_cwd),
         )
     if decision.scope.value == "sandbox" and decision.workspace_id is None and quota_before is not None:
-        quota_after = measure_directory(root)
+        quota_after = await measure_shell_persistent_usage(db, user_id)
         operation = (
             "build" if any(token in command for token in ("npm ", "pnpm ", "yarn ", "cargo ", "make ", "gradle ", "build"))
             else "shell_exec"
