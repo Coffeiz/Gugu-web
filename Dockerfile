@@ -102,13 +102,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG GSTREAMER_BASE_FIXED_DEB=libgstreamer-plugins-base1.0-0_1.26.2-1+deb13u2
 # TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串
 ARG TARGETARCH
-RUN sed -i \
+ARG HTTPS_PROXY
+RUN if [ -n "${HTTPS_PROXY:-}" ]; then export http_proxy="${HTTPS_PROXY}" https_proxy="${HTTPS_PROXY}"; fi; \
+    sed -i \
         -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
         -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && curl -fsSL -o /tmp/gst-base.deb \
-        "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb" \
+    && if [ -n "${HTTPS_PROXY:-}" ]; then \
+        curl --proxy "${HTTPS_PROXY}" -fsSL -o /tmp/gst-base.deb \
+            "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb"; \
+    else \
+        curl -fsSL -o /tmp/gst-base.deb \
+            "https://deb.debian.org/debian-security/pool/updates/main/g/gst-plugins-base1.0/${GSTREAMER_BASE_FIXED_DEB}_${TARGETARCH}.deb"; \
+    fi \
     && apt-get install -y --no-install-recommends /tmp/gst-base.deb \
     && rm -f /tmp/gst-base.deb
 
@@ -120,6 +127,7 @@ RUN sed -i \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
+    && if [ -n "${HTTPS_PROXY:-}" ]; then export http_proxy="${HTTPS_PROXY}" https_proxy="${HTTPS_PROXY}"; fi \
     && sed -i \
         -e "s|${APT_MIRROR}/debian-security|https://deb.debian.org/debian-security|g" \
         -e "s|${APT_MIRROR}/debian|https://deb.debian.org/debian|g" \
@@ -127,7 +135,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get update \
     && apt-get upgrade -y
 
-WORKDIR /app
+ARG GUGU_VERSION=unknown
+ARG GUGU_REVISION=unknown
+ARG GUGU_APP_RUNTIME_CONTRACT=1
+
+# 镜像应用代码固定放在独立路径；/app 在构建末尾创建为指向此目录的符号链接。
+# 启动时不能把 OverlayFS 的 lower-layer 目录 rename 到别处（会返回 EXDEV）。
+WORKDIR /opt/gugu/image-app
 
 ENV PATH=/opt/venv/bin:${PATH} \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -154,14 +168,14 @@ COPY backend/scripts/runtime/ensure_embedded_pg_hba.py /usr/local/bin/ensure_emb
 COPY backend/scripts/runtime/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
 COPY backend/scripts/runtime/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
 RUN mkdir -p /opt/gugu \
-    && cp /app/updater/app_bundle_runtime.py /opt/gugu/app_bundle_runtime.py \
+    && cp /opt/gugu/image-app/updater/app_bundle_runtime.py /opt/gugu/app_bundle_runtime.py \
     && chmod 0555 /opt/gugu/app_bundle_runtime.py
 COPY squid/egress.conf /opt/gugu/egress.conf
 RUN chmod 0755 /usr/local/bin/gugu-sandbox-egress-init.sh /usr/local/bin/gugu-start-embedded-sandbox-manager.sh /usr/local/bin/dockerd-rootless.sh
 RUN set -eux; \
     useradd --uid 1000 --user-group --create-home --home-dir /var/lib/gugu-rootless --shell /usr/sbin/nologin gugu-rootless; \
-    printf 'gugu-rootless:100000:65536\\n' >> /etc/subuid; \
-    printf 'gugu-rootless:100000:65536\\n' >> /etc/subgid; \
+    grep -qxF 'gugu-rootless:100000:65536' /etc/subuid || printf '%s\n' 'gugu-rootless:100000:65536' >> /etc/subuid; \
+    grep -qxF 'gugu-rootless:100000:65536' /etc/subgid || printf '%s\n' 'gugu-rootless:100000:65536' >> /etc/subgid; \
     mkdir -p /run/user/1000 /data/sandbox-rootless; \
     chown -R 1000:1000 /var/lib/gugu-rootless /run/user/1000 /data/sandbox-rootless; \
     chmod 0700 /run/user/1000
@@ -178,7 +192,6 @@ RUN node bin/gugu-filesync-ts-worker.cjs --version
 # （v2.39.2 因此被扫出 57 个 HIGH/CRITICAL，2026-09-16 docker-release 失败根因）。
 # updater 资产（固定更新脚本/manifest 校验器/schema）落到 /opt/gugu-updater。
 # 支持受限构建网络通过标准 Docker build proxy args 下载官方 Compose 插件。
-ARG HTTPS_PROXY
 ARG DOCKER_COMPOSE_VERSION=v5.5.1
 # TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串（URL 404）
 ARG TARGETARCH
@@ -193,13 +206,15 @@ RUN compose_arch="$(case "${TARGETARCH:-amd64}" in amd64) echo x86_64 ;; arm64) 
     fi \
     && chmod 0755 /usr/local/libexec/docker/cli-plugins/docker-compose \
     && docker compose version
-RUN cd /app && python3 -c "import updater.daemon, updater.client"
+RUN cd /opt/gugu/image-app && python3 -c "import updater.daemon, updater.client"
 
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
 COPY --from=frontend-build /workspace/frontend/dist ./static/
 COPY nginx/compose.conf /etc/nginx/nginx.conf
 RUN mkdir -p logs \
-    && find /app -type f -name '._*' -delete \
+    && GUGU_IMAGE_VERSION="$GUGU_VERSION" GUGU_RUNTIME_CONTRACT="$GUGU_APP_RUNTIME_CONTRACT" python3 -c 'import json, os; from pathlib import Path; Path(".gugu-app-release.json").write_text(json.dumps({"version": os.environ["GUGU_IMAGE_VERSION"], "runtime_contract": os.environ["GUGU_RUNTIME_CONTRACT"]}, separators=(",", ":")) + "\n", encoding="utf-8")' \
+    && ln -s /opt/gugu/image-app /app \
+    && find /opt/gugu/image-app -type f -name '._*' -delete \
     && find ./static -type d -exec chmod 755 {} + \
     && find ./static -type f -exec chmod 644 {} + \
     && chmod 755 docker-entrypoint.sh compose_bootstrap.py /usr/local/bin/gugu-sandbox-init.sh /usr/local/bin/prepare_rootless_storage.py /usr/local/bin/gugu-wait-embedded-postgres.sh /usr/local/bin/gugu-wait-embedded-redis.sh \
@@ -271,9 +286,6 @@ CMD ["nginx", "-g", "daemon off;"]
 
 # 版本号和提交 SHA 每次构建都会变化，只在最终镜像元数据中使用。
 # 放在所有文件系统层之后，避免每次提交都使运行时依赖和应用文件层失效。
-ARG GUGU_VERSION=unknown
-ARG GUGU_REVISION=unknown
-ARG GUGU_APP_RUNTIME_CONTRACT=1
 ENV GUGU_IMAGE_VERSION=${GUGU_VERSION} \
     GUGU_APP_RUNTIME_CONTRACT=${GUGU_APP_RUNTIME_CONTRACT}
 LABEL org.opencontainers.image.version="${GUGU_VERSION}" \

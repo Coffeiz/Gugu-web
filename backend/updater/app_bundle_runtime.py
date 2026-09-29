@@ -66,35 +66,58 @@ def _replace_app_link(target: Path) -> None:
         os.replace(link, APP_ROOT)
         return
     if APP_ROOT.exists():
-        if IMAGE_APP_ROOT.exists():
-            raise AppBundleError("镜像应用目录暂存路径已存在，拒绝覆盖")
-        IMAGE_APP_ROOT.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(APP_ROOT, IMAGE_APP_ROOT)
+        _preserve_image_app(APP_ROOT)
     os.replace(link, APP_ROOT)
+
+
+def _already_activated_release() -> dict[str, str] | None:
+    if not APP_ROOT.is_symlink():
+        return None
+    selected = APP_ROOT.resolve(strict=True)
+    if IMAGE_APP_ROOT.is_dir() and selected == IMAGE_APP_ROOT.resolve(strict=True):
+        return None
+    return read_release_info(selected)
+
+
+def _image_release_info(image_target: Path) -> dict[str, str]:
+    try:
+        return read_release_info(image_target)
+    except AppBundleError:
+        image_version = os.getenv("GUGU_IMAGE_VERSION", "")
+        image_contract = os.getenv("GUGU_APP_RUNTIME_CONTRACT", "")
+        if image_target.is_symlink() or not image_version or not image_contract:
+            raise
+        _write_json_atomic(
+            image_target / ".gugu-app-release.json",
+            {"version": image_version, "runtime_contract": image_contract},
+        )
+        return read_release_info(image_target)
+
+
+def _preserve_image_app(image_target: Path) -> Path:
+    if image_target != APP_ROOT:
+        return image_target
+    # 旧镜像布局的兼容迁移：复制而不是 rename，因 /app 可能位于 OverlayFS
+    # lower layer，与 /opt/gugu 不同设备；新镜像构建时已预置固定目录和链接。
+    IMAGE_APP_ROOT.parent.mkdir(parents=True, exist_ok=True)
+    if IMAGE_APP_ROOT.exists():
+        raise AppBundleError("镜像应用目录暂存路径冲突")
+    shutil.copytree(APP_ROOT, IMAGE_APP_ROOT, symlinks=True)
+    shutil.rmtree(APP_ROOT)
+    return IMAGE_APP_ROOT
 
 
 def activate_image_or_persisted_app() -> dict[str, str]:
     """容器启动时选择镜像代码或持久化代码；新镜像版本优先，避免旧包遮蔽镜像升级。"""
     DATA_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if APP_ROOT.is_symlink():
-        selected = APP_ROOT.resolve(strict=True)
-        info = read_release_info(selected)
-        return info
+    active_info = _already_activated_release()
+    if active_info is not None:
+        return active_info
     if not APP_ROOT.is_dir():
         raise AppBundleError("镜像应用目录不存在")
 
-    try:
-        image_info = read_release_info(APP_ROOT)
-    except AppBundleError:
-        image_version = os.getenv("GUGU_IMAGE_VERSION", "")
-        image_contract = os.getenv("GUGU_APP_RUNTIME_CONTRACT", "")
-        if APP_ROOT.is_symlink() or not image_version or not image_contract:
-            raise
-        _write_json_atomic(
-            APP_ROOT / ".gugu-app-release.json",
-            {"version": image_version, "runtime_contract": image_contract},
-        )
-        image_info = read_release_info(APP_ROOT)
+    image_target = IMAGE_APP_ROOT if IMAGE_APP_ROOT.is_dir() else APP_ROOT
+    image_info = _image_release_info(image_target)
     active: dict[str, Any] | None = None
     try:
         parsed = json.loads(ACTIVE_FILE.read_text(encoding="utf-8"))
@@ -117,7 +140,6 @@ def activate_image_or_persisted_app() -> dict[str, str]:
     if nested_mount:
         return image_info
 
-    image_target = APP_ROOT
     persisted_target: Path | None = None
     if active:
         release_path = DATA_ROOT / "releases" / str(active.get("version", ""))
@@ -142,11 +164,7 @@ def activate_image_or_persisted_app() -> dict[str, str]:
             selected = image_target
 
     if selected == image_target:
-        if IMAGE_APP_ROOT.exists():
-            raise AppBundleError("镜像应用目录暂存路径冲突")
-        IMAGE_APP_ROOT.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(APP_ROOT, IMAGE_APP_ROOT)
-        selected = IMAGE_APP_ROOT
+        selected = _preserve_image_app(image_target)
     _replace_app_link(selected)
     info = read_release_info(selected)
     if selected == IMAGE_APP_ROOT:

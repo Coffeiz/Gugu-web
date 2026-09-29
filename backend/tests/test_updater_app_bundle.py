@@ -57,6 +57,40 @@ def test_app_bundle_switch_and_failed_start_rollback_are_atomic(monkeypatch, tmp
     assert not runtime.PENDING_FILE.exists()
 
 
+def test_image_symlink_layout_still_selects_newer_persisted_app(monkeypatch, tmp_path):
+    _patch_paths(monkeypatch, tmp_path)
+    _write_release(runtime.IMAGE_APP_ROOT, "v1.1.0")
+    runtime.APP_ROOT.parent.mkdir(parents=True, exist_ok=True)
+    runtime.APP_ROOT.symlink_to(runtime.IMAGE_APP_ROOT, target_is_directory=True)
+
+    newer_release = runtime.DATA_ROOT / "releases" / "v1.2.0"
+    _write_release(newer_release, "v1.2.0")
+    runtime._write_json_atomic(runtime.ACTIVE_FILE, {"version": "v1.2.0", "runtime_contract": "1"})
+
+    info = runtime.activate_image_or_persisted_app()
+
+    assert info["version"] == "v1.2.0"
+    assert runtime.APP_ROOT.is_symlink()
+    assert runtime.APP_ROOT.resolve() == newer_release.resolve()
+    assert runtime.IMAGE_APP_ROOT.is_dir()
+    assert runtime.read_release_info(runtime.IMAGE_APP_ROOT)["version"] == "v1.1.0"
+
+
+def test_legacy_image_directory_can_switch_to_newer_persisted_app(monkeypatch, tmp_path):
+    _patch_paths(monkeypatch, tmp_path)
+    _write_release(runtime.APP_ROOT, "v1.1.0")
+    newer_release = runtime.DATA_ROOT / "releases" / "v1.2.0"
+    _write_release(newer_release, "v1.2.0")
+    runtime._write_json_atomic(runtime.ACTIVE_FILE, {"version": "v1.2.0", "runtime_contract": "1"})
+
+    info = runtime.activate_image_or_persisted_app()
+
+    assert info["version"] == "v1.2.0"
+    assert runtime.APP_ROOT.is_symlink()
+    assert runtime.APP_ROOT.resolve() == newer_release.resolve()
+    assert runtime.read_release_info(runtime.IMAGE_APP_ROOT)["version"] == "v1.1.0"
+
+
 def test_app_bundle_rejects_digest_mismatch_and_path_traversal(monkeypatch, tmp_path):
     _patch_paths(monkeypatch, tmp_path)
     archive = tmp_path / "valid.tar.gz"
