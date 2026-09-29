@@ -188,7 +188,9 @@ class AppBundleUpdater:
             "architectures", "database_migration", "release_notes_url", "rollback_supported",
             "git_sha", "published_at", "app_bundle",
         }
-        required_fields = allowed_fields - {"git_sha", "published_at"}
+        # app_bundle 是后续单容器应用包更新才增加的可选字段；历史 Release
+        # 清单仍可用于识别最新版本，但没有应用包时应提示由 Docker 管理器升级整镜像。
+        required_fields = allowed_fields - {"git_sha", "published_at", "app_bundle"}
         if not required_fields.issubset(manifest) or set(manifest) - allowed_fields:
             raise AppBundleError("Release 更新清单字段不完整或包含未知字段")
         version = manifest.get("version")
@@ -216,8 +218,11 @@ class AppBundleUpdater:
             raise AppBundleError("Release git_sha 格式无效")
         if "published_at" in manifest and (not isinstance(manifest["published_at"], str) or not manifest["published_at"]):
             raise AppBundleError("Release 发布时间无效")
+        result = dict(manifest)
+        result["manifest_sha256"] = hashlib.sha256(payload).hexdigest()
+        result["checked_at"] = _utc_now()
         if not isinstance(bundle, dict):
-            raise AppBundleError("此 Release 未发布单容器应用包")
+            return result
         archive_name = bundle.get("archive")
         signature_name = bundle.get("signature_bundle")
         digest = bundle.get("sha256")
@@ -236,11 +241,8 @@ class AppBundleUpdater:
             raise AppBundleError("应用包解压大小声明无效")
         if set(bundle) != {"archive", "signature_bundle", "sha256", "runtime_contract", "size", "unpacked_size"}:
             raise AppBundleError("应用包清单字段不完整或包含未知字段")
-        result = dict(manifest)
         result["app_bundle"] = dict(bundle)
-        result["manifest_sha256"] = hashlib.sha256(payload).hexdigest()
         result["archive_size"] = archive_size
-        result["checked_at"] = _utc_now()
         return result
 
     async def status(self, _params: dict[str, Any]) -> dict[str, Any]:
@@ -278,6 +280,19 @@ class AppBundleUpdater:
             raise RuntimeError("无法访问 GitHub Release 更新源") from exc
         candidate = self._validate_manifest(payload)
         current = self._current()
+        if not isinstance(candidate.get("app_bundle"), dict):
+            async with self._lock:
+                # 不保留之前检查到的应用包，避免旧候选版本在本次无包 Release
+                # 检查后仍显示为可更新。
+                self.state["candidate"] = None
+                self._save()
+            return {
+                "has_update": False,
+                "manual_update_required": True,
+                "message": "此 Release 未发布单容器应用包；请在 Docker 管理器中更新整镜像。",
+                "current": current,
+                "candidate": self._public_candidate(candidate),
+            }
         async with self._lock:
             self.state["candidate"] = candidate
             self._save()

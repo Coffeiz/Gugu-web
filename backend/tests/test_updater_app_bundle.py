@@ -177,3 +177,34 @@ def test_app_bundle_updater_accepts_only_version_bound_release_assets(tmp_path):
     manifest["app_bundle"]["archive"] = "gugu-app-v1.3.0.tar.gz"
     with pytest.raises(runtime.AppBundleError, match="资源名称"):
         updater._validate_manifest(json.dumps(manifest).encode())
+
+
+@pytest.mark.asyncio
+async def test_legacy_release_without_app_bundle_reports_manual_image_update(monkeypatch, tmp_path):
+    updater = AppBundleUpdater(state_dir=tmp_path / "updater")
+    manifest = {
+        "schema_version": 3,
+        "version": "v1.4.0",
+        "channel": "stable",
+        "minimum_version": "v1.3.0",
+        "app_image": f"docker.io/coffeiz/gugu-web@sha256:{'a' * 64}",
+        "split_images": {
+            "backend_image": f"docker.io/coffeiz/gugu-web-backend@sha256:{'b' * 64}",
+            "frontend_image": f"docker.io/coffeiz/gugu-web-frontend@sha256:{'c' * 64}",
+        },
+        "architectures": ["linux/amd64"],
+        "database_migration": True,
+        "release_notes_url": "https://github.com/Coffeiz/Gugu-web/releases/tag/v1.4.0",
+        "rollback_supported": True,
+    }
+    monkeypatch.setattr(updater, "_read_url", lambda *_args: json.dumps(manifest).encode())
+    monkeypatch.setattr(updater, "_current", lambda: {"version": "v1.4.0", "runtime_contract": "1"})
+    updater.state["candidate"] = {"version": "v1.3.0", "app_bundle": {"archive": "old"}}
+
+    result = await updater.check({})
+
+    assert result["has_update"] is False
+    assert result["manual_update_required"] is True
+    assert "Docker 管理器" in result["message"]
+    assert result["candidate"]["version"] == "v1.4.0"
+    assert updater.state["candidate"] is None

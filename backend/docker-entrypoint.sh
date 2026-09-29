@@ -359,6 +359,10 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
     monitored_pids=()
     app_restart_requested=0
     EMBEDDED_SANDBOX_SUPERVISORD_PID=""
+    if [ -n "${GUGU_LOG_FILE:-}" ]; then
+        # 一体化镜像默认写入 /data 持久卷，Admin Debug 可跨容器重建读取。
+        mkdir -p "$(dirname "$GUGU_LOG_FILE")"
+    fi
     if [ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" = "embedded" ]; then
         # 内置 Rootless daemon 与 sandboxd 由独立 supervisor 托管；只在 manager
         # 子进程环境中设置内部 socket，不向 Web/Worker/Gateway 暴露 Docker API。
@@ -392,11 +396,19 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
         monitored_pids+=("$!")
     fi
     if [ "${GUGU_ENABLE_WORKER:-1}" = "1" ]; then
-        python -m worker &
+        worker_log=""
+        if [ -n "${GUGU_LOG_FILE:-}" ]; then
+            worker_log="$(dirname "$GUGU_LOG_FILE")/gugu-worker.log"
+        fi
+        GUGU_LOG_FILE="$worker_log" python -m worker &
         monitored_pids+=("$!")
     fi
     if [ "${GUGU_ENABLE_GATEWAY:-1}" = "1" ]; then
-        python -m agent.gateway.gateway &
+        gateway_log=""
+        if [ -n "${GUGU_LOG_FILE:-}" ]; then
+            gateway_log="$(dirname "$GUGU_LOG_FILE")/gugu-gateway.log"
+        fi
+        GUGU_LOG_FILE="$gateway_log" python -m agent.gateway.gateway &
         monitored_pids+=("$!")
     fi
     app_pid=""

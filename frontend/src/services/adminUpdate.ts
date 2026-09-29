@@ -48,6 +48,7 @@ export interface UpdateStatus {
 
 export interface UpdateCheck {
   has_update: boolean
+  manual_update_required?: boolean
   current: { version: string }
   candidate: UpdateCandidate
 }

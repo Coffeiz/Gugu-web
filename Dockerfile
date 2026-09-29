@@ -255,6 +255,7 @@ ENV DB__HOST=postgres \
     GUGU_ENABLE_WORKER=1 \
     GUGU_ENABLE_GATEWAY=1 \
     GUGU_DATA_DIR=/data \
+    GUGU_LOG_FILE=/data/logs/gugu.log \
     # 首启自动生成的 SECRET_KEY/ADMIN_PASSWORD 写到这里，随 /data 卷持久化。
     GUGU_ENV_FILE=/data/.env \
     STORAGE__LOCAL_PATH=/data/users \

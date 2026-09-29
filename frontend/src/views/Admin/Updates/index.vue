@@ -26,7 +26,7 @@
       :current-version="currentVersion"
       :candidate="candidate"
       :has-update="hasUpdate"
-      :check-result="checkResult?.has_update ?? null"
+      :check-result="checkResult"
       :preflight="preflight"
       :checking="checking"
       :loading="loading"

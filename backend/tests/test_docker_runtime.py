@@ -2008,6 +2008,9 @@ def test_unified_image_bundles_egress_manager_and_uses_internal_rootless_socket(
     assert 'DOCKER_HOST="unix://$ROOTLESS_DOCKER_SOCKET"' in (backend / "scripts/runtime/start_embedded_sandbox_manager.sh").read_text(encoding="utf-8")
     assert 'SANDBOX__EGRESS_PROXY_URL="http://egress-proxy:3128"' in entrypoint
     assert 'SANDBOX__EGRESS_ISOLATION_ENABLED="true"' in entrypoint
+    assert "GUGU_LOG_FILE=/data/logs/gugu.log" in dockerfile_text
+    assert 'worker_log="$(dirname "$GUGU_LOG_FILE")/gugu-worker.log"' in entrypoint
+    assert 'gateway_log="$(dirname "$GUGU_LOG_FILE")/gugu-gateway.log"' in entrypoint
 
 
 def test_quota_measurement_ignores_symlinks_and_checks_reservation(tmp_path):
