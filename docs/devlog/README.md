@@ -6,12 +6,19 @@
 
 ### 2026-09-29
 
-- [单容器 Bubblewrap Phase 0：fnOS 默认安全配置未通过](./2026-09-29-Bubblewrap-Phase0-fnOS可行性.md)
+- [单容器内置 Rootless Shell：方案收敛、实施与 fnOS 验收](./2026-09-29-一体化镜像默认启用Shell沙盒.md)
 - [画布项目筛选框滚动边界与描边](./2026-09-29-画布项目筛选框滚动边界与描边.md)
 
 ### 2026-09-28
 
 - [Agent ORM 存量收口并恢复严格守卫](./2026-09-28-Agent-ORM存量收口与严格守卫.md)
+- [PRD-DEPLOY-2 Phase 1.8.3：执行隔离与资源清理回归](./2026-09-28-DEPLOY2-Phase1.8.3-执行隔离与资源清理.md)
+- [PRD-DEPLOY-2 Phase 1.8.2：内置管理器入口生命周期与故障隔离](./2026-09-28-DEPLOY2-Phase1.8.2-内置管理器生命周期.md)
+- [PRD-DEPLOY-2 Phase 1.8.1：部署模式矩阵与 external Rootless 强制](./2026-09-28-DEPLOY2-Phase1.8.1-部署模式矩阵.md)
+- [PRD-DEPLOY-2 Phase 1.7：离线包移除重复沙箱镜像](./2026-09-28-DEPLOY2-Phase1.7-离线包移除重复沙箱镜像.md)
+- [PRD-DEPLOY-2 Phase 1.6：Compose 沙箱拓扑收敛](./2026-09-28-DEPLOY2-Phase1.6-Compose沙箱拓扑收敛.md)
+- [PRD-DEPLOY-2 Phase 1.5.3：候选镜像离线 Shell 验证](./2026-09-28-DEPLOY2-Phase1.5.3候选镜像离线Shell验证.md)
+- [PRD-DEPLOY-2 Phase 1.5.4：正式发布绑定候选 digest](./2026-09-28-DEPLOY2-Phase1.5.4正式发布绑定候选digest.md)
 
 ### 2026-09-26
 

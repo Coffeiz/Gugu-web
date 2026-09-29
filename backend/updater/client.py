@@ -1,41 +1,19 @@
-"""Admin 更新入口：分体部署走受限 Unix Socket RPC，其余拓扑使用进程内执行器。"""
+"""Admin 更新入口：单容器使用进程内应用包执行器，Compose 仅返回手动更新状态。"""
 
 from __future__ import annotations
 
-import asyncio
-import os
 from typing import Any
 
-from updater.daemon import UpdateDaemon, self_update_enabled
+from updater.daemon import self_update_enabled
 from updater.deployment import detect_deployment
-from updater.rpc import UpdaterRpcError, call_rpc
 
-_executor: UpdateDaemon | None = None
-_executor_failed = False
+_app_bundle_executor = None
 
 
 class UpdaterClientError(RuntimeError):
     def __init__(self, code: str, message: str = "更新服务暂不可用") -> None:
         super().__init__(message)
         self.code = code
-
-
-def _get_executor() -> UpdateDaemon:
-    global _executor, _executor_failed
-    if _executor is not None:
-        return _executor
-    if _executor_failed:
-        raise UpdaterClientError("self_update_disabled", "此部署未启用一键更新")
-    if not self_update_enabled():
-        raise UpdaterClientError("self_update_disabled", "此部署未启用一键更新")
-    try:
-        _executor = UpdateDaemon()
-        _executor.start_pending_restart_resume()
-    except Exception as exc:
-        # Compose 目录无效 / 状态文件损坏等：按未启用降级，不让 admin 反复 500。
-        _executor_failed = True
-        raise UpdaterClientError("self_update_disabled", "此部署未启用一键更新") from exc
-    return _executor
 
 
 def _error_code(exc: Exception) -> str:
@@ -58,10 +36,8 @@ def _error_code(exc: Exception) -> str:
 
 
 async def call_updater(method: str, **params: Any) -> dict[str, Any]:
-    """按部署模式选择独立 updater RPC 或进程内执行器。"""
+    """仅为无 Compose 单容器提供签名应用包更新；镜像由部署平台管理。"""
     deployment = detect_deployment()
-    if deployment["mode"] in {"split_compose", "integrated_compose"} and deployment["enabled"]:
-        return await _call_compose_updater(method, params, deployment)
     if method == "status" and not deployment["enabled"]:
         return {
             **deployment,
@@ -72,53 +48,24 @@ async def call_updater(method: str, **params: Any) -> dict[str, Any]:
         raise UpdaterClientError(deployment["reason_code"], deployment["reason"])
     if method != "status" and not self_update_enabled():
         raise UpdaterClientError("self_update_disabled", "此部署未启用一键更新")
+    if deployment["mode"] != "standalone_app_bundle":
+        raise UpdaterClientError(deployment["reason_code"], deployment["reason"])
     try:
-        executor = _get_executor()
-    except UpdaterClientError:
+        global _app_bundle_executor
+        if _app_bundle_executor is None:
+            from updater.app_bundle import AppBundleUpdater
+
+            _app_bundle_executor = AppBundleUpdater()
+        return await _app_bundle_executor.dispatch(method, params)
+    except Exception as exc:
         if method == "status":
-            deployment = detect_deployment()
             deployment.update({
-                "enabled": False,
-                "capability": "manual",
+                "enabled": False, "capability": "manual",
                 "reason_code": "updater_initialization_failed",
-                "reason": "更新器初始化失败；为避免误操作，自动更新已关闭。",
+                "reason": "应用包更新器初始化失败；请由 Docker 管理器更新整镜像。",
             })
             return {
-                **deployment,
-                "current": None, "candidate": None, "has_update": False,
+                **deployment, "current": None, "candidate": None, "has_update": False,
                 "task": None, "history": [],
             }
-        raise
-    try:
-        return await asyncio.wait_for(
-            executor.dispatch({"method": method, "params": params}), timeout=90
-        )
-    except UpdaterClientError:
-        raise
-    except asyncio.TimeoutError as exc:
-        raise UpdaterClientError("operation_failed", "更新命令超时") from exc
-    except Exception as exc:
         raise UpdaterClientError(_error_code(exc), str(exc)[:240]) from exc
-
-
-async def _call_compose_updater(
-    method: str, params: dict[str, Any], deployment: dict[str, Any]
-) -> dict[str, Any]:
-    try:
-        return await call_rpc(method, params)
-    except UpdaterRpcError as exc:
-        if method != "status":
-            raise UpdaterClientError(exc.code, str(exc)) from exc
-        mode = deployment["mode"]
-        unavailable_code = "integrated_updater_unavailable" if mode == "integrated_compose" else "split_updater_unavailable"
-        deployment.update({
-            "enabled": False,
-            "capability": "manual",
-            "reason_code": unavailable_code,
-            "reason": str(exc),
-        })
-        return {
-            **deployment,
-            "current": None, "candidate": None, "has_update": False,
-            "task": None, "history": [],
-        }

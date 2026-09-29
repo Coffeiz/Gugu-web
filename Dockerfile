@@ -12,7 +12,7 @@ FROM node:22-trixie AS frontend-build
 
 WORKDIR /workspace
 
-RUN npm install --global pnpm@latest
+RUN npm install --global pnpm@10.15.0
 
 # 依赖单独一层：workspace 元数据和 manifest 未变时改代码不重装；
 # pnpm store 走 cache mount，lockfile 变更时只下载增量。
@@ -69,8 +69,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 # ── Stage 3：后端生产运行时 + 前端静态产物 ──────────────────────────────────
-# Docker CLI 供受控更新器及 Compose 沙盒服务使用；单容器部署不启动 sandboxd，沙盒由独立 Compose 服务提供。
+# Docker CLI 供受控更新器和显式启用的内嵌 sandbox manager 使用。
 FROM python:3.14-slim-trixie
+
+# 应用包更新需要容器内独立验签；只把固定版本 Cosign CLI 复制进运行镜像，不带 Docker socket。
+COPY --from=ghcr.io/sigstore/cosign/cosign@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8 /ko-app/cosign /usr/local/bin/cosign
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 
@@ -84,9 +87,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker-cli nodejs acl \
-        # 内置依赖（GUGU_EMBEDDED_DEPS=1 时由入口拉起，镜像默认开）：单容器一键部署
-        # 无需外部 postgres/redis。仅监听 127.0.0.1，数据在 /data/postgres、/data/redis。
+        nginx poppler-utils fonts-noto-cjk ffmpeg curl docker.io docker-cli nodejs acl \
+        rootlesskit slirp4netns fuse-overlayfs uidmap iproute2 iptables \
         postgresql redis-server supervisor \
     # snakeoil 是 ssl-cert 包（postgresql 依赖）装的 Debian 全机通用示例证书，随层公开
     # 会被 trivy secrets 扫描判为私钥泄漏；内嵌 PostgreSQL 只监听 127.0.0.1 且 ssl=off
@@ -144,11 +146,25 @@ COPY backend/worker.py ./worker.py
 COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY backend/compose_bootstrap.py ./compose_bootstrap.py
 COPY backend/scripts/runtime/sandbox_rootless_init.sh /usr/local/bin/gugu-sandbox-init.sh
+COPY backend/scripts/runtime/sandbox_egress_init.sh /usr/local/bin/gugu-sandbox-egress-init.sh
+COPY backend/scripts/runtime/start_embedded_sandbox_manager.sh /usr/local/bin/gugu-start-embedded-sandbox-manager.sh
+COPY backend/scripts/runtime/dockerd-rootless.sh /usr/local/bin/dockerd-rootless.sh
 COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 COPY backend/scripts/runtime/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py
 COPY backend/scripts/runtime/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
 COPY backend/scripts/runtime/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
+RUN mkdir -p /opt/gugu \
+    && cp /app/updater/app_bundle_runtime.py /opt/gugu/app_bundle_runtime.py \
+    && chmod 0555 /opt/gugu/app_bundle_runtime.py
 COPY squid/egress.conf /opt/gugu/egress.conf
+RUN chmod 0755 /usr/local/bin/gugu-sandbox-egress-init.sh /usr/local/bin/gugu-start-embedded-sandbox-manager.sh /usr/local/bin/dockerd-rootless.sh
+RUN set -eux; \
+    useradd --uid 1000 --user-group --create-home --home-dir /var/lib/gugu-rootless --shell /usr/sbin/nologin gugu-rootless; \
+    printf 'gugu-rootless:100000:65536\\n' >> /etc/subuid; \
+    printf 'gugu-rootless:100000:65536\\n' >> /etc/subgid; \
+    mkdir -p /run/user/1000 /data/sandbox-rootless; \
+    chown -R 1000:1000 /var/lib/gugu-rootless /run/user/1000 /data/sandbox-rootless; \
+    chmod 0700 /run/user/1000
 RUN mkdir -p ./bin
 COPY backend/bin/gugu-rag-ts-worker.mjs ./bin/gugu-rag-ts-worker.mjs
 COPY backend/bin/gugu-filesync-ts-worker.cjs ./bin/gugu-filesync-ts-worker.cjs
@@ -161,21 +177,22 @@ RUN node bin/gugu-filesync-ts-worker.cjs --version
 # v5.5.1：内嵌 containerd v2.3.4 / docker-cli v29.7.2 均高于 trivy 门要求的修复版
 # （v2.39.2 因此被扫出 57 个 HIGH/CRITICAL，2026-09-16 docker-release 失败根因）。
 # updater 资产（固定更新脚本/manifest 校验器/schema）落到 /opt/gugu-updater。
+# 支持受限构建网络通过标准 Docker build proxy args 下载官方 Compose 插件。
+ARG HTTPS_PROXY
 ARG DOCKER_COMPOSE_VERSION=v5.5.1
 # TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串（URL 404）
 ARG TARGETARCH
 # compose 发布资源用 uname 风格命名（x86_64/aarch64），与 TARGETARCH（amd64/arm64）不同名
-RUN mkdir -p /usr/local/libexec/docker/cli-plugins /opt/gugu-updater/scripts/release /opt/gugu-updater/deploy \
-    && compose_arch="$(case "${TARGETARCH}" in amd64) echo x86_64 ;; arm64) echo aarch64 ;; *) echo "${TARGETARCH}" ;; esac)" \
-    && curl -fsSL -o /usr/local/libexec/docker/cli-plugins/docker-compose \
-        "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${compose_arch}" \
+RUN mkdir -p /usr/local/libexec/docker/cli-plugins
+RUN compose_arch="$(case "${TARGETARCH:-amd64}" in amd64) echo x86_64 ;; arm64) echo aarch64 ;; *) echo "不支持的 Docker Compose 架构: ${TARGETARCH}" >&2; exit 1 ;; esac)" \
+    && compose_url="https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${compose_arch}" \
+    && if [ -n "${HTTPS_PROXY:-}" ]; then \
+        curl --proxy "${HTTPS_PROXY}" -fsSL "$compose_url" -o /usr/local/libexec/docker/cli-plugins/docker-compose; \
+    else \
+        curl -fsSL "$compose_url" -o /usr/local/libexec/docker/cli-plugins/docker-compose; \
+    fi \
     && chmod 0755 /usr/local/libexec/docker/cli-plugins/docker-compose \
     && docker compose version
-COPY scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/compose-update.sh
-COPY scripts/release/split-compose-update.sh /opt/gugu-updater/scripts/release/split-compose-update.sh
-COPY scripts/release/validate-update-manifest.mjs /opt/gugu-updater/scripts/release/validate-update-manifest.mjs
-COPY deploy/update-manifest.schema.json /opt/gugu-updater/deploy/update-manifest.schema.json
-RUN chmod 0755 /opt/gugu-updater/scripts/release/compose-update.sh /opt/gugu-updater/scripts/release/split-compose-update.sh
 RUN cd /app && python3 -c "import updater.daemon, updater.client"
 
 # 前端静态产物：由 Nginx 直接托管，API/SSE/WebSocket 反代到容器内 Uvicorn。
@@ -229,8 +246,11 @@ ENV DB__HOST=postgres \
     CREDENTIALS_MASTER_KEY_FILE=/data/byok/.byok-master-key \
     GUGU_CONFIG_OVERRIDE_FILE=/config/config.override.json \
     GUGU_SANDBOXD_SOCKET=/run/gugu/sandboxd.sock \
-    SANDBOX__ROOTLESS_REQUIRED=false \
-    SANDBOX__ENABLED=false \
+    GUGU_SANDBOX_MANAGER_MODE=embedded \
+    SANDBOX__ROOTLESS_REQUIRED=true \
+    SANDBOX__ENABLED=true \
+    SANDBOX__EGRESS_ISOLATION_ENABLED=true \
+    SANDBOX__EGRESS_PROXY_URL=http://egress-proxy:3128 \
     # 默认内置 postgres/redis（单容器一键部署开箱即用）；Compose 部署显式置 0 走外部服务。
     GUGU_EMBEDDED_DEPS=1
 
@@ -243,7 +263,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
 
 # 复用与 Dockerfile.prod 相同的入口：等数据库就绪 → 迁移 → 执行传入命令。
 # 默认 Compose 的 nginx 命令会由入口同时托管 Uvicorn、消息 worker 与 IM gateway。
-# 沙盒执行服务只由 Compose 单独启动；直接运行一体化镜像不会托管 sandboxd。
+# 一体化镜像默认托管内部 Rootless Docker 与 embedded sandboxd；需要外层容器
+# 以 privileged 模式运行，但不连接宿主 Docker Socket，也不回退到本机执行。
+# 分体镜像使用独立 Dockerfile 与显式 external 配置。
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
 
@@ -251,5 +273,8 @@ CMD ["nginx", "-g", "daemon off;"]
 # 放在所有文件系统层之后，避免每次提交都使运行时依赖和应用文件层失效。
 ARG GUGU_VERSION=unknown
 ARG GUGU_REVISION=unknown
+ARG GUGU_APP_RUNTIME_CONTRACT=1
+ENV GUGU_IMAGE_VERSION=${GUGU_VERSION} \
+    GUGU_APP_RUNTIME_CONTRACT=${GUGU_APP_RUNTIME_CONTRACT}
 LABEL org.opencontainers.image.version="${GUGU_VERSION}" \
     org.opencontainers.image.revision="${GUGU_REVISION}"

@@ -1,0 +1,6 @@
+# syntax=docker/dockerfile:1
+# 只给已经构建并扫描的 app 镜像追加内置 runtime bundle；不重建应用依赖。
+ARG APP_IMAGE
+FROM ${APP_IMAGE}
+
+COPY --chmod=0444 runtime-images.tar manifest.json /opt/gugu/sandbox-bundle/

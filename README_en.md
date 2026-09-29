@@ -183,7 +183,7 @@ The first run initializes the database and applies migrations. If `ADMIN_PASSWOR
 
 See the [Deployment Guide](docs/quick-deploy_en.md) for the complete Compose parameters and configuration locations.
 
-The default Compose setup also starts sandboxd and the controlled egress proxy, and pulls the separate `gugu-sandbox` execution image with a pinned digest when online. For offline deployments, import the single `gugu-compose-bundle.tar` release artifact and use `docker-compose.offline.yml`; no external registry is contacted. The host Docker socket must be available to Compose (default: `/var/run/docker.sock`). For Rootless Docker, set `GUGU_DOCKER_SOCKET` in the project `.env`. To omit sandbox containers, set `GUGU_SANDBOX_ENABLED=false` and stop sandboxd and egress-proxy.
+The integrated Compose and single-container image run an internal Rootless Docker daemon and bundle the execution runtime; the app does not need a host Docker socket or a separate `sandboxd`. The outer integrated app container must run as privileged; on fnOS and similar panels, enable the privileged-container option. This mode is intended for trusted personal single-user deployments, not multi-tenant, public-facing, or business servers. Split production Compose continues to use a separate Rootless `sandboxd`; see the [quick deployment guide](docs/quick-deploy_en.md) for details.
 
 Developers who need source mounts and Vite should use [Dev Compose](docker-compose.dev.yml):
 

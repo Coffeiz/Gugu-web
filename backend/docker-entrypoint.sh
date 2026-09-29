@@ -5,6 +5,25 @@
 # prod/dev 分体部署复用同一个入口脚本；默认 Compose 额外托管 worker、gateway、Uvicorn 和 Nginx。
 set -euo pipefail
 
+# 无 Compose 的一体化容器可把应用代码版本化保存到 /data，以便 Admin 更新应用包；
+# Compose 仍由镜像更新链路负责，避免覆盖 /app/logs 等 Compose 挂载点。
+if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
+    && [ -z "${GUGU_UPDATE_DEPLOYMENT_MODE:-}" ]; then
+    if [ -S "${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}" ]; then
+        export GUGU_UPDATE_DEPLOYMENT_MODE=standalone_docker
+    else
+        export GUGU_UPDATE_DEPLOYMENT_MODE=standalone_app_bundle
+    fi
+fi
+if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
+    && [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ] \
+    && [ "${GUGU_APP_BUNDLE_UPDATE:-on}" != "off" ] \
+    && [ "${GUGU_UPDATE_DEPLOYMENT_MODE:-}" != "integrated_compose" ] \
+    && [ "${GUGU_UPDATE_DEPLOYMENT_MODE:-}" != "split_compose" ]; then
+    python /opt/gugu/app_bundle_runtime.py --activate
+    cd /app
+fi
+
 # 默认一体化应用模式在等待数据库和 Alembic 之前给出可操作的中文配置提示；
 # 常规 backend/frontend 分离部署不启用这段逻辑。
 if [ "${GUGU_UNIFIED_APP:-0}" = "1" ]; then
@@ -338,6 +357,34 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
     # 在同一服务中运行。任一启用的关键进程退出都让服务退出，避免健康检查看似正常但后台消息
     # 或 IM 长连接已经无人消费。
     monitored_pids=()
+    app_restart_requested=0
+    EMBEDDED_SANDBOX_SUPERVISORD_PID=""
+    if [ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" = "embedded" ]; then
+        # 内置 Rootless daemon 与 sandboxd 由独立 supervisor 托管；只在 manager
+        # 子进程环境中设置内部 socket，不向 Web/Worker/Gateway 暴露 Docker API。
+        if [ "${SANDBOX__EGRESS_PROXY_URL+x}" != "x" ]; then
+            export SANDBOX__EGRESS_PROXY_URL="http://egress-proxy:3128"
+        fi
+        if [ "${SANDBOX__EGRESS_NETWORK_NAME+x}" != "x" ]; then
+            export SANDBOX__EGRESS_NETWORK_NAME="gugu-sandbox-egress"
+        fi
+        if [ "${SANDBOX__EGRESS_ISOLATION_ENABLED+x}" != "x" ]; then
+            export SANDBOX__EGRESS_ISOLATION_ENABLED="true"
+        fi
+        export SQUID_CONF_PATH="${SQUID_CONF_PATH:-/opt/gugu/egress.conf}"
+        EMBEDDED_DATA_DIR="${GUGU_DATA_DIR:-/data}"
+        EMBEDDED_SANDBOX_SOCKET="${GUGU_SANDBOXD_SOCKET:-/run/gugu/sandboxd.sock}"
+        if EMBEDDED_SANDBOX_SUPERVISORD_PID="$(/usr/local/bin/gugu-start-embedded-sandbox-manager.sh \
+            "$EMBEDDED_SANDBOX_SOCKET" "$EMBEDDED_DATA_DIR/users" /run/gugu/sandbox-supervisor)"; then
+            echo "[entrypoint] 已启动内置 Rootless Docker 与 sandbox manager；其未就绪不会重启 Web/数据库。"
+        else
+            EMBEDDED_SANDBOX_SUPERVISORD_PID=""
+            echo "[entrypoint] 内置 Rootless Docker/sandbox manager 启动失败；Web 继续启动，Shell 将显示未就绪。" >&2
+        fi
+    elif [ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" != "external" ] \
+        && [ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" != "disabled" ]; then
+        echo "[entrypoint] 沙盒管理模式无效；Web 继续启动，Shell 保持关闭。" >&2
+    fi
     if [ "${GUGU_ENABLE_RAG_SIDECAR:-1}" = "1" ]; then
         mkdir -p /run/gugu
         export SEARCH__TS_SIDECAR_SOCKET=/run/gugu/rag-sidecar.sock
@@ -367,10 +414,57 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
         for pid in "${monitored_pids[@]}"; do
             kill "$pid" 2>/dev/null || true
         done
+        if [ -n "$EMBEDDED_SANDBOX_SUPERVISORD_PID" ]; then
+            # 独立 manager 接收 TERM 后由 supervisord 回收其 sandboxd 子进程。
+            kill -TERM "$EMBEDDED_SANDBOX_SUPERVISORD_PID" 2>/dev/null || true
+        fi
+    }
+    restart_for_app_update() {
+        app_restart_requested=1
+        stop_children
     }
     trap stop_children TERM INT
+    if [ "${GUGU_UPDATE_DEPLOYMENT_MODE:-}" = "standalone_app_bundle" ]; then
+        trap restart_for_app_update HUP
+    fi
+
+    # app-bundle 切换后需确认新代码确实能提供健康服务；若启动失败，恢复上一代码版本，
+    # 再由同一容器入口重新启动。这里不接触数据库回滚或任何用户数据。
+    if [ "${GUGU_UPDATE_DEPLOYMENT_MODE:-}" = "standalone_app_bundle" ]; then
+        app_ready=0
+        for _ in $(seq 1 90); do
+            if curl -sf "http://127.0.0.1:${GUGU_HTTP_PORT:-9595}/health" >/dev/null; then
+                app_ready=1
+                break
+            fi
+            sleep 1
+        done
+        if [ "$app_ready" = 1 ]; then
+            python /opt/gugu/app_bundle_runtime.py --mark-ready || true
+        else
+            if python /opt/gugu/app_bundle_runtime.py --rollback-pending; then
+                stop_children
+                for pid in "${monitored_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+                if [ -n "$EMBEDDED_SANDBOX_SUPERVISORD_PID" ]; then
+                    wait "$EMBEDDED_SANDBOX_SUPERVISORD_PID" 2>/dev/null || true
+                fi
+                cd /
+                exec /app/docker-entrypoint.sh "$@"
+            fi
+            echo "[entrypoint] 应用未通过健康检查，且不存在可安全恢复的上一版本。" >&2
+            exit 1
+        fi
+    fi
 
     while true; do
+        if [ "$app_restart_requested" = 1 ]; then
+            for pid in "${monitored_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+            if [ -n "$EMBEDDED_SANDBOX_SUPERVISORD_PID" ]; then
+                wait "$EMBEDDED_SANDBOX_SUPERVISORD_PID" 2>/dev/null || true
+            fi
+            cd /
+            exec /app/docker-entrypoint.sh "$@"
+        fi
         for pid in "${monitored_pids[@]}"; do
             if ! kill -0 "$pid" 2>/dev/null; then
                 set +e

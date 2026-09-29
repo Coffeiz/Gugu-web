@@ -237,10 +237,39 @@ def ensure_sandbox_acl(root: str | Path) -> bool:
             apply_ownership=os.geteuid() == 0,
         )
         apply_permission_plan(plan)
+        if os.environ.get("GUGU_SANDBOX_MANAGER_MODE", "disabled").strip().lower() == "embedded":
+            # 内置 Rootless daemon 进程需要先能穿越 app 数据路径，随后容器内
+            # 固定 UID 通过 subordinate 映射访问已授权的 shell/workspace 目录。
+            daemon_uid = int(os.environ.get("GUGU_ROOTLESS_UID", "1000"))
+            path = Path(resolved)
+            users_root = Path(os.environ.get("GUGU_DATA_DIR", "/data")) / "users"
+            users_root = users_root.resolve(strict=False)
+            try:
+                path.relative_to(users_root)
+            except ValueError as exc:
+                raise ValueError("内置 Rootless ACL 目标不在 /data/users 下") from exc
+            for parent in (path, *path.parents):
+                if parent == users_root:
+                    permission = "r-x"
+                elif parent == users_root.parent:
+                    permission = "--x"
+                elif parent == path:
+                    permission = "rwx"
+                else:
+                    permission = "--x"
+                subprocess.run(
+                    ("setfacl", "-m", f"u:{daemon_uid}:{permission}", str(parent)),
+                    check=True,
+                )
+                if parent == users_root.parent:
+                    break
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         if resolved not in _acl_warned_roots:
             _acl_warned_roots.add(resolved)
-            _logger.warning("沙盒 ACL 初始化失败，降级为全员可写兜底（%s）：%s", resolved, exc)
+            if os.environ.get("GUGU_SANDBOX_MANAGER_MODE", "disabled").strip().lower() == "embedded":
+                _logger.warning("内置 Rootless 沙盒 ACL 初始化失败，将拒绝执行（%s）：%s", resolved, exc)
+            else:
+                _logger.warning("沙盒 ACL 初始化失败，将由调用方处理兼容权限（%s）：%s", resolved, exc)
         return False
     _acl_ready_roots.add(resolved)
     return True

@@ -85,15 +85,12 @@ def ensure_sandbox_root(root: str | Path) -> Path:
     if base.name not in {"shell", "workspace"} or base.parent.name == "":
         raise ValueError("沙盒目录不是受支持的用户 Shell 根目录")
     base.mkdir(parents=True, exist_ok=True)
-    # 生产部署中沙盒容器由 backend 通过 docker.sock 作为兄弟容器启动；rootless
-    # docker 下沙盒进程映射到部署用户 uid，与 backend 容器的 root 不同，必须在
-    # 挂载根目录上有写权限。优先用 ACL 收紧（沙盒映射身份可读写，还能读到 backend
-    # 写入的 0660 文件）；Compose 使用 bootstrap 共享的 daemon 映射，本机 rootless
-    # 开发从 subordinate 配置推导。环境不支持时（无 setfacl 或映射）退回原来的
-    # 全员可写兼容性取舍：宿主机侧其他本地用户
-    # 理论上可写此目录（专用单用户部署可接受）；容器侧仍受 cap-drop、只读根和
-    # 挂载范围限制。
+    # rootless Docker 下沙盒 UID 通过 subordinate 映射访问挂载目录；embedded
+    # 模式还需 ACL 允许内部 daemon 用户穿越授权路径。embedded ACL 失败必须拒绝，
+    # 不能扩大为全员可写；external/本机兼容行为保持原状。
     if not ensure_sandbox_acl(base):
+        if os.environ.get("GUGU_SANDBOX_MANAGER_MODE", "disabled").strip().lower() == "embedded":
+            raise PermissionError("内置 Rootless 沙盒工作区权限初始化失败")
         base.chmod(0o777)
     if not base.is_dir():
         raise ValueError("沙盒根目录不可用")

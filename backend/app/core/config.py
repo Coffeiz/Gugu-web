@@ -133,6 +133,10 @@ class SandboxSettings(BaseModel):
     enabled 只表示 Admin 请求启用沙盒；是否真的可执行还必须经过 Docker
     运行时探测和执行器就绪检查，不能由配置值单独推断。
     """
+    manager_mode: Literal["embedded", "external", "disabled"] = Field(
+        default_factory=lambda: os.getenv("GUGU_SANDBOX_MANAGER_MODE", "disabled").strip().lower(),
+        description="沙盒管理器部署模式；必须显式指定，不根据 Docker Socket 自动推断",
+    )
     enabled: bool = Field(True, description="是否启用 Docker Shell 沙盒（默认开启；运行时仍需 Docker 就绪）")
     full_user_sandbox_authorization_enabled: bool = Field(
         True,
@@ -155,10 +159,9 @@ class SandboxSettings(BaseModel):
         description="已验证的镜像 digest；Compose 可使用 resolved 引用 bootstrap 固定的 registry digest",
     )
     rootless_required: bool = Field(
-        False,
+        default_factory=lambda: os.getenv("SANDBOX__ROOTLESS_REQUIRED", "false").strip().lower() in {"1", "true", "yes", "on"},
         description=(
-            "是否强制要求 Rootless Docker；默认部署允许 Rootful Docker，"
-            "生产环境可显式设为 true"
+            "是否强制 Rootless Docker；external 管理器始终强制，单容器 embedded 镜像默认强制"
         ),
     )
     network_profile: Literal["none", "egress"] = Field("egress", description="容器网络策略；默认允许通过受控代理临时访问公网")
@@ -198,8 +201,8 @@ class FileSyncSettings(BaseModel):
     """本地文件事实源同步配置。"""
 
     enabled: bool = Field(
-        False,
-        description="是否启用本地文件事实源自动同步（默认关闭）",
+        True,
+        description="是否启用本地文件事实源自动同步（默认开启）",
     )
     active_window_days: int = Field(
         7,
@@ -582,7 +585,7 @@ class AppSettings(BaseSettings):
                     raise ValueError("sandbox 配置必须是对象")
                 merged = {**self.sandbox.model_dump(), **{
                     k: v for k, v in raw_sandbox.items()
-                    if k in SandboxSettings.model_fields
+                    if k in SandboxSettings.model_fields and k != "manager_mode"
                 }}
                 updates["sandbox"] = SandboxSettings.model_construct(**merged)
 
@@ -683,6 +686,14 @@ def _merge_override_patch(existing: dict, patch: dict) -> None:
     """迁移自动模式旧键、过滤沙盒遗留项并合并待保存配置。"""
     _remove_legacy_automatic_mode_key(existing, patch)
     sandbox_patch = patch.get("sandbox")
+    if isinstance(sandbox_patch, dict):
+        # 部署模式只来自进程环境变量；Admin/config.override 不能改变 Socket 边界。
+        safe_sandbox_patch = {
+            key: value for key, value in sandbox_patch.items()
+            if key in SandboxSettings.model_fields and key != "manager_mode"
+        }
+        patch = {**patch, "sandbox": safe_sandbox_patch}
+        sandbox_patch = safe_sandbox_patch
     if isinstance(sandbox_patch, dict):
         old_sandbox = existing.get("sandbox", {})
         if not isinstance(old_sandbox, dict):

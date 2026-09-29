@@ -71,10 +71,33 @@ def test_docker_container_mount_source_rejects_non_host_source(monkeypatch):
     assert docker_runtime.docker_container_mount_source() is None
 
 
-def test_sandboxd_resolves_host_data_root_once_at_startup(monkeypatch):
+def test_docker_container_storage_root_maps_only_data_mount(monkeypatch):
+    monkeypatch.setattr(
+        docker_runtime, "docker_container_mount_source",
+        lambda destination: Path("/srv/gugu-data") if destination == "/data" else None,
+    )
+    assert docker_runtime.docker_container_storage_root("/data/users", "/data") == Path("/srv/gugu-data/users")
+    with pytest.raises(ValueError, match="持久化 /data"):
+        docker_runtime.docker_container_storage_root("/var/lib/gugu-users", "/data")
+
+
+@pytest.mark.parametrize(
+    ("manager_mode", "host_data_root", "resolved_root", "expected"),
+    [
+        ("external", "//Gugu-data/users", Path("/srv/compose/project/Gugu-data/users"), "/srv/compose/project/Gugu-data/users"),
+        ("embedded", "/untrusted/configured/path", Path("/srv/approved-data/users"), "/data/users"),
+        ("embedded", "/untrusted/configured/path", None, "/data/users"),
+    ],
+)
+def test_sandboxd_resolves_host_data_root_for_deployment_mode(
+    monkeypatch, manager_mode, host_data_root, resolved_root, expected,
+):
     from agent.sandbox import sandboxd
 
-    settings = SimpleNamespace(sandbox=SimpleNamespace(host_data_root="//Gugu-data/users"))
+    settings = SimpleNamespace(
+        sandbox=SimpleNamespace(manager_mode=manager_mode, host_data_root=host_data_root),
+        storage=SimpleNamespace(local_path="/data/users"),
+    )
     monkeypatch.setattr(sandboxd, "get_settings", lambda: settings)
     monkeypatch.setattr(
         sandboxd, "docker_container_mount_source",
@@ -82,29 +105,152 @@ def test_sandboxd_resolves_host_data_root_once_at_startup(monkeypatch):
     )
 
     sandboxd._resolve_host_data_root_once()
-    assert settings.sandbox.host_data_root == "/srv/compose/project/Gugu-data/users"
+    assert settings.sandbox.host_data_root == (
+        str(Path(settings.storage.local_path).resolve())
+        if manager_mode == "embedded"
+        else expected
+    )
 
 
-def test_docker_executor_uses_resolved_host_data_root_for_workspace(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_embedded_egress_initialization_targets_internal_rootless_daemon_and_fails_closed(monkeypatch, tmp_path):
+    from agent.sandbox import sandboxd
+
+    settings = SimpleNamespace(
+        manager_mode="embedded",
+        enabled=True,
+        network_profile="egress",
+        egress_proxy_url="http://egress-proxy:3128",
+        egress_isolation_enabled=True,
+        egress_network_name="gugu-sandbox-egress",
+        stdio_max_sessions=8,
+        stdio_max_sessions_per_user=4,
+    )
+    monkeypatch.setattr(sandboxd, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    script = tmp_path / "egress-init.sh"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(sandboxd, "_EMBEDDED_EGRESS_INIT_SCRIPT", script)
+    monkeypatch.setattr(sandboxd, "docker_environment", lambda: {})
+    monkeypatch.setattr(sandboxd, "docker_network_available", lambda _name: True)
+    calls = []
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setattr(
+        sandboxd.subprocess, "run",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or Completed(),
+    )
+    allowed_root = tmp_path / "users"
+    allowed_root.mkdir()
+    manager = sandboxd.SandboxdServer(tmp_path / "sandboxd.sock", allowed_root)
+    proxy_image_id = "sha256:" + "c" * 64
+    proxy_image_name = "ubuntu/squid:embedded"
+    manager._embedded_bundle_runtime = SimpleNamespace(
+        load_verified_manifest=lambda: SimpleNamespace(
+            image_for_role=lambda role: SimpleNamespace(
+                image_id=proxy_image_id if role == "egress-proxy" else None,
+                local_ref=proxy_image_name if role == "egress-proxy" else None,
+            ),
+        ),
+    )
+
+    manager._validate_egress_network()
+
+    args, kwargs = calls[0]
+    assert args[0] == [str(script)]
+    assert kwargs["env"]["DOCKER_HOST"] == "unix:///run/user/1000/docker.sock"
+    assert kwargs["env"]["GUGU_EGRESS_CONFIG_FROM_CLIENT"] == "1"
+    assert kwargs["env"]["GUGU_EGRESS_REQUIRE_LABELS"] == "1"
+    assert kwargs["env"]["GUGU_EGRESS_REQUIRE_LOCAL_IMAGE"] == "1"
+    assert kwargs["env"]["GUGU_EGRESS_PROXY_IMAGE"] == proxy_image_name
+    assert kwargs["env"]["GUGU_EGRESS_USE_CONFIG_FILE"] == "0"
+    assert kwargs["env"]["GUGU_EGRESS_PROXY_URL"] == "http://egress-proxy:3128"
+
+    class Failed:
+        returncode = 1
+
+    monkeypatch.setattr(sandboxd.subprocess, "run", lambda *_args, **_kwargs: Failed())
+    with pytest.raises(ValueError, match="代理初始化失败"):
+        manager._validate_egress_network()
+
+
+@pytest.mark.asyncio
+async def test_sandboxd_pty_refuses_egress_when_initialization_fails(monkeypatch, tmp_path):
+    from agent.sandbox import sandboxd
+
+    settings = SimpleNamespace(
+        stdio_max_sessions=8,
+        stdio_max_sessions_per_user=4,
+    )
+    monkeypatch.setattr(sandboxd, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    allowed_root = tmp_path / "users"
+    allowed_root.mkdir()
+    workspace = allowed_root / "user-a"
+    workspace.mkdir()
+    manager = sandboxd.SandboxdServer(tmp_path / "sandboxd.sock", allowed_root)
+
+    def refuse_egress():
+        raise ValueError("受控 egress 初始化失败")
+
+    monkeypatch.setattr(manager, "_validate_egress_network", refuse_egress)
+    with pytest.raises(ValueError, match="受控 egress 初始化失败"):
+        await manager._handle_pty({
+            "root": str(workspace),
+            "shell_mode": "sandbox",
+            "network_profile": "egress",
+        }, None, None)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "manager_mode": "external",
+            "resolved_data_root": None,
+            "workspace_in_root": True,
+            "expected_mount": "/srv/compose/project/Gugu-data/users/user-1/workspace",
+        },
+        {
+            "manager_mode": "embedded",
+            "resolved_data_root": Path("/srv/approved-data/users"),
+            "workspace_in_root": True,
+            "expected_mount": None,
+        },
+        {
+            "manager_mode": "embedded",
+            "resolved_data_root": Path("/srv/approved-data/users"),
+            "workspace_in_root": False,
+            "error": "超出授权数据目录",
+        },
+    ],
+)
+def test_docker_executor_resolves_authorized_host_workspace(
+    monkeypatch, tmp_path, case,
+):
     from agent.sandbox import docker as docker_module
     from agent.sandbox.docker import DockerSandboxExecutor
     from app.core import config
 
+    manager_mode = case["manager_mode"]
+    workspace_in_root = case["workspace_in_root"]
     logical_root = tmp_path / "data" / "users"
-    workspace = logical_root / "user-1" / "workspace"
+    workspace = logical_root / "user-1" / "workspace" if workspace_in_root else tmp_path / "unrelated"
     workspace.mkdir(parents=True)
     monkeypatch.setattr(
         docker_module, "docker_container_mount_source",
         lambda: Path("/srv/compose/project/Gugu-data"),
     )
+    monkeypatch.setattr("agent.sandbox.rootless_permissions.ensure_sandbox_acl", lambda _root: True)
     monkeypatch.setattr(
         config, "get_settings",
         lambda: SimpleNamespace(storage=SimpleNamespace(local_path=str(logical_root))),
     )
     settings = SimpleNamespace(
+        manager_mode=manager_mode,
         image="debian:bookworm-slim",
         image_digest="sha256:" + "a" * 64,
-        host_data_root="//Gugu-data/users",
+        host_data_root="/untrusted/configured/path" if manager_mode == "embedded" else "//Gugu-data/users",
         network_profile="none",
         pids_limit=64,
         cpu_limit=1,
@@ -113,12 +259,36 @@ def test_docker_executor_uses_resolved_host_data_root_for_workspace(monkeypatch,
         egress_proxy_url="",
         egress_isolation_enabled=False,
     )
+    if manager_mode == "embedded":
+        bundle_dir = tmp_path / "sandbox-bundle"
+        bundle_dir.mkdir()
+        (bundle_dir / "manifest.json").write_text(json.dumps({
+            "schema_version": 2,
+            "archive_sha256": "sha256:" + "d" * 64,
+            "images": [
+                {"role": "sandbox", "name": "coffeiz/gugu-sandbox:embedded", "digest": "sha256:" + "a" * 64, "image_id": "sha256:" + "c" * 64},
+                {"role": "egress-proxy", "name": "ubuntu/squid:embedded", "digest": "sha256:" + "b" * 64, "image_id": "sha256:" + "e" * 64},
+            ],
+        }), encoding="utf-8")
+        monkeypatch.setenv("GUGU_SANDBOX_BUNDLE_DIR", str(bundle_dir))
 
-    argv = DockerSandboxExecutor(workspace, settings, docker_path="/usr/bin/docker").build_argv("pwd")
-    assert (
-        "--mount=type=bind,src=/srv/compose/project/Gugu-data/users/user-1/workspace,dst=/workspace"
-        in argv
+    executor = DockerSandboxExecutor(workspace, settings, docker_path="/usr/bin/docker")
+    if case.get("error"):
+        with pytest.raises(ValueError, match=case["error"]):
+            executor.build_argv("pwd")
+        return
+
+    argv = executor.build_argv("pwd")
+    expected_mount = (
+        str(workspace.resolve()) if manager_mode == "embedded"
+        else case["expected_mount"]
     )
+    assert f"--mount=type=bind,src={expected_mount},dst=/workspace" in argv
+    if manager_mode == "embedded":
+        assert all("/untrusted/configured/path" not in arg for arg in argv)
+        assert not any(arg.startswith(("--cpus=", "--memory=", "--pids-limit=")) for arg in argv)
+    else:
+        assert all(any(arg.startswith(prefix) for arg in argv) for prefix in ("--cpus=", "--memory=", "--pids-limit="))
 
 
 def test_probe_reports_rootless_daemon(monkeypatch):
@@ -153,8 +323,9 @@ def test_probe_does_not_treat_daemon_failure_as_ready(monkeypatch):
     assert status.executor_ready is False
 
 
-def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
+def test_embedded_sandbox_readiness_uses_verified_bundle_not_configured_image_digest(monkeypatch):
     settings = SimpleNamespace(
+        manager_mode="embedded",
         enabled=True,
         rootless_required=True,
         network_profile="none",
@@ -162,11 +333,14 @@ def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
         image_digest="sha256:" + "a" * 64,
     )
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: docker_runtime.DockerRuntimeStatus(True, True, True))
-    monkeypatch.setattr(docker_runtime, "image_available", lambda *_args, **_kwargs: True)
-    assert docker_runtime.sandbox_readiness(settings)[0]
+    snapshot = docker_runtime.SandboxRuntimeSnapshot(
+        docker=docker_runtime.DockerRuntimeStatus(True, True, True),
+        image_ready=True,
+    )
+    assert docker_runtime.docker_sandbox_readiness(settings, runtime_snapshot=snapshot)[0]
 
     settings.image_digest = ""
-    assert docker_runtime.sandbox_readiness(settings)[0] is False
+    assert docker_runtime.docker_sandbox_readiness(settings, runtime_snapshot=snapshot)[0] is True
     assert docker_runtime.valid_image_digest("sha256:" + "f" * 64)
     assert not docker_runtime.valid_image_digest("sha256:" + "g" * 64)
     assert docker_runtime.valid_image_digest("resolved")
@@ -174,8 +348,21 @@ def test_sandbox_readiness_requires_enabled_rootless_and_digest(monkeypatch):
     assert not docker_runtime.valid_image_digest("latest")
 
 
-def test_sandbox_readiness_allows_rootful_daemon_by_default(monkeypatch):
+def test_sandbox_manager_mode_comes_from_deployment_environment_not_override(monkeypatch, tmp_path):
+    from app.core import config
+
+    monkeypatch.setenv("GUGU_SANDBOX_MANAGER_MODE", "embedded")
+    monkeypatch.setattr(config, "OVERRIDE_FILE", tmp_path / "config.override.json")
+    (tmp_path / "config.override.json").write_text(
+        '{"sandbox":{"manager_mode":"external"}}', encoding="utf-8",
+    )
+
+    assert config.AppSettings().apply_override().sandbox.manager_mode == "embedded"
+
+
+def test_embedded_sandbox_readiness_rejects_rootful_daemon(monkeypatch):
     settings = SimpleNamespace(
+        manager_mode="embedded",
         enabled=True,
         rootless_required=False,
         network_profile="none",
@@ -183,13 +370,18 @@ def test_sandbox_readiness_allows_rootful_daemon_by_default(monkeypatch):
         image_digest="sha256:" + "a" * 64,
     )
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: docker_runtime.DockerRuntimeStatus(True, True, False))
-    monkeypatch.setattr(docker_runtime, "image_available", lambda *_args, **_kwargs: True)
-
-    assert docker_runtime.sandbox_readiness(settings)[0] is True
+    snapshot = docker_runtime.SandboxRuntimeSnapshot(
+        docker=docker_runtime.DockerRuntimeStatus(True, True, False),
+        image_ready=True,
+    )
+    assert docker_runtime.docker_sandbox_readiness(settings, runtime_snapshot=snapshot) == (
+        False, "当前 Docker 不是 Rootless 模式",
+    )
 
 
 def test_sandbox_readiness_queries_sandboxd_instead_of_worker_docker(monkeypatch):
     settings = SimpleNamespace(
+        manager_mode="external",
         enabled=True,
         rootless_required=True,
         network_profile="none",
@@ -280,6 +472,8 @@ def test_sandboxd_runtime_status_reads_the_executor_daemon_snapshot():
         True, True, True, server_version="29.8.0", message="Docker daemon 已就绪",
     )
     assert snapshot.image_ready is True
+    assert snapshot.runtime_ready is True
+    assert snapshot.manager_message == "Docker 沙盒运行时已就绪"
     assert received == [b'{"operation":"status"}\n']
 
 
@@ -308,26 +502,47 @@ def test_sandboxd_runtime_status_fails_closed_for_legacy_status_payload():
     assert snapshot is None
 
 
-def test_docker_sandbox_readiness_rejects_rootful_daemon_before_image_check(monkeypatch):
+@pytest.mark.parametrize(
+    ("manager_mode", "configured_rootless_required", "daemon_rootless", "expected_ready"),
+    [
+        ("embedded", False, False, False),
+        ("embedded", True, False, False),
+        ("embedded", False, True, True),
+        ("external", False, False, False),
+        ("external", True, False, False),
+        ("external", False, True, True),
+    ],
+)
+def test_docker_sandbox_readiness_enforces_mode_rootless_matrix(
+    monkeypatch, manager_mode, configured_rootless_required, daemon_rootless, expected_ready,
+):
     settings = SimpleNamespace(
+        manager_mode=manager_mode,
         enabled=True,
-        rootless_required=True,
+        rootless_required=configured_rootless_required,
         network_profile="none",
         image="debian:bookworm-slim",
         image_digest="sha256:" + "a" * 64,
     )
     monkeypatch.setattr(
         docker_runtime, "probe_docker",
-        lambda: docker_runtime.DockerRuntimeStatus(True, True, False),
+        lambda: docker_runtime.DockerRuntimeStatus(True, True, daemon_rootless),
     )
+    monkeypatch.setattr(docker_runtime, "_probe_embedded_images", lambda can_inspect, _bundle: (can_inspect, ""))
+    image_checks = []
     monkeypatch.setattr(
-        docker_runtime, "image_available",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("rootful daemon 不应继续检查镜像")),
+        docker_runtime,
+        "image_available",
+        lambda *_args: image_checks.append(True) or True,
     )
 
-    assert docker_runtime.docker_sandbox_readiness(settings) == (
-        False, "当前 Docker 不是 Rootless 模式",
+    ready, reason = docker_runtime.docker_sandbox_readiness(settings)
+
+    assert ready is expected_ready
+    assert reason == (
+        "Docker 沙盒运行时已就绪" if expected_ready else "当前 Docker 不是 Rootless 模式"
     )
+    assert bool(image_checks) is (manager_mode == "external" and daemon_rootless)
 
 
 @pytest.mark.asyncio
@@ -393,28 +608,114 @@ async def test_sandboxd_status_includes_its_actual_runtime_snapshot(monkeypatch,
         "server_version": "29.8.0",
         "message": "Docker daemon 已就绪",
         "image_ready": True,
+        "image_error": "",
     }
     assert writer.closed
 
 
 @pytest.mark.asyncio
-async def test_sandboxd_refuses_to_start_when_docker_is_not_ready(monkeypatch, tmp_path):
+async def test_sandboxd_serves_status_when_docker_is_not_ready(monkeypatch, tmp_path):
+    import asyncio
+    from agent.sandbox.docker_runtime import _sandboxd_status_payload
     from agent.sandbox import sandboxd as sandboxd_module
 
     allowed = tmp_path / "allowed"
     allowed.mkdir()
-    server = sandboxd_module.SandboxdServer(tmp_path / "sandboxd.sock", allowed)
+    socket_path = Path("/tmp") / f"gugu-sd-{uuid.uuid4().hex[:10]}.sock"
+    server = sandboxd_module.SandboxdServer(socket_path, allowed)
+    monkeypatch.setattr(server, "_validate_peer", lambda _writer: None)
     monkeypatch.setattr(
         sandboxd_module, "docker_sandbox_readiness",
-        lambda _settings: (False, "当前 Docker 不是 Rootless 模式"),
+        lambda _settings, **_kwargs: (False, "当前 Docker 不是 Rootless 模式"),
+    )
+    monkeypatch.setattr(
+        sandboxd_module,
+        "probe_sandbox_runtime",
+        lambda _settings: docker_runtime.SandboxRuntimeSnapshot(
+            docker=docker_runtime.DockerRuntimeStatus(True, False, None, message="Docker daemon 不可用"),
+            image_ready=False,
+        ),
     )
     monkeypatch.setattr(
         sandboxd_module, "cleanup_orphan_pty_containers",
         lambda: (_ for _ in ()).throw(AssertionError("未通过 Rootless 检查前不能操作 Docker")),
     )
 
-    with pytest.raises(RuntimeError, match="当前 Docker 不是 Rootless 模式"):
-        await server.serve()
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if socket_path.exists():
+                break
+            await asyncio.sleep(0.01)
+        payload, error = await asyncio.to_thread(_sandboxd_status_payload, str(socket_path), timeout_seconds=1)
+        assert error is None
+        assert payload["ready"] is False
+        assert payload["reason"] == "当前 Docker 不是 Rootless 模式"
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        socket_path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_sandboxd_keeps_status_socket_available_when_embedded_bundle_is_invalid(monkeypatch, tmp_path):
+    import asyncio
+    from agent.sandbox.docker_runtime import _sandboxd_status_payload
+    from agent.sandbox import sandboxd as sandboxd_module
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    socket_path = Path("/tmp") / f"gugu-sd-bundle-{uuid.uuid4().hex[:8]}.sock"
+    settings = SimpleNamespace(
+        manager_mode="embedded",
+        enabled=True,
+        rootless_required=False,
+        network_profile="none",
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+        stdio_max_sessions=8,
+        stdio_max_sessions_per_user=4,
+    )
+    snapshot = docker_runtime.SandboxRuntimeSnapshot(
+        docker=docker_runtime.DockerRuntimeStatus(True, True, False, message="Docker daemon 已就绪"),
+        image_ready=False,
+        image_error="内置沙盒运行镜像归档摘要不匹配",
+    )
+    monkeypatch.setattr(sandboxd_module, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    monkeypatch.setattr(sandboxd_module, "_resolve_host_data_root_once", lambda: None)
+    monkeypatch.setattr(sandboxd_module, "probe_sandbox_runtime", lambda *_args, **_kwargs: snapshot)
+    monkeypatch.setattr(
+        sandboxd_module,
+        "docker_sandbox_readiness",
+        lambda _settings, *, runtime_snapshot: (False, runtime_snapshot.image_error),
+    )
+    monkeypatch.setattr(
+        sandboxd_module,
+        "cleanup_orphan_pty_containers",
+        lambda: pytest.fail("bundle 无效时不能进行容器清理"),
+    )
+    server = sandboxd_module.SandboxdServer(socket_path, allowed)
+    monkeypatch.setattr(server, "_validate_peer", lambda _writer: None)
+
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if socket_path.exists():
+                break
+            await asyncio.sleep(0.01)
+        payload, error = await asyncio.to_thread(
+            _sandboxd_status_payload,
+            str(socket_path),
+            timeout_seconds=1,
+        )
+        assert error is None
+        assert payload["ready"] is False
+        assert payload["reason"] == "内置沙盒运行镜像归档摘要不匹配"
+        assert payload["runtime"]["image_error"] == payload["reason"]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        socket_path.unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio
@@ -488,6 +789,65 @@ def test_resolved_image_ref_uses_digest_written_by_compose_bootstrap(monkeypatch
         image_digest="resolved",
     )
     assert _image_ref(settings) == f"coffeiz/gugu-sandbox:latest@{digest}"
+
+
+def test_embedded_image_ref_uses_manifest_local_tag(monkeypatch, tmp_path):
+    image_id = "sha256:" + "c" * 64
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "schema_version": 2,
+        "archive_sha256": "sha256:" + "d" * 64,
+        "images": [
+            {"role": "sandbox", "name": "coffeiz/gugu-sandbox:embedded", "digest": "sha256:" + "a" * 64, "image_id": image_id},
+            {"role": "egress-proxy", "name": "ubuntu/squid:embedded", "digest": "sha256:" + "b" * 64, "image_id": "sha256:" + "e" * 64},
+        ],
+    }), encoding="utf-8")
+    monkeypatch.setenv("GUGU_SANDBOX_BUNDLE_DIR", str(tmp_path))
+    settings = SimpleNamespace(
+        manager_mode="embedded",
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "f" * 64,
+    )
+
+    assert _image_ref(settings) == "coffeiz/gugu-sandbox:embedded"
+
+
+def test_embedded_runtime_probe_surfaces_bundle_failure_and_never_checks_configured_image(monkeypatch):
+    from agent.sandbox.offline_bundle import BundleManifestError
+
+    settings = SimpleNamespace(
+        manager_mode="embedded",
+        enabled=True,
+        rootless_required=False,
+        network_profile="none",
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+    )
+    monkeypatch.setattr(
+        docker_runtime,
+        "probe_docker",
+        lambda: docker_runtime.DockerRuntimeStatus(True, True, True),
+    )
+    monkeypatch.setattr(
+        docker_runtime,
+        "image_available",
+        lambda *_args: pytest.fail("embedded 不应检查 Admin 配置的浮动镜像"),
+    )
+
+    class InvalidBundle:
+        def ensure_images(self):
+            raise BundleManifestError("内置沙盒运行镜像归档摘要不匹配")
+
+    snapshot = docker_runtime.probe_sandbox_runtime(
+        settings,
+        embedded_bundle_runtime=InvalidBundle(),
+    )
+
+    assert snapshot.image_ready is False
+    assert snapshot.image_error == "内置沙盒运行镜像归档摘要不匹配"
+    assert docker_runtime.docker_sandbox_readiness(settings, runtime_snapshot=snapshot) == (
+        False,
+        "内置沙盒运行镜像归档摘要不匹配",
+    )
 
 
 def test_offline_bundle_image_ref_uses_verified_local_tag(monkeypatch, tmp_path):
@@ -808,6 +1168,76 @@ def test_docker_execution_uses_unique_container_name_for_cleanup(tmp_path):
     assert "--name=gugu-sandbox-test" in argv
 
 
+@pytest.mark.asyncio
+async def test_docker_execution_timeout_force_removes_its_container(monkeypatch, tmp_path):
+    import asyncio
+    from agent.sandbox import docker as docker_module
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1,
+        memory_limit_bytes=128 * 1024 * 1024,
+        ephemeral_quota_bytes=128 * 1024 * 1024,
+        timeout_seconds=30,
+        output_limit_bytes=12_000,
+        egress_proxy_url="",
+        egress_isolation_enabled=False,
+    )
+    executor = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker")
+    calls = []
+    process = None
+
+    class FakeProcess:
+        def __init__(self, pid, *, finished=False):
+            self.pid = pid
+            self.returncode = 0 if finished else None
+            self.finished = asyncio.Event()
+            if finished:
+                self.finished.set()
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
+            self.stdout.feed_eof()
+            self.stderr.feed_eof()
+
+        async def wait(self):
+            await self.finished.wait()
+            return self.returncode
+
+    async def _create_subprocess_exec(*argv, **_kwargs):
+        nonlocal process
+        calls.append(argv)
+        if argv[1:3] == ("rm", "--force"):
+            return FakeProcess(4322, finished=True)
+        process = FakeProcess(4321)
+        return process
+
+    terminated = []
+
+    def _terminate_process_group(pid):
+        terminated.append(pid)
+        process.returncode = -9
+        process.finished.set()
+
+    monkeypatch.setattr(docker_module.asyncio, "create_subprocess_exec", _create_subprocess_exec)
+    monkeypatch.setattr(
+        DockerSandboxExecutor,
+        "_terminate_process_group",
+        staticmethod(_terminate_process_group),
+    )
+
+    result = await executor.execute("sleep 60", timeout=0.1)
+
+    assert result.timed_out is True
+    assert result.ok is False
+    assert terminated == [4321]
+    container_name = next(arg.removeprefix("--name=") for arg in calls[0] if arg.startswith("--name="))
+    assert calls[1] == ("/usr/bin/docker", "rm", "--force", container_name)
+
+
 def test_sandboxd_server_rejects_root_outside_allowed_root(tmp_path):
     from agent.sandbox.sandboxd import SandboxdServer
     import pytest
@@ -853,16 +1283,28 @@ def test_sandbox_override_includes_sandboxd_socket(monkeypatch, tmp_path):
 
 
 def test_sandbox_readiness_rejects_disabled(monkeypatch):
-    settings = SimpleNamespace(enabled=False, rootless_required=True, image_digest="sha256:" + "a" * 64)
+    settings = SimpleNamespace(manager_mode="embedded", enabled=False, rootless_required=True, image_digest="sha256:" + "a" * 64)
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: (_ for _ in ()).throw(AssertionError("不应探测关闭的沙盒")))
     ready, reason = docker_runtime.sandbox_readiness(settings)
     assert not ready
     assert reason == "Shell 沙盒未开启"
 
 
+def test_sandbox_readiness_does_not_probe_local_docker_when_manager_disabled(monkeypatch):
+    from app.core.config import SandboxSettings
+
+    settings = SandboxSettings(manager_mode="disabled", sandboxd_socket="")
+    monkeypatch.setattr(
+        docker_runtime, "probe_docker",
+        lambda: (_ for _ in ()).throw(AssertionError("disabled 模式不得探测 Docker")),
+    )
+    assert docker_runtime.sandbox_readiness(settings) == (False, "沙盒部署模式已禁用")
+
+
 def test_sandbox_readiness_rejects_invalid_egress_configuration(monkeypatch):
     settings = SimpleNamespace(
         enabled=True,
+        manager_mode="embedded",
         rootless_required=True,
         network_profile="egress",
         egress_proxy_url="",
@@ -922,74 +1364,120 @@ def test_admin_sandbox_state_allows_rootful_when_not_required():
     )
 
 
-def test_admin_executor_readiness_is_independent_of_enabled_switch(monkeypatch):
+def _mock_admin_sandbox_status(monkeypatch, settings, snapshot):
     from app.api.v1 import sandbox_admin
-    from app.core.config import SandboxSettings
 
-    settings = SandboxSettings(enabled=False, sandboxd_socket="")
     monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
-    monkeypatch.setattr(
-        sandbox_admin,
-        "probe_docker",
-        lambda: docker_runtime.DockerRuntimeStatus(True, True, True),
-    )
-    monkeypatch.setattr(sandbox_admin, "valid_image_digest", lambda value: True)
-    monkeypatch.setattr(sandbox_admin, "image_available", lambda *_args, **_kwargs: True)
-    response = sandbox_admin._response()
-    assert response["state"] == "disabled"
-    assert response["executor_ready"] is True
-    assert response["full_user_sandbox_authorization_enabled"] is True
+    monkeypatch.setattr(sandbox_admin, "sandboxd_runtime_status", lambda _path: snapshot)
+    return sandbox_admin
 
 
-def test_admin_sandbox_status_uses_sandboxd_runtime_not_backend_docker(monkeypatch):
-    from app.api.v1 import sandbox_admin
-    from app.core.config import SandboxSettings
-
-    settings = SandboxSettings(enabled=True, sandboxd_socket="/run/gugu/sandboxd.sock")
-    snapshot = docker_runtime.SandboxRuntimeSnapshot(
-        docker=docker_runtime.DockerRuntimeStatus(True, True, True, server_version="29.8.0"),
+def _sandbox_admin_snapshot(*, rootless=True, runtime_ready=True, message="Docker 沙盒运行时已就绪", server_version=None):
+    return docker_runtime.SandboxRuntimeSnapshot(
+        docker=docker_runtime.DockerRuntimeStatus(True, True, rootless, server_version=server_version),
         image_ready=True,
+        runtime_ready=runtime_ready,
+        manager_message=message,
     )
-    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
-    monkeypatch.setattr(sandbox_admin, "sandboxd_runtime_status", lambda path: snapshot)
-    monkeypatch.setattr(
-        sandbox_admin,
-        "probe_docker",
-        lambda: (_ for _ in ()).throw(AssertionError("不能探测 backend 的 Docker daemon")),
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "manager_mode": "external",
+            "enabled": True,
+            "snapshot": {"rootless": True, "runtime_ready": True, "message": "Docker 沙盒运行时已就绪"},
+            "expected_state": "ready",
+            "expected_message": "Docker 沙盒运行时已就绪",
+            "expected_executor_ready": True,
+            "expected_manager_ready": True,
+        },
+        {
+            "manager_mode": "external",
+            "enabled": True,
+            "snapshot": {"rootless": False, "runtime_ready": True, "message": "Docker 沙盒运行时已就绪"},
+            "expected_state": "rootless_required",
+            "expected_message": "当前 Docker 不是 Rootless 模式",
+            "expected_executor_ready": False,
+            "expected_manager_ready": True,
+        },
+        {
+            "manager_mode": "embedded",
+            "enabled": True,
+            "snapshot": {"rootless": False, "runtime_ready": True, "message": "Docker 沙盒运行时已就绪"},
+            "expected_state": "rootless_required",
+            "expected_message": "当前 Docker 不是 Rootless 模式",
+            "expected_executor_ready": False,
+            "expected_manager_ready": True,
+        },
+        {
+            "manager_mode": "embedded",
+            "enabled": False,
+            "snapshot": {"rootless": True, "runtime_ready": False, "message": "Shell 沙盒未开启"},
+            "expected_state": "disabled",
+            "expected_message": "沙盒已关闭",
+            "expected_executor_ready": True,
+            "expected_manager_ready": True,
+        },
+        {
+            "manager_mode": "external",
+            "enabled": True,
+            "snapshot": None,
+            "expected_state": "docker_unavailable",
+            "expected_message": "sandboxd 状态不可用",
+            "expected_executor_ready": False,
+            "expected_manager_ready": False,
+        },
+    ],
+)
+def test_admin_sandbox_status_uses_sandboxd_runtime_not_backend_docker(monkeypatch, case):
+    from app.core.config import SandboxSettings
+
+    settings = SandboxSettings(
+        enabled=case["enabled"],
+        manager_mode=case["manager_mode"],
+        rootless_required=False,
+        sandboxd_socket="/run/gugu/sandboxd.sock",
     )
-    monkeypatch.setattr(
-        sandbox_admin,
-        "image_available",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("不能检查 backend daemon 的镜像")),
-    )
+    snapshot_config = case["snapshot"]
+    snapshot = _sandbox_admin_snapshot(**snapshot_config) if snapshot_config else None
+    sandbox_admin = _mock_admin_sandbox_status(monkeypatch, settings, snapshot)
+    if snapshot is None:
+        monkeypatch.setattr(docker_runtime, "probe_docker", lambda: pytest.fail("不应回退探测 API 进程的 Docker"))
 
     response = sandbox_admin._response()
 
-    assert response["rootless"] is True
-    assert response["image_ready"] is True
-    assert response["executor_ready"] is True
-    assert response["state"] == "ready"
+    expected_snapshot = case["snapshot"]
+    assert response["rootless"] == (expected_snapshot["rootless"] if expected_snapshot else None)
+    assert response["image_ready"] is bool(expected_snapshot)
+    assert response["executor_ready"] is case["expected_executor_ready"]
+    assert response["state"] == case["expected_state"]
+    assert response["manager_ready"] is case["expected_manager_ready"]
+    assert response["rootless_required"] is (case["manager_mode"] in {"embedded", "external"})
+    assert response["message"] == case["expected_message"]
 
 
-def test_admin_sandbox_status_does_not_fall_back_when_sandboxd_status_is_missing(monkeypatch):
+@pytest.mark.asyncio
+async def test_enable_sandbox_rejects_unready_manager(monkeypatch):
+    from fastapi import HTTPException
+
     from app.api.v1 import sandbox_admin
     from app.core.config import SandboxSettings
 
-    settings = SandboxSettings(sandboxd_socket="/run/gugu/sandboxd.sock")
-    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
-    monkeypatch.setattr(sandbox_admin, "sandboxd_runtime_status", lambda _path: None)
-    monkeypatch.setattr(
-        sandbox_admin,
-        "probe_docker",
-        lambda: (_ for _ in ()).throw(AssertionError("sandboxd 不可用时不能退回 backend Docker")),
+    settings = SandboxSettings(
+        manager_mode="embedded",
+        rootless_required=False,
+        sandboxd_socket="/run/gugu/sandboxd.sock",
     )
+    snapshot = _sandbox_admin_snapshot(rootless=False, runtime_ready=False, message="Docker 沙盒运行时未就绪")
+    _mock_admin_sandbox_status(monkeypatch, settings, snapshot)
 
-    response = sandbox_admin._response()
+    with pytest.raises(HTTPException) as error:
+        await sandbox_admin.enable_sandbox(db=None)
 
-    assert response["rootless"] is None
-    assert response["executor_ready"] is False
-    assert response["state"] == "docker_unavailable"
-    assert "sandboxd" in response["message"]
+    assert error.value.status_code == 409
+    assert error.value.detail == "当前 Docker 不是 Rootless 模式"
 
 
 def test_admin_sandbox_status_does_not_echo_invalid_proxy(monkeypatch):
@@ -998,19 +1486,12 @@ def test_admin_sandbox_status_does_not_echo_invalid_proxy(monkeypatch):
 
     settings = SandboxSettings(
         enabled=False,
+        manager_mode="disabled",
         sandboxd_socket="",
         egress_proxy_url="http://user:secret@proxy.example:3128",
         egress_isolation_enabled=True,
     )
     monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
-    monkeypatch.setattr(
-        sandbox_admin,
-        "probe_docker",
-        lambda: docker_runtime.DockerRuntimeStatus(True, True, True),
-    )
-    monkeypatch.setattr(sandbox_admin, "valid_image_digest", lambda value: True)
-    monkeypatch.setattr(sandbox_admin, "image_available", lambda *_args, **_kwargs: True)
-
     response = sandbox_admin._response()
     assert response["egress_proxy_url"] == ""
     assert response["egress_available"] is False
@@ -1360,19 +1841,18 @@ def test_prepare_storage_publishes_rootful_identity_without_subordinate_ranges(t
     assert identity["mapped_gid"] == 65532
 
 
-def test_compose_sandboxd_owns_initialization_contract():
+def test_dev_compose_sandboxd_owns_initialization_contract():
     repo = Path(__file__).parents[2]
-    for name in ("docker-compose.yml", "docker-compose.dev.yml", "docker-compose.prod.yml"):
-        text = (repo / name).read_text(encoding="utf-8")
-        assert "  sandbox-bootstrap:" not in text
-        block = text.split("  sandboxd:", 1)[1]
-        assert "- *gugu-data-mount" in block
-        assert "/etc/passwd:/host/etc/passwd:ro" in block
-        assert "/etc/subuid:/host/etc/subuid:ro" in block
-        assert "/etc/subgid:/host/etc/subgid:ro" in block
-        assert "sandbox_socket:/run/gugu" in block
-        assert "/usr/local/bin/gugu-sandbox-init.sh" in block
-        assert "exec python -m agent.sandbox.sandboxd" in block
+    text = (repo / "docker-compose.dev.yml").read_text(encoding="utf-8")
+    assert "  sandbox-bootstrap:" not in text
+    block = text.split("  sandboxd:", 1)[1]
+    assert "- *gugu-data-mount" in block
+    assert "/etc/passwd:/host/etc/passwd:ro" in block
+    assert "/etc/subuid:/host/etc/subuid:ro" in block
+    assert "/etc/subgid:/host/etc/subgid:ro" in block
+    assert "sandbox_socket:/run/gugu" in block
+    assert "/usr/local/bin/gugu-sandbox-init.sh" in block
+    assert "exec python -m agent.sandbox.sandboxd" in block
 
 
 def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
@@ -1388,7 +1868,7 @@ def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
         assert match is not None, f"{compose_name} 缺少 {service_name} 服务"
         return match.group(1)
 
-    for compose_name in ("docker-compose.dev.yml", "docker-compose.prod.yml"):
+    for compose_name in ("docker-compose.dev.yml",):
         for service_name in ("worker", "gateway", "migrate"):
             block = service_block(compose_name, service_name)
             assert re.search(r"(?m)^    healthcheck:\n      disable: true$", block)
@@ -1400,15 +1880,21 @@ def test_compose_healthchecks_and_sandbox_egress_match_service_roles():
             block = service_block(compose_name, service_name)
             assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in block
 
+    for service_name in ("worker", "gateway", "migrate"):
+        block = service_block("docker-compose.prod.yml", service_name)
+        assert re.search(r"(?m)^    healthcheck:\n      disable: true$", block)
+    for service_name in ("backend", "worker"):
+        block = service_block("docker-compose.prod.yml", service_name)
+        assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in block
+
     integrated = (repo / "docker-compose.yml").read_text(encoding="utf-8")
     assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in integrated
     assert 'http://127.0.0.1:9595/health' in integrated
     assert 'HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \\\n    CMD curl -sf http://127.0.0.1:9595/health' in (repo / "Dockerfile").read_text(encoding="utf-8")
 
-    sandboxd = service_block("docker-compose.yml", "sandboxd")
-    assert 'test: ["CMD-SHELL", "test -S \\"$${GUGU_SANDBOXD_SOCKET}\\""]' in sandboxd
-    assert 'SANDBOX__EGRESS_ISOLATION_ENABLED: "true"' in sandboxd
-    assert "sandbox-bootstrap" not in integrated
+    assert 'GUGU_SANDBOX_MANAGER_MODE: embedded' in integrated
+    assert 'SANDBOX__ROOTLESS_REQUIRED: "true"' in integrated
+    assert 'DOCKER_HOST: unix:///var/run/docker.sock' not in integrated
 
 
 def test_permission_plan_rejects_root_directory(tmp_path):
@@ -1482,7 +1968,20 @@ def test_non_compose_egress_bootstrap_uses_isolated_network_and_stable_proxy():
 
     backend = Path(__file__).parents[1]
     script = (backend / "scripts/runtime/sandbox_egress_init.sh").read_text(encoding="utf-8")
-    assert 'docker_cli network create --internal "$EGRESS_NETWORK"' in script
+    assert "docker_cli network create --internal" in script
+    assert "--label gugu.managed=egress-network" in script
+    assert 'GUGU_EGRESS_REQUIRE_LABELS:-0' in script
+    assert 'GUGU_EGRESS_REQUIRE_LOCAL_IMAGE:-0' in script
+    assert '内置 egress 代理镜像未加载，拒绝在线拉取' in script
+    assert 'GUGU_EGRESS_USE_CONFIG_FILE:-1' in script
+    assert 'GUGU_EGRESS_CONFIG_FROM_CLIENT:-0' in script
+    assert 'docker_cli cp "$SQUID_CONF" "$PROXY_CONTAINER_NAME:/etc/squid/squid.conf"' in script
+    assert 'gugu.egress.config-mode' in script
+    assert "同名 Docker 网络不属于 Gugu egress 管理器，拒绝接管" in script
+    assert "同名容器不属于 Gugu egress 管理器，拒绝接管" in script
+    assert "container_is_managed()" in script
+    assert "{{ .HostConfig.Privileged }}" in script
+    assert "case \"$mounts\" in *docker.sock*" in script
     assert 'PROXY_CONTAINER_NAME="${GUGU_EGRESS_PROXY_CONTAINER_NAME:-egress-proxy}"' in script
     assert 'GUGU_EGRESS_PROXY_URL:-http://egress-proxy:3128' in script
     assert 'GUGU_EGRESS_CONFIG_FILE' in script
@@ -1493,6 +1992,22 @@ def test_non_compose_egress_bootstrap_uses_isolated_network_and_stable_proxy():
     assert 'network connect "$network" "$PROXY_CONTAINER_NAME"' in script
     assert 'connect_network "$PROXY_UPLINK_NETWORK"' in script
     assert '--volume "$SQUID_CONF:/etc/squid/squid.conf:ro"' in script
+
+
+def test_unified_image_bundles_egress_manager_and_uses_internal_rootless_socket():
+    from pathlib import Path
+
+    backend = Path(__file__).parents[1]
+    dockerfile_text = (backend.parent / "Dockerfile").read_text(encoding="utf-8")
+    entrypoint = (backend / "docker-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "sandbox_egress_init.sh /usr/local/bin/gugu-sandbox-egress-init.sh" in dockerfile_text
+    assert "chmod 0755 /usr/local/bin/gugu-sandbox-egress-init.sh" in dockerfile_text
+    assert '[ "${GUGU_SANDBOX_MANAGER_MODE:-disabled}" = "embedded" ]' in entrypoint
+    assert 'DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"' not in entrypoint
+    assert 'DOCKER_HOST="unix://$ROOTLESS_DOCKER_SOCKET"' in (backend / "scripts/runtime/start_embedded_sandbox_manager.sh").read_text(encoding="utf-8")
+    assert 'SANDBOX__EGRESS_PROXY_URL="http://egress-proxy:3128"' in entrypoint
+    assert 'SANDBOX__EGRESS_ISOLATION_ENABLED="true"' in entrypoint
 
 
 def test_quota_measurement_ignores_symlinks_and_checks_reservation(tmp_path):

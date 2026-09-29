@@ -1,181 +1,190 @@
-# PRD-DEPLOY-2：单容器 Bubblewrap Shell 与外置沙箱自动发现
+# PRD-DEPLOY-2：一体化镜像内置 Rootless 沙盒
 
-> 状态：提案；Phase 0 默认 fnOS 单容器硬门未通过，Phase 1 暂停；当前单独运行 `gugu-web` 不提供 sandbox Shell，需外部 `sandboxd`；Bubblewrap 单容器执行尚未实现
+> 状态：实施中；以 C9 的内置 sandboxd/runtime bundle 为代码基线，目标改为 app 容器内运行 Rootless Docker；完成构建后由用户导入 fnOS 验收
 > 创建：2026-09-27
 > 最近更新：2026-09-29
-> 关联模块：`backend/agent/sandbox/`、`backend/agent/tools/shell.py`、`backend/app/api/v1/sandbox_admin.py`、`backend/app/core/config.py`、`backend/docker-entrypoint.sh`、`Dockerfile`、`docker-compose.yml`、`docker-compose.prod.yml`
-> 背景参考：`docs/prds/【已完成】PRD-SHELL-1-工作区Shell沙盒.md`、`docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md`、Bubblewrap [README](https://github.com/containers/bubblewrap/blob/main/README.md)、Docker [seccomp 文档](https://docs.docker.com/engine/security/seccomp/)
+> 关联模块：`Dockerfile`、`backend/docker-entrypoint.sh`、`backend/agent/sandbox/`、`docker-compose.yml`、`docker-compose.prod.yml`、`.github/workflows/docker-release.yml`
+> 背景参考：`docs/prds/【已完成】PRD-DEPLOY-1-一体化镜像一键部署.md`、`docs/prds/【已完成】PRD-SHELL-1-工作区Shell沙盒.md`、`docs/superpowers/specs/2026-09-22-offline-sandbox-bundle-design.md`
 
-## 0. 实际状态
+## 0. 当前基线与目标
 
-| 能力/结果 | 状态 | 说明 |
-|---|---|---|
-| 单个 `gugu-web` 容器、不用 Compose、不部署 `gugu-sandbox` 时运行 sandbox Shell | 🔲 待实施 | 当前 sandbox scope 只经 Unix Socket 调用 `SandboxdClient`；Socket 不可用即拒绝，没有 Bubblewrap 执行器。 |
-| 已部署外置 `gugu-sandbox` / `sandboxd` 时自动识别并调用 | 🟡 部分完成 | 已有 `SandboxdClient` 与 status 协议，但当前依靠固定配置路径，尚无 `auto` provider 选择和探测边界。 |
-| 基础跨用户文件隔离及进程隔离 | 🔲 待实施 | 当前 Docker 执行器提供容器隔离；`LocalWorkspaceExecutor` 不是 sandbox 的安全替代。 |
-| fnOS 默认容器安全配置下 Bubblewrap 可启动 | ❌ 未通过 | 2026-09-29 Phase 0 测试镜像在默认 `docker-default` AppArmor + builtin seccomp 下，root / 非 root 均无法创建 namespace；详见 `docs/devlog/2026-09-29-Bubblewrap-Phase0-fnOS可行性.md`。 |
+C9 已恢复单容器内置 `sandboxd`、逐命令执行容器和镜像 bundle，但原设计要求把宿主 Docker Socket 挂进 app。该依赖在 fnOS 单镜像部署中难以配置，且把宿主 Docker 控制权交给 app。此 PRD 保留 C9 的执行 API、权限检查、确认门、逐命令容器和 runtime bundle，**只将 embedded 模式的 Docker daemon 改为 app 容器内的 Rootless Docker**。
 
-## 1. 背景与目标
+目标部署形态：用户在 fnOS 导入并启动一个 `gugu-web` 镜像，按 fnOS 的“使用高权限执行容器/privileged”选项启动；无需 Compose、宿主 Docker Socket 映射、单独 sandboxd、gugu-sandbox 常驻服务或额外手动配置，即可使用隔离 Shell。空闲时 Docker 中只有 `gugu-web`；执行 Shell 时由其内部 Rootless daemon 临时创建 `gugu-sandbox-*` 子容器，结束后回收。
 
-### 1.1 背景
+## 1. 目标、范围与边界
 
-用户希望从 fnOS 导入并启动一个 `gugu-web` 镜像后即可使用 Shell，不必部署 Compose、额外的 `gugu-sandbox` 镜像或长期运行的沙箱容器。当前执行边界把 sandbox scope 固定交给外置 `sandboxd`；没有该服务时 Shell 失败。`LocalWorkspaceExecutor` 是显式 system scope 的执行器，直接复用它会让模型命令获得应用进程可访问的宿主文件权限，因此不能作为缺少沙箱时的兜底。
+### 1.1 目标
 
-### 1.2 目标
+- 一体化镜像携带 Rootless Docker daemon 所需运行时、sandboxd 和本次 app 构建对应的执行镜像/runtime bundle；用户仅导入单个 app 镜像。
+- embedded 模式由入口自动启动、探测并监督内部 Rootless daemon 与 sandboxd；不连接、不探测、不挂载宿主 Docker Socket。
+- 复用现有 `SandboxdClient`、`SandboxdServer`、`DockerSandboxExecutor` 执行链；Shell/PTY/MCP stdio 仍在逐次创建的子容器中运行，不能回退至 app 容器本机执行。
+- 用户数据只挂载授权工作区；执行容器不获得宿主 socket、app 配置、密钥或无关用户数据。
+- 分体业务部署保持独立 external `sandboxd` + Rootless Docker 的拓扑；backend/worker/gateway 不接触 Docker API/socket。
+- App 每次构建都从同一源码提交构建并打包执行镜像。embedded 用户不单独管理 sandbox 版本；分体部署的独立 sandbox 发布生命周期保留。
+- 单用户个人自托管优先开箱可用，不把 cgroup 配额作为运行前置条件；保留应用层并发、超时、输出限制、取消和清理。状态页如无法获得 cgroup 限额，应诚实显示“未设置/不可用”，不得伪报已施加硬限制。
 
-- 单容器镜像自带 Bubblewrap 和精简只读 Shell rootfs；不需要 Compose、宿主 Docker Socket、额外容器或另一个沙箱镜像即可运行 sandbox scope 的命令。
-- 默认执行 provider 为 `auto`：若发现兼容且健康的外置 `gugu-sandbox` / `sandboxd` Unix Socket，则复用现有 `SandboxdClient` 协议；未发现 Socket 时使用容器内 Bubblewrap runner。
-- 单容器路径提供“防误操作、限制常见越权”的基础隔离，目标人群是个人部署及少量可信成员；明确不把 Bubblewrap 路径宣传为对抗恶意租户、内核漏洞或应用容器逃逸的强多租户边界。
-- 两种 provider 共用 Shell 授权、工作区归属、确认门、超时、输出上限、审计、取消和配额等应用策略；执行器只负责进程与 OS 隔离。
-- Bubblewrap 不可用时明确显示原因并拒绝 sandbox 命令；不得退回 `LocalWorkspaceExecutor`、`os.system`、Docker CLI 或未隔离执行。
+### 1.2 明确不做
 
-### 1.3 部署安全前置条件
-
-Bubblewrap 使用 Linux user/mount 等 namespace 构造文件系统视图；上游说明其依赖 user namespaces，且已移除旧的 setuid 运行模式。Docker 默认 seccomp 是 syscall allowlist，namespace 与挂载操作是否被允许还取决于 daemon profile、容器 capability、内核及 NAS 厂商配置。故“镜像里安装 bwrap”本身不等于可运行。
-
-首个验收门必须在 fnOS 默认创建方式下验证；若默认 profile 阻止 Bubblewrap，则只允许评估并记录能工作的最小单容器运行选项（优先精确 capability，而非 `privileged` 或 `seccomp=unconfined`）。该选项必须可以通过 fnOS 的单容器部署流程应用；如果 fnOS UI/可交付安装入口无法设置它，提案不得宣称开箱即用，须暂停发布并重新评审部署产品形态。运行时 capability 只用于受限 Bubblewrap 启动边界，不得把 Docker Socket 挂进 `gugu-web`。
-
-依据：[Bubblewrap user namespace 与 setuid 说明](https://github.com/containers/bubblewrap/blob/main/README.md#user-namespaces)、[Bubblewrap namespace / 文件系统隔离与限制](https://github.com/containers/bubblewrap/blob/main/README.md#sandboxing)、[Docker 默认 seccomp 与 profile 配置](https://docs.docker.com/engine/security/seccomp/)。
-
-### 1.4 明确不做
-
-- 不在 Web、Worker 或 Gateway 进程中裸执行用户 Shell；不把 `LocalWorkspaceExecutor` 用作失败回退。
-- 不要求或自动挂载宿主 Docker Socket，不创建 Docker-in-Docker，也不新增常驻容器。
-- 不承诺 Bubblewrap 单容器模式与独立 Rootless Docker 沙箱具有相同的恶意租户隔离强度、网络隔离、cgroup 配额或抗内核攻击能力。
-- 不把模型提供的路径、provider 名、Bubblewrap 参数、挂载参数或 Socket 路径当作部署配置；只能从可信服务端配置读取。
-- 第一阶段不在 Bubblewrap provider 下开放未经代理强制的公网/内网网络访问；需要受控 egress 时由外置 sandboxd 执行，或后续另立经过安全评审的方案。
+- 不依赖、自动挂载或自动发现宿主 Docker Socket；不要求用户编写 Compose 或手动挂 socket 路径。
+- 不使用 Bubblewrap；不在 app/worker 进程直接执行用户命令；不使用 `LocalWorkspaceExecutor` 作为故障回退。
+- 不声称 privileged app 容器适用于多租户、公网或业务服务器。Rootless 限制的是内部 Docker daemon/执行容器权限，并不能消除外层 privileged app 容器自身的宿主机风险。
+- 不把 Rootless daemon 作为第二个常驻 Docker 容器；不要求用户部署或更新独立 sandboxd 容器。
+- 不要求 cgroup v1/v2；资源使用受应用层策略管理，不承诺在缺少 cgroup 控制器时具备内核级 CPU/内存硬上限。
+- 不改变分体部署的外部 Rootless 要求，不兼容旧 Compose 沙箱拓扑的自动迁移/回滚，也不清理用户数据、宿主镜像或网络。
 
 ## 2. 功能需求
 
-### FR-DEPLOY2-001：默认单容器提供 Bubblewrap sandbox
+### FR-DEPLOY2-001：内置 Rootless daemon 生命周期
 
-单容器部署启动后，`sandbox.enabled=true` 且用户具备 Shell 权限时，sandbox scope 默认由 Bubblewrap runner 执行。启动检查验证 `bwrap`、必要 namespace、mount、运行 rootfs、临时目录和隔离参数实际可用；只有完整探测通过才报告 ready。二进制存在但隔离能力不全仍为 unavailable。
+embedded 入口启动时，在专用非 root 服务账号下启动镜像内的 Rootless Docker daemon，使用私有 `HOME`、持久 Docker data-root 和仅容器内可访问的 Unix socket（默认 `/run/user/1000/docker.sock`）。daemon 不监听 TCP。随后由独立 supervisor 启动 `sandboxd`；daemon 或 manager 失败只令 Shell 未就绪，不应重启 Web/数据库。容器停止时依次停止 sandboxd、Rootless daemon，并清理由本次生命周期产生的临时资源。
 
-### FR-DEPLOY2-002：自动发现并优先使用外置 gugu-sandbox
+daemon 不可用、初始化条件不满足或 privileged 前置条件缺失时：Admin 明确显示当前管理模式、Rootless 状态和可操作原因；Shell fail-closed；不连接宿主 daemon、不本机执行、不暗中降级为 Rootful。
 
-服务端在启动和状态刷新时检查可信配置中的 `GUGU_SANDBOXD_SOCKET`（未配置时使用约定默认路径），并通过现有 status 协议进行有超时、有限数据长度及协议版本校验的健康握手：
+### FR-DEPLOY2-002：Rootless 运行时与构建 bundle
 
-| 发现结果 | `auto` provider 行为 |
-|---|---|
-| 路径不存在 / 没有 Socket | 选择本容器 Bubblewrap；这是无外置沙箱单容器的常态。 |
-| Socket 可连接、协议兼容且 status ready | 选择外置 sandboxd，并通过现有 `SandboxdClient` 执行。 |
-| Socket 存在但拒绝连接、status 不健康或协议不兼容 | 报告 `external_unavailable` 并拒绝执行，不悄悄切换 provider；避免将外置部署故障掩盖成不同安全等级的执行。 |
-| 外置服务探测期间 | 暂不就绪；探测有严格超时，完成后刷新状态，不阻塞 Web 启动。 |
+最终一体化 app 镜像需包含可审计、版本固定的 `dockerd-rootless`、`rootlesskit`、`newuidmap/newgidmap`、`slirp4netns`（或经验证的等价用户态网络驱动）、overlay/fuse 所需组件及其运行库。构建阶段必须验证版本、架构和依赖闭合；不能从未固定 tag 的在线镜像复制可执行文件。优先采用 Docker 官方 Rootless 发行资产/官方构建产物，并记录来源、版本、校验和与许可证。
 
-Socket 检查、所有权/权限校验与握手只能使用可信配置和固定路径；不允许模型或普通用户指定 Socket。只挂载 Socket 的部署可以保持单个应用容器；不要求 Compose，但部署者必须把 Socket 暴露给 app 才能被发现。明确 `external` 的部署模式不得在 Socket 缺失时回退到 Bubblewrap。
+每次一体化 app 构建从同一源码提交构建执行镜像，跑 smoke 与安全扫描后生成归档/manifest，最终 app 携带该 bundle。首次启动或内部 daemon 缺少镜像时，仅从校验通过的本地归档导入；摘要、image ID、架构不匹配时拒绝 Shell，不在线 pull 替代镜像。导入必须可重入，状态目录损坏要清楚报错，不能清空 `/data` 中其他内容。
 
-### FR-DEPLOY2-003：Bubblewrap 文件系统只暴露最小工作集
+### FR-DEPLOY2-003：路径、UID 映射与用户数据隔离
 
-- Bubblewrap 使用镜像内专用的精简 Shell rootfs；rootfs 只读，不把应用完整 `/`、Python venv、环境文件、密钥、数据库/Redis 文件或其他用户数据映射进去。
-- 每次执行只读挂载运行所需基础目录，只读提供必要的 `/proc`（新 PID namespace）和最小 `/dev`；`/tmp` 为有大小上限的临时空间。
-- 唯一可写持久路径是服务端依据 ownership 校验得到的当前用户 Shell 根目录。绑定工作区时只额外挂载当前用户明确授权的工作区，并保持请求要求的只读/可写策略。
-- 沙盒内路径由服务端规范化并检查真实路径、符号链接和越界；模型不能传入任意宿主路径或 bwrap 挂载选项。
-- 使用独立 mount、user、PID、IPC、UTS namespace；默认创建隔离 network namespace。运行命令使用非特权沙盒 UID，丢弃 capability，关闭额外文件描述符，清空环境后仅加入经 allowlist 选择的变量。
+Rootless daemon 和 app 位于同一个外层容器文件系统视图，因此执行容器的 bind source 使用 app 容器内的绝对路径（授权根默认为 `/data/users`），不得再调用 `docker inspect <outer-container>` 反查宿主机 bind 路径。内部 daemon 用户只获得穿越 `/data` 与授权 `/data/users` 子路径所需的 ACL，不递归扩权整个数据卷。执行器只接收经过所有权和路径策略校验的授权根，不能接收模型提供的 host path 或 Docker 参数。
 
-### FR-DEPLOY2-004：Shell 执行生命周期与既有权限策略一致
+专用 Rootless 用户需具有受控的 subordinate UID/GID 映射；映射准备必须幂等、范围固定并限制在外层容器内。需验证 NAS bind mount、旧数据 owner/ACL、文件新建/编辑/删除以及升级重启后的可访问性。无法满足 UID/GID 映射或挂载语义时保持 Shell 未就绪，不得放宽为 Rootful 子容器或递归修改整个 `/data` 权限。
 
-Bubblewrap 执行器实现现有 sandbox 执行契约，覆盖普通命令、PTY、流式输出、取消、权限撤销、超时、并发限制、输出限制、持久目录配额检查及残留进程清理。超时/取消必须结束整个执行进程组，父 runner 退出时子进程不得继续驻留。Bubblewrap argv 与 namespace 参数为固定服务端策略，不接受模型覆盖。
+### FR-DEPLOY2-004：fnOS 启动前置条件与产品说明
 
-容器内 Bubblewrap 不具备可移植的 Docker cgroup 配额接口时，不得把 `RLIMIT` 或目录用量检查描述为与 Docker CPU/内存/PID quota 等价；Admin 状态和部署说明必须列出实际生效的资源限制。单容器方案至少强制执行时间、输出、并发、临时空间和持久目录用量限制。若无法证明单用户文件访问隔离，Shell 不得标记 ready。
+单容器安装只要求导入镜像、配置端口、挂载持久 `/data`（`/config` 按现有部署约定）并在 fnOS UI 选择“使用高权限执行容器/privileged”。不需要选择 sock 文件或配置 Docker 环境变量。镜像不得含宿主 socket volume 或 `DOCKER_HOST=unix:///var/run/docker.sock` 默认值。README、quick-deploy、Admin 状态和 fnOS 测试说明均须明确：privileged 是外层容器运行前置条件；Rootless Docker 在其内部运行；这属于可信个人单用户部署，不能作为多租户安全部署建议。
 
-### FR-DEPLOY2-005：网络与失败状态不降级
+若 Docker API 可检测到外层未授予 Rootless 所需能力，应在状态页说明所需 fnOS 操作，而不是尝试 Rootful daemon。不同 NAS 内核/安全配置可能拒绝 user namespace、mount namespace、网络 namespace 或 id-map；实际可用性由 fnOS 真机导入测试确认。
 
-Bubblewrap provider 默认使用独立 network namespace（仅 loopback），不继承 app 网络，不传递代理变量来假装强制代理。Bubblewrap provider 收到 `network=egress` 时明确拒绝并提示需要可用的外置 sandboxd；外置 provider 继续执行其已有受控 egress 策略。任何 namespace、mount、rootfs、Socket 或健康检查失败均 fail-closed，禁止转为 system scope。
+### FR-DEPLOY2-005：部署模式与管理器边界
 
-### FR-DEPLOY2-006：Admin 状态展示真实执行器
+部署模式由受信配置明确指定，不由 socket 探测隐式推断：
 
-Admin 沙盒状态显示：`selected_provider`（`bubblewrap` / `sandboxd` / `none`）、探测状态、就绪结果、不可用原因、Bubblewrap 版本与已验证的隔离能力、外置 Socket 是否被发现（不回显敏感路径）、网络能力、真实生效的资源边界。用户 Shell 开关、Admin 总开关和用户授权仍是执行前必要条件。状态探测不得暴露宿主路径、用户目录或敏感环境变量。
+| 模式 | 管理器 | Docker daemon | 外层/内层权限 | Shell 不可用时 |
+|---|---|---|---|---|
+| `embedded` 单容器 | app 容器内 sandboxd | app 容器内 Rootless Docker | fnOS 外层容器需 privileged；内层 daemon Rootless | 明确失败，绝不连宿主 daemon或本机执行 |
+| `external` 分体业务 | 独立 sandboxd | 由外部 Rootless daemon 提供 | 仅独立 manager 持有 daemon socket；业务 app 不持有 | 明确拒绝，不回退 |
+| `disabled` | 不启动 | 不提供 | 不适用 | 管理员关闭/未配置 |
 
-## 3. 技术方案
+单容器 `embedded` 默认启用。生产分体 Compose 显式使用 `external`、强制 Rootless，保持现有 Unix API 边界。任何模式下，执行容器均不得挂载 Docker socket。
 
-### 3.1 执行拓扑
+### FR-DEPLOY2-006：网络、资源与清理
 
-```text
-单容器，无 Compose / 无 gugu-sandbox
-└── gugu-web 容器
-    ├── Web / Worker / Gateway
-    ├── Shell provider selector（sandbox scope）
-    ├── Bubblewrap runner（窄执行入口；无 Docker Socket）
-    └── /opt/gugu-shell-rootfs（镜像内、只读、精简工具集）
-        └── 每条命令在独立 namespace 中运行
+`network=none` 必须在内部 Rootless daemon 上无外网；受控 egress 必须经现有代理策略，不可静默连接默认网络。Rootless 网络驱动不支持所需网络策略时，对该 profile fail-closed。保留逐命令隔离、非 root 执行 UID、只读 rootfs、drop capabilities、no-new-privileges、路径授权、应用层并发限制、超时、取消、输出上限和带 Gugu 标签的临时容器回收。若具体内核能力不受支持，状态/文档应报告限制；不得在测试未通过时宣称等价隔离。
 
-部署了外置 gugu-sandbox
-├── gugu-web 容器 ── 受限 Unix Socket ──> gugu-sandbox / sandboxd
-└── sandboxd 按现有 Rootless Docker 策略创建短生命周期执行容器
-```
+无 cgroup 不影响管理器启动；资源控制 UI/API 不得将“配置值”误报为“内核已强制”。本期不实现宿主级/内核级资源硬上限。
 
-两条路径都由一个服务端 provider 选择点接入，不复制 Shell 权限/确认/审计逻辑。自动模式只有在外置服务健康握手成功时选择外置服务；Socket 缺失时使用 Bubblewrap；Socket 存在但坏链路必须显示故障并停用执行。
-
-### 3.2 单容器启动权限与边界
-
-镜像不能自行改变宿主容器创建时的 seccomp/capability 配置。实现前先证明 fnOS 实际运行参数能允许 Bubblewrap 建立所需 namespace/mount；如需运行时权限，只给最小必要项并用真实 `docker inspect`/fnOS 容器详情记录，不采用 `privileged`、宿主 Docker Socket 或无限制 seccomp 关闭作为默认方案。若采用 capability 隔离专用 runner，Web/Worker/Gateway 进程本身不保留该 capability；Bubblewrap 子执行在创建 namespace 后丢弃 capability。
-
-不得把用户可控命令参数直接拼接进 bwrap CLI。执行配置应由固定策略构造 argv，并对每个 bind source 做 ownership、真实路径与 symlink 校验。Bubblewrap 配置失败或内核不支持时不能使用 `--not-a-security-boundary` 继续启动。
-
-### 3.3 配置与发现
-
-新增单一事实源的执行模式配置：`auto`（默认）、`bubblewrap`、`external`、`disabled`。`auto` 只执行 FR-DEPLOY2-002 的握手；`bubblewrap` 强制本地 bwrap；`external` 强制外置 sandboxd；`disabled` 完全不注册/执行 sandbox Shell。`GUGU_SANDBOXD_SOCKET` 只提供外置 Socket 路径，不表示路径存在时可绕过协议握手。实际选择结果为运行时状态，不持久化成跨进程缓存；Socket 变化后通过有界状态刷新更新，不在每条消息动态修改上下文或数据库。
-
-默认 Sandbox 总开关与现有用户权限、scope 决策保持独立；auto 只在服务端选择执行 provider，不扩大调用者权限，不把 provider 能力写入模型提示词。
-
-### 3.4 目录职责与改动范围
+## 3. 目标拓扑
 
 ```text
-backend/agent/sandbox/
-  【新增】bubblewrap_executor.py       # 固定 namespace、rootfs、路径与子进程生命周期
-  【新增】provider.py                 # auto/external/bubblewrap 选择与状态快照
-  【修改】client.py / __init__.py     # 复用现有外置协议并暴露统一 provider
-backend/agent/tools/shell.py          # 【修改】sandbox scope 统一 dispatch；system scope 保持分离
-backend/app/core/config.py            # 【修改】执行模式、rootfs 与有界探测配置
-backend/app/api/v1/sandbox_admin.py   # 【修改】汇报真实 provider 与隔离状态
-backend/docker-entrypoint.sh         # 【修改】初始化/探测 Bubblewrap runner，不启动 Docker-in-Docker
-Dockerfile                           # 【修改】安装固定来源的 bwrap 与生成精简只读 rootfs
-backend/tests/                        # 【修改】执行器、provider、权限边界和自动发现回归
-frontend/src/views/Admin/Sandbox/     # 【条件】仅在状态接口改变显示时调整
-docker-compose*.yml                  # 【不改】不得将 Compose 设为单容器 Shell 的前置条件
+fnOS / Docker（用户导入单一 gugu-web 镜像；外层选择 privileged）
+└── gugu-web（唯一常驻容器）
+    ├── Web / Worker / Gateway / PostgreSQL / Redis
+    ├── dockerd-rootless（专用非 root UID；私有 socket/data-root）
+    ├── sandboxd（窄 Unix API，仅调用内部 daemon）
+    └── idle: 无 shell 子容器
+        active shell: 内部 daemon 创建 gugu-sandbox-*，结束回收
 ```
 
-`provider.py` 是 sandbox scope 唯一执行器选择边界；`bubblewrap_executor.py` 只负责启动隔离子进程，不重做 Shell 授权、配额、确认或审计。容器入口只做初始化与状态采集，不启动另一个容器管理器。生成的 rootfs 只能由镜像构建流程生成，不在运行中联网下载或覆盖。
+不挂宿主 `/var/run/docker.sock`，不额外常驻 sandboxd 容器，不用 Compose。执行器和 `sandboxd` 协议继续复用 C9 实现。内部 Rootless daemon 的 socket 位于 app 私有运行目录，不能进入执行容器。
 
-## 4. 验证与上线
+## 4. 技术约束
 
-- 单元测试使用 `tmp_path`、fake Socket 服务和 fake runner；不能读取真实 `Gugu-data/users`、配置文件或真实 Socket。
-- `auto` 决策表逐项测 Socket 缺失、健康、拒绝连接、超时、无效 JSON、错误协议、ready=false；只在 Socket 确实不存在时选 Bubblewrap。
-- Bubblewrap 集成测试验证：命令可运行；不可见 `/data` 全量、应用 `.env`、Python venv、其他用户目录和宿主进程；本用户工作区权限符合请求；`/tmp` 有界；无网络；无法访问 Docker Socket；退出、取消、超时均回收进程。
-- fnOS 真机验收必须使用用户实际的单容器部署流程，无 Compose、无 `gugu-sandbox`、无 Docker Socket，并记录镜像 digest、容器创建安全选项、内核及 Docker 版本。至少跑 `pwd`、`python`、文件读写、超时/取消、用户隔离和越界攻击用例。
-- 用一个独立 sandboxd 测试实例验证自动选择 external，并验证该实例故障时不 fallback；不得用真实多用户数据做隔离测试。
-- 仅在 Phase 0 的最小权限方案确认后才允许进入构建/部署。发布回滚通过恢复上一镜像与配置，不删除 Shell 用户文件、沙盒目录、数据库或卷。
+- 容器内 `DOCKER_HOST` 只在 embedded sandbox manager 子进程环境中指向内部 Rootless socket；不能让 app 全局环境意外选择外层 socket。
+- Rootless daemon 持久数据位于单独可配置目录（默认 `/data/sandbox-rootless`），不与 PostgreSQL/Redis/user files 混用。该目录只包含 daemon 元数据、缓存和导入的镜像，不作为执行容器的用户挂载源。
+- `docker_container_storage_root()` 的“宿主反查”仅可用于 external 模式；embedded 模式直接使用授权的容器内 `/data/users` 路径。
+- 首次启动不应在无交互时进行无界下载；sandbox images 从 app 内只读 bundle 导入。Rootless daemon 包随 app 镜像分发。
+- 入口和管理器启动失败可降级为 Web 可用、Shell 不可用；运行 Shell 必须经真实内部 Rootless daemon readiness 和准确镜像校验。
+- 单容器 privileged 外层属于高信任部署：应用自身漏洞风险不由 Rootless 子 daemon 消除。个人单管理员用途是明确产品边界。
 
-## 5. 风险与待确认问题
+## 5. 文件范围与职责
+
+```text
+Dockerfile                                        【修改】固定来源安装 Rootless Docker runtime 和工具依赖
+backend/docker-entrypoint.sh                     【修改】启动/停止内部 Rootless daemon，再托管 sandboxd
+backend/scripts/runtime/                          【新增/修改】daemon bootstrap、ready 等待、持久目录/用户映射初始化
+backend/agent/sandbox/docker_runtime.py          【修改】embedded socket、状态探测、Rootless readiness
+backend/agent/sandbox/sandboxd.py                 【修改】embedded 容器内路径，不反查外层宿主 mount
+backend/agent/sandbox/docker.py                   【条件】Rootless bind/UID 映射修正
+backend/agent/sandbox/bundle_runtime.py           【修改】通过内部 Rootless daemon 导入并验证 bundle
+backend/app/api/v1/sandbox_admin.py               【修改】准确报告 embedded Rootless 与 privileged 前置条件
+frontend/src/views/Admin/Sandbox/                 【条件】呈现无 privileged/daemon 的明确状态，不误报 Rootful fallback
+Dockerfile.sandbox-bundle、scripts/release/       【修改】app/sandbox 同提交构建、内嵌 bundle、离线候选包
+.github/workflows/docker-release.yml              【修改】最终单镜像含 Rootless 运行时和同轮已扫描 bundle
+docker-compose.yml / docker-compose.offline.yml   【修改】默认 app 不挂 host socket；Compose 不拥有 embedded daemon
+ docker-compose.prod.yml                           【保持】external 分体部署继续独立 Rootless
+ docs/quick-deploy*.md、README*.md                 【修改】fnOS privileged 单镜像说明及信任边界
+ backend/tests/test_unified_image_sandbox_boundary.py 【修改】禁止 host socket、验证内部 daemon 拓扑
+ backend/tests/test_docker_runtime.py、test_bundle_runtime.py 【修改】Rootless socket / readiness / bundle
+ backend/tests/                                   【新增】bootstrap 生命周期、映射和 fail-closed 回归
+```
+
+## 6. 执行 TODO 与 Phase
+
+### Phase 0：内部 Rootless 能力门
+
+- [x] `DEPLOY2-000` 将 PRD 目标切换至单容器内置 Rootless Docker；本文档为后续实施依据。
+- [x] `DEPLOY2-001` 固定运行时来源为 Debian Trixie 仓库签名包（`docker.io`、`docker-cli`、`rootlesskit`、`slirp4netns`、`fuse-overlayfs`、`uidmap`），构建时记录实际包版本并验证运行库闭合；不从未固定 tag 的第三方镜像复制二进制。
+- [x] `DEPLOY2-002` 在临时测试环境复现“外层 privileged + 内部 Rootless daemon”：校验无宿主 socket、daemon 报告 Rootless、network=none 子容器执行、容器内路径 bind mount 可读写；记录运行内核能力限制。不得将未经验证的能力标为完成。
+
+### Phase 1：单镜像 daemon 集成
+
+- [x] `DEPLOY2-010` 将 Rootless runtime 纳入 Dockerfile，验证架构、依赖、可执行文件和镜像体积；不引入 Bubblewrap、不引用浮动镜像 tag。
+- [x] `DEPLOY2-011` 实现专用 Rootless 用户、固定 subordinate UID/GID、持久 daemon 数据目录、内部 Unix socket 与启动等待/健康检查；重启幂等、停止时有序清理。
+- [x] `DEPLOY2-012` embedded manager 只连接内部 Rootless socket；删除 embedded 路径中对宿主 socket 的默认、fallback 和 inspect 反查；external 模式逻辑保持独立。
+- [x] `DEPLOY2-013` 修正 embedded `/data/users` bind source 与 Rootless 文件映射；覆盖既有 owner/ACL、文件创建/编辑/删除和重启，不递归放宽整个 `/data`。
+
+### Phase 2：产品状态、网络与隔离验收
+
+- [ ] `DEPLOY2-020` Admin 显示 embedded Rootless daemon、Shell runtime、镜像 bundle 和 privileged 前置失败原因；缺少能力时 fail-closed，不声称 cgroup 硬限额。
+- [ ] `DEPLOY2-021` 内部 daemon 实测 `network=none` 与受控 egress；代理/驱动未就绪时拒绝 egress；检查内层执行容器看不到 daemon socket。
+- [ ] `DEPLOY2-022` 回归逐命令执行、PTY、MCP stdio、并发、取消、超时、输出限制、标签清理，以及外部 Rootless Compose 模式。
+
+### Phase 3：测试、文档及设计复查
+
+- [x] `DEPLOY2-030` 定向 pytest、构建/manifest 脚本测试、compose 配置检查通过；列明无法在本机验证的真实内核能力。
+- [x] `DEPLOY2-031` 更新 README、quick-deploy、Dockerfile 注释、Admin 文案和 CHANGELOG，统一说明 fnOS 外层 privileged、内层 Rootless、个人信任边界、无 cgroup 硬保证。
+- [x] `DEPLOY2-032` 逐条对照本 PRD 检查实现与测试：不存在宿主 socket 默认/探测/挂载；embedded/external 责任边界一致；网络策略和数据权限无静默降级。记录偏差，先修复再构建。
+
+### Phase 4：devserver 构建 fnOS 导入包
+
+- [x] `DEPLOY2-040` 在 devserver 按仓库 local skill 同步后的代码构建唯一候选镜像；检查 Docker context、磁盘余量、tag 不冲突，不清理用户数据或运行中的服务。
+- [x] `DEPLOY2-041` 导出**未压缩 `.tar`** 到 `/home/coffeiz`，验证 tar 可列举、导入结构完整、记录 SHA-256 / 镜像 ID / 大小；不覆盖已有文件、不生成 `.tar.gz`。
+- [x] `DEPLOY2-042` 将 tar 路径、校验信息、fnOS privileged 部署步骤和未完成的真机验收项交给用户。fnOS 实测由用户导入后完成，不把未实测宣称成已通过。
+
+#### 2026-09-29 devserver 冒烟记录
+
+- 外层 Docker 使用 `--privileged` 启动单个候选 app 容器；只绑定临时 `/data`、`/config`，没有挂载宿主 Docker Socket，也没有启动外部 `sandboxd` 容器。
+- 内部 daemon `SecurityOptions` 含 `name=rootless`，RootlessKit 使用 `slirp4netns`，Docker API 只监听 `/run/user/1000/docker.sock`。首次 sandboxd 状态探测校验并导入 schema v2 bundle 后，沙盒与 egress-proxy 两张镜像均可用。
+- 实际 sandboxd `execute` RPC 与 `network=none` 子容器 shell 均通过；执行身份为 UID/GID 65532。对 `/data/users` 下的临时授权目录完成 bind mount 读写；外层容器重启后健康检查恢复，bundle 镜像仍可使用。
+- 构建时验证运行时包版本：`docker.io` / `docker-cli` `26.1.5+dfsg1-9+deb13u1`、`rootlesskit` `2.0.2-2+b9`、`slirp4netns` `1.2.1-1.1`、`fuse-overlayfs` `1.14-1+b1`、`uidmap` `1:4.17.4-2`。候选镜像平台为 `linux/amd64`，镜像 `Size` 为 1,488,515,770 字节。
+- 已导出 `/home/coffeiz/gugu-web-fnos-rootless-poc-20260929.tar`，未压缩，1,488,567,808 字节；SHA-256：`6c9da98a2d0a36d2eddf61822c6e4c41c74ad0a15e23f39c8665e144b0eca501`；镜像 ID：`sha256:f706f4cf9e9596dce93c73a200606582a33fd8e5d159264db4223b03771b9871`。tar 包含单一 `coffeiz/gugu-web:rootless-poc-20260929` repo tag，成员完整可列举。
+- devserver 测试内核为 `7.0.0-31-generic`，Docker 报告 cgroup v2、`CgroupDriver=none`；这不是 fnOS 内核验证，也不提供 cgroup 硬限额结论。
+- 尚未完成：fnOS 真机导入/启动；受控 egress 网络端到端；PTY、MCP stdio、并发/取消/超时等全套运行回归。它们保持为未完成验收，不因本次 shell 冒烟通过而推定通过。
+
+## 7. 验收方案
+
+- 单容器无 Compose、无宿主 Docker Socket、无额外 sandboxd：启动后 Admin 显示内置 daemon Rootless ready；idle 时宿主只看到 gugu-web 容器。
+- 通过 Shell 和 PTY 执行固定无害命令，确认仅在临时 `gugu-sandbox-*` 中运行；读写授权工作区成功，其他用户/系统路径拒绝；退出后容器清理，daemon 重启后镜像与数据状态可恢复。
+- 从执行容器检查 `/run/gugu-rootless/docker.sock`、宿主 socket、`/data/postgres`、`/data/redis`、其他用户目录和 `/config` 均不可访问。
+- privileged 未开启、user namespace/id-map 不可用、Rootless daemon 起不来、manifest 不符：Web 保持可用，Shell 显示诊断状态，不能 Rootful fallback、本机 fallback 或宿主 socket fallback。
+- 网络 `none` 无外网；egress 只能访问受控代理允许的目标。目标 NAS 内核不能实现该策略时，不得报告通过。
+- 无 cgroup 环境仍可执行，但 UI/API 不得声称 CPU/内存/PID 内核硬限制已生效；现有应用并发/超时/输出限制仍生效。
+- 分体部署 backend/worker/gateway 不持 daemon socket；external manager 必须 Rootless；Rootful external 被拒绝。
+- 最终 tar 与通过检查的候选 app image ID 一致；最终由用户在 fnOS 真机验证 userns、privileged、挂载、Shell、网络与重启持久性。
+
+## 8. 风险与已定决策
 
 | 风险 | 影响 | 对策 |
 |---|---|---|
-| fnOS/Docker 的 seccomp、内核 userns 或 mount 策略阻止 Bubblewrap | 单容器镜像内虽有 `bwrap`，Shell 仍不可用 | Phase 0 使用目标机器默认部署做真机证明；只接受最小单容器权限配置；无法由 fnOS 单容器流程配置则停止宣称开箱即用。 |
-| 单容器 app 与 Shell 共处同一外层容器 | Bubblewrap 是基础误操作隔离，不等价于独立 Rootless 容器；应用漏洞影响面更大 | 明确目标为个人/可信小群体；不提供恶意租户安全承诺；需要强隔离时部署外置 Rootless sandboxd。 |
-| 两条执行器能力不完全相等 | 本地 Bubblewrap 不能天然提供 Docker cgroup 和代理网络能力 | Admin 显示实效限制；本地默认断网；`egress` 仅外置 provider 支持；不伪报等价配额。 |
-| Socket 文件存在但服务未就绪或协议不兼容 | 可能误选执行器或静默改变安全属性 | 外置健康握手作为选择条件；Socket 存在但 unhealthy 时拒绝并提示，不回退。 |
+| fnOS privileged app 容器 | 外层 app 被攻破后宿主风险高；内部 Rootless 不能消除此风险 | 面向可信个人单管理员；醒目说明，不建议多租户/公网/业务服务器 |
+| NAS 内核/面板未开放 user namespaces 或必要 syscall | 内部 Rootless daemon 无法启动，Shell 不可用 | 先做 privileged Rootless POC；状态明确报告缺失能力；不 Rootful 降级 |
+| Rootless bind mount UID/GID 映射 | 文件可能无法读写或出现映射 owner | 固定映射设计，真实覆盖 fnOS bind mount 与既有数据权限；权限失败 fail-closed |
+| Rootless 网络策略支持度不同 | egress 隔离可能比普通 Docker 更受限 | 对 none/egress 分别实测；不满足即关闭对应 profile，不放通默认网络 |
+| 内置 daemon 和镜像增大 app | 下载与磁盘占用上升 | 体积增量接受并量化；版本、摘要、架构可复核；不重复打包 runtime |
+| 无 cgroup 控制器 | 缺少内核级硬资源上限 | 明确不作为启动条件；只承诺实际仍工作的应用层限制 |
 
-待确认事项：无。Bubblewrap 基础隔离边界、auto 发现规则、外置不可用时 fail-closed 和 fnOS 真机硬门均按本 PRD 定案。
-
-## 6. 唯一实施 TODO
-
-### Phase 0：fnOS 可行性硬门
-
-- [x] `DEPLOY2-001` 已执行 fnOS 默认单容器 smoke，结果未通过：宿主机 `unshare -Ur true` 成功，但默认容器 root / 非 root 均不能创建 namespace；`seccomp=unconfined` 诊断及仅加 `SYS_ADMIN` 均不能完成 mount smoke。该测试不是通过验收；没有找到并验证符合 PRD 且可由 fnOS 单容器入口配置的最小权限组合，因此 Phase 1 暂停，需先评审部署安全配置/产品取舍。证据与具体输出见上述 devlog。
-- [ ] `DEPLOY2-002` 确定本地 Shell rootfs、bubblewrap 版本和发行包来源；验收：镜像内 rootfs 只含批准的 Shell runtime，构建可复现、无运行时下载，bwrap 不使用 setuid/setcap 旧模式。
-
-### Phase 1：Bubblewrap 执行器和最小文件视图
-
-- [ ] `DEPLOY2-003` 实现 Bubblewrap executor 和固定 profile；验收：每次执行拥有独立 mount/user/PID/IPC/UTS/network namespace、只读 runtime rootfs、仅本人目录可写、临时目录限额、无应用凭据和 Docker Socket，隔离失败即拒绝。
-- [ ] `DEPLOY2-004` 将 sandbox scope 接到统一执行器接口；验收：Shell 工具的授权、ownership、确认门、审计、配额、输出、超时、取消与权限撤销继续由既有路径负责；system scope 不变，LocalWorkspaceExecutor 不会被 sandbox fallback 调用。
-- [ ] `DEPLOY2-005` 补齐进程生命周期与 resource policy；验收：取消/超时/runner 重启会回收整个进程树，运行限制真实可测，未由 Bubblewrap 支持的 Docker cgroup 指标不被宣称已实现。
-
-### Phase 2：外置 sandboxd 自动发现
-
-- [ ] `DEPLOY2-006` 实现 auto/external/bubblewrap/disabled provider 状态机与外置 health handshake；验收：socket 缺失选择 bwrap、兼容健康选择 sandboxd、Socket 存在但不健康/协议错误时拒绝且不 fallback，disabled 完全不执行。
-- [ ] `DEPLOY2-007` 接入 Admin 沙盒状态；验收：显示真实 provider、隔离能力、不可用原因与有效资源边界，不泄漏宿主路径/环境变量；开关权限与现有策略一致。
-
-### Phase 3：回归、fnOS 验收和交付
-
-- [ ] `DEPLOY2-008` 完成 sandbox/agent 测试矩阵和跨用户隔离安全回归；验收：路径穿越、符号链接越界、环境/FD 泄漏、宿主进程可见性、网络、超时和取消均覆盖，测试只使用临时目录/fake socket。
-- [ ] `DEPLOY2-009` 完成 fnOS 单容器端到端验收与安装说明；验收：不使用 Compose、`gugu-sandbox` 或 Docker Socket 的目标镜像实际运行 Shell；若需单容器 capability，部署说明以最少可执行步骤设置且明确安全影响；外置 sandboxd 发现与故障 fail-closed 另有一组验证结果。
+已定决策：单容器优先开箱易用，不依赖 Compose/宿主 Docker Socket；外层 privileged、内层 Rootless Docker；不考虑 Bubblewrap 和 cgroup；个人自托管可接受该信任等级；分体业务部署继续使用独立 Rootless sandboxd。

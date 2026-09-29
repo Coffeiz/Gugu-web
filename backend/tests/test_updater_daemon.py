@@ -43,22 +43,20 @@ def make_daemon(tmp_path, monkeypatch, state=None, *, self_update="on"):
 
 
 @pytest.mark.asyncio
-async def test_initial_state_status_handles_null_task(tmp_path, monkeypatch):
+async def test_compose_status_is_manual_and_handles_null_task(tmp_path, monkeypatch):
     daemon, _ = make_daemon(tmp_path, monkeypatch)
-    async def compose(_args):
-        return {"services": {"app": {}, "updater": {}, "postgres": {}, "redis": {}}}
-    monkeypatch.setattr(daemon, "_compose", compose)
 
     status = await daemon.dispatch({"method": "status", "params": {}})
 
-    assert status["enabled"] is True
+    assert status["enabled"] is False
+    assert status["reason_code"] == "manual_image_update"
     assert status["task"] is None
     assert status["candidate"] is None
     assert status["has_update"] is False
 
 
 @pytest.mark.asyncio
-async def test_status_disables_updates_when_compose_interpolation_is_invalid(tmp_path, monkeypatch):
+async def test_status_keeps_compose_manual_even_if_legacy_validation_fails(tmp_path, monkeypatch):
     daemon, _ = make_daemon(tmp_path, monkeypatch)
 
     async def invalid_compose(_args):
@@ -69,7 +67,7 @@ async def test_status_disables_updates_when_compose_interpolation_is_invalid(tmp
 
     assert status["mode"] == "integrated_compose"
     assert status["enabled"] is False
-    assert status["reason_code"] == "compose_invalid"
+    assert status["reason_code"] == "manual_image_update"
 
 
 def test_restart_converts_interrupted_task_to_recoverable_state(tmp_path, monkeypatch):
@@ -611,22 +609,29 @@ async def test_rollback_preflight_rejects_without_app_service_definition(tmp_pat
     assert "challenge" not in preflight
 
 
-def test_self_update_disabled_blocks_methods(tmp_path, monkeypatch):
-    """GUGU_SELF_UPDATE=off：非 status 调用一律降级为未启用；status 返回 enabled=False。"""
+def test_compose_admin_update_is_disabled_even_when_legacy_flag_is_on(tmp_path, monkeypatch):
+    """Compose 升级交给 Docker 管理器；遗留 GUGU_SELF_UPDATE 不再启用 Admin 自更新。"""
     import asyncio
-    import updater.client as client_module
     from updater.client import UpdaterClientError, call_updater
 
-    make_daemon(tmp_path, monkeypatch, self_update="off")
-    monkeypatch.setattr(client_module, "_executor", None)
-    monkeypatch.setattr(client_module, "_executor_failed", False)
+    project = tmp_path / "compose-project"
+    project.mkdir()
+    (project / "docker-compose.yml").write_text(
+        "services: {app: {environment: {GUGU_EMBEDDED_DEPS: '1'}}}\n", encoding="utf-8",
+    )
+    monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
+    monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(project))
+    monkeypatch.setenv("GUGU_UNIFIED_APP", "1")
+    monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "1")
+    monkeypatch.setenv("GUGU_SELF_UPDATE", "on")
 
     async def scenario():
         with pytest.raises(UpdaterClientError) as exc_info:
             await call_updater("check")
-        assert exc_info.value.code == "self_update_disabled"
+        assert exc_info.value.code == "manual_image_update"
         status = await call_updater("status")
         assert status["enabled"] is False
+        assert status["capability"] == "manual"
 
     asyncio.run(scenario())
 
