@@ -40,7 +40,7 @@ def test_adapter_for_qwen_keeps_known_openai_cache_capability():
     assert a.supports_active_cache("qwen-max")
 
 
-def test_responses_prompt_cache_key_is_official_openai_only():
+def test_responses_prompt_cache_key_is_scoped_to_declared_provider_support():
     adapter = adapter_for(_ai(provider="openai", base_url="https://api.openai.com/v1"))
     assert adapter.supports_responses_prompt_cache_key(
         _ai(provider="openai", base_url="https://api.openai.com/v1")
@@ -51,6 +51,13 @@ def test_responses_prompt_cache_key_is_official_openai_only():
     assert not adapter_for(_ai(provider="qwen")).supports_responses_prompt_cache_key(
         _ai(provider="qwen")
     )
+    minimax = adapter_for(_ai(provider="minimax", model="MiniMax-M3"))
+    assert minimax.supports_responses_prompt_cache_key(SimpleNamespace(
+        provider="minimax", model="MiniMax-M3", api_format="responses",
+    ))
+    assert not minimax.supports_responses_prompt_cache_key(SimpleNamespace(
+        provider="minimax", model="MiniMax-M3", api_format="openai",
+    ))
 
 
 def test_bailian_qwen3_capabilities_and_thinking_toggle():
@@ -548,9 +555,49 @@ def test_capability_snapshot_exposes_protocol_scoped_reasoning_options():
     assert snapshot["selected_api_format"] == "anthropic"
     assert snapshot["default_api_format"] == "anthropic"
     assert snapshot["default_base_url"] == "https://api.minimaxi.com/anthropic"
-    assert snapshot["supported_api_formats"] == ["anthropic"]
+    assert snapshot["supported_api_formats"] == ["anthropic", "openai", "responses"]
     assert snapshot["reasoning_modes"] == ["adaptive"]
     assert snapshot["reasoning_efforts"] == ["low", "medium", "high", "xhigh", "max"]
+
+
+def test_minimax_responses_protocol_capabilities_and_defaults():
+    adapter = adapter_for(_ai(provider="minimax", model="MiniMax-M3.1-Flash-Preview"))
+    responses_ai = SimpleNamespace(
+        provider="minimax", model="MiniMax-M3.1-Flash-Preview", api_format="responses",
+        reasoning_effort="xhigh", thinking="adaptive",
+    )
+
+    assert adapter.supported_api_formats(responses_ai) == ("anthropic", "openai", "responses")
+    assert adapter.default_base_url_for(responses_ai) == "https://api.minimax.cn/v1"
+    assert adapter.supports_responses_prompt_cache_key(responses_ai)
+    assert adapter.build_responses_reasoning_params(responses_ai) == {
+        "reasoning": {"effort": "xhigh"}}
+
+    snapshot = capability_snapshot(responses_ai)
+    assert snapshot["selected_api_format"] == "responses"
+    assert snapshot["default_base_url"] == "https://api.minimax.cn/v1"
+    assert snapshot["reasoning_modes"] == ["adaptive"]
+    assert snapshot["reasoning_efforts"] == ["low", "medium", "high", "xhigh", "max"]
+
+
+def test_minimax_responses_reasoning_matches_each_model_family():
+    adapter = adapter_for(_ai(provider="minimax", model="MiniMax-M3"))
+    minimax_m3 = SimpleNamespace(
+        provider="minimax", model="MiniMax-M3", api_format="responses", thinking="adaptive",
+    )
+    assert adapter.reasoning_capabilities(minimax_m3, "responses").modes == (
+        "disabled", "adaptive")
+    assert adapter.build_responses_reasoning_params(minimax_m3) == {
+        "reasoning": {"effort": "high"}}
+    minimax_m3.thinking = "disabled"
+    assert adapter.build_responses_reasoning_params(minimax_m3) == {}
+
+    minimax_m2 = SimpleNamespace(
+        provider="minimax", model="MiniMax-M2.7", api_format="responses",
+        thinking="adaptive", reasoning_effort="high",
+    )
+    assert adapter.reasoning_capabilities(minimax_m2, "responses").modes == ("adaptive",)
+    assert adapter.build_responses_reasoning_params(minimax_m2) == {}
 
 
 def test_request_snapshots_do_not_add_unsupported_provider_parameters():
