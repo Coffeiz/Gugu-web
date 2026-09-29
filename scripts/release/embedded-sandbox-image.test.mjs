@@ -7,12 +7,35 @@ const workflowPath = new URL('../../.github/workflows/docker-release.yml', impor
 const bundleActionPath = new URL('../../.github/actions/package-embedded-sandbox-bundle/action.yml', import.meta.url)
 const candidateActionPath = new URL('../../.github/actions/assemble-embedded-app-candidate/action.yml', import.meta.url)
 const verifierPath = new URL('./verify_embedded_app_image.py', import.meta.url)
+const bundledAppBuildScriptPath = new URL('./build-bundled-app-image.sh', import.meta.url)
 
 test('候选 app 镜像只从既有 app 追加只读 bundle 文件层', async () => {
   const dockerfile = await readFile(dockerfilePath, 'utf8')
   assert.match(dockerfile, /^ARG APP_IMAGE\s+FROM \$\{APP_IMAGE\}/m)
   assert.match(dockerfile, /COPY --chmod=0444 runtime-images\.tar manifest\.json \/opt\/gugu\/sandbox-bundle\//)
   assert.doesNotMatch(dockerfile, /^RUN\b|^ENV\b|^ENTRYPOINT\b|^CMD\b|^LABEL\b|^USER\b|^WORKDIR\b|^EXPOSE\b/m)
+})
+
+test('一体化 app 镜像必须先组装并验证 bundled candidate，tar 导出为可选', async () => {
+  const script = await readFile(bundledAppBuildScriptPath, 'utf8')
+  const assemble = script.indexOf('docker build --platform linux/amd64')
+  const verify = script.indexOf('verify_embedded_app_image.py')
+  const save = script.indexOf('docker save --output')
+
+  assert.match(script, /Dockerfile\.sandbox-bundle/)
+  assert.match(script, /runtime-images\.tar[\s\S]*manifest\.json/)
+  assert.ok(assemble >= 0 && verify > assemble && save > verify,
+    '必须先组装候选镜像、验证 bundle 与离线 Shell，再导出 tar')
+  assert.match(script, /\[\[ ! -e "\$archive" \]\]/,
+    '指定 archive 时不得覆盖已有文件')
+  assert.match(script, /\[\[ "\$archive" == \*\.tar \]\]/,
+    '指定 archive 时必须为未压缩 tar')
+  assert.match(script, /tar -tf "\$archive_tmp"/,
+    '导出后必须验证 Docker archive 可读取')
+  assert.match(script, /if \[\[ -n "\$archive" \]\]; then[\s\S]*docker save/,
+    '最终镜像通过验证后，即使不请求 tar 也应正常构建完成')
+  assert.match(script, /archive_tmp="\$\{archive\}\.tmp\.\$\$"[\s\S]*mv -- "\$archive_tmp" "\$archive"/,
+    '只在 tar 完整校验后原子发布输出文件')
 })
 
 test('Sandbox 从当前提交构建、扫描后就地打包并记录提交身份', async () => {

@@ -126,6 +126,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
   ```
 
 - tag 触发 publish job：构建公开的一体化 `gugu-web`、updater、sandbox 和拆分 backend/frontend 镜像，并同步推送 Docker Hub 与 GHCR；业务镜像只发布语义版本号标签，不发布 Git SHA 镜像标签。稳定版的一体化 `gugu-web`、updater、sandbox 仍维护 `latest` 别名；镜像均以 Cosign OCI 1.1 referrer 方式签名，签名不会创建 `sha256-<digest>.sig` 普通镜像 tag。此前已发布的旧式 `.sig` tag 保留，不做清理。update manifest 使用 `docker.io/coffeiz/gugu-web@sha256:...`，不引用拆分镜像。
+- 一体化 `gugu-web` 发布必须先把同次构建的沙盒与 egress-proxy bundle 追加到 app 基础镜像，再通过 `verify_embedded_app_image.py` 完成完整性和离线 Shell smoke test；publish 只允许复制 `bundled-ci-<run_id>` 候选镜像，禁止把 `ci-<run_id>` 基础 app 镜像作为单容器正式镜像。所有本地候选镜像也统一使用 `scripts/release/build-bundled-app-image.sh` 组装并验证；需要离线导入时再通过 `--archive` 导出 `.tar`，不得直接 `docker save` 基础 app 镜像。
 - 稳定版发布完成后，CI 会在 GHCR 与 Docker Hub 的四个镜像仓库中保留最新 10 个 `v主.次.补丁` 正式版本 tag；预发布、`latest`、`dev` 和其他非版本 tag 不清理。GHCR 仅删除不含别名或保留版本 tag 的旧 package version；`GITHUB_TOKEN` 必须对 GHCR package 有 admin 权限，`DOCKERHUB_TOKEN` 必须具备删除 tag 的权限。若 registry 权限或平台限制导致清理失败，只记录告警，不回滚或阻断已完成的发布。
 - Docker Hub 首次推送会按 `coffeiz` 命名空间的默认可见性创建 backend/frontend 仓库；首次发布前确认这两个仓库为 Public，确保业务服务器可匿名拉取。
 
