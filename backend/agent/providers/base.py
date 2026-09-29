@@ -9,6 +9,23 @@ from dataclasses import dataclass
 from typing import Literal
 
 
+ApiFormat = Literal["anthropic", "openai", "responses"]
+
+
+@dataclass(frozen=True)
+class ReasoningCapabilities:
+    """单个模型在单个 API 格式下支持的思考配置。"""
+
+    modes: tuple[str, ...] = ()
+    efforts: tuple[str, ...] = ()
+    effort_map: tuple[tuple[str, str], ...] = ()
+
+    def provider_effort(self, value: str) -> str | None:
+        if value not in self.efforts:
+            return None
+        return dict(self.effort_map).get(value, value)
+
+
 @dataclass(frozen=True)
 class ProviderCapabilities:
     """按模型声明的能力矩阵。
@@ -16,7 +33,7 @@ class ProviderCapabilities:
     供应商适配器可以按 model 覆盖，避免把同一供应商的所有模型误认为能力相同。
     """
 
-    api_format: Literal["anthropic", "openai", "responses"]
+    api_format: ApiFormat
     cache_mode: str = "none"
     thinking: bool = False
     structured_json: bool = False
@@ -53,6 +70,28 @@ class ProviderAdapter:
         """是否确认支持 Responses 的 ``prompt_cache_key`` 请求字段。"""
         return False
 
+    def supported_api_formats(self, ai) -> tuple[ApiFormat, ...]:
+        """返回该 Provider 已声明的公共协议；默认只开放当前默认协议。"""
+        model = getattr(ai, "model", "") or ""
+        return (self.capabilities(model).api_format,)
+
+    def reasoning_capabilities(self, ai, api_format: str) -> ReasoningCapabilities:
+        """返回模型/协议组合支持的推理档位；未知组合默认不发送档位参数。"""
+        return ReasoningCapabilities()
+
+    def _reasoning_effort(self, ai, api_format: str) -> str | None:
+        if getattr(ai, "thinking", None) == "disabled":
+            return None
+        value = (getattr(ai, "reasoning_effort", "") or "").lower()
+        if not value:
+            return None
+        return self.reasoning_capabilities(ai, api_format).provider_effort(value)
+
+    def build_responses_reasoning_params(self, ai) -> dict:
+        """构造 Responses API 推理档位；不支持或默认配置时省略字段。"""
+        effort = self._reasoning_effort(ai, "responses")
+        return {"reasoning": {"effort": effort}} if effort else {}
+
     def supports_explicit_cache(self, model: str = "") -> bool:
         """是否在 OpenAI-compatible 请求中尝试发送显式缓存锚点。
 
@@ -82,9 +121,12 @@ class ProviderAdapter:
     def auth_headers(self, ai) -> dict[str, str]:
         return {}
 
+    def default_base_url_for(self, ai) -> str:
+        return self.default_base_url
+
     def resolve_base_url(self, ai) -> str:
         """返回本次请求地址；允许本地服务使用默认地址而不保存伪造配置。"""
-        return (getattr(ai, "base_url", "") or self.default_base_url).rstrip("/")
+        return (getattr(ai, "base_url", "") or self.default_base_url_for(ai)).rstrip("/")
 
     def diagnostic_request(self, ai) -> dict:
         """构造后台连通性测试请求，不执行请求也不返回密钥。"""
@@ -197,7 +239,11 @@ class ProviderAdapter:
     def build_openai_thinking_kwargs(self, ai, *, thinking: str | None = None) -> dict:
         """返回 OpenAI SDK 调用所需的思考参数。"""
         params = self.build_thinking_params(ai, thinking=thinking)
-        return {"extra_body": params} if params else {}
+        kwargs = {"extra_body": params} if params else {}
+        effort = self._reasoning_effort(ai, "openai")
+        if effort and "reasoning_effort" not in params:
+            kwargs["reasoning_effort"] = effort
+        return kwargs
 
     def build_openai_cache_kwargs(self, ai) -> dict:
         """构造 OpenAI 兼容接口的本地 prompt cache 参数。"""
@@ -205,7 +251,11 @@ class ProviderAdapter:
 
     def build_anthropic_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         """返回 Anthropic SDK 调用所需的思考参数。"""
-        return self.build_thinking_params(ai, thinking=thinking)
+        params = self.build_thinking_params(ai, thinking=thinking)
+        effort = self._reasoning_effort(ai, "anthropic")
+        if effort:
+            params["output_config"] = {"effort": effort}
+        return params
 
     def build_anthropic_generation_params(self, ai) -> dict:
         """返回 Anthropic 兼容端点的额外生成参数。"""

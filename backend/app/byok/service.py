@@ -162,10 +162,8 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
             updates["max_tokens"] = row.max_tokens
         if getattr(row, "context_tokens", None) is not None:
             updates["context_tokens"] = row.context_tokens
-        if getattr(row, "thinking", None) is not None:
-            updates["thinking"] = row.thinking
-        if getattr(row, "reasoning_effort", None) is not None:
-            updates["reasoning_effort"] = row.reasoning_effort
+        updates["thinking"] = getattr(row, "thinking", None)
+        updates["reasoning_effort"] = getattr(row, "reasoning_effort", None) or ""
         updates["reasoning_persistence"] = getattr(row, "reasoning_persistence", "off")
     return base.model_copy(update=updates) if hasattr(base, "model_copy") else base
 

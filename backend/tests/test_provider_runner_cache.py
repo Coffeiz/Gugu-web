@@ -284,6 +284,7 @@ async def test_complete_messages_uses_responses_protocol_and_native_tool_schema(
         lambda ai: SimpleNamespace(
             protocol_format=lambda ai: "responses",
             supports_responses_prompt_cache_key=lambda ai: False,
+            build_responses_reasoning_params=lambda ai: {"reasoning": {"effort": "low"}},
             build_structured_output=lambda ai: {},
         ))
     ai = SimpleNamespace(

@@ -171,8 +171,6 @@
         :saving="editSaving"
         :error="editError"
         :providers="PROVIDERS"
-        :api-formats="API_FORMATS"
-        :deepseek-efforts="DEEPSEEK_EFFORTS"
         :image-detail-levels="IMAGE_DETAIL_LEVELS"
         :media-dimensions="mediaDimensions"
         :capability-loading="capabilityProbeLoading"
@@ -668,13 +666,6 @@ const PROVIDERS = computed(() => [
   ...MODEL_PROVIDERS.map(provider => ({ key: provider.value, label: t(provider.labelKey), base_url: provider.base_url, model: provider.model })),
 ])
 
-// OpenAI-compatible provider 可显式选择 Chat Completions / Responses；MiMo 另外保留 Anthropic。
-const API_FORMATS = computed(() => [
-  { key: 'openai',    label: t('adminAgentUi.formatOpenai') },
-  { key: 'responses', label: t('adminAgentUi.formatResponses') },
-  { key: 'anthropic', label: t('adminAgentUi.formatAnthropic') },
-])
-
 const capabilityProbeLoading = ref(false)
 const capabilityProbeResult = ref<Record<string, { status?: string; detail?: string }>>({})
 
@@ -683,12 +674,6 @@ const mediaDimensions = computed(() => [
   { key: 'image', label: t('agent.image'), hint: t('adminAgentUi.imageHint') },
   { key: 'video', label: t('agent.video'), hint: t('adminAgentUi.videoHint') },
   { key: 'audio', label: t('agent.audio'), hint: t('adminAgentUi.audioHint') },
-])
-const DEEPSEEK_EFFORTS = computed(() => [
-  { key: '', label: t('adminAgentUi.defaultOption') },
-  { key: 'low', label: t('adminAgentUi.low') },
-  { key: 'high', label: t('adminAgentUi.high') },
-  { key: 'max', label: t('adminAgentUi.maximum') },
 ])
 const IMAGE_DETAIL_LEVELS = computed(() => [
   { key: 'auto', label: t('adminAgentUi.auto') },
@@ -759,7 +744,7 @@ async function togglePool(p: LlmPresetRecord) {
 function openNewPreset() {
   editClosing.value = false
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, context_tokens: 128000, thinking: 'disabled', reasoning_effort: '', reasoning_persistence: 'off', image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off', image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''

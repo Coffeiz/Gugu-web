@@ -38,3 +38,37 @@ select {
   box-shadow: var(--input-focus-shadow);
   background: var(--input-bg-focus);
 }
+
+/* 带说明的选项行：标题与说明成组，选项按整组内容垂直居中。 */
+.setting-choice-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.setting-choice-row__copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+.setting-choice-row__options {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+@media (max-width: 720px) {
+  .setting-choice-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .setting-choice-row__options {
+    align-self: stretch;
+  }
+}

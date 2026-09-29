@@ -157,6 +157,8 @@ def _reasoning_persistence_for_model(model) -> str:
 def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
     """统一解析模型、协议、上下文预算和模型级推理状态策略。"""
     model = pick_model(settings, ctx)
+    from agent.providers import filter_reasoning_config
+    model = filter_reasoning_config(model)
     return ModelRunConfig(
         model=model,
         use_anthropic=use_anthropic_for(model),
@@ -208,12 +210,14 @@ async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelR
         updates["context_tokens"] = row.context_tokens
     if getattr(row, "max_tokens", None) is not None:
         updates["max_tokens"] = row.max_tokens
-    if getattr(row, "thinking", None) is not None:
-        updates["thinking"] = row.thinking
-    if getattr(row, "reasoning_effort", None) is not None:
-        updates["reasoning_effort"] = row.reasoning_effort
+    # BYOK 的空/默认思考配置必须覆盖平台模型上的旧值，不能继承平台的
+    # reasoning_effort 或关闭开关后意外改变用户 Provider 的默认行为。
+    updates["thinking"] = getattr(row, "thinking", None)
+    updates["reasoning_effort"] = getattr(row, "reasoning_effort", None) or ""
     updates["reasoning_persistence"] = getattr(row, "reasoning_persistence", "off")
     model = base.model_copy(update=updates) if hasattr(base, "model_copy") else base
+    from agent.providers import filter_reasoning_config
+    model = filter_reasoning_config(model)
     return ModelRunConfig(
         model=model, use_anthropic=use_anthropic_for(model),
         context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),

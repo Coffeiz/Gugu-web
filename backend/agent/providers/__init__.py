@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from copy import copy
+
 from .anthropic import AnthropicAdapter
 from .base import MediaLimits, ProviderAdapter, ProviderCapabilities
 from .deepseek import DeepSeekAdapter
@@ -49,6 +51,8 @@ def capability_snapshot(ai) -> dict[str, object]:
     adapter = adapter_for(ai)
     model = getattr(ai, "model", "") or ""
     capabilities = adapter.capabilities(model)
+    selected_api_format = adapter.protocol_format(ai)
+    reasoning = adapter.reasoning_capabilities(ai, selected_api_format)
     overrides = getattr(ai, "capability_overrides", None) or {}
     values = {field: getattr(capabilities, field) for field in (
         "thinking", "structured_json", "structured_schema", "tools", "parallel_tools",
@@ -59,7 +63,13 @@ def capability_snapshot(ai) -> dict[str, object]:
     return {
         "provider": adapter.name,
         "model": model,
+        "default_base_url": adapter.default_base_url_for(ai),
+        "default_api_format": capabilities.api_format,
         "api_format": capabilities.api_format,
+        "selected_api_format": selected_api_format,
+        "supported_api_formats": list(adapter.supported_api_formats(ai)),
+        "reasoning_modes": list(reasoning.modes),
+        "reasoning_efforts": list(reasoning.efforts),
         "cache_mode": capabilities.cache_mode,
         "thinking": values["thinking"],
         "structured_json": values["structured_json"],
@@ -71,6 +81,38 @@ def capability_snapshot(ai) -> dict[str, object]:
         "video": values["video"],
         "overrides": {k: v for k, v in overrides.items() if k in values and isinstance(v, bool)},
     }
+
+
+def filter_reasoning_config(ai):
+    """返回只保留当前 Provider/模型/API 格式支持的推理配置副本。
+
+    旧配置继续可读，但能力未知或已不匹配时按模型默认处理，不修改持久化配置。
+    """
+    adapter = adapter_for(ai)
+    api_format = adapter.protocol_format(ai)
+    supported_formats = adapter.supported_api_formats(ai)
+    reasoning = adapter.reasoning_capabilities(ai, api_format) \
+        if api_format in supported_formats else None
+    modes = set(reasoning.modes) if reasoning else set()
+    efforts = set(reasoning.efforts) if reasoning else set()
+    thinking = getattr(ai, "thinking", None)
+    effort = getattr(ai, "reasoning_effort", None)
+    updates = {}
+    effort_is_supported = effort in efforts
+    if thinking and thinking not in modes and not (thinking == "adaptive" and effort_is_supported and not modes):
+        updates["thinking"] = None
+    if effort and (not effort_is_supported or thinking == "disabled"):
+        updates["reasoning_effort"] = ""
+    if not updates:
+        return ai
+    return ai.model_copy(update=updates) if hasattr(ai, "model_copy") else _copy_with_updates(ai, updates)
+
+
+def _copy_with_updates(value, updates):
+    cloned = copy(value)
+    for key, item in updates.items():
+        setattr(cloned, key, item)
+    return cloned
 
 
 def adapter_for(ai) -> ProviderAdapter:
@@ -148,7 +190,7 @@ def build_ollama_client(ai, timeout):
 
 
 __all__ = [
-    "MediaLimits", "ProviderAdapter", "ProviderCapabilities", "adapter_for",
+    "MediaLimits", "ProviderAdapter", "ProviderCapabilities", "ReasoningCapabilities", "adapter_for",
     "capability_snapshot",
     "build_anthropic_client", "build_openai_client", "build_ollama_client",
 ]

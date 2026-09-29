@@ -252,6 +252,7 @@ export const scheduledTasksApi = {
 // ── 用户 BYOK ────────────────────────────────────────────────────────────────
 export const byokApi = {
   list: () => get<{ enabled: boolean; status?: string; items: any[] }>('/byok'),
+  capabilities: (data: { provider: string; api_format?: string; base_url?: string; model?: string; ollama_api_mode?: string; ollama_mode?: string; local_runtime?: string }) => post<Record<string, any>>('/byok/capabilities', data),
   create: (data: any) => post('/byok', data),
   update: (id: number, data: any) => patch(`/byok/${id}`, data),
   remove: (id: number) => del(`/byok/${id}`),

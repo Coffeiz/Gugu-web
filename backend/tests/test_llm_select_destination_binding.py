@@ -72,14 +72,15 @@ def harness(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_user_key_without_base_url_never_rides_platform_endpoint(monkeypatch, harness):
-    """用户 DeepSeek Key + base_url 空：deepseek 解析不出官方默认端点 → 放弃覆盖
-    回落平台配置。绝不能出现平台 DashScope URL + 用户 DeepSeek Key 的混配。"""
+async def test_user_key_without_base_url_uses_provider_default_not_platform_endpoint(monkeypatch, harness):
+    """用户 DeepSeek Key + base_url 空时使用 DeepSeek 默认端点，不继承平台 URL。"""
     db = _Db(_user_row(base_url=""))
     cfg = await resolve_run_config_for_user(harness, db, "uid")
-    assert cfg.is_byok is False
-    assert cfg.model.api_key == "platform-secret"
-    assert cfg.model.base_url == PLATFORM_BASE_URL
+    assert cfg.is_byok is True
+    assert cfg.model.api_key == "sk-deepseek-secret"
+    assert cfg.model.base_url == "https://api.deepseek.com"
+    assert cfg.model.thinking is None
+    assert cfg.model.reasoning_effort == ""
 
 
 @pytest.mark.asyncio
@@ -90,6 +91,8 @@ async def test_user_explicit_base_url_is_used_as_destination(monkeypatch, harnes
     assert cfg.model.provider == "deepseek"
     assert cfg.model.api_key == "sk-deepseek-secret"
     assert cfg.model.base_url == "https://my-deepseek-proxy.example/v1"
+    assert cfg.model.thinking is None
+    assert cfg.model.reasoning_effort == ""
     assert PLATFORM_BASE_URL not in cfg.model.base_url
 
 

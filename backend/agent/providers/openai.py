@@ -1,6 +1,6 @@
 from urllib.parse import urlparse
 
-from .base import ProviderAdapter, ProviderCapabilities
+from .base import ApiFormat, ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
 class OpenAIAdapter(ProviderAdapter):
@@ -13,6 +13,11 @@ class OpenAIAdapter(ProviderAdapter):
     name = "unknown"
     api_format = "anthropic"
     cache_mode = "active"
+
+    def default_base_url_for(self, ai) -> str:
+        if (getattr(ai, "provider", "") or "").lower() == "openai":
+            return "https://api.openai.com/v1"
+        return super().default_base_url_for(ai)
 
     def supports_explicit_cache(self, model: str = "") -> bool:
         return True
@@ -27,3 +32,37 @@ class OpenAIAdapter(ProviderAdapter):
 
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         return ProviderCapabilities(api_format="openai", cache_mode="active", tools=True)
+
+    def supported_api_formats(self, ai) -> tuple[ApiFormat, ...]:
+        if (getattr(ai, "provider", "") or "").lower() == "openai":
+            model = (getattr(ai, "model", "") or "").strip().lower()
+            if model.startswith("gpt-5.5-pro"):
+                return ("responses",)
+            return ("openai", "responses")
+        return super().supported_api_formats(ai)
+
+    def reasoning_capabilities(self, ai, api_format: str) -> ReasoningCapabilities:
+        if (getattr(ai, "provider", "") or "").lower() != "openai":
+            return ReasoningCapabilities()
+        base_url = (getattr(ai, "base_url", "") or self.default_base_url_for(ai)).strip()
+        if urlparse(base_url).hostname != "api.openai.com":
+            return ReasoningCapabilities()
+        if api_format not in self.supported_api_formats(ai):
+            return ReasoningCapabilities()
+
+        model = (getattr(ai, "model", "") or "").strip().lower()
+        if model.startswith("gpt-5-pro"):
+            efforts = ("high",)
+        elif model.startswith("gpt-5.6"):
+            efforts = ("none", "low", "medium", "high", "xhigh", "max")
+        elif model.startswith("gpt-6-astra"):
+            efforts = ("low", "medium", "high", "xhigh", "max")
+        elif model.startswith(("gpt-6-sol", "gpt-6-luna")):
+            efforts = ("none", "low", "medium", "high", "xhigh", "max")
+        elif model.startswith("gpt-5.5"):
+            efforts = ("low", "medium", "high", "xhigh")
+        elif model in {"gpt-5", "gpt-5-mini", "gpt-5-nano"}:
+            efforts = ("minimal", "low", "medium", "high")
+        else:
+            return ReasoningCapabilities()
+        return ReasoningCapabilities(efforts=efforts)

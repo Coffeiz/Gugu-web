@@ -325,9 +325,7 @@ async def complete_branch(
     }
     if instructions:
         request["instructions"] = instructions
-    effort = getattr(ai, "reasoning_effort", "") or ""
-    if effort:
-        request["reasoning"] = {"effort": effort}
+    request.update(adapter.build_responses_reasoning_params(ai))
     if json_mode:
         response_format = adapter.build_structured_output(ai).get("response_format")
         if isinstance(response_format, dict):
@@ -432,9 +430,7 @@ class OpenAIResponsesDriver:
         }
         if ctx.previous_response_id:
             request["previous_response_id"] = ctx.previous_response_id
-        effort = getattr(ctx.ai, "reasoning_effort", "") or ""
-        if effort:
-            request["reasoning"] = {"effort": effort}
+        request.update(ctx.adapter.build_responses_reasoning_params(ctx.ai))
         # Responses continuation 依赖服务端 response chain；只有明确配置为 False
         # 时才关闭存储。该值会随 reasoning config fingerprint 参与状态匹配。
         request["store"] = bool(getattr(ctx.ai, "store", True))

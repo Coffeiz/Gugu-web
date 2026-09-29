@@ -35,6 +35,7 @@ from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage, User, UserMcpServer
 from app.services import multimodal_probe, provider_reasoning_state
+from app.byok.schemas import ProviderCapabilityPreview
 
 # 2026-09-03 19:15（北京时间）前的 OpenAI 兼容流仍把 cache_read 计入
 # tokens_in；Anthropic/MiniMax 始终使用拆分口径。表结构没有保存口径版本，
@@ -789,6 +790,14 @@ async def list_llm_presets():
             "pool_mode": presets.get("pool_mode", "random"), "items": items}
 
 
+@router.post("/llm-presets/capabilities-preview")
+async def preview_llm_capabilities(body: ProviderCapabilityPreview):
+    """按编辑中的配置返回静态能力，不读取或写入运行配置文件。"""
+    from types import SimpleNamespace
+    from agent.providers import capability_snapshot
+    return capability_snapshot(SimpleNamespace(**body.model_dump()))
+
+
 class StrategyUpdate(BaseModel):
     strategy: str | None = None    # active | pool | router
     pool_mode: str | None = None   # random | round_robin | least_loaded
@@ -818,7 +827,7 @@ _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens",
                  "image_detail", "audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
                  "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
 _AI_DEFAULTS = {"max_tokens": 8000, "context_tokens": 128000,
-                "thinking": "disabled", "reasoning_effort": "", "reasoning_persistence": "off", "image": False,
+                "thinking": "", "reasoning_effort": "", "reasoning_persistence": "off", "image": False,
                 "image_detail": "auto", "video": False, "audio": False, "api_format": "",
                 "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
                 "deployment_mode": "cloud", "local_runtime": "other", "capability_overrides": {},
@@ -838,7 +847,7 @@ class PresetCreate(BaseModel):
     model: str = ""
     max_tokens: int = Field(8000, gt=0)
     context_tokens: int = Field(128000, gt=1)
-    thinking: str = "disabled"
+    thinking: str = ""
     reasoning_effort: str = ""
     reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
     image: bool = False

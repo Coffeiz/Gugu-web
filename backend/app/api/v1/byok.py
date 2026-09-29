@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import User, UserProviderCredential
 from app.byok.policy import require_byok_enabled
-from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialTestPreview, MediaCapabilityProbe
+from app.byok.schemas import CredentialCreate, CredentialModelsPreview, CredentialPatch, CredentialTestPreview, MediaCapabilityProbe, ProviderCapabilityPreview
 from app.byok.service import credential_view, decrypt_value, encrypt_value, get_owned_credential, list_credentials, master_key_status_for_credentials
 from app.services import multimodal_probe
 
@@ -31,6 +31,16 @@ async def get_credentials(user: User = Depends(get_current_user), db: AsyncSessi
     _gate()
     rows = await list_credentials(db, user.id)
     return {"enabled": True, "status": master_key_status_for_credentials(rows), "items": [credential_view(row) for row in rows]}
+
+
+@router.post("/capabilities")
+async def preview_provider_capabilities(body: ProviderCapabilityPreview,
+                                        user: User = Depends(get_current_user)):
+    """给 BYOK 配置界面提供无凭据、无网络请求的能力快照。"""
+    _gate()
+    from agent.providers import capability_snapshot
+    config = SimpleNamespace(**body.model_dump())
+    return capability_snapshot(config)
 
 
 def _embedding_allows_empty_key(capability: str, provider: str, base_url: str) -> bool:

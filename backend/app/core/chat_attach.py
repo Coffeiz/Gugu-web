@@ -892,11 +892,10 @@ def video_transport_for(model_cfg) -> str:
     from agent import providers
     adapter = providers.adapter_for(model_cfg)
     model = getattr(model_cfg, "model", "") or ""
-    declared = adapter.capabilities(model)
-    # 媒体块跟随本轮实际请求协议，而非适配器默认协议。Responses 目前没有视频
-    # 输入块；协议被显式切换时也不能把另一种协议的媒体结构塞进请求。
+    # 媒体块跟随本轮实际请求协议。Responses 目前没有视频输入块；Chat
+    # 协议只要在该 Provider 的声明列表中，就按所选格式构造媒体内容。
     protocol = adapter.protocol_format(model_cfg)
-    if protocol == "responses" or protocol != declared.api_format:
+    if protocol == "responses" or protocol not in adapter.supported_api_formats(model_cfg):
         return "none"
     overrides = getattr(model_cfg, "capability_overrides", None) or {}
     declared_video = overrides.get("video") if isinstance(overrides.get("video"), bool) \
