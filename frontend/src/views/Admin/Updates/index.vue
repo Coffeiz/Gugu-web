@@ -73,7 +73,7 @@ async function confirmAndStartUpdate() {
   if (!target || !preflight.value?.challenge) return
   const confirmed = await confirmDialog({
     title: t('adminUpdateUi.confirmUpdateTitle'),
-    message: `${t('adminUpdateUi.confirmUpdateMessage', { current: currentVersion.value || t('adminUpdateUi.currentUnknown'), target })}\n\n${t('adminUpdateUi.migrationWarning')}`,
+    message: `${t(status.value?.mode === 'standalone_app_bundle' ? 'adminUpdateUi.confirmAppBundleMessage' : 'adminUpdateUi.confirmUpdateMessage', { current: currentVersion.value || t('adminUpdateUi.currentUnknown'), target })}\n\n${t('adminUpdateUi.migrationWarning')}`,
     tone: 'warning',
     confirmText: t('adminUpdateUi.beginUpdate'),
   })

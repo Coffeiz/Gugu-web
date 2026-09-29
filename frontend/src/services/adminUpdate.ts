@@ -28,13 +28,14 @@ export interface UpdateTask {
   updated_at?: string
   completed_at?: string
   rollback_supported?: boolean
+  rollback_available?: boolean
   previous_version?: string
   events?: Array<{ stage: string; at: string }>
 }
 
 export interface UpdateStatus {
   enabled: boolean
-  mode: 'integrated_compose' | 'split_compose' | 'standalone_docker' | 'unknown'
+  mode: 'integrated_compose' | 'split_compose' | 'standalone_app_bundle' | 'unknown'
   capability: 'one_click' | 'manual'
   reason_code: string
   reason: string
