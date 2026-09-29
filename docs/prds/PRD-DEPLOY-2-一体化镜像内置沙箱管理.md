@@ -1,6 +1,6 @@
 # PRD-DEPLOY-2：单容器 Bubblewrap Shell 与外置沙箱自动发现
 
-> 状态：提案；当前单独运行 `gugu-web` 不提供 sandbox Shell，需外部 `sandboxd`；Bubblewrap 单容器执行尚未实现
+> 状态：提案；Phase 0 默认 fnOS 单容器硬门未通过，Phase 1 暂停；当前单独运行 `gugu-web` 不提供 sandbox Shell，需外部 `sandboxd`；Bubblewrap 单容器执行尚未实现
 > 创建：2026-09-27
 > 最近更新：2026-09-29
 > 关联模块：`backend/agent/sandbox/`、`backend/agent/tools/shell.py`、`backend/app/api/v1/sandbox_admin.py`、`backend/app/core/config.py`、`backend/docker-entrypoint.sh`、`Dockerfile`、`docker-compose.yml`、`docker-compose.prod.yml`
@@ -13,7 +13,7 @@
 | 单个 `gugu-web` 容器、不用 Compose、不部署 `gugu-sandbox` 时运行 sandbox Shell | 🔲 待实施 | 当前 sandbox scope 只经 Unix Socket 调用 `SandboxdClient`；Socket 不可用即拒绝，没有 Bubblewrap 执行器。 |
 | 已部署外置 `gugu-sandbox` / `sandboxd` 时自动识别并调用 | 🟡 部分完成 | 已有 `SandboxdClient` 与 status 协议，但当前依靠固定配置路径，尚无 `auto` provider 选择和探测边界。 |
 | 基础跨用户文件隔离及进程隔离 | 🔲 待实施 | 当前 Docker 执行器提供容器隔离；`LocalWorkspaceExecutor` 不是 sandbox 的安全替代。 |
-| fnOS 默认容器安全配置下 Bubblewrap 可启动 | 🔲 待验证 | Bubblewrap 依赖 namespace 与 mount；Docker 默认 seccomp/能力组合可能阻止所需调用，必须先在目标 fnOS 实机验证，不能只以包已安装判定可用。 |
+| fnOS 默认容器安全配置下 Bubblewrap 可启动 | ❌ 未通过 | 2026-09-29 Phase 0 测试镜像在默认 `docker-default` AppArmor + builtin seccomp 下，root / 非 root 均无法创建 namespace；详见 `docs/devlog/2026-09-29-Bubblewrap-Phase0-fnOS可行性.md`。 |
 
 ## 1. 背景与目标
 
@@ -161,7 +161,7 @@ docker-compose*.yml                  # 【不改】不得将 Compose 设为单�
 
 ### Phase 0：fnOS 可行性硬门
 
-- [ ] `DEPLOY2-001` 在目标 fnOS 默认单容器流程验证 Bubblewrap 所需 user/mount/PID namespace 与 bind mount；验收：不部署 Compose、gugu-sandbox、Docker Socket，记录启动配置、capability/seccomp、内核/daemon 版本和 `bwrap` 实际 smoke 结果。若默认失败，只验证最小单容器权限配置；若 fnOS 无法表达该配置，停止本 PRD 实施并提交产品取舍，不以安装成功替代运行验收。
+- [x] `DEPLOY2-001` 已执行 fnOS 默认单容器 smoke，结果未通过：宿主机 `unshare -Ur true` 成功，但默认容器 root / 非 root 均不能创建 namespace；`seccomp=unconfined` 诊断及仅加 `SYS_ADMIN` 均不能完成 mount smoke。该测试不是通过验收；没有找到并验证符合 PRD 且可由 fnOS 单容器入口配置的最小权限组合，因此 Phase 1 暂停，需先评审部署安全配置/产品取舍。证据与具体输出见上述 devlog。
 - [ ] `DEPLOY2-002` 确定本地 Shell rootfs、bubblewrap 版本和发行包来源；验收：镜像内 rootfs 只含批准的 Shell runtime，构建可复现、无运行时下载，bwrap 不使用 setuid/setcap 旧模式。
 
 ### Phase 1：Bubblewrap 执行器和最小文件视图
