@@ -22,6 +22,59 @@ from agent.run.contract import PreparedExecution
 from agent.run.execution import RunOutcome
 
 
+async def persist_interrupted_agent_run(req, exec_, outcome: RunOutcome) -> None:
+    """持久化用户取消前已完成的 canonical 轮次和部分正文，不触发摘要/反思。"""
+    from agent.context.canonical_tool_history import persistable_canonical_batch_records
+    from agent.context.run_finalize import finalize_run
+
+    prepared = exec_.prepared
+    messages = prepared.anthr_messages if exec_.use_anthropic else prepared.oa_messages
+    initial_len = prepared.anthr_initial_len if exec_.use_anthropic else prepared.oa_initial_len
+    canonical_batches = persistable_canonical_batch_records(messages)
+    if not (outcome.display_timeline_items or outcome.text or outcome.files or canonical_batches):
+        return
+
+    await finalize_run(
+        session_factory=exec_.session_factory,
+        session_id=exec_.session_id,
+        user_id=req.user_id,
+        settings=exec_.settings,
+        model_cfg=exec_.model_cfg,
+        rag_context=prepared.rag_context,
+        messages=messages,
+        initial_len=initial_len,
+        text=outcome.text,
+        display_timeline=outcome.display_timeline_items,
+        files=outcome.files,
+        tokens_in=outcome.tokens_in,
+        tokens_out=outcome.tokens_out,
+        cache_read=outcome.cache_read,
+        cache_write=outcome.cache_write,
+        tools_used=outcome.tool_names,
+        stance_text=prepared.stance_to_persist,
+        user_message_id=getattr(exec_.user_message, "id", None),
+        canonical_batches=canonical_batches,
+        interrupted=True,
+    )
+
+    try:
+        from app.core import events
+        await events.publish(
+            req.user_id,
+            "sessions",
+            session_id=exec_.session_id,
+            appended=[{
+                "role": "assistant",
+                "text": outcome.text,
+                "files": outcome.files or None,
+            }],
+        )
+    except Exception as exc:
+        # 持久化是主路径；广播失效不能回滚已经写入的中止历史。
+        from app.core.redaction import diag_log
+        diag_log("agent.run.interrupted_broadcast", exc)
+
+
 async def finalize_agent_run(
     req,
     exec_: PreparedExecution,
@@ -31,8 +84,8 @@ async def finalize_agent_run(
 ) -> bool:
     """持久化 + 标题/摘要调度 + 渠道广播 + 反思；返回 im_used_tools 供响应装配。
 
-    仅在 outcome 未中断（无错误、未取消）时执行；调用方在此之前自行处理
-    取消/错误的终态响应。
+    仅在 outcome 未中断（无错误、未取消）时执行；取消部分历史由
+    ``persist_interrupted_agent_run`` 单独持久化，错误终态不写入历史。
     """
     from agent.context.run_finalize import finalize_run
 

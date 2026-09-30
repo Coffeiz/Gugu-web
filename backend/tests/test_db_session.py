@@ -1,5 +1,6 @@
 """数据库 Session 生命周期回归测试。"""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -63,6 +64,42 @@ async def test_get_db_rolls_back_before_close(monkeypatch):
     await generator.aclose()
 
     assert calls == ["rollback", "close"]
+
+
+@pytest.mark.asyncio
+async def test_get_db_cleanup_finishes_if_request_task_is_cancelled(monkeypatch):
+    calls = []
+    rollback_started = asyncio.Event()
+    allow_rollback_to_finish = asyncio.Event()
+    session_closed = asyncio.Event()
+
+    class FakeSession:
+        async def rollback(self):
+            calls.append("rollback-started")
+            rollback_started.set()
+            await allow_rollback_to_finish.wait()
+            calls.append("rollback-finished")
+
+        async def close(self):
+            calls.append("close")
+            session_closed.set()
+
+    session = FakeSession()
+    monkeypatch.setattr(db_session, "_engine", object())
+    monkeypatch.setattr(db_session, "_SessionLocal", lambda: session)
+
+    generator = db_session.get_db()
+    assert await generator.__anext__() is session
+    cleanup_task = asyncio.create_task(generator.aclose())
+    await asyncio.wait_for(rollback_started.wait(), timeout=1)
+
+    cleanup_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup_task
+
+    allow_rollback_to_finish.set()
+    await asyncio.wait_for(session_closed.wait(), timeout=1)
+    assert calls == ["rollback-started", "rollback-finished", "close"]
 
 
 @pytest.mark.asyncio

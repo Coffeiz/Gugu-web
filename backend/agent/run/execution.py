@@ -256,7 +256,20 @@ async def consume_agent_events(
         raise
 
     if interrupted:
-        # 错误/取消终态：保留当前进度供响应装配，不做最终轮拼接。
+        # 取消需要把已生成的部分正文留给收尾层持久化；错误仍不把错误文案
+        # 当成 assistant 正文。刷新 sanitizer 尾部，避免截断点丢失最后几个字符。
+        if outcome.cancelled:
+            cur += san.flush()
+            _close_active_seg(cur.strip())
+            for item in outcome.display_timeline_items:
+                if item.get("kind") == "tool" and item.get("toolStatus") == "running":
+                    item["toolStatus"] = "stopped"
+            outcome.round_texts = [r.strip() for r in rounds if r.strip()]
+            if cur.strip():
+                outcome.round_texts.append(cur.strip())
+            outcome.text = "\n\n".join(outcome.round_texts)
+            return
+        # 错误终态不把错误文案当成 assistant 正文，也不持久化不完整输出。
         outcome.round_texts = [r.strip() for r in rounds if r.strip()]
         if outcome.errored:
             outcome.text = outcome.errored_text

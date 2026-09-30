@@ -77,7 +77,11 @@ def test_over_budget_keeps_latest_tool_round_atomic():
 def test_atomic_message_units_keep_tool_call_and_consecutive_results_together():
     messages = [
         {"role": "user", "content": "之前的问题"},
-        {"role": "assistant", "tool_calls": [{"id": "call-1"}], "content": None},
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "call-1"}, {"id": "call-2"}],
+            "content": None,
+        },
         {"role": "tool", "tool_call_id": "call-1", "content": "结果一"},
         {"role": "tool", "tool_call_id": "call-2", "content": "结果二"},
         {"role": "user", "content": "当前问题"},

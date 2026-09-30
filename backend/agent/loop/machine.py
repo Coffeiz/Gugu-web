@@ -519,15 +519,16 @@ async def run_loop(
                         continue
                     yield stream_event("_context_compaction", phase="completed", applied=False,
                                        reason="not_applied")
-                # 已吐过 token 中途出错（emitted 就原样抛的路径）或其他未预期异常——按未知处理：
-                # 原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
-                # where 里带上 provider + api_format——2026-07-14 那次 MiniMax AttributeError
-                # 故障排查时，_core.diag_log 没记 provider，只能靠静态代码分析猜是哪家（PRD-LLM-1
-                # 「待确认问题」），这次直接把它写进日志，下次同类问题一眼就能看出是哪个 provider。
-                _core.diag_log(f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
-                         f"format={driver.api_format}", e)
+                # 已吐 token 后中途失败或其他未预期异常按未知错误处理。错误描述器会把原始异常
+                # 写入受限诊断日志，并将同一诊断编号返回给用户；上下文保留 provider 与 api_format。
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
-                error_info = describe_llm_error(e)
+                error_info = describe_llm_error(
+                    e,
+                    diagnostic_context=(
+                        f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
+                        f"format={driver.api_format}"
+                    ),
+                )
                 yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
 
