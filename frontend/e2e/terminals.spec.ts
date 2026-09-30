@@ -23,7 +23,7 @@ test('交互式终端可以创建、连接、输入并删除', async ({ page }) 
     await terminal.click()
     await page.keyboard.type('printf e2e-pty')
     await page.keyboard.press('Enter')
-    await page.waitForTimeout(300)
+    await expect(terminal.locator('.xterm-rows')).toContainText('e2e-pty', { timeout: 10000 })
     await expect(page.locator('.terminal-page-error, .terminal-output-error')).toHaveCount(0)
 
     await page.getByRole('button', { name: '删除' }).click()

@@ -126,5 +126,21 @@
     "productionEntry": "frontend/src/utils/consoleBanner.ts",
     "keyBehavior": "主题切换不重复追加控制台横幅",
     "ci": "frontend-test"
+  },
+  "frontend/src/utils/llmThinkingOptions.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/llmThinkingOptions.ts",
+    "keyBehavior": "思考选项按 Provider 与模型身份切换并保留有效选择",
+    "ci": "frontend-test"
+  },
+  "frontend/src/utils/modelProviders.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/modelProviders.ts",
+    "keyBehavior": "Provider API 协议选项与默认值符合端点能力且保留有效选择",
+    "ci": "frontend-test"
   }
 }

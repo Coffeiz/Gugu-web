@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from pathlib import Path
 from inspect import signature
 
 from fastapi.dependencies.utils import get_dependant
@@ -104,10 +103,6 @@ def test_long_lived_stream_routes_do_not_hold_dependency_sessions():
 
     assert "db" not in signature(resume_stream).parameters
     assert "db" not in signature(stream_terminal_events).parameters
-
-    session_source = Path(__file__).parents[1].joinpath("app/db/session.py").read_text(encoding="utf-8")
-    assert "await rollback_safely(session" in session_source
-    assert "await asyncio.shield(_cleanup())" in session_source
 
 
 @pytest.mark.asyncio

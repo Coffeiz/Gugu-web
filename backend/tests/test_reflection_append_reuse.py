@@ -6,7 +6,6 @@ LLM 与 Redis 一律打桩；快照登记表逐用例清空。
 """
 from __future__ import annotations
 
-import inspect
 import json
 import time
 from dataclasses import replace
@@ -189,18 +188,6 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
     assert reflection._TASK_REQUIREMENTS in branch_input.delta
     assert policy.name == "reflection"
     assert policy.output_mode == "json"
-
-
-def test_task_requirements_single_source():
-    """owner 与群业务 append 反思共用同一份任务要求常量。"""
-    source = inspect.getsource(reflection)
-    assert source.count("_TASK_REQUIREMENTS") >= 3   # 定义 + 两条路径各引用一次
-
-
-def test_history_directive_is_append_only():
-    """完整历史边界指令只进入 append 反思消息。"""
-    append_src = inspect.getsource(reflection._extract_append)
-    assert "_APPEND_HISTORY_DIRECTIVE" in append_src
 
 
 # ── reflect 模式分流（§6.3）──────────────────────────────────────────

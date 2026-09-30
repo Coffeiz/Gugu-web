@@ -63,6 +63,9 @@ async function dragOnto(page: Page, source: Locator, target: Locator, edgeOffset
   // 先走几步小位移越过 5px 抓取阈值，再移向落点——太快/太少步数有时不会触发 Runtime 的拖拽 session。
   await page.mouse.move(startX + 20, startY + 20, { steps: 5 })
   await page.mouse.move(endX, endY, { steps: 15 })
+  // 确认 Runtime 已创建跟手代理，再释放指针；之后等待代理消失才能证明视觉事务收尾，
+  // 避免仅检查“当前没有代理”时在 landing 尚未开始前提前通过。
+  await expect(page.locator('[data-runtime-proxy-content="true"]').first()).toBeAttached({ timeout: 5000 })
   await page.mouse.up()
   await page.mouse.move(0, 0)
 }
@@ -98,9 +101,11 @@ async function waitForMovedFile(page: Page, ...fileNames: string[]) {
 }
 
 async function waitForMoveRuntime(page: Page) {
-  // API 响应先于 Runtime 的受控对象释放；等一个完整的浏览器渲染周期和
-  // Runtime 收尾动画，避免导航保护把紧随其后的目标点击误判为拖拽中的点击。
-  await page.waitForTimeout(500)
+  // API 响应先于 Runtime 的视觉事务收尾。等拖拽代理实际释放，避免紧随其后的
+  // 目标点击被导航保护误判为仍处于拖拽中；等待 DOM 状态而不是估算动画时长。
+  await expect(page.locator('[data-runtime-proxy-content="true"]')).toHaveCount(0, {
+    timeout: 5000,
+  })
 }
 
 test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
