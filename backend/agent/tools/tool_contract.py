@@ -174,15 +174,20 @@ def unwrap_arguments_wrapper(schema: dict[str, Any], instance: dict[str, Any]) -
     return inner, True
 
 
-def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+def normalize_input_by_schema(
+    schema: dict[str, Any],
+    instance: dict[str, Any],
+    *,
+    strict_array_fields: frozenset[str] = frozenset(),
+) -> tuple[dict[str, Any], list[str]]:
     """按工具 Schema 做无歧义的 JSON 类型归一化。
 
-    模型常把 JSON Schema 中的原生标量序列化成字符串；可选字段还可能以空字符串
-    表示“未填写”。这里只处理能从 Schema 唯一确定的转换，不把必填空值猜成
+    模型常把 JSON Schema 中的原生标量序列化成字符串。空字符串保持原意，
+    仅由字段的 x-empty-string 显式声明转为空数组或省略；不把必填空值猜成
     0/false，避免容错层掩盖真实参数错误。标量方向是双向的：字符串字段里的
     数字文本转回 number，string-only 字段收到 JSON number 也转回字符串（见
     ``normalize_value``）。仅有的两类结构性修复都是模型侧稳定形态：
-    ``{"item": [...]}`` 单键包装，以及数组 item 字段被拍平到顶层（见下）。
+    ``{"item": [...]}`` 单键包装（最多四层），以及数组 item 字段被拍平到顶层（见下）。
     """
     adaptations: list[str] = []
 
@@ -229,11 +234,28 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
         if (
             isinstance(value, dict)
             and isinstance(field_schema, dict)
-            and "array" in types
+            and types == {"array"}
+            and path.rsplit(".", 1)[-1].split("[")[0] not in strict_array_fields
             and len(value) == 1
             and next(iter(value)) in {"item", "block"}
         ):
-            unwrapped = next(iter(value.values()))
+            item_schema = field_schema.get("items") or {}
+            item_properties = item_schema.get("properties", {}) if isinstance(item_schema, dict) else {}
+            unwrapped = value
+            for _ in range(4):
+                if not isinstance(unwrapped, dict) or len(unwrapped) != 1:
+                    break
+                wrapper = next(iter(unwrapped))
+                # item/block 是合法业务字段时不能当成包装拆掉。
+                if wrapper not in {"item", "block"} or wrapper in item_properties:
+                    break
+                unwrapped = unwrapped[wrapper]
+            if unwrapped is value:
+                return value
+            if isinstance(unwrapped, dict) and len(unwrapped) == 1:
+                wrapper = next(iter(unwrapped))
+                if wrapper in {"item", "block"} and wrapper not in item_properties:
+                    return value  # 超出上限，保留原结构交给校验器。
             if isinstance(unwrapped, list):
                 adaptations.append(f"{path or 'args'}:item_wrapper_unwrapped")
                 item_schema = field_schema.get("items")
@@ -269,12 +291,13 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
             return value
         text = value.strip()
         if not text:
-            # 空串统一表示“未填写”：可选字段（含对象/数组容器）剔除或转 null；
-            # 必填字段原样保留，让校验报出真实的形状错误。
-            if not required:
-                if "null" in types:
-                    adaptations.append(f"{path}:empty_to_null")
-                    return None
+            # 空值语义由字段显式声明，不能根据“可选”猜成未传或 null。
+            # 必填字段不做空值兼容；文本原样保留，是否允许清空由 Schema 决定。
+            empty_policy = field_schema.get("x-empty-string") if isinstance(field_schema, dict) else None
+            if not required and empty_policy == "empty-array" and types == {"array"}:
+                adaptations.append(f"{path}:empty_string_to_array")
+                return []
+            if not required and empty_policy == "omit" and types == {"string"}:
                 adaptations.append(f"{path}:empty_omitted")
                 return _OMIT
             return value
@@ -327,6 +350,8 @@ def normalize_input_by_schema(schema: dict[str, Any], instance: dict[str, Any]) 
         if isinstance(top_properties, dict):
             for field_name, field_schema in top_properties.items():
                 if not isinstance(field_schema, dict) or "array" not in schema_types(field_schema):
+                    continue
+                if field_name in strict_array_fields:
                     continue
                 current = instance.get(field_name)
                 if current is not None and not (isinstance(current, str) and not current.strip()):
@@ -575,6 +600,26 @@ def invalid_input_payload(
         "next_action": _invalid_input_next_action(bounded),
     }
     hints = _schema_repair_hints(schema, bounded)
+    if tool_name in {"create_event", "update_event"} and any(
+        item.get("rule") == "not" for item in bounded
+    ):
+        payload["issues"] = [
+            {**item, "message": "全天活动不能设置 time 或 end_time"}
+            if item.get("rule") == "not" else item for item in bounded
+        ]
+        payload["next_action"] = "全天活动请移除 time/end_time；需要具体时间时传 all_day=false 和 time。"
+    if tool_name in {"create_project", "set_stages", "update_stage", "delete_project"}:
+        examples = {
+            "stages": 'stages 使用名称数组 ["开发","上线"]，或对象数组 [{"label":"开发","todos":["接口"]}]；重排现有阶段可带 key。',
+            "add": 'add 使用字符串数组，例如 ["验收","冒烟测试"]。',
+            "todos": 'todos 使用对象数组，例如 [{"text":"验收","stage":"s0","done":true}]；text 也可填写 get_project 返回的待办 id。',
+            "project_ids": 'project_ids 使用整数数组，例如 [101,102]。',
+        }
+        fields = {item.get("path", "").split(".", 1)[0] for item in bounded}
+        repair = [hint for field, hint in examples.items() if field in fields]
+        if repair:
+            hints = [*hints, *repair, "请使用扁平数组，不要嵌套数组或继续添加 item/block 包装；保留全部待处理项。"]
+            payload["next_action"] = "请按 schema_hints 重建报错数组后再调用；不要重复提交相同参数。"
     if tool_name == "edit_file" and any(item.get("rule") == "not" for item in bounded):
         payload["next_action"] = (
             "edit_file 的编辑模式字段不能混用；根据 mode 只保留对应的一组字段，"

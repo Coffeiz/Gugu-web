@@ -7,7 +7,7 @@ from app.core.mind import (
 )
 from app.core.date_input import parse_flexible_date
 from app.core.mind_content import MindContentError, serialize_mind_blocks, validate_mind_references
-from app.services.mind import get_live_note, get_user_node, latest_gugu_note, list_live_nodes, list_node_relations, search_live_nodes
+from app.services.mind import get_live_note, get_user_node, latest_gugu_note, list_live_nodes, list_node_relations, list_note_references, search_live_nodes
 from app.search.query import normalize_queries
 from app.core.tz import LOCAL_TZ
 from agent.tools.base import BaseSkill, Tool
@@ -210,6 +210,7 @@ async def _note_search(db, user_id, args: dict):
         for relation in relations
     } - match_ids
     nodes = await _live_nodes_by_ids(db, user_id, match_ids | neighbor_ids)
+    references = await list_note_references(db, user_id, matches)
 
     related = []
     for relation in relations:
@@ -226,6 +227,8 @@ async def _note_search(db, user_id, args: dict):
             for node in matches
         ],
         "related": related,
+        "references": [{"from_node_id": node.id, **reference}
+                       for node in matches for reference in references[node.id]],
     }
 
 
@@ -247,9 +250,11 @@ async def _note_get(db, user_id, args: dict):
     ]
     detail = _note_detail(node)
     detail["numbered_content"] = numbered_lines(node.content_md or "")
+    references = await list_note_references(db, user_id, [node])
     return {
         "node": detail,
         "related": related,
+        "references": references[node.id],
     }
 
 
@@ -349,13 +354,15 @@ async def _undo_last_gugu_note(db, user_id, args: dict):
     return {"deleted_node_id": node.id, "can_restore": True}
 
 
-class MindSkill(BaseSkill):
+class NoteSkill(BaseSkill):
     name = "mind"
     tools = [
         Tool(
             name="note_search", label="搜索思维笔记",
             description_short='全局搜索时间流笔记和画布便签。',
-            description="按一个或多个关键词（默认 OR）搜索思维面板中的笔记和画布便签，并带回每条命中节点的一跳关联。"
+            description="按一个或多个关键词（默认 OR）搜索思维面板中的笔记和画布便签。related 返回实际关系边的一跳邻居；"
+                        "references 独立返回正文中 @ 引用的项目、文件和活动（含 from_node_id、ref_type、ref_id、当前名称 label），不创建关系边。"
+                        "两者均过滤不可访问或已删除对象；正文引用不一定出现在 related 中。"
                         "用于回答用户的想法、结论、上下文之间有什么关联；需要完整正文时再调用 note_get。",
             input_schema={
                 "type": "object",
@@ -375,7 +382,9 @@ class MindSkill(BaseSkill):
         Tool(
             name="note_get", label="读取思维节点",
             description_short='固定工具名 note_get：读取搜索到的思维节点正文；传 node_id',
-            description="读取一条已知思维节点的完整正文、来源对象和一跳关联。"
+            description="读取一条已知思维节点的完整正文和来源对象。related 返回实际关系边的一跳邻居；"
+                        "references 独立返回正文中 @ 引用的项目、文件和活动（ref_type、ref_id、当前名称 label），不创建关系边。"
+                        "两者均过滤不可访问或已删除对象；代码中的引用示例不计入 references。"
                         "node_id 必须来自 note_search 或用户当前可见的思维内容，不能猜测。",
             input_schema={
                 "type": "object",
@@ -466,4 +475,4 @@ class MindSkill(BaseSkill):
     ]
 
 
-MindSkill().register()
+NoteSkill().register()

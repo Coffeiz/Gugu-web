@@ -310,7 +310,7 @@ Agent 工具和后台任务
 
 ### P0：画布 Agent 工具边界
 
-- [x] 清点 `backend/agent/tools/mind_canvas.py` 中所有 SQLAlchemy、Model、`get_owned()` 和 `db.*` 使用点。
+- [x] 清点 `backend/agent/tools/canvas.py` 中所有 SQLAlchemy、Model、`get_owned()` 和 `db.*` 使用点。
 - [x] 将画布查询、节点写入、关系写入、引用节点和批量操作全部迁移到 `backend/app/services/mind_canvas.py`。
 - [x] 保留 Agent 工具中的参数解析、确认门、调用 Service 和结果格式化。
 - [x] 确认 `backend/app/core/mind_canvas.py` 只保留领域原子逻辑，不新增查询入口。

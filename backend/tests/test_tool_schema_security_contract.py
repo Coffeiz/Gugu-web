@@ -174,7 +174,7 @@ def test_create_workspace_directory_kind_rejects_folder_and_project_ids():
     })
 
 
-def test_phase8_migrated_tools_are_source_canonical_schema():
+def test_migrated_tools_preserve_provider_schema_constraints():
     for name in (
         "create_project", "create_event", "update_event", "save_uploaded_file",
         "list_events", "list_projects",
@@ -194,7 +194,16 @@ def test_phase8_migrated_tools_are_source_canonical_schema():
         "run_script",
     ):
         tool = registry.get(name)
-        assert tool.input_schema == _compact_schema(tool.input_schema), name
+        # 内部兼容注解不属于供应商 JSON Schema；其他结构约束必须保持原样。
+        def without_internal_annotations(value):
+            if isinstance(value, dict):
+                return {key: without_internal_annotations(item)
+                        for key, item in value.items() if key != "x-empty-string"}
+            if isinstance(value, list):
+                return [without_internal_annotations(item) for item in value]
+            return value
+
+        assert without_internal_annotations(tool.input_schema) == _compact_schema(tool.input_schema, omit_documentation=False), name
 
 
 def test_note_schemas_keep_structural_metadata_for_model_guidance():

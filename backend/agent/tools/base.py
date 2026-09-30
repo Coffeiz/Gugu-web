@@ -275,22 +275,29 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         print(f"[skill] 慢工具进度声明发送失败（不影响工具执行）: {type(e).__name__}: {e}", flush=True)
 
 
-def _compact_schema(value: Any) -> Any:
-    """移除 Schema 节点元数据，保留 properties 中同名的真实字段。"""
+def _compact_schema(value: Any, *, omit_documentation: bool = True) -> Any:
+    """移除内部归一化标记，可选移除文档；保留 properties 中同名真实字段。"""
     if isinstance(value, list):
-        return [_compact_schema(item) for item in value]
+        return [_compact_schema(item, omit_documentation=omit_documentation) for item in value]
     if not isinstance(value, dict):
         return value
-    omitted = {"description", "example", "examples", "title", "default"}
+    omitted = {"x-empty-string"}
+    if omit_documentation:
+        omitted.update({"description", "example", "examples", "title", "default"})
     result = {}
     for key, item in value.items():
         if key in omitted:
             continue
-        if key == "properties" and isinstance(item, dict):
+        if not omit_documentation and key in {"default", "const", "enum", "example", "examples"}:
+            # 这些值是业务数据而非 Schema 节点，不能删除其中同名的真实键。
+            result[key] = copy.deepcopy(item)
+        elif key in {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"} \
+                and isinstance(item, dict):
             # properties 的 key 是用户参数名，不是 Schema 元数据；参数名可以合法地叫 title。
-            result[key] = {name: _compact_schema(schema) for name, schema in item.items()}
+            result[key] = {name: _compact_schema(schema, omit_documentation=omit_documentation)
+                           for name, schema in item.items()}
         else:
-            result[key] = _compact_schema(item)
+            result[key] = _compact_schema(item, omit_documentation=omit_documentation)
     return result
 
 
@@ -311,7 +318,8 @@ class Tool:
                  platforms: tuple[str, ...] = (),
                  related_skills: tuple[str, ...] = (),
                  source: str = "builtin", schema_version: int = 1,
-                 batch_confirmation: bool = False):
+                 batch_confirmation: bool = False,
+                 strict_array_fields: tuple[str, ...] = ()):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -323,6 +331,8 @@ class Tool:
         self.requires_confirmation = requires_confirmation
         # 显式声明批量分支也使用精确目标集合确认；静态守卫检查统一 helper。
         self.batch_confirmation = batch_confirmation
+        # 这些输入数组要求调用方提供规范结构，不应用模型侧 item 包装/拍平归一。
+        self.strict_array_fields = frozenset(strict_array_fields)
         # 是否会改数据（写库/改长期记忆/删笔记……）：定时任务只有在整轮没有任何
         # mutates=True 的调用时才允许重跑完整 execution（见 scheduled_tasks.py 的
         # mutated 判断）。以前靠猜工具名前缀（create_/update_/delete_/...），
@@ -368,7 +378,7 @@ class Tool:
         return {
             "name": self.name,
             "description": self.provider_description,
-            "input_schema": copy.deepcopy(self.input_schema),
+            "input_schema": _compact_schema(self.input_schema, omit_documentation=False),
         }
 
     def to_openai(self) -> dict:
@@ -377,7 +387,7 @@ class Tool:
             "function": {
                 "name": self.name,
                 "description": self.provider_description,
-                "parameters": copy.deepcopy(self.input_schema),
+                "parameters": _compact_schema(self.input_schema, omit_documentation=False),
             },
         }
 
@@ -604,7 +614,9 @@ class SkillRegistry:
         # 注入 registry，仍需在 dispatch 边界补建，避免校验器为空导致整轮 Agent 崩溃。
         if tool._input_validator is None:
             tool._input_validator = build_validator(tool.input_schema)
-        args, _type_adaptations = normalize_input_by_schema(tool.input_schema, args)
+        args, _type_adaptations = normalize_input_by_schema(
+            tool.input_schema, args, strict_array_fields=tool.strict_array_fields,
+        )
         issues = validate_input(tool._input_validator, args)
         if issues:
             payload = invalid_input_payload(name, issues, schema=tool.input_schema)
@@ -721,6 +733,16 @@ class SkillRegistry:
         # 确认门是跨工具的协议：无论 handler 直接返回 JSON，还是把它包进 error，
         # 从 dispatch 边界出去都统一为顶层载荷，避免下游各自猜包装形状。
         result = normalize_confirmation_result(result)
+
+        # 成功回执显式报告兼容转换，只包含固定规则/字段路径，不回显原始输入。
+        if isinstance(result, dict) and not result.get("error") \
+                and result.get("status") != "failed" and confirmation_payload(result) is None:
+            adaptations = [*_legacy_adaptations, *_type_adaptations]
+            if name in {"create_project", "set_stages"} \
+                    and any(isinstance(stage, str) for stage in args.get("stages", [])):
+                adaptations.append("stages:stage_names_to_objects")
+            if adaptations:
+                result["input_adaptations"] = adaptations
 
         # 未知字段警告：只注入成功路径的 dict 回执（错误/确认门载荷各有固定形状，不掺和）。
         if unknown_fields and isinstance(result, dict) and not result.get("error") \

@@ -11,6 +11,7 @@ from app.core.ownership import get_owned
 from app.core import events
 from app.core.tz import now_utc
 from app.services.undo import UndoService
+from app.services.calendar import event_base_datetime, event_reminder_lead_minutes, list_event_reminders
 from app.services.undo.domains import domain_ref, domain_state, event_snapshot, task_snapshot
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -113,6 +114,10 @@ async def update_event(
         project = await get_owned(db, Project, data["project_id"], current_user.id)
         if project is None or project.deleted_at is not None:
             raise HTTPException(400, "关联的项目不存在")
+    if "date" in data or "time" in data:
+        base = event_base_datetime(e)
+        for reminder in await list_event_reminders(db, current_user.id, e.id):
+            reminder.reminder_lead_minutes = event_reminder_lead_minutes(reminder, base)
     for k, v in data.items():
         setattr(e, k, v)
     e.version = (e.version or 1) + 1

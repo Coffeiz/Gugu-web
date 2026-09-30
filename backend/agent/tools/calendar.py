@@ -6,10 +6,10 @@ import json
 
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
-from app.core.schedule_rules import SCHEDULE_TZ
 from app.services.calendar import (
     create_event,
     event_base_datetime,
+    event_reminder_lead_minutes,
     find_events_by_title,
     get_event,
     get_project,
@@ -140,12 +140,10 @@ async def _update_event(db, user_id, args: dict):
     old_base = event_base_datetime(e)
     preserved_enabled_reminders = []
     for reminder in existing_reminders:
+        reminder.reminder_lead_minutes = event_reminder_lead_minutes(reminder, old_base)
         if not reminder.enabled:
             continue
-        fire_at = reminder.start_at
-        if fire_at.tzinfo is not None:
-            fire_at = fire_at.astimezone(SCHEDULE_TZ).replace(tzinfo=None)
-        lead_minutes = round((old_base - fire_at).total_seconds() / 60)
+        lead_minutes = reminder.reminder_lead_minutes
         preserved_enabled_reminders.append({
             "lead_minutes": lead_minutes,
             "channels": [channel for channel in (reminder.channels or "web").split(",") if channel],
@@ -241,12 +239,7 @@ async def _delete_event(db, user_id, args: dict):
 # ── 活动提醒（活动字段的聚合视图；底层绑定 @once ScheduledTask）───────────────
 def _reminder_brief(t, base):
     """ScheduledTask → 可直接放回 event.reminders 的字段视图。"""
-    lead = None
-    if t.schedule_kind == "once" and t.start_at:
-        fire = t.start_at
-        if fire.tzinfo is not None:
-            fire = fire.astimezone(SCHEDULE_TZ).replace(tzinfo=None)
-        lead = round((base - fire).total_seconds() / 60)
+    lead = event_reminder_lead_minutes(t, base)
     channels = [c for c in (t.channels or "").split(",") if c]
     result = {"lead_minutes": lead, "channels": channels, "enabled": t.enabled}
     if "qq" in channels:
@@ -318,7 +311,8 @@ class CalendarSkill(BaseSkill):
                     "end_time":   {"type": "string", "pattern": _TIME_PATTERN},
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
                     "project_id": {"type": "integer"},
-                    "reminders":  {"type": "array", "items": _REMINDER_SCHEMA, "maxItems": 20},
+                    "reminders":  {"type": "array", "items": _REMINDER_SCHEMA, "maxItems": 20,
+                                   "x-empty-string": "empty-array"},
                     "all_day":   {"type": "boolean"},
                 },
                 "required": ["title", "date", "all_day"],
@@ -342,7 +336,8 @@ class CalendarSkill(BaseSkill):
                 "properties": {
                     "from": {"type": "string", "pattern": _DATE_PATTERN},
                     "to":   {"type": "string", "pattern": _DATE_PATTERN},
-                    "type": {"type": "string", "enum": ["event", "deadline"]},
+                    "type": {"type": "string", "enum": ["event", "deadline"],
+                             "x-empty-string": "omit", "description": "省略或留空时不筛选活动类型"},
                 },
             },
             handler=_list_events,
@@ -352,7 +347,7 @@ class CalendarSkill(BaseSkill):
             label="更新日历事件",
             description_short='修改日历活动及其提醒配置。',
             description=("修改日历事件的标题、日期、时间、类型、关联项目、描述和提醒；date/on_date 传日期字符串，time/end_time 传 HH:MM。"
-                         "reminders 省略表示不改提醒，传完整提醒配置数组表示整体替换，传 [] 会清除全部提醒。"
+                         'reminders 省略表示不改提醒，传完整提醒配置数组表示整体替换，传 [] 会清除全部提醒；兼容空字符串 "" 为 []。'
                          "活动日期或开始时间变化且 reminders 省略时，启用的提醒会保留原提前分钟数并随活动重排。"
                          "QQ 投递到私聊用 owner_private，投递到当前群用 current_group；在 QQ 群中配置 QQ 提醒时必须明确选择。"),
             input_schema={
@@ -368,7 +363,8 @@ class CalendarSkill(BaseSkill):
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
                     "project_id": {"type": "integer"},
                     "description": {"type": "string"},
-                    "reminders": {"type": "array", "items": _REMINDER_SCHEMA, "maxItems": 20},
+                    "reminders": {"type": "array", "items": _REMINDER_SCHEMA, "maxItems": 20,
+                                  "x-empty-string": "empty-array"},
                     "all_day":   {"type": "boolean"},
                 },
                 "anyOf": [

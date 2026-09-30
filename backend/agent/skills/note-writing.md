@@ -15,6 +15,7 @@ emoji: 📝
 
 - 搜索普通笔记或全局查找笔记/画布便签：使用固定工具名 `note_search`，传 `query`。
 - 读取搜索结果的完整正文：使用固定工具名 `note_get`，传 `node_id`。
+- `related` 是已建立关系边的一跳邻居；正文中的 @ 引用另由 `references` 返回项目、文件和活动的真实 ID 与当前名称，不会自动建立关系边。
 - 创建、更新或删除普通时间流笔记：使用本 Skill 的 `note_create`、`note_update`、`note_delete` 等工具。
 - 指定画布、搜索画布节点、创建画布便签、放置项目/文件、连接节点：改用 `canvas` Skill，不要用 `note_create` 代替 `canvas_create_note`。
 - `canvas_search` 只搜索指定画布内容，需要 `canvas_id`；它不是普通笔记搜索工具。

@@ -140,8 +140,21 @@ def build_reminder(user_id, event, lead_minutes, channels, delivery_targets=None
         channels=normalize_reminder_channels(channels),
         enabled=enabled,
         event_id=event.id,
+        reminder_lead_minutes=lead_minutes,
         delivery_targets=delivery_targets,
     ), None
+
+
+def event_reminder_lead_minutes(task, base):
+    """优先读取提醒配置；旧记录按尚未修改的活动时间推导。"""
+    if task.reminder_lead_minutes is not None:
+        return task.reminder_lead_minutes
+    if task.schedule_kind != "once" or task.start_at is None:
+        return None
+    fire = task.start_at
+    if fire.tzinfo is not None:
+        fire = fire.astimezone(SCHEDULE_TZ).replace(tzinfo=None)
+    return round((base - fire).total_seconds() / 60)
 
 
 async def replace_event_reminders(db, user_id, event, reminders, *, preserve_disabled=False):
@@ -186,6 +199,7 @@ async def replace_event_reminders(db, user_id, event, reminders, *, preserve_dis
         current.channels = candidate.channels
         current.delivery_targets = candidate.delivery_targets
         current.enabled = candidate.enabled
+        current.reminder_lead_minutes = candidate.reminder_lead_minutes
         matched.append(current)
 
     await db.flush()

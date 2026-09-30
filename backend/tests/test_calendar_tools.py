@@ -191,11 +191,11 @@ def test_reminder_brief_is_an_event_field_value():
     base = datetime(2026, 9, 20, 9, 0)
     once = SimpleNamespace(schedule_kind="once",
                            start_at=datetime(2026, 9, 20, 8, 0, tzinfo=SCHEDULE_TZ),
-                           channels="web", enabled=True, delivery_targets=None)
+                           channels="web", enabled=True, delivery_targets=None, reminder_lead_minutes=None)
     brief = cal._reminder_brief(once, base)
     assert brief == {"lead_minutes": 60, "channels": ["web"], "enabled": True}
 
     cron = cal._reminder_brief(SimpleNamespace(
-        schedule_kind="cron", start_at=None, channels=None, enabled=False, delivery_targets=None), base)
+        schedule_kind="cron", start_at=None, channels=None, enabled=False, delivery_targets=None, reminder_lead_minutes=None), base)
     assert cron["lead_minutes"] is None
     assert cron["channels"] == [] and cron["enabled"] is False

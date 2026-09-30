@@ -33,6 +33,7 @@ from app.services.canvas.service import (
     get_or_create_reference,
     list_canvas_nodes,
     list_canvas_relations_for_canvas,
+    list_canvas_relation_geometry,
     relation_anchor_from_canvas,
     list_canvases,
     list_existing_canvas_reference_items,
@@ -101,13 +102,34 @@ _CANVAS_NOTE_UPDATE_ITEM_SCHEMA = {
     "anyOf": [{"required": [field]} for field in ("title", "content", "color")],
     "additionalProperties": False,
 }
+_CANVAS_POSITION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "x": {"type": "number"}, "y": {"type": "number"},
+        "anchor": {"type": "string", "enum": [
+            "auto", "viewport_center", "viewport_top_left", "viewport_top_right",
+            "viewport_bottom_left", "viewport_bottom_right", "near_node",
+        ]},
+        "near_node_id": {"type": "integer"},
+        "offset_x": {"type": "number"}, "offset_y": {"type": "number"},
+    },
+    "allOf": [
+        {"if": {"required": ["x"]}, "then": {"required": ["y"]}},
+        {"if": {"required": ["y"]}, "then": {"required": ["x"]}},
+        {
+        "if": {"required": ["anchor"], "properties": {"anchor": {"const": "near_node"}}},
+        "then": {"required": ["near_node_id"]},
+        },
+    ],
+    "additionalProperties": False,
+}
 _CANVAS_NOTE_CREATE_ITEM_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string", "maxLength": 300},
         "content": {"type": "string"},
         "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
-        "position": {"type": "object"},
+        "position": _CANVAS_POSITION_SCHEMA,
         "width": {"type": "number", "minimum": 180, "maximum": 520},
         "height": {"type": "number", "minimum": 100, "maximum": 420},
     },
@@ -119,7 +141,7 @@ _CANVAS_ADD_NODE_ITEM_SCHEMA = {
         "node_id": {"type": "integer"},
         "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)},
         "ref_id": {"type": "integer"},
-        "position": {"type": "object"},
+        "position": _CANVAS_POSITION_SCHEMA,
     },
     "oneOf": [
         {"required": ["node_id"], "not": {"anyOf": [{"required": ["ref_type"]}, {"required": ["ref_id"]}]}},
@@ -339,48 +361,45 @@ async def _canvas_get(db, user_id, args: dict):
             "view": _view_summary(canvas),
         }
     }
-    if not include_nodes:
-        return result
-    total_nodes = await count_canvas_nodes(db, user_id, canvas.id)
-    visible_rows = await list_canvas_nodes(db, user_id, canvas.id, limit=limit, offset=offset)
-    result["nodes"] = [_node_summary(node, item, include_content=include_content) for item, node in visible_rows]
-    has_next_page = offset + len(visible_rows) < total_nodes
-    result["pagination"] = {
-        "offset": offset,
-        "limit": limit,
-        "total": total_nodes,
-        "next_offset": offset + limit if has_next_page else None,
-    }
-    result["truncated"] = has_next_page
-    if include_relations:
-        relations = await list_canvas_relations_for_canvas(db, user_id, canvas.id)
-        node_by_id = {
-            node.id: _node_summary(node, item, include_content=False)
-            for item, node in visible_rows
+    visible_rows = []
+    if include_nodes:
+        total_nodes = await count_canvas_nodes(db, user_id, canvas.id)
+        visible_rows = await list_canvas_nodes(db, user_id, canvas.id, limit=limit, offset=offset)
+        result["nodes"] = [_node_summary(node, item, include_content=include_content) for item, node in visible_rows]
+        has_next_page = offset + len(visible_rows) < total_nodes
+        result["pagination"] = {
+            "offset": offset,
+            "limit": limit,
+            "total": total_nodes,
+            "next_offset": offset + limit if has_next_page else None,
         }
-        result["relation_scope"] = "canvas"
-        result["relation_audit_scope"] = "visible_nodes"
-        result["relation_count"] = len(relations)
-        if relations:
-            result["relations"] = [
-                {
-                    "relation_id": relation.id,
-                    "source_node_id": relation.src_node_id,
-                    "target_node_id": relation.dst_node_id,
-                    "type": relation.rel_type,
-                    "status": relation.status,
-                    **(relation_anchor_from_canvas(canvas, relation.id) or {}),
-                }
-                for relation in relations
-            ]
-            result["relation_audit"] = [
-                _relation_anchor_audit(relation, node_by_id, canvas)
-                for relation in relations
-            ]
-        else:
-            result["relations"] = []
-            result["relation_audit"] = []
+        result["truncated"] = has_next_page
+    if include_relations:
+        result.update(await _canvas_relation_snapshot(db, user_id, canvas, visible_rows, include_nodes))
     return result
+
+
+async def _canvas_relation_snapshot(db, user_id, canvas, visible_rows, include_nodes):
+    """关系独立读取；审计复用当前页，或只读关系端点几何。"""
+    relations = await list_canvas_relations_for_canvas(db, user_id, canvas.id)
+    if include_nodes:
+        node_by_id = {node.id: _node_summary(node, item, include_content=False)
+                      for item, node in visible_rows}
+    else:
+        endpoint_ids = {node_id for relation in relations
+                        for node_id in (relation.src_node_id, relation.dst_node_id)}
+        node_by_id = await list_canvas_relation_geometry(db, user_id, canvas.id, endpoint_ids)
+    return {
+        "relation_scope": "canvas",
+        "relation_audit_scope": "visible_nodes" if include_nodes else "relation_endpoints",
+        "relation_count": len(relations),
+        "relations": [{
+            "relation_id": relation.id, "source_node_id": relation.src_node_id,
+            "target_node_id": relation.dst_node_id, "type": relation.rel_type, "status": relation.status,
+            **(relation_anchor_from_canvas(canvas, relation.id) or {}),
+        } for relation in relations],
+        "relation_audit": [_relation_anchor_audit(relation, node_by_id, canvas) for relation in relations],
+    }
 
 
 async def _canvas_search(db, user_id, args: dict):
@@ -466,12 +485,14 @@ async def _canvas_search_placeable(db, user_id, args: dict):
 
 
 def _finite_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return canvas_layout.finite_number(value)
 
 
 async def _resolve_canvas_position(db, user_id, canvas: Any, node: Any, position: Any) -> tuple[float, float]:
     """把显式世界坐标或语义锚点转换成 MindCanvasItem 的世界坐标。"""
-    position = position if isinstance(position, dict) else {}
+    if position is not None and not isinstance(position, dict):
+        raise ValueError("position 必须是坐标或锚点对象")
+    position = position or {}
     near_item = None
     if position.get("anchor") == "near_node":
         near_node_id = position.get("near_node_id")
@@ -955,7 +976,7 @@ async def _canvas_batch(db, user_id, args: dict):
         resolve_position=_resolve_canvas_position,
         summarize=_node_summary,
     )
-class MindCanvasSkill(BaseSkill):
+class CanvasSkill(BaseSkill):
     name = "mind_canvas"
     tools = [
         Tool(
@@ -982,6 +1003,7 @@ class MindCanvasSkill(BaseSkill):
                 "custom 只表示当前端点与默认建议不同，不代表可以直接修改；不要仅凭节点 ID 顺序判断左右。"
                 "节点结果支持 limit/offset 分页；pagination.total/next_offset 表示是否还有节点。"
                 "relations 返回全画布关系，relation_audit_scope=visible_nodes 表示当前页之外的关系端点会标记为 incomplete。"
+                "include_nodes 和 include_relations 独立；只读取关系时不加载节点正文，relation_audit_scope=relation_endpoints。"
             ),
             input_schema={
                 "type": "object",
@@ -1076,7 +1098,7 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_create_note", label="创建画布便签",
             description_short='创建画布便签；可设置大小，不进入时间流 note',
-            description="在指定画布创建专属便签，不进入时间流 note；可选 width/height，范围由系统限制。单项传 title/content，批量传 notes。",
+            description="在指定画布创建专属便签，不进入时间流 note；可选 width/height，范围由系统限制。单项传 title/content，批量传 notes。position.x/y 必须同时提供数值，表示左上角世界坐标；省略时自动布局，无效坐标会报错。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1084,7 +1106,7 @@ class MindCanvasSkill(BaseSkill):
                     "title": {"type": "string", "maxLength": 300},
                     "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
-                    "position": {"type": "object"},
+                    "position": _CANVAS_POSITION_SCHEMA,
                     "width": {"type": "number", "minimum": 180, "maximum": 520},
                     "height": {"type": "number", "minimum": 100, "maximum": 420},
                     "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": _CANVAS_NOTE_CREATE_ITEM_SCHEMA},
@@ -1101,7 +1123,7 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_add_node", label="放置画布节点",
             description_short='把项目/文件/活动放入画布；位置自动避让',
-            description="把项目、文件或活动引用放入画布，最多 20 个；位置按节点实际尺寸避让。",
+            description="把项目、文件或活动引用放入画布，最多 20 个。position.x/y 同时提供数值时使用指定左上角世界坐标，省略时自动布局；无效坐标会报错。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1109,7 +1131,7 @@ class MindCanvasSkill(BaseSkill):
                     "node_id": {"type": "integer"},
                     "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)},
                     "ref_id": {"type": "integer"},
-                    "position": {"type": "object"},
+                    "position": _CANVAS_POSITION_SCHEMA,
                     "nodes": {"type": "array", "minItems": 1, "maxItems": 20, "items": _CANVAS_ADD_NODE_ITEM_SCHEMA},
                 },
                 "required": ["canvas_id"],
@@ -1274,7 +1296,7 @@ class MindCanvasSkill(BaseSkill):
                             "x": {"type": "number"}, "y": {"type": "number"},
                             "width": {"type": "number", "minimum": 180, "maximum": 520},
                             "height": {"type": "number", "minimum": 100, "maximum": 420},
-                            "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},
+                            "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": _CANVAS_POSITION_SCHEMA,
                         },
                         "required": ["kind"],
                     }},
@@ -1289,4 +1311,4 @@ class MindCanvasSkill(BaseSkill):
     ]
 
 
-MindCanvasSkill().register()
+CanvasSkill().register()

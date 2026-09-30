@@ -1529,6 +1529,8 @@ class ScheduledTask(Base):
     # 绑定的日历事件 id（活动编辑面板里加的提醒）；null = 普通独立任务。
     # 故意不设 DB 外键：删事件时由应用层显式删其提醒任务（_delete_event），避免 FK 命名/迁移复杂度、更可移植。
     event_id:    Mapped[Optional[int]]      = mapped_column(Integer, nullable=True, index=True)
+    # 提前分钟数是活动提醒配置，独立于禁用期间保留的绝对触发时间。
+    reminder_lead_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     # 可选工作区是任务 Shell 和文件操作的完整边界；不保存宿主机路径。
     workspace_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True

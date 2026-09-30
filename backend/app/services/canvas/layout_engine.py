@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -22,7 +23,7 @@ class CanvasLayoutEngine:
 
     @staticmethod
     def finite_number(value: Any) -> bool:
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
     def default_size(self, node: Any = None, *, kind: str | None = None, ref_type: str | None = None) -> tuple[int, int]:
         node_kind = kind if kind is not None else getattr(node, "kind", None)
@@ -69,6 +70,19 @@ class CanvasLayoutEngine:
         side = "right" if target_center >= source_center else "left"
         return side, side
 
+    def validate_position(self, position: Any) -> dict[str, Any]:
+        """校验显式位置，禁止错误坐标被自动布局掩盖。"""
+        if position is not None and not isinstance(position, dict):
+            raise ValueError("position 必须是坐标或锚点对象")
+        position = position or {}
+        x, y = position.get("x"), position.get("y")
+        if ("x" in position or "y" in position) and not (self.finite_number(x) and self.finite_number(y)):
+            raise ValueError("position 必须同时提供有效数字 x 和 y，不能回落到自动布局")
+        for field in ("offset_x", "offset_y"):
+            if field in position and not self.finite_number(position[field]):
+                raise ValueError(f"position.{field} 必须是有效数字")
+        return position
+
     def resolve_position(
         self,
         position: Any,
@@ -77,8 +91,8 @@ class CanvasLayoutEngine:
         last_item: Any = None,
         near_item: Any = None,
     ) -> tuple[float, float]:
-        """将语义锚点转换为世界坐标，保持旧工具的坐标契约。"""
-        position = position if isinstance(position, dict) else {}
+        """将有效的显式坐标或语义锚点转换为世界坐标。"""
+        position = self.validate_position(position)
         x, y = position.get("x"), position.get("y")
         if self.finite_number(x) and self.finite_number(y):
             return float(x), float(y)
