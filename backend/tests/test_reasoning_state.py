@@ -9,6 +9,7 @@ from agent.context.reasoning_state import (
     ProviderStateEnvelope,
     ReasoningPersistencePolicy,
     configuration_fingerprint,
+    model_state_fingerprints,
 )
 from agent.context.reasoning_runtime import ReasoningStateCoordinator
 from app.core.tz import now_utc
@@ -30,6 +31,93 @@ async def _session(db, user_id):
     await db.commit()
     await db.refresh(item)
     return item
+
+
+@pytest.mark.asyncio
+async def test_legacy_history_cleanup_keeps_continuation_state_available(
+    db, user_a, monkeypatch,
+):
+    """旧 session 清理历史 thinking 时，续接状态仍应独立恢复到 provider 边界。"""
+    import app.byok.crypto as byok_crypto
+    from agent import providers
+    from agent.context.provider_history import clean_persisted_history, prepare_session
+    from agent.loop_drivers import AnthropicDriver
+
+    monkeypatch.setattr(byok_crypto, "_master_key", lambda version=1: b"r" * 32)
+    adapter = SimpleNamespace(
+        name="minimax",
+        protocol_format=lambda _ai: "anthropic",
+    )
+    monkeypatch.setattr(providers, "adapter_for", lambda _ai: adapter)
+
+    session = await _session(db, user_a.id)
+    historical_thinking = {
+        "type": "thinking", "thinking": "历史 provider 推理", "signature": "opaque-signature",
+    }
+    message = ConversationMessage(
+        session_id=session.id,
+        role="assistant",
+        content_json=[historical_thinking, {"type": "text", "text": "已发出的答复"}],
+    )
+    db.add(message)
+    await db.commit()
+
+    model = SimpleNamespace(
+        provider="minimax", model="MiniMax-M3.1-Flash-Preview",
+        context_tokens=128000, max_tokens=8000, thinking="adaptive",
+        reasoning_effort=None, thinking_budget=None, store=True,
+        include_encrypted_reasoning=None,
+    )
+    config_digest, reasoning_digest = model_state_fingerprints(
+        model, provider="minimax", api_format="anthropic", tool_digest="tools-digest",
+    )
+    envelope = ProviderStateEnvelope.from_payload(
+        owner_user_id=user_a.id,
+        session_id=session.id,
+        provider="minimax",
+        api_format="anthropic",
+        model_id=model.model,
+        reasoning_persistence="continuation",
+        config_digest=config_digest,
+        reasoning_config_digest=reasoning_digest,
+        source_run_id="run-previous",
+        source_round_id="round-1",
+        sequence=1,
+        state_kind="anthropic_thinking_blocks",
+        payload={"blocks": [historical_thinking]},
+        expires_at=now_utc() + timedelta(hours=1),
+        state_summary={"state_block_count": 1},
+    )
+    await commit_state(
+        db, user_id=user_a.id, session_id=session.id, envelope=envelope, expected_version=0,
+    )
+    await db.commit()
+
+    # 无 provenance 的旧 session 会触发一次 canonical 历史清理。
+    _, changed = prepare_session(session, model)
+    assert changed is True
+    assert clean_persisted_history([message]) == 1
+    assert message.content_json == [{"type": "text", "text": "已发出的答复"}]
+
+    class _DbContext:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *_args):
+            return None
+
+    ctx = SimpleNamespace(tool_state_digest="tools-digest", restored_blocks=None)
+    coordinator = ReasoningStateCoordinator(
+        user_id=user_a.id,
+        session_id=session.id,
+        model_cfg=model,
+        policy=ReasoningPersistencePolicy("continuation"),
+        session_factory=_DbContext,
+    )
+    await coordinator.prepared(AnthropicDriver(), ctx)
+
+    assert coordinator.diagnostics()["continuation_reused"] is True
+    assert ctx.restored_blocks == [historical_thinking]
 
 
 def _envelope(user, session, *, run_id="run-1", provider="anthropic", mode="continuation",

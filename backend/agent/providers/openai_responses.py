@@ -581,7 +581,7 @@ class OpenAIResponsesDriver:
             ),
         ))
 
-    def extract_provider_state(self, result: RoundResult) -> dict | None:
+    def extract_provider_state(self, result: RoundResult, ctx=None) -> dict | None:
         raw = result.raw
         if not isinstance(raw, _ResponsesRaw) or not raw.response_id:
             return None

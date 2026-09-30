@@ -153,13 +153,77 @@ def test_anthropic_state_extract_restore_keeps_thinking_blocks_only():
     driver = AnthropicDriver()
     state = driver.extract_provider_state(_anthropic_result())
     assert state["state_kind"] == "anthropic_thinking_blocks"
-    assert state["payload"]["blocks"] == _anthropic_result().raw[:2]
+    assert state["payload"]["history_thinking_by_tool_id"] == {"call-1": _anthropic_result().raw[:2]}
+    assert state["payload"]["tail_blocks"] is None
     assert state["summary"]["thinking_block_count"] == 2
 
-    ctx = SimpleNamespace(restored_blocks=None)
+    ctx = SimpleNamespace(restored_blocks=None, history_tool_use_ids={"call-1"})
     assert driver.restore_provider_state(ctx, state["payload"])
-    assert ctx.restored_blocks == _anthropic_result().raw[:2]
-    assert all(block["type"] != "tool_use" for block in ctx.restored_blocks)
+    assert ctx.restored_blocks is None
+    assert ctx.history_thinking_by_tool_id == {"call-1": _anthropic_result().raw[:2]}
+
+
+def test_anthropic_history_restore_reinserts_signed_thinking_before_matching_tool_call():
+    from agent.loop_drivers import _restore_anthropic_history_thinking
+
+    original = [{
+        "role": "assistant",
+        "content": [
+            {"type": "tool_use", "id": "call-1", "name": "search", "input": {}},
+            {"type": "tool_use", "id": "call-2", "name": "read", "input": {}},
+        ],
+    }]
+    blocks = _anthropic_result().raw[:2]
+
+    _restore_anthropic_history_thinking(original, {"call-1": blocks})
+
+    assert original[0]["content"] == blocks + [
+        {"type": "tool_use", "id": "call-1", "name": "search", "input": {}},
+        {"type": "tool_use", "id": "call-2", "name": "read", "input": {}},
+    ]
+    _restore_anthropic_history_thinking(original, {"call-1": blocks})
+    assert original[0]["content"] == blocks + [
+        {"type": "tool_use", "id": "call-1", "name": "search", "input": {}},
+        {"type": "tool_use", "id": "call-2", "name": "read", "input": {}},
+    ]
+
+
+def test_anthropic_history_restore_reinserts_every_historical_tool_round():
+    """跨 run 后每个历史工具轮都保留签名 thinking，避免前缀从较早工具轮断开。"""
+    from agent.loop_drivers import _restore_anthropic_history_thinking
+
+    messages = [
+        {"role": "assistant", "content": [{"type": "tool_use", "id": f"call-{index}",
+                                                 "name": "search", "input": {}}]}
+        for index in range(3)
+    ]
+    saved = {
+        f"call-{index}": [{"type": "thinking", "thinking": f"thought-{index}",
+                           "signature": f"signature-{index}"}]
+        for index in range(3)
+    }
+
+    _restore_anthropic_history_thinking(messages, saved)
+
+    for index, message in enumerate(messages):
+        assert message["content"][0] == saved[f"call-{index}"][0]
+        assert message["content"][1]["id"] == f"call-{index}"
+    _restore_anthropic_history_thinking(messages, saved)
+    assert all(len(message["content"]) == 2 for message in messages)
+
+
+def test_anthropic_state_extraction_keeps_prior_tool_rounds_across_run_rounds():
+    driver = AnthropicDriver()
+    ctx = SimpleNamespace(
+        history_thinking_by_tool_id={"older-call": [{"type": "thinking", "thinking": "older", "signature": "s0"}]},
+        persisted_tail_blocks=None,
+        restored_blocks=None,
+    )
+
+    state = driver.extract_provider_state(_anthropic_result(), ctx=ctx)
+
+    assert set(state["payload"]["history_thinking_by_tool_id"]) == {"older-call", "call-1"}
+    assert state["summary"]["state_block_count"] == 3
 
 
 def test_anthropic_state_restore_drops_persisted_tool_use_only_payload():

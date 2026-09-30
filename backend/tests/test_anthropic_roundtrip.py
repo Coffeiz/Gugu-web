@@ -6,6 +6,7 @@ import pytest
 
 from agent.context.assembly import PromptMessages
 from agent.context.canonical_tool_history import canonical_tool_round
+from agent.context.history import _anthropic_history_blocks
 from agent.loop_drivers import AnthropicDriver, NormalizedToolCall, RoundResult
 from agent.runtime.loopscope_trace.state import (
     _ScopeRun,
@@ -16,6 +17,43 @@ from agent.runtime.loopscope_trace.state import (
     deactivate_llm_span,
     record_anthropic_request_failure,
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [
+    {"max_results": 15, "query": "测试记录", "filters": {"z": None, "a": [1, {"z": 2, "a": 3}]}},
+    {},
+])
+async def test_anthropic_tool_input_keeps_wire_order_after_persistence(arguments):
+    """真实驱动解析→canonical 保存→对象键重排→回放，工具 input 序列化保持一致。"""
+    driver = AnthropicDriver()
+    ctx = SimpleNamespace(
+        model="test-model", max_tokens=32, tools=[], system_param="",
+        thinking_param={}, generation_param={}, supports_active_cache=False,
+        adapter=SimpleNamespace(render_history=lambda value: value),
+    )
+
+    async def response(_client, _kwargs, _adapter):
+        yield "final", SimpleNamespace(
+            content=[{"type": "tool_use", "id": "test-call", "name": "search", "input": arguments}],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    events = [event async for event in driver.run_round(
+        object(), ctx, [{"role": "user", "content": "测试"}], stream_round=response,
+    )]
+    result = events[-1][1]
+    dispatched = [(result.tool_calls[0], "测试结果")]
+    live = driver.build_tool_round(result, dispatched)
+    canonical = canonical_tool_round(result, dispatched)
+    # JSONB 不承诺键序；模拟持久化层对所有对象键进行重新排列。
+    persisted = json.loads(json.dumps(canonical, ensure_ascii=False, sort_keys=True))
+    replay = _anthropic_history_blocks(persisted[0]["content"])
+
+    assert json.dumps(replay[0]["input"], ensure_ascii=False) == json.dumps(
+        live[0]["content"][0]["input"], ensure_ascii=False,
+    )
+    assert replay[0]["input"] == arguments
 
 
 def test_anthropic_tool_round_preserves_all_response_blocks_and_signature():

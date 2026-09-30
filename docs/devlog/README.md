@@ -4,6 +4,10 @@
 
 ## 按日期浏览
 
+### 2026-10-01
+
+- [Anthropic 工具轮 thinking 历史恢复与跨 run 缓存前缀](./2026-10-01-Anthropic工具轮thinking历史恢复与跨run缓存前缀.md)
+
 ### 2026-09-29
 
 - [单容器内置 Rootless Shell：方案收敛、实施与 fnOS 验收](./2026-09-29-一体化镜像默认启用Shell沙盒.md)

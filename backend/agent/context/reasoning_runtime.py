@@ -209,7 +209,7 @@ class ReasoningStateCoordinator:
         if not callable(extract):
             return
         try:
-            state = extract(result)
+            state = extract(result, ctx=ctx)
         except Exception as exc:
             diag_log("agent.reasoning_state.extract", exc)
             self.unavailable_reason = "state_corrupt"

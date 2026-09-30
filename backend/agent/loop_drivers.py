@@ -88,8 +88,8 @@ class NormalizedToolCall(ToolCall):
     """运行时工具调用，在 canonical 字段上补充 provider 解析状态。"""
 
     parse_error: bool = False   # 只有 OpenAI 路会真的置真（JSON 截断解析失败）
-    # provider 返回的 arguments 原始字符串。canonical history 存这个原样字节，
-    # 回放时才能与 live 发出的 wire 逐字节一致——parse→dumps 会改变序列化风格
+    # OpenAI 返回的 arguments 原始字符串，或 Anthropic input 的有序 JSON。
+    # canonical history 保存字符串，避免 JSONB 重排；OpenAI 的 parse→dumps 还会改变序列化风格
     # （空格/键序），跨 run 前缀缓存会在第一个工具轮就断开（2026-09-12 排查）。
     raw_arguments: str | None = None
 
@@ -114,6 +114,8 @@ class RoundResult:
 
 class LoopDriver(Protocol):
     api_format: str
+
+    def extract_provider_state(self, result: RoundResult, ctx=None) -> dict | None: ...
 
     def prepare(self, tool_names: list[str], ai, messages: list, system_text: str | None,
                 tool_snapshot=None): ...
@@ -141,58 +143,133 @@ class _AnthropicCtx:
     model: str
     generation_param: dict
     restored_blocks: list[dict] | None = None
+    history_thinking_by_tool_id: dict[str, list[dict]] = field(default_factory=dict)
+    history_tool_use_ids: set[str] = field(default_factory=set)
+    persisted_tail_blocks: list[dict] | None = None
     tool_state_digest: str = ""
     cache_state: CacheState = field(default_factory=CacheState)
+
+
+def _anthropic_history_tool_use_ids(messages) -> set[str]:
+    conversation = getattr(messages, "conversation", messages)
+    result = set()
+    for message in conversation or ():
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else [content]
+        for block in blocks:
+            if isinstance(block, dict) and block.get("type") in {"tool_call", "tool_use"}:
+                call_id = block.get("id") or block.get("tool_call_id") or block.get("tool_use_id")
+                if isinstance(call_id, str) and call_id:
+                    result.add(call_id)
+    return result
+
+
+def _restore_anthropic_history_thinking(messages, thinking_by_tool_id: dict[str, list[dict]]) -> None:
+    """把加密续接状态中的 thinking 块放回对应历史工具轮，不改变其他消息。"""
+    if not thinking_by_tool_id:
+        return
+    conversation = getattr(messages, "conversation", messages)
+    for message in conversation:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        if any(isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}
+               for block in content):
+            continue
+        for index, block in enumerate(content):
+            if not isinstance(block, dict) or block.get("type") not in {"tool_call", "tool_use"}:
+                continue
+            call_id = block.get("id") or block.get("tool_call_id") or block.get("tool_use_id")
+            saved = thinking_by_tool_id.get(call_id) if isinstance(call_id, str) else None
+            if saved:
+                content[index:index] = copy.deepcopy(saved)
+                break
 
 
 class AnthropicDriver:
     api_format = "anthropic"
     continuation_available = True
 
-    def extract_provider_state(self, result: RoundResult) -> dict | None:
-        """提取必须原样回放的 assistant blocks；不把它们转成 canonical history。"""
+    def extract_provider_state(self, result: RoundResult, ctx=None) -> dict | None:
+        """提取跨 run 重建 provider 历史前缀所需的签名 thinking blocks。"""
         blocks = [b.model_dump() if hasattr(b, "model_dump") else dict(b)
                   for b in (result.raw or [])]
         state_blocks = [block for block in blocks if block.get("type") in {
             "thinking", "redacted_thinking",
         }]
-        if not state_blocks:
+        history_thinking = copy.deepcopy(
+            getattr(ctx, "history_thinking_by_tool_id", {}) if ctx is not None else {}
+        )
+        tail_blocks = copy.deepcopy(
+            getattr(ctx, "persisted_tail_blocks", None) if ctx is not None else None
+        )
+        tool_ids = [
+            str(block.get("id")) for block in blocks
+            if block.get("type") == "tool_use" and block.get("id")
+        ]
+        if state_blocks and tool_ids:
+            # 一个 assistant 工具轮可能包含多个 tool_use。以首个稳定 call id 关联该轮，
+            # 恢复时将 thinking 放在整组 tool_use 之前，避免把签名块追加到新 user 后。
+            history_thinking[tool_ids[0]] = copy.deepcopy(state_blocks)
+            tail_blocks = None
+        elif state_blocks:
+            tail_blocks = copy.deepcopy(state_blocks)
+
+        if ctx is not None:
+            ctx.history_thinking_by_tool_id = history_thinking
+            ctx.persisted_tail_blocks = tail_blocks
+            ctx.restored_blocks = None
+        if not state_blocks and not history_thinking and not tail_blocks:
             return None
         counts: dict[str, int] = {}
         for block in blocks:
             block_type = str(block.get("type") or "unknown")
             counts[block_type] = counts.get(block_type, 0) + 1
+        stored_block_count = sum(len(items) for items in history_thinking.values()) + len(tail_blocks or ())
         return {
             "state_kind": "anthropic_thinking_blocks",
-            # 只保存 provider 专属的 thinking 块。普通文本和 tool_use 已经
-            # 进入 canonical history，跨请求恢复它们会重复插入旧工具调用。
-            "payload": {"blocks": copy.deepcopy(state_blocks)},
+            # provider 专属的 thinking/signature 不进入 canonical history；加密续接状态
+            # 按 tool_use id 保留历史工具轮的原位置，tail 仅用于无工具的最后一轮。
+            "payload": {
+                "history_thinking_by_tool_id": history_thinking,
+                "tail_blocks": tail_blocks,
+            },
             "summary": {
-                "state_block_count": len(state_blocks),
+                "state_block_count": stored_block_count,
                 "thinking_block_count": sum(counts.get(t, 0) for t in ("thinking", "redacted_thinking")),
                 "tool_use_block_count": counts.get("tool_use", 0),
             },
         }
 
     def restore_provider_state(self, ctx: _AnthropicCtx, payload: Any) -> bool:
-        blocks = payload.get("blocks") if isinstance(payload, dict) else None
-        if not isinstance(blocks, list) or not blocks or any(
-            not isinstance(block, dict) or not isinstance(block.get("type"), str)
-            for block in blocks
-        ):
+        if not isinstance(payload, dict):
             return False
-        # tool_use 已经随上一轮的 assistant/tool_result 写入 canonical history。
-        # 跨请求恢复时再次插入它会复用旧 id，且当前 user 消息后没有对应
-        # tool_result，MiniMax 会以 2013 拒绝整次请求。跨请求只需恢复
-        # provider 专属的 thinking 签名块；普通文本和工具调用都由历史提供。
-        thinking_blocks = [
-            copy.deepcopy(block)
-            for block in blocks
-            if block.get("type") in {"thinking", "redacted_thinking"}
-        ]
-        if not thinking_blocks:
+        # 旧 envelope 的 blocks 是没有工具轮身份的续接状态，只能按原 tail 行为恢复。
+        tail = payload.get("tail_blocks", payload.get("blocks"))
+        if tail is not None and (not isinstance(tail, list) or any(
+            not isinstance(block, dict) or block.get("type") not in {"thinking", "redacted_thinking"}
+            for block in tail
+        )):
             return False
-        ctx.restored_blocks = thinking_blocks
+        raw_history = payload.get("history_thinking_by_tool_id", {})
+        if not isinstance(raw_history, dict):
+            return False
+        history = {}
+        for call_id, blocks in raw_history.items():
+            if not isinstance(call_id, str) or not call_id or not isinstance(blocks, list) or any(
+                not isinstance(block, dict) or block.get("type") not in {"thinking", "redacted_thinking"}
+                for block in blocks
+            ):
+                return False
+            if call_id in getattr(ctx, "history_tool_use_ids", set()):
+                history[call_id] = copy.deepcopy(blocks)
+        ctx.history_thinking_by_tool_id = history
+        ctx.persisted_tail_blocks = copy.deepcopy(tail) if tail else None
+        ctx.restored_blocks = copy.deepcopy(tail) if tail else None
         return True
 
     def prepare(self, tool_names, ai, messages, system_text, tool_snapshot=None):
@@ -223,6 +300,7 @@ class AnthropicDriver:
             thinking_param=thinking_param, system_param=system_param,
             supports_active_cache=supports_active_cache, adapter=adapter, model=ai.model,
             generation_param=adapter.build_anthropic_generation_params(ai),
+            history_tool_use_ids=_anthropic_history_tool_use_ids(messages),
             tool_state_digest=hashlib.sha256(json.dumps(
                 tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode("utf-8")).hexdigest()[:16],
@@ -252,6 +330,9 @@ class AnthropicDriver:
         # time-context 等 canonical 边界会丢失并在每轮被误合并。
         from agent.context.provider_history import render_anthropic_message_roles
         outbound = render_anthropic_message_roles(outbound, ctx.adapter)
+        _restore_anthropic_history_thinking(
+            outbound, getattr(ctx, "history_thinking_by_tool_id", {})
+        )
         restored_blocks = getattr(ctx, "restored_blocks", None)
         restored_blocks_for_trace = copy.deepcopy(restored_blocks) if restored_blocks else None
         restored_insert_index = None
@@ -355,7 +436,10 @@ class AnthropicDriver:
         tool_blocks = [b for b in raw_blocks if b.get("type") == "tool_use"]
         text = "".join(str(b.get("text") or "") for b in raw_blocks if b.get("type") == "text")
         tool_calls = [NormalizedToolCall(
-            id=b.get("id"), name=b.get("name"), input=b.get("input") or {}
+            id=b.get("id"), name=b.get("name"), input=b.get("input") or {},
+            # JSONB 会重排对象键；封存本轮 input 的有序 JSON，历史回放才能
+            # 还原相同序列化顺序。复用 canonical 已有的 arguments 字符串路径。
+            raw_arguments=json.dumps(b.get("input") or {}, ensure_ascii=False, separators=(",", ":")),
         ) for b in tool_blocks]
         yield ("done", RoundResult(
             text=text, tool_calls=tool_calls, requires_tools=bool(tool_calls),
@@ -455,7 +539,7 @@ class OpenAIDriver:
     api_format = "openai"
     continuation_available = False
 
-    def extract_provider_state(self, result: RoundResult) -> dict | None:
+    def extract_provider_state(self, result: RoundResult, ctx=None) -> dict | None:
         """Chat Completions 没有跨请求私有推理续接协议，明确返回不可用。"""
         return None
 
