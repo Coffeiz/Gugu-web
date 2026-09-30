@@ -70,6 +70,7 @@ def capability_snapshot(ai) -> dict[str, object]:
         "supported_api_formats": list(adapter.supported_api_formats(ai)),
         "reasoning_modes": list(reasoning.modes),
         "reasoning_efforts": list(reasoning.efforts),
+        "supports_adaptive_thinking": reasoning.supports_adaptive_thinking,
         "cache_mode": capabilities.cache_mode,
         "thinking": values["thinking"],
         "structured_json": values["structured_json"],
@@ -118,9 +119,13 @@ def _copy_with_updates(value, updates):
 def adapter_for(ai) -> ProviderAdapter:
     """按 provider 精确匹配，未命中时按 base_url 关键字兜底。"""
     provider = (getattr(ai, "provider", "") or "").lower()
+    base_url = (getattr(ai, "base_url", "") or "").lower()
+    # GLM Coding Plan 是独立接入类型：BYOK 以 glm + 专用地址保存，Admin
+    # 也允许通过同一 Provider 的子类型选择，因此专用端点必须先于通用注册匹配。
+    if provider in {"glm", "glm-coding"} and "bigmodel.cn" in base_url and "/api/coding/" in base_url:
+        return _GLM_CODING
     if provider in _REGISTRY:
         return _REGISTRY[provider]
-    base_url = (getattr(ai, "base_url", "") or "").lower()
     if "xiaomimimo" in base_url:
         return _MIMO
     if "minimaxi.com" in base_url:

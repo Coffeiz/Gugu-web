@@ -35,9 +35,7 @@ class OpenAIAdapter(ProviderAdapter):
 
     def supported_api_formats(self, ai) -> tuple[ApiFormat, ...]:
         if (getattr(ai, "provider", "") or "").lower() == "openai":
-            model = (getattr(ai, "model", "") or "").strip().lower()
-            if model.startswith("gpt-5.5-pro"):
-                return ("responses",)
+            # API 协议由 OpenAI Provider 提供；具体模型能力在请求/能力层单独处理。
             return ("openai", "responses")
         return super().supported_api_formats(ai)
 

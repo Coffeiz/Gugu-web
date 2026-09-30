@@ -68,7 +68,30 @@
               <input v-model="newEditor.value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKey')" />
               <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @mousedown.prevent @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" :popup-class="onboarding ? 'model-options onboarding-model-popup' : 'model-options'"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
               <input v-if="newEditor.capability === 'embedding'" v-model.number="newEditor.dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
-              <template v-if="newEditor.capability === 'llm'"><div v-if="supportsReasoningPersistence(newEditor)" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="setting-choice-row__options pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: newEditor.reasoning_persistence === option.key }" @click="newEditor.reasoning_persistence = option.key">{{ option.label }}</button></div></div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="newEditor.max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
+              <template v-if="newEditor.capability === 'llm'">
+                <div class="byok-subsection">
+                  <div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div>
+                  <AdminSelect v-model="newEditor.thinking_mode" :options="thinkingOptionsFor(newEditor)" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(newEditor, $event)" />
+                </div>
+                <div v-if="supportsReasoningPersistence(newEditor)" class="byok-subsection">
+                  <div class="setting-choice-row">
+                    <div class="setting-choice-row__copy">
+                      <div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div>
+                      <div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div>
+                    </div>
+                    <div class="setting-choice-row__options pm-style-group">
+                      <button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: newEditor.reasoning_persistence === option.key }" @click="newEditor.reasoning_persistence = option.key">{{ option.label }}</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="byok-subsection">
+                  <div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div>
+                  <div class="byok-budget-grid">
+                    <input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" />
+                    <input v-model.number="newEditor.max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" />
+                  </div>
+                </div>
+              </template>
               <MultimodalCapabilities v-if="newEditor.capability === 'llm'" :model="newEditor" :dims="localizedMediaDimensions" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="mediaTesting" @probe="probeNewVision" />
             </div>
             <div class="byok-editor-actions"><div v-if="mediaFeedbackTarget === 'new' && mediaFeedback" class="byok-editor-feedback pm-msg" :class="mediaFeedbackType" role="status">{{ mediaFeedback }}</div><button class="pm-style-chip" :disabled="testing === -1 || !newEditor.provider || !newEditor.value" @click="testNewEditor">{{ testing === -1 ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeNewEditor">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !newEditor.provider || (keyRequiredFor(newEditor) && !newEditor.value)" @click="saveNewEditor">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
@@ -98,8 +121,8 @@ import MultimodalCapabilities from '@/components/common/controls/MultimodalCapab
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useI18n } from 'vue-i18n'
-import { MODEL_PROVIDERS, type ModelProvider } from '@/utils/modelProviders'
-import { buildThinkingOptions } from '@/utils/llmThinkingOptions'
+import { apiFormatsForProvider, defaultApiFormatForProvider, MODEL_PROVIDERS, retainApiFormatForProvider, type ModelProvider } from '@/utils/modelProviders'
+import { buildThinkingOptionsForIdentity } from '@/utils/llmThinkingOptions'
 
 type ReasoningPersistence = 'off' | 'summary' | 'continuation'
 type Item = { id: number; capability: string; provider: string; api_format: string; base_url: string; model: string; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; reasoning_persistence: ReasoningPersistence; image: boolean; video: boolean; audio: boolean; image_detail: string; has_value: boolean; enabled: boolean; [key: string]: any }
@@ -143,13 +166,12 @@ function capabilityIdentityFor(draft: Pick<Editor, 'provider' | 'model' | 'ollam
 }
 function interfaceOptionsFor(draft: Pick<Editor, 'provider' | 'model' | 'api_format' | 'base_url' | 'ollama_mode' | 'ollama_api_mode' | 'local_runtime'> | null) {
   if (!draft) return []
-  if (capabilitySnapshotIdentity.value !== capabilityIdentityFor(draft)) return []
-  const options = (capabilitySnapshot.value?.supported_api_formats || []).map((key: string) => ({ key, label: t(apiFormatLabels[key] || key) }))
+  const options = apiFormatsForProvider(draft.provider, draft.base_url).map((key: string) => ({ key, label: t(apiFormatLabels[key] || key) }))
   return draft.provider === 'ollama' ? [{ key: 'native', label: t(apiFormatLabels.native) }, ...options] : options
 }
 function defaultInterfaceFor(provider: string) {
   if (provider === 'ollama' && (editor.value?.ollama_api_mode || newEditor.value?.ollama_api_mode || 'native') === 'native') return 'native'
-  return capabilitySnapshot.value?.default_api_format || (provider === 'anthropic' || provider === 'minimax' ? 'anthropic' : 'openai')
+  return defaultApiFormatForProvider(provider)
 }
 function displayInterfaceFor(item: Pick<Item, 'provider' | 'api_format'>) {
   if (item.api_format) return item.api_format
@@ -222,9 +244,8 @@ watch(() => {
       draft.base_url = snapshot.default_base_url
     }
     capabilitySnapshotIdentity.value = capabilityIdentityFor(draft)
-    const supportedFormats: string[] = snapshot.supported_api_formats || []
-    if (draft.api_format && draft.api_format !== 'native' && !supportedFormats.includes(draft.api_format)) {
-      draft.api_format = snapshot.default_api_format || ''
+    if (draft.api_format !== 'native') {
+      draft.api_format = retainApiFormatForProvider(draft.provider, draft.api_format || '', draft.base_url)
     }
     if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
   } catch {
@@ -243,8 +264,12 @@ function providersFor(capability: string): readonly ProviderOption[] {
   return modelProviders
 }
 function thinkingOptionsFor(draft: Pick<Editor, 'provider' | 'model' | 'api_format' | 'base_url' | 'ollama_mode' | 'ollama_api_mode' | 'local_runtime'>) {
-  if (capabilitySnapshotKey.value !== capabilityKeyFor(draft)) return buildThinkingOptions(null, t)
-  return buildThinkingOptions(capabilitySnapshot.value, t)
+  return buildThinkingOptionsForIdentity(
+    capabilitySnapshot.value,
+    capabilitySnapshotIdentity.value,
+    capabilityIdentityFor(draft),
+    t,
+  )
 }
 function thinkingModeFor(thinking: Editor['thinking'], effort: string | null): ThinkingMode {
   if (thinking === 'disabled') return 'disabled'

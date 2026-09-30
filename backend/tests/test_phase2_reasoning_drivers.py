@@ -35,6 +35,13 @@ def _anthropic_result():
     )
 
 
+def _responses_adapter():
+    return SimpleNamespace(
+        render_history=lambda messages: list(messages),
+        build_responses_reasoning_params=lambda _ai: {},
+    )
+
+
 def test_responses_input_converts_chat_text_blocks_without_changing_other_blocks():
     messages = [
         {
@@ -408,7 +415,7 @@ async def test_responses_driver_retries_full_history_when_response_chain_is_stal
     client = _StaleThenSuccessClient()
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    adapter = _responses_adapter()
     ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-1")
 
     result = None
@@ -464,7 +471,7 @@ async def test_stale_response_fallback_retries_transient_error_before_success(mo
     client = _StaleThenRateLimitClient()
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    adapter = _responses_adapter()
     messages = [{"role": "user", "content": "继续"}]
     ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-stale")
 
@@ -504,7 +511,7 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
     client = _FakeResponsesClient(events)
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    adapter = _responses_adapter()
     ctx = _ResponsesCtx(
         [], 100, "gpt-test", "system", adapter, ai,
         supports_prompt_cache_key=True,
@@ -574,7 +581,7 @@ async def test_responses_driver_marks_full_request_protocol_error():
     )
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    adapter = _responses_adapter()
     ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
 
     with pytest.raises(ResponsesCompatibilityError) as raised:
@@ -614,7 +621,7 @@ async def test_responses_driver_only_classifies_explicit_compatibility_errors(
     )
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    adapter = _responses_adapter()
     ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-1")
 
     if should_raise:

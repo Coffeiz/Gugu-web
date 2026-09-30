@@ -20,19 +20,15 @@ class GlmAdapter(ProviderAdapter):
         return (model or "").strip().lower().startswith(("glm-5.3", "glm-5.3-flash"))
 
     def supported_api_formats(self, ai):
-        # GLM-5.3 的模型文档列出 Chat、Responses 和 Anthropic 兼容端点；
-        # 其它型号目前只开放通用 Chat 协议，避免按供应商整体推断兼容性。
-        if self._glm53(getattr(ai, "model", "") or ""):
-            return ("openai", "responses", "anthropic")
-        return ("openai",)
+        # 协议是 GLM 通用 API 的接入能力，不随当前选择的模型改变。
+        return ("openai", "responses", "anthropic")
 
     def default_base_url_for(self, ai) -> str:
-        if self._glm53(getattr(ai, "model", "") or ""):
-            protocol = self.protocol_format(ai)
-            if protocol == "responses":
-                return "https://open.bigmodel.cn/api/v1"
-            if protocol == "anthropic":
-                return "https://open.bigmodel.cn/api/anthropic"
+        protocol = self.protocol_format(ai)
+        if protocol == "responses":
+            return "https://open.bigmodel.cn/api/v1"
+        if protocol == "anthropic":
+            return "https://open.bigmodel.cn/api/anthropic"
         return self.default_base_url
 
     @staticmethod

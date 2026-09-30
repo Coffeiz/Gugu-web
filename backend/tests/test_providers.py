@@ -68,6 +68,9 @@ def test_bailian_qwen3_capabilities_and_thinking_toggle():
     assert adapter.supported_api_formats(SimpleNamespace(
         provider="qwen", model="qwen3.8-max"
     )) == ("openai", "responses")
+    assert adapter.supported_api_formats(SimpleNamespace(
+        provider="qwen", model="qwen-max"
+    )) == ("openai", "responses")
     assert adapter.reasoning_capabilities(SimpleNamespace(
         provider="qwen", model="qwen3.8-max"
     ), "responses").efforts == (
@@ -112,6 +115,8 @@ def test_adapter_for_mimo_by_provider():
     a = adapter_for(_ai(provider="mimo"))
     assert a.name == "mimo"
     assert a.api_format == "openai"
+    assert a.supported_api_formats(_ai(provider="mimo", model="mimo-v2.6-pro")) == (
+        "openai", "responses", "anthropic")
     assert not a.supports_active_cache("")
     assert a.supports_thinking_toggle
     assert a.auth_headers(_ai(provider="mimo")) == {"api-key": ""}  # 始终带 key（api_key 空就是空串值，不是缺键）
@@ -183,7 +188,7 @@ def test_unknown_model_capability_snapshot_offers_default_without_reasoning_cont
         provider="qwen", model="qwen-max", base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         api_format="openai",
     ))
-    assert snapshot["supported_api_formats"] == ["openai"]
+    assert snapshot["supported_api_formats"] == ["openai", "responses"]
     assert snapshot["reasoning_modes"] == []
     assert snapshot["reasoning_efforts"] == []
 
@@ -199,6 +204,12 @@ def test_glm_53_protocols_effort_and_protocol_specific_endpoints():
     assert adapter.resolve_base_url(SimpleNamespace(
         provider="glm", model="glm-5.3", api_format="anthropic", base_url=""
     )) == "https://open.bigmodel.cn/api/anthropic"
+    assert adapter.supported_api_formats(SimpleNamespace(
+        provider="glm", model="glm-5.2", api_format="openai"
+    )) == ("openai", "responses", "anthropic")
+    assert adapter.resolve_base_url(SimpleNamespace(
+        provider="glm", model="glm-5.2", api_format="responses", base_url=""
+    )) == "https://open.bigmodel.cn/api/v1"
     ai = SimpleNamespace(
         provider="glm", model="glm-5.3", api_format="openai",
         thinking="disabled", reasoning_effort="high",
@@ -211,6 +222,13 @@ def test_glm_53_protocols_effort_and_protocol_specific_endpoints():
     coding = adapter_for(_ai(provider="glm-coding", model="glm-5.3"))
     assert coding.supported_api_formats(SimpleNamespace(
         provider="glm-coding", model="glm-5.3"
+    )) == ("openai",)
+    coding_by_url = adapter_for(_ai(
+        provider="glm", model="glm-5.3", base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+    ))
+    assert coding_by_url.name == "glm-coding"
+    assert coding_by_url.supported_api_formats(SimpleNamespace(
+        provider="glm", model="glm-5.3", base_url="https://open.bigmodel.cn/api/coding/paas/v4",
     )) == ("openai",)
 
 
@@ -447,6 +465,33 @@ def test_capability_matrix_for_supported_providers_is_explicit():
             assert actual[key] == value, (provider, key, actual)
 
 
+def test_mimo_api_formats_have_protocol_specific_endpoints_and_thinking_params():
+    adapter = adapter_for(_ai(provider="mimo", model="mimo-v2.6-pro"))
+    anthropic_ai = SimpleNamespace(
+        provider="mimo", model="mimo-v2.6-pro", api_format="anthropic",
+        base_url="", api_key="test-key", thinking="adaptive",
+    )
+    assert adapter.default_base_url_for(anthropic_ai) == "https://api.xiaomimimo.com/anthropic"
+    assert adapter.resolve_base_url(anthropic_ai) == "https://api.xiaomimimo.com/anthropic"
+    assert adapter.reasoning_capabilities(anthropic_ai, "anthropic").modes == (
+        "disabled", "adaptive")
+    assert adapter.build_anthropic_thinking_params(anthropic_ai) == {
+        "thinking": {"type": "enabled"},
+    }
+
+    responses_ai = SimpleNamespace(
+        provider="mimo", model="mimo-v2.6-pro", api_format="responses", thinking="adaptive",
+    )
+    assert adapter.default_base_url_for(responses_ai) == "https://api.xiaomimimo.com/v1"
+    assert adapter.build_responses_reasoning_params(responses_ai) == {
+        "reasoning": {"effort": "medium"},
+    }
+    responses_ai.thinking = "disabled"
+    assert adapter.build_responses_reasoning_params(responses_ai) == {
+        "reasoning": {"effort": "none"},
+    }
+
+
 def test_capability_snapshot_keeps_probe_separate_and_contains_no_credentials():
     ai = SimpleNamespace(provider="mimo", model="mimo-v2", api_key="secret-key")
     snapshot = capability_snapshot(ai)
@@ -492,8 +537,9 @@ def test_compatible_endpoints_do_not_inherit_official_provider_reasoning_options
         provider="openai", model="gpt-5.5-pro", api_format="responses",
         reasoning_effort="high",
     )
-    assert openai.supported_api_formats(chat_only) == ("responses",)
-    assert openai.reasoning_capabilities(chat_only, "openai").efforts == ()
+    assert openai.supported_api_formats(chat_only) == ("openai", "responses")
+    assert openai.reasoning_capabilities(chat_only, "openai").efforts == (
+        "low", "medium", "high", "xhigh")
 
     unsupported = SimpleNamespace(
         provider="openai", model="gpt-4o", api_format="responses", reasoning_effort="high",
@@ -558,6 +604,44 @@ def test_capability_snapshot_exposes_protocol_scoped_reasoning_options():
     assert snapshot["supported_api_formats"] == ["anthropic", "openai", "responses"]
     assert snapshot["reasoning_modes"] == ["adaptive"]
     assert snapshot["reasoning_efforts"] == ["low", "medium", "high", "xhigh", "max"]
+    assert snapshot["supports_adaptive_thinking"] is False
+
+
+def test_adaptive_thinking_is_exposed_only_for_explicitly_supported_provider_protocols():
+    minimax_chat = capability_snapshot(SimpleNamespace(
+        provider="minimax", model="MiniMax-M3", api_format="openai",
+    ))
+    assert minimax_chat["reasoning_modes"] == ["disabled", "adaptive"]
+    assert minimax_chat["supports_adaptive_thinking"] is True
+
+    minimax_responses = capability_snapshot(SimpleNamespace(
+        provider="minimax", model="MiniMax-M3", api_format="responses",
+    ))
+    assert minimax_responses["reasoning_modes"] == ["disabled", "adaptive"]
+    assert minimax_responses["supports_adaptive_thinking"] is False
+
+    minimax_preview = capability_snapshot(SimpleNamespace(
+        provider="minimax", model="MiniMax-M3.1-Flash-Preview", api_format="openai",
+    ))
+    assert minimax_preview["supports_adaptive_thinking"] is False
+
+    anthropic = capability_snapshot(SimpleNamespace(
+        provider="anthropic", model="claude-opus-4-8", api_format="anthropic",
+    ))
+    assert anthropic["supports_adaptive_thinking"] is True
+
+    compatible_anthropic = capability_snapshot(SimpleNamespace(
+        provider="anthropic", model="claude-opus-4-8", api_format="anthropic",
+        base_url="https://proxy.example/v1",
+    ))
+    assert compatible_anthropic["supports_adaptive_thinking"] is False
+
+
+def test_minimax_protocols_are_available_before_model_selection():
+    snapshot = capability_snapshot(SimpleNamespace(
+        provider="minimax", model="", api_format="anthropic",
+    ))
+    assert snapshot["supported_api_formats"] == ["anthropic", "openai", "responses"]
 
 
 def test_minimax_responses_protocol_capabilities_and_defaults():

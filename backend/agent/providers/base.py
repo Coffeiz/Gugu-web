@@ -19,6 +19,9 @@ class ReasoningCapabilities:
     modes: tuple[str, ...] = ()
     efforts: tuple[str, ...] = ()
     effort_map: tuple[tuple[str, str], ...] = ()
+    # mode="adaptive" 在部分适配器中只是“启用思考”的内部兼容值；只有
+    # Provider 明确承诺模型自行决定是否/何时思考时，才将此项设为 True。
+    supports_adaptive_thinking: bool = False
 
     def provider_effort(self, value: str) -> str | None:
         if value not in self.efforts:

@@ -91,7 +91,7 @@
               </div>
             </div>
 
-            <div v-if="thinkingOptions.length > 1" class="modal-field">
+            <div class="modal-field">
               <label>{{ t('profileByokUi.thinkingIntensity') }}</label>
               <AdminSelect :model-value="thinkingSelection(draft)" :options="thinkingOptions"
                 :placeholder="t('profileByokUi.thinkingPlaceholder')"
@@ -165,10 +165,11 @@ import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import ProviderSelect from '../../components/ProviderSelect.vue'
 import InterfaceTypeSelect from '../../components/InterfaceTypeSelect.vue'
+import { apiFormatsForProvider, defaultApiFormatForProvider, retainApiFormatForProvider } from '@/utils/modelProviders'
 import LocalCapabilityOverrides from '../../components/LocalCapabilityOverrides.vue'
 import MultimodalCapabilities from '@/components/common/controls/MultimodalCapabilities.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
-import { buildThinkingOptions } from '@/utils/llmThinkingOptions'
+import { buildThinkingOptionsForIdentity } from '@/utils/llmThinkingOptions'
 
 interface Provider { key: string; label: string; base_url: string; model: string }
 interface Option { key: string; label: string; hint?: string }
@@ -232,15 +233,13 @@ const formatLabels: Record<string, string> = {
 }
 function interfaceOptionsFor(draft: LlmPresetDraft | null) {
   if (!draft) return []
-  if (capabilitySnapshotIdentity.value !== capabilityIdentityFor(draft)) return []
-  const supported = capabilitySnapshot.value?.supported_api_formats
-  if (!Array.isArray(supported)) return []
+  const supported = apiFormatsForProvider(draft.provider, draft.base_url)
   const options = supported.map((key: string) => ({ key, label: t(formatLabels[key] || key) }))
   return draft.provider === 'ollama' ? [{ key: 'native', label: t(formatLabels.native) }, ...options] : options
 }
 function interfaceValue(draft: LlmPresetDraft) {
   if (draft.provider === 'ollama' && (draft.ollama_api_mode || 'native') === 'native') return 'native'
-  return String(draft.api_format || capabilitySnapshot.value?.default_api_format || 'openai')
+  return String(draft.api_format || defaultApiFormatForProvider(draft.provider))
 }
 function supportsReasoningPersistence(draft: LlmPresetDraft | null) {
   if (!draft) return false
@@ -264,10 +263,12 @@ function pickInterface(draft: LlmPresetDraft, value: string) {
 }
 const thinkingOptions = computed(() => {
   const draft = props.draft
-  const currentSnapshot = draft && capabilitySnapshotKey.value === capabilityKeyFor(draft)
-    ? capabilitySnapshot.value
-    : null
-  return buildThinkingOptions(currentSnapshot, t)
+  return buildThinkingOptionsForIdentity(
+    capabilitySnapshot.value,
+    capabilitySnapshotIdentity.value,
+    draft ? capabilityIdentityFor(draft) : '',
+    t,
+  )
 })
 function thinkingSelection(draft: LlmPresetDraft) {
   if (!draft.thinking) return 'default'
@@ -309,8 +310,9 @@ watch(
       if ((!latest.base_url || (previousSnapshot?.default_base_url && latest.base_url === previousSnapshot.default_base_url)) && snapshot.default_base_url) latest.base_url = snapshot.default_base_url
       capabilitySnapshotIdentity.value = capabilityIdentityFor(latest)
       capabilitySnapshotKey.value = capabilityKeyFor(latest)
-      const supportedFormats: string[] = snapshot.supported_api_formats || []
-      if (latest.api_format && !supportedFormats.includes(String(latest.api_format))) latest.api_format = snapshot.default_api_format || ''
+      latest.api_format = retainApiFormatForProvider(
+        latest.provider, String(latest.api_format || ''), latest.base_url,
+      )
       if (!thinkingOptions.value.some(option => option.value === thinkingSelection(latest))) pickThinking(latest, 'default')
     } catch {
       if (requestId === capabilityRequestId && props.draft) pickThinking(props.draft, 'default')

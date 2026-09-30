@@ -100,7 +100,8 @@ function selectChild(provider: ProviderOption, child: ChildOption) {
 <style scoped>
 .provider-select { position:relative; display:inline-block; min-width:220px; }
 .provider-trigger { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; height:34px; padding:0 12px; border:1px solid var(--input-border); border-radius:9px; background:var(--input-bg); color:var(--input-fg); font:13px var(--font-sans); cursor:pointer; text-align:left; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
-.provider-trigger:hover,.provider-trigger.open { border-color:var(--input-border-hover); background:var(--input-bg-hover); }
+.provider-trigger:hover { border-color:var(--input-border-hover); background:var(--input-bg); }
+.provider-trigger.open { border-color:var(--input-border-hover); background:var(--input-bg-focus); }
 .provider-chevron { color:var(--popup-item-fg-muted); }
 :global(.provider-popup) { min-width:220px; max-height:260px; overflow:auto; }
 :global(.provider-popup .provider-option-group + .provider-option-group) { margin-top:1px; }

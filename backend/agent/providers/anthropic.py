@@ -36,10 +36,12 @@ class AnthropicAdapter(ProviderAdapter):
         elif model.startswith(("claude-sonnet-4-6", "claude-sonnet-5")):
             efforts = ("low", "medium", "high")
         elif model.startswith(("claude-fable-5", "claude-mythos-5")):
-            return ReasoningCapabilities(modes=("adaptive",))
+            return ReasoningCapabilities(modes=("adaptive",), supports_adaptive_thinking=True)
         else:
             return ReasoningCapabilities()
-        return ReasoningCapabilities(modes=("adaptive",), efforts=efforts)
+        return ReasoningCapabilities(
+            modes=("adaptive",), efforts=efforts, supports_adaptive_thinking=True,
+        )
 
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         value = thinking if thinking is not None else getattr(ai, "thinking", "disabled")

@@ -21,19 +21,14 @@ class QwenAdapter(ProviderAdapter):
         return (model or "").strip().lower().startswith("qwen3")
 
     @staticmethod
-    def _supports_responses(model: str) -> bool:
-        model = (model or "").strip().lower()
-        return model.startswith(("qwen3.8", "qwen3.7", "qwen3.6", "qwen3.5", "qwen3-max"))
-
-    @staticmethod
     def _supports_effort(model: str) -> bool:
         # 百炼文档明确列出 Qwen3.8 的 reasoning_effort 档位；其它 Qwen3
         # 型号不因共享协议而继承这组档位。
         return (model or "").strip().lower().startswith("qwen3.8")
 
     def supported_api_formats(self, ai):
-        model = getattr(ai, "model", "") or ""
-        return ("openai", "responses") if self._supports_responses(model) else ("openai",)
+        # 百炼接入支持的协议属于 Provider 能力；模型专属推理参数仍单独按型号过滤。
+        return ("openai", "responses")
 
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         # 百炼能力按模型族收窄：老的 qwen-max 不能因为 provider 名称相同就
@@ -55,7 +50,7 @@ class QwenAdapter(ProviderAdapter):
                     effort_map=(("minimal", "low"), ("high", "xhigh"), ("max", "xhigh")),
                 )
             return ReasoningCapabilities(modes=("disabled", "adaptive"))
-        if api_format == "responses" and self._supports_responses(model):
+        if api_format == "responses" and self._qwen3_model(model):
             if self._supports_effort(model):
                 return ReasoningCapabilities(
                     modes=("disabled", "adaptive"),
@@ -67,7 +62,7 @@ class QwenAdapter(ProviderAdapter):
 
     def build_responses_reasoning_params(self, ai) -> dict:
         model = getattr(ai, "model", "") or ""
-        if not self._supports_responses(model):
+        if not self._qwen3_model(model):
             return {}
         if getattr(ai, "thinking", "disabled") == "disabled":
             return {"reasoning": {"effort": "none"}}

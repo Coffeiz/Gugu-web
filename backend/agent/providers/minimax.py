@@ -47,7 +47,11 @@ class MiniMaxAdapter(ProviderAdapter):
                 # M2.x 推理始终开启，none 会被忽略。
                 return ReasoningCapabilities(modes=("adaptive",))
             if api_format == "openai" and model.startswith("minimax-m3"):
-                return ReasoningCapabilities(modes=("disabled", "adaptive"))
+                is_documented_adaptive_model = not model.startswith("minimax-m3.1")
+                return ReasoningCapabilities(
+                    modes=("disabled", "adaptive"),
+                    supports_adaptive_thinking=is_documented_adaptive_model,
+                )
             return ReasoningCapabilities(modes=("adaptive",))
         return ReasoningCapabilities()
 
