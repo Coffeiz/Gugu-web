@@ -27,10 +27,13 @@ runs:
         }
         # 直接由 BuildKit 导出完整 Docker archive，避免 containerd snapshotter
         # 对 lazy-pulled registry 镜像执行 docker save 时遗漏 config/layer blob。
+        # 上游 ubuntu/squid:latest 会滞后于 Ubuntu 安全更新；固定其 digest 后
+        # 仍需每轮刷新 apt 元数据并升级系统包，再扫描实际将被打包的不可变镜像。
         proxy_archive="/tmp/gugu-egress-proxy-${GITHUB_RUN_ID}.tar"
-        printf 'FROM ubuntu/squid@%s\n' "$proxy_digest" \
+        printf 'FROM ubuntu/squid@%s\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && rm -rf /var/lib/apt/lists/*\n' "$proxy_digest" \
           | docker buildx build \
               --platform linux/amd64 \
+              --no-cache \
               --tag gugu-egress-proxy:embedded \
               --output "type=docker,dest=${proxy_archive}" \
               --file - -

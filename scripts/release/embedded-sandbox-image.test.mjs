@@ -52,8 +52,8 @@ test('Sandbox 从当前提交构建、扫描后就地打包并记录提交身份
   assert.match(bundleAction, /inputs\.sandbox-image-id/)
   assert.match(bundleAction, /crane digest --platform linux\/amd64 ubuntu\/squid:latest/,
     'egress proxy digest 必须解析成与执行镜像相同平台的不可变子 manifest')
-  assert.match(bundleAction, /FROM ubuntu\/squid@%s[\s\S]*type=docker,dest=\$\{proxy_archive\}[\s\S]*docker load --input/,
-    '固定 digest 必须通过 BuildKit 直接导出完整 Docker archive，再导入目标 daemon')
+  assert.match(bundleAction, /FROM ubuntu\/squid@%s\\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y[\s\S]*--no-cache[\s\S]*type=docker,dest=\$\{proxy_archive\}[\s\S]*docker load --input/,
+    '固定上游 digest 后必须刷新系统安全补丁，再无缓存构建并直接导出完整 archive')
   assert.match(bundleAction, /docker image tag "\$SANDBOX_ID" gugu-sandbox:embedded/,
     'bundle 应按通过 smoke/scan 的 sandbox image ID 打 tag')
   assert.match(bundleAction, /docker image inspect --format '\{\{\.Id\}\}' gugu-egress-proxy:embedded/,

@@ -26,10 +26,10 @@ def test_integrated_compose_uses_embedded_deps():
     services = compose["services"]
     assert services["app"]["environment"]["GUGU_EMBEDDED_DEPS"] == "1"
     assert services["app"]["environment"]["GUGU_SANDBOX_MANAGER_MODE"] == "embedded"
-    assert "updater" in services, "一体化 Compose 必须包含受限 updater"
+    assert "updater" not in services, "Compose 整镜像升级由部署管理器负责，不运行 updater sidecar"
+    assert services["app"].get("privileged") is True
     app_mounts = services["app"]["volumes"]
-    assert any("docker.sock" in str(mount) for mount in app_mounts), "内置 manager 必须访问宿主 Docker Socket"
-    assert any("docker.sock" in str(mount) for mount in services["updater"]["volumes"])
+    assert not any("docker.sock" in str(mount) for mount in app_mounts), "内置 Rootless daemon 不挂载宿主 Docker Socket"
     assert any("legacy_pgdata:/legacy-pgdata:ro" == mount for mount in app_mounts)
     assert any("legacy_redisdata:/legacy-redisdata:ro" == mount for mount in app_mounts)
 

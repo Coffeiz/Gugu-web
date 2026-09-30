@@ -380,7 +380,7 @@ jobs:
       - name: Start mock LLM server
         working-directory: backend
         run: |
-          PYTHONPATH=. nohup python -m uvicorn scripts.mock_llm_server:app --port 8899 \
+          PYTHONPATH=. nohup python -m uvicorn scripts.testing.mock_llm_server:app --port 8899 \
             > /tmp/mock-llm.log 2>&1 &
           for i in $(seq 1 20); do
             curl -sf http://127.0.0.1:8899/openapi.json > /dev/null && exit 0

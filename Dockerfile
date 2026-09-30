@@ -135,10 +135,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get update \
     && apt-get upgrade -y
 
-ARG GUGU_VERSION=unknown
-ARG GUGU_REVISION=unknown
-ARG GUGU_APP_RUNTIME_CONTRACT=1
-
 # 镜像应用代码固定放在独立路径；/app 在构建末尾创建为指向此目录的符号链接。
 # 启动时不能把 OverlayFS 的 lower-layer 目录 rename 到别处（会返回 EXDEV）。
 WORKDIR /opt/gugu/image-app
@@ -287,6 +283,9 @@ CMD ["nginx", "-g", "daemon off;"]
 
 # 版本号和提交 SHA 每次构建都会变化，只在最终镜像元数据中使用。
 # 放在所有文件系统层之后，避免每次提交都使运行时依赖和应用文件层失效。
+ARG GUGU_VERSION=unknown
+ARG GUGU_REVISION=unknown
+ARG GUGU_APP_RUNTIME_CONTRACT=1
 ENV GUGU_IMAGE_VERSION=${GUGU_VERSION} \
     GUGU_APP_RUNTIME_CONTRACT=${GUGU_APP_RUNTIME_CONTRACT}
 LABEL org.opencontainers.image.version="${GUGU_VERSION}" \
