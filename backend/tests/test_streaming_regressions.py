@@ -316,6 +316,47 @@ async def test_web_generate_finalizes_preflight_failure_instead_of_sticking(monk
 
 
 @pytest.mark.asyncio
+async def test_web_generate_preserves_resolved_reasoning_policy_for_background_task(monkeypatch):
+    from agent.gateway import web
+    from agent.context import compress_conv
+
+    class _Gate:
+        async def __aenter__(self):
+            return "run-1"
+
+        async def __aexit__(self, *_args):
+            return None
+
+    async def idle_state(_session_id):
+        return None
+
+    async def no_refresh(*_args):
+        return None
+
+    received = {}
+
+    async def capture_unlocked(*_args, **kwargs):
+        received.update(kwargs)
+
+    async def not_cancelled(_session_id):
+        return False
+
+    monkeypatch.setattr(compress_conv, "session_run_gate", lambda *_args, **_kwargs: _Gate())
+    monkeypatch.setattr(compress_conv, "_read_execution_state", idle_state)
+    monkeypatch.setattr(web, "_refresh_generation_history", no_refresh)
+    monkeypatch.setattr(web, "_generate_unlocked", capture_unlocked)
+    monkeypatch.setattr(web.genstream, "is_cancelled", not_cancelled)
+
+    run_config = SimpleNamespace(reasoning_persistence="continuation")
+    await web._generate(
+        SimpleNamespace(user_id=77), 670, {}, [], False,
+        model_cfg=SimpleNamespace(), run_config=run_config,
+    )
+
+    assert received["run_config"] is run_config
+
+
+@pytest.mark.asyncio
 async def test_feishu_fallback_drains_agent_after_final(monkeypatch):
     from agent.gateway import feishu
 

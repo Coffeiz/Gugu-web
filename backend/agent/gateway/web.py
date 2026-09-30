@@ -345,6 +345,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
             sent_at=user_message.sent_at, user_message=user_message,
             session=session, history_stats=history_stats, model_cfg=model_cfg,
+            run_config=run_config,
             locale=current_locale,
             strip_thinking=strip_thinking,
             owner_run_id=owner_run_id,
@@ -364,6 +365,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
         sent_at=user_message.sent_at, user_message=user_message,
         session=session, history_stats=history_stats, model_cfg=model_cfg,
+        run_config=run_config,
         locale=current_locale,
         strip_thinking=strip_thinking,
         owner_run_id=owner_run_id,
@@ -598,7 +600,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None, locale=None,
+                    history_stats=None, model_cfg=None, run_config=None, locale=None,
                     owner_run_id=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
@@ -629,7 +631,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
     from agent.llm import modelctx
     modelctx.mark_user_scope()
-    run_config = resolve_run_config(settings, req) if model_cfg is None else None
+    if run_config is None and model_cfg is None:
+        run_config = resolve_run_config(settings, req)
     model_cfg = model_cfg or run_config.model
     import app.db.session as _sess
 
@@ -1130,7 +1133,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None, locale=None,
+                    history_stats=None, model_cfg=None, run_config=None, locale=None,
                     owner_run_id=None,
                     begin_after_gate: bool = False) -> None:
     """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。
@@ -1200,6 +1203,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 user_tz=user_tz, sent_at=sent_at, user_message=user_message,
                 resume_interaction=resume_interaction, strip_thinking=strip_thinking,
                 session=session, history_stats=history_stats, model_cfg=model_cfg,
+                run_config=run_config,
                 locale=locale,
                 owner_run_id=claimed_owner_run_id or owner_run_id,
             )
