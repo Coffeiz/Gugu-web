@@ -72,7 +72,6 @@
                      悬浮操作按钮走 props 和默认插槽。 -->
                 <RuntimeFileCard
                   v-for="file in sortedCurrentFiles" :key="file.id"
-                  class="hover-card-fx"
                   :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'file', file.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"

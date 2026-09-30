@@ -7,9 +7,11 @@
    FileCard/FolderCard already receive their complete motion contract from global.css. Excluding
    them here prevents the generic hover utility from becoming a second transition owner. 便签组件
    还自带阴影、位移和高度的组合过渡，也必须由组件本身持有。 */
-html[data-theme][data-family] .hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card),
-html[data-theme][data-family] .sample-project-card {
+html[data-theme][data-family] .hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card):not(.proj-card) {
   transition: var(--card-motion);
+}
+html[data-theme][data-family] .sample-project-card {
+  transition: var(--project-card-motion);
 }
 html[data-theme][data-family] .cal-chip::after {
   background: var(--calendar-chip-hover-overlay) !important;

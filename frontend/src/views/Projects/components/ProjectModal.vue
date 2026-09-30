@@ -812,8 +812,9 @@ const filePanelContext = {
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
 .header-name-input:hover {
-  border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
+  border-color: var(--input-border-hover);
+  background: var(--input-bg);
+  box-shadow: var(--input-hover-shadow);
 }
 .header-progress-bar {
   height: 3px; background: rgba(0,0,0,0.07); flex-shrink: 0; position: relative;
