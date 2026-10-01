@@ -145,6 +145,7 @@ import { canPreview, fmtSize } from './messageDisplay'
 import { useChatAudio } from './composables/useChatAudio'
 import { useChatAttachments } from './composables/useChatAttachments'
 import { useChatActions } from './composables/useChatActions'
+import { copyTextToClipboard } from './composables/copyTextToClipboard'
 import { useChatConversation } from './composables/useChatConversation'
 import { useChatImConnect } from './composables/useChatImConnect'
 import { useChatWindow } from './composables/useChatWindow'
@@ -725,7 +726,7 @@ function openFileFromChat(f: ChatFile) {
   downloadFile(f)
 }
 
-function copyMsg(msg: ChatMessage) {
+async function copyMsg(msg: ChatMessage) {
   // AI 消息取渲染后的纯文本，用户消息直接取原文
   let text = msg.text
   if (msg.role === 'ai' && msg.text) {
@@ -733,17 +734,11 @@ function copyMsg(msg: ChatMessage) {
     tmp.innerHTML = renderMd(msg.text)
     text = tmp.innerText || tmp.textContent || msg.text
   }
-  const fallback = () => {
-    const el = document.createElement('textarea')
-    el.value = text
-    el.style.cssText = 'position:fixed;top:-9999px;left:0;opacity:0'
-    document.body.appendChild(el)
-    el.focus(); el.select()
-    try { document.execCommand('copy') } catch {}
-    document.body.removeChild(el)
+  const copied = await copyTextToClipboard(text)
+  if (!copied) {
+    showAppError(t('chatUi.copyFailed'))
+    return
   }
-  ;(navigator.clipboard ? navigator.clipboard.writeText(text).catch(fallback) : Promise.reject())
-    .catch(fallback)
   copiedId.value = msg.id
   setTimeout(() => { if (copiedId.value === msg.id) copiedId.value = null }, 1500)
 }
