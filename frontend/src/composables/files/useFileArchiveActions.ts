@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { filesApi } from '@/services/api'
@@ -19,21 +19,22 @@ interface ArchiveDialogForm {
   name: string
 }
 
-export interface FileLibraryArchiveActionsOptions {
+export interface FileArchiveActionsOptions {
   cacheStore: {
     getFile(id: number): FileMeta | null
     getFolder(id: number): FolderMeta | null
     addFile(file: FileMeta): void
     refresh(): Promise<void>
   }
-  selectedFileIds: Ref<Set<number>>
-  selectedFolderKeys: Ref<Set<number | string>>
+  getSelectedFileIds: () => number[]
+  getSelectedFolderKeys: () => Array<number | string>
   getVisibleFolders: () => FolderCard[]
+  getFolderKey?: (folder: FolderCard) => number | string
   clearSelection: () => void
   createExtractionGhost: (name: string) => () => void
 }
 
-export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsOptions) {
+export function useFileArchiveActions(options: FileArchiveActionsOptions) {
   const dialogOpen = ref(false)
   const mode = ref<ArchiveDialogMode>('compress')
   const busy = ref(false)
@@ -43,6 +44,7 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
   const selectedArchive = ref<FileMeta | null>(null)
   const { t } = useI18n()
   const extractable = isExtractableArchive
+  const folderKey = (folder: FolderCard) => options.getFolderKey?.(folder) ?? folder.id
 
   function setDialog(nextMode: ArchiveDialogMode, name = '') {
     mode.value = nextMode
@@ -53,17 +55,19 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
   }
 
   function openCompressSelected() {
-    const files = [...options.selectedFileIds.value]
+    const selectedFileIds = options.getSelectedFileIds()
+    const selectedFolderKeys = new Set(options.getSelectedFolderKeys())
+    const files = selectedFileIds
       .map(id => options.cacheStore.getFile(id))
       .filter((file): file is FileMeta => file != null)
-    const visibleFolders = options.getVisibleFolders().filter(folder => options.selectedFolderKeys.value.has(folder.id))
+    const visibleFolders = options.getVisibleFolders().filter(folder => selectedFolderKeys.has(folderKey(folder)))
     const folderMetas = visibleFolders
       .filter(folder => folder.type === 'folder' && folder.folderId != null)
       .map(folder => options.cacheStore.getFolder(Number(folder.folderId)))
       .filter((folder): folder is FolderMeta => folder != null)
 
-    if (files.length !== options.selectedFileIds.value.size
-      || folderMetas.length !== options.selectedFolderKeys.value.size
+    if (files.length !== selectedFileIds.length
+      || folderMetas.length !== selectedFolderKeys.size
       || (!files.length && !folderMetas.length)) {
       error.value = t('filesUi.archiveSelectionChanged')
       mode.value = 'compress'
@@ -132,9 +136,10 @@ export function useFileLibraryArchiveActions(options: FileLibraryArchiveActionsO
     let removeGhost: (() => void) | null = null
     try {
       if (submittedMode === 'compress') {
-        const fileIds = [...options.selectedFileIds.value]
+        const fileIds = options.getSelectedFileIds()
+        const selectedFolderKeys = new Set(options.getSelectedFolderKeys())
         const folderIds = options.getVisibleFolders()
-          .filter(folder => options.selectedFolderKeys.value.has(folder.id) && folder.type === 'folder' && folder.folderId != null)
+          .filter(folder => selectedFolderKeys.has(folderKey(folder)) && folder.type === 'folder' && folder.folderId != null)
           .map(folder => Number(folder.folderId))
         const created = await filesApi.archive({
           fileIds,

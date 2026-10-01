@@ -11,6 +11,7 @@ export interface FileSelectionOptions {
   getFiles: () => FileMeta[]
   openPreview: (file: FileMeta) => void
   isPreviewable: (ext: string, mimeType?: string | null) => boolean
+  openDirectFileAction?: (file: FileMeta) => boolean
   enterFolder: (folder: FolderMeta) => void
   fileAttr?: string
   folderAttr?: string
@@ -69,7 +70,7 @@ function createFileSelectionCoordinator(options: FileSelectionOptions) {
   function handleFileClick(file: FileMeta, event: MouseEvent) {
     if (event.shiftKey || event.ctrlKey || event.metaKey || inSelectionMode.value) onFileClick(file, event)
     else if (options.isPreviewable(file.ext, file.mimeType)) options.openPreview(file)
-    else onFileClick(file, event)
+    else if (!options.openDirectFileAction?.(file)) onFileClick(file, event)
   }
   return {
     gridRef,

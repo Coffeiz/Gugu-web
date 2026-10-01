@@ -69,6 +69,18 @@
         <ProjectFilesPanel :context="filePanelContext" />
   </ProjectModalShell>
 
+  <ArchiveOperationDialog
+    :show="pmArchiveDialogOpen"
+    teleport-to="body"
+    :mode="pmArchiveMode"
+    :initial-name="pmArchiveInitialName"
+    :busy="pmArchiveBusy"
+    :error="pmArchiveError"
+    :success="pmArchiveSuccess"
+    @close="closePmArchiveDialog"
+    @submit="submitPmArchive"
+  />
+
   <!-- 右键菜单 -->
   <FileBrowserContextMenu :show="pmCtx.visible" :x="pmCtx.x" :y="pmCtx.y" @close="pmCtx.visible = false">
     <FileBrowserContextMenuContent
@@ -78,6 +90,8 @@
       :can-copy-folder="false"
       :delete-separator="true"
       :can-paste="pmCbStore.hasContent()"
+      :can-extract-archive="pmCanExtractContextArchive"
+      :can-compress-selection="pmCanCompressContextSelection"
       @action="handlePmCtxMenuAction"
     />
   </FileBrowserContextMenu>
@@ -123,6 +137,7 @@ import FileBrowserContextMenuContent from '@/components/common/file-browser/File
 import ProjectInfoPanel from '@/views/Projects/components/ProjectInfoPanel.vue'
 import ProjectStagesPanel from '@/views/Projects/components/ProjectStagesPanel.vue'
 import ProjectFilesPanel from '@/views/Projects/components/ProjectFilesPanel.vue'
+import ArchiveOperationDialog from '@/views/Files/components/ArchiveOperationDialog.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -139,6 +154,8 @@ import { calculateHeaderProgress } from '@/composables/projects/useProjectProgre
 import { useProjectModalActions } from '@/composables/projects/useProjectModalActions'
 import { useProjectFileMutations } from '@/composables/files/useProjectFileMutations'
 import { useProjectFileUpload } from '@/composables/files/useProjectFileUpload'
+import { useFileArchiveActions } from '@/composables/files/useFileArchiveActions'
+import { canCompressArchiveContext, canExtractArchiveContext, findSelectedExtractableArchive, isExtractableArchive } from '@/composables/files/archive'
 import { useProjectFileBatchActions } from '@/composables/files/useProjectFileBatchActions'
 import { useProjectFileContextActions } from '@/composables/files/useProjectFileContextActions'
 import { useProjectFileDragMoves } from '@/composables/files/useProjectFileDragMoves'
@@ -291,6 +308,7 @@ const {
 })
 
 // ── 项目文件区选择 ────────────────────────────────────────────────────────────
+let openPmExtractArchive: ((file: FileMeta) => void) | null = null
 const {
   gridRef: pmGridRef,
   selectedFileIds: pmSelectedFileIds,
@@ -315,6 +333,11 @@ const {
   getFiles: () => sortedCurrentFiles.value,
   openPreview: file => openPreview(file),
   isPreviewable,
+  openDirectFileAction: file => {
+    if (!isExtractableArchive(file) || !openPmExtractArchive) return false
+    openPmExtractArchive(file)
+    return true
+  },
   enterFolder: folder => pmEnterFolderWrapped(folder),
 })
 
@@ -503,7 +526,9 @@ const openPreview = (f: FileMeta) => previewStore.open(f, sortedCurrentFiles.val
 // ── 文件夹操作 ────────────────────────────────────────────────────────────────
 
 function downloadFolderZip(folder: FolderMeta) {
-  return projectFileMutations.downloadFolder(folder)
+  return projectFileMutations.downloadFolder(folder).catch(() => {
+    showAppError(t('filesUi.downloadFailed'))
+  })
 }
 
 async function deleteFolderCard(folder: FolderMeta) {
@@ -583,6 +608,7 @@ const {
   onDragEnter: onPmDragEnter,
   onDragLeave: onPmDragLeave,
   onDrop: onPmDrop,
+  createExtractionGhost: createPmExtractionGhost,
 } = useProjectFileUpload({
   projectId: () => props.project?.id ?? null,
   baseFolderId: () => currentFolder.value?.id ?? null,
@@ -590,6 +616,38 @@ const {
   showConflicts: conflicts => conflictDialogRef.value?.show(conflicts)
     ?? Promise.resolve(new Map<string, ConflictDecision>()),
 })
+const pmArchiveActions = useFileArchiveActions({
+  cacheStore: fileCacheStore,
+  getSelectedFileIds: () => [...pmSelectedFileIds.value],
+  getSelectedFolderKeys: () => [...pmSelectedFolderIds.value],
+  getVisibleFolders: () => sortedCurrentFolders.value.map(folder => ({
+    id: String(folder.id), type: 'folder', displayName: folder.name, count: null, folderId: folder.id,
+  })),
+  getFolderKey: folder => Number(folder.folderId),
+  clearSelection: clearPmSelection,
+  createExtractionGhost: name => createPmExtractionGhost(name, t('filesUi.archiveExtracting')),
+})
+const {
+  dialogOpen: pmArchiveDialogOpen,
+  mode: pmArchiveMode,
+  busy: pmArchiveBusy,
+  error: pmArchiveError,
+  success: pmArchiveSuccess,
+  initialName: pmArchiveInitialName,
+  openCompressSelected: openPmCompressSelected,
+  extractFile: extractPmArchive,
+  submit: submitPmArchive,
+  closeDialog: closePmArchiveDialog,
+} = pmArchiveActions
+openPmExtractArchive = extractPmArchive
+const selectedPmArchive = computed(() => {
+  return findSelectedExtractableArchive(pmSelectedFileIds.value, pmSelectedFolderIds.value, id => fileCacheStore.getFile(id))
+})
+const pmCanExtractSelectedArchive = computed(() => selectedPmArchive.value != null)
+
+function extractSelectedPmArchive() {
+  if (selectedPmArchive.value) extractPmArchive(selectedPmArchive.value)
+}
 
 // ── 剪贴板 & 右键菜单（ProjectModal）──────────────────────────────────────────
 const isMac = navigator.platform.toUpperCase().includes('MAC') || navigator.userAgent.includes('Mac')
@@ -636,10 +694,18 @@ const {
   startRenameFolder,
   downloadFolder: downloadFolderZip,
   deleteFolder: deleteFolderCard,
+  extractArchive: extractPmArchive,
+  compressSelection: openPmCompressSelected,
   openInfo: (file, x, y) => { pmInfoPopup.value = { show: true, file, x, y } },
   showNewFolder,
   showConflicts: conflicts => conflictDialogRef.value?.show(conflicts)
     ?? Promise.resolve(new Map<string, ConflictDecision>()),
+})
+const pmCanExtractContextArchive = computed(() => {
+  return canExtractArchiveContext(pmCtx.value.type, pmCtx.value.target)
+})
+const pmCanCompressContextSelection = computed(() => {
+  return canCompressArchiveContext(pmCtx.value.type, pmCtx.value.target, pmSelectedFileIds.value, pmSelectedFolderIds.value)
 })
 
 useProjectFileKeyboard({
@@ -723,6 +789,10 @@ const filePanelContext = {
   handleFileInput,
   fileIconColor,
   pmDownloadingZip,
+  pmArchiveBusy,
+  pmCanExtractSelectedArchive,
+  openPmCompressSelected,
+  extractSelectedPmArchive,
   downloadSelectedPm,
   pmSelCut,
   pmSelCopy,

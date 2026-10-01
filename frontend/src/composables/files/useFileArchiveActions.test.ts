@@ -1,8 +1,8 @@
-import { createApp, h, ref } from 'vue'
+import { createApp, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import type { FileMeta } from '@/stores/filesCache'
-import { useFileLibraryArchiveActions } from './useFileLibraryArchiveActions'
+import { useFileArchiveActions } from './useFileArchiveActions'
 
 const { unarchive, showAppError } = vi.hoisted(() => ({
   unarchive: vi.fn(),
@@ -33,18 +33,18 @@ function mountActions() {
   const removeGhost = vi.fn()
   const createExtractionGhost = vi.fn(() => removeGhost)
   const refresh = vi.fn().mockResolvedValue(undefined)
-  let actions!: ReturnType<typeof useFileLibraryArchiveActions>
+  let actions!: ReturnType<typeof useFileArchiveActions>
   const app = createApp({
     setup() {
-      actions = useFileLibraryArchiveActions({
+      actions = useFileArchiveActions({
         cacheStore: {
           getFile: () => archive,
           getFolder: () => null,
           addFile: vi.fn(),
           refresh,
         },
-        selectedFileIds: ref(new Set<number>()),
-        selectedFolderKeys: ref(new Set<number | string>()),
+        getSelectedFileIds: () => [],
+        getSelectedFolderKeys: () => [],
         getVisibleFolders: () => [],
         clearSelection: vi.fn(),
         createExtractionGhost,

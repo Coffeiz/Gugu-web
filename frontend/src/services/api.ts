@@ -629,9 +629,27 @@ export const foldersApi = {
     post<ApiFolderResponse>(`/folders/${id}/copy`, { parentId, projectId, workspaceDirectoryId }),
   delete: (id: number, meta?: RequestMeta)           => del(`/folders/${id}`, meta),
   download: async (id: number, name: string) => {
+    const downloadPath = `${BASE_URL}/folders/${id}/download`
+    const downloadUrl = new URL(downloadPath, window.location.origin)
+
+    // 同源下载交给浏览器直接处理，避免大文件经过 fetch + Blob 占用额外内存，
+    // 也避免不同浏览器对 Blob URL 下载接管时序的差异。登录时设置的 HttpOnly
+    // Cookie 会随同源导航发送，后端 Content-Disposition 提供下载文件名。
+    if (downloadUrl.origin === window.location.origin) {
+      const a = document.createElement('a')
+      a.href = downloadUrl.href
+      a.download = `${name}.zip`
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      return
+    }
+
     const token = getToken()
-    const res = await fetch(`${BASE_URL}/folders/${id}/download`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    const res = await fetch(downloadUrl.href, {
+      credentials: 'include',
+      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
     if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -640,8 +658,12 @@ export const foldersApi = {
     const a = document.createElement('a')
     a.href = url
     a.download = `${name}.zip`
+    a.style.display = 'none'
+    document.body.appendChild(a)
     a.click()
-    URL.revokeObjectURL(url)
+    a.remove()
+    // 下载由浏览器异步接管；立即 revoke 会和 Chrome 的 Blob URL 读取竞态。
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
   },
 }
 

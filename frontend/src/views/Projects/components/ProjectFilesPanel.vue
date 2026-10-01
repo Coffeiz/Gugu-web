@@ -251,6 +251,10 @@
             :file-count="pmSelectedFileIds.size"
             :folder-count="pmSelectedFolderIds.size"
             :downloading="pmDownloadingZip"
+            :archiving="pmArchiveBusy"
+            :can-extract-archive="pmCanExtractSelectedArchive"
+            @archive="openPmCompressSelected"
+            @extract="extractSelectedPmArchive"
             @download="downloadSelectedPm"
             @cut="pmSelCut"
             @copy="pmSelCopy"
@@ -292,6 +296,7 @@ const {
   pmPreviewFileIds, renamingFileId, startRename, commitRename, renameText, renameExtension,
   cancelRename, thumbLoadedIds, downloadFile, deleteFile, pmHandleFileClick,
   uploadingItems, dragging, handleFileDrop, handleFileInput, fileIconColor, pmDownloadingZip,
+  pmArchiveBusy, pmCanExtractSelectedArchive, openPmCompressSelected, extractSelectedPmArchive,
   downloadSelectedPm, pmSelCut, pmSelCopy, deleteSelectedPm, clearPmSelection, pmCbStore,
   pmSortKey, pmSortDir, onPmSortSelect,
 } = props.context
