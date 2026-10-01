@@ -11,7 +11,7 @@ import json
 
 from sqlalchemy import (
     String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON,
-    UniqueConstraint, CheckConstraint, Index, text,
+    UniqueConstraint, CheckConstraint, Index, func, literal_column, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -597,6 +597,21 @@ class UndoOperation(Base):
 
 class Folder(Base):
     __tablename__ = "folders"
+    __table_args__ = (
+        # NULL 在普通复合唯一索引中彼此不相等；COALESCE 把根目录的可空作用域
+        # 映射到不可能出现的 ID 0，保证活动目录名在同一用户/空间/父目录内唯一。
+        Index(
+            "uq_folders_active_scope_name",
+            "user_id",
+            func.coalesce(literal_column("project_id"), 0),
+            func.coalesce(literal_column("workspace_directory_id"), 0),
+            func.coalesce(literal_column("parent_id"), 0),
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
