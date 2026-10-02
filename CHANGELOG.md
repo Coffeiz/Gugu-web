@@ -7,6 +7,16 @@
 
 ## [未发布]
 
+### Fixes
+
+- Added password confirmation during registration to catch mistyped passwords.
+- Fixed cursor placement when clicking the upper or lower area of single-line inputs.
+
+### 修复
+
+- 注册时增加确认密码输入，避免因密码输错而无法登录。
+- 修复点击单行输入框文字上下区域时光标跳到首尾的问题。
+
 ## [1.5.0] - 2026-10-03
 
 ### What's New

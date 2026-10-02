@@ -23,6 +23,11 @@
           <input v-model="form.password" type="password" :placeholder="t('auth.passwordRule')"
             autocomplete="new-password" :disabled="loading" />
         </div>
+        <div class="field">
+          <label>{{ t('auth.confirmPassword') }}</label>
+          <input v-model="form.confirmPassword" type="password" :placeholder="t('auth.confirmPassword')"
+            autocomplete="new-password" :disabled="loading" />
+        </div>
 
         <Checkbox v-model="form.emailSubscribed" class="subscribe-row" :disabled="loading">
           {{ t('subscriptionUi.subscribe') }}
@@ -57,24 +62,18 @@ import AuthBrand from '@/components/common/auth/AuthBrand.vue'
 import AuthPageFooter from '@/components/common/auth/AuthPageFooter.vue'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { useI18n } from 'vue-i18n'
+import { getRegistrationValidationError } from '@/utils/registrationValidation'
 
 const router  = useRouter()
 const auth    = useAuthStore()
-const form    = reactive({ username: '', email: '', password: '', emailSubscribed: false })
+const form    = reactive({ username: '', email: '', password: '', confirmPassword: '', emailSubscribed: false })
 const loading      = ref(false)
 const error        = ref('')
 const { t } = useI18n()
 
 async function handleRegister() {
-  if (!form.username || !form.email || !form.password) {
-    error.value = t('auth.fillAll'); return
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-    error.value = t('auth.invalidEmail'); return
-  }
-  if (form.password.length < 8) {
-    error.value = t('auth.passwordTooShort'); return
-  }
+  const validationError = getRegistrationValidationError(form)
+  if (validationError) { error.value = t(`auth.${validationError}`); return }
   loading.value = true; error.value = ''
   try {
     await auth.register(form.username, form.email, form.password, form.emailSubscribed)

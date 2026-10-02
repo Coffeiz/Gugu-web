@@ -367,8 +367,10 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(load('./components/forms.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
   })
 
-  it('普通输入统一使用足够的行高，避免字母下伸部被输入框裁切', () => {
-    expect(sharedForms).toContain('line-height: var(--line-height-body);')
+  it('普通单行输入统一使用完整控件高度的文本行框，保证上下区域按横坐标定位光标', () => {
+    expect(sharedForms).toContain('height: var(--input-control-height);')
+    expect(sharedForms).toContain('line-height: var(--input-text-line-height);')
+    expect(load('./tokens/components/surfaces.css')).toContain('--input-text-line-height: var(--input-control-height);')
     expect(sharedForms).toContain('vertical-align: middle;')
     expect(sharedForms).toContain("input:is([type='text'], [type='email']")
     expect(sharedForms).not.toContain(":where(input[type='text']")

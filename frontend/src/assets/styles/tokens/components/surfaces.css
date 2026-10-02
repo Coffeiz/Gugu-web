@@ -203,6 +203,9 @@
   --input-hover-shadow: inset 0 1px 0 var(--highlight-muted);
   --input-focus-shadow: var(--control-focus-shadow);
   --input-radius: var(--radius-sm);
+  /* 单行文本行框覆盖完整控件高度，保证点击上下区域时仍按横坐标定位光标。 */
+  --input-control-height: var(--control-height-lg);
+  --input-text-line-height: var(--input-control-height);
 
   --option-bg: var(--surface-soft);
   --option-bg-hover: var(--surface-soft-hover);
