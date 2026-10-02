@@ -16,7 +16,7 @@ description: 发版、PR 编写与合并、版本 tag、CHANGELOG 与生产部�
 
 ## 流程骨架（细节见 release.md 对应章节）
 
-撰写或完善 PR 描述时，按 `docs/ops/release.md` §1.1 选择一个主要类型并填写标题与描述；创建 PR 时使用 `.github/PULL_REQUEST_TEMPLATE.md`。本 skill 不复制模板字段，规范事实源仍是 release.md。
+撰写或完善 PR 描述时，按 `docs/ops/release.md` §1.1 为标题选择一个主要类型，并在正文勾选本 PR 实际包含的全部类型；创建 PR 时使用 `.github/PULL_REQUEST_TEMPLATE.md`。本 skill 不复制模板字段，规范事实源仍是 release.md。
 
 1. **PR 合并（dev → main）**：GitHub CI 不随 PR 自动触发（省 Actions usage）。合并前必须人工触发两个 workflow（Runtime integration、Docker release）各一次并选 PR 分支，全部全绿后才允许合并（release.md §1）。**未经用户授权不得主动触发 CI**——这是 AGENTS.md 常驻红线。
 2. **打 tag 前本地预检**：前端回归脚本 + 后端测试 + 本地构建生产镜像并 trivy 预扫，全部通过 tag 才允许指向 main 的合并提交（release.md §2）。镜像构建与 trivy 预扫在 devserver 做（见 local/devserver skill）。
