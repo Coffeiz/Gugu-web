@@ -7,23 +7,79 @@
 
 ## [未发布]
 
-### 新功能
+## [1.5.0] - 2026-10-03
 
-- **日历活动提醒**：创建或编辑活动时可直接配置提醒，并为提醒选择投递渠道及 QQ 私聊/群聊目标。
-- **GuguChat 音频播放列表**：支持连续播放，并可在迷你播放器中切换上一首、下一首及查看播放进度。
+### What's New
 
-### 改进
+#### New Features
 
-- **一体化镜像内置并默认启用 Rootless Shell 沙盒**：单容器部署无需 Compose、单独 sandboxd、执行镜像导入或宿主 Docker Socket；外层 app 容器需启用 privileged，适用于可信个人单用户部署。
-- **Knowledge 时间与检索**：知识条目时间统一以带时区的 ISO 8601 格式保存；既有条目会自动迁移，读取结果按用户时区显示，并支持以分隔字符串提供关键词。
-- **长对话上下文压缩**：优先保留最近完整对话轮并压缩更早历史；仅在服务端确认上下文超限后才裁切旧历史重试，减少不必要的历史丢失。
-- **部署文档与 Compose 示例**：补充一体化镜像、NAS 部署所需的完整 Compose 配置、环境变量及持久化目录说明。
+- **User data portability**: export encrypted archives, preview imports, incrementally import or replace portable account data, and undo a replacement within seven days.
+- **Calendar reminders**: configure delivery channels and QQ direct-message or group targets when creating or editing events.
+- **GuguChat audio playlist**: play audio continuously, switch tracks, and view playback progress in the mini player.
+- **Notifications and group memory controls**: clear notifications and authorize owner personal-memory access per group.
 
-### 修复
+#### Improvements
 
-- 修复被中断或取消的运行未完整保存已完成执行轮的问题；刷新或恢复会话后仍可查看已持久化的进度。
-- 修复非 Compose 部署的沙盒出网代理 systemd 服务配置路径，避免服务因脚本或 Squid 配置文件路径不匹配而启动失败。
-- 修复离线沙盒镜像包构建流程中的脚本路径及镜像清单 digest 注入问题。
+- **Tool execution progress**: show queued tools while multiple tools are executed in one round.
+- **Provider protocol routing**: route non-chat model calls through the configured API protocol and keep reasoning output separate from user-visible content.
+- **Context and reasoning lifecycle**: improve cache-prefix reuse, reasoning-state cleanup, and run finalization across conversation and reflection paths.
+- **Shell scope clarity**: make execution scope and sandbox deployment requirements clearer.
+- **Import storage scalability**: paginate private object-storage prefix scans for migration tasks.
+- **Deployment and context handling**: improve single-container sandbox support, add complete Compose/NAS deployment guidance, and improve knowledge timestamps and search and long-conversation compression.
+
+#### Fixes
+
+- Fixed concurrent Shell terminal events receiving conflicting sequence numbers.
+- Fixed stale progress after emptying the recycle bin and restored its confirmation gate in automatic mode.
+- Fixed data-portability migrations creating duplicate tables or leaving multiple migration heads.
+- Fixed IM attachment echoes and multimodal request assembly.
+- Fixed personal data archive downloads navigating to the backend's localhost address; downloads now stay on the current site.
+- Fixed interrupted runs losing completed execution history and corrected sandbox proxy and offline image-bundle setup.
+- Fixed Provider finalization edge cases that could leave reasoning state or completed run history inconsistent.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- None listed.
+
+### 更新内容
+
+#### 新功能
+
+- **用户数据可移植**：支持生成加密归档、导入预检、增量导入或替换可移植账号数据，并可在七天内撤销替换。
+- **日历活动提醒**：创建或编辑活动时可配置提醒渠道及 QQ 私聊/群聊目标。
+- **GuguChat 音频播放列表**：支持连续播放、切换上一首/下一首，并在迷你播放器中查看播放进度。
+- **通知与群聊记忆控制**：支持清空通知，并可按群授权读取 owner 个人记忆。
+
+#### 改进
+
+- **工具执行进度**：单轮并行执行多个工具时，显示排队中的工具状态。
+- **Provider 协议路由**：非聊天模型请求按配置的 API 协议发送，并隔离推理输出与用户可见内容。
+- **上下文与推理状态**：改进缓存前缀复用，并完善会话、反思路径的推理状态清理和 run 收尾。
+- **Shell 范围说明**：明确执行范围和沙盒部署要求。
+- **迁移存储扩展性**：对象存储私有前缀扫描支持分页处理。
+- **部署与上下文处理**：改进单容器沙盒支持，补充完整 Compose/NAS 部署说明，并改进 Knowledge 时间与检索及长对话压缩。
+
+#### 修复
+
+- 修复并发 Shell 终端事件序号冲突。
+- 修复清空回收站后的进度残留，并恢复自动模式下清空操作的确认门。
+- 修复数据可移植迁移重复建表或出现多个迁移 head 的问题。
+- 修复 IM 附件回声和多模态请求组装问题。
+- 修复个人数据归档下载跳转到后端 localhost 地址的问题，下载现会留在当前站点。
+- 修复被中断或取消的运行未完整保存已完成执行轮的问题，并修正沙盒代理和离线镜像包配置。
+- 修复 Provider 收尾边界导致推理状态或已完成 run 历史不一致的问题。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
 
 ## [1.4.0] - 2026-09-25
 
