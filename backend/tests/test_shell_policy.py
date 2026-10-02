@@ -170,6 +170,25 @@ async def test_dynamic_shell_prompt_reports_disabled_dangerous_state(monkeypatch
 
     assert prompt is not None
     assert "全部 Shell 命令：未开放" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admin_enabled,user_enabled", [(False, True), (True, False), (True, True)])
+async def test_system_environment_hint_requires_both_permission_gates(monkeypatch, admin_enabled, user_enabled):
+    """只在两侧放行后说明 system 调用方法，不改变省略 scope 的沙盒默认值。"""
+    db = _PolicyDB()
+    settings = _settings()
+    settings.agent.shell_system_enabled = admin_enabled
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true() if user_enabled else _false())
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+    default = await shell_policy.evaluate(db, "user-1", 1, "pwd", session=db.session)
+    system = await shell_policy.evaluate(db, "user-1", 1, "pwd", session=db.session, requested_scope="system")
+    assert default.scope is ShellScope.SANDBOX
+    assert system.allowed is (admin_enabled and user_enabled)
+    assert ('显式传 scope="system"' in prompt) is (admin_enabled and user_enabled)
+    assert "容器部署仍是应用容器" in prompt
     assert "不要向用户索要确认后继续" in prompt
     assert "自动模式：未开启" in prompt
 

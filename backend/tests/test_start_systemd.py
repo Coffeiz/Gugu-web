@@ -3,10 +3,24 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import shlex
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_systemd_agent_entries_share_external_sandbox_manager():
+    """防止网页可用而 IM 默认禁用；部署模式必须由安装的服务统一声明。"""
+    for service in ("gugu-backend", "gugu-worker", "gugu-gateway", "gugu-sandboxd"):
+        environment = {}
+        for line in (ROOT / f"{service}.service").read_text().splitlines():
+            if line.startswith("Environment="):
+                for assignment in shlex.split(line.removeprefix("Environment=")):
+                    key, value = assignment.split("=", 1)
+                    environment[key] = value
+        assert environment.get("GUGU_SANDBOX_MANAGER_MODE") == "external", service
+        assert environment.get("GUGU_SANDBOXD_SOCKET"), service
 
 
 def _fake_systemctl(tmp_path: Path) -> Path:
