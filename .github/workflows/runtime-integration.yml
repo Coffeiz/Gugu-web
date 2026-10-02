@@ -240,6 +240,9 @@ jobs:
         working-directory: backend
         run: python -m compileall -q app agent
 
+      - name: License generator tests
+        run: backend/.venv/bin/python -m pytest -q scripts/licenses/tests
+
       - name: Backend tests (代码/测试分类)
         working-directory: backend
         env:
