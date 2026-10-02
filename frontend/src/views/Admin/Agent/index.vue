@@ -190,7 +190,7 @@
         @pick-api-format="pickApiFormat"
         @set-capability-override="setCapabilityOverride"
         @probe-capabilities="probeCapabilities"
-        @probe-image="probeMedia"
+        @probe-media="probeMedia"
       />
 
       <!-- ── 系统提示词 ── -->
