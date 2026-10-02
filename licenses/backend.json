@@ -428,6 +428,13 @@
       "repository": "https://github.com/numpy/numpy"
     },
     {
+      "name": "odfpy",
+      "version": "1.4.1",
+      "license": "Apache-2.0 OR GPL-2.0-or-later",
+      "homepage": "https://github.com/eea/odfpy",
+      "repository": ""
+    },
+    {
       "name": "openai",
       "version": "2.45.0",
       "license": "Apache-2.0",
@@ -545,13 +552,6 @@
       "license": "BSD-2-Clause",
       "homepage": "https://pygments.org",
       "repository": "https://github.com/pygments/pygments"
-    },
-    {
-      "name": "pykakasi",
-      "version": "2.3.0",
-      "license": "GPL-3.0-or-later",
-      "homepage": "",
-      "repository": "https://codeberg.org/miurahr/pykakasi"
     },
     {
       "name": "pypinyin",
@@ -840,6 +840,7 @@
     "httpx",
     "jsonschema",
     "lark-oapi",
+    "odfpy",
     "openai",
     "oss2",
     "passlib",
@@ -848,7 +849,6 @@
     "Pillow",
     "pillow-heif",
     "pydantic-settings",
-    "pykakasi",
     "pypinyin",
     "python-dotenv",
     "python-jose",

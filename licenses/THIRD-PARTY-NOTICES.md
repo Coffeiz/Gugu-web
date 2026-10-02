@@ -821,6 +821,7 @@
 | mdurl | 0.1.2 | OSI Approved :: MIT License | https://github.com/executablebooks/mdurl |
 | multidict | 6.7.1 | Apache License 2.0 | https://github.com/aio-libs/multidict |
 | numpy | 2.5.0 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | https://numpy.org · https://github.com/numpy/numpy |
+| odfpy | 1.4.1 | Apache-2.0 OR GPL-2.0-or-later | https://github.com/eea/odfpy |
 | openai | 2.45.0 | Apache-2.0 | https://github.com/openai/openai-python · https://github.com/openai/openai-python |
 | oss2 | 2.19.1 | OSI Approved :: MIT License | http://oss.aliyun.com |
 | packaging | 26.2 | Apache-2.0 OR BSD-2-Clause | https://github.com/pypa/packaging |
@@ -838,7 +839,6 @@
 | pydantic-settings | 2.14.2 | MIT | https://github.com/pydantic/pydantic-settings · https://github.com/pydantic/pydantic-settings |
 | pydantic_core | 2.46.4 | MIT | https://github.com/pydantic/pydantic · https://github.com/pydantic |
 | Pygments | 2.20.0 | BSD-2-Clause | https://pygments.org · https://github.com/pygments/pygments |
-| pykakasi | 2.3.0 | GPL-3.0-or-later | https://codeberg.org/miurahr/pykakasi |
 | pypinyin | 0.55.0 | MIT | https://github.com/mozillazg/python-pinyin · https://github.com/mozillazg/python-pinyin |
 | pytest | 9.1.1 | MIT | https://docs.pytest.org/en/latest/ · https://github.com/pytest-dev/pytest |
 | pytest-asyncio | 1.4.0 | Apache-2.0 | https://github.com/pytest-dev/pytest-asyncio |

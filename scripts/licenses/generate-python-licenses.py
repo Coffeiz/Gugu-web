@@ -14,7 +14,14 @@ from typing import Any
 PACKAGE_NAME = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 REQUIRES_NAME = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 
-LICENSE_OVERRIDES = {"hyperframe": "MIT"}
+# odfpy 的 PyPI classifiers 混合了项目级许可选项和文件级许可证，按
+# “最后一个 classifier” 取值会误判为 LGPL。上游 README 明确说明项目
+# （OpenDocument schemas 除外）可选 GPL-2.0-or-later 或 Apache-2.0：
+# https://github.com/eea/odfpy#redistribution-license
+LICENSE_OVERRIDES = {
+    "hyperframe": "MIT",
+    "odfpy": "Apache-2.0 OR GPL-2.0-or-later",
+}
 
 
 def normalize_name(name: str) -> str:

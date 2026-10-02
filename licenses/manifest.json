@@ -4521,6 +4521,13 @@
       "repository": "git+https://github.com/sxzz/obug.git"
     },
     {
+      "name": "odfpy",
+      "version": "1.4.1",
+      "license": "Apache-2.0 OR GPL-2.0-or-later",
+      "homepage": "https://github.com/eea/odfpy",
+      "repository": ""
+    },
+    {
       "name": "openai",
       "version": "2.45.0",
       "license": "Apache-2.0",
@@ -4955,13 +4962,6 @@
       "repository": "https://github.com/pydantic/pydantic"
     },
     {
-      "name": "pydantic_core",
-      "version": "2.46.4",
-      "license": "MIT",
-      "homepage": "https://github.com/pydantic/pydantic",
-      "repository": "https://github.com/pydantic"
-    },
-    {
       "name": "pydantic-settings",
       "version": "2.14.2",
       "license": "MIT",
@@ -4969,18 +4969,18 @@
       "repository": "https://github.com/pydantic/pydantic-settings"
     },
     {
+      "name": "pydantic_core",
+      "version": "2.46.4",
+      "license": "MIT",
+      "homepage": "https://github.com/pydantic/pydantic",
+      "repository": "https://github.com/pydantic"
+    },
+    {
       "name": "Pygments",
       "version": "2.20.0",
       "license": "BSD-2-Clause",
       "homepage": "https://pygments.org",
       "repository": "https://github.com/pygments/pygments"
-    },
-    {
-      "name": "pykakasi",
-      "version": "2.3.0",
-      "license": "GPL-3.0-or-later",
-      "homepage": "",
-      "repository": "https://codeberg.org/miurahr/pykakasi"
     },
     {
       "name": "pypinyin",
@@ -5417,18 +5417,18 @@
       "repository": "git://github.com/wilsonpage/strictdom.git"
     },
     {
-      "name": "string_decoder",
-      "version": "1.1.1",
-      "license": "MIT",
-      "homepage": "https://github.com/nodejs/string_decoder",
-      "repository": "git://github.com/nodejs/string_decoder.git"
-    },
-    {
       "name": "string-width",
       "version": "4.2.3",
       "license": "MIT",
       "homepage": "",
       "repository": "sindresorhus/string-width"
+    },
+    {
+      "name": "string_decoder",
+      "version": "1.1.1",
+      "license": "MIT",
+      "homepage": "https://github.com/nodejs/string_decoder",
+      "repository": "git://github.com/nodejs/string_decoder.git"
     },
     {
       "name": "strip-ansi",
@@ -5648,18 +5648,18 @@
       "repository": "https://github.com/microsoft/TypeScript.git"
     },
     {
-      "name": "typing_extensions",
-      "version": "4.15.0",
-      "license": "PSF-2.0",
-      "homepage": "",
-      "repository": "https://github.com/python/typing_extensions"
-    },
-    {
       "name": "typing-inspection",
       "version": "0.4.2",
       "license": "MIT",
       "homepage": "https://github.com/pydantic/typing-inspection",
       "repository": "https://github.com/pydantic/typing-inspection"
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.15.0",
+      "license": "PSF-2.0",
+      "homepage": "",
+      "repository": "https://github.com/python/typing_extensions"
     },
     {
       "name": "tzdata",
