@@ -30,6 +30,9 @@ def canonical_restore_record(message) -> dict:
     content_json = getattr(message, "_reference_content_json", None)
     if content_json is None:
         content_json = getattr(message, "content_json", None)
+    if isinstance(content_json, list):
+        content_json = [block for block in content_json if not isinstance(block, dict)
+                        or block.get("type") not in {"thinking", "redacted_thinking", "reasoning_content"}]
     return {
         "_history_id": getattr(message, "id", None),
         "role": str(getattr(message, "role", "user") or "user"),

@@ -69,6 +69,7 @@ async def run_loop(
         modelctx.set_model_cfg(ai)
         if not isinstance(messages, MessageArea):
             raise TypeError("Agent loop 只接受 MessageArea")
+        messages.reasoning_state = reasoning_state
         # 每轮对话最多允许三次 read_file 调用包含网络图片；历史附件不占用该额度。
         from agent.tools.media_reader import reset_remote_image_read_budget
         reset_remote_image_read_budget()
@@ -567,6 +568,9 @@ async def run_loop(
             run_context_usage_peak = max(run_context_usage_peak, run_context_usage)
             if reasoning_state is not None:
                 await reasoning_state.round_finished(driver, ctx, result, round_id)
+            private_reasoning = str(getattr(getattr(result, "raw", None), "reasoning", "") or "")
+            if private_reasoning and result.tool_calls:
+                messages.private_reasoning_by_call[result.tool_calls[0].id] = private_reasoning
             # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
             # 本次 run 累计值，诊断和观测层可据此区分“当前上下文”与“累计消耗”。
             yield stream_event(

@@ -25,6 +25,7 @@ from sqlalchemy import delete, select
 
 from agent.context import session_snapshot
 from agent.context.budget import ContextBudget
+from agent.context.provider_conversation import ProviderConversation
 from agent.context.tokens import content_text, estimate_tokens
 from agent.context.audit import session_scope, summary_change
 
@@ -603,7 +604,7 @@ async def _snapshot_cache_prefix(
     model_cfg,
     baseline_id: int,
     compressed_message_ids: set[int],
-) -> list[dict] | None:
+) -> list[dict] | ProviderConversation | None:
     """仅当持久化历史能逐条精确对齐时，返回原 provider 请求的同前缀。"""
     if snapshot is None or not getattr(snapshot, "history", None):
         return None
@@ -679,7 +680,10 @@ async def _snapshot_cache_prefix(
         )
         if start_at is None:
             return None
-        return list(snapshot.history[:start_at + len(parts)])
+        prefix = list(snapshot.history[:start_at + len(parts)])
+        if isinstance(snapshot.history, ProviderConversation):
+            return snapshot.history.with_messages(prefix, dynamic_tail_size=0)
+        return prefix
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.context.compress_conv.snapshot_prefix", exc)

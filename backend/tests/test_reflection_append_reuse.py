@@ -380,7 +380,8 @@ async def test_idle_rebuild_uses_owned_idle_session_and_persisted_history(monkey
     assert rebuilt.session_id == 7
     assert rebuilt.system_prompt == "stable-system"
     assert rebuilt.tools == ()
-    assert rebuilt.history == ({"role": "user", "content": "persisted"},)
+    # 重建结果也保留 wire 边界；不把 build_history_parts 的输出再次当作 canonical。
+    assert rebuilt.history.to_messages() == [{"role": "user", "content": "persisted"}]
 
 
 @pytest.mark.asyncio

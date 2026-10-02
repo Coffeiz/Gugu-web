@@ -71,10 +71,14 @@ def model_state_fingerprints(ai: Any, *, provider: str, api_format: str,
                              tool_digest: str = "") -> tuple[str, str]:
     """生成 provider state 使用的模型/推理配置指纹。
 
-    这里仅允许稳定的模型配置标量进入指纹；API key、base URL、提示词和工具参数
-    都不进入，避免把凭据或用户正文旁路写入状态元数据。工具 Schema 的摘要由调用方
+    这里只保存稳定配置的指纹，不保存 API key、接口地址、提示词或工具参数原文。
+    接口身份包含去凭据的地址，防止同名模型跨供应商复用私有状态。工具 Schema 的摘要由调用方
     先脱敏计算后传入。
     """
+    from urllib.parse import urlsplit
+
+    endpoint = urlsplit(str(getattr(ai, "base_url", "") or ""))
+    endpoint_identity = (endpoint.scheme.lower(), endpoint.hostname, endpoint.port, endpoint.path.rstrip("/"))
     model_config = {
         "provider": str(provider),
         "api_format": str(api_format),
@@ -82,6 +86,7 @@ def model_state_fingerprints(ai: Any, *, provider: str, api_format: str,
         "context_tokens": int(getattr(ai, "context_tokens", 0) or 0),
         "max_tokens": int(getattr(ai, "max_tokens", 0) or 0),
         "tool_digest": str(tool_digest or ""),
+        "endpoint_digest": configuration_fingerprint({"endpoint": endpoint_identity}),
     }
     reasoning_config = {
         "thinking": getattr(ai, "thinking", None),

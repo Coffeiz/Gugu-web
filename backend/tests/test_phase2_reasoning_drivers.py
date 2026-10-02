@@ -44,6 +44,43 @@ def _responses_adapter():
     )
 
 
+def test_responses_reasoning_belongs_to_latest_tool_only_round():
+    """旧 assistant 文本不能抢走最新无文本工具轮的 reasoning 插入位置。"""
+    from agent.providers.openai_responses import _insert_responses_reasoning_items
+
+    items = [
+        {"role": "user", "content": "旧问题"},
+        {"role": "assistant", "content": "旧回复"},
+        {"role": "user", "content": "新问题"},
+        {"type": "function_call", "call_id": "call-new"},
+        {"type": "function_call", "call_id": "call-new-2"},
+        {"type": "function_call_output", "call_id": "call-new"},
+    ]
+    reasoning = [{"type": "reasoning", "id": "rs-new", "encrypted_content": "合成密文"}]
+    rendered = _insert_responses_reasoning_items(items, reasoning)
+    assert rendered[:3] == items[:3]
+    assert rendered[3] == reasoning[0]
+    assert rendered[4:] == items[3:]
+    assert _responses_input(rendered) == rendered
+
+
+def test_anthropic_private_state_restores_original_interleaved_order():
+    """签名块与文本交错时仍按原 block 位置恢复，内部位置不进入 wire。"""
+    from agent.loop_drivers import _restore_anthropic_history_thinking
+
+    blocks = [
+        {"type": "thinking", "thinking": "合成推理", "signature": "synthetic"},
+        {"type": "text", "text": "合成正文"},
+        {"type": "redacted_thinking", "data": "synthetic"},
+        {"type": "tool_use", "id": "call-order", "name": "search", "input": {}},
+    ]
+    result = RoundResult(text="合成正文", raw=blocks)
+    state = AnthropicDriver().extract_provider_state(result)
+    messages = [{"role": "assistant", "content": [blocks[1], blocks[3]]}]
+    _restore_anthropic_history_thinking(messages, state["payload"]["history_thinking_by_tool_id"])
+    assert messages[0]["content"] == blocks
+
+
 def test_responses_input_converts_chat_text_blocks_without_changing_other_blocks():
     messages = [
         {
@@ -162,14 +199,16 @@ def test_anthropic_state_extract_restore_keeps_thinking_blocks_only():
     driver = AnthropicDriver()
     state = driver.extract_provider_state(_anthropic_result())
     assert state["state_kind"] == "anthropic_thinking_blocks"
-    assert state["payload"]["history_thinking_by_tool_id"] == {"call-1": _anthropic_result().raw[:2]}
+    positioned = [dict(block, _block_position=index)
+                  for index, block in enumerate(_anthropic_result().raw[:2])]
+    assert state["payload"]["history_thinking_by_tool_id"] == {"call-1": positioned}
     assert state["payload"]["tail_blocks"] is None
     assert state["summary"]["thinking_block_count"] == 2
 
     ctx = SimpleNamespace(restored_blocks=None, history_tool_use_ids={"call-1"})
     assert driver.restore_provider_state(ctx, state["payload"])
     assert ctx.restored_blocks is None
-    assert ctx.history_thinking_by_tool_id == {"call-1": _anthropic_result().raw[:2]}
+    assert ctx.history_thinking_by_tool_id == {"call-1": positioned}
 
 
 def test_anthropic_history_restore_reinserts_signed_thinking_before_matching_tool_call():

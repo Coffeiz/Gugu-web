@@ -264,7 +264,7 @@ def test_canonical_tool_round_does_not_depend_on_provider_wire_shape():
     ]
 
 
-def test_canonical_tool_round_persists_openai_reasoning_content():
+def test_canonical_tool_round_excludes_private_openai_reasoning():
     result = SimpleNamespace(
         text="继续处理",
         raw=SimpleNamespace(reasoning="先确认工具结果，再继续。"),
@@ -277,7 +277,6 @@ def test_canonical_tool_round_persists_openai_reasoning_content():
         "role": "assistant",
         "content": [
             {"type": "text", "text": "继续处理"},
-            {"type": "reasoning_content", "text": "先确认工具结果，再继续。"},
         ],
     }]
     message = SimpleNamespace(
@@ -287,17 +286,17 @@ def test_canonical_tool_round_persists_openai_reasoning_content():
     )
     assert build_history_parts([message], None, use_anthropic=False) == [{
         "role": "assistant", "content": "继续处理",
-        "reasoning_content": "先确认工具结果，再继续。",
     }]
 
 
-def test_new_message_batch_accepts_persisted_reasoning_content():
-    batch = MessageBatch.from_canonical_messages([{
-        "role": "assistant",
-        "content": [{"type": "reasoning_content", "text": "继续处理"}],
-    }])
+def test_new_message_batch_rejects_private_reasoning_content():
+    import pytest
 
-    assert batch.canonical_messages[0]["content"][0]["type"] == "reasoning_content"
+    with pytest.raises(TypeError, match="不支持 block 类型"):
+        MessageBatch.from_canonical_messages([{
+            "role": "assistant",
+            "content": [{"type": "reasoning_content", "text": "合成推理"}],
+        }])
 
 
 def test_canonical_tool_round_keeps_provider_raw_arguments_bytes():

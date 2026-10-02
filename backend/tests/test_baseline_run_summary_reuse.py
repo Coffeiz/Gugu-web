@@ -280,6 +280,21 @@ async def test_reflection_compaction_reuses_only_an_exact_persisted_prefix(db, u
     ]
     assert prefix == [captured_prefix, *expected_selected]
 
+    # 同进程新快照保留不可变 wire 类型；截取旧历史后仍不能退回裸列表二次渲染。
+    from agent.context.provider_conversation import ProviderConversation
+
+    wire_snapshot = SimpleNamespace(
+        ai=model_cfg,
+        history=ProviderConversation([captured_prefix, *history], fixed_prefix_size=1),
+    )
+    wire_prefix = await compress_conv._snapshot_cache_prefix(
+        wire_snapshot, session, rows, user_a.id, model_cfg, 0,
+        {rows[0].id, rows[1].id},
+    )
+    assert isinstance(wire_prefix, ProviderConversation)
+    assert wire_prefix.to_messages() == [captured_prefix, *expected_selected]
+    assert wire_prefix.fixed_prefix_size == 1
+
     # MiniMax 主请求把普通文本包装为单个 text block；持久化回放仍是字符串。
     # 对齐时承认语义等价，但返回的必须是原快照对象以保留缓存锚点。
     block_history = [

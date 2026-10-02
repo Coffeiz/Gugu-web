@@ -454,8 +454,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 tool_db, user_id, session_id, session=session,
             )
             if shell_prompt:
-                system_prompt = session_system.append_shell_prompt(system_prompt, enabled=True)
-                system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
+                _dynamic_extra_parts.append(shell_prompt)
             else:
                 tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
         capability_context = await _capability_context(

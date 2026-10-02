@@ -70,6 +70,28 @@ async def _collect_openai(chunks):
 
 
 @pytest.mark.asyncio
+async def test_openai_replays_private_reasoning_without_canonical_persistence():
+    """兼容端工具轮仍收到本 Run 的 reasoning，但 Area 正文和持久增量均不含它。"""
+    from agent.context.assembly import MessageBatch
+
+    area = MessageArea.from_canonical_messages([{"role": "user", "content": "合成提问"}])
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{"type": "tool_call", "id": "private-call",
+                                               "name": "search", "arguments": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_call_id": "private-call",
+                                         "content": "合成回执"}]},
+    ], metadata={"round_id": "round-1"}))
+    area.private_reasoning_by_call["private-call"] = "合成私有推理"
+    client = _FakeOpenAIClient([])
+    async for _kind, _value in OpenAIDriver().run_round(client, _openai_ctx(), area):
+        pass
+    assistant = next(message for message in client.kwargs["messages"] if message.get("tool_calls"))
+    assert assistant["reasoning_content"] == "合成私有推理"
+    assert "合成私有推理" not in str(area.snapshot().messages)
+    assert "合成私有推理" not in str(area.persistence_delta(outcome="success"))
+
+
+@pytest.mark.asyncio
 async def test_openai_prompt_tokens_subtracts_deepseek_cache_hit():
     # DeepSeek 语义：prompt_tokens=100 包含 cache_hit=80 → usage_in 应为 20
     chunk = SimpleNamespace(

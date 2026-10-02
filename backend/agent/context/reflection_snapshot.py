@@ -7,7 +7,7 @@ append_reuse；快照缺失时 owner idle worker 与群业务 worker 都从已�
 重建追加历史，不创建独立提取器。重建只恢复最小历史与当前静态 system，不保留
 完整 provider tools/动态上下文，所以不承诺前缀缓存命中。
 
-快照内容是主请求实际发送的 provider 消息序列（canonical 形态），包含末尾
+快照内容是主请求的不可变 provider 消息投影，包含冻结前缀与末尾
 assistant 回复、不含 dynamic tail（时间 reminder 每轮必变，进快照会把公共
 前缀截短）。revision 是 history 的 digest，供消费侧做漂移校验。
 """
@@ -17,6 +17,8 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
+
+from .provider_conversation import ProviderConversation
 
 # TTL 与容量上限共同兜住内存占用：history 可能上百 KB，64 条 × 15 分钟足够
 # 覆盖「主请求完成 → 内联反思冲刷」的窗口，同时防止长会话用户把登记表撑大。
@@ -39,8 +41,8 @@ class ReflectionSnapshot:
     # 主 run 实际发给 provider 的工具声明（driver ctx.tools）；provider 把 tools
     # 算进可缓存前缀，缺了它整段 miss（PRD-MCP 复审与压缩分支的实测结论）。
     tools: tuple
-    # canonical 形态消息（含末尾 assistant 回复，不含 dynamic tail）。
-    history: tuple
+    # 不可变 wire 快照（包含冻结 request prefix，不含 dynamic tail）。
+    history: ProviderConversation
     # digest(history)：快照自洽指纹；消费前重算比对可发现进程内篡改/损坏。
     revision: str
     created_at: float
@@ -83,17 +85,21 @@ def capture_reflection_snapshot(
     try:
         if session_id is None or not (reply_text or "").strip():
             return None
-        # Area conversation 排除 dynamic tail。末尾追加 assistant 回复——它是主请求的输出，
+        # 保留固定 request prefix 与同一次投影，排除 dynamic tail。末尾追加 assistant 回复——
         # 不在请求输入序列里，追加属于尾部 delta，不影响前缀缓存命中。
         from .assembly.area import MessageArea
         if not isinstance(messages, MessageArea):
             raise TypeError("Reflection snapshot 只接受 MessageArea")
-        conversation = tuple(entry.canonical_message for entry in messages.entries)
+        from .prefix_history import render_branch_prefix
+
+        projection = messages.last_provider_projection
+        if projection is None or projection.area_revision != messages.revision:
+            projection = render_branch_prefix(messages, ai)
+        conversation = projection.conversation
         if not conversation:
             return None
-        history = tuple(conversation) + (
-            ({"role": "assistant", "content": reply_text},)
-            if (reply_text or "").strip() else ()
+        history = projection.with_messages(
+            [*conversation, {"role": "assistant", "content": reply_text}], dynamic_tail_size=0,
         )
         from .canonical_context import digest
 
@@ -105,7 +111,7 @@ def capture_reflection_snapshot(
             ai=ai,
             tools=tuple(tools or ()),
             history=history,
-            revision=digest({"history": history}),
+            revision=digest({"history": history.to_messages()}),
             created_at=time.monotonic(),
             provider_context_input=provider_context_input,
             provider_compacted=provider_compacted,

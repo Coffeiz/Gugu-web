@@ -267,7 +267,7 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
         block["type"]
         for message in turn_batch.canonical_messages
         for block in message["content"]
-    ] == ["time-context", "text", "runtime-context"]
+    ] == ["time-context", "text"]
 
     history = [
         _history_row(
@@ -301,8 +301,8 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
     assert next_run_prefix.to_messages() == previous_conversation_wire.to_messages()
 
 
-def test_initial_runtime_context_batch_is_persisted_without_rag_duplicates():
-    """首轮工作区 reminder 必须跨 run 保持原位置，RAG 不得重复落库。"""
+def test_temporary_runtime_context_is_request_tail_not_persisted_history():
+    """环境提醒只属于本轮动态尾部，持久化仍保留 RAG 而不保存过期环境。"""
     runtime_text = "## 当前会话工作区\n当前绑定：QQ；规范落点 space=personal"
     turn_batch, _ = assemble_turn(
         current_user={"role": "user", "content": "测试"},
@@ -320,14 +320,10 @@ def test_initial_runtime_context_batch_is_persisted_without_rag_duplicates():
         entry for entry in delta.entries if entry.source.value == "runtime"
     ]
 
-    assert len(runtime_entries) == 1
-    assert [
-        block["type"]
-        for block in runtime_entries[0].canonical_message["content"]
-    ] == ["runtime-context"]
-    assert runtime_entries[0].canonical_message["content"][0]["text"] == (
-        f"[system-reminder]\n{runtime_text}\n[/system-reminder]"
-    )
+    assert runtime_entries == []
+    assert runtime_text in messages.dynamic_tail[-1]["content"]
+    assert runtime_text not in str(messages.provider_projection().conversation)
+    assert any(entry.source.value == "rag" for entry in delta.entries)
 
 
 def test_replayed_knowledge_context_keeps_message_boundary_across_runs():

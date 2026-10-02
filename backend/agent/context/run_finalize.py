@@ -97,6 +97,17 @@ async def finalize_run(
         if session_exists_required:
             session_alive = await db.get(ConversationSession, session_id) is not None
         if session_alive:
+            if run_id:
+                from agent.context.canonical_context import digest
+                from agent.context.message_area_repository import _insert_or_get_batch
+
+                _receipt, is_new = await _insert_or_get_batch(db, {
+                    "session_id": session_id, "version": "finalize-v1",
+                    "run_id": run_id, "round_id": persisted_round_id,
+                    "digest": digest({"finalized_run": run_id}),
+                })
+                if not is_new:
+                    return FinalizeResult(tokens_in=0, tokens_out=0)
             cache_anchor = getattr(message_area, "provider_cache_anchor", None)
             if cache_anchor:
                 session_row = await db.get(ConversationSession, session_id)
@@ -179,7 +190,12 @@ async def finalize_run(
             cache_write=cache_write,
             tools_used=tools_used,
         )
+        coordinator = message_area.reasoning_state
+        if session_alive and not interrupted and coordinator is not None:
+            await coordinator.commit_pending(db, run_id=run_id)
         await db.commit()
+        if session_alive and not interrupted and coordinator is not None:
+            coordinator.committed()
 
     await trim_session_messages(session_id)
     # 只有当前 run 已经在 provider round 边界执行过 >=90% 压缩，才同步推进

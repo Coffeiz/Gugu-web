@@ -81,6 +81,10 @@ Canonical Assembly 的输出不绑定 Anthropic、OpenAI 或 Ollama。Provider a
 
 `MessageBatch`、`History`、baseline 和 provider cache 属于同一条生命周期，不能分别维护成互相独立的上下文区域。Batch 仅是待追加 Area entries 的一次性输入 DTO；Area 中每条 entry 的 policy 决定它在 finalize 时持久化、跳过或在恢复时重建。baseline 只在压缩事务成功后推进；缓存则复用没有变化的稳定前缀。
 
+收尾以 Run 身份在现有 `ConversationBatch` 账本写入 `finalize-v1` 凭据；工具增量、最终回复、用量与加密推理状态共用事务。重复收尾不新增回复或再次记账，事务失败不推进协调器 CAS 版本。Web 展示保留逐轮时间线，Canonical 最终回复只记录最后一个非空轮次，不再拼入此前工具轮的过程正文。
+
+`extra_reminder` 属于 Provider-only 动态尾部，不进入 Canonical 或持久化；Chat 兼容端所需的 `reasoning_content` 仅保留在本 Run 私有回放映射中。跨 Run 状态使用独立加密服务，接口身份包含去凭据 endpoint 摘要。反思优先复用 Driver 最后请求的不可变投影，保留恢复后的签名推理块；Area baseline 已变化时不复用旧投影。
+
 ```mermaid
 flowchart TD
     A([进入新请求]) --> B[读取 Snapshot<br/>与已持久化 History]

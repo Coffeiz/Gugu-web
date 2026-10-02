@@ -26,18 +26,6 @@ def _time_context(message: dict) -> dict:
     }
 
 
-def _runtime_context(content: str) -> dict:
-    """把只在当前 turn 生成、但后面可能跟随工具历史的运行上下文 canonical 化。"""
-    wrapped = reminder(content)
-    return {
-        "role": "user",
-        "content": [{
-            "type": "runtime-context",
-            "text": str(wrapped.get("content") or ""),
-        }],
-    }
-
-
 def assemble_turn(*, stance: str | None = None,
                   previous_stance_digest: str | None = None,
                   message_time: dict | None = None,
@@ -76,10 +64,6 @@ def assemble_turn(*, stance: str | None = None,
     if current_user is not None:
         messages.append(current_user)
 
-    if extra_reminder:
-        # Provider 继续看到原来的普通 reminder 形状；canonical history 使用
-        # runtime-context 保存同一段文本，下一 run 可无损恢复到同一位置。
-        messages.append(reminder(extra_reminder))
     # Batch 只持有完整 canonical entries 一份；持久化选择由每条 entry 的策略决定。
     batch = MessageBatch.from_area_entries(_build_area_entries(
         messages=messages,
@@ -89,14 +73,13 @@ def assemble_turn(*, stance: str | None = None,
         tail_messages=tail_messages,
         message_time=message_time,
         current_user=current_user,
-        extra_reminder=extra_reminder,
-    ))
+    ), metadata={"dynamic_tail": [reminder(extra_reminder)]} if extra_reminder else None)
     return batch, current_digest
 
 
 def _build_area_entries(
     *, messages, previous_stance_digest, current_digest, stance, tail_messages,
-    message_time, current_user, extra_reminder,
+    message_time, current_user,
 ) -> list[dict]:
     """为同一 turn 的 entries 标注来源与 durability，不改变 Provider 顺序。"""
     from ..history import canonicalize_tool_messages
@@ -132,13 +115,6 @@ def _build_area_entries(
             "message": _canonical_snapshot(current_user, canonicalize_tool_messages),
             "source": _current_user_source(current_user).value,
             "persistence_policy": PersistencePolicy.ALREADY_PERSISTED.value,
-        })
-    if extra_reminder:
-        entries.append({
-            "message": _runtime_context(extra_reminder),
-            "source": MessageSource.RUNTIME.value,
-            "persistence_policy": PersistencePolicy.COMMIT_ON_SUCCESS.value,
-            "in_batch": True,
         })
     return entries
 

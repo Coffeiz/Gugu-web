@@ -135,6 +135,9 @@ class MessageArea:
         self.canonical_context: Any = None
         self.protected_history_start: int | None = None
         self.provider_cache_anchor: dict[str, str] | None = None
+        self.reasoning_state: Any = None
+        self.last_provider_projection: Any = None
+        self.private_reasoning_by_call: dict[str, str] = {}
         self._assert_order()
 
     def remember_provider_cache_anchor(self, anchor: dict[str, str] | None) -> None:
@@ -332,6 +335,8 @@ class MessageArea:
 
         if isinstance(batch, MessageBatch):
             batch.seal()
+            if batch.metadata.get("dynamic_tail"):
+                self.set_dynamic_tail([*self.dynamic_tail, *batch.metadata["dynamic_tail"]])
             return self._append_area_entries(
                 batch.area_entries,
                 metadata=batch.metadata,

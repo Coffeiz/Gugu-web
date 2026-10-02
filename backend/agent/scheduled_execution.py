@@ -40,6 +40,7 @@ def _build_scheduled_messages(
     *,
     use_anthropic: bool,
     user_content=None,
+    extra_reminder: str | None = None,
 ):
     """scheduled 与 Web/IM 使用同样的动态上下文布局。"""
     fixed_parts = [session_snapshot.snapshot_message(snapshot_context)] if snapshot_context else []
@@ -55,6 +56,7 @@ def _build_scheduled_messages(
         )
         batch, _ = assembly.assemble_turn(
             stance=stance_text,
+            extra_reminder=extra_reminder,
             current_user={"role": "user", "content": user_content},
         )
         batch.update_area_entry("current_user", persistence_policy="request_only")
@@ -69,6 +71,7 @@ def _build_scheduled_messages(
     )
     batch, _ = assembly.assemble_turn(
         stance=stance_text,
+        extra_reminder=extra_reminder,
         current_user={"role": "user", "content": user_content},
     )
     batch.update_area_entry("current_user", persistence_policy="request_only")
@@ -189,8 +192,6 @@ async def run_scheduled_once(
                         tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
 
         system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
-        if shell_prompt:
-            system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
         capability_context = await _capability_context(
             tool_names, settings, owner_id=user_id, query=prompt,
             dynamic_tools=mcp_tools,
@@ -221,6 +222,7 @@ async def run_scheduled_once(
                 memory,
                 use_anthropic=True,
                 user_content=build_user_content(prompt, [], True),
+                extra_reminder=shell_prompt,
             )
             gen = scheduled_runner.run(
                 user_id,
@@ -241,6 +243,7 @@ async def run_scheduled_once(
                 memory,
                 use_anthropic=False,
                 user_content=prompt,
+                extra_reminder=shell_prompt,
             )
             gen = scheduled_runner.run(
                 user_id,

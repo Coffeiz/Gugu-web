@@ -106,11 +106,17 @@ def _insert_responses_reasoning_items(
     ]
     # 工具调用轮可能同时投影出 assistant 文本与 function_call；reasoning 属于
     # 整个 assistant 输出，必须排在文本/调用项之前，而不是插在两者之间。
-    anchors = assistant_anchors or [
+    call_anchors = [
         index for index, item in enumerate(items)
         if isinstance(item, dict) and item.get("type") == "function_call"
     ]
-    anchor = max(anchors, default=-1)
+    anchor = max([*assistant_anchors, *call_anchors], default=-1)
+    # 同一输出中的文本和多个调用是连续项；找到该输出的首项，而不是旧回复。
+    while anchor > 0 and (
+        items[anchor - 1].get("role") == "assistant"
+        or items[anchor - 1].get("type") == "function_call"
+    ):
+        anchor -= 1
     if anchor < 0:
         return items
     return [*items[:anchor], *copy.deepcopy(reasoning_items), *items[anchor:]]
@@ -166,6 +172,9 @@ def _responses_input(messages: list[dict]) -> list[dict]:
     legacy_call_occurrences: dict[str, int] = {}
     for message in messages:
         if not isinstance(message, dict):
+            continue
+        if message.get("type") in {"reasoning", "function_call", "function_call_output"}:
+            items.append(copy.deepcopy(message))
             continue
         role = message.get("role")
         if role == "system":
@@ -434,6 +443,7 @@ class OpenAIResponsesDriver:
             ctx.reasoning_items = None
 
     async def run_round(self, client, ctx, messages, stream_round=None):
+        from agent.context.assembly import MessageArea
         # stream_round 仅 AnthropicDriver 使用；本驱动接收并忽略，保持统一调用签名。
         projection = render_provider_history(messages, ctx.adapter)
         full_rendered = projection.to_messages()
@@ -443,6 +453,15 @@ class OpenAIResponsesDriver:
         )
         if not request_input:
             raise ValueError("Responses 请求没有可发送的输入项")
+        if isinstance(messages, MessageArea):
+            from agent.context.provider_conversation import ProviderConversation
+
+            system_messages = [item for item in full_rendered if item.get("role") == "system"]
+            messages.last_provider_projection = ProviderConversation(
+                [*system_messages, *request_input], source=messages,
+                fixed_prefix_size=len(system_messages),
+                dynamic_tail_size=projection.dynamic_tail_size,
+            )
         request = {
             "model": ctx.model,
             "instructions": ctx.instructions,

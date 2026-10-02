@@ -8,7 +8,7 @@ from ..canonical_context import digest
 
 
 _CANONICAL_BLOCK_TYPES = frozenset({
-    "text", "reasoning_content", "tool_call", "tool_result", "tool-schema", "skill-schema",
+    "text", "tool_call", "tool_result", "tool-schema", "skill-schema",
     "tool-discovery", "knowledge-context", "stance-context", "time-context",
     "runtime-context",
 })

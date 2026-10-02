@@ -52,6 +52,8 @@ class ReasoningStateCoordinator:
         self.sequence = 0
         self.source_run_id = f"reasoning-{uuid4().hex[:20]}"
         self.latest: _Snapshot | None = None
+        self._ready = False
+        self._pending_version: int | None = None
         self.unavailable_reason: str | None = None
         self._prepared_once = False
         self._diagnostic = {
@@ -233,8 +235,14 @@ class ReasoningStateCoordinator:
         self._publish_diagnostics("round_finished")
 
     async def completed(self) -> None:
-        if self.session_id is None or self.session_factory is None or self.latest is None:
-            self._publish_diagnostics("completed")
+        """只标记成功输出；由历史收尾事务提交，不能在循环里提前落库。"""
+        self._ready = self.latest is not None and self.policy.can_resume
+        self._publish_diagnostics("staged")
+
+    async def commit_pending(self, db, *, run_id: str | None) -> None:
+        """与 Canonical 历史共用事务；状态失败不会留下半写入的 payload。"""
+        self._pending_version = None
+        if not self._ready or self.session_id is None or self.latest is None:
             return
         snapshot = self.latest
         if self.policy.can_resume:
@@ -251,7 +259,7 @@ class ReasoningStateCoordinator:
                 reasoning_persistence=self.policy.mode,
                 config_digest=self.config_digest,
                 reasoning_config_digest=self.reasoning_config_digest,
-                source_run_id=self.source_run_id,
+                source_run_id=run_id or self.source_run_id,
                 source_round_id=snapshot.round_id,
                 sequence=self.sequence, state_kind=kind, payload=payload,
                 expires_at=expires_at, state_summary=snapshot.summary,
@@ -263,14 +271,14 @@ class ReasoningStateCoordinator:
                 "state_version": envelope.version,
                 "state_digest": envelope.payload_digest,
             })
-            async with self.session_factory() as db:
-                await provider_reasoning_state.commit_state(
+            async with db.begin_nested():
+                version = await provider_reasoning_state.commit_state(
                     db, user_id=self.user_id, session_id=self.session_id,
                     envelope=envelope, expected_version=self.expected_version,
                 )
-                await db.commit()
-            self._diagnostic["state_status"] = "committed"
-            self._publish_diagnostics("completed")
+            self._pending_version = version
+            self._diagnostic["state_status"] = "staged"
+            self._publish_diagnostics("staged")
         except provider_reasoning_state.ProviderStateConflict as exc:
             self._mark_unavailable("concurrency_conflict", invalidated_reason="concurrency_conflict")
             diag_log("agent.reasoning_state.commit_conflict", exc)
@@ -280,8 +288,18 @@ class ReasoningStateCoordinator:
             diag_log("agent.reasoning_state.commit", exc)
             self._publish_diagnostics("completed")
 
+    def committed(self) -> None:
+        """仅外层事务提交成功后推进协调器版本，失败重试仍使用原 CAS 版本。"""
+        if self._pending_version is not None:
+            self.expected_version = self._pending_version
+            self._pending_version = None
+            self._ready = False
+            self._diagnostic["state_status"] = "committed"
+            self._publish_diagnostics("completed")
+
     async def failed(self, reason: str = "provider_rejected") -> None:
         self.latest = None
+        self._ready = False
         self._mark_unavailable(
             reason,
             invalidated_reason=reason,
@@ -295,6 +313,7 @@ class ReasoningStateCoordinator:
                 await provider_reasoning_state.invalidate_state(
                     db, user_id=self.user_id, session_id=self.session_id,
                     reason=reason,
+                    expected_version=self.expected_version,
                 )
                 from sqlalchemy import select
                 row = (await db.execute(select(provider_reasoning_state.ProviderReasoningState).where(
@@ -308,18 +327,6 @@ class ReasoningStateCoordinator:
         self._publish_diagnostics("failed")
 
     async def boundary_changed(self, reason: str) -> None:
-        self.latest = None
-        self._mark_unavailable(reason, invalidated_reason=reason)
-        if self.session_id is None or self.session_factory is None:
-            self._publish_diagnostics("boundary_changed")
-            return
-        try:
-            async with self.session_factory() as db:
-                await provider_reasoning_state.invalidate_state(
-                    db, user_id=self.user_id, session_id=self.session_id,
-                    reason=reason,
-                )
-                await db.commit()
-        except Exception as exc:
-            diag_log("agent.reasoning_state.boundary", exc)
+        # 失效和读取新版本必须在同一事务里，旧 Run 不能清除新 Run 的状态。
+        await self.failed(reason)
         self._publish_diagnostics("boundary_changed")

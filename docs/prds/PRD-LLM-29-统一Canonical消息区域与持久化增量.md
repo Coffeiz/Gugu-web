@@ -8,6 +8,8 @@
 
 ## 0. 实际状态
 
+2026-10-03 审查补正：最终回复和用量也纳入 Run 级收尾凭据，不再只对工具 delta 幂等；私有推理状态与历史在同一收尾事务提交。Web 最终 Canonical 正文与累计展示正文分开；临时环境说明放入请求动态尾部；Chat reasoning 不再进入持久化 Canonical。详细修复与验证范围见 [上下文与推理续接审查修复](../devlog/2026-10-03-上下文与推理续接审查修复.md)。
+
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
 | Run 内 canonical history 与本轮消息有序归属 | ✅ Phase 1 已完成 | `MessageArea` 持有恢复 history 与本轮 canonical entries；固定 Snapshot/system 和 Provider-only dynamic tail 排除在 Area 外。 |

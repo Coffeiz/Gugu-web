@@ -331,7 +331,8 @@ def test_history_baseline_never_moves_back_from_session_watermark():
     assert history_baseline(session) == 20
 
 
-def test_message_area_keeps_turn_batch_contiguous_before_tool_round():
+def test_message_area_keeps_turn_batch_before_tools_and_temporary_reminder_in_tail():
+    """临时环境提醒不得插入可持久化工具前缀，同时保留已有时间尾部。"""
     messages = assemble(
         fixed_parts=[{"role": "user", "content": "session"}],
         history=[{"role": "user", "content": "history"}],
@@ -350,12 +351,14 @@ def test_message_area_keeps_turn_batch_contiguous_before_tool_round():
 
     projected = messages.provider_projection().to_messages()
     projected_text = str(projected)
-    ordered = ["stance", "new", "summary", "tool call", "tool result"]
+    ordered = ["stance", "new", "tool call", "tool result"]
     offsets = [projected_text.index(value) for value in ordered]
     assert offsets == sorted(offsets)
-    assert projected[-1] == reminder("当前时间：time")
-    assert messages.dynamic_tail == [reminder("当前时间：time")]
+    assert projected[-2:] == [reminder("当前时间：time"), reminder("summary")]
+    assert messages.dynamic_tail == [reminder("当前时间：time"), reminder("summary")]
     assert "当前时间：time" not in str(messages.provider_projection().conversation)
+    assert "summary" not in str(messages.provider_projection().conversation)
+    assert "summary" not in str(messages.persistence_delta(outcome="success").entries)
     assert messages.provider_projection().conversation[-2]["content"] == "tool call"
 
 

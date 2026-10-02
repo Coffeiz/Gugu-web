@@ -44,6 +44,74 @@ class _DbContext:
 
 
 @pytest.mark.asyncio
+async def test_finalize_is_atomic_and_idempotent_including_reasoning_and_usage(db, user_a, monkeypatch):
+    """提交失败不留下私有状态或回复；重试成功后重复收尾不重复记账。"""
+    from agent.context.reasoning_runtime import ReasoningStateCoordinator
+    from agent.context.reasoning_state import ReasoningPersistencePolicy
+    from app.models import ProviderReasoningState
+    from agent.usage import UsageResult
+
+    monkeypatch.setattr("app.byok.crypto._master_key", lambda version=1: b"r" * 32)
+    session = ConversationSession(user_id=user_a.id, title="合成原子收尾")
+    db.add(session)
+    await db.commit()
+    normal_factory = async_sessionmaker(db.bind, expire_on_commit=False)
+
+    class FailCommitSession(AsyncSession):
+        async def commit(self):
+            raise RuntimeError("合成提交失败")
+
+    failed_factory = async_sessionmaker(db.bind, class_=FailCommitSession, expire_on_commit=False)
+    model = SimpleNamespace(model="synthetic", provider="anthropic")
+    coordinator = ReasoningStateCoordinator(
+        user_id=user_a.id, session_id=session.id, model_cfg=model,
+        policy=ReasoningPersistencePolicy("continuation"), session_factory=normal_factory,
+    )
+    coordinator.provider = "anthropic"
+    coordinator.api_format = "anthropic"
+    coordinator.config_digest = "synthetic-config"
+    coordinator.reasoning_config_digest = "synthetic-reasoning"
+    driver = SimpleNamespace(extract_provider_state=lambda result, ctx: {
+        "state_kind": "anthropic_thinking_blocks", "payload": {"tail_blocks": []},
+        "summary": {"state_block_count": 0},
+    })
+    await coordinator.round_finished(driver, None, None, "round-1")
+    await coordinator.completed()
+    assert (await db.scalars(select(ProviderReasoningState))).all() == []
+    area = MessageArea()
+    area.reasoning_state = coordinator
+    calls = []
+
+    async def usage(*args, **kwargs):
+        calls.append(1)
+        return UsageResult(tokens_in=3, tokens_out=2)
+
+    monkeypatch.setattr("agent.usage.record_usage", usage)
+    monkeypatch.setattr("app.services.conversation_retention.trim_session_messages",
+                        lambda *_args: _async_none())
+    args = dict(session_id=session.id, user_id=user_a.id, settings=SimpleNamespace(),
+                model_cfg=model, message_area=area, text="合成最终回复", files=[],
+                tokens_in=3, tokens_out=2, run_id="synthetic-atomic-run")
+    with pytest.raises(RuntimeError, match="合成提交失败"):
+        await run_finalize.finalize_run(session_factory=failed_factory, **args)
+    async with normal_factory() as check:
+        assert (await check.scalars(select(ProviderReasoningState))).all() == []
+        assert (await check.scalars(select(ConversationMessage))).all() == []
+        assert (await check.scalars(select(ConversationBatch))).all() == []
+    # 事务失败不推进 CAS 版本，同一 Run 可安全重试。
+    assert coordinator.expected_version == 0
+    await run_finalize.finalize_run(session_factory=normal_factory, **args)
+    before_duplicate = len(calls)
+    await run_finalize.finalize_run(session_factory=normal_factory, **args)
+    assert len(calls) == before_duplicate
+    async with normal_factory() as check:
+        rows = (await check.scalars(select(ConversationMessage))).all()
+        assert len(rows) == 1
+        state = (await check.scalars(select(ProviderReasoningState))).one()
+        assert state.source_run_id == "synthetic-atomic-run"
+
+
+@pytest.mark.asyncio
 async def test_finalize_run_requires_canonical_message_area():
     """收尾不能再从 provider wire 临时推导并补写 canonical history。"""
     with pytest.raises(ValueError, match="必须接收 MessageArea"):
@@ -473,8 +541,8 @@ async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a, monkeypatch):
-    """相同首轮 runtime-context 在连续 run 中只能落一个 canonical batch。"""
+async def test_finalize_run_never_persists_temporary_runtime_context(db, user_a, monkeypatch):
+    """本轮环境提醒可发送，但连续收尾不能把过期环境说明写入数据库。"""
     session = ConversationSession(user_id=user_a.id, title="runtime 去重", source="web")
     db.add(session)
     await db.commit()
@@ -526,9 +594,8 @@ async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a,
         messages = (await check_db.scalars(select(ConversationMessage).where(
             ConversationMessage.session_id == session.id,
         ))).all()
-    assert len(batches) == 1
-    assert len(messages) == 1
-    assert messages[0].canonical_batch_id == batches[0].id
+    assert batches == []
+    assert messages == []
 
 
 @pytest.mark.asyncio

@@ -111,7 +111,7 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         "也不得把更早历史中的内容重新提取为新增记忆。"
     )
     history = _replace_reflection_media(
-        render_branch_prefix(list(snapshot.history), snapshot.ai),
+        render_branch_prefix(snapshot.history, snapshot.ai),
     )
     reflection_scope = (
         "member" if task_type == "member-batch" else

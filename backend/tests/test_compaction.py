@@ -1110,3 +1110,19 @@ class TestBranchPrefixHistory:
         assert [message_text(m) for m in out] == [
             "系统提示", "历史0", "历史1", "历史2", "历史3",
         ]
+
+    def test_prefix_preserves_already_projected_tool_round(self):
+        """压缩入口拿到 wire 历史后不得二次渲染并丢掉 tool_use。"""
+        from agent.context.compaction import _branch_prefix_history
+
+        messages = [
+            {"role": "user", "content": "合成冻结快照"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "synthetic-call",
+                                                   "name": "list_dir", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "synthetic-call",
+                                              "content": "合成结果"}]},
+        ]
+        history = messages[1:]
+        ai = SimpleNamespace(provider="minimax", model="MiniMax-M3", api_format="anthropic")
+        prefix = _branch_prefix_history(messages, 1, history, history, ai, include_recent=True)
+        assert prefix.to_messages() == messages

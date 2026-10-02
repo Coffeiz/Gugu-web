@@ -33,6 +33,43 @@ async def _session(db, user_id):
     return item
 
 
+def test_endpoint_identity_is_distinct_without_recording_url_credentials():
+    """兼容端点变更使状态失效，URL 中的认证部分不进入身份或状态元数据。"""
+    def fingerprints(url):
+        return model_state_fingerprints(SimpleNamespace(model="synthetic", base_url=url),
+                                        provider="anthropic", api_format="anthropic")
+
+    assert fingerprints("https://a.example/v1") != fingerprints("https://b.example/v1")
+    assert fingerprints("https://secret@a.example/v1?key=synthetic") == fingerprints("https://a.example/v1")
+
+
+@pytest.mark.asyncio
+async def test_boundary_refreshes_version_and_stale_failure_preserves_new_state(db, user_a, monkeypatch):
+    """压缩后新状态可提交，旧 Run 的失败不能清除另一 Run 已提交的状态。"""
+    session, envelope = await _seed_active_state(db, user_a, monkeypatch, key=b"r" * 32)
+
+    class DbContext:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *_args):
+            return False
+
+    coordinator = ReasoningStateCoordinator(
+        user_id=user_a.id, session_id=session.id, model_cfg=SimpleNamespace(model="claude-test"),
+        policy=ReasoningPersistencePolicy("continuation"), session_factory=DbContext,
+    )
+    coordinator.expected_version = 1
+    await coordinator.boundary_changed("baseline_changed")
+    assert coordinator.expected_version == 2
+    await commit_state(db, user_id=user_a.id, session_id=session.id, envelope=envelope, expected_version=2)
+    await db.commit()
+    await coordinator.failed("provider_rejected")
+    row = (await db.execute(select(ProviderReasoningState))).scalar_one()
+    assert row.status == "active"
+    assert row.version == 3
+
+
 @pytest.mark.asyncio
 async def test_legacy_history_cleanup_keeps_continuation_state_available(
     db, user_a, monkeypatch,
@@ -84,7 +121,7 @@ async def test_legacy_history_cleanup_keeps_continuation_state_available(
         source_round_id="round-1",
         sequence=1,
         state_kind="anthropic_thinking_blocks",
-        payload={"blocks": [historical_thinking]},
+        payload={"tail_blocks": [historical_thinking], "history_thinking_by_tool_id": {}},
         expires_at=now_utc() + timedelta(hours=1),
         state_summary={"state_block_count": 1},
     )
@@ -317,6 +354,7 @@ async def test_responses_incompatible_invalidates_persisted_state(db, user_a, mo
         session_factory=lambda: _DbContext(),
     )
 
+    coordinator.expected_version = 1
     await coordinator.failed("responses_incompatible")
 
     row = (await db.execute(select(ProviderReasoningState))).scalar_one()

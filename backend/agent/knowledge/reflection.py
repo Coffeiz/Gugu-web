@@ -182,7 +182,7 @@ async def reflect_if_candidate(
         scope_revision=scope_revision,
         session_id=int(session_id),
         run_id=snapshot.run_id,
-        history_messages=render_branch_prefix(list(snapshot.history), snapshot.ai),
+        history_messages=render_branch_prefix(snapshot.history, snapshot.ai),
         tools=tuple(snapshot.tools),
         branch_mode="append_reuse",
     )

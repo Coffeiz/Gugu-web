@@ -697,8 +697,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             user_id, session_id, scenario="mcp" if mcp_tools else "chat",
         )
     system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
-    if shell_prompt:
-        system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
     capability_context = await _capability_context(
         tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),
         user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
@@ -726,6 +724,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         dynamic_tools=mcp_tools,
     )
     full_reply = ""
+    canonical_reply = ""
     display_timeline = []   # 顶部已初始化（供 CancelledError 收尾读取），这里重置
     active_segment: dict | None = None
     current_run_id = ""
@@ -763,7 +762,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             settings=settings,
             model_cfg=model_cfg,
             message_area=message_area,
-            text=full_reply,
+            text=canonical_reply,
             display_timeline=display_timeline,
             files=sent_files,
             tokens_in=usage_tokens["input"],
@@ -808,6 +807,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             model_cfg=model_cfg,
             stance_text=stance_text,
             snapshot_injection=_snapshot_injection,
+            extra_reminder=shell_prompt,
             user_message=user_message,
             resume_interaction=resume_interaction,
             session=session,
@@ -838,7 +838,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         dedup      = False
 
         async def emit_clean(text: str):
-            nonlocal full_reply, round_buf, dedup, active_segment
+            nonlocal full_reply, canonical_reply, round_buf, dedup, active_segment
             if not text:
                 return
             if dedup:
@@ -855,6 +855,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 round_buf += text
                 out = text
             out = sanitize.strip_disallowed_emoji(out)   # 出口兜底删白名单外 emoji（prompt 压不住）
+            if round_buf:
+                canonical_reply = sanitize.strip_disallowed_emoji(round_buf)
             if out:
                 full_reply += out
                 if active_segment is None:
@@ -1013,7 +1015,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 model_cfg=model_cfg,
                 message_area=message_area,
                 user_message_id=getattr(user_message, "id", None),
-                text=full_reply,
+                text=canonical_reply,
                 display_timeline=[
                     item for item in display_timeline
                     if (

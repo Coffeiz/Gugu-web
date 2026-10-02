@@ -244,6 +244,26 @@ def test_reflection_observation_flags_low_hit_only_for_supported_long_prefix(mon
     assert unsupported["cache_low_hit"] is False
 
 
+def test_reflection_probe_counts_full_provider_prefix_without_trace_truncation():
+    """长 wire 前缀不能因 trace 展示裁剪被漏报；探针仍不返回正文。"""
+    from agent.context.branch_types import BranchInput
+    from agent.context.provider_conversation import ProviderConversation
+
+    _, ai, adapter = _reflection_observation_input(supported=True)
+    content = "合成前缀与工具结果，不是用户数据。" * 4_000
+    branch = BranchInput(stable_system="合成系统", history_messages=ProviderConversation([
+        {"role": "user", "content": content},
+    ]))
+    observation = cache_probe.build_reflection_sample(
+        branch, ai, adapter, {"fresh_input": 80_000, "cache_read": 128},
+    )
+    assert observation["stable_prefix_tokens_estimate"] >= 32_000
+    assert observation["history_message_count"] == 1
+    assert observation["probe_eligible"] is True
+    assert observation["cache_low_hit"] is True
+    assert content not in repr(observation)
+
+
 def test_reflection_cache_observation_is_attached_to_an_active_trace(monkeypatch):
     from agent.runtime.loopscope_trace import state
 

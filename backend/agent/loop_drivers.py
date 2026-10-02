@@ -187,13 +187,16 @@ def _restore_anthropic_history_thinking(messages, thinking_by_tool_id: dict[str,
         if any(isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}
                for block in content):
             continue
-        for index, block in enumerate(content):
+        for block in content:
             if not isinstance(block, dict) or block.get("type") not in {"tool_call", "tool_use"}:
                 continue
             call_id = block.get("id") or block.get("tool_call_id") or block.get("tool_use_id")
             saved = thinking_by_tool_id.get(call_id) if isinstance(call_id, str) else None
             if saved:
-                content[index:index] = copy.deepcopy(saved)
+                for offset, saved_block in enumerate(saved):
+                    restored = copy.deepcopy(saved_block)
+                    position = int(restored.pop("_block_position", offset))
+                    content.insert(position, restored)
                 break
 
 
@@ -205,9 +208,8 @@ class AnthropicDriver:
         """提取跨 run 重建 provider 历史前缀所需的签名 thinking blocks。"""
         blocks = [b.model_dump() if hasattr(b, "model_dump") else dict(b)
                   for b in (result.raw or [])]
-        state_blocks = [block for block in blocks if block.get("type") in {
-            "thinking", "redacted_thinking",
-        }]
+        state_blocks = [dict(block, _block_position=index) for index, block in enumerate(blocks)
+                        if block.get("type") in {"thinking", "redacted_thinking"}]
         history_thinking = copy.deepcopy(
             getattr(ctx, "history_thinking_by_tool_id", {}) if ctx is not None else {}
         )
@@ -224,7 +226,8 @@ class AnthropicDriver:
             history_thinking[tool_ids[0]] = copy.deepcopy(state_blocks)
             tail_blocks = None
         elif state_blocks:
-            tail_blocks = copy.deepcopy(state_blocks)
+            tail_blocks = [{key: value for key, value in block.items() if key != "_block_position"}
+                           for block in state_blocks]
 
         if ctx is not None:
             ctx.history_thinking_by_tool_id = history_thinking
@@ -255,14 +258,13 @@ class AnthropicDriver:
     def restore_provider_state(self, ctx: _AnthropicCtx, payload: Any) -> bool:
         if not isinstance(payload, dict):
             return False
-        # 旧 envelope 的 blocks 是没有工具轮身份的续接状态，只能按原 tail 行为恢复。
-        tail = payload.get("tail_blocks", payload.get("blocks"))
+        tail = payload.get("tail_blocks")
         if tail is not None and (not isinstance(tail, list) or any(
             not isinstance(block, dict) or block.get("type") not in {"thinking", "redacted_thinking"}
             for block in tail
         )):
             return False
-        raw_history = payload.get("history_thinking_by_tool_id", {})
+        raw_history = payload.get("history_thinking_by_tool_id")
         if not isinstance(raw_history, dict):
             return False
         history = {}
@@ -358,6 +360,8 @@ class AnthropicDriver:
             outbound_messages.insert(insert_at, restored)
             outbound = outbound.with_messages(outbound_messages)
             ctx.restored_blocks = None
+        if isinstance(messages, MessageArea):
+            messages.last_provider_projection = outbound
         pending_cache_state = None
         if ctx.supports_active_cache:
             _msgs, pending_cache_state = _with_history_cache(
@@ -590,6 +594,17 @@ class OpenAIDriver:
         outbound = render_openai_request_history(outbound, ctx.adapter)
         from agent.providers.message_utils import strip_responses_item_ids
         outbound = strip_responses_item_ids(outbound)
+        if isinstance(messages, MessageArea):
+            wire = outbound.to_messages()
+            for message in wire:
+                calls = message.get("tool_calls") or []
+                for call in calls:
+                    reasoning = messages.private_reasoning_by_call.get(call.get("id", ""))
+                    if reasoning:
+                        message["reasoning_content"] = reasoning
+                        break
+            outbound = outbound.with_messages(wire)
+            messages.last_provider_projection = outbound
         # OpenAI 兼容端点的原生 KV cache 不等于支持显式 cache_control。
         # DeepSeek 依赖服务端自动缓存；只有经过验证的 provider 才能在消息中
         # 插入显式锚点，避免把 DeepSeek 的自动缓存误走成 Anthropic/Qwen 策略。

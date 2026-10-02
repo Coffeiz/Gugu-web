@@ -609,8 +609,10 @@ def _branch_prefix_history(
     # 渲染口径（adapter.render_history + anthropic 消息角色投影）已提炼为共享
     # helper，反思 append_reuse 分支共用同一出口（PRD-LLM-27 §6.2）。
     from .prefix_history import render_branch_prefix
+    from .provider_conversation import ProviderConversation
 
-    return render_branch_prefix(prefix, model_cfg)
+    # compact_context 已投影过 Area；保持 wire 类型，禁止再次当作 canonical 渲染。
+    return render_branch_prefix(ProviderConversation(prefix, fixed_prefix_size=fixed_prefix_size), model_cfg)
 
 
 def _load_compress_prompt() -> str:

@@ -1,6 +1,7 @@
 """LoopScope 内的缓存突降触发与归因规则；只处理结构元数据，不记录正文。"""
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -206,6 +207,10 @@ def build_reflection_sample(
     """构造反思请求缓存样本；只输出 token、计数与指纹，不输出任何正文。"""
     stable_system = branch_input.stable_system
     history_messages = branch_input.history_messages
+    from agent.context.provider_conversation import ProviderConversation
+
+    if isinstance(history_messages, ProviderConversation):
+        history_messages = history_messages.to_messages()
     tools = branch_input.tools
     trigger_context = branch_input.cache_probe_context or {}
     model = str(getattr(ai, "model", "") or "")
@@ -227,7 +232,9 @@ def build_reflection_sample(
         input_tokens = _nonnegative_int(usage.get("input"))
         fresh_input = max(0, input_tokens - cache_read - cache_write)
     ratio = cache_read / input_tokens if input_tokens else 0.0
-    prefix_tokens = _estimate_tokens(prefix, model)
+    # _estimate_tokens 的对象路径使用 trace 展示裁剪，不能拿裁剪后的前缀判断告警资格。
+    prefix_json = json.dumps(prefix, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    prefix_tokens = _estimate_tokens(prefix_json, model)
     supported = bool(adapter.supports_active_cache(model))
     eligible = supported and prefix_tokens >= MIN_PREFIX_TOKENS
     source = trigger_context.get("trigger_source", "unknown")
@@ -256,7 +263,7 @@ def build_reflection_sample(
         "cache_write_tokens": cache_write,
         "cache_hit_ratio": round(ratio, 6),
         "stable_prefix_tokens_estimate": prefix_tokens,
-        "stable_prefix_digest": _prompt_digest(prefix),
+        "stable_prefix_digest": _prompt_digest(prefix_json),
         "system_digest": _prompt_digest(stable_system or ""),
         "tool_schema_digest": _prompt_digest(tool_list),
         "history_message_count": len(history) if hasattr(history, "__len__") else 0,

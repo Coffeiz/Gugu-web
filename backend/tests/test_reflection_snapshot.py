@@ -217,3 +217,85 @@ def test_render_branch_prefix_surfaces_projection_failure(monkeypatch):
     prefix = [{"role": "user", "content": "hi"}]
     with pytest.raises(RuntimeError, match="no adapter"):
         ph.render_branch_prefix(prefix, _ai("deepseek"))
+
+
+@pytest.mark.parametrize("api_format", ["anthropic", "responses"])
+def test_reflection_keeps_frozen_prefix_and_live_provider_messages(api_format):
+    """反思必须复用冻结 snapshot 与工具前缀，不能只捕获动态 ledger。"""
+    from agent.context.assembly import MessageArea, MessageBatch
+    from agent.context.prefix_history import render_branch_prefix
+
+    ai = _ai("minimax", "MiniMax-M3")
+    ai.api_format = api_format
+    area = MessageArea.from_canonical_messages(
+        [{"role": "system", "content": "合成冻结快照"}],
+        fixed_prefix_size=1, render_options={"api_format": api_format},
+    )
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "user", "content": "合成提问"},
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "synthetic-call", "name": "list_dir", "input": {},
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_use_id": "synthetic-call", "content": "合成结果",
+        }]},
+    ]))
+    main = render_branch_prefix(area.provider_projection(), ai)
+    area.set_dynamic_tail([{"role": "user", "content": "本轮动态提醒"}])
+    snapshot = capture_reflection_snapshot(
+        user_id="synthetic", session_id=7, run_id="synthetic-run", ai=ai,
+        system_prompt="合成系统", tools=(), messages=area, reply_text="合成收尾",
+    )
+    assert snapshot is not None
+    branch = render_branch_prefix(snapshot.history, ai).to_messages()
+    assert branch[:-1] == main.to_messages()
+    assert branch[-1] == {"role": "assistant", "content": "合成收尾"}
+    assert "本轮动态提醒" not in str(branch)
+
+
+def test_provider_prefix_is_not_rendered_again():
+    """合法 wire 工具轮必须原样保留，不能当作持久化 canonical 再解析。"""
+    from agent.context.prefix_history import render_branch_prefix
+    from agent.context.provider_conversation import ProviderConversation
+
+    ai = _ai("minimax", "MiniMax-M3")
+    ai.api_format = "anthropic"
+    messages = [
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "synthetic-call",
+                                               "name": "list_dir", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "synthetic-call",
+                                          "content": "合成结果"}]},
+    ]
+    prefix = ProviderConversation(messages)
+    assert render_branch_prefix(prefix, ai).to_messages() == messages
+
+
+def test_reflection_reuses_last_request_with_restored_private_thinking():
+    """续接恢复只发生在 Driver 时，反思必须捕获最终投影而非从 Area 重生成。"""
+    from agent.context.assembly import MessageArea, MessageBatch
+    from agent.context.prefix_history import render_branch_prefix
+    from agent.loop_drivers import _restore_anthropic_history_thinking
+
+    ai = _ai("minimax", "MiniMax-M3")
+    ai.api_format = "anthropic"
+    area = MessageArea.from_canonical_messages([{"role": "user", "content": "合成提问"}],
+                                               render_options={"api_format": "anthropic"})
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{"type": "tool_call", "id": "synthetic-call",
+                                               "name": "search", "arguments": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_call_id": "synthetic-call",
+                                         "content": "合成回执"}]},
+    ]))
+    projection = render_branch_prefix(area, ai)
+    wire = projection.to_messages()
+    _restore_anthropic_history_thinking(wire, {"synthetic-call": [
+        {"type": "thinking", "thinking": "合成推理", "signature": "synthetic"},
+    ]})
+    area.last_provider_projection = projection.with_messages(wire)
+    snapshot = capture_reflection_snapshot(user_id="synthetic", session_id=7, run_id="synthetic-run",
+                                           ai=ai, system_prompt="合成系统", tools=(), messages=area,
+                                           reply_text="合成收尾")
+    assert snapshot.history.to_messages()[:-1] == wire
+    assert any(block.get("type") == "thinking" for message in snapshot.history
+               for block in (message["content"] if isinstance(message["content"], list) else []))
+    assert "合成推理" not in str(area.snapshot().messages)
