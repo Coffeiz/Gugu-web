@@ -10,6 +10,7 @@ from agent.providers.message_utils import (
     merge_openai_system_messages,
 )
 from agent.context.assembly import MessageArea, reminder
+from agent.context.assembly.area import MessageSource
 from agent.context.cache_state import CacheState
 from agent.context.provider_conversation import ProviderConversation
 
@@ -36,6 +37,57 @@ def test_first_diff_is_structural_and_diagnostics_are_digest_only():
     before = [{"role": "user", "content": "old"}, {"role": "system", "content": "time"}]
     after = [{"role": "user", "content": "old"}, {"role": "system", "content": "new"}]
     assert first_diff_index(before, after) == 1
+
+
+def test_request_diagnostics_build_canonical_sections_from_runtime_area():
+    messages = MessageArea()
+    messages.configure_request(
+        fixed_prefix=[
+            {"role": "system", "content": "stable system"},
+            {"role": "user", "content": "private snapshot"},
+        ],
+    )
+    messages.append(
+        {"role": "user", "content": "private history"},
+        source=MessageSource.RESTORED_HISTORY,
+    )
+    messages.append(
+        {"role": "user", "content": "private current request"},
+        source=MessageSource.USER,
+    )
+    projection = messages.provider_projection()
+
+    class ProjectionOnlyAdapter(FakeAdapter):
+        def render_history(self, _messages):
+            raise AssertionError("诊断应复用本轮已生成的 Provider 投影")
+
+    result = request_diagnostics(
+        messages,
+        system_text="stable system",
+        tools=[{"name": "lookup", "parameters": {"type": "object"}}],
+        adapter=ProjectionOnlyAdapter(),
+        model="test-model",
+        api_format="openai",
+        provider_messages=projection,
+        provider_history_sanitization={"applied": True, "changed": False},
+    )
+
+    assert result["available"] is True
+    assert result["context"]["section_counts"] == {
+        "static_system": 1,
+        "session_snapshot": 1,
+        "canonical_history": 1,
+        "current_turn": 1,
+    }
+    assert result["tool_count"] == 1
+    assert result["wire_digest"] == projection.wire_digest
+    assert result["provider_history_sanitization"] == {
+        "applied": True, "changed": False,
+    }
+    assert all(
+        secret not in str(result)
+        for secret in ("private snapshot", "private history", "private current request")
+    )
 
 
 def test_provider_projection_keeps_cache_state_outside_message_area():

@@ -550,6 +550,8 @@ def ensure_hooks() -> None:
                 model=model_name,
                 api_format=str(getattr(round_driver, "api_format", "unknown") or "unknown"),
                 previous_messages=previous_round_messages,
+                provider_messages=round_wire_messages,
+                provider_history_sanitization=provider_history_sanitization,
             ) if getattr(ctx, "adapter", None) is not None else {"available": False}
             if run:
                 record_canonical_event_stats(run, canonical_stats)

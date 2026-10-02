@@ -14,10 +14,7 @@ from agent.context.canonical_context import digest
 from agent.context.cache_state import CachePlan, CacheState
 from agent.context.provider_conversation import ProviderConversation
 
-ProviderHistoryProjection = ProviderConversation
-
-
-def render_provider_history(messages, adapter) -> ProviderHistoryProjection:
+def render_provider_history(messages, adapter) -> ProviderConversation:
     """从 MessageArea 快照生成不可变 ProviderConversation。
 
     MessageArea 的 revision/digest 被绑定在投影上，固定 Snapshot 和当前
