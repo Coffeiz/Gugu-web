@@ -31,10 +31,7 @@ from agent.tools.tool_contract import (
     enrich_tool_error,
     internal_error_text,
     invalid_input_payload,
-    normalize_legacy_input,
-    normalize_input_by_schema,
-    unwrap_arguments_wrapper,
-    validate_input,
+    normalize_and_validate_tool_input,
 )
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
@@ -601,27 +598,9 @@ class SkillRegistry:
         # JSON 能解析 ≠ 符合工具契约。先要求顶层 object，再按工具 Schema 做安全归一化，最后按
         # Tool.input_schema 做本地实例校验。任何失败都在进度声明/DB/handler/confirm 之前返回，
         # 防止“参数根本不能执行，却先对用户说我去做了”或 mutation handler 带错参运行。
-        if not isinstance(args, dict):
-            payload = invalid_input_payload(
-                name,
-                [{"path": "$", "rule": "type", "message": "工具输入必须是 object"}],
-                schema=tool.input_schema,
-            )
-            _log_traj(name, user_id, args, False, "tool_input_invalid:type", t0)
-            return json.dumps(payload, ensure_ascii=False), None
-
-        # 版本适配集中在契约层，只转换无歧义的旧字段，再进入当前 Schema 校验。
-        args, _arguments_unwrapped = unwrap_arguments_wrapper(tool.input_schema, args)
-        args, _legacy_adaptations = normalize_legacy_input(name, args)
-
-        # 正常工具会在 registry.add() 时缓存 validator；测试工具和少量运行时扩展可能直接
-        # 注入 registry，仍需在 dispatch 边界补建，避免校验器为空导致整轮 Agent 崩溃。
-        if tool._input_validator is None:
-            tool._input_validator = build_validator(tool.input_schema)
-        args, _type_adaptations = normalize_input_by_schema(
-            tool.input_schema, args, strict_array_fields=tool.strict_array_fields,
+        args, issues, _legacy_adaptations, _type_adaptations = (
+            normalize_and_validate_tool_input(name, args, tool)
         )
-        issues = validate_input(tool._input_validator, args)
         if issues:
             payload = invalid_input_payload(name, issues, schema=tool.input_schema)
             first_rule = issues[0].get("rule", "invalid")

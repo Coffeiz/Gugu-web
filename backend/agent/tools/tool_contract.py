@@ -537,6 +537,21 @@ def validate_input(validator: Draft202012Validator, instance: dict) -> list[dict
     return issues
 
 
+def normalize_and_validate_tool_input(tool_name: str, instance: Any, tool) -> tuple[Any, list[dict[str, str]], list[str], list[str]]:
+    """执行 dispatch 共用的纯输入归一与 Schema 校验，不运行 handler 或权限副作用。"""
+    if not isinstance(instance, dict):
+        return instance, [{"path": "$", "rule": "type", "message": "工具输入必须是 object"}], [], []
+    instance, _ = unwrap_arguments_wrapper(tool.input_schema, instance)
+    instance, legacy_adaptations = normalize_legacy_input(tool_name, instance)
+    if tool._input_validator is None:
+        tool._input_validator = build_validator(tool.input_schema)
+    instance, type_adaptations = normalize_input_by_schema(
+        tool.input_schema, instance, strict_array_fields=tool.strict_array_fields,
+    )
+    issues = validate_input(tool._input_validator, instance)
+    return instance, issues, legacy_adaptations, type_adaptations
+
+
 def _invalid_input_next_action(issues: list[dict[str, str]]) -> str:
     """给模型一个短的纠错动作，不重复注入完整 schema。"""
     missing = [item["path"] for item in issues if item.get("rule") == "required"]
@@ -707,6 +722,7 @@ __all__ = [
     "internal_error_text",
     "normalize_legacy_input",
     "normalize_input_by_schema",
+    "normalize_and_validate_tool_input",
     "validate_input",
 ]
 

@@ -621,7 +621,86 @@ async def run_loop(
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 dispatched = []
                 pending_interaction = None
-                for call_index, tc in enumerate(result.tool_calls):
+                agent_settings = getattr(getattr(runner, "settings", None), "agent", None)
+                parallel_batch = None
+                parallel_cancelled = False
+                if getattr(agent_settings, "parallel_tool_execution_enabled", False):
+                    parallel_batch = _core._prepare_parallel_batch(result.tool_calls, tool_snapshot)
+                if parallel_batch is not None:
+                    parallel_meta = []
+                    for call_index, (tc, dispatch_target, dispatch_input) in enumerate(parallel_batch):
+                        effective_tool_name = dispatch_target
+                        label = runner._label(effective_tool_name)
+                        if verify_mode:
+                            label = runner._label("_verify_prefix", "复查 · ") + label
+                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                        tool_calls_used += 1
+                        await _core._im_set_tool_state(effective_tool_name)
+                        yield stream_event(
+                            "tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                            name=effective_tool_name, label=label, input=dispatch_input,
+                            verify=verify_mode, status="running",
+                        )
+                        parallel_meta.append((tc, dispatch_target, dispatch_input,
+                                              effective_tool_name, label, tool_call_id))
+
+                    async def _dispatch_parallel_call(call):
+                        _tc, target, arguments = call
+                        return await _core._dispatch_in_session(
+                            user_id, target, arguments,
+                            session_id=session_id, session=session, run_id=run_id,
+                            tool_snapshot=tool_snapshot,
+                            skill_state=_core._copy_skill_state_for_parallel(loaded_skill_slugs),
+                        )
+
+                    try:
+                        parallel_results = await _core._run_parallel_dispatches(
+                            parallel_batch, _dispatch_parallel_call,
+                        )
+                    except _core._ParallelDispatchCancelled as exc:
+                        parallel_results = exc.results
+                        parallel_cancelled = True
+                    from agent.interactions.confirmations import confirmation_payload
+                    for meta, dispatched_result in zip(parallel_meta, parallel_results):
+                        tc, dispatch_target, dispatch_input, effective_tool_name, label, tool_call_id = meta
+                        call_cancelled = isinstance(dispatched_result, _core.asyncio.CancelledError)
+                        if call_cancelled:
+                            res, artifact = _core.json.dumps(
+                                {"error": "工具调用已取消。"}, ensure_ascii=False,
+                            ), None
+                        elif isinstance(dispatched_result, Exception):
+                            _core.diag_log("agent.loop.parallel_tool_dispatch", dispatched_result)
+                            res, artifact = _core.json.dumps(
+                                {"error": "只读工具执行失败，请稍后重试。"}, ensure_ascii=False,
+                            ), None
+                        else:
+                            res, artifact = dispatched_result
+                        if confirmation_payload(res) is not None:
+                            # 并行安全声明禁止交互；动态返回确认载荷表示工具契约配置错误，
+                            # 不创建等待卡，也不把其内部状态继续暴露给模型。
+                            _core.diag_log(
+                                "agent.loop.parallel_tool_interaction",
+                                RuntimeError("并发安全工具返回了交互确认载荷"),
+                            )
+                            res, artifact = _core.json.dumps(
+                                {"error": "该只读工具返回了未声明的确认请求，本次结果无法使用。"},
+                                ensure_ascii=False,
+                            ), None
+                        yield stream_event(
+                            "tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                            name=effective_tool_name, label=label, verify=verify_mode,
+                            status=(
+                                "cancelled" if call_cancelled else
+                                "success" if _core._is_successful_tool_result(res) else "error"
+                            ),
+                            result=res,
+                        )
+                        if artifact:
+                            yield _core._artifact_sse(artifact)
+                        dispatched.append((tc, res))
+
+                calls_for_serial = () if parallel_batch is not None else result.tool_calls
+                for call_index, tc in enumerate(calls_for_serial):
                     raw_call_name = getattr(tc, "name", None)
                     dispatch_target, dispatch_input, protocol_error = _core._resolve_tool_call(
                         raw_call_name, getattr(tc, "input", None)
@@ -934,6 +1013,11 @@ async def run_loop(
                             if tool is not None:
                                 add_event(tool_schema_event(tool))
                 messages.append_batch(batch)
+                if parallel_cancelled:
+                    # 已完成调用保留实际结果；未完成调用用取消回执补齐 canonical 配对。
+                    # 取消事件结束当前 Run，不能再把这批结果发给 Provider 续轮。
+                    yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                    return
                 if pending_interaction is not None:
                     from app.services.interactions import wait_for_resolution
                     pending_tool_call_id = pending_interaction.tool_call_id

@@ -36,6 +36,29 @@ def parallel_safe_batch(tool_calls, tool_snapshot) -> bool:
     return all(_parallel_safe_call(call, tool_snapshot) for call in tool_calls)
 
 
+def prepare_parallel_batch(tool_calls, tool_snapshot) -> list[tuple[Any, str, dict]] | None:
+    """预解析并校验整批调用；任何一个输入不合约就让原串行路径处理整批。"""
+    if not parallel_safe_batch(tool_calls, tool_snapshot):
+        return None
+    from agent.tools.tool_contract import normalize_and_validate_tool_input, resolve_tool_call
+
+    prepared = []
+    for call in tool_calls:
+        target, arguments, error = resolve_tool_call(
+            getattr(call, "name", None), getattr(call, "input", None),
+        )
+        if error is not None:
+            return None
+        tool = tool_snapshot.get(target)
+        normalized, issues, _legacy_adaptations, _type_adaptations = (
+            normalize_and_validate_tool_input(target, arguments, tool)
+        )
+        if issues:
+            return None
+        prepared.append((call, target, normalized))
+    return prepared
+
+
 def _parallel_safe_call(call, tool_snapshot) -> bool:
     """解析一项调用并按最终目标判断；输入不完整或工具名不明时拒绝并行。"""
     from agent.tools.tool_contract import resolve_tool_call

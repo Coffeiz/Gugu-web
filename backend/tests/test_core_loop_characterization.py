@@ -1158,6 +1158,271 @@ async def test_multi_tool_round_keeps_serial_dispatch_and_model_order(monkeypatc
     ]
 
 
+async def test_enabled_parallel_round_overlaps_but_emits_and_persists_in_model_order(monkeypatch):
+    """阶段 1 集成行为：安全调用真实重叠，事件和 Provider 工具结果仍按原顺序。"""
+    from agent.tools.base import Tool
+
+    calls = [
+        TU("safe_alpha", "call-a", {}),
+        TU("safe_beta", "call-b", {}),
+        TU("safe_gamma", "call-c", {}),
+    ]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
+    tools = {
+        name: Tool(
+            name=name,
+            description="并发安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None,
+            parallel_safe=True,
+        )
+        for name in ("safe_alpha", "safe_beta", "safe_gamma")
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    active = 0
+    max_active = 0
+    started = []
+    completed = []
+    all_started = asyncio.Event()
+    release_call = {name: asyncio.Event() for name in ("safe_alpha", "safe_beta", "safe_gamma")}
+    finished_call = {name: asyncio.Event() for name in release_call}
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        started.append(name)
+        if len(started) == 3:
+            all_started.set()
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=1)
+            await release_call[name].wait()
+            completed.append(name)
+            finished_call[name].set()
+            return json.dumps({"result": name}), None
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(parallel_tool_execution_enabled=True),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "并行查询"},
+    ])
+    events = []
+    async def complete_in_reverse_order():
+        await all_started.wait()
+        for name in ("safe_gamma", "safe_beta", "safe_alpha"):
+            release_call[name].set()
+            await finished_call[name].wait()
+
+    completion_driver = asyncio.create_task(complete_in_reverse_order())
+    async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+        try:
+            event = json.loads(chunk[len("data: "):])
+        except (TypeError, ValueError):
+            continue
+        if event.get("type") in {"tool_call", "tool_done"}:
+            events.append((event["type"], event.get("tool_call_id"), event.get("status")))
+    await completion_driver
+
+    assert max_active == 3, "屏障确认三个 handler 确实同时运行"
+    assert started == ["safe_alpha", "safe_beta", "safe_gamma"]
+    assert completed == ["safe_gamma", "safe_beta", "safe_alpha"]
+    assert events == [
+        ("tool_call", "call-a", "running"),
+        ("tool_call", "call-b", "running"),
+        ("tool_call", "call-c", "running"),
+        ("tool_done", "call-a", "success"),
+        ("tool_done", "call-b", "success"),
+        ("tool_done", "call-c", "success"),
+    ]
+    tool_results = [
+        block
+        for message in canonical_messages(messages)
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert [block.get("tool_use_id") or block.get("tool_call_id") for block in tool_results] == [
+        "call-a", "call-b", "call-c",
+    ]
+
+
+async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(monkeypatch):
+    """取消并发批次时保留已完成回执、关闭未完成调用，且绝不请求下一轮 Provider。"""
+    from agent.tools.base import Tool
+
+    calls = [
+        TU("safe_alpha", "call-a", {}),
+        TU("safe_beta", "call-b", {}),
+        TU("safe_gamma", "call-c", {}),
+    ]
+    patch_anthropic(monkeypatch, [msg(calls)])
+    tools = {
+        name: Tool(
+            name=name,
+            description="并发安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None,
+            parallel_safe=True,
+        )
+        for name in ("safe_alpha", "safe_beta", "safe_gamma")
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    all_started = asyncio.Event()
+    alpha_completed = asyncio.Event()
+    never = asyncio.Event()
+    started = 0
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        nonlocal started
+        started += 1
+        if started == 3:
+            all_started.set()
+        await all_started.wait()
+        if name == "safe_alpha":
+            alpha_completed.set()
+            return json.dumps({"result": "alpha done"}), None
+        await never.wait()
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(parallel_tool_execution_enabled=True),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "并行查询后停止"},
+    ])
+    events = []
+
+    async def consume():
+        async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+            try:
+                events.append(json.loads(chunk[len("data: "):]))
+            except (TypeError, ValueError):
+                continue
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(all_started.wait(), timeout=1)
+    await asyncio.wait_for(alpha_completed.wait(), timeout=1)
+    task.cancel()
+    await asyncio.wait_for(task, timeout=1)
+
+    terminal_events = [
+        (event["type"], event.get("tool_call_id"), event.get("status"))
+        for event in events
+        if event.get("type") in {"tool_call", "tool_done"}
+    ]
+    assert terminal_events == [
+        ("tool_call", "call-a", "running"),
+        ("tool_call", "call-b", "running"),
+        ("tool_call", "call-c", "running"),
+        ("tool_done", "call-a", "success"),
+        ("tool_done", "call-b", "cancelled"),
+        ("tool_done", "call-c", "cancelled"),
+    ]
+    assert any(event.get("type") == "_cancelled" for event in events)
+    tool_results = [
+        block
+        for message in canonical_messages(messages)
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert [block.get("tool_use_id") or block.get("tool_call_id") for block in tool_results] == [
+        "call-a", "call-b", "call-c",
+    ]
+    assert json.loads(tool_results[0]["content"]) == {"result": "alpha done"}
+    assert all("工具调用已取消" in str(block) for block in tool_results[1:])
+    assert not any(event.get("type") == "error" for event in events)
+
+
+async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch):
+    """开启总开关也不能拆分混合安全等级的批次并提前启动只读项。"""
+    from agent.tools.base import Tool
+
+    calls = [TU("safe_alpha", "call-a", {}), TU("ordinary_beta", "call-b", {})]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
+    tools = {
+        "safe_alpha": Tool(
+            name="safe_alpha", description="安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None, parallel_safe=True,
+        ),
+        "ordinary_beta": Tool(
+            name="ordinary_beta", description="普通工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None,
+        ),
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls_started = []
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        calls_started.append(name)
+        if name == "safe_alpha":
+            first_started.set()
+            await release_first.wait()
+            return json.dumps({"result": name}), None
+        assert release_first.is_set(), "第二项不能在第一项完成前启动"
+        return json.dumps({"result": name}), None
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(parallel_tool_execution_enabled=True),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "混合批次"},
+    ])
+    events = []
+
+    async def consume():
+        async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+            try:
+                events.append(json.loads(chunk[len("data: "):]))
+            except (TypeError, ValueError):
+                continue
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    release_first.set()
+    await asyncio.wait_for(task, timeout=1)
+
+    assert calls_started == ["safe_alpha", "ordinary_beta"]
+    assert [
+        (event["type"], event.get("tool_call_id"))
+        for event in events if event.get("type") in {"tool_call", "tool_done"}
+    ] == [
+        ("tool_call", "call-a"), ("tool_done", "call-a"),
+        ("tool_call", "call-b"), ("tool_done", "call-b"),
+    ]
+
+
 async def test_scheduled_agent_loop_fails_before_dispatch_above_30_calls(monkeypatch, dispatched):
     """定时 run 保留 30 次专属上限，超额批次不派发并返回失败事件供外层重试。"""
     from agent.scheduled import ScheduledLLMRunner
