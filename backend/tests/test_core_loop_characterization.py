@@ -29,6 +29,7 @@ from agent.loop_drivers import RoundResult
 from agent.core import (
     LLMRunner, _FINALIZE_PROMPT, _VERIFY_PROMPT,
 )
+from agent.context.assembly import MessageArea
 from agent.tools import registry
 
 _CONFIRMATION_TOOL_NAMES = tuple(
@@ -65,11 +66,40 @@ def dispatched(monkeypatch):
 
 
 AI = SimpleNamespace(model="fake", base_url="http://local", api_key="dummy",
-                     provider="anthropic", max_tokens=100, thinking="disabled")
+                     provider="anthropic", max_tokens=100, thinking="disabled",
+                     context_tokens=1_000_000)
 
 
 def make_runner(**kwargs):
-    return LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI), **kwargs)
+    settings = kwargs.pop("settings", SimpleNamespace(ai=kwargs.pop("ai", AI)))
+    tool_names = kwargs.pop("tool_names", [])
+    runner = LLMRunner(tool_names=tool_names, settings=settings, **kwargs)
+
+    class _RunHarness:
+        """测试场景用便捷输入转为当前正式的 MessageArea 契约。"""
+        def __getattr__(self, name):
+            return getattr(runner, name)
+
+        @staticmethod
+        def _area(value):
+            return value if isinstance(value, MessageArea) else MessageArea.from_canonical_messages(value)
+
+        def _run_anthropic(self, user_id, system_text, messages, ai, **options):
+            return runner._run_anthropic(
+                user_id, system_text, self._area(messages), ai, **options,
+            )
+
+        def _run_openai(self, user_id, messages, ai, **options):
+            return runner._run_openai(
+                user_id, self._area(messages), ai, **options,
+            )
+
+        def _run_responses(self, user_id, system_text, messages, ai, **options):
+            return runner._run_responses(
+                user_id, system_text, self._area(messages), ai, **options,
+            )
+
+    return _RunHarness()
 
 
 async def drain(gen):
@@ -91,7 +121,13 @@ async def drain(gen):
 
 
 def n_verify(messages):
-    return sum(1 for m in messages if m.get("content") == _VERIFY_PROMPT)
+    return sum(1 for m in canonical_messages(messages) if m.get("content") == _VERIFY_PROMPT)
+
+
+def canonical_messages(messages):
+    if isinstance(messages, MessageArea):
+        return [entry.canonical_message for entry in messages.entries]
+    return list(messages)
 
 
 async def test_progress_only_round_is_retried_but_draft_remains_visible(monkeypatch):
@@ -123,8 +159,8 @@ async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
     final = msg([TX("最终回复")])
     final.usage.input_tokens = 950
     patch_anthropic(monkeypatch, [final])
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
-    runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=ai))
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
+    runner = make_runner(settings=SimpleNamespace(ai=ai))
 
     ev, text, errors = await drain(runner._run_anthropic(
         "u", "sys", [{"role": "user", "content": "测试"}], ai,
@@ -326,8 +362,8 @@ async def test_compound_mutating_tool_read_action_does_not_trigger_verify(monkey
         msg([TX("当前没有配置 MCP 服务")]),
     ])
     messages = [{"role": "user", "content": "看看 MCP 服务"}]
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
-    runner = LLMRunner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
+    runner = make_runner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
     ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, ai))
     assert "当前没有配置 MCP 服务" in text
     assert n_verify(messages) == 0
@@ -355,8 +391,8 @@ async def test_compound_tool_read_action_ends_post_mutation_verify(monkeypatch, 
         msg([TX("MCP 服务配置已经完成")]),
     ])
     messages = [{"role": "user", "content": "添加 MCP 服务"}]
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
-    runner = LLMRunner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
+    runner = make_runner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
     ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, ai))
 
     assert "MCP 服务配置已经完成" in text
@@ -371,7 +407,7 @@ async def test_note_get_counts_as_verify_observation(monkeypatch, dispatched):
         msg([TX("笔记已记录")]),
     ])
     messages = [{"role": "user", "content": "记一条笔记"}]
-    runner = LLMRunner(tool_names=["note_create", "note_get"], settings=SimpleNamespace(ai=AI))
+    runner = make_runner(tool_names=["note_create", "note_get"], settings=SimpleNamespace(ai=AI))
     _ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, AI))
     assert dispatched == ["note_create"]
     assert "笔记已记录" in text
@@ -446,7 +482,9 @@ async def test_tool_confirmation_cancel_replaces_tool_result_and_finalizes(monke
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
 
     patch_anthropic(monkeypatch, [msg([TU("send_email", "call-1", {})])])
-    messages = [{"role": "user", "content": "发邮件"}]
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "发邮件"},
+    ])
 
     ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
 
@@ -456,7 +494,8 @@ async def test_tool_confirmation_cancel_replaces_tool_result_and_finalizes(monke
     assert errors == []
     # 内存里的 pending 工具结果必须已被取消结果替换，收尾持久化才不会写回占位符。
     tool_results = [
-        block.get("content") for m in messages if m.get("role") == "user"
+        block.get("content") for entry in messages.entries
+        for m in [entry.canonical_message] if m.get("role") == "user"
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any('"status": "cancelled"' in (c or "") for c in tool_results)
@@ -498,7 +537,9 @@ async def test_confirmation_adapter_routes_every_confirmable_tool(monkeypatch, d
     })])])
 
     ev, _text, errors = await drain(make_runner()._run_anthropic(
-        "u", "sys", [{"role": "user", "content": "执行操作"}], AI, session_id=807,
+        "u", "sys", MessageArea.from_canonical_messages([
+            {"role": "user", "content": "执行操作"},
+        ]), AI, session_id=807,
     ))
 
     assert dispatches == [(target_name, {"probe": "confirm-routing"})]
@@ -558,7 +599,9 @@ async def test_tool_confirmation_confirm_replays_tool_without_model_recall(monke
         msg([TU("send_email", "call-1", {})]),
         msg([TX("邮件已经发送出去了 ✅")]),
     ])
-    messages = [{"role": "user", "content": "帮我发邮件"}]
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "帮我发邮件"},
+    ])
 
     ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
 
@@ -567,7 +610,8 @@ async def test_tool_confirmation_confirm_replays_tool_without_model_recall(monke
     assert ev["_cancelled"] == 0
     assert errors == []
     tool_results = [
-        block.get("content") for m in messages if m.get("role") == "user"
+        block.get("content") for entry in messages.entries
+        for m in [entry.canonical_message] if m.get("role") == "user"
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any("邮件已发送" in (c or "") for c in tool_results), "真实执行结果必须回写进工具往返"
@@ -682,14 +726,14 @@ async def test_confirmed_replay_result_reaches_canonical_batch(monkeypatch, disp
         msg([TU("send_email", "call-1", {})]),
         msg([TX("邮件已经发送出去了 ✅")]),
     ])
-    from agent.context.assembly import PromptMessages
-    messages = PromptMessages([{"role": "user", "content": "帮我发邮件"}])
+    from agent.context.assembly import MessageArea
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我发邮件"}])
 
     _ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
 
     assert "邮件已经发送出去了" in text
     assert errors == []
-    persisted = json.dumps(messages.canonical_batch_records, ensure_ascii=False)
+    persisted = json.dumps(messages.batch_records(), ensure_ascii=False)
     assert "邮件已发送" in persisted, "重投的真实结果必须写进 canonical 批次"
     assert "waiting_confirmation" not in persisted, "落库的工具往返不能停在「等待确认」占位"
 
@@ -726,14 +770,14 @@ async def test_tool_confirmation_state_survives_wait_but_replay_is_single_shot(m
         msg([TU("send_email", "call-1", {})]),
         msg([TX("这次没发出去，稍后再试")]),
     ])
-    messages = [{"role": "user", "content": "帮我发邮件"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我发邮件"}])
 
     _ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
 
     assert "这次没发出去" in text
     assert errors == []
     tool_results = [
-        block.get("content") for m in messages if m.get("role") == "user"
+        block.get("content") for m in canonical_messages(messages) if m.get("role") == "user"
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any("确认未生效" in (c or "") for c in tool_results)
@@ -776,7 +820,7 @@ async def test_user_cancel_closes_tool_bubble_and_starts_new_round(monkeypatch, 
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
 
     patch_anthropic(monkeypatch, [msg([TU("delete_scheduled_task", "call-1", {"task_id": 266})])])
-    messages = [{"role": "user", "content": "把定时任务删掉"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "把定时任务删掉"}])
 
     frames = []
     async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1):
@@ -804,7 +848,7 @@ async def test_user_cancel_closes_tool_bubble_and_starts_new_round(monkeypatch, 
     assert calls == ["delete_scheduled_task"], "取消不能触发重投"
 
     tool_results = [
-        block.get("content") for m in messages if m.get("role") == "user"
+        block.get("content") for m in canonical_messages(messages) if m.get("role") == "user"
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any('"status": "cancelled"' in (c or "") for c in tool_results), "取消结果要落进本轮工具往返"
@@ -886,8 +930,8 @@ async def test_responses_failure_falls_back_with_current_tools(monkeypatch):
     monkeypatch.setattr(core, "OpenAIResponsesDriver", _ResponsesDriver)
     monkeypatch.setattr(loop_drivers, "OpenAIDriver", _ChatDriver)
 
-    ai = SimpleNamespace(**AI.__dict__, api_format="responses", context_tokens=1000)
-    runner = LLMRunner(
+    ai = SimpleNamespace(**{**AI.__dict__, "api_format": "responses", "context_tokens": 1000})
+    runner = make_runner(
         tool_names=["initial_tool"],
         settings=SimpleNamespace(ai=ai),
         capability_context=_CapabilityContext(),
@@ -917,9 +961,9 @@ async def test_narration_guard_nudges_once_then_gives_up(monkeypatch, dispatched
         msg([TX("让我读一下这个文件，读到了，改好了！")]),   # R1 叙事口吻、零工具 → 命中 narration 守卫
         msg([TX("好的，明白了")]),   # R2 仍零工具；内容应被抑制，不再追第三次
     ])
-    messages = [{"role": "user", "content": "帮我改一下这个文件"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我改一下这个文件"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._NARRATION_NUDGE]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._NARRATION_NUDGE]
     assert len(nudges) == 1, "叙事守卫应该只追一次，不能无限重试"
     assert nudges[0]["role"] == "system"
     assert ev["_usage"] == 1 and ev["error"] == 0
@@ -933,7 +977,7 @@ async def test_narration_guard_does_not_treat_reported_fact_as_local_mutation(mo
     ])
     messages = [{"role": "user", "content": "查一下这个案件的调查进展"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    assert not [m for m in messages if m.get("content") == core._NARRATION_NUDGE]
+    assert not [m for m in canonical_messages(messages) if m.get("content") == core._NARRATION_NUDGE]
     assert "已经发出传票" in text
     assert ev["_usage"] == 1 and ev["error"] == 0
 
@@ -944,9 +988,9 @@ async def test_intent_announce_guard_nudges_once(monkeypatch, dispatched):
         msg([TX("我这就去帮你查一下项目进度")]),   # 宣告将来式、零工具 → 命中意图守卫
         msg([TX("查到了，项目进度是 80%")]),        # 被逼后仍零工具，内容不应输出
     ])
-    messages = [{"role": "user", "content": "帮我查一下项目进度"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我查一下项目进度"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._INTENT_NUDGE]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._INTENT_NUDGE]
     assert len(nudges) == 1
     assert "项目进度是 80%" not in text
     assert ev["_usage"] == 1 and ev["error"] == 0
@@ -958,13 +1002,13 @@ async def test_colon_ended_reply_retries_without_fixed_prefix_and_shows_completi
         msg([TX("看一下当前在跑的定时任务，找管插画推送和每日新闻速览的：")]),
         msg([TX("句末冒号表示下文可能尚未输出，回复应接着把说明说完整。")]),
     ])
-    messages = [{"role": "user", "content": "检查这两个定时任务"}]
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "检查这两个定时任务"}])
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 100_000})
 
     ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, ai))
 
     nudge = core.guard_locale("zh-CN").colon_nudge
-    assert any(m.get("content") == nudge for m in messages)
+    assert any(m.get("content") == nudge for m in canonical_messages(messages))
     assert "看一下当前在跑的定时任务" in text
     assert "句末冒号表示下文可能尚未输出" in text
     assert ev["_new_round"] == 1
@@ -977,7 +1021,7 @@ async def test_colon_guard_does_not_expose_unverified_tool_claim_from_retry(monk
         msg([TX("看一下当前任务：")]),
         msg([TX("我查了一下文件，发现任务写入到了个人文件夹。")]),
     ])
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 100_000})
 
     _ev, text, _errors = await drain(make_runner()._run_anthropic(
         "u", "sys", [{"role": "user", "content": "检查任务配置"}], ai,
@@ -994,7 +1038,7 @@ async def test_intent_announce_guard_skips_questions(monkeypatch, dispatched):
     ])
     messages = [{"role": "user", "content": "项目怎么样了"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._INTENT_NUDGE]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._INTENT_NUDGE]
     assert len(nudges) == 0, "问句/征询不该被意图守卫误伤"
     assert "要我现在去查一下项目进度吗" in text
 
@@ -1012,15 +1056,15 @@ async def test_colon_guard_still_runs_after_a_previous_tool_round(
         msg([TX(draft)]),
         msg([TX(completion)]),
     ])
-    messages = [{"role": "user", "content": "检查当前定时任务"}]
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "检查当前定时任务"}])
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 100_000})
 
     ev, text, _errors = await drain(
         make_runner(locale=locale)._run_anthropic("u", "sys", messages, ai)
     )
 
     nudge = core.guard_locale(locale).colon_nudge
-    nudges = [m for m in messages if m.get("content") == nudge]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == nudge]
     assert len(nudges) == 1
     assert draft in text
     assert completion in text
@@ -1033,9 +1077,9 @@ async def test_decision_dodge_guard_nudges_once(monkeypatch, dispatched):
         msg([TX("这个不需要重新排序，已经挺合理的了")]),   # 用户要排序，模型零工具驳回 → 命中决策守卫
         msg([TX("好的，已经帮你重新排好序了")]),           # 守卫后的纯文本应被丢弃
     ])
-    messages = [{"role": "user", "content": "帮我把这些任务重新排序一下"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我把这些任务重新排序一下"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._DECISION_NUDGE]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._DECISION_NUDGE]
     assert len(nudges) == 1
     assert text == "这个不需要重新排序，已经挺合理的了"
     assert ev["_usage"] == 1 and ev["error"] == 0
@@ -1047,9 +1091,9 @@ async def test_empty_reply_falls_back_after_one_retry(monkeypatch, dispatched):
         msg([TX("")]),   # R1 空正文
         msg([TX("")]),   # R2 追问后仍空 → 触发兜底文案
     ])
-    messages = [{"role": "user", "content": "你好"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "你好"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    retry_prompts = [m for m in messages
+    retry_prompts = [m for m in canonical_messages(messages)
                       if m.get("content") == "（把要回复用户的话直接说出来就好，别只在心里想。）"]
     assert len(retry_prompts) == 1, "空回复应该只追问一次"
     assert "没太接住" in text or "换个说法" in text, f"应该吐出兜底文案，实际：{text!r}"
@@ -1089,7 +1133,9 @@ async def test_scheduled_agent_loop_fails_before_dispatch_above_30_calls(monkeyp
     ])
     runner = ScheduledLLMRunner([], SimpleNamespace(ai=AI))
     ev, text, errors = await drain(runner._run_anthropic(
-        "u", "sys", [{"role": "user", "content": "定时查询任务"}], AI,
+        "u", "sys", MessageArea.from_canonical_messages([
+            {"role": "user", "content": "定时查询任务"},
+        ]), AI,
     ))
 
     assert dispatched == ["get_project"] * 30
@@ -1114,7 +1160,9 @@ async def test_scheduled_agent_loop_has_100_round_limit(monkeypatch, dispatched)
     runner.tool_call_limit_per_run = None
     runner.fail_on_tool_call_limit = False
     ev, _text, errors = await drain(runner._run_anthropic(
-        "u", "sys", [{"role": "user", "content": "定时查询任务"}], AI,
+        "u", "sys", MessageArea.from_canonical_messages([
+            {"role": "user", "content": "定时查询任务"},
+        ]), AI,
     ))
 
     assert dispatched == ["get_project"] * 2
@@ -1166,7 +1214,7 @@ async def test_polluted_tool_name_salvaged_before_dispatch_and_events(monkeypatc
 
 async def _recover_frames(stub_frames, monkeypatch):
     """跑一次 _recover_interrupted_continuation，返回 (此轮吐出的帧, 重发模型的次数)。"""
-    runner = make_runner()
+    runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
     retries: list[int] = []
 
     async def fake_provider(*_a, **_kw):
@@ -1182,7 +1230,7 @@ async def _recover_frames(stub_frames, monkeypatch):
 
     out = []
     async for line in runner._recover_interrupted_continuation(
-        first(), "u", "sys", [], use_anthropic=True, model_cfg=None, session_id=1,
+        first(), "u", "sys", MessageArea(), use_anthropic=True, model_cfg=None, session_id=1,
     ):
         out.append(line)
     return out, len(retries)

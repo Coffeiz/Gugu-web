@@ -10,7 +10,7 @@ from agent.context.budget import (
     estimate_tool_schema_tokens,
     truncate_messages,
 )
-from agent.context.assembly import PromptMessages
+from agent.context.assembly import MessageArea
 from agent.context.tokens import estimate_tokens, message_text
 
 
@@ -148,8 +148,8 @@ def test_tool_schema_reservation_is_included_in_hard_budget():
 
 def test_turn_batch_is_counted_during_truncation():
     """本轮 batch 消息参与预算，不能绕过历史截断逻辑。"""
-    messages = PromptMessages(
-        conversation=[
+    messages = MessageArea.from_canonical_messages(
+        [
             {"role": "user", "content": "旧历史 " * 200},
             {"role": "user", "content": "当前问题"},
         ],
@@ -160,7 +160,7 @@ def test_turn_batch_is_counted_during_truncation():
 
     assert result.changed
     assert result.after_tokens <= ContextBudget(1200).soft_limit_tokens + 10
-    assert "旧历史" not in str(messages.conversation)
+    assert "旧历史" not in str(messages.provider_projection().to_messages())
 
 
 def test_truncate_messages_protects_tail_from_index():
@@ -186,94 +186,105 @@ def test_truncate_messages_target_ratio_tightens_cap():
 
 
 def test_provider_overflow_noop_when_within_limits():
-    messages = [{"role": "user", "content": "短消息"} for _ in range(3)]
+    messages = MessageArea.from_canonical_messages(
+        [{"role": "user", "content": "短消息"} for _ in range(3)],
+    )
 
     result = enforce_provider_overflow_fallback(messages, context_tokens=100)
 
     assert not result.changed
     assert result.oversized_item is False
-    assert len(messages) == 3
+    assert len(messages.provider_projection()) == 3
 
 
 def test_provider_overflow_keeps_last_ten_complete_units_in_place():
-    messages = [{"role": "user", "content": f"消息{i}" + "x" * 100} for i in range(40)]
+    messages = MessageArea.from_canonical_messages(
+        [{"role": "user", "content": f"消息{i}" + "x" * 100} for i in range(40)],
+    )
 
     result = enforce_provider_overflow_fallback(messages)
 
     assert result.changed
     assert result.dropped_messages == 30
-    assert len(messages) == 10
-    assert messages[0]["content"].startswith("消息30")
-    assert messages[-1]["content"].startswith("消息39")
+    projected = messages.provider_projection().to_messages()
+    assert len(projected) == 10
+    assert projected[0]["content"].startswith("消息30")
+    assert projected[-1]["content"].startswith("消息39")
 
 
 def test_provider_overflow_keeps_last_ten_complete_units():
-    messages = [{"role": "user", "content": f"m{index}" + "y" * 900} for index in range(30)]
+    messages = MessageArea.from_canonical_messages(
+        [{"role": "user", "content": f"m{index}" + "y" * 900} for index in range(30)],
+    )
 
     result = enforce_provider_overflow_fallback(messages)
 
     assert result.changed
-    assert len(messages) == 10
-    assert messages[0]["content"].startswith("m20")
+    projected = messages.provider_projection().to_messages()
+    assert len(projected) == 10
+    assert projected[0]["content"].startswith("m20")
 
 
 def test_provider_overflow_keeps_tool_round_atomic():
-    messages = [{"role": "user", "content": "旧消息" + "a" * 80} for _ in range(30)]
-    messages.append({"role": "assistant", "tool_calls": [{"id": "call-1"}], "content": None})
-    messages.append({"role": "tool", "tool_call_id": "call-1", "content": "工具结果"})
+    messages = MessageArea.from_canonical_messages([
+        *[{"role": "user", "content": "旧消息" + "a" * 80} for _ in range(30)],
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "call-1", "name": "search", "arguments": {},
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "call-1", "content": "工具结果",
+        }]},
+    ])
 
     result = enforce_provider_overflow_fallback(messages)
 
     assert result.changed
-    tool_index = next(index for index, item in enumerate(messages) if item.get("role") == "tool")
-    assert messages[tool_index - 1].get("tool_calls")
-    assert all(item.get("role") != "tool" for item in messages[:tool_index - 1])
+    projected = messages.provider_projection().to_messages()
+    tool_index = next(index for index, item in enumerate(projected) if item.get("role") == "tool")
+    assert projected[tool_index - 1].get("tool_calls")
+    assert all(item.get("role") != "tool" for item in projected[:tool_index - 1])
 
 
 def test_provider_overflow_preserves_fixed_prefix_and_protected_tail():
-    from agent.context.assembly import PromptMessages
+    from agent.context.assembly import MessageArea
 
     conversation = [{"role": "user", "content": f"m{i}" + "b" * 120} for i in range(30)]
     conversation[-1]["content"] = "受保护的收尾"
     original_count = len(conversation)
-    history = PromptMessages(list(conversation), fixed_prefix_size=1)
+    history = MessageArea.from_canonical_messages(list(conversation), fixed_prefix_size=1)
 
     result = enforce_provider_overflow_fallback(history, protected_from=28)
 
     assert result.changed
-    assert history[0]["content"] == conversation[0]["content"]
-    assert history[-1]["content"] == "受保护的收尾"
-    assert len(history) < original_count
+    projected = history.provider_projection().to_messages()
+    assert projected[0]["content"] == conversation[0]["content"]
+    assert projected[-1]["content"] == "受保护的收尾"
+    assert len(projected) < original_count
 
 
-def test_provider_overflow_uses_replace_conversation_when_available():
-    class _History:
-        def __init__(self, conversation):
-            self.conversation = list(conversation)
-            self.fixed_prefix_size = 0
-            self.replaced = None
-
-        def replace_conversation(self, items):
-            self.replaced = list(items)
-
-    history = _History([{"role": "user", "content": f"m{i}" + "c" * 100} for i in range(40)])
+def test_provider_overflow_updates_area_baseline_as_one_revision():
+    history = MessageArea.from_canonical_messages(
+        [{"role": "user", "content": f"m{i}" + "c" * 100} for i in range(40)],
+    )
+    original_revision = history.revision
 
     result = enforce_provider_overflow_fallback(history)
 
     assert result.changed
-    assert history.replaced is not None
-    assert len(history.replaced) == 10
-    assert len(history.conversation) == 40  # 原列表不被原地改写
+    assert len(history.provider_projection()) == 10
+    assert history.revision == original_revision + 1
 
 
 def test_provider_overflow_truncates_single_giant_message():
-    messages = [{"role": "user", "content": "z" * 30_000}]
+    messages = MessageArea.from_canonical_messages(
+        [{"role": "user", "content": "z" * 30_000}],
+    )
 
     result = enforce_provider_overflow_fallback(messages, context_tokens=100)
 
     assert result.changed
     assert result.oversized_item is True
-    assert len(messages[0]["content"]) < 30_000
+    assert len(messages.provider_projection()[0]["content"]) < 30_000
 
 
 def test_truncate_value_traverses_nested_structures():

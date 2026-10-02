@@ -109,7 +109,15 @@ class ProviderAdapter:
         return cache_capabilities(self, model)
 
     def render_history(self, messages):
-        """把 canonical history 转换为本 provider 的请求前历史。"""
+        """把不可变 Area snapshot 转换为本 provider 的请求前历史。"""
+        from agent.context.assembly.area import MessageArea
+        if isinstance(messages, MessageArea):
+            from agent.context.history import render_canonical_area_snapshot
+            options = dict(messages.render_options or {})
+            options.setdefault("api_format", self.api_format)
+            return render_canonical_area_snapshot(
+                messages.snapshot(), source=messages, options=options,
+            )
         from agent.context.canonical_tool_history import render_events_for_provider
         return render_events_for_provider(messages)
 

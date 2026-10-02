@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 BranchName = Literal["compaction", "reflection", "knowledge"]
 OutputMode = Literal["text", "json"]
+LONG_RUNNING_PROVIDER_READ_TIMEOUT_SECONDS = 300.0
 # append_reuse：只读 sibling branch（PRD-LLM-27 §6.6），复用会话前缀但不修改
 # 主 continuation——分支响应不作为主会话下一轮的 Responses API 续接。
 # 没有 history_messages 的内部调用仍可执行，但不再携带独立分支模式。
@@ -20,9 +21,10 @@ BranchMode = Literal["append_reuse"]
 class BranchInput:
     """分支请求的稳定前缀和本次增量。
 
-    history_messages 非空时走「追加式」：直接复用会话的 canonical 消息序列，
-    delta 作为末尾追加的 user 消息发送，让分支请求与主对话共享前缀以命中
-    provider 的会话内缓存。history_messages 为空时仍执行一次无历史的内部调用，
+    history_messages 非空时走「追加式」：复用不可变 provider projection（或尚未
+    投影的 canonical 重建历史），delta 作为末尾 user 消息只追加一次，让分支请求
+    与主对话共享前缀。已渲染投影必须保留 ProviderConversation 类型，
+    history_messages 为空时仍执行一次无历史的内部调用，
     但不再引入独立分支模式语义。
     """
 
@@ -33,7 +35,7 @@ class BranchInput:
     session_id: int | None = None
     scope_owner_id: str | int | None = None
     run_id: str | None = None
-    history_messages: tuple[Any, ...] = ()
+    history_messages: Any = ()
     # 追加式分支必须带上主 run 的同款工具声明：provider 把 tools 一并算进可缓存
     # 前缀，缺了它连消息部分都命中不了（实测 100% → 15%）。分支只输出文本、不消费
     # 工具调用，也不要设置 tool_choice——实测那同样会让命中失效。
@@ -54,6 +56,7 @@ class BranchPolicy:
     max_retries: int = 0
     max_tokens: int = 800
     thinking: str | None = None
+    provider_read_timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)

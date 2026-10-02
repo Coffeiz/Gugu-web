@@ -347,15 +347,18 @@ flowchart LR
     S[system<br/>人格 / policy / 稳定规则] --> C[Context Assembly]
     P[snapshot<br/>会话状态 / Memory 摘要 / 工具目录] --> C
     H[history<br/>已封存的对话与工具往返] --> C
-    I[本轮用户输入与上下文] --> B[NewMessageBatch]
-    C --> R[固定上下文 + 本轮 batch]
-    B --> R
+    I[本轮用户输入与上下文] --> B[MessageBatch]
+    H --> A[MessageArea]
+    B --> A
+    C --> R[固定上下文 + ProviderConversation]
+    A --> R
     R --> L[LLM 提供商]
     T[定时任务当前时间] --> B
     L --> Q{是否需要工具续轮}
     Q -- 是 --> B
-    Q -- 否 --> K[seal / canonical 投影]
-    K --> H2[持久化到 history]
+    Q -- 否 --> D[PersistenceDelta]
+    A --> D
+    D --> H2[事务持久化到 history]
     H2 --> H
 ```
 
@@ -364,10 +367,10 @@ flowchart LR
 | `system` | 人格、行为规则、安全策略和稳定的 Agent 工作原则 | 跨会话复用，尽量保持不变 |
 | `snapshot` | 会话信息、长期上下文摘要、能力目录、工具短简介与字段签名 | 会话级持久化，变化时重新生成 |
 | `history` | 已持久化的用户消息、模型回复、工具调用、工具结果、Skill 使用和关键上下文事件 | 支持多轮恢复、压缩和回放 |
-| `batch` | 当前用户消息、姿态、消息时间、RAG 结果、IM/工作区提醒，以及本轮模型与工具往返 | 先保证本轮连续提交；成功收尾后封存为 canonical history |
+| `MessageBatch` / `MessageArea` | Batch 是本轮 canonical 增量；Area 按顺序统一持有恢复历史和本轮条目、来源与持久化策略 | 每轮追加到 Area；Provider 投影只读生成，收尾时按 delta 持久化 |
 | `dynamic tail` | 特定提供商请求才需要的实时临时信息 | 可选；只对本次请求有效，不进入 history，也不污染稳定前缀 |
 
-`batch` 不会把提供商返回的消息直接散落追加到上下文中。每轮先由统一组装器生成一个 `NewMessageBatch`，固定本轮消息顺序和元数据；提交时同时保留提供商投影与 canonical 投影，封存后再追加到 `history`，收尾阶段将 canonical batch 持久化。下一次请求从已持久化的 history 恢复，而不是从提供商 wire 格式反推历史。
+每轮由统一组装器生成一个 `MessageBatch`，只承载 canonical 消息增量和分组元数据；追加后由 `MessageArea` 负责唯一的运行期顺序、来源和持久化策略。Provider 请求从 Area 的不可变快照生成 `ProviderConversation`，不会把 Provider wire 写回 Area；收尾阶段只将 Area 生成的 `PersistenceDelta` 事务性持久化。下一次请求仍从数据库恢复历史，而不是从 Provider wire 格式反推。
 
 上下文的组装顺序保持稳定：`system` 提供跨会话规则，`snapshot` 放在 history 之前形成固定前缀，已封存的 `history` 后接当前 `batch`。普通 Web/IM 请求的消息时间、RAG 和群聊运行上下文都在 `batch` 内；定时任务的当前时间也通过 `batch` 注入。`dynamic tail` 只作为可选的提供商专属边界，新增消息始终插在它之前；因此工具续轮、压缩和跨提供商转换时都不会把临时信息误写进历史或打乱稳定前缀。
 

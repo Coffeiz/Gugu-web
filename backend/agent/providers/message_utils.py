@@ -8,30 +8,30 @@ from __future__ import annotations
 
 import copy
 import json
-from dataclasses import dataclass
 from typing import Any
 
 from agent.context.canonical_context import digest
 from agent.context.cache_state import CachePlan, CacheState
+from agent.context.provider_conversation import ProviderConversation
+
+ProviderHistoryProjection = ProviderConversation
 
 
-@dataclass(frozen=True)
-class ProviderHistoryProjection:
-    """Provider 出站历史及其脱敏身份指纹。"""
+def render_provider_history(messages, adapter) -> ProviderHistoryProjection:
+    """从 MessageArea 快照生成不可变 ProviderConversation。
 
-    messages: Any
-    canonical_digest: str
-    wire_digest: str
-
-
-def render_provider_history(messages: list, adapter) -> ProviderHistoryProjection:
-    """生成带 canonical/wire 身份的 Provider 历史投影。"""
-    canonical = getattr(messages, "conversation", messages)
+    MessageArea 的 revision/digest 被绑定在投影上，固定 Snapshot 和当前
+    provider-only tail 则保留各自边界，不会写回 canonical 区域。
+    """
+    from agent.context.assembly.area import MessageArea
+    if not isinstance(messages, MessageArea):
+        raise TypeError("Provider history renderer 只接受 MessageArea")
     rendered = adapter.render_history(messages)
-    return ProviderHistoryProjection(
-        messages=rendered,
-        canonical_digest=digest(canonical),
-        wire_digest=digest(rendered),
+    if not isinstance(rendered, ProviderConversation):
+        raise TypeError("Provider adapter 必须返回 ProviderConversation")
+    return rendered.with_messages(
+        rendered.to_messages(),
+        diagnostics={"renderer": str(getattr(adapter, "name", "unknown"))},
     )
 
 
@@ -55,6 +55,14 @@ def _contains_volatile_image(value: Any) -> bool:
 
 def _volatile_message_indices(messages: list) -> set[int]:
     """记录首轮请求中带内联图片的消息位置，后续只折叠这些初始图片。"""
+    from agent.context.assembly.area import MessageArea
+    from agent.context.provider_conversation import ProviderConversation
+    if isinstance(messages, MessageArea):
+        messages = messages.provider_projection().conversation
+    elif isinstance(messages, ProviderConversation):
+        messages = messages.conversation
+    else:
+        raise TypeError("图片边界只接受 MessageArea 或 ProviderConversation")
     return {
         index for index, message in enumerate(messages)
         if _contains_volatile_image(message)
@@ -136,13 +144,10 @@ def _sanitize_openai_tool_history(messages: list) -> tuple[list, dict[str, Any]]
 
         return cleaned, retained_indices
 
-    is_prompt_messages = hasattr(messages, "fixed_prefix_size")
-    if is_prompt_messages:
-        conversation = list(messages.conversation)
-        dynamic_tail = list(messages.dynamic_tail)
-    else:
-        conversation = list(messages)
-        dynamic_tail = []
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("OpenAI tool-history sanitizer 只接受 ProviderConversation")
+    conversation = messages.conversation
+    dynamic_tail = messages.dynamic_tail
 
     cleaned_conversation, retained = clean_sequence(conversation)
     cleaned_tail, retained_tail = clean_sequence(dynamic_tail)
@@ -188,25 +193,17 @@ def _sanitize_openai_tool_history(messages: list) -> tuple[list, dict[str, Any]]
         "first_changed_index": min(changed_positions) if changed_positions else None,
     }
 
-    if not is_prompt_messages:
-        return (cleaned_conversation if changed else messages), diagnostics
     if not changed:
         return messages, diagnostics
 
-    from agent.context.assembly import PromptMessages
-
     old_fixed_size = int(getattr(messages, "fixed_prefix_size", 0) or 0)
     fixed_prefix_size = sum(index < old_fixed_size for index in retained)
-    result = PromptMessages(cleaned_conversation, fixed_prefix_size=fixed_prefix_size)
-    if cleaned_tail:
-        result.set_dynamic_tail(cleaned_tail)
-    old_to_new = {old: new for new, old in enumerate(retained)}
-    for name in ("canonical_context", "_canonical_batches", "_canonical_batch_digests"):
-        if hasattr(messages, name):
-            value = getattr(messages, name)
-            setattr(result, name, list(value) if name.startswith("_canonical_") else value)
-    if hasattr(messages, "_canonical_batch_metadata"):
-        result._canonical_batch_metadata = copy.deepcopy(messages._canonical_batch_metadata)
+    result = messages.with_messages(
+        cleaned_conversation + cleaned_tail,
+        fixed_prefix_size=fixed_prefix_size,
+        dynamic_tail_size=len(cleaned_tail),
+        diagnostics={"openai_history_sanitized": diagnostics},
+    )
     return result, diagnostics
 
 
@@ -233,10 +230,8 @@ def _merge_system_content(messages: list[dict]) -> Any:
     return merged
 
 
-def _merge_prompt_messages(messages, merged_system: dict):
-    """合并 PromptMessages 后恢复其 provider-only 边界和缓存元数据。"""
-    from agent.context.assembly import PromptMessages
-
+def _merge_provider_conversation(messages, merged_system: dict):
+    """在不可变 ProviderConversation 上合并 system 并保留投影边界。"""
     conversation = list(messages.conversation)
     dynamic_tail = list(messages.dynamic_tail)
     conversation_system_indices = {
@@ -276,30 +271,11 @@ def _merge_prompt_messages(messages, merged_system: dict):
         if merged_system_is_fixed
         else 0
     )
-    result = PromptMessages(
-        normalized_conversation,
+    return messages.with_messages(
+        normalized_conversation + normalized_tail,
         fixed_prefix_size=fixed_prefix_size,
+        dynamic_tail_size=len(normalized_tail),
     )
-    if normalized_tail:
-        result.set_dynamic_tail(normalized_tail)
-
-    old_to_new = {index: 0 for index in all_system_indices}
-    next_index = 1
-    for index in range(len(conversation)):
-        if index in conversation_system_indices:
-            continue
-        old_to_new[index] = next_index
-        next_index += 1
-    if hasattr(messages, "canonical_context"):
-        result.canonical_context = messages.canonical_context
-    result._canonical_batches = list(getattr(messages, "_canonical_batches", ()))
-    result._canonical_batch_digests = list(
-        getattr(messages, "_canonical_batch_digests", ())
-    )
-    result._canonical_batch_metadata = copy.deepcopy(list(
-        getattr(messages, "_canonical_batch_metadata", ())
-    ))
-    return result
 
 
 def merge_openai_system_messages(messages: list) -> list:
@@ -322,53 +298,60 @@ def merge_openai_system_messages(messages: list) -> list:
     merged_system = copy.deepcopy(system_messages[0])
     merged_system["role"] = "system"
     merged_system["content"] = _merge_system_content(system_messages)
-    if not hasattr(messages, "fixed_prefix_size"):
-        normalized = [merged_system]
-        normalized.extend(
-            copy.deepcopy(message)
-            for message in messages
-            if not (isinstance(message, dict) and message.get("role") == "system")
-        )
-        return normalized
-
-    return _merge_prompt_messages(messages, merged_system)
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("OpenAI system merger 只接受 ProviderConversation")
+    return _merge_provider_conversation(messages, merged_system)
 
 
 def render_openai_request_history(
-    messages: list,
+    messages,
     adapter,
     *,
     with_diagnostics: bool = False,
-) -> list | tuple[list, dict[str, Any]]:
+) -> ProviderConversation | tuple[ProviderConversation, dict[str, Any]]:
     """生成清洗后的 OpenAI provider 历史投影。
 
     缓存策略、LoopScope 和实际 Chat Completions 请求必须共用这个投影；调用方应在
     此步骤之后再计算/插入缓存锚点，避免清理历史后请求前缀与诊断指纹不一致。
     """
-    rendered = adapter.render_history(messages)
+    if isinstance(messages, ProviderConversation):
+        rendered = messages
+    else:
+        from agent.context.assembly.area import MessageArea
+        if not isinstance(messages, MessageArea):
+            raise TypeError("OpenAI request history 只接受 MessageArea 或 ProviderConversation")
+        rendered = adapter.render_history(messages)
     cleaned, diagnostics = _sanitize_openai_tool_history(rendered)
     cleaned = merge_openai_system_messages(cleaned)
     return (cleaned, diagnostics) if with_diagnostics else cleaned
 
 
-def strip_responses_item_ids(messages: list) -> list:
+def strip_responses_item_ids(messages: ProviderConversation) -> ProviderConversation:
     """从 Chat Completions 请求副本中剥离 Responses 专属历史元数据。"""
-    result = copy.deepcopy(messages)
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("Responses item 清理只接受 ProviderConversation")
+    result = copy.deepcopy(messages.to_messages())
     for message in result:
         if not isinstance(message, dict):
             continue
         for call in message.get("tool_calls") or ():
             if isinstance(call, dict):
                 call.pop("responses_item_id", None)
-    return result
+    return messages.with_messages(result)
 
 
-def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
-    """模型首轮消费图片后，把初始图片消息收敛为稳定文本。"""
-    for index in indices:
-        if index < 0 or index >= len(messages):
+def _collapse_volatile_messages(messages, indices: set[int]) -> int:
+    """模型首轮消费图片后，通过 Area revision 将初始图片收敛为稳定文本。"""
+    from agent.context.assembly.area import MessageArea
+    if not isinstance(messages, MessageArea):
+        raise TypeError("图片消费状态修订只接受 MessageArea")
+    changed = 0
+    for index in sorted(indices):
+        entries = messages.entries
+        if index < 0 or index >= len(entries):
             continue
-        message = messages[index]
+        entry = entries[index]
+        message = entry.canonical_message
         content = message.get("content")
         if not isinstance(content, list) or not _contains_volatile_image(content):
             continue
@@ -378,58 +361,108 @@ def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
             if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
         ]
         message["content"] = "\n".join(text_parts) or "[图片已查看]"
+        messages.revise_entry(
+            entry.entry_id, message, expected_revision=messages.revision,
+        )
+        changed += 1
+    return changed
+
+
+def _cache_identity_fields(messages, conversation_count: int, fallback: CacheState | None = None) -> dict[str, Any]:
+    if isinstance(messages, ProviderConversation):
+        return {
+            "area_revision": messages.area_revision,
+            "area_digest": messages.area_digest,
+            "area_entry_count": messages.area_entry_count,
+            "area_prefix_digest": messages.area_prefix_digest(messages.area_entry_count),
+            "projection_entry_count": conversation_count,
+            "projection_prefix_digest": messages.projection_prefix_digest(conversation_count),
+        }
+    if fallback is None:
+        return {}
+    return {
+        "area_revision": fallback.area_revision,
+        "area_digest": fallback.area_digest,
+        "area_entry_count": fallback.area_entry_count,
+        "area_prefix_digest": fallback.area_prefix_digest,
+        "projection_entry_count": fallback.projection_entry_count,
+        "projection_prefix_digest": fallback.projection_prefix_digest,
+    }
+
+
+def _projection_identity_is_current(state: CacheState, messages, conversation_count: int) -> bool:
+    if not isinstance(messages, ProviderConversation):
+        return True
+    if state.area_digest and (
+        state.area_entry_count > messages.area_entry_count
+        or not state.area_prefix_digest
+        or messages.area_prefix_digest(state.area_entry_count) != state.area_prefix_digest
+    ):
+        return False
+    if state.projection_prefix_digest and (
+        state.projection_entry_count > conversation_count
+        or messages.projection_prefix_digest(state.projection_entry_count)
+        != state.projection_prefix_digest
+    ):
+        return False
+    return True
 
 
 def _history_cache_state(messages: list, state: CacheState | None = None, *,
                          provider: str = "", api_format: str = "",
                          model: str = "", single_anchor: bool = False) -> CachePlan:
-    """基于 canonical 消息 digest 计算一次请求的缓存计划。
-
-    这里不再读取或修改 PromptMessages 的隐藏字段。跨轮身份由 ``CacheState``
-    保存，当前请求只把 digest 映射为临时 wire 下标。
-    """
-    conversation = getattr(messages, "conversation", messages)
-    cache_limit = len(conversation)
-    if cache_limit <= 0:
-        empty = CacheState(provider, api_format, model,
-                           "single" if single_anchor else "multi",
-                           revision=(state.revision + 1 if state else 1))
-        return CachePlan(0, (), "", "", empty)
-
-    volatile_index = next(
-        (index for index, message in enumerate(conversation[:cache_limit])
-         if _contains_volatile_image(message)),
-        None,
-    )
-    stable_limit = volatile_index if volatile_index is not None else cache_limit
+    """按 wire 前缀和 Area 身份计算缓存计划；不修改输入 projection。"""
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("Cache state 只接受 ProviderConversation")
+    conversation = messages.conversation
+    conversation_count = len(conversation)
     strategy = "single" if single_anchor else "multi"
-    state = state or CacheState()
-    digests = [_cache_message_digest(message)
-               for message in conversation[:stable_limit]]
+    previous = state or CacheState()
+    if conversation_count == 0:
+        empty_state = CacheState(
+            provider=provider, api_format=api_format, model=model,
+            strategy=strategy, revision=previous.revision + 1,
+            **_cache_identity_fields(messages, 0, previous),
+        )
+        return CachePlan(0, (), "", "", empty_state)
+
+    stable_limit = _stable_history_limit(conversation)
+    if not _projection_identity_is_current(previous, messages, conversation_count):
+        previous = CacheState()
+    digests = [_cache_message_digest(item) for item in conversation[:stable_limit]]
     baseline_index = _cache_baseline_index(
-        conversation, digests, stable_limit, state,
+        conversation, digests, stable_limit, previous,
         provider=provider, api_format=api_format, model=model,
         strategy=strategy,
     )
     latest_anchor = stable_limit - 1
-    anchors = ({latest_anchor} if single_anchor else {baseline_index, latest_anchor})
-    anchors = tuple(sorted(index for index in anchors if 0 <= index < stable_limit))
+    anchor_indices = _history_cache_anchors(
+        baseline_index, latest_anchor, stable_limit, single_anchor,
+    )
     next_state = CacheState(
-        provider=provider,
-        api_format=api_format,
-        model=model,
+        provider=provider, api_format=api_format, model=model,
         strategy=strategy,
         baseline_digest=digests[baseline_index] if 0 <= baseline_index < stable_limit else "",
         latest_digest=digests[latest_anchor] if latest_anchor >= 0 else "",
-        revision=state.revision + 1,
+        revision=previous.revision + 1,
+        **_cache_identity_fields(messages, conversation_count, previous),
     )
     return CachePlan(
-        stable_limit=stable_limit,
-        anchor_indices=anchors,
-        baseline_digest=next_state.baseline_digest,
-        latest_digest=next_state.latest_digest,
-        next_state=next_state,
+        stable_limit, anchor_indices, next_state.baseline_digest,
+        next_state.latest_digest, next_state,
     )
+
+
+def _stable_history_limit(conversation: list[dict]) -> int:
+    for index, message in enumerate(conversation):
+        if _contains_volatile_image(message):
+            return index
+    return len(conversation)
+
+
+def _history_cache_anchors(baseline: int, latest: int, limit: int, single: bool) -> tuple[int, ...]:
+    candidates = (latest,) if single else (baseline, latest)
+    return tuple(sorted(index for index in candidates if 0 <= index < limit))
 
 
 def _cache_message_digest(message: dict) -> str:
@@ -478,32 +511,20 @@ def _without_cache_control(value: Any) -> Any:
     return value
 
 
-def _cache_message_copy(messages: list, rendered: list[dict]):
-    """复制缓存标记后的消息，同时保留 PromptMessages 的动态尾缀边界。"""
-    if not hasattr(messages, "conversation"):
-        return rendered
-
-    from agent.context.assembly import PromptMessages
-
-    # 缓存锚点可以因内联图片而提前截止，但 conversation 与 provider-only
-    # dynamic_tail 的边界仍由 PromptMessages 自己定义，两者不能混用。
-    conversation_count = len(messages.conversation)
-    result = PromptMessages(
-        rendered[:conversation_count],
-        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
-    )
-    if len(rendered) > conversation_count:
-        result.set_dynamic_tail([
+def _cache_message_copy(messages: list, rendered: list[dict], *, cache_plan=None):
+    """复制缓存标记后的 ProviderConversation，并剥离动态尾部缓存元数据。"""
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("缓存投影只能基于 ProviderConversation")
+    conversation_count = messages.conversation_count
+    tail = [
             _without_cache_control(message)
             for message in rendered[conversation_count:]
-        ])
-    for name in (
-        "canonical_context", "_canonical_batches", "_canonical_batch_digests",
-        "_canonical_batch_metadata",
-    ):
-        if hasattr(messages, name):
-            setattr(result, name, getattr(messages, name))
-    return result
+    ]
+    return messages.with_messages(
+        rendered[:conversation_count] + tail,
+        dynamic_tail_size=len(tail),
+        cache_plan=cache_plan,
+    )
 
 
 def _apply_history_cache(messages: list, plan: CachePlan, *, single_anchor: bool):
@@ -530,7 +551,7 @@ def _apply_history_cache(messages: list, plan: CachePlan, *, single_anchor: bool
             ]
         new_messages.append(clone)
 
-    return _cache_message_copy(messages, new_messages), plan.next_state
+    return _cache_message_copy(messages, new_messages, cache_plan=plan), plan.next_state
 
 
 def _with_history_cache(messages: list, state: CacheState | None = None, *,
@@ -561,7 +582,9 @@ def _with_single_history_cache(messages: list, state: CacheState | None = None, 
 
 def _with_system_cache_control(messages: list) -> list:
     """只在 provider 请求副本上标记连续 system 前缀，避免污染会话 history。"""
-    conversation_count = len(getattr(messages, "conversation", messages))
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("System cache marker 只接受 ProviderConversation")
+    conversation_count = messages.conversation_count
     result = copy.deepcopy(list(messages))
     for message in result[:conversation_count]:
         if message.get("role") != "system":
@@ -577,7 +600,7 @@ def _with_system_cache_control(messages: list) -> list:
                 *content[:-1],
                 {**content[-1], "cache_control": {"type": "ephemeral"}},
             ]
-    # _cache_message_copy 统一负责恢复 PromptMessages 边界并清理 dynamic_tail。
+    # _cache_message_copy 统一保留不可变 projection 边界并清理 dynamic_tail。
     return _cache_message_copy(messages, result)
 
 

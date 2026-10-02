@@ -325,15 +325,18 @@ flowchart LR
     S[system<br/>persona / policy / stable rules] --> C[Context Assembly]
     P[snapshot<br/>session state / Memory summary / tool catalog] --> C
     H[history<br/>sealed conversation and tool exchanges] --> C
-    I[Current user input and context] --> B[NewMessageBatch]
-    C --> R[Stable context + current batch]
-    B --> R
+    I[Current user input and context] --> B[MessageBatch]
+    H --> A[MessageArea]
+    B --> A
+    C --> R[Stable context + ProviderConversation]
+    A --> R
     R --> L[LLM Provider]
     T[Current time for scheduled tasks] --> B
     L --> Q{Tool follow-up needed?}
     Q -- Yes --> B
-    Q -- No --> K[seal / canonical projection]
-    K --> H2[Persist to history]
+    Q -- No --> D[PersistenceDelta]
+    A --> D
+    D --> H2[Persist transactionally to history]
     H2 --> H
 ```
 
@@ -342,10 +345,10 @@ flowchart LR
 | `system` | Persona, behavior rules, security policy, and stable Agent principles | Reused across sessions and kept as stable as possible |
 | `snapshot` | Session information, long-term context summaries, capability catalog, short tool descriptions, and field signatures | Persisted at session scope and regenerated when it changes |
 | `history` | Persisted user messages, model replies, tool calls and results, Skill usage, and key context events | Supports multi-turn recovery, compaction, and replay |
-| `batch` | Current user message, stance, message time, RAG results, IM/workspace reminders, and this round's model/tool exchanges | Submitted as one continuous batch, then sealed into canonical history |
+| `MessageBatch` / `MessageArea` | The batch is this round's canonical delta; the area owns restored history and new entries, in order, with source and persistence policy | Each round appends to the area; provider projection is read-only, and finalization persists a delta |
 | `dynamic tail` | Real-time temporary information required by a specific provider request | Optional; valid only for the current request and never persisted to history |
 
-Each round is assembled as a `NewMessageBatch` with a fixed message order and metadata. The provider projection and canonical projection are retained together; canonical history is persisted after the run finishes. The next request restores persisted history instead of reconstructing it from provider wire format.
+Each round is assembled as a `MessageBatch` containing only the canonical message delta and grouping metadata. After append, `MessageArea` is the sole source of runtime order, source, and persistence policy. Provider requests get an immutable `ProviderConversation` rendered from an Area snapshot; Provider wire is never written back into the Area. Finalization transactionally persists only the `PersistenceDelta` produced by the Area. The next request restores history from the database rather than reconstructing it from Provider wire format.
 
 The stable assembly order is `system`, `snapshot`, sealed `history`, and the current `batch`. New messages are always inserted before the optional `dynamic tail`, so tool follow-ups, compaction, and cross-provider conversion do not write temporary information into history or disturb the stable prefix.
 

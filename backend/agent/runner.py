@@ -84,7 +84,7 @@ async def _run_collect_unlocked(
         # Responses 不把 system 消息放进 input；稳定 system prompt 必须进入
         # instructions，否则人格、规则和工具行为约束都会丢失。
         exec_.system_prompt,
-        exec_.prepared.anthr_messages if exec_.use_anthropic else exec_.prepared.oa_messages,
+        exec_.prepared.message_area,
         use_anthropic=exec_.use_anthropic,
         model_cfg=exec_.model_cfg,
         session_id=session_id,
@@ -188,7 +188,7 @@ async def _run_stream_unlocked(
         # Responses 不把 system 消息放进 input；稳定 system prompt 必须进入
         # instructions，否则人格、规则和工具行为约束都会丢失。
         exec_.system_prompt,
-        exec_.prepared.anthr_messages if exec_.use_anthropic else exec_.prepared.oa_messages,
+        exec_.prepared.message_area,
         use_anthropic=exec_.use_anthropic,
         model_cfg=exec_.model_cfg,
         session_id=session_id,

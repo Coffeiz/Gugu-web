@@ -27,15 +27,15 @@ def _clean_snapshot_registry():
 
 
 def _messages(*turns: str):
-    """构造带 dynamic_tail 的 PromptMessages 形态容器（只用到被测接口）。"""
-    from agent.context.assembly import PromptMessages
+    """构造带 dynamic_tail 的 MessageArea 形态容器（只用到被测接口）。"""
+    from agent.context.assembly import MessageArea, MessageBatch
 
-    messages = PromptMessages()
+    messages = MessageArea.from_canonical_messages()
     for turn in turns:
-        messages.append_batch([
+        messages.append_batch(MessageBatch.from_canonical_messages([
             {"role": "user", "content": turn},
             {"role": "assistant", "content": f"回复：{turn}"},
-        ])
+        ]))
     messages.set_dynamic_tail([{"role": "user", "content": "[time] 12:00"}])
     return messages
 
@@ -192,19 +192,22 @@ async def test_append_reuse_does_not_invalidate_reasoning_state(monkeypatch):
 # ── 共享前缀渲染 helper（§6.2 契约）─────────────────────────────────────
 
 
-def test_render_branch_prefix_returns_plain_list_detached_from_canonical():
+def test_render_branch_prefix_returns_immutable_provider_projection():
     from agent.context.prefix_history import render_branch_prefix
+    from agent.context.provider_conversation import ProviderConversation
 
     prefix = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "好"}]
     rendered = render_branch_prefix(prefix, _ai("deepseek"))
-    # 普通 list（脱离 canonical 簿记），内容与主 run 渲染口径一致
-    assert type(rendered) is list
+    # 保留 wire 类型边界，后续分支不能把已渲染内容重新解释为 canonical。
+    assert isinstance(rendered, ProviderConversation)
     assert len(rendered) == 2
+    assert rendered.to_messages()[0] == {"role": "user", "content": "hi"}
     # 输入不被修改
     assert prefix[0] == {"role": "user", "content": "hi"}
 
 
-def test_render_branch_prefix_failure_falls_back_to_input(monkeypatch):
+def test_render_branch_prefix_surfaces_projection_failure(monkeypatch):
+    import pytest
     import agent.context.prefix_history as ph
 
     def boom(ai):
@@ -212,5 +215,5 @@ def test_render_branch_prefix_failure_falls_back_to_input(monkeypatch):
 
     monkeypatch.setattr("agent.providers.adapter_for", boom)
     prefix = [{"role": "user", "content": "hi"}]
-    rendered = ph.render_branch_prefix(prefix, _ai("deepseek"))
-    assert rendered == prefix
+    with pytest.raises(RuntimeError, match="no adapter"):
+        ph.render_branch_prefix(prefix, _ai("deepseek"))

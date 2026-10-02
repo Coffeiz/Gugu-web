@@ -98,7 +98,7 @@ def _wire_message_diagnostics(messages: list[dict[str, Any]]) -> list[dict[str, 
 
 def request_diagnostics(messages: Any, *, system_text: str, tools: list[dict],
                         adapter: Any, model: str, api_format: str = "unknown",
-                        previous_messages: list[dict] | None = None) -> dict[str, Any]:
+                        previous_messages: Any = None) -> dict[str, Any]:
     context = getattr(messages, "canonical_context", None)
     if context is None:
         return {"available": False}

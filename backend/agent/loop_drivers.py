@@ -47,8 +47,11 @@ from app.core.errors import RetryableError
 from app.core.redaction import diag_log
 from app.core.retry import LLM_RETRY
 from app.core.redaction import diag_log
+from agent.context.assembly.area import MessageArea
 from agent.context.canonical_tool_history import ToolCall, ToolResult
+from agent.context.assembly.batch import request_only_batch
 from agent.context.cache_state import CacheState
+from agent.context.provider_conversation import ProviderConversation
 from agent.providers.message_utils import (
     _collapse_volatile_messages,
     _contains_volatile_image,
@@ -117,10 +120,10 @@ class LoopDriver(Protocol):
 
     def extract_provider_state(self, result: RoundResult, ctx=None) -> dict | None: ...
 
-    def prepare(self, tool_names: list[str], ai, messages: list, system_text: str | None,
+    def prepare(self, tool_names: list[str], ai, messages: MessageArea, system_text: str | None,
                 tool_snapshot=None): ...
     def update_tools(self, ctx, tool_names: list[str], tool_snapshot=None) -> None: ...
-    def run_round(self, client, ctx, messages: list) -> AsyncGenerator[tuple, None]: ...
+    def run_round(self, client, ctx, messages: MessageArea) -> AsyncGenerator[tuple, None]: ...
     def build_tool_round(self, result: RoundResult, dispatched: list) -> list[dict]: ...
     def build_followup(self, result: RoundResult, next_content: str,
                        assistant_fallback: str = "（…）") -> list[dict]: ...
@@ -150,8 +153,10 @@ class _AnthropicCtx:
     cache_state: CacheState = field(default_factory=CacheState)
 
 
-def _anthropic_history_tool_use_ids(messages) -> set[str]:
-    conversation = getattr(messages, "conversation", messages)
+def _anthropic_history_tool_use_ids(messages, adapter) -> set[str]:
+    # 恢复的 Area entry 是 row envelope，工具块存于 content_json；live entry
+    # 则直接使用 content。统一扫描实际投影，避免漏掉历史工具轮或续接已裁剪的调用。
+    conversation = render_provider_history(messages, adapter)
     result = set()
     for message in conversation or ():
         if not isinstance(message, dict) or message.get("role") != "assistant":
@@ -170,7 +175,9 @@ def _restore_anthropic_history_thinking(messages, thinking_by_tool_id: dict[str,
     """把加密续接状态中的 thinking 块放回对应历史工具轮，不改变其他消息。"""
     if not thinking_by_tool_id:
         return
-    conversation = getattr(messages, "conversation", messages)
+    # 调用方传入的是 ProviderConversation 的本次请求副本；这里只修复出站
+    # payload，不能回写 canonical Area。
+    conversation = messages
     for message in conversation:
         if not isinstance(message, dict) or message.get("role") != "assistant":
             continue
@@ -300,7 +307,7 @@ class AnthropicDriver:
             thinking_param=thinking_param, system_param=system_param,
             supports_active_cache=supports_active_cache, adapter=adapter, model=ai.model,
             generation_param=adapter.build_anthropic_generation_params(ai),
-            history_tool_use_ids=_anthropic_history_tool_use_ids(messages),
+            history_tool_use_ids=_anthropic_history_tool_use_ids(messages, adapter),
             tool_state_digest=hashlib.sha256(json.dumps(
                 tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode("utf-8")).hexdigest()[:16],
@@ -324,15 +331,17 @@ class AnthropicDriver:
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
         #    绝不能混入 cache_control，否则下次加载历史会带着旧断点、累积超过 4 个上限）。
         projection = render_provider_history(messages, ctx.adapter)
-        outbound = projection.messages
+        outbound = projection
         # 历史已在 LLMRunner._run_loop 进入时按 canonical 结构清洗一次。这里
         # 只能做 provider 投影，不能对渲染后的普通文本再次清洗，否则
         # time-context 等 canonical 边界会丢失并在每轮被误合并。
         from agent.context.provider_history import render_anthropic_message_roles
         outbound = render_anthropic_message_roles(outbound, ctx.adapter)
+        outbound_messages = outbound.to_messages()
         _restore_anthropic_history_thinking(
-            outbound, getattr(ctx, "history_thinking_by_tool_id", {})
+            outbound_messages, getattr(ctx, "history_thinking_by_tool_id", {})
         )
+        outbound = outbound.with_messages(outbound_messages)
         restored_blocks = getattr(ctx, "restored_blocks", None)
         restored_blocks_for_trace = copy.deepcopy(restored_blocks) if restored_blocks else None
         restored_insert_index = None
@@ -340,22 +349,14 @@ class AnthropicDriver:
             restored = {"role": "assistant", "content": copy.deepcopy(restored_blocks)}
             # 当前请求的 user 消息仍由业务历史提供；状态只在 provider boundary
             # 插入，且用完即清，避免同一次 run 重复回放旧响应。
-            if hasattr(outbound, "conversation"):
-                # dynamic_tail 是仅本次请求使用的 provider 提醒，不是对话末尾。
-                # 恢复块要插入 conversation，不能通过切片把 PromptMessages 摊平，
-                # 否则后面的 Anthropic cache helper 会把动态提醒也当成稳定历史。
-                conversation = outbound.conversation
-                insert_at = len(conversation)
-                if conversation and conversation[-1].get("role") == "user":
-                    insert_at -= 1
-                restored_insert_index = insert_at
-                outbound.insert(insert_at, restored)
-            elif outbound and outbound[-1].get("role") == "user":
-                restored_insert_index = len(outbound) - 1
-                outbound = outbound[:-1] + [restored, outbound[-1]]
-            else:
-                restored_insert_index = len(outbound)
-                outbound.append(restored)
+            conversation = outbound.conversation
+            insert_at = len(conversation)
+            if conversation and conversation[-1].get("role") == "user":
+                insert_at -= 1
+            restored_insert_index = insert_at
+            outbound_messages = outbound.to_messages()
+            outbound_messages.insert(insert_at, restored)
+            outbound = outbound.with_messages(outbound_messages)
             ctx.restored_blocks = None
         pending_cache_state = None
         if ctx.supports_active_cache:
@@ -374,10 +375,11 @@ class AnthropicDriver:
             context=ctx,
             restored_blocks=restored_blocks_for_trace,
             restored_insert_index=restored_insert_index,
-            projection=projection,
+            projection=_msgs,
         )
+        sdk_messages = _msgs.to_messages()
         kwargs = dict(
-            model=ctx.model, system=ctx.system_param, messages=_msgs,
+            model=ctx.model, system=ctx.system_param, messages=sdk_messages,
             tools=ctx.tools, max_tokens=ctx.max_tokens,
             **ctx.thinking_param,
             **ctx.generation_param,
@@ -403,8 +405,7 @@ class AnthropicDriver:
                     error=exc,
                     restored_blocks=restored_blocks_for_trace,
                     restored_insert_index=restored_insert_index,
-                    canonical_digest=projection.canonical_digest,
-                    wire_digest=projection.wire_digest,
+                    projection=_msgs,
                 )
             except Exception:
                 pass
@@ -484,26 +485,26 @@ class AnthropicDriver:
         return messages
 
     def build_followup(self, result, next_content, assistant_fallback="（…）"):
-        return [
+        return request_only_batch([
             {"role": "assistant", "content": self._content_dicts(result)},
             {"role": "user", "content": next_content},
-        ]
+        ])
 
     def build_guard_followup(self, result, next_content):
         """追加内部守卫控制消息；守卫不是用户新消息，保留 system 语义。"""
-        return [
+        return request_only_batch([
             {"role": "assistant", "content": self._content_dicts(result)},
             {"role": "system", "content": next_content},
-        ]
+        ])
 
     def build_empty_retry(self, result):
         # 占位保证 user/assistant 交替合法（真·空 content 会被 Anthropic 拒）；
         # 这条守卫消息不入历史（tool_rounds_only 过滤）
         content_dicts = self._content_dicts(result) or [{"type": "text", "text": "（…）"}]
-        return [
+        return request_only_batch([
             {"role": "assistant", "content": content_dicts},
             {"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"},
-        ]
+        ])
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -583,9 +584,9 @@ class OpenAIDriver:
     async def run_round(self, client, ctx, messages, stream_round=None):
         # stream_round 仅 AnthropicDriver 使用；接收并忽略，保持统一调用签名。
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
-        # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
+        # 使用 ProviderConversation 副本，避免 cache_control 写回 Area。
         projection = render_provider_history(messages, ctx.adapter)
-        outbound = projection.messages
+        outbound = projection
         outbound = render_openai_request_history(outbound, ctx.adapter)
         from agent.providers.message_utils import strip_responses_item_ids
         outbound = strip_responses_item_ids(outbound)
@@ -627,7 +628,7 @@ class OpenAIDriver:
             try:
                 stream = await client.chat.completions.create(
                     model=ctx.model,
-                    messages=messages,
+                    messages=messages.to_messages(),
                     max_tokens=ctx.max_tokens,
                     stream=True,
                     stream_options={"include_usage": True},
@@ -765,22 +766,24 @@ class OpenAIDriver:
         return messages
 
     def build_followup(self, result, next_content, assistant_fallback="（…）"):
-        return [
+        return request_only_batch([
             self._asst(result.raw, result.text or assistant_fallback),
             {"role": "user", "content": next_content},
-        ]
+        ])
 
     def build_guard_followup(self, result, next_content):
         """追加内部守卫控制消息，不把它伪装成用户指令。"""
-        return [
+        return request_only_batch([
             self._asst(result.raw, result.text or "（…）"),
             {"role": "system", "content": next_content},
-        ]
+        ])
 
     def build_empty_retry(self, result):
         # 跟 Anthropic 路不一样：这里不把 assistant 消息入历史，直接追问——是改动前就有的既有行为
         # （openai 路空回复兜底那段代码本来就没有 messages.append(_asst(...)) 这一步），原样保留。
-        return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
+        return request_only_batch([{
+            "role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）",
+        }])
 
 # ══════════════════════════════════════════════════════════════════════════
 # Ollama 原生（/api/chat，NDJSON）
@@ -873,9 +876,10 @@ class OllamaDriver:
 
     async def run_round(self, client, ctx, messages, stream_round=None):
         # stream_round 仅 AnthropicDriver 使用；接收并忽略，保持统一调用签名。
+        projection = render_provider_history(messages, ctx.adapter)
         payload = {
             "model": ctx.model,
-            "messages": _ollama_messages(ctx.adapter.render_history(messages)),
+            "messages": _ollama_messages(projection.to_messages()),
             "stream": True,
             "think": ctx.think,
             "keep_alive": ctx.keep_alive,
@@ -952,16 +956,18 @@ class OllamaDriver:
         return messages
 
     def build_followup(self, result, next_content, assistant_fallback="（…）"):
-        return [
+        return request_only_batch([
             self._assistant(result.raw, result.text or assistant_fallback),
             {"role": "user", "content": next_content},
-        ]
+        ])
 
     def build_guard_followup(self, result, next_content):
-        return [
+        return request_only_batch([
             self._assistant(result.raw, result.text or "（…）"),
             {"role": "system", "content": next_content},
-        ]
+        ])
 
     def build_empty_retry(self, result):
-        return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
+        return request_only_batch([{
+            "role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）",
+        }])

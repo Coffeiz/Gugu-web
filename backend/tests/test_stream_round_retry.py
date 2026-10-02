@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.core import _stream_round
+from agent.context.assembly import MessageArea
 from agent.providers import adapter_for
 from app.core.errors import RetryableError
 
@@ -199,7 +200,7 @@ def _openai_ctx_stub():
         model="deepseek-chat", max_tokens=100, think_kwargs={}, tools=[],
         supports_active_cache=False, supports_explicit_cache=False,
         adapter=_NS(
-            render_history=lambda messages: list(messages),
+            render_history=lambda messages: messages.provider_projection(),
             uses_single_history_cache_anchor=lambda _m: False,
             build_tool_params=lambda ai, tools: {},
             build_openai_cache_kwargs=lambda ai: {},
@@ -267,7 +268,7 @@ async def _drain_openai(client):
 
     tokens = []
     events = []
-    async for kind, val in OpenAIDriver().run_round(client, _openai_ctx_stub(), []):
+    async for kind, val in OpenAIDriver().run_round(client, _openai_ctx_stub(), MessageArea()):
         if kind == "token":
             tokens.append(val)
         elif kind == "retry":

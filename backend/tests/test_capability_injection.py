@@ -483,17 +483,18 @@ def test_llm_runner_accepts_dynamic_capability_context_without_changing_default_
 
 
 def test_loaded_skill_is_detected_from_history_and_can_be_reloaded_after_compaction():
+    from agent.context.assembly import MessageArea
     digest = skill_content_digest("weather")
-    messages = [{
+    messages = MessageArea.from_canonical_messages([{
         "role": "tool",
         "content": '{"skill":"weather","content":"天气技能正文","_capability_usage":{"kind":"skill","slug":"weather","loaded":true,"content_digest":"%s"}}' % digest,
-    }]
+    }])
     assert _loaded_skill_slugs(messages) == {"weather": digest}
-    assert _loaded_skill_slugs([{
+    assert _loaded_skill_slugs(MessageArea.from_canonical_messages([{
         "role": "tool",
         "content": '{"_capability_usage":{"kind":"skill","slug":"weather","loaded":true}}',
-    }]) == {}
-    assert _loaded_skill_slugs([]) == {}
+    }])) == {}
+    assert _loaded_skill_slugs(MessageArea()) == {}
 
 
 @pytest.mark.anyio

@@ -4,8 +4,14 @@
 
 ## 按日期浏览
 
+### 2026-10-02
+
+- [Anthropic 与 Responses API 上下文回放修复及真实模型 A/B](./2026-10-02-Anthropic与Responses-API上下文回放修复.md)
+- [LLM-29 历史工具签名恢复回归与缓存 A/B 验证](./2026-10-02-LLM29历史工具签名恢复回归与缓存AB验证.md)
+
 ### 2026-10-01
 
+- [PRD-LLM-29 Phase 4：入口复审与隔离 20-run 验证](./2026-10-01-LLM29-Phase4入口复审与隔离20-run验证.md)
 - [Anthropic 工具轮 thinking 历史恢复与跨 run 缓存前缀](./2026-10-01-Anthropic工具轮thinking历史恢复与跨run缓存前缀.md)
 
 ### 2026-09-29

@@ -19,7 +19,7 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from agent.llm.llm_select import pick_model, release, use_anthropic_for
-from agent.context.assembly import PromptMessages
+from agent.context.assembly import MessageArea
 from app.core.config import get_settings
 
 _UID = "00000000-0000-0000-0000-000000000000"
@@ -167,9 +167,9 @@ def aggregate_usage_rows(
     }
 
 
-def history_metrics(messages: PromptMessages) -> dict[str, Any]:
+def history_metrics(messages: MessageArea) -> dict[str, Any]:
     """只记录连续会话的结构，不把用户正文或工具参数写入测试结果。"""
-    conversation = list(getattr(messages, "conversation", messages))
+    conversation = messages.provider_projection().to_messages()
     roles = Counter(
         str(item.get("role") or "unknown")
         for item in conversation
@@ -180,7 +180,7 @@ def history_metrics(messages: PromptMessages) -> dict[str, Any]:
         "message_count": len(conversation),
         "chars": len(serialized),
         "roles": dict(roles),
-        "canonical_batch_count": len(getattr(messages, "canonical_batch_digests", ())),
+        "canonical_batch_count": len(messages.batch_records()),
     }
 
 
@@ -339,7 +339,7 @@ async def run_continuous_case(
     settings, model_cfg, anthropic: bool, tool_name: str,
     prompt: str, expected: dict[str, Any], turns: int = 2,
 ) -> dict[str, Any]:
-    """在同一个 PromptMessages 中连续调用工具，真实覆盖缓存与工具续轮。"""
+    """在同一个 MessageArea 中连续调用工具，真实覆盖缓存与工具续轮。"""
     from agent.core import LLMRunner
     from agent.capabilities.defaults import all_system_tool_names
 
@@ -347,9 +347,9 @@ async def run_continuous_case(
     runner = LLMRunner(all_system_tool_names(), settings)
     initial = [{"role": "user", "content": prompt}]
     if anthropic:
-        messages = PromptMessages(initial)
+        messages = MessageArea.from_canonical_messages(initial)
     else:
-        messages = PromptMessages([{"role": "system", "content": system}, *initial])
+        messages = MessageArea.from_canonical_messages([{"role": "system", "content": system}, *initial])
     rows: list[dict[str, Any]] = []
     for turn in range(1, max(1, turns) + 1):
         if turn > 1:
@@ -441,9 +441,9 @@ async def run_continuous_sequence(
         system = f"{system}\n\n{catalog_block(capability_context.snapshot, tool_order=tool_names)}"
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     if anthropic:
-        messages = PromptMessages()
+        messages = MessageArea.from_canonical_messages()
     else:
-        messages = PromptMessages([{"role": "system", "content": system}])
+        messages = MessageArea.from_canonical_messages([{"role": "system", "content": system}])
 
     async def run_turn(tool_name: str, prompt: str, expected: dict[str, Any], turn: int) -> dict[str, Any]:
         messages.append({

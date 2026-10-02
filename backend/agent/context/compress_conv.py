@@ -791,6 +791,7 @@ async def _compress_if_needed_unlocked(
         _generate_append_summary,
         resolve_compaction_limits,
     )
+    from agent.context.prefix_history import render_branch_prefix
     limits = resolve_compaction_limits(model_cfg=model_cfg)
     if reuse_summary:
         # run 内压缩刚生成过同一批历史的摘要（且那次分支请求命中了缓存），
@@ -799,7 +800,6 @@ async def _compress_if_needed_unlocked(
         compression_mode = "run-reuse"
     else:
         if cache_prefix is not None:
-            from agent.context.prefix_history import render_branch_prefix
             from agent import providers
 
             adapter = providers.adapter_for(model_cfg)
@@ -820,7 +820,8 @@ async def _compress_if_needed_unlocked(
             # 没有同进程快照或持久化历史无法逐条对齐时，安全回退到 DB 重建；
             # 该路径保持原有摘要范围与落库语义，但不保证前缀缓存命中。
             summary = await _generate_append_summary(
-                history_messages, prev_summary, model_cfg=model_cfg,
+                render_branch_prefix(history_messages, model_cfg), prev_summary,
+                model_cfg=model_cfg,
             )
             compression_mode = "append-replay"
     from agent.context.compaction import validate_compact_summary

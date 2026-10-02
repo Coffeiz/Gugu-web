@@ -123,7 +123,7 @@ def _deterministic_summary(
 
 
 async def compact_context(
-    messages: list,
+    messages,
     session_id: int | None = None,
     fixed_prefix_size: int = 0,
     protected_from: int | None = None,
@@ -150,8 +150,14 @@ async def compact_context(
     limits = resolve_compaction_limits(model_cfg)
     # 保留窗口是历史结构策略，不等同于摘要请求的输入预算。
 
+    from agent.context.assembly.area import MessageArea
+    if not isinstance(messages, MessageArea):
+        raise TypeError("上下文压缩只接受 MessageArea")
+    area = messages
+    messages = area.provider_projection().to_messages()
+    if fixed_prefix_size == 0:
+        fixed_prefix_size = area.fixed_prefix_size
     # snapshot/system-info 是固定前缀，不属于可压缩的 message history。
-    # 普通 list 调用保持 fixed_prefix_size=0，兼容旧历史和单测。
     fixed_prefix_size = max(0, min(int(fixed_prefix_size), len(messages)))
     if protected_from is not None and protected_anchor_index is None:
         raise ValueError("运行中滚动压缩必须同时提供当前用户消息锚点")
@@ -568,7 +574,7 @@ def _branch_prefix_history(
     model_cfg,
     *,
     include_recent: bool = False,
-) -> list:
+):
     """给追加式压缩构造「从对话头开始」的连续前缀，而不是只给待压缩的中间片段。
 
     只发中间片段时，分支请求的第一条消息就是对话中段，与主 run 刚发过的请求
@@ -648,7 +654,11 @@ async def _generate_append_summary(
 
     from app.core.config import get_settings
     from agent.context.branch import ContextBranch
-    from agent.context.branch_types import BranchInput, BranchPolicy
+    from agent.context.branch_types import (
+        LONG_RUNNING_PROVIDER_READ_TIMEOUT_SECONDS,
+        BranchInput,
+        BranchPolicy,
+    )
     settings = get_settings()
 
     delta = instruction
@@ -662,9 +672,10 @@ async def _generate_append_summary(
     async def request(history: list, task: str) -> object:
         return await ContextBranch().run(
             BranchInput(stable_system=append_system, delta=task,
-                        history_messages=tuple(history), tools=tuple(tools or ())),
+                        history_messages=history, tools=tuple(tools or ())),
             BranchPolicy(name="compaction", output_mode="text",
-                         max_tokens=limits.output_tokens, max_retries=1),
+                         max_tokens=limits.output_tokens, max_retries=1,
+                         provider_read_timeout_seconds=LONG_RUNNING_PROVIDER_READ_TIMEOUT_SECONDS),
             settings,
         )
 
@@ -740,7 +751,7 @@ def _summary_output_exhausted(result, output_limit: int) -> bool:
     return isinstance(usage, dict) and int(usage.get("output") or 0) >= output_limit
 
 
-def _strip_tool_call_inputs(history: list[dict]) -> tuple[list[dict], int]:
+def _strip_tool_call_inputs(history) -> tuple[object, int]:
     """只清空调用参数，保留工具名称、调用 ID 和完整结果；不改原历史。"""
     def strip_arguments(call: dict) -> tuple[dict, bool]:
         copied = dict(call)
@@ -757,6 +768,9 @@ def _strip_tool_call_inputs(history: list[dict]) -> tuple[list[dict], int]:
                 changed = True
         return copied, changed
 
+    from agent.context.provider_conversation import ProviderConversation
+    source = history if isinstance(history, ProviderConversation) else None
+    values = source.to_messages() if source is not None else history
     stripped: list[dict] = []
     changed_calls = 0
     for message in history:
@@ -787,13 +801,16 @@ def _strip_tool_call_inputs(history: list[dict]) -> tuple[list[dict], int]:
                     blocks.append(block)
             copied["content"] = blocks
         stripped.append(copied)
-    return stripped, changed_calls
+    return (source.with_messages(stripped), changed_calls) if source is not None else (stripped, changed_calls)
 
 
-def _trim_oldest_history(history: list[dict], budget: int) -> tuple[list[dict], int, int]:
+def _trim_oldest_history(history, budget: int) -> tuple[object, int, int]:
     """超限后按完整工具往返裁切旧消息，保留 system、已有摘要和最后单元。"""
-    units = _atomic_message_units(history)
-    total = sum(estimate_tokens(message_text(message)) for message in history)
+    from agent.context.provider_conversation import ProviderConversation
+    source = history if isinstance(history, ProviderConversation) else None
+    values = source.to_messages() if source is not None else history
+    units = _atomic_message_units(values)
+    total = sum(estimate_tokens(message_text(message)) for message in values)
     # provider 已确认超限，至少去掉约一成旧历史，避免估算偏低后重试仍超限。
     target = min(max(1, budget), max(1, int(total * 0.9)))
     to_drop: set[int] = set()
@@ -801,14 +818,15 @@ def _trim_oldest_history(history: list[dict], budget: int) -> tuple[list[dict], 
         if total <= target:
             break
         if any(
-            history[index].get("role") in {"system", "summary"}
-            or SUMMARY_OPEN in message_text(history[index])
-            or _is_system_injection(message_text(history[index]))
+            values[index].get("role") in {"system", "summary"}
+            or SUMMARY_OPEN in message_text(values[index])
+            or _is_system_injection(message_text(values[index]))
             for index in unit
         ):
             continue
         to_drop.update(unit)
-        total -= sum(estimate_tokens(message_text(history[index])) for index in unit)
-    removed_tokens = sum(estimate_tokens(message_text(history[index])) for index in to_drop)
-    return ([message for index, message in enumerate(history) if index not in to_drop],
+        total -= sum(estimate_tokens(message_text(values[index])) for index in unit)
+    removed_tokens = sum(estimate_tokens(message_text(values[index])) for index in to_drop)
+    trimmed = [message for index, message in enumerate(values) if index not in to_drop]
+    return (source.with_messages(trimmed) if source is not None else trimmed,
             len(to_drop), removed_tokens)

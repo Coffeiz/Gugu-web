@@ -13,6 +13,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
 from agent import core as _core
+from agent.context.assembly.area import MessageArea
 from agent.errors import describe_llm_error
 from agent.loop import watchdog as _watchdog
 
@@ -28,7 +29,7 @@ async def run_loop(
     runner: Any,
     driver: Any,
     user_id: Any,
-    messages: list,
+    messages: MessageArea,
     ai: Any,
     system_text: str | None,
     *,
@@ -51,11 +52,8 @@ async def run_loop(
         # "当前模型支持什么"必须看这个，不能重新读静态的 get_settings().ai。
         from agent.llm import modelctx
         modelctx.set_model_cfg(ai)
-        # 入口统一提升为带固定前缀边界的消息容器。直接调用 runner 的测试和少量
-        # 内部调用仍可能传入普通 list，但运行中的追加、压缩和审计必须走同一套批次语义。
-        if not hasattr(messages, "append_batch"):
-            from agent.context.assembly import PromptMessages
-            messages = PromptMessages(messages)
+        if not isinstance(messages, MessageArea):
+            raise TypeError("Agent loop 只接受 MessageArea")
         # 每轮对话最多允许三次 read_file 调用包含网络图片；历史附件不占用该额度。
         from agent.tools.media_reader import reset_remote_image_read_budget
         reset_remote_image_read_budget()
@@ -64,12 +62,12 @@ async def run_loop(
             if system_text:
                 system_text = f"{system_text}{_core._GOAL_POLICY}"
             else:
-                messages.insert(0, {"role": "system", "content": _core._GOAL_POLICY.strip()})
-        if getattr(driver, "api_format", "") == "anthropic":
-            before_count, after_count, history_changed = _core._sanitize_anthropic_history(messages)
-            if history_changed:
-                _core._log.warning("[anthropic] 请求历史已归一化：消息数 %s -> %s",
-                              before_count, after_count)
+                if hasattr(messages, "insert_request_message"):
+                    messages.insert_request_message(
+                        0, {"role": "system", "content": _core._GOAL_POLICY.strip()},
+                    )
+                else:
+                    messages.insert(0, {"role": "system", "content": _core._GOAL_POLICY.strip()})
         from agent.tools import registry as tool_registry
         tool_snapshot = tool_registry.snapshot_with_extras(tuple(runner.dynamic_tools.values()))
         initial_tool_names = runner.tool_names
@@ -83,6 +81,18 @@ async def run_loop(
         client, ctx = driver.prepare(
             initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
         )
+        if getattr(ctx, "supports_active_cache", False):
+            from agent.context.cache_state import CacheState
+
+            session_context = getattr(session, "session_context", None)
+            session_context = session_context if isinstance(session_context, dict) else {}
+            ctx.cache_state = CacheState.from_session_anchor(
+                session_context.get("provider_cache_anchor"),
+                provider=str(getattr(ctx.adapter, "name", "unknown")),
+                api_format=str(getattr(ctx.adapter, "api_format", "anthropic")),
+                model=str(ctx.model),
+                strategy="multi",
+            )
         if reasoning_state is not None:
             await reasoning_state.prepared(driver, ctx)
         # 只把能力上下文挂到 provider request context，供 LoopScope 记录脱敏指标；
@@ -92,7 +102,7 @@ async def run_loop(
         loaded_skill_slugs = _core._loaded_skill_slugs(messages)
         # 当前用户消息是本轮 run 的保护边界。压缩时只处理它之前的历史，
         # 工具调用/结果追加后仍通过对象身份找到同一个起点。
-        _run_conversation = getattr(messages, "conversation", messages)
+        _run_conversation = messages.provider_projection().to_messages()
         _run_start_index = _core.last_user_index(_run_conversation)
         run_start_index = _run_start_index if _run_start_index is not None else max(0, len(_run_conversation) - 1)
         run_round_start_indices: list[tuple[int, int]] = []
@@ -107,7 +117,7 @@ async def run_loop(
         colon_retry_pending = False
         guard_retry_buf: list[str] = []
         tool_calls_used = 0
-        _request_conversation = getattr(messages, "conversation", messages)
+        _request_conversation = messages.provider_projection().to_messages()
         _request_user_index = _core.last_user_index(_request_conversation)
         _user_req = (
             _core.user_text_from_message(_request_conversation[_request_user_index])
@@ -163,7 +173,7 @@ async def run_loop(
 
             heartbeat = _core.asyncio.create_task(keep_generation_alive())
 
-            conversation = getattr(messages, "conversation", messages)
+            conversation = messages.provider_projection().to_messages()
             before_count = len(conversation)
             before_summary = [
                 item for item in conversation
@@ -174,11 +184,12 @@ async def run_loop(
             )
             if protected_from is None:
                 protected_from = run_start_index
+            area_revision = messages.revision
             try:
                 try:
                     result = await compaction.compact_context(
-                        list(conversation), session_id=session_id,
-                        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+                        messages, session_id=session_id,
+                        fixed_prefix_size=messages.fixed_prefix_size,
                         protected_from=protected_from,
                         protected_anchor_index=run_start_index,
                         model_cfg=ai,
@@ -228,10 +239,9 @@ async def run_loop(
             if not changed:
                 return False
             provider_compacted = True
-            if hasattr(messages, "replace_conversation"):
-                messages.replace_conversation(compacted_messages)
-            else:
-                messages = compacted_messages
+            messages.replace_request_baseline(
+                compacted_messages, expected_revision=area_revision,
+            )
             if getattr(result, "anchor_index", None) is not None:
                 run_start_index = result.anchor_index
             protected_start_index = getattr(result, "protected_start_index", None)
@@ -256,7 +266,7 @@ async def run_loop(
             nonlocal messages, run_start_index, last_compaction_no_progress_length, provider_compacted
             from agent.context.budget import enforce_provider_overflow_fallback
 
-            conversation = getattr(messages, "conversation", messages)
+            conversation = messages.provider_projection().to_messages()
             protected_from = _core.loop_rounds.rolling_compaction_start_index(
                 run_round_start_indices, round_number,
             )
@@ -291,7 +301,7 @@ async def run_loop(
 
         def usage_compaction_due() -> bool:
             # 90% 阈值判定归 loop/rounds（PRD-LLM-25 LLM25-006）；压缩执行仍归 context 模块。
-            conversation = getattr(messages, "conversation", messages)
+            conversation = messages.provider_projection().to_messages()
             return _core.loop_rounds.usage_compaction_due(
                 run_context_usage=run_context_usage,
                 context_tokens=int(getattr(ai, "context_tokens", 0) or 0),
@@ -309,7 +319,7 @@ async def run_loop(
             if await apply_deterministic_compaction_fallback("usage_threshold_fallback"):
                 _core._log.warning("[core] provider usage 达到 90% 但摘要压缩未生效，执行确定性裁切")
                 return True
-            last_compaction_no_progress_length = len(getattr(messages, "conversation", messages))
+            last_compaction_no_progress_length = len(messages.provider_projection())
             _core._log.error("[core] provider usage 达到 90%，摘要和确定性裁切均未生效")
             return False
 
@@ -339,7 +349,7 @@ async def run_loop(
             round_id = f"round-{round_number}"
             run_round_start_indices.append((
                 round_number,
-                len(getattr(messages, "conversation", messages)),
+                len(messages.provider_projection()),
             ))
             yield stream_event("round_start", round_id=round_id)
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
@@ -536,6 +546,8 @@ async def run_loop(
             total_out += result.usage_out
             total_cache += result.cache_tokens
             total_cache_write += result.cache_write_tokens
+            if getattr(ctx, "supports_active_cache", False):
+                messages.remember_provider_cache_anchor(ctx.cache_state.to_session_anchor())
             run_context_usage = int(_core._provider_context_usage(driver, result) or 0)
             run_context_usage_peak = max(run_context_usage_peak, run_context_usage)
             if reasoning_state is not None:
@@ -815,7 +827,7 @@ async def run_loop(
                     if artifact:
                         yield _core._artifact_sse(artifact)
                     dispatched.append((tc, res))
-                from agent.context.assembly import NewMessageBatch
+                from agent.context.assembly import MessageBatch
                 from agent.context.canonical_tool_history import canonical_tool_round
 
                 # 工具结果里的图片块只能发给明确支持视觉输入的本轮模型。不能只看
@@ -827,36 +839,29 @@ async def run_loop(
                 )
                 if getattr(driver, "api_format", "") == "anthropic":
                     try:
+                        from agent.context.provider_conversation import ProviderConversation
                         from agent.runtime.loopscope_trace.state import record_anthropic_structure_probe
                         record_anthropic_structure_probe(
                             provider=getattr(getattr(ctx, "adapter", None), "name", ""),
                             model=getattr(ctx, "model", ""),
                             response_blocks=getattr(result, "raw", []),
-                            provider_messages=provider_round,
+                            provider_conversation=ProviderConversation(provider_round),
                         )
                     except Exception:
                         pass
-                batch = NewMessageBatch.from_canonical_messages(
+                batch = MessageBatch.from_canonical_messages(
                     canonical_tool_round(result, dispatched),
-                    provider_messages=provider_round,
                     metadata={"round_id": round_id},
                 )
-                try:
-                    from agent.runtime.loopscope_trace.state import record_canonical_batch
-                    record_canonical_batch(
-                        digest=batch.batch_digest,
-                        round_id=round_id,
-                        message_count=len(batch.canonical_messages),
-                    )
-                except Exception:
-                    pass
                 if getattr(runner.capability_context, "fixed_adapter", False):
                     from agent.context.canonical_tool_history import (
                         SkillSchemaEvent, ToolDiscoveryEvent, append_event, tool_schema_event,
                     )
                     # canonical event 也先进入同一批次，不能在工具 round 提交后再单独
                     # 修改 history；否则下一次重建时消息粒度和顺序可能发生变化。
-                    batch_history = list(getattr(messages, "conversation", messages)) + batch.messages
+                    batch_history = [
+                        entry.canonical_message for entry in messages.entries
+                    ] + list(batch.canonical_messages)
 
                     def add_event(event) -> None:
                         before = len(batch_history)

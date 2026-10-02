@@ -226,7 +226,6 @@ const childProviderOptions = computed(() => {
   const provider = providerGroups.value.find(item => item.key === props.draft?.provider)
   return (provider?.children || []).map(child => ({ key: child.key, label: child.label }))
 })
-const openaiProtocolProviders = new Set(['openai', 'qwen', 'glm', 'glm-coding', 'deepseek', 'mimo', 'ollama', 'local'])
 const formatLabels: Record<string, string> = {
   openai: 'adminAgentUi.formatOpenai', responses: 'adminAgentUi.formatResponses',
   anthropic: 'adminAgentUi.formatAnthropic', native: 'adminAgentUi.ollamaNative',
@@ -243,12 +242,10 @@ function interfaceValue(draft: LlmPresetDraft) {
 }
 function supportsReasoningPersistence(draft: LlmPresetDraft | null) {
   if (!draft) return false
-  // 已知 Provider 的空值按默认协议处理，不再保留旧的 Auto 语义。
-  if (!draft.api_format && openaiProtocolProviders.has(draft.provider)) return false
   const format = interfaceValue(draft)
   if (draft.provider === 'ollama' && format === 'native') return false
-  if (openaiProtocolProviders.has(draft.provider)) return format === 'responses' || format === 'anthropic'
-  return true
+  // 推理状态能力由 wire 协议决定；Chat Completions 不支持跨请求状态持久化。
+  return format === 'responses' || format === 'anthropic'
 }
 function pickInterface(draft: LlmPresetDraft, value: string) {
   if (draft.provider === 'ollama') {

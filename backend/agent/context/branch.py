@@ -72,12 +72,13 @@ class ContextBranch:
                         # 追加式：canonical 消息序列原样发送，user 只是末尾追加的指令。
                         output = await provider_runner.complete_messages(
                             branch_input.stable_system,
-                            list(branch_input.history_messages),
+                            branch_input.history_messages,
                             user, settings,
                             max_tokens=policy.max_tokens,
                             json_mode=policy.output_mode != "text",
                             tools=list(branch_input.tools) or None,
                             usage_sink=usage_sink,
+                            read_timeout=policy.provider_read_timeout_seconds,
                         )
                         ok = bool(str(output or "").strip()) and (
                             not isinstance(output, dict) or bool(output))

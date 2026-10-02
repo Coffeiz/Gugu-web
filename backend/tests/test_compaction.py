@@ -7,7 +7,7 @@ import pytest
 from agent.context import compress_conv
 import agent.context.compaction as compaction_module
 from agent.context.compaction import (
-    compact_context,
+    compact_context as _compact_context_area,
     validate_compacted_shape,
     _is_system_injection,
     _atomic_message_units,
@@ -17,7 +17,24 @@ from agent.context.compaction import (
     resolve_compaction_limits,
 )
 from agent.context.tokens import estimate_tokens, message_text
+from agent.context.assembly import MessageArea
 from app.models import ConversationSession
+
+
+def _area_from_fixture(messages, fixed_prefix_size=0):
+    """把测试用简明 canonical 样本显式装入正式 Area 边界。"""
+    return MessageArea.from_canonical_messages(
+        messages, fixed_prefix_size=fixed_prefix_size,
+    )
+
+
+async def compact_context(messages, *args, **kwargs):
+    """测试数据工厂：生产压缩入口仍只接受 MessageArea。"""
+    if not isinstance(messages, MessageArea):
+        messages = _area_from_fixture(
+            messages, fixed_prefix_size=kwargs.get("fixed_prefix_size", 0),
+        )
+    return await _compact_context_area(messages, *args, **kwargs)
 
 
 def _make_msg(role: str, text: str) -> dict:
@@ -141,11 +158,11 @@ class TestCompactionBudget:
             return "新摘要"
 
         monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
-        messages = [
+        messages = MessageArea.from_canonical_messages([
             _make_msg("user", "<compacted-summary>\n旧摘要\n</compacted-summary>"),
             *[_make_msg("user", "旧历史" * 20) for _ in range(40)],
             _make_msg("user", "当前消息"),
-        ]
+        ])
         result = asyncio.get_event_loop().run_until_complete(
             compact_context(messages, model_cfg=_model_cfg(1000, 80))
         )
@@ -410,7 +427,7 @@ class TestCompactContext:
         kept = result.messages[-3:]
         kept_text = "\n".join(message_text(item) for item in kept)
         # tool_use 与 tool_result 必须作为一个完整 round 原样保留。
-        assert "工具调用:calendar" in kept_text
+        assert '"name": "calendar"' in kept_text
         assert "工具结果" in kept_text
         assert "当前问题" in kept_text
 
@@ -452,8 +469,10 @@ class TestCompactContext:
         result_text = "\n".join(message_text(item) for item in result.messages)
         assert "本轮问题" in result_text
         assert "本轮工具结果" in result_text
-        assert result.messages[result.anchor_index] == current
-        assert result.messages[result.protected_start_index:] == [tool_use, tool_result]
+        assert result.messages[result.anchor_index]["role"] == "user"
+        protected = result.messages[result.protected_start_index:]
+        assert protected[0]["tool_calls"][0]["id"] == "call-1"
+        assert protected[1]["tool_call_id"] == "call-1"
 
     def test_rolling_run_compaction_keeps_anchor_and_latest_round_window(self, monkeypatch):
         captured = []
@@ -465,11 +484,11 @@ class TestCompactContext:
             return "滚动摘要"
 
         monkeypatch.setattr("agent.context.compaction._generate_append_summary", fake_summary)
-        messages = [
+        messages = MessageArea.from_canonical_messages([
             _make_msg("user", "之前 run 的历史"),
             _make_msg("user", "当前 run 用户原文"),
             *[_make_msg("assistant", f"执行轮 {number}") for number in range(1, 13)],
-        ]
+        ])
 
         result = asyncio.get_event_loop().run_until_complete(
             compact_context(
@@ -531,12 +550,12 @@ class TestCompactContext:
     def test_rolling_compaction_fallback_preserves_user_anchor_and_recent_window(self):
         from agent.context.budget import enforce_provider_overflow_fallback
 
-        messages = [
+        messages = MessageArea.from_canonical_messages([
             _make_msg("user", "旧历史" * 200),
             _make_msg("user", "当前 run 用户原文"),
             *[_make_msg("assistant", f"执行轮 {number}" + "x" * 1000)
               for number in range(1, 13)],
-        ]
+        ])
         result = enforce_provider_overflow_fallback(
             messages,
             context_tokens=1200,
@@ -545,14 +564,15 @@ class TestCompactContext:
         )
 
         assert result.changed
-        assert any(item.get("content") == "当前 run 用户原文" for item in messages)
-        assert messages[result.anchor_index]["content"] == "当前 run 用户原文"
+        projected = messages.provider_projection().to_messages()
+        assert any(item.get("content") == "当前 run 用户原文" for item in projected)
+        assert projected[result.anchor_index]["content"] == "当前 run 用户原文"
         assert all(
             not str(item.get("content") or "").startswith(("执行轮 1x", "执行轮 2x"))
-            for item in messages
+            for item in projected
         )
-        assert len(messages[result.protected_start_index:]) < 10
-        retained = messages[result.protected_start_index:]
+        assert len(projected[result.protected_start_index:]) < 10
+        retained = projected[result.protected_start_index:]
         if retained:
             first_round = int(retained[0]["content"].split("执行轮 ", 1)[1].split("x", 1)[0])
             # 原输入中 round N 的 message index 为 N + 1；裁掉窗口左侧后，
@@ -980,14 +1000,14 @@ class TestCompleteMessagesShape:
         ]
         settings = SimpleNamespace(ai=fake_ai)
         result = asyncio.get_event_loop().run_until_complete(
-            pr.complete_messages("主系统", history, "压缩指令",
+            pr.complete_messages("主系统", tuple(history), "压缩指令",
                                  settings, max_tokens=100)
         )
 
         assert result == "ok"
         msgs = captured["messages"]
         assert len(msgs) == 3 and msgs[-1]["content"] == "压缩指令"
-        assert msgs[0]["content"] == "问题"
+        assert msgs[0]["content"] == [{"type": "text", "text": "问题"}]
         # 末尾历史消息被打上会话内缓存断点
         tail = msgs[1]["content"]
         assert isinstance(tail, list) and tail[-1].get("cache_control")

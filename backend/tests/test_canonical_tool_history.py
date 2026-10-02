@@ -17,7 +17,15 @@ from agent.context.canonical_context import normalize_history_message
 from agent.loop_drivers import NormalizedToolCall
 from agent.context.history import build_history_parts, canonicalize_tool_messages
 from agent.security.sanitize import sanitize_messages
-from agent.context.assembly.batch import NewMessageBatch
+from agent.context.assembly.batch import MessageBatch
+from agent.context.provider_conversation import ProviderConversation
+
+
+def _render_events(messages):
+    return render_events_for_provider(
+        messages if isinstance(messages, ProviderConversation)
+        else ProviderConversation(messages)
+    )
 
 
 def test_schema_event_has_stable_digest_and_is_deduplicated():
@@ -34,7 +42,7 @@ def test_schema_event_has_stable_digest_and_is_deduplicated():
 def test_canonical_events_render_as_text_without_provider_wire_blocks():
     messages = []
     append_event(messages, SkillSchemaEvent("image-analysis", ("image_search", "read_file")))
-    rendered = render_events_for_provider(messages)
+    rendered = _render_events(messages)
     assert rendered[0]["role"] == "user"
     assert isinstance(rendered[0]["content"], list)
     assert rendered[0]["content"][0]["type"] == "text"
@@ -60,9 +68,9 @@ def test_canonical_event_round_trips_through_persisted_history():
     openai = build_history_parts([message], None, use_anthropic=False)
     anthropic = build_history_parts([message], None, use_anthropic=True)
     assert openai[0]["content"][0]["type"] == "tool-schema"
-    assert "weather" in render_events_for_provider(openai)[0]["content"][0]["text"]
+    assert "weather" in _render_events(openai)[0]["content"][0]["text"]
     assert anthropic[0]["content"][0]["type"] == "tool-schema"
-    assert "weather" in render_events_for_provider(anthropic)[0]["content"][0]["text"]
+    assert "weather" in _render_events(anthropic)[0]["content"][0]["text"]
 
 
 def test_time_reminders_round_trip_without_changing_provider_text():
@@ -85,7 +93,7 @@ def test_time_reminders_round_trip_without_changing_provider_text():
         sent_at=None, chat_type=None, platform_user_id=None, platform_user_name=None,
     )
     restored = build_history_parts([message], None, use_anthropic=False)
-    assert render_events_for_provider(restored)[0]["content"] == [{
+    assert _render_events(restored)[0]["content"] == [{
         "type": "text",
         "text": original[0]["content"],
     }]
@@ -115,8 +123,8 @@ def test_time_context_wrapper_regression_guard_keeps_legacy_and_canonical_wire_e
         sent_at=None, chat_type=None, platform_user_id=None, platform_user_name=None,
         files=None, quoted_text=None,
     )
-    legacy_wire = render_events_for_provider(build_history_parts([legacy], None, use_anthropic=True))
-    canonical_wire = render_events_for_provider(build_history_parts([canonical], None, use_anthropic=True))
+    legacy_wire = _render_events(build_history_parts([legacy], None, use_anthropic=True))
+    canonical_wire = _render_events(build_history_parts([canonical], None, use_anthropic=True))
     assert legacy_wire == canonical_wire
 
 
@@ -139,7 +147,7 @@ def test_provider_projection_drops_null_metadata_and_normalizes_stance_wrapper()
         "content": [{"type": "stance-context", "digest": "old", "text": stance_text}],
     }]
 
-    assert render_events_for_provider(legacy) == render_events_for_provider(canonical)
+    assert _render_events(legacy) == _render_events(canonical)
 
 
 def test_schema_event_never_shares_tool_result_message_boundary():
@@ -284,7 +292,7 @@ def test_canonical_tool_round_persists_openai_reasoning_content():
 
 
 def test_new_message_batch_accepts_persisted_reasoning_content():
-    batch = NewMessageBatch.from_canonical_messages([{
+    batch = MessageBatch.from_canonical_messages([{
         "role": "assistant",
         "content": [{"type": "reasoning_content", "text": "继续处理"}],
     }])

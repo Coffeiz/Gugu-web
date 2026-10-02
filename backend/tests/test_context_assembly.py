@@ -10,7 +10,7 @@ def test_build_messages_preserves_existing_layout_and_attaches_canonical_context
             {"role": "system", "content": "时间"},
         ],
     )
-    assert [item["content"] for item in messages] == ["固定", "历史", "当前", "时间"]
+    assert [item["content"] for item in messages.provider_projection().to_messages()] == ["固定", "历史", "当前", "时间"]
     assert messages.fixed_prefix_size == 1
     assert messages.canonical_context.current_turn == (
         {"role": "user", "content": "当前"},

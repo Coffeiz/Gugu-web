@@ -12,6 +12,7 @@ import pytest
 
 from agent.models import AgentRequest
 from agent.context import run_context
+from agent.context.assembly import MessageArea
 from agent.context.session_system import NON_STREAMING_BLOCK
 
 
@@ -87,18 +88,14 @@ async def test_preparation_parity_between_collect_and_stream_modes(db, user_a, u
 
     @dataclasses.dataclass
     class _StubPrepared:
-        anthr_messages: list
-        anthr_initial_len: int
-        oa_messages: list
-        oa_initial_len: int
+        message_area: MessageArea
         rag_context: dict
         stance_to_persist: str | None
 
     async def fake_prepare_run(**kwargs):
         captured_prepare_run_kwargs.append(kwargs)
         return _StubPrepared(
-            anthr_messages=[], anthr_initial_len=0,
-            oa_messages=[], oa_initial_len=0,
+            message_area=MessageArea(),
             rag_context={}, stance_to_persist=None,
         )
 

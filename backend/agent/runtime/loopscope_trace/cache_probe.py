@@ -41,7 +41,10 @@ def _memory_values(run: Any) -> list[Any]:
 
 
 def _summary_values(messages: Any) -> list[str]:
-    conversation = getattr(messages, "conversation", messages)
+    from agent.context.provider_conversation import ProviderConversation
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("LoopScope summary probe 只接受 ProviderConversation")
+    conversation = messages.conversation
     found = []
     for message in conversation if isinstance(conversation, list) else ():
         content = message.get("content") if isinstance(message, dict) else None

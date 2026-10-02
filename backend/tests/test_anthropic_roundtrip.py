@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.context.assembly import PromptMessages
+from app.core.errors import RetryableError
+from agent.context.assembly import MessageArea
+from agent.context.provider_conversation import ProviderConversation
 from agent.context.canonical_tool_history import canonical_tool_round
 from agent.context.history import _anthropic_history_blocks
 from agent.loop_drivers import AnthropicDriver, NormalizedToolCall, RoundResult
@@ -20,6 +22,83 @@ from agent.runtime.loopscope_trace.state import (
 
 
 @pytest.mark.asyncio
+async def test_restored_tool_rows_keep_signed_thinking_in_next_run_request(db, user_a, monkeypatch):
+    """工具落库再恢复为 row envelope 后，下一 run 仍回传每轮签名且不污染 canonical。"""
+    from sqlalchemy import select
+
+    from agent import providers
+    from agent.context.message_area_repository import restore_entries
+    from agent.llm import llm_select
+    from app.models import ConversationMessage, ConversationSession
+
+    session = ConversationSession(user_id=user_a.id, title="历史工具续接测试")
+    db.add(session)
+    await db.flush()
+    db.add(ConversationMessage(session_id=session.id, role="user", content="检查工具契约"))
+    driver = AnthropicDriver()
+    state_ctx = SimpleNamespace(history_thinking_by_tool_id={}, persisted_tail_blocks=None)
+    expected_blocks = {}
+    for index in range(2):
+        call = NormalizedToolCall(f"call-{index}", "get_tool_schema", {"tools": ["get_project"]})
+        thinking = [{"type": "thinking", "thinking": f"检查步骤 {index}", "signature": f"sig-{index}"}]
+        expected_blocks[call.id] = thinking
+        result = RoundResult(text="", tool_calls=[call], raw=thinking + [{
+            "type": "tool_use", "id": call.id, "name": call.name, "input": call.input,
+        }])
+        state = driver.extract_provider_state(result, ctx=state_ctx)
+        for message in canonical_tool_round(result, [(call, "测试工具结果")]):
+            db.add(ConversationMessage(
+                session_id=session.id, role=message["role"], content="", content_json=message["content"],
+            ))
+    await db.commit()
+    rows = (await db.execute(select(ConversationMessage).where(
+        ConversationMessage.session_id == session.id,
+    ).order_by(ConversationMessage.id))).scalars().all()
+    area = restore_entries(rows)
+    area.configure_request(fixed_prefix=[], render_options={"api_format": "anthropic"})
+    area.append({"role": "user", "content": "继续检查"})
+    before = area.snapshot().digest
+    adapter = SimpleNamespace(
+        name="minimax", api_format="anthropic", render_history=lambda value: value.provider_projection(),
+        build_anthropic_thinking_params=lambda _: {}, build_anthropic_generation_params=lambda _: {},
+    )
+    monkeypatch.setattr(providers, "adapter_for", lambda _: adapter)
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda *_: object())
+    monkeypatch.setattr(llm_select, "supports_anthropic_active_cache", lambda _: False)
+    client, ctx = driver.prepare(
+        [], SimpleNamespace(model="test-model", max_tokens=32), area, "测试前缀",
+        tool_snapshot=SimpleNamespace(anthropic_schemas=lambda _: []),
+    )
+    state["payload"]["history_thinking_by_tool_id"]["removed-call"] = [{
+        "type": "thinking", "thinking": "已被压缩的调用", "signature": "removed-signature",
+    }]
+    assert driver.restore_provider_state(ctx, state["payload"])
+    captured = {}
+
+    async def stream(_client, kwargs, _adapter):
+        captured.update(kwargs)
+        yield "final", SimpleNamespace(
+            content=[{"type": "text", "text": "完成"}],
+            usage=SimpleNamespace(input_tokens=10, output_tokens=1,
+                                  cache_read_input_tokens=0, cache_creation_input_tokens=0),
+        )
+
+    events = [event async for event in driver.run_round(client, ctx, area, stream_round=stream)]
+    assert events[-1][0] == "done"
+    assistants = [message for message in captured["messages"] if message["role"] == "assistant"]
+    assert len(assistants) == 2
+    for index, message in enumerate(assistants):
+        assert message["content"] == expected_blocks[f"call-{index}"] + [{
+            "type": "tool_use", "id": f"call-{index}", "name": "get_tool_schema",
+            "input": {"tools": ["get_project"]},
+        }]
+    assert "removed-call" not in ctx.history_thinking_by_tool_id
+    assert area.snapshot().digest == before
+    assert all(block["type"] not in {"thinking", "redacted_thinking"}
+               for row in rows for block in (row.content_json or []))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("arguments", [
     {"max_results": 15, "query": "测试记录", "filters": {"z": None, "a": [1, {"z": 2, "a": 3}]}},
     {},
@@ -30,7 +109,7 @@ async def test_anthropic_tool_input_keeps_wire_order_after_persistence(arguments
     ctx = SimpleNamespace(
         model="test-model", max_tokens=32, tools=[], system_param="",
         thinking_param={}, generation_param={}, supports_active_cache=False,
-        adapter=SimpleNamespace(render_history=lambda value: value),
+        adapter=SimpleNamespace(render_history=lambda value: value.provider_projection()),
     )
 
     async def response(_client, _kwargs, _adapter):
@@ -40,7 +119,7 @@ async def test_anthropic_tool_input_keeps_wire_order_after_persistence(arguments
         )
 
     events = [event async for event in driver.run_round(
-        object(), ctx, [{"role": "user", "content": "测试"}], stream_round=response,
+        object(), ctx, MessageArea.from_canonical_messages([{"role": "user", "content": "测试"}]), stream_round=response,
     )]
     result = events[-1][1]
     dispatched = [(result.tool_calls[0], "测试结果")]
@@ -164,6 +243,39 @@ def test_anthropic_structure_digest_detects_non_identical_roundtrip():
     assert _anthropic_structure(original)[1] != _anthropic_structure(changed)[1]
 
 
+def test_anthropic_structure_probe_requires_provider_projection(monkeypatch):
+    from agent.runtime.loopscope_trace.state import record_anthropic_structure_probe
+
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-anthropic-projection-boundary", trace_id="trace-projection-boundary",
+        session_key="gugu:web:projection-boundary", external_session_id="projection-boundary",
+        source="web", started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    try:
+        record_anthropic_structure_probe(
+            provider="anthropic", model="test-model",
+            response_blocks=[{"type": "text", "text": "private"}],
+            provider_conversation=[{"role": "assistant", "content": []}],
+        )
+        assert "anthropic_structure_probe" not in run.attributes
+
+        record_anthropic_structure_probe(
+            provider="anthropic", model="test-model",
+            response_blocks=[{"type": "text", "text": "private"}],
+            provider_conversation=ProviderConversation([
+                {"role": "assistant", "content": [{"type": "text", "text": "private"}]},
+            ]),
+        )
+    finally:
+        _scope_run.reset(token)
+
+    summary = run.attributes["anthropic_structure_probe"]["last"]
+    assert summary["assistant_roundtrip_same"] is True
+    assert "private" not in repr(summary)
+
+
 def test_anthropic_request_failure_trace_records_structure_without_payload(monkeypatch):
     monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
     run = _ScopeRun(
@@ -171,7 +283,7 @@ def test_anthropic_request_failure_trace_records_structure_without_payload(monke
         session_key="gugu:web:test-session", external_session_id="test-session",
         source="web", started_at=_now(),
     )
-    messages = [
+    messages = ProviderConversation([
         {"role": "assistant", "content": [{
             "type": "tool_use", "id": "private-call-id", "name": "test_tool",
             "input": {"secret": "must-not-be-recorded"},
@@ -184,7 +296,7 @@ def test_anthropic_request_failure_trace_records_structure_without_payload(monke
             "type": "tool_use", "id": "private-call-id", "name": "test_tool", "input": {},
         }]},
         {"role": "user", "content": "private user text"},
-    ]
+    ], area_revision=3, area_digest="a" * 64, area_entry_count=3)
 
     class ProviderError(Exception):
         status_code = 400
@@ -201,8 +313,7 @@ def test_anthropic_request_failure_trace_records_structure_without_payload(monke
                 "input": {"secret": "must-not-be-recorded"},
             }],
             restored_insert_index=3,
-            canonical_digest="a" * 64,
-            wire_digest="b" * 64,
+            projection=messages,
         )
     finally:
         _scope_run.reset(token)
@@ -212,6 +323,8 @@ def test_anthropic_request_failure_trace_records_structure_without_payload(monke
     assert diagnostic["error_type"] == "invalid_request_error"
     assert diagnostic["provider_code"] == "2013"
     assert diagnostic["restored_state"]["insert_index"] == 3
+    assert diagnostic["provider_projection"]["area_revision"] == 3
+    assert diagnostic["provider_projection"]["area_digest"] == "a" * 64
     restored_tool = diagnostic["restored_state"]["blocks"][0]
     assert restored_tool["type"] == "tool_use"
     assert restored_tool["tool_id_fp"] == diagnostic["tool_pairing"]["tool_uses"][0]["tool_id_fp"]
@@ -226,6 +339,46 @@ def test_anthropic_request_failure_trace_records_structure_without_payload(monke
         "must-not-be-recorded",
     ):
         assert private_value not in serialized
+
+
+def test_anthropic_request_failure_trace_unwraps_retry_error_without_recording_body(monkeypatch):
+    """重试耗尽后仍保留上游状态码/错误码，避免只记录外层 RetryableError。"""
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-test-wrapped-provider-error", trace_id="trace-test",
+        session_key="gugu:web:test-session", external_session_id="test-session",
+        source="web", started_at=_now(),
+    )
+    messages = ProviderConversation([{"role": "user", "content": "private input"}])
+
+    class ProviderError(Exception):
+        status_code = 500
+        type = "api_error"
+        message = "upstream failure (2001)"
+        body = {"error": {"type": "api_error", "code": "2001", "message": "private response"}}
+
+    wrapped = RetryableError(
+        "llm.stream_exhausted", "provider retry exhausted",
+        cause=ProviderError("private response"), attempt=5,
+    )
+    token = _scope_run.set(run)
+    try:
+        record_anthropic_request_failure(
+            provider="minimax", model="MiniMax-M3", messages=messages,
+            error=wrapped, projection=messages,
+        )
+    finally:
+        _scope_run.reset(token)
+
+    diagnostic = run.attributes["provider_request_failures"]["last"]
+    assert diagnostic["error_status"] == 500
+    assert diagnostic["error_type"] == "api_error"
+    assert diagnostic["provider_code"] == "2001"
+    assert diagnostic["wrapper_error_type"] == "RetryableError"
+    assert diagnostic["retry_attempt"] == 5
+    serialized = json.dumps(diagnostic, ensure_ascii=False)
+    assert "private response" not in serialized
+    assert "private input" not in serialized
 
 
 @pytest.mark.asyncio
@@ -254,12 +407,12 @@ async def test_anthropic_driver_records_failure_trace_only_when_scoped(monkeypat
         thinking_param={}, generation_param={}, supports_active_cache=False,
         adapter=SimpleNamespace(
             name="minimax", api_format="anthropic",
-            render_history=lambda value: list(value),
+            render_history=lambda value: value.provider_projection(),
         ),
     )
-    messages = [{
+    messages = MessageArea.from_canonical_messages([{
         "role": "user", "content": [{"type": "text", "text": "private user prompt"}],
-    }]
+    }])
 
     token = _scope_run.set(run)
     try:
@@ -276,8 +429,8 @@ async def test_anthropic_driver_records_failure_trace_only_when_scoped(monkeypat
     assert diagnostic["protocol"] == "anthropic"
     assert diagnostic["error_status"] == 400
     assert diagnostic["provider_code"] == "2013"
-    assert diagnostic["canonical_history_digest"]
-    assert diagnostic["rendered_history_digest"]
+    assert diagnostic["provider_projection"]["wire_digest"]
+    assert diagnostic["provider_projection"]["message_count"] == 1
     serialized = json.dumps(diagnostic, ensure_ascii=False)
     assert "private user prompt" not in serialized
     assert "private provider detail" not in serialized
@@ -317,10 +470,10 @@ async def test_anthropic_driver_records_final_cached_request_structure(monkeypat
         restored_blocks=restored,
         adapter=SimpleNamespace(
             name="minimax", api_format="anthropic",
-            render_history=lambda value: value,
+            render_history=lambda value: value.provider_projection(),
         ),
     )
-    messages = PromptMessages([
+    messages = MessageArea.from_canonical_messages([
         {"role": "user", "content": "历史用户消息"},
         {"role": "assistant", "content": "历史回复"},
         {"role": "user", "content": "本轮问题"},

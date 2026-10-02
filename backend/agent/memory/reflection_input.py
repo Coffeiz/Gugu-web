@@ -5,12 +5,14 @@
 """
 from __future__ import annotations
 
+from typing import Any
+
 from agent.models import AgentRequest
 
 
 def build_reflection_input(
     req: AgentRequest,
-    messages: list,
+    messages: Any,
     initial_len: int,
     reply: str,
 ) -> tuple[str, str]:
@@ -19,17 +21,41 @@ def build_reflection_input(
         return req.message, reply
 
     private_results: list[str] = []
-    for item in messages[initial_len:]:
-        if item.get("role") != "tool":
-            continue
-        content = item.get("content")
-        if isinstance(content, list):
-            content = "\n".join(
-                str(part.get("text") or part.get("content") or "")
-                for part in content
-                if isinstance(part, dict)
-            )
-        if content:
-            private_results.append(str(content))
+    from agent.context.assembly.area import MessageArea, MessageSource
+
+    if isinstance(messages, MessageArea):
+        source_messages = (
+            entry.canonical_message
+            for entry in messages.entries
+            if entry.source == MessageSource.TOOL_ROUND
+        )
+        for item in source_messages:
+            blocks = item.get("content")
+            for block in blocks if isinstance(blocks, list) else ():
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                content = block.get("content")
+                if isinstance(content, list):
+                    content = "\n".join(
+                        str(part.get("text") or part.get("content") or "")
+                        for part in content
+                        if isinstance(part, dict)
+                    )
+                if content:
+                    private_results.append(str(content))
+    else:
+        # 兼容仍传 provider 消息列表的内部调用方。
+        for item in messages[initial_len:]:
+            if item.get("role") != "tool":
+                continue
+            content = item.get("content")
+            if isinstance(content, list):
+                content = "\n".join(
+                    str(part.get("text") or part.get("content") or "")
+                    for part in content
+                    if isinstance(part, dict)
+                )
+            if content:
+                private_results.append(str(content))
 
     return req.message, "\n\n".join(private_results) or "（只分析当前 owner 发言，不分析群聊助手回复）"

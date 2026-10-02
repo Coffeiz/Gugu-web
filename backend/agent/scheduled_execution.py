@@ -51,12 +51,13 @@ def _build_scheduled_messages(
         messages = assembly.assemble(
             fixed_parts=fixed_parts,
             history=[],
-            system_text=system_prompt,
+            render_options={"api_format": "anthropic"},
         )
         batch, _ = assembly.assemble_turn(
             stance=stance_text,
             current_user={"role": "user", "content": user_content},
         )
+        batch.update_area_entry("current_user", persistence_policy="request_only")
         messages.append_batch(batch)
         messages.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
         return messages
@@ -64,12 +65,13 @@ def _build_scheduled_messages(
     messages = assembly.assemble(
         fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
         history=[],
-        system_text=system_prompt,
+        render_options={"api_format": "openai"},
     )
     batch, _ = assembly.assemble_turn(
         stance=stance_text,
         current_user={"role": "user", "content": user_content},
     )
+    batch.update_area_entry("current_user", persistence_policy="request_only")
     messages.append_batch(batch)
     messages.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
     return messages

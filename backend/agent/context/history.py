@@ -25,6 +25,27 @@ def build_canonical_history_envelopes(history: Iterable, *, source: str | None =
     return [normalize_history_message(message, source=source) for message in history]
 
 
+def canonical_restore_record(message) -> dict:
+    """把持久化行恢复成可放入 MessageArea 的 provider-neutral row envelope。"""
+    content_json = getattr(message, "_reference_content_json", None)
+    if content_json is None:
+        content_json = getattr(message, "content_json", None)
+    return {
+        "_history_id": getattr(message, "id", None),
+        "role": str(getattr(message, "role", "user") or "user"),
+        "content": str(getattr(message, "content", "") or ""),
+        "content_json": content_json,
+        "sent_at": getattr(message, "sent_at", None).isoformat()
+        if getattr(message, "sent_at", None) is not None else None,
+        "quoted_text": getattr(message, "quoted_text", None),
+        "references_json": getattr(message, "references_json", None),
+        "files": getattr(message, "files", None),
+        "chat_type": getattr(message, "chat_type", None),
+        "platform_user_id": getattr(message, "platform_user_id", None),
+        "platform_user_name": getattr(message, "platform_user_name", None),
+    }
+
+
 def _summary_content(message) -> str:
     """将持久化 baseline 摘要恢复为普通历史 user 消息。"""
     text = (getattr(message, "content", "") or "").strip()
@@ -159,7 +180,13 @@ def _has_assistant_history_payload(message, content_json) -> bool:
             or getattr(message, "files", None)
             or getattr(message, "quoted_text", None)
         )
-    return bool(content_text(content_json).strip())
+    if content_text(content_json).strip():
+        return True
+    return any(
+        isinstance(block, dict)
+        and block.get("type") in {"tool_call", "tool_use", "reasoning_content", "thinking"}
+        for block in _blocks(content_json)
+    )
 
 
 def _openai_tool_call(block: dict) -> dict:
@@ -241,6 +268,8 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
                         "type": "time-context",
                         "text": str(block["text"]),
                     })
+                elif role == "user" and block.get("type") == "text" and block.get("text"):
+                    canonical.append({"type": "text", "text": str(block["text"])})
                 elif role == "assistant" and block.get("type") == "text" and block.get("text"):
                     canonical.append({"type": "text", "text": str(block["text"])})
         if canonical and any(
@@ -324,6 +353,8 @@ def _ordered_canonical_content(
             content.append(dict(block))
         elif block_type == "text" and block.get("text"):
             content.append({"type": "text", "text": str(block["text"])})
+        elif block_type in {"image_url", "video_url", "input_audio", "input_image", "file"}:
+            content.append(dict(block))
         elif block_type not in {"reasoning_content", "thinking"}:
             rendered = content_text(block)
             if rendered:
@@ -336,16 +367,19 @@ def _ordered_canonical_content(
 
 
 def _openai_history_message(message, request, *, strip_thinking: bool = False,
-                            content_json=None) -> list[dict]:
+                            content_json=None, strip_history_images: bool = True) -> list[dict]:
     if content_json is None:
         content_json = getattr(message, "content_json", None)
     if content_json is None:
+        if not getattr(message, "_canonical_restored", True):
+            return [{"role": message.role, "content": message.content or ""}]
         from agent.im.context_loader import format_history_content
 
         return [{"role": message.role, "content": format_history_content(message, request)}]
 
     from app.core.chat_attach import strip_image_for_history
-    content_json = strip_image_for_history(content_json)
+    if strip_history_images:
+        content_json = strip_image_for_history(content_json)
     blocks = _blocks(content_json)
     if strip_thinking:
         blocks = [block for block in blocks if block.get("type") not in {"thinking", "reasoning_content"}]
@@ -400,7 +434,10 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
     if attachment_refs:
         text_parts.append(attachment_refs)
 
-    if canonical_events and not tool_calls and not tool_results:
+    has_media = any(block.get("type") in {
+        "image_url", "video_url", "input_audio", "input_image", "file",
+    } for block in blocks)
+    if (canonical_events or has_media) and not tool_calls and not tool_results:
         return [{"role": message.role, "content": _ordered_canonical_content(
             blocks, quote_prefix=quote_prefix, attachment_refs=attachment_refs,
         )}]
@@ -500,8 +537,9 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         if use_anthropic:
             if content_json is not None:
                 from agent.im.context_loader import format_attachment_refs
-                from app.core.chat_attach import strip_image_for_history
-                content_json = strip_image_for_history(content_json)
+                if getattr(message, "_canonical_restored", True):
+                    from app.core.chat_attach import strip_image_for_history
+                    content_json = strip_image_for_history(content_json)
                 attachment_refs = format_attachment_refs(message)
                 blocks = _blocks(content_json)
                 if any(block.get("type") in (
@@ -536,6 +574,87 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             parts.extend(_openai_history_message(
                 message, request, strip_thinking=strip_thinking,
                 content_json=content_json,
+                strip_history_images=getattr(message, "_canonical_restored", True),
             ))
 
     return (parts, protected_start) if return_protected_start else parts
+
+
+def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
+    """从 CanonicalAreaSnapshot 纯生成 ProviderConversation，不读取 ORM 或修改 Area。
+
+    恢复行已经以 provider-neutral row envelope 放在 MessageEntry 中；live entry
+    使用相同 canonical blocks，但不执行“历史图片清理”或按 sent_at 重建时间块，
+    因为当前轮的媒体和时间提醒已经由 Area 明确携带。
+    """
+    from types import SimpleNamespace
+
+    from agent.context.assembly.area import MessageSource
+    from agent.context.canonical_tool_history import render_events_for_provider
+    from agent.context.provider_conversation import ProviderConversation
+    from agent.security.sanitize import sanitize_messages
+
+    options = dict(options or {})
+    use_anthropic = options.get("api_format") == "anthropic"
+    records = []
+    for entry in snapshot.entries:
+        record = entry.canonical_message
+        content_json = record.get("content_json")
+        content = record.get("content", "")
+        if entry.source != MessageSource.RESTORED_HISTORY:
+            # Live Area entries are already canonical. Route them through the same
+            # provider formatter without ORM/history reconstruction, which can drop
+            # request-only assistant/tool messages or re-read persisted timestamps.
+            content_json = record.get("content_json")
+            if content_json is None and isinstance(record.get("content"), (list, dict)):
+                content_json = record.get("content")
+                content = ""
+            else:
+                content = record.get("content", "")
+        elif content_json is None and isinstance(content, (list, dict)):
+            content_json, content = content, ""
+        sent_at = record.get("sent_at") if entry.source == MessageSource.RESTORED_HISTORY else None
+        if isinstance(sent_at, str):
+            from datetime import datetime
+            try:
+                sent_at = datetime.fromisoformat(sent_at)
+            except ValueError:
+                sent_at = None
+        records.append(SimpleNamespace(
+            id=record.get("_history_id"),
+            role=record.get("role", "user"),
+            content=content,
+            content_json=content_json,
+            sent_at=sent_at,
+            quoted_text=record.get("quoted_text"),
+            files=record.get("files"),
+            references_json=record.get("references_json"),
+            _reference_content_json=record.get("_reference_content_json"),
+            chat_type=record.get("chat_type"),
+            platform_user_id=record.get("platform_user_id"),
+            platform_user_name=record.get("platform_user_name"),
+            _canonical_restored=entry.source == MessageSource.RESTORED_HISTORY,
+        ))
+    history = build_history_parts(
+        records,
+        options.get("request"),
+        use_anthropic=use_anthropic,
+        user_tz=options.get("user_tz"),
+        strip_thinking=bool(options.get("strip_thinking", False)),
+    )
+    fixed_prefix_size = int(getattr(source, "fixed_prefix_size", 0) or 0)
+    fixed_prefix = list(getattr(source, "request_prefix", ())[:fixed_prefix_size])
+    # 固定前缀由组装器持有，不属于 Area；Area 是所有动态 canonical history 的唯一来源。
+    request_messages = fixed_prefix + history
+    if use_anthropic:
+        request_messages = sanitize_messages(request_messages)
+    request_messages.extend(getattr(source, "dynamic_tail", ()) or ())
+    projection = ProviderConversation(
+        request_messages,
+        source=source,
+        area_snapshot=snapshot,
+        fixed_prefix_size=min(fixed_prefix_size, len(request_messages)),
+        dynamic_tail_size=len(getattr(source, "dynamic_tail", ()) or ()),
+        diagnostics={"canonical_area_projection": True},
+    )
+    return render_events_for_provider(projection)

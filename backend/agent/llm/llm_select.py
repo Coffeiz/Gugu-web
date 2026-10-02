@@ -132,9 +132,9 @@ def _reasoning_persistence_for_model(model) -> str:
     """返回当前协议真正支持的推理状态策略。
 
     Chat Completions 不会返回可恢复的 provider state；即使数据库里还留有
-    旧的 summary/continuation 配置，也一律回落 off，不再触发任何 Responses
-    协议自动探测/切换。continuation 只在显式 api_format=responses（或
-    Anthropic 等原生支持续接的协议）下生效。
+    旧的 summary/continuation 配置，也一律回落 off。协议通过适配器解析，
+    不根据 Provider 名单推断是否支持；continuation 只在非 Chat Completions
+    协议且驱动明确支持时才可能生效。
     """
     mode = ReasoningPersistencePolicy.from_value(
         getattr(model, "reasoning_persistence", "off")
@@ -142,11 +142,7 @@ def _reasoning_persistence_for_model(model) -> str:
     configured_format = str(getattr(model, "api_format", "") or "").strip().lower()
     if configured_format in {"openai", "chat", "chat_completions"}:
         return "off"
-    # 已知 OpenAI-compatible Provider 的空值按 Chat Completions 处理；
-    # 未知 Provider 交回协议适配器自行解释（不主动切换协议）。
-    provider = (getattr(model, "provider", "") or "").lower()
-    known_openai_providers = {"openai", "qwen", "glm", "glm-coding", "deepseek", "mimo", "ollama", "local"}
-    if not configured_format and provider in known_openai_providers:
+    if providers.adapter_for(model).protocol_format(model) == "openai":
         return "off"
     if (getattr(model, "provider", "") or "").lower() == "ollama" and \
             getattr(model, "ollama_api_mode", "native") == "native":

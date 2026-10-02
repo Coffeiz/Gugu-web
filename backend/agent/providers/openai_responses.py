@@ -291,7 +291,7 @@ def _responses_output_text(response: Any) -> str:
 
 async def complete_branch(
     system_text: str,
-    history: list[dict],
+    history,
     user: str,
     ai: Any,
     settings,
@@ -300,25 +300,43 @@ async def complete_branch(
     tools: list[dict] | None = None,
     json_mode: bool = False,
     usage_sink: list | None = None,
+    read_timeout: float | None = None,
 ) -> str:
     """以无状态 Responses 请求执行只读分支，不接入主 run 的 response chain。"""
     import httpx
     from agent import providers
 
     client = providers.build_openai_client(
-        ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0),
+        ai, httpx.Timeout(
+            connect=10.0, read=read_timeout or 40.0, write=10.0, pool=5.0,
+        ),
     )
     adapter = providers.adapter_for(ai)
+    from agent.context.provider_conversation import ProviderConversation
+    if isinstance(history, ProviderConversation):
+        projection = history.with_messages(
+            [*history.to_messages(), {"role": "user", "content": user}],
+            dynamic_tail_size=1,
+        )
+    else:
+        from agent.context.assembly import MessageArea
+        from agent.context.history import render_canonical_area_snapshot
+        area = MessageArea.from_canonical_messages(
+            history or (),
+            render_options={"api_format": adapter.protocol_format(ai)},
+        )
+        area.set_dynamic_tail([{"role": "user", "content": user}])
+        projection = render_canonical_area_snapshot(
+            area.snapshot(), source=area, options=area.render_options,
+        )
+    wire_history = projection.to_messages()
     base_instructions, snapshot_instructions, instructions = _responses_instruction_parts(
-        history, system_text,
+        wire_history, system_text,
     )
     branch_tools = list(tools or ())
     request = {
         "model": ai.model,
-        "input": _responses_input([
-            *history,
-            {"role": "user", "content": user},
-        ]),
+        "input": _responses_input(wire_history),
         "max_output_tokens": max_output_tokens,
         "tools": branch_tools,
         "store": bool(getattr(ai, "store", True)),
@@ -387,8 +405,9 @@ class OpenAIResponsesDriver:
         chat_tools = schema_source.openai_schemas(tool_names)
         tools = _responses_tools(chat_tools)
         adapter = providers.adapter_for(ai)
+        provider_history = render_provider_history(messages, adapter)
         base_instructions, snapshot_instructions, instructions = _responses_instruction_parts(
-            messages, system_text,
+            provider_history.to_messages(), system_text,
         )
         return client, _ResponsesCtx(
             tools=tools, max_output_tokens=ai.max_tokens, model=ai.model,
@@ -409,8 +428,9 @@ class OpenAIResponsesDriver:
     async def run_round(self, client, ctx, messages, stream_round=None):
         # stream_round 仅 AnthropicDriver 使用；本驱动接收并忽略，保持统一调用签名。
         projection = render_provider_history(messages, ctx.adapter)
-        full_rendered = projection.messages
+        full_rendered = projection.to_messages()
         rendered = full_rendered
+        use_previous_response = bool(ctx.previous_response_id)
         if ctx.previous_response_id:
             # response chain 已经包含旧历史；只发送上一个 response 之后的增量，
             # 但仍在每次请求显式发送 instructions/tools。
@@ -420,15 +440,33 @@ class OpenAIResponsesDriver:
                 default=-1,
             )
             rendered = rendered[last_assistant + 1:] or rendered[-1:]
+            # OpenAI-compatible 服务对 function_call_output 的 response-chain
+            # 续接支持不一致；即使接受请求，也可能只回应“工具已加载”而丢失原任务意图。
+            # 本地 canonical 历史完整，因此一旦本轮增量含工具回执，就用完整对话无状态重放。
+            if any(
+                item.get("type") == "function_call_output"
+                for item in _responses_input(rendered)
+            ):
+                use_previous_response = False
+                rendered = full_rendered
+        request_input = _responses_input(rendered)
+        if not request_input and use_previous_response:
+            # 增量尾部可能只剩 Responses 不接受的 reasoning-only/空 assistant 项。
+            # 不要把 input=[] 交给上游；本地历史完整时退回无状态全量回放。
+            request_input = _responses_input(full_rendered)
+            if request_input:
+                use_previous_response = False
+        if not request_input:
+            raise ValueError("Responses 请求没有可发送的输入项")
         request = {
             "model": ctx.model,
             "instructions": ctx.instructions,
-            "input": _responses_input(rendered),
+            "input": request_input,
             "max_output_tokens": ctx.max_output_tokens,
             "tools": ctx.tools,
             "stream": True,
         }
-        if ctx.previous_response_id:
+        if use_previous_response:
             request["previous_response_id"] = ctx.previous_response_id
         request.update(ctx.adapter.build_responses_reasoning_params(ctx.ai))
         # Responses continuation 依赖服务端 response chain；只有明确配置为 False
@@ -645,10 +683,21 @@ class OpenAIResponsesDriver:
         return messages
 
     def build_followup(self, result, next_content, assistant_fallback="（…）"):
-        return [self._asst(result.raw, result.text or assistant_fallback), {"role": "user", "content": next_content}]
+        from agent.context.assembly.batch import request_only_batch
+        return request_only_batch([
+            self._asst(result.raw, result.text or assistant_fallback),
+            {"role": "user", "content": next_content},
+        ])
 
     def build_guard_followup(self, result, next_content):
-        return [self._asst(result.raw, result.text or "（…）"), {"role": "system", "content": next_content}]
+        from agent.context.assembly.batch import request_only_batch
+        return request_only_batch([
+            self._asst(result.raw, result.text or "（…）"),
+            {"role": "system", "content": next_content},
+        ])
 
     def build_empty_retry(self, result):
-        return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
+        from agent.context.assembly.batch import request_only_batch
+        return request_only_batch([{
+            "role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）",
+        }])

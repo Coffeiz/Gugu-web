@@ -83,13 +83,12 @@ def capture_reflection_snapshot(
     try:
         if session_id is None or not (reply_text or "").strip():
             return None
-        # PromptMessages.conversation 排除 dynamic tail；普通 list 调用方（测试/
-        # 内部直调）原样作为前缀。末尾追加 assistant 回复——它是主请求的输出，
+        # Area conversation 排除 dynamic tail。末尾追加 assistant 回复——它是主请求的输出，
         # 不在请求输入序列里，追加属于尾部 delta，不影响前缀缓存命中。
-        conversation = (
-            list(messages.conversation)
-            if hasattr(messages, "conversation") else list(messages)
-        )
+        from .assembly.area import MessageArea
+        if not isinstance(messages, MessageArea):
+            raise TypeError("Reflection snapshot 只接受 MessageArea")
+        conversation = tuple(entry.canonical_message for entry in messages.entries)
         if not conversation:
             return None
         history = tuple(conversation) + (
@@ -116,10 +115,10 @@ def capture_reflection_snapshot(
         while len(_snapshots) > _SNAPSHOT_MAX_ENTRIES:
             _snapshots.popitem(last=False)
         return snapshot
-    except Exception:
+    except Exception as exc:
         from app.core.redaction import diag_log
         # 只记异常类型与位置，不打快照内容（聊天正文/工具参数不进日志）。
-        diag_log("agent.context.reflection_snapshot.capture", None)
+        diag_log("agent.context.reflection_snapshot.capture", exc)
         return None
 
 

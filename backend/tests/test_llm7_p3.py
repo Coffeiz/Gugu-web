@@ -95,8 +95,10 @@ async def test_ollama_native_stream_and_tool_roundtrip(monkeypatch):
     )
 
     driver = OllamaDriver()
-    _, context = driver.prepare(["probe_noop"], _ollama_ai(), [], None)
-    events = [event async for event in driver.run_round(client, context, [])]
+    from agent.context.assembly.area import MessageArea
+    messages = MessageArea.from_canonical_messages()
+    _, context = driver.prepare(["probe_noop"], _ollama_ai(), messages, None)
+    events = [event async for event in driver.run_round(client, context, messages)]
 
     assert events[0] == ("token", "先查一下。")
     result = events[-1][1]

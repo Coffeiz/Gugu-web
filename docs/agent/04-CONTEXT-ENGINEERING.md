@@ -69,18 +69,22 @@ Memory、Knowledge、RAG、项目状态等动态来源由各自服务产生结�
 | `history.py` | 从持久化消息恢复 canonical History |
 | `batch.py` | 表示本轮新增消息集合，保持顺序和边界 |
 | `turn.py` | 维护本轮姿态、时间、用户消息和动态内容 |
-| `messages.py` | 提供消息结构和公共类型 |
+| `area.py` | 定义不可变 `MessageEntry` 与 Run 内唯一有序 canonical ledger、来源、持久化策略及增量快照 |
+| `provider_conversation.py` | 定义与 Area 解耦的不可变 Provider 请求投影 |
+| `message_area_repository.py` | 在事务中恢复/提交 Area delta，并按 sequence 与 run-aware digest 幂等 |
 
 Canonical Assembly 的输出不绑定 Anthropic、OpenAI 或 Ollama。Provider adapter 可以将它转换为供应商需要的 wire format，但不能删除工具结果、改变角色语义或重新排序历史。
 
+`MessageArea` 是 Run 内 canonical history 与持久化增量的唯一事实源。`MessageBatch` 仅是一次性输入 DTO，只持有完整 canonical entries 一份；每条 entry 的来源与持久化策略随正文一起进入 Area。`finalize_run()` 必须接收 Area，缺失时直接失败，不从 Provider wire 猜测或补建历史。Loop、sanitize、compaction、cache 与 LoopScope 诊断均消费 Area 或不可变 `ProviderConversation`，不保留旧可变 list facade。
+
 ## 5. 稳定性与缓存边界
 
-`Batch`、`History`、baseline 和 provider cache 属于同一条生命周期，不能分别维护成互相独立的上下文区域。`Batch` 表示本轮新增事实；它先参与当前请求，确认需要持久化后再追加到 History；baseline 只在压缩事务成功后推进；缓存则复用没有变化的稳定前缀。
+`MessageBatch`、`History`、baseline 和 provider cache 属于同一条生命周期，不能分别维护成互相独立的上下文区域。Batch 仅是待追加 Area entries 的一次性输入 DTO；Area 中每条 entry 的 policy 决定它在 finalize 时持久化、跳过或在恢复时重建。baseline 只在压缩事务成功后推进；缓存则复用没有变化的稳定前缀。
 
 ```mermaid
 flowchart TD
     A([进入新请求]) --> B[读取 Snapshot<br/>与已持久化 History]
-    B --> C[建立唯一<br/>NewMessageBatch]
+    B --> C[建立唯一<br/>MessageBatch]
     C --> D[加入当前消息<br/>和动态来源]
     D --> E[Context Assembly]
     E --> F[Provider context]
@@ -112,7 +116,7 @@ flowchart TD
 History(n) + Batch(n+1) = History(n+1)
 ```
 
-- `History` 只表示已成功持久化的事实；`Batch` 只表示当前 Run 的新增事实。
+- `History` 只表示已成功持久化的事实；`MessageBatch` 只表示即将追加到当前 Run 的 canonical entries。
 - 各来源只向同一个 Batch 提供片段，由统一组装器决定顺序、边界和 canonical 身份。
 - 工具调用、工具结果和交互恢复继续追加到同一个 Run，不能拆成多个动态尾部。
 - 普通新增只追加 Batch，不会重写旧 History；只有压缩事务可以替代已覆盖的旧历史。

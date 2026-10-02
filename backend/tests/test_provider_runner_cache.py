@@ -256,6 +256,78 @@ async def test_anthropic_append_branch_sanitizes_history_before_appending_delta(
 
 
 @pytest.mark.asyncio
+async def test_minimax_anthropic_branch_sends_rendered_tool_history_without_reprojection(monkeypatch):
+    """wire 历史二次按 canonical 渲染会丢工具事件，必须保留 Anthropic 工具往返。"""
+    from agent.context.provider_conversation import ProviderConversation
+
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    history = ProviderConversation([
+        {"role": "user", "content": "执行查询"},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "call-1", "name": "lookup", "input": {"q": "x"}},
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "call-1", "content": "结果"},
+        ]},
+    ])
+    ai = SimpleNamespace(
+        model="MiniMax-M3", provider="minimax", api_format="anthropic",
+        base_url="https://api.minimaxi.com/anthropic",
+    )
+
+    await provider_runner.complete_messages(
+        "stable system", history, "继续处理", settings=SimpleNamespace(ai=ai),
+    )
+
+    sent = fake.kwargs["messages"]
+    assert sent[0] == {"role": "user", "content": "执行查询"}
+    assert sent[1]["content"][0]["type"] == "tool_use"
+    assert sent[1]["content"][0]["input"] == {"q": "x"}
+    assert sent[2]["content"][0]["type"] == "tool_result"
+    assert sent[2]["content"][0]["tool_use_id"] == "call-1"
+    assert sent[-1] == {"role": "user", "content": "继续处理"}
+
+
+@pytest.mark.asyncio
+async def test_minimax_prefix_projection_remains_wire_shaped_through_branch_request(monkeypatch):
+    """从 canonical 工具轮次到 Anthropic HTTP payload 只投影一次，避免二次转换造成 400。"""
+    from agent.context.prefix_history import render_branch_prefix
+
+    fake = _FakeAnthropic()
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda ai, timeout: fake)
+    ai = SimpleNamespace(
+        model="MiniMax-M3", provider="minimax", api_format="anthropic",
+        base_url="https://api.minimaxi.com/anthropic",
+    )
+    canonical = [
+        {"role": "user", "content_json": [{"type": "text", "text": "查一下"}]},
+        {"role": "assistant", "content_json": [
+            {"type": "tool_call", "id": "call-1", "name": "lookup", "arguments": {"q": "x"}},
+        ]},
+        {"role": "tool", "content_json": [
+            {"type": "tool_result", "tool_call_id": "call-1", "content": "结果"},
+        ]},
+        {"role": "assistant", "content_json": [{"type": "text", "text": "查到了"}]},
+    ]
+    projection = render_branch_prefix(canonical, ai)
+    expected_prefix = projection.to_messages()
+
+    await provider_runner.complete_messages(
+        "stable system", projection, "追加任务", settings=SimpleNamespace(ai=ai),
+    )
+
+    sent = fake.kwargs["messages"]
+    assert [message["role"] for message in sent[:len(expected_prefix)]] == [
+        message["role"] for message in expected_prefix
+    ]
+    assert sent[1]["content"][0]["type"] == "tool_use"
+    assert sent[2]["content"][0]["type"] == "tool_result"
+    assert sent[-1] == {"role": "user", "content": "追加任务"}
+    assert canonical[1]["content_json"][0]["type"] == "tool_call"
+
+
+@pytest.mark.asyncio
 async def test_complete_messages_uses_responses_protocol_and_native_tool_schema(monkeypatch):
     class _FakeResponses:
         def __init__(self):

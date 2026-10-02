@@ -1,4 +1,5 @@
 """统一 run 收尾契约的回归测试。"""
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -7,8 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent.context import run_finalize
-from agent.context.assembly import PromptMessages, assemble_turn
-from agent.context.canonical_tool_history import persistable_canonical_batch_records
+from agent.context.assembly import (
+    MessageArea, MessageSource, MessageBatch, PersistencePolicy,
+    assemble_turn,
+)
+from agent.context.canonical_tool_history import canonical_tool_round
 from agent.context.history import build_history_parts
 from agent.context.session_history import load_session_history
 from app.models import ConversationBatch, ConversationMessage, ConversationSession
@@ -40,35 +44,172 @@ class _DbContext:
 
 
 @pytest.mark.asyncio
-async def test_insert_or_get_batch_reuses_existing_unique_row(db, user_a):
-    """canonical batch 重复收尾必须复用已有行，不得把唯一键冲突抛到 IM 出口。"""
-    from agent.context.run_finalize import _insert_or_get_batch
-    from app.models import ConversationBatch, ConversationSession
-    from sqlalchemy import select
+async def test_finalize_run_requires_canonical_message_area():
+    """收尾不能再从 provider wire 临时推导并补写 canonical history。"""
+    with pytest.raises(ValueError, match="必须接收 MessageArea"):
+        await run_finalize.finalize_run(
+            session_factory=lambda: None,
+            session_id=1,
+            user_id="user-test",
+            settings=SimpleNamespace(ai=SimpleNamespace(context_tokens=80000)),
+            model_cfg=SimpleNamespace(model="test", provider="test"),
+            message_area=None,
+            text="reply",
+            files=[],
+            tokens_in=0,
+            tokens_out=0,
+        )
 
-    session = ConversationSession(user_id=user_a.id)
+
+@pytest.mark.asyncio
+async def test_message_area_delta_commit_is_ordered_and_idempotent(db, user_a):
+    """Area delta 重复 finalize 不重复写入，且附属上下文仍排在已落库 user 前。"""
+    session = ConversationSession(user_id=user_a.id, title="delta 测试")
     db.add(session)
     await db.commit()
     await db.refresh(session)
-
-    values = {
-        "session_id": session.id,
-        "version": "v1",
-        "run_id": None,
-        "round_id": None,
-        "digest": "runtime-batch-digest",
-    }
-    first, first_created = await _insert_or_get_batch(db, ConversationBatch, values)
+    sent_at = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
+    user_message = ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="当前问题",
+        content_json=[{"type": "text", "text": "当前问题"}],
+        sent_at=sent_at,
+        created_at=sent_at,
+    )
+    db.add(user_message)
     await db.commit()
-    second, second_created = await _insert_or_get_batch(db, ConversationBatch, values)
+    await db.refresh(user_message)
 
-    assert first_created is True
-    assert second_created is False
-    assert second.id == first.id
-    rows = (await db.execute(
-        select(ConversationBatch).where(ConversationBatch.session_id == session.id)
-    )).scalars().all()
-    assert len(rows) == 1
+    area = MessageArea()
+    area.append(
+        {"role": "user", "content": [{"type": "knowledge-context", "text": "RAG"}]},
+        source=MessageSource.RAG,
+        persistence_policy=PersistencePolicy.COMMIT_ON_SUCCESS,
+    )
+    area.append(
+        {"role": "user", "content": "当前问题"},
+        source=MessageSource.USER,
+        persistence_policy=PersistencePolicy.ALREADY_PERSISTED,
+        persisted_message_id=user_message.id,
+    )
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "call-delta", "name": "lookup", "arguments": "{}",
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "call-delta", "content": "完成",
+        }]},
+    ], metadata={"round_id": "round-1"}))
+    delta = area.persistence_delta(outcome="success")
+    assert delta.user_anchor_sequence == 1
+
+    from agent.context.message_area_repository import commit_delta
+    for _ in range(2):
+        await commit_delta(
+            db,
+            session_id=session.id,
+            delta=delta,
+            run_id="run-delta-test",
+            default_round_id="round-1",
+            user_message=user_message,
+            interrupted=False,
+        )
+        await db.commit()
+
+    rows = (await db.scalars(select(ConversationMessage).where(
+        ConversationMessage.session_id == session.id,
+        ConversationMessage.id != user_message.id,
+    ).order_by(ConversationMessage.created_at, ConversationMessage.id))).all()
+    batches = (await db.scalars(select(ConversationBatch).where(
+        ConversationBatch.session_id == session.id,
+    ))).all()
+    assert [row.content_json for row in rows[:1]] == [[
+        {"type": "knowledge-context", "text": "RAG"},
+    ]]
+    assert [row.role for row in rows] == ["user", "assistant", "user"]
+    assert rows[0].created_at < user_message.created_at
+    assert len(batches) == 2
+
+
+@pytest.mark.asyncio
+async def test_twenty_isolated_tool_runs_keep_area_restore_and_provider_wire_aligned(db, user_a):
+    """连续工具 run 每轮 reload 后，新 Area 投影必须与旧 history renderer 等价。"""
+    from agent.context.context_diagnostics import first_diff_index
+    from agent.context.assembly import MessageSource, PersistencePolicy
+    from agent.context.history import render_canonical_area_snapshot
+    from agent.context.message_area_repository import commit_delta, restore_entries
+    from agent.context.assembly import MessageArea
+
+    session = ConversationSession(user_id=user_a.id, title="合成连续工具 run")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    observed = []
+    expected_restored_wire = None
+
+    for run_number in range(20):
+        history = await load_session_history(db, session.id, max_messages=200)
+        area = restore_entries(history)
+
+        area.configure_request(fixed_prefix=(), render_options={
+            "api_format": "openai", "user_tz": timezone.utc,
+        })
+        area_wire = area.provider_projection().to_messages()
+        if expected_restored_wire is not None:
+            assert first_diff_index(expected_restored_wire, area_wire) is None
+
+        user_message = ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"合成请求 {run_number}",
+        )
+        db.add(user_message)
+        await db.commit()
+        await db.refresh(user_message)
+        area.append(
+            {"role": "user", "content": user_message.content},
+            source=MessageSource.USER,
+            persistence_policy=PersistencePolicy.ALREADY_PERSISTED,
+            persisted_message_id=user_message.id,
+        )
+        area.append_batch(MessageBatch.from_canonical_messages([
+            {"role": "assistant", "content": [{
+                "type": "tool_call", "id": f"synthetic-call-{run_number}",
+                "name": "lookup", "arguments": {"sequence": run_number},
+            }]},
+            {"role": "user", "content": [{
+                "type": "tool_result", "tool_call_id": f"synthetic-call-{run_number}",
+                "content": f"结果 {run_number}",
+            }]},
+        ], metadata={"round_id": f"synthetic-round-{run_number}"}), source=MessageSource.TOOL_ROUND,
+            persistence_policy=PersistencePolicy.COMMIT_ON_SUCCESS)
+        area.append(
+            {"role": "assistant", "content": f"完成 {run_number}"},
+            source=MessageSource.AGENT_FOLLOWUP,
+            persistence_policy=PersistencePolicy.COMMIT_ON_SUCCESS,
+        )
+        delta = area.persistence_delta(outcome="success")
+        await commit_delta(
+            db, session_id=session.id, delta=delta,
+            run_id=f"synthetic-run-{run_number}",
+            default_round_id=f"synthetic-round-{run_number}",
+            user_message=user_message, interrupted=False,
+        )
+        await db.commit()
+        observed.append((area.revision, area.digest(), delta.digest))
+        expected_restored_area = restore_entries(
+            await load_session_history(db, session.id, max_messages=200),
+        )
+        expected_restored_area.configure_request(fixed_prefix=(), render_options={
+            "api_format": "openai", "user_tz": timezone.utc,
+        })
+        expected_restored_wire = expected_restored_area.provider_projection().to_messages()
+
+    restored = restore_entries(await load_session_history(db, session.id, max_messages=200))
+    assert len(observed) == 20
+    assert len(restored.entries) == 20 * 4
+    assert restored.entries[-1].canonical_message["content"] == "完成 19"
 
 
 @pytest.mark.asyncio
@@ -76,6 +217,7 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
     db = _Db()
     trim_calls = []
     baseline_calls = []
+    committed_deltas = []
 
     async def cap_usage(*args):
         return 12, 3
@@ -87,29 +229,33 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
         baseline_calls.append((args, kwargs))
         return True
 
+    async def commit_delta(_db, **kwargs):
+        committed_deltas.append(kwargs["delta"])
+
     monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
     monkeypatch.setattr("agent.context.compress_conv.compress_if_needed", persist_baseline)
-    monkeypatch.setattr(
-        "agent.context.assembly.newly_appended",
-        lambda messages, initial_len: messages[initial_len:],
-    )
-    monkeypatch.setattr(
-        "agent.context.history.canonicalize_tool_messages",
-        lambda messages: [{"role": "assistant", "content": [{"type": "text", "text": "tool"}]}],
-    )
-
+    monkeypatch.setattr("agent.context.message_area_repository.commit_delta", commit_delta)
     settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
     model = SimpleNamespace(model="test-model", provider="test", context_tokens=80000)
+    area = MessageArea()
+    area.append(
+        {"role": "user", "content": [{"type": "text", "text": "rag"}]},
+        source=MessageSource.RAG,
+        persistence_policy=PersistencePolicy.COMMIT_ON_SUCCESS,
+    )
+    area.append(
+        {"role": "assistant", "content": [{"type": "text", "text": "tool"}]},
+        source=MessageSource.TOOL_ROUND,
+        persistence_policy=PersistencePolicy.COMMIT_ON_SUCCESS,
+    )
     result = await run_finalize.finalize_run(
         session_factory=lambda: _DbContext(db),
         session_id=7,
         user_id="user-test",
         settings=settings,
         model_cfg=model,
-        rag_context={"blocks": [{"type": "text", "text": "rag"}]},
-        messages=[{"role": "assistant", "content": "new"}],
-        initial_len=0,
+        message_area=area,
         text="reply",
         display_timeline=[
             {"kind": "tool", "toolCallId": "call-1", "toolName": "project_details"},
@@ -127,7 +273,12 @@ async def test_finalize_run_uses_one_canonical_persistence_contract(monkeypatch)
 
     assert result.tokens_in == 12
     assert result.tokens_out == 3
-    assert len(db.items) == 4  # RAG、tool turn、assistant、usage
+    assert len(db.items) == 2  # assistant 与 usage；canonical 消息只交给 Area repository
+    assert len(committed_deltas) == 1
+    assert [entry.canonical_message for entry in committed_deltas[0].entries] == [
+        {"role": "user", "content": [{"type": "text", "text": "rag"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "tool"}]},
+    ]
     assistant_row = next(
         item for item in db.items
         if isinstance(item, ConversationMessage) and item.role == "assistant" and item.display_timeline
@@ -161,16 +312,11 @@ async def test_finalize_run_reuses_run_summary_for_baseline(monkeypatch):
     monkeypatch.setattr("agent.quota.cap_usage", cap_usage)
     monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", trim)
     monkeypatch.setattr("agent.context.compress_conv.compress_if_needed", persist_baseline)
-    monkeypatch.setattr(
-        "agent.context.assembly.newly_appended",
-        lambda messages, initial_len: messages[initial_len:],
-    )
-    monkeypatch.setattr(
-        "agent.context.history.canonicalize_tool_messages",
-        lambda messages: [],
-    )
-
     wrapped = format_compacted_summary("run 内摘要正文")
+    area = MessageArea.from_restored([
+        {"role": "user", "content": wrapped},
+        {"role": "assistant", "content": "new"},
+    ])
     settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
     model = SimpleNamespace(
         model="test-model", provider="test", context_tokens=80000, max_tokens=4000,
@@ -181,12 +327,7 @@ async def test_finalize_run_reuses_run_summary_for_baseline(monkeypatch):
         user_id="user-test",
         settings=settings,
         model_cfg=model,
-        rag_context=None,
-        messages=[
-            {"role": "user", "content": wrapped},
-            {"role": "assistant", "content": "new"},
-        ],
-        initial_len=0,
+        message_area=area,
         text="reply",
         files=[],
         tokens_in=10,
@@ -270,9 +411,7 @@ async def test_finalize_run_records_byok_usage_without_platform_capping(monkeypa
         user_id="user-test",
         settings=settings,
         model_cfg=model,
-        rag_context=None,
-        messages=[],
-        initial_len=0,
+        message_area=MessageArea(),
         text="reply",
         files=[],
         tokens_in=100,
@@ -319,9 +458,7 @@ async def test_finalize_run_keeps_byok_flag_from_real_pydantic_model(monkeypatch
         user_id="user-test",
         settings=settings,
         model_cfg=model,
-        rag_context=None,
-        messages=[],
-        initial_len=0,
+        message_area=MessageArea(),
         text="reply",
         files=[],
         tokens_in=50,
@@ -347,9 +484,8 @@ async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a,
         current_user={"role": "user", "content": "测试"},
         extra_reminder="## 当前工作区\nworkspace=project",
     )
-    prompt = PromptMessages()
+    prompt = MessageArea.from_canonical_messages()
     prompt.append_batch(turn)
-    canonical_batches = persistable_canonical_batch_records(prompt)
 
     async def fake_record_usage(*args, **kwargs):
         from agent.usage import UsageResult
@@ -376,14 +512,11 @@ async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a,
             user_id=str(user_a.id),
             settings=settings,
             model_cfg=model,
-            rag_context=None,
-            messages=[],
-            initial_len=0,
+            message_area=prompt,
             text="",
             files=[],
             tokens_in=0,
             tokens_out=0,
-            canonical_batches=canonical_batches,
         )
 
     async with session_factory() as check_db:
@@ -399,6 +532,64 @@ async def test_finalize_run_deduplicates_runtime_context_across_runs(db, user_a,
 
 
 @pytest.mark.asyncio
+async def test_finalize_run_persists_provider_cache_anchor_in_session_metadata(
+    db, user_a, monkeypatch,
+):
+    session = ConversationSession(
+        user_id=user_a.id,
+        title="缓存锚点测试",
+        source="web",
+        session_context={"stance_digest": "keep-this"},
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    async def fake_record_usage(*args, **kwargs):
+        from agent.usage import UsageResult
+
+        return UsageResult()
+
+    async def no_trim(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("agent.usage.record_usage", fake_record_usage)
+    monkeypatch.setattr("app.services.conversation_retention.trim_session_messages", no_trim)
+    import app.db.session as db_session
+
+    session_factory = async_sessionmaker(
+        db_session._engine, class_=AsyncSession, expire_on_commit=False,
+    )
+    anchor = {
+        "provider": "minimax",
+        "api_format": "anthropic",
+        "model": "MiniMax-M3.1-Flash-Preview",
+        "strategy": "multi",
+        "baseline_digest": "message-fingerprint",
+    }
+    area = MessageArea()
+    area.remember_provider_cache_anchor(anchor)
+
+    await run_finalize.finalize_run(
+        session_factory=session_factory,
+        session_id=session.id,
+        user_id=str(user_a.id),
+        settings=SimpleNamespace(ai=SimpleNamespace(context_tokens=80000)),
+        model_cfg=SimpleNamespace(model="test-model", provider="test", context_tokens=80000),
+        message_area=area,
+        text="",
+        files=[],
+        tokens_in=0,
+        tokens_out=0,
+    )
+
+    async with session_factory() as check_db:
+        restored = await check_db.get(ConversationSession, session.id)
+    assert restored.session_context["stance_digest"] == "keep-this"
+    assert restored.session_context["provider_cache_anchor"] == anchor
+
+
+@pytest.mark.asyncio
 async def test_finalize_run_persists_rag_before_user_and_restores_provider_history(
     db, user_a, monkeypatch,
 ):
@@ -409,6 +600,14 @@ async def test_finalize_run_persists_rag_before_user_and_restores_provider_histo
     await db.refresh(session)
 
     sent_at = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+    older_message = ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="上一轮问题",
+        content_json=[{"type": "text", "text": "上一轮问题"}],
+        sent_at=sent_at - timedelta(days=1),
+        created_at=sent_at - timedelta(days=1),
+    )
     user_message = ConversationMessage(
         session_id=session.id,
         role="user",
@@ -417,8 +616,9 @@ async def test_finalize_run_persists_rag_before_user_and_restores_provider_histo
         sent_at=sent_at,
         created_at=sent_at,
     )
-    db.add(user_message)
+    db.add_all([older_message, user_message])
     await db.commit()
+    await db.refresh(older_message)
     await db.refresh(user_message)
 
     async def fake_record_usage(*args, **kwargs):
@@ -442,6 +642,20 @@ async def test_finalize_run_persists_rag_before_user_and_restores_provider_histo
         "scope": "owner-rag",
         "text": "[owner-rag]\n参考资料\n[/owner-rag]",
     }
+    from agent.context.message_area_repository import restore_entries
+
+    area = restore_entries([older_message])
+    area.append(
+        {"role": "user", "content": [rag_block]},
+        source=MessageSource.RAG,
+        persistence_policy=PersistencePolicy.COMMIT_ON_SUCCESS,
+    )
+    area.append(
+        {"role": "user", "content": [{"type": "text", "text": "当前问题"}]},
+        source=MessageSource.USER,
+        persistence_policy=PersistencePolicy.ALREADY_PERSISTED,
+        persisted_message_id=user_message.id,
+    )
 
     await run_finalize.finalize_run(
         session_factory=session_factory,
@@ -449,9 +663,7 @@ async def test_finalize_run_persists_rag_before_user_and_restores_provider_histo
         user_id=str(user_a.id),
         settings=settings,
         model_cfg=model,
-        rag_context={"blocks": [rag_block]},
-        messages=[],
-        initial_len=0,
+        message_area=area,
         text="",
         files=[],
         tokens_in=0,
@@ -463,7 +675,8 @@ async def test_finalize_run_persists_rag_before_user_and_restores_provider_histo
         rows = await load_session_history(check_db, session.id, max_messages=20)
 
     # 数据库按 created_at/id 倒序取窗口后反转；RAG 仍应出现在问题之前。
-    assert [row.content_json for row in rows[:2]] == [
+    assert [row.content_json for row in rows[-3:]] == [
+        [{"type": "text", "text": "上一轮问题"}],
         [rag_block],
         [{"type": "text", "text": "当前问题"}],
     ]
@@ -475,15 +688,86 @@ async def test_finalize_run_persists_rag_before_user_and_restores_provider_histo
             use_anthropic=use_anthropic,
             user_tz=timezone.utc,
         )
-        assert restored[0]["content"] == [
+        assert restored[2]["content"] == [
             {"type": "knowledge-context", "scope": "owner-rag", "text": rag_block["text"]},
         ]
-        assert restored[1]["content"][0]["type"] == "time-context"
-        assert restored[2]["role"] == "user"
+        assert restored[3]["content"][0]["type"] == "time-context"
+        assert restored[4]["role"] == "user"
         if use_anthropic:
-            assert restored[2]["content"] == [{"type": "text", "text": "当前问题"}]
+            assert restored[4]["content"] == [{"type": "text", "text": "当前问题"}]
         else:
-            assert restored[2]["content"] == "当前问题"
+            assert restored[4]["content"] == "当前问题"
+
+
+@pytest.mark.asyncio
+async def test_synthetic_tool_round_survives_canonical_persistence_and_restore(
+    db, user_a, monkeypatch,
+):
+    """旧链基线：工具轮从 live 请求到落库、下一 run 恢复保持内容和顺序。"""
+    from agent.loop_drivers import AnthropicDriver, NormalizedToolCall, RoundResult
+
+    session = ConversationSession(user_id=user_a.id, title="合成工具轮往返")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    arguments = {"max_results": 3, "query": "合成查询", "options": {"z": 1, "a": 2}}
+    call = NormalizedToolCall(
+        id="call-synthetic-order",
+        name="web_search",
+        input=arguments,
+        raw_arguments=json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+    )
+    result = RoundResult(
+        text="", tool_calls=[call], requires_tools=True,
+        raw=[{"type": "tool_use", "id": call.id, "name": call.name, "input": arguments}],
+    )
+    dispatched = [(call, "合成工具结果")]
+    live_wire = AnthropicDriver().build_tool_round(result, dispatched)
+    canonical = canonical_tool_round(result, dispatched)
+    prompt_messages = MessageArea.from_canonical_messages()
+    prompt_messages.append_batch(MessageBatch.from_canonical_messages(
+        canonical,
+        metadata={"round_id": "round-1"},
+    ))
+
+    async def fake_record_usage(*args, **kwargs):
+        from agent.usage import UsageResult
+
+        return UsageResult()
+
+    monkeypatch.setattr("agent.usage.record_usage", fake_record_usage)
+    monkeypatch.setattr(
+        "app.services.conversation_retention.trim_session_messages",
+        lambda *_args, **_kwargs: _async_none(),
+    )
+    session_factory = async_sessionmaker(
+        db.bind, class_=AsyncSession, expire_on_commit=False,
+    )
+
+    await run_finalize.finalize_run(
+        session_factory=session_factory,
+        session_id=session.id,
+        user_id=str(user_a.id),
+        settings=SimpleNamespace(ai=SimpleNamespace(context_tokens=80000)),
+        model_cfg=SimpleNamespace(model="synthetic", provider="test", context_tokens=80000),
+        message_area=prompt_messages,
+        text="",
+        files=[],
+        tokens_in=0,
+        tokens_out=0,
+    )
+
+    async with session_factory() as check_db:
+        rows = await load_session_history(check_db, session.id, max_messages=20)
+
+    restored_wire = build_history_parts(
+        rows,
+        SimpleNamespace(source="web", chat_id=None),
+        use_anthropic=True,
+        user_tz=timezone.utc,
+    )
+    assert restored_wire == live_wire
 
 
 @pytest.mark.asyncio
@@ -529,19 +813,22 @@ async def test_interrupted_run_persists_completed_history_before_followup(
     )
     settings = SimpleNamespace(ai=SimpleNamespace(context_tokens=80000))
     model = SimpleNamespace(model="test-model", provider="test", context_tokens=80000)
-    completed_batch = {
-        "messages": [
-            {"role": "assistant", "content": [{
-                "type": "tool_call", "id": "call-complete", "name": "read_file",
-                "arguments": {"path": "notes.txt"},
-            }]},
-            {"role": "user", "content": [{
-                "type": "tool_result", "tool_call_id": "call-complete", "content": "已读取",
-            }]},
-        ],
-        "digest": "completed-tool-round",
-        "metadata": {"round_id": "round-1"},
-    }
+    area = MessageArea()
+    area.append(
+        {"role": "user", "content": "先检查文件"},
+        source=MessageSource.USER,
+        persistence_policy=PersistencePolicy.ALREADY_PERSISTED,
+        persisted_message_id=current_user.id,
+    )
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "call-complete", "name": "read_file",
+            "arguments": {"path": "notes.txt"},
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "call-complete", "content": "已读取",
+        }]},
+    ], metadata={"round_id": "round-1"}))
 
     await run_finalize.finalize_run(
         session_factory=session_factory,
@@ -549,9 +836,7 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         user_id=str(user_a.id),
         settings=settings,
         model_cfg=model,
-        rag_context=None,
-        messages=[],
-        initial_len=0,
+        message_area=area,
         text="已经读到文件开头，后续检查被中止。",
         display_timeline=[{"kind": "tool", "toolCallId": "call-complete"}],
         files=[],
@@ -560,7 +845,6 @@ async def test_interrupted_run_persists_completed_history_before_followup(
         user_message_id=current_user.id,
         run_id="run-test-interrupted",
         round_id="round-2",
-        canonical_batches=[completed_batch],
         interrupted=True,
     )
 

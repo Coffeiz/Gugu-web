@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.context.session_history import load_session_history
+from agent.context.assembly import MessageArea, MessageSource, PersistencePolicy
 from agent.im.actor import ActorContext
 from agent.im.loop import PreparedImRequest, dispatch_im_message
 from agent.im.session import SessionRoute
@@ -93,13 +94,18 @@ async def test_im_cancel_persists_partial_assistant_message_for_followup(db, use
 
             return events()
 
+    area = MessageArea()
+    area.append(
+        {"role": "user", "content": user_message.content},
+        source=MessageSource.USER,
+        persistence_policy=PersistencePolicy.ALREADY_PERSISTED,
+        persisted_message_id=user_message.id,
+    )
+
     class _PreparedMessages:
-        anthr_messages = []
-        anthr_initial_len = 0
-        oa_messages = []
-        oa_initial_len = 0
         rag_context = {}
         stance_to_persist = None
+        message_area = area
 
     execution = SimpleNamespace(
         session_id=session.id,

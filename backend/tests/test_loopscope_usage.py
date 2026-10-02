@@ -46,14 +46,21 @@ EXPECTED_USAGE = {
 
 
 def test_loopscope_separates_session_snapshot_from_history_display():
-    from agent.context.assembly import PromptMessages
+    from agent.context.assembly.area import MessageArea, MessageSource, PersistencePolicy
+    from agent.context.provider_conversation import ProviderConversation
 
-    messages = PromptMessages([
+    area = MessageArea()
+    area.append(
+        {"role": "user", "content": "当前问题"},
+        source=MessageSource.USER,
+        persistence_policy=PersistencePolicy.ALREADY_PERSISTED,
+    )
+    messages = ProviderConversation([
         {"role": "system", "content": "平台系统内容"},
         {"role": "system", "content": "[system-reminder]\n用户 Skill catalog\n[/system-reminder]"},
         {"role": "user", "content": "当前问题"},
         {"role": "system", "content": "[system-reminder]\n本轮动态提醒\n[/system-reminder]"},
-    ], fixed_prefix_size=2)
+    ], area_snapshot=area.snapshot(), fixed_prefix_size=2, dynamic_tail_size=1)
 
     snapshot = _trace_snapshot(messages)
     visible = _trace_conversation_messages(messages, "messages[0]")
@@ -63,17 +70,62 @@ def test_loopscope_separates_session_snapshot_from_history_display():
         {"role": "system", "content": "[system-reminder]\n本轮动态提醒\n[/system-reminder]"},
     ]
 
-    legacy_messages = [{"role": "system", "content": "[system-reminder]\n旧历史\n[/system-reminder]"}]
-    assert _trace_snapshot(legacy_messages) is None
-    assert _trace_conversation_messages(legacy_messages, "system_param") == legacy_messages
+
+
+def test_loopscope_context_layout_records_area_projection_without_message_body(monkeypatch):
+    from agent.context.assembly.area import MessageArea, MessageSource, PersistencePolicy
+    from agent.context.provider_conversation import ProviderConversation
+    from agent.runtime.loopscope_trace.state import record_context_layout
+
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-area-layout", trace_id="trace-area-layout",
+        session_key="gugu:web:area-layout", external_session_id="area-layout",
+        source="web", started_at=_now(),
+    )
+
+    area = MessageArea()
+    area.append(
+        {"role": "user", "content": "私密测试正文"},
+        source=MessageSource.USER,
+        persistence_policy=PersistencePolicy.COMMIT_ON_SUCCESS,
+        round_id="round-2",
+    )
+    projection = ProviderConversation(
+        [{"role": "user", "content": "私密测试正文"}],
+        area_snapshot=area.snapshot(),
+    )
+
+    token = _scope_run.set(run)
+    try:
+        record_context_layout(projection, message_area=area)
+    finally:
+        _scope_run.reset(token)
+
+    span = next(item for item in run.spans if item.name == "Context layout at provider boundary")
+    diagnostics = span.input
+    assert diagnostics["canonical_area"] == {
+        "revision": area.revision,
+        "digest": area.digest(),
+        "entry_count": 1,
+        "sequence_range": [0, 0],
+        "source_counts": {"user": 1},
+        "persistence_counts": {"commit_on_success": 1},
+    }
+    assert diagnostics["provider_projection"]["area_revision"] == area.revision
+    assert diagnostics["provider_projection"]["area_digest"] == area.digest()
+    assert diagnostics["provider_projection"]["message_count"] == 1
+    assert "私密测试正文" not in repr(diagnostics)
 
 
 def test_loopscope_input_uses_real_user_after_internal_context():
-    messages = [
+    from agent.context.provider_conversation import ProviderConversation
+
+    messages = ProviderConversation([
         {"role": "user", "content": "用户真正的问题"},
         {"role": "user", "content": "[system-reminder]\n工作区\n[/system-reminder]"},
         {"role": "user", "content": [{"type": "knowledge-context", "text": "知识召回"}]},
-    ]
+    ])
 
     assert _extract_last_user(messages) == "用户真正的问题"
 
@@ -256,7 +308,10 @@ async def test_usage_lands_before_done_break(monkeypatch, loopscope_hooks):
     )
     token = _scope_run.set(run)
     try:
-        messages = [{"role": "user", "content": "你好"}]
+        from agent.context.assembly.area import MessageArea
+        messages = MessageArea.from_canonical_messages([
+            {"role": "user", "content": "你好"},
+        ])
         runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
         ev, text, errors = await drain(
             runner._run_anthropic("u", "sys", messages, AI, session_id=388)
@@ -332,9 +387,12 @@ async def test_responses_fallback_round_keeps_loopscope_usage(monkeypatch, loops
     )
     token = _scope_run.set(run)
     try:
+        from agent.context.assembly.area import MessageArea
         runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=ai))
         ev, text, errors = await drain(runner._run_responses(
-            "u", "sys", [{"role": "user", "content": "测试回退埋点"}], ai,
+            "u", "sys", MessageArea.from_canonical_messages([
+                {"role": "user", "content": "测试回退埋点"},
+            ]), ai,
             session_id=388,
         ))
     finally:
@@ -377,8 +435,11 @@ async def test_loopscope_wrapper_without_active_run_accepts_session_id(monkeypat
             pass
 
     runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
+    from agent.context.assembly.area import MessageArea
     ev, text, errors = await drain(
-        runner._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], AI,
+        runner._run_anthropic("u", "sys", MessageArea.from_canonical_messages([
+            {"role": "user", "content": "测试"},
+        ]), AI,
                               session_id=388, reasoning_state=ReasoningStateProbe())
     )
 
@@ -424,7 +485,10 @@ async def test_mid_stream_abort_marks_span_cancelled(monkeypatch, loopscope_hook
     )
     token = _scope_run.set(run)
     try:
-        messages = [{"role": "user", "content": "算了"}]
+        from agent.context.assembly.area import MessageArea
+        messages = MessageArea.from_canonical_messages([
+            {"role": "user", "content": "算了"},
+        ])
         runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
         ev, _text, errors = await drain(runner._run_anthropic("u", "sys", messages, AI))
     finally:

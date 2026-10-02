@@ -35,7 +35,6 @@ _log = logging.getLogger("agent.core")
 # 通过本模块属性查找生效（_run_loop 调用时把该名字注入 driver.run_round）。
 from agent.loop.provider import provider_context_usage as _provider_context_usage
 from agent.loop.provider import stream_round as _stream_round
-from agent.context.provider_history import sanitize_anthropic_history as _sanitize_anthropic_history
 from agent.tools.tool_contract import (
     MAX_CALL_TOOL_ADAPTER_DEPTH as _MAX_CALL_TOOL_ADAPTER_DEPTH,
     resolve_adapter_arguments as _resolve_adapter_arguments,
@@ -46,7 +45,7 @@ from agent.tools.base import (
     is_successful_tool_result as _is_successful_tool_result,
     mutating_tools as _mutating_tools,
 )
-from agent.context.assembly.messages import replace_tool_result as _replace_tool_result
+from agent.context.assembly.area import MessageArea as _MessageArea
 from agent.loop.tools import (
     call_observes as _call_observes,
     call_requires_verification as _call_requires_verification,
@@ -55,6 +54,15 @@ from agent.loop.tools import (
     pending_tool_signal as _pending_tool_signal,
     tool_result_payload as _tool_result_payload,
 )
+
+
+def _replace_tool_result(message_area, *, tool_call_id: str, result: dict) -> bool:
+    """通过 Area entry ID 修订交互等待中的 canonical 工具结果。"""
+    if not isinstance(message_area, _MessageArea):
+        raise TypeError("工具结果修订只接受 MessageArea")
+    return message_area.resolve_tool_result(
+        tool_call_id=tool_call_id, result=result,
+    ) is not None
 from agent.loop.events import artifact_sse as _artifact_sse
 from agent.loop.models import PendingInteraction as _PendingInteraction
 from agent.loop import rounds as loop_rounds
@@ -199,7 +207,8 @@ def _loaded_skill_slugs(messages) -> dict[str, str]:
             if isinstance(slug, str) and slug and isinstance(digest, str) and digest:
                 loaded[slug] = digest
 
-    for message in getattr(messages, "conversation", messages) or []:
+    for entry in messages.entries:
+        message = entry.canonical_message
         if not isinstance(message, dict):
             continue
         if message.get("role") == "tool":
@@ -272,7 +281,7 @@ async def _im_set_tool_state(tool_name: str) -> None:
 
 class LLMRunner:
     """provider 无关的工具循环执行器。"""
-    async def _run_loop(self, driver, user_id, messages: list, ai,
+    async def _run_loop(self, driver, user_id, messages: _MessageArea, ai,
                          system_text: str | None,
                          session_id: int | None = None,
                          session=None,
@@ -330,7 +339,7 @@ class LLMRunner:
         """取状态显示名：命名含多个候选时随机取一（后端在发 tool_call 时调用）。"""
         return _pick_label(self.labels.get(name, name if default is None else default))
 
-    def run(self, user_id, system_text: str, messages: list,
+    def run(self, user_id, system_text: str, messages: _MessageArea,
             use_anthropic: bool, model_cfg=None,
             session_id: int | None = None,
             session=None,
@@ -362,7 +371,7 @@ class LLMRunner:
         )
 
     def _run_provider(
-        self, user_id, system_text: str | None, messages: list, *,
+        self, user_id, system_text: str | None, messages: _MessageArea, *,
         use_anthropic: bool, model_cfg, session_id: int | None, session=None,
         on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         reasoning_state=None,
@@ -396,7 +405,7 @@ class LLMRunner:
 
     async def _recover_interrupted_continuation(
         self, generation: AsyncGenerator[str, None], user_id, system_text,
-        messages: list, *, use_anthropic: bool, model_cfg, session_id: int | None,
+        messages: _MessageArea, *, use_anthropic: bool, model_cfg, session_id: int | None,
         session=None, on_interaction=None, reasoning_state=None,
     ) -> AsyncGenerator[str, None]:
         """统一处理工具续轮生成器提前结束。
@@ -438,7 +447,7 @@ class LLMRunner:
             )
             continuation_pending = False
 
-    async def _run_ollama(self, user_id, messages: list, ai=None,
+    async def _run_ollama(self, user_id, messages: _MessageArea, ai=None,
                           session_id: int | None = None,
                           session=None,
                           on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
@@ -454,7 +463,7 @@ class LLMRunner:
 
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
     async def _run_anthropic(self, user_id, system_text: str,
-                             messages: list, ai=None,
+                             messages: _MessageArea, ai=None,
                              session_id: int | None = None,
                              session=None,
                              on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
@@ -470,7 +479,7 @@ class LLMRunner:
             yield line
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
-    async def _run_openai(self, user_id, messages: list, ai=None,
+    async def _run_openai(self, user_id, messages: _MessageArea, ai=None,
                           session_id: int | None = None,
                           session=None,
                           on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
@@ -486,7 +495,7 @@ class LLMRunner:
             yield line
 
     async def _run_responses(self, user_id, system_text: str | None,
-                             messages: list, ai=None,
+                             messages: _MessageArea, ai=None,
                              session_id: int | None = None,
                              session=None,
                              on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,

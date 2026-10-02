@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import Callable
 
 from agent.capabilities.defaults import SYSTEM_MEMORY_ENABLED
-from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.memory.reflection_input import build_reflection_input
 from agent.security import sanitize
 from agent.run.contract import PreparedExecution
@@ -24,14 +23,13 @@ from agent.run.execution import RunOutcome
 
 async def persist_interrupted_agent_run(req, exec_, outcome: RunOutcome) -> None:
     """持久化用户取消前已完成的 canonical 轮次和部分正文，不触发摘要/反思。"""
-    from agent.context.canonical_tool_history import persistable_canonical_batch_records
     from agent.context.run_finalize import finalize_run
 
     prepared = exec_.prepared
-    messages = prepared.anthr_messages if exec_.use_anthropic else prepared.oa_messages
-    initial_len = prepared.anthr_initial_len if exec_.use_anthropic else prepared.oa_initial_len
-    canonical_batches = persistable_canonical_batch_records(messages)
-    if not (outcome.display_timeline_items or outcome.text or outcome.files or canonical_batches):
+    message_area = getattr(prepared, "message_area", None)
+    delta = message_area.persistence_delta(outcome="interruption") if message_area else None
+    if not (outcome.display_timeline_items or outcome.text or outcome.files
+            or (delta and delta.entries)):
         return
 
     await finalize_run(
@@ -40,9 +38,7 @@ async def persist_interrupted_agent_run(req, exec_, outcome: RunOutcome) -> None
         user_id=req.user_id,
         settings=exec_.settings,
         model_cfg=exec_.model_cfg,
-        rag_context=prepared.rag_context,
-        messages=messages,
-        initial_len=initial_len,
+        message_area=message_area,
         text=outcome.text,
         display_timeline=outcome.display_timeline_items,
         files=outcome.files,
@@ -51,9 +47,7 @@ async def persist_interrupted_agent_run(req, exec_, outcome: RunOutcome) -> None
         cache_read=outcome.cache_read,
         cache_write=outcome.cache_write,
         tools_used=outcome.tool_names,
-        stance_text=prepared.stance_to_persist,
         user_message_id=getattr(exec_.user_message, "id", None),
-        canonical_batches=canonical_batches,
         interrupted=True,
     )
 
@@ -93,8 +87,6 @@ async def finalize_agent_run(
     session_id = exec_.session_id
     settings = exec_.settings
     prepared = exec_.prepared
-    messages = prepared.anthr_messages if exec_.use_anthropic else prepared.oa_messages
-    initial_len = prepared.anthr_initial_len if exec_.use_anthropic else prepared.oa_initial_len
     text = outcome.text
 
     # 出站兜底清洗：正文与逐轮文本同一口径（抹 tool_id 噪声、拦系统提示词泄露、
@@ -127,12 +119,8 @@ async def finalize_agent_run(
         user_id=user_id,
         settings=settings,
         model_cfg=exec_.model_cfg,
-        rag_context=prepared.rag_context,
-        messages=messages,
-        initial_len=initial_len,
-        stance_text=prepared.stance_to_persist,
+        message_area=getattr(prepared, "message_area", None),
         user_message_id=getattr(exec_.user_message, "id", None),
-        canonical_batches=persistable_canonical_batch_records(messages),
         text=text,
         display_timeline=display_timeline or None,
         files=outcome.files,
@@ -164,9 +152,16 @@ async def finalize_agent_run(
     im_used_tools = False
     if SYSTEM_MEMORY_ENABLED and text and exec_.context_policy.allow_memory_reflection:
         from agent.memory import reflection
-        im_used_tools = exec_.use_anthropic and len(messages) > initial_len
+        from agent.context.assembly.area import MessageSource
+
+        message_area = getattr(prepared, "message_area", None)
+        has_tool_round = bool(message_area) and any(
+            entry.source == MessageSource.TOOL_ROUND
+            for entry in message_area.entries
+        )
+        im_used_tools = exec_.use_anthropic and has_tool_round
         reflect_message, reflect_reply = build_reflection_input(
-            req, messages, initial_len, text
+            req, message_area, 0, text
         )
         if reflect_reply:
             reflection.schedule(user_id, req.user_name, reflect_message, reflect_reply, settings,

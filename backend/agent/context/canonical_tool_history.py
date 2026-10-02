@@ -47,51 +47,6 @@ _PROVIDER_TEXT_EVENT_TYPES = frozenset({
 })
 
 
-def persistable_canonical_batch_records(messages: Any) -> list[dict]:
-    """筛选需要跨 run 重放的 canonical batch。
-
-    工具批次带 ``round_id``；首轮组装批次没有 round id，但其中的
-    ``runtime-context``（例如工作区约束）必须落库，否则下一次 run 会把同一
-    reminder 从历史中间移动到输入末尾，打断 provider 的缓存前缀。RAG 等其它
-    首轮附属内容由独立持久化路径负责，这里只保留 runtime-context，避免重复写入。
-    """
-    records = getattr(messages, "canonical_batch_records", ())
-    result: list[dict] = []
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        metadata = record.get("metadata") or {}
-        if metadata.get("round_id"):
-            result.append(record)
-            continue
-
-        runtime_messages = []
-        for message in record.get("messages") or []:
-            if not isinstance(message, dict):
-                continue
-            content = message.get("content")
-            if not isinstance(content, list):
-                continue
-            runtime_blocks = [
-                block for block in content
-                if isinstance(block, dict) and block.get("type") == "runtime-context"
-            ]
-            if runtime_blocks:
-                runtime_messages.append({
-                    "role": message.get("role", "user"),
-                    "content": runtime_blocks,
-                })
-        if runtime_messages:
-            # 不复用包含 RAG 的原 batch digest；按实际要持久化的 runtime 内容
-            # 重新生成 fallback digest，才能在连续 run 中稳定去重。
-            result.append({
-                "messages": runtime_messages,
-                "digest": "",
-                "metadata": {"kind": "runtime-context"},
-            })
-    return result
-
-
 def _tool_result_is_error(block: dict[str, Any]) -> bool:
     """从 provider-neutral 结果中判断失败，不读取或记录结果正文。"""
     if "is_error" in block:
@@ -381,8 +336,8 @@ def _drop_null_block_fields(block: Any) -> Any:
     return {key: value for key, value in block.items() if value is not None}
 
 
-def render_events_for_provider(messages: list[dict]) -> list[dict]:
-    """复制并原位渲染 canonical blocks，同时保留 PromptMessages 的边界元数据。
+def render_events_for_provider(messages):
+    """从不可变 ProviderConversation 生成 event blocks 的 Provider 投影。
 
     canonical event 必须在原 block 位置转换成 provider text。不能先摘出再统一
     append 到 content 尾部，否则 ``[time-context, user text]`` 会被翻成
@@ -390,8 +345,9 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
     dynamic tail 也是 provider boundary 的一部分：只随本次请求渲染并保持在末尾，
     但绝不混进 conversation/canonical history。
     """
-    conversation_count = len(getattr(messages, "conversation", messages))
-    is_prompt_messages = hasattr(messages, "fixed_prefix_size")
+    from agent.context.provider_conversation import ProviderConversation
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("Canonical event 渲染只接受 ProviderConversation")
     rendered: list[dict] = []
     for message in messages:
         clone = dict(message)
@@ -409,28 +365,6 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
             clone["content"] = rendered_content
         rendered.append(clone)
 
-    if not is_prompt_messages:
-        return rendered
-
-    # 延迟导入避免 assembly 与 canonical history 之间形成模块级循环依赖。
-    from agent.context.assembly import PromptMessages
-
-    result = PromptMessages(
-        rendered[:conversation_count],
-        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+    return messages.with_messages(
+        rendered, diagnostics={"canonical_events_rendered": True},
     )
-    # conversation 之后的内容只可能是 provider-only dynamic tail。原位渲染后
-    # 重新挂回 PromptMessages，后续 cache helper 才能继续把断点限制在稳定前缀。
-    if len(rendered) > conversation_count:
-        result.set_dynamic_tail(rendered[conversation_count:])
-    canonical_context = getattr(messages, "canonical_context", None)
-    if canonical_context is not None:
-        result.canonical_context = canonical_context
-    result._canonical_batches = list(getattr(messages, "_canonical_batches", ()))
-    result._canonical_batch_digests = list(
-        getattr(messages, "_canonical_batch_digests", ())
-    )
-    result._canonical_batch_metadata = copy.deepcopy(list(
-        getattr(messages, "_canonical_batch_metadata", ())
-    ))
-    return result

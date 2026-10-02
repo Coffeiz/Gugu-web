@@ -1243,7 +1243,7 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
             delta=user,
             scope="owner",
             run_id=snapshot.run_id,
-            history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
+            history_messages=render_branch_prefix(list(snapshot.history), snapshot.ai),
             tools=tuple(snapshot.tools),
             session_id=snapshot.session_id,
             cache_probe_context=probe_context,

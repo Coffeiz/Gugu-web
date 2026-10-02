@@ -116,7 +116,7 @@ def format_history_content(message, request: AgentRequest) -> str:
         getattr(message, "quoted_text", None),
     )
     content += format_attachment_refs(message)
-    if not request.chat_id or getattr(message, "chat_type", None) != "group":
+    if not request or not request.chat_id or getattr(message, "chat_type", None) != "group":
         return content
     if getattr(message, "role", None) != "user":
         return content

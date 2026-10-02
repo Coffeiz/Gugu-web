@@ -130,7 +130,10 @@ def test_context_probe_reports_memory_and_summary_without_returning_their_text()
             output={"content": private_memory},
         )],
     )
-    messages = [{"role": "system", "content": "<compacted-summary>摘要正文</compacted-summary>"}]
+    from agent.context.provider_conversation import ProviderConversation
+    messages = ProviderConversation([{
+        "role": "system", "content": "<compacted-summary>摘要正文</compacted-summary>",
+    }])
 
     result = context_digests(messages, run)
 

@@ -432,23 +432,24 @@ def enforce_message_budget(
     protected_from: int | None = None,
 ) -> BudgetResult:
     """就地应用强制截断；本轮新增消息已经属于普通 history。"""
-    conversation = list(getattr(messages, "conversation", messages))
+    from agent.context.assembly.area import MessageArea
+    if not isinstance(messages, MessageArea):
+        raise TypeError("消息预算截断只接受 MessageArea")
+    conversation = messages.provider_projection().to_messages()
     truncated, result = truncate_messages(
         conversation,
         system_text,
         context_tokens,
-        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+        fixed_prefix_size=messages.fixed_prefix_size,
         overhead_tokens=overhead_tokens,
         extra_tokens=0,
         protected_from=protected_from,
     )
     if not result.changed:
         return result
-    replace = getattr(messages, "replace_conversation", None)
-    if replace is not None:
-        replace(truncated)
-    else:
-        messages[:] = truncated
+    messages.replace_request_baseline(
+        truncated, expected_revision=messages.revision,
+    )
     return result
 
 
@@ -467,8 +468,11 @@ def enforce_provider_overflow_fallback(
     单元数量策略，再按 token 硬预算从最旧完整单元开始缩窗。它仅在
     provider overflow 且 LLM 压缩无结果时执行，正常请求不会经过此路径。
     """
-    conversation = list(getattr(messages, "conversation", messages))
-    prefix_size = max(0, min(int(getattr(messages, "fixed_prefix_size", 0) or 0), len(conversation)))
+    from agent.context.assembly.area import MessageArea
+    if not isinstance(messages, MessageArea):
+        raise TypeError("Provider overflow 截断只接受 MessageArea")
+    conversation = messages.provider_projection().to_messages()
+    prefix_size = max(0, min(int(messages.fixed_prefix_size or 0), len(conversation)))
     prefix = conversation[:prefix_size]
     body = conversation[prefix_size:]
     protected_tail: list[dict] = []
@@ -543,11 +547,7 @@ def enforce_provider_overflow_fallback(
         changed = result != conversation
         if not changed:
             return BudgetResult(False, 0, 0, 0, oversized_item=oversized)
-        replace = getattr(messages, "replace_conversation", None)
-        if replace is not None:
-            replace(result)
-        else:
-            messages[:] = result
+        messages.replace_request_baseline(result, expected_revision=messages.revision)
         return BudgetResult(
             True, 0, 0, max(0, len(conversation) - len(result)), oversized,
             protected_start_index=len(fixed), anchor_index=anchor_result_index,
@@ -580,11 +580,7 @@ def enforce_provider_overflow_fallback(
                 oversized = True
     if not changed:
         return BudgetResult(False, 0, 0, 0, oversized_item=oversized)
-    replace = getattr(messages, "replace_conversation", None)
-    if replace is not None:
-        replace(result)
-    else:
-        messages[:] = result
+    messages.replace_request_baseline(result, expected_revision=messages.revision)
     return BudgetResult(True, 0, 0, max(0, len(conversation) - len(result)), oversized_item=oversized)
 
 

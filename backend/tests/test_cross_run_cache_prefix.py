@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from agent.context.assembly import NewMessageBatch, PromptMessages, assemble_turn, reminder
+from agent.context.assembly import MessageBatch, MessageArea, assemble_turn, reminder
 from agent.context.canonical_tool_history import render_events_for_provider
 from agent.context.history import build_history_parts
 from agent.context.provider_history import render_anthropic_message_roles
@@ -9,14 +9,20 @@ from agent.context.run_context import (
     _effective_history,
     _is_legacy_persisted_time_context,
 )
-from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.security import sanitize
+from agent.context.provider_conversation import ProviderConversation
 
 
 def _provider_wire(messages):
-    clean = sanitize.sanitize_messages(list(messages))
-    rendered = render_events_for_provider(clean)
-    return render_anthropic_message_roles(rendered, None)
+    if isinstance(messages, MessageArea):
+        projection = messages.provider_projection()
+    elif isinstance(messages, ProviderConversation):
+        projection = messages
+    else:
+        projection = ProviderConversation(messages)
+    return render_anthropic_message_roles(
+        render_events_for_provider(projection), None,
+    )
 
 
 def _history_row(*, role, content="", content_json=None, sent_at=None, row_id=1):
@@ -48,15 +54,15 @@ def test_rag_context_precedes_user_in_anthropic_and_openai_projections():
         current_user={"role": "user", "content": "当前问题"},
         conversation_tail=[rag],
     )
-    prompt = PromptMessages()
+    prompt = MessageArea.from_canonical_messages()
     prompt.append_batch(batch)
 
     # Anthropic/MiniMax 路径先清洗，再在 provider 边界渲染 canonical event。
-    anthropic = render_anthropic_message_roles(
-        sanitize.sanitize_messages(list(prompt.conversation)), None,
-    )
+    prompt.configure_request(fixed_prefix=(), render_options={"api_format": "anthropic"})
+    anthropic = prompt.provider_projection().to_messages()
     # OpenAI 兼容路径保留独立消息边界，canonical event 也在 provider 边界渲染。
-    openai = list(render_events_for_provider(prompt))
+    prompt.configure_request(fixed_prefix=(), render_options={"api_format": "openai"})
+    openai = prompt.provider_projection().to_messages()
 
     for projected in (anthropic, openai):
         assert [message["role"] for message in projected] == ["user", "user"]
@@ -76,7 +82,7 @@ def test_provider_render_keeps_canonical_blocks_in_original_position():
         ],
     }]
 
-    rendered = render_events_for_provider(messages)
+    rendered = render_events_for_provider(ProviderConversation(messages))
 
     assert rendered[0]["content"] == [
         {"type": "text", "text": time_text},
@@ -89,12 +95,12 @@ def test_dynamic_tail_is_provider_only_and_always_stays_last():
     batch, _ = assemble_turn(
         current_user={"role": "user", "content": "测试"},
     )
-    prompt = PromptMessages()
+    prompt = MessageArea.from_canonical_messages()
     prompt.set_dynamic_tail([
         reminder("当前时间：2026-08-27（星期四）"),
     ])
     prompt.append_batch(batch)
-    prompt.append_batch(NewMessageBatch.from_provider_messages([
+    prompt.append_batch(MessageBatch.from_canonical_messages([
         {"role": "assistant", "content": "工具前说明"},
         {"role": "user", "content": "工具结果"},
     ]))
@@ -102,46 +108,52 @@ def test_dynamic_tail_is_provider_only_and_always_stays_last():
     assert prompt.dynamic_tail == [
         reminder("当前时间：2026-08-27（星期四）"),
     ]
-    assert list(prompt)[-1] == reminder("当前时间：2026-08-27（星期四）")
-    assert prompt.conversation == [
+    assert prompt.provider_projection().to_messages()[-1] == reminder("当前时间：2026-08-27（星期四）")
+    assert prompt.provider_projection().conversation == [
         {"role": "user", "content": "测试"},
         {"role": "assistant", "content": "工具前说明"},
         {"role": "user", "content": "工具结果"},
     ]
-    assert batch.canonical_messages == ()
-    assert prompt.canonical_batches == ()
+    assert batch.canonical_messages == ({"role": "user", "content": "测试"},)
+    assert prompt.batch_records() == ()
+    assert prompt.persistence_delta(outcome="success").entries == ()
 
-    prompt.replace_conversation([
-        {"role": "user", "content": "压缩后的稳定 conversation"},
-    ])
-    assert prompt.conversation == [
+    prompt.replace_request_baseline(
+        [{"role": "user", "content": "压缩后的稳定 conversation"}],
+        expected_revision=prompt.revision,
+    )
+    assert prompt.provider_projection().conversation == [
         {"role": "user", "content": "压缩后的稳定 conversation"},
     ]
-    assert list(prompt)[-1] == reminder("当前时间：2026-08-27（星期四）")
+    assert prompt.provider_projection().to_messages()[-1] == reminder("当前时间：2026-08-27（星期四）")
 
 
-def test_message_time_with_empty_canonical_projection_stays_provider_only_after_seal():
+def test_message_time_is_canonical_but_reconstructed_and_user_is_already_persisted():
     batch, _ = assemble_turn(
         message_time=reminder("08-27 18:27"),
         current_user={"role": "user", "content": "所以已经有一些信息了？"},
     )
-    assert batch.canonical_messages == ()
+    assert [
+        message["content"][0]["type"] if isinstance(message["content"], list) else "text"
+        for message in batch.canonical_messages
+    ] == ["time-context", "text"]
 
-    prompt = PromptMessages()
+    prompt = MessageArea.from_canonical_messages()
     prompt.append_batch(batch)
 
-    assert prompt.conversation == [
-        {
-            "role": "user",
-            "content": [{
-                "type": "time-context",
-                "text": "[system-reminder]\n08-27 18:27\n[/system-reminder]",
-            }],
-        },
+    assert prompt.entries[0].canonical_message["content"][0]["type"] == "time-context"
+    assert prompt.provider_projection().to_messages() == [
+        {"role": "user", "content": [{
+            "type": "text",
+            "text": "[system-reminder]\n08-27 18:27\n[/system-reminder]",
+        }]},
         {"role": "user", "content": "所以已经有一些信息了？"},
     ]
-    assert batch.canonical_messages == ()
-    assert prompt.canonical_batches == ()
+    assert [entry.persistence_policy.value for entry in prompt.entries] == [
+        "reconstruct_on_restore", "already_persisted",
+    ]
+    assert prompt.persistence_delta(outcome="success").entries == ()
+    assert prompt.batch_records() == ()
 
 
 def test_legacy_persisted_time_context_rows_are_filtered():
@@ -211,47 +223,51 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
         },
         extra_reminder=runtime_context,
     )
-    tool_batch = NewMessageBatch.from_provider_messages([
+    tool_batch = MessageBatch.from_canonical_messages([
         {
             "role": "assistant",
             "content": [{
-                "type": "tool_use",
+                "type": "tool_call",
                 "id": "call-weather",
                 "name": "use_skill",
-                "input": {"name": "weather"},
+                "arguments": {"name": "weather"},
             }],
         },
         {
             "role": "user",
             "content": [{
                 "type": "tool_result",
-                "tool_use_id": "call-weather",
+                "tool_call_id": "call-weather",
                 "content": "weather skill loaded",
             }],
         },
-    ])
+    ], metadata={"round_id": "round-1"})
 
-    previous_round = PromptMessages()
+    previous_round = MessageArea.from_canonical_messages()
+    previous_round.configure_request(
+        fixed_prefix=(), render_options={"api_format": "anthropic"},
+    )
     previous_round.set_dynamic_tail([
         reminder(f"当前时间：{now_text}"),
     ])
     previous_round.append_batch(turn_batch)
     previous_round.append_batch(tool_batch)
-    previous_conversation_wire = _provider_wire(previous_round.conversation)
+    previous_conversation_wire = _provider_wire(
+        ProviderConversation(previous_round.provider_projection().conversation)
+    )
 
     # dynamic tail 发给 provider，但不属于可重放 conversation；Anthropic 清洗可能
     # 把相邻 user 块合并，所以这里只锁定语义存在，不假定它一定独占一条 message。
     full_wire = _provider_wire(previous_round)
-    assert "当前时间：2026-08-27（星期四）" in str(full_wire)
+    assert "当前时间：2026-08-27（星期四）" in str(full_wire.to_messages())
     assert "当前时间：2026-08-27（星期四）" not in str(previous_conversation_wire)
 
-    # 当前用户正文已经在进入 LLM 前单独落库；turn batch 只应保存那些
-    # 必须跨 run 原位置 replay 的附属上下文。
+    # Batch 只暴露 canonical Area 内容；是否提交由 entry policy 决定。
     assert [
         block["type"]
         for message in turn_batch.canonical_messages
         for block in message["content"]
-    ] == ["runtime-context"]
+    ] == ["time-context", "text", "runtime-context"]
 
     history = [
         _history_row(
@@ -263,7 +279,9 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
         ),
     ]
     row_id = 2
-    for message in (*turn_batch.canonical_messages, *tool_batch.canonical_messages):
+    durable_entries = previous_round.persistence_delta(outcome="success").entries
+    for entry in durable_entries:
+        message = entry.canonical_message
         history.append(_history_row(
             row_id=row_id,
             role=message["role"],
@@ -280,7 +298,7 @@ def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail
     )
     next_run_prefix = _provider_wire(restored)
 
-    assert next_run_prefix == previous_conversation_wire
+    assert next_run_prefix.to_messages() == previous_conversation_wire.to_messages()
 
 
 def test_initial_runtime_context_batch_is_persisted_without_rag_duplicates():
@@ -294,19 +312,20 @@ def test_initial_runtime_context_batch_is_persisted_without_rag_duplicates():
         }],
         extra_reminder=runtime_text,
     )
-    messages = PromptMessages()
+    messages = MessageArea.from_canonical_messages()
     messages.append_batch(turn_batch)
 
-    records = persistable_canonical_batch_records(messages)
+    delta = messages.persistence_delta(outcome="success")
+    runtime_entries = [
+        entry for entry in delta.entries if entry.source.value == "runtime"
+    ]
 
-    assert len(records) == 1
-    assert records[0]["metadata"] == {"kind": "runtime-context"}
+    assert len(runtime_entries) == 1
     assert [
         block["type"]
-        for message in records[0]["messages"]
-        for block in message["content"]
+        for block in runtime_entries[0].canonical_message["content"]
     ] == ["runtime-context"]
-    assert records[0]["messages"][0]["content"][0]["text"] == (
+    assert runtime_entries[0].canonical_message["content"][0]["text"] == (
         f"[system-reminder]\n{runtime_text}\n[/system-reminder]"
     )
 
