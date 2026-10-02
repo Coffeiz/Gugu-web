@@ -1,6 +1,6 @@
 # PRD-NET-1：安全出站 HTTP 适配器与代理配置
 
-> 状态：实施中（Phase 0、Phase 1 已完成）
+> 状态：实施中（Phase 0、Phase 1、Phase 2 已完成）
 > 创建：2026-10-02
 > 最近更新：2026-10-02
 > 关联模块：`backend/app/core/url_security.py`、`backend/app/core/pinned_http.py`、`backend/app/core/safe_egress.py`、`backend/app/api/v1/safe_egress_admin.py`、`backend/agent/tools/web.py`、`backend/agent/tools/search.py`、`backend/agent/tools/deep_research.py`、`backend/agent/mcp/client.py`、`backend/agent/tools/files/transfer.py`、Admin 运行配置
@@ -168,13 +168,19 @@ PoC 必须同时验证连接确实钉扎目标 IP。代理不支持时停止并�
 - 保持已有响应大小、timeout、重试和不自动跟随重定向的行为，除非单项变更另有批准。
 - 在 devserver 以被污染的系统 DNS 环境和经代理 DoH 结果进行回归。
 
-**Phase 1 实施结果（2026-10-02）**：完成 Admin 专用代理配置接口和设置卡片；代理认证在统一配置写入层加密，读取只返回配置状态；配置 URL 不接受内嵌认证。`SafeEgressClient` 在代理启用时使用经代理 DoH、检查 A/AAAA/CNAME 答案，并通过 CONNECT 到校验 IP、原始域名 TLS SNI/证书及 HTTP Host 完成请求；失败不直连回退。代理传输仅在启用代理时协商 HTTP/2（新增 `h2` 依赖），未启用代理继续使用原 IP 钉扎传输。`http_get` 已迁移，网页下载路径仍留待 Phase 2。
+**Phase 1 实施结果（2026-10-02）**：完成 Admin 专用代理配置接口和设置卡片；代理认证在统一配置写入层加密，读取只返回配置状态；配置 URL 不接受内嵌认证。`SafeEgressClient` 在代理启用时使用经代理 DoH、检查 A/AAAA/CNAME 答案，并通过 CONNECT 到校验 IP、原始域名 TLS SNI/证书及 HTTP Host 完成请求；失败不直连回退。代理传输仅在启用代理时协商 HTTP/2（新增 `h2` 依赖），未启用代理继续使用原 IP 钉扎传输。`http_get` 已迁移。
 
 行为验证：7 项初始契约测试加密/脱敏、混合 DNS 拒绝、系统 DNS 不回退、IPv4/IPv6 CONNECT authority 与原域名 TLS 身份；与 `http_get` 既有重试用例合计 17 项通过。前端 `typecheck`、i18n 扫描和 license policy 检查通过。当前代理下真实请求 `https://ja.wikipedia.org/wiki/Muque` 得到 HTTP/2 200；对照测试发现 HTTP/1.1 GET 会得到上游 403，因此仅代理路径启用 HTTP/2，避免改变直连请求协议。
 
 ### Phase 2：外网内容工具扩展
 
-盘点并逐项迁移模型可控外部目的地，包括网页搜索/深度研究中的 URL 抓取、外部 URL 下载等。固定第三方 API endpoint 可以共享代理 transport，但使用独立 endpoint policy，不套用任意 URL 的目的地址授权。
+盘点并逐项迁移模型可控的任意外部 URL 请求，包括 `http_get`、文件库 `web_download`、`send_file(url=...)` 和图片 URL 读取。下载器继续流式读取并限制大小；重定向逐跳重新通过共享适配器解析、校验和钉扎，不能自动跟随或跳过安全策略。
+
+**Phase 2 实施结果（2026-10-02）**：两个下载入口已改为调用 `SafeEgressClient`；图片下载器仍手动最多跟随 3 次重定向，每跳重新解析和验证，继续保留 Content-Length 提前拒绝、流式累计上限和附件生命周期约束。移除了下载器重复实现的 IP pin 请求构造函数，统一由共享适配器维护连接与 TLS 身份。
+
+本阶段未迁移配置型 SearXNG endpoint 或 Tavily/You/Baidu 固定 Provider API：前者可能是本地服务，后者携带各自供应商凭据；后续须使用固定 endpoint allowlist 与独立代理授权，不套用任意 URL 策略。该边界转入 Phase 3。
+
+行为验证：安全出站、`http_get` 重试/截断、下载分块限额、Content-Length 预拒绝、重定向逐跳重验及旧 URL 安全契约相关测试共 36 项通过。
 
 ### Phase 3：其他出站客户端评估
 

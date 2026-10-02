@@ -7,6 +7,7 @@ import mimetypes
 from pathlib import Path, PurePosixPath
 
 from app.core.redaction import redact
+from app.core.safe_egress import SafeEgressClient, SafeEgressError
 from agent.tools.filesystem_policy import current_filesystem_policy
 
 
@@ -187,44 +188,6 @@ _SEND_URL_IMAGE_EXT = {
 }
 
 
-def _url_is_safe(url: str) -> str | None:
-    from app.core.url_security import url_is_safe
-
-    return url_is_safe(url)
-
-
-def _build_pinned_request(client, method: str, url: str):
-    """校验 host 并把连接 pin 到校验时解析到的那个 IP，返回 (request, error)。
-
-    单纯"校验一次、httpx 连接时再 resolve 一次"堵不住 DNS rebinding（攻击者控制的域名
-    可以在两次解析之间把 A 记录从公网 IP 换成内网 IP，见 url_security.resolve_pinned_ip
-    文档）。这里改成用解析到的 IP 直接建连，Host 头 / TLS SNI 仍用原始域名，保证证书
-    校验和路由都不受影响，只是"连去哪"这件事不再交给 httpx 自己二次决定。
-    """
-    from urllib.parse import urlparse
-
-    from app.core.url_security import resolve_pinned_ip
-
-    ip, error = resolve_pinned_ip(url)
-    if error:
-        return None, error
-    parsed = urlparse(url)
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    netloc = f"[{ip}]:{port}" if ":" in ip else f"{ip}:{port}"
-    pinned_url = parsed._replace(netloc=netloc).geturl()
-    extensions = {"sni_hostname": parsed.hostname} if parsed.scheme == "https" else {}
-    # Host 头：字面 IPv6 地址在 URI authority/HTTP Host 里必须带方括号（如
-    # "[2606:4700:4700::1111]"），否则冒号会被误当成端口分隔符——parsed.hostname
-    # 对这种 URL 返回的是不带括号的裸地址，直接拼进 Host 头格式不合法（code review
-    # 发现）。普通域名不含冒号，加不加这个判断都不受影响。
-    host = f"[{parsed.hostname}]" if ":" in (parsed.hostname or "") else parsed.hostname
-    # 非默认端口（如 :8443）省略端口会让部分虚拟主机/CDN 按错误的站点路由（同样是
-    # code review 发现）；有 parsed.port 时原样带上，用默认端口时留纯 host。
-    host_header = f"{host}:{parsed.port}" if parsed.port else host
-    req = client.build_request(method, pinned_url, headers={"Host": host_header}, extensions=extensions)
-    return req, None
-
-
 def _fmt_age(ttl_left: int, total_ttl: int) -> str:
     """按剩余 TTL 反推大致存了多久（暂存无绝对时间戳，只能这样估）。"""
     if ttl_left is None or ttl_left < 0:
@@ -259,77 +222,51 @@ async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = Tr
     Content-Length 2GB 的 URL 会先把 2GB 全读进 RAM 才触发 15MB 检查，是 DoS 面）。
     有 Content-Length 提前拒绝；chunked/无 Content-Length 在读取过程中累计，超限立即中止。
 
-    生命周期：**最终 response 的完整消费（含 aiter_bytes）必须留在 AsyncClient 的
-    async with 块内**——真实 httpx 的 transport 随 client 关闭，若在 __aexit__ 之后
-    才读 body，连接已关会抛 ReadError。原则：创建 client → 获取 streaming response →
-    完整消费/主动中止 → close response → 最后才 close client。
+    每一跳都通过 SafeEgressClient 重新做 DNS 校验和 IP 钉扎。重定向手动跟随，
+    避免自动跳转绕过 SSRF 检查；响应流始终在 adapter 管理的连接上下文内消费。
     """
     import httpx
     from urllib.parse import urljoin
     try:
-        # 手动跟随重定向 + 逐跳重新校验：自动 follow 会让公网页 302 跳内网/云元数据绕过校验（SSRF）。
-        # stream=True 只读响应头不读 body，避免 redirect 探测阶段就把大 body 读进内存。
-        # 每一跳都用 _build_pinned_request 把"校验的地址"和"实际连接的地址"锁定成同一个 IP，
-        # 防 DNS rebinding（见该函数文档）。
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
-            follow_redirects=False,
-            # 禁用连接池 keep-alive：pin 到 IP 后，重定向多跳可能解析到同一个 IP（CDN
-            # 场景很常见），httpcore 按 origin（这里全是同一个 IP:port）复用连接池——
-            # 但 sni_hostname 只在新建 TLS 连接时生效，复用已有连接不会重新握手，会
-            # 出现"握手时验证了 A 的证书，之后却拿这条连接发 Host: B 的请求"这种
-            # TLS hostname 隔离缺口（code review 发现）。这个下载器最多才 4 跳，
-            # 完全没必要为了 keep-alive 收益承担这个风险，禁掉最简单也最彻底。
-            limits=httpx.Limits(max_keepalive_connections=0),
-        ) as client:
-            cur = url
-            req, reason = _build_pinned_request(client, "GET", cur)
-            if reason:
-                return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
-            resp = await client.send(req, stream=True)
-            for _ in range(3):   # 最多跟 3 跳
-                if resp.status_code not in (301, 302, 303, 307, 308):
-                    break
-                loc = resp.headers.get("location")
-                await resp.aclose()   # 关闭 3xx 响应连接，再发下一跳
-                if not loc:
-                    break
-                cur = urljoin(cur, loc)
-                req, reason = _build_pinned_request(client, "GET", cur)   # 每一跳的目标都重新解析+校验+pin
-                if reason:
-                    return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
-                resp = await client.send(req, stream=True)
+        cur = url
+        timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0)
+        byte_limit = min(_SEND_URL_MAX_BYTES, max_bytes) if max_bytes is not None else _SEND_URL_MAX_BYTES
+        for hop in range(4):  # 最多跟随 3 次重定向
+            async with SafeEgressClient().stream(
+                cur,
+                timeout=timeout,
+                headers={"User-Agent": "Gugu-web/1.0"},
+            ) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("location")
+                    if not loc or hop == 3:
+                        return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
+                    cur = urljoin(cur, loc)
+                    continue
+                if resp.status_code != 200:
+                    return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
 
-            # 最终 response 的完整消费留在 client 生命周期内（见 docstring）。
-            if resp.status_code != 200:
-                await resp.aclose()
-                return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
+                ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+                ext = _SEND_URL_IMAGE_EXT.get(ctype)
+                if not ext:
+                    return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
+                clen = resp.headers.get("content-length")
+                if clen and clen.isdigit() and int(clen) > byte_limit:
+                    return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过本次读取上限 {byte_limit // 1048576}MB"}, ensure_ascii=False)
 
-            ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-            ext = _SEND_URL_IMAGE_EXT.get(ctype)
-            if not ext:
-                await resp.aclose()
-                return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
-            # Content-Length 提前拒绝：声明体积就超限的，不用读 body。
-            clen = resp.headers.get("content-length")
-            byte_limit = min(_SEND_URL_MAX_BYTES, max_bytes) if max_bytes is not None else _SEND_URL_MAX_BYTES
-            if clen and clen.isdigit() and int(clen) > byte_limit:
-                await resp.aclose()
-                return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过本次读取上限 {byte_limit // 1048576}MB"}, ensure_ascii=False)
-
-            # 流式读取 + 累计限流：chunked/无 Content-Length 时在读取过程中累计，超限立即中止，
-            # 不把整个响应消费完（防 DoS）。
-            total = 0
-            chunks: list[bytes] = []
-            try:
+                total = 0
+                chunks: list[bytes] = []
                 async for chunk in resp.aiter_bytes():
                     total += len(chunk)
                     if total > byte_limit:
                         return json.dumps({"error": f"图片过大（超过本次读取上限 {byte_limit // 1048576}MB）"}, ensure_ascii=False)
                     chunks.append(chunk)
-            finally:
-                await resp.aclose()
-            data = b"".join(chunks)
+                data = b"".join(chunks)
+                break
+        else:
+            return json.dumps({"error": "图片下载失败（重定向次数过多）"}, ensure_ascii=False)
+    except SafeEgressError as e:
+        return json.dumps({"error": f"这个链接发不了：{e.message}"}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
     if not data:

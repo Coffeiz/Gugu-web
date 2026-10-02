@@ -337,7 +337,13 @@ class SafeEgressClient:
         return address, proxy
 
     @asynccontextmanager
-    async def stream(self, url: str, *, timeout: float, headers: dict[str, str] | None = None):
+    async def stream(
+        self,
+        url: str,
+        *,
+        timeout: float | httpx.Timeout,
+        headers: dict[str, str] | None = None,
+    ):
         address, proxy = await self.resolve(url)
         if proxy is None:
             from app.core.pinned_http import PinnedHTTPTransport
@@ -346,7 +352,9 @@ class SafeEgressClient:
         else:
             transport = _PinnedProxyTransport(pinned_ip=address, proxy=proxy)
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout), follow_redirects=False, transport=transport,
+            timeout=timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout),
+            follow_redirects=False,
+            transport=transport,
         ) as client:
             async with client.stream("GET", url, headers=headers or {}) as response:
                 yield response
