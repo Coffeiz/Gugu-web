@@ -216,16 +216,16 @@ def test_image_search_schema_uses_flat_compatible_input():
 
 
 def test_image_search_accepts_numeric_string_result_count_after_normalization():
-    from agent.tools.base import build_validator, validate_input, registry
-    from agent.tools.tool_contract import normalize_input_by_schema
+    from agent.tools.base import registry
+    from agent.tools.tool_contract import normalize_and_validate_tool_input
 
     args = {"mode": "image", "attach_id": "attach-1", "max_results": "5"}
-    args, _ = normalize_input_by_schema(registry.get("image_search").input_schema, args)
+    args, issues, _, _ = normalize_and_validate_tool_input(
+        "image_search", args, registry.get("image_search")
+    )
 
     assert args["max_results"] == 5
-    assert validate_input(
-        build_validator(registry.get("image_search").input_schema), args
-    ) == []
+    assert issues == []
 
 
 def test_similar_image_default_count_is_fifteen():

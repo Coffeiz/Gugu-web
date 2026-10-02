@@ -212,9 +212,20 @@ async def test_list_dir_resolves_slash_path(db, user_a):
 
 
 async def test_list_dir_path_ambiguous_segment_reports_candidates(db, user_a):
-    root = await _mk(db, Folder(user_id=user_a.id, name="素材"))
-    await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="图"))
-    await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="图"))
+    # 活动目录在同一作用域内由唯一索引保证不重名；歧义只可能来自多个
+    # 可见作用域。省略 workspace scope 时，同名根目录必须要求模型用 ID 消歧。
+    workspace_a = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="工作区 A", directory_name="workspace-a",
+    ))
+    workspace_b = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="工作区 B", directory_name="workspace-b",
+    ))
+    await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=workspace_a.id, name="素材",
+    ))
+    await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=workspace_b.id, name="素材",
+    ))
 
     miss = json.loads(await _list_dir(db, user_a.id, {"folder": "素材/图"}))
     assert "多个同名文件夹" in miss["error"]
