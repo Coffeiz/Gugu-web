@@ -7,16 +7,6 @@
 
 ## [未发布]
 
-### Fixes
-
-- Added password confirmation during registration to catch mistyped passwords.
-- Fixed cursor placement when clicking the upper or lower area of single-line inputs.
-
-### 修复
-
-- 注册时增加确认密码输入，避免因密码输错而无法登录。
-- 修复点击单行输入框文字上下区域时光标跳到首尾的问题。
-
 ## [1.5.0] - 2026-10-03
 
 ### What's New
@@ -53,6 +43,8 @@
 - Fixed Responses and Anthropic reasoning/tool-call history restoration, non-chat protocol selection, and Provider request diagnostics using the active request configuration.
 - Fixed invalid tool calls disrupting safe parallel batches, and improved actionable parameter-type correction hints.
 - Fixed interrupted runs losing completed execution history, Provider finalization inconsistencies, Shell quota accounting, and sandbox proxy/offline bundle setup.
+- Added password confirmation during registration to catch mistyped passwords.
+- Fixed cursor placement when clicking the upper or lower area of single-line inputs.
 
 #### Contributors
 
@@ -96,6 +88,8 @@
 - 修复 Responses 与 Anthropic 推理/工具调用历史恢复、非聊天协议选择，以及上下文诊断未沿用实际 Provider 请求配置的问题。
 - 修复无效工具调用打断安全并行批次的问题，并改进参数类型错误的可执行纠正提示。
 - 修复中断运行丢失已完成执行历史、Provider 收尾不一致、Shell 配额核算及沙盒代理/离线镜像包配置问题。
+- 注册时增加确认密码输入，避免因密码输错而无法登录。
+- 修复点击单行输入框文字上下区域时光标跳到首尾的问题。
 
 #### 贡献者
 
