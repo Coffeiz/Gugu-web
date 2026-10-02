@@ -849,7 +849,7 @@ class PresetCreate(BaseModel):
     context_tokens: int = Field(128000, gt=1)
     thinking: str = ""
     reasoning_effort: str = ""
-    reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
+    reasoning_persistence: Literal["off", "continuation"] = "off"
     image: bool = False
     image_detail: str = "auto"
     video: bool = False
@@ -917,7 +917,7 @@ class PresetUpdate(BaseModel):
     context_tokens: int | None = Field(default=None, gt=1)
     thinking: str | None = None
     reasoning_effort: str | None = None
-    reasoning_persistence: Literal["off", "summary", "continuation"] | None = None
+    reasoning_persistence: Literal["off", "continuation"] | None = None
     image: bool | None = None
     image_detail: str | None = None
     video: bool | None = None

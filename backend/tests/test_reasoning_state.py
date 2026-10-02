@@ -144,11 +144,26 @@ def _envelope(user, session, *, run_id="run-1", provider="anthropic", mode="cont
     )
 
 
+async def _seed_active_state(db, user, monkeypatch, *, key: bytes):
+    import app.byok.crypto as byok_crypto
+
+    monkeypatch.setattr(byok_crypto, "_master_key", lambda version=1: key)
+    session = await _session(db, user.id)
+    envelope = _envelope(user, session)
+    await commit_state(
+        db, user_id=user.id, session_id=session.id, envelope=envelope, expected_version=0
+    )
+    await db.commit()
+    return session, envelope
+
+
 def test_policy_has_single_safe_boundary():
     assert ReasoningPersistencePolicy.from_value(None).mode == "off"
     assert ReasoningPersistencePolicy.from_value(" CONTINUATION ").can_resume
     with pytest.raises(ValueError):
         ReasoningPersistencePolicy.from_value("unknown")
+    with pytest.raises(ValueError):
+        ReasoningPersistencePolicy.from_value("summary")
     assert not hasattr(ReasoningPersistencePolicy("continuation"), "previous_response_id")
 
 
@@ -158,7 +173,12 @@ async def test_coordinator_diagnostics_distinguish_state_lifecycle(monkeypatch):
         provider="anthropic", model="claude-test", context_tokens=128000,
         max_tokens=8000, thinking="adaptive",
     )
-    driver = SimpleNamespace(api_format="anthropic", continuation_available=True)
+    driver = SimpleNamespace(
+        api_format="anthropic", continuation_available=True,
+        configure_reasoning_replay=lambda target, *, enabled: setattr(
+            target, "reasoning_replay_enabled", enabled,
+        ),
+    )
     ctx = SimpleNamespace(tool_state_digest="tools-digest")
 
     disabled = ReasoningStateCoordinator(
@@ -168,12 +188,14 @@ async def test_coordinator_diagnostics_distinguish_state_lifecycle(monkeypatch):
     await disabled.prepared(driver, ctx)
     assert disabled.diagnostics()["state_status"] == "disabled"
     assert disabled.diagnostics()["continuation_attempted"] is False
+    assert ctx.reasoning_replay_enabled is False
 
     unavailable = ReasoningStateCoordinator(
         user_id="user-a", session_id=None, model_cfg=model,
         policy=ReasoningPersistencePolicy("continuation"), session_factory=None,
     )
     await unavailable.prepared(driver, ctx)
+    assert ctx.reasoning_replay_enabled is True
     diagnostics = unavailable.diagnostics()
     assert diagnostics["state_status"] == "unavailable"
     assert diagnostics["continuation_attempted"] is True
@@ -247,28 +269,14 @@ async def test_coordinator_off_invalidates_state_before_pool_can_restore_it(monk
     assert off.expected_version == 7
     assert off.diagnostics()["state_status"] == "disabled"
 
-    summary = ReasoningStateCoordinator(
-        user_id="user-a", session_id=7, model_cfg=model,
-        policy=ReasoningPersistencePolicy("summary"),
-        session_factory=lambda: _DbContext(),
-    )
-    await summary.prepared(driver, ctx)
-    assert summary.expected_version == 7
-    assert summary.diagnostics()["state_status"] == "summary_only"
-
-    assert calls == ["off", "summary"]
+    assert calls == ["off"]
 
 
 @pytest.mark.asyncio
 async def test_invalidate_user_states_clears_only_active_rows(db, user_a, monkeypatch):
-    import app.byok.crypto as byok_crypto
     from app.services.provider_reasoning_state import invalidate_user_states
 
-    monkeypatch.setattr(byok_crypto, "_master_key", lambda version=1: b"r" * 32)
-    session = await _session(db, user_a.id)
-    envelope = _envelope(user_a, session)
-    await commit_state(db, user_id=user_a.id, session_id=session.id, envelope=envelope, expected_version=0)
-    await db.commit()
+    await _seed_active_state(db, user_a, monkeypatch, key=b"r" * 32)
     count = await invalidate_user_states(db, user_id=user_a.id)
     assert count == 1
     await db.commit()
@@ -466,14 +474,8 @@ async def test_expired_and_changed_state_is_invalidated_without_replay(db, user_
 
 
 @pytest.mark.asyncio
-async def test_off_and_summary_never_replay_provider_payload(db, user_a, monkeypatch):
-    import app.byok.crypto as byok_crypto
-
-    monkeypatch.setattr(byok_crypto, "_master_key", lambda version=1: b"m" * 32)
-    session = await _session(db, user_a.id)
-    envelope = _envelope(user_a, session)
-    await commit_state(db, user_id=user_a.id, session_id=session.id, envelope=envelope, expected_version=0)
-    await db.commit()
+async def test_off_never_replays_provider_payload(db, user_a, monkeypatch):
+    session, envelope = await _seed_active_state(db, user_a, monkeypatch, key=b"m" * 32)
 
     off = await load_state(
         db, user_id=user_a.id, session_id=session.id, policy=ReasoningPersistencePolicy("off"),
@@ -482,35 +484,6 @@ async def test_off_and_summary_never_replay_provider_payload(db, user_a, monkeyp
     )
     assert off.envelope is None
     assert off.unavailable_reason == "disabled"
-
-    summary = await load_state(
-        db, user_id=user_a.id, session_id=session.id, policy=ReasoningPersistencePolicy("summary"),
-        provider="anthropic", api_format="anthropic", model_id="claude-test",
-        config_digest=envelope.config_digest, reasoning_config_digest=envelope.reasoning_config_digest,
-    )
-    assert summary.envelope is None
-    assert summary.unavailable_reason == "summary_only"
-
-
-@pytest.mark.asyncio
-async def test_summary_can_store_only_restricted_metrics(db, user_a, monkeypatch):
-    import app.byok.crypto as byok_crypto
-
-    monkeypatch.setattr(byok_crypto, "_master_key", lambda version=1: b"y" * 32)
-    session = await _session(db, user_a.id)
-    metrics = {"block_count": 2, "reasoning_tokens": 20, "state_digest": "a" * 64}
-    envelope = _envelope(
-        user_a, session, mode="summary", state_kind="summary", payload=metrics,
-        state_summary=metrics,
-    )
-    assert await commit_state(
-        db, user_id=user_a.id, session_id=session.id, envelope=envelope, expected_version=0
-    ) == 1
-    await db.commit()
-    row = (await db.execute(select(ProviderReasoningState))).scalar_one()
-    assert row.state_summary == metrics
-    assert row.encrypted_payload != envelope.payload_json()
-
 
 @pytest.mark.asyncio
 async def test_expire_and_explicit_delete_contract(db, user_a, monkeypatch):

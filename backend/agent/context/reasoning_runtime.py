@@ -60,7 +60,7 @@ class ReasoningStateCoordinator:
             "reasoning_persistence": self.policy.mode,
             "state_status": (
                 "disabled" if self.policy.mode == "off"
-                else "summary_only" if self.policy.mode == "summary" else "miss"
+                else "miss"
             ),
             "continuation_attempted": False,
             "continuation_reused": False,
@@ -108,6 +108,9 @@ class ReasoningStateCoordinator:
         })
 
     async def prepared(self, driver: Any, ctx: Any) -> None:
+        configure = getattr(driver, "configure_reasoning_replay", None)
+        if callable(configure):
+            configure(ctx, enabled=self.policy.can_resume)
         if self._prepared_once:
             if self.latest is not None:
                 restore = getattr(driver, "restore_provider_state", None)
@@ -134,10 +137,8 @@ class ReasoningStateCoordinator:
             self._publish_diagnostics("prepared")
             return
         if not self.policy.can_resume:
-            # off/summary 不恢复 provider payload，但仍必须读取一次 state：
-            # 这会失效旧的 active continuation，并返回正确的版本号供 summary
-            # 本轮提交时使用，避免留下可被后续恢复的旧分支。即使模型池或
-            # router 在下一轮重新选回原 preset，也不能复活这条旧分支。
+            # off 不恢复 provider payload，但仍必须读取并失效旧状态，避免模型池或
+            # router 下一轮重新选回原 preset 时复活旧分支。
             async with self.session_factory() as db:
                 lookup = await provider_reasoning_state.load_state(
                     db, user_id=self.user_id, session_id=self.session_id, policy=self.policy,
@@ -236,10 +237,7 @@ class ReasoningStateCoordinator:
             self._publish_diagnostics("completed")
             return
         snapshot = self.latest
-        if self.policy.mode == "summary":
-            payload = dict(snapshot.summary)
-            kind = "summary"
-        elif self.policy.can_commit_provider_payload:
+        if self.policy.can_resume:
             payload = snapshot.payload
             kind = snapshot.kind
         else:

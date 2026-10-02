@@ -16,7 +16,7 @@
               <div class="byok-card-head">
                 <div class="byok-card-main">
                   <div class="byok-name">{{ providerLabel(item.provider) }}<span v-if="item.model"> · {{ item.model }}</span><template v-if="item.capability === 'llm'"><span v-for="dim in mediaDimensions.filter(entry => item[entry.key])" :key="dim.key" class="byok-capability-tag">{{ t(dim.labelKey) }}</span></template></div>
-                  <div class="byok-meta">{{ displayInterfaceFor(item) }} · {{ item.has_value ? t('profileByokUi.encrypted') : t('profileByokUi.noCredential') }}<template v-if="item.capability === 'llm' && supportsReasoningPersistence(item) && item.reasoning_persistence === 'summary'"> · {{ t('llmExtraUi.reasoningSummary') }}</template><template v-else-if="item.capability === 'llm' && supportsReasoningPersistence(item) && item.reasoning_persistence === 'continuation'"> · {{ t('llmExtraUi.reasoningContinuation') }}</template></div>
+                  <div class="byok-meta">{{ displayInterfaceFor(item) }} · {{ item.has_value ? t('profileByokUi.encrypted') : t('profileByokUi.noCredential') }}<template v-if="item.capability === 'llm' && supportsReasoningPersistence(item) && item.reasoning_persistence === 'continuation'"> · {{ t('llmExtraUi.reasoningContinuation') }}</template></div>
                 </div>
               </div>
               <div class="byok-card-actions">
@@ -124,7 +124,7 @@ import { useI18n } from 'vue-i18n'
 import { apiFormatsForProvider, defaultApiFormatForProvider, MODEL_PROVIDERS, retainApiFormatForProvider, type ModelProvider } from '@/utils/modelProviders'
 import { buildThinkingOptionsForIdentity } from '@/utils/llmThinkingOptions'
 
-type ReasoningPersistence = 'off' | 'summary' | 'continuation'
+type ReasoningPersistence = 'off' | 'continuation'
 type Item = { id: number; capability: string; provider: string; api_format: string; base_url: string; model: string; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; reasoning_persistence: ReasoningPersistence; image: boolean; video: boolean; audio: boolean; image_detail: string; has_value: boolean; enabled: boolean; [key: string]: any }
 type ThinkingMode = 'default' | 'disabled' | 'adaptive' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type Editor = { id?: number; capability: string; provider: string; value: string; api_format: string; base_url: string; model: string; dimensions: number | null; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; reasoning_persistence: ReasoningPersistence; thinking_mode: ThinkingMode; image: boolean; video: boolean; audio: boolean; image_detail: string; local_runtime?: string; ollama_mode?: string; ollama_api_mode?: string }
@@ -137,11 +137,10 @@ const groups = [
 const mediaDimensions = [{ key: 'image', labelKey: 'profileByokUi.image' }, { key: 'video', labelKey: 'profileByokUi.video' }, { key: 'audio', labelKey: 'profileByokUi.audio' }] as const
 const reasoningPersistenceOptions = computed(() => [
   { key: 'off', label: t('llmExtraUi.reasoningOff') },
-  { key: 'summary', label: t('llmExtraUi.reasoningSummary') },
   { key: 'continuation', label: t('llmExtraUi.reasoningContinuation') },
 ] as const)
 function normalizeReasoningPersistence(value: unknown): ReasoningPersistence {
-  return value === 'summary' || value === 'continuation' ? value : 'off'
+  return value === 'continuation' ? value : 'off'
 }
 const providerChildren: Record<string, Array<{ key: string; labelKey: string }>> = {
   glm: [{ key: 'general', labelKey: 'profileByokUi.generalApi' }, { key: 'coding', labelKey: 'profileByokUi.codingPlan' }],
@@ -185,12 +184,10 @@ function interfaceValueFor(draft: Pick<Editor, 'provider' | 'api_format'>) {
 }
 function supportsReasoningPersistence(draft: Pick<Editor, 'provider' | 'api_format'> | null) {
   if (!draft) return false
-  // 已知 Provider 的空值按默认协议处理，不再保留旧的 Auto 语义。
-  if (!draft.api_format && ['openai', 'qwen', 'glm', 'glm-coding', 'deepseek', 'mimo', 'ollama', 'local'].includes(draft.provider)) return false
   const format = interfaceValueFor(draft)
   if (draft.provider === 'ollama' && format === 'native') return false
-  if (['openai', 'qwen', 'glm', 'glm-coding', 'deepseek', 'mimo', 'ollama', 'local'].includes(draft.provider)) return format === 'responses' || format === 'anthropic'
-  return true
+  // 推理状态能力由 wire 协议决定；Chat Completions 不支持跨请求状态持久化。
+  return format === 'responses' || format === 'anthropic'
 }
 function applyInterface(draft: Editor, value: string) {
   draft.api_format = value

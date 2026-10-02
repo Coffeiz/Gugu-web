@@ -368,100 +368,7 @@ async def _raise_status(status_code):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "error_body,messages,expected_input",
-    [
-        (
-            {"error": {
-                "code": "invalid_prompt",
-                "message": "tool result's tool id(call-1) not found",
-            }},
-            [
-                {"role": "user", "content": "请先帮我确认技术方案。"},
-                {"role": "assistant", "content": [{
-                    "type": "tool_call", "id": "call-1", "name": "ask_user",
-                    "arguments": "{}",
-                }]},
-                {"role": "user", "content": "我补充一下，请继续。"},
-            ],
-            [
-                {"role": "user", "content": "请先帮我确认技术方案。"},
-                {
-                    "type": "function_call",
-                    "id": "fc_legacy_" + digest({"call_id": "call-1", "occurrence": 0}, length=24),
-                    "call_id": "call-1", "name": "ask_user", "arguments": "{}",
-                },
-                {"role": "user", "content": "我补充一下，请继续。"},
-            ],
-        ),
-        (
-            {"error": {
-                "param": "response_id",
-                "message": "Response with id 'resp-stale' not found.",
-            }},
-            [
-                {"role": "user", "content": "之前的问题"},
-                {"role": "assistant", "content": "之前的回答"},
-                {"role": "user", "content": "请接着说"},
-            ],
-            [
-                {"role": "user", "content": "之前的问题"},
-                {"role": "assistant", "content": "之前的回答"},
-                {"role": "user", "content": "请接着说"},
-            ],
-        ),
-    ],
-    ids=["missing-tool-call-id", "missing-response-id"],
-)
-async def test_responses_driver_retries_full_history_when_response_chain_is_stale(
-    error_body, messages, expected_input,
-):
-    response = {
-        "id": "resp-recovered",
-        "output": [],
-        "usage": {"input_tokens": 12, "output_tokens": 3},
-    }
-    events = [
-        SimpleNamespace(type="response.output_text.delta", delta="已继续"),
-        SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: response)),
-    ]
-
-    class _StaleThenSuccessClient:
-        def __init__(self):
-            self.requests = []
-            self.responses = SimpleNamespace(create=self.create)
-
-        async def create(self, **kwargs):
-            self.requests.append(kwargs)
-            if len(self.requests) == 1:
-                error = _ResponsesStatusError(400)
-                if error_body["error"].get("param") == "response_id":
-                    error = _ResponsesStatusError(404)
-                error.body = error_body
-                raise error
-            return _FakeResponsesStream(list(events))
-
-    client = _StaleThenSuccessClient()
-    driver = OpenAIResponsesDriver()
-    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = _responses_adapter()
-    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-1")
-
-    result = None
-    async for kind, value in driver.run_round(client, ctx, MessageArea.from_canonical_messages(messages)):
-        if kind == "done":
-            result = value
-
-    assert result.text == "已继续"
-    assert len(client.requests) == 2
-    assert client.requests[0]["previous_response_id"] == "resp-1"
-    assert "prompt_cache_key" not in client.requests[0]
-    assert "previous_response_id" not in client.requests[1]
-    assert client.requests[1]["input"] == expected_input
-
-
-@pytest.mark.asyncio
-async def test_responses_driver_replays_full_history_when_incremental_input_is_empty():
+async def test_responses_driver_sends_full_history_and_rejects_empty_input():
     response = {
         "id": "resp-recovered",
         "output": [],
@@ -472,10 +379,7 @@ async def test_responses_driver_replays_full_history_when_incremental_input_is_e
         SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: response)),
     ])
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    ctx = _ResponsesCtx(
-        [], 100, "gpt-test", "system", _responses_adapter(), ai,
-        previous_response_id="resp-previous",
-    )
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", _responses_adapter(), ai)
     messages = MessageArea.from_canonical_messages([
         {"role": "user", "content": "上一轮用户输入"},
         {
@@ -510,7 +414,6 @@ async def test_responses_driver_replays_user_intent_after_tool_result_instead_of
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
     ctx = _ResponsesCtx(
         [], 100, "gpt-test", "system", _responses_adapter(), ai,
-        previous_response_id="resp-before-tool",
     )
     messages = MessageArea.from_canonical_messages([
         {"role": "user", "content": "搜索 Childspot 的 MV，最后告诉我校验词 ORBIT-42。"},
@@ -563,7 +466,7 @@ async def test_responses_driver_rejects_empty_full_history_before_upstream_reque
 
 
 @pytest.mark.asyncio
-async def test_stale_response_fallback_retries_transient_error_before_success(monkeypatch):
+async def test_responses_full_history_retry_keeps_same_input_after_transient_error(monkeypatch):
     from app.core import retry as retry_module
     from app.core.retry import RetryPolicy
 
@@ -586,10 +489,6 @@ async def test_stale_response_fallback_retries_transient_error_before_success(mo
         async def create(self, **kwargs):
             self.requests.append(kwargs)
             if len(self.requests) == 1:
-                error = _ResponsesStatusError(404)
-                error.body = {"error": {"param": "response_id", "message": "Response not found"}}
-                raise error
-            if len(self.requests) == 2:
                 import httpx
                 import openai
 
@@ -604,7 +503,7 @@ async def test_stale_response_fallback_retries_transient_error_before_success(mo
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
     adapter = _responses_adapter()
     messages = MessageArea.from_canonical_messages([{"role": "user", "content": "继续"}])
-    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-stale")
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
 
     emitted = []
     async for kind, value in driver.run_round(client, ctx, messages):
@@ -612,23 +511,23 @@ async def test_stale_response_fallback_retries_transient_error_before_success(mo
 
     retry_events = [value for kind, value in emitted if kind == "retry"]
     results = [value for kind, value in emitted if kind == "done"]
-    assert len(client.requests) == 3
-    assert client.requests[0]["previous_response_id"] == "resp-stale"
-    assert all("previous_response_id" not in request for request in client.requests[1:])
-    assert client.requests[1]["input"] == client.requests[2]["input"]
+    assert len(client.requests) == 2
+    assert all("previous_response_id" not in request for request in client.requests)
+    assert client.requests[0]["input"] == client.requests[1]["input"]
     assert [event["attempt"] for event in retry_events] == [1]
     assert results[0].text == "已恢复"
 
 
 @pytest.mark.asyncio
-async def test_responses_driver_uses_response_chain_and_function_call_items():
+async def test_responses_driver_captures_and_replays_reasoning_items_with_full_history():
     response = {
         "id": "resp-2",
-        "previous_response_id": "resp-1",
-        "output": [{
-            "type": "function_call", "id": "fc-1", "call_id": "call-1",
-            "name": "calendar_list", "arguments": '{"date":"2026-09-05"}',
-        }],
+        "output": [
+            {"type": "reasoning", "id": "rs-1", "status": "completed",
+             "summary": [], "content": [{"type": "reasoning_text", "text": "private reasoning"}]},
+            {"type": "function_call", "id": "fc-1", "call_id": "call-1",
+             "name": "calendar_list", "arguments": '{"date":"2026-09-05"}'},
+        ],
         "usage": {
             "input_tokens": 100,
             "output_tokens": 7,
@@ -647,6 +546,7 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
         [], 100, "gpt-test", "system", adapter, ai,
         supports_prompt_cache_key=True,
     )
+    driver.configure_reasoning_replay(ctx, enabled=True)
 
     result = None
     async for kind, value in driver.run_round(client, ctx, MessageArea.from_canonical_messages([
@@ -662,26 +562,51 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
     assert result.usage_in == 40
     assert result.cache_tokens == 60
     assert result.usage_out == 7
-    assert result.raw.response_id == "resp-2"
     assert client.requests[0]["input"] == [{"role": "user", "content": "请查日历"}]
     assert "previous_response_id" not in client.requests[0]
     assert client.requests[0]["prompt_cache_key"].startswith("gugu-")
 
     state = driver.extract_provider_state(result)
-    assert state["payload"] == {"response_id": "resp-2", "previous_response_id": "resp-1"}
+    assert state["payload"]["reasoning_items"] == [response["output"][0]]
     assert driver.restore_provider_state(ctx, state["payload"])
-    assert ctx.previous_response_id == "resp-2"
 
-    followup = driver.build_tool_round(result, [(result.tool_calls[0], "日历为空")])
-    assert _responses_input(followup) == [
+    second_response = {
+        "id": "resp-3", "output": [{"type": "message", "id": "msg-1", "role": "assistant",
+            "status": "completed", "content": [{"type": "output_text", "text": "日历为空。"}]}],
+    }
+    second_client = _FakeResponsesClient([
+        SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: second_response)),
+    ])
+    next_turn_area = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "请查日历"},
         {"role": "assistant", "content": "查一下"},
-        {
-            "type": "function_call", "id": "fc-1", "call_id": "call-1",
-            "name": "calendar_list", "arguments": '{"date":"2026-09-05"}',
-        },
-        {"type": "function_call_output", "call_id": "call-1", "output": "日历为空"},
+        {"role": "user", "content": "结果呢？"},
+    ])
+    async for kind, _value in driver.run_round(
+        second_client, ctx, next_turn_area,
+    ):
+        if kind == "done":
+            break
+    assert "previous_response_id" not in second_client.requests[0]
+    assert second_client.requests[0]["input"] == [
+        {"role": "user", "content": "请查日历"},
+        response["output"][0],
+        {"role": "assistant", "content": "查一下"},
+        {"role": "user", "content": "结果呢？"},
     ]
-    assert followup[1] == {"role": "tool", "tool_call_id": "call-1", "content": "日历为空"}
+
+    disabled_ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
+    driver.configure_reasoning_replay(disabled_ctx, enabled=False)
+    disabled_client = _FakeResponsesClient([
+        SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: second_response)),
+    ])
+    async for kind, _value in driver.run_round(
+        disabled_client, disabled_ctx, next_turn_area,
+    ):
+        if kind == "done":
+            break
+    assert all(item.get("type") != "reasoning" for item in disabled_client.requests[0]["input"])
+    assert "include" not in disabled_client.requests[0]
 
 
 def test_responses_update_tools_refreshes_tool_state_digest():
@@ -753,7 +678,7 @@ async def test_responses_driver_only_classifies_explicit_compatibility_errors(
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
     adapter = _responses_adapter()
-    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-1")
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
 
     if should_raise:
         with pytest.raises(ResponsesCompatibilityError):
@@ -771,7 +696,7 @@ def test_responses_driver_keeps_tool_images_as_input_image_items():
     result = RoundResult(
         text="",
         raw=_ResponsesRaw(
-            content="", response_id=None, previous_response_id=None,
+            content="",
             tool_calls_payload=[{"id": "call-1", "name": "read_file", "args": "{}"}],
             output_items=[],
         ),

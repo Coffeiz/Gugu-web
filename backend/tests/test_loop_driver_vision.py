@@ -81,7 +81,7 @@ def test_responses_tool_round_does_not_forward_unsupported_audio_video_blocks():
 
     result = RoundResult(
         text="",
-        raw=_ResponsesRaw(content="", response_id=None, previous_response_id=None,
+        raw=_ResponsesRaw(content="",
                           tool_calls_payload=[{"id": "call-1", "name": "read_file", "args": "{}"}],
                           output_items=[]),
     )

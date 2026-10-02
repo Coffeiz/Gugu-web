@@ -547,6 +547,21 @@ def test_compatible_endpoints_do_not_inherit_official_provider_reasoning_options
     assert openai.build_responses_reasoning_params(unsupported) == {}
 
 
+def test_only_official_openai_endpoint_requests_encrypted_reasoning_items():
+    adapter = adapter_for(_ai(provider="openai", model="gpt-5.6-sol"))
+    official = SimpleNamespace(
+        provider="openai", base_url="https://api.openai.com/v1", model="gpt-5.6-sol",
+    )
+    compatible = SimpleNamespace(
+        provider="openai", base_url="https://gateway.example/v1", model="gpt-5.6-sol",
+    )
+
+    assert adapter.build_responses_reasoning_replay_params(official) == {
+        "include": ["reasoning.encrypted_content"],
+    }
+    assert adapter.build_responses_reasoning_replay_params(compatible) == {}
+
+
 def test_anthropic_and_minimax_efforts_use_anthropic_wire_parameters():
     anthropic = adapter_for(_ai(provider="anthropic", model="claude-opus-4-8"))
     claude_ai = SimpleNamespace(

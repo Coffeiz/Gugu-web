@@ -4480,7 +4480,7 @@ export interface components {
             /** Reasoning Effort */
             reasoning_effort?: ("" | "low" | "medium" | "high" | "max") | null;
             /** Reasoning Persistence */
-            reasoning_persistence: "off" | "summary" | "continuation";
+            reasoning_persistence: "off" | "continuation";
             /**
              * Image
              * @default false
@@ -4551,7 +4551,7 @@ export interface components {
             /** Reasoning Effort */
             reasoning_effort?: ("" | "low" | "medium" | "high" | "max") | null;
             /** Reasoning Persistence */
-            reasoning_persistence?: "off" | "summary" | "continuation" | null;
+            reasoning_persistence?: "off" | "continuation" | null;
             /** Image */
             image?: boolean | null;
             /** Video */
@@ -5449,7 +5449,7 @@ export interface components {
              */
             reasoning_effort: string;
             /** Reasoning Persistence */
-            reasoning_persistence: "off" | "summary" | "continuation";
+            reasoning_persistence: "off" | "continuation";
             /**
              * Image
              * @default false
@@ -5536,7 +5536,7 @@ export interface components {
             /** Reasoning Effort */
             reasoning_effort?: string | null;
             /** Reasoning Persistence */
-            reasoning_persistence?: "off" | "summary" | "continuation" | null;
+            reasoning_persistence?: "off" | "continuation" | null;
             /** Image */
             image?: boolean | null;
             /** Image Detail */

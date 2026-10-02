@@ -15,9 +15,9 @@ from typing import Any, Literal, Mapping
 from app.core.tz import now_utc
 
 
-ReasoningPersistenceMode = Literal["off", "summary", "continuation"]
+ReasoningPersistenceMode = Literal["off", "continuation"]
 REASONING_PERSISTENCE_MODES: frozenset[str] = frozenset(
-    {"off", "summary", "continuation"}
+    {"off", "continuation"}
 )
 PROVIDER_STATE_VERSION = 1
 MAX_PROVIDER_STATE_PAYLOAD_BYTES = 8 * 1024 * 1024
@@ -26,7 +26,6 @@ MAX_PROVIDER_STATE_PAYLOAD_BYTES = 8 * 1024 * 1024
 INVALIDATION_REASONS: frozenset[str] = frozenset(
     {
         "disabled",
-        "summary_only",
         "expired",
         "provider_changed",
         "api_format_changed",
@@ -124,10 +123,6 @@ class ReasoningPersistencePolicy:
 
     @property
     def can_resume(self) -> bool:
-        return self.mode == "continuation"
-
-    @property
-    def can_commit_provider_payload(self) -> bool:
         return self.mode == "continuation"
 
 

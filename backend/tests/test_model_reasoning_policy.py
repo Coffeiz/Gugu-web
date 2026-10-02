@@ -1,8 +1,7 @@
 """模型级推理状态策略回归。
 
 推理接续只在显式 Responses（或原生支持续接的协议）下生效；Chat API 下的
-自动协议探测/切换已随旧策略移除——数据库里的 summary/continuation 旧配置
-一律回落 off，不再发起任何探测请求。
+自动协议探测/切换已移除；推理状态策略只允许 off 与 continuation。
 """
 from types import SimpleNamespace
 
@@ -27,7 +26,8 @@ def _settings(mode: str, *, provider: str = "openai", api_format: str = "respons
 
 def test_run_policy_comes_from_selected_model():
     assert resolve_run_config(_settings("continuation")).reasoning_persistence == "continuation"
-    assert resolve_run_config(_settings("summary")).reasoning_persistence == "summary"
+    with pytest.raises(ValueError, match="无效的推理状态持久化策略"):
+        resolve_run_config(_settings("summary"))
 
 
 def test_missing_model_policy_defaults_to_off():
@@ -36,9 +36,8 @@ def test_missing_model_policy_defaults_to_off():
     assert resolve_run_config(SimpleNamespace(ai=model, ai_presets=None)).reasoning_persistence == "off"
 
 
-@pytest.mark.parametrize("mode", ["summary", "continuation"])
-def test_chat_completions_disables_reasoning_persistence(mode):
-    settings = _settings(mode)
+def test_chat_completions_disables_reasoning_persistence():
+    settings = _settings("continuation")
     settings.ai.api_format = "openai"
 
     assert resolve_run_config(settings).reasoning_persistence == "off"
@@ -52,9 +51,8 @@ def test_known_openai_provider_empty_format_uses_chat_completions():
 
 
 @pytest.mark.asyncio
-async def test_legacy_continuation_no_longer_switches_protocol(monkeypatch):
-    """旧配置（未知 Provider + continuation）不再触发任何协议探测/切换：
-    api_format 原样保留、无提示标记、provider_diagnostics 里已无探测入口。"""
+async def test_unknown_provider_does_not_switch_protocol_or_enable_chat_continuation(monkeypatch):
+    """未知 Provider 不触发协议探测；适配器识别为 Chat 时关闭跨请求续接。"""
     import app.services.provider_diagnostics as diagnostics
 
     assert not hasattr(diagnostics, "probe_responses_capability")
@@ -70,7 +68,7 @@ async def test_legacy_continuation_no_longer_switches_protocol(monkeypatch):
 
     assert cfg.model.api_format == ""            # 未被改成 responses
     assert cfg.reasoning_notice is None          # 不再有探测失败提示
-    assert cfg.reasoning_persistence == "continuation"  # 交回协议适配器自行解释
+    assert cfg.reasoning_persistence == "off"  # Chat 协议没有可恢复的跨请求状态
 
 
 @pytest.mark.asyncio

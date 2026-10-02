@@ -16,7 +16,7 @@ class CredentialCreate(BaseModel):
     context_tokens: int | None = None
     thinking: Literal["disabled", "adaptive"] | None = None
     reasoning_effort: Literal["", "none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
-    reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
+    reasoning_persistence: Literal["off", "continuation"] = "off"
     image: bool = False
     video: bool = False
     audio: bool = False
@@ -36,7 +36,7 @@ class CredentialPatch(BaseModel):
     context_tokens: int | None = None
     thinking: Literal["disabled", "adaptive"] | None = None
     reasoning_effort: Literal["", "none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
-    reasoning_persistence: Literal["off", "summary", "continuation"] | None = None
+    reasoning_persistence: Literal["off", "continuation"] | None = None
     image: bool | None = None
     video: bool | None = None
     audio: bool | None = None

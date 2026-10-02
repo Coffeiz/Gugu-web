@@ -175,7 +175,7 @@ interface Provider { key: string; label: string; base_url: string; model: string
 interface Option { key: string; label: string; hint?: string }
 interface LlmPresetDraft {
   id?: string | number; name: string; provider: string; api_key: string; base_url: string; model: string
-  max_tokens: number; context_tokens: number; thinking: string; reasoning_persistence: 'off' | 'summary' | 'continuation'
+  max_tokens: number; context_tokens: number; thinking: string; reasoning_persistence: 'off' | 'continuation'
   image: boolean; video: boolean; audio: boolean
   capability_checked_at?: string
   [key: string]: unknown
@@ -319,7 +319,6 @@ watch(
 )
 const reasoningPersistenceOptions = computed(() => [
   { key: 'off', label: t('llmExtraUi.reasoningOff') },
-  { key: 'summary', label: t('llmExtraUi.reasoningSummary') },
   { key: 'continuation', label: t('llmExtraUi.reasoningContinuation') },
 ] as const)
 const $emit = defineEmits<{

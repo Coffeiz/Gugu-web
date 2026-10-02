@@ -131,8 +131,7 @@ def pick_model(settings, ctx=None):
 def _reasoning_persistence_for_model(model) -> str:
     """返回当前协议真正支持的推理状态策略。
 
-    Chat Completions 不会返回可恢复的 provider state；即使数据库里还留有
-    旧的 summary/continuation 配置，也一律回落 off。协议通过适配器解析，
+    Chat Completions 不会返回可恢复的 provider state。协议通过适配器解析，
     不根据 Provider 名单推断是否支持；continuation 只在非 Chat Completions
     协议且驱动明确支持时才可能生效。
     """

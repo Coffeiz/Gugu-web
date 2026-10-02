@@ -118,8 +118,7 @@
                 <span class="preset-meta-item">out {{ p.max_tokens ?? 8000 }}</span>
                 <span class="preset-meta-item">ctx {{ p.context_tokens ?? 128000 }}</span>
                                 <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><Icon name="admin.brain" size="xs" />{{ t('agent.thinking') }}</span>
-                <span v-if="p.reasoning_persistence === 'summary'" class="preset-meta-item">{{ t('llmExtraUi.reasoningSummary') }}</span>
-                <span v-else-if="p.reasoning_persistence === 'continuation'" class="preset-meta-item">{{ t('llmExtraUi.reasoningContinuation') }}</span>
+                <span v-if="p.reasoning_persistence === 'continuation'" class="preset-meta-item">{{ t('llmExtraUi.reasoningContinuation') }}</span>
                 <span v-if="p.image" class="preset-meta-item preset-meta-media"><Icon name="admin.eye" size="xs" />{{ t('agent.image') }}</span>
                 <span v-if="p.video" class="preset-meta-item preset-meta-media"><Icon name="admin.video" size="xs" />{{ t('agent.video') }}</span>
                 <span v-if="p.audio" class="preset-meta-item preset-meta-media"><Icon name="admin.microphone" size="xs" />{{ t('agent.audio') }}</span>
@@ -731,7 +730,7 @@ interface LlmPresetDraft extends Partial<LlmPresetRecord> {
   max_tokens: number
   context_tokens: number
   thinking: string
-  reasoning_persistence: 'off' | 'summary' | 'continuation'
+  reasoning_persistence: 'off' | 'continuation'
   image: boolean
   video: boolean
   audio: boolean
@@ -782,7 +781,7 @@ function openNewPreset() {
 function openEditPreset(p: LlmPresetRecord) {
   editClosing.value = false
   editIsNew.value  = false
-  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 8000, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'summary' || p.reasoning_persistence === 'continuation' ? p.reasoning_persistence : 'off', image_detail: p.image_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
+  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 8000, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'continuation' ? 'continuation' : 'off', image_detail: p.image_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''

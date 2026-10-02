@@ -30,6 +30,13 @@ class OpenAIAdapter(ProviderAdapter):
         base_url = (getattr(ai, "base_url", "") or "https://api.openai.com/v1").strip()
         return urlparse(base_url).hostname == "api.openai.com"
 
+    def build_responses_reasoning_replay_params(self, ai) -> dict:
+        # encrypted_content 是 OpenAI 官方 Responses 的显式 include 项；不要把
+        # OpenAI-compatible 服务假定为支持这个扩展字段。
+        if self.supports_responses_prompt_cache_key(ai):
+            return {"include": ["reasoning.encrypted_content"]}
+        return {}
+
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         return ProviderCapabilities(api_format="openai", cache_mode="active", tools=True)
 

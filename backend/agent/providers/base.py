@@ -95,6 +95,10 @@ class ProviderAdapter:
         effort = self._reasoning_effort(ai, "responses")
         return {"reasoning": {"effort": effort}} if effort else {}
 
+    def build_responses_reasoning_replay_params(self, ai) -> dict:
+        """构造取回可恢复推理项所需的 Responses 参数。"""
+        return {}
+
     def supports_explicit_cache(self, model: str = "") -> bool:
         """是否在 OpenAI-compatible 请求中尝试发送显式缓存锚点。
 

@@ -45,7 +45,7 @@ _REASONING_STATE_DIAGNOSTIC_KEYS = frozenset({
     "invalidated_reason", "unavailable_reason",
 })
 _REASONING_STATE_STATUSES = frozenset({
-    "disabled", "summary_only", "miss", "reused", "captured", "committed",
+    "disabled", "miss", "reused", "captured", "committed",
     "unavailable", "expired", "provider_rejected",
 })
 

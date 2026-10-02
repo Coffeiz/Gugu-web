@@ -6,32 +6,40 @@ LLM-29 将对话上下文迁移到统一的 canonical `MessageArea`，Provider �
 
 此前 Anthropic 工具轮签名 thinking 的持久化恢复和跨 run 缓存前缀修复已单独记录在 [LLM-29 历史工具签名恢复回归与缓存 A/B 验证](./2026-10-02-LLM29历史工具签名恢复回归与缓存AB验证.md)，本文记录其后续 API 边界适配、Responses 续接问题及真实模型复测，不重复缓存 A/B 的历史数据。
 
-## Responses：工具回执后的续接丢失原任务意图
+## Responses：完整历史回放与推理续接策略
 
 ### 现象与定位
 
-LoopScope 导出的真实 run 中，发给第二轮的本地 Provider 投影仍包含最初用户任务、`use_skill` 调用及其结果，也包含搜索工具定义。因此没有证据表明应用组装时丢弃了用户原始意图。问题出现在依赖 `previous_response_id` 的增量续接：兼容服务对 `function_call_output` 的 response-chain 续接行为不一致，旧链路可能返回 HTTP 400，或在接受请求后只回应“工具已加载”，没有继续原任务。
+LoopScope 导出的真实 run 中，发给后续轮次的本地 Provider 投影仍包含最初用户任务、工具调用及结果。因此没有证据表明应用组装时丢弃了用户原始意图。问题出现在依赖 `previous_response_id` 的增量续接：兼容服务对 `function_call_output` 的 response-chain 行为不一致，可能返回 HTTP 400，或接受请求后只回应“工具已加载”，没有继续原任务。
 
 另一条可复现边界是增量投影只剩 reasoning-only/空 assistant 项。Responses 序列化会过滤这些不可发送项，结果可能变成 `input=[]`，被上游以参数错误拒绝。
 
 ### 修复
 
-- 当 response-chain 增量包含 `function_call_output` 时，改用本地完整 canonical 历史做无状态重放，并不发送 `previous_response_id`。工具调用、工具结果和最初用户消息按原顺序一起发给模型。
-- 当增量过滤后为空时，如果完整本地历史仍有可发送输入，就回放完整历史；若完整历史也为空，则在发起网络请求前明确报错，不发送 `input=[]`。
-- 保留已有 stale response-chain 恢复边界：只有明确识别到 response/tool ID 丢失时才去掉旧 chain 并以本地历史重放，避免把普通模型路由或参数错误误当成可恢复的 chain 失效。
-- 不对所有 Responses 请求无条件全量回放：没有工具回执且增量有效时仍可使用既有 response-chain 路径。
+- 所有 Responses 请求统一由本地完整 canonical 历史生成 `input`，不再发送 `previous_response_id`，也不保留增量续接及 stale-chain fallback。用户消息、assistant 回复、工具调用和工具结果按 Provider 协议投影后按序回放；过滤后没有可发送输入时，在发起网络请求前明确报错，不发送 `input=[]`。
+- “推理续接”负责控制 provider-specific reasoning item 的提取、加密持久化与后续回放策略，不再决定是否使用 response chain。关闭时只回放普通完整历史，不注入 reasoning item；开启时从已完成响应提取 reasoning item，在完整历史中按 assistant 输出顺序重放，并按 Provider 能力请求可恢复的加密 reasoning 内容。
+- reasoning item 不写入 canonical 对话正文或普通日志；跨 run 状态仍受现有加密存储、模型/配置指纹、生命周期和并发校验约束。Responses 的推理内容只在续接策略允许时参与重放。
 
 ### 真实模型 A/B
 
-在 devserver 使用实际配置的 MiniMax 与 Agnes Responses 模型，执行脚本化多轮对话。测试将真实驱动置于两组路径中：旧组使用 `previous_response_id` 增量续接，修复组使用工具回执后的 canonical 全量回放；工具返回内容为合成结果，没有执行真实网页搜索，也未修改业务会话。
+早期 response-chain 故障定位阶段，曾以 `previous_response_id` 增量路径和工具回执后的完整历史路径作隔离对照；这批结果说明旧增量续接在当时选取的三个配置上失败，完整历史能继续工具流程，但不代表当前“推理回放开关”的 A/B。可复用脚本现已改为只比较完整历史的两种策略：`canonical_only` 与 `reasoning_replay`。脚本会在模型声明支持时仅对内存测试副本启用推理档位，不改持久化预设；两组均不发送 `previous_response_id`，并用合成天气工具回执，不执行真实网页搜索、不修改业务会话。
 
-| 接口配置 | 旧增量续接 | 修复后的回放 | 原任务理解检查 |
+| 早期接口配置 | response-chain 增量 | 完整历史 | 原任务理解检查 |
 | --- | --- | --- | --- |
 | MiniMax Responses（MiniMax-M3.1-Flash-Preview） | HTTP 400 | 继续调用搜索工具并生成最终答复 | 最终答复包含校验短语 `ORBIT-42` |
 | Agnes，经 APIHub | HTTP 400 | 继续调用搜索工具并生成最终答复 | 最终答复包含 `ORBIT-42` |
 | Agnes 直连接口 | HTTP 400 | 继续调用搜索工具并生成最终答复 | 工具链继续，但最终答复未包含 `ORBIT-42` |
 
-三种配置的旧续接都复现失败，修复路径都能继续最初任务并发起预期工具调用。最终指令校验通过 2/3；Agnes 直连接口虽未遗忘任务流程，但没有遵守必须回显校验短语的约束，因此不把结果夸大为所有端点都完全正确。该脚本验证的是这三种具体模型/端点和该类多轮工具流程，不构成所有 Responses 服务兼容性的保证。
+三种配置的旧续接都复现失败，完整历史路径都能继续最初任务并发起预期工具调用。最终指令校验通过 2/3；Agnes 直连接口虽未遗忘任务流程，但没有遵守必须回显校验短语的约束。以上仅是旧链路故障定位数据，不是当前推理回放策略的验收结果。
+
+当前策略的真实模型 A/B 使用“南京天气 → 合成工具结果 → ‘一会儿呢？’”多轮探针。验收同时检查后续是否继续调用 `weather_lookup(city=南京, period=next_hour)`，以及 reasoning-replay 组是否至少有一轮实际把 reasoning item 放入后续完整历史。推理档位只在脚本创建的内存模型配置副本中启用，报告确认原持久化配置未改。
+
+| Responses 配置 | 完整历史意图识别 | reasoning 回放观测 | 结论 |
+| --- | --- | --- | --- |
+| Agnes，经 APIHub（`agnes-2.5-flash`） | 两组均 3/3 正确调用下一小时天气工具 | 关闭 0/3；开启 3/3 实际回放 | 推理续接 A/B 通过 |
+| MiniMax（`MiniMax-M3.1-Flash-Preview`） | 两组各 5 轮合计：关闭 9/10、开启 10/10 正确调用下一小时天气工具 | 关闭组 0/10 回放；开启组 5/10 实际收到并回放 reasoning item | 确认推理回放链路有效；样本不足以证明意图正确率有因果提升 |
+
+MiniMax 探针显式发送已声明支持的 `reasoning.effort=max`，并确认未修改持久化预设。调查发现原先“查询当前天气→简单追问”的探针太简单：5 轮中没有一次产出 reasoning item。单独 Responses 探针显示，普通短答、必须调用工具的请求与多因素天气判断会产生不同输出；在完整多轮 A/B 中加入多因素天气比较后，推理回放组 10 轮里有 5 轮实际收到并回放 reasoning item，另一半没有输出该 item。所有 10 轮都没有 API 错误；两组意图检查合计 19/20。由此未发现 MiniMax reasoning item 被驱动漏读或漏回放的问题；当前限制是模型对简单工具任务不稳定地产生可回放推理项。这个小样本只能确认路径能工作，不能据此声称回放提高任务成功率。Responses 驱动的捕获/插入/关闭隔离另由行为测试覆盖。结果仅代表这些端点、模型和脚本输入，不构成所有兼容 Responses 服务的保证。
 
 对应行为回归覆盖：空增量回放、完整历史为空时请求前拒绝，以及工具回执后保留原始用户请求、工具调用和工具结果，并不使用旧 response chain。
 
@@ -58,8 +66,8 @@ MiniMax adapter 新增对上游错误的结构化解析：沿异常链查找 Min
 
 ## 验证与边界
 
-- 本地行为测试覆盖 Responses 空增量与工具回执回放，以及 Anthropic Provider round-trip 和异常包装诊断。
+- 本地行为测试覆盖 Responses 完整历史、推理项捕获/回放与关闭隔离，以及 Anthropic Provider round-trip 和异常包装诊断。
 - Anthropic 定向回归在 devserver 的 round-trip/reasoning driver 测试组共 42 项通过；历史签名与缓存前缀专门测试的结果另见前述 LLM-29 记录。
-- Responses 真实模型 A/B 已按上表复测。旧链路在三种目标配置均以 HTTP 400 失败；修复链路均继续工具流程，原始任务约束最终通过 2/3。
+- Responses 真实模型 A/B 已按上表复测：Agnes 推理关闭/开启组意图识别均 3/3，开启组 reasoning 项实际回放 3/3；MiniMax 在更丰富的天气比较探针中开启组 5/10 实际回放 reasoning item、关闭组 0/10，意图检查分别为 10/10 和 9/10，差异只作观测、不作因果结论。
 - A/B 不执行真实搜索、不写业务数据、不记录 API 密钥或原始聊天内容。结果仅代表当晚使用的具体端点、模型和脚本输入；网络响应和模型版本变化后应重新验证。
 - 本文是排查记录，不表示其他无关工作区改动已通过测试、已提交或已发布。
