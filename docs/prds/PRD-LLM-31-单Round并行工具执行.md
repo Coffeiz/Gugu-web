@@ -1,14 +1,16 @@
 # PRD-LLM-31：单 Round 并行工具执行
 
-> 状态：🚧 实施中（Phase 0–3 已完成，待 Phase 4 最终复审）
+> 状态：✅ 主体完成（Phase 0–4）；全量测试有 13 个非本阶段失败，按任务约定暂跳过并记录
 > 创建：2026-10-01
 > 最近更新：2026-10-02
 > 关联模块：backend/agent/loop/machine.py、backend/agent/loop/tools.py、backend/agent/tools/base.py、backend/agent/providers/
 > 背景参考：docs/prds/PRD-LLM-29-统一Canonical消息区域与持久化增量.md、docs/prds/PRD-LLM-30-Provider思考深度与API格式能力配置.md
 
-## 0. 代码调查结论
+## 0. 原始代码调查基线（Phase 0）
 
-| 项目 | 当前实现 | 对并行的影响 |
+以下表格记录实施前的基线，不代表当前状态。当前已由同一 Round 有界并行调度器处理满足显式安全授权的整批调用；默认关闭，可在 Admin 快速回退。当前仅六个本地只读工具进入首批白名单，其他工具仍串行。
+
+| 项目 | 实施前状态 | 对并行的影响 |
 |---|---|---|
 | 单 Round 多工具调用 | machine.run_loop() 遍历 result.tool_calls，每个调用完成后才处理下一个 | 当前是串行执行 |
 | 数据库事务 | 每次 registry.dispatch() 独立创建 AsyncSession；成功提交、错误回滚 | 工具间没有共享数据库 session；无需为并行另行拆分 |
@@ -237,8 +239,17 @@
 
 ### Phase 3 实施记录（已完成，审查范围）
 
-- `agent.traj` 新增多工具批次摘要。串行记录仅含模式、调用数与固定回退原因；并行完成记录另含执行耗时和成功/失败/取消数，不记录用户标识、工具名、参数、URL、正文或异常文本。记录失败不会影响工具执行。
+- `agent.traj` 新增多工具批次摘要。串行记录仅含模式、调用数与固定回退原因；并行完成记录另含执行耗时和成功/失败/取消数，不记录用户标识、工具名、参数、URL、正文或异常文本；事件构造仅接收字段白名单。
 - 现有单工具轨迹已包含单项执行耗时，因此串行批次不增加涵盖 SSE/交互等待的误导性总耗时。
 - 回归测试确认 `web_search`、`http_get` 未授权进入并行批次；两者继续保持串行。`http_get` 自身的 `urls` 批量输入可并发取数，是工具内部行为，与跨工具并行授权不同。
 - 本地验证和合成测试只能证明调度契约与日志脱敏，不能代表真实服务时延或网络限流数据；因此评估结论为维持当前白名单，不启用外部网络、文件、MCP 或写工具。
 - 验证：`tests/test_parallel_tool_policy.py` + `tests/test_core_loop_characterization.py` 为 79 passed；`compileall`、ownership、confirm-gate 和 diff check 通过。全量 pytest 为 3753 passed、13 failed。失败分布在 BYOK 草稿密钥复用（7）、IM 反思快照（3）、推理策略（1）、图片搜索测试导入（1）、目录路径夹具唯一约束（1）；故障点与本阶段变更文件无关。工作区另有未提交的 BYOK、IM/provider 等修改，因此不把失败归因于本阶段，也不擅自改动这些范围外内容。
+
+### Phase 4：最终复审（已完成，2026-10-02）
+
+- 逐项复核显式授权、最多 4 并发、整批回退、取消清理、调用顺序与 Provider tool id 配对，以及 Admin 持久化回退开关；未发现与 PRD 冲突的实现。
+- 复跑 PRD 关键链路：并行策略、Loop characterization、Anthropic round-trip、OpenAI/Ollama 工具结果协议、确认门共 186 passed；前端 typecheck 与生产构建通过。
+- 后端全量 pytest 仍为 3753 passed、13 failed。失败局限于 BYOK 预览凭据夹具、IM 反思输入契约、旧推理策略预期、图片搜索测试导入及目录路径测试夹具；不属于 LLM-31 范围。本轮未修改这些现存/共享工作区内容，按用户明确允许的阻塞跳过规则记录，不宣称全量套件全绿。
+- 各实现阶段分开提交：Phase 0 `0087f9a59`、Phase 1 `66c1879ad`、Phase 2 `28dbd9522`、Phase 3 `4344b719d`。Phase 4 仅更新最终审计记录，不含运行时代码变更。
+
+- [x] LLM31-006 状态：完成（2026-10-02）。最终审计确认关键行为、Provider 往返与 Admin 回退路径；明确登记全量测试 13 个范围外失败并按约定跳过。未触碰其余未提交改动。
