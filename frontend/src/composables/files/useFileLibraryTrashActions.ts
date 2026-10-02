@@ -193,6 +193,7 @@ export function useFileLibraryTrashActions(options: FileLibraryTrashActionOption
       showAppError(i18n.global.t('filesViewUi.emptyTrashFailed'))
     } finally {
       emptyTrashBusy.value = false
+      emptyTrashProgress.value = null
     }
   }
 
