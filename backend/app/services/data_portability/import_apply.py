@@ -6,7 +6,7 @@ import hashlib
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +17,7 @@ from app.models import ChatAttachment, DataPortableIdentity, MemoryScopeTombston
 from app.services.data_portability.projection import RECORD_SPECS
 from app.services.data_portability.schema import PortableArchiveManifest, PortableEntityRecord
 from app.services.storage import get_storage
+from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage
 from agent.memory.scopes import MemoryScope
 
 
@@ -157,12 +158,20 @@ async def apply_incremental_archive(
                     values["created_at"] = _datetime(record.created_at)
                 if record.updated_at and "updated_at" in spec.model.__table__.columns:
                     values["updated_at"] = _datetime(record.updated_at)
+                if record_type == "file":
+                    await get_quota(db, user.id, FILE_LIBRARY)
                 row = spec.model(**values)
                 db.add(row)
                 await db.flush()
                 if record_type == "workspace_directory":
                     row.directory_name = f"workspace-{row.id}"
                     await db.flush()
+                elif record_type == "file" and row.deleted_at is None:
+                    await record_usage(
+                        db, user.id, category=FILE_LIBRARY, delta_bytes=int(row.size_bytes or 0),
+                        operation="data_import", resource_type="file", resource_id=row.id,
+                        idempotency_key=f"data-import:{job_id}:file:{record.portable_id}",
+                    )
                 target_id = str(getattr(row, spec.id_field))
                 target_type = record_type
                 if record_type == "chat_attachment":
@@ -228,6 +237,20 @@ def _model_fields(spec, record: PortableEntityRecord) -> dict[str, Any]:
         if column_name in allowed and column_name not in {"id", spec.owner_field}:
             if column_name in spec.json_fields and spec.model.__table__.columns[column_name].type.python_type is str and value is not None:
                 value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            elif isinstance(value, str):
+                try:
+                    python_type = spec.model.__table__.columns[column_name].type.python_type
+                except NotImplementedError:
+                    column_type = spec.model.__table__.columns[column_name].type
+                    python_type = getattr(getattr(column_type, "impl", None), "python_type", None)
+                if python_type is datetime:
+                    value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                elif python_type is date:
+                    value = date.fromisoformat(value)
+                elif python_type is time:
+                    value = time.fromisoformat(value)
+                elif python_type is UUID:
+                    value = UUID(value)
             values[column_name] = value
     return values
 

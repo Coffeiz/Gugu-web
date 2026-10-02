@@ -14,8 +14,8 @@
     <p v-if="error" class="pm-msg err">{{ error }}</p>
 
     <div class="data-options">
-      <label class="data-option"><input v-model="includeDrafts" type="checkbox" />{{ t('profileDataUi.includeDrafts') }}</label>
-      <label class="data-option"><input v-model="includeImMemory" type="checkbox" />{{ t('profileDataUi.includeImMemory') }}</label>
+      <Checkbox v-model="includeDrafts" class="data-option">{{ t('profileDataUi.includeDrafts') }}</Checkbox>
+      <Checkbox v-model="includeImMemory" class="data-option">{{ t('profileDataUi.includeImMemory') }}</Checkbox>
     </div>
     <p class="data-warning">{{ t('profileDataUi.sensitiveHint') }}</p>
     <p class="data-muted">{{ t('profileDataUi.credentialsHint') }}</p>
@@ -116,6 +116,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Checkbox from '@/components/common/controls/Checkbox.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { dataPortabilityApi, type DataExportJob, type DataImportJob } from '@/services/api'
 
@@ -139,6 +140,20 @@ const error = ref('')
 const includeDrafts = ref(true)
 const includeImMemory = ref(true)
 let pollTimer: ReturnType<typeof setInterval> | undefined
+
+function createIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+  return `data-portability-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 const visibleCategories = computed(() => Object.keys(preview.value?.categories ?? {}).filter(key =>
   !['archive_docs', 'drafts', 'im_memory'].includes(key),
@@ -190,7 +205,7 @@ async function createExport() {
     const categories = Object.keys(preview.value.categories).filter(key => key !== 'archive_docs')
     if (!includeDrafts.value) categories.splice(categories.indexOf('drafts'), 1)
     if (!includeImMemory.value) categories.splice(categories.indexOf('im_memory'), 1)
-    await dataPortabilityApi.createExport(categories, crypto.randomUUID())
+    await dataPortabilityApi.createExport(categories, createIdempotencyKey())
     await loadJobs()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileDataUi.createFailed')
@@ -300,7 +315,7 @@ async function applyReplace() {
   error.value = ''
   try {
     importJob.value = await dataPortabilityApi.applyImport(
-      importJob.value.id, 'replace', importToken.value, crypto.randomUUID(),
+      importJob.value.id, 'replace', importToken.value, createIdempotencyKey(),
     )
     importToken.value = ''
   } catch (cause) {
@@ -324,7 +339,7 @@ async function applyIncremental() {
   error.value = ''
   try {
     importJob.value = await dataPortabilityApi.applyImport(
-      importJob.value.id, 'incremental', importToken.value, crypto.randomUUID(),
+      importJob.value.id, 'incremental', importToken.value, createIdempotencyKey(),
     )
     importToken.value = ''
   } catch (cause) {
@@ -349,7 +364,7 @@ async function rollbackReplace(job: DataImportJob) {
   applying.value = true
   error.value = ''
   try {
-    importJob.value = await dataPortabilityApi.rollbackImport(job.id, crypto.randomUUID())
+    importJob.value = await dataPortabilityApi.rollbackImport(job.id, createIdempotencyKey())
     await loadImportJobs()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileDataUi.importFailed')
@@ -407,13 +422,31 @@ function formatBytes(value: number) {
 .data-summary-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; color: var(--content-secondary); }
 .data-summary-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--panel-divider); font-size: 12px; color: var(--content-tertiary); }
 .data-options { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
-.data-option { display: flex; align-items: center; gap: 9px; color: var(--content-primary); font-size: 13px; }
-.data-option input { accent-color: var(--accent-color); }
+.data-option { color: var(--content-primary); font-size: 13px; }
 .data-actions { display: flex; justify-content: flex-end; }
 .data-import { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--panel-divider); display: flex; flex-direction: column; gap: 8px; }
 .data-import h4 { margin: 0; font-size: 13px; color: var(--content-primary); }
 .data-import-actions { display: flex; align-items: center; gap: 8px; }
-.data-import-actions input { min-width: 0; flex: 1; color: var(--content-secondary); }
+.data-import-actions input[type='file'] { min-width: 0; flex: 1; color: var(--content-secondary); font: 13px var(--font-sans); }
+.data-import-actions input[type='file']::file-selector-button {
+  margin-inline-end: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--choice-chip-border);
+  border-radius: var(--choice-chip-radius);
+  background: var(--choice-chip-bg);
+  color: var(--choice-chip-fg);
+  font: 500 12px var(--font-sans);
+  cursor: pointer;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.data-import-actions input[type='file']:not(:disabled)::file-selector-button:hover {
+  background: var(--choice-chip-bg-hover);
+  border-color: var(--choice-chip-border-hover);
+  color: var(--choice-chip-fg-hover);
+}
+.data-import-actions input[type='file']:focus-visible { outline: 2px solid var(--action-primary); outline-offset: 2px; }
+.data-import-actions input[type='file']:disabled { opacity: .55; }
+.data-import-actions input[type='file']:disabled::file-selector-button { cursor: not-allowed; }
 .data-jobs { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--panel-divider); }
 .data-jobs h4 { margin: 0 0 10px; font-size: 13px; color: var(--content-primary); }
 .data-job { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--panel-divider); }

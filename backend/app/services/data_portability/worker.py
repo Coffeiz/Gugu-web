@@ -287,7 +287,7 @@ async def process_incremental_import(job: ClaimedJob, *, worker_id: str, session
                             raise RuntimeError("导入任务租约已丢失")
                         timestamp = now_utc()
                         current.preview = {**(current.preview or {}), "result": counts}
-                        current.status = "rolled_back" if mode == "rollback" else "completed"
+                        current.status = "completed"
                         current.stage = current.status
                         current.progress_current = validated.record_count
                         current.progress_total = validated.record_count
@@ -533,6 +533,8 @@ async def process_replace_import(job: ClaimedJob, *, worker_id: str, session_fac
                         user = await db.get(User, job.user_id)
                         if user is None:
                             raise ValueError("替换账号不存在")
+                        from app.services.storage.quota_ledger import reconcile_user_storage
+                        await reconcile_user_storage(db, user.id)
                         old_rows = await clear_portable_database(db, user_id=job.user_id)
                         old_storage_keys = old_rows["storage_keys"]
                         from app.services.storage.quota_ledger import FILE_LIBRARY, record_usage
