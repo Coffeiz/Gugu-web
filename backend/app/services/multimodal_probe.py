@@ -194,7 +194,8 @@ async def probe_multimodal_capability(
     dim_label = {"image": "图片", "video": "视频", "audio": "音频"}.get(dim, dim)
     try:
         adapter = providers.adapter_for(target)
-        is_anthropic = adapter.protocol_format(target) == "anthropic"
+        protocol = adapter.protocol_format(target)
+        is_anthropic = protocol == "anthropic"
         read_timeout = 90.0 if dim == "video" else 25.0
         timeout = httpx.Timeout(connect=10.0, read=read_timeout, write=10.0, pool=5.0)
     except Exception as exc:
@@ -204,6 +205,9 @@ async def probe_multimodal_capability(
     known_result = _known_capability_result(adapter, target.model, is_anthropic, dim, dim_label)
     if known_result is not None:
         return known_result
+
+    if protocol == "responses" and dim != "image":
+        return None, 0, f"尚无已验证的 Responses {dim_label}探测格式，不能据此判断模型能力"
 
     client = None
     try:
@@ -222,9 +226,19 @@ async def probe_multimodal_capability(
             if content is None:
                 return None, 0, "不支持的探测类型"
             client = providers.build_openai_client(target, timeout)
-            await client.chat.completions.create(
-                model=target.model, max_tokens=16, messages=[{"role": "user", "content": content}],
-            )
+            if protocol == "responses":
+                image = next(block["image_url"] for block in content if block["type"] == "image_url")
+                await client.responses.create(
+                    model=target.model, max_output_tokens=16,
+                    input=[{"role": "user", "content": [
+                        {"type": "input_text", "text": content[0]["text"]},
+                        {"type": "input_image", "image_url": image["url"], "detail": image["detail"]},
+                    ]}],
+                )
+            else:
+                await client.chat.completions.create(
+                    model=target.model, max_tokens=16, messages=[{"role": "user", "content": content}],
+                )
         return True, 200, f"模型接受了{dim_label}输入"
     except Exception as exc:
         return _classify_probe_error(exc, dim_label)

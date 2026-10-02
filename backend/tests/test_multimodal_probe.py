@@ -101,3 +101,34 @@ async def test_minimax_m3_anthropic_video_uses_shared_declared_capability(monkey
     assert supported is True
     assert status == 200
     assert "MiniMax M3" in detail
+
+
+@pytest.mark.asyncio
+async def test_responses_image_probe_uses_native_image_input(monkeypatch):
+    client = _AnthropicClient()
+    client.responses = client.messages
+    monkeypatch.setattr(providers, "build_openai_client", lambda *_args: client)
+    target = multimodal_probe.MultimodalProbeTarget(
+        provider="openai", api_key="probe-key", base_url="https://example.com/v1",
+        model="probe-model", api_format="responses")
+    supported, status, _ = await multimodal_probe.probe_multimodal_capability(target)
+    assert supported is True and status == 200
+    request = client.responses.request
+    assert "messages" not in request
+    image = request["input"][0]["content"][1]
+    assert image["type"] == "input_image"
+    assert image["image_url"].startswith("data:image/png;base64,")
+    assert client.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dim", ["audio", "video"])
+async def test_unverified_responses_media_probe_does_not_test_chat_or_deny_capability(monkeypatch, dim):
+    def unexpected_client(*args):
+        raise AssertionError("未知 Responses 媒体格式不得切到 Chat 探测")
+    monkeypatch.setattr(providers, "build_openai_client", unexpected_client)
+    target = multimodal_probe.MultimodalProbeTarget(
+        provider="openai", api_key="probe-key", base_url="https://example.com/v1",
+        model="probe-model", api_format="responses")
+    supported, _, _ = await multimodal_probe.probe_multimodal_capability(target, dim=dim)
+    assert supported is None

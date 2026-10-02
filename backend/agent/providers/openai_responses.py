@@ -269,15 +269,15 @@ def _responses_prompt_cache_key(ctx: _ResponsesCtx) -> str | None:
 
 
 def _responses_output_text(response: Any) -> str:
-    """从 Responses 对象中提取文本，兼容 SDK 对象与 OpenAI-compatible 返回体。"""
-    text = getattr(response, "output_text", None)
-    if text is None and isinstance(response, dict):
-        text = response.get("output_text")
-    if isinstance(text, str):
-        return text
+    """优先提取 message 正文，避免兼容服务的聚合字段混入 reasoning。"""
     raw_output = getattr(response, "output", None)
     if raw_output is None and isinstance(response, dict):
         raw_output = response.get("output")
+    if raw_output is None:
+        text = getattr(response, "output_text", None)
+        if text is None and isinstance(response, dict):
+            text = response.get("output_text")
+        return text if isinstance(text, str) else ""
     parts: list[str] = []
     for item in raw_output or ():
         item = item.model_dump() if hasattr(item, "model_dump") else item

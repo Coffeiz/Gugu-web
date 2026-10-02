@@ -1054,6 +1054,9 @@ async def _probe_local_capabilities(item: dict) -> dict:
 
     ai = SimpleNamespace(**item)
     adapter = providers.adapter_for(ai)
+    if adapter.protocol_format(ai) == "responses":
+        from app.services.provider_diagnostics import probe_responses_capabilities
+        return await probe_responses_capabilities(ai)
     base_url = adapter.resolve_base_url(ai).rstrip("/")
     api_key = item.get("api_key") or "local"
     headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
