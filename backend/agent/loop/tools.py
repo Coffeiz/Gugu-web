@@ -17,11 +17,65 @@ from app.core.redaction import diag_log
 # 数据却被误判成没有观察，白白多跑复查回合。
 READ_PREFIXES = ("read_", "list_", "get_", "find_", "search_")
 READ_TOOL_NAMES = {"note_get", "note_search"}
+_PARALLEL_INTERACTION_TOOLS = frozenset({"ask_user", "manage_mcp_servers", "use_skill"})
 
 
 def is_read_tool(name: str) -> bool:
     """返回该工具能否作为一次有效的状态观察。"""
     return name.startswith(READ_PREFIXES) or name in READ_TOOL_NAMES
+
+
+def parallel_safe_batch(tool_calls, tool_snapshot) -> bool:
+    """判断整批调用是否满足显式并行安全契约；任一不确定项都回退串行。
+
+    固定 ``call_tool`` Adapter 必须先解析到最终业务目标，再检查目标元数据。
+    Provider 能否生成并行调用、工具是否标记 ``mutates=False``，都不能授予并发权限。
+    """
+    if not isinstance(tool_calls, (list, tuple)) or len(tool_calls) < 2:
+        return False
+    return all(_parallel_safe_call(call, tool_snapshot) for call in tool_calls)
+
+
+def _parallel_safe_call(call, tool_snapshot) -> bool:
+    """解析一项调用并按最终目标判断；输入不完整或工具名不明时拒绝并行。"""
+    from agent.tools.tool_contract import resolve_tool_call
+
+    if getattr(call, "parse_error", None):
+        return False
+    target, arguments, error = resolve_tool_call(
+        getattr(call, "name", None), getattr(call, "input", None),
+    )
+    if error is not None or target in _PARALLEL_INTERACTION_TOOLS:
+        return False
+    if not isinstance(arguments, dict):
+        return False
+    return _parallel_safe_target(target, arguments, tool_snapshot)
+
+
+def _parallel_safe_target(target: str, arguments: dict, tool_snapshot) -> bool:
+    """检查最终业务工具的并发授权和可能按参数生效的写入声明。"""
+    tool = tool_snapshot.get(target) if tool_snapshot is not None else None
+    if (
+        tool is None
+        or getattr(tool, "parallel_safe", False) is not True
+        or getattr(tool, "mutates", False)
+        or getattr(tool, "destructive", False)
+        or getattr(tool, "requires_confirmation", False)
+        or getattr(tool, "source", "builtin") == "mcp"
+    ):
+        return False
+    mutation_predicate = getattr(tool, "mutates_for_input", None)
+    if not callable(mutation_predicate):
+        return True
+    try:
+        return not mutation_predicate(arguments)
+    except Exception:
+        return False
+
+
+def copy_skill_state_for_parallel(skill_state: dict[str, str] | None) -> dict[str, str] | None:
+    """为单个并发 dispatch 复制技能 digest 状态，避免 ContextVar 继承共享可变字典。"""
+    return dict(skill_state) if skill_state is not None else None
 
 
 def call_requires_verification(tool_name: str, tool_input: Any, tool_snapshot, mutating_tools: set) -> bool:

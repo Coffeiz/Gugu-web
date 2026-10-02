@@ -319,7 +319,8 @@ class Tool:
                  related_skills: tuple[str, ...] = (),
                  source: str = "builtin", schema_version: int = 1,
                  batch_confirmation: bool = False,
-                 strict_array_fields: tuple[str, ...] = ()):
+                 strict_array_fields: tuple[str, ...] = (),
+                 parallel_safe: bool = False):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -331,6 +332,9 @@ class Tool:
         self.requires_confirmation = requires_confirmation
         # 显式声明批量分支也使用精确目标集合确认；静态守卫检查统一 helper。
         self.batch_confirmation = batch_confirmation
+        # 并发安全是独立于 mutates 的显式调度授权；默认关闭，只有经过副作用与
+        # 共享状态审查的工具才能加入同一 Round 的并发批次。
+        self.parallel_safe = parallel_safe is True
         # 这些输入数组要求调用方提供规范结构，不应用模型侧 item 包装/拍平归一。
         self.strict_array_fields = frozenset(strict_array_fields)
         # 是否会改数据（写库/改长期记忆/删笔记……）：定时任务只有在整轮没有任何

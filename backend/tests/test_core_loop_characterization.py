@@ -1123,6 +1123,41 @@ async def test_agent_loop_has_no_product_tool_call_cap(monkeypatch, dispatched):
     assert ev["error"] == 0
 
 
+async def test_multi_tool_round_keeps_serial_dispatch_and_model_order(monkeypatch, dispatched):
+    """阶段 0 基线：现有多调用 Round 串行 dispatch，SSE 事件按模型声明顺序交错发出。"""
+    calls = [
+        TU("read_alpha", "call-a", {}),
+        TU("read_beta", "call-b", {}),
+        TU("read_gamma", "call-c", {}),
+    ]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
+    snapshot = SimpleNamespace(
+        get=lambda _name: None,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    events = []
+    async for chunk in make_runner()._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "并行工具基线"}], AI,
+    ):
+        try:
+            event = json.loads(chunk[len("data: "):])
+        except (TypeError, ValueError):
+            continue
+        if event.get("type") in {"tool_call", "tool_done"}:
+            events.append((event["type"], event.get("tool_call_id"), event.get("status")))
+
+    assert dispatched == ["read_alpha", "read_beta", "read_gamma"]
+    assert events == [
+        ("tool_call", "call-a", "running"), ("tool_done", "call-a", "success"),
+        ("tool_call", "call-b", "running"), ("tool_done", "call-b", "success"),
+        ("tool_call", "call-c", "running"), ("tool_done", "call-c", "success"),
+    ]
+
+
 async def test_scheduled_agent_loop_fails_before_dispatch_above_30_calls(monkeypatch, dispatched):
     """定时 run 保留 30 次专属上限，超额批次不派发并返回失败事件供外层重试。"""
     from agent.scheduled import ScheduledLLMRunner
