@@ -1,6 +1,6 @@
 # PRD-DATA-1：用户数据可移植导出与迁移
 
-> 状态：Web 功能已实现并完成本地回归；待 devserver 验收。桌面原生导入器尚未实施
+> 状态：Web 功能已实现；本地 41 项数据可移植回归与 devserver 同版本回归通过。devserver 上的真实账号全流程演练待隔离测试账号；桌面原生导入器尚未实施
 > 创建：2026-09-28
 > 最近更新：2026-10-02
 > 关联模块：`backend/app/models/__init__.py`、`backend/app/services/storage/`、`backend/agent/memory/`、`backend/app/api/v1/`、`frontend/src/components/common/profile/`
@@ -274,7 +274,7 @@ backend/tests/test_data_export_archive.py          【新增】归档格式、�
 
 ### Phase 5：回归、安全和部署验收
 
-- [ ] `DATA1-007` 完成部署前安全验收：本地测试已完成，仍需 devserver 导出、增量导入、替换、撤销与恢复演练；验收：大文件流式处理，archive 可独立校验，失败原数据完整，暂存/快照按期限清理。
+- [ ] `DATA1-007` 完成部署前安全验收：本地 41 项回归及 devserver 同步代码后的 41 项回归已通过，覆盖导出流式下载、导入、替换与撤销；仍需在隔离测试账号上完成 devserver 真实任务链演练。不得对真实用户账号执行破坏性替换。最终验收：大文件流式处理，archive 可独立校验，失败原数据完整，暂存/快照按期限清理。
 
 ### 后续桌面端导入
 

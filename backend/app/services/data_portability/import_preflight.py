@@ -78,7 +78,10 @@ async def process_import_preflight(job: ClaimedJob, *, worker_id: str, session_f
         unpacked = EncryptedArchiveReader(source, f"data-portability-staging:{job.user_id.hex}:{job.job_id.hex}")
         with zipfile.ZipFile(unpacked, "r") as archive:
             for entry in result.manifest.entries:
-                if not entry.path.startswith("records/") or not entry.path.endswith((".jsonl", ".json")):
+                if not entry.path.endswith((".jsonl", ".json")) or not (
+                    entry.path.startswith("records/")
+                    or entry.path in {"memory/im/entries.jsonl", "memory/im/sources.jsonl"}
+                ):
                     continue
                 with archive.open(entry.path, "r") as stream:
                     for line in stream:

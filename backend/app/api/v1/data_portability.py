@@ -9,7 +9,7 @@ import tempfile
 from datetime import timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -33,6 +33,8 @@ _EXPORT_TTL = timedelta(hours=24)
 _ACTIVE_STATUSES = {"queued", "running", "canceling"}
 _ACTIVE_IMPORT_STATUSES = {"uploading", "queued", "running", "applying", "rolling_back", "needs_recovery"}
 _MAX_UPLOAD_BYTES = 5 * 1024**3
+_DOWNLOAD_TICKET_TTL_SECONDS = 120
+_DOWNLOAD_TICKET_COOKIE = "gugu_export_ticket"
 
 
 class ExportCreate(BaseModel):
@@ -439,6 +441,89 @@ async def cancel_export(job_id: UUID, user: User = Depends(get_current_user), db
     return _job_view(row)
 
 
+@router.delete("/exports/{job_id}", status_code=204)
+async def delete_export(job_id: UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """提前删除已结束导出及其私有归档；运行中的任务必须先取消。"""
+    row = (await db.execute(select(DataExportJob).where(
+        DataExportJob.id == job_id, DataExportJob.user_id == user.id,
+    ).with_for_update())).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="找不到此导出任务")
+    if row.status in _ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="请先取消仍在运行的导出任务")
+    if row.artifact_key:
+        try:
+            await get_storage().delete(row.artifact_key)
+        except Exception as exc:
+            diag_log("data_portability.export_delete", exc)
+            raise HTTPException(status_code=503, detail="导出归档暂时无法删除，请稍后重试") from None
+    await db.delete(row)
+    await db.commit()
+
+
+def _download_ticket(user_id: UUID, job_id: UUID, expires_at: int) -> str:
+    from app.core.config import get_settings
+
+    payload = f"{user_id.hex}:{job_id.hex}:{expires_at}"
+    signature = hmac.new(
+        get_settings().secret_key.encode("utf-8"), payload.encode("ascii"), hashlib.sha256,
+    ).hexdigest()
+    return f"{payload}:{signature}"
+
+
+def _verify_download_ticket(ticket: str | None, job_id: UUID) -> UUID | None:
+    from app.core.config import get_settings
+    import time
+
+    if not ticket:
+        return None
+    try:
+        user_hex, job_hex, expiry_text, signature = ticket.split(":", 3)
+        user_id = UUID(hex=user_hex)
+        ticket_job_id = UUID(hex=job_hex)
+        expires_at = int(expiry_text)
+        payload = f"{user_id.hex}:{ticket_job_id.hex}:{expires_at}"
+        expected = hmac.new(
+            get_settings().secret_key.encode("utf-8"), payload.encode("ascii"), hashlib.sha256,
+        ).hexdigest()
+        if (ticket_job_id != job_id or expires_at < int(time.time())
+                or not hmac.compare_digest(signature, expected)):
+            return None
+        return user_id
+    except (ValueError, UnicodeError):
+        return None
+
+
+@router.post("/exports/{job_id}/download-ticket")
+async def create_browser_download_ticket(
+    job_id: UUID,
+    request: Request,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """给浏览器原生下载签发短时、限路径的 HttpOnly cookie，避免前端缓冲整个大归档。"""
+    row = (await db.execute(select(DataExportJob.id).where(
+        DataExportJob.id == job_id, DataExportJob.user_id == user.id,
+        DataExportJob.status == "ready", DataExportJob.expires_at > now_utc(),
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="导出文件不存在或已过期")
+    import time
+    expiry = int(time.time()) + _DOWNLOAD_TICKET_TTL_SECONDS
+    ticket = _download_ticket(user.id, job_id, expiry)
+    download_path = f"{request.url.path.removesuffix('/download-ticket')}/download/browser"
+    response.set_cookie(
+        _DOWNLOAD_TICKET_COOKIE, ticket,
+        max_age=_DOWNLOAD_TICKET_TTL_SECONDS,
+        path=download_path,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+    )
+    return {"url": str(request.base_url).rstrip("/") + download_path}
+
+
 @router.get("/exports/{job_id}/download")
 async def download_export(
     job_id: UUID,
@@ -446,18 +531,24 @@ async def download_export(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    return await _stream_export(job_id, user.id, request, db)
+
+
+@router.get("/exports/{job_id}/download/browser", name="download_export_browser")
+async def download_export_browser(job_id: UUID, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = _verify_download_ticket(request.cookies.get(_DOWNLOAD_TICKET_COOKIE), job_id)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="下载授权已过期，请重新下载")
+    return await _stream_export(job_id, user_id, request, db)
+
+
+async def _stream_export(job_id: UUID, user_id: UUID, request: Request, db: AsyncSession):
     row = (await db.execute(select(DataExportJob).where(
-        DataExportJob.id == job_id, DataExportJob.user_id == user.id,
+        DataExportJob.id == job_id, DataExportJob.user_id == user_id,
         DataExportJob.status == "ready", DataExportJob.expires_at > now_utc(),
     ))).scalar_one_or_none()
     if row is None or not row.artifact_key:
         raise HTTPException(status_code=404, detail="导出文件不存在或已过期")
-    from app.models import DataPortabilityOrigin
-    origin_id = (await db.execute(select(DataPortabilityOrigin.origin_id).where(
-        DataPortabilityOrigin.user_id == user.id,
-    ))).scalar_one_or_none()
-    if origin_id is None:
-        raise HTTPException(status_code=410, detail="导出文件已失效")
 
     source = tempfile.TemporaryFile(mode="w+b")
     digest = hashlib.sha256()
@@ -469,7 +560,7 @@ async def download_export(
             size += len(chunk)
         if size != row.artifact_size or digest.hexdigest() != row.artifact_sha256:
             raise HTTPException(status_code=410, detail="导出文件校验失败")
-        context = f"data-portability:{user.id.hex}:{row.id.hex}"
+        context = f"data-portability:{user_id.hex}:{row.id.hex}"
         archive = EncryptedArchiveReader(source, context)
     except HTTPException:
         source.close()
@@ -493,10 +584,17 @@ async def download_export(
         try:
             unit, value = range_header.split("=", 1)
             first, last = value.split("-", 1)
-            if unit != "bytes" or not first:
+            if unit != "bytes" or (not first and not last):
                 raise ValueError
-            start = int(first)
-            end = min(int(last), total - 1) if last else total - 1
+            if not first:
+                suffix_length = int(last)
+                if suffix_length <= 0:
+                    raise ValueError
+                start = max(total - suffix_length, 0)
+                end = total - 1
+            else:
+                start = int(first)
+                end = min(int(last), total - 1) if last else total - 1
             if start < 0 or start >= total or end < start:
                 raise ValueError
             status_code = 206

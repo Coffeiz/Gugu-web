@@ -37,7 +37,8 @@ async def create_rollback_snapshot(
     """以完整归档格式加密当前可移植数据，持久化后才允许替换进入应用阶段。"""
     key = f"{user_id.hex}/.data-portability/rollback/{job_id.hex}.gupa"
     async with session_factory() as db:
-        await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
         if await db.get(User, user_id) is None:
             raise ValueError("替换账号不存在")
         identity_map = SQLitePortableIdentityMap()

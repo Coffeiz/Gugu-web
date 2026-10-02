@@ -223,6 +223,9 @@ export const dataPortabilityApi = {
   createExport: (categories: string[], idempotencyKey: string) => post<DataExportJob>('/data-portability/exports', { categories, idempotency_key: idempotencyKey }),
   getExport: (jobId: string) => get<DataExportJob>(`/data-portability/exports/${encodeURIComponent(jobId)}`),
   cancelExport: (jobId: string) => post<DataExportJob>(`/data-portability/exports/${encodeURIComponent(jobId)}/cancel`),
+  deleteExport: (jobId: string) => del<void>(`/data-portability/exports/${encodeURIComponent(jobId)}`),
+  createBrowserDownloadTicket: (jobId: string) =>
+    post<{ url: string }>(`/data-portability/exports/${encodeURIComponent(jobId)}/download-ticket`),
   async preflightImport(file: File): Promise<DataImportJob> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/zip',

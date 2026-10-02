@@ -47,6 +47,9 @@
           <small v-if="importJob.preview?.complete && importJob.preview.replace">
             {{ t('profileDataUi.replaceCounts', { current: replaceCurrentTotal, incoming: replaceIncomingTotal }) }}
           </small>
+          <small v-if="['queued', 'running', 'applying', 'rolling_back'].includes(importJob.status) && importJob.progress_total">
+            {{ importJob.progress_current }} / {{ importJob.progress_total }}
+          </small>
           <small v-if="importJob.status === 'completed' && importJob.mode === 'replace' && importJob.rollback_expires_at">
             {{ t('profileDataUi.rollbackUntil', { date: formatDate(importJob.rollback_expires_at) }) }}
           </small>
@@ -83,6 +86,9 @@
           </button>
           <button v-else-if="['queued', 'running'].includes(job.status)" class="pm-style-chip" :disabled="canceling === job.id" @click="cancel(job)">
             {{ t('profileDataUi.cancel') }}
+          </button>
+          <button v-if="!['queued', 'running', 'canceling'].includes(job.status)" class="pm-style-chip delete-export" :disabled="deleting === job.id" @click="deleteExport(job)">
+            {{ deleting === job.id ? t('profileDataUi.deleting') : t('profileDataUi.deleteExport') }}
           </button>
         </div>
       </article>
@@ -121,6 +127,7 @@ const loading = ref(true)
 const loadingJobs = ref(true)
 const creating = ref(false)
 const canceling = ref('')
+const deleting = ref('')
 const downloading = ref('')
 const selectedArchive = ref<File | null>(null)
 const archiveInput = ref<HTMLInputElement | null>(null)
@@ -198,16 +205,34 @@ async function cancel(job: DataExportJob) {
   finally { canceling.value = '' }
 }
 
+async function deleteExport(job: DataExportJob) {
+  const confirmed = await confirmDialog({
+    title: t('profileDataUi.deleteConfirmTitle'),
+    message: t('profileDataUi.deleteConfirmMessage'),
+    tone: 'warning',
+    confirmText: t('profileDataUi.deleteExport'),
+  })
+  if (!confirmed) return
+  deleting.value = job.id
+  error.value = ''
+  try { await dataPortabilityApi.deleteExport(job.id); await loadJobs() }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : t('profileDataUi.deleteFailed') }
+  finally { deleting.value = '' }
+}
+
 async function download(job: DataExportJob) {
   downloading.value = job.id
   error.value = ''
   let writable: { write(data: Uint8Array): Promise<void>; close(): Promise<void>; abort(): Promise<void> } | null = null
   try {
     const pickerWindow = window as Window & { showSaveFilePicker?: (options: unknown) => Promise<{ createWritable(): Promise<typeof writable> }> }
-    if (pickerWindow.showSaveFilePicker) {
-      const handle = await pickerWindow.showSaveFilePicker({ suggestedName: `gugu-export-${job.id.slice(0, 12)}.zip` })
-      writable = await handle.createWritable()
+    if (!pickerWindow.showSaveFilePicker) {
+      const { url } = await dataPortabilityApi.createBrowserDownloadTicket(job.id)
+      window.location.assign(url)
+      return
     }
+    const handle = await pickerWindow.showSaveFilePicker({ suggestedName: `gugu-export-${job.id.slice(0, 12)}.zip` })
+    writable = await handle.createWritable()
     const response = await dataPortabilityApi.downloadExport(job.id)
     if (!response.body) throw new Error(t('profileDataUi.downloadFailed'))
     if (writable) {
@@ -224,14 +249,6 @@ async function download(job: DataExportJob) {
         await writer.abort()
         throw cause
       }
-    } else {
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = `gugu-export-${job.id.slice(0, 12)}.zip`
-      anchor.click()
-      URL.revokeObjectURL(url)
     }
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === 'AbortError') return
@@ -381,6 +398,7 @@ function formatBytes(value: number) {
 <style scoped>
 .data-pane { display: flex; flex-direction: column; gap: 12px; }
 .replace-action { color: var(--pm-danger-text, #a44949); }
+.delete-export { color: var(--pm-danger-text, #a44949); }
 .data-intro, .data-muted, .data-warning { margin: 0; color: var(--content-secondary); font-size: 13px; line-height: 1.55; }
 .data-muted { color: var(--content-tertiary); }
 .data-warning { color: var(--warning-text, var(--content-secondary)); }

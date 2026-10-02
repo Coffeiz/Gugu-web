@@ -53,7 +53,10 @@ async def apply_incremental_archive(
 
     records_by_type: dict[str, list[PortableEntityRecord]] = {}
     for entry in manifest.entries:
-        if not entry.path.startswith("records/") or not entry.path.endswith((".jsonl", ".json")):
+        if not entry.path.endswith((".jsonl", ".json")) or not (
+            entry.path.startswith("records/")
+            or entry.path in {"memory/im/entries.jsonl", "memory/im/sources.jsonl"}
+        ):
             continue
         with archive.open(entry.path, "r") as stream:
             for line in stream:
@@ -95,15 +98,16 @@ async def apply_incremental_archive(
                 continue  # 登录身份由目标账号保留。
             if record_type == "preferences":
                 data = record.fields.get("data") or {}
+                serialized_data = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
                 row = (await db.execute(select(UserPreferences).where(
                     UserPreferences.user_id == user.id,
                 ))).scalar_one_or_none()
                 if row is None:
-                    row = UserPreferences(user_id=user.id, data_json=data)
+                    row = UserPreferences(user_id=user.id, data_json=serialized_data)
                     db.add(row)
                     await db.flush()
                 elif replace:
-                    row.data_json = data
+                    row.data_json = serialized_data
                     await db.flush()
                 else:
                     # 增量语义不覆盖目标端已存在的偏好。
@@ -368,7 +372,10 @@ async def _import_memory_files(
     archive: zipfile.ZipFile, job_id: UUID, written_storage_keys: list[str],
     replace: bool,
 ) -> dict[str, int]:
-    memory_entries = [entry for entry in manifest.entries if entry.category in {"owner_memory", "im_memory"}]
+    memory_entries = [
+        entry for entry in manifest.entries
+        if entry.path.startswith(("memory/owner/", "memory/legacy/", "memory/im/scopes/"))
+    ]
     if not memory_entries:
         return {"memory_created": 0, "memory_skipped": 0}
     user_id = user.id
@@ -405,7 +412,10 @@ async def _import_memory_files(
         "stance.json", "lens.json", "facts.json", "facts.md", "summary.md", "summary.ts",
     }
     for entry in memory_entries:
-        if entry.path in {"memory/im/scopes.jsonl", "memory/im/deletion_markers.jsonl"}:
+        if entry.path in {
+            "memory/im/entries.jsonl", "memory/im/sources.jsonl",
+            "memory/im/scopes.jsonl", "memory/im/deletion_markers.jsonl",
+        }:
             continue
         if entry.path.startswith(("memory/owner/", "memory/legacy/")):
             source_type = "owner_memory_file"

@@ -74,7 +74,8 @@ async def process_export_job(job: ClaimedJob, *, worker_id: str, session_factory
 
             # 所有 SQL 查询处于同一只读一致性视图。身份 ledger 写入仍在本事务内，
             # 归档完成后才提交，构造失败不会留下半成品身份。
-            await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+            if db.bind is not None and db.bind.dialect.name == "postgresql":
+                await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
             identity_map = SQLitePortableIdentityMap()
             try:
                 origin_id, _identities, producers = await build_record_producers(
