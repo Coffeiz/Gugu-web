@@ -675,7 +675,7 @@ export interface TrashFolderContents {
 }
 
 export const trashApi = {
-  list:          ()           => get('/trash'),
+  list:          ()           => get<Schemas['FileResponse'][]>('/trash'),
   listFolders:   ()           => get<TrashFolderMeta[]>('/trash/folders'),
   listFolderContents: (id: number) => get<TrashFolderContents>(`/trash/folders/${id}/contents`),
   restore:       (id: number) => post(`/trash/${id}/restore`, {}),

@@ -73,6 +73,8 @@
       <FileTrashToolbarActions v-if="currentType === 'trash'"
         :has-items="Boolean(contents.files.length || trashFolders.length)"
         :all-selected="allTrashSelected"
+        :empty-busy="trashActions.emptyTrashBusy.value"
+        :empty-progress="trashActions.emptyTrashProgress.value"
         @toggle-select="toggleSelectAllTrash"
         @empty="confirmEmptyTrash" />
     </template>
