@@ -6,7 +6,7 @@ import hmac
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
@@ -307,17 +307,15 @@ async def finish_delete_export_job(db: AsyncSession, row: DataExportJob) -> None
     await db.commit()
 
 
-def _downloadable_export_query(*, user_id: UUID, job_id: UUID, now: datetime) -> Select[tuple[DataExportJob]]:
-    return select(DataExportJob).where(
+async def ready_export_job_id(db: AsyncSession, *, user_id: UUID, job_id: UUID, now: datetime) -> UUID | None:
+    return await db.scalar(select(DataExportJob.id).where(
         DataExportJob.id == job_id, DataExportJob.user_id == user_id,
         DataExportJob.status == "ready", DataExportJob.expires_at > now,
-    )
-
-
-async def ready_export_job_id(db: AsyncSession, *, user_id: UUID, job_id: UUID, now: datetime) -> UUID | None:
-    query = _downloadable_export_query(user_id=user_id, job_id=job_id, now=now)
-    return await db.scalar(query.with_only_columns(DataExportJob.id))
+    ))
 
 
 async def get_downloadable_export(db: AsyncSession, *, user_id: UUID, job_id: UUID, now: datetime) -> DataExportJob | None:
-    return (await db.execute(_downloadable_export_query(user_id=user_id, job_id=job_id, now=now))).scalar_one_or_none()
+    return (await db.execute(select(DataExportJob).where(
+        DataExportJob.id == job_id, DataExportJob.user_id == user_id,
+        DataExportJob.status == "ready", DataExportJob.expires_at > now,
+    ))).scalar_one_or_none()
