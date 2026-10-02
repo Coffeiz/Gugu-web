@@ -1257,6 +1257,101 @@ async def test_enabled_parallel_round_overlaps_but_emits_and_persists_in_model_o
     ]
 
 
+async def test_invalid_protocol_call_does_not_serialize_five_safe_shell_calls(monkeypatch):
+    """无副作用的协议错误应单独回执，不阻塞同 Round 五个安全 Shell 调用并发。"""
+    from agent.tools.base import Tool
+
+    calls = [TU("call_tool", "bad-call", {"name": "shell", "arguments": []})]
+    calls.extend(
+        TU("shell", f"shell-{index}", {"command": f"echo {index}"})
+        for index in range(5)
+    )
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("执行完成")])])
+    shell = Tool(
+        name="shell", description="受控 Shell",
+        input_schema={
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+            "additionalProperties": False,
+        },
+        handler=lambda *_args: None,
+        mutates=True,
+        destructive=True,
+        parallel_safe_for_input=lambda arguments: arguments.get("command", "").startswith("echo "),
+    )
+    snapshot = SimpleNamespace(
+        get=lambda name: shell if name == "shell" else None,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    active = 0
+    max_active = 0
+    started = 0
+    all_started = asyncio.Event()
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        nonlocal active, max_active, started
+        assert name == "shell", "格式无效的 Adapter 调用不能进入工具 dispatch"
+        active += 1
+        started += 1
+        max_active = max(max_active, active)
+        if started == 5:
+            all_started.set()
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=1)
+            return json.dumps({"result": "done"}), None
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(
+            parallel_tool_execution_enabled=True,
+            parallel_tool_max_concurrency=5,
+        ),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "并发执行五条互相独立的命令"},
+    ])
+    events = []
+    async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+        try:
+            events.append(json.loads(chunk[len("data: "):]))
+        except (TypeError, ValueError):
+            continue
+
+    assert started == 5
+    assert max_active == 5, "屏障确认五个 Shell handler 确实重叠运行"
+    tool_events = [
+        event for event in events if event.get("type") in {"tool_call", "tool_done"}
+    ]
+    assert [event.get("tool_call_id") for event in tool_events if event["type"] == "tool_call"] == [
+        "bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4",
+    ]
+    assert [event.get("tool_call_id") for event in tool_events if event["type"] == "tool_done"] == [
+        "bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4",
+    ]
+    invalid_result = next(
+        event["result"] for event in tool_events
+        if event["type"] == "tool_done" and event.get("tool_call_id") == "bad-call"
+    )
+    assert json.loads(invalid_result)["error"] == "tool_call_invalid"
+    tool_results = [
+        block
+        for message in canonical_messages(messages)
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert [block.get("tool_use_id") or block.get("tool_call_id") for block in tool_results] == [
+        "bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4",
+    ]
+
+
 async def test_parallel_round_uses_admin_configured_concurrency_limit(monkeypatch):
     """Admin 保存的每轮上限必须传到真实 Round 调度器，而非只影响 UI。"""
     from agent.loop import machine as loop_machine
@@ -1404,10 +1499,14 @@ async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(
 
 
 async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch):
-    """开启总开关也不能拆分混合安全等级的批次并提前启动只读项。"""
+    """无效调用不能掩盖同批真实不安全工具，真实混合批次仍必须整批串行。"""
     from agent.tools.base import Tool
 
-    calls = [TU("safe_alpha", "call-a", {}), TU("ordinary_beta", "call-b", {})]
+    calls = [
+        TU("safe_alpha", "call-a", {}),
+        TU("call_tool", "bad-call", {"name": "safe_alpha", "arguments": []}),
+        TU("ordinary_beta", "call-b", {}),
+    ]
     patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
     tools = {
         "safe_alpha": Tool(
@@ -1470,6 +1569,7 @@ async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch)
         for event in events if event.get("type") in {"tool_call", "tool_done"}
     ] == [
         ("tool_call", "call-a"), ("tool_done", "call-a"),
+        ("tool_call", "bad-call"), ("tool_done", "bad-call"),
         ("tool_call", "call-b"), ("tool_done", "call-b"),
     ]
 

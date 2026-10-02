@@ -26,6 +26,7 @@ def _log_tool_batch_observation(event: dict[str, Any]) -> None:
     """只输出允许的低敏度批次汇总字段。"""
     safe_fields = {
         "mode", "calls", "reason", "elapsed_ms", "succeeded", "failed", "cancelled",
+        "isolated_invalid",
     }
     payload = {key: value for key, value in event.items() if key in safe_fields}
     payload.update(t="loop", event="tool_batch")
@@ -637,9 +638,44 @@ async def run_loop(
                 pending_interaction = None
                 agent_settings = getattr(getattr(runner, "settings", None), "agent", None)
                 parallel_batch = None
+                parallel_protocol_errors = {}
                 parallel_cancelled = False
                 if getattr(agent_settings, "parallel_tool_execution_enabled", False):
                     parallel_batch = _core._prepare_parallel_batch(result.tool_calls, tool_snapshot)
+                    # 协议无效或 JSON 截断的调用不会 dispatch，也没有副作用；它们不应
+                    # 单独阻塞同 Round 中其余安全调用。真实工具仍必须整批通过预检。
+                    if parallel_batch is None and len(result.tool_calls) > 2:
+                        executable_calls = []
+                        candidate_errors = {}
+                        for original_index, call in enumerate(result.tool_calls):
+                            target, _arguments, protocol_error = _core._resolve_tool_call(
+                                getattr(call, "name", None), getattr(call, "input", None),
+                            )
+                            if protocol_error is not None:
+                                candidate_errors[original_index] = (
+                                    target, _core.json.dumps(protocol_error, ensure_ascii=False),
+                                )
+                            elif getattr(call, "parse_error", None):
+                                candidate_errors[original_index] = (
+                                    target, _core.loop_drivers.TOOL_ARGS_TRUNCATED_ERROR,
+                                )
+                            else:
+                                executable_calls.append((original_index, call))
+                        candidate_batch = _core._prepare_parallel_batch(
+                            [call for _index, call in executable_calls], tool_snapshot,
+                        )
+                        if candidate_batch is not None:
+                            original_indexes = [index for index, _call in executable_calls]
+                            parallel_batch = [
+                                (original_indexes[index], *prepared_call)
+                                for index, prepared_call in enumerate(candidate_batch)
+                            ]
+                            parallel_protocol_errors = candidate_errors
+                    if parallel_batch is not None and not parallel_protocol_errors:
+                        parallel_batch = [
+                            (index, *prepared_call)
+                            for index, prepared_call in enumerate(parallel_batch)
+                        ]
                 if len(result.tool_calls) > 1 and parallel_batch is None:
                     _log_tool_batch_observation({
                         "mode": "serial",
@@ -652,12 +688,34 @@ async def run_loop(
                     })
                 if parallel_batch is not None:
                     parallel_meta = []
-                    for call_index, (tc, dispatch_target, dispatch_input) in enumerate(parallel_batch):
+                    prepared_by_index = {
+                        original_index: (tc, dispatch_target, dispatch_input)
+                        for original_index, tc, dispatch_target, dispatch_input in parallel_batch
+                    }
+                    invalid_meta = {}
+                    for original_index, tc in enumerate(result.tool_calls):
+                        if original_index in parallel_protocol_errors:
+                            effective_tool_name, protocol_result = parallel_protocol_errors[original_index]
+                            label = runner._label(effective_tool_name)
+                            if verify_mode:
+                                label = runner._label("_verify_prefix", "复查 · ") + label
+                            tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{original_index + 1}"
+                            tool_calls_used += 1
+                            yield stream_event(
+                                "tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                                name=effective_tool_name, label=label, input={},
+                                verify=verify_mode, status="invalid",
+                            )
+                            invalid_meta[original_index] = (
+                                tc, effective_tool_name, label, tool_call_id, protocol_result,
+                            )
+                            continue
+                        tc, dispatch_target, dispatch_input = prepared_by_index[original_index]
                         effective_tool_name = dispatch_target
                         label = runner._label(effective_tool_name)
                         if verify_mode:
                             label = runner._label("_verify_prefix", "复查 · ") + label
-                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{original_index + 1}"
                         tool_calls_used += 1
                         await _core._im_set_tool_state(effective_tool_name)
                         yield stream_event(
@@ -665,11 +723,12 @@ async def run_loop(
                             name=effective_tool_name, label=label, input=dispatch_input,
                             verify=verify_mode, status="running",
                         )
-                        parallel_meta.append((tc, dispatch_target, dispatch_input,
+                        parallel_meta.append((original_index, tc, dispatch_target, dispatch_input,
                                               effective_tool_name, label, tool_call_id))
+                    parallel_meta_by_index = {item[0]: item for item in parallel_meta}
 
                     async def _dispatch_parallel_call(call):
-                        _tc, target, arguments = call
+                        _original_index, _tc, target, arguments = call
                         from agent.tools.base import parallel_dispatch_context
                         with parallel_dispatch_context():
                             return await _core._dispatch_in_session(
@@ -692,11 +751,15 @@ async def run_loop(
                         parallel_cancelled = True
                     from agent.interactions.confirmations import confirmation_payload
                     succeeded = failed = cancelled = 0
-                    for dispatched_result in parallel_results:
+                    results_by_index = {}
+                    for meta, dispatched_result in zip(parallel_meta, parallel_results):
+                        original_index = meta[0]
                         if isinstance(dispatched_result, _core.asyncio.CancelledError):
                             cancelled += 1
+                            results_by_index[original_index] = (dispatched_result, None)
                         elif isinstance(dispatched_result, Exception):
                             failed += 1
+                            results_by_index[original_index] = (dispatched_result, None)
                         else:
                             result_payload = dispatched_result[0]
                             if (
@@ -706,29 +769,40 @@ async def run_loop(
                                 failed += 1
                             else:
                                 succeeded += 1
+                            results_by_index[original_index] = dispatched_result
                     _log_tool_batch_observation({
                         "mode": "parallel",
                         "calls": len(parallel_batch),
+                        "isolated_invalid": len(parallel_protocol_errors),
                         "reason": "eligible_batch",
                         "elapsed_ms": round((time.monotonic() - dispatch_started_at) * 1000),
                         "succeeded": succeeded,
                         "failed": failed,
                         "cancelled": cancelled,
                     })
-                    for meta, dispatched_result in zip(parallel_meta, parallel_results):
-                        tc, dispatch_target, dispatch_input, effective_tool_name, label, tool_call_id = meta
-                        call_cancelled = isinstance(dispatched_result, _core.asyncio.CancelledError)
+                    for original_index, tc in enumerate(result.tool_calls):
+                        if original_index in invalid_meta:
+                            _tc, effective_tool_name, label, tool_call_id, res = invalid_meta[original_index]
+                            yield stream_event(
+                                "tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                                name=effective_tool_name, label=label, verify=verify_mode,
+                                status="error", result=res,
+                            )
+                            dispatched.append((tc, res))
+                            continue
+                        meta = parallel_meta_by_index[original_index]
+                        _index, tc, dispatch_target, dispatch_input, effective_tool_name, label, tool_call_id = meta
+                        res, artifact = results_by_index[original_index]
+                        call_cancelled = isinstance(res, _core.asyncio.CancelledError)
                         if call_cancelled:
-                            res, artifact = _core.json.dumps(
-                                {"error": "工具调用已取消。"}, ensure_ascii=False,
-                            ), None
-                        elif isinstance(dispatched_result, Exception):
-                            _core.diag_log("agent.loop.parallel_tool_dispatch", dispatched_result)
-                            res, artifact = _core.json.dumps(
+                            res = _core.json.dumps({"error": "工具调用已取消。"}, ensure_ascii=False)
+                            artifact = None
+                        if isinstance(res, Exception):
+                            _core.diag_log("agent.loop.parallel_tool_dispatch", res)
+                            res = _core.json.dumps(
                                 {"error": "只读工具执行失败，请稍后重试。"}, ensure_ascii=False,
-                            ), None
-                        else:
-                            res, artifact = dispatched_result
+                            )
+                            artifact = None
                         if confirmation_payload(res) is not None:
                             # 并行安全声明禁止交互；动态返回确认载荷表示工具契约配置错误，
                             # 不创建等待卡，也不把其内部状态继续暴露给模型。
