@@ -165,9 +165,39 @@ def test_phase2_registered_read_tools_are_explicitly_whitelisted():
         [_call("list_projects"), _call("get_upcoming")], snapshot,
     )
     assert not snapshot.get("read_file").parallel_safe
+    assert not snapshot.get("web_search").parallel_safe
+    assert not snapshot.get("http_get").parallel_safe
+    assert not parallel_safe_batch(
+        [_call("web_search", {"query": "合成查询"}), _call("http_get", {"url": "https://example.invalid"})],
+        snapshot,
+    ), "Phase 3 未评估外部网络工具限流、超时和取消前，不得进入并行白名单"
     assert not parallel_safe_batch(
         [_call("list_projects"), _call("update_project")], snapshot,
     ), "一个写工具必须让整批回到串行"
+
+
+def test_batch_observation_contains_only_bounded_aggregate_fields(caplog):
+    from agent.loop.machine import _log_tool_batch_observation
+
+    with caplog.at_level("INFO", logger="agent.traj"):
+        _log_tool_batch_observation(
+            {
+                "mode": "serial",
+                "calls": 2,
+                "reason": "batch_not_eligible_or_preflight_failed",
+                "query": "must not enter logs",
+            },
+        )
+
+    record = json.loads(caplog.records[-1].message)
+    assert record == {
+        "t": "loop",
+        "event": "tool_batch",
+        "mode": "serial",
+        "calls": 2,
+        "reason": "batch_not_eligible_or_preflight_failed",
+    }
+    assert not {"user", "run", "tool", "args", "url", "query"}.intersection(record)
 
 
 async def test_phase2_whitelisted_tool_calls_reach_the_bounded_executor_concurrently():

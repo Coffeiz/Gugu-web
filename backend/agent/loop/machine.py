@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 from typing import Any, AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
@@ -16,6 +18,18 @@ from agent import core as _core
 from agent.context.assembly.area import MessageArea
 from agent.errors import describe_llm_error
 from agent.loop import watchdog as _watchdog
+
+_parallel_traj_log = logging.getLogger("agent.traj")
+
+
+def _log_tool_batch_observation(event: dict[str, Any]) -> None:
+    """只输出允许的低敏度批次汇总字段。"""
+    safe_fields = {
+        "mode", "calls", "reason", "elapsed_ms", "succeeded", "failed", "cancelled",
+    }
+    payload = {key: value for key, value in event.items() if key in safe_fields}
+    payload.update(t="loop", event="tool_batch")
+    _parallel_traj_log.info(json.dumps(payload, ensure_ascii=False))
 
 def _allow_tool_images(model_cfg: Any) -> bool:
     """判断工具读回的图片能否继续交给本轮实际模型。"""
@@ -626,6 +640,16 @@ async def run_loop(
                 parallel_cancelled = False
                 if getattr(agent_settings, "parallel_tool_execution_enabled", False):
                     parallel_batch = _core._prepare_parallel_batch(result.tool_calls, tool_snapshot)
+                if len(result.tool_calls) > 1 and parallel_batch is None:
+                    _log_tool_batch_observation({
+                        "mode": "serial",
+                        "calls": len(result.tool_calls),
+                        "reason": (
+                            "parallel_disabled"
+                            if not getattr(agent_settings, "parallel_tool_execution_enabled", False)
+                            else "batch_not_eligible_or_preflight_failed"
+                        ),
+                    })
                 if parallel_batch is not None:
                     parallel_meta = []
                     for call_index, (tc, dispatch_target, dispatch_input) in enumerate(parallel_batch):
@@ -653,6 +677,7 @@ async def run_loop(
                             skill_state=_core._copy_skill_state_for_parallel(loaded_skill_slugs),
                         )
 
+                    dispatch_started_at = time.monotonic()
                     try:
                         parallel_results = await _core._run_parallel_dispatches(
                             parallel_batch, _dispatch_parallel_call,
@@ -661,6 +686,30 @@ async def run_loop(
                         parallel_results = exc.results
                         parallel_cancelled = True
                     from agent.interactions.confirmations import confirmation_payload
+                    succeeded = failed = cancelled = 0
+                    for dispatched_result in parallel_results:
+                        if isinstance(dispatched_result, _core.asyncio.CancelledError):
+                            cancelled += 1
+                        elif isinstance(dispatched_result, Exception):
+                            failed += 1
+                        else:
+                            result_payload = dispatched_result[0]
+                            if (
+                                confirmation_payload(result_payload) is not None
+                                or not _core._is_successful_tool_result(result_payload)
+                            ):
+                                failed += 1
+                            else:
+                                succeeded += 1
+                    _log_tool_batch_observation({
+                        "mode": "parallel",
+                        "calls": len(parallel_batch),
+                        "reason": "eligible_batch",
+                        "elapsed_ms": round((time.monotonic() - dispatch_started_at) * 1000),
+                        "succeeded": succeeded,
+                        "failed": failed,
+                        "cancelled": cancelled,
+                    })
                     for meta, dispatched_result in zip(parallel_meta, parallel_results):
                         tc, dispatch_target, dispatch_input, effective_tool_name, label, tool_call_id = meta
                         call_cancelled = isinstance(dispatched_result, _core.asyncio.CancelledError)
