@@ -156,7 +156,7 @@ class McpToolManager:
             tool._input_validator = build_validator(tool.input_schema)
         issues = validate_input(tool._input_validator, args)
         if issues:
-            payload = invalid_input_payload(tool_name, issues, schema=tool.input_schema)
+            payload = invalid_input_payload(tool_name, issues, schema=tool.input_schema, instance=args)
             _log_traj(tool_name, user_id, args, False,
                       f"mcp:tool_input_invalid:{issues[0].get('rule', 'invalid')}", t0)
             return json.dumps(payload, ensure_ascii=False), None

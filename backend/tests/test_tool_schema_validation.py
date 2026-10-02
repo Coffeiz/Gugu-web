@@ -316,6 +316,32 @@ async def test_boolean_type_error_explains_native_json_value():
     ]
 
 
+def test_string_type_error_turns_boolean_into_quoted_retry_example_without_echoing_other_values():
+    schema = {
+        "type": "object",
+        "properties": {
+            "is_china": {
+                "type": "string",
+                "description": "可选值为 `true` 或 `false`",
+            },
+        },
+    }
+    issues = [{"path": "is_china", "rule": "type", "message": "字段类型应为 string"}]
+
+    payload = invalid_input_payload(
+        "mcp_baidu_maps_map_weather",
+        issues,
+        schema=schema,
+        instance={"is_china": True, "api_key": "secret-value"},
+    )
+
+    assert payload["schema_hints"] == [
+        'is_china 必须是字符串；当前传入的是 boolean，请改为带双引号的 "true"，不要传裸 true/false。',
+    ]
+    assert payload["next_action"] == "请按 schema_hints 把布尔值改成对应的字符串后重试，不要再次传入裸 true/false。"
+    assert "secret-value" not in json.dumps(payload, ensure_ascii=False)
+
+
 def test_note_schema_recovery_explains_flat_block_shape():
     schema = {"type": "array", "items": _BLOCK_ITEM_SCHEMA}
     validator = build_validator(schema)

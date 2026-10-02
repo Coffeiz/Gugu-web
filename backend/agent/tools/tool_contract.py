@@ -561,7 +561,11 @@ def _invalid_input_next_action(issues: list[dict[str, str]]) -> str:
     return "请根据 issues 修正参数后再调用；不要重复提交相同参数，也不要猜测用户未提供的值。"
 
 
-def _schema_repair_hints(schema: dict[str, Any] | None, issues: list[dict[str, str]]) -> list[str]:
+def _schema_repair_hints(
+    schema: dict[str, Any] | None,
+    issues: list[dict[str, str]],
+    instance: dict[str, Any] | None = None,
+) -> list[str]:
     """从 schema 生成短修正示例，不回显模型传入的实际参数。"""
     if not isinstance(schema, dict):
         return []
@@ -593,6 +597,15 @@ def _schema_repair_hints(schema: dict[str, Any] | None, issues: list[dict[str, s
             hints.append(f"{path} 必须是对象（{{...}}），不要传数组或字符串。")
         elif expected == "boolean":
             hints.append(f"{path} 必须是 boolean：使用 true 或 false，不要加引号。")
+        elif expected == "string":
+            value = instance.get(path) if isinstance(instance, dict) else None
+            if isinstance(value, bool):
+                example = json.dumps(str(value).lower(), ensure_ascii=False)
+                hints.append(
+                    f"{path} 必须是字符串；当前传入的是 boolean，请改为带双引号的 {example}，不要传裸 true/false。"
+                )
+            else:
+                hints.append(f"{path} 必须是字符串（JSON string），文本需用双引号；不要传数值或布尔值。")
         elif expected:
             hints.append(f"{path} 必须是 {expected} 类型。")
     return hints
@@ -603,6 +616,7 @@ def invalid_input_payload(
     issues: list[dict[str, str]],
     *,
     schema: dict[str, Any] | None = None,
+    instance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """返回统一、短小且可执行的参数纠错提示；完整 schema 仍由工具声明负责。"""
     bounded = issues[:MAX_VALIDATION_ISSUES]
@@ -614,7 +628,7 @@ def invalid_input_payload(
         "usage_hint": "参数不符合工具 schema。先按 issues 修正；缺少无法从上下文确定的必填信息时，先向用户询问。",
         "next_action": _invalid_input_next_action(bounded),
     }
-    hints = _schema_repair_hints(schema, bounded)
+    hints = _schema_repair_hints(schema, bounded, instance)
     if tool_name in {"create_event", "update_event"} and any(
         item.get("rule") == "not" for item in bounded
     ):
@@ -649,6 +663,20 @@ def invalid_input_payload(
     if tool_name in {"note_create", "note_update"}:
         payload["next_action"] = "笔记结构错误，请按 schema_hints 重建完整 blocks；不要沿用原来的嵌套结构或 item 包装。"
         hints = [*hints, *_NOTE_SCHEMA_HINTS]
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    has_boolean_for_string = (
+        isinstance(instance, dict)
+        and isinstance(properties, dict)
+        and any(
+            item.get("rule") == "type"
+            and isinstance(properties.get(item.get("path", "")), dict)
+            and properties[item.get("path", "")].get("type") == "string"
+            and isinstance(instance.get(item.get("path", "")), bool)
+            for item in bounded
+        )
+    )
+    if has_boolean_for_string:
+        payload["next_action"] = "请按 schema_hints 把布尔值改成对应的字符串后重试，不要再次传入裸 true/false。"
     if hints:
         payload["schema_hints"] = hints
     return payload
