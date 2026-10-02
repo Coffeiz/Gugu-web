@@ -521,7 +521,9 @@ async def create_browser_download_ticket(
         secure=request.url.scheme == "https",
         samesite="lax",
     )
-    return {"url": str(request.base_url).rstrip("/") + download_path}
+    # 票据下载必须留在当前站点 origin 下；绝对地址可能受反向代理 Host 配置影响，
+    # 在开发环境中会把浏览器带到它自己的 localhost:8000。
+    return {"url": download_path}
 
 
 @router.get("/exports/{job_id}/download")

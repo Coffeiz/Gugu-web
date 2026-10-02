@@ -60,7 +60,7 @@
           <button v-if="importJob.status === 'preview_ready' && importToken" class="pm-save-btn" :disabled="applying || Boolean(importJob.preview?.conflicts?.total)" @click="applyIncremental">
             {{ applying ? t('profileDataUi.importing') : t('profileDataUi.incrementalImport') }}
           </button>
-          <button v-if="importJob.status === 'preview_ready' && importToken && importJob.preview?.complete" class="pm-style-chip replace-action" :disabled="applying" @click="applyReplace">
+          <button v-if="importJob.status === 'preview_ready' && importToken && importJob.preview?.complete" class="pm-danger-btn" :disabled="applying" @click="applyReplace">
             {{ applying ? t('profileDataUi.importing') : t('profileDataUi.replaceCurrent') }}
           </button>
           <button v-else-if="importJob.status === 'queued'" class="pm-style-chip" @click="cancelImport">
@@ -81,13 +81,13 @@
           <small v-if="job.status === 'running' && job.progress_total">{{ job.progress_current }} / {{ job.progress_total }}</small>
         </div>
         <div class="data-job-actions">
-          <button v-if="job.download_available" class="pm-style-chip" :disabled="downloading === job.id" @click="download(job)">
+          <button v-if="job.download_available" class="pm-save-btn" :disabled="downloading === job.id" @click="download(job)">
             {{ downloading === job.id ? t('common.status.loading') : t('profileDataUi.download') }}
           </button>
           <button v-else-if="['queued', 'running'].includes(job.status)" class="pm-style-chip" :disabled="canceling === job.id" @click="cancel(job)">
             {{ t('profileDataUi.cancel') }}
           </button>
-          <button v-if="!['queued', 'running', 'canceling'].includes(job.status)" class="pm-style-chip delete-export" :disabled="deleting === job.id" @click="deleteExport(job)">
+          <button v-if="!['queued', 'running', 'canceling'].includes(job.status)" class="pm-danger-btn" :disabled="deleting === job.id" @click="deleteExport(job)">
             {{ deleting === job.id ? t('profileDataUi.deleting') : t('profileDataUi.deleteExport') }}
           </button>
         </div>
@@ -101,10 +101,10 @@
           </small>
         </div>
         <div class="data-job-actions">
-          <button v-if="job.status === 'completed' && job.mode === 'replace' && job.rollback_expires_at && new Date(job.rollback_expires_at) > new Date()" class="pm-style-chip replace-action" :disabled="applying" @click="rollbackReplace(job)">
+          <button v-if="job.status === 'completed' && job.mode === 'replace' && job.rollback_expires_at && new Date(job.rollback_expires_at) > new Date()" class="pm-danger-btn" :disabled="applying" @click="rollbackReplace(job)">
             {{ t('profileDataUi.undoReplace') }}
           </button>
-          <button v-if="job.status === 'needs_recovery'" class="pm-style-chip replace-action" :disabled="applying" @click="recoverImport(job)">
+          <button v-if="job.status === 'needs_recovery'" class="pm-style-chip" :disabled="applying" @click="recoverImport(job)">
             {{ t('profileDataUi.recover') }}
           </button>
         </div>
@@ -243,7 +243,16 @@ async function download(job: DataExportJob) {
     const pickerWindow = window as Window & { showSaveFilePicker?: (options: unknown) => Promise<{ createWritable(): Promise<typeof writable> }> }
     if (!pickerWindow.showSaveFilePicker) {
       const { url } = await dataPortabilityApi.createBrowserDownloadTicket(job.id)
-      window.location.assign(url)
+      // 用当前页面 origin 下的 API 路径触发原生下载，避免跳到后端监听端口。
+      // Ticket 是 HttpOnly Cookie，浏览器会随同源请求发送；文件名由 Content-Disposition 提供。
+      const ticketUrl = new URL(url, window.location.origin)
+      const downloadUrl = new URL(ticketUrl.pathname + ticketUrl.search, window.location.origin)
+      const link = document.createElement('a')
+      link.href = downloadUrl.href
+      link.style.display = 'none'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
       return
     }
     const handle = await pickerWindow.showSaveFilePicker({ suggestedName: `gugu-export-${job.id.slice(0, 12)}.zip` })
@@ -412,8 +421,6 @@ function formatBytes(value: number) {
 
 <style scoped>
 .data-pane { display: flex; flex-direction: column; gap: 12px; }
-.replace-action { color: var(--pm-danger-text, #a44949); }
-.delete-export { color: var(--pm-danger-text, #a44949); }
 .data-intro, .data-muted, .data-warning { margin: 0; color: var(--content-secondary); font-size: 13px; line-height: 1.55; }
 .data-muted { color: var(--content-tertiary); }
 .data-warning { color: var(--warning-text, var(--content-secondary)); }
