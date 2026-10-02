@@ -1,44 +1,47 @@
 <template>
   <section class="config-card outbound-card">
     <div class="card-head">
+      <div class="card-icon" style="--ic: color-mix(in srgb, var(--status-info) 14%, transparent); --stroke: var(--status-info)">
+        <Icon name="admin.shield" size="md" />
+      </div>
       <div class="card-title-block">
         <h3>{{ t('adminConfig.egressTitle') }}</h3>
         <p>{{ t('adminConfig.egressDescription') }}</p>
       </div>
     </div>
 
-    <label class="enabled-row">
-      <input v-model="draft.enabled" type="checkbox" />
-      <span>{{ t('adminConfig.egressEnabled') }}</span>
-    </label>
     <p class="scope-note">{{ t('adminConfig.egressScope') }}</p>
 
     <div class="field-grid">
       <div class="field span2">
-        <label for="safe-egress-proxy-url">{{ t('adminConfig.proxyUrl') }}</label>
-        <input id="safe-egress-proxy-url" v-model.trim="draft.proxy_url" type="url" inputmode="url" autocomplete="url" placeholder="http://proxy.example:7890" />
+        <span id="safe-egress-proxy-url-label" class="field-label">{{ t('adminConfig.proxyUrl') }}</span>
+        <input id="safe-egress-proxy-url" v-model.trim="draft.proxy_url" class="form-input" aria-labelledby="safe-egress-proxy-url-label" type="url" inputmode="url" autocomplete="url" placeholder="http://proxy.example:7890" />
       </div>
       <div class="field">
-        <label for="safe-egress-proxy-username">{{ t('adminConfig.proxyUsername') }}</label>
-        <input id="safe-egress-proxy-username" v-model="draft.proxy_username" autocomplete="off" />
+        <span id="safe-egress-proxy-username-label" class="field-label">{{ t('adminConfig.proxyUsername') }}</span>
+        <input id="safe-egress-proxy-username" v-model="draft.proxy_username" class="form-input" aria-labelledby="safe-egress-proxy-username-label" autocomplete="off" />
       </div>
       <div class="field">
-        <label for="safe-egress-proxy-password">{{ t('adminConfig.proxyPassword') }}</label>
-        <input id="safe-egress-proxy-password" v-model="draft.proxy_password" type="password" autocomplete="new-password" :placeholder="state.has_auth ? t('adminConfig.authConfigured') : ''" />
+        <span id="safe-egress-proxy-password-label" class="field-label">{{ t('adminConfig.proxyPassword') }}</span>
+        <input id="safe-egress-proxy-password" v-model="draft.proxy_password" class="form-input" aria-labelledby="safe-egress-proxy-password-label" type="password" autocomplete="new-password" :placeholder="state.has_auth ? t('adminConfig.authConfigured') : ''" />
       </div>
     </div>
 
     <div class="actions">
-      <button v-if="state.has_auth" class="clear-auth" type="button" :disabled="busy" @click="draft.clear_credentials = !draft.clear_credentials">
+      <ActionButton v-if="state.has_auth" :variant="draft.clear_credentials ? 'danger' : 'secondary'" fit :disabled="busy" @click="draft.clear_credentials = !draft.clear_credentials">
         {{ draft.clear_credentials ? t('adminConfig.authWillClear') : t('adminConfig.clearAuth') }}
-      </button>
+      </ActionButton>
       <span v-if="message" class="result" :class="{ error: !resultOk }" role="status">{{ message }}</span>
-      <button type="button" class="button secondary" :disabled="busy" @click="testProxy">
+      <div class="proxy-toggle">
+        <span>{{ t('adminConfig.egressEnabled') }}</span>
+        <ToggleSwitch v-model="draft.enabled" size="sm" :disabled="busy" :aria-label="t('adminConfig.egressEnabled')" />
+      </div>
+      <ActionButton variant="secondary" fit :disabled="busy" @click="testProxy">
         {{ testing ? t('adminConfig.testingProxy') : t('adminConfig.testProxy') }}
-      </button>
-      <button type="button" class="button primary" :disabled="busy" @click="saveProxy">
+      </ActionButton>
+      <ActionButton variant="primary" fit :disabled="busy" @click="saveProxy">
         {{ saving ? t('adminConfig.savingProxy') : t('adminConfig.saveProxy') }}
-      </button>
+      </ActionButton>
     </div>
   </section>
 </template>
@@ -46,6 +49,8 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import { useAdminStore } from '@/stores/admin'
 
 const { t } = useI18n()
@@ -145,23 +150,21 @@ onMounted(load)
 
 <style scoped>
 .outbound-card { display: flex; flex-direction: column; gap: 14px; }
-.outbound-card .card-head { margin: 0; }
-.enabled-row { display: flex; align-items: center; gap: 9px; color: var(--text-primary); font-size: 13px; cursor: pointer; }
-.enabled-row input { accent-color: var(--action-primary-bg); }
-.scope-note { margin: -8px 0 0 24px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.outbound-card .card-head { display: flex; align-items: center; gap: 13px; margin: 0; }
+.card-icon { width: 38px; height: 38px; border-radius: 11px; background: var(--ic); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.card-icon :deep(svg) { width: 18px; height: 18px; color: var(--stroke); }
+.card-title-block { min-width: 0; flex: 1; }
+.card-title-block h3 { margin: 0; color: var(--content-primary); font-size: 14px; font-weight: 700; line-height: 1.4; }
+.card-title-block p { margin: 2px 0 0; color: var(--content-secondary); font-size: 12px; line-height: 1.5; }
+.scope-note { margin: 0; color: var(--content-secondary); font-size: 12px; line-height: 1.5; }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.field > label { color: var(--text-muted); font-size: 11px; font-weight: 600; }
-.field input { width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid var(--input-border); border-radius: 9px; background: var(--input-bg); color: var(--text-primary); font: 13px var(--font-sans); outline: none; transition: border-color .18s ease, box-shadow .18s ease; }
-.field input:hover { border-color: var(--input-border-hover, var(--input-border)); }
-.field input:focus { border-color: var(--input-border-focus, var(--action-primary-bg)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary-bg) 16%, transparent); }
+.field-label { color: var(--content-secondary); font-size: 12px; line-height: 1.4; }
+.field .form-input { width: 100%; min-width: 0; }
 .span2 { grid-column: span 2; }
 .actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-.result { margin-right: auto; color: var(--status-success, #5ab899); font-size: 12px; line-height: 1.45; }
-.result.error { color: var(--status-danger, #e07878); }
-.button, .clear-auth { border: 1px solid var(--panel-divider); border-radius: 9px; padding: 7px 12px; color: var(--text-secondary); background: var(--panel-bg); font: inherit; font-size: 12px; cursor: pointer; transition: border-color .18s ease, color .18s ease, opacity .18s ease; }
-.button:hover:not(:disabled), .clear-auth:hover:not(:disabled) { border-color: var(--input-border-hover, var(--input-border)); color: var(--text-primary); }
-.button.primary { background: var(--action-primary-bg); border-color: transparent; color: #fff; }
-.button:disabled, .clear-auth:disabled { opacity: .55; cursor: default; }
+.proxy-toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--content-secondary); font-size: 12px; white-space: nowrap; }
+.result { margin-right: auto; color: var(--status-success); font-size: 12px; line-height: 1.45; }
+.result.error { color: var(--status-danger); }
 @media (max-width: 640px) { .field-grid { grid-template-columns: 1fr; } .span2 { grid-column: auto; } .actions { justify-content: flex-start; } .result { flex-basis: 100%; } }
 </style>
