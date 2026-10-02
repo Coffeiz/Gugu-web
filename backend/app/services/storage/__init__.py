@@ -157,6 +157,21 @@ class StorageBackend(ABC):
     async def list_keys(self) -> list[str]:
         """列出存储里所有对象 key（对账用；含 .agent/.chat_staging 等内部 key，由调用方过滤）"""
 
+    async def list_keys_prefix(
+        self, prefix: str, *, cursor: str | None = None, limit: int = 500,
+    ) -> tuple[list[str], str | None]:
+        """按对象 key 前缀分页列举；返回本页 key 与下一页游标。游标为空表示结束。
+
+        自定义后端兼容实现；生产 Local/OSS 后端覆盖，避免扫描全存储桶。
+        """
+        if not prefix or prefix.startswith("/") or ".." in prefix.split("/"):
+            raise ValueError("对象前缀必须是非空规范相对路径")
+        if not 1 <= limit <= 5000:
+            raise ValueError("对象分页大小超出范围")
+        keys = sorted(key for key in await self.list_keys() if key.startswith(prefix) and (cursor is None or key > cursor))
+        page = keys[:limit]
+        return page, page[-1] if len(keys) > limit and page else None
+
     @abstractmethod
     async def delete_prefix(self, prefix: str) -> int:
         """删除该前缀下**所有**对象（账户注销清数据用），返回删除数量。
@@ -332,6 +347,42 @@ class LocalStorageBackend(StorageBackend):
             return [p.relative_to(self.root).as_posix()
                     for p in self.root.rglob("*") if p.is_file()]
         return await asyncio.to_thread(_walk)
+
+    async def list_keys_prefix(
+        self, prefix: str, *, cursor: str | None = None, limit: int = 500,
+    ) -> tuple[list[str], str | None]:
+        import heapq
+        if not prefix or prefix.startswith("/") or ".." in prefix.split("/"):
+            raise ValueError("对象前缀必须是非空规范相对路径")
+        if not 1 <= limit <= 5000:
+            raise ValueError("对象分页大小超出范围")
+
+        def _page():
+            base = self.root / prefix
+            if not base.exists():
+                return [], None
+            def candidates():
+                if base.is_file() and not base.is_symlink():
+                    key = base.relative_to(self.root).as_posix()
+                    if cursor is None or key > cursor:
+                        yield key
+                    return
+                if not base.is_dir() or base.is_symlink():
+                    return
+                for directory, dirnames, filenames in os.walk(base, followlinks=False):
+                    dirnames[:] = [name for name in dirnames if not (Path(directory) / name).is_symlink()]
+                    for filename in filenames:
+                        path = Path(directory) / filename
+                        if path.is_symlink() or not path.is_file():
+                            continue
+                        key = path.relative_to(self.root).as_posix()
+                        if cursor is None or key > cursor:
+                            yield key
+            smallest = heapq.nsmallest(limit + 1, candidates())
+            has_more = len(smallest) > limit
+            page = smallest[:limit]
+            return page, page[-1] if has_more and page else None
+        return await asyncio.to_thread(_page)
 
     async def list_dirs(self, prefix: str = "") -> list[str]:
         """列出 prefix 下所有子目录 key（root 相对，posix；不含 prefix 自身）。folder_doctor 对账用。"""
@@ -584,6 +635,28 @@ class OSSStorageBackend(StorageBackend):
             return [obj.key[n:] for obj in oss2.ObjectIterator(self.bucket, prefix=self.pfx)
                     if not obj.key.endswith("/")]
         return await asyncio.to_thread(_list)
+
+    async def list_keys_prefix(
+        self, prefix: str, *, cursor: str | None = None, limit: int = 500,
+    ) -> tuple[list[str], str | None]:
+        import asyncio
+        if not prefix or prefix.startswith("/") or ".." in prefix.split("/"):
+            raise ValueError("对象前缀必须是非空规范相对路径")
+        if not 1 <= limit <= 5000:
+            raise ValueError("对象分页大小超出范围")
+        full_prefix = self.pfx + prefix
+        marker = self.pfx + cursor if cursor else ""
+
+        def _page():
+            result = self.bucket.list_objects(prefix=full_prefix, marker=marker, max_keys=limit)
+            keys = [obj.key[len(self.pfx):] for obj in result.object_list if not obj.key.endswith("/")]
+            next_cursor = None
+            if result.is_truncated:
+                marker_value = result.next_marker or (result.object_list[-1].key if result.object_list else "")
+                if marker_value:
+                    next_cursor = marker_value[len(self.pfx):]
+            return keys, next_cursor
+        return await asyncio.to_thread(_page)
 
     async def delete_prefix(self, prefix: str) -> int:
         import asyncio, oss2

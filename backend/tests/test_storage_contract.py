@@ -35,6 +35,26 @@ async def test_iter_chunks_reads_local_objects_without_changing_bytes(storage):
     assert len(chunks) > 1
 
 
+async def test_list_keys_prefix_is_sorted_scoped_and_cursor_paged(storage):
+    for key in ("u/.agent/im/b/a", "u/.agent/im/a/z", "u/.agent/im/a/b", "u/.agent/other/file"):
+        await storage.put(key, b"x")
+
+    first, cursor = await storage.list_keys_prefix("u/.agent/im/", limit=2)
+    second, next_cursor = await storage.list_keys_prefix("u/.agent/im/", cursor=cursor, limit=2)
+
+    assert first == ["u/.agent/im/a/b", "u/.agent/im/a/z"]
+    assert second == ["u/.agent/im/b/a"]
+    assert cursor == "u/.agent/im/a/z"
+    assert next_cursor is None
+
+
+async def test_list_keys_prefix_rejects_unbounded_or_unsafe_requests(storage):
+    with pytest.raises(ValueError):
+        await storage.list_keys_prefix("../")
+    with pytest.raises(ValueError):
+        await storage.list_keys_prefix("u/", limit=0)
+
+
 async def test_failed_replace_keeps_previous_file(tmp_path, monkeypatch):
     """覆盖写被中断时不能留下空文件或半截内容。"""
     storage = LocalStorageBackend(tmp_path)
