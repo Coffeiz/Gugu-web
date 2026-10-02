@@ -9,6 +9,7 @@ import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent.providers.minimax import minimax_error_details
 from app.core.redaction import diag_log
 
 
@@ -74,6 +75,34 @@ def describe_llm_error(
     status_code = upstream_status_code(error) if provider_error else None
     params = {"tag": tag, "attempts": attempts}
     retried = f"已自动重试 {attempts} 次"
+
+    minimax_details = minimax_error_details(error)
+    if provider_error and minimax_details is not None:
+        diagnostic_id = secrets.token_hex(8).upper()
+        error_type = minimax_details.error_type or "-"
+        diag_log(
+            f"{diagnostic_context} provider=minimax status={status_code} "
+            f"error_code={minimax_details.code} error_type={error_type} "
+            f"request_id={minimax_details.request_id or '-'} diagnostic_id={diagnostic_id}",
+            error,
+        )
+        request_id = minimax_details.request_id or "-"
+        return LLMErrorPresentation(
+            code="provider_minimax_error",
+            message_key="chatUi.minimaxProviderError",
+            message_params={
+                **params,
+                "minimax_code": minimax_details.code,
+                "minimax_error_type": error_type,
+                "minimax_description_key": minimax_details.description_key,
+                "diagnostic_id": diagnostic_id,
+                "minimax_request_id": request_id,
+            },
+            text=(f"MiniMax 请求失败（上游 {tag}，错误码 {minimax_details.code} / "
+                  f"{error_type}："
+                  f"{minimax_details.summary}）。诊断编号 {diagnostic_id}；"
+                  f"MiniMax 请求 ID：{request_id}"),
+        )
 
     if is_network_error(error):
         return LLMErrorPresentation(

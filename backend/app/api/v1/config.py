@@ -1052,12 +1052,32 @@ async def test_voice(body: VoiceTestRequest):
             return {"ok": False, "message": "语音模型未配置"}
         return {"ok": True, "message": "连接正常（静音测试已收到响应）"}
     except httpx.HTTPStatusError as e:
+        from agent.providers.minimax import minimax_error_details
+        if minimax_error_details(e) is not None:
+            from agent.errors import describe_llm_error
+            presentation = describe_llm_error(e, diagnostic_context="admin.config.test_voice")
+            return {
+                "ok": False,
+                "message": presentation.text,
+                "message_key": presentation.message_key,
+                "message_params": presentation.message_params,
+            }
         # 上游 4xx 的响应体通常包含真正的参数/模型校验原因；只返回短的
         # 脱敏摘要，避免把可能包含凭据或请求细节的完整响应暴露给前端。
         detail = redact((e.response.text or "").strip()[:300])
         suffix = f"：{detail}" if detail else ""
         return {"ok": False, "message": f"测试失败：HTTP {e.response.status_code}{suffix}"}
     except Exception as e:
+        from agent.providers.minimax import minimax_error_details
+        if minimax_error_details(e) is not None:
+            from agent.errors import describe_llm_error
+            presentation = describe_llm_error(e, diagnostic_context="admin.config.test_voice")
+            return {
+                "ok": False,
+                "message": presentation.text,
+                "message_key": presentation.message_key,
+                "message_params": presentation.message_params,
+            }
         return {"ok": False, "message": f"测试失败：{redact(f'{type(e).__name__}: {e}')}"}
 
 

@@ -38,6 +38,7 @@ from agent.models import AgentRequest
 from agent.run.contract import (
     EARLY_EXIT_ATTACHMENT,
     EARLY_EXIT_QUOTA,
+    EARLY_EXIT_PROVIDER_ERROR,
     EARLY_EXIT_VOICE,
     EarlyExit,
     PreparedExecution,
@@ -386,10 +387,23 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         from agent import voice as _voice
         # 上面的会话读取事务已经结束，不能继续复用已退出上下文的 db；
         # 语音模型解析需要独立短事务，避免把连接带进后续 LLM 等待。
-        async with _sess._SessionLocal() as voice_db:
-            transcript = await _voice.transcribe(
-                _transcribe_media, settings, db=voice_db, user_id=user_id,
-            )
+        try:
+            async with _sess._SessionLocal() as voice_db:
+                transcript = await _voice.transcribe(
+                    _transcribe_media, settings, db=voice_db, user_id=user_id,
+                    raise_minimax_errors=True,
+                )
+        except Exception as error:
+            from agent.providers.minimax import minimax_error_details
+            if minimax_error_details(error) is None:
+                raise
+            from agent.errors import describe_llm_error
+            error_info = describe_llm_error(error, diagnostic_context="agent.run.preparation.voice")
+            _release_model(model_cfg)
+            return EarlyExit(EARLY_EXIT_PROVIDER_ERROR, AgentResponse(
+                text=error_info.text, session_id=session_id, tokens_in=0, tokens_out=0,
+                errored=True, error_info=error_info,
+            ))
         if transcript is None:        # 未配置语音模型
             _release_model(model_cfg)
             return EarlyExit(EARLY_EXIT_VOICE, AgentResponse(

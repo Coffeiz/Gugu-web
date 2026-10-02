@@ -25,4 +25,14 @@ export function getLocale(): SupportedLocale {
   return isSupportedLocale(value) ? value : 'zh-CN'
 }
 
+export function translateAgentError(messageKey: string, params?: Record<string, any>): string {
+  const resolvedParams = params ? { ...params } : {}
+  const descriptionKey = resolvedParams.minimax_description_key
+  if (typeof descriptionKey === 'string') {
+    resolvedParams.minimax_message = i18n.global.t(descriptionKey)
+    delete resolvedParams.minimax_description_key
+  }
+  return i18n.global.t(messageKey, resolvedParams)
+}
+
 export { detectBrowserLocale, isSupportedLocale, localeOptions, type SupportedLocale } from './types'

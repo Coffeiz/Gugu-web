@@ -279,10 +279,23 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
     if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
         from agent import voice as _voice
-        async with _sess._SessionLocal() as voice_db:
-            transcript = await _voice.transcribe(
-                _transcribe_media, settings, db=voice_db, user_id=user_id,
-            )
+        try:
+            async with _sess._SessionLocal() as voice_db:
+                transcript = await _voice.transcribe(
+                    _transcribe_media, settings, db=voice_db, user_id=user_id,
+                    raise_minimax_errors=True,
+                )
+        except Exception as error:
+            from agent.providers.minimax import minimax_error_details
+            if minimax_error_details(error) is None:
+                raise
+            from agent.errors import describe_llm_error
+            error_event = describe_llm_error(
+                error, diagnostic_context="agent.gateway.web.voice"
+            ).as_event()
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
         if transcript is None:        # 未配置语音模型
             block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
             async with _sess._SessionLocal() as db2:

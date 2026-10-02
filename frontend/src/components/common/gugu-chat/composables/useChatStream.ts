@@ -1,5 +1,5 @@
 import { ref, type Ref } from 'vue'
-import { getLocale, i18n } from '@/i18n'
+import { getLocale, i18n, translateAgentError } from '@/i18n'
 import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { useLiveStore } from '@/stores/live'
@@ -739,9 +739,11 @@ export function useChatStream(options: {
               options.clearStatus()
               playGuguSfx('error')
               const messageKey = typeof evt.message_key === 'string' ? evt.message_key : ''
-              const params = (evt.message_params && typeof evt.message_params === 'object') ? evt.message_params : undefined
+              const params = (evt.message_params && typeof evt.message_params === 'object')
+                ? { ...evt.message_params }
+                : undefined
               const errorText = messageKey
-                ? i18n.global.t(messageKey, params)
+                ? translateAgentError(messageKey, params)
                 : (evt.message || evt.detail || i18n.global.t('chatUi.genericError'))
               messages.value.push({ id: mkid(), role: 'ai', text: errorText, time: now() })
               aiMessageId = messages.value[messages.value.length - 1]?.id ?? null
