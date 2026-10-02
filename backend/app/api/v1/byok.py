@@ -58,7 +58,7 @@ class PreviewKeyReuseDenied(ValueError):
     """草稿试呼无法安全取得 Key（无凭据可回源，或目的地与存量凭据不一致）。"""
 
 
-_MISMATCH_MESSAGE = "Provider 或 Endpoint 已变更，为避免旧 Key 发往其他服务商，请重新填写 API Key"
+_MISMATCH_MESSAGE = "Provider 或自定义 Endpoint 已变更。请确认目标地址；如地址已更换，请重新填写 API Key"
 
 
 def _url_origin(url: str | None) -> tuple[str, str, int | None]:
@@ -69,30 +69,103 @@ def _url_origin(url: str | None) -> tuple[str, str, int | None]:
     return scheme, (parts.hostname or "").lower(), port
 
 
-def _effective_origin(provider: str, base_url: str) -> tuple[str, str, int | None] | None:
+def _effective_origin(
+    provider: str, base_url: str, *, api_format: str = "", model: str = "",
+) -> tuple[str, str, int | None] | None:
     """经 provider adapter 解析后的真实请求 origin（与 provider_diagnostics 同口径）。
 
     空串不等于「无目的地」：adapter 会把它落到 default_base_url（如 glm →
     open.bigmodel.cn）。返回 None 表示解析失败，由调用方按「无法证明同目的地」拒绝。
     """
     from agent.providers import adapter_for
-    cfg = SimpleNamespace(provider=provider, base_url=base_url)
+    cfg = SimpleNamespace(
+        provider=provider, api_format=api_format, base_url=base_url, model=model,
+    )
     try:
         return _url_origin(adapter_for(cfg).resolve_base_url(cfg))
     except Exception:
         return None
 
 
+def _protocol_default_origin(
+    provider: str, api_format: str, model: str,
+) -> tuple[str, str, int | None] | None:
+    """返回 Provider 明确声明的协议默认端点 origin，不猜测自定义地址。"""
+    from agent.providers import adapter_for
+
+    config = SimpleNamespace(
+        provider=provider, api_format=api_format, base_url="", model=model,
+    )
+    try:
+        adapter = adapter_for(config)
+        if api_format not in adapter.supported_api_formats(config):
+            return None
+        return _url_origin(adapter.default_base_url_for(config))
+    except Exception:
+        return None
+
+
+def _can_reuse_key_for_protocol_switch(
+    row: UserProviderCredential | None,
+    *,
+    target_provider: str,
+    target_api_format: str,
+    target_base_url: str,
+    target_model: str,
+) -> bool:
+    """只允许同厂商、同模型在两个已声明官方协议默认端点间复用 Key。"""
+    if row is None or getattr(row, "capability", None) != "llm":
+        return False
+    stored_model = getattr(row, "model", "") or ""
+    stored_api_format = getattr(row, "api_format", "") or ""
+    if row.provider != target_provider or stored_model != target_model:
+        return False
+
+    from agent.providers import adapter_for
+
+    old_config = SimpleNamespace(
+        provider=row.provider, api_format=stored_api_format,
+        base_url=row.base_url, model=stored_model,
+    )
+    try:
+        adapter = adapter_for(old_config)
+        old_api_format = stored_api_format or adapter.protocol_format(old_config)
+    except Exception:
+        return False
+    if not target_api_format or old_api_format == target_api_format:
+        return False
+
+    old_default = _protocol_default_origin(row.provider, old_api_format, stored_model)
+    target_default = _protocol_default_origin(
+        target_provider, target_api_format, target_model,
+    )
+    if old_default is None or target_default is None:
+        return False
+
+    stored_origin = _effective_origin(
+        row.provider, row.base_url,
+        api_format=getattr(row, "api_format", "") or "",
+        model=getattr(row, "model", "") or "",
+    )
+    target_origin = _effective_origin(
+        target_provider, target_base_url, api_format=target_api_format,
+        model=target_model,
+    )
+    return stored_origin == old_default and target_origin == target_default
+
+
 def resolve_preview_key(row: UserProviderCredential | None, *, supplied_key: str,
                         target_provider: str, target_base_url: str,
+                        target_api_format: str = "", target_model: str = "",
                         allow_keyless: bool = False) -> str:
     """草稿试呼（test-preview / models-preview / media-capability-probe 共用）的 Key 来源裁决。
 
     已存 Key 只属于它保存时的目的地：显式填写的新 Key 永远优先；目标是无鉴权
     自托管 Embedding 时直接用空串；否则仅当 provider 一致、且经 adapter 解析后的
-    effective origin（scheme+host+port）一致才解密复用——空串 base_url 会落到
-    provider 默认端点，必须按解析结果而非原始字符串比较，防止「清空 Base URL →
-    官方默认端点」绕过校验把 A 家 Key 发到 B 家 endpoint。拒绝时抛
+    effective origin（scheme+host+port）一致才解密复用；同厂商同模型在 Provider
+    明确声明的官方协议默认端点间切换也可复用。空串 base_url 会落到 provider
+    默认端点，必须按解析结果而非原始字符串比较，防止「清空 Base URL → 官方默认端点」
+    绕过校验把 A 家 Key 发到 B 家 endpoint。拒绝时抛
     PreviewKeyReuseDenied，调用方按各自响应形态转换。
     """
     if supplied_key:
@@ -103,10 +176,23 @@ def resolve_preview_key(row: UserProviderCredential | None, *, supplied_key: str
         raise PreviewKeyReuseDenied("请填写 API Key 后再测试")
     if row.provider != target_provider:
         raise PreviewKeyReuseDenied(_MISMATCH_MESSAGE)
-    stored_origin = _effective_origin(row.provider, row.base_url)
-    target_origin = _effective_origin(target_provider, target_base_url)
+    stored_api_format = getattr(row, "api_format", "") or ""
+    stored_model = getattr(row, "model", "") or ""
+    stored_origin = _effective_origin(
+        row.provider, row.base_url, api_format=stored_api_format, model=stored_model,
+    )
+    target_origin = _effective_origin(
+        target_provider, target_base_url, api_format=target_api_format,
+        model=target_model,
+    )
     # 解析失败按「无法证明同目的地」处理：宁拒勿漏。
-    if stored_origin is None or target_origin is None or stored_origin != target_origin:
+    if stored_origin is None or target_origin is None or (
+        stored_origin != target_origin and not _can_reuse_key_for_protocol_switch(
+            row, target_provider=target_provider,
+            target_api_format=target_api_format,
+            target_base_url=target_base_url, target_model=target_model,
+        )
+    ):
         raise PreviewKeyReuseDenied(_MISMATCH_MESSAGE)
     return decrypt_value(row)
 
@@ -165,7 +251,8 @@ async def preview_models(body: CredentialModelsPreview, user: User = Depends(get
             raise HTTPException(status_code=404, detail="凭据不存在")
     try:
         api_key = resolve_preview_key(row, supplied_key=body.api_key,
-                                      target_provider=body.provider, target_base_url=body.base_url)
+                                      target_provider=body.provider, target_base_url=body.base_url,
+                                      target_api_format=body.api_format, target_model=body.model)
     except PreviewKeyReuseDenied as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not api_key:
@@ -189,7 +276,8 @@ async def probe_media(body: MediaCapabilityProbe, user: User = Depends(get_curre
             raise HTTPException(status_code=404, detail="凭据不存在")
     try:
         api_key = resolve_preview_key(row, supplied_key=body.api_key,
-                                      target_provider=body.provider, target_base_url=body.base_url)
+                                      target_provider=body.provider, target_base_url=body.base_url,
+                                      target_api_format=body.api_format, target_model=body.model)
     except PreviewKeyReuseDenied as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not api_key:
@@ -215,23 +303,36 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
     if row is None:
         raise HTTPException(status_code=404, detail="凭据不存在")
     # Key 的目的地绑定裁决必须发生在改动 row 之前：provider/base_url 变更而未重新
-    # 提供 Key 时，旧 Key 是「它保存时那个目的地」的凭据，原样带到新 provider/新
-    # endpoint 会把 A 家 Key 发给 B 家（运行时 resolve 会解密旧 Key 拼进新配置）。
-    # 与 resolve_preview_key 同一规则：provider 一致且 effective origin（经 adapter
-    # 解析，空串落到默认端点）一致才允许「留空保持不变」；解析失败按无法证明同目的
-    # 地拒绝，宁拒勿漏。先全部校验再落字段，失败请求零副作用。
+    # 提供 Key 时，只复用同目的地 Key；同厂商同模型切换两个已声明的官方协议端点也
+    # 允许复用。任意自定义 endpoint 变更仍须重新输入，避免旧 Key 发往未经确认的地址。
+    # 解析失败按无法证明目标安全处理。先全部校验再落字段，失败请求零副作用。
     old_provider, old_base_url = row.provider, row.base_url
     target_provider = body.provider if body.provider is not None else old_provider
     target_base_url = body.base_url if body.base_url is not None else old_base_url
+    target_api_format = body.api_format if body.api_format is not None else row.api_format
+    target_model = body.model if body.model is not None else row.model
     # allow_empty / 一致性校验都基于保存后的目标配置（capability 经 PATCH 不可变）。
     final_allows_empty = _embedding_allows_empty_key(row.capability, target_provider, target_base_url)
     new_key_material: tuple[bytes, bytes, bytes] | None = None
     if body.value is None:
         destination_changed = old_provider != target_provider
         if not destination_changed:
-            stored_origin = _effective_origin(old_provider, old_base_url)
-            target_origin = _effective_origin(target_provider, target_base_url)
+            stored_origin = _effective_origin(
+                old_provider, old_base_url,
+                api_format=getattr(row, "api_format", "") or "",
+                model=getattr(row, "model", "") or "",
+            )
+            target_origin = _effective_origin(
+                target_provider, target_base_url, api_format=target_api_format,
+                model=target_model,
+            )
             destination_changed = stored_origin is None or target_origin is None or stored_origin != target_origin
+            if destination_changed and _can_reuse_key_for_protocol_switch(
+                row, target_provider=target_provider,
+                target_api_format=target_api_format or "",
+                target_base_url=target_base_url, target_model=target_model or "",
+            ):
+                destination_changed = False
         if destination_changed:
             raise HTTPException(status_code=422, detail=_MISMATCH_MESSAGE)
         if not final_allows_empty:
@@ -365,6 +466,7 @@ async def test_credential_preview(body: CredentialTestPreview, user: User = Depe
             api_key = resolve_preview_key(
                 row, supplied_key="", target_provider=body.provider,
                 target_base_url=body.base_url,
+                target_api_format=body.api_format, target_model=body.model,
                 allow_keyless=_embedding_allows_empty_key(body.capability, body.provider, body.base_url))
         except PreviewKeyReuseDenied as exc:
             return {"ok": False, "status": 0, "message": str(exc)}
