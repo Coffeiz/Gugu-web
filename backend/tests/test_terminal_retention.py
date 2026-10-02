@@ -157,6 +157,46 @@ async def test_append_shell_result_never_deletes_newest_event(db, user_a, monkey
 
 
 @pytest.mark.asyncio
+async def test_parallel_shell_results_allocate_unique_sequences_from_persisted_state(db, user_a):
+    """并发 dispatch 持有的终端 ORM 行可能过期；事件序号必须按数据库当前值原子递增。"""
+    terminal = TerminalSessionRecord(
+        id="term-parallel", owner_id=user_a.id, session_id=None,
+        name="咕咕终端", source="agent", status="idle",
+        shell_mode="sandbox", network_profile="none",
+    )
+    db.add(terminal)
+    await db.flush()
+
+    await append_shell_result(
+        db, terminal, command="printf first", stdout="first", stderr="",
+        exit_code=0, ok=True,
+    )
+    # 模拟并发 dispatch 从同一旧快照拿到的 terminal row，而不是复用已更新对象。
+    stale_terminal = TerminalSessionRecord(
+        id=terminal.id, owner_id=user_a.id, session_id=None,
+        name="咕咕终端", source="agent", status="running",
+        shell_mode="sandbox", network_profile="none",
+        last_sequence=0, output_chars=0,
+    )
+    await append_shell_result(
+        db, stale_terminal, command="printf second", stdout="second", stderr="",
+        exit_code=0, ok=True,
+    )
+
+    events = (await db.execute(
+        select(TerminalEventRecord).where(
+            TerminalEventRecord.terminal_id == terminal.id,
+        ).order_by(TerminalEventRecord.sequence.asc())
+    )).scalars().all()
+    await db.refresh(terminal)
+
+    assert [event.sequence for event in events] == [1, 2]
+    assert [event.command for event in events] == ["printf first", "printf second"]
+    assert terminal.last_sequence == 2
+    assert terminal.output_chars == len("first") + len("second")
+
+
+@pytest.mark.asyncio
 async def test_remove_session_closes_agent_terminal_but_keeps_user_terminal(db, user_a):
     session = ConversationSession(user_id=user_a.id)
     db.add(session)
