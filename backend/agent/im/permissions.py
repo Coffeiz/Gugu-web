@@ -108,6 +108,24 @@ async def resolve_access(
     return ImAccess(access.role, access.allowed_tool_names)
 
 
+async def resolve_group_owner_memory(actor, bot_id: str) -> bool:
+    """只读服务端 Bot 设置；载荷不能授权私人记忆进入群聊。"""
+    if not actor.is_owner or actor.chat_type != "group":
+        return False
+    bot_db_id = _parse_bot_db_id(bot_id)
+    if bot_db_id is None:
+        return False
+    import app.db.session as db_session
+    from app.models import UserBot
+
+    if db_session._engine is None:
+        db_session._build_engine()
+    async with db_session._SessionLocal() as db:
+        bot = await db.get(UserBot, bot_db_id)
+        return bool(bot and bot.user_id == actor.owner_user_id
+                    and bot.platform == actor.platform and bot.group_owner_memory_enabled)
+
+
 async def resolve_group_policy(bot_id: str) -> tuple[bool, bool, bool, bool, bool]:
     """读取 QQ 群策略：回应开关、@规则、静默记录和两类记忆开关。"""
     import app.db.session as db_session

@@ -1407,6 +1407,7 @@ class UserBot(Base):
     # 群聊记忆：分别控制本群公开记忆和群成员个人记忆的读取/沉淀。
     group_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     member_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    group_owner_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # 群成员可用工具白名单；默认开放联网搜索 + 图片搜索 + 发网络图片，不暴露用户私有内容和写操作。
     group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "read_file", "send_file"])
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
@@ -1616,5 +1617,16 @@ class NotificationRead(Base):
     user_id:         Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     notification_id: Mapped[int]      = mapped_column(ForeignKey("site_notifications.id", ondelete="CASCADE"), index=True)
     read_at:         Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+class NotificationDismissal(Base):
+    """按用户隐藏的站内通知；不删除其他用户仍可见的通知本体。"""
+    __tablename__ = "notification_dismissals"
+    __table_args__ = (UniqueConstraint("user_id", "notification_id", name="uq_notif_dismissal"),)
+
+    id:              Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:         Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    notification_id: Mapped[int]      = mapped_column(ForeignKey("site_notifications.id", ondelete="CASCADE"), index=True)
+    dismissed_at:    Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
 
 from app.models.mcp import UserMcpServer  # noqa: E402  (PRD-MCP-1)

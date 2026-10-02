@@ -4704,6 +4704,7 @@ export interface components {
             group_read_enabled?: boolean | null;
             /** Group Memory Enabled */
             group_memory_enabled?: boolean | null;
+            group_owner_memory_enabled?: boolean | null;
             /** Member Memory Enabled */
             member_memory_enabled?: boolean | null;
             /** Group Response Mode */

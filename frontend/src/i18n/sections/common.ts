@@ -323,4 +323,7 @@ Object.assign((messages['en-US'] as Record<string, any>).agent, { automaticModeH
 Object.assign((messages['zh-CN'] as Record<string, any>).agent, { automaticModeGroup: '自动模式' })
 Object.assign((messages['ja-JP'] as Record<string, any>).agent, { automaticModeGroup: '自動モード' })
 Object.assign((messages['en-US'] as Record<string, any>).agent, { automaticModeGroup: 'Automatic mode' })
+Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { groupOwnerMemory: '允许群聊使用个人记忆', groupOwnerMemoryHint: '仅本人发言时召回个人记忆；回复可能向群成员公开私人信息', groupOwnerMemoryWarning: '开启后，本人与咕咕在此 Bot 群聊中的对话可使用个人记忆，私人信息可能出现在群回复和群历史中。关闭不会撤回已有消息。确定开启？' })
+Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { groupOwnerMemory: 'Use personal memory in groups', groupOwnerMemoryHint: 'Only verified owner messages can recall personal memory; replies may disclose private information', groupOwnerMemoryWarning: 'Personal memory may appear in group replies and history. Disabling this does not retract existing messages. Enable?' })
+Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { groupOwnerMemory: 'グループで個人メモリを使用', groupOwnerMemoryHint: '本人と確認された発言のみ対象。返信で個人情報が共有される可能性があります', groupOwnerMemoryWarning: '個人メモリがグループの返信や履歴に含まれる可能性があります。無効にしても過去のメッセージは撤回されません。有効にしますか？' })
 }

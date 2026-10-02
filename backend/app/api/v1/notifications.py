@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.core.security import get_current_user
-from app.models import User, SiteNotification, NotificationRead
+from app.models import User, SiteNotification, NotificationDismissal, NotificationRead
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -40,7 +40,14 @@ async def list_notifications(
     uid = current_user.id
     rows = (await db.execute(
         select(SiteNotification)
-        .where(_visible(current_user), SiteNotification.persist == True)
+        .where(
+            _visible(current_user),
+            SiteNotification.persist == True,
+            ~exists().where(
+                NotificationDismissal.user_id == uid,
+                NotificationDismissal.notification_id == SiteNotification.id,
+            ),
+        )
         .order_by(SiteNotification.created_at.desc())
         .limit(max(1, min(limit, 100)))
     )).scalars().all()
@@ -74,6 +81,10 @@ async def latest_bubble(
             ~exists().where(
                 NotificationRead.user_id == uid,
                 NotificationRead.notification_id == SiteNotification.id,
+            ),
+            ~exists().where(
+                NotificationDismissal.user_id == uid,
+                NotificationDismissal.notification_id == SiteNotification.id,
             ),
         )
         .order_by(SiteNotification.created_at.desc())
@@ -113,3 +124,35 @@ async def mark_read(
     if added:
         await db.commit()
     return {"ok": True, "marked": added}
+
+
+@router.delete("")
+async def clear_notifications(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """清空当前用户的持久通知视图，不删除其他用户可见的通知本体。"""
+    uid = current_user.id
+    target_ids = (await db.execute(
+        select(SiteNotification.id).where(
+            _visible(current_user),
+            SiteNotification.persist == True,
+        )
+    )).scalars().all()
+    if not target_ids:
+        return {"ok": True, "dismissed": 0}
+
+    existing = set((await db.execute(
+        select(NotificationDismissal.notification_id).where(
+            NotificationDismissal.user_id == uid,
+            NotificationDismissal.notification_id.in_(target_ids),
+        )
+    )).scalars().all())
+    added = 0
+    for notification_id in target_ids:
+        if notification_id not in existing:
+            db.add(NotificationDismissal(user_id=uid, notification_id=notification_id))
+            added += 1
+    if added:
+        await db.commit()
+    return {"ok": True, "dismissed": added}

@@ -230,6 +230,8 @@ def _request_scopes(request) -> list[tuple[str, Any]]:
         if getattr(request, "im_group_memory_enabled", True):
             scopes.append(("group-rag", group_scope(request.user_id, source, bot_id, chat_id)))
         role = getattr(request, "im_role", None)
+        if role == "owner" and getattr(request, "im_group_owner_memory_enabled", False):
+            scopes.append(("owner-rag", owner_scope(request.user_id)))
         if role == "member" and getattr(request, "im_member_memory_enabled", True):
             member_id = str(getattr(request, "platform_user_id", "") or "")
             if member_id:

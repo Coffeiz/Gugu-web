@@ -827,6 +827,7 @@ export const notificationsApi = {
   list:        ()    => get('/notifications'),                       // 通知中心：近期持久通知 + 未读态
   latestBubble: ()   => get('/notifications/bubble'),               // 上线补弹：最近一条有效气泡（{bubble:null|{...}}）
   markRead:    (ids?: number[] | null) => request('POST', '/notifications/read', { ids: ids ?? null }),  // 无 ids = 全部已读
+  clear:       ()    => del<{ ok: boolean; dismissed: number }>('/notifications'), // 仅清除当前用户的通知视图
 }
 
 export const agentApi = {
