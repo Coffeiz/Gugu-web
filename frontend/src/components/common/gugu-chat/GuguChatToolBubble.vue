@@ -65,7 +65,7 @@ const toolLabel = computed(() => {
   return backendLabel || toolName || t('chatUi.toolCall')
 })
 const statusText = computed(() => ({
-  running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),
+  queued: t('chatUi.toolQueued'), running: t('chatUi.toolRunning'), waiting: t('chatUi.toolWaiting'), success: t('chatUi.toolDone'), error: t('chatUi.toolFailed'), skipped: t('chatUi.toolSkipped'),
   cancelled: t('chatUi.toolCancelled'),
 }[props.msg.toolStatus || 'running']))
 const durationText = computed(() => {
@@ -170,6 +170,7 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-head { position: relative; z-index: 1; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; grid-template-rows: auto auto; align-items: center; column-gap: 9px; width: 100%; min-height: 54px; border: 0; padding: 10px 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .tool-event-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--border-focus); }
 .tool-event-state { grid-row: 1 / span 2; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--content-tertiary); }
+.tool-event-state.is-queued { background: var(--content-secondary); }
 .tool-event-state.is-running { background: var(--action-primary); animation: tool-pulse 1.2s ease-in-out infinite; }
 .tool-event-state.is-success { background: var(--status-success); }
 .tool-event-state.is-error { background: var(--status-danger); }

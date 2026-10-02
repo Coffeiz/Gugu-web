@@ -717,18 +717,24 @@ async def run_loop(
                             label = runner._label("_verify_prefix", "复查 · ") + label
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{original_index + 1}"
                         tool_calls_used += 1
-                        await _core._im_set_tool_state(effective_tool_name)
                         yield stream_event(
                             "tool_call", round_id=round_id, tool_call_id=tool_call_id,
                             name=effective_tool_name, label=label, input=dispatch_input,
-                            verify=verify_mode, status="running",
+                            verify=verify_mode, status="queued",
                         )
                         parallel_meta.append((original_index, tc, dispatch_target, dispatch_input,
                                               effective_tool_name, label, tool_call_id))
                     parallel_meta_by_index = {item[0]: item for item in parallel_meta}
 
+                    started_calls: asyncio.Queue[tuple[int, asyncio.Future[None]] | None] = asyncio.Queue()
+
                     async def _dispatch_parallel_call(call):
-                        _original_index, _tc, target, arguments = call
+                        original_index, _tc, target, arguments = call
+                        meta = parallel_meta_by_index[original_index]
+                        await _core._im_set_tool_state(meta[4])
+                        acknowledged = asyncio.get_running_loop().create_future()
+                        started_calls.put_nowait((original_index, acknowledged))
+                        await acknowledged
                         from agent.tools.base import parallel_dispatch_context
                         with parallel_dispatch_context():
                             return await _core._dispatch_in_session(
@@ -738,14 +744,49 @@ async def run_loop(
                                 skill_state=_core._copy_skill_state_for_parallel(loaded_skill_slugs),
                             )
 
+                    async def _dispatch_parallel_batch():
+                        try:
+                            return await _core._run_parallel_dispatches(
+                                parallel_batch, _dispatch_parallel_call,
+                                max_concurrency=getattr(
+                                    agent_settings, "parallel_tool_max_concurrency", 5,
+                                ),
+                            )
+                        except _core._ParallelDispatchCancelled as exc:
+                            return exc
+                        finally:
+                            started_calls.put_nowait(None)
+
                     dispatch_started_at = time.monotonic()
+                    dispatch_task = asyncio.create_task(_dispatch_parallel_batch())
                     try:
-                        parallel_results = await _core._run_parallel_dispatches(
-                            parallel_batch, _dispatch_parallel_call,
-                            max_concurrency=getattr(
-                                agent_settings, "parallel_tool_max_concurrency", 5,
-                            ),
-                        )
+                        while True:
+                            started = await started_calls.get()
+                            if started is None:
+                                break
+                            original_index, acknowledged = started
+                            meta = parallel_meta_by_index[original_index]
+                            if not acknowledged.done():
+                                acknowledged.set_result(None)
+                            yield stream_event(
+                                "tool_call", round_id=round_id,
+                                tool_call_id=meta[6], name=meta[4], label=meta[5],
+                                input=meta[3], verify=verify_mode, status="running",
+                            )
+                        parallel_results = await dispatch_task
+                        if isinstance(parallel_results, _core._ParallelDispatchCancelled):
+                            parallel_cancelled = True
+                            parallel_results = parallel_results.results
+                    except asyncio.CancelledError:
+                        if not dispatch_task.done():
+                            dispatch_task.cancel()
+                        settled = await asyncio.gather(dispatch_task, return_exceptions=True)
+                        cancellation = settled[0] if settled else None
+                        if isinstance(cancellation, _core._ParallelDispatchCancelled):
+                            parallel_results = cancellation.results
+                            parallel_cancelled = True
+                        else:
+                            raise
                     except _core._ParallelDispatchCancelled as exc:
                         parallel_results = exc.results
                         parallel_cancelled = True

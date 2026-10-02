@@ -88,8 +88,9 @@
 
 ### FR-LLM31-03：事件与结果顺序稳定
 
-- 所有 tool_call running 事件按模型返回顺序发出。
-- 并发任务可以任意顺序完成；dispatched、canonical history 和下一轮 Provider 输入仍按模型原始顺序排列。
+- 并行批次中的调用首次以 `queued` 状态按模型返回顺序展示；调度器真正放行某调用时，再以相同 tool_call_id 更新为 `running`。未启动的排队项不得显示为运行中，也不得开始计时。
+- 同一 tool_call_id 的状态更新必须更新现有实时卡片及持久化时间线项，不得重复创建卡片；取消时排队中与运行中的调用都必须进入 cancelled 终态。
+- 串行批次仍在开始 dispatch 时发出 running；并发任务完成后，终态、dispatched、canonical history 和下一轮 Provider 输入仍按模型原始顺序排列。
 - 每个 tool call 恰有一个终态结果；普通单调用失败不丢弃同批其他结果。
 - Run 取消时取消尚未完成任务并等待清理；已完成结果遵循当前持久化/可观测策略。不可并行副作用工具不进入并行批次。
 - 继续遵守 Provider 对 assistant tool call 与 tool result 的一一配对规则。
@@ -135,8 +136,8 @@
 ### Phase 1：有界执行器（已完成，2026-10-02）
 
 - `AgentBehaviorSettings.parallel_tool_execution_enabled` 是全局并行开关，默认 `false`，可由环境变量 `AGENT__PARALLEL_TOOL_EXECUTION_ENABLED` 设置初始值，并可在 Admin → Agent → 运行行为中持久化切换，方便调试和快速回退。关闭时已审查的候选批次走串行路径；未审查、混合或含交互的批次无论开关状态都保持串行。
-- 单 Round 固定最多并发 4 项，按输入顺序切块；任一批次不满足资格或输入 schema 预检失败，整批使用原串行路径。
-- 全批 `tool_call/running` 先按模型顺序发出；并行任务完成后，结果事件、`dispatched`、canonical history 和 Provider round 均按原索引回填。
+- 单 Round 按 Admin 配置的并发上限分批；任一批次不满足资格或输入 schema 预检失败，整批使用原串行路径。
+- 并行批次先按模型顺序发出 `tool_call/queued`；各调用被调度器实际启动时更新为 `running`。任务完成后，结果事件、`dispatched`、canonical history 和 Provider round 均按原索引回填。
 - 单项普通异常作为该项脱敏错误回执，不丢弃其他结果；任务取消时取消并等待未完成项，保留已完成项的真实回执，为未完成项写入取消回执并发 `cancelled` 终态，然后结束当前 Run，不继续请求 Provider。
 - 验收：屏障测试确认真实重叠；逆序完成仍按模型顺序回填；启用开关的混合批次仍严格串行；单项失败隔离、部分完成取消、canonical 配对与取消后不续轮测试通过。
 
@@ -204,7 +205,7 @@
 1. 每 Round 并发上限由 Admin 配置，默认 5，范围 1–20，超出按原顺序分批。
 2. 全局串行回退由默认关闭的配置控制，并在 Admin → Agent → 运行行为提供持久化调试开关。
 3. 交互/确认/技能加载/外部 MCP 调用，以及无法解析或无法证明安全的整批均串行。
-4. 并行批次先按模型顺序发出全部 running，再按模型顺序发终态；取消时取消并等待未完成任务，已完成调用保留其实际结果，已取消调用发取消终态，之后不再请求下一轮 Provider。
+4. 并行批次先按模型顺序发出 queued；实际启动的调用更新为 running，终态按模型顺序发出。取消时取消并等待未完成任务，已完成调用保留其实际结果，已排队/运行调用发取消终态，之后不再请求下一轮 Provider。
 5. 首批安全工具名单留到 Phase 2，逐个审查 handler、副作用、共享状态和归属校验后再启用。
 
 ## 9. TODO
@@ -263,3 +264,10 @@
 - 回归验证：并行策略与 Loop、Shell 锁、配置持久化等后端定向测试 100 passed；Admin 前端 typecheck 和 build 通过；ownership、confirm-gate 检查及 Python compileall 通过。前端构建仅有既有 Vite 配置、chunk 大小和 highlight.js 动态/静态导入提示。
 
 - [x] LLM31-006 状态：完成（2026-10-02）。最终审计确认关键行为、Provider 往返与 Admin 回退路径；明确登记全量测试 13 个范围外失败并按约定跳过。未触碰其余未提交改动。
+- [x] LLM31-008 状态：完成（2026-10-02）。并行工具先显示“排队中”，只在调度器放行后显示“进行中”；前端按 tool_call_id 更新原卡片并从真正启动时计时，取消与持久化恢复均覆盖排队状态。
+
+### LLM31-008 实施记录
+
+- 并行 dispatch 首次事件按原顺序标记 `queued`；调度器启动单项后发同一 `tool_call_id` 的 `running` 更新。实时卡片和数据库时间线均按调用 ID 原位更新，刷新快照也不会把 queued 状态误发为终态。
+- queued 卡片不显示运行耗时；转为 running 才开始计时。取消时排队中和执行中的卡片均收敛到 cancelled。
+- 验证：Loop 并行策略与取消、快照恢复相关后端测试 96 passed；前端 composable 用例 6 passed、typecheck 与 production build 通过。构建仍有仓库既有的大 chunk 和 highlight.js 导入告警。

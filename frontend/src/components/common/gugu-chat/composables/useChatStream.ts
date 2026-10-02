@@ -493,6 +493,9 @@ export function useChatStream(options: {
                 existing.roundId = evt.round_id || existing.roundId
                 existing.toolName = evt.name || existing.toolName
                 existing.toolLabel = evt.label || existing.toolLabel
+                if (evt.status === 'running' && existing.toolStatus !== 'running') {
+                  (existing as ChatMessage & { _toolStartedAt?: number })._toolStartedAt = Date.now()
+                }
                 existing.toolStatus = evt.status || existing.toolStatus || 'running'
                 if (evt.input !== undefined) existing.toolInput = evt.input
                 toolMessageIds.set(toolCallId, existing.id)
@@ -504,7 +507,7 @@ export function useChatStream(options: {
                   runId: evt.run_id, roundId: evt.round_id || currentRoundId,
                   toolCallId, toolName: evt.name, toolLabel: evt.label,
                   toolStatus: evt.status || 'running', toolInput: evt.input,
-                  _toolStartedAt: Date.now(),
+                  ...(evt.status === 'queued' ? {} : { _toolStartedAt: Date.now() }),
                 })
                 sortLiveTimeline()
                 toolMessageIds.set(toolCallId, messageId)
@@ -534,7 +537,7 @@ export function useChatStream(options: {
             if (toolIndex < 0 && evt.name) {
               toolIndex = messages.value.findLastIndex(item =>
                 item.role === 'tool'
-                && item.toolStatus === 'running'
+                && (item.toolStatus === 'running' || item.toolStatus === 'queued')
                 && (!evt.round_id || item.roundId === evt.round_id)
                 && (!item.toolName || item.toolName === evt.name),
               )
@@ -728,7 +731,7 @@ export function useChatStream(options: {
                 aborted = true // 取消是正常终态，不应再补「没有收到回复」兜底气泡。
                 for (const messageId of toolMessageIds.values()) {
                   const item = messages.value.find(message => message.id === messageId)
-                  if (item?.role === 'tool' && (item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
+                  if (item?.role === 'tool' && (item.toolStatus === 'queued' || item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
                     item.toolStatus = 'cancelled'
                   }
                 }

@@ -523,7 +523,7 @@ async def _close_running_tool_events(display_timeline: list, pub) -> None:
     SSE 补发合成 tool_done，让实时与刷新两端都收敛。
     """
     for item in display_timeline:
-        if item.get("kind") != "tool" or item.get("toolStatus") not in ("running", "waiting"):
+        if item.get("kind") != "tool" or item.get("toolStatus") not in ("queued", "running", "waiting"):
             continue
         item["toolStatus"] = "cancelled"
         await pub({
@@ -597,7 +597,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
             for tool_call in snap.get("tools") or []:
                 if tool_call.get("name"):
                     yield f"data: {json.dumps({'type': 'tool_call', **tool_call}, ensure_ascii=False)}\n\n"
-                    if tool_call.get("status") not in (None, "running"):
+                    if tool_call.get("status") not in (None, "queued", "running", "waiting"):
                         yield f"data: {json.dumps({'type': 'tool_done', **tool_call}, ensure_ascii=False)}\n\n"
         async for line in genstream.subscribe(session_id, pubsub=pubsub):
             yield line
@@ -916,14 +916,23 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 if name and not name.startswith("_") and name not in used_tools:
                     used_tools.append(name)
                 if name and not name.startswith("_"):
-                    display_timeline.append({
+                    timeline_item = {
                         "kind": "tool",
                         "toolCallId": str(evt.get("tool_call_id") or ""),
                         "toolName": name,
                         "toolLabel": evt.get("label") or name,
                         "toolInput": evt.get("input"),
                         "toolStatus": evt.get("status") or "running",
-                    })
+                    }
+                    call_id = timeline_item["toolCallId"]
+                    existing_item = next((
+                        item for item in reversed(display_timeline)
+                        if item.get("kind") == "tool" and item.get("toolCallId") == call_id
+                    ), None) if call_id else None
+                    if existing_item is None:
+                        display_timeline.append(timeline_item)
+                    else:
+                        existing_item.update(timeline_item)
             if etype == "tool_done":
                 call_id = str(evt.get("tool_call_id") or "")
                 for item in reversed(display_timeline):

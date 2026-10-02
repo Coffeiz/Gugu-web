@@ -1239,6 +1239,9 @@ async def test_enabled_parallel_round_overlaps_but_emits_and_persists_in_model_o
     assert started == ["safe_alpha", "safe_beta", "safe_gamma"]
     assert completed == ["safe_gamma", "safe_beta", "safe_alpha"]
     assert events == [
+        ("tool_call", "call-a", "queued"),
+        ("tool_call", "call-b", "queued"),
+        ("tool_call", "call-c", "queued"),
         ("tool_call", "call-a", "running"),
         ("tool_call", "call-b", "running"),
         ("tool_call", "call-c", "running"),
@@ -1330,9 +1333,13 @@ async def test_invalid_protocol_call_does_not_serialize_five_safe_shell_calls(mo
     tool_events = [
         event for event in events if event.get("type") in {"tool_call", "tool_done"}
     ]
-    assert [event.get("tool_call_id") for event in tool_events if event["type"] == "tool_call"] == [
-        "bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4",
-    ]
+    calls_by_id = {
+        call_id: [event["status"] for event in tool_events
+                  if event["type"] == "tool_call" and event.get("tool_call_id") == call_id]
+        for call_id in ("bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4")
+    }
+    assert calls_by_id["bad-call"] == ["invalid"]
+    assert all(calls_by_id[f"shell-{index}"] == ["queued", "running"] for index in range(5))
     assert [event.get("tool_call_id") for event in tool_events if event["type"] == "tool_done"] == [
         "bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4",
     ]
@@ -1401,6 +1408,78 @@ async def test_parallel_round_uses_admin_configured_concurrency_limit(monkeypatc
         pass
 
     assert received_limits == [2]
+
+
+async def test_parallel_tool_events_distinguish_queued_from_running(monkeypatch):
+    """排队卡片保持 queued；只有调度器放行的两个调用才显示 running。"""
+    from agent.tools.base import Tool
+
+    calls = [TU(f"safe_{i}", f"call-{i}", {}) for i in range(5)]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("完成")])])
+    tools = {
+        call.name: Tool(
+            name=call.name, description="并发安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None, parallel_safe=True,
+        )
+        for call in calls
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    started = []
+    release = asyncio.Event()
+    two_started = asyncio.Event()
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        started.append(name)
+        if len(started) == 2:
+            two_started.set()
+        await release.wait()
+        return json.dumps({"result": name}), None
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(
+            parallel_tool_execution_enabled=True,
+            parallel_tool_max_concurrency=2,
+        ),
+    )
+    stream = make_runner(settings=settings)._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "并发查询"}], AI,
+    )
+    events = []
+
+    async def read_until_two_are_running():
+        async for chunk in stream:
+            try:
+                event = json.loads(chunk[len("data: "):])
+            except (TypeError, ValueError):
+                continue
+            if event.get("type") == "tool_call":
+                events.append(event)
+                if sum(item.get("status") == "running" for item in events) == 2:
+                    return
+
+    consumer = asyncio.create_task(read_until_two_are_running())
+    await asyncio.wait_for(two_started.wait(), timeout=1)
+    await asyncio.wait_for(consumer, timeout=1)
+    assert [event["status"] for event in events] == ["queued"] * 5 + ["running"] * 2
+    assert len(started) == 2
+
+    release.set()
+    remaining = []
+    async for chunk in stream:
+        try:
+            remaining.append(json.loads(chunk[len("data: "):]))
+        except (TypeError, ValueError):
+            continue
+    assert [event["tool_call_id"] for event in remaining if event.get("type") == "tool_call" and event.get("status") == "running"] == ["call-2", "call-3", "call-4"]
 
 
 async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(monkeypatch):
@@ -1476,6 +1555,9 @@ async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(
         if event.get("type") in {"tool_call", "tool_done"}
     ]
     assert terminal_events == [
+        ("tool_call", "call-a", "queued"),
+        ("tool_call", "call-b", "queued"),
+        ("tool_call", "call-c", "queued"),
         ("tool_call", "call-a", "running"),
         ("tool_call", "call-b", "running"),
         ("tool_call", "call-c", "running"),
