@@ -1,6 +1,6 @@
 # PRD-NET-1：安全出站 HTTP 适配器与代理配置
 
-> 状态：实施中（Phase 0、Phase 1、Phase 2 已完成）
+> 状态：Phase 0–2 已实施；Phase 3 评估完成，其他用途待单独决策
 > 创建：2026-10-02
 > 最近更新：2026-10-02
 > 关联模块：`backend/app/core/url_security.py`、`backend/app/core/pinned_http.py`、`backend/app/core/safe_egress.py`、`backend/app/api/v1/safe_egress_admin.py`、`backend/agent/tools/web.py`、`backend/agent/tools/search.py`、`backend/agent/tools/deep_research.py`、`backend/agent/mcp/client.py`、`backend/agent/tools/files/transfer.py`、Admin 运行配置
@@ -185,6 +185,18 @@ PoC 必须同时验证连接确实钉扎目标 IP。代理不支持时停止并�
 ### Phase 3：其他出站客户端评估
 
 按请求类型评估供应商 SDK、MCP、平台 gateway 和媒体服务。Admin 可按用途开启代理范围；任何迁移必须验证鉴权、流式响应、连接池和超时行为。内部服务和入站连接不在此阶段默认迁移。
+
+**Phase 3 评估结果（2026-10-02）**：本阶段完成边界审查，没有把这些调用纳入“公网内容抓取”开关。
+
+| 请求类别 | 当前边界 | 评估与后续建议 |
+|---|---|---|
+| 模型 Provider SDK | OpenAI/Anthropic SDK 由 provider factory 构造；Base URL 可能是官方云端、自定义 BYOK，也可能是 Ollama/本地兼容服务。Anthropic SDK 目前使用不同的 HTTP runtime。 | 不应全局代理或套任意 URL 的公网校验。后续应新增独立的 `provider_api` 用途配置，按 Provider/明确 endpoint 授权；OpenAI 与 Anthropic 分别验证 SDK transport 注入、流式、超时和重试。 |
+| MCP HTTP | endpoint 是用户配置，当前每次请求先校验并钉扎公网 IP、拒绝自动重定向；stdio MCP 走本地 sandbox socket。 | HTTP 代理可作为独立的 MCP server 传输选项，但要保留 endpoint 级授权、凭据头/query 注入及响应流协议。不能让本地 stdio 或内部 endpoint 继承公网代理策略。 |
+| 平台 gateway / IM | QQ、飞书等有固定 API、长连接/回调、签名和重试契约。 | 不进入通用工具出站代理。若有部署网络需求，另做 gateway 专属代理和连接器配置，不能改变回调入站或长连接生命周期。 |
+| 媒体与语音 API | 有固定厂商 endpoint 和凭据；图片 URL 下载已统一归入 Phase 2 任意 URL 路径。 | 固定媒体/语音 API 随对应 Provider API 用途评估；图片 URL 读取沿用 `agent_web_fetch`。 |
+| 搜索服务 | SearXNG endpoint 由管理员配置，允许本地部署；深度研究/相似图搜索调用固定第三方 API 并携带各自 Key。 | SearXNG 保持现有直连语义；第三方 API 归到独立 Provider endpoint policy，不接受任意目标，也不使用 `http_get` 的普通网页 SSRF 授权。 |
+
+本阶段没有剩余实现提交。后续若需要代理 Provider API/MCP，由独立需求明确用途开关、受信目的地址来源和本地 endpoint 行为，再分别实现；不扩大当前默认范围。
 
 ## 8. 测试与验收
 
