@@ -214,9 +214,10 @@ def test_batch_observation_contains_only_bounded_aggregate_fields(caplog):
     with caplog.at_level("INFO", logger="agent.traj"):
         _log_tool_batch_observation(
             {
-                "mode": "serial",
+                "mode": "parallel",
                 "calls": 2,
-                "reason": "batch_not_eligible_or_preflight_failed",
+                "isolated_invalid": 1,
+                "reason": "eligible_batch",
                 "query": "must not enter logs",
             },
         )
@@ -225,9 +226,10 @@ def test_batch_observation_contains_only_bounded_aggregate_fields(caplog):
     assert record == {
         "t": "loop",
         "event": "tool_batch",
-        "mode": "serial",
+        "mode": "parallel",
         "calls": 2,
-        "reason": "batch_not_eligible_or_preflight_failed",
+        "isolated_invalid": 1,
+        "reason": "eligible_batch",
     }
     assert not {"user", "run", "tool", "args", "url", "query"}.intersection(record)
 
