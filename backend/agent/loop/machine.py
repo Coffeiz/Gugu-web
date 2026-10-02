@@ -670,17 +670,22 @@ async def run_loop(
 
                     async def _dispatch_parallel_call(call):
                         _tc, target, arguments = call
-                        return await _core._dispatch_in_session(
-                            user_id, target, arguments,
-                            session_id=session_id, session=session, run_id=run_id,
-                            tool_snapshot=tool_snapshot,
-                            skill_state=_core._copy_skill_state_for_parallel(loaded_skill_slugs),
-                        )
+                        from agent.tools.base import parallel_dispatch_context
+                        with parallel_dispatch_context():
+                            return await _core._dispatch_in_session(
+                                user_id, target, arguments,
+                                session_id=session_id, session=session, run_id=run_id,
+                                tool_snapshot=tool_snapshot,
+                                skill_state=_core._copy_skill_state_for_parallel(loaded_skill_slugs),
+                            )
 
                     dispatch_started_at = time.monotonic()
                     try:
                         parallel_results = await _core._run_parallel_dispatches(
                             parallel_batch, _dispatch_parallel_call,
+                            max_concurrency=getattr(
+                                agent_settings, "parallel_tool_max_concurrency", 5,
+                            ),
                         )
                     except _core._ParallelDispatchCancelled as exc:
                         parallel_results = exc.results

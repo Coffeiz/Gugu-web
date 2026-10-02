@@ -5,11 +5,21 @@
       <span class="behavior-desc">{{ t('agentParallelUi.hint') }}</span>
     </div>
     <div class="control-status">
-      <span v-if="error" class="status-text status-error" role="status">{{ error }}</span>
-      <span v-else-if="saved" class="status-text" role="status">{{ t('agent.saved') }}</span>
+      <div class="limit-control">
+        <span>{{ t('agentParallelUi.limit') }}</span>
+        <input
+          class="form-input limit-input"
+          :value="props.maxConcurrency"
+          type="number"
+          min="1"
+          max="20"
+          step="1"
+          :aria-label="t('agentParallelUi.limit')"
+          @change="emit('update:maxConcurrency', Number(($event.target as HTMLInputElement).value))"
+        />
+      </div>
       <ToggleSwitch
-        :model-value="modelValue"
-        :disabled="saving"
+        :model-value="props.modelValue"
         :aria-label="t('agentParallelUi.label')"
         @update:model-value="emit('update:modelValue', $event)"
       />
@@ -21,14 +31,15 @@
 import { useI18n } from 'vue-i18n'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 
-defineProps<{
+const props = defineProps<{
   modelValue: boolean
-  saving: boolean
-  saved: boolean
-  error: string
+  maxConcurrency: number
 }>()
 
-const emit = defineEmits<{ (event: 'update:modelValue', value: boolean): void }>()
+const emit = defineEmits<{
+  (event: 'update:modelValue', value: boolean): void
+  (event: 'update:maxConcurrency', value: number): void
+}>()
 const { t } = useI18n()
 </script>
 
@@ -38,7 +49,7 @@ const { t } = useI18n()
 .behavior-label>span:first-child { font-size:13px; font-weight:500; color:var(--content-primary); }
 .behavior-desc { color:var(--content-tertiary); font-size:12px; line-height:1.5; }
 .control-status { display:flex; align-items:center; gap:10px; flex-shrink:0; }
-.status-text { color:var(--status-success); font-size:12px; }
-.status-error { max-width:280px; color:var(--status-danger); overflow-wrap:anywhere; }
+.limit-control { display:flex; align-items:center; gap:8px; color:var(--content-secondary); font-size:12px; white-space:nowrap; }
+.limit-control .limit-input { width:64px; min-height:32px; padding:5px 8px; text-align:center; }
 @media(max-width:720px) { .behavior-item { align-items:flex-start; } }
 </style>

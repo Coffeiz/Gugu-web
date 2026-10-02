@@ -129,8 +129,12 @@ def _get_session_lock(session_id: int) -> asyncio.Lock:
 
 @asynccontextmanager
 async def session_shell_lock(session_id: int | None):
-    """串行化同一会话的工作区绑定和 Shell 执行。"""
+    """串行化普通调用的工作区绑定和 Shell 执行；并行 Round 由调度上限控制。"""
     if not session_id:
+        yield
+        return
+    from agent.tools.base import current_dispatch_is_parallel
+    if current_dispatch_is_parallel():
         yield
         return
     async with _get_session_lock(int(session_id)):

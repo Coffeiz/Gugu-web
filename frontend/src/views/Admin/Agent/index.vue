@@ -215,10 +215,9 @@
         <div class="behavior-grid">
           <ParallelToolExecutionControl
             :model-value="agentDraft.parallel_tool_execution_enabled"
-            :saving="parallelToolSaving"
-            :saved="parallelToolSaved"
-            :error="parallelToolError"
-            @update:model-value="setParallelToolExecution"
+            :max-concurrency="agentDraft.parallel_tool_max_concurrency"
+            @update:model-value="agentDraft.parallel_tool_execution_enabled = $event; saveBehavior()"
+            @update:max-concurrency="agentDraft.parallel_tool_max_concurrency = $event; saveBehavior()"
           />
 
           <div v-if="behaviorTab === 'runtime'" class="behavior-item">
@@ -633,10 +632,6 @@ const sandboxRuntimeEnabled = ref(false)
 const mcpSaving = ref(false)
 const mcpSaved = ref(false)
 const mcpError = ref('')
-const parallelToolSaving = ref(false)
-const parallelToolSaved = ref(false)
-const parallelToolError = ref('')
-
 const tabs = computed(() => [
   { key: 'llm',      label: t('agent.llm') },
   { key: 'permissions', label: t('agent.permissions') },
@@ -670,21 +665,6 @@ async function saveMcpEnabled(enabled: boolean) {
     setTimeout(() => { mcpSaved.value = false }, 3000)
   }
   mcpSaving.value = false
-}
-
-async function setParallelToolExecution(enabled: boolean) {
-  parallelToolSaving.value = true
-  parallelToolSaved.value = false
-  parallelToolError.value = ''
-  await configStore.saveConfig({ agent: { parallel_tool_execution_enabled: enabled } })
-  if (configStore.saveError) {
-    parallelToolError.value = configStore.saveError
-  } else {
-    agentDraft.parallel_tool_execution_enabled = enabled
-    parallelToolSaved.value = true
-    setTimeout(() => { parallelToolSaved.value = false }, 3000)
-  }
-  parallelToolSaving.value = false
 }
 
 // ── LLM 预设 ──────────────────────────────────────────────────────────────

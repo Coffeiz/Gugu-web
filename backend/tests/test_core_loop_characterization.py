@@ -1257,6 +1257,57 @@ async def test_enabled_parallel_round_overlaps_but_emits_and_persists_in_model_o
     ]
 
 
+async def test_parallel_round_uses_admin_configured_concurrency_limit(monkeypatch):
+    """Admin 保存的每轮上限必须传到真实 Round 调度器，而非只影响 UI。"""
+    from agent.loop import machine as loop_machine
+    from agent.tools.base import Tool
+
+    calls = [TU("safe_alpha", "call-a", {}), TU("safe_beta", "call-b", {})]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("完成")])])
+    tools = {
+        name: Tool(
+            name=name, description="并发安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None, parallel_safe=True,
+        )
+        for name in ("safe_alpha", "safe_beta")
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(
+        registry, "dispatch",
+        lambda _user, name, _args: asyncio.sleep(0, result=(json.dumps({"result": name}), None)),
+    )
+    original_dispatcher = loop_machine._core._run_parallel_dispatches
+    received_limits = []
+
+    async def record_limit(batch, dispatch, **kwargs):
+        received_limits.append(kwargs.get("max_concurrency"))
+        return await original_dispatcher(batch, dispatch, **kwargs)
+
+    monkeypatch.setattr(loop_machine._core, "_run_parallel_dispatches", record_limit)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(
+            parallel_tool_execution_enabled=True,
+            parallel_tool_max_concurrency=2,
+        ),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "读取两项"},
+    ])
+
+    async for _chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+        pass
+
+    assert received_limits == [2]
+
+
 async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(monkeypatch):
     """取消并发批次时保留已完成回执、关闭未完成调用，且绝不请求下一轮 Provider。"""
     from agent.tools.base import Tool

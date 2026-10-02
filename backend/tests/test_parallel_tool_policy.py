@@ -122,6 +122,25 @@ def test_parallel_safe_predicate_failure_falls_back_to_serial():
     )
 
 
+def test_input_parallel_authorization_is_required_for_mutating_shell_tools():
+    tool = _tool(
+        "guarded_shell",
+        parallel_safe_for_input=lambda args: args.get("command") == "read-only",
+        mutates=True,
+        destructive=True,
+    )
+    snapshot = _snapshot(tool)
+
+    assert parallel_safe_batch(
+        [_call("guarded_shell", {"command": "read-only"}), _call("guarded_shell", {"command": "read-only"})],
+        snapshot,
+    )
+    assert not parallel_safe_batch(
+        [_call("guarded_shell", {"command": "write"}), _call("guarded_shell", {"command": "write"})],
+        snapshot,
+    ), "mutates/destructive 工具没有本次输入的明确并行授权时仍应串行"
+
+
 def test_parallel_preflight_validates_the_entire_batch_without_dispatching():
     safe = _tool(
         "safe_read",
@@ -151,7 +170,7 @@ def test_parallel_preflight_validates_the_entire_batch_without_dispatching():
     assert invalid_batch is None, "单项 Schema 无效时整批必须回到原串行校验路径"
 
 
-def test_phase2_registered_read_tools_are_explicitly_whitelisted():
+def test_reviewed_read_tools_and_parallel_shell_inputs_enter_the_batch():
     from agent.tools import registry
 
     snapshot = registry.snapshot()
@@ -165,12 +184,25 @@ def test_phase2_registered_read_tools_are_explicitly_whitelisted():
         [_call("list_projects"), _call("get_upcoming")], snapshot,
     )
     assert not snapshot.get("read_file").parallel_safe
-    assert not snapshot.get("web_search").parallel_safe
-    assert not snapshot.get("http_get").parallel_safe
-    assert not parallel_safe_batch(
+    assert snapshot.get("web_search").parallel_safe
+    assert snapshot.get("http_get").parallel_safe
+    assert parallel_safe_batch(
         [_call("web_search", {"query": "合成查询"}), _call("http_get", {"url": "https://example.invalid"})],
         snapshot,
-    ), "Phase 3 未评估外部网络工具限流、超时和取消前，不得进入并行白名单"
+    ), "只读联网搜索和受 SSRF/超时策略保护的 HTTP GET 应可同轮并行"
+    shell = snapshot.get("shell")
+    assert shell.parallel_safe_for_input({"command": "pwd"}) is True
+    assert shell.parallel_safe_for_input({"command": "mkdir newdir"}) is True
+    assert shell.parallel_safe_for_input({"command": "printf ok > result.txt"}) is False
+    assert shell.parallel_safe_for_input({"command": "rm -rf result.txt"}) is False
+    assert parallel_safe_batch(
+        [_call("shell", {"command": "pwd"}), _call("web_search", {"query": "合成查询"})],
+        snapshot,
+    ), "符合确认策略的 Shell 调用应能与同批联网搜索并行"
+    assert not parallel_safe_batch(
+        [_call("shell", {"command": "rm -rf result.txt"}), _call("web_search", {"query": "合成查询"})],
+        snapshot,
+    ), "需要确认的危险 Shell 命令必须保留原串行确认流程"
     assert not parallel_safe_batch(
         [_call("list_projects"), _call("update_project")], snapshot,
     ), "一个写工具必须让整批回到串行"

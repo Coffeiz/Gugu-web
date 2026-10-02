@@ -80,11 +80,21 @@ def _parallel_safe_target(target: str, arguments: dict, tool_snapshot) -> bool:
     tool = tool_snapshot.get(target) if tool_snapshot is not None else None
     if (
         tool is None
-        or getattr(tool, "parallel_safe", False) is not True
-        or getattr(tool, "mutates", False)
-        or getattr(tool, "destructive", False)
         or getattr(tool, "requires_confirmation", False)
         or getattr(tool, "source", "builtin") == "mcp"
+    ):
+        return False
+    safe_for_input = getattr(tool, "parallel_safe_for_input", None)
+    if callable(safe_for_input):
+        try:
+            if safe_for_input(arguments):
+                return True
+        except Exception:
+            return False
+    if (
+        getattr(tool, "parallel_safe", False) is not True
+        or getattr(tool, "mutates", False)
+        or getattr(tool, "destructive", False)
     ):
         return False
     mutation_predicate = getattr(tool, "mutates_for_input", None)

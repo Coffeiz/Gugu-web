@@ -10,6 +10,7 @@ import copy
 import json
 import logging
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
 from typing import Any, Callable
@@ -53,6 +54,7 @@ _automation_allowed_tools: ContextVar[frozenset[str]] = ContextVar(
 _dispatch_filesystem_subject: ContextVar[dict[str, Any] | None] = ContextVar(
     "agent_dispatch_filesystem_subject", default=None,
 )
+_dispatch_parallel: ContextVar[bool] = ContextVar("agent_dispatch_parallel", default=False)
 
 
 def set_dispatch_session_id(session_id: int | None):
@@ -104,6 +106,21 @@ def current_dispatch_tool_snapshot():
 def current_dispatch_skill_state() -> dict[str, str] | None:
     """返回当前 Run 的 Skill 正文 digest 状态。"""
     return _dispatch_skill_state.get()
+
+
+def current_dispatch_is_parallel() -> bool:
+    """返回当前工具调用是否由同一 Round 的并行调度器启动。"""
+    return _dispatch_parallel.get()
+
+
+@contextmanager
+def parallel_dispatch_context():
+    """为单个并发 dispatch 标记上下文，并在结束时恢复父任务状态。"""
+    token = _dispatch_parallel.set(True)
+    try:
+        yield
+    finally:
+        _dispatch_parallel.reset(token)
 
 
 def set_automation_allowed_tools(tool_names: set[str] | frozenset[str]):
@@ -317,7 +334,8 @@ class Tool:
                  source: str = "builtin", schema_version: int = 1,
                  batch_confirmation: bool = False,
                  strict_array_fields: tuple[str, ...] = (),
-                 parallel_safe: bool = False):
+                 parallel_safe: bool = False,
+                 parallel_safe_for_input: Callable[[dict], bool] | None = None):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -332,6 +350,9 @@ class Tool:
         # 并发安全是独立于 mutates 的显式调度授权；默认关闭，只有经过副作用与
         # 共享状态审查的工具才能加入同一 Round 的并发批次。
         self.parallel_safe = parallel_safe is True
+        # 少数有副作用工具（如受权限/确认策略保护的 Shell）可按具体输入
+        # 声明本次调用能否与同 Round 的其他调用并行；失败时默认串行。
+        self.parallel_safe_for_input = parallel_safe_for_input
         # 这些输入数组要求调用方提供规范结构，不应用模型侧 item 包装/拍平归一。
         self.strict_array_fields = frozenset(strict_array_fields)
         # 是否会改数据（写库/改长期记忆/删笔记……）：定时任务只有在整轮没有任何
@@ -602,7 +623,7 @@ class SkillRegistry:
             normalize_and_validate_tool_input(name, args, tool)
         )
         if issues:
-            payload = invalid_input_payload(name, issues, schema=tool.input_schema)
+            payload = invalid_input_payload(name, issues, schema=tool.input_schema, instance=args)
             first_rule = issues[0].get("rule", "invalid")
             first_path = issues[0].get("path", "$")
             _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}:{first_path}", t0)

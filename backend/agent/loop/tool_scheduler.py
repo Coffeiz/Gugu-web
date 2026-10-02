@@ -5,7 +5,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
-MAX_PARALLEL_TOOL_CALLS = 4
+MAX_PARALLEL_TOOL_CALLS = 5
 
 
 class ParallelDispatchCancelled(asyncio.CancelledError):

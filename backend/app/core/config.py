@@ -97,6 +97,7 @@ class AISettings(BaseModel):
     ollama_mode: str = Field("local", description="Ollama 连接模式: local | cloud")
     ollama_api_mode: str = Field("native", description="Ollama 接口模式: native | openai")
     ollama_keep_alive: str = Field("5m", description="Ollama 模型驻留时间；0 表示请求结束后卸载")
+
     deployment_mode: str = Field("cloud", description="部署方式: cloud | local")
     local_runtime: str = Field("other", description="本地运行时: ollama | llama.cpp | vllm | other")
     capability_overrides: dict[str, bool] = Field(default_factory=dict, description="模型能力人工覆盖")
@@ -279,7 +280,10 @@ def _load_stored_preset(raw: dict) -> AIPresetItem:
 class AgentBehaviorSettings(BaseModel):
     parallel_tool_execution_enabled: bool = Field(
         False,
-        description="全局并行执行开关，可在 Admin 中切换以调试或回退；默认关闭；未审查批次仍串行",
+        description="全局并行执行开关，可在 Admin 中切换以调试或回退；默认关闭",
+    )
+    parallel_tool_max_concurrency: int = Field(
+        5, ge=1, le=20, description="单 Round 并行工具最大并发数，可在 Admin 调整",
     )
     # 默认开放受沙盒隔离的 Shell 工具；宿主机 system 范围仍单独关闭。
     shell_enabled: bool = Field(True, description="是否启用 Shell 工具（默认开启）")

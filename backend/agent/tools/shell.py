@@ -12,7 +12,7 @@ import app.db.session as _db_session
 
 from agent.security import confirm
 from agent.security.logsafe import fingerprint
-from agent.security.shell_policy import evaluate, session_shell_lock
+from agent.security.shell_policy import ShellRisk, classify_command, evaluate, session_shell_lock
 from agent.security.shell_policy import shell_cwd_mapping
 from agent.tools.base import (
     current_dispatch_filesystem_subject,
@@ -598,6 +598,10 @@ class ShellSkill(BaseSkill):
             },
             handler=_shell,
             mutates=True,
+            parallel_safe_for_input=lambda args: (
+                isinstance(args.get("command"), str)
+                and classify_command(args["command"]) is not ShellRisk.DANGEROUS
+            ),
         # 需要确认的工具才会桥接到网页/IM 确认按钮（create_tool_confirmation），
             # 用户点击后服务端记录 Redis 授权；schema 不暴露 confirm 参数，
             # 确认状态只由服务端 grant 决定，模型无法自行声明已确认。

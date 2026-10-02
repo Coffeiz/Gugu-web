@@ -373,6 +373,7 @@ class WebSkill(BaseSkill):
                 ],
             },
             handler=_http_get,
+            parallel_safe=True,
         ),
         Tool(
             name="web_download",
