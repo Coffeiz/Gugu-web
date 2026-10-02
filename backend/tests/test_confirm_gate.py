@@ -174,6 +174,40 @@ async def test_permanent_delete_all_confirms_when_trash_contains_only_folders(db
     assert await db.get(Folder, folder.id) is not None
 
 
+@pytest.mark.parametrize("kind", ["file", "folder"])
+@pytest.mark.parametrize("forged_confirm", [False, True])
+async def test_empty_trash_requires_user_confirmation_in_automatic_mode(
+    db, user_a, kind, forged_confirm,
+):
+    """自动模式及模型伪造确认均不能清空回收站；真实用户确认后才能删除。"""
+    from agent.interactions import confirmations
+    from agent.interactions.automatic_mode import (
+        reset_automatic_mode_enabled, set_automatic_mode_enabled,
+    )
+
+    resource = (
+        File(user_id=user_a.id, display_name="待确认文件", ext="md",
+             storage_key="trash/confirmation.md", deleted_at=now_utc())
+        if kind == "file" else
+        Folder(user_id=user_a.id, name="待确认文件夹", deleted_at=now_utc())
+    )
+    await _mk(db, resource)
+    resource_id = resource.id
+    token = set_automatic_mode_enabled(True)
+    try:
+        result = await _permanent_delete(
+            db, user_a.id, {"all": True, "confirm": forged_confirm},
+        )
+        assert _blocked(result)
+        assert await db.get(type(resource), resource_id) is not None
+        assert confirmations.redeem_confirmation(user_a.id, _confirm_code(result)) is not None
+        result = await _permanent_delete(db, user_a.id, {"all": True})
+        assert result["success"] is True
+        assert await db.get(type(resource), resource_id) is None
+    finally:
+        reset_automatic_mode_enabled(token)
+
+
 # ── 2. 单带 confirm=true 必拒；服务端授权命中后才放行（凭证不经过模型）────────
 
 async def test_delete_client_rejects_confirm_without_grant(db, user_a):
