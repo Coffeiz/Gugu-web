@@ -174,6 +174,100 @@ export const undoApi = {
   redo: (operationId: string) => post(`/undo/redo`, { operation_id: operationId, context_id: UNDO_CONTEXT_ID }),
 }
 
+export interface DataExportJob {
+  id: string
+  status: 'queued' | 'running' | 'canceling' | 'ready' | 'failed' | 'canceled' | string
+  stage: string | null
+  progress_current: number
+  progress_total: number | null
+  error_code: string | null
+  artifact_size: number | null
+  created_at: string | null
+  expires_at: string | null
+  download_available: boolean
+}
+
+export interface DataImportPreview {
+  format_version: string
+  origin_id: string
+  export_id: string
+  created_at: string
+  complete: boolean
+  record_count: number
+  expanded_bytes: number
+  categories: Record<string, { included: boolean; records: number; bytes: number }>
+  incremental?: { add: Record<string, number>; skip: Record<string, number>; add_total: number; skip_total: number }
+  memory?: { add: Record<string, number>; skip: Record<string, number>; add_total: number; skip_total: number }
+  replace?: { current: Record<string, number>; incoming: Record<string, number> }
+  conflicts?: { total: number; items: Array<{ source_type: string; portable_id: string; fields: string[]; kind: string }> }
+}
+
+export interface DataImportJob {
+  id: string
+  status: string
+  stage: string | null
+  mode: string
+  progress_current: number
+  progress_total: number | null
+  error_code: string | null
+  preview: DataImportPreview | null
+  created_at: string | null
+  expires_at: string | null
+  import_token?: string
+  rollback_expires_at?: string | null
+}
+
+export const dataPortabilityApi = {
+  preview: () => get<{ categories: Record<string, { records: number; bytes: number }>; format_version: string }>('/data-portability/export/preview'),
+  listExports: () => get<DataExportJob[]>('/data-portability/exports'),
+  createExport: (categories: string[], idempotencyKey: string) => post<DataExportJob>('/data-portability/exports', { categories, idempotency_key: idempotencyKey }),
+  getExport: (jobId: string) => get<DataExportJob>(`/data-portability/exports/${encodeURIComponent(jobId)}`),
+  cancelExport: (jobId: string) => post<DataExportJob>(`/data-portability/exports/${encodeURIComponent(jobId)}/cancel`),
+  async preflightImport(file: File): Promise<DataImportJob> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/zip',
+      'X-Client-Id': CLIENT_ID,
+      ...getCsrfHeaders(),
+      'X-Undo-Context-ID': UNDO_CONTEXT_ID,
+    }
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const response = await fetch(`${BASE_URL}/data-portability/imports/preflight`, {
+      method: 'POST', body: file, headers, credentials: 'include', cache: 'no-store',
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      const detail = typeof body.detail === 'string' ? body.detail : i18n.global.t('errors.http', { status: response.status })
+      throw new Error(detail)
+    }
+    return response.json() as Promise<DataImportJob>
+  },
+  getImport: (jobId: string) => get<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}`),
+  listImports: () => get<DataImportJob[]>('/data-portability/imports'),
+  applyImport: (jobId: string, mode: 'incremental' | 'replace', importToken: string, idempotencyKey: string) =>
+    post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/apply`, {
+      mode, import_token: importToken, idempotency_key: idempotencyKey,
+    }),
+  cancelImport: (jobId: string) => post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/cancel`),
+  rollbackImport: (jobId: string, idempotencyKey: string) =>
+    post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/rollback`, { idempotency_key: idempotencyKey }),
+  recoverImport: (jobId: string) => post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/recover`),
+  async downloadExport(jobId: string): Promise<Response> {
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const response = await fetch(`${BASE_URL}/data-portability/exports/${encodeURIComponent(jobId)}/download`, {
+      headers, credentials: 'include', cache: 'no-store',
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      const detail = typeof body.detail === 'string' ? body.detail : i18n.global.t('errors.http', { status: response.status })
+      throw new Error(detail)
+    }
+    return response
+  },
+}
+
 export function uploadDirectWithProgress(url: string, file: File, onProgress: (p: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()

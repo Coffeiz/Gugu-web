@@ -1628,5 +1628,107 @@ class NotificationDismissal(Base):
     notification_id: Mapped[int]      = mapped_column(ForeignKey("site_notifications.id", ondelete="CASCADE"), index=True)
     dismissed_at:    Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
+# ── 用户数据可移植归档任务 ────────────────────────────────────────────────────
+
+class DataPortabilityOrigin(Base):
+    """稳定的随机来源身份，不暴露 User.id，供多次导出后的增量导入去重。"""
+    __tablename__ = "data_portability_origins"
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    origin_id: Mapped[UUID] = mapped_column(Uuid, unique=True, default=uuid7)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+
+class DataExportJob(Base):
+    """用户数据导出任务；artifact 保存在私有暂存，不进入文件库。"""
+    __tablename__ = "data_export_jobs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_data_export_idempotency"),
+        Index("ix_data_export_jobs_claim", "status", "lease_until", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid7)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    options: Mapped[dict] = mapped_column(JSON, default=dict)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    artifact_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    artifact_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    artifact_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class DataImportJob(Base):
+    """归档预检、增量导入和替换任务。"""
+    __tablename__ = "data_import_jobs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_data_import_idempotency"),
+        Index("ix_data_import_jobs_claim", "status", "lease_until", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid7)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    mode: Mapped[str] = mapped_column(String(20), default="incremental")
+    source_job_id: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="validating", index=True)
+    staging_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    import_token_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    archive_origin_id: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True)
+    archive_export_id: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True)
+    archive_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    preview: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rollback_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    rollback_expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class DataPortableIdentity(Base):
+    """来源对象到目标对象的映射，保障同一来源跨多份导出仍幂等。"""
+    __tablename__ = "data_portable_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "origin_id", "source_type", "portable_id",
+            name="uq_data_portable_source_identity",
+        ),
+        Index("ix_data_portable_identity_target", "user_id", "target_type", "target_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    origin_id: Mapped[UUID] = mapped_column(Uuid, index=True)
+    source_type: Mapped[str] = mapped_column(String(80))
+    portable_id: Mapped[str] = mapped_column(String(200))
+    target_type: Mapped[str] = mapped_column(String(80))
+    target_id: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 from app.models.mcp import UserMcpServer  # noqa: E402  (PRD-MCP-1)

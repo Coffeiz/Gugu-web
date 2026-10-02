@@ -515,6 +515,10 @@ async def serve():
     )
     reflection_task = asyncio.create_task(_reflection_loop())
     cleanup_task = asyncio.create_task(_cleanup_loop())
+    from app.services.data_portability.worker import run_portability_worker
+    portability_task = asyncio.create_task(run_portability_worker(
+        _stop, worker_id=f"portability:{CONSUMER}", session_factory=db_session._SessionLocal,
+    ), name="data-portability-worker")
     while not _stop.is_set():
         try:
             await run_once()
@@ -532,8 +536,9 @@ async def serve():
     filesync_task.cancel()
     reflection_task.cancel()
     cleanup_task.cancel()
+    portability_task.cancel()
     await asyncio.gather(
-        hb, sched_task, filesync_task, reflection_task, cleanup_task,
+        hb, sched_task, filesync_task, reflection_task, cleanup_task, portability_task,
         return_exceptions=True,
     )
     from agent.rag.injection import shutdown_background_recall_tasks
