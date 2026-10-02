@@ -231,8 +231,9 @@ async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = Tr
         cur = url
         timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0)
         byte_limit = min(_SEND_URL_MAX_BYTES, max_bytes) if max_bytes is not None else _SEND_URL_MAX_BYTES
+        egress = SafeEgressClient()
         for hop in range(4):  # 最多跟随 3 次重定向
-            async with SafeEgressClient().stream(
+            async with egress.stream(
                 cur,
                 timeout=timeout,
                 headers={"User-Agent": "Gugu-web/1.0"},

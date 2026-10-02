@@ -180,12 +180,14 @@ def test_send_file_revalidates_redirect_target_through_shared_adapter(monkeypatc
         _FakeResp(CHUNK),
     ]
     resolved = []
+    adapter_instances = []
 
     class _ResponseQueueClient(_FakeClient):
         def __init__(self, _resp):
             super().__init__(responses.pop(0))
 
     async def resolve(_self, url):
+        adapter_instances.append(_self)
         resolved.append(url)
         return "93.184.216.34", None
 
@@ -194,6 +196,8 @@ def test_send_file_revalidates_redirect_target_through_shared_adapter(monkeypatc
     result, _ = _run("https://example.com/image.jpg", responses[-1])
     assert result.get("ok") is True
     assert resolved == ["https://example.com/image.jpg", "https://cdn.example/image.jpg"]
+    assert len(adapter_instances) == 2
+    assert adapter_instances[0] is adapter_instances[1]
 
 
 def test_send_file_rejects_private_redirect_before_opening_second_connection(monkeypatch):
