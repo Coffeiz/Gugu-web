@@ -172,6 +172,8 @@ PoC 必须同时验证连接确实钉扎目标 IP。代理不支持时停止并�
 
 行为验证：7 项初始契约测试加密/脱敏、混合 DNS 拒绝、系统 DNS 不回退、IPv4/IPv6 CONNECT authority 与原域名 TLS 身份；与 `http_get` 既有重试用例合计 17 项通过。前端 `typecheck`、i18n 扫描和 license policy 检查通过。当前代理下真实请求 `https://ja.wikipedia.org/wiki/Muque` 得到 HTTP/2 200；对照测试发现 HTTP/1.1 GET 会得到上游 403，因此仅代理路径启用 HTTP/2，避免改变直连请求协议。
 
+**复审补充（2026-10-02）**：适配器将目标 TLS 握手及证书验证异常归一为 `tls_verification_failed`，Admin 代理测试可显示对应阶段，不再误报成通用连接/代理错误。该分类有针对异常因果链的行为测试。
+
 ### Phase 2：外网内容工具扩展
 
 盘点并逐项迁移模型可控的任意外部 URL 请求，包括 `http_get`、文件库 `web_download`、`send_file(url=...)` 和图片 URL 读取。下载器继续流式读取并限制大小；重定向逐跳重新通过共享适配器解析、校验和钉扎，不能自动跟随或跳过安全策略。

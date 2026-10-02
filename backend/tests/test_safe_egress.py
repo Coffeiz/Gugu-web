@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import httpcore
 import json
-import pytest
+import ssl
 from types import SimpleNamespace
+
+import httpcore
+import httpx
+import pytest
 
 from app.core import safe_egress
 from app.core.config import SafeEgressSettings
@@ -16,6 +19,47 @@ def test_proxy_url_requires_a_separate_auth_field():
         safe_egress.validate_proxy_url("http://user:secret@proxy.example:3128")
     with pytest.raises(ValueError, match="不能包含路径"):
         safe_egress.validate_proxy_url("http://proxy.example:3128/path")
+
+
+@pytest.mark.asyncio
+async def test_client_classifies_tls_certificate_failures_separately(monkeypatch):
+    async def resolve(_self, _url):
+        return "93.184.216.34", None
+
+    class FailingStream:
+        async def __aenter__(self):
+            try:
+                raise ssl.SSLCertVerificationError("certificate rejected")
+            except ssl.SSLError as cause:
+                request = httpx.Request("GET", "https://example.net")
+                raise httpx.ConnectError("connection failed", request=request) from cause
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, *_args, **_kwargs):
+            return FailingStream()
+
+    monkeypatch.setattr(safe_egress.SafeEgressClient, "resolve", resolve)
+    monkeypatch.setattr(safe_egress.httpx, "AsyncClient", FakeClient)
+    client = safe_egress.SafeEgressClient(SafeEgressSettings())
+
+    with pytest.raises(safe_egress.SafeEgressError) as caught:
+        async with client.stream("https://example.net", timeout=5.0):
+            pass
+
+    assert caught.value.code == "tls_verification_failed"
+    assert "certificate rejected" not in caught.value.message
 
 
 @pytest.mark.asyncio

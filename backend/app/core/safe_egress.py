@@ -72,6 +72,24 @@ def _proxy_auth(settings: SafeEgressSettings) -> tuple[str, str] | None:
     return (username, password) if username or password else None
 
 
+def _caused_by_tls_error(error: BaseException) -> bool:
+    """判断传输异常链是否包含 TLS 握手或证书验证错误。"""
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLError):
+            return True
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return False
+
+
 def _httpcore_proxy(settings: SafeEgressSettings) -> httpcore.Proxy:
     url = validate_proxy_url(settings.proxy_url)
     auth = _proxy_auth(settings)
@@ -356,5 +374,13 @@ class SafeEgressClient:
             follow_redirects=False,
             transport=transport,
         ) as client:
-            async with client.stream("GET", url, headers=headers or {}) as response:
-                yield response
+            try:
+                async with client.stream("GET", url, headers=headers or {}) as response:
+                    yield response
+            except Exception as exc:
+                if _caused_by_tls_error(exc):
+                    raise SafeEgressError(
+                        "tls_verification_failed",
+                        "目标站点 TLS 握手或证书验证失败，已拒绝连接",
+                    ) from exc
+                raise
