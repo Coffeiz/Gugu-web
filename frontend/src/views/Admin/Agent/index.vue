@@ -214,6 +214,14 @@
         </div>
 
         <div class="behavior-grid">
+          <ParallelToolExecutionControl
+            :model-value="agentDraft.parallel_tool_execution_enabled"
+            :saving="parallelToolSaving"
+            :saved="parallelToolSaved"
+            :error="parallelToolError"
+            @update:model-value="setParallelToolExecution"
+          />
+
           <div v-if="behaviorTab === 'runtime'" class="behavior-item">
             <div class="behavior-label">
               <span>{{ t('agent.conversationCompression') }}</span>
@@ -590,6 +598,7 @@ import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
 import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.vue'
+import ParallelToolExecutionControl from './runtime-config/components/ParallelToolExecutionControl.vue'
 import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS } from '@/utils/modelProviders'
@@ -625,6 +634,9 @@ const sandboxRuntimeEnabled = ref(false)
 const mcpSaving = ref(false)
 const mcpSaved = ref(false)
 const mcpError = ref('')
+const parallelToolSaving = ref(false)
+const parallelToolSaved = ref(false)
+const parallelToolError = ref('')
 
 const tabs = computed(() => [
   { key: 'llm',      label: t('agent.llm') },
@@ -659,6 +671,21 @@ async function saveMcpEnabled(enabled: boolean) {
     setTimeout(() => { mcpSaved.value = false }, 3000)
   }
   mcpSaving.value = false
+}
+
+async function setParallelToolExecution(enabled: boolean) {
+  parallelToolSaving.value = true
+  parallelToolSaved.value = false
+  parallelToolError.value = ''
+  await configStore.saveConfig({ agent: { parallel_tool_execution_enabled: enabled } })
+  if (configStore.saveError) {
+    parallelToolError.value = configStore.saveError
+  } else {
+    agentDraft.parallel_tool_execution_enabled = enabled
+    parallelToolSaved.value = true
+    setTimeout(() => { parallelToolSaved.value = false }, 3000)
+  }
+  parallelToolSaving.value = false
 }
 
 // ── LLM 预设 ──────────────────────────────────────────────────────────────

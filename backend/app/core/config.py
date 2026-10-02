@@ -279,7 +279,7 @@ def _load_stored_preset(raw: dict) -> AIPresetItem:
 class AgentBehaviorSettings(BaseModel):
     parallel_tool_execution_enabled: bool = Field(
         False,
-        description="部署级开关：启用单 Round 内显式标记安全的工具并行执行；默认串行",
+        description="全局并行执行开关，可在 Admin 中切换以调试或回退；默认关闭；未审查批次仍串行",
     )
     # 默认开放受沙盒隔离的 Shell 工具；宿主机 system 范围仍单独关闭。
     shell_enabled: bool = Field(True, description="是否启用 Shell 工具（默认开启）")

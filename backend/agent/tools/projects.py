@@ -602,6 +602,7 @@ class ProjectsSkill(BaseSkill):
                 },
             },
             handler=_list_projects,
+            parallel_safe=True,
         ),
         Tool(
             name="update_project",
@@ -713,6 +714,7 @@ class ProjectsSkill(BaseSkill):
                 "required": [],
             },
             handler=_get_project,
+            parallel_safe=True,
         ),
         Tool(
             name="add_stage", label="新增阶段",

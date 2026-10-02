@@ -1423,6 +1423,56 @@ async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch)
     ]
 
 
+async def test_parallel_dispatch_exception_is_isolated_and_not_exposed(monkeypatch):
+    """并行只读调用异常只影响本项，原始异常内容不得进入 SSE 或 canonical 回执。"""
+    from agent.tools.base import Tool
+
+    calls = [TU("safe_broken", "call-a", {}), TU("safe_ok", "call-b", {})]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
+    tools = {
+        name: Tool(
+            name=name, description="安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None, parallel_safe=True,
+        )
+        for name in ("safe_broken", "safe_ok")
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        if name == "safe_broken":
+            raise RuntimeError("private diagnostic sentinel")
+        return json.dumps({"result": "safe result"}), None
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(parallel_tool_execution_enabled=True),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "并行查询"},
+    ])
+    events = []
+    async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+        try:
+            events.append(json.loads(chunk[len("data: "):]))
+        except (TypeError, ValueError):
+            continue
+
+    tool_done = [event for event in events if event.get("type") == "tool_done"]
+    assert [event.get("status") for event in tool_done] == ["error", "success"]
+    assert "private diagnostic sentinel" not in json.dumps(events, ensure_ascii=False)
+    assert "只读工具执行失败" in tool_done[0]["result"]
+    canonical = json.dumps(canonical_messages(messages), ensure_ascii=False)
+    assert "private diagnostic sentinel" not in canonical
+
+
 async def test_scheduled_agent_loop_fails_before_dispatch_above_30_calls(monkeypatch, dispatched):
     """定时 run 保留 30 次专属上限，超额批次不派发并返回失败事件供外层重试。"""
     from agent.scheduled import ScheduledLLMRunner

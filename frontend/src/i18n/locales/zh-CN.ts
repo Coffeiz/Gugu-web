@@ -1,4 +1,5 @@
 export const zhCN = {
+  agentParallelUi: { label: '并行工具调用（调试）', hint: '关闭后可并行批次也会串行，方便对比排查；未审查或混合批次始终串行。' },
   projectsDeleted: { deleted: '已删除项目', deletedShort: '已删除', noDeleted: '暂无已删除项目', deletedView: '查看已删除项目', deletedRetention: '保留 30 天', deletedAt: '删除于 {date}', restoreDeleted: '恢复项目', unknownDate: '未知日期' },
   storageAudit: { subtitle: '存储 ↔ DB 一致性核查：文件层与目录层；扫描只读，修复需显式操作。', scanLegacyTrash: '扫描旧目录', migrateItems: '迁移 {count} 项', legacyFound: '发现 {count} 个旧目录对象', fileAudit: '文件对账', fileAuditHint: '扫描物理对象与 File 表：幽灵记录与孤儿文件', scanning: '对账中…', scan: '扫描' },
   common: {

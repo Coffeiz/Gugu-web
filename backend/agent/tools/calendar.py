@@ -341,6 +341,7 @@ class CalendarSkill(BaseSkill):
                 },
             },
             handler=_list_events,
+            parallel_safe=True,
         ),
         Tool(
             name="update_event",

@@ -1,5 +1,6 @@
 """PRD-LLM-31 阶段 0：并发资格与 dispatch 上下文基线。"""
 import asyncio
+import json
 from types import SimpleNamespace
 
 from agent.loop.tools import (
@@ -148,6 +149,101 @@ def test_parallel_preflight_validates_the_entire_batch_without_dispatching():
         {"limit": 2}, {"limit": 3},
     ]
     assert invalid_batch is None, "单项 Schema 无效时整批必须回到原串行校验路径"
+
+
+def test_phase2_registered_read_tools_are_explicitly_whitelisted():
+    from agent.tools import registry
+
+    snapshot = registry.snapshot()
+    reviewed_reads = (
+        "get_current_time", "list_projects", "get_project", "list_events",
+        "get_upcoming", "get_dashboard_stats",
+    )
+    assert all(snapshot.get(name).parallel_safe for name in reviewed_reads)
+    assert all(not snapshot.get(name).mutates for name in reviewed_reads)
+    assert parallel_safe_batch(
+        [_call("list_projects"), _call("get_upcoming")], snapshot,
+    )
+    assert not snapshot.get("read_file").parallel_safe
+    assert not parallel_safe_batch(
+        [_call("list_projects"), _call("update_project")], snapshot,
+    ), "一个写工具必须让整批回到串行"
+
+
+async def test_phase2_whitelisted_tool_calls_reach_the_bounded_executor_concurrently():
+    from agent.tools import registry
+
+    prepared = prepare_parallel_batch(
+        [_call("get_current_time"), _call("list_projects")],
+        registry.snapshot(),
+    )
+    assert prepared is not None
+    active = 0
+    max_active = 0
+    started = 0
+    all_started = asyncio.Event()
+
+    async def dispatch(call):
+        nonlocal active, max_active, started
+        active += 1
+        started += 1
+        max_active = max(max_active, active)
+        if started == 2:
+            all_started.set()
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=1)
+            return call[1]
+        finally:
+            active -= 1
+
+    results = await run_parallel_dispatches(prepared, dispatch)
+    assert max_active == 2
+    assert results == ["get_current_time", "list_projects"]
+
+
+async def test_phase2_project_and_calendar_reads_preserve_user_scope(db, user_a, user_b):
+    from agent.tools.calendar import _create_event, _list_events
+    from agent.tools.overview import _get_dashboard_stats, _get_upcoming
+    from agent.tools.projects import _create_project, _get_project, _list_projects
+
+    project_a = await _create_project(db, user_a.id, {
+        "name": "用户甲项目", "status": "active",
+        "start_date": "2026-10-02", "deadline": "2026-10-20",
+    })
+    project_b = await _create_project(db, user_b.id, {
+        "name": "用户乙项目", "status": "pending",
+        "start_date": "2026-10-02", "deadline": "2026-10-20",
+    })
+    event_a = await _create_event(db, user_a.id, {
+        "title": "用户甲活动", "date": "2026-10-12", "all_day": True,
+    })
+    event_b = await _create_event(db, user_b.id, {
+        "title": "用户乙活动", "date": "2026-10-12", "all_day": True,
+    })
+    assert project_a["success"] and project_b["success"]
+    assert event_a["success"] and event_b["success"]
+
+    projects_a = await _list_projects(db, user_a.id, {})
+    projects_b = await _list_projects(db, user_b.id, {})
+    assert [item["name"] for item in projects_a] == ["用户甲项目"]
+    assert [item["name"] for item in projects_b] == ["用户乙项目"]
+    assert "项目不存在" in json.loads(await _get_project(
+        db, user_a.id, {"project_id": project_b["project_id"]},
+    ))["error"]
+
+    events_a = await _list_events(db, user_a.id, {})
+    events_b = await _list_events(db, user_b.id, {})
+    assert [item["title"] for item in events_a] == ["用户甲活动"]
+    assert [item["title"] for item in events_b] == ["用户乙活动"]
+
+    stats_a = await _get_dashboard_stats(db, user_a.id, {})
+    stats_b = await _get_dashboard_stats(db, user_b.id, {})
+    assert stats_a["projects"]["total"] == 1 and stats_a["upcoming_events"] == 1
+    assert stats_b["projects"]["total"] == 1 and stats_b["upcoming_events"] == 1
+    upcoming_a = await _get_upcoming(db, user_a.id, {"days": 30})
+    upcoming_b = await _get_upcoming(db, user_b.id, {"days": 30})
+    assert {item["title"] for item in upcoming_a["items"]} == {"用户甲项目", "用户甲活动"}
+    assert {item["title"] for item in upcoming_b["items"]} == {"用户乙项目", "用户乙活动"}
 
 
 def test_parallel_execution_deployment_setting_defaults_to_serial():

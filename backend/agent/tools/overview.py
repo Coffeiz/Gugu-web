@@ -57,6 +57,7 @@ class OverviewSkill(BaseSkill):
                 },
             },
             handler=_get_upcoming,
+            parallel_safe=True,
         ),
         Tool(
             name="get_dashboard_stats", label="总览统计",
@@ -64,6 +65,7 @@ class OverviewSkill(BaseSkill):
             description="返回项目（按状态）、近期事件、文件、客户的数量统计。用于回答「我手头有多少项目」这类总览问题。",
             input_schema={"type": "object", "properties": {}},
             handler=_get_dashboard_stats,
+            parallel_safe=True,
         ),
     ]
 
