@@ -1011,6 +1011,10 @@ async def get_session_messages(
 
     def timeline_items(message: ConversationMessage) -> list[dict]:
         """兼容旧消息：把未写入时间线的 assistant 附件补成展示事件。"""
+        # 用户附件由 messages 展示；没有时间线的助手消息也保留在 messages。
+        # 只有已转入时间线的助手行需要补附件，否则会生成虚假的助手回声。
+        if message.role != "assistant" or not message.display_timeline:
+            return []
         items = list(message.display_timeline or [])
         if message.files and not any(
             isinstance(item, dict) and item.get("files") for item in items

@@ -132,6 +132,46 @@ async def test_get_session_messages_backfills_legacy_timeline_files(db, user_a):
     assert payload["timelineEvents"][-1]["files"][0]["attach_id"] == "attachment-1"
 
 
+@pytest.mark.parametrize("source,chat_type", [
+    ("web", None), ("qq", "c2c"), ("qq", "group"),
+    ("feishu", "c2c"), ("feishu", "group"),
+    ("wechat", "c2c"), ("wechat", "group"),
+])
+@pytest.mark.parametrize("kind,ext", [
+    ("image", "png"), ("audio", "flac"), ("video", "mp4"),
+    ("file", "pdf"), ("file", "txt"),
+])
+async def test_user_attachment_never_becomes_assistant_timeline_event(
+    db, user_a, source, chat_type, kind, ext,
+):
+    """跨端用户附件只展示一次，不凭空生成未调用模型的助手回复。"""
+    session = await _mk_session(db, user_a)
+    session.source, session.chat_type = source, chat_type
+    files = [{"attach_id": "synthetic-upload", "kind": kind, "ext": ext, "upload": True}]
+    message = await _mk_message(db, session.id, "user", "查看附件", files=files)
+    await db.commit()
+
+    for after_id in (None, message.id - 1):
+        payload = await agent_api.get_session_messages(
+            session.id, after_id=after_id, current_user=user_a, db=db,
+        )
+        assert len(payload["messages"]) == 1
+        assert payload["messages"][0]["role"] == "user"
+        assert payload["messages"][0]["files"] == files
+        assert payload["timelineEvents"] == []
+
+
+async def test_assistant_attachment_without_timeline_is_not_duplicated(db, user_a):
+    """没有时间线的旧助手附件由消息本体展示，不再补一个重复附件事件。"""
+    session = await _mk_session(db, user_a)
+    files = [{"attach_id": "synthetic-result", "kind": "file", "ext": "pdf"}]
+    await _mk_message(db, session.id, "assistant", "结果", files=files)
+    await db.commit()
+    payload = await agent_api.get_session_messages(session.id, current_user=user_a, db=db)
+    assert payload["messages"][0]["files"] == files
+    assert payload["timelineEvents"] == []
+
+
 async def test_get_session_messages_pairs_tool_events_within_window(db, user_a):
     session = await _mk_session(db, user_a)
     await _mk_message(db, session.id, "user", "帮我抓个网页")

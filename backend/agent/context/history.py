@@ -9,6 +9,7 @@ from .tokens import content_text
 from .canonical_tool_history import ToolCall, ToolResult, _tool_result_is_error
 from .canonical_context import (
     HistoryEnvelope,
+    MEDIA_BLOCK_TYPES,
     canonicalize_time_context_blocks,
     normalize_history_message,
 )
@@ -260,6 +261,9 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
                 normalized = _canonical_block(block)
                 if normalized is not None:
                     canonical.append(normalized)
+                elif block.get("type") in MEDIA_BLOCK_TYPES:
+                    # 引用与当前媒体混合时保留原位置，不能只提取文本。
+                    canonical.append(dict(block))
                 elif (
                     role == "user"
                     and block.get("type") == "text"

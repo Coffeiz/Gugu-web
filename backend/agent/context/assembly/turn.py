@@ -6,6 +6,7 @@ from typing import Iterable
 
 from .batch import MessageBatch
 from .area import MessageSource, PersistencePolicy
+from ..canonical_context import MEDIA_BLOCK_TYPES
 from ..dynamic_tail import reminder_message as reminder
 
 
@@ -136,10 +137,7 @@ def _current_user_source(message: dict) -> MessageSource:
         return MessageSource.REFERENCE
     if any(
         isinstance(block, dict)
-        and block.get("type") in {
-            "image", "image_url", "input_image", "input_audio", "audio",
-            "video", "video_url", "file",
-        }
+        and block.get("type") in MEDIA_BLOCK_TYPES
         for block in blocks
     ):
         return MessageSource.ATTACHMENT

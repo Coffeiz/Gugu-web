@@ -4,10 +4,10 @@ from __future__ import annotations
 import copy
 from typing import Any, Iterable
 
-from ..canonical_context import digest
+from ..canonical_context import MEDIA_BLOCK_TYPES, digest
 
 
-_CANONICAL_BLOCK_TYPES = frozenset({
+_CANONICAL_BLOCK_TYPES = MEDIA_BLOCK_TYPES | frozenset({
     "text", "tool_call", "tool_result", "tool-schema", "skill-schema",
     "tool-discovery", "knowledge-context", "stance-context", "time-context",
     "runtime-context",
@@ -15,7 +15,7 @@ _CANONICAL_BLOCK_TYPES = frozenset({
 
 
 def _validate_canonical_messages(messages: Iterable[dict]) -> list[dict]:
-    """拒绝 Provider wire，确保批次只承载 canonical history。"""
+    """拒绝 Provider 工具 wire；当前媒体保留在请求内存，不重复写入历史。"""
     values = copy.deepcopy(list(messages))
     for message in values:
         if not isinstance(message, dict) or not isinstance(message.get("role"), str):
