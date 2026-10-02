@@ -253,6 +253,20 @@
       "repository": ""
     },
     {
+      "name": "h2",
+      "version": "4.4.1",
+      "license": "MIT",
+      "homepage": "https://github.com/python-hyper/h2/",
+      "repository": "https://github.com/python-hyper/h2/"
+    },
+    {
+      "name": "hpack",
+      "version": "4.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/python-hyper/hpack/",
+      "repository": "https://github.com/python-hyper/hpack/"
+    },
+    {
       "name": "htmldate",
       "version": "1.10.0",
       "license": "Apache-2.0",
@@ -279,6 +293,13 @@
       "license": "BSD-3-Clause",
       "homepage": "https://github.com/encode/httpx",
       "repository": "https://github.com/encode/httpx"
+    },
+    {
+      "name": "hyperframe",
+      "version": "6.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/python-hyper/hyperframe/",
+      "repository": "https://github.com/python-hyper/hyperframe/"
     },
     {
       "name": "idna",
@@ -814,6 +835,7 @@
     "asyncpg",
     "email-validator",
     "fastapi",
+    "h2",
     "httpcore",
     "httpx",
     "jsonschema",

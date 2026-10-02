@@ -30,6 +30,7 @@ import httpx
 from agent.tools.base import BaseSkill, Tool
 from agent.security import logsafe
 from app.core.redaction import diag_log, diag_log_raw, redact
+from app.core.safe_egress import SafeEgressClient, SafeEgressError
 from app.core.url_security import resolve_pinned_ip
 from app.db.session import rollback_safely
 from app.services.storage.file_service import FileService
@@ -51,7 +52,7 @@ _HTTP_GET_RETRY_BACKOFF = [1, 2]
 # httpx.NetworkError 覆盖 ConnectError 等连接层错误，httpx.TimeoutException 覆盖各类超时，
 # RemoteProtocolError 覆盖「连接中途被对端断开/协议错乱」——都是「请求没跑完」的瞬时故障；
 # 不含 HTTPStatusError（4xx/5xx 状态码），因为本函数默认不对状态码抛异常（见下方调用处）。
-_TRANSIENT_HTTPX = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+_TRANSIENT_HTTPX = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
 
 
 # IP 钉扎传输已上提到 app/core/pinned_http.py（MCP 客户端复用同一实现）。
@@ -76,36 +77,34 @@ async def _http_get_one(db, user_id, url: str, max_chars: int):
         return {"error": "非法 url"}
     if _ALLOW_HOSTS and p.hostname not in _ALLOW_HOSTS:
         return {"error": "该地址不允许访问（仅放行公网地址）"}
-    pinned_ip, resolve_error = resolve_pinned_ip(url)
-    if not pinned_ip:
-        return {"error": resolve_error or "该地址不允许访问（仅放行公网地址）"}
     r = None
     for i in range(len(_HTTP_GET_RETRY_BACKOFF) + 1):
         try:
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(15.0),
-                follow_redirects=False,
-                transport=_PinnedHTTPTransport(pinned_ip),
-            ) as c:
-                async with c.stream("GET", url, headers={"User-Agent": "curl/8"}) as response:
-                    chunks: list[bytes] = []
-                    total = 0
-                    async for chunk in response.aiter_bytes():
-                        remaining = _MAX_DOWNLOAD_BYTES - total
-                        if len(chunk) > remaining:
-                            chunks.append(chunk[:remaining])
-                            total = _MAX_DOWNLOAD_BYTES + 1
-                            break
-                        chunks.append(chunk)
-                        total += len(chunk)
-                    if total > _MAX_DOWNLOAD_BYTES:
-                        return {"error": f"响应内容过大，已停止读取（上限 {_MAX_DOWNLOAD_BYTES // 1024 // 1024}MB）"}
-                    r = (response.status_code, response.headers, b"".join(chunks), response.encoding)
+            async with SafeEgressClient().stream(
+                url, timeout=15.0, headers={"User-Agent": "curl/8"},
+            ) as response:
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    remaining = _MAX_DOWNLOAD_BYTES - total
+                    if len(chunk) > remaining:
+                        chunks.append(chunk[:remaining])
+                        total = _MAX_DOWNLOAD_BYTES + 1
+                        break
+                    chunks.append(chunk)
+                    total += len(chunk)
+                if total > _MAX_DOWNLOAD_BYTES:
+                    return {"error": f"响应内容过大，已停止读取（上限 {_MAX_DOWNLOAD_BYTES // 1024 // 1024}MB）"}
+                r = (response.status_code, response.headers, b"".join(chunks), response.encoding)
             break
+        except SafeEgressError as e:
+            return {"error": e.message}
         except _TRANSIENT_HTTPX as e:
             if i >= len(_HTTP_GET_RETRY_BACKOFF):
                 diag_log("agent.tools.web.http_get", e)   # 原始 → 受限诊断出口
                 _log.warning("http_get 重试 %d 次后仍失败：%s", i, type(e).__name__)
+                if isinstance(e, httpx.ProxyError):
+                    return {"error": "代理隧道失败，未回退为直连请求"}
                 return {"error": f"请求失败：{type(e).__name__}（已重试仍超时/连接失败）"}
             await asyncio.sleep(_HTTP_GET_RETRY_BACKOFF[i])
         except Exception as e:

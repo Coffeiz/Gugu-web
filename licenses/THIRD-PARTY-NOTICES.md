@@ -796,6 +796,9 @@
 | frozenlist | 1.8.0 | Apache-2.0 | https://github.com/aio-libs/frozenlist |
 | greenlet | 3.5.2 | MIT AND PSF-2.0 | https://greenlet.readthedocs.io · https://github.com/python-greenlet/greenlet |
 | h11 | 0.16.0 | MIT | https://github.com/python-hyper/h11 |
+| h2 | 4.4.1 | MIT | https://github.com/python-hyper/h2/ · https://github.com/python-hyper/h2/ |
+| hpack | 4.2.0 | MIT | https://github.com/python-hyper/hpack/ · https://github.com/python-hyper/hpack/ |
+| hyperframe | 6.1.0 | MIT | https://github.com/python-hyper/hyperframe/ · https://github.com/python-hyper/hyperframe/ |
 | htmldate | 1.10.0 | Apache-2.0 | https://htmldate.readthedocs.io · https://github.com/adbar/htmldate |
 | httpcore | 1.0.9 | BSD-3-Clause | https://www.encode.io/httpcore/ · https://github.com/encode/httpcore |
 | httptools | 0.8.0 | MIT | https://github.com/MagicStack/httptools |

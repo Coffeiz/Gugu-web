@@ -1,9 +1,9 @@
 # PRD-NET-1：安全出站 HTTP 适配器与代理配置
 
-> 状态：实施中（Phase 0 已完成）
+> 状态：实施中（Phase 0、Phase 1 已完成）
 > 创建：2026-10-02
 > 最近更新：2026-10-02
-> 关联模块：`backend/app/core/url_security.py`、`backend/app/core/pinned_http.py`、`backend/agent/tools/web.py`、`backend/agent/tools/search.py`、`backend/agent/tools/deep_research.py`、`backend/agent/mcp/client.py`、`backend/agent/tools/files/transfer.py`、Admin 运行配置
+> 关联模块：`backend/app/core/url_security.py`、`backend/app/core/pinned_http.py`、`backend/app/core/safe_egress.py`、`backend/app/api/v1/safe_egress_admin.py`、`backend/agent/tools/web.py`、`backend/agent/tools/search.py`、`backend/agent/tools/deep_research.py`、`backend/agent/mcp/client.py`、`backend/agent/tools/files/transfer.py`、Admin 运行配置
 
 ## 0. 决策摘要
 
@@ -167,6 +167,10 @@ PoC 必须同时验证连接确实钉扎目标 IP。代理不支持时停止并�
 - 迁移 `http_get` 的外部 URL 路径。
 - 保持已有响应大小、timeout、重试和不自动跟随重定向的行为，除非单项变更另有批准。
 - 在 devserver 以被污染的系统 DNS 环境和经代理 DoH 结果进行回归。
+
+**Phase 1 实施结果（2026-10-02）**：完成 Admin 专用代理配置接口和设置卡片；代理认证在统一配置写入层加密，读取只返回配置状态；配置 URL 不接受内嵌认证。`SafeEgressClient` 在代理启用时使用经代理 DoH、检查 A/AAAA/CNAME 答案，并通过 CONNECT 到校验 IP、原始域名 TLS SNI/证书及 HTTP Host 完成请求；失败不直连回退。代理传输仅在启用代理时协商 HTTP/2（新增 `h2` 依赖），未启用代理继续使用原 IP 钉扎传输。`http_get` 已迁移，网页下载路径仍留待 Phase 2。
+
+行为验证：7 项初始契约测试加密/脱敏、混合 DNS 拒绝、系统 DNS 不回退、IPv4/IPv6 CONNECT authority 与原域名 TLS 身份；与 `http_get` 既有重试用例合计 17 项通过。前端 `typecheck`、i18n 扫描和 license policy 检查通过。当前代理下真实请求 `https://ja.wikipedia.org/wiki/Muque` 得到 HTTP/2 200；对照测试发现 HTTP/1.1 GET 会得到上游 403，因此仅代理路径启用 HTTP/2，避免改变直连请求协议。
 
 ### Phase 2：外网内容工具扩展
 

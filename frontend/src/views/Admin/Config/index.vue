@@ -16,6 +16,8 @@
 
     <div class="cards-wrap">
 
+      <OutboundNetworkSettings />
+
       <!-- ── 数据库 ── -->
       <section id="sec-db" class="config-card">
         <div class="card-head">
@@ -270,6 +272,7 @@ import AdminSelect from '@/components/AdminSelect.vue'
 import ConfigField from './components/ConfigField.vue'
 import FeedbackEmailSettings from './components/FeedbackEmailSettings.vue'
 import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
+import OutboundNetworkSettings from './components/OutboundNetworkSettings.vue'
 
 const { t } = useI18n()
 

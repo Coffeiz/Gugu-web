@@ -15,7 +15,7 @@
       "packageManifests": [
         "backend/requirements.txt"
       ],
-      "dependencyCount": 114
+      "dependencyCount": 117
     }
   ],
   "dependencies": [
@@ -3611,6 +3611,13 @@
       "repository": ""
     },
     {
+      "name": "h2",
+      "version": "4.4.1",
+      "license": "MIT",
+      "homepage": "https://github.com/python-hyper/h2/",
+      "repository": "https://github.com/python-hyper/h2/"
+    },
+    {
       "name": "hachure-fill",
       "version": "0.5.2",
       "license": "MIT",
@@ -3665,6 +3672,13 @@
       "license": "BSD-3-Clause",
       "homepage": "https://highlightjs.org/",
       "repository": "git://github.com/highlightjs/highlight.js.git"
+    },
+    {
+      "name": "hpack",
+      "version": "4.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/python-hyper/hpack/",
+      "repository": "https://github.com/python-hyper/hpack/"
     },
     {
       "name": "html-encoding-sniffer",
@@ -3728,6 +3742,13 @@
       "license": "Apache-2.0",
       "homepage": "https://www.github.com/ehmicky/human-signals",
       "repository": "git+https://github.com/ehmicky/human-signals.git"
+    },
+    {
+      "name": "hyperframe",
+      "version": "6.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/python-hyper/hyperframe/",
+      "repository": "https://github.com/python-hyper/hyperframe/"
     },
     {
       "name": "iconv-lite",

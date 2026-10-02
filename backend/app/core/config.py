@@ -381,6 +381,14 @@ class McpSettings(BaseModel):
     stdio_restart_limit: int = Field(3, ge=0, le=10, description="MCP stdio 单次连接允许的崩溃重启次数")
 
 
+class SafeEgressSettings(BaseModel):
+    """模型可控公网内容请求的显式出站代理配置。"""
+
+    enabled: bool = Field(False, description="是否为安全出站请求启用显式代理")
+    proxy_url: str = Field("", description="HTTP(S) 代理地址，不含认证信息")
+    proxy_auth_secret: str = Field("", repr=False, description="加密保存的代理认证信息")
+
+
 class SmtpSettings(BaseModel):
     host:     str           = Field("", description="SMTP 服务器地址")
     enabled:  bool          = Field(True, description="是否启用系统 SMTP 邮件能力")
@@ -478,6 +486,7 @@ class AppSettings(BaseSettings):
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
     byok: BYOKSettings = Field(default_factory=BYOKSettings)
     mcp: McpSettings = Field(default_factory=McpSettings)
+    safe_egress: SafeEgressSettings = Field(default_factory=SafeEgressSettings)
     # 业务 Live SSE 由 TypeScript 服务独立承载，FastAPI 不再提供代理入口。
 
     def apply_override(self) -> "AppSettings":
@@ -579,6 +588,16 @@ class AppSettings(BaseSettings):
                 }}
                 updates["mcp"] = McpSettings.model_construct(**merged)
 
+            if "safe_egress" in override:
+                raw_safe_egress = override["safe_egress"] or {}
+                if not isinstance(raw_safe_egress, dict):
+                    raise ValueError("safe_egress 配置必须是对象")
+                merged = {**self.safe_egress.model_dump(), **{
+                    k: v for k, v in raw_safe_egress.items()
+                    if k in SafeEgressSettings.model_fields
+                }}
+                updates["safe_egress"] = SafeEgressSettings.model_validate(merged)
+
             if "sandbox" in override:
                 raw_sandbox = override["sandbox"] or {}
                 if not isinstance(raw_sandbox, dict):
@@ -646,7 +665,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok", "mcp"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok", "mcp", "safe_egress"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]
@@ -908,6 +927,7 @@ def invalidate_settings_cache() -> None:
 
 
 async def save_override(patch: dict) -> AppSettings:
+    patch = _protect_safe_egress_secret(patch)
     if isinstance(patch.get("embedding"), dict) and "dimensions" in patch["embedding"]:
         patch = {**patch, "embedding": {
             **patch["embedding"],
@@ -947,3 +967,23 @@ async def save_override(patch: dict) -> AppSettings:
         except Exception as e:
             print(f"[警告] 表创建失败（{type(e).__name__}: {e}），后台重试会继续")
     return new_settings
+
+
+def _protect_safe_egress_secret(patch: dict) -> dict:
+    """统一配置入口也加密代理认证，并把脱敏回传值视为未修改。"""
+    safe_egress = patch.get("safe_egress")
+    if not isinstance(safe_egress, dict) or "proxy_auth_secret" not in safe_egress:
+        return patch
+    prepared = dict(patch)
+    prepared_egress = dict(safe_egress)
+    secret = prepared_egress.get("proxy_auth_secret")
+    if secret == "****":
+        prepared_egress.pop("proxy_auth_secret")
+    elif secret:
+        if not isinstance(secret, str):
+            raise ValueError("safe_egress.proxy_auth_secret 必须是字符串")
+        from app.core.crypto import encrypt_secret
+
+        prepared_egress["proxy_auth_secret"] = encrypt_secret(secret)
+    prepared["safe_egress"] = prepared_egress
+    return prepared

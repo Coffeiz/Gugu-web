@@ -14,6 +14,8 @@ from typing import Any
 PACKAGE_NAME = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 REQUIRES_NAME = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 
+LICENSE_OVERRIDES = {"hyperframe": "MIT"}
+
 
 def normalize_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -32,6 +34,10 @@ def read_requirement_names(path: Path) -> list[str]:
 
 
 def package_license(dist: metadata.Distribution) -> str:
+    package_name = normalize_name(dist.metadata.get("Name") or "")
+    if package_name in LICENSE_OVERRIDES:
+        return LICENSE_OVERRIDES[package_name]
+
     expression = (dist.metadata.get("License-Expression") or "").strip()
     if expression:
         return expression
