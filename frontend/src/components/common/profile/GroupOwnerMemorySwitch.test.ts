@@ -11,6 +11,7 @@ describe('群聊个人记忆授权', () => {
     const host = document.createElement('div')
     const app = createApp({ render: () => h(GroupOwnerMemorySwitch, { enabled: enabled.value, onChange: changes }) })
     app.mount(host)
+    expect(host.querySelector('.pm-switch-label')?.textContent).toBe('profileImUi.disabled')
     const button = host.querySelector('button')!
     confirm.mockResolvedValueOnce(false)
     button.click()
@@ -22,6 +23,7 @@ describe('群聊个人记忆授权', () => {
     expect(changes).toHaveBeenCalledWith(true)
     enabled.value = true
     await nextTick()
+    expect(host.querySelector('.pm-switch-label')?.textContent).toBe('profileImUi.enabled')
     const count = confirm.mock.calls.length
     button.click()
     await nextTick()

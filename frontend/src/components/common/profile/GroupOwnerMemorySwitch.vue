@@ -1,7 +1,7 @@
 <template>
   <div class="pm-bot-group-row pm-bot-tools-row">
     <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupOwnerMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupOwnerMemoryHint') }}</span></div>
-    <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="enabled" :aria-label="t('profileImUi.groupOwnerMemory')" @update:model-value="change" /></span>
+    <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="enabled" :aria-label="t('profileImUi.groupOwnerMemory')" @update:model-value="change" /><span class="pm-switch-label" :class="{ on: enabled }">{{ enabled ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
   </div>
 </template>
 <script setup lang="ts">
