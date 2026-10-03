@@ -4,7 +4,20 @@
     <div v-if="loading" class="empty-state">{{ t('skills.loading') }}</div>
     <div v-else-if="!skills.length" class="empty-state"><Icon name="resource.skill" :size="32" /><strong>{{ t('skills.emptyTitle') }}</strong><span>{{ t('skills.emptyHint') }}</span><ActionButton fit @click="openChatSetup">{{ t('skills.createFirst') }}</ActionButton></div>
     <div v-else class="skill-list scroll-surface scroll-surface--compact"><SkillCard v-for="skill in skills" :key="skill.slug" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" /></div>
-    <SkillForm :key="formKey" :show="formOpen" :skill="editing" :tools="tools" :busy="saving" :external-error="error" @close="formOpen = false" @save="saveForm" />
+      <SkillForm
+        :key="formKey"
+        :show="formOpen"
+        :skill="editing"
+        :tools="tools"
+        :tools-loaded="toolsLoaded"
+        :tools-loading="toolsLoading"
+        :tools-error="toolsError"
+        :busy="saving"
+        :external-error="error"
+        @close="formOpen = false"
+        @load-tools="loadTools"
+        @save="saveForm"
+      />
   </div>
 </template>
 
@@ -22,7 +35,10 @@ import SkillCard from './components/SkillCard.vue'
 import SkillForm from './components/SkillForm.vue'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 
-const { skills, tools, loading, saving, error, load, save, toggle, remove } = useUserSkills()
+const {
+  skills, tools, toolsLoaded, toolsLoading, toolsError,
+  loading, saving, error, load, loadTools, save, toggle, remove,
+} = useUserSkills()
 const { t } = useI18n()
 const props = defineProps<{ createRequest?: number }>()
 const uiStore = useUiStore()

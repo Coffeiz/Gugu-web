@@ -553,7 +553,8 @@ export interface SkillToolItem {
 }
 
 export const userSkillsApi = {
-  list: () => get<{ skills: UserSkillItem[]; tools: SkillToolItem[] }>('/skills'),
+  list: () => get<{ skills: UserSkillItem[] }>('/skills?include_tools=false'),
+  tools: () => get<{ tools: SkillToolItem[] }>('/skills/tools'),
   create: (data: UserSkillWrite) => post<UserSkillItem>('/skills', data),
   update: (slug: string, data: Partial<Omit<UserSkillWrite, 'slug'>>) => patch<UserSkillItem>(`/skills/${encodeURIComponent(slug)}`, data),
   delete: (slug: string) => del(`/skills/${encodeURIComponent(slug)}`),

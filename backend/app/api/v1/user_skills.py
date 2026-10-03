@@ -1,7 +1,7 @@
 """用户 Prompt Skill 管理 API。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,16 +47,28 @@ def _allowed_tools() -> list[str]:
     return all_system_tool_names()
 
 
+def _builtin_skill_tools() -> tuple[list[dict[str, str | bool]], set[str]]:
+    names = _allowed_tools()
+    metadata = ToolCapabilityRegistry(tool_registry).metadata(names)
+    items = [
+        {"name": item.name, "description_short": item.description_short,
+         "category": item.category, "enabled": item.enabled}
+        for item in metadata
+    ]
+    return items, {item.name for item in metadata}
+
+
 async def _available_skill_tools(
     user_id: object,
+    *,
+    discover_mcp: bool = True,
 ) -> tuple[list[dict[str, str | bool]], set[str], list[Tool]]:
     """返回本用户当前可关联的内置与 MCP 工具，不缓存跨开关状态。"""
-    builtin_names = _allowed_tools()
-    builtin = ToolCapabilityRegistry(tool_registry).metadata(builtin_names)
+    builtin_items, builtin_names = _builtin_skill_tools()
     dynamic_tools = []
     from app.core.config import get_settings
 
-    if get_settings().mcp.enabled:
+    if discover_mcp and get_settings().mcp.enabled:
         from agent.mcp.manager import mcp_manager
 
         dynamic_tools = await mcp_manager.list_user_tools(user_id)
@@ -73,13 +85,14 @@ async def _available_skill_tools(
         for tool in dynamic_tools
         if tool.name not in builtin_names
     ]
-    metadata = [*builtin, *dynamic]
-    items = [
+    dynamic_items = [
         {"name": item.name, "description_short": item.description_short,
          "category": item.category, "enabled": item.enabled}
-        for item in metadata
+        for item in dynamic
     ]
-    return items, {item.name for item in metadata}, dynamic_tools
+    return [*builtin_items, *dynamic_items], builtin_names | {
+        item.name for item in dynamic
+    }, dynamic_tools
 
 
 def _serialize(row: UserSkill) -> dict:
@@ -97,21 +110,39 @@ def _serialize(row: UserSkill) -> dict:
 
 
 @router.get("")
-async def list_skills(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_skills(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    include_tools: bool = Query(default=True),
+):
     rows = (await db.execute(select(UserSkill).where(
         UserSkill.owner_id == current_user.id,
     ).order_by(UserSkill.updated_at.desc(), UserSkill.id.desc()))).scalars().all()
-    tools, _, _ = await _available_skill_tools(current_user.id)
+    if include_tools:
+        tools, _, _ = await _available_skill_tools(current_user.id)
+    else:
+        # 技能目录首屏不应因为用户配置的远程 MCP server 响应慢而阻塞。
+        tools = []
     return {
         "skills": [_serialize(row) for row in rows],
         "tools": tools,
     }
 
 
+@router.get("/tools")
+async def list_skill_tools(current_user: User = Depends(get_current_user)):
+    """按需加载技能关联工具；MCP 工具发现只在用户展开工具选择器时触发。"""
+    tools, _, _ = await _available_skill_tools(current_user.id)
+    return {"tools": tools}
+
+
 @router.post("", status_code=201)
 async def create_skill(payload: UserSkillPayload, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
-        _, allowed_tool_names, dynamic_tools = await _available_skill_tools(current_user.id)
+        needs_mcp_discovery = any(name.startswith("mcp_") for name in payload.related_tools)
+        _, allowed_tool_names, dynamic_tools = await _available_skill_tools(
+            current_user.id, discover_mcp=needs_mcp_discovery,
+        )
         row = await _registry.create_user_skill(
             db, current_user.id, allowed_tool_names=allowed_tool_names,
             dynamic_tools=dynamic_tools,
@@ -129,7 +160,19 @@ async def create_skill(payload: UserSkillPayload, current_user: User = Depends(g
 @router.patch("/{slug}")
 async def update_skill(slug: str, payload: UserSkillPatch, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
-        _, allowed_tool_names, dynamic_tools = await _available_skill_tools(current_user.id)
+        existing = (await db.execute(select(UserSkill).where(
+            UserSkill.owner_id == current_user.id,
+            UserSkill.slug == slug,
+        ))).scalar_one_or_none()
+        retained_tools = set(existing.related_tools or ()) if existing else set()
+        requested_tools = payload.related_tools or []
+        needs_mcp_discovery = any(
+            name.startswith("mcp_") and name not in retained_tools
+            for name in requested_tools
+        )
+        _, allowed_tool_names, dynamic_tools = await _available_skill_tools(
+            current_user.id, discover_mcp=needs_mcp_discovery,
+        )
         row = await _registry.update_user_skill(
             db, current_user.id, slug, allowed_tool_names=allowed_tool_names,
             dynamic_tools=dynamic_tools,
