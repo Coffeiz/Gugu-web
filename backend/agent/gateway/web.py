@@ -1033,6 +1033,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 tools_used=used_tools,
                 compaction_applied=compaction_applied,
                 session_exists_required=True,
+                run_id=current_run_id,
+                round_id=current_round_id,
             )
             await _publish_session_append(req, session_id, [{
                 "role": "assistant",

@@ -102,7 +102,12 @@ def test_persisted_summary_is_first_history_message():
 
     parts = build_history_parts([Message()], object(), use_anthropic=True)
     assert parts[0]["role"] == "user"
-    assert parts[0]["content"] == "<compacted-summary>\n早前决定\n</compacted-summary>"
+    from agent.context.summary_format import (
+        SUMMARY_NOTICE, format_compacted_summary, unwrap_compacted_summary,
+    )
+    assert parts[0]["content"] == format_compacted_summary("早前决定")
+    assert SUMMARY_NOTICE in parts[0]["content"]
+    assert unwrap_compacted_summary(parts[0]["content"]) == "早前决定"
 
 
 def test_submitted_batch_is_frozen_and_keeps_canonical_projection():

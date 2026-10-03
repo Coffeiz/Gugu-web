@@ -210,6 +210,13 @@ class TestIsSystemInjection:
 
 
 class TestCompactContext:
+    def test_compaction_task_echo_is_rejected(self):
+        """模型回显压缩任务时，不得把任务指令作为历史摘要交给主模型。"""
+        candidate = "已有结论\n" + compaction_module._APPEND_TASK_PREFACE
+        assert validate_compact_summary(candidate, max_output_tokens=8000) == (
+            False, "摘要包含压缩任务指令",
+        )
+
     def test_summary_candidate_respects_model_budget_and_shape_contract(self):
         assert validate_compact_summary("有效摘要", max_output_tokens=8_000)[0]
         assert validate_compact_summary(" ", max_output_tokens=8_000) == (False, "摘要为空")
@@ -249,7 +256,9 @@ class TestCompactContext:
         assert result.changed
         assert result.return_reason == "compacted"
         summary = next(m["content"] for m in result.messages if m["role"] == "user" and "compacted-summary" in m["content"])
-        assert estimate_tokens(summary) <= 80 + 10
+        from agent.context.summary_format import format_compacted_summary
+        # 输出预算约束摘要正文；稳定的资料隔离说明属于请求包装开销。
+        assert estimate_tokens(summary) <= 80 + estimate_tokens(format_compacted_summary(""))
         assert "历史片段" in summary
 
     def test_local_fallback_unwraps_previous_compacted_summary(self, monkeypatch):

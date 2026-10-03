@@ -38,7 +38,13 @@ def _run_compaction_summary(
     for item in conversation:
         if not isinstance(item, dict):
             continue
-        content = str(item.get("content") or "")
+        content = item.get("content") or ""
+        if isinstance(content, list):
+            # Anthropic 合并相邻 user 消息后，摘要与本轮用户原文是不同文本块。
+            # 只提取完整摘要块，不能把后续用户请求一起推进 baseline。
+            content = next((block.get("text", "") for block in content
+                            if isinstance(block, dict) and block.get("type") == "text"
+                            and block.get("text", "").lstrip().startswith(SUMMARY_OPEN)), "")
         # 摘要由组装器写成 <compacted-summary> 开头的 history 消息；run 内多次
         # 压缩时取最后一条（最新一次已经把上一版滚动合并进去）。
         if item.get("role") == "summary" or content.lstrip().startswith(SUMMARY_OPEN):
