@@ -304,47 +304,32 @@ async function toggleOpen() {
   await scrollBottom(true)
 }
 
-// 展开：调大窗布局 + 加载会话列表 + 滚到底 + 校准输入框
+// 展开：先捕获当前视口底部锚点，再切换布局。
 async function enterExpanded() {
+  markResizing()
   expanded.value = true
   loadBots()
-  markResizing()
   // 真实输入框此时仍在从小窗宽度过渡到大窗宽度，输入高度统一在过渡结束后校准，
   // 避免用中间态宽度测量导致窗口先撑高再回落。
   await nextTick()
   trackApi.track('chat_expanded').catch(() => {})
-  await fetchSessions()
-  await nextTick()
+  void fetchSessions()
   composerRef.value?.focus?.()
-  stick.value = true
-  const el = messagesEl.value
-  if (!el) return
-  el.scrollTop = 999999; lastTop.value = el.scrollTop
-  // 展开动画期间容器高度持续变化，用 ResizeObserver 跟底，420ms 动画结束后断开
-  const ro = new ResizeObserver(() => { el.scrollTop = 999999; lastTop.value = el.scrollTop })
-  ro.observe(el)
-  setTimeout(() => { ro.disconnect() }, 450)
 }
 
-// 收起：重置 contentH / 冻结基线 / 切回小窗 / 滚到底 / 动画结束后重测基线
+// 收起：保留底部锚点，冻结高度基线，布局稳定后重新测量。
 async function exitExpanded() {
+  markResizing()
   resetContentH()   // 先重置，小窗 DOM 以 SMALL_H 直接创建，不产生二次缩小
   // 缩小动画期间冻结增长（grown 恒 0、窗口稳在 SMALL_H）：大窗换行少、
   // scrollHeight 偏小，拿它当基线会让小窗重新换行后的高度全被算成新增 → 顶满
   setBaseScrollH(Infinity)
   expanded.value = false
-  markResizing()
   await nextTick()
   const el = messagesEl.value
   if (!el) return
-  stick.value = true
-  el.scrollTop = 999999; lastTop.value = el.scrollTop
-  // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
-  // ResizeObserver 跟着一直滚底，过渡结束后断开；动画结束、小窗布局稳定后再测真实基线
-  const ro = new ResizeObserver(() => { el.scrollTop = 999999; lastTop.value = el.scrollTop })
-  ro.observe(el)
+  // 窗口域统一维护底部锚点；小窗布局稳定后再测真实基线。
   setTimeout(() => {
-    ro.disconnect()
     captureBaseScrollH()
     syncSmallH()
   }, 450)
@@ -432,7 +417,7 @@ const {
   currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
   restorePendingQueueForDraft, restorePendingQueueForSession,
   drainPendingQueue,
-  stick, lastTop,
+  stick,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,
   pendingQueue, removeQueued,

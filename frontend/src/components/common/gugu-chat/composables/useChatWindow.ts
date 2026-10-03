@@ -52,8 +52,42 @@ export function useChatWindow(options: UseChatWindowOptions) {
   // 如果用户恰好在模式动画期间拖浏览器边缘，真实 window.resize 会直接结束模式动画，
   // 让 is-layout-resizing class 在同一 Vue patch 中撤掉，避免新的 viewport 几何继续吃旧 transition。
   let _resizeTimer: ReturnType<typeof setTimeout> | null = null
+  let _resizeScrollFrame: number | null = null
+  let _resizeObserver: ResizeObserver | null = null
+  let _resizeAnchor: { index: string; fraction: number } | null = null
+  let _resizeAtBottom = false
   let _onResizeTransitionEnd: ((e: TransitionEvent) => void) | null = null
+  function restoreResizeAnchor() {
+    const el = options.messagesEl.value
+    if (!el) return
+    if (_resizeAtBottom) {
+      el.scrollTop = el.scrollHeight - el.clientHeight
+      return
+    }
+    if (!_resizeAnchor) return
+    const row = el.querySelector<HTMLElement>(`.msg-virtual-row[data-index="${_resizeAnchor.index}"]`)
+    if (!row) return
+    const rect = row.getBoundingClientRect()
+    el.scrollTop += rect.top + rect.height * _resizeAnchor.fraction - el.getBoundingClientRect().bottom
+  }
+  function observeResizeAnchor() {
+    _resizeScrollFrame = null
+    const el = options.messagesEl.value
+    if (!resizing.value || !el) return
+    _resizeObserver = new ResizeObserver(restoreResizeAnchor)
+    _resizeObserver.observe(el)
+    const spacer = el.querySelector('.msg-virtual-spacer')
+    if (spacer) _resizeObserver.observe(spacer)
+    restoreResizeAnchor()
+  }
   function finishResizing(fitTextarea = true) {
+    _resizeObserver?.disconnect()
+    _resizeObserver = null
+    if (_resizeScrollFrame !== null) cancelAnimationFrame(_resizeScrollFrame)
+    _resizeScrollFrame = null
+    if (resizing.value && fitTextarea) restoreResizeAnchor()
+    _resizeAnchor = null
+    _resizeAtBottom = false
     resizing.value = false
     if (_resizeTimer) { clearTimeout(_resizeTimer); _resizeTimer = null }
     const w = options.windowRef.value
@@ -98,10 +132,28 @@ export function useChatWindow(options: UseChatWindowOptions) {
   // 走完时就被重新打开，看起来「闪一下」。定时器保留作兜底（万一属性没变、不会触发
   // transitionend），加了缓冲、不再和过渡时长完全对齐。
   function markResizing() {
+    _resizeObserver?.disconnect()
+    _resizeObserver = null
     if (_resizeTimer) clearTimeout(_resizeTimer)
     const w = options.windowRef.value
     if (w && _onResizeTransitionEnd) w.removeEventListener('transitionend', _onResizeTransitionEnd)
+    const el = options.messagesEl.value
+    _resizeAtBottom = !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 2
+    _resizeAnchor = null
+    if (el && !_resizeAtBottom) {
+      const bottom = el.getBoundingClientRect().bottom
+      const rows = Array.from(el.querySelectorAll<HTMLElement>('.msg-virtual-row[data-index]'))
+      const row = rows.find(row => row.getBoundingClientRect().bottom >= bottom)
+      if (row) {
+        const rect = row.getBoundingClientRect()
+        _resizeAnchor = { index: row.dataset.index!, fraction: Math.max(0, Math.min(1, (bottom - rect.top) / rect.height)) }
+      }
+    }
     resizing.value = true
+    // 同时监听视口与虚拟内容高度，在布局完成后、绘制前校准锚点。
+    // 不能逐帧轮询：rAF 可能先于虚拟行测量，导致上一帧的高度被拿来滚动。
+    if (_resizeScrollFrame !== null) cancelAnimationFrame(_resizeScrollFrame)
+    _resizeScrollFrame = requestAnimationFrame(observeResizeAnchor)
     _onResizeTransitionEnd = (e: TransitionEvent) => {
       if (e.target !== w) return
       if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
@@ -173,6 +225,7 @@ export function useChatWindow(options: UseChatWindowOptions) {
 
   // ── 关闭（纯窗口：开/关 + 清 expanded） ─────────────────────
   function closeChat() {
+    finishResizing(false)
     chatClosing.value = true
     open.value = false
     expanded.value = false
