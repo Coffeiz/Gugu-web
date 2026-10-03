@@ -57,7 +57,7 @@
 | SearXNG        | 自建通用搜索（`web_search`，省 Tavily 配额）   | Docker / 1Panel                                 | 可选     |
 
 
-> 前端：开发用 `npm run dev`（:5173）；生产 `npm run build` 出 `dist/`，由 nginx 托管。
+> 前端：开发用 `corepack pnpm --filter gugu-web run dev`（:5173）；生产用 `corepack pnpm --filter gugu-web run build` 生成 `dist/`，由 nginx 托管。前端依赖使用根 `pnpm-lock.yaml`，其中 `gugu-interaction-runtime` 是从 npm registry 获取的外部包。
 > 不接 IM（飞书/QQ/微信）时，worker / gateway / Redis 可以不跑。
 >
 > 💡 **「咕咕的大脑跑在 worker，不在 web」**——记住这条，能省掉一半运维困惑（改大脑代码要重启 worker 而非 backend，详见 §6.1）。
@@ -88,7 +88,7 @@ sudo apt install -y python3-venv python3-dev build-essential \
 # Node 用 nvm 或 nodesource 装 18+
 
 # 部署后只读检查 PDF 转换器和中文字体
-python3 backend/scripts/check_pdf_fonts.py
+python3 backend/scripts/checks/check_pdf_fonts.py
 ```
 
 检查结果应能看到 LibreOffice 版本，并且中文字体匹配到 CJK 字体；如果只匹配到
@@ -326,7 +326,7 @@ docker compose -f docker-compose.prod.yml up -d
 混用同一份环境变量或数据卷。若使用一体化 Compose，请按前面的章节使用 `GUGU_DATA_HOST_DIR`
 持久化 `/data`，应用镜像会在容器内托管 PostgreSQL/Redis，并把连接固定到回环地址。
 
-构建镜像示例（在仓库根目录执行；前端 Runtime 从 npm 安装）。正式版本由发布 workflow 同步推送 Docker Hub 与 GHCR，业务服务器可直接拉取 Docker Hub 版本标签；以下命令展示如何手动构建并推送到 GHCR：
+构建镜像示例（在仓库根目录执行）。正式版本由发布 workflow 同步推送 Docker Hub 与 GHCR，业务服务器可直接拉取 Docker Hub 版本标签；以下命令展示如何手动构建并推送到 GHCR：
 
 ```bash
 docker build -f backend/Dockerfile.prod \
@@ -401,7 +401,7 @@ docker network inspect gugu-sandbox-egress
 > 动态的 `172.20.x.x` 写进代理配置。代理地址应在 Admin 中保存为
 > `http://egress-proxy:3128`，网络名保存为 `gugu-sandbox-egress`。
 >
-> 非 Compose 部署仍需手动运行 `backend/scripts/prepare_rootless_storage.py`（或对应安装
+> 非 Compose 部署仍需手动运行 `backend/scripts/runtime/prepare_rootless_storage.py`（或对应安装
 > 流程）应用 ACL；不要把 `SANDBOX_ACL` 之类手工开关当作 Compose 的替代品。systemd 的
 > egress 引导只负责 Docker 网络和代理，不会擅自改写 `config.override.json` 或用户数据。
 > 配置中的 egress 代理必须先在 Admin 保存一次，之后 `gugu-sandbox-egress.service` 才能让
@@ -562,7 +562,7 @@ sudo nginx -t && sudo systemctl reload nginx
   location /admin { try_files $uri $uri/ /admin/index.html; }
   location /      { try_files $uri $uri/ /index.html; }
   ```
-  > 后台路由 base 为 `/admin`，所有 admin 页面 URL 形如 `/admin/config`、`/admin/login`，刷新时命中第一条规则。本地 admin dev server（`npm run dev:admin`）也需从 `localhost:5174/admin/` 访问。
+  > 后台路由 base 为 `/admin`，所有 admin 页面 URL 形如 `/admin/config`、`/admin/login`，刷新时命中第一条规则。本地 admin dev server（`corepack pnpm --filter gugu-web run dev:admin`）也需从 `localhost:5174/admin/` 访问。
 
 **踩过的坑（按出现频率）：**
 
@@ -834,7 +834,7 @@ sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
 | 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | 开发：`make dev-worker`；生产：`systemctl restart gugu-worker`   |
 | IM 网关代码：`agent/gateway/`（feishu / qq / wechat）、`router.py`        | **gateway**（连带重起所有网关子进程）            | `systemctl restart gugu-gateway` |
 | Shell 沙盒：`agent/sandbox/`、固定镜像或 sandboxd 配置                  | **sandboxd + worker**                         | `systemctl restart gugu-sandboxd gugu-worker` |
-| 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `cd frontend && npm run build`    |
+| 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `corepack pnpm --filter gugu-web run build` |
 | 配置 `.env`（含 `SECRET_KEY` / 管理员账号）                                 | **backend**                            | `systemctl restart gugu-backend`  |
 | **新增了模型字段 / 数据库列**                                                | **不是重启，是迁移！**                          | `make migrate`（见 §7）              |
 | 启用 / 停用 / 增删某个 IM bot                                             | 都不用重启                                  | Admin 面板即时生效（见 §6.4）             |
@@ -933,48 +933,19 @@ sudo journalctl -u gugu-gateway -f                    # 看频道起停日志
 
 ### 7.0.1 Docker Compose 生产镜像更新
 
-一体化 Docker Compose 部署不需要下载 Git 源码或在用户服务器重新构建。正式版本由 GitHub Actions 构建 `gugu-web`、backend、frontend 镜像并推送到 Docker Hub 与 GHCR。manifest v3 同时携带一体化和分体镜像的不可变 digest；v2 不再受支持。当前发布的架构列表仍以实际构建结果为准，不得据此假定 arm64 已受支持。更新前下载 GitHub Release 的 `update-manifest.json`，再使用仓库内的安全入口：
+正式版本由 GitHub Actions 构建一体化 `gugu-web` 与拆分 backend/frontend 镜像并发布到 Docker Hub、GHCR。Compose 镜像更新由 Docker/Compose 管理器执行；Gugu 不提供 Admin 一键镜像更新，也不运行 updater sidecar 或挂载宿主 Docker Socket。使用 Docker 管理器拉取新版本并重建 Compose 项目时，保留原 `.env`、Compose 配置、数据库及 `/data`、`/config` 等数据映射。不要使用 `docker compose down -v` 或无范围的 `docker system prune`。
 
-```bash
-scripts/release/compose-update.sh \
-  --manifest /path/to/update-manifest.json \
-  --confirm
-```
-
-脚本默认使用一体化 `docker-compose.yml`，验证 manifest、Release 签名和 `gugu-web` 镜像签名，
-备份 Compose 配置和数据库，拉取 manifest 指定的不可变 digest，并只重建 `app`（以及使用
-同一镜像且正在运行的 `sandboxd`）。默认一体化路径的数据库备份从 app 容器内置 PostgreSQL
-执行；旧式分体 Compose 才从 `postgres` 服务备份。拆分 `docker-compose.prod.yml` 不属于
-此更新入口。脚本不会执行 `docker compose down -v`、无范围 `docker system prune`，也不会
-删除 `/data`、`Gugu-data`、`gugu_config` 或 `sandbox_socket`。
-
-普通更新仅拉取 `app` 镜像，不会拉取 egress proxy、搜索或独立 `gugu-sandbox` 执行镜像。
-若 `sandboxd` 正在运行且配置为使用 `gugu-web` 同一镜像，脚本会同步更新它；自定义
-`sandboxd` 镜像保持不变，也不会改变沙盒开关。
+Compose 更新会启动新版本应用并按发布迁移数据库；更新前应通过部署平台或数据库工具备份数据。Docker/Compose 管理器不一定具备应用感知的数据库预检或自动回滚能力，失败恢复由部署管理员使用平台回退镜像并检查迁移兼容性。Admin 的“版本更新”页对 Compose 只显示此手动更新边界，不会拉取镜像或操作 Docker daemon。
 
 #### Admin 在线更新与部署模式支持状态
 
-更新页会先显示识别到的部署模式与能力原因。一体化 `docker-compose.yml` 和分体 `docker-compose.prod.yml` 都由独立 updater sidecar 执行，Docker socket 只挂载给 updater，app/backend 通过私有 Unix socket RPC 调用。更新器按各自拓扑检查数据库、备份数据与配置、校验迁移状态、拉取已签名 digest，再按固定服务顺序重建业务服务。纯 Docker 单容器模式由短期 helper 接管：仅支持官方 unified 镜像、嵌入式依赖、可写持久 `/data` 挂载、Docker socket 和受支持的容器配置；先拉取镜像并校验数据库备份，再替换容器，健康检查失败时恢复旧容器。状态及备份保存在 `/data/updater`，不会自动回滚数据库。
+更新页会先显示识别到的部署模式与能力原因。Compose 部署显示由 Docker/Compose 管理器更新整套镜像，不提供 Admin 检查、执行或回滚操作。单容器通过 Admin 下载 Cosign 签名的应用包；预检只放行未包含数据库迁移且 Release 明确声明支持安全代码回滚的版本。包校验后放入 `/data/app-updates` 并原子切换 `/app`，由容器入口监督器重启 Web、Worker、Gateway 等进程；健康检查失败时仅在数据库 schema 未变化且回滚策略有效时恢复上一代码目录。包含数据库迁移的 Release 必须通过 fnOS/群晖等 Docker 管理器更新完整镜像，不能用应用包切换代码。应用包路径不替换外层 Docker 容器，也不更新基础镜像、系统库或沙盒执行镜像；整镜像升级需保留原 `/data` 与 `/config` 映射。任务和应用版本状态保存在 `/data/updater`。
 
-三种模式都要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表，镜像必须来自签名 manifest 中的官方 digest。一体化/分体业务容器均不挂 Docker socket；standalone helper 会短暂获得 Docker socket 权限，只有在受支持的单容器拓扑中才启用。缺少受限 updater/RPC、设置 `GUGU_SELF_UPDATE=off`、容器配置不受支持或数据卷不符合要求时，Admin 页明确显示手动路径。`sandboxd` 是独立沙盒运行组件，不是一体化或分体 app 更新的前置条件；仅当它正在运行且与 app/backend 使用同一镜像引用时，更新才同步重建它。自定义 sandboxd 镜像保持不变。
+单容器应用包更新要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表。应用包必须通过固定发布身份的 Cosign blob 签名及 SHA-256 校验。Compose、单容器整镜像与基础运行时更新统一由 Docker/Compose 或 NAS Docker 管理器负责；`GUGU_SELF_UPDATE=off` 可关闭单容器应用包更新。
 
-从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须先按 `docs/quick-deploy.md` 停止旧 app（暂停 worker/gateway），并执行 `scripts/migrate-compose-postgres.sh`，将 PostgreSQL 与 Redis RDB 快照导出到 `/data/updater/`。新版 app 会只读挂载旧卷并检查迁移备份：旧数据仍在而备份缺失时 fail-closed，不会静默切换到空数据库/队列；备份只会导入全新的内置数据目录，成功加载后写入各自完成标记。原卷和备份都保留，需人工核验后再清理。首次升级时保留根目录 `.env`、`Gugu-data` 和旧数据卷；默认一体化 Compose 已包含受限 updater sidecar，启动后 Admin 在线更新可用。
+从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须先备份 PostgreSQL 与 Redis，并按上文迁移流程导出快照；新版本启动会检查迁移备份，不会静默切换到空数据库/队列。保留根目录 `.env`、`Gugu-data` 和旧数据卷。默认 Compose 不包含 updater sidecar，Admin 不提供 Compose 镜像自更新。
 
-如果更新脚本不在部署目录内，应显式指定部署路径和校验器路径；在部署目录执行，并从受保护的环境注入数据库密码（不要把密码写进命令参数或 shell 历史）：
-
-```bash
-cd /path/to/gugu-web-compose
-COMPOSE_PROJECT_DIR="$PWD" \
-COMPOSE_FILE="$PWD/docker-compose.yml" \
-UPDATE_VALIDATOR="/path/to/release/scripts/validate-update-manifest.mjs" \
-GUGU_DB_PASSWORD="$GUGU_DB_PASSWORD" \
-  /path/to/release/scripts/compose-update.sh \
-    --manifest /path/to/update-manifest.json \
-    --bundle /path/to/update-manifest.json.bundle \
-    --confirm
-```
-
-一体化脚本宿主机需有 Docker Compose 插件、Node.js、Cosign；分体更新侧车使用镜像内固定校验器。纯 Docker standalone 需使用官方 unified 镜像并挂载 Docker socket 与一个可写的持久 `/data` 卷；匿名卷、自定义 hostname、host 网络、特权/自动删除容器和未知 Docker 配置会被 fail-closed 拒绝。源码/systemd 部署仍不适用 Admin 在线镜像更新。尚未在 dev/staging 完成灰度验收前，不应把 Admin 在线更新用于生产升级。
+单容器应用包更新使用官方 unified 镜像内置的固定 Cosign 校验器，并要求可写持久 `/data`；仅更新应用代码。源码/systemd 部署不支持 Admin 在线 Docker 镜像更新。
 
 部署安全约束：Compose 文件统一固定 project name 为 `gugu-web-compose`。不要通过改
 project name、`-p` 参数或 `docker compose down -v` 启动/清理生产环境；一体化部署更新前

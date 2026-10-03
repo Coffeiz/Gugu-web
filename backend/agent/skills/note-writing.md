@@ -15,6 +15,7 @@ emoji: 📝
 
 - 搜索普通笔记或全局查找笔记/画布便签：使用固定工具名 `note_search`，传 `query`。
 - 读取搜索结果的完整正文：使用固定工具名 `note_get`，传 `node_id`。
+- `related` 是已建立关系边的一跳邻居；正文中的 @ 引用另由 `references` 返回项目、文件和活动的真实 ID 与当前名称，不会自动建立关系边。
 - 创建、更新或删除普通时间流笔记：使用本 Skill 的 `note_create`、`note_update`、`note_delete` 等工具。
 - 指定画布、搜索画布节点、创建画布便签、放置项目/文件、连接节点：改用 `canvas` Skill，不要用 `note_create` 代替 `canvas_create_note`。
 - `canvas_search` 只搜索指定画布内容，需要 `canvas_id`；它不是普通笔记搜索工具。
@@ -61,6 +62,8 @@ emoji: 📝
 **行内内容**（`content` 数组里的元素）只有两种：
 - 文本：`{"type":"text","text":"...","marks":[{"type":"bold"}]}`（`marks` 可省略；可选 `bold`/`italic`/`strike`/`code`/`link`，`link` 要带 `{"type":"link","href":"https://..."}`）
 - 引用：`{"type":"reference","ref_type":"project"|"file"|"event","ref_id":123,"label":"显示名"}`——**`ref_id` 必填，三种 `ref_type` 都要**，漏传会被拦（`file`/`event` 类型尤其容易漏，因为用得少）。
+
+用户说在笔记里 **@/引用文件、项目或活动**时，先搜索并确认对象 ID，再插入 `reference`；不要只写普通的 `@名称`。笔记中会显示成可点击的 @ 标签。
 
 ## 常见 Schema 错误
 

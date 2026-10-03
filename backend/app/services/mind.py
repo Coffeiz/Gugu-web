@@ -3,12 +3,13 @@ from sqlalchemy import func, or_, select
 
 from app.core.mind import (
     create_mind_note,
+    extract_mind_references,
     soft_delete_mind_note,
     update_mind_note,
 )
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
-from app.models import MindNode, MindRelation, ScheduledTask, UserMcpServer, UserSkill
+from app.models import CalendarEvent, File, MindNode, MindRelation, Project, ScheduledTask, UserMcpServer, UserSkill
 from app.search.query import keyword_condition
 
 
@@ -90,6 +91,29 @@ async def list_node_relations(db, user_id, node_ids):
     ).order_by(MindRelation.created_at.desc()))).scalars().all()
 
 
+async def list_note_references(db, user_id, nodes):
+    """正文引用独立于关系边；只返回当前用户可读取的未删除对象。"""
+    targets = {"project": (Project, "name"), "file": (File, "display_name"), "event": (CalendarEvent, "title")}
+    parsed = {node.id: extract_mind_references(node.content_md) for node in nodes}
+    cache = {}
+    for ref_type, (model, label_field) in targets.items():
+        ids = {ref_id for refs in parsed.values() for kind, ref_id in refs if kind == ref_type}
+        if not ids:
+            continue
+        # 先批量限定归属，失效正文锚点只被过滤，不触发越权告警；存活对象再经统一归属门。
+        entities = (await db.scalars(select(model).where(
+            model.user_id == user_id, model.id.in_(ids), model.deleted_at.is_(None),
+        ))).all()
+        for candidate in entities:
+            entity = await get_owned(db, model, candidate.id, user_id)
+            if entity is not None:
+                cache[(ref_type, entity.id)] = {
+                    "ref_type": ref_type, "ref_id": entity.id, "label": getattr(entity, label_field),
+                }
+    return {node_id: [dict(cache[ref]) for ref in refs if ref in cache]
+            for node_id, refs in parsed.items()}
+
+
 async def search_live_nodes(db, user_id, queries, mode, limit):
     return (await db.execute(select(MindNode).where(
         MindNode.user_id == user_id,
@@ -125,3 +149,22 @@ async def list_recent_reference_extras(db, user_id, *, limit: int):
         ).order_by(ScheduledTask.updated_at.desc()).limit(limit)
     )).all()
     return skills, mcp_servers, tasks
+
+
+async def list_user_prompt_skills(db, user_id):
+    """列出当前用户自定义 Prompt Skill，按名称和稳定 slug 排序。"""
+    return (await db.scalars(
+        select(UserSkill).where(
+            UserSkill.owner_id == user_id,
+            UserSkill.source == "user",
+        ).order_by(UserSkill.name, UserSkill.slug)
+    )).all()
+
+
+async def get_user_prompt_skill(db, user_id, slug):
+    """按稳定 slug 读取当前用户自定义 Prompt Skill。"""
+    return await db.scalar(select(UserSkill).where(
+        UserSkill.owner_id == user_id,
+        UserSkill.slug == slug,
+        UserSkill.source == "user",
+    ))

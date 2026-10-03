@@ -54,8 +54,11 @@ _REFLECTION_MEDIA_PLACEHOLDERS = {
 }
 
 
-def _replace_reflection_media(history: list) -> list:
+def _replace_reflection_media(history):
     """将反思前缀中的多媒体块替换为文本，避免 provider 重新审核媒体内容。"""
+    from agent.context.provider_conversation import ProviderConversation
+    if not isinstance(history, ProviderConversation):
+        raise TypeError("反思媒体清理只接受 ProviderConversation")
     replaced = []
     for message in history:
         if not isinstance(message, dict) or not isinstance(message.get("content"), list):
@@ -71,7 +74,7 @@ def _replace_reflection_media(history: list) -> list:
             else:
                 content.append(block)
         replaced.append({**message, "content": content})
-    return replaced
+    return history.with_messages(replaced)
 
 
 def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
@@ -107,9 +110,9 @@ def _build_append_branch_input(scope: MemoryScope, job, task_type: str,
         "只从追加历史末尾与本批范围对应的用户消息提取新增记忆，不要在任务中寻找重复正文，"
         "也不得把更早历史中的内容重新提取为新增记忆。"
     )
-    history = tuple(_replace_reflection_media(
-        render_branch_prefix(list(snapshot.history), snapshot.ai),
-    ))
+    history = _replace_reflection_media(
+        render_branch_prefix(snapshot.history, snapshot.ai),
+    )
     reflection_scope = (
         "member" if task_type == "member-batch" else
         "private" if task_type == "private-owner" else "group"

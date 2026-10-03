@@ -7,7 +7,7 @@ import {
   type UpdateStatus,
 } from '@/services/adminUpdate'
 
-const activeStatuses = new Set(['pending', 'prechecking', 'backing_up', 'pulling', 'migrating', 'recreating', 'health_checking', 'rolling_back'])
+const activeStatuses = new Set(['pending', 'prechecking', 'backing_up', 'pulling', 'downloading', 'verifying', 'installing', 'restarting', 'migrating', 'recreating', 'health_checking', 'rolling_back'])
 
 export function useAdminUpdates() {
   const status = ref<UpdateStatus | null>(null)

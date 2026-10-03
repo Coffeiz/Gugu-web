@@ -10,7 +10,7 @@
     spellcheck="false"
     @click="!editing && startEdit()"
     @blur="commit"
-    @keydown.enter.prevent="commit"
+    v-enter.prevent="commit"
     @keydown.esc.prevent="cancel"
   >{{ title }}</span>
   <!-- 侧边栏模式：编辑态用文件重命名样式（.rename-input-inline），按钮原地变勾选确认。
@@ -26,7 +26,7 @@
         class="rename-input-inline"
         :placeholder="title"
         @blur="commit"
-        @keydown.enter.prevent="commit"
+        v-enter.prevent="commit"
         @keydown.esc.prevent="cancel"
       />
     </span>

@@ -454,6 +454,20 @@ async def file_count_for_folder(db: AsyncSession, user_id, folder_id: int) -> in
     )).scalar_one()
 
 
+async def file_counts_for_folders(db: AsyncSession, user_id, folder_ids: list[int]) -> dict[int, int]:
+    """批量统计当前用户各文件夹的直属存活文件数。"""
+    if not folder_ids:
+        return {}
+    rows = await db.execute(
+        select(File.folder_id, func.count()).where(
+            File.user_id == user_id,
+            File.folder_id.in_(folder_ids),
+            File.deleted_at.is_(None),
+        ).group_by(File.folder_id)
+    )
+    return dict(rows.all())
+
+
 async def descendant_folder_ids(db: AsyncSession, user_id, root_id: int) -> list[int]:
     """按归属查询文件夹子树 ID。"""
     ids = [root_id]

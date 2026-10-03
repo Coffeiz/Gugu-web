@@ -15,7 +15,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 [![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883?style=flat)](frontend/)
 [![Python](https://img.shields.io/badge/backend-Python%20latest-3776ab?style=flat)](backend/)
 
-[中文](README.md) ｜ [English](README_en.md) ｜ [Quick Deploy](docs/quick-deploy.md) ｜ [Live Demo](https://www.gugugu.site)
+[中文](README.md) ｜ [English](README_en.md) ｜ [Quick Deploy](docs/quick-deploy_en.md) ｜ [Live Demo](https://www.gugugu.site)
 
 </div>
 
@@ -137,36 +137,33 @@ Gugu's tools are organized by capability groups. The Agent selects the appropria
 
 - Docker 20+ and Docker Compose v2.20+
 - A model provider API key (BYOK)
-- Network access for the first start, including PostgreSQL, Redis, and image registries
+- Access to Docker Hub and other image registries on first start; the default unified image includes PostgreSQL and Redis
 
 ### One-command deployment (Recommended, linux/amd64)
 
 ```bash
-git clone https://github.com/Coffeiz/Gugu-web.git
-cd Gugu-web
+mkdir -p gugu && cd gugu
+curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/.env.example -o .env.example
 cp .env.example .env
-mkdir -p backend && touch backend/.env
-# Edit the root .env and set SECRET_KEY, GUGU_DB_PASSWORD, and model configuration.
-# You may also put application settings in backend/.env; an admin password is generated on first start if omitted.
-# The user-data directory defaults to Gugu-data under the repository root;
+# Edit .env and set GUGU_DB_PASSWORD. SECRET_KEY is generated and persisted on first start if omitted.
+# Configure the model provider in Admin after startup; an admin password is generated if omitted.
+# User data defaults to Gugu-data under this deployment directory;
 # Compose creates it automatically on first startup:
 # For a custom absolute path, set GUGU_DATA_HOST_DIR=/srv/gugu-data in .env.
 docker compose up -d
 ```
 
+You do not need to clone the source repository. Keep `docker-compose.yml` and your `.env` in the deployment directory. Compose pulls the application and service images from Docker Hub and other registries. NAS panels that accept pasted YAML can use the Compose example in the [quick deployment guide](docs/quick-deploy_en.md).
+
 Basic variables:
 
 ```dotenv
 # Project-root .env: default Compose configuration
-SECRET_KEY=replace-with-a-long-random-string
 GUGU_DB_PASSWORD=replace-with-a-database-password
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 
-# backend/.env: optional application configuration
-AI__PROVIDER=qwen
-AI__API_KEY=your-provider-api-key
-
-# backend/.env: optional admin configuration; a random password is generated if omitted
+# Optional admin configuration; a random password is generated if omitted
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-with-an-admin-password
 # Public site origin used in email verification and password-reset links
@@ -175,18 +172,18 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8001`.
 
-The default Compose setup uses one unified Gugu application image containing the frontend, Nginx, Uvicorn, worker, and IM gateway. PostgreSQL, Redis, and SearXNG are provided by separate Compose services. Always use the repository's [`docker-compose.yml`](docker-compose.yml) for deployment and updates; it defines the persistent data mounts. The production and development Compose files are for deployments that need the frontend and backend managed separately. See the [quick deployment guide](docs/quick-deploy.md) for details.
+The default Compose setup uses one unified Gugu application image containing the frontend, Nginx, Uvicorn, worker, IM gateway, PostgreSQL, and Redis. SearXNG is provided as a separate Compose service. Use the local deployment directory's `docker-compose.yml` for deployment; it defines the persistent data mounts. The production and development Compose files are for deployments that need the frontend and backend managed separately. See the [quick deployment guide](docs/quick-deploy_en.md) for details.
 
 Open:
 
 - Gugu: <http://localhost:9595>
 - Admin: <http://localhost:9595/admin/>
 
-The first run initializes the database and applies migrations. If `ADMIN_PASSWORD` is omitted, a random password is generated, saved to `backend/.env`, and printed once; there is no public default admin password.
+The first run initializes the database and applies migrations. If `ADMIN_PASSWORD` is omitted, a random password is generated, saved to `Gugu-data/.env`, and printed once; there is no public default admin password.
 
-See the [Deployment Guide](docs/quick-deploy.md) for the complete Compose parameters and configuration locations.
+See the [Deployment Guide](docs/quick-deploy_en.md) for the complete Compose parameters and configuration locations.
 
-The default Compose setup also starts sandboxd and the controlled egress proxy, and pulls the separate `gugu-sandbox` execution image with a pinned digest when online. For offline deployments, import the single `gugu-compose-bundle.tar` release artifact and use `docker-compose.offline.yml`; no external registry is contacted. The host Docker socket must be available to Compose (default: `/var/run/docker.sock`). For Rootless Docker, set `GUGU_DOCKER_SOCKET` in the project `.env`. To omit sandbox containers, set `GUGU_SANDBOX_ENABLED=false` and stop sandboxd and egress-proxy.
+The integrated Compose and single-container image run an internal Rootless Docker daemon and bundle the execution runtime; the app does not need a host Docker socket or a separate `sandboxd`. The outer integrated app container must run as privileged; on fnOS and similar panels, enable the privileged-container option. This mode is intended for trusted personal single-user deployments, not multi-tenant, public-facing, or business servers. Split production Compose continues to use a separate Rootless `sandboxd`; see the [quick deployment guide](docs/quick-deploy_en.md) for details.
 
 Developers who need source mounts and Vite should use [Dev Compose](docker-compose.dev.yml):
 
@@ -203,7 +200,7 @@ LoopScope must be opened from a logged-in Gugu `/dev` page by selecting the Loop
 
 ## Configuration
 
-The README keeps configuration at index level. See [Deployment Guide](docs/quick-deploy.md) for the complete Compose setup and configuration locations.
+The README keeps configuration at index level. See [Deployment Guide](docs/quick-deploy_en.md) for the complete Compose setup and configuration locations.
 
 | Configuration | Purpose |
 | --- | --- |
@@ -328,15 +325,18 @@ flowchart LR
     S[system<br/>persona / policy / stable rules] --> C[Context Assembly]
     P[snapshot<br/>session state / Memory summary / tool catalog] --> C
     H[history<br/>sealed conversation and tool exchanges] --> C
-    I[Current user input and context] --> B[NewMessageBatch]
-    C --> R[Stable context + current batch]
-    B --> R
+    I[Current user input and context] --> B[MessageBatch]
+    H --> A[MessageArea]
+    B --> A
+    C --> R[Stable context + ProviderConversation]
+    A --> R
     R --> L[LLM Provider]
     T[Current time for scheduled tasks] --> B
     L --> Q{Tool follow-up needed?}
     Q -- Yes --> B
-    Q -- No --> K[seal / canonical projection]
-    K --> H2[Persist to history]
+    Q -- No --> D[PersistenceDelta]
+    A --> D
+    D --> H2[Persist transactionally to history]
     H2 --> H
 ```
 
@@ -345,10 +345,10 @@ flowchart LR
 | `system` | Persona, behavior rules, security policy, and stable Agent principles | Reused across sessions and kept as stable as possible |
 | `snapshot` | Session information, long-term context summaries, capability catalog, short tool descriptions, and field signatures | Persisted at session scope and regenerated when it changes |
 | `history` | Persisted user messages, model replies, tool calls and results, Skill usage, and key context events | Supports multi-turn recovery, compaction, and replay |
-| `batch` | Current user message, stance, message time, RAG results, IM/workspace reminders, and this round's model/tool exchanges | Submitted as one continuous batch, then sealed into canonical history |
+| `MessageBatch` / `MessageArea` | The batch is this round's canonical delta; the area owns restored history and new entries, in order, with source and persistence policy | Each round appends to the area; provider projection is read-only, and finalization persists a delta |
 | `dynamic tail` | Real-time temporary information required by a specific provider request | Optional; valid only for the current request and never persisted to history |
 
-Each round is assembled as a `NewMessageBatch` with a fixed message order and metadata. The provider projection and canonical projection are retained together; canonical history is persisted after the run finishes. The next request restores persisted history instead of reconstructing it from provider wire format.
+Each round is assembled as a `MessageBatch` containing only the canonical message delta and grouping metadata. After append, `MessageArea` is the sole source of runtime order, source, and persistence policy. Provider requests get an immutable `ProviderConversation` rendered from an Area snapshot; Provider wire is never written back into the Area. Finalization transactionally persists only the `PersistenceDelta` produced by the Area. The next request restores history from the database rather than reconstructing it from Provider wire format.
 
 The stable assembly order is `system`, `snapshot`, sealed `history`, and the current `batch`. New messages are always inserted before the optional `dynamic tail`, so tool follow-ups, compaction, and cross-provider conversion do not write temporary information into history or disturb the stable prefix.
 

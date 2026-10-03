@@ -256,15 +256,7 @@ Agent 工具和后台任务
 
 ### 9.5 当前收口顺序
 
-主要领域已经完成 Service 化，但 Agent 工具仍有残余 Model、SQLAlchemy 查询和事务操作。后续按以下顺序收口：
-
-1. 思维画布 Agent 工具：移除 `mind_canvas.py` 中的 Model、SQLAlchemy、`get_owned()` 和数据库操作，全部转调 `services/mind_canvas.py`。
-2. 思维、群上下文、历史对话和搜索：清理工具层残余查询与 Model 依赖，保持现有 Service 行为不变。
-3. 日历、项目和定时任务：清理引用校验、`refresh()` 以及残余事务操作。
-4. 文件和回收站：清点工具层残余 `refresh()`、归属查询和事务协调，确认不绕过 `FileService`。
-5. 全部领域完成后，再扩大 Agent ORM 禁止规则，并删除不再使用的兼容 helper。
-
-每个领域都按“实现、回归测试、静态守卫、独立提交、审查”顺序完成，不能把画布功能开发、UI 改动或设计令牌重构混入 ORM 收口提交。
+2026-09-28 已清理 Agent 工具剩余的 ORM 边界：历史对话消息归属解析、文件夹文件数统计、工作区目录读取、MCP server 查询与写入、用户 Skill 查询，以及定时任务授权路径中的冗余 `flush()` 均由对应 Service 承担。全量 `check_orm_boundaries.py --agent-strict` 通过；后续新增 ORM 仍必须留在 Service 层。
 
 ### 9.6 清理旧入口
 
@@ -303,9 +295,9 @@ Agent 工具和后台任务
 
 ## 12. 实施状态
 
-- 阶段 0 已完成：基线见 `docs/refactor/ORM规范化阶段0基线.md`，扫描器为 `backend/scripts/check_orm_boundaries.py`，默认只报告存量。
-- 阶段 1 已完成首个守卫接入：CI 使用 `--diff-base` 只检查新增的高风险 ORM 行，不因历史存量阻塞当前开发。
-- 阶段 1 当前拦截范围：API、Agent 新增 `select/update/delete/insert`、数据库写入/裸 `get`，以及 api/Agent 直接导入 `File/Folder`；Service 是规范要求承接 ORM 的边界，不由这条棘轮拦截。
+- 阶段 0 已完成：基线见 `docs/refactor/ORM规范化阶段0基线.md`，扫描器为 `backend/scripts/checks/check_orm_boundaries.py`，默认只报告存量。
+- 阶段 1 曾以 `--diff-base` 检查新增高风险 ORM 行，作为存量迁移期间的临时棘轮；该模式不会证明存量问题已修复，不应替代严格扫描。
+- 当前 Agent 工具使用 `--agent-strict` 全量守卫；ORM 查询和写入迁移完成后，严格扫描必须通过，不得通过增量基线隐藏存量违规。
 - 现有 `check_ownership.py`、`check_confirm_gate.py` 和 `check_utcnow.py` 继续作为独立守卫；它们不替代后续文件域 Service 迁移。
 - 阶段 2 已完成文件域试点：文件夹列表/下载、回收站列表/内容/恢复/永久删除、FileService 写操作，以及 Agent 文件工具的浏览、创建、移动、复制、删除和回收站操作均已收口到 `services/files/` 或 `FileService`，并补充跨用户回归测试。
 - 阶段 3 已完成主要领域的 Service 化：项目列表、详情计数、创建落库和项目删除时文件软删已迁移到 `services/projects.py`；日历事件及活动提醒的查询、创建、删除已迁移到 `services/calendar.py`；思维面板的主要画布查询、节点写入、连接写入、引用节点和批量事务已迁移到 `services/mind_canvas.py`；客户、独立定时任务、历史对话、总览、时间流思维查询、群上下文和搜索用量已分别建立对应 Service。这里的“主要领域已迁移”不等于 Agent 工具已经完全没有 ORM，残余清理按 9.5 执行。
@@ -318,7 +310,7 @@ Agent 工具和后台任务
 
 ### P0：画布 Agent 工具边界
 
-- [x] 清点 `backend/agent/tools/mind_canvas.py` 中所有 SQLAlchemy、Model、`get_owned()` 和 `db.*` 使用点。
+- [x] 清点 `backend/agent/tools/canvas.py` 中所有 SQLAlchemy、Model、`get_owned()` 和 `db.*` 使用点。
 - [x] 将画布查询、节点写入、关系写入、引用节点和批量操作全部迁移到 `backend/app/services/mind_canvas.py`。
 - [x] 保留 Agent 工具中的参数解析、确认门、调用 Service 和结果格式化。
 - [x] 确认 `backend/app/core/mind_canvas.py` 只保留领域原子逻辑，不新增查询入口。
@@ -330,13 +322,17 @@ Agent 工具和后台任务
 
 - [x] 将 Agent 工具禁止导入 SQLAlchemy、Model、ownership helper 和直接查询/刷新操作写入静态检查规则。
 - [x] 移除本轮 Agent 工具中仅用于类型标注的 Model 引用，使用 Service 返回对象和通用类型标注。
-- [x] 保留阶段 1 棘轮，确保新增违规无法进入 API 和 Agent 工具。
-- [x] 验收：`check_orm_boundaries.py --agent-strict` 和阶段 1 棘轮均通过；事务提交/回滚规则留到 P3。
+- [x] 迁移 Agent 工具存量 ORM 后恢复严格守卫，确保工具层不再直接依赖 ORM。
+- [x] 验收：`check_orm_boundaries.py --agent-strict` 通过；事务提交/回滚规则留到 P3。
 
 ### P2：清理其他 Agent 工具残余
 
 - [x] 思维工具：迁移便签、节点和关系残余查询与刷新逻辑。
 - [x] 群上下文和历史对话：移除消息/会话 Model 及直接查询。
+- [x] 对话 RAG 旧索引消息归属回查迁移到 `app.services.conversations`。
+- [x] 文件夹直属文件计数迁移到 `app.services.files.browser`；工作区目录归属读取迁移到 `app.services.workspaces`。
+- [x] MCP server CRUD 查询及持久化操作迁移到 `app.services.mcp_servers`；Skill 列表/删除查询迁移到 `app.services.mind`。
+- [x] 定时任务授权流程移除 Service 已执行 flush 后的工具层重复 flush。
 - [x] 搜索用量：移除直接聚合查询，统一使用搜索 Service。
 - [x] 日历、项目、定时任务：移除引用校验、Model 依赖和残余刷新操作。
 - [x] 文件和回收站：清点 `refresh()`、归属查询和事务协调，确认不绕过 `FileService`；事务提交留到 P3。
@@ -354,7 +350,7 @@ Agent 工具和后台任务
 
 - [x] 建立 `ORM规范化调用方清单.md`，记录画布和已完成 Agent 收口领域的调用方与事务边界。
 - [x] 删除画布 Agent 不再需要的 `_canvas_item` 旧查询包装。
-- [x] 保留 Agent 严格 ORM 守卫和新增代码棘轮，并用任务事务回归测试锁定边界。
+- [x] Agent 工具严格 ORM 守卫全量通过；不以增量棘轮替代存量迁移验收。
 - [x] 客户 API 已改用客户 Service，避免 API 保留第二套客户查询/写入入口。
 - [x] 画布 API 第一批基础画布、节点和关系查询/写入入口已复用 `mind_canvas Service`。
 - [x] 迁移画布关系创建、节点置顶和引用节点入口到 `mind_canvas Service`。
@@ -364,7 +360,7 @@ Agent 工具和后台任务
 ### P5：最终验收
 
 - [x] 运行完整后端测试和领域专项测试：`953 passed`，时间流与画布专项测试通过。
-- [x] 运行 ORM 棘轮、ownership、确认门和时钟守卫。
+- [x] 运行 Agent ORM 严格守卫及 ownership、确认门和时钟守卫。
 - [x] 复查 ORM 基线数量，当前扫描为 811 项；相对阶段 0 文档的减少来自本轮 Service/API 收口，没有新增高风险边界。
 - [x] 更新阶段状态、变更记录和实施文档。
 - [x] P0-P4 的代码、测试、边界守卫和 devserver 验收已完成；阶段 4 收口文档保留后台事务语义与环境同步注意事项。

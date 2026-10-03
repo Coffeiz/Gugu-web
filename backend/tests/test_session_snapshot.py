@@ -21,10 +21,12 @@ from agent.context.session_snapshot import (
 )
 from agent.context.dynamic_tail import current_time_text
 from agent.context.assembly import (
-    NewMessageBatch, PromptMessages, assemble, assemble_turn, reminder,
-    newly_appended, stance_digest,
+    MessageBatch, MessageArea, assemble, assemble_turn, reminder,
+    stance_digest,
 )
-from agent.loop_drivers import _with_history_cache, _with_single_history_cache
+from agent.loop_drivers import (
+    _with_history_cache, _with_single_history_cache, _with_system_cache_control,
+)
 from agent.runtime.loopscope_trace.state import _ScopeRun, _scope_run, _now
 import pytest
 
@@ -292,6 +294,11 @@ def test_initialize_snapshot_preserves_goal_control_state():
         "goal_status": "active",
         "goal_mode": True,
         "stance_digest": "stable-stance",
+        "provider_cache_anchor": {
+            "provider": "minimax", "api_format": "anthropic",
+            "model": "test-model", "strategy": "multi",
+            "baseline_digest": "message-fingerprint",
+        },
         "user_skill_snapshot": [{
             "name": "saved-skill", "kind": "skill", "source": "user",
             "description_short": "已冻结的技能目录",
@@ -310,6 +317,7 @@ def test_initialize_snapshot_preserves_goal_control_state():
     assert session.session_context["goal_status"] == "active"
     assert session.session_context["goal_mode"] is True
     assert session.session_context["stance_digest"] == "stable-stance"
+    assert session.session_context["provider_cache_anchor"]["baseline_digest"] == "message-fingerprint"
     assert session.session_context["user_skill_snapshot"][0]["name"] == "saved-skill"
 
 
@@ -323,7 +331,8 @@ def test_history_baseline_never_moves_back_from_session_watermark():
     assert history_baseline(session) == 20
 
 
-def test_prompt_messages_keep_turn_batch_contiguous_before_tool_round():
+def test_message_area_keeps_turn_batch_before_tools_and_temporary_reminder_in_tail():
+    """临时环境提醒不得插入可持久化工具前缀，同时保留已有时间尾部。"""
     messages = assemble(
         fixed_parts=[{"role": "user", "content": "session"}],
         history=[{"role": "user", "content": "history"}],
@@ -335,26 +344,22 @@ def test_prompt_messages_keep_turn_batch_contiguous_before_tool_round():
     )
     messages.set_dynamic_tail([reminder("当前时间：time")])
     messages.append_batch(turn)
-    messages.append_batch(NewMessageBatch([
+    messages.append_batch(MessageBatch.from_canonical_messages([
         {"role": "assistant", "content": "tool call"},
         {"role": "user", "content": "tool result"},
     ]))
 
-    assert [item["content"] for item in messages][-6:] == [
-        [{
-            "type": "stance-context",
-            "digest": stance_digest("stance"),
-            "text": reminder("stance")["content"],
-        }],
-        "new",
-        "[system-reminder]\nsummary\n[/system-reminder]",
-        "tool call",
-        "tool result",
-        "[system-reminder]\n当前时间：time\n[/system-reminder]",
-    ]
-    assert messages.dynamic_tail == [reminder("当前时间：time")]
-    assert "当前时间：time" not in str(messages.conversation)
-    assert messages.newly_appended(2)[-2:][0]["content"] == "tool call"
+    projected = messages.provider_projection().to_messages()
+    projected_text = str(projected)
+    ordered = ["stance", "new", "tool call", "tool result"]
+    offsets = [projected_text.index(value) for value in ordered]
+    assert offsets == sorted(offsets)
+    assert projected[-2:] == [reminder("当前时间：time"), reminder("summary")]
+    assert messages.dynamic_tail == [reminder("当前时间：time"), reminder("summary")]
+    assert "当前时间：time" not in str(messages.provider_projection().conversation)
+    assert "summary" not in str(messages.provider_projection().conversation)
+    assert "summary" not in str(messages.persistence_delta(outcome="success").entries)
+    assert messages.provider_projection().conversation[-2]["content"] == "tool call"
 
 
 def test_stance_digest_only_appends_when_stance_changes():
@@ -368,37 +373,37 @@ def test_stance_digest_only_appends_when_stance_changes():
         current_user={"role": "user", "content": "三"},
     )
 
-    assert first.messages[0]["content"][0]["type"] == "stance-context"
-    assert first.messages[0]["content"][0]["text"].startswith("[system-reminder]")
-    assert [item["content"] for item in same.messages] == ["二"]
-    assert changed.messages[0]["content"][0]["type"] == "stance-context"
-    assert changed.messages[0]["content"][0]["text"].startswith("[system-reminder]")
+    assert first.canonical_messages[0]["content"][0]["type"] == "stance-context"
+    assert first.canonical_messages[0]["content"][0]["text"].startswith("[system-reminder]")
+    assert [item["content"] for item in same.canonical_messages] == ["二"]
+    assert changed.canonical_messages[0]["content"][0]["type"] == "stance-context"
+    assert changed.canonical_messages[0]["content"][0]["text"].startswith("[system-reminder]")
     assert changed_digest != same_digest
 
 
 def test_old_stance_message_is_never_removed_from_history():
-    messages = PromptMessages([{"role": "user", "content": "旧姿态"}])
-    messages.append_batch(NewMessageBatch([{"role": "user", "content": "新姿态"}]))
-    assert [item["content"] for item in messages] == ["旧姿态", "新姿态"]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "旧姿态"}])
+    messages.append_batch(MessageBatch.from_canonical_messages([{"role": "user", "content": "新姿态"}]))
+    assert [item["content"] for item in messages.provider_projection().conversation] == ["旧姿态", "新姿态"]
 
 
-def test_prompt_messages_commit_one_new_message_batch_atomically():
-    messages = PromptMessages(
+def test_message_area_commits_one_new_message_batch_atomically():
+    messages = MessageArea.from_canonical_messages(
         [{"role": "user", "content": "history"}],
     )
-    batch = NewMessageBatch([
+    batch = MessageBatch.from_canonical_messages([
         {"role": "assistant", "content": "tool call"},
         {"role": "user", "content": "tool result"},
     ])
 
     messages.append_batch(batch)
 
-    assert [item["content"] for item in messages] == [
+    assert [item["content"] for item in messages.provider_projection().conversation] == [
         "history",
         "tool call",
         "tool result",
     ]
-    assert [item["content"] for item in messages.newly_appended(1)] == [
+    assert [item["content"] for item in messages.provider_projection().conversation[-2:]] == [
         "tool call", "tool result",
     ]
 
@@ -416,16 +421,11 @@ def test_snapshot_reminder_is_fixed_before_history_and_runtime_tail():
     )[0])
     messages.set_dynamic_tail([reminder("当前时间：time")])
 
-    assert messages[0] == snapshot
-    assert [item["content"] for item in messages.conversation] == [
-        snapshot["content"], "history",
-        [{
-            "type": "stance-context",
-            "digest": stance_digest("stance"),
-            "text": reminder("stance")["content"],
-        }],
-            [{"type": "time-context", "text": "[system-reminder]\nmessage-time\n[/system-reminder]"}], "new",
-    ]
+    assert messages.request_prefix[0] == snapshot
+    projected_text = str(messages.provider_projection().to_messages())
+    assert projected_text.index("memory / projects") < projected_text.index("history")
+    assert projected_text.index("stance") < projected_text.index("message-time")
+    assert projected_text.index("message-time") < projected_text.index("new")
     assert messages.dynamic_tail == [reminder("当前时间：time")]
 
 
@@ -436,7 +436,7 @@ def test_turn_batch_keeps_stance_and_message_time_order_stable():
         current_user={"role": "user", "content": "new"},
     )
 
-    assert [item["content"] for item in batch.messages] == [
+    assert [item["content"] for item in batch.canonical_messages] == [
         [{
             "type": "stance-context",
             "digest": stance_digest("stance"),
@@ -447,38 +447,40 @@ def test_turn_batch_keeps_stance_and_message_time_order_stable():
     ]
 
 
-def test_prompt_messages_replace_conversation_preserves_batch_messages():
-    messages = PromptMessages([{"role": "user", "content": "old"}])
-    messages.append_batch(NewMessageBatch([reminder("time")]))
-    messages.replace_conversation([{"role": "user", "content": "compacted"}])
-    assert messages.conversation[0]["content"] == "compacted"
+def test_area_baseline_replacement_preserves_request_only_dynamic_tail():
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "old"}])
+    messages.append_batch(MessageBatch.from_canonical_messages([reminder("time")]))
+    messages.replace_request_baseline(
+        [{"role": "user", "content": "compacted"}],
+        expected_revision=messages.revision,
+    )
+    assert messages.provider_projection().conversation[0]["content"] == "compacted"
 
 
 def test_history_cache_boundary_uses_batch_messages():
-    messages = PromptMessages(
+    messages = MessageArea.from_canonical_messages(
         [{"role": "user", "content": [{"type": "text", "text": "fixed"}]}],
     )
-    messages.append_batch(NewMessageBatch([
+    messages.append_batch(MessageBatch.from_canonical_messages([
         {"role": "user", "content": [{"type": "text", "text": "stance"}]},
         {"role": "user", "content": [{"type": "text", "text": "time"}]},
     ]))
-    cached, _state = _with_history_cache(messages)
+    cached, _state = _with_history_cache(messages.provider_projection())
     assert "cache_control" in cached[2]["content"][0]
-    assert newly_appended([{"role": "user", "content": "old"}, {"role": "assistant", "content": "new"}], 1)[0]["content"] == "new"
 
 
 def test_history_cache_keeps_previous_checkpoint_across_round_append():
-    messages = PromptMessages(
+    messages = MessageArea.from_canonical_messages(
         [
             {"role": "user", "content": [{"type": "text", "text": "fixed"}]},
             {"role": "user", "content": [{"type": "text", "text": "round one"}]},
         ],
     )
 
-    first, state = _with_history_cache(messages)
+    first, state = _with_history_cache(messages.provider_projection())
     messages.append({"role": "assistant", "content": [{"type": "text", "text": "tool call"}]})
     messages.append({"role": "user", "content": [{"type": "text", "text": "tool result"}]})
-    second, _next_state = _with_history_cache(messages, state)
+    second, _next_state = _with_history_cache(messages.provider_projection(), state)
 
     assert "cache_control" in second[3]["content"][0]
     assert "cache_control" in second[0]["content"][0]
@@ -487,15 +489,15 @@ def test_history_cache_keeps_previous_checkpoint_across_round_append():
 
 
 def test_history_cache_keeps_baseline_when_tool_continuation_appends():
-    messages = PromptMessages([
+    messages = MessageArea.from_canonical_messages([
         {"role": "user", "content": [{"type": "text", "text": "baseline"}]},
         {"role": "user", "content": [{"type": "text", "text": "本轮请求"}]},
     ])
 
-    _first, state = _with_history_cache(messages)
+    _first, state = _with_history_cache(messages.provider_projection())
     messages.append({"role": "assistant", "content": [{"type": "tool_use", "name": "ask_user"}]})
     messages.append({"role": "user", "content": [{"type": "tool_result", "content": "已选择"}]})
-    cached, _next_state = _with_history_cache(messages, state)
+    cached, _next_state = _with_history_cache(messages.provider_projection(), state)
 
     assert "cache_control" in cached[0]["content"][0]
     assert "cache_control" in cached[3]["content"][0]
@@ -503,37 +505,34 @@ def test_history_cache_keeps_baseline_when_tool_continuation_appends():
 
 
 def test_batch_messages_are_persisted_as_new_history():
-    messages = PromptMessages(
+    messages = MessageArea.from_canonical_messages(
         [{"role": "user", "content": "fixed"}, {"role": "user", "content": "round one"}],
     )
-    initial_len = len(messages.conversation)
-    messages.append_batch(NewMessageBatch([
+    initial_len = len(messages.provider_projection().conversation)
+    messages.append_batch(MessageBatch.from_canonical_messages([
         {"role": "assistant", "content": "tool call"},
-        {"role": "tool", "content": "tool result"},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "call-1", "content": "tool result",
+        }]},
     ]))
 
-    assert [item["content"] for item in messages.newly_appended(initial_len)] == [
+    assert [item["content"] for item in messages.provider_projection().conversation[initial_len:]] == [
         "tool call", "tool result",
     ]
 
 
 def test_single_history_cache_keeps_only_latest_history_anchor():
-    messages = PromptMessages(
+    messages = MessageArea.from_canonical_messages(
         [
-            {"role": "system", "content": [{
-                "type": "text", "text": "固定 system",
-                "cache_control": {"type": "ephemeral"},
-            }]},
-            {"role": "system", "content": [{
-                "type": "text", "text": "固定 snapshot",
-                "cache_control": {"type": "ephemeral"},
-            }]},
+            {"role": "system", "content": [{"type": "text", "text": "固定 system"}]},
+            {"role": "system", "content": [{"type": "text", "text": "固定 snapshot"}]},
             {"role": "user", "content": "旧锚点"},
             {"role": "assistant", "content": "回复"},
             {"role": "user", "content": "最新锚点"},
         ],
     )
-    cached, _state = _with_single_history_cache(messages)
+    projection = _with_system_cache_control(messages.provider_projection())
+    cached, _state = _with_single_history_cache(projection)
 
     assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}

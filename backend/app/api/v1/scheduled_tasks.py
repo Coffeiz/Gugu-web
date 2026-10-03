@@ -22,7 +22,7 @@ from app.core.ownership import get_owned
 from app.core import events
 from app.db.session import get_db
 from app.models import FilesystemAuthorizationGrant, ScheduledTask, User
-from app.services.calendar import find_event_reminder_by_cron
+from app.services.calendar import event_base_datetime, event_reminder_lead_minutes, find_event_reminder_by_cron
 from app.services.scheduled_tasks import (
     find_qq_group_session,
     get_enabled_user_bot,
@@ -299,6 +299,8 @@ async def create_task(
         t.delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
     else:
         t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
+    if body.event_id is not None:
+        t.reminder_lead_minutes = event_reminder_lead_minutes(t, event_base_datetime(ev))
     db.add(t)
     try:
         await db.flush()
@@ -380,6 +382,13 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.interval_minutes = spec.interval_minutes
         t.start_at = spec.start_at
         t.end_at = spec.end_at
+        if t.event_id is not None:
+            from app.models import CalendarEvent
+            event = await get_owned(db, CalendarEvent, t.event_id, user.id)
+            if event is None or event.deleted_at is not None:
+                raise HTTPException(400, "绑定的日历事件不存在")
+            t.reminder_lead_minutes = None
+            t.reminder_lead_minutes = event_reminder_lead_minutes(t, event_base_datetime(event))
     if body.name is not None:
         t.name = body.name
     if body.payload is not None:
@@ -556,6 +565,7 @@ async def delete_task(task_id: int, user: User = Depends(get_current_user), db: 
 class TestNotify(BaseModel):
     channels: list[str] = ["web"]
     name: str = "活动提醒"
+    qq_delivery: dict | None = None
 
 
 @router.post("/test-notify")
@@ -567,10 +577,15 @@ async def test_notify(body: TestNotify, user: User = Depends(get_current_user), 
     chans = {c for c in (body.channels or []) if c in _CHANNELS} or {"web"}
     name = (body.name or "活动提醒").strip()
     text = f"这是一条测试提醒——「{name}」。如果你收到了这条消息，说明提醒渠道工作正常。"
+    delivery_targets = None
+    if "qq" in chans and body.qq_delivery is not None:
+        delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
     # 渠道投递可能等待外部 IM 接口，不能让认证用的请求会话跨越整个投递过程。
     await db.close()
     from app import scheduled_tasks as ST
-    result = await ST.deliver_to_channels(user.id, f"{name}（测试）", text, chans)
+    result = await ST.deliver_to_channels(
+        user.id, f"{name}（测试）", text, chans, delivery_targets,
+    )
     if not result:
         return {"ok": True, "msg": "已发送（未选任何投递渠道）"}
     msg = "测试发送结果：\n" + "\n".join(f"· {k}：{v}" for k, v in result.items())

@@ -61,16 +61,25 @@ def test_pattern_strength_orders_observed_before_manual_and_tolerates_legacy_fie
 
 
 def test_system_message_text_extracts_first_system_content():
-    assert _system_message_text("not-a-list") == ""
-    assert _system_message_text([{"role": "user", "content": "x"}]) == ""
-    assert _system_message_text([{"role": "system", "content": "稳定前缀"}]) == "稳定前缀"
+    import pytest
+    from agent.context.provider_conversation import ProviderConversation
+
+    with pytest.raises(TypeError):
+        _system_message_text("not-a-list")
+    assert _system_message_text(ProviderConversation([{"role": "user", "content": "x"}])) == ""
+    assert _system_message_text(ProviderConversation([
+        {"role": "system", "content": "稳定前缀"},
+    ])) == "稳定前缀"
     blocks = [
         {"type": "text", "text": "A"},
         {"type": "image", "text": "忽略"},
         {"type": "text", "text": "B"},
     ]
-    assert _system_message_text([{"role": "system", "content": blocks}]) == "AB"
-    assert _system_message_text(["junk", {"role": "system", "content": "ok"}]) == "ok"
+    assert _system_message_text(ProviderConversation([
+        {"role": "system", "content": blocks},
+    ])) == "AB"
+    with pytest.raises(TypeError):
+        _system_message_text(["junk", {"role": "system", "content": "ok"}])
 
 
 def test_classify_followup_matches_guard_categories():

@@ -1,6 +1,6 @@
 """对话默认问候生成：组装精简记忆上下文 + 轻量 LLM 直连。
 
-不走完整 agent 循环（复用 conversation.session_metadata.generate_title）；模型走 BYOK 覆盖链路（modelctx 绑定）。
+不走完整 agent 循环（复用 providers.standalone 文本生成）；模型走 BYOK 覆盖链路（modelctx 绑定）。
 **不计入精力/配额**：本调用不经 web.stream / runner 那条记 AgentUsage 的路，token 不写 AgentUsage、不扣配额。
 同一用户同一语言十分钟内复用 Redis 中的结果，并发请求合并；失败 / 空 → 返回 ''，由前端兜底池接手（永不慢、永不空）。
 问候**不自我介绍、不报功能菜单、emoji 极简**。
@@ -22,7 +22,7 @@ from agent.memory import store as mem_store
 logger = logging.getLogger("agent.greeting")
 
 _CACHE_TTL_SECONDS = 600
-_CACHE_LOCK_TIMEOUT_SECONDS = 30
+_CACHE_LOCK_TIMEOUT_SECONDS = 60
 _CACHE_LOCK_WAIT_SECONDS = 15
 
 _PROMPT = (
@@ -159,7 +159,8 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
 
 
 def _cache_key(user_id, locale: str) -> str:
-    return f"agent:greeting:{user_id}:{locale}"
+    # 协议修复后不复用此前可能混入推理正文的问候。
+    return f"agent:greeting:v2:{user_id}:{locale}"
 
 
 async def _generate_uncached(db: AsyncSession, user_id, settings, *, locale: str = "zh-CN") -> str:
@@ -179,31 +180,16 @@ async def _generate_uncached(db: AsyncSession, user_id, settings, *, locale: str
         await resolve_and_bind_user_embedding(settings, db, user_id)   # 与主链路同口径绑定 embedding（PRD-SEC-2）
         language_instruction = _LOCALE_INSTRUCTIONS.get(locale, _LOCALE_INSTRUCTIONS["zh-CN"])
         prompt = _PROMPT.format(ctx=await _recent_context(db, user_id)) + "\n" + language_instruction
-        from agent import providers
-        from agent.llm.llm_select import use_anthropic_for
         from agent.llm.modelctx import effective_ai
+        from agent.providers.standalone import complete_text
         # greeting 由用户请求派生（fire-and-forget），模型走 modelctx 绑定（BYOK）+ 平台兜底
         ai = effective_ai(settings)
-        provider_adapter = providers.adapter_for(ai)
-        import httpx
-        _timeout = httpx.Timeout(12.0)
-        if use_anthropic_for(ai):
-            client = providers.build_anthropic_client(ai, _timeout)
-            extra = provider_adapter.build_anthropic_thinking_params(ai)
-            resp = await client.messages.create(
-                model=ai.model, max_tokens=180,
-                messages=[{"role": "user", "content": prompt}], **extra)
-            text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
-        else:
-            client = providers.build_openai_client(ai, _timeout)
-            extra = provider_adapter.build_openai_thinking_kwargs(ai)
-            resp = await client.chat.completions.create(
-                model=ai.model, max_tokens=180,
-                messages=[{"role": "user", "content": prompt}], **extra)
-            text = resp.choices[0].message.content or ""
-        return text.strip().strip('"「」')
+        text = await complete_text(ai, prompt, max_tokens=180)
+        return text.strip('"「」')
     except Exception as e:
-        logger.warning("greeting 生成失败（前端兜底）: %s", e)
+        from app.core.redaction import diag_log
+        diag_log("agent.greeting", e)
+        logger.warning("greeting 生成失败（前端兜底）: %s", type(e).__name__)
         return ""
     finally:
         if model is not None:

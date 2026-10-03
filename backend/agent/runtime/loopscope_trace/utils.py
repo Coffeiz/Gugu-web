@@ -157,12 +157,22 @@ def _prompt_digest(value: Any) -> str:
         return ""
 
 
+def provider_message_rows(messages: Any) -> list[dict[str, Any]]:
+    """从 canonical Area 或不可变 Provider 快照读取 wire rows。"""
+    from agent.context.assembly.area import MessageArea
+    from agent.context.provider_conversation import ProviderConversation
+
+    if isinstance(messages, MessageArea):
+        return messages.provider_projection().to_messages()
+    if isinstance(messages, ProviderConversation):
+        return messages.to_messages()
+    raise TypeError("LoopScope 消息诊断必须接收 Provider projection")
+
+
 def _cache_diagnostics(
     messages: Any,
     ctx: Any = None,
     model: str = "",
-    *,
-    provider_projected: bool = False,
 ) -> dict[str, Any]:
     """返回缓存断点与工具 schema 的脱敏诊断信息。
 
@@ -177,32 +187,13 @@ def _cache_diagnostics(
             if adapter is not None and ai is not None
             else getattr(adapter, "api_format", "")
         )
-        # 缓存指纹必须按 provider 实际投影计算。OpenAI 的 tool-call 清洗也属于
-        # 投影步骤，必须先于 anchor 选择；否则孤儿结果会进入 digest，却不会进入请求。
-        if provider_projected:
-            projected = messages
-        else:
-            from agent.context.canonical_tool_history import render_events_for_provider
+        from agent.context.provider_conversation import ProviderConversation
 
-            if adapter is not None and protocol == "openai":
-                from agent.providers.message_utils import render_openai_request_history
-
-                projected = render_openai_request_history(messages, adapter)
-            else:
-                raw_conversation = getattr(messages, "conversation", messages)
-                # 兼容只在测试/旧调用方上提供 class-level conversation 的轻量容器；
-                # 真实 PromptMessages 整体投影以保留 dynamic tail 与缓存元数据。
-                projection_source = (
-                    raw_conversation
-                    if isinstance(raw_conversation, list)
-                    and not hasattr(messages, "fixed_prefix_size")
-                    and raw_conversation is not messages
-                    else messages
-                )
-                projected = render_events_for_provider(projection_source)
+        if not isinstance(messages, ProviderConversation):
+            raise TypeError("缓存诊断必须使用 ProviderConversation projection")
+        projected = messages
         conversation = getattr(projected, "conversation", projected)
-        if not isinstance(conversation, list):
-            conversation = []
+        conversation = list(conversation)
         from agent.loop_drivers import _history_cache_state
 
         cache_plan = _history_cache_state(
@@ -279,9 +270,7 @@ def _cache_diagnostics(
 
 def _system_message_text(messages: Any) -> str:
     """提取 OpenAI 兼容格式的 system message，供 trace 说明真实组装位置。"""
-    if not isinstance(messages, list):
-        return ""
-    for message in messages:
+    for message in provider_message_rows(messages):
         if not isinstance(message, dict) or message.get("role") != "system":
             continue
         content = message.get("content")
@@ -318,8 +307,9 @@ def _usage_payload(result: Any, api_format: str = "") -> dict[str, Any]:
     }
 
 def _extract_last_user(messages: Any) -> str:
-    index = last_user_index(messages)
-    return user_text_from_message(messages[index]) if index is not None else ""
+    rows = provider_message_rows(messages)
+    index = last_user_index(rows)
+    return user_text_from_message(rows[index]) if index is not None else ""
 
 def _round_result(result: Any, api_format: str = "") -> dict[str, Any]:
     if result is None:

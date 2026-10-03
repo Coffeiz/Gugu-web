@@ -94,7 +94,7 @@ Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`an
 不要因为 handler 暂时支持省略、兼容旧调用、表达空操作或重复表达默认值而保留可选字段。需要区分“未修改”和“清空”时使用 `null`、显式布尔值或 action 枚举。格式优先写进 Schema：严格格式使用 `pattern`，必要时配一条极短说明，例如 `pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$"` 加 `description: "24小时制 HH:MM"`；不要只依赖 `format: "time"`。全天使用必填 `all_day`，不要用“省略 `time` 表示全天”作为新契约。
 
 `_compact_schema` 仅作为 Phase 8 迁移审计辅助，不参与 provider 输出；所有新工具必须直接声明源码规范结构。简介模式的字段签名由该结构自动生成，不得另写一份字段目录；可识别的 `mode` 条件分支会摘要展示其必填与互斥字段，其他复杂约束仍按需获取完整 Schema。修改后运行
-`PYTHONPATH=. .venv/bin/python scripts/audit_tool_schemas.py`，并保留对应的 Schema 正反例测试，避免只删文字而丢失业务语义。
+`PYTHONPATH=. .venv/bin/python scripts/checks/audit_tool_schemas.py`，并保留对应的 Schema 正反例测试，避免只删文字而丢失业务语义。
 
 ## 批量操作、权限校验与确认门
 
@@ -127,7 +127,7 @@ if blocked is not None:
 - 批量授权的一次确认只覆盖请求中明确列出的主体和同一权限范围。确认后应为每个主体写入独立授权记录；禁止把批次确认升级为用户全局授权，也禁止顺带授权列表外资源。不同权限范围应拆分确认。
 - 普通可撤销写操作按目标逐项执行现有归属/权限校验，不因“批量”而自动增加确认门；例如文件/文件夹移入回收站仍由 `filesystem_policy.py` 和文件服务检查当前主体的写权限。不可逆清空回收站则必须逐目标集合确认。
 
-有批量确认分支的工具必须在 `Tool(...)` 上声明 `batch_confirmation=True`。`scripts/check_confirm_gate.py` 会静态检查其 handler 是否沿调用链使用 `needs_target_confirmation()`；新增批量确认工具必须同步加该标记和回归测试。当前内置路径包括：
+有批量确认分支的工具必须在 `Tool(...)` 上声明 `batch_confirmation=True`。`scripts/checks/check_confirm_gate.py` 会静态检查其 handler 是否沿调用链使用 `needs_target_confirmation()`；新增批量确认工具必须同步加该标记和回归测试。当前内置路径包括：
 
 | 工具 | 批量目标 | 确认/授权范围 |
 | --- | --- | --- |

@@ -1,5 +1,5 @@
-# 生产 Compose：只消费已经构建好的镜像，不挂载源码，不运行 Vite/Uvicorn reload。
-# 默认入口：http://localhost:9595；默认不启动 Shell 沙盒；使用 --profile sandbox 启用
+# 生产分体 Compose：只消费已构建镜像；sandbox manager 和 egress 由外部 Rootless 部署管理。
+# 默认入口：http://localhost:9595；使用前需让 backend/worker 可访问 external sandbox socket。
 # 使用前设置 GUGU_BACKEND_IMAGE、GUGU_FRONTEND_IMAGE、GUGU_DB_PASSWORD。
 
 name: gugu-web-compose
@@ -9,28 +9,6 @@ x-json-file-logging: &json-file-logging
   options:
     max-size: "50m"
     max-file: "3"
-
-x-squid-config-command: &squid-config-command
-  - |
-    cat > /etc/squid/squid.conf <<'SQUID_CONF'
-    http_port 3128
-    cache deny all
-    acl SSL_ports port 443
-    acl Safe_ports port 80 443
-    acl CONNECT method CONNECT
-    acl private_dst dst 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 0.0.0.0/8
-    acl private_dst6 dst ::1/128 fc00::/7 fe80::/10
-    http_access deny !Safe_ports
-    http_access deny CONNECT !SSL_ports
-    http_access deny private_dst
-    http_access deny private_dst6
-    http_access allow all
-    via off
-    forwarded_for delete
-    request_header_access X-Forwarded-For deny all
-    request_header_access Via deny all
-    SQUID_CONF
-    exec /usr/sbin/squid -N -d 1
 
 configs:
   searxng-settings:
@@ -98,17 +76,6 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 
-  egress-proxy:
-    profiles: [sandbox]
-    logging: *json-file-logging
-    image: ubuntu/squid:latest
-    entrypoint: ["/bin/sh", "-c"]
-    command: *squid-config-command
-    networks:
-      - default
-      - egress_internal
-    restart: unless-stopped
-
   migrate:
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
@@ -134,8 +101,8 @@ services:
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
-      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      SANDBOX__EGRESS_PROXY_URL: ${GUGU_SANDBOX_EGRESS_PROXY_URL:-http://egress-proxy:3128}
+      SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -154,7 +121,6 @@ services:
       - ./backend/.env
     environment:
       GUGU_UPDATE_DEPLOYMENT_MODE: split_compose
-      GUGU_UPDATER_RPC_SOCKET: /run/gugu-updater/updater.sock
       PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       GUGU_LOG_FILE: /app/logs/gugu.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
@@ -171,13 +137,15 @@ services:
       # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
       CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_SANDBOX_MANAGER_MODE: external
+      SANDBOX__ROOTLESS_REQUIRED: "true"
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
-      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      SANDBOX__EGRESS_PROXY_URL: ${GUGU_SANDBOX_EGRESS_PROXY_URL:-http://egress-proxy:3128}
+      SANDBOX__EGRESS_NETWORK_NAME: ${GUGU_SANDBOX_EGRESS_NETWORK_NAME:-gugu-sandbox-egress}
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -192,35 +160,7 @@ services:
       - *gugu-data-mount
       - gugu_config:/config
       - sandbox_socket:/run/gugu
-      - updater_socket:/run/gugu-updater
       - gugu_logs:/app/logs
-    restart: unless-stopped
-
-  # 受限更新边界：仅 updater sidecar 挂载 Docker socket；backend 通过私有 Unix socket RPC 调用。
-  updater:
-    logging: *json-file-logging
-    image: ${GUGU_UPDATER_IMAGE:-docker.io/coffeiz/gugu-web:latest}
-    entrypoint: ["python", "-m", "updater.rpc_server"]
-    healthcheck:
-      disable: true
-    environment:
-      GUGU_UPDATE_DEPLOYMENT_MODE: split_compose
-      GUGU_UPDATER_RPC_SERVER: "1"
-      GUGU_UPDATER_RPC_SOCKET: /run/gugu-updater/updater.sock
-      GUGU_UPDATER_COMPOSE_DIR: ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}
-      GUGU_UPDATER_COMPOSE_FILE: docker-compose.prod.yml
-      GUGU_UPDATER_STATE_DIR: /data/updater
-      GUGU_UPDATER_CODE_DIR: /opt/gugu-updater
-      GUGU_DOCKER_SOCKET: /var/run/docker.sock
-      GUGU_SELF_UPDATE: ${GUGU_SELF_UPDATE:-on}
-      DOCKER_HOST: unix:///var/run/docker.sock
-      GUGU_DB_USER: ${GUGU_DB_USER:-gugu}
-      GUGU_DB_NAME: ${GUGU_DB_NAME:-gugu}
-    volumes:
-      - ${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:${GUGU_UPDATER_COMPOSE_DIR:-${PWD}}:ro
-      - *gugu-data-mount
-      - updater_socket:/run/gugu-updater
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     restart: unless-stopped
 
   worker:
@@ -248,11 +188,15 @@ services:
       # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
       CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_SANDBOX_MANAGER_MODE: external
+      SANDBOX__ROOTLESS_REQUIRED: "true"
       GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
       SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
       SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
+      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
+      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
@@ -308,68 +252,6 @@ services:
       - gugu_logs:/app/logs
     restart: unless-stopped
 
-  sandboxd:
-    profiles: [sandbox]
-    # 与 backend 共享 host pid namespace，SO_PEERCRED peer 校验才能拿到真实 pid/uid。
-    pid: "host"
-    logging: *json-file-logging
-    # 工具执行随 backend/worker 镜像提供；sandboxd 是按需开启的可选沙盒执行层。
-    image: ${GUGU_SANDBOXD_IMAGE:-${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}}
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        sh /usr/local/bin/gugu-sandbox-init.sh
-        exec python -m agent.sandbox.sandboxd --socket /run/gugu/sandboxd.sock --allowed-root /data/users
-    # 检查 sandboxd 实际提供的 Unix socket，不使用 backend 镜像的 HTTP 健康检查。
-    healthcheck:
-      test: ["CMD-SHELL", "test -S \"$${GUGU_SANDBOXD_SOCKET}\""]
-      interval: 10s
-      timeout: 3s
-      start_period: 10s
-      retries: 3
-    env_file:
-      - ./backend/.env
-    environment:
-      DOCKER_HOST: unix:///run/gugu/docker.sock
-      DB__HOST: ${GUGU_DB_HOST:-postgres}
-      DB__PORT: ${GUGU_DB_PORT:-5432}
-      DB__NAME: ${GUGU_DB_NAME:-gugu}
-      DB__USER: ${GUGU_DB_USER:-gugu}
-      DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
-      REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
-      REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
-      REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
-      STORAGE__LOCAL_PATH: /data/users
-      # BYOK 主密钥文件必须落在持久卷：默认路径在容器可写层，每次更新重建容器都会
-      # 丢密钥，导致已保存的凭据解密失败、被迫重新输入各提供商 API Key
-      CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
-      GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
-      SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
-      SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
-      SANDBOX__IMAGE: ${GUGU_SANDBOX_IMAGE:-debian:bookworm-slim}
-      SANDBOX__IMAGE_DIGEST: ${GUGU_SANDBOX_IMAGE_DIGEST:-sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}
-      SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
-      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
-      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
-      SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
-      GUGU_SANDBOX_IMAGE_DIGEST_FILE: /run/gugu/sandbox-image-digest
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      egress-proxy:
-        condition: service_started
-    volumes:
-      - *gugu-data-mount
-      - gugu_config:/config
-      - sandbox_socket:/run/gugu
-      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
-      - ./backend/scripts/sandbox_rootless_init.sh:/usr/local/bin/gugu-sandbox-init.sh:ro
-      - /etc/passwd:/host/etc/passwd:ro
-      - /etc/subuid:/host/etc/subuid:ro
-      - /etc/subgid:/host/etc/subgid:ro
-    restart: unless-stopped
-
   frontend:
     logging: *json-file-logging
     image: ${GUGU_FRONTEND_IMAGE:?请设置 GUGU_FRONTEND_IMAGE}
@@ -392,11 +274,8 @@ volumes:
   pgdata:
   redisdata:
   gugu_config:
+  # Socket volume is provisioned and lifecycle-managed by the external Rootless manager.
   sandbox_socket:
-  updater_socket:
+    external: true
+    name: ${GUGU_SANDBOX_SOCKET_VOLUME:-gugu-web-compose_sandbox_socket}
   gugu_logs:
-
-networks:
-  egress_internal:
-    name: gugu-sandbox-egress
-    internal: true

@@ -23,9 +23,9 @@
         <span v-if="task.requested_by">{{ t('adminUpdateUi.requestedBy') }} <b>{{ task.requested_by }}</b></span>
         <span v-if="task.created_at">{{ t('adminUpdateUi.startedAt') }} <b>{{ formatTime(task.created_at) }}</b></span>
       </div>
-      <p v-if="task.status === 'rollback_required' && task.rollback_supported" class="rollback-hint">{{ t('adminUpdateUi.rollbackAvailable') }}</p>
+      <p v-if="task.rollback_available || (task.status === 'rollback_required' && task.rollback_supported)" class="rollback-hint">{{ t('adminUpdateUi.rollbackAvailable') }}</p>
       <button
-        v-if="task.status === 'rollback_required' && task.rollback_supported"
+        v-if="task.rollback_available || (task.status === 'rollback_required' && task.rollback_supported)"
         class="btn-danger"
         :disabled="!!action"
         @click="$emit('rollback')"

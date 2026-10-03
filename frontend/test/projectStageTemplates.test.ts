@@ -23,8 +23,17 @@ const knownTranslations: Record<string, string[]> = {
 }
 
 const matchesBuiltinTranslation = (value: string, key: string) => knownTranslations[key]?.includes(value) ?? false
+const projectModalSource = readFileSync('src/views/Projects/components/NewProjectModal.vue', 'utf8')
 
-describe('localizeSavedBuiltinTemplates', () => {
+function styleDeclarations(selector: string): Record<string, string> {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const rule = projectModalSource.match(new RegExp(`${escapedSelector}\\s*\\{([^}]+)\\}`))?.[1] ?? ''
+  return Object.fromEntries(rule.split(';')
+    .map(declaration => declaration.trim().split(/:\s*/, 2))
+    .filter(([property, value]) => Boolean(property && value)))
+}
+
+describe('内置阶段模板本地化逻辑', () => {
   it('无论当前界面语言为何，都能识别不同语言保存的内置文案', () => {
     expect(isBuiltinTemplateTranslation('Illustration workflow', 'projects.templateIllustration')).toBe(true)
     expect(isBuiltinTemplateTranslation('插画流程', 'projects.templateIllustration')).toBe(true)
@@ -82,23 +91,21 @@ describe('localizeSavedBuiltinTemplates', () => {
     ])
   })
 
-  it('阶段预览的省略容器保留 g、p、q 的字形下伸空间', () => {
-    const source = readFileSync('src/views/Projects/components/NewProjectModal.vue', 'utf8')
-    const previewStyles = source.match(/\.tpl-stages-preview\s*\{([^}]+)\}/)?.[1] ?? ''
+})
 
-    expect(previewStyles).toMatch(/line-height:\s*1\.5/)
-    expect(previewStyles).toMatch(/overflow:\s*hidden/)
-    expect(previewStyles).toMatch(/text-overflow:\s*ellipsis/)
+describe('新建项目模板区的静态布局约束', () => {
+  it('阶段预览裁切长文案时保留下伸字形所需行高并启用省略', () => {
+    expect(styleDeclarations('.tpl-stages-preview')).toMatchObject({
+      'line-height': '1.5',
+      overflow: 'hidden',
+      'text-overflow': 'ellipsis',
+    })
   })
 
-  it('模板重命名使用单层可伸缩输入框，让确认和删除按钮贴齐行尾', () => {
-    const source = readFileSync('src/views/Projects/components/NewProjectModal.vue', 'utf8')
-    const sharedInputStyles = source.match(/\.tpl-name-input\s*\{([^}]+)\}/)?.[1] ?? ''
-    const renameInputStyles = source.match(/\.tpl-rename-input\s*\{([^}]+)\}/)?.[1] ?? ''
-
-    expect(source).toContain('class="tpl-name-input tpl-rename-input"')
-    expect(source).not.toContain('class="rename-sizer"')
-    expect(sharedInputStyles).toMatch(/flex:\s*1/)
-    expect(renameInputStyles).toMatch(/min-width:\s*0/)
+  it('模板重命名复用单层输入框并为按钮预留尾部空间', () => {
+    expect(projectModalSource).toContain('class="tpl-name-input tpl-rename-input"')
+    expect(projectModalSource).not.toContain('class="rename-sizer"')
+    expect(styleDeclarations('.tpl-name-input').flex).toBe('1')
+    expect(styleDeclarations('.tpl-rename-input')['min-width']).toBe('0')
   })
 })

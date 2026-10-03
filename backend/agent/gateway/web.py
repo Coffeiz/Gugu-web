@@ -25,7 +25,6 @@ from agent.security.logsafe import fingerprint
 from agent.llm import genstream
 from agent import quota
 from agent.context import builder, dynamic_tail, loaders, session_snapshot, session_history, run_context, session_system
-from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.conversation.session_metadata import generate_title, schedule_summary
 from agent.core import LLMRunner
 from agent.models import AgentRequest
@@ -280,10 +279,23 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
     if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
         from agent import voice as _voice
-        async with _sess._SessionLocal() as voice_db:
-            transcript = await _voice.transcribe(
-                _transcribe_media, settings, db=voice_db, user_id=user_id,
-            )
+        try:
+            async with _sess._SessionLocal() as voice_db:
+                transcript = await _voice.transcribe(
+                    _transcribe_media, settings, db=voice_db, user_id=user_id,
+                    raise_minimax_errors=True,
+                )
+        except Exception as error:
+            from agent.providers.minimax import minimax_error_details
+            if minimax_error_details(error) is None:
+                raise
+            from agent.errors import describe_llm_error
+            error_event = describe_llm_error(
+                error, diagnostic_context="agent.gateway.web.voice"
+            ).as_event()
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
         if transcript is None:        # 未配置语音模型
             block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
             async with _sess._SessionLocal() as db2:
@@ -345,6 +357,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
             sent_at=user_message.sent_at, user_message=user_message,
             session=session, history_stats=history_stats, model_cfg=model_cfg,
+            run_config=run_config,
             locale=current_locale,
             strip_thinking=strip_thinking,
             owner_run_id=owner_run_id,
@@ -364,6 +377,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
         sent_at=user_message.sent_at, user_message=user_message,
         session=session, history_stats=history_stats, model_cfg=model_cfg,
+        run_config=run_config,
         locale=current_locale,
         strip_thinking=strip_thinking,
         owner_run_id=owner_run_id,
@@ -509,7 +523,7 @@ async def _close_running_tool_events(display_timeline: list, pub) -> None:
     SSE 补发合成 tool_done，让实时与刷新两端都收敛。
     """
     for item in display_timeline:
-        if item.get("kind") != "tool" or item.get("toolStatus") not in ("running", "waiting"):
+        if item.get("kind") != "tool" or item.get("toolStatus") not in ("queued", "running", "waiting"):
             continue
         item["toolStatus"] = "cancelled"
         await pub({
@@ -583,7 +597,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
             for tool_call in snap.get("tools") or []:
                 if tool_call.get("name"):
                     yield f"data: {json.dumps({'type': 'tool_call', **tool_call}, ensure_ascii=False)}\n\n"
-                    if tool_call.get("status") not in (None, "running"):
+                    if tool_call.get("status") not in (None, "queued", "running", "waiting"):
                         yield f"data: {json.dumps({'type': 'tool_done', **tool_call}, ensure_ascii=False)}\n\n"
         async for line in genstream.subscribe(session_id, pubsub=pubsub):
             yield line
@@ -598,7 +612,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None, locale=None,
+                    history_stats=None, model_cfg=None, run_config=None, locale=None,
                     owner_run_id=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
@@ -629,7 +643,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
     from agent.llm import modelctx
     modelctx.mark_user_scope()
-    run_config = resolve_run_config(settings, req) if model_cfg is None else None
+    if run_config is None and model_cfg is None:
+        run_config = resolve_run_config(settings, req)
     model_cfg = model_cfg or run_config.model
     import app.db.session as _sess
 
@@ -682,8 +697,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             user_id, session_id, scenario="mcp" if mcp_tools else "chat",
         )
     system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
-    if shell_prompt:
-        system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
     capability_context = await _capability_context(
         tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),
         user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
@@ -711,6 +724,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         dynamic_tools=mcp_tools,
     )
     full_reply = ""
+    canonical_reply = ""
     display_timeline = []   # 顶部已初始化（供 CancelledError 收尾读取），这里重置
     active_segment: dict | None = None
     current_run_id = ""
@@ -730,18 +744,14 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     generation_failed = False
     rag_context: dict | None = None
     stance_to_persist: str | None = None
-    anthr_messages: list = []
-    anthr_initial_len: int = 0
-    oa_messages: list = []
-    oa_initial_len: int = 0
+    message_area = None
     sent_files = []   # 咕咕本轮发的文件卡片，随助手消息持久化（顶部已初始化）
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
 
     async def persist_interrupted_run() -> None:
         """保存中止前已完成的历史；不把当前未提交工具批次写成完整往返。"""
-        history_messages = anthr_messages if use_anthropic else oa_messages
-        canonical_batches = persistable_canonical_batch_records(history_messages)
-        if not (display_timeline or full_reply or sent_files or canonical_batches):
+        delta = message_area.persistence_delta(outcome="interruption") if message_area else None
+        if not (display_timeline or full_reply or sent_files or (delta and delta.entries)):
             return
         from agent.context.run_finalize import finalize_run
 
@@ -751,10 +761,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             user_id=user_id,
             settings=settings,
             model_cfg=model_cfg,
-            rag_context=rag_context,
-            messages=history_messages,
-            initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
-            text=full_reply,
+            message_area=message_area,
+            text=canonical_reply,
             display_timeline=display_timeline,
             files=sent_files,
             tokens_in=usage_tokens["input"],
@@ -763,10 +771,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             cache_write=usage_tokens["cache_write"],
             tools_used=used_tools,
             compaction_applied=compaction_applied,
-            stance_text=stance_to_persist,
             user_message_id=getattr(user_message, "id", None),
             run_id=current_run_id,
-            canonical_batches=canonical_batches,
             interrupted=True,
             session_exists_required=True,
         )
@@ -801,24 +807,21 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             model_cfg=model_cfg,
             stance_text=stance_text,
             snapshot_injection=_snapshot_injection,
+            extra_reminder=shell_prompt,
             user_message=user_message,
             resume_interaction=resume_interaction,
             session=session,
             snapshot=snapshot,
             history_stats=history_stats,
         )
-        anthr_messages = prepared.anthr_messages
-        anthr_initial_len = prepared.anthr_initial_len
-        oa_messages = prepared.oa_messages
-        oa_initial_len = prepared.oa_initial_len
         rag_context = prepared.rag_context
         stance_to_persist = prepared.stance_to_persist
+        message_area = prepared.message_area
         gen = runner.run(
             user_id,
-            # Chat Completions 的 system 已在 oa_messages 中；Responses 还需要
-            # 通过 instructions 接收稳定 system prompt。
+            # Responses 通过 instructions 接收稳定 system prompt；所有协议共用同一 Area。
             system_prompt,
-            anthr_messages if use_anthropic else oa_messages,
+            message_area,
             use_anthropic=use_anthropic,
             model_cfg=model_cfg,
             session_id=session_id,
@@ -835,7 +838,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         dedup      = False
 
         async def emit_clean(text: str):
-            nonlocal full_reply, round_buf, dedup, active_segment
+            nonlocal full_reply, canonical_reply, round_buf, dedup, active_segment
             if not text:
                 return
             if dedup:
@@ -852,6 +855,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 round_buf += text
                 out = text
             out = sanitize.strip_disallowed_emoji(out)   # 出口兜底删白名单外 emoji（prompt 压不住）
+            if round_buf:
+                canonical_reply = sanitize.strip_disallowed_emoji(round_buf)
             if out:
                 full_reply += out
                 if active_segment is None:
@@ -913,14 +918,23 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 if name and not name.startswith("_") and name not in used_tools:
                     used_tools.append(name)
                 if name and not name.startswith("_"):
-                    display_timeline.append({
+                    timeline_item = {
                         "kind": "tool",
                         "toolCallId": str(evt.get("tool_call_id") or ""),
                         "toolName": name,
                         "toolLabel": evt.get("label") or name,
                         "toolInput": evt.get("input"),
                         "toolStatus": evt.get("status") or "running",
-                    })
+                    }
+                    call_id = timeline_item["toolCallId"]
+                    existing_item = next((
+                        item for item in reversed(display_timeline)
+                        if item.get("kind") == "tool" and item.get("toolCallId") == call_id
+                    ), None) if call_id else None
+                    if existing_item is None:
+                        display_timeline.append(timeline_item)
+                    else:
+                        existing_item.update(timeline_item)
             if etype == "tool_done":
                 call_id = str(evt.get("tool_call_id") or "")
                 for item in reversed(display_timeline):
@@ -973,14 +987,15 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             await _close_running_tool_events(display_timeline, _pub)
             if cancelled:
                 await _pub({"type": "done", "cancelled": True})
-            # 中止只停止后续生成，不丢弃此前已经完成的对话历史。PromptMessages
-            # 只记录已提交的 canonical batch；当前未完成工具批次不会进入其中，
-            # 因而不会把悬空 tool_call 伪装成完整往返。已生成的文本另作为部分
-            # assistant 内容保存，供用户和下一轮上下文接续。
-            try:
-                await persist_interrupted_run()
-            except Exception:
-                logger.exception("取消/失败路径的部分历史持久化失败 session=%s", session_id)
+            # 取消与生成错误采用不同的历史语义：用户主动取消时保留已完成轮次和
+            # 部分正文；模型/Provider 报错时不提交本轮增量或部分输出，与 Run
+            # finalization 的错误终态保持一致。当前用户消息在生成前已单独落库，
+            # 这里跳过的是失败 run 的增量，不删除用户原始消息。
+            if cancelled:
+                try:
+                    await persist_interrupted_run()
+                except Exception:
+                    logger.exception("取消路径的部分历史持久化失败 session=%s", session_id)
             return
 
         # 冲洗清洗器残留（未触发截断时的尾部）
@@ -998,13 +1013,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 user_id=user_id,
                 settings=settings,
                 model_cfg=model_cfg,
-                rag_context=rag_context,
-                messages=anthr_messages if use_anthropic else oa_messages,
-                initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
-                stance_text=prepared.stance_to_persist,
+                message_area=message_area,
                 user_message_id=getattr(user_message, "id", None),
-                canonical_batches=persistable_canonical_batch_records(anthr_messages if use_anthropic else oa_messages),
-                text=full_reply,
+                text=canonical_reply,
                 display_timeline=[
                     item for item in display_timeline
                     if (
@@ -1066,7 +1077,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         # 报错，且本轮持久化整体跳过。发取消终态让订阅端正常退出后 re-raise，
         # 交给外层 _generate 的取消分支清 active 快照。
         # 与 in-band cancelled 分支同款：保留已生成文本与已提交的 canonical
-        # 工具轮次；当前未完成的批次不在 canonical_batch_records 中，不会留下孤儿调用。
+        # 工具轮次；当前未完成的批次不在可提交 Area delta 中，不会留下孤儿调用。
         # 被打断的工具先补「已停止」终态（live 合成 tool_done + timeline 修正），
         # 否则工具气泡在实时与刷新两端都永远停在「进行中」。
         try:
@@ -1130,7 +1141,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
                     strip_thinking: bool = False, session=None,
-                    history_stats=None, model_cfg=None, locale=None,
+                    history_stats=None, model_cfg=None, run_config=None, locale=None,
                     owner_run_id=None,
                     begin_after_gate: bool = False) -> None:
     """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。
@@ -1200,6 +1211,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 user_tz=user_tz, sent_at=sent_at, user_message=user_message,
                 resume_interaction=resume_interaction, strip_thinking=strip_thinking,
                 session=session, history_stats=history_stats, model_cfg=model_cfg,
+                run_config=run_config,
                 locale=locale,
                 owner_run_id=claimed_owner_run_id or owner_run_id,
             )

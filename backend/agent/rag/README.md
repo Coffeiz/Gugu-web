@@ -89,13 +89,13 @@ Agent 查询通过 `UnifiedQueryRetriever` 进入 TS worker。worker 先按来�
 
 ```bash
 cd backend
-PYTHONPATH=. .venv/bin/python scripts/rebuild_knowledge_index.py --user-id <UUID>
+PYTHONPATH=. .venv/bin/python scripts/maintenance/rebuild_knowledge_index.py --user-id <UUID>
 ```
 
 只重建某个来源：
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/rebuild_knowledge_index.py \
+PYTHONPATH=. .venv/bin/python scripts/maintenance/rebuild_knowledge_index.py \
   --user-id <UUID> --source knowledge
 ```
 

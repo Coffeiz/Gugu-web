@@ -55,10 +55,12 @@ jobs:
           scripts/release/validate-update-manifest.test.mjs
           scripts/release/compose-update.test.mjs
           scripts/release/docker-release-tags.test.mjs
+          scripts/release/embedded-sandbox-image.test.mjs
+          scripts/release/offline-bundle.test.mjs
           scripts/release/prune-container-tags.test.mjs
 
   sandbox-build:
-    # Sandbox 执行镜像作为独立制品构建、扫描与发布，不打包进一体化应用镜像。
+    # 每次从当前提交构建；同轮扫描后直接打包供 app 镜像内置，tag 发布另保留分体镜像。
     name: Build & scan sandbox runtime
     needs: compose-validate
     runs-on: ubuntu-latest
@@ -123,13 +125,23 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
 
+      - name: Resolve scanned Sandbox image ID
+        id: sandbox-id
+        run: echo "value=$(docker image inspect --format '{{.Id}}' '${{ steps.img.outputs.ref }}')" >> "$GITHUB_OUTPUT"
+
+      - name: Package same-commit embedded runtime bundle
+        uses: ./.github/actions/package-embedded-sandbox-bundle
+        with:
+          sandbox-image-id: ${{ steps.sandbox-id.outputs.value }}
+          source-revision: ${{ github.sha }}
+
   docker-build:
-    # 三个业务镜像并行；sandbox 执行镜像作为独立制品发布，不打包进一体化 app。
+    # 基础业务镜像并行；app 在同一 runner 组装、校验并扫描本次 sandbox bundle。
     # CI 在 GitHub 托管 runner（海外）上直连官方源比默认 TUNA（国内镜像）快；
     # APT_MIRROR / PIP_INDEX_URL 只覆盖声明了这些 ARG 的镜像（backend/app/sandbox），
     # 未声明的自动忽略。本地/devserver 构建不传参数，仍走 TUNA 默认。
     name: Build & scan ${{ matrix.name }}
-    needs: compose-validate
+    needs: [compose-validate, sandbox-build]
     runs-on: ubuntu-latest
     # tag 触发时镜像推 :ci-<run_id>，publish 对该 digest 纯复制发布，需要 GHCR 写权限。
     permissions:
@@ -179,9 +191,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 本地镜像引用：tag 触发时 build 只带全限定 :ci-<run_id> 一个 tag（push+load
-      # 双 exporter，本地名即限定名），非 tag 运行仍是非限定 :ci。下方 smoke 与
-      # trivy 统一从这里取名字。
+      # tag 触发时临时推送基础镜像供同一 job 的本地候选组装；非 tag 运行不推送。
       - name: Resolve local image ref
         id: img
         run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:ci-{1}', matrix.ci_image, github.run_id) || matrix.tag }}" >> "$GITHUB_OUTPUT"
@@ -223,6 +233,20 @@ jobs:
           docker run --rm --entrypoint docker ${{ steps.img.outputs.ref }} compose version
           docker run --rm --entrypoint sh ${{ steps.img.outputs.ref }} -c 'test ! -d /opt/gugu/sandbox'
 
+      - name: Resolve bundled app candidate ref
+        if: matrix.name == 'app'
+        id: candidate
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/v') && format('{0}:bundled-ci-{1}', env.IMAGE_REPOSITORY, github.run_id) || format('gugu-web:candidate-{0}', github.run_id) }}" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble and verify bundled app candidate
+        if: matrix.name == 'app'
+        uses: ./.github/actions/assemble-embedded-app-candidate
+        with:
+          base-image: ${{ steps.img.outputs.ref }}
+          candidate-image: ${{ steps.candidate.outputs.ref }}
+          bundle-artifact: embedded-runtime-bundle-${{ github.run_id }}
+          source-revision: ${{ github.sha }}
+
       # 安全门扫本地加载的镜像（真实文件系统）：不要扫 registry 引用——trivy 会自动
       # 发现并优先消费 registry 侧可关联的第三方 SBOM referrer，历史构建残留的过期
       # SBOM 会导致误报已修复的漏洞（v1.0.2 曾因此报 msgpack 1.1.2/setuptools 70.3.0，
@@ -233,12 +257,102 @@ jobs:
       - name: Scan ${{ matrix.name }} image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ steps.img.outputs.ref }}
+          image-ref: ${{ matrix.name == 'app' && steps.candidate.outputs.ref || steps.img.outputs.ref }}
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
           skip-files: ${{ (matrix.name == 'backend' || matrix.name == 'app') && '/opt/venv/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json,/usr/local/lib/python3.14/site-packages/pip/_vendor/bom.cdx.json' || '' }}
+
+      - name: Package standalone app bundle
+        if: matrix.name == 'app' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.ref }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p release/app-bundle
+          container_id="$(docker create "$CANDIDATE_IMAGE")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/app" release/app-bundle/app
+          python3 - "$container_id" release/app-bundle/app/.gugu-app-release.json "$VERSION" <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+          inspected = json.loads(subprocess.check_output(['docker', 'inspect', sys.argv[1]], text=True))[0]
+          environment = dict(item.split('=', 1) for item in inspected['Config']['Env'] if '=' in item)
+          version = environment.get('GUGU_IMAGE_VERSION')
+          contract = environment.get('GUGU_APP_RUNTIME_CONTRACT')
+          if version != sys.argv[3] or not contract:
+              raise SystemExit('app 镜像版本或 runtime contract 元数据不匹配')
+          Path(sys.argv[2]).write_text(json.dumps({'version': version, 'runtime_contract': contract}, separators=(',', ':')) + '\n', encoding='utf-8')
+          PY
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' release/app-bundle/app/.gugu-app-release.json)" = "$VERSION"
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('release/app-bundle/app')
+          total = sum(path.stat().st_size for path in root.rglob('*') if path.is_file() and not path.is_symlink())
+          if not 0 < total <= 1024 * 1024 * 1024:
+              raise SystemExit('app bundle 解压大小超出 1 GiB 限制')
+          Path('release/app-bundle/unpacked-size.txt').write_text(str(total), encoding='ascii')
+          PY
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            --use-compress-program='gzip -n' \
+            -cf "release/gugu-app-${VERSION}.tar.gz" -C release/app-bundle app
+
+      - name: Upload standalone app bundle
+        if: matrix.name == 'app' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: gugu-app-bundle-${{ github.run_id }}
+          path: release/gugu-app-${{ github.ref_name }}.tar.gz
+          if-no-files-found: error
+
+      - name: Push verified bundled app candidate
+        if: matrix.name == 'app' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.ref }}
+        run: docker push "$CANDIDATE_IMAGE"
+
+      - name: Record bundled candidate compressed size
+        if: matrix.name == 'app' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          BASE_IMAGE: ${{ steps.img.outputs.ref }}
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.ref }}
+        run: |
+          set -euo pipefail
+          version="v0.20.3"
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${version}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin crane
+          crane manifest --platform linux/amd64 "$BASE_IMAGE" > /tmp/gugu-base-manifest.json
+          crane manifest --platform linux/amd64 "$CANDIDATE_IMAGE" > /tmp/gugu-candidate-manifest.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          def compressed_bytes(path):
+              manifest = json.loads(Path(path).read_text(encoding='utf-8'))
+              return int(manifest['config']['size']) + sum(int(layer['size']) for layer in manifest['layers'])
+
+          base = compressed_bytes('/tmp/gugu-base-manifest.json')
+          candidate = compressed_bytes('/tmp/gugu-candidate-manifest.json')
+          delta = candidate - base
+          if delta < 0:
+              raise SystemExit('候选镜像压缩体积小于基础镜像，manifest 对比异常')
+          print(f'基础 app 压缩镜像：{base} bytes')
+          print(f'内置 bundle 压缩增量：{delta} bytes')
+          with open('/tmp/gugu-bundle-size.txt', 'w', encoding='utf-8') as output:
+              output.write(f'{base}\t{delta}\n')
+          PY
+          read -r base_bytes delta_bytes < /tmp/gugu-bundle-size.txt
+          {
+            echo '### 内置 Sandbox 候选镜像'
+            echo "- 候选镜像：$CANDIDATE_IMAGE"
+            echo "- digest：$(crane digest "$CANDIDATE_IMAGE")"
+            echo "- 基础 app 压缩体积：$base_bytes bytes"
+            echo "- bundle 压缩增量：$delta_bytes bytes"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish Docker Hub app and GHCR business images
@@ -301,14 +415,15 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           CI_SUFFIX: ci-${{ github.run_id }}
+          BUNDLED_APP_SUFFIX: bundled-ci-${{ github.run_id }}
         run: |
           set -euo pipefail
           crane copy "${REGISTRY}/coffeiz/gugu-web-backend:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web-backend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-backend:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web-backend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-frontend:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web-frontend:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-web-frontend:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web-frontend:${VERSION}"
-          crane copy "${REGISTRY}/coffeiz/gugu-web:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web:${VERSION}"
-          crane copy "${REGISTRY}/coffeiz/gugu-web:${CI_SUFFIX}" "docker.io/coffeiz/gugu-web:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web:${BUNDLED_APP_SUFFIX}" "${REGISTRY}/coffeiz/gugu-web:${VERSION}"
+          crane copy "${REGISTRY}/coffeiz/gugu-web:${BUNDLED_APP_SUFFIX}" "docker.io/coffeiz/gugu-web:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-sandbox:${CI_SUFFIX}" "${REGISTRY}/coffeiz/gugu-sandbox:${VERSION}"
           crane copy "${REGISTRY}/coffeiz/gugu-sandbox:${CI_SUFFIX}" "docker.io/coffeiz/gugu-sandbox:${VERSION}"
 
@@ -342,6 +457,22 @@ jobs:
         uses: sigstore/cosign-installer@v4.1.2
         with:
           cosign-release: v3.1.3
+
+      - name: Download standalone app bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: gugu-app-bundle-${{ github.run_id }}
+          path: release/app-bundle
+
+      - name: Sign standalone app bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          archive="release/app-bundle/gugu-app-${VERSION}.tar.gz"
+          cosign sign-blob --yes \
+            --bundle "release/app-bundle/gugu-app-${VERSION}.sigstore.json" \
+            "$archive"
 
       - name: Sign immutable image references
         env:
@@ -390,12 +521,53 @@ jobs:
         run: |
           mkdir -p release
           python - <<'PY'
+          import hashlib
           import json
           import os
+          import re
+          import subprocess
+          import tarfile
           from datetime import datetime, timezone
           from pathlib import Path
 
           version = os.environ['VERSION']
+          archive = Path(f'release/app-bundle/gugu-app-{version}.tar.gz')
+          with tarfile.open(archive, 'r:gz') as bundle:
+              marker = bundle.extractfile('app/.gugu-app-release.json')
+              if marker is None:
+                  raise SystemExit('应用包缺少版本标记')
+              release_info = json.load(marker)
+              unpacked_size = sum(member.size for member in bundle if member.isfile())
+          if release_info.get('version') != version:
+              raise SystemExit('应用包版本标记与 Release 版本不一致')
+          runtime_contract = release_info.get('runtime_contract')
+          if not isinstance(runtime_contract, str) or not runtime_contract:
+              raise SystemExit('应用包缺少有效的 runtime contract')
+          digest = hashlib.sha256()
+          with archive.open('rb') as stream:
+              for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                  digest.update(chunk)
+          archive_digest = digest.hexdigest()
+          git_sha = os.environ['GIT_SHA']
+          stable_tags = []
+          for tag in subprocess.check_output(['git', 'tag', '--list'], text=True).splitlines():
+              if not re.fullmatch(r'v\d+\.\d+\.\d+', tag) or tag == version:
+                  continue
+              if subprocess.run(['git', 'merge-base', '--is-ancestor', tag, git_sha], check=False).returncode == 0:
+                  stable_tags.append(tag)
+          if stable_tags:
+              def version_key(tag):
+                  return tuple(int(part) for part in tag[1:].split('.'))
+              previous_tag = max(stable_tags, key=version_key)
+              changed_migrations = subprocess.check_output(
+                  ['git', 'diff', '--name-only', previous_tag, git_sha, '--', 'backend/alembic/versions'],
+                  text=True,
+              ).splitlines()
+              database_migration = bool(changed_migrations)
+          else:
+              # 缺少可比较的稳定基线时保守阻止 App Bundle 热更新。
+              database_migration = True
+          print(f'database_migration={database_migration}')
           manifest = {
               'schema_version': 3,
               'version': version,
@@ -407,10 +579,18 @@ jobs:
                   'frontend_image': f"docker.io/coffeiz/gugu-web-frontend@{os.environ['FRONTEND_DIGEST']}",
               },
               'architectures': ['linux/amd64'],
-              'database_migration': True,
+              'database_migration': database_migration,
               'release_notes_url': f"https://github.com/Coffeiz/Gugu-web/releases/tag/{version}",
               'rollback_supported': True,
-              'git_sha': os.environ['GIT_SHA'],
+              'app_bundle': {
+                  'archive': archive.name,
+                  'signature_bundle': f'gugu-app-{version}.sigstore.json',
+                  'sha256': archive_digest,
+                  'runtime_contract': runtime_contract,
+                  'size': archive.stat().st_size,
+                  'unpacked_size': unpacked_size,
+              },
+              'git_sha': git_sha,
               'published_at': datetime.now(timezone.utc).isoformat(),
           }
           Path('release/update-manifest.json').write_text(
@@ -429,9 +609,9 @@ jobs:
           # Release 可能已手动创建（如提前按 CHANGELOG 发）或上次运行已建过；
           # 幂等处理：已存在只补传 manifest 附件，不存在才新建。
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" release/update-manifest.json --clobber
+            gh release upload "$TAG" release/update-manifest.json release/app-bundle/gugu-app-*.tar.gz release/app-bundle/gugu-app-*.sigstore.json --clobber
           else
-            gh release create "$TAG" release/update-manifest.json \
+            gh release create "$TAG" release/update-manifest.json release/app-bundle/gugu-app-*.tar.gz release/app-bundle/gugu-app-*.sigstore.json \
               --title "$TAG" \
               --generate-notes
           fi
@@ -462,7 +642,7 @@ jobs:
             echo "- default Compose app digest：$APP_DIGEST"
             echo "- sandbox digest：$SANDBOX_DIGEST"
             echo '- 架构：linux/amd64'
-            echo '- 镜像来源：docker-build 推送的 :ci-<run_id> digest 纯复制（扫的即发的）'
+            echo '- app 镜像：同轮构建并扫描的 Sandbox bundle 已内置并验证；backend/frontend/sandbox 从本轮 CI 镜像复制'
             echo '- manifest：GitHub Release 资产'
               } >> "$GITHUB_STEP_SUMMARY"
 
@@ -479,27 +659,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Pull published runtime images
+      - name: Pull published app and optional search image
         env:
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
           set -euo pipefail
           docker pull "docker.io/coffeiz/gugu-web:${VERSION}"
-          docker pull "docker.io/coffeiz/gugu-sandbox:${VERSION}"
-          docker pull ubuntu/squid:latest
           docker pull searxng/searxng:latest
           docker tag "docker.io/coffeiz/gugu-web:${VERSION}" coffeiz/gugu-web:latest
-          docker tag "docker.io/coffeiz/gugu-sandbox:${VERSION}" coffeiz/gugu-sandbox:latest
 
       - name: Build one-file offline bundle
         run: |
           mkdir -p release/offline
-          bash scripts/release/build-offline-sandbox-bundle.sh \
+          scripts/release/build-offline-sandbox-bundle.sh \
             --output release/offline/gugu-compose-bundle.tar \
-            --manifest release/offline/sandbox-bundle-manifest.json \
             --image coffeiz/gugu-web:latest \
-            --image coffeiz/gugu-sandbox:latest \
-            --image ubuntu/squid:latest \
             --image searxng/searxng:latest
 
       - name: Upload offline Compose bundle
@@ -508,7 +682,6 @@ jobs:
           name: gugu-compose-bundle-${{ github.ref_name }}
           path: |
             release/offline/gugu-compose-bundle.tar
-            release/offline/sandbox-bundle-manifest.json
             docker-compose.yml
             docker-compose.offline.yml
             searxng/settings.yml

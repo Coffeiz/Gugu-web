@@ -19,7 +19,7 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from agent.llm.llm_select import pick_model, release, use_anthropic_for
-from agent.context.assembly import PromptMessages
+from agent.context.assembly import MessageArea
 from app.core.config import get_settings
 
 _UID = "00000000-0000-0000-0000-000000000000"
@@ -33,7 +33,7 @@ CASES = [
     ("send_file", "把文件 42 发给我。", {"file_id": 42}),
     ("save_uploaded_file", "把我刚刚上传且唯一的附件保存到个人文件区。", {"source": "latest"}),
     ("update_stage", "把项目‘网站重构’准备阶段的待办‘补充接口文档’和‘联调环境’一次勾完。", {"project": "网站重构", "stage": "准备", "todos": [{"text": "补充接口文档", "done": True}, {"text": "联调环境", "done": True}]}),
-    ("add_event_reminder", "给标题为‘活动 11’的活动添加提前 60 分钟的网页提醒。", {"event": "活动 11", "lead_minutes": 60, "channels": ["web"]}),
+    ("update_event", "给标题为‘活动 11’的活动设置提前 60 分钟的网页提醒。", {"event": "活动 11", "reminders": [{"lead_minutes": 60, "channels": ["web"]}]}),
     ("web_search", "搜索公开网页‘TypeScript 5.9 release notes’，返回 3 条结果。", {"query": "TypeScript 5.9 release notes", "max_results": 3}),
     ("image_search", "按关键词搜索‘低饱和配色’，找图片候选。", {"query": "低饱和配色"}),
     ("http_get", "读取 https://example.com 的网页内容。", {"url": "https://example.com"}),
@@ -167,9 +167,9 @@ def aggregate_usage_rows(
     }
 
 
-def history_metrics(messages: PromptMessages) -> dict[str, Any]:
+def history_metrics(messages: MessageArea) -> dict[str, Any]:
     """只记录连续会话的结构，不把用户正文或工具参数写入测试结果。"""
-    conversation = list(getattr(messages, "conversation", messages))
+    conversation = messages.provider_projection().to_messages()
     roles = Counter(
         str(item.get("role") or "unknown")
         for item in conversation
@@ -180,7 +180,7 @@ def history_metrics(messages: PromptMessages) -> dict[str, Any]:
         "message_count": len(conversation),
         "chars": len(serialized),
         "roles": dict(roles),
-        "canonical_batch_count": len(getattr(messages, "canonical_batch_digests", ())),
+        "canonical_batch_count": len(messages.batch_records()),
     }
 
 
@@ -273,10 +273,6 @@ def matches_expected(tool_name: str, actual: Any, expected: dict[str, Any]) -> b
     if tool_name == "note_create":
         expected_text = _text_in_blocks(expected.get("blocks"))
         return bool(expected_text) and expected_text in _text_in_blocks(actual.get("blocks"))
-    if tool_name == "add_event_reminder":
-        event_ok = actual.get("event_id") == 11 or actual.get("event") == expected.get("event")
-        lead_ok = actual.get("lead_minutes") == 60 or actual.get("reminders") == [60]
-        return event_ok and lead_ok and actual.get("channels") == expected.get("channels")
     return all(actual.get(key) == value for key, value in expected.items())
 
 
@@ -286,12 +282,6 @@ def schema_mismatch(tool_name: str, actual: Any, expected: dict[str, Any]) -> di
         return {"kind": "invalid_input", "actual_type": type(actual).__name__}
     if tool_name == "create_file" and actual.get("files"):
         expected = {**expected, "format": actual["format"]}
-    if tool_name == "add_event_reminder":
-        event_ok = actual.get("event_id") == 11 or actual.get("event") == expected.get("event")
-        lead_ok = actual.get("lead_minutes") == 60 or actual.get("reminders") == [60]
-        if event_ok and lead_ok and actual.get("channels") == expected.get("channels"):
-            return None
-        return {"kind": "field_mismatch", "missing": [], "mismatched": {"reminder_target_or_lead": {"expected": "event 11 + 60 minutes"}}}
     missing = sorted(key for key in expected if key not in actual)
     mismatched = {
         key: {"expected_type": type(value).__name__, "actual_type": type(actual[key]).__name__}
@@ -349,7 +339,7 @@ async def run_continuous_case(
     settings, model_cfg, anthropic: bool, tool_name: str,
     prompt: str, expected: dict[str, Any], turns: int = 2,
 ) -> dict[str, Any]:
-    """在同一个 PromptMessages 中连续调用工具，真实覆盖缓存与工具续轮。"""
+    """在同一个 MessageArea 中连续调用工具，真实覆盖缓存与工具续轮。"""
     from agent.core import LLMRunner
     from agent.capabilities.defaults import all_system_tool_names
 
@@ -357,9 +347,9 @@ async def run_continuous_case(
     runner = LLMRunner(all_system_tool_names(), settings)
     initial = [{"role": "user", "content": prompt}]
     if anthropic:
-        messages = PromptMessages(initial)
+        messages = MessageArea.from_canonical_messages(initial)
     else:
-        messages = PromptMessages([{"role": "system", "content": system}, *initial])
+        messages = MessageArea.from_canonical_messages([{"role": "system", "content": system}, *initial])
     rows: list[dict[str, Any]] = []
     for turn in range(1, max(1, turns) + 1):
         if turn > 1:
@@ -451,9 +441,9 @@ async def run_continuous_sequence(
         system = f"{system}\n\n{catalog_block(capability_context.snapshot, tool_order=tool_names)}"
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     if anthropic:
-        messages = PromptMessages()
+        messages = MessageArea.from_canonical_messages()
     else:
-        messages = PromptMessages([{"role": "system", "content": system}])
+        messages = MessageArea.from_canonical_messages([{"role": "system", "content": system}])
 
     async def run_turn(tool_name: str, prompt: str, expected: dict[str, Any], turn: int) -> dict[str, Any]:
         messages.append({

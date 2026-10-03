@@ -7,9 +7,11 @@
    FileCard/FolderCard already receive their complete motion contract from global.css. Excluding
    them here prevents the generic hover utility from becoming a second transition owner. 便签组件
    还自带阴影、位移和高度的组合过渡，也必须由组件本身持有。 */
-html[data-theme][data-family] .hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card),
-html[data-theme][data-family] .sample-project-card {
+html[data-theme][data-family] .hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card):not(.proj-card) {
   transition: var(--card-motion);
+}
+html[data-theme][data-family] .sample-project-card {
+  transition: var(--project-card-motion);
 }
 html[data-theme][data-family] .cal-chip::after {
   background: var(--calendar-chip-hover-overlay) !important;
@@ -190,7 +192,7 @@ html[data-theme][data-family] .cal-toolbar .view-toggle {
 html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--control-fg); }
 html[data-theme][data-family] .cal-toolbar .view-toggle button.on { color: var(--selection-fg); }
 
-html[data-theme='light'][data-family][data-palette]:not([data-palette='mist']):not([data-palette='cafe']) .chat-window {
+html[data-theme='light'][data-family='glass'] .chat-window {
   --gugu-chat-highlight: var(--aero-glass-highlight);
   border-top-color: var(--aero-glass-border);
 }
@@ -201,8 +203,8 @@ html[data-theme='light'][data-family='mono'] .chat-window {
   border-top-color: var(--border-strong);
 }
 
-/* 个人设置左侧栏的分界线同样由 border-right + inset 侧向高光组成，亮色非 Aero 时保持一致。 */
-html[data-theme='light'][data-family][data-palette]:not([data-palette='mist']):not([data-palette='cafe']) .bm-card .pm-layout > .pm-nav.panel-left {
+/* Glass 使用浅色玻璃边缘；Mono 侧栏边界沿用主题语义令牌，不继承白色 Aero 高光。 */
+html[data-theme='light'][data-family='glass'] .bm-card .pm-layout > .pm-nav.panel-left {
   --panel-glass-border: var(--aero-glass-border);
   --panel-glass-side-highlight: var(--aero-glass-highlight-side);
 }

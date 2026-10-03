@@ -18,7 +18,7 @@
           @keydown.esc="emit('finish-edit')" @keydown.backspace="!todo.text && emit('remove', stage, todo.id)" />
         <span v-else class="todo-name" :style="todo.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
           @click.stop="emit('start-edit', todo.id)">{{ todo.text || t('projects.todo') }}</span>
-        <button class="todo-del" :aria-label="t('common.actions.delete')" :title="t('common.actions.delete')"
+        <button class="popup-close-btn todo-del" :aria-label="t('common.actions.delete')" :title="t('common.actions.delete')"
           @click.stop="emit('remove', stage, todo.id)"><Icon name="action.close" :size="12" /></button>
       </div>
     </TransitionGroup>
@@ -87,18 +87,19 @@ const emit = defineEmits<{
 .todo-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .todo-input::placeholder { color: var(--input-placeholder); }
 .todo-del {
-  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; padding: 0; border-radius: var(--danger-button-radius);
-  background: transparent; border: 1px solid transparent; cursor: pointer;
-  color: var(--danger-button-fg); opacity: 0; pointer-events: none;
+  width: 22px; height: 22px; flex: 0 0 22px;
+  color: var(--popup-item-fg-muted); opacity: 0; pointer-events: none;
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard),
     color var(--motion-hover-control) var(--motion-ease-standard),
-    background-color var(--motion-hover-control) var(--motion-ease-standard),
-    border-color var(--motion-hover-control) var(--motion-ease-standard);
+    background-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .todo-item:hover .todo-del,
 .todo-del:focus-visible { opacity: .72; pointer-events: auto; }
-.todo-del:hover { opacity: 1; background: var(--danger-button-bg); border-color: var(--danger-button-border); }
+.todo-del:hover { opacity: 1; }
+.popup-close-btn.todo-del:hover {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent) !important;
+  color: var(--status-danger) !important;
+}
 .todo-del:focus-visible { opacity: 1; outline: none; box-shadow: var(--control-focus-shadow); }
 .todo-add-btn {
   display: flex; align-items: center; gap: 4px; height: 24px; margin-top: 2px; margin-right: 18px;

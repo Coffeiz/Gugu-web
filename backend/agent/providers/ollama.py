@@ -1,4 +1,4 @@
-from .base import ProviderAdapter, ProviderCapabilities
+from .base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
 class OllamaAdapter(ProviderAdapter):
@@ -38,6 +38,14 @@ class OllamaAdapter(ProviderAdapter):
         return ProviderCapabilities(api_format="openai", cache_mode="none", thinking=True,
                                     structured_json=True, tools=True)
 
+    def reasoning_capabilities(self, ai, api_format: str) -> ReasoningCapabilities:
+        if api_format == "openai" and getattr(ai, "ollama_api_mode", "native") != "native":
+            return ReasoningCapabilities(
+                modes=("disabled", "adaptive"),
+                efforts=("low", "medium", "high", "max"),
+            )
+        return ReasoningCapabilities()
+
     def diagnostic_request(self, ai) -> dict:
         if getattr(ai, "ollama_api_mode", "native") != "native":
             return super().diagnostic_request(ai)
@@ -57,6 +65,8 @@ class OllamaAdapter(ProviderAdapter):
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         """使用 Ollama OpenAI 兼容接口声明的 reasoning_effort 字段。"""
         value = thinking if thinking is not None else getattr(ai, "thinking", "disabled")
+        if value not in self.reasoning_capabilities(ai, "openai").modes:
+            return {}
         if value != "adaptive":
             return {"reasoning_effort": "none"}
         effort = getattr(ai, "reasoning_effort", "") or "medium"

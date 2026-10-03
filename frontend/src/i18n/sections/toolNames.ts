@@ -2,7 +2,6 @@
 export const toolNames = {
   'zh-CN': {
     create_event: '新建日历事件', list_events: '查询日历事件', update_event: '更新日历事件', delete_event: '删除日历事件',
-    add_event_reminder: '给活动加提醒', list_event_reminders: '查看活动提醒', remove_event_reminder: '删除活动提醒',
     list_projects: '查询项目列表', get_project: '项目详情', create_project: '新建项目', update_project: '更新项目', archive_project: '归档项目', delete_project: '删除项目',
     list_dir: '浏览目录', read_file: '读取文件', edit_file: '修改文件', create_file: '创建文件', rename_file: '重命名文件', move_items: '移动文件/文件夹', copy_file: '复制文件', create_folder: '新建文件夹', delete_file: '删除文件', rename_folder: '重命名文件夹', delete_folder: '删除文件夹', send_file: '发送文件', send_link_buttons: '发送链接按钮', save_uploaded_file: '保存上传文件',
     web_search: '联网搜索', image_search: '图片搜索', inspect_images: '读取图片（旧版）', deep_research: '深度研究', global_search: '站内全局搜索',
@@ -18,7 +17,6 @@ export const toolNames = {
   },
   'ja-JP': {
     create_event: '予定を作成', list_events: '予定を検索', update_event: '予定を更新', delete_event: '予定を削除',
-    add_event_reminder: '予定にリマインダーを追加', list_event_reminders: 'リマインダーを表示', remove_event_reminder: 'リマインダーを削除',
     list_projects: 'プロジェクトを検索', get_project: 'プロジェクト詳細', create_project: 'プロジェクトを作成', update_project: 'プロジェクトを更新', archive_project: 'プロジェクトをアーカイブ', delete_project: 'プロジェクトを削除',
     list_dir: 'ディレクトリを閲覧', read_file: 'ファイルを読み込む', edit_file: 'ファイルを編集', create_file: 'ファイルを作成', rename_file: 'ファイル名を変更', move_items: 'ファイル/フォルダーを移動', copy_file: 'ファイルをコピー', create_folder: 'フォルダーを作成', delete_file: 'ファイルを削除', rename_folder: 'フォルダー名を変更', delete_folder: 'フォルダーを削除', send_file: 'ファイルを送信', send_link_buttons: 'リンクボタンを送信', save_uploaded_file: 'アップロードを保存',
     web_search: 'ウェブ検索', image_search: '画像検索', inspect_images: '画像読み込み（旧版）', deep_research: '詳細調査', global_search: 'サイト内検索',
@@ -34,7 +32,6 @@ export const toolNames = {
   },
   'en-US': {
     create_event: 'Create calendar event', list_events: 'Search calendar events', update_event: 'Update calendar event', delete_event: 'Delete calendar event',
-    add_event_reminder: 'Add event reminder', list_event_reminders: 'View event reminders', remove_event_reminder: 'Remove event reminder',
     list_projects: 'Search projects', get_project: 'Project details', create_project: 'Create project', update_project: 'Update project', archive_project: 'Archive project', delete_project: 'Delete project',
     list_dir: 'Browse directory', read_file: 'Read file', edit_file: 'Edit file', create_file: 'Create file', rename_file: 'Rename file', move_items: 'Move files/folders', copy_file: 'Copy file', create_folder: 'Create folder', delete_file: 'Delete file', rename_folder: 'Rename folder', delete_folder: 'Delete folder', send_file: 'Send file', send_link_buttons: 'Send link buttons', save_uploaded_file: 'Save upload',
     web_search: 'Web search', image_search: 'Image search', inspect_images: 'Read images (legacy)', deep_research: 'Deep research', global_search: 'Site search',

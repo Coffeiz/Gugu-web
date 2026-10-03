@@ -86,6 +86,18 @@ async def get_session(db, user_id, session_id):
     return await get_owned(db, ConversationSession, session_id, user_id)
 
 
+async def resolve_message_session_id(db, user_id, message_id):
+    """解析消息所属会话，并在同一查询中校验会话归属。"""
+    return (await db.execute(
+        select(ConversationMessage.session_id)
+        .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
+        .where(
+            ConversationMessage.id == message_id,
+            ConversationSession.user_id == user_id,
+        )
+    )).scalar_one_or_none()
+
+
 async def list_messages(db, session_id, limit):
     return (await db.execute(select(ConversationMessage).where(
         ConversationMessage.session_id == session_id,

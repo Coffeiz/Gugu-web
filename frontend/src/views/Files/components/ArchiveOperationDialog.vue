@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show" width="460px" background="var(--panel-bg)" @close="emit('close')">
+  <BaseModal :show="show" width="460px" background="var(--panel-bg)" :teleport-to="teleportTo" @close="emit('close')">
     <form class="archive-dialog" @submit.prevent="submit">
       <header class="archive-dialog-header">
         <div class="archive-dialog-heading">
@@ -12,10 +12,17 @@
       </header>
 
       <div class="archive-dialog-body">
-        <label class="archive-field">
+        <div class="archive-field">
           <span>{{ t(mode === 'compress' ? 'filesUi.archiveName' : 'filesUi.archiveFolderName') }}</span>
-          <input v-model="name" :disabled="busy || Boolean(success)" :maxlength="mode === 'compress' ? 300 : 200" autocomplete="off" />
-        </label>
+          <input
+            v-model="name"
+            class="form-input"
+            :aria-label="t(mode === 'compress' ? 'filesUi.archiveName' : 'filesUi.archiveFolderName')"
+            :disabled="busy || Boolean(success)"
+            :maxlength="mode === 'compress' ? 300 : 200"
+            autocomplete="off"
+          />
+        </div>
         <p v-if="error" class="archive-message is-error" role="alert">{{ error }}</p>
         <p v-if="success && mode === 'compress'" class="archive-message is-success" role="status">{{ success }}</p>
       </div>
@@ -40,14 +47,15 @@ import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   show: boolean
   mode: 'compress' | 'extract'
   initialName: string
   busy: boolean
   error: string
   success: string
-}>()
+  teleportTo?: string
+}>(), { teleportTo: '' })
 const emit = defineEmits<{
   close: []
   submit: [form: { name: string }]
@@ -83,12 +91,7 @@ function submit() {
 .archive-close:hover { background: var(--control-bg-hover); color: var(--content-primary); }
 .archive-dialog-body { display: grid; gap: 16px; padding: 20px 22px; }
 .archive-field { display: grid; gap: 7px; color: var(--content-secondary); font-size: 12px; }
-.archive-field input {
-  width: 100%; min-width: 0; box-sizing: border-box; height: 36px; padding: 0 11px;
-  border: 1px solid var(--input-border); border-radius: var(--control-radius);
-  background: var(--input-bg); color: var(--input-fg); font: 13px var(--font-sans);
-}
-.archive-field input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.archive-field input { width: 100%; min-width: 0; box-sizing: border-box; height: 36px; }
 .archive-message { margin: 0; padding: 9px 11px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.5; }
 .archive-message.is-error { color: var(--danger-fg); background: var(--danger-bg); }
 .archive-message.is-success { color: var(--status-success); background: var(--status-success-bg); }

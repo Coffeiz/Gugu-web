@@ -91,7 +91,7 @@ function inventoryItem(file, kind) {
   const ci = isE2e
     ? workflow.includes(path.basename(file))
     : kind === 'vitest'
-      ? workflow.includes('npm run test:run') || workflow.includes('pnpm test')
+      ? workflow.includes('pnpm --filter gugu-web run test:run') || workflow.includes('pnpm --filter gugu-web test:run')
       : kind === 'node-test'
         ? false
         : kind === 'diagnostic-script'

@@ -1,11 +1,20 @@
-"""Agent Loop 统一状态机的行为回归测试。
+"""`LLMRunner._run_anthropic`/`_run_openai` 主循环特征测试（characterization tests）。
 
-当前主循环由 `agent.loop.machine.run_loop` 执行，`LLMRunner` 保留兼容入口，
-各 provider 的请求轮次由 LoopDriver 驱动。本文件覆盖工具续轮、核验守卫、取消、
-压缩与空回复处理等关键行为，防止后续调整状态机或 provider 边界时引入回归。
+PRD-LLM-1 Phase 2 前置：这两条循环各自完整实现工具调用/核实轮/防幻觉守卫控制流，
+重复约 90%，是下一步"合并成一条循环 + provider 适配器提供标准化流"的目标，但现状
+**没有任何端到端测试**——贸然合并的风险跟"修一个 bug"不对等。这份测试先把现有行为
+钉死，给后续合并提供回归安全网；不改任何主循环代码。
 
-部分用例由原手动冒烟场景迁入；测试通过 `monkeypatch.setattr` 临时替换依赖，
-由 pytest 在用例结束时恢复，避免共享模块状态污染其他测试。
+现有场景（`test_verify_*`/`test_readonly_*`/`test_openai_clean_pass_matches_anthropic`）
+移植自原 `scripts/smoke_self_verify.py`（手动冒烟脚本，原本只能手跑、不进 CI，场景已
+完整迁到这里后已删除，避免两份资产分叉维护）——移植时注意：原脚本直接对模块全局赋值
+（`core._stream_round = fake_stream_round`、`registry.dispatch = fake_dispatch` 等）
+不会自动撤销，混进 pytest 一个进程里跑会污染其它测试文件；这里全部改用
+`monkeypatch.setattr`，测试结束自动复原。
+
+后续场景覆盖三条防幻觉守卫（叙事/意图播报/决策拒绝）、句末冒号续写和空回复兜底——
+这几处正是合并时最容易被悄悄改坏的分支，因为两条循环里
+是逐字复制的同一段判断，合并时任何一次「顺手改一下措辞/顺序」都可能让两路从此不同步。
 """
 import asyncio
 import collections
@@ -20,6 +29,7 @@ from agent.loop_drivers import RoundResult
 from agent.core import (
     LLMRunner, _FINALIZE_PROMPT, _VERIFY_PROMPT,
 )
+from agent.context.assembly import MessageArea
 from agent.tools import registry
 
 _CONFIRMATION_TOOL_NAMES = tuple(
@@ -56,11 +66,40 @@ def dispatched(monkeypatch):
 
 
 AI = SimpleNamespace(model="fake", base_url="http://local", api_key="dummy",
-                     provider="anthropic", max_tokens=100, thinking="disabled")
+                     provider="anthropic", max_tokens=100, thinking="disabled",
+                     context_tokens=1_000_000)
 
 
 def make_runner(**kwargs):
-    return LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI), **kwargs)
+    settings = kwargs.pop("settings", SimpleNamespace(ai=kwargs.pop("ai", AI)))
+    tool_names = kwargs.pop("tool_names", [])
+    runner = LLMRunner(tool_names=tool_names, settings=settings, **kwargs)
+
+    class _RunHarness:
+        """测试场景用便捷输入转为当前正式的 MessageArea 契约。"""
+        def __getattr__(self, name):
+            return getattr(runner, name)
+
+        @staticmethod
+        def _area(value):
+            return value if isinstance(value, MessageArea) else MessageArea.from_canonical_messages(value)
+
+        def _run_anthropic(self, user_id, system_text, messages, ai, **options):
+            return runner._run_anthropic(
+                user_id, system_text, self._area(messages), ai, **options,
+            )
+
+        def _run_openai(self, user_id, messages, ai, **options):
+            return runner._run_openai(
+                user_id, self._area(messages), ai, **options,
+            )
+
+        def _run_responses(self, user_id, system_text, messages, ai, **options):
+            return runner._run_responses(
+                user_id, system_text, self._area(messages), ai, **options,
+            )
+
+    return _RunHarness()
 
 
 async def drain(gen):
@@ -82,7 +121,13 @@ async def drain(gen):
 
 
 def n_verify(messages):
-    return sum(1 for m in messages if m.get("content") == _VERIFY_PROMPT)
+    return sum(1 for m in canonical_messages(messages) if m.get("content") == _VERIFY_PROMPT)
+
+
+def canonical_messages(messages):
+    if isinstance(messages, MessageArea):
+        return [entry.canonical_message for entry in messages.entries]
+    return list(messages)
 
 
 async def test_progress_only_round_is_retried_but_draft_remains_visible(monkeypatch):
@@ -114,8 +159,8 @@ async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
     final = msg([TX("最终回复")])
     final.usage.input_tokens = 950
     patch_anthropic(monkeypatch, [final])
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
-    runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=ai))
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
+    runner = make_runner(settings=SimpleNamespace(ai=ai))
 
     ev, text, errors = await drain(runner._run_anthropic(
         "u", "sys", [{"role": "user", "content": "测试"}], ai,
@@ -317,8 +362,8 @@ async def test_compound_mutating_tool_read_action_does_not_trigger_verify(monkey
         msg([TX("当前没有配置 MCP 服务")]),
     ])
     messages = [{"role": "user", "content": "看看 MCP 服务"}]
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
-    runner = LLMRunner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
+    runner = make_runner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
     ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, ai))
     assert "当前没有配置 MCP 服务" in text
     assert n_verify(messages) == 0
@@ -346,8 +391,8 @@ async def test_compound_tool_read_action_ends_post_mutation_verify(monkeypatch, 
         msg([TX("MCP 服务配置已经完成")]),
     ])
     messages = [{"role": "user", "content": "添加 MCP 服务"}]
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
-    runner = LLMRunner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
+    runner = make_runner(tool_names=["manage_mcp_servers"], settings=SimpleNamespace(ai=ai))
     ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, ai))
 
     assert "MCP 服务配置已经完成" in text
@@ -362,7 +407,7 @@ async def test_note_get_counts_as_verify_observation(monkeypatch, dispatched):
         msg([TX("笔记已记录")]),
     ])
     messages = [{"role": "user", "content": "记一条笔记"}]
-    runner = LLMRunner(tool_names=["note_create", "note_get"], settings=SimpleNamespace(ai=AI))
+    runner = make_runner(tool_names=["note_create", "note_get"], settings=SimpleNamespace(ai=AI))
     _ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, AI))
     assert dispatched == ["note_create"]
     assert "笔记已记录" in text
@@ -437,7 +482,9 @@ async def test_tool_confirmation_cancel_replaces_tool_result_and_finalizes(monke
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
 
     patch_anthropic(monkeypatch, [msg([TU("send_email", "call-1", {})])])
-    messages = [{"role": "user", "content": "发邮件"}]
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "发邮件"},
+    ])
 
     ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
 
@@ -447,7 +494,8 @@ async def test_tool_confirmation_cancel_replaces_tool_result_and_finalizes(monke
     assert errors == []
     # 内存里的 pending 工具结果必须已被取消结果替换，收尾持久化才不会写回占位符。
     tool_results = [
-        block.get("content") for m in messages if m.get("role") == "user"
+        block.get("content") for entry in messages.entries
+        for m in [entry.canonical_message] if m.get("role") == "user"
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any('"status": "cancelled"' in (c or "") for c in tool_results)
@@ -489,7 +537,9 @@ async def test_confirmation_adapter_routes_every_confirmable_tool(monkeypatch, d
     })])])
 
     ev, _text, errors = await drain(make_runner()._run_anthropic(
-        "u", "sys", [{"role": "user", "content": "执行操作"}], AI, session_id=807,
+        "u", "sys", MessageArea.from_canonical_messages([
+            {"role": "user", "content": "执行操作"},
+        ]), AI, session_id=807,
     ))
 
     assert dispatches == [(target_name, {"probe": "confirm-routing"})]
@@ -549,7 +599,9 @@ async def test_tool_confirmation_confirm_replays_tool_without_model_recall(monke
         msg([TU("send_email", "call-1", {})]),
         msg([TX("邮件已经发送出去了 ✅")]),
     ])
-    messages = [{"role": "user", "content": "帮我发邮件"}]
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "帮我发邮件"},
+    ])
 
     ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
 
@@ -558,7 +610,8 @@ async def test_tool_confirmation_confirm_replays_tool_without_model_recall(monke
     assert ev["_cancelled"] == 0
     assert errors == []
     tool_results = [
-        block.get("content") for m in messages if m.get("role") == "user"
+        block.get("content") for entry in messages.entries
+        for m in [entry.canonical_message] if m.get("role") == "user"
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any("邮件已发送" in (c or "") for c in tool_results), "真实执行结果必须回写进工具往返"
@@ -673,14 +726,14 @@ async def test_confirmed_replay_result_reaches_canonical_batch(monkeypatch, disp
         msg([TU("send_email", "call-1", {})]),
         msg([TX("邮件已经发送出去了 ✅")]),
     ])
-    from agent.context.assembly import PromptMessages
-    messages = PromptMessages([{"role": "user", "content": "帮我发邮件"}])
+    from agent.context.assembly import MessageArea
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我发邮件"}])
 
     _ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
 
     assert "邮件已经发送出去了" in text
     assert errors == []
-    persisted = json.dumps(messages.canonical_batch_records, ensure_ascii=False)
+    persisted = json.dumps(messages.batch_records(), ensure_ascii=False)
     assert "邮件已发送" in persisted, "重投的真实结果必须写进 canonical 批次"
     assert "waiting_confirmation" not in persisted, "落库的工具往返不能停在「等待确认」占位"
 
@@ -717,14 +770,14 @@ async def test_tool_confirmation_state_survives_wait_but_replay_is_single_shot(m
         msg([TU("send_email", "call-1", {})]),
         msg([TX("这次没发出去，稍后再试")]),
     ])
-    messages = [{"role": "user", "content": "帮我发邮件"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我发邮件"}])
 
     _ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1))
 
     assert "这次没发出去" in text
     assert errors == []
     tool_results = [
-        block.get("content") for m in messages if m.get("role") == "user"
+        block.get("content") for m in canonical_messages(messages) if m.get("role") == "user"
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any("确认未生效" in (c or "") for c in tool_results)
@@ -767,7 +820,7 @@ async def test_user_cancel_closes_tool_bubble_and_starts_new_round(monkeypatch, 
     monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
 
     patch_anthropic(monkeypatch, [msg([TU("delete_scheduled_task", "call-1", {"task_id": 266})])])
-    messages = [{"role": "user", "content": "把定时任务删掉"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "把定时任务删掉"}])
 
     frames = []
     async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1):
@@ -795,7 +848,7 @@ async def test_user_cancel_closes_tool_bubble_and_starts_new_round(monkeypatch, 
     assert calls == ["delete_scheduled_task"], "取消不能触发重投"
 
     tool_results = [
-        block.get("content") for m in messages if m.get("role") == "user"
+        block.get("content") for m in canonical_messages(messages) if m.get("role") == "user"
         for block in (m.get("content") or []) if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     assert any('"status": "cancelled"' in (c or "") for c in tool_results), "取消结果要落进本轮工具往返"
@@ -877,8 +930,8 @@ async def test_responses_failure_falls_back_with_current_tools(monkeypatch):
     monkeypatch.setattr(core, "OpenAIResponsesDriver", _ResponsesDriver)
     monkeypatch.setattr(loop_drivers, "OpenAIDriver", _ChatDriver)
 
-    ai = SimpleNamespace(**AI.__dict__, api_format="responses", context_tokens=1000)
-    runner = LLMRunner(
+    ai = SimpleNamespace(**{**AI.__dict__, "api_format": "responses", "context_tokens": 1000})
+    runner = make_runner(
         tool_names=["initial_tool"],
         settings=SimpleNamespace(ai=ai),
         capability_context=_CapabilityContext(),
@@ -908,9 +961,9 @@ async def test_narration_guard_nudges_once_then_gives_up(monkeypatch, dispatched
         msg([TX("让我读一下这个文件，读到了，改好了！")]),   # R1 叙事口吻、零工具 → 命中 narration 守卫
         msg([TX("好的，明白了")]),   # R2 仍零工具；内容应被抑制，不再追第三次
     ])
-    messages = [{"role": "user", "content": "帮我改一下这个文件"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我改一下这个文件"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._NARRATION_NUDGE]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._NARRATION_NUDGE]
     assert len(nudges) == 1, "叙事守卫应该只追一次，不能无限重试"
     assert nudges[0]["role"] == "system"
     assert ev["_usage"] == 1 and ev["error"] == 0
@@ -924,7 +977,7 @@ async def test_narration_guard_does_not_treat_reported_fact_as_local_mutation(mo
     ])
     messages = [{"role": "user", "content": "查一下这个案件的调查进展"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    assert not [m for m in messages if m.get("content") == core._NARRATION_NUDGE]
+    assert not [m for m in canonical_messages(messages) if m.get("content") == core._NARRATION_NUDGE]
     assert "已经发出传票" in text
     assert ev["_usage"] == 1 and ev["error"] == 0
 
@@ -935,9 +988,9 @@ async def test_intent_announce_guard_nudges_once(monkeypatch, dispatched):
         msg([TX("我这就去帮你查一下项目进度")]),   # 宣告将来式、零工具 → 命中意图守卫
         msg([TX("查到了，项目进度是 80%")]),        # 被逼后仍零工具，内容不应输出
     ])
-    messages = [{"role": "user", "content": "帮我查一下项目进度"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我查一下项目进度"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._INTENT_NUDGE]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._INTENT_NUDGE]
     assert len(nudges) == 1
     assert "项目进度是 80%" not in text
     assert ev["_usage"] == 1 and ev["error"] == 0
@@ -949,13 +1002,13 @@ async def test_colon_ended_reply_retries_without_fixed_prefix_and_shows_completi
         msg([TX("看一下当前在跑的定时任务，找管插画推送和每日新闻速览的：")]),
         msg([TX("句末冒号表示下文可能尚未输出，回复应接着把说明说完整。")]),
     ])
-    messages = [{"role": "user", "content": "检查这两个定时任务"}]
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "检查这两个定时任务"}])
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 100_000})
 
     ev, text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, ai))
 
     nudge = core.guard_locale("zh-CN").colon_nudge
-    assert any(m.get("content") == nudge for m in messages)
+    assert any(m.get("content") == nudge for m in canonical_messages(messages))
     assert "看一下当前在跑的定时任务" in text
     assert "句末冒号表示下文可能尚未输出" in text
     assert ev["_new_round"] == 1
@@ -968,7 +1021,7 @@ async def test_colon_guard_does_not_expose_unverified_tool_claim_from_retry(monk
         msg([TX("看一下当前任务：")]),
         msg([TX("我查了一下文件，发现任务写入到了个人文件夹。")]),
     ])
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 100_000})
 
     _ev, text, _errors = await drain(make_runner()._run_anthropic(
         "u", "sys", [{"role": "user", "content": "检查任务配置"}], ai,
@@ -985,7 +1038,7 @@ async def test_intent_announce_guard_skips_questions(monkeypatch, dispatched):
     ])
     messages = [{"role": "user", "content": "项目怎么样了"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._INTENT_NUDGE]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._INTENT_NUDGE]
     assert len(nudges) == 0, "问句/征询不该被意图守卫误伤"
     assert "要我现在去查一下项目进度吗" in text
 
@@ -1003,15 +1056,15 @@ async def test_colon_guard_still_runs_after_a_previous_tool_round(
         msg([TX(draft)]),
         msg([TX(completion)]),
     ])
-    messages = [{"role": "user", "content": "检查当前定时任务"}]
-    ai = SimpleNamespace(**AI.__dict__, context_tokens=100_000)
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "检查当前定时任务"}])
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 100_000})
 
     ev, text, _errors = await drain(
         make_runner(locale=locale)._run_anthropic("u", "sys", messages, ai)
     )
 
     nudge = core.guard_locale(locale).colon_nudge
-    nudges = [m for m in messages if m.get("content") == nudge]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == nudge]
     assert len(nudges) == 1
     assert draft in text
     assert completion in text
@@ -1024,9 +1077,9 @@ async def test_decision_dodge_guard_nudges_once(monkeypatch, dispatched):
         msg([TX("这个不需要重新排序，已经挺合理的了")]),   # 用户要排序，模型零工具驳回 → 命中决策守卫
         msg([TX("好的，已经帮你重新排好序了")]),           # 守卫后的纯文本应被丢弃
     ])
-    messages = [{"role": "user", "content": "帮我把这些任务重新排序一下"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我把这些任务重新排序一下"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    nudges = [m for m in messages if m.get("content") == core._DECISION_NUDGE]
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._DECISION_NUDGE]
     assert len(nudges) == 1
     assert text == "这个不需要重新排序，已经挺合理的了"
     assert ev["_usage"] == 1 and ev["error"] == 0
@@ -1038,9 +1091,9 @@ async def test_empty_reply_falls_back_after_one_retry(monkeypatch, dispatched):
         msg([TX("")]),   # R1 空正文
         msg([TX("")]),   # R2 追问后仍空 → 触发兜底文案
     ])
-    messages = [{"role": "user", "content": "你好"}]
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "你好"}])
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
-    retry_prompts = [m for m in messages
+    retry_prompts = [m for m in canonical_messages(messages)
                       if m.get("content") == "（把要回复用户的话直接说出来就好，别只在心里想。）"]
     assert len(retry_prompts) == 1, "空回复应该只追问一次"
     assert "没太接住" in text or "换个说法" in text, f"应该吐出兜底文案，实际：{text!r}"
@@ -1070,6 +1123,589 @@ async def test_agent_loop_has_no_product_tool_call_cap(monkeypatch, dispatched):
     assert ev["error"] == 0
 
 
+async def test_multi_tool_round_keeps_serial_dispatch_and_model_order(monkeypatch, dispatched):
+    """阶段 0 基线：现有多调用 Round 串行 dispatch，SSE 事件按模型声明顺序交错发出。"""
+    calls = [
+        TU("read_alpha", "call-a", {}),
+        TU("read_beta", "call-b", {}),
+        TU("read_gamma", "call-c", {}),
+    ]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
+    snapshot = SimpleNamespace(
+        get=lambda _name: None,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    events = []
+    async for chunk in make_runner()._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "并行工具基线"}], AI,
+    ):
+        try:
+            event = json.loads(chunk[len("data: "):])
+        except (TypeError, ValueError):
+            continue
+        if event.get("type") in {"tool_call", "tool_done"}:
+            events.append((event["type"], event.get("tool_call_id"), event.get("status")))
+
+    assert dispatched == ["read_alpha", "read_beta", "read_gamma"]
+    assert events == [
+        ("tool_call", "call-a", "running"), ("tool_done", "call-a", "success"),
+        ("tool_call", "call-b", "running"), ("tool_done", "call-b", "success"),
+        ("tool_call", "call-c", "running"), ("tool_done", "call-c", "success"),
+    ]
+
+
+async def test_enabled_parallel_round_overlaps_but_emits_and_persists_in_model_order(monkeypatch):
+    """阶段 1 集成行为：安全调用真实重叠，事件和 Provider 工具结果仍按原顺序。"""
+    from agent.tools.base import Tool
+
+    calls = [
+        TU("safe_alpha", "call-a", {}),
+        TU("safe_beta", "call-b", {}),
+        TU("safe_gamma", "call-c", {}),
+    ]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
+    tools = {
+        name: Tool(
+            name=name,
+            description="并发安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None,
+            parallel_safe=True,
+        )
+        for name in ("safe_alpha", "safe_beta", "safe_gamma")
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    active = 0
+    max_active = 0
+    started = []
+    completed = []
+    all_started = asyncio.Event()
+    release_call = {name: asyncio.Event() for name in ("safe_alpha", "safe_beta", "safe_gamma")}
+    finished_call = {name: asyncio.Event() for name in release_call}
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        started.append(name)
+        if len(started) == 3:
+            all_started.set()
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=1)
+            await release_call[name].wait()
+            completed.append(name)
+            finished_call[name].set()
+            return json.dumps({"result": name}), None
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(parallel_tool_execution_enabled=True),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "并行查询"},
+    ])
+    events = []
+    async def complete_in_reverse_order():
+        await all_started.wait()
+        for name in ("safe_gamma", "safe_beta", "safe_alpha"):
+            release_call[name].set()
+            await finished_call[name].wait()
+
+    completion_driver = asyncio.create_task(complete_in_reverse_order())
+    async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+        try:
+            event = json.loads(chunk[len("data: "):])
+        except (TypeError, ValueError):
+            continue
+        if event.get("type") in {"tool_call", "tool_done"}:
+            events.append((event["type"], event.get("tool_call_id"), event.get("status")))
+    await completion_driver
+
+    assert max_active == 3, "屏障确认三个 handler 确实同时运行"
+    assert started == ["safe_alpha", "safe_beta", "safe_gamma"]
+    assert completed == ["safe_gamma", "safe_beta", "safe_alpha"]
+    assert events == [
+        ("tool_call", "call-a", "queued"),
+        ("tool_call", "call-b", "queued"),
+        ("tool_call", "call-c", "queued"),
+        ("tool_call", "call-a", "running"),
+        ("tool_call", "call-b", "running"),
+        ("tool_call", "call-c", "running"),
+        ("tool_done", "call-a", "success"),
+        ("tool_done", "call-b", "success"),
+        ("tool_done", "call-c", "success"),
+    ]
+    tool_results = [
+        block
+        for message in canonical_messages(messages)
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert [block.get("tool_use_id") or block.get("tool_call_id") for block in tool_results] == [
+        "call-a", "call-b", "call-c",
+    ]
+
+
+async def test_invalid_protocol_call_does_not_serialize_five_safe_shell_calls(monkeypatch):
+    """无副作用的协议错误应单独回执，不阻塞同 Round 五个安全 Shell 调用并发。"""
+    from agent.tools.base import Tool
+
+    calls = [TU("call_tool", "bad-call", {"name": "shell", "arguments": []})]
+    calls.extend(
+        TU("shell", f"shell-{index}", {"command": f"echo {index}"})
+        for index in range(5)
+    )
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("执行完成")])])
+    shell = Tool(
+        name="shell", description="受控 Shell",
+        input_schema={
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+            "additionalProperties": False,
+        },
+        handler=lambda *_args: None,
+        mutates=True,
+        destructive=True,
+        parallel_safe_for_input=lambda arguments: arguments.get("command", "").startswith("echo "),
+    )
+    snapshot = SimpleNamespace(
+        get=lambda name: shell if name == "shell" else None,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    active = 0
+    max_active = 0
+    started = 0
+    all_started = asyncio.Event()
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        nonlocal active, max_active, started
+        assert name == "shell", "格式无效的 Adapter 调用不能进入工具 dispatch"
+        active += 1
+        started += 1
+        max_active = max(max_active, active)
+        if started == 5:
+            all_started.set()
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=1)
+            return json.dumps({"result": "done"}), None
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(
+            parallel_tool_execution_enabled=True,
+            parallel_tool_max_concurrency=5,
+        ),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "并发执行五条互相独立的命令"},
+    ])
+    events = []
+    async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+        try:
+            events.append(json.loads(chunk[len("data: "):]))
+        except (TypeError, ValueError):
+            continue
+
+    assert started == 5
+    assert max_active == 5, "屏障确认五个 Shell handler 确实重叠运行"
+    tool_events = [
+        event for event in events if event.get("type") in {"tool_call", "tool_done"}
+    ]
+    calls_by_id = {
+        call_id: [event["status"] for event in tool_events
+                  if event["type"] == "tool_call" and event.get("tool_call_id") == call_id]
+        for call_id in ("bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4")
+    }
+    assert calls_by_id["bad-call"] == ["invalid"]
+    assert all(calls_by_id[f"shell-{index}"] == ["queued", "running"] for index in range(5))
+    assert [event.get("tool_call_id") for event in tool_events if event["type"] == "tool_done"] == [
+        "bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4",
+    ]
+    invalid_result = next(
+        event["result"] for event in tool_events
+        if event["type"] == "tool_done" and event.get("tool_call_id") == "bad-call"
+    )
+    assert json.loads(invalid_result)["error"] == "tool_call_invalid"
+    tool_results = [
+        block
+        for message in canonical_messages(messages)
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert [block.get("tool_use_id") or block.get("tool_call_id") for block in tool_results] == [
+        "bad-call", "shell-0", "shell-1", "shell-2", "shell-3", "shell-4",
+    ]
+
+
+async def test_parallel_round_uses_admin_configured_concurrency_limit(monkeypatch):
+    """Admin 保存的每轮上限必须传到真实 Round 调度器，而非只影响 UI。"""
+    from agent.loop import machine as loop_machine
+    from agent.tools.base import Tool
+
+    calls = [TU("safe_alpha", "call-a", {}), TU("safe_beta", "call-b", {})]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("完成")])])
+    tools = {
+        name: Tool(
+            name=name, description="并发安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None, parallel_safe=True,
+        )
+        for name in ("safe_alpha", "safe_beta")
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    monkeypatch.setattr(
+        registry, "dispatch",
+        lambda _user, name, _args: asyncio.sleep(0, result=(json.dumps({"result": name}), None)),
+    )
+    original_dispatcher = loop_machine._core._run_parallel_dispatches
+    received_limits = []
+
+    async def record_limit(batch, dispatch, **kwargs):
+        received_limits.append(kwargs.get("max_concurrency"))
+        return await original_dispatcher(batch, dispatch, **kwargs)
+
+    monkeypatch.setattr(loop_machine._core, "_run_parallel_dispatches", record_limit)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(
+            parallel_tool_execution_enabled=True,
+            parallel_tool_max_concurrency=2,
+        ),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "读取两项"},
+    ])
+
+    async for _chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+        pass
+
+    assert received_limits == [2]
+
+
+async def test_parallel_tool_events_distinguish_queued_from_running(monkeypatch):
+    """排队卡片保持 queued；只有调度器放行的两个调用才显示 running。"""
+    from agent.tools.base import Tool
+
+    calls = [TU(f"safe_{i}", f"call-{i}", {}) for i in range(5)]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("完成")])])
+    tools = {
+        call.name: Tool(
+            name=call.name, description="并发安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None, parallel_safe=True,
+        )
+        for call in calls
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+    started = []
+    release = asyncio.Event()
+    two_started = asyncio.Event()
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        started.append(name)
+        if len(started) == 2:
+            two_started.set()
+        await release.wait()
+        return json.dumps({"result": name}), None
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(
+            parallel_tool_execution_enabled=True,
+            parallel_tool_max_concurrency=2,
+        ),
+    )
+    stream = make_runner(settings=settings)._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "并发查询"}], AI,
+    )
+    events = []
+
+    async def read_until_two_are_running():
+        async for chunk in stream:
+            try:
+                event = json.loads(chunk[len("data: "):])
+            except (TypeError, ValueError):
+                continue
+            if event.get("type") == "tool_call":
+                events.append(event)
+                if sum(item.get("status") == "running" for item in events) == 2:
+                    return
+
+    consumer = asyncio.create_task(read_until_two_are_running())
+    await asyncio.wait_for(two_started.wait(), timeout=1)
+    await asyncio.wait_for(consumer, timeout=1)
+    assert [event["status"] for event in events] == ["queued"] * 5 + ["running"] * 2
+    assert len(started) == 2
+
+    release.set()
+    remaining = []
+    async for chunk in stream:
+        try:
+            remaining.append(json.loads(chunk[len("data: "):]))
+        except (TypeError, ValueError):
+            continue
+    assert [event["tool_call_id"] for event in remaining if event.get("type") == "tool_call" and event.get("status") == "running"] == ["call-2", "call-3", "call-4"]
+
+
+async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(monkeypatch):
+    """取消并发批次时保留已完成回执、关闭未完成调用，且绝不请求下一轮 Provider。"""
+    from agent.tools.base import Tool
+
+    calls = [
+        TU("safe_alpha", "call-a", {}),
+        TU("safe_beta", "call-b", {}),
+        TU("safe_gamma", "call-c", {}),
+    ]
+    patch_anthropic(monkeypatch, [msg(calls)])
+    tools = {
+        name: Tool(
+            name=name,
+            description="并发安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None,
+            parallel_safe=True,
+        )
+        for name in ("safe_alpha", "safe_beta", "safe_gamma")
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    all_started = asyncio.Event()
+    alpha_completed = asyncio.Event()
+    never = asyncio.Event()
+    started = 0
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        nonlocal started
+        started += 1
+        if started == 3:
+            all_started.set()
+        await all_started.wait()
+        if name == "safe_alpha":
+            alpha_completed.set()
+            return json.dumps({"result": "alpha done"}), None
+        await never.wait()
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(parallel_tool_execution_enabled=True),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "并行查询后停止"},
+    ])
+    events = []
+
+    async def consume():
+        async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+            try:
+                events.append(json.loads(chunk[len("data: "):]))
+            except (TypeError, ValueError):
+                continue
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(all_started.wait(), timeout=1)
+    await asyncio.wait_for(alpha_completed.wait(), timeout=1)
+    task.cancel()
+    await asyncio.wait_for(task, timeout=1)
+
+    terminal_events = [
+        (event["type"], event.get("tool_call_id"), event.get("status"))
+        for event in events
+        if event.get("type") in {"tool_call", "tool_done"}
+    ]
+    assert terminal_events == [
+        ("tool_call", "call-a", "queued"),
+        ("tool_call", "call-b", "queued"),
+        ("tool_call", "call-c", "queued"),
+        ("tool_call", "call-a", "running"),
+        ("tool_call", "call-b", "running"),
+        ("tool_call", "call-c", "running"),
+        ("tool_done", "call-a", "success"),
+        ("tool_done", "call-b", "cancelled"),
+        ("tool_done", "call-c", "cancelled"),
+    ]
+    assert any(event.get("type") == "_cancelled" for event in events)
+    tool_results = [
+        block
+        for message in canonical_messages(messages)
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert [block.get("tool_use_id") or block.get("tool_call_id") for block in tool_results] == [
+        "call-a", "call-b", "call-c",
+    ]
+    assert json.loads(tool_results[0]["content"]) == {"result": "alpha done"}
+    assert all("工具调用已取消" in str(block) for block in tool_results[1:])
+    assert not any(event.get("type") == "error" for event in events)
+
+
+async def test_parallel_enabled_mixed_batch_remains_strictly_serial(monkeypatch):
+    """无效调用不能掩盖同批真实不安全工具，真实混合批次仍必须整批串行。"""
+    from agent.tools.base import Tool
+
+    calls = [
+        TU("safe_alpha", "call-a", {}),
+        TU("call_tool", "bad-call", {"name": "safe_alpha", "arguments": []}),
+        TU("ordinary_beta", "call-b", {}),
+    ]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
+    tools = {
+        "safe_alpha": Tool(
+            name="safe_alpha", description="安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None, parallel_safe=True,
+        ),
+        "ordinary_beta": Tool(
+            name="ordinary_beta", description="普通工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None,
+        ),
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls_started = []
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        calls_started.append(name)
+        if name == "safe_alpha":
+            first_started.set()
+            await release_first.wait()
+            return json.dumps({"result": name}), None
+        assert release_first.is_set(), "第二项不能在第一项完成前启动"
+        return json.dumps({"result": name}), None
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(parallel_tool_execution_enabled=True),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "混合批次"},
+    ])
+    events = []
+
+    async def consume():
+        async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+            try:
+                events.append(json.loads(chunk[len("data: "):]))
+            except (TypeError, ValueError):
+                continue
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    release_first.set()
+    await asyncio.wait_for(task, timeout=1)
+
+    assert calls_started == ["safe_alpha", "ordinary_beta"]
+    assert [
+        (event["type"], event.get("tool_call_id"))
+        for event in events if event.get("type") in {"tool_call", "tool_done"}
+    ] == [
+        ("tool_call", "call-a"), ("tool_done", "call-a"),
+        ("tool_call", "bad-call"), ("tool_done", "bad-call"),
+        ("tool_call", "call-b"), ("tool_done", "call-b"),
+    ]
+
+
+async def test_parallel_dispatch_exception_is_isolated_and_not_exposed(monkeypatch):
+    """并行只读调用异常只影响本项，原始异常内容不得进入 SSE 或 canonical 回执。"""
+    from agent.tools.base import Tool
+
+    calls = [TU("safe_broken", "call-a", {}), TU("safe_ok", "call-b", {})]
+    patch_anthropic(monkeypatch, [msg(calls), msg([TX("读取完成")])])
+    tools = {
+        name: Tool(
+            name=name, description="安全测试工具",
+            input_schema={"type": "object", "properties": {}},
+            handler=lambda *_args: None, parallel_safe=True,
+        )
+        for name in ("safe_broken", "safe_ok")
+    }
+    snapshot = SimpleNamespace(
+        get=tools.get,
+        anthropic_schemas=lambda _names: [],
+        openai_schemas=lambda _names: [],
+        labels=lambda: {},
+    )
+    monkeypatch.setattr(registry, "snapshot_with_extras", lambda _extras: snapshot)
+
+    async def fake_dispatch(_user_id, name, _arguments):
+        if name == "safe_broken":
+            raise RuntimeError("private diagnostic sentinel")
+        return json.dumps({"result": "safe result"}), None
+
+    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    settings = SimpleNamespace(
+        ai=AI,
+        agent=SimpleNamespace(parallel_tool_execution_enabled=True),
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "并行查询"},
+    ])
+    events = []
+    async for chunk in make_runner(settings=settings)._run_anthropic("u", "sys", messages, AI):
+        try:
+            events.append(json.loads(chunk[len("data: "):]))
+        except (TypeError, ValueError):
+            continue
+
+    tool_done = [event for event in events if event.get("type") == "tool_done"]
+    assert [event.get("status") for event in tool_done] == ["error", "success"]
+    assert "private diagnostic sentinel" not in json.dumps(events, ensure_ascii=False)
+    assert "只读工具执行失败" in tool_done[0]["result"]
+    canonical = json.dumps(canonical_messages(messages), ensure_ascii=False)
+    assert "private diagnostic sentinel" not in canonical
+
+
 async def test_scheduled_agent_loop_fails_before_dispatch_above_30_calls(monkeypatch, dispatched):
     """定时 run 保留 30 次专属上限，超额批次不派发并返回失败事件供外层重试。"""
     from agent.scheduled import ScheduledLLMRunner
@@ -1080,7 +1716,9 @@ async def test_scheduled_agent_loop_fails_before_dispatch_above_30_calls(monkeyp
     ])
     runner = ScheduledLLMRunner([], SimpleNamespace(ai=AI))
     ev, text, errors = await drain(runner._run_anthropic(
-        "u", "sys", [{"role": "user", "content": "定时查询任务"}], AI,
+        "u", "sys", MessageArea.from_canonical_messages([
+            {"role": "user", "content": "定时查询任务"},
+        ]), AI,
     ))
 
     assert dispatched == ["get_project"] * 30
@@ -1105,7 +1743,9 @@ async def test_scheduled_agent_loop_has_100_round_limit(monkeypatch, dispatched)
     runner.tool_call_limit_per_run = None
     runner.fail_on_tool_call_limit = False
     ev, _text, errors = await drain(runner._run_anthropic(
-        "u", "sys", [{"role": "user", "content": "定时查询任务"}], AI,
+        "u", "sys", MessageArea.from_canonical_messages([
+            {"role": "user", "content": "定时查询任务"},
+        ]), AI,
     ))
 
     assert dispatched == ["get_project"] * 2
@@ -1157,7 +1797,7 @@ async def test_polluted_tool_name_salvaged_before_dispatch_and_events(monkeypatc
 
 async def _recover_frames(stub_frames, monkeypatch):
     """跑一次 _recover_interrupted_continuation，返回 (此轮吐出的帧, 重发模型的次数)。"""
-    runner = make_runner()
+    runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
     retries: list[int] = []
 
     async def fake_provider(*_a, **_kw):
@@ -1173,7 +1813,7 @@ async def _recover_frames(stub_frames, monkeypatch):
 
     out = []
     async for line in runner._recover_interrupted_continuation(
-        first(), "u", "sys", [], use_anthropic=True, model_cfg=None, session_id=1,
+        first(), "u", "sys", MessageArea(), use_anthropic=True, model_cfg=None, session_id=1,
     ):
         out.append(line)
     return out, len(retries)

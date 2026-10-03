@@ -39,7 +39,7 @@ global.css
   `tokens/interaction-refinements.css` 的 `.task-card .card-link-btn` 规则收口。新卡片类型
   一律消费这里，不得另画透明底按钮。
 - `components/popups.css` 负责通用弹层结构、菜单项和过渡；Teleport 根节点由 `PopupMenu.vue` 负责，业务内容主题归属各自组件。
-- `components/forms.css` 负责标题编辑和基础输入控件的跨页面结构样式。
+- `components/forms.css` 负责标题编辑、基础输入控件，以及 `.setting-choice-row`（双行标题/说明与选项垂直居中的布局）的跨页面结构样式；Admin 和 BYOK 同类选项共用该布局契约。
 - 多行输入框的可调整高度统一使用 `.control-resizable`；缩放柄只由 `adoption/forms.css` 的公共规则绘制，视觉值使用 `--control-resizer-bg`，页面组件不得自行添加 `::-webkit-resizer`、硬编码颜色或重复 `resize` 视觉规则。需要编辑器滚动行为时，再组合 `.scroll-surface scroll-surface--editor`。
 - `bridges/index.css` 只负责 Teleport、浮层根节点和拖拽跨 DOM 边界，不承接组件几何或业务状态。
 - `theme-refinements.css` 只提供主题/语义变量映射；具体组件的背景、边框、阴影和高光由组件文件消费。

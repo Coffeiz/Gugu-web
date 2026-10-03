@@ -18,18 +18,20 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
         "稳定系统", "## 项目\n- 小北的计划", tz,
         "执行任务", {"stance": "温和"}, use_anthropic=False,
     )
-    assert messages[0] == {"role": "system", "content": "稳定系统"}
-    assert "小北的计划" in messages[1]["content"]
-    assert messages[2]["role"] == "user"
+    projected = messages.provider_projection().to_messages()
+    assert projected[0] == {"role": "system", "content": "稳定系统"}
+    assert "小北的计划" in projected[1]["content"]
+    assert projected[2]["role"] == "user"
     assert any(
         "以下是仅供你内部遵循的回应规则" in block.get("text", "")
-        for block in messages[2]["content"]
+        for entry in messages.entries
+        for block in entry.canonical_message.get("content", [])
         if block.get("type") == "stance-context"
     )
-    assert messages[3] == {"role": "user", "content": "执行任务"}
-    assert sum("小北的计划" in item["content"] for item in messages) == 1
+    assert projected[3] == {"role": "user", "content": "执行任务"}
+    assert sum("小北的计划" in item["content"] for item in projected) == 1
     assert messages.dynamic_tail == [time_message(tz)]
-    assert "当前时间" not in str(messages.conversation)
+    assert "当前时间" not in str(messages.provider_projection().conversation)
 
 
 @pytest.mark.asyncio

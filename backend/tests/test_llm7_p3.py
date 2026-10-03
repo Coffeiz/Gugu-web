@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from agent import providers
 from agent.loop_drivers import OllamaDriver
 from app.api.v1 import agent_admin
+from app.services import multimodal_probe
 from helpers.agent_provider import probe_capabilities
 
 
@@ -94,8 +95,10 @@ async def test_ollama_native_stream_and_tool_roundtrip(monkeypatch):
     )
 
     driver = OllamaDriver()
-    _, context = driver.prepare(["probe_noop"], _ollama_ai(), [], None)
-    events = [event async for event in driver.run_round(client, context, [])]
+    from agent.context.assembly.area import MessageArea
+    messages = MessageArea.from_canonical_messages()
+    _, context = driver.prepare(["probe_noop"], _ollama_ai(), messages, None)
+    events = [event async for event in driver.run_round(client, context, messages)]
 
     assert events[0] == ("token", "先查一下。")
     result = events[-1][1]
@@ -213,13 +216,13 @@ async def test_capability_fingerprint_changes_when_model_changes(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_vision_probe_preview_supports_unsaved_preset(monkeypatch):
-    async def fake_probe(provider, api_key, base_url, model, api_format, *, dim):
+async def test_media_probe_preview_supports_unsaved_preset(monkeypatch):
+    async def fake_probe(target, *, dim):
         return True, 200, f"支持{dim}"
 
-    monkeypatch.setattr(agent_admin, "_do_vision_probe", fake_probe)
-    result = await agent_admin.probe_vision_preview(
-        agent_admin.VisionProbePreview(
+    monkeypatch.setattr(multimodal_probe, "probe_multimodal_capability", fake_probe)
+    result = await agent_admin.probe_media_preview(
+        agent_admin.MediaProbePreview(
             provider="openai", base_url="http://127.0.0.1:8000/v1", model="vision-model",
         ),
         dim="image",
@@ -230,23 +233,23 @@ async def test_vision_probe_preview_supports_unsaved_preset(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_vision_probe_persists_definitive_capabilities(monkeypatch):
+async def test_media_probe_persists_definitive_capabilities(monkeypatch):
     item = {
         "id": "vision-1", "provider": "openai", "api_key": "", "base_url": "http://local/v1",
-        "model": "vision-model", "vision": False, "vision_video": False, "vision_audio": False,
+        "model": "vision-model", "image": False, "video": False, "audio": False,
     }
     override = {"ai_presets": {"active_id": "vision-1", "items": [item]}}
     monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
     monkeypatch.setattr(agent_admin, "_write_override", lambda value: None)
 
-    async def fake_probe(provider, api_key, base_url, model, api_format, *, dim):
+    async def fake_probe(target, *, dim):
         return (dim == "image"), 200, "明确结果"
 
-    monkeypatch.setattr(agent_admin, "_do_vision_probe", fake_probe)
-    result = await agent_admin.probe_vision_preset("vision-1")
+    monkeypatch.setattr(multimodal_probe, "probe_multimodal_capability", fake_probe)
+    result = await agent_admin.probe_media_preset("vision-1")
 
     assert result["results"]["image"]["supported"] is True
-    assert item["vision"] is True
-    assert item["vision_video"] is False
-    assert item["vision_audio"] is False
-    assert override["ai"]["vision"] is True
+    assert item["image"] is True
+    assert item["video"] is False
+    assert item["audio"] is False
+    assert override["ai"]["image"] is True

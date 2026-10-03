@@ -78,93 +78,38 @@ def _validate_stages(stages: Any) -> None:
 
 
 def normalize_project_stages(raw: Any) -> List[Dict[str, Any]]:
-    """把咕咕创建项目时的松散阶段输入规范为项目持久化结构。"""
-    if not isinstance(raw, list):
-        raise ValueError("项目阶段必须是列表")
+    """把阶段名称/对象列表规范为持久化结构；完整校验，不跳过无效项。"""
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("项目阶段必须是非空列表")
     stages: List[Dict[str, Any]] = []
     todo_number = 0
     for index, item in enumerate(raw):
         if isinstance(item, str):
-            label = item
-            todo_source = []
-        elif isinstance(item, dict):
-            label = item.get("label") or item.get("name") or ""
-            todo_source = item.get("todos") or []
-        else:
-            continue
-        label = str(label).strip()
-        if not label:
-            continue
+            item = {"label": item}
+        if not isinstance(item, dict):
+            raise ValueError(f"第 {index + 1} 个阶段必须是对象")
+        if set(item) - {"label", "todos"}:
+            raise ValueError(f"第 {index + 1} 个阶段包含未知字段")
+        label = item.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError(f"第 {index + 1} 个阶段必须提供非空 label")
+        label = label.strip()
+        todo_source = item.get("todos", [])
         if not isinstance(todo_source, list):
             raise ValueError("阶段 todos 必须是列表")
         todos: List[Dict[str, Any]] = []
-        for todo in todo_source:
-            text = todo.get("text") if isinstance(todo, dict) else todo
+        for todo_index, todo in enumerate(todo_source):
+            text = todo
             if not isinstance(text, str) or not text.strip():
-                continue
+                raise ValueError(f"阶段「{label}」的第 {todo_index + 1} 个待办必须是非空文本")
             todo_number += 1
             todos.append({
                 "id": f"t{todo_number}",
-                "text": text,
-                "done": bool(todo.get("done")) if isinstance(todo, dict) else False,
+                "text": text.strip(),
+                "done": False,
             })
         stages.append({"key": f"s{index}", "label": label, "todos": todos})
     _validate_stages(stages)
-    return stages
-
-
-def normalize_project_stages_for_read(raw: Any) -> List[Dict[str, Any]]:
-    """兼容旧阶段数据，确保读接口始终返回当前前端可消费的结构。"""
-    if not isinstance(raw, list):
-        return []
-
-    stages: List[Dict[str, Any]] = []
-    stage_keys = set()
-    todo_ids = set()
-    todo_number = 0
-    for index, item in enumerate(raw):
-        if not isinstance(item, dict):
-            continue
-        label = item.get("label")
-        if not isinstance(label, str) or not label.strip():
-            continue
-
-        key = item.get("key")
-        if not isinstance(key, str) or not key.strip() or key in stage_keys:
-            key = f"s{index}"
-            while key in stage_keys:
-                key = f"s{len(stage_keys)}"
-        stage_keys.add(key)
-
-        raw_todos = item.get("todos")
-        todos: List[Dict[str, Any]] = []
-        if isinstance(raw_todos, list):
-            for todo in raw_todos:
-                if not isinstance(todo, dict):
-                    continue
-                text = todo.get("text")
-                # 新建待办先以空文本进入编辑态；它是合法的待办草稿，不能在读响应时丢掉。
-                if not isinstance(text, str):
-                    continue
-                todo_id = todo.get("id")
-                if not isinstance(todo_id, str) or not todo_id.strip() or todo_id in todo_ids:
-                    todo_number += 1
-                    todo_id = f"t{todo_number}"
-                    while todo_id in todo_ids:
-                        todo_number += 1
-                        todo_id = f"t{todo_number}"
-                todo_ids.add(todo_id)
-                normalized_todo: Dict[str, Any] = {
-                    "id": todo_id,
-                    "text": text,
-                    "done": todo.get("done") if isinstance(todo.get("done"), bool) else False,
-                }
-                if isinstance(todo.get("autoCompleted"), bool):
-                    normalized_todo["autoCompleted"] = todo["autoCompleted"]
-                if isinstance(todo.get("_savedDone"), bool):
-                    normalized_todo["_savedDone"] = todo["_savedDone"]
-                todos.append(normalized_todo)
-        stages.append({"key": key, "label": label, "todos": todos})
     return stages
 
 
@@ -200,54 +145,79 @@ def replace_project_stages(
     current_stage: str | None,
     raw: Any,
 ) -> tuple[List[Dict[str, Any]], str]:
-    """声明式替换阶段结构，同时保留同名阶段未显式覆盖的待办。"""
+    """声明式替换阶段结构，按现有 key/唯一名称保留阶段身份和未覆盖待办。"""
     if not isinstance(raw, list) or not raw:
-        raise ValueError('需提供 stages 列表，如 ["需求","开发"] 或 [{"label":"开发","todos":["接口"]}]')
+        raise ValueError('需提供非空 stages 列表，如 [{"label":"开发","todos":["接口"]}]')
 
-    old_by_label = {stage.get("label"): stage for stage in old_stages}
+    old_by_key = {stage.get("key"): stage for stage in old_stages}
+    old_by_label: Dict[str, List[Dict[str, Any]]] = {}
+    for old_stage in old_stages:
+        old_by_label.setdefault(old_stage.get("label"), []).append(old_stage)
     stages: List[Dict[str, Any]] = []
+    used_keys: set[str] = set()
     todo_number = 0
     for index, item in enumerate(raw):
         if isinstance(item, str):
-            label, todo_source, has_todos = item, [], False
-        elif isinstance(item, dict):
-            label = item.get("label") or item.get("name") or ""
-            todo_source = item.get("todos") or []
-            has_todos = "todos" in item
+            item = {"label": item}
+        if not isinstance(item, dict):
+            raise ValueError(f"第 {index + 1} 个阶段必须是对象")
+        if set(item) - {"key", "label", "todos"}:
+            raise ValueError(f"第 {index + 1} 个阶段包含未知字段")
+        label = item.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError(f"第 {index + 1} 个阶段必须提供非空 label")
+        label = label.strip()
+        explicit_key = item.get("key")
+        if explicit_key is not None:
+            if not isinstance(explicit_key, str) or not explicit_key.strip():
+                raise ValueError(f"第 {index + 1} 个阶段的 key 必须是非空文本")
+            previous = old_by_key.get(explicit_key)
+            if previous is None:
+                raise ValueError(f"阶段 key 不存在: {explicit_key}")
         else:
-            continue
-        label = str(label).strip()
-        if not label:
-            continue
+            same_label = old_by_label.get(label, [])
+            if len(same_label) > 1:
+                raise ValueError(f"阶段名称「{label}」重名，请在 stages 项中提供 key")
+            previous = same_label[0] if same_label else None
+        if previous is not None and previous["key"] in used_keys:
+            raise ValueError(f"阶段 key 不能重复: {previous['key']}")
+        if previous is not None:
+            stage_key = previous["key"]
+        else:
+            stage_key = next_project_stage_key(old_stages + stages)
+        if stage_key in used_keys:
+            raise ValueError(f"阶段 key 不能重复: {stage_key}")
+        used_keys.add(stage_key)
+
+        todo_source = item.get("todos", [])
+        has_todos = "todos" in item
+        if not isinstance(todo_source, list):
+            raise ValueError(f"阶段「{label}」的 todos 必须是列表")
         if has_todos:
-            source = [
-                {
-                    "text": todo.get("text") if isinstance(todo, dict) else todo,
-                    "done": bool(todo.get("done")) if isinstance(todo, dict) else False,
-                }
-                for todo in todo_source
-            ]
-        elif label in old_by_label:
+            source = [{"text": todo, "done": False} for todo in todo_source]
+        elif previous is not None:
             source = [
                 {"text": todo.get("text"), "done": todo.get("done", False)}
-                for todo in old_by_label[label].get("todos", [])
+                for todo in previous.get("todos", [])
             ]
         else:
             source = []
         todos: List[Dict[str, Any]] = []
-        for todo in source:
+        for todo_index, todo in enumerate(source):
             if not isinstance(todo.get("text"), str) or not todo["text"].strip():
-                continue
+                raise ValueError(f"阶段「{label}」的第 {todo_index + 1} 个待办必须是非空文本")
             todo_number += 1
-            todos.append({"id": f"t{todo_number}", "text": todo["text"], "done": bool(todo.get("done"))})
-        stages.append({"key": f"s{index}", "label": label, "todos": todos})
+            todos.append({"id": f"t{todo_number}", "text": todo["text"].strip(), "done": bool(todo.get("done"))})
+        stages.append({"key": stage_key, "label": label, "todos": todos})
     if not stages:
         raise ValueError("stages 解析后为空")
     _validate_stages(stages)
 
-    old_current = next((stage for stage in old_stages if stage.get("key") == current_stage), None)
-    current_label = old_current.get("label") if old_current else None
-    next_current = next((stage["key"] for stage in stages if stage["label"] == current_label), stages[0]["key"])
+    next_current = (
+        current_stage
+        if any(stage["key"] == current_stage for stage in stages)
+        else stages[0]["key"]
+    )
     return stages, next_current
 
 

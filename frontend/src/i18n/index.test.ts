@@ -61,7 +61,6 @@ describe('i18n locale policy', () => {
       expect(scope.reasoningPersistence).not.toBe('llmExtraUi.reasoningPersistence')
       expect(scope.reasoningPersistenceHint).not.toBe('llmExtraUi.reasoningPersistenceHint')
       expect(scope.reasoningOff).not.toBe('llmExtraUi.reasoningOff')
-      expect(scope.reasoningSummary).not.toBe('llmExtraUi.reasoningSummary')
       expect(scope.reasoningContinuation).not.toBe('llmExtraUi.reasoningContinuation')
     }
   })

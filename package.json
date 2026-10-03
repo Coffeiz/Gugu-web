@@ -1,18 +1,19 @@
 {
   "name": "gugu-web-workspace",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
+  "packageManager": "pnpm@10.15.0",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "dev:web": "pnpm --filter gugu-web dev",
-    "dev:loopscope": "pnpm --filter loopscope-web dev",
-    "build:web": "pnpm --filter gugu-web build",
-    "build:rag": "pnpm --filter gugu-rag-ts-worker build",
-    "build": "pnpm -r --if-present build",
-    "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test",
+    "dev:web": "corepack pnpm --filter gugu-web dev",
+    "dev:loopscope": "corepack pnpm --filter loopscope-web dev",
+    "build:web": "corepack pnpm --filter gugu-web build",
+    "build:rag": "corepack pnpm --filter gugu-rag-ts-worker build",
+    "build": "corepack pnpm -r --if-present build",
+    "typecheck": "corepack pnpm -r --if-present typecheck",
+    "test": "corepack pnpm -r --if-present test",
     "test:fast": "node scripts/tests/run-fast-tests.mjs",
     "test:unit": "TEST_TIER=unit node scripts/tests/run-test-tier.mjs",
     "test:integration": "TEST_TIER=integration node scripts/tests/run-test-tier.mjs",

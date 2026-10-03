@@ -14,6 +14,7 @@ import asyncio
 import base64
 import logging
 import os
+import secrets
 import tempfile
 from types import SimpleNamespace
 from urllib.parse import urlsplit, urlunsplit
@@ -21,6 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 from agent.security.logsafe import fingerprint
 from app.core.redaction import diag_log, redact
 from app.core.credentials import normalize_ascii_api_key
+from agent.providers.minimax import minimax_error_details
 
 logger = logging.getLogger("agent.voice")
 
@@ -118,7 +120,34 @@ def is_configured(settings) -> bool:
     return bool(vm and (getattr(vm, "model", "") or "").strip())
 
 
-async def transcribe(media: list, settings, *, db=None, user_id=None, raise_errors: bool = False) -> str | None:
+def _log_transcription_error(context: str, error: BaseException, *, defer_minimax: bool = False) -> bool:
+    details = minimax_error_details(error)
+    if details is None:
+        diag_log(context, error)
+        return False
+    if defer_minimax:
+        return True
+    response = getattr(error, "response", None)
+    status_code = getattr(error, "status_code", None) or getattr(response, "status_code", None)
+    diagnostic_id = secrets.token_hex(8).upper()
+    diag_log(
+        f"{context} provider=minimax status={status_code or '-'} "
+        f"error_code={details.code} error_type={details.error_type} "
+        f"request_id={details.request_id or '-'} diagnostic_id={diagnostic_id}",
+        error,
+    )
+    logger.warning(
+        "MiniMax 语音转写失败 status=%s error_code=%s error_type=%s request_id=%s diagnostic_id=%s",
+        status_code or "-", details.code, details.error_type,
+        details.request_id or "-", diagnostic_id,
+    )
+    return True
+
+
+async def transcribe(
+    media: list, settings, *, db=None, user_id=None,
+    raise_errors: bool = False, raise_minimax_errors: bool = False,
+) -> str | None:
     """把 media（[{type:'audio'|'video', mime, b64}]）转成文字。
     返回 None = 未配置语音模型（调用方切断回「不支持」）；返回 str = 转写结果（可能为空串）。"""
     vm = _vm(settings)
@@ -202,8 +231,10 @@ async def transcribe(media: list, settings, *, db=None, user_id=None, raise_erro
             return out
         except transient as e:
             if i >= len(_ASR_RETRY_BACKOFF):
-                diag_log("agent.voice.transcribe", e)   # 原始 → 受限诊断出口
-                logger.warning("语音转写重试 %d 次后仍失败 model=%s：%s", i, vm.model, type(e).__name__)
+                if raise_minimax_errors and minimax_error_details(e) is not None:
+                    raise
+                if not _log_transcription_error("agent.voice.transcribe", e, defer_minimax=raise_errors):
+                    logger.warning("语音转写重试 %d 次后仍失败 model=%s：%s", i, vm.model, type(e).__name__)
                 if raise_errors:
                     raise
                 # 不上抛 RetryableError：transcribe() 的既有契约是「非 None 即成功（可能空串），
@@ -217,17 +248,23 @@ async def transcribe(media: list, settings, *, db=None, user_id=None, raise_erro
             await asyncio.sleep(_ASR_RETRY_BACKOFF[i])
         except httpx.HTTPStatusError as e:
             if e.response.status_code not in (429,) and e.response.status_code < 500:
-                diag_log("agent.voice.transcribe.permanent", e)
-                logger.warning("语音转写失败 model=%s base_url=%s → %s",
-                               getattr(vm, "model", "?"), getattr(vm, "base_url", "?"),
-                               redact(f"HTTP {e.response.status_code}"))
+                if raise_minimax_errors and minimax_error_details(e) is not None:
+                    raise
+                if not _log_transcription_error(
+                    "agent.voice.transcribe.permanent", e, defer_minimax=raise_errors
+                ):
+                    logger.warning("语音转写失败 model=%s base_url=%s → %s",
+                                   getattr(vm, "model", "?"), getattr(vm, "base_url", "?"),
+                                   redact(f"HTTP {e.response.status_code}"))
                 if raise_errors:
                     raise
                 return ""
             if i >= len(_ASR_RETRY_BACKOFF):
-                diag_log("agent.voice.transcribe", e)
-                logger.warning("语音转写重试 %d 次后仍失败 model=%s：HTTP %s",
-                               i, vm.model, e.response.status_code)
+                if raise_minimax_errors and minimax_error_details(e) is not None:
+                    raise
+                if not _log_transcription_error("agent.voice.transcribe", e, defer_minimax=raise_errors):
+                    logger.warning("语音转写重试 %d 次后仍失败 model=%s：HTTP %s",
+                                   i, vm.model, e.response.status_code)
                 if raise_errors:
                     raise
                 return ""
@@ -238,10 +275,14 @@ async def transcribe(media: list, settings, *, db=None, user_id=None, raise_erro
             # 非瞬时（4xx 鉴权/参数错等）或未知错误：失败回空串（调用方兜底为「没听清」），
             # 但打日志——别再静默吞错（model 名错/端点错/鉴权都靠它排查）。原始异常（可能含
             # base_url/请求细节）只进受限诊断出口，可见日志只留脱敏摘要（P2-b §3/§5）。
-            diag_log("agent.voice.transcribe.permanent", e)
-            logger.warning("语音转写失败 model=%s base_url=%s → %s",
-                           getattr(vm, "model", "?"), getattr(vm, "base_url", "?"),
-                           redact(f"{type(e).__name__}: {e}"))
+            if raise_minimax_errors and minimax_error_details(e) is not None:
+                raise
+            if not _log_transcription_error(
+                "agent.voice.transcribe.permanent", e, defer_minimax=raise_errors
+            ):
+                logger.warning("语音转写失败 model=%s base_url=%s → %s",
+                               getattr(vm, "model", "?"), getattr(vm, "base_url", "?"),
+                               redact(f"{type(e).__name__}: {e}"))
             if raise_errors:
                 raise
             return ""

@@ -1,7 +1,7 @@
 """agent/tools/base.py SkillRegistry.dispatch() 的 `_media_block` 特殊键回归测试。
 
 这是 read_file 读视频最终把真正的 video content block 交给模型的唯一路径——
-跟已有的 `_vision_image`（看图）走同一套机制，只是键名和内容块类型不同。
+跟已有的 `_image_block`（看图）走同一套机制，只是键名和内容块类型不同。
 """
 import pytest
 

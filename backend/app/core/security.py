@@ -184,6 +184,7 @@ async def get_current_user_id(
 
 
 async def get_current_user_identity(
+    request: Request,
     user_id: UUID = Depends(get_current_user_id),
 ) -> CurrentUserIdentity:
     """为 StreamingResponse/长连接提供短事务身份快照。"""
@@ -194,6 +195,7 @@ async def get_current_user_identity(
     if db_session._SessionLocal is None:
         raise HTTPException(status_code=503, detail="数据库暂不可用")
     async with db_session._SessionLocal() as db:
+        await ensure_data_replacement_allows_write(request, db, user_id)
         user = await db.get(User, user_id)
         if not account_is_active(user):
             raise HTTPException(status_code=401, detail="用户不存在或已停用")
@@ -232,6 +234,28 @@ async def get_current_user(
     user = await db.get(User, user_id)
     if not account_is_active(user):
         raise HTTPException(status_code=401, detail="用户不存在或已停用")
+    await ensure_data_replacement_allows_write(request, db, user_id)
     from app.security.risk_policy import enforce_user_throttle
     await enforce_user_throttle(user_id)
     return user
+
+
+async def ensure_data_replacement_allows_write(
+    request: Request, db: AsyncSession, user_id: UUID,
+) -> None:
+    """替换提交窗口内拒绝新的用户写请求；迁移控制面仍可查询/撤销/恢复任务。"""
+    if request.method in _SAFE_METHODS or request.url.path.startswith("/api/v1/data-portability/"):
+        return
+    from app.models import DataImportJob
+    from sqlalchemy import select
+
+    active = (await db.execute(select(DataImportJob.id).where(
+        DataImportJob.user_id == user_id,
+        DataImportJob.status.in_({"applying", "rolling_back", "needs_recovery"}),
+    ).limit(1))).scalar_one_or_none()
+    if active is not None:
+        raise HTTPException(
+            status_code=423,
+            detail="账号正在替换用户数据，暂时不能修改；请稍后重试",
+            headers={"Retry-After": "5"},
+        )

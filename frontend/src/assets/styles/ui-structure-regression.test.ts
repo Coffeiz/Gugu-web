@@ -113,7 +113,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(hoverCard).toContain('transition: transform var(--motion-hover-card)')
     expect(hoverCard).not.toContain('box-shadow var(--motion-hover-card)')
     expect(componentTokens).toContain('--card-motion: transform var(--motion-hover-card)')
-    expect(componentTokens).not.toContain('box-shadow var(--motion-hover-card) ease')
+    expect(componentTokens).not.toMatch(/--card-motion:[^;]*box-shadow/)
   })
 
   it('画布便签由组件保留完整的 hover 阴影过渡，不被通用卡片动效覆盖', () => {
@@ -309,13 +309,15 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   it('项目阶段和待办删除操作保持可见且具备可访问名称', () => {
     expect(projectStagesPanel).toContain(':aria-label="t(\'common.actions.delete\')"')
     expect(projectStagesPanel).toContain(':size="12"')
-    expect(projectStagesPanel).toContain('width: 24px; height: 24px;')
-    expect(projectStagesPanel).toContain('color: var(--danger-button-fg); opacity: 0; pointer-events: none;')
+    expect(projectStagesPanel).toContain('class="popup-close-btn del-stage"')
+    expect(projectStagesPanel).toContain('flex: 0 0 22px; opacity: 0; pointer-events: none;')
+    expect(projectStagesPanel).toContain('color: var(--popup-item-fg-muted);')
     expect(projectStagesPanel).toContain('.node-row:hover .del-stage')
     expect(projectTodosPanel).toContain(':aria-label="t(\'common.actions.delete\')"')
     expect(projectTodosPanel).toContain(':size="12"')
-    expect(projectTodosPanel).toContain('width: 24px; height: 24px;')
-    expect(projectTodosPanel).toContain('color: var(--danger-button-fg); opacity: 0; pointer-events: none;')
+    expect(projectTodosPanel).toContain('class="popup-close-btn todo-del"')
+    expect(projectTodosPanel).toContain('width: 22px; height: 22px; flex: 0 0 22px;')
+    expect(projectTodosPanel).toContain('color: var(--popup-item-fg-muted); opacity: 0; pointer-events: none;')
     expect(projectTodosPanel).toContain('.todo-item:hover .todo-del')
     expect(projectTodosPanel).toContain('.todo-item { display: flex; align-items: center;')
     expect(projectTodosPanel).toContain('.todo-check, .todo-del { margin-top: 0; }')
@@ -365,8 +367,10 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(load('./components/forms.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
   })
 
-  it('普通输入统一使用足够的行高，避免字母下伸部被输入框裁切', () => {
-    expect(sharedForms).toContain('line-height: var(--line-height-body);')
+  it('普通单行输入统一使用完整控件高度的文本行框，保证上下区域按横坐标定位光标', () => {
+    expect(sharedForms).toContain('height: var(--input-control-height);')
+    expect(sharedForms).toContain('line-height: var(--input-text-line-height);')
+    expect(load('./tokens/components/surfaces.css')).toContain('--input-text-line-height: var(--input-control-height);')
     expect(sharedForms).toContain('vertical-align: middle;')
     expect(sharedForms).toContain("input:is([type='text'], [type='email']")
     expect(sharedForms).not.toContain(":where(input[type='text']")

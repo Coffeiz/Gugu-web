@@ -7,10 +7,9 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import select
-
-from app.models import ConversationMessage, ConversationSession
-from app.services.conversations import get_session, list_messages, list_recent_sessions
+from app.services.conversations import (
+    get_session, list_messages, list_recent_sessions, resolve_message_session_id,
+)
 
 from app.search.query import normalize_mode, normalize_queries
 from agent.tools.base import BaseSkill, Tool
@@ -52,14 +51,7 @@ async def _resolve_conversation_session_id(db, user_id, item: dict) -> int | Non
     if message_id is None:
         return None
 
-    return (await db.execute(
-        select(ConversationMessage.session_id)
-        .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-        .where(
-            ConversationMessage.id == message_id,
-            ConversationSession.user_id == user_id,
-        )
-    )).scalar_one_or_none()
+    return await resolve_message_session_id(db, user_id, message_id)
 
 
 async def _search_conversations(db, user_id, args: dict):

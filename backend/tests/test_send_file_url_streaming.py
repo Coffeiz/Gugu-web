@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from agent.tools import files as im_files
+from agent.tools.files import transfer as file_transfer
 from app.core import chat_attach
 
 
@@ -27,11 +28,6 @@ MAX_BYTES = im_files._SEND_URL_MAX_BYTES
 CHUNK = 1024 * 1024   # 1MB
 
 
-def _fake_build_pinned_request(client, method, url):
-    """绕过真实 DNS 解析/IP pinning，测试只关心 streaming 限流逻辑本身。"""
-    return client.build_request(method, url), None
-
-
 class _FakeResp:
     """流式响应：连续吐 chunk，记录被消费的字节数。
 
@@ -39,9 +35,9 @@ class _FakeResp:
     此时再 aiter_bytes() 会抛 ReadError——用于断言 body 必须在 AsyncClient 生命周期内消费。
     """
 
-    def __init__(self, total_bytes: int, content_type: str = "image/jpeg"):
-        self.status_code = 200
-        self.headers = {"content-type": content_type}
+    def __init__(self, total_bytes: int, content_type: str = "image/jpeg", *, status_code: int = 200, headers=None):
+        self.status_code = status_code
+        self.headers = {"content-type": content_type, **(headers or {})}
         self._total = total_bytes
         self.consumed = 0
         self.closed = False
@@ -71,11 +67,20 @@ class _FakeClient:
         self._resp.client_closed = True
         return False
 
-    def build_request(self, method, url):
-        return {"method": method, "url": url}
+    def stream(self, method, url, headers=None):
+        assert method == "GET"
+        return _FakeStream(self._resp)
 
-    async def send(self, request, stream=False):
-        return self._resp
+
+class _FakeStream:
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, *a):
+        return False
 
 
 def _run(url: str, resp: _FakeResp):
@@ -94,7 +99,9 @@ def _run(url: str, resp: _FakeResp):
 ])
 def test_streaming_aborts_near_limit_not_full_body(monkeypatch, total_bytes):
     """chunked 响应连续吐 >15MB：读取到上限附近就中止，不消费完整响应。"""
-    monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
+    async def resolve(_self, url):
+        return "93.184.216.34", None
+    monkeypatch.setattr(file_transfer.SafeEgressClient, "resolve", resolve)
     resp = _FakeResp(total_bytes)
     client = _FakeClient(resp)
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client)
@@ -112,7 +119,9 @@ def test_streaming_aborts_near_limit_not_full_body(monkeypatch, total_bytes):
 
 def test_streaming_accepts_under_limit(monkeypatch):
     """小于上限的图片正常下载成功。"""
-    monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
+    async def resolve(_self, url):
+        return "93.184.216.34", None
+    monkeypatch.setattr(file_transfer.SafeEgressClient, "resolve", resolve)
     monkeypatch.setattr(chat_attach, "stage", _fake_stage)
     resp = _FakeResp(CHUNK)   # 1MB
     client = _FakeClient(resp)
@@ -127,7 +136,9 @@ def test_streaming_accepts_under_limit(monkeypatch):
 
 def test_content_length_over_limit_rejected_before_read(monkeypatch):
     """Content-Length 声明就超限：不读 body 直接拒绝。"""
-    monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
+    async def resolve(_self, url):
+        return "93.184.216.34", None
+    monkeypatch.setattr(file_transfer.SafeEgressClient, "resolve", resolve)
     resp = _FakeResp(0)   # body 为空，但声明 Content-Length 超限
     resp.headers["content-length"] = str(MAX_BYTES * 2)
     client = _FakeClient(resp)
@@ -141,105 +152,73 @@ def test_content_length_over_limit_rejected_before_read(monkeypatch):
     assert resp.consumed == 0, "Content-Length 超限不应读 body"
 
 
-def test_send_file_disables_keepalive_to_prevent_cross_hop_tls_reuse(monkeypatch):
-    """PR13 复审发现的问题：pin 到 IP 后，重定向多跳可能解析到同一个 IP（CDN 场景），
-    httpcore 按 origin 复用连接池；但 sni_hostname 只在新建 TLS 连接时生效，复用连接
-    不会重新握手，会出现"握手验证了 A 的证书，之后却拿这条连接发 Host: B"的 TLS
-    hostname 隔离缺口。最简单的堵法是禁用 keep-alive，逼每一跳都新建连接/握手。"""
-    monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
+def test_send_file_uses_shared_egress_stream(monkeypatch):
+    """文件 URL 下载复用统一出站适配器；目标域名先经过统一解析校验。"""
     monkeypatch.setattr(chat_attach, "stage", _fake_stage)
     resp = _FakeResp(CHUNK)
     client = _FakeClient(resp)
-    captured_kwargs = {}
+    resolved = []
+
+    async def resolve(_self, url):
+        resolved.append(url)
+        return "93.184.216.34", None
 
     def fake_async_client(**kwargs):
-        captured_kwargs.update(kwargs)
         return client
 
+    monkeypatch.setattr(file_transfer.SafeEgressClient, "resolve", resolve)
     monkeypatch.setattr(httpx, "AsyncClient", fake_async_client)
 
     _run("https://example.com/small.jpg", resp)
-
-    limits = captured_kwargs.get("limits")
-    assert limits is not None
-    assert limits.max_keepalive_connections == 0
+    assert resolved == ["https://example.com/small.jpg"]
 
 
-def test_build_pinned_request_host_header_keeps_non_default_port(monkeypatch):
-    """非默认端口（如 :8443）的 Host 头必须带端口，否则部分虚拟主机/CDN 会路由错误
-    （PR13 复审发现：之前只用 parsed.hostname，端口信息被丢掉了）。"""
-    import socket
+def test_send_file_revalidates_redirect_target_through_shared_adapter(monkeypatch):
+    monkeypatch.setattr(chat_attach, "stage", _fake_stage)
+    responses = [
+        _FakeResp(0, status_code=302, headers={"location": "https://cdn.example/image.jpg"}),
+        _FakeResp(CHUNK),
+    ]
+    resolved = []
+    adapter_instances = []
 
-    from agent.tools.files import _build_pinned_request
+    class _ResponseQueueClient(_FakeClient):
+        def __init__(self, _resp):
+            super().__init__(responses.pop(0))
 
-    def safe_result(*_args, **_kwargs):
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    async def resolve(_self, url):
+        adapter_instances.append(_self)
+        resolved.append(url)
+        return "93.184.216.34", None
 
-    monkeypatch.setattr(socket, "getaddrinfo", safe_result)
-
-    captured = {}
-
-    class _FakeClientForHost:
-        def build_request(self, method, url, headers=None, extensions=None):
-            captured["url"] = url
-            captured["headers"] = headers
-            return "request-object"
-
-    req, error = _build_pinned_request(_FakeClientForHost(), "GET", "https://example.com:8443/a.png")
-    assert error is None
-    assert captured["headers"]["Host"] == "example.com:8443"
-    assert "93.184.216.34:8443" in captured["url"]
-
-
-def test_build_pinned_request_wraps_literal_ipv6_host_in_brackets(monkeypatch):
-    """URL 本身就是字面 IPv6 地址（如 https://[2606:4700:4700::1111]/a.png）时，
-    Host 头必须给 IPv6 地址加方括号——parsed.hostname 返回的是不带括号的裸地址，
-    直接拼进 Host 头会因为地址内部的冒号被误当成端口分隔符而格式不合法
-    （PR13 复审发现的 P3）。"""
-    import socket
-
-    from agent.tools.files import _build_pinned_request
-
-    def safe_result(*_args, **_kwargs):
-        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700:4700::1111", 0, 0, 0))]
-
-    monkeypatch.setattr(socket, "getaddrinfo", safe_result)
-
-    captured = {}
-
-    class _FakeClientForHost:
-        def build_request(self, method, url, headers=None, extensions=None):
-            captured["url"] = url
-            captured["headers"] = headers
-            return "request-object"
-
-    req, error = _build_pinned_request(
-        _FakeClientForHost(), "GET", "https://[2606:4700:4700::1111]/a.png"
-    )
-    assert error is None
-    assert captured["headers"]["Host"] == "[2606:4700:4700::1111]"
+    monkeypatch.setattr(file_transfer.SafeEgressClient, "resolve", resolve)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _ResponseQueueClient(None))
+    result, _ = _run("https://example.com/image.jpg", responses[-1])
+    assert result.get("ok") is True
+    assert resolved == ["https://example.com/image.jpg", "https://cdn.example/image.jpg"]
+    assert len(adapter_instances) == 2
+    assert adapter_instances[0] is adapter_instances[1]
 
 
-def test_build_pinned_request_wraps_literal_ipv6_host_with_port(monkeypatch):
-    """字面 IPv6 地址 + 非默认端口同时出现时，Host 头应该是「[地址]:端口」。"""
-    import socket
+def test_send_file_rejects_private_redirect_before_opening_second_connection(monkeypatch):
+    response = _FakeResp(0, status_code=302, headers={"location": "http://127.0.0.1/secret"})
+    resolved = []
+    clients_created = []
 
-    from agent.tools.files import _build_pinned_request
+    async def resolve(_self, url):
+        resolved.append(url)
+        if url.startswith("http://127."):
+            raise file_transfer.SafeEgressError("non_public_destination", "目标地址不是公网地址，已拒绝请求")
+        return "93.184.216.34", None
 
-    def safe_result(*_args, **_kwargs):
-        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700:4700::1111", 0, 0, 0))]
+    def fake_async_client(**kwargs):
+        clients_created.append(kwargs)
+        return _FakeClient(response)
 
-    monkeypatch.setattr(socket, "getaddrinfo", safe_result)
+    monkeypatch.setattr(file_transfer.SafeEgressClient, "resolve", resolve)
+    monkeypatch.setattr(httpx, "AsyncClient", fake_async_client)
+    result, _ = _run("https://example.com/image.jpg", response)
 
-    captured = {}
-
-    class _FakeClientForHost:
-        def build_request(self, method, url, headers=None, extensions=None):
-            captured["headers"] = headers
-            return "request-object"
-
-    req, error = _build_pinned_request(
-        _FakeClientForHost(), "GET", "https://[2606:4700:4700::1111]:8443/a.png"
-    )
-    assert error is None
-    assert captured["headers"]["Host"] == "[2606:4700:4700::1111]:8443"
+    assert "目标地址不是公网地址" in json.loads(result)["error"]
+    assert resolved == ["https://example.com/image.jpg", "http://127.0.0.1/secret"]
+    assert len(clients_created) == 1

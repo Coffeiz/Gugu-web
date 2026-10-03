@@ -5,6 +5,7 @@ from app.core.tz import now_utc
 import asyncio
 import base64
 import json
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -28,7 +29,14 @@ def _verify_admin_token(token: str) -> None:
         raise HTTPException(401, "Token 无效")
 
 _BACKEND = Path(__file__).resolve().parents[3]
-_LOGS = _BACKEND / "logs"
+
+
+def _configured_logs_dir() -> Path:
+    log_file = os.environ.get("GUGU_LOG_FILE")
+    return Path(log_file).parent if log_file else _BACKEND / "logs"
+
+
+_LOGS = _configured_logs_dir()
 LOG_FILES = {
     "web":        _LOGS / "gugu.log",
     "worker":     _LOGS / "gugu-worker.log",

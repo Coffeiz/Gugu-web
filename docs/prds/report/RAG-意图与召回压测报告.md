@@ -11,7 +11,7 @@
 脚本位置：
 
 ```text
-backend/scripts/bench_rag_virtual.py
+backend/scripts/benchmarks/bench_rag_virtual.py
 ```
 
 脚本从 `backend/` 目录运行，读取当前环境的 AI 和 Embedding 配置。它支持 BM25、Embedding、LLM 意图判断、真实文档向量缓存和质量指标输出。
@@ -20,7 +20,7 @@ backend/scripts/bench_rag_virtual.py
 
 ```bash
 cd <devserver用户目录>/文档/Workspace/Gugu-web/backend
-PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/python scripts/benchmarks/bench_rag_virtual.py \
   --docs 30 \
   --embed-docs 30 \
   --top-k 20 \
@@ -37,7 +37,7 @@ backend/scripts/.bench_rag_embeddings.json
 复用已有缓存进行测试：
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/python scripts/benchmarks/bench_rag_virtual.py \
   --docs 30 \
   --embed-docs 0 \
   --top-k 20 \
@@ -52,7 +52,7 @@ PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
 测试 LLM 重排：
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/python scripts/benchmarks/bench_rag_virtual.py \
   --docs 1000 \
   --embed-docs 0 \
   --top-k 100 \

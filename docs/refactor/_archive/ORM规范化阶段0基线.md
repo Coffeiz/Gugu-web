@@ -1,7 +1,7 @@
 # ORM 规范化阶段 0 基线
 
 > 扫描日期：2026-08-15
-> 扫描脚本：`backend/scripts/check_orm_boundaries.py`
+> 扫描脚本：`backend/scripts/checks/check_orm_boundaries.py`
 
 ## 结论
 
@@ -54,6 +54,6 @@
 
 ```bash
 cd backend
-PYTHONPATH=. .venv/bin/python scripts/check_orm_boundaries.py
-PYTHONPATH=. .venv/bin/python scripts/check_orm_boundaries.py --json
+PYTHONPATH=. .venv/bin/python scripts/checks/check_orm_boundaries.py
+PYTHONPATH=. .venv/bin/python scripts/checks/check_orm_boundaries.py --json
 ```

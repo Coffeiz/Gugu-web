@@ -515,7 +515,9 @@ async def test_restore_folder_conflict_renames(db, user_a, tmp_path):
     await svc.restore_folder(user_a.id, folder.id)
     await db.commit()
     await db.refresh(r.file)
-    assert r.file.display_name == "note(1)"                     # 冲突改名，不覆盖 r2
+    await db.refresh(folder)
+    assert folder.name == "资料(1)"                             # 目录冲突时改目录名，避免同作用域重复
+    assert r.file.display_name == "note"                        # 目录已分开，无需改名文件
     assert await svc.storage.get(r2.file.storage_key) == b"new"
 
 

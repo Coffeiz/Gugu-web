@@ -52,41 +52,12 @@ async def generate_title(
 
     ai_reply = strip_think_blocks(ai_reply)
     prompt = build_title_prompt(user_msg, ai_reply, locale)
-    from agent import providers
     from agent.llm.modelctx import effective_ai
+    from agent.providers.standalone import complete_text
 
     ai = ai or effective_ai(settings)
-    provider_adapter = providers.adapter_for(ai)
     try:
-        if use_anthropic:
-            import httpx
-
-            client = providers.build_anthropic_client(ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_anthropic_thinking_params(ai)
-            resp = await client.messages.create(
-                model=ai.model,
-                max_tokens=40,
-                messages=[{"role": "user", "content": prompt}],
-                **extra,
-            )
-            text = "".join(
-                getattr(block, "text", "")
-                for block in resp.content
-                if getattr(block, "type", "") == "text"
-            )
-            return (strip_think_blocks(text).strip()[:30]) or user_msg[:20]
-
-        import httpx
-
-        client = providers.build_openai_client(ai, httpx.Timeout(10.0))
-        extra = provider_adapter.build_openai_thinking_kwargs(ai)
-        resp = await client.chat.completions.create(
-            model=ai.model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=40,
-            **extra,
-        )
-        title = strip_think_blocks(resp.choices[0].message.content or "").strip()
+        title = await complete_text(ai, prompt, max_tokens=40)
         return title[:30] or user_msg[:20]
     except Exception:
         return user_msg[:20]
@@ -102,41 +73,12 @@ async def generate_summary(convo: str, settings, use_anthropic: bool) -> str:
         "供日后检索和接着聊时一眼认出。只输出那句话，不要引号、不要解释。\n\n"
         f"{convo[:1500]}"
     )
-    from agent import providers
     from agent.llm.modelctx import effective_ai
+    from agent.providers.standalone import complete_text
 
     ai = effective_ai(settings)
-    provider_adapter = providers.adapter_for(ai)
     try:
-        if use_anthropic:
-            import httpx
-
-            client = providers.build_anthropic_client(ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_anthropic_thinking_params(ai)
-            resp = await client.messages.create(
-                model=ai.model,
-                max_tokens=80,
-                messages=[{"role": "user", "content": prompt}],
-                **extra,
-            )
-            text = "".join(
-                getattr(block, "text", "")
-                for block in resp.content
-                if getattr(block, "type", "") == "text"
-            )
-            return strip_think_blocks(text).strip().strip('"「」')[:120]
-
-        import httpx
-
-        client = providers.build_openai_client(ai, httpx.Timeout(10.0))
-        extra = provider_adapter.build_openai_thinking_kwargs(ai)
-        resp = await client.chat.completions.create(
-            model=ai.model,
-            max_tokens=80,
-            messages=[{"role": "user", "content": prompt}],
-            **extra,
-        )
-        summary = strip_think_blocks(resp.choices[0].message.content or "").strip()
+        summary = await complete_text(ai, prompt, max_tokens=80)
         return summary.strip('"「」')[:120]
     except Exception:
         return ""

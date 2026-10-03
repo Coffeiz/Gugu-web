@@ -7,9 +7,10 @@ from enum import StrEnum
 
 
 class ConfirmationPurpose(StrEnum):
-    """操作确认可跳过；权限或访问范围授权必须由用户明确确认。"""
+    """普通操作可自动确认；强制确认操作及权限授权必须由用户明确确认。"""
 
     ACTION = "action"
+    REQUIRED_ACTION = "required_action"
     AUTHORIZATION = "authorization"
 
 

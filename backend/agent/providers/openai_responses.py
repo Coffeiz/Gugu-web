@@ -1,12 +1,7 @@
-"""OpenAI Responses API 的 provider driver。
-
-Responses 的 response-chain 和流式事件协议与 Chat Completions 不同，单独放置
-以保持共享 loop driver 模块聚焦于通用协议和其它 provider。
-"""
+"""OpenAI Responses API 的 Provider 驱动。"""
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import time
 
@@ -60,32 +55,7 @@ def _raise_if_responses_compatibility_error(exc: Exception) -> None:
         raise ResponsesCompatibilityError(status_code) from exc
 
 
-def _is_stale_response_chain_error(exc: Exception) -> bool:
-    """识别服务端 response chain 丢失的可恢复错误。
-
-    兼容服务可能在交互暂停后丢失服务端 response chain，但本地仍保留完整的
-    assistant/tool 往返。只匹配明确的 tool-id 或 response-id not-found，避免把
-    普通模型/路由 404 当成 chain 失效或盲目重试。
-    """
-    searchable = " ".join(
-        str(value) for value in (
-            str(exc),
-            getattr(exc, "code", None),
-            getattr(exc, "type", None),
-            getattr(exc, "message", None),
-            getattr(exc, "body", None),
-        ) if value is not None
-    ).lower()
-    if "not found" not in searchable:
-        return False
-    return (
-        "tool id" in searchable
-        or "response with id" in searchable
-        or "response_id" in searchable
-    )
-
-
-# OpenAI Responses（独立于 Chat Completions 的 response chain）
+# OpenAI Responses（独立于 Chat Completions 的 item 协议）
 # ══════════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -96,7 +66,8 @@ class _ResponsesCtx:
     instructions: str | None
     adapter: Any
     ai: Any
-    previous_response_id: str | None = None
+    reasoning_replay_enabled: bool = False
+    reasoning_items: list[dict] | None = None
     tool_state_digest: str = ""
     supports_active_cache: bool = False
     base_instructions: str | None = None
@@ -107,10 +78,48 @@ class _ResponsesCtx:
 @dataclass
 class _ResponsesRaw:
     content: str
-    response_id: str | None
-    previous_response_id: str | None
     tool_calls_payload: list[dict]
     output_items: list[dict]
+
+
+def _responses_reasoning_items(items: list[dict] | None) -> list[dict]:
+    """只保留已完成、可回放的 reasoning item；payload 由状态服务加密保存。"""
+    result = []
+    for item in items or ():
+        if not isinstance(item, dict) or item.get("type") != "reasoning":
+            continue
+        if item.get("status") not in {None, "completed"}:
+            continue
+        result.append(copy.deepcopy(item))
+    return result
+
+
+def _insert_responses_reasoning_items(
+    items: list[dict], reasoning_items: list[dict] | None,
+) -> list[dict]:
+    """把最新 reasoning item 放在其对应的最近 assistant 输出之前。"""
+    if not reasoning_items:
+        return items
+    assistant_anchors = [
+        index for index, item in enumerate(items)
+        if isinstance(item, dict) and item.get("role") == "assistant"
+    ]
+    # 工具调用轮可能同时投影出 assistant 文本与 function_call；reasoning 属于
+    # 整个 assistant 输出，必须排在文本/调用项之前，而不是插在两者之间。
+    call_anchors = [
+        index for index, item in enumerate(items)
+        if isinstance(item, dict) and item.get("type") == "function_call"
+    ]
+    anchor = max([*assistant_anchors, *call_anchors], default=-1)
+    # 同一输出中的文本和多个调用是连续项；找到该输出的首项，而不是旧回复。
+    while anchor > 0 and (
+        items[anchor - 1].get("role") == "assistant"
+        or items[anchor - 1].get("type") == "function_call"
+    ):
+        anchor -= 1
+    if anchor < 0:
+        return items
+    return [*items[:anchor], *copy.deepcopy(reasoning_items), *items[anchor:]]
 
 
 def _responses_tools(tools: list[dict]) -> list[dict]:
@@ -163,6 +172,9 @@ def _responses_input(messages: list[dict]) -> list[dict]:
     legacy_call_occurrences: dict[str, int] = {}
     for message in messages:
         if not isinstance(message, dict):
+            continue
+        if message.get("type") in {"reasoning", "function_call", "function_call_output"}:
+            items.append(copy.deepcopy(message))
             continue
         role = message.get("role")
         if role == "system":
@@ -266,15 +278,15 @@ def _responses_prompt_cache_key(ctx: _ResponsesCtx) -> str | None:
 
 
 def _responses_output_text(response: Any) -> str:
-    """从 Responses 对象中提取文本，兼容 SDK 对象与 OpenAI-compatible 返回体。"""
-    text = getattr(response, "output_text", None)
-    if text is None and isinstance(response, dict):
-        text = response.get("output_text")
-    if isinstance(text, str):
-        return text
+    """优先提取 message 正文，避免兼容服务的聚合字段混入 reasoning。"""
     raw_output = getattr(response, "output", None)
     if raw_output is None and isinstance(response, dict):
         raw_output = response.get("output")
+    if raw_output is None:
+        text = getattr(response, "output_text", None)
+        if text is None and isinstance(response, dict):
+            text = response.get("output_text")
+        return text if isinstance(text, str) else ""
     parts: list[str] = []
     for item in raw_output or ():
         item = item.model_dump() if hasattr(item, "model_dump") else item
@@ -291,7 +303,7 @@ def _responses_output_text(response: Any) -> str:
 
 async def complete_branch(
     system_text: str,
-    history: list[dict],
+    history,
     user: str,
     ai: Any,
     settings,
@@ -300,34 +312,50 @@ async def complete_branch(
     tools: list[dict] | None = None,
     json_mode: bool = False,
     usage_sink: list | None = None,
+    read_timeout: float | None = None,
 ) -> str:
-    """以无状态 Responses 请求执行只读分支，不接入主 run 的 response chain。"""
+    """以完整历史执行独立 Responses 只读分支，不接入主 run 的状态。"""
     import httpx
     from agent import providers
 
     client = providers.build_openai_client(
-        ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0),
+        ai, httpx.Timeout(
+            connect=10.0, read=read_timeout or 40.0, write=10.0, pool=5.0,
+        ),
     )
     adapter = providers.adapter_for(ai)
+    from agent.context.provider_conversation import ProviderConversation
+    if isinstance(history, ProviderConversation):
+        projection = history.with_messages(
+            [*history.to_messages(), {"role": "user", "content": user}],
+            dynamic_tail_size=1,
+        )
+    else:
+        from agent.context.assembly import MessageArea
+        from agent.context.history import render_canonical_area_snapshot
+        area = MessageArea.from_canonical_messages(
+            history or (),
+            render_options={"api_format": adapter.protocol_format(ai)},
+        )
+        area.set_dynamic_tail([{"role": "user", "content": user}])
+        projection = render_canonical_area_snapshot(
+            area.snapshot(), source=area, options=area.render_options,
+        )
+    wire_history = projection.to_messages()
     base_instructions, snapshot_instructions, instructions = _responses_instruction_parts(
-        history, system_text,
+        wire_history, system_text,
     )
     branch_tools = list(tools or ())
     request = {
         "model": ai.model,
-        "input": _responses_input([
-            *history,
-            {"role": "user", "content": user},
-        ]),
+        "input": _responses_input(wire_history),
         "max_output_tokens": max_output_tokens,
         "tools": branch_tools,
         "store": bool(getattr(ai, "store", True)),
     }
     if instructions:
         request["instructions"] = instructions
-    effort = getattr(ai, "reasoning_effort", "") or ""
-    if effort:
-        request["reasoning"] = {"effort": effort}
+    request.update(adapter.build_responses_reasoning_params(ai))
     if json_mode:
         response_format = adapter.build_structured_output(ai).get("response_format")
         if isinstance(response_format, dict):
@@ -389,8 +417,9 @@ class OpenAIResponsesDriver:
         chat_tools = schema_source.openai_schemas(tool_names)
         tools = _responses_tools(chat_tools)
         adapter = providers.adapter_for(ai)
+        provider_history = render_provider_history(messages, adapter)
         base_instructions, snapshot_instructions, instructions = _responses_instruction_parts(
-            messages, system_text,
+            provider_history.to_messages(), system_text,
         )
         return client, _ResponsesCtx(
             tools=tools, max_output_tokens=ai.max_tokens, model=ai.model,
@@ -408,35 +437,46 @@ class OpenAIResponsesDriver:
         schema_source = tool_snapshot or registry.snapshot()
         _set_tools(ctx, _responses_tools(schema_source.openai_schemas(tool_names)))
 
+    def configure_reasoning_replay(self, ctx, *, enabled: bool) -> None:
+        ctx.reasoning_replay_enabled = bool(enabled)
+        if not enabled:
+            ctx.reasoning_items = None
+
     async def run_round(self, client, ctx, messages, stream_round=None):
+        from agent.context.assembly import MessageArea
         # stream_round 仅 AnthropicDriver 使用；本驱动接收并忽略，保持统一调用签名。
         projection = render_provider_history(messages, ctx.adapter)
-        full_rendered = projection.messages
-        rendered = full_rendered
-        if ctx.previous_response_id:
-            # response chain 已经包含旧历史；只发送上一个 response 之后的增量，
-            # 但仍在每次请求显式发送 instructions/tools。
-            last_assistant = max(
-                (index for index, item in enumerate(rendered)
-                 if isinstance(item, dict) and item.get("role") == "assistant"),
-                default=-1,
+        full_rendered = projection.to_messages()
+        request_input = _insert_responses_reasoning_items(
+            _responses_input(full_rendered),
+            ctx.reasoning_items if ctx.reasoning_replay_enabled else None,
+        )
+        if not request_input:
+            raise ValueError("Responses 请求没有可发送的输入项")
+        if isinstance(messages, MessageArea):
+            from agent.context.provider_conversation import ProviderConversation
+
+            system_messages = [item for item in full_rendered if item.get("role") == "system"]
+            messages.last_provider_projection = ProviderConversation(
+                [*system_messages, *request_input], source=messages,
+                fixed_prefix_size=len(system_messages),
+                dynamic_tail_size=projection.dynamic_tail_size,
             )
-            rendered = rendered[last_assistant + 1:] or rendered[-1:]
         request = {
             "model": ctx.model,
             "instructions": ctx.instructions,
-            "input": _responses_input(rendered),
+            "input": request_input,
             "max_output_tokens": ctx.max_output_tokens,
             "tools": ctx.tools,
             "stream": True,
         }
-        if ctx.previous_response_id:
-            request["previous_response_id"] = ctx.previous_response_id
-        effort = getattr(ctx.ai, "reasoning_effort", "") or ""
-        if effort:
-            request["reasoning"] = {"effort": effort}
-        # Responses continuation 依赖服务端 response chain；只有明确配置为 False
-        # 时才关闭存储。该值会随 reasoning config fingerprint 参与状态匹配。
+        request.update(ctx.adapter.build_responses_reasoning_params(ctx.ai))
+        if ctx.reasoning_replay_enabled:
+            replay_params = getattr(
+                ctx.adapter, "build_responses_reasoning_replay_params", None,
+            )
+            if callable(replay_params):
+                request.update(replay_params(ctx.ai))
         request["store"] = bool(getattr(ctx.ai, "store", True))
         # Responses 的自动前缀缓存需要稳定的路由 key 才能跨 run 复用；key
         # 只由实际固定前缀身份组成，不包含本轮用户消息或动态工具结果。
@@ -446,8 +486,7 @@ class OpenAIResponsesDriver:
 
         wire_request = {key: value for key, value in request.items() if value is not None}
         # create 阶段走统一重试节奏（app/core/retry.py）：529/429/瞬时 5xx 绝大多数
-        # 落在 create；流式消费阶段的断流仍按原样抛出（链路里有 store/续接语义，
-        # 盲目整轮重试可能重复产出 response chain，不在这里放宽）。
+        # 落在 create；流式消费阶段的断流仍按原样抛出，避免重复执行同一轮请求。
         from app.core.errors import RetryableError
         from app.core.retry import LLM_RETRY
 
@@ -458,17 +497,6 @@ class OpenAIResponsesDriver:
                 stream = await client.responses.create(**wire_request)
                 break
             except Exception as exc:
-                # 某些 OpenAI-compatible Responses 服务在 ask_user 等交互暂停期间
-                # 不保留原 response chain。恢复时本地历史仍完整，因此用无状态完整
-                # 历史重试一次，避免把可恢复的 tool-id 失效误报成通用模型错误。
-                if ("previous_response_id" in wire_request
-                        and _is_stale_response_chain_error(exc)):
-                    # 切换到无状态完整历史后留在同一重试循环；fallback 自身遇到
-                    # 429/529/5xx/timeout 时也必须经过共享的瞬时错误重试策略。
-                    wire_request = dict(wire_request)
-                    wire_request.pop("previous_response_id", None)
-                    wire_request["input"] = _responses_input(full_rendered)
-                    continue
                 from agent.providers.errors import openai_transient_error, openai_error_kind
                 if not openai_transient_error(exc):
                     _raise_if_responses_compatibility_error(exc)
@@ -485,8 +513,6 @@ class OpenAIResponsesDriver:
                 })
                 await LLM_RETRY.pause()
         content = ""
-        response_id = None
-        previous_response_id = ctx.previous_response_id
         output_items: dict[str, dict] = {}
         tool_buf: dict[str, dict] = {}
         usage_in = usage_out = cache_read = cache_write = 0
@@ -518,8 +544,6 @@ class OpenAIResponsesDriver:
                     response = getattr(event, "response", None)
                     response_data = response.model_dump() if hasattr(response, "model_dump") else response
                     if isinstance(response_data, dict):
-                        response_id = str(response_data.get("id") or "") or None
-                        previous_response_id = response_data.get("previous_response_id") or previous_response_id
                         usage = response_data.get("usage") or {}
                         from agent.usage import normalize_responses_usage
 
@@ -570,42 +594,43 @@ class OpenAIResponsesDriver:
                 raw_arguments=args_text if not parse_error else None,
                 responses_item_id=(str(item["id"]) if item.get("id") else None),
             ))
-        if response_id:
-            # 先更新上下文再 yield；核心循环在拿到 done 后会结束当前 generator，
-            # 不能依赖 yield 之后的代码执行。
-            ctx.previous_response_id = response_id
+        if ctx.reasoning_replay_enabled:
+            # 先更新上下文再 yield；核心循环收到 done 后可能立即结束 generator。
+            ctx.reasoning_items = _responses_reasoning_items(ordered)
         yield ("done", RoundResult(
             text=content, tool_calls=normalized, requires_tools=bool(normalized),
             usage_in=usage_in, usage_out=usage_out,
             cache_tokens=cache_read, cache_write_tokens=cache_write,
             raw=_ResponsesRaw(
-                content=content, response_id=response_id,
-                previous_response_id=previous_response_id,
-                tool_calls_payload=tool_payload, output_items=ordered,
+                content=content, tool_calls_payload=tool_payload, output_items=ordered,
             ),
         ))
 
-    def extract_provider_state(self, result: RoundResult) -> dict | None:
+    def extract_provider_state(self, result: RoundResult, ctx=None) -> dict | None:
         raw = result.raw
-        if not isinstance(raw, _ResponsesRaw) or not raw.response_id:
+        if not isinstance(raw, _ResponsesRaw):
             return None
+        reasoning_items = _responses_reasoning_items(raw.output_items)
         return {
-            "state_kind": "openai_responses_chain",
-            "payload": {
-                "response_id": raw.response_id,
-                "previous_response_id": raw.previous_response_id,
-            },
+            "state_kind": "openai_responses_reasoning",
+            "payload": {"reasoning_items": reasoning_items},
             "summary": {
-                "response_chain": True,
-                "response_id_fingerprint": hashlib.sha256(raw.response_id.encode()).hexdigest()[:16],
+                "state_block_count": len(reasoning_items),
+                "reasoning_items_present": bool(reasoning_items),
             },
         }
 
     def restore_provider_state(self, ctx: _ResponsesCtx, payload: Any) -> bool:
-        response_id = payload.get("response_id") if isinstance(payload, dict) else None
-        if not isinstance(response_id, str) or not response_id.strip():
+        if not isinstance(payload, dict):
             return False
-        ctx.previous_response_id = response_id
+        items = payload.get("reasoning_items")
+        if not isinstance(items, list) or any(
+            not isinstance(item, dict) or item.get("type") != "reasoning"
+            or item.get("status") not in {None, "completed"}
+            for item in items
+        ):
+            return False
+        ctx.reasoning_items = copy.deepcopy(items) if ctx.reasoning_replay_enabled else None
         return True
 
     def _asst(self, raw: _ResponsesRaw, text: str, tool_calls_payload=None) -> dict:
@@ -649,10 +674,21 @@ class OpenAIResponsesDriver:
         return messages
 
     def build_followup(self, result, next_content, assistant_fallback="（…）"):
-        return [self._asst(result.raw, result.text or assistant_fallback), {"role": "user", "content": next_content}]
+        from agent.context.assembly.batch import request_only_batch
+        return request_only_batch([
+            self._asst(result.raw, result.text or assistant_fallback),
+            {"role": "user", "content": next_content},
+        ])
 
     def build_guard_followup(self, result, next_content):
-        return [self._asst(result.raw, result.text or "（…）"), {"role": "system", "content": next_content}]
+        from agent.context.assembly.batch import request_only_batch
+        return request_only_batch([
+            self._asst(result.raw, result.text or "（…）"),
+            {"role": "system", "content": next_content},
+        ])
 
     def build_empty_retry(self, result):
-        return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
+        from agent.context.assembly.batch import request_only_batch
+        return request_only_batch([{
+            "role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）",
+        }])

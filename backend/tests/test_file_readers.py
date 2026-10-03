@@ -22,7 +22,7 @@ class _Storage:
 
 def _minimax_m3_ai():
     return SimpleNamespace(provider="minimax", model="abab-m3", base_url="https://api.minimaxi.com/anthropic",
-                           vision_video=True)
+                           video=True)
 
 
 def _mimo_ai():
@@ -34,8 +34,8 @@ def _mimo_ai():
     ("reader", "physical_size", "data", "read_expected"),
     [
         ("audio", file_readers.MEDIA_READ_MAX_BYTES + 1, b"media", False),
-        ("image", chat_attach.VISION_READ_MAX + 1, b"media", False),
-        ("image", 5, b"x" * (chat_attach.VISION_READ_MAX + 1), True),
+        ("image", chat_attach.IMAGE_READ_MAX + 1, b"media", False),
+        ("image", 5, b"x" * (chat_attach.IMAGE_READ_MAX + 1), True),
     ],
 )
 async def test_media_readers_enforce_physical_and_actual_size(
@@ -50,7 +50,7 @@ async def test_media_readers_enforce_physical_and_actual_size(
         assert "超出读取上限" in result["error"]
     else:
         monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
-        monkeypatch.setattr(chat_attach, "vision_ready", lambda: True)
+        monkeypatch.setattr(chat_attach, "image_ready", lambda: True)
         monkeypatch.setattr(media_reader, "get_storage", lambda: storage)
         result = await media_reader.read_stored_image("u/image.png", "png")
         assert "过大" in result["error"]
@@ -98,7 +98,7 @@ async def test_read_video_returns_native_video_block_for_minimax_m3(monkeypatch)
     assert "_media_block" in result
     block = result["_media_block"]
     assert block == {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "ZmFrZQ=="}}
-    assert "_vision_image" not in result
+    assert "_image_block" not in result
     assert "content" not in result
     assert captured_args["raw"] == b"media"
     assert captured_args["mime"] == "video/mp4"
@@ -111,7 +111,7 @@ async def test_read_video_supports_openai_compatible_video_model(monkeypatch):
     storage = _Storage(1024)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     ai = _mimo_ai()
-    ai.vision_video = True
+    ai.video = True
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
 
     async def fake_prepare_video_media(raw, mime, name, model_cfg, **kwargs):
@@ -131,7 +131,7 @@ async def test_read_video_supports_openai_compatible_video_model(monkeypatch):
 async def test_read_video_rejects_responses_protocol_before_loading_file(monkeypatch):
     storage = _Storage(1024)
     ai = _mimo_ai()
-    ai.vision_video = True
+    ai.video = True
     ai.api_format = "responses"
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
@@ -247,7 +247,7 @@ async def test_read_video_uses_running_model_cfg_not_static_settings(monkeypatch
 async def test_read_audio_prefers_native_audio_when_enabled(monkeypatch):
     storage = _Storage(1024, b"audio")
     ai = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", base_url="https://api.xiaomimimo.com/v1",
-                         vision_audio=True)
+                         audio=True)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
 
@@ -267,7 +267,7 @@ async def test_read_audio_prefers_native_audio_when_enabled(monkeypatch):
 async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkeypatch):
     storage = _Storage(1024, b"audio")
     ai = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", base_url="https://api.xiaomimimo.com/v1",
-                         vision_audio=False)
+                         audio=False)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
     async def transcribe(*_):
@@ -287,7 +287,7 @@ async def test_read_audio_falls_back_to_asr_when_native_audio_is_disabled(monkey
 async def test_read_audio_falls_back_when_protocol_or_format_is_unsupported(monkeypatch, api_format, ext):
     storage = _Storage(1024, b"audio")
     ai = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", base_url="https://api.xiaomimimo.com/v1",
-                         vision_audio=True, api_format=api_format)
+                         audio=True, api_format=api_format)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=ai))
     async def transcribe(*_):

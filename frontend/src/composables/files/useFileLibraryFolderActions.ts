@@ -2,7 +2,9 @@ import { ref, type Ref } from 'vue'
 import type { FolderCard as FolderCardMeta, NavSeg } from '@/utils/filesNav'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useFileActions } from '@/composables/files/useFileActions'
+import { showAppError } from '@/composables/core/useAppToast'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
+import { useI18n } from 'vue-i18n'
 
 interface FolderActionsOptions {
   currentType: Readonly<Ref<string>>
@@ -18,6 +20,7 @@ interface FolderActionsOptions {
 /** 文件库文件夹创建、下载和删除的页面适配；缓存乐观更新仍由文件库注入。 */
 export function useFileLibraryFolderActions(options: FolderActionsOptions) {
   const { currentType, currentSeg, projectSeg, cacheStore, fileActions, loadContents, fetchStorage, pruneHistoryForFolders } = options
+  const { t } = useI18n()
   const newFolderName = ref('')
   const newFolderLoading = ref(false)
   const showNewFolderInput = ref(false)
@@ -58,8 +61,8 @@ export function useFileLibraryFolderActions(options: FolderActionsOptions) {
     if (folder.folderId == null) return
     try {
       await fileActions.downloadFolder(folder)
-    } catch (error) {
-      console.error('[Files] 下载文件夹失败:', (error as Error).message)
+    } catch {
+      showAppError(t('filesUi.downloadFailed'))
     }
   }
 

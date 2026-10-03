@@ -18,9 +18,9 @@ def test_rendering_does_not_mutate_canonical_messages_or_lose_context_metadata()
                 "schema": {"name": "search"},
             }]}],
     )
-    original = list(messages)
-    rendered = render_events_for_provider(messages)
-    assert list(messages) == original
+    original = messages.snapshot()
+    rendered = render_events_for_provider(messages.provider_projection())
+    assert messages.snapshot() == original
     assert rendered.canonical_context is messages.canonical_context
     assert "canonical tool-schema" in str(rendered[1]["content"])
 

@@ -5,13 +5,28 @@ from types import SimpleNamespace
 from agent.context.compaction import compact_context
 from agent.context.compress_conv import fixed_context_parts
 from agent.context.assembly import (
-    NewMessageBatch, PromptMessages, assemble, assemble_turn, reminder,
+    MessageBatch, MessageArea, assemble, assemble_turn, reminder,
 )
 from agent.context.history import build_history_parts
 from agent.context.canonical_tool_history import render_events_for_provider
 
 
 MODEL_CFG = SimpleNamespace(context_tokens=100, max_tokens=20)
+
+
+async def _compact_area(messages, **kwargs):
+    area = MessageArea.from_canonical_messages(messages)
+    return await compact_context(area, **kwargs)
+
+
+def _history_beyond_protected_window():
+    history = []
+    for index in range(12):
+        history.extend([
+            {"role": "user", "content": f"旧消息{index}" * 80},
+            {"role": "assistant", "content": f"旧回复{index}" * 80},
+        ])
+    return history
 
 
 def test_assembly_marks_snapshot_prefix():
@@ -27,7 +42,7 @@ def test_assembly_marks_snapshot_prefix():
     messages.append_batch(batch)
 
     assert messages.fixed_prefix_size == 2
-    assert [m["content"] for m in messages.conversation[:2]] == ["固定系统", "固定 session info"]
+    assert [m["content"] for m in messages.provider_projection().to_messages()[:2]] == ["固定系统", "固定 session info"]
     assert messages.dynamic_tail == [reminder("当前时间：当前时间")]
 
 
@@ -43,11 +58,11 @@ def test_rag_precedes_current_user_while_current_time_stays_in_dynamic_tail():
     messages.set_dynamic_tail([reminder("当前时间：当前时间")])
     messages.append_batch(batch)
 
-    assert [item["content"] for item in messages.conversation] == [
+    assert [item["content"] for item in messages.provider_projection().conversation] == [
         "固定 session info", "上一轮回复", "[group-rag]\n稳定知识", "当前问题",
     ]
     assert messages.dynamic_tail == [reminder("当前时间：当前时间")]
-    assert "当前时间：当前时间" not in str(messages.conversation)
+    assert "当前时间：当前时间" not in str(messages.provider_projection().conversation)
 
 
 def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
@@ -58,13 +73,12 @@ def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
     messages = [
         {"role": "system", "content": "固定系统"},
         {"role": "user", "content": "固定 session info"},
-        {"role": "user", "content": "旧消息" * 80},
-        {"role": "assistant", "content": "旧回复" * 80},
+        *_history_beyond_protected_window(),
         {"role": "user", "content": "当前消息"},
     ]
 
     result = __import__("asyncio").run(
-        compact_context(
+        _compact_area(
             messages, fixed_prefix_size=2, model_cfg=MODEL_CFG,
         )
     )
@@ -92,73 +106,79 @@ def test_persisted_summary_is_first_history_message():
 
 
 def test_submitted_batch_is_frozen_and_keeps_canonical_projection():
-    batch = NewMessageBatch([
-        {"role": "assistant", "tool_calls": [{
-            "id": "call-1", "function": {"name": "weather", "arguments": "{}"},
+    batch = MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "call-1", "name": "weather", "arguments": {},
         }]},
-        {"role": "tool", "tool_call_id": "call-1", "content": "晴天"},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "call-1", "content": "晴天",
+        }]},
     ])
-    messages = PromptMessages([{"role": "system", "content": "固定"}])
+    messages = MessageArea.from_canonical_messages([{"role": "system", "content": "固定"}])
     messages.append_batch(batch)
 
     assert batch.sealed is True
     assert batch.batch_digest == batch.batch_digest
-    assert [block["type"] for item in messages.canonical_batches for block in item["content"]] == [
+    assert [block["type"] for entry in messages.entries
+            for block in entry.canonical_message.get("content", [])
+            if isinstance(entry.canonical_message.get("content"), list)] == [
         "tool_call", "tool_result",
     ]
-    rendered = render_events_for_provider(messages)
-    assert rendered.canonical_batches == messages.canonical_batches
-    assert rendered.canonical_batch_digests == messages.canonical_batch_digests
+    rendered = messages.provider_projection()
+    assert rendered.area_digest == messages.digest()
+    assert rendered.area_revision == messages.revision
+    assert not hasattr(rendered, "canonical_batches")
     with pytest.raises(RuntimeError, match="已提交"):
         batch.append({"role": "user", "content": "不应追加"})
-    with pytest.raises(RuntimeError, match="已提交"):
-        batch.messages.append({"role": "user", "content": "不应直接追加"})
+    exposed = batch.canonical_messages
+    exposed[0]["content"].clear()
+    assert batch.canonical_messages[0]["content"]
 
 
-def test_prompt_messages_exposes_immutable_batch_records_for_finalize():
-    batch = NewMessageBatch.from_canonical_messages(
+def test_message_area_rejects_raw_list_batch():
+    area = MessageArea.from_canonical_messages()
+    with pytest.raises(TypeError, match="只接受 MessageBatch"):
+        area.append_batch([{"role": "user", "content": "裸列表不能进入 Area"}])
+
+
+def test_area_exposes_immutable_batch_records_for_finalize():
+    batch = MessageBatch.from_canonical_messages(
         [{"role": "assistant", "content": [{
             "type": "tool_call", "id": "call-1", "name": "weather", "arguments": {},
         }]}],
         metadata={"round_id": "round-1"},
     )
-    messages = PromptMessages()
+    messages = MessageArea.from_canonical_messages()
     messages.append_batch(batch)
 
-    records = messages.canonical_batch_records
+    records = messages.batch_records()
     assert records[0]["digest"] == batch.batch_digest
     assert records[0]["metadata"] == {"round_id": "round-1"}
     records[0]["metadata"]["round_id"] = "mutated"
-    assert messages.canonical_batch_records[0]["metadata"]["round_id"] == "round-1"
+    assert messages.batch_records()[0]["metadata"]["round_id"] == "round-1"
 
 
 def test_canonical_batch_rejects_provider_wire_shape():
     with pytest.raises(TypeError, match="Provider tool wire"):
-        NewMessageBatch.from_canonical_messages([{
+        MessageBatch.from_canonical_messages([{
             "role": "assistant",
             "content": "",
             "tool_calls": [],
         }])
 
 
-def test_canonical_batch_is_fixed_before_seal_and_append_updates_both_projections():
+def test_canonical_batch_is_fixed_before_seal_and_appends_canonical_results():
     canonical = [{
         "role": "assistant",
         "content": [{"type": "tool_call", "id": "call-1", "name": "weather", "arguments": {}}],
     }]
-    provider = [{
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "weather", "arguments": "{}"}}],
-    }]
-    batch = NewMessageBatch.from_canonical_messages(canonical, provider_messages=provider)
-    batch.append({"role": "tool", "content": [{
+    batch = MessageBatch.from_canonical_messages(canonical)
+    batch.append({"role": "user", "content": [{
         "type": "tool_result", "tool_call_id": "call-1", "content": "晴天",
     }]})
 
     assert batch.sealed is False
     assert len(batch.canonical_messages) == 2
-    assert batch.provider_messages[0]["tool_calls"][0]["id"] == "call-1"
     batch.seal()
     assert [block["type"] for item in batch.canonical_messages for block in item["content"]] == [
         "tool_call", "tool_result",
@@ -174,13 +194,12 @@ def test_inline_and_persisted_summary_keep_identical_provider_prefix(monkeypatch
     messages = [
         {"role": "system", "content": "固定系统"},
         {"role": "user", "content": "固定 snapshot"},
-        {"role": "user", "content": "旧消息" * 80},
-        {"role": "assistant", "content": "旧回复" * 80},
+        *_history_beyond_protected_window(),
         {"role": "user", "content": "当前消息"},
     ]
 
     result = asyncio.run(
-        compact_context(
+        _compact_area(
             messages, fixed_prefix_size=2, model_cfg=MODEL_CFG,
         )
     )

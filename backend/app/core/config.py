@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import fcntl
 import json
 import os
 import re
@@ -87,15 +88,16 @@ class AISettings(BaseModel):
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
-    reasoning_persistence: Literal["off", "summary", "continuation"] = Field("off", description="跨请求推理状态: off | summary | continuation")
-    vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
-    vision_detail: str = Field("auto", description="图片细节级别: auto | low | high | original")
-    vision_video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
-    vision_audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
+    reasoning_persistence: Literal["off", "continuation"] = Field("off", description="跨请求推理状态: off | continuation")
+    image: bool = Field(False, description="模型是否支持图片输入。后台「检测」按钮探测后写入，亦可手动改")
+    image_detail: str = Field("auto", description="图片细节级别: auto | low | high | original")
+    video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
+    audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
     api_format: str = Field("", description="API 格式: openai | responses | anthropic | 空=按 provider/base_url 自动判（Responses 与 Chat Completions 分开）")
     ollama_mode: str = Field("local", description="Ollama 连接模式: local | cloud")
     ollama_api_mode: str = Field("native", description="Ollama 接口模式: native | openai")
     ollama_keep_alive: str = Field("5m", description="Ollama 模型驻留时间；0 表示请求结束后卸载")
+
     deployment_mode: str = Field("cloud", description="部署方式: cloud | local")
     local_runtime: str = Field("other", description="本地运行时: ollama | llama.cpp | vllm | other")
     capability_overrides: dict[str, bool] = Field(default_factory=dict, description="模型能力人工覆盖")
@@ -132,6 +134,10 @@ class SandboxSettings(BaseModel):
     enabled 只表示 Admin 请求启用沙盒；是否真的可执行还必须经过 Docker
     运行时探测和执行器就绪检查，不能由配置值单独推断。
     """
+    manager_mode: Literal["embedded", "external", "disabled"] = Field(
+        default_factory=lambda: os.getenv("GUGU_SANDBOX_MANAGER_MODE", "disabled").strip().lower(),
+        description="沙盒管理器部署模式；必须显式指定，不根据 Docker Socket 自动推断",
+    )
     enabled: bool = Field(True, description="是否启用 Docker Shell 沙盒（默认开启；运行时仍需 Docker 就绪）")
     full_user_sandbox_authorization_enabled: bool = Field(
         True,
@@ -154,10 +160,9 @@ class SandboxSettings(BaseModel):
         description="已验证的镜像 digest；Compose 可使用 resolved 引用 bootstrap 固定的 registry digest",
     )
     rootless_required: bool = Field(
-        False,
+        default_factory=lambda: os.getenv("SANDBOX__ROOTLESS_REQUIRED", "false").strip().lower() in {"1", "true", "yes", "on"},
         description=(
-            "是否强制要求 Rootless Docker；默认部署允许 Rootful Docker，"
-            "生产环境可显式设为 true"
+            "是否强制 Rootless Docker；external 管理器始终强制，单容器 embedded 镜像默认强制"
         ),
     )
     network_profile: Literal["none", "egress"] = Field("egress", description="容器网络策略；默认允许通过受控代理临时访问公网")
@@ -197,8 +202,8 @@ class FileSyncSettings(BaseModel):
     """本地文件事实源同步配置。"""
 
     enabled: bool = Field(
-        False,
-        description="是否启用本地文件事实源自动同步（默认关闭）",
+        True,
+        description="是否启用本地文件事实源自动同步（默认开启）",
     )
     active_window_days: int = Field(
         7,
@@ -221,11 +226,11 @@ class AIPresetItem(BaseModel):
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
-    reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
-    vision: bool = False
-    vision_detail: str = "auto"
-    vision_video: bool = False
-    vision_audio: bool = False
+    reasoning_persistence: Literal["off", "continuation"] = "off"
+    image: bool = False
+    image_detail: str = "auto"
+    video: bool = False
+    audio: bool = False
     api_format: str = ""         # API 格式: openai | responses | anthropic | 空=自动
     ollama_mode: str = "local"   # Ollama 连接模式: local | cloud
     ollama_api_mode: str = "native"  # Ollama 接口模式: native | openai
@@ -273,6 +278,13 @@ def _load_stored_preset(raw: dict) -> AIPresetItem:
 
 
 class AgentBehaviorSettings(BaseModel):
+    parallel_tool_execution_enabled: bool = Field(
+        True,
+        description="全局并行执行开关，可在 Admin 中切换以调试或回退；默认开启",
+    )
+    parallel_tool_max_concurrency: int = Field(
+        5, ge=1, le=20, description="单 Round 并行工具最大并发数，可在 Admin 调整",
+    )
     # 默认开放受沙盒隔离的 Shell 工具；宿主机 system 范围仍单独关闭。
     shell_enabled: bool = Field(True, description="是否启用 Shell 工具（默认开启）")
     shell_system_enabled: bool = Field(False, description="是否允许 Shell 访问系统范围（高风险，默认关闭）")
@@ -377,6 +389,14 @@ class McpSettings(BaseModel):
     stdio_restart_limit: int = Field(3, ge=0, le=10, description="MCP stdio 单次连接允许的崩溃重启次数")
 
 
+class SafeEgressSettings(BaseModel):
+    """模型可控公网内容请求的显式出站代理配置。"""
+
+    enabled: bool = Field(False, description="是否为安全出站请求启用显式代理")
+    proxy_url: str = Field("", description="HTTP(S) 代理地址，不含认证信息")
+    proxy_auth_secret: str = Field("", repr=False, description="加密保存的代理认证信息")
+
+
 class SmtpSettings(BaseModel):
     host:     str           = Field("", description="SMTP 服务器地址")
     enabled:  bool          = Field(True, description="是否启用系统 SMTP 邮件能力")
@@ -474,6 +494,7 @@ class AppSettings(BaseSettings):
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
     byok: BYOKSettings = Field(default_factory=BYOKSettings)
     mcp: McpSettings = Field(default_factory=McpSettings)
+    safe_egress: SafeEgressSettings = Field(default_factory=SafeEgressSettings)
     # 业务 Live SSE 由 TypeScript 服务独立承载，FastAPI 不再提供代理入口。
 
     def apply_override(self) -> "AppSettings":
@@ -575,13 +596,23 @@ class AppSettings(BaseSettings):
                 }}
                 updates["mcp"] = McpSettings.model_construct(**merged)
 
+            if "safe_egress" in override:
+                raw_safe_egress = override["safe_egress"] or {}
+                if not isinstance(raw_safe_egress, dict):
+                    raise ValueError("safe_egress 配置必须是对象")
+                merged = {**self.safe_egress.model_dump(), **{
+                    k: v for k, v in raw_safe_egress.items()
+                    if k in SafeEgressSettings.model_fields
+                }}
+                updates["safe_egress"] = SafeEgressSettings.model_validate(merged)
+
             if "sandbox" in override:
                 raw_sandbox = override["sandbox"] or {}
                 if not isinstance(raw_sandbox, dict):
                     raise ValueError("sandbox 配置必须是对象")
                 merged = {**self.sandbox.model_dump(), **{
                     k: v for k, v in raw_sandbox.items()
-                    if k in SandboxSettings.model_fields
+                    if k in SandboxSettings.model_fields and k != "manager_mode"
                 }}
                 updates["sandbox"] = SandboxSettings.model_construct(**merged)
 
@@ -642,7 +673,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok", "mcp"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok", "mcp", "safe_egress"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]
@@ -682,6 +713,14 @@ def _merge_override_patch(existing: dict, patch: dict) -> None:
     """迁移自动模式旧键、过滤沙盒遗留项并合并待保存配置。"""
     _remove_legacy_automatic_mode_key(existing, patch)
     sandbox_patch = patch.get("sandbox")
+    if isinstance(sandbox_patch, dict):
+        # 部署模式只来自进程环境变量；Admin/config.override 不能改变 Socket 边界。
+        safe_sandbox_patch = {
+            key: value for key, value in sandbox_patch.items()
+            if key in SandboxSettings.model_fields and key != "manager_mode"
+        }
+        patch = {**patch, "sandbox": safe_sandbox_patch}
+        sandbox_patch = safe_sandbox_patch
     if isinstance(sandbox_patch, dict):
         old_sandbox = existing.get("sandbox", {})
         if not isinstance(old_sandbox, dict):
@@ -763,6 +802,7 @@ _settings_mtime: float = -1.0
 
 def get_settings() -> AppSettings:
     global _settings_cache, _settings_mtime
+    _migrate_multimodal_override()
     try:
         current_mtime = OVERRIDE_FILE.stat().st_mtime if OVERRIDE_FILE.exists() else -1.0
     except OSError:
@@ -774,6 +814,119 @@ def get_settings() -> AppSettings:
     return _settings_cache
 
 
+_MULTIMODAL_CONFIG_RENAMES = {
+    "vision": "image",
+    "vision_video": "video",
+    "vision_audio": "audio",
+    "vision_detail": "image_detail",
+}
+_multimodal_override_migration_signature: tuple[str, int, int] | None = None
+
+
+def _multimodal_override_backup_dir() -> Path:
+    """运行配置备份放在用户数据目录，不进入 Git/Mutagen 工作区。"""
+    return Path.home() / ".local" / "share" / "gugu" / "config-backups"
+
+
+def _rename_multimodal_config_fields(value: dict) -> bool:
+    """迁移一个 AI 配置对象中的能力字段；新旧键冲突时拒绝猜测。"""
+    changed = False
+    for old_name, new_name in _MULTIMODAL_CONFIG_RENAMES.items():
+        if old_name not in value:
+            continue
+        if new_name in value and value[new_name] != value[old_name]:
+            raise ValueError(f"多模态配置字段 {old_name} 与 {new_name} 值冲突")
+        value.setdefault(new_name, value[old_name])
+        del value[old_name]
+        changed = True
+
+    overrides = value.get("capability_overrides")
+    if isinstance(overrides, dict) and "vision" in overrides:
+        if "image" in overrides and overrides["image"] != overrides["vision"]:
+            raise ValueError("多模态能力覆盖项 vision 与 image 值冲突")
+        overrides.setdefault("image", overrides["vision"])
+        del overrides["vision"]
+        changed = True
+    return changed
+
+
+def _migrate_multimodal_override() -> None:
+    """首次加载时将已保存的旧能力键原位迁移，并在写入前备份原文件。"""
+    global _multimodal_override_migration_signature
+    try:
+        stat = OVERRIDE_FILE.stat()
+    except FileNotFoundError:
+        return
+    signature = (str(OVERRIDE_FILE.resolve()), stat.st_mtime_ns, stat.st_size)
+    if signature == _multimodal_override_migration_signature:
+        return
+    backup_dir = _multimodal_override_backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(backup_dir, 0o700)
+    lock_path = backup_dir / f".{OVERRIDE_FILE.name}.multimodal-migration.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            stat = OVERRIDE_FILE.stat()
+        except FileNotFoundError:
+            return
+        signature = (str(OVERRIDE_FILE.resolve()), stat.st_mtime_ns, stat.st_size)
+        if signature == _multimodal_override_migration_signature:
+            return
+        original = OVERRIDE_FILE.read_bytes()
+        override = json.loads(original)
+        if not isinstance(override, dict):
+            raise ValueError("配置文件根节点必须是对象")
+
+        changed = False
+        ai = override.get("ai")
+        if ai is not None:
+            if not isinstance(ai, dict):
+                raise ValueError("ai 配置必须是对象")
+            changed |= _rename_multimodal_config_fields(ai)
+
+        presets = override.get("ai_presets")
+        if presets is not None:
+            if not isinstance(presets, dict) or not isinstance(presets.get("items", []), list):
+                raise ValueError("ai_presets 配置格式无效")
+            for item in presets.get("items", []):
+                if not isinstance(item, dict):
+                    raise ValueError("ai_presets.items 项必须是对象")
+                changed |= _rename_multimodal_config_fields(item)
+
+        if not changed:
+            _multimodal_override_migration_signature = signature
+            return
+
+        # 先校验迁移后的相关配置段，再备份并替换；任何异常都不会把损坏配置写回。
+        if ai is not None:
+            AISettings.model_validate(ai)
+        if presets is not None:
+            for item in presets.get("items", []):
+                AIPresetItem.model_validate(item)
+
+        from datetime import datetime, timezone
+        backup_path = backup_dir / (
+            f"{OVERRIDE_FILE.name}.backup-multimodal-"
+            f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}"
+        )
+        backup_fd = os.open(backup_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(backup_fd, "wb") as backup:
+            backup.write(original)
+            backup.flush()
+            os.fsync(backup.fileno())
+        write_override_json(override)
+        stat = OVERRIDE_FILE.stat()
+        _multimodal_override_migration_signature = (
+            str(OVERRIDE_FILE.resolve()), stat.st_mtime_ns, stat.st_size
+        )
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
 def invalidate_settings_cache() -> None:
     """显式失效配置缓存（写入 override 后调用；也供 mtime 感知自动失效兜底）。"""
     global _settings_cache, _settings_mtime
@@ -782,6 +935,7 @@ def invalidate_settings_cache() -> None:
 
 
 async def save_override(patch: dict) -> AppSettings:
+    patch = _protect_safe_egress_secret(patch)
     if isinstance(patch.get("embedding"), dict) and "dimensions" in patch["embedding"]:
         patch = {**patch, "embedding": {
             **patch["embedding"],
@@ -821,3 +975,23 @@ async def save_override(patch: dict) -> AppSettings:
         except Exception as e:
             print(f"[警告] 表创建失败（{type(e).__name__}: {e}），后台重试会继续")
     return new_settings
+
+
+def _protect_safe_egress_secret(patch: dict) -> dict:
+    """统一配置入口也加密代理认证，并把脱敏回传值视为未修改。"""
+    safe_egress = patch.get("safe_egress")
+    if not isinstance(safe_egress, dict) or "proxy_auth_secret" not in safe_egress:
+        return patch
+    prepared = dict(patch)
+    prepared_egress = dict(safe_egress)
+    secret = prepared_egress.get("proxy_auth_secret")
+    if secret == "****":
+        prepared_egress.pop("proxy_auth_secret")
+    elif secret:
+        if not isinstance(secret, str):
+            raise ValueError("safe_egress.proxy_auth_secret 必须是字符串")
+        from app.core.crypto import encrypt_secret
+
+        prepared_egress["proxy_auth_secret"] = encrypt_secret(secret)
+    prepared["safe_egress"] = prepared_egress
+    return prepared

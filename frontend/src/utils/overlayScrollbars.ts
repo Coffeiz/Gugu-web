@@ -7,6 +7,7 @@ const SCROLL_SURFACE_SELECTOR = [
 
 const HOST_CLASS = 'overlay-scroll-host'
 const THUMB_ATTRIBUTE = 'data-overlay-scrollbar-thumb'
+const TRACK_INSET_HEADER_SELECTOR = ':scope > [data-scrollbar-inset-header]'
 
 type ScrollBinding = {
   thumb: HTMLDivElement
@@ -22,14 +23,28 @@ type ScrollBinding = {
 
 const bindings = new WeakMap<HTMLElement, ScrollBinding>()
 
+function getTrackInsets(element: HTMLElement, thumb: HTMLElement, rect: DOMRect) {
+  const styles = getComputedStyle(thumb)
+  const baseInset = Math.max(0, parseFloat(styles.getPropertyValue('--scrollbar-overlay-track-inset')) || 0)
+  const insetHeader = element.querySelector<HTMLElement>(TRACK_INSET_HEADER_SELECTOR)
+  const headerBottom = insetHeader
+    ? Math.max(0, insetHeader.getBoundingClientRect().bottom - rect.top)
+    : 0
+
+  return {
+    top: headerBottom > 0 ? headerBottom + baseInset : baseInset,
+    bottom: baseInset,
+  }
+}
+
 function updateThumb(element: HTMLElement, binding: ScrollBinding) {
   const viewport = element.clientHeight
   const content = element.scrollHeight
   const rect = element.getBoundingClientRect()
   const styles = getComputedStyle(binding.thumb)
-  const trackInset = Math.max(0, parseFloat(styles.getPropertyValue('--scrollbar-overlay-track-inset')) || 0)
+  const { top: trackInsetTop, bottom: trackInsetBottom } = getTrackInsets(element, binding.thumb, rect)
   const minThumb = Math.max(1, parseFloat(styles.getPropertyValue('--scrollbar-min-thumb')) || 24)
-  const track = Math.max(0, rect.height - trackInset * 2)
+  const track = Math.max(0, rect.height - trackInsetTop - trackInsetBottom)
   const maxScroll = content - viewport
 
   if (maxScroll <= 1 || track <= 1) {
@@ -44,10 +59,10 @@ function updateThumb(element: HTMLElement, binding: ScrollBinding) {
   binding.thumb.style.height = `${thumbHeight}px`
   if (binding.owner) {
     const ownerRect = binding.owner.getBoundingClientRect()
-    binding.thumb.style.top = `${rect.top - ownerRect.top + trackInset + offset}px`
+    binding.thumb.style.top = `${rect.top - ownerRect.top + trackInsetTop + offset}px`
     binding.thumb.style.right = `calc(${Math.max(0, ownerRect.right - rect.right)}px - var(--scrollbar-overlay-right-offset))`
   } else {
-    binding.thumb.style.top = `${rect.top + trackInset + offset}px`
+    binding.thumb.style.top = `${rect.top + trackInsetTop + offset}px`
     binding.thumb.style.right = `calc(${Math.max(0, window.innerWidth - rect.right)}px - var(--scrollbar-overlay-right-offset))`
   }
 
@@ -117,9 +132,9 @@ function bind(element: HTMLElement) {
   }
   binding.onPointerMove = (event) => {
     if (binding.dragStartY === null) return
-    const styles = getComputedStyle(thumb)
-    const trackInset = Math.max(0, parseFloat(styles.getPropertyValue('--scrollbar-overlay-track-inset')) || 0)
-    const track = Math.max(0, element.getBoundingClientRect().height - trackInset * 2)
+    const rect = element.getBoundingClientRect()
+    const { top: trackInsetTop, bottom: trackInsetBottom } = getTrackInsets(element, thumb, rect)
+    const track = Math.max(0, rect.height - trackInsetTop - trackInsetBottom)
     const thumbHeight = thumb.getBoundingClientRect().height
     const maxOffset = Math.max(1, track - thumbHeight)
     const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight)

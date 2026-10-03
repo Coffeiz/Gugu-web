@@ -31,8 +31,8 @@
       </div>
     </div>
 
-    <div v-if="checkResult" class="release-state" :class="hasUpdate ? 'is-update' : 'is-current'">
-      {{ hasUpdate ? t('adminUpdateUi.available') : t('adminUpdateUi.noUpdate') }}
+    <div v-if="checkResult" class="release-state" :class="checkResult.manual_update_required ? 'is-manual' : hasUpdate ? 'is-update' : 'is-current'">
+      {{ checkResult?.manual_update_required ? t('adminUpdateUi.manualImageRequired') : hasUpdate ? t('adminUpdateUi.available') : t('adminUpdateUi.noUpdate') }}
     </div>
 
     <div v-if="preflight" class="preflight-block">
@@ -60,13 +60,13 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
-import type { UpdateCandidate, UpdatePreflight } from '@/services/adminUpdate'
+import type { UpdateCandidate, UpdateCheck, UpdatePreflight } from '@/services/adminUpdate'
 
 const props = defineProps<{
   currentVersion: string
   candidate: UpdateCandidate | null
   hasUpdate: boolean
-  checkResult: boolean | null
+  checkResult: UpdateCheck | null
   preflight: UpdatePreflight | null
   checking: boolean
   loading: boolean
@@ -109,6 +109,7 @@ function checkLabel(key: string) {
 .release-state { margin-top: 14px; color: var(--content-tertiary); font-size: 12px; }
 .release-state.is-update { color: var(--status-warning); }
 .release-state.is-current { color: var(--status-success); }
+.release-state.is-manual { color: var(--status-warning); }
 .preflight-block { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--panel-divider); }
 .preflight-block h4 { margin: 0 0 12px; font-size: 13px; }
 .check-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }

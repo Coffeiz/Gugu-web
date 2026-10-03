@@ -305,8 +305,8 @@ Phase 4 TODO / 验收：
 - `backend/app/models/__init__.py`：`KnowledgeIndexEntry`；
 - `backend/agent/rag/persistent_store.py`：数据库索引 chunk 存取和查询；
 - `backend/agent/rag/index_builder.py`：各来源投影和 owner 级重建；
-- `backend/scripts/rebuild_knowledge_index.py`：重建入口；
-- `backend/scripts/compare_ilike_index.py`：对照测试入口。
+- `backend/scripts/maintenance/rebuild_knowledge_index.py`：重建入口；
+- `backend/scripts/benchmarks/compare_ilike_index.py`：对照测试入口。
 
 后续可能新增：
 

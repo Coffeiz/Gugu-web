@@ -192,7 +192,8 @@
   /* Inputs are controls, not glass panel edges. Aero light intentionally gives panels a white
      border; deriving field borders from content/action semantics keeps the old neutral outline. */
   --input-bg: var(--surface-raised);
-  --input-bg-hover: color-mix(in srgb,var(--surface-raised) 88%,var(--surface-glass-hover));
+  /* 输入框悬停只强调边框；填充色保持静止态，避免控件内部随主题/配色闪变。 */
+  --input-bg-hover: var(--input-bg);
   --input-bg-focus: var(--surface-floating);
   --input-fg: var(--content-primary);
   --input-placeholder: var(--content-tertiary);
@@ -202,6 +203,9 @@
   --input-hover-shadow: inset 0 1px 0 var(--highlight-muted);
   --input-focus-shadow: var(--control-focus-shadow);
   --input-radius: var(--radius-sm);
+  /* 单行文本行框覆盖完整控件高度，保证点击上下区域时仍按横坐标定位光标。 */
+  --input-control-height: var(--control-height-lg);
+  --input-text-line-height: var(--input-control-height);
 
   --option-bg: var(--surface-soft);
   --option-bg-hover: var(--surface-soft-hover);

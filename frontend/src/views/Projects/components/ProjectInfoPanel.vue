@@ -73,7 +73,7 @@ function computedModel(key: 'client' | 'startDate' | 'deadline') {
 .info-expanded .info-block > .section:nth-of-type(1)::after { content: ''; position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 1px; height: 28px; background: rgba(0,0,0,0.07); }
 .section { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
 .section-label { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.07em; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.field-input { width: 100%; padding: 8px 11px; box-sizing: border-box; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--input-fg); outline: none; transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; }
+.field-input { width: 100%; height: var(--control-height-md); padding: 0 11px; box-sizing: border-box; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--input-bg); font-size: 13px; line-height: var(--line-height-ui); font-family: var(--font-sans); color: var(--input-fg); outline: none; transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; }
 .field-input::placeholder { color: var(--input-placeholder); opacity: 0.6; }
 .field-input:hover { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow); }
 .field-input:focus { border-color: var(--input-border-focus); background: var(--input-bg-focus); box-shadow: var(--input-focus-shadow); }

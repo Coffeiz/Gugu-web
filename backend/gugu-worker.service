@@ -16,6 +16,7 @@ Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin
 # Shell 沙盒固定使用服务用户自己的 Rootless Docker，不得回落到 rootful socket
 Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
 Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
+Environment="GUGU_SANDBOX_MANAGER_MODE=external"
 Environment="DB_STARTUP_TIMEOUT=10"
 # 开发/联调环境启用 LoopScope；没有这个变量时 worker 会静默跳过 IM trace 上报
 Environment="LOOPSCOPE_ENABLED=1"

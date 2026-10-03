@@ -10,8 +10,6 @@
 import json
 import re
 
-from sqlalchemy import select
-
 from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.services.storage.folders import resolve_folder_path
@@ -24,12 +22,12 @@ from app.services.files.browser import (
     get_user_file,
     get_user_folder,
     list_user_folders,
+    file_counts_for_folders,
     search_user_files,
 )
 from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
-from app.models import File  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
 from app.services.storage.file_service import FileService
 from app.search.query import normalize_queries
 from agent.tools.text_edit import apply_line_edits
@@ -296,20 +294,8 @@ async def _list_dir(db, user_id, args: dict):
             workspace_directory_id=args.get("workspace_directory_id"),
             filter_parent=True,
         )
-        counts: dict[int, int] = {}
         folder_ids = [folder.id for folder in folder_rows]
-        if folder_ids:
-            from sqlalchemy import func
-            stmt = (
-                select(File.folder_id, func.count())  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
-                .where(
-                    File.user_id == user_id,
-                    File.deleted_at.is_(None),
-                    File.folder_id.in_(folder_ids),
-                )
-                .group_by(File.folder_id)
-            )
-            counts = dict((await db.execute(stmt)).all())  # orm-exempt: list_dir 文件夹文件数只读统计，随 files Service 收口一并迁移（1.1.2 遗留口径）
+        counts = await file_counts_for_folders(db, user_id, folder_ids)
         for folder in folder_rows:
             resolved = await resolve_folder_path(
                 db, user_id, folder.id, folder.project_id,

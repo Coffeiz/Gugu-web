@@ -8,6 +8,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime
 import re
+from uuid import uuid4
 
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
@@ -54,7 +55,18 @@ def event_snapshot(event: CalendarEvent) -> dict:
 
 
 def task_snapshot(task: ScheduledTask) -> dict:
-    return {"id": task.id, "enabled": bool(task.enabled)}
+    return {
+        "id": task.id,
+        "enabled": bool(task.enabled),
+        "name": task.name,
+        "payload": task.payload,
+        "cron": task.cron,
+        "schedule_kind": task.schedule_kind,
+        "start_at": task.start_at.isoformat() if task.start_at else None,
+        "reminder_lead_minutes": task.reminder_lead_minutes,
+        "channels": task.channels,
+        "delivery_targets": deepcopy(task.delivery_targets),
+    }
 
 
 def domain_state(items: dict[str, dict]) -> dict:
@@ -124,11 +136,20 @@ class DomainUndoAdapter:
             elif hasattr(row, "version"):
                 self._check_version(row, snapshot)
 
+    async def _stage_event_task_crons(self, items: dict[str, dict], user_id) -> None:
+        for ref in items:
+            if ref.startswith("task:"):
+                _, task = await self._load(user_id, ref)
+                task.cron = f"@once:undo-reschedule-{uuid4().hex}"
+        await self.db.flush()
+
     async def undo(self, operation: UndoOperation, user_id) -> dict:
         before = operation.before_state.get("items", {})
         after = operation.after_state.get("items", {})
         project_delete = operation.action == "delete" and operation.resource == "projects"
         await self._preflight(operation, user_id, redo=False)
+        if operation.resource == "calendar" and operation.action == "update":
+            await self._stage_event_task_crons(after, user_id)
         versions: dict[str, int] = {}
         for ref, snapshot in self._ordered_refs(after, undo=True, project_delete=project_delete):
             kind, row = await self._load(user_id, ref)
@@ -161,6 +182,8 @@ class DomainUndoAdapter:
                 row.enabled = before.get(ref, {}).get("enabled", row.enabled)
             elif kind == "task" and operation.action == "create" and operation.resource == "calendar":
                 row.enabled = False
+            elif kind == "task" and operation.action == "update" and operation.resource == "calendar":
+                self._restore_task(row, before[ref])
             else:
                 raise UndoError("undo.unsupported", "项目或日历操作类型尚未支持撤回")
             versions[ref] = int(row.version or 1) if hasattr(row, "version") else 0
@@ -172,6 +195,8 @@ class DomainUndoAdapter:
         project_delete = operation.action == "delete" and operation.resource == "projects"
         expected_versions = operation.after_state.get("undo_versions", {})
         await self._preflight(operation, user_id, redo=True)
+        if operation.resource == "calendar" and operation.action == "update":
+            await self._stage_event_task_crons(before, user_id)
         versions: dict[str, int] = {}
         # create/delete 的实体只存在于 after 快照；update 则从 before 找回实体，
         # 再把字段恢复到 after 状态。
@@ -207,6 +232,8 @@ class DomainUndoAdapter:
                 row.enabled = False
             elif kind == "task" and operation.action == "create" and operation.resource == "calendar":
                 row.enabled = bool(after.get(ref, {}).get("enabled", True))
+            elif kind == "task" and operation.action == "update" and operation.resource == "calendar":
+                self._restore_task(row, after[ref])
             else:
                 raise UndoError("undo.unsupported", "项目或日历操作类型尚未支持重做")
             versions[ref] = int(row.version or 1) if hasattr(row, "version") else 0
@@ -237,6 +264,17 @@ class DomainUndoAdapter:
             if field in snapshot:
                 setattr(row, field, snapshot[field])
         row.deleted_at = _parse_datetime(snapshot.get("deleted_at"))
+
+    @staticmethod
+    def _restore_task(row: ScheduledTask, snapshot: dict) -> None:
+        for field in (
+            "enabled", "name", "payload", "cron", "schedule_kind",
+            "reminder_lead_minutes", "channels", "delivery_targets",
+        ):
+            if field in snapshot:
+                setattr(row, field, deepcopy(snapshot[field]))
+        if "start_at" in snapshot:
+            row.start_at = _parse_datetime(snapshot.get("start_at"))
 
     @staticmethod
     def _events(operation: UndoOperation, versions: dict[str, int], mode: str) -> list[dict]:

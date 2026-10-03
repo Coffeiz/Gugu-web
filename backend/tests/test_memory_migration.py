@@ -260,7 +260,7 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
     """3 次独立调用里，只有第 0 条被 3 次都判定删除；第 1 条只被判 1 次；模拟今天遇到的
     「单次调用不可信」场景——验证只有过半数的才会被真的删掉，单次的分歧会被保留。"""
     from agent.memory import store as mem_store
-    import scripts.refresh_memory as rm
+    import scripts.maintenance.refresh_memory as rm
 
     patterns = [
         {"id": "a", "text": "一次性的项目执行细节", "kind": "inferred", "conf": 0.6, "imp": 3, "ts": 1.0},
@@ -293,7 +293,7 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
 
 async def test_review_patterns_all_trials_fail_to_parse_skips_user(storage, monkeypatch):
     from agent.memory import store as mem_store
-    import scripts.refresh_memory as rm
+    import scripts.maintenance.refresh_memory as rm
 
     await mem_store.write_pattern_list(UID, [{"id": "a", "text": "x", "kind": "observed", "conf": 0.9, "imp": 3, "ts": 1.0}])
 
@@ -313,7 +313,7 @@ async def test_review_patterns_all_trials_fail_to_parse_skips_user(storage, monk
 # ── refresh_memory：cleanup-legacy ──────────────────────────────────────
 
 async def test_cleanup_legacy_removes_old_files_once_migrated(storage):
-    import scripts.refresh_memory as rm
+    import scripts.maintenance.refresh_memory as rm
 
     await storage.put(f"{UID}/.agent/pattern.json", b"[]")
     await storage.put(f"{UID}/.agent/facts.json", b"[]")
@@ -329,7 +329,7 @@ async def test_cleanup_legacy_removes_old_files_once_migrated(storage):
 
 
 async def test_cleanup_legacy_noop_before_migration(storage):
-    import scripts.refresh_memory as rm
+    import scripts.maintenance.refresh_memory as rm
 
     await storage.put(f"{UID}/.agent/facts.json", b"[]")   # 还没迁移过，没有 pattern.json
     result = await rm._cleanup_legacy(UID, settings=object(), dry_run=False)
@@ -338,7 +338,7 @@ async def test_cleanup_legacy_noop_before_migration(storage):
 
 
 async def test_cleanup_legacy_dry_run_does_not_delete(storage):
-    import scripts.refresh_memory as rm
+    import scripts.maintenance.refresh_memory as rm
 
     await storage.put(f"{UID}/.agent/pattern.json", b"[]")
     await storage.put(f"{UID}/.agent/facts.json", b"[]")
@@ -348,7 +348,7 @@ async def test_cleanup_legacy_dry_run_does_not_delete(storage):
 
 
 async def test_migrate_daily_reports_preview_lines(storage):
-    import scripts.refresh_memory as rm
+    import scripts.maintenance.refresh_memory as rm
 
     await storage.put(
         f"{UID}/.agent/daily.md",
@@ -361,7 +361,7 @@ async def test_migrate_daily_reports_preview_lines(storage):
 
 
 async def test_migrate_profile_events_moves_temporal_profile_to_memory(storage):
-    import scripts.refresh_memory as rm
+    import scripts.maintenance.refresh_memory as rm
     from agent.memory import store
 
     await store.write_profile_list(UID, [
@@ -383,7 +383,7 @@ async def test_migrate_profile_events_moves_temporal_profile_to_memory(storage):
 
 
 async def test_migrate_profile_events_dedupes_existing_memory(storage):
-    import scripts.refresh_memory as rm
+    import scripts.maintenance.refresh_memory as rm
     from agent.memory import store
 
     await store.write_profile_list(UID, [

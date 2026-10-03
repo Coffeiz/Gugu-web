@@ -199,11 +199,15 @@ async def test_resolve_never_inherits_platform_destination(monkeypatch):
     # 平台是 dashscope URL + 平台模型：用户凭据缺 model → 覆盖放弃
     assert await resolve_embedding_settings(None, "uid", BASE) is None
 
-    # 有 model 但 base_url 空，且 provider 解析不出官方默认端点 → 同样放弃
+    # 有 model 但 base_url 空时使用 OpenAI 官方默认端点，不继承平台目的地。
     row = SimpleNamespace(provider="openai", model="user-model", base_url="",
                           dimensions=None, encrypted_value="x")
     _patch_resolver(monkeypatch, row, decrypt=lambda r: "user-key")
-    assert await resolve_embedding_settings(None, "uid", BASE) is None
+    cfg = await resolve_embedding_settings(None, "uid", BASE)
+    assert cfg is not None
+    assert cfg["base_url"] == "https://api.openai.com/v1"
+    assert cfg["model"] == "user-model"
+    assert "platform.example" not in cfg["base_url"]
 
 
 @pytest.mark.asyncio

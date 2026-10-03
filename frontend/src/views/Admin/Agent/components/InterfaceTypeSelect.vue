@@ -1,5 +1,5 @@
 <template>
-  <div class="interface-type-select">
+  <div v-if="options.length > 1" class="interface-type-select">
     <label>{{ label }}</label>
     <div class="interface-type-options">
       <button

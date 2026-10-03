@@ -153,10 +153,15 @@ export const useUiStore = defineStore('ui', () => {
     if (n) n.unread = false
     if (id != null) _persistRead([id])
   }
+  async function clearNotifications() {
+    const { notificationsApi } = await import('@/services/api')
+    await notificationsApi.clear()
+    notifications.value = []
+  }
 
   return {
     notifCount, notifications, liveNotification, fetchNotifications, checkLoginBubble,
-    pushNotification, markAllRead, markRead, resetAccountState,
+    pushNotification, markAllRead, markRead, clearNotifications, resetAccountState,
     openNewProject, newProjectInitStatus, openProfile, profileInitialNav, sidebarCollapsed, newProjectRange,
     calendarActiveRange, pendingChatSession, pendingChatPrefill, pendingFileTarget, chatNotifyAnchor, chatNotifyOrigin,
     pendingChatMessageId, pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,

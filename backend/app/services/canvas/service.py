@@ -513,6 +513,32 @@ async def list_canvas_nodes(db, user_id, canvas_id, *, limit, offset=0):
     )).all()
 
 
+async def list_canvas_relation_geometry(db, user_id, canvas_id, node_ids):
+    """关系审计只读端点几何，不加载节点正文。"""
+    if not node_ids:
+        return {}
+    rows = (await db.execute(select(
+        MindCanvasItem.node_id, MindCanvasItem.x, MindCanvasItem.y, MindCanvasItem.w, MindCanvasItem.h,
+        MindNode.kind, MindNode.ref_type,
+    ).join(MindNode, MindNode.id == MindCanvasItem.node_id).where(
+        MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id,
+        MindCanvasItem.deleted_at.is_(None), MindCanvasItem.node_id.in_(node_ids),
+        MindNode.user_id == user_id, MindNode.deleted_at.is_(None),
+        MindNode.kind.in_(("canvas_note", "ref")),
+    ))).all()
+    geometry = {}
+    for row in rows:
+        width, height = canvas_layout.default_size(kind=row.kind, ref_type=row.ref_type)
+        geometry[row.node_id] = {
+            "position": {"x": row.x, "y": row.y},
+            "layout": {"effective_size": {
+                "w": row.w if row.w is not None else width,
+                "h": row.h if row.h is not None else height,
+            }},
+        }
+    return geometry
+
+
 async def list_canvas_relations(db, user_id, node_ids):
     if not node_ids:
         return []

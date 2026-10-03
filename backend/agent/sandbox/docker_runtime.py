@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from app.core.config import SandboxSettings
+from .offline_bundle import BundleManifestError
 
 
 _RESOLVED_IMAGE_DIGEST = "resolved"
@@ -25,9 +26,9 @@ _RESOLVED_IMAGE_DIGEST_FILE = Path("/run/gugu/sandbox-image-digest")
 
 
 def docker_environment() -> dict[str, str]:
-    """返回 Docker CLI 环境，优先使用当前用户的 Rootless socket。
+    """返回 Docker CLI 环境，优先使用显式 manager socket 或当前用户 Rootless socket。
 
-    显式 `DOCKER_HOST` 始终保留给部署配置；未显式配置且当前用户的
+    显式 `DOCKER_HOST` 始终保留给 manager 配置；未显式配置且当前用户的
     `/run/user/<uid>/docker.sock` 存在时，自动选择该 socket，避免业务服务
     因 systemd 环境缺少变量而误连 rootful daemon。
     """
@@ -71,6 +72,18 @@ def docker_container_mount_source(
             continue
         return Path(source).resolve()
     return None
+
+
+def docker_container_storage_root(local_path: str | Path, data_dir: str | Path = "/data") -> Path | None:
+    """把容器内持久数据目录映射为目标 Docker daemon 可见的宿主机路径。"""
+    container_data = Path(data_dir).resolve()
+    storage_path = Path(local_path).resolve()
+    try:
+        relative = storage_path.relative_to(container_data)
+    except ValueError as exc:
+        raise ValueError("内置沙盒的数据目录必须位于持久化 /data 挂载内") from exc
+    source = docker_container_mount_source(str(container_data))
+    return source / relative if source is not None else None
 
 
 def valid_image_digest(value: str) -> bool:
@@ -265,6 +278,9 @@ class DockerRuntimeStatus:
 class SandboxRuntimeSnapshot:
     docker: DockerRuntimeStatus
     image_ready: bool
+    runtime_ready: bool | None = None
+    manager_message: str = ""
+    image_error: str = ""
 
 
 def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
@@ -304,19 +320,58 @@ def probe_docker(*, timeout_seconds: float = 2.0) -> DockerRuntimeStatus:
     )
 
 
-def probe_sandbox_runtime(settings: SandboxSettings) -> SandboxRuntimeSnapshot:
+def probe_sandbox_runtime(
+    settings: SandboxSettings,
+    *,
+    embedded_bundle_runtime=None,
+) -> SandboxRuntimeSnapshot:
     """在当前进程持有的 daemon 上采集执行器状态。"""
     docker = probe_docker()
-    image_ready = (
+    can_inspect_images = (
         docker.daemon_ready
-        and (not settings.rootless_required or docker.rootless is True)
-        and valid_image_digest(settings.image_digest)
-        and image_available(settings.image, settings.image_digest)
+        and (not sandbox_requires_rootless(settings) or docker.rootless is True)
     )
-    return SandboxRuntimeSnapshot(docker=docker, image_ready=image_ready)
+    if getattr(settings, "manager_mode", "disabled") == "embedded":
+        image_ready, image_error = _probe_embedded_images(
+            can_inspect_images, embedded_bundle_runtime,
+        )
+    else:
+        image_ready = (
+            can_inspect_images
+            and valid_image_digest(settings.image_digest)
+            and image_available(settings.image, settings.image_digest)
+        )
+        image_error = ""
+    return SandboxRuntimeSnapshot(
+        docker=docker,
+        image_ready=image_ready,
+        image_error=image_error,
+    )
+
+
+def _probe_embedded_images(can_inspect: bool, bundle_runtime) -> tuple[bool, str]:
+    if not can_inspect:
+        return False, ""
+    if bundle_runtime is None:
+        return False, "内置沙盒 bundle 运行时未初始化"
+    try:
+        bundle_runtime.ensure_images()
+    except BundleManifestError as exc:
+        return False, str(exc)
+    return True, ""
+
+
+def sandbox_requires_rootless(settings: SandboxSettings) -> bool:
+    """分体与一体化内置管理器均固定使用 Rootless Docker。"""
+    return settings.manager_mode in {"embedded", "external"} or settings.rootless_required
 
 
 def _sandbox_configuration_readiness(settings: SandboxSettings) -> tuple[bool, str]:
+    manager_mode = str(getattr(settings, "manager_mode", "disabled") or "disabled")
+    if manager_mode == "disabled":
+        return False, "沙盒部署模式已禁用"
+    if manager_mode not in {"embedded", "external"}:
+        return False, "沙盒部署模式无效"
     if not settings.enabled:
         return False, "Shell 沙盒未开启"
     if settings.network_profile == "egress":
@@ -345,12 +400,14 @@ def docker_sandbox_readiness(
         return False, status.message
     if not status.daemon_ready:
         return False, status.message
-    if settings.rootless_required and status.rootless is not True:
+    if sandbox_requires_rootless(settings) and status.rootless is not True:
         return False, "当前 Docker 不是 Rootless 模式"
-    if not valid_image_digest(settings.image_digest):
+    manager_mode = str(getattr(settings, "manager_mode", "disabled") or "disabled")
+    embedded = manager_mode == "embedded"
+    if not embedded and not valid_image_digest(settings.image_digest):
         return False, "尚未配置有效的固定镜像 digest"
     if not snapshot.image_ready:
-        return False, "固定 Shell 沙盒镜像尚未加载到当前 Docker daemon"
+        return False, snapshot.image_error or "固定 Shell 沙盒镜像尚未加载到当前 Docker daemon"
     return True, "Docker 沙盒运行时已就绪"
 
 
@@ -393,6 +450,9 @@ def sandboxd_runtime_status(
     server_version = runtime.get("server_version")
     message = runtime.get("message")
     image_ready = runtime.get("image_ready")
+    image_error = runtime.get("image_error", "")
+    runtime_ready = payload.get("ready")
+    manager_message = payload.get("reason")
     if (
         not isinstance(installed, bool)
         or not isinstance(daemon_ready, bool)
@@ -400,6 +460,9 @@ def sandboxd_runtime_status(
         or not isinstance(server_version, str)
         or not isinstance(message, str)
         or not isinstance(image_ready, bool)
+        or not isinstance(image_error, str)
+        or not isinstance(runtime_ready, bool)
+        or not isinstance(manager_message, str)
     ):
         return None
     return SandboxRuntimeSnapshot(
@@ -411,6 +474,9 @@ def sandboxd_runtime_status(
             message=message,
         ),
         image_ready=image_ready,
+        runtime_ready=runtime_ready,
+        manager_message=manager_message,
+        image_error=image_error,
     )
 
 
@@ -427,13 +493,16 @@ def sandboxd_readiness(socket_path: str, *, timeout_seconds: float = 6.0) -> tup
 def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
     """返回当前配置是否允许执行容器命令。
 
-    生产执行经 sandboxd 时只向其查询状态，避免误探测 Worker/Backend 自己的
-    Docker daemon；独立运行且未配置 sandboxd 时保留直接探测行为。
+    embedded/external 均只通过显式配置的 sandboxd socket 查询实际执行器；
+    未配置管理器或 Socket 不可用时 fail-closed，不探测调用方自己的 Docker。
     """
     configured, reason = _sandbox_configuration_readiness(settings)
     if not configured:
         return False, reason
+    manager_mode = str(getattr(settings, "manager_mode", "disabled") or "disabled")
+    if manager_mode not in {"embedded", "external"}:
+        return False, "沙盒部署模式无效"
     socket_path = str(getattr(settings, "sandboxd_socket", "") or "").strip()
-    if socket_path:
-        return sandboxd_readiness(socket_path)
-    return docker_sandbox_readiness(settings)
+    if not socket_path:
+        return False, "sandboxd Socket 未配置，未执行命令"
+    return sandboxd_readiness(socket_path)

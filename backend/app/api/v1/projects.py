@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import events
 from app.core.ownership import get_owned
-from app.core.projects import build_project, normalize_project_stages_for_read, update_project_atomic
+from app.core.projects import build_project, update_project_atomic
 from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.db.session import get_db
@@ -46,7 +46,7 @@ def _to_resp(p: Project, file_count: int = 0) -> ProjectResponse:
         deadline=p.deadline,
         color=p.color,
         progress=p.progress,
-        stages=normalize_project_stages_for_read(p.stages),
+        stages=p.stages,
         current_stage=p.current_stage,
         archived=p.archived,
         priority=p.priority,

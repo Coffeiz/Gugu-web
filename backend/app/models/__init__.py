@@ -11,7 +11,7 @@ import json
 
 from sqlalchemy import (
     String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON,
-    UniqueConstraint, CheckConstraint, Index, text,
+    UniqueConstraint, CheckConstraint, Index, func, literal_column, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -206,10 +206,10 @@ class UserProviderCredential(Base):
     thinking: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     reasoning_effort: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     reasoning_persistence: Mapped[str] = mapped_column(String(20), default="off", server_default="off", nullable=False)
-    vision: Mapped[bool] = mapped_column(Boolean, default=False)
-    vision_video: Mapped[bool] = mapped_column(Boolean, default=False)
-    vision_audio: Mapped[bool] = mapped_column(Boolean, default=False)
-    vision_detail: Mapped[str] = mapped_column(String(16), default="auto")
+    image: Mapped[bool] = mapped_column(Boolean, default=False)
+    video: Mapped[bool] = mapped_column(Boolean, default=False)
+    audio: Mapped[bool] = mapped_column(Boolean, default=False)
+    image_detail: Mapped[str] = mapped_column(String(16), default="auto")
     # BYOK embedding 凭据专用：请求维度（NULL=用模型默认）；其他能力不读。
     dimensions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
@@ -597,6 +597,21 @@ class UndoOperation(Base):
 
 class Folder(Base):
     __tablename__ = "folders"
+    __table_args__ = (
+        # NULL 在普通复合唯一索引中彼此不相等；COALESCE 把根目录的可空作用域
+        # 映射到不可能出现的 ID 0，保证活动目录名在同一用户/空间/父目录内唯一。
+        Index(
+            "uq_folders_active_scope_name",
+            "user_id",
+            func.coalesce(literal_column("project_id"), 0),
+            func.coalesce(literal_column("workspace_directory_id"), 0),
+            func.coalesce(literal_column("parent_id"), 0),
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -1016,6 +1031,9 @@ class ConversationMessage(Base):
     canonical_batch_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("conversation_batches.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # 保留/压缩窗口按完整 run 与 provider round 划界；旧消息允许为空。
+    run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    round_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     # 仅 summary 行使用：本条摘要覆盖到的最大消息 id。compress 在写摘要的同一
     # 事务里落这个水位；历史装载取 max(session.baseline, summary.covers) 过滤，
     # 防「读到新摘要 + 旧 baseline」竞态把摘要已覆盖的原文重复拼进上下文。
@@ -1389,6 +1407,7 @@ class UserBot(Base):
     # 群聊记忆：分别控制本群公开记忆和群成员个人记忆的读取/沉淀。
     group_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     member_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    group_owner_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # 群成员可用工具白名单；默认开放联网搜索 + 图片搜索 + 发网络图片，不暴露用户私有内容和写操作。
     group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "read_file", "send_file"])
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
@@ -1526,6 +1545,8 @@ class ScheduledTask(Base):
     # 绑定的日历事件 id（活动编辑面板里加的提醒）；null = 普通独立任务。
     # 故意不设 DB 外键：删事件时由应用层显式删其提醒任务（_delete_event），避免 FK 命名/迁移复杂度、更可移植。
     event_id:    Mapped[Optional[int]]      = mapped_column(Integer, nullable=True, index=True)
+    # 提前分钟数是活动提醒配置，独立于禁用期间保留的绝对触发时间。
+    reminder_lead_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     # 可选工作区是任务 Shell 和文件操作的完整边界；不保存宿主机路径。
     workspace_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
@@ -1596,5 +1617,118 @@ class NotificationRead(Base):
     user_id:         Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     notification_id: Mapped[int]      = mapped_column(ForeignKey("site_notifications.id", ondelete="CASCADE"), index=True)
     read_at:         Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+class NotificationDismissal(Base):
+    """按用户隐藏的站内通知；不删除其他用户仍可见的通知本体。"""
+    __tablename__ = "notification_dismissals"
+    __table_args__ = (UniqueConstraint("user_id", "notification_id", name="uq_notif_dismissal"),)
+
+    id:              Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:         Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    notification_id: Mapped[int]      = mapped_column(ForeignKey("site_notifications.id", ondelete="CASCADE"), index=True)
+    dismissed_at:    Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+# ── 用户数据可移植归档任务 ────────────────────────────────────────────────────
+
+class DataPortabilityOrigin(Base):
+    """稳定的随机来源身份，不暴露 User.id，供多次导出后的增量导入去重。"""
+    __tablename__ = "data_portability_origins"
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    origin_id: Mapped[UUID] = mapped_column(Uuid, unique=True, default=uuid7)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+
+class DataExportJob(Base):
+    """用户数据导出任务；artifact 保存在私有暂存，不进入文件库。"""
+    __tablename__ = "data_export_jobs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_data_export_idempotency"),
+        Index("ix_data_export_jobs_claim", "status", "lease_until", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid7)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    options: Mapped[dict] = mapped_column(JSON, default=dict)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    artifact_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    artifact_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    artifact_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class DataImportJob(Base):
+    """归档预检、增量导入和替换任务。"""
+    __tablename__ = "data_import_jobs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_data_import_idempotency"),
+        Index("ix_data_import_jobs_claim", "status", "lease_until", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid7)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    mode: Mapped[str] = mapped_column(String(20), default="incremental")
+    source_job_id: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="validating", index=True)
+    staging_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    import_token_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    archive_origin_id: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True)
+    archive_export_id: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True)
+    archive_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    preview: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rollback_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    rollback_expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class DataPortableIdentity(Base):
+    """来源对象到目标对象的映射，保障同一来源跨多份导出仍幂等。"""
+    __tablename__ = "data_portable_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "origin_id", "source_type", "portable_id",
+            name="uq_data_portable_source_identity",
+        ),
+        Index("ix_data_portable_identity_target", "user_id", "target_type", "target_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    origin_id: Mapped[UUID] = mapped_column(Uuid, index=True)
+    source_type: Mapped[str] = mapped_column(String(80))
+    portable_id: Mapped[str] = mapped_column(String(200))
+    target_type: Mapped[str] = mapped_column(String(80))
+    target_id: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 from app.models.mcp import UserMcpServer  # noqa: E402  (PRD-MCP-1)

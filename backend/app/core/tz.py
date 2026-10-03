@@ -63,13 +63,13 @@ def local_day_start_utc() -> datetime:
     return day0.astimezone(timezone.utc)
 
 
-def fmt_local(dt, fmt: str = "%Y-%m-%d %H:%M") -> str:
-    """UTC datetime（aware 或 naive 都兼容）→ 本地时间格式化字符串（供 API 下发的时间字段）。"""
+def fmt_local(dt, fmt: str = "%Y-%m-%d %H:%M", tz: tzinfo | None = None) -> str:
+    """UTC datetime（aware 或 naive 都兼容）→ 指定时区格式化字符串。"""
     if dt is None:
         return ""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)   # 兜底：万一拿到 naive，按 UTC 解释
-    return dt.astimezone(LOCAL_TZ).strftime(fmt)
+    return dt.astimezone(tz or LOCAL_TZ).strftime(fmt)
 
 
 def utc_to_local_date_expr() -> str:

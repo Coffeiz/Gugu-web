@@ -11,14 +11,14 @@ from .cache_probe import build_cache_round, context_digests, prefix_unchanged, r
 from .context import install_context_hooks
 from .state import (
     _ScopeRun, _enabled, _finish_run, _now, _scope_run, activate_llm_span,
-    deactivate_llm_span, get_trace,
+    deactivate_llm_span, get_trace, message_area_diagnostics,
     record_adapter_call, record_adapter_result, record_canonical_event_stats,
     record_context_layout, record_tool_schema_error,
 )
 from .utils import (
     _classify_followup, _code_ref, _estimate_tokens, _extract_last_user,
     _jsonable, _prompt_digest, _round_result, _system_message_text,
-    _cache_diagnostics,
+    _cache_diagnostics, provider_message_rows,
 )
 
 _hooks_installed = False
@@ -141,26 +141,24 @@ def _trace_conversation_messages(messages: Any, system_location: str) -> Any:
     但它属于用户侧 snapshot，不应混进 history 展示；实际发送给 provider 的
     messages 不在这里修改。
     """
-    if not isinstance(messages, list):
-        return _jsonable(messages)
+    rows = provider_message_rows(messages)
     hidden = set(_snapshot_message_indices(messages))
-    if system_location == "messages[0]" and messages:
-        first = messages[0]
+    if system_location == "messages[0]" and rows:
+        first = rows[0]
         if isinstance(first, dict) and first.get("role") == "system":
             hidden.add(0)
-    return _jsonable([message for index, message in enumerate(messages) if index not in hidden])
+    return _jsonable([message for index, message in enumerate(rows) if index not in hidden])
 
 
 def _snapshot_message_indices(messages: Any) -> list[int]:
     """定位固定 session snapshot 消息，供 LoopScope 单独展示。"""
-    if not isinstance(messages, list):
-        return []
     fixed_count = getattr(messages, "fixed_prefix_size", None)
     if not isinstance(fixed_count, int) or fixed_count <= 0:
         return []
-    candidate_count = min(fixed_count, len(messages))
+    rows = provider_message_rows(messages)
+    candidate_count = min(fixed_count, len(rows))
     indices: list[int] = []
-    for index, message in enumerate(messages[:candidate_count]):
+    for index, message in enumerate(rows[:candidate_count]):
         if not isinstance(message, dict):
             continue
         content = message.get("content")
@@ -171,11 +169,10 @@ def _snapshot_message_indices(messages: Any) -> list[int]:
 
 def _trace_snapshot(messages: Any) -> dict[str, Any] | None:
     """提取固定 snapshot 正文；正文属于受控 LoopScope trace，可完整查看。"""
-    if not isinstance(messages, list):
-        return None
+    rows = provider_message_rows(messages)
     contents = []
     for index in _snapshot_message_indices(messages):
-        message = messages[index]
+        message = rows[index]
         content = message.get("content") if isinstance(message, dict) else None
         if isinstance(content, str) and content:
             contents.append(content)
@@ -417,7 +414,8 @@ def ensure_hooks() -> None:
                     "messages": _trace_conversation_messages(messages, system_location),
                     "assembly": {
                         "system": system_assembly,
-                        "messages": {"count": len(messages) if isinstance(messages, list) else None},
+                        "messages": {"count": len(provider_message_rows(messages))},
+                        **message_area_diagnostics(messages),
                     },
                 },
                 code=_code_ref(original_builder_build),
@@ -433,7 +431,7 @@ def ensure_hooks() -> None:
                 # OpenAI 兼容接口把 system 放在 messages[0]；Context span 仍展示
                 # provider 实际会消费的完整 system，避免 LoopScope 看见空值。
                 "system_prompt": effective_system,
-                "message_count": len(messages) if isinstance(messages, list) else None,
+                "message_count": len(provider_message_rows(messages)),
             })
             run.attach_context_spans(ctx_span.id)
 
@@ -444,7 +442,8 @@ def ensure_hooks() -> None:
                 application_layout = consume_context_layout_audit()
             except Exception:
                 application_layout = None
-            provider_layout_messages = messages
+            from agent.providers.message_utils import render_provider_history
+            provider_layout_messages = render_provider_history(messages, _adapter)
             provider_history_sanitization = {
                 "applied": False,
                 "changed": False,
@@ -457,7 +456,7 @@ def ensure_hooks() -> None:
 
                 provider_layout_messages, provider_history_sanitization = (
                     render_openai_request_history(
-                        messages, _adapter, with_diagnostics=True,
+                        provider_layout_messages, _adapter, with_diagnostics=True,
                     )
                 )
             provider_layout_metadata = dict(application_layout or {})
@@ -467,6 +466,7 @@ def ensure_hooks() -> None:
             record_context_layout(
                 provider_layout_messages,
                 metadata=provider_layout_metadata,
+                message_area=messages,
                 system_text=effective_system,
                 parent_span_id=ctx_span.id,
             )
@@ -479,7 +479,7 @@ def ensure_hooks() -> None:
                 code=_code_ref(original_run_loop),
                 token_impact={"included_tokens": messages_est},
             )
-            history.finish({"message_count": len(messages) if isinstance(messages, list) else None})
+            history.finish({"message_count": len(provider_message_rows(messages))})
 
         async def traced_round(client, ctx, round_messages, stream_round=None):
             # stream_round 由 core 注入（PRD-LLM-25）：转发给被包裹的原 run_round。
@@ -500,7 +500,14 @@ def ensure_hooks() -> None:
                 "first_changed_index": None,
             }
             if adapter is None:
-                round_wire_messages = round_messages
+                from agent.context.assembly.area import MessageArea
+                from agent.context.provider_conversation import ProviderConversation
+                if isinstance(round_messages, MessageArea):
+                    round_wire_messages = round_messages.provider_projection()
+                elif isinstance(round_messages, ProviderConversation):
+                    round_wire_messages = round_messages
+                else:
+                    raise TypeError("LoopScope round 只接受 MessageArea 或 ProviderConversation")
             elif getattr(round_driver, "api_format", "") == "openai":
                 from agent.providers.message_utils import render_openai_request_history
 
@@ -523,10 +530,17 @@ def ensure_hooks() -> None:
             )
             growth = max(round_prompt_est - previous_prompt_estimate, 0) if previous_prompt_estimate else 0
             cache_diag = _cache_diagnostics(
-                round_wire_messages, ctx, model_name, provider_projected=True,
+                round_wire_messages, ctx, model_name,
             )
             from agent.context.canonical_tool_history import canonical_event_stats
-            canonical_stats = canonical_event_stats(round_messages)
+            area_snapshot = getattr(round_messages, "snapshot", None)
+            if callable(area_snapshot):
+                canonical_rows = [
+                    entry.canonical_message for entry in area_snapshot().entries
+                ]
+            else:
+                canonical_rows = provider_message_rows(round_messages)
+            canonical_stats = canonical_event_stats(canonical_rows)
             from agent.context.context_diagnostics import request_diagnostics
             canonical_diagnostics = request_diagnostics(
                 round_messages,
@@ -536,6 +550,8 @@ def ensure_hooks() -> None:
                 model=model_name,
                 api_format=str(getattr(round_driver, "api_format", "unknown") or "unknown"),
                 previous_messages=previous_round_messages,
+                provider_messages=round_wire_messages,
+                provider_history_sanitization=provider_history_sanitization,
             ) if getattr(ctx, "adapter", None) is not None else {"available": False}
             if run:
                 record_canonical_event_stats(run, canonical_stats)
@@ -614,9 +630,10 @@ def ensure_hooks() -> None:
                             "source_round": 1,
                         },
                         "messages": {
-                            "count": len(round_messages) if isinstance(round_messages, list) else None,
+                            "count": len(provider_message_rows(round_wire_messages)),
                             "round": round_index,
                         },
+                        **message_area_diagnostics(messages, round_wire_messages),
                         "cache": cache_diag,
                         "provider_history_sanitization": provider_history_sanitization,
                         "canonical_events": canonical_stats,
@@ -640,8 +657,8 @@ def ensure_hooks() -> None:
             ) if run else None
             previous_prompt_estimate = round_prompt_est
             # 下一轮诊断的 previous_messages 必须保存同一 provider projection，
-            # 不能保存未渲染的 canonical PromptMessages。
-            previous_round_messages = list(round_wire_messages)
+            # 不能保存未渲染的 canonical MessageArea。
+            previous_round_messages = round_wire_messages
             final = None
             active_span_token = activate_llm_span(span)
             try:

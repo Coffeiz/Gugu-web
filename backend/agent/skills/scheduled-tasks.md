@@ -3,7 +3,7 @@ name: 定时任务
 description_short: 用户要设置独立定时任务、周期任务或到点执行时使用；日程自带提醒直接用日历工具。
 description_long: "要设定时/周期执行任务时，怎么用 *_scheduled_task 建任务、单次、cron 或精确 interval 怎么写、可选开始结束时间和渠道怎么选；并区分日历活动自带提醒。"
 category: scheduling
-related_tools: list_scheduled_tasks, create_scheduled_task, update_scheduled_task, delete_scheduled_task, create_event, add_event_reminder, list_event_reminders, remove_event_reminder
+related_tools: list_scheduled_tasks, create_scheduled_task, update_scheduled_task, delete_scheduled_task, create_event, list_events, update_event
 emoji: ⏰
 ---
 
@@ -19,10 +19,12 @@ emoji: ⏰
 
 ## 2. 日程活动提醒
 
-- 新建活动：在 `create_event` 中传 `reminders=[提前分钟数]`，可一次传多个提前量；不要再调用 `create_scheduled_task`。
-- 已有活动：使用 `add_event_reminder`。
-- 查看或删除活动提醒：使用 `list_event_reminders` / `remove_event_reminder`。
+- 新建活动：在 `create_event` 的 `reminders` 字段中传提醒配置数组，每项包含 `lead_minutes`，可选 `channels` 和 `delivery_mode`；不要再调用 `create_scheduled_task`。
+- 查看活动与提醒：使用 `list_events`，提醒配置随活动一并返回。
+- 更新或删除活动提醒：使用 `update_event` 的 `reminders` 字段传完整配置数组；省略该字段表示不改提醒，传 `[]` 会删除全部提醒。不能只传增量项，需保留仍要使用的提醒配置。
+- 修改活动日期或开始时间且省略 `reminders` 时，启用提醒会保留原提前分钟数并按新活动时间重排。
 - 活动提醒绑定 `event_id`，跟随活动管理和删除，不属于独立定时任务列表。
+- 每条活动提醒可独立设置渠道。QQ 投递到私聊用 `delivery_mode="owner_private"`，投递到当前 QQ 群用 `delivery_mode="current_group"`。群聊中配置 QQ 渠道时必须先明确投递位置；不要让用户或模型手填 QQ openid。
 
 ## 3. 创建独立定时任务
 

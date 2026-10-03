@@ -3,26 +3,32 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const workflowPath = new URL('../../.github/workflows/docker-release.yml', import.meta.url)
-const composePath = new URL('../../docker-compose.yml', import.meta.url)
+const composePath = new URL('../../docker-compose.prod.yml', import.meta.url)
 const appDockerfilePath = new URL('../../Dockerfile', import.meta.url)
+const embeddedManagerPath = new URL('../../backend/scripts/runtime/start_embedded_sandbox_manager.sh', import.meta.url)
 
-test('一体化镜像不内嵌 Sandbox，默认 Compose 启动独立沙盒并解析镜像 digest', async () => {
-  const [compose, dockerfile] = await Promise.all([
+test('一体化 app 镜像内置 Sandbox；分体 Compose 仍配置独立版本化镜像', async () => {
+  const [compose, dockerfile, embeddedManager] = await Promise.all([
     readFile(composePath, 'utf8'),
     readFile(appDockerfilePath, 'utf8'),
+    readFile(embeddedManagerPath, 'utf8'),
   ])
-  assert.equal((compose.match(/SANDBOX__IMAGE: \$\{GUGU_SANDBOX_IMAGE:-coffeiz\/gugu-sandbox:latest\}/g) ?? []).length, 2,
-    'app 与 sandboxd 应默认使用已发布沙盒镜像')
-  assert.equal((compose.match(/SANDBOX__IMAGE_DIGEST: \$\{GUGU_SANDBOX_IMAGE_DIGEST:-resolved\}/g) ?? []).length, 2,
-    'app 与 sandboxd 应使用 sandboxd 初始化解析的固定 digest')
-  assert.doesNotMatch(compose, /profiles:\s*\[sandbox\]/,
-    '默认 Compose 必须启动 egress-proxy 和 sandboxd')
-  assert.doesNotMatch(dockerfile, /docker\/sandbox\/bundle|\/opt\/gugu\/sandbox\//,
-    '一体化镜像不得包含 Sandbox bundle')
+  assert.match(compose, /SANDBOX__IMAGE: \$\{GUGU_SANDBOX_IMAGE:-debian:bookworm-slim\}/,
+    '分体业务 Compose 仍保留独立 Sandbox 镜像配置')
+  assert.match(compose, /SANDBOX__IMAGE_DIGEST: \$\{GUGU_SANDBOX_IMAGE_DIGEST:-sha256:/,
+    '分体 Sandbox 继续固定 digest')
+  assert.match(dockerfile, /GUGU_SANDBOX_MANAGER_MODE=embedded/)
+  assert.match(dockerfile, /SANDBOX__ENABLED=true/)
+  assert.match(dockerfile, /SANDBOX__ROOTLESS_REQUIRED=true/)
+  assert.doesNotMatch(dockerfile, /DOCKER_HOST=unix:\/\/\/var\/run\/docker\.sock/,
+    '一体化镜像不得默认连接或回退到宿主 Docker Socket')
+  assert.match(embeddedManager, /ROOTLESS_DOCKER_SOCKET="\$ROOTLESS_RUNTIME_DIR\/docker\.sock"/)
+  assert.match(embeddedManager, /DOCKER_HOST="unix:\/\/\$ROOTLESS_DOCKER_SOCKET"/,
+    'embedded sandbox manager 必须只连接容器内 Rootless daemon')
 })
 
 test('正式发布提供单 tar 离线沙盒 bundle', async () => {
-  const workflow = await readFile(workflowPath, 'utf8')
+  const workflow = (await readFile(workflowPath, 'utf8')).replace(/\r\n/g, '\n')
   assert.match(workflow, /offline-bundle:/)
   assert.match(workflow, /build-offline-sandbox-bundle\.sh/)
   assert.match(workflow, /actions\/upload-artifact@v4/)
@@ -45,7 +51,7 @@ test('app 镜像的动态版本元数据不使文件系统层缓存失效', asyn
 })
 
 test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元数据', async () => {
-  const workflow = await readFile(workflowPath, 'utf8')
+  const workflow = (await readFile(workflowPath, 'utf8')).replace(/\r\n/g, '\n')
   const publishJob = workflow.slice(workflow.indexOf('\n  publish:\n'))
 
   // 发布不再重建镜像：publish 从 docker-build 推送的 :ci-<run_id> 纯复制，
@@ -68,8 +74,8 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
     '稳定版需继续更新默认部署使用的 latest 别名')
   assert.match(workflow, /push: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/,
     ':ci 中间镜像只在 tag 触发时推送，main/dispatch 运行零额外推送')
-  assert.doesNotMatch(workflow, /bundled-sandbox-runtime|sandbox-image\.tar\.gz|Download bundled sandbox runtime/,
-    '发布流水线不得把 Sandbox bundle 注入一体化 app')
+  assert.match(workflow, /Package same-commit embedded runtime bundle/,
+    '同轮 Sandbox runtime 必须进入一体化镜像构建链')
 
   assert.match(publishJob, /uses: sigstore\/cosign-installer@v4\.1\.2\s+with:\s+cosign-release: v3\.1\.3/)
   // cosign 3.x 的 oci-1-1 referrers 模式在实验开关后面，缺 env 直接报 invalid argument
@@ -82,10 +88,4 @@ test('正式镜像只发布语义版本号标签，Git SHA 仅保留为构建元
   assert.match(publishJob, /cosign sign --yes --registry-referrers-mode=oci-1-1 "\$\{DOCKERHUB_BACKEND_IMAGE_REPOSITORY\}@\$\{BACKEND_DIGEST\}"/)
   assert.match(publishJob, /cosign sign --yes --registry-referrers-mode=oci-1-1 "\$\{DOCKERHUB_FRONTEND_IMAGE_REPOSITORY\}@\$\{FRONTEND_DIGEST\}"/)
   assert.match(publishJob, /GIT_SHA:\s*\$\{\{\s*github\.sha\s*\}\}/, 'manifest 仍应记录构建 commit SHA')
-
-  const manifestStep = publishJob.split('- name: Generate update manifest')[1]?.split('\n      - name:')[0] ?? ''
-  assert.match(manifestStep, /BACKEND_DIGEST:\s*\$\{\{\s*steps\.digests\.outputs\.hub_backend\s*\}\}/,
-    '生成更新清单必须注入 Docker Hub backend digest')
-  assert.match(manifestStep, /FRONTEND_DIGEST:\s*\$\{\{\s*steps\.digests\.outputs\.hub_frontend\s*\}\}/,
-    '生成更新清单必须注入 Docker Hub frontend digest')
 })

@@ -178,6 +178,25 @@ async def test_snapshot_keeps_tool_timeline_for_refresh_resume(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_snapshot_preserves_queued_tool_status_as_nonterminal(monkeypatch):
+    """刷新/重连时排队中的工具不能被快照误判为已经终结。"""
+    redis = _FakeRedis()
+    monkeypatch.setattr(genstream, "get_redis", lambda: redis)
+
+    await genstream.begin(484)
+    await genstream.publish(484, {
+        "type": "tool_call", "run_id": "run-1", "round_id": "round-1",
+        "tool_call_id": "call-queued", "name": "shell", "status": "queued",
+    })
+
+    snap = await genstream.snapshot(484)
+    assert snap["tools"] == [{
+        "run_id": "run-1", "round_id": "round-1", "tool_call_id": "call-queued",
+        "name": "shell", "label": "shell", "input": None, "status": "queued",
+    }]
+
+
+@pytest.mark.asyncio
 async def test_end_keeps_done_snapshot_for_late_subscriber(monkeypatch):
     redis = _FakeRedis()
     monkeypatch.setattr(genstream, "get_redis", lambda: redis)

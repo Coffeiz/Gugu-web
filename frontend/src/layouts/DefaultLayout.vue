@@ -107,7 +107,7 @@ const audioStore   = useAudioStore()
 // 音频文件不走预览框，直接交给迷你播放器
 watch(() => previewStore.file, (f) => {
   if (f && isAudioExt(f.ext)) {
-    audioStore.play(f)
+    audioStore.play(f, previewStore.singleSiblings)
     previewStore.close()
   }
 })

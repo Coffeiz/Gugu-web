@@ -33,6 +33,51 @@ export function isExtractableArchive(file: Pick<FileMeta, 'displayName' | 'ext'>
   return archiveFormatForFile(file) != null
 }
 
+type ArchiveContextTarget = {
+  id?: number | string
+  displayName?: string
+  ext?: string
+}
+
+export function findSelectedExtractableArchive(
+  selectedFileIds: ReadonlySet<number>,
+  selectedFolderIds: ReadonlySet<number | string>,
+  getFile: (id: number) => FileMeta | null,
+): FileMeta | null {
+  if (selectedFileIds.size !== 1 || selectedFolderIds.size !== 0) return null
+  const [id] = selectedFileIds
+  if (id == null) return null
+  const file = getFile(id)
+  return file && isExtractableArchive(file) ? file : null
+}
+
+export function canExtractArchiveContext(
+  type: string | null,
+  target: ArchiveContextTarget | null,
+): boolean {
+  return (type === 'file' || type === 'multi-file')
+    && target != null
+    && typeof target.displayName === 'string'
+    && typeof target.ext === 'string'
+    && isExtractableArchive({ displayName: target.displayName, ext: target.ext })
+}
+
+export function canCompressArchiveContext(
+  type: string | null,
+  target: ArchiveContextTarget | null,
+  selectedFileIds: ReadonlySet<number>,
+  selectedFolderIds: ReadonlySet<number | string>,
+): boolean {
+  const hasSelection = selectedFileIds.size + selectedFolderIds.size > 0
+  if (type === 'multi-file') return hasSelection
+  // 用户可能在多选后右键落在未选中的文件卡上；压缩动作仍然针对当前选择集合。
+  if (type === 'file' && hasSelection) return true
+  if (target?.id == null) return false
+  if (type === 'file') return selectedFileIds.has(Number(target.id))
+  if (type === 'folder') return selectedFolderIds.has(target.id)
+  return false
+}
+
 export function archiveFormatForFile(file: Pick<FileMeta, 'displayName' | 'ext'>): string | null {
   const filename = `${file.displayName}.${file.ext}`.toLowerCase().replace(/\.+$/, '')
   if (filename.endsWith('.tar.gz')) return 'tar.gz'

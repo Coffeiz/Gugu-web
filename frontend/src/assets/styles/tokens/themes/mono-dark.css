@@ -9,7 +9,7 @@
   --theme-content-primary: #f0edf3; --theme-content-secondary: #aaa3af; --theme-content-tertiary: #7f7885; --theme-content-disabled: #5e5962; --theme-content-inverse: #17151b;
   --theme-border-hairline: rgba(255,255,255,.045); --theme-border-subtle: rgba(255,255,255,.075); --theme-border-default: rgba(255,255,255,.105); --theme-border-strong: rgba(255,255,255,.145); --theme-border-hover: rgba(255,255,255,.20);
   --theme-highlight-rest: rgba(255,255,255,.045); --theme-highlight-side: rgba(255,255,255,.025); --theme-highlight-hover: rgba(255,255,255,.07); --theme-highlight-hover-side: rgba(255,255,255,.04);
-  --theme-sidebar-active-border: rgba(164,154,203,.10); --theme-sidebar-active-highlight: transparent;
+  --theme-sidebar-active-border: var(--action-outline); --theme-sidebar-active-highlight: transparent;
   --theme-shadow-1: 0 2px 8px rgba(0,0,0,.14); --theme-shadow-2: 0 7px 20px rgba(0,0,0,.20); --theme-shadow-3: 0 14px 38px rgba(0,0,0,.26); --theme-shadow-4: 0 24px 64px rgba(0,0,0,.34);
   
   /* GuguChat 发送按钮暗色专用背景：mono dark 用相对更冷的紫调，避免和

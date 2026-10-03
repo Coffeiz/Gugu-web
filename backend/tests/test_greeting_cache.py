@@ -25,7 +25,7 @@ class _FakeRedis:
 
     def lock(self, key: str, *, timeout: int, thread_local: bool) -> _FakeLock:
         assert key.endswith(":lock")
-        assert timeout == 30
+        assert timeout == 60
         assert thread_local is False
         return _FakeLock()
 
@@ -52,7 +52,7 @@ async def test_greeting_reuses_cached_text_for_ten_minutes(monkeypatch):
 
     assert first == second == "欢迎回来，今天也慢慢来。"
     assert calls == 1
-    assert redis.set_calls == [("agent:greeting:7:zh-CN", 600)]
+    assert redis.set_calls == [(greeting._cache_key(7, "zh-CN"), 600)]
 
 
 @pytest.mark.asyncio
@@ -73,3 +73,15 @@ async def test_greeting_can_be_disabled_before_cache_or_model_call(monkeypatch):
 
     assert result == ""
     assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_greeting_does_not_reuse_old_cache_with_leaked_thinking(monkeypatch):
+    redis = greeting.redis_core.get_redis()
+    await redis.set("agent:greeting:7:zh-CN", "内部规划", ex=600)
+
+    async def generate_uncached(*args, **kwargs):
+        return "回来啦！"
+
+    monkeypatch.setattr(greeting, "_generate_uncached", generate_uncached)
+    assert await greeting.generate(None, 7, None) == "回来啦！"

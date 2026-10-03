@@ -5,6 +5,100 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+## [1.5.0] - 2026-10-03
+
+### What's New
+
+#### New Features
+
+- **User data portability**: export encrypted archives, preview imports, incrementally import or replace portable account data, and undo a replacement within seven days.
+- **Calendar reminders**: configure delivery channels and QQ direct-message or group targets when creating or editing events.
+- **GuguChat audio playlist**: play audio continuously, switch tracks, choose repeat or shuffle, and view playback progress in the mini player.
+- **Parallel tool execution**: run independent tools concurrently within one model round, with bounded concurrency, a configurable safe-tool set, and visible queued/running status.
+- **Secure outbound proxy**: configure an explicit proxy for web retrieval and external file downloads while keeping URL/SSRF checks and TLS validation in place.
+- **Single-container sandbox support**: manage the embedded Shell sandbox and its offline runtime bundle in supported single-container deployments.
+- **Notifications and group memory controls**: clear notifications and authorize owner personal-memory access per group.
+
+#### Improvements
+
+- **Provider configuration**: configure API format and reasoning depth per Provider, support MiniMax Responses API, and route non-chat calls through the selected protocol.
+- **Multimodal capability controls**: align image, audio, and video capability configuration across model settings and runtime requests.
+- **Agent context and run lifecycle**: improve history search timestamps, cache-prefix reuse and long-conversation compression; preserve completed tool history on interruption and make run cancellation/finalization more consistent.
+- **Tool contracts and feedback**: improve parameter correction guidance and project, calendar, and canvas tool behavior so validation failures and ambiguous targets are easier to resolve.
+- **File operations**: improve archive download, compression and extraction interactions across project files and the file library.
+- **Shell scope and deployment**: clarify execution scope and sandbox requirements, and improve single-container update state and sandbox permission handling.
+- **Import storage scalability**: paginate private object-storage prefix scans for migration tasks.
+- **Knowledge and deployment guidance**: improve knowledge timestamps and search, and document complete Compose/NAS deployment paths.
+
+#### Fixes
+
+- Fixed concurrent Shell terminal events receiving conflicting sequence numbers.
+- Fixed stale progress after emptying the recycle bin and restored its confirmation gate in automatic mode.
+- Fixed data-portability import/replace recovery, duplicate migration tables and migration-head conflicts; archive downloads now stay on the current site instead of navigating to a backend localhost URL.
+- Fixed duplicate file-sync folder projections, false success feedback when copying chat content, and project/calendar/canvas tool contract edge cases.
+- Fixed IM attachment echoes and multimodal request assembly, and corrected Admin multimodal-probe event naming.
+- Improved MiniMax error classification and voice feedback; fixed safe switching between official API protocols from the same provider.
+- Fixed Responses and Anthropic reasoning/tool-call history restoration, non-chat protocol selection, and Provider request diagnostics using the active request configuration.
+- Fixed invalid tool calls disrupting safe parallel batches, and improved actionable parameter-type correction hints.
+- Fixed interrupted runs losing completed execution history, Provider finalization inconsistencies, Shell quota accounting, and sandbox proxy/offline bundle setup.
+- Added password confirmation during registration to catch mistyped passwords.
+- Fixed cursor placement when clicking the upper or lower area of single-line inputs.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- None listed.
+
+### 更新内容
+
+#### 新功能
+
+- **用户数据可移植**：支持生成加密归档、导入预检、增量导入或替换可移植账号数据，并可在七天内撤销替换。
+- **日历活动提醒**：创建或编辑活动时可配置提醒渠道及 QQ 私聊/群聊目标。
+- **GuguChat 音频播放列表**：支持连续播放、切换曲目、循环或随机播放，并在迷你播放器中查看播放进度。
+- **并行工具执行**：单个模型轮次内并发执行相互独立的工具，支持有界并发、可配置的安全工具范围和排队/运行状态显示。
+- **安全出站代理**：为网页读取和外部文件下载配置显式代理，同时保留 URL/SSRF 校验和 TLS 验证。
+- **单容器沙盒支持**：在受支持的单容器部署中管理内置 Shell 沙盒及离线运行镜像包。
+- **通知与群聊记忆控制**：支持清空通知，并可按群授权读取 owner 个人记忆。
+
+#### 改进
+
+- **Provider 配置**：按 Provider 配置 API 格式和思考强度，支持 MiniMax Responses API，并让非聊天请求遵循所选协议。
+- **多模态能力控制**：统一模型设置与运行请求中的图片、音频和视频能力配置。
+- **Agent 上下文与运行生命周期**：改进历史检索时间、缓存前缀复用和长对话压缩；中断时保留已完成的工具历史，并统一 run 取消与收尾行为。
+- **工具契约与反馈**：改进参数纠正提示及项目、日历、画布工具行为，让校验失败和定位歧义更容易处理。
+- **文件操作**：改进项目文件和文件库的压缩包下载、压缩与解压交互。
+- **Shell 范围与部署**：明确执行范围和沙盒要求，并改进单容器更新状态及沙盒权限处理。
+- **迁移存储扩展性**：对象存储私有前缀扫描支持分页处理。
+- **Knowledge 与部署说明**：改进 Knowledge 时间与检索，并补充完整 Compose/NAS 部署路径。
+
+#### 修复
+
+- 修复并发 Shell 终端事件序号冲突。
+- 修复清空回收站后的进度残留，并恢复自动模式下清空操作的确认门。
+- 修复数据可移植导入/替换恢复、迁移重复建表及多个 migration head；归档下载不再跳转到后端 localhost 地址。
+- 修复文件同步重复投影文件夹、聊天复制失败却提示成功，以及项目/日历/画布工具契约边界问题。
+- 修复 IM 附件回声和多模态请求组装问题，并校正 Admin 多模态探测事件名。
+- 完善 MiniMax 错误分类和语音反馈；修复同一厂商官方 API 协议之间安全切换的问题。
+- 修复 Responses 与 Anthropic 推理/工具调用历史恢复、非聊天协议选择，以及上下文诊断未沿用实际 Provider 请求配置的问题。
+- 修复无效工具调用打断安全并行批次的问题，并改进参数类型错误的可执行纠正提示。
+- 修复中断运行丢失已完成执行历史、Provider 收尾不一致、Shell 配额核算及沙盒代理/离线镜像包配置问题。
+- 注册时增加确认密码输入，避免因密码输错而无法登录。
+- 修复点击单行输入框文字上下区域时光标跳到首尾的问题。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.4.0] - 2026-09-25
 
 ### 新功能

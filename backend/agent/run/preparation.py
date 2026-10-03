@@ -38,6 +38,7 @@ from agent.models import AgentRequest
 from agent.run.contract import (
     EARLY_EXIT_ATTACHMENT,
     EARLY_EXIT_QUOTA,
+    EARLY_EXIT_PROVIDER_ERROR,
     EARLY_EXIT_VOICE,
     EarlyExit,
     PreparedExecution,
@@ -218,8 +219,8 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     modelctx.mark_user_scope()
     run_config = resolve_run_config(settings, req)
     context_policy = policy_for(req)
-    # 不强切 vision 模型：这轮 pick 到的模型看得了图就识图、看不了就当普通文件存。
-    # 避免硬切到「标了 vision 实则不收图片块」的模型（如 MiniMax 兼容口）。
+    # 不强切模型：这轮 pick 到的模型看得了图就识图、看不了就当普通文件存。
+    # 避免硬切到「声明支持图片、实际不收图片块」的模型（如 MiniMax 兼容口）。
 
     import app.db.session as _sess
     if _sess._engine is None:
@@ -386,10 +387,23 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         from agent import voice as _voice
         # 上面的会话读取事务已经结束，不能继续复用已退出上下文的 db；
         # 语音模型解析需要独立短事务，避免把连接带进后续 LLM 等待。
-        async with _sess._SessionLocal() as voice_db:
-            transcript = await _voice.transcribe(
-                _transcribe_media, settings, db=voice_db, user_id=user_id,
-            )
+        try:
+            async with _sess._SessionLocal() as voice_db:
+                transcript = await _voice.transcribe(
+                    _transcribe_media, settings, db=voice_db, user_id=user_id,
+                    raise_minimax_errors=True,
+                )
+        except Exception as error:
+            from agent.providers.minimax import minimax_error_details
+            if minimax_error_details(error) is None:
+                raise
+            from agent.errors import describe_llm_error
+            error_info = describe_llm_error(error, diagnostic_context="agent.run.preparation.voice")
+            _release_model(model_cfg)
+            return EarlyExit(EARLY_EXIT_PROVIDER_ERROR, AgentResponse(
+                text=error_info.text, session_id=session_id, tokens_in=0, tokens_out=0,
+                errored=True, error_info=error_info,
+            ))
         if transcript is None:        # 未配置语音模型
             _release_model(model_cfg)
             return EarlyExit(EARLY_EXIT_VOICE, AgentResponse(
@@ -440,8 +454,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 tool_db, user_id, session_id, session=session,
             )
             if shell_prompt:
-                system_prompt = session_system.append_shell_prompt(system_prompt, enabled=True)
-                system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
+                _dynamic_extra_parts.append(shell_prompt)
             else:
                 tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
         capability_context = await _capability_context(

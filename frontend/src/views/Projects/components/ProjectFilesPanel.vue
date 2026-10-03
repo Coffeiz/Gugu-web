@@ -72,7 +72,6 @@
                      悬浮操作按钮走 props 和默认插槽。 -->
                 <RuntimeFileCard
                   v-for="file in sortedCurrentFiles" :key="file.id"
-                  class="hover-card-fx"
                   :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'file', file.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
@@ -252,6 +251,10 @@
             :file-count="pmSelectedFileIds.size"
             :folder-count="pmSelectedFolderIds.size"
             :downloading="pmDownloadingZip"
+            :archiving="pmArchiveBusy"
+            :can-extract-archive="pmCanExtractSelectedArchive"
+            @archive="openPmCompressSelected"
+            @extract="extractSelectedPmArchive"
             @download="downloadSelectedPm"
             @cut="pmSelCut"
             @copy="pmSelCopy"
@@ -293,6 +296,7 @@ const {
   pmPreviewFileIds, renamingFileId, startRename, commitRename, renameText, renameExtension,
   cancelRename, thumbLoadedIds, downloadFile, deleteFile, pmHandleFileClick,
   uploadingItems, dragging, handleFileDrop, handleFileInput, fileIconColor, pmDownloadingZip,
+  pmArchiveBusy, pmCanExtractSelectedArchive, openPmCompressSelected, extractSelectedPmArchive,
   downloadSelectedPm, pmSelCut, pmSelCopy, deleteSelectedPm, clearPmSelection, pmCbStore,
   pmSortKey, pmSortDir, onPmSortSelect,
 } = props.context

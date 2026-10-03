@@ -21,6 +21,7 @@ Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin
 # Shell 沙盒固定使用服务用户自己的 Rootless Docker，不得回落到 rootful socket
 Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
 Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
+Environment="GUGU_SANDBOX_MANAGER_MODE=external"
 Environment="DB_STARTUP_TIMEOUT=10"
 # DDL 由 deploy/migrate 步骤单独执行，禁止 2 个 uvicorn worker 在业务流量启动时建表。
 Environment="GUGU_STARTUP_MIGRATIONS=0"

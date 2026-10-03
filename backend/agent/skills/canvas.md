@@ -38,6 +38,7 @@ emoji: 🧠
 画布节点是有尺寸的矩形，不是无尺寸的点。
 
 - `position.x/y` 是卡片**左上角**的世界坐标，不是中心坐标。
+- 创建便签、放置节点及批量创建共用坐标格式：x/y 必须同时提供数值；省略坐标才自动布局，无效坐标会报错。
 - 节点实际占用尺寸优先使用 `layout.effective_size`；读取尺寸用返回结果里的 `layout.effective_size`，设置画布便签尺寸使用 `width` / `height`，不要传内部字段 `w/h`。
 - 未显式设置尺寸时使用 `layout.default_size`。
 - 当前默认尺寸约定：画布便签 `240×140`、项目卡 `240×120`、文件卡 `156×140`、活动卡 `220×96`。
@@ -97,6 +98,7 @@ bottom = y + height
 - 创建普通关系时不要传 `source_side` / `target_side`；只有有意回环或明确端点时才传，并同时传 `allow_custom_anchor=true`。
 - 读取画布关系时，以返回的 `source_node_id` / `target_node_id` 对应端点；数据库可能按节点 ID 归一，不能因此自行交换端点。
 - `canvas_get` 的 `relation_audit` 是只读核对依据：先看两端卡片中心坐标和 `recommended`，`custom` 只表示与默认布局不同，可能是有意回环，不得直接当作错误改写。
+- `include_nodes` 与 `include_relations` 独立；只读关系时不返回节点正文，审计只读取端点几何，`relation_audit_scope=relation_endpoints`。
 - 已有关系修改端点使用 `canvas_update_anchor`；移动节点后不要擅自重算已经确认的端点。
 - 删除便签或关系必须先走确认门。
 

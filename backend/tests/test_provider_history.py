@@ -8,6 +8,7 @@ from agent.context.provider_history import (
     sanitize_anthropic_branch_history,
     strip_thinking_blocks,
 )
+from agent.context.provider_conversation import ProviderConversation
 
 
 class _Adapter:
@@ -22,10 +23,11 @@ def test_native_anthropic_renders_internal_system_reminder_as_user():
         {"role": "system", "content": "[system-reminder]\n时间\n[/system-reminder]"},
         {"role": "user", "content": "继续"},
     ]
-    result = render_anthropic_message_roles(messages, SimpleNamespace(name="anthropic"))
+    projection = ProviderConversation(messages)
+    result = render_anthropic_message_roles(projection, SimpleNamespace(name="anthropic"))
     assert [item["role"] for item in result] == ["user", "user"]
     assert [item["role"] for item in render_anthropic_message_roles(
-        messages, SimpleNamespace(name="minimax"))] == ["user", "user"]
+        projection, SimpleNamespace(name="minimax"))] == ["user", "user"]
 
 
 def test_strip_thinking_blocks_keeps_text_and_tools():
@@ -76,7 +78,8 @@ def test_clean_persisted_history_removes_old_blocks_once():
 
 
 def test_anthropic_branch_history_removes_reasoning_and_orphan_tool_results():
-    history = [
+    from agent.context.provider_conversation import ProviderConversation
+    history = ProviderConversation([
         {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
         {"role": "assistant", "content": [
             {"type": "text", "text": "回答"},
@@ -92,10 +95,10 @@ def test_anthropic_branch_history_removes_reasoning_and_orphan_tool_results():
         {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": "paired", "content": "ok"},
         ]},
-    ]
-    original = [dict(message) for message in history]
+    ])
+    original = history.to_messages()
 
-    cleaned = sanitize_anthropic_branch_history(history)
+    cleaned = sanitize_anthropic_branch_history(history).to_messages()
 
     assert cleaned == [
         {"role": "user", "content": [{"type": "text", "text": "旧问题"}]},
@@ -108,30 +111,32 @@ def test_anthropic_branch_history_removes_reasoning_and_orphan_tool_results():
             {"type": "tool_result", "tool_use_id": "paired", "content": "ok"},
         ]},
     ]
-    assert history == original
+    assert history.to_messages() == original
 
 
 def test_anthropic_branch_history_drops_unanswered_tool_use():
-    history = [
+    from agent.context.provider_conversation import ProviderConversation
+    history = ProviderConversation([
         {"role": "user", "content": [{"type": "text", "text": "请求"}]},
         {"role": "assistant", "content": [
             {"type": "tool_use", "id": "unfinished", "name": "demo", "input": {}},
         ]},
-    ]
+    ])
 
-    assert sanitize_anthropic_branch_history(history) == [
+    assert sanitize_anthropic_branch_history(history).to_messages() == [
         {"role": "user", "content": [{"type": "text", "text": "请求"}]},
     ]
 
 
 def test_anthropic_branch_history_drops_messages_that_only_contain_reasoning():
-    history = [
+    from agent.context.provider_conversation import ProviderConversation
+    history = ProviderConversation([
         {"role": "user", "content": "问题"},
         {"role": "assistant", "content": [
             {"type": "reasoning_content", "text": "provider-specific"},
         ]},
-    ]
+    ])
 
-    assert sanitize_anthropic_branch_history(history) == [
+    assert sanitize_anthropic_branch_history(history).to_messages() == [
         {"role": "user", "content": "问题"},
     ]

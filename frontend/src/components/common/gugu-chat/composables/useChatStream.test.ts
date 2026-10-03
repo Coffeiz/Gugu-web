@@ -38,6 +38,30 @@ describe('useChatStream 停止 run', () => {
     vi.unstubAllGlobals()
   })
 
+  it('同一工具调用从排队中更新为进行中且只保留一张卡片', async () => {
+    const options = createOptions([])
+    const stream = useChatStream(options)
+    let sseController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { sseController = controller },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+
+    const consuming = stream.resumeStream(42)
+    const send = (value: object) => sseController.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`))
+    send({ type: 'tool_call', run_id: 'run-1', round_id: 'round-1', tool_call_id: 'call-1', name: 'shell', status: 'queued' })
+    await vi.waitFor(() => expect(options.messages.value[0]?.toolStatus).toBe('queued'))
+    send({ type: 'tool_call', run_id: 'run-1', round_id: 'round-1', tool_call_id: 'call-1', name: 'shell', status: 'running' })
+    await vi.waitFor(() => expect(options.messages.value[0]?.toolStatus).toBe('running'))
+    send({ type: 'tool_done', run_id: 'run-1', round_id: 'round-1', tool_call_id: 'call-1', name: 'shell', status: 'success' })
+    send({ type: 'done', run_id: 'run-1' })
+    sseController.close()
+    await consuming
+
+    expect(options.messages.value).toHaveLength(1)
+    expect(options.messages.value[0]?.toolStatus).toBe('success')
+  })
+
   it('请求取消时保留 SSE，收到取消终态后将运行中的工具卡收口', async () => {
     const toolMessage: ChatMessage = {
       id: 1, role: 'tool', text: '', time: '12:00', toolStatus: 'running',

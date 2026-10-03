@@ -83,7 +83,8 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(sharedRenameInput).toContain('font: inherit;')
     expect(sharedRenameInput).not.toContain('line-height: normal;')
     expect(filesCss).not.toContain('.rename-sizer--segmented .rename-input-inline')
-    expect(sharedForms).toContain('line-height: var(--line-height-body);')
+    expect(sharedForms).toContain('line-height: var(--input-text-line-height);')
+    expect(sharedForms).toContain('height: var(--input-control-height);')
     expect(renameSurface).toContain('border-color: var(--input-border);')
     expect(surfacesAdoption).toContain('.rename-input-inline:hover')
     expect(surfacesAdoption).toContain('border-color: var(--input-border-hover);')
@@ -106,13 +107,13 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
   it('文件夹与文件 rename 保留完整下伸字形且绝对定位不撑高卡片', () => {
     const sizerRenameInput = cssBlock(filesCss, '.rename-sizer .rename-input-inline {')
     const sharedRenameInput = cssBlock(filesCss, '.rename-input-inline {')
+    expect(sizerRenameInput).toContain('height: auto;')
     expect(sizerRenameInput).toContain('line-height: inherit;')
     expect(sizerRenameInput).toContain('top: -1px; bottom: -1px;')
     expect(sizerRenameInput).not.toContain('line-height: 1.15;')
     expect(sharedRenameInput).toContain('position: absolute;')
     expect(filesCss).toContain('.rename-ghost {')
     expect(cssBlock(filesCss, '.rename-ghost {')).toContain('display: block; visibility: hidden; white-space: pre;')
-    expect(sizerRenameInput).not.toMatch(/(?:^|[;{\s])height\s*:/)
   })
 
   it('共享重命名输入框自动聚焦与失焦提交会给标准焦点过渡留出时间', () => {
@@ -205,14 +206,27 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentSurfaces).toContain('--file-card-hover-overlay: color-mix(in srgb,var(--action-primary) 6%,transparent);')
   })
 
-  it('20.4 selected ring 在 hover 时保持，generic hover utility 不再拥有 File/FolderCard shadow/transition', () => {
+  it('文件、文件夹、项目卡保留专属反馈，通用 hover 层不接管它们的阴影和过渡', () => {
     expect(fileCard).toContain('.fc-card.selected {')
     expect(fileCard).toContain('box-shadow: var(--file-card-shadow-selected);')
     expect(filesGridView).not.toContain('class="hover-card-fx"')
-    expect(productCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):hover')
-    expect(productCss).not.toContain('html[data-theme][data-family] .hover-card-fx:hover { box-shadow:')
-    expect(componentRefinements).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card),')
-    expect(componentRefinements).not.toContain('html[data-theme][data-family] .hover-card-fx,\n')
+    expect(projectFilesPanel).not.toContain('class="hover-card-fx"')
+
+    const genericShadowSelector = productCss
+      .match(/([^{}]+)\{\s*box-shadow:\s*var\(--elevation-card-hover\);/)?.[1]
+      ?.replace(/\s+/g, ' ')
+    const genericMotionSelector = componentRefinements
+      .match(/([^{}]+)\{\s*transition:\s*var\(--card-motion\);/)?.[1]
+      ?.replace(/\s+/g, ' ')
+
+    expect(genericShadowSelector).toBeDefined()
+    expect(genericMotionSelector).toBeDefined()
+    for (const ownerClass of ['fc-card', 'folder-card', 'proj-card']) {
+      expect(genericShadowSelector).toContain(`:not(.${ownerClass})`)
+    }
+    for (const ownerClass of ['fc-card', 'folder-card', 'note-card', 'proj-card']) {
+      expect(genericMotionSelector).toContain(`:not(.${ownerClass})`)
+    }
   })
 
   it('框选 preview 与已选集合视觉互斥，同时保留完整 mouseup 命中集合', () => {
@@ -220,6 +234,10 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(boxSelection).toContain('!selectedFileIds.value.has(id)')
     expect(boxSelection).toContain('!selectedFolderIds.value.has(id)')
     expect(filesListRows).toContain(':hover:not(.selected):not(.pre-selected)')
+    expect(filesListRows).toContain(':hover:not(.selected):not(.pre-selected) { background: var(--action-soft); }')
+    expect(filesListRows).not.toContain('background: rgba(180,148,80,0.06);')
+    expect(filesListRows).not.toContain('.list-row.folder-row):hover:not(.selected):not(.pre-selected)')
+    expect(filesListRows).not.toContain("html[data-theme='dark'][data-family] .list-row:hover { background:")
     expect(filesListRows).toContain('.pre-selected:not(.selected)')
   })
 

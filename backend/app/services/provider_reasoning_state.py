@@ -102,7 +102,7 @@ async def load_state(
     await _owned_session(db, user_id, session_id)
     row = await _find_row(db, user_id, session_id, lock=True)
     if row is None:
-        reason = "disabled" if policy.mode == "off" else "summary_only" if policy.mode == "summary" else None
+        reason = "disabled" if policy.mode == "off" else None
         return ProviderStateLookup(expected_version=0, unavailable_reason=reason)
 
     current = now or now_utc()
@@ -110,10 +110,6 @@ async def load_state(
         if row.status == "active":
             _invalidate_row(row, "disabled", current)
         return ProviderStateLookup(expected_version=row.version, unavailable_reason="disabled")
-    if policy.mode == "summary":
-        if row.status == "active":
-            _invalidate_row(row, "summary_only", current)
-        return ProviderStateLookup(expected_version=row.version, unavailable_reason="summary_only")
     if row.status != "active":
         return ProviderStateLookup(
             expected_version=row.version,
@@ -190,12 +186,6 @@ async def commit_state(
         raise ProviderStateConflict("provider state 归属不匹配")
     if envelope.reasoning_persistence == "off":
         raise ValueError("off 策略不能提交 provider state")
-    if envelope.reasoning_persistence == "summary":
-        if envelope.state_kind != "summary" or not isinstance(envelope.payload, dict):
-            raise ValueError("summary 策略不能提交完整 provider payload")
-        if envelope.payload != envelope.state_summary:
-            raise ValueError("summary 策略只能提交受限状态摘要")
-
     row = await _find_row(db, user_id, session_id, lock=True)
     if row is None:
         if expected_version != 0:

@@ -66,7 +66,7 @@ def _replay_request(record: MindCanvasBatchRequest, fingerprint: str, request_id
 
 
 def _finite_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return canvas_layout.finite_number(value)
 
 
 async def batch_canvas_operations(

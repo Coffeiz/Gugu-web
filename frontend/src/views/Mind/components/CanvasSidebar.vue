@@ -45,8 +45,8 @@
     >
        <section class="cd-content-panel projects-panel" :class="contentPanelClass('projects')" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
-           <SearchInput v-model="projectQuery" class="project-search" :placeholder="t('mindUi.filterProjects')" :no-focus-ring="true" @pointerdown.stop />
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
+           <SearchInput v-model="projectQuery" class="project-search" data-scrollbar-inset-header :placeholder="t('mindUi.filterProjects')" :no-focus-ring="true" @pointerdown.stop />
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
@@ -347,7 +347,20 @@ onMounted(() => {
 .project-list-scroll { flex: 1 1 auto; max-height: none; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: auto; }
 
 .project-search {
-  flex: 0 0 38px;
+  position: sticky;
+  top: 1px;
+  z-index: 2;
+  --input-bg: var(--surface-canvas-card);
+  --input-bg-focus: var(--surface-canvas-card);
+}
+/* 给 sticky 顶边补一个同色像素，卡片滚过筛选框时不会从边缘露出。 */
+.project-search::before {
+  content: '';
+  position: absolute;
+  inset: -2px -1px auto;
+  height: 1px;
+  background: var(--surface-canvas-card);
+  pointer-events: none;
 }
 .canvas-track[data-drawer-scroll] { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: auto; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }

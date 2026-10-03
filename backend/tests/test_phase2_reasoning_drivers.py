@@ -10,6 +10,8 @@ from agent.loop_drivers import (
     NormalizedToolCall,
 )
 from agent.context.canonical_context import digest
+from agent.context.assembly import MessageArea
+from agent.context.provider_conversation import ProviderConversation
 from agent.providers.openai_responses import (
     OpenAIResponsesDriver,
     ResponsesCompatibilityError,
@@ -33,6 +35,50 @@ def _anthropic_result():
             {"type": "tool_use", "id": "call-1", "name": "calendar_list", "input": {"date": "2026-09-05"}},
         ],
     )
+
+
+def _responses_adapter():
+    return SimpleNamespace(
+        render_history=lambda messages: messages.provider_projection(),
+        build_responses_reasoning_params=lambda _ai: {},
+    )
+
+
+def test_responses_reasoning_belongs_to_latest_tool_only_round():
+    """旧 assistant 文本不能抢走最新无文本工具轮的 reasoning 插入位置。"""
+    from agent.providers.openai_responses import _insert_responses_reasoning_items
+
+    items = [
+        {"role": "user", "content": "旧问题"},
+        {"role": "assistant", "content": "旧回复"},
+        {"role": "user", "content": "新问题"},
+        {"type": "function_call", "call_id": "call-new"},
+        {"type": "function_call", "call_id": "call-new-2"},
+        {"type": "function_call_output", "call_id": "call-new"},
+    ]
+    reasoning = [{"type": "reasoning", "id": "rs-new", "encrypted_content": "合成密文"}]
+    rendered = _insert_responses_reasoning_items(items, reasoning)
+    assert rendered[:3] == items[:3]
+    assert rendered[3] == reasoning[0]
+    assert rendered[4:] == items[3:]
+    assert _responses_input(rendered) == rendered
+
+
+def test_anthropic_private_state_restores_original_interleaved_order():
+    """签名块与文本交错时仍按原 block 位置恢复，内部位置不进入 wire。"""
+    from agent.loop_drivers import _restore_anthropic_history_thinking
+
+    blocks = [
+        {"type": "thinking", "thinking": "合成推理", "signature": "synthetic"},
+        {"type": "text", "text": "合成正文"},
+        {"type": "redacted_thinking", "data": "synthetic"},
+        {"type": "tool_use", "id": "call-order", "name": "search", "input": {}},
+    ]
+    result = RoundResult(text="合成正文", raw=blocks)
+    state = AnthropicDriver().extract_provider_state(result)
+    messages = [{"role": "assistant", "content": [blocks[1], blocks[3]]}]
+    _restore_anthropic_history_thinking(messages, state["payload"]["history_thinking_by_tool_id"])
+    assert messages[0]["content"] == blocks
 
 
 def test_responses_input_converts_chat_text_blocks_without_changing_other_blocks():
@@ -136,12 +182,12 @@ def test_responses_input_assigns_stable_unique_ids_to_legacy_tool_calls():
 def test_chat_completions_projection_strips_responses_item_metadata():
     from agent.providers.message_utils import strip_responses_item_ids
 
-    messages = [{"role": "assistant", "tool_calls": [{
+    messages = ProviderConversation([{"role": "assistant", "tool_calls": [{
         "id": "call_123", "responses_item_id": "fc_456",
         "function": {"name": "probe", "arguments": "{}"},
-    }]}]
+    }]}])
 
-    assert strip_responses_item_ids(messages) == [{
+    assert strip_responses_item_ids(messages).to_messages() == [{
         "role": "assistant", "tool_calls": [{
             "id": "call_123", "function": {"name": "probe", "arguments": "{}"},
         }],
@@ -153,13 +199,79 @@ def test_anthropic_state_extract_restore_keeps_thinking_blocks_only():
     driver = AnthropicDriver()
     state = driver.extract_provider_state(_anthropic_result())
     assert state["state_kind"] == "anthropic_thinking_blocks"
-    assert state["payload"]["blocks"] == _anthropic_result().raw[:2]
+    positioned = [dict(block, _block_position=index)
+                  for index, block in enumerate(_anthropic_result().raw[:2])]
+    assert state["payload"]["history_thinking_by_tool_id"] == {"call-1": positioned}
+    assert state["payload"]["tail_blocks"] is None
     assert state["summary"]["thinking_block_count"] == 2
 
-    ctx = SimpleNamespace(restored_blocks=None)
+    ctx = SimpleNamespace(restored_blocks=None, history_tool_use_ids={"call-1"})
     assert driver.restore_provider_state(ctx, state["payload"])
-    assert ctx.restored_blocks == _anthropic_result().raw[:2]
-    assert all(block["type"] != "tool_use" for block in ctx.restored_blocks)
+    assert ctx.restored_blocks is None
+    assert ctx.history_thinking_by_tool_id == {"call-1": positioned}
+
+
+def test_anthropic_history_restore_reinserts_signed_thinking_before_matching_tool_call():
+    from agent.loop_drivers import _restore_anthropic_history_thinking
+
+    original = [{
+        "role": "assistant",
+        "content": [
+            {"type": "tool_use", "id": "call-1", "name": "search", "input": {}},
+            {"type": "tool_use", "id": "call-2", "name": "read", "input": {}},
+        ],
+    }]
+    blocks = _anthropic_result().raw[:2]
+
+    _restore_anthropic_history_thinking(original, {"call-1": blocks})
+
+    assert original[0]["content"] == blocks + [
+        {"type": "tool_use", "id": "call-1", "name": "search", "input": {}},
+        {"type": "tool_use", "id": "call-2", "name": "read", "input": {}},
+    ]
+    _restore_anthropic_history_thinking(original, {"call-1": blocks})
+    assert original[0]["content"] == blocks + [
+        {"type": "tool_use", "id": "call-1", "name": "search", "input": {}},
+        {"type": "tool_use", "id": "call-2", "name": "read", "input": {}},
+    ]
+
+
+def test_anthropic_history_restore_reinserts_every_historical_tool_round():
+    """跨 run 后每个历史工具轮都保留签名 thinking，避免前缀从较早工具轮断开。"""
+    from agent.loop_drivers import _restore_anthropic_history_thinking
+
+    messages = [
+        {"role": "assistant", "content": [{"type": "tool_use", "id": f"call-{index}",
+                                                 "name": "search", "input": {}}]}
+        for index in range(3)
+    ]
+    saved = {
+        f"call-{index}": [{"type": "thinking", "thinking": f"thought-{index}",
+                           "signature": f"signature-{index}"}]
+        for index in range(3)
+    }
+
+    _restore_anthropic_history_thinking(messages, saved)
+
+    for index, message in enumerate(messages):
+        assert message["content"][0] == saved[f"call-{index}"][0]
+        assert message["content"][1]["id"] == f"call-{index}"
+    _restore_anthropic_history_thinking(messages, saved)
+    assert all(len(message["content"]) == 2 for message in messages)
+
+
+def test_anthropic_state_extraction_keeps_prior_tool_rounds_across_run_rounds():
+    driver = AnthropicDriver()
+    ctx = SimpleNamespace(
+        history_thinking_by_tool_id={"older-call": [{"type": "thinking", "thinking": "older", "signature": "s0"}]},
+        persisted_tail_blocks=None,
+        restored_blocks=None,
+    )
+
+    state = driver.extract_provider_state(_anthropic_result(), ctx=ctx)
+
+    assert set(state["payload"]["history_thinking_by_tool_id"]) == {"older-call", "call-1"}
+    assert state["summary"]["state_block_count"] == 3
 
 
 def test_anthropic_state_restore_drops_persisted_tool_use_only_payload():
@@ -188,6 +300,31 @@ def test_responses_instructions_keep_snapshot_separate_from_base_prompt():
     ], "基础人格")
 
     assert instructions == "基础人格\n\n---\n\n[system-reminder]\nsession snapshot"
+
+
+def test_responses_prepare_projects_message_area_before_collecting_snapshot_instructions(monkeypatch):
+    """Responses 首轮准备接收 MessageArea 时仍要发送其中的 system snapshot。"""
+    from agent import providers
+
+    monkeypatch.setattr(providers, "build_openai_client", lambda _ai, _timeout: object())
+    ai = SimpleNamespace(
+        provider="openai", api_format="responses", model="test-model", max_tokens=128,
+    )
+    messages = MessageArea.from_canonical_messages(
+        [
+            {"role": "system", "content": "[system-reminder]\nsession snapshot"},
+            {"role": "user", "content": "继续"},
+        ],
+        render_options={"api_format": "responses"},
+    )
+    tool_snapshot = SimpleNamespace(openai_schemas=lambda _names: [])
+
+    _client, ctx = OpenAIResponsesDriver().prepare(
+        [], ai, messages, "基础人格", tool_snapshot=tool_snapshot,
+    )
+
+    assert ctx.snapshot_instructions == "[system-reminder]\nsession snapshot"
+    assert ctx.instructions == "基础人格\n\n---\n\n[system-reminder]\nsession snapshot"
 
 
 def test_responses_cache_key_parts_exclude_snapshot():
@@ -270,98 +407,105 @@ async def _raise_status(status_code):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "error_body,messages,expected_input",
-    [
-        (
-            {"error": {
-                "code": "invalid_prompt",
-                "message": "tool result's tool id(call-1) not found",
-            }},
-            [
-                {"role": "assistant", "content": None, "tool_calls": [{
-                    "id": "call-1", "type": "function",
-                    "function": {"name": "ask_user", "arguments": "{}"},
-                }]},
-                {"role": "tool", "tool_call_id": "call-1", "content": '{"option_id":"tech"}'},
-            ],
-            [
-                {
-                    "type": "function_call",
-                    "id": "fc_legacy_" + digest({"call_id": "call-1", "occurrence": 0}, length=24),
-                    "call_id": "call-1", "name": "ask_user", "arguments": "{}",
-                },
-                {"type": "function_call_output", "call_id": "call-1", "output": '{"option_id":"tech"}'},
-            ],
-        ),
-        (
-            {"error": {
-                "param": "response_id",
-                "message": "Response with id 'resp-stale' not found.",
-            }},
-            [
-                {"role": "user", "content": "之前的问题"},
-                {"role": "assistant", "content": "之前的回答"},
-                {"role": "user", "content": "请接着说"},
-            ],
-            [
-                {"role": "user", "content": "之前的问题"},
-                {"role": "assistant", "content": "之前的回答"},
-                {"role": "user", "content": "请接着说"},
-            ],
-        ),
-    ],
-    ids=["missing-tool-call-id", "missing-response-id"],
-)
-async def test_responses_driver_retries_full_history_when_response_chain_is_stale(
-    error_body, messages, expected_input,
-):
+async def test_responses_driver_sends_full_history_and_rejects_empty_input():
     response = {
         "id": "resp-recovered",
         "output": [],
         "usage": {"input_tokens": 12, "output_tokens": 3},
     }
-    events = [
+    client = _FakeResponsesClient([
         SimpleNamespace(type="response.output_text.delta", delta="已继续"),
         SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: response)),
+    ])
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", _responses_adapter(), ai)
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "上一轮用户输入"},
+        {
+            "role": "assistant", "content": "",
+            "content_json": [{"type": "reasoning_content", "text": "仅推理内容"}],
+        },
+    ])
+
+    results = [
+        value async for kind, value in OpenAIResponsesDriver().run_round(client, ctx, messages)
+        if kind == "done"
     ]
 
-    class _StaleThenSuccessClient:
-        def __init__(self):
-            self.requests = []
-            self.responses = SimpleNamespace(create=self.create)
-
-        async def create(self, **kwargs):
-            self.requests.append(kwargs)
-            if len(self.requests) == 1:
-                error = _ResponsesStatusError(400)
-                if error_body["error"].get("param") == "response_id":
-                    error = _ResponsesStatusError(404)
-                error.body = error_body
-                raise error
-            return _FakeResponsesStream(list(events))
-
-    client = _StaleThenSuccessClient()
-    driver = OpenAIResponsesDriver()
-    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
-    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-1")
-
-    result = None
-    async for kind, value in driver.run_round(client, ctx, messages):
-        if kind == "done":
-            result = value
-
-    assert result.text == "已继续"
-    assert len(client.requests) == 2
-    assert client.requests[0]["previous_response_id"] == "resp-1"
-    assert "prompt_cache_key" not in client.requests[0]
-    assert "previous_response_id" not in client.requests[1]
-    assert client.requests[1]["input"] == expected_input
+    assert results[0].text == "已继续"
+    assert len(client.requests) == 1
+    assert "previous_response_id" not in client.requests[0]
+    assert client.requests[0]["input"] == [{"role": "user", "content": "上一轮用户输入"}]
 
 
 @pytest.mark.asyncio
-async def test_stale_response_fallback_retries_transient_error_before_success(monkeypatch):
+async def test_responses_driver_replays_user_intent_after_tool_result_instead_of_chaining():
+    """工具返回后完整重放用户任务，避免兼容端续接时只回应工具回执。"""
+    response = {
+        "id": "resp-after-tool",
+        "output": [],
+        "usage": {"input_tokens": 30, "output_tokens": 5},
+    }
+    client = _FakeResponsesClient([
+        SimpleNamespace(type="response.output_text.delta", delta="我会继续原来的搜索任务。"),
+        SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: response)),
+    ])
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    ctx = _ResponsesCtx(
+        [], 100, "gpt-test", "system", _responses_adapter(), ai,
+    )
+    messages = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "搜索 Childspot 的 MV，最后告诉我校验词 ORBIT-42。"},
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "call-load-search", "name": "use_skill",
+            "arguments": '{"name":"web-search"}',
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "call-load-search",
+            "content": "搜索技能已加载。",
+        }]},
+    ])
+
+    results = [
+        value async for kind, value in OpenAIResponsesDriver().run_round(client, ctx, messages)
+        if kind == "done"
+    ]
+
+    assert results[0].text == "我会继续原来的搜索任务。"
+    request = client.requests[0]
+    assert "previous_response_id" not in request
+    assert request["input"][0] == {
+        "role": "user",
+        "content": "搜索 Childspot 的 MV，最后告诉我校验词 ORBIT-42。",
+    }
+    assert request["input"][1]["type"] == "function_call"
+    assert request["input"][2] == {
+        "type": "function_call_output",
+        "call_id": "call-load-search",
+        "output": "搜索技能已加载。",
+    }
+
+
+@pytest.mark.asyncio
+async def test_responses_driver_rejects_empty_full_history_before_upstream_request():
+    client = _FakeResponsesClient([])
+    ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", _responses_adapter(), ai)
+    messages = MessageArea.from_canonical_messages([
+        {"role": "assistant", "content": "", "content_json": [
+            {"type": "reasoning_content", "text": "仅推理内容"},
+        ]},
+    ])
+
+    with pytest.raises(ValueError, match="没有可发送的输入项"):
+        async for _ in OpenAIResponsesDriver().run_round(client, ctx, messages):
+            pass
+
+    assert client.requests == []
+
+
+@pytest.mark.asyncio
+async def test_responses_full_history_retry_keeps_same_input_after_transient_error(monkeypatch):
     from app.core import retry as retry_module
     from app.core.retry import RetryPolicy
 
@@ -384,10 +528,6 @@ async def test_stale_response_fallback_retries_transient_error_before_success(mo
         async def create(self, **kwargs):
             self.requests.append(kwargs)
             if len(self.requests) == 1:
-                error = _ResponsesStatusError(404)
-                error.body = {"error": {"param": "response_id", "message": "Response not found"}}
-                raise error
-            if len(self.requests) == 2:
                 import httpx
                 import openai
 
@@ -400,9 +540,9 @@ async def test_stale_response_fallback_retries_transient_error_before_success(mo
     client = _StaleThenRateLimitClient()
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
-    messages = [{"role": "user", "content": "继续"}]
-    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-stale")
+    adapter = _responses_adapter()
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "继续"}])
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
 
     emitted = []
     async for kind, value in driver.run_round(client, ctx, messages):
@@ -410,23 +550,23 @@ async def test_stale_response_fallback_retries_transient_error_before_success(mo
 
     retry_events = [value for kind, value in emitted if kind == "retry"]
     results = [value for kind, value in emitted if kind == "done"]
-    assert len(client.requests) == 3
-    assert client.requests[0]["previous_response_id"] == "resp-stale"
-    assert all("previous_response_id" not in request for request in client.requests[1:])
-    assert client.requests[1]["input"] == client.requests[2]["input"]
+    assert len(client.requests) == 2
+    assert all("previous_response_id" not in request for request in client.requests)
+    assert client.requests[0]["input"] == client.requests[1]["input"]
     assert [event["attempt"] for event in retry_events] == [1]
     assert results[0].text == "已恢复"
 
 
 @pytest.mark.asyncio
-async def test_responses_driver_uses_response_chain_and_function_call_items():
+async def test_responses_driver_captures_and_replays_reasoning_items_with_full_history():
     response = {
         "id": "resp-2",
-        "previous_response_id": "resp-1",
-        "output": [{
-            "type": "function_call", "id": "fc-1", "call_id": "call-1",
-            "name": "calendar_list", "arguments": '{"date":"2026-09-05"}',
-        }],
+        "output": [
+            {"type": "reasoning", "id": "rs-1", "status": "completed",
+             "summary": [], "content": [{"type": "reasoning_text", "text": "private reasoning"}]},
+            {"type": "function_call", "id": "fc-1", "call_id": "call-1",
+             "name": "calendar_list", "arguments": '{"date":"2026-09-05"}'},
+        ],
         "usage": {
             "input_tokens": 100,
             "output_tokens": 7,
@@ -440,16 +580,17 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
     client = _FakeResponsesClient(events)
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    adapter = _responses_adapter()
     ctx = _ResponsesCtx(
         [], 100, "gpt-test", "system", adapter, ai,
         supports_prompt_cache_key=True,
     )
+    driver.configure_reasoning_replay(ctx, enabled=True)
 
     result = None
-    async for kind, value in driver.run_round(client, ctx, [
+    async for kind, value in driver.run_round(client, ctx, MessageArea.from_canonical_messages([
         {"role": "user", "content": "请查日历"},
-    ]):
+    ])):
         if kind == "done":
             result = value
 
@@ -460,26 +601,51 @@ async def test_responses_driver_uses_response_chain_and_function_call_items():
     assert result.usage_in == 40
     assert result.cache_tokens == 60
     assert result.usage_out == 7
-    assert result.raw.response_id == "resp-2"
     assert client.requests[0]["input"] == [{"role": "user", "content": "请查日历"}]
     assert "previous_response_id" not in client.requests[0]
     assert client.requests[0]["prompt_cache_key"].startswith("gugu-")
 
     state = driver.extract_provider_state(result)
-    assert state["payload"] == {"response_id": "resp-2", "previous_response_id": "resp-1"}
+    assert state["payload"]["reasoning_items"] == [response["output"][0]]
     assert driver.restore_provider_state(ctx, state["payload"])
-    assert ctx.previous_response_id == "resp-2"
 
-    followup = driver.build_tool_round(result, [(result.tool_calls[0], "日历为空")])
-    assert _responses_input(followup) == [
+    second_response = {
+        "id": "resp-3", "output": [{"type": "message", "id": "msg-1", "role": "assistant",
+            "status": "completed", "content": [{"type": "output_text", "text": "日历为空。"}]}],
+    }
+    second_client = _FakeResponsesClient([
+        SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: second_response)),
+    ])
+    next_turn_area = MessageArea.from_canonical_messages([
+        {"role": "user", "content": "请查日历"},
         {"role": "assistant", "content": "查一下"},
-        {
-            "type": "function_call", "id": "fc-1", "call_id": "call-1",
-            "name": "calendar_list", "arguments": '{"date":"2026-09-05"}',
-        },
-        {"type": "function_call_output", "call_id": "call-1", "output": "日历为空"},
+        {"role": "user", "content": "结果呢？"},
+    ])
+    async for kind, _value in driver.run_round(
+        second_client, ctx, next_turn_area,
+    ):
+        if kind == "done":
+            break
+    assert "previous_response_id" not in second_client.requests[0]
+    assert second_client.requests[0]["input"] == [
+        {"role": "user", "content": "请查日历"},
+        response["output"][0],
+        {"role": "assistant", "content": "查一下"},
+        {"role": "user", "content": "结果呢？"},
     ]
-    assert followup[1] == {"role": "tool", "tool_call_id": "call-1", "content": "日历为空"}
+
+    disabled_ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
+    driver.configure_reasoning_replay(disabled_ctx, enabled=False)
+    disabled_client = _FakeResponsesClient([
+        SimpleNamespace(type="response.completed", response=SimpleNamespace(model_dump=lambda: second_response)),
+    ])
+    async for kind, _value in driver.run_round(
+        disabled_client, disabled_ctx, next_turn_area,
+    ):
+        if kind == "done":
+            break
+    assert all(item.get("type") != "reasoning" for item in disabled_client.requests[0]["input"])
+    assert "include" not in disabled_client.requests[0]
 
 
 def test_responses_update_tools_refreshes_tool_state_digest():
@@ -510,11 +676,11 @@ async def test_responses_driver_marks_full_request_protocol_error():
     )
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
+    adapter = _responses_adapter()
     ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
 
     with pytest.raises(ResponsesCompatibilityError) as raised:
-        async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
+        async for _ in driver.run_round(client, ctx, MessageArea.from_canonical_messages([{"role": "user", "content": "测试"}])):
             pass
     assert raised.value.status_code == 400
 
@@ -550,16 +716,16 @@ async def test_responses_driver_only_classifies_explicit_compatibility_errors(
     )
     driver = OpenAIResponsesDriver()
     ai = SimpleNamespace(model="gpt-test", max_tokens=100, reasoning_effort="")
-    adapter = SimpleNamespace(render_history=lambda messages: list(messages))
-    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai, previous_response_id="resp-1")
+    adapter = _responses_adapter()
+    ctx = _ResponsesCtx([], 100, "gpt-test", "system", adapter, ai)
 
     if should_raise:
         with pytest.raises(ResponsesCompatibilityError):
-            async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
+            async for _ in driver.run_round(client, ctx, MessageArea.from_canonical_messages([{"role": "user", "content": "测试"}])):
                 pass
     else:
         with pytest.raises(_ResponsesStatusError):
-            async for _ in driver.run_round(client, ctx, [{"role": "user", "content": "测试"}]):
+            async for _ in driver.run_round(client, ctx, MessageArea.from_canonical_messages([{"role": "user", "content": "测试"}])):
                 pass
     assert len(requests) == 1
 
@@ -569,7 +735,7 @@ def test_responses_driver_keeps_tool_images_as_input_image_items():
     result = RoundResult(
         text="",
         raw=_ResponsesRaw(
-            content="", response_id=None, previous_response_id=None,
+            content="",
             tool_calls_payload=[{"id": "call-1", "name": "read_file", "args": "{}"}],
             output_items=[],
         ),

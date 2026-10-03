@@ -247,7 +247,7 @@ async def test_image_search_only_returns_candidates_without_visual_inspection(mo
 
     result = await search_tools._searxng_image_search(None, None, {"query": "cat"})
 
-    assert "_vision_images" not in result
+    assert "_image_blocks" not in result
     assert result["results"][0]["img_src"] == "https://example.com/cat.jpg"
 
 

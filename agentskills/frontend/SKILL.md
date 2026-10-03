@@ -61,10 +61,15 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 - 卡片内联重命名沿用共享 ghost sizer：单输入模式由隐藏 ghost 的自然行盒决定高度，input 绝对定位覆盖其上；不要给共享单输入 sizer 强制 `1lh` 高度或 `appearance: none`。输入框继承名称行行高，若内容盒空间不足，只扩展绝对定位 input 的上下边界到名称行预留留白；不得压低 `line-height` 或改变 sizer 流式高度。分段布局只增加容器规则，文件夹、文件名与后缀输入继续共用同一输入样式。窄控件需实测 `g`、`p`、`q` 等下伸字形及基线，避免 input 内容区裁切。
 - 文件、文件夹等同类重命名输入必须复用同一基础 class、CSS 规则和 design token；分段布局只增加容器布局规则，不复制输入框外观或叠画第二层焦点光晕。输入框不得覆盖元信息或撑高卡片；焦点态沿用标准描边与光晕。窄控件需在浏览器用含下伸字母的值（如 `gg`）实测字形、基线、焦点样式和相邻元信息间距。
 
+## 输入框标题交互
+
+- 字段标题与输入控件分开布局，标题点击不应触发输入框聚焦；不要用包裹输入框的 `<label>` 实现布局。使用 `aria-label` 或 `aria-labelledby` 为控件提供可访问名称。
+- 输入框使用公共 `.form-input` 样式与 `--input-*` 焦点令牌，包含背景、描边、焦点光晕及淡入淡出过渡；页面局部样式只负责尺寸和布局，不得另画瞬时 outline 或覆盖标准焦点状态。
+
 ## 验证
 
 - 修改完成后按风险运行 typecheck、测试，并在 devserver 验证 UI。
-- 完成功能或提交前运行完整 `npm run typecheck`；涉及 strict 白名单文件用 `npm run typecheck:strict`。
+- 完成功能或提交前运行完整 `corepack pnpm --filter gugu-web run typecheck`；涉及 strict 白名单文件用 `corepack pnpm --filter gugu-web run typecheck:strict`。
 
 ## PR 前本地 CI（GitHub Actions 已禁用）
 
@@ -72,10 +77,10 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 
 ```bash
 cd frontend
-npm run typecheck          # TypeScript 类型检查
-npm run typecheck:strict   # strict 模式（涉及 strict 白名单文件时）
-npm run test:run           # 单元测试（vitest 单次运行）
-npm run build              # 构建验证
+corepack pnpm --filter gugu-web run typecheck          # TypeScript 类型检查
+corepack pnpm --filter gugu-web run typecheck:strict   # strict 模式（涉及 strict 白名单文件时）
+corepack pnpm --filter gugu-web run test:run           # 单元测试（vitest 单次运行）
+corepack pnpm --filter gugu-web run build              # 构建验证
 ```
 
 全部通过后再提交 PR。不需要等待 GitHub CI——本地通过即可。

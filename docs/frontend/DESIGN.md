@@ -91,7 +91,7 @@ Token 必须沿着“基础值 -> 主题/色板 -> 语义角色 -> 组件契约�
 4. 建立完整状态组，并在组件 owner 中消费；删除旧别名和重复 CSS，不能通过选择器优先级压住旧规则。
 5. 在 `frontend/src/views/Design/data/tokenCatalog.ts` 登记名称、变量、类别、类型和用途。目录只保存元数据，不复制 CSS 实际值。
 6. 在 `/design` 增加真实样板或索引入口，展示默认态与关键交互态，并确认页面使用的是实际 token。
-7. 更新受影响的组件测试、CSS 回归测试和必要的浏览器验证；运行 `npm run typecheck`、相关测试和构建检查。
+7. 更新受影响的组件测试、CSS 回归测试和必要的浏览器验证；运行 `corepack pnpm --filter gugu-web run typecheck`、相关测试和构建检查。
 
 ## `/design` 设计系统页面
 

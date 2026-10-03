@@ -46,6 +46,7 @@
             <ProfileByokPane v-else-if="activeNav === 'byok'" />
             <ProfileToolPermissionsPane v-else-if="activeNav === 'tools'" />
             <ProfileWorkspacesPane v-else-if="activeNav === 'workspaces'" />
+            <ProfileDataPortabilityPane v-else-if="activeNav === 'data'" />
             <ProfileImPane v-else-if="activeNav === 'im'" />
             <ProfilePreferencesPane v-else-if="activeNav === 'prefs'" />
           </KeepAlive>
@@ -89,6 +90,7 @@ import ProfileImPane from './ProfileImPane.vue'
 import ProfileToolPermissionsPane from './ProfileToolPermissionsPane.vue'
 import ProfileWorkspacesPane from './ProfileWorkspacesPane.vue'
 import ProfileByokPane from './ProfileByokPane.vue'
+import ProfileDataPortabilityPane from './ProfileDataPortabilityPane.vue'
 import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/core/windowz'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -112,6 +114,7 @@ const navItems = [
   { key: 'byok', label: 'sharedUi.modelConfigNav', icon: 'user.security' },
   { key: 'tools', label: 'sharedUi.capabilityConfig', icon: 'admin.wrench' },
   { key: 'workspaces', label: 'sharedUi.workspaces', icon: 'admin.folder' },
+  { key: 'data', label: 'profileDataUi.nav', icon: 'user.settings' },
 ]
 const activeNav = ref('info')
 const currentNavLabel = computed(() => { const key = navItems.find(n => !n.divider && n.key === activeNav.value)?.label; return key ? t(key) : '' })
@@ -321,9 +324,9 @@ async function doDeleteAccount() {
 .pm-bind-btn {
   padding: 6px 16px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent);
   font: 600 12px var(--font-sans); cursor: pointer; box-shadow: var(--elevation-card);
-  transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard);
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
-.pm-bind-btn:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
+.pm-bind-btn:hover:not(:disabled) { opacity: .9; }
 .pm-bind-btn:disabled { opacity: .4; cursor: default; }
 .pm-danger-btn {
   padding: 6px 16px; border-radius: var(--danger-button-radius); border: 1px solid var(--danger-button-border);
@@ -369,8 +372,8 @@ async function doDeleteAccount() {
 .pm-msg { font-size: 12px; margin-right: auto; }
 .pm-msg.ok { color: var(--status-success); }
 .pm-msg.err { color: var(--status-danger); }
-.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: none; transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard); }
-.pm-save-btn:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); }
+.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: none; transition: opacity var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-save-btn:hover:not(:disabled) { opacity: .88; }
 .pm-save-btn:disabled { opacity: .35; cursor: default; transform: none; }
 
 .pm-quota-skeleton { display: flex; flex-direction: column; gap: 14px; }

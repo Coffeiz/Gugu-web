@@ -64,6 +64,31 @@ def test_ensure_sandbox_acl_uses_bootstrap_rootful_mapping(tmp_path: Path, monke
     assert applied[0].mapped_gid == 65532
 
 
+def test_embedded_rootless_acl_allows_daemon_to_traverse_data_without_recursive_data_acl(
+    tmp_path: Path, monkeypatch, reset_acl_caches,
+):
+    data_root = tmp_path / "data"
+    users_root = data_root / "users"
+    workspace = users_root / "synthetic-user" / "shell"
+    workspace.mkdir(parents=True)
+    applied = []
+    monkeypatch.setenv("GUGU_SANDBOX_MANAGER_MODE", "embedded")
+    monkeypatch.setenv("GUGU_DATA_DIR", str(data_root))
+    monkeypatch.setenv("GUGU_ROOTLESS_UID", "1000")
+    monkeypatch.setattr(rootless_permissions.shutil, "which", lambda name: "/usr/bin/setfacl")
+    monkeypatch.setattr(rootless_permissions, "_read_runtime_identity", lambda: (165531, 165531))
+    monkeypatch.setattr(rootless_permissions, "apply_permission_plan", lambda plan: None)
+    monkeypatch.setattr(
+        rootless_permissions.subprocess, "run",
+        lambda command, **kwargs: applied.append(command),
+    )
+
+    assert ensure_sandbox_acl(workspace) is True
+    acl_targets = [Path(command[-1]) for command in applied]
+    assert acl_targets == [workspace, workspace.parent, users_root, data_root]
+    assert applied[-1] == ("setfacl", "-m", "u:1000:--x", str(data_root))
+
+
 def test_runtime_identity_reads_and_validates_bootstrap_file(tmp_path: Path, monkeypatch):
     identity_file = tmp_path / "sandbox-storage-identity.json"
     monkeypatch.setattr(rootless_permissions, "_RUNTIME_IDENTITY_PATH", identity_file)

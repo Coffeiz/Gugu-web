@@ -177,7 +177,7 @@ html[data-theme][data-family] .np-search {
 html[data-theme][data-family] .np-search:focus {
   background: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
+  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
 }
 html[data-theme][data-family] .np-note:hover { background: var(--control-bg-hover); }
 html[data-theme][data-family] .canvas-create-card {

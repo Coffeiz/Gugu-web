@@ -1,7 +1,9 @@
 """通知气泡的已读补弹策略。"""
 
-from app.api.v1.notifications import latest_bubble
-from app.models import NotificationRead, SiteNotification
+from sqlalchemy import select
+
+from app.api.v1.notifications import clear_notifications, latest_bubble, list_notifications
+from app.models import NotificationDismissal, NotificationRead, SiteNotification
 
 
 async def test_admin_history_excludes_scheduled_task_notifications(db):
@@ -53,3 +55,28 @@ async def test_latest_bubble_skips_read_latest_and_returns_unread_older_bubble(d
 
     result = await latest_bubble(user_a, db)
     assert result["bubble"]["id"] == older.id
+
+
+async def test_clearing_notifications_hides_them_only_for_current_user(db, user_a, user_b):
+    notification = SiteNotification(
+        title="共享通知",
+        content="内容",
+        target="all",
+        bubble=True,
+        persist=True,
+    )
+    db.add(notification)
+    await db.commit()
+
+    result = await clear_notifications(current_user=user_a, db=db)
+
+    assert result == {"ok": True, "dismissed": 1}
+    assert await list_notifications(current_user=user_a, db=db) == []
+    assert [item["id"] for item in await list_notifications(current_user=user_b, db=db)] == [notification.id]
+    assert (await latest_bubble(current_user=user_a, db=db)) == {"bubble": None}
+    assert await db.scalar(
+        select(NotificationDismissal.id).where(
+            NotificationDismissal.user_id == user_a.id,
+            NotificationDismissal.notification_id == notification.id,
+        )
+    ) is not None

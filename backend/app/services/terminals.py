@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.terminal.access import TerminalAccessDecision, TerminalOperation, page_access, pty_access
@@ -151,21 +151,67 @@ async def _enforce_output_retention(db: AsyncSession, row: TerminalSessionRecord
         row.output_chars -= removed_chars
 
 
+async def _advance_terminal_event_state(
+    db: AsyncSession,
+    row: TerminalSessionRecord,
+    *,
+    output_delta: int = 0,
+    status: str | None = None,
+    closed_at: datetime | None = None,
+) -> tuple[int, int]:
+    """原子分配终端事件序号并更新累计状态，避免并行 Shell 使用同一旧序号。"""
+    updated_at = now_utc()
+    values = {
+        "last_sequence": TerminalSessionRecord.last_sequence + 1,
+        "output_chars": TerminalSessionRecord.output_chars + output_delta,
+        "updated_at": updated_at,
+    }
+    if status is not None:
+        values["status"] = status
+    if closed_at is not None:
+        values["closed_at"] = closed_at
+
+    result = await db.execute(
+        update(TerminalSessionRecord)
+        .where(TerminalSessionRecord.id == row.id)
+        .values(**values)
+        .returning(
+            TerminalSessionRecord.last_sequence,
+            TerminalSessionRecord.output_chars,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    state = result.one_or_none()
+    if state is None:
+        raise LookupError("终端会话不存在")
+
+    sequence, output_chars = state
+    row.last_sequence = sequence
+    row.output_chars = output_chars
+    row.updated_at = updated_at
+    if status is not None:
+        row.status = status
+    if closed_at is not None:
+        row.closed_at = closed_at
+    return sequence, output_chars
+
+
 async def append_shell_result(db: AsyncSession, row: TerminalSessionRecord, *, command: str,
                               stdout: str, stderr: str, exit_code: int | None,
                               ok: bool, source: str = TerminalSource.AGENT.value,
                               run_id: str | None = None) -> None:
-    sequence = row.last_sequence + 1
+    sequence, _output_chars = await _advance_terminal_event_state(
+        db,
+        row,
+        output_delta=len(stdout or "") + len(stderr or ""),
+        status=TerminalStatus.IDLE.value if ok else TerminalStatus.FAILED.value,
+    )
     event = TerminalEventRecord(
         terminal_id=row.id, run_id=run_id or row.run_id, sequence=sequence, event_type="command",
         source=source, command=command, stdout=stdout or "", stderr=stderr or "",
         exit_code=exit_code,
     )
     db.add(event)
-    row.last_sequence = sequence
-    row.output_chars += len(stdout or "") + len(stderr or "")
-    row.status = TerminalStatus.IDLE.value if ok else TerminalStatus.FAILED.value
-    row.updated_at = now_utc()
     await db.flush()
     await _enforce_output_retention(db, row)
 
@@ -173,30 +219,33 @@ async def append_shell_result(db: AsyncSession, row: TerminalSessionRecord, *, c
 async def append_terminal_status(db: AsyncSession, row: TerminalSessionRecord, *, command: str,
                                  status: str, run_id: str | None = None) -> TerminalEventRecord:
     """记录命令生命周期状态，供执行记录和 SSE 重放使用。"""
-    sequence = row.last_sequence + 1
+    sequence, _output_chars = await _advance_terminal_event_state(
+        db,
+        row,
+        status="running" if status == "running" else None,
+    )
     event = TerminalEventRecord(
         terminal_id=row.id, run_id=run_id or row.run_id, sequence=sequence,
         event_type="status", source=TerminalSource.USER.value, command=command,
         stdout=status, stderr="", exit_code=None,
     )
     db.add(event)
-    row.last_sequence = sequence
-    row.status = "running" if status == "running" else row.status
-    row.updated_at = now_utc()
     await db.flush()
     return event
 
 
 async def terminate_terminal(db: AsyncSession, row: TerminalSessionRecord) -> None:
-    sequence = row.last_sequence + 1
+    closed_at = now_utc()
+    sequence, _output_chars = await _advance_terminal_event_state(
+        db,
+        row,
+        status=TerminalStatus.TERMINATED.value,
+        closed_at=closed_at,
+    )
     db.add(TerminalEventRecord(
         terminal_id=row.id, run_id=row.run_id, sequence=sequence, event_type="status",
         source=TerminalSource.USER.value, command=None, stdout="", stderr="", exit_code=None,
     ))
-    row.last_sequence = sequence
-    row.status = TerminalStatus.TERMINATED.value
-    row.closed_at = now_utc()
-    row.updated_at = row.closed_at
     await db.flush()
 
 

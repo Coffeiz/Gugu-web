@@ -434,7 +434,7 @@ cmd_install() {
 
     # egress 引导脚本由 systemd 通过 /bin/sh 调用，安装时仍规范化为公共只读可执行，
     # 避免 Git/归档/同步工具丢失 mode 后再次出现 203/EXEC，也允许服务用户与部署者不同。
-    local egress_script="${APP_DIR}/scripts/sandbox_egress_init.sh"
+    local egress_script="${APP_DIR}/scripts/runtime/sandbox_egress_init.sh"
     local squid_conf="${APP_DIR}/../squid/egress.conf"
     chmod 755 "$egress_script"
     if ! command -v runuser >/dev/null 2>&1; then
@@ -451,11 +451,14 @@ cmd_install() {
         err "请将项目放在该用户可访问的目录，或使用项目目录所属用户作为 RUN_USER。"
         exit 1
     fi
+    local squid_conf_path
+    squid_conf_path="$(realpath "$squid_conf")"
 
     # 按实际安装目录 / 用户填占位符，生成 egress + 四个核心单元
     for s in $services; do
         log "生成 systemd 单元 → /etc/systemd/system/${s}.service"
         sed -e "s#__APP_DIR__#${APP_DIR}#g" \
+            -e "s#__SQUID_CONF_PATH__#${squid_conf_path}#g" \
             -e "s#__RUN_USER__#${run_user}#g" \
             -e "s#__RUN_UID__#${run_uid}#g" \
             -e "s#__RUN_HOME__#${run_home}#g" \

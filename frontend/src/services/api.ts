@@ -174,6 +174,103 @@ export const undoApi = {
   redo: (operationId: string) => post(`/undo/redo`, { operation_id: operationId, context_id: UNDO_CONTEXT_ID }),
 }
 
+export interface DataExportJob {
+  id: string
+  status: 'queued' | 'running' | 'canceling' | 'ready' | 'failed' | 'canceled' | string
+  stage: string | null
+  progress_current: number
+  progress_total: number | null
+  error_code: string | null
+  artifact_size: number | null
+  created_at: string | null
+  expires_at: string | null
+  download_available: boolean
+}
+
+export interface DataImportPreview {
+  format_version: string
+  origin_id: string
+  export_id: string
+  created_at: string
+  complete: boolean
+  record_count: number
+  expanded_bytes: number
+  categories: Record<string, { included: boolean; records: number; bytes: number }>
+  incremental?: { add: Record<string, number>; skip: Record<string, number>; add_total: number; skip_total: number }
+  memory?: { add: Record<string, number>; skip: Record<string, number>; add_total: number; skip_total: number }
+  replace?: { current: Record<string, number>; incoming: Record<string, number> }
+  conflicts?: { total: number; items: Array<{ source_type: string; portable_id: string; fields: string[]; kind: string }> }
+}
+
+export interface DataImportJob {
+  id: string
+  status: string
+  stage: string | null
+  mode: string
+  progress_current: number
+  progress_total: number | null
+  error_code: string | null
+  preview: DataImportPreview | null
+  created_at: string | null
+  expires_at: string | null
+  import_token?: string
+  rollback_expires_at?: string | null
+}
+
+export const dataPortabilityApi = {
+  preview: () => get<{ categories: Record<string, { records: number; bytes: number }>; format_version: string }>('/data-portability/export/preview'),
+  listExports: () => get<DataExportJob[]>('/data-portability/exports'),
+  createExport: (categories: string[], idempotencyKey: string) => post<DataExportJob>('/data-portability/exports', { categories, idempotency_key: idempotencyKey }),
+  getExport: (jobId: string) => get<DataExportJob>(`/data-portability/exports/${encodeURIComponent(jobId)}`),
+  cancelExport: (jobId: string) => post<DataExportJob>(`/data-portability/exports/${encodeURIComponent(jobId)}/cancel`),
+  deleteExport: (jobId: string) => del<void>(`/data-portability/exports/${encodeURIComponent(jobId)}`),
+  createBrowserDownloadTicket: (jobId: string) =>
+    post<{ url: string }>(`/data-portability/exports/${encodeURIComponent(jobId)}/download-ticket`),
+  async preflightImport(file: File): Promise<DataImportJob> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/zip',
+      'X-Client-Id': CLIENT_ID,
+      ...getCsrfHeaders(),
+      'X-Undo-Context-ID': UNDO_CONTEXT_ID,
+    }
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const response = await fetch(`${BASE_URL}/data-portability/imports/preflight`, {
+      method: 'POST', body: file, headers, credentials: 'include', cache: 'no-store',
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      const detail = typeof body.detail === 'string' ? body.detail : i18n.global.t('errors.http', { status: response.status })
+      throw new Error(detail)
+    }
+    return response.json() as Promise<DataImportJob>
+  },
+  getImport: (jobId: string) => get<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}`),
+  listImports: () => get<DataImportJob[]>('/data-portability/imports'),
+  applyImport: (jobId: string, mode: 'incremental' | 'replace', importToken: string, idempotencyKey: string) =>
+    post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/apply`, {
+      mode, import_token: importToken, idempotency_key: idempotencyKey,
+    }),
+  cancelImport: (jobId: string) => post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/cancel`),
+  rollbackImport: (jobId: string, idempotencyKey: string) =>
+    post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/rollback`, { idempotency_key: idempotencyKey }),
+  recoverImport: (jobId: string) => post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/recover`),
+  async downloadExport(jobId: string): Promise<Response> {
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const response = await fetch(`${BASE_URL}/data-portability/exports/${encodeURIComponent(jobId)}/download`, {
+      headers, credentials: 'include', cache: 'no-store',
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      const detail = typeof body.detail === 'string' ? body.detail : i18n.global.t('errors.http', { status: response.status })
+      throw new Error(detail)
+    }
+    return response
+  },
+}
+
 export function uploadDirectWithProgress(url: string, file: File, onProgress: (p: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -246,19 +343,20 @@ export const scheduledTasksApi = {
   requestFilesystemAuthorization: (id: number) => post<Record<string, any>>(`/scheduled-tasks/${id}/filesystem-authorization/request`),
   confirmFilesystemAuthorization: (id: number, confirmCode: string) => post(`/scheduled-tasks/${id}/filesystem-authorization`, { confirm_code: confirmCode }),
   revokeFilesystemAuthorization: (id: number) => del(`/scheduled-tasks/${id}/filesystem-authorization`),
-  testNotify:   (data: any)         => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
+  testNotify:   (data: Partial<Schemas['TestNotify']>) => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
 }
 
 // ── 用户 BYOK ────────────────────────────────────────────────────────────────
 export const byokApi = {
   list: () => get<{ enabled: boolean; status?: string; items: any[] }>('/byok'),
+  capabilities: (data: { provider: string; api_format?: string; base_url?: string; model?: string; ollama_api_mode?: string; ollama_mode?: string; local_runtime?: string }) => post<Record<string, any>>('/byok/capabilities', data),
   create: (data: any) => post('/byok', data),
   update: (id: number, data: any) => patch(`/byok/${id}`, data),
   remove: (id: number) => del(`/byok/${id}`),
   test: (id: number) => post<{ ok: boolean; status: string; message: string }>(`/byok/${id}/test`, {}),
   testPreview: (data: any) => post<{ ok: boolean; status: string; message: string }>('/byok/test-preview', data),
   modelsPreview: (data: any) => post<{ models: string[] }>('/byok/models-preview', data),
-  visionProbe: (data: any) => post<{ dim: string; supported: boolean | null; status: number; detail: string }>('/byok/vision-probe', data),
+  mediaCapabilityProbe: (data: any) => post<{ dim: string; supported: boolean | null; status: number; detail: string }>('/byok/media-capability-probe', data),
   rebuildVectors: () => post<{ ok: boolean; message: string; status?: { status: string } }>('/byok/embedding-rebuild', {}),
   rebuildVectorsStatus: () => get<{ status: string; message?: string }>('/byok/embedding-rebuild/status'),
 }
@@ -628,9 +726,27 @@ export const foldersApi = {
     post<ApiFolderResponse>(`/folders/${id}/copy`, { parentId, projectId, workspaceDirectoryId }),
   delete: (id: number, meta?: RequestMeta)           => del(`/folders/${id}`, meta),
   download: async (id: number, name: string) => {
+    const downloadPath = `${BASE_URL}/folders/${id}/download`
+    const downloadUrl = new URL(downloadPath, window.location.origin)
+
+    // 同源下载交给浏览器直接处理，避免大文件经过 fetch + Blob 占用额外内存，
+    // 也避免不同浏览器对 Blob URL 下载接管时序的差异。登录时设置的 HttpOnly
+    // Cookie 会随同源导航发送，后端 Content-Disposition 提供下载文件名。
+    if (downloadUrl.origin === window.location.origin) {
+      const a = document.createElement('a')
+      a.href = downloadUrl.href
+      a.download = `${name}.zip`
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      return
+    }
+
     const token = getToken()
-    const res = await fetch(`${BASE_URL}/folders/${id}/download`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    const res = await fetch(downloadUrl.href, {
+      credentials: 'include',
+      headers: { ...getCsrfHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
     if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -639,8 +755,12 @@ export const foldersApi = {
     const a = document.createElement('a')
     a.href = url
     a.download = `${name}.zip`
+    a.style.display = 'none'
+    document.body.appendChild(a)
     a.click()
-    URL.revokeObjectURL(url)
+    a.remove()
+    // 下载由浏览器异步接管；立即 revoke 会和 Chrome 的 Blob URL 读取竞态。
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
   },
 }
 
@@ -652,7 +772,7 @@ export interface TrashFolderContents {
 }
 
 export const trashApi = {
-  list:          ()           => get('/trash'),
+  list:          ()           => get<Schemas['FileResponse'][]>('/trash'),
   listFolders:   ()           => get<TrashFolderMeta[]>('/trash/folders'),
   listFolderContents: (id: number) => get<TrashFolderContents>(`/trash/folders/${id}/contents`),
   restore:       (id: number) => post(`/trash/${id}/restore`, {}),
@@ -804,6 +924,7 @@ export const notificationsApi = {
   list:        ()    => get('/notifications'),                       // 通知中心：近期持久通知 + 未读态
   latestBubble: ()   => get('/notifications/bubble'),               // 上线补弹：最近一条有效气泡（{bubble:null|{...}}）
   markRead:    (ids?: number[] | null) => request('POST', '/notifications/read', { ids: ids ?? null }),  // 无 ids = 全部已读
+  clear:       ()    => del<{ ok: boolean; dismissed: number }>('/notifications'), // 仅清除当前用户的通知视图
 }
 
 export const agentApi = {
