@@ -5986,6 +5986,8 @@ export interface components {
              * @default false
              */
             automaticModeEnabled: boolean;
+            /** Decisionguardenabled */
+            decisionGuardEnabled: boolean;
             /**
              * Showtoolinteractions
              * @default false
@@ -6060,6 +6062,8 @@ export interface components {
             shellDangerousEnabled?: boolean | null;
             /** Automaticmodeenabled */
             automaticModeEnabled?: boolean | null;
+            /** Decisionguardenabled */
+            decisionGuardEnabled?: boolean | null;
             /** Showtoolinteractions */
             showToolInteractions?: boolean | null;
             showIntermediateReplies?: boolean | null;

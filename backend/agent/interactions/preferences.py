@@ -33,4 +33,22 @@ async def show_intermediate_replies(user_id) -> bool:
     return (await im_display_preferences(user_id))[1]
 
 
-__all__ = ["im_display_preferences", "show_tool_interactions", "show_intermediate_replies"]
+async def decision_guard_enabled(user_id) -> bool:
+    """读取用户主动开启的行动跟进守卫；读取失败或未设置时关闭。"""
+    from sqlalchemy import select
+    from app.db import session as db_session
+    from app.models import UserPreferences
+
+    try:
+        db_session.ensure_engine()
+        if db_session._SessionLocal is None:
+            return False
+        async with db_session._SessionLocal() as db:
+            row = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_id))
+            data = (row.data or {}) if row else {}
+            return bool(data.get("decision_guard_enabled", False))
+    except Exception:
+        return False
+
+
+__all__ = ["im_display_preferences", "show_tool_interactions", "show_intermediate_replies", "decision_guard_enabled"]

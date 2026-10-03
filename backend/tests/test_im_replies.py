@@ -26,6 +26,32 @@ async def test_im_display_preferences_reads_both_flags_with_legacy_defaults(monk
     assert await im_display_preferences("synthetic-user") == (True, False)
 
 
+@pytest.mark.asyncio
+async def test_decision_guard_preference_reads_user_opt_in_and_fails_closed(monkeypatch):
+    from agent.interactions.preferences import decision_guard_enabled
+    from app.db import session as db_session
+
+    class FakeDb:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def scalar(self, _query):
+            class Row:
+                data = {"decision_guard_enabled": True}
+            return Row()
+
+    monkeypatch.setattr(db_session, "ensure_engine", lambda: None)
+    monkeypatch.setattr(db_session, "_SessionLocal", FakeDb)
+
+    assert await decision_guard_enabled("synthetic-user") is True
+
+    monkeypatch.setattr(db_session, "_SessionLocal", None)
+    assert await decision_guard_enabled("synthetic-user") is False
+
+
 def test_qq_expired_msg_id_is_treated_as_passive_reply_failure():
     from agent.gateway.qq import QQAPIError, _qq_msg_id_invalid
 

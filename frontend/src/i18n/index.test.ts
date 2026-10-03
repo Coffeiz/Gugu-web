@@ -41,6 +41,15 @@ describe('i18n locale policy', () => {
     expect(messages['en-US'].agent.automaticMode).toBe('Automatic mode')
     expect((messages['en-US'] as unknown as { chat: { automaticMode: string } }).chat.automaticMode).toBe('Automatic mode')
   })
+  it('行动跟进守卫设置在各语言中明确标注弱模型用途和关闭默认值', () => {
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const scope = (messages[locale] as unknown as Record<string, Record<string, string>>).profileGuguUi
+      expect(scope.decisionGuard).not.toBe('profileGuguUi.decisionGuard')
+      expect(scope.decisionGuardHint).not.toBe('profileGuguUi.decisionGuardHint')
+    }
+    expect((messages['zh-CN'] as any).profileGuguUi.decisionGuardHint).toContain('默认关闭')
+    expect((messages['zh-CN'] as any).profileGuguUi.decisionGuardHint).toContain('弱模型')
+  })
 
   // 用例要对三个语言包全量路径逐一编译解析，空跑就要数秒；CI 与其他套件并行时
   // 默认 5s 超时会误报（devserver 全量 CI 实测 5.6s 超时、单独跑 0.3s 通过）。

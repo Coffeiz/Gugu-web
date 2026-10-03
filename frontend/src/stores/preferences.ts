@@ -19,6 +19,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const shellSystemEnabled = ref(false)
   const shellDangerousEnabled = ref(true)
   const automaticModeEnabled = ref(false)
+  const decisionGuardEnabled = ref(false)
   const showToolInteractions = ref(false)
   const showIntermediateReplies = ref(true)
   const toolInjectionMode = ref<'description' | 'full'>('full')
@@ -64,6 +65,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       shellSystemEnabled.value = (data as any).shellSystemEnabled ?? false
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? true
       automaticModeEnabled.value = (data as any).automaticModeEnabled === true
+      decisionGuardEnabled.value = (data as any).decisionGuardEnabled === true
       showToolInteractions.value = (data as any).showToolInteractions ?? false
       showIntermediateReplies.value = (data as any).showIntermediateReplies ?? true
       toolInjectionMode.value = (data as any).toolInjectionMode === 'description' ? 'description' : 'full'
@@ -133,6 +135,10 @@ export const usePreferencesStore = defineStore('preferences', () => {
     await savePreferenceValue('automaticModeEnabled', automaticModeEnabled, v)
   }
 
+  async function saveDecisionGuardEnabled(v: boolean) {
+    await savePreferenceValue('decisionGuardEnabled', decisionGuardEnabled, v)
+  }
+
   async function saveShowToolInteractions(v: boolean) {
     await savePreferenceValue('showToolInteractions', showToolInteractions, v)
   }
@@ -191,7 +197,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, showToolInteractions, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
-    loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveShowToolInteractions, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, automaticModeEnabled, decisionGuardEnabled, showToolInteractions, showIntermediateReplies, toolInjectionMode, personalityPreference, personalityPreferenceEnabled, personalityPreferenceAvailable, personalityPreferenceRevision, emailChangeEnabled, locale,
+    loaded, fetch, saveLocale, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveAutomaticModeEnabled, saveDecisionGuardEnabled, saveShowToolInteractions, saveShowIntermediateReplies, saveToolInjectionMode, savePersonalityPreference, uploadPersonalityFile,
   }
 })

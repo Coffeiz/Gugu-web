@@ -21,7 +21,18 @@ def _looks_like_narration(text: str, locale: str | None = None) -> bool:
 
 def _is_decision_dodge(user_req: str, reply: str, locale: str | None = None) -> bool:
     policy = get_guard_locale(locale)
-    return bool(user_req and reply) and bool(policy.action_request.search(user_req)) and bool(policy.refusal.search(reply))
+    if not user_req or not reply or policy.question.search(reply):
+        return False
+    request = user_req
+    # QQ/IM 引用会将历史原文前置在当前消息里；守卫只应判断引用后面的本轮正文。
+    quote_marker = "），针对这条消息说：\n\n"
+    quote_prefix = "💬 用户引用/回复了一条历史消息（原文：「"
+    quote_start = request.find(quote_prefix)
+    if quote_start >= 0:
+        _quoted, separator, current_message = request[quote_start:].partition(quote_marker)
+        if separator:
+            request = current_message
+    return bool(request.strip()) and bool(policy.action_request.search(request)) and bool(policy.refusal.search(reply))
 
 
 def _announces_intent(text: str, locale: str | None = None) -> bool:

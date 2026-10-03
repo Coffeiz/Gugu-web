@@ -139,6 +139,10 @@ async def run_loop(
             _core.user_text_from_message(_request_conversation[_request_user_index])
             if _request_user_index is not None else ""
         )
+        decision_guard_enabled = False
+        if session_id is not None:
+            from agent.interactions.preferences import decision_guard_enabled as read_decision_guard
+            decision_guard_enabled = await read_decision_guard(user_id)
         # 初始用户图片只需要首轮完整发送；首轮结束后折叠成稳定文本，避免下一轮和下一次
         # run 在同一历史位置分别出现 base64 与占位文本，导致 provider 从图片处断缓存。
         initial_volatile_indices = _core.loop_drivers._volatile_message_indices(messages)
@@ -1506,7 +1510,7 @@ async def run_loop(
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
-            if (not any_tool_called and not verify_mode and decision_retry < 1
+            if (decision_guard_enabled and not any_tool_called and not verify_mode and decision_retry < 1
                     and _core._is_decision_dodge(_user_req, _final_text, runner.locale)):
                 decision_retry += 1
                 guard_retry_pending = True
