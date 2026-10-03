@@ -17,7 +17,7 @@
   - docker-release 的 `docker-build` job **已包含 trivy 扫描**（HIGH/CRITICAL、ignore-unfixed、
     exit-code 1）——两个 workflow 全绿就代表测试、镜像构建和安全门都过了。
   - push 到 main 和版本 tag 仍然自动触发；PR 迭代过程中的中间 commit 不再消耗 Actions 时长。
-- CI 只跑了构建与扫描，业务回归脚本本地跑（见 §2）。不要为了赶发版跳过回归直接合。
+- PR 合并前的手动 CI 与 main 合并后的自动 CI 是两个不同门禁：前者决定是否合并，后者是发版前置条件（见 §2）。
 
 ### 1.1 PR 标题与描述
 
@@ -56,30 +56,16 @@
 
 PR 模板是必须完整填写的描述结构，不替代 §1 的合并门槛、§2 的发布前预检或对应领域的测试要求。PR 作者应将模板提示替换为具体事实，并为不适用项说明原因。
 
-## 2. 发版前本地预检（打 tag 之前必须全部通过）
+## 2. 发版前 CI 门禁与补充验证
 
-```bash
-# 1) 前端回归：确认弹窗/提醒组件契约与玻璃样式没被破坏
-cd frontend && npm run typecheck && npm run test:css-glass && npm run test:ui-dialogs
+打版本 tag 前，以 GitHub 上 **main 合并提交的自动 CI** 为准，不在 devserver 重复跑相同测试、镜像构建或 Trivy 扫描。
 
-# 2) 后端测试
-cd backend && PYTHONPATH=. python -m pytest -q -n auto
+1. 确认待发布版本 PR 已合并，并记录 main 当前合并提交的完整 SHA；确认根目录与 `frontend/package.json` 版本号一致，CHANGELOG 已包含该版本小节，目标版本 tag 尚不存在。
+2. 在 GitHub Actions 中按该 SHA 核对 `Runtime integration` 与 `Docker release` 两个由 push 到 main 自动触发的 workflow：必须均为 `completed / success`。若仍在运行就等待；若失败则停止发版，按常规 PR 修复后等待修复提交合入 main 并通过自动 CI。不得拿 PR 分支旧 run、较早的 main run 或仅有部分 job 成功代替。
+3. `Runtime integration` 已覆盖前端 typecheck/unit tests/build、后端全量 pytest、关键 E2E 与相关集成检查；`Docker release` 已覆盖 Compose 校验、Sandbox/app/backend/frontend 镜像构建及对应安全扫描。以上范围不要求在本机或 devserver 再跑一遍。
+4. 只有自动 CI 未覆盖、且与本次发布风险直接相关的验证，才做有针对性的补充检查。优先在本机执行；确实依赖 devserver、目标架构或真实部署环境时，只在 devserver 执行该项，并记录原因和结果，不重复全套 CI。
 
-# 3) 本地构建生产镜像并 trivy 预扫（防患于未然，别让 CI 当第一个发现问题的）
-docker build -f backend/Dockerfile.prod  -t gugu-backend:release-check .
-docker build -f frontend/Dockerfile.prod -t gugu-frontend:release-check .
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
-  image gugu-backend:release-check --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
-  image gugu-frontend:release-check --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
-```
-
-注意：
-
-- 本地没有 docker 时可用 devserver（amd64、与生产同架构）执行 §2 的第 3 步。
-- trivy 报的 installed version 若与镜像 dist-info 不一致，是语言清单类文件误报（如 pip 的
-  `pip/_vendor/bom.cdx.json`，workflow 里已 skip-files），不是真的漏洞——先核对再下结论。
-- 新增依赖时先查一下是否引入新的 HIGH/CRITICAL（`pip install pip-audit` 或扫一次），避免发版当天返工。
+CI 状态可使用 GitHub Actions 页面或 `gh run list --branch main --commit <main完整SHA>` 核对，避免把同 SHA 的 tag 发布 run 当作 main 合并 CI。不得为了“刷新绿灯”而重复触发 workflow；需要重跑时按仓库授权规则先取得用户授权。
 
 ## 3. 版本号与 CHANGELOG
 
@@ -146,8 +132,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
 
 ## 4. 打 tag 与发布
 
-- **前置条件**：版本 PR 已合并进 main，且合并前手动触发的 CI（含 trivy 门）全绿；
-  合并提交进 main 后 push 自动触发的那轮 CI 也应为绿。
+- **前置条件**：版本 PR 已合并进 main；合并前要求的手动 PR CI 全绿；并且 §2 所述两个 main 自动 workflow 针对**同一个待打 tag 的 main 合并 SHA**均已完成且成功。不得仅凭本地测试、devserver 测试或旧 run 打 tag。
 - **版本 tag 命名只允许 `v<主>.<次>.<补丁>`（如 `v1.0.4`）**：小写 `v` 前缀 + 三段数字，
   不加日期、后缀或其它前缀；禁止打裸数字（历史上有过 `1.0.0`，与 `v1.0.0` 重复易混）。
   备份/基线等非版本用途的 tag 用 `backup/…`、`baseline-…` 命名，不会触发发布流水线。
@@ -163,8 +148,9 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
   git fetch origin && git tag -a v1.0.x -m "v1.0.x：一句话摘要" origin/main && git push origin v1.0.x
   ```
 
+- 推送 tag 后必须继续监控该 tag 对应的 `Docker release` workflow。只有 Compose 校验、镜像构建/扫描、候选镜像校验、发布推送及所需离线 bundle job 均按 workflow 条件成功完成，才可报告“发布完成”；tag 创建成功不等于镜像已发布。此阶段使用 GitHub 自动执行，不在 devserver 重复构建或扫描。
 - tag 触发 publish job：构建公开的一体化 `gugu-web`、updater、sandbox 和拆分 backend/frontend 镜像，并同步推送 Docker Hub 与 GHCR；业务镜像只发布语义版本号标签，不发布 Git SHA 镜像标签。稳定版的一体化 `gugu-web`、updater、sandbox 仍维护 `latest` 别名；镜像均以 Cosign OCI 1.1 referrer 方式签名，签名不会创建 `sha256-<digest>.sig` 普通镜像 tag。此前已发布的旧式 `.sig` tag 保留，不做清理。update manifest 使用 `docker.io/coffeiz/gugu-web@sha256:...`，不引用拆分镜像。
-- 一体化 `gugu-web` 发布必须先把同次构建的沙盒与 egress-proxy bundle 追加到 app 基础镜像，再通过 `verify_embedded_app_image.py` 完成完整性和离线 Shell smoke test；publish 只允许复制 `bundled-ci-<run_id>` 候选镜像，禁止把 `ci-<run_id>` 基础 app 镜像作为单容器正式镜像。所有本地候选镜像也统一使用 `scripts/release/build-bundled-app-image.sh` 组装并验证；需要离线导入时再通过 `--archive` 导出 `.tar`，不得直接 `docker save` 基础 app 镜像。
+- 一体化 `gugu-web` 发布必须先把同次构建的沙盒与 egress-proxy bundle 追加到 app 基础镜像，再通过 `verify_embedded_app_image.py` 完成完整性和离线 Shell smoke test；publish 只允许复制 `bundled-ci-<run_id>` 候选镜像，禁止把 `ci-<run_id>` 基础 app 镜像作为单容器正式镜像。只有明确需要本地离线验收包时，才用 `scripts/release/build-bundled-app-image.sh` 组装验证并可选通过 `--archive` 导出 `.tar`；这不是常规发版 CI 的替代或重复步骤，也不得直接 `docker save` 基础 app 镜像。
 - 稳定版发布完成后，CI 会在 GHCR 与 Docker Hub 的四个镜像仓库中保留最新 10 个 `v主.次.补丁` 正式版本 tag；预发布、`latest`、`dev` 和其他非版本 tag 不清理。GHCR 仅删除不含别名或保留版本 tag 的旧 package version；`GITHUB_TOKEN` 必须对 GHCR package 有 admin 权限，`DOCKERHUB_TOKEN` 必须具备删除 tag 的权限。若 registry 权限或平台限制导致清理失败，只记录告警，不回滚或阻断已完成的发布。
 - Docker Hub 首次推送会按 `coffeiz` 命名空间的默认可见性创建 backend/frontend 仓库；首次发布前确认这两个仓库为 Public，确保业务服务器可匿名拉取。
 
