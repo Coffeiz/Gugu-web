@@ -150,6 +150,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 _MIGRATIONS = [
+    # 非 Alembic 的部署初始化也需补齐提醒配置列；旧提醒在活动修改前推导并保存。
+    "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS reminder_lead_minutes INTEGER",
     # 兼容已通过旧基线初始化、但尚未执行 IM tombstone 增量迁移的数据库。
     # 生产启动路径以 create_all_tables 为基线，不能假设所有环境都经过 Alembic upgrade。
     """CREATE TABLE IF NOT EXISTS memory_scope_tombstones (

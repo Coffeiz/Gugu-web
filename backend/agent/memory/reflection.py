@@ -266,6 +266,8 @@ async def _rebuild_owner_reflection_snapshot(user_id, session_id, user_name, mod
     if rebuilt is None:
         return None
     system_prompt, history_parts = rebuilt
+    from agent.context.provider_conversation import ProviderConversation
+
     return SimpleNamespace(
         user_id=str(user_id),
         session_id=int(session_id),
@@ -273,7 +275,7 @@ async def _rebuild_owner_reflection_snapshot(user_id, session_id, user_name, mod
         system_prompt=system_prompt,
         ai=model_cfg,
         tools=(),
-        history=tuple(history_parts),
+        history=ProviderConversation(history_parts),
         source="persisted_history",
     )
 
@@ -1243,7 +1245,7 @@ async def _extract_append(snapshot, user_name, turns, existing_profile, existing
             delta=user,
             scope="owner",
             run_id=snapshot.run_id,
-            history_messages=tuple(render_branch_prefix(list(snapshot.history), snapshot.ai)),
+            history_messages=render_branch_prefix(snapshot.history, snapshot.ai),
             tools=tuple(snapshot.tools),
             session_id=snapshot.session_id,
             cache_probe_context=probe_context,

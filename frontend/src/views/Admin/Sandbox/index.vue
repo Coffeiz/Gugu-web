@@ -10,34 +10,12 @@
       </ActionButton>
     </div>
 
-    <section class="section-wrap">
-      <div class="section-head">
-        <span class="section-label">{{ t('adminSandbox.runtime') }}</span>
-        <span class="section-desc">{{ t('adminSandbox.runtimeHint') }}</span>
-      </div>
-      <div class="panel-card">
-      <div class="status-head">
-        <div>
-          <h3>{{ status.message || t('adminSandbox.readingDocker') }}</h3>
-        </div>
-        <span class="status-pill" :class="`status-${status.state}`">{{ stateLabel }}</span>
-      </div>
-      <div class="status-grid">
-        <div><span>Docker CLI</span><strong>{{ status.docker_installed ? t('adminSandbox.installed') : t('adminSandbox.dockerMissing') }}</strong></div>
-        <div><span>Docker daemon</span><strong>{{ status.docker_daemon_ready ? t('adminSandbox.ready') : t('adminSandbox.unavailable') }}</strong></div>
-        <div><span>Rootless</span><strong>{{ status.rootless === true ? t('adminSandbox.enabled') : status.rootless === false ? t('adminSandbox.notEnabled') : t('adminSandbox.unknown') }}</strong></div>
-        <div><span>{{ t('adminSandbox.executor') }}</span><strong>{{ status.executor_ready ? t('adminSandbox.canUse') : t('adminSandbox.cannotUse') }}</strong></div>
-      </div>
-      <p v-if="!canEnable && !status.enabled" class="status-note">{{ t('adminSandbox.cannotEnable') }}</p>
-      <p v-if="status.rootless === false && !status.rootless_required" class="status-note">{{ t('adminSandbox.configHint') }}</p>
-      <p v-if="status.enabled" class="status-note">{{ t('adminSandbox.stoppedNotice') }}</p>
-      </div>
-    </section>
+    <SandboxRuntimeStatus :status="status" :can-enable="canEnable" />
 
-    <section class="section-wrap">
-      <div class="section-head">
-        <span class="section-label">{{ t('adminSandbox.config') }}</span>
-        <span class="section-desc">{{ t('adminSandbox.configHint') }}</span>
+    <section class="sandbox-config-section">
+      <div class="sandbox-config-section__head">
+        <span class="sandbox-config-section__label">{{ t('adminSandbox.config') }}</span>
+        <span class="sandbox-config-section__desc">{{ t('adminSandbox.configHint') }}</span>
       </div>
       <div class="panel-card">
       <div class="config-row"><span>{{ t('adminSandbox.image') }}</span><code>{{ status.image }}</code></div>
@@ -98,9 +76,13 @@ import { useConfigStore } from '@/stores/config'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
+import SandboxRuntimeStatus from './components/SandboxRuntimeStatus.vue'
 import { useI18n } from 'vue-i18n'
 
 type SandboxStatus = {
+  manager_mode: string
+  manager_ready: boolean
+  manager_message: string
   enabled: boolean
   full_user_sandbox_authorization_enabled: boolean
   terminal_mode: 'auto' | 'pty_disabled' | 'entry_disabled'
@@ -133,7 +115,7 @@ const { t } = useI18n()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
-const status = reactive<SandboxStatus>({ enabled: true, full_user_sandbox_authorization_enabled: true, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, rootless_required: false, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 1073741824, network_profile: 'egress', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
+const status = reactive<SandboxStatus>({ manager_mode: 'disabled', manager_ready: false, manager_message: '', enabled: true, full_user_sandbox_authorization_enabled: true, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, rootless_required: false, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 1073741824, network_profile: 'egress', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
 const quotaDraft = reactive({ persistentMb: 512, ephemeralMb: 1024 })
 const quotaSaving = ref(false)
 const quotaMessage = ref('')
@@ -151,14 +133,13 @@ const egressTesting = ref(false)
 const proxyDraft = ref('')
 const egressMessage = ref('')
 const egressError = ref(false)
-const canEnable = computed(() => status.docker_installed && status.docker_daemon_ready && (!status.rootless_required || status.rootless === true) && status.image_ready)
+const canEnable = computed(() => status.executor_ready)
 const egressHint = computed(() => {
   if (status.egress_config_error) return status.egress_config_error
   if (!status.egress_proxy_configured) return t('adminSandbox.proxyNotConfigured')
   if (!status.egress_network_ready) return t('adminSandbox.networkNotReady')
   return status.network_profile === 'egress' ? t('adminSandbox.egressEnabled') : t('adminSandbox.egressAvailable')
 })
-const stateLabel = computed(() => ({ ready: t('adminSandbox.ready'), disabled: t('adminSandbox.disabled'), docker_missing: t('adminSandbox.dockerMissing'), docker_unavailable: t('adminSandbox.dockerUnavailable'), rootless_required: t('adminSandbox.rootlessRequired'), image_unavailable: t('adminSandbox.imageUnavailable') } as Record<string, string>)[status.state] || t('adminSandbox.unknown'))
 function formatBytes(value: number) {
   if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
   return `${Math.round(value / (1024 * 1024))} MB`
@@ -297,20 +278,13 @@ onMounted(async () => {
 .page-title-block { display: flex; flex-direction: column; }
 .page-title { margin: 0; color: var(--content-primary); font-size: 22px; font-weight: 700; line-height: 1.2; }
 .page-desc { margin-top: 6px; color: var(--content-tertiary); font-size: 12px; }
-.section-wrap { padding: 20px 36px 0; }
-.section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.section-label { color: var(--content-primary); font-size: 13px; font-weight: 600; }
-.section-desc { color: var(--content-tertiary); font-size: 12px; }
+.sandbox-config-section { min-width: 0; padding: 20px 36px 0; }
+.sandbox-config-section__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; min-width: 0; margin-bottom: 10px; }
+.sandbox-config-section__label { flex: 0 0 auto; color: var(--content-primary); font-size: 13px; font-weight: 600; }
+.sandbox-config-section__desc { flex: 1 1 280px; min-width: 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .panel-card { padding: 22px 24px; border: 1px solid var(--panel-glass-border); border-radius: var(--radius-lg); background: var(--panel-glass-bg); box-shadow: var(--elevation-card); color: var(--content-primary); backdrop-filter: var(--panel-glass-blur); -webkit-backdrop-filter: var(--panel-glass-blur); }
-.status-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-h3 { margin: 0; color: var(--content-primary); font-size: 14px; font-weight: 700; }
-.status-pill { flex-shrink: 0; padding: 5px 10px; border-radius: var(--radius-pill); background: var(--surface-muted); color: var(--content-secondary); font-size: 12px; }
-.status-ready { background: color-mix(in srgb, var(--status-success) 12%, transparent); color: var(--status-success); }
-.status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 20px; }
-.status-grid div { padding: 12px; border: 1px solid var(--panel-divider); border-radius: var(--radius-sm); background: var(--surface-glass); }
-.status-grid span, .config-row span { display: block; color: var(--content-tertiary); font-size: 12px; }
-.status-grid strong { display: block; margin-top: 6px; color: var(--content-primary); font-size: 14px; font-weight: 600; }
-.section-note, .status-note { margin: 10px 0 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.6; }
+.section-note { margin: 10px 0 0; color: var(--content-tertiary); font-size: 12px; line-height: 1.6; }
+.config-row span { display: block; color: var(--content-tertiary); font-size: 12px; }
 .config-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid var(--panel-divider); }
 .config-row:last-of-type { border-bottom: 0; }
 .config-row strong { color: var(--content-secondary); font-size: 12px; font-weight: 600; }
@@ -335,7 +309,7 @@ h3 { margin: 0; color: var(--content-primary); font-size: 14px; font-weight: 700
 .action-message { margin-right: auto; color: var(--status-success); font-size: 12px; }
 .action-message.error { color: var(--status-danger); }
 .error-message { margin: 16px 36px 0; color: var(--status-danger); font-size: 12px; }
-@media (max-width: 760px) { .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .page-header { padding-left: 20px; padding-right: 20px; } .section-wrap { padding-left: 20px; padding-right: 20px; } .error-message { margin-left: 20px; margin-right: 20px; } }
+@media (max-width: 760px) { .page-header { padding-left: 20px; padding-right: 20px; } .section-wrap, .sandbox-config-section { padding-left: 20px; padding-right: 20px; } .error-message { margin-left: 20px; margin-right: 20px; } }
 @media (max-width: 520px) { .page-header { flex-direction: column; gap: 12px; } .page-header .app-action-button { align-self: flex-start; } }
 @media (max-width: 620px) { .egress-input-row { align-items: stretch; flex-wrap: wrap; } .egress-input { flex-basis: 100%; } }
 </style>

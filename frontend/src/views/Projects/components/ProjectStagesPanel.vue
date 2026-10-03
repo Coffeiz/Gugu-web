@@ -35,7 +35,7 @@
               <span v-else class="node-label" @click.stop="startEdit(stage.key)">{{ stage.label }}</span>
               <span class="todo-count" v-if="stage.todos?.length">{{ stage.todos.filter(t=>t.done).length }}/{{ stage.todos.length }}</span>
             </div>
-            <button class="del-stage" :aria-label="t('common.actions.delete')" :title="t('common.actions.delete')"
+            <button class="popup-close-btn del-stage" :aria-label="t('common.actions.delete')" :title="t('common.actions.delete')"
               @click.stop="handleRemoveStage(stage.key)">
               <Icon name="action.close" :size="12" />
             </button>
@@ -373,17 +373,18 @@ function handleToggleTodo(todo: ProjectTodo) {
 .stage-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; }
 .stage-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
 .del-stage {
-  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; padding: 0; border-radius: var(--danger-button-radius);
-  background: transparent; border: 1px solid transparent; cursor: pointer;
-  color: var(--danger-button-fg); opacity: 0; pointer-events: none;
+  flex: 0 0 22px; opacity: 0; pointer-events: none;
+  color: var(--popup-item-fg-muted);
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard),
-    color var(--motion-hover-control) var(--motion-ease-standard),
     background-color var(--motion-hover-control) var(--motion-ease-standard),
-    border-color var(--motion-hover-control) var(--motion-ease-standard);
+    color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .node-row:hover .del-stage,
 .del-stage:focus-visible { opacity: .72; pointer-events: auto; }
-.del-stage:hover { opacity: 1; background: var(--danger-button-bg); border-color: var(--danger-button-border); }
+.del-stage:hover { opacity: 1; }
+.popup-close-btn.del-stage:hover {
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent) !important;
+  color: var(--status-danger) !important;
+}
 .del-stage:focus-visible { opacity: 1; outline: none; box-shadow: var(--control-focus-shadow); }
 </style>

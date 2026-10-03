@@ -28,6 +28,8 @@ export interface ProjectFileContextOptions {
   startRenameFolder: (folder: FolderMeta) => void
   downloadFolder: (folder: FolderMeta) => void
   deleteFolder: (folder: FolderMeta) => Promise<void>
+  extractArchive: (file: FileMeta) => void
+  compressSelection: () => void
   openInfo: (file: FileMeta, x: number, y: number) => void
   showNewFolder: Ref<boolean>
   showConflicts?: (items: ConflictItem[]) => Promise<Map<string, ConflictDecision>>
@@ -196,6 +198,8 @@ export function useProjectFileContextActions(options: ProjectFileContextOptions)
     const actions: Record<string, () => unknown> = {
       info,
       download,
+      'extract-archive': withFileTarget(options.extractArchive),
+      'compress-selection': () => { close(); options.compressSelection() },
       rename: withFileTarget(options.startRenameFile),
       cut,
       copy,

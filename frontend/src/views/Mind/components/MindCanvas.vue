@@ -265,10 +265,34 @@ function updateViewportSizeAndEmit() {
 }
 
 const hoveredNodeId = ref<number | null>(null)
+let lastPointerPosition: { x: number; y: number } | null = null
+let hoverRefreshFrame = 0
 function onItemHover(item: MindCanvasItem, hovering: boolean) {
   if (landingNodeIds.has(item.nodeId)) return
   if (hovering) hoveredNodeId.value = item.nodeId
   else if (hoveredNodeId.value === item.nodeId) hoveredNodeId.value = null
+}
+
+function refreshHoveredNodeAtPointer() {
+  if (hoverRefreshFrame) cancelAnimationFrame(hoverRefreshFrame)
+  hoverRefreshFrame = requestAnimationFrame(() => {
+    hoverRefreshFrame = 0
+    const viewport = viewportRef.value
+    const pointer = lastPointerPosition
+    if (!viewport || !pointer) return
+
+    // 拖拽 proxy 落地时会暂时隐藏真实卡片，并清掉 hoveredNodeId。指针若一直停在
+    // 卡片上，浏览器不会再发 mouseenter；落地结束后按当前命中元素恢复连线端点 hover。
+    const target = document.elementFromPoint(pointer.x, pointer.y)
+    if (!target || !viewport.contains(target)) {
+      hoveredNodeId.value = null
+      return
+    }
+    const card = target.closest<HTMLElement>('[data-node-id]')
+    const nodeId = Number(card?.dataset.nodeId)
+    const exists = Number.isInteger(nodeId) && props.items.some(item => item.nodeId === nodeId)
+    hoveredNodeId.value = exists && !landingNodeIds.has(nodeId) ? nodeId : null
+  })
 }
 
 const landingPositions = reactive(new Map<number, { x: number; y: number }>())
@@ -285,6 +309,7 @@ function onRuntimeVisual(event: RuntimeEvent) {
     if (nodeId != null) {
       landingPositions.delete(nodeId)
       landingNodeIds.delete(nodeId)
+      refreshHoveredNodeAtPointer()
     }
     return
   }
@@ -506,6 +531,7 @@ function onConnectionDragEnd(event: ClientPoint) {
 }
 
 function onPointerMove(event: PointerEvent) {
+  lastPointerPosition = { x: event.clientX, y: event.clientY }
   if (!panMove(event, false)) return
   const visual = panPosition()
   schedulePanVisual(visual.x, visual.y)
@@ -517,6 +543,7 @@ function onPointerMove(event: PointerEvent) {
   }
 }
 function onPointerUp(event: PointerEvent) {
+  lastPointerPosition = { x: event.clientX, y: event.clientY }
   if (!panMove(event, false)) return
   const visual = panPosition()
   flushPanVisual(visual.x, visual.y)
@@ -619,6 +646,8 @@ onBeforeUnmount(() => {
   }
   if (panVisualRaf) cancelAnimationFrame(panVisualRaf)
   panVisualRaf = 0
+  if (hoverRefreshFrame) cancelAnimationFrame(hoverRefreshFrame)
+  hoverRefreshFrame = 0
   pendingPanVisual = null
   cancelAnimationFrame(connSpringRaf)
   landingObjectNodeIds.clear()

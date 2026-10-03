@@ -4,14 +4,22 @@
 BM25 索引——写入即可读，强一致。search_memory 只负责记忆（profile/pattern/
 daily/memory），不再承担知识检索；索引仅服务被动召回。
 """
+from datetime import datetime, timezone
+
 from agent.knowledge.store import KnowledgeStore
 from agent.tools.base import BaseSkill, Tool
+from app.core.tz import ctx_tz
 
 _LIST_DEFAULT_LIMIT = 50
 _LIST_MAX_LIMIT = 200
 
 
 def _entry_summary(entry) -> dict:
+    def local_iso(timestamp: float) -> str:
+        return datetime.fromtimestamp(timestamp, timezone.utc).astimezone(ctx_tz()).isoformat(
+            timespec="seconds"
+        )
+
     return {
         "knowledge_id": entry.id,
         "title": entry.title,
@@ -21,7 +29,8 @@ def _entry_summary(entry) -> dict:
         "confidence": entry.confidence,
         "source_type": entry.source.type,
         "scope_type": entry.scope.type,
-        "updated_at": entry.updated_at,
+        "created_at": local_iso(entry.created_at),
+        "updated_at": local_iso(entry.updated_at),
     }
 
 
@@ -191,7 +200,7 @@ class KnowledgeSkill(BaseSkill):
             description=(
                 "直接读取已保存的知识条目，写入即可读，没有索引延迟。"
                 "传 knowledge_id 时返回单条完整正文；省略时为列举模式，返回全部启用条目的清单"
-                "（标题、描述、关键词、id 等，不含正文），可用 scope 按 scope 类型过滤、"
+                "（标题、描述、关键词、id、按用户时区显示的 ISO 创建/更新时间等，不含正文），可用 scope 按 scope 类型过滤、"
                 "keyword 对标题/正文/主题/描述/关键词做包含匹配、limit 控制条数——这就是知识搜索入口。"
                 "需要查某条知识的完整内容、确认刚保存的知识、或查找旧知识时都用本工具："
                 "省略 knowledge_id 的列举模式本身就是全量搜索（keyword 对标题/正文/主题/描述/关键词"
@@ -217,7 +226,8 @@ class KnowledgeSkill(BaseSkill):
                 "普通聊天不要自动保存。正文必须自包含并填写真实来源。"
                 "可能与已有知识同主题时，先 read_knowledge(keyword=...) 查重：已有条目改用 update_knowledge 合并，"
                 "save_knowledge 对同主题条目是整段替换，直接保存会覆盖旧正文。"
-                "keywords 填未来检索时可能出现的稳定别名、工具名或专有名词，最多10个，"
+                "keywords 用于辅助检索，最多10个；可传字符串数组，也兼容逗号、分号或换行分隔的字符串。"
+                "关键词应是未来检索时可能出现的稳定别名、工具名或专有名词，"
                 "单个不超过40字符，必须能从标题、主题或正文直接支持；不要把关键词当成额外事实。"
                 "description 用一句触发式描述说明未来什么情况下需要这条知识，"
                 "不超过150字符，帮助日后判断这条知识和当前任务是否相关；"
@@ -252,7 +262,8 @@ class KnowledgeSkill(BaseSkill):
                 "knowledge_id 必须来自 read_knowledge 的真实结果。"
                 "content 省略时保留原正文，只调整标题、主题、关键词或描述等字段；"
                 "提供 content 时必须是合并旧内容后的完整正文，不要只写新增或修改的部分。"
-                "title、topic、keywords、description 省略时保留原值，keywords 需要调整时给出完整新列表"
+                "title、topic、keywords、description 省略时保留原值；keywords 需要调整时给出完整列表"
+                "（可传字符串数组，也兼容逗号、分号或换行分隔的字符串）"
                 "（最多10个，非字符串元素自动转为字符串）；description 提供时用一句触发式描述"
                 "说明何时需要这条知识（不超过150字符）。"
                 "内容与关键词都没有变化时不产生新版本。"

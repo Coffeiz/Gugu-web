@@ -30,6 +30,7 @@ class TimeSkill(BaseSkill):
             description="返回当前请求用户时区下的日期、星期、时间和完整时间戳。用户询问现在日期、星期或准确时间时调用，不要用消息时间代替实时当前时间。",
             input_schema={"type": "object", "properties": {}},
             handler=_get_current_time,
+            parallel_safe=True,
         ),
     ]
 

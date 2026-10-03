@@ -30,7 +30,7 @@ from agent.run.execution import (
     cancelled_response,
     consume_agent_events,
 )
-from agent.run.finalization import finalize_agent_run
+from agent.run.finalization import finalize_agent_run, persist_interrupted_agent_run
 from agent.run.preparation import (   # 兼容再导出（web.py/scheduled_execution/测试）
     _apply_capability_context,
     _capability_context,
@@ -84,7 +84,7 @@ async def _run_collect_unlocked(
         # Responses 不把 system 消息放进 input；稳定 system prompt 必须进入
         # instructions，否则人格、规则和工具行为约束都会丢失。
         exec_.system_prompt,
-        exec_.prepared.anthr_messages if exec_.use_anthropic else exec_.prepared.oa_messages,
+        exec_.prepared.message_area,
         use_anthropic=exec_.use_anthropic,
         model_cfg=exec_.model_cfg,
         session_id=session_id,
@@ -105,6 +105,7 @@ async def _run_collect_unlocked(
 
     # 用户中途「算了」：网关已回「先不继续啦」，这里不再补发/不入历史/不反思（已执行的工具效果保留）
     if outcome.cancelled:
+        await persist_interrupted_agent_run(req, exec_, outcome)
         return cancelled_response(outcome, session_id)
 
     # 生成失败：错误文案不入历史/不反思，直接以 errored 终态返回
@@ -187,7 +188,7 @@ async def _run_stream_unlocked(
         # Responses 不把 system 消息放进 input；稳定 system prompt 必须进入
         # instructions，否则人格、规则和工具行为约束都会丢失。
         exec_.system_prompt,
-        exec_.prepared.anthr_messages if exec_.use_anthropic else exec_.prepared.oa_messages,
+        exec_.prepared.message_area,
         use_anthropic=exec_.use_anthropic,
         model_cfg=exec_.model_cfg,
         session_id=session_id,
@@ -207,6 +208,7 @@ async def _run_stream_unlocked(
         _release_model(exec_.model_cfg)
 
     if outcome.cancelled:
+        await persist_interrupted_agent_run(req, exec_, outcome)
         yield ("final", cancelled_response(outcome, session_id))
         return
 

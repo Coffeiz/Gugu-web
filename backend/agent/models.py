@@ -44,6 +44,7 @@ class AgentRequest:
     im_message_format: Optional[str] = None         # QQ 文本出站格式策略
     im_group_memory_enabled: bool = True            # IM 群公开记忆是否读取/沉淀
     im_member_memory_enabled: bool = True           # IM 群成员记忆是否读取/沉淀
+    im_group_owner_memory_enabled: bool = False     # 群聊允许已验证 owner 召回私人记忆
     interaction_prompt_id: Optional[int] = None     # Web 恢复 ask_user 的 pending Run
     interaction_token: Optional[str] = None         # 仅由交互恢复入口消费，不进入模型上下文
     interaction_event_id: Optional[str] = None

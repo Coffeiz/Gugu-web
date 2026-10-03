@@ -552,6 +552,7 @@ class SearchSkill(BaseSkill):
             },
             handler=_searxng_search,
             start_message=lambda args: random.choice(["我去查一下。", "我搜一下最新的资料。", "我确认一下这个。"]),
+            parallel_safe=True,
         ),
         Tool(
             name="image_search", label="图片搜索",

@@ -93,8 +93,20 @@ function refTypeLabel(type: CanvasRefItem['type']) {
 .np-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .np-head button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
 .np-head button:hover { color: var(--color-primary); background: rgba(123,127,178,.11); }
-.np-search { width: 100%; height: 31px; box-sizing: border-box; margin: 0 0 6px; padding: 0 9px; border: 1px solid rgba(123,127,178,.15); border-radius: 6px; outline: 0; background: rgba(255,255,255,.56); color: var(--text-primary); font: inherit; font-size: 11.5px; }
-.np-search:focus { border-color: rgba(123,127,178,.45); background: rgba(255,255,255,.8); }
+.np-search {
+  width: 100%; height: 31px; box-sizing: border-box; margin: 0 0 6px; padding: 0 9px;
+  border: 1px solid var(--input-border); border-radius: 6px; outline: 0;
+  background: var(--input-bg); color: var(--input-fg); font: inherit; font-size: 11.5px;
+  box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
+              border-color var(--motion-hover-control) var(--motion-ease-standard),
+              box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+              color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.np-search:focus {
+  border-color: var(--input-border-focus); background: var(--input-bg-focus);
+  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
+}
 .np-note { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 9px; border: 0; border-radius: 6px; background: none; color: var(--text-primary); text-align: left; cursor: pointer; }
 .np-note:hover { background: rgba(255,255,255,.72); }
 .np-note strong, .np-note span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

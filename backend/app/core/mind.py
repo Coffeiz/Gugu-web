@@ -43,6 +43,36 @@ _CONTENT_FIELDS = ("content_md", "content_plain")
 REF_PATTERN = re.compile(r"\[\[(?P<type>[a-z_]+):(?P<id>\d+)\|(?P<label>[^\]]*)\]\]")
 
 
+def extract_mind_references(md: str | None) -> list[tuple[str, int]]:
+    """按正文顺序提取去重引用，忽略代码围栏、行内代码和转义标记。"""
+    lines = []
+    fence = None
+    for line in (md or "").splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if fence is not None:
+            if re.match(r"^ {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}\s*$", line):
+                fence = None
+            continue
+        if marker:
+            fence = marker.group(1)
+            continue
+        lines.append(line)
+    text = re.sub(r"(?<!`)(?P<ticks>`+)(?!`)[\s\S]*?(?<!`)(?P=ticks)(?!`)", " ", "".join(lines))
+    refs = []
+    seen = set()
+    for match in REF_PATTERN.finditer(text):
+        before = match.start() - 1
+        while before >= 0 and text[before] == "\\":
+            before -= 1
+        if (match.start() - 1 - before) % 2:
+            continue
+        ref = (match.group("type"), int(match.group("id")))
+        if ref[1] > 0 and ref not in seen:
+            refs.append(ref)
+            seen.add(ref)
+    return refs
+
+
 def to_plain_text(md: str | None) -> str:
     """Markdown 源 → 去格式纯文本，喂给 global_search 的 ILIKE（将来还喂 embedding）。
 

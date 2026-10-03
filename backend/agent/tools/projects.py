@@ -12,7 +12,7 @@ from app.core.project_colors import (
     project_color_value,
 )
 from app.core.projects import (
-    build_project, find_project_stage, next_project_stage_key, next_project_todo_number,
+    build_project, next_project_stage_key, next_project_todo_number,
     normalize_project_stages, replace_project_stages, update_project_atomic,
 )
 from app.core.tz import now_utc
@@ -93,6 +93,33 @@ _DEFAULT_STAGES = [
     {"key": "s1", "label": "执行", "todos": []},
     {"key": "s2", "label": "交付", "todos": []},
 ]
+_STAGES_INPUT_SCHEMA = {
+    "type": "array",
+    "minItems": 1,
+    "items": {
+        "type": ["string", "object"],
+        "minLength": 1,
+        "properties": {
+            "label": {"type": "string", "minLength": 1},
+            "todos": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+        "required": ["label"],
+        "additionalProperties": False,
+    },
+}
+_SET_STAGES_INPUT_SCHEMA = {
+    **_STAGES_INPUT_SCHEMA,
+    "items": {
+        **_STAGES_INPUT_SCHEMA["items"],
+        "properties": {
+            "key": {"type": "string", "minLength": 1},
+            **_STAGES_INPUT_SCHEMA["items"]["properties"],
+        },
+    },
+}
 
 
 async def _pick_unused_color(db, user_id) -> str:
@@ -104,13 +131,13 @@ async def _pick_unused_color(db, user_id) -> str:
 
 
 async def _create_project(db, user_id, args: dict):
-    # 自定义阶段：stages 可为 ["计划","执行"] 或 [{"label":..,"todos":[..]}]，不传用默认三段
-    raw = args.get("stages")
-    stages = normalize_project_stages(raw) if raw else [dict(s) for s in _DEFAULT_STAGES]
-    if not stages:
-        stages = [dict(s) for s in _DEFAULT_STAGES]
     priority = (args.get("priority") or "").strip().lower()
     try:
+        stages = (
+            normalize_project_stages(args["stages"])
+            if "stages" in args
+            else [dict(s) for s in _DEFAULT_STAGES]
+        )
         p = build_project(user_id, {
             "name": args["name"],
             "client": args.get("client"),
@@ -127,7 +154,10 @@ async def _create_project(db, user_id, args: dict):
     await add_project(db, p)
     await db.commit()
     return {"success": True, "project_id": p.id, "name": p.name,
-            "stages": [s["label"] for s in stages]}
+            "stages": [s["label"] for s in stages],
+            "stage_details": [{"key": s["key"], "label": s["label"],
+                               "todo_count": len(s["todos"])} for s in stages],
+            "current_stage": p.current_stage}
 
 
 async def _update_stage(db, user_id, args: dict):
@@ -137,17 +167,36 @@ async def _update_stage(db, user_id, args: dict):
         return _err
 
     stages = p.stages  # [{key, label, todos:[{id,text,done}]}]
-    stage_arg = str(args.get("stage") or "").strip() or None
-    add_texts = [str(t).strip() for t in (args.get("add") or []) if str(t).strip()]
-    todo_items = [t for t in (args.get("todos") or [])
-                  if isinstance(t, dict) and str(t.get("text") or "").strip()]
+    stage_arg = args.get("stage")
+    if stage_arg is not None:
+        if not isinstance(stage_arg, str) or not stage_arg.strip():
+            return json.dumps({"error": "stage 必须是非空文本"})
+        stage_arg = stage_arg.strip()
+
+    raw_add = args.get("add", [])
+    if not isinstance(raw_add, list) or any(not isinstance(text, str) or not text.strip() for text in raw_add):
+        return json.dumps({"error": "add 必须是非空文本组成的数组"})
+    add_texts = [text.strip() for text in raw_add]
+
+    raw_todos = args.get("todos", [])
+    if not isinstance(raw_todos, list):
+        return json.dumps({"error": "todos 必须是对象数组"})
+    for index, item in enumerate(raw_todos):
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip():
+            return json.dumps({"error": f"todos 第 {index + 1} 项必须包含非空 text"})
+        for field in ("stage", "new_text", "to_stage"):
+            if field in item and (not isinstance(item[field], str) or not item[field].strip()):
+                return json.dumps({"error": f"todos 第 {index + 1} 项的 {field} 必须是非空文本"})
+    todo_items = raw_todos
 
     if not stage_arg and not add_texts and not todo_items:
         return json.dumps({"error": "未指定操作：stage（切换阶段）、add（批量新增）或 todos（批量修改）至少给一个"})
 
     # 只传 stage = 切换当前阶段；配合 add/todos 时仅作操作范围限定，不切换指针
     if stage_arg and not add_texts and not todo_items:
-        match = find_project_stage(stages, stage_arg)
+        match, stage_error = _resolve_stage(stages, stage_arg)
+        if stage_error:
+            return json.dumps({"error": stage_error})
         if not match:
             return json.dumps({"error": f"阶段不存在: {stage_arg}",
                                "available": [s.get("label") for s in stages]})
@@ -156,15 +205,14 @@ async def _update_stage(db, user_id, args: dict):
             return error
         return {"success": True, "project_id": p.id, "current_stage": p.current_stage}
 
-    def _scope(hint):
-        key = hint or p.current_stage
-        return find_project_stage(stages, str(key)) if key else None
-
     results: list[dict] = []
     changed = False
 
     if add_texts:
-        target = _scope(stage_arg)
+        add_scope = stage_arg or p.current_stage
+        target, stage_error = _resolve_stage(stages, str(add_scope)) if add_scope else (None, None)
+        if stage_error:
+            return json.dumps({"error": stage_error})
         if not target:
             return json.dumps({"error": f"阶段不存在: {stage_arg or p.current_stage}",
                                "available": [s.get("label") for s in stages]})
@@ -179,19 +227,28 @@ async def _update_stage(db, user_id, args: dict):
         target_text = str(item["text"]).strip()
         entry: dict = {"todo": target_text}
         results.append(entry)
-        scope = _scope(item.get("stage") or stage_arg)
-        if not scope:
-            entry["error"] = f"阶段不存在: {item.get('stage') or stage_arg or p.current_stage}"
+        scope_hint = item.get("stage") or stage_arg
+        scope = None
+        if scope_hint:
+            scope, stage_error = _resolve_stage(stages, scope_hint)
+            if stage_error:
+                entry["error"] = stage_error
+                continue
+            if not scope:
+                entry["error"] = f"阶段不存在: {scope_hint}"
+                continue
+        todo_match, match_error = _find_todo(stages, target_text, scope)
+        if match_error:
+            if isinstance(match_error, tuple):
+                entry["error"], entry["candidates"] = match_error
+            else:
+                entry["error"] = match_error
             continue
-        entry["stage"] = scope.get("label")
-        found = next(
-            (t for t in scope.get("todos", [])
-             if t.get("id") == target_text or target_text in t.get("text", "")),
-            None,
-        )
-        if not found:
+        if not todo_match:
             entry["error"] = "未找到待办"
             continue
+        scope, found = todo_match
+        entry["stage"] = scope.get("label")
         entry["todo"] = found.get("text")
 
         if item.get("remove"):
@@ -204,7 +261,10 @@ async def _update_stage(db, user_id, args: dict):
         # changed=True 时，这条已做的 rename/done 会被一起提交（静默数据损坏）。
         dest_stage = scope
         if item.get("to_stage"):
-            dest_stage = find_project_stage(stages, str(item["to_stage"]))
+            dest_stage, stage_error = _resolve_stage(stages, item["to_stage"])
+            if stage_error:
+                entry["error"] = stage_error
+                continue
             if not dest_stage:
                 entry["error"] = f"目标阶段不存在: {item['to_stage']}"
                 continue
@@ -362,6 +422,49 @@ async def _commit_project_intent(db, project, user_id, fields: dict):
     return None
 
 
+def _resolve_stage(stages: list[dict], target: str):
+    """按 key 精确定位；名称仅在唯一时可用，避免重名时误改第一项。"""
+    value = target.strip()
+    by_key = next((stage for stage in stages if stage.get("key") == value), None)
+    if by_key:
+        return by_key, None
+    by_label = [stage for stage in stages if stage.get("label") == value]
+    if len(by_label) == 1:
+        return by_label[0], None
+    if len(by_label) > 1:
+        return None, "阶段名称重名，请使用阶段 key 定位"
+    return None, None
+
+
+def _find_todo(stages: list[dict], target: str, stage: dict | None = None):
+    """在给定阶段或全项目查找待办；重复命中时要求调用方缩小范围。"""
+    haystack = [stage] if stage is not None else stages
+    todos = [
+        (candidate_stage, todo)
+        for candidate_stage in haystack
+        for todo in candidate_stage.get("todos", [])
+    ]
+    matches = [(candidate_stage, todo) for candidate_stage, todo in todos if todo.get("id") == target]
+    if not matches:
+        matches = [(candidate_stage, todo) for candidate_stage, todo in todos if todo.get("text") == target]
+    if not matches:
+        matches = [
+            (candidate_stage, todo)
+            for candidate_stage, todo in todos
+            if target in todo.get("text", "")
+        ]
+    if len(matches) == 1:
+        return matches[0], None
+    if len(matches) > 1:
+        candidates = [
+            {"stage_key": candidate_stage.get("key"), "stage": candidate_stage.get("label"),
+             "todo_id": todo.get("id"), "todo": todo.get("text")}
+            for candidate_stage, todo in matches
+        ]
+        return None, ("待办匹配到多项，请提供 todos[].stage 或待办 ID", candidates)
+    return None, None
+
+
 async def _get_project(db, user_id, args: dict):
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
@@ -385,7 +488,11 @@ async def _add_stage(db, user_id, args: dict):
     if _err:
         return _err
     stages = p.stages
-    new = {"key": next_project_stage_key(stages), "label": args["label"], "todos": []}
+    label = args.get("label")
+    if not isinstance(label, str) or not label.strip():
+        return json.dumps({"error": "阶段名称不能为空"})
+    label = label.strip()
+    new = {"key": next_project_stage_key(stages), "label": label, "todos": []}
     pos = args.get("position")
     if pos is None or pos >= len(stages):
         stages.append(new)
@@ -402,10 +509,18 @@ async def _remove_stage(db, user_id, args: dict):
     if _err:
         return _err
     stages = p.stages
-    match = find_project_stage(stages, args["stage"])
+    stage_arg = args.get("stage")
+    if not isinstance(stage_arg, str) or not stage_arg.strip():
+        return json.dumps({"error": "stage 必须是非空文本"})
+    stage_arg = stage_arg.strip()
+    match, stage_error = _resolve_stage(stages, stage_arg)
+    if stage_error:
+        return json.dumps({"error": stage_error})
     if not match:
-        return json.dumps({"error": f"阶段不存在: {args['stage']}",
+        return json.dumps({"error": f"阶段不存在: {stage_arg}",
                            "available": [s.get("label") for s in stages]})
+    if len(stages) <= 1:
+        return json.dumps({"error": "项目至少保留一个阶段，无法删除最后一个阶段"})
     removed_key = match.get("key")
     stages = [s for s in stages if s.get("key") != removed_key]
     current_stage = stages[0]["key"] if p.current_stage == removed_key and stages else p.current_stage
@@ -414,8 +529,11 @@ async def _remove_stage(db, user_id, args: dict):
     )
     if error:
         return error
+    current = next((stage for stage in stages if stage.get("key") == current_stage), None)
     return {"success": True, "project_id": p.id, "removed": match.get("label"),
-            "remaining_stages": [s.get("label") for s in stages]}
+            "remaining_stages": [s.get("label") for s in stages],
+            "current_stage_key": current.get("key") if current else None,
+            "current_stage": current.get("label") if current else None}
 
 
 async def _rename_stage(db, user_id, args: dict):
@@ -423,14 +541,23 @@ async def _rename_stage(db, user_id, args: dict):
     if _err:
         return _err
     stages = p.stages
-    match = find_project_stage(stages, args["stage"])
+    stage_arg = args.get("stage")
+    if not isinstance(stage_arg, str) or not stage_arg.strip():
+        return json.dumps({"error": "stage 必须是非空文本"})
+    stage_arg = stage_arg.strip()
+    match, stage_error = _resolve_stage(stages, stage_arg)
+    if stage_error:
+        return json.dumps({"error": stage_error})
     if not match:
-        return json.dumps({"error": f"阶段不存在: {args['stage']}"})
-    match["label"] = args["new_label"]
+        return json.dumps({"error": f"阶段不存在: {stage_arg}"})
+    new_label = args.get("new_label")
+    if not isinstance(new_label, str) or not new_label.strip():
+        return json.dumps({"error": "阶段名称不能为空"})
+    match["label"] = new_label.strip()
     error = await _commit_project_intent(db, p, user_id, {"stages": stages})
     if error:
         return error
-    return {"success": True, "project_id": p.id, "label": args["new_label"]}
+    return {"success": True, "project_id": p.id, "label": match["label"]}
 
 
 async def _set_stages(db, user_id, args: dict):
@@ -448,7 +575,10 @@ async def _set_stages(db, user_id, args: dict):
     )
     if error:
         return error
-    return {"success": True, "project_id": p.id, "stages": [s["label"] for s in new_stages]}
+    return {"success": True, "project_id": p.id, "stages": [s["label"] for s in new_stages],
+            "stage_details": [{"key": s["key"], "label": s["label"],
+                               "todo_count": len(s["todos"])} for s in new_stages],
+            "current_stage": current_stage}
 
 
 class ProjectsSkill(BaseSkill):
@@ -472,6 +602,7 @@ class ProjectsSkill(BaseSkill):
                 },
             },
             handler=_list_projects,
+            parallel_safe=True,
         ),
         Tool(
             name="update_project",
@@ -498,8 +629,8 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="create_project",
             label="新建项目",
-            description_short="创建项目；可带 stages/todos，后续用 add_stage/update_stage 补充结构",
-            description="创建项目，必须填写开始日期和截止日期（日期字符串，系统统一归一为 YYYY-MM-DD），可一次设置颜色、优先级、阶段和待办。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或‘蓝色渐变’等视觉描述。",
+            description_short='创建项目；stages 可用名称数组 ["开发","上线"]，也可用带待办的对象数组；省略时使用默认阶段',
+            description="创建项目，必须填写开始日期和截止日期（YYYY-MM-DD），可设置颜色、优先级和阶段。stages 必须是非空数组，可用名称简写 [\"开发\",\"上线\"]，或对象 {label: 阶段名, todos: [待办文本]}，例如 [{\"label\":\"设计\",\"todos\":[\"整理需求\"]}]；省略 stages 时使用默认阶段。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或视觉描述。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -510,18 +641,10 @@ class ProjectsSkill(BaseSkill):
                     "start_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
                     "color":      {"type": "string", "enum": list(PROJECT_COLOR_KEYS)},
                     "priority":   {"type": "string", "enum": ["high", "medium", "low"]},
-                    "stages": {
-                        "type": "array",
-                        "items": {
-                            "type": ["string", "object"],
-                            "properties": {
-                                "label": {"type": "string"},
-                                "todos": {"type": "array", "items": {"type": "string"}},
-                            },
-                        },
-                    },
+                    "stages": _STAGES_INPUT_SCHEMA,
                 },
                 "required": ["name", "start_date", "deadline"],
+                "additionalProperties": False,
             },
             handler=_create_project,
             mutates=True,
@@ -591,20 +714,22 @@ class ProjectsSkill(BaseSkill):
                 "required": [],
             },
             handler=_get_project,
+            parallel_safe=True,
         ),
         Tool(
             name="add_stage", label="新增阶段",
             description_short="新增阶段。",
-            description="给项目新增一个阶段（追加到末尾，或用 position 指定插入位置）。注意：这是给项目加阶段，不是新建项目。",
+            description="给项目新增一个阶段（追加到末尾，或用 position 指定插入位置）。阶段 key 是稳定标识，不代表显示顺序；注意：这是给项目加阶段，不是新建项目。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
-                    "label": {"type": "string"},
+                    "label": {"type": "string", "minLength": 1},
                     "position": {"type": "integer", "minimum": 0},
                 },
                 "required": ["label"],
+                "additionalProperties": False,
             },
             handler=_add_stage,
             mutates=True,
@@ -612,15 +737,16 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="remove_stage", label="删除阶段",
             description_short='删除阶段。',
-            description="删除项目的某个阶段（按阶段名称或 key）。连带该阶段的待办一并移除。",
+            description="删除项目的某个阶段（按唯一阶段名称或 key；同名时必须用 key）。连带该阶段的待办一并移除；删除当前阶段后会切换到剩余列表第一阶段并在结果中返回。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
-                    "stage": {"type": "string"},
+                    "stage": {"type": "string", "minLength": 1},
                 },
                 "required": ["stage"],
+                "additionalProperties": False,
             },
             handler=_remove_stage,
             mutates=True,
@@ -628,16 +754,17 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="rename_stage", label="重命名阶段",
             description_short='重命名阶段。',
-            description="重命名项目的某个阶段。",
+            description="重命名项目的某个阶段（按唯一阶段名称或 key；同名时必须用 key）。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
-                    "stage": {"type": "string"},
-                    "new_label": {"type": "string"},
+                    "stage": {"type": "string", "minLength": 1},
+                    "new_label": {"type": "string", "minLength": 1},
                 },
                 "required": ["stage", "new_label"],
+                "additionalProperties": False,
             },
             handler=_rename_stage,
             mutates=True,
@@ -645,38 +772,42 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_stage",
             label="更新阶段",
-            description_short="阶段与待办统一入口：切换阶段、批量增/删/改/移/勾待办。",
+            description_short='切换阶段或批量更新待办；add 是字符串数组，如 ["验收"]，todos 是对象数组。',
             description=(
                 "项目阶段与待办的统一入口。只传 stage＝切换当前阶段；"
-                "add＝批量新增待办（字符串数组）；"
+                "add＝批量新增待办（字符串数组，省略 stage 时加到当前阶段）；"
                 "todos＝批量修改待办（每项 {text 定位, done 勾/取消, new_text 改名, "
                 "to_stage 移动, remove 删除}，一次可处理多条，比如把整个阶段的待办一次勾完）。"
-                "配合 add/todos 的 stage 只作范围限定，不切换当前阶段。"
+                "待办定位的 stage 优先取每项 todos[].stage，其次取顶层 stage；两者都省略时在全项目唯一匹配，"
+                "如重名或模糊匹配到多项会要求提供阶段 key，或在 text 中填写 get_project 返回的待办 id。"
+                '例如 add:["验收"]，或 todos:[{"text":"t1","done":true}]。顶层 stage 只作范围限定，不切换当前阶段。'
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
-                    "stage": {"type": "string"},
-                    "add": {"type": "array", "items": {"type": "string"}},
+                    "stage": {"type": "string", "minLength": 1},
+                    "add": {"type": "array", "items": {"type": "string", "minLength": 1}},
                     "todos": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "text": {"type": "string"},
-                                "stage": {"type": "string"},
+                                "text": {"type": "string", "minLength": 1},
+                                "stage": {"type": "string", "minLength": 1},
                                 "done": {"type": "boolean"},
-                                "new_text": {"type": "string"},
-                                "to_stage": {"type": "string"},
+                                "new_text": {"type": "string", "minLength": 1},
+                                "to_stage": {"type": "string", "minLength": 1},
                                 "remove": {"type": "boolean"},
                             },
                             "required": ["text"],
+                            "additionalProperties": False,
                         },
                     },
                 },
                 "required": [],
+                "additionalProperties": False,
             },
             handler=_update_stage,
             mutates=True,
@@ -684,24 +815,16 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="set_stages", label="整体设置阶段",
             description_short="整体重排阶段。",
-            description="一次性声明项目的完整阶段列表，可增删、改名和重排；只改一个阶段用专用工具。",
+            description="一次性声明项目的完整阶段列表，可增删、改名和重排；stages 是非空数组，可用名称简写，也可用对象 {key?: 现有阶段key, label: 阶段名, todos?: [待办文本]}。同名阶段必须提供 key；保留阶段时建议带上 key。省略 todos 保留对应阶段的待办，显式提供 todos 会将待办重建为未完成。当前阶段 key 若仍存在则保留，否则切换到首个阶段。只改一个阶段用专用工具。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer"},
                     "project": {"type": "string"},
-                    "stages": {
-                        "type": "array",
-                        "items": {
-                            "type": ["string", "object"],
-                            "properties": {
-                                "label": {"type": "string"},
-                                "todos": {"type": "array", "items": {"type": "string"}},
-                            },
-                        },
-                    },
+                    "stages": _SET_STAGES_INPUT_SCHEMA,
                 },
                 "required": ["stages"],
+                "additionalProperties": False,
             },
             handler=_set_stages,
             mutates=True,

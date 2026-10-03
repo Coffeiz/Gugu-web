@@ -14,6 +14,7 @@ import json
 import pytest
 
 from agent.models import AgentRequest, AgentResponse
+from agent.context.assembly import MessageArea
 
 
 def _sse(event: dict) -> str:
@@ -53,10 +54,9 @@ def _stub_exec(runner):
         allow_memory_reflection = False
 
     class _Prepared:
-        anthr_messages = [{"role": "user", "content": "hi"}]
-        anthr_initial_len = 1
-        oa_messages = []
-        oa_initial_len = 0
+        message_area = MessageArea.from_canonical_messages([
+            {"role": "user", "content": "hi"},
+        ])
         rag_context = {}
         stance_to_persist = None
 
@@ -216,15 +216,12 @@ async def test_preparation_sessions_all_closed_before_execution(db, user_a, monk
 
     @dataclasses.dataclass
     class _StubPrepared:
-        anthr_messages: list
-        anthr_initial_len: int
-        oa_messages: list
-        oa_initial_len: int
+        message_area: MessageArea
         rag_context: dict
         stance_to_persist: str | None
 
     async def fake_prepare_run(**kwargs):
-        return _StubPrepared([], 0, [], 0, {}, None)
+        return _StubPrepared(MessageArea(), {}, None)
 
     class _StubRunner:
         def __init__(self, tool_names, settings, **kwargs):

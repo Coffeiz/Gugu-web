@@ -1,0 +1,51 @@
+name: Assemble embedded app candidate
+description: 把已扫描 runtime bundle 追加到 app 基础镜像并验证候选镜像
+inputs:
+  base-image:
+    description: 已构建并扫描的 app 基础镜像
+    required: true
+  candidate-image:
+    description: 组装后候选 app 镜像引用
+    required: true
+  bundle-artifact:
+    description: runtime bundle artifact 名称
+    required: true
+  source-revision:
+    description: runtime bundle 必须关联的源码提交 SHA
+    required: true
+outputs:
+  image:
+    description: 已验证候选 app 本地引用
+    value: ${{ inputs.candidate-image }}
+runs:
+  using: composite
+  steps:
+    - name: Download scanned runtime bundle
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.bundle-artifact }}
+        path: release/embedded-bundle
+
+    - name: Assemble bundle layer onto the prebuilt app
+      shell: bash
+      env:
+        BASE_IMAGE: ${{ inputs.base-image }}
+        CANDIDATE_IMAGE: ${{ inputs.candidate-image }}
+      run: >-
+        docker build --platform linux/amd64
+        --file Dockerfile.sandbox-bundle
+        --build-arg "APP_IMAGE=$BASE_IMAGE"
+        --tag "$CANDIDATE_IMAGE"
+        release/embedded-bundle
+
+    - name: Verify candidate preserves app config and bundle integrity
+      shell: bash
+      env:
+        BASE_IMAGE: ${{ inputs.base-image }}
+        CANDIDATE_IMAGE: ${{ inputs.candidate-image }}
+        SOURCE_REVISION: ${{ inputs.source-revision }}
+      run: >-
+        python3 scripts/release/verify_embedded_app_image.py
+        --base "$BASE_IMAGE"
+        --candidate "$CANDIDATE_IMAGE"
+        --expected-source-revision "$SOURCE_REVISION"

@@ -9,7 +9,7 @@ CRAP 报告和变异测试均为维护者周期性手动执行的质量检查，
 ## Phase 0 盘点与工具选择
 
 - 后端现有入口：runtime-integration workflow 在服务隔离环境中运行 backend 的完整 pytest；开发测试基座使用内存 SQLite 和 fakeredis。本报告所选测试不需要访问真实服务。
-- 前端现有入口：runtime-integration workflow 运行 frontend 的 npm run test:run；本报告只额外启用 Vitest V8 coverage，不改既有测试脚本。
+- 前端现有入口：runtime-integration workflow 运行 `pnpm --filter gugu-web run test:run`；本报告只额外启用 Vitest V8 coverage，不改既有测试脚本。
 - 仓库原先没有 Python pytest 覆盖率/统一圈复杂度依赖，也没有前端 Vitest coverage provider。本报告使用开发依赖 pytest-cov 7.1.0、coverage 7.16.0、Lizard 1.23.0，以及与 Vitest 4.1.11 对齐的 @vitest/coverage-v8。
 - Lizard 对 Python 与 TypeScript 使用同一复杂度口径；覆盖率来自各语言原生测试工具。流程只合并显式列出的单文件，不把工具默认范围扩展到整个仓库。
 - 风险展示规则：CRAP ≥30 为高、≥15 为中、其余为低；仅用于人工排序，不作为通过条件或 CI 阈值。

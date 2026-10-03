@@ -341,11 +341,8 @@ async def list_servers(user: User = Depends(get_current_user),
     )).scalars().all()
     from agent.mcp.manager import mcp_manager
 
-    # 运行时工具缓存在 worker 内；列表页不能只读本进程旧缓存，否则咕咕
-    # 刚在另一个 worker 装载成功时，这里仍会显示 0 个工具。已启用服务
-    # 在没有有效缓存时会按需执行一次 tools/list，之后仍复用缓存。
-    if settings.mcp.enabled:
-        await mcp_manager.list_user_tools(user.id)
+    # 列表 GET 只读取本 worker 已有的运行时状态；MCP 握手和工具发现
+    # 由用户显式测试/重连触发，避免外部服务延迟阻塞设置页加载。
     states = {s["server_id"]: s for s in mcp_manager.server_states(user.id)}
     items = []
     for row in rows:

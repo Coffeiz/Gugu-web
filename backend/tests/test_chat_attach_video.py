@@ -6,63 +6,63 @@
 import pytest
 
 
-def test_vision_ready_uses_active_model_context(monkeypatch):
+def test_image_ready_uses_active_model_context(monkeypatch):
     """文件库工具必须按本轮实际模型判断，不能被全局默认模型遮蔽。"""
     from types import SimpleNamespace
     from app.core import chat_attach
 
-    default_ai = SimpleNamespace(provider="qwen", model="qwen3.8", vision=False)
-    active_ai = SimpleNamespace(provider="minimax", model="abab-m3", vision=True)
+    default_ai = SimpleNamespace(provider="qwen", model="qwen3.8", image=False)
+    active_ai = SimpleNamespace(provider="minimax", model="abab-m3", image=True)
     monkeypatch.setattr(chat_attach, "get_settings", lambda: SimpleNamespace(ai=default_ai), raising=False)
     monkeypatch.setattr("agent.llm.modelctx.get_model_cfg", lambda: active_ai)
     monkeypatch.setattr(
         "agent.providers.adapter_for",
         lambda _ai: SimpleNamespace(
-            capabilities=lambda _model: SimpleNamespace(vision=False, api_format="anthropic")
+            capabilities=lambda _model: SimpleNamespace(image=False, api_format="anthropic")
         ),
     )
 
-    assert chat_attach.vision_ready() is True
+    assert chat_attach.image_ready() is True
 
 
-def test_vision_ready_honors_explicit_toggle_for_openai_compatible_model(monkeypatch):
+def test_image_ready_honors_explicit_toggle_for_openai_compatible_model(monkeypatch):
     """后台明确启用视觉后，不应再被适配器的静态能力声明否决。"""
     from types import SimpleNamespace
     from app.core import chat_attach
 
-    default_ai = SimpleNamespace(provider="qwen", model="qwen3.8", vision=False)
-    active_ai = SimpleNamespace(provider="deepseek", model="deepseek-flash", vision=True)
+    default_ai = SimpleNamespace(provider="qwen", model="qwen3.8", image=False)
+    active_ai = SimpleNamespace(provider="deepseek", model="deepseek-flash", image=True)
     monkeypatch.setattr(chat_attach, "get_settings", lambda: SimpleNamespace(ai=default_ai), raising=False)
     monkeypatch.setattr("agent.llm.modelctx.get_model_cfg", lambda: active_ai)
     monkeypatch.setattr(
         "agent.providers.adapter_for",
         lambda _ai: SimpleNamespace(
-            capabilities=lambda _model: SimpleNamespace(vision=False, api_format="openai")
+            capabilities=lambda _model: SimpleNamespace(image=False, api_format="openai")
         ),
     )
 
-    assert chat_attach.vision_ready() is True
+    assert chat_attach.image_ready() is True
 
 
-def test_vision_ready_honors_capability_override(monkeypatch):
+def test_image_ready_honors_capability_override(monkeypatch):
     """模型能力覆写为支持视觉时，工具预检应使用同一份有效能力。"""
     from types import SimpleNamespace
     from app.core import chat_attach
 
     ai = SimpleNamespace(
-        provider="deepseek", model="custom-vision-model", vision=False,
-        capability_overrides={"vision": True},
+        provider="deepseek", model="custom-vision-model", image=False,
+        capability_overrides={"image": True},
     )
     monkeypatch.setattr(chat_attach, "get_settings", lambda: SimpleNamespace(ai=ai), raising=False)
     monkeypatch.setattr("agent.llm.modelctx.get_model_cfg", lambda: ai)
     monkeypatch.setattr(
         "agent.providers.adapter_for",
         lambda _ai: SimpleNamespace(
-            capabilities=lambda _model: SimpleNamespace(vision=False, api_format="openai")
+            capabilities=lambda _model: SimpleNamespace(image=False, api_format="openai")
         ),
     )
 
-    assert chat_attach.vision_ready() is True
+    assert chat_attach.image_ready() is True
 
 
 # ── _should_compress_video：压缩触发判断 ─────────────────────────────────────
@@ -188,8 +188,8 @@ def test_text_only_provider_does_not_receive_audio_or_video_blocks():
     from types import SimpleNamespace
     from app.core.chat_attach import _audio_enabled, _video_enabled
 
-    cfg = SimpleNamespace(provider="glm", model="glm-4.5-air", vision_audio=True,
-                          vision_video=True, api_format="", base_url="")
+    cfg = SimpleNamespace(provider="glm", model="glm-4.5-air", audio=True,
+                          video=True, api_format="", base_url="")
 
     assert _audio_enabled(cfg) is False
     assert _video_enabled(cfg) is False
@@ -199,7 +199,7 @@ def test_native_audio_model_does_not_fallback_to_transcription():
     from types import SimpleNamespace
     from app.core.chat_attach import should_transcribe_audio
 
-    cfg = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", vision_audio=True,
+    cfg = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", audio=True,
                           api_format="", base_url="https://token-plan-cn.xiaomimimo.com/v1")
     assert should_transcribe_audio(cfg) is False
 
@@ -208,7 +208,7 @@ def test_text_only_model_falls_back_to_transcription():
     from types import SimpleNamespace
     from app.core.chat_attach import should_transcribe_audio
 
-    cfg = SimpleNamespace(provider="glm", model="glm-4.5-air", vision_audio=False,
+    cfg = SimpleNamespace(provider="glm", model="glm-4.5-air", audio=False,
                           api_format="", base_url="")
     assert should_transcribe_audio(cfg) is True
 
@@ -458,7 +458,7 @@ def test_resolve_mmfile_failure_does_not_fallback_base64(monkeypatch):
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
 
     cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
-                          model="MiniMax-M3", vision_video=True)
+                          model="MiniMax-M3", video=True)
     text, cards, images, media = asyncio.run(
         chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
     # 不应生成任何 base64 视频块
@@ -500,7 +500,7 @@ def test_resolve_video_over_90mb_rejected(monkeypatch):
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
 
     cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
-                          model="MiniMax-M3", vision_video=True)
+                          model="MiniMax-M3", video=True)
     text, cards, images, media = asyncio.run(
         chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
     assert media == []
@@ -532,7 +532,7 @@ def test_resolve_video_under_45mb_base64(monkeypatch):
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
 
     cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
-                          model="MiniMax-M3", vision_video=True)
+                          model="MiniMax-M3", video=True)
     text, cards, images, media = asyncio.run(
         chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
     assert len(media) == 1
@@ -573,7 +573,7 @@ def test_resolve_for_message_calls_shared_prepare_video_media(monkeypatch):
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
 
     cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
-                          model="MiniMax-M3", vision_video=True)
+                          model="MiniMax-M3", video=True)
     asyncio.run(chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
     assert calls["n"] == 1
 
@@ -607,7 +607,7 @@ def test_resolve_video_45_to_90mb_uses_mmfile_on_success(monkeypatch):
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
 
     cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
-                          model="MiniMax-M3", vision_video=True)
+                          model="MiniMax-M3", video=True)
     text, cards, images, media = asyncio.run(
         chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
     assert len(media) == 1

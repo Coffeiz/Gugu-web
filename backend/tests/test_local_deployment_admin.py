@@ -58,11 +58,11 @@ async def test_capability_probe_persists_fingerprint_and_results(monkeypatch):
 def test_local_runtime_model_defaults_and_override_precedence():
     ai = SimpleNamespace(
         provider="local", local_runtime="llama.cpp", base_url="", model="demo",
-        capability_overrides={"tools": True, "vision": False}, api_key="do-not-expose")
+        capability_overrides={"tools": True, "image": False}, api_key="do-not-expose")
     snapshot = providers.capability_snapshot(ai)
     assert snapshot["tools"] is True
-    assert snapshot["vision"] is False
-    assert snapshot["overrides"] == {"tools": True, "vision": False}
+    assert snapshot["image"] is False
+    assert snapshot["overrides"] == {"tools": True, "image": False}
     assert "do-not-expose" not in repr(snapshot)
 
 

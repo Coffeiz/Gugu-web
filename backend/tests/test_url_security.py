@@ -93,7 +93,7 @@ def test_resolve_pinned_ip_rejects_mixed_dns_results(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_web_pinned_backend_uses_resolved_ip(monkeypatch):
-    from agent.tools.web import _PinnedAsyncNetworkBackend
+    from app.core.pinned_http import PinnedAsyncNetworkBackend
 
     calls = {}
 
@@ -109,54 +109,8 @@ async def test_web_pinned_backend_uses_resolved_ip(monkeypatch):
         async def sleep(self, seconds):
             return None
 
-    backend = _PinnedAsyncNetworkBackend("93.184.216.34")
+    backend = PinnedAsyncNetworkBackend("93.184.216.34")
     backend._backend = _Backend()
     result = await backend.connect_tcp("rebind.example", 443)
     assert result == "stream"
     assert calls == {"host": "93.184.216.34", "port": 443}
-
-
-def test_build_pinned_request_connects_to_resolved_ip_not_hostname(monkeypatch):
-    """关键回归：真正发起连接的 URL 必须是校验时解析到的 IP，而不是重新交给 httpx 用
-    域名自己再 resolve 一次——否则 DNS rebinding 窗口依然存在（校验一次、连接再解析一次）。"""
-    import socket
-
-    from agent.tools.files import _build_pinned_request
-
-    def safe_result(*_args, **_kwargs):
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
-
-    monkeypatch.setattr(socket, "getaddrinfo", safe_result)
-
-    captured = {}
-
-    class _FakeClient:
-        def build_request(self, method, url, headers=None, extensions=None):
-            captured["method"] = method
-            captured["url"] = url
-            captured["headers"] = headers
-            captured["extensions"] = extensions
-            return "request-object"
-
-    req, error = _build_pinned_request(_FakeClient(), "GET", "https://rebind.example/img.jpg")
-    assert error is None
-    assert req == "request-object"
-    # 实际请求打到解析出的 IP，不是域名——域名只留在 Host 头和 SNI 里保证证书校验/路由正确。
-    assert "93.184.216.34" in captured["url"]
-    assert "rebind.example" not in captured["url"]
-    assert captured["headers"]["Host"] == "rebind.example"
-    assert captured["extensions"]["sni_hostname"] == "rebind.example"
-
-
-def test_build_pinned_request_propagates_block_reason(monkeypatch):
-    import socket
-
-    from agent.tools.files import _build_pinned_request
-
-    def blocked_result(*_args, **_kwargs):
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
-
-    monkeypatch.setattr(socket, "getaddrinfo", blocked_result)
-    req, error = _build_pinned_request(object(), "GET", "https://evil.example/img.jpg")
-    assert req is None
-    assert "内网" in error

@@ -10,6 +10,7 @@ import copy
 import json
 import logging
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
 from typing import Any, Callable
@@ -31,10 +32,7 @@ from agent.tools.tool_contract import (
     enrich_tool_error,
     internal_error_text,
     invalid_input_payload,
-    normalize_legacy_input,
-    normalize_input_by_schema,
-    unwrap_arguments_wrapper,
-    validate_input,
+    normalize_and_validate_tool_input,
 )
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
@@ -56,6 +54,7 @@ _automation_allowed_tools: ContextVar[frozenset[str]] = ContextVar(
 _dispatch_filesystem_subject: ContextVar[dict[str, Any] | None] = ContextVar(
     "agent_dispatch_filesystem_subject", default=None,
 )
+_dispatch_parallel: ContextVar[bool] = ContextVar("agent_dispatch_parallel", default=False)
 
 
 def set_dispatch_session_id(session_id: int | None):
@@ -107,6 +106,21 @@ def current_dispatch_tool_snapshot():
 def current_dispatch_skill_state() -> dict[str, str] | None:
     """返回当前 Run 的 Skill 正文 digest 状态。"""
     return _dispatch_skill_state.get()
+
+
+def current_dispatch_is_parallel() -> bool:
+    """返回当前工具调用是否由同一 Round 的并行调度器启动。"""
+    return _dispatch_parallel.get()
+
+
+@contextmanager
+def parallel_dispatch_context():
+    """为单个并发 dispatch 标记上下文，并在结束时恢复父任务状态。"""
+    token = _dispatch_parallel.set(True)
+    try:
+        yield
+    finally:
+        _dispatch_parallel.reset(token)
 
 
 def set_automation_allowed_tools(tool_names: set[str] | frozenset[str]):
@@ -275,22 +289,29 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         print(f"[skill] 慢工具进度声明发送失败（不影响工具执行）: {type(e).__name__}: {e}", flush=True)
 
 
-def _compact_schema(value: Any) -> Any:
-    """移除 Schema 节点元数据，保留 properties 中同名的真实字段。"""
+def _compact_schema(value: Any, *, omit_documentation: bool = True) -> Any:
+    """移除内部归一化标记，可选移除文档；保留 properties 中同名真实字段。"""
     if isinstance(value, list):
-        return [_compact_schema(item) for item in value]
+        return [_compact_schema(item, omit_documentation=omit_documentation) for item in value]
     if not isinstance(value, dict):
         return value
-    omitted = {"description", "example", "examples", "title", "default"}
+    omitted = {"x-empty-string"}
+    if omit_documentation:
+        omitted.update({"description", "example", "examples", "title", "default"})
     result = {}
     for key, item in value.items():
         if key in omitted:
             continue
-        if key == "properties" and isinstance(item, dict):
+        if not omit_documentation and key in {"default", "const", "enum", "example", "examples"}:
+            # 这些值是业务数据而非 Schema 节点，不能删除其中同名的真实键。
+            result[key] = copy.deepcopy(item)
+        elif key in {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"} \
+                and isinstance(item, dict):
             # properties 的 key 是用户参数名，不是 Schema 元数据；参数名可以合法地叫 title。
-            result[key] = {name: _compact_schema(schema) for name, schema in item.items()}
+            result[key] = {name: _compact_schema(schema, omit_documentation=omit_documentation)
+                           for name, schema in item.items()}
         else:
-            result[key] = _compact_schema(item)
+            result[key] = _compact_schema(item, omit_documentation=omit_documentation)
     return result
 
 
@@ -311,7 +332,10 @@ class Tool:
                  platforms: tuple[str, ...] = (),
                  related_skills: tuple[str, ...] = (),
                  source: str = "builtin", schema_version: int = 1,
-                 batch_confirmation: bool = False):
+                 batch_confirmation: bool = False,
+                 strict_array_fields: tuple[str, ...] = (),
+                 parallel_safe: bool = False,
+                 parallel_safe_for_input: Callable[[dict], bool] | None = None):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -323,6 +347,14 @@ class Tool:
         self.requires_confirmation = requires_confirmation
         # 显式声明批量分支也使用精确目标集合确认；静态守卫检查统一 helper。
         self.batch_confirmation = batch_confirmation
+        # 并发安全是独立于 mutates 的显式调度授权；默认关闭，只有经过副作用与
+        # 共享状态审查的工具才能加入同一 Round 的并发批次。
+        self.parallel_safe = parallel_safe is True
+        # 少数有副作用工具（如受权限/确认策略保护的 Shell）可按具体输入
+        # 声明本次调用能否与同 Round 的其他调用并行；失败时默认串行。
+        self.parallel_safe_for_input = parallel_safe_for_input
+        # 这些输入数组要求调用方提供规范结构，不应用模型侧 item 包装/拍平归一。
+        self.strict_array_fields = frozenset(strict_array_fields)
         # 是否会改数据（写库/改长期记忆/删笔记……）：定时任务只有在整轮没有任何
         # mutates=True 的调用时才允许重跑完整 execution（见 scheduled_tasks.py 的
         # mutated 判断）。以前靠猜工具名前缀（create_/update_/delete_/...），
@@ -368,7 +400,7 @@ class Tool:
         return {
             "name": self.name,
             "description": self.provider_description,
-            "input_schema": copy.deepcopy(self.input_schema),
+            "input_schema": _compact_schema(self.input_schema, omit_documentation=False),
         }
 
     def to_openai(self) -> dict:
@@ -377,7 +409,7 @@ class Tool:
             "function": {
                 "name": self.name,
                 "description": self.provider_description,
-                "parameters": copy.deepcopy(self.input_schema),
+                "parameters": _compact_schema(self.input_schema, omit_documentation=False),
             },
         }
 
@@ -587,27 +619,11 @@ class SkillRegistry:
         # JSON 能解析 ≠ 符合工具契约。先要求顶层 object，再按工具 Schema 做安全归一化，最后按
         # Tool.input_schema 做本地实例校验。任何失败都在进度声明/DB/handler/confirm 之前返回，
         # 防止“参数根本不能执行，却先对用户说我去做了”或 mutation handler 带错参运行。
-        if not isinstance(args, dict):
-            payload = invalid_input_payload(
-                name,
-                [{"path": "$", "rule": "type", "message": "工具输入必须是 object"}],
-                schema=tool.input_schema,
-            )
-            _log_traj(name, user_id, args, False, "tool_input_invalid:type", t0)
-            return json.dumps(payload, ensure_ascii=False), None
-
-        # 版本适配集中在契约层，只转换无歧义的旧字段，再进入当前 Schema 校验。
-        args, _arguments_unwrapped = unwrap_arguments_wrapper(tool.input_schema, args)
-        args, _legacy_adaptations = normalize_legacy_input(name, args)
-
-        # 正常工具会在 registry.add() 时缓存 validator；测试工具和少量运行时扩展可能直接
-        # 注入 registry，仍需在 dispatch 边界补建，避免校验器为空导致整轮 Agent 崩溃。
-        if tool._input_validator is None:
-            tool._input_validator = build_validator(tool.input_schema)
-        args, _type_adaptations = normalize_input_by_schema(tool.input_schema, args)
-        issues = validate_input(tool._input_validator, args)
+        args, issues, _legacy_adaptations, _type_adaptations = (
+            normalize_and_validate_tool_input(name, args, tool)
+        )
         if issues:
-            payload = invalid_input_payload(name, issues, schema=tool.input_schema)
+            payload = invalid_input_payload(name, issues, schema=tool.input_schema, instance=args)
             first_rule = issues[0].get("rule", "invalid")
             first_path = issues[0].get("path", "$")
             _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}:{first_path}", t0)
@@ -722,6 +738,16 @@ class SkillRegistry:
         # 从 dispatch 边界出去都统一为顶层载荷，避免下游各自猜包装形状。
         result = normalize_confirmation_result(result)
 
+        # 成功回执显式报告兼容转换，只包含固定规则/字段路径，不回显原始输入。
+        if isinstance(result, dict) and not result.get("error") \
+                and result.get("status") != "failed" and confirmation_payload(result) is None:
+            adaptations = [*_legacy_adaptations, *_type_adaptations]
+            if name in {"create_project", "set_stages"} \
+                    and any(isinstance(stage, str) for stage in args.get("stages", [])):
+                adaptations.append("stages:stage_names_to_objects")
+            if adaptations:
+                result["input_adaptations"] = adaptations
+
         # 未知字段警告：只注入成功路径的 dict 回执（错误/确认门载荷各有固定形状，不掺和）。
         if unknown_fields and isinstance(result, dict) and not result.get("error") \
                 and confirmation_payload(result) is None:
@@ -745,7 +771,7 @@ class SkillRegistry:
         # destructive 绊线：不可逆工具在「未带 confirm」的调用里，合法结果只有两种——
         # needs_confirm 拦截（handler 内 confirm.needs_confirmation 返回）或业务错误。
         # 返回了"成功执行" = 该 handler 漏接确认门、无确认就做了不可逆操作——已无法撤销，
-        # 但必须响亮地被看见（静态守卫 scripts/check_confirm_gate.py 在提交前拦同类问题，
+        # 但必须响亮地被看见（静态守卫 scripts/checks/check_confirm_gate.py 在提交前拦同类问题，
         # 这里是运行时兜底，抓静态分析覆盖不到的动态路径）。
         from agent.security import confirm as _confirm
         if (tool.destructive and _ok
@@ -768,8 +794,8 @@ class SkillRegistry:
         if isinstance(result, dict) and "_media_content" in result:
             return result.pop("_media_content"), None
 
-        if isinstance(result, dict) and "_vision_image" in result:
-            block = result.pop("_vision_image")
+        if isinstance(result, dict) and "_image_block" in result:
+            block = result.pop("_image_block")
             note = result.get("note", "")
             content = ([{"type": "text", "text": note}] if note else []) + [block]
             return content, None

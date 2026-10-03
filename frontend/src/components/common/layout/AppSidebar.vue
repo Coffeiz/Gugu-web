@@ -72,7 +72,13 @@
     <Transition name="notif-pop">
       <div v-if="notifOpen" class="notif-popup" ref="notifPopupRef" :style="notifStyle" @click.stop>
         <div class="notif-popup-surface">
-          <div class="notif-header"><span class="notif-title">{{ t('navigation.notifications') }}</span><button class="notif-mark-all" @click="markAllRead">{{ t('layout.markAllRead') }}</button></div>
+          <div class="notif-header">
+            <span class="notif-title">{{ t('navigation.notifications') }}</span>
+            <div class="notif-header-actions">
+              <button class="notif-mark-all" @click="markAllRead">{{ t('layout.markAllRead') }}</button>
+              <button class="notif-mark-all notif-clear" :disabled="!notifications.length || clearingNotifications" @click="clearNotifications">{{ t('layout.clearNotifications') }}</button>
+            </div>
+          </div>
           <div class="notif-list scroll-surface scroll-surface--compact">
             <div v-for="n in notifications" :key="n.id ?? ''" class="notif-item" :class="{ unread: n.unread }" @click="n.id != null && uiStore.markRead(n.id)">
               <span class="notif-dot" :style="{ background: n.color }"></span>
@@ -106,6 +112,8 @@ import { canAccessTerminals, mcpApi, workspacesApi } from '@/services/api'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 import { SUPPORT_ALIPAY_QR_URL, SUPPORT_KOFI_URL, SUPPORT_WECHAT_QR_URL } from '@/config/support'
 import { useI18n } from 'vue-i18n'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { showAppError } from '@/composables/core/useAppToast'
 
 const router = useRouter()
 const projectStore = useProjectStore()
@@ -169,6 +177,7 @@ const notifBtnRef = ref<HTMLElement | null>(null)
 const notifPopupRef = ref<HTMLElement | null>(null)
 const notifStyle = ref({})
 const notifications = computed(() => uiStore.notifications)
+const clearingNotifications = ref(false)
 
 function updateSettingsPosition() {
   if (!settingsOpen.value) return
@@ -202,6 +211,24 @@ function toggleNotif() {
   })
 }
 function markAllRead() { uiStore.markAllRead() }
+async function clearNotifications() {
+  if (!notifications.value.length || clearingNotifications.value) return
+  const confirmed = await confirmDialog({
+    title: t('layout.clearNotificationsTitle'),
+    message: t('layout.clearNotificationsMessage'),
+    tone: 'danger',
+    confirmText: t('layout.clearNotifications'),
+  })
+  if (!confirmed) return
+  clearingNotifications.value = true
+  try {
+    await uiStore.clearNotifications()
+  } catch {
+    showAppError(t('layout.clearNotificationsFailed'))
+  } finally {
+    clearingNotifications.value = false
+  }
+}
 // 拖选保护：弹层内拖选文字移出后松开，click 落在外面，不能因此误关
 const pressGuard = createPressOutsideGuard((t: Node) => {
   if (t instanceof HTMLElement && t.closest('.nb-stack')) return true
@@ -312,6 +339,7 @@ onUnmounted(() => {
   display:flex; align-items:center; justify-content:space-between; padding:13px 14px 10px;
   border-bottom:1px solid var(--popup-divider);
 }
+.notif-header-actions { display:flex; align-items:center; gap:4px; }
 .notif-title { font-size:13px; font-weight:700; color:var(--content-primary); }
 .notif-mark-all {
   font-size:11px; font-weight:500; color:var(--popup-item-fg-muted); background:none; border:none;
@@ -319,6 +347,9 @@ onUnmounted(() => {
   transition:background .12s;
 }
 .notif-mark-all:hover { background:var(--popup-item-bg-hover); }
+.notif-mark-all:disabled { opacity:.45; cursor:default; }
+.notif-mark-all:disabled:hover { background:none; }
+.notif-clear { color:var(--status-danger); }
 .notif-list {
   padding:6px; display:flex; flex-direction:column; gap:2px; flex:1; min-height:0; overflow-y:auto;
 }

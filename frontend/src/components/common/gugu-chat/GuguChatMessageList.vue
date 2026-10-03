@@ -49,7 +49,7 @@
  * virtualizer 的 scrollToIndex（流式跟随滚动、切会话定位、搜索跳转高亮），
  * 通过 defineExpose 暴露 el 和 scrollToIndex，不把这些操作重新实现一遍。
  */
-import { ref, computed, watch, nextTick, type ComponentPublicInstance } from 'vue'
+import { ref, computed, watch, watchEffect, nextTick, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import GuguChatMessageRow from './GuguChatMessageRow.vue'
 import type { ChatMessage, ChatFile, ChatReference } from './chatTypes'
@@ -62,6 +62,7 @@ const props = defineProps<{
   copiedId: number | null
   voicePlayingId: string | null
   expanded: boolean
+  resizing: boolean
   statusKind: string
   statusTyped: string
   sessionSettling: boolean
@@ -93,6 +94,10 @@ const virtualizer = useVirtualizer({
     const message = props.messages[index]
     return message?.dbId ?? message?.id ?? `${props.sessionId ?? 'new'}:${index}`
   },
+})
+// 尺寸过渡由窗口域维护视口底部锚点，避免虚拟列表同时按顶部纠偏。
+watchEffect(() => {
+  virtualizer.value.shouldAdjustScrollPositionOnItemSizeChange = props.resizing ? () => false : undefined
 })
 const virtualRows = computed(() => virtualizer.value.getVirtualItems())
 // 绝对定位的子元素不会跟着祖先的 padding 走（top:0/left:0 是相对祖先的边框盒，不是内容盒），

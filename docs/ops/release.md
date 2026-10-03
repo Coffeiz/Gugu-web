@@ -7,6 +7,7 @@
 ## 1. PR 规范（dev → main）
 
 - 任何进入 main 的代码必须走 dev → main 的 PR，禁止直接 push main。
+- PR 标题与描述按 §1.1 编写；仓库的 `.github/PULL_REQUEST_TEMPLATE.md` 是创建 PR 时的填写模板。
 - **GitHub CI 不随 PR 自动运行**（省 Actions usage，两个 workflow 均已去掉 `pull_request` 触发）。
   PR 合并前必须**人工手动触发**并等全绿：
   - 触发方式：GitHub Actions 页对 `Runtime integration` 和 `Docker release` 各点一次
@@ -17,6 +18,43 @@
     exit-code 1）——两个 workflow 全绿就代表测试、镜像构建和安全门都过了。
   - push 到 main 和版本 tag 仍然自动触发；PR 迭代过程中的中间 commit 不再消耗 Actions 时长。
 - CI 只跑了构建与扫描，业务回归脚本本地跑（见 §2）。不要为了赶发版跳过回归直接合。
+
+### 1.1 PR 标题与描述
+
+每个 PR 都必须按 `.github/PULL_REQUEST_TEMPLATE.md` **完整填写**，不得只写摘要或省略章节。模板章节和检查项是 PR 描述的最低结构要求，不是可选示例。
+
+正文的 PR 类型必须勾选本 PR **实际包含的全部类型**，允许多选；不能只选标题类型，也不能把混合改动都归到一个类型。标题仍使用“`主要类型：简短说明`”格式，只写一个最能代表 PR 主要目的的类型，并且该类型必须也在正文勾选。混合改动的各类范围在“主要变更”中分别说明。
+
+类型如下：
+
+- **功能**：新增用户能力。
+- **修复**：修复错误或异常行为。
+- **改进**：优化现有功能、性能或体验。
+- **重构**：调整实现或架构，原则上不改变用户可见行为。
+- **安全**：修复或强化安全边界。
+- **文档**：仅文档变更。
+- **测试**：仅测试或测试基础设施变更。
+- **构建/CI**：构建、依赖、流水线或开发工具变更。
+- **发布**：版本号、CHANGELOG 或发版流程变更。
+
+标题应描述用户能理解的目的，不写实现流水账、内部代号或未经核实的效果。例如“`修复：复制失败时不再显示成功`”。
+
+正文必须保留并填写以下章节，不得留空：
+
+- **PR 类型**：勾选本 PR 实际包含的全部类型，可以多选；标题使用其中一个主要类型作为前缀。
+- **变更目的**：说明现状、要解决的问题或用户需求及预期结果；有 issue、PRD 或设计文档时附链接。
+- **主要变更**：列出用户可感知变化和重要实现范围；混合改动区分各部分，并明确写出 PR 不包含的相关范围。
+- **验证**：列出实际执行的命令或操作及结果。未执行的测试、类型检查、构建或手动验证须逐项写明“未执行”和原因；不得把计划执行写成已通过。
+- **风险与兼容性**：说明影响对象以及 API、数据、配置、权限、部署和回滚影响；无已知影响时明确写“未发现”，不能留空或只写“低风险”。
+- **部署说明**：说明环境变量、Compose/镜像调整、数据库迁移、人工步骤和回滚方式；无需额外步骤时明确写“无”。
+- **截图或录屏**：所有 UI 变化必须附能展示结果的截图或录屏；非 UI 改动可删除此章节。无法提供 UI 材料时写明原因和待补项，不得勾选完成。
+- **合并前检查**：逐项核对目标分支、标题/类型、验证、风险/部署、密钥/运行配置和 UI 材料，并如实勾选；未满足项保持未勾选并说明原因。
+
+破坏性变化不作为 PR 类型单独勾选，必须在“风险与兼容性”中明确标注受影响对象、迁移方式和回滚限制。安全修复也应在该项说明安全边界或风险变化，避免只写“安全已修复”。
+
+不适用的必填章节仍须保留，并填写“无”或“不适用”及简短原因；只有非 UI PR 可以删除“截图或录屏”章节。不得保留模板提示文字、空列表、空白章节或未经核对的勾选状态。类型清单中的每一项都必须判断是否适用：适用的全部勾选，不适用的不勾选。
+
+PR 模板是必须完整填写的描述结构，不替代 §1 的合并门槛、§2 的发布前预检或对应领域的测试要求。PR 作者应将模板提示替换为具体事实，并为不适用项说明原因。
 
 ## 2. 发版前本地预检（打 tag 之前必须全部通过）
 
@@ -126,6 +164,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:lates
   ```
 
 - tag 触发 publish job：构建公开的一体化 `gugu-web`、updater、sandbox 和拆分 backend/frontend 镜像，并同步推送 Docker Hub 与 GHCR；业务镜像只发布语义版本号标签，不发布 Git SHA 镜像标签。稳定版的一体化 `gugu-web`、updater、sandbox 仍维护 `latest` 别名；镜像均以 Cosign OCI 1.1 referrer 方式签名，签名不会创建 `sha256-<digest>.sig` 普通镜像 tag。此前已发布的旧式 `.sig` tag 保留，不做清理。update manifest 使用 `docker.io/coffeiz/gugu-web@sha256:...`，不引用拆分镜像。
+- 一体化 `gugu-web` 发布必须先把同次构建的沙盒与 egress-proxy bundle 追加到 app 基础镜像，再通过 `verify_embedded_app_image.py` 完成完整性和离线 Shell smoke test；publish 只允许复制 `bundled-ci-<run_id>` 候选镜像，禁止把 `ci-<run_id>` 基础 app 镜像作为单容器正式镜像。所有本地候选镜像也统一使用 `scripts/release/build-bundled-app-image.sh` 组装并验证；需要离线导入时再通过 `--archive` 导出 `.tar`，不得直接 `docker save` 基础 app 镜像。
 - 稳定版发布完成后，CI 会在 GHCR 与 Docker Hub 的四个镜像仓库中保留最新 10 个 `v主.次.补丁` 正式版本 tag；预发布、`latest`、`dev` 和其他非版本 tag 不清理。GHCR 仅删除不含别名或保留版本 tag 的旧 package version；`GITHUB_TOKEN` 必须对 GHCR package 有 admin 权限，`DOCKERHUB_TOKEN` 必须具备删除 tag 的权限。若 registry 权限或平台限制导致清理失败，只记录告警，不回滚或阻断已完成的发布。
 - Docker Hub 首次推送会按 `coffeiz` 命名空间的默认可见性创建 backend/frontend 仓库；首次发布前确认这两个仓库为 Public，确保业务服务器可匿名拉取。
 
@@ -160,8 +199,7 @@ docker restart gugu-web-main-nginx-1
 
 ### Shell 沙盒前置（首次部署或迁移时）
 
-沙盒容器由 `sandboxd` 通过 Docker socket 作为**兄弟容器**启动；backend 只通过受限 Unix
-socket IPC 请求沙盒执行，不直接持有 Docker socket。`--mount src=.../users/<uid>/shell`
+沙盒容器由 backend 通过 docker.sock 作为**兄弟容器**启动，`--mount src=.../users/<uid>/shell`
 由**宿主机 daemon** 解析，所以宿主机需要看到与容器内一致的 `Gugu-data` 路径。Compose
 会把 `GUGU_DATA_HOST_DIR` 直接 bind 到容器的 `/data`，未设置时按 Compose 文件目录解析为
 `Gugu-data`，首次启动会自动创建。启用 `sandbox` profile 时，`sandboxd` 会在启动前自动为每个用户的

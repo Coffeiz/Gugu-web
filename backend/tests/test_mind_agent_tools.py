@@ -1,7 +1,7 @@
 """咕咕思维工具：只读、受限块写入、软删恢复与用户隔离。"""
 from app.core.mind import upsert_relation
 from app.models import MindNode, Project
-from agent.tools.mind import (
+from agent.tools.note import (
     _create_note, _delete_note, _note_get, _note_search, _restore_note, _undo_last_gugu_note,
     _update_note,
 )

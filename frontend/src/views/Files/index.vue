@@ -73,6 +73,8 @@
       <FileTrashToolbarActions v-if="currentType === 'trash'"
         :has-items="Boolean(contents.files.length || trashFolders.length)"
         :all-selected="allTrashSelected"
+        :empty-busy="trashActions.emptyTrashBusy.value"
+        :empty-progress="trashActions.emptyTrashProgress.value"
         @toggle-select="toggleSelectAllTrash"
         @empty="confirmEmptyTrash" />
     </template>
@@ -216,7 +218,8 @@ import { useFileLibraryDirectory } from '@/composables/files/useFileLibraryDirec
 import { useFileLibrarySorting } from '@/composables/files/useFileLibrarySorting'
 import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelection'
 import { useFileLibraryBatchActions } from '@/composables/files/useFileLibraryBatchActions'
-import { useFileLibraryArchiveActions } from '@/composables/files/useFileLibraryArchiveActions'
+import { useFileArchiveActions } from '@/composables/files/useFileArchiveActions'
+import { canCompressArchiveContext, canExtractArchiveContext, findSelectedExtractableArchive } from '@/composables/files/archive'
 import { useFileLibraryTrashActions } from '@/composables/files/useFileLibraryTrashActions'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileLibraryContextActions } from '@/composables/files/useFileLibraryContextActions'
@@ -559,10 +562,10 @@ const batchActions = useFileLibraryBatchActions({
   },
   showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),
 })
-const archiveActions = useFileLibraryArchiveActions({
+const archiveActions = useFileArchiveActions({
   cacheStore,
-  selectedFileIds: selectedIds,
-  selectedFolderKeys,
+  getSelectedFileIds: () => [...selectedIds.value],
+  getSelectedFolderKeys: () => [...selectedFolderKeys.value],
   getVisibleFolders: () => sortedContents.value.folders,
   clearSelection,
   createExtractionGhost: name => fileUpload.createExtractionGhost(name, t('filesUi.archiveExtracting')),
@@ -581,11 +584,8 @@ const {
   closeDialog: closeArchiveDialog,
 } = archiveActions
 const selectedExtractableArchive = computed(() => {
-  if (currentType.value === 'trash' || selectedIds.value.size !== 1 || selectedFolderKeys.value.size > 0) return null
-  const [selectedId] = selectedIds.value
-  if (selectedId == null) return null
-  const selectedArchive = cacheStore.getFile(selectedId)
-  return selectedArchive && isExtractableArchive(selectedArchive) ? selectedArchive : null
+  if (currentType.value === 'trash') return null
+  return findSelectedExtractableArchive(selectedIds.value, selectedFolderKeys.value, id => cacheStore.getFile(id))
 })
 const canExtractSelectedArchive = computed(() => Boolean(selectedExtractableArchive.value))
 
@@ -804,24 +804,11 @@ const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
 })
 const { state: ctx, openContext: openCtx, handleAction: handleCtxMenuAction } = contextActions
 const canExtractContextArchive = computed(() => {
-  const target = ctx.value.target
-  return currentType.value !== 'trash'
-    && (ctx.value.type === 'file' || ctx.value.type === 'multi-file')
-    && target != null
-    && 'ext' in target
-    && isExtractableArchive(target as FileMeta)
+  return currentType.value !== 'trash' && canExtractArchiveContext(ctx.value.type, ctx.value.target)
 })
 const canCompressContextSelection = computed(() => {
-  if (currentType.value === 'trash') return false
-  const target = ctx.value.target
-  if (ctx.value.type === 'multi-file') return selectedIds.value.size + selectedFolderKeys.value.size > 0
-  if (ctx.value.type === 'file') {
-    return target != null && 'ext' in target && selectedIds.value.has(Number(target.id))
-  }
-  if (ctx.value.type === 'folder') {
-    return target != null && selectedFolderKeys.value.has(target.id)
-  }
-  return false
+  return currentType.value !== 'trash'
+    && canCompressArchiveContext(ctx.value.type, ctx.value.target, selectedIds.value, selectedFolderKeys.value)
 })
 const gridViewContext = {
   contents, sortedContents, selectedFolderKeys, previewFolderKeys, inSelectionMode,

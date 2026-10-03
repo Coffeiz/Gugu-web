@@ -57,6 +57,8 @@ from app.api.v1 import user_skills as user_skills_router
 from app.api.v1 import byok as byok_router
 from app.api.v1 import mcp_settings as mcp_settings_router
 from app.api.v1 import undo as undo_router
+from app.api.v1 import data_portability as data_portability_router
+from app.api.v1 import safe_egress_admin as safe_egress_admin_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
 from app.api.v1 import public_config as public_config_router
@@ -491,11 +493,17 @@ app.include_router(
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )
+app.include_router(
+    safe_egress_admin_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
 app.include_router(notifications_router.router, prefix="/api/v1")
 app.include_router(user_skills_router.router, prefix="/api/v1")
 app.include_router(byok_router.router, prefix="/api/v1")
 app.include_router(mcp_settings_router.router, prefix="/api/v1")
 app.include_router(undo_router.router, prefix="/api/v1")
+app.include_router(data_portability_router.router, prefix="/api/v1")
 
 
 @app.exception_handler(RequestValidationError)

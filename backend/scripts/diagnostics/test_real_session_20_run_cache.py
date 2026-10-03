@@ -273,7 +273,7 @@ async def run(args) -> int:
     for run_index in range(1, args.runs + 1):
         label, prompt = SCENARIOS[(run_index - 1) % len(SCENARIOS)]
         current_user = {"role": "user", "content": prompt}
-        request_messages = assembly.PromptMessages(
+        request_messages = assembly.MessageArea.from_canonical_messages(
             conversation,
             fixed_prefix_size=1 if snapshot_context else 0,
         )

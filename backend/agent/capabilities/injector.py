@@ -75,7 +75,7 @@ class CapabilityToolContext:
             self.selection = SelectedCapabilities(names, shadow=False)
             return self.selection
         query = ""
-        for message in reversed(getattr(messages, "conversation", messages) or []):
+        for message in reversed(messages.provider_projection().conversation):
             if message.get("role") == "user":
                 content = message.get("content", "")
                 query = content if isinstance(content, str) else str(content)

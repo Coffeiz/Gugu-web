@@ -28,6 +28,7 @@ EVENT_FINAL = "final"
 EARLY_EXIT_ATTACHMENT = "attachment_claim_failed"
 EARLY_EXIT_QUOTA = "quota_exhausted"
 EARLY_EXIT_VOICE = "voice_unsupported"
+EARLY_EXIT_PROVIDER_ERROR = "provider_error"
 
 
 @dataclass(frozen=True)

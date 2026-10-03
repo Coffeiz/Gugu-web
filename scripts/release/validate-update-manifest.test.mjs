@@ -67,6 +67,39 @@ test('接受同时携带不可变 backend/frontend digest 的 v3 manifest', () =
   assert.equal(result.status, 0, result.stderr)
 })
 
+test('接受带 Cosign 应用包元数据的单容器更新 manifest', () => {
+  const manifest = {
+    ...makeManifest(),
+    app_bundle: {
+      archive: 'gugu-app-v1.2.2.tar.gz',
+      signature_bundle: 'gugu-app-v1.2.2.sigstore.json',
+      sha256: digestA,
+      runtime_contract: '1',
+      size: 1024,
+      unpacked_size: 4096,
+    },
+  }
+  assert.equal(runManifestCheck(manifest).status, 0)
+})
+
+test('拒绝版本不匹配、摘要错误或附带未知字段的应用包元数据', () => {
+  const app_bundle = {
+    archive: 'gugu-app-v1.2.2.tar.gz',
+    signature_bundle: 'gugu-app-v1.2.2.sigstore.json',
+    sha256: digestA,
+    runtime_contract: '1',
+    size: 1024,
+    unpacked_size: 4096,
+  }
+  for (const bundle of [
+    { ...app_bundle, archive: 'gugu-app-v1.2.3.tar.gz' },
+    { ...app_bundle, sha256: 'not-a-digest' },
+    { ...app_bundle, unexpected: true },
+  ]) {
+    assert.notEqual(runManifestCheck({ ...makeManifest(), app_bundle: bundle }).status, 0)
+  }
+})
+
 test('v3 拆分镜像组缺失、使用 tag 或出现未知字段时拒绝 manifest', () => {
   const base = makeManifest()
   const invalid = [

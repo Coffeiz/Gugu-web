@@ -22,7 +22,7 @@ async def _read_history_media(user_id, attach_id: str, *, restricted: bool = Fal
         if result.get("error"):
             return json.dumps(result, ensure_ascii=False)
         return {
-            "_vision_image": result["block"], "_source_size_bytes": result["_source_size_bytes"],
+            "_image_block": result["block"], "_source_size_bytes": result["_source_size_bytes"],
             "note": f"已打开聊天附件图片《{meta.get('name') or attach_id}》，见随附图像。",
         }
     if restricted:
@@ -60,7 +60,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
         title = str(args.get("title") or "").strip()
         title_note = f"《{title}》" if title else ""
         return {
-            "_vision_image": result["block"],
+            "_image_block": result["block"],
             "_source_size_bytes": result.get("_source_size_bytes", 0),
             "note": f"已读取网络图片{title_note}，见随附图像。",
         }
@@ -84,7 +84,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
         if result.get("error"):
             return json.dumps(result, ensure_ascii=False)
         if ext in IMAGE_EXTS:
-            return {"_vision_image": result["block"],
+            return {"_image_block": result["block"],
                     "_source_size_bytes": result.get("_source_size_bytes", 0),
                     "note": f"已打开图片《{f.display_name}.{f.ext}》，见随附图像。"}
         return result
@@ -215,9 +215,9 @@ async def _read_file(db, user_id, args: dict):
             break
         total_bytes += source_size
         succeeded += 1
-        if result.get("_vision_image"):
+        if result.get("_image_block"):
             content_blocks.extend([
-                {"type": "text", "text": f"【{label}】图片内容："}, result.pop("_vision_image"),
+                {"type": "text", "text": f"【{label}】图片内容："}, result.pop("_image_block"),
             ])
         elif result.get("_media_block"):
             note = result.get("note") or f"【{label}】媒体内容："

@@ -20,8 +20,8 @@
   --mind-calendar-trigger-bg: rgba(255,255,255,.52);
   --mind-calendar-trigger-border: rgba(255,255,255,.75);
   --mind-calendar-trigger-shadow: none;
-  --mind-calendar-trigger-bg-hover: rgba(255,255,255,.75);
-  --mind-calendar-trigger-border-hover: rgba(255,255,255,.90);
+  --mind-calendar-trigger-bg-hover: var(--mind-calendar-trigger-bg);
+  --mind-calendar-trigger-border-hover: var(--input-border-hover);
   --mind-calendar-trigger-shadow-hover: none;
   --mind-calendar-trigger-bg-open: rgba(255,255,255,.75);
   --mind-calendar-trigger-border-open: rgba(255,255,255,.90);
@@ -37,6 +37,8 @@
   --note-highlight: rgba(255,255,255,.9);
   --note-shadow: var(--card-shadow);
   --note-shadow-hover: var(--card-shadow-hover);
+  --mind-note-border-selected: var(--action-outline);
+  --mind-note-shadow-selected: 0 0 0 2px var(--selection-bg), var(--elevation-card);
   --note-divider: color-mix(in srgb,var(--content-primary) 10%,transparent);
   --note-hover-overlay: var(--card-hover-overlay);
   --note-new-highlight: color-mix(in srgb,var(--action-primary) 20%,var(--note-surface));

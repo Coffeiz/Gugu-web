@@ -1,5 +1,5 @@
 """智谱 GLM 的 OpenAI 兼容接口适配。"""
-from .base import ProviderAdapter, ProviderCapabilities
+from .base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
 class GlmAdapter(ProviderAdapter):
@@ -16,12 +16,28 @@ class GlmAdapter(ProviderAdapter):
     default_base_url = "https://open.bigmodel.cn/api/paas/v4"
 
     @staticmethod
+    def _glm53(model: str) -> bool:
+        return (model or "").strip().lower().startswith(("glm-5.3", "glm-5.3-flash"))
+
+    def supported_api_formats(self, ai):
+        # 协议是 GLM 通用 API 的接入能力，不随当前选择的模型改变。
+        return ("openai", "responses", "anthropic")
+
+    def default_base_url_for(self, ai) -> str:
+        protocol = self.protocol_format(ai)
+        if protocol == "responses":
+            return "https://open.bigmodel.cn/api/v1"
+        if protocol == "anthropic":
+            return "https://open.bigmodel.cn/api/anthropic"
+        return self.default_base_url
+
+    @staticmethod
     def _supports_thinking(model: str) -> bool:
         model_l = (model or "").strip().lower()
         return model_l.startswith(("glm-4.5", "glm-4.6", "glm-4.7", "glm-5"))
 
     @staticmethod
-    def _supports_vision(model: str) -> bool:
+    def _supports_image(model: str) -> bool:
         model_l = (model or "").strip().lower()
         return model_l.startswith(("glm-4v", "glm-4.1v", "glm-5v"))
 
@@ -32,11 +48,25 @@ class GlmAdapter(ProviderAdapter):
             thinking=self._supports_thinking(model),
             structured_json=True,
             tools=True,
-            vision=self._supports_vision(model),
+            image=self._supports_image(model),
         )
+
+    def reasoning_capabilities(self, ai, api_format: str) -> ReasoningCapabilities:
+        model = getattr(ai, "model", "") or ""
+        if self._glm53(model):
+            if api_format == "openai":
+                return ReasoningCapabilities(modes=("adaptive",), efforts=("low", "high", "max"))
+            # 模型文档列出了这两个协议的端点，但没有明确思考参数的协议映射。
+            return ReasoningCapabilities()
+        if api_format == "openai" and self._supports_thinking(model):
+            return ReasoningCapabilities(modes=("disabled", "adaptive"))
+        return ReasoningCapabilities()
 
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         model = getattr(ai, "model", "") or ""
+        if self._glm53(model):
+            # GLM-5.3 固定启用思考，不向服务端发送关闭开关。
+            return {}
         if not self._supports_thinking(model):
             return {}
         value = thinking if thinking is not None else getattr(ai, "thinking", "disabled")
@@ -56,6 +86,13 @@ class GlmCodingAdapter(GlmAdapter):
     name = "glm-coding"
     default_base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
 
-    def _supports_vision(self, model: str) -> bool:
+    def supported_api_formats(self, ai):
+        # Coding Plan 目前仅允许 Chat Completion 协议。
+        return ("openai",)
+
+    def default_base_url_for(self, ai) -> str:
+        return self.default_base_url
+
+    def _supports_image(self, model: str) -> bool:
         # 官方 Coding Plan 接入示例要求关闭图片能力，保持保守声明。
         return False

@@ -10,14 +10,13 @@
 ## Common Commands
 
 ```bash
-cd frontend
-npm run typecheck
-npm run typecheck:strict
-npm run test:run
-npm run test:css-glass
-npm run test:ui-dialogs
-npm run build
-npm run test:e2e:stable
+corepack pnpm --filter gugu-web run typecheck
+corepack pnpm --filter gugu-web run typecheck:strict
+corepack pnpm --filter gugu-web run test:run
+corepack pnpm --filter gugu-web run test:css-glass
+corepack pnpm --filter gugu-web run test:ui-dialogs
+corepack pnpm --filter gugu-web run build
+corepack pnpm --filter gugu-web run test:e2e:stable
 ```
 
 Run the smallest set for the changed area, but always run typecheck before commit. Shared component, theme, and sync changes require the relevant regression tests.

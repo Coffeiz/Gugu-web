@@ -54,6 +54,7 @@ const paletteFiles = [['aero', 'mist'], ['mono', 'cafe'], ['rose', 'rose'], ['sk
 }))
 const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
 const materialCompositionCss = load('./tokens/themes/material-composition.css')
+const componentThemeRefinementsCss = load('./component-theme-refinements.css')
 const semanticCss = load('./tokens/semantic.css')
 const themeCss = [
   load('./tokens/themes/glass-light.css'),
@@ -154,10 +155,18 @@ describe('主题 CSS 回归契约', () => {
     expect(semanticCss).toContain('--surface-sidebar: var(--surface-glass);')
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
     expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='dark']")
-    expect(materialCompositionCss).toContain(":not([data-palette='cafe'])")
+    expect(materialCompositionCss).not.toContain(":not([data-palette='cafe'])")
+    expect(componentThemeRefinementsCss).toContain("html[data-theme='light'][data-family='glass'] .bm-card .pm-layout > .pm-nav.panel-left")
+    expect(componentThemeRefinementsCss).not.toMatch(/html\[data-theme='light'\]\[data-family\]\[data-palette\][^{]*\.bm-card \.pm-layout > \.pm-nav\.panel-left/)
     expect(materialCompositionCss).not.toMatch(/--theme-(shadow|blur|radius)\s*:/)
     expect(load('./tokens/themes/mono-light.css')).toContain("--theme-border-strong: rgba(42,35,49,.15)")
     expect(load('./tokens/themes/mono-dark.css')).toContain("--theme-border-strong: rgba(255,255,255,.145)")
+  })
+
+  it('Mono 亮暗主题的侧栏选中描边沿用清晰的主色轮廓令牌', () => {
+    const activeBorder = '--theme-sidebar-active-border: var(--action-outline);'
+    expect(load('./tokens/themes/mono-light.css')).toContain(activeBorder)
+    expect(load('./tokens/themes/mono-dark.css')).toContain(activeBorder)
   })
 
   it('暗色玻璃页面渐变从较亮端向较暗端收束', () => {
@@ -230,6 +239,11 @@ describe('主题 CSS 回归契约', () => {
     const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
     expect(projectCardVue).toContain('border: 1px solid var(--project-card-border)')
     expect(projectCardVue).toContain('box-shadow: var(--project-card-shadow)')
+    expect(componentCss).toContain('--project-card-motion: var(--card-motion), box-shadow var(--motion-hover-card) ease;')
+    expect(projectCardVue).toContain('transition: var(--project-card-motion);')
+    expect(componentThemeRefinementsCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):not(.note-card):not(.proj-card) {')
+    expect(componentThemeRefinementsCss).toContain('html[data-theme][data-family] .sample-project-card {\n  transition: var(--project-card-motion);')
+    expect(productCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):not(.proj-card):hover { box-shadow: var(--elevation-card-hover); }')
     expect(themeAdoptionCss).not.toMatch(/html\[data-theme\]\[data-family\] \.proj-card\s*\{/)
     expect(productCss).not.toMatch(/html\[data-theme\]\[data-family\] \.proj-card\s*\{/)
   })

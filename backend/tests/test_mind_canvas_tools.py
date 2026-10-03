@@ -8,7 +8,7 @@ import json
 from sqlalchemy import select
 
 from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, MindRelation, Project
-from agent.tools.mind_canvas import (
+from agent.tools.canvas import (
     _canvas_add_node,
     _canvas_create,
     _canvas_create_note,
@@ -627,7 +627,7 @@ async def test_get_canvas_limit_1_keeps_full_relations_and_marks_incomplete_audi
     })
     node_a_id = batch["operations"][0]["node"]["node_id"]
     node_b_id = batch["operations"][1]["node"]["node_id"]
-    from agent.tools.mind_canvas import _canvas_connect
+    from agent.tools.canvas import _canvas_connect
     connect_result = await _canvas_connect(db, user_a.id, {
         "canvas_id": canvas.id,
         "source_node_id": node_a_id,
@@ -637,7 +637,7 @@ async def test_get_canvas_limit_1_keeps_full_relations_and_marks_incomplete_audi
     assert "relation_id" in connect_result
 
     # limit=1 只返回第一个节点
-    from agent.tools.mind_canvas import _canvas_get
+    from agent.tools.canvas import _canvas_get
     result = await _canvas_get(db, user_a.id, {
         "canvas_id": canvas.id,
         "limit": 1,

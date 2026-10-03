@@ -49,6 +49,19 @@ def upstream_status_tag(error: BaseException) -> str:
     return type(error).__name__
 
 
+def upstream_status_code(error: BaseException) -> int | None:
+    """返回异常链中第一个上游 HTTP 状态码。"""
+    for current in _exception_chain(error):
+        status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code
+        response = getattr(current, "response", None)
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int):
+            return response_status
+    return None
+
+
 def openai_transient_error(exc: BaseException) -> bool:
     """OpenAI 兼容链路的瞬时错误判定（与 app/core/retry.py 的统一节奏配套）。
 

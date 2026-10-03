@@ -9,26 +9,42 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 from typing import Any, AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
 from agent import core as _core
+from agent.context.assembly.area import MessageArea
 from agent.errors import describe_llm_error
 from agent.loop import watchdog as _watchdog
+
+_parallel_traj_log = logging.getLogger("agent.traj")
+
+
+def _log_tool_batch_observation(event: dict[str, Any]) -> None:
+    """只输出允许的低敏度批次汇总字段。"""
+    safe_fields = {
+        "mode", "calls", "reason", "elapsed_ms", "succeeded", "failed", "cancelled",
+        "isolated_invalid",
+    }
+    payload = {key: value for key, value in event.items() if key in safe_fields}
+    payload.update(t="loop", event="tool_batch")
+    _parallel_traj_log.info(json.dumps(payload, ensure_ascii=False))
 
 def _allow_tool_images(model_cfg: Any) -> bool:
     """判断工具读回的图片能否继续交给本轮实际模型。"""
     from app.core import chat_attach
     # 与当前用户附件 resolve_for_message 使用同一套显式配置/能力判断，不能只看
-    # provider capability snapshot：用户手动开启 vision 时 snapshot 可能仍未探测。
-    return chat_attach.vision_ready(model_cfg)
+    # provider capability snapshot：用户手动开启 image 时 snapshot 可能仍未探测。
+    return chat_attach.image_ready(model_cfg)
 
 
 async def run_loop(
     runner: Any,
     driver: Any,
     user_id: Any,
-    messages: list,
+    messages: MessageArea,
     ai: Any,
     system_text: str | None,
     *,
@@ -51,11 +67,9 @@ async def run_loop(
         # "当前模型支持什么"必须看这个，不能重新读静态的 get_settings().ai。
         from agent.llm import modelctx
         modelctx.set_model_cfg(ai)
-        # 入口统一提升为带固定前缀边界的消息容器。直接调用 runner 的测试和少量
-        # 内部调用仍可能传入普通 list，但运行中的追加、压缩和审计必须走同一套批次语义。
-        if not hasattr(messages, "append_batch"):
-            from agent.context.assembly import PromptMessages
-            messages = PromptMessages(messages)
+        if not isinstance(messages, MessageArea):
+            raise TypeError("Agent loop 只接受 MessageArea")
+        messages.reasoning_state = reasoning_state
         # 每轮对话最多允许三次 read_file 调用包含网络图片；历史附件不占用该额度。
         from agent.tools.media_reader import reset_remote_image_read_budget
         reset_remote_image_read_budget()
@@ -64,12 +78,12 @@ async def run_loop(
             if system_text:
                 system_text = f"{system_text}{_core._GOAL_POLICY}"
             else:
-                messages.insert(0, {"role": "system", "content": _core._GOAL_POLICY.strip()})
-        if getattr(driver, "api_format", "") == "anthropic":
-            before_count, after_count, history_changed = _core._sanitize_anthropic_history(messages)
-            if history_changed:
-                _core._log.warning("[anthropic] 请求历史已归一化：消息数 %s -> %s",
-                              before_count, after_count)
+                if hasattr(messages, "insert_request_message"):
+                    messages.insert_request_message(
+                        0, {"role": "system", "content": _core._GOAL_POLICY.strip()},
+                    )
+                else:
+                    messages.insert(0, {"role": "system", "content": _core._GOAL_POLICY.strip()})
         from agent.tools import registry as tool_registry
         tool_snapshot = tool_registry.snapshot_with_extras(tuple(runner.dynamic_tools.values()))
         initial_tool_names = runner.tool_names
@@ -83,6 +97,18 @@ async def run_loop(
         client, ctx = driver.prepare(
             initial_tool_names, ai, messages, system_text, tool_snapshot=tool_snapshot,
         )
+        if getattr(ctx, "supports_active_cache", False):
+            from agent.context.cache_state import CacheState
+
+            session_context = getattr(session, "session_context", None)
+            session_context = session_context if isinstance(session_context, dict) else {}
+            ctx.cache_state = CacheState.from_session_anchor(
+                session_context.get("provider_cache_anchor"),
+                provider=str(getattr(ctx.adapter, "name", "unknown")),
+                api_format=str(getattr(ctx.adapter, "api_format", "anthropic")),
+                model=str(ctx.model),
+                strategy="multi",
+            )
         if reasoning_state is not None:
             await reasoning_state.prepared(driver, ctx)
         # 只把能力上下文挂到 provider request context，供 LoopScope 记录脱敏指标；
@@ -92,7 +118,7 @@ async def run_loop(
         loaded_skill_slugs = _core._loaded_skill_slugs(messages)
         # 当前用户消息是本轮 run 的保护边界。压缩时只处理它之前的历史，
         # 工具调用/结果追加后仍通过对象身份找到同一个起点。
-        _run_conversation = getattr(messages, "conversation", messages)
+        _run_conversation = messages.provider_projection().to_messages()
         _run_start_index = _core.last_user_index(_run_conversation)
         run_start_index = _run_start_index if _run_start_index is not None else max(0, len(_run_conversation) - 1)
         run_round_start_indices: list[tuple[int, int]] = []
@@ -107,7 +133,7 @@ async def run_loop(
         colon_retry_pending = False
         guard_retry_buf: list[str] = []
         tool_calls_used = 0
-        _request_conversation = getattr(messages, "conversation", messages)
+        _request_conversation = messages.provider_projection().to_messages()
         _request_user_index = _core.last_user_index(_request_conversation)
         _user_req = (
             _core.user_text_from_message(_request_conversation[_request_user_index])
@@ -163,7 +189,7 @@ async def run_loop(
 
             heartbeat = _core.asyncio.create_task(keep_generation_alive())
 
-            conversation = getattr(messages, "conversation", messages)
+            conversation = messages.provider_projection().to_messages()
             before_count = len(conversation)
             before_summary = [
                 item for item in conversation
@@ -174,11 +200,12 @@ async def run_loop(
             )
             if protected_from is None:
                 protected_from = run_start_index
+            area_revision = messages.revision
             try:
                 try:
                     result = await compaction.compact_context(
-                        list(conversation), session_id=session_id,
-                        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+                        messages, session_id=session_id,
+                        fixed_prefix_size=messages.fixed_prefix_size,
                         protected_from=protected_from,
                         protected_anchor_index=run_start_index,
                         model_cfg=ai,
@@ -228,10 +255,9 @@ async def run_loop(
             if not changed:
                 return False
             provider_compacted = True
-            if hasattr(messages, "replace_conversation"):
-                messages.replace_conversation(compacted_messages)
-            else:
-                messages = compacted_messages
+            messages.replace_request_baseline(
+                compacted_messages, expected_revision=area_revision,
+            )
             if getattr(result, "anchor_index", None) is not None:
                 run_start_index = result.anchor_index
             protected_start_index = getattr(result, "protected_start_index", None)
@@ -256,7 +282,7 @@ async def run_loop(
             nonlocal messages, run_start_index, last_compaction_no_progress_length, provider_compacted
             from agent.context.budget import enforce_provider_overflow_fallback
 
-            conversation = getattr(messages, "conversation", messages)
+            conversation = messages.provider_projection().to_messages()
             protected_from = _core.loop_rounds.rolling_compaction_start_index(
                 run_round_start_indices, round_number,
             )
@@ -291,7 +317,7 @@ async def run_loop(
 
         def usage_compaction_due() -> bool:
             # 90% 阈值判定归 loop/rounds（PRD-LLM-25 LLM25-006）；压缩执行仍归 context 模块。
-            conversation = getattr(messages, "conversation", messages)
+            conversation = messages.provider_projection().to_messages()
             return _core.loop_rounds.usage_compaction_due(
                 run_context_usage=run_context_usage,
                 context_tokens=int(getattr(ai, "context_tokens", 0) or 0),
@@ -309,7 +335,7 @@ async def run_loop(
             if await apply_deterministic_compaction_fallback("usage_threshold_fallback"):
                 _core._log.warning("[core] provider usage 达到 90% 但摘要压缩未生效，执行确定性裁切")
                 return True
-            last_compaction_no_progress_length = len(getattr(messages, "conversation", messages))
+            last_compaction_no_progress_length = len(messages.provider_projection())
             _core._log.error("[core] provider usage 达到 90%，摘要和确定性裁切均未生效")
             return False
 
@@ -339,7 +365,7 @@ async def run_loop(
             round_id = f"round-{round_number}"
             run_round_start_indices.append((
                 round_number,
-                len(getattr(messages, "conversation", messages)),
+                len(messages.provider_projection()),
             ))
             yield stream_event("round_start", round_id=round_id)
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
@@ -519,15 +545,16 @@ async def run_loop(
                         continue
                     yield stream_event("_context_compaction", phase="completed", applied=False,
                                        reason="not_applied")
-                # 已吐过 token 中途出错（emitted 就原样抛的路径）或其他未预期异常——按未知处理：
-                # 原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
-                # where 里带上 provider + api_format——2026-07-14 那次 MiniMax AttributeError
-                # 故障排查时，_core.diag_log 没记 provider，只能靠静态代码分析猜是哪家（PRD-LLM-1
-                # 「待确认问题」），这次直接把它写进日志，下次同类问题一眼就能看出是哪个 provider。
-                _core.diag_log(f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
-                         f"format={driver.api_format}", e)
+                # 已吐 token 后中途失败或其他未预期异常按未知错误处理。错误描述器会把原始异常
+                # 写入受限诊断日志，并将同一诊断编号返回给用户；上下文保留 provider 与 api_format。
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
-                error_info = describe_llm_error(e)
+                error_info = describe_llm_error(
+                    e,
+                    diagnostic_context=(
+                        f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
+                        f"format={driver.api_format}"
+                    ),
+                )
                 yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
 
@@ -535,10 +562,15 @@ async def run_loop(
             total_out += result.usage_out
             total_cache += result.cache_tokens
             total_cache_write += result.cache_write_tokens
+            if getattr(ctx, "supports_active_cache", False):
+                messages.remember_provider_cache_anchor(ctx.cache_state.to_session_anchor())
             run_context_usage = int(_core._provider_context_usage(driver, result) or 0)
             run_context_usage_peak = max(run_context_usage_peak, run_context_usage)
             if reasoning_state is not None:
                 await reasoning_state.round_finished(driver, ctx, result, round_id)
+            private_reasoning = str(getattr(getattr(result, "raw", None), "reasoning", "") or "")
+            if private_reasoning and result.tool_calls:
+                messages.private_reasoning_by_call[result.tool_calls[0].id] = private_reasoning
             # 发送单个 provider 请求的脱敏 usage；run 结束时的 _usage 仍保留为
             # 本次 run 累计值，诊断和观测层可据此区分“当前上下文”与“累计消耗”。
             yield stream_event(
@@ -608,7 +640,240 @@ async def run_loop(
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 dispatched = []
                 pending_interaction = None
-                for call_index, tc in enumerate(result.tool_calls):
+                agent_settings = getattr(getattr(runner, "settings", None), "agent", None)
+                parallel_batch = None
+                parallel_protocol_errors = {}
+                parallel_cancelled = False
+                if getattr(agent_settings, "parallel_tool_execution_enabled", False):
+                    parallel_batch = _core._prepare_parallel_batch(result.tool_calls, tool_snapshot)
+                    # 协议无效或 JSON 截断的调用不会 dispatch，也没有副作用；它们不应
+                    # 单独阻塞同 Round 中其余安全调用。真实工具仍必须整批通过预检。
+                    if parallel_batch is None and len(result.tool_calls) > 2:
+                        executable_calls = []
+                        candidate_errors = {}
+                        for original_index, call in enumerate(result.tool_calls):
+                            target, _arguments, protocol_error = _core._resolve_tool_call(
+                                getattr(call, "name", None), getattr(call, "input", None),
+                            )
+                            if protocol_error is not None:
+                                candidate_errors[original_index] = (
+                                    target, _core.json.dumps(protocol_error, ensure_ascii=False),
+                                )
+                            elif getattr(call, "parse_error", None):
+                                candidate_errors[original_index] = (
+                                    target, _core.loop_drivers.TOOL_ARGS_TRUNCATED_ERROR,
+                                )
+                            else:
+                                executable_calls.append((original_index, call))
+                        candidate_batch = _core._prepare_parallel_batch(
+                            [call for _index, call in executable_calls], tool_snapshot,
+                        )
+                        if candidate_batch is not None:
+                            original_indexes = [index for index, _call in executable_calls]
+                            parallel_batch = [
+                                (original_indexes[index], *prepared_call)
+                                for index, prepared_call in enumerate(candidate_batch)
+                            ]
+                            parallel_protocol_errors = candidate_errors
+                    if parallel_batch is not None and not parallel_protocol_errors:
+                        parallel_batch = [
+                            (index, *prepared_call)
+                            for index, prepared_call in enumerate(parallel_batch)
+                        ]
+                if len(result.tool_calls) > 1 and parallel_batch is None:
+                    _log_tool_batch_observation({
+                        "mode": "serial",
+                        "calls": len(result.tool_calls),
+                        "reason": (
+                            "parallel_disabled"
+                            if not getattr(agent_settings, "parallel_tool_execution_enabled", False)
+                            else "batch_not_eligible_or_preflight_failed"
+                        ),
+                    })
+                if parallel_batch is not None:
+                    parallel_meta = []
+                    prepared_by_index = {
+                        original_index: (tc, dispatch_target, dispatch_input)
+                        for original_index, tc, dispatch_target, dispatch_input in parallel_batch
+                    }
+                    invalid_meta = {}
+                    for original_index, tc in enumerate(result.tool_calls):
+                        if original_index in parallel_protocol_errors:
+                            effective_tool_name, protocol_result = parallel_protocol_errors[original_index]
+                            label = runner._label(effective_tool_name)
+                            if verify_mode:
+                                label = runner._label("_verify_prefix", "复查 · ") + label
+                            tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{original_index + 1}"
+                            tool_calls_used += 1
+                            yield stream_event(
+                                "tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                                name=effective_tool_name, label=label, input={},
+                                verify=verify_mode, status="invalid",
+                            )
+                            invalid_meta[original_index] = (
+                                tc, effective_tool_name, label, tool_call_id, protocol_result,
+                            )
+                            continue
+                        tc, dispatch_target, dispatch_input = prepared_by_index[original_index]
+                        effective_tool_name = dispatch_target
+                        label = runner._label(effective_tool_name)
+                        if verify_mode:
+                            label = runner._label("_verify_prefix", "复查 · ") + label
+                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{original_index + 1}"
+                        tool_calls_used += 1
+                        yield stream_event(
+                            "tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                            name=effective_tool_name, label=label, input=dispatch_input,
+                            verify=verify_mode, status="queued",
+                        )
+                        parallel_meta.append((original_index, tc, dispatch_target, dispatch_input,
+                                              effective_tool_name, label, tool_call_id))
+                    parallel_meta_by_index = {item[0]: item for item in parallel_meta}
+
+                    started_calls: asyncio.Queue[tuple[int, asyncio.Future[None]] | None] = asyncio.Queue()
+
+                    async def _dispatch_parallel_call(call):
+                        original_index, _tc, target, arguments = call
+                        meta = parallel_meta_by_index[original_index]
+                        await _core._im_set_tool_state(meta[4])
+                        acknowledged = asyncio.get_running_loop().create_future()
+                        started_calls.put_nowait((original_index, acknowledged))
+                        await acknowledged
+                        from agent.tools.base import parallel_dispatch_context
+                        with parallel_dispatch_context():
+                            return await _core._dispatch_in_session(
+                                user_id, target, arguments,
+                                session_id=session_id, session=session, run_id=run_id,
+                                tool_snapshot=tool_snapshot,
+                                skill_state=_core._copy_skill_state_for_parallel(loaded_skill_slugs),
+                            )
+
+                    async def _dispatch_parallel_batch():
+                        try:
+                            return await _core._run_parallel_dispatches(
+                                parallel_batch, _dispatch_parallel_call,
+                                max_concurrency=getattr(
+                                    agent_settings, "parallel_tool_max_concurrency", 5,
+                                ),
+                            )
+                        except _core._ParallelDispatchCancelled as exc:
+                            return exc
+                        finally:
+                            started_calls.put_nowait(None)
+
+                    dispatch_started_at = time.monotonic()
+                    dispatch_task = asyncio.create_task(_dispatch_parallel_batch())
+                    try:
+                        while True:
+                            started = await started_calls.get()
+                            if started is None:
+                                break
+                            original_index, acknowledged = started
+                            meta = parallel_meta_by_index[original_index]
+                            if not acknowledged.done():
+                                acknowledged.set_result(None)
+                            yield stream_event(
+                                "tool_call", round_id=round_id,
+                                tool_call_id=meta[6], name=meta[4], label=meta[5],
+                                input=meta[3], verify=verify_mode, status="running",
+                            )
+                        parallel_results = await dispatch_task
+                        if isinstance(parallel_results, _core._ParallelDispatchCancelled):
+                            parallel_cancelled = True
+                            parallel_results = parallel_results.results
+                    except asyncio.CancelledError:
+                        if not dispatch_task.done():
+                            dispatch_task.cancel()
+                        settled = await asyncio.gather(dispatch_task, return_exceptions=True)
+                        cancellation = settled[0] if settled else None
+                        if isinstance(cancellation, _core._ParallelDispatchCancelled):
+                            parallel_results = cancellation.results
+                            parallel_cancelled = True
+                        else:
+                            raise
+                    except _core._ParallelDispatchCancelled as exc:
+                        parallel_results = exc.results
+                        parallel_cancelled = True
+                    from agent.interactions.confirmations import confirmation_payload
+                    succeeded = failed = cancelled = 0
+                    results_by_index = {}
+                    for meta, dispatched_result in zip(parallel_meta, parallel_results):
+                        original_index = meta[0]
+                        if isinstance(dispatched_result, _core.asyncio.CancelledError):
+                            cancelled += 1
+                            results_by_index[original_index] = (dispatched_result, None)
+                        elif isinstance(dispatched_result, Exception):
+                            failed += 1
+                            results_by_index[original_index] = (dispatched_result, None)
+                        else:
+                            result_payload = dispatched_result[0]
+                            if (
+                                confirmation_payload(result_payload) is not None
+                                or not _core._is_successful_tool_result(result_payload)
+                            ):
+                                failed += 1
+                            else:
+                                succeeded += 1
+                            results_by_index[original_index] = dispatched_result
+                    _log_tool_batch_observation({
+                        "mode": "parallel",
+                        "calls": len(parallel_batch),
+                        "isolated_invalid": len(parallel_protocol_errors),
+                        "reason": "eligible_batch",
+                        "elapsed_ms": round((time.monotonic() - dispatch_started_at) * 1000),
+                        "succeeded": succeeded,
+                        "failed": failed,
+                        "cancelled": cancelled,
+                    })
+                    for original_index, tc in enumerate(result.tool_calls):
+                        if original_index in invalid_meta:
+                            _tc, effective_tool_name, label, tool_call_id, res = invalid_meta[original_index]
+                            yield stream_event(
+                                "tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                                name=effective_tool_name, label=label, verify=verify_mode,
+                                status="error", result=res,
+                            )
+                            dispatched.append((tc, res))
+                            continue
+                        meta = parallel_meta_by_index[original_index]
+                        _index, tc, dispatch_target, dispatch_input, effective_tool_name, label, tool_call_id = meta
+                        res, artifact = results_by_index[original_index]
+                        call_cancelled = isinstance(res, _core.asyncio.CancelledError)
+                        if call_cancelled:
+                            res = _core.json.dumps({"error": "工具调用已取消。"}, ensure_ascii=False)
+                            artifact = None
+                        if isinstance(res, Exception):
+                            _core.diag_log("agent.loop.parallel_tool_dispatch", res)
+                            res = _core.json.dumps(
+                                {"error": "只读工具执行失败，请稍后重试。"}, ensure_ascii=False,
+                            )
+                            artifact = None
+                        if confirmation_payload(res) is not None:
+                            # 并行安全声明禁止交互；动态返回确认载荷表示工具契约配置错误，
+                            # 不创建等待卡，也不把其内部状态继续暴露给模型。
+                            _core.diag_log(
+                                "agent.loop.parallel_tool_interaction",
+                                RuntimeError("并发安全工具返回了交互确认载荷"),
+                            )
+                            res, artifact = _core.json.dumps(
+                                {"error": "该只读工具返回了未声明的确认请求，本次结果无法使用。"},
+                                ensure_ascii=False,
+                            ), None
+                        yield stream_event(
+                            "tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                            name=effective_tool_name, label=label, verify=verify_mode,
+                            status=(
+                                "cancelled" if call_cancelled else
+                                "success" if _core._is_successful_tool_result(res) else "error"
+                            ),
+                            result=res,
+                        )
+                        if artifact:
+                            yield _core._artifact_sse(artifact)
+                        dispatched.append((tc, res))
+
+                calls_for_serial = () if parallel_batch is not None else result.tool_calls
+                for call_index, tc in enumerate(calls_for_serial):
                     raw_call_name = getattr(tc, "name", None)
                     dispatch_target, dispatch_input, protocol_error = _core._resolve_tool_call(
                         raw_call_name, getattr(tc, "input", None)
@@ -814,7 +1079,7 @@ async def run_loop(
                     if artifact:
                         yield _core._artifact_sse(artifact)
                     dispatched.append((tc, res))
-                from agent.context.assembly import NewMessageBatch
+                from agent.context.assembly import MessageBatch
                 from agent.context.canonical_tool_history import canonical_tool_round
 
                 # 工具结果里的图片块只能发给明确支持视觉输入的本轮模型。不能只看
@@ -826,36 +1091,29 @@ async def run_loop(
                 )
                 if getattr(driver, "api_format", "") == "anthropic":
                     try:
+                        from agent.context.provider_conversation import ProviderConversation
                         from agent.runtime.loopscope_trace.state import record_anthropic_structure_probe
                         record_anthropic_structure_probe(
                             provider=getattr(getattr(ctx, "adapter", None), "name", ""),
                             model=getattr(ctx, "model", ""),
                             response_blocks=getattr(result, "raw", []),
-                            provider_messages=provider_round,
+                            provider_conversation=ProviderConversation(provider_round),
                         )
                     except Exception:
                         pass
-                batch = NewMessageBatch.from_canonical_messages(
+                batch = MessageBatch.from_canonical_messages(
                     canonical_tool_round(result, dispatched),
-                    provider_messages=provider_round,
                     metadata={"round_id": round_id},
                 )
-                try:
-                    from agent.runtime.loopscope_trace.state import record_canonical_batch
-                    record_canonical_batch(
-                        digest=batch.batch_digest,
-                        round_id=round_id,
-                        message_count=len(batch.canonical_messages),
-                    )
-                except Exception:
-                    pass
                 if getattr(runner.capability_context, "fixed_adapter", False):
                     from agent.context.canonical_tool_history import (
                         SkillSchemaEvent, ToolDiscoveryEvent, append_event, tool_schema_event,
                     )
                     # canonical event 也先进入同一批次，不能在工具 round 提交后再单独
                     # 修改 history；否则下一次重建时消息粒度和顺序可能发生变化。
-                    batch_history = list(getattr(messages, "conversation", messages)) + batch.messages
+                    batch_history = [
+                        entry.canonical_message for entry in messages.entries
+                    ] + list(batch.canonical_messages)
 
                     def add_event(event) -> None:
                         before = len(batch_history)
@@ -928,6 +1186,11 @@ async def run_loop(
                             if tool is not None:
                                 add_event(tool_schema_event(tool))
                 messages.append_batch(batch)
+                if parallel_cancelled:
+                    # 已完成调用保留实际结果；未完成调用用取消回执补齐 canonical 配对。
+                    # 取消事件结束当前 Run，不能再把这批结果发给 Provider 续轮。
+                    yield f"data: {_core.json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                    return
                 if pending_interaction is not None:
                     from app.services.interactions import wait_for_resolution
                     pending_tool_call_id = pending_interaction.tool_call_id

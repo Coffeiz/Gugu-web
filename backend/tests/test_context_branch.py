@@ -278,3 +278,33 @@ async def test_reflection_provider_usage_is_added_to_active_trace_without_prompt
     assert probe["trigger_source"] == "idle"
     assert probe["origin_gap_seconds"] == 180.0
     assert "私密" not in repr(span.input)
+
+
+@pytest.mark.asyncio
+async def test_read_only_branch_provider_mutation_does_not_change_source_history(monkeypatch):
+    from agent.context.provider_conversation import ProviderConversation
+
+    history = ProviderConversation((
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "tool-1", "input": {"query": "原始值"}}],
+        },
+    ))
+
+    async def fake_complete_messages(system, provider_history, user, settings, **kwargs):
+        provider_history[0]["content"][0]["input"]["query"] = "Provider 临时改写"
+        return "完成"
+
+    monkeypatch.setattr(provider_runner, "complete_messages", fake_complete_messages)
+    result = await ContextBranch().run(
+        BranchInput(
+            stable_system="stable",
+            delta="仅分支使用",
+            history_messages=history,
+        ),
+        BranchPolicy(name="reflection", output_mode="text"),
+        SimpleNamespace(),
+    )
+
+    assert result.ok is True
+    assert history.to_messages()[0]["content"][0]["input"]["query"] == "原始值"

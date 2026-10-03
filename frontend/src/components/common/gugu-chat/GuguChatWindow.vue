@@ -89,7 +89,7 @@
         ref="messageListRef"
         :messages="messages" :session-id="sessionId" :is-group-session="isGroupSession"
         :copied-id="copiedId" :voice-playing-id="voicePlayingId"
-        :expanded="expanded" :status-kind="statusKind" :status-typed="statusTyped"
+        :expanded="expanded" :resizing="resizing" :status-kind="statusKind" :status-typed="statusTyped"
         :session-settling="sessionSettling"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"

@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.projects import (
-    build_project, find_project_stage, normalize_project_stages, normalize_project_stages_for_read, prepare_project_update,
+    build_project, find_project_stage, normalize_project_stages, prepare_project_update,
     replace_project_stages, update_project_atomic,
 )
 from app.models import Project
@@ -112,43 +112,86 @@ def test_build_project_applies_shared_create_validation(user_a):
 
 
 def test_normalize_project_stages_builds_stable_stage_and_todo_ids():
-    stages = normalize_project_stages(["计划", {"label": "执行", "todos": ["写接口", {"text": "验收", "done": True}]}])
-
-    assert stages == [
-        {"key": "s0", "label": "计划", "todos": []},
-        {"key": "s1", "label": "执行", "todos": [
-            {"id": "t1", "text": "写接口", "done": False},
-            {"id": "t2", "text": "验收", "done": True},
-        ]},
-    ]
-
-
-def test_normalize_project_stages_for_read_fills_legacy_missing_todos_without_mutating_stage_identity():
-    stages = normalize_project_stages_for_read([
-        {"key": "s0", "label": "计划"},
-        {"key": "s1", "label": "执行", "todos": [
-            {"id": "t1", "text": "开发", "done": True},
-            {"id": "t2", "text": "", "done": False},
-        ]},
+    stages = normalize_project_stages([
+        {"label": "计划"}, {"label": "执行", "todos": ["写接口", "验收"]},
     ])
 
     assert stages == [
         {"key": "s0", "label": "计划", "todos": []},
         {"key": "s1", "label": "执行", "todos": [
-            {"id": "t1", "text": "开发", "done": True},
-            {"id": "t2", "text": "", "done": False},
+            {"id": "t1", "text": "写接口", "done": False},
+            {"id": "t2", "text": "验收", "done": False},
         ]},
     ]
+
+
+@pytest.mark.parametrize("raw", [
+    [],
+    [{"name": "旧字段"}],
+    [{"item": {"label": "包装对象"}}],
+    [{"label": "阶段", "todos": [""]}],
+    [{"label": "阶段", "todos": [{"text": "旧待办对象"}]}],
+])
+def test_normalize_project_stages_rejects_noncanonical_shapes(raw):
+    with pytest.raises(ValueError):
+        normalize_project_stages(raw)
 
 
 def test_replace_project_stages_preserves_implicit_same_name_todos():
     old_stages = [{"key": "s0", "label": "计划", "todos": [{"id": "t1", "text": "梳理需求", "done": True}]}]
 
-    stages, current_stage = replace_project_stages(old_stages, "s0", ["计划", "交付"])
+    stages, current_stage = replace_project_stages(
+        old_stages, "s0", [{"label": "计划"}, {"label": "交付"}],
+    )
 
     assert current_stage == "s0"
     assert stages[0]["todos"] == [{"id": "t1", "text": "梳理需求", "done": True}]
     assert find_project_stage(stages, "交付") == stages[1]
+    assert stages[0]["key"] == "s0"
+
+
+def test_replace_project_stages_keeps_keys_when_reordering_and_renaming():
+    old_stages = [
+        {"key": "s0", "label": "准备", "todos": []},
+        {"key": "s1", "label": "执行", "todos": []},
+    ]
+
+    stages, current_stage = replace_project_stages(old_stages, "s0", [
+        {"key": "s1", "label": "开发"},
+        {"key": "s0", "label": "准备"},
+        {"label": "新增"},
+    ])
+
+    assert [(stage["key"], stage["label"]) for stage in stages] == [
+        ("s1", "开发"), ("s0", "准备"), ("s2", "新增"),
+    ]
+    assert current_stage == "s0"
+
+
+def test_replace_project_stages_requires_key_for_duplicate_labels():
+    old_stages = [
+        {"key": "s0", "label": "阶段", "todos": []},
+        {"key": "s1", "label": "阶段", "todos": []},
+    ]
+
+    with pytest.raises(ValueError, match="提供 key"):
+        replace_project_stages(old_stages, "s0", [{"label": "阶段"}])
+
+    stages, _ = replace_project_stages(old_stages, "s0", [
+        {"key": "s0", "label": "阶段一"}, {"key": "s1", "label": "阶段二"},
+    ])
+    assert [stage["key"] for stage in stages] == ["s0", "s1"]
+
+
+@pytest.mark.parametrize("raw", [
+    [],
+    [{"name": "旧字段"}],
+    [{"item": {"label": "包装对象"}}],
+    [{"label": "阶段", "todos": [""]}],
+])
+def test_replace_project_stages_rejects_noncanonical_shapes(raw):
+    with pytest.raises(ValueError):
+        replace_project_stages([], None, raw)
 
 
 def _tool_res(result):
@@ -268,3 +311,16 @@ async def test_update_stage_failed_item_has_zero_side_effects(db, user_a):
     assert next(t for t in s0["todos"] if t["text"] == "写稿")["done"] is False  # 没被勾选
     assert next(t for t in s0["todos"] if t["text"] == "录屏")["done"] is True  # 成功项生效
     assert [t["text"] for t in s1["todos"]] == []  # 失败项没有被移动到目标阶段
+
+
+def test_stage_name_shorthand_matches_object_contract():
+    assert normalize_project_stages(["计划", "交付"]) == normalize_project_stages([
+        {"label": "计划"}, {"label": "交付"},
+    ])
+    old = [{"key": "s0", "label": "计划", "todos": [
+        {"id": "t1", "text": "整理需求", "done": True},
+    ]}]
+    shorthand = replace_project_stages(old, "s0", ["计划", "交付"])
+    explicit = replace_project_stages(old, "s0", [{"label": "计划"}, {"label": "交付"}])
+    assert shorthand == explicit
+    assert shorthand[0][0]["todos"] == old[0]["todos"]

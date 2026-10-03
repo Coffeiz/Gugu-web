@@ -150,7 +150,7 @@ async def test_ask_user_button_result_is_stored_for_run_resume(db, user_a):
 
     工具往返不在这里改写：交互期间那一轮 batch 还没落库（只在 run 收尾时写），
     用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上
-    （见 PromptMessages.replace_tool_result）。
+    （见 MessageArea.replace_tool_result）。
     """
     session, _pending_message = await _make_interaction_session(db, user_a)
     prompt, actions = await create_prompt(

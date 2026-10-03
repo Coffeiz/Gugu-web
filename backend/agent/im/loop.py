@@ -675,6 +675,8 @@ async def prepare_request(
     chat_type = actor.chat_type
     role = actor.role
     allowed_tool_names = actor.allowed_tool_names
+    from agent.im.permissions import resolve_group_owner_memory
+    group_owner_memory = await resolve_group_owner_memory(actor, route.bot_id)
     agent_user_name = (
         payload.get("platform_user_name") or platform_message.sender.name or "这位群友"
         if role in {"member", "unknown"}
@@ -699,6 +701,7 @@ async def prepare_request(
         im_message_format=payload.get("message_format"),
         im_group_memory_enabled=bool(payload.get("group_memory_enabled", True)),
         im_member_memory_enabled=bool(payload.get("member_memory_enabled", True)),
+        im_group_owner_memory_enabled=group_owner_memory,
     )
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
 

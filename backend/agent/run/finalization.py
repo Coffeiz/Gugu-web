@@ -15,11 +15,58 @@ from __future__ import annotations
 from typing import Callable
 
 from agent.capabilities.defaults import SYSTEM_MEMORY_ENABLED
-from agent.context.canonical_tool_history import persistable_canonical_batch_records
 from agent.memory.reflection_input import build_reflection_input
 from agent.security import sanitize
 from agent.run.contract import PreparedExecution
 from agent.run.execution import RunOutcome
+
+
+async def persist_interrupted_agent_run(req, exec_, outcome: RunOutcome) -> None:
+    """持久化用户取消前已完成的 canonical 轮次和部分正文，不触发摘要/反思。"""
+    from agent.context.run_finalize import finalize_run
+
+    prepared = exec_.prepared
+    message_area = getattr(prepared, "message_area", None)
+    delta = message_area.persistence_delta(outcome="interruption") if message_area else None
+    if not (outcome.display_timeline_items or outcome.text or outcome.files
+            or (delta and delta.entries)):
+        return
+
+    await finalize_run(
+        session_factory=exec_.session_factory,
+        session_id=exec_.session_id,
+        user_id=req.user_id,
+        settings=exec_.settings,
+        model_cfg=exec_.model_cfg,
+        message_area=message_area,
+        text=outcome.text,
+        display_timeline=outcome.display_timeline_items,
+        files=outcome.files,
+        tokens_in=outcome.tokens_in,
+        tokens_out=outcome.tokens_out,
+        cache_read=outcome.cache_read,
+        cache_write=outcome.cache_write,
+        tools_used=outcome.tool_names,
+        user_message_id=getattr(exec_.user_message, "id", None),
+        interrupted=True,
+    )
+
+    try:
+        from app.core import events
+        await events.publish(
+            req.user_id,
+            "sessions",
+            session_id=exec_.session_id,
+            appended=[{
+                "role": "assistant",
+                "text": outcome.text,
+                "files": outcome.files or None,
+            }],
+        )
+    except Exception as exc:
+        # 持久化是主路径；广播失效不能回滚已经写入的中止历史。
+        from app.core.redaction import diag_log
+        diag_log("agent.run.interrupted_broadcast", exc)
 
 
 async def finalize_agent_run(
@@ -31,8 +78,8 @@ async def finalize_agent_run(
 ) -> bool:
     """持久化 + 标题/摘要调度 + 渠道广播 + 反思；返回 im_used_tools 供响应装配。
 
-    仅在 outcome 未中断（无错误、未取消）时执行；调用方在此之前自行处理
-    取消/错误的终态响应。
+    仅在 outcome 未中断（无错误、未取消）时执行；取消部分历史由
+    ``persist_interrupted_agent_run`` 单独持久化，错误终态不写入历史。
     """
     from agent.context.run_finalize import finalize_run
 
@@ -40,8 +87,6 @@ async def finalize_agent_run(
     session_id = exec_.session_id
     settings = exec_.settings
     prepared = exec_.prepared
-    messages = prepared.anthr_messages if exec_.use_anthropic else prepared.oa_messages
-    initial_len = prepared.anthr_initial_len if exec_.use_anthropic else prepared.oa_initial_len
     text = outcome.text
 
     # 出站兜底清洗：正文与逐轮文本同一口径（抹 tool_id 噪声、拦系统提示词泄露、
@@ -74,12 +119,8 @@ async def finalize_agent_run(
         user_id=user_id,
         settings=settings,
         model_cfg=exec_.model_cfg,
-        rag_context=prepared.rag_context,
-        messages=messages,
-        initial_len=initial_len,
-        stance_text=prepared.stance_to_persist,
+        message_area=getattr(prepared, "message_area", None),
         user_message_id=getattr(exec_.user_message, "id", None),
-        canonical_batches=persistable_canonical_batch_records(messages),
         text=text,
         display_timeline=display_timeline or None,
         files=outcome.files,
@@ -111,9 +152,16 @@ async def finalize_agent_run(
     im_used_tools = False
     if SYSTEM_MEMORY_ENABLED and text and exec_.context_policy.allow_memory_reflection:
         from agent.memory import reflection
-        im_used_tools = exec_.use_anthropic and len(messages) > initial_len
+        from agent.context.assembly.area import MessageSource
+
+        message_area = getattr(prepared, "message_area", None)
+        has_tool_round = bool(message_area) and any(
+            entry.source == MessageSource.TOOL_ROUND
+            for entry in message_area.entries
+        )
+        im_used_tools = exec_.use_anthropic and has_tool_round
         reflect_message, reflect_reply = build_reflection_input(
-            req, messages, initial_len, text
+            req, message_area, 0, text
         )
         if reflect_reply:
             reflection.schedule(user_id, req.user_name, reflect_message, reflect_reply, settings,

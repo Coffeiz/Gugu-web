@@ -48,7 +48,7 @@ def _presets(settings, providers: set[str]) -> list[Any]:
 
 
 async def _run_model(settings, model_cfg) -> dict[str, Any]:
-    from agent.context.assembly import PromptMessages
+    from agent.context.assembly import MessageArea
     from agent.core import LLMRunner
     from agent.llm.llm_select import use_anthropic_for
     from test_full_schema_compact_ab import payload
@@ -58,7 +58,7 @@ async def _run_model(settings, model_cfg) -> dict[str, Any]:
         "## Current conversation language\n"
         "Unless the user explicitly asks for another language, always reply in English."
     )
-    messages = PromptMessages()
+    messages = MessageArea.from_canonical_messages()
     runner = LLMRunner([], settings)
     rows = []
     for turn, prompt in enumerate(_PROMPTS, 1):
@@ -66,7 +66,7 @@ async def _run_model(settings, model_cfg) -> dict[str, Any]:
         generation = runner.run(
             _UID,
             system if anthropic else None,
-            messages if anthropic else PromptMessages(
+            messages if anthropic else MessageArea.from_canonical_messages(
                 [{"role": "system", "content": system}, *messages]
             ),
             anthropic,

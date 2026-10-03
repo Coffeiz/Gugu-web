@@ -100,7 +100,8 @@ defineExpose({ close, open, root: rootRef })
   font: 13px var(--font-sans); text-align: left; cursor: pointer;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.select-popup-trigger:hover:not(:disabled), .select-popup-trigger.open { border-color: var(--input-border-hover); background: var(--input-bg-hover); }
+.select-popup-trigger:hover:not(:disabled) { border-color: var(--input-border-hover); background: var(--input-bg); }
+.select-popup-trigger.open { border-color: var(--input-border-hover); background: var(--input-bg-focus); }
 .select-popup-trigger:disabled, .select-popup-trigger.disabled { cursor: default; opacity: .55; }
 .select-popup-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-popup-chevron { flex-shrink: 0; color: var(--popup-item-fg-muted); }

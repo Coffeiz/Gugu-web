@@ -51,9 +51,8 @@
   --theme-highlight-rest: var(--palette-highlight);
 }
 
-/* Mono 保留自己的实体面板、阴影和圆角配方；非 Mono 调色板只负责给这些材质染上邻近色。
-   默认 mono 调色板不进入这里，以保持原本的暖灰 Mono 视觉。 */
-:root[data-family='mono'][data-theme='light']:not([data-palette='cafe']) {
+/* Mono 保留自己的实体面板、阴影和圆角配方；当前调色板只负责给这些材质角色染色。 */
+:root[data-family='mono'][data-theme='light'] {
   --theme-page: radial-gradient(900px 560px at 78% -8%,color-mix(in srgb,var(--theme-action-primary) 10%,transparent),transparent 62%),radial-gradient(700px 440px at 18% 110%,color-mix(in srgb,var(--theme-action-primary) 8%,transparent),transparent 65%),linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 6%,#f5f3f6),color-mix(in srgb,var(--theme-action-primary) 9%,#eeecf0));
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 6%,#f8f6f9);
   --theme-base: color-mix(in srgb,var(--theme-action-primary) 7%,#f7f5f8);
@@ -65,7 +64,7 @@
   --theme-raised: color-mix(in srgb,var(--theme-action-primary) 3%,#ffffff);
   --theme-floating: color-mix(in srgb,var(--theme-action-primary) 5%,#fdfcfe);
 }
-:root[data-family='mono'][data-theme='dark']:not([data-palette='cafe']) {
+:root[data-family='mono'][data-theme='dark'] {
   --theme-page: radial-gradient(900px 560px at 80% -10%,color-mix(in srgb,var(--theme-action-primary) 12%,transparent),transparent 62%),radial-gradient(760px 480px at 16% 110%,color-mix(in srgb,var(--theme-action-primary) 9%,transparent),transparent 66%),linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 8%,#1c1921),color-mix(in srgb,var(--theme-action-primary) 10%,#17151b));
   --theme-auth-page: linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 8%,#1c1921) 0%,color-mix(in srgb,var(--theme-action-primary) 9%,#19171f) 52%,color-mix(in srgb,var(--theme-action-primary) 10%,#17151b) 100%);
   --theme-sidebar: color-mix(in srgb,var(--theme-action-primary) 6%,#19171e);

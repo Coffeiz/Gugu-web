@@ -42,4 +42,4 @@
 - 主对话轮尾部带恒定 system-reminder（占位 dynamic tail 位置）；内容恒定是为隔离「反思是否断主对话缓存」这一个变量。
 - 反思走生产 ContextBranch 真实链路（append_reuse、观测记账生效）；主对话经 complete_messages 直发。
 - 主对话与反思共享同一份渲染前缀（render_branch_prefix 同口径），理论上前缀命中互不干扰；本报告用数据验证。
-- 报告生成脚本：`backend/scripts/ab_reflection_continuous.py`。
+- 报告生成脚本：`backend/scripts/benchmarks/ab_reflection_continuous.py`。

@@ -13,7 +13,7 @@ from app.core.project_colors import PROJECT_COLOR_KEYS, PROJECT_COLOR_PRESETS, p
 
 import agent.tools.base as tool_base
 from agent.tools.base import SkillRegistry, Tool, ToolContractError, registry as global_registry
-from agent.tools.mind import _BLOCK_ITEM_SCHEMA, _parse_captured_at
+from agent.tools.note import _BLOCK_ITEM_SCHEMA, _parse_captured_at
 from app.core.tz import LOCAL_TZ
 from app.core.date_input import normalize_date_string
 from agent.tools.tool_contract import (
@@ -57,6 +57,29 @@ def test_send_email_normalizes_json_string_arrays_without_widening_schema():
         "send_email.sections:json_string_to_array",
         "send_email.actions:json_string_to_array",
     ]
+
+
+@pytest.mark.parametrize("tool_name", ["save_knowledge", "update_knowledge"])
+def test_knowledge_keywords_accept_delimited_string(tool_name):
+    normalized, adaptations = normalize_legacy_input(tool_name, {
+        "keywords": "AlphaStar，DeepMind; StarCraft II\nLeague",
+    })
+
+    assert normalized["keywords"] == ["AlphaStar", "DeepMind", "StarCraft II", "League"]
+    assert adaptations == [f"{tool_name}.keywords:delimited_string_to_array"]
+
+
+def test_knowledge_keywords_keep_native_array_and_other_tools_remain_strict():
+    keywords = ["AlphaStar", "DeepMind"]
+    normalized, adaptations = normalize_legacy_input("save_knowledge", {"keywords": keywords})
+    unrelated, unrelated_adaptations = normalize_legacy_input("other_tool", {
+        "keywords": "AlphaStar, DeepMind",
+    })
+
+    assert normalized["keywords"] == keywords
+    assert adaptations == []
+    assert unrelated["keywords"] == "AlphaStar, DeepMind"
+    assert unrelated_adaptations == []
 
 
 def test_unwrap_arguments_wrapper_only_when_inner_fields_match_schema():
@@ -293,6 +316,32 @@ async def test_boolean_type_error_explains_native_json_value():
     ]
 
 
+def test_string_type_error_turns_boolean_into_quoted_retry_example_without_echoing_other_values():
+    schema = {
+        "type": "object",
+        "properties": {
+            "is_china": {
+                "type": "string",
+                "description": "可选值为 `true` 或 `false`",
+            },
+        },
+    }
+    issues = [{"path": "is_china", "rule": "type", "message": "字段类型应为 string"}]
+
+    payload = invalid_input_payload(
+        "mcp_baidu_maps_map_weather",
+        issues,
+        schema=schema,
+        instance={"is_china": True, "api_key": "secret-value"},
+    )
+
+    assert payload["schema_hints"] == [
+        'is_china 必须是字符串；当前传入的是 boolean，请改为带双引号的 "true"，不要传裸 true/false。',
+    ]
+    assert payload["next_action"] == "请按 schema_hints 把布尔值改成对应的字符串后重试，不要再次传入裸 true/false。"
+    assert "secret-value" not in json.dumps(payload, ensure_ascii=False)
+
+
 def test_note_schema_recovery_explains_flat_block_shape():
     schema = {"type": "array", "items": _BLOCK_ITEM_SCHEMA}
     validator = build_validator(schema)
@@ -324,6 +373,98 @@ def test_project_colors_use_semantic_tokens_at_agent_boundary():
     assert set_color_schema["properties"]["color"]["enum"] == list(PROJECT_COLOR_KEYS)
     assert project_color_value("lavender") == PROJECT_COLOR_PRESETS[5]
     assert project_color_key(PROJECT_COLOR_PRESETS[5]) == "lavender"
+
+
+@pytest.mark.parametrize("tool_name", ["create_project", "set_stages"])
+@pytest.mark.parametrize("stages", [
+    ["准备"],
+    [{"name": "准备"}],
+    [{"label": "准备", "todos": [{"text": "整理事项"}]}],
+    [{"label": "准备", "unexpected": True}],
+])
+def test_project_stage_tools_reject_noncanonical_stage_shapes(tool_name, stages):
+    from agent.tools import registry
+
+    schema = registry.get(tool_name).input_schema
+    issues = validate_input(build_validator(schema), {
+        "name": "测试项目",
+        "project_id": 1,
+        "start_date": "2026-01-01",
+        "deadline": "2026-01-02",
+        "stages": stages,
+    })
+
+    assert issues
+
+
+@pytest.mark.parametrize("tool_name", ["create_project", "set_stages"])
+def test_project_stage_arrays_accept_provider_item_wrappers_then_validate_canonical_shape(tool_name):
+    from agent.tools import registry
+
+    tool = registry.get(tool_name)
+    raw = {
+        "stages": {
+            "item": [{"label": "准备", "todos": {"item": ["整理事项"]}}],
+        },
+    }
+    raw.update(
+        {"name": "测试项目", "start_date": "2026-01-01", "deadline": "2026-01-02"}
+        if tool_name == "create_project" else {"project_id": 1}
+    )
+    normalized, adaptations = normalize_input_by_schema(
+        tool.input_schema, raw,
+    )
+
+    assert normalized["stages"] == [{"label": "准备", "todos": ["整理事项"]}]
+    assert "stages:item_wrapper_unwrapped" in adaptations
+    assert "stages[0].todos:item_wrapper_unwrapped" in adaptations
+    assert validate_input(tool._input_validator, normalized) == []
+
+
+def test_update_stage_accepts_single_item_array_wrappers_then_validates_todo_operations():
+    from agent.tools import registry
+
+    tool = registry.get("update_stage")
+    normalized, adaptations = normalize_input_by_schema(tool.input_schema, {
+        "project_id": 323,
+        "stage": "计划",
+        "add": {"item": "整理需求"},
+        "todos": {"item": {"text": "已有事项", "done": True}},
+    })
+
+    assert normalized["add"] == ["整理需求"]
+    assert normalized["todos"] == [{"text": "已有事项", "done": True}]
+    assert "add:item_wrapper_unwrapped" in adaptations
+    assert "todos:item_wrapper_unwrapped" in adaptations
+    assert validate_input(tool._input_validator, normalized) == []
+
+
+def test_stage_tools_reject_unknown_top_level_fields():
+    from agent.tools import registry
+
+    set_issues = validate_input(build_validator(registry.get("set_stages").input_schema), {
+        "project_id": 1,
+        "stages": [{"label": "准备"}],
+        "todos": ["不应放在顶层"],
+    })
+    update_issues = validate_input(build_validator(registry.get("update_stage").input_schema), {
+        "project_id": 1,
+        "item": [],
+    })
+
+    assert any(issue["rule"] == "additionalProperties" for issue in set_issues)
+    assert any(issue["rule"] == "additionalProperties" for issue in update_issues)
+
+
+def test_set_stages_schema_accepts_existing_stage_key():
+    from agent.tools import registry
+
+    issues = validate_input(build_validator(registry.get("set_stages").input_schema), {
+        "project_id": 1,
+        "stages": [{"key": "s3", "label": "发布"}],
+    })
+
+    assert issues == []
 
 
 @pytest.mark.parametrize("color", PROJECT_COLOR_KEYS)
@@ -360,7 +501,7 @@ def test_project_color_normalization_converts_legacy_gradient_only():
     assert adaptations == ["set_color.color:normalized_token"]
 
 
-def test_schema_normalization_converts_numeric_text_and_omits_optional_empty_values():
+def test_schema_normalization_converts_numeric_text_and_preserves_invalid_empty_values():
     normalized, adaptations = normalize_input_by_schema({
         "type": "object",
         "properties": {
@@ -371,12 +512,11 @@ def test_schema_normalization_converts_numeric_text_and_omits_optional_empty_val
         },
     }, {"limit": "20", "temperature": "0.7", "include_content": "TRUE", "offset": "  "})
 
-    assert normalized == {"limit": 20, "temperature": 0.7, "include_content": True}
+    assert normalized == {"limit": 20, "temperature": 0.7, "include_content": True, "offset": "  "}
     assert adaptations == [
         "limit:string_to_integer",
         "temperature:string_to_number",
         "include_content:string_to_boolean",
-        "offset:empty_omitted",
     ]
 
 
@@ -394,10 +534,11 @@ def test_schema_normalization_does_not_guess_required_empty_numbers():
         schema, {"limit": "", "include_content": "", "types": {"item": ["project", "file"]}}
     )
 
-    # 空值仍不猜（必填空串原样保留、可选空串剔除）；但 {item: [...]} 单键包装
+    # 空值仍不猜（必填和可选空串均保留供类型校验）；但 {item: [...]} 单键包装
     # 是模型侧稳定的结构性序列化，属于无歧义转换，见 test_item_wrapper_* 用例。
-    assert normalized == {"limit": "", "types": ["project", "file"]}
-    assert adaptations == ["include_content:empty_omitted", "types:item_wrapper_unwrapped"]
+    assert normalized == {"limit": "", "include_content": "", "types": ["project", "file"]}
+    assert adaptations == ["types:item_wrapper_unwrapped"]
+    assert {issue["path"] for issue in validate_input(build_validator(schema), normalized)} == {"limit", "include_content"}
 
 
 def test_schema_normalization_converts_numbers_for_string_only_fields():
@@ -455,9 +596,11 @@ def test_schema_normalization_hoists_flattened_array_items():
     })
 
     assert normalized == {
+        "target": "",
         "files": [{"name": "_token_test.py", "content": "print(1)", "space": "personal"}],
     }
-    assert adaptations == ["files:flattened_items_hoisted", "target:empty_omitted"]
+    assert adaptations == ["files:flattened_items_hoisted"]
+    assert validate_input(build_validator(_create_file_like_schema()), normalized)[0]["path"] == "target"
 
 
 def test_schema_normalization_does_not_hoist_with_unplaceable_top_level_keys():
@@ -741,20 +884,22 @@ def test_provider_schema_parity_uses_one_tool_contract():
     assert anthropic["input_schema"] == openai["function"]["parameters"] == schema
 
 
-def test_provider_schema_serialization_does_not_run_compactor(monkeypatch):
+def test_provider_schema_serialization_keeps_guidance_and_hides_internal_annotations():
     schema = {
         "type": "object",
-        "properties": {"query": {"type": "string"}},
-        "required": ["query"],
+        "properties": {"query": {
+            "type": "string", "description": "检索关键词", "x-empty-string": "omit",
+        }},
     }
     _, tool = _make_registry(schema)
+    expected = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "检索关键词"}},
+    }
+    assert tool.to_anthropic()["input_schema"] == expected
+    assert tool.to_openai()["function"]["parameters"] == expected
+    assert tool.input_schema == schema
 
-    def fail_compactor(_value):
-        raise AssertionError("provider serialization must use source schema directly")
-
-    monkeypatch.setattr(tool_base, "_compact_schema", fail_compactor)
-    assert tool.to_anthropic()["input_schema"] == schema
-    assert tool.to_openai()["function"]["parameters"] == schema
 
 
 def test_all_registered_tools_have_cached_validators():

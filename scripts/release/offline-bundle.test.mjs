@@ -4,28 +4,24 @@ import test from 'node:test'
 
 const scriptPath = new URL('./build-offline-sandbox-bundle.sh', import.meta.url)
 const composePath = new URL('../../docker-compose.offline.yml', import.meta.url)
-const workflowPath = new URL('../../.github/workflows/docker-release.yml', import.meta.url)
 
-test('offline bundle builder saves declared runtime images and writes a manifest', async () => {
+test('offline bundle builder saves only the app and optional integration images', async () => {
   const script = await readFile(scriptPath, 'utf8')
   assert.match(script, /--output/)
-  assert.match(script, /--manifest/)
   assert.match(script, /docker save/)
-  assert.match(script, /RepoDigests/)
-  assert.match(script, /image_id/)
-  assert.match(script, /if not digest:/)
+  assert.match(script, /GUGU_WEB_IMAGE/)
+  assert.match(script, /GUGU_SEARCH_IMAGE/)
+  assert.doesNotMatch(script, /SANDBOX|egress-proxy|sandbox-bundle-manifest/)
+
+  const workflow = await readFile(new URL('../../.github/workflows/docker-release.yml', import.meta.url), 'utf8')
+  const offlineJob = workflow.slice(workflow.indexOf('\n  offline-bundle:'))
+  assert.match(offlineJob, /--image coffeiz\/gugu-web:latest[\s\S]*--image searxng\/searxng:latest/)
+  assert.doesNotMatch(offlineJob, /gugu-sandbox|ubuntu\/squid|sandbox-bundle-manifest/)
 })
 
 test('offline compose never pulls and enables local bundle validation', async () => {
   const compose = await readFile(composePath, 'utf8')
   assert.match(compose, /pull_policy:\s*never/)
-  assert.match(compose, /GUGU_SANDBOX_OFFLINE:\s*["']?1/)
-  assert.match(compose, /GUGU_SANDBOX_BUNDLE_MANIFEST/)
+  assert.doesNotMatch(compose, /GUGU_SANDBOX_OFFLINE|GUGU_SANDBOX_BUNDLE_MANIFEST/)
   assert.doesNotMatch(compose, /sandbox-bootstrap/)
-})
-
-test('Docker release invokes the offline bundle builder through bash', async () => {
-  const workflow = await readFile(workflowPath, 'utf8')
-  assert.match(workflow, /bash scripts\/release\/build-offline-sandbox-bundle\.sh/,
-    'bundle builder must not depend on executable file mode in the checkout')
 })

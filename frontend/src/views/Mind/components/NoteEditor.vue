@@ -44,7 +44,7 @@
              items 从 0 宽长开，把按钮"挤"到右边）；按钮本身就是收起入口，再点一下收回去，
              不需要额外的收起按钮。「样式」「插入」互斥：开一个收起另一个，且要等对方的收起
              动画播完才开（见 toggleStylesMenu/DRAWER_CLOSE_MS）。 -->
-        <div class="ne-drawer" :class="{ open: stylesOpen }">
+        <div class="ne-drawer" :class="{ open: expandDrawers || stylesOpen }">
           <div class="ne-drawer-items">
             <template v-if="!linkInputOpen">
               <button class="ne-style-item" :class="{ on: editor.isActive('bold') }"
@@ -74,16 +74,17 @@
               <button class="ne-link-ok" @mousedown.prevent="confirmLink">{{ t('mindEditorUi.confirm') }}</button>
             </div>
           </div>
-          <!-- expandDrawers（宽窗格常开）模式：抽屉已永久展开，开合按钮没有存在意义 -->
+          <!-- expandDrawers（宽窗格常开）模式：抽屉永久展开，开合按钮没有存在意义 -->
           <button v-if="!expandDrawers" class="ne-tool" :class="{ on: stylesOpen || (isFocused && hasAnyMark) }"
                   @mousedown.prevent="toggleStylesMenu" :title="t('mindEditorUi.textStyle')">
             <PhTextAa :size="13" weight="bold" />
           </button>
         </div>
         <!-- 「插入」抽屉：代码块/引用块/分割线，2026-07-11 加。有序列表挪到主工具栏跟
-             无序列表放一起了，不算在这里头。都是一次性动作，点了直接生效、抽屉自己收起。
+             无序列表放一起了，不算在这里头。普通模式下是一次性动作、执行后收起；宽窗格
+             常开模式保持抽屉展开，便于连续编辑。
              代码块不给手动选语言——交给 highlightAuto 自动识别。 -->
-        <div class="ne-drawer" :class="{ open: insertOpen }">
+        <div class="ne-drawer" :class="{ open: expandDrawers || insertOpen }">
           <div class="ne-drawer-items">
             <button class="ne-style-item" @mousedown.prevent="insertHorizontalRule" :title="t('mindEditorUi.divider')">
               <PhMinus :size="13" weight="bold" />
@@ -146,8 +147,8 @@ const props = withDefaults(defineProps<{
   // 一起藏起来，见下面 .ne-toolbar-floating.pending 的说明。非浮动模式下这个 prop
   // 不起作用（原有的 :deep(.ne-toolbar) 淡入规则仍然生效）。
   editReady?: boolean
-  // 样式/插入抽屉初始展开（默认收起）。宽版阅读窗格（三栏笔记原型）空间足够，
-  // 折叠反而多一步；窄卡片场景维持默认收起。
+  // 样式/插入抽屉保持展开（默认收起）。宽版阅读窗格（三栏笔记原型）空间足够，
+  // 不自动折叠；窄卡片场景维持默认交互。
   expandDrawers?: boolean
 }>(), { placeholder: '写点什么…', compact: false, autofocus: false, floatToolbar: false, editReady: true, expandDrawers: false })
 
@@ -409,7 +410,8 @@ const editor = useEditor({
   onBlur() {
     isFocused.value = false
     clearDrawerSwitchTimer()   // 失焦直接双关，不留一个"马上要开另一个"的挂起计时器
-    // 宽窗格常开模式（expandDrawers）：抽屉保持展开，失焦不收
+    // 宽窗格常开模式（expandDrawers）：失焦不收；模板也会强制保留 open 类，避免动作处理
+    // 重置内部开合状态后工具项消失。
     if (props.expandDrawers) return
     if (!linkInputOpen.value) stylesOpen.value = false
     insertOpen.value = false

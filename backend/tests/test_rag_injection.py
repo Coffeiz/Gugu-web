@@ -85,6 +85,43 @@ def test_rag_history_injection_hides_internal_identity_fields():
     assert "9.5" not in message["content"]
 
 
+def test_conversation_rag_includes_message_time_in_user_timezone():
+    from app.core.tz import ctx_tz, resolve_tz, set_ctx_tz
+
+    previous_tz = ctx_tz()
+    set_ctx_tz(resolve_tz("Asia/Shanghai"))
+    try:
+        rendered = render_history_context("之前的决定", [{
+            "source": "conversation",
+            "title": "项目讨论",
+            "message_id": "42",
+            "updated_at": "2026-09-27T01:30:00+00:00",
+            "text": "决定先完成测试。",
+            "citation": {"source_type": "conversation", "title": "项目讨论"},
+        }])
+    finally:
+        set_ctx_tz(previous_tz)
+
+    assert "消息时间：2026-09-27 09:30" in rendered
+    assert "决定先完成测试。" in rendered
+
+
+def test_rag_does_not_label_memory_or_session_update_as_message_time():
+    rendered = render_history_context("之前的决定", [
+        {
+            "source": "memory", "title": "用户画像",
+            "updated_at": "2026-09-27T01:30:00+00:00", "text": "喜欢简洁回复。",
+        },
+        {
+            "source": "conversation", "title": "会话摘要",
+            "updated_at": "2026-09-27T01:30:00+00:00", "text": "讨论过测试计划。",
+            "citation": {"source_type": "conversation", "title": "会话摘要"},
+        },
+    ])
+
+    assert "消息时间：" not in rendered
+
+
 def test_empty_rag_results_do_not_create_history_message():
     assert build_history_message("没有结果", []) is None
     assert "knowledge-context" in render_history_context("没有结果", [])

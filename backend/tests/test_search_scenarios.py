@@ -5,7 +5,7 @@ from app.api.v1.search import run_global_search
 from agent.im import imctx
 from agent.tools.global_search import _global_search
 from agent.tools.group_context import _group_context_search
-from agent.tools.mind import _note_search
+from agent.tools.note import _note_search
 
 
 async def _add(db, obj):

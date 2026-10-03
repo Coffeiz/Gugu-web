@@ -61,6 +61,8 @@
    不能压低 line-height，也不改变 ghost sizer 的自然高度或撑高卡片。 */
 .rename-sizer .rename-input-inline {
   top: -1px; bottom: -1px;
+  /* 全局单行 input 有 42px 控件高度；内联重命名必须回到自然高度，避免撑出 ghost 行盒。 */
+  height: auto;
   line-height: inherit;
 }
 .rename-sizer--segmented {

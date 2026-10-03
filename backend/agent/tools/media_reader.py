@@ -15,7 +15,7 @@ from app.services import storage as storage_service
 
 VIDEO_EXTS = frozenset({"mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v"})
 AUDIO_EXTS = frozenset({"mp3", "wav", "flac", "m4a", "ogg", "aac", "amr", "opus", "wma"})
-IMAGE_EXTS = frozenset(chat_attach.VISION_EXTS)
+IMAGE_EXTS = frozenset(chat_attach.IMAGE_EXTS)
 MEDIA_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 MEDIA_READ_MAX_BYTES = 36 * 1024 * 1024
 MEDIA_BATCH_MAX_ITEMS = 20
@@ -45,12 +45,12 @@ def reserve_remote_image_read() -> bool:
 
 def image_capability_error(ext: str | None = None, size: int | None = None) -> str | None:
     """统一检查视觉能力、格式与图片读取体积上限。"""
-    if not chat_attach.vision_ready():
+    if not chat_attach.image_ready():
         return "当前模型/通道无法识别图像内容"
     normalized_ext = str(ext or "").lower().lstrip(".")
-    if ext is not None and normalized_ext not in chat_attach.VISION_EXTS:
+    if ext is not None and normalized_ext not in chat_attach.IMAGE_EXTS:
         return f"图片格式 {normalized_ext or '未知'} 暂不支持识别"
-    if size is not None and size > chat_attach.VISION_READ_MAX:
+    if size is not None and size > chat_attach.IMAGE_READ_MAX:
         return "图片过大，超出可看上限"
     return None
 
@@ -60,7 +60,7 @@ def build_image_block(raw: bytes, ext: str) -> dict:
     error = image_capability_error(ext, len(raw))
     if error:
         return {"error": error}
-    block = chat_attach.vision_block(raw, ext)
+    block = chat_attach.image_block(raw, ext)
     return ({"block": block, "_source_size_bytes": len(raw)}
             if block else {"error": "图片无法解析"})
 
@@ -162,7 +162,7 @@ async def read_video(file, *, max_source_bytes: int | None = None) -> dict:
     """按本轮主模型已启用的原生视频能力读取；压缩与 provider payload 共用附件逻辑。"""
     ai = _active_model_cfg()
     transport = chat_attach.video_transport_for(ai)
-    if not getattr(ai, "vision_video", False) or transport == "none":
+    if not getattr(ai, "video", False) or transport == "none":
         return {"error": "当前模型或 API 协议未开启原生视频理解，请切换到支持视频输入的模型"}
 
     ext = file.ext.lower()

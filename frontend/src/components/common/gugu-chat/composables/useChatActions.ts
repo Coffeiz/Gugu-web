@@ -7,6 +7,8 @@ import { uploadSignal, calendarSignal } from '@/services/cache'
 import type { Router } from 'vue-router'
 import { i18n } from '@/i18n'
 import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
+import { showAppError } from '@/composables/core/useAppToast'
+import { copyTextToClipboard } from './copyTextToClipboard'
 
 // 工具名 → 受影响数据域，咕咕操作后据此刷新前端，免手动刷新页面。
 // 与后端 RESOURCE_BY_TOOL（app/core/events.py）保持一致——漏了哪个工具，对应视图就不会实时刷新。
@@ -78,16 +80,13 @@ export function useChatActions(options: {
     if (btn) {
       e.preventDefault()
       const text = (btn.closest('.md-code-block')?.querySelector('code') as HTMLElement | null)?.innerText ?? ''
-      const done = () => { btn.textContent = `${i18n.global.t('chatUi.copied')} ✓`; setTimeout(() => { btn.textContent = i18n.global.t('chatUi.copy') }, 1200) }
-      if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(done)
-      } else {
-        const a = document.createElement('textarea')
-        a.value = text; a.style.position = 'fixed'; a.style.opacity = '0'
-        document.body.appendChild(a); a.select()
-        try { document.execCommand('copy') } catch {}
-        a.remove(); done()
+      const copied = await copyTextToClipboard(text)
+      if (!copied) {
+        showAppError(i18n.global.t('chatUi.copyFailed'))
+        return
       }
+      btn.textContent = `${i18n.global.t('chatUi.copied')} ✓`
+      setTimeout(() => { btn.textContent = i18n.global.t('chatUi.copy') }, 1200)
       return
     }
     const a = target.closest?.('a[href^="gugu://"]') as HTMLAnchorElement | null

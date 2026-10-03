@@ -12,7 +12,10 @@ from types import SimpleNamespace
 import pytest
 
 import agent.llm.llm_select as llm_select
+from agent.llm import modelctx
+from agent.tools import media_reader
 import app.byok.service as byok_service
+from app.core import chat_attach
 from agent.llm.llm_select import ModelRunConfig, resolve_run_config_for_user
 from app.core.config import AIPresetItem
 
@@ -48,7 +51,9 @@ class _Db:
 def _user_row(**overrides):
     row = SimpleNamespace(provider="deepseek", api_format="openai", base_url="",
                           model="deepseek-v4", context_tokens=None, max_tokens=None,
-                          thinking=None, reasoning_effort=None, reasoning_persistence="off")
+                          thinking=None, reasoning_effort=None, reasoning_persistence="off",
+                          image=False, video=False, audio=False,
+                          image_detail="auto")
     for key, value in overrides.items():
         setattr(row, key, value)
     return [row]
@@ -67,14 +72,15 @@ def harness(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_user_key_without_base_url_never_rides_platform_endpoint(monkeypatch, harness):
-    """用户 DeepSeek Key + base_url 空：deepseek 解析不出官方默认端点 → 放弃覆盖
-    回落平台配置。绝不能出现平台 DashScope URL + 用户 DeepSeek Key 的混配。"""
+async def test_user_key_without_base_url_uses_provider_default_not_platform_endpoint(monkeypatch, harness):
+    """用户 DeepSeek Key + base_url 空时使用 DeepSeek 默认端点，不继承平台 URL。"""
     db = _Db(_user_row(base_url=""))
     cfg = await resolve_run_config_for_user(harness, db, "uid")
-    assert cfg.is_byok is False
-    assert cfg.model.api_key == "platform-secret"
-    assert cfg.model.base_url == PLATFORM_BASE_URL
+    assert cfg.is_byok is True
+    assert cfg.model.api_key == "sk-deepseek-secret"
+    assert cfg.model.base_url == "https://api.deepseek.com"
+    assert cfg.model.thinking is None
+    assert cfg.model.reasoning_effort == ""
 
 
 @pytest.mark.asyncio
@@ -85,6 +91,8 @@ async def test_user_explicit_base_url_is_used_as_destination(monkeypatch, harnes
     assert cfg.model.provider == "deepseek"
     assert cfg.model.api_key == "sk-deepseek-secret"
     assert cfg.model.base_url == "https://my-deepseek-proxy.example/v1"
+    assert cfg.model.thinking is None
+    assert cfg.model.reasoning_effort == ""
     assert PLATFORM_BASE_URL not in cfg.model.base_url
 
 
@@ -96,6 +104,31 @@ async def test_user_empty_base_url_resolves_provider_default(monkeypatch, harnes
     assert cfg.is_byok is True
     assert cfg.model.api_key == "sk-deepseek-secret"
     assert cfg.model.base_url == "https://open.bigmodel.cn/api/paas/v4"
+
+
+@pytest.mark.asyncio
+async def test_byok_multimodal_flags_reach_the_runtime_model(monkeypatch, harness):
+    """BYOK 主对话配置应保留图片/视频/音频开关，供 read_file 按本轮模型判断能力。"""
+    db = _Db(_user_row(
+        provider="minimax", api_format="anthropic",
+        base_url="https://api.minimax.example/anthropic", model="MiniMax-M3",
+        image=True, video=True, audio=True, image_detail="high",
+    ))
+
+    cfg = await resolve_run_config_for_user(harness, db, "uid")
+
+    assert cfg.is_byok is True
+    assert cfg.model.image is True
+    assert cfg.model.video is True
+    assert cfg.model.audio is True
+    assert cfg.model.image_detail == "high"
+    assert chat_attach.image_ready(cfg.model) is True
+    assert chat_attach.video_transport_for(cfg.model) == "anthropic"
+    modelctx.set_model_cfg(cfg.model)
+    try:
+        assert media_reader.image_capability_error("png") is None
+    finally:
+        modelctx.set_model_cfg(None)
 
 
 @pytest.mark.asyncio

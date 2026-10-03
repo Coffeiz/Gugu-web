@@ -31,7 +31,9 @@ def _run_compaction_summary(
     from agent.context.compaction import resolve_compaction_limits, validate_compact_summary
     from agent.context.summary_format import SUMMARY_OPEN, unwrap_compacted_summary
 
-    conversation = list(getattr(messages, "conversation", messages) or [])
+    # finalize 传入的是冻结的 CanonicalAreaSnapshot.messages；摘要识别属于
+    # canonical 收尾规则，不应再反向生成 Provider wire。
+    conversation = messages
     candidate = None
     for item in conversation:
         if not isinstance(item, dict):
@@ -53,46 +55,6 @@ def _run_compaction_summary(
     return text if ok else None
 
 
-async def _insert_or_get_batch(db, batch_model, values: dict[str, Any]):
-    """原子写入 canonical batch，唯一键竞争时复用已有行。"""
-    from sqlalchemy import select
-
-    session_id = values["session_id"]
-    batch_digest = values["digest"]
-    dialect_name = db.get_bind().dialect.name
-    if dialect_name == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert as dialect_insert
-    elif dialect_name == "sqlite":
-        from sqlalchemy.dialects.sqlite import insert as dialect_insert
-    else:
-        raise RuntimeError(f"canonical batch 不支持数据库方言：{dialect_name}")
-
-    statement = (
-        dialect_insert(batch_model)
-        .values(**values)
-        .on_conflict_do_nothing(
-            index_elements=[batch_model.session_id, batch_model.digest]
-        )
-        .returning(batch_model.id)
-    )
-    result = await db.execute(statement)
-    inserted_id = result.scalar_one_or_none()
-    if inserted_id is not None:
-        row = await db.get(batch_model, inserted_id)
-        if row is not None:
-            return row, True
-
-    existing = (await db.execute(
-        select(batch_model).where(
-            batch_model.session_id == session_id,
-            batch_model.digest == batch_digest,
-        )
-    )).scalars().first()
-    if existing is None:
-        raise RuntimeError("canonical batch 插入后无法读取结果")
-    return existing, False
-
-
 async def finalize_run(
     *,
     session_factory: Callable[[], Any],
@@ -100,9 +62,7 @@ async def finalize_run(
     user_id: str,
     settings: Any,
     model_cfg: Any,
-    rag_context: dict | None,
-    messages: list,
-    initial_len: int,
+    message_area: Any,
     text: str,
     display_timeline: list[dict] | None = None,
     files: list | None,
@@ -113,10 +73,9 @@ async def finalize_run(
     tools_used: list[str] | None = None,
     compaction_applied: bool = False,
     session_exists_required: bool = False,
-    stance_text: str | None = None,
     user_message_id: int | None = None,
     run_id: str | None = None,
-    canonical_batches: list[dict] | tuple[dict, ...] | None = None,
+    round_id: str | None = None,
     interrupted: bool = False,
 ) -> FinalizeResult:
     """用一个契约完成 canonical turn、展示时间线、trim 与压缩边界持久化。
@@ -125,131 +84,56 @@ async def finalize_run(
     消息结构、配额封顶及 baseline 入口在这里保持一致。
     ``session_exists_required`` 供 Web 删除竞态使用：会话已删除时跳过消息，但仍保留 usage 记账。
     """
-    from agent.context import assembly, compress_conv
+    from agent.context import compress_conv
     from app.models import ConversationMessage, ConversationSession
-    from app.core import chat_attach
     from app.services.conversation_retention import trim_session_messages
+    persisted_round_id = round_id or "round-1"
+
+    if message_area is None:
+        raise ValueError("finalize_run 必须接收 MessageArea")
 
     async with session_factory() as db:
         session_alive = True
         if session_exists_required:
-            from app.models import ConversationSession
             session_alive = await db.get(ConversationSession, session_id) is not None
         if session_alive:
-            history_order = 0
-            stance_persisted = False
+            if run_id:
+                from agent.context.canonical_context import digest
+                from agent.context.message_area_repository import _insert_or_get_batch
+
+                _receipt, is_new = await _insert_or_get_batch(db, {
+                    "session_id": session_id, "version": "finalize-v1",
+                    "run_id": run_id, "round_id": persisted_round_id,
+                    "digest": digest({"finalized_run": run_id}),
+                })
+                if not is_new:
+                    return FinalizeResult(tokens_in=0, tokens_out=0)
+            cache_anchor = getattr(message_area, "provider_cache_anchor", None)
+            if cache_anchor:
+                session_row = await db.get(ConversationSession, session_id)
+                if session_row is not None:
+                    session_context = dict(session_row.session_context or {})
+                    session_context["provider_cache_anchor"] = cache_anchor
+                    session_row.session_context = session_context
             user_message = (
                 await db.get(ConversationMessage, user_message_id)
                 if user_message_id else None
             )
-            rag_blocks = [
-                block for block in (rag_context or {}).get("blocks", [])
-                if isinstance(block, dict)
-            ]
-            if stance_text and user_message_id:
-                if user_message is not None:
-                    # 当前用户消息已在生成前写入；把姿态事件排在它之前，保持
-                    # provider 首轮的「姿态 → 用户消息」顺序。每次变化都追加，
-                    # 不按正文去重；下一轮从 canonical history 稳定恢复。
-                    stance_offset = len(rag_blocks) + 1
-                    db.add(ConversationMessage(
-                        session_id=session_id,
-                        role="user",
-                        content="",
-                        content_json=[{
-                            "type": "stance-context",
-                            "digest": assembly.stance_digest(stance_text),
-                            "text": f"[system-reminder]\n{stance_text}\n[/system-reminder]",
-                        }],
-                        created_at=user_message.created_at - timedelta(microseconds=stance_offset),
-                    ))
-                    stance_persisted = True
-            if stance_persisted:
-                session_row = await db.get(ConversationSession, session_id)
-                if session_row is not None:
-                    context = dict(session_row.session_context or {})
-                    context["stance_digest"] = assembly.stance_digest(stance_text)
-                    session_row.session_context = context
-            # 当前用户行在生成前已经落库。RAG 需要在 provider 首轮和下一轮 history
-            # 中都出现在它前面；因此用用户行的时间作为锚点，不能让数据库默认的
-            # now_utc() 把 RAG 排到用户消息后面。多个块按原顺序占用连续微秒。
-            for index, block in enumerate(rag_blocks):
-                values = {
-                    "session_id": session_id,
-                    "role": "user",
-                    "content": "",
-                    "content_json": [block],
-                }
-                if user_message is not None:
-                    values["created_at"] = user_message.created_at - timedelta(
-                        microseconds=len(rag_blocks) - index,
-                    )
-                db.add(ConversationMessage(**values))
-            if canonical_batches is None:
-                # 旧调用方/旧 worker 的过渡路径。新 runner 必须传入已封存的
-                # canonical batch，不能在这里从 provider wire 二次推导。
-                from agent.context.history import canonicalize_tool_messages
-                tool_history = assembly.newly_appended(messages, initial_len)
-                for tm in canonicalize_tool_messages(tool_history):
-                    db.add(ConversationMessage(
-                        session_id=session_id,
-                        role=tm["role"],
-                        content="",
-                        content_json=chat_attach.strip_vision_for_history(tm["content"]),
-                    ))
-            else:
-                from app.models import ConversationBatch
-                from sqlalchemy import select
-                for record in canonical_batches:
-                    if not isinstance(record, dict):
-                        continue
-                    canonical_messages = record.get("messages") or []
-                    if not canonical_messages:
-                        continue
-                    digest = str(record.get("digest") or "")
-                    metadata = record.get("metadata") or {}
-                    if not digest:
-                        from agent.context.canonical_context import digest as canonical_digest
-
-                        digest = canonical_digest({
-                            "messages": canonical_messages,
-                            "metadata": metadata,
-                        })
-                    batch_row, is_new_batch = await _insert_or_get_batch(
-                        db,
-                        ConversationBatch,
-                        {
-                            "session_id": session_id,
-                            "version": "v1",
-                            "run_id": run_id or str(metadata.get("run_id") or "") or None,
-                            "round_id": str(metadata.get("round_id") or "") or None,
-                            "digest": digest,
-                        },
-                    )
-                    if is_new_batch:
-                        for message in canonical_messages:
-                            created_at = None
-                            if interrupted and user_message is not None:
-                                history_order += 1
-                                created_at = user_message.created_at + timedelta(
-                                    microseconds=history_order,
-                                )
-                            values = {
-                                "session_id": session_id,
-                                "role": message["role"],
-                                "content": message.get("content") if isinstance(message.get("content"), str) else "",
-                                "canonical_batch_id": batch_row.id,
-                            }
-                            # content_json 不能显式传 None：SQLAlchemy JSON 列会把
-                            # 显式 None 序列化成 jsonb 'null'（≠ SQL NULL），正文行
-                            # 会被消息端点的 content_json IS NULL 过滤吞掉。str 正文
-                            # 省略该字段走列默认值，落成真正的 SQL NULL。
-                            if not isinstance(message.get("content"), str):
-                                values["content_json"] = chat_attach.strip_vision_for_history(
-                                    message["content"])
-                            if created_at is not None:
-                                values["created_at"] = created_at
-                            db.add(ConversationMessage(**values))
+            if user_message is not None and run_id:
+                user_message.run_id = run_id
+                user_message.round_id = "round-1"
+            from agent.context.message_area_repository import commit_delta
+            outcome = "interruption" if interrupted else "success"
+            delta = message_area.persistence_delta(outcome=outcome)
+            await commit_delta(
+                db,
+                session_id=session_id,
+                delta=delta,
+                run_id=run_id,
+                default_round_id=persisted_round_id if run_id else None,
+                user_message=user_message,
+                interrupted=interrupted,
+            )
             persisted_timeline = display_timeline or None
             if persisted_timeline and user_message_id:
                 # 展示时间线可能在取消收尾时才落库，而下一条用户消息已先提交。
@@ -265,8 +149,16 @@ async def finalize_run(
             if text or files or persisted_timeline:
                 assistant_created_at = None
                 if interrupted and user_message is not None:
+                    anchor = delta.user_anchor_sequence
+                    persisted_after_anchor = [
+                        entry.sequence for entry in delta.entries
+                        if anchor is not None and entry.sequence > anchor
+                    ]
                     assistant_created_at = user_message.created_at + timedelta(
-                        microseconds=history_order + 1,
+                        microseconds=max(
+                            (sequence - anchor + 1 for sequence in persisted_after_anchor),
+                            default=1,
+                        ),
                     )
                 assistant_content = text
                 if interrupted and assistant_content:
@@ -277,6 +169,8 @@ async def finalize_run(
                     content=assistant_content,
                     files=files or None,
                     display_timeline=persisted_timeline,
+                    run_id=run_id,
+                    round_id=persisted_round_id if run_id else None,
                 )
                 if assistant_created_at is not None:
                     assistant_values["created_at"] = assistant_created_at
@@ -296,7 +190,12 @@ async def finalize_run(
             cache_write=cache_write,
             tools_used=tools_used,
         )
+        coordinator = message_area.reasoning_state
+        if session_alive and not interrupted and coordinator is not None:
+            await coordinator.commit_pending(db, run_id=run_id)
         await db.commit()
+        if session_alive and not interrupted and coordinator is not None:
+            coordinator.committed()
 
     await trim_session_messages(session_id)
     # 只有当前 run 已经在 provider round 边界执行过 >=90% 压缩，才同步推进
@@ -306,7 +205,7 @@ async def finalize_run(
         # 前缀、能命中缓存）。baseline 直接复用它并只重算水位，不再用摊平文本
         # 重放一遍——那条路结构上不可能共享前缀，每次都是全冷的大输入调用。
         # 摘要取不到时退回旧的重生成路径。
-        reuse_summary = _run_compaction_summary(messages, model_cfg, user_message_id)
+        reuse_summary = _run_compaction_summary(message_area.snapshot().messages, model_cfg, user_message_id)
         await compress_conv.compress_if_needed(
             session_id, user_id, settings, force=False,
             reuse_summary=reuse_summary,

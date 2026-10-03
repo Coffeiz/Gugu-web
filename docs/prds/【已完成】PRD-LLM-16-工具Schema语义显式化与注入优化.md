@@ -403,7 +403,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 
 目标：将全部注册工具迁移为“源码即线上 Schema”。迁移完成后，工具定义中的 `input_schema` 必须与当前精简算法的输出一致；provider、`get_tool_schema`、执行校验和测试基准使用同一份结构，不再依赖运行时二次精简。
 
-- [x] 盘点全部注册工具，记录字段级 `description`、`title`、`default`、`example/examples` 等冗余元数据及其实际语义；新增 `backend/scripts/audit_tool_schemas.py` 作为盘点入口，迁移前发现 394 个字段级 `description`，当前无冗余字段说明，必要安全语义已移到工具级短描述。
+- [x] 盘点全部注册工具，记录字段级 `description`、`title`、`default`、`example/examples` 等冗余元数据及其实际语义；新增 `backend/scripts/checks/audit_tool_schemas.py` 作为盘点入口，迁移前发现 394 个字段级 `description`，当前无冗余字段说明，必要安全语义已移到工具级短描述。
 - [x] 按精简算法迁移所有工具定义：保留字段名、类型、必填、枚举、条件分支、互斥关系、嵌套结构和边界约束；删除可由结构表达或不影响调用的元数据。
 - [x] 将无法由 Schema 可靠表达的关键语义改成显式字段、枚举或 action；仅保留必要的短字段说明，并同步更新 `description_short`。已覆盖全天、来源/目标互斥、文件编辑 mode、项目待办 action、删除确认和 shell scope/network。
 - [x] 逐项审查可选字段：保留项仅属于独立业务状态、会改变工具行为、不能安全默认或低风险分页/筛选便利参数；兼容别名和重复默认说明已移出 Schema，确认门与跨项目定位保留为必要语义。

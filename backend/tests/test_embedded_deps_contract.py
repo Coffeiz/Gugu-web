@@ -25,10 +25,11 @@ def test_integrated_compose_uses_embedded_deps():
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
     assert services["app"]["environment"]["GUGU_EMBEDDED_DEPS"] == "1"
-    assert "updater" in services, "一体化 Compose 必须包含受限 updater"
+    assert services["app"]["environment"]["GUGU_SANDBOX_MANAGER_MODE"] == "embedded"
+    assert "updater" not in services, "Compose 整镜像升级由部署管理器负责，不运行 updater sidecar"
+    assert services["app"].get("privileged") is True
     app_mounts = services["app"]["volumes"]
-    assert not any("docker.sock" in str(mount) for mount in app_mounts), "Web app 不得挂载 Docker Socket"
-    assert any("docker.sock" in str(mount) for mount in services["updater"]["volumes"])
+    assert not any("docker.sock" in str(mount) for mount in app_mounts), "内置 Rootless daemon 不挂载宿主 Docker Socket"
     assert any("legacy_pgdata:/legacy-pgdata:ro" == mount for mount in app_mounts)
     assert any("legacy_redisdata:/legacy-redisdata:ro" == mount for mount in app_mounts)
 
@@ -117,7 +118,7 @@ def test_embedded_redis_readiness_helper_is_called_before_app_start():
     [("redis", "内置 Redis 已就绪"), ("postgres", "内置 PostgreSQL 已就绪")],
 )
 def test_embedded_service_readiness_waits_until_ready(tmp_path: Path, service: str, ready_message: str):
-    helper = REPO_ROOT / "backend" / "scripts" / f"wait_embedded_{service}.sh"
+    helper = REPO_ROOT / "backend" / "scripts" / "runtime" / f"wait_embedded_{service}.sh"
     call_count = tmp_path / f"{service}-readiness-calls"
     ready_output = "printf 'PONG\\n'" if service == "redis" else ":"
     result = _run_readiness_helper(
@@ -153,7 +154,7 @@ def test_embedded_service_readiness_fails_clearly_on_timeout(
     service: str,
     timeout_message: str,
 ):
-    helper = REPO_ROOT / "backend" / "scripts" / f"wait_embedded_{service}.sh"
+    helper = REPO_ROOT / "backend" / "scripts" / "runtime" / f"wait_embedded_{service}.sh"
     result = _run_readiness_helper(
         tmp_path,
         helper=helper,
@@ -175,7 +176,7 @@ def test_embedded_postgres_readiness_guard_runs_before_createdb_and_app_start():
 
     assert wait_call < createdb_call < app_start
     assert (
-        "COPY backend/scripts/wait_embedded_postgres.sh "
+        "COPY backend/scripts/runtime/wait_embedded_postgres.sh "
         "/usr/local/bin/gugu-wait-embedded-postgres.sh" in dockerfile
     )
     assert "chmod 755" in dockerfile

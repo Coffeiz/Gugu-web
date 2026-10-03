@@ -49,6 +49,19 @@
     "database_migration": { "type": "boolean" },
     "release_notes_url": { "type": "string", "format": "uri", "pattern": "^https://github\\.com/Coffeiz/Gugu-web/releases/" },
     "rollback_supported": { "type": "boolean" },
+    "app_bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archive", "signature_bundle", "sha256", "runtime_contract", "size", "unpacked_size"],
+      "properties": {
+        "archive": { "type": "string", "pattern": "^gugu-app-[A-Za-z0-9.+-]+\\.tar\\.gz$" },
+        "signature_bundle": { "type": "string", "pattern": "^gugu-app-[A-Za-z0-9.+-]+\\.sigstore\\.json$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "runtime_contract": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" },
+        "size": { "type": "integer", "minimum": 1, "maximum": 536870912 },
+        "unpacked_size": { "type": "integer", "minimum": 1, "maximum": 1073741824 }
+      }
+    },
     "git_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "published_at": { "type": "string", "format": "date-time" }
   }

@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 /**
  * CI 关键路径之三：GuguChat 悬浮窗——发消息收到回复、大窗会话列表、
  * 新建会话、收起/关闭。跟另外两条关键路径同一个原则：CI 里接
- * scripts/mock_llm_server.py 的固定回复，不接真实模型、不受限流/网络
+ * scripts/testing/mock_llm_server.py 的固定回复，不接真实模型、不受限流/网络
  * 影响。但断言只认"生成了一条新的 AI 回复气泡"，不死抠固定回复的具体
  * 文字——这样本地/devserver 用真实模型跑也一样有效（只是不如 CI 那么
  * 快，回复内容也不确定，但"发了消息、收到回复"这个核心行为一样能测）。
@@ -147,63 +147,68 @@ test.describe('GuguChat 悬浮窗', () => {
     // 修复：消费时允许 sessionId == null 在同 viewGeneration 内消费；session_id
     // 事件到达时再回填真实 id。两条消息应该都进入同一个全新会话并各自收到回复。
     //
-    // 确定性策略：拦截首个 POST /api/v1/agent/chat（"firstText" 那一条）延迟 800ms
-    // 放行。这 800ms 是我们故意打开的"竞态窗口"——保证排队项入队时 session_id 事件
-    // 一定还没到达（如果直接放行，本地网络太快，session_id 可能在第二条入队前就回来了，
-    // 测试就退化为"两条消息顺序发送"，不再覆盖 P1）。修复前会丢消息；修复后两条都进
-    // 同一会话并各自收到 AI 回复。
+    // 用显式闸门暂停首个 POST，而非依赖固定延迟：直到第二条确实进入队列前，
+    // session_id 事件都不可能返回，因此无论 CI 机器快慢都稳定覆盖「先排队、后拿到 id」。
     let firstRequestDelayed = false
+    let firstRequestPaused = false
+    let releaseFirstRequest: () => void = () => {}
+    const firstRequestGate = new Promise<void>((resolve) => {
+      releaseFirstRequest = () => resolve()
+    })
     await page.route('**/api/v1/agent/chat', async (route) => {
-      // 只延迟首次请求；后续请求（含接力发送的"secondText"）直接放行
-      if (firstRequestDelayed) {
-        await route.continue()
-      } else {
+      // 只暂停首次请求；后续请求（含接力发送的第二条）直接放行。
+      if (!firstRequestDelayed) {
         firstRequestDelayed = true
-        await new Promise((r) => setTimeout(r, 800))
-        await route.continue()
+        firstRequestPaused = true
+        await firstRequestGate
       }
+      await route.continue()
     })
 
-    await page.goto('/')
-    await page.locator('.ai-fab').click()
-    const chatWindow = page.locator('.chat-window')
-    await expect(chatWindow).toBeVisible()
+    try {
+      await page.goto('/')
+      await page.locator('.ai-fab').click()
+      const chatWindow = page.locator('.chat-window')
+      await expect(chatWindow).toBeVisible()
 
-    // 强制从全新会话开始——切到新会话并确认消息区为空
-    await chatWindow.locator('.popup-icon-btn[title="展开"]').click()
-    const sidebar = page.locator('.exp-sidebar')
-    await expect(sidebar).toBeVisible()
-    await sidebar.locator('.exp-new-session-btn').click()
-    await expect(chatWindow.locator('.msg')).toHaveCount(0)
+      // 强制从全新会话开始——切到新会话并确认消息区为空。
+      await chatWindow.locator('.popup-icon-btn[title="展开"]').click()
+      const sidebar = page.locator('.exp-sidebar')
+      await expect(sidebar).toBeVisible()
+      await sidebar.locator('.exp-new-session-btn').click()
+      await expect(chatWindow.locator('.msg')).toHaveCount(0)
 
-    const textarea = chatWindow.locator('.chat-input-editor .ProseMirror')
-    const sendBtn = chatWindow.locator('.send-btn')
+      const textarea = chatWindow.locator('.chat-input-editor .ProseMirror')
+      const sendBtn = chatWindow.locator('.send-btn')
 
-    // 第一条：必然触发 session_id 事件回传真实 id；请求被延迟 800ms，给第二条的入队留出确定的窗口
-    const firstText = `e2e-newqueue-first-${Date.now()}`
-    await textarea.fill(firstText)
-    await sendBtn.click()
+      const firstText = `e2e-newqueue-first-${Date.now()}`
+      await textarea.fill(firstText)
+      await sendBtn.click()
+      await expect.poll(() => firstRequestPaused).toBe(true)
 
-    // 第二条：立刻排队——入队时 sessionId 还是 null（firstText 的请求仍在 800ms 延迟中，
-    // session_id 事件一定还没回来；这是一条确定性的"先排队、后拿到 id"路径）
-    const queuedText = `e2e-newqueue-second-${Date.now()}`
-    await textarea.fill(queuedText)
-    // 同上：等 PM 文档落地再 Enter，防空输入被静默吞掉的竞态
-    await expect(textarea).toHaveText(queuedText)
-    await textarea.press('Enter')
-    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: queuedText })).toBeVisible()
+      // 首个请求仍暂停，session_id 尚未回传；第二条实际进入队列后再放行。
+      const queuedText = `e2e-newqueue-second-${Date.now()}`
+      await textarea.fill(queuedText)
+      // 等 PM 文档落地再 Enter，防空输入被静默吞掉的竞态。
+      await expect(textarea).toHaveText(queuedText)
+      await textarea.press('Enter')
+      // 排队期间消息显示在输入框上方的排队条里，等首轮确认 session_id 后才成为对话气泡。
+      await expect(chatWindow.locator('.chat-pending-item .chat-pending-text', { hasText: queuedText })).toBeVisible()
+      releaseFirstRequest()
 
-    // 关键断言：不切会话，等两条都收到回复
-    // （如果 P1 仍存在，secondText 的 user 气泡会显示但永远没有 AI 回复——
-    //  因为消费时 null !== realId 把它丢弃了）
-    await expect(chatWindow.locator('.msg.user .msg-bubble')).toHaveCount(2, { timeout: 15000 })
-    const aiBubbles = chatWindow.locator(AI_REPLY)
-    await expect(aiBubbles).toHaveCount(2, { timeout: aiReplyTimeout * 2 })
-    await expect(aiBubbles.nth(0)).not.toBeEmpty()
-    await expect(aiBubbles.nth(1)).not.toBeEmpty()
-    // AI 回复可能复述用户输入；这里验证用户气泡本身，避免把回复里的同名文本也算进去。
-    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: firstText })).toHaveCount(1)
-    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: queuedText })).toHaveCount(1)
+      // 关键断言：不切会话，两条消息都收到回复；旧缺陷会留下第二条 user 气泡但不产生回复。
+      await expect(chatWindow.locator('.msg.user .msg-bubble')).toHaveCount(2, { timeout: 15000 })
+      const aiBubbles = chatWindow.locator(AI_REPLY)
+      await expect(aiBubbles).toHaveCount(2, { timeout: aiReplyTimeout * 2 })
+      await expect(aiBubbles.nth(0)).not.toBeEmpty()
+      await expect(aiBubbles.nth(1)).not.toBeEmpty()
+      // AI 回复可能复述用户输入；这里只核对 user 气泡，避免同名回复造成误计。
+      await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: firstText })).toHaveCount(1)
+      await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: queuedText })).toHaveCount(1)
+    } finally {
+      // 断言失败时也释放拦截请求，避免悬挂的 route 阻碍页面清理。
+      releaseFirstRequest()
+    }
   })
 
   test('点击侧栏会话标题区域能切换会话', async ({ page }) => {

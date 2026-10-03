@@ -1,96 +1,81 @@
 from __future__ import annotations
 
-import socket
-import uuid
 from pathlib import Path
+
+import yaml
 
 from updater.deployment import detect_deployment
 
 
-def test_detect_integrated_compose_uses_updater_rpc_and_switch(tmp_path, monkeypatch):
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_supported_compose_files_have_no_updater_service_or_host_socket_mount():
+    for filename in ("docker-compose.yml", "docker-compose.prod.yml"):
+        config = yaml.safe_load((REPO_ROOT / filename).read_text(encoding="utf-8"))
+        services = config["services"]
+        assert "updater" not in services
+        serialized = str(services)
+        assert "/var/run/docker.sock" not in serialized
+        assert "/run/gugu-updater" not in serialized
+
+
+def test_integrated_compose_is_manual_and_does_not_require_updater_service(tmp_path, monkeypatch):
     (tmp_path / "docker-compose.yml").write_text(
-        "services: {app: {environment: {GUGU_EMBEDDED_DEPS: '1'}}, updater: {}}\n",
+        "services: {app: {environment: {GUGU_EMBEDDED_DEPS: '1'}}}\n",
         encoding="utf-8",
     )
-    socket_path = Path("/tmp") / f"gugu-updater-{uuid.uuid4().hex[:10]}.sock"
-    rpc_server = socket.socket(socket.AF_UNIX)
-    rpc_server.bind(str(socket_path))
     monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(tmp_path))
-    monkeypatch.setenv("GUGU_UPDATER_RPC_SOCKET", str(socket_path))
     monkeypatch.setenv("GUGU_UNIFIED_APP", "1")
     monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "0")
+    monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
     monkeypatch.setenv("GUGU_SELF_UPDATE", "on")
 
     result = detect_deployment()
 
     assert result == {
-        "mode": "integrated_compose", "enabled": True, "capability": "one_click",
-        "reason_code": "ready", "reason": "一体化 Compose 受限更新服务已就绪。",
+        "mode": "integrated_compose", "enabled": False, "capability": "manual",
+        "reason_code": "manual_image_update",
+        "reason": "Compose 部署由 Docker/Compose 管理器更新整套镜像；Admin 不执行镜像更新。",
     }
 
     monkeypatch.setenv("GUGU_SELF_UPDATE", "off")
-    assert detect_deployment()["reason_code"] == "self_update_disabled"
-    rpc_server.close()
-    socket_path.unlink()
+    assert detect_deployment()["reason_code"] == "manual_image_update"
 
 
-def test_integrated_compose_reads_configured_filename_and_requires_external_dependencies(tmp_path, monkeypatch):
-    (tmp_path / "custom-compose.yml").write_text(
-        "services: {app: {}, updater: {}}\n", encoding="utf-8",
-    )
-    monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(tmp_path))
-    monkeypatch.setenv("GUGU_UPDATER_COMPOSE_FILE", "custom-compose.yml")
+def test_explicit_compose_mode_does_not_need_socket_rpc_or_compose_mount(monkeypatch):
     monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
     monkeypatch.setenv("GUGU_UNIFIED_APP", "1")
     monkeypatch.setenv("GUGU_EMBEDDED_DEPS", "0")
+    monkeypatch.setenv("GUGU_UPDATER_RPC_SOCKET", "/nonexistent/updater.sock")
+    monkeypatch.setenv("GUGU_DOCKER_SOCKET", "/nonexistent/docker.sock")
 
-    assert detect_deployment()["reason_code"] == "compose_invalid"
+    assert detect_deployment()["reason_code"] == "manual_image_update"
 
 
-def test_detect_split_and_standalone_report_their_capabilities(tmp_path, monkeypatch):
+def test_split_compose_is_manual_and_single_container_uses_app_bundle(tmp_path, monkeypatch):
     (tmp_path / "docker-compose.prod.yml").write_text(
         "services: {postgres: {}, redis: {}, migrate: {}, backend: {}, worker: {}, gateway: {}, frontend: {}, nginx: {}}\n",
         encoding="utf-8",
     )
-    socket_path = tmp_path / "docker.sock"
-    socket_path.touch()
     monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(tmp_path))
     monkeypatch.setenv("GUGU_UPDATER_COMPOSE_FILE", "docker-compose.prod.yml")
-    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
     monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "split_compose")
-    assert detect_deployment()["reason_code"] == "split_updater_unavailable"
+    assert detect_deployment()["reason_code"] == "manual_image_update"
 
-    rpc_path = Path("/tmp") / f"gugu-updater-{uuid.uuid4().hex[:8]}.sock"
-    rpc = socket.socket(socket.AF_UNIX)
-    rpc.bind(str(rpc_path))
-    try:
-        monkeypatch.setenv("GUGU_UPDATER_RPC_SOCKET", str(rpc_path))
-        result = detect_deployment()
-        assert result["enabled"] is True
-        assert result["reason_code"] == "ready"
-    finally:
-        rpc.close()
-        rpc_path.unlink()
-
+    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(tmp_path / "host-docker.sock"))
     monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "standalone_docker")
-    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(socket_path))
     monkeypatch.setenv("GUGU_SELF_UPDATE", "on")
-    assert detect_deployment() == {
-        "mode": "standalone_docker", "enabled": True, "capability": "one_click",
-        "reason_code": "ready", "reason": "纯 Docker 单容器 helper 更新已就绪。",
-    }
-
-    monkeypatch.setenv("GUGU_DOCKER_SOCKET", str(tmp_path / "missing.sock"))
-    assert detect_deployment()["reason_code"] == "docker_socket_missing"
+    monkeypatch.setattr("updater.app_bundle_runtime.supports_app_bundle_updates", lambda: True)
+    result = detect_deployment()
+    assert result["mode"] == "standalone_app_bundle"
+    assert result["enabled"] is True
+    assert result["reason_code"] == "ready"
 
 
-def test_compose_missing_and_ambiguous_topology_are_not_reported_as_disabled_only(tmp_path, monkeypatch):
-    monkeypatch.setenv("GUGU_UPDATER_COMPOSE_DIR", str(tmp_path))
+def test_compose_mode_is_manual_but_unknown_topology_stays_fail_closed(monkeypatch):
     monkeypatch.setenv("GUGU_UPDATE_DEPLOYMENT_MODE", "integrated_compose")
-    assert detect_deployment()["reason_code"] == "compose_missing"
-
-    (tmp_path / "docker-compose.yml").write_text("services: [broken\n", encoding="utf-8")
-    assert detect_deployment()["reason_code"] == "compose_invalid"
+    assert detect_deployment()["reason_code"] == "manual_image_update"
 
     monkeypatch.delenv("GUGU_UPDATE_DEPLOYMENT_MODE")
     monkeypatch.setenv("GUGU_UNIFIED_APP", "0")

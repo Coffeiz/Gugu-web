@@ -57,15 +57,15 @@ def credential_view(row: UserProviderCredential) -> dict:
     return {"id": row.id, "provider": row.provider, "api_format": row.api_format,
             "capability": row.capability,
             "base_url": row.base_url, "model": row.model,
-            "max_tokens": getattr(row, "max_tokens", None), "vision": row.vision,
+            "max_tokens": getattr(row, "max_tokens", None), "image": row.image,
             # dimensions 必须回给前端：漏掉会让编辑器拿到 null，保存时发 0 把已存维度清零。
             "dimensions": getattr(row, "dimensions", None),
             "context_tokens": getattr(row, "context_tokens", None),
             "thinking": getattr(row, "thinking", None),
             "reasoning_effort": getattr(row, "reasoning_effort", None),
             "reasoning_persistence": getattr(row, "reasoning_persistence", "off"),
-            "vision_video": row.vision_video, "vision_audio": row.vision_audio,
-            "vision_detail": row.vision_detail, "enabled": row.enabled,
+            "video": row.video, "audio": row.audio,
+            "image_detail": row.image_detail, "enabled": row.enabled,
             "has_value": bool(row.encrypted_value), "last_verified_at": row.last_verified_at,
             "created_at": row.created_at, "updated_at": row.updated_at}
 
@@ -154,18 +154,16 @@ async def resolve_capability_settings(db: AsyncSession, user_id: UUID, capabilit
     ollama_api_mode = "native" if row.provider == "ollama" and row.api_format in {"", "native"} else "openai"
     updates = {"api_key": api_key, "provider": row.provider,
                "api_format": row.api_format, "base_url": base_url,
-               "model": row.model or getattr(base, "model", ""), "vision": row.vision,
-               "vision_video": row.vision_video, "vision_audio": row.vision_audio,
-               "vision_detail": row.vision_detail, "ollama_api_mode": ollama_api_mode}
+               "model": row.model or getattr(base, "model", ""), "image": row.image,
+               "video": row.video, "audio": row.audio,
+               "image_detail": row.image_detail, "ollama_api_mode": ollama_api_mode}
     if capability == "llm":
         if getattr(row, "max_tokens", None) is not None:
             updates["max_tokens"] = row.max_tokens
         if getattr(row, "context_tokens", None) is not None:
             updates["context_tokens"] = row.context_tokens
-        if getattr(row, "thinking", None) is not None:
-            updates["thinking"] = row.thinking
-        if getattr(row, "reasoning_effort", None) is not None:
-            updates["reasoning_effort"] = row.reasoning_effort
+        updates["thinking"] = getattr(row, "thinking", None)
+        updates["reasoning_effort"] = getattr(row, "reasoning_effort", None) or ""
         updates["reasoning_persistence"] = getattr(row, "reasoning_persistence", "off")
     return base.model_copy(update=updates) if hasattr(base, "model_copy") else base
 
@@ -187,7 +185,7 @@ async def resolve_embedding_settings(db: AsyncSession, user_id: UUID, base):
     默认端点解析（resolve_user_base_url，与保存链路同口径），解析不出 → None，调用方
     沿用平台配置——BYOK 配置不完整只该降级到平台或词法检索，不能把记忆链路
     打炸。覆盖字段只有 embedding 相关五个；不使用 resolve_capability_settings
-    （它会无条件注入 vision 等 LLM 专属字段）。
+    （它会无条件注入图片等 LLM 专属字段）。
     """
     row = await get_active_credential(db, user_id, "embedding")
     if row is None:

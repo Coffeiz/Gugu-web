@@ -1,4 +1,4 @@
-from scripts.compare_ilike_index import _overlap_ratio, _percentile
+from scripts.benchmarks.compare_ilike_index import _overlap_ratio, _percentile
 
 
 def test_compare_metrics_are_aggregate_only_and_stable():

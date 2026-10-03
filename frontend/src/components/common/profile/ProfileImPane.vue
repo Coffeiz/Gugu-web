@@ -24,6 +24,7 @@
           <MessageFormatSettings :bot="bot" @change="(scope, mode) => setMessageFormat(bot, scope, mode)" />
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.privateStreaming') }}</span><span class="pm-field-hint">{{ t('profileImUi.privateStreamingHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.private_streaming_enabled === true" :aria-label="t('profileImUi.togglePrivateStreaming')" @update:model-value="togglePrivateStreaming(bot)" /><span class="pm-switch-label" :class="{ on: bot.private_streaming_enabled === true }">{{ bot.private_streaming_enabled === true ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
         </template>
+        <GroupOwnerMemorySwitch v-if="platform.key === 'feishu' || (platform.key === 'qq' && bot.group_chat_enabled)" :enabled="bot.group_owner_memory_enabled === true" @change="value => updateBotSetting(bot.id, { group_owner_memory_enabled: value }, '群聊个人记忆设置失败')" />
         <template v-if="platform.key === 'qq' && bot.group_chat_enabled">
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.member_memory_enabled !== false" :aria-label="t('profileImUi.toggleMemberMemory')" @update:model-value="toggleMemory(bot, 'member_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.member_memory_enabled !== false }">{{ bot.member_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
@@ -48,13 +49,14 @@ import { beginOptimisticIntent, isOptimisticIntentCurrent, withOptimisticIntent 
 import MessageFormatSettings from './MessageFormatSettings.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import GroupOwnerMemorySwitch from './GroupOwnerMemorySwitch.vue'
 import { useI18n } from 'vue-i18n'
 
-interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
+interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; group_owner_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
 type BotSettingPatch = Partial<Pick<Bot,
   'enabled' | 'group_chat_enabled' | 'group_response_mode' | 'group_allowed_tools' |
   'group_message_format' | 'private_message_format' | 'private_streaming_enabled' |
-  'group_memory_enabled' | 'member_memory_enabled'
+  'group_memory_enabled' | 'member_memory_enabled' | 'group_owner_memory_enabled'
 >>
 
 const groupResponseOptions = [

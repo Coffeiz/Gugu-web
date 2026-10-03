@@ -5,10 +5,10 @@ from app.core import chat_attach
 from agent.tools import media_reader
 
 
-@pytest.mark.parametrize("ext", sorted(chat_attach.VISION_EXTS))
+@pytest.mark.parametrize("ext", sorted(chat_attach.IMAGE_EXTS))
 def test_shared_image_policy_accepts_every_vision_format(monkeypatch, ext):
-    monkeypatch.setattr(chat_attach, "vision_ready", lambda: True)
-    monkeypatch.setattr(chat_attach, "vision_block", lambda raw, actual_ext: {"ext": actual_ext})
+    monkeypatch.setattr(chat_attach, "image_ready", lambda: True)
+    monkeypatch.setattr(chat_attach, "image_block", lambda raw, actual_ext: {"ext": actual_ext})
 
     result = media_reader.build_image_block(b"image", ext)
 
@@ -16,7 +16,7 @@ def test_shared_image_policy_accepts_every_vision_format(monkeypatch, ext):
 
 
 def test_shared_image_policy_rejects_unsupported_format(monkeypatch):
-    monkeypatch.setattr(chat_attach, "vision_ready", lambda: True)
+    monkeypatch.setattr(chat_attach, "image_ready", lambda: True)
 
     result = media_reader.build_image_block(b"image", "svg")
 
@@ -47,13 +47,13 @@ async def test_read_file_history_attachment_uses_shared_media_reader(monkeypatch
     result = await documents._read_file(None, "user-1", {"attach_id": "attach-1"})
 
     assert result == {
-        "_vision_image": {"type": "image", "test": True},
+        "_image_block": {"type": "image", "test": True},
         "note": "已打开聊天附件图片《attach-1》，见随附图像。",
     }
 
 
 def test_shared_image_policy_blocks_without_vision_capability(monkeypatch):
-    monkeypatch.setattr(chat_attach, "vision_ready", lambda: False)
+    monkeypatch.setattr(chat_attach, "image_ready", lambda: False)
 
     assert media_reader.image_capability_error("png") == "当前模型/通道无法识别图像内容"
 
@@ -64,7 +64,7 @@ async def test_read_file_mixed_batch_preserves_text_and_media_order(monkeypatch)
 
     results = {
         1: {"content": "正文 A", "_source_size_bytes": 10},
-        2: {"_vision_image": {"type": "image", "source": {"data": "B"}}, "_source_size_bytes": 20},
+        2: {"_image_block": {"type": "image", "source": {"data": "B"}}, "_source_size_bytes": 20},
         3: {"_media_block": {"type": "input_audio", "input_audio": {"data": "C"}},
             "note": "音频", "_source_size_bytes": 30},
     }

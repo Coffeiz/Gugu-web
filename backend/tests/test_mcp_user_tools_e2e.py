@@ -1,6 +1,7 @@
 """MCP1-006/007 的桩级链路：用户配置 → 动态声明 → 调用结果 → 下一轮可见。"""
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -70,6 +71,69 @@ async def test_user_config_to_dynamic_declaration_call_and_next_round(monkeypatc
 
     next_round_tools = await manager.list_user_tools(user_id)
     assert [tool.name for tool in next_round_tools] == ["mcp_demo_echo"]
+
+
+@pytest.mark.asyncio
+async def test_string_boolean_mismatch_returns_quoted_retry_hint_before_mcp_call(monkeypatch):
+    settings = SimpleNamespace(
+        mcp=SimpleNamespace(
+            enabled=True,
+            max_tools_per_server=64,
+            default_timeout_seconds=30,
+            failure_threshold=3,
+            backoff_seconds=60,
+        ),
+        ai=SimpleNamespace(provider="fake", model="fake"),
+    )
+    monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
+
+    class WeatherClient:
+        def __init__(self):
+            self.calls = []
+
+        async def list_tools(self):
+            return {
+                "tools": [{
+                    "name": "map_weather",
+                    "description": "天气查询",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "is_china": {
+                                "type": "string",
+                                "description": "可选值为 `true` 或 `false`，默认为 `true`",
+                            },
+                        },
+                    },
+                }],
+            }
+
+        async def call_tool(self, name, arguments):
+            self.calls.append((name, arguments))
+            return {"content": [{"type": "text", "text": "天气结果"}]}
+
+    client = WeatherClient()
+    monkeypatch.setattr(manager_module, "McpClient", lambda *args, **kwargs: client)
+    user_id = uuid4()
+    config = McpServerConfig(
+        id=uuid4(), user_id=user_id, name="baidu_maps",
+        endpoint="https://mcp.example/rpc", confirm_mode="auto",
+    )
+    manager = manager_module.McpToolManager()
+    manager._iter_enabled_configs = lambda _user_id: _configs([config])
+    await manager.list_user_tools(user_id)
+
+    result, artifact = await manager.dispatch(
+        user_id, "mcp_baidu_maps_map_weather", {"is_china": True},
+    )
+    payload = json.loads(result)
+
+    assert artifact is None
+    assert payload["error"] == "tool_input_invalid"
+    assert payload["schema_hints"] == [
+        'is_china 必须是字符串；当前传入的是 boolean，请改为带双引号的 "true"，不要传裸 true/false。',
+    ]
+    assert client.calls == []
 
 
 @pytest.mark.asyncio

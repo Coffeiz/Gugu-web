@@ -1,4 +1,4 @@
-"""agent/tools/mind_canvas.py CRAP 治理 P1 缺口补测。
+"""agent/tools/canvas.py CRAP 治理 P1 缺口补测。
 
 与 test_mind_canvas_tools.py 互补：聚焦画布删除（确认门）、断开关联批量、
 节点布局更新校验矩阵、批量操作守卫、placeable 搜索分页与 _card_size_fields。
@@ -7,7 +7,7 @@
 import pytest
 
 from app.models import MindMap, MindCanvasItem, MindNode, Project
-from agent.tools.mind_canvas import (
+from agent.tools.canvas import (
     _card_size_fields,
     _canvas_batch,
     _canvas_connect,
@@ -241,7 +241,7 @@ async def test_canvas_update_note_fields_and_conflict(db, user_a, monkeypatch):
     async def conflict(*args, **kwargs):
         return False                                                   # 模拟乐观锁失败
 
-    monkeypatch.setattr("agent.tools.mind_canvas.update_canvas_note", conflict)
+    monkeypatch.setattr("agent.tools.canvas.update_canvas_note", conflict)
     raced = await _canvas_update_note(db, user_a.id, {"node_id": note.id, "title": "再改"})
     assert "刚被修改" in raced["error"]
 

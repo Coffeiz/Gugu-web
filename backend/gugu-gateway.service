@@ -15,6 +15,7 @@ Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin
 # 网关子进程继承 Rootless Docker socket，保持 Shell 执行后端一致
 Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
 Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
+Environment="GUGU_SANDBOX_MANAGER_MODE=external"
 Environment="DB_STARTUP_TIMEOUT=10"
 # gateway 拉起的 QQ/飞书/微信网关继承此变量，保证网关生成的 trace_id 能进入 worker
 Environment="LOOPSCOPE_ENABLED=1"

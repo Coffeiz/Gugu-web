@@ -12,7 +12,8 @@ from agent.loop_drivers import (
     _contains_volatile_image,
     _with_history_cache,
 )
-from agent.context.assembly import PromptMessages
+from agent.context.assembly import MessageArea
+from agent.context.provider_conversation import ProviderConversation
 from agent.providers.message_utils import (
     render_openai_request_history,
     sanitize_openai_tool_history,
@@ -80,7 +81,7 @@ def test_responses_tool_round_does_not_forward_unsupported_audio_video_blocks():
 
     result = RoundResult(
         text="",
-        raw=_ResponsesRaw(content="", response_id=None, previous_response_id=None,
+        raw=_ResponsesRaw(content="",
                           tool_calls_payload=[{"id": "call-1", "name": "read_file", "args": "{}"}],
                           output_items=[]),
     )
@@ -169,8 +170,8 @@ def test_tool_image_gate_uses_actual_model_vision_setting(monkeypatch):
     """显式开启视觉时，即使 provider capability 尚未探测也不能丢掉图片。"""
     from app.core import chat_attach
 
-    model = SimpleNamespace(provider="openai", vision=True)
-    monkeypatch.setattr(chat_attach, "vision_ready", lambda model_cfg=None: bool(model_cfg.vision))
+    model = SimpleNamespace(provider="openai", image=True)
+    monkeypatch.setattr(chat_attach, "image_ready", lambda model_cfg=None: bool(model_cfg.image))
     assert _allow_tool_images(model) is True
 
 
@@ -205,10 +206,10 @@ def test_deepseek_driver_keeps_system_message_plain_without_explicit_cache():
         supports_active_cache=adapter.supports_active_cache(ai.model),
         supports_explicit_cache=adapter.supports_explicit_cache(ai.model),
     )
-    messages = [
+    messages = MessageArea.from_canonical_messages([
         {"role": "system", "content": "稳定系统提示"},
         {"role": "user", "content": "你好"},
-    ]
+    ])
 
     async def _run():
         return [item async for item in OpenAIDriver().run_round(client, ctx, messages)]
@@ -216,12 +217,12 @@ def test_deepseek_driver_keeps_system_message_plain_without_explicit_cache():
     asyncio.run(_run())
 
     sent_messages = completions.kwargs["messages"]
-    assert sent_messages == messages
+    assert sent_messages == messages.provider_projection().to_messages()
     assert all("cache_control" not in str(message) for message in sent_messages)
 
 
 def test_openai_history_removes_orphan_tool_result_and_preserves_valid_pair():
-    messages = [
+    messages = ProviderConversation([
         {"role": "user", "content": "之前的问题"},
         {"role": "tool", "tool_call_id": "orphan", "content": "旧结果"},
         {"role": "assistant", "content": None, "tool_calls": [{
@@ -230,42 +231,43 @@ def test_openai_history_removes_orphan_tool_result_and_preserves_valid_pair():
         }]},
         {"role": "tool", "tool_call_id": "valid", "content": "匹配结果"},
         {"role": "user", "content": "继续"},
-    ]
+    ])
 
     cleaned = sanitize_openai_tool_history(messages)
 
-    assert cleaned == [messages[0], messages[2], messages[3], messages[4]]
+    assert cleaned.to_messages() == [messages[0], messages[2], messages[3], messages[4]]
     assert messages[1]["tool_call_id"] == "orphan"  # 仅清理出站副本
 
 
 def test_openai_history_drops_only_unpaired_parallel_calls_and_keeps_prompt_metadata():
-    messages = PromptMessages([
+    messages = MessageArea.from_canonical_messages([
         {"role": "system", "content": "固定前缀"},
-        {"role": "tool", "tool_call_id": "stale", "content": "旧结果"},
-        {"role": "assistant", "content": None, "tool_calls": [
-            {"id": "missing", "type": "function", "function": {"name": "a", "arguments": "{}"}},
-            {"id": "present", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+        {"role": "assistant", "content": [
+            {"type": "tool_call", "id": "missing", "name": "a", "arguments": {}},
+            {"type": "tool_call", "id": "present", "name": "b", "arguments": {}},
         ]},
-        {"role": "tool", "tool_call_id": "present", "content": "匹配结果"},
-        {"role": "tool", "tool_call_id": "unrequested", "content": "另一个孤儿"},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_call_id": "stale", "content": "旧结果"},
+            {"type": "tool_result", "tool_call_id": "present", "content": "匹配结果"},
+            {"type": "tool_result", "tool_call_id": "unrequested", "content": "另一个孤儿"},
+        ]},
         {"role": "user", "content": "继续"},
     ], fixed_prefix_size=1)
-    cleaned = sanitize_openai_tool_history(messages)
+    cleaned = sanitize_openai_tool_history(messages.provider_projection())
 
-    assert cleaned == [
-        messages[0],
-        {"role": "assistant", "content": None, "tool_calls": [messages[2]["tool_calls"][1]]},
-        messages[3],
-        messages[5],
-    ]
-    assert [call["id"] for call in cleaned[1]["tool_calls"]] == ["present"]
+    assert cleaned.to_messages()[0] == {"role": "system", "content": "固定前缀"}
+    assert cleaned.to_messages()[-1] == {"role": "user", "content": "继续"}
+    assert len(cleaned.to_messages()) == 4
+    retained_calls = cleaned.to_messages()[1]["tool_calls"]
+    assert [call["id"] for call in retained_calls] == ["present"]
+    assert cleaned.to_messages()[2]["tool_call_id"] == "present"
     assert cleaned.fixed_prefix_size == 1
 
 
 def test_openai_history_is_cleaned_before_cache_anchors_and_diagnostics():
     ai = SimpleNamespace(provider="openai", api_format="openai", model="test-model")
     adapter = adapter_for(ai)
-    messages = PromptMessages([
+    messages = MessageArea.from_canonical_messages([
         {"role": "system", "content": "稳定系统提示"},
         {"role": "user", "content": "上一轮用户消息"},
         {"role": "tool", "tool_call_id": "stale", "content": "孤儿结果"},
@@ -284,7 +286,7 @@ def test_openai_history_is_cleaned_before_cache_anchors_and_diagnostics():
         "modified_messages": 0,
         "first_changed_index": 2,
     }
-    assert [message["role"] for message in messages] == ["system", "user", "tool", "user"]
+    assert [message["role"] for message in messages.provider_projection()] == ["system", "user", "tool", "user"]
 
     cached, _state = _with_history_cache(_with_system_cache_control(projected))
     assert [message["role"] for message in cached] == ["system", "user", "user"]
@@ -298,15 +300,10 @@ def test_openai_history_is_cleaned_before_cache_anchors_and_diagnostics():
         ai=ai,
     )
 
-    raw_diagnostics = _cache_diagnostics(messages, context)
-    projected_diagnostics = _cache_diagnostics(
-        projected, context, provider_projected=True,
-    )
-    assert raw_diagnostics["conversation_messages"] == 3
-    assert raw_diagnostics["cache_anchor_indices"] == [1, 2]
-    assert raw_diagnostics["stable_prefix_digest"] == projected_diagnostics[
-        "stable_prefix_digest"
-    ]
+    projected_diagnostics = _cache_diagnostics(cached, context)
+    assert projected_diagnostics["conversation_messages"] == 3
+    assert projected_diagnostics["cache_anchor_indices"] == [1, 2]
+    assert projected_diagnostics["stable_prefix_digest"]
 
 
 def test_openai_driver_sends_sanitized_provider_projection():
@@ -338,11 +335,11 @@ def test_openai_driver_sends_sanitized_provider_projection():
         think_kwargs={},
         supports_explicit_cache=False,
     )
-    messages = [
+    messages = MessageArea.from_canonical_messages([
         {"role": "system", "content": "stable"},
         {"role": "tool", "tool_call_id": "stale", "content": "orphan"},
         {"role": "user", "content": "current"},
-    ]
+    ])
 
     async def _run():
         return [item async for item in OpenAIDriver().run_round(client, context, messages)]
@@ -352,7 +349,7 @@ def test_openai_driver_sends_sanitized_provider_projection():
     assert [message["role"] for message in completions.kwargs["messages"]] == [
         "system", "user",
     ]
-    assert messages[1]["role"] == "tool"  # 清洗仅作用于出站副本
+    assert messages.provider_projection()[1]["role"] == "tool"  # 清洗仅作用于出站副本
 
 
 def test_deepseek_driver_drops_orphan_tool_result_before_request():
@@ -385,23 +382,26 @@ def test_deepseek_driver_drops_orphan_tool_result_before_request():
         supports_active_cache=adapter.supports_active_cache(ai.model),
         supports_explicit_cache=adapter.supports_explicit_cache(ai.model),
     )
-    messages = [
+    messages = ProviderConversation([
         {"role": "system", "content": "稳定系统提示"},
         {"role": "tool", "tool_call_id": "stale-call", "content": "截断后残留的旧结果"},
         {"role": "user", "content": "看这张图"},
-    ]
+    ])
 
     async def _run():
-        return [item async for item in OpenAIDriver().run_round(client, ctx, messages)]
+        return [item async for item in OpenAIDriver().run_round(
+            client, ctx, MessageArea.from_canonical_messages(messages.to_messages()),
+        )]
 
     asyncio.run(_run())
 
-    assert completions.kwargs["messages"] == [messages[0], messages[2]]
-    assert messages[1]["role"] == "tool"  # 不回写会话历史
+    projected = messages.to_messages()
+    assert completions.kwargs["messages"] == [projected[0], projected[2]]
+    assert projected[1]["role"] == "tool"  # 不回写会话历史
 
 
 def test_inline_image_stops_cache_checkpoint_before_image():
-    messages = [
+    messages = ProviderConversation([
         {"role": "user", "content": "稳定消息一"},
         {"role": "assistant", "content": "稳定消息二"},
         {"role": "user", "content": [
@@ -411,7 +411,7 @@ def test_inline_image_stops_cache_checkpoint_before_image():
             }},
         ]},
         {"role": "assistant", "content": "图片之后的临时回复"},
-    ]
+    ])
 
     assert _contains_volatile_image(messages[2])
     cached, _state = _with_history_cache(messages)
@@ -431,23 +431,25 @@ def test_anthropic_base64_image_is_volatile():
 
 
 def test_initial_image_collapses_to_stable_text_after_first_round():
-    messages = [{"role": "user", "content": [
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": [
         {"type": "text", "text": "[消息时间：2026-08-22 06:00]\\n查查这个角色"},
         {"type": "image_url", "image_url": {
             "url": "data:image/jpeg;base64,AAAA",
         }},
-    ]}]
+    ]}])
 
-    _collapse_volatile_messages(messages, {0})
+    revision = messages.revision
+    assert _collapse_volatile_messages(messages, {0}) == 1
 
-    assert messages[0]["content"] == "[消息时间：2026-08-22 06:00]\\n查查这个角色"
+    assert messages.revision == revision + 1
+    assert messages.entries[0].canonical_message["content"] == "[消息时间：2026-08-22 06:00]\\n查查这个角色"
 
 
 def test_cache_checkpoint_recovers_after_image_round():
-    messages = [
+    messages = ProviderConversation([
         {"role": "user", "content": "下一轮稳定消息"},
         {"role": "assistant", "content": "下一轮稳定回复"},
-    ]
+    ])
 
     cached, _state = _with_history_cache(messages)
 
@@ -455,11 +457,11 @@ def test_cache_checkpoint_recovers_after_image_round():
 
 
 def test_cache_checkpoint_rebuilds_previous_turn_for_new_request():
-    messages = [
+    messages = ProviderConversation([
         {"role": "user", "content": "上一轮用户消息"},
         {"role": "assistant", "content": "上一轮回复"},
         {"role": "user", "content": "本轮用户消息"},
-    ]
+    ])
 
     cached, _state = _with_history_cache(messages)
 
@@ -468,19 +470,20 @@ def test_cache_checkpoint_rebuilds_previous_turn_for_new_request():
 
 
 def test_cache_diagnostics_only_exposes_sizes_and_digests():
-    class Messages(list):
-        conversation = [
-            {"role": "user", "content": "稳定正文"},
-            {"role": "user", "content": [{
-                "type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"},
-            }]},
-        ]
+    from agent.context.provider_conversation import ProviderConversation
+
+    messages = ProviderConversation([
+        {"role": "user", "content": "稳定正文"},
+        {"role": "user", "content": [{
+            "type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"},
+        }]},
+    ])
 
     class Context:
         tools = [{"name": "secret_tool", "description": "私有工具定义"}]
         supports_active_cache = True
 
-    diagnostics = _cache_diagnostics(Messages(), Context())
+    diagnostics = _cache_diagnostics(messages, Context())
 
     assert diagnostics["cache_supported"] is True
     assert diagnostics["conversation_messages"] == 2
@@ -500,11 +503,13 @@ def test_cache_diagnostics_only_exposes_sizes_and_digests():
 
 def test_cache_diagnostics_reports_effective_runtime_anchors():
     """LoopScope 应记录 driver 实际会打出的断点，而不是装配前的空列表。"""
-    messages = [
+    from agent.context.provider_conversation import ProviderConversation
+
+    messages = ProviderConversation([
         {"role": "user", "content": "上一轮用户消息"},
         {"role": "assistant", "content": "上一轮回复"},
         {"role": "user", "content": "本轮用户消息"},
-    ]
+    ])
 
     class Context:
         tools = []

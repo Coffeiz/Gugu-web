@@ -497,7 +497,9 @@ async def test_http_get_retries_on_timeout_then_succeeds(monkeypatch):
                 raise httpx.ConnectTimeout("timed out")
             return _FakeStream(_FakeResponse())
 
-    monkeypatch.setattr(web_mod, "resolve_pinned_ip", lambda url: ("93.184.216.34", None))
+    async def fake_resolve(_self, url):
+        return "93.184.216.34", None
+    monkeypatch.setattr(web_mod.SafeEgressClient, "resolve", fake_resolve)
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
     out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert out["status"] == 200
@@ -523,7 +525,9 @@ async def test_http_get_exhausts_retries_returns_error():
             calls["n"] += 1
             raise httpx.ConnectTimeout("still timing out")
 
-    with patch("agent.tools.web.resolve_pinned_ip", lambda url: ("93.184.216.34", None)), \
+    async def fake_resolve(_self, url):
+        return "93.184.216.34", None
+    with patch.object(web_mod.SafeEgressClient, "resolve", fake_resolve), \
          patch.object(httpx, "AsyncClient", _FakeAsyncClient):
         out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert "error" in out
@@ -550,7 +554,9 @@ async def test_http_get_does_not_retry_on_non_transient_exception():
             calls["n"] += 1
             raise ValueError("unexpected")
 
-    with patch("agent.tools.web.resolve_pinned_ip", lambda url: ("93.184.216.34", None)), \
+    async def fake_resolve(_self, url):
+        return "93.184.216.34", None
+    with patch.object(web_mod.SafeEgressClient, "resolve", fake_resolve), \
          patch.object(httpx, "AsyncClient", _FakeAsyncClient):
         out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert "error" in out
@@ -594,7 +600,9 @@ async def test_http_get_stops_reading_oversized_response(monkeypatch):
         def stream(self, method, url, headers=None):
             return _FakeStream()
 
-    monkeypatch.setattr(web_mod, "resolve_pinned_ip", lambda url: ("93.184.216.34", None))
+    async def fake_resolve(_self, url):
+        return "93.184.216.34", None
+    monkeypatch.setattr(web_mod.SafeEgressClient, "resolve", fake_resolve)
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
     out = await web_mod._http_get(None, None, {"url": "https://example.com/large"})
     assert "过大" in out["error"]

@@ -57,6 +57,12 @@ async def _unregistered_shell_bytes(db: AsyncSession, user_id: Any, root: Path) 
     return max(0, measure_directory(root) - registered)
 
 
+async def measure_shell_persistent_usage(db: AsyncSession, user_id: Any) -> int:
+    """按账本口径测量 Shell 持久空间用量，排除已登记的 Workspace 文件。"""
+    root = ensure_sandbox_root(_shell_root(user_id))
+    return await _unregistered_shell_bytes(db, user_id, root)
+
+
 async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[StorageQuotaLedger]:
     """创建用户持久空间、三类账本行，并写入一次性初始化审计。"""
     user_id = user.id if isinstance(user, User) else user
@@ -180,10 +186,9 @@ async def reconcile_user_storage(db: AsyncSession, user_id: Any) -> dict[str, in
     file_bytes = int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
         File.user_id == user_id, File.deleted_at.is_(None),
     ))).scalar_one() or 0)
-    shell_root = ensure_sandbox_root(_shell_root(user_id))
     measured = {
         FILE_LIBRARY: file_bytes,
-        SHELL_PERSISTENT: await _unregistered_shell_bytes(db, user_id, shell_root),
+        SHELL_PERSISTENT: await measure_shell_persistent_usage(db, user_id),
         SHELL_EPHEMERAL: 0,
     }
     for category, actual in measured.items():
@@ -226,5 +231,5 @@ async def verify_user_storage_space(db: AsyncSession, user_id: Any) -> dict[str,
 __all__ = [
     "FILE_LIBRARY", "SHELL_PERSISTENT", "SHELL_EPHEMERAL", "DEFAULT_WORKSPACE_FOLDER_NAME",
     "ensure_user_storage_space", "ensure_all_user_storage_spaces", "get_quota",
-    "record_usage", "reconcile_user_storage", "verify_user_storage_space",
+    "measure_shell_persistent_usage", "record_usage", "reconcile_user_storage", "verify_user_storage_space",
 ]

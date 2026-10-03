@@ -181,7 +181,7 @@ defineExpose({ listRef })
 .canvas-item.selected .ci-select { border-color: var(--action-primary); background: var(--action-primary); color: var(--content-on-accent); }
 .canvas-item:hover { background: var(--sidebar-item-hover); }
 .canvas-item.active { background: var(--sidebar-item-active); color: var(--sidebar-item-active-fg); font-weight: 700; box-shadow: var(--elevation-card); }
-.ci-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ci-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: var(--line-height-ui); }
 /* global.css 里 .rename-sizer 是 inline-block，宽度随文字内容收缩——在这个 flex 行里
    会导致输入框跟着文字宽度走，右边的操作按钮跟着一起挪动、不再固定在行尾。这里改成
    flex:1 顶开剩余空间，行为对齐 .ci-title（2026-07-17 复现：进入重命名后图标跟着文字跑）。

@@ -46,3 +46,21 @@ def test_debug_log_page_inherits_timestamp_when_page_starts_with_traceback_conti
 
     assert page == ['  File "worker.py", line 1', "09-22 12:01:00 INFO recovered"]
     assert _fmt_time(carried) == "09-22 12:00:00"
+
+
+def test_debug_log_paths_follow_configured_persistent_log_file(monkeypatch, tmp_path):
+    import app.api.v1.admin_debug as debug
+
+    monkeypatch.setenv("GUGU_LOG_FILE", str(tmp_path / "logs" / "gugu.log"))
+    assert debug._configured_logs_dir() == tmp_path / "logs"
+    monkeypatch.setattr(debug, "_LOGS", tmp_path / "logs")
+    monkeypatch.setattr(debug, "_WEB_CANDIDATES", [debug._LOGS / "gugu-web-dev.log", debug._LOGS / "gugu.log"])
+    monkeypatch.setattr(debug, "LOG_FILES", {
+        "web": debug._LOGS / "gugu.log",
+        "worker": debug._LOGS / "gugu-worker.log",
+        "gateway": debug._LOGS / "gugu-gateway.log",
+    })
+
+    assert debug._resolve("web") == tmp_path / "logs" / "gugu.log"
+    assert debug._resolve("worker") == tmp_path / "logs" / "gugu-worker.log"
+    assert debug._resolve("gateway") == tmp_path / "logs" / "gugu-gateway.log"

@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional, Protocol
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import Conflict, Invalid, NotFound
@@ -48,6 +49,48 @@ class FolderTree(Protocol):
 class SqlAlchemyFolderTree:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _active_name_exists(
+        self,
+        user_id,
+        *,
+        project_id: int | None,
+        workspace_directory_id: int | None,
+        parent_id: int | None,
+        name: str,
+        exclude_id: int | None = None,
+    ) -> bool:
+        query = select(Folder.id).where(
+            Folder.user_id == user_id,
+            Folder.deleted_at.is_(None),
+            Folder.name == name,
+        )
+        for column, value in (
+            (Folder.project_id, project_id),
+            (Folder.workspace_directory_id, workspace_directory_id),
+            (Folder.parent_id, parent_id),
+        ):
+            query = query.where(column.is_(None) if value is None else column == value)
+        if exclude_id is not None:
+            query = query.where(Folder.id != exclude_id)
+        return await self.db.scalar(query.limit(1)) is not None
+
+    async def _restored_name(self, folder: Folder) -> str:
+        """恢复目录遇到活动同名项时分配可用后缀，保留两棵目录树。"""
+        original = folder.name
+        suffix = 1
+        while True:
+            marker = f"({suffix})"
+            candidate = f"{original[:200 - len(marker)]}{marker}"
+            if not await self._active_name_exists(
+                folder.user_id,
+                project_id=folder.project_id,
+                workspace_directory_id=folder.workspace_directory_id,
+                parent_id=folder.parent_id,
+                name=candidate,
+            ):
+                return candidate
+            suffix += 1
 
     # ── 读（只认存活）───────────────────────────────────────────────────────────
     async def get(self, user_id, folder_id: int) -> Optional[Folder]:
@@ -115,33 +158,53 @@ class SqlAlchemyFolderTree:
             proj = await get_owned(self.db, Project, project_id, user_id)
             if not proj:
                 raise NotFound("project.not_found", "项目不存在")
-        existing = (await self.db.execute(
-            select(Folder).where(
-                Folder.user_id == user_id,
-                Folder.project_id == project_id,
-                Folder.workspace_directory_id == workspace_directory_id,
-                Folder.parent_id == parent_id,
-                Folder.name == name,
-                Folder.deleted_at.is_(None),   # 重名检测只认存活文件夹——回收站里同名不挡新建
-            )
-        )).scalar_one_or_none()
-        if existing:
+        if await self._active_name_exists(
+            user_id, project_id=project_id,
+            workspace_directory_id=workspace_directory_id, parent_id=parent_id, name=name,
+        ):
             raise Conflict("folder.duplicate", "同名文件夹已存在")
         folder = Folder(user_id=user_id, project_id=project_id, workspace_directory_id=workspace_directory_id, parent_id=parent_id, name=name)
-        self.db.add(folder)
-        await self.db.flush()
+        try:
+            async with self.db.begin_nested():
+                self.db.add(folder)
+                await self.db.flush()
+        except IntegrityError as exc:
+            if await self._active_name_exists(
+                user_id, project_id=project_id,
+                workspace_directory_id=workspace_directory_id, parent_id=parent_id, name=name,
+            ):
+                raise Conflict("folder.duplicate", "同名文件夹已存在") from exc
+            raise
         return folder
 
     async def rename(self, user_id, folder_id: int, new_name: str, *, client_version: int) -> Folder:
         folder = await self.get(user_id, folder_id)
         if not folder:
             raise NotFound("folder.not_found", "文件夹不存在")
-        result = await self.db.execute(
-            update(Folder)
-            .where(Folder.id == folder_id, Folder.user_id == user_id,
-                   Folder.deleted_at.is_(None), Folder.version == client_version)
-            .values(name=new_name, version=Folder.version + 1, updated_at=now_utc())
-        )
+        if folder.version != client_version:
+            raise Conflict("folder.version_mismatch", "文件夹已被修改，请刷新后重试")
+        if await self._active_name_exists(
+            user_id, project_id=folder.project_id,
+            workspace_directory_id=folder.workspace_directory_id,
+            parent_id=folder.parent_id, name=new_name, exclude_id=folder.id,
+        ):
+            raise Conflict("folder.duplicate", "同名文件夹已存在")
+        try:
+            async with self.db.begin_nested():
+                result = await self.db.execute(
+                    update(Folder)
+                    .where(Folder.id == folder_id, Folder.user_id == user_id,
+                           Folder.deleted_at.is_(None), Folder.version == client_version)
+                    .values(name=new_name, version=Folder.version + 1, updated_at=now_utc())
+                )
+        except IntegrityError as exc:
+            if await self._active_name_exists(
+                user_id, project_id=folder.project_id,
+                workspace_directory_id=folder.workspace_directory_id,
+                parent_id=folder.parent_id, name=new_name, exclude_id=folder.id,
+            ):
+                raise Conflict("folder.duplicate", "同名文件夹已存在") from exc
+            raise
         if result.rowcount != 1:
             raise Conflict("folder.version_mismatch", "文件夹已被修改，请刷新后重试")
         await self.db.refresh(folder)
@@ -174,17 +237,43 @@ class SqlAlchemyFolderTree:
                 if f is None:
                     break
                 cur = f.parent_id
+        target_project_id = target_project_id if target_project_set else folder.project_id
+        target_workspace_directory_id = (
+            target_workspace_directory_id if target_workspace_set else folder.workspace_directory_id
+        )
+        if await self._active_name_exists(
+            user_id,
+            project_id=target_project_id,
+            workspace_directory_id=target_workspace_directory_id,
+            parent_id=new_parent_id,
+            name=folder.name,
+            exclude_id=folder.id,
+        ):
+            raise Conflict("folder.duplicate", "目标目录下已存在同名文件夹")
         values = {"parent_id": new_parent_id, "version": Folder.version + 1, "updated_at": now_utc()}
         if target_project_set:
             values["project_id"] = target_project_id
         if target_workspace_set:
             values["workspace_directory_id"] = target_workspace_directory_id
-        result = await self.db.execute(
-            update(Folder)
-            .where(Folder.id == folder_id, Folder.user_id == user_id,
-                   Folder.deleted_at.is_(None), Folder.version == client_version)
-            .values(**values)
-        )
+        try:
+            async with self.db.begin_nested():
+                result = await self.db.execute(
+                    update(Folder)
+                    .where(Folder.id == folder_id, Folder.user_id == user_id,
+                           Folder.deleted_at.is_(None), Folder.version == client_version)
+                    .values(**values)
+                )
+        except IntegrityError as exc:
+            if await self._active_name_exists(
+                user_id,
+                project_id=target_project_id,
+                workspace_directory_id=target_workspace_directory_id,
+                parent_id=new_parent_id,
+                name=folder.name,
+                exclude_id=folder.id,
+            ):
+                raise Conflict("folder.duplicate", "目标目录下已存在同名文件夹") from exc
+            raise
         if result.rowcount != 1:
             raise Conflict("folder.version_mismatch", "文件夹已被修改，请刷新后重试")
         await self.db.refresh(folder)
@@ -228,8 +317,18 @@ class SqlAlchemyFolderTree:
             frontier = [fid for fid, dt in rows if dt == stamp and fid not in ids]
             ids.extend(frontier)
         restore_rows = (await self.db.execute(select(Folder).where(Folder.id.in_(ids)))).scalars().all()
+        restore_order = {value: index for index, value in enumerate(ids)}
+        restore_rows.sort(key=lambda row: restore_order[row.id])
         now = now_utc()
         for f in restore_rows:
+            if await self._active_name_exists(
+                user_id,
+                project_id=f.project_id,
+                workspace_directory_id=f.workspace_directory_id,
+                parent_id=f.parent_id,
+                name=f.name,
+            ):
+                f.name = await self._restored_name(f)
             f.deleted_at = None
             f.updated_at = now
             f.version += 1

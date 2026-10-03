@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from .utils import _code_ref, _estimate_tokens, _jsonable
+from .utils import _code_ref, _estimate_tokens, _jsonable, provider_message_rows
 
 _trace: ContextVar[str] = ContextVar("trace_id", default="")
 _scope_run: ContextVar["_ScopeRun | None"] = ContextVar("loopscope_run", default=None)
@@ -45,7 +45,7 @@ _REASONING_STATE_DIAGNOSTIC_KEYS = frozenset({
     "invalidated_reason", "unavailable_reason",
 })
 _REASONING_STATE_STATUSES = frozenset({
-    "disabled", "summary_only", "miss", "reused", "captured", "committed",
+    "disabled", "miss", "reused", "captured", "committed",
     "unavailable", "expired", "provider_rejected",
 })
 
@@ -116,20 +116,51 @@ def record_canonical_event_stats(run: "_ScopeRun", stats: dict[str, Any]) -> Non
     bucket["schema_digests"] = sorted({str(item) for item in stats.get("schema_digests") or () if item})
 
 
-def record_canonical_batch(*, digest: str, round_id: str | None, message_count: int) -> None:
-    """记录已提交 canonical batch 的脱敏身份，便于核对持久化与请求投影。"""
-    run = _scope_run.get()
-    if run is None or run.ended_at is not None:
-        return
-    bucket = _diagnostic_bucket(run, "canonical_batches", {
-        "count": 0, "digests": [], "round_ids": [], "message_count": 0,
-    })
-    bucket["count"] = int(bucket.get("count", 0) or 0) + 1
-    bucket["message_count"] = int(bucket.get("message_count", 0) or 0) + int(message_count or 0)
-    if digest:
-        bucket["digests"] = sorted({*bucket.get("digests", []), str(digest)})
-    if round_id:
-        bucket["round_ids"] = sorted({*bucket.get("round_ids", []), str(round_id)})
+def message_area_diagnostics(area: Any = None, projection: Any = None) -> dict[str, Any]:
+    """生成 Area 与 Provider projection 的身份摘要，不复制消息正文。"""
+    snapshot = area.snapshot() if callable(getattr(area, "snapshot", None)) else None
+    entries = tuple(getattr(snapshot, "entries", ()) or ())
+    if not entries:
+        entries = tuple(getattr(area, "entries", ()) or ())
+    source_counts: dict[str, int] = {}
+    persistence_counts: dict[str, int] = {}
+    for entry in entries:
+        source = str(getattr(getattr(entry, "source", None), "value", "unknown"))
+        policy = str(getattr(
+            getattr(entry, "persistence_policy", None), "value", "unknown",
+        ))
+        source_counts[source] = source_counts.get(source, 0) + 1
+        persistence_counts[policy] = persistence_counts.get(policy, 0) + 1
+
+    area_summary = {
+        "revision": getattr(
+            snapshot, "revision", getattr(area, "revision", getattr(projection, "area_revision", None)),
+        ),
+        "digest": str(
+            getattr(snapshot, "digest", "") or getattr(projection, "area_digest", "") or ""
+        )[:64],
+        "entry_count": len(entries) or int(getattr(projection, "area_entry_count", 0) or 0),
+        "sequence_range": (
+            [entries[0].sequence, entries[-1].sequence] if entries else None
+        ),
+        "source_counts": source_counts,
+        "persistence_counts": persistence_counts,
+    }
+    projection_summary: dict[str, Any] = {}
+    if projection is not None:
+        projection_summary = {
+            "area_revision": getattr(projection, "area_revision", None),
+            "area_digest": str(getattr(projection, "area_digest", "") or "")[:64],
+            "area_entry_count": int(getattr(projection, "area_entry_count", 0) or 0),
+            "wire_digest": str(getattr(projection, "wire_digest", "") or "")[:64],
+            "message_count": len(projection) if hasattr(projection, "__len__") else None,
+            "fixed_prefix_size": int(getattr(projection, "fixed_prefix_size", 0) or 0),
+            "dynamic_tail_size": int(getattr(projection, "dynamic_tail_size", 0) or 0),
+        }
+    return {
+        "canonical_area": area_summary,
+        "provider_projection": projection_summary,
+    }
 
 
 def _anthropic_structure(blocks: Any) -> tuple[dict[str, Any], str]:
@@ -155,7 +186,7 @@ def record_anthropic_structure_probe(
     provider: str,
     model: str,
     response_blocks: Any,
-    provider_messages: Any = None,
+    provider_conversation,
 ) -> None:
     """记录 Anthropic block round-trip 结构，禁止写入思考/消息正文。"""
     if not _enabled():
@@ -164,10 +195,13 @@ def record_anthropic_structure_probe(
     if run is None or run.ended_at is not None:
         return
     try:
+        from agent.context.provider_conversation import ProviderConversation
+        if not isinstance(provider_conversation, ProviderConversation):
+            raise TypeError("Anthropic 结构探针只接受 ProviderConversation")
         summary, response_digest = _anthropic_structure(response_blocks)
         same = None
-        if isinstance(provider_messages, list):
-            assistant = next((item for item in provider_messages
+        if provider_conversation:
+            assistant = next((item for item in provider_conversation
                               if isinstance(item, dict) and item.get("role") == "assistant"), None)
             if assistant is not None:
                 _, assistant_digest = _anthropic_structure(assistant.get("content"))
@@ -190,8 +224,10 @@ def record_anthropic_structure_probe(
 
 def _anthropic_request_message_structure(messages: Any) -> list[dict[str, Any]]:
     """生成只含消息结构与工具 ID 指纹的 Anthropic 请求摘要。"""
-    if not isinstance(messages, list):
-        return []
+    from agent.context.provider_conversation import ProviderConversation
+    if not isinstance(messages, ProviderConversation):
+        raise TypeError("Anthropic 请求结构诊断只接受 ProviderConversation")
+    messages = messages.to_messages()
 
     def id_fingerprint(value: Any) -> str | None:
         if not isinstance(value, (str, int)) or not str(value):
@@ -204,7 +240,8 @@ def _anthropic_request_message_structure(messages: Any) -> list[dict[str, Any]]:
         "audio", "file",
     }
     summaries: list[dict[str, Any]] = []
-    for message_index, message in enumerate(messages[:256]):
+    rows = list(messages)
+    for message_index, message in enumerate(rows[:256]):
         if not isinstance(message, dict):
             summaries.append({"index": message_index, "role": "other", "blocks": []})
             continue
@@ -281,18 +318,22 @@ def record_anthropic_request_diagnostics(
     if span is None or span.ended_at is not None:
         return
     try:
+        from agent.context.provider_conversation import ProviderConversation
+        if not isinstance(messages, ProviderConversation):
+            raise TypeError("Anthropic 请求诊断只接受 ProviderConversation")
         from .utils import _cache_diagnostics
 
         cache_diagnostics = _cache_diagnostics(
-            messages, context, str(getattr(context, "model", "")), provider_projected=True,
+            messages, context, str(getattr(context, "model", "")),
         )
         structure = _anthropic_request_message_structure(messages)
         structure_json = json.dumps(
             structure, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         )
-        restored_structure = _anthropic_request_message_structure([
+        from agent.context.provider_conversation import ProviderConversation
+        restored_structure = _anthropic_request_message_structure(ProviderConversation([
             {"role": "assistant", "content": restored_blocks}
-        ])[0]["blocks"] if isinstance(restored_blocks, list) else []
+        ]))[0]["blocks"] if isinstance(restored_blocks, list) else []
         restored_json = json.dumps(
             restored_blocks or [], ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         )
@@ -326,17 +367,17 @@ def record_anthropic_request_diagnostics(
         actual_request = {
             "schema_version": 1,
             "message_count": len(structure),
-            "messages_truncated": len(messages) > 256 if isinstance(messages, list) else False,
+            "messages_truncated": len(messages) > 256,
             "message_structure": structure,
             "structure_digest": hashlib.sha256(structure_json.encode("utf-8")).hexdigest()[:16],
             "wire_digest": hashlib.sha256(
                 json.dumps(
-                    messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                    messages.to_messages(), ensure_ascii=False,
+                    sort_keys=True, separators=(",", ":"),
                     default=str,
                 ).encode("utf-8")
             ).hexdigest()[:16],
-            "canonical_history_digest": str(getattr(projection, "canonical_digest", ""))[:64],
-            "rendered_history_digest": str(getattr(projection, "wire_digest", ""))[:64],
+            **message_area_diagnostics(projection=projection),
             "system": {
                 "type": "blocks" if isinstance(system_param, list) else (
                     "text" if isinstance(system_param, str) else "empty"
@@ -439,6 +480,19 @@ def _anthropic_request_pairing(messages: list[dict[str, Any]]) -> dict[str, Any]
     }
 
 
+def _provider_error_cause(error: BaseException) -> BaseException:
+    """沿应用包装异常找到 provider 根因，防止诊断丢失 HTTP 状态。"""
+    current = error
+    seen: set[int] = set()
+    while id(current) not in seen:
+        seen.add(id(current))
+        cause = getattr(current, "cause", None) or current.__cause__ or current.__context__
+        if not isinstance(cause, BaseException) or id(cause) in seen:
+            break
+        current = cause
+    return current
+
+
 def record_anthropic_request_failure(
     *,
     provider: str,
@@ -447,8 +501,7 @@ def record_anthropic_request_failure(
     error: BaseException,
     restored_blocks: Any = None,
     restored_insert_index: int | None = None,
-    canonical_digest: str = "",
-    wire_digest: str = "",
+    projection: Any,
 ) -> None:
     """仅在 Anthropic 请求失败时记录出站结构，不记录正文、参数或原始 ID。"""
     if not _enabled():
@@ -457,20 +510,31 @@ def record_anthropic_request_failure(
     if run is None or run.ended_at is not None:
         return
     try:
+        # 重试耗尽时主链路会用 RetryableError 包装上游异常。结构诊断需要保留
+        # 根因的状态码/错误类别，但只摘取白名单字段，不保存异常正文或响应体。
+        root_error = _provider_error_cause(error)
+
+        from agent.context.provider_conversation import ProviderConversation
+        if not isinstance(messages, ProviderConversation):
+            raise TypeError("Anthropic 请求失败诊断只接受 ProviderConversation")
         message_structure = _anthropic_request_message_structure(messages)
         structure_json = json.dumps(message_structure, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        status = getattr(error, "status_code", None)
+        status = getattr(root_error, "status_code", None)
         if not isinstance(status, int) or isinstance(status, bool):
             status = None
-        body = getattr(error, "body", None)
+        body = getattr(root_error, "body", None)
         provider_error = body.get("error") if isinstance(body, dict) else None
         provider_error = provider_error if isinstance(provider_error, dict) else {}
-        error_type = provider_error.get("type") or getattr(error, "type", None) or type(error).__name__
+        error_type = (
+            provider_error.get("type")
+            or getattr(root_error, "type", None)
+            or type(root_error).__name__
+        )
         if not isinstance(error_type, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", error_type):
             error_type = type(error).__name__
         provider_code = provider_error.get("code")
         if provider_code is None:
-            message = getattr(error, "message", "")
+            message = getattr(root_error, "message", "")
             if isinstance(message, str):
                 match = re.search(r"\(([0-9]{3,8})\)\s*$", message)
                 provider_code = match.group(1) if match else None
@@ -479,9 +543,10 @@ def record_anthropic_request_failure(
         ):
             provider_code = None
 
-        restored_structure = _anthropic_request_message_structure([
+        from agent.context.provider_conversation import ProviderConversation
+        restored_structure = _anthropic_request_message_structure(ProviderConversation([
             {"role": "assistant", "content": restored_blocks}
-        ])[0]["blocks"] if isinstance(restored_blocks, list) else []
+        ]))[0]["blocks"] if isinstance(restored_blocks, list) else []
         summary = {
             "schema_version": 1,
             "provider": (
@@ -494,18 +559,19 @@ def record_anthropic_request_failure(
                 and re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", model) else "unknown"
             ),
             "error_type": error_type,
+            "wrapper_error_type": type(error).__name__ if root_error is not error else None,
+            "retry_attempt": getattr(error, "attempt", None),
             "error_status": status,
             "provider_code": str(provider_code) if provider_code is not None else None,
             "message_count": len(message_structure),
-            "messages_truncated": len(messages) > 256 if isinstance(messages, list) else False,
+            "messages_truncated": len(message_structure) > 256,
             "message_structure": message_structure,
-            "tool_pairing": _anthropic_request_pairing(messages if isinstance(messages, list) else []),
+            "tool_pairing": _anthropic_request_pairing(messages.to_messages()),
             "restored_state": {
                 "insert_index": restored_insert_index,
                 "blocks": restored_structure,
             },
-            "canonical_history_digest": canonical_digest[:64],
-            "rendered_history_digest": wire_digest[:64],
+            **message_area_diagnostics(projection=projection),
             "structure_digest": hashlib.sha256(structure_json.encode("utf-8")).hexdigest()[:16],
         }
         bucket = _diagnostic_bucket(run, "provider_request_failures", {"count": 0, "last": {}})
@@ -866,6 +932,7 @@ def record_context_layout(
     messages: Any,
     *,
     metadata: dict[str, Any] | None = None,
+    message_area: Any = None,
     system_text: str = "",
     parent_span_id: str | None = None,
 ) -> None:
@@ -876,7 +943,10 @@ def record_context_layout(
     if run is None or run.ended_at is not None:
         return
     try:
-        rows = list(messages) if isinstance(messages, (list, tuple)) else []
+        from agent.context.provider_conversation import ProviderConversation
+        if not isinstance(messages, ProviderConversation):
+            raise TypeError("Provider context layout 只接受 ProviderConversation")
+        rows = messages.to_messages()
         def _row(value: Any) -> dict[str, Any]:
             if isinstance(value, dict):
                 role = str(value.get("role") or "")
@@ -910,6 +980,7 @@ def record_context_layout(
             "system_len": len(system_text or ""),
             "system_fp": hashlib.sha1((system_text or "").encode("utf-8")).hexdigest()[:12],
             "application_boundary": _jsonable(metadata or {}),
+            **message_area_diagnostics(message_area, messages),
         }
         # 数据已进 run.attributes 与 collector span；主日志只留 DEBUG 通道，
         # 排查缓存边界时把 agent.core 调到 DEBUG 即可恢复完整输出。

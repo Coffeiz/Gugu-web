@@ -55,6 +55,54 @@
     "keyBehavior": "定时任务工作区归属与任务级文件授权隔离",
     "ci": "backend-pytest"
   },
+  "backend/tests/test_bundle_runtime.py": {
+    "domain": "sandbox-deployment",
+    "layer": "L1",
+    "owner": "backend/agent/sandbox",
+    "productionEntry": "agent/sandbox/bundle_runtime.py",
+    "keyBehavior": "内置 runtime 只从校验过的离线归档导入并核对镜像身份",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_context_retention.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/retention.py",
+    "keyBehavior": "上下文保护统一按最近 run 的完整 round 窗口执行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_im_interrupted_run_persistence.py": {
+    "domain": "agent-cancellation",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "agent/im/loop.py",
+    "keyBehavior": "IM 中断后已生成的部分回复会持久化供下一轮继续使用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_run_cancellation.py": {
+    "domain": "agent-cancellation",
+    "layer": "L1",
+    "owner": "backend/agent/runtime",
+    "productionEntry": "agent/runtime/cancellation.py",
+    "keyBehavior": "共享取消信号同时停止工具和 Sandbox 请求且完成结果优先",
+    "ci": "backend-pytest"
+  },
+  "scripts/release/test_build_embedded_sandbox_bundle.py": {
+    "domain": "sandbox-deployment",
+    "layer": "L0",
+    "owner": "scripts/release",
+    "productionEntry": "scripts/release/build_embedded_sandbox_bundle.py",
+    "keyBehavior": "runtime bundle 仅接受与归档镜像身份及摘要一致的构建输入",
+    "ci": "docker-release"
+  },
+  "scripts/release/test_verify_embedded_app_image.py": {
+    "domain": "sandbox-deployment",
+    "layer": "L0",
+    "owner": "scripts/release",
+    "productionEntry": "scripts/release/verify_embedded_app_image.py",
+    "keyBehavior": "候选 app 必须保留基础配置并通过离线 bundle 与 Shell smoke 校验",
+    "ci": "docker-release"
+  },
   "backend/tests/test_shell_prompt.py": {
     "domain": "shell-security",
     "layer": "L1",
@@ -77,6 +125,22 @@
     "owner": "frontend/utils",
     "productionEntry": "frontend/src/utils/consoleBanner.ts",
     "keyBehavior": "主题切换不重复追加控制台横幅",
+    "ci": "frontend-test"
+  },
+  "frontend/src/utils/llmThinkingOptions.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/llmThinkingOptions.ts",
+    "keyBehavior": "思考选项按 Provider 与模型身份切换并保留有效选择",
+    "ci": "frontend-test"
+  },
+  "frontend/src/utils/modelProviders.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/modelProviders.ts",
+    "keyBehavior": "Provider API 协议选项与默认值符合端点能力且保留有效选择",
     "ci": "frontend-test"
   }
 }

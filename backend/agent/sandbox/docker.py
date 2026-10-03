@@ -1,4 +1,4 @@
-"""Rootless Docker 沙盒执行器。
+"""Docker 沙盒执行器。
 
 Docker 是普通用户 Shell 的真正隔离边界。单条 argv 命令按参数直跑；含
 shell 元字符的复合命令整体交给容器内 /bin/sh -c 解释（跳过逐参数路径
@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 
 from app.core.config import SandboxSettings
 
+from .bundle_runtime import bundle_directory
 from .docker_runtime import (
     docker_environment,
     docker_container_mount_source,
@@ -34,6 +35,7 @@ from .docker_runtime import (
 )
 from .local_executor import LocalWorkspaceExecutor, ShellResult
 from .quota import measure_directory
+from .offline_bundle import load_bundle_manifest
 
 
 _MAX_TIMEOUT = 300
@@ -156,6 +158,15 @@ def _tmpfs_spec(settings: SandboxSettings) -> str:
 
 
 def _image_ref(settings: SandboxSettings) -> str:
+    if getattr(settings, "manager_mode", "disabled") == "embedded":
+        manifest = load_bundle_manifest(bundle_directory() / "manifest.json")
+        if manifest.schema_version != 2:
+            raise ValueError("内置沙盒 bundle manifest 版本不受支持")
+        image = manifest.image_for_role("sandbox")
+        if image.image_id is None:
+            raise ValueError("内置沙盒 bundle 未声明执行镜像 ID")
+        return image.local_ref
+
     digest = settings.image_digest.strip()
     if not digest:
         raise ValueError("尚未配置固定镜像 digest")
@@ -176,7 +187,7 @@ def _image_ref(settings: SandboxSettings) -> str:
 
 
 class DockerSandboxExecutor:
-    """使用固定 Rootless Docker 基线执行一条工作区命令。"""
+    """使用固定安全基线执行一条 Docker 工作区命令。"""
 
     def __init__(
         self, workspace_root: str | Path, settings: SandboxSettings, *,
@@ -211,27 +222,39 @@ class DockerSandboxExecutor:
         self._daemon_host_data_root_resolved = False
 
     def _daemon_mount_src_for(self, path: Path) -> Path:
-        """按目标 Docker daemon 的宿主机视角解析 bind mount 源路径。"""
+        """解析目标 daemon 可见的 bind 源；embedded 与 app 共享容器内路径。"""
+        from app.core.config import get_settings
+
+        app_settings = get_settings()
+        logical_root = Path(app_settings.storage.local_path).resolve()
+        if getattr(self.settings, "manager_mode", "disabled") == "embedded":
+            try:
+                resolved = path.resolve(strict=True)
+                resolved.relative_to(logical_root)
+            except (OSError, ValueError) as exc:
+                raise ValueError("内置沙盒挂载路径超出授权数据目录，已拒绝创建容器") from exc
+            from .rootless_permissions import ensure_sandbox_acl
+            if not ensure_sandbox_acl(resolved):
+                raise ValueError("内置 Rootless 沙盒挂载权限初始化失败，已拒绝创建容器")
+            return resolved
         if not self._daemon_host_data_root_resolved:
-            host_root = getattr(self.settings, "host_data_root", None)
-            host_root_text = str(host_root or "").strip()
-            # Compose UI（尤其 FNOS）不一定设置 PWD，导致旧模板把 `${PWD}`
-            # 展开成 `//Gugu-data`。正常的显式绝对路径继续优先；缺失或异常
-            # 时从当前 sandboxd 容器的 /data bind mount 自动解析。
-            if not host_root_text or not host_root_text.startswith("/") or host_root_text.startswith("//"):
-                data_source = docker_container_mount_source()
-                if data_source is not None:
-                    host_root_text = str(data_source / "users")
-            self._daemon_host_data_root = host_root_text or None
+            self._daemon_host_data_root = self._resolve_external_host_data_root()
             self._daemon_host_data_root_resolved = True
         if not self._daemon_host_data_root:
             return path
-        from app.core.config import get_settings
-        logical_root = Path(get_settings().storage.local_path).resolve()
         try:
             return Path(self._daemon_host_data_root) / path.relative_to(logical_root)
-        except ValueError:
+        except ValueError as exc:
             return path
+
+    def _resolve_external_host_data_root(self) -> str | None:
+        """保留分体部署显式路径及旧 Compose 展开错误值的兼容解析。"""
+        host_root = getattr(self.settings, "host_data_root", None)
+        host_root_text = str(host_root or "").strip()
+        if host_root_text.startswith("/") and not host_root_text.startswith("//"):
+            return host_root_text
+        data_source = docker_container_mount_source()
+        return str(data_source / "users") if data_source is not None else None
 
     def _resolve_cwd(self, cwd: str | Path) -> Path:
         # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
@@ -331,9 +354,11 @@ class DockerSandboxExecutor:
             # Docker 默认加载内置 seccomp profile；不能传 `seccomp=default`，
             # 该值在 Docker CLI 中会被当作 profile 文件路径。
             "--security-opt=apparmor=docker-default",
-            f"--pids-limit={max(16, min(int(self.settings.pids_limit), 512))}",
-            f"--cpus={max(0.1, min(float(self.settings.cpu_limit), 2.0))}",
-            f"--memory={max(64 * 1024 * 1024, int(self.settings.memory_limit_bytes))}",
+            *([] if getattr(self.settings, "manager_mode", "disabled") == "embedded" else [
+                f"--pids-limit={max(16, min(int(self.settings.pids_limit), 512))}",
+                f"--cpus={max(0.1, min(float(self.settings.cpu_limit), 2.0))}",
+                f"--memory={max(64 * 1024 * 1024, int(self.settings.memory_limit_bytes))}",
+            ]),
             f"--tmpfs={_tmpfs_spec(self.settings)}",
             "--ulimit=nofile=1024:1024",
             f"--user={_CONTAINER_USER}",
@@ -487,7 +512,7 @@ exec bash --noprofile --norc -i
         self, command: str, *, cwd: str = ".", network_profile: str | None = None,
         container_name: str | None = None,
     ) -> DockerStdioHandle:
-        """在固定 Rootless Docker 参数内启动长驻 MCP stdio server。"""
+        """在固定 Docker 安全参数内启动长驻 MCP stdio server。"""
         docker_argv = self.build_stdio_argv(
             command, cwd=cwd, network_profile=network_profile, container_name=container_name,
         )

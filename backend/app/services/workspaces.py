@@ -36,6 +36,12 @@ async def get_workspace(db: AsyncSession, user_id, workspace_id: int) -> Workspa
     return await get_owned(db, Workspace, workspace_id, user_id)
 
 
+async def get_live_workspace_directory(db: AsyncSession, user_id, directory_id: int) -> WorkspaceDirectory | None:
+    """读取当前用户仍有效的工作区顶层目录。"""
+    row = await get_owned(db, WorkspaceDirectory, directory_id, user_id)
+    return row if row and row.deleted_at is None else None
+
+
 async def get_workspace_by_directory(
     db: AsyncSession, user_id, directory_id: int,
 ) -> Workspace | None:

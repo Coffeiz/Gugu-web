@@ -5,18 +5,22 @@
     :visible="!!audioStore.file && (miniPinned || open)"
     :style="miniPlayerStyle" :bars-playing="barsPlaying"
     :file-name="audioStore.file ? `${audioStore.file.displayName}.${audioStore.file.ext?.toLowerCase()}` : ''"
+    :playlist="audioStore.playlist" :current-track-id="audioStore.file?.id ?? null"
     :pinned="miniPinned" @update:pinned="miniPinned = $event"
     :current="audioCurrent" :duration="audioDuration" :seek-pct="audioSeekPct"
     :playing="audioPlaying" :muted="audioMuted" :volume="audioVolume"
-    :fmt-time="fmtTime" :on-stop="audioStop" :on-seek="audioSeek" :on-start-drag="audioStartDrag"
+    :playback-mode="audioStore.playbackMode" :on-cycle-playback-mode="audioStore.cyclePlaybackMode"
+    :fmt-time="fmtTime" :on-stop="audioStop" :on-start-drag="audioStartDrag"
     :on-toggle="audioToggle" :on-toggle-mute="audioToggleMute" :on-set-volume="audioSetVolume"
+    :on-previous="audioStore.previousTrack" :on-next="audioStore.nextTrack"
+    :on-select-track="selectAudioTrack" @load-playlist-durations="audioStore.loadPlaylistDurations"
   />
 
   <audio
     ref="audioEl"
     :src="audioStore.blobUrl ?? undefined"
     @timeupdate="audioCurrent = audioEl?.currentTime ?? 0"
-    @durationchange="audioDuration = audioEl?.duration || 0"
+    @durationchange="onAudioDurationChange"
     @play="audioPlaying = true"
     @pause="onAudioPause"
     @ended="onAudioEnded"
@@ -121,6 +125,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAudioStore } from '@/stores/audio'
+import type { AudioTrack } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
@@ -140,6 +145,7 @@ import { canPreview, fmtSize } from './messageDisplay'
 import { useChatAudio } from './composables/useChatAudio'
 import { useChatAttachments } from './composables/useChatAttachments'
 import { useChatActions } from './composables/useChatActions'
+import { copyTextToClipboard } from './composables/copyTextToClipboard'
 import { useChatConversation } from './composables/useChatConversation'
 import { useChatImConnect } from './composables/useChatImConnect'
 import { useChatWindow } from './composables/useChatWindow'
@@ -211,7 +217,8 @@ let rippleTimeout: ReturnType<typeof setTimeout> | null = null
 const {
   audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct,
   saveProgress, onCanPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
-  audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioSeek, audioStartDrag, fmtTime,
+  onAudioDurationChange,
+  audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioStartDrag, fmtTime,
   voicePlayingId, toggleVoice,
 } = useChatAudio({
   onTip: (text) => _chatTip(text),
@@ -231,6 +238,10 @@ const {
     setTimeout(() => { svgEl.style.transform = ''; svgEl.style.transition = ''; spinningBack.value = false }, 750)
   },
 })
+
+function selectAudioTrack(track: AudioTrack) {
+  void audioStore.play(track)
+}
 
 watch(audioPlaying, (playing) => {
   if (playing) {
@@ -293,47 +304,32 @@ async function toggleOpen() {
   await scrollBottom(true)
 }
 
-// 展开：调大窗布局 + 加载会话列表 + 滚到底 + 校准输入框
+// 展开：先捕获当前视口底部锚点，再切换布局。
 async function enterExpanded() {
+  markResizing()
   expanded.value = true
   loadBots()
-  markResizing()
   // 真实输入框此时仍在从小窗宽度过渡到大窗宽度，输入高度统一在过渡结束后校准，
   // 避免用中间态宽度测量导致窗口先撑高再回落。
   await nextTick()
   trackApi.track('chat_expanded').catch(() => {})
-  await fetchSessions()
-  await nextTick()
+  void fetchSessions()
   composerRef.value?.focus?.()
-  stick.value = true
-  const el = messagesEl.value
-  if (!el) return
-  el.scrollTop = 999999; lastTop.value = el.scrollTop
-  // 展开动画期间容器高度持续变化，用 ResizeObserver 跟底，420ms 动画结束后断开
-  const ro = new ResizeObserver(() => { el.scrollTop = 999999; lastTop.value = el.scrollTop })
-  ro.observe(el)
-  setTimeout(() => { ro.disconnect() }, 450)
 }
 
-// 收起：重置 contentH / 冻结基线 / 切回小窗 / 滚到底 / 动画结束后重测基线
+// 收起：保留底部锚点，冻结高度基线，布局稳定后重新测量。
 async function exitExpanded() {
+  markResizing()
   resetContentH()   // 先重置，小窗 DOM 以 SMALL_H 直接创建，不产生二次缩小
   // 缩小动画期间冻结增长（grown 恒 0、窗口稳在 SMALL_H）：大窗换行少、
   // scrollHeight 偏小，拿它当基线会让小窗重新换行后的高度全被算成新增 → 顶满
   setBaseScrollH(Infinity)
   expanded.value = false
-  markResizing()
   await nextTick()
   const el = messagesEl.value
   if (!el) return
-  stick.value = true
-  el.scrollTop = 999999; lastTop.value = el.scrollTop
-  // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
-  // ResizeObserver 跟着一直滚底，过渡结束后断开；动画结束、小窗布局稳定后再测真实基线
-  const ro = new ResizeObserver(() => { el.scrollTop = 999999; lastTop.value = el.scrollTop })
-  ro.observe(el)
+  // 窗口域统一维护底部锚点；小窗布局稳定后再测真实基线。
   setTimeout(() => {
-    ro.disconnect()
     captureBaseScrollH()
     syncSmallH()
   }, 450)
@@ -421,7 +417,7 @@ const {
   currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
   restorePendingQueueForDraft, restorePendingQueueForSession,
   drainPendingQueue,
-  stick, lastTop,
+  stick,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,
   pendingQueue, removeQueued,
@@ -715,7 +711,7 @@ function openFileFromChat(f: ChatFile) {
   downloadFile(f)
 }
 
-function copyMsg(msg: ChatMessage) {
+async function copyMsg(msg: ChatMessage) {
   // AI 消息取渲染后的纯文本，用户消息直接取原文
   let text = msg.text
   if (msg.role === 'ai' && msg.text) {
@@ -723,17 +719,11 @@ function copyMsg(msg: ChatMessage) {
     tmp.innerHTML = renderMd(msg.text)
     text = tmp.innerText || tmp.textContent || msg.text
   }
-  const fallback = () => {
-    const el = document.createElement('textarea')
-    el.value = text
-    el.style.cssText = 'position:fixed;top:-9999px;left:0;opacity:0'
-    document.body.appendChild(el)
-    el.focus(); el.select()
-    try { document.execCommand('copy') } catch {}
-    document.body.removeChild(el)
+  const copied = await copyTextToClipboard(text)
+  if (!copied) {
+    showAppError(t('chatUi.copyFailed'))
+    return
   }
-  ;(navigator.clipboard ? navigator.clipboard.writeText(text).catch(fallback) : Promise.reject())
-    .catch(fallback)
   copiedId.value = msg.id
   setTimeout(() => { if (copiedId.value === msg.id) copiedId.value = null }, 1500)
 }

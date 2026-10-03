@@ -8,7 +8,7 @@
 普通的 user history message。它是 baseline 的历史起点，不是动态尾部，也不是另一份
 system/snapshot 状态。
 
-自动路径由 ``agent.core`` 根据 provider 实际上下文 usage 达到 90% 时触发；普通 run
+自动路径由 ``agent.core`` 根据 provider 实际输入达到 90% 时触发；普通 run
 收尾不会再按固定字符窗口裁剪。压缩保留窗口只决定达到阈值后的压缩目标，摘要请求的
 输入/输出预算跟随本轮实际模型配置。
 """
@@ -25,14 +25,14 @@ from sqlalchemy import delete, select
 
 from agent.context import session_snapshot
 from agent.context.budget import ContextBudget
+from agent.context.provider_conversation import ProviderConversation
 from agent.context.tokens import content_text, estimate_tokens
 from agent.context.audit import session_scope, summary_change
 
 logger = logging.getLogger(__name__)
 
-# provider 实际上下文达到该比例后，由 agent.core 在当前 round 内触发压缩。
+# provider 实际输入达到该比例后，由 agent.core 触发压缩。
 AUTO_COMPACTION_RATIO = 0.90
-_RECENT_HISTORY_KEEP_CHARS = 20_000
 _COMPRESS_LOCK_TIMEOUT = 300
 _SESSION_RUN_LOCK_TIMEOUT = 300
 _SESSION_RUN_HEARTBEAT_INTERVAL = 15
@@ -526,12 +526,14 @@ async def compact_for_reflection(
     context_tokens = int(getattr(model_cfg, "context_tokens", 0) or 0)
     if context_tokens <= 0:
         return "not_needed"
-    soft_limit = int(context_tokens * AUTO_COMPACTION_RATIO)
+    from agent.context.compaction import compaction_trigger_tokens
+
+    soft_limit = compaction_trigger_tokens(context_tokens)
     if getattr(snapshot, "provider_compacted", False):
         return "not_needed"
     provider_input = getattr(snapshot, "provider_context_input", None)
     if provider_input is not None and int(provider_input) > 0:
-        # 同进程主 run 已按 provider usage 完成每轮 90% 判定；快照可能在压缩后
+        # 同进程主 run 已按 provider usage 完成每轮触发判定；快照可能在压缩后
         # 才捕获，不能拿压缩前的 usage 对新历史重复压缩。
         if int(provider_input) < soft_limit:
             return "not_needed"
@@ -547,7 +549,7 @@ async def compact_for_reflection(
             current_turn_tokens=estimate_tokens(extra_text or ""),
             output_reserve_tokens=output_reserve,
         )
-        if budget.total_tokens < budget.soft_limit_tokens:
+        if budget.total_tokens < soft_limit:
             return "not_needed"
         observed_tokens = budget.total_tokens
         source = "estimate"
@@ -602,7 +604,7 @@ async def _snapshot_cache_prefix(
     model_cfg,
     baseline_id: int,
     compressed_message_ids: set[int],
-) -> list[dict] | None:
+) -> list[dict] | ProviderConversation | None:
     """仅当持久化历史能逐条精确对齐时，返回原 provider 请求的同前缀。"""
     if snapshot is None or not getattr(snapshot, "history", None):
         return None
@@ -678,7 +680,10 @@ async def _snapshot_cache_prefix(
         )
         if start_at is None:
             return None
-        return list(snapshot.history[:start_at + len(parts)])
+        prefix = list(snapshot.history[:start_at + len(parts)])
+        if isinstance(snapshot.history, ProviderConversation):
+            return snapshot.history.with_messages(prefix, dynamic_tail_size=0)
+        return prefix
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.context.compress_conv.snapshot_prefix", exc)
@@ -726,21 +731,15 @@ async def _compress_if_needed_unlocked(
     if not all_msgs:
         return False
 
-    # 不把本地 token 估算用于决定哪些 history 被保留；保留窗口采用字符硬上限。
-    # 复用 run 内摘要时这条规则同时保证水位安全：run 内的保留窗口不超过
-    # RECENT_HISTORY_KEEP_CHARS 且按工具单元（更粗的粒度）回退，这里的 20k
-    # 按单条消息回退、只会保留得更多，因此水位最多推进到 run 内摘要已覆盖的
-    # 位置，不会越过被压缩内容。
-    target_keep_chars = _RECENT_HISTORY_KEEP_CHARS
-    tail_chars = 0
-    split_idx = 0
-    for i in range(len(all_msgs) - 1, -1, -1):
-        raw = all_msgs[i].content_json if all_msgs[i].content_json is not None else all_msgs[i].content
-        chars = len(content_text(raw).strip())
-        if tail_chars + chars > target_keep_chars:
-            split_idx = i + 1
-            break
-        tail_chars += chars
+    # 与运行中压缩共用 run/round 保护规则。缺少归属信息的旧行不猜测轮次，
+    # 交由既有摘要承接；整个最近 run 的最后 N 轮及其消息原样保留。
+    from agent.context.retention import protected_message_ids
+
+    protected_ids = protected_message_ids(all_msgs)
+    split_idx = next(
+        (index for index, message in enumerate(all_msgs) if message.id in protected_ids),
+        len(all_msgs),
+    )
 
     to_compress = all_msgs[:split_idx]
     if not to_compress:
@@ -753,7 +752,6 @@ async def _compress_if_needed_unlocked(
     if not reuse_summary and cache_snapshot is not None:
         # 持久化工具轮次可能与主 run 的最后几条消息结构不同；把未对齐的
         # 截点留在近期尾部，优先使用已经精确验证过的主请求前缀。
-        backtracked_chars = 0
         for count in range(split_idx, max(0, split_idx - 8), -1):
             candidate = all_msgs[:count]
             cache_prefix = await _snapshot_cache_prefix(
@@ -774,11 +772,6 @@ async def _compress_if_needed_unlocked(
                     )
                 break
             if count <= 1:
-                break
-            removed = all_msgs[count - 1]
-            raw = removed.content_json if removed.content_json is not None else removed.content
-            backtracked_chars += len(content_text(raw))
-            if backtracked_chars > _RECENT_HISTORY_KEEP_CHARS:
                 break
 
     # 统一读取普通正文和 content_json，工具轮次不能因为正文不在 content 而丢失。
@@ -802,6 +795,7 @@ async def _compress_if_needed_unlocked(
         _generate_append_summary,
         resolve_compaction_limits,
     )
+    from agent.context.prefix_history import render_branch_prefix
     limits = resolve_compaction_limits(model_cfg=model_cfg)
     if reuse_summary:
         # run 内压缩刚生成过同一批历史的摘要（且那次分支请求命中了缓存），
@@ -810,7 +804,6 @@ async def _compress_if_needed_unlocked(
         compression_mode = "run-reuse"
     else:
         if cache_prefix is not None:
-            from agent.context.prefix_history import render_branch_prefix
             from agent import providers
 
             adapter = providers.adapter_for(model_cfg)
@@ -831,7 +824,8 @@ async def _compress_if_needed_unlocked(
             # 没有同进程快照或持久化历史无法逐条对齐时，安全回退到 DB 重建；
             # 该路径保持原有摘要范围与落库语义，但不保证前缀缓存命中。
             summary = await _generate_append_summary(
-                history_messages, prev_summary, model_cfg=model_cfg,
+                render_branch_prefix(history_messages, model_cfg), prev_summary,
+                model_cfg=model_cfg,
             )
             compression_mode = "append-replay"
     from agent.context.compaction import validate_compact_summary

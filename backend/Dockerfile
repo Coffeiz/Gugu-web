@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
 COPY . .
-COPY scripts/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
+COPY scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_rootless_storage.py
 RUN mkdir -p logs
 RUN chmod 755 /usr/local/bin/prepare_rootless_storage.py
 

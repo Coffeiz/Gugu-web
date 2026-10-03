@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from agent.context import provider_runner
+from agent.context.branch_types import LONG_RUNNING_PROVIDER_READ_TIMEOUT_SECONDS
 from agent.memory import store
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
@@ -44,6 +45,7 @@ async def _generate_memory_entries(user: str, settings) -> dict:
         try:
             output = await provider_runner.complete_json(
                 _load_sys(), user, settings, max_tokens=None,
+                read_timeout=LONG_RUNNING_PROVIDER_READ_TIMEOUT_SECONDS,
             )
             if isinstance(output, dict) and output:
                 return output

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
+from app.core.config import FileSyncSettings
 from app.models import (
     ConversationSession,
     File,
@@ -46,8 +47,22 @@ def test_sync_path_rejects_symlink_escape(tmp_path):
         validate_sync_path(tmp_path, "link/secret.txt")
 
 
+def test_filesync_is_enabled_by_default():
+    assert FileSyncSettings().enabled is True
+
+
 @pytest.mark.asyncio
-async def test_phase1_protocol_is_disabled_by_default(db, user_a):
+async def test_phase1_protocol_respects_explicit_disabled_setting(db, user_a, monkeypatch):
+    import app.services.filesync.protocol as protocol
+
+    monkeypatch.setattr(
+        protocol,
+        "get_settings",
+        lambda: SimpleNamespace(
+            filesync=SimpleNamespace(enabled=False),
+            storage=SimpleNamespace(backend="local"),
+        ),
+    )
     with pytest.raises(FileSyncDisabled):
         await create_binding(db, user_id=user_a.id, source="local_directory", root_fingerprint="a" * 64)
 

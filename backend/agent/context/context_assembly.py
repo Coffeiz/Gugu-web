@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from .canonical_context import CanonicalContext, group_history_units
-from .assembly import PromptMessages, assemble
+from .assembly import MessageArea, MessageBatch, assemble
 
 
 def build_context(*, fixed_parts: Iterable[dict], history: Iterable[dict],
@@ -38,7 +38,7 @@ def build_context(*, fixed_parts: Iterable[dict], history: Iterable[dict],
 
 def build_messages(*, fixed_parts: Iterable[dict], history: Iterable[dict],
                    current_batch: Iterable[dict] = (),
-                   system_text: str | None = None) -> PromptMessages:
+                  system_text: str | None = None) -> MessageArea:
     fixed = tuple(dict(item) for item in fixed_parts)
     history_values = tuple(dict(item) for item in history)
     conversation = assemble(
@@ -46,7 +46,7 @@ def build_messages(*, fixed_parts: Iterable[dict], history: Iterable[dict],
         history=history_values,
     )
     batch = list(current_batch)
-    conversation.append_batch(batch)
+    conversation.append_batch(MessageBatch.from_canonical_messages(batch))
     conversation.canonical_context = build_context(
         fixed_parts=fixed,
         history=history_values,

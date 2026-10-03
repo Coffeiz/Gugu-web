@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .cache_policy import cache_capabilities
-from .canonical_context import digest
+from .canonical_context import CanonicalContext, digest, group_history_units
 from .canonical_request import CanonicalRequest
 from .tokens import estimate_tokens, message_text
 
@@ -96,12 +96,56 @@ def _wire_message_diagnostics(messages: list[dict[str, Any]]) -> list[dict[str, 
     return result
 
 
+def _canonical_context_from_area(messages: Any, system_text: str) -> CanonicalContext:
+    """从本轮 Area 即时生成诊断分区，不在运行状态上另存第二份上下文。"""
+    from .assembly.area import MessageArea, MessageSource
+
+    if not isinstance(messages, MessageArea):
+        raise TypeError("上下文诊断只接受 MessageArea")
+
+    fixed_parts = messages.request_prefix
+    static_system = tuple(
+        item for item in fixed_parts
+        if item.get("role") == "system"
+        and not str(item.get("content", "")).startswith("[system-reminder]")
+    )
+    if system_text and not any(item.get("content") == system_text for item in static_system):
+        static_system = ({"role": "system", "content": system_text},) + static_system
+    static_contents = {digest(item) for item in static_system}
+    session_snapshot = tuple(
+        item for item in fixed_parts
+        if digest(item) not in static_contents
+    )
+
+    entries = messages.snapshot().entries
+    restored = tuple(
+        entry.canonical_message for entry in entries
+        if entry.source == MessageSource.RESTORED_HISTORY
+    )
+    current_turn = tuple(
+        entry.canonical_message for entry in entries
+        if entry.source != MessageSource.RESTORED_HISTORY
+    )
+    return CanonicalContext(
+        static_system=static_system,
+        session_snapshot=session_snapshot,
+        canonical_history=restored,
+        current_turn=current_turn,
+        history_units=group_history_units(restored),
+    )
+
+
 def request_diagnostics(messages: Any, *, system_text: str, tools: list[dict],
                         adapter: Any, model: str, api_format: str = "unknown",
-                        previous_messages: list[dict] | None = None) -> dict[str, Any]:
-    context = getattr(messages, "canonical_context", None)
-    if context is None:
+                        previous_messages: Any = None,
+                        provider_messages: Any = None,
+                        provider_history_sanitization: dict[str, Any] | None = None) -> dict[str, Any]:
+    from .assembly.area import MessageArea
+    from .provider_conversation import ProviderConversation
+
+    if not isinstance(messages, MessageArea):
         return {"available": False}
+    context = _canonical_context_from_area(messages, system_text)
     request = CanonicalRequest(
         context=context,
         tools=tuple(tools or ()),
@@ -110,9 +154,24 @@ def request_diagnostics(messages: Any, *, system_text: str, tools: list[dict],
         model=model,
     )
     result = request.diagnostics()
+    result["available"] = True
     result["cache_capabilities"] = cache_capabilities(adapter, model).__dict__
     result["system_digest"] = digest(system_text)
-    if api_format == "openai":
+    if provider_messages is not None:
+        if not isinstance(provider_messages, ProviderConversation):
+            raise TypeError("上下文诊断的 Provider 输入必须是 ProviderConversation")
+        wire_messages = provider_messages
+        if api_format == "openai":
+            result["provider_history_sanitization"] = (
+                provider_history_sanitization or {
+                    "applied": False,
+                    "changed": False,
+                    "removed_messages": 0,
+                    "modified_messages": 0,
+                    "first_changed_index": None,
+                }
+            )
+    elif api_format == "openai":
         from agent.providers.message_utils import render_openai_request_history
 
         wire_messages, history_sanitization = render_openai_request_history(

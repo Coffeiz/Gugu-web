@@ -796,15 +796,14 @@ def test_owner_group_reflection_excludes_assistant_reply_and_other_members():
     assert "群友说了不应进入 owner memory" not in private_text
 
 
-def test_group_and_member_jobs_do_not_duplicate_batch_body_in_delta(monkeypatch):
+def test_group_and_member_jobs_do_not_duplicate_batch_body_in_delta():
     """群级与成员级 worker 反思正文只进入 append history，不在 delta 重复。"""
-    from agent.context import prefix_history
+    from agent.context.provider_conversation import ProviderConversation
     from agent.memory.im_reflection import _build_append_branch_input
     from agent.memory.scopes import MemoryScope
 
     marker = "仅用于回归断言的正文标记"
-    full_history = ({"role": "user", "content": marker},)
-    monkeypatch.setattr(prefix_history, "render_branch_prefix", lambda prefix, ai: list(prefix))
+    full_history = ProviderConversation([{"role": "user", "content": marker}])
     scope = MemoryScope("owner-1", "qq", "bot-1", "group", "group-1")
     job = SimpleNamespace(id=12, idempotency_key="job-key")
     message = SimpleNamespace(
@@ -812,7 +811,8 @@ def test_group_and_member_jobs_do_not_duplicate_batch_body_in_delta(monkeypatch)
         platform_user_id="member-1", session_id=77,
     )
     snapshot = SimpleNamespace(
-        history=full_history, ai=object(), system_prompt="静态系统提示词", tools=(),
+        history=full_history, ai=SimpleNamespace(provider="minimax", model="MiniMax-M3", api_format="anthropic"),
+        system_prompt="静态系统提示词", tools=(),
         session_id=77, run_id="group-main-run",
     )
 
@@ -827,12 +827,12 @@ def test_group_and_member_jobs_do_not_duplicate_batch_body_in_delta(monkeypatch)
         assert snapshot_input.cache_probe_context["trigger_source"] == "session_snapshot"
 
 
-def test_reflection_snapshot_replaces_image_audio_and_video_blocks(monkeypatch):
-    from agent.context import prefix_history
+def test_reflection_snapshot_replaces_image_audio_and_video_blocks():
+    from agent.context.provider_conversation import ProviderConversation
     from agent.memory.im_reflection import _build_append_branch_input
     from agent.memory.scopes import MemoryScope
 
-    history = ({
+    history = ProviderConversation([{
         "role": "user",
         "content": [
             {"type": "text", "text": "保留这段文字"},
@@ -840,10 +840,10 @@ def test_reflection_snapshot_replaces_image_audio_and_video_blocks(monkeypatch):
             {"type": "input_audio", "input_audio": {"data": "secret"}},
             {"type": "video", "source": {"type": "url", "url": "https://example.invalid/video"}},
         ],
-    },)
-    monkeypatch.setattr(prefix_history, "render_branch_prefix", lambda prefix, ai: list(prefix))
+    }])
     snapshot = SimpleNamespace(
-        history=history, ai=object(), system_prompt="静态系统提示词", tools=(),
+        history=history, ai=SimpleNamespace(provider="minimax", model="MiniMax-M3", api_format="anthropic"),
+        system_prompt="静态系统提示词", tools=(),
         session_id=77, run_id="group-main-run",
     )
     branch_input = _build_append_branch_input(
@@ -876,15 +876,14 @@ def test_append_branch_input_requires_full_session_snapshot():
         )
 
 
-def test_private_reflection_snapshot_keeps_batch_body_only_in_history(monkeypatch):
+def test_private_reflection_snapshot_keeps_batch_body_only_in_history():
     """私聊快照反思复用完整主历史，delta 只声明反思范围。"""
-    from agent.context import prefix_history
+    from agent.context.provider_conversation import ProviderConversation
     from agent.memory.im_reflection import _build_append_branch_input
     from agent.memory.scopes import MemoryScope
 
     marker = "仅用于验证快照前缀的正文标记"
-    history = ({"role": "user", "content": marker},)
-    monkeypatch.setattr(prefix_history, "render_branch_prefix", lambda prefix, ai: list(prefix))
+    history = ProviderConversation([{"role": "user", "content": marker}])
     scope = MemoryScope("owner-1", "qq", "bot-1", "platform-user", "user-1")
     job = SimpleNamespace(id=13, idempotency_key="private-job")
     message = SimpleNamespace(
@@ -892,7 +891,8 @@ def test_private_reflection_snapshot_keeps_batch_body_only_in_history(monkeypatc
         platform_user_id="user-1", session_id=78,
     )
     snapshot = SimpleNamespace(
-        history=history, ai=object(), system_prompt="静态系统提示词", tools=(),
+        history=history, ai=SimpleNamespace(provider="minimax", model="MiniMax-M3", api_format="anthropic"),
+        system_prompt="静态系统提示词", tools=(),
         session_id=78, run_id="main-run",
     )
 

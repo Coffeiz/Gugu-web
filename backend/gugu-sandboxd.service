@@ -11,6 +11,7 @@ WorkingDirectory=__APP_DIR__
 Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
 Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
+Environment="GUGU_SANDBOX_MANAGER_MODE=external"
 ExecStart=__APP_DIR__/.venv/bin/python -m agent.sandbox.sandboxd \
   --socket /run/user/__RUN_UID__/gugu-sandboxd.sock \
   --allowed-root __DATA_DIR__

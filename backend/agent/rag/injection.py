@@ -1,11 +1,13 @@
 """RAG 结果到 provider-compatible history 消息的确定性编码。"""
 from __future__ import annotations
 
+from collections.abc import Iterable
+from datetime import datetime
+from typing import Any
+
 import asyncio
 import json
-from collections.abc import Iterable
 import logging
-from typing import Any
 
 from agent.context.serialization import knowledge_context_block
 
@@ -105,6 +107,26 @@ def _citation_label(item: dict[str, Any]) -> str:
     return f"{source} / {title}"
 
 
+def _conversation_message_time(item: dict[str, Any]) -> str:
+    """只为具体的历史消息附带发生时间，不把会话更新时间误标成消息时间。"""
+    citation = item.get("citation") or {}
+    source = citation.get("source_type") or item.get("source")
+    if source != "conversation" or item.get("message_id") is None:
+        return ""
+    value = item.get("updated_at") or citation.get("updated_at")
+    if not value:
+        return ""
+    try:
+        timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+
+    from agent.context.dynamic_tail import message_time_text
+    from app.core.tz import ctx_tz
+
+    return message_time_text(timestamp, ctx_tz()) or ""
+
+
 def render_history_context(query: str, results: Iterable[dict[str, Any]]) -> str:
     """把已通过 scope/预算过滤的结果编码成普通文本 history。"""
     rows = [
@@ -116,7 +138,11 @@ def render_history_context(query: str, results: Iterable[dict[str, Any]]) -> str
         text = str(item.get("text") or "").strip()
         if not text:
             continue
-        rows.extend((f"[{index}] {_citation_label(item)}", text))
+        rows.append(f"[{index}] {_citation_label(item)}")
+        message_time = _conversation_message_time(item)
+        if message_time:
+            rows.append(message_time)
+        rows.append(text)
     rows.append("[/knowledge-context]")
     return "\n".join(rows)
 
@@ -204,6 +230,8 @@ def _request_scopes(request) -> list[tuple[str, Any]]:
         if getattr(request, "im_group_memory_enabled", True):
             scopes.append(("group-rag", group_scope(request.user_id, source, bot_id, chat_id)))
         role = getattr(request, "im_role", None)
+        if role == "owner" and getattr(request, "im_group_owner_memory_enabled", False):
+            scopes.append(("owner-rag", owner_scope(request.user_id)))
         if role == "member" and getattr(request, "im_member_memory_enabled", True):
             member_id = str(getattr(request, "platform_user_id", "") or "")
             if member_id:

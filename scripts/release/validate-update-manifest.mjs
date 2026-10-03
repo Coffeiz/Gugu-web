@@ -47,7 +47,7 @@ function validateManifest(manifest) {
   for (const field of required) {
     if (!keys.has(field)) fail(`缺少字段 ${field}`)
   }
-  const allowed = new Set([...required, 'git_sha', 'published_at'])
+  const allowed = new Set([...required, 'git_sha', 'published_at', 'app_bundle'])
   for (const field of keys) {
     if (!allowed.has(field)) fail(`不允许的字段 ${field}`)
   }
@@ -81,6 +81,22 @@ function validateManifest(manifest) {
   }
   if (manifest.published_at !== undefined && Number.isNaN(Date.parse(manifest.published_at))) {
     fail('published_at 必须是有效时间')
+  }
+  if (manifest.app_bundle !== undefined) {
+    const bundle = manifest.app_bundle
+    if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) fail('app_bundle 必须是对象')
+    const expectedArchive = `gugu-app-${manifest.version}.tar.gz`
+    const expectedSignature = `gugu-app-${manifest.version}.sigstore.json`
+    if (bundle.archive !== expectedArchive || bundle.signature_bundle !== expectedSignature) {
+      fail('app_bundle 资源名称必须与版本一致')
+    }
+    if (!/^[0-9a-f]{64}$/.test(bundle.sha256 || '')) fail('app_bundle.sha256 必须是 SHA-256')
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(bundle.runtime_contract || '')) fail('app_bundle.runtime_contract 格式无效')
+    if (!Number.isSafeInteger(bundle.size) || bundle.size < 1 || bundle.size > 536870912) fail('app_bundle.size 超出限制')
+    if (!Number.isSafeInteger(bundle.unpacked_size) || bundle.unpacked_size < 1 || bundle.unpacked_size > 1073741824) fail('app_bundle.unpacked_size 超出限制')
+    if (Object.keys(bundle).sort().join(',') !== 'archive,runtime_contract,sha256,signature_bundle,size,unpacked_size') {
+      fail('app_bundle 字段不完整或包含未知字段')
+    }
   }
 }
 

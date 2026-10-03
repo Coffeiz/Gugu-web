@@ -15,12 +15,12 @@ class CredentialCreate(BaseModel):
     max_tokens: int | None = None
     context_tokens: int | None = None
     thinking: Literal["disabled", "adaptive"] | None = None
-    reasoning_effort: Literal["", "low", "medium", "high", "max"] | None = None
-    reasoning_persistence: Literal["off", "summary", "continuation"] = "off"
-    vision: bool = False
-    vision_video: bool = False
-    vision_audio: bool = False
-    vision_detail: Literal["auto", "low", "high", "original"] = "auto"
+    reasoning_effort: Literal["", "none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    reasoning_persistence: Literal["off", "continuation"] = "off"
+    image: bool = False
+    video: bool = False
+    audio: bool = False
+    image_detail: Literal["auto", "low", "high", "original"] = "auto"
 
 
 class CredentialPatch(BaseModel):
@@ -35,13 +35,24 @@ class CredentialPatch(BaseModel):
     max_tokens: int | None = None
     context_tokens: int | None = None
     thinking: Literal["disabled", "adaptive"] | None = None
-    reasoning_effort: Literal["", "low", "medium", "high", "max"] | None = None
-    reasoning_persistence: Literal["off", "summary", "continuation"] | None = None
-    vision: bool | None = None
-    vision_video: bool | None = None
-    vision_audio: bool | None = None
-    vision_detail: Literal["auto", "low", "high", "original"] | None = None
+    reasoning_effort: Literal["", "none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    reasoning_persistence: Literal["off", "continuation"] | None = None
+    image: bool | None = None
+    video: bool | None = None
+    audio: bool | None = None
+    image_detail: Literal["auto", "low", "high", "original"] | None = None
     enabled: bool | None = None
+
+
+class ProviderCapabilityPreview(BaseModel):
+    """返回当前 provider、model 与 API 格式的静态能力，不接触凭据。"""
+    provider: str = Field(min_length=1, max_length=64)
+    api_format: str = Field("", max_length=32)
+    base_url: str = Field("", max_length=500)
+    model: str = Field("", max_length=200)
+    ollama_api_mode: str = "openai"
+    ollama_mode: str = "local"
+    local_runtime: str = "other"
 
 
 class CredentialModelsPreview(BaseModel):
@@ -53,7 +64,7 @@ class CredentialModelsPreview(BaseModel):
     credential_id: int | None = None
 
 
-class CredentialVisionProbe(CredentialModelsPreview):
+class MediaCapabilityProbe(CredentialModelsPreview):
     dim: Literal["image", "video", "audio"]
 
 

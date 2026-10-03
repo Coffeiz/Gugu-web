@@ -1,4 +1,4 @@
-from .base import ProviderAdapter, ProviderCapabilities
+from .base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
 class QwenAdapter(ProviderAdapter):
@@ -6,6 +6,7 @@ class QwenAdapter(ProviderAdapter):
     api_format = "openai"
     cache_mode = "active"
     supports_thinking_toggle = True
+    default_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     def supports_explicit_cache(self, model: str = "") -> bool:
         return self.supports_active_cache(model)
@@ -19,6 +20,16 @@ class QwenAdapter(ProviderAdapter):
     def _qwen3_model(model: str) -> bool:
         return (model or "").strip().lower().startswith("qwen3")
 
+    @staticmethod
+    def _supports_effort(model: str) -> bool:
+        # 百炼文档明确列出 Qwen3.8 的 reasoning_effort 档位；其它 Qwen3
+        # 型号不因共享协议而继承这组档位。
+        return (model or "").strip().lower().startswith("qwen3.8")
+
+    def supported_api_formats(self, ai):
+        # 百炼接入支持的协议属于 Provider 能力；模型专属推理参数仍单独按型号过滤。
+        return ("openai", "responses")
+
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         # 百炼能力按模型族收窄：老的 qwen-max 不能因为 provider 名称相同就
         # 被误发 Qwen3 专属参数；当前 devserver 的 qwen3.8-max 属于支持族。
@@ -28,6 +39,50 @@ class QwenAdapter(ProviderAdapter):
             structured_json=qwen3, structured_schema=qwen3, tools=True,
             parallel_tools=False,
         )
+
+    def reasoning_capabilities(self, ai, api_format: str) -> ReasoningCapabilities:
+        model = getattr(ai, "model", "") or ""
+        if api_format == "openai" and self._qwen3_model(model):
+            if self._supports_effort(model):
+                return ReasoningCapabilities(
+                    modes=("disabled", "adaptive"),
+                    efforts=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+                    effort_map=(("minimal", "low"), ("high", "xhigh"), ("max", "xhigh")),
+                )
+            return ReasoningCapabilities(modes=("disabled", "adaptive"))
+        if api_format == "responses" and self._qwen3_model(model):
+            if self._supports_effort(model):
+                return ReasoningCapabilities(
+                    modes=("disabled", "adaptive"),
+                    efforts=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+                    effort_map=(("minimal", "low"), ("high", "xhigh"), ("max", "xhigh")),
+                )
+            return ReasoningCapabilities(modes=("disabled", "adaptive"))
+        return ReasoningCapabilities()
+
+    def build_responses_reasoning_params(self, ai) -> dict:
+        model = getattr(ai, "model", "") or ""
+        if not self._qwen3_model(model):
+            return {}
+        if getattr(ai, "thinking", "disabled") == "disabled":
+            return {"reasoning": {"effort": "none"}}
+        return super().build_responses_reasoning_params(ai)
+
+    def build_openai_thinking_kwargs(self, ai, *, thinking: str | None = None) -> dict:
+        model = getattr(ai, "model", "") or ""
+        if not self._qwen3_model(model):
+            return {}
+        value = thinking if thinking is not None else getattr(ai, "thinking", "disabled")
+        if value not in self.reasoning_capabilities(ai, "openai").modes:
+            return {}
+        kwargs = {"extra_body": self.build_thinking_params(ai, thinking=value)}
+        if value == "adaptive" and self._supports_effort(model):
+            effort = self._reasoning_effort(ai, "openai")
+            if effort and effort != "none":
+                kwargs["reasoning_effort"] = effort
+            elif (getattr(ai, "reasoning_effort", "") or "").lower() == "none":
+                kwargs["extra_body"] = {"enable_thinking": False}
+        return kwargs
 
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         """构造百炼 OpenAI 兼容接口的 Qwen3 思考参数。
@@ -39,6 +94,8 @@ class QwenAdapter(ProviderAdapter):
         if not self._qwen3_model(model):
             return {}
         value = thinking if thinking is not None else getattr(ai, "thinking", "disabled")
+        if value not in self.reasoning_capabilities(ai, "openai").modes:
+            return {}
         if value == "disabled":
             return {"enable_thinking": False}
         # qwen3.8-max 等模型默认开启思考；不发送 enable_thinking 以保持服务端默认。

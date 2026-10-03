@@ -5,29 +5,68 @@ import { spawnSync } from 'node:child_process';
 const root = path.resolve(import.meta.dirname, '../..');
 const licensesDir = path.join(root, 'licenses');
 const frontendManifestPath = path.join(root, 'frontend/package.json');
-const frontendLockPath = path.join(root, 'frontend/package-lock.json');
+const frontendVirtualStorePath = path.join(root, 'node_modules/.pnpm');
+const frontendOnly = process.argv.includes('--frontend-only');
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-function packageNameFromLockPath(lockPath) {
-  const marker = 'node_modules/';
-  const index = lockPath.lastIndexOf(marker);
-  return index < 0 ? null : lockPath.slice(index + marker.length);
+function packageLicense(packagePath, info) {
+  const declared = typeof info.license === 'string'
+    ? info.license
+    : info.license?.type;
+  if (declared) return declared;
+
+  const licenseFile = fs.readdirSync(packagePath).find(name => (
+    ['license', 'license.md', 'license.txt', 'copying', 'copying.md'].includes(name.toLowerCase())
+  ));
+  if (!licenseFile) return 'Unknown';
+
+  const text = fs.readFileSync(path.join(packagePath, licenseFile), 'utf8').slice(0, 4096);
+  const spdx = text.match(/SPDX-License-Identifier:\s*([^\s*]+)/i)?.[1];
+  if (spdx) return spdx;
+  if (/^\s*The MIT License(?:\s*\(MIT\))?/i.test(text)) return 'MIT';
+  if (/^\s*Apache License\s*\n\s*Version 2\.0/i.test(text)) return 'Apache-2.0';
+  return 'Unknown';
+}
+
+function collectInstalledPackages() {
+  if (!fs.existsSync(frontendVirtualStorePath)) {
+    throw new Error('未找到 pnpm 虚拟依赖目录，请先运行 corepack pnpm install --filter gugu-web。');
+  }
+
+  const packages = new Map();
+  for (const virtualPackage of fs.readdirSync(frontendVirtualStorePath).sort()) {
+    const moduleRoot = path.join(frontendVirtualStorePath, virtualPackage, 'node_modules');
+    if (!fs.existsSync(moduleRoot)) continue;
+
+    for (const entry of fs.readdirSync(moduleRoot).sort()) {
+      const entryPath = path.join(moduleRoot, entry);
+      const packagePaths = entry.startsWith('@')
+        ? fs.readdirSync(entryPath).sort().map(name => path.join(entryPath, name))
+        : [entryPath];
+
+      for (const packagePath of packagePaths) {
+        const manifestPath = path.join(packagePath, 'package.json');
+        if (!fs.existsSync(manifestPath)) continue;
+        const info = readJson(manifestPath);
+        if (!info.name || !info.version) continue;
+        packages.set(`${info.name}@${info.version}`, { info, packagePath });
+      }
+    }
+  }
+  return [...packages.values()];
 }
 
 function generateFrontendReport() {
   const manifest = readJson(frontendManifestPath);
-  const lock = readJson(frontendLockPath);
   const dependencies = [];
-  for (const [lockPath, packageInfo] of Object.entries(lock.packages ?? {})) {
-    const name = packageNameFromLockPath(lockPath);
-    if (!name || !packageInfo.version) continue;
+  for (const { info: packageInfo, packagePath } of collectInstalledPackages()) {
     dependencies.push({
-      name,
+      name: packageInfo.name,
       version: packageInfo.version,
-      license: packageInfo.license || 'Unknown',
+      license: packageLicense(packagePath, packageInfo),
       homepage: packageInfo.homepage || '',
       repository: typeof packageInfo.repository === 'string'
         ? packageInfo.repository
@@ -38,8 +77,8 @@ function generateFrontendReport() {
   return {
     project: 'frontend',
     label: 'Gugu-web / 前端',
-    packageManager: 'npm',
-    packageManifests: ['frontend/package.json', 'frontend/package-lock.json'],
+    packageManager: 'pnpm',
+    packageManifests: ['frontend/package.json', 'pnpm-lock.yaml'],
     dependencies,
     directDependencies: Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }).sort(),
   };
@@ -53,20 +92,23 @@ fs.mkdirSync(licensesDir, { recursive: true });
 const frontend = generateFrontendReport();
 writeJson(path.join(licensesDir, 'frontend.json'), frontend);
 
-const defaultPython = path.join(root, 'backend/.venv/bin/python');
-const python = process.env.PYTHON ?? (fs.existsSync(defaultPython) ? defaultPython : 'python3');
-const pythonResult = spawnSync(python, [
-  path.join(root, 'scripts/licenses/generate-python-licenses.py'),
-  '--root', root,
-  '--output', path.join(licensesDir, 'backend.json'),
-], { encoding: 'utf8' });
-if (pythonResult.error || pythonResult.status !== 0) {
-  console.error(pythonResult.stderr || pythonResult.error?.message || 'Python license generation failed');
-  process.exit(1);
+const backendPath = path.join(licensesDir, 'backend.json');
+if (!frontendOnly) {
+  const defaultPython = path.join(root, 'backend/.venv/bin/python');
+  const python = process.env.PYTHON ?? (fs.existsSync(defaultPython) ? defaultPython : 'python3');
+  const pythonResult = spawnSync(python, [
+    path.join(root, 'scripts/licenses/generate-python-licenses.py'),
+    '--root', root,
+    '--output', backendPath,
+  ], { encoding: 'utf8' });
+  if (pythonResult.error || pythonResult.status !== 0) {
+    console.error(pythonResult.stderr || pythonResult.error?.message || 'Python license generation failed');
+    process.exit(1);
+  }
+  if (pythonResult.stdout) process.stdout.write(pythonResult.stdout);
 }
-if (pythonResult.stdout) process.stdout.write(pythonResult.stdout);
 
-const backend = readJson(path.join(licensesDir, 'backend.json'));
+const backend = readJson(backendPath);
 const reports = [frontend, backend];
 const allPackages = new Map();
 for (const report of reports) {
@@ -84,7 +126,7 @@ writeJson(path.join(licensesDir, 'manifest.json'), {
 const markdown = [
   '# Third-party notices',
   '',
-  '> Generated by `npm run licenses:generate`. Do not edit manually.',
+  '> Generated by `corepack pnpm --filter gugu-web run licenses:generate`. Do not edit manually.',
   '',
   ...reports.flatMap(report => [
     `## ${report.label}`,

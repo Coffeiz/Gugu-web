@@ -24,13 +24,12 @@ from mimetypes import guess_extension
 from pathlib import PurePosixPath
 from urllib.parse import unquote, urlparse
 
-import httpcore
 import httpx
 
 from agent.tools.base import BaseSkill, Tool
 from agent.security import logsafe
 from app.core.redaction import diag_log, diag_log_raw, redact
-from app.core.url_security import resolve_pinned_ip
+from app.core.safe_egress import SafeEgressClient, SafeEgressError
 from app.db.session import rollback_safely
 from app.services.storage.file_service import FileService
 from agent.tools.files.locations import _resolve_create_location
@@ -51,12 +50,7 @@ _HTTP_GET_RETRY_BACKOFF = [1, 2]
 # httpx.NetworkError 覆盖 ConnectError 等连接层错误，httpx.TimeoutException 覆盖各类超时，
 # RemoteProtocolError 覆盖「连接中途被对端断开/协议错乱」——都是「请求没跑完」的瞬时故障；
 # 不含 HTTPStatusError（4xx/5xx 状态码），因为本函数默认不对状态码抛异常（见下方调用处）。
-_TRANSIENT_HTTPX = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
-
-
-# IP 钉扎传输已上提到 app/core/pinned_http.py（MCP 客户端复用同一实现）。
-from app.core.pinned_http import PinnedAsyncNetworkBackend as _PinnedAsyncNetworkBackend
-from app.core.pinned_http import PinnedHTTPTransport as _PinnedHTTPTransport  # noqa: F401
+_TRANSIENT_HTTPX = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
 
 
 def _looks_like_html(text: str) -> bool:
@@ -76,36 +70,34 @@ async def _http_get_one(db, user_id, url: str, max_chars: int):
         return {"error": "非法 url"}
     if _ALLOW_HOSTS and p.hostname not in _ALLOW_HOSTS:
         return {"error": "该地址不允许访问（仅放行公网地址）"}
-    pinned_ip, resolve_error = resolve_pinned_ip(url)
-    if not pinned_ip:
-        return {"error": resolve_error or "该地址不允许访问（仅放行公网地址）"}
     r = None
     for i in range(len(_HTTP_GET_RETRY_BACKOFF) + 1):
         try:
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(15.0),
-                follow_redirects=False,
-                transport=_PinnedHTTPTransport(pinned_ip),
-            ) as c:
-                async with c.stream("GET", url, headers={"User-Agent": "curl/8"}) as response:
-                    chunks: list[bytes] = []
-                    total = 0
-                    async for chunk in response.aiter_bytes():
-                        remaining = _MAX_DOWNLOAD_BYTES - total
-                        if len(chunk) > remaining:
-                            chunks.append(chunk[:remaining])
-                            total = _MAX_DOWNLOAD_BYTES + 1
-                            break
-                        chunks.append(chunk)
-                        total += len(chunk)
-                    if total > _MAX_DOWNLOAD_BYTES:
-                        return {"error": f"响应内容过大，已停止读取（上限 {_MAX_DOWNLOAD_BYTES // 1024 // 1024}MB）"}
-                    r = (response.status_code, response.headers, b"".join(chunks), response.encoding)
+            async with SafeEgressClient().stream(
+                url, timeout=15.0, headers={"User-Agent": "curl/8"},
+            ) as response:
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    remaining = _MAX_DOWNLOAD_BYTES - total
+                    if len(chunk) > remaining:
+                        chunks.append(chunk[:remaining])
+                        total = _MAX_DOWNLOAD_BYTES + 1
+                        break
+                    chunks.append(chunk)
+                    total += len(chunk)
+                if total > _MAX_DOWNLOAD_BYTES:
+                    return {"error": f"响应内容过大，已停止读取（上限 {_MAX_DOWNLOAD_BYTES // 1024 // 1024}MB）"}
+                r = (response.status_code, response.headers, b"".join(chunks), response.encoding)
             break
+        except SafeEgressError as e:
+            return {"error": e.message}
         except _TRANSIENT_HTTPX as e:
             if i >= len(_HTTP_GET_RETRY_BACKOFF):
                 diag_log("agent.tools.web.http_get", e)   # 原始 → 受限诊断出口
                 _log.warning("http_get 重试 %d 次后仍失败：%s", i, type(e).__name__)
+                if isinstance(e, httpx.ProxyError):
+                    return {"error": "代理隧道失败，未回退为直连请求"}
                 return {"error": f"请求失败：{type(e).__name__}（已重试仍超时/连接失败）"}
             await asyncio.sleep(_HTTP_GET_RETRY_BACKOFF[i])
         except Exception as e:
@@ -228,37 +220,34 @@ async def _download_to_spool(url: str, *, max_bytes: int | None = None) -> tuple
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return {"error": "非法 url"}
-    pinned_ip, resolve_error = resolve_pinned_ip(url)
-    if not pinned_ip:
-        return {"error": resolve_error or "该地址不允许访问"}
-
     for i in range(len(_HTTP_GET_RETRY_BACKOFF) + 1):
         try:
-            async with httpx.AsyncClient(
+            async with SafeEgressClient().stream(
+                url,
                 timeout=httpx.Timeout(30.0),
-                follow_redirects=False,
-                transport=_PinnedHTTPTransport(pinned_ip),
-            ) as client:
-                async with client.stream("GET", url, headers={"User-Agent": "Gugu-web/1.0"}) as response:
-                    length = response.headers.get("content-length")
-                    if max_bytes is not None and length and length.isdigit() and int(length) > max_bytes:
-                        return {"error": "下载内容超过当前用户可用存储空间"}
-                    spool = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
-                    digest = hashlib.sha256()
-                    total = 0
-                    try:
-                        async for chunk in response.aiter_bytes():
-                            total += len(chunk)
-                            if max_bytes is not None and total > max_bytes:
-                                spool.close()
-                                return {"error": "下载内容超过当前用户可用存储空间"}
-                            digest.update(chunk)
-                            spool.write(chunk)
-                        spool.seek(0)
-                        return response.status_code, response.headers, spool, total, digest.hexdigest()
-                    except BaseException:
-                        spool.close()
-                        raise
+                headers={"User-Agent": "Gugu-web/1.0"},
+            ) as response:
+                length = response.headers.get("content-length")
+                if max_bytes is not None and length and length.isdigit() and int(length) > max_bytes:
+                    return {"error": "下载内容超过当前用户可用存储空间"}
+                spool = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+                digest = hashlib.sha256()
+                total = 0
+                try:
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if max_bytes is not None and total > max_bytes:
+                            spool.close()
+                            return {"error": "下载内容超过当前用户可用存储空间"}
+                        digest.update(chunk)
+                        spool.write(chunk)
+                    spool.seek(0)
+                    return response.status_code, response.headers, spool, total, digest.hexdigest()
+                except BaseException:
+                    spool.close()
+                    raise
+        except SafeEgressError as e:
+            return {"error": e.message}
         except _TRANSIENT_HTTPX as e:
             if i >= len(_HTTP_GET_RETRY_BACKOFF):
                 diag_log("agent.tools.web.web_download", e)
@@ -384,6 +373,7 @@ class WebSkill(BaseSkill):
                 ],
             },
             handler=_http_get,
+            parallel_safe=True,
         ),
         Tool(
             name="web_download",

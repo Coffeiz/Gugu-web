@@ -1,13 +1,13 @@
 {
   "name": "gugu-web",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
     "dev:admin": "vite --config vite.admin.config.js",
     "build": "vite build",
-    "build:verify": "npm run build && npm run test:css-glass && npm run test:ui-dialogs",
+    "build:verify": "vite build && node scripts/check-css-glass-regression.mjs && node scripts/check-ui-dialog-regression.mjs",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "typecheck:strict": "vue-tsc -p tsconfig.strict.json --noEmit",

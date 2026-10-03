@@ -118,11 +118,10 @@
                 <span class="preset-meta-item">out {{ p.max_tokens ?? 8000 }}</span>
                 <span class="preset-meta-item">ctx {{ p.context_tokens ?? 128000 }}</span>
                                 <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><Icon name="admin.brain" size="xs" />{{ t('agent.thinking') }}</span>
-                <span v-if="p.reasoning_persistence === 'summary'" class="preset-meta-item">{{ t('llmExtraUi.reasoningSummary') }}</span>
-                <span v-else-if="p.reasoning_persistence === 'continuation'" class="preset-meta-item">{{ t('llmExtraUi.reasoningContinuation') }}</span>
-                <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><Icon name="admin.eye" size="xs" />{{ t('agent.image') }}</span>
-                <span v-if="p.vision_video" class="preset-meta-item preset-meta-vision"><Icon name="admin.video" size="xs" />{{ t('agent.video') }}</span>
-                <span v-if="p.vision_audio" class="preset-meta-item preset-meta-vision"><Icon name="admin.microphone" size="xs" />{{ t('agent.audio') }}</span>
+                <span v-if="p.reasoning_persistence === 'continuation'" class="preset-meta-item">{{ t('llmExtraUi.reasoningContinuation') }}</span>
+                <span v-if="p.image" class="preset-meta-item preset-meta-media"><Icon name="admin.eye" size="xs" />{{ t('agent.image') }}</span>
+                <span v-if="p.video" class="preset-meta-item preset-meta-media"><Icon name="admin.video" size="xs" />{{ t('agent.video') }}</span>
+                <span v-if="p.audio" class="preset-meta-item preset-meta-media"><Icon name="admin.microphone" size="xs" />{{ t('agent.audio') }}</span>
                 <span class="preset-key" :title="typeof p.api_key === 'string' ? p.api_key : t('agent.unsetKey')">{{ typeof p.api_key === 'string' ? p.api_key : t('agent.unsetKey') }}</span>
               </div>
             </div>
@@ -134,7 +133,7 @@
               <button class="pca-btn" :class="{ 'pca-btn--testing': testingId === p.id }" @click="testPreset(p.id)">
                 {{ testingId === p.id ? t('agent.testing') : t('agent.test') }}
               </button>
-              <button class="pca-btn" :class="{ 'pca-btn--testing': probingId === p.id }" @click="probeVision(p.id)">
+              <button class="pca-btn" :class="{ 'pca-btn--testing': probingId === p.id }" @click="probeMedia(p.id)">
                 {{ probingId === p.id ? t('agent.probing') : t('agent.probe') }}
               </button>
               <button
@@ -171,10 +170,8 @@
         :saving="editSaving"
         :error="editError"
         :providers="PROVIDERS"
-        :api-formats="API_FORMATS"
-        :deepseek-efforts="DEEPSEEK_EFFORTS"
         :image-detail-levels="IMAGE_DETAIL_LEVELS"
-        :vision-dims="visionDims"
+        :media-dimensions="mediaDimensions"
         :capability-loading="capabilityProbeLoading"
         :capability-results="capabilityProbeResult"
         :model-loading="modelListLoading"
@@ -193,7 +190,7 @@
         @pick-api-format="pickApiFormat"
         @set-capability-override="setCapabilityOverride"
         @probe-capabilities="probeCapabilities"
-        @probe-vision="probeVision"
+        @probe-media="probeMedia"
       />
 
       <!-- ── 系统提示词 ── -->
@@ -216,6 +213,13 @@
         </div>
 
         <div class="behavior-grid">
+          <ParallelToolExecutionControl
+            :model-value="agentDraft.parallel_tool_execution_enabled"
+            :max-concurrency="agentDraft.parallel_tool_max_concurrency"
+            @update:model-value="agentDraft.parallel_tool_execution_enabled = $event; saveBehavior()"
+            @update:max-concurrency="agentDraft.parallel_tool_max_concurrency = $event; saveBehavior()"
+          />
+
           <div v-if="behaviorTab === 'runtime'" class="behavior-item">
             <div class="behavior-label">
               <span>{{ t('agent.conversationCompression') }}</span>
@@ -592,6 +596,7 @@ import SegmentedTabs from '@/components/common/controls/SegmentedTabs.vue'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
 import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
 import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.vue'
+import ParallelToolExecutionControl from './runtime-config/components/ParallelToolExecutionControl.vue'
 import SimilarImageConfig from './runtime-config/components/SimilarImageConfig.vue'
 import { useI18n } from 'vue-i18n'
 import { MODEL_PROVIDERS } from '@/utils/modelProviders'
@@ -627,7 +632,6 @@ const sandboxRuntimeEnabled = ref(false)
 const mcpSaving = ref(false)
 const mcpSaved = ref(false)
 const mcpError = ref('')
-
 const tabs = computed(() => [
   { key: 'llm',      label: t('agent.llm') },
   { key: 'permissions', label: t('agent.permissions') },
@@ -668,27 +672,14 @@ const PROVIDERS = computed(() => [
   ...MODEL_PROVIDERS.map(provider => ({ key: provider.value, label: t(provider.labelKey), base_url: provider.base_url, model: provider.model })),
 ])
 
-// OpenAI-compatible provider 可显式选择 Chat Completions / Responses；MiMo 另外保留 Anthropic。
-const API_FORMATS = computed(() => [
-  { key: 'openai',    label: t('adminAgentUi.formatOpenai') },
-  { key: 'responses', label: t('adminAgentUi.formatResponses') },
-  { key: 'anthropic', label: t('adminAgentUi.formatAnthropic') },
-])
-
 const capabilityProbeLoading = ref(false)
 const capabilityProbeResult = ref<Record<string, { status?: string; detail?: string }>>({})
 
-// 多模态三维度：图片→vision，视频→vision_video，音频→vision_audio
-const visionDims = computed(() => [
+// 多模态三维度：image、video、audio
+const mediaDimensions = computed(() => [
   { key: 'image', label: t('agent.image'), hint: t('adminAgentUi.imageHint') },
   { key: 'video', label: t('agent.video'), hint: t('adminAgentUi.videoHint') },
   { key: 'audio', label: t('agent.audio'), hint: t('adminAgentUi.audioHint') },
-])
-const DEEPSEEK_EFFORTS = computed(() => [
-  { key: '', label: t('adminAgentUi.defaultOption') },
-  { key: 'low', label: t('adminAgentUi.low') },
-  { key: 'high', label: t('adminAgentUi.high') },
-  { key: 'max', label: t('adminAgentUi.maximum') },
 ])
 const IMAGE_DETAIL_LEVELS = computed(() => [
   { key: 'auto', label: t('adminAgentUi.auto') },
@@ -719,10 +710,10 @@ interface LlmPresetDraft extends Partial<LlmPresetRecord> {
   max_tokens: number
   context_tokens: number
   thinking: string
-  reasoning_persistence: 'off' | 'summary' | 'continuation'
-  vision: boolean
-  vision_video: boolean
-  vision_audio: boolean
+  reasoning_persistence: 'off' | 'continuation'
+  image: boolean
+  video: boolean
+  audio: boolean
   capability_overrides: Record<string, boolean>
 }
 const editTarget   = ref<LlmPresetDraft | null>(null)
@@ -759,7 +750,7 @@ async function togglePool(p: LlmPresetRecord) {
 function openNewPreset() {
   editClosing.value = false
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, context_tokens: 128000, thinking: 'disabled', reasoning_effort: '', reasoning_persistence: 'off', vision: false, vision_detail: 'auto', vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS.value[0].base_url, model: PROVIDERS.value[0].model, max_tokens: 8000, context_tokens: 128000, thinking: '', reasoning_effort: '', reasoning_persistence: 'off', image: false, image_detail: 'auto', video: false, audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -770,7 +761,7 @@ function openNewPreset() {
 function openEditPreset(p: LlmPresetRecord) {
   editClosing.value = false
   editIsNew.value  = false
-  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 8000, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'summary' || p.reasoning_persistence === 'continuation' ? p.reasoning_persistence : 'off', vision_detail: p.vision_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
+  editTarget.value = { ...p, api_key: '', max_tokens: p.max_tokens ?? 8000, context_tokens: p.context_tokens ?? 128000, reasoning_persistence: p.reasoning_persistence === 'continuation' ? 'continuation' : 'off', image_detail: p.image_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} } as unknown as LlmPresetDraft
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -974,7 +965,7 @@ async function savePreset() {
 
 // 多模态探测：发极小媒体给该预设模型，按响应判定是否支持对应维度，结论自动写回。
 // 卡片按钮不传 dim → 依次测图片/视频/音频三维度；弹窗内按钮传 dim → 只测单维度。
-async function probeVision(id: string | number | undefined, dim?: string) {
+async function probeMedia(id: string | number | undefined, dim?: string) {
   const target = editTarget.value
   if (dim && !target) return
   if (dim) {
@@ -985,8 +976,8 @@ async function probeVision(id: string | number | undefined, dim?: string) {
   try {
     const isDraft = Boolean(dim && !id && target)
     const url = isDraft
-      ? `/api/v1/admin/agent/llm-presets/probe-vision-preview?dim=${dim}`
-      : `/api/v1/admin/agent/llm-presets/${id}/probe-vision` + (dim ? `?dim=${dim}` : '')
+      ? `/api/v1/admin/agent/llm-presets/probe-media-preview?dim=${dim}`
+      : `/api/v1/admin/agent/llm-presets/${id}/probe-media` + (dim ? `?dim=${dim}` : '')
     const res = await adminStore.authFetch(url, {
       method: 'POST',
       ...(isDraft ? {
@@ -1003,24 +994,23 @@ async function probeVision(id: string | number | undefined, dim?: string) {
     const data = await res.json()
     if (dim) {
       // 单维度（弹窗内）
-      const label = visionDims.value.find(d => d.key === dim)?.label || dim
+      const label = mediaDimensions.value.find(d => d.key === dim)?.label || dim
       if (data.supported === true)       showMsg(t('adminAgentUi.dimensionSupported', { label }), false, true)
       else if (data.supported === false) showMsg(t('adminAgentUi.dimensionUnsupported', { label, detail: data.detail }), true)
       else                               showMsg(t('adminAgentUi.dimensionUnknown', { label, detail: data.detail }), true)
       if (data.supported === true || data.supported === false) {
-        const field = dim === 'image' ? 'vision' : 'vision_' + dim
-        target![field] = data.supported
+        target![dim] = data.supported
       }
     } else {
       // 全维度（卡片）
       const results = data.results || {}
       const probeParts: LlmMessagePart[] = []
-      for (const d of visionDims.value) {
+      for (const d of mediaDimensions.value) {
         const r = results[d.key]
         if (!r) continue
         if (r.supported === true || r.supported === false) {
           const preset = presets.value.find(item => String(item.id) === String(id))
-          if (preset) preset[d.key === 'image' ? 'vision' : `vision_${d.key}`] = r.supported
+          if (preset) preset[d.key] = r.supported
         }
         probeParts.push({
           key: d.key,
@@ -1246,9 +1236,9 @@ function resetPermissions() {
 .preset-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; min-width: 0; }
 .preset-model { font-size: 12px; color: rgba(255,255,255,0.55); white-space: nowrap; }
 .preset-meta-item { font-size: 12px; color: rgba(255,255,255,0.35); white-space: nowrap; flex-shrink: 0; }
-.preset-meta-think, .preset-meta-vision { display: inline-flex; align-items: center; gap: 3px; }
+.preset-meta-think, .preset-meta-media { display: inline-flex; align-items: center; gap: 3px; }
 .preset-meta-think { color: rgba(149,144,196,0.85); background: rgba(149,144,196,0.1); padding: 1px 6px; border-radius: 4px; }
-.preset-meta-vision { color: rgba(122,184,200,0.95); background: rgba(122,184,200,0.12); padding: 1px 6px; border-radius: 4px; }
+.preset-meta-media { color: rgba(122,184,200,0.95); background: rgba(122,184,200,0.12); padding: 1px 6px; border-radius: 4px; }
 /* key 独占整行、过长截断带省略号（悬停看全文），不再撑破页面宽度 */
 .preset-key   { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 11px; color: rgba(255,255,255,0.28); font-family: var(--font-family-mono); }

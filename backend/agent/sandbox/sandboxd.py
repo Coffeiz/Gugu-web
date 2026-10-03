@@ -13,14 +13,18 @@ import struct
 import logging
 import uuid
 import json
+import subprocess
+import threading
 from pathlib import Path
 
 from app.core.config import get_settings
 
+from .bundle_runtime import EmbeddedBundleRuntime
 from .docker import DockerSandboxExecutor
 from .docker_runtime import (
     cleanup_orphan_pty_containers,
     docker_container_mount_source,
+    docker_environment,
     docker_network_available,
     docker_sandbox_readiness,
     probe_sandbox_runtime,
@@ -30,11 +34,20 @@ from .docker_runtime import (
 from .protocol import ExecuteRequest, encode_response
 
 logger = logging.getLogger("agent.sandbox.sandboxd")
+_EMBEDDED_EGRESS_INIT_SCRIPT = Path("/usr/local/bin/gugu-sandbox-egress-init.sh")
 
 
 def _resolve_host_data_root_once() -> None:
-    """sandboxd 启动时解析一次宿主机数据根，避免每次 Shell 重复探测。"""
-    settings = get_settings().sandbox
+    """启动时预解析宿主机数据根；embedded 执行器会再次校验目标挂载。"""
+    app_settings = get_settings()
+    settings = app_settings.sandbox
+    if getattr(settings, "manager_mode", "disabled") == "embedded":
+        # 内嵌 Rootless daemon 与 app 共享外层容器文件系统视图，bind source
+        # 应使用容器内授权路径；不得调用外层 daemon inspect，也不依赖宿主 socket。
+        settings.host_data_root = str(Path(app_settings.storage.local_path).resolve())
+        logger.info("sandboxd 使用内置 Rootless daemon 的容器内数据路径")
+        return
+
     configured = str(getattr(settings, "host_data_root", "") or "").strip()
     if configured.startswith("/") and not configured.startswith("//"):
         return
@@ -57,6 +70,11 @@ class SandboxdServer:
         # stdio MCP 是长驻连接，绝不能和一次性 execute 共用 4 个槽：
         # 否则几个长连接就能把普通沙盒执行饿死。独立配额 + 按用户上限。
         sandbox_settings = get_settings().sandbox
+        self._embedded_bundle_runtime = (
+            EmbeddedBundleRuntime()
+            if getattr(sandbox_settings, "manager_mode", "disabled") == "embedded"
+            else None
+        )
         self._stdio_slots = asyncio.Semaphore(max(1, int(sandbox_settings.stdio_max_sessions)))
         self._stdio_per_user_limit = max(1, int(sandbox_settings.stdio_max_sessions_per_user))
         self._stdio_counts: dict[str, int] = {}
@@ -64,6 +82,7 @@ class SandboxdServer:
         self._active: dict[str, str] = {}
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._active_lock = asyncio.Lock()
+        self._egress_init_lock = threading.Lock()
 
     def _validate_root(self, root: str) -> Path:
         path = Path(root).expanduser().resolve(strict=True)
@@ -73,11 +92,43 @@ class SandboxdServer:
             raise ValueError("sandboxd root 必须是目录")
         return path
 
+    def _probe_runtime(self, settings):
+        if self._embedded_bundle_runtime is None:
+            return probe_sandbox_runtime(settings)
+        return probe_sandbox_runtime(
+            settings,
+            embedded_bundle_runtime=self._embedded_bundle_runtime,
+        )
+
+    async def _runtime_readiness(self, settings):
+        runtime = await asyncio.to_thread(self._probe_runtime, settings)
+        ready, reason = await asyncio.to_thread(
+            docker_sandbox_readiness, settings, runtime_snapshot=runtime,
+        )
+        return runtime, ready, reason
+
     async def _require_runtime_ready(self) -> None:
         """在唯一持有 Docker socket 的进程内复核执行器与 Rootless 边界。"""
-        ready, reason = await asyncio.to_thread(docker_sandbox_readiness, get_settings().sandbox)
+        _runtime, ready, reason = await self._runtime_readiness(get_settings().sandbox)
         if not ready:
             raise ValueError(reason)
+
+    async def _status_response(self, settings) -> dict:
+        runtime, ready, reason = await self._runtime_readiness(settings)
+        return {
+            "type": "status",
+            "ready": ready,
+            "reason": reason,
+            "runtime": {
+                "installed": runtime.docker.installed,
+                "daemon_ready": runtime.docker.daemon_ready,
+                "rootless": runtime.docker.rootless,
+                "server_version": runtime.docker.server_version,
+                "message": runtime.docker.message,
+                "image_ready": runtime.image_ready,
+                "image_error": runtime.image_error,
+            },
+        }
 
     def _validate_egress_network(self) -> None:
         settings = get_settings().sandbox
@@ -88,8 +139,52 @@ class SandboxdServer:
         network_name = getattr(settings, "egress_network_name", "")
         if not valid_egress_network_name(network_name):
             raise ValueError("egress 网络名无效")
+        if getattr(settings, "manager_mode", "disabled") == "embedded":
+            self._initialize_embedded_egress(settings)
         if not docker_network_available(network_name):
             raise ValueError("受控 egress Docker 网络不存在")
+
+    def _initialize_embedded_egress(self, settings) -> None:
+        """按需初始化由内置管理器独占管理的受控网络与代理容器。"""
+        with self._egress_init_lock:
+            script = _EMBEDDED_EGRESS_INIT_SCRIPT
+            if not script.is_file():
+                # 开发环境直接运行仓库代码时使用同一脚本；发布镜像固定使用
+                # /usr/local/bin 副本，避免依赖任意工作目录。
+                script = Path(__file__).resolve().parents[2] / "scripts/runtime/sandbox_egress_init.sh"
+            if not script.is_file():
+                raise ValueError("内置 egress 初始化程序不可用")
+
+            env = docker_environment()
+            # embedded 管理器只能连接入口托管的内部 Rootless daemon。
+            env.setdefault("DOCKER_HOST", "unix:///run/user/1000/docker.sock")
+            env.update({
+                "GUGU_EGRESS_USE_CONFIG_FILE": "0",
+                "GUGU_EGRESS_CONFIG_FROM_CLIENT": "1",
+                "GUGU_EGRESS_PROXY_URL": settings.egress_proxy_url,
+                "GUGU_EGRESS_REQUIRE_LABELS": "1",
+                "GUGU_EGRESS_REQUIRE_LOCAL_IMAGE": "1",
+                "SANDBOX__NETWORK_PROFILE": "egress",
+                "SANDBOX__EGRESS_NETWORK_NAME": settings.egress_network_name,
+                "SQUID_CONF_PATH": os.environ.get("SQUID_CONF_PATH", "/opt/gugu/egress.conf"),
+            })
+            if self._embedded_bundle_runtime is None:
+                raise ValueError("内置 egress 镜像 bundle 未就绪")
+            manifest = self._embedded_bundle_runtime.load_verified_manifest()
+            proxy_image = manifest.image_for_role("egress-proxy")
+            if proxy_image.image_id is None:
+                raise ValueError("内置 egress 代理镜像 ID 未配置")
+            env["GUGU_EGRESS_PROXY_IMAGE"] = proxy_image.local_ref
+            try:
+                result = subprocess.run(
+                    [str(script)], stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env=env, timeout=120, check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise ValueError("内置 egress 代理初始化失败") from exc
+            if result.returncode != 0:
+                raise ValueError("内置 egress 代理初始化失败")
 
     @staticmethod
     def _validate_peer(writer: asyncio.StreamWriter) -> None:
@@ -116,24 +211,7 @@ class SandboxdServer:
                 raise ValueError("sandboxd operation 无效")
             operation = value.get("operation")
             if operation == "status":
-                settings = get_settings().sandbox
-                runtime = await asyncio.to_thread(probe_sandbox_runtime, settings)
-                ready, reason = await asyncio.to_thread(
-                    docker_sandbox_readiness, settings, runtime_snapshot=runtime,
-                )
-                response = {
-                    "type": "status",
-                    "ready": ready,
-                    "reason": reason,
-                    "runtime": {
-                        "installed": runtime.docker.installed,
-                        "daemon_ready": runtime.docker.daemon_ready,
-                        "rootless": runtime.docker.rootless,
-                        "server_version": runtime.docker.server_version,
-                        "message": runtime.docker.message,
-                        "image_ready": runtime.image_ready,
-                    },
-                }
+                response = await self._status_response(get_settings().sandbox)
             elif operation == "pty_open":
                 await self._require_runtime_ready()
                 await self._handle_pty(value, reader, writer)
@@ -183,7 +261,7 @@ class SandboxdServer:
                     project_read_only=request.project_read_only,
                 )
                 if request.network_profile == "egress":
-                    self._validate_egress_network()
+                    await asyncio.to_thread(self._validate_egress_network)
                 output_lock = asyncio.Lock()
 
                 async def emit_output(stream: str, data: str) -> None:
@@ -222,7 +300,7 @@ class SandboxdServer:
         }
 
     async def _handle_stdio(self, value: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        """在 Rootless Docker 内桥接一个长驻 MCP stdio server。"""
+        """在受控 Docker 沙盒内桥接一个长驻 MCP stdio server。"""
         root = self._validate_root(str(value.get("root") or ""))
         command = str(value.get("command") or "").strip()
         cwd = str(value.get("cwd") or ".")
@@ -313,13 +391,16 @@ class SandboxdServer:
         if not 20 <= cols <= 500 or not 5 <= rows <= 200:
             raise ValueError("sandboxd PTY 尺寸无效")
         settings = get_settings().sandbox
+        network_profile = str(value.get("network_profile") or "none")
+        if network_profile == "egress":
+            await asyncio.to_thread(self._validate_egress_network)
         executor = DockerSandboxExecutor(
             root, settings, personal_root=personal_root, project_root=project_root,
             personal_read_only=personal_read_only, project_read_only=project_read_only,
         )
         container_name = f"gugu-pty-{uuid.uuid4().hex}"
         handle = await executor.open_pty(
-            cwd=".", network_profile=str(value.get("network_profile") or "none"),
+            cwd=".", network_profile=network_profile,
             container_name=container_name,
         )
         await handle.resize(cols, rows)
@@ -377,12 +458,16 @@ class SandboxdServer:
 
     async def serve(self) -> None:
         await asyncio.to_thread(_resolve_host_data_root_once)
-        ready, reason = await asyncio.to_thread(docker_sandbox_readiness, get_settings().sandbox)
-        if not ready:
-            raise RuntimeError(f"sandboxd 启动被拒绝：{reason}")
-        cleaned = await asyncio.to_thread(cleanup_orphan_pty_containers)
-        if cleaned:
-            logger.info("sandboxd 已清理 %d 个遗留 PTY 容器", cleaned)
+        settings = get_settings().sandbox
+        _runtime, ready, reason = await self._runtime_readiness(settings)
+        if ready:
+            cleaned = await asyncio.to_thread(cleanup_orphan_pty_containers)
+            if cleaned:
+                logger.info("sandboxd 已清理 %d 个遗留 PTY 容器", cleaned)
+        else:
+            # 管理器持续提供状态查询；Docker 暂时不可用时 Web/数据库照常运行，
+            # Shell 请求由 _require_runtime_ready 拒绝，不退回本机执行。
+            logger.warning("sandboxd 已启动但执行器未就绪：%s", reason)
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self.socket_path.unlink()
@@ -395,7 +480,7 @@ class SandboxdServer:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Gugu Rootless Docker sandboxd")
+    parser = argparse.ArgumentParser(description="Gugu Docker sandboxd")
     parser.add_argument("--socket", required=True)
     parser.add_argument("--allowed-root", required=True)
     args = parser.parse_args()

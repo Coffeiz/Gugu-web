@@ -7,7 +7,7 @@ _resolve_* / 带归属校验的 handler。几乎所有按 id 操作的工具都�
 隔离层写得过严把自己人也挡了。
 
 新增领域/工具时：给它的 resolver 补一组 A→B 用例是**默认动作**（商用就绪评审
-P0-2 的 CI 红线，scripts/check_ownership.py 静态守卫 + 本文件动态验证成对出现）。
+P0-2 的 CI 红线，scripts/checks/check_ownership.py 静态守卫 + 本文件动态验证成对出现）。
 """
 import json
 import types
@@ -21,7 +21,7 @@ from app.models import (
 
 from agent.tools.files import _list_dir, _resolve_file, _resolve_key, _resolve_target
 from agent.tools.projects import _resolve_project, _update_project
-from agent.tools.calendar import _resolve_event, _remove_event_reminder
+from agent.tools.calendar import _resolve_event
 from agent.tools.clients import _resolve_client
 from agent.tools.scheduled_tasks import _resolve_task
 from agent.tools.conversations import _read_conversation
@@ -212,9 +212,20 @@ async def test_list_dir_resolves_slash_path(db, user_a):
 
 
 async def test_list_dir_path_ambiguous_segment_reports_candidates(db, user_a):
-    root = await _mk(db, Folder(user_id=user_a.id, name="素材"))
-    await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="图"))
-    await _mk(db, Folder(user_id=user_a.id, parent_id=root.id, name="图"))
+    # 活动目录在同一作用域内由唯一索引保证不重名；歧义只可能来自多个
+    # 可见作用域。省略 workspace scope 时，同名根目录必须要求模型用 ID 消歧。
+    workspace_a = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="工作区 A", directory_name="workspace-a",
+    ))
+    workspace_b = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="工作区 B", directory_name="workspace-b",
+    ))
+    await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=workspace_a.id, name="素材",
+    ))
+    await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=workspace_b.id, name="素材",
+    ))
 
     miss = json.loads(await _list_dir(db, user_a.id, {"folder": "素材/图"}))
     assert "多个同名文件夹" in miss["error"]
@@ -316,13 +327,6 @@ async def test_event_resolve_owner_ok(db, user_b):
     e = await _mk(db, CalendarEvent(user_id=user_b.id, title="我的活动", date="2026-07-02"))
     got, err = await _resolve_event(db, user_b.id, {"event_id": e.id})
     assert err is None and got.id == e.id
-
-
-async def test_remove_event_reminder_cross_user(db, user_a, user_b):
-    t = await _mk(db, ScheduledTask(user_id=user_b.id, event_id=1, name="B的提醒", cron="0 9 * * *"))
-    res = await _remove_event_reminder(db, user_a.id, {"reminder_id": t.id})
-    assert _is_err(res)
-    assert await db.get(ScheduledTask, t.id) is not None   # B 的提醒必须还在
 
 
 # ── clients ───────────────────────────────────────────────────────────────────

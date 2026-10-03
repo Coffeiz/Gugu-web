@@ -483,17 +483,18 @@ def test_llm_runner_accepts_dynamic_capability_context_without_changing_default_
 
 
 def test_loaded_skill_is_detected_from_history_and_can_be_reloaded_after_compaction():
+    from agent.context.assembly import MessageArea
     digest = skill_content_digest("weather")
-    messages = [{
+    messages = MessageArea.from_canonical_messages([{
         "role": "tool",
         "content": '{"skill":"weather","content":"天气技能正文","_capability_usage":{"kind":"skill","slug":"weather","loaded":true,"content_digest":"%s"}}' % digest,
-    }]
+    }])
     assert _loaded_skill_slugs(messages) == {"weather": digest}
-    assert _loaded_skill_slugs([{
+    assert _loaded_skill_slugs(MessageArea.from_canonical_messages([{
         "role": "tool",
         "content": '{"_capability_usage":{"kind":"skill","slug":"weather","loaded":true}}',
-    }]) == {}
-    assert _loaded_skill_slugs([]) == {}
+    }])) == {}
+    assert _loaded_skill_slugs(MessageArea()) == {}
 
 
 @pytest.mark.anyio
@@ -562,7 +563,8 @@ def test_scheduled_tasks_skill_routes_calendar_reminders_to_event():
     content = load_skill("scheduled-tasks")
     assert content is not None
     assert "create_event" in content
-    assert "add_event_reminder" in content
+    assert "update_event" in content
+    assert "add_event_reminder" not in content
     assert "不要再调用 `create_scheduled_task`" in content
     assert "日历事件本身不会主动提醒" not in content
 

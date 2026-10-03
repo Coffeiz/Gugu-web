@@ -129,8 +129,12 @@ def _get_session_lock(session_id: int) -> asyncio.Lock:
 
 @asynccontextmanager
 async def session_shell_lock(session_id: int | None):
-    """串行化同一会话的工作区绑定和 Shell 执行。"""
+    """串行化普通调用的工作区绑定和 Shell 执行；并行 Round 由调度上限控制。"""
     if not session_id:
+        yield
+        return
+    from agent.tools.base import current_dispatch_is_parallel
+    if current_dispatch_is_parallel():
         yield
         return
     async with _get_session_lock(int(session_id)):
@@ -304,7 +308,7 @@ async def build_dynamic_prompt(
 ) -> str | None:
     """按本轮有效策略生成 Shell 状态提示。
 
-    这段文字只应追加到本轮 system prompt，不得进入 snapshot 或 canonical history。
+    这段文字仅放入本轮历史后的 reminder，不得进入顶层 system、snapshot 或持久化历史。
     ``evaluate`` 仍是唯一权限事实源；危险探针只用于分类和判权，从不交给执行器。
     未通过安全命令探测时返回 ``None``，调用方也不应注册 Shell 工具。
     """
@@ -340,6 +344,27 @@ async def build_dynamic_prompt(
         "- 复合命令：`&&`、`||`、`;`、`|` 可直接使用；重定向（`>` `>>`）和命令替换"
         "（`$(...)`、反引号）属于危险操作，必须确认后执行。",
     ]
+    lines.append('- 默认范围：省略 scope 时使用 sandbox 容器；开放系统范围不会自动切换执行环境。')
+    if subject_type != SUBJECT_SCHEDULED_TASK and settings.agent.shell_system_enabled:
+        system = await evaluate(
+            db, user_id, session_id, "pwd", session=session,
+            requested_scope=ShellScope.SYSTEM,
+            subject_type=subject_type, subject_id=subject_id,
+        )
+        if system.allowed:
+            confirmation = "仍需执行器确认" if system.needs_confirmation else "执行器仍会逐调用校验"
+            lines.append(
+                '- 系统范围：管理员与用户双侧已开放；用户明确要求检查系统环境时，'
+                f'显式传 scope="system"，{confirmation}。无需从沙盒逃逸，也不要用 /proc 或 nsenter 绕过隔离。'
+            )
+        else:
+            lines.append('- 系统范围：本轮策略未放行；不得从 sandbox 绕过隔离访问系统环境。')
+    else:
+        lines.append('- 系统范围：未开放或当前为定时任务；不得从 sandbox 绕过隔离。')
+    lines.append(
+        '- system 的含义：应用服务所在的本机执行环境；非容器部署通常是服务器，'
+        '容器部署仍是应用容器，不保证访问 Docker 宿主机，也不代表 root 权限；实际范围以工具回执为准。'
+    )
     cwd_mapping = await shell_cwd_mapping(
         db, user_id, session=session, workspace_id=workspace_id,
     )

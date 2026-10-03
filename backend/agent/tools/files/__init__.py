@@ -23,16 +23,14 @@ from .folders import (
 from .transfer import (
     _normalize_send_path, _stage_send_path, _send_file_from_url as _transfer_send_file_from_url,
     _send_file, _present_file, _list_recent_attachments, inspect_image_url,
-    _build_pinned_request, _url_is_safe, _SEND_URL_MAX_BYTES, _SEND_URL_IMAGE_EXT,
+    _SEND_URL_MAX_BYTES, _SEND_URL_IMAGE_EXT,
 )
 from .skill import FilesSkill
 
 
 async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True):
-    """兼容旧导入，并保留测试/调用方替换 files._build_pinned_request 的行为。"""
-    from . import transfer as file_transfer
-    file_transfer._build_pinned_request = _build_pinned_request
-    return await file_transfer._send_file_from_url(user_id, url, title, stage=stage)
+    """兼容旧导入路径。"""
+    return await _transfer_send_file_from_url(user_id, url, title, stage=stage)
 
 
 FilesSkill().register()

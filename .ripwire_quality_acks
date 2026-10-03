@@ -10,5 +10,6 @@ ack new-clone-of-reused-helper ebca564dee47f1a8 3 by=backend/agent/runtime/loops
 ack short-horizon-churn 5759313d2b3299a9 5 cid=4cd06c986beaec17 by=diff 本次是在当前 PR head 的近期实现上按审查意见补齐缺陷，短期重复修改是必要的 review follow-up
 ack short-horizon-churn 9be2759e6d6e3348 15 cid=241900b32650f86b by=diff 本次是在当前 PR head 的近期实现上按审查意见补齐缺陷，短期重复修改是必要的 review follow-up
 ack short-horizon-churn ceb2c930a962d819 8 cid=4b0f7cca7f14f741 by=diff 本次是在当前 PR head 的近期实现上按审查意见补齐缺陷，短期重复修改是必要的 review follow-up
+ack short-horizon-churn d7d5ac4f9538a6a4 9 cid=2effacccb1a1ecf3 by=backend/agent/sandbox/docker_runtime.py,backend/app/api/v1/sandbox_admin.py,backend/app/core/config.py,backend/tests/test_docker_runtime.py,backend/tests/test_embedded_deps_contract.py,backend/tests/test_unified_image_sandbox_boundary.py DEPLOY2-008拓扑收敛后更新为最终开发、一体化和分体Compose契约；这是本阶段最后一次调整该断言
 ack short-horizon-churn dae860e116ec1837 8 cid=4180be0a4189e6cd by=diff 本次是在当前 PR head 的近期实现上按审查意见补齐缺陷，短期重复修改是必要的 review follow-up
 ack short-horizon-churn f1c16294abd25751 12 cid=0d6605796f7261f1 by=diff 本次是在当前 PR head 的近期实现上按审查意见补齐缺陷，短期重复修改是必要的 review follow-up

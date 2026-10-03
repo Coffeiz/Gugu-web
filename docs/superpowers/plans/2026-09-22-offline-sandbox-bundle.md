@@ -47,7 +47,7 @@
 ### Task 2: 修改 sandbox 初始化的在线/离线分流
 
 **Files:**
-- Modify: `backend/scripts/sandbox_rootless_init.sh`
+- Modify: `backend/scripts/runtime/sandbox_rootless_init.sh`
 - Test: `backend/tests/test_sandbox_image_signature.py`
 
 **Interfaces:**

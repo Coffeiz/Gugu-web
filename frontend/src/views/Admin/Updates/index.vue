@@ -26,7 +26,7 @@
       :current-version="currentVersion"
       :candidate="candidate"
       :has-update="hasUpdate"
-      :check-result="checkResult?.has_update ?? null"
+      :check-result="checkResult"
       :preflight="preflight"
       :checking="checking"
       :loading="loading"
@@ -73,7 +73,7 @@ async function confirmAndStartUpdate() {
   if (!target || !preflight.value?.challenge) return
   const confirmed = await confirmDialog({
     title: t('adminUpdateUi.confirmUpdateTitle'),
-    message: `${t('adminUpdateUi.confirmUpdateMessage', { current: currentVersion.value || t('adminUpdateUi.currentUnknown'), target })}\n\n${t('adminUpdateUi.migrationWarning')}`,
+    message: `${t(status.value?.mode === 'standalone_app_bundle' ? 'adminUpdateUi.confirmAppBundleMessage' : 'adminUpdateUi.confirmUpdateMessage', { current: currentVersion.value || t('adminUpdateUi.currentUnknown'), target })}\n\n${t('adminUpdateUi.migrationWarning')}`,
     tone: 'warning',
     confirmText: t('adminUpdateUi.beginUpdate'),
   })

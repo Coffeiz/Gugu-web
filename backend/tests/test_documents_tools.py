@@ -107,14 +107,14 @@ async def test_read_file_image_and_media_branches(db, user_a, storage, monkeypat
 
     png = await _mk_file(db, user_a, storage, name="图.png", content="\x89PNG",
                          mime_type="image/png")
-    monkeypatch.setattr(chat_attach, "vision_ready", lambda *a: False)
+    monkeypatch.setattr(chat_attach, "image_ready", lambda *a: False)
     no_vision = json.loads(await documents._read_file(db, user_a.id, {"file_id": png.id}))
     assert "无法识别图像内容" in no_vision["error"]
 
-    monkeypatch.setattr(chat_attach, "vision_ready", lambda *a: True)
-    monkeypatch.setattr(chat_attach, "vision_block", lambda data, ext: {"type": "image"})
+    monkeypatch.setattr(chat_attach, "image_ready", lambda *a: True)
+    monkeypatch.setattr(chat_attach, "image_block", lambda data, ext: {"type": "image"})
     block = await documents._read_file(db, user_a.id, {"file_id": png.id})
-    assert block["_vision_image"] == {"type": "image"} and "已打开图片" in block["note"]
+    assert block["_image_block"] == {"type": "image"} and "已打开图片" in block["note"]
 
     async def fake_read_media(f, **kwargs):
         return {"media": f.id}

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from agent.context.assembly import MessageArea
 import pytest
 
 from agent.context import reflection_snapshot as rs
@@ -31,7 +32,10 @@ def _capture(session_id=7, run_id="run-x") -> None:
     capture_reflection_snapshot(
         user_id="u1", session_id=session_id, run_id=run_id, ai=_ai(),
         system_prompt="主会话SYS", tools=({"name": "list_dir"},),
-        messages=[{"role": "user", "content": "问题"}, {"role": "assistant", "content": "回答"}],
+        messages=MessageArea.from_canonical_messages([
+            {"role": "user", "content": "问题"},
+            {"role": "assistant", "content": "回答"},
+        ]),
         reply_text="最终回复",
     )
 

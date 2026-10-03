@@ -8,11 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from agent.context import audit, compress_conv, assembly
+from agent.context import audit, compress_conv, assembly, session_history
 from agent.context import dynamic_tail, session_snapshot
 from agent.context.history import build_history_parts
 from agent.context.references import prepend_reference_context
-from agent.security import sanitize
 from app.core.chat_attach import build_user_content
 
 
@@ -20,13 +19,9 @@ from app.core.chat_attach import build_user_content
 class PreparedRun:
     """供 LLMRunner 消费的已组装上下文。"""
 
-    use_anthropic: bool
-    anthr_messages: Any
-    anthr_initial_len: int
-    oa_messages: Any
-    oa_initial_len: int
     rag_context: dict
     stance_to_persist: str | None
+    message_area: Any
 
 
 def _history_stance_digest(history: list) -> str | None:
@@ -86,6 +81,13 @@ def _effective_history(history: list, user_message: Any = None,
     ]
 
 
+def _bind_persisted_user_message(batch, user_message: Any, resume_interaction: bool) -> None:
+    if user_message is not None and not resume_interaction:
+        batch.update_area_entry(
+            "current_user", persisted_message_id=getattr(user_message, "id", None),
+        )
+
+
 async def prepare_run(
     *,
     system_prompt: str,
@@ -121,13 +123,25 @@ async def prepare_run(
     effective_history = _effective_history(
         history, user_message=user_message, resume_interaction=resume_interaction,
     )
+    restored_area = session_history.restore_canonical_area(effective_history)
+    from agent import providers
+    render_options = {
+        "api_format": providers.adapter_for(model_cfg).protocol_format(model_cfg),
+        "request": req,
+        "user_tz": user_tz,
+        "strip_thinking": strip_thinking,
+    }
     current_message_id = (
         getattr(user_message, "id", None)
         if user_message is not None and not resume_interaction else None
     )
-    history_parts = build_history_parts(
+    from agent.context.retention import protected_message_ids
+    prior_run_message_ids = protected_message_ids(effective_history)
+    history_parts, prior_run_parts_start = build_history_parts(
         effective_history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking,
+        protected_message_ids=prior_run_message_ids,
+        return_protected_start=True,
     )
     message_time = None
     if user_message is not None and not resume_interaction:
@@ -164,7 +178,7 @@ async def prepare_run(
         "content": prepend_reference_context(
             build_user_content(
                 current_text, images, use_anthropic, media=media,
-                image_detail=getattr(model_cfg, "vision_detail", "auto"),
+                image_detail=getattr(model_cfg, "image_detail", "auto"),
             ),
             getattr(req, "reference_context", None),
         ),
@@ -175,8 +189,13 @@ async def prepare_run(
         assembled = assembly.assemble(
             fixed_parts=fixed_parts,
             history=history_parts,
-            system_text=system_prompt,
+            message_area=restored_area,
+            render_options=render_options,
         )
+        if prior_run_parts_start is not None:
+            assembled.protected_history_start = (
+                assembled.fixed_prefix_size + prior_run_parts_start
+            )
         turn_batch, current_stance_digest = assembly.assemble_turn(
             stance=stance_text,
             previous_stance_digest=previous_stance_digest,
@@ -185,40 +204,31 @@ async def prepare_run(
             conversation_tail=rag_context["tail"],
             extra_reminder=extra_reminder,
         )
+        _bind_persisted_user_message(turn_batch, user_message, resume_interaction)
         assembled.append_batch(turn_batch)
-        before = len(assembled.conversation)
-        fixed_boundary = assembled.fixed_prefix_size
-        merged_cross_segment = bool(
-            fixed_boundary > 0
-            and fixed_boundary < before
-            and assembled.conversation[fixed_boundary - 1].get("role")
-            == assembled.conversation[fixed_boundary].get("role")
-        )
-        clean = sanitize.sanitize_messages(assembled.conversation)
-        merged_cross_segment = merged_cross_segment and len(clean) < before
-        assembled.replace_conversation(clean)
         audit.context_layout_audit(
             phase="assembled", session=session, snapshot=snapshot,
-            history=effective_history, messages=assembled,
+            history=effective_history, messages=assembled.provider_projection(),
             fixed_prefix_count=assembled.fixed_prefix_size,
-            turn_batch_count=len(turn_batch.messages),
+            turn_batch_count=turn_batch.message_count,
             history_stats=history_stats,
-            sanitize_before_count=before,
-            sanitize_after_count=len(assembled.conversation),
-            merged_cross_segment=merged_cross_segment,
         )
         return PreparedRun(
-            use_anthropic=True, anthr_messages=assembled,
-            anthr_initial_len=len(assembled.conversation),
-            oa_messages=[], oa_initial_len=0, rag_context=rag_context,
+            rag_context=rag_context,
             stance_to_persist=stance_text if stance_changed else None,
+            message_area=assembled,
         )
 
     assembled = assembly.assemble(
         fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
         history=history_parts,
-        system_text=system_prompt,
+        message_area=restored_area,
+        render_options=render_options,
     )
+    if prior_run_parts_start is not None:
+        assembled.protected_history_start = (
+            assembled.fixed_prefix_size + prior_run_parts_start
+        )
     turn_batch, current_stance_digest = assembly.assemble_turn(
         stance=stance_text,
         previous_stance_digest=previous_stance_digest,
@@ -227,18 +237,17 @@ async def prepare_run(
         conversation_tail=rag_context["tail"],
         extra_reminder=extra_reminder,
     )
+    _bind_persisted_user_message(turn_batch, user_message, resume_interaction)
     assembled.append_batch(turn_batch)
     audit.context_layout_audit(
         phase="assembled", session=session, snapshot=snapshot,
-        history=effective_history, messages=assembled,
+        history=effective_history, messages=assembled.provider_projection(),
         fixed_prefix_count=getattr(assembled, "fixed_prefix_size", None),
-        turn_batch_count=len(turn_batch.messages),
+        turn_batch_count=turn_batch.message_count,
         history_stats=history_stats,
     )
     return PreparedRun(
-        use_anthropic=False, anthr_messages=[], anthr_initial_len=0,
-        oa_messages=assembled,
-        oa_initial_len=len(assembled.conversation),
         rag_context=rag_context,
         stance_to_persist=stance_text if stance_changed else None,
+        message_area=assembled,
     )

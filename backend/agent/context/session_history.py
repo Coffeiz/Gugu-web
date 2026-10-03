@@ -112,6 +112,13 @@ async def load_session_history(
     return summary + history
 
 
+def restore_canonical_area(history):
+    """把已完成 baseline/window/hydration 的数据库行恢复为 MessageArea。"""
+    from .message_area_repository import restore_entries
+
+    return restore_entries(history)
+
+
 def consume_history_stats() -> dict[str, Any] | None:
     """取出当前任务最近一次历史窗口统计，不携带正文。"""
     stats = _last_history_stats.get()

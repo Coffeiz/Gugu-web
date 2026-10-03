@@ -33,6 +33,12 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 - 工具不可用时，优先在工具注册/调用前阻断并返回结构化结果；不要依赖模型读取提示词自行判断权限，也不要通过 prompt 让模型自行切换、扩大或回落权限。
 - 修改工具、Skill 或上下文组装时，必须检查是否新增了权限语义注入；发现重复权限提示词应删除，而不是继续叠加文案。
 
+### 明确例外：系统范围 Shell 环境说明
+
+- 系统范围 Shell 是管理员与用户双侧明确开启的高信任能力，允许由 `agent.security.shell_policy` 的实时策略结果生成本轮环境与范围说明。此例外仅用于现有 Shell 状态说明，不扩展到其他工具、Skill 或 RAG。
+- 说明必须区分默认 `sandbox` 与显式 `scope="system"`，不得把允许使用解释为已经切换环境。system 指应用服务所在环境；容器部署不等于宿主机，且不意味着 root 权限。
+- 动态状态通过本轮历史后的 reminder 注入，不写入顶层 system、冻结 snapshot 或持久化历史；不得把提示词当作授权凭据。执行器逐调用校验、权限撤销、定时任务隔离与确认门保持有效。
+
 ## 本地验证
 
 - 本地编辑后通过 Mutagen session `gugu-web` 同步到 devserver。
@@ -56,6 +62,10 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 **实现位置**：`backend/agent/runner.py` 组装段 + `backend/agent/context/builder.py` 的 `build_split()`。
 
+2026-10-03：Web、IM、定时任务的本轮 Shell 状态统一使用 `extra_reminder`，不再追加到顶层 system；稳定 Shell 协议仍按工具是否可用进入 system，因此工具可用性变化仍可能改变前缀。此改动不保证 provider 缓存命中率，需用真实用量另行验证。
+
+2026-10-03：反思快照复用 Area 的不可变 ProviderConversation，包含冻结 `request_prefix`，排除 dynamic tail；压缩与反思不得把已投影的 wire 消息转成裸列表再走 canonical renderer。持久历史重建不承诺命中率。缓存探针的资格估算与指纹必须基于完整前缀，不得使用 trace 展示裁剪后的内容。合成 MiniMax-M3 三组 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-10-03.md`。
+
 owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同一进程内执行；worker 仅在短 TTL 协调标记过期后作为进程退出时的接管路径。压缩复用快照前缀必须逐条验证模型身份、持久化行边界和消息序列，不能精确对齐时安全回退到数据库重建路径。完整快照不得写入 Redis/数据库/日志；该路径改善前缀一致性，但不承诺特定 provider 的缓存命中率。
 
 反思前的 90% 判定遵循上述统一口径：同进程主请求快照携带的最近一轮 provider `context_input` 优先；没有有效实际用量时才估算。压缩前缀允许纯文本字符串与单个 text block 等价，工具块和其他结构必须严格对齐；对齐成功后发送原始主请求前缀。2026-09-26 的合成 MiniMax-M3 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-09-26.md`。
@@ -73,8 +83,8 @@ owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同�
 ```bash
 cd backend
 PYTHONPATH=. .venv/bin/pytest -q                    # 单元测试
-python scripts/check_ownership.py                    # 归属校验
-python scripts/check_confirm_gate.py                 # 确认门校验
+python scripts/checks/check_ownership.py             # 归属校验
+python scripts/checks/check_confirm_gate.py          # 确认门校验
 python -m compileall -q app agent                    # 语法检查
 ```
 

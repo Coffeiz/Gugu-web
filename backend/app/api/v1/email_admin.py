@@ -211,28 +211,15 @@ async def recipient_count(db: AsyncSession = Depends(get_db)):
 
 
 async def _translate_with_model(draft: EmailDraft, target_locales: list[LocaleName]) -> dict[str, LocalizedEmailContent]:
-    from agent import providers
-    from agent.llm.llm_select import use_anthropic_for
-    import httpx
+    from agent.providers.standalone import complete_text
 
     settings = get_settings()
     ai = settings.ai
     source = json.dumps(_draft_kwargs(draft), ensure_ascii=False)
-    adapter = providers.adapter_for(ai)
-    timeout = httpx.Timeout(30.0)
     source_content = LocalizedEmailContent.model_validate(_draft_kwargs(draft))
 
     async def complete(request_prompt: str) -> str:
-        if use_anthropic_for(ai):
-            client = providers.build_anthropic_client(ai, timeout)
-            response = await client.messages.create(model=ai.model, max_tokens=5000,
-                messages=[{"role": "user", "content": request_prompt}], **adapter.build_anthropic_thinking_params(ai))
-            return "".join(getattr(block, "text", "") for block in response.content if getattr(block, "type", "") == "text")
-
-        client = providers.build_openai_client(ai, timeout)
-        response = await client.chat.completions.create(model=ai.model, max_tokens=5000,
-            messages=[{"role": "user", "content": request_prompt}], **adapter.build_openai_thinking_kwargs(ai))
-        return response.choices[0].message.content or ""
+        return await complete_text(ai, request_prompt, max_tokens=5000)
 
     translations: dict[str, LocalizedEmailContent] = {}
     for locale in target_locales:

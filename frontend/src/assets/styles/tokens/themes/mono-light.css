@@ -8,7 +8,7 @@
   --theme-content-primary: #29262e; --theme-content-secondary: #6f6975; --theme-content-tertiary: #99929f; --theme-content-disabled: #b9b3bd; --theme-content-inverse: #fff;
   --theme-border-hairline: rgba(42,35,49,.055); --theme-border-subtle: rgba(42,35,49,.08); --theme-border-default: rgba(42,35,49,.115); --theme-border-strong: rgba(42,35,49,.15); --theme-border-hover: rgba(42,35,49,.22);
   --theme-highlight-rest: rgba(255,255,255,.38); --theme-highlight-side: rgba(255,255,255,.20); --theme-highlight-hover: rgba(255,255,255,.48); --theme-highlight-hover-side: rgba(255,255,255,.28);
-  --theme-sidebar-active-border: rgba(112,103,165,.10); --theme-sidebar-active-highlight: transparent;
+  --theme-sidebar-active-border: var(--action-outline); --theme-sidebar-active-highlight: transparent;
   --theme-shadow-1: 0 1px 2px rgba(40,34,47,.025),0 3px 10px rgba(40,34,47,.035);
   --theme-shadow-2: 0 2px 5px rgba(40,34,47,.035),0 8px 20px rgba(40,34,47,.055);
   --theme-shadow-3: 0 6px 18px rgba(40,34,47,.075),0 16px 38px rgba(40,34,47,.08);

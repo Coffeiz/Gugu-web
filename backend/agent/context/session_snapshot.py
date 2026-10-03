@@ -273,6 +273,8 @@ def initialize_snapshot(
             "stance_digest",
             # 用户 Skill 目录随会话固定；正文由 use_skill 显式按需读取最新版本。
             "user_skill_snapshot",
+            # Provider 缓存只跨 run 保存稳定锚点指纹，不保存消息正文。
+            "provider_cache_anchor",
         )
         if key in previous_context
     }

@@ -46,7 +46,7 @@ def isolated_storage(tmp_path, monkeypatch):
 async def test_review_patterns_maps_each_batch_back_to_stable_pattern_id(isolated_storage, monkeypatch):
     """不同批次都返回局部索引时，必须删除各批自己的第一个 ID。"""
     from agent.memory import store as memory_store
-    import scripts.refresh_memory as refresh_memory
+    import scripts.maintenance.refresh_memory as refresh_memory
 
     user_id = "019fc2e0-5d71-7b35-8e86-09109553b064"
     patterns = [

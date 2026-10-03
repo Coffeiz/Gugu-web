@@ -30,7 +30,7 @@
 
 | 对象 | 是否能被放入画布 | 说明 |
 |---|---:|---|
-| `note` 普通时间流笔记 | 否 | 继续由现有 `MindSkill` 管理 |
+| `note` 普通时间流笔记 | 否 | 继续由现有 `NoteSkill` 管理 |
 | `canvas_note` 画布便签 | 创建时直接位于画布 | 不进入时间流 |
 | 项目引用 | 是 | 以 `ref` 节点放入 |
 | 文件引用 | 是 | 以 `ref` 节点放入 |
@@ -73,7 +73,7 @@
 - 节点关系创建和删除；
 - 项目、文件、活动引用节点创建。
 
-现有 `MindSkill` 已支持：
+现有 `NoteSkill` 已支持：
 
 - `note_search`；
 - `note_get`；
@@ -147,7 +147,7 @@
 
 ## 5. 工具设计
 
-建议新增独立的 `MindCanvasSkill`，而不是把全部画布动作塞进一个 `mind_canvas_action` 工具。每个工具职责单一，模型更容易选对，服务端也更容易做权限和确认。
+建议新增独立的 `CanvasSkill`，而不是把全部画布动作塞进一个 `mind_canvas_action` 工具。每个工具职责单一，模型更容易选对，服务端也更容易做权限和确认。
 
 ### 5.1 画布列表
 
@@ -556,7 +556,7 @@ request_id?: string
 
 ## 9. 提示词和调用规则
 
-`MindCanvasSkill` 的工具描述应明确：
+`CanvasSkill` 的工具描述应明确：
 
 - 用户说“画布”时先列出画布，不能猜画布 ID；
 - 用户指定名称时先搜索并确认唯一候选；
@@ -582,7 +582,7 @@ request_id?: string
 - [x] 确认 `canvas_note` 的删除和恢复语义；
 - [x] 确认画布 camera 的持久化字段；
 - [x] 确认群聊是否需要共享画布授权；
-- [x] 确认 `MindCanvasSkill` 与现有 `MindSkill` 的注册和提示词边界；
+- [x] 确认 `CanvasSkill` 与现有 `NoteSkill` 的注册和提示词边界；
 - [x] 设计 `request_id` 去重方案。
 
 ### Phase 1：只读工具
@@ -594,7 +594,7 @@ request_id?: string
 - [x] 返回 camera、viewport 和可见性摘要；
 - [x] 增加当前用户和跨用户隔离测试。
 
-Phase 1 实现位置：`backend/agent/tools/mind_canvas.py`，测试位置：`backend/tests/test_mind_canvas_tools.py`。普通 `note` 的排除、跨用户画布隔离、引用对象归属、视口 camera 返回和已有引用标记均有回归覆盖。
+Phase 1 实现位置：`backend/agent/tools/canvas.py`，测试位置：`backend/tests/test_mind_canvas_tools.py`。普通 `note` 的排除、跨用户画布隔离、引用对象归属、视口 camera 返回和已有引用标记均有回归覆盖。
 
 ### Phase 2：创建和放置
 
@@ -637,7 +637,7 @@ Phase 4 已完成。`canvas_batch` 只接受放置引用、更新布局和创建
 
 - [x] Agent 写入后画布自动刷新；
 - [x] 画布切换和 camera/viewport 状态验证；
-- [x] 更新 `MindSkill` / `MindCanvasSkill` 提示词；
+- [x] 更新 `NoteSkill` / `CanvasSkill` 提示词；
 - [x] 明确群聊工具权限：私人画布工具默认只对 owner 开放，不把私人画布暴露给群成员；共享画布留待授权模型完成后再开放；
 - [x] 完成后端测试、前端 typecheck 和工具注册校验；Playwright/人工验收列入接入后的发布门槛；
 - [x] 更新 [`思维面板/咕咕工具设计.md`](../思维面板/咕咕工具设计.md) 的实施状态。

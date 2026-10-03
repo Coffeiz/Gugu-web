@@ -170,6 +170,25 @@ async def test_dynamic_shell_prompt_reports_disabled_dangerous_state(monkeypatch
 
     assert prompt is not None
     assert "全部 Shell 命令：未开放" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admin_enabled,user_enabled", [(False, True), (True, False), (True, True)])
+async def test_system_environment_hint_requires_both_permission_gates(monkeypatch, admin_enabled, user_enabled):
+    """只在两侧放行后说明 system 调用方法，不改变省略 scope 的沙盒默认值。"""
+    db = _PolicyDB()
+    settings = _settings()
+    settings.agent.shell_system_enabled = admin_enabled
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true() if user_enabled else _false())
+    prompt = await shell_policy.build_dynamic_prompt(db, "user-1", 1, session=db.session)
+    default = await shell_policy.evaluate(db, "user-1", 1, "pwd", session=db.session)
+    system = await shell_policy.evaluate(db, "user-1", 1, "pwd", session=db.session, requested_scope="system")
+    assert default.scope is ShellScope.SANDBOX
+    assert system.allowed is (admin_enabled and user_enabled)
+    assert ('显式传 scope="system"' in prompt) is (admin_enabled and user_enabled)
+    assert "容器部署仍是应用容器" in prompt
     assert "不要向用户索要确认后继续" in prompt
     assert "自动模式：未开启" in prompt
 
@@ -409,12 +428,33 @@ async def test_run_shell_returns_structured_failure_when_sandboxd_is_unavailable
     monkeypatch.setattr(shell_tool, "get_settings", lambda: settings)
     monkeypatch.setattr(shell_tool, "sandbox_readiness", lambda *_: (True, ""))
     monkeypatch.setattr(shell_tool, "resolve_shell_root", _resolve_shell_root)
+    monkeypatch.setattr(
+        shell_tool,
+        "LocalWorkspaceExecutor",
+        lambda *_args, **_kwargs: pytest.fail("sandbox 模式不得回退到本机执行器"),
+    )
 
     result = await shell_tool._run_shell(None, "user-1", {"command": "ls"})
 
     assert result["ok"] is False
     assert result["error"] == "sandboxd 未配置，未执行命令"
     assert result["exit_code"] is None
+
+    monkeypatch.setattr(
+        shell_tool,
+        "SandboxdClient",
+        lambda *_args, **_kwargs: pytest.fail("沙盒未就绪时不得调用管理器"),
+    )
+    for reason in ("Docker daemon 不可用", "内置沙盒 bundle image ID 校验失败"):
+        monkeypatch.setattr(
+            shell_tool,
+            "get_settings",
+            lambda: SimpleNamespace(sandbox=SimpleNamespace(sandboxd_socket="/run/gugu/sandboxd.sock")),
+        )
+        monkeypatch.setattr(shell_tool, "sandbox_readiness", lambda *_: (False, reason))
+        result = await shell_tool._run_shell(None, "user-1", {"command": "ls"})
+        assert result["error"] == reason
+        assert result["_audit_event"] == "denied"
 
 
 @pytest.mark.asyncio
@@ -714,6 +754,11 @@ async def test_full_user_sandbox_authorization_reaches_executor(monkeypatch):
     for authorization, expected in ((True, True), (False, False)):
         captured = []
         _patch_run_shell_harness(monkeypatch, _direct_runtime_settings(authorization=authorization), captured)
+        monkeypatch.setattr(
+            shell_tool,
+            "LocalWorkspaceExecutor",
+            lambda *_args, **_kwargs: pytest.fail("sandbox 客户端失败后不得回退到本机执行器"),
+        )
         result = await shell_tool._run_shell(_PolicyDB(), "user-1", {"command": "npm install"})
         assert captured == [expected]
         # 桩件在执行器入口抛 SandboxdUnavailable：调用确实到达执行器并以

@@ -71,7 +71,10 @@
     </section>
 
     <!-- 栏 2+3：阅读窗格与信息栏合并为同一块玻璃面板，中间只用内容色细分隔线 -->
-    <section class="ntp-detail" :class="{ empty: !selected }">
+    <section
+      class="ntp-detail"
+      :class="[selected?.color ? `tint-${selected.color}` : '', { empty: !selected }]"
+    >
       <div ref="readingRef" class="ntp-reading" :class="{ editing }">
         <template v-if="selected">
           <template v-if="!editing">
@@ -549,7 +552,10 @@ function onListScroll() {
 }
 .ntp-item:hover { transform: translateY(-1px); box-shadow: var(--elevation-card-hover); }
 .ntp-item:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
-.ntp-item.selected { border-color: color-mix(in srgb, var(--color-primary) 45%, transparent); }
+.ntp-item.selected {
+  border-color: var(--mind-note-border-selected);
+  box-shadow: var(--mind-note-shadow-selected);
+}
 /* 便签四色 tint 消费主题 token（tokens/components/mind.css 定义亮暗两套值）——
    不能像 NoteCard 旧底稿那样硬编码浅色 rgb，暗色下会变成浅底配浅字不可读 */
 .ntp-item.tint-amber { background: var(--note-paper-amber); }
@@ -610,12 +616,19 @@ function onListScroll() {
 .ntp-detail {
   flex: 1; min-width: 0; min-height: 0;
   display: grid; grid-template-columns: minmax(0, 1fr) 264px;
-  background: var(--glass-bg);
+  background: linear-gradient(var(--ntp-detail-note-tint), var(--ntp-detail-note-tint)), var(--glass-bg);
   border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
   box-shadow: var(--glass-shadow);
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   overflow: hidden;
+  --ntp-detail-note-tint: transparent;
+  --ntp-detail-note-paper: transparent;
 }
+.ntp-detail[class*="tint-"] { border-color: color-mix(in srgb, var(--glass-border) 90%, var(--ntp-detail-note-paper)); }
+.ntp-detail.tint-amber { --ntp-detail-note-paper: var(--note-paper-amber); --ntp-detail-note-tint: color-mix(in srgb, var(--note-paper-amber) 50%, transparent); }
+.ntp-detail.tint-coral { --ntp-detail-note-paper: var(--note-paper-coral); --ntp-detail-note-tint: color-mix(in srgb, var(--note-paper-coral) 50%, transparent); }
+.ntp-detail.tint-blue  { --ntp-detail-note-paper: var(--note-paper-blue);  --ntp-detail-note-tint: color-mix(in srgb, var(--note-paper-blue) 50%, transparent); }
+.ntp-detail.tint-teal  { --ntp-detail-note-paper: var(--note-paper-teal);  --ntp-detail-note-tint: color-mix(in srgb, var(--note-paper-teal) 50%, transparent); }
 .ntp-detail.empty { grid-template-columns: minmax(0, 1fr); }
 /* 只读态底部 16px = 编辑态 12px 窗格边距 + ne-toolbar 自带 4px 底 padding，
    两种模式的按钮底缘才在同一水平线上 */

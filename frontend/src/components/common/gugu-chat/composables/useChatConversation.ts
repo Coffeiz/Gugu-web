@@ -311,10 +311,6 @@ export function useChatConversation(options: {
 
   // streaming 跟随意图：只有用户主动上翻才取消，回到底部附近恢复。
   const stick = ref(true)
-  // 上次（多为程序化）滚动后的 scrollTop，用于判别用户上翻。做成 ref（不是 let）——
-  // enterExpanded/exitExpanded（窗口域）在强制滚到底时也要同步这个值，避免被
-  // onMsgScroll 误判成用户上翻，需要能从外部直接写。
-  const _lastTop = ref(0)
 
   // streaming 用即时滚动跟随，避免 smooth 叠加追不上。用虚拟列表的 scrollToIndex 而不是
   // 直接写 scrollTop——最后一条消息的高度可能还只是估算值（还没被 measureElement 量过），
@@ -323,7 +319,6 @@ export function useChatConversation(options: {
     const idx = messages.value.length - 1
     if (idx < 0) return
     options.messageListRef.value?.scrollToIndex(idx, { align: 'end', behavior: smooth ? 'smooth' : 'auto' })
-    _lastTop.value = messagesEl.value?.scrollTop ?? 0   // 记录落点：程序化滚动产生的 scroll 事件不会误判为上翻
   }
 
   // 用户上翻 → 停住；滚回接近底部 → 恢复跟随。messagesEl 是真实可滚动容器，scrollHeight
@@ -332,7 +327,6 @@ export function useChatConversation(options: {
     const el = messagesEl.value; if (!el) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
     stick.value = dist < 40
-    _lastTop.value = el.scrollTop
   }
 
   // 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
@@ -508,7 +502,7 @@ export function useChatConversation(options: {
     sessionId, ownerPlatformUserId, isGroupSession,
     sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
     currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
-    stick, lastTop: _lastTop,
+    stick,
     fetchSessions, loadSession, newSession, deleteSession, renameSession, resolveSpeaker,
     send, stopStreaming, resumeStream,
     pendingQueue, removeQueued, restorePendingQueueForDraft,

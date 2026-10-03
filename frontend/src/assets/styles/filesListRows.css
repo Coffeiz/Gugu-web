@@ -45,11 +45,10 @@
   border-radius: 9px; transition: background 0.12s; cursor: pointer;
 }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) > * { min-width: 0; }
-:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover:not(.selected):not(.pre-selected) { background: rgba(123,127,178,0.06); }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover:not(.selected):not(.pre-selected) { background: var(--action-soft); }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).selected { background: rgba(123,127,178,0.1); }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).pre-selected:not(.selected) { background: rgba(123,127,178,0.06); outline: 1px solid rgba(123,127,178,0.25); }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).cut { opacity: 0.45; }
-:is(.file-list .list-row.folder-row, .file-list-view .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row):hover:not(.selected):not(.pre-selected) { background: rgba(180,148,80,0.06); }
 :is(.file-list .list-row.folder-row, .file-list-view .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row).selected { background: rgba(123,127,178,0.09); }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-folder-icon,
@@ -111,9 +110,7 @@
 
 /* ── 暗色模式：行/表头 paint 仍由本文件拥有；checkbox 不再需要暗色 selector，
    fileSelectionCheckbox.css 会跟随 FolderCard 已验证的暗色 token 自动映射。 ── */
-html[data-theme='dark'][data-family] .list-row:hover { background: var(--surface-hover-tint); }
 html[data-theme='dark'][data-family] .list-row.selected { background: var(--selection-bg); }
 html[data-theme='dark'][data-family] .list-row.pre-selected { background: var(--action-soft); outline-color: var(--action-outline); }
-html[data-theme='dark'][data-family] .list-row.folder-row:hover { background: var(--surface-hover-tint); }
 html[data-theme='dark'][data-family] .list-head { border-color: var(--border-subtle); }
 html[data-theme='dark'][data-family] .list-row:hover .file-list-btn { color: var(--control-fg-strong); }

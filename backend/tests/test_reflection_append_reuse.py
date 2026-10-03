@@ -6,7 +6,6 @@ LLM 与 Redis 一律打桩；快照登记表逐用例清空。
 """
 from __future__ import annotations
 
-import inspect
 import json
 import time
 from dataclasses import replace
@@ -14,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent.context.assembly import MessageArea
 from agent.context import reflection_snapshot as rs
 from agent.context.reflection_snapshot import (
     capture_reflection_snapshot,
@@ -37,7 +37,10 @@ def _capture(session_id=7, provider="deepseek", run_id="run-x") -> None:
     capture_reflection_snapshot(
         user_id="u1", session_id=session_id, run_id=run_id, ai=_ai(provider),
         system_prompt="主会话SYS", tools=({"name": "list_dir"},),
-        messages=[{"role": "user", "content": "问题"}, {"role": "assistant", "content": "回答"}],
+        messages=MessageArea.from_canonical_messages([
+            {"role": "user", "content": "问题"},
+            {"role": "assistant", "content": "回答"},
+        ]),
         reply_text="最终回复",
     )
 
@@ -189,18 +192,6 @@ async def test_extract_append_builds_reuse_input(monkeypatch):
     assert reflection._TASK_REQUIREMENTS in branch_input.delta
     assert policy.name == "reflection"
     assert policy.output_mode == "json"
-
-
-def test_task_requirements_single_source():
-    """owner 与群业务 append 反思共用同一份任务要求常量。"""
-    source = inspect.getsource(reflection)
-    assert source.count("_TASK_REQUIREMENTS") >= 3   # 定义 + 两条路径各引用一次
-
-
-def test_history_directive_is_append_only():
-    """完整历史边界指令只进入 append 反思消息。"""
-    append_src = inspect.getsource(reflection._extract_append)
-    assert "_APPEND_HISTORY_DIRECTIVE" in append_src
 
 
 # ── reflect 模式分流（§6.3）──────────────────────────────────────────
@@ -389,7 +380,8 @@ async def test_idle_rebuild_uses_owned_idle_session_and_persisted_history(monkey
     assert rebuilt.session_id == 7
     assert rebuilt.system_prompt == "stable-system"
     assert rebuilt.tools == ()
-    assert rebuilt.history == ({"role": "user", "content": "persisted"},)
+    # 重建结果也保留 wire 边界；不把 build_history_parts 的输出再次当作 canonical。
+    assert rebuilt.history.to_messages() == [{"role": "user", "content": "persisted"}]
 
 
 @pytest.mark.asyncio

@@ -349,7 +349,7 @@ async def run_target(target: Target, session, snapshot: dict, history: list, req
     for run_index in range(1, args.runs + 1):
         label, prompt = SCENARIOS[run_index - 1]
         current_user = {"role": "user", "content": prompt}
-        prompt_messages = assembly.PromptMessages(
+        prompt_messages = assembly.MessageArea.from_canonical_messages(
             conversation,
             fixed_prefix_size=1 if snapshot_context else 0,
         )
@@ -358,7 +358,7 @@ async def run_target(target: Target, session, snapshot: dict, history: list, req
             current_user=current_user,
         )
         prompt_messages.append_batch(turn_batch)
-        outbound = render_events_for_provider(prompt_messages)
+        outbound = prompt_messages.provider_projection()
         adapter = providers.adapter_for(target.ai)
         if ((target.anthropic or adapter.supports_explicit_cache(getattr(target.ai, "model", "") or ""))
                 and not os.environ.get("GUGU_DIAG_SKIP_OPENAI_HISTORY_CACHE")

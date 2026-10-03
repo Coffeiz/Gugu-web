@@ -752,7 +752,7 @@ async def test_resolve_oversized_audio_gates_before_read(db, user_a, storage, mo
 
     monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
     monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
-    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_image_enabled", lambda *a, **k: False)
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
     monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: True)
     monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
@@ -765,7 +765,7 @@ async def test_resolve_oversized_audio_gates_before_read(db, user_a, storage, mo
 
 @pytest.mark.asyncio
 async def test_resolve_oversized_image_gates_before_read(db, user_a, storage, monkeypatch):
-    """假 PNG 声明成几百 MB 时，vision 分支同样读前拒绝。"""
+    """假 PNG 声明成几百 MB 时，图片识别分支同样读前拒绝。"""
     meta = await chat_attach.stage(user_a.id, "假大图", "png", "image/png", b"png-bytes")
 
     async def _big_meta(_user_id, _aid):
@@ -776,7 +776,7 @@ async def test_resolve_oversized_image_gates_before_read(db, user_a, storage, mo
 
     monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
     monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
-    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(chat_attach, "_image_enabled", lambda *a, **k: True)
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
     monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: False)
     monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
@@ -801,7 +801,7 @@ async def test_resolve_oversized_text_gates_before_read(db, user_a, storage, mon
 
     monkeypatch.setattr(chat_attach, "get_meta", _big_meta)
     monkeypatch.setattr(chat_attach, "read_bytes", _must_not_read)
-    monkeypatch.setattr(chat_attach, "_vision_enabled", lambda *a, **k: False)
+    monkeypatch.setattr(chat_attach, "_image_enabled", lambda *a, **k: False)
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda *a, **k: False)
     monkeypatch.setattr(chat_attach, "_audio_enabled", lambda *a, **k: False)
     monkeypatch.setattr(chat_attach, "_voice_recognition_enabled", lambda *a, **k: False)
