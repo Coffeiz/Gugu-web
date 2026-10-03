@@ -86,7 +86,7 @@ RUN mkdir -p /out \
         -require=golang.org/x/crypto@v0.55.0 \
         -require=golang.org/x/mod@v0.40.0 \
         -require=golang.org/x/text@v0.39.0 \
-        -require=google.golang.org/grpc@v1.83.1 \
+        -require=google.golang.org/grpc@v1.83.2 \
     && go mod tidy \
     && go mod verify \
     && CGO_ENABLED=0 go build -trimpath \
