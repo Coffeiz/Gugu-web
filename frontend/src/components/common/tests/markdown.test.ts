@@ -87,7 +87,7 @@ describe('Markdown YAML frontmatter', () => {
       '---',
       'related_tools:',
       '  - shell',
-      '  - run_script',
+      '  - list_workspaces',
       'description: >-',
       '  第一行描述',
       '  第二行描述',
@@ -96,7 +96,7 @@ describe('Markdown YAML frontmatter', () => {
     ].join('\n')
 
     expect(splitYamlFrontmatter(source).entries).toEqual([
-      { key: 'related_tools', value: 'shell, run_script' },
+      { key: 'related_tools', value: 'shell, list_workspaces' },
       { key: 'description', value: '第一行描述 第二行描述' },
     ])
   })

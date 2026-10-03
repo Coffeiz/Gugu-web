@@ -21,7 +21,7 @@ from app.services.storage.quota_limits import resolve_file_library_limit
 FILE_LIBRARY = "file_library"
 SHELL_PERSISTENT = "shell_persistent"
 SHELL_EPHEMERAL = "shell_ephemeral"
-DEFAULT_WORKSPACE_FOLDER_NAME = "workspace"
+DEFAULT_WORKSPACE_FOLDER_NAME = "default"
 _CATEGORIES = (FILE_LIBRARY, SHELL_PERSISTENT, SHELL_EPHEMERAL)
 
 
@@ -37,7 +37,7 @@ def _limits(user: User) -> dict[str, int]:
 
 
 def _shell_root(user_id: Any) -> Path:
-    return (Path(get_settings().storage.local_path).resolve() / str(user_id) / DEFAULT_WORKSPACE_FOLDER_NAME).resolve()
+    return (Path(get_settings().storage.local_path).resolve() / str(user_id) / "workspace").resolve()
 
 
 async def _unregistered_shell_bytes(db: AsyncSession, user_id: Any, root: Path) -> int:

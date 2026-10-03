@@ -3,7 +3,7 @@ name: 工作区 Shell
 description_short: 用户要在已授权 Shell 范围运行检查、构建或整理命令时使用。
 description_long: 用户要求运行命令且系统提供 Shell 工具时使用
 category: shell
-related_tools: shell, run_script, list_workspaces, create_workspace, unlink_workspace, delete_workspace_directory
+related_tools: shell, list_workspaces, create_workspace, unlink_workspace, delete_workspace_directory
 ---
 # 工作区 Shell
 
@@ -30,17 +30,9 @@ related_tools: shell, run_script, list_workspaces, create_workspace, unlink_work
 - OSS 存储模式只提供独立 Shell 沙盒：workspace 绑定、`/personal`、`/project`、OSS
   对象挂载、materialize/cache、自动同步和自动上传均不可用。文件库操作必须走明确的文件 API。
 - `cd` 不带参数会回到沙盒 home `/`；需要回到当前 workspace 时使用 `cd /workspace`。
-- 一次只执行一条命令，不使用管道、重定向、命令替换或下载后执行。
-- 运行用户明确指定的脚本使用 `run_script`，传沙盒内相对或逻辑绝对 `script_path`；不要把脚本内容拼进 `shell`，也不要使用解释器的 inline/eval 参数。
-- `run_script` 只支持 `python3`、`node`、`bash`；脚本根和是否可用以本轮动态权限状态及
-  工具 Schema 为准。`script_path` 支持沙盒内相对路径，也支持 `/workspace`、`/personal`、
-  `/project` 下的逻辑绝对路径；路径不能经过软链接或硬链接。网络由后台沙盒配置自动决定，
-  不要向工具传递 `network` 参数。
-- `run_script` 不接受 positional `args` 数组；脚本应读取执行器注入的环境变量：
-  `GUGU_SCRIPT_ROOT`、`GUGU_SCRIPT_PATH`、`GUGU_WORKSPACE`，以及权限允许时的
-  `GUGU_PERSONAL`、`GUGU_PROJECT`。这些变量只描述本轮可见挂载点，不包含密钥。
-- 自动模式开启且执行器判定当前沙盒权限满足时，`run_script` 可跳过交互确认；这不扩大
-  沙盒范围，也不绕过脚本路径、解释器、配额、审计和执行器校验。未满足条件时仍需确认。
+- Shell 支持普通命令、复合命令、管道和运行时调用；是否可用由服务端权限策略决定。
+  不得利用命令拼接绕过危险操作确认、工作区挂载或沙盒隔离。
+- 网络由后台沙盒配置自动决定，不要向工具传递 `network` 参数。
 - system 范围使用宿主机执行器，开启后可访问宿主机路径和本机已有运行时；危险命令仍必须
   经过确认，system 开关不等于危险操作预授权。
 

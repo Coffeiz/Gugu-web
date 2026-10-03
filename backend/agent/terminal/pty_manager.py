@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from agent.sandbox.protocol import WorkspaceMount
+
 _log = logging.getLogger(__name__)
 
 
@@ -46,6 +48,8 @@ class PtyLaunchSpec:
     network_profile: str
     personal_root: str | None = None
     project_root: str | None = None
+    workspace_mounts: tuple[WorkspaceMount, ...] = ()
+    primary_workspace: str | None = None
     personal_read_only: bool = True
     project_read_only: bool = True
     cols: int = 120
@@ -56,6 +60,13 @@ class PtyLaunchSpec:
             raise ValueError("PTY 缺少 terminal_id")
         if not self.root:
             raise ValueError("PTY 缺少沙盒根目录")
+        mount_names = [mount.target for mount in self.workspace_mounts]
+        if len(mount_names) != len(set(mount_names)):
+            raise ValueError("PTY workspace mount 名称重复")
+        if self.workspace_mounts and self.primary_workspace not in mount_names:
+            raise ValueError("PTY primary_workspace 未在挂载清单中")
+        if not self.workspace_mounts and self.primary_workspace is not None:
+            raise ValueError("PTY primary_workspace 缺少挂载清单")
         if self.shell_mode not in {"sandbox", "system"}:
             raise ValueError("PTY shell_mode 无效")
         if self.network_profile not in {"none", "egress"}:

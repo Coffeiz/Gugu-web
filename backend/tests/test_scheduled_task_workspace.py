@@ -13,7 +13,7 @@ from app.services.filesystem_authorization import (
     grant_scheduled_task_filesystem_access,
     revoke_scheduled_task_filesystem_access,
 )
-from app.services.scheduled_tasks import normalize_script_authorization, validate_task_workspace
+from app.services.scheduled_tasks import validate_task_workspace
 
 
 def test_scheduled_task_contract_uses_workspace_root_without_cwd():
@@ -21,27 +21,9 @@ def test_scheduled_task_contract_uses_workspace_root_without_cwd():
 
     assert "cwd" not in TaskCreate.model_fields
     assert "cwd" not in TaskUpdate.model_fields
+    assert "script_authorization" not in TaskCreate.model_fields
+    assert "script_authorization" not in TaskUpdate.model_fields
     assert not hasattr(ScheduledTask, "cwd")
-
-
-def test_scheduled_script_authorization_is_exact_and_relative():
-    value = normalize_script_authorization({
-        "root": "workspace", "script_path": "jobs/report.py",
-        "interpreter": "python3",
-    })
-    assert value == {
-        "root": "workspace", "script_path": "jobs/report.py",
-        "interpreter": "python3",
-    }
-    with pytest.raises(ValueError, match="相对路径"):
-        normalize_script_authorization({
-            "root": "workspace", "script_path": "../report.py", "interpreter": "python3",
-        })
-    with pytest.raises(ValueError, match="args 已移除"):
-        normalize_script_authorization({
-            "root": "workspace", "script_path": "jobs/report.py",
-            "interpreter": "python3", "args": ["--daily"],
-        })
 
 
 @pytest.mark.asyncio

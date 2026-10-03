@@ -31,7 +31,7 @@ from .docker_runtime import (
     valid_egress_proxy,
     valid_egress_network_name,
 )
-from .protocol import ExecuteRequest, encode_response
+from .protocol import ExecuteRequest, WorkspaceMount, encode_response, workspace_target_for
 
 logger = logging.getLogger("agent.sandbox.sandboxd")
 _EMBEDDED_EGRESS_INIT_SCRIPT = Path("/usr/local/bin/gugu-sandbox-egress-init.sh")
@@ -91,6 +91,45 @@ class SandboxdServer:
         if not path.is_dir():
             raise ValueError("sandboxd root 必须是目录")
         return path
+
+    def _validate_workspace_mounts(
+        self, values: tuple[WorkspaceMount, ...], root: Path, primary_workspace: str | None,
+    ) -> tuple[WorkspaceMount, ...]:
+        mounts: list[WorkspaceMount] = []
+        names: set[str] = set()
+        for mount in values:
+            if mount.target in names:
+                raise ValueError("sandboxd workspace mount 名称重复")
+            names.add(mount.target)
+            path = self._validate_root(mount.root)
+            mounts.append(WorkspaceMount(mount.target, str(path)))
+        if mounts and primary_workspace not in names:
+            raise ValueError("sandboxd primary_workspace 未在挂载清单中")
+        if not mounts and primary_workspace is not None:
+            raise ValueError("sandboxd primary_workspace 缺少挂载清单")
+        if not mounts:
+            return ()
+        # 工作区目录与 Shell 锚点必须归属同一用户存储目录；不能借多个独立
+        # 合法根目录把其他用户的数据拼接进一个容器。
+        storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
+        paths = [root, *(Path(item.root) for item in mounts)]
+        owner_ids: set[str] = set()
+        for path in paths:
+            try:
+                relative = path.relative_to(storage_root)
+            except ValueError as exc:
+                raise ValueError("sandboxd workspace mounts 必须属于同一用户存储目录") from exc
+            if not relative.parts:
+                raise ValueError("sandboxd workspace mounts 必须属于同一用户存储目录")
+            owner_ids.add(relative.parts[0])
+        if len(owner_ids) != 1:
+            raise ValueError("sandboxd workspace mounts 必须属于同一用户存储目录")
+        for mount in mounts:
+            relative = Path(mount.root).relative_to(storage_root)
+            expected = workspace_target_for(Path(*relative.parts[1:]).as_posix())
+            if mount.target != expected:
+                raise ValueError("sandboxd 工作区目标与物理来源不一致")
+        return tuple(mounts)
 
     def _probe_runtime(self, settings):
         if self._embedded_bundle_runtime is None:
@@ -244,6 +283,9 @@ class SandboxdServer:
     async def _execute_request(self, value: dict, writer: asyncio.StreamWriter) -> dict:
         request = ExecuteRequest.from_dict(value)
         root = self._validate_root(request.root)
+        workspace_mounts = self._validate_workspace_mounts(
+            request.workspace_mounts, root, request.primary_workspace,
+        )
         personal_root = self._validate_root(request.personal_root) if request.personal_root else None
         project_root = self._validate_root(request.project_root) if request.project_root else None
         quota_root = self._validate_root(request.quota_root) if request.quota_root else None
@@ -257,6 +299,8 @@ class SandboxdServer:
                 executor = DockerSandboxExecutor(
                     root, get_settings().sandbox,
                     personal_root=personal_root, project_root=project_root,
+                    workspace_mounts=workspace_mounts,
+                    primary_workspace=request.primary_workspace,
                     personal_read_only=request.personal_read_only,
                     project_read_only=request.project_read_only,
                 )
@@ -278,8 +322,6 @@ class SandboxdServer:
                     quota_bytes=request.quota_bytes,
                     network_profile=request.network_profile,
                     on_output=emit_output,
-                    allow_script_execution=request.allow_script_execution,
-                    environment=request.environment,
                 )
             finally:
                 async with self._active_lock:
@@ -381,6 +423,12 @@ class SandboxdServer:
 
     async def _handle_pty(self, value: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         root = self._validate_root(str(value.get("root") or ""))
+        workspace_mount_values = value.get("workspace_mounts") or []
+        if not isinstance(workspace_mount_values, list) or len(workspace_mount_values) > 64:
+            raise ValueError("sandboxd workspace_mounts 无效")
+        workspace_mounts = tuple(WorkspaceMount.from_dict(item) for item in workspace_mount_values)
+        primary_workspace = str(value.get("primary_workspace") or "").strip() or None
+        workspace_mounts = self._validate_workspace_mounts(workspace_mounts, root, primary_workspace)
         personal_root = self._validate_root(str(value.get("personal_root") or "")) if value.get("personal_root") else None
         project_root = self._validate_root(str(value.get("project_root") or "")) if value.get("project_root") else None
         personal_read_only = bool(value.get("personal_read_only", True))
@@ -396,6 +444,7 @@ class SandboxdServer:
             await asyncio.to_thread(self._validate_egress_network)
         executor = DockerSandboxExecutor(
             root, settings, personal_root=personal_root, project_root=project_root,
+            workspace_mounts=workspace_mounts, primary_workspace=primary_workspace,
             personal_read_only=personal_read_only, project_read_only=project_read_only,
         )
         container_name = f"gugu-pty-{uuid.uuid4().hex}"

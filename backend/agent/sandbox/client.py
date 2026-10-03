@@ -75,6 +75,10 @@ class SandboxdPtyClient:
                 "root": spec.root, "shell_mode": spec.shell_mode,
                 "personal_root": spec.personal_root,
                 "project_root": spec.project_root,
+                "workspace_mounts": [
+                    {"target": mount.target, "root": mount.root} for mount in spec.workspace_mounts
+                ],
+                "primary_workspace": spec.primary_workspace,
                 "personal_read_only": spec.personal_read_only,
                 "project_read_only": spec.project_read_only,
                 "network_profile": spec.network_profile, "cols": spec.cols, "rows": spec.rows,

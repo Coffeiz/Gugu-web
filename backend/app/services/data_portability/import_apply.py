@@ -164,7 +164,7 @@ async def apply_incremental_archive(
                 db.add(row)
                 await db.flush()
                 if record_type == "workspace_directory":
-                    row.directory_name = f"workspace-{row.id}"
+                    row.directory_name = "default" if row.is_default else f"workspace-{row.id}"
                     await db.flush()
                 elif record_type == "file" and row.deleted_at is None:
                     await record_usage(

@@ -20,8 +20,12 @@ from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.core.tz import now_utc
 from agent.sandbox.rootless_permissions import ensure_sandbox_acl
+from agent.sandbox.protocol import workspace_target_for
 from app.services.storage.folders import resolve_folder_path
-from app.services.storage.keys import RESERVED_USER_ROOTS, _safe_name, compose_logical_path
+from app.services.storage.keys import (
+    RESERVED_USER_ROOTS, _safe_name, compose_logical_path,
+    workspace_directory_path, workspace_directory_segment,
+)
 from app.services.storage.quota_ledger import ensure_user_storage_space, SHELL_PERSISTENT, DEFAULT_WORKSPACE_FOLDER_NAME
 
 
@@ -56,7 +60,10 @@ async def get_workspace_by_directory(
 
 def _workspace_directory_root(user_id, directory_name: str) -> Path:
     settings = get_settings()
-    return (Path(settings.storage.local_path).expanduser().resolve() / str(user_id) / directory_name).resolve()
+    user_root = Path(settings.storage.local_path).expanduser().resolve() / str(user_id)
+    root = (user_root / workspace_directory_path(directory_name)).resolve()
+    root.relative_to(user_root / "workspace")
+    return root
 
 
 def _prepare_workspace_root(root: Path) -> None:
@@ -163,8 +170,8 @@ def _validate_workspace_display_name(name: str) -> str:
     normalized = name.strip()
     if not normalized:
         raise ValueError("Workspace 名称不能为空")
-    # 只拦显示名与系统空间同名造成的认知混淆；物理目录名按 id 生成，结构上不碰撞。
-    if _safe_name(normalized) in RESERVED_USER_ROOTS:
+    # 拦截系统空间保留名；物理目录段在创建时去重并冻结。
+    if _safe_name(normalized) in RESERVED_USER_ROOTS or normalized.lower() == "default":
         raise ValueError("Workspace 名称与系统目录冲突")
     return normalized
 
@@ -193,10 +200,14 @@ async def create_workspace_directory(db: AsyncSession, user_id, *, name: str) ->
     row = WorkspaceDirectory(user_id=user_id, name=normalized, directory_name="")
     db.add(row)
     await _flush_workspace_name_unique(db)
-    # 物理目录用不可变 id（workspace-<id>）：File.storage_key 永久引用物理路径，
-    # 若按显示名建目录，rename 后所有 key 失效（download/preview 全挂）。
-    # id 命名也结构性地排除了与系统保留根目录的碰撞。
-    row.directory_name = f"workspace-{row.id}"
+    # 创建时冻结段名，之后改展示名不会移动目录；同名段冲突使用 id 消歧。
+    alias = workspace_directory_segment(normalized, str(row.id))
+    occupied = await db.scalar(select(WorkspaceDirectory.id).where(
+        WorkspaceDirectory.user_id == user_id,
+        WorkspaceDirectory.directory_name == alias,
+        WorkspaceDirectory.deleted_at.is_(None),
+    ))
+    row.directory_name = f"{alias}-{row.id}" if occupied or _workspace_directory_root(user_id, alias).exists() else alias
     await db.flush()
     root = _workspace_directory_root(user_id, row.directory_name)
     _prepare_workspace_root(root)
@@ -219,7 +230,7 @@ async def update_workspace_directory(db: AsyncSession, user_id, directory_id: in
             WorkspaceDirectory.id != row.id,
         )):
             raise ValueError("Workspace 已存在")
-        # 物理目录（workspace-<id>）不可变：File.storage_key 永久引用它，rename 只改显示名。
+        # 物理目录段不可变：File.storage_key 引用它，rename 只改显示名。
         row.name = normalized
         bindings = (await db.execute(select(Workspace).where(
             Workspace.user_id == user_id, Workspace.directory_id == row.id,
@@ -329,7 +340,7 @@ async def scan_legacy_shell_directories(db: AsyncSession, user_id=None) -> list[
     users = list((await db.execute(stmt)).scalars().all())
     reports: list[WorkspaceMigrationReport] = []
     for user in users:
-        source = _workspace_directory_root(user.id, "shell")
+        source = Path(get_settings().storage.local_path).resolve() / str(user.id) / "shell"
         target = _workspace_directory_root(user.id, DEFAULT_WORKSPACE_FOLDER_NAME)
         status = "not_found"
         count = 0
@@ -703,11 +714,12 @@ async def resolve_sandbox_root(db: AsyncSession, user_id) -> Path | None:
         # 纯路径解析测试/启动探测没有数据库上下文，不能伪造配额登记；正式
         # Shell 请求始终传入 AsyncSession，并走统一账本初始化。
         from agent.sandbox.quota import ensure_sandbox_root
-        root = (Path(settings.storage.local_path).resolve() / str(user_id) / DEFAULT_WORKSPACE_FOLDER_NAME).resolve()
+        root = _workspace_directory_root(user_id, DEFAULT_WORKSPACE_FOLDER_NAME)
         return ensure_sandbox_root(root)
     rows = await ensure_user_storage_space(db, user_id)
     row = next(item for item in rows if item.category == SHELL_PERSISTENT)
-    return Path(row.root_path).resolve()
+    from agent.sandbox.quota import ensure_sandbox_root
+    return ensure_sandbox_root(Path(row.root_path).resolve() / DEFAULT_WORKSPACE_FOLDER_NAME)
 
 
 async def resolve_user_personal_root(db: AsyncSession, user_id) -> Path | None:
@@ -740,7 +752,7 @@ async def resolve_project_root(db: AsyncSession, user_id) -> Path | None:
 
     ``/project`` 不是当前 workspace，也不是某一个项目子目录；它对应用户存储
     下的 ``项目文件``，内部保留 ``年/月/项目名 #id`` 层级。workspace 只决定
-    ``/workspace`` 的默认工作目录。
+    默认工作目录解析到具体项目或文件夹的规范路径。
     """
     settings = get_settings()
     if settings.storage.backend != "local":
@@ -765,3 +777,101 @@ async def resolve_shell_root(db: AsyncSession, user_id, scope: str, workspace_id
     if scope == "system":
         return Path("/").resolve()
     return None
+
+
+async def resolve_shell_workspace_mounts(
+    db: AsyncSession,
+    user_id,
+    workspace_id: int | None,
+    *,
+    include_all: bool,
+) -> tuple[list[tuple[str, Path]], str] | None:
+    """返回授权的规范容器路径、物理来源及默认 cwd。
+
+    普通授权只暴露会话绑定工作区（未绑定时为默认工作区）；完整用户沙盒授权
+    才扩展到该用户所有未删除的 WorkspaceDirectory。路径仍按 owner 与用户存储
+    根双重约束，容器端只使用此显式白名单，不挂载用户存储父目录。
+    """
+    if not workspace_shell_supported():
+        return None
+
+    from app.models import WorkspaceDirectory
+
+    settings = get_settings()
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    user_root = (storage_root / str(user_id)).resolve()
+    try:
+        user_root.relative_to(storage_root)
+    except ValueError:
+        return None
+
+    directories = list((await db.scalars(
+        select(WorkspaceDirectory).where(
+            WorkspaceDirectory.user_id == user_id,
+            WorkspaceDirectory.deleted_at.is_(None),
+        ).order_by(WorkspaceDirectory.is_default.desc(), WorkspaceDirectory.name, WorkspaceDirectory.id)
+    )).all())
+    directory_by_id = {item.id: item for item in directories}
+    active_workspace = await get_workspace(db, user_id, workspace_id) if workspace_id is not None else None
+    if workspace_id is not None and (active_workspace is None or not active_workspace.enabled):
+        return None
+
+    active_directory = (
+        directory_by_id.get(active_workspace.directory_id)
+        if active_workspace is not None and active_workspace.kind == "directory"
+        else None
+    )
+    if workspace_id is None:
+        active_directory = next((item for item in directories if item.is_default), None)
+
+    selected: list[tuple[str, str, Path]] = []
+    for directory in directories:
+        if not include_all and directory is not active_directory:
+            continue
+        candidate = _workspace_directory_root(user_id, directory.directory_name)
+        try:
+            candidate.relative_to(user_root)
+        except ValueError:
+            return None
+        if candidate.is_dir():
+            selected.append((
+                f"/workspace/{directory.directory_name}",
+                f"directory-{directory.id}", candidate,
+            ))
+
+    if active_workspace is None:
+        if active_directory is None:
+            # 历史/OSS 用户可能还没有 Workspace 元数据；继续使用已配额登记的
+            # Shell 根，不伪造一个可见工作区。
+            default_root = await resolve_sandbox_root(db, user_id)
+            if default_root is None or not default_root.is_dir():
+                return None
+            selected.append(("/workspace/default", "shell-default", default_root.resolve()))
+            primary_identity = "shell-default"
+        else:
+            primary_identity = f"directory-{active_directory.id}"
+    elif active_directory is not None:
+        primary_identity = f"directory-{active_directory.id}"
+    else:
+        active_root = await resolve_workspace_root(db, user_id, active_workspace.id)
+        if active_root is None or not active_root.is_dir():
+            return None
+        try:
+            active_root = active_root.resolve(strict=True)
+            active_root.relative_to(user_root)
+        except (OSError, ValueError):
+            return None
+        try:
+            target = workspace_target_for(active_root.relative_to(user_root).as_posix())
+        except ValueError:
+            return None
+        selected.append((target, f"workspace-{active_workspace.id}", active_root))
+        primary_identity = f"workspace-{active_workspace.id}"
+
+    # 目标路径来源于物理空间，不使用工作区显示名另造别名。
+    mounts = [(target, path) for target, _identity, path in selected]
+    targets = [target for target, _path in mounts]
+    primary_target = next((target for target, identity, _path in selected if identity == primary_identity), "")
+    if not primary_target or len(targets) != len(set(targets)):
+        return None
+    return mounts, primary_target

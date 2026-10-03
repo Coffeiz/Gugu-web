@@ -20,10 +20,6 @@ _SHELL_META = set(";&|<>$`()\n\r")
 _MAX_TIMEOUT = 300
 _MAX_OUTPUT = 120_000
 _PATH_SEPARATOR_RE = re.compile(r"[\\/]+")
-_SCRIPT_INTERPRETERS = frozenset({
-    "ash", "awk", "bash", "dash", "ksh", "node", "perl", "python", "python3",
-    "pytest", "ruby", "sed", "sh", "zsh",
-})
 @dataclass(frozen=True)
 class ShellResult:
     ok: bool
@@ -48,13 +44,11 @@ class LocalWorkspaceExecutor:
         workspace_root: str | Path,
         *,
         env: dict[str, str] | None = None,
-        restrict_interpreter_inputs: bool = True,
     ):
         root = Path(workspace_root).expanduser().resolve(strict=True)
         if not root.is_dir():
             raise ValueError("workspace 必须是目录")
         self.root = root
-        self.restrict_interpreter_inputs = restrict_interpreter_inputs
         base_env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ}
         if env:
             base_env.update(env)
@@ -84,8 +78,6 @@ class LocalWorkspaceExecutor:
 
     def _validate_workspace_argv(
         self, argv: list[str], workdir: Path, *, allowed_absolute_paths: tuple[str, ...] = (),
-        allow_script_execution: bool = False,
-        environment: dict[str, str] | None = None,
         allow_container_device_paths: bool = False,
     ) -> None:
         """阻止 workspace 命令通过参数访问 workspace 外的路径。
@@ -144,29 +136,6 @@ class LocalWorkspaceExecutor:
             if stat is not None and candidate.is_file() and stat.st_nlink > 1:
                 raise ValueError("workspace 命令不能使用硬链接文件")
 
-        if self.restrict_interpreter_inputs and not allow_script_execution:
-            self._validate_interpreter_inputs(argv, workdir)
-
-    def _validate_interpreter_inputs(self, argv: list[str], workdir: Path) -> None:
-        """禁止把 workspace 文件直接交给解释器执行。
-
-        ``create_subprocess_exec`` 不会解析命令替换，但 ``bash script.sh``、
-        ``env bash script.sh`` 和 ``xargs -a input bash`` 仍会执行不受信文件。
-        这不是 workspace 路径越界问题，而是文件内容注入问题，因此不能只依赖
-        容器的只读、断网和低权限配置来兜底。
-        """
-        interpreter_indexes = [
-            index for index, value in enumerate(argv)
-            if (
-                Path(value).name.lower() in _SCRIPT_INTERPRETERS
-                or Path(value).name.lower().startswith("python3.")
-            )
-        ]
-        if not interpreter_indexes:
-            return
-
-        raise ValueError("普通 Shell 禁止直接执行代码运行时，请使用 run_script")
-
     @staticmethod
     def _has_shell_meta(command: str) -> bool:
         """原始命令串是否含 shell 复合/管道/重定向/替换元字符。
@@ -177,7 +146,7 @@ class LocalWorkspaceExecutor:
         return any(char in (command or "") for char in _SHELL_META)
 
     @staticmethod
-    def _parse_command(command: str, *, allow_script_execution: bool = False) -> list[str]:
+    def _parse_command(command: str) -> list[str]:
         text = (command or "").strip()
         if not text:
             raise ValueError("command 不能为空")
@@ -185,7 +154,7 @@ class LocalWorkspaceExecutor:
         # /bin/sh，引号内的 ; | > 等只是普通字符，本无注入面；而解释器 -c 的
         # 代码几乎必然含这些字符，直跑模式下再拦只剩误伤（确认门与 workspace
         # 路径校验才是真正的边界）。
-        if not allow_script_execution and LocalWorkspaceExecutor._has_shell_meta(text):
+        if LocalWorkspaceExecutor._has_shell_meta(text):
             raise ValueError("当前执行器不支持管道、重定向或命令替换")
         try:
             argv = shlex.split(text, posix=True)
@@ -204,23 +173,20 @@ class LocalWorkspaceExecutor:
         max_output_chars: int = 12_000,
         authorization_check: Callable[[], Awaitable[bool]] | None = None,
         on_output: Callable[[str, str], Awaitable[None]] | None = None,
-        allow_script_execution: bool = False,
-        environment: dict[str, str] | None = None,
     ) -> ShellResult:
-        argv = self._parse_command(command, allow_script_execution=allow_script_execution)
         workdir = self._resolve_cwd(cwd)
-        self._validate_workspace_argv(argv, workdir, allow_script_execution=allow_script_execution)
+        if self.root == Path("/") and self._has_shell_meta(command):
+            argv = ["/bin/sh", "-c", command]
+        else:
+            argv = self._parse_command(command)
+        self._validate_workspace_argv(argv, workdir)
         timeout = max(0.1, min(float(timeout), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars), _MAX_OUTPUT))
-        process_env = dict(self.env)
-        if environment:
-            process_env.update(environment)
-
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=workdir,
-                env=process_env,
+                env=self.env,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

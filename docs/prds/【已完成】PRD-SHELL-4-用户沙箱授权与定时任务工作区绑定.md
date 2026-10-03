@@ -337,7 +337,7 @@ Gugu-web/
 - `/workspace god`/askuser 的 Session 授权在 GuguChat 交互流中呈现，Shell 权限按钮使用独立公共弹窗，定时任务授权在任务表单上下文中呈现；
 - 前端只展示和发起确认，不能直接决定授权；
 - `backend/config.override.json`、`backend/.env`、用户存储目录、运行时密钥和 Docker daemon 配置【不改】；
-- `run_script` 是显式脚本入口，不接受任意 Shell command；脚本必须是沙箱挂载内的相对路径，拒绝软链接、硬链接、路径穿越和解释器 eval；
+- Shell 命令统一通过既有服务端权限、风险确认与沙盒边界执行；不保留脚本专用工具或脚本白名单字段。
 - 生成的 API 类型必须通过生成流程更新，不手工维护第二份 Schema。
 
 ## 4. 验证与上线
@@ -413,7 +413,7 @@ Phase 2 验证：后端定时任务工作区/授权、scheduler、Shell policy�
 
 - [x] `SHELL4-010` 让文件工具、回收站和 `web_download` 写操作复用统一 filesystem policy；未授权的 personal/project 仅可读，workspace 子树可写，完整授权解除该位置限制。
       🟡 2026-09-11 产品定案推翻：文件工具、回收站和 `web_download` 一律不再按 policy 拦截位置写入（绑定只作为默认落点），沙箱与工作区限制只约束 Shell。对应实现：删除 `filesystem_location_can_write`/`filesystem_write_error` 及 `agent/tools/filesystem_policy.py` 的写权限包装，文件/文件夹/回收站工具移除 `write_access_error` 调用。
-- [x] `SHELL4-011` 增加 `run_script` 明确入口，仅允许 python3/node/bash 与沙箱内相对脚本路径，拒绝软链接、硬链接、路径穿越和 Shell 控制字符。
+- [x] `SHELL4-011` 原脚本专用执行器已并入 Shell；运行时不再由解释器/脚本后缀白名单限制，继续由风险确认、工作区挂载、沙盒隔离和联网策略约束。
 
 Phase 3 验证：Phase 3 专项、下载写入边界、Shell/Docker、工具 Schema 共 `145 passed, 2 warnings`；受影响的 Shell、PTY、定时任务、文件、回收站回归共 `146 passed, 2 warnings`；Python compileall、`git diff --check` 通过。Schema audit 仍报告已有 note/web 工具描述长度提示，未由本阶段引入。
 

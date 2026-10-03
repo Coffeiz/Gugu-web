@@ -82,7 +82,8 @@ def ensure_sandbox_root(root: str | Path) -> Path:
     初始化逻辑；OSS 的对象存储不应被误当成本地执行挂载。
     """
     base = Path(root).expanduser().resolve()
-    if base.name not in {"shell", "workspace"} or base.parent.name == "":
+    supported = base.name in {"shell", "workspace"} or (base.name == "default" and base.parent.name == "workspace")
+    if not supported or base.parent.name == "":
         raise ValueError("沙盒目录不是受支持的用户 Shell 根目录")
     base.mkdir(parents=True, exist_ok=True)
     # rootless Docker 下沙盒 UID 通过 subordinate 映射访问挂载目录；embedded

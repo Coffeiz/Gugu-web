@@ -33,10 +33,14 @@ from agent.terminal.contracts import TerminalStatus
 from agent.terminal.protocol import PtyClientMessage
 from agent.terminal.pty_manager import PtyLaunchSpec
 from agent.terminal.runtime import get_pty_manager
-from app.services.workspaces import resolve_project_root, resolve_shell_root, resolve_user_personal_root
+from app.services.workspaces import (
+    resolve_project_root, resolve_shell_root, resolve_shell_workspace_mounts,
+    resolve_user_personal_root, workspace_shell_supported,
+)
 from app.services.filesystem_authorization import resolve_filesystem_policy
 from agent.tools.shell import _shell
 from agent.sandbox.client import SandboxdClient
+from agent.sandbox.protocol import WorkspaceMount
 from app.core.config import get_settings
 import app.db.session as db_session
 
@@ -231,7 +235,6 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
             pty_status = await pty_access(auth_db, user_id)
             if not pty_status.allowed:
                 raise HTTPException(status_code=403, detail=pty_status.reason)
-            root = await resolve_shell_root(auth_db, user_id, row.shell_mode, row.workspace_id)
             personal_root = await resolve_user_personal_root(auth_db, user_id) if row.shell_mode == "sandbox" else None
             project_root = await resolve_project_root(auth_db, user_id) if row.shell_mode == "sandbox" else None
             filesystem_policy = (
@@ -239,6 +242,22 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
                 if row.shell_mode == "sandbox" and row.session_id is not None
                 else None
             )
+            workspace_mounts: tuple[WorkspaceMount, ...] = ()
+            primary_workspace = None
+            resolved_workspace_mounts = await resolve_shell_workspace_mounts(
+                auth_db, user_id, row.workspace_id,
+                include_all=bool(filesystem_policy and filesystem_policy.full_user_sandbox),
+            )
+            if resolved_workspace_mounts is None and workspace_shell_supported():
+                raise HTTPException(status_code=403, detail="终端工作区挂载无法安全解析")
+            if resolved_workspace_mounts is not None:
+                mount_values, primary_workspace = resolved_workspace_mounts
+                workspace_mounts = tuple(
+                    WorkspaceMount(target=target, root=str(path)) for target, path in mount_values
+                )
+                root = dict(mount_values).get(primary_workspace)
+            else:
+                root = await resolve_shell_root(auth_db, user_id, row.shell_mode, row.workspace_id)
             row_id = row.id
             row_shell_mode = row.shell_mode
             row_network_profile = row.network_profile
@@ -253,6 +272,8 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
             terminal_id=row_id, root=str(root), shell_mode=row_shell_mode,
             personal_root=str(personal_root) if personal_root else None,
             project_root=str(project_root) if project_root else None,
+            workspace_mounts=workspace_mounts,
+            primary_workspace=primary_workspace,
             personal_read_only=not bool(filesystem_policy and filesystem_policy.full_user_sandbox),
             project_read_only=not bool(filesystem_policy and filesystem_policy.full_user_sandbox),
             network_profile=row_network_profile, cols=120, rows=32,

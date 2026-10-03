@@ -1,33 +1,8 @@
 """独立定时任务的查询与写入边界。"""
-from pathlib import PurePosixPath
-
 from sqlalchemy import select
 
 from app.core.ownership import get_owned
 from app.models import ConversationSession, ScheduledTask, UserBot, Workspace
-
-
-def normalize_script_authorization(value):
-    """规整定时任务的精确脚本能力，不保存宿主机路径。"""
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError("script_authorization 必须是对象")
-    if "args" in value:
-        raise ValueError("script_authorization.args 已移除，脚本请读取运行时环境变量")
-    root = str(value.get("root") or "").strip().lower()
-    interpreter = str(value.get("interpreter") or "").strip().lower()
-    path = str(value.get("script_path") or "").strip().replace("\\", "/")
-    if root not in {"workspace", "personal", "project"}:
-        raise ValueError("script_authorization.root 无效")
-    if interpreter not in {"python3", "node", "bash"}:
-        raise ValueError("script_authorization.interpreter 仅支持 python3、node、bash")
-    parsed = PurePosixPath(path)
-    if not path or parsed.is_absolute() or ".." in parsed.parts or "." in parsed.parts:
-        raise ValueError("script_authorization.script_path 必须是沙盒内相对路径")
-    if len(parsed.parts) > 32 or any(not part or part in {".", ".."} for part in parsed.parts):
-        raise ValueError("script_authorization.script_path 无效")
-    return {"root": root, "script_path": parsed.as_posix(), "interpreter": interpreter}
 
 
 async def validate_task_workspace(db, user_id, workspace_id: int | None) -> int | None:

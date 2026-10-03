@@ -60,7 +60,7 @@ async def test_agent_creates_and_lists_directories_as_workspace_targets(db, user
     assert item["kind"] == "directory"
     assert item["directory_id"] > 0
     assert item["directory_name"] == "资料区"
-    root = tmp_path / str(user_a.id) / f"workspace-{item['directory_id']}"
+    root = tmp_path / str(user_a.id) / "workspace" / f"workspace-{item['directory_id']}"
     assert root.is_dir()
     await db.commit()
 
@@ -105,7 +105,7 @@ async def test_agent_delete_workspace_directory_requires_confirmation_then_remov
     _local_storage(monkeypatch, tmp_path)
     row = await create_workspace_directory(db, user_a.id, name="待删除目录")
     await db.commit()
-    root = tmp_path / str(user_a.id) / row.directory_name
+    root = tmp_path / str(user_a.id) / "workspace" / row.directory_name
     (root / "保留检查.txt").write_text("test", encoding="utf-8")
 
     class NoLiveTerminals:
@@ -141,7 +141,7 @@ async def test_agent_cannot_delete_another_users_workspace_directory(db, user_a,
     _local_storage(monkeypatch, tmp_path)
     row = await create_workspace_directory(db, user_b.id, name="小北的目录")
     await db.commit()
-    root = tmp_path / str(user_b.id) / row.directory_name
+    root = tmp_path / str(user_b.id) / "workspace" / row.directory_name
     delete_tool = _tools_by_name().get("delete_workspace_directory")
     assert delete_tool is not None
 
@@ -165,4 +165,4 @@ async def test_agent_cannot_delete_default_workspace_directory(db, user_a, tmp_p
     )
 
     assert result == {"error": "默认工作区不可删除"}
-    assert (tmp_path / str(user_a.id) / row.directory_name).is_dir()
+    assert (tmp_path / str(user_a.id) / "workspace" / row.directory_name).is_dir()

@@ -142,7 +142,7 @@ class SandboxSettings(BaseModel):
     full_user_sandbox_authorization_enabled: bool = Field(
         True,
         description=(
-            "是否开放完整用户沙箱能力，包括用户工作区授权、代码运行时和 Shell 直跑运行时"
+            "是否允许 Shell/PTY 扩展到当前工作区以外的用户文件工作区"
         ),
     )
     terminal_mode: Literal["auto", "pty_disabled", "entry_disabled"] = Field(

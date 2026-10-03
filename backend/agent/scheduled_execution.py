@@ -154,10 +154,8 @@ async def run_scheduled_once(
         tool_names = tool_names_override if tool_names_override is not None else all_system_tool_names()
         # 定时任务的 Shell 暴露仍由任务授权和 dispatch 边界共同校验，不能仅靠工具列表作为权限边界。
         if not allow_shell:
-            tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
+            tool_names = [name for name in tool_names if name != "shell"]
         subject = filesystem_subject or {}
-        if str(subject.get("subject_type") or "") == "scheduled_task" and not subject.get("script_authorization"):
-            tool_names = [name for name in tool_names if name != "run_script"]
 
         mcp_allowed_names = allowed_tools if allowed_tools is not None else tool_names_override
         mcp_tools = await _load_mcp_tools(user_id, settings, mcp_allowed_names)
@@ -189,7 +187,7 @@ async def run_scheduled_once(
                         workspace_id=subject.get("workspace_id"),
                     )
                     if shell_prompt is None:
-                        tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
+                        tool_names = [name for name in tool_names if name != "shell"]
 
         system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
         capability_context = await _capability_context(

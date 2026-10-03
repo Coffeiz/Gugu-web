@@ -107,6 +107,25 @@ async def _ask_user(db, user_id, args: dict):
 
         if not filesystem_authorization_enabled():
             return {"error": "完整用户沙箱授权功能当前未开启"}
+        from agent.tools.base import current_dispatch_session_id
+        from app.services.filesystem_authorization import (
+            SUBJECT_SESSION,
+            resolve_filesystem_policy,
+        )
+
+        session_id = current_dispatch_session_id()
+        if session_id is not None:
+            policy = await resolve_filesystem_policy(
+                db, user_id, subject_type=SUBJECT_SESSION, subject_id=session_id,
+            )
+            if policy.full_user_sandbox:
+                return {
+                    "status": "already_authorized",
+                    "message": (
+                        "当前会话已具备完整用户沙箱读写授权，无需重复授权。请继续当前操作；"
+                        "若操作本身需要确认，按对应工具返回的确认门处理。"
+                    ),
+                }
         # 授权交互不能由模型自定义按钮语义，避免把普通澄清误当作权限授予。
         return {
             "_interaction": "ask_user",

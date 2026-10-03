@@ -296,8 +296,8 @@ class WorkspaceDirectory(Base):
             postgresql_where=text("deleted_at IS NULL"),
             sqlite_where=text("deleted_at IS NULL"),
         ),
-        # 显示名唯一性也要 DB 兜底：directory_name 现在按 id 生成（workspace-<id>）
-        # 永不冲突，并发创建同名 Workspace 只能靠这条部分唯一索引拦截。
+        # 显示名唯一性也要 DB 兜底：directory_name 是创建后冻结的物理目录段。
+        # 并发创建同名 Workspace 由这条部分唯一索引拦截。
         Index(
             "uq_workspace_directory_display_name",
             "user_id", "name",
@@ -1570,8 +1570,6 @@ class ScheduledTask(Base):
     authorized_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     # 定时任务直投邮件时附带的文件库文件；只保存 file_id，不保存宿主机路径。
     email_attachment_file_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
-    # 定时任务可执行的唯一脚本；为空时不暴露 run_script。
-    script_authorization: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
     # 只对 schedule_kind=once 的任务有意义：last_run_at 非空但这个是 True，
     # 表示"已经触发过、但执行失败"——跟"已经成功"区分开，允许重新触发一次；

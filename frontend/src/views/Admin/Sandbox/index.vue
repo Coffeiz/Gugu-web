@@ -28,7 +28,7 @@
         <ToggleSwitch :model-value="status.full_user_sandbox_authorization_enabled" :disabled="fullUserSandboxAuthorizationSaving" :aria-label="t('adminSandbox.fullUserSandboxAuthorization')" @update:model-value="toggleFullUserSandboxAuthorization" />
       </div>
       <div class="config-row terminal-mode-row">
-        <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint') }}</small></div>
+        <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint', { entry: status.terminal_entry_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }) }}</small></div>
         <AdminSelect
           :model-value="terminalModeDraft"
           :options="terminalModeOptions"
@@ -38,9 +38,6 @@
           @update:model-value="saveTerminalMode"
         />
       </div>
-      <p class="section-note terminal-effective-note">
-        {{ t('adminSandbox.terminalEffective', { entry: status.terminal_entry_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled'), pty: status.pty_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }) }}
-      </p>
       <div class="config-row config-row-switch">
         <div class="config-row-copy"><span>{{ t('adminSandbox.egress') }}</span><small>{{ egressHint }}</small></div>
         <ToggleSwitch :model-value="status.network_profile === 'egress'" :disabled="!status.egress_available || egressSaving" :aria-label="t('adminSandbox.switchEgress')" @update:model-value="toggleEgress" />
@@ -294,7 +291,6 @@ onMounted(async () => {
 .config-row-copy { min-width: 0; }
 .config-row-copy small { display: block; margin-top: 4px; color: var(--content-tertiary); font-size: 11px; line-height: 1.4; }
 .config-row code { max-width: 72%; overflow: hidden; color: var(--content-secondary); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.terminal-effective-note { margin-top: 0; }
 .egress-editor { padding: 14px 0 4px; border-bottom: 1px solid var(--panel-divider); }
 .egress-label { display: block; margin-bottom: 8px; color: var(--content-secondary); font-size: 12px; font-weight: 600; }
 .egress-input-row { display: flex; align-items: center; gap: 8px; }

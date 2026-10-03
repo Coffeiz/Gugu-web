@@ -13,7 +13,6 @@ import fcntl
 import os
 import pty
 import signal
-import shlex
 import shutil
 import struct
 import termios
@@ -33,6 +32,7 @@ from .docker_runtime import (
     valid_egress_proxy,
     valid_image_digest,
 )
+from .protocol import WorkspaceMount
 from .local_executor import LocalWorkspaceExecutor, ShellResult
 from .quota import measure_directory
 from .offline_bundle import load_bundle_manifest
@@ -186,6 +186,13 @@ def _image_ref(settings: SandboxSettings) -> str:
     return f"{image}@{digest}"
 
 
+def _validated_mount_root(value: str | Path, name: str) -> Path:
+    path = Path(value).expanduser().resolve(strict=True)
+    if not path.is_dir():
+        raise ValueError(f"{name} 根目录必须是目录")
+    return path
+
+
 class DockerSandboxExecutor:
     """使用固定安全基线执行一条 Docker 工作区命令。"""
 
@@ -193,6 +200,8 @@ class DockerSandboxExecutor:
         self, workspace_root: str | Path, settings: SandboxSettings, *,
         docker_path: str | None = None, personal_root: str | Path | None = None,
         project_root: str | Path | None = None,
+        workspace_mounts: tuple[WorkspaceMount, ...] = (),
+        primary_workspace: str | None = None,
         personal_read_only: bool = True, project_read_only: bool = True,
     ):
         root = Path(workspace_root).expanduser().resolve(strict=True)
@@ -201,18 +210,25 @@ class DockerSandboxExecutor:
         self.root = root
         self.personal_root = None
         if personal_root is not None:
-            personal_path = Path(personal_root).expanduser().resolve(strict=True)
-            if not personal_path.is_dir():
-                raise ValueError("personal 根目录必须是目录")
-            self.personal_root = personal_path
+            self.personal_root = _validated_mount_root(personal_root, "personal")
         self.personal_read_only = bool(personal_read_only)
         self.project_root = None
         if project_root is not None:
-            project_path = Path(project_root).expanduser().resolve(strict=True)
-            if not project_path.is_dir():
-                raise ValueError("project 根目录必须是目录")
-            self.project_root = project_path
+            self.project_root = _validated_mount_root(project_root, "project")
         self.project_read_only = bool(project_read_only)
+        self.workspace_mounts: dict[str, Path] = {}
+        for mount in workspace_mounts:
+            if mount.target in self.workspace_mounts:
+                raise ValueError("workspace mount 名称重复")
+            mount_root = Path(mount.root).expanduser().resolve(strict=True)
+            if not mount_root.is_dir():
+                raise ValueError("workspace mount 根目录必须是目录")
+            self.workspace_mounts[mount.target] = mount_root
+        if self.workspace_mounts and primary_workspace not in self.workspace_mounts:
+            raise ValueError("primary_workspace 未在工作区挂载清单中")
+        if not self.workspace_mounts and primary_workspace is not None:
+            raise ValueError("primary_workspace 缺少工作区挂载清单")
+        self.primary_workspace = primary_workspace
         self.settings = settings
         self.docker_path = docker_path or shutil.which("docker")
         if not self.docker_path:
@@ -220,7 +236,6 @@ class DockerSandboxExecutor:
         self.image = _image_ref(settings)
         self._daemon_host_data_root: str | None = None
         self._daemon_host_data_root_resolved = False
-
     def _daemon_mount_src_for(self, path: Path) -> Path:
         """解析目标 daemon 可见的 bind 源；embedded 与 app 共享容器内路径。"""
         from app.core.config import get_settings
@@ -257,26 +272,77 @@ class DockerSandboxExecutor:
         return str(data_source / "users") if data_source is not None else None
 
     def _resolve_cwd(self, cwd: str | Path) -> Path:
-        # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
-        return LocalWorkspaceExecutor(self.root)._resolve_cwd(cwd)
+        # 相对路径从当前绑定工作区开始；绝对容器路径只能进入明确授权的挂载。
+        value = Path(cwd)
+        if not self.workspace_mounts:
+            # OSS 独立 Shell 与 MCP stdio 不使用可枚举的 WorkspaceDirectory；
+            # 它们保留单根目录挂载，不是本地工作区会话的回退路径。
+            return LocalWorkspaceExecutor(self.root)._resolve_cwd(value)
+        if value.is_absolute():
+            matches = [target for target in self.workspace_mounts
+                       if value == Path(target) or Path(target) in value.parents]
+            if not matches:
+                raise ValueError("cwd 必须位于已授权的规范工作区路径内")
+            target = max(matches, key=len)
+            mount_root = self.workspace_mounts[target]
+            relative = value.relative_to(target)
+        else:
+            mount_root = self.workspace_mounts[self.primary_workspace]
+            relative = value
+        if ".." in relative.parts:
+            raise ValueError("cwd 超出已授权工作区范围")
+        resolved = (mount_root / relative).resolve(strict=True)
+        try:
+            resolved.relative_to(mount_root)
+        except ValueError as exc:
+            raise ValueError("cwd 超出已授权工作区范围") from exc
+        if not resolved.is_dir():
+            raise ValueError("cwd 必须是目录")
+        return resolved
 
-    def _validate_container_interpreter_inputs(self, argv: list[str], *, allow_script_execution: bool = False) -> None:
-        """禁止普通 Shell 通过容器执行代码运行时。"""
-        interpreter_indexes = [
-            index for index, value in enumerate(argv)
-            if (
-                Path(value).name.lower() in {
-                "ash", "awk", "bash", "dash", "ksh", "node", "perl", "python", "python3",
-                "pytest", "ruby", "sed", "sh", "zsh",
-                }
-                or Path(value).name.lower().startswith("python3.")
-            )
-        ]
-        if not interpreter_indexes:
-            return
-        if allow_script_execution:
-            return
-        raise ValueError("普通 Shell 禁止直接执行代码运行时，请使用 run_script")
+    def _container_cwd(self, workdir: Path) -> str:
+        if not self.workspace_mounts:
+            relative = workdir.relative_to(self.root)
+            return str(_CONTAINER_ROOT / relative)
+        for name, mount_root in self.workspace_mounts.items():
+            try:
+                relative = workdir.relative_to(mount_root)
+            except ValueError:
+                continue
+            return str(Path(name) / relative)
+        raise ValueError("cwd 不属于已授权工作区")
+
+    def _validation_root_for(self, workdir: Path) -> Path:
+        if not self.workspace_mounts:
+            return self.root
+        for mount_root in self.workspace_mounts.values():
+            try:
+                workdir.relative_to(mount_root)
+                return mount_root
+            except ValueError:
+                continue
+        return self.root
+
+    def _prepare_command(
+        self, text: str, workdir: Path,
+    ) -> list[str]:
+        shell_wrapped = LocalWorkspaceExecutor._has_shell_meta(text)
+        if shell_wrapped:
+            return ["/bin/sh", "-c", text]
+
+        argv = LocalWorkspaceExecutor._parse_command(text)
+        allowed_absolute_paths = list(self.workspace_mounts)
+        allowed_absolute_paths.append("/workspace")
+        if self.personal_root:
+            allowed_absolute_paths.append("/personal")
+        if self.project_root:
+            allowed_absolute_paths.append("/project")
+        LocalWorkspaceExecutor(self._validation_root_for(workdir))._validate_workspace_argv(
+            argv, workdir,
+            allowed_absolute_paths=tuple(allowed_absolute_paths),
+            allow_container_device_paths=True,
+        )
+        return argv
 
     def build_argv(
         self,
@@ -285,46 +351,14 @@ class DockerSandboxExecutor:
         cwd: str = ".",
         network_profile: str | None = None,
         container_name: str | None = None,
-        allow_script_execution: bool = False,
-        environment: dict[str, str] | None = None,
     ) -> list[str]:
         text = (command or "").strip()
         if not text:
             raise ValueError("command 不能为空")
-        # 含 shell 元字符的复合命令交给容器内 /bin/sh 解释：沙盒本身有 OS 级
-        # 边界（只读 root、绑定挂载、cap 全关、断网/受控 egress、非特权用户），
-        # 复合命令、管道与用户在终端输入的语义一致，也和 run_script 的脚本
-        # 执行同级。风险分类在 shell_policy 按整条命令串完成；重定向与命令
-        # 替换本就被归类 dangerous 走确认门。-c 载荷对逐参数路径预检不透明
-        # （整体当成一个 token 会把 `cd ..` 之类误判为路径越界），跳过该预检，
-        # 由容器边界兜底。普通模式仍禁止代码运行时，检查对象换成 -c 载荷的
-        # 内层 token，防止 `echo x && python3 y` 绕过运行时门。
-        shell_wrapped = LocalWorkspaceExecutor._has_shell_meta(text)
-        if shell_wrapped:
-            argv = ["/bin/sh", "-c", text]
-        else:
-            argv = LocalWorkspaceExecutor._parse_command(text, allow_script_execution=allow_script_execution)
         workdir = self._resolve_cwd(cwd)
-        if shell_wrapped:
-            if not allow_script_execution:
-                try:
-                    inner_argv = shlex.split(text, posix=True)
-                except ValueError as exc:
-                    raise ValueError("command 引号格式无效") from exc
-                self._validate_container_interpreter_inputs(inner_argv, allow_script_execution=False)
-        else:
-            self._validate_container_interpreter_inputs(argv, allow_script_execution=allow_script_execution)
-            LocalWorkspaceExecutor(self.root)._validate_workspace_argv(
-                argv, workdir,
-                allowed_absolute_paths=tuple(
-                    path for path, mounted in (
-                        ("/workspace", self.root), ("/personal", self.personal_root),
-                        ("/project", self.project_root),
-                    ) if mounted
-                ),
-                allow_script_execution=allow_script_execution,
-                allow_container_device_paths=True,
-            )
+        # 含 shell 元字符时由容器内 shell 处理复合命令；命令风险在策略层
+        # 按整条命令判断；沙盒隔离、风险确认和授权挂载是实际安全边界。
+        argv = self._prepare_command(text, workdir)
         profile = network_profile or self.settings.network_profile
         if profile not in ("none", "egress"):
             raise ValueError("当前 Shell 沙盒网络策略无效")
@@ -336,8 +370,7 @@ class DockerSandboxExecutor:
             egress_network_name = getattr(self.settings, "egress_network_name", "")
             if not valid_egress_network_name(egress_network_name):
                 raise ValueError("egress 网络名无效")
-        relative_cwd = workdir.relative_to(self.root)
-        container_cwd = _CONTAINER_ROOT / relative_cwd
+        container_cwd = self._container_cwd(workdir)
         return [
             self.docker_path,
             "run",
@@ -362,15 +395,23 @@ class DockerSandboxExecutor:
             f"--tmpfs={_tmpfs_spec(self.settings)}",
             "--ulimit=nofile=1024:1024",
             f"--user={_CONTAINER_USER}",
-            # 当前 workspace bind 默认可写；--mount 长语法不接受裸 `rw` 字段。
-            f"--mount=type=bind,src={self._daemon_mount_src_for(self.root)},dst={_CONTAINER_ROOT}",
+            # 先挂载文件库父根，再在规范子路径覆盖授权的可写目录。
             *([f"--mount=type=bind,src={self._daemon_mount_src_for(self.project_root)},dst=/project{',readonly' if self.project_read_only else ''}"] if self.project_root else []),
             *([f"--mount=type=bind,src={self._daemon_mount_src_for(self.personal_root)},dst=/personal{',readonly' if self.personal_read_only else ''}"] if self.personal_root else []),
+            # 本地工作区按授权清单逐项挂载；OSS 独立 Shell / MCP stdio
+            # 没有清单时继续使用单根目录挂载。--mount 长语法不接受裸 `rw` 字段。
+            *(
+                [
+                    f"--mount=type=bind,src={self._daemon_mount_src_for(path)},dst={name}"
+                    for name, path in self.workspace_mounts.items()
+                ]
+                if self.workspace_mounts else
+                [f"--mount=type=bind,src={self._daemon_mount_src_for(self.root)},dst={_CONTAINER_ROOT}"]
+            ),
             f"--workdir={container_cwd}",
             "--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "--env=LANG=C.UTF-8",
             "--env=HOME=/",
-            *([f"--env={key}={value}" for key, value in (environment or {}).items()]),
             *([f"--env=HTTP_PROXY={self.settings.egress_proxy_url}",
                f"--env=HTTPS_PROXY={self.settings.egress_proxy_url}",
                "--env=NO_PROXY=127.0.0.1,localhost"] if profile == "egress" else []),
@@ -479,7 +520,6 @@ exec bash --noprofile --norc -i
         argv = self.build_argv(
             "bash --noprofile --norc", cwd=cwd, network_profile=network_profile,
             container_name=container_name,
-            allow_script_execution=True,
         )
         # 这段命令是服务端固定的启动脚本，不经过用户命令校验器；前面的
         # build_argv 仍负责统一应用镜像、挂载、网络和资源限制参数。
@@ -502,7 +542,7 @@ exec bash --noprofile --norc -i
         """生成 MCP stdio 容器参数：允许 server 运行时，但仍使用完整沙盒基线。"""
         argv = self.build_argv(
             command, cwd=cwd, network_profile=network_profile,
-            container_name=container_name, allow_script_execution=True,
+            container_name=container_name,
         )
         run_index = argv.index("run")
         argv[run_index + 1:run_index + 1] = ["--interactive"]
@@ -564,15 +604,11 @@ exec bash --noprofile --norc -i
         quota_root: str | Path | None = None,
         quota_bytes: int | None = None,
         network_profile: str | None = None,
-        allow_script_execution: bool = False,
-        environment: dict[str, str] | None = None,
     ) -> ShellResult:
         workdir = self._resolve_cwd(cwd)
         container_name = f"gugu-sandbox-{uuid4().hex}"
         docker_argv = self.build_argv(
             command, cwd=cwd, network_profile=network_profile, container_name=container_name,
-            allow_script_execution=allow_script_execution,
-            environment=environment,
         )
         timeout_value = max(0.1, min(float(timeout if timeout is not None else self.settings.timeout_seconds), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars if max_output_chars is not None else self.settings.output_limit_bytes), _MAX_OUTPUT))
@@ -637,7 +673,7 @@ exec bash --noprofile --norc -i
             stdout=stdout[0],
             stderr=stderr[0],
             timed_out=timed_out,
-            cwd=str(workdir.relative_to(self.root) or "."),
+            cwd=self._container_cwd(workdir),
             truncated=stdout[1] or stderr[1],
             permission_revoked=permission_revoked,
             quota_exceeded=quota_exceeded,

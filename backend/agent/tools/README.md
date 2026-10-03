@@ -15,7 +15,7 @@
 | `text_edit.py` | 通用正文行级编辑契约和安全校验 | 具体文件、笔记或 Skill 的持久化 |
 | `filesystem_policy.py` | 把当前 Session/定时任务 dispatch 主体适配到统一 filesystem policy | 保存授权事实、创建 grant、实现第二套权限判断 |
 | `files/` / `trash.py` | 文件库与回收站领域工具；按 `documents.py`、`folders.py`、`locations.py`、`transfer.py` 分职责组织，写操作调用 `filesystem_policy.py` | 自行复制 Session/任务授权规则 |
-| `shell.py` | 受控 Shell 与显式 `run_script` 执行入口 | 绕过 sandbox 或提供任意脚本命令 |
+| `shell.py` | 受控 Shell 执行入口 | 绕过 sandbox 或提供任意越权操作 |
 | 其他领域文件 | 项目、文件、日历、记忆、画布等各自资源的工具 | 跨领域的通用 Adapter |
 
 新增 Skill 生命周期能力放在 `skill_management.py`；新增固定协议或工具 Schema

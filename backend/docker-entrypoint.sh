@@ -345,6 +345,8 @@ alembic upgrade head
 # Knowledge 主存储把创建/更新时间统一为 ISO 8601 UTC。应用入口在服务接流量前
 # 执行可重跑迁移；其他 worker/gateway 由 KnowledgeStore 的用户级迁移门禁保护。
 if [ "${1:-}" = "uvicorn" ] || [ "${1:-}" = "nginx" ]; then
+    echo "[entrypoint] 迁移统一工作区目录 ..."
+    python -m scripts.migrations.migrate_workspace_layout --allow-real-data --apply --services-stopped
     echo "[entrypoint] 迁移 Knowledge 时间戳为 ISO 8601 UTC ..."
     python -m scripts.migrations.migrate_knowledge_timestamps
 fi

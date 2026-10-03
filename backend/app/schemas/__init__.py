@@ -648,6 +648,7 @@ class PreferencesResponse(CamelModel):
     shellSystemEnabled: bool = False           # 用户级系统范围 Shell 开关
     shellDangerousEnabled: bool = False       # 用户级全部 Shell 命令权限，危险操作仍需确认
     automaticModeEnabled: bool = False        # 用户级自动模式；默认关闭
+    decisionGuardEnabled: bool = False        # 行动跟进守卫；默认关闭
     showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
     showIntermediateReplies: bool = True       # IM 是否展示运行中的中间轮次回复；默认保持现有行为
     toolInjectionMode: str = "full"         # description = 简介模式；full = 全量模式，默认全量
@@ -713,6 +714,7 @@ class PreferencesUpdate(CamelModel):
     shellSystemEnabled: Optional[bool] = None
     shellDangerousEnabled: Optional[bool] = None
     automaticModeEnabled: Optional[bool] = None
+    decisionGuardEnabled: Optional[bool] = None
     showToolInteractions: Optional[bool] = None
     showIntermediateReplies: Optional[bool] = None
     toolInjectionMode: Optional[str] = None
