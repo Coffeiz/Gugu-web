@@ -14,9 +14,13 @@
     <p v-if="error" class="pm-msg err">{{ error }}</p>
 
     <div class="data-options">
+      <Checkbox v-model="includeFiles" class="data-option">
+        {{ t('profileDataUi.includeFiles', { size: formatBytes(preview?.categories.files?.bytes ?? 0) }) }}
+      </Checkbox>
       <Checkbox v-model="includeDrafts" class="data-option">{{ t('profileDataUi.includeDrafts') }}</Checkbox>
       <Checkbox v-model="includeImMemory" class="data-option">{{ t('profileDataUi.includeImMemory') }}</Checkbox>
     </div>
+    <p class="data-muted">{{ t('profileDataUi.fileExportHint') }}</p>
     <p class="data-warning">{{ t('profileDataUi.sensitiveHint') }}</p>
     <p class="data-muted">{{ t('profileDataUi.credentialsHint') }}</p>
 
@@ -137,6 +141,7 @@ const importToken = ref('')
 const importing = ref(false)
 const applying = ref(false)
 const error = ref('')
+const includeFiles = ref(true)
 const includeDrafts = ref(true)
 const includeImMemory = ref(true)
 let pollTimer: ReturnType<typeof setInterval> | undefined
@@ -158,7 +163,10 @@ function createIdempotencyKey(): string {
 const visibleCategories = computed(() => Object.keys(preview.value?.categories ?? {}).filter(key =>
   !['archive_docs', 'drafts', 'im_memory'].includes(key),
 ))
-const totalBytes = computed(() => Object.values(preview.value?.categories ?? {}).reduce((sum, value) => sum + value.bytes, 0))
+const totalBytes = computed(() => {
+  const total = Object.values(preview.value?.categories ?? {}).reduce((sum, value) => sum + value.bytes, 0)
+  return includeFiles.value ? total : Math.max(0, total - (preview.value?.categories.files?.bytes ?? 0))
+})
 const plannedImportCounts = computed(() => ({
   add: (importJob.value?.preview?.incremental?.add_total ?? 0) + (importJob.value?.preview?.memory?.add_total ?? 0),
   skip: (importJob.value?.preview?.incremental?.skip_total ?? 0) + (importJob.value?.preview?.memory?.skip_total ?? 0),
@@ -202,7 +210,9 @@ async function createExport() {
   creating.value = true
   error.value = ''
   try {
-    const categories = Object.keys(preview.value.categories).filter(key => key !== 'archive_docs')
+    const categories = Object.keys(preview.value.categories).filter(key =>
+      key !== 'archive_docs' && (includeFiles.value || key !== 'files'),
+    )
     if (!includeDrafts.value) categories.splice(categories.indexOf('drafts'), 1)
     if (!includeImMemory.value) categories.splice(categories.indexOf('im_memory'), 1)
     await dataPortabilityApi.createExport(categories, createIdempotencyKey())
