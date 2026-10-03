@@ -87,7 +87,7 @@ RUN mkdir -p /out \
         -require=golang.org/x/mod@v0.40.0 \
         -require=golang.org/x/text@v0.39.0 \
         -require=google.golang.org/grpc@v1.83.1 \
-    && go mod download \
+    && go mod tidy \
     && go mod verify \
     && CGO_ENABLED=0 go build -trimpath \
         -ldflags="-buildid= -X sigs.k8s.io/release-utils/version.gitVersion=v3.1.3 -X sigs.k8s.io/release-utils/version.gitCommit=11926fa5bbbbde47e88fc006b625a17769b743b2 -X sigs.k8s.io/release-utils/version.gitTreeState=clean -X sigs.k8s.io/release-utils/version.buildDate=2026-08-06T00:10:15Z" \
