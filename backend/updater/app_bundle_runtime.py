@@ -253,7 +253,9 @@ def install_archive(archive_path: Path, *, expected_sha256: str, version: str, r
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def activate_installed_release(directory: Path) -> dict[str, str]:
+def activate_installed_release(
+    directory: Path, *, rollback_supported: bool = False, database_migration: bool = True,
+) -> dict[str, str]:
     info = read_release_info(directory)
     resolved = directory.resolve(strict=True)
     trusted_releases = (DATA_ROOT / "releases").resolve()
@@ -271,7 +273,11 @@ def activate_installed_release(directory: Path) -> dict[str, str]:
     else:
         PREVIOUS_FILE.unlink(missing_ok=True)
     previous_record = {**previous, "path": str(previous_target)} if previous and previous_target else None
-    _write_json_atomic(PENDING_FILE, {**info, "previous": previous_record})
+    _write_json_atomic(PENDING_FILE, {
+        **info, "previous": previous_record,
+        "rollback_supported": bool(rollback_supported),
+        "database_migration": bool(database_migration),
+    })
     _write_json_atomic(ACTIVE_FILE, info)
     _replace_app_link(resolved)
     return info
@@ -322,12 +328,20 @@ def prune_old_releases() -> None:
 
 
 def rollback_pending_app() -> dict[str, str] | None:
-    """应用启动健康检查失败时恢复切换前代码；不会回滚数据库或用户数据。"""
+    """仅在数据库 schema 未变化且 Release 明确支持时恢复切换前代码。"""
     if not PENDING_FILE.is_file():
         return None
     pending = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
     previous = pending.get("previous") if isinstance(pending, dict) else None
+    if not isinstance(pending, dict):
+        return None
+    if pending.get("database_migration") is not False or pending.get("rollback_supported") is not True:
+        pending["health_check_failed"] = True
+        _write_json_atomic(PENDING_FILE, pending)
+        return None
     if not isinstance(previous, dict):
+        pending["health_check_failed"] = True
+        _write_json_atomic(PENDING_FILE, pending)
         return None
     path_value = str(previous.get("path") or "")
     target = Path(path_value).resolve(strict=True)
@@ -368,7 +382,7 @@ def main() -> int:
     elif args.mark_ready:
         mark_app_ready()
     else:
-        rollback_pending_app()
+        return 0 if rollback_pending_app() is not None else 2
     return 0
 
 

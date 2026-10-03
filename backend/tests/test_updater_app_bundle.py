@@ -47,7 +47,7 @@ def test_app_bundle_switch_and_failed_start_rollback_are_atomic(monkeypatch, tmp
     release = runtime.install_archive(
         archive, expected_sha256=digest, version="v1.2.0", runtime_contract="1"
     )
-    runtime.activate_installed_release(release)
+    runtime.activate_installed_release(release, rollback_supported=True, database_migration=False)
     assert runtime.current_app_info()["version"] == "v1.2.0"
     assert runtime.PENDING_FILE.is_file()
 
@@ -135,7 +135,7 @@ def test_mark_ready_keeps_current_and_previous_and_prunes_only_old_releases(monk
             archive, expected_sha256=digest, version=version, runtime_contract="1"
         )
         installed.append(release)
-        runtime.activate_installed_release(release)
+        runtime.activate_installed_release(release, rollback_supported=True, database_migration=False)
         assert runtime.mark_app_ready()["version"] == version
 
     orphan = runtime.DATA_ROOT / "releases" / "v1.0.0"
@@ -177,6 +177,74 @@ def test_app_bundle_updater_accepts_only_version_bound_release_assets(tmp_path):
     manifest["app_bundle"]["archive"] = "gugu-app-v1.3.0.tar.gz"
     with pytest.raises(runtime.AppBundleError, match="资源名称"):
         updater._validate_manifest(json.dumps(manifest).encode())
+
+
+@pytest.mark.asyncio
+async def test_app_bundle_preflight_rejects_database_migrations_even_if_manifest_claims_rollback(
+    monkeypatch, tmp_path,
+):
+    import updater.app_bundle as bundle_module
+    from types import SimpleNamespace
+
+    updater = AppBundleUpdater(state_dir=tmp_path / "updater")
+    updater.state["candidate"] = {
+        "version": "v1.3.0", "minimum_version": "v1.1.0",
+        "manifest_sha256": "a" * 64, "database_migration": True,
+        "rollback_supported": True,
+        "app_bundle": {"runtime_contract": "1", "size": 1024, "unpacked_size": 4096},
+    }
+    monkeypatch.setattr(updater, "_current", lambda: {"version": "v1.2.0", "runtime_contract": "1"})
+    monkeypatch.setattr(bundle_module, "supports_app_bundle_updates", lambda: True)
+    monkeypatch.setattr(bundle_module, "DATA_ROOT", tmp_path)
+    monkeypatch.setattr(bundle_module.shutil, "disk_usage", lambda _path: SimpleNamespace(free=10**9))
+
+    result = await updater.preflight({"operator": "admin-test"})
+
+    checks = {item["key"]: item for item in result["checks"]}
+    assert result["ready"] is False
+    assert checks["database_migrations"]["ok"] is False
+    assert "完整镜像更新" in checks["database_migrations"]["detail"]
+    assert "challenge" not in result
+
+
+def test_app_bundle_health_failure_after_migration_never_selects_old_code(monkeypatch, tmp_path):
+    _patch_paths(monkeypatch, tmp_path)
+    _write_release(runtime.APP_ROOT, "v1.1.0")
+    runtime.activate_image_or_persisted_app()
+    archive = tmp_path / "gugu-app-v1.2.0.tar.gz"
+    digest = _archive(archive, version="v1.2.0")
+    release = runtime.install_archive(
+        archive, expected_sha256=digest, version="v1.2.0", runtime_contract="1"
+    )
+    runtime.activate_installed_release(release, rollback_supported=True, database_migration=True)
+
+    result = runtime.rollback_pending_app()
+
+    assert result is None
+    assert runtime.current_app_info()["version"] == "v1.2.0"
+    pending = json.loads(runtime.PENDING_FILE.read_text(encoding="utf-8"))
+    assert pending["health_check_failed"] is True
+
+
+@pytest.mark.asyncio
+async def test_app_bundle_status_marks_migration_health_failure_as_not_rollbackable(monkeypatch, tmp_path):
+    import updater.app_bundle as bundle_module
+
+    pending_file = tmp_path / "pending.json"
+    pending_file.write_text(json.dumps({"health_check_failed": True}), encoding="utf-8")
+    monkeypatch.setattr(bundle_module, "PENDING_FILE", pending_file)
+    updater = AppBundleUpdater(state_dir=tmp_path / "updater")
+    updater.state["task"] = {
+        "id": "task-1", "operation": "update", "version": "v1.2.0",
+        "status": "restarting", "rollback_supported": False,
+    }
+    updater.state["history"].append(dict(updater.state["task"]))
+
+    await updater._finish_restarted_task_if_ready()
+
+    assert updater.state["task"]["status"] == "failed"
+    assert updater.state["task"]["failure_code"] == "health_check_failed_rollback_blocked"
+    assert updater.state["task"]["rollback_available"] is False
 
 
 @pytest.mark.asyncio

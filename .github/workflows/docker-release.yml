@@ -524,6 +524,8 @@ jobs:
           import hashlib
           import json
           import os
+          import re
+          import subprocess
           import tarfile
           from datetime import datetime, timezone
           from pathlib import Path
@@ -546,6 +548,26 @@ jobs:
               for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                   digest.update(chunk)
           archive_digest = digest.hexdigest()
+          git_sha = os.environ['GIT_SHA']
+          stable_tags = []
+          for tag in subprocess.check_output(['git', 'tag', '--list'], text=True).splitlines():
+              if not re.fullmatch(r'v\d+\.\d+\.\d+', tag) or tag == version:
+                  continue
+              if subprocess.run(['git', 'merge-base', '--is-ancestor', tag, git_sha], check=False).returncode == 0:
+                  stable_tags.append(tag)
+          if stable_tags:
+              def version_key(tag):
+                  return tuple(int(part) for part in tag[1:].split('.'))
+              previous_tag = max(stable_tags, key=version_key)
+              changed_migrations = subprocess.check_output(
+                  ['git', 'diff', '--name-only', previous_tag, git_sha, '--', 'backend/alembic/versions'],
+                  text=True,
+              ).splitlines()
+              database_migration = bool(changed_migrations)
+          else:
+              # 缺少可比较的稳定基线时保守阻止 App Bundle 热更新。
+              database_migration = True
+          print(f'database_migration={database_migration}')
           manifest = {
               'schema_version': 3,
               'version': version,
@@ -557,7 +579,7 @@ jobs:
                   'frontend_image': f"docker.io/coffeiz/gugu-web-frontend@{os.environ['FRONTEND_DIGEST']}",
               },
               'architectures': ['linux/amd64'],
-              'database_migration': True,
+              'database_migration': database_migration,
               'release_notes_url': f"https://github.com/Coffeiz/Gugu-web/releases/tag/{version}",
               'rollback_supported': True,
               'app_bundle': {
@@ -568,7 +590,7 @@ jobs:
                   'size': archive.stat().st_size,
                   'unpacked_size': unpacked_size,
               },
-              'git_sha': os.environ['GIT_SHA'],
+              'git_sha': git_sha,
               'published_at': datetime.now(timezone.utc).isoformat(),
           }
           Path('release/update-manifest.json').write_text(

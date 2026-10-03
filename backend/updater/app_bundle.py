@@ -111,6 +111,11 @@ class AppBundleUpdater:
             return current == "unknown"
 
     @staticmethod
+    def _app_bundle_rollback_supported(candidate: dict[str, Any]) -> bool:
+        # App Bundle 只切换代码，不备份/恢复数据库，因此任何迁移都不能热回滚旧代码。
+        return candidate.get("database_migration") is False and candidate.get("rollback_supported") is True
+
+    @staticmethod
     def _public_candidate(value: Any) -> dict[str, Any] | None:
         if not isinstance(value, dict):
             return None
@@ -321,6 +326,12 @@ class AppBundleUpdater:
             {"key": "persistent_app_dir", "ok": supports_app_bundle_updates(), "detail": "持久化应用目录已就绪"},
             {"key": "disk", "ok": shutil.disk_usage(DATA_ROOT).free >= bundle["size"] + bundle["unpacked_size"] + 64 * 1024 * 1024, "detail": "检查应用包暂存空间"},
             {"key": "integrity", "ok": True, "detail": "Release 清单摘要已固定；下载后将验证 Cosign 签名与文件摘要"},
+            {"key": "database_migrations", "ok": candidate.get("database_migration") is False,
+             "detail": "应用包升级不包含数据库迁移" if candidate.get("database_migration") is False
+             else "此 Release 包含数据库迁移，请使用完整镜像更新，避免代码回滚后与数据库 schema 不兼容"},
+            {"key": "rollback_policy", "ok": candidate.get("rollback_supported") is True,
+             "detail": "Release 声明支持安全代码回滚" if candidate.get("rollback_supported") is True
+             else "Release 未声明支持安全代码回滚，不能使用应用包更新"},
         ]
         ready = all(item["ok"] for item in checks) and has_update
         result: dict[str, Any] = {
@@ -358,6 +369,8 @@ class AppBundleUpdater:
             raise AppBundleError("更新确认已失效，请重新预检")
         if match.get("expires_at", 0) <= time.time():
             raise AppBundleError("更新确认已过期，请重新预检")
+        if not self._app_bundle_rollback_supported(candidate):
+            raise AppBundleError("此 Release 不适用于可安全回滚的应用包更新，请使用完整镜像更新")
         if self.state.get("task", {}).get("status") in {"pending", "downloading", "verifying", "installing", "restarting", "health_checking", "rolling_back"}:
             raise AppBundleError("已有应用更新任务正在执行")
         current = self._current()
@@ -366,7 +379,8 @@ class AppBundleUpdater:
             "previous_version": current["version"], "status": "pending", "stage": "pending",
             "progress": 0, "message": "应用包更新已排队", "requested_by": operator,
             "created_at": _utc_now(), "updated_at": _utc_now(), "events": [],
-            "rollback_supported": True,
+            "rollback_supported": self._app_bundle_rollback_supported(candidate),
+            "database_migration": bool(candidate.get("database_migration")),
         }
         self.state["challenges"].remove(match)
         self.state["task"] = task
@@ -400,7 +414,11 @@ class AppBundleUpdater:
             self.state["previous_version"] = self._current()["version"]
             self._save()
             activated = True
-            await asyncio.to_thread(activate_installed_release, installed)
+            await asyncio.to_thread(
+                activate_installed_release, installed,
+                rollback_supported=self._app_bundle_rollback_supported(candidate),
+                database_migration=bool(candidate.get("database_migration")),
+            )
             await self._set_task(task_id, "restarting", "restarting", 80, "应用文件已原子切换，正在重启容器内服务")
             await self._signal_restart()
         except Exception as exc:
@@ -442,6 +460,20 @@ class AppBundleUpdater:
     async def _finish_restarted_task_if_ready(self) -> None:
         task = self.state.get("task")
         if not isinstance(task, dict) or task.get("status") not in {"restarting", "health_checking"}:
+            return
+        try:
+            pending_state = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            pending_state = None
+        if isinstance(pending_state, dict) and pending_state.get("health_check_failed"):
+            task.update({
+                "status": "failed", "stage": "failed", "progress": 100,
+                "message": "应用未通过健康检查；数据库迁移版本禁止自动恢复旧代码，请使用完整镜像更新或人工恢复。",
+                "failure_code": "health_check_failed_rollback_blocked",
+                "rollback_available": False, "updated_at": _utc_now(), "completed_at": _utc_now(),
+            })
+            self._replace_history(task)
+            self._save()
             return
         try:
             current = self._current()
@@ -490,18 +522,25 @@ class AppBundleUpdater:
             current_info = self._current()
             trusted_releases = (DATA_ROOT / "releases").resolve()
             trusted_image = IMAGE_APP_ROOT.resolve()
+            task = self.state.get("task")
+            rollback_supported = (
+                isinstance(task, dict) and task.get("operation") == "update"
+                and task.get("status") == "succeeded" and task.get("rollback_supported") is True
+            )
             ready = (
                 previous_path.is_dir()
                 and (previous_path == trusted_image or previous_path.parent == trusted_releases)
                 and previous.get("version") == self.state.get("previous_version")
                 and previous.get("version") != current_info["version"]
+                and rollback_supported
             )
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             previous = None
             previous_path = None
             ready = False
         result = {"ready": ready, "target_version": self.state.get("previous_version", ""),
-                  "detail": "可恢复上一应用代码版本；数据库迁移不会回滚。" if ready else "没有可用的上一应用代码版本。"}
+                  "detail": "可恢复上一应用代码版本；该应用包更新不包含数据库迁移。" if ready
+                  else "没有可用的上一应用代码版本，或该更新包含数据库迁移/未声明安全代码回滚。"}
         if ready:
             token = secrets.token_urlsafe(48)
             self.state["rollback_challenge"] = {
@@ -514,6 +553,12 @@ class AppBundleUpdater:
         return result
 
     async def rollback(self, params: dict[str, Any]) -> dict[str, Any]:
+        task_state = self.state.get("task")
+        if not (
+            isinstance(task_state, dict) and task_state.get("operation") == "update"
+            and task_state.get("status") == "succeeded" and task_state.get("rollback_supported") is True
+        ):
+            raise AppBundleError("此应用版本未声明支持安全代码回滚")
         challenge = self.state.get("rollback_challenge")
         token_hash = hashlib.sha256(str(params.get("challenge") or "").encode()).hexdigest()
         operator = self._operator(params.get("operator"))
@@ -527,7 +572,10 @@ class AppBundleUpdater:
             raise AppBundleError("上一应用版本记录与回滚目标不匹配")
         target = Path(str(previous["path"])).resolve(strict=True)
         current_version = self._current()["version"]
-        info = await asyncio.to_thread(activate_installed_release, target)
+        info = await asyncio.to_thread(
+            activate_installed_release, target,
+            rollback_supported=True, database_migration=False,
+        )
         task = {
             "id": str(uuid.uuid4()), "operation": "rollback", "version": info["version"],
             "status": "restarting", "stage": "restarting", "progress": 80,

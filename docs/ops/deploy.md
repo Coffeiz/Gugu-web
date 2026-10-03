@@ -939,7 +939,7 @@ Compose 更新会启动新版本应用并按发布迁移数据库；更新前应
 
 #### Admin 在线更新与部署模式支持状态
 
-更新页会先显示识别到的部署模式与能力原因。Compose 部署显示由 Docker/Compose 管理器更新整套镜像，不提供 Admin 检查、执行或回滚操作。单容器通过 Admin 下载 Cosign 签名的应用包，校验后放入 `/data/app-updates` 并原子切换 `/app`，由容器入口监督器重启 Web、Worker、Gateway 等进程；健康检查失败会恢复上一代码目录。该路径不替换外层 Docker 容器，也不更新基础镜像、系统库或沙盒执行镜像。整镜像升级由 fnOS/群晖等 Docker 管理器执行，需保留原 `/data` 与 `/config` 映射。任务和应用版本状态保存在 `/data/updater`，应用代码回滚不会自动回滚数据库迁移。
+更新页会先显示识别到的部署模式与能力原因。Compose 部署显示由 Docker/Compose 管理器更新整套镜像，不提供 Admin 检查、执行或回滚操作。单容器通过 Admin 下载 Cosign 签名的应用包；预检只放行未包含数据库迁移且 Release 明确声明支持安全代码回滚的版本。包校验后放入 `/data/app-updates` 并原子切换 `/app`，由容器入口监督器重启 Web、Worker、Gateway 等进程；健康检查失败时仅在数据库 schema 未变化且回滚策略有效时恢复上一代码目录。包含数据库迁移的 Release 必须通过 fnOS/群晖等 Docker 管理器更新完整镜像，不能用应用包切换代码。应用包路径不替换外层 Docker 容器，也不更新基础镜像、系统库或沙盒执行镜像；整镜像升级需保留原 `/data` 与 `/config` 映射。任务和应用版本状态保存在 `/data/updater`。
 
 单容器应用包更新要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表。应用包必须通过固定发布身份的 Cosign blob 签名及 SHA-256 校验。Compose、单容器整镜像与基础运行时更新统一由 Docker/Compose 或 NAS Docker 管理器负责；`GUGU_SELF_UPDATE=off` 可关闭单容器应用包更新。
 

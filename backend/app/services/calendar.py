@@ -1,5 +1,6 @@
 """日历事件、提醒查询与写入边界。"""
 from datetime import timedelta, timezone
+from uuid import uuid4
 
 from sqlalchemy import select
 
@@ -215,6 +216,52 @@ async def refresh_event_reminder_metadata(db, user_id, event):
         reminder.payload = f"提醒：{event.title}（{when}）"
     await db.flush()
     return reminders
+
+
+async def sync_event_reminders_after_update(
+    db, user_id, event, *, previous_base, timing_changed: bool,
+    metadata_changed: bool, reminders=None,
+):
+    """在事件更新事务中同步提醒时间与展示信息，并保留提醒任务 ID。"""
+    if reminders is not None:
+        return await replace_event_reminders(db, user_id, event, reminders)
+
+    existing = await list_event_reminders(db, user_id, event.id)
+    if timing_changed:
+        scheduled = []
+        for task in existing:
+            if not task.enabled:
+                continue
+            lead_minutes = event_reminder_lead_minutes(task, previous_base)
+            if lead_minutes is None:
+                continue
+            candidate, error = build_reminder(
+                user_id, event, lead_minutes,
+                [channel for channel in (task.channels or "web").split(",") if channel],
+                task.delivery_targets,
+            )
+            if error:
+                return None, error
+            scheduled.append((task, candidate))
+
+        # 日期整体平移时，新 cron 可能与同组另一条旧 cron 暂时冲突；
+        # 先在同一事务内挪到唯一临时值，再写入最终触发时间，保持 task id。
+        for task, _candidate in scheduled:
+            task.cron = f"@once:reschedule-{uuid4().hex}"
+        if scheduled:
+            await db.flush()
+        for task, candidate in scheduled:
+            task.name = candidate.name
+            task.payload = candidate.payload
+            task.cron = candidate.cron
+            task.schedule_kind = candidate.schedule_kind
+            task.start_at = candidate.start_at
+            task.reminder_lead_minutes = candidate.reminder_lead_minutes
+
+    if metadata_changed:
+        existing = await refresh_event_reminder_metadata(db, user_id, event)
+    await db.flush()
+    return existing, None
 
 
 async def delete_event_with_reminders(db, user_id, event, *, commit=False):

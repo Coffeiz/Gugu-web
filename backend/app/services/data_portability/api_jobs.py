@@ -127,7 +127,15 @@ async def finish_preflight_upload(
 ) -> DataImportJob:
     row = (await db.execute(select(DataImportJob).where(
         DataImportJob.id == job_id, DataImportJob.user_id == user_id,
-    ))).scalar_one()
+    ).with_for_update())).scalar_one()
+    if row.status != "uploading":
+        raise PortabilityJobError(409, "上传任务已结束，不能继续完成预检")
+    if row.expires_at is not None and row.expires_at <= now_utc():
+        row.status = row.stage = "expired"
+        row.import_token_hash = None
+        row.finished_at = row.updated_at = now_utc()
+        await db.commit()
+        raise PortabilityJobError(409, "上传任务已过期，请重新上传归档")
     row.archive_sha256 = digest
     row.staging_key = staging_key
     row.status = row.stage = "queued"
@@ -142,8 +150,12 @@ async def mark_preflight_upload_failed(db: AsyncSession, *, job_id: UUID, user_i
             DataImportJob.id == job_id, DataImportJob.user_id == user_id,
         ))).scalar_one_or_none()
         if row is not None:
+            if row.status != "uploading":
+                return
             row.status = row.stage = "failed"
             row.error_code = "upload_failed"
+            row.import_token_hash = None
+            row.finished_at = now_utc()
             row.updated_at = now_utc()
 
 

@@ -129,7 +129,7 @@ PostgreSQL、Redis、`pgdata`、`gugu_data`、`gugu_config`、用户上传内容
 
 应用包迁移失败、进程重启失败、健康检查超时或关键服务异常时，应用包更新器必须停止继续推进并保留诊断摘要。若数据库迁移不可逆或新版本明确不支持代码回滚，必须在预检阶段阻止更新。
 
-单容器应用包回滚恢复上一代码版本；已执行的数据库迁移必须由版本提供向后兼容策略或独立的回滚迁移处理，不能假设切回旧代码就能自动恢复数据库。Compose/整镜像的失败恢复由部署管理器/用户执行，Admin 不承诺自动回滚。
+单容器应用包只允许用于未包含数据库迁移且声明支持安全代码回滚的 Release；迁移 Release 必须改用完整镜像更新。应用包失败时仅可在数据库 schema 未变化时恢复上一代码版本；不能假设切回旧代码就能自动恢复数据库。Compose/整镜像的失败恢复由部署管理器/用户执行，Admin 不承诺自动回滚。
 
 ### FR-UPD-006：Admin 交互
 
@@ -235,7 +235,7 @@ Gugu 更新功能不得访问宿主 Docker Socket；Compose 文件不部署更�
 
 ### 3.5 配置与数据保护
 
-应用包更新不写入 `.env`、`backend/.env`、Compose 文件、容器环境配置或业务持久化卷之外的用户数据。Compose 镜像更新由平台/用户执行，须保留原有 `.env`、Compose 文件和卷映射；Gugu 不执行 `docker compose down -v`、无范围 `docker system prune` 或 Docker API 操作。
+应用包更新不写入 `.env`、`backend/.env`、Compose 文件、容器环境配置或业务持久化卷之外的用户数据。应用包预检拒绝带数据库迁移或未声明安全代码回滚的 Release；manifest 的迁移标记由发布流水线比较最近的稳定 tag 与本次提交中的 Alembic migration 文件生成，缺少稳定比较基线时按包含迁移处理。Compose 镜像更新由平台/用户执行，须保留原有 `.env`、Compose 文件和卷映射；Gugu 不执行 `docker compose down -v`、无范围 `docker system prune` 或 Docker API 操作。
 
 Compose 数据库备份和迁移须在业务容器重建前完成；standalone 数据库备份须在停止旧 app 前完成且验证备份可读。迁移文件必须幂等，回滚兼容要求在发布元数据和说明中明确；任何数据库恢复都必须是显式、可审计的操作，不以切换镜像隐式还原数据库。
 

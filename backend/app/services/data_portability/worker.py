@@ -160,11 +160,18 @@ async def cleanup_expired_portability_data(*, session_factory) -> None:
             DataExportJob.status.in_({"ready", "failed", "canceled"}),
         ).limit(50))).scalars().all()
         imports = (await db.execute(select(DataImportJob).where(
-            DataImportJob.status.in_({"preview_ready", "completed", "rolled_back", "failed", "canceled"}),
             (
-                (DataImportJob.expires_at.is_not(None) & (DataImportJob.expires_at <= timestamp))
-                | (DataImportJob.rollback_expires_at.is_not(None)
-                   & (DataImportJob.rollback_expires_at <= timestamp))
+                (DataImportJob.status.in_({"preview_ready", "completed", "rolled_back", "failed", "canceled"})
+                 & ((DataImportJob.expires_at.is_not(None) & (DataImportJob.expires_at <= timestamp))
+                    | (DataImportJob.rollback_expires_at.is_not(None)
+                       & (DataImportJob.rollback_expires_at <= timestamp))))
+                | ((DataImportJob.status == "uploading")
+                   & DataImportJob.expires_at.is_not(None)
+                   & (DataImportJob.expires_at <= timestamp))
+                | ((DataImportJob.status == "expired")
+                   & DataImportJob.staging_key.is_not(None)
+                   & DataImportJob.expires_at.is_not(None)
+                   & (DataImportJob.expires_at <= timestamp))
             ),
         ).limit(50))).scalars().all()
         await db.commit()
@@ -193,13 +200,35 @@ async def cleanup_expired_portability_data(*, session_factory) -> None:
     for row in imports:
         staging_expired = row.expires_at is not None and row.expires_at <= timestamp
         rollback_expired = row.rollback_expires_at is not None and row.rollback_expires_at <= timestamp
+        upload_expired = row.status == "uploading" and staging_expired
         try:
-            if staging_expired and row.staging_key:
-                await storage.delete(row.staging_key)
+            if staging_expired:
+                staging_key = row.staging_key
+                if upload_expired and not staging_key:
+                    # 上传进程可能在对象落盘后、写回 staging_key 前退出；路径由 job id 决定。
+                    staging_key = f"{row.user_id.hex}/.data-portability/imports/{row.id.hex}.gupi"
+                if staging_key:
+                    await storage.delete(staging_key)
             if rollback_expired and row.rollback_key:
                 await storage.delete(row.rollback_key)
         except Exception as exc:
             diag_log("data_portability.expiry_cleanup", exc)
+            if upload_expired:
+                # 对象存储短暂不可用时也必须解除用户级活跃任务锁；保留 staging_key，
+                # 后续清理轮次会继续删除孤立暂存对象。
+                staging_key = row.staging_key or f"{row.user_id.hex}/.data-portability/imports/{row.id.hex}.gupi"
+                async with session_factory() as db:
+                    await db.execute(update(DataImportJob).where(
+                        DataImportJob.id == row.id,
+                        DataImportJob.user_id == row.user_id,
+                        DataImportJob.status == "uploading",
+                        DataImportJob.expires_at <= timestamp,
+                    ).values(
+                        status="expired", stage="expired", staging_key=staging_key,
+                        import_token_hash=None, error_code="upload_expired",
+                        finished_at=timestamp, updated_at=timestamp,
+                    ))
+                    await db.commit()
             continue
         async with session_factory() as db:
             replacements_left = row.mode in {"replace", "rollback"} and not rollback_expired and bool(row.rollback_key)
@@ -210,12 +239,17 @@ async def cleanup_expired_portability_data(*, session_factory) -> None:
                 "import_token_hash": None,
                 "updated_at": timestamp,
             }
+            if upload_expired:
+                values.update(status="expired", stage="expired", finished_at=timestamp, error_code="upload_expired")
             if not replacements_left:
                 values.update(status="expired", stage="expired")
             await db.execute(update(DataImportJob).where(
                 DataImportJob.id == row.id,
                 DataImportJob.user_id == row.user_id,
-                DataImportJob.status.in_({"preview_ready", "completed", "rolled_back", "failed", "canceled"}),
+                DataImportJob.status.in_({"uploading", "preview_ready", "completed", "rolled_back", "failed", "canceled", "expired"}),
+                ((DataImportJob.expires_at.is_not(None) & (DataImportJob.expires_at <= timestamp))
+                 | (DataImportJob.rollback_expires_at.is_not(None)
+                    & (DataImportJob.rollback_expires_at <= timestamp))),
             ).values(**values))
             await db.commit()
 

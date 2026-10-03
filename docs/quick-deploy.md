@@ -54,7 +54,7 @@ docker save -o gugu-web.tar coffeiz/gugu-web:latest
 
 单容器镜像包含完整站点、内置 PostgreSQL/Redis、内部 Rootless Docker、沙盒管理器和 Shell 执行镜像。Shell 沙盒默认启用，不需要单独部署 `sandboxd`、导入执行镜像或挂载宿主 Docker Socket。SearXNG 不包含在单容器镜像中，因此联网搜索功能不可用。
 
-单容器更新分为两层：Admin「版本更新」可下载并验签 Gugu 应用包，在容器内安全切换应用代码并重启服务；它不会更新基础系统或替换 Docker 镜像。Docker 镜像、Rootless Docker、Shell 执行镜像及其他基础运行时更新，仍在 fnOS/群晖等 Docker 管理器中拉取新镜像并重建容器。请保留原有 `/data`、`/config` 映射；数据库迁移由新应用启动时执行，应用代码回滚不会自动逆转数据库迁移。旧版镜像需先通过 Docker 管理器更新到包含应用包更新运行时的版本。
+单容器更新分为两层：Admin「版本更新」只允许下载并验签不含数据库迁移、且明确支持安全代码回滚的 Gugu 应用包，在容器内切换应用代码并重启服务；包含数据库迁移的 Release 必须通过 Docker/NAS 管理器更新完整镜像。应用包更新失败时，只有在数据库 schema 未变化且 Release 声明支持回滚时才恢复旧代码，避免新旧代码与数据库 schema 不兼容。基础系统、Rootless Docker、Shell 执行镜像及其他基础运行时也由 Docker 管理器更新。请保留原有 `/data`、`/config` 映射。旧版镜像需先通过 Docker 管理器更新到包含应用包更新运行时的版本。
 
 > **安全提示：**privileged 会显著提高外层应用容器被攻破后的宿主机风险。内部 Rootless 只隔离其创建的 Shell 执行容器，不能消除外层应用的宿主风险；此部署方式面向可信个人单用户使用，不建议用于多租户、公网或业务服务器。
 

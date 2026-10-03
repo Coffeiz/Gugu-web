@@ -463,8 +463,7 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
                 cd /
                 exec /app/docker-entrypoint.sh "$@"
             fi
-            echo "[entrypoint] 应用未通过健康检查，且不存在可安全恢复的上一版本。" >&2
-            exit 1
+            echo "[entrypoint] 应用未通过健康检查；为避免数据库迁移后恢复旧代码造成 schema 不兼容，未自动回滚。请查看 updater 状态并使用完整镜像更新或人工恢复。" >&2
         fi
     fi
 

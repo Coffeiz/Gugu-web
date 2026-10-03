@@ -17,8 +17,8 @@ from app.services.calendar import (
     list_event_reminders,
     list_events_with_reminders,
     normalize_reminder_channels,
-    refresh_event_reminder_metadata,
     replace_event_reminders,
+    sync_event_reminders_after_update,
 )
 
 _DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
@@ -126,11 +126,6 @@ async def _update_event(db, user_id, args: dict):
         if not proj:
             return {"error": "关联项目不存在"}
 
-    timing_changed = "date" in args or "time" in args
-    existing_reminders = (
-        await list_event_reminders(db, user_id, e.id)
-        if timing_changed and "reminders" not in args else []
-    )
     resolved_reminders = None
     if "reminders" in args:
         resolved_reminders, error = await _resolve_reminder_specs(db, user_id, args["reminders"])
@@ -138,18 +133,8 @@ async def _update_event(db, user_id, args: dict):
             return {"error": error}
 
     old_base = event_base_datetime(e)
-    preserved_enabled_reminders = []
-    for reminder in existing_reminders:
-        reminder.reminder_lead_minutes = event_reminder_lead_minutes(reminder, old_base)
-        if not reminder.enabled:
-            continue
-        lead_minutes = reminder.reminder_lead_minutes
-        preserved_enabled_reminders.append({
-            "lead_minutes": lead_minutes,
-            "channels": [channel for channel in (reminder.channels or "web").split(",") if channel],
-            "delivery_targets": reminder.delivery_targets,
-            "enabled": True,
-        })
+    timing_changed = "date" in args or "time" in args
+    metadata_changed = any(field in args for field in ("title", "date", "time"))
 
     for field in fields:
         if field == "reminders":
@@ -157,20 +142,13 @@ async def _update_event(db, user_id, args: dict):
         if field in args:
             setattr(e, field, args[field])
 
-    if resolved_reminders is not None:
-        rows, error = await replace_event_reminders(db, user_id, e, resolved_reminders)
-        if error:
-            return {"error": error}
-    elif timing_changed and existing_reminders:
-        rows, error = await replace_event_reminders(
-            db, user_id, e, preserved_enabled_reminders, preserve_disabled=True,
-        )
-        if error:
-            return {"error": error}
-    elif "title" in args:
-        rows = await refresh_event_reminder_metadata(db, user_id, e)
-    else:
-        rows = await list_event_reminders(db, user_id, e.id)
+    rows, error = await sync_event_reminders_after_update(
+        db, user_id, e, previous_base=old_base,
+        timing_changed=timing_changed, metadata_changed=metadata_changed,
+        reminders=resolved_reminders,
+    )
+    if error:
+        return {"error": error}
 
     return {
         "success": True,

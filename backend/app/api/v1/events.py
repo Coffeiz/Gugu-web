@@ -11,7 +11,7 @@ from app.core.ownership import get_owned
 from app.core import events
 from app.core.tz import now_utc
 from app.services.undo import UndoService
-from app.services.calendar import event_base_datetime, event_reminder_lead_minutes, list_event_reminders
+from app.services.calendar import event_base_datetime, list_event_reminders, sync_event_reminders_after_update
 from app.services.undo.domains import domain_ref, domain_state, event_snapshot, task_snapshot
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -106,7 +106,11 @@ async def update_event(
     if not e or e.deleted_at is not None:
         raise HTTPException(404, "事件不存在")
     data = body.model_dump(exclude_unset=True, by_alias=False)
-    before = event_snapshot(e)
+    event_ref = domain_ref("event", e.id)
+    previous_base = event_base_datetime(e)
+    reminders_before = await list_event_reminders(db, current_user.id, e.id)
+    before_items = {event_ref: event_snapshot(e)}
+    before_items.update({domain_ref("task", task.id): task_snapshot(task) for task in reminders_before})
     client_version = data.pop("version", None)
     if client_version is not None and e.version != client_version:
         raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
@@ -114,21 +118,29 @@ async def update_event(
         project = await get_owned(db, Project, data["project_id"], current_user.id)
         if project is None or project.deleted_at is not None:
             raise HTTPException(400, "关联的项目不存在")
-    if "date" in data or "time" in data:
-        base = event_base_datetime(e)
-        for reminder in await list_event_reminders(db, current_user.id, e.id):
-            reminder.reminder_lead_minutes = event_reminder_lead_minutes(reminder, base)
     for k, v in data.items():
         setattr(e, k, v)
+    _reminders, reminder_error = await sync_event_reminders_after_update(
+        db, current_user.id, e, previous_base=previous_base,
+        timing_changed="date" in data or "time" in data,
+        metadata_changed=any(field in data for field in ("title", "date", "time")),
+    )
+    if reminder_error:
+        raise HTTPException(422, reminder_error)
     e.version = (e.version or 1) + 1
+    await db.flush()
+    reminders_after = await list_event_reminders(db, current_user.id, e.id)
+    after_items = {event_ref: event_snapshot(e)}
+    after_items.update({domain_ref("task", task.id): task_snapshot(task) for task in reminders_after})
+    all_refs = list(after_items)
     await UndoService.record_forward(
         db, user_id=current_user.id,
         context_id=request.headers.get("X-Undo-Context-ID") if request else None,
         resource="calendar", action="update",
-        target_refs=[{"kind": "event", "id": e.id}],
-        before_state=domain_state({domain_ref("event", e.id): before}),
-        after_state=domain_state({domain_ref("event", e.id): event_snapshot(e)}),
-        base_versions={domain_ref("event", e.id): {"version": before["version"]}},
+        target_refs=[{"kind": ref.split(":", 1)[0], "id": int(ref.split(":", 1)[1])} for ref in all_refs],
+        before_state=domain_state(before_items),
+        after_state=domain_state(after_items),
+        base_versions={ref: {"version": before_items.get(ref, {}).get("version", 0)} for ref in before_items},
     )
     await db.commit()
     await db.refresh(e)
