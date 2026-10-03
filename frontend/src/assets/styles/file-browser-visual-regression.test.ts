@@ -107,13 +107,13 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
   it('文件夹与文件 rename 保留完整下伸字形且绝对定位不撑高卡片', () => {
     const sizerRenameInput = cssBlock(filesCss, '.rename-sizer .rename-input-inline {')
     const sharedRenameInput = cssBlock(filesCss, '.rename-input-inline {')
+    expect(sizerRenameInput).toContain('height: auto;')
     expect(sizerRenameInput).toContain('line-height: inherit;')
     expect(sizerRenameInput).toContain('top: -1px; bottom: -1px;')
     expect(sizerRenameInput).not.toContain('line-height: 1.15;')
     expect(sharedRenameInput).toContain('position: absolute;')
     expect(filesCss).toContain('.rename-ghost {')
     expect(cssBlock(filesCss, '.rename-ghost {')).toContain('display: block; visibility: hidden; white-space: pre;')
-    expect(sizerRenameInput).not.toMatch(/(?:^|[;{\s])height\s*:/)
   })
 
   it('共享重命名输入框自动聚焦与失焦提交会给标准焦点过渡留出时间', () => {
