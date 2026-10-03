@@ -68,12 +68,38 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "msgpack==1.2.2" "setuptools==84.0.0" \
     && /opt/venv/bin/python -c "from importlib.metadata import version; assert version('msgpack') == '1.2.2'; assert version('setuptools') == '84.0.0'"
 
+# ── Stage 2.5：从固定上游源码构建修复版 Cosign ───────────────────────────────
+# Cosign v3.1.3 官方镜像内的 Go 依赖已被 Trivy 标记为高危漏洞。
+# 保持官方签名版本与固定源码提交，只更新已修复的 Go 依赖并使用修复版工具链。
+FROM golang:1.26.6-trixie AS cosign-build
+
+WORKDIR /src
+
+ADD --checksum=sha256:3a718446bac51466efff6853639e1ca108b456ecbf07cd92938f548715d22d6b \
+    https://github.com/sigstore/cosign/archive/11926fa5bbbbde47e88fc006b625a17769b743b2.tar.gz \
+    /tmp/cosign.tar.gz
+
+RUN mkdir -p /out \
+    && tar -xzf /tmp/cosign.tar.gz --strip-components=1 -C /src \
+    && rm /tmp/cosign.tar.gz \
+    && go mod edit \
+        -require=golang.org/x/crypto@v0.55.0 \
+        -require=golang.org/x/mod@v0.40.0 \
+        -require=golang.org/x/text@v0.39.0 \
+        -require=google.golang.org/grpc@v1.83.1 \
+    && go mod download \
+    && go mod verify \
+    && CGO_ENABLED=0 go build -trimpath \
+        -ldflags="-buildid= -X sigs.k8s.io/release-utils/version.gitVersion=v3.1.3 -X sigs.k8s.io/release-utils/version.gitCommit=11926fa5bbbbde47e88fc006b625a17769b743b2 -X sigs.k8s.io/release-utils/version.gitTreeState=clean -X sigs.k8s.io/release-utils/version.buildDate=2026-08-06T00:10:15Z" \
+        -o /out/cosign ./cmd/cosign \
+    && /out/cosign version
+
 # ── Stage 3：后端生产运行时 + 前端静态产物 ──────────────────────────────────
 # Docker CLI 供受控更新器和显式启用的内嵌 sandbox manager 使用。
 FROM python:3.14-slim-trixie
 
-# 应用包更新需要容器内独立验签；只把固定版本 Cosign CLI 复制进运行镜像，不带 Docker socket。
-COPY --from=ghcr.io/sigstore/cosign/cosign@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8 /ko-app/cosign /usr/local/bin/cosign
+# 应用包更新需要容器内独立验签；只把固定上游提交构建的 Cosign CLI 复制进运行镜像，不带 Docker socket。
+COPY --from=cosign-build /out/cosign /usr/local/bin/cosign
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 
