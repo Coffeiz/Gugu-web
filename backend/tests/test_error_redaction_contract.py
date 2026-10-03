@@ -52,7 +52,7 @@ def test_public_message_does_not_require_cause():
     ("sk-abcdefghijklmnop1234567890", "abcdefghijklmnop"),
     ("Authorization: Bearer abcdefghijklmnopqrstuvwx", "abcdefghijklmnopqrstuvwx"),
     ("/Users/alice/uploads/secret_report.pdf", "alice"),
-    ("<devserver用户目录>/.agent/staging/x", "coffeiz"),
+    ("/home/example-user/.agent/staging/x", "example-user"),
     ("user_id=12345678-1234-1234-1234-123456789012", "12345678-1234-1234-1234-123456789012"),
 ])
 def test_redact_strips_sensitive_patterns(raw, must_not_contain):

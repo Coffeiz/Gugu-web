@@ -54,8 +54,8 @@ class TestAPIErrorLayering:
     def test_internal_error_is_redacted(self):
         from app.core.redaction import redact
 
-        original = "读取 <devserver用户目录>/uploads/secret-token.txt 失败"
+        original = "读取 /home/example-user/uploads/secret-token.txt 失败"
         redacted = redact(original)
 
-        assert "<devserver用户目录>/uploads/secret-token.txt" not in redacted
+        assert "/home/example-user/" not in redacted
         assert len(redacted) < len(original)
