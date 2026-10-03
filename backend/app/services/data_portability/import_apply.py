@@ -242,7 +242,11 @@ def _model_fields(spec, record: PortableEntityRecord) -> dict[str, Any]:
                     python_type = spec.model.__table__.columns[column_name].type.python_type
                 except NotImplementedError:
                     column_type = spec.model.__table__.columns[column_name].type
-                    python_type = getattr(getattr(column_type, "impl", None), "python_type", None)
+                    # TypeDecorator.impl 可能仍是类型类；impl_instance 才能稳定提供
+                    # 包装类型对应的 Python 类型（例如 UtcDateTime -> datetime）。
+                    python_type = getattr(
+                        getattr(column_type, "impl_instance", None), "python_type", None
+                    )
                 if python_type is datetime:
                     value = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 elif python_type is date:

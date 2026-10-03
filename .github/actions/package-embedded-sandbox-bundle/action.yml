@@ -30,13 +30,16 @@ runs:
         # 上游 ubuntu/squid:latest 会滞后于 Ubuntu 安全更新；固定其 digest 后
         # 仍需每轮刷新 apt 元数据并升级系统包，再扫描实际将被打包的不可变镜像。
         proxy_archive="/tmp/gugu-egress-proxy-${GITHUB_RUN_ID}.tar"
+        proxy_context="$(mktemp -d)"
+        trap 'rm -rf "$proxy_context"' EXIT
         printf 'FROM ubuntu/squid@%s\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && rm -rf /var/lib/apt/lists/*\n' "$proxy_digest" \
-          | docker buildx build \
-              --platform linux/amd64 \
-              --no-cache \
-              --tag gugu-egress-proxy:embedded \
-              --output "type=docker,dest=${proxy_archive}" \
-              --file - -
+          > "$proxy_context/Dockerfile"
+        docker buildx build \
+          --platform linux/amd64 \
+          --no-cache \
+          --tag gugu-egress-proxy:embedded \
+          --output "type=docker,dest=${proxy_archive}" \
+          --file "$proxy_context/Dockerfile" "$proxy_context"
         docker load --input "$proxy_archive"
         rm -f "$proxy_archive"
         proxy_image_id="$(docker image inspect --format '{{.Id}}' gugu-egress-proxy:embedded)"
