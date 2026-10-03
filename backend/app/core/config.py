@@ -279,8 +279,8 @@ def _load_stored_preset(raw: dict) -> AIPresetItem:
 
 class AgentBehaviorSettings(BaseModel):
     parallel_tool_execution_enabled: bool = Field(
-        False,
-        description="全局并行执行开关，可在 Admin 中切换以调试或回退；默认关闭",
+        True,
+        description="全局并行执行开关，可在 Admin 中切换以调试或回退；默认开启",
     )
     parallel_tool_max_concurrency: int = Field(
         5, ge=1, le=20, description="单 Round 并行工具最大并发数，可在 Admin 调整",

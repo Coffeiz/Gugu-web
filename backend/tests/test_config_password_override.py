@@ -119,9 +119,9 @@ def test_apply_override_reads_legacy_admin_automatic_mode_once(tmp_path, monkeyp
     assert not hasattr(settings.agent, "shell_autopilot_enabled")
 
 
-def test_parallel_tool_execution_defaults_to_disabled():
+def test_parallel_tool_execution_defaults_to_enabled():
     settings = cfg.AgentBehaviorSettings()
-    assert settings.parallel_tool_execution_enabled is False
+    assert settings.parallel_tool_execution_enabled is True
     assert settings.parallel_tool_max_concurrency == 5
 
 
@@ -133,7 +133,8 @@ def test_parallel_tool_max_concurrency_is_bounded():
 
 
 @pytest.mark.asyncio
-async def test_admin_parallel_tool_toggle_persists_in_override(tmp_path, monkeypatch):
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_admin_parallel_tool_toggle_persists_in_override(tmp_path, monkeypatch, enabled):
     fake = tmp_path / "config.override.json"
     monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
     monkeypatch.setattr(
@@ -143,17 +144,17 @@ async def test_admin_parallel_tool_toggle_persists_in_override(tmp_path, monkeyp
     )
 
     await cfg.save_override({"agent": {
-        "parallel_tool_execution_enabled": True,
+        "parallel_tool_execution_enabled": enabled,
         "parallel_tool_max_concurrency": 5,
     }})
 
     persisted = json.loads(fake.read_text(encoding="utf-8"))
-    assert persisted["agent"]["parallel_tool_execution_enabled"] is True
+    assert persisted["agent"]["parallel_tool_execution_enabled"] is enabled
     assert persisted["agent"]["parallel_tool_max_concurrency"] == 5
     effective = cfg.AppSettings(
         db=cfg.DatabaseSettings(password="Test_db_password_123"),
     ).apply_override()
-    assert effective.agent.parallel_tool_execution_enabled is True
+    assert effective.agent.parallel_tool_execution_enabled is enabled
     assert effective.agent.parallel_tool_max_concurrency == 5
 
 

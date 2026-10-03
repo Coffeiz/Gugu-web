@@ -113,7 +113,7 @@
 
 ### FR-LLM31-06：快速回退
 
-提供全局串行开关，默认关闭，可由部署环境设置初始值，并可在 Admin → Agent → 运行行为中持久化切换，便于调试和快速回退。关闭后使用当前串行执行路径，不改变工具输入、结果、事件顺序或历史投影。开关和观测日志不包含用户数据。
+提供全局并行开关，默认开启，可由部署环境设置初始值，并可在 Admin → Agent → 运行行为中持久化切换，便于调试和快速回退。显式关闭的已有设置继续保留；关闭后使用当前串行执行路径，不改变工具输入、结果、事件顺序或历史投影。开关和观测日志不包含用户数据。
 
 ## 4. 安全与正确性边界
 
@@ -135,7 +135,7 @@
 
 ### Phase 1：有界执行器（已完成，2026-10-02）
 
-- `AgentBehaviorSettings.parallel_tool_execution_enabled` 是全局并行开关，默认 `false`，可由环境变量 `AGENT__PARALLEL_TOOL_EXECUTION_ENABLED` 设置初始值，并可在 Admin → Agent → 运行行为中持久化切换，方便调试和快速回退。关闭时已审查的候选批次走串行路径；未审查、混合或含交互的批次无论开关状态都保持串行。
+- `AgentBehaviorSettings.parallel_tool_execution_enabled` 是全局并行开关，默认 `true`（2026-10-03 调整），可由环境变量 `AGENT__PARALLEL_TOOL_EXECUTION_ENABLED` 设置初始值，并可在 Admin → Agent → 运行行为中持久化切换，方便调试和快速回退。关闭时已审查的候选批次走串行路径；未审查、混合或含交互的批次无论开关状态都保持串行。
 - 单 Round 按 Admin 配置的并发上限分批；任一批次不满足资格或输入 schema 预检失败，整批使用原串行路径。
 - 并行批次先按模型顺序发出 `tool_call/queued`；各调用被调度器实际启动时更新为 `running`。任务完成后，结果事件、`dispatched`、canonical history 和 Provider round 均按原索引回填。
 - 单项普通异常作为该项脱敏错误回执，不丢弃其他结果；任务取消时取消并等待未完成项，保留已完成项的真实回执，为未完成项写入取消回执并发 `cancelled` 终态，然后结束当前 Run，不继续请求 Provider。

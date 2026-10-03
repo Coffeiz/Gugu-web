@@ -310,10 +310,10 @@ async def test_phase2_project_and_calendar_reads_preserve_user_scope(db, user_a,
     assert {item["title"] for item in upcoming_b["items"]} == {"用户乙项目", "用户乙活动"}
 
 
-def test_parallel_execution_deployment_setting_defaults_to_serial():
+def test_parallel_execution_deployment_setting_can_explicitly_disable_parallelism():
     from app.core.config import AgentBehaviorSettings
 
-    assert AgentBehaviorSettings().parallel_tool_execution_enabled is False
+    assert AgentBehaviorSettings(parallel_tool_execution_enabled=False).parallel_tool_execution_enabled is False
 
 
 def test_parallel_dispatch_is_bounded_ordered_and_isolates_one_failure():

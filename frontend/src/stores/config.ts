@@ -99,7 +99,7 @@ export const useConfigStore = defineStore('config', () => {
       enabled: false,
     },
     agent: {
-      parallel_tool_execution_enabled: false,
+      parallel_tool_execution_enabled: true,
       parallel_tool_max_concurrency: 5,
       shell_enabled: true,
       shell_system_enabled: false,
