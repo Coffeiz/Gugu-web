@@ -271,10 +271,11 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          mkdir -p release/app-bundle
+          mkdir -p release/app-bundle/app
           container_id="$(docker create "$CANDIDATE_IMAGE")"
           trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
-          docker cp "$container_id:/app" release/app-bundle/app
+          # 先建好目标目录，再复制 /app 的内容，避免 docker cp 对不存在目标目录的处理差异。
+          docker cp "$container_id:/app/." release/app-bundle/app/
           python3 - "$container_id" release/app-bundle/app/.gugu-app-release.json "$VERSION" <<'PY'
           import json
           import subprocess
