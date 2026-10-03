@@ -425,7 +425,8 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         if snapshot_context else None
     )
 
-    # 组装本轮动态上下文注入块（放入 history 之后，不进 system）
+    # 组装本轮动态上下文注入块（放入 history 之后，不进 system）。
+    # Shell 状态说明单独放在 system_prompt 的固定位置，见下方 Shell 策略组装。
     _dynamic_extra_parts = []
     _im_id = im_identity_block(req, history)
     if _im_id:
@@ -454,9 +455,14 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
                 tool_db, user_id, session_id, session=session,
             )
             if shell_prompt:
-                _dynamic_extra_parts.append(shell_prompt)
+                # 权限状态会影响模型回答与工具选择，按 v1.4.0 固定放在 system prompt；
+                # 工作区授权通常不频繁变化，每轮重算但状态未变时前缀也保持稳定。
+                # 不进入 snapshot、Canonical history 或 provider dynamic tail。
+                # 这段提示只供模型理解当前环境，执行器仍逐调用校验真实权限。
+                system_prompt = session_system.append_shell_prompt(system_prompt, enabled=True)
+                system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
             else:
-                tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
+                tool_names = [name for name in tool_names if name != "shell"]
         capability_context = await _capability_context(
             tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
             user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,

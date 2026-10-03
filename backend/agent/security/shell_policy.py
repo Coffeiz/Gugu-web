@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import re
 import asyncio
-import shlex
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -85,38 +84,7 @@ _DANGEROUS = re.compile(
     re.IGNORECASE,
 )
 _WRITE = re.compile(r"(^|[;&|()\n])\s*(mkdir|touch|cp|python|pytest|npm|pnpm|git)\b", re.IGNORECASE)
-_RUNTIME_NAMES = frozenset({"node", "npm", "npx", "pnpm", "yarn", "bun", "deno", "pip", "pip3", "uv", "pytest", "py"})
-_RUNTIME_WRAPPERS = frozenset({"env", "command", "exec"})
-_SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash"})
-_PYTHON_RUNTIME = re.compile(r"^python(?:\d+(?:\.\d+)*)?$")
 _SESSION_LOCKS: dict[int, asyncio.Lock] = {}
-
-
-def _runtime_name(argv: list[str]) -> str | None:
-    """从单条 argv 中识别直接或 Shell wrapper 调用的代码运行时。"""
-    if not argv:
-        return None
-    executable = argv[0].rsplit("/", 1)[-1].lower()
-    if executable in _RUNTIME_NAMES or _PYTHON_RUNTIME.fullmatch(executable):
-        return executable
-    if executable in _RUNTIME_WRAPPERS:
-        index = 1
-        while index < len(argv) and (argv[index].startswith("-") or "=" in argv[index]):
-            index += 1
-        return _runtime_name(argv[index:])
-    if executable in _SHELL_WRAPPERS:
-        for index, value in enumerate(argv[1:], start=1):
-            if value in {"-c", "-lc", "--command"} and index + 1 < len(argv):
-                return _runtime_name(shlex.split(argv[index + 1], posix=True))
-    return None
-
-
-def blocked_runtime(command: str) -> str | None:
-    """返回命令中的代码运行时；解析失败时交由既有命令校验处理。"""
-    try:
-        return _runtime_name(shlex.split((command or "").strip(), posix=True))
-    except ValueError:
-        return None
 
 
 def _get_session_lock(session_id: int) -> asyncio.Lock:
@@ -179,10 +147,6 @@ async def evaluate(
     if scope is ShellScope.SANDBOX:
         if sandbox is not None and not getattr(sandbox, "enabled", False):
             return ShellDecision(False, "Shell 沙盒未开启", risk)
-        if sandbox is not None and not getattr(sandbox, "full_user_sandbox_authorization_enabled", True):
-            runtime = blocked_runtime(command)
-            if runtime is not None:
-                return ShellDecision(False, f"管理员未开启完整用户沙箱授权，禁止使用 {runtime} 运行时", risk, scope=scope)
     if subject_id is None and subject_type == SUBJECT_SESSION:
         subject_id = session_id
     if session_id and session is None:
@@ -308,8 +272,9 @@ async def build_dynamic_prompt(
 ) -> str | None:
     """按本轮有效策略生成 Shell 状态提示。
 
-    这段文字仅放入本轮历史后的 reminder，不得进入顶层 system、snapshot 或持久化历史。
-    ``evaluate`` 仍是唯一权限事实源；危险探针只用于分类和判权，从不交给执行器。
+    调用方将结果放入本轮 system prompt 的固定位置，不写入 snapshot 或持久化历史。
+    ``evaluate`` 仍是唯一权限事实源；提示词不是授权凭据，执行器逐调用复核。
+    危险探针只用于分类和判权，从不交给执行器。
     未通过安全命令探测时返回 ``None``，调用方也不应注册 Shell 工具。
     """
     settings = get_settings()
@@ -368,7 +333,7 @@ async def build_dynamic_prompt(
     cwd_mapping = await shell_cwd_mapping(
         db, user_id, session=session, workspace_id=workspace_id,
     )
-    lines.append(f"- 当前工作目录映射：/workspace → {cwd_mapping}；/workspace 不是独立的隐藏文件区。")
+    lines.append(f"- 当前工作目录映射：{cwd_mapping}；项目和文件夹沿用 /project 或 /personal 的规范路径，独立工作区位于 /workspace 下。")
     # /personal、/project 的挂载与可写性由完整用户沙箱授权决定；这里必须显式声明，
     # 否则静态 shell.md 要求模型「以本轮权限状态为准」，但状态里从没写过这两件事，
     # 模型只能靠用户的话猜自己有没有写权限（2026-09-11 修复）。
@@ -405,11 +370,6 @@ async def build_dynamic_prompt(
         )
     if subject_type == SUBJECT_SCHEDULED_TASK:
         lines.append("- 当前是定时任务；不支持交互式确认，需要确认的危险操作不得执行。")
-    if getattr(getattr(settings, "sandbox", None), "full_user_sandbox_authorization_enabled", False):
-        lines.append(
-            "- 代码运行时：沙盒内可直接执行 python3/node/npm 等命令，无需改走 run_script；"
-            "危险命令确认门与沙盒边界照常生效。"
-        )
     if getattr(getattr(settings, "storage", None), "backend", "local") == "oss":
         lines.extend([
             "- OSS 存储模式：本轮 Shell 只使用独立沙盒 /workspace；/personal、/project 和 workspace 绑定不可用。",
