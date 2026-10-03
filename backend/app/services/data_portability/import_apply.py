@@ -238,15 +238,19 @@ def _model_fields(spec, record: PortableEntityRecord) -> dict[str, Any]:
             if column_name in spec.json_fields and spec.model.__table__.columns[column_name].type.python_type is str and value is not None:
                 value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
             elif isinstance(value, str):
+                column_type = spec.model.__table__.columns[column_name].type
+                implementation = getattr(column_type, "impl_instance", None)
                 try:
-                    python_type = spec.model.__table__.columns[column_name].type.python_type
+                    # 先看 TypeDecorator 的底层实现；不同 SQLAlchemy 版本对包装类型
+                    # 的 python_type 可能返回未实现或不准确的类型。
+                    python_type = implementation.python_type if implementation is not None else None
                 except NotImplementedError:
-                    column_type = spec.model.__table__.columns[column_name].type
-                    # TypeDecorator.impl 可能仍是类型类；impl_instance 才能稳定提供
-                    # 包装类型对应的 Python 类型（例如 UtcDateTime -> datetime）。
-                    python_type = getattr(
-                        getattr(column_type, "impl_instance", None), "python_type", None
-                    )
+                    python_type = None
+                if python_type is None:
+                    try:
+                        python_type = column_type.python_type
+                    except NotImplementedError:
+                        python_type = None
                 if python_type is datetime:
                     value = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 elif python_type is date:
