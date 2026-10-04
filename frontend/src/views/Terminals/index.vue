@@ -125,7 +125,8 @@ async function load(options: { autoOpen?: boolean } = {}) {
         error.value = cause instanceof Error ? cause.message : t('terminalUi.autoStartError')
       }
     }
-    if (selectedId.value) await loadEvents(selectedId.value, true)
+    // 事件流持续监听，不属于一次性页面加载，不能等待它结束。
+    if (selectedId.value) void loadEvents(selectedId.value, true)
   } catch (cause) {
     const status = (cause as { status?: number }).status
     if (status === 401 || status === 403) {
