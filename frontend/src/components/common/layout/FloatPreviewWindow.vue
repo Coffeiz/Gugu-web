@@ -1,7 +1,7 @@
 <template>
   <div
     class="fpw-root"
-    :class="{ 'fpw-ready': ready && (!isImg || imageReady || placeholderReady) }"
+    :class="{ 'fpw-ready': ready && (!isImg || imageReady || placeholderReady || imageWasPresented) }"
     :style="maximized
       ? { left: 0, top: 0, width: '100vw', height: '100vh', zIndex: win.zIndex, borderRadius: 0, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }
       : { left: x+'px', top: y+'px', width: w+'px', height: h+'px', zIndex: win.zIndex, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }"
@@ -243,6 +243,8 @@ const loading         = ref(false)
 const error           = ref<string | null>(null)
 const placeholderReady = ref(false)
 const imageReady       = ref(false)
+// 首张图片显示后，切换同目录图片时保持预览窗可见；新图加载期间由加载态/占位图覆盖内容。
+const imageWasPresented = ref(false)
 
 const placeholderSrc = ref<string | null>(null)   // 从 blob Map 取，避免与全图下载竞速
 const currentCacheKey = ref('')
@@ -417,7 +419,10 @@ function onCsvRenderFailed() {
 
 function onImageLoaded() {
   // 等两帧确保浏览器已将真实图片合成到屏幕，再淡出占位图
-  requestAnimationFrame(() => requestAnimationFrame(() => { imageReady.value = true }))
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    imageReady.value = true
+    imageWasPresented.value = true
+  }))
 }
 
 function onPlaceholderLoad(e: Event) {
