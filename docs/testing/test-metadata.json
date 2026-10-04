@@ -119,6 +119,14 @@
     "keyBehavior": "文件系统授权确认、完成与撤销遵循 API 边界",
     "ci": "frontend-test"
   },
+  "frontend/src/composables/files/useFileBrowserWindow.test.ts": {
+    "domain": "file-library",
+    "layer": "L0",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileBrowserWindow.ts",
+    "keyBehavior": "大目录只渲染可见窗口且框选继续命中未挂载文件",
+    "ci": "frontend-test"
+  },
   "frontend/src/utils/consoleBanner.test.ts": {
     "domain": "frontend-ui",
     "layer": "L0",

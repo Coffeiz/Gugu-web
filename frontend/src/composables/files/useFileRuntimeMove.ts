@@ -12,6 +12,8 @@ export interface FileRuntimeMoveOptions {
   moveFolders: (ids: number[], targetFolderId: number | null) => Promise<void>
   moveFiles: (ids: number[], targetFolderId: number | null, dropInfo: DropInfo) => Promise<void>
   clearSelection: () => void
+  /** 虚拟目录中 Runtime 只持有可见卡片，业务移动仍须覆盖完整选择集。 */
+  getSelectedObjectIds?: () => string[]
 }
 
 type ParsedObject = { id: number; isFolder: boolean; objectId: string }
@@ -38,8 +40,14 @@ export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
     })
   }
 
+  function resolveMoveObjects(objectIds: readonly string[]): ParsedObject[] {
+    const selected = options.getSelectedObjectIds?.() ?? []
+    const ids = objectIds.some(id => selected.includes(id)) ? [...new Set([...objectIds, ...selected])] : objectIds
+    return parseObjects(ids)
+  }
+
   async function handleAction(objectIds: readonly string[], toSurfaceId: string): Promise<void> {
-    const parsed = parseObjects(objectIds)
+    const parsed = resolveMoveObjects(objectIds)
     if (parsed.length === 0 || toSurfaceId === options.browserSurfaceId) return
 
     let targetFolderId: number | null

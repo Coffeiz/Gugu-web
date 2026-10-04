@@ -39,6 +39,23 @@ describe('filesCache 空间索引', () => {
     setActivePinia(createPinia())
   })
 
+  it('移动与替换缓存后 Workspace 索引立即更新，不残留旧父级或其他空间记录', () => {
+    const store = useFilesCacheStore()
+    store.allFiles = [file({ id: 101, space: 'workspace', workspaceDirectoryId: 7 }), file({ id: 102, space: 'personal', workspaceDirectoryId: 7 })]
+    store.allFolders = [folder({ id: 201, workspaceDirectoryId: 7 })]
+    expect(store.getWorkspaceFiles(7).map(item => item.id)).toEqual([101])
+    store.updateFile(101, { folderId: 201 })
+    store.updateFolder(201, { parentId: 202 })
+    expect(store.getWorkspaceFiles(7)).toEqual([])
+    expect(store.getWorkspaceFiles(7, 201).map(item => item.id)).toEqual([101])
+    expect(store.getWorkspaceFolders(7)).toEqual([])
+    expect(store.getWorkspaceFolders(7, 202).map(item => item.id)).toEqual([201])
+    store.allFiles = []
+    store.allFolders = []
+    expect(store.getWorkspaceFiles(7, 201)).toEqual([])
+    expect(store.getWorkspaceFolders(7, 202)).toEqual([])
+  })
+
   it('不会把独立 Workspace 根文件和文件夹混入个人根目录', () => {
     const store = useFilesCacheStore()
     const personal = file({ id: 1, displayName: '个人文件' })

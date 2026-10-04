@@ -3,6 +3,27 @@ import { describe, expect, it, vi } from 'vitest'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 
 describe('useFileRuntimeMove', () => {
+  it('虚拟目录拖动选中卡片时也移动未挂载的选中项，未选中卡片不扩展范围', async () => {
+    const moveFiles = vi.fn(async () => undefined)
+    const moveFolders = vi.fn(async () => undefined)
+    const adapter = useFileRuntimeMove({
+      scope: 'files', browserSurfaceId: 'files:surface:browser',
+      resolveBreadcrumbTarget: () => null, moveFiles, moveFolders, clearSelection: vi.fn(),
+      getSelectedObjectIds: () => ['files:file:7', 'files:file:1007', 'files:folder:8'],
+    })
+    await adapter.handleAction(['files:file:7'], 'files:surface:folder:9')
+    expect(moveFiles).toHaveBeenCalledWith([7, 1007], 9, { droppedOn: 'folder' })
+    expect(moveFolders).toHaveBeenCalledWith([8], 9)
+    moveFiles.mockClear()
+    moveFolders.mockClear()
+    await adapter.handleAction(['files:file:10'], 'files:surface:folder:9')
+    expect(moveFiles).toHaveBeenCalledWith([10], 9, { droppedOn: 'folder' })
+    expect(moveFolders).not.toHaveBeenCalled()
+    moveFiles.mockClear()
+    await adapter.handleAction(['files:file:7'], 'files:surface:folder:8')
+    expect(moveFiles).not.toHaveBeenCalled()
+  })
+
   function setup(scope = 'files') {
     const moveFolders = vi.fn(async () => undefined)
     const moveFiles = vi.fn(async () => undefined)

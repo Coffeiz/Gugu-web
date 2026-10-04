@@ -183,7 +183,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, shallowRef, provide, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { fileWindowHitTestKey, type WindowHitTest } from '@/composables/files/useFileBrowserWindow'
 import { useI18n } from 'vue-i18n'
 import type { TrashFolderMeta } from '@/services/api'
 import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
@@ -275,6 +276,8 @@ function navSegmentLabel(segment: NavSeg): string {
 const viewMode    = ref<'grid' | 'list'>('grid')
 const loading     = ref(false)
 const mainRef     = ref<HTMLElement | null>(null)
+const windowHitTest = shallowRef<WindowHitTest | null>(null)
+provide(fileWindowHitTestKey, windowHitTest)
 const workspaceDirectoryPanel = ref<InstanceType<typeof WorkspaceDirectoryPanel> | null>(null)
 const live        = useLiveStore()
 let directoryLoader: () => void = () => {}
@@ -471,6 +474,7 @@ watch(() => live.resourceEvent, (event) => {
 // ── 统一选择、多选与框选 ──
 const selection = useFileLibrarySelection({
   containerRef: mainRef,
+  getItemsInBox: box => windowHitTest.value?.(box) ?? null,
   currentType,
   getFolders: () => sortedContents.value.folders,
   getFiles: () => sortedContents.value.files,
@@ -734,6 +738,11 @@ function fileLayoutKey(f: FileMeta): string {
 const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
   scope: RUNTIME_SCOPE,
   browserSurfaceId: runtimeBrowserSurfaceId,
+  getSelectedObjectIds: () => [
+    ...[...selectedIds.value].map(id => fileObjectId(RUNTIME_SCOPE, 'file', id)),
+    ...sortedContents.value.folders.filter(folder => selectedFolderKeys.value.has(folder.id) && folder.folderId != null)
+      .map(folder => fileObjectId(RUNTIME_SCOPE, 'folder', folder.folderId!)),
+  ],
   resolveBreadcrumbTarget: idx => {
     const seg = navPath.value[idx]
     if (!seg || !isBcDroppable(seg, idx)) return null
@@ -811,6 +820,7 @@ const canCompressContextSelection = computed(() => {
     && canCompressArchiveContext(ctx.value.type, ctx.value.target, selectedIds.value, selectedFolderKeys.value)
 })
 const gridViewContext = {
+  directoryViewportKey: computed(() => `${JSON.stringify(navPath.value)}:${sortKey.value}:${sortDir.value}`),
   contents, sortedContents, selectedFolderKeys, previewFolderKeys, inSelectionMode,
   openCtx, folderListIcon, folderAccentColor, handleFolderClick, renameExtension,
   renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder,
@@ -822,6 +832,7 @@ const gridViewContext = {
   layoutCollection: 'files-browser',
 }
 const listViewContext = {
+  directoryViewportKey: gridViewContext.directoryViewportKey,
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx, selectedFolderKeys,
   previewFolderKeys, handleFolderClick, folderListIcon,
   folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
