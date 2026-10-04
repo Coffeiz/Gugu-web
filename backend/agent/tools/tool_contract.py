@@ -629,6 +629,19 @@ def invalid_input_payload(
         "next_action": _invalid_input_next_action(bounded),
     }
     hints = _schema_repair_hints(schema, bounded, instance)
+    if tool_name == "update_knowledge" and any(
+        item.get("path") == "content" and item.get("rule") == "type"
+        for item in bounded
+    ):
+        payload["next_action"] = (
+            "update_knowledge 的 content 必须是单个普通字符串；只更新标题、主题、关键词或描述时省略 content。"
+            "不要重复提交对象或分块包装。"
+        )
+        hints = [
+            *hints,
+            '正确形状：{"knowledge_id":"knowledge-id","content":"合并后的完整正文"}；'
+            "content 不能是对象、数组或 token/$text 分块结构。",
+        ]
     if tool_name in {"create_event", "update_event"} and any(
         item.get("rule") == "not" for item in bounded
     ):
@@ -687,7 +700,13 @@ def invalid_tool_call_payload(
 ) -> dict[str, Any]:
     """返回工具调用外层协议错误，不回显模型传入的实际值。"""
     next_action = "请按工具 Schema 重新组织调用，不要把业务参数对象放到 name 字段。"
-    if path == "arguments" and rule == "required":
+    if path == "name":
+        next_action = (
+            "call_tool 必须提供目标业务工具名字符串和 arguments 对象；"
+            "name 填工具名（如 update_knowledge），arguments 填该工具的业务参数。"
+            "不要提交空对象，也不要把业务参数对象放进 name。"
+        )
+    elif path == "arguments" and rule == "required":
         next_action = "请先获取目标工具的完整 Schema，再通过 arguments 传入全部业务参数。"
     elif path == "arguments":
         next_action = "请先获取目标工具的完整 Schema，并确保 arguments 是 JSON object。"

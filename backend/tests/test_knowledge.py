@@ -623,6 +623,7 @@ def test_update_knowledge_schema_requires_id_and_content():
     # content 可选：支持只调关键词/标题等元数据的部分更新
     assert tool.input_schema["required"] == ["knowledge_id"]
     assert tool.input_schema["properties"]["keywords"] == {"type": "array", "items": {"type": "string"}}
+    assert "单个普通字符串" in tool.input_schema["properties"]["content"]["description"]
 
 
 @pytest.mark.asyncio

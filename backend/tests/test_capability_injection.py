@@ -379,6 +379,14 @@ def test_invalid_tool_call_payload_supports_required_arguments():
     assert "完整 Schema" in payload["next_action"]
 
 
+def test_invalid_tool_call_payload_explains_missing_business_tool_shape():
+    payload = invalid_tool_call_payload(path="name", rule="type", reason="call_tool.name 必须是字符串")
+
+    assert "目标业务工具名字符串" in payload["next_action"]
+    assert "arguments 对象" in payload["next_action"]
+    assert "不要提交空对象" in payload["next_action"]
+
+
 def test_tool_name_protocol_does_not_stringify_business_objects():
     """错误的 name 对象必须停在协议校验，不得变成一个伪工具名。"""
     assert normalize_tool_name("  canvas_create  ") == "canvas_create"
