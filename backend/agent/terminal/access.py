@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -50,7 +51,7 @@ async def page_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
     sandbox = getattr(settings, "sandbox", None)
     if sandbox is None:
         return TerminalAccessDecision(False, "Shell 沙盒未开启", operation)
-    sandbox_ready, sandbox_reason = sandbox_readiness(sandbox)
+    sandbox_ready, sandbox_reason = await asyncio.to_thread(sandbox_readiness, sandbox)
     if not sandbox_ready:
         return TerminalAccessDecision(False, sandbox_reason, operation)
     if configured_terminal_mode(settings) == "entry_disabled":
@@ -67,9 +68,12 @@ async def page_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
     return TerminalAccessDecision(False, "用户未开启 Shell", operation)
 
 
-async def pty_access(db: AsyncSession, user_id) -> TerminalAccessDecision:
+async def pty_access(
+    db: AsyncSession, user_id, *, page_decision: TerminalAccessDecision | None = None,
+) -> TerminalAccessDecision:
     """判断当前用户是否可以使用交互式 PTY。"""
-    decision = await page_access(db, user_id)
+    # 仅复用同一请求已经校验的结果，不跨请求缓存权限或沙盒状态。
+    decision = page_decision if page_decision is not None else await page_access(db, user_id)
     if not decision.allowed:
         return decision
     if configured_terminal_mode(get_settings()) == "pty_disabled":

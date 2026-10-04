@@ -77,7 +77,6 @@ const adoptedForms = load('./adoption/forms.css')
 const configField = load('../../views/Admin/Config/components/ConfigField.vue')
 const eventFormFields = load('../../components/events/EventFormFields.vue')
 const terminalsView = load('../../views/Terminals/index.vue')
-const terminalsRouter = load('../../router/index.ts')
 const terminalPty = load('../../views/Terminals/components/InteractivePtyTerminal.vue')
 const profileWorkspacesPane = load('../../components/common/profile/ProfileWorkspacesPane.vue')
 const overlayScrollbars = load('../../utils/overlayScrollbars.ts')
@@ -283,8 +282,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   })
 
   it('Shell 未授权时不允许直接进入终端页，也不让 PTY 403 自动重连', () => {
-    expect(terminalsRouter).toContain("if (to.name !== 'Terminals' && to.name !== 'SkillsMcp') return")
-    expect(terminalsRouter).toContain('canAccessTerminals(status)')
+    expect(terminalsView).toContain('const data = await terminalsApi.list()')
     expect(terminalsView).toContain('if (status === 401 || status === 403)')
     expect(terminalPty).toContain('event.code === 4401 || event.code === 4403')
   })

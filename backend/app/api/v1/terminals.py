@@ -134,7 +134,7 @@ async def get_terminals(user: User = Depends(get_current_user), db: AsyncSession
     await enforce_agent_terminal_cap(db, user.id)
     await db.commit()
     rows = await list_terminals(db, user.id)
-    pty_status = await pty_access(db, user.id)
+    pty_status = await pty_access(db, user.id, page_decision=access)
     return {"enabled": True, "ptyEnabled": pty_status.allowed, "items": [serialize_terminal(row) for row in rows]}
 
 

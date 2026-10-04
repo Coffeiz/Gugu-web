@@ -27,6 +27,34 @@ from app.services.terminals import (
 import agent.terminal.access as terminal_access
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [True, False])
+async def test_pty_reuses_request_page_decision_without_rechecking(db, user_a, monkeypatch, allowed):
+    """列表的同次权限判定无需再探测沙盒，拒绝结果不能变成授权。"""
+    async def unexpected_probe(*args):
+        raise AssertionError("重复校验页面权限")
+
+    monkeypatch.setattr(terminal_access, "page_access", unexpected_probe)
+    monkeypatch.setattr(terminal_access, "get_settings", lambda: SimpleNamespace(
+        sandbox=SimpleNamespace(terminal_mode="auto", full_user_sandbox_authorization_enabled=True),
+    ))
+    page = terminal_access.TerminalAccessDecision(allowed, "测试判定", TerminalOperation.VIEW)
+    result = await pty_access(db, user_a.id, page_decision=page)
+    assert result.allowed is allowed
+    if not allowed:
+        assert result.reason == page.reason
+
+
+@pytest.mark.asyncio
+async def test_pty_reused_page_access_still_respects_pty_disabled(db, user_a, monkeypatch):
+    """复用页面授权不会绕过管理员独立关闭 PTY 的设置。"""
+    monkeypatch.setattr(terminal_access, "get_settings", lambda: SimpleNamespace(
+        sandbox=SimpleNamespace(terminal_mode="pty_disabled"),
+    ))
+    page = terminal_access.TerminalAccessDecision(True, "允许查看", TerminalOperation.VIEW)
+    assert not (await pty_access(db, user_a.id, page_decision=page)).allowed
+
+
 def test_terminal_contract_has_stable_source_and_status_values():
     assert TerminalSource.AGENT.value == "agent"
     assert TerminalStatus.WAITING_CONFIRM.value == "waiting_confirm"

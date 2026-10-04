@@ -2,7 +2,8 @@
   <div class="terminals-page">
     <section class="terminals-panel glass-card">
       <div v-if="error && !selected" class="terminal-page-error" role="alert">{{ error }}</div>
-      <div v-if="!enabled" class="terminal-empty">{{ t('terminals.unavailable') }}</div>
+      <div v-if="loading" class="terminal-empty" role="status">{{ t('common.status.loading') }}</div>
+      <div v-else-if="!enabled" class="terminal-empty">{{ t('terminals.unavailable') }}</div>
       <div v-else class="terminal-layout">
         <aside class="terminal-list semantic-group">
           <button v-for="item in terminals" :key="item.id" class="terminal-item" :class="{ active: item.id === selectedId }" @click="select(item.id)">
@@ -87,6 +88,7 @@ const terminals = ref<TerminalItem[]>([])
 const selectedId = ref<string | null>(null)
 const events = ref<TerminalEventView[]>([])
 const enabled = ref(false)
+const loading = ref(true)
 const ptyEnabled = ref(false)
 const error = ref('')
 const outputRef = ref<HTMLElement | null>(null)
@@ -135,6 +137,8 @@ async function load(options: { autoOpen?: boolean } = {}) {
       return
     }
     error.value = cause instanceof Error ? cause.message : t('terminalUi.readError')
+  } finally {
+    loading.value = false
   }
 }
 
