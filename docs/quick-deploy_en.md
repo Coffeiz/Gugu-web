@@ -1,6 +1,6 @@
 # Gugu Quick Deployment Guide
 
-This guide covers the unified single-container image, the default integrated Compose deployment, and NAS container-manager settings. For reverse proxies, access control, backups, and troubleshooting, see the [operations deployment guide](ops/deploy.md).
+This guide recommends running the unified Docker Hub image directly, and also covers optional integrated Compose deployment and NAS container-manager settings. For reverse proxies, access control, backups, and troubleshooting, see the [operations deployment guide](ops/deploy.md).
 
 ## Get the image
 
@@ -12,7 +12,7 @@ docker pull docker.io/coffeiz/gugu-web:latest
 docker pull ghcr.io/coffeiz/gugu-web:latest
 ```
 
-For production, prefer a fixed release tag (`v<version>`) over `latest`. For single-container deployment, select the pulled `gugu-web` image. The default Compose file uses Docker Hub; to use GHCR instead, set `GUGU_WEB_IMAGE=ghcr.io/coffeiz/gugu-web:<version>` in the project-root `.env`.
+For production, prefer a fixed release tag (`v<version>`) over `latest`. GHCR is an explicit alternative if Docker Hub is unavailable; to use it with Compose, set `GUGU_WEB_IMAGE=ghcr.io/coffeiz/gugu-web:<version>` in the project-root `.env`.
 
 If your NAS cannot pull images directly, pull the image on a computer or server with Docker and export an uncompressed tar for import into fnOS:
 
@@ -22,27 +22,55 @@ docker save -o gugu-web.tar docker.io/coffeiz/gugu-web:latest
 
 ## Requirements
 
-- Docker 20+ for single-container deployment; Docker Compose v2.20+ for Compose
+- Docker 20+ and a Linux `amd64` Docker Engine for the unified image
+- Docker Compose v2.20+ for the Compose path
 - Access to an LLM provider, or a BYOK configuration
 - Network access to the image registries and model service
 
-## Gugu-web single-container deployment
+## Recommended: run the Docker Hub unified image
 
-Use the unified `coffeiz/gugu-web` image directly; Compose is not required. Map container port `9595`, bind persistent host directories to `/data` and `/config`, and enable privileged mode. Database credentials and other environment variables can be set in the container settings. If `ADMIN_PASSWORD` is omitted, a random password is generated and persisted at first startup, and the administrator username and password are printed in the container logs (`docker logs <container-name>`). The username defaults to `admin` if `ADMIN_USERNAME` is omitted.
+On a Linux host, create a deployment directory, then pull and run the official Docker Hub image:
+
+```bash
+mkdir -p gugu/Gugu-data gugu/Gugu-config
+cd gugu
+docker pull docker.io/coffeiz/gugu-web:latest
+docker run -d --name gugu-web \
+  --restart unless-stopped \
+  --privileged \
+  --publish 9595:9595 \
+  --volume "$PWD/Gugu-data:/data" \
+  --volume "$PWD/Gugu-config:/config" \
+  docker.io/coffeiz/gugu-web:latest
+```
+
+Open <http://localhost:9595>; the Admin interface is at <http://localhost:9595/admin/>. On first start, the database is initialized and migrations are applied. If `ADMIN_PASSWORD` is omitted, a random password is saved to `Gugu-data/.env` and printed once in the container logs; retrieve and save it with `docker logs gugu-web`. `ADMIN_USERNAME` defaults to `admin`. Configure the model provider and API key in Admin after signing in.
+
+`Gugu-data` stores user data and runtime configuration; `Gugu-config` stores Admin configuration. Back up both directories and the database before upgrading. To upgrade, pull the target image, stop and remove the old container, then run the new container with the same port and directory mappings. Keep the data directories. For production, use a fixed version tag or digest so `latest` cannot resolve to different versions across deployments.
 
 The image includes the complete site, embedded PostgreSQL/Redis, an internal Rootless Docker runtime, the sandbox manager, and the Shell execution image. Shell is enabled by default; no separate `sandboxd`, execution-image import, or host Docker socket mount is needed. SearXNG is not included, so web search is unavailable in single-container mode.
 
 > **Security:** privileged mode increases host risk if the outer app container is compromised. Internal Rootless only isolates the Shell execution containers; it does not remove the host risk of the outer app. This mode is intended for trusted personal, single-user deployments—not multi-tenant, public-facing, or business servers.
 
-## Default Compose deployment
+## Optional: Compose with web search
 
-The default `docker-compose.yml` uses the unified `coffeiz/gugu-web` app image and adds SearXNG for web search. It does not deploy an updater sidecar or mount the host Docker socket; the app runs Rootless Docker inside its privileged outer container.
+`docker-compose.yml` also uses the unified `coffeiz/gugu-web` app image and adds SearXNG for web search. It does not deploy an updater sidecar or mount the host Docker socket; the app runs Rootless Docker inside its privileged outer container.
 
-Compared with single-container mode, default Compose adds web search, but does not provide Admin image self-updates; use Docker/Compose to update the complete image stack. Shell still uses the runtime bundled in `gugu-web`. **The default Compose file does not start a separate `updater` or `sandboxd` service or pull a separate `gugu-sandbox` execution image.** The first startup initializes the embedded database and runs migrations; user data is stored in `Gugu-data`.
+To use this path, download the Compose file and environment template from GitHub, set `GUGU_DB_PASSWORD`, and start the stack:
+
+```bash
+mkdir -p gugu-compose && cd gugu-compose
+curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/.env.example -o .env
+# Edit .env and set GUGU_DB_PASSWORD
+docker compose up -d
+```
+
+Compared with running the image directly, Compose adds web search and orchestration, but does not provide Admin image self-updates; use Docker/Compose to update the complete image stack. Shell still uses the runtime bundled in `gugu-web`. **This Compose file does not start a separate `updater` or `sandboxd` service or pull a separate `gugu-sandbox` execution image.** The first startup initializes the embedded database and runs migrations; user data is stored in `Gugu-data`.
 
 Keep `docker-compose.yml` and the project-root `.env`, and set `GUGU_DB_PASSWORD`. You may also configure administrator credentials, port, and image version. If `ADMIN_PASSWORD` is omitted, a random password is generated and persisted at first startup, and the administrator username and password are printed in the app container logs (`docker compose logs app`). The username defaults to `admin` if `ADMIN_USERNAME` is omitted. `SECRET_KEY` can be omitted; it is generated and persisted on first startup. Open <http://localhost:9595>; the Admin interface is at <http://localhost:9595/admin/>. Do not delete `Gugu-data` or overwrite an existing `.env` with the template.
 
-For a split frontend/backend deployment, use `docker-compose.prod.yml`; see the [operations deployment guide](ops/deploy.md) for its topology and additional services. Do not mix its configuration with the default integrated Compose deployment.
+For a split frontend/backend deployment, use `docker-compose.prod.yml`; see the [operations deployment guide](ops/deploy.md) for its topology and additional services. Do not mix its configuration with the integrated Compose deployment.
 
 ## fnOS / Synology NAS configuration
 
@@ -79,7 +107,7 @@ GUGU_WEB_IMAGE=coffeiz/gugu-web:v1.x.y
 GUGU_DB_PASSWORD=replace-with-a-database-password
 ```
 
-Then start it with:
+For Compose, start it with:
 
 ```bash
 docker compose up -d
@@ -87,7 +115,7 @@ docker compose up -d
 
 Prepare persistent storage and back up the database and user files before deploying.
 
-For deployments that need separate frontend and backend images, use `docker-compose.prod.yml`. This is a separate deployment topology, not a required part of the default Compose setup:
+For deployments that need separate frontend and backend images, use `docker-compose.prod.yml`. This is a separate deployment topology, not a required part of the quick deployment path:
 
 ```bash
 export GUGU_BACKEND_IMAGE='docker.io/coffeiz/gugu-web-backend:v1.x.y'
