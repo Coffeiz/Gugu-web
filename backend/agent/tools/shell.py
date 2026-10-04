@@ -421,7 +421,7 @@ class ShellSkill(BaseSkill):
             name="shell",
             label="执行 Shell 命令",
             description_short='在当前授权范围内受控执行 Shell；目录挂载和网络能力由后台策略决定',
-            description="在当前授权 Shell 范围执行受控命令；默认工作目录采用绑定工作区的规范路径，其他目录挂载、网络和危险操作以服务端策略为准；网络由后台沙盒配置自动决定，执行结果会返回 network_access（none=断网沙盒、egress=受控代理公网、host=system 宿主机网络）；支持 &&、||、;、| 等复合命令与管道；重定向（> >>）和命令替换属于危险操作，需用户确认。",
+            description="在当前授权 Shell 范围执行受控命令。省略 scope 默认使用隔离的 sandbox 容器；scope=system 在 Gugu 后端服务进程所在的操作系统环境中直接执行，使用服务进程权限（不自动是 root），原生部署时是服务器主机，Docker 部署时是 Gugu 应用容器而非 Docker 宿主机。用户任务明确针对 Gugu 服务环境时才选择 system；目录、网络和危险操作仍由服务端策略决定。网络由后台策略自动决定，结果会返回 network_access（none=断网沙盒、egress=受控代理公网、host=system 网络）。支持 &&、||、;、| 等复合命令与管道；重定向（> >>）和命令替换属于危险操作，需用户确认。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -429,7 +429,11 @@ class ShellSkill(BaseSkill):
                     "cwd": {"type": "string"},
                     "timeout": {"type": "number", "minimum": 0.1, "maximum": 300},
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000},
-                    "scope": {"type": "string", "enum": ["sandbox", "system"]},
+                    "scope": {
+                        "type": "string",
+                        "enum": ["sandbox", "system"],
+                        "description": "省略时默认为 sandbox 隔离容器。system 在 Gugu 后端服务进程所在操作系统环境执行：原生部署为服务器主机，Docker 部署为应用容器（不是 Docker 宿主机），权限与服务进程相同。仅当任务目标是 Gugu 服务环境时指定 system。",
+                    },
                 },
                 "required": ["command"],
             },

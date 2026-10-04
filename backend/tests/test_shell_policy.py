@@ -38,6 +38,9 @@ def test_shell_schema_does_not_expose_session_identity():
     assert "session_id" not in schema["properties"]
     assert "network" not in schema["properties"]
     assert schema["required"] == ["command"]
+    scope_description = schema["properties"]["scope"]["description"]
+    assert "Gugu 后端服务进程所在操作系统环境" in scope_description
+    assert "不是 Docker 宿主机" in scope_description
     assert len(ShellSkill.tools) == 1
 
 
@@ -178,7 +181,9 @@ async def test_system_environment_hint_requires_both_permission_gates(monkeypatc
     assert default.scope is ShellScope.SANDBOX
     assert system.allowed is (admin_enabled and user_enabled)
     assert ('显式传 scope="system"' in prompt) is (admin_enabled and user_enabled)
-    assert "容器部署仍是应用容器" in prompt
+    assert "Gugu 后端服务进程所在的操作系统环境中直接运行" in prompt
+    assert "Docker 部署时这是 Gugu 应用容器，不是 Docker 宿主机" in prompt
+    assert ('任务明确针对 Gugu 后端服务环境' in prompt) is (admin_enabled and user_enabled)
     assert "不要向用户索要确认后继续" in prompt
     assert "自动模式：未开启" in prompt
 

@@ -309,7 +309,12 @@ async def build_dynamic_prompt(
         "- 复合命令：`&&`、`||`、`;`、`|` 可直接使用；重定向（`>` `>>`）和命令替换"
         "（`$(...)`、反引号）属于危险操作，必须确认后执行。",
     ]
-    lines.append('- 默认范围：省略 scope 时使用 sandbox 容器；开放系统范围不会自动切换执行环境。')
+    lines.append('- 默认范围：省略 scope 时使用 sandbox 容器；开放 system 不会自动切换执行环境。')
+    lines.append(
+        '- 执行位置：sandbox 在独立隔离的 Shell 容器内运行；scope="system" 在 Gugu 后端服务进程所在的操作系统环境中直接运行，'
+        '不会进入 sandbox。原生部署时这是服务器主机；Docker 部署时这是 Gugu 应用容器，不是 Docker 宿主机；'
+        '权限与服务进程相同，不自动拥有 root 权限。'
+    )
     if subject_type != SUBJECT_SCHEDULED_TASK and settings.agent.shell_system_enabled:
         system = await evaluate(
             db, user_id, session_id, "pwd", session=session,
@@ -319,17 +324,13 @@ async def build_dynamic_prompt(
         if system.allowed:
             confirmation = "仍需执行器确认" if system.needs_confirmation else "执行器仍会逐调用校验"
             lines.append(
-                '- 系统范围：管理员与用户双侧已开放；用户明确要求检查系统环境时，'
-                f'显式传 scope="system"，{confirmation}。无需从沙盒逃逸，也不要用 /proc 或 nsenter 绕过隔离。'
+                '- system 范围：管理员与用户双侧已开放；当用户任务明确针对 Gugu 后端服务环境（例如检查该环境可见的系统文件、'
+                f'命令或网络连通性）时，显式传 scope="system"；{confirmation}。'
             )
         else:
-            lines.append('- 系统范围：本轮策略未放行；不得从 sandbox 绕过隔离访问系统环境。')
+            lines.append('- system 范围：本轮策略未放行；不得从 sandbox 绕过隔离访问系统环境。')
     else:
-        lines.append('- 系统范围：未开放或当前为定时任务；不得从 sandbox 绕过隔离。')
-    lines.append(
-        '- system 的含义：应用服务所在的本机执行环境；非容器部署通常是服务器，'
-        '容器部署仍是应用容器，不保证访问 Docker 宿主机，也不代表 root 权限；实际范围以工具回执为准。'
-    )
+        lines.append('- system 范围：未开放或当前为定时任务；不得从 sandbox 绕过隔离。')
     cwd_mapping = await shell_cwd_mapping(
         db, user_id, session=session, workspace_id=workspace_id,
     )
