@@ -7,9 +7,65 @@
 
 ## [未发布]
 
-### 改进
+## [1.6.0] - 2026-10-04
 
-- **Shell 工具整合**：普通 Shell 可直接使用运行时与复合命令；移除重复的脚本工具和脚本白名单，保留沙盒、联网与危险操作确认边界。
+### What's New
+
+#### New Features
+
+- **Email-verified registration and account recovery**: when system SMTP is available, new accounts must verify a one-time email code; password recovery accepts a username or email and confirms the destination address (#77).
+- **Optional action follow-through guard**: users can enable a guard that nudges the Agent only when an explicit action request is declined without execution.
+
+#### Improvements
+
+- **Shell and workspace consistency**: unify Shell execution and authorized workspace mounts, with a safe local-storage layout migration for existing workspaces.
+- **Faster Skills page**: load the tool catalog on demand instead of blocking the initial page view.
+- **Scheduled task replies**: deliver the Agent's final response directly, avoiding an extra summary round.
+- **File naming support**: upload dotfiles and rename files while editing their extensions.
+- **Interface details**: align checkbox styling and input sizing, and tighten memory settings spacing.
+
+#### Fixes
+
+- Preserve run outcomes and completed execution history through interrupted streams; improve retry budgets and context-compaction boundaries.
+- Correct reflection history projection, clear stale interaction cards when starting a new session, and keep action-confirmation instructions waiting for the user's response.
+- Prevent Shell permission setup from following symlinks and fix Mind preview/timeline updates.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for reporting [#77](https://github.com/Coffeiz/Gugu-web/issues/77).
+
+### 更新内容
+
+#### 新功能
+
+- **邮箱验证注册与账号找回**：系统 SMTP 可用时，新账号必须完成一次性邮箱验证码验证；密码找回支持用户名或邮箱，并提示邮件将发送至的完整邮箱（#77）。
+- **可选的行动跟进守卫**：用户可开启守卫；仅当明确要求执行而 Agent 未执行并选择推脱时，才提醒它继续处理。
+
+#### 改进
+
+- **统一 Shell 与工作区行为**：统一 Shell 执行和授权工作区挂载；已有本地工作区可通过安全迁移切换到规范目录布局。
+- **加快技能页载入**：工具目录改为按需加载，不再阻塞技能页首次显示。
+- **定时任务回复**：直接投递 Agent 的最终回复，省去额外总结轮次。
+- **文件命名支持**：支持上传点文件，并可在重命名时编辑扩展名。
+- **界面细节**：统一复选框样式和输入框高度，收紧记忆设置卡片间距，并让思维导图待办预览及时响应状态变化。
+
+#### 修复
+
+- 中断流时保留运行终态和已完成的执行历史；改进重试预算与上下文压缩边界。
+- 修正反思历史投影；新建会话时清除旧交互卡片；操作确认指令会等待用户答复。
+- 修复 Shell 权限配置跟随符号链接的问题，并修正思维导图预览和时间轴更新。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 通过 [#77](https://github.com/Coffeiz/Gugu-web/issues/77) 提供反馈。
 
 ## [1.5.0] - 2026-10-03
 
