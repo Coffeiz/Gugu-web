@@ -60,4 +60,13 @@ describe('transition 令牌消费契约', () => {
   it('组合型 motion 令牌整体消费，不重复书写属性名', () => {
     expect(violations).toEqual([])
   })
+
+  it('弹窗 textarea 焦点阴影保留同序 inset 层，避免聚焦时阴影离散跳变', () => {
+    const adoptionForms = contents.get(resolve(SRC_ROOT, 'assets/styles/adoption/forms.css')) ?? ''
+    const focusRule = adoptionForms.match(
+      /html\[data-theme\]\[data-family\] \.bm-card textarea:not\(\.theme-native-control\):focus\s*\{([^}]*)\}/,
+    )?.[1] ?? ''
+
+    expect(focusRule).toMatch(/box-shadow:\s*var\(--input-hover-shadow\),\s*var\(--input-focus-shadow\);/)
+  })
 })

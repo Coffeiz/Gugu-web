@@ -117,5 +117,6 @@ html[data-theme][data-family] .bm-card textarea:not(.theme-native-control):focus
   outline: none;
   background-color: var(--input-bg-focus);
   border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
+  /* 保留起始/hover 的 inset 层；inset 与外侧 focus ring 数量、顺序一致才能连续插值。 */
+  box-shadow: var(--input-hover-shadow), var(--input-focus-shadow);
 }
