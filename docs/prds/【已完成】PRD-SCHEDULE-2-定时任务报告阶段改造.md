@@ -2,7 +2,7 @@
 
 > 状态：✅ 已实施（代码完成，测试通过，待评审合并）
 > 创建：2026-08-07
-> 最近更新：2026-08-08
+> 最近更新：2026-10-04
 > 关联模块：`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`、`backend/agent/scheduled_report.py`
 > 关联文档：[`【已完成】PRD-SCHEDULE-1-定时任务完整AGENTLOOP执行.md`](./【已完成】PRD-SCHEDULE-1-定时任务完整AGENTLOOP执行.md)、[`【已完成】PRD-IM-7-群定时任务完整LOOP.md`](./【已完成】PRD-IM-7-群定时任务完整LOOP.md)
 
@@ -16,6 +16,10 @@
 | 删除 report LLM 调用与相关代码 | ✅ 已完成 | 删除 `run_scheduled_report` / `build_prompt` / `scheduled_report.py` 模块 |
 | 更新测试 | ✅ 已完成 | 更新 `test_scheduled_task_execution.py` / `test_scheduled_delivery_targets.py` 适配 report schema 与 3 元组返回 |
 | 完整 pytest + 提交 | ✅ 已完成 | 完整后端套件 747 passed |
+
+## 当前实现（2026-10-04）
+
+后续调整取消了本 PRD 中的 report schema：定时执行不再向原提示词追加 `summary/context/status` JSON 要求，也不再解析或重试报告格式。AgentLoop 正常完成时，直接投递最后一轮非空 assistant 回复，保留任务提示词要求的正文格式；执行错误仍按执行器错误状态处理。下文记录的是 schema 方案的历史设计与实施过程，相关要求已由当前实现取代。
 
 ## 1. 背景与问题
 

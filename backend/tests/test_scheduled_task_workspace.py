@@ -278,7 +278,7 @@ async def test_scheduled_agent_receives_task_filesystem_subject(monkeypatch, use
     import app.scheduled_tasks as scheduled
 
     execution = AsyncMock(return_value=(
-        '{"summary":"已执行","context":"","status":"success"}',
+        "已执行。",
         False,
         {"tool_names": [], "mutated": False},
     ))
@@ -296,7 +296,7 @@ async def test_scheduled_agent_receives_task_filesystem_subject(monkeypatch, use
         allow_shell=True,
     )
 
-    assert result == '{"summary":"已执行","context":"","status":"success"}'
+    assert result == "已执行。"
     execution.assert_awaited_once()
     assert execution.await_args.kwargs["filesystem_subject"] == {
         "subject_type": "scheduled_task",
