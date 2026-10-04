@@ -31,6 +31,7 @@ const browserPanel = load('../../components/common/file-browser/FileBrowserPanel
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
 const renameInput = load('../../components/common/file-browser/RenameInput.vue')
 const filesGridView = load('../../views/Files/components/FilesGridView.vue')
+const filesView = load('../../views/Files/index.vue')
 const projectFilesPanel = load('../../views/Projects/components/ProjectFilesPanel.vue')
 const filesCss = load('./components/files.css')
 const sharedForms = load('./components/forms.css')
@@ -238,6 +239,15 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesListRows).not.toContain('.list-row.folder-row):hover:not(.selected):not(.pre-selected)')
     expect(filesListRows).not.toContain("html[data-theme='dark'][data-family] .list-row:hover { background:")
     expect(filesListRows).toContain('.pre-selected:not(.selected)')
+  })
+
+  it('框选矩形使用主题操作色，文件库与项目文件面板保持一致', () => {
+    for (const [source, selector] of [[filesView, '.selection-rect {'], [projectFilesPanel, '.pm-selection-rect {']] as const) {
+      const rectangle = cssBlock(source, selector)
+      expect(rectangle).toContain('border: 1.5px solid var(--action-outline);')
+      expect(rectangle).toContain('background: var(--action-soft);')
+      expect(rectangle).not.toMatch(/rgba\(123,\s*127,\s*178/)
+    }
   })
 
   it('网格与列表多选框共享全局复选框令牌和同一个勾形', () => {

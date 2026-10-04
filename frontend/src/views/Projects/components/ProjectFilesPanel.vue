@@ -392,8 +392,8 @@ const {
 /* ── 框选矩形 ── */
 	.pm-selection-rect {
 	  position: absolute; pointer-events: none; z-index: 30;
-	  border: 1.5px solid rgba(123,127,178,0.55);
-	  background: rgba(123,127,178,0.08); border-radius: 4px;
+	  border: 1.5px solid var(--action-outline);
+	  background: var(--action-soft); border-radius: 4px;
 	}
 
 	/* ── 列表视图：本页只拥有 5 列的列宽（vs 文件库 6 列）；容器/表头基础/单元格样式

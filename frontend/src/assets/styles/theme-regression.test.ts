@@ -286,8 +286,7 @@ describe('主题 CSS 回归契约', () => {
 
   it('组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块', () => {
     expect(guguChatVue).toContain('background: var(--gugu-chat-user-bg)')
-    expect(guguChatVue).toContain('border-bottom-right-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight)')
-    expect(guguChatVue).not.toContain('var(--gugu-chat-user-shadow)')
+    expect(guguChatVue).toContain('border-bottom-right-radius: 4px; box-shadow: var(--gugu-chat-user-shadow)')
     expect(guguChatVue).toContain('background: var(--gugu-chat-voice-bg)')
     expect(guguChatVue).not.toMatch(/background:\s*(?:linear-gradient|rgba?\(|#[0-9a-f]{3,8})/i)
 
@@ -486,6 +485,16 @@ describe('主题 CSS 回归契约', () => {
     // Legacy bridge / Mono adoption 不得重新获得 fc-card paint 或 border ownership。
     expect(themeAdoptionCss).not.toMatch(/html\[data-theme[^\n]*\.fc-card/)
     expect(surfacesCss).not.toMatch(/html\[data-family='mono'\][^{]*\.fc-card/)
+  })
+
+  it('Glass 亮色非 mist 调色板的文件与文件夹选择层使用当前主题主色', () => {
+    const paletteSelection = cssBlock(componentSurfacesCss, "html[data-theme='light'][data-family='glass'][data-palette]:not([data-palette='mist'])")
+    expect(paletteSelection).toContain('--file-card-border-selected: var(--action-outline);')
+    expect(paletteSelection).toContain('--file-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);')
+    expect(paletteSelection).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
+    expect(paletteSelection).toContain('--file-card-preselection-bg: color-mix(in srgb,var(--action-primary) 6%,var(--file-card-bg));')
+    expect(paletteSelection).toContain('--folder-card-selection-overlay: color-mix(in srgb,var(--action-primary) 14%,transparent);')
+    expect(paletteSelection).not.toMatch(/rgba\(123,\s*127,\s*178/)
   })
 
   it('常驻内容面板默认无 blur，导航栏和笔记 glass 显式保留 blur', () => {

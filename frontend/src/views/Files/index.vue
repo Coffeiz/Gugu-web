@@ -1063,8 +1063,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 /* ── 框选矩形 ── */
 .selection-rect {
   position: absolute; pointer-events: none; z-index: 30;
-  border: 1.5px solid rgba(123,127,178,0.55);
-  background: rgba(123,127,178,0.08);
+  border: 1.5px solid var(--action-outline);
+  background: var(--action-soft);
   border-radius: 4px;
 }
 
