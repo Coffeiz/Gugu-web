@@ -370,6 +370,7 @@ async def reconcile_local_directory(
     workspace_directory_id: int | None = None
     if workspace_id is not None:
         workspace_directory_id = await _workspace_directory_id_for(db, user_id, workspace_id)
+    directory_locations: dict[str, tuple[str, int | None, int | None, int | None]] = {}
 
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     quota_settings = getattr(settings, "quota", None)
@@ -457,6 +458,9 @@ async def reconcile_local_directory(
         )
         if folder_id is None:
             continue
+        directory_locations[relative] = (
+            space, project_id, folder_id, workspace_directory_id,
+        )
         observed = _directory_fingerprint(directory)
         previous = latest_by_path.get(("folder", relative))
         if previous is None:
@@ -681,6 +685,25 @@ async def reconcile_local_directory(
         except (OSError, ValueError):
             rejected += 1
             continue
+        relative_parent = path.parent.relative_to(root).as_posix()
+        location = directory_locations.get(relative_parent)
+        if location is None and relative_parent == "." and workspace_directory_id is not None:
+            location = ("workspace", None, None, workspace_directory_id)
+        if location is None:
+            try:
+                (
+                    space, project_id, folder_id, display_name, ext, file_ws_dir_id,
+                ) = await _classify_path(
+                    db, user_id, path, user_root,
+                    workspace_directory_id=workspace_directory_id,
+                    base=root,
+                )
+            except (OSError, ValueError):
+                rejected += 1
+                continue
+            location = (space, project_id, folder_id, file_ws_dir_id)
+        space, project_id, folder_id, file_ws_dir_id = location
+        display_name, ext = _file_name(path)
         previous = latest_by_path.get(("file", relative))
         if previous is None:
             previous = await record_change(
@@ -700,21 +723,37 @@ async def reconcile_local_directory(
                     save_snapshot(user_id, binding.id, relative, path)
                 except OSError:
                     rejected += 1
-        if row.size_bytes != path.stat().st_size or (
+        content_changed = row.size_bytes != path.stat().st_size or (
             previous is not None and previous.observed_fingerprint != observed
-        ):
+        )
+        location_changed = (
+            row.space != space
+            or row.project_id != project_id
+            or row.folder_id != folder_id
+            or row.workspace_directory_id != file_ws_dir_id
+            or row.display_name != display_name
+            or row.ext != ext
+        )
+        if content_changed or location_changed:
             size_delta = path.stat().st_size - int(row.size_bytes or 0)
-            if size_delta > quota_headroom:
+            if content_changed and size_delta > quota_headroom:
                 rejected += 1
                 continue
-            row.size_bytes = path.stat().st_size
-            row.size = str(path.stat().st_size)
+            if content_changed:
+                row.size_bytes = path.stat().st_size
+                row.size = str(path.stat().st_size)
+                quota_headroom -= size_delta
+                # 文件正文变了，旧缩略图即使仍在磁盘也不能继续返回。
+                if not dry_run:
+                    delete_thumb_cache(row.id, storage_root)
+            row.space = space
+            row.project_id = project_id
+            row.folder_id = folder_id
+            row.workspace_directory_id = file_ws_dir_id
+            row.display_name = display_name
+            row.ext = ext
             row.version = int(row.version or 1) + 1
             row.updated_at = now_utc()
-            quota_headroom -= size_delta
-            # 文件正文变了，旧缩略图即使仍在磁盘也不能继续返回。
-            if not dry_run:
-                delete_thumb_cache(row.id, storage_root)
             updated += 1
             entity_ids.append(row.id)
             journal = await record_change(

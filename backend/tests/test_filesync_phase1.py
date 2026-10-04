@@ -180,6 +180,77 @@ async def test_oss_does_not_expose_or_bind_workspace(db, user_a, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_migrated_known_workspace_file_is_reconciled_into_its_folder(db, user_a, monkeypatch, tmp_path):
+    """迁移后按已有 storage_key 重新投影，修复旧记录漏掉的文件夹归属。"""
+    from app.models import Folder, WorkspaceDirectory
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.workspaces as workspaces
+    from scripts.migrations.migrate_workspace_layout import migrate
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(workspaces, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        quota=SimpleNamespace(default_storage_limit_bytes=1024 * 1024),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(workspaces, "get_settings", lambda: settings)
+
+    directory = WorkspaceDirectory(
+        user_id=user_a.id, name="默认工作区", directory_name="workspace",
+        is_default=True, is_system=True,
+    )
+    db.add(directory)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name=directory.name, kind="directory",
+        directory_id=directory.id, enabled=True,
+    )
+    folder = Folder(
+        user_id=user_a.id, name="package", workspace_directory_id=directory.id,
+    )
+    db.add_all([workspace, folder])
+    await db.flush()
+
+    old_root = tmp_path / str(user_a.id) / "workspace"
+    package = old_root / "package"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("# probe", encoding="utf-8")
+    row = File(
+        user_id=user_a.id, display_name="__init__", ext="py", space="workspace",
+        workspace_directory_id=directory.id, folder_id=None,
+        storage_key=f"{user_a.id}/workspace/package/__init__.py",
+        size="7", size_bytes=7, storage_backend="local",
+    )
+    db.add(row)
+    await db.commit()
+
+    migration = await migrate(db, tmp_path, apply=True)
+    assert migration["status"] == "completed"
+    assert row.storage_key == f"{user_a.id}/workspace/default/package/__init__.py"
+    assert row.folder_id is None
+
+    summary = await reconcile.reconcile_local_directory(
+        db, user_a.id, workspace_id=workspace.id,
+        allow_delete=False, dry_run=True, use_stat_cache=False,
+    )
+    assert summary.updated == 1
+    assert row.folder_id == folder.id
+
+    version = row.version
+    second = await reconcile.reconcile_local_directory(
+        db, user_a.id, workspace_id=workspace.id,
+        allow_delete=False, dry_run=True, use_stat_cache=False,
+    )
+    assert second.updated == 0
+    assert row.version == version
+
+
+@pytest.mark.asyncio
 async def test_oss_session_workspace_is_rejected_by_shell_policy(db, user_a, monkeypatch):
     import agent.security.shell_policy as policy
 
@@ -332,7 +403,7 @@ async def test_local_reconcile_projects_directory_workspace_shell_files(db, user
     """directory 型工作区绑定根即工作区目录：shell 产物按 space=workspace 投影。
 
     真实故障：_classify_path/_parse_directory_path 只认个人/项目 canonical 前缀，
-    workspace/、workspace-<id>/ 下的 shell 产物（如 _tools/）整树被拒，文件库
+    workspace/<directory_name>/ 下的 shell 产物（如 _tools/）整树被拒，文件库
     永远看不到咕咕 shell 写入的文件夹。
     """
     import app.services.filesync.reconcile as reconcile
@@ -363,7 +434,7 @@ async def test_local_reconcile_projects_directory_workspace_shell_files(db, user
     db.add(workspace)
     await db.flush()
 
-    ws_root = tmp_path / str(user_a.id) / "workspace-probe"
+    ws_root = tmp_path / str(user_a.id) / "workspace" / "workspace-probe"
     tools_dir = ws_root / "_tools"
     (tools_dir / "bin").mkdir(parents=True)
     (tools_dir / "empty").mkdir()

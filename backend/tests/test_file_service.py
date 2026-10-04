@@ -640,7 +640,7 @@ async def test_update_file_cut_into_workspace_subfolder_keeps_folder(db, user_a,
     assert res.file.space == "workspace"
     assert res.file.workspace_directory_id == ws.id
     assert res.file.folder_id == sub.id
-    assert res.file.storage_key == f"{user_a.id}/workspace-w/子目录/a.txt"
+    assert res.file.storage_key == f"{user_a.id}/workspace/workspace-w/子目录/a.txt"
 
 
 @pytest.mark.asyncio
@@ -665,7 +665,7 @@ async def test_update_file_cross_workspace_without_folder_lands_at_root(db, user
     await db.commit()
     assert res.file.workspace_directory_id == ws_b.id
     assert res.file.folder_id is None
-    assert res.file.storage_key == f"{user_a.id}/workspace-b/a.txt"
+    assert res.file.storage_key == f"{user_a.id}/workspace/workspace-b/a.txt"
 
     # 显式指到别的 Workspace 的文件夹 → 归属校验拒绝
     sub_b = await svc.create_folder(user_a.id, name="B子目录", parent_id=None,
