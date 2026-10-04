@@ -45,7 +45,8 @@ describe('session message refresh', () => {
     const sessionId = ref<number | null>(12)
     const messages = ref<ChatMessage[]>([message(1, 'message:40', 'already shown')])
     vi.mocked(agentApi.getMessages).mockResolvedValue({
-      messages: [{ id: 40, role: 'user', content: 'already shown', createdAt: '2026-09-21T00:00:00Z' },
+      messages: [{ id: 40, role: 'user', content: 'already shown', createdAt: '2026-09-21T00:00:00Z',
+        runOutcome: { status: 'interrupted', errorCode: 'cancelled' } },
         { id: 41, role: 'user', content: 'new', createdAt: '2026-09-21T00:01:00Z' }],
       timelineEvents: [], toolEvents: [], pagination: { newestId: 41 },
     } as any)
@@ -60,6 +61,7 @@ describe('session message refresh', () => {
     expect(agentApi.getMessages).toHaveBeenCalledWith('12', 40, 200)
     expect(messages.value.map(item => item.text)).toEqual(['already shown', 'new'])
     expect(messages.value[1]._syncKey).toBe('message:41')
+    expect(messages.value[0].runOutcome?.status).toBe('interrupted')
   })
 
   it('does not apply a response after the active session changed', async () => {

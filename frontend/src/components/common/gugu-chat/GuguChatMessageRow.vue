@@ -23,6 +23,12 @@
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
   <div v-else-if="msg.text" class="msg-bubble user-md" @click="onBodyClick"><MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat /></div>
+  <div v-if="msg.role === 'user' && msg.runOutcome" class="msg-run-outcome" role="status">
+    <span class="msg-run-outcome-label">
+      {{ t(msg.runOutcome.status === 'interrupted' ? 'chatUi.runInterrupted' : 'chatUi.runFailed') }}
+    </span>
+    <span v-if="runOutcomeDetail">{{ runOutcomeDetail }}</span>
+  </div>
   <!-- send_link_buttons（PRD-LLM-24）：URL 全部经服务端安全校验，这里只渲染普通导航链接；
        target=_blank 配合 noopener noreferrer，不使用 v-html 拼接。 -->
   <div v-if="msg.linkButtons?.buttons?.length" class="msg-link-buttons interaction-bubble" role="group" :aria-label="msg.linkButtons.message || t('chatUi.gugu')">
@@ -80,6 +86,8 @@
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
+import { computed } from 'vue'
+import { translateAgentError } from '@/i18n'
 /**
  * 单条消息展示：只接收消息对象和展示回调，不直接读取全局 Store、不直接修改会话数组。
  * 播放语音、打开/下载文件、复制正文、代码块复制和 gugu:// 协议链接都通过事件转发给
@@ -103,6 +111,11 @@ const props = defineProps<{
   voicePlayingId: string | null
 }>()
 const { t } = useI18n()
+const runOutcomeDetail = computed(() => {
+  const outcome = props.msg.runOutcome
+  if (outcome?.status !== 'failed' || !outcome.messageKey) return ''
+  return translateAgentError(outcome.messageKey, outcome.messageParams)
+})
 
 const emit = defineEmits<{
   copy: [msg: ChatMessage]
@@ -130,3 +143,21 @@ function onBodyClick(event: MouseEvent) {
   if (reference) emit('referenceClick', reference)
 }
 </script>
+
+<style scoped>
+.msg-run-outcome {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 7px;
+  max-width: min(100%, 34rem);
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.msg-run-outcome-label {
+  color: var(--color-danger, #b85b59);
+  font-weight: 600;
+}
+</style>

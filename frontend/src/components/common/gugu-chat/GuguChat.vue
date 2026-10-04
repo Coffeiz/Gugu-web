@@ -847,7 +847,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   color: var(--content-primary); background: var(--surface-card-solid);
   border: 1px solid var(--border-default); border-radius: var(--card-radius);
   box-shadow: var(--card-shadow); text-decoration: none; cursor: pointer;
-  transition: var(--card-motion);
+  transition: var(--card-motion), box-shadow var(--motion-hover-card) var(--motion-ease-standard);
 }
 :deep(.msg-bubble.md-body a.chat-object-card:hover) {
   color: var(--content-primary); opacity: 1;

@@ -50,6 +50,7 @@ export function mapSessionMessageDelta(
       time: displayTime(item.createdAt), _createdAt: item.createdAt,
       _timelineOrder: item.timelineOrder ?? item.id,
       runId: item.runId, roundId: item.roundId,
+      runOutcome: item.runOutcome,
     }
   })
   const timeline: ChatMessage[] = (data.timelineEvents || []).map((event: any) => event.kind === 'assistant'

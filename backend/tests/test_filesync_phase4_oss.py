@@ -78,7 +78,7 @@ def test_oss_disables_full_user_sandbox_authorization(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_oss_removes_workspace_tool_before_model_schema_is_built(db, user_a, monkeypatch, tmp_path):
     import app.services.workspaces as workspaces
-    from agent.runner import _filter_shell_tool
+    from agent.run.preparation import _filter_shell_tool
 
     monkeypatch.setattr(workspaces, "get_settings", lambda: _oss_settings(tmp_path))
     names = await _filter_shell_tool(db, user_a.id, None, ["workspaces", "files"])

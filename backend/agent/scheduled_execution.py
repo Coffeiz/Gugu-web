@@ -6,16 +6,11 @@
 from __future__ import annotations
 
 from app.core.tz import set_ctx_tz
-from agent.context import assembly, builder, dynamic_tail, loaders, session_snapshot, session_system
+from agent.context import builder, loaders
 from agent.capabilities.defaults import DEFAULT_PROMPT_NAME, SYSTEM_MEMORY_ENABLED, all_system_tool_names
 from agent.llm.llm_select import resolve_run_config_for_user, release as _release_model
-from agent.runner import (
-    _apply_capability_context,
-    _capability_context,
-    _collect,
-    _filter_shell_tool,
-    _load_mcp_tools,
-)
+from agent.runner import _collect
+from agent.run.preparation import _load_mcp_tools, prepare_run_capabilities, prepare_scheduled_context
 
 
 def _scheduled_collect_result(collected: tuple) -> tuple[str, bool, dict]:
@@ -29,55 +24,6 @@ def _scheduled_collect_result(collected: tuple) -> tuple[str, bool, dict]:
     execution_meta = dict(meta or {})
     execution_meta["files"] = files
     return text, errored, execution_meta
-
-
-def _build_scheduled_messages(
-    system_prompt: str,
-    snapshot_context: str,
-    user_tz,
-    prompt: str,
-    memory: dict,
-    *,
-    use_anthropic: bool,
-    user_content=None,
-    extra_reminder: str | None = None,
-):
-    """scheduled 与 Web/IM 使用同样的动态上下文布局。"""
-    fixed_parts = [session_snapshot.snapshot_message(snapshot_context)] if snapshot_context else []
-    stance_text = builder.stance_block(memory)
-    if user_content is None:
-        user_content = prompt
-
-    if use_anthropic:
-        messages = assembly.assemble(
-            fixed_parts=fixed_parts,
-            history=[],
-            render_options={"api_format": "anthropic"},
-        )
-        batch, _ = assembly.assemble_turn(
-            stance=stance_text,
-            extra_reminder=extra_reminder,
-            current_user={"role": "user", "content": user_content},
-        )
-        batch.update_area_entry("current_user", persistence_policy="request_only")
-        messages.append_batch(batch)
-        messages.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
-        return messages
-
-    messages = assembly.assemble(
-        fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
-        history=[],
-        render_options={"api_format": "openai"},
-    )
-    batch, _ = assembly.assemble_turn(
-        stance=stance_text,
-        extra_reminder=extra_reminder,
-        current_user={"role": "user", "content": user_content},
-    )
-    batch.update_area_entry("current_user", persistence_policy="request_only")
-    messages.append_batch(batch)
-    messages.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
-    return messages
 
 
 async def run_scheduled_once(
@@ -163,42 +109,13 @@ async def run_scheduled_once(
             user_id, scenario="mcp" if mcp_tools else "chat",
         )
 
-        shell_prompt = None
-        if "shell" in tool_names:
-            async with _sess._SessionLocal() as policy_db:
-                tool_names = await _filter_shell_tool(
-                    policy_db,
-                    user_id,
-                    None,
-                    tool_names,
-                    subject_type=str(subject.get("subject_type") or "session"),
-                    subject_id=subject.get("subject_id"),
-                    workspace_id=subject.get("workspace_id"),
-                )
-                if "shell" in tool_names:
-                    from agent.security.shell_policy import build_dynamic_prompt
-
-                    shell_prompt = await build_dynamic_prompt(
-                        policy_db,
-                        user_id,
-                        None,
-                        subject_type=str(subject.get("subject_type") or "session"),
-                        subject_id=subject.get("subject_id"),
-                        workspace_id=subject.get("workspace_id"),
-                    )
-                    if shell_prompt is None:
-                        tool_names = [name for name in tool_names if name != "shell"]
-
-        system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
-        capability_context = await _capability_context(
-            tool_names, settings, owner_id=user_id, query=prompt,
-            dynamic_tools=mcp_tools,
-        )
-        system_prompt, snapshot_context = _apply_capability_context(
-            system_prompt,
-            snapshot_context,
-            capability_context,
-        )
+        async with _sess._SessionLocal() as policy_db:
+            tool_names, system_prompt, snapshot_context, capability_context = await prepare_run_capabilities(
+                policy_db, user_id, None, tool_names, settings, system_prompt, snapshot_context,
+                query=prompt, dynamic_tools=mcp_tools,
+                subject_type=str(subject.get("subject_type") or "session"),
+                subject_id=subject.get("subject_id"), workspace_id=subject.get("workspace_id"),
+            )
 
         from agent.scheduled import ScheduledLLMRunner
 
@@ -209,50 +126,16 @@ async def run_scheduled_once(
             dynamic_tools=mcp_tools,
         )
 
-        from app.core.chat_attach import build_user_content
-
-        if use_anthropic:
-            messages = _build_scheduled_messages(
-                system_prompt,
-                snapshot_context,
-                user_tz,
-                prompt,
-                memory,
-                use_anthropic=True,
-                user_content=build_user_content(prompt, [], True),
-                extra_reminder=shell_prompt,
-            )
-            gen = scheduled_runner.run(
-                user_id,
-                system_prompt,
-                messages,
-                use_anthropic=True,
-                model_cfg=model_cfg,
-                # 定时任务没有稳定的会话续接边界；provider state 只属于交互式 session。
-                reasoning_policy="off",
-                state_session_factory=None,
-            )
-        else:
-            messages = _build_scheduled_messages(
-                system_prompt,
-                snapshot_context,
-                user_tz,
-                prompt,
-                memory,
-                use_anthropic=False,
-                user_content=prompt,
-                extra_reminder=shell_prompt,
-            )
-            gen = scheduled_runner.run(
-                user_id,
-                # Responses 将 system prompt 放在 instructions，而不是 input。
-                system_prompt,
-                messages,
-                use_anthropic=False,
-                model_cfg=model_cfg,
-                reasoning_policy="off",
-                state_session_factory=None,
-            )
+        messages = prepare_scheduled_context(
+            system_prompt, snapshot_context, user_tz, prompt, memory,
+            use_anthropic=use_anthropic,
+        )
+        gen = scheduled_runner.run(
+            user_id, system_prompt, messages, use_anthropic=use_anthropic,
+            model_cfg=model_cfg,
+            # 任务没有稳定的会话续接边界，不能继承交互式 session 的推理状态。
+            reasoning_policy="off", state_session_factory=None,
+        )
 
         # 定时任务由用户创建并明确授权其指令执行；只给邮件工具自动授权，
         # 其它 destructive 工具仍必须经过各自安全门，不能借任务上下文扩大权限。

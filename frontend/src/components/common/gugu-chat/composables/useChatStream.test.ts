@@ -6,6 +6,8 @@ import { agentApi, trackApi } from '@/services/api'
 import { useChatStream } from './useChatStream'
 import type { ChatMessage } from '../chatTypes'
 
+vi.mock('@/services/sfx', () => ({ playGuguSfx: vi.fn() }))
+
 function createOptions(messages: ChatMessage[], sessionId = ref<number | null>(42)) {
   return {
     messages: ref(messages),
@@ -60,6 +62,30 @@ describe('useChatStream 停止 run', () => {
 
     expect(options.messages.value).toHaveLength(1)
     expect(options.messages.value[0]?.toolStatus).toBe('success')
+  })
+
+  it('失败终态更新原用户消息且不伪造 assistant 错误消息', async () => {
+    const userMessage: ChatMessage = { id: 7, dbId: 42, role: 'user', text: '测试请求', time: '12:00' }
+    const options = createOptions([userMessage])
+    const stream = useChatStream(options)
+    let sseController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { sseController = controller },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+
+    const consuming = stream.resumeStream(42)
+    sseController.enqueue(new TextEncoder().encode(
+      'data: {"type":"error","user_message_id":42,"run_outcome":{"status":"failed","errorCode":"provider_unavailable","messageKey":"chatUi.providerUnavailable","messageParams":{"tag":"500"}}}\n\n',
+    ))
+    sseController.close()
+    await consuming
+
+    expect(userMessage.runOutcome).toMatchObject({
+      status: 'failed', errorCode: 'provider_unavailable',
+      messageKey: 'chatUi.providerUnavailable',
+    })
+    expect(options.messages.value.filter(message => message.role === 'ai')).toHaveLength(0)
   })
 
   it('请求取消时保留 SSE，收到取消终态后将运行中的工具卡收口', async () => {
@@ -135,15 +161,16 @@ describe('useChatStream 停止 run', () => {
     expect(options.setStatus).toHaveBeenCalledWith(expect.objectContaining({ kind: 'text' }))
 
     sseController.enqueue(new TextEncoder().encode(
-      'data: {"type":"session_id","session_id":42}\n\n'
+      'data: {"type":"session_id","session_id":42,"user_message_id":73}\n\n'
       + 'data: {"type":"tool_call","run_id":"run-current","tool_call_id":"call-current","name":"shell","status":"running"}\n\n'
-      + 'data: {"type":"done","cancelled":true}\n\n',
+      + 'data: {"type":"done","cancelled":true,"user_message_id":73,"run_outcome":{"status":"interrupted","errorCode":"cancelled"}}\n\n',
     ))
     sseController.close()
     await sending
 
     expect(cancel).toHaveBeenCalledWith('42')
     expect(toolMessage.toolStatus).toBe('cancelled')
+    expect(options.messages.value.find(message => message.dbId === 73)?.runOutcome?.status).toBe('interrupted')
     expect(options.messages.value.some(message => message.text.includes('没有收到回复'))).toBe(false)
   })
 
