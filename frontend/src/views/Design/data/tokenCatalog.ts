@@ -10,6 +10,16 @@ export interface DesignToken {
 }
 
 export const tokenCatalog: DesignToken[] = [
+  { name: '复选框尺寸', variable: '--control-checkbox-size', category: 'component', type: 'size', description: '原生、公共组件和自定义复选框共享的边长。' },
+  { name: '复选框圆角', variable: '--control-checkbox-radius', category: 'component', type: 'size', description: '全局复选框统一圆角。' },
+  { name: '复选框边框宽度', variable: '--control-checkbox-border-width', category: 'component', type: 'size', description: '全局复选框统一边框粗细。' },
+  { name: '复选框默认表面', variable: '--control-checkbox-bg', category: 'component', type: 'color', description: '未选中复选框表面。' },
+  { name: '复选框默认边界', variable: '--control-checkbox-border', category: 'component', type: 'color', description: '未选中复选框边界。' },
+  { name: '复选框悬停边界', variable: '--control-checkbox-border-hover', category: 'component', type: 'color', description: '悬停与键盘聚焦时的复选框边界。' },
+  { name: '复选框选中表面', variable: '--control-checkbox-bg-checked', category: 'component', type: 'color', description: '选中复选框表面。' },
+  { name: '复选框选中边界', variable: '--control-checkbox-border-checked', category: 'component', type: 'color', description: '选中复选框边界。' },
+  { name: '复选框勾色', variable: '--control-checkbox-mark', category: 'component', type: 'color', description: '复选框勾形颜色。' },
+  { name: '复选框阴影', variable: '--control-checkbox-shadow', category: 'component', type: 'shadow', description: '全局复选框统一为无阴影。' },
   { name: '页面表面', variable: '--surface-page', category: 'semantic', type: 'color', description: '应用根页面背景。' },
   { name: '画布表面', variable: '--surface-canvas', category: 'semantic', type: 'color', description: '主题预览与自由画布的底层表面。' },
   { name: '侧栏表面', variable: '--surface-sidebar', category: 'semantic', type: 'color', description: '导航侧栏使用的主题表面。' },

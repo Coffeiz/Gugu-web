@@ -157,12 +157,6 @@
   --folder-card-bg-preselected: rgba(123,127,178,.05);
   --folder-card-border-preselected: rgba(123,127,178,.38);
   --folder-card-shadow-preselected: inset 0 1px 0 rgba(255,255,255,.90), 0 0 0 1.5px rgba(123,127,178,.12);
-  --folder-card-checkbox-bg: rgba(255,255,255,.75);
-  --folder-card-checkbox-border: rgba(123,127,178,.55);
-  --folder-card-checkbox-bg-checked: var(--color-primary,#7b7fb2);
-  --folder-card-checkbox-border-checked: var(--color-primary,#7b7fb2);
-  --folder-card-checkbox-fg-checked: #fff;
-
   /* Shared menu / calendar / context / sort popover. Geometry can stay component-specific; all
      paint and cadence comes from this one contract. */
   --popup-surface-bg: var(--surface-popup);
@@ -325,11 +319,6 @@ html[data-theme='light'][data-family='mono'] {
   --folder-card-bg-preselected: var(--action-soft);
   --folder-card-border-preselected: var(--action-outline);
   --folder-card-shadow-preselected: 0 0 0 1px var(--selection-bg), var(--elevation-card);
-  --folder-card-checkbox-bg: var(--control-bg);
-  --folder-card-checkbox-border: var(--action-outline);
-  --folder-card-checkbox-bg-checked: var(--action-primary);
-  --folder-card-checkbox-border-checked: var(--action-primary);
-  --folder-card-checkbox-fg-checked: var(--content-on-accent);
 }
 
 html[data-theme='dark'][data-family] {
@@ -419,12 +408,6 @@ html[data-theme='dark'][data-family] {
   --folder-card-bg-preselected: color-mix(in srgb,var(--action-primary) 5%,var(--surface-card-solid));
   --folder-card-border-preselected: color-mix(in srgb,var(--action-primary) 38%,transparent);
   --folder-card-shadow-preselected: inset 0 1px 0 var(--highlight-muted), 0 0 0 1px color-mix(in srgb,var(--action-primary) 12%,transparent);
-  --folder-card-checkbox-bg: var(--control-bg);
-  --folder-card-checkbox-border: var(--action-outline);
-  --folder-card-checkbox-bg-checked: var(--action-primary-bg);
-  --folder-card-checkbox-border-checked: transparent;
-  --folder-card-checkbox-fg-checked: var(--content-on-accent);
-
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 9%,transparent);
   --switch-track-bg-active: color-mix(in srgb,var(--action-primary) 46%,var(--surface-card-solid));
   --switch-thumb-bg: var(--content-on-accent);

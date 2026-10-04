@@ -64,22 +64,11 @@
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; position: relative; min-width: 0; }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover .file-list-btn { opacity: 1; }
 
-/* 列表选择框只有这一份 geometry/paint owner。主题颜色来自 fileSelectionCheckbox.css 的共享
-   checkbox contract；不再先画 generic checkbox、再被 .lr-actions 和 dark selector 二次覆盖。 */
+/* 列表选择框的位置属于行布局；盒子和颜色由 fileSelectionCheckbox.css 共用标准令牌。 */
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox {
   position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 3;
-  width: 18px; height: 18px; border-radius: 5px;
-  color: var(--file-browser-checkbox-fg-checked);
-  border: 2px solid var(--file-browser-checkbox-border);
-  background: var(--file-browser-checkbox-bg);
-  box-shadow: none;
-  display: flex; align-items: center; justify-content: center;
-  transition: opacity 0.18s ease;
-  pointer-events: none;
 }
 :is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox.checked {
-  background: var(--file-browser-checkbox-bg-checked);
-  border-color: var(--file-browser-checkbox-border-checked);
   /* 同 FolderCard：填充淡入只在勾选方向声明，取消勾选瞬时还原 */
   transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
 }

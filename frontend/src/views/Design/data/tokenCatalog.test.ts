@@ -13,4 +13,20 @@ describe('设计令牌目录契约', () => {
     expect(tokenCatalog.every(token => !('value' in token))).toBe(true)
     expect(new Set(tokenCatalog.map(token => token.variable)).size).toBe(tokenCatalog.length)
   })
+
+  it('全局复选框 paint 契约公开为标准组件令牌', () => {
+    const checkboxTokens = tokenCatalog.filter(token => token.variable.startsWith('--control-checkbox-'))
+    expect(checkboxTokens.map(token => token.variable)).toEqual(expect.arrayContaining([
+      '--control-checkbox-size',
+      '--control-checkbox-radius',
+      '--control-checkbox-border-width',
+      '--control-checkbox-bg',
+      '--control-checkbox-border',
+      '--control-checkbox-border-hover',
+      '--control-checkbox-bg-checked',
+      '--control-checkbox-border-checked',
+      '--control-checkbox-mark',
+      '--control-checkbox-shadow',
+    ]))
+  })
 })

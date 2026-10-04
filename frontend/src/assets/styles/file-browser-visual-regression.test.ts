@@ -173,8 +173,7 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     const dark = cssBlock(componentSurfaces, "html[data-theme='dark'][data-family]")
     expect(dark).toContain('--folder-card-bg-base: var(--surface-card-solid);')
     expect(dark).toContain('--folder-card-border-base: var(--border-strong);')
-    expect(dark).toContain('--folder-card-checkbox-bg-checked: var(--action-primary-bg);')
-    expect(dark).toContain('--folder-card-checkbox-border-checked: transparent;')
+    expect(dark).not.toContain('--control-checkbox-bg-checked:')
 
     expect(surfacesAdoption).not.toContain('.folder-card')
     expect(componentRefinements).not.toContain('.folder-card.selected {')
@@ -241,15 +240,15 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesListRows).toContain('.pre-selected:not(.selected)')
   })
 
-  it('网格与列表多选框共享 FolderCard 已验证的主题 token 和同一个勾形', () => {
-    expect(fileSelectionCheckbox).toContain('--file-browser-checkbox-bg: var(--folder-card-checkbox-bg);')
-    expect(fileSelectionCheckbox).toContain('--file-card-checkbox-bg: var(--file-browser-checkbox-bg);')
-    expect(fileSelectionCheckbox).toContain('--file-card-checkbox-fg-checked: var(--file-browser-checkbox-fg-checked);')
+  it('网格与列表多选框共享全局复选框令牌和同一个勾形', () => {
+    expect(fileSelectionCheckbox).toContain('width: var(--control-checkbox-size);')
+    expect(fileSelectionCheckbox).toContain('border: var(--control-checkbox-border-width) solid var(--control-checkbox-border);')
+    expect(fileSelectionCheckbox).toContain('background: var(--control-checkbox-bg-checked);')
     expect(fileSelectionCheckbox).toContain('.sel-checkbox.checked > svg')
     expect(fileSelectionCheckbox).toContain('.sel-checkbox.checked::after')
     expect(fileSelectionCheckbox).toContain("M2 6l3 3 5-5")
-    expect(filesListRows).toContain('color: var(--file-browser-checkbox-fg-checked);')
-    expect(filesListRows).toContain('background: var(--file-browser-checkbox-bg-checked);')
+    expect(filesListRows).not.toContain('file-browser-checkbox-')
+    expect(fileSelectionCheckbox).not.toContain('box-shadow: none;')
     expect(filesListRows).not.toContain("html[data-theme='dark'][data-family] .list-row .sel-checkbox")
   })
 
@@ -258,7 +257,7 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesListView).not.toContain('.sel-checkbox {')
     expect(filesListView).not.toContain('grid-template-columns:')
     expect(filesListRows).toContain('.sel-checkbox')
-    expect(filesListRows).toContain('box-shadow: none;')
+    expect(fileSelectionCheckbox).toContain('box-shadow: var(--control-checkbox-shadow);')
     expect(uploadGhost).not.toContain('grid-template-columns:')
     expect(uploadGhost).not.toContain(':deep(.lr-filename)')
   })
@@ -343,9 +342,10 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(projectAdoption).toContain('Project title paint is intentionally not overridden here')
   })
 
-  it('多选 checkbox 无高光阴影，最终主题层不再重复接管 checkbox/folder paint', () => {
-    expect(folderCard).toContain('box-shadow: none;')
-    expect(filesListRows).toContain('box-shadow: none;')
+  it('多选 checkbox 消费标准无阴影令牌，组件不重复定义 paint', () => {
+    expect(folderCard).not.toContain('.sel-checkbox {')
+    expect(filesListRows).not.toContain('box-shadow:')
+    expect(fileSelectionCheckbox).toContain('--control-checkbox-shadow')
     expect(componentRefinements).not.toContain('.sel-checkbox')
     expect(componentRefinements).not.toContain('/* ── File toolbar')
   })

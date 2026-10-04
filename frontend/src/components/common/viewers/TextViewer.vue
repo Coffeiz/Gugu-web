@@ -1057,7 +1057,6 @@ onBeforeUnmount(() => {
 .tv-md :deep(li:has(> input[type="checkbox"]) > code) { white-space: nowrap; }
 /* 可交互勾选框（md + 真实文件）：手型 + hover 提示可点 */
 .tv-md :deep(input[type="checkbox"][data-task]) { cursor: pointer; }
-.tv-md :deep(input[type="checkbox"][data-task]:hover) { border-color: var(--action-outline); }
 
 .tv-md :deep(blockquote) {
   margin: 1em 0;

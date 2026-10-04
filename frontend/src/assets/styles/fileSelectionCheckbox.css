@@ -1,20 +1,27 @@
-/* File browser selection checkbox contract.
-   Grid FileCard / FolderCard and every list row share the same semantic paint and the same check glyph.
-   FolderCard already had the correct Aero/Mono + light/dark token mapping, so the generic contract aliases
-   that proven mapping instead of inventing another theme branch. FileCard consumes compatibility aliases
-   below; list rows consume the generic names directly. */
-:root {
-  --file-browser-checkbox-bg: var(--folder-card-checkbox-bg);
-  --file-browser-checkbox-border: var(--folder-card-checkbox-border);
-  --file-browser-checkbox-bg-checked: var(--folder-card-checkbox-bg-checked);
-  --file-browser-checkbox-border-checked: var(--folder-card-checkbox-border-checked);
-  --file-browser-checkbox-fg-checked: var(--folder-card-checkbox-fg-checked);
-
-  --file-card-checkbox-bg: var(--file-browser-checkbox-bg);
-  --file-card-checkbox-border: var(--file-browser-checkbox-border);
-  --file-card-checkbox-bg-checked: var(--file-browser-checkbox-bg-checked);
-  --file-card-checkbox-border-checked: var(--file-browser-checkbox-border-checked);
-  --file-card-checkbox-fg-checked: var(--file-browser-checkbox-fg-checked);
+/* 文件网格与列表使用同一 checkbox 标准令牌；这里只保留选择控件的布局和勾形行为。 */
+:where(.fc-card, .folder-card) .sel-checkbox {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+}
+:where(.fc-card, .folder-card, .list-row) .sel-checkbox {
+  box-sizing: border-box;
+  width: var(--control-checkbox-size);
+  height: var(--control-checkbox-size);
+  border: var(--control-checkbox-border-width) solid var(--control-checkbox-border);
+  border-radius: var(--control-checkbox-radius);
+  background: var(--control-checkbox-bg);
+  color: var(--control-checkbox-mark);
+  box-shadow: var(--control-checkbox-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+:where(.fc-card, .folder-card, .list-row) .sel-checkbox.checked {
+  color: var(--control-checkbox-mark);
+  background: var(--control-checkbox-bg-checked);
+  border-color: var(--control-checkbox-border-checked);
+  box-shadow: var(--control-checkbox-shadow);
 }
 
 /* Templates historically used two different check icons (inline path vs PhCheck). Hide both when checked
@@ -28,15 +35,15 @@
 :where(.fc-card, .folder-card, .list-row) .sel-checkbox::after {
   content: '';
   display: block;
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
   background: currentColor;
   opacity: 0;
   transform: scale(0.4);
   transition: opacity 0.15s ease, transform 0.18s cubic-bezier(0.34, 1.4, 0.64, 1);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 6l3 3 5-5' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 6l3 3 5-5' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 6l3 3 5-5' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 6l3 3 5-5' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
 }
 :where(.fc-card, .folder-card, .list-row) .sel-checkbox.checked::after {
   opacity: 1;

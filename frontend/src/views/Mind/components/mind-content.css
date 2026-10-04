@@ -47,12 +47,11 @@
 .ne-body .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
   opacity: 0.45; text-decoration: line-through;
 }
-/* checkbox 固定宽高——原生 checkbox 尺寸跟着系统/浏览器字体走，不锁死宽度就没法
-   保证跟无序列表的圆点标记（.mind-dot）严丝合缝对齐。结构不同（预览是裸 input，
-   编辑器是 label 包 input）分开写选择器，数值保持一致。 */
+/* 预览和编辑使用不同 DOM 结构，但尺寸统一跟随全局控件令牌，避免局部规则覆盖全局尺寸。 */
 .md-preview .np-tasks input,
 .ne-body .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
-  width: 14px; height: 14px; margin-top: 3px; flex-shrink: 0; cursor: pointer;
+  width: var(--control-checkbox-size); height: var(--control-checkbox-size);
+  margin-top: 3px; flex-shrink: 0; cursor: pointer;
 }
 .ne-body .ProseMirror ul[data-type="taskList"] li > label { display: flex; }
 .ne-body .ProseMirror ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
@@ -71,7 +70,7 @@
 .ne-body .ProseMirror ul:not([data-type="taskList"]) li > div { flex: 1; min-width: 0; }
 .ne-body .ProseMirror ul:not([data-type="taskList"]) li > div p { margin: 0; }
 
-/* 圆点标记：跟 checkbox 同宽（14px），预览/编辑态用同一个类名，一条规则两边都生效 */
+/* 圆点标记：跟 checkbox 共用宽度令牌，预览/编辑态用同一个类名，一条规则两边都生效 */
 .mind-dot {
   flex-shrink: 0; width: 14px; margin-top: 3px;
   text-align: center; line-height: 1; color: var(--text-secondary);

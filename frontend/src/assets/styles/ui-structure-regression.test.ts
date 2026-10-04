@@ -242,6 +242,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(chatVoiceBlock).not.toContain('box-shadow 0.15s')
   })
 
+  it('聊天对象卡片的悬浮阴影平滑过渡', () => {
+    const objectCardBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a.chat-object-card)')
+    expect(objectCardBlock).toContain('transition: var(--card-motion), box-shadow var(--motion-hover-card) var(--motion-ease-standard);')
+  })
+
   it('交互消费失败时进入终态，避免重复提交已消费 token', () => {
     const handlerStart = guguChat.indexOf('async function onInteractionSelect')
     const endpointStart = guguChat.indexOf('const endpoint =', handlerStart)
