@@ -3,7 +3,7 @@
        没便签的日期不出列——时间轴压缩，不摆空列。列内溢出自己竖滚。
        每列一块玻璃底板（同定时任务 .panel.glass-card 的轻玻璃，背后是静态页面背景，安全）。 -->
   <div ref="root" class="timeline-cols">
-    <section v-for="(g, i) in groups" :key="g.date" v-memo="[dayMemo(g)]" class="tl-col glass-card" :data-date="g.date">
+    <section v-for="(g, i) in groups" :key="g.date" v-memo="[timelineColumnMemoKey(g.items, highlightId, editingId, conflict)]" class="tl-col glass-card" :data-date="g.date">
       <div class="tl-col-head">
         <span class="tl-day" :class="{ today: g.date === todayIso }">{{ +g.date.slice(8, 10) }}</span>
         <span class="tl-day-side">
@@ -42,6 +42,7 @@
 import { onMounted, onUpdated, ref } from 'vue'
 import type { MindNote } from '@/services/api'
 import { localDayKey } from '@/utils/dateAttribution'
+import { timelineColumnMemoKey } from '../utils/timelineMemo'
 import NoteCard from './NoteCard.vue'
 
 const props = defineProps<{
@@ -90,14 +91,6 @@ function confirmEdit(n: MindNote) {
 function stopEditing() { editingId.value = null; conflict.value = false }
 function autosave(n: MindNote, md: string) {
   emit('save', n, md)
-}
-
-/** 未变化的日期列完全跳过 patch，补录其它日期不会触发已有便签的列表移动计算。 */
-function dayMemo(group: { date: string; items: MindNote[] }) {
-  const versions = group.items.map(note => `${note.id}:${note.version}`).join('|')
-  const highlighted = group.items.some(note => note.id === props.highlightId) ? props.highlightId : ''
-  const editing = group.items.some(note => note.id === editingId.value) ? editingId.value : ''
-  return `${versions};h:${highlighted};e:${editing};c:${editing ? conflict.value : ''}`
 }
 
 /** 真实列坐标不变，只压缩视觉卡片：越远越小、越靠中心越密，边缘沉到后方。 */
