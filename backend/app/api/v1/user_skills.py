@@ -1,7 +1,7 @@
 """用户 Prompt Skill 管理 API。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,6 +95,11 @@ async def _available_skill_tools(
     }, dynamic_tools
 
 
+async def _tools_for_skill_update(user_id: object, related_tools: list[str]):
+    needs_mcp_discovery = any(name.startswith("mcp_") for name in related_tools)
+    return await _available_skill_tools(user_id, discover_mcp=needs_mcp_discovery)
+
+
 def _serialize(row: UserSkill) -> dict:
     return {
         "id": row.id, "slug": row.slug, "name": row.name,
@@ -109,11 +114,49 @@ def _serialize(row: UserSkill) -> dict:
     }
 
 
+async def _commit_skill(db: AsyncSession, row: UserSkill) -> dict:
+    await db.commit()
+    await db.refresh(row)
+    return _serialize(row)
+
+
+async def _raise_registration_error(db: AsyncSession, exc: CapabilityRegistrationError):
+    await db.rollback()
+    raise HTTPException(422, str(exc)) from exc
+
+
+async def _write_skill(
+    db: AsyncSession, user_id: object, values: dict, *, slug: str | None = None,
+) -> dict:
+    values = dict(values)
+    enabled = values.pop("enabled", True if slug is None else None)
+    try:
+        _, allowed_tool_names, dynamic_tools = await _tools_for_skill_update(
+            user_id, values.get("related_tools") or [],
+        )
+        if slug is None:
+            row = await _registry.create_user_skill(
+                db, user_id, allowed_tool_names=allowed_tool_names,
+                dynamic_tools=dynamic_tools, **values,
+            )
+            row.enabled = enabled
+        else:
+            row = await _registry.update_user_skill(
+                db, user_id, slug, allowed_tool_names=allowed_tool_names,
+                dynamic_tools=dynamic_tools, enabled=enabled, **values,
+            )
+            if row is None:
+                raise HTTPException(404, "Skill 不存在")
+        return await _commit_skill(db, row)
+    except CapabilityRegistrationError as exc:
+        await _raise_registration_error(db, exc)
+
+
 @router.get("")
 async def list_skills(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    include_tools: bool = Query(default=True),
+    include_tools: bool = True,
 ):
     rows = (await db.execute(select(UserSkill).where(
         UserSkill.owner_id == current_user.id,
@@ -138,54 +181,16 @@ async def list_skill_tools(current_user: User = Depends(get_current_user)):
 
 @router.post("", status_code=201)
 async def create_skill(payload: UserSkillPayload, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    try:
-        needs_mcp_discovery = any(name.startswith("mcp_") for name in payload.related_tools)
-        _, allowed_tool_names, dynamic_tools = await _available_skill_tools(
-            current_user.id, discover_mcp=needs_mcp_discovery,
-        )
-        row = await _registry.create_user_skill(
-            db, current_user.id, allowed_tool_names=allowed_tool_names,
-            dynamic_tools=dynamic_tools,
-            **payload.model_dump(exclude={"enabled"}),
-        )
-        row.enabled = payload.enabled
-        await db.commit()
-        await db.refresh(row)
-        return _serialize(row)
-    except CapabilityRegistrationError as exc:
-        await db.rollback()
-        raise HTTPException(422, str(exc)) from exc
+    return await _write_skill(
+        db, current_user.id, payload.model_dump(),
+    )
 
 
 @router.patch("/{slug}")
 async def update_skill(slug: str, payload: UserSkillPatch, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    try:
-        existing = (await db.execute(select(UserSkill).where(
-            UserSkill.owner_id == current_user.id,
-            UserSkill.slug == slug,
-        ))).scalar_one_or_none()
-        retained_tools = set(existing.related_tools or ()) if existing else set()
-        requested_tools = payload.related_tools or []
-        needs_mcp_discovery = any(
-            name.startswith("mcp_") and name not in retained_tools
-            for name in requested_tools
-        )
-        _, allowed_tool_names, dynamic_tools = await _available_skill_tools(
-            current_user.id, discover_mcp=needs_mcp_discovery,
-        )
-        row = await _registry.update_user_skill(
-            db, current_user.id, slug, allowed_tool_names=allowed_tool_names,
-            dynamic_tools=dynamic_tools,
-            **payload.model_dump(exclude_unset=True),
-        )
-        if row is None:
-            raise HTTPException(404, "Skill 不存在")
-        await db.commit()
-        await db.refresh(row)
-        return _serialize(row)
-    except CapabilityRegistrationError as exc:
-        await db.rollback()
-        raise HTTPException(422, str(exc)) from exc
+    return await _write_skill(
+        db, current_user.id, payload.model_dump(exclude_unset=True), slug=slug,
+    )
 
 
 @router.delete("/{slug}", status_code=204)

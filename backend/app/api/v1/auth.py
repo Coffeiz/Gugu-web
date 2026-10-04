@@ -43,6 +43,7 @@ from app.services.email.queries import get_user_email_preferences
 from app.services.account_queries import (
     byok_usage_stats,
     create_user_preferences,
+    find_user_by_name_or_email,
     get_active_email_change,
     get_email_change_for_token,
     get_user_by_id,
@@ -99,10 +100,7 @@ async def register(body: UserRegister, request: Request, response: Response, db:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    existing = await db.execute(
-        select(User).where((User.username == body.username) | (func.lower(User.email) == email))
-    )
-    if existing.scalars().first():
+    if await find_user_by_name_or_email(db, body.username, email):
         raise HTTPException(400, "用户名或邮箱已被注册")
 
     verification_required = is_system_email_available()
@@ -257,11 +255,9 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     if not is_system_email_available():
         raise HTTPException(status_code=503, detail="密码找回邮件当前不可用")
     r = get_redis()
-    user = (await db.execute(
-        select(User).where(
-            (func.lower(User.email) == identifier) | (func.lower(User.username) == identifier)
-        )
-    )).scalars().first()
+    user = await find_user_by_name_or_email(
+        db, identifier, identifier, name_case_insensitive=True,
+    )
     if not user:
         return _RESET_GENERIC
 
