@@ -6,6 +6,7 @@ import type { components } from '@/types/api'
 import { getLocale, i18n, type SupportedLocale } from '@/i18n'
 import { getInteractionClientId } from '@/interaction/sync/InteractionSyncState'
 import { handleUnauthorized, isUnauthorizedResponse } from '@/services/authSession'
+import { getAuthDeviceId } from '@/utils/authDevice'
 
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
@@ -16,6 +17,7 @@ export interface SiteConfig {
   icpNumber: string
   icpUrl: string
   passwordResetEnabled: boolean
+  registrationVerificationEnabled: boolean
 }
 
 export async function fetchSiteConfig(): Promise<SiteConfig> {
@@ -62,7 +64,7 @@ function getUndoContextId(): string {
 
 export const UNDO_CONTEXT_ID = getUndoContextId()
 
-export interface RequestMeta { mutationId?: string; undoGroupId?: string }
+export interface RequestMeta { mutationId?: string; undoGroupId?: string; headers?: Record<string, string> }
 
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
@@ -77,6 +79,7 @@ async function request<T = any>(method: string, path: string, body: any = null, 
   }
   if (meta?.mutationId) headers['X-Mutation-Id'] = meta.mutationId
   if (meta?.undoGroupId) headers['X-Undo-Group-ID'] = meta.undoGroupId
+  if (meta?.headers) Object.assign(headers, meta.headers)
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const opts: RequestInit = { method, headers, signal, credentials: 'include' }
@@ -1001,6 +1004,9 @@ export const searchApi = {
 }
 
 export const authApi = {
+  sendRegistrationCode: (email: string) => post<{ ok: boolean }>(
+    '/auth/registration-code', { email }, { headers: { 'X-Device-ID': getAuthDeviceId() } },
+  ),
   updateProfile: (data: any)     => request('PATCH',  '/auth/profile', data),
   requestEmailChange: (data: { newEmail: string; currentPassword: string }) => request('POST', '/auth/email-change/request', data),
   resendEmailChange: () => request('POST', '/auth/email-change/resend'),

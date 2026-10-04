@@ -329,4 +329,29 @@ Object.assign((messages['en-US'] as Record<string, any>).agent, { automaticModeG
 Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { groupOwnerMemory: '允许群聊使用个人记忆', groupOwnerMemoryHint: '仅本人发言时召回个人记忆；回复可能向群成员公开私人信息', groupOwnerMemoryWarning: '开启后，本人与咕咕在此 Bot 群聊中的对话可使用个人记忆，私人信息可能出现在群回复和群历史中。关闭不会撤回已有消息。确定开启？' })
 Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { groupOwnerMemory: 'Use personal memory in groups', groupOwnerMemoryHint: 'Only verified owner messages can recall personal memory; replies may disclose private information', groupOwnerMemoryWarning: 'Personal memory may appear in group replies and history. Disabling this does not retract existing messages. Enable?' })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { groupOwnerMemory: 'グループで個人メモリを使用', groupOwnerMemoryHint: '本人と確認された発言のみ対象。返信で個人情報が共有される可能性があります', groupOwnerMemoryWarning: '個人メモリがグループの返信や履歴に含まれる可能性があります。無効にしても過去のメッセージは撤回されません。有効にしますか？' })
+
+Object.assign((messages['zh-CN'] as Record<string, any>).auth, {
+  emailOrUsername: '用户名或邮箱', registrationCode: '邮箱验证码', registrationCodePlaceholder: '输入 6 位验证码',
+  sendRegistrationCode: '发送验证码', registrationCodeSending: '发送中…', registrationCodeSent: '如果邮箱可用于注册，验证码邮件已发送，请查收。',
+  registrationCodeHint: '验证码 10 分钟内有效；每分钟可重新发送一次。', registrationCodeRequired: '请输入有效的 6 位邮箱验证码',
+  registrationConfigFailed: '暂时无法读取注册设置，请刷新页面后重试。', resendAfter: '{seconds} 秒后重发',
+  forgotHint: '输入注册时使用的用户名或邮箱，系统会向账号邮箱发送重置密码邮件。',
+  resetSentTo: '重置邮件已发送至 {email}。请查收邮箱（含垃圾箱）。',
+})
+Object.assign((messages['en-US'] as Record<string, any>).auth, {
+  emailOrUsername: 'Username or email', registrationCode: 'Email verification code', registrationCodePlaceholder: 'Enter the 6-digit code',
+  sendRegistrationCode: 'Send code', registrationCodeSending: 'Sending…', registrationCodeSent: 'If this address can be used to register, a verification code has been sent.',
+  registrationCodeHint: 'The code expires in 10 minutes. You can request another every minute.', registrationCodeRequired: 'Enter a valid 6-digit email verification code',
+  registrationConfigFailed: 'Registration settings could not be loaded. Refresh the page and try again.', resendAfter: 'Resend in {seconds}s',
+  forgotHint: 'Enter your registered username or email. A password reset email will be sent to the account address.',
+  resetSentTo: 'A password reset email was sent to {email}. Check your inbox and spam folder.',
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).auth, {
+  emailOrUsername: 'ユーザー名またはメール', registrationCode: 'メール認証コード', registrationCodePlaceholder: '6 桁のコードを入力',
+  sendRegistrationCode: 'コードを送信', registrationCodeSending: '送信中…', registrationCodeSent: '登録に使用できるアドレスの場合、認証コードを送信しました。',
+  registrationCodeHint: 'コードは 10 分間有効です。再送信は 1 分後に可能です。', registrationCodeRequired: '有効な 6 桁のメール認証コードを入力してください',
+  registrationConfigFailed: '登録設定を読み込めません。ページを更新して再試行してください。', resendAfter: '{seconds} 秒後に再送信',
+  forgotHint: '登録時のユーザー名またはメールを入力してください。アカウントのメールアドレスに再設定メールを送信します。',
+  resetSentTo: '{email} に再設定メールを送信しました。受信トレイと迷惑メールを確認してください。',
+})
 }

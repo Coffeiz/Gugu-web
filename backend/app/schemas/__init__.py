@@ -33,6 +33,11 @@ class UserRegister(CamelModel):
     password: str
     locale: Optional[Literal["zh-CN", "ja-JP", "en-US"]] = None
     email_subscribed: bool = False
+    verification_code: Optional[str] = Field(default=None, min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class RegistrationCodeRequest(CamelModel):
+    email: str = Field(min_length=3, max_length=300)
 
 
 class UserLogin(CamelModel):
@@ -41,7 +46,8 @@ class UserLogin(CamelModel):
 
 
 class ForgotPassword(CamelModel):
-    email: str
+    # 字段名保留兼容既有客户端；值可以是邮箱或用户名。
+    email: str = Field(min_length=1, max_length=300, description="注册邮箱或用户名")
 
 
 class ResetPassword(CamelModel):

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAudioStore } from './audio'
 import { authApi } from '@/services/api'
+import { getAuthDeviceId } from '@/utils/authDevice'
 import type { components } from '@/types/api'
 import { getLocale } from '@/i18n'
 import { clearGreeting } from '@/composables/shared/useGreeting'
@@ -61,12 +62,12 @@ export const useAuthStore = defineStore('auth', () => {
     return fallback
   }
 
-  async function register(username: string, email: string, password: string, emailSubscribed = false) {
+  async function register(username: string, email: string, password: string, emailSubscribed = false, verificationCode?: string) {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Device-ID': getAuthDeviceId() },
       credentials: 'include',
-      body: JSON.stringify({ username, email, password, locale: getLocale(), emailSubscribed }),
+      body: JSON.stringify({ username, email, password, locale: getLocale(), emailSubscribed, verificationCode }),
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(_extractDetail(body, '注册失败'))
