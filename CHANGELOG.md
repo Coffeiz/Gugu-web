@@ -13,7 +13,7 @@
 
 #### New Features
 
-- **Email-verified registration and account recovery**: when system SMTP is available, new accounts must verify a one-time email code; password recovery accepts a username or email and confirms the destination address (#77).
+- **Email-verified registration and account recovery**: when system SMTP is available, new accounts must verify a one-time email code; password recovery accepts a username or email and shows a masked destination address (#77).
 - **Optional action follow-through guard**: users can enable a guard that nudges the Agent only when an explicit action request is declined without execution.
 
 #### Improvements
@@ -22,13 +22,16 @@
 - **Faster Skills page**: load the tool catalog on demand instead of blocking the initial page view.
 - **Scheduled task replies**: deliver the Agent's final response directly, avoiding an extra summary round.
 - **File naming support**: upload dotfiles and rename files while editing their extensions.
-- **Interface details**: align checkbox styling and input sizing, and tighten memory settings spacing.
+- **Media and theme details**: remember video volume, align file selection overlays and marquee frames with the active theme, and use consistent compact progress bars.
+- **Interface details**: align checkbox styling and input sizing, tighten memory settings spacing, and match inline note-title editing to its display size.
+- **Deployment safety**: stop application and external sandbox writers before workspace migration, create paired database/storage backups, and keep failed migrations in a recoverable stopped state.
 
 #### Fixes
 
 - Preserve run outcomes and completed execution history through interrupted streams; improve retry budgets and context-compaction boundaries.
 - Correct reflection history projection, clear stale interaction cards when starting a new session, and keep action-confirmation instructions waiting for the user's response.
-- Prevent Shell permission setup from following symlinks and fix Mind preview/timeline updates.
+- Bind dangerous Shell confirmation to the exact command and execution context, consume it once, and prevent Shell permission setup from following symlinks.
+- Stabilize floating video preview sizing/loading and fix Mind preview/timeline updates.
 
 #### Contributors
 
@@ -42,7 +45,7 @@
 
 #### 新功能
 
-- **邮箱验证注册与账号找回**：系统 SMTP 可用时，新账号必须完成一次性邮箱验证码验证；密码找回支持用户名或邮箱，并提示邮件将发送至的完整邮箱（#77）。
+- **邮箱验证注册与账号找回**：系统 SMTP 可用时，新账号必须完成一次性邮箱验证码验证；密码找回支持用户名或邮箱，并显示脱敏后的收件地址（#77）。
 - **可选的行动跟进守卫**：用户可开启守卫；仅当明确要求执行而 Agent 未执行并选择推脱时，才提醒它继续处理。
 
 #### 改进
@@ -51,13 +54,16 @@
 - **加快技能页载入**：工具目录改为按需加载，不再阻塞技能页首次显示。
 - **定时任务回复**：直接投递 Agent 的最终回复，省去额外总结轮次。
 - **文件命名支持**：支持上传点文件，并可在重命名时编辑扩展名。
+- **媒体与主题细节**：记住视频播放器音量；文件选中覆盖层和框选框适配当前主题；统一紧凑进度条样式。
 - **界面细节**：统一复选框样式和输入框高度，收紧记忆设置卡片间距，并让思维导图待办预览及时响应状态变化。
+- **部署安全**：工作区迁移前停止应用与外部沙盒写入方并成对备份数据库和文件；迁移失败时保持停服，支持一致恢复。
 
 #### 修复
 
 - 中断流时保留运行终态和已完成的执行历史；改进重试预算与上下文压缩边界。
 - 修正反思历史投影；新建会话时清除旧交互卡片；操作确认指令会等待用户答复。
-- 修复 Shell 权限配置跟随符号链接的问题，并修正思维导图预览和时间轴更新。
+- 危险 Shell 确认绑定到精确命令和执行上下文，且仅消费一次；修复 Shell 权限配置跟随符号链接的问题。
+- 修复浮动视频预览尺寸/加载状态不稳定，以及思维导图预览和时间轴更新问题。
 
 #### 贡献者
 
