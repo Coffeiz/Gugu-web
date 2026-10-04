@@ -509,7 +509,10 @@ defineExpose({ rootEl: cardRef })
 /* 编辑态标题区：跟只读态 .nc-title 同样字号字重，固定分割线跟正文区隔开（不管有没有
    打字都分——按区域区分，不是靠有没有内容判断）。 */
 .nc-title-input {
-  flex-shrink: 0; width: 100%;
+  display: block; flex-shrink: 0; width: 100%; box-sizing: border-box;
+  /* 普通单行输入会继承全站控件高度，不适合卡片内联标题；这里按标题行高 + 下留白 + 分割线定高，
+     使编辑态的标题基线和分割线位置与只读态一致。 */
+  height: calc(1.35em + 8px);
   border: none; outline: none; background: none; padding: 0 0 7px; margin-bottom: 4px;
   border-bottom: 1px solid rgba(80,90,110,0.1);
   font-size: 14px; font-weight: 600; line-height: 1.35;
