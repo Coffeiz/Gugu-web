@@ -10,6 +10,7 @@ const KEEP = [
   'app_version',       // 版本门自身的标记
   'gugu_mini_pinned',  // 偏好：球钉住
   'gugu_audio_volume', // 偏好：音量
+  'gugu_video_volume', // 偏好：视频音量
 ]
 
 export function runClientVersionGate() {

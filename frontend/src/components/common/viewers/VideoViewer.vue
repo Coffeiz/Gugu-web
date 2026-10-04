@@ -11,6 +11,7 @@
       :controls="visible"
       playsinline
       preload="metadata"
+      @volumechange="persistVolume"
       @error="onError"
       @play="playing = true"
       @pause="playing = false"
@@ -37,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -49,8 +50,36 @@ const videoRef = ref<HTMLVideoElement | null>(null)
 const error    = ref(false)
 const playing  = ref(false)
 const visible  = ref(false)
+const VIDEO_VOLUME_KEY = 'gugu_video_volume'
 
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+
+function readSavedVolume(): number | null {
+  try {
+    const stored = localStorage.getItem(VIDEO_VOLUME_KEY)
+    if (stored === null) return null
+    const volume = Number(stored)
+    return Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : null
+  } catch {
+    return null
+  }
+}
+
+function restoreVolume() {
+  const volume = readSavedVolume()
+  if (volume !== null && videoRef.value) videoRef.value.volume = volume
+}
+
+function persistVolume(event: Event) {
+  const video = event.currentTarget as HTMLVideoElement
+  try {
+    localStorage.setItem(VIDEO_VOLUME_KEY, String(video.volume))
+  } catch {
+    // 存储不可用时仍可正常调整当前播放器音量。
+  }
+}
+
+onMounted(restoreVolume)
 
 // ── 显示 / 隐藏 ───────────────────────────────────────
 function showBtn() {
@@ -68,7 +97,10 @@ function onMouseLeave() {
 watch(() => props.src, () => {
   error.value   = false
   playing.value = false
-  if (videoRef.value) videoRef.value.load()
+  if (videoRef.value) {
+    restoreVolume()
+    videoRef.value.load()
+  }
 })
 
 function onError() { error.value = true }
@@ -113,7 +145,7 @@ onUnmounted(() => {
   width: 60px;
   height: 60px;
   color: white;
-  opacity: 0.72;
+  opacity: 0.92;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.5);
   box-sizing: border-box;
@@ -126,9 +158,7 @@ onUnmounted(() => {
   inset: 1px;
   border-radius: 50%;
   clip-path: circle(50%);
-  background: rgba(16, 17, 24, 0.24);
-  backdrop-filter: blur(24px) saturate(135%);
-  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  background: rgba(16, 17, 24, 0.42);
   pointer-events: none;
 }
 .vv-center-wrap:hover  { transform: translate(-50%, -50%) scale(1.08); }
