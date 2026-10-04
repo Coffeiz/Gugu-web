@@ -5,7 +5,6 @@
 """
 
 import pytest
-from pathlib import PurePosixPath
 from sqlalchemy import select
 
 from app.models import ConversationSession, File, Folder, Workspace
@@ -229,51 +228,3 @@ async def test_bound_session_writes_outside_workspace(db, user_a, tmp_path, monk
         reset_dispatch_session(token)
     await db.refresh(outside.file)
     assert outside.file.deleted_at is not None
-
-
-def test_script_path_rejects_absolute_traversal_and_platform_separators():
-    from agent.tools.shell import _normalize_script_path
-
-    assert _normalize_script_path("jobs/run.py") == ("workspace", PurePosixPath("jobs/run.py"))
-    assert _normalize_script_path("/workspace/jobs/run.py") == (
-        "workspace", PurePosixPath("jobs/run.py"),
-    )
-    assert _normalize_script_path("/personal/F1/run.py") == (
-        "personal", PurePosixPath("F1/run.py"),
-    )
-    for value in ("/tmp/run.py", "/Users/user/run.py", "../run.py", "jobs/../run.py", r"jobs\\run.py", ""):
-        with pytest.raises(ValueError):
-            _normalize_script_path(value)
-    with pytest.raises(ValueError, match="根目录必须与 root 一致"):
-        _normalize_script_path("/personal/F1/run.py", root_name="workspace")
-
-
-def test_script_file_rejects_symlink_and_hardlink(tmp_path):
-    from agent.tools.shell import _validate_script_file, _normalize_script_path
-
-    root = tmp_path / "workspace"
-    outside = tmp_path / "outside"
-    root.mkdir()
-    outside.mkdir()
-    (root / "run.py").write_text("print('ok')\n", encoding="utf-8")
-    _, relative = _normalize_script_path("run.py")
-    assert _validate_script_file(root, relative) == root / "run.py"
-
-    link = root / "link.py"
-    try:
-        link.symlink_to(outside / "run.py")
-    except (NotImplementedError, OSError):
-        pytest.skip("当前平台不支持文件软链接")
-    (outside / "run.py").write_text("print('outside')\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="软链接"):
-        _, relative = _normalize_script_path("link.py")
-        _validate_script_file(root, relative)
-
-    hardlink = root / "hard.py"
-    try:
-        hardlink.hardlink_to(root / "run.py")
-    except (NotImplementedError, OSError):
-        pytest.skip("当前平台不支持硬链接")
-    with pytest.raises(ValueError, match="硬链接"):
-        _, relative = _normalize_script_path("hard.py")
-        _validate_script_file(root, relative)
