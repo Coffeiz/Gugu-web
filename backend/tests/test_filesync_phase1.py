@@ -1108,8 +1108,10 @@ async def test_watcher_compensation_covers_inactive_user_bindings(db, user_a, us
             return None
 
     sidecar = FakeSidecar()
+    # 模拟 uptime 短于日级间隔；新 manager 的首轮必须 force 全量投影。
+    monkeypatch.setattr(watcher.asyncio, "get_running_loop", lambda: SimpleNamespace(time=lambda: 100.0))
     manager = watcher.FileSyncWatcherManager(
-        refresh_interval=0.0, compensation_interval=0.0, sidecar=sidecar,
+        refresh_interval=0.0, compensation_interval=86400.0, sidecar=sidecar,
     )
     stop_event = asyncio.Event()
     task = asyncio.create_task(manager.run(stop_event))

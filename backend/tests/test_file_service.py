@@ -340,6 +340,28 @@ async def test_update_file_rename_and_extension_resolves_conflict(db, user_a, tm
     assert await svc.storage.get(existing.file.storage_key) == b"existing"
 
 
+@pytest.mark.parametrize("new_ext", ["png", "jpg", "zip", "pyc", "docx"])
+async def test_update_file_rejects_text_to_binary_suffix_without_moving_bytes(
+    db, user_a, tmp_path, new_ext,
+):
+    """REST 共用 FileService 必须挡住文本字节改挂常见二进制后缀。"""
+    svc = _svc(db, tmp_path)
+    result = await _create(svc, user_a.id, "readme", "md", data=b"plain text", mime_type="text/markdown")
+    await db.commit()
+    old_key = result.file.storage_key
+
+    with pytest.raises(Invalid, match="不能仅通过改后缀"):
+        await svc.update_file(
+            user_a.id, result.file.id, display_name="readme", ext=new_ext, stage_name=None,
+            folder_id=None, project_id=None, folder_set=False, project_set=False,
+        )
+
+    await db.refresh(result.file)
+    assert result.file.storage_key == old_key
+    assert result.file.ext == "md"
+    assert await svc.storage.get(old_key) == b"plain text"
+
+
 async def test_update_file_not_found(db, user_a, tmp_path):
     svc = _svc(db, tmp_path)
     with pytest.raises(NotFound):

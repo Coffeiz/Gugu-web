@@ -26,6 +26,7 @@ from app.services.storage.key_strategy import KeyContext
 from app.services.storage.keys import compose_logical_path
 from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage, reconcile_user_storage
 from app.services.filesync.protocol import record_canonical_file_change
+from app.services.storage.file_service.content_types import validated_rename_extension
 
 
 def _fmt_size(size_bytes: int) -> str:
@@ -240,7 +241,7 @@ class FileOps:
         if not f:
             raise NotFound("file.not_found", "文件不存在")
         new_display = display_name if display_name is not None else f.display_name
-        new_ext = ext if ext is not None else f.ext
+        new_ext = validated_rename_extension(f, ext if ext is not None else f.ext)
         new_stage = stage_name if stage_name is not None else f.stage_name
         # 仅显式提供 folder_id/project_id（含 null）时移动；纯改名不能隐式移回个人空间。
         new_fid = folder_id if folder_set else f.folder_id

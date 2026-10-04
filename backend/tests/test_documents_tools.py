@@ -221,7 +221,7 @@ async def test_rename_file_single_batch_and_format(db, user_a, storage):
     old_key = double.storage_key
     renamed = await _rename_file(db, user_a.id, {"file_id": double.id,
                                                 "new_name": "试一下", "format": "docx"})
-    assert "error" in renamed and "跨文本/二进制" in renamed["error"]
+    assert "error" in renamed and "不能仅通过改后缀" in renamed["error"]
     await db.refresh(double)
     assert double.storage_key == old_key
     assert await storage.get(old_key) == b"x"
@@ -230,6 +230,16 @@ async def test_rename_file_single_batch_and_format(db, user_a, storage):
                                                 "new_name": "试一下", "format": "png9"})
     assert renamed["name"] == "试一下.png9"
     assert await storage.get(double.storage_key) == b"x"
+
+    for ext in ("png", "jpg", "zip", "pyc"):
+        before_key = double.storage_key
+        denied = await _rename_file(db, user_a.id, {
+            "file_id": double.id, "new_name": "绕过尝试", "format": ext,
+        })
+        assert "error" in denied and "不能仅通过改后缀" in denied["error"]
+        await db.refresh(double)
+        assert double.storage_key == before_key
+        assert await storage.get(before_key) == b"x"
 
     f2 = await _mk_file(db, user_a, storage, name="批量甲.md", content="x")
     f3 = await _mk_file(db, user_a, storage, name="批量乙.md", content="x")
@@ -242,7 +252,7 @@ async def test_rename_file_single_batch_and_format(db, user_a, storage):
 
 
 @pytest.mark.parametrize("new_name,fmt,expected,allowed", [
-    (".env", None, ".env", True),
+    (".env", None, ".env", False),
     ("配置", "custom", "配置.custom", True),
     ("新名字", None, "新名字.pyc", True),
     ("docker-compose.yml", None, "docker-compose.yml", False),
@@ -261,7 +271,7 @@ async def test_rename_binary_extension_preserves_bytes_or_rejects_text_suffix(
         args["format"] = fmt
     result = await _rename_file(db, user_a.id, args)
     if not allowed:
-        assert "error" in result and "跨文本/二进制" in result["error"]
+        assert "error" in result and "不能仅通过改后缀" in result["error"]
         await db.refresh(file)
         assert file.storage_key == old_key
         assert file.mime_type == "application/x-python-code"

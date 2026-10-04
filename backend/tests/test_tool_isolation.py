@@ -446,4 +446,4 @@ async def test_rename_one_rejects_binary_to_text_format_change(db, user_a, monke
                                 ext="png", mime_type="image/png", storage_key="k"))
     monkeypatch.setattr(documents, "get_storage", lambda: types.SimpleNamespace(rename_file=None))
     r = await documents._rename_one(db, user_a.id, f, "天气周报v1", "py")
-    assert r.get("error") and "跨文本/二进制" in r["error"]
+    assert r.get("error") and "不能仅通过改后缀" in r["error"]
