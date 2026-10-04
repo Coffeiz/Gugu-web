@@ -1,9 +1,10 @@
 """统一的 LLM provider 调用重试策略（全站唯一出处，2026-09-18 定稿）。
 
-节奏：固定 5s 间隔、最多 5 次重试、总墙钟 90s 先到为准。固定间隔取代旧的
+节奏：固定 5s 间隔、最多 5 次重试。主对话重试准入预算为 900s，分支仍为
+90s，次数与墙钟先到为准。准入预算不强制中断正在进行的请求。固定间隔取代旧的
 1/2/4s 指数退避——过载窗口里 1s 的首次重试几乎必败，等于浪费配额；5s 起
-步直接对准「秒级尖峰」的恢复节奏。墙钟上限兜住超时类错误（每次尝试本身
-要烧满读超时，纯次数上限会拖到分钟级才报错）。
+步直接对准「秒级尖峰」的恢复节奏。主对话预算允许 120s 读取超时后继续重试，
+避免首次超时即耗尽旧的 90s 预算；已输出正文时仍禁止重试。
 
 分支约定：
 - `LLM_RETRY`：主对话流式调用（stream_round）。
@@ -47,5 +48,5 @@ class RetryPolicy:
         await asyncio.sleep(self.interval_seconds)
 
 
-LLM_RETRY = RetryPolicy()
+LLM_RETRY = RetryPolicy(max_wall_seconds=900.0)
 BRANCH_RETRY = RetryPolicy(max_retries=BRANCH_MAX_RETRIES)
