@@ -1,10 +1,9 @@
 """/new 命令：清空当前会话的对话上下文。"""
 from __future__ import annotations
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 
 from agent.commands.help import command_help, is_help_arg
-from app.core.tz import now_utc
 
 
 async def handle(user_id, session_id: int | None, arg: str, locale: str | None = None) -> str:
@@ -29,26 +28,21 @@ async def handle(user_id, session_id: int | None, arg: str, locale: str | None =
             )).scalars().all())
             refs = await remove_messages_with_attachments(db, message_ids, commit=False)
 
-            # 交互提示属于旧 Run 的控制状态，不能在新上下文里继续恢复。
+            # 交互卡独立于消息存储；/new 清空上下文时必须一起删除，否则历史接口
+            # 会再次把已完成或已取消的旧选项卡恢复到时间线。
             await db.execute(
-                update(InteractionPrompt)
-                .where(
-                    InteractionPrompt.session_id == session_id,
-                    InteractionPrompt.status == "active",
-                )
-                .values(status="cancelled", resolved_at=now_utc())
-            )
-            await db.execute(
-                update(InteractionAction)
-                .where(
+                delete(InteractionAction).where(
                     InteractionAction.prompt_id.in_(
                         select(InteractionPrompt.id).where(
                             InteractionPrompt.session_id == session_id,
                         )
-                    ),
-                    InteractionAction.status == "pending",
+                    )
                 )
-                .values(status="cancelled", consumed_at=now_utc())
+            )
+            await db.execute(
+                delete(InteractionPrompt).where(
+                    InteractionPrompt.session_id == session_id,
+                )
             )
             await db.execute(
                 delete(ConversationMessage).where(ConversationMessage.session_id == session_id)
