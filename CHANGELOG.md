@@ -32,6 +32,7 @@
 - Correct reflection history projection, clear stale interaction cards when starting a new session, and keep action-confirmation instructions waiting for the user's response.
 - Bind dangerous Shell confirmation to the exact command and execution context, consume it once, and prevent Shell permission setup from following symlinks.
 - Stabilize floating video preview sizing/loading and fix Mind preview/timeline updates.
+- Refine the video playback control overlay for a more consistent appearance.
 
 #### Contributors
 
@@ -64,6 +65,7 @@
 - 修正反思历史投影；新建会话时清除旧交互卡片；操作确认指令会等待用户答复。
 - 危险 Shell 确认绑定到精确命令和执行上下文，且仅消费一次；修复 Shell 权限配置跟随符号链接的问题。
 - 修复浮动视频预览尺寸/加载状态不稳定，以及思维导图预览和时间轴更新问题。
+- 调整视频播放控制按钮的遮罩显示效果。
 
 #### 贡献者
 

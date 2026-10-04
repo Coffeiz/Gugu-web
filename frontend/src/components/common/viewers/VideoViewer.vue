@@ -145,7 +145,7 @@ onUnmounted(() => {
   width: 60px;
   height: 60px;
   color: white;
-  opacity: 0.92;
+  opacity: 0.75;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.5);
   box-sizing: border-box;
@@ -157,8 +157,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 1px;
   border-radius: 50%;
-  clip-path: circle(50%);
-  background: rgba(16, 17, 24, 0.42);
+  background: rgba(16, 17, 24, 0.5);
   pointer-events: none;
 }
 .vv-center-wrap:hover  { transform: translate(-50%, -50%) scale(1.08); }
