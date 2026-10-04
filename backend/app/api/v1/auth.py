@@ -238,9 +238,18 @@ _RESET_GENERIC   = {"ok": True, "message": "若该邮箱已注册，重置链接
 _EMAIL_CHANGE_TTL = 30 * 60
 
 
+def _mask_reset_email(email: str) -> str:
+    """保留邮箱名首尾和域名；短邮箱名不能完整暴露。"""
+    local, _, domain = email.rpartition("@")
+    masked = "*" if len(local) == 1 else local[0] + "***"
+    if len(local) > 2:
+        masked += local[-1]
+    return f"{masked}@{domain}"
+
+
 @router.post("/forgot-password")
 async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSession = Depends(get_db)):
-    """按邮箱或用户名申请重置；所有业务分支保持统一响应，不泄漏绑定邮箱。"""
+    """按邮箱或用户名找回；允许掩码提示以帮助用户辨认邮箱，不返回完整地址。"""
     await rate_limit(request, "forgot", 5, 3600, fail_closed=True)
     identifier = (body.email or "").strip().lower()
     if not identifier:
@@ -257,9 +266,10 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
         return _RESET_GENERIC
 
     email_in = user.email.strip().lower()
+    reset_response = {**_RESET_GENERIC, "maskedEmail": _mask_reset_email(email_in)}
     cd_key = f"pwdreset:cd:{email_in}"
     if await r.get(cd_key):        # 冷却中，静默返回（不重复发信）
-        return _RESET_GENERIC
+        return reset_response
 
     token = secrets.token_urlsafe(32)
     await r.set(f"pwdreset:tok:{token}", str(user.id), ex=_RESET_TOKEN_TTL)
@@ -283,7 +293,7 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     if not sent:
         await r.delete(f"pwdreset:tok:{token}", cd_key)
         return _RESET_GENERIC
-    return _RESET_GENERIC
+    return reset_response
 
 
 @router.post("/reset-password")

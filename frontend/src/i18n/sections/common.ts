@@ -336,6 +336,7 @@ Object.assign((messages['zh-CN'] as Record<string, any>).auth, {
   registrationCodeHint: '验证码 10 分钟内有效；每分钟可重新发送一次。', registrationCodeRequired: '请输入有效的 6 位邮箱验证码',
   registrationConfigFailed: '暂时无法读取注册设置，请刷新页面后重试。', resendAfter: '{seconds} 秒后重发',
   forgotHint: '输入注册时使用的用户名或邮箱，系统会向账号邮箱发送重置密码邮件。',
+  resetSentTo: '重置链接已发送至 {email}，请查收邮箱（含垃圾箱）。',
 })
 Object.assign((messages['en-US'] as Record<string, any>).auth, {
   emailOrUsername: 'Username or email', registrationCode: 'Email verification code', registrationCodePlaceholder: 'Enter the 6-digit code',
@@ -343,6 +344,7 @@ Object.assign((messages['en-US'] as Record<string, any>).auth, {
   registrationCodeHint: 'The code expires in 10 minutes. You can request another every minute.', registrationCodeRequired: 'Enter a valid 6-digit email verification code',
   registrationConfigFailed: 'Registration settings could not be loaded. Refresh the page and try again.', resendAfter: 'Resend in {seconds}s',
   forgotHint: 'Enter your registered username or email. A password reset email will be sent to the account address.',
+  resetSentTo: 'A reset link has been sent to {email}. Check your inbox and spam folder.',
 })
 Object.assign((messages['ja-JP'] as Record<string, any>).auth, {
   emailOrUsername: 'ユーザー名またはメール', registrationCode: 'メール認証コード', registrationCodePlaceholder: '6 桁のコードを入力',
@@ -350,5 +352,6 @@ Object.assign((messages['ja-JP'] as Record<string, any>).auth, {
   registrationCodeHint: 'コードは 10 分間有効です。再送信は 1 分後に可能です。', registrationCodeRequired: '有効な 6 桁のメール認証コードを入力してください',
   registrationConfigFailed: '登録設定を読み込めません。ページを更新して再試行してください。', resendAfter: '{seconds} 秒後に再送信',
   forgotHint: '登録時のユーザー名またはメールを入力してください。アカウントのメールアドレスに再設定メールを送信します。',
+  resetSentTo: '{email} に再設定リンクを送信しました。受信箱と迷惑メールを確認してください。',
 })
 }

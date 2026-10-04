@@ -18,7 +18,9 @@ def request():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cooldown", [False, True])
-async def test_forgot_password_never_discloses_email_or_account_presence(db, user_a, monkeypatch, cooldown):
+async def test_username_reset_shows_only_masked_email_even_during_cooldown(db, user_a, monkeypatch, cooldown):
+    user_a.email = "cedarz@gmail.com"
+    await db.flush()
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     monkeypatch.setattr(auth, "get_redis", lambda: redis)
     monkeypatch.setattr(auth, "rate_limit", AsyncMock())
@@ -29,9 +31,21 @@ async def test_forgot_password_never_discloses_email_or_account_presence(db, use
         await redis.set(f"pwdreset:cd:{user_a.email.lower()}", "1")
     known = await auth.forgot_password(auth.ForgotPassword(email=user_a.username), request(), db)
     unknown = await auth.forgot_password(auth.ForgotPassword(email="synthetic-missing"), request(), db)
-    assert known == unknown == auth._RESET_GENERIC
+    assert known["maskedEmail"] == "c***z@gmail.com"
+    assert unknown == auth._RESET_GENERIC
+    assert user_a.email not in str(known)
     assert "email" not in known
     await redis.aclose()
+
+
+@pytest.mark.parametrize("email,expected", [
+    ("a@example.test", "*@example.test"),
+    ("ab@example.test", "a***@example.test"),
+    ("abc@example.test", "a***c@example.test"),
+])
+def test_short_reset_email_names_never_reveal_full_address(email, expected):
+    assert auth._mask_reset_email(email) == expected
+    assert expected != email
 
 
 @pytest.mark.asyncio
