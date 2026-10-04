@@ -19,9 +19,12 @@ IM 流式（飞书卡片）将来也复用这条频道。
 from __future__ import annotations
 
 import json
+import logging
 from uuid import uuid4
 
 from app.core.redis import get_redis
+
+_diagnostic_logger = logging.getLogger(__name__)
 
 TTL = 300   # 活跃标志/快照存活秒数；生成中每次 publish/touch 刷新，卡死/崩溃后自动过期
 LEASE_TTL = 300  # 后台任务租约；必须覆盖压缩/工具调用等长于普通请求的阶段
@@ -178,6 +181,9 @@ async def publish(session_id, event: dict) -> None:
             "owner_run_id": "",
         }
         st.setdefault("timeline", [])
+        # 临时诊断序号只用于关联广播与浏览器消费，不记录事件正文或参数。
+        st["diagnostic_seq"] = int(st.get("diagnostic_seq", 0)) + 1
+        event = {**event, "diagnostic_seq": st["diagnostic_seq"]}
         et = event.get("type")
         if event.get("run_id"):
             st["run_id"] = event["run_id"]
@@ -253,7 +259,12 @@ async def publish(session_id, event: dict) -> None:
         # expire 只会续期已有键；Redis 短暂抖动或 begin 的部分写入失败后，
         # beat 可能已经消失。每次事件都重新写入，避免活跃 run 被误判为僵尸。
         await r.set(_beat_key(session_id), "1", ex=BEAT_TTL)
-        await r.publish(_ch(session_id), json.dumps(event, ensure_ascii=False))
+        subscribers = await r.publish(_ch(session_id), json.dumps(event, ensure_ascii=False))
+        if event.get("type") in {"round_start", "tool_call", "tool_done", "interaction_required", "done", "error"}:
+            _diagnostic_logger.info(
+                "聊天流诊断 session=%s seq=%s event=%s subscribers=%s",
+                session_id, event.get("diagnostic_seq"), event["type"], subscribers,
+            )
     except Exception:
         return
 

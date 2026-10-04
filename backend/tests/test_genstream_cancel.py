@@ -6,6 +6,25 @@ import pytest
 from agent.llm import genstream
 
 
+@pytest.mark.asyncio
+async def test_stream_diagnostics_correlate_broadcast_without_logging_content(monkeypatch, caplog):
+    """广播序号可关联前端，但参数、结果和正文不能进入普通诊断日志。"""
+    redis = _FakeRedis()
+    broadcasts = []
+    async def publish(channel, value):
+        broadcasts.append(json.loads(value))
+        return 1
+    redis.publish = publish
+    monkeypatch.setattr(genstream, "get_redis", lambda: redis)
+    with caplog.at_level("INFO", logger=genstream.__name__):
+        await genstream.publish(42, {"type": "tool_call", "tool_call_id": "test-call", "input": "保密参数"})
+        await genstream.publish(42, {"type": "tool_done", "tool_call_id": "test-call", "result": "保密结果"})
+    assert [item["diagnostic_seq"] for item in broadcasts] == [1, 2]
+    assert "subscribers=1" in caplog.text
+    assert "保密参数" not in caplog.text
+    assert "保密结果" not in caplog.text
+
+
 class _FakeRedis:
     def __init__(self):
         self.values = {}

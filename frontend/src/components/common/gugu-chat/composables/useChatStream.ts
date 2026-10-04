@@ -12,6 +12,7 @@ import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
+import { recordStreamDiagnostic } from './chatStreamDiagnostics'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
@@ -451,6 +452,13 @@ export function useChatStream(options: {
           if (!line.startsWith('data: ')) continue
           const raw = line.slice(6).trim(); if (!raw) continue
           let evt; try { evt = JSON.parse(raw) } catch { continue }
+          if (['round_start', 'tool_call', 'tool_done', 'done', 'error', 'interaction_required'].includes(evt.type)) {
+            recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
+              detached, viewChanged: viewGeneration !== options.getViewGeneration(),
+              controllerChanged: Boolean(runController && abortCtrl.value !== runController),
+              sessionChanged: sessionId.value !== (sid ?? ownerSid),
+            }, `收到_${evt.type}`)
+          }
           const eventUserMessageId = Number(evt.user_message_id)
           if (Number.isInteger(eventUserMessageId) && eventUserMessageId > 0) {
             outcomeMessageDbId = eventUserMessageId
@@ -554,11 +562,15 @@ export function useChatStream(options: {
               )
             }
             if (toolIndex >= 0 && messages.value[toolIndex]) {
+              recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
+                matched: true, succeeded: !evt.status || evt.status === 'success' }, '工具终态匹配')
               messages.value[toolIndex].toolStatus = evt.status || 'success'
               if (evt.result !== undefined) messages.value[toolIndex].toolResult = evt.result
               const startedAt = (messages.value[toolIndex] as ChatMessage & { _toolStartedAt?: number })._toolStartedAt
               if (startedAt) messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
             } else if (live() && evt.name) {
+              recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
+                matched: false }, '工具终态补建')
               // tool_done 先于 tool_call 到达时也要落一张终态卡，不能等刷新才补齐。
               const messageId = mkid()
               messages.value.push({
@@ -685,6 +697,10 @@ export function useChatStream(options: {
                 syncAiIndex()
               }
               messages.value[aiIdx].text += tokenContent
+              if (messages.value[aiIdx].text.length === tokenContent.length) {
+                recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
+                  chars: tokenContent.length, messageId: messages.value[aiIdx].id }, '正文首段写入')
+              }
               scheduleStreamScroll()
             }
           } else if (evt.type === 'file') {
@@ -827,6 +843,12 @@ export function useChatStream(options: {
         }
       } catch { /* 恢复失败再由调用方决定是否显示兜底提示 */ }
     }
+    recordStreamDiagnostic({ session: sid, detached, aborted, interactionPaused,
+      receivedAssistantContent, pendingTools: messages.value.filter(item =>
+        item.role === 'tool' && toolMessageIds.has(item.toolCallId || '')
+        && ['queued', 'running', 'waiting'].includes(item.toolStatus || '')).length,
+      emptyBubbles: messages.value.filter(item => item.role === 'ai' && !item.text?.trim() && !item.files?.length).length,
+    }, '流收尾')
     return { aiIdx, usedTools, detached, sid, aborted, interactionPaused, receivedAssistantContent }
   }
 
