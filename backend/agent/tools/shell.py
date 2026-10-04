@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 
 import app.db.session as _db_session
@@ -39,24 +38,6 @@ from app.services.storage.quota_ledger import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-_SHELL_LEASE_OPERATION = re.compile(
-    r"\b(?:curl|wget|python|pytest|node|npm|pnpm|yarn|pip|git|make|sh|bash|zsh|"
-    r"perl|ruby)\b|[|><]",
-    re.IGNORECASE,
-)
-_SHELL_LEASE_BLOCKERS = re.compile(
-    r"\b(?:rm|mv|chmod|chown|kill|pkill|dd|mkfs|shutdown|reboot|sudo|doas)\b"
-    r"|\bgit\s+(?:reset|clean)\b|\b(?:drop|delete|truncate)\b",
-    re.IGNORECASE,
-)
-
-
-def _can_use_shell_lease(command: str) -> bool:
-    """给受限 Shell 操作复用短期授权，但保留不可逆操作的单次确认。"""
-    text = (command or "").strip()
-    return bool(_SHELL_LEASE_OPERATION.search(text)) and not _SHELL_LEASE_BLOCKERS.search(text)
 
 
 def _audit(**fields) -> None:
@@ -174,28 +155,22 @@ async def _run_shell(db, user_id, args: dict):
         egress_ttl = int(getattr(get_settings().sandbox, "egress_ttl_seconds", 600))
         egress_expires_at = time.time() + egress_ttl
     if decision.needs_confirmation:
-        shell_lease = _can_use_shell_lease(command)
-        confirmation_summary = (
-            f"允许当前会话在 {decision.scope.value} 范围执行受限 Shell 操作（30分钟）"
-            if shell_lease
-            else f"将在当前工作区执行危险命令：{command}"
-        )
-        confirmation_identity = (
-            f"shell:operation:{session_id}:{decision.scope.value}"
-            if shell_lease else None
-        )
-        blocked = confirm.needs_confirmation(
+        # 解释器、构建与管道均可能执行任意代码，不能用会话级 lease 推断影响范围。
+        # 服务端授权绑定完整命令与执行上下文，并原子消费；脚本原地变更后的重跑也须再确认。
+        blocked = confirm.needs_target_confirmation(
             args,
-            confirmation_summary,
+            f"将在 {decision.scope.value} 范围执行危险命令：{command}",
             user_id,
+            action="shell.execute",
+            targets={"command": [command]},
+            context={
+                "session_id": session_id, "scope": decision.scope.value,
+                "workspace_id": decision.workspace_id, "cwd": str(requested_cwd),
+                "subject_type": subject_type, "subject_id": subject_id,
+            },
             purpose=confirm.ACTION,
-            identity=confirmation_identity,
-            ttl_minutes=30 if shell_lease else 5,
-            instruction=(
-                "这是当前会话的受限 Shell 操作授权，有效期 30 分钟；"
-                "请把授权范围告知用户；用户确认后由服务端继续执行本次调用，你无需再次调用。"
-                if shell_lease else None
-            ),
+            consume_grant=True,
+            instruction="请转达本次命令的影响并等待用户确认；授权仅用于本次执行，不覆盖后续命令。",
         )
         if blocked is not None:
             return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "confirmation_required"}

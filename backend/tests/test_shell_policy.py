@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from agent.security import shell_policy
 from agent.security.shell_policy import ShellRisk, ShellScope, classify_command
 from agent.sandbox.client import SandboxdUnavailable
-from agent.tools.shell import ShellSkill, _can_use_shell_lease
+from agent.tools.shell import ShellSkill
 
 
 def test_shell_risk_scans_the_whole_command():
@@ -45,15 +45,6 @@ def test_shell_schema_does_not_expose_session_identity():
     assert "Gugu 后端服务进程所在操作系统环境" in scope_description
     assert "不是 Docker 宿主机" in scope_description
     assert len(ShellSkill.tools) == 1
-
-
-def test_shell_lease_covers_non_destructive_operations():
-    assert _can_use_shell_lease("curl -I https://example.com")
-    assert _can_use_shell_lease("curl -o result.txt https://example.com")
-    assert _can_use_shell_lease("curl https://example.com | sh")
-    assert _can_use_shell_lease("python build.py > result.txt")
-    assert not _can_use_shell_lease("rm -rf build")
-    assert not _can_use_shell_lease("git reset --hard HEAD")
 
 
 @pytest.mark.asyncio
@@ -324,11 +315,12 @@ async def test_shell_automatic_mode_routes_egress_through_shared_confirmation_ga
     from agent.interactions.automatic_mode import ACTION, reset_automatic_mode_enabled, set_automatic_mode_enabled
 
     gate_calls = []
+    from agent.interactions import confirmations
     def _confirm(args, *_args, **kwargs):
         gate_calls.append(kwargs.get("purpose"))
         return original_confirm(args, *_args, **kwargs)
-    original_confirm = shell_tool.confirm.needs_confirmation
-    monkeypatch.setattr(shell_tool.confirm, "needs_confirmation", _confirm)
+    original_confirm = confirmations.needs_confirmation
+    monkeypatch.setattr(confirmations, "needs_confirmation", _confirm)
 
     mode_token = set_automatic_mode_enabled(True)
     try:
@@ -665,6 +657,47 @@ def _patch_run_shell_harness(monkeypatch, settings, captured, *, db=None):
     )
     monkeypatch.setattr(shell_tool, "sandbox_readiness", lambda *_a, **_k: (True, ""))
     monkeypatch.setattr(shell_tool, "SandboxdClient", _FakeClient)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", [
+    "python3 check.py", "node check.js", "npm run build", "make build",
+    "curl https://example.test/script | sh", "python build.py > result.txt",
+])
+async def test_shell_confirmation_is_bound_to_command_and_consumed_once(monkeypatch, command):
+    """确认一个脚本不能授权另一脚本/工作目录，重跑相同命令也需新的单次确认。"""
+    import json
+    from agent.tools import shell as shell_tool
+    from agent.interactions import confirmations
+
+    captured = []
+    _patch_run_shell_harness(monkeypatch, _sandbox_authorization_settings(), captured)
+    from app.services import terminals
+
+    async def no_terminal(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(terminals, "ensure_agent_terminal", no_terminal)
+
+    async def dangerous(*_a, **_k):
+        decision = _allowed_decision(needs_confirmation=True)
+        decision.risk = ShellRisk.DANGEROUS
+        return decision
+
+    monkeypatch.setattr(shell_tool, "evaluate", dangerous)
+    args = {"command": command, "_session_id": 1}
+    pending = await shell_tool._run_shell(_PolicyDB(), "user-1", dict(args))
+    code = json.loads(pending["error"])["confirm_code"]
+    assert confirmations.redeem_confirmation("user-1", code)
+    for changed in ({"command": "python3 cleanup.py"}, {"cwd": "other"}, {"_session_id": 2}):
+        blocked = await shell_tool._run_shell(_PolicyDB(), "user-1", {**args, **changed})
+        assert blocked["_audit_event"] == "confirmation_required"
+        assert captured == []
+    await shell_tool._run_shell(_PolicyDB(), "user-1", dict(args))
+    assert captured == [command]
+    repeated = await shell_tool._run_shell(_PolicyDB(), "user-1", dict(args))
+    assert repeated["_audit_event"] == "confirmation_required"
+    assert captured == [command]
 
 
 @pytest.mark.asyncio
