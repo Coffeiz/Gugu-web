@@ -68,6 +68,19 @@ describe('文件库分段重命名', () => {
     expect(renameFile).toHaveBeenCalledWith(7, 'README', undefined, { mutationId: 'mutation-1' })
   })
 
+  it('旧版把点文件误存为扩展名时，重命名保留完整点文件名并规范为 FILE', async () => {
+    const file = createFile('GITCONFIG')
+    file.displayName = ''
+    const { rename, renameFile } = createRename(file)
+    rename.startFile(file)
+
+    expect(rename.renameText.value).toBe('.gitconfig')
+    expect(rename.renameExtension.value).toBe('')
+    await rename.commit()
+
+    expect(renameFile).toHaveBeenCalledWith(7, '.gitconfig', 'FILE', { mutationId: 'mutation-1' })
+  })
+
   it('已有后缀被清空时保留编辑状态并拒绝提交', async () => {
     const file = createFile('TXT')
     const { rename, renameFile, updateFile, onInvalidExtension } = createRename(file)

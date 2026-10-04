@@ -212,19 +212,20 @@ async def test_rename_file_single_batch_and_format(db, user_a, storage):
     assert result["success"] and result["name"] == "新名字.md"
     assert result["old_name"] == "旧名.md"
 
-    # format 修正双后缀：markdown → md，mime 跟规范 ext 走
+    # format 只修正后缀，不改变内容类型
     double = await _mk_file(db, user_a, storage, name="说明.markdown", content="x")
     fixed = await _rename_file(db, user_a.id, {"file_id": double.id,
                                                "new_name": "说明", "format": "md"})
     assert fixed["name"] == "说明.md"
 
-    # 二进制家族转换被拒
-    denied = await _rename_file(db, user_a.id, {"file_id": double.id,
+    renamed = await _rename_file(db, user_a.id, {"file_id": double.id,
                                                 "new_name": "试一下", "format": "docx"})
-    assert "不能跨文本/二进制格式" in denied["error"]
-    denied = await _rename_file(db, user_a.id, {"file_id": double.id,
+    assert renamed["name"] == "试一下.docx"
+    assert double.mime_type == "text/markdown"
+    renamed = await _rename_file(db, user_a.id, {"file_id": double.id,
                                                 "new_name": "试一下", "format": "png9"})
-    assert "不支持的格式" in denied["error"]
+    assert renamed["name"] == "试一下.png9"
+    assert await storage.get(double.storage_key) == b"x"
 
     f2 = await _mk_file(db, user_a, storage, name="批量甲.md", content="x")
     f3 = await _mk_file(db, user_a, storage, name="批量乙.md", content="x")
@@ -234,6 +235,56 @@ async def test_rename_file_single_batch_and_format(db, user_a, storage):
         {"file_id": f3.id},
     ]})
     assert batch["renamed_count"] == 1 and batch["failed_count"] == 2
+
+
+@pytest.mark.parametrize("new_name,fmt,expected", [
+    ("docker-compose.yml", None, "docker-compose.yml"),
+    (".env", None, ".env"),
+    ("配置", "custom", "配置.custom"),
+    ("新名字", None, "新名字.pyc"),
+    ("配置.yaml", "yaml", "配置.yaml"),
+])
+async def test_rename_extension_preserves_binary_bytes_and_mime(db, user_a, storage, new_name, fmt, expected):
+    """二进制可改任意合法后缀，但物理字节、MIME、文件身份保持不变。"""
+    file = await _mk_file(db, user_a, storage, name="旧文件.pyc", mime_type="application/x-python-code")
+    original = b"\xa7\x0d\x0d\x0a\x00\xff"
+    old_key = file.storage_key
+    await storage.put(old_key, original, file.mime_type)
+    args = {"file_id": file.id, "new_name": new_name}
+    if fmt is not None:
+        args["format"] = fmt
+    result = await _rename_file(db, user_a.id, args)
+    assert result["success"] and result["name"] == expected
+    await db.refresh(file)
+    assert file.storage_key.endswith("/" + expected)
+    assert file.mime_type == "application/x-python-code"
+    assert await storage.get(file.storage_key) == original
+    assert not await storage.exists(old_key)
+
+
+@pytest.mark.parametrize("new_name,fmt", [("../逃逸.yml", None), ("配置", "../yaml"), ("配置", "")])
+async def test_rename_invalid_name_leaves_original_untouched(db, user_a, storage, new_name, fmt):
+    file = await _mk_file(db, user_a, storage)
+    old_key = file.storage_key
+    result = await _rename_file(db, user_a.id, {"file_id": file.id, "new_name": new_name, "format": fmt})
+    assert "error" in result
+    await db.refresh(file)
+    assert file.storage_key == old_key
+    assert await storage.exists(old_key)
+
+
+async def test_rename_new_extension_conflict_and_owner_boundary(db, user_a, user_b, storage):
+    """改后缀不能覆盖已有文件，也不能修改其他用户的文件。"""
+    source = await _mk_file(db, user_a, storage, name="源.pyc", content="源内容")
+    target = await _mk_file(db, user_a, storage, name="目标.yml", content="原内容")
+    denied = await _rename_file(db, user_b.id, {"file_id": source.id, "new_name": ".env"})
+    if isinstance(denied, str):
+        denied = json.loads(denied)
+    assert "error" in denied
+    result = await _rename_file(db, user_a.id, {"file_id": source.id, "new_name": "目标.yml"})
+    assert result["name"] == "目标(1).yml"
+    assert await storage.get(source.storage_key) == "源内容".encode()
+    assert await storage.get(target.storage_key) == "原内容".encode()
 
 
 # ── _save_uploaded_file / _save_one_attach：暂存附件入库 ──────────────────

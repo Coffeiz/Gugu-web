@@ -578,28 +578,22 @@ async def _save_uploaded_file(db, user_id, args: dict):
 
 
 async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None) -> dict:
-    """重命名已解析的 File f，各自 commit。返回结果 dict。供单个与批量 rename 共用。
-
-    new_fmt 为 None 时沿用 f.ext（旧行为，"改名不改格式"）。传了新 fmt 就用规范 ext，
-    用于修双后缀文件：new_name="README" + new_fmt="md" 会把 f.ext="markdown" 的
-    README.md.markdown 改成 README.md。文本类互相转也走这条；非文本类（docx/pdf/xlsx）
-    仅当 new_fmt 等于当前 ext 时允许"改名不改内容"，跨文本/二进制的格式转换请重新上传，
-    而不是把 rename 当成转换工具。
-    """
+    """只修改名称及后缀，不转换字节或 MIME；单个与批量共用。"""
     old_ext = f.ext
     if new_fmt is not None:
-        fmt = new_fmt.lower()
-        if fmt not in _DOC_MIME:
-            return {"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME), "name": f"{f.display_name}.{f.ext}"}
-        new_ext = _DOC_EXT.get(fmt, fmt)
-        # 格式转换只在文本家族内允许：源是图片等二进制后缀（png/jpg…，不在 _DOC_MIME）
-        # 或目标是 docx/pdf/xlsx 时，改后缀只会产出内容对不上的坏文件，一律拒绝
-        if new_ext != old_ext and (old_ext not in _DOC_MIME or new_ext in ("docx", "pdf", "xlsx")):
-            return {"error": f"rename 不能跨文本/二进制格式（{old_ext}→{new_ext}），请用 edit_file 走 LibreOffice 转换",
-                    "name": f"{f.display_name}.{f.ext}"}
+        if not isinstance(new_fmt, str) or not _CREATE_NAME_EXT_RE.fullmatch(new_fmt):
+            return {"error": "扩展名非法", "name": f"{f.display_name}.{f.ext}"}
+        new_ext = new_fmt.lower()
+        new_display = _strip_ext(new_name, new_ext)
+        _, _, name_error = _split_create_name(f"{new_display}.{new_ext}")
+    elif "." in new_name:
+        new_display, new_ext, name_error = _split_create_name(new_name)
     else:
         new_ext = old_ext
-    new_display = _strip_ext(new_name, new_ext)
+        new_display = new_name
+        _, _, name_error = _split_create_name(f"{new_display}.{new_ext}")
+    if name_error:
+        return {"error": name_error, "name": f"{f.display_name}.{f.ext}"}
     try:
         new_key = await _resolve_key(
             db, user_id, f.space, new_display, new_ext,
@@ -618,10 +612,7 @@ async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None)
         f.storage_key = new_key
     old = f.display_name
     f.display_name = new_display
-    if new_ext != old_ext:
-        # 文本类同族转换（md↔txt↔yaml…）是显示层差异，内容不需要重写；mime 跟着规范 ext 走
-        f.ext = new_ext
-        f.mime_type = _DOC_MIME[new_ext]
+    f.ext = new_ext
     f.updated_at = now_utc()
     await db.commit()
     return {"success": True, "file_id": f.id, "old_name": f"{old}.{old_ext}", "name": f"{new_display}.{f.ext}"}
@@ -630,7 +621,7 @@ async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None)
 async def _rename_file(db, user_id, args: dict):
     """重命名文件。单个：file/file_id + new_name。
     批量：renames=[{file 或 file_id, new_name, format?}, ...]——适合「按顺序编号」，Agent 自己生成序号、一次调用全改。
-    可选 format：传了就改后缀（修 .md.markdown 这种双后缀文件 → format="md"），不传沿用旧 ext。
+    完整文件名直接修改后缀；仅名称沿用旧后缀。format 显式指定后缀，不转换内容。
     """
     items = args.get("renames")
     if items:

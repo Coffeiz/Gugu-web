@@ -92,8 +92,8 @@
                     <div class="fc-thumb-fade"></div>
                   </template>
                   <template #name>
-                    <RenameInput v-if="renamingFileId === file.id" v-model="renameText" v-model:extension="renameExtension"
-                      :extension-required="file.ext.toUpperCase() !== 'FILE'" @commit="commitRename" @cancel="cancelRename" />
+                    <RenameInput v-if="renamingFileId === file.id" v-model="renameText" :extension="file.ext.toUpperCase() === 'FILE' || !file.displayName ? undefined : renameExtension" @update:extension="renameExtension = $event"
+                      :extension-required="file.ext.toUpperCase() !== 'FILE' && !!file.displayName" @commit="commitRename" @cancel="cancelRename" />
                     <template v-else>{{ file.displayName }}</template>
                   </template>
                   <template #meta>{{ file.stageName ? file.stageName + ' · ' : '' }}{{ file.size }}</template>
@@ -192,8 +192,8 @@
                   <span class="lr-name-cell">
                     <span v-if="renamingFileId !== file.id" class="lr-ext" :style="{ color: fileIconColor(file.ext), background: fileIconColor(file.ext) + '18' }">{{ file.ext }}</span>
                     <span class="lr-filename" :title="file.displayName">
-                      <RenameInput v-if="renamingFileId === file.id" v-model="renameText" v-model:extension="renameExtension"
-                        :extension-required="file.ext.toUpperCase() !== 'FILE'" @commit="commitRename" @cancel="cancelRename" />
+                      <RenameInput v-if="renamingFileId === file.id" v-model="renameText" :extension="file.ext.toUpperCase() === 'FILE' || !file.displayName ? undefined : renameExtension" @update:extension="renameExtension = $event"
+                        :extension-required="file.ext.toUpperCase() !== 'FILE' && !!file.displayName" @commit="commitRename" @cancel="cancelRename" />
                       <template v-else>{{ file.displayName }}</template>
                     </span>
                   </span>
