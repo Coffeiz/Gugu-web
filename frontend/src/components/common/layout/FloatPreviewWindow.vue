@@ -51,7 +51,7 @@
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
       <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
       <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
-      <div v-if="loading && !placeholderReady" class="fpw-status">
+      <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
       </div>
@@ -490,14 +490,26 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       await new Promise<void>(resolve => {
         const vid = document.createElement('video')
         vid.preload = 'metadata'
-        vid.onloadedmetadata = () => {
-          const vw = vid.videoWidth || 720, vh = vid.videoHeight || 404
-          contentSize.value = `${vw} × ${vh}`
-          fitWindow(vw, vh)
-          vid.src = ''
+        const finish = () => {
+          // 清空资源地址也会触发 error；先解绑，避免成功定尺后被错误回调再次缩小。
+          vid.onloadedmetadata = null
+          vid.onerror = null
+          vid.removeAttribute('src')
+          vid.load()
           resolve()
         }
-        vid.onerror = () => { fitWindow(720, 404); resolve() }
+        vid.onloadedmetadata = () => {
+          if (sequence === loadSequence) {
+            const vw = vid.videoWidth || 720, vh = vid.videoHeight || 404
+            contentSize.value = `${vw} × ${vh}`
+            fitWindow(vw, vh)
+          }
+          finish()
+        }
+        vid.onerror = () => {
+          if (sequence === loadSequence) fitWindow(720, 404)
+          finish()
+        }
         vid.src = url
       })
       if (sequence !== loadSequence) return
@@ -860,6 +872,7 @@ onUnmounted(() => {
 }
 .fpw-name {
   font-size: 12px;
+  line-height: 18px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -919,6 +932,17 @@ onUnmounted(() => {
   gap: 10px; color: var(--text-secondary); font-size: 12px;
 }
 .fpw-error { color: rgba(180, 80, 80, 0.8); }
+.fpw-loading {
+  display: grid;
+  place-items: center;
+}
+.fpw-loading > span {
+  position: absolute;
+  top: calc(50% + 24px);
+  left: 0;
+  right: 0;
+  text-align: center;
+}
 .fpw-spinner {
   width: 24px; height: 24px; border-radius: 50%;
   border: 2px solid rgba(123, 127, 178, 0.2);

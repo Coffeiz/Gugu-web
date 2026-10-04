@@ -22,7 +22,6 @@
         v-if="visible && !error"
         class="vv-center-wrap"
       >
-        <div class="vv-btn-ring"></div>
         <button class="vv-center-btn" @click="togglePlay">
           <Icon name="media.play"  v-if="!playing" :size="32" />
           <Icon name="media.pause" v-else :size="32" />
@@ -116,26 +115,24 @@ onUnmounted(() => {
   color: white;
   opacity: 0.72;
   border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: transform 0.15s;
+}
+.vv-center-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: 50%;
+  clip-path: circle(50%);
   background: rgba(16, 17, 24, 0.24);
   backdrop-filter: blur(24px) saturate(135%);
   -webkit-backdrop-filter: blur(24px) saturate(135%);
-  box-shadow: var(--elevation-card);
-  transition: transform 0.15s, box-shadow 0.2s;
+  pointer-events: none;
 }
 .vv-center-wrap:hover  { transform: translate(-50%, -50%) scale(1.08); }
 .vv-center-wrap:active { transform: translate(-50%, -50%) scale(0.94); }
-
-/* ── 描边 ── */
-.vv-btn-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 2px solid currentColor;
-  opacity: 0.5;
-  pointer-events: none;
-  z-index: 2;
-  transition: border-color 0.2s;
-}
 
 /* ── 按钮 ── */
 .vv-center-btn {
@@ -173,9 +170,6 @@ onUnmounted(() => {
 .vv-center-btn:active {
   outline: none;
   background: transparent;
-}
-.vv-center-wrap:hover {
-  box-shadow: var(--elevation-card-hover);
 }
 
 /* ── 淡入淡出 ── */
