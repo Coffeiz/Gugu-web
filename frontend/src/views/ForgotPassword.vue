@@ -71,9 +71,7 @@ async function handleSubmit() {
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(body?.detail || t('errors.requestFailed'))
-    message.value = body?.email
-      ? t('auth.resetSentTo', { email: body.email })
-      : t('auth.resetSent')
+    message.value = t('auth.resetSent')
     sent.value = true
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('auth.operationFailed')

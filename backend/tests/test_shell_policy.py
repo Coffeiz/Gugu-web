@@ -20,16 +20,19 @@ def test_shell_risk_scans_the_whole_command():
 @pytest.mark.asyncio
 async def test_full_user_sandbox_filesystem_setting_does_not_block_runtimes(monkeypatch):
     db = _PolicyDB()
-    settings = _settings(shell=True)
+    settings = _settings(shell=True, dangerous=True)
     settings.sandbox = SimpleNamespace(enabled=True, full_user_sandbox_authorization_enabled=False)
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
     monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_dangerous_enabled", lambda *_: _true())
     monkeypatch.setattr(shell_policy, "sandbox_readiness", lambda *_: (True, ""))
 
     runtime = await shell_policy.evaluate(db, "user-1", 1, "python3 script.py")
     allowed = await shell_policy.evaluate(db, "user-1", 1, "ls")
 
     assert runtime.allowed
+    # 运行环境不依赖完整文件授权，但任意脚本执行仍须在执行前确认。
+    assert runtime.needs_confirmation
     assert allowed.allowed
 
 

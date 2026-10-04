@@ -5,6 +5,33 @@ from scripts.migrations.migrate_workspace_layout import migrate
 
 
 @pytest.mark.asyncio
+async def test_startup_check_refuses_legacy_users_without_moving_files(db, user_a, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.migrations import migrate_workspace_layout as migration
+    source = tmp_path / str(user_a.id) / "workspace"
+    source.mkdir(parents=True)
+    inode = source.stat().st_ino
+    monkeypatch.setattr("sys.argv", ["migration", "--allow-real-data", "--check"])
+    monkeypatch.setattr("app.core.config.get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path))))
+    with pytest.raises(RuntimeError, match="离线迁移"):
+        await migration.main()
+    assert source.stat().st_ino == inode
+    assert not (tmp_path / ".workspace-layout-v2.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_empty_install_check_marks_layout_without_migration(db, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.migrations import migrate_workspace_layout as migration
+    monkeypatch.setattr("sys.argv", ["migration", "--allow-real-data", "--check"])
+    monkeypatch.setattr("app.core.config.get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path))))
+    await migration.main()
+    assert (await migrate(db, tmp_path, apply=False))["status"] == "already_completed"
+
+
+@pytest.mark.asyncio
 async def test_all_users_files_and_keys_move_without_copying_and_retry(db, user_a, user_b, tmp_path):
     """默认与命名目录整体迁移，登记文件更新 key，未登记文件及 inode 保留。"""
     entries = []

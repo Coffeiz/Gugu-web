@@ -176,6 +176,7 @@ async def main() -> None:
     parser.add_argument("--allow-real-data", action="store_true")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--services-stopped", action="store_true")
+    parser.add_argument("--check", action="store_true", help="只确认迁移完成；空库建立新布局标记，旧库拒绝启动")
     args = parser.parse_args()
     if not args.allow_real_data or (args.apply and not args.services_stopped):
         parser.error("需显式 --allow-real-data；执行迁移还需停服并传 --services-stopped")
@@ -187,6 +188,19 @@ async def main() -> None:
         return
     session.ensure_engine()
     root = Path(settings.storage.local_path).resolve()
+    if args.check:
+        marker = root / ".workspace-layout-v2.json"
+        # 使用 migrate 的同一清单事实源，不能由启动进程自称已经停服。
+        async with session._SessionLocal() as db:
+            result = await migrate(db, root, apply=False)
+            if result["status"] == "already_completed":
+                return
+            if await db.scalar(select(User.id).limit(1)) is not None:
+                raise RuntimeError("工作区布局尚未离线迁移完成；请停服、备份后执行迁移，禁止在线移动用户文件")
+        root.mkdir(parents=True, exist_ok=True)
+        # 全新空库没有旧用户数据；只标记当前布局，不能对有用户的库采用此分支。
+        save_journal(marker, {"status": "completed", "version": 2, "directories": [], "keys": [], "moves": []})
+        return
     if args.apply:
         root.mkdir(parents=True, exist_ok=True)
     # 两个应用容器可能共享卷并同时启动；全局锁覆盖文件移动和数据库提交。

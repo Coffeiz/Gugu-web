@@ -83,6 +83,12 @@ _DANGEROUS = re.compile(
     r"|(?:>|>>|\$\(|`)|\b(?:drop|delete|truncate)\b",
     re.IGNORECASE,
 )
+_CODE_EXECUTION = re.compile(
+    r"\b(?:python(?:\d+(?:\.\d+)*)?|node|nodejs|deno|bun|ruby|perl|php|lua|bash|dash|zsh|sh|"
+    r"pytest|npm|pnpm|npx|yarn|make|cmake|just|source|eval|exec)\b"
+    r"|(?:^|[;&|\s])(?:\./|/)[^\s]+\.(?:py|js|mjs|cjs|sh|rb|pl|php|lua)\b",
+    re.IGNORECASE,
+)
 _WRITE = re.compile(r"(^|[;&|()\n])\s*(mkdir|touch|cp|python|pytest|npm|pnpm|git)\b", re.IGNORECASE)
 _SESSION_LOCKS: dict[int, asyncio.Lock] = {}
 
@@ -114,7 +120,9 @@ def classify_command(command: str) -> ShellRisk:
     text = (command or "").strip()
     if not text:
         return ShellRisk.SAFE
-    if _DANGEROUS.search(text):
+    # 不尝试静态理解脚本正文：解释器、包脚本和构建工具可执行任意代码，
+    # 必须在执行前经过同一确认门，不能将其视为普通文件写入。
+    if _DANGEROUS.search(text) or _CODE_EXECUTION.search(text):
         return ShellRisk.DANGEROUS
     if _WRITE.search(text):
         return ShellRisk.WRITE
@@ -306,7 +314,7 @@ async def build_dynamic_prompt(
         "## 本轮 Shell 权限状态（动态）",
         "以下状态只代表本轮执行器返回的有效权限，下一轮必须重新读取，不能从历史消息推断。",
         "- Shell：已授权；本轮已注册 Shell 工具。",
-        "- 复合命令：`&&`、`||`、`;`、`|` 可直接使用；重定向（`>` `>>`）和命令替换"
+        "- 复合命令：`&&`、`||`、`;`、`|` 可直接使用；解释器/脚本/包脚本执行、重定向（`>` `>>`）和命令替换"
         "（`$(...)`、反引号）属于危险操作，必须确认后执行。",
     ]
     lines.append('- 默认范围：省略 scope 时使用 sandbox 容器；开放 system 不会自动切换执行环境。')

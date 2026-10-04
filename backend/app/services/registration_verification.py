@@ -56,8 +56,8 @@ async def clear_registration_code(redis, email: str) -> None:
     )
 
 
-async def consume_registration_code(redis, email: str, code: str) -> bool:
-    """限制邮箱验证码猜测次数，并在成功校验时原子删除一次性验证码。"""
+async def verify_registration_code(redis, email: str, code: str) -> bool:
+    """限制猜测次数；准备账号事务时只校验，不提前消费验证码。"""
     key = _email_key(email)
     attempts_key = f"regverify:attempts:{key}"
     attempts = await redis.incr(attempts_key)
@@ -70,4 +70,32 @@ async def consume_registration_code(redis, email: str, code: str) -> bool:
     expected = await redis.get(code_key)
     if not expected or not hmac.compare_digest(expected, _code_digest(email, code)):
         return False
-    return await redis.delete(code_key) == 1
+    return True
+
+
+async def consume_registration_code(redis, email: str, code: str) -> bool:
+    """事务提交前再次核对并原子消费，避免重发或并发注册时误删新验证码。"""
+    from redis.exceptions import WatchError
+    key = f"regverify:code:{_email_key(email)}"
+    async with redis.pipeline(transaction=True) as pipeline:
+        try:
+            await pipeline.watch(key)
+            expected = await pipeline.get(key)
+            if not expected or not hmac.compare_digest(expected, _code_digest(email, code)):
+                return False
+            pipeline.multi()
+            pipeline.delete(key)
+            result = await pipeline.execute()
+            return result[0] == 1
+        except WatchError:
+            return False
+
+
+async def restore_registration_code(redis, email: str, code: str, ttl_ms: int) -> None:
+    """数据库提交失败时恢复剩余有效期；不能覆盖用户后来收到的新验证码。"""
+    if ttl_ms > 0:
+        await redis.set(f"regverify:code:{_email_key(email)}", _code_digest(email, code), px=ttl_ms, nx=True)
+
+
+async def registration_code_ttl(redis, email: str) -> int:
+    return await redis.pttl(f"regverify:code:{_email_key(email)}")

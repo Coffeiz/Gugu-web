@@ -16,9 +16,11 @@ const mockDocker = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$MOCK_DOCKER_LOG"
 if [[ "$1" == inspect ]]; then
+  if [[ "$*" == *'json .Mounts'* ]]; then echo '[{"Destination":"/data","Source":"/synthetic/data"}]'; exit 0; fi
   if [[ "$*" == *backend-id* || "$*" == *sandboxd-id* ]]; then echo 'docker.io/coffeiz/gugu-web-backend:v1.2.1'; else echo 'docker.io/coffeiz/gugu-web-frontend:v1.2.1'; fi
   exit 0
 fi
+if [[ "$1" == ps ]]; then exit 0; fi
 [[ "$1" == compose ]] || exit 90
 shift
 while (($#)); do case "$1" in --project-directory|-f|--profile) shift 2 ;; *) break ;; esac; done
@@ -40,7 +42,12 @@ case "$command_name" in
     fi
     ;;
   exec)
+    if [[ "$*" == *'backend curl'* && "${'${MOCK_FAIL_HEALTH:-false}'}" == true ]]; then exit 22; fi
     if [[ "$*" == *'postgres pg_dumpall'* ]]; then echo '-- PostgreSQL database cluster dump'; fi
+    ;;
+  run)
+    if [[ "$*" == *'--entrypoint tar'* ]]; then tar -C "$MOCK_STORAGE_DIR" -cpf - users; fi
+    if [[ "$*" == *'--entrypoint bash'* && "${'${MOCK_FAIL_MIGRATION:-false}'}" == true ]]; then exit 42; fi
     ;;
   *) ;;
 esac
@@ -54,6 +61,9 @@ function fixture() {
   fs.writeFileSync(path.join(root, 'backend', '.env'), 'ADMIN_PASSWORD=synthetic\n')
   fs.writeFileSync(path.join(root, 'docker-compose.prod.yml'), 'services: {}\n')
   fs.writeFileSync(path.join(bin, 'docker'), mockDocker, { mode: 0o755 })
+  fs.writeFileSync(path.join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  fs.mkdirSync(path.join(root, 'storage', 'users'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'storage', 'users', 'sentinel'), 'preserved')
   fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
     schema_version: 3, version: 'v1.2.2', channel: 'stable', minimum_version: 'v1.2.1',
     app_image: `docker.io/coffeiz/gugu-web@sha256:${'a'.repeat(64)}`,
@@ -71,6 +81,7 @@ function run(f, extraEnv = {}) {
       COMPOSE_PROJECT_DIR: f.root, COMPOSE_FILE: path.join(f.root, 'docker-compose.prod.yml'),
       BACKUP_ROOT: path.join(f.root, 'backup'), UPDATE_VALIDATOR: validator,
       UPDATE_SCHEMA: path.resolve(releaseDir, '../../deploy/update-manifest.schema.json'),
+      MOCK_STORAGE_DIR: path.join(f.root, 'storage'),
       ...extraEnv,
     },
   })
@@ -86,17 +97,42 @@ test('分体更新备份配置与数据库，验证迁移后按固定服务顺�
     assert.match(log, /run --rm --no-deps --entrypoint python backend -m updater.database_check/)
     assert.match(log, /up -d --no-deps --force-recreate backend/)
     assert.match(log, /up -d --no-deps --force-recreate worker gateway frontend/)
+    const stopped = log.indexOf('stop backend worker gateway sandboxd')
+    const databaseBackup = log.indexOf('postgres pg_dumpall')
+    const storageBackup = log.indexOf('--entrypoint tar')
+    const migration = log.indexOf('--entrypoint bash')
+    assert.ok(stopped >= 0 && stopped < databaseBackup && databaseBackup < storageBackup && storageBackup < migration)
+    assert.ok(migration < log.indexOf('up -d --no-deps --force-recreate backend'))
     assert.doesNotMatch(log, /down -v|system prune/)
     const backupRoot = path.join(f.root, 'backup')
     const backup = path.join(backupRoot, fs.readdirSync(backupRoot)[0])
     assert.equal(fs.readFileSync(path.join(backup, 'backend.env'), 'utf8'), 'ADMIN_PASSWORD=synthetic\n')
     assert.match(fs.readFileSync(path.join(backup, 'postgres.sql'), 'utf8'), /PostgreSQL database cluster dump/)
+    const archive = spawnSync('tar', ['-tf', path.join(backup, 'users.tar')], { encoding: 'utf8' })
+    assert.equal(archive.status, 0)
+    assert.match(archive.stdout, /users\/sentinel/)
   } finally {
     fs.rmSync(f.root, { recursive: true, force: true })
   }
 })
 
-test('仅当运行中的 sandboxd 与 backend 镜像引用完全一致时同步更新及回滚它', () => {
+for (const failure of ['MOCK_FAIL_HEALTH', 'MOCK_FAIL_MIGRATION']) {
+  test(`${failure} 后保持人工恢复态，禁止只回滚镜像`, () => {
+    const f = fixture()
+    try {
+      const result = run(f, { [failure]: 'true' })
+      assert.notEqual(result.status, 0)
+      const log = fs.readFileSync(f.log, 'utf8')
+      assert.doesNotMatch(log, /up -d --pull never/)
+      assert.doesNotMatch(log, /force-recreate worker gateway frontend/)
+      assert.match(result.stderr, /禁止只降级镜像/)
+      const backup = path.join(f.root, 'backup', fs.readdirSync(path.join(f.root, 'backup'))[0])
+      assert.equal(fs.readFileSync(path.join(backup, 'recovery-required'), 'utf8').trim(), 'manual-recovery')
+    } finally { fs.rmSync(f.root, { recursive: true, force: true }) }
+  })
+}
+
+test('仅当运行中的 sandboxd 与 backend 镜像引用完全一致时同步更新它', () => {
   const f = fixture()
   try {
     const result = run(f, { MOCK_SANDBOXD: 'true' })

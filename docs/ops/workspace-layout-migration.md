@@ -6,7 +6,7 @@
 
 ## 升级时执行
 
-先备份数据库与完整存储目录，再停止使用该存储的 Web、Worker、Gateway、Shell/PTY 和沙盒任务。迁移锁只防止迁移进程互相竞争，不能替代停服。
+先停止使用该存储的 Web、Worker、Gateway、Shell/PTY 和沙盒任务，再备份数据库与完整存储目录，避免备份期间继续写入。迁移锁只防止迁移进程互相竞争，不能替代停服。
 
 裸机部署在数据库升级后、启动服务前执行：
 
@@ -16,7 +16,11 @@ make workspace-layout-plan
 make workspace-layout-migrate SERVICES_STOPPED=1
 ```
 
-普通 `make migrate` 不自动移动文件，避免在服务仍运行时改名。下一版本镜像的 Web 启动入口会在数据库升级后、接收流量前调用同一迁移脚本；共享存储的其他旧服务和沙盒必须先停止。对象存储不执行本地目录迁移。
+普通 `make migrate` 不自动移动文件。镜像启动入口只检查布局迁移完成状态，不再传入虚假的 `--services-stopped` 在线改名；旧用户数据未完成迁移时拒绝启动。全新空库只建立新布局标记。对象存储不执行本地目录迁移。
+
+Split updater 先拉取镜像、停止 backend/worker/gateway/sandboxd 及挂载本部署存储的临时 Shell/PTY，再保存 PostgreSQL、配置和完整 `users.tar` 备份。独立 one-shot 执行 Alembic 与布局迁移，通过后才启动新 backend，健康检查通过后启动 worker/gateway。共享此存储的其他部署或裸机进程必须由管理员另行停止。
+
+停服阶段开始后失败会写入备份目录的 `recovery-required` 并进入人工恢复态。不可逆 schema/layout 迁移可能已经部分生效，不能只降级业务镜像；即使 manifest 允许回滚也不自动回到旧版本。需保持停服，续跑迁移，或由管理员成套恢复数据库、users 存储和原镜像。备份目录包含敏感数据，须保持受限权限。
 
 ## 恢复与校验
 
