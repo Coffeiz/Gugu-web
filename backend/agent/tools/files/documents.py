@@ -594,6 +594,14 @@ async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None)
         _, _, name_error = _split_create_name(f"{new_display}.{new_ext}")
     if name_error:
         return {"error": name_error, "name": f"{f.display_name}.{f.ext}"}
+    source_is_text = _is_text_file_record(f)
+    target_is_binary = new_ext in _CREATE_BINARY_EXTS
+    target_is_text = new_ext in TEXT_EXTS
+    if (source_is_text and target_is_binary) or (not source_is_text and target_is_text):
+        return {
+            "error": "不能跨文本/二进制格式重命名；重命名不会转换文件内容",
+            "name": f"{f.display_name}.{f.ext}",
+        }
     try:
         new_key = await _resolve_key(
             db, user_id, f.space, new_display, new_ext,

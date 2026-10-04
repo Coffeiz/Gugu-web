@@ -218,9 +218,13 @@ async def test_rename_file_single_batch_and_format(db, user_a, storage):
                                                "new_name": "说明", "format": "md"})
     assert fixed["name"] == "说明.md"
 
+    old_key = double.storage_key
     renamed = await _rename_file(db, user_a.id, {"file_id": double.id,
                                                 "new_name": "试一下", "format": "docx"})
-    assert renamed["name"] == "试一下.docx"
+    assert "error" in renamed and "跨文本/二进制" in renamed["error"]
+    await db.refresh(double)
+    assert double.storage_key == old_key
+    assert await storage.get(old_key) == b"x"
     assert double.mime_type == "text/markdown"
     renamed = await _rename_file(db, user_a.id, {"file_id": double.id,
                                                 "new_name": "试一下", "format": "png9"})
@@ -237,15 +241,17 @@ async def test_rename_file_single_batch_and_format(db, user_a, storage):
     assert batch["renamed_count"] == 1 and batch["failed_count"] == 2
 
 
-@pytest.mark.parametrize("new_name,fmt,expected", [
-    ("docker-compose.yml", None, "docker-compose.yml"),
-    (".env", None, ".env"),
-    ("配置", "custom", "配置.custom"),
-    ("新名字", None, "新名字.pyc"),
-    ("配置.yaml", "yaml", "配置.yaml"),
+@pytest.mark.parametrize("new_name,fmt,expected,allowed", [
+    (".env", None, ".env", True),
+    ("配置", "custom", "配置.custom", True),
+    ("新名字", None, "新名字.pyc", True),
+    ("docker-compose.yml", None, "docker-compose.yml", False),
+    ("配置", "yaml", "配置.yaml", False),
 ])
-async def test_rename_extension_preserves_binary_bytes_and_mime(db, user_a, storage, new_name, fmt, expected):
-    """二进制可改任意合法后缀，但物理字节、MIME、文件身份保持不变。"""
+async def test_rename_binary_extension_preserves_bytes_or_rejects_text_suffix(
+    db, user_a, storage, new_name, fmt, expected, allowed,
+):
+    """二进制改为非文本后缀时保留内容；改成文本后缀时保持原状并拒绝。"""
     file = await _mk_file(db, user_a, storage, name="旧文件.pyc", mime_type="application/x-python-code")
     original = b"\xa7\x0d\x0d\x0a\x00\xff"
     old_key = file.storage_key
@@ -254,6 +260,15 @@ async def test_rename_extension_preserves_binary_bytes_and_mime(db, user_a, stor
     if fmt is not None:
         args["format"] = fmt
     result = await _rename_file(db, user_a.id, args)
+    if not allowed:
+        assert "error" in result and "跨文本/二进制" in result["error"]
+        await db.refresh(file)
+        assert file.storage_key == old_key
+        assert file.mime_type == "application/x-python-code"
+        assert await storage.exists(old_key)
+        assert await storage.get(old_key) == original
+        return
+
     assert result["success"] and result["name"] == expected
     await db.refresh(file)
     assert file.storage_key.endswith("/" + expected)
