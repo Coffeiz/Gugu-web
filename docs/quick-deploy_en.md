@@ -46,11 +46,27 @@ docker run -d --name gugu-web \
 
 Open <http://localhost:9595>; the Admin interface is at <http://localhost:9595/admin/>. On first start, the database is initialized and migrations are applied. If `ADMIN_PASSWORD` is omitted, a random password is saved to `Gugu-data/.env` and printed once in the container logs; retrieve and save it with `docker logs gugu-web`. `ADMIN_USERNAME` defaults to `admin`. Configure the model provider and API key in Admin after signing in.
 
-`Gugu-data` stores user data and runtime configuration; `Gugu-config` stores Admin configuration. Back up both directories and the database before upgrading. To upgrade, pull the target image, stop and remove the old container, then run the new container with the same port and directory mappings. Keep the data directories. For production, use a fixed version tag or digest so `latest` cannot resolve to different versions across deployments.
+`Gugu-data` stores user data and runtime configuration; `Gugu-config` stores Admin configuration. Back up both directories and the database before upgrading. Pull the target image and stop the old container, complete the required offline migration below, then recreate the app with the original port and directory mappings. Keep the data directories. For production, use a fixed version tag or digest.
 
 The image includes the complete site, embedded PostgreSQL/Redis, an internal Rootless Docker runtime, the sandbox manager, and the Shell execution image. Shell is enabled by default; no separate `sandboxd`, execution-image import, or host Docker socket mount is needed. SearXNG is not included, so web search is unavailable in single-container mode.
 
 > **Security:** privileged mode increases host risk if the outer app container is compromised. Internal Rootless only isolates the Shell execution containers; it does not remove the host risk of the outer app. This mode is intended for trusted personal, single-user deployments—not multi-tenant, public-facing, or business servers.
+
+### Upgrading 1.5 to 1.6: migrate offline first
+
+Keep the old container/image and back up the data/configuration directories. Stop the old container, then run the target unified image with its original `/data` and `/config` mappings and the command `gugu-offline-migrate --services-stopped`. Do not override the entrypoint. For example, from the deployment directory:
+
+```bash
+docker stop gugu-web
+docker run --rm --name gugu-offline-migration --privileged \
+  --volume "$PWD/Gugu-data:/data" --volume "$PWD/Gugu-config:/config" \
+  docker.io/coffeiz/gugu-web:<target-version> \
+  gugu-offline-migrate --services-stopped
+```
+
+The command starts only embedded PostgreSQL/Redis, backs up the database and `users` under `migration-backups/`, runs Alembic and workspace migration/validation, then shuts down the dependencies. No business or sandbox services start. Recreate the normal app only after exit code 0. With default Compose, stop `app`, run `docker compose run --rm --no-deps app gugu-offline-migrate --services-stopped` using the target image, then recreate `app` after success. The unified Compose updater also runs this step automatically.
+
+On failure, keep services stopped and retain the backups/journal. Do not downgrade only the image: rollback requires restoring the database and the complete `users` directory from the same backup together. See the recovery section in [deployment operations](ops/deploy.md#工作区布局迁移失败后的恢复).
 
 ## Optional: Compose with web search
 

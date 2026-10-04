@@ -17,6 +17,26 @@
 
 不熟悉运维也没关系，下面每章节先有一段大白话，跳过命令细节也能明白在干什么；要动手操作时再回来看命令块。
 
+## 工作区布局迁移失败后的恢复
+
+1. 保持 Web、Worker、Gateway、Sandbox manager 和全部 Shell/PTY 执行容器停止；恢复时也不得继续写文件。
+2. 选择同一次离线迁移生成的 `migration-backups/workspace-*/postgres.dump` 与 `users.tar`，确认两份归档有效。不要将某次数据库备份和另一次文件备份混用。
+3. 保留失败后的数据库和 `users` 作为调查副本。使用 PostgreSQL 管理工具重建原应用数据库并用 `pg_restore --exit-on-error` 恢复 custom dump；归档的数据库角色不随 dump 重建，沿用旧部署角色配置。
+4. 将完整 `users.tar` 恢复至原数据根，不与部分迁移后的目录合并；目录中的 v2 marker、检查点、文件 key 和数据库必须一起回到同一个状态。旧目录先移至受保护的恢复副本，不直接删除。复核文件内容与工作区数据库记录后，才启动旧镜像。
+
+分体 updater 的备份为 `postgres.sql`（cluster dump）和 `users.tar`，恢复时使用 `psql --set=ON_ERROR_STOP=1`，不是 `pg_restore`。两种备份格式不能混用。失败后 `recovery-required` 标记要求人工恢复；不能仅降级镜像绕过迁移门禁。
+
+## 分体升级的 external Sandbox 停服契约
+
+生产 `docker-compose.prod.yml` 不包含 sandboxd。`split-compose-update.sh` 在这种拓扑下必须配置：
+
+- `EXTERNAL_SANDBOX_CONTROL`：部署管理员提供的普通可执行文件（绝对路径，建议只读挂载）。只接受 `stop`、`status`、`start`；`status` 的标准输出只能为 `running` 或 `stopped`，其他结果/非零退出立即阻断升级。控制器必须操作本部署实际 manager，不能仅删除 socket 文件。
+- `EXTERNAL_SANDBOX_DOCKER_HOST`：实际执行容器所在 Rootless daemon 的 `unix://` 地址。运行 updater 的环境必须可访问该 socket；不会回退到 rootful Docker。仅为可信管理员更新环境开放，不能挂给业务进程。
+
+停止业务后，updater 调用控制器停止 manager 并验证状态，再连接指定 daemon 验证 Rootless 属性、停止所有挂载本部署数据根的 Gugu 执行容器并逐一确认退出；其他部署容器不受影响。全部成功后才备份数据库和 `users` 并迁移。失败时业务与 manager 保持停服，不能自动恢复写入；更新校验成功后，仅恢复更新前正在运行的 manager。
+
+在 manager 主机直接执行更新时，可使用仓库提供的 `scripts/release/external-sandbox-systemd.sh`，它管理固定 `gugu-sandboxd.service`（可通过 `EXTERNAL_SANDBOX_SYSTEMD_UNIT` 选择同前缀的部署单元）；user unit 配置 `EXTERNAL_SANDBOX_SYSTEMD_USER=1`。脚本须有执行权限，执行用户须有该服务的管理权限。容器中的 updater 不能通过挂载这个脚本直接控制宿主 systemd：必须由管理员接入经过授权的宿主控制入口，或在 manager 主机执行升级。未接入生命周期控制器的 sidecar 会明确拒绝迁移，不会声称已离线。
+
 ## 快速导航
 
 | 我想…                                            | 去看                                        |

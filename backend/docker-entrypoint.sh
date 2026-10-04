@@ -5,6 +5,24 @@
 # prod/dev 分体部署复用同一个入口脚本；默认 Compose 额外托管 worker、gateway、Uvicorn 和 Nginx。
 set -euo pipefail
 
+# 升级命令仍走入口启动内置数据库，但不激活持久化旧代码或启动任何业务/沙盒进程。
+OFFLINE_MIGRATION=0
+if [ "${1:-}" = "gugu-offline-migrate" ]; then
+    if [ "$#" != 2 ] || [ "${2:-}" != "--services-stopped" ] \
+        || [ "${GUGU_UNIFIED_APP:-0}" != 1 ] || [ "${GUGU_EMBEDDED_DEPS:-0}" != 1 ]; then
+        echo '[entrypoint] 离线迁移仅支持一体化内置数据库；必须先停旧容器并传 --services-stopped。' >&2
+        exit 2
+    fi
+    OFFLINE_MIGRATION=1
+    DATA_ROOT="${GUGU_DATA_DIR:-/data}"
+    if [ ! -s "$DATA_ROOT/postgres/PG_VERSION" ] || [ -L "$DATA_ROOT/.offline-migration.lock" ]; then
+        echo '[entrypoint] 找不到旧内置数据库或迁移锁异常，拒绝离线迁移。' >&2
+        exit 1
+    fi
+    exec 9>"$DATA_ROOT/.offline-migration.lock"
+    flock -n 9 || { echo '[entrypoint] 已有离线迁移占用数据目录。' >&2; exit 1; }
+fi
+
 # 无 Compose 的一体化容器可把应用代码版本化保存到 /data，以便 Admin 更新应用包；
 # Compose 仍由镜像更新链路负责，避免覆盖 /app/logs 等 Compose 挂载点。
 if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
@@ -17,6 +35,7 @@ if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
 fi
 if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] \
     && [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ] \
+    && [ "$OFFLINE_MIGRATION" = 0 ] \
     && [ "${GUGU_APP_BUNDLE_UPDATE:-on}" != "off" ] \
     && [ "${GUGU_UPDATE_DEPLOYMENT_MODE:-}" != "integrated_compose" ] \
     && [ "${GUGU_UPDATE_DEPLOYMENT_MODE:-}" != "split_compose" ]; then
@@ -230,6 +249,33 @@ SUPERVISEOF
     echo "[entrypoint] 启动内置 PostgreSQL / Redis（supervisord 托管）..."
     supervisord -c "$EMBED_RUN/supervisord.conf"
     EMBEDDED_SUPERVISORD_PID="$(cat "$EMBED_RUN/supervisord.pid" 2>/dev/null || true)"
+    if [ "$OFFLINE_MIGRATION" = 1 ]; then
+        # 正常和异常退出均优雅关闭内置数据库，避免迁移容器退出留下未刷盘的依赖进程。
+        stop_migration_dependencies() {
+            local status=$?
+            trap - EXIT
+            if [ -n "$EMBEDDED_SUPERVISORD_PID" ]; then
+                kill -TERM "$EMBEDDED_SUPERVISORD_PID" || status=1
+                for _ in $(seq 1 30); do
+                    kill -0 "$EMBEDDED_SUPERVISORD_PID" 2>/dev/null || break
+                    # PID 1 的 shell 可能尚未回收 daemon 的僵尸状态；此时依赖已结束。
+                    [[ "$(ps -o stat= -p "$EMBEDDED_SUPERVISORD_PID")" == Z* ]] && break
+                    sleep 1
+                done
+                if kill -0 "$EMBEDDED_SUPERVISORD_PID" 2>/dev/null \
+                    && [[ "$(ps -o stat= -p "$EMBEDDED_SUPERVISORD_PID")" != Z* ]]; then
+                    echo '[entrypoint] 内置依赖未及时退出，禁止将本次迁移视为成功。' >&2
+                    status=1
+                fi
+            fi
+            exit "$status"
+        }
+        trap stop_migration_dependencies EXIT
+        trap 'exit 143' TERM
+        trap 'exit 130' INT
+        [[ "$EMBEDDED_SUPERVISORD_PID" =~ ^[1-9][0-9]*$ ]] \
+            || { echo '[entrypoint] 内置依赖进程无法确认，拒绝继续迁移。' >&2; exit 1; }
+    fi
     # 应用改连本机内置实例；用户显式指向外部数据库时不覆盖。内置 postgres/redis 固定监听
     # 5432/6379（supervisord 配置不读 DB__PORT/REDIS__PORT），因此一旦解析为内置实例就
     # 把端口一并钉死，避免面板里改了端口后应用去连一个并不存在的监听。
@@ -297,6 +343,15 @@ if [ "$DB_READY" != 1 ]; then
     echo "  ② 检查 DB__HOST/DB__PORT 是否指向可访问的 PostgreSQL 服务；" >&2
     echo "  ③ PostgreSQL 首次初始化尚未完成，可稍后重试。" >&2
     exit 1
+fi
+
+if [ "$OFFLINE_MIGRATION" = 1 ]; then
+    case "$DB_HOST" in
+        127.0.0.1|localhost) ;;
+        *) echo '[entrypoint] 离线模式禁止迁移外部数据库。' >&2; exit 1 ;;
+    esac
+    GUGU_OFFLINE_PG_BIN="$PG_BIN" bash /usr/local/bin/gugu-offline-migration.sh
+    exit 0
 fi
 
 echo "[entrypoint] 检查是否为全新数据库..."

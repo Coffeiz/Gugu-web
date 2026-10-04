@@ -15,6 +15,21 @@ const frontendTarget = `docker.io/coffeiz/gugu-web-frontend@sha256:${'c'.repeat(
 const mockDocker = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$MOCK_DOCKER_LOG"
+if [[ "$1" == --host ]]; then
+  shift 2
+  case "$1" in
+    info) [[ "\${MOCK_BAD_ROOTLESS:-false}" != true ]] || exit 1; echo '["name=rootless"]' ;;
+    ps) echo own-shell; echo foreign-shell ;;
+    inspect)
+      if [[ "$*" == *State.Running* ]]; then
+        if [[ "\${MOCK_STUCK_SHELL:-false}" == true ]]; then echo true; else echo false; fi
+      elif [[ "$*" == *own-shell* ]]; then echo '[{"Source":"/synthetic/data/users/moon/workspace"}]'
+      else echo '[{"Source":"/synthetic/other-data/users/moon/workspace"}]'; fi ;;
+    stop) ;;
+    *) exit 90 ;;
+  esac
+  exit 0
+fi
 if [[ "$1" == inspect ]]; then
   if [[ "$*" == *'json .Mounts'* ]]; then echo '[{"Destination":"/data","Source":"/synthetic/data"}]'; exit 0; fi
   if [[ "$*" == *backend-id* || "$*" == *sandboxd-id* ]]; then echo 'docker.io/coffeiz/gugu-web-backend:v1.2.1'; else echo 'docker.io/coffeiz/gugu-web-frontend:v1.2.1'; fi
@@ -28,7 +43,11 @@ command_name="$1"; shift
 case "$command_name" in
   config)
     if [[ "$*" == *'--format json'* ]]; then
-      printf '%s\\n' '{"services":{"postgres":{},"redis":{},"migrate":{},"backend":{},"worker":{},"gateway":{},"frontend":{},"nginx":{},"sandboxd":{}}}'
+      if [[ "\${MOCK_EXTERNAL:-false}" == true ]]; then
+        printf '%s\\n' '{"services":{"postgres":{},"redis":{},"migrate":{},"backend":{},"worker":{},"gateway":{},"frontend":{},"nginx":{}}}'
+      else
+        printf '%s\\n' '{"services":{"postgres":{},"redis":{},"migrate":{},"backend":{},"worker":{},"gateway":{},"frontend":{},"nginx":{},"sandboxd":{}}}'
+      fi
     else
       printf '%s\\n' postgres redis migrate backend worker gateway frontend nginx sandboxd
     fi
@@ -62,6 +81,16 @@ function fixture() {
   fs.writeFileSync(path.join(root, 'docker-compose.prod.yml'), 'services: {}\n')
   fs.writeFileSync(path.join(bin, 'docker'), mockDocker, { mode: 0o755 })
   fs.writeFileSync(path.join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  fs.writeFileSync(path.join(root, 'manager.state'), 'running')
+  fs.writeFileSync(path.join(root, 'manager-control'), `#!/bin/bash
+set -e
+printf 'manager %s\\n' "$1" >> "$MOCK_DOCKER_LOG"
+case "$1" in
+  status) cat "$MANAGER_STATE" ;;
+  stop) [[ "\${MOCK_STUCK_MANAGER:-false}" != true ]] && printf stopped > "$MANAGER_STATE" || true ;;
+  start) printf running > "$MANAGER_STATE" ;;
+esac
+`, { mode: 0o755 })
   fs.mkdirSync(path.join(root, 'storage', 'users'), { recursive: true })
   fs.writeFileSync(path.join(root, 'storage', 'users', 'sentinel'), 'preserved')
   fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
@@ -82,6 +111,7 @@ function run(f, extraEnv = {}) {
       BACKUP_ROOT: path.join(f.root, 'backup'), UPDATE_VALIDATOR: validator,
       UPDATE_SCHEMA: path.resolve(releaseDir, '../../deploy/update-manifest.schema.json'),
       MOCK_STORAGE_DIR: path.join(f.root, 'storage'),
+      MANAGER_STATE: path.join(f.root, 'manager.state'),
       ...extraEnv,
     },
   })
@@ -115,6 +145,40 @@ test('分体更新备份配置与数据库，验证迁移后按固定服务顺�
     fs.rmSync(f.root, { recursive: true, force: true })
   }
 })
+
+test('external manager 与当前部署 Rootless 执行容器停止后才备份，成功后恢复 manager', () => {
+  const f = fixture()
+  try {
+    const result = run(f, {
+      MOCK_EXTERNAL: 'true', EXTERNAL_SANDBOX_CONTROL: path.join(f.root, 'manager-control'),
+      EXTERNAL_SANDBOX_DOCKER_HOST: 'unix:///synthetic/rootless.sock',
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const log = fs.readFileSync(f.log, 'utf8')
+    assert.ok(log.indexOf('manager stop') < log.indexOf('stop own-shell'))
+    assert.ok(log.indexOf('stop own-shell') < log.indexOf('postgres pg_dumpall'))
+    assert.doesNotMatch(log, /stop foreign-shell/)
+    assert.ok(log.indexOf('manager start') > log.indexOf('up -d --no-deps --force-recreate worker gateway frontend'))
+    assert.equal(fs.readFileSync(path.join(f.root, 'manager.state'), 'utf8'), 'running')
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }) }
+})
+
+for (const failure of ['missing', 'MOCK_STUCK_MANAGER', 'MOCK_BAD_ROOTLESS', 'MOCK_STUCK_SHELL']) {
+  test(`external 停服无法证明时拒绝数据库和 users 备份：${failure}`, () => {
+    const f = fixture()
+    try {
+      const env = { MOCK_EXTERNAL: 'true' }
+      if (failure !== 'missing') Object.assign(env, {
+        EXTERNAL_SANDBOX_CONTROL: path.join(f.root, 'manager-control'),
+        EXTERNAL_SANDBOX_DOCKER_HOST: 'unix:///synthetic/rootless.sock', [failure]: 'true',
+      })
+      const result = run(f, env)
+      assert.notEqual(result.status, 0)
+      const log = fs.readFileSync(f.log, 'utf8')
+      assert.doesNotMatch(log, /pg_dumpall|--entrypoint tar|--entrypoint bash|manager start/)
+    } finally { fs.rmSync(f.root, { recursive: true, force: true }) }
+  })
+}
 
 for (const failure of ['MOCK_FAIL_HEALTH', 'MOCK_FAIL_MIGRATION']) {
   test(`${failure} 后保持人工恢复态，禁止只回滚镜像`, () => {

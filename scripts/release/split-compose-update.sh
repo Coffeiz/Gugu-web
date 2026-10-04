@@ -21,6 +21,14 @@ node "$VALIDATOR" "$MANIFEST" >/dev/null
 COMPOSE=(docker compose --project-directory "$ROOT_DIR" -f "$COMPOSE_FILE" --profile sandbox)
 CONFIG="$("${COMPOSE[@]}" config --format json)"
 SERVICES="$(printf '%s' "$CONFIG" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(Object.keys(JSON.parse(s).services||{}).sort().join("\n")))')"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXTERNAL_SANDBOX=false
+MANAGER_EXTERNAL="$(printf '%s' "$CONFIG" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s).services?.backend?.environment?.GUGU_SANDBOX_MANAGER_MODE==="external")))')"
+if ! grep -qx sandboxd <<<"$SERVICES" || [[ "$MANAGER_EXTERNAL" == true ]]; then
+  EXTERNAL_SANDBOX=true
+  [[ -n "${EXTERNAL_SANDBOX_CONTROL:-}" && -n "${EXTERNAL_SANDBOX_DOCKER_HOST:-}" ]] \
+    || { echo 'external sandbox 未配置停服控制器和 Rootless socket，拒绝更新。' >&2; exit 1; }
+fi
 for name in postgres redis migrate backend worker gateway frontend nginx; do
   grep -qx "$name" <<<"$SERVICES" || { echo "分体 Compose 缺少固定服务：$name" >&2; exit 1; }
 done
@@ -36,7 +44,7 @@ TARGET_FRONTEND="$(sed -n '2p' <<<"$IMAGES")"
 
 PULL_SERVICES=(migrate backend worker gateway frontend)
 SANDBOXD_UPDATE=false
-if "${COMPOSE[@]}" ps --status running --services sandboxd 2>/dev/null | grep -qx sandboxd; then
+if "${COMPOSE[@]}" ps --status running --services sandboxd 2>/dev/null | grep -x sandboxd >/dev/null; then
   SANDBOXD_ID="$("${COMPOSE[@]}" ps -q sandboxd | head -n1)"
   CURRENT_BACKEND_ID="$("${COMPOSE[@]}" ps -q backend | head -n1)"
   if [[ -n "$SANDBOXD_ID" && -n "$CURRENT_BACKEND_ID" ]]; then
@@ -64,7 +72,7 @@ if [[ -f "$ROOT_DIR/.env" && ! -L "$ROOT_DIR/.env" ]]; then
   chmod 600 "$BACKUP_DIR/compose.env"
 fi
 
-if ! "${COMPOSE[@]}" ps --status running --services | grep -qx postgres; then
+if ! "${COMPOSE[@]}" ps --status running --services | grep -x postgres >/dev/null; then
   echo 'PostgreSQL 未运行，拒绝更新' >&2
   exit 1
 fi
@@ -116,6 +124,10 @@ DATA_SOURCE="$(docker inspect --format '{{json .Mounts}}' "$PREVIOUS_BACKEND_ID"
 let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{const m=JSON.parse(s).find(x=>x.Destination==="/data");if(!m||!m.Source||m.Source==="/")process.exit(1);process.stdout.write(m.Source)})')"
 ROLLBACK_ARMED=true
 "${COMPOSE[@]}" stop "${STOP_SERVICES[@]}"
+if [[ "$EXTERNAL_SANDBOX" == true ]]; then
+  export SANDBOX_DATA_SOURCE="$DATA_SOURCE" SANDBOX_STATE_FILE="$BACKUP_DIR/external-sandbox.state"
+  bash "$SCRIPT_DIR/quiesce-external-sandbox.sh" stop
+fi
 # 临时 Shell/PTY 不属于 Compose；只停止挂载本部署数据的 Gugu 沙盒，不能操作其他部署。
 SANDBOX_IDS="$(docker ps -q --filter label=com.gugu.sandbox=true)"
 while read -r sandbox_id; do
@@ -160,6 +172,9 @@ if [[ "$SANDBOXD_UPDATE" == true ]]; then
   "${COMPOSE[@]}" up -d --no-deps --force-recreate sandboxd
 elif grep -qx sandboxd <<<"$SERVICES"; then
   "${COMPOSE[@]}" start sandboxd
+fi
+if [[ "$EXTERNAL_SANDBOX" == true ]]; then
+  bash "$SCRIPT_DIR/quiesce-external-sandbox.sh" start
 fi
 echo '更新完成；PostgreSQL、Redis、配置和数据卷未重建'
 ROLLBACK_ARMED=false

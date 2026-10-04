@@ -68,13 +68,33 @@ docker run -d --name gugu-web \
 
 访问 <http://localhost:9595>；Admin 位于 <http://localhost:9595/admin/>。首次启动会初始化数据库并执行迁移。未设置 `ADMIN_PASSWORD` 时，系统会生成随机管理员密码，保存到 `Gugu-data/.env` 并在容器日志中打印一次；用 `docker logs gugu-web` 查看并保存。未设置 `ADMIN_USERNAME` 时账号默认为 `admin`。模型 Provider 和 API Key 可在登录后通过 Admin 页面配置。
 
-`Gugu-data` 保存用户数据和运行配置，`Gugu-config` 保存 Admin 配置。升级镜像前先备份这两个目录和数据库；升级时拉取目标镜像、停止并删除旧容器，再用相同的端口和目录映射运行新容器。不要删除数据目录。正式部署应使用固定版本标签或 digest，避免 `latest` 在两次部署间指向不同版本。
+`Gugu-data` 保存用户数据和运行配置，`Gugu-config` 保存 Admin 配置。升级前备份这两个目录和数据库；拉取目标镜像后先停止旧容器，完成下面要求的离线迁移，再删除旧容器并用原端口和目录映射运行新容器。不要删除数据目录。正式部署应使用固定版本标签或 digest，避免 `latest` 在两次部署间指向不同版本。
 
 单容器镜像包含完整站点、内置 PostgreSQL/Redis、内部 Rootless Docker、沙盒管理器和 Shell 执行镜像。Shell 沙盒默认启用，不需要单独部署 `sandboxd`、导入执行镜像或挂载宿主 Docker Socket。SearXNG 不包含在单容器镜像中，因此联网搜索功能不可用。
 
 单容器更新分为两层：Admin「版本更新」只允许下载并验签不含数据库迁移、且明确支持安全代码回滚的 Gugu 应用包，在容器内切换应用代码并重启服务；包含数据库迁移的 Release 必须通过 Docker/NAS 管理器更新完整镜像。应用包更新失败时，只有在数据库 schema 未变化且 Release 声明支持回滚时才恢复旧代码，避免新旧代码与数据库 schema 不兼容。基础系统、Rootless Docker、Shell 执行镜像及其他基础运行时也由 Docker 管理器更新。请保留原有 `/data`、`/config` 映射。旧版镜像需先通过 Docker 管理器更新到包含应用包更新运行时的版本。
 
 > **安全提示：**privileged 会显著提高外层应用容器被攻破后的宿主机风险。内部 Rootless 只隔离其创建的 Shell 执行容器，不能消除外层应用的宿主风险；此部署方式面向可信个人单用户使用，不建议用于多租户、公网或业务服务器。
+
+### 1.5 → 1.6：先运行一体化离线迁移
+
+已有用户的旧工作区必须离线迁移，不能直接用新镜像接流量。先保留旧容器和镜像、备份 `Gugu-data` 与 `Gugu-config`，再在原部署目录执行（把 `<目标版本>` 换为实际 release tag）：
+
+```bash
+docker pull docker.io/coffeiz/gugu-web:<目标版本>
+docker stop gugu-web
+docker run --rm --name gugu-offline-migration --privileged \
+  --volume "$PWD/Gugu-data:/data" \
+  --volume "$PWD/Gugu-config:/config" \
+  docker.io/coffeiz/gugu-web:<目标版本> \
+  gugu-offline-migrate --services-stopped
+```
+
+使用旧容器原有的数据/配置映射和自定义数据库设置；不要另建空数据目录，不要用 `--entrypoint` 绕过入口。该命令只启动内置 PostgreSQL/Redis，在数据卷 `migration-backups/` 中保留时间戳数据库归档和 `users.tar`，然后执行 Alembic、工作区迁移与校验，关闭依赖并退出；不启动 Web、Worker、Gateway、RAG 或 Sandbox。**仅命令退出码为 0 后**，才删除旧容器并按上面的正常运行命令用目标镜像重新创建。
+
+默认 Compose 使用同一入口：固定目标 `GUGU_WEB_IMAGE`，执行 `docker compose pull app`、`docker compose stop app`，然后 `docker compose run --rm --no-deps app gugu-offline-migrate --services-stopped`；成功后执行 `docker compose up -d --no-deps --force-recreate app`。`scripts/release/compose-update.sh` 已在停止 app 后自动执行该迁移步骤。
+
+失败时不要只换回旧镜像启动：文件和 schema 可能已部分迁移。保留 `migration-backups/`、迁移清单与旧镜像，继续停服；布局迁移可在排除错误后续跑。需要回滚时必须把同一次备份的数据库与整个 `users` 目录一起恢复，步骤见[部署文档](ops/deploy.md#工作区布局迁移失败后的恢复)。
 
 ## 可选：使用 Compose 并启用联网搜索
 

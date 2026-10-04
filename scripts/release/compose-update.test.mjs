@@ -62,6 +62,9 @@ case "$command_name" in
     shift
     if [[ "$service" == app ]]; then printf 'fake database dump\\n'; fi
     ;;
+  run)
+    [[ "\${MOCK_FAIL_OFFLINE:-false}" != true ]] || exit 42
+    ;;
   *) ;;
 esac
 `
@@ -164,6 +167,8 @@ test('只更新一体化 app，并在同镜像 sandboxd 运行时同步更新', 
     assert.match(log, /pull app sandboxd/)
     assert.match(log, /up -d --no-deps --force-recreate app sandboxd/)
     assert.match(log, /compose .* stop app sandboxd/)
+    assert.ok(log.indexOf('stop app sandboxd') < log.indexOf('gugu-offline-migrate --services-stopped'))
+    assert.ok(log.indexOf('gugu-offline-migrate --services-stopped') < log.indexOf('up -d --no-deps'))
     assert.doesNotMatch(log, /docker run/)
     assert.doesNotMatch(log, /docker inspect/)
     assert.doesNotMatch(log, /gugu-web-(?:backend|frontend)/)
@@ -172,6 +177,20 @@ test('只更新一体化 app，并在同镜像 sandboxd 运行时同步更新', 
     const backupDir = path.join(backupRoot, fs.readdirSync(backupRoot)[0])
     assert.match(fs.readFileSync(path.join(backupDir, 'previous-images.txt'), 'utf8'), /coffeiz\/gugu-web:old/)
     assert.equal(fs.readFileSync(path.join(backupDir, 'compose.env'), 'utf8'), 'GUGU_DB_PASSWORD=test-only-value\n')
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('内置数据库离线迁移失败后不得启动应用或接回流量', () => {
+  const fixture = createFixture()
+  try {
+    const result = runUpdate(fixture, { MOCK_FAIL_OFFLINE: 'true' })
+    assert.equal(result.status, 42)
+    const log = fs.readFileSync(fixture.dockerLog, 'utf8')
+    assert.match(log, /stop app sandboxd/)
+    assert.match(log, /run --rm --no-deps app gugu-offline-migrate --services-stopped/)
+    assert.doesNotMatch(log, /up -d|app curl/)
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
   }

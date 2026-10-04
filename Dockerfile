@@ -115,7 +115,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get install -y --no-install-recommends \
         nginx poppler-utils fonts-noto-cjk ffmpeg curl docker.io docker-cli nodejs acl \
         rootlesskit slirp4netns fuse-overlayfs uidmap iproute2 iptables \
-        postgresql redis-server supervisor \
+        postgresql redis-server supervisor util-linux procps \
     # snakeoil 是 ssl-cert 包（postgresql 依赖）装的 Debian 全机通用示例证书，随层公开
     # 会被 trivy secrets 扫描判为私钥泄漏；内嵌 PostgreSQL 只监听 127.0.0.1 且 ssl=off
     # （见 docker-entrypoint.sh），用不到它，直接删。
@@ -189,6 +189,7 @@ COPY backend/scripts/runtime/prepare_rootless_storage.py /usr/local/bin/prepare_
 COPY backend/scripts/runtime/ensure_embedded_pg_hba.py /usr/local/bin/ensure_embedded_pg_hba.py
 COPY backend/scripts/runtime/wait_embedded_postgres.sh /usr/local/bin/gugu-wait-embedded-postgres.sh
 COPY backend/scripts/runtime/wait_embedded_redis.sh /usr/local/bin/gugu-wait-embedded-redis.sh
+COPY backend/scripts/runtime/offline_migration.sh /usr/local/bin/gugu-offline-migration.sh
 RUN mkdir -p /opt/gugu \
     && cp /opt/gugu/image-app/updater/app_bundle_runtime.py /opt/gugu/app_bundle_runtime.py \
     && chmod 0555 /opt/gugu/app_bundle_runtime.py
