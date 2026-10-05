@@ -25,14 +25,16 @@ const known = file => (
   || /^loopscope\/backend\/tests\/test_[^/]+\.py$/.test(file)
   || /^loopscope\/.+\.test\.ts$/.test(file)
   || /^frontend\/tests\/.+\.(test|spec)\.ts$/.test(file)
-  || /^frontend\/(src|test)\/.+\.test\.ts$/.test(file)
   || /^frontend\/e2e\/[^/]+\.spec\.ts$/.test(file)
   || /^frontend\/scripts\/check-[^/]+\.mjs$/.test(file)
   || /^scripts\/licenses\/check-[^/]+\.mjs$/.test(file)
   || /^scripts\/tests\/.+\.mjs$/.test(file)
 )
 
-const unknown = testLike.filter(file => !known(file))
+const misplacedFrontendTests = testLike.filter(file =>
+  /^frontend\/(src|test)\/.+\.(test|spec)\.ts$/.test(file),
+)
+const unknown = testLike.filter(file => !known(file) && !misplacedFrontendTests.includes(file))
 const skipFiles = testLike.filter(file => {
   const source = fs.readFileSync(path.join(root, file), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -40,6 +42,12 @@ const skipFiles = testLike.filter(file => {
     .replace(/^\s*#.*$/gm, '')
   return /(?:test|it|describe)\.skip\s*\(|pytest\.(?:skip|mark\.skip)|@pytest\.mark\.skip/.test(source)
 })
+
+if (misplacedFrontendTests.length) {
+  console.error('[测试边界] 前端 Vitest 测试必须位于 frontend/tests/：')
+  for (const file of misplacedFrontendTests) console.error(`- ${file}`)
+  process.exitCode = 1
+}
 
 if (unknown.length) {
   console.error('[测试边界] 发现未纳入白名单的测试文件：')

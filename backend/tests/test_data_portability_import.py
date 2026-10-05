@@ -8,14 +8,43 @@ import pytest
 from sqlalchemy import select
 
 from app.models import (
-    ConversationMessage, ConversationPendingQueue, DataPortableIdentity, MindNode, Project,
+    ConversationMessage, ConversationPendingQueue, ConversationSession, DataPortableIdentity, MindNode, Project,
     UserMcpServer, Workspace, WorkspaceDirectory,
 )
 from app.services.data_portability.import_apply import apply_incremental_archive
+from app.services.data_portability.projection import RECORD_SPECS, project_record
 from app.services.data_portability.schema import PortableArchiveManifest, PortableArchiveEntry, PortableCategory
-from app.services.conversation_pending_queue import list_imported_draft_queues
+from app.services.conversation_pending_queue import (
+    get_pending_queue_for_session,
+    list_imported_draft_queues,
+    session_pending_queue_id,
+)
 from app.services.storage import LocalStorageBackend
 from agent.memory.scopes import MemoryScope
+
+
+def _archive_from_records(record_files: dict[str, tuple[str, list[dict]]]):
+    packed_data = io.BytesIO()
+    entries = []
+    categories: dict[str, dict[str, int]] = {}
+    with zipfile.ZipFile(packed_data, "w") as archive:
+        for path, (category, records) in record_files.items():
+            data = ("\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n").encode()
+            archive.writestr(path, data)
+            totals = categories.setdefault(category, {"records": 0, "bytes": 0})
+            totals["records"] += len(records)
+            totals["bytes"] += len(data)
+            entries.append(PortableArchiveEntry(
+                path=path, category=category, size=len(data),
+                sha256=hashlib.sha256(data).hexdigest(), records=len(records),
+            ))
+    manifest = PortableArchiveManifest(
+        origin_id=uuid4(), export_id=uuid4(), created_at="2026-10-02T00:00:00+00:00",
+        complete=False,
+        categories={name: PortableCategory(included=True, **values) for name, values in categories.items()},
+        entries=entries,
+    )
+    return packed_data.getvalue(), manifest
 
 
 @pytest.mark.asyncio
@@ -269,6 +298,95 @@ async def test_incremental_import_recovers_sessionless_draft_queue(db, user_a, u
     )
     db.add(other_user_queue)
     await db.flush()
+    assert len(await list_imported_draft_queues(db, user_id=user_a.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_incremental_import_maps_session_queue_to_canonical_queue_id(db, user_a):
+    """完整归档导入后，会话待发队列使用新会话的规范队列 ID 并可正常读取。"""
+    records = [
+        {
+            "record_schema": "gugu.conversation.v1", "portable_id": "source-session",
+            "source_type": "conversation", "fields": {"title": "有待发内容的会话", "source": "web"},
+            "relations": [],
+        },
+        {
+            "record_schema": "gugu.pending_queue.v1", "portable_id": "source-session-queue",
+            "source_type": "pending_queue",
+            "fields": {
+                "items": [{"key": 31, "text": "待继续发送", "attachments": [], "references": []}],
+                "updated_at": "2026-10-02T00:00:00+00:00",
+            },
+            "relations": [{
+                "relation_type": "session", "target_type": "conversation",
+                "target_portable_id": "source-session",
+            }],
+        },
+    ]
+    archive_data, manifest = _archive_from_records({
+        "records/conversations/sessions.jsonl": ("conversations", [records[0]]),
+        "records/conversations/drafts.jsonl": ("drafts", [records[1]]),
+    })
+
+    with zipfile.ZipFile(io.BytesIO(archive_data), "r") as archive:
+        result = await apply_incremental_archive(
+            db, user=user_a, archive=archive, manifest=manifest,
+            job_id=uuid4(), written_storage_keys=[],
+        )
+    session = (await db.execute(select(ConversationSession).where(
+        ConversationSession.user_id == user_a.id,
+        ConversationSession.title == "有待发内容的会话",
+    ))).scalar_one()
+    queue = (await db.execute(select(ConversationPendingQueue).where(
+        ConversationPendingQueue.user_id == user_a.id,
+    ))).scalar_one()
+
+    assert result["created"] == 2
+    assert queue.session_id == session.id
+    assert queue.queue_id == session_pending_queue_id(session.id)
+    assert await get_pending_queue_for_session(db, user_id=user_a.id, session_id=session.id) == [{
+        "key": 31, "text": "待继续发送", "attachments": [], "references": [],
+        "queue_id": session_pending_queue_id(session.id), "session_id": session.id, "claimed": False,
+    }]
+
+
+@pytest.mark.asyncio
+async def test_draft_only_projection_drops_session_relation_and_imports_recoverable_draft(db, user_a):
+    """只导出 drafts 时投影移除会话关系，导入后成为可被草稿恢复接口发现的队列。"""
+    source_session = ConversationSession(user_id=user_a.id, title="不随草稿导出的会话", source="web")
+    db.add(source_session)
+    await db.flush()
+    source_queue = ConversationPendingQueue(
+        user_id=user_a.id, queue_id=session_pending_queue_id(source_session.id),
+        session_id=source_session.id,
+        items=[{"key": 32, "text": "只导出草稿", "attachments": [], "references": []}],
+    )
+    db.add(source_queue)
+    await db.flush()
+    queue_spec = next(spec for spec in RECORD_SPECS if spec.record_type == "pending_queue")
+    portable_queue = await project_record(
+        db, user_id=user_a.id, origin_id=uuid4(), spec=queue_spec, row=source_queue,
+        identities={("pending_queue", str(source_queue.id)): "source-draft-only"},
+        selected_categories={"drafts"},
+    )
+
+    assert portable_queue.relations == []
+    archive_data, manifest = _archive_from_records({
+        "records/conversations/drafts.jsonl": ("drafts", [portable_queue.model_dump(mode="json")]),
+    })
+    with zipfile.ZipFile(io.BytesIO(archive_data), "r") as archive:
+        result = await apply_incremental_archive(
+            db, user=user_a, archive=archive, manifest=manifest,
+            job_id=uuid4(), written_storage_keys=[],
+        )
+    imported = (await db.execute(select(ConversationPendingQueue).where(
+        ConversationPendingQueue.user_id == user_a.id,
+        ConversationPendingQueue.id != source_queue.id,
+    ))).scalar_one()
+
+    assert result["created"] == 1
+    assert imported.session_id is None
+    assert imported.queue_id.startswith("import-")
     assert len(await list_imported_draft_queues(db, user_id=user_a.id)) == 1
 
 

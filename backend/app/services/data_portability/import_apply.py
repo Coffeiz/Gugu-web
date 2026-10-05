@@ -183,6 +183,15 @@ async def apply_incremental_archive(
                         target_spec = _SPEC_BY_TYPE[relation.target_type]
                         target_python_type = target_spec.model.__table__.columns[target_spec.id_field].type.python_type
                         values[ref_spec[0]] = target_python_type(target_id)
+                    if record_type == "pending_queue":
+                        from app.services.conversation_pending_queue import session_pending_queue_id
+                        session_id = values.get("session_id")
+                        # session_id 是 relation，必须等目标会话映射完成后再决定队列 ID。
+                        # 未导出会话的草稿则保持 sessionless，以便草稿恢复接口发现。
+                        values["queue_id"] = (
+                            session_pending_queue_id(session_id)
+                            if session_id is not None else f"import-{uuid.uuid4().hex}"
+                        )
                     if record_type == "mind_node" and values.get("kind") == "ref" and (
                         values.get("ref_type") is None or values.get("ref_id") is None
                     ):
@@ -344,15 +353,6 @@ def _apply_safety_defaults(record_type: str, values: dict[str, Any], user: User)
         values.setdefault("digest", hashlib.sha256(
             f"{values.get('version', 'v1')}:{values.get('round_id') or ''}:{uuid.uuid4().hex}".encode()
         ).hexdigest())
-    elif record_type == "pending_queue":
-        from app.services.conversation_pending_queue import session_pending_queue_id
-        session_id = values.get("session_id")
-        # 新对话草稿原本使用浏览器 sessionStorage 中的标签级 ID；该 ID 不可移植。
-        # 用专属前缀生成目标端 ID，供聊天页的导入草稿恢复接口安全发现。
-        values["queue_id"] = (
-            session_pending_queue_id(session_id)
-            if session_id is not None else f"import-{uuid.uuid4().hex}"
-        )
     elif record_type == "skill":
         values["content_digest"] = hashlib.sha256(str(values.get("body") or "").encode()).hexdigest()
 
