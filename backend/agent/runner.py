@@ -31,15 +31,7 @@ from agent.run.execution import (
     consume_agent_events,
 )
 from agent.run.finalization import finalize_agent_run, persist_interrupted_agent_run
-from agent.run.preparation import (   # 兼容再导出（web.py/scheduled_execution/测试）
-    _apply_capability_context,
-    _capability_context,
-    _filter_shell_tool,
-    _load_mcp_tools,
-    _pin_session_user_skill_metadata,
-    _session_user_skill_metadata,
-    prepare_agent_run,
-)
+from agent.run.preparation import prepare_agent_run
 
 
 async def _run_collect_unlocked(

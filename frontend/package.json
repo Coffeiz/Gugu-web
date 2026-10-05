@@ -1,6 +1,6 @@
 {
   "name": "gugu-web",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
@@ -15,7 +15,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:mutation": "stryker run stryker.config.mjs",
-    "test:fast": "vitest run src test",
+    "test:fast": "vitest run tests",
     "test:css-glass": "node scripts/check-css-glass-regression.mjs",
     "test:ui-dialogs": "node scripts/check-ui-dialog-regression.mjs",
     "licenses:generate": "node ../scripts/licenses/generate-licenses.mjs",

@@ -180,6 +180,13 @@ migrate:     ## 跑数据库迁移（用 venv 绝对路径，不踩 PEP 668）
 backup:      ## 备份数据库 + Gugu-data/users + override 配置
 	./backup.sh
 
+workspace-layout-plan: ## 只读预检统一工作区迁移
+	@$(VENV_BIN)/python -m scripts.migrations.migrate_workspace_layout --allow-real-data
+
+workspace-layout-migrate: ## 停服后显式迁移所有用户工作区
+	@test "$(SERVICES_STOPPED)" = "1" || { echo "请停服并传入 SERVICES_STOPPED=1"; exit 1; }
+	@$(VENV_BIN)/python -m scripts.migrations.migrate_workspace_layout --allow-real-data --apply --services-stopped
+
 # ── systemd ──────────────────────────────────────────────
 install:     ## 装成 systemd 服务（egress + sandboxd + web + IM worker + IM gateway）
 	@$(MAKE) sandbox-acl-prepare

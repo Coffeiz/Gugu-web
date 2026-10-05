@@ -18,7 +18,7 @@ from pydantic import BaseModel, field_validator
 from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import FileSyncSettings, get_settings, save_override
+from app.core.config import FileSyncSettings, SmtpSettings, get_settings, save_override
 from app.core.redaction import diag_log, redact
 from app.db.session import create_all_tables, reset_engine, get_db
 from app.services.multimodal_probe import make_silent_wav
@@ -59,6 +59,27 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         agent_patch = body.patch.get("agent")
         sandbox_patch = body.patch.get("sandbox")
         filesync_patch = body.patch.get("filesync")
+        smtp_patch = body.patch.get("smtp")
+        if isinstance(smtp_patch, dict) and "registration_verification_enabled" in smtp_patch:
+            if type(smtp_patch["registration_verification_enabled"]) is not bool:
+                raise HTTPException(
+                    status_code=400,
+                    detail="smtp.registration_verification_enabled 必须是布尔值",
+                )
+            if smtp_patch["registration_verification_enabled"]:
+                from app.services.email.capabilities import is_system_email_configured
+
+                current_settings = get_settings()
+                candidate_smtp = SmtpSettings.model_validate({
+                    **current_settings.smtp.model_dump(),
+                    **smtp_patch,
+                })
+                candidate_settings = current_settings.model_copy(update={"smtp": candidate_smtp})
+                if not is_system_email_configured(candidate_settings):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="请先配置系统 SMTP，再开启注册邮箱认证",
+                    )
         if isinstance(sandbox_patch, dict):
             from app.core.config import SandboxSettings
             unknown_sandbox_fields = set(sandbox_patch) - SandboxSettings.model_fields.keys()

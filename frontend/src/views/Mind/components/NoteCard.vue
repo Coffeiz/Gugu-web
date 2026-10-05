@@ -61,7 +61,7 @@
         </template>
       </CardAffordances>
       <div v-if="bodyMd" ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
-           @click="onBodyClick" v-html="previewHtml"></div>
+           @click="onBodyClick" v-mind-preview="previewHtml"></div>
       <button v-if="clamped && !canvasMode" class="nc-expand" @pointerdown.stop @click.stop="expanded = !expanded">
         {{ expanded ? t('mindUi.collapseContent') : t('mindUi.expandContent') }}
       </button>
@@ -88,6 +88,7 @@ import type { MindNote } from '@/services/api'
 import CardAffordances from '@/components/common/mind/CardAffordances.vue'
 import ColorSwatches from './ColorSwatches.vue'
 import NoteEditor from './NoteEditor.vue'
+import { vMindPreview } from '../directives/mindPreview'
 
 // Markdown 预览会在时间轴卡片、画布卡片之间复用相同正文。按正文缓存有限数量的 HTML，避免
 // 实时刷新或卡片重新挂载时重复做代码高亮；限制容量避免长期编辑造成无界内存增长。
@@ -387,7 +388,7 @@ async function measureClamp() {
   if (expanded.value) return   // 展开着就保持"可收起"，不重判
   clamped.value = el.scrollHeight > el.clientHeight + 2
 }
-/** 预览由 v-html 生成，引用的缺失状态在渲染后补到对应 chip 上。 */
+/** 预览由 Markdown 生成，引用的缺失状态在渲染后补到对应 chip 上。 */
 async function refreshReferenceStates() {
   await nextTick()
   const refs = bodyRef.value?.querySelectorAll<HTMLElement>('.mind-ref[data-ref-type][data-ref-id]') ?? []
@@ -404,7 +405,8 @@ watch(() => props.note.contentMd, () => { expanded.value = false; measureClamp()
 function onBodyClick(e: MouseEvent) {
   const t = e.target as HTMLElement
   if (t instanceof HTMLInputElement && t.dataset.taskIdx !== undefined) {
-    e.preventDefault()   // 视觉状态由 PATCH 成功后的数据回流驱动，别让浏览器先勾上
+    // 保留原生勾选：阻止默认行为会在 click 收尾时撤回 checked，覆盖 Vue 的乐观更新。
+    // 正文只原位同步待办状态，失败时由 Store 回滚，不会重建 checkbox 中断过渡。
     // 标题只会摘掉真正的 # 标题行，待办/列表都不会被摘，body 里的序号就是完整 content 里的真实序号
     emit('toggle-task', Number(t.dataset.taskIdx))
     return
@@ -507,7 +509,10 @@ defineExpose({ rootEl: cardRef })
 /* 编辑态标题区：跟只读态 .nc-title 同样字号字重，固定分割线跟正文区隔开（不管有没有
    打字都分——按区域区分，不是靠有没有内容判断）。 */
 .nc-title-input {
-  flex-shrink: 0; width: 100%;
+  display: block; flex-shrink: 0; width: 100%; box-sizing: border-box;
+  /* 普通单行输入会继承全站控件高度，不适合卡片内联标题；这里按标题行高 + 下留白 + 分割线定高，
+     使编辑态的标题基线和分割线位置与只读态一致。 */
+  height: calc(1.35em + 8px);
   border: none; outline: none; background: none; padding: 0 0 7px; margin-bottom: 4px;
   border-bottom: 1px solid rgba(80,90,110,0.1);
   font-size: 14px; font-weight: 600; line-height: 1.35;
@@ -618,6 +623,6 @@ defineExpose({ rootEl: cardRef })
 .nc-done-btn:hover { background: rgba(123,127,178,0.12); }
 </style>
 
-<!-- v-html 出来的预览内容不能 scoped；排版规则跟 NoteEditor.vue 共用同一份文件，
+<!-- Markdown 生成的预览内容不能 scoped；排版规则跟 NoteEditor.vue 共用同一份文件，
      两边数值必须一致，见 mind-content.css 顶部注释 -->
 <style src="./mind-content.css"></style>

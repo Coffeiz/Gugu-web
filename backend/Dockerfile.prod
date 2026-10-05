@@ -117,6 +117,7 @@ COPY backend/app ./app
 COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY backend/onboarding ./onboarding
+COPY backend/scripts/migrations ./scripts/migrations
 COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py

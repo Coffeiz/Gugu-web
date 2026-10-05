@@ -10,12 +10,12 @@
       </ActionButton>
     </div>
     <form v-if="secretFields.length && !resolved" class="interaction-secrets" @submit.prevent="submitSecrets">
-      <label v-for="field in secretFields" :key="field.name" class="interaction-secret-field">
+      <div v-for="field in secretFields" :key="field.name" class="interaction-secret-field">
         <span>{{ field.label }}</span>
         <input v-model="secretValues[field.name]" type="password" autocomplete="new-password"
                :name="`mcp-secret-${field.name}`" :disabled="submitting || expired"
-               spellcheck="false" required />
-      </label>
+               :aria-label="field.label" spellcheck="false" required />
+      </div>
       <ActionButton class="interaction-secret-submit" fit type="submit"
                     :disabled="resolved || submitting || expired || !secretsReady">
         {{ t('chatUi.submitSecretFields') }}

@@ -340,6 +340,28 @@ async def test_update_file_rename_and_extension_resolves_conflict(db, user_a, tm
     assert await svc.storage.get(existing.file.storage_key) == b"existing"
 
 
+@pytest.mark.parametrize("new_ext", ["png", "jpg", "zip", "pyc", "docx"])
+async def test_update_file_rejects_text_to_binary_suffix_without_moving_bytes(
+    db, user_a, tmp_path, new_ext,
+):
+    """REST 共用 FileService 必须挡住文本字节改挂常见二进制后缀。"""
+    svc = _svc(db, tmp_path)
+    result = await _create(svc, user_a.id, "readme", "md", data=b"plain text", mime_type="text/markdown")
+    await db.commit()
+    old_key = result.file.storage_key
+
+    with pytest.raises(Invalid, match="不能仅通过改后缀"):
+        await svc.update_file(
+            user_a.id, result.file.id, display_name="readme", ext=new_ext, stage_name=None,
+            folder_id=None, project_id=None, folder_set=False, project_set=False,
+        )
+
+    await db.refresh(result.file)
+    assert result.file.storage_key == old_key
+    assert result.file.ext == "md"
+    assert await svc.storage.get(old_key) == b"plain text"
+
+
 async def test_update_file_not_found(db, user_a, tmp_path):
     svc = _svc(db, tmp_path)
     with pytest.raises(NotFound):
@@ -640,7 +662,7 @@ async def test_update_file_cut_into_workspace_subfolder_keeps_folder(db, user_a,
     assert res.file.space == "workspace"
     assert res.file.workspace_directory_id == ws.id
     assert res.file.folder_id == sub.id
-    assert res.file.storage_key == f"{user_a.id}/workspace-w/子目录/a.txt"
+    assert res.file.storage_key == f"{user_a.id}/workspace/workspace-w/子目录/a.txt"
 
 
 @pytest.mark.asyncio
@@ -665,7 +687,7 @@ async def test_update_file_cross_workspace_without_folder_lands_at_root(db, user
     await db.commit()
     assert res.file.workspace_directory_id == ws_b.id
     assert res.file.folder_id is None
-    assert res.file.storage_key == f"{user_a.id}/workspace-b/a.txt"
+    assert res.file.storage_key == f"{user_a.id}/workspace/workspace-b/a.txt"
 
     # 显式指到别的 Workspace 的文件夹 → 归属校验拒绝
     sub_b = await svc.create_folder(user_a.id, name="B子目录", parent_id=None,

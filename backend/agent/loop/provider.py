@@ -12,6 +12,8 @@ import logging
 import time
 from typing import Any
 
+import httpx
+
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
 from app.core.retry import LLM_RETRY
@@ -19,7 +21,7 @@ from app.core.retry import LLM_RETRY
 _log = logging.getLogger("agent.core.loop.provider")
 
 # ⑦ 慢尾兜底：LLM 瞬时错误（限流 429 / 超时 / 网络 / 5xx / 过载 529）统一按
-# app/core/retry.py 的节奏重试——固定 5s 间隔、最多 5 次、总墙钟 90s 先到为准。
+# app/core/retry.py 的主对话节奏重试——固定 5s 间隔、最多 5 次。
 # 只在「本轮还没吐 token 前」重试（已吐过再重试会重复输出）。
 # OverloadedError（529）是 APIStatusError 的直接子类、不是 InternalServerError
 # 的子类（2026-09-18 MiniMax 高峰 529 连穿排查确认），必须显式列出。
@@ -41,7 +43,8 @@ async def stream_round(client, kwargs, adapter=None):
     import anthropic
     transient = (anthropic.RateLimitError, anthropic.APITimeoutError,
                  anthropic.APIConnectionError, anthropic.InternalServerError,
-                 anthropic.OverloadedError)
+                 anthropic.OverloadedError, httpx.TimeoutException,
+                 httpx.NetworkError, httpx.RemoteProtocolError)
     if adapter is not None:
         # 各 provider 专属的「流式响应跟 SDK 期望 schema 对不上」容错，只加给对应 provider——
         # 见 agent/providers.py 里每个适配器 transient_exceptions 的注释（MiniMax 的
@@ -55,9 +58,10 @@ async def stream_round(client, kwargs, adapter=None):
             return "rate_limited"
         if isinstance(exc, anthropic.OverloadedError):
             return "overloaded"
-        if isinstance(exc, anthropic.APITimeoutError):
+        if isinstance(exc, (anthropic.APITimeoutError, httpx.TimeoutException)):
             return "timeout"
-        if isinstance(exc, anthropic.APIConnectionError):
+        if isinstance(exc, (anthropic.APIConnectionError, httpx.NetworkError,
+                            httpx.RemoteProtocolError)):
             return "network"
         if isinstance(exc, anthropic.InternalServerError):
             return "server_error"

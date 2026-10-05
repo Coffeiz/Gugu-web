@@ -112,6 +112,39 @@ async def test_update_preferences_persists_intermediate_reply_preference(monkeyp
     assert result.showIntermediateReplies is False
 
 
+def test_decision_guard_preference_defaults_to_disabled(monkeypatch):
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(
+        agent=SimpleNamespace(personality_preference_enabled=False),
+    ))
+
+    result = preferences_api._to_response({})
+
+    assert result.decisionGuardEnabled is False
+
+
+@pytest.mark.asyncio
+async def test_update_preferences_persists_decision_guard_preference(monkeypatch):
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(
+        agent=SimpleNamespace(personality_preference_enabled=False),
+    ))
+    prefs = _Prefs()
+
+    async def fake_get_or_create(_user, _db):
+        return prefs
+
+    monkeypatch.setattr(preferences_api, "_get_or_create", fake_get_or_create)
+    monkeypatch.setattr(preferences_api, "read_personality_file", lambda _user_id: None)
+
+    result = await preferences_api.update_preferences(
+        PreferencesUpdate(decisionGuardEnabled=True),
+        SimpleNamespace(id="synthetic-user"),
+        _Db(),
+    )
+
+    assert prefs.data["decision_guard_enabled"] is True
+    assert result.decisionGuardEnabled is True
+
+
 @pytest.mark.asyncio
 async def test_update_preferences_persists_personality_and_invalidates_snapshot(monkeypatch):
     prefs = _Prefs()

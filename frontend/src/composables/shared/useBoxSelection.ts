@@ -12,8 +12,10 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
   parseFolderId   = ((v: string) => v as F),
   onBoxSelect     = null,
   onClear         = null,
+  getItemsInBox,
 }: {
   fileAttr?: string
+  getItemsInBox?: (box: { left: number; top: number; width: number; height: number }) => { fileIds: Set<number>; folderIds: Set<F> } | null
   folderAttr?: string
   extraFolderAttrs?: string[]
   excludeSelector?: string
@@ -67,6 +69,8 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
   function _getItemsInBox() {
     const rect = selectionRect.value
     if (!rect || !containerRef.value) return { fileIds: new Set<number>(), folderIds: new Set<F>() }
+    const virtualItems = getItemsInBox?.(rect)
+    if (virtualItems) return virtualItems
     const cRect     = containerRef.value.getBoundingClientRect()
     const st        = containerRef.value.scrollTop
     const fileIds   = new Set<number>()

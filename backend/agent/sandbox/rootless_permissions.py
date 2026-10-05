@@ -125,11 +125,11 @@ def build_permission_plan(
     commands = head + (
         ("setfacl", "-m", f"u:{login}:rwx,g:{gid}:rwx", str(resolved)),
         ("setfacl", "-d", "-m", f"u::rwx,u:{login}:rwx,g::rwx,g:{gid}:rwx,m::rwx", str(resolved)),
-        # 递归只处理属于 login 的条目：沙盒映射身份在目录里创建的文件不归
-        # 部署用户所有，setfacl 会 EPERM 并中断整批；这些条目沙盒天然可读写，
-        # 无需补 ACL（find -user 接受数字 UID，兼容初始化容器无 passwd 的情况）。
+        # 递归只处理属于 login 的普通文件：沙盒映射身份创建的条目不归部署用户所有，
+        # 无需补 ACL。明确排除符号链接：setfacl 会跟随链接修改目标，可能越出 workspace
+        # 并触碰 systemd 保护的只读系统文件（find -user 接受数字 UID）。
         (
-            "find", str(resolved), "-user", login, "-exec", "setfacl", "-m",
+            "find", str(resolved), "-type", "f", "-user", login, "-exec", "setfacl", "-m",
             f"u:{login}:rwX,g:{gid}:rwX", "{}", "+",
         ),
         # 仅给根目录设置 default ACL 不够：文件库里已经存在的子目录不会

@@ -177,6 +177,22 @@ async def get_import(job_id: UUID, user: User = Depends(get_current_user), db: A
     return _import_view(row)
 
 
+@router.post("/imports/{job_id}/resume")
+async def resume_import(
+    job_id: UUID,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """恢复当前用户预检任务的确认能力；令牌仅在此响应中返回。"""
+    try:
+        row, token = await api_jobs.resume_preflight_import(db, user_id=user.id, job_id=job_id)
+    except PortabilityJobError as exc:
+        _raise_job_error(exc)
+    response.headers["Cache-Control"] = "no-store"
+    return _import_view(row, include_token=token)
+
+
 @router.post("/imports/{job_id}/apply", status_code=202)
 async def apply_import(
     job_id: UUID,
@@ -207,6 +223,22 @@ async def cancel_import(job_id: UUID, user: User = Depends(get_current_user), db
         except Exception as exc:
             diag_log("data_portability.cancel_cleanup", exc)
     return _import_view(row)
+
+
+@router.delete("/imports/{job_id}", status_code=204)
+async def delete_import(job_id: UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """删除已结束的失败/预检任务及其私有暂存，不删除已导入数据。"""
+    try:
+        row, storage_keys = await api_jobs.delete_import_job(db, user_id=user.id, job_id=job_id)
+    except PortabilityJobError as exc:
+        _raise_job_error(exc)
+    for key in storage_keys:
+        try:
+            await get_storage().delete(key)
+        except Exception as exc:
+            diag_log("data_portability.import_delete", exc)
+            raise HTTPException(status_code=503, detail="导入暂存数据暂时无法删除，请稍后重试") from None
+    await api_jobs.finish_delete_import_job(db, row)
 
 
 @router.post("/imports/{job_id}/rollback", status_code=202)

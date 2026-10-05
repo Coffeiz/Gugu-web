@@ -12,30 +12,11 @@ def test_local_sandbox_rejects_shell_operators(tmp_path):
         asyncio.run(sandbox.execute("pwd && echo escaped"))
 
 
-@pytest.mark.parametrize("command", [
-    "bash payload.sh", "sh payload.sh", "perl payload.pl", "awk -f payload.awk",
-    "sed -f payload.sed", "env bash payload.sh", "xargs -a payload.txt bash",
-    "bash -lc 'python3 payload.py'", "python3 -m package", "pytest tests",
-])
-def test_local_sandbox_rejects_all_code_runtime_entry_points(tmp_path, command):
-    (tmp_path / "payload.sh").write_text("echo blocked\n", encoding="utf-8")
-    (tmp_path / "payload.py").write_text("print('blocked')\n", encoding="utf-8")
-    sandbox = LocalWorkspaceExecutor(tmp_path)
-    with pytest.raises(ValueError, match="普通 Shell"):
-        asyncio.run(sandbox.execute(command))
-
-
-def test_local_sandbox_rejects_interpreter_eval_mode(tmp_path):
-    sandbox = LocalWorkspaceExecutor(tmp_path)
-    with pytest.raises(ValueError, match="普通 Shell"):
-        asyncio.run(sandbox.execute("bash -c 'source payload.sh'"))
-
-
-def test_local_sandbox_allows_only_explicit_script_bypass(tmp_path):
-    sandbox = LocalWorkspaceExecutor(tmp_path)
-    sandbox._validate_workspace_argv(
-        ["python3", "payload.py"], tmp_path, allow_script_execution=True,
-    )
+def test_local_executor_runs_code_without_script_specific_bypass(tmp_path):
+    (tmp_path / "payload.py").write_text("print('runtime-ok')\n", encoding="utf-8")
+    result = asyncio.run(LocalWorkspaceExecutor(tmp_path).execute("python3 payload.py"))
+    assert result.ok
+    assert result.stdout.strip() == "runtime-ok"
 
 
 def test_local_sandbox_still_allows_reading_workspace_files_without_interpreter(tmp_path):
@@ -44,13 +25,6 @@ def test_local_sandbox_still_allows_reading_workspace_files_without_interpreter(
     result = asyncio.run(sandbox.execute("cat payload.txt"))
     assert result.ok
     assert result.stdout == "$(id)\n"
-
-
-def test_system_executor_can_run_workspace_script_inputs_without_sandbox_restriction(tmp_path):
-    (tmp_path / "build.py").write_text("print('ok')\n", encoding="utf-8")
-    executor = LocalWorkspaceExecutor(tmp_path, restrict_interpreter_inputs=False)
-    # 只验证 system scope 的边界开关，不执行脚本，避免测试产生副作用。
-    executor._validate_workspace_argv(["python", "build.py"], tmp_path)
 
 
 def test_local_sandbox_runs_inside_workspace(tmp_path):
@@ -62,11 +36,19 @@ def test_local_sandbox_runs_inside_workspace(tmp_path):
 
 
 def test_system_executor_accepts_absolute_cwd():
-    executor = LocalWorkspaceExecutor("/", restrict_interpreter_inputs=False)
+    executor = LocalWorkspaceExecutor("/")
 
     resolved = Path("/tmp").resolve()
     assert executor._resolve_cwd("/tmp") == resolved
     assert executor._cwd_value(resolved) == str(resolved)
+
+
+def test_system_executor_supports_inline_runtime_command():
+    result = asyncio.run(LocalWorkspaceExecutor("/").execute(
+        "python3 -c \"print('inline-ok')\"",
+    ))
+    assert result.ok
+    assert result.stdout.strip() == "inline-ok"
 
 
 def test_local_sandbox_returns_shell_error_for_missing_command(tmp_path):
@@ -183,14 +165,3 @@ def test_local_sandbox_allows_proc_word_but_not_proc_absolute_path(tmp_path):
     assert (tmp_path / "proc_test").is_file()
     with pytest.raises(ValueError, match="绝对路径"):
         asyncio.run(sandbox.execute("cat /proc/self/status"))
-
-
-def test_local_sandbox_passes_runtime_environment_to_script(tmp_path):
-    script = tmp_path / "env.py"
-    script.write_text("import os; print(os.environ['GUGU_SCRIPT_PATH'])", encoding="utf-8")
-    result = asyncio.run(LocalWorkspaceExecutor(tmp_path).execute(
-        "python3 env.py", allow_script_execution=True,
-        environment={"GUGU_SCRIPT_PATH": "jobs/env.py"},
-    ))
-    assert result.ok
-    assert result.stdout.strip() == "jobs/env.py"

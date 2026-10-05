@@ -82,6 +82,28 @@ def test_knowledge_keywords_keep_native_array_and_other_tools_remain_strict():
     assert unrelated_adaptations == []
 
 
+def test_update_knowledge_content_object_gets_targeted_safe_repair():
+    """对象正文应被拒绝并给出可用形状，不把分块内容猜测性拼接或回显。"""
+    tool = global_registry.get("update_knowledge")
+    assert tool is not None
+    instance = {
+        "knowledge_id": "knowledge-test",
+        "content": {"token": "synthetic-private-fragment", "$text": "another-fragment"},
+    }
+    normalized, adaptations = normalize_legacy_input("update_knowledge", instance)
+    issues = validate_input(build_validator(tool.input_schema), normalized)
+    payload = invalid_input_payload(
+        "update_knowledge", issues, schema=tool.input_schema, instance=normalized,
+    )
+
+    assert normalized["content"] == instance["content"]
+    assert adaptations == []
+    assert any(issue["path"] == "content" and issue["rule"] == "type" for issue in issues)
+    assert any("合并后的完整正文" in hint for hint in payload["schema_hints"])
+    assert "只更新标题、主题、关键词或描述时省略 content" in payload["next_action"]
+    assert "synthetic-private-fragment" not in json.dumps(payload, ensure_ascii=False)
+
+
 def test_unwrap_arguments_wrapper_only_when_inner_fields_match_schema():
     schema = {
         "type": "object",

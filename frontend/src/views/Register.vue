@@ -18,6 +18,20 @@
           <input v-model="form.email" type="email" placeholder="your@email.com"
             autocomplete="email" :disabled="loading" />
         </div>
+        <div v-if="registrationVerificationEnabled" class="field">
+          <label>{{ t('auth.registrationCode') }}</label>
+          <div class="code-field-row">
+            <input v-model="form.verificationCode" type="text" inputmode="numeric" maxlength="6"
+              autocomplete="one-time-code" :placeholder="t('auth.registrationCodePlaceholder')"
+              :disabled="loading" />
+            <ActionButton variant="secondary" fit :disabled="loading || codeSending || codeCountdown > 0"
+              @click="sendRegistrationCode">
+              {{ codeSending ? t('auth.registrationCodeSending') : codeCountdown > 0
+                ? t('auth.resendAfter', { seconds: codeCountdown }) : t('auth.sendRegistrationCode') }}
+            </ActionButton>
+          </div>
+          <p class="field-hint">{{ t('auth.registrationCodeHint') }}</p>
+        </div>
         <div class="field">
           <label>{{ t('auth.password') }}</label>
           <input v-model="form.password" type="password" :placeholder="t('auth.passwordRule')"
@@ -34,8 +48,10 @@
         </Checkbox>
 
         <div v-if="error" class="error-msg">{{ error }}</div>
+        <div v-if="notice" class="success-msg">{{ notice }}</div>
+        <div v-if="configError" class="error-msg">{{ t('auth.registrationConfigFailed') }}</div>
 
-        <button type="submit" class="btn-primary" :disabled="loading">
+        <button type="submit" class="btn-primary" :disabled="loading || configLoading || configError">
           <span>{{ loading ? t('auth.registering') : t('auth.register') }}</span>
         </button>
       </form>
@@ -55,28 +71,77 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { onBeforeUnmount, onMounted, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AuthBrand from '@/components/common/auth/AuthBrand.vue'
 import AuthPageFooter from '@/components/common/auth/AuthPageFooter.vue'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import { authApi, fetchSiteConfig } from '@/services/api'
 import { useI18n } from 'vue-i18n'
 import { getRegistrationValidationError } from '@/utils/registrationValidation'
 
 const router  = useRouter()
 const auth    = useAuthStore()
-const form    = reactive({ username: '', email: '', password: '', confirmPassword: '', emailSubscribed: false })
+const form    = reactive({ username: '', email: '', password: '', confirmPassword: '', verificationCode: '', emailSubscribed: false })
 const loading      = ref(false)
 const error        = ref('')
+const notice       = ref('')
+const codeSending  = ref(false)
+const codeCountdown = ref(0)
+const registrationVerificationEnabled = ref(false)
+const configLoading = ref(true)
+const configError = ref(false)
+let countdownTimer: ReturnType<typeof setInterval> | undefined
 const { t } = useI18n()
 
+async function loadRegistrationConfig() {
+  try {
+    registrationVerificationEnabled.value = (await fetchSiteConfig()).registrationVerificationEnabled === true
+  } catch {
+    configError.value = true
+  } finally {
+    configLoading.value = false
+  }
+}
+
+async function sendRegistrationCode() {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+    error.value = t('auth.invalidEmail')
+    return
+  }
+  codeSending.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    await authApi.sendRegistrationCode(form.email.trim())
+    notice.value = t('auth.registrationCodeSent')
+    codeCountdown.value = 60
+    countdownTimer = setInterval(() => {
+      codeCountdown.value = Math.max(0, codeCountdown.value - 1)
+      if (!codeCountdown.value && countdownTimer) {
+        clearInterval(countdownTimer)
+        countdownTimer = undefined
+      }
+    }, 1000)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : t('auth.operationFailed')
+  } finally {
+    codeSending.value = false
+  }
+}
+
 async function handleRegister() {
+  if (registrationVerificationEnabled.value && !/^\d{6}$/.test(form.verificationCode)) {
+    error.value = t('auth.registrationCodeRequired')
+    return
+  }
   const validationError = getRegistrationValidationError(form)
   if (validationError) { error.value = t(`auth.${validationError}`); return }
   loading.value = true; error.value = ''
   try {
-    await auth.register(form.username, form.email, form.password, form.emailSubscribed)
+    await auth.register(form.username, form.email, form.password, form.emailSubscribed, form.verificationCode || undefined)
     router.push('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('auth.operationFailed')
@@ -84,6 +149,9 @@ async function handleRegister() {
     loading.value = false
   }
 }
+
+onMounted(() => { void loadRegistrationConfig() })
+onBeforeUnmount(() => { if (countdownTimer) clearInterval(countdownTimer) })
 </script>
 
 <style scoped>
@@ -138,6 +206,15 @@ async function handleRegister() {
 }
 .field input::placeholder { color: #b0b4c4; }
 .field input:disabled { opacity: 0.5; }
+
+.code-field-row { display: flex; align-items: center; gap: 8px; }
+.code-field-row input { min-width: 0; flex: 1; }
+.field-hint { margin: 6px 0 0; color: var(--content-tertiary); font-size: 11px; line-height: 1.5; }
+.success-msg {
+  font-size: 12px; color: var(--status-success); margin-bottom: 12px;
+  padding: 8px 12px; border-radius: 9px; background: var(--status-success-bg);
+  border: 1px solid color-mix(in srgb, var(--status-success) 18%, transparent);
+}
 
 .subscribe-row { width:100%; box-sizing:border-box; justify-content:center; margin:2px 0 14px; color:#8a8fa8; font-size:12px; line-height:1.45; text-align:center; }
 

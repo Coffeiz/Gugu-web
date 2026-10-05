@@ -106,6 +106,19 @@ async def test_preparation_parity_between_collect_and_stream_modes(db, user_a, u
 
     monkeypatch.setattr(run_preparation, "_load_mcp_tools", fake_mcp)
     monkeypatch.setattr(run_preparation, "_capability_context", fake_capability)
+
+    async def allow_shell(_db, _user_id, _session_id, names, **_kwargs):
+        return list(dict.fromkeys([*names, "shell"]))
+
+    shell_prompt = "## 测试用本轮 Shell 状态"
+    shell_prompt_calls = []
+
+    async def fake_shell_prompt(*_args, **_kwargs):
+        shell_prompt_calls.append(True)
+        return shell_prompt
+
+    monkeypatch.setattr(run_preparation, "_filter_shell_tool", allow_shell)
+    monkeypatch.setattr("agent.security.shell_policy.build_dynamic_prompt", fake_shell_prompt)
     monkeypatch.setattr(run_preparation, "_pin_session_user_skill_metadata", lambda *a, **k: False)
     monkeypatch.setattr(run_preparation, "LLMRunner", _StubRunner)
     monkeypatch.setattr(run_context, "prepare_run", fake_prepare_run)
@@ -136,6 +149,12 @@ async def test_preparation_parity_between_collect_and_stream_modes(db, user_a, u
     )
     assert isinstance(exec_collect, PreparedExecution)
     assert isinstance(exec_stream, PreparedExecution)
+    # Shell 状态每轮重算，但应留在固定 system 区域，而不是 Canonical 历史的动态尾部。
+    assert shell_prompt in exec_collect.system_prompt
+    assert shell_prompt in exec_stream.system_prompt
+    assert len(shell_prompt_calls) == 2
+    assert captured_prepare_run_kwargs[0]["extra_reminder"] is None
+    assert captured_prepare_run_kwargs[1]["extra_reminder"] is None
 
     fp_collect = _fingerprint(exec_collect)
     fp_stream = _fingerprint(exec_stream)

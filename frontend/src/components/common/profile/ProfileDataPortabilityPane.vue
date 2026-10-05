@@ -39,36 +39,63 @@
           {{ importing ? t('profileDataUi.importing') : t('profileDataUi.preflight') }}
         </button>
       </div>
-      <article v-if="importJob" class="data-job">
+    </div>
+
+    <div class="data-jobs">
+      <h4>{{ t('profileDataUi.importJobs') }}</h4>
+      <p v-if="importJobs.length === 0 && !loadingJobs" class="data-muted">{{ t('profileDataUi.importEmpty') }}</p>
+      <article v-for="job in importJobs" :key="job.id" class="data-job">
         <div class="data-job-copy">
-          <strong>{{ t(`profileDataUi.${importStatusKey}`) }}</strong>
-          <small v-if="importJob.preview">
-            {{ t('profileDataUi.importCounts', { add: plannedImportCounts.add, skip: plannedImportCounts.skip }) }}
+          <strong>{{ t(`profileDataUi.${isPreflightExpired(job) ? 'preflightExpired' : jobStatusKey(job.status)}`) }}</strong>
+          <small>{{ t('profileDataUi.importJobMode', { mode: t(`profileDataUi.mode_${job.mode}`) }) }}</small>
+          <template v-if="job.status === 'preview_ready' && job.preview">
+            <small>{{ t('profileDataUi.importCounts', { add: plannedImportCounts(job).add, skip: plannedImportCounts(job).skip }) }}</small>
+            <small v-if="job.preview.conflicts?.total" class="data-conflict">
+              {{ t('profileDataUi.importConflicts', { count: job.preview.conflicts.total }) }}
+            </small>
+            <small v-if="job.preview.compatibility?.mind_refs_as_notes" class="data-muted">
+              {{ t('profileDataUi.mindRefsAsNotes', { count: job.preview.compatibility.mind_refs_as_notes }) }}
+            </small>
+            <small v-if="job.preview.complete && job.preview.replace">
+              {{ t('profileDataUi.replaceCounts', { current: replaceCurrentTotal(job), incoming: replaceIncomingTotal(job) }) }}
+            </small>
+            <small v-if="!job.preview.complete">{{ t('profileDataUi.replaceUnavailable') }}</small>
+            <small v-if="job.expires_at">{{ t('profileDataUi.preflightExpires', { date: formatDate(job.expires_at) }) }}</small>
+          </template>
+          <small v-if="['queued', 'running', 'applying', 'rolling_back'].includes(job.status) && job.progress_total">
+            {{ job.progress_current }} / {{ job.progress_total }}
           </small>
-          <small v-if="importJob.preview?.conflicts?.total" class="data-conflict">
-            {{ t('profileDataUi.importConflicts', { count: importJob.preview.conflicts.total }) }}
+          <small v-if="job.status === 'completed' && job.mode === 'replace' && job.rollback_expires_at">
+            {{ t('profileDataUi.rollbackUntil', { date: formatDate(job.rollback_expires_at) }) }}
           </small>
-          <small v-if="importJob.preview?.complete && importJob.preview.replace">
-            {{ t('profileDataUi.replaceCounts', { current: replaceCurrentTotal, incoming: replaceIncomingTotal }) }}
+          <small v-if="job.status === 'completed' && job.mode === 'incremental'">
+            {{ t('profileDataUi.incrementalNoRollback') }}
           </small>
-          <small v-if="['queued', 'running', 'applying', 'rolling_back'].includes(importJob.status) && importJob.progress_total">
-            {{ importJob.progress_current }} / {{ importJob.progress_total }}
-          </small>
-          <small v-if="importJob.status === 'completed' && importJob.mode === 'replace' && importJob.rollback_expires_at">
-            {{ t('profileDataUi.rollbackUntil', { date: formatDate(importJob.rollback_expires_at) }) }}
-          </small>
-          <small v-if="importJob.status === 'needs_recovery'">{{ t('profileDataUi.needsRecovery') }}</small>
-          <small v-if="importJob.status === 'failed'">{{ t('profileDataUi.importFailed') }}</small>
+          <small v-if="job.status === 'needs_recovery'">{{ t('profileDataUi.needsRecovery') }}</small>
         </div>
         <div class="data-job-actions">
-          <button v-if="importJob.status === 'preview_ready' && importToken" class="pm-save-btn" :disabled="applying || Boolean(importJob.preview?.conflicts?.total)" @click="applyIncremental">
-            {{ applying ? t('profileDataUi.importing') : t('profileDataUi.incrementalImport') }}
-          </button>
-          <button v-if="importJob.status === 'preview_ready' && importToken && importJob.preview?.complete" class="pm-danger-btn" :disabled="applying" @click="applyReplace">
-            {{ applying ? t('profileDataUi.importing') : t('profileDataUi.replaceCurrent') }}
-          </button>
-          <button v-else-if="importJob.status === 'queued'" class="pm-style-chip" @click="cancelImport">
+          <template v-if="job.status === 'preview_ready' && !isPreflightExpired(job)">
+            <button v-if="importTokens[job.id]" class="pm-save-btn" :disabled="applying || Boolean(job.preview?.conflicts?.total)" @click="applyIncremental(job)">
+              {{ applying ? t('profileDataUi.importing') : t('profileDataUi.incrementalImport') }}
+            </button>
+            <button v-if="importTokens[job.id] && job.preview?.complete" class="pm-danger-btn" :disabled="applying" @click="applyReplace(job)">
+              {{ applying ? t('profileDataUi.importing') : t('profileDataUi.replaceCurrent') }}
+            </button>
+            <button v-if="!importTokens[job.id]" class="pm-style-chip" :disabled="resumingJobs.has(job.id)" @click="resumeImport(job)">
+              {{ resumingJobs.has(job.id) ? t('profileDataUi.restoringImport') : t('profileDataUi.resumeImport') }}
+            </button>
+          </template>
+          <button v-if="job.status === 'queued'" class="pm-style-chip" @click="cancelImport(job)">
             {{ t('profileDataUi.cancel') }}
+          </button>
+          <button v-if="job.status === 'completed' && job.mode === 'replace' && job.rollback_expires_at && new Date(job.rollback_expires_at) > new Date()" class="pm-danger-btn" :disabled="applying" @click="rollbackReplace(job)">
+            {{ t('profileDataUi.undoReplace') }}
+          </button>
+          <button v-if="job.status === 'needs_recovery'" class="pm-style-chip" :disabled="applying" @click="recoverImport(job)">
+            {{ t('profileDataUi.recover') }}
+          </button>
+          <button v-if="['preview_ready', 'failed', 'canceled', 'expired'].includes(job.status)" class="pm-danger-btn" :disabled="deletingImport === job.id" @click="deleteImport(job)">
+            {{ deletingImport === job.id ? t('profileDataUi.deletingImport') : t('profileDataUi.deleteImport') }}
           </button>
         </div>
       </article>
@@ -82,34 +109,27 @@
           <strong>{{ statusLabel(job.status) }}</strong>
           <small v-if="job.expires_at && job.status === 'ready'">{{ t('profileDataUi.expires', { date: formatDate(job.expires_at) }) }}</small>
           <small v-if="job.status === 'failed'">{{ t('profileDataUi.exportFailed') }}</small>
-          <small v-if="job.status === 'running' && job.progress_total">{{ job.progress_current }} / {{ job.progress_total }}</small>
+          <template v-if="['running', 'canceling'].includes(job.status)">
+            <small>{{ exportStageLabel(job.stage) }}</small>
+            <div
+              class="data-job-progress"
+              role="progressbar"
+              :aria-label="t('profileDataUi.running')"
+              :aria-valuetext="exportStageLabel(job.stage)"
+            >
+              <div class="data-job-progress-fill" />
+            </div>
+          </template>
         </div>
         <div class="data-job-actions">
           <button v-if="job.download_available" class="pm-save-btn" :disabled="downloading === job.id" @click="download(job)">
             {{ downloading === job.id ? t('common.status.loading') : t('profileDataUi.download') }}
           </button>
-          <button v-else-if="['queued', 'running'].includes(job.status)" class="pm-style-chip" :disabled="canceling === job.id" @click="cancel(job)">
-            {{ t('profileDataUi.cancel') }}
+          <button v-else-if="['queued', 'running', 'canceling'].includes(job.status)" class="pm-style-chip" :disabled="job.status === 'canceling' || canceling === job.id" @click="cancel(job)">
+            {{ job.status === 'canceling' ? t('profileDataUi.canceling') : t('profileDataUi.cancel') }}
           </button>
           <button v-if="!['queued', 'running', 'canceling'].includes(job.status)" class="pm-danger-btn" :disabled="deleting === job.id" @click="deleteExport(job)">
             {{ deleting === job.id ? t('profileDataUi.deleting') : t('profileDataUi.deleteExport') }}
-          </button>
-        </div>
-      </article>
-      <article v-for="job in importJobs" :key="job.id" class="data-job">
-        <div class="data-job-copy">
-          <strong>{{ t(`profileDataUi.${jobStatusKey(job.status)}`) }}</strong>
-          <small>{{ t('profileDataUi.importJobMode', { mode: t(`profileDataUi.mode_${job.mode}`) }) }}</small>
-          <small v-if="job.status === 'completed' && job.mode === 'replace' && job.rollback_expires_at">
-            {{ t('profileDataUi.rollbackUntil', { date: formatDate(job.rollback_expires_at) }) }}
-          </small>
-        </div>
-        <div class="data-job-actions">
-          <button v-if="job.status === 'completed' && job.mode === 'replace' && job.rollback_expires_at && new Date(job.rollback_expires_at) > new Date()" class="pm-danger-btn" :disabled="applying" @click="rollbackReplace(job)">
-            {{ t('profileDataUi.undoReplace') }}
-          </button>
-          <button v-if="job.status === 'needs_recovery'" class="pm-style-chip" :disabled="applying" @click="recoverImport(job)">
-            {{ t('profileDataUi.recover') }}
           </button>
         </div>
       </article>
@@ -133,11 +153,13 @@ const loadingJobs = ref(true)
 const creating = ref(false)
 const canceling = ref('')
 const deleting = ref('')
+const deletingImport = ref('')
 const downloading = ref('')
 const selectedArchive = ref<File | null>(null)
 const archiveInput = ref<HTMLInputElement | null>(null)
-const importJob = ref<DataImportJob | null>(null)
-const importToken = ref('')
+const importTokens = ref<Record<string, string>>({})
+const resumingJobs = ref(new Set<string>())
+const attemptedResumeJobs = new Set<string>()
 const importing = ref(false)
 const applying = ref(false)
 const error = ref('')
@@ -167,16 +189,9 @@ const totalBytes = computed(() => {
   const total = Object.values(preview.value?.categories ?? {}).reduce((sum, value) => sum + value.bytes, 0)
   return includeFiles.value ? total : Math.max(0, total - (preview.value?.categories.files?.bytes ?? 0))
 })
-const plannedImportCounts = computed(() => ({
-  add: (importJob.value?.preview?.incremental?.add_total ?? 0) + (importJob.value?.preview?.memory?.add_total ?? 0),
-  skip: (importJob.value?.preview?.incremental?.skip_total ?? 0) + (importJob.value?.preview?.memory?.skip_total ?? 0),
-}))
-const replaceCurrentTotal = computed(() => Object.values(importJob.value?.preview?.replace?.current ?? {}).reduce((sum, count) => sum + count, 0))
-const replaceIncomingTotal = computed(() => Object.values(importJob.value?.preview?.replace?.incoming ?? {}).reduce((sum, count) => sum + count, 0))
-
 onMounted(async () => {
   await Promise.all([loadPreview(), loadJobs(), loadImportJobs()])
-  pollTimer = setInterval(() => { void loadJobs(); void loadImportJobs(); void pollImport() }, 3000)
+  pollTimer = setInterval(() => { void loadJobs(); void loadImportJobs() }, 3000)
 })
 onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
@@ -188,13 +203,29 @@ async function loadPreview() {
 }
 
 async function loadJobs() {
-  try { jobs.value = await dataPortabilityApi.listExports() }
+  try {
+    const listed = await dataPortabilityApi.listExports()
+    jobs.value = listed.map(remote => {
+      const current = jobs.value.find(job => job.id === remote.id)
+      return current && current.id === canceling.value && current.status === 'canceling' && remote.status === 'running'
+        ? current
+        : remote
+    })
+  }
   catch { if (!jobs.value.length) error.value = t('profileDataUi.loadFailed') }
   finally { loadingJobs.value = false }
 }
 
 async function loadImportJobs() {
-  try { importJobs.value = await dataPortabilityApi.listImports() }
+  try {
+    importJobs.value = await dataPortabilityApi.listImports()
+    for (const job of importJobs.value) {
+      if (job.status === 'preview_ready' && !isPreflightExpired(job) && !importTokens.value[job.id] && !attemptedResumeJobs.has(job.id)) {
+        attemptedResumeJobs.add(job.id)
+        void resumeImport(job)
+      }
+    }
+  }
   catch { /* keep the last visible history while the endpoint is temporarily unavailable */ }
 }
 
@@ -225,8 +256,19 @@ async function createExport() {
 async function cancel(job: DataExportJob) {
   canceling.value = job.id
   error.value = ''
-  try { await dataPortabilityApi.cancelExport(job.id); await loadJobs() }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : t('profileDataUi.cancelFailed') }
+  jobs.value = jobs.value.map(current => current.id === job.id
+    ? { ...current, status: 'canceling', stage: 'canceling' }
+    : current)
+  try {
+    const updated = await dataPortabilityApi.cancelExport(job.id)
+    jobs.value = jobs.value.map(current => current.id === updated.id ? updated : current)
+    await loadJobs()
+  }
+  catch (cause) {
+    canceling.value = ''
+    await loadJobs()
+    error.value = cause instanceof Error ? cause.message : t('profileDataUi.cancelFailed')
+  }
   finally { canceling.value = '' }
 }
 
@@ -292,8 +334,6 @@ async function download(job: DataExportJob) {
 
 function selectArchive(event: Event) {
   selectedArchive.value = (event.target as HTMLInputElement).files?.[0] ?? null
-  importJob.value = null
-  importToken.value = ''
 }
 
 async function preflightImport() {
@@ -302,29 +342,61 @@ async function preflightImport() {
   error.value = ''
   try {
     const result = await dataPortabilityApi.preflightImport(selectedArchive.value)
-    importJob.value = result
-    importToken.value = result.import_token ?? ''
+    if (result.import_token) importTokens.value = { ...importTokens.value, [result.id]: result.import_token }
+    upsertImportJob(result)
     selectedArchive.value = null
     if (archiveInput.value) archiveInput.value.value = ''
-    await pollImport()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileDataUi.preflightFailed')
   } finally { importing.value = false }
 }
 
-async function pollImport() {
-  if (!importJob.value || !['queued', 'running', 'applying', 'rolling_back'].includes(importJob.value.status)) return
-  try { importJob.value = await dataPortabilityApi.getImport(importJob.value.id) }
-  catch { /* keep the last visible task state; the next poll can recover */ }
+function upsertImportJob(updated: DataImportJob) {
+  const index = importJobs.value.findIndex(item => item.id === updated.id)
+  if (index < 0) importJobs.value = [updated, ...importJobs.value]
+  else importJobs.value = importJobs.value.map(item => item.id === updated.id ? updated : item)
 }
 
-async function applyReplace() {
-  if (!importJob.value || !importToken.value || !importJob.value.preview?.complete || applying.value) return
+async function resumeImport(job: DataImportJob) {
+  if (importTokens.value[job.id] || resumingJobs.value.has(job.id)) return
+  resumingJobs.value.add(job.id)
+  try {
+    const resumed = await dataPortabilityApi.resumeImport(job.id)
+    if (resumed.import_token) importTokens.value = { ...importTokens.value, [job.id]: resumed.import_token }
+    upsertImportJob(resumed)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : t('profileDataUi.resumeImportFailed')
+  } finally {
+    const next = new Set(resumingJobs.value)
+    next.delete(job.id)
+    resumingJobs.value = next
+  }
+}
+
+function plannedImportCounts(job: DataImportJob) {
+  return {
+    add: (job.preview?.incremental?.add_total ?? 0) + (job.preview?.memory?.add_total ?? 0),
+    skip: (job.preview?.incremental?.skip_total ?? 0) + (job.preview?.memory?.skip_total ?? 0),
+  }
+}
+function replaceCurrentTotal(job: DataImportJob) {
+  return Object.values(job.preview?.replace?.current ?? {}).reduce((sum, count) => sum + count, 0)
+}
+function replaceIncomingTotal(job: DataImportJob) {
+  return Object.values(job.preview?.replace?.incoming ?? {}).reduce((sum, count) => sum + count, 0)
+}
+function isPreflightExpired(job: DataImportJob) {
+  return job.status === 'preview_ready' && (!job.expires_at || new Date(job.expires_at).getTime() <= Date.now())
+}
+
+async function applyReplace(job: DataImportJob) {
+  const token = importTokens.value[job.id]
+  if (!token || !job.preview?.complete || applying.value) return
   const confirmed = await confirmDialog({
     title: t('profileDataUi.replaceConfirmTitle'),
     message: t('profileDataUi.replaceConfirmMessage', {
-      current: replaceCurrentTotal.value,
-      incoming: replaceIncomingTotal.value,
+      current: replaceCurrentTotal(job),
+      incoming: replaceIncomingTotal(job),
     }),
     tone: 'warning',
     confirmText: t('profileDataUi.replaceCurrent'),
@@ -333,22 +405,21 @@ async function applyReplace() {
   applying.value = true
   error.value = ''
   try {
-    importJob.value = await dataPortabilityApi.applyImport(
-      importJob.value.id, 'replace', importToken.value, createIdempotencyKey(),
-    )
-    importToken.value = ''
+    upsertImportJob(await dataPortabilityApi.applyImport(job.id, 'replace', token, createIdempotencyKey()))
+    delete importTokens.value[job.id]
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileDataUi.importFailed')
   } finally { applying.value = false }
 }
 
-async function applyIncremental() {
-  if (!importJob.value || !importToken.value || applying.value) return
+async function applyIncremental(job: DataImportJob) {
+  const token = importTokens.value[job.id]
+  if (!token || applying.value) return
   const confirmed = await confirmDialog({
     title: t('profileDataUi.incrementalConfirmTitle'),
     message: t('profileDataUi.incrementalConfirmMessage', {
-      add: plannedImportCounts.value.add,
-      skip: plannedImportCounts.value.skip,
+      add: plannedImportCounts(job).add,
+      skip: plannedImportCounts(job).skip,
     }),
     tone: 'warning',
     confirmText: t('profileDataUi.incrementalImport'),
@@ -357,19 +428,36 @@ async function applyIncremental() {
   applying.value = true
   error.value = ''
   try {
-    importJob.value = await dataPortabilityApi.applyImport(
-      importJob.value.id, 'incremental', importToken.value, createIdempotencyKey(),
-    )
-    importToken.value = ''
+    upsertImportJob(await dataPortabilityApi.applyImport(job.id, 'incremental', token, createIdempotencyKey()))
+    delete importTokens.value[job.id]
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileDataUi.importFailed')
   } finally { applying.value = false }
 }
 
-async function cancelImport() {
-  if (!importJob.value) return
-  try { importJob.value = await dataPortabilityApi.cancelImport(importJob.value.id); importToken.value = '' }
+async function cancelImport(job: DataImportJob) {
+  try { upsertImportJob(await dataPortabilityApi.cancelImport(job.id)); delete importTokens.value[job.id] }
   catch (cause) { error.value = cause instanceof Error ? cause.message : t('profileDataUi.cancelFailed') }
+}
+
+async function deleteImport(job: DataImportJob) {
+  const confirmed = await confirmDialog({
+    title: t('profileDataUi.deleteImportConfirmTitle'),
+    message: t('profileDataUi.deleteImportConfirmMessage'),
+    tone: 'warning',
+    confirmText: t('profileDataUi.deleteImport'),
+  })
+  if (!confirmed) return
+  deletingImport.value = job.id
+  error.value = ''
+  try {
+    await dataPortabilityApi.deleteImport(job.id)
+    delete importTokens.value[job.id]
+    attemptedResumeJobs.delete(job.id)
+    importJobs.value = importJobs.value.filter(current => current.id !== job.id)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : t('profileDataUi.deleteImportFailed')
+  } finally { deletingImport.value = '' }
 }
 
 async function rollbackReplace(job: DataImportJob) {
@@ -383,7 +471,7 @@ async function rollbackReplace(job: DataImportJob) {
   applying.value = true
   error.value = ''
   try {
-    importJob.value = await dataPortabilityApi.rollbackImport(job.id, createIdempotencyKey())
+    upsertImportJob(await dataPortabilityApi.rollbackImport(job.id, createIdempotencyKey()))
     await loadImportJobs()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileDataUi.importFailed')
@@ -394,21 +482,19 @@ async function recoverImport(job: DataImportJob) {
   applying.value = true
   error.value = ''
   try {
-    importJob.value = await dataPortabilityApi.recoverImport(job.id)
+    upsertImportJob(await dataPortabilityApi.recoverImport(job.id))
     await loadImportJobs()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('profileDataUi.importFailed')
   } finally { applying.value = false }
 }
 
-const importStatusKey = computed(() => {
-  const status = importJob.value?.status ?? 'queued'
-  return ({ preview_ready: 'previewReady', completed: 'importCompleted' } as Record<string, string>)[status]
-    ?? (['queued', 'running', 'failed', 'canceled'].includes(status) ? status : 'running')
-})
-
 function statusLabel(status: string) {
-  const key = ['queued', 'running', 'ready', 'failed', 'canceled'].includes(status) ? status : 'running'
+  const key = ['queued', 'running', 'canceling', 'ready', 'failed', 'canceled'].includes(status) ? status : 'running'
+  return t(`profileDataUi.${key}`)
+}
+function exportStageLabel(stage: string | null) {
+  const key = stage === 'storing' ? 'exportStage_storing' : stage === 'projecting' ? 'exportStage_projecting' : 'exportStage_running'
   return t(`profileDataUi.${key}`)
 }
 function jobStatusKey(status: string) {
@@ -469,5 +555,14 @@ function formatBytes(value: number) {
 .data-job { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--panel-divider); }
 .data-job-copy { display: flex; flex-direction: column; gap: 4px; color: var(--content-primary); font-size: 13px; }
 .data-job-copy small { color: var(--content-tertiary); font-size: 11px; }
+.data-job-progress { width: min(240px, 100%); height: var(--progress-track-height); overflow: hidden; border-radius: var(--progress-track-radius); background: var(--progress-track-bg); }
+.data-job-progress-fill { width: 38%; height: 100%; border-radius: inherit; background: var(--progress-fill-bg); animation: data-job-progress-indeterminate 1.4s ease-in-out infinite alternate; }
+@keyframes data-job-progress-indeterminate {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(263%); }
+}
 .data-job-actions { display: flex; gap: 8px; }
+@media (prefers-reduced-motion: reduce) {
+  .data-job-progress-fill { animation: none; transform: translateX(82%); }
+}
 </style>

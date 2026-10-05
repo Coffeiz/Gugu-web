@@ -417,6 +417,18 @@ def _summary_model(**overrides):
     return SimpleNamespace(**values)
 
 
+def test_run_summary_reuse_excludes_merged_current_user_block():
+    """摘要与当前用户请求合并为文本块时，只复用摘要正文。"""
+    from agent.context.run_finalize import _run_compaction_summary
+    from agent.context.summary_format import format_compacted_summary
+
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": format_compacted_summary("已完成设计")},
+        {"type": "text", "text": "现在开始开发"},
+    ]}]
+    assert _run_compaction_summary(messages, _summary_model(), 321) == "已完成设计"
+
+
 def test_run_compaction_summary_requires_summary_shaped_candidate():
     """正文里恰好出现标记的用户消息不能被当成摘要复用。"""
     from agent.context.run_finalize import _run_compaction_summary

@@ -2,11 +2,11 @@
 
 ## 新增测试元数据
 
-新增测试文件必须在 `test-metadata.json` 增加同路径条目：
+新增测试文件必须放入 `frontend/tests/<功能域>/`，并在 `test-metadata.json` 增加同路径条目：
 
 ```json
 {
-  "frontend/test/example.test.ts": {
+  "frontend/tests/example-feature/example.test.ts": {
     "domain": "frontend-ui",
     "layer": "L0",
     "owner": "frontend/frontend-ui",

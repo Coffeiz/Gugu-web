@@ -118,18 +118,6 @@ async def list_qq_targets(user: User = Depends(get_current_user), db: AsyncSessi
     return {"groups": [{"chat_id": chat_id, "title": title} for chat_id, title in groups.items()]}
 
 
-def _norm_script_authorization(value):
-    from app.services.scheduled_tasks import normalize_script_authorization
-    try:
-        normalized = normalize_script_authorization(value)
-        from app.services.workspaces import workspace_shell_supported
-        if normalized and normalized["root"] in {"personal", "project"} and not workspace_shell_supported():
-            raise HTTPException(409, "OSS 存储模式不支持 personal/project 脚本")
-        return normalized
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
 def _to_resp(t: ScheduledTask) -> dict:
     from app.services.filesystem_authorization import filesystem_authorization_enabled
 
@@ -151,7 +139,6 @@ def _to_resp(t: ScheduledTask) -> dict:
         "delivery_targets": t.delivery_targets,
         "authorized_tools": t.authorized_tools or [],
         "email_attachment_file_ids": t.email_attachment_file_ids or [],
-        "script_authorization": t.script_authorization,
     }
 
 
@@ -171,7 +158,6 @@ class TaskCreate(BaseModel):
     event_id: int | None = None   # 绑定到某日历事件（活动面板加的提醒）；省略=独立任务
     authorized_tools: list[str] = Field(default_factory=list)
     workspace_id: int | None = None
-    script_authorization: dict | None = None
     email_attachment_file_ids: list[int] = Field(default_factory=list, max_length=5)
 
 
@@ -188,7 +174,6 @@ class TaskUpdate(BaseModel):
     enabled: bool | None = None
     authorized_tools: list[str] | None = None
     workspace_id: int | None = None
-    script_authorization: dict | None = None
     email_attachment_file_ids: list[int] | None = Field(default=None, max_length=5)
 
 
@@ -257,13 +242,6 @@ async def create_task(
         workspace_id = await validate_task_workspace(db, user.id, body.workspace_id)
     except LookupError as exc:
         raise HTTPException(400, str(exc)) from exc
-    script_authorization = _norm_script_authorization(body.script_authorization)
-    if script_authorization is not None:
-        from app.services.workspaces import workspace_shell_supported
-        if script_authorization["root"] == "workspace" and workspace_id is None and workspace_shell_supported():
-            raise HTTPException(400, "workspace 脚本必须绑定 workspace_id")
-        if script_authorization["root"] in {"personal", "project"}:
-            raise HTTPException(400, "personal/project 脚本必须通过完整用户沙箱授权")
     try:
         email_attachment_file_ids = await validate_email_attachment_file_ids(
             db, user.id, body.email_attachment_file_ids,
@@ -291,7 +269,6 @@ async def create_task(
         event_id=body.event_id,
         authorized_tools=_norm_authorized_tools(body.authorized_tools),
         workspace_id=workspace_id,
-        script_authorization=script_authorization,
         email_attachment_file_ids=email_attachment_file_ids,
     )
     from app.scheduled_tasks import owner_private_targets
@@ -336,7 +313,6 @@ async def _owned(task_id: int, user: User, db: AsyncSession) -> ScheduledTask:
 @router.patch("/{task_id}")
 async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db), request: Request = None):
     t = await _owned(task_id, user, db)
-    previous_workspace_id = t.workspace_id
     if "workspace_id" in body.model_fields_set:
         try:
             t.workspace_id = await validate_task_workspace(db, user.id, body.workspace_id)
@@ -416,18 +392,6 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.authorized_tools = []
     if body.enabled is not None:
         t.enabled = body.enabled
-    if "script_authorization" in body.model_fields_set:
-        script_authorization = _norm_script_authorization(body.script_authorization)
-        if script_authorization is not None:
-            from app.services.workspaces import workspace_shell_supported
-            if script_authorization["root"] == "workspace" and t.workspace_id is None and workspace_shell_supported():
-                raise HTTPException(400, "workspace 脚本必须绑定 workspace_id")
-            if script_authorization["root"] in {"personal", "project"}:
-                raise HTTPException(400, "personal/project 脚本必须通过完整用户沙箱授权")
-        t.script_authorization = script_authorization
-    elif "workspace_id" in body.model_fields_set and previous_workspace_id != t.workspace_id:
-        # 工作区变更后原脚本路径的根已不再确定，必须重新显式绑定，不能沿用旧授权。
-        t.script_authorization = None
     if "email_attachment_file_ids" in body.model_fields_set:
         try:
             t.email_attachment_file_ids = await validate_email_attachment_file_ids(

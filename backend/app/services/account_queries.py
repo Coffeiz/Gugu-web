@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, func, or_, select, update
 
 from app.models import AgentUsage, EmailChangeRequest, User, UserPreferences
 
@@ -18,6 +18,16 @@ async def create_user_preferences(db, user_id, data: dict) -> UserPreferences:
 
 async def get_user_by_id(db, user_id):
     return await db.get(User, user_id)
+
+
+async def find_user_by_name_or_email(
+    db, name: str, email: str, *, name_case_insensitive: bool = False,
+) -> User | None:
+    """按用户名或邮箱查找账户；注册保留用户名精确匹配，找回可忽略大小写。"""
+    name_match = func.lower(User.username) == name if name_case_insensitive else User.username == name
+    return await db.scalar(select(User).where(
+        or_(name_match, func.lower(User.email) == email),
+    ))
 
 
 async def is_email_occupied(db, email: str, excluding_user_id=None) -> bool:

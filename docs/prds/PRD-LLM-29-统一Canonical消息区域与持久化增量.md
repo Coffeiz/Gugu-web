@@ -2,13 +2,13 @@
 
 > 状态：✅ Phase 1–4 实现与本机全量验证完成；未做当前工作区 devserver 部署或真实 Provider 调用
 > 创建：2026-09-25
-> 最近更新：2026-10-01
+> 最近更新：2026-10-04
 > 关联模块：`backend/agent/context/assembly/`、`backend/agent/context/run_context.py`、`backend/agent/context/run_finalize.py`、`backend/agent/providers/`
 > 背景参考：[[【已完成】PRD-LLM-11-Canonical Context与Provider Adapter分层重构]]、[[【已完成】PRD-LLM-14-Batch单一事实源与Canonical History一致性]]、`docs/agent/04-CONTEXT-ENGINEERING.md`
 
 ## 0. 实际状态
 
-2026-10-03 审查补正：最终回复和用量也纳入 Run 级收尾凭据，不再只对工具 delta 幂等；私有推理状态与历史在同一收尾事务提交。Web 最终 Canonical 正文与累计展示正文分开；临时环境说明放入请求动态尾部；Chat reasoning 不再进入持久化 Canonical。详细修复与验证范围见 [上下文与推理续接审查修复](../devlog/2026-10-03-上下文与推理续接审查修复.md)。
+2026-10-04 方案校正：最终回复和用量纳入 Run 级收尾凭据，私有推理状态与历史在同一收尾事务提交；Web 最终 Canonical 正文与累计展示正文分开；Chat reasoning 不进入持久化 Canonical。Shell 环境说明按 v1.4.0 方案每轮重算并追加到 system prompt 的固定位置，不进入 snapshot、Canonical 历史或动态尾部。原因是权限/环境信息会影响模型的回答与工具选择，应在稳定明确的位置提供；把它移到对话尾部会改变模型收到的上下文位置，可能改变 LLM 输出。工作区授权通常不会频繁变化，因此每轮重算不等于每轮改变前缀：状态未变时内容与前缀保持一致。实际权限仍由执行器逐调用校验。详细修复与验证范围见 [上下文与推理续接审查修复](../devlog/2026-10-03-上下文与推理续接审查修复.md)。
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|

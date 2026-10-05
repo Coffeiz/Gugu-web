@@ -135,55 +135,33 @@ Gugu's tools are organized by capability groups. The Agent selects the appropria
 
 ### Requirements
 
-- Docker 20+ and Docker Compose v2.20+
+- Docker 20+
 - A model provider API key (BYOK)
-- Access to Docker Hub and other image registries on first start; the default unified image includes PostgreSQL and Redis
+- Access to Docker Hub on first start; the unified image includes PostgreSQL, Redis, and the Rootless sandbox runtime
 
-### One-command deployment (Recommended, linux/amd64)
+### Quick deployment with the unified image (Recommended, Linux `amd64`)
+
+Run these commands from a dedicated deployment directory:
 
 ```bash
-mkdir -p gugu && cd gugu
-curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/docker-compose.yml -o docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/.env.example -o .env.example
-cp .env.example .env
-# Edit .env and set GUGU_DB_PASSWORD. SECRET_KEY is generated and persisted on first start if omitted.
-# Configure the model provider in Admin after startup; an admin password is generated if omitted.
-# User data defaults to Gugu-data under this deployment directory;
-# Compose creates it automatically on first startup:
-# For a custom absolute path, set GUGU_DATA_HOST_DIR=/srv/gugu-data in .env.
-docker compose up -d
+mkdir -p Gugu-data Gugu-config
+docker pull docker.io/coffeiz/gugu-web:latest
+docker run -d --name gugu-web \
+  --restart unless-stopped \
+  --privileged \
+  --publish 9595:9595 \
+  --volume "$PWD/Gugu-data:/data" \
+  --volume "$PWD/Gugu-config:/config" \
+  docker.io/coffeiz/gugu-web:latest
 ```
 
-You do not need to clone the source repository. Keep `docker-compose.yml` and your `.env` in the deployment directory. Compose pulls the application and service images from Docker Hub and other registries. NAS panels that accept pasted YAML can use the Compose example in the [quick deployment guide](docs/quick-deploy_en.md).
+Open <http://localhost:9595>; the Admin interface is at <http://localhost:9595/admin/>. On first start, the database is initialized and migrations are applied. If `ADMIN_PASSWORD` is omitted, a random password is saved to `Gugu-data/.env` and printed once in the container logs; retrieve and save it with `docker logs gugu-web`. Configure the model provider and API key in Admin after signing in.
 
-Basic variables:
+`Gugu-data` stores user data and runtime configuration; `Gugu-config` stores Admin configuration. Keep both directories when upgrading or recreating the container. For production, replace `latest` with a fixed release tag.
 
-```dotenv
-# Project-root .env: default Compose configuration
-GUGU_DB_PASSWORD=replace-with-a-database-password
-GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
+Shell runs through the Rootless Docker daemon and sandbox manager bundled in the image; do not mount the host Docker socket. The outer app container must run with `--privileged`. This mode is intended for trusted personal, single-user deployments, not multi-tenant, public-facing, or business servers. The single-container image does not include SearXNG, so web search is unavailable. For web search or Compose management, use the Compose path in the [quick deployment guide](docs/quick-deploy_en.md).
 
-# Optional admin configuration; a random password is generated if omitted
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=replace-with-an-admin-password
-# Public site origin used in email verification and password-reset links
-GUGU_PUBLIC_APP_URL=http://localhost:9595
-```
-
-When deploying behind a domain or an Nginx reverse proxy, set `GUGU_PUBLIC_APP_URL` to the complete URL users actually open, such as `https://gugu.example.com`. Nginx provides the shared entry point and proxy headers, while the backend uses this same value for external links instead of exposing an internal address such as `localhost:8001`.
-
-The default Compose setup uses one unified Gugu application image containing the frontend, Nginx, Uvicorn, worker, IM gateway, PostgreSQL, and Redis. SearXNG is provided as a separate Compose service. Use the local deployment directory's `docker-compose.yml` for deployment; it defines the persistent data mounts. The production and development Compose files are for deployments that need the frontend and backend managed separately. See the [quick deployment guide](docs/quick-deploy_en.md) for details.
-
-Open:
-
-- Gugu: <http://localhost:9595>
-- Admin: <http://localhost:9595/admin/>
-
-The first run initializes the database and applies migrations. If `ADMIN_PASSWORD` is omitted, a random password is generated, saved to `Gugu-data/.env`, and printed once; there is no public default admin password.
-
-See the [Deployment Guide](docs/quick-deploy_en.md) for the complete Compose parameters and configuration locations.
-
-The integrated Compose and single-container image run an internal Rootless Docker daemon and bundle the execution runtime; the app does not need a host Docker socket or a separate `sandboxd`. The outer integrated app container must run as privileged; on fnOS and similar panels, enable the privileged-container option. This mode is intended for trusted personal single-user deployments, not multi-tenant, public-facing, or business servers. Split production Compose continues to use a separate Rootless `sandboxd`; see the [quick deployment guide](docs/quick-deploy_en.md) for details.
+Split production Compose continues to use a separate Rootless `sandboxd`; for deployment boundaries, the Compose path, and NAS graphical setup, see the [quick deployment guide](docs/quick-deploy_en.md).
 
 Developers who need source mounts and Vite should use [Dev Compose](docker-compose.dev.yml):
 
@@ -200,7 +178,7 @@ LoopScope must be opened from a logged-in Gugu `/dev` page by selecting the Loop
 
 ## Configuration
 
-The README keeps configuration at index level. See [Deployment Guide](docs/quick-deploy_en.md) for the complete Compose setup and configuration locations.
+The README keeps configuration at index level. See the [Deployment Guide](docs/quick-deploy_en.md) for direct Docker image deployment, optional Compose, and configuration locations.
 
 | Configuration | Purpose |
 | --- | --- |

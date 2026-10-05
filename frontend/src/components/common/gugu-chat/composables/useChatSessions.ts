@@ -20,6 +20,7 @@ interface RawSessionMessage {
   createdAt: string
   runId?: string
   roundId?: string
+  runOutcome?: ChatMessage['runOutcome']
 }
 
 interface RawToolEvent {
@@ -199,6 +200,7 @@ export function useChatSessions(options: {
           _timelineOrder: m.timelineOrder ?? m.id,
           runId: m.runId,
           roundId: m.roundId,
+          runOutcome: m.runOutcome,
         }
       })
       const loadedTools = ((data.toolEvents || []) as RawToolEvent[]).map((event) => ({

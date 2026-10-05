@@ -40,7 +40,7 @@ from app.services.storage import LocalStorageBackend, StorageBackend
 from app.services.storage.factory import get_key_strategy
 from app.services.storage.folders import folder_dir_key, resolve_folder_path
 from app.services.storage.key_strategy import KeyContext
-from app.services.storage.keys import _safe_name, compose_logical_path
+from app.services.storage.keys import _safe_name, compose_logical_path, workspace_directory_path
 
 # mind 空间的物理位置由历史遗留字段驱动，不在本工具的「纠正物理位置」范围内（见模块顶注）。
 _MISPLACED_SPACES = frozenset({"personal", "project", "asset"})
@@ -108,7 +108,7 @@ async def _expected_and_containers(db: AsyncSession, user_id) -> tuple[set[str],
         y, m = date_str[:4], date_str[5:7]
         containers.add(f"{p.user_id}/项目文件/{y}/{m}/{_safe_name(p.name)} #{p.id}")
     for directory in directories:
-        containers.add(f"{directory.user_id}/{_safe_name(directory.directory_name)}")
+        containers.add(f"{directory.user_id}/{workspace_directory_path(directory.directory_name)}")
     return expected, containers, len(folders)
 
 

@@ -5,7 +5,83 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [1.6.0] - 2026-10-05
+
+### What's New
+
+#### New Features
+
+- **Email-verified registration and account recovery**: when system SMTP is available, new accounts must verify a one-time email code; administrators can control this requirement, and password recovery accepts a username or email and shows a masked destination address (#77).
+- **Optional action follow-through guard**: users can enable a guard that nudges the Agent only when an explicit action request is declined without execution.
+
+#### Improvements
+
+- **Shell and workspace consistency**: unify Shell execution and authorized workspace mounts, show users their own workspaces in user-created terminals without requiring Agent sandbox authorization, and safely migrate existing local-storage layouts.
+- **Faster Skills page**: load the tool catalog on demand instead of blocking the initial page view.
+- **Scheduled task replies**: deliver the Agent's final response directly, avoiding an extra summary round.
+- **File naming support**: upload dotfiles and rename files while editing their extensions.
+- **Media and theme details**: remember video volume, align file selection overlays and marquee frames with the active theme, and use consistent compact progress bars.
+- **Interface details**: align checkbox styling and input sizing, tighten memory settings spacing, and match inline note-title editing to its display size.
+- **Deployment safety**: stop application and external sandbox writers before workspace migration, create paired database/storage backups, and keep failed migrations in a recoverable stopped state.
+
+#### Fixes
+
+- Preserve run outcomes and completed execution history through interrupted streams; improve retry budgets and context-compaction boundaries.
+- Correct reflection history projection, clear stale interaction cards when starting a new session, and keep action-confirmation instructions waiting for the user's response.
+- Bind dangerous Shell confirmation to the exact command and execution context, consume it once, and prevent Shell permission setup from following symlinks.
+- Prevent renaming text files as binary files or binary files as text files without converting their contents.
+- Fix archive-import mapping and conflict detection, including restoring session-bound pending queues under the imported session's ID and keeping drafts recoverable when conversations are excluded; valid preflight jobs can be resumed, and failed or unexecuted jobs and their staged data can be cleaned up.
+- Fix export cancellation and concurrent lease-finalization races; skip unnecessary backup and migration when the unified deployment already has the new workspace layout or an empty database.
+- Correct Compose deployment guidance for the unified and split sandbox architectures.
+- Keep skill-form labels from unexpectedly focusing inputs, and prevent long tool names and descriptions from overflowing their cards.
+- Stabilize floating video preview sizing/loading and fix Mind preview/timeline updates.
+- Refine the video playback control overlay for a more consistent appearance.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for reporting [#77](https://github.com/Coffeiz/Gugu-web/issues/77).
+
+### 更新内容
+
+#### 新功能
+
+- **邮箱验证注册与账号找回**：系统 SMTP 可用时，新账号必须完成一次性邮箱验证码验证，管理员可单独控制此要求；密码找回支持用户名或邮箱，并显示脱敏后的收件地址（#77）。
+- **可选的行动跟进守卫**：用户可开启守卫；仅当明确要求执行而 Agent 未执行并选择推脱时，才提醒它继续处理。
+
+#### 改进
+
+- **统一 Shell 与工作区行为**：统一 Shell 执行和授权工作区挂载；用户创建的终端可查看本人工作区，不需要 Agent 沙盒授权；已有本地工作区可通过安全迁移切换到规范目录布局。
+- **加快技能页载入**：工具目录改为按需加载，不再阻塞技能页首次显示。
+- **定时任务回复**：直接投递 Agent 的最终回复，省去额外总结轮次。
+- **文件命名支持**：支持上传点文件，并可在重命名时编辑扩展名。
+- **媒体与主题细节**：记住视频播放器音量；文件选中覆盖层和框选框适配当前主题；统一紧凑进度条样式。
+- **界面细节**：统一复选框样式和输入框高度，收紧记忆设置卡片间距，并让思维导图待办预览及时响应状态变化。
+- **部署安全**：工作区迁移前停止应用与外部沙盒写入方并成对备份数据库和文件；迁移失败时保持停服，支持一致恢复。
+
+#### 修复
+
+- 中断流时保留运行终态和已完成的执行历史；改进重试预算与上下文压缩边界。
+- 修正反思历史投影；新建会话时清除旧交互卡片；操作确认指令会等待用户答复。
+- 危险 Shell 确认绑定到精确命令和执行上下文，且仅消费一次；修复 Shell 权限配置跟随符号链接的问题。
+- 阻止文本文件与二进制文件在未转换内容时互相改名为对方格式。
+- 修复归档导入映射与冲突识别：会话待发队列会绑定到导入后的会话 ID；未导入会话时草稿仍可恢复。支持恢复仍有效的预检任务，并清理失败或未执行任务及其暂存数据。
+- 修复归档导出取消与任务租约并发收尾竞态；一体化部署已完成工作区迁移或数据库为空时，会跳过不必要的备份和迁移。
+- 校准一体化与分体沙盒架构对应的 Compose 部署说明。
+- 技能表单字段标题不再意外聚焦输入框，过长的工具名称和说明不会溢出卡片。
+- 修复浮动视频预览尺寸/加载状态不稳定，以及思维导图预览和时间轴更新问题。
+- 调整视频播放控制按钮的遮罩显示效果。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 通过 [#77](https://github.com/Coffeiz/Gugu-web/issues/77) 提供反馈。
 
 ## [1.5.0] - 2026-10-03
 

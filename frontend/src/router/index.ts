@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
-import { canAccessTerminals, mcpApi, workspacesApi } from '@/services/api'
+import { mcpApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
@@ -224,15 +224,14 @@ router.beforeEach(async (to) => {
 })
 
 router.beforeEach(async (to) => {
-  if (to.name !== 'Terminals' && to.name !== 'SkillsMcp') return
+  // 终端页通过列表接口实时校验权限，避免先串行加载整个工作区。
+  if (to.name !== 'SkillsMcp') return
   try {
     if (to.name === 'SkillsMcp') {
       const status = await mcpApi.status()
       if (!status.enabled) return { path: '/skills' }
       return
     }
-    const status = await workspacesApi.status()
-    if (!canAccessTerminals(status)) return { path: '/projects' }
   } catch (cause) {
     const status = (cause as { status?: number }).status
     if (status === 401 || status === 403) return { path: '/projects' }

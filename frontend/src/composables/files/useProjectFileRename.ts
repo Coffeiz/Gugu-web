@@ -20,12 +20,13 @@ export function useProjectFileRename(options: {
     const id = renamingFileId.value; const name = renameText.value.trim()
     const file = editingFile.value
     const normalizedExtension = normalizeEditableExtension(renameExtension.value)
-    if (id != null && (normalizedExtension == null || (!normalizedExtension && file?.ext.toUpperCase() !== 'FILE'))) {
+    const isLegacyDotfile = file?.displayName === '' && file.ext.toUpperCase() !== 'FILE'
+    if (id != null && (normalizedExtension == null || (!normalizedExtension && file?.ext.toUpperCase() !== 'FILE' && !isLegacyDotfile))) {
       options.onInvalidExtension?.()
       nextTick(() => document.querySelector<HTMLInputElement>('.rename-file-extension-input')?.focus())
       return
     }
-    const extension = normalizedExtension || undefined
+    const extension = isLegacyDotfile ? 'FILE' : normalizedExtension || undefined
     if (id == null || !name) { cancelRename(); return }
     if (file?.displayName === name && (extension ?? file.ext) === file.ext) { cancelRename(); return }
     void options.renameFile(id, name, extension)

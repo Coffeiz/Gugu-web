@@ -89,7 +89,9 @@ class FileSyncWatcherManager:
         self._sidecar = sidecar or FileSyncSidecar()
         self._binding_roots: dict[int, Path] = {}
         self._last_refresh = 0.0
-        self._last_compensation = 0.0
+        # Worker 每次启动都先做一次全量补偿；不能拿 loop.time() 和 0 比，
+        # 因为它是单调时钟，主机启动未满补偿间隔时会跳过首轮全量扫描。
+        self._last_compensation: float | None = None
         self._path_events: dict[int, PathEventBatch] = {}
         self._pending_fallback: set[int] = set()
 
@@ -245,7 +247,10 @@ class FileSyncWatcherManager:
                     await asyncio.sleep(min(self.refresh_interval, 5.0))
                     continue
                 now = loop.time()
-                force = now - self._last_compensation >= self._compensation_seconds()
+                force = (
+                    self._last_compensation is None
+                    or now - self._last_compensation >= self._compensation_seconds()
+                )
                 try:
                     await self._sidecar.start()
                     async with db_session._SessionLocal() as db:
@@ -268,6 +273,7 @@ class FileSyncWatcherManager:
                         if force:
                             # 日级兜底：并入可补偿全集并强制全量哈希，自愈 stat 缓存的统计漂移。
                             targets = targets | compensable_ids
+                        compensation_complete = force
                         for binding_id in targets & compensable_ids:
                             binding, root = current[binding_id]
                             try:
@@ -284,6 +290,7 @@ class FileSyncWatcherManager:
                                 # rollback 会过期本轮余下的 binding ORM 对象，继续遍历
                                 # 只会连坐出 MissingGreenlet；中断本轮，下轮重查后再试。
                                 await db.rollback()
+                                compensation_complete = False
                                 logger.warning(
                                     "[worker] 文件同步投影出错 binding=%s", binding_id,
                                     exc_info=exc,
@@ -292,7 +299,7 @@ class FileSyncWatcherManager:
                         # 精确事件放最后消费：即使回滚也只影响本轮尾部，
                         # 回退的绑定下轮以整树方式重查。
                         await self._project_path_events(db, current)
-                        if force:
+                        if compensation_complete:
                             self._last_compensation = now
                 except FileSyncSidecarUnavailable:
                     pending.update(self._binding_roots)

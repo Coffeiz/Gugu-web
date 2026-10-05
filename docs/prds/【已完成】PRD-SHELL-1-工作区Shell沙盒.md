@@ -70,7 +70,7 @@ Shell 只维护两种执行模式：
 - 容器基础镜像首版使用固定 digest 的 `debian:bookworm-slim`；容器内部使用非 root 用户 `gugu`。
 - 宿主机需要启用 user namespace、cgroup v2，并准备 `fuse-overlayfs`；Rootless Docker 通过 systemd lingering 保持后台运行。
 - 禁止 `privileged`、host network、host PID、任意宿主机挂载、Docker-in-Docker 和未经批准的设备映射。
-- 用户数据只允许挂载对应用户的数据卷和当前工作区目录；镜像根文件系统只读，临时目录单独限制大小。
+- 用户工作区通过显式授权清单挂载到规范路径：独立目录为 `/workspace/<稳定目录段>`，项目为 `/project/<年>/<月>/<项目名 #ID>`，项目内文件夹及个人文件夹沿用 `/project`、`/personal` 下的真实相对路径；不额外挂载显示名别名，不挂载用户存储父目录。普通 Shell 只授予绑定工作区写权限，完整用户沙盒授权才扩展到该用户所有有效目录工作区；镜像根文件系统只读，临时目录单独限制大小。
 - 低端口映射、部分内核能力和高级网络能力属于 Rootless Docker 的已知限制，Shell 沙盒不依赖这些能力。
 - Rootless Docker 不可用时，沙盒不能开启，Shell 不得回退到本机执行器。
 
@@ -146,7 +146,7 @@ docker network inspect gugu-sandbox-egress
 ```json
 {
   "sandbox": {
-    "egress_proxy_url": "http://127.0.0.1:3128",
+    "egress_proxy_url": "http://<测试代理地址>:3128",
     "egress_network_name": "gugu-sandbox-egress",
     "egress_isolation_enabled": true
   }
@@ -207,7 +207,7 @@ SANDBOX_ACL=1 make compose-up ROOTLESS_LOGIN=gugu-sandbox
 
 容器执行器稳定后，可以清理本机执行器中重复的路径穿越和旧 scope 兼容代码，但不能在容器执行器上线前直接删除。
 
-- 容器内只挂载用户沙盒和当前工作区，路径边界由容器挂载、只读根文件系统和非 root 用户共同提供。
+- 独立目录使用 `/workspace/<稳定目录段>`；项目和文件夹的默认 `cwd` 使用对应 `/project` 或 `/personal` 规范路径，不另造 `/workspace/<显示名>` 别名。文件库父根可只读挂载，绑定项目或文件夹在原规范子路径覆盖为可写；普通授权不扩大到整个文件库。
 - `LocalWorkspaceExecutor` 只保留开发测试用途；生产 Shell 统一经过 `sandboxd` 和 `DockerSandboxExecutor`。
 - 容器执行器迁移完成后，删除旧的 `personal/workspace` scope 分支、旧 `shell_scope` 兼容逻辑以及业务层重复路径解析。
 - 保留 Shell API 的相对 cwd 校验、非法挂载拒绝、软链接逃逸检查和 sandboxd 的参数校验，不能把 Docker 隔离当作唯一防线。
@@ -344,7 +344,8 @@ POST /api/v1/admin/sandbox/users/{user_id}/clear
 - 用户或咕咕可以在本地存储模式下为当前 session 绑定、切换、解除工作区。
 - 本地存储模式下工作区可以来自文件库文件夹或项目；OSS 模式不提供文件库工作区。
 - 用户未开启 Shell 或系统总开关关闭时，不向 Agent 暴露 Shell 工具。
-- `sandbox` 仅允许访问用户沙盒根目录及本地存储模式下的当前工作区挂载目录；OSS 模式只允许访问用户沙盒根目录；`system` 使用独立的系统执行策略。
+- `sandbox` 仅允许访问用户沙盒根目录及当前授权工作区挂载清单中的目录；OSS 模式只允许访问用户沙盒根目录；`system` 使用独立的系统执行策略。
+- 本地存储未绑定时默认进入 `/workspace/default`；绑定独立目录时进入 `/workspace/<稳定目录段>`，绑定项目或文件夹时进入对应 `/project`、`/personal` 规范路径。Shell 和 PTY 共用同一授权挂载清单；完整用户沙盒授权开启后可扩展其他有效目录工作区。OSS 模式不挂载该命名空间。
 - 本机执行器不提供可信网络隔离；普通用户只能通过容器的 network profile 获得网络边界。
 - 危险命令必须经过确认门。
 - 记录结构化审计信息，不记录密钥、完整用户输入或敏感命令输出。
@@ -394,7 +395,7 @@ ConversationSession.workspace_id: nullable
 首版统一为：
 
 ```text
-sandbox：用户独立沙盒；绑定工作区时挂载并进入当前工作区
+sandbox：用户独立沙盒；工作区各自挂载到稳定命名空间，绑定只决定默认 cwd
 system：宿主机受控执行器，仅在独立权限开启后可用
 ```
 
@@ -546,7 +547,7 @@ workspace_unbind
 
 ```text
 - 使用 Gugu-web 当前系统用户启动子进程
-- sandbox 的 cwd 只能是沙盒根目录或当前 workspace 挂载目录的子目录
+- sandbox 的 cwd 只能是沙盒根目录或当前授权 workspace 挂载目录的子目录；相对 cwd 以当前绑定工作区为起点
 - system 的 cwd 默认跟随 workspace，但必须经过系统执行器的独立路径策略
 - 不接受宿主机绝对路径、额外挂载和任意环境变量
 - 环境变量使用最小白名单，不继承密钥、Token 和数据库连接信息
@@ -557,11 +558,11 @@ workspace_unbind
 
 ### 9.2 路径限制
 
-- sandbox 的 `cwd` 必须解析到沙盒根目录或 `/workspace` 挂载点内部。
+- sandbox 的 `cwd` 必须解析到沙盒根目录或授权工作区挂载点内部；绝对逻辑路径只接受 `/workspace/<已挂载名称>`。
 - 拒绝 `..` 逃逸、绝对宿主机路径和未授权挂载。
-- 解析真实路径后再次检查是否仍在沙盒根目录或当前 workspace 根目录下。
+- 解析真实路径后再次检查是否仍在沙盒根目录或对应工作区根目录下；相对 cwd 以当前绑定工作区为起点。
 - 拒绝通过软链接逃逸到 workspace 外部。
-- 容器只挂载当前 workspace，不挂载用户 home、数据库、配置文件或密钥目录；未绑定 workspace 时不挂载工作区。
+- 容器不挂载用户 home、数据库、配置文件或密钥目录，也不挂载工作区父目录；普通授权仅挂载当前 workspace，完整用户沙盒授权时按服务端所有权查询挂载有效工作区。PTY 与 Shell 使用相同的挂载白名单。
 
 ### 9.3 资源限制
 
@@ -599,7 +600,7 @@ Docker/Podman 不属于当前首版交付。后续只实现 `ShellSandbox` 的�
 
 - devserver 已安装 `uidmap`、`rootlesskit`、`slirp4netns`、`fuse-overlayfs`，并为 `coffeiz` 开启 user lingering。
 - Ubuntu 的 AppArmor `apparmor_restrict_unprivileged_userns=1` 已通过官方建议的 RootlessKit 专用 profile 放行；rootful Docker daemon 和 Gugu 服务未停用。
-- 用户级 Rootless Docker 29.7.2 已运行在独立 socket：`/run/user/1000/docker.sock`，不使用 `/var/run/docker.sock`。
+- 用户级 Rootless Docker 29.7.2 已运行在独立 socket：`/run/user/<uid>/docker.sock`，不使用 `/var/run/docker.sock`。
 - 三个 Gugu systemd 服务的模板已由 `start.sh install` 自动写入运行用户 UID 对应的
   `DOCKER_HOST=unix:///run/user/<uid>/docker.sock`；服务进程不会因缺少交互式环境变量而误连 rootful socket。
 - 运行时探测和执行器同时自动发现当前用户的 `/run/user/<uid>/docker.sock`；显式
@@ -877,7 +878,7 @@ Phase 6 不把当前的每命令临时容器伪装成常驻容器。当前 `Dock
 - 默认配置下后台 Shell 总开关为开启，但仍需用户开关和 Docker 沙盒运行时就绪后才可调用；system 范围、危险命令和自动模式仍不可用。
 - Admin 关闭开关后，旧请求也会被 dispatch 拒绝。
 - Admin 和用户 Shell 权限满足时，sandbox 工具即可注册并执行；本地存储模式下 workspace 只决定默认 cwd，OSS 模式不提供 workspace。
-- sandbox 只能在沙盒根目录或本地存储模式下的当前 workspace 挂载目录内工作，不会回退到任意宿主机目录。
+- sandbox 只能在沙盒根目录或本地存储模式下的已授权 workspace 挂载目录内工作，不会回退到任意宿主机目录；绑定仅改变默认 cwd，授权清单决定可见工作区。
 - 命令超时、输出超限和后台进程都能被收束。
 - `sudo`、提权命令、系统目录、密钥目录和软链接逃逸被拒绝。
 
@@ -885,7 +886,7 @@ Phase 6 不把当前的每命令临时容器伪装成常驻容器。当前 `Dock
 
 - Admin 关闭后，任意用户无法看到或调用 Shell。
 - 用户未开启时，模型工具列表没有 Shell；未绑定 workspace 时仍可使用默认 sandbox。
-- sandbox 无法访问沙盒/当前 workspace 外路径、软链接目标和宿主机密钥；system 使用独立权限策略。
+- sandbox 无法访问沙盒/已授权 workspace 挂载范围外路径、软链接目标和宿主机密钥；system 使用独立权限策略。
 - safe 命令可以正常执行并返回统一结果。
 - dangerous 命令未确认时不会执行。
 - 超时命令会终止完整进程树并释放执行状态。

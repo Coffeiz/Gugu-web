@@ -38,3 +38,10 @@ def test_legacy_history_fallback_keeps_ten_complete_batch_units():
 def test_shared_round_policy_selects_tail_units_without_char_budget():
     assert protected_unit_offset([[0], [1, 2], [3], [4]], keep_rounds=2) == 2
     assert protected_unit_offset([[0], [1]], keep_rounds=10) == 0
+
+
+def test_missing_recent_run_identity_does_not_pin_oldest_run():
+    """混合历史的近期消息缺归属时，不能保护旧 run 而阻止 baseline 前移。"""
+    rows = [_row(1, "old-run", "round-1")]
+    rows.extend(_row(index) for index in range(2, 15))
+    assert protected_message_ids(rows) == set(range(5, 15))

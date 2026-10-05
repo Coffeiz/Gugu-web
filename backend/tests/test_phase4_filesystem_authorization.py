@@ -110,6 +110,55 @@ async def test_disabled_flag_does_not_offer_model_authorization_prompt(user_a, m
 
 
 @pytest.mark.asyncio
+async def test_ask_user_does_not_repeat_existing_session_sandbox_authorization(
+    db, user_a, enable_filesystem_authorization,
+):
+    """已有会话授权时，模型误发授权请求也不能再次挂起会话。"""
+    from agent.tools.base import reset_dispatch_session_id, set_dispatch_session_id
+    from agent.tools.meta import _ask_user
+
+    session = await _session(db, user_a)
+    await grant_session_filesystem_access(db, user_a.id, session.id, granted_by="user")
+    await db.commit()
+
+    token = set_dispatch_session_id(session.id)
+    try:
+        result = await _ask_user(db, user_a.id, {"authorization": "user_sandbox"})
+    finally:
+        reset_dispatch_session_id(token)
+
+    assert result["status"] == "already_authorized"
+    assert "_interaction" not in result
+    assert "无需重复授权" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_automatic_mode_does_not_skip_new_sandbox_authorization(
+    db, user_a, enable_filesystem_authorization,
+):
+    """自动模式只处理操作确认；尚未授予的沙箱权限仍要用户明确同意。"""
+    from agent.interactions.automatic_mode import (
+        reset_automatic_mode_enabled,
+        set_automatic_mode_enabled,
+    )
+    from agent.tools.base import reset_dispatch_session_id, set_dispatch_session_id
+    from agent.tools.meta import _ask_user
+
+    session = await _session(db, user_a)
+    dispatch_token = set_dispatch_session_id(session.id)
+    automatic_token = set_automatic_mode_enabled(True)
+    try:
+        result = await _ask_user(db, user_a.id, {"authorization": "user_sandbox"})
+    finally:
+        reset_automatic_mode_enabled(automatic_token)
+        reset_dispatch_session_id(dispatch_token)
+
+    assert result["_interaction"] == "ask_user"
+    assert result["authorization"] == "user_sandbox"
+    assert [option["id"] for option in result["options"]] == ["confirm", "cancel"]
+
+
+@pytest.mark.asyncio
 async def test_grant_and_revoke_are_audited_in_same_transaction(
     db, user_a, enable_filesystem_authorization,
 ):

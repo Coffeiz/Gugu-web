@@ -1,6 +1,6 @@
 # Gugu 部署指南
 
-这是一份面向普通使用者的简版部署说明。生产环境的反向代理、权限、备份和故障排查见[运维部署文档](ops/deploy.md)。
+这是一份面向普通使用者的简版部署说明。主路径直接使用 Docker Hub 的一体化镜像；生产环境的反向代理、权限、备份和故障排查见[运维部署文档](ops/deploy.md)。
 
 ## 获取镜像
 
@@ -32,7 +32,7 @@ docker tag docker.1ms.run/coffeiz/gugu-web:latest coffeiz/gugu-web:latest
 
 DaoCloud 和 1ms 都是第三方加速服务，可能未收录该镜像或未及时同步新标签；拉取失败或版本不确定时，改用 Docker Hub/GHCR 官方地址。用法见[DaoCloud 镜像加速站文档](https://docs.daocloud.io/tf/community/mirror/)和[1ms 使用文档](https://1ms.run/guide)。
 
-正式部署建议将 `latest` 换成固定版本标签（例如 `v<版本号>`）。单容器部署直接选择拉取后的 `gugu-web` 镜像；默认 Compose 使用 Docker Hub 镜像，也可在根目录 `.env` 中设置 `GUGU_WEB_IMAGE=ghcr.io/coffeiz/gugu-web:<版本号>` 改用 GHCR。
+快速部署使用 Docker Hub 的 `gugu-web` 一体化镜像。正式部署建议将 `latest` 换成固定版本标签（例如 `v<版本号>`）。GHCR 可作为 Docker Hub 不可达时的显式替代来源；使用 Compose 时可在根目录 `.env` 中设置 `GUGU_WEB_IMAGE=ghcr.io/coffeiz/gugu-web:<版本号>`。
 
 若 NAS 面板不能直接拉取镜像，可在有 Docker 的电脑或服务器上拉取后导出为 fnOS 可导入的未压缩 tar，再将文件导入 NAS：
 
@@ -44,13 +44,31 @@ docker save -o gugu-web.tar coffeiz/gugu-web:latest
 
 ## 前置要求
 
-- 单容器部署：Docker 20+；Compose 部署：Docker Compose v2.20+
+- 一体化镜像：Docker 20+，Linux `amd64` Docker Engine
+- Compose 路径：Docker Compose v2.20+
 - 一个可访问的模型 Provider，或准备好的 BYOK 配置
 - 能访问镜像仓库和模型服务的网络
 
-## Gugu-web 单容器部署
+## 推荐：直接运行 Docker Hub 一体化镜像
 
-直接使用 `coffeiz/gugu-web` 一体化镜像，不需要 Compose。配置容器端口 `9595`，将宿主机持久化目录分别映射到容器 `/data` 和 `/config`，并启用 privileged（特权容器）模式。数据库密码等环境变量可在容器设置中填写；未设置 `ADMIN_PASSWORD` 时，首次启动会生成随机管理员密码并持久化，同时把管理员账号和密码打印到容器日志中（可用 `docker logs <容器名>` 查看）。未设置 `ADMIN_USERNAME` 时账号默认为 `admin`。
+在 Linux 主机上创建并进入部署目录，再拉取、运行官方 Docker Hub 镜像：
+
+```bash
+mkdir -p gugu/Gugu-data gugu/Gugu-config
+cd gugu
+docker pull docker.io/coffeiz/gugu-web:latest
+docker run -d --name gugu-web \
+  --restart unless-stopped \
+  --privileged \
+  --publish 9595:9595 \
+  --volume "$PWD/Gugu-data:/data" \
+  --volume "$PWD/Gugu-config:/config" \
+  docker.io/coffeiz/gugu-web:latest
+```
+
+访问 <http://localhost:9595>；Admin 位于 <http://localhost:9595/admin/>。首次启动会初始化数据库并执行迁移。未设置 `ADMIN_PASSWORD` 时，系统会生成随机管理员密码，保存到 `Gugu-data/.env` 并在容器日志中打印一次；用 `docker logs gugu-web` 查看并保存。未设置 `ADMIN_USERNAME` 时账号默认为 `admin`。模型 Provider 和 API Key 可在登录后通过 Admin 页面配置。
+
+`Gugu-data` 保存用户数据和运行配置，`Gugu-config` 保存 Admin 配置。升级前备份这两个目录和数据库；拉取目标镜像后先停止旧容器，完成下面要求的离线迁移，再删除旧容器并用原端口和目录映射运行新容器。不要删除数据目录。正式部署应使用固定版本标签或 digest，避免 `latest` 在两次部署间指向不同版本。
 
 单容器镜像包含完整站点、内置 PostgreSQL/Redis、内部 Rootless Docker、沙盒管理器和 Shell 执行镜像。Shell 沙盒默认启用，不需要单独部署 `sandboxd`、导入执行镜像或挂载宿主 Docker Socket。SearXNG 不包含在单容器镜像中，因此联网搜索功能不可用。
 
@@ -58,15 +76,45 @@ docker save -o gugu-web.tar coffeiz/gugu-web:latest
 
 > **安全提示：**privileged 会显著提高外层应用容器被攻破后的宿主机风险。内部 Rootless 只隔离其创建的 Shell 执行容器，不能消除外层应用的宿主风险；此部署方式面向可信个人单用户使用，不建议用于多租户、公网或业务服务器。
 
-## 默认 Compose 部署
+### 1.5 → 1.6：先运行一体化离线迁移
 
-默认 `docker-compose.yml` 使用同一个 `coffeiz/gugu-web` 一体化应用镜像，并额外拉取 SearXNG 镜像提供联网搜索。Compose 不部署独立 updater 服务，也不挂载宿主 Docker Socket；app 在 privileged 外层容器内运行 Rootless Docker。
+已有用户的旧工作区必须离线迁移，不能直接用新镜像接流量。先保留旧容器和镜像、备份 `Gugu-data` 与 `Gugu-config`，再在原部署目录执行（把 `<目标版本>` 换为实际 release tag）：
 
-因此，默认 Compose 相比单容器增加联网搜索，但不提供 Admin 一键镜像更新；由 Docker/Compose 管理器更新整套镜像。Shell 沙盒仍由 `gugu-web` 内置 runtime 提供。**默认 Compose 没有独立 `updater` 或 `sandboxd` 服务，也不拉取独立 `gugu-sandbox` 执行镜像。**首次启动会初始化内置数据库并执行迁移，用户数据保存在 `Gugu-data`。
+```bash
+docker pull docker.io/coffeiz/gugu-web:<目标版本>
+docker stop gugu-web
+docker run --rm --name gugu-offline-migration --privileged \
+  --volume "$PWD/Gugu-data:/data" \
+  --volume "$PWD/Gugu-config:/config" \
+  docker.io/coffeiz/gugu-web:<目标版本> \
+  gugu-offline-migrate --services-stopped
+```
+
+使用旧容器原有的数据/配置映射和自定义数据库设置；不要另建空数据目录，不要用 `--entrypoint` 绕过入口。该命令只启动内置 PostgreSQL/Redis，在数据卷 `migration-backups/` 中保留时间戳数据库归档和 `users.tar`，然后执行 Alembic、工作区迁移与校验，关闭依赖并退出；不启动 Web、Worker、Gateway、RAG 或 Sandbox。**仅命令退出码为 0 后**，才删除旧容器并按上面的正常运行命令用目标镜像重新创建。
+
+默认 Compose 使用同一入口：固定目标 `GUGU_WEB_IMAGE`，执行 `docker compose pull app`、`docker compose stop app`，然后 `docker compose run --rm --no-deps app gugu-offline-migrate --services-stopped`；成功后执行 `docker compose up -d --no-deps --force-recreate app`。`scripts/release/compose-update.sh` 已在停止 app 后自动执行该迁移步骤。
+
+失败时不要只换回旧镜像启动：文件和 schema 可能已部分迁移。保留 `migration-backups/`、迁移清单与旧镜像，继续停服；布局迁移可在排除错误后续跑。需要回滚时必须把同一次备份的数据库与整个 `users` 目录一起恢复，步骤见[部署文档](ops/deploy.md#工作区布局迁移失败后的恢复)。
+
+## 可选：使用 Compose 并启用联网搜索
+
+`docker-compose.yml` 同样使用 Docker Hub 的一体化应用镜像，并额外拉取 SearXNG 提供联网搜索。Compose 不部署独立 updater 服务，也不挂载宿主 Docker Socket；app 在 privileged 外层容器内运行 Rootless Docker。
+
+如需此路径，从 GitHub 下载 Compose 文件和环境变量模板，填写 `GUGU_DB_PASSWORD` 后启动：
+
+```bash
+mkdir -p gugu-compose && cd gugu-compose
+curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/Coffeiz/Gugu-web/main/.env.example -o .env
+# 编辑 .env，至少设置 GUGU_DB_PASSWORD
+docker compose up -d
+```
+
+Compose 相比直接运行单容器增加联网搜索和编排管理，但不提供 Admin 一键镜像更新；使用 Docker/Compose 管理器更新整套镜像。Shell 沙盒仍由 `gugu-web` 内置 runtime 提供。**该 Compose 没有独立 `updater` 或 `sandboxd` 服务，也不拉取独立 `gugu-sandbox` 执行镜像。**首次启动会初始化内置数据库并执行迁移，用户数据保存在 `Gugu-data`。
 
 部署时保留 `docker-compose.yml` 与根目录 `.env`，并设置 `GUGU_DB_PASSWORD`。可以设置管理员账号密码、端口和镜像版本；未设置 `ADMIN_PASSWORD` 时，首次启动会生成随机密码并持久化，同时将管理员账号和密码打印到 app 容器日志（可用 `docker compose logs app` 查看）。未设置 `ADMIN_USERNAME` 时账号默认为 `admin`。`SECRET_KEY` 可留空，由首次启动生成并持久化。启动后通过 <http://localhost:9595> 访问，管理后台为 <http://localhost:9595/admin/>。不要删除 `Gugu-data` 或用模板覆盖已有 `.env`。
 
-如需前后端拆分部署，请使用 `docker-compose.prod.yml`；该部署拓扑及其额外服务见[运维部署文档](ops/deploy.md)，不要与默认一体化 Compose 混用配置。
+如需前后端拆分部署，请使用 `docker-compose.prod.yml`；该部署拓扑及其额外服务见[运维部署文档](ops/deploy.md)，不要与一体化 Compose 混用配置。
 
 ## fnOS / 群晖 NAS 配置
 
@@ -79,13 +127,13 @@ fnOS 已实测单镜像 Shell 沙盒可正常运行。部署后确认打开的�
 
 ## Compose 配置
 
-默认一体化 Compose 从项目根目录 `.env` 读取编排变量，并把运行配置持久化到 `Gugu-data/.env`（挂载到容器 `/data`）。分体生产部署仍使用 `backend/.env`。两种拓扑都可由 Admin 面板的 `config.override.json`（优先级最高，运行时热合并）补充或覆盖。
+一体化 Compose 从项目根目录 `.env` 读取编排变量，并把运行配置持久化到 `Gugu-data/.env`（挂载到容器 `/data`）。直接运行镜像时，运行配置同样保存在 `Gugu-data/.env`。分体生产部署仍使用 `backend/.env`。这些部署拓扑都可由 Admin 面板的 `config.override.json`（优先级最高，运行时热合并）补充或覆盖。
 
 可以直接在项目根目录创建 `.env`，按需填写下面的 Compose 配置：
 
 ```dotenv
 # PostgreSQL
-# 默认 Compose 使用 app 内置 PostgreSQL；外部数据库部署时再改成实际地址
+# 一体化 Compose 使用 app 内置 PostgreSQL；外部数据库部署时再改成实际地址
 GUGU_DB_HOST=127.0.0.1
 GUGU_DB_PORT=5432
 GUGU_DB_NAME=gugu
@@ -106,11 +154,11 @@ GUGU_PUBLIC_APP_URL=http://localhost:9595
 
 # Shell 沙盒默认随一体化应用镜像启用，不需要配置独立执行镜像。
 
-# 默认 Compose 应用镜像
+# 一体化 Compose 应用镜像
 GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 ```
 
-默认 Compose 使用 `GUGU_WEB_IMAGE` 和 `GUGU_DB_PASSWORD`。只有需要分别管理前后端时才使用 `docker-compose.prod.yml`；从源码开发并热更新时使用 `docker-compose.dev.yml`。
+一体化 Compose 使用 `GUGU_WEB_IMAGE` 和 `GUGU_DB_PASSWORD`。只有需要分别管理前后端时才使用 `docker-compose.prod.yml`；从源码开发并热更新时使用 `docker-compose.dev.yml`。
 
 默认一体化部署的持久化运行配置为 `Gugu-data/.env`；分体部署的应用配置放在 `backend/.env`，模板见 [`backend/.env.example`](../backend/.env.example)。根目录 `.env.example` 提供 Compose 编排变量模板。
 
@@ -122,10 +170,10 @@ GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 
 常用配置文件：
 
-- `.env`：默认 Compose 编排变量，包括可选的管理员初始账号密码
+- `.env`：一体化 Compose 编排变量，包括可选的管理员初始账号密码
 - `Gugu-data/.env`：默认一体化部署生成并持久化的运行配置
 - `backend/.env`：分体生产部署配置
-- `docker-compose.yml`：默认一体化应用部署入口，推荐用于常规部署
+- `docker-compose.yml`：需要联网搜索时使用的一体化 Compose 部署入口
 - `docker-compose.dev.yml`：源码开发 Compose 服务
 - `docker-compose.prod.yml`：生产环境前后端分体部署
 
@@ -133,9 +181,9 @@ GUGU_WEB_IMAGE=coffeiz/gugu-web:latest
 
 ## 生产部署补充
 
-默认 Compose 通常只需使用 `docker compose up -d`。正式部署建议固定 release tag 或镜像 digest，并在升级前备份数据库和用户文件。环境变量和持久化目录的完整说明见[运维部署文档](ops/deploy.md)。
+直接运行镜像的部署由 `docker run` 管理；Compose 路径通常使用 `docker compose up -d`。正式部署建议固定 release tag 或镜像 digest，并在升级前备份数据库和用户文件。环境变量和持久化目录的完整说明见[运维部署文档](ops/deploy.md)。
 
-需要分别部署前后端时，使用 `docker-compose.prod.yml` 和对应的 backend/frontend 镜像。它是独立的分体拓扑，不是默认 Compose 的必需组件；切换部署方式前，按运维文档迁移配置与数据，不要直接复用另一种拓扑的 `.env`。
+需要分别部署前后端时，使用 `docker-compose.prod.yml` 和对应的 backend/frontend 镜像。它是独立的分体拓扑，不是快速部署的必需组件；切换部署方式前，按运维文档迁移配置与数据，不要直接复用另一种拓扑的 `.env`。
 
 ## 开发环境
 

@@ -3,9 +3,65 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import PurePosixPath
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
+
+
+def validate_workspace_target(target: str) -> None:
+    path = PurePosixPath(target)
+    if (not path.is_absolute() or path.parts[0] != "/" or len(path.parts) < 3
+            or path.parts[1] not in {"workspace", "personal", "project"}
+            or ".." in path.parts or path.as_posix() != target
+            or any(char in target for char in (",", "\x00", "\n", "\r"))):
+        raise ValueError("workspace mount 目标路径无效")
+
+
+def workspace_target_for(relative: str) -> str:
+    """用户存储内相对路径到容器规范路径的唯一映射。"""
+    path = PurePosixPath(relative)
+    library = {"项目文件": "project", "个人文件": "personal", "workspace": "workspace"}.get(path.parts[0] if path.parts else "")
+    if library is None or len(path.parts) < 2:
+        raise ValueError("工作区来源不属于可挂载的文件空间")
+    target = str(PurePosixPath("/") / library / PurePosixPath(*path.parts[1:]))
+    validate_workspace_target(target)
+    return target
+
+
+@dataclass(frozen=True)
+class WorkspaceMount:
+    """单个经过业务层授权的工作区挂载。"""
+
+    target: str
+    root: str
+
+    def __post_init__(self) -> None:
+        validate_workspace_target(self.target)
+        if not self.root.strip():
+            raise ValueError("workspace mount 根目录不能为空")
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "WorkspaceMount":
+        if not isinstance(value, dict):
+            raise ValueError("workspace mount 无效")
+        return cls(target=str(value.get("target") or ""), root=str(value.get("root") or ""))
+
+
+def _parse_workspace_mounts(value: Any) -> tuple[tuple[WorkspaceMount, ...], str | None]:
+    values = value.get("workspace_mounts") or []
+    if not isinstance(values, list) or len(values) > 64:
+        raise ValueError("sandboxd workspace_mounts 无效")
+    mounts = tuple(WorkspaceMount.from_dict(item) for item in values)
+    names = [item.target for item in mounts]
+    if len(names) != len(set(names)):
+        raise ValueError("sandboxd workspace mount 名称重复")
+    primary = str(value.get("primary_workspace") or "").strip() or None
+    if mounts and primary not in names:
+        raise ValueError("sandboxd primary_workspace 未在挂载清单中")
+    if not mounts and primary is not None:
+        raise ValueError("sandboxd primary_workspace 缺少挂载清单")
+    return mounts, primary
 
 
 @dataclass(frozen=True)
@@ -24,8 +80,8 @@ class ExecuteRequest:
     project_root: str | None = None
     personal_read_only: bool = True
     project_read_only: bool = True
-    allow_script_execution: bool = False
-    environment: dict[str, str] | None = None
+    workspace_mounts: tuple[WorkspaceMount, ...] = ()
+    primary_workspace: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExecuteRequest":
@@ -56,19 +112,11 @@ class ExecuteRequest:
             raise ValueError("sandboxd quota_bytes 无效")
         if quota_bytes is not None and not quota_root:
             raise ValueError("sandboxd quota_bytes 缺少 quota_root")
+        workspace_mounts, primary_workspace = _parse_workspace_mounts(value)
         if not 0.1 <= timeout <= 300:
             raise ValueError("sandboxd timeout 超出允许范围")
         if not 1 <= max_output_chars <= 120_000:
             raise ValueError("sandboxd 输出上限超出允许范围")
-        environment = value.get("environment")
-        if environment is not None:
-            if not isinstance(environment, dict) or len(environment) > 32:
-                raise ValueError("sandboxd environment 无效")
-            for key, env_value in environment.items():
-                if not isinstance(key, str) or not key or not key[0].isalpha() or not key.replace("_", "").isalnum():
-                    raise ValueError("sandboxd environment 名称无效")
-                if not isinstance(env_value, str) or len(env_value) > 4096 or "\x00" in env_value:
-                    raise ValueError("sandboxd environment 值无效")
         return cls(
             request_id=str(value.get("request_id") or "").strip() or None,
             root=root,
@@ -84,8 +132,8 @@ class ExecuteRequest:
             project_root=str(value.get("project_root") or "").strip() or None,
             personal_read_only=bool(value.get("personal_read_only", True)),
             project_read_only=bool(value.get("project_read_only", True)),
-            allow_script_execution=bool(value.get("allow_script_execution", False)),
-            environment=environment,
+            workspace_mounts=workspace_mounts,
+            primary_workspace=primary_workspace,
         )
 
     def to_json(self) -> bytes:
@@ -105,8 +153,10 @@ class ExecuteRequest:
             "project_root": self.project_root,
             "personal_read_only": self.personal_read_only,
             "project_read_only": self.project_read_only,
-            "allow_script_execution": self.allow_script_execution,
-            "environment": self.environment,
+            "workspace_mounts": [
+                {"target": mount.target, "root": mount.root} for mount in self.workspace_mounts
+            ],
+            "primary_workspace": self.primary_workspace,
         }, ensure_ascii=False) + "\n").encode("utf-8")
 
 

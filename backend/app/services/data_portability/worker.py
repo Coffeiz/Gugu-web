@@ -29,6 +29,7 @@ from app.services.data_portability.replace import (
 
 _log = logging.getLogger("data_portability.worker")
 _EXPORT_TTL = timedelta(hours=24)
+_EXPORT_HEARTBEAT_INTERVAL_SECONDS = 2
 
 
 async def process_export_job(job: ClaimedJob, *, worker_id: str, session_factory) -> None:
@@ -36,23 +37,28 @@ async def process_export_job(job: ClaimedJob, *, worker_id: str, session_factory
     storage = get_storage()
     artifact_key = f"{job.user_id.hex}/.data-portability/exports/{job.job_id.hex}.gupa"
     heartbeat_stop = asyncio.Event()
+    cancel_requested = asyncio.Event()
+    export_task = asyncio.current_task()
 
     async def heartbeat():
         while not heartbeat_stop.is_set():
             try:
-                await asyncio.wait_for(heartbeat_stop.wait(), timeout=25)
+                await asyncio.wait_for(
+                    heartbeat_stop.wait(), timeout=_EXPORT_HEARTBEAT_INTERVAL_SECONDS,
+                )
                 return
             except TimeoutError:
                 async with session_factory() as lease_db:
                     if not await renew_lease(lease_db, "export", job.job_id, worker_id):
-                        timestamp = now_utc()
-                        await lease_db.execute(update(DataExportJob).where(
+                        export_job = (await lease_db.execute(select(DataExportJob).where(
                             DataExportJob.id == job.job_id,
                             DataExportJob.user_id == job.user_id,
-                            DataExportJob.status == "canceling",
                             DataExportJob.lease_owner == worker_id,
-                        ).values(status="canceled", stage="canceled", finished_at=timestamp, updated_at=timestamp))
-                        await lease_db.commit()
+                        ))).scalar_one_or_none()
+                        if export_job is not None and export_job.status == "canceling":
+                            cancel_requested.set()
+                            if export_task is not None:
+                                export_task.cancel()
                         return
 
     heartbeat_task = asyncio.create_task(heartbeat())
@@ -92,9 +98,19 @@ async def process_export_job(job: ClaimedJob, *, worker_id: str, session_factory
                         complete=complete,
                         included_categories=categories,
                     )
-                    export_job.stage = "storing"
-                    export_job.updated_at = now_utc()
-                    await db.flush()
+                    # 归档构造成功后先提交身份映射，再在独立事务里推进任务阶段。
+                    await db.commit()
+                    # db 在 PostgreSQL 上使用 REPEATABLE READ 构造一致快照；租约心跳
+                    # 会并发更新同一条任务记录。快照事务不能再写这条记录，否则提交会
+                    # 因并发更新触发 SerializationError。状态更新放到新事务中。
+                    async with session_factory() as stage_db:
+                        await stage_db.execute(update(DataExportJob).where(
+                            DataExportJob.id == job.job_id,
+                            DataExportJob.user_id == job.user_id,
+                            DataExportJob.status == "running",
+                            DataExportJob.lease_owner == worker_id,
+                        ).values(stage="storing", updated_at=now_utc()))
+                        await stage_db.commit()
                     await storage.put_stream(artifact_key, encrypted, size, "application/vnd.gugu.portable+zip")
                     timestamp = now_utc()
                     finalized = await db.execute(update(DataExportJob).where(
@@ -113,16 +129,50 @@ async def process_export_job(job: ClaimedJob, *, worker_id: str, session_factory
                         finished_at=timestamp,
                         expires_at=timestamp + _EXPORT_TTL,
                         updated_at=timestamp,
+                        lease_owner=None,
+                        lease_until=None,
                     ))
                     if finalized.rowcount != 1:
                         await db.rollback()
                         await storage.delete(artifact_key)
+                        canceled_at = now_utc()
+                        await db.execute(update(DataExportJob).where(
+                            DataExportJob.id == job.job_id,
+                            DataExportJob.user_id == job.user_id,
+                            DataExportJob.status == "canceling",
+                            DataExportJob.lease_owner == worker_id,
+                        ).values(
+                            status="canceled", stage="canceled", error_code=None,
+                            artifact_key=None, artifact_size=None, artifact_sha256=None,
+                            finished_at=canceled_at, updated_at=canceled_at,
+                            lease_owner=None, lease_until=None,
+                        ))
+                        await db.commit()
                         return
                     await db.commit()
             finally:
                 identity_map.close()
     except asyncio.CancelledError:
-        raise
+        if not cancel_requested.is_set():
+            raise
+        try:
+            await storage.delete(artifact_key)
+        except Exception as cleanup_exc:
+            diag_log("data_portability.export_cleanup", cleanup_exc)
+        async with session_factory() as db:
+            timestamp = now_utc()
+            await db.execute(update(DataExportJob).where(
+                DataExportJob.id == job.job_id,
+                DataExportJob.user_id == job.user_id,
+                DataExportJob.status == "canceling",
+                DataExportJob.lease_owner == worker_id,
+            ).values(
+                status="canceled", stage="canceled", error_code=None,
+                artifact_key=None, artifact_size=None, artifact_sha256=None,
+                finished_at=timestamp, updated_at=timestamp,
+                lease_owner=None, lease_until=None,
+            ))
+            await db.commit()
     except Exception as exc:
         diag_log("data_portability.export", exc)
         try:
@@ -133,18 +183,31 @@ async def process_export_job(job: ClaimedJob, *, worker_id: str, session_factory
             export_job = (await db.execute(select(DataExportJob).where(
                 DataExportJob.id == job.job_id, DataExportJob.user_id == job.user_id,
                 DataExportJob.lease_owner == worker_id,
-            ))).scalar_one_or_none()
+            ).with_for_update())).scalar_one_or_none()
             if export_job is not None:
-                export_job.status = "failed"
-                export_job.stage = "failed"
-                export_job.error_code = "export_failed"
+                timestamp = now_utc()
+                if export_job.status == "canceling":
+                    export_job.status = export_job.stage = "canceled"
+                    export_job.error_code = None
+                elif export_job.status == "running":
+                    export_job.status = export_job.stage = "failed"
+                    export_job.error_code = "export_failed"
+                else:
+                    await db.commit()
+                    _log.warning("数据导出任务已由其他流程收尾 job=%s", job.job_id.hex)
+                    return
                 export_job.artifact_key = None
                 export_job.artifact_size = None
                 export_job.artifact_sha256 = None
-                export_job.finished_at = now_utc()
-                export_job.updated_at = now_utc()
+                export_job.finished_at = timestamp
+                export_job.updated_at = timestamp
+                export_job.lease_owner = None
+                export_job.lease_until = None
                 await db.commit()
-        _log.warning("数据导出任务失败 job=%s type=%s", job.job_id.hex, type(exc).__name__)
+                if export_job.status == "canceled":
+                    _log.info("数据导出任务已取消 job=%s", job.job_id.hex)
+                else:
+                    _log.warning("数据导出任务失败 job=%s type=%s", job.job_id.hex, type(exc).__name__)
     finally:
         heartbeat_stop.set()
         heartbeat_task.cancel()

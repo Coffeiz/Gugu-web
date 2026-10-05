@@ -111,7 +111,7 @@
     "keyBehavior": "Shell 动态权限提示词仅在工具实际可用时注入且可重复调用",
     "ci": "backend-pytest"
   },
-  "frontend/src/composables/useFilesystemAuthorization.test.ts": {
+  "frontend/tests/filesystem/useFilesystemAuthorization.test.ts": {
     "domain": "frontend-scheduling",
     "layer": "L0",
     "owner": "frontend/composables",
@@ -119,7 +119,15 @@
     "keyBehavior": "文件系统授权确认、完成与撤销遵循 API 边界",
     "ci": "frontend-test"
   },
-  "frontend/src/utils/consoleBanner.test.ts": {
+  "frontend/tests/files/composables/useFileBrowserWindow.test.ts": {
+    "domain": "file-library",
+    "layer": "L0",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileBrowserWindow.ts",
+    "keyBehavior": "大目录只渲染可见窗口且框选继续命中未挂载文件",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/design/consoleBanner.test.ts": {
     "domain": "frontend-ui",
     "layer": "L0",
     "owner": "frontend/utils",
@@ -127,7 +135,7 @@
     "keyBehavior": "主题切换不重复追加控制台横幅",
     "ci": "frontend-test"
   },
-  "frontend/src/utils/llmThinkingOptions.test.ts": {
+  "frontend/tests/agent-configuration/llmThinkingOptions.test.ts": {
     "domain": "agent-configuration",
     "layer": "L0",
     "owner": "frontend/utils",
@@ -135,12 +143,44 @@
     "keyBehavior": "思考选项按 Provider 与模型身份切换并保留有效选择",
     "ci": "frontend-test"
   },
-  "frontend/src/utils/modelProviders.test.ts": {
+  "frontend/tests/agent-configuration/modelProviders.test.ts": {
     "domain": "agent-configuration",
     "layer": "L0",
     "owner": "frontend/utils",
     "productionEntry": "frontend/src/utils/modelProviders.ts",
     "keyBehavior": "Provider API 协议选项与默认值符合端点能力且保留有效选择",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/forms/field-label-focus.test.ts": {
+    "domain": "frontend-accessibility",
+    "layer": "L0",
+    "owner": "frontend/forms",
+    "productionEntry": "frontend/src 全站 Vue 模板",
+    "keyBehavior": "字段标题不得通过 label 语义意外聚焦文本输入控件",
+    "ci": "test:fast"
+  },
+  "frontend/tests/skills/SkillForm.test.ts": {
+    "domain": "frontend-skills",
+    "layer": "L0",
+    "owner": "frontend/skills",
+    "productionEntry": "frontend/src/views/Skills/components/SkillForm.vue",
+    "keyBehavior": "工具卡片长名称和说明可省略显示且悬停可读取全文",
+    "ci": "test:fast"
+  },
+  "backend/tests/test_data_portability_import_delete_api.py": {
+    "domain": "data-portability",
+    "layer": "L1",
+    "owner": "backend/services/data_portability",
+    "productionEntry": "backend/app/api/v1/data_portability.py:delete_import",
+    "keyBehavior": "仅任务所有者可删除已结束导入并清理其私有暂存对象",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/profile/ProfileDataPortabilityPane.test.ts": {
+    "domain": "data-portability",
+    "layer": "L1",
+    "owner": "frontend/profile",
+    "productionEntry": "frontend/src/components/common/profile/ProfileDataPortabilityPane.vue",
+    "keyBehavior": "预检和失败任务可删除，增量导入完成状态明确显示撤回限制",
     "ci": "frontend-test"
   }
 }

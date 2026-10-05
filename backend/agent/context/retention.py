@@ -42,7 +42,7 @@ def protected_message_ids(
          if getattr(row, "run_id", None)),
         "",
     )
-    if not latest_run_id:
+    if not latest_run_id or not getattr(rows[-1], "run_id", None):
         # 旧数据没有 run/round 标识时，将连续的 canonical batch 作为完整单元，
         # 普通消息各自作为兼容单元；不再退回字符窗口。
         units: list[list[Any]] = []

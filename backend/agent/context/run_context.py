@@ -88,6 +88,27 @@ def _bind_persisted_user_message(batch, user_message: Any, resume_interaction: b
         )
 
 
+def assemble_run_area(
+    *, system_prompt, fixed_parts, history, render_options, use_anthropic,
+    current_user, stance=None, previous_stance_digest=None, message_time=None,
+    conversation_tail=(), extra_reminder=None, message_area=None,
+):
+    """统一固定前缀、历史和本轮消息布局；协议差异只影响 system 的承载位置。"""
+    prefix = list(fixed_parts)
+    if not use_anthropic:
+        prefix.insert(0, {"role": "system", "content": system_prompt})
+    assembled = assembly.assemble(
+        fixed_parts=prefix, history=history, message_area=message_area,
+        render_options=render_options,
+    )
+    batch, _ = assembly.assemble_turn(
+        stance=stance, previous_stance_digest=previous_stance_digest,
+        message_time=message_time, current_user=current_user,
+        conversation_tail=conversation_tail, extra_reminder=extra_reminder,
+    )
+    return assembled, batch
+
+
 async def prepare_run(
     *,
     system_prompt: str,
@@ -185,64 +206,23 @@ async def prepare_run(
     }
     current_stance_digest = assembly.stance_digest(stance_text)
     stance_changed = current_stance_digest != (previous_stance_digest or "")
-    if use_anthropic:
-        assembled = assembly.assemble(
-            fixed_parts=fixed_parts,
-            history=history_parts,
-            message_area=restored_area,
-            render_options=render_options,
-        )
-        if prior_run_parts_start is not None:
-            assembled.protected_history_start = (
-                assembled.fixed_prefix_size + prior_run_parts_start
-            )
-        turn_batch, current_stance_digest = assembly.assemble_turn(
-            stance=stance_text,
-            previous_stance_digest=previous_stance_digest,
-            message_time=message_time,
-            current_user=current_user,
-            conversation_tail=rag_context["tail"],
-            extra_reminder=extra_reminder,
-        )
-        _bind_persisted_user_message(turn_batch, user_message, resume_interaction)
-        assembled.append_batch(turn_batch)
-        audit.context_layout_audit(
-            phase="assembled", session=session, snapshot=snapshot,
-            history=effective_history, messages=assembled.provider_projection(),
-            fixed_prefix_count=assembled.fixed_prefix_size,
-            turn_batch_count=turn_batch.message_count,
-            history_stats=history_stats,
-        )
-        return PreparedRun(
-            rag_context=rag_context,
-            stance_to_persist=stance_text if stance_changed else None,
-            message_area=assembled,
-        )
-
-    assembled = assembly.assemble(
-        fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
-        history=history_parts,
-        message_area=restored_area,
-        render_options=render_options,
+    assembled, turn_batch = assemble_run_area(
+        system_prompt=system_prompt, fixed_parts=fixed_parts, history=history_parts,
+        message_area=restored_area, render_options=render_options, use_anthropic=use_anthropic,
+        stance=stance_text, previous_stance_digest=previous_stance_digest,
+        message_time=message_time, current_user=current_user,
+        conversation_tail=rag_context["tail"], extra_reminder=extra_reminder,
     )
     if prior_run_parts_start is not None:
         assembled.protected_history_start = (
             assembled.fixed_prefix_size + prior_run_parts_start
         )
-    turn_batch, current_stance_digest = assembly.assemble_turn(
-        stance=stance_text,
-        previous_stance_digest=previous_stance_digest,
-        message_time=message_time,
-        current_user=current_user,
-        conversation_tail=rag_context["tail"],
-        extra_reminder=extra_reminder,
-    )
     _bind_persisted_user_message(turn_batch, user_message, resume_interaction)
     assembled.append_batch(turn_batch)
     audit.context_layout_audit(
         phase="assembled", session=session, snapshot=snapshot,
         history=effective_history, messages=assembled.provider_projection(),
-        fixed_prefix_count=getattr(assembled, "fixed_prefix_size", None),
+        fixed_prefix_count=assembled.fixed_prefix_size,
         turn_batch_count=turn_batch.message_count,
         history_stats=history_stats,
     )

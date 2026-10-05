@@ -11,6 +11,7 @@
       :controls="visible"
       playsinline
       preload="metadata"
+      @volumechange="persistVolume"
       @error="onError"
       @play="playing = true"
       @pause="playing = false"
@@ -22,7 +23,6 @@
         v-if="visible && !error"
         class="vv-center-wrap"
       >
-        <div class="vv-btn-ring"></div>
         <button class="vv-center-btn" @click="togglePlay">
           <Icon name="media.play"  v-if="!playing" :size="32" />
           <Icon name="media.pause" v-else :size="32" />
@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -50,8 +50,36 @@ const videoRef = ref<HTMLVideoElement | null>(null)
 const error    = ref(false)
 const playing  = ref(false)
 const visible  = ref(false)
+const VIDEO_VOLUME_KEY = 'gugu_video_volume'
 
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+
+function readSavedVolume(): number | null {
+  try {
+    const stored = localStorage.getItem(VIDEO_VOLUME_KEY)
+    if (stored === null) return null
+    const volume = Number(stored)
+    return Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : null
+  } catch {
+    return null
+  }
+}
+
+function restoreVolume() {
+  const volume = readSavedVolume()
+  if (volume !== null && videoRef.value) videoRef.value.volume = volume
+}
+
+function persistVolume(event: Event) {
+  const video = event.currentTarget as HTMLVideoElement
+  try {
+    localStorage.setItem(VIDEO_VOLUME_KEY, String(video.volume))
+  } catch {
+    // 存储不可用时仍可正常调整当前播放器音量。
+  }
+}
+
+onMounted(restoreVolume)
 
 // ── 显示 / 隐藏 ───────────────────────────────────────
 function showBtn() {
@@ -69,7 +97,10 @@ function onMouseLeave() {
 watch(() => props.src, () => {
   error.value   = false
   playing.value = false
-  if (videoRef.value) videoRef.value.load()
+  if (videoRef.value) {
+    restoreVolume()
+    videoRef.value.load()
+  }
 })
 
 function onError() { error.value = true }
@@ -114,28 +145,23 @@ onUnmounted(() => {
   width: 60px;
   height: 60px;
   color: white;
-  opacity: 0.72;
+  opacity: 0.75;
   border-radius: 50%;
-  background: rgba(16, 17, 24, 0.24);
-  backdrop-filter: blur(24px) saturate(135%);
-  -webkit-backdrop-filter: blur(24px) saturate(135%);
-  box-shadow: var(--elevation-card);
-  transition: transform 0.15s, box-shadow 0.2s;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: transform 0.15s;
+}
+.vv-center-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: 50%;
+  background: rgba(16, 17, 24, 0.5);
+  pointer-events: none;
 }
 .vv-center-wrap:hover  { transform: translate(-50%, -50%) scale(1.08); }
 .vv-center-wrap:active { transform: translate(-50%, -50%) scale(0.94); }
-
-/* ── 描边 ── */
-.vv-btn-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 2px solid currentColor;
-  opacity: 0.5;
-  pointer-events: none;
-  z-index: 2;
-  transition: border-color 0.2s;
-}
 
 /* ── 按钮 ── */
 .vv-center-btn {
@@ -173,9 +199,6 @@ onUnmounted(() => {
 .vv-center-btn:active {
   outline: none;
   background: transparent;
-}
-.vv-center-wrap:hover {
-  box-shadow: var(--elevation-card-hover);
 }
 
 /* ── 淡入淡出 ── */

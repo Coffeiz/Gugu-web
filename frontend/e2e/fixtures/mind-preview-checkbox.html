@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>笔记预览勾选测试</title></head>
+<body><div id="app"></div>
+<script type="module">
+import { createApp, h, ref } from 'vue'
+import { createPinia } from 'pinia'
+import { createRouter, createMemoryHistory } from 'vue-router'
+import { i18n } from '/src/i18n/index.ts'
+import { toggleTaskInMd } from '/src/composables/mind/useMindEditor.ts'
+import NoteTimeline from '/src/views/Mind/components/NoteTimeline.vue'
+import '/src/assets/styles/global.css'
+import '/src/views/Mind/components/mind-content.css'
+
+const note = ref({ id: 42, version: 3, contentMd: '- [ ] 整理需求', color: null })
+const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { render: () => null } }] })
+createApp({
+  render: () => h(NoteTimeline, {
+    groups: [{ date: '2026-01-01', items: [note.value] }], highlightId: null, filtered: false,
+    onToggleTask: (current, index) => {
+      // 模拟 Store 的同步乐观替换；服务端尚未确认，version 保持原值。
+      note.value = { ...current, contentMd: toggleTaskInMd(current.contentMd, index) }
+    },
+  }),
+}).use(createPinia()).use(router).use(i18n).mount('#app')
+</script></body></html>

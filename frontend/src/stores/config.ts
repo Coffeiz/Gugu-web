@@ -29,7 +29,7 @@ export const useConfigStore = defineStore('config', () => {
   const saveError = ref('')
   // 后端把已存的密钥脱敏成 ****、前端又清空显示，导致「已存」无任何痕迹 → 看着像没保存。
   // 这里记录各保密字段后端当前是否已有值，供 UI 显示「已配置」指示。
-  const secretSet = reactive({ voiceApiKey: false, embeddingApiKey: false })
+  const secretSet = reactive({ voiceApiKey: false, embeddingApiKey: false, smtpPassword: false })
 
   const cfg = reactive({
     db: {
@@ -142,6 +142,7 @@ export const useConfigStore = defineStore('config', () => {
       similar_image_limit_daily: 10,
     },
     smtp: {
+      enabled: true,
       host: '',
       port: 465,
       user: '',
@@ -150,6 +151,7 @@ export const useConfigStore = defineStore('config', () => {
       to_addr: '',
       test_to_addr: '',
       feedback_email_enabled: true,
+      registration_verification_enabled: true,
       use_ssl: true,
     },
     security: {
@@ -181,7 +183,10 @@ export const useConfigStore = defineStore('config', () => {
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
-      if (data.smtp)    Object.assign(cfg.smtp,    sanitizeForEdit(data.smtp))
+      if (data.smtp) {
+        secretSet.smtpPassword = data.smtp.password === '****'
+        Object.assign(cfg.smtp, sanitizeForEdit(data.smtp))
+      }
       if (data.security) Object.assign(cfg.security, data.security)
       if (data.byok)    Object.assign(cfg.byok,    data.byok)
       if (data.mcp)     Object.assign(cfg.mcp,     data.mcp)
@@ -216,6 +221,7 @@ export const useConfigStore = defineStore('config', () => {
       }
       if (cleanPatch.voice?.api_key) secretSet.voiceApiKey = true   // 这次确实写了新 key
       if (cleanPatch.embedding?.api_key) secretSet.embeddingApiKey = true
+      if (cleanPatch.smtp?.password) secretSet.smtpPassword = true
       saved.value = true
       setTimeout(() => { saved.value = false }, 3000)
     } catch (e) {

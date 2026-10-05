@@ -2,7 +2,7 @@
 
 > 状态：Office 文档文本提取已支持；结构化检查、编辑和创建待实施
 > 创建：2026-10-03
-> 最近更新：2026-10-03
+> 最近更新：2026-10-04
 > 关联模块：`backend/agent/tools/files/`、`backend/app/core/doctext.py`、`backend/app/services/storage/file_service/`、`backend/app/services/files/`
 > 背景参考：`docs/prds/【已完成】PRD-FS-3-文件事实源与双向同步.md`、`docs/prds/【已完成】PRD-FS-4-顶层Workspace文件库空间.md`、`docs/prds/PRD-LLM-16-工具Schema语义显式化与注入优化.md`
 
@@ -41,6 +41,7 @@
 - 不通过 LibreOffice/UNO 新增常驻服务或增加大型办公套件运行依赖。
 - 不把 Office 二进制文件交给文本 `edit_file`，也不让模型直接输出/覆盖完整二进制编码。
 - 不执行文档宏、嵌入代码、外部链接或文档内脚本。
+- 不原样安装或运行外部 Office Skill，不依赖 MiniMax 模型或 API；首期不强制增加 .NET、LibreOffice 或独立 Office 服务。
 
 ## 2. 功能需求
 
@@ -88,7 +89,7 @@ Office 文件继续使用现有文件记录、`file_id`、用户归属及 `perso
 
 Office 编辑必须先读取并检查目标文件当前版本；若 `expected_version` 与当前版本不一致，拒绝写入并要求重新检查，防止覆盖用户或其他流程刚做的修改。
 
-编辑器在内存或隔离临时对象中生成候选字节，完成格式容器校验、对应库重新解析、目标修改核对及大小限制检查后，才通过统一文件内容更新服务提交。提交需保持文件数据与数据库版本更新一致；失败时保留原文件和原版本。并发提交必须使用版本条件避免最后写入静默覆盖。
+编辑器在内存或隔离临时对象中生成候选字节，完成格式容器校验、对应库重新解析、目标修改核对、未修改部件保留验证及大小限制检查后，才通过统一文件内容更新服务提交。提交需保持文件数据与数据库版本更新一致；失败时保留原文件和原版本。并发提交必须使用版本条件避免最后写入静默覆盖。
 
 写入成功后递增文件版本、更新大小与时间、触发现有 canonical 文件变更/同步事件并重新计算配额。不得由 Office 工具自行拼物理存储路径或绕过 FileService。
 
@@ -126,9 +127,11 @@ FileService 内容更新入口：归属、配额、版本并发、存储提交�
 
 ### 3.2 格式编辑器
 
-- DOCX 使用 `python-docx`，只暴露明确支持的段落、表格和基础样式操作；不支持的文档部件必须保留并经 fixture 测试验证，否则对应输入应拒绝修改。
-- XLSX 使用 `openpyxl`；对宏工作簿和已知可能丢失的图表/形状等内容采取拒绝或保护策略，不做不透明的“打开后全量保存”。不执行公式计算。
-- PPTX 使用 `python-pptx`；范围限定为可编辑文本形状、表格和简单幻灯片操作。对不支持的图表、媒体、动画和形状结构采取保留验证或拒绝修改。
+- 创建与编辑分开选型：创建新文件优先使用已有成熟格式库；编辑已有文件优先评估目标 OOXML 部件的局部修改，不把所有格式都固定为整包打开后重新保存。Phase 0 按格式与 action 确定唯一执行路径和拒绝条件，不在执行失败后自动切换另一套编辑器掩盖错误。
+- DOCX 使用 `python-docx` 进行结构读取和基础创建，段落、表格编辑对比库保存与局部 OOXML 修改的保留效果；只暴露明确支持的操作，不支持的文档部件必须保留并经 fixture 测试验证，否则对应输入应拒绝修改。
+- XLSX 使用 `openpyxl` 进行结构读取和基础创建；编辑重点评估局部 worksheet、sharedStrings、styles 等必要部件的修改，避免默认全量 round-trip。行删除/追加涉及公式、命名范围、表格、图表或跨表引用时，必须正确更新受影响引用或在写入前拒绝，不能仅改行号。不执行公式计算，首期仍拒绝宏工作簿。
+- PPTX 使用 `python-pptx` 进行结构读取和基础创建；文本和表格更新优先评估局部 slide XML 修改。复制幻灯片必须处理关联的 relationships、部件身份和 Content Types，不能只复制 slide XML。对不支持的图表、媒体、动画和形状结构采取保留验证或拒绝修改。
+- 局部修改先确定允许变化的部件集合；未变化的 ZIP 成员保留原始解压字节，不批量美化或重写全部 XML。目标部件内还需验证非目标内容、命名空间和关系引用；ZIP 压缩结果不必逐字节相同，部件保留也不等于完整 Office 兼容。
 - 采用轻量内部结果契约表达 `changed`、`locator`、`warnings` 和 `candidate_bytes`；格式库不能直接访问数据库、Storage 或用户权限。
 - 首期不增加 LibreOffice/UNO；若后续确需高保真转换或复杂格式支持，另行评估独立执行服务和资源边界。
 
@@ -160,10 +163,36 @@ backend/tests/services/storage/test_file_content_update.py 【新增】版本冲
 
 格式编辑器只负责文档字节和结构操作；Agent 工具负责对话工具契约；FileService 是文件写入、权限、版本和同步的唯一业务入口。不得修改 `create_file` / `edit_file` 的文本语义，不新增数据库迁移，不把 LibreOffice 安装进 Web 镜像，不在工具 handler 复制 FileService 的归属/配额/同步逻辑。若现有 FileService 无法原子更新文件内容，应先在其职责内建立受测入口，不从 Office 编辑器绕开。
 
+### 3.5 MiniMax Office Skill 选择性融合
+
+2026-10-03 已对 [MiniMax 官方 Skills 仓库](https://github.com/MiniMax-AI/skills) 进行源码调查；这属于复用候选评估，不代表已安装、完成兼容测试或接入运行时。
+
+| 上游能力 | 可复用部分 | 首期接入策略 |
+|---|---|---|
+| [minimax-docx](https://github.com/MiniMax-AI/skills/blob/main/skills/minimax-docx/SKILL.md) | 创建/编辑/套模板工作流、排版指南、OpenXML 结构与校验案例 | 转译为 Gugu 的工具指南和 fixture；.NET 8/OpenXML SDK 实现只作对比候选，不直接引入其安装脚本或运行依赖。 |
+| [minimax-xlsx](https://github.com/MiniMax-AI/skills/blob/main/skills/minimax-xlsx/SKILL.md) | OOXML 局部编辑思路、基础模板、公式静态检查和引用处理案例 | 优先评估 Python 实现，审查后按需改造为内部字节处理函数；不原样调用路径型 CLI。 |
+| [pptx-generator](https://github.com/MiniMax-AI/skills/blob/main/skills/pptx-generator/SKILL.md) | 版式配方、模板编辑、幻灯片关系处理与质量检查流程 | 基础创建仍使用现有库；PptxGenJS 仅在模板与排版收益经验证后另行评估，不作为首期必需依赖。 |
+
+融合分为三层，不能新增绕过现有工具的第二套文件写入入口：
+
+1. **Skill 指南层**：将上游场景路由、模板和验证经验改写到现有 `file-ops` Skill，按需加载；调用本 PRD 的三个 Office 工具，不要求模型直接改物理路径或自行安装依赖。上游的脚本、资源和 references 不能仅靠复制 SKILL.md 获得运行能力。
+2. **格式编辑器层**：复用通过审查的算法或资源，统一接收受控字节和结构操作，返回候选字节及校验结果；需要临时目录的实现由服务创建并限制范围，不能接受用户提供的输出目录或递归清理任意路径。
+3. **文件业务层**：归属、确认、版本冲突、配额、文件变更和存储提交继续由现有工具及 FileService 处理；Office 核心能力不依赖 Shell 授权、独立沙盒服务或某个 LLM Provider。
+
+已发现的上游边界必须纳入改造与测试，不能照搬其“零格式损失”或“校验通过即安全”的描述：
+
+- [XLSX 解包器](https://github.com/MiniMax-AI/skills/blob/main/skills/minimax-xlsx/scripts/xlsx_unpack.py) 会清理已有输出目录并重新格式化全部 XML；内部实现必须改为独立受控临时目录和限定部件修改，并加入解压总量、成员数量、路径及 XML 解析限制。
+- [行位移脚本](https://github.com/MiniMax-AI/skills/blob/main/skills/minimax-xlsx/scripts/xlsx_shift_rows.py) 遍历多个工作表，且命名范围、结构化引用和外部链接处理存在明确限制；不能直接用于指定工作表的增删行。测试必须区分目标表、其他表自己的坐标与确实引用目标表的公式。
+- [公式校验器](https://github.com/MiniMax-AI/skills/blob/main/skills/minimax-xlsx/scripts/formula_check.py) 是静态检查，不执行重算且含启发式判断；不能将退出码 0 当成计算正确或整份文件兼容的证明。
+- DOCX 上游的自动修复、格式清理或校验降级只能作为案例，不能成为本服务遇错继续提交的兜底路径。
+
+实际引入代码、模板或文档前固定上游 commit，记录来源、改造范围和依赖；保留 [MIT 版权与许可声明](https://github.com/MiniMax-AI/skills/blob/main/LICENSE)，逐项核对资源及第三方依赖许可证。不运行上游自动安装脚本，不从浮动分支在用户运行时下载或更新代码；复用材料随 Gugu 发布。需要增加运行依赖或扩大格式范围时，先更新本 PRD 再实施。
+
 ## 4. 验证与上线
 
 - 工具契约测试验证：支持格式与 action 枚举正确；缺字段、额外字段、混合动作、模糊 locator 和过期版本均在写入前拒绝。
 - 格式行为测试使用包含段落/表格、公式/样式、文本形状/表格及未支持对象的真实 fixture；分别验证新增、更新、删除、重读定位、保存后再次解析，以及未修改部件保留或明确拒绝。
+- 局部编辑验证 ZIP 成员清单、非目标部件解压字节及受影响关系；加入共享字符串、跨表公式、命名范围、幻灯片关联资源等 fixture。保留原部件但关系或引用已损坏也必须判为失败；不能用可重新解析替代语义保留测试。
 - 故障注入验证：解析、序列化、配额、存储写入、数据库提交、版本冲突任一失败，原文件字节、版本和配额事实不被部分覆盖；canonical 文件变更只在成功提交后产生。
 - 安全测试验证跨用户文件 ID、已删除文件、空间边界、Workspace 绑定、确认取消及过期 locator 均不产生写入。
 - 端到端验收覆盖 Agent 检查文件 → 按 locator 修改 → `read_file`/再次检查确认修改 → 在文件库下载并由对应 Office 解析器打开。
@@ -189,6 +218,7 @@ backend/tests/services/storage/test_file_content_update.py 【新增】版本冲
 
 - [ ] `FS6-001` 核对三种格式库对已支持/未支持 Office 部件的 round-trip 行为并确定拒绝策略；验收：每种格式均有带未支持部件的 fixture，文档记录最大字节数、输出限额、格式检测及复杂格式处理策略。
 - [ ] `FS6-002` 定义结构检查结果、版本绑定 locator 和单操作工具 Schema；验收：DOCX/XLSX/PPTX 均能表达唯一目标，歧义、过期 locator、额外字段和多动作混传均可拒绝。
+- [ ] `FS6-011` 完成 MiniMax Office 复用选型与来源审查；验收：固定候选上游 commit，记录许可证、依赖、复用/拒绝清单；使用同一批 fixture 对比库 round-trip 与局部 OOXML 修改，确定每种格式/action 的唯一执行路径，不引入未经确认的 .NET/LibreOffice/PptxGenJS 依赖。
 
 ### Phase 1：结构化检查
 
@@ -201,11 +231,11 @@ backend/tests/services/storage/test_file_content_update.py 【新增】版本冲
 ### Phase 3：Office 定点编辑
 
 - [ ] `FS6-005` 实现 DOCX 段落和表格操作；验收：目标增改删后可重新解析定位，未支持部件不被静默丢弃，失败不改变原文件。
-- [ ] `FS6-006` 实现 XLSX 单元格和行操作；验收：值、公式、基础格式及可保留对象经 round-trip 测试；不支持宏/图表等风险输入按基线拒绝，公式缓存不被声称为已重算。
-- [ ] `FS6-007` 实现 PPTX 文本形状、表格与简单幻灯片操作；验收：目标形状/幻灯片经 round-trip 验证，未支持媒体、图表和动画对象按基线保留或拒绝。
+- [ ] `FS6-006` 实现 XLSX 单元格和行操作；验收：按 Phase 0 路径完成目标部件与非目标部件保留验证，行操作不误移其他工作表坐标，相关公式/命名范围正确更新或拒绝；不支持宏/图表等风险输入按基线拒绝，静态公式检查不被声称为已重算。
+- [ ] `FS6-007` 实现 PPTX 文本形状、表格与简单幻灯片操作；验收：目标形状/幻灯片经保存重读与关系完整性验证，复制后部件身份和关联资源有效，非目标部件保留，未支持媒体、图表和动画对象按基线保留或拒绝。
 - [ ] `FS6-008` 注册 `office_edit` 并接入统一确认、文件工具授权及回执；验收：模型可单操作完成三种格式增改删，确认取消无写入，成功后文件库读回和版本均更新。
 
 ### Phase 4：结构化创建与发布验收
 
 - [ ] `FS6-009` 实现 `create_office_file` 的基础模板创建；验收：可在个人、项目和授权 Workspace 创建有效 DOCX/XLSX/PPTX，冲突、配额、归属和真实 file_id 回执符合现有文件契约。
-- [ ] `FS6-010` 完成文件工具 Skill、测试和上线验收；验收：Agent 完成检查—修改—重读闭环，后端文件工具/格式/存储测试通过；发布说明明确首期格式边界与风险，不改动现有文本工具行为。
+- [ ] `FS6-010` 完成文件工具 Skill、测试和上线验收；验收：选择性吸收 MiniMax 场景路由、模板和验证指南并适配 Gugu 工具，不保留直接 Shell 写回或自动安装指令；Agent 完成检查—修改—重读闭环，后端文件工具/格式/存储测试通过；发布说明明确首期格式边界与风险，不改动现有文本工具行为。

@@ -205,7 +205,7 @@ async def _bind_user_model(user_id, settings, session_id=None):
 
 
 async def _load_owner_reflection_history(db, user_id, session_id, user_name, model_cfg):
-    """加载归属正确且已空闲 session 的最小 system 与 provider history。"""
+    """加载归属正确且已空闲 session 的最小 system 与待投影历史。"""
     from sqlalchemy import select
     from app.models import ConversationSession
     from agent.capabilities.defaults import DEFAULT_PROMPT_NAME
@@ -266,7 +266,11 @@ async def _rebuild_owner_reflection_snapshot(user_id, session_id, user_name, mod
     if rebuilt is None:
         return None
     system_prompt, history_parts = rebuilt
-    from agent.context.provider_conversation import ProviderConversation
+    from agent.context.prefix_history import render_branch_prefix
+
+    # 持久化历史仍含 stance/knowledge 等 Canonical event；先走统一投影入口，
+    # 再作为 wire 快照传递，不能仅用 ProviderConversation 包装而跳过渲染。
+    history = render_branch_prefix(history_parts, model_cfg)
 
     return SimpleNamespace(
         user_id=str(user_id),
@@ -275,7 +279,7 @@ async def _rebuild_owner_reflection_snapshot(user_id, session_id, user_name, mod
         system_prompt=system_prompt,
         ai=model_cfg,
         tools=(),
-        history=ProviderConversation(history_parts),
+        history=history,
         source="persisted_history",
     )
 

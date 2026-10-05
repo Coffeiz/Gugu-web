@@ -315,6 +315,21 @@ def send_reset_email(*, to_addr: str, username: str, link: str, theme: str = "li
                       actions=[{"label": "重置密码", "url": link}], theme=theme, palette=palette)
 
 
+def send_registration_verification(*, to_addr: str, code: str) -> bool:
+    """发送邮箱注册验证码，复用咕咕安全邮件模板。"""
+    subject = "咕咕 · 注册验证码"
+    body = f"你的咕咕注册验证码是：{code}\n\n验证码 10 分钟内有效。若这不是你本人操作，请忽略此邮件。"
+    return send_email(
+        subject,
+        body,
+        to_addr=to_addr,
+        template="security",
+        title=subject,
+        preheader="完成邮箱验证以继续注册咕咕账号",
+        sections=[{"heading": "邮箱验证码", "text": f"{code}\n验证码 10 分钟内有效。"}],
+    )
+
+
 def send_email_change_verification(*, to_addr: str, username: str, link: str,
                                    theme: str = "light", palette: str = "mist") -> bool:
     """发送新邮箱确认邮件；link 只由服务端生成。"""

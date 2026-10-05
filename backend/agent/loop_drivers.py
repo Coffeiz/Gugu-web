@@ -289,7 +289,7 @@ class AnthropicDriver:
 
         schema_source = tool_snapshot or registry.snapshot()
         tools = schema_source.anthropic_schemas(tool_names)
-        _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
+        _timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
         client = providers.build_anthropic_client(ai, _timeout)
@@ -561,7 +561,7 @@ class OpenAIDriver:
         declared = providers.capability_snapshot(ai)
         schema_source = tool_snapshot or registry.snapshot()
         tools = schema_source.openai_schemas(tool_names) if declared.get("tools", True) else []
-        _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
+        _timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
         client = providers.build_openai_client(ai, _timeout)
 
         think_kwargs = adapter.build_openai_thinking_kwargs(ai)
@@ -630,7 +630,7 @@ class OpenAIDriver:
         tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
         cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
         # 与 AnthropicDriver 的 stream_round 同一套统一重试节奏（app/core/retry.py）：
-        # 固定 5s×5、墙钟 90s、只在吐出首个 token 前重试、重试事件对用户可见。
+        # 使用主对话共享预算；只在吐出首个 token 前重试，重试事件对用户可见。
         started_at = time.monotonic()
         retries_done = 0
         while True:

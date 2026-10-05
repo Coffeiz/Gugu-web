@@ -11,9 +11,24 @@ import re
 _INVALID_RE = re.compile(r'[\\/:*?"<>|]')
 
 # 用户存储根（<uid>/）下的系统保留顶层目录名——个人文件/项目文件/思维/素材板/默认
-# 工作区/旧 shell 迁移目录。Workspace 物理目录与它们平级，任何情况下不得占用这些
+# 工作区/旧 shell 迁移目录。Workspace 物理目录统一位于 workspace/，不得占用这些
 # 名称；本集合是唯一事实源，新增系统顶层目录时在此登记。
 RESERVED_USER_ROOTS = frozenset({"workspace", "shell", "个人文件", "项目文件", "思维", "素材板"})
+
+
+def workspace_directory_path(directory_name: str) -> str:
+    """所有工作区共享 workspace 命名空间，目录字段只保存稳定段名。"""
+    if not directory_name or directory_name in {".", ".."} or _safe_name(directory_name) != directory_name:
+        raise ValueError("工作区目录名无效")
+    return f"workspace/{directory_name}"
+
+
+def workspace_directory_segment(name: str, identity: str, *, is_default: bool = False) -> str:
+    """创建时冻结宿主与容器共用段名，非 ASCII 名称及保留段用稳定身份消歧。"""
+    if is_default:
+        return "default"
+    segment = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.strip()).strip("-_ ").lower()[:48]
+    return segment if segment and segment != "default" else f"workspace-{identity}"
 
 
 def _safe_name(name: str) -> str:
@@ -46,7 +61,7 @@ def _build_key(uid: int, space: str, display_name: str, ext: str,
     if space == "asset":
         return f"{uid}/素材板/{fname}"
     if space == "workspace":
-        base = f"{uid}/{_safe_name(workspace_directory_name)}"
+        base = f"{uid}/{workspace_directory_path(workspace_directory_name)}"
         return f"{base}/{safe_folder_path}/{fname}" if safe_folder_path else f"{base}/{fname}"
     # personal — 有文件夹时放进子目录
     if safe_folder_path:
@@ -83,7 +98,7 @@ def compose_logical_path(
     if space == "asset":
         return "素材板"
     if space == "workspace":
-        base = _safe_name(workspace_directory_name)
+        base = workspace_directory_path(workspace_directory_name)
         return f"{base}/{safe_folder_path}" if safe_folder_path else base
     # personal
     return f"个人文件/{safe_folder_path}" if safe_folder_path else "个人文件"

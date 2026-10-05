@@ -7,7 +7,6 @@
 - [画布/便签约定](../../agentskills/canvas-mind/SKILL.md)
 - [设计规范](../../agentskills/design/SKILL.md)（完整文档见 [references/](../../agentskills/design/references/)）
 - [测试约定](../../agentskills/testing/SKILL.md)
-- [Devserver 运维](../../agentskills/devserver/SKILL.md)
 - [许可证合规](LICENSES.md)
 - [本地开发约定](../../agentskills/local/SKILL.md)（仅本机，不提交敏感凭据）
 

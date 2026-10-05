@@ -573,13 +573,15 @@ async function setPriority(n: number) {
 .tp-item:active .tp-name { cursor: grabbing; }
 .tp-ghost { opacity: 0.35; }
 .tp-check {
-  width: 15px; height: 15px; border-radius: 5px; flex-shrink: 0;
-  border: var(--control-checkbox-border-width) solid var(--action-outline); background: var(--control-bg); color: var(--content-on-accent);
+  appearance: none; flex: 0 0 var(--control-checkbox-size); width: var(--control-checkbox-size); height: var(--control-checkbox-size);
+  border: var(--control-checkbox-border-width) solid var(--control-checkbox-border); border-radius: var(--control-checkbox-radius);
+  background: var(--control-checkbox-bg); color: var(--control-checkbox-mark); box-shadow: var(--control-checkbox-shadow);
   display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tp-check:hover { border-color: var(--border-focus); }
-.tp-check.checked { background: var(--action-primary-bg); border-color: var(--action-primary); }
+.tp-check:hover { border-color: var(--control-checkbox-border-hover); }
+.tp-check.checked { background: var(--control-checkbox-bg-checked); border-color: var(--control-checkbox-border-checked); box-shadow: var(--control-checkbox-shadow); }
+.tp-check:focus-visible { outline: 2px solid var(--control-checkbox-border-hover); outline-offset: 2px; }
 .tp-input {
   flex: 1; min-width: 0; border: none; background: none; outline: none;
   font-size: 12px; color: var(--text-primary); font-family: var(--font-sans); padding: 2px 0;
@@ -677,12 +679,6 @@ html[data-theme][data-family] .todo-pop-popup .tp-input { color: var(--content-p
 html[data-theme][data-family] .todo-pop-popup .tp-count,
 html[data-theme][data-family] .todo-pop-popup .tp-empty { color: var(--content-secondary); }
 html[data-theme][data-family] .todo-pop-popup .tp-item:hover { background: var(--surface-soft-hover); }
-html[data-theme][data-family] .todo-pop-popup .tp-check {
-  color: var(--content-on-accent); background: var(--control-bg); border-color: var(--action-outline);
-}
-html[data-theme][data-family] .todo-pop-popup .tp-check.checked {
-  background: var(--action-primary-bg); border-color: var(--action-primary);
-}
 html[data-theme][data-family] .todo-pop-popup .tp-del { color: var(--content-secondary); }
 html[data-theme][data-family] .todo-pop-popup .tp-del:hover {
   color: var(--status-danger); background: var(--status-danger-bg);

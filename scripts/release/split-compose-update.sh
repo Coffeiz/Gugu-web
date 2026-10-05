@@ -21,6 +21,14 @@ node "$VALIDATOR" "$MANIFEST" >/dev/null
 COMPOSE=(docker compose --project-directory "$ROOT_DIR" -f "$COMPOSE_FILE" --profile sandbox)
 CONFIG="$("${COMPOSE[@]}" config --format json)"
 SERVICES="$(printf '%s' "$CONFIG" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(Object.keys(JSON.parse(s).services||{}).sort().join("\n")))')"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXTERNAL_SANDBOX=false
+MANAGER_EXTERNAL="$(printf '%s' "$CONFIG" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s).services?.backend?.environment?.GUGU_SANDBOX_MANAGER_MODE==="external")))')"
+if ! grep -qx sandboxd <<<"$SERVICES" || [[ "$MANAGER_EXTERNAL" == true ]]; then
+  EXTERNAL_SANDBOX=true
+  [[ -n "${EXTERNAL_SANDBOX_CONTROL:-}" && -n "${EXTERNAL_SANDBOX_DOCKER_HOST:-}" ]] \
+    || { echo 'external sandbox 未配置停服控制器和 Rootless socket，拒绝更新。' >&2; exit 1; }
+fi
 for name in postgres redis migrate backend worker gateway frontend nginx; do
   grep -qx "$name" <<<"$SERVICES" || { echo "分体 Compose 缺少固定服务：$name" >&2; exit 1; }
 done
@@ -33,12 +41,10 @@ TARGET_BACKEND="$(sed -n '1p' <<<"$IMAGES")"
 TARGET_FRONTEND="$(sed -n '2p' <<<"$IMAGES")"
 [[ "$TARGET_BACKEND" =~ ^(docker\.io|ghcr\.io)/coffeiz/gugu-web-backend@sha256:[a-f0-9]{64}$ ]] || { echo 'backend 镜像不符合白名单' >&2; exit 1; }
 [[ "$TARGET_FRONTEND" =~ ^(docker\.io|ghcr\.io)/coffeiz/gugu-web-frontend@sha256:[a-f0-9]{64}$ ]] || { echo 'frontend 镜像不符合白名单' >&2; exit 1; }
-ROLLBACK_SUPPORTED="$(node -e 'const m=require(process.argv[1]);process.stdout.write(m.rollback_supported === true ? "true" : "false")' "$MANIFEST")"
 
-UPDATE_SERVICES=(backend worker gateway frontend)
 PULL_SERVICES=(migrate backend worker gateway frontend)
 SANDBOXD_UPDATE=false
-if "${COMPOSE[@]}" ps --status running --services sandboxd 2>/dev/null | grep -qx sandboxd; then
+if "${COMPOSE[@]}" ps --status running --services sandboxd 2>/dev/null | grep -x sandboxd >/dev/null; then
   SANDBOXD_ID="$("${COMPOSE[@]}" ps -q sandboxd | head -n1)"
   CURRENT_BACKEND_ID="$("${COMPOSE[@]}" ps -q backend | head -n1)"
   if [[ -n "$SANDBOXD_ID" && -n "$CURRENT_BACKEND_ID" ]]; then
@@ -48,7 +54,6 @@ if "${COMPOSE[@]}" ps --status running --services sandboxd 2>/dev/null | grep -q
     if [[ "$SANDBOXD_IMAGE" == "$CURRENT_BACKEND_IMAGE" \
         && "$SANDBOXD_IMAGE" =~ ^(docker\.io|index\.docker\.io|ghcr\.io)/coffeiz/gugu-web-backend(:[A-Za-z0-9_.-]{1,128}|@sha256:[a-f0-9]{64})$ ]]; then
       SANDBOXD_UPDATE=true
-      UPDATE_SERVICES+=(sandboxd)
       PULL_SERVICES+=(sandboxd)
     fi
   fi
@@ -67,14 +72,10 @@ if [[ -f "$ROOT_DIR/.env" && ! -L "$ROOT_DIR/.env" ]]; then
   chmod 600 "$BACKUP_DIR/compose.env"
 fi
 
-if ! "${COMPOSE[@]}" ps --status running --services | grep -qx postgres; then
+if ! "${COMPOSE[@]}" ps --status running --services | grep -x postgres >/dev/null; then
   echo 'PostgreSQL 未运行，拒绝更新' >&2
   exit 1
 fi
-"${COMPOSE[@]}" exec -T postgres pg_dumpall -U "$DB_USER" > "$BACKUP_DIR/postgres.sql"
-chmod 600 "$BACKUP_DIR/postgres.sql"
-[[ -s "$BACKUP_DIR/postgres.sql" ]] || { echo '数据库备份为空，拒绝更新' >&2; exit 1; }
-
 echo '拉取分体业务镜像'
 GUGU_BACKEND_IMAGE="$TARGET_BACKEND" GUGU_FRONTEND_IMAGE="$TARGET_FRONTEND" \
   "${COMPOSE[@]}" pull "${PULL_SERVICES[@]}"
@@ -107,26 +108,49 @@ COMPOSE=(docker compose --project-directory "$ROOT_DIR" -f "$COMPOSE_FILE" -f "$
 ROLLBACK_ARMED=false
 rollback_on_exit() {
   local exit_code=$?
-  if [[ "$ROLLBACK_ARMED" == true && "$ROLLBACK_SUPPORTED" == true ]]; then
-    trap - EXIT
-    echo '更新阶段失败，manifest 允许回滚，正在恢复原分体镜像...' >&2
-    local rollback_compose=(docker compose --project-directory "$ROOT_DIR" -f "$COMPOSE_FILE" -f "$ROLLBACK_OVERRIDE" --profile sandbox)
-    if "${rollback_compose[@]}" up -d --pull never --no-deps --force-recreate "${UPDATE_SERVICES[@]}" \
-      && "${rollback_compose[@]}" exec -T backend curl -fsS http://127.0.0.1:8000/health >/dev/null; then
-      echo '已恢复原 backend/frontend 镜像；数据库未自动回滚。' >&2
-      exit 76
-    else
-      echo '自动恢复失败；原镜像与数据库备份均保留，需管理员介入。' >&2
-    fi
+  if [[ "$exit_code" != 0 && "$ROLLBACK_ARMED" == true ]]; then
+    echo '离线更新失败：业务保持停服/新镜像状态，禁止只降级镜像；请用完整数据库与 users 备份人工恢复。' >&2
+    printf 'manual-recovery\n' > "$BACKUP_DIR/recovery-required"
   fi
   exit "$exit_code"
 }
 trap rollback_on_exit EXIT
 
-echo '迁移检查'
+# 迁移目录前，关闭所有持有路径或数据库元数据的业务进程。
+# sandboxd 不一定与 backend 同镜像，但无论是否更新都必须先停止。
+STOP_SERVICES=(backend worker gateway)
+if grep -qx sandboxd <<<"$SERVICES"; then STOP_SERVICES+=(sandboxd); fi
+DATA_SOURCE="$(docker inspect --format '{{json .Mounts}}' "$PREVIOUS_BACKEND_ID" | node -e '
+let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{const m=JSON.parse(s).find(x=>x.Destination==="/data");if(!m||!m.Source||m.Source==="/")process.exit(1);process.stdout.write(m.Source)})')"
+ROLLBACK_ARMED=true
+"${COMPOSE[@]}" stop "${STOP_SERVICES[@]}"
+if [[ "$EXTERNAL_SANDBOX" == true ]]; then
+  export SANDBOX_DATA_SOURCE="$DATA_SOURCE" SANDBOX_STATE_FILE="$BACKUP_DIR/external-sandbox.state"
+  bash "$SCRIPT_DIR/quiesce-external-sandbox.sh" stop
+fi
+# 临时 Shell/PTY 不属于 Compose；只停止挂载本部署数据的 Gugu 沙盒，不能操作其他部署。
+SANDBOX_IDS="$(docker ps -q --filter label=com.gugu.sandbox=true)"
+while read -r sandbox_id; do
+  [[ -n "$sandbox_id" ]] || continue
+  if docker inspect --format '{{json .Mounts}}' "$sandbox_id" | node -e '
+let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{const root=process.argv[1].replace(/\/$/,"");process.exit(JSON.parse(s).some(m=>m.Source===root||m.Source?.startsWith(root+"/"))?0:3)})' "$DATA_SOURCE"; then
+    docker stop "$sandbox_id" >/dev/null
+  else
+    status=$?
+    [[ "$status" == 3 ]] || exit "$status"
+  fi
+done <<<"$SANDBOX_IDS"
+"${COMPOSE[@]}" exec -T postgres pg_dumpall -U "$DB_USER" > "$BACKUP_DIR/postgres.sql"
+chmod 600 "$BACKUP_DIR/postgres.sql"
+[[ -s "$BACKUP_DIR/postgres.sql" ]] || { echo '数据库备份为空，拒绝迁移' >&2; exit 1; }
+"${COMPOSE[@]}" run --rm --no-deps --entrypoint tar backend -C /data -cpf - users > "$BACKUP_DIR/users.tar"
+chmod 600 "$BACKUP_DIR/users.tar"
+tar -tf "$BACKUP_DIR/users.tar" >/dev/null
+echo '独立执行数据库与工作区离线迁移'
+"${COMPOSE[@]}" run --rm --no-deps --entrypoint bash backend -ec \
+  'alembic upgrade head && python -m scripts.migrations.migrate_workspace_layout --allow-real-data --apply --services-stopped'
 "${COMPOSE[@]}" run --rm --no-deps --entrypoint python backend -m updater.database_check
 echo '重新创建分体 backend'
-ROLLBACK_ARMED=true
 "${COMPOSE[@]}" up -d --no-deps --force-recreate backend
 echo '健康检查'
 HEALTHY=false
@@ -146,6 +170,11 @@ echo '重新创建 worker、gateway 与 frontend'
 "${COMPOSE[@]}" up -d --no-deps --force-recreate worker gateway frontend
 if [[ "$SANDBOXD_UPDATE" == true ]]; then
   "${COMPOSE[@]}" up -d --no-deps --force-recreate sandboxd
+elif grep -qx sandboxd <<<"$SERVICES"; then
+  "${COMPOSE[@]}" start sandboxd
+fi
+if [[ "$EXTERNAL_SANDBOX" == true ]]; then
+  bash "$SCRIPT_DIR/quiesce-external-sandbox.sh" start
 fi
 echo '更新完成；PostgreSQL、Redis、配置和数据卷未重建'
 ROLLBACK_ARMED=false

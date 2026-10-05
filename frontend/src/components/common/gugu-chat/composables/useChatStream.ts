@@ -12,6 +12,7 @@ import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { dispatchPendingQueueItem } from './chatPendingQueueDispatch'
+import { recordStreamDiagnostic } from './chatStreamDiagnostics'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
@@ -360,7 +361,7 @@ export function useChatStream(options: {
     ownerSid: number | null,
     viewGeneration: number,
     replayText = '',
-    onSessionId?: (id: number, timelineOrder: number) => void,
+    onSessionId?: (id: number, timelineOrder: number, userMessageId?: number) => void,
     runController?: AbortController,
   ) {
     const streamStartedAt = Date.now()
@@ -380,6 +381,7 @@ export function useChatStream(options: {
     // 判断整条流是否已经收到过正文。否则第一轮有回复、第二轮空回合时会误加兜底气泡。
     let receivedAssistantContent = false
     let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
+    let outcomeMessageDbId: number | null = null
     let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
     let replaySuppressed = false
     const displayedGreeting = ownerSid == null
@@ -396,6 +398,11 @@ export function useChatStream(options: {
       0,
     )
     const nextTimelineOrder = () => ++timelineOrder
+    const applyRunOutcome = (outcome: ChatMessage['runOutcome']) => {
+      if (!outcome || !outcomeMessageDbId) return
+      const target = messages.value.find(message => message.dbId === outcomeMessageDbId)
+      if (target?.role === 'user') target.runOutcome = outcome
+    }
     const syncAiIndex = () => {
       aiIdx = aiMessageId == null
         ? -1
@@ -445,10 +452,22 @@ export function useChatStream(options: {
           if (!line.startsWith('data: ')) continue
           const raw = line.slice(6).trim(); if (!raw) continue
           let evt; try { evt = JSON.parse(raw) } catch { continue }
+          if (['round_start', 'tool_call', 'tool_done', 'done', 'error', 'interaction_required'].includes(evt.type)) {
+            recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
+              detached, viewChanged: viewGeneration !== options.getViewGeneration(),
+              controllerChanged: Boolean(runController && abortCtrl.value !== runController),
+              sessionChanged: sessionId.value !== (sid ?? ownerSid),
+            }, `收到_${evt.type}`)
+          }
+          const eventUserMessageId = Number(evt.user_message_id)
+          if (Number.isInteger(eventUserMessageId) && eventUserMessageId > 0) {
+            outcomeMessageDbId = eventUserMessageId
+          }
           if (evt.type === 'session_id') {
             const acceptedSessionId = Number(evt.session_id)
             if (runController) runSessionIds.set(runController, acceptedSessionId)
-            onSessionId?.(acceptedSessionId, onSessionId ? nextTimelineOrder() : 0)
+            onSessionId?.(acceptedSessionId, onSessionId ? nextTimelineOrder() : 0,
+              outcomeMessageDbId ?? undefined)
             const isNew = sessionId.value !== evt.session_id
             // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话。
             // 走 bindNewSessionId：身份落地要保留当前输入并记为新会话草稿（普通赋值
@@ -543,11 +562,15 @@ export function useChatStream(options: {
               )
             }
             if (toolIndex >= 0 && messages.value[toolIndex]) {
+              recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
+                matched: true, succeeded: !evt.status || evt.status === 'success' }, '工具终态匹配')
               messages.value[toolIndex].toolStatus = evt.status || 'success'
               if (evt.result !== undefined) messages.value[toolIndex].toolResult = evt.result
               const startedAt = (messages.value[toolIndex] as ChatMessage & { _toolStartedAt?: number })._toolStartedAt
               if (startedAt) messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
             } else if (live() && evt.name) {
+              recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
+                matched: false }, '工具终态补建')
               // tool_done 先于 tool_call 到达时也要落一张终态卡，不能等刷新才补齐。
               const messageId = mkid()
               messages.value.push({
@@ -674,6 +697,10 @@ export function useChatStream(options: {
                 syncAiIndex()
               }
               messages.value[aiIdx].text += tokenContent
+              if (messages.value[aiIdx].text.length === tokenContent.length) {
+                recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
+                  chars: tokenContent.length, messageId: messages.value[aiIdx].id }, '正文首段写入')
+              }
               scheduleStreamScroll()
             }
           } else if (evt.type === 'file') {
@@ -729,6 +756,9 @@ export function useChatStream(options: {
               // 工具气泡统一翻成「已停止」，不允许出现永久「进行中」。
               if (evt.cancelled) {
                 aborted = true // 取消是正常终态，不应再补「没有收到回复」兜底气泡。
+                applyRunOutcome(evt.run_outcome || {
+                  status: 'interrupted', runId: String(evt.run_id || currentRunId || ''),
+                })
                 for (const messageId of toolMessageIds.values()) {
                   const item = messages.value.find(message => message.id === messageId)
                   if (item?.role === 'tool' && (item.toolStatus === 'queued' || item.toolStatus === 'running' || item.toolStatus === 'waiting')) {
@@ -741,6 +771,11 @@ export function useChatStream(options: {
             if (live()) {
               options.clearStatus()
               playGuguSfx('error')
+              if (evt.run_outcome && typeof evt.run_outcome === 'object') {
+                applyRunOutcome(evt.run_outcome as ChatMessage['runOutcome'])
+                await options.scrollBottom()
+                continue
+              }
               const messageKey = typeof evt.message_key === 'string' ? evt.message_key : ''
               const params = (evt.message_params && typeof evt.message_params === 'object')
                 ? { ...evt.message_params }
@@ -808,6 +843,12 @@ export function useChatStream(options: {
         }
       } catch { /* 恢复失败再由调用方决定是否显示兜底提示 */ }
     }
+    recordStreamDiagnostic({ session: sid, detached, aborted, interactionPaused,
+      receivedAssistantContent, pendingTools: messages.value.filter(item =>
+        item.role === 'tool' && toolMessageIds.has(item.toolCallId || '')
+        && ['queued', 'running', 'waiting'].includes(item.toolStatus || '')).length,
+      emptyBubbles: messages.value.filter(item => item.role === 'ai' && !item.text?.trim() && !item.files?.length).length,
+    }, '流收尾')
     return { aiIdx, usedTools, detached, sid, aborted, interactionPaused, receivedAssistantContent }
   }
 
@@ -926,6 +967,7 @@ export function useChatStream(options: {
 
     // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
     const fromInput = forcedText === undefined
+    let optimisticUserMessage: ChatMessage | null = null
     const text = (fromInput ? options.inputText.value : (forcedText ?? '')).trim()
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     const refs = fromInput ? options.inputReferences.value.slice() : (forcedReferences ?? [])
@@ -960,9 +1002,10 @@ export function useChatStream(options: {
         messages.value = []
         options.onContentReset?.()
       } else if (!streaming.value) {
-        messages.value.push({ id: mkid(), role: 'user', text, time: now(),
+        optimisticUserMessage = { id: mkid(), role: 'user', text, time: now(),
           references: refs.length ? refs : undefined,
-          files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
+          files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined }
+        messages.value.push(optimisticUserMessage)
       }
       options.inputText.value = ''
       options.inputReferences.value = []
@@ -1038,7 +1081,8 @@ export function useChatStream(options: {
       if (!res.body) throw new Error('empty response body')
 
       let receivedSessionIdEvent = false
-      const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, '', (_acceptedSessionId, timelineOrder) => {
+      const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration, '', (_acceptedSessionId, timelineOrder, userMessageId) => {
+        if (optimisticUserMessage && userMessageId) optimisticUserMessage.dbId = userMessageId
         runSessionIds.set(requestController, _acceptedSessionId)
         if (stopWaitingForSessionId.has(requestController)) {
           stopWaitingForSessionId.delete(requestController)
@@ -1047,12 +1091,14 @@ export function useChatStream(options: {
         receivedSessionIdEvent = true
         if (queuedItemKey === undefined || ownerSid !== sessionId.value || viewGeneration !== options.getViewGeneration()) return
         pendingQueue.value = pendingQueue.value.filter(item => queueIdentity(item) !== queuedIdentity)
-        messages.value.push({
+        optimisticUserMessage = {
           id: mkid(), role: 'user', text, time: now(),
+          dbId: userMessageId,
           references: refs.length ? refs : undefined,
           files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined,
           _timelineOrder: timelineOrder,
-        })
+        }
+        messages.value.push(optimisticUserMessage)
       }, requestController)
       resolvedSid = r.sid
       // session_id 事件可能在浏览器切换/重连的边界丢失；流本身已经返回真实

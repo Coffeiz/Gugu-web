@@ -1,5 +1,5 @@
 <template>
-  <FileBrowserList :layout-collection="layoutCollection" @empty-context="openCtx('empty', null, $event)">
+  <FileBrowserList ref="browserRef" :layout-collection="layoutCollection" @empty-context="openCtx('empty', null, $event)">
     <!-- 表头 -->
     <div class="list-head">
       <span
@@ -17,12 +17,14 @@
       ><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
     </div>
 
-    <RuntimeFolderListRow v-for="f in sortedContents.folders" :key="f.id" :item="f" :context="props.context" :runtime-id="folderLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-selected="selectedFolderKeys.has(f.id)" :runtime-abilities="f.type === 'folder' && f.folderId != null ? ['move'] : []" :runtime-target="f.type === 'folder' && f.folderId != null ? { surfaceId: `files:surface:folder:${f.folderId}`, accepts: ['file-item', 'folder-item'], priority: 2 } : undefined" />
-    <RuntimeFileListRow v-for="f in sortedContents.files" :key="f.id" :item="f" :context="props.context" :runtime-id="fileLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-selected="selectedIds.has(f.id)" :runtime-abilities="['move']" />
+    <div v-if="top" :style="{ height: Math.max(0, top - 2) + 'px', flexShrink: 0 }" aria-hidden="true" />
+    <RuntimeFolderListRow v-for="f in visibleFolders" :key="f.id" :item="f" :context="props.context" :runtime-id="folderLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-selected="selectedFolderKeys.has(f.id)" :runtime-abilities="f.type === 'folder' && f.folderId != null ? ['move'] : []" :runtime-target="f.type === 'folder' && f.folderId != null ? { surfaceId: `files:surface:folder:${f.folderId}`, accepts: ['file-item', 'folder-item'], priority: 2 } : undefined" />
+    <RuntimeFileListRow v-for="f in visibleFiles" :key="f.id" :item="f" :context="props.context" :runtime-id="fileLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-selected="selectedIds.has(f.id)" :runtime-abilities="['move']" />
 
+    <div v-if="bottom" :style="{ height: Math.max(0, bottom - 2) + 'px', flexShrink: 0 }" aria-hidden="true" />
     <!-- 上传中的幽灵卡片 -->
     <FileUploadGhostCard
-      v-for="g in uploadingItems"
+      v-for="g in visibleUploads"
       :key="g.uid"
       mode="list"
       :name="g.name"
@@ -54,7 +56,7 @@
     </FileUploadGhostCard>
 
     <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" variant="list" />
-    <FileUploadButton v-if="canUpload" mode="list" data-flip-target @select="handleFileInput" />
+    <FileUploadButton v-if="showUploadButton" mode="list" data-flip-target @select="handleFileInput" />
   </FileBrowserList>
 </template>
 <script setup lang="ts">
@@ -66,7 +68,8 @@ import FileUploadButton from '@/components/common/file-browser/FileUploadButton.
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
 import RuntimeFolderListRow from '@/views/Files/components/RuntimeFolderListRow.vue'
 import RuntimeFileListRow from '@/views/Files/components/RuntimeFileListRow.vue'
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { useFileBrowserWindow } from '@/composables/files/useFileBrowserWindow'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
@@ -91,4 +94,14 @@ const {
   uploadingItems, loading, canUpload, handleFileInput,
   folderLayoutKey, fileLayoutKey, layoutCollection,
 } = props.context
+const { browserRef, visibleFolders, visibleFiles, top, bottom, tailStart, tailEnd } = useFileBrowserWindow(sortedContents, 'list', {
+  tailCount: () => uploadingItems.value.length + Number(canUpload.value),
+  resetKey: () => props.context.directoryViewportKey.value,
+})
+const visibleUploads = computed(() => uploadingItems.value.slice(tailStart.value, tailEnd.value))
+const showUploadButton = computed(() => canUpload.value && tailEnd.value > uploadingItems.value.length)
+watch([visibleFolders, visibleFiles], () => {
+  if (renamingFileId.value != null && !visibleFiles.value.some(file => file.id === renamingFileId.value)
+    || renamingFolderKey.value != null && !visibleFolders.value.some(folder => folder.folderId === renamingFolderKey.value)) void commitRename()
+})
 </script>

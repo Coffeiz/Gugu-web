@@ -166,22 +166,6 @@ const props = defineProps({
 .fc-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
 .fc-meta { color: var(--content-secondary); font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
 
-/* 多选 checkbox：与 FolderCard 保持一致的位置和样式 */
-.fc-card .sel-checkbox {
-  position: absolute; top: 8px; right: 8px; z-index: 3;
-  width: 18px; height: 18px; border-radius: 5px;
-  border: 2px solid var(--file-card-checkbox-border, rgba(123,127,178,0.55));
-  background: var(--file-card-checkbox-bg, rgba(255,255,255,0.75));
-  box-shadow: none;
-  display: flex; align-items: center; justify-content: center;
-  pointer-events: none;
-  transition: opacity 0.18s ease;
-}
-.fc-card .sel-checkbox.checked {
-  color: var(--file-card-checkbox-fg-checked, var(--color-primary,#7b7fb2));
-  background: var(--file-card-checkbox-bg-checked, var(--color-primary,#7b7fb2));
-  border-color: var(--file-card-checkbox-border-checked, var(--color-primary,#7b7fb2));
-}
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 /* leave 只走 opacity（同 filesListRows.css 的注释）：退出多选时 clearSelection 同帧移除
    .checked，若背景/边框也过渡，选中填充会先变色再淡完，暗色下结尾明显闪一下。 */

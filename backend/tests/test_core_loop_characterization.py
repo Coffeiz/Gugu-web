@@ -1072,15 +1072,40 @@ async def test_colon_guard_still_runs_after_a_previous_tool_round(
 
 
 async def test_decision_dodge_guard_nudges_once(monkeypatch, dispatched):
-    """用户明确要求改动，模型却零工具、用"不用改/已合理"驳回 → 逼它执行或问清，不许擅自不做。"""
+    """用户主动开启守卫后，明确操作被模型推脱时只追问一次。"""
+    async def decision_guard_on(_user_id):
+        return True
+
+    monkeypatch.setattr("agent.interactions.preferences.decision_guard_enabled", decision_guard_on)
     patch_anthropic(monkeypatch, [
         msg([TX("这个不需要重新排序，已经挺合理的了")]),   # 用户要排序，模型零工具驳回 → 命中决策守卫
         msg([TX("好的，已经帮你重新排好序了")]),           # 守卫后的纯文本应被丢弃
     ])
     messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我把这些任务重新排序一下"}])
-    ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+    ev, text, _errors = await drain(make_runner()._run_anthropic(
+        "u", "sys", messages, AI, session_id=42,
+    ))
     nudges = [m for m in canonical_messages(messages) if m.get("content") == core._DECISION_NUDGE]
     assert len(nudges) == 1
+    assert text == "这个不需要重新排序，已经挺合理的了"
+    assert ev["_usage"] == 1 and ev["error"] == 0
+
+
+async def test_decision_dodge_guard_is_disabled_without_user_opt_in(monkeypatch, dispatched):
+    """默认关闭时，模型的拒绝语气不会触发额外模型轮次。"""
+    async def decision_guard_off(_user_id):
+        return False
+
+    monkeypatch.setattr("agent.interactions.preferences.decision_guard_enabled", decision_guard_off)
+    patch_anthropic(monkeypatch, [msg([TX("这个不需要重新排序，已经挺合理的了")])])
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "帮我把这些任务重新排序一下"}])
+
+    ev, text, _errors = await drain(make_runner()._run_anthropic(
+        "u", "sys", messages, AI, session_id=42,
+    ))
+
+    nudges = [m for m in canonical_messages(messages) if m.get("content") == core._DECISION_NUDGE]
+    assert nudges == []
     assert text == "这个不需要重新排序，已经挺合理的了"
     assert ev["_usage"] == 1 and ev["error"] == 0
 

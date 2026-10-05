@@ -47,16 +47,28 @@ def _allowed_tools() -> list[str]:
     return all_system_tool_names()
 
 
+def _builtin_skill_tools() -> tuple[list[dict[str, str | bool]], set[str]]:
+    names = _allowed_tools()
+    metadata = ToolCapabilityRegistry(tool_registry).metadata(names)
+    items = [
+        {"name": item.name, "description_short": item.description_short,
+         "category": item.category, "enabled": item.enabled}
+        for item in metadata
+    ]
+    return items, {item.name for item in metadata}
+
+
 async def _available_skill_tools(
     user_id: object,
+    *,
+    discover_mcp: bool = True,
 ) -> tuple[list[dict[str, str | bool]], set[str], list[Tool]]:
     """返回本用户当前可关联的内置与 MCP 工具，不缓存跨开关状态。"""
-    builtin_names = _allowed_tools()
-    builtin = ToolCapabilityRegistry(tool_registry).metadata(builtin_names)
+    builtin_items, builtin_names = _builtin_skill_tools()
     dynamic_tools = []
     from app.core.config import get_settings
 
-    if get_settings().mcp.enabled:
+    if discover_mcp and get_settings().mcp.enabled:
         from agent.mcp.manager import mcp_manager
 
         dynamic_tools = await mcp_manager.list_user_tools(user_id)
@@ -73,13 +85,19 @@ async def _available_skill_tools(
         for tool in dynamic_tools
         if tool.name not in builtin_names
     ]
-    metadata = [*builtin, *dynamic]
-    items = [
+    dynamic_items = [
         {"name": item.name, "description_short": item.description_short,
          "category": item.category, "enabled": item.enabled}
-        for item in metadata
+        for item in dynamic
     ]
-    return items, {item.name for item in metadata}, dynamic_tools
+    return [*builtin_items, *dynamic_items], builtin_names | {
+        item.name for item in dynamic
+    }, dynamic_tools
+
+
+async def _tools_for_skill_update(user_id: object, related_tools: list[str]):
+    needs_mcp_discovery = any(name.startswith("mcp_") for name in related_tools)
+    return await _available_skill_tools(user_id, discover_mcp=needs_mcp_discovery)
 
 
 def _serialize(row: UserSkill) -> dict:
@@ -96,53 +114,83 @@ def _serialize(row: UserSkill) -> dict:
     }
 
 
+async def _commit_skill(db: AsyncSession, row: UserSkill) -> dict:
+    await db.commit()
+    await db.refresh(row)
+    return _serialize(row)
+
+
+async def _raise_registration_error(db: AsyncSession, exc: CapabilityRegistrationError):
+    await db.rollback()
+    raise HTTPException(422, str(exc)) from exc
+
+
+async def _write_skill(
+    db: AsyncSession, user_id: object, values: dict, *, slug: str | None = None,
+) -> dict:
+    values = dict(values)
+    enabled = values.pop("enabled", True if slug is None else None)
+    try:
+        _, allowed_tool_names, dynamic_tools = await _tools_for_skill_update(
+            user_id, values.get("related_tools") or [],
+        )
+        if slug is None:
+            row = await _registry.create_user_skill(
+                db, user_id, allowed_tool_names=allowed_tool_names,
+                dynamic_tools=dynamic_tools, **values,
+            )
+            row.enabled = enabled
+        else:
+            row = await _registry.update_user_skill(
+                db, user_id, slug, allowed_tool_names=allowed_tool_names,
+                dynamic_tools=dynamic_tools, enabled=enabled, **values,
+            )
+            if row is None:
+                raise HTTPException(404, "Skill 不存在")
+        return await _commit_skill(db, row)
+    except CapabilityRegistrationError as exc:
+        await _raise_registration_error(db, exc)
+
+
 @router.get("")
-async def list_skills(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_skills(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    include_tools: bool = True,
+):
     rows = (await db.execute(select(UserSkill).where(
         UserSkill.owner_id == current_user.id,
     ).order_by(UserSkill.updated_at.desc(), UserSkill.id.desc()))).scalars().all()
-    tools, _, _ = await _available_skill_tools(current_user.id)
+    if include_tools:
+        tools, _, _ = await _available_skill_tools(current_user.id)
+    else:
+        # 技能目录首屏不应因为用户配置的远程 MCP server 响应慢而阻塞。
+        tools = []
     return {
         "skills": [_serialize(row) for row in rows],
         "tools": tools,
     }
 
 
+@router.get("/tools")
+async def list_skill_tools(current_user: User = Depends(get_current_user)):
+    """按需加载技能关联工具；MCP 工具发现只在用户展开工具选择器时触发。"""
+    tools, _, _ = await _available_skill_tools(current_user.id)
+    return {"tools": tools}
+
+
 @router.post("", status_code=201)
 async def create_skill(payload: UserSkillPayload, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    try:
-        _, allowed_tool_names, dynamic_tools = await _available_skill_tools(current_user.id)
-        row = await _registry.create_user_skill(
-            db, current_user.id, allowed_tool_names=allowed_tool_names,
-            dynamic_tools=dynamic_tools,
-            **payload.model_dump(exclude={"enabled"}),
-        )
-        row.enabled = payload.enabled
-        await db.commit()
-        await db.refresh(row)
-        return _serialize(row)
-    except CapabilityRegistrationError as exc:
-        await db.rollback()
-        raise HTTPException(422, str(exc)) from exc
+    return await _write_skill(
+        db, current_user.id, payload.model_dump(),
+    )
 
 
 @router.patch("/{slug}")
 async def update_skill(slug: str, payload: UserSkillPatch, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    try:
-        _, allowed_tool_names, dynamic_tools = await _available_skill_tools(current_user.id)
-        row = await _registry.update_user_skill(
-            db, current_user.id, slug, allowed_tool_names=allowed_tool_names,
-            dynamic_tools=dynamic_tools,
-            **payload.model_dump(exclude_unset=True),
-        )
-        if row is None:
-            raise HTTPException(404, "Skill 不存在")
-        await db.commit()
-        await db.refresh(row)
-        return _serialize(row)
-    except CapabilityRegistrationError as exc:
-        await db.rollback()
-        raise HTTPException(422, str(exc)) from exc
+    return await _write_skill(
+        db, current_user.id, payload.model_dump(exclude_unset=True), slug=slug,
+    )
 
 
 @router.delete("/{slug}", status_code=204)

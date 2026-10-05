@@ -56,7 +56,7 @@ async def test_oss_storage_keeps_a_local_sandbox_root(tmp_path, monkeypatch):
         lambda: SimpleNamespace(storage=SimpleNamespace(backend="oss", local_path=str(tmp_path))),
     )
     root = await workspace_service.resolve_sandbox_root(None, "user-oss")
-    assert root == (tmp_path / "user-oss" / "workspace").resolve()
+    assert root == (tmp_path / "user-oss" / "workspace" / "default").resolve()
     assert root.is_dir()
 
 

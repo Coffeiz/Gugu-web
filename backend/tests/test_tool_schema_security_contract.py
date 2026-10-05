@@ -191,7 +191,6 @@ def test_migrated_tools_preserve_provider_schema_constraints():
         "create_file",
         "update_stage", "rename_file", "edit_file", "search_memory", "save_knowledge", "update_knowledge", "remember",
         "image_search", "move_items", "archive_project", "use_skill", "call_tool",
-        "run_script",
     ):
         tool = registry.get(name)
         # 内部兼容注解不属于供应商 JSON Schema；其他结构约束必须保持原样。
@@ -204,6 +203,9 @@ def test_migrated_tools_preserve_provider_schema_constraints():
             return value
 
         assert without_internal_annotations(tool.input_schema) == _compact_schema(tool.input_schema, omit_documentation=False), name
+
+    assert registry.get("run_script") is None
+    assert registry.get("shell") is not None
 
 
 def test_note_schemas_keep_structural_metadata_for_model_guidance():

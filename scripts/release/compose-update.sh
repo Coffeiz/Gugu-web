@@ -143,6 +143,10 @@ fi
 
 # stop 不删除持久卷；仅在 sandboxd 使用同一一体化镜像且当前运行时才同步重建它。
 "${COMPOSE[@]}" stop "${STOP_SERVICES[@]}"
+if [[ "$DATABASE_SERVICE" == app ]]; then
+  # 新镜像入口只启动内置 PostgreSQL/Redis，先备份并完成离线布局迁移再接业务流量。
+  "${COMPOSE[@]}" run --rm --no-deps app gugu-offline-migrate --services-stopped
+fi
 echo '重新创建一体化应用服务...'
 "${COMPOSE[@]}" up -d --no-deps --force-recreate "${RECREATE_SERVICES[@]}"
 

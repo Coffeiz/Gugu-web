@@ -227,6 +227,11 @@
         </div>
       </section>
 
+      <RegistrationVerificationSettings
+        v-model="draft.smtp.registration_verification_enabled"
+        :smtp-configured="smtpConfigured"
+      />
+
       <!-- ── 用户反馈邮件 ── -->
       <FeedbackEmailSettings
         v-model:enabled="draft.smtp.feedback_email_enabled"
@@ -271,8 +276,10 @@ import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
 import ConfigField from './components/ConfigField.vue'
 import FeedbackEmailSettings from './components/FeedbackEmailSettings.vue'
+import RegistrationVerificationSettings from './components/RegistrationVerificationSettings.vue'
 import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
 import OutboundNetworkSettings from './components/OutboundNetworkSettings.vue'
+import { useSystemSmtpConfiguration } from './composables/useSystemSmtpConfiguration'
 
 const { t } = useI18n()
 
@@ -289,6 +296,10 @@ const draft = reactive({
     alert_email_recipients: [],
   })),
 })
+const { smtpConfigured } = useSystemSmtpConfiguration(
+  () => draft.smtp,
+  () => configStore.secretSet.smtpPassword,
+)
 
 onMounted(async () => {
   await configStore.fetchConfig()

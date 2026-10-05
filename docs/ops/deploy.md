@@ -7,7 +7,7 @@
 
 ## 易读概述（不懂运维也能看懂）
 
-咕咕不是一个程序，是**好几个程序配合着跑**：一个负责网页和 API（web），一个负责在飞书/QQ 里聊天时"思考"（worker，咕咕的"大脑"其实在这），一个负责管理各平台的连接（gateway）。这三个是核心服务；启用生产 Shell 沙盒时，还要运行独立的 `gugu-sandboxd`，由它承接 Rootless Docker 执行。三个核心服务都要活着，IM 才能正常收发消息；只用网页版，可以只跑 web。
+咕咕由网页/API、Agent worker 和 IM gateway 等进程协作运行。部署形态不同，进程边界也不同：默认一体化 Compose 将这些服务与 Rootless Shell 沙盒管理器放在一个应用容器中；生产分体 Compose 使用独立 backend、worker、gateway，并连接外部 Rootless 沙盒管理器；systemd 部署则按服务单元分别运行。不要把某一种拓扑的容器清单套用到另一种部署方式。
 
 生产服务器上这些服务一般交给 **systemd** 管——相当于给每个程序配一个"看护人"，程序崩了自动拉起来，开机自动启动，不用人盯着。开发机则可以用前台热重载：web 用 Uvicorn reload，worker 用 `watchfiles` 监听代码后自动重启；gateway 和 sandboxd 按需单独重启。开发热重载与生产 systemd 是两套互斥的启动方式，不能让同一个进程同时跑两份。
 
@@ -16,6 +16,26 @@
 2. **改了数据库表结构，必须跑迁移**——不是重启就完事，见 §7.1。
 
 不熟悉运维也没关系，下面每章节先有一段大白话，跳过命令细节也能明白在干什么；要动手操作时再回来看命令块。
+
+## 工作区布局迁移失败后的恢复
+
+1. 保持 Web、Worker、Gateway、Sandbox manager 和全部 Shell/PTY 执行容器停止；恢复时也不得继续写文件。
+2. 选择同一次离线迁移生成的 `migration-backups/workspace-*/postgres.dump` 与 `users.tar`，确认两份归档有效。不要将某次数据库备份和另一次文件备份混用。
+3. 保留失败后的数据库和 `users` 作为调查副本。使用 PostgreSQL 管理工具重建原应用数据库并用 `pg_restore --exit-on-error` 恢复 custom dump；归档的数据库角色不随 dump 重建，沿用旧部署角色配置。
+4. 将完整 `users.tar` 恢复至原数据根，不与部分迁移后的目录合并；目录中的 v2 marker、检查点、文件 key 和数据库必须一起回到同一个状态。旧目录先移至受保护的恢复副本，不直接删除。复核文件内容与工作区数据库记录后，才启动旧镜像。
+
+分体 updater 的备份为 `postgres.sql`（cluster dump）和 `users.tar`，恢复时使用 `psql --set=ON_ERROR_STOP=1`，不是 `pg_restore`。两种备份格式不能混用。失败后 `recovery-required` 标记要求人工恢复；不能仅降级镜像绕过迁移门禁。
+
+## 分体升级的 external Sandbox 停服契约
+
+生产 `docker-compose.prod.yml` 不包含 sandboxd。`split-compose-update.sh` 在这种拓扑下必须配置：
+
+- `EXTERNAL_SANDBOX_CONTROL`：部署管理员提供的普通可执行文件（绝对路径，建议只读挂载）。只接受 `stop`、`status`、`start`；`status` 的标准输出只能为 `running` 或 `stopped`，其他结果/非零退出立即阻断升级。控制器必须操作本部署实际 manager，不能仅删除 socket 文件。
+- `EXTERNAL_SANDBOX_DOCKER_HOST`：实际执行容器所在 Rootless daemon 的 `unix://` 地址。运行 updater 的环境必须可访问该 socket；不会回退到 rootful Docker。仅为可信管理员更新环境开放，不能挂给业务进程。
+
+停止业务后，updater 调用控制器停止 manager 并验证状态，再连接指定 daemon 验证 Rootless 属性、停止所有挂载本部署数据根的 Gugu 执行容器并逐一确认退出；其他部署容器不受影响。全部成功后才备份数据库和 `users` 并迁移。失败时业务与 manager 保持停服，不能自动恢复写入；更新校验成功后，仅恢复更新前正在运行的 manager。
+
+在 manager 主机直接执行更新时，可使用仓库提供的 `scripts/release/external-sandbox-systemd.sh`，它管理固定 `gugu-sandboxd.service`（可通过 `EXTERNAL_SANDBOX_SYSTEMD_UNIT` 选择同前缀的部署单元）；user unit 配置 `EXTERNAL_SANDBOX_SYSTEMD_USER=1`。脚本须有执行权限，执行用户须有该服务的管理权限。容器中的 updater 不能通过挂载这个脚本直接控制宿主 systemd：必须由管理员接入经过授权的宿主控制入口，或在 manager 主机执行升级。未接入生命周期控制器的 sidecar 会明确拒绝迁移，不会声称已离线。
 
 ## 快速导航
 
@@ -114,7 +134,7 @@ Docker 日志必须启用轮转，避免 `json-file` 日志占满系统盘。仓
 不会删除 Docker 数据卷；已有容器若要继承新的 Compose 日志选项，需要由对应项目重新创建，
 不能只依赖普通 `restart`。
 
-Docker Compose 同时提供一个受控的临时公网出口：`egress-proxy` 使用 Compose 内嵌的 Squid 配置，沙盒只加入内部网络 `gugu-sandbox-egress`，不能直接加入默认网络绕过代理。独立 systemd 部署仍使用 `squid/egress.conf`。Admin 的“临时公网访问”开关只切换会话请求的网络 profile；普通模式下每次实际 egress 执行还要通过确认门，“自动模式”可跳过确认但仍由 sandboxd 校验内部网络、代理和审计，缺少任一条件都会保持断网。不要把沙盒改成 Docker `bridge` 或给业务进程开放 Docker socket。
+默认一体化 Compose 的应用镜像内置 Rootless Docker、sandbox manager 与 egress proxy；沙盒只加入内部网络 `gugu-sandbox-egress`，不能直接加入默认网络绕过代理。生产分体 Compose 不启动这些组件，必须连接管理员单独维护的 Rootless manager 和受控代理；systemd 部署则由对应服务单元管理。Admin 的“临时公网访问”开关只切换会话请求的网络 profile；普通模式下每次实际 egress 执行还要通过确认门，“自动模式”可跳过确认但仍由 sandbox manager 校验内部网络、代理和审计，缺少任一条件都会保持断网。不要把沙盒改成 Docker `bridge` 或给业务进程开放宿主 Docker socket。
 
 ---
 
@@ -297,18 +317,17 @@ services:
 
 #### 默认一体化 Compose 沙箱
 
-根目录 `docker-compose.yml` 默认启动独立 `sandboxd` 和受控 egress 代理。在线模式会拉取官方 `gugu-sandbox` 并固定 RepoDigest；离线模式使用发布包中的 `gugu-compose-bundle.tar` 和 `docker-compose.offline.yml`，只验证本地镜像，不访问 registry。应用镜像本身不托管 sandboxd；沙盒仍依赖宿主机 Docker daemon，Compose 默认挂载 `/var/run/docker.sock`，Rootless Docker 可设置 `GUGU_DOCKER_SOCKET`：
+根目录 `docker-compose.yml` 只有 `app` 与可选搜索服务等业务服务；默认一体化应用镜像在 app 容器内部托管 PostgreSQL、Redis、Rootless Docker、sandbox manager 和 egress proxy。固定 Shell 执行镜像及代理镜像由发布构建流程打包并校验。Compose 不定义独立 `sandboxd` / `egress-proxy` 服务，也不挂载宿主机 Docker socket；app 通过内部 Unix Socket 使用沙盒管理器。
+
+部署时按一体化 Compose 的 `.env` 和 `/data` 持久化约定启动：
 
 ```bash
-GUGU_DOCKER_SOCKET=/run/user/$(id -u)/docker.sock \
 docker compose up -d
 ```
 
-Web/Worker 只通过共享的 `sandboxd.sock` 请求执行；如果 Rootless
-daemon、固定镜像或 Socket 不满足要求，Shell 会拒绝执行，不会回退到宿主机命令。开发机若使用
-rootful Docker，必须明确设置 `GUGU_SANDBOX_ROOTLESS_REQUIRED=false`，不建议用于生产。
+如果内置 Rootless daemon、固定镜像或 sandbox manager 未就绪，Shell 会明确不可用，不会回退到宿主机命令。不要为此给 app 增加宿主 Docker socket 挂载，也不要通过设置旧的 `GUGU_DOCKER_SOCKET` 改变执行边界。
 
-### 3.10 生产构建物 Compose（默认端口 8000）
+### 3.10 生产构建物 Compose（默认端口 9595）
 
 生产环境不要使用前面的开发 Compose。拆分业务 Compose 只消费已经构建好的
 `GUGU_BACKEND_IMAGE` 和 `GUGU_FRONTEND_IMAGE`，不挂载源码，也不启动 Vite 或 Uvicorn
@@ -347,82 +366,11 @@ docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 Compose 则把数据库、用户文件、记忆、工作区和 Admin 的 `config.override.json` 收口在
 `/data` 与 `gugu_config`。不要删除对应部署路径的数据卷或 `Gugu-data`。
 
-生产部署目录仍需要提供 `backend/.env`（非代码构建物，用于 AI/IM 等运行配置）；SearXNG
-配置已随 `docker-compose.prod.yml` 内嵌，独立 SearXNG 部署才需要提供
-`searxng/settings.yml`。当前项目统一使用 `latest` 跟随基础服务和应用镜像的最新版本；
-如需可复现发布，再通过环境变量覆盖应用镜像为具体版本号标签或固定 digest（不使用 Git SHA 标签）。
-Shell 沙盒仍需额外提供宿主机 Docker Socket，并通过 `--profile sandbox` 启用。Compose 会同时启动受控 `egress-proxy` 和内部网络 `gugu-sandbox-egress`：
+生产 `docker-compose.prod.yml` 是分体部署：backend、worker 和 gateway 连接独立 PostgreSQL/Redis；沙盒 manager 与受控 egress 代理由部署管理员在 Compose 外部运行。该 Compose 不含 `sandboxd`、`egress-proxy` 服务，也不挂载宿主 Docker socket，不提供 `--profile sandbox`。启用 Shell 沙盒前，必须按本节开头的“分体升级的 external Sandbox 停服契约”配置并验证外部 manager 生命周期控制器、Rootless Docker endpoint、共享 sandbox socket 和可达的受控代理；不满足时保持 fail-closed。
 
-```bash
-GUGU_DOCKER_SOCKET=/run/user/$(id -u)/docker.sock \
-GUGU_SANDBOX_ENABLED=true \
-docker compose -f docker-compose.prod.yml --profile sandbox up -d
-```
+生产分体 Compose 会向 backend/worker 配置 external manager 模式及共享 Unix Socket 路径；egress 代理地址和网络名通过部署环境配置。运行 `docker compose -f docker-compose.prod.yml config` 核对解析后的配置，并由外部 manager 的运维入口检查 socket、Rootless daemon、内部网络、代理和执行镜像。不要用 `docker compose ps` 查找不存在于该 Compose 项目中的 `sandboxd` 或 `egress-proxy`，也不要把宿主 Docker socket 挂给业务容器。
 
-Compose 已自动向 backend、worker 和 sandboxd 注入：
-
-```text
-SANDBOX__EGRESS_PROXY_URL=http://egress-proxy:3128
-SANDBOX__EGRESS_NETWORK_NAME=gugu-sandbox-egress
-SANDBOX__EGRESS_ISOLATION_ENABLED=true
-```
-
-检查受控出口：
-
-```bash
-docker compose -f docker-compose.prod.yml ps egress-proxy sandboxd
-docker network inspect gugu-sandbox-egress
-```
-
-> **⚠️ 沙盒跑在 Rootless daemon 时（backend 通过 `GUGU_DOCKER_SOCKET` 指向
-> `/run/user/<uid>/docker.sock`），egress 必须在 rootless daemon 里也有一份**——
-> Compose 的 `egress-proxy` 容器和 `gugu-sandbox-egress` 网络建在 rootful daemon，
-> 沙盒容器看不见，执行时报「受控 egress Docker 网络不存在」。
->
-> **现在 compose 已自动处理**：`--profile sandbox` 启动时，`sandboxd` 会先幂等确保目标 daemon 上有
-> egress 内部网络、squid 代理
-> 和沙盒基础镜像；同时为每个用户的 `shell`、`个人文件`、`项目文件` 目录应用目标 daemon
-> 对应的 Rootless ACL，并用真实沙盒 UID 验证可创建/删除文件。rootful 单 daemon 部署下
-> 映射使用容器 UID/GID，compose 管理的代理按 `com.docker.compose.service` 标签识别。
-> 日志出现「沙盒环境就绪」即通过
-> （`docker logs gugu-web-main-sandboxd-1`）。初始化失败时 sandboxd 会退出并由 Compose 重启，
-> 形成 fail-closed，需先查 bootstrap 日志和 ACL/写入探针错误。
->
-> **Rootless-only 主机**（没有 `/var/run/docker.sock`）：sandboxd 默认不再挂
-> 宿主 rootful socket，缺失镜像时由 rootless daemon 直接 pull。若 rootless
-> daemon 拉不到镜像，可在 `docker-compose.override.yml` 里把 rootful socket
-> 只读挂进 sandboxd 的 `/var/run/docker.sock`，脚本会自动改走
-> `docker save | load` 从宿主搬运。
->
-> 不使用 Compose profile、采用 systemd 直接运行 sandboxd 时，`make install` 会额外安装
-> `gugu-sandbox-egress.service`。它以同一个 Rootless Docker 用户在 sandboxd 前幂等创建
-> `gugu-sandbox-egress` internal 网络和 `egress-proxy`，再把代理接到默认 `bridge` 出网；
-> 沙盒容器仍只加入 internal 网络。这样非 Compose 部署不再依赖手工创建代理容器，也不会把
-> 动态的 `172.20.x.x` 写进代理配置。代理地址应在 Admin 中保存为
-> `http://egress-proxy:3128`，网络名保存为 `gugu-sandbox-egress`。
->
-> 非 Compose 部署仍需手动运行 `backend/scripts/runtime/prepare_rootless_storage.py`（或对应安装
-> 流程）应用 ACL；不要把 `SANDBOX_ACL` 之类手工开关当作 Compose 的替代品。systemd 的
-> egress 引导只负责 Docker 网络和代理，不会擅自改写 `config.override.json` 或用户数据。
-> 配置中的 egress 代理必须先在 Admin 保存一次，之后 `gugu-sandbox-egress.service` 才能让
-> 实际沙盒请求通过这个地址工作。
-> 安装器会把引导脚本规范化为 `0755`，systemd 通过 `/bin/sh` 启动，并以 `RUN_USER` 校验
-> 引导脚本和 Squid 配置可读。若项目位于部署者的私有 home、而 `RUN_USER` 是另一个账号，
-> 应将项目放到服务用户可遍历的共享目录，或让 `RUN_USER` 与项目目录所属用户一致；安装器会在
-> 生成 systemd 单元并启动服务前明确报出权限问题，不会静默留下启动失败。
->
-> 手动等效操作（不依赖 bootstrap 服务时）：
->
-> ```bash
-> D='docker -H unix:///run/user/<uid>/docker.sock'
-> $D network create --internal gugu-sandbox-egress
-> docker save ubuntu/squid:latest | $D load
-> $D run -d --name egress-proxy --network gugu-sandbox-egress \
->   --restart unless-stopped -v ./squid/egress.conf:/etc/squid/squid.conf:ro ubuntu/squid:latest
-> $D network connect bridge egress-proxy   # squid 自己要走默认桥出网，沙盒侧仍是内部网
-> $D run --rm --network=gugu-sandbox-egress -e HTTPS_PROXY=http://egress-proxy:3128 \
->   curlimages/curl:latest -sI https://www.baidu.com   # 端到端验证
-> ```
+systemd 部署与生产分体 Compose 是另一种运行形态：可由 `make install` 安装独立的 `gugu-sandboxd` 和 `gugu-sandbox-egress` 服务。相关 Rootless Docker ACL、代理和启动诊断只适用于这条路径，不是默认一体化或生产分体 Compose 的附加步骤。
 
 检查通过后，可以在 Admin → Shell 沙盒直接填写并保存受控代理地址，再打开“临时公网访问”。这不会把沙盒默认网络改成公网；
 只有当前会话显式选择 `network=egress` 且通过确认门（或已启用 Shell“自动模式”）时，sandboxd 才会使用内部 egress 网络。
@@ -639,7 +587,7 @@ SANDBOX_ACL=1 RUN_USER=gugu-sandbox make restart
 
 不传 `SANDBOX_ACL=1` 时，`make start`、`make restart` 和 `make install` 都不会修改 ACL。
 
-Compose 使用同一套宿主机初始化入口：
+开发专用 `docker-compose.dev.yml` 使用宿主机初始化入口：
 
 ```bash
 cd backend
@@ -647,9 +595,9 @@ make compose-up                         # 普通 Compose，不修改 ACL
 SANDBOX_ACL=1 make compose-up           # 启用 sandbox profile；bootstrap 自动应用 ACL 并验证写入
 ```
 
-直接执行 `docker compose up` 仍是轻量模式，不启动沙盒；直接执行
-`docker compose --profile sandbox up` 会自动运行 bootstrap，应用 `shell`、`个人文件`、
-`项目文件` 的 ACL 并验证写入。初始化脚本不会修改业务容器、镜像或数据库目录。
+在 `docker-compose.dev.yml` 下，直接启动仍是轻量模式；使用 `--profile sandbox` 会运行
+bootstrap，应用 `shell`、`个人文件`、`项目文件` 的 ACL 并验证写入。此开发拓扑的步骤
+不适用于默认一体化 Compose 或生产分体 Compose。初始化脚本不会修改业务容器、镜像或数据库目录。
 
 启用沙盒前先检查 Rootless Docker 和固定镜像：
 
@@ -664,8 +612,7 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 
 #### 沙盒镜像（`docker/sandbox/Dockerfile`）
 
-工具链 Sandbox 执行镜像以独立 `gugu-sandbox` 镜像发布；默认一体化 Compose 在线时自动固定 RepoDigest，离线发布包则携带同一执行镜像及 manifest。它不以内嵌归档形式进入 `gugu-web` 应用镜像。独立 systemd 或拆分
-backend/frontend 部署仍可按需自行准备工具链镜像 `docker/sandbox/Dockerfile`
+工具链 Sandbox 执行镜像以独立 `gugu-sandbox` 镜像发布；默认一体化 Compose 的最终发布镜像内含执行镜像和 egress proxy 的归档及 manifest，并在启动时校验后导入内置 Rootless daemon。拆分 backend/frontend 部署连接外部 Rootless manager，需由其运行环境准备匹配的工具链镜像 `docker/sandbox/Dockerfile`
 （bookworm-slim + git / nodejs / python3 / ffmpeg /
 Noto CJK 字体等，运行用户 uid 65532）。镜像只放通用工具链：**不预置任何 git 凭据或用户
 身份**（`user.name`/`user.email` 由使用方在会话内设置），系统级 gitconfig 仅设置
@@ -943,7 +890,7 @@ Compose 更新会启动新版本应用并按发布迁移数据库；更新前应
 
 单容器应用包更新要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表。应用包必须通过固定发布身份的 Cosign blob 签名及 SHA-256 校验。Compose、单容器整镜像与基础运行时更新统一由 Docker/Compose 或 NAS Docker 管理器负责；`GUGU_SELF_UPDATE=off` 可关闭单容器应用包更新。
 
-从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须先备份 PostgreSQL 与 Redis，并按上文迁移流程导出快照；新版本启动会检查迁移备份，不会静默切换到空数据库/队列。保留根目录 `.env`、`Gugu-data` 和旧数据卷。默认 Compose 不包含 updater sidecar，Admin 不提供 Compose 镜像自更新。
+从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须在停服状态下完成旧 PostgreSQL/Redis 数据迁移，并保留原卷作为恢复来源。新一体化更新流程会先停止 app；`compose-update.sh` 随后调用 `gugu-offline-migrate --services-stopped`，备份 PostgreSQL 和完整 `users` 存储，再执行 workspace 布局迁移与校验。迁移未成功时不得启动新业务版本，也不得删除旧卷。手动替换镜像时必须遵循同一停服、备份、迁移、校验顺序，不可仅靠普通 `docker compose up` 代替迁移。保留根目录 `.env`、`Gugu-data` 和旧数据卷。默认 Compose 不包含 updater sidecar，Admin 不提供 Compose 镜像自更新。
 
 单容器应用包更新使用官方 unified 镜像内置的固定 Cosign 校验器，并要求可写持久 `/data`；仅更新应用代码。源码/systemd 部署不支持 Admin 在线 Docker 镜像更新。
 
@@ -961,14 +908,14 @@ app 内 `/data/.env` 中已生效的数据库密码，不把密码写入命令�
 > 🔥 **dockerd 升级 / 服务器重启后的两个坑（2026-09-12 生产实战）**：
 >
 > 1. **dockerd 升级后必须全栈重建容器**。docker-ce 升级（如 29.8.0）+ 重启后，重启前已存在的容器内嵌 DNS（127.0.0.11）解析服务名会 SERVFAIL——nginx 报 `frontend could not be resolved (2: Server failure)`（整站 502）、worker 报 `Error -3 connecting to redis:6379. Temporary failure in name resolution` 崩溃循环，但新重建的容器正常。修复：`cd <devserver部署目录> && docker compose -p gugu-web-main up -d --force-recreate`。**以后 dockerd 相关包升级，重启后必须跟一次全栈 force-recreate**。
-> 2. **检查每个容器的 restart 策略**。默认一体化 Compose 的 app、sandboxd、egress-proxy
->    和 searxng 都声明了 `restart: unless-stopped`；旧式分体 Compose 仍需逐个核对，避免
+> 2. **检查每个容器的 restart 策略**。默认一体化 Compose 的 app 和 searxng
+>    声明了 `restart: unless-stopped`；旧式分体 Compose 仍需逐个核对，避免
 >    数据库或 backend 因策略为 `no` 而不再自动拉起。
 >
-> 重启后验证清单：一体化 Compose 应看到 app、sandboxd、egress-proxy、searxng 全员 Up；
-> 分体 Compose 还应看到 postgres 和 redis。随后检查 `curl -s -o /dev/null -w "%{http_code}"`
-> 返回 200；sandboxd 的 Socket 和沙盒镜像校验应通过。不要把一体化部署误判为缺少 postgres
-> 容器。
+> 重启后验证清单：一体化 Compose 应看到 app 和 searxng；分体 Compose 还应看到
+> backend、worker、gateway、frontend、nginx、postgres、redis 等本拓扑定义的服务。随后检查
+> 健康端点；一体化 Shell 状态通过 app 的健康信息/日志确认，分体 Shell 状态通过外部
+> sandbox manager 的运维入口确认。不要把一体化部署误判为缺少 postgres 容器或独立 sandboxd。
 
 ```bash
 # scp/rsync 传新代码后：

@@ -135,6 +135,10 @@ async def validate_oss_upload(storage, user_id: int, storage_key: str) -> Upload
 
 
 def parse_upload_filename(filename: str) -> Tuple[str, str]:
+    # 单独的前导点是点文件名的一部分（如 .gitconfig / .env），不是扩展名分隔符。
+    # 含多个点的名称（如 .env.local）仍按最后一个点拆分。
+    if filename.startswith(".") and filename.count(".") == 1 and len(filename) > 1:
+        return filename, "FILE"
     parts = filename.rsplit('.', 1)
     return parts[0], parts[1].upper()[:10] if len(parts) > 1 else 'FILE'
 

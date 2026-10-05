@@ -1,7 +1,7 @@
 """文件文档操作：文本/Office 文件的列表、读取、编辑与管理。
 
-复用文件服务层的现成 helper（`_build_key`/`_resolve_conflict`/
-`_fmt_size`/`color_value`）、`app.services.storage.trash`（`move_file_to_trash`）与
+改名、创建、复制复用 FileService；其他文档操作使用 `_fmt_size`/`color_value`、
+`app.services.storage.trash`（`move_file_to_trash`）与
 存储层 `get_storage()`，整理类工具复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
 
 编辑和创建仅限 UTF-8 文本且 ≤256KB，已知文本扩展名和文件记录的 text/* MIME 都支持。
@@ -10,6 +10,7 @@
 import json
 import re
 
+from app.core.errors import Invalid
 from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.services.storage.folders import resolve_folder_path
@@ -26,8 +27,10 @@ from app.services.files.browser import (
     search_user_files,
 )
 from app.services.storage.file_service.files import _fmt_size
+from app.services.storage.file_service.content_types import (
+    TEXT_EXTS, is_text_file_record as _is_text_file_record,
+)
 from app.services.files.actions import delete_file as delete_file_action
-from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
 from app.search.query import normalize_queries
 from agent.tools.text_edit import apply_line_edits
@@ -52,13 +55,6 @@ async def _resolve_file(db, user_id, args):
         return await package_resolve_file(db, user_id, args)
     return await _locations_resolve_file(db, user_id, args)
 
-# 可读/可改的文本类扩展名
-TEXT_EXTS = frozenset({
-    "md", "markdown", "txt", "text", "json", "csv", "tsv", "yaml", "yml",
-    "xml", "html", "htm", "css", "js", "ts", "jsx", "tsx", "py", "java",
-    "c", "cpp", "h", "hpp", "go", "rs", "rb", "php", "sh", "bash", "sql",
-    "ini", "toml", "conf", "log", "vue", "svg",
-})
 READ_MAX_BYTES = 256 * 1024
 
 # 已知扩展名的 MIME 映射。create_file 不再限制格式枚举；未知后缀按 text/plain 保存。
@@ -105,20 +101,6 @@ _CREATE_BINARY_EXTS = frozenset({
     "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods",
     "ppt", "pptx", "odp",
 })
-
-
-def _is_text_file_record(file) -> bool:
-    """判断文件是否可按 UTF-8 文本处理。
-
-    扩展名白名单只覆盖常见文件；create_file 对自定义扩展名写入 text/plain，
-    因此这里同时信任文本 MIME。上传的未知二进制仍保持不可编辑/不可读。
-    """
-    ext = (getattr(file, "ext", "") or "").lower()
-    mime = (getattr(file, "mime_type", "") or "").lower()
-    return ext in TEXT_EXTS or mime.startswith("text/") or mime in {
-        "application/json", "application/xml", "application/javascript",
-        "application/typescript", "application/sql", "application/x-sh",
-    } or mime.endswith("+json") or mime.endswith("+xml")
 
 
 def _split_create_name(name: str) -> tuple[str | None, str | None, str | None]:
@@ -578,59 +560,48 @@ async def _save_uploaded_file(db, user_id, args: dict):
 
 
 async def _rename_one(db, user_id, f, new_name: str, new_fmt: str | None = None) -> dict:
-    """重命名已解析的 File f，各自 commit。返回结果 dict。供单个与批量 rename 共用。
-
-    new_fmt 为 None 时沿用 f.ext（旧行为，"改名不改格式"）。传了新 fmt 就用规范 ext，
-    用于修双后缀文件：new_name="README" + new_fmt="md" 会把 f.ext="markdown" 的
-    README.md.markdown 改成 README.md。文本类互相转也走这条；非文本类（docx/pdf/xlsx）
-    仅当 new_fmt 等于当前 ext 时允许"改名不改内容"，跨文本/二进制的格式转换请重新上传，
-    而不是把 rename 当成转换工具。
-    """
+    """只修改名称及后缀，不转换字节或 MIME；单个与批量共用。"""
     old_ext = f.ext
     if new_fmt is not None:
-        fmt = new_fmt.lower()
-        if fmt not in _DOC_MIME:
-            return {"error": f"不支持的格式: {fmt}", "supported": list(_DOC_MIME), "name": f"{f.display_name}.{f.ext}"}
-        new_ext = _DOC_EXT.get(fmt, fmt)
-        # 格式转换只在文本家族内允许：源是图片等二进制后缀（png/jpg…，不在 _DOC_MIME）
-        # 或目标是 docx/pdf/xlsx 时，改后缀只会产出内容对不上的坏文件，一律拒绝
-        if new_ext != old_ext and (old_ext not in _DOC_MIME or new_ext in ("docx", "pdf", "xlsx")):
-            return {"error": f"rename 不能跨文本/二进制格式（{old_ext}→{new_ext}），请用 edit_file 走 LibreOffice 转换",
-                    "name": f"{f.display_name}.{f.ext}"}
+        if not isinstance(new_fmt, str) or not _CREATE_NAME_EXT_RE.fullmatch(new_fmt):
+            return {"error": "扩展名非法", "name": f"{f.display_name}.{f.ext}"}
+        new_ext = new_fmt.lower()
+        new_display = _strip_ext(new_name, new_ext)
+        _, _, name_error = _split_create_name(f"{new_display}.{new_ext}")
+    elif "." in new_name:
+        new_display, new_ext, name_error = _split_create_name(new_name)
     else:
         new_ext = old_ext
-    new_display = _strip_ext(new_name, new_ext)
+        new_display = new_name
+        _, _, name_error = _split_create_name(f"{new_display}.{new_ext}")
+    if name_error:
+        return {"error": name_error, "name": f"{f.display_name}.{f.ext}"}
+    old_name = f"{f.display_name}.{old_ext}"
     try:
-        new_key = await _resolve_key(
-            db, user_id, f.space, new_display, new_ext,
-            project_id=f.project_id, folder_id=f.folder_id,
-            workspace_directory_id=getattr(f, "workspace_directory_id", None),
+        result = await FileService(db).update_file(
+            user_id, f.id,
+            display_name=new_display, ext=new_ext, stage_name=None,
+            folder_id=None, project_id=None, folder_set=False, project_set=False,
+            workspace_directory_id=None, workspace_directory_set=False,
         )
-    except ValueError as e:
-        return {"error": str(e), "name": f"{f.display_name}.{f.ext}"}
-    storage = get_storage()
-    if new_key != f.storage_key:
-        new_key, new_display = await _resolve_conflict(storage, new_key, new_display, new_ext)
-        try:
-            await storage.rename_file(f.storage_key, new_key)
-        except Exception as e:
-            return {"error": f"重命名失败（物理文件可能已丢失）：{str(e)[:80]}", "name": f"{f.display_name}.{f.ext}"}
-        f.storage_key = new_key
-    old = f.display_name
-    f.display_name = new_display
-    if new_ext != old_ext:
-        # 文本类同族转换（md↔txt↔yaml…）是显示层差异，内容不需要重写；mime 跟着规范 ext 走
-        f.ext = new_ext
-        f.mime_type = _DOC_MIME[new_ext]
-    f.updated_at = now_utc()
-    await db.commit()
-    return {"success": True, "file_id": f.id, "old_name": f"{old}.{old_ext}", "name": f"{new_display}.{f.ext}"}
+        await db.commit()
+    except Invalid as error:
+        return {"error": error.public_message, "name": old_name}
+    except ValueError as error:
+        return {"error": str(error), "name": old_name}
+    except Exception:
+        return {"error": "重命名失败；原文件名保持不变", "name": old_name}
+    renamed = result.file
+    return {
+        "success": True, "file_id": renamed.id, "old_name": old_name,
+        "name": f"{renamed.display_name}.{renamed.ext}",
+    }
 
 
 async def _rename_file(db, user_id, args: dict):
     """重命名文件。单个：file/file_id + new_name。
     批量：renames=[{file 或 file_id, new_name, format?}, ...]——适合「按顺序编号」，Agent 自己生成序号、一次调用全改。
-    可选 format：传了就改后缀（修 .md.markdown 这种双后缀文件 → format="md"），不传沿用旧 ext。
+    完整文件名直接修改后缀；仅名称沿用旧后缀。format 显式指定后缀，不转换内容。
     """
     items = args.get("renames")
     if items:

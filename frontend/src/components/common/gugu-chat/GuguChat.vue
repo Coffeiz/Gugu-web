@@ -442,16 +442,25 @@ const visiblePendingQueue = computed(() => pendingQueue.value.filter(item => ite
 let stopPendingQueueRecovery = false
 
 async function recoverPendingQueue() {
-  if (!isPendingQueueRecoveryNeeded()) return
   try {
-    const snapshot = await agentApi.getPendingQueue(getDraftPendingQueueId())
+    const localSnapshot = isPendingQueueRecoveryNeeded()
+      ? await agentApi.getPendingQueue(getDraftPendingQueueId()).catch(() => ({ sessionId: null, items: [] }))
+      : { sessionId: null, items: [] }
+    const importedSnapshots = await agentApi.listImportedDraftQueues().catch(() => ({ queues: [] }))
     if (stopPendingQueueRecovery || sessionId.value != null) return
-    restorePendingQueueForDraft(snapshot.items)
-    setPendingQueueRecoveryNeeded(snapshot.items.length > 0 || pendingQueue.value.length > 0)
+    const importedItems = importedSnapshots.queues.flatMap(queue => queue.items)
+    restorePendingQueueForDraft([...localSnapshot.items, ...importedItems])
+    setPendingQueueRecoveryNeeded(
+      localSnapshot.items.length > 0 || importedItems.length > 0 || pendingQueue.value.length > 0,
+    )
   } catch {
     // 不在页面后台轮询；恢复标记保留，下次打开聊天时再读服务端快照。
   }
 }
+
+watch(sessionId, (current, previous) => {
+  if (current === null && previous !== null) void recoverPendingQueue()
+})
 
 // 授权/撤销成功后立即更新标题栏；会话列表刷新只负责把本地状态重新校准到服务端。
 const sessionFilesystemAuthorized = ref(false)
@@ -847,7 +856,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
   color: var(--content-primary); background: var(--surface-card-solid);
   border: 1px solid var(--border-default); border-radius: var(--card-radius);
   box-shadow: var(--card-shadow); text-decoration: none; cursor: pointer;
-  transition: var(--card-motion);
+  transition: var(--card-motion), box-shadow var(--motion-hover-card) var(--motion-ease-standard);
 }
 :deep(.msg-bubble.md-body a.chat-object-card:hover) {
   color: var(--content-primary); opacity: 1;
@@ -903,7 +912,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 }
 :deep(.msg.user .msg-bubble) {
   background: var(--gugu-chat-user-bg); color: var(--gugu-chat-user-fg);
-  border-bottom-right-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
+  border-bottom-right-radius: 4px; box-shadow: var(--gugu-chat-user-shadow);
 }
 /* 用户气泡 MD 排版（.user-md）：md-view 默认把标题/加粗/引用映射到深色文字
    token，紫底上对比不足，重映射到气泡前景。行内代码叠半透明前景，代码块用

@@ -115,15 +115,3 @@ html[data-theme][data-family='mono'] .chat-window .msg.ai .msg-bubble {
 html[data-theme][data-family='mono'] .sidebar {
   background: var(--chrome-glass-bg);
 }
-
-/* Native controls and selections share action/focus language. */
-html[data-theme][data-family] input[type='checkbox']:not(.arco-checkbox-icon) {
-  border-color: var(--action-outline);
-  background: var(--surface-raised);
-}
-html[data-theme][data-family] input[type='checkbox']:not(.arco-checkbox-icon):hover { border-color: var(--action-primary); }
-html[data-theme][data-family] input[type='checkbox']:not(.arco-checkbox-icon):checked {
-  background: var(--action-primary);
-  border-color: transparent;
-  box-shadow: 0 2px 8px color-mix(in srgb,var(--action-primary) 35%,transparent);
-}

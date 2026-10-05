@@ -9,7 +9,6 @@
 | canvas-mind | `agentskills/canvas-mind/SKILL.md` | 画布/便签/Mind |
 | design | `agentskills/design/SKILL.md` | UI 视觉与交互规范 |
 | testing | `agentskills/testing/SKILL.md` | 写/改测试 |
-| devserver | `agentskills/devserver/SKILL.md` | 部署/同步/运维 |
 | release | `agentskills/release/SKILL.md` | 发版、PR 合并、版本 tag、CHANGELOG、生产部署 |
 | local | `agentskills/local/SKILL.md` | 使用本地开发机、代理和 devserver 连接信息 |
 | loopscope | `agentskills/loopscope/SKILL.md` | LoopScope trace、Collector、上下文观测与脱敏边界 |
@@ -19,6 +18,7 @@
 ## 本地开发机信息
 
 - 本地开发机、devserver、代理、Mutagen 和权限操作相关信息统一以 `agentskills/local/SKILL.md` 为准，不在本文件或其他 Git 跟踪文件中重复记录。
+- Git 跟踪文件中的报告、开发记录、PRD、测试说明和示例不得包含本机或服务器的详细环境信息：包括真实 IP/内网 IP、用户名、SSH 登录目标、绝对家目录/工作区/数据目录、代理地址及可定位到具体机器的主机名与端口组合。需要描述环境时统一使用 `devserver`、`本地测试环境`、`测试代理` 等代称；路径使用仓库相对路径或 `<devserver仓库根目录>`、`<devserver数据目录>` 等占位符。测试网络地址仅可使用明确的合成示例值，不得复用真实环境地址。
 - 密码、Token、API Key 等凭据只从本机安全存储或用户临时提供的环境变量读取，不写入仓库、命令、日志、提交记录或同步文件；本地运行信息不会作为凭据保存到 Git。
 
 ## Admin 前端拆分约定

@@ -59,7 +59,7 @@
     "targets": [
       {
         "source": "frontend/src/utils/optimisticMutation.ts",
-        "tests": ["frontend/test/optimisticMutation.test.ts"],
+        "tests": ["frontend/tests/files/optimisticMutation.test.ts"],
         "behavior": "乐观更新提交、回滚及更新意图结算时序"
       }
     ],

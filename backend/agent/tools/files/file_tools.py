@@ -234,7 +234,7 @@ FILE_TOOLS = [
         Tool(
             name="rename_file", label="重命名文件",
             description_short='重命名文件；可选修改扩展名。',
-            description="重命名文件，可单个或批量修改名称及后缀，不改变位置。",
+            description="重命名文件，可单个或批量。new_name 含后缀时按完整文件名修改（如 docker-compose.yml、.env）；不含点时保留原后缀。可选 format 显式指定扩展名，支持自定义后缀，不是格式转换。只改名称，不改变文件内容、MIME 或所属目录；改后缀不能把二进制变成文本。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -246,7 +246,7 @@ FILE_TOOLS = [
                                 "file": {"type": "string"},
                                 "file_id": {"type": "integer"},
                                 "new_name": {"type": "string"},
-                                "format": {"type": "string", "enum": sorted(_DOC_MIME)},
+                                "format": {"type": "string", "minLength": 1, "maxLength": 20, "pattern": "^[A-Za-z0-9][A-Za-z0-9._+\\-]{0,19}$"},
                             },
                             "required": ["new_name"],
                         },
@@ -254,7 +254,7 @@ FILE_TOOLS = [
                     "file_id": {"type": "integer"},
                     "file": {"type": "string"},
                     "new_name": {"type": "string"},
-                    "format": {"type": "string", "enum": sorted(_DOC_MIME)},
+                    "format": {"type": "string", "minLength": 1, "maxLength": 20, "pattern": "^[A-Za-z0-9][A-Za-z0-9._+\\-]{0,19}$"},
                 },
             },
             handler=_rename_file,

@@ -1,17 +1,21 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { userSkillsApi, type SkillToolItem, type UserSkillItem, type UserSkillWrite } from '@/services/api'
+import { userSkillsApi, type UserSkillItem, type UserSkillWrite } from '@/services/api'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
+import { useSkillToolCatalog } from './useSkillToolCatalog'
 
 export function useUserSkills() {
   const { t } = useI18n()
   const skills = ref<UserSkillItem[]>([])
-  const tools = ref<SkillToolItem[]>([])
+  const toolCatalog = useSkillToolCatalog()
   const loading = ref(false)
   const saving = ref(false)
   const error = ref('')
 
-  const onMcpChanged = () => { void load() }
+  const onMcpChanged = () => {
+    void load()
+    if (toolCatalog.loaded.value) void toolCatalog.load(true)
+  }
   onMounted(() => window.addEventListener(RESOURCE_REFRESH_EVENTS.mcp, onMcpChanged))
   onBeforeUnmount(() => window.removeEventListener(RESOURCE_REFRESH_EVENTS.mcp, onMcpChanged))
 
@@ -21,7 +25,6 @@ export function useUserSkills() {
     try {
       const data = await userSkillsApi.list()
       skills.value = data.skills
-      tools.value = data.tools
     } catch (err) {
       error.value = err instanceof Error ? err.message : t('skills.loadFailed')
     } finally {
@@ -71,5 +74,12 @@ export function useUserSkills() {
     }
   }
 
-  return { skills, tools, loading, saving, error, load, save, toggle, remove }
+  return {
+    skills,
+    tools: toolCatalog.tools,
+    toolsLoaded: toolCatalog.loaded,
+    toolsLoading: toolCatalog.loading,
+    toolsError: toolCatalog.error,
+    loading, saving, error, load, loadTools: toolCatalog.load, save, toggle, remove,
+  }
 }

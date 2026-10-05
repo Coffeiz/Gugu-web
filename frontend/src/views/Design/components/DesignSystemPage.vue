@@ -297,6 +297,27 @@
             </article>
           </div>
 
+          <div class="subhead"><div><h3>Progress bar</h3><p>紧凑、无描边的进度轨道；回收站任务和音乐播放器共用同一组样式令牌。</p></div><code>--progress-*</code></div>
+          <div class="progress-token-preview preview-card">
+            <div class="progress-token-sample" role="progressbar" aria-label="进度条样式示例" aria-valuenow="68" aria-valuemin="0" aria-valuemax="100">
+              <div class="progress-token-track"><span /></div>
+              <small>68%</small>
+            </div>
+          </div>
+          <div class="token-grid compact-colors rename-token-grid">
+            <article v-for="token in progressTokens" :key="token.name" class="token-card color-card">
+              <div class="progress-token-swatch">
+                <span :style="{
+                  width: token.demo === 'height' ? '64px' : '80px',
+                  height: token.demo === 'height' ? 'var(--progress-track-height)' : '10px',
+                  borderRadius: 'var(--progress-track-radius)',
+                  background: token.demo === 'track' ? 'var(--progress-track-bg)' : token.demo === 'fill' ? 'var(--progress-fill-bg)' : 'var(--action-primary)',
+                }" />
+              </div>
+              <div class="token-meta"><strong>{{ token.label }}</strong><code>{{ token.name }}</code><span>{{ token.note }}</span></div>
+            </article>
+          </div>
+
           <div class="subhead"><div><h3>Mind note palette</h3><p>保存的 amber / coral / blue / teal 不变；渲染色按当前主题 surface 自动混合。</p></div><code>--note-paper-*</code></div>
           <div class="note-grid">
             <article v-for="note in notes" :key="note.token" class="preview-card note-token">
@@ -431,7 +452,7 @@ const contracts = [
 const tokenIndex = [
   {title:'Foundations',items:['--font-family-body','--font-family-ui','--font-family-heading','--font-family-mono','--font-size-xs','--font-size-sm','--font-size-md','--font-size-lg','--font-size-xl','--space-xs','--space-sm','--space-md','--space-lg','--space-xl','--radius-xs','--radius-sm','--radius-md','--radius-lg','--radius-pill','--scrollbar-size-default','--scrollbar-size-compact','--scrollbar-size-editor','--scrollbar-safe-inset']},
   {title:'Semantic',items:['--color-primary','--color-accent','--color-accent-muted','--action-primary-bg','--action-secondary-bg','--action-secondary-border','--action-secondary-fg','--surface-hover-tint','--color-text','--color-muted','--color-surface','--surface-floating','--content-primary','--border-subtle','--status-success','--elevation-popup']},
-  {title:'Components',items:['--sidebar-item-active','--topbar-bg','--control-resizer-bg','--confirm-dialog-width','--confirm-dialog-bg','--confirm-dialog-padding','--confirm-dialog-icon-fg','--confirm-dialog-confirm-bg','--confirm-dialog-danger-confirm-bg','--danger-button-fg','--danger-button-bg','--danger-button-bg-hover','--danger-button-border','--danger-button-border-hover','--motion-hover-micro','--motion-hover-control','--motion-hover-card','--card-motion','--card-overlay-motion','--calendar-grid-line','--calendar-weekend-bg','--calendar-today-date-bg','--scrollbar-track','--scrollbar-thumb','--scrollbar-thumb-hover','--scrollbar-overlay-right-offset','--scrollbar-column-right-offset','--scrollbar-overlay-z-index','--scrollbar-overlay-modal-z-index','--scrollbar-overlay-transition','--scrollbar-overlay-track-inset','--project-card-shadow','--project-card-motion','--gugu-chat-bg','--gugu-chat-sidebar-bg','--gugu-fab-bg']},
+  {title:'Components',items:['--sidebar-item-active','--topbar-bg','--control-resizer-bg','--progress-track-height','--progress-track-radius','--progress-track-bg','--progress-fill-bg','--confirm-dialog-width','--confirm-dialog-bg','--confirm-dialog-padding','--confirm-dialog-icon-fg','--confirm-dialog-confirm-bg','--confirm-dialog-danger-confirm-bg','--danger-button-fg','--danger-button-bg','--danger-button-bg-hover','--danger-button-border','--danger-button-border-hover','--motion-hover-micro','--motion-hover-control','--motion-hover-card','--card-motion','--card-overlay-motion','--calendar-grid-line','--calendar-weekend-bg','--calendar-today-date-bg','--scrollbar-track','--scrollbar-thumb','--scrollbar-thumb-hover','--scrollbar-overlay-right-offset','--scrollbar-column-right-offset','--scrollbar-overlay-z-index','--scrollbar-overlay-modal-z-index','--scrollbar-overlay-transition','--scrollbar-overlay-track-inset','--project-card-shadow','--project-card-motion','--gugu-chat-bg','--gugu-chat-sidebar-bg','--gugu-fab-bg']},
 ]
 function indexDotStyle(token:string){return /color|surface|content|border|action|status|danger|bg|active|calendar/.test(token)?{background:`var(${token})`}:{background:'var(--action-primary)'}}
 /* 次要按钮样板：按 token 角色决定把当前 token 映射到背景 / 边框 / 前景，其余属性用配套 token。 */
@@ -451,6 +472,12 @@ const renameInputTokens = [
   { label:'Border', name:'--rename-input-border', value:'var(--input-border)', note:'主题输入框边框', demo:'surface' },
   { label:'Foreground', name:'--rename-input-fg', value:'var(--input-fg)', note:'主题输入框文字', demo:'surface' },
 ]
+const progressTokens = [
+  { label:'Track height', name:'--progress-track-height', note:'紧凑进度轨道高度', demo:'height' },
+  { label:'Track radius', name:'--progress-track-radius', note:'轨道与填充的圆角', demo:'radius' },
+  { label:'Track background', name:'--progress-track-bg', note:'主色 14% 透明度，无描边', demo:'track' },
+  { label:'Fill background', name:'--progress-fill-bg', note:'已完成进度的主色填充', demo:'fill' },
+]
 
 const notes = [
   { label: 'Default', token: '--note-surface', note: '时间流默认纸面' },
@@ -463,7 +490,8 @@ const notes = [
 
 <style scoped>
 .motion-token-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--design-grid-gap)}.motion-token-card{overflow:hidden}.motion-preview{height:76px;display:flex;align-items:center;padding:0 var(--space-lg);border-bottom:1px solid var(--border-hairline);background:var(--surface-soft)}.motion-preview-dot{width:22px;height:22px;border-radius:var(--radius-pill);background:var(--action-primary);box-shadow:0 3px 10px color-mix(in srgb,var(--action-primary) 28%,transparent);transition:transform var(--motion-preview-duration) var(--motion-ease-emphasis)}.motion-token-card:hover .motion-preview-dot{transform:translateX(calc(100% + 120px))}.design-page{min-height:100vh;background:var(--surface-page);color:var(--content-primary);font-family:var(--font-sans);font-synthesis:none;-webkit-font-smoothing:antialiased}
-.design-hero{position:fixed;top:0;right:0;left:0;z-index:50;min-height:58px;display:flex;align-items:center;gap:var(--space-xl);padding:var(--space-sm) clamp(var(--space-lg),4vw,56px);background:color-mix(in srgb,var(--surface-glass) 78%,transparent);border-bottom:1px solid var(--border-strong)}
+/* 固定标题栏覆盖滚动内容，单独启用主题玻璃；不改变常驻内容卡的无 blur 契约。 */
+.design-hero{position:fixed;top:0;right:0;left:0;z-index:50;min-height:58px;display:flex;align-items:center;gap:var(--space-xl);padding:var(--space-sm) clamp(var(--space-lg),4vw,56px);background:color-mix(in srgb,var(--surface-glass) 78%,transparent);border-bottom:1px solid var(--border-strong);backdrop-filter:var(--chrome-glass-blur);-webkit-backdrop-filter:var(--chrome-glass-blur)}
 .hero-copy{min-width:0;max-width:760px}.hero-title-row{display:flex;align-items:baseline;gap:var(--space-sm)}.eyebrow,.section-kicker{color:var(--content-tertiary);font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);letter-spacing:var(--tracking-label)}.hero-copy h1{margin:0;padding-block:2px;font-size:var(--font-size-xl);line-height:var(--line-height-tight)}.hero-copy p{margin-top:var(--space-xs);color:var(--content-secondary);font-size:var(--font-size-xs);line-height:var(--line-height-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .design-content{width:min(1440px,100%);margin:0 auto;padding:calc(58px + var(--space-xl) + var(--space-lg)) clamp(var(--space-lg),4vw,56px) 72px}
 .theme-matrix{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-sm);margin-bottom:var(--space-xl)}
@@ -527,4 +555,10 @@ const notes = [
 .rename-token-swatch { height: 56px; display: grid; place-items: center; border-bottom: 1px solid var(--border-hairline); }
 .rename-token-swatch > span { display: block; min-width: 38px; height: 20px; border: 1px solid var(--border-default); background: var(--surface-raised); }
 .rename-token-swatch code { color: var(--content-secondary); font: var(--font-size-xs) var(--font-mono); }
+.progress-token-preview { min-height: 74px; display: flex; align-items: center; padding: var(--space-lg); }
+.progress-token-sample { display: flex; align-items: center; gap: var(--space-sm); width: min(360px, 100%); color: var(--content-tertiary); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+.progress-token-track { flex: 1; height: var(--progress-track-height); overflow: hidden; border: 0; border-radius: var(--progress-track-radius); background: var(--progress-track-bg); }
+.progress-token-track span { display: block; width: 68%; height: 100%; border-radius: inherit; background: var(--progress-fill-bg); }
+.progress-token-swatch { height: 56px; display: grid; place-items: center; border-bottom: 1px solid var(--border-hairline); }
+.progress-token-swatch > span { display: block; }
 </style>

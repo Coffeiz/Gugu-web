@@ -13,7 +13,7 @@ from app.services.filesystem_authorization import (
     grant_scheduled_task_filesystem_access,
     revoke_scheduled_task_filesystem_access,
 )
-from app.services.scheduled_tasks import normalize_script_authorization, validate_task_workspace
+from app.services.scheduled_tasks import validate_task_workspace
 
 
 def test_scheduled_task_contract_uses_workspace_root_without_cwd():
@@ -21,27 +21,9 @@ def test_scheduled_task_contract_uses_workspace_root_without_cwd():
 
     assert "cwd" not in TaskCreate.model_fields
     assert "cwd" not in TaskUpdate.model_fields
+    assert "script_authorization" not in TaskCreate.model_fields
+    assert "script_authorization" not in TaskUpdate.model_fields
     assert not hasattr(ScheduledTask, "cwd")
-
-
-def test_scheduled_script_authorization_is_exact_and_relative():
-    value = normalize_script_authorization({
-        "root": "workspace", "script_path": "jobs/report.py",
-        "interpreter": "python3",
-    })
-    assert value == {
-        "root": "workspace", "script_path": "jobs/report.py",
-        "interpreter": "python3",
-    }
-    with pytest.raises(ValueError, match="相对路径"):
-        normalize_script_authorization({
-            "root": "workspace", "script_path": "../report.py", "interpreter": "python3",
-        })
-    with pytest.raises(ValueError, match="args 已移除"):
-        normalize_script_authorization({
-            "root": "workspace", "script_path": "jobs/report.py",
-            "interpreter": "python3", "args": ["--daily"],
-        })
 
 
 @pytest.mark.asyncio
@@ -296,7 +278,7 @@ async def test_scheduled_agent_receives_task_filesystem_subject(monkeypatch, use
     import app.scheduled_tasks as scheduled
 
     execution = AsyncMock(return_value=(
-        '{"summary":"已执行","context":"","status":"success"}',
+        "已执行。",
         False,
         {"tool_names": [], "mutated": False},
     ))
@@ -314,7 +296,7 @@ async def test_scheduled_agent_receives_task_filesystem_subject(monkeypatch, use
         allow_shell=True,
     )
 
-    assert result == '{"summary":"已执行","context":"","status":"success"}'
+    assert result == "已执行。"
     execution.assert_awaited_once()
     assert execution.await_args.kwargs["filesystem_subject"] == {
         "subject_type": "scheduled_task",

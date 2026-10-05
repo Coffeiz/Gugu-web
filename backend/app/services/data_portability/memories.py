@@ -26,14 +26,15 @@ _OWNER_LEGACY = ("facts.json", "facts.md", "summary.md", "summary.ts")
 
 
 async def _source_file_producer(path: str, category: str, storage, key: str) -> ArchiveProducer | None:
-    before = await storage.stat(key)
-    if before is None:
+    if await storage.stat(key) is None:
         return None
 
     async def write(stream):
-        current = await storage.stat(key)
-        if current is None or current.size != before.size or current.mtime != before.mtime:
-            raise ValueError("记忆源文件在导出前发生变化")
+        # producer 创建与实际写入之间可能隔着大量附件处理；只在即将读取时
+        # 建立基准，避免把这段等待期间的正常记忆更新误判为导出期间写入冲突。
+        before = await storage.stat(key)
+        if before is None:
+            raise ValueError(f"记忆源文件在归档读取前已不存在: {path}")
         size = 0
         async for chunk in storage.iter_chunks(key):
             stream.write(chunk)
@@ -42,37 +43,44 @@ async def _source_file_producer(path: str, category: str, storage, key: str) -> 
         if after is None or size != before.size or after.size != before.size or (
             before.mtime is not None and after.mtime != before.mtime
         ):
-            raise ValueError("记忆源文件在导出期间发生变化")
+            raise ValueError(f"记忆源文件在归档读取期间发生变化: {path}")
         return None
 
     return ArchiveProducer(path, category, write)
 
 
 async def build_memory_producers(db: AsyncSession, *, user_id: UUID) -> list[ArchiveProducer]:
-    """owner 源文件静态逐个登记；IM scope 清单按 owner DB 行和用户前缀取并集。"""
+    """延迟读取 owner 源文件；IM scope 清单按 owner DB 行和用户前缀取并集。"""
     storage = get_storage()
     producers: list[ArchiveProducer] = []
-    current_present: set[str] = set()
-    for filename in _OWNER_CURRENT:
-        producer = await _source_file_producer(
-            f"memory/owner/{filename}", "owner_memory", storage,
-            f"{user_id}/.agent/{filename}",
-        )
-        if producer is not None:
-            producers.append(producer)
-            current_present.add(filename)
-    legacy_names = []
-    if "pattern.json" not in current_present:
-        legacy_names.extend(("facts.json", "facts.md"))
-    if "summary.json" not in current_present:
-        legacy_names.extend(("summary.md", "summary.ts"))
-    for filename in legacy_names:
-        producer = await _source_file_producer(
-            f"memory/legacy/{filename}", "owner_memory", storage,
-            f"{user_id}/.agent/{filename}",
-        )
-        if producer is not None:
-            producers.append(producer)
+
+    async def expand_owner_files() -> AsyncIterator[ArchiveProducer]:
+        # 延迟到归档实际处理记忆时才读取文件清单，前面处理大附件期间发生的
+        # 正常记忆更新/删除不会让整个导出任务因过期的 stat 快照而失败。
+        current_present: set[str] = set()
+        for filename in _OWNER_CURRENT:
+            producer = await _source_file_producer(
+                f"memory/owner/{filename}", "owner_memory", storage,
+                f"{user_id}/.agent/{filename}",
+            )
+            if producer is not None:
+                current_present.add(filename)
+                yield producer
+
+        legacy_names = []
+        if "pattern.json" not in current_present:
+            legacy_names.extend(("facts.json", "facts.md"))
+        if "summary.json" not in current_present:
+            legacy_names.extend(("summary.md", "summary.ts"))
+        for filename in legacy_names:
+            producer = await _source_file_producer(
+                f"memory/legacy/{filename}", "owner_memory", storage,
+                f"{user_id}/.agent/{filename}",
+            )
+            if producer is not None:
+                yield producer
+
+    producers.append(ArchiveProducer(category="owner_memory", expand=expand_owner_files))
 
     scopes: dict[tuple[str, str, str, str], MemoryScope] = {}
     tombstones: set[tuple[str, str, str, str]] = set()

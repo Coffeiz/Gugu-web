@@ -215,7 +215,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         "files": attach_cards or None,
         "references": req.references or None,
     }])
-    yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
+    yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id, 'user_message_id': user_message.id})}\n\n"
 
     # 记忆控制命令（/memory /forget）：确定性短路，零 LLM、不计精力、不反思；先于配额（命令免费）
     from agent import commands as _commands
@@ -633,13 +633,24 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     settings = get_settings()
 
     owner_run_id = str(owner_run_id or genstream.new_run_id())
+    from app.services.conversation_run_outcomes import RunOutcomeTarget, persist_run_outcome
+    outcome_target = RunOutcomeTarget(
+        user_id=req.user_id,
+        session_id=session_id,
+        user_message_id=getattr(user_message, "id", None),
+        run_id=owner_run_id,
+    )
 
     async def _pub(event: dict) -> None:
         # 本 run 的每个事件统一注入 owner_run_id：provider 内层的 run_id 是核心循环
         # 自造的（core.py 另起 uuid），与 web 侧 owner_run_id 不同；排队连接靠
         # run_id 识别「自己的 run 已开始」并转发（见 _stream_queued_run），token/done
         # 这类原本不带 run_id 的事件必须能归属到 run。
-        await genstream.publish(session_id, {**event, "run_id": owner_run_id})
+        await genstream.publish(session_id, {
+            **event,
+            "run_id": owner_run_id,
+            "user_message_id": getattr(user_message, "id", None),
+        })
 
     from agent.llm import modelctx
     modelctx.mark_user_scope()
@@ -668,10 +679,10 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
     # Web 后台生成与 IM 共用能力目录：简介/catalog 模式注入工具短描述和字段签名；
     # full-schema 模式只补用户 Skill，工具 Schema 保持 Provider 的原始完整注入。
-    from agent.runner import (
-        _apply_capability_context, _capability_context, _filter_shell_tool,
+    from agent.run.preparation import (
         _load_mcp_tools,
         _pin_session_user_skill_metadata, _session_user_skill_metadata,
+        prepare_run_capabilities,
     )
     user_skill_metadata = _session_user_skill_metadata(session)
     async with _sess._SessionLocal() as db:
@@ -681,26 +692,15 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             modelctx.set_model_cfg(model_cfg)   # 后台任务经 create_task 继承此绑定
             from app.byok.service import resolve_and_bind_user_embedding
             await resolve_and_bind_user_embedding(settings, db, user_id)   # 记忆/RAG 向量化走用户 embedding 凭据（PRD-SEC-2）
-        tool_names = await _filter_shell_tool(
-            db, user_id, session_id, all_system_tool_names(), session=session,
-        )
-        shell_prompt = None
-        if "shell" in tool_names:
-            from agent.security.shell_policy import build_dynamic_prompt
-            shell_prompt = await build_dynamic_prompt(
-                db, user_id, session_id, session=session,
-            )
-            if shell_prompt is None:
-                tool_names = [name for name in tool_names if name != "shell"]
         mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
         modelctx.set_usage_context(
             user_id, session_id, scenario="mcp" if mcp_tools else "chat",
         )
-    system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
-    capability_context = await _capability_context(
-        tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),
-        user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
-    )
+        tool_names, system_prompt, snapshot_context, capability_context = await prepare_run_capabilities(
+            db, user_id, session_id, all_system_tool_names(), settings, system_prompt, snapshot_context,
+            session=session, query=req.message,
+            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
+        )
     if capability_context is not None:
         if _pin_session_user_skill_metadata(session, capability_context):
             # stream() 已经提交并关闭了原事务；后台生成使用独立事务，首次建立的
@@ -710,9 +710,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 if stored_session is not None:
                     stored_session.session_context = dict(session.session_context or {})
                     await snapshot_db.commit()
-        system_prompt, snapshot_context = _apply_capability_context(
-            system_prompt, snapshot_context, capability_context,
-        )
         _snapshot_injection = session_snapshot.snapshot_message(snapshot_context)
 
     from agent.llm.llm_select import use_anthropic_for
@@ -807,7 +804,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             model_cfg=model_cfg,
             stance_text=stance_text,
             snapshot_injection=_snapshot_injection,
-            extra_reminder=shell_prompt,
             user_message=user_message,
             resume_interaction=resume_interaction,
             session=session,
@@ -1033,6 +1029,8 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 tools_used=used_tools,
                 compaction_applied=compaction_applied,
                 session_exists_required=True,
+                run_id=current_run_id,
+                round_id=current_round_id,
             )
             await _publish_session_append(req, session_id, [{
                 "role": "assistant",
@@ -1085,12 +1083,25 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             await persist_interrupted_run()
         except Exception:
             logger.exception("task.cancel 路径的部分展示产物持久化失败 session=%s", session_id)
-        await _pub({"type": "done", "cancelled": True})
+        from app.services.conversation_run_outcomes import build_run_outcome
+        outcome = build_run_outcome(status="interrupted", run_id=owner_run_id)
+        await persist_run_outcome(_sess._SessionLocal, outcome_target, outcome)
+        await _pub({"type": "done", "cancelled": True, "run_outcome": outcome})
         raise
     except BaseException as e:
         generation_failed = True
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
-        await _pub(describe_llm_error(e).as_event())
+        presentation = describe_llm_error(e)
+        from app.services.conversation_run_outcomes import build_run_outcome
+        outcome = build_run_outcome(
+            status="failed",
+            run_id=owner_run_id,
+            error_code=presentation.code,
+            message_key=presentation.message_key,
+            message_params=presentation.message_params,
+        )
+        await persist_run_outcome(_sess._SessionLocal, outcome_target, outcome)
+        await _pub({**presentation.as_event(), "run_outcome": outcome})
     finally:
         # LoopScope 正常由 genstream 的 done/error 事件收尾；事件发布前异常、
         # Redis 发布失败或后台任务被提前终止时，仍需提交一个终态，避免该 run
@@ -1156,6 +1167,13 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     from agent.context import compress_conv
 
     owner_run_id = owner_run_id or genstream.new_run_id()
+    from app.services.conversation_run_outcomes import RunOutcomeTarget
+    outcome_target = RunOutcomeTarget(
+        user_id=req.user_id,
+        session_id=session_id,
+        user_message_id=getattr(user_message, "id", None),
+        run_id=owner_run_id,
+    )
     # run 级进程心跳：长工具调用/交互等待期间没有 token 事件，快照 TTL 得不到
     # 刷新；这个心跳让「快照非 done 但心跳已断」可以安全判定为 crash 僵尸
     # （见 genstream.beat_alive / reap 与 recover_orphaned_session）。
@@ -1219,7 +1237,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         # 进程关闭/任务取消时保留取消语义，但清掉 active 快照，避免重启后
         # 续看端点把已不存在的后台任务误显示成「生成中」。
         await _finalize_preflight_failure(
-            session_id, model_cfg, cancelled=True, owner_run_id=owner_run_id,
+            outcome_target, model_cfg, cancelled=True,
         )
         from app.services.conversation_pending_queue import publish_session_pending_queue_changed
         await publish_session_pending_queue_changed(
@@ -1228,7 +1246,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         raise
     except BaseException as exc:
         await _finalize_preflight_failure(
-            session_id, model_cfg, error=exc, owner_run_id=owner_run_id,
+            outcome_target, model_cfg, error=exc,
         )
         from app.services.conversation_pending_queue import publish_session_pending_queue_changed
         await publish_session_pending_queue_changed(
@@ -1240,41 +1258,67 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             await heartbeat_task
 
 
-async def _finalize_preflight_failure(session_id, model_cfg=None, error=None,
-                                      cancelled: bool = False,
-                                      owner_run_id=None) -> None:
+async def _finalize_preflight_failure(target, model_cfg=None, error=None,
+                                      cancelled: bool = False) -> None:
     """收口生成任务在 ``_generate_unlocked`` 之前抛出的异常。
 
     正常业务异常由 ``_generate_unlocked`` 自己发布并结束；这里只处理它尚未
     进入内部 ``try`` 的失败（例如能力注册表短暂不一致），并按快照状态幂等
     判断，避免重复发布错误或重复释放模型计数。
     """
-    state = await genstream.snapshot(session_id)
+    state = await genstream.snapshot(target.session_id)
     is_active = bool(state and not state.get("done"))
-    if not is_active:
-        await genstream.end(session_id, owner_run_id=owner_run_id)
-        return
+    import app.db.session as _sess
+    from app.services.conversation_run_outcomes import build_run_outcome, persist_run_outcome
 
+    presentation = None
+    outcome = None
     if error is not None:
         logger.error(
             "Web 后台生成任务异常 session=%s error_type=%s",
-            session_id, type(error).__name__,
+            target.session_id, type(error).__name__,
             exc_info=(type(error), error, error.__traceback__),
         )
-        await genstream.publish(
-            session_id,
-            {"run_id": str(owner_run_id or ""), **describe_llm_error(error).as_event()},
+        presentation = describe_llm_error(error)
+        outcome = build_run_outcome(
+            status="failed",
+            run_id=target.run_id,
+            error_code=presentation.code,
+            message_key=presentation.message_key,
+            message_params=presentation.message_params,
         )
     elif cancelled:
-        await genstream.publish(session_id, {
-            "run_id": str(owner_run_id or ""),
-            "type": "error",
-            "message": "这次生成已中断，请重试。",
-            "message_key": "chatUi.genericError",
+        outcome = build_run_outcome(status="interrupted", run_id=target.run_id)
+
+    if outcome is not None:
+        await persist_run_outcome(_sess._SessionLocal, target, outcome)
+
+    state_owner = str((state or {}).get("owner_run_id") or "")
+    owns_active_run = not state_owner or state_owner == target.run_id
+    if not is_active or not owns_active_run:
+        # 排队任务可能在等待 session gate 时被取消。它仍要保存自己的消息结果，
+        # 但不能把另一个 run 的快照广播成当前任务的失败/取消终态。
+        await genstream.end(target.session_id, owner_run_id=target.run_id)
+        return
+
+    if presentation is not None and outcome is not None:
+        await genstream.publish(target.session_id, {
+            "run_id": target.run_id,
+            "user_message_id": target.user_message_id,
+            **presentation.as_event(),
+            "run_outcome": outcome,
+        })
+    elif cancelled and outcome is not None:
+        await genstream.publish(target.session_id, {
+            "run_id": target.run_id,
+            "user_message_id": target.user_message_id,
+            "type": "done",
+            "cancelled": True,
+            "run_outcome": outcome,
         })
 
     try:
         from agent.llm.llm_select import release as _release_model
         _release_model(model_cfg)
     finally:
-        await genstream.end(session_id, owner_run_id=owner_run_id)
+        await genstream.end(target.session_id, owner_run_id=target.run_id)

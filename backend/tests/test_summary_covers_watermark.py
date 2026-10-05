@@ -52,9 +52,12 @@ async def test_compress_writes_covers_until_id_with_summary(db, user_a, monkeypa
     from agent.context import compress_conv
 
     session, ids = await _seed(db, user_a)
-    prior_run_row = await db.get(ConversationMessage, ids[2])
-    prior_run_row.run_id = "legacy-test-run"
-    prior_run_row.round_id = "round-1"
+    # 最新一条被保留的消息必须属于最近 run，否则旧数据保护策略会按最近
+    # 10 个独立消息单元全部保留，测试无法进入压缩分支。
+    for message_id in ids[2:4]:
+        row = await db.get(ConversationMessage, message_id)
+        row.run_id = "legacy-test-run"
+        row.round_id = "round-1"
     await db.commit()
     monkeypatch.setattr("app.core.redis.get_redis", lambda: _FakeRedis())
     monkeypatch.setattr(

@@ -23,6 +23,21 @@
     </div>
     <div class="pm-sep"></div>
     <div class="pm-section">
+      <div class="pm-section-label">{{ t('profileGuguUi.decisionGuard') }}</div>
+      <div class="pm-field-row">
+        <div class="pm-field-desc">
+          <span class="pm-field-name">{{ t('profileGuguUi.decisionGuard') }}</span>
+          <span class="pm-field-hint">{{ t('profileGuguUi.decisionGuardHint') }}</span>
+        </div>
+        <ToggleSwitch
+          :model-value="prefsStore.decisionGuardEnabled"
+          :aria-label="t('profileGuguUi.toggleDecisionGuard')"
+          @update:model-value="prefsStore.saveDecisionGuardEnabled($event)"
+        />
+      </div>
+    </div>
+    <div class="pm-sep"></div>
+    <div class="pm-section">
       <div class="pm-section-label">{{ t('profileGuguUi.replyStyle') }}</div>
       <div v-for="setting in styleSettings" :key="setting.key" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ setting.label }}</span><span class="pm-field-hint">{{ setting.hint }}</span></div><div class="pm-style-group"><button v-for="opt in setting.options" :key="opt.value" class="pm-style-chip" :class="{ active: setting.current === opt.value }" @click="setting.select(opt.value)">{{ opt.label }}</button></div></div>
     </div>
@@ -49,6 +64,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import ProfilePersonalityPane from './ProfilePersonalityPane.vue'
 import TokenTrendChart from './TokenTrendChart.vue'
+import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 
 const { t } = useI18n()
 

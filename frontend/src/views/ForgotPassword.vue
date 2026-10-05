@@ -10,9 +10,9 @@
         <p class="hint">{{ t('auth.forgotHint') }}</p>
         <form @submit.prevent="handleSubmit" novalidate>
           <div class="field">
-            <label>{{ t('auth.email') }}</label>
-            <input v-model="email" type="email" placeholder="your@email.com"
-              autocomplete="email" :disabled="loading" />
+            <label>{{ t('auth.emailOrUsername') }}</label>
+            <input v-model="email" type="text" :placeholder="t('auth.usernamePlaceholder')"
+              autocomplete="username" :disabled="loading" />
           </div>
 
           <div v-if="error" class="error-msg">{{ error }}</div>
@@ -61,9 +61,7 @@ const message = ref('')
 const { t } = useI18n()
 
 async function handleSubmit() {
-  if (!email.value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {
-    error.value = t('auth.validEmail'); return
-  }
+  if (!email.value.trim()) { error.value = t('auth.fillAll'); return }
   loading.value = true; error.value = ''
   try {
     const res = await fetch(`${BASE_URL}/auth/forgot-password`, {
@@ -73,7 +71,9 @@ async function handleSubmit() {
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(body?.detail || t('errors.requestFailed'))
-    message.value = t('auth.resetSent')
+    message.value = body.maskedEmail
+      ? t('auth.resetSentTo', { email: body.maskedEmail })
+      : t('auth.resetSent')
     sent.value = true
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('auth.operationFailed')

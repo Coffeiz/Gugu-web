@@ -28,7 +28,7 @@
         <ToggleSwitch :model-value="status.full_user_sandbox_authorization_enabled" :disabled="fullUserSandboxAuthorizationSaving" :aria-label="t('adminSandbox.fullUserSandboxAuthorization')" @update:model-value="toggleFullUserSandboxAuthorization" />
       </div>
       <div class="config-row terminal-mode-row">
-        <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint') }}</small></div>
+        <div class="config-row-copy"><span>{{ t('adminSandbox.terminalMode') }}</span><small>{{ t('adminSandbox.terminalModeHint', { entry: status.terminal_entry_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }) }}</small></div>
         <AdminSelect
           :model-value="terminalModeDraft"
           :options="terminalModeOptions"
@@ -38,17 +38,14 @@
           @update:model-value="saveTerminalMode"
         />
       </div>
-      <p class="section-note terminal-effective-note">
-        {{ t('adminSandbox.terminalEffective', { entry: status.terminal_entry_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled'), pty: status.pty_enabled ? t('adminSandbox.enabled') : t('adminSandbox.disabled') }) }}
-      </p>
       <div class="config-row config-row-switch">
         <div class="config-row-copy"><span>{{ t('adminSandbox.egress') }}</span><small>{{ egressHint }}</small></div>
         <ToggleSwitch :model-value="status.network_profile === 'egress'" :disabled="!status.egress_available || egressSaving" :aria-label="t('adminSandbox.switchEgress')" @update:model-value="toggleEgress" />
       </div>
       <div class="egress-editor">
-        <label class="egress-label" for="egress-proxy-url">{{ t('adminSandbox.proxyAddress') }}</label>
+        <span class="egress-label">{{ t('adminSandbox.proxyAddress') }}</span>
         <div class="egress-input-row">
-          <input id="egress-proxy-url" v-model="proxyDraft" class="egress-input" type="url" inputmode="url" placeholder="http://egress-proxy:3128" autocomplete="off" />
+          <input v-model="proxyDraft" class="egress-input" type="url" inputmode="url" placeholder="http://egress-proxy:3128" autocomplete="off" :aria-label="t('adminSandbox.proxyAddress')" />
           <ActionButton variant="secondary" fit :disabled="egressSaving" @click="saveEgressProxy">{{ egressSaving ? t('adminSandbox.saving') : t('adminSandbox.saveProxy') }}</ActionButton>
           <ActionButton variant="secondary" fit :disabled="egressTesting || !status.egress_proxy_configured" @click="validateEgressProxy">{{ egressTesting ? t('adminSandbox.check') : t('adminSandbox.validate') }}</ActionButton>
         </div>
@@ -58,8 +55,8 @@
       <div class="config-row"><span>{{ t('adminSandbox.lifecycle') }}</span><strong>{{ status.lifecycle_mode === 'ephemeral' ? t('adminSandbox.oneShot') : status.lifecycle_mode }}</strong></div>
       <p class="section-note">{{ t('adminSandbox.policyHint') }}</p>
       <div class="quota-editor">
-        <label><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" /></label>
-        <label><span>{{ t('adminSandbox.ephemeralMb') }}</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" /></label>
+        <div class="quota-field"><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.persistentMb')" /></div>
+        <div class="quota-field"><span>{{ t('adminSandbox.ephemeralMb') }}</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.ephemeralMb')" /></div>
         <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><ActionButton variant="secondary" fit :disabled="quotaSaving" @click="resetQuotaDraft">{{ t('adminSandbox.undo') }}</ActionButton><ActionButton fit :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? t('adminSandbox.saving') : t('adminSandbox.saveRuntimeConfig') }}</ActionButton></div>
       </div>
       </div>
@@ -294,7 +291,6 @@ onMounted(async () => {
 .config-row-copy { min-width: 0; }
 .config-row-copy small { display: block; margin-top: 4px; color: var(--content-tertiary); font-size: 11px; line-height: 1.4; }
 .config-row code { max-width: 72%; overflow: hidden; color: var(--content-secondary); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.terminal-effective-note { margin-top: 0; }
 .egress-editor { padding: 14px 0 4px; border-bottom: 1px solid var(--panel-divider); }
 .egress-label { display: block; margin-bottom: 8px; color: var(--content-secondary); font-size: 12px; font-weight: 600; }
 .egress-input-row { display: flex; align-items: center; gap: 8px; }
@@ -302,7 +298,7 @@ onMounted(async () => {
 .egress-input:focus { border-color: var(--action-primary); box-shadow: var(--control-focus-shadow); }
 .egress-note { margin: 8px 0 0; color: var(--content-tertiary); font-size: 11px; line-height: 1.5; }
 .quota-editor { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--panel-divider); }
-.quota-editor label { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; color: var(--content-secondary); font-size: 12px; }
+.quota-editor .quota-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; color: var(--content-secondary); font-size: 12px; }
 .quota-editor input { width: 150px; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-glass); color: var(--content-primary); outline: none; }
 .quota-editor input:focus { border-color: var(--action-primary); }
 .quota-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; }

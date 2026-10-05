@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import UserSkill
+from app.models import UserSkill, WorkspaceDirectory
 from app.services.data_portability.conflicts import find_unique_conflicts
 from app.services.data_portability.schema import PortableArchiveEntry, PortableArchiveManifest, PortableCategory
 
@@ -60,3 +60,58 @@ async def test_preflight_reports_direct_owner_unique_collision_without_exposing_
         "kind": "target_conflict",
     }]
     assert "fixture-skill" not in json.dumps(conflicts)
+
+
+@pytest.mark.asyncio
+async def test_preflight_ignores_tombstoned_partial_index_keys_and_reuses_default_directory(db, user_a):
+    """部分唯一索引只约束活动目录；默认目录同名时应按系统身份复用。"""
+    db.add_all([
+        WorkspaceDirectory(
+            user_id=user_a.id, name="默认工作区", directory_name="default",
+            is_default=True, is_system=True,
+        ),
+        WorkspaceDirectory(
+            user_id=user_a.id, name="目标目录", directory_name="target-dir",
+        ),
+    ])
+    await db.flush()
+
+    records = [
+        {"record_schema": "gugu.workspace_directory.v1", "portable_id": "test-old", "source_type": "workspace_directory",
+         "fields": {"name": "test", "is_default": False, "is_system": False, "deleted_at": "2026-09-01T00:00:00Z"}, "relations": []},
+        {"record_schema": "gugu.workspace_directory.v1", "portable_id": "test-newer-deleted", "source_type": "workspace_directory",
+         "fields": {"name": "test", "is_default": False, "is_system": False, "deleted_at": "2026-09-02T00:00:00Z"}, "relations": []},
+        {"record_schema": "gugu.workspace_directory.v1", "portable_id": "qq-deleted", "source_type": "workspace_directory",
+         "fields": {"name": "QQ", "is_default": False, "is_system": False, "deleted_at": "2026-09-03T00:00:00Z"}, "relations": []},
+        {"record_schema": "gugu.workspace_directory.v1", "portable_id": "qq-active", "source_type": "workspace_directory",
+         "fields": {"name": "QQ", "is_default": False, "is_system": False, "deleted_at": None}, "relations": []},
+        {"record_schema": "gugu.workspace_directory.v1", "portable_id": "default-source", "source_type": "workspace_directory",
+         "fields": {"name": "默认工作区", "is_default": True, "is_system": True, "deleted_at": None}, "relations": []},
+        {"record_schema": "gugu.workspace_directory.v1", "portable_id": "target-name", "source_type": "workspace_directory",
+         "fields": {"name": "目标目录", "is_default": False, "is_system": False, "deleted_at": None}, "relations": []},
+        {"record_schema": "gugu.workspace_directory.v1", "portable_id": "new-name-1", "source_type": "workspace_directory",
+         "fields": {"name": "归档重复名", "is_default": False, "is_system": False, "deleted_at": None}, "relations": []},
+        {"record_schema": "gugu.workspace_directory.v1", "portable_id": "new-name-2", "source_type": "workspace_directory",
+         "fields": {"name": "归档重复名", "is_default": False, "is_system": False, "deleted_at": None}, "relations": []},
+    ]
+    data = ("\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n").encode()
+    packed_data = io.BytesIO()
+    with zipfile.ZipFile(packed_data, "w") as packed:
+        packed.writestr("records/workspaces/directories.jsonl", data)
+    manifest = PortableArchiveManifest(
+        origin_id=uuid4(), export_id=uuid4(), created_at="2026-10-03T00:00:00+00:00",
+        complete=False,
+        categories={"workspaces": PortableCategory(included=True, records=len(records), bytes=len(data))},
+        entries=[PortableArchiveEntry(
+            path="records/workspaces/directories.jsonl", category="workspaces",
+            size=len(data), sha256="0" * 64, records=len(records),
+        )],
+    )
+
+    with zipfile.ZipFile(io.BytesIO(packed_data.getvalue()), "r") as packed:
+        conflicts = await find_unique_conflicts(db, user_id=user_a.id, archive=packed, manifest=manifest)
+
+    assert conflicts == [
+        {"source_type": "workspace_directory", "portable_id": "target-name", "fields": ["name"], "kind": "target_conflict"},
+        {"source_type": "workspace_directory", "portable_id": "new-name-2", "fields": ["name"], "kind": "archive_duplicate"},
+    ]

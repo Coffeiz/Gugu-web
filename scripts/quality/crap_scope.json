@@ -77,11 +77,11 @@
       "language": "typescript",
       "source": "frontend/src/utils/optimisticMutation.ts",
       "tests": [
-        "frontend/test/optimisticMutation.test.ts"
+        "frontend/tests/files/optimisticMutation.test.ts"
       ],
       "function_tests": {
         "optimisticMutation": [
-          "frontend/test/optimisticMutation.test.ts"
+          "frontend/tests/files/optimisticMutation.test.ts"
         ]
       },
       "domain": "文件库乐观更新时序",

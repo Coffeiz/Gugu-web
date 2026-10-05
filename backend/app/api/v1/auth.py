@@ -26,14 +26,24 @@ from app.core.security import (
 from app.core.tz import now_utc, iso_utc, user_tz
 from app.db.session import get_db
 from app.models import User, UserPreferences, AgentUsage, FrontendEvent, EmailChangeRequest
-from app.schemas import UserRegister, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount, EmailChangeRequestCreate, EmailChangeVerify
+from app.schemas import UserRegister, RegistrationCodeRequest, UserLogin, UserResponse, TokenResponse, UpdateProfile, ForgotPassword, ResetPassword, DeleteAccount, EmailChangeRequestCreate, EmailChangeVerify
 from app.services import email as email_svc
 from app.services.email.capabilities import is_system_email_available
 from app.services.email.email_change import create_email_change_request, hash_email_change_token, normalize_email
+from app.services.registration_verification import (
+    clear_registration_code,
+    consume_registration_code,
+    verify_registration_code,
+    restore_registration_code,
+    registration_code_ttl,
+    create_registration_code,
+    reserve_registration_code,
+)
 from app.services.email.queries import get_user_email_preferences
 from app.services.account_queries import (
     byok_usage_stats,
     create_user_preferences,
+    find_user_by_name_or_email,
     get_active_email_change,
     get_email_change_for_token,
     get_user_by_id,
@@ -52,20 +62,64 @@ def _public_app_url(request: Request) -> str:
     return configured or str(request.base_url).rstrip("/")
 
 
+async def _commit_verified_registration(db: AsyncSession, email: str, code: str) -> None:
+    """验证码消费与注册提交配对；失败恢复剩余有效期，不覆盖新验证码。"""
+    import time
+    redis = get_redis()
+    try:
+        receipt_ttl = await registration_code_ttl(redis, email)
+        consumed_at = time.monotonic()
+        consumed = await consume_registration_code(redis, email, code)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(503, "验证码服务暂不可用，请稍后重试") from None
+    if not consumed:
+        await db.rollback()
+        raise HTTPException(400, "验证码错误或已过期")
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        try:
+            remaining = receipt_ttl - int((time.monotonic() - consumed_at) * 1000)
+            await restore_registration_code(redis, email, code, remaining)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+            diag_log("registration.code_restore", exc)
+        raise
+
+
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(body: UserRegister, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    await rate_limit(request, "register", 20, 3600)   # 同 IP 每小时最多 20 次注册尝试
-    existing = await db.execute(
-        select(User).where(
-            (User.username == body.username) | (User.email == body.email)
-        )
+    await rate_limit(
+        request, "register", 10, 3600,
+        device_limit=5, device_window=24 * 3600, fail_closed=True,
     )
-    if existing.scalars().first():
+    try:
+        email = normalize_email(body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if await find_user_by_name_or_email(db, body.username, email):
         raise HTTPException(400, "用户名或邮箱已被注册")
+
+    verification_required = (
+        get_settings().smtp.registration_verification_enabled
+        and is_system_email_available()
+    )
+    if verification_required:
+        if not body.verification_code:
+            raise HTTPException(status_code=400, detail="请先完成邮箱验证码验证")
+        try:
+            verified = await verify_registration_code(get_redis(), email, body.verification_code)
+        except Exception:
+            raise HTTPException(status_code=503, detail="验证码服务暂不可用，请稍后重试") from None
+        if not verified:
+            raise HTTPException(status_code=400, detail="验证码错误或已过期")
 
     user = User(
         username=body.username,
-        email=body.email,
+        email=email,
         hashed_password=hash_password(body.password),
         display_name=body.username,
         email_subscribed=body.email_subscribed,
@@ -80,7 +134,10 @@ async def register(body: UserRegister, request: Request, response: Response, db:
     from app.services.workspaces import ensure_default_workspace_directory
     await ensure_default_workspace_directory(db, user.id)
 
-    await db.commit()
+    if verification_required:
+        await _commit_verified_registration(db, email, body.verification_code)
+    else:
+        await db.commit()
     await db.refresh(user)
 
     # 新手引导播种（独立子系统，best-effort：内部已吞异常，不影响注册）
@@ -93,6 +150,51 @@ async def register(body: UserRegister, request: Request, response: Response, db:
         access_token=token,
         user=UserResponse.from_user(user),
     )
+
+
+@router.post("/registration-code")
+async def send_registration_code(
+    body: RegistrationCodeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """发送注册验证码。管理员关闭注册验证或系统邮件不可用时关闭该能力。"""
+    await rate_limit(
+        request, "register-code", 5, 3600,
+        device_limit=3, device_window=3600, fail_closed=True,
+    )
+    if not (get_settings().smtp.registration_verification_enabled and is_system_email_available()):
+        raise HTTPException(status_code=503, detail="邮箱验证码注册当前不可用")
+    try:
+        email = normalize_email(body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if await is_email_occupied(db, email):
+        return {"ok": True}
+
+    redis = get_redis()
+    code = create_registration_code()
+    try:
+        reserved = await reserve_registration_code(redis, email, code)
+    except Exception:
+        raise HTTPException(status_code=503, detail="验证码服务暂不可用，请稍后重试") from None
+    if not reserved:
+        return {"ok": True}
+
+    try:
+        sent = await run_in_threadpool(email_svc.send_registration_verification, to_addr=email, code=code)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("registration.verification_delivery", exc)
+        sent = False
+    if not sent:
+        try:
+            await clear_registration_code(redis, email)
+        except Exception:
+            pass
+        raise HTTPException(status_code=503, detail="验证码邮件发送失败，请稍后重试")
+    return {"ok": True}
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -137,24 +239,36 @@ _RESET_GENERIC   = {"ok": True, "message": "若该邮箱已注册，重置链接
 _EMAIL_CHANGE_TTL = 30 * 60
 
 
+def _mask_reset_email(email: str) -> str:
+    """保留邮箱名首尾和域名；短邮箱名不能完整暴露。"""
+    local, _, domain = email.rpartition("@")
+    masked = "*" if len(local) == 1 else local[0] + "***"
+    if len(local) > 2:
+        masked += local[-1]
+    return f"{masked}@{domain}"
+
+
 @router.post("/forgot-password")
 async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSession = Depends(get_db)):
-    """申请重置：生成一次性 token 存 Redis，发邮件给注册邮箱。
-
-    **无论邮箱是否注册都返回同一句**——避免通过接口枚举哪些邮箱已注册。"""
-    await rate_limit(request, "forgot", 5, 3600)   # 同 IP 每小时最多 5 次找回请求
-    email_in = (body.email or "").strip().lower()
-    if not email_in or "@" not in email_in:
+    """按邮箱或用户名找回；允许掩码提示以帮助用户辨认邮箱，不返回完整地址。"""
+    await rate_limit(request, "forgot", 5, 3600, fail_closed=True)
+    identifier = (body.email or "").strip().lower()
+    if not identifier:
         return _RESET_GENERIC
+    if not is_system_email_available():
+        raise HTTPException(status_code=503, detail="密码找回邮件当前不可用")
     r = get_redis()
-    cd_key = f"pwdreset:cd:{email_in}"
-    if await r.get(cd_key):        # 冷却中，静默返回（不重复发信）
-        return _RESET_GENERIC
-    user = (await db.execute(
-        select(User).where(func.lower(User.email) == email_in)
-    )).scalars().first()
+    user = await find_user_by_name_or_email(
+        db, identifier, identifier, name_case_insensitive=True,
+    )
     if not user:
         return _RESET_GENERIC
+
+    email_in = user.email.strip().lower()
+    reset_response = {**_RESET_GENERIC, "maskedEmail": _mask_reset_email(email_in)}
+    cd_key = f"pwdreset:cd:{email_in}"
+    if await r.get(cd_key):        # 冷却中，静默返回（不重复发信）
+        return reset_response
 
     token = secrets.token_urlsafe(32)
     await r.set(f"pwdreset:tok:{token}", str(user.id), ex=_RESET_TOKEN_TTL)
@@ -164,16 +278,21 @@ async def forgot_password(body: ForgotPassword, request: Request, db: AsyncSessi
     origin = _public_app_url(request)
     link = f"{origin}/reset-password?token={token}"
     # 发信 best-effort：smtplib 是同步的，丢线程池避免阻塞事件循环；失败不暴露给前端
+    sent = False
     try:
         preference_data = await get_user_email_preferences(db, user.id)
-        await run_in_threadpool(
+        sent = await run_in_threadpool(
             email_svc.send_reset_email,
             to_addr=user.email, username=user.display_name or user.username, link=link,
             theme=preference_data.get("theme", "light"), palette=preference_data.get("palette", "mist"),
         )
-    except Exception:
-        pass
-    return _RESET_GENERIC
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("password_reset.delivery", exc)
+    if not sent:
+        await r.delete(f"pwdreset:tok:{token}", cd_key)
+        return _RESET_GENERIC
+    return reset_response
 
 
 @router.post("/reset-password")

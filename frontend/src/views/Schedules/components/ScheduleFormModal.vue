@@ -1,13 +1,13 @@
 <template>
   <BaseModal :show="props.show" width="420px" background="var(--panel-bg)" @close="emit('close')">
     <div class="sched-modal">
-      <input v-model="form.name" ref="nameRef" class="title-input" :placeholder="t('schedules.taskName')" maxlength="100" />
+      <input v-model="form.name" ref="nameRef" class="title-input" :placeholder="t('schedules.taskName')" :aria-label="t('schedules.taskName')" maxlength="100" />
       <div class="divider divider-full"></div>
 
-      <label class="field">
+      <div class="field">
         <span>{{ t('schedules.reminder') }}</span>
-        <textarea v-model="form.payload" ref="payloadRef" rows="3" :placeholder="t('schedules.reminderPlaceholder')" @input="resizePayload"></textarea>
-      </label>
+        <textarea v-model="form.payload" ref="payloadRef" rows="3" :placeholder="t('schedules.reminderPlaceholder')" :aria-label="t('schedules.reminder')" @input="resizePayload"></textarea>
+      </div>
       <div class="divider"></div>
 
       <div v-if="props.workspaceSupported" class="field workspace-field">
@@ -49,11 +49,11 @@
       </div>
       <div class="divider"></div>
 
-      <label v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="field time-field">
+      <div v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="field time-field">
         <span>{{ repeatMode === 'interval' ? t('schedules.minutes') : t('schedules.time') }}</span>
-        <input v-if="repeatMode === 'interval' && intervalPreset === 'custom'" v-model.number="intervalMinutes" type="number" min="1" max="60" step="1" :placeholder="t('scheduleUi.intervalPlaceholder')" />
+        <input v-if="repeatMode === 'interval' && intervalPreset === 'custom'" v-model.number="intervalMinutes" type="number" min="1" max="60" step="1" :placeholder="t('scheduleUi.intervalPlaceholder')" :aria-label="t('schedules.minutes')" />
         <TimeInput v-else v-model="form.time" />
-      </label>
+      </div>
       <div v-if="repeatMode !== 'once' && (repeatMode !== 'interval' || intervalPreset === 'custom')" class="divider"></div>
 
       <div v-if="repeatMode === 'once'" class="field once-field" data-testid="schedule-once-boundary">

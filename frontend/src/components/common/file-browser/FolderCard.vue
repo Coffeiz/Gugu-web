@@ -116,24 +116,6 @@ defineProps({
   display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
 }
 .folder-card:hover .fd-hover-actions { opacity: 1; }
-.sel-checkbox {
-  position: absolute; top: 8px; right: 8px; z-index: 3;
-  width: 18px; height: 18px; border-radius: 5px;
-  border: 2px solid var(--folder-card-checkbox-border);
-  background: var(--folder-card-checkbox-bg);
-  box-shadow: none;
-  display: flex; align-items: center; justify-content: center;
-  pointer-events: none;
-  transition: opacity 0.18s ease;
-}
-/* 填充过渡只声明在勾选态：勾上时背景/边框淡入；取消勾选时回落到基类
-   （无 background/border 过渡）瞬时还原，避免整个勾选框看起来在"退出"。 */
-.sel-checkbox.checked {
-  color: var(--folder-card-checkbox-fg-checked);
-  background: var(--folder-card-checkbox-bg-checked);
-  border-color: var(--folder-card-checkbox-border-checked);
-  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
-}
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 /* leave 只走 opacity（同 FileCard.vue 的注释）：离场冻结 paint，避免选中填充
    先变色再淡完导致结尾闪烁。 */

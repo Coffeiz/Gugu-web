@@ -37,7 +37,7 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 - 系统范围 Shell 是管理员与用户双侧明确开启的高信任能力，允许由 `agent.security.shell_policy` 的实时策略结果生成本轮环境与范围说明。此例外仅用于现有 Shell 状态说明，不扩展到其他工具、Skill 或 RAG。
 - 说明必须区分默认 `sandbox` 与显式 `scope="system"`，不得把允许使用解释为已经切换环境。system 指应用服务所在环境；容器部署不等于宿主机，且不意味着 root 权限。
-- 动态状态通过本轮历史后的 reminder 注入，不写入顶层 system、冻结 snapshot 或持久化历史；不得把提示词当作授权凭据。执行器逐调用校验、权限撤销、定时任务隔离与确认门保持有效。
+- 状态说明每轮按实时策略重新计算，并按固定位置追加到 system prompt；不写入冻结 snapshot、Canonical 历史或持久化历史。这样做首先是为了让模型在稳定、明确的位置理解当前执行环境与权限边界，避免把它放在对话尾部改变上下文位置后影响回答内容或工具选择。工作区授权通常不是每轮变化的设置，所以即使每轮重新校验，未变化时生成的 system 前缀仍保持一致；不得把提示词当作授权凭据，执行器逐调用校验、权限撤销、定时任务隔离与确认门保持有效。
 
 ## 本地验证
 
@@ -56,13 +56,13 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 - 本地 token 算法只在**尚无可用 provider 用量**时兜底，例如首次请求前的安全预检、静默反思、进程重启后的持久化接管，以及 provider 溢出后的受控裁剪。估算结果必须标记为 `estimate`，不得记录或展示成 provider 实际用量；一旦取得实际用量，后续判定立即改用实际值。
 - 修改任何预算、反思或压缩路径时，增加回归用例覆盖：实际用量与本地估算冲突时实际值优先、缓存命中输入计入阈值、恰好到达 90% 才触发，以及 provider 用量缺失时兜底生效。真实模型 A/B 用 provider 返回的 usage 验证缓存率，不能以估算命中率代替。
 
-**当前策略（2026-08-24）**：system prompt 只包含静态内容（persona/skills/policy），动态内容（beh/memory/projects/time）通过带 `[system-reminder]` 的 `role=system` 消息注入 conversation。内部上下文与真实 user message 分离；原生 Anthropic adapter 在 wire 边界把消息级 system reminder 转成允许的 user message，MiniMax/百炼按已验证能力保留 system role。system prefix 跨 call 完全一致，MiniMax 前缀匹配缓存稳定命中 90%+。
+**当前策略（2026-08-24，Shell 例外按 v1.4.0）**：system prompt 通常只包含静态内容（persona/skills/policy），动态内容（beh/memory/projects/time）通过带 `[system-reminder]` 的 `role=system` 消息注入 conversation。Shell 环境状态是例外：每轮按实时策略重算，追加在 system prompt 固定位置；环境未变时保持该段与前缀稳定，环境变化时更新该段。它不进入 snapshot 或持久历史，且不代替执行器逐调用授权校验。内部上下文与真实 user message 分离；原生 Anthropic adapter 在 wire 边界把消息级 system reminder 转成允许的 user message，MiniMax/百炼按已验证能力保留 system role。
 
 **为什么把动态内容移到 conversation**：测试验证 behavior block（相处姿态）在不同 call 间变化（Query 430 chars → Companion 705 chars），导致 system prefix 断裂，缓存命中率从 99%+ 降到 0.4%。移到 conversation 后，静态 system 完全不变；再用 role=system 表达其语义，避免模型把动态上下文误当成用户发言。
 
 **实现位置**：`backend/agent/runner.py` 组装段 + `backend/agent/context/builder.py` 的 `build_split()`。
 
-2026-10-03：Web、IM、定时任务的本轮 Shell 状态统一使用 `extra_reminder`，不再追加到顶层 system；稳定 Shell 协议仍按工具是否可用进入 system，因此工具可用性变化仍可能改变前缀。此改动不保证 provider 缓存命中率，需用真实用量另行验证。
+2026-10-04 方案校正：Web、IM、定时任务的本轮 Shell 状态都按 v1.4.0 方案重新计算，并追加到 system prompt 的固定位置。权限提示会影响模型输出和工具选择，不能因缓存布局重构而改变其上下文位置；工作区授权通常不频繁变动，未变时重复计算仍产生相同前缀。状态不写入 snapshot、Canonical 历史或动态尾部，执行器仍逐调用判权。此前“Shell 状态统一使用 `extra_reminder`”的记录作废；普通 `extra_reminder` 的其他用途不受影响。
 
 2026-10-03：反思快照复用 Area 的不可变 ProviderConversation，包含冻结 `request_prefix`，排除 dynamic tail；压缩与反思不得把已投影的 wire 消息转成裸列表再走 canonical renderer。持久历史重建不承诺命中率。缓存探针的资格估算与指纹必须基于完整前缀，不得使用 trace 展示裁剪后的内容。合成 MiniMax-M3 三组 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-10-03.md`。
 

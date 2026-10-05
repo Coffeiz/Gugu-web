@@ -158,3 +158,44 @@ def test_build_permission_plan_non_root_replaces_chown_with_chmod(tmp_path: Path
         tmp_path / "workspace", login="tester", subuid=ranges, subgid=ranges,
     )
     assert root_plan.commands[0][0] == "install"
+
+
+def test_acl_initialization_skips_symlinks_to_outside_targets(tmp_path: Path, monkeypatch):
+    """递归 ACL 不能跟随 workspace 符号链接去修改根目录外的目标。"""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    regular_file = workspace / "notes.txt"
+    regular_file.write_text("test", encoding="utf-8")
+    symlink_target = tmp_path / "protected-python"
+    symlink_target.write_text("not an executable", encoding="utf-8")
+    workspace_link = workspace / "python"
+    workspace_link.symlink_to(symlink_target)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_setfacl = fake_bin / "setfacl"
+    fake_setfacl.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$ACL_CAPTURE\"\n",
+        encoding="utf-8",
+    )
+    fake_setfacl.chmod(0o755)
+    captured_args = tmp_path / "setfacl-args.txt"
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("ACL_CAPTURE", str(captured_args))
+    monkeypatch.setattr(rootless_permissions.shutil, "which", lambda name: str(fake_setfacl))
+
+    plan = rootless_permissions.build_permission_plan(
+        workspace,
+        login=pwd.getpwuid(os.getuid()).pw_name,
+        subuid=(),
+        subgid=(),
+        mapped_uid=165531,
+        mapped_gid=165531,
+        apply_ownership=False,
+    )
+    rootless_permissions.apply_permission_plan(plan)
+
+    applied_paths = captured_args.read_text(encoding="utf-8").splitlines()
+    assert str(regular_file) in applied_paths
+    assert str(workspace_link) not in applied_paths
+    assert str(symlink_target) not in applied_paths

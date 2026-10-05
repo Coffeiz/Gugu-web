@@ -11,10 +11,10 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
     from zoneinfo import ZoneInfo
 
     from agent.context.dynamic_tail import time_message
-    from agent.scheduled_execution import _build_scheduled_messages
+    from agent.run.preparation import prepare_scheduled_context
 
     tz = ZoneInfo("Asia/Shanghai")
-    messages = _build_scheduled_messages(
+    messages = prepare_scheduled_context(
         "稳定系统", "## 项目\n- 小北的计划", tz,
         "执行任务", {"stance": "温和"}, use_anthropic=False,
     )
@@ -38,38 +38,37 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
 async def test_scheduled_execution_always_uses_full_loop(monkeypatch, db, user_a):
     """创建任务不再调用 LLM 选择工具，执行阶段直接使用完整工具集。
 
-    PRD-SCHEDULE-2：execution 最后一轮输出 report schema JSON，report 模块纯代码渲染。
-    无工具时 execution 返回合法 schema，解析成功直接返回 summary。"""
+    定时任务直接投递最后一轮回复，不追加报告 schema 指令。"""
     import app.scheduled_tasks as scheduled
 
     execution = AsyncMock(return_value=(
-        '{"summary":"执行结果","context":"","status":"success"}',
+        "## 执行结果\n已完成。",
         False, {"tool_names": [], "mutated": False},
     ))
     monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
     result, _files, _status = await scheduled._run_agent(user_a.id, "测试任务", trial=True)
 
-    assert result == "执行结果"
+    assert result == "## 执行结果\n已完成。"
     execution.assert_awaited_once()
+    assert "[定时任务报告 schema]" not in execution.await_args.args[2]
 
 
 @pytest.mark.asyncio
-async def test_scheduled_tools_run_schema_parse_without_reexecuting(monkeypatch, db, user_a):
-    """PRD-SCHEDULE-2：有工具时 execution 返回 report schema，report 模块纯代码解析 summary。
-
-    execution 只调一次（不再调 report LLM），summary 直接作为投递正文。"""
+async def test_scheduled_tools_run_delivers_final_response(monkeypatch, db, user_a):
+    """有工具时仍直接投递 execution 的最终正文，并保留其 Markdown 格式。"""
     import app.scheduled_tasks as scheduled
 
     execution = AsyncMock(return_value=(
-        '{"summary":"整理后的报告","context":"调了 web_search","status":"success"}',
+        "## 本周速览\n\n### 科技\n- 结果一\n\n### 影视\n- 结果二",
         False, {"tool_names": ["web_search"], "mutated": False},
     ))
     monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
 
-    result, _files, _status = await scheduled._run_agent(user_a.id, "查资料", trial=True)
+    result, _files, status = await scheduled._run_agent(user_a.id, "查资料", trial=True)
 
-    assert result == "整理后的报告"
+    assert result == "## 本周速览\n\n### 科技\n- 结果一\n\n### 影视\n- 结果二"
+    assert status == "success"
     execution.assert_awaited_once()
 
 
@@ -87,48 +86,6 @@ async def test_scheduled_execution_failure_after_mutation_is_not_replayed(monkey
 
 
 @pytest.mark.asyncio
-async def test_scheduled_schema_parse_failure_retries_execution(monkeypatch, db, user_a):
-    """PRD-SCHEDULE-2：execution 最后一轮不是合法 JSON → 重试一次 execution。
-
-    第一次返回非 JSON 文本，第二次返回合法 schema。execution 应被调用 2 次，
-    最终返回第二次的 summary。"""
-    import app.scheduled_tasks as scheduled
-
-    execution = AsyncMock(side_effect=[
-        ("查询结果（不是 JSON）", False, {"tool_names": ["web_search"], "mutated": False}),
-        ('{"summary":"整理后的报告","context":"","status":"success"}',
-         False, {"tool_names": ["web_search"], "mutated": False}),
-    ])
-    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
-
-    result, _files, _status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
-
-    assert result == "整理后的报告"
-    assert execution.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_scheduled_schema_parse_failure_mutated_never_reruns(monkeypatch, db, user_a):
-    """P1：execution 成功但 schema 解析失败，且已产生写副作用（mutated=True）时，
-    绝不重跑 execution——否则 create_project/update_file 等业务操作会被重复执行。
-
-    此时直接 fallback 到 execution 原文，execution 只应被调用 1 次。"""
-    import app.scheduled_tasks as scheduled
-
-    execution = AsyncMock(return_value=(
-        "不是 JSON",
-        False,
-        {"tool_names": ["create_project"], "mutated": True},
-    ))
-    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
-
-    result, _files, status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
-
-    assert result == "不是 JSON"
-    assert status == "success"
-    assert execution.await_count == 1
-
-
 @pytest.mark.asyncio
 async def test_execute_task_marks_last_run_failed_on_exception(monkeypatch, db, user_a):
     """一次性任务执行抛异常：last_run_at 已经被写了，但不能就这么在"失败"状态里
@@ -309,21 +266,6 @@ async def test_run_now_uses_trial_for_normal_task(monkeypatch, db, user_a):
 
 
 @pytest.mark.asyncio
-async def test_scheduled_schema_parse_failure_twice_falls_back_to_execution_text(monkeypatch, db, user_a):
-    """PRD-SCHEDULE-2：execution 重试后仍解析失败 → fallback 到 execution 原文。
-
-    防止把空 schema 的兜底内容发出去——execution_text 是真实产出，比 `schema.get('summary')` 兜底更可靠。"""
-    import app.scheduled_tasks as scheduled
-
-    execution = AsyncMock(return_value=("查询结果", False, {"tool_names": ["web_search"], "mutated": False}))
-    monkeypatch.setattr("agent.scheduled_execution.run_scheduled_execution", execution)
-
-    result, _files, _status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
-
-    assert result == "查询结果"
-    assert execution.await_count == 2
-
-
 @pytest.mark.asyncio
 async def test_execute_task_renews_lock_for_long_running_task(monkeypatch, db, user_a):
     """任务执行时间超过一个续租周期：锁必须被 extend 续期，而不是放任它在任务还在跑
@@ -558,7 +500,8 @@ async def test_rename_session_rejects_empty_and_overlong(monkeypatch, db, user_a
 
 
 @pytest.mark.asyncio
-async def test_scheduled_once_applies_user_byok(monkeypatch):
+@pytest.mark.parametrize("allow_shell", [False, True])
+async def test_scheduled_once_applies_user_byok(monkeypatch, allow_shell):
     """回归：定时任务执行阶段必须走 resolve_run_config_for_user（BYOK 覆盖链路）。
 
     历史 bug：_run_scheduled_once 直接用 resolve_run_config（平台激活预设），
@@ -597,7 +540,11 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
     async def no_capability(tool_names, settings, owner_id=None, query=None, **_kwargs):
         return None
 
-    monkeypatch.setattr(runner, "_capability_context", no_capability)
+    monkeypatch.setattr("agent.run.preparation._capability_context", no_capability)
+    shell_state = "合成任务 Shell 状态"
+    monkeypatch.setattr("agent.run.preparation._filter_shell_tool", AsyncMock(side_effect=lambda db, uid, sid, names, **kw: names))
+    shell_prompt = AsyncMock(return_value=shell_state)
+    monkeypatch.setattr("agent.security.shell_policy.build_dynamic_prompt", shell_prompt)
     monkeypatch.setattr(runner.builder, "build_split",
                         lambda *a, **k: ("系统", "快照", "现在"))
     monkeypatch.setattr(
@@ -609,6 +556,8 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
             pass
 
         def run(self, *a, **k):
+            picked["system"] = a[1]
+            picked["messages"] = a[2]
             async def _gen():
                 yield ""
             return _gen()
@@ -618,9 +567,18 @@ async def test_scheduled_once_applies_user_byok(monkeypatch):
     text, errored, meta = await runner.run_scheduled_once(
         "user-byok", "小北", "执行任务", SimpleNamespace(),
         include_meta=True, minimal_context=True,
+        allow_shell=allow_shell, tool_names_override=["shell"],
+        filesystem_subject={"subject_type": "scheduled_task", "subject_id": 9},
     )
 
     assert picked["user_id"] == "user-byok"
     assert text == "执行完成"
     assert errored is False
     assert meta == {"files": []}
+    assert (shell_state in picked["system"]) is allow_shell
+    assert shell_state not in str(picked["messages"].dynamic_tail)
+    if allow_shell:
+        assert shell_prompt.call_args.kwargs["subject_type"] == "scheduled_task"
+        assert shell_prompt.call_args.kwargs["subject_id"] == 9
+    else:
+        shell_prompt.assert_not_called()

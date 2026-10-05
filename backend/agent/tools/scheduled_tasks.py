@@ -27,7 +27,6 @@ from app.services.scheduled_tasks import (
     list_tasks,
     validate_task_workspace,
     update_task,
-    normalize_script_authorization,
 )
 from app.services.email.attachments import (
     EmailAttachmentError,
@@ -202,13 +201,6 @@ def _authorized_tools(value) -> list[str]:
     return ["send_email"] if isinstance(value, list) and "send_email" in value else []
 
 
-def _script_authorization(value):
-    try:
-        return normalize_script_authorization(value)
-    except ValueError as exc:
-        raise ValueError(str(exc)) from exc
-
-
 async def _resolve_task(db, user_id, args):
     """按 task_id 或任务名 task 定位；返回 (task|None, 错误JSON|None)。少调用：可直接按名字操作。"""
     # 日程提醒（event_id 非空）归日历管，咕咕的定时任务工具一律视作「不存在」、不可解析/改/删
@@ -249,16 +241,6 @@ async def _create_scheduled_task(db, user_id, args: dict):
     spec = _normalize_tool_schedule(args)
     if isinstance(spec, str):
         return spec
-    try:
-        script_authorization = _script_authorization(args.get("script_authorization"))
-    except ValueError as exc:
-        return json.dumps({"error": str(exc)}, ensure_ascii=False)
-    if script_authorization is not None:
-        from app.services.workspaces import workspace_shell_supported
-        if script_authorization["root"] == "workspace" and args.get("workspace_id") is None and workspace_shell_supported():
-            return json.dumps({"error": "workspace 脚本必须绑定 workspace_id"}, ensure_ascii=False)
-        if script_authorization["root"] in {"personal", "project"} and args.get("filesystem_authorized") is not True:
-            return json.dumps({"error": "personal/project 脚本必须同时申请完整用户沙箱授权"}, ensure_ascii=False)
     try:
         workspace_id = await validate_task_workspace(db, user_id, args.get("workspace_id"))
     except LookupError as exc:
@@ -305,7 +287,6 @@ async def _create_scheduled_task(db, user_id, args: dict):
         enabled=args.get("enabled", True),
         delivery_targets=delivery_targets,
         authorized_tools=_authorized_tools(args.get("authorized_tools")),
-        script_authorization=script_authorization,
         workspace_id=workspace_id,
         email_attachment_file_ids=email_attachment_file_ids,
     )
@@ -443,7 +424,6 @@ async def _update_scheduled_task(db, user_id, args: dict):
     editable_fields = schedule_fields | {
         "name", "instruction", "channels", "enabled", "delivery_mode", "authorized_tools",
         "workspace_id", "filesystem_authorized",
-        "script_authorization",
         "email_attachment_file_ids",
     }
     if not any(fld in args for fld in editable_fields):
@@ -534,22 +514,6 @@ async def _update_scheduled_task(db, user_id, args: dict):
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
     if "workspace_id" in args:
         fields["workspace_id"] = workspace_id
-    if "script_authorization" in args:
-        try:
-            script_authorization = _script_authorization(args["script_authorization"])
-        except ValueError as exc:
-            return json.dumps({"error": str(exc)}, ensure_ascii=False)
-        if script_authorization is not None:
-            from app.services.workspaces import workspace_shell_supported
-            if script_authorization["root"] == "workspace" and workspace_id is None and workspace_shell_supported():
-                return json.dumps({"error": "workspace 脚本必须绑定 workspace_id"}, ensure_ascii=False)
-            if script_authorization["root"] in {"personal", "project"} and args.get("filesystem_authorized") is not True and not getattr(t, "filesystem_authorization_grant_id", None):
-                return json.dumps({"error": "personal/project 脚本必须拥有完整用户沙箱授权"}, ensure_ascii=False)
-        fields["script_authorization"] = script_authorization
-    elif "workspace_id" in args and getattr(t, "script_authorization", None):
-        current_script = t.script_authorization
-        if current_script.get("root") == "workspace" and workspace_id != getattr(t, "workspace_id", None):
-            fields["script_authorization"] = None
     t = await update_task(db, t, fields)
     if args.get("enabled") is False:
         # 停用任务即让任务级完整授权失效；保留 grant 审计记录，不等到下一次触发才处理。
@@ -640,11 +604,6 @@ class ScheduledTasksSkill(BaseSkill):
                     "email_attachment_file_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 5, "uniqueItems": True},
                     "workspace_id": {"type": ["integer", "null"]},
                     "filesystem_authorized": {"type": "boolean"},
-                    "script_authorization": {"type": ["object", "null"], "properties": {
-                        "root": {"type": "string", "enum": ["workspace", "personal", "project"]},
-                        "script_path": {"type": "string"},
-                        "interpreter": {"type": "string", "enum": ["python3", "node", "bash"]},
-                    }, "required": ["root", "script_path", "interpreter"]},
                 },
                 "required": ["name", "instruction", "schedule_kind"],
             },
@@ -677,11 +636,6 @@ class ScheduledTasksSkill(BaseSkill):
                     "email_attachment_file_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 5, "uniqueItems": True},
                     "workspace_id": {"type": ["integer", "null"]},
                     "filesystem_authorized": {"type": "boolean"},
-                    "script_authorization": {"type": ["object", "null"], "properties": {
-                        "root": {"type": "string", "enum": ["workspace", "personal", "project"]},
-                        "script_path": {"type": "string"},
-                        "interpreter": {"type": "string", "enum": ["python3", "node", "bash"]},
-                    }, "required": ["root", "script_path", "interpreter"]},
                 },
                 "required": [],
                 "oneOf": [
@@ -702,7 +656,6 @@ class ScheduledTasksSkill(BaseSkill):
                                 "name", "instruction", "schedule_kind", "cron", "interval_minutes",
                                 "start_at", "end_at", "channels", "enabled", "delivery_mode",
                                 "authorized_tools", "email_attachment_file_ids", "workspace_id",
-                                "script_authorization",
                             )],
                         ]},
                     },

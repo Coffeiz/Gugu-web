@@ -170,6 +170,64 @@ async def test_new_without_session_is_deterministic():
 
 
 @pytest.mark.asyncio
+async def test_new_removes_old_interactions_without_touching_other_sessions(db, user_a):
+    """/new 清空消息后，完成/待处理交互都不应再从历史接口恢复。"""
+    from datetime import timedelta
+
+    from app.core.tz import now_utc
+    from app.models import ConversationMessage, InteractionAction, InteractionPrompt
+    from app.services.interactions import list_history
+
+    session = ConversationSession(user_id=user_a.id, title="重置目标", source="web")
+    other_session = ConversationSession(user_id=user_a.id, title="保留会话", source="web")
+    db.add_all([session, other_session])
+    await db.flush()
+
+    now = now_utc()
+    db.add(ConversationMessage(
+        session_id=session.id, role="user", content="旧对话内容", created_at=now,
+    ))
+    prompts = [
+        InteractionPrompt(
+            user_id=user_a.id, session_id=session.id, kind="choice", title="旧待选择",
+            body="选择一个选项", schema_json={"options": [{"id": "yes", "label": "是"}]},
+            status="active", expires_at=now + timedelta(hours=1), created_at=now,
+        ),
+        InteractionPrompt(
+            user_id=user_a.id, session_id=session.id, kind="choice", title="旧已完成",
+            body="已提交的选择", schema_json={"options": [{"id": "no", "label": "否"}]},
+            status="resolved", expires_at=now + timedelta(hours=1), resolved_at=now,
+            created_at=now + timedelta(seconds=1),
+        ),
+        InteractionPrompt(
+            user_id=user_a.id, session_id=other_session.id, kind="choice", title="另一会话卡片",
+            body="保持不变", schema_json={"options": []}, status="active",
+            expires_at=now + timedelta(hours=1), created_at=now,
+        ),
+    ]
+    db.add_all(prompts)
+    await db.flush()
+    db.add(InteractionAction(
+        prompt_id=prompts[0].id, token_hash="a" * 64, action_type="choice",
+        option_id="yes", context_json={}, status="pending",
+        expires_at=now + timedelta(hours=1), created_at=now,
+    ))
+    await db.commit()
+
+    result = await commands.handle(user_a.id, "/new", session_id=session.id)
+
+    assert result.startswith("已开启新对话")
+    assert await list_history(db, user_id=user_a.id, session_id=session.id) == []
+    assert len(await list_history(db, user_id=user_a.id, session_id=other_session.id)) == 1
+    assert (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == session.id)
+    )).scalars().all() == []
+    assert (await db.execute(
+        select(InteractionAction).where(InteractionAction.prompt_id == prompts[0].id)
+    )).scalars().all() == []
+
+
+@pytest.mark.asyncio
 async def test_workspace_delete_requires_explicit_confirmation(db, user_a):
     from app.services.workspaces import create_workspace
     from app.services.interactions import consume_action

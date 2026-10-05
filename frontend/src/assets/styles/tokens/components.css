@@ -51,10 +51,22 @@
   --control-checkbox-radius: 5px;
   --control-checkbox-border-width: 1.5px;
   --control-checkbox-fill-inset: 1px;
+  --control-checkbox-bg: var(--control-bg);
+  --control-checkbox-border: var(--action-outline);
+  --control-checkbox-border-hover: var(--action-primary);
+  --control-checkbox-bg-checked: var(--action-primary-bg);
+  --control-checkbox-border-checked: var(--action-primary);
+  --control-checkbox-mark: var(--content-on-accent);
+  --control-checkbox-shadow: none;
   --control-checkbox-mark-width: 7px;
   --control-checkbox-mark-height: 4px;
   --control-checkbox-mark-stroke: 1.6px;
   --control-focus-shadow: 0 0 0 3px color-mix(in srgb,var(--focus-ring) 48%,transparent);
+  /* 紧凑进度轨道与音频播放器的无描边滑动条保持一致。 */
+  --progress-track-height: 3px;
+  --progress-track-radius: 99px;
+  --progress-track-bg: color-mix(in srgb,var(--action-primary) 14%,transparent);
+  --progress-fill-bg: var(--action-primary);
   --segmented-track-bg: var(--action-soft);
   --segmented-pill-bg: var(--control-bg);
   --segmented-pill-shadow: var(--elevation-card);

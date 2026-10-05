@@ -3,10 +3,12 @@ import type { FileMeta } from '@/stores/filesCache'
 import type { TrashFolderMeta } from '@/services/api'
 import type { FolderCard as FolderCardMeta } from '@/utils/filesNav'
 import { useBoxSelection } from '@/composables/shared/useBoxSelection'
+import type { SelectionBox, WindowHitTest } from './useFileBrowserWindow'
 import { useSelectionState, selectRange, resolveSelectionAnchor, type SelectableItem } from './useSelectionState'
 
 export interface FileLibrarySelectionOptions {
   containerRef: Ref<HTMLElement | null>
+  getItemsInBox?: (box: SelectionBox) => ReturnType<WindowHitTest> | null
   currentType: Ref<string>
   getFolders: () => Array<{ id: number | string }>
   getFiles: () => FileMeta[]
@@ -51,6 +53,7 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
   const selectModeForced = ref(false)
   const lastAnchorIndex = ref(-1)
   const box = useBoxSelection(options.containerRef, {
+    getItemsInBox: options.getItemsInBox,
     fileAttr: 'data-file-id', folderAttr: 'data-folder-key', extraFolderAttrs: ['data-trash-folder-id'],
     excludeSelector: 'button, .fc-card, .folder-card, .fub, .list-row',
     onBoxSelect: ({ fileIds, folderIds }, event) => {

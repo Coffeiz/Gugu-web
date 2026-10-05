@@ -546,6 +546,8 @@ def validate_compact_summary(
         return False, "摘要超过模型输出预算"
     if SUMMARY_OPEN in value or SUMMARY_CLOSE in value:
         return False, "摘要包含外层包裹标记"
+    if _APPEND_TASK_PREFACE.rstrip() in value or "只输出摘要正文，不要添加前缀或解释，也不要调用任何工具。" in value:
+        return False, "摘要包含压缩任务指令"
     return True, "摘要候选有效"
 
 

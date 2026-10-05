@@ -108,13 +108,13 @@ const navItems = [
   { key: 'info', label: 'sharedUi.personalInfo', icon: 'user.default' },
   { key: 'account', label: 'sharedUi.accountSecurity', icon: 'user.security' },
   { key: 'prefs', label: 'sharedUi.preferences', icon: 'user.settings' },
+  { key: 'data', label: 'profileDataUi.nav', icon: 'user.settings' },
   { divider: true },
   { key: 'gugu', label: 'sharedUi.guguSettings', icon: 'user.gugu' },
   { key: 'im', label: 'sharedUi.connectGugu', icon: 'communication.chat' },
   { key: 'byok', label: 'sharedUi.modelConfigNav', icon: 'user.security' },
   { key: 'tools', label: 'sharedUi.capabilityConfig', icon: 'admin.wrench' },
   { key: 'workspaces', label: 'sharedUi.workspaces', icon: 'admin.folder' },
-  { key: 'data', label: 'profileDataUi.nav', icon: 'user.settings' },
 ]
 const activeNav = ref('info')
 const currentNavLabel = computed(() => { const key = navItems.find(n => !n.divider && n.key === activeNav.value)?.label; return key ? t(key) : '' })

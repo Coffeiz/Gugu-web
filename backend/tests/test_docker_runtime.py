@@ -980,6 +980,78 @@ def test_sandboxd_request_round_trips_as_json():
     assert value["quota_bytes"] == 512
 
 
+def test_sandboxd_request_round_trips_authorized_workspace_mounts():
+    from agent.sandbox.protocol import ExecuteRequest, WorkspaceMount
+
+    request = ExecuteRequest(
+        "/data/user/workspace/qq", "pwd", cwd=".",
+        workspace_mounts=(
+            WorkspaceMount("/workspace/default", "/data/user/workspace/default"),
+            WorkspaceMount("/workspace/qq", "/data/user/workspace/qq"),
+        ),
+        primary_workspace="/workspace/qq",
+    )
+    restored = ExecuteRequest.from_dict(json.loads(request.to_json()))
+    assert [(item.target, item.root) for item in restored.workspace_mounts] == [
+        ("/workspace/default", "/data/user/workspace/default"), ("/workspace/qq", "/data/user/workspace/qq"),
+    ]
+    assert restored.primary_workspace == "/workspace/qq"
+
+
+def test_sandboxd_request_rejects_duplicate_or_unselected_workspace_mounts():
+    from agent.sandbox.protocol import ExecuteRequest
+
+    with pytest.raises(ValueError, match="名称重复"):
+        ExecuteRequest.from_dict({
+            "root": "/data/user/workspace", "command": "pwd",
+            "workspace_mounts": [
+                {"target": "/workspace/qq", "root": "/data/user/qq"},
+                {"target": "/workspace/qq", "root": "/data/user/qq-copy"},
+            ],
+            "primary_workspace": "/workspace/qq",
+        })
+    with pytest.raises(ValueError, match="primary_workspace"):
+        ExecuteRequest.from_dict({
+            "root": "/data/user/workspace", "command": "pwd",
+            "workspace_mounts": [{"target": "/workspace/qq", "root": "/data/user/qq"}],
+            "primary_workspace": "/workspace/default",
+        })
+
+
+def test_sandboxd_workspace_mounts_must_share_one_storage_owner(monkeypatch, tmp_path):
+    from agent.sandbox import sandboxd
+    from agent.sandbox.protocol import WorkspaceMount
+
+    storage_root = tmp_path / "users"
+    owner_root = storage_root / "user-a"
+    default_root = owner_root / "workspace" / "default"
+    qq_root = owner_root / "workspace" / "qq"
+    other_root = storage_root / "user-b" / "workspace" / "other"
+    default_root.mkdir(parents=True)
+    qq_root.mkdir(parents=True)
+    other_root.mkdir(parents=True)
+    settings = SimpleNamespace(
+        sandbox=SimpleNamespace(stdio_max_sessions=2, stdio_max_sessions_per_user=1),
+        storage=SimpleNamespace(local_path=str(storage_root)),
+    )
+    monkeypatch.setattr(sandboxd, "get_settings", lambda: settings)
+    server = sandboxd.SandboxdServer(tmp_path / "sandboxd.sock", storage_root)
+
+    mounts = (
+        WorkspaceMount("/workspace/default", str(default_root)),
+        WorkspaceMount("/workspace/qq", str(qq_root)),
+    )
+    assert server._validate_workspace_mounts(mounts, qq_root, "/workspace/qq") == mounts
+    with pytest.raises(ValueError, match="目标与物理来源不一致"):
+        server._validate_workspace_mounts(
+            (WorkspaceMount("/project/2026/10/任意 #7", str(qq_root)),),
+            qq_root, "/project/2026/10/任意 #7",
+        )
+    with pytest.raises(ValueError, match="同一用户存储目录"):
+        server._validate_workspace_mounts(
+            (WorkspaceMount("/workspace/qq", str(qq_root)), WorkspaceMount("/workspace/other", str(other_root))),
+            qq_root, "/workspace/qq",
+        )
 def test_sandboxd_request_round_trips_library_roots():
     from agent.sandbox.protocol import ExecuteRequest
 
@@ -1008,12 +1080,13 @@ def test_sandboxd_request_preserves_library_write_policy():
     assert restored.project_read_only is False
 
 
-def test_sandboxd_request_round_trips_script_execution_capability():
+def test_sandboxd_request_has_no_script_execution_capability():
     from agent.sandbox.protocol import ExecuteRequest
 
-    request = ExecuteRequest("/data/user/workspace", "python3 /workspace/jobs/run.py", allow_script_execution=True)
+    request = ExecuteRequest("/data/user/workspace", "python3 /workspace/jobs/run.py")
     restored = ExecuteRequest.from_dict(json.loads(request.to_json()))
-    assert restored.allow_script_execution is True
+    assert restored.command == "python3 /workspace/jobs/run.py"
+    assert "allow_script_execution" not in json.loads(request.to_json())
 
 
 def test_pty_spec_defaults_to_read_only_library_mounts():
@@ -1531,6 +1604,50 @@ def test_docker_executor_builds_fixed_security_argv(tmp_path):
     assert not any("privileged" in item or "host" in item or "docker.sock" in item for item in argv)
     assert argv[-2] == "debian:bookworm-slim@sha256:" + "b" * 64
     assert argv[-1] == "pwd"
+
+
+def test_docker_executor_uses_stable_workspace_namespace_and_validates_cwd(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+    from agent.sandbox.protocol import WorkspaceMount
+
+    default_root = tmp_path / "user" / "workspace" / "default"
+    qq_root = tmp_path / "user" / "workspace" / "qq"
+    default_root.mkdir(parents=True)
+    qq_root.mkdir()
+    (qq_root / "src").mkdir()
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim", image_digest="sha256:" + "d" * 64,
+        network_profile="none", pids_limit=64, cpu_limit=1.0,
+        memory_limit_bytes=512 * 1024 * 1024, ephemeral_quota_bytes=64 * 1024 * 1024,
+    )
+    executor = DockerSandboxExecutor(
+        qq_root, settings, docker_path="/usr/bin/docker",
+        workspace_mounts=(
+            WorkspaceMount("/workspace/default", str(default_root)),
+            WorkspaceMount("/workspace/qq", str(qq_root)),
+        ),
+        primary_workspace="/workspace/qq",
+    )
+
+    argv = executor.build_argv("ls /workspace", cwd=".")
+    assert "--workdir=/workspace/qq" in argv
+    assert f"--mount=type=bind,src={default_root},dst=/workspace/default" in argv
+    assert f"--mount=type=bind,src={qq_root},dst=/workspace/qq" in argv
+    assert executor.build_argv("pwd", cwd="/workspace/qq/src").count("--workdir=/workspace/qq/src") == 1
+    absolute_argv = executor.build_argv("ls /workspace/default", cwd=".")
+    assert absolute_argv[-2:] == ["ls", "/workspace/default"]
+
+    with pytest.raises(ValueError, match="已授权"):
+        executor.build_argv("pwd", cwd="/workspace/not-mounted")
+    with pytest.raises(ValueError, match="超出已授权"):
+        executor.build_argv("pwd", cwd="/workspace/qq/../../etc")
+    with pytest.raises(ValueError, match="超出 workspace"):
+        executor.build_argv("ls ../default", cwd=".")
+
+    pty_argv = executor.build_pty_argv()
+    assert "--workdir=/workspace/qq" in pty_argv
+    assert f"--mount=type=bind,src={default_root},dst=/workspace/default" in pty_argv
+    assert f"--mount=type=bind,src={qq_root},dst=/workspace/qq" in pty_argv
 
 
 def test_docker_executor_mounts_read_only_libraries(tmp_path):

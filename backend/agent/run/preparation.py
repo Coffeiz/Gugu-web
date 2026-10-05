@@ -169,6 +169,56 @@ def _apply_capability_context(system_prompt: str, snapshot_context: str, context
     )
 
 
+async def prepare_run_capabilities(
+    db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
+    *, session=None, query="", user_skill_metadata=None, dynamic_tools=(),
+    subject_type="session", subject_id=None, workspace_id=None,
+):
+    """统一组装本轮工具与提示词；入口只提供会话或任务授权主体。
+
+    Shell 状态只追加到本轮 system，不进入冻结 snapshot 或动态尾部。
+    调用方负责短事务、执行器与传输生命周期，不重复实现权限组装。
+    """
+    from agent.security.shell_policy import build_dynamic_prompt
+
+    subject = dict(session=session, subject_type=subject_type,
+                   subject_id=subject_id, workspace_id=workspace_id)
+    tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, **subject)
+    shell_prompt = None
+    if "shell" in tool_names:
+        shell_prompt = await build_dynamic_prompt(db, user_id, session_id, **subject)
+        if shell_prompt is None:
+            tool_names = [name for name in tool_names if name != "shell"]
+    system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
+    if shell_prompt:
+        system_prompt = "\n\n---\n\n".join((system_prompt, shell_prompt))
+    capability_context = await _capability_context(
+        tool_names, settings, db=db, owner_id=user_id, query=query,
+        user_skill_metadata=user_skill_metadata, dynamic_tools=dynamic_tools,
+    )
+    system_prompt, snapshot_context = _apply_capability_context(
+        system_prompt, snapshot_context, capability_context,
+    )
+    return tool_names, system_prompt, snapshot_context, capability_context
+
+
+def prepare_scheduled_context(system_prompt, snapshot_context, user_tz, prompt, memory, *, use_anthropic):
+    """任务无会话历史；复用公共消息布局，不引入交互式 RAG 或会话持久化。"""
+    from app.core.chat_attach import build_user_content
+
+    fixed_parts = [session_snapshot.snapshot_message(snapshot_context)] if snapshot_context else []
+    area, batch = run_context.assemble_run_area(
+        system_prompt=system_prompt, fixed_parts=fixed_parts, history=[],
+        render_options={"api_format": "anthropic" if use_anthropic else "openai"},
+        use_anthropic=use_anthropic, stance=builder.stance_block(memory),
+        current_user={"role": "user", "content": build_user_content(prompt, [], use_anthropic)},
+    )
+    batch.update_area_entry("current_user", persistence_policy="request_only")
+    area.append_batch(batch)
+    area.set_dynamic_tail([dynamic_tail.time_message(user_tz)])
+    return area
+
+
 async def _filter_shell_tool(
     db,
     user_id,
@@ -425,7 +475,8 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         if snapshot_context else None
     )
 
-    # 组装本轮动态上下文注入块（放入 history 之后，不进 system）
+    # 组装本轮动态上下文注入块（放入 history 之后，不进 system）。
+    # Shell 状态说明单独放在 system_prompt 的固定位置，见下方 Shell 策略组装。
     _dynamic_extra_parts = []
     _im_id = im_identity_block(req, history)
     if _im_id:
@@ -445,28 +496,13 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
     # 这里同样使用短事务。工具组装可能触发数据库查询，不能把前面已关闭的
     # session 传入，否则 AsyncSession 会在上下文外重新 checkout 连接并由 GC 回收。
     async with _sess._SessionLocal() as tool_db:
-        tool_names = await _filter_shell_tool(
-            tool_db, user_id, session_id, tool_names, session=session,
-        )
-        if "shell" in tool_names:
-            from agent.security.shell_policy import build_dynamic_prompt
-            shell_prompt = await build_dynamic_prompt(
-                tool_db, user_id, session_id, session=session,
-            )
-            if shell_prompt:
-                _dynamic_extra_parts.append(shell_prompt)
-            else:
-                tool_names = [name for name in tool_names if name not in {"shell", "run_script"}]
-        capability_context = await _capability_context(
-            tool_names, settings, db=tool_db, owner_id=user_id, query=aug_text,
+        tool_names, system_prompt, snapshot_context, capability_context = await prepare_run_capabilities(
+            tool_db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
+            session=session, query=aug_text,
             user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
         )
-    system_prompt = session_system.append_shell_prompt(system_prompt, enabled="shell" in tool_names)
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)
-    system_prompt, snapshot_context = _apply_capability_context(
-        system_prompt, snapshot_context, capability_context,
-    )
     if capability_context is not None:
         _snapshot_injection = session_snapshot.snapshot_message(snapshot_context)
     runner = LLMRunner(

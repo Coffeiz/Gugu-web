@@ -91,7 +91,7 @@
             <!-- 只读正文复用 NoteCard 同一套 mdToPreviewHtml + 全局 .md-preview 样式：
                  待办勾选、引用 chip、代码块、引用块的行为和主题适配免费拿到 -->
             <div class="rp-body-wrap">
-              <article class="rp-body md-preview" @click="onBodyClick" v-html="previewHtml"></article>
+              <article class="rp-body md-preview" @click="onBodyClick" v-mind-preview="previewHtml"></article>
             </div>
             <!-- 底部操作区：与编辑态 Done/Cancel 同一位置；删除带文字，四个按钮统一形态 -->
             <div class="rp-foot">
@@ -168,6 +168,7 @@ import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd, combineTitleBody } from '@/composables/mind/useMindEditor'
+import { vMindPreview } from './directives/mindPreview'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { MindNote } from '@/services/api'
 import NoteEditor from './components/NoteEditor.vue'
@@ -279,8 +280,8 @@ function onBodyClick(e: MouseEvent) {
   const note = selected.value
   if (!note) return
   if (target instanceof HTMLInputElement && target.dataset.taskIdx !== undefined) {
-    e.preventDefault()   // 视觉状态由 PATCH 成功后的数据回流驱动，别让浏览器先勾上
-    if (note.id < 0) return   // 样例数据不写后端
+    if (note.id < 0) { e.preventDefault(); return }   // 样例数据不写后端
+    // 保留原生勾选，乐观正文原位同步状态；失败时 Store 负责回滚。
     const idx = Number(target.dataset.taskIdx)
     void onSave(note, toggleTaskInMd(note.contentMd, idx))
     return
@@ -662,11 +663,6 @@ function onListScroll() {
    14px 正文算 2.8px 混着不齐；窗格字号已锁 14/15px，间距钉成同值，两模式同源一致 */
 .rp-body > * + *,
 .rp-editor :deep(.ProseMirror > * + *) { margin-top: 3px; }
-/* 勾选框：mind-content 的 14px 是窄卡片口径，宽窗格预览侧浏览器默认渲染已是 16px，
-   编辑态按同值锁死，消除「编辑时 checkbox 变小」的观感差 */
-.rp-body-wrap :deep(.md-preview .np-tasks input[type="checkbox"]) { width: 16px; height: 16px; margin-top: 3px; }
-.rp-editor :deep(.ne-body ul[data-type="taskList"] input[type="checkbox"]) { width: 16px; height: 16px; margin-top: 3px; }
-
 /* 编辑态：排版与只读预览完全同口径——mind-content 基础 13px 是窄卡片口径，宽窗格
    两边一起抬到 14px；标题行与只读大标题同字号（ne-body h1 默认 15px 是卡片口径）；
    小节标题对齐只读视图的 15px；工具栏图标比卡片编辑态大一档（阅读窗格宽、密度低）；

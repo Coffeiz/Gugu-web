@@ -11,8 +11,10 @@ export function useInlineFileRenameState() {
   function start(file: FileMeta) {
     editingFile.value = file
     renamingFileId.value = file.id
-    renameText.value = file.displayName
-    renameExtension.value = file.ext.toUpperCase() === 'FILE' ? '' : file.ext.toLowerCase()
+    const isLegacyDotfile = !file.displayName && file.ext.toUpperCase() !== 'FILE'
+    const extensionlessName = isLegacyDotfile || file.ext.toUpperCase() === 'FILE'
+    renameText.value = isLegacyDotfile ? `.${file.ext.toLowerCase()}` : file.displayName
+    renameExtension.value = extensionlessName ? '' : file.ext.toLowerCase()
   }
 
   function cancel() {

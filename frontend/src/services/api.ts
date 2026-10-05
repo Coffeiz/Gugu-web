@@ -6,6 +6,7 @@ import type { components } from '@/types/api'
 import { getLocale, i18n, type SupportedLocale } from '@/i18n'
 import { getInteractionClientId } from '@/interaction/sync/InteractionSyncState'
 import { handleUnauthorized, isUnauthorizedResponse } from '@/services/authSession'
+import { getAuthDeviceId } from '@/utils/authDevice'
 
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
@@ -16,6 +17,7 @@ export interface SiteConfig {
   icpNumber: string
   icpUrl: string
   passwordResetEnabled: boolean
+  registrationVerificationEnabled: boolean
 }
 
 export async function fetchSiteConfig(): Promise<SiteConfig> {
@@ -62,7 +64,7 @@ function getUndoContextId(): string {
 
 export const UNDO_CONTEXT_ID = getUndoContextId()
 
-export interface RequestMeta { mutationId?: string; undoGroupId?: string }
+export interface RequestMeta { mutationId?: string; undoGroupId?: string; headers?: Record<string, string> }
 
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
@@ -77,6 +79,7 @@ async function request<T = any>(method: string, path: string, body: any = null, 
   }
   if (meta?.mutationId) headers['X-Mutation-Id'] = meta.mutationId
   if (meta?.undoGroupId) headers['X-Undo-Group-ID'] = meta.undoGroupId
+  if (meta?.headers) Object.assign(headers, meta.headers)
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const opts: RequestInit = { method, headers, signal, credentials: 'include' }
@@ -200,6 +203,7 @@ export interface DataImportPreview {
   memory?: { add: Record<string, number>; skip: Record<string, number>; add_total: number; skip_total: number }
   replace?: { current: Record<string, number>; incoming: Record<string, number> }
   conflicts?: { total: number; items: Array<{ source_type: string; portable_id: string; fields: string[]; kind: string }> }
+  compatibility?: { mind_refs_as_notes?: number }
 }
 
 export interface DataImportJob {
@@ -247,6 +251,8 @@ export const dataPortabilityApi = {
   },
   getImport: (jobId: string) => get<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}`),
   listImports: () => get<DataImportJob[]>('/data-portability/imports'),
+  deleteImport: (jobId: string) => del<void>(`/data-portability/imports/${encodeURIComponent(jobId)}`),
+  resumeImport: (jobId: string) => post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/resume`),
   applyImport: (jobId: string, mode: 'incremental' | 'replace', importToken: string, idempotencyKey: string) =>
     post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/apply`, {
       mode, import_token: importToken, idempotency_key: idempotencyKey,
@@ -553,7 +559,8 @@ export interface SkillToolItem {
 }
 
 export const userSkillsApi = {
-  list: () => get<{ skills: UserSkillItem[]; tools: SkillToolItem[] }>('/skills'),
+  list: () => get<{ skills: UserSkillItem[] }>('/skills?include_tools=false'),
+  tools: () => get<{ tools: SkillToolItem[] }>('/skills/tools'),
   create: (data: UserSkillWrite) => post<UserSkillItem>('/skills', data),
   update: (slug: string, data: Partial<Omit<UserSkillWrite, 'slug'>>) => patch<UserSkillItem>(`/skills/${encodeURIComponent(slug)}`, data),
   delete: (slug: string) => del(`/skills/${encodeURIComponent(slug)}`),
@@ -942,6 +949,7 @@ export const agentApi = {
   },
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
+  listImportedDraftQueues: () => get<{ queues: Array<{ queue_id: string; items: Array<{ key: number; queue_id: string; session_id: null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }> }>('/agent/pending-queues/imported-drafts'),
   updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>
     put(`/agent/pending-queues/${encodeURIComponent(queueId)}`, { items }),
   patchPendingQueue: (queueId: string, sessionId: number, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>, removeKeys: number[] = []) =>
@@ -1000,6 +1008,9 @@ export const searchApi = {
 }
 
 export const authApi = {
+  sendRegistrationCode: (email: string) => post<{ ok: boolean }>(
+    '/auth/registration-code', { email }, { headers: { 'X-Device-ID': getAuthDeviceId() } },
+  ),
   updateProfile: (data: any)     => request('PATCH',  '/auth/profile', data),
   requestEmailChange: (data: { newEmail: string; currentPassword: string }) => request('POST', '/auth/email-change/request', data),
   resendEmailChange: () => request('POST', '/auth/email-change/resend'),

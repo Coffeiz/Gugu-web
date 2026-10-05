@@ -109,9 +109,13 @@ async def get_pending_queue_by_id(
     row = await _get_queue_row(db, user_id=user_id, queue_id=queue_id)
     if row is None:
         return None, []
+    return row.session_id, _visible_queue_items(row)
+
+
+def _visible_queue_items(row: ConversationPendingQueue) -> list[dict]:
     now = time.time()
     items = row.items if isinstance(row.items, list) else []
-    visible_items = [
+    return [
         {
             **{key: value for key, value in item.items() if key not in {"_claim_token", "_claim_until"}},
             "queue_id": row.queue_id,
@@ -125,7 +129,25 @@ async def get_pending_queue_by_id(
         for item in items
         if isinstance(item, dict)
     ]
-    return row.session_id, visible_items
+
+
+async def list_imported_draft_queues(db: AsyncSession, *, user_id) -> list[dict]:
+    """列出归档恢复的新对话草稿；不暴露用户其他标签的本地草稿队列。"""
+    rows = (await db.execute(
+        select(ConversationPendingQueue)
+        .where(
+            ConversationPendingQueue.user_id == user_id,
+            ConversationPendingQueue.session_id.is_(None),
+            ConversationPendingQueue.queue_id.like("import-%"),
+        )
+        .order_by(ConversationPendingQueue.updated_at, ConversationPendingQueue.id)
+    )).scalars().all()
+    snapshots = []
+    for row in rows:
+        items = _visible_queue_items(row)
+        if items:
+            snapshots.append({"queue_id": row.queue_id, "items": items})
+    return snapshots
 
 
 async def get_pending_queue_for_session(

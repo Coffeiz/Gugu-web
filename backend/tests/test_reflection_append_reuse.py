@@ -319,69 +319,97 @@ async def test_reflect_defers_owner_without_snapshot(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_idle_rebuild_uses_owned_idle_session_and_persisted_history(monkeypatch):
-    from app.db import session as db_session
-    from app.models import ConversationSession
+async def test_idle_rebuild_uses_owned_idle_session_and_persisted_history(db, user_a, user_b, monkeypatch):
+    from app.models import ConversationMessage, ConversationSession
 
-    class _Query:
-        def where(self, *conditions):
-            self.conditions = conditions
-            return self
-
-    class _Rows:
-        def __init__(self, value):
-            self.value = value
-
-        def scalars(self):
-            return self
-
-        def first(self):
-            return self.value
-
-    idle_session = SimpleNamespace(
-        id=7, user_id="u1", execution_state="idle", pending_message_count=0,
-        chat_id=None, platform_user_id=None, baseline_message_id=12,
-        session_context=None,
-    )
-
-    class _DB:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def execute(self, query):
-            assert len(query.conditions) == 2
-            return _Rows(idle_session)
-
-    monkeypatch.setattr(db_session, "ensure_engine", lambda: None)
-    monkeypatch.setattr(db_session, "_SessionLocal", _DB)
-    monkeypatch.setattr("sqlalchemy.select", lambda *_args: _Query())
-
-    import agent.context.session_history as session_history
-    import agent.context.session_snapshot as session_snapshot
-    import agent.context.loaders as loaders
-    import agent.context.history as history_builder
-    import agent.context.session_system as session_system
-    import agent.llm.llm_select as llm_select
-    monkeypatch.setattr(session_snapshot, "history_baseline", lambda _session: 12)
-    monkeypatch.setattr(session_history, "load_session_history", _load_history)
-    monkeypatch.setattr(loaders, "load_user_tz", _load_tz)
-    monkeypatch.setattr(loaders, "load_style_prefs", _load_style)
-    monkeypatch.setattr(history_builder, "build_history_parts", _build_history_parts)
-    monkeypatch.setattr(session_system, "build_static_prompt", lambda *a, **k: "stable-system")
-    monkeypatch.setattr(llm_select, "use_anthropic_for", lambda _cfg: False)
-
+    idle_session = ConversationSession(user_id=user_a.id, execution_state="idle")
+    db.add(idle_session)
+    await db.flush()
+    db.add(ConversationMessage(session_id=idle_session.id, role="user", content="持久历史"))
+    await db.commit()
+    monkeypatch.setattr("agent.context.session_system.build_static_prompt", lambda *a, **k: "stable-system")
     rebuilt = await reflection._rebuild_owner_reflection_snapshot(
-        "u1", 7, "小北", _ai(),
+        user_a.id, idle_session.id, "小北", _ai(),
     )
     assert rebuilt.source == "persisted_history"
-    assert rebuilt.session_id == 7
+    assert rebuilt.session_id == idle_session.id
     assert rebuilt.system_prompt == "stable-system"
     assert rebuilt.tools == ()
-    # 重建结果也保留 wire 边界；不把 build_history_parts 的输出再次当作 canonical。
-    assert rebuilt.history.to_messages() == [{"role": "user", "content": "persisted"}]
+    # 数据库重建结果经过投影后保留 wire 边界，供后续分支直接复用。
+    assert "持久历史" in str(rebuilt.history.to_messages())
+    assert await reflection._rebuild_owner_reflection_snapshot(user_b.id, idle_session.id, "小北", _ai()) is None
+    for state, pending in [("running", 0), ("idle", 1)]:
+        idle_session.execution_state = state
+        idle_session.pending_message_count = pending
+        await db.commit()
+        assert await reflection._rebuild_owner_reflection_snapshot(user_a.id, idle_session.id, "小北", _ai()) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["stance-context", "knowledge-context"])
+async def test_idle_rebuild_projects_persisted_context_before_minimax_request(
+    db, user_a, monkeypatch, event_type,
+):
+    """数据库重建保留上下文语义，MiniMax 请求只收到合法 text 块。"""
+    from agent import providers
+    from agent.context import provider_runner
+    from agent.context.prefix_history import render_branch_prefix
+    from agent.context.provider_conversation import ProviderConversation
+    from app.models import ConversationMessage, ConversationSession
+
+    session = ConversationSession(user_id=user_a.id, execution_state="idle")
+    db.add(session)
+    await db.flush()
+    context_text = "合成姿态：简洁回答" if event_type == "stance-context" else "合成知识：每周整理"
+    event = {"type": event_type, "text": context_text}
+    row = ConversationMessage(session_id=session.id, role="user", content_json=[event])
+    db.add_all([
+        ConversationMessage(session_id=session.id, role="user", content="请整理安排"),
+        row,
+        ConversationMessage(session_id=session.id, role="assistant", content="已整理"),
+    ])
+    await db.commit()
+    monkeypatch.setattr(
+        "agent.context.session_system.build_static_prompt", lambda *a, **k: "合成系统",
+    )
+    ai = SimpleNamespace(provider="minimax", model="MiniMax-M3", api_format="anthropic")
+    captured = {}
+
+    async def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text="完成")], usage=None)
+
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda *a: SimpleNamespace(
+        messages=SimpleNamespace(create=create),
+    ))
+    monkeypatch.setattr("agent.llm.modelctx.effective_ai", lambda _settings: ai)
+    snapshot = await reflection._rebuild_owner_reflection_snapshot(
+        user_a.id, session.id, "小北", ai,
+    )
+    assert isinstance(snapshot.history, ProviderConversation)
+    original_prefix = snapshot.history.to_messages()
+    assert any(
+        block == {"type": "text", "text": context_text}
+        for message in original_prefix if isinstance(message["content"], list)
+        for block in message["content"]
+    )
+
+    def reject_reprojection(*args, **kwargs):
+        raise AssertionError("已投影的历史不能再次经过 Canonical renderer")
+
+    monkeypatch.setattr("agent.context.history.render_canonical_area_snapshot", reject_reprojection)
+    result = await provider_runner.complete_messages(
+        snapshot.system_prompt, render_branch_prefix(snapshot.history, ai), "反思本轮",
+        settings=SimpleNamespace(ai=ai),
+    )
+    assert result == "完成"
+    blocks = [block for message in captured["messages"]
+              if isinstance(message["content"], list) for block in message["content"]]
+    assert all(block["type"] == "text" for block in blocks)
+    assert context_text in [block["text"] for block in blocks]
+    assert snapshot.history.to_messages() == original_prefix
+    await db.refresh(row)
+    assert row.content_json == [event]
 
 
 @pytest.mark.asyncio
@@ -423,27 +451,6 @@ async def test_reflect_routes_idle_rebuilt_history_through_append(monkeypatch):
 
 async def _async_value(value):
     return value
-
-
-async def _load_history(_db, session_id, baseline):
-    assert session_id == 7 and baseline == 12
-    return [SimpleNamespace(role="user", content="持久历史")]
-
-
-async def _load_tz(_db, user_id):
-    assert user_id == "u1"
-    return None
-
-
-async def _load_style(_db, user_id):
-    assert user_id == "u1"
-    return {"reply_tone": "warm"}
-
-
-def _build_history_parts(rows, request, *, use_anthropic, user_tz):
-    assert rows[0].content == "持久历史"
-    assert request.chat_id is None and use_anthropic is False and user_tz is None
-    return [{"role": "user", "content": "persisted"}]
 
 
 # ── drain 路径传递快照（§6.1 拓扑）───────────────────────────────────

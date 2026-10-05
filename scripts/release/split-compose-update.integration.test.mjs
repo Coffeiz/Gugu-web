@@ -37,6 +37,9 @@ function writeFixture(root, id) {
   fs.writeFileSync(path.join(root, 'backend', '.env'), 'ADMIN_PASSWORD=synthetic-integration-secret\nSYNTHETIC_CONFIG=preserve-me\n', { mode: 0o600 })
   fs.writeFileSync(path.join(root, 'fixture', 'updater', '__init__.py'), '')
   fs.writeFileSync(path.join(root, 'fixture', 'updater', 'database_check.py'), 'print("synthetic migration check passed")\n')
+  fs.mkdirSync(path.join(root, 'fixture', 'scripts', 'migrations'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'fixture', 'scripts', 'migrations', 'migrate_workspace_layout.py'), 'from pathlib import Path\nPath("/data/users/layout-migrated").write_text("synthetic-layout")\n')
+  fs.writeFileSync(path.join(root, 'fixture', 'alembic'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
   for (const module of ['standalone.py', 'standalone_helper.py']) {
     fs.copyFileSync(path.join(repositoryRoot, 'backend', 'updater', module), path.join(root, 'fixture', 'updater', module))
   }
@@ -101,9 +104,14 @@ def main():
 if __name__ == '__main__':
     main()
 `, { mode: 0o755 })
-  fs.writeFileSync(path.join(root, 'Dockerfile'), `FROM python:3.14-slim-bookworm\nARG HEALTH_MODE=ok\nENV PYTHONPATH=/opt/e2e\nCOPY fixture/updater /opt/e2e/updater\nCOPY fixture/curl /usr/local/bin/curl\nCOPY fixture/pg_dumpall /usr/local/bin/pg_dumpall\nCOPY fixture/docker /usr/local/bin/docker\nRUN printf '%s' "$HEALTH_MODE" > /etc/e2e-health-mode && chmod 755 /usr/local/bin/curl /usr/local/bin/pg_dumpall /usr/local/bin/docker\nCMD ["python", "-c", "import time; time.sleep(86400)"]\n`)
+  fs.writeFileSync(path.join(root, 'Dockerfile'), `FROM python:3.14-slim-bookworm\nARG HEALTH_MODE=ok\nENV PYTHONPATH=/opt/e2e\nCOPY fixture/updater /opt/e2e/updater\nCOPY fixture/scripts /opt/e2e/scripts\nCOPY fixture/alembic /usr/local/bin/alembic\nCOPY fixture/curl /usr/local/bin/curl\nCOPY fixture/pg_dumpall /usr/local/bin/pg_dumpall\nCOPY fixture/docker /usr/local/bin/docker\nRUN printf '%s' "$HEALTH_MODE" > /etc/e2e-health-mode && chmod 755 /usr/local/bin/curl /usr/local/bin/pg_dumpall /usr/local/bin/docker /usr/local/bin/alembic\nCMD ["python", "-c", "import time; time.sleep(86400)"]\n`)
   fs.writeFileSync(path.join(root, 'compose.yml'), `name: ${id}\nservices:\n  postgres:\n    image: postgres:18-alpine\n    environment: { POSTGRES_USER: e2e, POSTGRES_PASSWORD: synthetic, POSTGRES_DB: e2e }\n    volumes: [pgdata:/var/lib/postgresql]\n    healthcheck:\n      test: [CMD-SHELL, pg_isready -U e2e -d e2e]\n      interval: 2s\n      timeout: 2s\n      retries: 30\n  redis:\n    image: redis:7-alpine\n    volumes: [redisdata:/data]\n  migrate:\n    image: docker.io/coffeiz/gugu-web-backend:${id}-old\n  backend:\n    image: docker.io/coffeiz/gugu-web-backend:${id}-old\n    volumes: [appdata:/data]\n  worker:\n    image: docker.io/coffeiz/gugu-web-backend:${id}-old\n  gateway:\n    image: docker.io/coffeiz/gugu-web-backend:${id}-old\n  frontend:\n    image: docker.io/coffeiz/gugu-web-frontend:${id}-old\n  nginx:\n    image: docker.io/coffeiz/gugu-web-frontend:${id}-old\nvolumes:\n  pgdata:\n  redisdata:\n  appdata:\n`)
 
+  // 此夹具验证旧式 Compose 内管理器拓扑；external 的停服与隔离边界由专门的脚本测试覆盖。
+  const composePath = path.join(root, 'compose.yml')
+  fs.writeFileSync(composePath, fs.readFileSync(composePath, 'utf8').replace(
+    '  nginx:', `  sandboxd:\n    image: docker.io/coffeiz/gugu-web-backend:${id}-old\n  nginx:`,
+  ))
   const dockerPath = run('sh', ['-lc', 'command -v docker']).stdout.trim()
   assert.ok(dockerPath, 'devserver 未找到 Docker CLI')
   const dockerShim = `#!/bin/bash\nset -euo pipefail\nif [[ "\${1:-}" == compose ]]; then\n  shift\n  args=("$@")\n  command_name=""\n  for ((i=0; i<\${#args[@]}; i++)); do\n    if [[ "\${args[$i]}" == -f ]]; then\n      i=$((i+1))\n      file="\${args[$i]}"\n      if [[ "$file" == *.json && -f "$file" ]]; then\n        node -e 'const fs=require("node:fs");const f=process.argv[1];const v=JSON.parse(fs.readFileSync(f,"utf8"));for(const s of Object.values(v.services||{})){if(s.image?.endsWith("@sha256:"+"b".repeat(64)))s.image=process.env.E2E_BACKEND_IMAGE;if(s.image?.endsWith("@sha256:"+"c".repeat(64)))s.image=process.env.E2E_FRONTEND_IMAGE;}fs.writeFileSync(f,JSON.stringify(v));' "$file"\n      fi\n    fi\n    case "\${args[$i]}" in config|ps|exec|run|up|pull) command_name="\${args[$i]}"; break ;; esac\n  done\n  if [[ "$command_name" == pull ]]; then exit 0; fi\n  exec "$REAL_DOCKER" compose "\${args[@]}"\nfi\nexec "$REAL_DOCKER" "$@"\n`
@@ -178,7 +186,7 @@ async function exerciseUpdate({ failHealth }) {
     const gatewayBefore = compose(root, id, 'ps', '-q', 'gateway').stdout.trim()
     assert.ok(postgresBefore && redisBefore && backendBefore && workerBefore && gatewayBefore, '测试栈关键容器未启动')
     requireSuccess(compose(root, id, 'exec', '-T', 'postgres', 'psql', '-U', 'e2e', '-d', 'e2e', '-c', "CREATE TABLE update_probe (value text); INSERT INTO update_probe VALUES ('split-db-marker');"), '写入数据库持久化探针失败')
-    requireSuccess(compose(root, id, 'exec', '-T', 'backend', 'sh', '-c', 'mkdir -p /data/byok && printf byok-marker > /data/byok/.byok-master-key && printf preserved-marker > /data/persistence-marker'), '写入数据卷探针失败')
+    requireSuccess(compose(root, id, 'exec', '-T', 'backend', 'sh', '-c', 'mkdir -p /data/byok /data/users && printf storage-marker > /data/users/sentinel && printf byok-marker > /data/byok/.byok-master-key && printf preserved-marker > /data/persistence-marker'), '写入数据卷探针失败')
 
     const update = run('bash', [path.join(releaseDir, 'split-compose-update.sh'), createManifest(root)], {
       cwd: root,
@@ -186,7 +194,8 @@ async function exerciseUpdate({ failHealth }) {
       env: baseEnv,
     })
     if (failHealth) {
-      assert.equal(update.status, 76, `健康检查失败时应自动回滚\n${update.stdout}\n${update.stderr}`)
+      assert.equal(update.status, 1, `迁移后健康失败必须进入人工恢复态\n${update.stdout}\n${update.stderr}`)
+      assert.match(update.stderr, /禁止只降级镜像/)
     } else {
       requireSuccess(update, '成功升级路径失败')
     }
@@ -196,19 +205,26 @@ async function exerciseUpdate({ failHealth }) {
     const workerAfter = compose(root, id, 'ps', '-q', 'worker').stdout.trim()
     const gatewayAfter = compose(root, id, 'ps', '-q', 'gateway').stdout.trim()
     assert.notEqual(backendAfter, backendBefore, 'backend 应已替换')
-    assert.notEqual(workerAfter, workerBefore, 'worker 应按顺序重建')
-    assert.notEqual(gatewayAfter, gatewayBefore, 'gateway 应按顺序重建')
+    if (failHealth) {
+      assert.equal(workerAfter, '', '失败时旧 worker 必须保持停服')
+      assert.equal(gatewayAfter, '', '失败时旧 gateway 必须保持停服')
+    } else {
+      assert.notEqual(workerAfter, workerBefore, 'worker 应按顺序重建')
+      assert.notEqual(gatewayAfter, gatewayBefore, 'gateway 应按顺序重建')
+    }
     assert.notEqual(frontendAfter, '', 'frontend 应保持运行')
     assert.equal(compose(root, id, 'ps', '-q', 'postgres').stdout.trim(), postgresBefore, 'PostgreSQL 不应重建')
     assert.equal(compose(root, id, 'ps', '-q', 'redis').stdout.trim(), redisBefore, 'Redis 不应重建')
 
-    const expectedBackend = failHealth ? images[0] : (process.env.E2E_BACKEND_IMAGE || images[1])
+    const expectedBackend = failHealth ? images[2] : (process.env.E2E_BACKEND_IMAGE || images[1])
     const expectedFrontend = failHealth ? images[3] : images[4]
-    assert.equal(imageOf(backendAfter), expectedBackend, 'backend 镜像应为目标版本或自动恢复的原版本')
-    assert.equal(imageOf(workerAfter), expectedBackend, 'worker 应使用目标版本或自动恢复的原版本')
-    assert.equal(imageOf(gatewayAfter), expectedBackend, 'gateway 应使用目标版本或自动恢复的原版本')
+    assert.equal(imageOf(backendAfter), expectedBackend, 'backend 不得降级到不兼容的旧镜像')
+    if (!failHealth) {
+      assert.equal(imageOf(workerAfter), expectedBackend)
+      assert.equal(imageOf(gatewayAfter), expectedBackend)
+    }
     assert.equal(imageOf(frontendAfter), expectedFrontend, 'frontend 应使用新镜像或在失败时恢复原镜像')
-    for (const containerId of [backendAfter, workerAfter, gatewayAfter, frontendAfter]) {
+    for (const containerId of [backendAfter, workerAfter, gatewayAfter, frontendAfter].filter(Boolean)) {
       const mounts = JSON.parse(run('docker', ['inspect', '--format', '{{json .Mounts}}', containerId]).stdout)
       assert.equal(mounts.some((mount) => mount.Destination === '/var/run/docker.sock'), false, '分体业务容器不得挂 Docker socket')
     }
@@ -227,6 +243,10 @@ async function exerciseUpdate({ failHealth }) {
     assert.equal(fs.readFileSync(path.join(backupDir, 'backend.env'), 'utf8'), 'ADMIN_PASSWORD=synthetic-integration-secret\nSYNTHETIC_CONFIG=preserve-me\n')
     const sqlBackup = fs.readFileSync(path.join(backupDir, 'postgres.sql'), 'utf8')
     assert.match(sqlBackup, /split-db-marker/, '数据库备份应包含升级前测试记录')
+    const storageBackup = run('tar', ['-xOf', path.join(backupDir, 'users.tar'), 'users/sentinel'])
+    requireSuccess(storageBackup, '读取存储备份探针失败')
+    assert.equal(storageBackup.stdout, 'storage-marker')
+    if (failHealth) assert.equal(fs.readFileSync(path.join(backupDir, 'recovery-required'), 'utf8').trim(), 'manual-recovery')
     assert.equal(fs.readFileSync(path.join(root, 'backend', '.env'), 'utf8'), 'ADMIN_PASSWORD=synthetic-integration-secret\nSYNTHETIC_CONFIG=preserve-me\n', '用户配置不得被更新流程改写')
   } finally {
     const down = compose(root, id, 'down', '-v', '--remove-orphans')
@@ -240,7 +260,7 @@ test('隔离 Compose 栈完成分体升级并保留数据库、配置和数据�
   await exerciseUpdate({ failHealth: false })
 })
 
-test('隔离 Compose 栈健康检查失败后自动恢复旧 backend 且保留数据', { skip: !integrationEnabled }, async () => {
+test('隔离 Compose 栈迁移后健康失败保持新 backend 与停服状态，保留成套备份', { skip: !integrationEnabled }, async () => {
   await exerciseUpdate({ failHealth: true })
 })
 

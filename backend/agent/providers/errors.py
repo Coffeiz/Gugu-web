@@ -69,9 +69,12 @@ def openai_transient_error(exc: BaseException) -> bool:
     通用 APIStatusError，按状态码 ≥500 认定瞬时。
     """
     import openai
+    import httpx
 
     if isinstance(exc, (openai.RateLimitError, openai.APITimeoutError,
-                        openai.APIConnectionError, openai.InternalServerError)):
+                        openai.APIConnectionError, openai.InternalServerError,
+                        httpx.TimeoutException, httpx.NetworkError,
+                        httpx.RemoteProtocolError)):
         return True
     return (isinstance(exc, openai.APIStatusError)
             and int(getattr(exc, "status_code", 0) or 0) >= 500)
@@ -80,15 +83,17 @@ def openai_transient_error(exc: BaseException) -> bool:
 def openai_error_kind(exc: BaseException) -> str:
     """脱敏类别标签：随 retry 事件给前端状态行显示，不带上游正文。"""
     import openai
+    import httpx
 
     if isinstance(exc, openai.RateLimitError):
         return "rate_limited"
     status_code = getattr(exc, "status_code", None)
     if isinstance(status_code, int) and status_code == 529:
         return "overloaded"
-    if isinstance(exc, openai.APITimeoutError):
+    if isinstance(exc, (openai.APITimeoutError, httpx.TimeoutException)):
         return "timeout"
-    if isinstance(exc, openai.APIConnectionError):
+    if isinstance(exc, (openai.APIConnectionError, httpx.NetworkError,
+                        httpx.RemoteProtocolError)):
         return "network"
     if isinstance(exc, openai.InternalServerError):
         return "server_error"

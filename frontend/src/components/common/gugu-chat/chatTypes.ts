@@ -33,6 +33,15 @@ export interface ChatMessage {
   // Agent 交互协议：工具调用作为独立消息行展示，不混入助手正文。
   runId?: string
   roundId?: string
+  /** 生成失败/中断的持久化展示状态；独立于模型可见正文。 */
+  runOutcome?: {
+    status: 'failed' | 'interrupted'
+    runId?: string
+    errorCode?: string
+    messageKey?: string
+    messageParams?: Record<string, string | number | boolean>
+    completedAt?: string
+  }
   toolCallId?: string
   toolName?: string
   toolLabel?: string

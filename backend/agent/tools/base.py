@@ -682,7 +682,7 @@ class SkillRegistry:
                     )
                 automatic_mode_token = set_automatic_mode_enabled(automatic_mode)
                 handler_args = args
-                if name in {"shell", "run_script"}:
+                if name == "shell":
                     handler_args = dict(args)
                     handler_args["_session_id"] = session_id
                 try:

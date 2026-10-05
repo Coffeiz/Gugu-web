@@ -273,7 +273,14 @@ class KnowledgeSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "knowledge_id": {"type": "string"},
-                    "content": {"type": "string", "maxLength": 3000},
+                    "content": {
+                        "type": "string",
+                        "maxLength": 3000,
+                        "description": (
+                            "可省略以保留原正文；需要更新时传合并后的完整正文，必须是单个普通字符串，"
+                            "不要传对象、数组或 token/$text 分块包装。"
+                        ),
+                    },
                     "title": {"type": "string"},
                     "topic": {"type": "string"},
                     "keywords": {"type": "array", "items": {"type": "string"}},

@@ -9,6 +9,8 @@ from app.services.workspaces import (
     delete_workspace_directory,
     ensure_default_workspace_directory,
     list_workspace_directories,
+    get_workspace_by_directory,
+    resolve_shell_workspace_mounts,
     update_workspace_directory,
     scan_legacy_shell_directories,
 )
@@ -50,9 +52,9 @@ async def test_workspace_directory_crud_is_owned_and_removes_only_its_physical_r
 
     row = await create_workspace_directory(db, user_a.id, name="数据分析")
     await db.commit()
-    # 物理目录是不可变的 workspace-<id>：File.storage_key 永久引用它，
+    # 物理目录段创建后不可变：File.storage_key 永久引用它，
     # 显示名只活在 WorkspaceDirectory.name，rename 不能再动磁盘路径。
-    root = tmp_path / str(user_a.id) / f"workspace-{row.id}"
+    root = tmp_path / str(user_a.id) / "workspace" / row.directory_name
     assert root.is_dir()
     listed = await list_workspace_directories(db, user_a.id)
     assert [item.id for item in listed if item.id == row.id] == [row.id]
@@ -82,7 +84,47 @@ async def test_workspace_directory_crud_is_owned_and_removes_only_its_physical_r
     recreated = await create_workspace_directory(db, user_a.id, name="数据分析")
     await db.commit()
     assert recreated.id != row.id
-    assert (tmp_path / str(user_a.id) / f"workspace-{recreated.id}").is_dir()
+    assert (tmp_path / str(user_a.id) / "workspace" / recreated.directory_name).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_shell_workspace_namespace_is_owner_scoped_and_binding_only_selects_default_cwd(
+    db, user_a, user_b, tmp_path, monkeypatch,
+):
+    """普通授权只挂当前目录；完整授权才扩展到同一用户的工作区树。"""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    monkeypatch.setattr(settings.storage, "local_path", str(tmp_path))
+    default = await ensure_default_workspace_directory(db, user_a.id)
+    qq = await create_workspace_directory(db, user_a.id, name="QQ 工作区")
+    await ensure_default_workspace_directory(db, user_b.id)
+    await db.commit()
+    qq_binding = await get_workspace_by_directory(db, user_a.id, qq.id)
+    assert qq_binding is not None
+
+    default_mounts, default_cwd = await resolve_shell_workspace_mounts(
+        db, user_a.id, None, include_all=False,
+    )
+    assert default_cwd == "/workspace/default"
+    assert default_mounts == [("/workspace/default", tmp_path / str(user_a.id) / "workspace" / default.directory_name)]
+
+    bound_mounts, bound_cwd = await resolve_shell_workspace_mounts(
+        db, user_a.id, qq_binding.id, include_all=False,
+    )
+    assert bound_cwd == "/workspace/qq"
+    assert bound_mounts == [("/workspace/qq", tmp_path / str(user_a.id) / "workspace" / qq.directory_name)]
+
+    all_mounts, all_cwd = await resolve_shell_workspace_mounts(
+        db, user_a.id, qq_binding.id, include_all=True,
+    )
+    assert all_cwd == "/workspace/qq"
+    assert dict(all_mounts) == {
+        "/workspace/default": tmp_path / str(user_a.id) / "workspace" / default.directory_name,
+        "/workspace/qq": tmp_path / str(user_a.id) / "workspace" / qq.directory_name,
+    }
+    assert all(str(user_b.id) not in str(path) for _name, path in all_mounts)
 
 
 @pytest.mark.asyncio
@@ -249,7 +291,7 @@ async def test_workspace_directory_name_rules_shared_by_create_and_rename(db, us
 
 @pytest.mark.asyncio
 async def test_workspace_directory_display_name_unique_at_db_level(db, user_a):
-    """directory_name 按 id 生成后，显示名唯一性由部分唯一索引兜底并发创建。"""
+    """物理目录段冻结后，显示名唯一性由部分唯一索引兜底并发创建。"""
     from sqlalchemy.exc import IntegrityError
 
     db.add(WorkspaceDirectory(user_id=user_a.id, name="撞名", directory_name="workspace-901"))

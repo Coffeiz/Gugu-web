@@ -21,8 +21,8 @@
             @error="($event.target as HTMLElement).style.display='none'" />
         </template>
         <template #name>
-          <RenameInput v-if="renamingId === f.id" v-model="renameText" v-model:extension="renameExtension"
-            :extension-required="f.ext.toUpperCase() !== 'FILE'"
+          <RenameInput v-if="renamingId === f.id" v-model="renameText" :extension="f.ext.toUpperCase() === 'FILE' || !f.name ? undefined : renameExtension" @update:extension="renameExtension = $event"
+            :extension-required="f.ext.toUpperCase() !== 'FILE' && !!f.name"
             @commit="commitRename(f)" @cancel="cancelRename" />
           <template v-else>{{ f.name }}</template>
         </template>
@@ -178,21 +178,23 @@ function openFile(f: any) {
 
 async function startRename(f: any) {
   renamingId.value = f.id
-  renameText.value = f.name
-  renameExtension.value = f.ext.toUpperCase() === 'FILE' ? '' : f.ext.toLowerCase()
+  const isLegacyDotfile = !f.name && f.ext.toUpperCase() !== 'FILE'
+  renameText.value = isLegacyDotfile ? `.${f.ext.toLowerCase()}` : f.name
+  renameExtension.value = isLegacyDotfile || f.ext.toUpperCase() === 'FILE' ? '' : f.ext.toLowerCase()
 }
 
 async function commitRename(f: any) {
   const name = renameText.value.trim()
   const normalizedExtension = normalizeEditableExtension(renameExtension.value)
+  const isLegacyDotfile = !f.name && f.ext.toUpperCase() !== 'FILE'
   if (!name) { cancelRename(); return }
-  if (normalizedExtension == null || (!normalizedExtension && f.ext.toUpperCase() !== 'FILE')) {
+  if (normalizedExtension == null || (!normalizedExtension && f.ext.toUpperCase() !== 'FILE' && !isLegacyDotfile)) {
     showAppError(t('filesUi.extensionInvalid'))
     await nextTick()
     panelRef.value?.querySelector<HTMLInputElement>('.rename-file-extension-input')?.focus()
     return
   }
-  const extension = normalizedExtension || undefined
+  const extension = isLegacyDotfile ? 'FILE' : normalizedExtension || undefined
   const nextExtension = extension ?? f.ext
   renamingId.value = null
   renameText.value = ''

@@ -2,8 +2,7 @@
 
 ## 测试层级
 
-- 纯函数、store、composable、InteractionSync 和竞态逻辑放在 `frontend/src/**.test.ts` 或 `frontend/test/`，使用 Vitest。
-- 全局样式、主题 token、公共组件结构和样式 owner 使用 `frontend/src/assets/styles/*regression.test.ts` 或现有 CSS 检查脚本。
+- 所有 Vitest 测试统一放在 `frontend/tests/<功能域>/`，纯函数、store、composable、InteractionSync、竞态和样式回归按产品功能或跨模块领域归档；`frontend/src/` 只保留生产代码。
 - 页面跨组件流程使用 `frontend/e2e/` 的 Playwright；稳定主路径集中在 `test:e2e:stable`，拖拽和阶段性实验路径集中在 `test:e2e:experimental`。
 - E2E 默认连接已启动的 devserver，通过 `PLAYWRIGHT_BASE_URL` 切换环境，不在测试中重复启动前后端。
 

@@ -1,7 +1,7 @@
 """create_file 显式 workspace 空间与工具名污染兜底回归。
 
 真实故障链：MiniMax 偶发把 XML 参数片段拼进工具名（未知工具），随后按
-run_script 的词汇把 create_file 的 space 传成 workspace 又被 schema enum 拒掉，
+历史工具术语把 create_file 的 space 传成 workspace 又被 schema enum 拒掉，
 绕到 personal 再被绑定守卫拒，模型据此误判「环境死锁」。
 """
 import json

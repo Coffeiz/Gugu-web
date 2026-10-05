@@ -192,13 +192,15 @@ export function useChatWindow(options: UseChatWindowOptions) {
     }
   })
 
-  // 播放器联动：小窗打开时顶到窗口上方，其余情况悬在 fab 上方
+  // 播放器联动：小窗展开时放到窗口后面；紧凑聊天窗与播放器同层，利用 DOM 顺序
+  // 让聊天窗背景覆盖播放器投到聊天区域内的阴影，同时保留播放器本体的独立空隙和点击区。
+  // 聊天窗关闭时播放器仍悬在 fab 上方。
   const miniPlayerStyle = computed(() => {
     const bottom = (open.value && !expanded.value) ? 88 + smallH.value + 8 : 88
     const origin = (open.value && !expanded.value)
       ? '50% 50%'
       : `calc(100% - 25px) calc(100% + ${bottom - 53}px)`
-    const zIndex = expanded.value ? chatZ.value - 1 : chatZ.value + 1
+    const zIndex = expanded.value ? chatZ.value - 1 : open.value ? chatZ.value : chatZ.value + 1
     return { bottom: `${bottom}px`, transformOrigin: origin, zIndex }
   })
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 
 from app.core.ownership import get_owned
-from app.models import File, MindMap, Project
+from app.models import File, MindMap, Project, WorkspaceDirectory
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key, _resolve_conflict, _safe_name
 
@@ -30,9 +30,19 @@ def is_legacy_trash_key(file: File) -> bool:
     return bool(re.match(rf"^{re.escape(str(file.user_id))}/trash/{file.id}/", file.storage_key))
 
 
+async def _restore_directory_name(f: File, db) -> str:
+    if f.workspace_directory_id is None:
+        return ""
+    directory = await get_owned(db, WorkspaceDirectory, f.workspace_directory_id, f.user_id)
+    if directory is None or directory.deleted_at is not None:
+        raise LookupError("工作区目录不存在")
+    return directory.directory_name
+
+
 async def original_storage_key(f: File, db) -> str:
     """按文件当前归属重建进入回收站前的逻辑 key。"""
     project_name = project_year = project_month = folder_path = mind_map_title = ""
+    directory_name = await _restore_directory_name(f, db)
     if f.project_id:
         p = await get_owned(db, Project, f.project_id, f.user_id)
         if p:
@@ -40,7 +50,7 @@ async def original_storage_key(f: File, db) -> str:
             date_str = p.start_date or p.created_at.strftime("%Y-%m-%d")
             project_year, project_month = date_str[:4], date_str[5:7]
     if f.folder_id:
-        resolved = await resolve_folder_path(db, f.user_id, f.folder_id, f.project_id)
+        resolved = await resolve_folder_path(db, f.user_id, f.folder_id, f.project_id, f.workspace_directory_id)
         if resolved:
             _, folder_path = resolved
     if f.mind_map_id:
@@ -53,6 +63,7 @@ async def original_storage_key(f: File, db) -> str:
         project_year=project_year, project_month=project_month,
         folder_path=folder_path, mind_map_title=mind_map_title,
         mind_map_id=f.mind_map_id or 0,
+        workspace_directory_name=directory_name,
     )
 
 
