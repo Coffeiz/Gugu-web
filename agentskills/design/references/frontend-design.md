@@ -334,6 +334,7 @@ function darkenHex(hex, amount = 0.60) {
 
 **表单控件**：
 
+- **字段标题交互（全站规范）**：文本、数字、日期、邮箱、URL、密码等输入框的标题与控件分开布局；点击标题不应触发控件聚焦。不要用包裹输入框的 `<label>` 或指向输入框的 `<label for>` 实现布局，改用 `aria-label` / `aria-labelledby` 提供可访问名称。复选框和单选框保留 label 可点击语义。全局回归由 `frontend/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面。
 - `field-input`：`padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.6); border: 1px solid rgba(0,0,0,0.1)`，focus 时蓝紫色光晕
 - `section-label`：`10px / 600 / uppercase / letter-spacing: 0.07em`，小型大写标题
 - `col-divider`：`border-top: 1px solid rgba(0,0,0,0.07)`，区块间水平线
