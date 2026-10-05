@@ -407,6 +407,7 @@ class SmtpSettings(BaseModel):
     to_addr:  str           = Field("", description="反馈通知收件人地址")
     test_to_addr: str       = Field("", description="SMTP 测试邮件收件人地址")
     feedback_email_enabled: bool = Field(True, description="是否发送用户反馈邮件提醒")
+    registration_verification_enabled: bool = Field(True, description="是否要求新用户注册时完成邮箱验证")
     use_ssl:  bool          = Field(True, description="True=SSL(465)，False=STARTTLS(587)")
 
 

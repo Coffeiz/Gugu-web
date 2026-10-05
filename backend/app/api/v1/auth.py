@@ -103,7 +103,10 @@ async def register(body: UserRegister, request: Request, response: Response, db:
     if await find_user_by_name_or_email(db, body.username, email):
         raise HTTPException(400, "用户名或邮箱已被注册")
 
-    verification_required = is_system_email_available()
+    verification_required = (
+        get_settings().smtp.registration_verification_enabled
+        and is_system_email_available()
+    )
     if verification_required:
         if not body.verification_code:
             raise HTTPException(status_code=400, detail="请先完成邮箱验证码验证")
@@ -155,12 +158,12 @@ async def send_registration_code(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """发送注册验证码。SMTP 未启用时关闭该能力；对外响应不透露邮箱是否已注册。"""
+    """发送注册验证码。管理员关闭注册验证或系统邮件不可用时关闭该能力。"""
     await rate_limit(
         request, "register-code", 5, 3600,
         device_limit=3, device_window=3600, fail_closed=True,
     )
-    if not is_system_email_available():
+    if not (get_settings().smtp.registration_verification_enabled and is_system_email_available()):
         raise HTTPException(status_code=503, detail="邮箱验证码注册当前不可用")
     try:
         email = normalize_email(body.email)
