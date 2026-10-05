@@ -773,6 +773,18 @@ async def get_greeting(
     return {"text": text if enabled else "", "enabled": enabled}
 
 
+@router.get("/pending-queues/imported-drafts")
+async def list_imported_draft_queues(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出当前用户通过数据导入恢复的新对话草稿。"""
+    queues = await conversation_pending_queue.list_imported_draft_queues(
+        db, user_id=current_user.id,
+    )
+    return {"queues": queues}
+
+
 @router.get("/pending-queues/{queue_id}")
 async def get_pending_queue_by_id(
     queue_id: str = Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),

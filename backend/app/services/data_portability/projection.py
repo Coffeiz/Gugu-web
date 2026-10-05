@@ -261,10 +261,12 @@ async def project_record(
         target_id = getattr(row, source_field)
         if target_id is None:
             continue
+        target_category = _CATEGORY_BY_TYPE.get(target_type)
+        if selected_categories is not None and target_category not in selected_categories:
+            # 不得输出指向未随归档导出的对象的关系。
+            continue
         target_portable_id = identities.get((target_type, str(target_id)))
         if target_portable_id is None:
-            if selected_categories is not None and _CATEGORY_BY_TYPE.get(target_type) not in selected_categories:
-                continue
             # Legacy dangling references remain as explicit snapshots only for MindNode below.
             if spec.record_type == "mind_node":
                 continue
@@ -276,15 +278,22 @@ async def project_record(
     if spec.record_type == "mind_node" and row.kind == "ref" and row.ref_type and row.ref_id is not None:
         target_type = row.ref_type
         target_portable_id = identities.get((target_type, str(row.ref_id)))
-        if target_portable_id:
+        target_included = (
+            selected_categories is None
+            or _CATEGORY_BY_TYPE.get(target_type) in selected_categories
+        )
+        if target_portable_id and target_included:
             relations.append(PortableRelation(
                 relation_type="referenced_object", target_type=target_type,
                 target_portable_id=target_portable_id,
             ))
+        # Snapshot data is safe to retain without the target; it lets the importer
+        # preserve the visible note instead of creating an invalid reference proxy.
+        if row.ref_snapshot is not None:
             fields["reference_snapshot"] = _json_value(row.ref_snapshot)
-        elif selected_categories is None or _CATEGORY_BY_TYPE.get(target_type) in selected_categories:
-            # Deleted business records intentionally retain a snapshot-only mind ref.
-            fields["reference_snapshot"] = _json_value(row.ref_snapshot)
+        if not any(item.relation_type == "referenced_object" for item in relations):
+            # A ref without an exported target cannot satisfy MindNode's DB invariant.
+            fields["kind"] = "note"
 
     if spec.record_type == "conversation":
         # 不导出 platform ids、execution state、Provider/API 快照及上下文 lease。

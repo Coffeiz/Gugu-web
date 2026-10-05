@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
 from datetime import datetime
 from uuid import UUID
 
@@ -168,6 +169,25 @@ async def get_import_job(db: AsyncSession, user_id: UUID, job_id: UUID, *, lock:
     return (await db.execute(query)).scalar_one_or_none()
 
 
+async def resume_preflight_import(
+    db: AsyncSession, *, user_id: UUID, job_id: UUID,
+) -> tuple[DataImportJob, str]:
+    """为当前用户尚未提交的预检任务轮换一次性确认令牌。"""
+    row = await get_import_job(db, user_id, job_id, lock=True)
+    if row is None:
+        raise PortabilityJobError(404, "找不到此导入任务")
+    if (row.mode != "preflight" or row.status != "preview_ready" or not row.staging_key
+            or not row.preview or row.expires_at is None or row.expires_at <= now_utc()):
+        raise PortabilityJobError(409, "此预检任务已过期或不能继续")
+
+    token = secrets.token_urlsafe(32)
+    row.import_token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    row.updated_at = now_utc()
+    await db.commit()
+    await db.refresh(row)
+    return row, token
+
+
 async def list_import_jobs(db: AsyncSession, user_id: UUID) -> list[DataImportJob]:
     return (await db.execute(select(DataImportJob).where(
         DataImportJob.user_id == user_id,
@@ -218,6 +238,24 @@ async def cancel_import_job(db: AsyncSession, *, user_id: UUID, job_id: UUID) ->
     await db.commit()
     await db.refresh(row)
     return row, staging_key
+
+
+async def delete_import_job(
+    db: AsyncSession, *, user_id: UUID, job_id: UUID,
+) -> tuple[DataImportJob, tuple[str, ...]]:
+    """只删除可安全丢弃的预检/失败任务，不触碰已导入业务数据。"""
+    row = await get_import_job(db, user_id, job_id, lock=True)
+    if row is None:
+        raise PortabilityJobError(404, "找不到此导入任务")
+    if row.status not in {"preview_ready", "failed", "canceled", "expired"}:
+        raise PortabilityJobError(409, "此导入任务当前不能删除")
+    storage_keys = tuple(dict.fromkeys(key for key in (row.staging_key, row.rollback_key) if key))
+    return row, storage_keys
+
+
+async def finish_delete_import_job(db: AsyncSession, row: DataImportJob) -> None:
+    await db.delete(row)
+    await db.commit()
 
 
 async def create_rollback_job(
@@ -287,7 +325,7 @@ async def list_export_jobs(db: AsyncSession, user_id: UUID) -> list[DataExportJo
 
 
 async def cancel_export_job(db: AsyncSession, *, user_id: UUID, job_id: UUID) -> DataExportJob:
-    row = await get_export_job(db, user_id, job_id)
+    row = await get_export_job(db, user_id, job_id, lock=True)
     if row is None:
         raise PortabilityJobError(404, "找不到此导出任务")
     timestamp = now_utc()

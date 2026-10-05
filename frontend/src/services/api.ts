@@ -203,6 +203,7 @@ export interface DataImportPreview {
   memory?: { add: Record<string, number>; skip: Record<string, number>; add_total: number; skip_total: number }
   replace?: { current: Record<string, number>; incoming: Record<string, number> }
   conflicts?: { total: number; items: Array<{ source_type: string; portable_id: string; fields: string[]; kind: string }> }
+  compatibility?: { mind_refs_as_notes?: number }
 }
 
 export interface DataImportJob {
@@ -250,6 +251,8 @@ export const dataPortabilityApi = {
   },
   getImport: (jobId: string) => get<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}`),
   listImports: () => get<DataImportJob[]>('/data-portability/imports'),
+  deleteImport: (jobId: string) => del<void>(`/data-portability/imports/${encodeURIComponent(jobId)}`),
+  resumeImport: (jobId: string) => post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/resume`),
   applyImport: (jobId: string, mode: 'incremental' | 'replace', importToken: string, idempotencyKey: string) =>
     post<DataImportJob>(`/data-portability/imports/${encodeURIComponent(jobId)}/apply`, {
       mode, import_token: importToken, idempotency_key: idempotencyKey,
@@ -946,6 +949,7 @@ export const agentApi = {
   },
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
+  listImportedDraftQueues: () => get<{ queues: Array<{ queue_id: string; items: Array<{ key: number; queue_id: string; session_id: null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }> }>('/agent/pending-queues/imported-drafts'),
   updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>
     put(`/agent/pending-queues/${encodeURIComponent(queueId)}`, { items }),
   patchPendingQueue: (queueId: string, sessionId: number, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>, removeKeys: number[] = []) =>

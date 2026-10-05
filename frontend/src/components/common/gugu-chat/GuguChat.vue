@@ -442,16 +442,25 @@ const visiblePendingQueue = computed(() => pendingQueue.value.filter(item => ite
 let stopPendingQueueRecovery = false
 
 async function recoverPendingQueue() {
-  if (!isPendingQueueRecoveryNeeded()) return
   try {
-    const snapshot = await agentApi.getPendingQueue(getDraftPendingQueueId())
+    const localSnapshot = isPendingQueueRecoveryNeeded()
+      ? await agentApi.getPendingQueue(getDraftPendingQueueId()).catch(() => ({ sessionId: null, items: [] }))
+      : { sessionId: null, items: [] }
+    const importedSnapshots = await agentApi.listImportedDraftQueues().catch(() => ({ queues: [] }))
     if (stopPendingQueueRecovery || sessionId.value != null) return
-    restorePendingQueueForDraft(snapshot.items)
-    setPendingQueueRecoveryNeeded(snapshot.items.length > 0 || pendingQueue.value.length > 0)
+    const importedItems = importedSnapshots.queues.flatMap(queue => queue.items)
+    restorePendingQueueForDraft([...localSnapshot.items, ...importedItems])
+    setPendingQueueRecoveryNeeded(
+      localSnapshot.items.length > 0 || importedItems.length > 0 || pendingQueue.value.length > 0,
+    )
   } catch {
     // 不在页面后台轮询；恢复标记保留，下次打开聊天时再读服务端快照。
   }
 }
+
+watch(sessionId, (current, previous) => {
+  if (current === null && previous !== null) void recoverPendingQueue()
+})
 
 // 授权/撤销成功后立即更新标题栏；会话列表刷新只负责把本地状态重新校准到服务端。
 const sessionFilesystemAuthorized = ref(false)

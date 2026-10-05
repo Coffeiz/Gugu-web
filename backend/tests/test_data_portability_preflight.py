@@ -44,13 +44,28 @@ async def test_preflight_retains_archive_stream_through_conflict_preview(db, use
         stream.write(record_bytes)
         return 1
 
+    legacy_ref_bytes = (json.dumps({
+        "record_schema": "gugu.mind_node.v1",
+        "portable_id": "legacy-ref-node",
+        "source_type": "mind_node",
+        "fields": {"kind": "ref", "title": "项目快照"},
+        "relations": [],
+    }, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+    async def write_legacy_ref(stream):
+        stream.write(legacy_ref_bytes)
+        return 1
+
     portable_archive = io.BytesIO()
     context = f"data-portability:{user_a.id.hex}:{uuid4().hex}"
     export_id = uuid4()
     await build_encrypted_archive(
         portable_archive, context=context, origin_id=uuid4(), export_id=export_id,
-        producers=[ArchiveProducer("records/skills.jsonl", "skills", write_record)],
-        complete=False, included_categories={"skills"},
+        producers=[
+            ArchiveProducer("records/skills.jsonl", "skills", write_record),
+            ArchiveProducer("records/mind/nodes.jsonl", "mind", write_legacy_ref),
+        ],
+        complete=False, included_categories={"skills", "mind"},
     )
     plain_zip = EncryptedArchiveReader(io.BytesIO(portable_archive.getvalue()), context).read()
     job = DataImportJob(
@@ -80,3 +95,4 @@ async def test_preflight_retains_archive_stream_through_conflict_preview(db, use
     assert job.status == "preview_ready"
     assert job.preview["conflicts"]["total"] == 1
     assert job.preview["conflicts"]["items"][0]["fields"] == ["slug"]
+    assert job.preview["compatibility"]["mind_refs_as_notes"] == 1

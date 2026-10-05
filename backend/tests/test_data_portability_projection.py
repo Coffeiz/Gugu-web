@@ -1,10 +1,11 @@
 import io
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
-from app.models import ChatAttachment, ConversationMessage, ConversationPendingQueue, ConversationSession, Project
+from app.models import ChatAttachment, ConversationMessage, ConversationPendingQueue, ConversationSession, File, MindNode, Project
 from app.services.data_portability.projection import (
     RECORD_SPECS, ensure_origin, ensure_portable_identities, project_record,
     write_record_stream,
@@ -39,6 +40,35 @@ async def test_projection_uses_stable_random_identity_and_explicit_project_allow
     assert record.fields["name"] == "迁移样例"
     assert "id" not in record.fields and "user_id" not in record.fields
     assert "storage_key" not in record.fields and "api_key" not in record.fields
+
+
+@pytest.mark.asyncio
+async def test_projection_downgrades_reference_when_target_category_is_not_exported(db, user_a):
+    target = File(
+        user_id=user_a.id, display_name="说明文档", ext="md", storage_key="private/object",
+    )
+    db.add(target)
+    await db.flush()
+    node = MindNode(
+        user_id=user_a.id, kind="ref", title="说明文档", content_md="引用快照",
+        content_plain="引用快照", ref_type="file", ref_id=target.id,
+        ref_snapshot={"summary": "引用快照"},
+    )
+    db.add(node)
+    await db.flush()
+
+    record = await project_record(
+        db, user_id=user_a.id, origin_id=uuid4(),
+        spec=next(spec for spec in RECORD_SPECS if spec.record_type == "mind_node"),
+        row=node,
+        identities={("mind_node", str(node.id)): "portable-node", ("file", str(target.id)): "portable-file"},
+        selected_categories={"mind"},
+    )
+
+    assert record.fields["kind"] == "note"
+    assert record.fields["reference_snapshot"] == {"summary": "引用快照"}
+    assert record.relations == []
+    assert "ref_id" not in record.fields and "storage_key" not in record.fields
 
 
 @pytest.mark.asyncio

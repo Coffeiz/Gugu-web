@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 
 from app.core.redaction import diag_log
 from app.core.tz import now_utc
-from app.models import DataImportJob, DataPortableIdentity
+from app.models import DataImportJob, DataPortableIdentity, Workspace, WorkspaceDirectory
 from app.services.data_portability.crypto_stream import EncryptedArchiveReader
 from app.services.data_portability.schema import PortableEntityRecord
 from app.services.data_portability.projection import RECORD_SPECS, count_owned_records
@@ -71,7 +71,21 @@ async def process_import_preflight(job: ClaimedJob, *, worker_id: str, session_f
                 DataPortableIdentity.origin_id == result.manifest.origin_id,
             ))).all()
             identities = {(str(source_type), str(portable_id)) for source_type, portable_id in known_rows}
+            target_default_directory_id = (await identity_db.execute(select(WorkspaceDirectory.id).where(
+                WorkspaceDirectory.user_id == job.user_id,
+                WorkspaceDirectory.is_default.is_(True),
+                WorkspaceDirectory.deleted_at.is_(None),
+            ).limit(1))).scalar_one_or_none()
+            has_target_default_directory = target_default_directory_id is not None
+            has_target_default_workspace = False
+            if target_default_directory_id is not None:
+                has_target_default_workspace = (await identity_db.execute(select(Workspace.id).where(
+                    Workspace.user_id == job.user_id,
+                    Workspace.directory_id == target_default_directory_id,
+                    Workspace.kind == "directory",
+                ).limit(1))).scalar_one_or_none() is not None
         source_counts, existing_counts = {}, {}
+        mind_refs_as_notes = 0
         memory_source_counts = {"owner_memory_file": 0, "im_memory_file": 0}
         memory_existing_counts = {"owner_memory_file": 0, "im_memory_file": 0}
         source.seek(0)
@@ -90,9 +104,27 @@ async def process_import_preflight(job: ClaimedJob, *, worker_id: str, session_f
                         record = PortableEntityRecord.model_validate_json(line)
                         if record.source_type == "account":
                             continue
+                        if record.source_type == "mind_node" and record.fields.get("kind") == "ref" and not any(
+                            relation.relation_type == "referenced_object" for relation in record.relations
+                        ):
+                            mind_refs_as_notes += 1
                         source_counts[record.source_type] = source_counts.get(record.source_type, 0) + 1
                         identity = (record.source_type, record.portable_id)
                         if identity in identities:
+                            existing_counts[record.source_type] = existing_counts.get(record.source_type, 0) + 1
+                        elif (
+                            record.source_type == "workspace_directory"
+                            and record.fields.get("is_default") is True
+                            and has_target_default_directory
+                        ):
+                            # 目标端的系统默认目录作为同一逻辑对象复用，而不是重复创建。
+                            existing_counts[record.source_type] = existing_counts.get(record.source_type, 0) + 1
+                        elif (
+                            record.source_type == "workspace"
+                            and record.fields.get("is_default") is True
+                            and has_target_default_workspace
+                        ):
+                            # 目标端已有默认绑定时复用，避免导入出第二条默认绑定。
                             existing_counts[record.source_type] = existing_counts.get(record.source_type, 0) + 1
             for entry in result.manifest.entries:
                 if entry.path.startswith(("memory/owner/", "memory/legacy/")):
@@ -139,6 +171,7 @@ async def process_import_preflight(job: ClaimedJob, *, worker_id: str, session_f
                 "add_total": sum(memory_add_counts.values()),
                 "skip_total": sum(memory_existing_counts.values()),
             },
+            "compatibility": {"mind_refs_as_notes": mind_refs_as_notes},
             "categories": {
                 name: {
                     "included": category.included,

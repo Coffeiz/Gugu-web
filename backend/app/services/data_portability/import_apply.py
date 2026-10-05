@@ -13,7 +13,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ChatAttachment, DataPortableIdentity, MemoryScopeTombstone, User, UserPreferences
+from app.models import (
+    ChatAttachment, DataPortableIdentity, MemoryScopeTombstone, User, UserPreferences,
+    Workspace, WorkspaceDirectory,
+)
 from app.services.data_portability.projection import RECORD_SPECS
 from app.services.data_portability.schema import PortableArchiveManifest, PortableEntityRecord
 from app.services.storage import get_storage
@@ -89,6 +92,7 @@ async def apply_incremental_archive(
             if source_key in existing:
                 counts["skipped"] += 1
                 continue
+            reused_default_record = False
             if record_type == "account":
                 if replace:
                     # 只还原展示资料；用户名、邮箱和认证身份始终由目标账号保留。
@@ -123,55 +127,89 @@ async def apply_incremental_archive(
                 if record_type == "mind_node" and "reference_snapshot" in record.fields:
                     values["ref_snapshot"] = record.fields["reference_snapshot"]
                 _apply_safety_defaults(record_type, values, user)
-                if record_type in {"file", "chat_attachment"}:
-                    values["storage_key"] = await _store_asset(
-                        archive, record.fields.get("asset"), user_id=user.id, job_id=job_id,
-                        written_storage_keys=written_storage_keys,
-                    )
-                    if record_type == "chat_attachment":
-                        values["attach_id"] = uuid.uuid4().hex
                 deferred: list[tuple[str, str, str]] = []
-                for relation in record.relations:
-                    target_id = target_ids.get((relation.target_type, relation.target_portable_id))
-                    ref_spec = next((item for item in spec.refs if item[1] == relation.relation_type), None)
-                    if ref_spec is None and record_type == "mind_node" and relation.relation_type == "referenced_object":
-                        if target_id is None:
-                            deferred.append((relation.relation_type, relation.target_type, relation.target_portable_id))
-                        else:
-                            target_model = _SPEC_BY_TYPE[relation.target_type].model
-                            target_pk = _SPEC_BY_TYPE[relation.target_type].id_field
-                            values["ref_type"] = relation.target_type
-                            values["ref_id"] = target_model.__table__.columns[target_pk].type.python_type(target_id)
-                        continue
-                    if ref_spec is None:
-                        raise ValueError("归档含有不支持的对象关系")
-                    if target_id is None:
-                        # 文件夹父子关系和 Mind 引用可能前向指向同类型对象，稍后回填。
-                        deferred.append((relation.relation_type, relation.target_type, relation.target_portable_id))
-                        continue
-                    target_spec = _SPEC_BY_TYPE[relation.target_type]
-                    target_python_type = target_spec.model.__table__.columns[target_spec.id_field].type.python_type
-                    values[ref_spec[0]] = target_python_type(target_id)
-                if record.deleted_at:
-                    values["deleted_at"] = _datetime(record.deleted_at)
-                if record.created_at and "created_at" in spec.model.__table__.columns:
-                    values["created_at"] = _datetime(record.created_at)
-                if record.updated_at and "updated_at" in spec.model.__table__.columns:
-                    values["updated_at"] = _datetime(record.updated_at)
-                if record_type == "file":
-                    await get_quota(db, user.id, FILE_LIBRARY)
-                row = spec.model(**values)
-                db.add(row)
-                await db.flush()
-                if record_type == "workspace_directory":
-                    row.directory_name = "default" if row.is_default else f"workspace-{row.id}"
-                    await db.flush()
-                elif record_type == "file" and row.deleted_at is None:
-                    await record_usage(
-                        db, user.id, category=FILE_LIBRARY, delta_bytes=int(row.size_bytes or 0),
-                        operation="data_import", resource_type="file", resource_id=row.id,
-                        idempotency_key=f"data-import:{job_id}:file:{record.portable_id}",
+                row = None
+                if record_type == "workspace_directory" and values.get("is_default") is True:
+                    row = (await db.execute(select(WorkspaceDirectory).where(
+                        WorkspaceDirectory.user_id == user.id,
+                        WorkspaceDirectory.is_default.is_(True),
+                        WorkspaceDirectory.deleted_at.is_(None),
+                    ).limit(1))).scalar_one_or_none()
+                elif record_type == "workspace" and values.get("is_default") is True:
+                    directory_relation = next(
+                        (item for item in record.relations if item.relation_type == "directory"), None
                     )
+                    mapped_directory_id = (
+                        target_ids.get(("workspace_directory", directory_relation.target_portable_id))
+                        if directory_relation is not None else None
+                    )
+                    if mapped_directory_id is not None:
+                        row = (await db.execute(select(Workspace).where(
+                            Workspace.user_id == user.id,
+                            Workspace.directory_id == int(mapped_directory_id),
+                            Workspace.kind == "directory",
+                        ).limit(1))).scalar_one_or_none()
+                reused_default_record = row is not None
+                if not reused_default_record:
+                    if record_type in {"file", "chat_attachment"}:
+                        values["storage_key"] = await _store_asset(
+                            archive, record.fields.get("asset"), user_id=user.id, job_id=job_id,
+                            written_storage_keys=written_storage_keys,
+                        )
+                        if record_type == "chat_attachment":
+                            values["attach_id"] = uuid.uuid4().hex
+                    for relation in record.relations:
+                        target_id = target_ids.get((relation.target_type, relation.target_portable_id))
+                        ref_spec = next((item for item in spec.refs if item[1] == relation.relation_type), None)
+                        if ref_spec is None and record_type == "mind_node" and relation.relation_type == "referenced_object":
+                            if target_id is None:
+                                # 引用目标未能映射时保留为普通笔记快照，避免写入违反
+                                # ck_mind_node_ref_shape 的半成品 ref。
+                                values["kind"] = "note"
+                                values.pop("ref_type", None)
+                                values.pop("ref_id", None)
+                            else:
+                                target_model = _SPEC_BY_TYPE[relation.target_type].model
+                                target_pk = _SPEC_BY_TYPE[relation.target_type].id_field
+                                values["ref_type"] = relation.target_type
+                                values["ref_id"] = target_model.__table__.columns[target_pk].type.python_type(target_id)
+                            continue
+                        if ref_spec is None:
+                            raise ValueError("归档含有不支持的对象关系")
+                        if target_id is None:
+                            # 文件夹父子关系和 Mind 引用可能前向指向同类型对象，稍后回填。
+                            deferred.append((relation.relation_type, relation.target_type, relation.target_portable_id))
+                            continue
+                        target_spec = _SPEC_BY_TYPE[relation.target_type]
+                        target_python_type = target_spec.model.__table__.columns[target_spec.id_field].type.python_type
+                        values[ref_spec[0]] = target_python_type(target_id)
+                    if record_type == "mind_node" and values.get("kind") == "ref" and (
+                        values.get("ref_type") is None or values.get("ref_id") is None
+                    ):
+                        # 兼容旧归档：目标类别未导出时曾生成没有关系的 kind=ref。
+                        values["kind"] = "note"
+                        values.pop("ref_type", None)
+                        values.pop("ref_id", None)
+                    if record.deleted_at:
+                        values["deleted_at"] = _datetime(record.deleted_at)
+                    if record.created_at and "created_at" in spec.model.__table__.columns:
+                        values["created_at"] = _datetime(record.created_at)
+                    if record.updated_at and "updated_at" in spec.model.__table__.columns:
+                        values["updated_at"] = _datetime(record.updated_at)
+                    if record_type == "file":
+                        await get_quota(db, user.id, FILE_LIBRARY)
+                    row = spec.model(**values)
+                    db.add(row)
+                    await db.flush()
+                    if record_type == "workspace_directory":
+                        row.directory_name = "default" if row.is_default else f"workspace-{row.id}"
+                        await db.flush()
+                    elif record_type == "file" and row.deleted_at is None:
+                        await record_usage(
+                            db, user.id, category=FILE_LIBRARY, delta_bytes=int(row.size_bytes or 0),
+                            operation="data_import", resource_type="file", resource_id=row.id,
+                            idempotency_key=f"data-import:{job_id}:file:{record.portable_id}",
+                        )
                 target_id = str(getattr(row, spec.id_field))
                 target_type = record_type
                 if record_type == "chat_attachment":
@@ -190,7 +228,10 @@ async def apply_incremental_archive(
                 target_id=target_id,
             ))
             target_ids[source_key] = target_id
-            counts["created"] += 1
+            if reused_default_record:
+                counts["skipped"] += 1
+            else:
+                counts["created"] += 1
             await db.flush()
             if record_type == "message":
                 for field_name in ("files", "content_json", "display_timeline", "references"):
@@ -218,6 +259,12 @@ async def apply_incremental_archive(
         target_pk = _SPEC_BY_TYPE[target_type].id_field
         pk_type = target_model.__table__.columns[target_pk].type.python_type
         setattr(row, field_name, pk_type(target_id))
+    # 嵌入式消息引用在所有记录创建后恢复；同步本轮新建目标，但附件需保留
+    # attach_id（不是数据库主键），其映射已在创建附件时单独写入。
+    embedded_targets.update({
+        key: target_id for key, target_id in target_ids.items()
+        if key[0] != "chat_attachment"
+    })
     for row, field_name, value in pending_embedded:
         setattr(row, field_name, _restore_embedded_refs(value, embedded_targets))
     memory_counts = await _import_memory_files(
@@ -285,6 +332,9 @@ def _apply_safety_defaults(record_type: str, values: dict[str, Any], user: User)
         for name in ("secret", "token", "client_secret", "app_secret"):
             values.pop(name, None)
     elif record_type == "mcp_config":
+        # 导出会移除含密钥或无法安全迁移的端点；目标列仍为 NOT NULL，
+        # 因此用空端点占位并禁用，要求用户在目标环境重新配置。
+        values["endpoint"] = values.get("endpoint") or ""
         values["enabled"] = False
     elif record_type == "conversation":
         # 外部平台会话身份不跨服务器迁移。
@@ -297,8 +347,12 @@ def _apply_safety_defaults(record_type: str, values: dict[str, Any], user: User)
     elif record_type == "pending_queue":
         from app.services.conversation_pending_queue import session_pending_queue_id
         session_id = values.get("session_id")
-        if session_id is not None:
-            values["queue_id"] = session_pending_queue_id(session_id)
+        # 新对话草稿原本使用浏览器 sessionStorage 中的标签级 ID；该 ID 不可移植。
+        # 用专属前缀生成目标端 ID，供聊天页的导入草稿恢复接口安全发现。
+        values["queue_id"] = (
+            session_pending_queue_id(session_id)
+            if session_id is not None else f"import-{uuid.uuid4().hex}"
+        )
     elif record_type == "skill":
         values["content_digest"] = hashlib.sha256(str(values.get("body") or "").encode()).hexdigest()
 
@@ -406,6 +460,7 @@ async def _import_memory_files(
     memory_entries = [
         entry for entry in manifest.entries
         if entry.path.startswith(("memory/owner/", "memory/legacy/", "memory/im/scopes/"))
+        or entry.path in {"memory/im/scopes.jsonl", "memory/im/deletion_markers.jsonl"}
     ]
     if not memory_entries:
         return {"memory_created": 0, "memory_skipped": 0}
