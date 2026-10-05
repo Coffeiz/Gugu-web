@@ -21,7 +21,7 @@
           <p v-if="smtpLoading">{{ t('devEmail.loadingSmtp') }}</p>
           <p v-else-if="smtpConfigured" class="state-ok"><span class="state-dot" />{{ t('devEmail.smtpReady') }}</p>
           <p v-else class="state-muted"><span class="state-dot" />{{ t('devEmail.smtpMissing') }}</p>
-          <label class="recipient-field"><span>{{ t('devEmail.recipient') }}</span><input v-model="testRecipient" type="email" :placeholder="t('devEmail.recipientPlaceholder')" autocomplete="email" /></label>
+          <div class="recipient-field"><span>{{ t('devEmail.recipient') }}</span><input v-model="testRecipient" type="email" :placeholder="t('devEmail.recipientPlaceholder')" autocomplete="email" :aria-label="t('devEmail.recipient')" /></div>
           <ActionButton class="send-button" :disabled="sending || !smtpConfigured" @click="sendTest">{{ sending ? t('devEmail.sending') : t('devEmail.sendCurrent') }}</ActionButton>
           <p v-if="message" class="result" :class="{ error: failed }" role="status">{{ message }}</p>
         </div>

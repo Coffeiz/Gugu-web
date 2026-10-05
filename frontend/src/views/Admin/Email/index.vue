@@ -19,10 +19,10 @@
           <ActionButton variant="primary" fit :disabled="translating" @click="translateAll">{{ translating ? t('adminEmailUi.translating') : t('adminEmailUi.translate') }}</ActionButton>
         </div>
         <div class="field-grid">
-          <label>{{ t('adminEmailUi.template') }}<AdminSelect v-model="form.template" :options="templates" class="template-select" /></label>
-          <label>{{ t('adminEmailUi.subject') }}<input v-model="form.subject" class="form-input" maxlength="200" :placeholder="t('adminEmailUi.subjectPlaceholder')" /></label>
-          <label>{{ t('adminEmailUi.titleLabel') }}<input v-model="form.title" class="form-input" maxlength="200" :placeholder="t('adminEmailUi.titlePlaceholder')" /></label>
-          <label>{{ t('adminEmailUi.preheader') }}<input v-model="form.preheader" class="form-input" maxlength="180" :placeholder="t('adminEmailUi.preheaderPlaceholder')" /></label>
+          <div class="field-control"><span>{{ t('adminEmailUi.template') }}</span><AdminSelect v-model="form.template" :options="templates" class="template-select" /></div>
+          <div class="field-control"><span>{{ t('adminEmailUi.subject') }}</span><input v-model="form.subject" class="form-input" maxlength="200" :placeholder="t('adminEmailUi.subjectPlaceholder')" :aria-label="t('adminEmailUi.subject')" /></div>
+          <div class="field-control"><span>{{ t('adminEmailUi.titleLabel') }}</span><input v-model="form.title" class="form-input" maxlength="200" :placeholder="t('adminEmailUi.titlePlaceholder')" :aria-label="t('adminEmailUi.titleLabel')" /></div>
+          <div class="field-control"><span>{{ t('adminEmailUi.preheader') }}</span><input v-model="form.preheader" class="form-input" maxlength="180" :placeholder="t('adminEmailUi.preheaderPlaceholder')" :aria-label="t('adminEmailUi.preheader')" /></div>
         </div>
         <div class="toggle-row">
           <div class="toggle-group"><span>{{ t('adminEmailUi.theme') }}</span><div class="toggle-options"><button v-for="item in themes" :key="item" class="chip" :class="{ active: form.theme === item }" @click="form.theme = item">{{ item === 'light' ? t('adminEmailUi.light') : t('adminEmailUi.dark') }}</button></div></div>
@@ -207,7 +207,7 @@ onMounted(() => { void Promise.all([refreshPreview(), loadCount()]) })
 .email-grid { display:grid; grid-template-columns:minmax(420px, 520px) minmax(0,1fr); gap:20px; align-items:start; }
 .editor-card,.preview-card { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:22px; min-width:0; }
 .section-title,.subhead { font-size:13px; font-weight:700; color:rgba(255,255,255,.72); margin-bottom:16px; } .subhead { display:flex; align-items:center; gap:8px; margin-top:22px; margin-bottom:9px; } .subhead > button { margin-left:auto; } .locale-row { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin:-4px 0 16px; } .locale-row :deep(.app-action-button) { margin-left:auto; }
-.field-grid { display:grid; grid-template-columns:1fr 1fr; gap:13px; } label { display:flex; flex-direction:column; gap:7px; color:rgba(255,255,255,.42); font-size:11px; }
+.field-grid { display:grid; grid-template-columns:1fr 1fr; gap:13px; }.field-control { display:flex; flex-direction:column; gap:7px; color:rgba(255,255,255,.42); font-size:11px; }
 .field-block { display:flex; flex-direction:column; gap:7px; margin-top:15px; } .field-label { color:rgba(255,255,255,.42); font-size:11px; } .body-editor { min-height:130px; }
 .template-select { display:block; width:100%; } :deep(.template-select .asel-trigger) { width:100%; height:41px; box-sizing:border-box; }
 .toggle-row { display:flex; flex-direction:column; gap:12px; width:100%; margin:17px 0 2px; color:rgba(255,255,255,.4); font-size:11px; } .toggle-group { display:flex; min-width:0; flex-direction:column; gap:7px; } .toggle-options { display:flex; gap:7px; min-width:0; width:100%; } .toggle-options .chip { flex:1 1 0; min-width:0; }

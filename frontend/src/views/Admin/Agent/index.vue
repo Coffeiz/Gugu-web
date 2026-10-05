@@ -59,11 +59,11 @@
             <p class="presets-desc">{{ t('agent.presetDescription') }}</p>
           </div>
           <div class="presets-header-right">
-            <label class="strategy-select" :title="t('agentConfigUi.concurrencyHint')">
+            <div class="strategy-select" :title="t('agentConfigUi.concurrencyHint')">
               <span>{{ t('agent.concurrency') }}</span>
               <input type="number" min="1" max="64" class="conc-input"
-                     v-model.number="agentDraft.worker_concurrency" @change="saveConcurrency" />
-            </label>
+                     v-model.number="agentDraft.worker_concurrency" :aria-label="t('agent.concurrency')" @change="saveConcurrency" />
+            </div>
             <div class="strategy-select">
               <span>{{ t('agent.strategy') }}</span>
               <AdminSelect
