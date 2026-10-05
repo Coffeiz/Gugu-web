@@ -150,6 +150,6 @@ export default defineConfig({
     // 不碰 DOM 的测试文件首行加 `// @vitest-environment node` 跳过 jsdom——
     // 环境搭建是测试耗时大头，全量 33s → 15s（2026-09-17 实测）；新测试文件默认照此办理。
     environment: 'jsdom',
-    include: ['test/**/*.{test,spec}.{js,ts}', 'src/**/*.{test,spec}.{js,ts}'],
+    include: ['tests/**/*.{test,spec}.{js,ts}'],
   },
 })

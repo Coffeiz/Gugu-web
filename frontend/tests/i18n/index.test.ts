@@ -1,0 +1,103 @@
+// @vitest-environment jsdom
+import { describe, expect, it } from 'vitest'
+import { createI18n } from 'vue-i18n'
+import { detectBrowserLocale, mapBrowserLocale, localeOptions } from '@/i18n/types'
+import { getLocale, setLocale } from '@/i18n'
+import { messages } from '@/i18n/messages'
+
+describe('i18n locale policy', () => {
+  function messagePaths(value: unknown, prefix = ''): string[] {
+    if (typeof value === 'string') return [prefix]
+    if (!value || typeof value !== 'object') return []
+    return Object.entries(value).flatMap(([key, child]) =>
+      messagePaths(child, prefix ? `${prefix}.${key}` : key),
+    )
+  }
+
+  it('语言选择器使用稳定的原生名称', () => {
+    expect(localeOptions).toEqual([
+      { value: 'zh-CN', label: '简体中文' },
+      { value: 'ja-JP', label: '日本語' },
+      { value: 'en-US', label: 'English' },
+    ])
+  })
+  it('设置页的跟随系统选项不带状态提示括号', () => {
+    expect(messages['zh-CN'].layout.followSystemOption).toBe('跟随系统')
+    expect(messages['ja-JP'].layout.followSystemOption).toBe('システムに従う')
+    expect(messages['en-US'].layout.followSystemOption).toBe('Follow system')
+  })
+  it('自动模式名称在各语言界面中保持一致', () => {
+    const zhProfile = (messages['zh-CN'] as unknown as {
+      profileWorkspacesUi: { automaticMode: string }
+    }).profileWorkspacesUi
+    const zhChat = (messages['zh-CN'] as unknown as {
+      chat: { automaticMode: string; automaticModeOn: string; automaticModeOff: string }
+    }).chat
+    expect(messages['zh-CN'].agent.automaticMode).toBe('自动模式')
+    expect(zhProfile.automaticMode).toBe('自动模式')
+    expect(zhChat).toMatchObject({ automaticMode: '自动模式', automaticModeOn: '关闭自动模式', automaticModeOff: '开启自动模式' })
+    expect(messages['ja-JP'].agent.automaticMode).toBe('自動モード')
+    expect((messages['ja-JP'] as unknown as { chat: { automaticMode: string } }).chat.automaticMode).toBe('自動モード')
+    expect(messages['en-US'].agent.automaticMode).toBe('Automatic mode')
+    expect((messages['en-US'] as unknown as { chat: { automaticMode: string } }).chat.automaticMode).toBe('Automatic mode')
+  })
+  it('行动跟进守卫设置在各语言中明确标注弱模型用途和关闭默认值', () => {
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const scope = (messages[locale] as unknown as Record<string, Record<string, string>>).profileGuguUi
+      expect(scope.decisionGuard).not.toBe('profileGuguUi.decisionGuard')
+      expect(scope.decisionGuardHint).not.toBe('profileGuguUi.decisionGuardHint')
+    }
+    expect((messages['zh-CN'] as any).profileGuguUi.decisionGuardHint).toContain('默认关闭')
+    expect((messages['zh-CN'] as any).profileGuguUi.decisionGuardHint).toContain('弱模型')
+  })
+
+  // 用例要对三个语言包全量路径逐一编译解析，空跑就要数秒；CI 与其他套件并行时
+  // 默认 5s 超时会误报（devserver 全量 CI 实测 5.6s 超时、单独跑 0.3s 通过）。
+  it('所有语言包文案都能被 vue-i18n 正常解析', () => {
+    const paths = messagePaths(messages['en-US'])
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const localI18n = createI18n({ legacy: false, locale, messages })
+      for (const path of paths) {
+        expect(() => localI18n.global.t(path)).not.toThrow()
+      }
+    }
+  }, 30_000)
+  it('模型级推理状态选项在三个语言包中都使用公共 llmExtraUi 文案', () => {
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const scope = (messages[locale] as unknown as Record<string, Record<string, string>>).llmExtraUi
+      expect(scope.thinkingHint).not.toBe('llmExtraUi.thinkingHint')
+      expect(scope.keepUnchanged).not.toBe('llmExtraUi.keepUnchanged')
+      expect(scope.reasoningPersistence).not.toBe('llmExtraUi.reasoningPersistence')
+      expect(scope.reasoningPersistenceHint).not.toBe('llmExtraUi.reasoningPersistenceHint')
+      expect(scope.reasoningOff).not.toBe('llmExtraUi.reasoningOff')
+      expect(scope.reasoningContinuation).not.toBe('llmExtraUi.reasoningContinuation')
+    }
+  })
+  it('Admin 模型图片细节选项在三个语言包中都有文案', () => {
+    for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
+      const scope = (messages[locale] as unknown as Record<string, Record<string, string>>).adminAgentUi
+      expect(scope.auto).not.toBe('adminAgentUi.auto')
+      expect(scope.original).not.toBe('adminAgentUi.original')
+    }
+  })
+  it('maps supported browser language families', () => {
+    expect(mapBrowserLocale('zh-TW')).toBe('zh-CN')
+    expect(mapBrowserLocale('ja-JP')).toBe('ja-JP')
+    expect(mapBrowserLocale('fr-FR')).toBe('en-US')
+  })
+
+  it('uses the first supported language and falls back to Chinese', () => {
+    expect(detectBrowserLocale(['xx', 'ja'])).toBe('en-US')
+    expect(detectBrowserLocale([])).toBe('zh-CN')
+  })
+
+  it('switches the runtime immediately and persists only when requested', () => {
+    localStorage.clear()
+    setLocale('ja-JP')
+    expect(getLocale()).toBe('ja-JP')
+    expect(localStorage.getItem('gugu-locale')).toBeNull()
+    setLocale('en-US', true)
+    expect(getLocale()).toBe('en-US')
+    expect(localStorage.getItem('gugu-locale')).toBe('en-US')
+  })
+})

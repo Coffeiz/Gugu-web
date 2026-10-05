@@ -29,8 +29,32 @@ for (const line of names) {
 }
 
 const tracked = new Set(git(['ls-files']).split('\n').filter(Boolean))
-for (const file of git(['ls-files', '-o', '--exclude-standard']).split('\n').filter(Boolean)) {
-  if (testPattern.test(file) && !tracked.has(file)) added.add(file)
+const trackedTests = [...tracked].filter(file => testPattern.test(file))
+const deletedFrontendTests = trackedTests.filter(file =>
+  /^frontend\/(?:src|test)\//.test(file) && !fs.existsSync(path.join(root, file)),
+)
+const untrackedTests = git(['ls-files', '-o', '--exclude-standard']).split('\n')
+  .filter(file => testPattern.test(file) && !tracked.has(file))
+
+// 本地搬迁尚未暂存时，Git 会把新路径列为 untracked、旧路径列为 deleted。
+// 同名一一配对视为移动，避免要求搬迁者为原有测试重复填写新增元数据。
+const deletedByName = new Map()
+const untrackedByName = new Map()
+for (const file of deletedFrontendTests) {
+  const name = path.basename(file)
+  deletedByName.set(name, [...(deletedByName.get(name) || []), file])
+}
+for (const file of untrackedTests.filter(item => item.startsWith('frontend/tests/'))) {
+  const name = path.basename(file)
+  untrackedByName.set(name, [...(untrackedByName.get(name) || []), file])
+}
+const relocated = new Set()
+for (const [name, oldPaths] of deletedByName) {
+  const newPaths = untrackedByName.get(name) || []
+  if (oldPaths.length === newPaths.length) newPaths.forEach(file => relocated.add(file))
+}
+for (const file of untrackedTests) {
+  if (!relocated.has(file)) added.add(file)
 }
 
 const required = ['domain', 'layer', 'owner', 'productionEntry', 'keyBehavior', 'ci']

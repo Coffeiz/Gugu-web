@@ -67,7 +67,7 @@ def test_scope_is_explicit_and_manual_only():
     scope = _load_scope()
     assert scope["policy"] == "periodic-manual-no-automatic-ci"
     assert len(scope["python"]["targets"]) == 7
-    assert scope["typescript"]["targets"][0]["tests"] == ["frontend/test/optimisticMutation.test.ts"]
+    assert scope["typescript"]["targets"][0]["tests"] == ["frontend/tests/files/optimisticMutation.test.ts"]
 
 
 def test_scope_rejects_automatic_ci_policy(tmp_path, monkeypatch):

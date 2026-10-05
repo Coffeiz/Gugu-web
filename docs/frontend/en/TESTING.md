@@ -2,8 +2,7 @@
 
 ## Test Layers
 
-- Test pure functions, stores, composables, InteractionSync, and race logic in frontend/src/**.test.ts or frontend/test/ with Vitest.
-- Test global styles, theme tokens, shared component structure, and style owners with frontend/src/assets/styles/*regression.test.ts or the existing CSS checks.
+- Put all Vitest tests under `frontend/tests/<feature-domain>/`, grouping pure functions, stores, composables, InteractionSync, race logic, and style regressions by product feature or cross-module domain. Keep `frontend/src/` for production code only.
 - Test cross-component page flows with Playwright under frontend/e2e/. Stable primary paths belong to test:e2e:stable; drag and experimental flows belong to test:e2e:experimental.
 - E2E uses an already running devserver by default. Change the environment with PLAYWRIGHT_BASE_URL instead of starting another frontend/backend inside the test.
 

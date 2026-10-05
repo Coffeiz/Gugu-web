@@ -202,7 +202,7 @@ def test_test_timeout_has_its_own_status(monkeypatch, tmp_path):
     entry = {
         "language": "typescript",
         "source": "frontend/src/utils/optimisticMutation.ts",
-        "tests": ["frontend/test/optimisticMutation.test.ts"],
+        "tests": ["frontend/tests/files/optimisticMutation.test.ts"],
         "domain": "测试",
         "layer": "L0",
         "ci": "不阻断",

@@ -58,6 +58,9 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 ## 前端单测（vitest）
 
 - 跑法：`corepack pnpm --filter gugu-web run test:run`（一次性）或 `corepack pnpm --filter gugu-web run test`（watch）。
+- 所有前端 Vitest 测试统一放在 `frontend/tests/<功能域>/`，按产品功能或跨模块领域归档；需要细分时在功能域下建立子目录。`frontend/src/` 只放生产代码，禁止在源码旁新建 `*.test.*` / `*.spec.*`；旧的 `frontend/test/` 扁平目录不再使用。Vitest 与 `test:fast` 只发现 `frontend/tests/`。
+- 新测试优先使用 `@/` alias 引用 `src/` 生产模块，避免测试搬迁后相对路径失效；同一测试域的辅助夹具放在 `frontend/tests/<功能域>/` 内，不与生产代码混放。文件名使用被保护行为或模块名加 `.test.ts`；浏览器端交互验收仍归 `frontend/e2e/`，不混入 Vitest。
+- 移动既有测试时保持行为断言不变，只改必要的导入、测试数据路径和质量工具映射；更新 `docs/testing/test-metadata.json` 中对应测试路径，不将纯搬迁误登记为新增测试。
 - 改完纯逻辑/composable 之后必须跑。
 - 测试失败时先定位实现、夹具和调用链，**不得直接改断言、删除用例、增加 `skip` 或放宽校验来恢复绿色**。
 - 只有产品契约明确改变并完成记录后才调整预期。
