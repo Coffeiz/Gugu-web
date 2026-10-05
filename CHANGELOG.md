@@ -5,29 +5,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
-
-### 修复
-
-- 阻止将文本与二进制文件互相改名为对方格式，避免文件内容被错误地按新后缀处理。
-- 校准 Compose 部署文档，使默认一体化部署与分体部署说明符合当前沙盒架构。
-- 修复用户数据归档的增量导入映射与冲突识别，支持恢复仍有效的预检任务，并可清理失败或未执行的导入任务及其暂存数据。
-- 修复归档导出取消与任务租约并发更新的收尾竞态；一体化离线迁移遇到已完成布局或空库时会跳过备份和迁移。
-- Shell 终端会按会话类型挂载用户可用的工作区目录，不再把 Agent 的完整沙盒授权误当作用户终端的可见性条件。
-- 管理员可单独控制注册邮箱验证；技能表单字段标题不再误触发输入框聚焦，工具名称和说明过长时会在卡片内截断显示。
-
-## [1.6.0] - 2026-10-04
+## [1.6.0] - 2026-10-05
 
 ### What's New
 
 #### New Features
 
-- **Email-verified registration and account recovery**: when system SMTP is available, new accounts must verify a one-time email code; password recovery accepts a username or email and shows a masked destination address (#77).
+- **Email-verified registration and account recovery**: when system SMTP is available, new accounts must verify a one-time email code; administrators can control this requirement, and password recovery accepts a username or email and shows a masked destination address (#77).
 - **Optional action follow-through guard**: users can enable a guard that nudges the Agent only when an explicit action request is declined without execution.
 
 #### Improvements
 
-- **Shell and workspace consistency**: unify Shell execution and authorized workspace mounts, with a safe local-storage layout migration for existing workspaces.
+- **Shell and workspace consistency**: unify Shell execution and authorized workspace mounts, show users their own workspaces in user-created terminals without requiring Agent sandbox authorization, and safely migrate existing local-storage layouts.
 - **Faster Skills page**: load the tool catalog on demand instead of blocking the initial page view.
 - **Scheduled task replies**: deliver the Agent's final response directly, avoiding an extra summary round.
 - **File naming support**: upload dotfiles and rename files while editing their extensions.
@@ -40,6 +29,11 @@
 - Preserve run outcomes and completed execution history through interrupted streams; improve retry budgets and context-compaction boundaries.
 - Correct reflection history projection, clear stale interaction cards when starting a new session, and keep action-confirmation instructions waiting for the user's response.
 - Bind dangerous Shell confirmation to the exact command and execution context, consume it once, and prevent Shell permission setup from following symlinks.
+- Prevent renaming text files as binary files or binary files as text files without converting their contents.
+- Fix archive-import mapping and conflict detection, including restoring session-bound pending queues under the imported session's ID and keeping drafts recoverable when conversations are excluded; valid preflight jobs can be resumed, and failed or unexecuted jobs and their staged data can be cleaned up.
+- Fix export cancellation and concurrent lease-finalization races; skip unnecessary backup and migration when the unified deployment already has the new workspace layout or an empty database.
+- Correct Compose deployment guidance for the unified and split sandbox architectures.
+- Keep skill-form labels from unexpectedly focusing inputs, and prevent long tool names and descriptions from overflowing their cards.
 - Stabilize floating video preview sizing/loading and fix Mind preview/timeline updates.
 - Refine the video playback control overlay for a more consistent appearance.
 
@@ -55,12 +49,12 @@
 
 #### 新功能
 
-- **邮箱验证注册与账号找回**：系统 SMTP 可用时，新账号必须完成一次性邮箱验证码验证；密码找回支持用户名或邮箱，并显示脱敏后的收件地址（#77）。
+- **邮箱验证注册与账号找回**：系统 SMTP 可用时，新账号必须完成一次性邮箱验证码验证，管理员可单独控制此要求；密码找回支持用户名或邮箱，并显示脱敏后的收件地址（#77）。
 - **可选的行动跟进守卫**：用户可开启守卫；仅当明确要求执行而 Agent 未执行并选择推脱时，才提醒它继续处理。
 
 #### 改进
 
-- **统一 Shell 与工作区行为**：统一 Shell 执行和授权工作区挂载；已有本地工作区可通过安全迁移切换到规范目录布局。
+- **统一 Shell 与工作区行为**：统一 Shell 执行和授权工作区挂载；用户创建的终端可查看本人工作区，不需要 Agent 沙盒授权；已有本地工作区可通过安全迁移切换到规范目录布局。
 - **加快技能页载入**：工具目录改为按需加载，不再阻塞技能页首次显示。
 - **定时任务回复**：直接投递 Agent 的最终回复，省去额外总结轮次。
 - **文件命名支持**：支持上传点文件，并可在重命名时编辑扩展名。
@@ -73,6 +67,11 @@
 - 中断流时保留运行终态和已完成的执行历史；改进重试预算与上下文压缩边界。
 - 修正反思历史投影；新建会话时清除旧交互卡片；操作确认指令会等待用户答复。
 - 危险 Shell 确认绑定到精确命令和执行上下文，且仅消费一次；修复 Shell 权限配置跟随符号链接的问题。
+- 阻止文本文件与二进制文件在未转换内容时互相改名为对方格式。
+- 修复归档导入映射与冲突识别：会话待发队列会绑定到导入后的会话 ID；未导入会话时草稿仍可恢复。支持恢复仍有效的预检任务，并清理失败或未执行任务及其暂存数据。
+- 修复归档导出取消与任务租约并发收尾竞态；一体化部署已完成工作区迁移或数据库为空时，会跳过不必要的备份和迁移。
+- 校准一体化与分体沙盒架构对应的 Compose 部署说明。
+- 技能表单字段标题不再意外聚焦输入框，过长的工具名称和说明不会溢出卡片。
 - 修复浮动视频预览尺寸/加载状态不稳定，以及思维导图预览和时间轴更新问题。
 - 调整视频播放控制按钮的遮罩显示效果。
 
