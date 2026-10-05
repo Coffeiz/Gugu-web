@@ -15,11 +15,11 @@ if s.db.host not in ("127.0.0.1", "localhost"):
 MIGRATION_STATE="$(python -m scripts.migrations.migrate_workspace_layout --allow-real-data --status)"
 case "$MIGRATION_STATE" in
     completed|empty)
-        echo "[offline-migration] 工作区布局状态为 $MIGRATION_STATE，跳过备份与迁移。"
+        echo "[offline-migration] 工作区布局状态为 ${MIGRATION_STATE}，跳过备份与迁移。"
         exit 0
         ;;
     pending) ;;
-    *) echo "[offline-migration] 无法识别的工作区迁移状态：$MIGRATION_STATE" >&2; exit 1 ;;
+    *) echo "[offline-migration] 无法识别的工作区迁移状态：${MIGRATION_STATE}" >&2; exit 1 ;;
 esac
 BACKUP_ROOT="$DATA_ROOT/migration-backups"
 [[ ! -L "$BACKUP_ROOT" ]] || { echo '迁移备份目录不能是符号链接。' >&2; exit 1; }

@@ -9,7 +9,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts/runtime/offline_migratio
 ENTRYPOINT = Path(__file__).resolve().parents[1] / "docker-entrypoint.sh"
 
 
-def _run(tmp_path, *, failure=""):
+def _run(tmp_path, *, failure="", workspace_state="pending"):
     data = tmp_path / "data"
     (data / "users" / "synthetic-user" / "workspace").mkdir(parents=True)
     (data / "users" / "synthetic-user" / "workspace" / "kept.txt").write_text("original")
@@ -20,7 +20,7 @@ def _run(tmp_path, *, failure=""):
         "pg_dump": 'test "$FAILURE" != dump; for arg in "$@"; do case "$arg" in --file=*) printf backup > "${arg#--file=}" ;; esac; done',
         "pg_restore": "printf 'archive contents\\n'",
         "alembic": 'test "$FAILURE" != alembic',
-        "python": 'if [[ "$*" == *--apply* ]]; then test "$FAILURE" != layout; fi',
+        "python": 'if [[ "$*" == *--status* ]]; then printf "%s\\n" "$WORKSPACE_STATE"; elif [[ "$*" == *--apply* ]]; then test "$FAILURE" != layout; fi',
     }
     for name, body in bodies.items():
         tool = tools / name
@@ -29,6 +29,7 @@ def _run(tmp_path, *, failure=""):
     result = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, env={
         **os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "GUGU_DATA_DIR": str(data),
         "GUGU_OFFLINE_PG_BIN": str(tools), "CALL_LOG": str(log), "FAILURE": failure,
+        "WORKSPACE_STATE": workspace_state,
     })
     return result, data, log.read_text()
 
@@ -49,10 +50,22 @@ def test_offline_migration_preserves_backups_and_failure_state(tmp_path, failure
         assert "updater.database_check" not in calls
     else:
         assert result.returncode == 0, result.stderr
+        assert "--status" in calls
         assert "--apply --services-stopped" in calls
         assert "--check" in calls and "updater.database_check" in calls
         assert not (backup / "recovery-required").exists()
     assert (data / "users/synthetic-user/workspace/kept.txt").read_text() == "original"
+
+
+@pytest.mark.parametrize("workspace_state", ["completed", "empty"])
+def test_offline_migration_skips_backup_when_layout_needs_no_migration(tmp_path, workspace_state):
+    result, data, calls = _run(tmp_path, workspace_state=workspace_state)
+    assert result.returncode == 0, result.stderr
+    assert "--status" in calls
+    assert "pg_dump" not in calls
+    assert "alembic" not in calls
+    assert "--apply" not in calls
+    assert not (data / "migration-backups").exists()
 
 
 def test_offline_migration_aborts_before_schema_changes_on_backup_failure(tmp_path):
