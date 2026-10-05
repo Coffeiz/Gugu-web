@@ -23,6 +23,11 @@ TERMINAL_OUTPUT_RETENTION_CHARS = 500_000
 AGENT_TERMINAL_KEEP_ALIVE = 5
 
 
+def should_mount_all_workspace_directories(source: str, *, full_user_sandbox: bool) -> bool:
+    """用户自建终端可访问本人全部工作区；Agent 终端仍由会话授权决定。"""
+    return source == TerminalSource.USER.value or full_user_sandbox
+
+
 def _terminal_id() -> str:
     return f"term-{uuid4().hex}"
 

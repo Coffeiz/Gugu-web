@@ -21,10 +21,28 @@ from app.services.terminals import (
     reopen_terminal,
     reset_terminal,
     rename_terminal,
+    should_mount_all_workspace_directories,
     terminal_events,
     terminate_terminal,
 )
 import agent.terminal.access as terminal_access
+
+
+@pytest.mark.parametrize(
+    ("source", "full_user_sandbox", "expected"),
+    [
+        (TerminalSource.USER.value, False, True),
+        (TerminalSource.AGENT.value, False, False),
+        (TerminalSource.AGENT.value, True, True),
+    ],
+)
+def test_user_terminal_sees_owned_workspaces_without_expanding_agent_scope(
+    source, full_user_sandbox, expected,
+):
+    """用户终端访问本人所有 Workspace；Agent 仍须逐会话获批后扩展范围。"""
+    assert should_mount_all_workspace_directories(
+        source, full_user_sandbox=full_user_sandbox,
+    ) is expected
 
 
 @pytest.mark.asyncio

@@ -420,7 +420,7 @@ onUnmounted(() => {
 .terminals-page .terminal-item::after { content:''; position:absolute; inset:0; border-radius:inherit; background:var(--card-hover-overlay); box-shadow:inset 0 1px 0 var(--highlight-soft); opacity:0; pointer-events:none; transition:opacity var(--hover-motion-card); }
 .terminals-page .terminal-item > * { position:relative; z-index:1; }
 .terminals-page .terminal-item:hover { background:var(--surface-raised); border-color:var(--border-hover); box-shadow:var(--elevation-card-hover); }
-.terminals-page .terminal-item.active { background:var(--surface-raised); border-color:var(--action-outline); box-shadow:var(--elevation-card-hover); }
+.terminals-page .terminal-item.active { background:var(--surface-raised); border-color:var(--action-outline); box-shadow:var(--control-focus-shadow), var(--elevation-card-hover); }
 .terminals-page .terminal-item:hover::after,
 .terminals-page .terminal-item.active::after { opacity:1; }
 @media(max-width:700px){.terminals-panel{padding:16px}.terminal-layout{grid-template-columns:1fr}.terminal-list{max-height:170px}.terminal-main{min-height:360px}}

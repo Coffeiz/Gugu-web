@@ -24,7 +24,7 @@ from app.services.terminals import (
     create_terminal, delete_terminal, enforce_agent_terminal_cap, get_terminal, list_terminals,
     terminate_terminal as terminate_terminal_record,
     prune_terminals, reopen_terminal, reset_terminal, rename_terminal, serialize_event, serialize_terminal, terminal_events, terminal_metrics,
-    append_shell_result, append_terminal_status,
+    append_shell_result, append_terminal_status, should_mount_all_workspace_directories,
 )
 from agent.interactions.confirmations import redeem_confirmation
 from agent.terminal.access import TerminalOperation, authorize_operation, page_access, pty_access
@@ -246,7 +246,10 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket):
             primary_workspace = None
             resolved_workspace_mounts = await resolve_shell_workspace_mounts(
                 auth_db, user_id, row.workspace_id,
-                include_all=bool(filesystem_policy and filesystem_policy.full_user_sandbox),
+                include_all=should_mount_all_workspace_directories(
+                    row.source,
+                    full_user_sandbox=bool(filesystem_policy and filesystem_policy.full_user_sandbox),
+                ),
             )
             if resolved_workspace_mounts is None and workspace_shell_supported():
                 raise HTTPException(status_code=403, detail="终端工作区挂载无法安全解析")
