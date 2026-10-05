@@ -141,7 +141,7 @@ frontend/src/views/Admin/Agent/**                       【条件】Admin 模型
 backend/tests/test_providers.py                        【修改】Provider 能力及模型矩阵回归
 backend/tests/test_byok*.py                             【条件】配置校验、旧配置兼容和运行时过滤回归
 backend/tests/test_loop_drivers*.py                     【条件】三种协议参数结构回归
-frontend/src/**/ProfileByokPane*.test.*                 【条件】配置选项切换和失效值回归
+frontend/tests/agent-configuration/                     【条件】配置选项切换和失效值回归
 ```
 
 公共协议驱动只负责协议请求格式；供应商模块负责能力和映射；BYOK/Admin 只消费能力快照。文件树中的条件文件仅在现有测试/API没有可复用入口时新增或修改。不得顺手重构无关 Provider 特性、媒体协议、ASR 或 Agent Loop 生命周期。

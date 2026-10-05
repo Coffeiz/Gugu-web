@@ -9,7 +9,6 @@
 | canvas-mind | `agentskills/canvas-mind/SKILL.md` | 画布/便签/Mind |
 | design | `agentskills/design/SKILL.md` | UI 视觉与交互规范 |
 | testing | `agentskills/testing/SKILL.md` | 写/改测试 |
-| devserver | `agentskills/devserver/SKILL.md` | 部署/同步/运维 |
 | release | `agentskills/release/SKILL.md` | 发版、PR 合并、版本 tag、CHANGELOG、生产部署 |
 | local | `agentskills/local/SKILL.md` | 使用本地开发机、代理和 devserver 连接信息 |
 | loopscope | `agentskills/loopscope/SKILL.md` | LoopScope trace、Collector、上下文观测与脱敏边界 |
