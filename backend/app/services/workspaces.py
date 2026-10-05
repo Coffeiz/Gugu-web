@@ -788,9 +788,10 @@ async def resolve_shell_workspace_mounts(
 ) -> tuple[list[tuple[str, Path]], str] | None:
     """返回授权的规范容器路径、物理来源及默认 cwd。
 
-    普通授权只暴露会话绑定工作区（未绑定时为默认工作区）；完整用户沙盒授权
-    才扩展到该用户所有未删除的 WorkspaceDirectory。路径仍按 owner 与用户存储
-    根双重约束，容器端只使用此显式白名单，不挂载用户存储父目录。
+    Agent 普通授权只暴露会话绑定工作区（未绑定时为默认工作区）；完整用户沙盒授权
+    才扩展到 Agent 可见的全部 WorkspaceDirectory。用户自建终端可由调用方按所有者
+    身份打开该用户的全部工作区。路径仍按 owner 与用户存储根双重约束，容器端只使用
+    此显式白名单，不挂载用户存储父目录。
     """
     if not workspace_shell_supported():
         return None

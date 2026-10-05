@@ -176,18 +176,37 @@ async def main() -> None:
     parser.add_argument("--allow-real-data", action="store_true")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--services-stopped", action="store_true")
+    parser.add_argument("--status", action="store_true", help="只报告布局迁移状态，不修改数据")
     parser.add_argument("--check", action="store_true", help="只确认迁移完成；空库建立新布局标记，旧库拒绝启动")
     args = parser.parse_args()
+    if args.status and (args.apply or args.check):
+        parser.error("--status 不能与 --apply 或 --check 同时使用")
     if not args.allow_real_data or (args.apply and not args.services_stopped):
         parser.error("需显式 --allow-real-data；执行迁移还需停服并传 --services-stopped")
     from app.core.config import get_settings
     import app.db.session as session
     settings = get_settings()
     if settings.storage.backend != "local":
+        if args.status:
+            print("external")
+            return
         print("非本地存储，跳过工作区磁盘迁移")
         return
     session.ensure_engine()
     root = Path(settings.storage.local_path).resolve()
+    if args.status:
+        marker = root / ".workspace-layout-v2.json"
+        if marker.is_symlink():
+            raise ValueError("迁移清单不能是符号链接")
+        if marker.exists():
+            journal = json.loads(marker.read_text(encoding="utf-8"))
+            if journal["status"] == "completed":
+                print("completed")
+                return
+        async with session._SessionLocal() as db:
+            state = "pending" if await db.scalar(select(User.id).limit(1)) is not None else "empty"
+        print(state)
+        return
     if args.check:
         marker = root / ".workspace-layout-v2.json"
         # 使用 migrate 的同一清单事实源，不能由启动进程自称已经停服。

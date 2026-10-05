@@ -394,10 +394,30 @@ elif [ "$NEED_STAMP" -ne 0 ]; then
     exit "$NEED_STAMP"
 fi
 
+if [ "${GUGU_UNIFIED_APP:-0}" = "1" ] && [ "${GUGU_EMBEDDED_DEPS:-0}" = "1" ]; then
+    # 一体化容器启动时，PostgreSQL/Redis 已就绪，但 Web/Worker/Gateway/Sandbox 尚未启动；
+    # 可在这个停服窗口自动执行带完整备份的工作区迁移。迁移脚本先检查状态，已完成或空库不重复备份。
+    WORKSPACE_LAYOUT_STATUS="$(python -m scripts.migrations.migrate_workspace_layout --allow-real-data --status)"
+    case "$WORKSPACE_LAYOUT_STATUS" in
+        pending)
+            echo "[entrypoint] 检测到旧工作区布局，在启动应用前自动备份并迁移..."
+            GUGU_OFFLINE_PG_BIN="$PG_BIN" bash /usr/local/bin/gugu-offline-migration.sh
+            ;;
+        completed|empty)
+            echo "[entrypoint] 工作区布局状态为 $WORKSPACE_LAYOUT_STATUS，无需离线迁移。"
+            ;;
+        external)
+            echo "[entrypoint] 使用非本地存储，跳过工作区磁盘迁移。"
+            ;;
+        *) echo "[entrypoint] 无法识别的工作区迁移状态：$WORKSPACE_LAYOUT_STATUS" >&2; exit 1 ;;
+    esac
+else
+    # 分体部署没有统一的停服窗口，仍拒绝在线移动用户文件。
+    python -m scripts.migrations.migrate_workspace_layout --allow-real-data --check
+fi
 echo "[entrypoint] alembic upgrade head ..."
-# 在 schema 变更前拒绝未完成布局迁移的旧部署；普通容器启动不是停服证明。
-python -m scripts.migrations.migrate_workspace_layout --allow-real-data --check
 alembic upgrade head
+python -m scripts.migrations.migrate_workspace_layout --allow-real-data --check
 
 # Knowledge 主存储把创建/更新时间统一为 ISO 8601 UTC。应用入口在服务接流量前
 # 执行可重跑迁移；其他 worker/gateway 由 KnowledgeStore 的用户级迁移门禁保护。
