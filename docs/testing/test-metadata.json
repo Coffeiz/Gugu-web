@@ -1,4 +1,12 @@
 {
+  "backend/tests/test_filesync_schema_retirement.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "alembic/versions/20261007000001_retire_filesync_snapshot_schema.py",
+    "keyBehavior": "清理快照重构结构保留绑定、journal 与其他功能数据；活动任务阻止清理，重复执行安全",
+    "ci": "backend-pytest"
+  },
   "backend/tests/test_model_reasoning_policy.py": {
     "domain": "agent-reasoning",
     "layer": "L1",
