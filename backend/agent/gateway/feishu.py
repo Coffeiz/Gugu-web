@@ -734,7 +734,8 @@ _STREAM_PATCH_MIN_CHARS = 30
 
 
 def _make_card_payload(text: str, title: str = "咕咕思考中", color: str = "blue",
-                       streaming_mode: bool = True) -> str:
+                       streaming_mode: bool = True,
+                       elements: list[dict] | None = None) -> str:
     """构造 CardKit 卡片 2.0 的 data 字段（JSON 字符串）。
 
     OpenAPI 要求 schema 2.0 的内嵌 card JSON 必须有 schema + header + body 结构：
@@ -762,7 +763,7 @@ def _make_card_payload(text: str, title: str = "咕咕思考中", color: str = "
             "template": color,
         },
         "body": {
-            "elements": _build_card_elements(text),
+            "elements": elements if elements is not None else _build_card_elements(text),
         },
     }, ensure_ascii=False)
 
@@ -798,7 +799,8 @@ async def _get_tenant_token(app_id: str, app_secret: str) -> str:
     return token
 
 
-async def _do_create_card(app_id: str, app_secret: str, text: str) -> str | None:
+async def _do_create_card(app_id: str, app_secret: str, text: str,
+                          *, elements: list[dict] | None = None) -> str | None:
     """raw httpx 版 create_card：返回 card_id 或 None。
 
     已知坑：
@@ -816,7 +818,7 @@ async def _do_create_card(app_id: str, app_secret: str, text: str) -> str | None
         diag_log("agent.gateway.feishu.tenant_token", e)   # 原始 → 受限诊断出口
         print(f"[feishu] tenant_token 拿失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
         return None
-    body = {"type": "card_json", "data": _make_card_payload(text)}
+    body = {"type": "card_json", "data": _make_card_payload(text, elements=elements)}
     try:
         async with httpx.AsyncClient(timeout=15.0) as cli:
             resp = await cli.post(
@@ -890,7 +892,8 @@ _STREAM_TARGET_ELEMENT_ID = "markdown_1"
 
 
 async def _do_streaming_update_text(app_id: str, app_secret: str, card_id: str,
-                                     content: str, sequence: int, uuid: str) -> bool:
+                                     content: str, sequence: int, uuid: str,
+                                     element_id: str = _STREAM_TARGET_ELEMENT_ID) -> bool:
     """element 级别流式更新（PUT /open-apis/cardkit/v1/cards/{cid}/elements/{eid}/content）。
 
     这是飞书官方的「Streaming Update Text」接口，比整卡 PUT 更轻——服务端自动增量渲染
@@ -908,7 +911,7 @@ async def _do_streaming_update_text(app_id: str, app_secret: str, card_id: str,
         async with httpx.AsyncClient(timeout=15.0) as cli:
             resp = await cli.request(
                 "PUT",
-                f"https://open.feishu.cn/open-apis/cardkit/v1/cards/{card_id}/elements/{_STREAM_TARGET_ELEMENT_ID}/content",
+                f"https://open.feishu.cn/open-apis/cardkit/v1/cards/{card_id}/elements/{element_id}/content",
                 headers={"Authorization": f"Bearer {token}",
                          "Content-Type": "application/json; charset=utf-8"},
                 content=json.dumps(body, ensure_ascii=False),
@@ -973,7 +976,8 @@ async def _do_finalize_streaming_card(app_id: str, app_secret: str, card_id: str
 
 
 async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str, *, sequence: int,
-                          title: str = "咕咕思考中", streaming_mode: bool = True) -> bool:
+                          title: str = "咕咕思考中", streaming_mode: bool = True,
+                          elements: list[dict] | None = None) -> bool:
     """raw httpx 版 update_card：节流策略由 caller 控制（每 ≥200ms 或 ≥30 字调一次）。
 
     HTTP method 是 **PUT**——SDK update() 签名的也是 PUT（cardkit/v1/model/update_card_request
@@ -996,7 +1000,9 @@ async def _do_update_card(app_id: str, app_secret: str, card_id: str, text: str,
     body = {
         "card": {
             "type": "card_json",
-            "data": _make_card_payload(text, title=title, streaming_mode=streaming_mode),
+            "data": _make_card_payload(
+                text, title=title, streaming_mode=streaming_mode, elements=elements,
+            ),
         },
         "sequence": sequence,
     }
@@ -1034,9 +1040,154 @@ def _stream_fallback_text(text: str, has_files: bool) -> str:
     return "给你～" if has_files else "嗯~在的，你说～"
 
 
+async def _send_tool_summary_stream(
+    app_id: str,
+    app_secret: str,
+    card_id: str,
+    token_iter,
+    summary,
+    *,
+    show_intermediate_replies: bool,
+) -> tuple[bool, "AgentResponse | None"]:
+    """同一卡片串行呈现正文与工具摘要；只供用户主动开启摘要时使用。"""
+    stream_seq_key = f"{card_id}:stream"
+
+    def _next_sequence() -> int:
+        _card_seq[stream_seq_key] = _card_seq.get(stream_seq_key, 0) + 1
+        return _card_seq[stream_seq_key]
+
+    async def _write_elements(elements: list[dict]) -> bool:
+        return await _do_update_card(
+            app_id,
+            app_secret,
+            card_id,
+            "",
+            sequence=_next_sequence(),
+            elements=elements,
+        )
+
+    summary.bind(_write_elements)
+    accumulated = ""
+    pending_final_text: str | None = None
+    final_resp = None
+    stream_ok = True
+    last_patch_ts = time.monotonic()
+    last_patched_len = 0
+    active_element_id = summary.active_text_id
+
+    try:
+        async for kind, payload in token_iter:
+            if not summary.healthy:
+                stream_ok = False
+            if kind == "token":
+                if not show_intermediate_replies:
+                    continue
+                accumulated += payload
+                needs_card_update = summary.append_text(payload)
+                current_element_id = summary.active_text_id
+                if not stream_ok or not current_element_id:
+                    continue
+                if needs_card_update:
+                    stream_ok = await summary.flush()
+                    last_patch_ts = time.monotonic()
+                    last_patched_len = len(summary.active_text)
+                    active_element_id = current_element_id
+                    continue
+                if current_element_id != active_element_id:
+                    # 新 Markdown 元素必须先通过整卡更新创建，再调用元素级流式接口。
+                    stream_ok = await summary.flush()
+                    last_patch_ts = time.monotonic()
+                    last_patched_len = len(summary.active_text)
+                    active_element_id = current_element_id
+                    continue
+                now = time.monotonic()
+                text = summary.active_text
+                if (now - last_patch_ts >= _STREAM_PATCH_INTERVAL_S
+                        or len(text) - last_patched_len >= _STREAM_PATCH_MIN_CHARS):
+                    _card_seq[stream_seq_key] = _card_seq.get(stream_seq_key, 0) + 1
+                    stream_ok = await _do_streaming_update_text(
+                        app_id,
+                        app_secret,
+                        card_id,
+                        text,
+                        sequence=_card_seq[stream_seq_key],
+                        uuid=uuid.uuid4().hex,
+                        element_id=current_element_id,
+                    )
+                    if not stream_ok:
+                        summary.mark_failed()
+                    last_patch_ts = now
+                    last_patched_len = len(text)
+            elif kind == "round_end":
+                summary.end_round()
+                active_element_id = None
+            elif kind == "final":
+                final_resp = payload
+                if payload.cancelled:
+                    summary.finish("", cancelled=True)
+                    pending_final_text = accumulated
+                else:
+                    pending_final_text = _stream_fallback_text(
+                        payload.text or accumulated,
+                        bool(payload.files),
+                    )
+                    summary.finish(pending_final_text)
+    except Exception as exc:
+        diag_log("agent.gateway.feishu.tool_summary_stream_consume", exc)
+        print(
+            f"[feishu] 工具摘要流消费异常: {redact(f'{type(exc).__name__}: {exc}')}",
+            flush=True,
+        )
+        stream_ok = False
+
+    if final_resp is None and accumulated:
+        pending_final_text = accumulated
+        summary.finish(accumulated)
+
+    if summary.healthy:
+        stream_ok = await summary.flush() and stream_ok
+    else:
+        stream_ok = False
+
+    final_text = pending_final_text or ""
+    if stream_ok:
+        if final_text:
+            _card_seq[stream_seq_key] = _card_seq.get(stream_seq_key, 0) + 1
+            finalized = await _do_finalize_streaming_card(
+                app_id,
+                app_secret,
+                card_id,
+                final_text,
+                sequence=_card_seq[stream_seq_key],
+                uuid=uuid.uuid4().hex,
+            )
+            if not finalized:
+                print(
+                    f"[feishu] 工具摘要卡片 finalize 失败但保留已更新卡片: card_id={card_id}",
+                    flush=True,
+                )
+        _card_seq[stream_seq_key] = _card_seq.get(stream_seq_key, 0) + 1
+        renamed = await _do_update_card(
+            app_id,
+            app_secret,
+            card_id,
+            "",
+            sequence=_card_seq[stream_seq_key],
+            title="咕咕",
+            streaming_mode=False,
+            elements=summary.elements(),
+        )
+        if not renamed:
+            print(f"[feishu] 工具摘要卡片收尾改标题失败: card_id={card_id}", flush=True)
+    # 占位卡片已经作为用户可见消息发送；即使后续卡片更新失败，也要阻止
+    # IM Loop 再发一条重复正文。Run 仍完整消费，响应对象照常交给后续收尾。
+    return True, final_resp
+
+
 async def send_text_stream(receive_id: str, token_iter, channel_id: str | None = None,
                           placeholder: str = "咕咕正在想…",
-                          show_intermediate_replies: bool = True) -> tuple[bool, "AgentResponse | None"]:
+                          show_intermediate_replies: bool = True,
+                          tool_summary=None) -> tuple[bool, "AgentResponse | None"]:
     """飞书流式回复（IM 端模拟 SSE）。
 
     Args:
@@ -1044,6 +1195,7 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
         token_iter: async iterator，yield ("token", str) / ("final", AgentResponse)（agent.runner.run_stream）
         channel_id: user_bot.id
         placeholder: 占位卡片首屏文案
+        tool_summary: 可选的 FeishuToolSummaryStream；仅用户开启工具展示时传入
 
     Returns: (ok, final_response)——ok 表示流式/fallback 是否成功；final_response 是 run_stream
     yield 的 AgentResponse（含 session_id），消费端需要它来续写 Redis 会话映射。如果 token_iter
@@ -1096,6 +1248,16 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
             ok = await send_text(receive_id, final_text, channel_id)
             return (ok, final_resp)
         return (False, final_resp)
+
+    if tool_summary is not None:
+        return await _send_tool_summary_stream(
+            app_id,
+            app_secret,
+            card_id,
+            token_iter,
+            tool_summary,
+            show_intermediate_replies=show_intermediate_replies,
+        )
 
     # 3) 初始化 element 级流式更新的 sequence（sequence 从 1 开始严格递增）
     stream_seq = 0

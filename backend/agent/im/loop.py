@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, List, Optional
 
 from agent.im.actor import ActorContext, ActorResolver
@@ -55,6 +56,25 @@ def choose_instant_reaction(text: str, has_media: bool) -> tuple[str, str]:
         if any(keyword in normalized for keyword in keywords):
             return random.choice(replies), emoji
     return random.choice(_QUICK_DEFAULT[1]), _QUICK_DEFAULT[0]
+
+
+async def display_tool_event(
+    payload: dict,
+    event: dict,
+    *,
+    show_tool_interactions: bool,
+    publish_web_event,
+    feishu_tool_summary=None,
+) -> None:
+    """保持 Web 镜像独立，再按用户偏好选择 IM 工具状态呈现。"""
+    await publish_web_event(event)
+    if not show_tool_interactions:
+        return
+    if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):
+        return
+    from agent.im.replies import send_tool_event
+
+    await send_tool_event(payload, event)
 
 
 @dataclass(frozen=True)
@@ -952,6 +972,12 @@ async def dispatch_im_message(payload: dict):
                     await _publish_web_event(event)
             yield line
 
+    feishu_tool_summary = None
+    if platform == "feishu" and show_tool_interactions:
+        from agent.gateway.feishu_tool_summary import FeishuToolSummaryStream
+
+        feishu_tool_summary = FeishuToolSummaryStream()
+
     shown_interaction_ids: set[int] = set()
     sent_round_indices: set[int] = set()
     immediate_round_index = 0
@@ -965,13 +991,13 @@ async def dispatch_im_message(payload: dict):
         # 才能在 Runner 阻塞等待前把按钮发出去。工具状态开关不能影响这个必需交互。
         if qq_private_streaming:
             qq_private_streaming = False
-    async def _show_tool_event(event: dict) -> None:
-        """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
-        await _publish_web_event(event)
-        if not show_tool_interactions:
-            return
-        from agent.im.replies import send_tool_event
-        await send_tool_event(payload, event)
+    tool_event_callback = partial(
+        display_tool_event,
+        payload,
+        show_tool_interactions=show_tool_interactions,
+        publish_web_event=_publish_web_event,
+        feishu_tool_summary=feishu_tool_summary,
+    )
 
     async def _show_round(text: str) -> bool:
         """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
@@ -1032,20 +1058,24 @@ async def dispatch_im_message(payload: dict):
             token_iter = agent_loop.run_stream(
                 req,
                 on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
+                on_tool_event=tool_event_callback,
             )
             stream_sent, resp = await feishu.send_text_stream(
                 str(receive_id or ""), _mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
                 show_intermediate_replies=show_intermediate_replies,
+                tool_summary=feishu_tool_summary,
             )
+            if resp is None and stream_sent:
+                # 卡片已经可见但流没有产出最终响应；不能重新执行同一 Run。
+                raise RuntimeError("飞书流式回复已发送卡片，但未收到最终响应")
             if resp is None:
                 # 没有可用飞书凭据时，流式网关不会消费生成器；继续走统一收集出口，
                 # 避免消息已入历史却没有任何回复。
                 resp = await agent_loop.run_collect(
                     req,
                     on_interaction=_show_im_interaction,
-                    on_tool_event=_show_tool_event,
+                    on_tool_event=tool_event_callback,
                     on_round=_show_round,
                 )
             reply_text = ""
@@ -1054,7 +1084,7 @@ async def dispatch_im_message(payload: dict):
             token_iter = agent_loop.run_stream(
                 req,
                 on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
+                on_tool_event=tool_event_callback,
             )
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
                 payload, _mirror_stream(token_iter),
@@ -1064,7 +1094,7 @@ async def dispatch_im_message(payload: dict):
             resp = await agent_loop.run_collect(
                 req,
                 on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
+                on_tool_event=tool_event_callback,
                 on_round=_show_round,
             )
             reply_text = ""
