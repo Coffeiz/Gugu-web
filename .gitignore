@@ -79,6 +79,7 @@ Gugu-data/
 *.pid
 # 备份文件
 backup/
+/backend/.deploy-backups/
 
 # 构建产物 / 大字体资源
 gugu-backend-*.tar.gz
