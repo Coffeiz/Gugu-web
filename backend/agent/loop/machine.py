@@ -18,6 +18,7 @@ from agent import core as _core
 from agent.context.assembly.area import MessageArea
 from agent.errors import describe_llm_error
 from agent.loop import watchdog as _watchdog
+from agent.runtime.cancellation import RunCancellation, RunCancellationRequested
 
 _parallel_traj_log = logging.getLogger("agent.traj")
 
@@ -207,17 +208,22 @@ async def run_loop(
             area_revision = messages.revision
             try:
                 try:
-                    result = await compaction.compact_context(
-                        messages, session_id=session_id,
-                        fixed_prefix_size=messages.fixed_prefix_size,
-                        protected_from=protected_from,
-                        protected_anchor_index=run_start_index,
-                        model_cfg=ai,
-                        system_text=system_text,
-                        # 分支要带上本 run 的工具声明，provider 才算得出同一份可缓存
-                        # 前缀（详见 compaction._generate_append_summary）。
-                        branch_tools=getattr(ctx, "tools", None),
+                    result = await RunCancellation(session_id).dispatch(
+                        lambda: compaction.compact_context(
+                            messages, session_id=session_id,
+                            fixed_prefix_size=messages.fixed_prefix_size,
+                            protected_from=protected_from,
+                            protected_anchor_index=run_start_index,
+                            model_cfg=ai,
+                            system_text=system_text,
+                            # 分支复用本 run 的工具声明，保持可缓存前缀一致。
+                            branch_tools=getattr(ctx, "tools", None),
+                        ),
+                        request_id=None,
                     )
+                except RunCancellationRequested:
+                    # 中断不是摘要失败，不得转入确定性裁切或继续下一轮。
+                    raise
                 except Exception as exc:
                     # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成
                     # “开小差”并丢掉本轮已有输出。

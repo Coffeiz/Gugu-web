@@ -173,6 +173,85 @@ async def test_final_reply_compacts_at_provider_threshold(monkeypatch):
 
 
 # ── 假 Anthropic 消息块（迁自 scripts/smoke_self_verify.py）─────────────────────
+@pytest.mark.parametrize("command", ["取消", "/stop"])
+async def test_long_compaction_keeps_qq_busy_and_stops_without_error(monkeypatch, command):
+    """压缩跨过活跃 TTL 后仍能即时取消，不继续工具、不生成错误气泡。"""
+    from agent.im import imctx
+    from agent.im.loop import decide_im_shortcut, apply_im_shortcut_cancel
+    from agent.runtime import runtime_state
+
+    started, stopped = asyncio.Event(), asyncio.Event()
+    clock = [100.0]
+    expires = [clock[0] + runtime_state.STATE_TTL]
+    cancel = [False]
+
+    async def refresh(*args):
+        expires[0] = clock[0] + runtime_state.STATE_TTL
+
+    async def state(*args):
+        return "thinking" if clock[0] < expires[0] else "idle"
+
+    async def active(*args):
+        return {"user-test"} if clock[0] < expires[0] else set()
+
+    async def cancelled(*args):
+        return cancel[0]
+
+    async def request(*args):
+        cancel[0] = True
+        return True
+
+    async def awaiting(*args):
+        return False
+
+    async def compact(*args, **kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            stopped.set()
+            raise
+
+    monkeypatch.setattr(imctx, "get_im", lambda: {
+        "platform": "qq", "channel_id": "bot-test", "puid": "user-test",
+    })
+    monkeypatch.setattr(runtime_state, "refresh_activity", refresh)
+    monkeypatch.setattr(runtime_state, "get_state", state)
+    monkeypatch.setattr(runtime_state, "get_active", active)
+    monkeypatch.setattr(runtime_state, "is_awaiting", awaiting)
+    monkeypatch.setattr(runtime_state, "is_cancelled", cancelled)
+    monkeypatch.setattr(runtime_state, "request_cancel", request)
+    monkeypatch.setattr("agent.runtime.cancellation.time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr("agent.runtime.cancellation._CANCEL_POLL_INTERVAL", 0.001)
+    monkeypatch.setattr(compaction, "compact_context", compact)
+    final = msg([TX("最终回复")])
+    final.usage.input_tokens = 950
+    patch_anthropic(monkeypatch, [final])
+    ai = SimpleNamespace(**{**AI.__dict__, "context_tokens": 1000})
+    task = asyncio.create_task(drain(make_runner()._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "测试"}], ai,
+    )))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        # 不真实等待十分钟；推进逻辑时钟，让实际取消轮询负责续期。
+        for _ in range(7):
+            clock[0] += 100
+            async with asyncio.timeout(2):
+                while expires[0] <= clock[0] + 200:
+                    await asyncio.wait((task,), timeout=0.002)
+        decision = await decide_im_shortcut("qq", "user-test", command, bot_id="bot-test")
+        assert decision["action"] == "cancel"
+        await apply_im_shortcut_cancel("qq", "user-test", decision, bot_id="bot-test")
+        events, _, errors = await asyncio.wait_for(task, 2)
+        assert stopped.is_set()
+        assert events["_cancelled"] == 1
+        assert events["round_start"] == 1
+        assert errors == []
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 class TU:  # tool_use
     type = "tool_use"
     def __init__(self, name, i, inp):
