@@ -9,7 +9,6 @@ export interface MemCleanupPlanItem {
   profile_event_texts?: string[]
   daily_migrated?: number
   daily_texts?: string[]
-  legacy_files?: string[]
   total?: number
   batch_count?: number
   source_revision?: string
@@ -29,13 +28,11 @@ export function useMemoryMaintenance(adminStore: AdminStore) {
   const stop = () => { if (timer) { clearInterval(timer); timer = null } }
   const userCount = computed(() => Object.values(state.plan).filter(p =>
     (p.removed_texts?.length ?? 0) > 0 || (p.moved_texts?.length ?? 0) > 0 ||
-    (p.profile_event_texts?.length ?? 0) > 0 || (p.daily_texts?.length ?? 0) > 0 ||
-    (p.legacy_files?.length ?? 0) > 0).length)
+    (p.profile_event_texts?.length ?? 0) > 0 || (p.daily_texts?.length ?? 0) > 0).length)
   const totalRemoved = computed(() => Object.values(state.plan).reduce((n, p) => n + (p.removed_texts?.length ?? 0), 0))
   const totalMoved = computed(() => Object.values(state.plan).reduce((n, p) => n + (p.moved_texts?.length ?? 0), 0))
   const totalProfileEvents = computed(() => Object.values(state.plan).reduce((n, p) => n + (p.profile_event_migrated ?? 0), 0))
   const totalDaily = computed(() => Object.values(state.plan).reduce((n, p) => n + (p.daily_migrated ?? 0), 0))
-  const totalLegacy = computed(() => Object.values(state.plan).reduce((n, p) => n + (p.legacy_files?.length ?? 0), 0))
   const applyMsg = computed(() => state.applyMsg)
 
   async function poll() {
@@ -70,13 +67,13 @@ export function useMemoryMaintenance(adminStore: AdminStore) {
   }
 
   async function apply() {
-    if (!await confirmDialog({ title: '执行记忆整理', message: `确定要删 ${totalRemoved.value} 条、搬 ${totalMoved.value} 条去画像、迁 ${totalProfileEvents.value} 条画像事件到 memory、迁 ${totalDaily.value} 条 daily、清 ${totalLegacy.value} 个遗留文件吗？删除/搬动不可恢复。`, tone: 'danger', confirmText: '执行整理' })) return
+    if (!await confirmDialog({ title: '执行记忆整理', message: `确定要删 ${totalRemoved.value} 条、搬 ${totalMoved.value} 条去画像、迁 ${totalProfileEvents.value} 条画像事件到 memory、迁 ${totalDaily.value} 条 daily 吗？删除/搬动不可恢复。`, tone: 'danger', confirmText: '执行整理' })) return
     state.applying = true; state.applyMsg = ''; state.applyError = false
     try {
       const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/apply', { method: 'POST' })
       const data = await res.json()
       if (data.ok) {
-        state.applyMsg = `完成：删 ${data.total_removed} 条 / 搬 ${data.total_moved} 条 / 迁 ${data.total_profile_events_migrated} 条画像事件 / 迁 ${data.total_daily_migrated} 条 daily / 清 ${data.legacy_files_removed} 个文件（共 ${data.users_applied} 个用户）`
+        state.applyMsg = `完成：删 ${data.total_removed} 条 / 搬 ${data.total_moved} 条 / 迁 ${data.total_profile_events_migrated} 条画像事件 / 迁 ${data.total_daily_migrated} 条 daily（共 ${data.users_applied} 个用户）`
         state.plan = {}; state.status = 'idle'; state.expanded = false
       } else { state.applyError = true; state.applyMsg = data.detail || data.message || '执行失败' }
     } catch (error) { state.applyError = true; state.applyMsg = '请求失败：' + (error instanceof Error ? error.message : String(error)) }
@@ -84,5 +81,5 @@ export function useMemoryMaintenance(adminStore: AdminStore) {
   }
 
   onUnmounted(stop)
-  return { state, stop, userCount, totalRemoved, totalMoved, totalProfileEvents, totalDaily, totalLegacy, applyMsg, poll, startPreview, apply }
+  return { state, stop, userCount, totalRemoved, totalMoved, totalProfileEvents, totalDaily, applyMsg, poll, startPreview, apply }
 }

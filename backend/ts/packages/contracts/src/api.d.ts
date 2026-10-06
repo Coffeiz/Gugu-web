@@ -2607,9 +2607,8 @@ export interface paths {
         /**
          * Memory Cleanup Apply
          * @description 一键执行上一次 preview 存下来的全部结果——不重新调 LLM，预览看到的就是真删/真搬的。
-         *     五件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
+         *     四件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
          *     ③ 把误进 profile 的阶段性事件迁去 memory.md ④ 把旧 daily.md 改成按日期分组的新格式
-         *     ⑤ 清掉已迁移完的遗留 facts.json/facts.md。
          *     执行完清掉 Redis 里的 plan，防止同一份 plan 被误重复应用（比如两次点了确认）。
          */
         post: operations["memory_cleanup_apply_api_v1_admin_config_memory_cleanup_apply_post"];

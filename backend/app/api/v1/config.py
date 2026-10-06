@@ -1271,12 +1271,12 @@ async def index_rebuild_status():
         return {"status": "idle"}
 
 
-# ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 画像事件迁 memory + daily 改格式 + 清遗留文件
+# ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 画像事件迁 memory + daily 改格式
 # （2026-07-09，见 scripts/maintenance/refresh_memory.py）────────────────────────────────────
 # 预览(preview) 和真删(apply) 分两步：预览只跑一次 LLM 判断（review + split，各 3 次投票，
 # dry_run），结果连同具体 fact id 存 Redis；apply 直接按存下来的 id 执行，**不重新调用 LLM**——
 # 同一批数据前后两次调用结果可能差很多（今天踩过：40%→94%），"预览看到的" 必须等于 "真删的"，
-# 不能是"重新掷一次骰子"。画像事件迁移 / daily 迁格式 / legacy 文件清理都是确定性改写，
+# 不能是"重新掷一次骰子"。画像事件迁移 / daily 迁格式都是确定性改写，
 # 没有 LLM 参与，但也一起挂进 preview/apply，保持一个入口做完。
 _MEM_CLEANUP_KEY = "mem_cleanup:plan"
 _MEM_CLEANUP_STALE_SECONDS = 600
@@ -1302,7 +1302,6 @@ async def _memory_cleanup_revision(user_id: str, storage) -> str:
 
 async def _mem_cleanup_worker(user_ids: list[str]) -> None:
     from scripts.maintenance.refresh_memory import _migrate_daily, _migrate_profile_events, _review_patterns, _split_profile
-    from agent.memory.store import _key, PATTERN_FILE
     from app.services.storage import get_storage
     from app.core.redis import get_redis
     r = get_redis()
@@ -1324,12 +1323,7 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
             source_revision = await _memory_cleanup_revision(uid, storage)
             total_batches += int(review.get("batch_count") or 0) + int(split.get("batch_count") or 0)
             completed_batches += int(review.get("successful_batches") or 0) + int(split.get("successful_batches") or 0)
-            legacy_files = []
-            if await storage.exists(_key(uid, PATTERN_FILE)):
-                for legacy_name in ("facts.json", "facts.md", "facts_vec.json"):
-                    if await storage.exists(_key(uid, legacy_name)):
-                        legacy_files.append(legacy_name)
-            if review.get("removed") or split.get("moved") or profile_events.get("migrated") or daily.get("migrated") or legacy_files:
+            if review.get("removed") or split.get("moved") or profile_events.get("migrated") or daily.get("migrated"):
                 plan[uid] = {
                     "removed_ids": review.get("removed_ids", []), "removed_texts": review.get("removed_texts", []),
                     "moved_ids": split.get("moved_ids", []), "moved_texts": split.get("moved_texts", []),
@@ -1337,7 +1331,6 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
                     "profile_event_texts": profile_events.get("moved_texts", []),
                     "daily_migrated": daily.get("migrated", 0),
                     "daily_texts": daily.get("migrated_texts", []),
-                    "legacy_files": legacy_files,
                     "total": review.get("total", 0),
                     "source_revision": source_revision,
                     "batch_count": int(review.get("batch_count") or 0) + int(split.get("batch_count") or 0),
@@ -1398,13 +1391,11 @@ async def memory_cleanup_status():
 @router.post("/memory-cleanup/apply")
 async def memory_cleanup_apply():
     """一键执行上一次 preview 存下来的全部结果——不重新调 LLM，预览看到的就是真删/真搬的。
-    五件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
+    四件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
     ③ 把误进 profile 的阶段性事件迁去 memory.md ④ 把旧 daily.md 改成按日期分组的新格式
-    ⑤ 清掉已迁移完的遗留 facts.json/facts.md。
     执行完清掉 Redis 里的 plan，防止同一份 plan 被误重复应用（比如两次点了确认）。"""
     from app.core.redis import get_redis
     from agent.memory import store
-    from agent.memory.store import _key
     from app.services.storage import get_storage
     from scripts.maintenance.refresh_memory import _migrate_profile_events
     r = get_redis()
@@ -1417,7 +1408,7 @@ async def memory_cleanup_apply():
         raise HTTPException(400, "预览还没跑完，等它跑完再确认")
     if not data.get("plan_ready", False):
         raise HTTPException(400, "记忆维护预览包含失败用户，请重新生成预览")
-    applied_users, applied_total, moved_total, profile_event_total, daily_total, legacy_total = 0, 0, 0, 0, 0, 0
+    applied_users, applied_total, moved_total, profile_event_total, daily_total = 0, 0, 0, 0, 0
     for uid, p in (data.get("plan") or {}).items():
         expected_revision = p.get("source_revision")
         if not expected_revision or expected_revision != await _memory_cleanup_revision(uid, storage):
@@ -1456,13 +1447,6 @@ async def memory_cleanup_apply():
             daily_total += int(daily.get("migrated") or 0)
             touched = True
 
-        for legacy_name in (p.get("legacy_files") or []):
-            legacy_key = _key(uid, legacy_name)
-            if await storage.exists(legacy_key):
-                await storage.delete(legacy_key)
-                legacy_total += 1
-                touched = True
-
         if touched:
             applied_users += 1
     await r.delete(_MEM_CLEANUP_KEY)
@@ -1470,7 +1454,7 @@ async def memory_cleanup_apply():
         "ok": True, "users_applied": applied_users,
         "total_removed": applied_total, "total_moved": moved_total,
         "total_profile_events_migrated": profile_event_total,
-        "total_daily_migrated": daily_total, "legacy_files_removed": legacy_total,
+        "total_daily_migrated": daily_total,
     }
 
 

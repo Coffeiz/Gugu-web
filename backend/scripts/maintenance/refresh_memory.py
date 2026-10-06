@@ -10,9 +10,6 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
   没经过现在这套更细的筛选标准，见 devlog）。
   ⚠️ 同一份输入模型判断可能不稳定（同一 prompt 两次调用删除比例差过一倍，包括该保护的条目
   被误删），所以对每个用户跑 --trials 次独立判断，合并和删除都只采纳多数票，不信单次结果。
-- cleanup-legacy：pattern.json 已存在（说明该用户已经迁移过）时，删掉不再被读写的旧
-  facts.json / facts.md / facts_vec.json（向量缓存改名前的旧文件），纯粹清死重量，
-  不影响任何记忆内容（向量缓存本身可重建）
 - split-profile：profile.json 是全新概念，没有旧数据自动迁移过去——用户 2026-07-08 前记的
   "住哪/是干嘛的"这类身份信息，都跟着旧 facts.json 整份进了 pattern.json，没有被区分出来。
   这个操作把 pattern.json 里其实该算「画像」的条目挑出来搬进 profile.json（一次性迁移债）。
@@ -26,7 +23,6 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
     cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --patterns --dry-run  # 只看会删什么，不写
     cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --patterns --user <uuid> --trials 5  # 调试/调参
     兼容性：`--facts` 是旧命令别名，仍可用，但新脚本请使用 `--patterns`。
-    cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --cleanup-legacy --dry-run
     cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --split-profile --dry-run
     cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --migrate-daily --dry-run
     cd backend && .venv/bin/python scripts/maintenance/refresh_memory.py --migrate-profile-events --dry-run
@@ -240,28 +236,6 @@ async def _review_patterns(user_id: str, settings, dry_run: bool,
     }
 
 
-async def _cleanup_legacy(user_id: str, settings, dry_run: bool, **_ignored) -> dict:
-    """pattern.json 已存在（该用户已迁移过）时，删掉不再被读写的旧 facts.json / facts.md /
-    facts_vec.json（向量缓存改名前的旧文件，自身可重建，删了没损失，next sync_pattern_vecs 会
-    在 pattern_vec.json 下自动重嵌）。"""
-    from agent.memory import store
-    from agent.memory.store import _key
-    from app.services.storage import get_storage
-
-    storage = get_storage()
-    pattern_key = _key(user_id, store.PATTERN_FILE)   # 现在的真实文件名，如 "pattern.json"
-    if not await storage.exists(pattern_key):
-        return {"removed": 0}
-    removed = []
-    for legacy_name in ("facts.json", "facts.md", "facts_vec.json"):
-        legacy_key = _key(user_id, legacy_name)
-        if await storage.exists(legacy_key):
-            if not dry_run:
-                await storage.delete(legacy_key)
-            removed.append(legacy_key)
-    return {"removed": len(removed), "removed_texts": removed}
-
-
 _SPLIT_SYS_PROMPT = (
     "你在复核一份「行为/决策模式」列表(pattern)，挑出其中其实该属于「用户画像」(profile)的条目——\n"
     "这些条目该搬到画像文件里，不该继续留在这份行为模式列表里。\n"
@@ -423,7 +397,6 @@ async def _migrate_profile_events(user_id: str, settings, dry_run: bool, **_igno
 
 OPS = {
     "patterns": _review_patterns,
-    "cleanup-legacy": _cleanup_legacy,
     "migrate-daily": _migrate_daily,
     "migrate-profile-events": _migrate_profile_events,
     "split-profile": _split_profile,

@@ -7,7 +7,6 @@
 - pattern 的增删/印证（apply_pattern_ops）
 - refresh_memory 的多数票复核机制（本身就是今天真实踩过坑的地方，
   单次调用同一份数据删除比例能从 40% 跳到 94%，必须验证投票能收敛）
-- refresh_memory 的 cleanup-legacy
 """
 import json
 from types import SimpleNamespace
@@ -20,11 +19,7 @@ from app.services.storage import LocalStorageBackend
 @pytest.fixture
 def storage(tmp_path, monkeypatch):
     s = LocalStorageBackend(tmp_path)
-    # store.py 已经在模块里 `from ... import get_storage`；refresh_memory._cleanup_legacy
-    # 则是函数内临时 `from app.services.storage import get_storage`（每次调用现查），
-    # 两处都要打——只打 store.py 那处的话 _cleanup_legacy 会绕过 tmp_path、直接摸到真实存储。
     monkeypatch.setattr("agent.memory.store.get_storage", lambda: s)
-    monkeypatch.setattr("app.services.storage.get_storage", lambda: s)
     return s
 
 
@@ -308,43 +303,6 @@ async def test_review_patterns_all_trials_fail_to_parse_skips_user(storage, monk
     assert "error" in result
     # 没删任何东西
     assert len(await mem_store.read_pattern_list(UID)) == 1
-
-
-# ── refresh_memory：cleanup-legacy ──────────────────────────────────────
-
-async def test_cleanup_legacy_removes_old_files_once_migrated(storage):
-    import scripts.maintenance.refresh_memory as rm
-
-    await storage.put(f"{UID}/.agent/pattern.json", b"[]")
-    await storage.put(f"{UID}/.agent/facts.json", b"[]")
-    await storage.put(f"{UID}/.agent/facts.md", b"- old\n")
-    await storage.put(f"{UID}/.agent/facts_vec.json", b"{}")   # 向量缓存改名前的旧文件，也该清
-
-    result = await rm._cleanup_legacy(UID, settings=object(), dry_run=False)
-    assert result["removed"] == 3
-    assert not await storage.exists(f"{UID}/.agent/facts.json")
-    assert not await storage.exists(f"{UID}/.agent/facts.md")
-    assert not await storage.exists(f"{UID}/.agent/facts_vec.json")
-    assert await storage.exists(f"{UID}/.agent/pattern.json")   # 新文件不受影响
-
-
-async def test_cleanup_legacy_noop_before_migration(storage):
-    import scripts.maintenance.refresh_memory as rm
-
-    await storage.put(f"{UID}/.agent/facts.json", b"[]")   # 还没迁移过，没有 pattern.json
-    result = await rm._cleanup_legacy(UID, settings=object(), dry_run=False)
-    assert result["removed"] == 0
-    assert await storage.exists(f"{UID}/.agent/facts.json")   # 没动
-
-
-async def test_cleanup_legacy_dry_run_does_not_delete(storage):
-    import scripts.maintenance.refresh_memory as rm
-
-    await storage.put(f"{UID}/.agent/pattern.json", b"[]")
-    await storage.put(f"{UID}/.agent/facts.json", b"[]")
-    result = await rm._cleanup_legacy(UID, settings=object(), dry_run=True)
-    assert result["removed"] == 1
-    assert await storage.exists(f"{UID}/.agent/facts.json")   # dry-run 不应该真删
 
 
 async def test_migrate_daily_reports_preview_lines(storage):
