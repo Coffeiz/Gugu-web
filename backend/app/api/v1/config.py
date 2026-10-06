@@ -94,8 +94,9 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
                     detail="sandbox.full_user_sandbox_authorization_enabled 必须是布尔值",
                 )
         if isinstance(filesync_patch, dict):
-            if "enabled" in filesync_patch and type(filesync_patch["enabled"]) is not bool:
-                raise HTTPException(status_code=400, detail="filesync.enabled 必须是布尔值")
+            for field in ("enabled", "background_reconcile_enabled"):
+                if field in filesync_patch and type(filesync_patch[field]) is not bool:
+                    raise HTTPException(status_code=400, detail=f"filesync.{field} 必须是布尔值")
             FileSyncSettings.model_validate({
                 **get_settings().filesync.model_dump(),
                 **filesync_patch,
@@ -431,12 +432,20 @@ async def _import_orphan(db, key: str, storage) -> bool:
     folder_id = await _resolve_import_folder(db, uid, project_id, parsed["folder_parts"])
     if parsed["folder_parts"] and folder_id is None:
         return False
-    db.add(File(
+    file = File(
         user_id=uid, display_name=name, ext=ext.lower(), space=parsed["space"],
         project_id=project_id, folder_id=folder_id, storage_key=key,
         size=_fmt_size(info.size), size_bytes=info.size,
         mime_type=mimetypes.guess_type(fname)[0],
-    ))
+    )
+    db.add(file)
+    await db.flush()
+    from app.services.filesync.protocol import record_canonical_path_change
+
+    await record_canonical_path_change(
+        db, user_id=uid, storage_key=key, operation="create",
+        change_id=f"admin-orphan-import:{file.id}:{uuid.uuid4().hex}",
+    )
     return True
 
 
@@ -477,6 +486,8 @@ class PathMigrationRequest(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if len(self.items) > 1000:
             raise ValueError("单次路径迁移最多处理 1000 项")
+
+
 
 
 @router.post("/reconcile-storage/repair")
@@ -574,6 +585,17 @@ async def scan_path_migration(db: AsyncSession = Depends(get_db)):
         })
     return {"candidates": candidates, "ambiguous": ambiguous,
             "candidate_count": len(candidates), "ambiguous_count": len(ambiguous)}
+
+
+async def _record_file_path_move(db: AsyncSession, file: Any, old_key: str, new_key: str) -> None:
+    """统一记录管理修复造成的文件路径迁移。"""
+    from app.services.filesync.protocol import record_canonical_file_move
+
+    await record_canonical_file_move(
+        db, user_id=file.user_id, old_storage_key=old_key,
+        new_storage_key=new_key, entity_id=file.id,
+        version=int(file.version or 1),
+    )
 
 
 @router.post("/reconcile-storage/path-migration/repair")
@@ -677,7 +699,9 @@ async def repair_path_migration(body: PathMigrationRequest, db: AsyncSession = D
             file.space = parsed["space"]
             file.project_id = parsed["project_id"]
             file.folder_id = folder_id
+            old_key = file.storage_key
             file.storage_key = new_key
+            await _record_file_path_move(db, file, old_key, new_key)
             done.append(file.id)
         except Exception as exc:
             failed.append({"file_id": file.id, "error": type(exc).__name__})
@@ -1271,12 +1295,12 @@ async def index_rebuild_status():
         return {"status": "idle"}
 
 
-# ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 画像事件迁 memory + daily 改格式
+# ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 画像事件迁 memory + daily 改格式 + 清遗留文件
 # （2026-07-09，见 scripts/maintenance/refresh_memory.py）────────────────────────────────────
 # 预览(preview) 和真删(apply) 分两步：预览只跑一次 LLM 判断（review + split，各 3 次投票，
 # dry_run），结果连同具体 fact id 存 Redis；apply 直接按存下来的 id 执行，**不重新调用 LLM**——
 # 同一批数据前后两次调用结果可能差很多（今天踩过：40%→94%），"预览看到的" 必须等于 "真删的"，
-# 不能是"重新掷一次骰子"。画像事件迁移 / daily 迁格式都是确定性改写，
+# 不能是"重新掷一次骰子"。画像事件迁移 / daily 迁格式 / legacy 文件清理都是确定性改写，
 # 没有 LLM 参与，但也一起挂进 preview/apply，保持一个入口做完。
 _MEM_CLEANUP_KEY = "mem_cleanup:plan"
 _MEM_CLEANUP_STALE_SECONDS = 600
@@ -1289,7 +1313,6 @@ async def _memory_cleanup_revision(user_id: str, storage) -> str:
     digest = hashlib.sha256()
     for name in (
         "pattern.json", "profile.json", "daily.md", "memory.md",
-        "facts.json", "facts.md",
     ):
         key = _key(user_id, name)
         digest.update(name.encode("utf-8"))
@@ -1391,7 +1414,7 @@ async def memory_cleanup_status():
 @router.post("/memory-cleanup/apply")
 async def memory_cleanup_apply():
     """一键执行上一次 preview 存下来的全部结果——不重新调 LLM，预览看到的就是真删/真搬的。
-    四件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
+    四件事：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
     ③ 把误进 profile 的阶段性事件迁去 memory.md ④ 把旧 daily.md 改成按日期分组的新格式
     执行完清掉 Redis 里的 plan，防止同一份 plan 被误重复应用（比如两次点了确认）。"""
     from app.core.redis import get_redis

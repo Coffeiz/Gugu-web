@@ -1,14 +1,17 @@
 """P3.2 Agent 文件夹工具与 FileService 的最小对称回归。"""
 from pathlib import Path
 import json
+from types import SimpleNamespace
+
 import pytest
+from sqlalchemy import select
 
 from agent.tools.files.documents import _valid_file_ids
 from app.core.tz import now_utc
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 from app.services.storage.trash import move_file_to_trash
-from app.models import Folder, Project, WorkspaceDirectory
+from app.models import FileSyncBinding, FileSyncJournal, Folder, Project, WorkspaceDirectory
 
 
 async def _wire_agent_storage(monkeypatch, root: Path):
@@ -278,6 +281,16 @@ async def test_agent_restore_folder_matches_file_service(db, user_a, tmp_path, m
 
 async def test_agent_edit_file_updates_content_and_metadata(db, user_a, tmp_path, monkeypatch):
     agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(storage.root)),
+    )
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
     service = FileService(db, storage=storage)
     result = await service.create_file(
         user_a.id,
@@ -293,6 +306,12 @@ async def test_agent_edit_file_updates_content_and_metadata(db, user_a, tmp_path
     )
     file = result.file
     await db.commit()
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="d" * 64,
+    )
+    db.add(binding)
+    await db.flush()
     old_version = file.version
 
     edited = await agent_files._edit_file(
@@ -305,6 +324,14 @@ async def test_agent_edit_file_updates_content_and_metadata(db, user_a, tmp_path
     await db.refresh(file)
     assert file.size_bytes == len("新内容".encode())
     assert file.version == old_version + 1
+    journal = await db.scalar(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.relative_path == "个人文件/编辑测试.md",
+        FileSyncJournal.source == "file_api",
+    ))
+    await db.refresh(binding)
+    assert journal is not None and journal.operation == "update"
+    assert binding.dirty_revision == 1
 
 
 async def test_agent_create_file_supports_batch_custom_extensions_and_partial_results(db, user_a, tmp_path, monkeypatch):

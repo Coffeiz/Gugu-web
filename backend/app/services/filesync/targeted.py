@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,7 +23,21 @@ from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project, User
 from app.services.files.previews import delete_thumb_cache
+from app.services.filesync.file_ops import (
+    directory_fingerprint as _directory_fingerprint,
+    is_sync_temporary as _is_sync_temporary,
+    safe_storage_key as _safe_storage_key,
+    stable_fingerprint as _stable_fingerprint,
+)
+from app.services.filesync.projection_paths import (
+    classify_path as _classify_path,
+    ensure_folder_path as _ensure_folder_path,
+    find_folder_path as _find_folder_path,
+    parse_directory_path as _parse_directory_path,
+    workspace_directory_id_for as _workspace_directory_id_for,
+)
 from app.services.filesync.protocol import (
+    FileSyncMode,
     FileSyncOperation,
     FileSyncSource,
     FileSyncStatus,
@@ -31,20 +46,16 @@ from app.services.filesync.protocol import (
     record_change,
     validate_sync_path,
 )
-from app.services.filesync.reconcile import (
-    SyncSummary,
-    _directory_fingerprint,
-    _classify_path,
-    _find_folder_path,
-    _is_sync_temporary,
-    _parse_directory_path,
-    _safe_storage_key,
-    _stable_fingerprint,
-    _workspace_directory_id_for,
-)
+from app.services.filesync.summary import SyncSummary
 from app.services.filesync.snapshots import save_snapshot
+from app.services.filesync.scan import ScanEntry
 from app.services.workspaces import workspace_shell_supported
 from app.services.storage.quota_limits import resolve_file_library_limit
+
+
+def _reject_path(summary_inout: dict, relative: str) -> None:
+    summary_inout["rejected"] += 1
+    summary_inout["rejected_paths"].add(relative)
 
 
 @dataclass
@@ -134,8 +145,10 @@ async def _project_changed_file(
     workspace_directory_id: int | None,
     relative: str,
     latest: dict[tuple[str, str], FileSyncJournal],
+    scanned_entry: ScanEntry | None,
     quota_headroom: int,
     summary_inout: dict,
+    *, mark_dirty: bool = True,
 ) -> int:
     """单文件 create/update 投影；返回本次变更的净字节增量。
 
@@ -155,10 +168,20 @@ async def _project_changed_file(
             db, user_id, path, user_root,
             workspace_directory_id=workspace_directory_id, base=root,
         )
-        # 精确变更事件是重新核对正文的依据；size/mtime 相同也不能跳过哈希。
-        observed = _stable_fingerprint(path)
+        info = path.stat(follow_symlinks=False)
+        if scanned_entry is not None and (
+            scanned_entry.object_type != "file"
+            or scanned_entry.size_bytes != info.st_size
+            or scanned_entry.mtime_ns != info.st_mtime_ns
+            or scanned_entry.ctime_ns != getattr(info, "st_ctime_ns", 0)
+        ):
+            _reject_path(summary_inout, relative)
+            return 0
+        observed = scanned_entry.fingerprint if scanned_entry else None
+        if observed is None:
+            observed = _stable_fingerprint(path)
     except (OSError, ValueError):
-        summary_inout["rejected"] += 1
+        _reject_path(summary_inout, relative)
         return 0
 
     row = (await db.execute(select(File).where(
@@ -171,11 +194,24 @@ async def _project_changed_file(
 
     if row is not None and source is None:
         previous = latest.get(("file", relative))
-        if previous is not None and previous.observed_fingerprint == observed:
+        metadata_matches = (
+            row.size_bytes == info.st_size
+            and row.display_name == display_name
+            and row.ext == ext
+            and row.space == space
+            and row.project_id == project_id
+            and row.folder_id == folder_id
+            and row.workspace_directory_id == file_ws_dir_id
+        )
+        if (
+            previous is not None
+            and previous.observed_fingerprint == observed
+            and metadata_matches
+        ):
             return 0
         size_delta = path.stat().st_size - int(row.size_bytes or 0)
         if size_delta > quota_headroom:
-            summary_inout["rejected"] += 1
+            _reject_path(summary_inout, relative)
             return 0
         row.size_bytes = path.stat().st_size
         row.size = str(path.stat().st_size)
@@ -196,7 +232,7 @@ async def _project_changed_file(
         row = source
         size_delta = path.stat().st_size - int(row.size_bytes or 0)
         if size_delta > quota_headroom:
-            summary_inout["rejected"] += 1
+            _reject_path(summary_inout, relative)
             return 0
         old_key = row.storage_key
         row.storage_key = key
@@ -216,7 +252,7 @@ async def _project_changed_file(
         baseline = old_journal.observed_fingerprint if old_journal else None
     else:
         if path.stat().st_size > quota_headroom:
-            summary_inout["rejected"] += 1
+            _reject_path(summary_inout, relative)
             return 0
         stat = path.stat()
         size_delta = stat.st_size
@@ -241,6 +277,7 @@ async def _project_changed_file(
         ),
         baseline_fingerprint=baseline, observed_fingerprint=observed,
         status=FileSyncStatus.SYNCED,
+        mark_dirty=mark_dirty,
     )
     latest[("file", relative)] = journal
     summary_inout["journal_ids"].append(journal.id)
@@ -256,6 +293,7 @@ async def _project_deleted_file(
     db: AsyncSession, user_id, binding: FileSyncBinding, storage_root: Path,
     scope_prefix: str, relative: str,
     latest: dict[tuple[str, str], FileSyncJournal], summary_inout: dict,
+    *, mark_dirty: bool = True,
 ) -> None:
     key = scope_prefix + relative
     row = (await db.execute(select(File).where(
@@ -280,6 +318,7 @@ async def _project_deleted_file(
         ),
         baseline_fingerprint=previous.observed_fingerprint if previous else None,
         observed_fingerprint=None, status=FileSyncStatus.SYNCED,
+        mark_dirty=mark_dirty,
     )
     summary_inout["journal_ids"].append(journal.id)
 
@@ -288,34 +327,29 @@ async def _project_folder_created(
     db: AsyncSession, user_id, binding: FileSyncBinding, root: Path,
     user_root: Path, workspace_directory_id: int | None, relative: str,
     latest: dict[tuple[str, str], FileSyncJournal], summary_inout: dict,
+    scanned_entry: ScanEntry | None = None,
+    *, mark_dirty: bool = True,
 ) -> None:
     directory = root / relative
     try:
-        validate_sync_path(root, relative)
-        if not directory.is_dir() or directory.is_symlink():
-            raise ValueError("目录不存在或是符号链接")
-        if workspace_directory_id is not None:
-            space, project_id, folder_names = "workspace", None, list(directory.relative_to(root).parts)
-        else:
-            parsed = _parse_directory_path(directory, user_root)
-            if parsed is None:
-                summary_inout["rejected"] += 1
-                return
-            space, project_id, folder_names = parsed
-        if project_id is not None and await get_owned(db, Project, project_id, user_id) is None:
-            raise ValueError("项目不属于当前用户")
+        space, project_id, folder_names = await _folder_projection_target(
+            db, user_id, root, user_root, workspace_directory_id, relative,
+        )
     except (OSError, ValueError):
-        summary_inout["rejected"] += 1
+        _reject_path(summary_inout, relative)
         return
 
-    from app.services.filesync.reconcile import _ensure_folder_path
+    observed = _folder_observed_fingerprint(directory, scanned_entry)
+    if observed is None:
+        _reject_path(summary_inout, relative)
+        return
+
     folder_id, was_created = await _ensure_folder_path(
         db, user_id, space=space, project_id=project_id, folder_names=folder_names,
         workspace_directory_id=workspace_directory_id,
     )
     if folder_id is None:
         return
-    observed = _directory_fingerprint(directory)
     previous = latest.get(("folder", relative))
     if previous is not None and previous.observed_fingerprint == observed:
         return
@@ -331,6 +365,7 @@ async def _project_folder_created(
             object_type="folder", relative_path=relative, fingerprint=observed,
         ),
         observed_fingerprint=observed, status=FileSyncStatus.SYNCED,
+        mark_dirty=mark_dirty,
     )
     latest[("folder", relative)] = journal
     summary_inout["journal_ids"].append(journal.id)
@@ -341,10 +376,51 @@ async def _project_folder_created(
         summary_inout["folders_updated"] += 1
 
 
+async def _folder_projection_target(
+    db: AsyncSession,
+    user_id,
+    root: Path,
+    user_root: Path,
+    workspace_directory_id: int | None,
+    relative: str,
+) -> tuple[str, int | None, list[str]]:
+    directory = validate_sync_path(root, relative)
+    if not directory.is_dir() or directory.is_symlink():
+        raise ValueError("目录不存在或是符号链接")
+    if workspace_directory_id is not None:
+        return "workspace", None, list(directory.relative_to(root).parts)
+    parsed = _parse_directory_path(directory, user_root)
+    if parsed is None:
+        raise ValueError("目录不属于可同步的用户路径")
+    space, project_id, folder_names = parsed
+    if project_id is not None and await get_owned(db, Project, project_id, user_id) is None:
+        raise ValueError("项目不属于当前用户")
+    return space, project_id, folder_names
+
+
+def _folder_observed_fingerprint(
+    directory: Path, scanned_entry: ScanEntry | None,
+) -> str | None:
+    if scanned_entry is None:
+        return _directory_fingerprint(directory)
+    try:
+        info = directory.stat(follow_symlinks=False)
+    except OSError:
+        return None
+    if (
+        scanned_entry.object_type != "folder"
+        or scanned_entry.mtime_ns != info.st_mtime_ns
+        or scanned_entry.ctime_ns != getattr(info, "st_ctime_ns", 0)
+    ):
+        return None
+    return scanned_entry.fingerprint
+
+
 async def _project_folder_deleted(
     db: AsyncSession, user_id, binding: FileSyncBinding, root: Path,
     user_root: Path, workspace_directory_id: int | None, relative: str,
     latest: dict[tuple[str, str], FileSyncJournal], summary_inout: dict,
+    *, mark_dirty: bool = True,
 ) -> None:
     parts = [item for item in relative.split("/") if item]
     if not parts:
@@ -362,14 +438,14 @@ async def _project_folder_deleted(
             workspace_directory_id=workspace_directory_id,
         )
     except (OSError, ValueError):
-        summary_inout["rejected"] += 1
+        _reject_path(summary_inout, relative)
         return
     if folder_id is None:
         return
     folder = await db.get(Folder, folder_id)
     if folder is None or folder.deleted_at is not None:
         return
-    # 保守删除：仍有活动文件或子目录时不动，需显式手动核对。
+    # 保守删除：仍有活动文件或子目录时不动，交给日级补偿整树裁决。
     live_file = await db.scalar(select(func.count()).select_from(File).where(
         File.folder_id == folder_id, File.deleted_at.is_(None),
     ))
@@ -393,6 +469,7 @@ async def _project_folder_deleted(
         baseline_fingerprint=(latest.get(("folder", relative)).observed_fingerprint
                               if latest.get(("folder", relative)) else None),
         status=FileSyncStatus.SYNCED,
+        mark_dirty=mark_dirty,
     )
     summary_inout["journal_ids"].append(journal.id)
 
@@ -405,8 +482,15 @@ async def project_path_events(
     batch: PathEventBatch,
     *,
     allow_delete: bool = True,
+    scanned_entries: Mapping[str, ScanEntry] | None = None,
+    mark_dirty: bool = True,
+    quota_reclaim_bytes: int = 0,
 ) -> SyncSummary:
     """把一批 sidecar 路径事件投影为 File/Folder 单点变更。"""
+    # mirror_out 的权威方向是文件库→绑定目录；即使调用方误把本地事件
+    # 送到这里，也不能反向导入文件库。
+    if binding.mode == FileSyncMode.MIRROR_OUT:
+        return SyncSummary()
     if not is_file_sync_enabled() or not workspace_shell_supported():
         return SyncSummary(rejected=1)
     settings = get_settings()
@@ -427,6 +511,7 @@ async def project_path_events(
     quota_limit = await _quota_limit(db, user_id)
     summary_inout: dict = {
         "created": 0, "updated": 0, "moved": 0, "deleted": 0, "rejected": 0,
+        "rejected_paths": set(),
         "folders_created": 0, "folders_updated": 0, "folders_deleted": 0,
         "journal_ids": [], "entity_ids": [],
     }
@@ -435,24 +520,32 @@ async def project_path_events(
     # 先建后删让「改名 = unlink+add」事件对在删除前完成移动识别。
     for relative in sorted(batch.folders_created):
         await _project_folder_created(
-            db, user_id, binding, root, user_root, workspace_directory_id, relative, latest, summary_inout,
+            db, user_id, binding, root, user_root, workspace_directory_id, relative, latest,
+            summary_inout, (scanned_entries or {}).get(relative),
+            mark_dirty=mark_dirty,
         )
-    quota_headroom = quota_limit - await _live_storage_bytes(db, user_id)
+    quota_headroom = (
+        quota_limit - await _live_storage_bytes(db, user_id)
+        + max(0, int(quota_reclaim_bytes))
+    )
     for relative in sorted(batch.changed):
         # 按净字节增量逐项更新余量：新增/扩容扣减，缩小文件释放余量。
         quota_headroom -= await _project_changed_file(
             db, user_id, binding, root, storage_root, scope_prefix, user_root,
             workspace_directory_id, relative, latest,
-            quota_headroom, summary_inout,
+            (scanned_entries or {}).get(relative),
+            quota_headroom, summary_inout, mark_dirty=mark_dirty,
         )
     if allow_delete:
         for relative in sorted(batch.deleted):
             await _project_deleted_file(
                 db, user_id, binding, storage_root, scope_prefix, relative, latest, summary_inout,
+                mark_dirty=mark_dirty,
             )
         for relative in sorted(batch.folders_deleted, key=lambda item: item.count("/"), reverse=True):
             await _project_folder_deleted(
                 db, user_id, binding, root, user_root, workspace_directory_id, relative, latest, summary_inout,
+                mark_dirty=mark_dirty,
             )
     binding.last_reconciled_at = now_utc()
     await db.flush()
@@ -462,6 +555,7 @@ async def project_path_events(
         created=summary_inout["created"], updated=summary_inout["updated"],
         moved=summary_inout["moved"], deleted=summary_inout["deleted"],
         rejected=summary_inout["rejected"],
+        rejected_paths=tuple(sorted(summary_inout["rejected_paths"])),
         folders_created=summary_inout["folders_created"],
         folders_updated=summary_inout["folders_updated"],
         folders_deleted=summary_inout["folders_deleted"],

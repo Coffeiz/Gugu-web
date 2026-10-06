@@ -8,6 +8,13 @@ from app.models import FileSyncBinding, FileSyncConflict, FileSyncJournal, FileS
 from app.services.filesync.admin import admin_resolve_conflict, get_admin_sync_status
 
 
+def test_background_reconcile_defaults_enabled_for_existing_deployments():
+    """升级旧配置后保持自动对账开启，回滚开关不会默认改变线上行为。"""
+    from app.core.config import FileSyncSettings
+
+    assert FileSyncSettings().background_reconcile_enabled is True
+
+
 def _local_settings(tmp_path):
     return SimpleNamespace(storage=SimpleNamespace(backend="local", local_path=str(tmp_path)))
 
@@ -52,6 +59,7 @@ async def test_admin_status_aggregates_bindings_failures_conflicts_and_outbox(db
 
     assert result["supported"] is True
     assert result["featureEnabled"] is True
+    assert result["backgroundReconcileEnabled"] is True
     assert result["totals"] == {
         "bindings": 1, "journals": 2, "pendingJournals": 0,
         "failedJournals": 0, "rejectedJournals": 1, "pendingConflicts": 1,
@@ -129,6 +137,24 @@ async def test_admin_reconcile_requires_explicit_confirmation(db):
     with pytest.raises(HTTPException) as exc:
         await binding_reconcile(1, BindingActionRequest(confirm=False), db=db)
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_admin_config_rejects_non_boolean_background_reconcile_flag(db):
+    """后台对账开关拒绝整数等隐式真值，避免配置写入造成意外停跑。"""
+    from types import SimpleNamespace
+
+    import app.api.v1.config as config_api
+
+    request = SimpleNamespace(state=SimpleNamespace(admin_username="admin"))
+    with pytest.raises(HTTPException) as exc:
+        await config_api.update_config(
+            config_api.ConfigPatch(patch={"filesync": {"background_reconcile_enabled": 0}}),
+            request=request,
+            db=db,
+        )
+    assert exc.value.status_code == 400
+    assert "background_reconcile_enabled" in exc.value.detail
 
 
 @pytest.mark.asyncio

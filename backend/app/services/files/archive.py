@@ -25,7 +25,10 @@ from app.core.errors import Conflict, Invalid, NotFound
 from app.core.ownership import get_owned
 from app.core.redaction import diag_log
 from app.models import File, Folder, Project, WorkspaceDirectory
-from app.services.filesync.protocol import record_canonical_file_change
+from app.services.filesync.protocol import (
+    record_canonical_file_change,
+    record_canonical_folder_change,
+)
 from app.services.storage import OSSStorageBackend, StorageBackend, get_storage
 from app.services.storage.key_strategy import KeyContext, PathMirrorStrategy
 from app.services.storage.keys import compose_logical_path
@@ -680,6 +683,10 @@ async def _create_extracted_folder(
     folder_key = await _physical_folder_key(storage, user_id, target, target_folder_path)
     created_folder_keys.append(folder_key)
     await storage.ensure_folder(folder_key)
+    await record_canonical_folder_change(
+        db, user_id=user_id, storage_key=folder_key,
+        operation="create", entity_id=folder.id, version=int(folder.version or 1),
+    )
     return folder.id, final_name, target_folder_path
 
 

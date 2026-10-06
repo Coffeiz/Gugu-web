@@ -175,11 +175,19 @@ async def relocate_folder_tree_files(
         )
         new_name = file.display_name
         if new_key != file.storage_key:
+            old_key = file.storage_key
             new_key, new_name = await _resolve_conflict(storage, new_key, new_name, file.ext)
             await storage.rename_file(file.storage_key, new_key)
             file.storage_key = new_key
             file.display_name = new_name
             moved += 1
+            from app.services.filesync.protocol import record_canonical_file_move
+
+            await record_canonical_file_move(
+                db, user_id=user_id, old_storage_key=old_key,
+                new_storage_key=new_key, entity_id=file.id,
+                version=int(file.version or 1),
+            )
         file.space = file_space
         file.project_id = project_id
         file.workspace_directory_id = folder.workspace_directory_id

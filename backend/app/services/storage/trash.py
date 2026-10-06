@@ -60,7 +60,7 @@ async def original_storage_key(f: File, db) -> str:
     )
 
 
-async def move_file_to_trash(storage, f: File) -> None:
+async def move_file_to_trash(storage, f: File, db=None) -> None:
     """把物理文件移入回收站目录，更新 storage_key；失败时静默忽略。
 
     幂等判断按「当前 key 是否已等于本该算出的 trash_key」——原判断
@@ -68,7 +68,8 @@ async def move_file_to_trash(storage, f: File) -> None:
     `f"{uid}/trash/{fid}/..."` 格式对不上，从未生效过（迁移时顺带修正，
     行为更安全：本函数现在才是真正可重复调用不出错）。
     """
-    trash_key = to_trash_key(f.user_id, f.storage_key, f.display_name, f.ext)
+    source_key = f.storage_key
+    trash_key = to_trash_key(f.user_id, source_key, f.display_name, f.ext)
     if f.storage_key == trash_key:
         return  # 已在回收站
     try:
@@ -78,6 +79,13 @@ async def move_file_to_trash(storage, f: File) -> None:
         # 不清旧祖先：文件所属文件夹可能仍存活，空目录须持久（P1.2）；孤儿由对账工具兜底
     except Exception:
         pass
+    if db is not None:
+        from app.services.filesync.protocol import record_canonical_file_delete
+
+        await record_canonical_file_delete(
+            db, user_id=f.user_id, storage_key=source_key,
+            entity_id=f.id, version=int(f.version or 1) + 1,
+        )
 
 
 async def restore_file_storage(f: File, storage, db) -> None:
@@ -97,3 +105,9 @@ async def restore_file_storage(f: File, storage, db) -> None:
         # 物理文件丢失时仍恢复 DB 记录，storage_key 重置为预期路径
         f.storage_key = final_key
         f.display_name = final_name
+    from app.services.filesync.protocol import record_canonical_file_restore
+
+    await record_canonical_file_restore(
+        db, user_id=f.user_id, storage_key=f.storage_key,
+        entity_id=f.id, version=int(f.version or 1) + 1,
+    )

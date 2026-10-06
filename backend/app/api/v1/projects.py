@@ -24,6 +24,7 @@ from app.services.projects import (
     count_project_files,
     get_project_row,
     list_project_rows,
+    _record_project_file_moves,
     project_trash_cutoff,
 )
 
@@ -138,6 +139,7 @@ async def update_project(
     # 项目改名时同步重命名存储目录
     old_name = p.name
     new_name = data.get("name")
+    moved_files: list[tuple[File, str, str]] = []
     if new_name and new_name != old_name:
         def _safe(s: str) -> str:
             return re.sub(r'[\\/:*?"<>|]', "_", s)
@@ -152,7 +154,9 @@ async def update_project(
         )
         for f in files_res.scalars().all():
             if f.storage_key.startswith(old_prefix):
+                old_key = f.storage_key
                 f.storage_key = new_prefix + f.storage_key[len(old_prefix):]
+                moved_files.append((f, old_key, f.storage_key))
 
     try:
         updated = await update_project_atomic(db, pid, current_user.id, client_version, data, p)
@@ -161,6 +165,7 @@ async def update_project(
     if not updated:
         await db.rollback()
         raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
+    await _record_project_file_moves(db, current_user.id, moved_files)
     # update_project_atomic 使用 Core UPDATE；在 asyncpg 下 SQLAlchemy 可能把未参与
     # 更新的标量字段标记为 expired。Undo 快照必须在显式刷新后读取，避免访问
     # p.done_at 等字段时触发隐式 IO，落入 MissingGreenlet 并把已成功的更新报成 500。

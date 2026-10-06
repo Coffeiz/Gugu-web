@@ -3,13 +3,15 @@
 同 test_mind_api：直接调路由函数（current_user/db/origin 显式传），不起 TestClient。
 """
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from app.api.v1 import folders as folders_api
 from app.core.errors import Conflict, Invalid, NotFound
-from app.models import Project
+from app.models import FileSyncBinding, FileSyncJournal, Project
 from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename
 from app.services.storage import LocalStorageBackend
 
@@ -50,6 +52,46 @@ async def test_rename_endpoint(db, user_a):
     r2 = await folders_api.rename_folder(r.id, FolderRename(name="new", version=r.version),
                                          current_user=user_a, origin=None, db=db)
     assert r2.name == "new" and r2.version == r.version + 1
+
+
+async def test_empty_folder_rename_advances_sync_path_watermark(
+    db, user_a, monkeypatch, tmp_path,
+):
+    """即使文件夹为空，改名也要向绑定提交旧/新路径的变更水位。"""
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+
+    folder = await _create(db, user_a, "before")
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="c" * 64,
+    )
+    db.add(binding)
+    await db.flush()
+
+    renamed = await folders_api.rename_folder(
+        folder.id, FolderRename(name="after", version=folder.version),
+        current_user=user_a, origin=None, db=db,
+    )
+
+    changes = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.object_type == "folder",
+    ).order_by(FileSyncJournal.id))).all()
+    assert renamed.name == "after"
+    assert [(row.relative_path, row.operation) for row in changes] == [
+        ("个人文件/before", "delete"),
+        ("个人文件/after", "create"),
+    ]
+    await db.refresh(binding)
+    assert binding.dirty_revision == 2
 
 
 async def test_rename_not_found(db, user_a):

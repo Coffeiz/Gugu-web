@@ -5,6 +5,7 @@ import hashlib
 import re
 from enum import StrEnum
 from pathlib import Path
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,8 @@ from app.core.redaction import diag_log
 from app.core.config import get_settings
 from app.models import FileSyncBinding, FileSyncJournal, Workspace
 from app.core.ownership import get_owned
+from app.services.filesync.activity import record_file_activity
+from app.services.filesync.paths import normalize_relative_path
 
 FILE_SYNC_PROTOCOL_VERSION = 1
 
@@ -53,18 +56,6 @@ def is_file_sync_enabled() -> bool:
     return bool(settings.filesync.enabled)
 
 
-def normalize_relative_path(value: str) -> str:
-    if not isinstance(value, str) or not value or "\x00" in value:
-        raise ValueError("同步路径无效")
-    path = value.replace("\\", "/")
-    if path.startswith("/") or re.match(r"^[A-Za-z]:/", path):
-        raise ValueError("同步路径必须是相对路径")
-    parts = [part for part in path.split("/") if part not in ("", ".")]
-    if not parts or any(part == ".." for part in parts):
-        raise ValueError("同步路径越界")
-    return "/".join(parts)
-
-
 async def create_binding(
     db: AsyncSession,
     *,
@@ -100,24 +91,31 @@ async def create_binding(
     return row
 
 
-async def record_canonical_file_change(
+async def record_canonical_path_change(
     db: AsyncSession,
     *,
     user_id,
     storage_key: str,
-    observed_fingerprint: str,
+    operation: str,
+    change_id: str,
+    object_type: str = "file",
+    observed_fingerprint: str | None = None,
 ) -> None:
-    """把文件库正式写入登记到覆盖它的本地目录绑定。
+    """把文件库中的路径变更登记到覆盖它的本地目录绑定。
 
     文件同步是文件库的可选旁路能力：开关关闭、存储后端不是 local 或绑定根
-    无法解析时，主文件写入仍然必须成功。workspace 绑定的 ``root_path`` 固定
-    为 ``.``，因此必须解析真实 workspace 根后再计算 journal 相对路径。
+    无法解析时，主文件写入仍然必须成功。workspace 绑定必须解析真实根目录后
+    再计算 journal 相对路径。调用方提供的 change_id 区分同一路径的不同变更。
     """
     settings = get_settings()
     if not is_file_sync_enabled():
         return
     if getattr(settings.storage, "backend", "local") != "local":
         return
+    if operation not in {item.value for item in FileSyncOperation}:
+        raise ValueError("同步操作无效")
+    if object_type not in {"file", "folder"} or not change_id:
+        raise ValueError("同步路径变更无效")
     prefix = f"{user_id}/"
     if not storage_key.startswith(prefix):
         return
@@ -135,7 +133,15 @@ async def record_canonical_file_change(
         FileSyncBinding.source == FileSyncSource.LOCAL_DIRECTORY,
         FileSyncBinding.status == "active",
     ))).all()
+    mirror_out_bindings = []
     for binding in bindings:
+        if binding.mode == FileSyncMode.MIRROR_OUT:
+            # mirror_out 的来源是整个文件库，通常不位于输出目录之下，不能
+            # 用路径覆盖关系决定是否需要导出。脏水位让运行中的固定截止任务
+            # 在完成后排入下一轮，避免吞掉任务开始后的文件库变更。
+            binding.dirty_revision = int(binding.dirty_revision or 0) + 1
+            mirror_out_bindings.append(binding)
+            continue
         try:
             if binding.workspace_id is not None:
                 # 自动 workspace binding 的 root_path 是“工作区根”的占位值，
@@ -157,17 +163,17 @@ async def record_canonical_file_change(
             continue
         if not relative:
             continue
-        operation = FileSyncOperation.UPDATE
         try:
             # 用 savepoint 隔离同步 journal；即使同步校验/唯一键遇到异常，
             # 也不能回滚文件库本身已经完成的主事务。
             async with db.begin_nested():
                 await record_change(
                     db, binding=binding, user_id=user_id, source=FileSyncSource.FILE_API,
-                    operation=operation, relative_path=relative,
+                    operation=operation, object_type=object_type, relative_path=relative,
                     idempotency_key=build_idempotency_key(
                         source=FileSyncSource.FILE_API, operation=operation,
-                        relative_path=relative, fingerprint=observed_fingerprint,
+                        object_type=object_type, relative_path=relative,
+                        fingerprint=f"{change_id}:{observed_fingerprint or ''}",
                     ), observed_fingerprint=observed_fingerprint,
                     status=FileSyncStatus.SYNCED,
                 )
@@ -176,6 +182,111 @@ async def record_canonical_file_change(
         except Exception as exc:
             # canonical journal 是可选旁路；保留受限诊断，放行主文件写入。
             diag_log("filesync.canonical_file_change", exc)
+
+    if mirror_out_bindings:
+        # 文件库事件只计一次用户活动；mirror_out 本身不反向导入目标目录。
+        try:
+            await record_file_activity(db, user_id)
+        except Exception as exc:
+            diag_log("filesync.mirror_out_activity", exc)
+        try:
+            from app.services.filesync.jobs import enqueue_reconcile
+
+            for binding in mirror_out_bindings:
+                async with db.begin_nested():
+                    await enqueue_reconcile(
+                        db, binding, mode=FileSyncMode.MIRROR_OUT, reason="file_event",
+                    )
+        except Exception as exc:
+            # 文件同步是可选旁路，排队失败不能回滚已经完成的文件库写入。
+            diag_log("filesync.mirror_out_enqueue", exc)
+
+
+async def record_canonical_file_change(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    observed_fingerprint: str,
+) -> None:
+    """记录文件库正文变更，供上传、覆盖、编辑和归档导入复用。"""
+    await record_canonical_path_change(
+        db,
+        user_id=user_id,
+        storage_key=storage_key,
+        operation=FileSyncOperation.UPDATE,
+        change_id=observed_fingerprint,
+        observed_fingerprint=observed_fingerprint,
+    )
+
+
+async def record_canonical_file_move(
+    db: AsyncSession,
+    *,
+    user_id,
+    old_storage_key: str,
+    new_storage_key: str,
+    entity_id: int,
+    version: int,
+) -> None:
+    """登记文件库内移动的源/目标路径，使两个绑定范围都推进脏水位。"""
+    change_id = f"file:{entity_id}:version:{version}:{uuid4().hex}"
+    await record_canonical_path_change(
+        db, user_id=user_id, storage_key=old_storage_key,
+        operation=FileSyncOperation.DELETE, change_id=f"{change_id}:old",
+    )
+    await record_canonical_path_change(
+        db, user_id=user_id, storage_key=new_storage_key,
+        operation=FileSyncOperation.CREATE, change_id=f"{change_id}:new",
+    )
+
+
+async def record_canonical_file_delete(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    entity_id: int,
+    version: int,
+) -> None:
+    """登记文件进入回收站前的原路径删除。"""
+    await record_canonical_path_change(
+        db, user_id=user_id, storage_key=storage_key,
+        operation=FileSyncOperation.DELETE,
+        change_id=f"file:{entity_id}:version:{version}:delete:{uuid4().hex}",
+    )
+
+
+async def record_canonical_file_restore(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    entity_id: int,
+    version: int,
+) -> None:
+    """登记文件从回收站恢复到文件库路径。"""
+    await record_canonical_path_change(
+        db, user_id=user_id, storage_key=storage_key,
+        operation=FileSyncOperation.CREATE,
+        change_id=f"file:{entity_id}:version:{version}:restore:{uuid4().hex}",
+    )
+
+
+async def record_canonical_folder_change(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    operation: str,
+    entity_id: int,
+    version: int,
+) -> None:
+    """登记文件夹层级变化，避免只移动空目录时不推进绑定水位。"""
+    await record_canonical_path_change(
+        db, user_id=user_id, storage_key=storage_key, operation=operation,
+        object_type="folder", change_id=f"folder:{entity_id}:version:{version}",
+    )
 
 
 def validate_sync_path(root: Path, relative_path: str) -> Path:
@@ -214,6 +325,7 @@ async def record_change(
     baseline_fingerprint: str | None = None,
     observed_fingerprint: str | None = None,
     status: str = FileSyncStatus.PENDING,
+    mark_dirty: bool = True,
 ) -> FileSyncJournal:
     if not is_file_sync_enabled():
         raise FileSyncDisabled("文件同步未开启")
@@ -238,13 +350,18 @@ async def record_change(
     if existing is not None:
         return existing
     binding.revision = int(binding.revision or 0) + 1
+    if mark_dirty:
+        binding.dirty_revision = int(binding.dirty_revision or 0) + 1
+    dirty_revision = int(binding.dirty_revision or 0) if mark_dirty else None
     row = FileSyncJournal(
         binding_id=binding.id, user_id=user_id, idempotency_key=idempotency_key,
         source=str(source), operation=str(operation), object_type=object_type,
         relative_path=relative_path,
         baseline_fingerprint=baseline_fingerprint, observed_fingerprint=observed_fingerprint,
-        revision=binding.revision, status=str(status),
+        revision=binding.revision, dirty_revision=dirty_revision, status=str(status),
     )
     db.add(row)
     await db.flush()
+    if mark_dirty:
+        await record_file_activity(db, user_id)
     return row

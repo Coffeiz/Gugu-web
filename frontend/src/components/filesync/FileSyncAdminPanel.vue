@@ -19,6 +19,19 @@
             @update:model-value="toggleSync"
           />
         </div>
+        <div v-if="status" class="fs-setting">
+          <div class="fs-setting-copy">
+            <span>{{ t('filesyncAdmin.backgroundReconcile') }}</span>
+            <small>{{ status.backgroundReconcileEnabled ? t('filesyncAdmin.backgroundReconcileEnabled') : t('filesyncAdmin.backgroundReconcileDisabled') }}</small>
+          </div>
+          <ToggleSwitch
+            size="sm"
+            :model-value="status.backgroundReconcileEnabled"
+            :disabled="reconcileSaving || !status.supported"
+            :aria-label="t('filesyncAdmin.toggleBackgroundReconcile')"
+            @update:model-value="toggleBackgroundReconcile"
+          />
+        </div>
         <ActionButton variant="secondary" fit :disabled="loading" @click="load">
           <Icon name="action.refresh" size="sm" />
           {{ loading ? t('filesyncAdmin.loading') : t('filesyncAdmin.refresh') }}
@@ -59,8 +72,7 @@
           <div class="fs-row-main">
             <strong>#{{ binding.id }} · {{ binding.mode }}</strong>
             <span>{{ binding.rootPath }} · {{ binding.userId }}</span>
-            <small>{{ t('filesyncAdmin.watcherHealth', { status: binding.watcherStatus }) }} · {{ t(binding.needsReconcile ? 'filesyncAdmin.manualReconcileNeeded' : 'filesyncAdmin.noManualReconcileNeeded') }}<template v-if="binding.healthErrorCode"> · {{ binding.healthErrorCode }}</template></small>
-            <small>{{ t('filesyncAdmin.revision') }} {{ binding.revision }} · {{ t('filesyncAdmin.conflictCount') }} {{ binding.pendingConflicts }}</small>
+            <small>{{ t('filesyncAdmin.revision') }} {{ binding.revision }} · {{ t('filesyncAdmin.conflictCount') }} {{ binding.pendingConflicts }} · {{ binding.status === 'active' ? t('filesyncAdmin.bindingActive') : t('filesyncAdmin.bindingInactive') }}</small>
           </div>
           <div class="fs-actions">
             <ActionButton variant="secondary" fit :disabled="actionKey === `dry-${binding.id}`" @click="dryRun(binding.id)">
@@ -71,12 +83,52 @@
               <Icon name="action.refresh" size="sm" />
               {{ actionKey === `sync-${binding.id}` ? t('filesyncAdmin.working') : t('filesyncAdmin.reconcile') }}
             </ActionButton>
+            <ActionButton variant="secondary" fit :disabled="actionKey === `integrity-${binding.id}`" @click="reconcile(binding.id, true)">
+              <Icon name="action.search" size="sm" />
+              {{ actionKey === `integrity-${binding.id}` ? t('filesyncAdmin.working') : t('filesyncAdmin.fullIntegrity') }}
+            </ActionButton>
+            <ActionButton v-if="binding.status === 'active'" variant="secondary" fit
+                          :disabled="actionKey === `unbind-${binding.id}`" @click="unbind(binding.id)">
+              {{ actionKey === `unbind-${binding.id}` ? t('filesyncAdmin.working') : t('filesyncAdmin.unbind') }}
+            </ActionButton>
           </div>
         </div>
       </div>
 
       <div v-if="dryResult" class="fs-result">
-        {{ t('filesyncAdmin.dryRunResult', { scanned: dryResult.summary.scanned, created: dryResult.summary.created, updated: dryResult.summary.updated, rejected: dryResult.summary.rejected, conflicts: dryResult.summary.conflicts }) }}
+        {{ t('filesyncAdmin.dryRunResult', { scanned: dryResult.resultCounts.scanned || 0, created: dryResult.resultCounts.created || 0, updated: dryResult.resultCounts.updated || 0, rejected: dryResult.resultCounts.rejected || 0, conflicts: dryResult.resultCounts.conflicts || 0 }) }}
+      </div>
+
+      <div v-if="status.reconcileRuns.length" class="fs-block">
+        <div class="fs-block-title">{{ t('filesyncAdmin.jobs') }}</div>
+        <div v-for="run in status.reconcileRuns" :key="run.id" class="fs-row">
+          <div class="fs-row-main">
+            <strong>{{ t('filesyncAdmin.jobState', { id: run.id.slice(0, 8), mode: run.mode, reason: runReasonLabel(run.reason), status: runStatusLabel(run), stage: runStageLabel(run.stage) }) }}</strong>
+            <span v-if="run.progressTotal !== null">{{ t('filesyncAdmin.jobProgress', { current: run.progressCurrent, total: run.progressTotal }) }}</span>
+            <span v-else-if="run.stage === 'scanning' && run.resultCounts.scanned !== undefined">
+              {{ t('filesyncAdmin.scanProgress', { scanned: run.resultCounts.scanned, hashed: run.resultCounts.hashed || 0, reused: run.resultCounts.reused || 0, rejected: run.resultCounts.rejected || 0 }) }}
+            </span>
+            <small v-if="run.pauseReason">{{ t('filesyncAdmin.pausedUntil', { reason: pauseReasonLabel(run.pauseReason), at: run.nextRunAt || '—' }) }}</small>
+            <small v-if="run.errorCode && !filesyncRunStatusKey(run)">{{ run.errorCode }}</small>
+            <small v-else-if="run.status === 'succeeded'">{{ t('filesyncAdmin.dryRunResult', { scanned: run.resultCounts.scanned || 0, created: run.resultCounts.created || 0, updated: run.resultCounts.updated || 0, rejected: run.resultCounts.rejected || 0, conflicts: run.resultCounts.conflicts || 0 }) }}</small>
+          </div>
+          <div v-if="['queued', 'running', 'paused', 'cancelling'].includes(run.status)" class="fs-actions">
+            <ActionButton variant="secondary" fit :disabled="run.status === 'cancelling'" @click="cancelRun(run.id)">
+              {{ t('filesyncAdmin.cancelJob') }}
+            </ActionButton>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="status.userScanStates.length" class="fs-block">
+        <div class="fs-block-title">{{ t('filesyncAdmin.userCycles') }}</div>
+        <div v-for="state in status.userScanStates" :key="state.userId" class="fs-row">
+          <div class="fs-row-main">
+            <strong>{{ state.userId }} · {{ cycleDecisionLabel(state.lastCycleDecision) }}</strong>
+            <span>{{ t('filesyncAdmin.activityWatermark', { seq: state.activitySeq, reliable: state.activityReliable ? 'yes' : 'no' }) }}</span>
+            <small v-if="state.skipReason">{{ state.skipReason }} · {{ state.currentCycleCutoff || '—' }}</small>
+          </div>
+        </div>
       </div>
 
       <div v-if="status.conflicts.length" class="fs-block">
@@ -110,11 +162,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
-import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncActionResult } from '@/api/filesync'
+import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncReconcileRunStatus } from '@/api/filesync'
+import {
+  filesyncCycleDecisionKey,
+  filesyncPauseReasonKey,
+  filesyncRunReasonKey,
+  filesyncRunStageKey,
+  filesyncRunStatusKey,
+} from '@/utils/filesyncJobStatus'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -122,17 +181,44 @@ import Icon from '@/components/common/icons/Icon.vue'
 const { t } = useI18n()
 const adminStore = useAdminStore()
 const status = ref<FileSyncAdminStatus | null>(null)
-const dryResult = ref<FileSyncActionResult | null>(null)
+const dryResult = ref<FileSyncReconcileRunStatus | null>(null)
 const loading = ref(false)
 const syncSaving = ref(false)
+const reconcileSaving = ref(false)
 const error = ref('')
 const actionKey = ref('')
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 const resolutions = [
   { value: 'keep_local' as const, label: 'filesyncAdmin.keepLocal' },
   { value: 'keep_remote' as const, label: 'filesyncAdmin.keepRemote' },
   { value: 'keep_both' as const, label: 'filesyncAdmin.keepBoth' },
   { value: 'cancel' as const, label: 'filesyncAdmin.cancelConflict' },
 ]
+
+function runStatusLabel(run: FileSyncReconcileRunStatus) {
+  const key = filesyncRunStatusKey(run)
+  return key ? t(key) : run.status
+}
+
+function cycleDecisionLabel(decision: string | null) {
+  const key = filesyncCycleDecisionKey(decision)
+  return key ? t(key) : decision || '—'
+}
+
+function runReasonLabel(reason: string) {
+  const key = filesyncRunReasonKey(reason)
+  return key ? t(key) : reason
+}
+
+function runStageLabel(stage: string | null) {
+  const key = filesyncRunStageKey(stage)
+  return key ? t(key) : stage || '—'
+}
+
+function pauseReasonLabel(reason: string) {
+  const key = filesyncPauseReasonKey(reason)
+  return key ? t(key) : reason
+}
 
 // 绑定随 workspace 自动登记，健康绑定（无待处理/失败 journal、无冲突）对排查没有
 // 信息量；默认只列出有异常的，全量列表留给开关。
@@ -142,8 +228,7 @@ const visibleBindings = computed(() => {
   if (!onlyIssues.value) return all
   return all.filter((binding) =>
     binding.pendingJournal > 0 || binding.failedJournal > 0 ||
-    binding.rejectedJournal > 0 || binding.pendingConflicts > 0 ||
-    binding.needsReconcile || !['ready', 'inactive', 'unknown'].includes(binding.watcherStatus),
+    binding.rejectedJournal > 0 || binding.pendingConflicts > 0,
   )
 })
 
@@ -151,7 +236,10 @@ async function load() {
   if (loading.value) return
   loading.value = true
   error.value = ''
-  try { status.value = await filesyncAdminApi.status(adminStore.authFetch) }
+  try {
+    status.value = await filesyncAdminApi.status(adminStore.authFetch)
+    scheduleRunPolling()
+  }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { loading.value = false }
 }
@@ -173,21 +261,98 @@ async function toggleSync(enabled: boolean) {
   }
 }
 
+async function toggleBackgroundReconcile(enabled: boolean) {
+  if (!status.value || reconcileSaving.value) return
+  const previous = status.value.backgroundReconcileEnabled
+  status.value.backgroundReconcileEnabled = enabled
+  reconcileSaving.value = true
+  error.value = ''
+  try {
+    await filesyncAdminApi.setBackgroundReconcileEnabled(adminStore.authFetch, enabled)
+    await load()
+  } catch (e) {
+    status.value.backgroundReconcileEnabled = previous
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    reconcileSaving.value = false
+  }
+}
+
 async function dryRun(bindingId: number) {
   actionKey.value = `dry-${bindingId}`
   error.value = ''
-  try { dryResult.value = await filesyncAdminApi.dryRun(adminStore.authFetch, bindingId) }
+  try {
+    dryResult.value = await filesyncAdminApi.dryRun(adminStore.authFetch, bindingId)
+    upsertRun(dryResult.value)
+    scheduleRunPolling()
+  }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { actionKey.value = '' }
 }
 
-async function reconcile(bindingId: number) {
-  if (!await confirmDialog({ title: t('filesyncAdmin.reconcileTitle'), message: t('filesyncAdmin.reconcileConfirm'), tone: 'warning', confirmText: t('filesyncAdmin.reconcile') })) return
-  actionKey.value = `sync-${bindingId}`
+async function reconcile(bindingId: number, integrityFull = false) {
+  const action = integrityFull ? 'fullIntegrity' : 'reconcile'
+  const message = integrityFull ? 'fullIntegrityConfirm' : 'reconcileConfirm'
+  if (!await confirmDialog({ title: t('filesyncAdmin.reconcileTitle'), message: t(`filesyncAdmin.${message}`), tone: 'warning', confirmText: t(`filesyncAdmin.${action}`) })) return
+  actionKey.value = `${integrityFull ? 'integrity' : 'sync'}-${bindingId}`
   error.value = ''
-  try { await filesyncAdminApi.reconcile(adminStore.authFetch, bindingId); await load() }
+  try {
+    const run = await filesyncAdminApi.reconcile(adminStore.authFetch, bindingId, integrityFull)
+    upsertRun(run)
+    scheduleRunPolling()
+  }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { actionKey.value = '' }
+}
+
+async function unbind(bindingId: number) {
+  if (!await confirmDialog({
+    title: t('filesyncAdmin.unbindTitle'),
+    message: t('filesyncAdmin.unbindConfirm'),
+    tone: 'warning',
+    confirmText: t('filesyncAdmin.unbind'),
+  })) return
+  actionKey.value = `unbind-${bindingId}`
+  error.value = ''
+  try {
+    await filesyncAdminApi.unbind(adminStore.authFetch, bindingId)
+    await load()
+  } catch (e) { error.value = e instanceof Error ? e.message : String(e) }
+  finally { actionKey.value = '' }
+}
+
+function upsertRun(run: FileSyncReconcileRunStatus) {
+  if (!status.value) return
+  status.value.reconcileRuns = [run, ...status.value.reconcileRuns.filter((item) => item.id !== run.id)].slice(0, 20)
+}
+
+function scheduleRunPolling() {
+  if (pollTimer) clearTimeout(pollTimer)
+  const active = status.value?.reconcileRuns.some((run) => ['queued', 'running', 'paused', 'cancelling'].includes(run.status))
+  if (!active) return
+  const hasRunnable = status.value?.reconcileRuns.some((run) => ['queued', 'running', 'cancelling'].includes(run.status))
+  pollTimer = setTimeout(() => { void pollRuns() }, hasRunnable ? 1500 : 15000)
+}
+
+async function pollRuns() {
+  if (!status.value) return
+  const active = status.value.reconcileRuns.filter((run) => ['queued', 'running', 'paused', 'cancelling'].includes(run.status))
+  await Promise.all(active.map(async (run) => {
+    try { upsertRun(await filesyncAdminApi.run(adminStore.authFetch, run.id)) }
+    catch { /* 状态接口短暂失败时由下一轮继续；不替换原任务状态 */ }
+  }))
+  if (!status.value.reconcileRuns.some((run) => ['queued', 'running', 'paused', 'cancelling'].includes(run.status))) {
+    await load()
+  } else {
+    scheduleRunPolling()
+  }
+}
+
+async function cancelRun(runId: string) {
+  try {
+    upsertRun(await filesyncAdminApi.cancel(adminStore.authFetch, runId))
+    scheduleRunPolling()
+  } catch (e) { error.value = e instanceof Error ? e.message : String(e) }
 }
 
 async function resolve(conflictId: number, resolution: typeof resolutions[number]['value']) {
@@ -200,6 +365,7 @@ async function resolve(conflictId: number, resolution: typeof resolutions[number
 }
 
 onMounted(load)
+onUnmounted(() => { if (pollTimer) clearTimeout(pollTimer) })
 </script>
 
 <style scoped>

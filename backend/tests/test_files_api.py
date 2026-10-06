@@ -16,7 +16,7 @@ from starlette.datastructures import Headers
 
 from app.api.v1 import files as files_api
 from app.core.errors import Invalid, NotFound
-from app.models import File, Project, UndoOperation
+from app.models import File, FileSyncBinding, FileSyncJournal, Project, UndoOperation
 from app.schemas import FileCopyBody, FileUpdate
 from app.services.storage import LocalStorageBackend
 
@@ -99,6 +99,97 @@ async def test_patch_rename_endpoint(db, user_a):
     r = await files_api.update_file(up.id, FileUpdate(display_name="new"),
                                     current_user=user_a, origin=None, db=db)
     assert r.display_name == "new"
+
+
+async def test_file_library_rename_advances_both_bound_paths_and_dirty_watermark(
+    db, user_a, monkeypatch,
+):
+    """文件库改名必须让旧路径和新路径的同步绑定都可见。"""
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+
+    storage = files_api.get_storage()
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(storage.root)),
+    )
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
+
+    uploaded = await _do_upload(db, user_a, b"move me", "old.txt")
+    file_row = await db.get(File, uploaded.id)
+    old_key = file_row.storage_key
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="a" * 64,
+    )
+    db.add(binding)
+    await db.flush()
+
+    renamed = await files_api.update_file(
+        uploaded.id, FileUpdate(display_name="new"),
+        current_user=user_a, origin=None, db=db,
+    )
+    await db.flush()
+    await db.refresh(file_row)
+
+    changes = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.source == "file_api",
+    ).order_by(FileSyncJournal.id))).all()
+    assert file_row.storage_key != old_key
+    assert {(row.relative_path, row.operation) for row in changes} == {
+        ("个人文件/old.txt", "delete"),
+        ("个人文件/new.txt", "create"),
+    }
+    await db.refresh(binding)
+    assert binding.dirty_revision == 2
+
+
+async def test_file_trash_and_restore_advance_binding_watermark(
+    db, user_a, monkeypatch,
+):
+    """回收站删除与恢复必须分别留下原路径删除和恢复创建水位。"""
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+    from app.services.files import selection, trash
+
+    storage = files_api.get_storage()
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(storage.root)),
+    )
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
+
+    uploaded = await _do_upload(db, user_a, b"trash me", "memo.txt")
+    file_row = await db.get(File, uploaded.id)
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="b" * 64,
+    )
+    db.add(binding)
+    await db.flush()
+
+    assert await selection.move_file_to_trash_by_id(
+        db, storage, user_a.id, file_row.id, datetime.now(timezone.utc),
+    )
+    await db.flush()
+    assert await trash.restore_file_by_id(db, storage, user_a.id, file_row.id)
+    await db.flush()
+
+    changes = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.source == "file_api",
+    ).order_by(FileSyncJournal.id))).all()
+    assert [(row.relative_path, row.operation) for row in changes] == [
+        ("个人文件/memo.txt", "delete"),
+        ("个人文件/memo.txt", "create"),
+    ]
+    await db.refresh(binding)
+    assert binding.dirty_revision == 2
 
 
 async def test_patch_extension_endpoint_updates_suffix_only(db, user_a):

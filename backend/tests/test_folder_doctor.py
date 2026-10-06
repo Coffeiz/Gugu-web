@@ -1,8 +1,11 @@
 """P1.5 folder_doctor —— 目录对账：报缺失/孤儿、补缺失、确认后清孤儿、忽略结构目录。"""
 from pathlib import Path
+from types import SimpleNamespace
+
+from sqlalchemy import select
 
 from app.api.v1 import folder_doctor_admin as doctor_api
-from app.models import File, Folder
+from app.models import File, FileSyncBinding, FileSyncJournal, Folder
 from app.services.storage import LocalStorageBackend, folder_doctor
 from app.services.storage.file_service import FileService
 
@@ -119,14 +122,32 @@ async def test_scan_detects_misplaced_file(db, user_a, tmp_path):
     assert report.to_dict()["healthy"] is False
 
 
-async def test_repair_relocates_file_only_with_flag(db, user_a, tmp_path):
+async def test_repair_relocates_file_only_with_flag_and_advances_sync_watermark(
+    db, user_a, tmp_path, monkeypatch,
+):
     storage = _storage(tmp_path)
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
+    monkeypatch.setattr(protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+
     parent = await _folder_row(db, user_a, "咕咕开发")
     child = await _folder_row(db, user_a, "ADR", parent_id=parent.id)
     stale_key = f"{user_a.id}/个人文件/ADR/ADR-002.md"
     await storage.put(stale_key, b"content")
     f = File(user_id=user_a.id, display_name="ADR-002", ext="md", folder_id=child.id, storage_key=stale_key)
     db.add(f)
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="e" * 64,
+    )
+    db.add(binding)
     await db.commit()
     await db.refresh(f)
 
@@ -141,6 +162,15 @@ async def test_repair_relocates_file_only_with_flag(db, user_a, tmp_path):
     assert not await storage.exists(stale_key)
     await db.refresh(f)
     assert f.storage_key == expected_key
+    changes = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+    ).order_by(FileSyncJournal.id))).all()
+    assert [(row.relative_path, row.operation) for row in changes] == [
+        ("个人文件/ADR/ADR-002.md", "delete"),
+        ("个人文件/咕咕开发/ADR/ADR-002.md", "create"),
+    ]
+    await db.refresh(binding)
+    assert binding.dirty_revision == 2
     assert r2.misplaced_files == []                       # 不再有位置不一致的文件
     # 文件搬空后，陈旧的根级 "ADR" 目录变成了普通空壳孤儿——这正是两个检查组合起来
     # 完整解决真实 bug 的方式：先搬文件内容，再清空壳（remove_orphans）才到 healthy。

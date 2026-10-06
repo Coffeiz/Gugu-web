@@ -360,13 +360,85 @@ class FileSyncBinding(Base):
     root_path: Mapped[str] = mapped_column(String(1000), default=".", server_default=".")
     root_fingerprint: Mapped[str] = mapped_column(String(64))
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    watcher_status: Mapped[str] = mapped_column(String(24), default="unknown", server_default="unknown")
-    needs_reconcile: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
-    health_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    gap_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    health_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    scope_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    dirty_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    baseline_dirty_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    baseline_generation: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    last_daily_reconciled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    last_integrity_verified_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    next_reconcile_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncUserScanState(Base):
+    """用户级文件活动水位、每日周期和公平调度状态。"""
+
+    __tablename__ = "file_sync_user_scan_states"
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True,
+    )
+    activity_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_file_activity_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    previous_cycle_cutoff: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    current_cycle_cutoff: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    cycle_activity_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    activity_reliable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    last_cycle_decision: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    skip_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_rotation_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    last_binding_rotation_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    lease_token: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncReconcileRun(Base):
+    """单绑定异步对账任务；只保存任务事实，不保存文件路径或正文。"""
+
+    __tablename__ = "file_sync_reconcile_runs"
+    __table_args__ = (
+        Index("ix_file_sync_reconcile_claim", "status", "lease_until", "created_at"),
+        Index(
+            "uq_file_sync_reconcile_active_binding", "binding_id", unique=True,
+            postgresql_where=text("status IN ('queued', 'running', 'paused', 'cancelling')"),
+            sqlite_where=text("status IN ('queued', 'running', 'paused', 'cancelling')"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid7)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    binding_id: Mapped[int] = mapped_column(
+        ForeignKey("file_sync_bindings.id", ondelete="CASCADE"), index=True,
+    )
+    mode: Mapped[str] = mapped_column(String(24))
+    reason: Mapped[str] = mapped_column(String(24))
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    allow_delete: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    status: Mapped[str] = mapped_column(String(24), default="queued", server_default="queued", index=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    binding_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    dirty_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lease_token: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    deadline_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    slice_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    cumulative_runtime_seconds: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    pause_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    priority_since: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    checkpoint_ref: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    candidate_generation: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    progress_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result_counts: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
 
@@ -376,6 +448,7 @@ class FileSyncJournal(Base):
     __table_args__ = (
         UniqueConstraint("binding_id", "idempotency_key", name="uq_file_sync_journal_idempotency"),
         Index("ix_file_sync_journal_binding_revision", "binding_id", "revision"),
+        Index("ix_file_sync_journal_dirty_revision", "binding_id", "dirty_revision"),
         Index("ix_file_sync_journal_user_status", "user_id", "status"),
     )
 
@@ -390,6 +463,7 @@ class FileSyncJournal(Base):
     baseline_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     observed_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    dirty_revision: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", index=True)
     error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)

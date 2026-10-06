@@ -25,7 +25,10 @@ from app.services.storage.folders import resolve_folder_path
 from app.services.storage.key_strategy import KeyContext
 from app.services.storage.keys import compose_logical_path
 from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage, reconcile_user_storage
-from app.services.filesync.protocol import record_canonical_file_change
+from app.services.filesync.protocol import (
+    record_canonical_file_change,
+    record_canonical_file_move,
+)
 from app.services.storage.file_service.content_types import validated_rename_extension
 
 
@@ -279,6 +282,7 @@ class FileOps:
             fo, folder_path = resolved
             folder_name = fo.name
 
+        old_key = f.storage_key
         new_key = self._build_key(
             user_id, file_id=f.id, space=new_space, name=new_display, ext=new_ext,
             project=project, project_id=new_pid,
@@ -300,6 +304,11 @@ class FileOps:
         f.version = int(f.version or 1) + 1
         f.updated_at = now_utc()
         await self.db.flush()
+        if old_key != f.storage_key:
+            await record_canonical_file_move(
+                self.db, user_id=user_id, old_storage_key=old_key,
+                new_storage_key=f.storage_key, entity_id=f.id, version=f.version,
+            )
         return FileResult(f, project, folder_name or None)
 
     # ── 复制 ───────────────────────────────────────────────────────────────────

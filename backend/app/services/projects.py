@@ -11,6 +11,18 @@ from app.services.storage.trash import move_file_to_trash
 PROJECT_TRASH_DAYS = 30
 
 
+async def _record_project_file_moves(db, user_id, moves) -> None:
+    """把项目目录改名产生的旧/新路径写入文件同步 journal。"""
+    from app.services.filesync.protocol import record_canonical_file_move
+
+    for file_row, old_key, new_key in moves:
+        await record_canonical_file_move(
+            db, user_id=user_id, old_storage_key=old_key,
+            new_storage_key=new_key, entity_id=file_row.id,
+            version=int(file_row.version or 1),
+        )
+
+
 def project_trash_cutoff():
     """返回项目回收站的保留边界；边界统一使用 UTC。"""
     return now_utc() - timedelta(days=PROJECT_TRASH_DAYS)
@@ -139,7 +151,7 @@ async def soft_delete_project_full(db, storage, user_id, project, deleted_at):
         )).scalars().all()
 
     for row in files:
-        await move_file_to_trash(storage, row)
+        await move_file_to_trash(storage, row, db)
         row.deleted_at = deleted_at
         row.version = int(row.version or 1) + 1
     for row in folders:

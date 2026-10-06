@@ -236,10 +236,18 @@ async def repair(db: AsyncSession, storage: StorageBackend, *,
             if not await storage.exists(f.storage_key):
                 continue                              # 物理对象已消失，跳过（幽灵记录范畴）
             resolved = await key_strategy.resolve_conflict(storage, expected_key, f.display_name, f.ext)
-            await storage.rename_file(f.storage_key, resolved.key)
+            old_key = f.storage_key
+            await storage.rename_file(old_key, resolved.key)
             f.storage_key = resolved.key
             f.display_name = resolved.name
             relocated += 1
+            from app.services.filesync.protocol import record_canonical_file_move
+
+            await record_canonical_file_move(
+                db, user_id=f.user_id, old_storage_key=old_key,
+                new_storage_key=f.storage_key, entity_id=f.id,
+                version=int(f.version or 1),
+            )
         await db.commit()
     if created or removed or relocated:
         report = await scan(db, storage, user_id)   # 重新扫描，返回修复后的真实状态

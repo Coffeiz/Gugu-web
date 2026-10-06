@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import File, FileSyncBinding, Workspace
-from app.services.filesync import create_binding, dry_run_local_binding, list_user_bindings
+from app.services.filesync import create_binding, list_user_bindings
 from app.services.filesystem_authorization import filesystem_authorization_enabled
 from app.services.scheduled_tasks import validate_task_workspace
 from app.services.workspaces import (
@@ -45,13 +45,20 @@ async def test_oss_workspace_mutations_and_task_binding_are_rejected(db, user_a,
 async def test_oss_hides_local_sync_state_and_never_creates_file_rows(db, user_a, monkeypatch, tmp_path):
     import app.services.filesync.protocol as protocol
     import app.services.filesync.bindings as bindings
+    import app.api.v1.filesync as filesync_api
+    from fastapi import HTTPException
 
     monkeypatch.setattr(bindings, "get_settings", lambda: _oss_settings(tmp_path))
     monkeypatch.setattr(bindings, "workspace_shell_supported", lambda: False)
     monkeypatch.setattr(protocol, "get_settings", lambda: _oss_settings(tmp_path))
+    monkeypatch.setattr(filesync_api, "workspace_shell_supported", lambda: False)
+    monkeypatch.setattr(filesync_api, "is_file_sync_enabled", lambda: True)
     assert await list_user_bindings(db, user_a.id) == []
-    result = await dry_run_local_binding(db, user_a.id, root_path=".")
-    assert result.summary.rejected == 1
+    with pytest.raises(HTTPException) as raised:
+        await filesync_api.dry_run(
+            filesync_api.BindingRequest(root_path="."), user=user_a, db=db,
+        )
+    assert raised.value.status_code == 400
     assert (await db.scalars(select(FileSyncBinding))).all() == []
     assert (await db.scalars(select(File))).all() == []
 

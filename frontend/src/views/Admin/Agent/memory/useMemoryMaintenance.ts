@@ -67,7 +67,7 @@ export function useMemoryMaintenance(adminStore: AdminStore) {
   }
 
   async function apply() {
-    if (!await confirmDialog({ title: '执行记忆整理', message: `确定要删 ${totalRemoved.value} 条、搬 ${totalMoved.value} 条去画像、迁 ${totalProfileEvents.value} 条画像事件到 memory、迁 ${totalDaily.value} 条 daily 吗？删除/搬动不可恢复。`, tone: 'danger', confirmText: '执行整理' })) return
+    if (!await confirmDialog({ title: '执行记忆整理', message: `确定要删 ${totalRemoved.value} 条、搬 ${totalMoved.value} 条去画像、迁 ${totalProfileEvents.value} 条画像事件到 memory、迁 ${totalDaily.value} 条 daily吗？删除/搬动不可恢复。`, tone: 'danger', confirmText: '执行整理' })) return
     state.applying = true; state.applyMsg = ''; state.applyError = false
     try {
       const res = await adminStore.authFetch('/api/v1/admin/config/memory-cleanup/apply', { method: 'POST' })

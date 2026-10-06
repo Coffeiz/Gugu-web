@@ -13,6 +13,7 @@ from uuid import uuid4
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import CalendarEvent, File, Folder, Project, ScheduledTask, UndoOperation
+from app.services.projects import _record_project_file_moves
 from app.services.storage import get_storage
 from app.services.storage.trash import move_file_to_trash, restore_file_storage
 from app.services.undo.service import UndoConflict, UndoError
@@ -222,7 +223,7 @@ class DomainUndoAdapter:
                     self._restore_event(row, after[ref])
                 row.version = int(row.version or 1) + 1
             elif kind == "file" and operation.action == "delete" and operation.resource == "projects":
-                await move_file_to_trash(self.storage, row)
+                await move_file_to_trash(self.storage, row, self.db)
                 row.deleted_at = _parse_datetime(after[ref].get("deleted_at")) or now_utc()
                 row.version = int(row.version or 1) + 1
             elif kind == "folder" and operation.action == "delete" and operation.resource == "projects":
@@ -248,9 +249,13 @@ class DomainUndoAdapter:
             await self.storage.rename_dir(old_prefix, new_prefix)
             from sqlalchemy import select
             files = (await self.db.execute(select(File).where(File.project_id == row.id, File.user_id == row.user_id))).scalars().all()
+            moved_files = []
             for file in files:
                 if file.storage_key.startswith(old_prefix):
+                    old_key = file.storage_key
                     file.storage_key = new_prefix + file.storage_key[len(old_prefix):]
+                    moved_files.append((file, old_key, file.storage_key))
+            await _record_project_file_moves(self.db, row.user_id, moved_files)
         for field in ("name", "client", "status", "start_date", "deadline", "color", "progress", "current_stage", "priority", "archived"):
             if field in snapshot:
                 setattr(row, field, snapshot[field])

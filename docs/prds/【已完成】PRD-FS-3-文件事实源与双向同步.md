@@ -1,10 +1,12 @@
 # PRD-FS-3：文件事实源与双向同步
 
-> 状态：🟡 Phase 6 Python 过渡实现完成；TS 事件监听迁移待实施
+> 状态：历史方案；运行时同步与对账设计已由 [PRD-FS-6 文件同步快照与增量对账](./PRD-FS-6-文件同步快照与增量对账.md) 替代
 > 创建：2026-09-06
 > 最近更新：2026-09-06
 > 关联模块：`backend/app/services/storage/`、`backend/app/services/files/`、`backend/app/services/workspaces.py`、`backend/app/services/filesystem_authorization.py`、`backend/agent/sandbox/`、`backend/agent/tools/shell.py`、`backend/app/api/v1/config.py`、`frontend/src/stores/filesCache.ts`、`frontend/src/stores/live.ts`
 > 背景参考：[`docs/backend/storage.md`](../backend/storage.md)、[`PRD-SHELL-1-工作区Shell沙盒`](./【已完成】PRD-SHELL-1-工作区Shell沙盒.md)、[`桌面应用迁移方案`](../product/_archibe/桌面应用迁移方案.md)
+
+> 历史说明（2026-10-06）：本文中由 `reconcile_local_directory()` 消费实时事件、Python 60 秒全树补偿及“TS 迁移待实施”等描述，记录的是当时设计/实现状态，不代表当前运行方案。当前实时路径事件经 watcher → targeted → journal/outbox 及时投影；整树快照差异、完整校验及 `mirror_out` 由 PRD-FS-6 的持久任务执行。本文阶段清单和验收记录作为历史保留。
 
 ## 0. 实际状态
 

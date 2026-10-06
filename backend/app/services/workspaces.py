@@ -66,6 +66,37 @@ def _workspace_directory_root(user_id, directory_name: str) -> Path:
     return root
 
 
+async def _record_workspace_directory_deletes(db: AsyncSession, user_id, directory_id: int) -> None:
+    """为仍覆盖此路径的同步绑定记录工作区内文件与目录的删除水位。"""
+    files = (await db.scalars(select(File).where(
+        File.user_id == user_id, File.workspace_directory_id == directory_id,
+        File.deleted_at.is_(None),
+    ))).all()
+    folders = (await db.scalars(select(Folder).where(
+        Folder.user_id == user_id, Folder.workspace_directory_id == directory_id,
+        Folder.deleted_at.is_(None),
+    ))).all()
+    from app.services.filesync.protocol import (
+        record_canonical_file_delete,
+        record_canonical_folder_change,
+    )
+    from app.services.storage.folders import folder_dir_key
+
+    for file in files:
+        await record_canonical_file_delete(
+            db, user_id=user_id, storage_key=file.storage_key,
+            entity_id=file.id, version=int(file.version or 1),
+        )
+    for folder in folders:
+        directory_key = await folder_dir_key(db, user_id, folder)
+        if directory_key:
+            await record_canonical_folder_change(
+                db, user_id=user_id, storage_key=directory_key,
+                operation="delete", entity_id=folder.id,
+                version=int(folder.version or 1) + 1,
+            )
+
+
 def _prepare_workspace_root(root: Path) -> None:
     """创建工作区目录并保证沙盒容器进程可读写。
 
@@ -284,6 +315,11 @@ async def delete_workspace_directory(db: AsyncSession, user_id, directory_id: in
             TerminalSessionRecord.workspace_id.in_(binding_ids),
             TerminalSessionRecord.closed_at.is_(None),
         ).values(status="terminated", closed_at=deleted_at, updated_at=deleted_at))
+
+    # 先记录变更：删除专属 Workspace binding 后，其他覆盖此路径的根绑定仍需看到墓碑。
+    await _record_workspace_directory_deletes(db, user_id, row.id)
+
+    if binding_ids:
         await db.execute(Workspace.__table__.delete().where(Workspace.id.in_(binding_ids)))
     await db.execute(File.__table__.update().where(
         File.user_id == user_id, File.workspace_directory_id == row.id, File.deleted_at.is_(None),

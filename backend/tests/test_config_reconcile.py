@@ -1,9 +1,10 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
 from app.api.v1 import config as config_api
-from app.models import File, Project
+from app.models import File, FileSyncBinding, FileSyncJournal, Project
 from app.services import storage as storage_module
 from app.services.storage import LocalStorageBackend
 
@@ -46,10 +47,25 @@ async def test_import_orphan_uses_stat_and_rejects_unresolved_project(db, user_a
     assert await config_api._import_orphan(db, key, storage) is False
 
 
-async def test_import_orphan_creates_owned_file_with_stat_size(db, user_a, tmp_path, monkeypatch):
+async def test_import_orphan_creates_owned_file_and_advances_binding_watermark(
+    db, user_a, tmp_path, monkeypatch,
+):
     storage = LocalStorageBackend(Path(tmp_path))
     key = f"{user_a.id}/个人文件/orphan.txt"
     await storage.put(key, b"payload")
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="c" * 64,
+    )
+    db.add(binding)
+    await db.flush()
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr("app.services.filesync.bindings.get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.filesync.protocol.get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.filesync.protocol.is_file_sync_enabled", lambda: True)
 
     async def forbidden_get(_key):
         raise AssertionError("导入孤儿文件不应把整个对象读进内存")
@@ -60,6 +76,14 @@ async def test_import_orphan_creates_owned_file_with_stat_size(db, user_a, tmp_p
     row = (await db.execute(select(File).where(File.storage_key == key))).scalars().one()
     assert row.user_id == user_a.id
     assert row.size_bytes == len(b"payload")
+    journal = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+    ))).one()
+    assert (journal.relative_path, journal.operation, journal.status) == (
+        "个人文件/orphan.txt", "create", "synced",
+    )
+    await db.refresh(binding)
+    assert binding.dirty_revision == 1
 
 
 async def test_path_migration_rechecks_identity_uniqueness(db, user_a, tmp_path, monkeypatch):
@@ -82,6 +106,51 @@ async def test_path_migration_rechecks_identity_uniqueness(db, user_a, tmp_path,
     result = await config_api.repair_path_migration(body, db=db)
     assert result["done"] == []
     assert result["failed"][0]["error"] == "路径身份不再唯一，请重新扫描"
+
+
+async def test_path_migration_repair_advances_old_and_new_binding_paths(
+    db, user_a, tmp_path, monkeypatch,
+):
+    storage = LocalStorageBackend(Path(tmp_path))
+    old_key = f"{user_a.id}/个人文件/old.txt"
+    new_key = f"{user_a.id}/个人文件/new.txt"
+    await storage.put(new_key, b"same")
+    file = File(
+        user_id=user_a.id, display_name="new", ext="txt", space="personal",
+        storage_key=old_key, size_bytes=4,
+    )
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="b" * 64,
+    )
+    db.add_all([file, binding])
+    await db.commit()
+    await db.refresh(file)
+    await db.refresh(binding)
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr("app.services.filesync.bindings.get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.filesync.protocol.get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.filesync.protocol.is_file_sync_enabled", lambda: True)
+
+    body = config_api.PathMigrationRequest(items=[
+        config_api.PathMigrationItem(file_id=file.id, key=new_key, expected_old_key=old_key),
+    ])
+    result = await config_api.repair_path_migration(body, db=db)
+
+    assert result == {"done": [file.id], "failed": []}
+    changes = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+    ).order_by(FileSyncJournal.id))).all()
+    assert [(row.relative_path, row.operation) for row in changes] == [
+        ("个人文件/old.txt", "delete"),
+        ("个人文件/new.txt", "create"),
+    ]
+    await db.refresh(binding)
+    assert binding.dirty_revision == 2
 
 
 async def test_path_migration_reports_missing_file_ids(db, tmp_path, monkeypatch):

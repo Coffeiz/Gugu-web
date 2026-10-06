@@ -14,14 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.tz import now_utc
-from app.models import FileSyncBinding, FileSyncConflict, FileSyncJournal, FileSyncOutbox
+from app.models import (
+    FileSyncBinding, FileSyncConflict, FileSyncJournal, FileSyncOutbox,
+    FileSyncReconcileRun, FileSyncUserScanState,
+)
 from app.services.filesync.bindings import (
-    BindingSyncResult,
     cleanup_stale_conflicts,
-    dry_run_local_binding,
     resolve_sync_conflict,
     resolve_local_binding_root,
-    sync_local_binding,
 )
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.protocol import FileSyncStatus, is_file_sync_enabled
@@ -35,6 +35,15 @@ def _iso(value: datetime | None) -> str | None:
 def _safe_failure(error_code: str | None, status: str) -> str:
     """只向 Admin 返回稳定错误码，不把异常或用户内容带出。"""
     return str(error_code or status)
+
+
+def _feature_status(settings) -> dict[str, bool]:
+    """提取同步功能开关，避免把配置细节塞进状态聚合流程。"""
+    filesync = getattr(settings, "filesync", None)
+    return {
+        "featureEnabled": is_file_sync_enabled(),
+        "backgroundReconcileEnabled": getattr(filesync, "background_reconcile_enabled", True),
+    }
 
 
 async def _grouped_counts(
@@ -128,6 +137,11 @@ async def get_admin_sync_status(
             "failedJournal": journals.get(FileSyncStatus.FAILED.value, 0),
             "rejectedJournal": journals.get(FileSyncStatus.REJECTED.value, 0),
             "pendingConflicts": conflicts.get("pending", 0),
+            "baselineGeneration": row.baseline_generation,
+            "lastDailyReconciledAt": _iso(row.last_daily_reconciled_at),
+            "lastIntegrityVerifiedAt": _iso(row.last_integrity_verified_at),
+            "nextReconcileAt": _iso(row.next_reconcile_at),
+            "consecutiveFailures": row.consecutive_failures,
         })
 
     failure_query = select(FileSyncJournal).where(
@@ -185,14 +199,56 @@ async def get_admin_sync_status(
         for row in (await db.scalars(conflict_query)).all()
     ] if supported else []
 
+    run_query = select(FileSyncReconcileRun).order_by(
+        FileSyncReconcileRun.created_at.desc(),
+    ).limit(failure_limit)
+    if user_id is not None:
+        run_query = run_query.where(FileSyncReconcileRun.user_id == user_id)
+    reconcile_runs = [
+        {
+            "id": str(row.id), "bindingId": row.binding_id,
+            "userId": str(row.user_id), "mode": row.mode,
+            "reason": row.reason, "status": row.status, "stage": row.stage,
+            "dryRun": row.dry_run, "progressCurrent": row.progress_current,
+            "progressTotal": row.progress_total, "resultCounts": row.result_counts or {},
+            "errorCode": row.error_code, "createdAt": _iso(row.created_at),
+            "startedAt": _iso(row.started_at), "finishedAt": _iso(row.finished_at),
+            "pauseReason": row.pause_reason, "nextRunAt": _iso(row.next_run_at),
+            "cumulativeRuntimeSeconds": row.cumulative_runtime_seconds,
+        }
+        for row in (await db.scalars(run_query)).all()
+    ]
+
+    user_state_query = select(FileSyncUserScanState).order_by(
+        FileSyncUserScanState.updated_at.desc(),
+    ).limit(failure_limit)
+    if user_id is not None:
+        user_state_query = user_state_query.where(FileSyncUserScanState.user_id == user_id)
+    user_scan_states = [
+        {
+            "userId": str(row.user_id), "activitySeq": row.activity_seq,
+            "lastFileActivityAt": _iso(row.last_file_activity_at),
+            "previousCycleCutoff": _iso(row.previous_cycle_cutoff),
+            "currentCycleCutoff": _iso(row.current_cycle_cutoff),
+            "activityReliable": row.activity_reliable,
+            "lastCycleDecision": row.last_cycle_decision,
+            "skipReason": row.skip_reason,
+            "lastRotationAt": _iso(row.last_rotation_at),
+            "leaseUntil": _iso(row.lease_until),
+        }
+        for row in (await db.scalars(user_state_query)).all()
+    ]
+
     return {
-        "featureEnabled": is_file_sync_enabled(),
+        **_feature_status(settings),
         "storageBackend": backend,
         "supported": supported,
         "workspaceShellSupported": workspace_shell_supported(),
         "ignoredBindingCount": 0 if supported else len(all_bindings),
         "bindings": bindings,
         "conflicts": conflicts,
+        "reconcileRuns": reconcile_runs,
+        "userScanStates": user_scan_states,
         "failures": failures,
         "totals": {
             "bindings": len(visible_bindings),
@@ -205,51 +261,6 @@ async def get_admin_sync_status(
         },
         "generatedAt": now_utc().isoformat(),
     }
-
-
-async def admin_dry_run_binding(db: AsyncSession, binding_id: int) -> BindingSyncResult:
-    binding = await db.get(FileSyncBinding, binding_id)
-    if binding is None:
-        raise LookupError("同步绑定不存在")
-    if not workspace_shell_supported():
-        raise ValueError("当前存储模式不支持本地文件同步")
-    return await dry_run_local_binding(
-        db, binding.user_id, root_path=binding.root_path, mode=binding.mode
-    )
-
-
-async def admin_reconcile_binding(
-    db: AsyncSession,
-    binding_id: int,
-    *,
-    allow_delete: bool = False,
-) -> BindingSyncResult:
-    binding = await db.get(FileSyncBinding, binding_id)
-    if binding is None:
-        raise LookupError("同步绑定不存在")
-    if not workspace_shell_supported():
-        raise ValueError("当前存储模式不支持本地文件同步")
-    try:
-        _, root = resolve_local_binding_root(binding.user_id, binding.root_path)
-        await cleanup_stale_conflicts(db, binding, root=root)
-    except (OSError, ValueError, LookupError):
-        # 正式对账仍由后续同步流程返回具体错误；历史绑定失效时不阻塞其它绑定。
-        pass
-    result = await sync_local_binding(
-        db, binding.user_id, root_path=binding.root_path, mode=binding.mode,
-        allow_delete=allow_delete,
-    )
-    if result.summary.entity_ids or result.summary.conflicts:
-        outbox = await enqueue_file_event(
-            db, binding.user_id, operation="refresh", source="local_directory",
-            entity_ids=result.summary.entity_ids, revision=binding.revision,
-        )
-        await db.commit()
-        await deliver_file_event(db, outbox)
-        await db.commit()
-    else:
-        await db.commit()
-    return result
 
 
 async def admin_resolve_conflict(

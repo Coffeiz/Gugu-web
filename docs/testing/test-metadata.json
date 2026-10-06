@@ -1,26 +1,26 @@
 {
-  "backend/tests/test_filesync_watcher_health.py": {
-    "domain": "filesync",
-    "layer": "L2",
-    "owner": "backend/app/services/filesync",
-    "productionEntry": "app/services/filesync/health.py",
-    "keyBehavior": "监听恢复只更新健康状态，历史缺口保持待人工核对且迁移默认保护已有绑定",
+  "backend/tests/test_file_stream_preview.py": {
+    "domain": "file-preview",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/files.py",
+    "productionEntry": "backend/app/api/v1/files.py:get_stream_url",
+    "keyBehavior": "单文件预览同时返回文件元数据与流地址，跨用户和已删除文件均拒绝且不生成地址",
     "ci": "backend-pytest"
   },
-  "backend/ts/packages/filesync-watcher/test/protocol-output.test.ts": {
-    "domain": "filesync",
-    "layer": "L2",
-    "owner": "backend/ts/packages/filesync-watcher",
-    "productionEntry": "src/protocol-output.ts",
-    "keyBehavior": "输出拥塞时不丢已受理事件和控制响应，且保留待手动核对信号",
-    "ci": "backend-ts"
+  "backend/tests/test_trash_purge_jobs.py": {
+    "domain": "trash-purge",
+    "layer": "L1",
+    "owner": "backend/app/services/files/trash_purge.py",
+    "productionEntry": "backend/app/services/files/trash_purge.py:run_trash_purge_worker",
+    "keyBehavior": "清空任务全局限并发、用户隔离、完成冷却、提交后唤醒、向所有者推送进度及通知失败恢复",
+    "ci": "backend-pytest"
   },
-  "backend/tests/test_filesync_schema_retirement.py": {
-    "domain": "filesync",
-    "layer": "L2",
-    "owner": "backend/app/services/filesync",
-    "productionEntry": "alembic/versions/20261007000001_retire_filesync_snapshot_schema.py",
-    "keyBehavior": "清理快照重构结构保留绑定、journal 与其他功能数据；活动任务阻止清理，重复执行安全",
+  "backend/tests/test_retired_storage_maintenance_routes.py": {
+    "domain": "storage-maintenance",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/api/v1/config.py",
+    "keyBehavior": "旧回收站迁移和旧记忆文件清理路由不再暴露，现行对账及记忆维护接口仍保留",
     "ci": "backend-pytest"
   },
   "backend/tests/test_model_reasoning_policy.py": {
@@ -143,14 +143,6 @@
     "keyBehavior": "文件系统授权确认、完成与撤销遵循 API 边界",
     "ci": "frontend-test"
   },
-  "frontend/tests/admin/filesync/FileSyncAdminPanel.test.ts": {
-    "domain": "filesync",
-    "layer": "L1",
-    "owner": "frontend/components/filesync",
-    "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
-    "keyBehavior": "待手动核对绑定在异常筛选中可见并展示恢复提示",
-    "ci": "frontend-test"
-  },
   "frontend/tests/files/composables/useFileBrowserWindow.test.ts": {
     "domain": "file-library",
     "layer": "L0",
@@ -207,6 +199,110 @@
     "keyBehavior": "仅任务所有者可删除已结束导入并清理其私有暂存对象",
     "ci": "backend-pytest"
   },
+  "backend/tests/test_filesync_api.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/filesync.py",
+    "productionEntry": "backend/app/services/filesync/job_api.py:reconcile_run_result",
+    "keyBehavior": "绑定预检与确认请求均只创建持久队列任务，不在 HTTP handler 中投影；dry-run 与删除确认被保存到任务；仅任务所有者可取消；管理员解绑需确认、保留文件库文件并取消绑定任务；用户响应不暴露管理员专用信息",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_activity.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/activity.py",
+    "keyBehavior": "每日跳过仅依据可信文件活动水位；普通每日任务入队不降低 watcher 可靠性，claim 前可重新检查活动且不伪造扫描成功",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_phase1.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/targeted.py:project_path_events",
+    "keyBehavior": "mirror_out 不注册目录监听且本地事件不会反向投影或在文件库创建记录",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_baseline.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/baseline.py",
+    "keyBehavior": "快照分片校验与原子代次发布拒绝不完整基线",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_checkpoint.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/checkpoint.py",
+    "keyBehavior": "扫描游标、目录队列、冲突阻塞与 SQLite 候选条目原子持久恢复并按变更范围清理",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_jobs.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/jobs.py",
+    "keyBehavior": "整树任务跨预算续跑、单次预算暂停分类与终态时长累计；配额拒绝候选不发布到成功基线且容量恢复后重试；配额不统计文件库外 Shell 内容、无限配额有效、删除可释放同轮导入空间；镜像输出 dry-run 不执行复制，正式任务增量复制并修复目标，缺少源文件时不删除 File，复制失败保留水位并在任务中源变更时续排；重叠绑定下父绑定不误报子绑定已覆盖路径为双边冲突",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_migration.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261006000001_add_filesync_reconcile_runs.py",
+    "keyBehavior": "文件同步任务迁移可重复执行，并保留既有绑定、journal 和冲突记录",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_watcher.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/watcher.py:FileSyncWatcherManager",
+    "keyBehavior": "普通路径事件即时走 targeted/journal/outbox，不创建或等待整树持久任务；后台对账暂停时保留 fallback 信号并在恢复后重新入队；等长覆盖且 size/mtime 不变时仍重算指纹并更新文件与 journal；单点投影失败会排入整树回退，但可见日志不泄漏异常中的路径或文件正文",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_postgres_lifecycle.py": {
+    "domain": "file-sync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/jobs.py",
+    "keyBehavior": "PostgreSQL 中长扫描不持有空闲事务，多用户并发领取不重复占用执行槽；多 Worker 扫描期间事件循环保持响应、无变化扫描复用指纹且取消在 1 秒内收敛终态",
+    "ci": "manual-postgres"
+  },
+  "backend/tests/test_filesync_revision_watermark.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/protocol.py",
+    "keyBehavior": "真实文件变更推进脏水位；文件库事件能触发无路径重叠的 mirror_out，对账投影不自我标脏",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_scan.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/scan.py",
+    "keyBehavior": "目录变更局部重扫，扫描候选和大文件摘要前沿有界续跑",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_scan_stress.py": {
+    "domain": "file-sync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/scan.py",
+    "keyBehavior": "SQLite 持久候选存储可完整遍历十万项合成目录结构",
+    "ci": "manual-stress"
+  },
+  "backend/tests/test_filesync_scheduling.py": {
+    "domain": "file-sync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync/scheduling.py",
+    "productionEntry": "backend/app/services/filesync/jobs.py:claim_due_job",
+    "keyBehavior": "用户批次公平轮转、单绑定失败退避不阻塞其他绑定、解绑后队列任务不会进入扫描、重绑定用户让出切片后小用户先获槽、单用户租约锁后复核、绑定轮转、活跃跳过复核、优先级老化、过期运行任务保留检查点续跑、过期取消任务恢复终态及失败退避使用有界抖动",
+    "ci": "backend-pytest"
+  },
   "frontend/tests/profile/ProfileDataPortabilityPane.test.ts": {
     "domain": "data-portability",
     "layer": "L1",
@@ -215,21 +311,37 @@
     "keyBehavior": "预检和失败任务可删除，增量导入完成状态明确显示撤回限制",
     "ci": "frontend-test"
   },
-  "backend/tests/test_file_stream_preview.py": {
-    "domain": "file-preview",
-    "layer": "L1",
-    "owner": "backend/app/api/v1/files.py",
-    "productionEntry": "backend/app/api/v1/files.py:get_stream_url",
-    "keyBehavior": "单文件预览同时返回文件元数据与流地址，跨用户和已删除文件均拒绝且不生成地址",
-    "ci": "backend-pytest"
+  "frontend/tests/filesync/jobStatus.test.ts": {
+    "domain": "file-sync",
+    "layer": "L0",
+    "owner": "frontend/filesync",
+    "productionEntry": "frontend/src/utils/filesyncJobStatus.ts",
+    "keyBehavior": "每日文件活跃跳过保持独立结果，任务状态/阶段/原因/暂停和每日扫描决定可本地化显示，未知值仍可见",
+    "ci": "frontend-test"
   },
-  "backend/tests/test_trash_purge_jobs.py": {
-    "domain": "trash-purge",
+  "frontend/tests/filesync/api.test.ts": {
+    "domain": "file-sync",
     "layer": "L1",
-    "owner": "backend/app/services/files/trash_purge.py",
-    "productionEntry": "backend/app/services/files/trash_purge.py:run_trash_purge_worker",
-    "keyBehavior": "清空任务全局限并发、用户隔离、完成冷却、提交后唤醒、向所有者推送进度及通知失败恢复",
-    "ci": "backend-pytest"
+    "owner": "frontend/src/api/filesync.ts",
+    "productionEntry": "frontend/src/api/filesync.ts:filesyncAdminApi.cancel",
+    "keyBehavior": "取消任务 API 返回完整终态，使队列 UI 立即反映服务端取消结果而不等待下一次轮询",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/filesync/adminPanel.test.ts": {
+    "domain": "file-sync",
+    "layer": "L2",
+    "owner": "frontend/filesync",
+    "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
+    "keyBehavior": "管理员任务队列显示持久扫描计数；取消成功后立即呈现服务端终态并移除可取消操作",
+    "ci": "frontend-test"
+  },
+  "frontend/e2e/filesync-admin.spec.ts": {
+    "domain": "file-sync",
+    "layer": "L3",
+    "owner": "frontend/filesync",
+    "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
+    "keyBehavior": "管理员文件同步预览不启动实际对账；差异对账必须通过统一确认弹窗，取消确认无副作用，已启动任务可取消并立即显示终态；解绑需确认且保留文件库数据",
+    "ci": "manual-e2e"
   },
   "frontend/tests/mind/noteDraft.test.ts": {
     "domain": "mind-notes",

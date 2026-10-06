@@ -1347,6 +1347,8 @@ async def update_state_labels(body: StateLabelsUpdate):
     return {"ok": True, "count": len(clean)}
 
 
+
+
 @router.get("/memory/im-scopes")
 async def list_im_memory_scopes():
     """返回 IM 记忆汇总统计；不返回 owner、群组或成员标识。"""

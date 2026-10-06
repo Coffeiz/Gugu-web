@@ -90,7 +90,7 @@ async def move_files_to_trash(
         )
     )).scalars().all()
     for file in rows:
-        await move_file_to_trash(storage, file)
+        await move_file_to_trash(storage, file, db)
         file.deleted_at = deleted_at
         file.version = int(file.version or 1) + 1
     return [file.id for file in rows]
@@ -107,7 +107,7 @@ async def move_file_to_trash_by_id(
     file = await get_owned(db, File, file_id, user_id)
     if not file or file.deleted_at is not None:
         return False
-    await move_file_to_trash(storage, file)
+    await move_file_to_trash(storage, file, db)
     file.deleted_at = deleted_at
     file.version = int(file.version or 1) + 1
     return True

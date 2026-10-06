@@ -19,6 +19,11 @@ export interface FileSyncBindingStatus {
   failedJournal: number
   rejectedJournal: number
   pendingConflicts: number
+  baselineGeneration: string | null
+  lastDailyReconciledAt: string | null
+  lastIntegrityVerifiedAt: string | null
+  nextReconcileAt: string | null
+  consecutiveFailures: number
 }
 
 export interface FileSyncConflictStatus {
@@ -36,12 +41,15 @@ export interface FileSyncConflictStatus {
 
 export interface FileSyncAdminStatus {
   featureEnabled: boolean
+  backgroundReconcileEnabled: boolean
   storageBackend: string
   supported: boolean
   workspaceShellSupported: boolean
   ignoredBindingCount: number
   bindings: FileSyncBindingStatus[]
   conflicts: FileSyncConflictStatus[]
+  reconcileRuns: FileSyncReconcileRunStatus[]
+  userScanStates: FileSyncUserScanStateStatus[]
   failures: Array<{
     kind: string
     id: number
@@ -65,13 +73,39 @@ export interface FileSyncAdminStatus {
   generatedAt: string
 }
 
-export interface FileSyncActionResult {
-  bindingId: number | null
+export interface FileSyncReconcileRunStatus {
+  id: string
+  bindingId: number
+  userId?: string
   mode: string
-  rootPath: string
+  reason: string
+  status: string
+  stage: string | null
   dryRun: boolean
-  summary: Record<'scanned' | 'created' | 'updated' | 'moved' | 'deleted' | 'rejected' | 'conflicts', number>
-  conflictIds: number[]
+  allowDelete?: boolean
+  progressCurrent: number
+  progressTotal: number | null
+  resultCounts: Record<string, number>
+  errorCode: string | null
+  pauseReason?: string | null
+  nextRunAt?: string | null
+  cumulativeRuntimeSeconds?: number
+  createdAt?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface FileSyncUserScanStateStatus {
+  userId: string
+  activitySeq: number
+  lastFileActivityAt: string | null
+  previousCycleCutoff: string | null
+  currentCycleCutoff: string | null
+  activityReliable: boolean
+  lastCycleDecision: string | null
+  skipReason: string | null
+  lastRotationAt: string | null
+  leaseUntil: string | null
 }
 
 export type FileSyncConflictResolution = 'keep_local' | 'keep_remote' | 'keep_both' | 'cancel'
@@ -91,7 +125,14 @@ export const filesyncAdminApi = {
     method: 'PATCH',
     body: JSON.stringify({ patch: { filesync: { enabled } } }),
   })),
-  dryRun: (fetcher: AdminFetch, bindingId: number) => read<FileSyncActionResult>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/dry-run`, { method: 'POST' })),
-  reconcile: (fetcher: AdminFetch, bindingId: number) => read<FileSyncActionResult>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/reconcile`, { method: 'POST', body: JSON.stringify({ confirm: true }) })),
+  setBackgroundReconcileEnabled: (fetcher: AdminFetch, enabled: boolean) => read<Record<string, unknown>>(fetcher('/api/v1/admin/config', {
+    method: 'PATCH',
+    body: JSON.stringify({ patch: { filesync: { background_reconcile_enabled: enabled } } }),
+  })),
+  dryRun: (fetcher: AdminFetch, bindingId: number, integrityFull = false) => read<FileSyncReconcileRunStatus>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/dry-run`, { method: 'POST', body: JSON.stringify({ integrityFull }) })),
+  reconcile: (fetcher: AdminFetch, bindingId: number, integrityFull = false) => read<FileSyncReconcileRunStatus>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/reconcile`, { method: 'POST', body: JSON.stringify({ confirm: true, integrityFull }) })),
+  unbind: (fetcher: AdminFetch, bindingId: number) => read<{ id: number; status: string; scopeRevision: number }>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}`, { method: 'DELETE', body: JSON.stringify({ confirm: true }) })),
+  run: (fetcher: AdminFetch, runId: string) => read<FileSyncReconcileRunStatus>(fetcher(`/api/v1/admin/filesync/runs/${runId}`)),
+  cancel: (fetcher: AdminFetch, runId: string) => read<FileSyncReconcileRunStatus>(fetcher(`/api/v1/admin/filesync/runs/${runId}/cancel`, { method: 'POST' })),
   resolveConflict: (fetcher: AdminFetch, conflictId: number, resolution: FileSyncConflictResolution) => read<{ id: number; status: string; resolution: string }>(fetcher(`/api/v1/admin/filesync/conflicts/${conflictId}/resolve`, { method: 'POST', body: JSON.stringify({ resolution, confirm: resolution !== 'cancel' }) })),
 }

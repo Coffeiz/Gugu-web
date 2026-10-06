@@ -205,10 +205,43 @@ class FileSyncSettings(BaseModel):
         True,
         description="是否启用本地文件事实源自动同步（默认开启）",
     )
+    background_reconcile_enabled: bool = Field(
+        True,
+        description="是否调度自动整树补偿与后台对账任务；关闭不影响实时路径投影、事件 outbox 或手动对账",
+    )
     active_window_days: int = Field(
         7,
-        description="活跃度门控：仅给最近 N 天活跃用户的绑定挂实时监听；其余绑定需手动核对（0 表示全部监听）",
+        description="活跃度门控：仅给最近 N 天活跃用户的绑定挂实时监听，其余只走日级补偿扫描（0 表示全部监听）",
     )
+    compensation_interval_seconds: float = Field(
+        86400.0,
+        gt=0,
+        description="元数据快照差异对账间隔（秒），默认一天一次",
+    )
+    reconcile_timeout_seconds: float = Field(
+        1800.0, gt=0,
+        description="单次文件对账执行片段预算上限；耗尽后应保存游标并暂停续跑",
+    )
+    reconcile_batch_size: int = Field(
+        200, gt=0, le=2000,
+        description="文件对账每批投影的路径上限",
+    )
+    reconcile_concurrency: int = Field(
+        1, gt=0, le=4,
+        description="全局同时扫描用户数",
+    )
+    reconcile_user_batch_size: int = Field(8, gt=0, le=64)
+    reconcile_slice_seconds: float = Field(10.0, gt=0, le=1800)
+    reconcile_scan_batch_size: int = Field(1000, gt=0, le=10000)
+    reconcile_hash_chunk_bytes: int = Field(1_048_576, gt=0, le=16_777_216)
+    reconcile_hash_concurrency: int = Field(1, gt=0, le=8)
+    reconcile_write_concurrency: int = Field(1, gt=0, le=8)
+
+    @model_validator(mode="after")
+    def validate_slice_budget(self):
+        if self.reconcile_slice_seconds > self.reconcile_timeout_seconds:
+            raise ValueError("文件对账时间片不能超过单次执行预算")
+        return self
 
 
 class AIPresetItem(BaseModel):

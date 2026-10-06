@@ -2,7 +2,7 @@
 
 import hashlib
 
-from app.services.filesync import reconcile
+from app.services.filesync import file_ops
 
 
 def test_forced_large_file_hash_advises_cache_drop_in_bounded_ranges(tmp_path, monkeypatch):
@@ -14,10 +14,10 @@ def test_forced_large_file_hash_advises_cache_drop_in_bounded_ranges(tmp_path, m
     def record_advice(fd, offset, length, advice):
         calls.append((fd, offset, length, advice))
 
-    monkeypatch.setattr(reconcile.os, "posix_fadvise", record_advice, raising=False)
-    monkeypatch.setattr(reconcile.os, "POSIX_FADV_DONTNEED", 4, raising=False)
+    monkeypatch.setattr(file_ops.os, "posix_fadvise", record_advice, raising=False)
+    monkeypatch.setattr(file_ops.os, "POSIX_FADV_DONTNEED", 4, raising=False)
 
-    digest = reconcile._stable_fingerprint(path, discard_cache=True)
+    digest = file_ops.stable_fingerprint(path, discard_cache=True)
 
     assert digest == hashlib.sha256(content).hexdigest()
     assert calls
@@ -31,17 +31,17 @@ def test_incremental_or_small_file_hash_does_not_advise_cache(tmp_path, monkeypa
     path.write_text("small", encoding="utf-8")
     calls = []
     monkeypatch.setattr(
-        reconcile.os, "posix_fadvise",
+        file_ops.os, "posix_fadvise",
         lambda *args: calls.append(args), raising=False,
     )
-    monkeypatch.setattr(reconcile.os, "POSIX_FADV_DONTNEED", 4, raising=False)
+    monkeypatch.setattr(file_ops.os, "POSIX_FADV_DONTNEED", 4, raising=False)
 
-    reconcile._stable_fingerprint(path, discard_cache=True)
+    file_ops.stable_fingerprint(path, discard_cache=True)
     assert calls == []
 
     large_path = tmp_path / "large-incremental.bin"
     large_path.write_bytes(b"incremental" * (1024 * 1024))
-    reconcile._stable_fingerprint(large_path)
+    file_ops.stable_fingerprint(large_path)
     assert calls == []
 
 
@@ -54,11 +54,11 @@ def test_cache_advice_failure_does_not_fail_hash(tmp_path, monkeypatch):
     def fail_advice(*_args):
         raise OSError("advice unsupported")
 
-    monkeypatch.setattr(reconcile.os, "posix_fadvise", fail_advice, raising=False)
-    monkeypatch.setattr(reconcile.os, "POSIX_FADV_DONTNEED", 4, raising=False)
-    monkeypatch.setattr(reconcile, "diag_log", lambda event, exc: diagnostics.append((event, exc)))
+    monkeypatch.setattr(file_ops.os, "posix_fadvise", fail_advice, raising=False)
+    monkeypatch.setattr(file_ops.os, "POSIX_FADV_DONTNEED", 4, raising=False)
+    monkeypatch.setattr(file_ops, "diag_log", lambda event, exc: diagnostics.append((event, exc)))
 
-    actual = reconcile._stable_fingerprint(path, discard_cache=True)
+    actual = file_ops.stable_fingerprint(path, discard_cache=True)
 
     assert actual == hashlib.sha256(content).hexdigest()
     assert len(diagnostics) == 1

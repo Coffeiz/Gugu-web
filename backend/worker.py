@@ -513,6 +513,11 @@ async def serve():
     filesync_task = asyncio.create_task(
         FileSyncWatcherManager().run(_stop), name="filesync-watcher"
     )
+    from app.services.filesync.jobs import run_reconcile_jobs
+    filesync_jobs_task = asyncio.create_task(
+        run_reconcile_jobs(_stop, session_factory=db_session._SessionLocal),
+        name="filesync-reconcile-jobs",
+    )
     reflection_task = asyncio.create_task(_reflection_loop())
     cleanup_task = asyncio.create_task(_cleanup_loop())
     from app.services.data_portability.worker import run_portability_worker
@@ -538,13 +543,14 @@ async def serve():
     hb.cancel()
     sched_task.cancel()
     filesync_task.cancel()
+    filesync_jobs_task.cancel()
     reflection_task.cancel()
     cleanup_task.cancel()
     portability_task.cancel()
     trash_purge_task.cancel()
     await asyncio.gather(
-        hb, sched_task, filesync_task, reflection_task, cleanup_task, portability_task,
-        trash_purge_task,
+        hb, sched_task, filesync_task, filesync_jobs_task, reflection_task, cleanup_task,
+        portability_task, trash_purge_task,
         return_exceptions=True,
     )
     from agent.rag.injection import shutdown_background_recall_tasks

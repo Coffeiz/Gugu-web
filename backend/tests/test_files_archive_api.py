@@ -1,10 +1,13 @@
 """文件库归档 API：薄壳提交与实时事件契约。"""
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
+
 from app.api.v1 import files as files_api
 from app.core.errors import Conflict, Invalid, NotFound
-from app.models import File, Folder
+from app.models import File, FileSyncBinding, FileSyncJournal, Folder
 from app.services.files import archive as archive_service
 from app.services.storage import LocalStorageBackend
 
@@ -83,6 +86,19 @@ async def test_unarchive_api_returns_created_ids_and_publishes_create(db, user_a
     await storage.put(source.storage_key, payload.getvalue(), "application/zip")
     source.size_bytes = len(payload.getvalue())
     source.size = f"{source.size_bytes} B"
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="d" * 64,
+    )
+    db.add(binding)
+    await db.flush()
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(storage.root)),
+    )
+    monkeypatch.setattr("app.services.filesync.bindings.get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.filesync.protocol.get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.filesync.protocol.is_file_sync_enabled", lambda: True)
     published = []
 
     async def capture(*args, **kwargs):
@@ -101,6 +117,12 @@ async def test_unarchive_api_returns_created_ids_and_publishes_create(db, user_a
     assert len(published) == 1
     assert published[0][1]["operation"] == "create"
     assert published[0][1]["origin"] == "browser-tab"
+    folder_changes = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.object_type == "folder",
+    ))).all()
+    assert folder_changes
+    assert all(row.operation == "create" for row in folder_changes)
 
 
 async def test_unarchive_api_accepts_output_folder_name(db, user_a, storage, monkeypatch):

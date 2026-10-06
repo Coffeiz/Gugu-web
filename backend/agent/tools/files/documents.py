@@ -8,6 +8,7 @@
 创建（create_file）支持批量文件和自定义后缀，不做格式转换、不执行文件内容；读取编排见 read.py。
 """
 import json
+import hashlib
 import re
 
 from app.core.errors import Invalid
@@ -32,6 +33,7 @@ from app.services.storage.file_service.content_types import (
 )
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.file_service import FileService
+from app.services.filesync.protocol import record_canonical_file_change
 from app.search.query import normalize_queries
 from agent.tools.text_edit import apply_line_edits
 from .locations import (
@@ -388,6 +390,10 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
     f.size = _fmt_size(len(data))
     f.version = int(f.version or 1) + 1
     f.updated_at = now_utc()
+    await record_canonical_file_change(
+        db, user_id=user_id, storage_key=f.storage_key,
+        observed_fingerprint=hashlib.sha256(data).hexdigest(),
+    )
     await db.commit()
     result = {"success": True, "file_id": f.id, "name": nm, "new_size": f.size, "change": change}
     # 内容骤降告警：行级整体替换也可能误删正文，改后显著变短时确定性提示模型核对。

@@ -1,9 +1,11 @@
 """顶层 Workspace 文件空间元数据契约测试。"""
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 import pytest
 
-from app.models import WorkspaceDirectory
+from app.models import File, FileSyncBinding, FileSyncJournal, Folder, WorkspaceDirectory
+import app.services.filesync.protocol as filesync_protocol
+import app.services.workspaces as workspace_service
 from app.services.workspaces import (
     create_workspace_directory,
     delete_workspace_directory,
@@ -85,6 +87,51 @@ async def test_workspace_directory_crud_is_owned_and_removes_only_its_physical_r
     await db.commit()
     assert recreated.id != row.id
     assert (tmp_path / str(user_a.id) / "workspace" / recreated.directory_name).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_workspace_directory_delete_advances_overlapping_root_binding(db, user_a, tmp_path, monkeypatch):
+    """删除独立工作区时，覆盖全用户根目录的同步绑定仍收到文件和目录墓碑。"""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    monkeypatch.setattr(settings.storage, "local_path", str(tmp_path))
+    monkeypatch.setattr(settings.filesync, "enabled", True)
+    monkeypatch.setattr(workspace_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(filesync_protocol, "get_settings", lambda: settings)
+    monkeypatch.setattr(filesync_protocol, "is_file_sync_enabled", lambda: True)
+
+    directory = await create_workspace_directory(db, user_a.id, name="资料工作区")
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", mode="bidirectional",
+        status="active", root_path=".", root_fingerprint="a" * 64,
+    )
+    folder = Folder(
+        user_id=user_a.id, workspace_directory_id=directory.id, name="文档",
+    )
+    db.add_all([binding, folder])
+    await db.flush()
+    file = File(
+        user_id=user_a.id, workspace_directory_id=directory.id,
+        folder_id=folder.id, display_name="说明", ext="md", space="workspace",
+        storage_key=f"{user_a.id}/workspace/{directory.directory_name}/文档/说明.md",
+    )
+    db.add(file)
+    await db.commit()
+    await db.refresh(binding)
+
+    await delete_workspace_directory(db, user_a.id, directory.id)
+    changes = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+    ).order_by(FileSyncJournal.id))).all()
+
+    assert [(entry.relative_path, entry.operation) for entry in changes] == [
+        (f"workspace/{directory.directory_name}/文档/说明.md", "delete"),
+        (f"workspace/{directory.directory_name}/文档", "delete"),
+    ]
+    await db.refresh(binding)
+    assert binding.dirty_revision == 2
 
 
 @pytest.mark.asyncio

@@ -53,6 +53,7 @@ class FolderOps:
             dir_key = await self._dir_key(user_id, folder)
             if dir_key:
                 await self.storage.ensure_folder(dir_key)   # P1.2：空夹上盘
+                await self._record_directory_change(user_id, folder, dir_key, "create")
         return folder
 
     async def rename(self, user_id, folder_id, new_name, *, client_version):
@@ -126,7 +127,20 @@ class FolderOps:
         if old_dir:
             new_dir = await self._dir_key(user_id, folder)
             if new_dir != old_dir:
+                await self._record_directory_change(user_id, folder, old_dir, "delete")
+                await self._record_directory_change(user_id, folder, new_dir, "create")
                 await self.storage.remove_folder(old_dir)   # 治 adr 幽灵目录
+
+    async def _record_directory_change(self, user_id, folder, storage_key, operation):
+        if not storage_key:
+            return
+        from app.services.filesync.protocol import record_canonical_folder_change
+
+        await record_canonical_folder_change(
+            self.db,
+            user_id=user_id, storage_key=storage_key, operation=operation,
+            entity_id=folder.id, version=int(folder.version or 1),
+        )
 
     # ── 软删 / 恢复（P2.2/P2.4）──────────────────────────────────────────────────
     async def delete(self, user_id, folder_id):
@@ -147,7 +161,7 @@ class FolderOps:
             .values(folder_id=None)
         )
 
-        dir_keys: list[str] = []
+        dir_rows: list[tuple[Folder, str]] = []
         if self._relocates:
             # 目录骨架清理要在文件搬空之后；先取每个受影响文件夹当前的物理 key（deleted_at 已
             # 置位不影响 folder_dir_key 的路径解析——它只关心归属链，不关心软删状态）。
@@ -155,17 +169,18 @@ class FolderOps:
             for f in rows:
                 dk = await self._dir_key(user_id, f)
                 if dk:
-                    dir_keys.append(dk)
+                    dir_rows.append((f, dk))
 
         files = (await self.db.execute(
             select(File).where(File.folder_id.in_(ids), File.deleted_at.is_(None))
         )).scalars().all()
         for f in files:
-            await move_file_to_trash(self.storage, f)
+            await move_file_to_trash(self.storage, f, self.db)
             f.deleted_at = stamp
         await self.db.flush()
 
-        for dk in dir_keys:
+        for folder_row, dk in dir_rows:
+            await self._record_directory_change(user_id, folder_row, dk, "delete")
             await self.storage.remove_folder(dk)   # 空了才真删；非空（残留孤儿文件等）保守跳过
         return folder
 
@@ -175,6 +190,12 @@ class FolderOps:
         folder, ids, stamp = await self.folder_tree.restore(user_id, folder_id)
         if self._relocates:
             await self._materialize_subtree(user_id, folder.id)   # 补回目录骨架（含空夹）
+            rows = (await self.db.scalars(select(Folder).where(
+                Folder.user_id == user_id, Folder.id.in_(ids),
+            ))).all()
+            for row in rows:
+                directory_key = await self._dir_key(user_id, row)
+                await self._record_directory_change(user_id, row, directory_key, "create")
 
         files = (await self.db.execute(
             select(File).where(File.folder_id.in_(ids), File.deleted_at == stamp)
