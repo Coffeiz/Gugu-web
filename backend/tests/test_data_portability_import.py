@@ -245,6 +245,34 @@ async def test_incremental_import_preserves_legacy_reference_without_target_as_n
 
 
 @pytest.mark.asyncio
+async def test_incremental_import_keeps_deleted_note_as_tombstone(db, user_a):
+    """导入软删除笔记时保留删除状态，列表不能把墓碑当成活动笔记。"""
+    payload = {
+        "record_schema": "gugu.mind_node.v1",
+        "portable_id": "deleted-note-tombstone",
+        "source_type": "mind_node",
+        "created_at": "2026-09-07T08:30:00+00:00",
+        "deleted_at": "2026-09-08T08:30:00+00:00",
+        "fields": {"kind": "note", "title": None, "content_md": "", "content_plain": ""},
+        "relations": [],
+    }
+    archive_bytes, manifest = _archive_from_records({
+        "records/mind/nodes.jsonl": ("mind", [payload]),
+    })
+
+    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as archive:
+        result = await apply_incremental_archive(
+            db, user=user_a, archive=archive, manifest=manifest,
+            job_id=uuid4(), written_storage_keys=[],
+        )
+    node = (await db.execute(select(MindNode).where(MindNode.user_id == user_a.id))).scalar_one()
+
+    assert result["created"] == 1
+    assert node.deleted_at is not None
+    assert node.title is None and node.content_md == ""
+
+
+@pytest.mark.asyncio
 async def test_incremental_import_recovers_sessionless_draft_queue(db, user_a, user_b):
     """新对话草稿缺少可移植标签 ID 时仍可导入，并且只向所属用户恢复。"""
     payload = {

@@ -256,6 +256,13 @@ async def project_record(
             _decode_json(value) if name in spec.json_fields else value
         )
 
+    # 软删除的时间流笔记只作为关系墓碑迁移，不能把用户已删除的标题或正文带进归档。
+    # 保留记录身份和 deleted_at，确保其他仍存在的关系可以稳定解析，且导入后不会复活。
+    if spec.record_type == "mind_node" and row.kind == "note" and row.deleted_at is not None:
+        fields["title"] = None
+        fields["content_md"] = ""
+        fields["content_plain"] = ""
+
     relations: list[PortableRelation] = []
     for source_field, relation_name, target_type in spec.refs:
         target_id = getattr(row, source_field)

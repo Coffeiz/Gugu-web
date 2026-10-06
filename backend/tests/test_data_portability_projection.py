@@ -1,5 +1,6 @@
 import io
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -69,6 +70,32 @@ async def test_projection_downgrades_reference_when_target_category_is_not_expor
     assert record.fields["reference_snapshot"] == {"summary": "引用快照"}
     assert record.relations == []
     assert "ref_id" not in record.fields and "storage_key" not in record.fields
+
+
+@pytest.mark.asyncio
+async def test_soft_deleted_note_export_keeps_tombstone_but_excludes_user_content(db, user_a):
+    secret_title = "已删除标题-不得进入归档"
+    secret_body = "已删除正文-不得进入归档"
+    deleted_at = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    node = MindNode(
+        user_id=user_a.id, kind="note", title=secret_title,
+        content_md=secret_body, content_plain=secret_body, deleted_at=deleted_at,
+    )
+    db.add(node)
+    await db.flush()
+
+    spec = next(item for item in RECORD_SPECS if item.record_type == "mind_node")
+    record = await project_record(
+        db, user_id=user_a.id, origin_id=uuid4(), spec=spec, row=node,
+        identities={("mind_node", str(node.id)): "portable-deleted-note"},
+    )
+
+    assert record.deleted_at == deleted_at.isoformat()
+    assert record.fields["title"] is None
+    assert record.fields["content_md"] == ""
+    assert record.fields["content_plain"] == ""
+    assert secret_title not in record.model_dump_json()
+    assert secret_body not in record.model_dump_json()
 
 
 @pytest.mark.asyncio
