@@ -495,6 +495,7 @@ class Project(Base):
     id:            Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:       Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name:          Mapped[str]           = mapped_column(String(200))
+    summary:       Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
     client:        Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     status:        Mapped[str]           = mapped_column(String(20),  default="pending")
     start_date:    Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)

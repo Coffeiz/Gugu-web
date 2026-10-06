@@ -198,6 +198,7 @@ def _user_files_stmt(
     user_id,
     *, space=None, project_id=None, folder_id=None,
     workspace_directory_id=None, ext=None, queries=None, mode=None,
+    root_only: bool = False,
 ):
     """构造 list_dir 共用的存活文件过滤条件（搜索与计数必须同口径）。"""
     stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
@@ -207,6 +208,8 @@ def _user_files_stmt(
         stmt = stmt.where(File.project_id == project_id)
     if folder_id is not None:
         stmt = stmt.where(File.folder_id == folder_id)
+    elif root_only:
+        stmt = stmt.where(File.folder_id.is_(None))
     if workspace_directory_id is not None:
         stmt = stmt.where(File.workspace_directory_id == workspace_directory_id)
     if ext:
@@ -228,6 +231,7 @@ async def search_user_files(
     ext=None,
     queries=None,
     mode=None,
+    root_only: bool = False,
     limit=100,
     offset=0,
     sort="updated",
@@ -241,6 +245,7 @@ async def search_user_files(
         user_id, space=space, project_id=project_id, folder_id=folder_id,
         workspace_directory_id=workspace_directory_id, ext=ext,
         queries=queries, mode=mode,
+        root_only=root_only,
     )
     if sort == "name":
         # 名字升序 + id 兜底：分页遍历时顺序稳定，同名文件（不同 ext/space）也不漏重
@@ -263,6 +268,7 @@ async def count_user_files(
     ext=None,
     queries=None,
     mode=None,
+    root_only: bool = False,
 ):
     """与 search_user_files 完全同口径的总数（不含 limit）。
 
@@ -275,6 +281,7 @@ async def count_user_files(
         user_id, space=space, project_id=project_id, folder_id=folder_id,
         workspace_directory_id=workspace_directory_id, ext=ext,
         queries=queries, mode=mode,
+        root_only=root_only,
     )
     return (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
 

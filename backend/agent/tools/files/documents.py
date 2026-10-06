@@ -189,16 +189,28 @@ async def _list_dir(db, user_id, args: dict):
     """统一目录浏览：一次返回目录内的子文件夹与文件（取代 list_files/list_folders）。
 
     folder 不传时 folders 只含各空间根目录；传了（id 或名字）时 folders 为该目录的子文件夹、files 为直属文件。
-    文件夹只返回当前层的直属子目录，不递归展开。parent_id 是 folder 的纯 id 形式。
+    scope=project_root 只看项目根层；scope=project_recursive 遍历项目文件和所有目录；
+    scope=folder 或传 folder_id 时查看指定目录。parent_id 是 folder 的纯 id 形式。
     limit 只约束 files，folders 恒全量。
     """
     kind = args.get("kind") if args.get("kind") in ("both", "file", "folder") else "both"
+    scope = args.get("scope")
+    if scope not in (None, "project_root", "project_recursive", "folder"):
+        return {"error": "scope 必须是 project_root、project_recursive 或 folder"}
+    if scope in {"project_root", "project_recursive"} and (
+        args.get("space") != "project" or args.get("project_id") is None
+    ):
+        return {"error": "项目范围查询必须同时提供 space=project 和 project_id"}
 
     folder_value = args.get("folder_id")
     if folder_value in (None, ""):
         folder_value = args.get("folder")
     if folder_value in (None, ""):
         folder_value = args.get("parent_id")
+    if scope in {"project_root", "project_recursive"} and folder_value not in (None, ""):
+        return {"error": "项目根层或递归查询不能同时指定 folder_id"}
+    if scope == "folder" and folder_value in (None, ""):
+        return {"error": "scope=folder 时必须指定 folder_id"}
     scope_folder_id = None
     if folder_value not in (None, ""):
         try:
@@ -222,6 +234,30 @@ async def _list_dir(db, user_id, args: dict):
                 scope_folder_id = folder.id if folder is not None else None
             if error:
                 return error
+    if scope == "folder" and scope_folder_id is None:
+        return {"error": "文件夹不存在"}
+    if scope_folder_id is not None:
+        folder = await get_user_folder(db, user_id, scope_folder_id)
+        if folder is None or folder.deleted_at is not None:
+            return {"error": "文件夹不存在"}
+        project_id = args.get("project_id")
+        workspace_directory_id = args.get("workspace_directory_id")
+        if (
+            (args.get("space") == "project" and (
+                folder.project_id is None
+                or (project_id is not None and folder.project_id != project_id)
+            ))
+            or (project_id is not None and folder.project_id != project_id)
+            or (args.get("space") == "workspace" and (
+                folder.project_id is not None or folder.workspace_directory_id is None
+                or (workspace_directory_id is not None
+                    and folder.workspace_directory_id != workspace_directory_id)
+            ))
+            or (args.get("space") in {"personal", "mind", "asset"} and (
+                folder.project_id is not None or folder.workspace_directory_id is not None
+            ))
+        ):
+            return {"error": "文件夹不属于指定空间或项目"}
 
     file_queries = normalize_queries(
         args.get("query") or args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
@@ -240,6 +276,7 @@ async def _list_dir(db, user_id, args: dict):
             project_id=args.get("project_id"),
             folder_id=scope_folder_id,
             workspace_directory_id=args.get("workspace_directory_id"),
+            root_only=scope == "project_root",
             ext=args.get("ext"),
             queries=file_queries,
             mode=args.get("mode"),
@@ -274,7 +311,7 @@ async def _list_dir(db, user_id, args: dict):
             project_id=args.get("project_id"),
             parent_id=scope_folder_id,
             workspace_directory_id=args.get("workspace_directory_id"),
-            filter_parent=True,
+            filter_parent=scope != "project_recursive",
         )
         folder_ids = [folder.id for folder in folder_rows]
         counts = await file_counts_for_folders(db, user_id, folder_ids)
@@ -296,7 +333,10 @@ async def _list_dir(db, user_id, args: dict):
 
     # shown/total 只统计 files（folders 只含当前层且恒全量、无截断语义）：shown<total 说明被
     # limit 截断，必须加大 limit 重查或加过滤条件，不能把前 N 条当全量下结论。
-    return {"shown": len(out_files), "total": total, "files": out_files, "folders": out_folders}
+    result = {"shown": len(out_files), "total": total, "files": out_files, "folders": out_folders}
+    if scope:
+        result["scope"] = scope
+    return result
 
 
 async def _edit_one(db, user_id, f, spec: dict) -> dict:

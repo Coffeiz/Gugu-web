@@ -40,7 +40,7 @@ class RecordSpec:
 RECORD_SPECS = (
     RecordSpec("preferences", "preferences", UserPreferences, "user_id", "id", ("data_json",), json_fields=("data_json",), sanitize="preferences"),
     RecordSpec("project", "projects", Project, "user_id", "id", (
-        "name", "client", "status", "start_date", "deadline", "color", "progress",
+        "name", "summary", "client", "status", "start_date", "deadline", "color", "progress",
         "stages_json", "current_stage", "priority", "archived", "done_at"), json_fields=("stages_json",)),
     RecordSpec("client", "clients", Client, "user_id", "id", ("name", "contact", "email", "phone", "notes")),
     RecordSpec("workspace_directory", "workspaces", WorkspaceDirectory, "user_id", "id",

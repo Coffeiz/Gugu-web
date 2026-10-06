@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.tz import now_utc, resolve_tz, today_str
 from app.models import CalendarEvent, File, Folder, MindNode, Project, User
+from app.services.project_context import load_project_file_overviews
 from app.services.storage.folders import resolve_folder_path
 
 PERSONAL_FILES_RECENT_LIMIT = 20
@@ -46,6 +47,11 @@ async def load_projects(db, user_id) -> list:
     for status in ("pending", "active", "done"):
         ordered = sorted(grouped.get(status, []), key=project_sort_key)
         selected.extend(ordered[:PROJECT_CONTEXT_LIMITS[status]])
+    file_overviews = await load_project_file_overviews(
+        db, user_id, [project.id for project in selected],
+    )
+    for project in selected:
+        project._agent_file_overview = file_overviews[project.id]
     return selected
 
 

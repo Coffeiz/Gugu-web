@@ -11,8 +11,12 @@ from .read import _read_file
 FILE_TOOLS = [
         Tool(
             name="list_dir", label="浏览目录",
-            description_short='浏览目录：文件夹只列当前层直属子目录，不递归；未指定目录时列根级文件夹。',
+            description_short='浏览目录：可显式查项目根层、项目递归清单或具体文件夹。',
             description="列出文件与当前层直属子文件夹，可按空间、项目、工作区或目录筛选；文件仍按传入条件过滤，不传位置条件时覆盖当前用户所有可访问空间。"
+                        "项目查询优先显式指定 scope：scope=project_root + space=project + project_id 只查项目根层；"
+                        "scope=project_recursive + 相同项目参数列出项目全部层级的文件与文件夹；"
+                        "scope=folder 必须搭配真实 folder_id 查具体目录。项目本身不是 folder，不能把 project_id 填进 folder_id。"
+                        "为兼容旧调用，不传 scope 时保留原行为；需要判断项目根层是否为空时不要依赖旧行为。"
                         "folder 传目录名（支持 a/b/c 式路径，也可用 folder_id/parent_id 传 id），限定该目录的子文件夹与直属文件。"
                         "folders 只返回当前层的直属子目录，不递归展开；未传目录时只返回各空间根目录下的文件夹。需要深入时，再对目标子目录传 folder_id 调用。"
                         "返回 {shown, total, files, folders}：total/shown 只统计文件——shown<total 说明未取完，"
@@ -25,6 +29,10 @@ FILE_TOOLS = [
                 "properties": {
                     "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                     "project_id": {"type": "integer"},
+                    "scope": {
+                        "type": "string",
+                        "enum": ["project_root", "project_recursive", "folder"],
+                    },
                     "workspace_directory_id": {"type": "integer"},
                     "folder": {"type": "string"},
                     "folder_id": {"type": "integer"},

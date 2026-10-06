@@ -18,7 +18,7 @@ from app.core.tz import now_utc
 from app.models import Project
 
 _PROJECT_FIELDS = {
-    "name", "client", "status", "start_date", "deadline", "color", "progress",
+    "name", "summary", "client", "status", "start_date", "deadline", "color", "progress",
     "current_stage", "archived", "priority", "stages",
 }
 _PROJECT_STATUSES = {"pending", "active", "done"}
@@ -230,6 +230,15 @@ def prepare_project_update(fields: Dict[str, Any], existing_project: Project | N
     values = dict(fields)
     if "name" in values:
         _validate_name(values["name"])
+    if "summary" in values:
+        summary = values["summary"]
+        if summary is not None and not isinstance(summary, str):
+            raise ValueError("项目摘要必须是文本或空值")
+        if summary is not None:
+            summary = summary.strip() or None
+            if summary is not None and len(summary) > 200:
+                raise ValueError("项目摘要不能超过 200 个字符")
+        values["summary"] = summary
     if "status" in values and values["status"] not in _PROJECT_STATUSES:
         raise ValueError("项目状态必须是 pending、active 或 done")
     if "priority" in values and values["priority"] not in _PROJECT_PRIORITIES | {None}:
