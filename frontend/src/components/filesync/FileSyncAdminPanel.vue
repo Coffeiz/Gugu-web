@@ -73,6 +73,9 @@
             <strong>#{{ binding.id }} · {{ binding.mode }}</strong>
             <span>{{ binding.rootPath }} · {{ binding.userId }}</span>
             <small>{{ t('filesyncAdmin.revision') }} {{ binding.revision }} · {{ t('filesyncAdmin.conflictCount') }} {{ binding.pendingConflicts }} · {{ binding.status === 'active' ? t('filesyncAdmin.bindingActive') : t('filesyncAdmin.bindingInactive') }}</small>
+            <small v-if="binding.needsReconcile" class="fs-health-warning">
+              {{ t('filesyncAdmin.manualReconcileNeeded') }}<template v-if="binding.healthErrorCode"> · {{ binding.healthErrorCode }}</template>
+            </small>
           </div>
           <div class="fs-actions">
             <ActionButton variant="secondary" fit :disabled="actionKey === `dry-${binding.id}`" @click="dryRun(binding.id)">
@@ -95,11 +98,17 @@
         </div>
       </div>
 
-      <div v-if="dryResult" class="fs-result">
-        {{ t('filesyncAdmin.dryRunResult', { scanned: dryResult.resultCounts.scanned || 0, created: dryResult.resultCounts.created || 0, updated: dryResult.resultCounts.updated || 0, rejected: dryResult.resultCounts.rejected || 0, conflicts: dryResult.resultCounts.conflicts || 0 }) }}
+      <div v-if="dryResult" class="fs-result" :class="dryResult.status === 'failed' ? 'is-error' : dryResult.status === 'succeeded' ? 'is-success' : 'is-pending'" role="status" aria-live="polite">
+        <template v-if="dryResult.status === 'succeeded'">
+          {{ t('filesyncAdmin.dryRunResult', { scanned: dryResult.resultCounts.scanned || 0, created: dryResult.resultCounts.created || 0, updated: dryResult.resultCounts.updated || 0, rejected: dryResult.resultCounts.rejected || 0, conflicts: dryResult.resultCounts.conflicts || 0 }) }}
+        </template>
+        <template v-else>
+          {{ t('filesyncAdmin.dryRunState', { status: runStatusLabel(dryResult), stage: runStageLabel(dryResult.stage) }) }}
+          <span v-if="dryResult.errorCode"> · {{ dryResult.errorCode }}</span>
+        </template>
       </div>
 
-      <div v-if="status.reconcileRuns.length" class="fs-block">
+      <div v-if="status.reconcileRuns.length" ref="jobsSection" class="fs-block">
         <div class="fs-block-title">{{ t('filesyncAdmin.jobs') }}</div>
         <div v-for="run in status.reconcileRuns" :key="run.id" class="fs-row">
           <div class="fs-row-main">
@@ -109,7 +118,9 @@
               {{ t('filesyncAdmin.scanProgress', { scanned: run.resultCounts.scanned, hashed: run.resultCounts.hashed || 0, reused: run.resultCounts.reused || 0, rejected: run.resultCounts.rejected || 0 }) }}
             </span>
             <small v-if="run.pauseReason">{{ t('filesyncAdmin.pausedUntil', { reason: pauseReasonLabel(run.pauseReason), at: run.nextRunAt || '—' }) }}</small>
-            <small v-if="run.errorCode && !filesyncRunStatusKey(run)">{{ run.errorCode }}</small>
+            <small v-if="run.errorCode && ['failed', 'interrupted'].includes(run.status)" class="fs-health-warning">
+              {{ t('filesyncAdmin.jobError') }}：{{ run.errorCode }}
+            </small>
             <small v-else-if="run.status === 'succeeded'">{{ t('filesyncAdmin.dryRunResult', { scanned: run.resultCounts.scanned || 0, created: run.resultCounts.created || 0, updated: run.resultCounts.updated || 0, rejected: run.resultCounts.rejected || 0, conflicts: run.resultCounts.conflicts || 0 }) }}</small>
           </div>
           <div v-if="['queued', 'running', 'paused', 'cancelling'].includes(run.status)" class="fs-actions">
@@ -162,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
@@ -187,6 +198,7 @@ const syncSaving = ref(false)
 const reconcileSaving = ref(false)
 const error = ref('')
 const actionKey = ref('')
+const jobsSection = ref<HTMLElement | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 const resolutions = [
   { value: 'keep_local' as const, label: 'filesyncAdmin.keepLocal' },
@@ -228,7 +240,7 @@ const visibleBindings = computed(() => {
   if (!onlyIssues.value) return all
   return all.filter((binding) =>
     binding.pendingJournal > 0 || binding.failedJournal > 0 ||
-    binding.rejectedJournal > 0 || binding.pendingConflicts > 0,
+    binding.rejectedJournal > 0 || binding.pendingConflicts > 0 || binding.needsReconcile,
   )
 })
 
@@ -285,6 +297,7 @@ async function dryRun(bindingId: number) {
     dryResult.value = await filesyncAdminApi.dryRun(adminStore.authFetch, bindingId)
     upsertRun(dryResult.value)
     scheduleRunPolling()
+    await focusJobsSection()
   }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { actionKey.value = '' }
@@ -300,6 +313,7 @@ async function reconcile(bindingId: number, integrityFull = false) {
     const run = await filesyncAdminApi.reconcile(adminStore.authFetch, bindingId, integrityFull)
     upsertRun(run)
     scheduleRunPolling()
+    await focusJobsSection()
   }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { actionKey.value = '' }
@@ -324,6 +338,12 @@ async function unbind(bindingId: number) {
 function upsertRun(run: FileSyncReconcileRunStatus) {
   if (!status.value) return
   status.value.reconcileRuns = [run, ...status.value.reconcileRuns.filter((item) => item.id !== run.id)].slice(0, 20)
+  if (run.dryRun && dryResult.value?.id === run.id) dryResult.value = run
+}
+
+async function focusJobsSection() {
+  await nextTick()
+  jobsSection.value?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
 }
 
 function scheduleRunPolling() {
@@ -401,8 +421,12 @@ onUnmounted(() => { if (pollTimer) clearTimeout(pollTimer) })
 .fs-row-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; font-size:var(--font-size-sm); }
 .fs-row-main strong { overflow-wrap:anywhere; }
 .fs-row-main span,.fs-row-main small { color:var(--content-secondary); overflow-wrap:anywhere; }
+.fs-row-main .fs-health-warning { color:var(--status-warning); }
 .fs-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; flex:0 0 auto; }
-.fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); font-size:var(--font-size-sm); }
+.fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; font-size:var(--font-size-sm); }
+.fs-result.is-success { color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); }
+.fs-result.is-pending { color:var(--content-primary); background:var(--control-bg); }
+.fs-result.is-error { color:var(--status-danger); background:color-mix(in srgb,var(--status-danger) 10%,transparent); }
 .fs-failure { border-top:1px solid var(--border-subtle); padding:7px 0; color:var(--status-danger); font-size:var(--font-size-xs); overflow-wrap:anywhere; }
 @media (max-width:720px) { .fs-head { flex-direction:column; } .fs-head-actions { width:100%; justify-content:space-between; } .fs-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .fs-row { align-items:flex-start; flex-direction:column; } .fs-actions { justify-content:flex-start; } .fs-banner { align-items:flex-start; flex-wrap:wrap; } .fs-banner-meta { margin-left:0; flex-basis:100%; } .fs-block-head { flex-direction:column; align-items:flex-start; gap:4px; } }
 </style>
