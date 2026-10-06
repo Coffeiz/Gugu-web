@@ -1289,7 +1289,7 @@ async def _memory_cleanup_revision(user_id: str, storage) -> str:
     digest = hashlib.sha256()
     for name in (
         "pattern.json", "profile.json", "daily.md", "memory.md",
-        "facts.json", "facts.md", "facts_vec.json",
+        "facts.json", "facts.md",
     ):
         key = _key(user_id, name)
         digest.update(name.encode("utf-8"))
