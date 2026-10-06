@@ -311,6 +311,11 @@ class FileResponse(CamelModel):
     version: int = 1
 
 
+class FileStreamResponse(CamelModel):
+    file: FileResponse
+    url: str
+
+
 class BatchDeleteBody(CamelModel):
     ids: list[int]
 
@@ -408,6 +413,15 @@ class TrashFolderContentsResponse(CamelModel):
     """回收站顶层文件夹的直属内容，只读查看，不改变整体恢复单元语义。"""
     folders: list[TrashFolderResponse] = Field(default_factory=list)
     files: list[FileResponse] = Field(default_factory=list)
+
+
+class TrashPurgeJobResponse(CamelModel):
+    id: int
+    status: Literal["queued", "running", "completed", "failed"]
+    progress_current: int
+    progress_total: int
+    failed_count: int
+    error_code: Optional[str] = None
 
 
 # ── File Tree ─────────────────────────────────────────────────────────────────

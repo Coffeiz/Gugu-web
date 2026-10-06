@@ -29,6 +29,7 @@ def _storage_and_events(tmp_path, monkeypatch):
         pass
     monkeypatch.setattr(folders_api.events, "publish", _noop)
     monkeypatch.setattr(trash_api.events, "publish", _noop)
+    monkeypatch.setattr("app.core.events.publish_trash_purge_progress", _noop)
     return storage
 
 
@@ -130,14 +131,50 @@ async def test_folder_deleted_files_are_hidden_and_cannot_restore_individually(d
     assert f.deleted_at is not None
 
 
-async def test_empty_trash_removes_deleted_folder_with_its_files(db, user_a):
+async def test_empty_trash_removes_deleted_folder_with_its_files(db, user_a, monkeypatch):
     folder, f = await _mk_folder_with_file(db, user_a, "待清空")
+    file_id = f.id
+    user_id = user_a.id
     await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
 
-    await trash_api.empty_trash(current_user=user_a, origin=None, db=db)
+    job = await trash_api.empty_trash(current_user=user_a, db=db)
+    job_id = job.id
+    assert job.status == "queued"
 
+    from app.db import session as db_session
+    from app.services.files import trash_purge
+    progress_events = []
+
+    async def capture_progress(user_id, **payload):
+        progress_events.append((user_id, payload))
+
+    monkeypatch.setattr(
+        "app.core.events.publish_trash_purge_progress", capture_progress,
+    )
+    worker_id = "test-trash-purge"
+    claimed_id = await trash_purge._claim(db_session._SessionLocal, worker_id)
+    assert claimed_id == job.id
+    await trash_purge._process(claimed_id, worker_id, db_session._SessionLocal)
+
+    db.expire_all()
     assert await db.get(Folder, folder.id) is None
-    assert await db.get(File, f.id) is None
+    assert await db.get(File, file_id) is None
+    persisted_user = await db.get(type(user_a), user_id)
+    persisted = await trash_api.get_empty_trash_job(job_id, current_user=persisted_user, db=db)
+    assert persisted.status == "completed"
+    assert persisted.progress_current == persisted.progress_total == 1
+    assert [(event[1]["status"], event[1]["progress_current"]) for event in progress_events] == [
+        ("running", 1), ("completed", 1),
+    ]
+
+
+async def test_empty_trash_reuses_active_job(db, user_a):
+    folder, _ = await _mk_folder_with_file(db, user_a, "排队任务")
+    await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
+    first = await trash_api.start_empty_trash(current_user=user_a, db=db)
+    second = await trash_api.start_empty_trash(current_user=user_a, db=db)
+    assert first.id == second.id
+    assert first.status == "queued"
 
 
 async def test_hard_delete_trash_folder_removes_its_subtree(db, user_a):

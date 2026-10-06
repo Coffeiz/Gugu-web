@@ -166,7 +166,7 @@ import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
+import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useLiveStore } from '@/stores/live'
@@ -474,6 +474,17 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   }
   const token   = localStorage.getItem('user_token') ?? ''
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  previewBlobCache.rememberFile(f)
+  let initialStreamUrl = props.win.streamUrl
+  props.win.streamUrl = undefined
+  const getStreamUrl = async (id: number) => {
+    if (initialStreamUrl) {
+      const url = initialStreamUrl
+      initialStreamUrl = undefined
+      return { url }
+    }
+    return filesApi.getStreamUrl(id)
+  }
 
   try {
     if (isVideoExt(f.ext)) {
@@ -486,7 +497,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         url = URL.createObjectURL(await res.blob())
         videoSrc.value = url
       } else {
-        const stream = await filesApi.getStreamUrl(f.id!)
+        const stream = await getStreamUrl(f.id!)
         if (sequence !== loadSequence) return
         url = withCacheBust(stream.url, refresh)
         videoSrc.value = url
@@ -526,31 +537,15 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (!bust) {
         const cached = previewBlobCache.get(key)
         if (cached) {
-          try {
-            const cachedResponse = await fetch(cached)
-            if (cachedResponse.ok) {
-              const cachedBlob = await cachedResponse.blob()
-              const textBlob = expectsText ? await normalizeTextBlob(cachedBlob) : cachedBlob
-              if (textBlob) {
-                let cachedUrl = cached
-                if (textBlob !== cachedBlob) {
-                  cachedUrl = URL.createObjectURL(textBlob)
-                  previewBlobCache.put(key, cachedUrl)
-                }
-                if (expectsText) f.mimeType = 'text/plain'
-                blobUrl.value = cachedUrl
-                // DOCX 使用预览器初始几何，避免下载完成时被通用窗口适配先撑成高窗。
-                if (isDocx.value) ready.value = true
-                else if (!ready.value && !isPptx.value && !isOffice.value) {
-                  fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
-                }
-                return
-              }
-            }
-          } catch {
-            // blob URL 可能在热更新或窗口销毁后失效，丢弃后重新下载原文件。
+          // 缓存只返回仍由缓存持有的 object URL，直接复用即可。
+          // 再 fetch/blob/解码会让命中缓存后仍完整读取一次正文。
+          if (expectsText) f.mimeType = 'text/plain'
+          blobUrl.value = cached
+          if (isDocx.value) ready.value = true
+          else if (!ready.value && !isPptx.value && !isOffice.value) {
+            fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
           }
-          previewBlobCache.discard(key, cached)
+          return
         }
       }
       if (isXlsx.value && f.id != null && !f.attach_id) {
@@ -565,7 +560,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       } else {
         let stream: { url: string }
         try {
-          stream = await filesApi.getStreamUrl(f.id!)
+          stream = await getStreamUrl(f.id!)
         } catch (error) {
           throw new Error(`获取流地址失败：${error instanceof Error ? error.message : error}`)
         }
@@ -638,7 +633,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (f.attach_id) {
         dlUrl = `${BASE_URL}/agent/attachment/${f.attach_id}/download${bust}`
       } else {
-        const stream = await filesApi.getStreamUrl(f.id!)
+        const stream = await getStreamUrl(f.id!)
         dlUrl = withCacheBust(stream.url, refresh)
       }
       const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
@@ -693,8 +688,7 @@ function onTextContentSaved(content: string, fileKey: string | number | null) {
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
-  if (event?.resource !== 'files') return
-  if (event?.origin === CLIENT_ID) return
+  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.win.file.id, event)) return
   if (!props.win.file.attach_id) load(props.win.file, true)
 })
 

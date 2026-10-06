@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -268,6 +269,33 @@ async def publish(user_id, *resources: str, origin: str | None = None,
             if invalidation_operation == "append":
                 invalidation_operation = "update"
             await publish_data_runtime_invalidation(user_id, resource, operation=invalidation_operation)
+    return True
+
+
+async def publish_trash_purge_progress(
+    user_id, *, job_id: int, status: str, progress_current: int,
+    progress_total: int, failed_count: int,
+) -> bool:
+    """推送回收站清理进度；任务表仍是权威状态，SSE 只负责及时通知。"""
+    payload = {
+        "protocol_version": "live-event-v1",
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "type": "task.progress",
+        "task_type": "trash_purge",
+        "task_id": job_id,
+        "status": status,
+        "progress_current": progress_current,
+        "progress_total": progress_total,
+        "failed_count": failed_count,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await asyncio.wait_for(
+            get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False)),
+            timeout=0.5,
+        )
+    except Exception:
+        return False
     return True
 
 

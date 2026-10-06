@@ -519,6 +519,10 @@ async def serve():
     portability_task = asyncio.create_task(run_portability_worker(
         _stop, worker_id=f"portability:{CONSUMER}", session_factory=db_session._SessionLocal,
     ), name="data-portability-worker")
+    from app.services.files.trash_purge import run_trash_purge_worker
+    trash_purge_task = asyncio.create_task(run_trash_purge_worker(
+        _stop, worker_id=f"trash-purge:{CONSUMER}", session_factory=db_session._SessionLocal,
+    ), name="trash-purge-worker")
     while not _stop.is_set():
         try:
             await run_once()
@@ -537,8 +541,10 @@ async def serve():
     reflection_task.cancel()
     cleanup_task.cancel()
     portability_task.cancel()
+    trash_purge_task.cancel()
     await asyncio.gather(
         hb, sched_task, filesync_task, reflection_task, cleanup_task, portability_task,
+        trash_purge_task,
         return_exceptions=True,
     )
     from agent.rag.injection import shutdown_background_recall_tasks

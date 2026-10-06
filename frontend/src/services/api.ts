@@ -478,8 +478,8 @@ export const filesApi = {
     post<{ filename: string; conflict: boolean; existing_file: any }[]>('/files/check-conflicts', {
       items: items.map(it => ({ filename: it.filename, space: it.space, project_id: it.projectId ?? null, folder_id: it.folderId ?? null, workspace_directory_id: it.workspaceDirectoryId ?? null })),
     }),
-  // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
-  getStreamUrl: (id: number) => get(`/files/${id}/stream-url`),
+  // 返回单文件信息和短时效签名 URL，供预览入口避免加载整个文件库。
+  getStreamUrl: (id: number) => get<{ file: Schemas['FileResponse']; url: string }>(`/files/${id}/stream-url`),
   xlsxPreview: (id: number) => get<{
     version: number
     sheets: Array<{
@@ -773,6 +773,14 @@ export const foldersApi = {
 
 // ── Trash ─────────────────────────────────────────────────────────────────────
 export type TrashFolderMeta = Schemas['TrashFolderResponse']
+export interface TrashPurgeJob {
+  id: number
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progressCurrent: number
+  progressTotal: number
+  failedCount: number
+  errorCode?: string | null
+}
 export interface TrashFolderContents {
   folders: TrashFolderMeta[]
   files: Schemas['FileResponse'][]
@@ -786,7 +794,10 @@ export const trashApi = {
   restoreFolder: (id: number) => post(`/trash/folders/${id}/restore`, {}),
   hardDeleteFolder: (id: number) => del(`/trash/folders/${id}`),
   hardDelete:    (id: number) => del(`/trash/${id}`),
-  empty:         ()           => del('/trash'),
+  startEmpty:    ()           => post<TrashPurgeJob>('/trash/empty', {}),
+  activeEmpty:   ()           => get<TrashPurgeJob | null>('/trash/empty/active'),
+  getEmptyJob:   (id: number) => get<TrashPurgeJob>(`/trash/empty/${id}`),
+  empty:         ()           => del<TrashPurgeJob>('/trash'),
 }
 
 // ── Clients ────────────────────────────────────────────────────────────────────

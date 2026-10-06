@@ -110,7 +110,7 @@ import { formatFileCreatedDate } from '@/utils/fileDate'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isTextExt, isVideoExt, isAudioExt } from '@/stores/preview'
+import { isImageExt, isTextExt, isVideoExt, isAudioExt, isPreviewAffectedByFileEvent } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
@@ -265,8 +265,7 @@ watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined]
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
-  if (event?.resource !== 'files') return
-  if (event?.origin === CLIENT_ID) return
+  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.file?.id, event)) return
   if (props.show && props.file && !props.file.attach_id) load(props.file, true)
 })
 

@@ -1732,4 +1732,43 @@ class DataPortableIdentity(Base):
     target_id: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
+
+class TrashPurgeJob(Base):
+    """用户清空回收站的持久后台任务。"""
+
+    __tablename__ = "trash_purge_jobs"
+    __table_args__ = (
+        Index(
+            "uq_trash_purge_jobs_user_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+            sqlite_where=text("status IN ('queued', 'running')"),
+        ),
+        Index(
+            "uq_trash_purge_jobs_global_running",
+            "status",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+            sqlite_where=text("status = 'running'"),
+        ),
+        Index("ix_trash_purge_jobs_claim", "status", "lease_until", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    snapshot_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+
 from app.models.mcp import UserMcpServer  # noqa: E402  (PRD-MCP-1)

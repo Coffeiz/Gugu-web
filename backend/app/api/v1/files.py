@@ -15,7 +15,7 @@ from app.core.upload_stream import spool_upload
 from app.db.session import get_db
 from app.models import File, Folder, Project, User  # orm-exempt: 文件归档接口的模型引用随现有遗留查询，files Service 收口时一并移除
 from app.schemas import (
-    CamelModel, FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
+    CamelModel, FileResponse, FileStreamResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
 from app.services.files.browser import get_file_tree_rows, get_file_version_snapshot, get_storage_usage, list_existing_file_rows, list_file_rows
@@ -899,18 +899,19 @@ async def xlsx_preview_image(
 
 # ── GET /files/{fid}/stream-url ──────────────────────────────────────────────
 
-@router.get("/{fid}/stream-url")
+@router.get("/{fid}/stream-url", response_model=FileStreamResponse)
 async def get_stream_url(
     fid: int,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
-    if not f:
+    if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
 
     storage = get_storage()
     return {
+        "file": to_file_response(f),
         "url": await build_stream_url(
             storage,
             storage_key=f.storage_key,

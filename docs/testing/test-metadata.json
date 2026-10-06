@@ -182,5 +182,29 @@
     "productionEntry": "frontend/src/components/common/profile/ProfileDataPortabilityPane.vue",
     "keyBehavior": "预检和失败任务可删除，增量导入完成状态明确显示撤回限制",
     "ci": "frontend-test"
+  },
+  "backend/tests/test_file_stream_preview.py": {
+    "domain": "file-preview",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/files.py",
+    "productionEntry": "backend/app/api/v1/files.py:get_stream_url",
+    "keyBehavior": "单文件预览同时返回文件元数据与流地址，跨用户和已删除文件均拒绝且不生成地址",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_trash_purge_jobs.py": {
+    "domain": "trash-purge",
+    "layer": "L1",
+    "owner": "backend/app/services/files/trash_purge.py",
+    "productionEntry": "backend/app/services/files/trash_purge.py:run_trash_purge_worker",
+    "keyBehavior": "清空任务全局限并发、用户隔离、完成冷却、提交后唤醒、向所有者推送进度及通知失败恢复",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/mind/noteDraft.test.ts": {
+    "domain": "mind-notes",
+    "layer": "L0",
+    "owner": "frontend/mind",
+    "productionEntry": "frontend/src/views/Mind/utils/noteDraft.ts",
+    "keyBehavior": "未编辑空白草稿离开时不创建笔记；正文或仅标题草稿只持久化一次并保留 capturedAt",
+    "ci": "frontend-test"
   }
 }

@@ -46,6 +46,33 @@ def _is_live_event(value: Any) -> bool:
     )
 
 
+def _is_trash_purge_progress_event(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return (
+        value.get("protocol_version") == "live-event-v1"
+        and isinstance(value.get("event_id"), str)
+        and bool(value["event_id"])
+        and value.get("type") == "task.progress"
+        and value.get("task_type") == "trash_purge"
+        and isinstance(value.get("task_id"), int)
+        and not isinstance(value.get("task_id"), bool)
+        and value["task_id"] > 0
+        and isinstance(value.get("status"), str)
+        and value["status"] in {"queued", "running", "completed", "failed"}
+        and isinstance(value.get("progress_current"), int)
+        and not isinstance(value.get("progress_current"), bool)
+        and value["progress_current"] >= 0
+        and isinstance(value.get("progress_total"), int)
+        and not isinstance(value.get("progress_total"), bool)
+        and value["progress_total"] >= 0
+        and isinstance(value.get("failed_count"), int)
+        and not isinstance(value.get("failed_count"), bool)
+        and value["failed_count"] >= 0
+        and isinstance(value.get("created_at"), str)
+    )
+
+
 def _serialize_message(raw: Any) -> str | None:
     """过滤 Redis 中的非业务消息，返回一条完整 SSE data frame。"""
     if not isinstance(raw, str):
@@ -54,7 +81,7 @@ def _serialize_message(raw: Any) -> str | None:
         value = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    if not (_is_live_event(value) or (
+    if not (_is_live_event(value) or _is_trash_purge_progress_event(value) or (
         isinstance(value, dict)
         and isinstance(value.get("notification"), dict)
     ) or (

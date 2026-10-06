@@ -2,6 +2,7 @@ import type { FileMeta } from '@/stores/filesCache'
 
 const PREVIEW_CACHE_MAX = 20
 const previewCache = new Map<string, string>()
+const previewFileMeta = new Map<number, { file: Partial<FileMeta>; filesRevision: number | null }>()
 
 export function previewBlobCacheKey(file: Partial<FileMeta>): string {
   if (file.attach_id) return `attach:${file.attach_id}`
@@ -35,6 +36,29 @@ export function usePreviewBlobCache() {
     }
   }
 
+  function rememberFile(file: Partial<FileMeta>, filesRevision?: number): void {
+    if (file.id == null) return
+    const previousRevision = previewFileMeta.get(file.id)?.filesRevision
+    previewFileMeta.delete(file.id)
+    previewFileMeta.set(file.id, {
+      file,
+      filesRevision: filesRevision ?? previousRevision ?? null,
+    })
+    while (previewFileMeta.size > PREVIEW_CACHE_MAX * 2) {
+      const oldestId = previewFileMeta.keys().next().value as number | undefined
+      if (oldestId == null) break
+      previewFileMeta.delete(oldestId)
+    }
+  }
+
+  function getFile(id: number, filesRevision?: number): Partial<FileMeta> | null {
+    const entry = previewFileMeta.get(id)
+    if (!entry || (filesRevision !== undefined && entry.filesRevision !== filesRevision)) return null
+    previewFileMeta.delete(id)
+    previewFileMeta.set(id, entry)
+    return entry.file
+  }
+
   function release(key: string, url: string | null): void {
     if (url && (!key || previewCache.get(key) !== url)) URL.revokeObjectURL(url)
   }
@@ -46,11 +70,12 @@ export function usePreviewBlobCache() {
     URL.revokeObjectURL(cached)
   }
 
-  return { get, put, release, discard, keyOf: previewBlobCacheKey }
+  return { get, put, release, discard, rememberFile, getFile, keyOf: previewBlobCacheKey }
 }
 
 /** 仅供单元测试清空会话缓存，生产代码不要调用。 */
 export function clearPreviewBlobCacheForTests(): void {
   for (const url of previewCache.values()) URL.revokeObjectURL(url)
   previewCache.clear()
+  previewFileMeta.clear()
 }

@@ -35,6 +35,27 @@ def test_serialize_live_message_accepts_canonical_event_and_notification():
     assert notification is not None
 
 
+def test_serialize_live_message_accepts_valid_trash_purge_progress_only():
+    event = {
+        "protocol_version": "live-event-v1",
+        "event_id": "evt-purge-1",
+        "type": "task.progress",
+        "task_type": "trash_purge",
+        "task_id": 12,
+        "status": "running",
+        "progress_current": 10,
+        "progress_total": 40,
+        "failed_count": 0,
+        "created_at": "2026-10-06T00:00:00+00:00",
+    }
+    frame = live._serialize_message(json.dumps(event))
+    assert frame is not None
+    assert json.loads(frame.removeprefix("data: ").strip()) == event
+
+    assert live._serialize_message(json.dumps({**event, "task_id": True})) is None
+    assert live._serialize_message(json.dumps({**event, "status": "unknown"})) is None
+
+
 def test_serialize_live_message_rejects_non_business_payloads():
     assert live._serialize_message("not-json") is None
     assert live._serialize_message(json.dumps({"resource": "files"})) is None
