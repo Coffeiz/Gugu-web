@@ -638,7 +638,8 @@ function onListScroll() {
 .ntp-reading.editing { overflow: hidden; padding-bottom: 12px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
 .rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }
-.rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
+/* 浏览器原生 input 的文字垂直居中与 h1 字形基线有约 1px 的差异，预览标题微调对齐编辑态。 */
+.rp-title { position: relative; top: 1px; font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
 /* 标题→分割线→正文的节奏（12/14）与编辑态标题 h1 的 padding/margin 严格同值，
    两种模式切换时标题、分割线、正文的相对位置不动 */
 .rp-divider { border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent); margin: 12px 0 14px; }
