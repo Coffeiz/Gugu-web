@@ -4,8 +4,6 @@ app/api/v1/trash.py 原样迁出，仅把失效的幂等判断换成真正生效
 """
 from __future__ import annotations
 
-import re
-
 from app.core.ownership import get_owned
 from app.models import File, MindMap, Project, WorkspaceDirectory
 from app.services.storage.folders import resolve_folder_path
@@ -23,11 +21,6 @@ def to_trash_key(user_id, storage_key: str, display_name: str, ext: str) -> str:
         logical_parent = logical_parent.split("/", 1)[1] if "/" in logical_parent else ""
     trash_parent = f"{logical_parent}/" if logical_parent else ""
     return f"{user_id}/trash/{trash_parent}{filename}"
-
-
-def is_legacy_trash_key(file: File) -> bool:
-    """旧版回收站 key：`{uid}/trash/{file_id}/...`。"""
-    return bool(re.match(rf"^{re.escape(str(file.user_id))}/trash/{file.id}/", file.storage_key))
 
 
 async def _restore_directory_name(f: File, db) -> str:

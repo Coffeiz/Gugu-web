@@ -42,24 +42,6 @@
       </div>
     </section>
 
-    <section class="sa-card">
-      <div class="sa-card-head">
-        <div>
-          <h3 class="sa-card-title">{{ t('storageAuditUi.legacyTitle') }}</h3>
-          <p class="sa-card-sub">{{ t('storageAuditUi.legacyHint') }}</p>
-        </div>
-        <div class="sa-card-head-right">
-          <ActionButton variant="secondary" fit :disabled="trashMigrating" @click="scanTrashMigration"><Icon name="action.search" size="sm" />{{ t('storageAudit.scanLegacyTrash') }}</ActionButton>
-          <ActionButton v-if="trashMigration?.items?.length" fit :disabled="trashMigrating" @click="runTrashMigration"><Icon name="action.refresh" size="sm" />{{ t('storageAudit.migrateItems', { count: trashMigration.items.length }) }}</ActionButton>
-        </div>
-      </div>
-      <div v-if="trashMigrationMsg" class="sa-inline-msg" :class="trashMigrationKind">{{ trashMigrationMsg }}</div>
-      <div v-if="trashMigration" class="recon-summary">
-        <template v-if="trashMigration.note">{{ trashMigration.note }}</template>
-        <template v-else>{{ t('storageAudit.legacyFound', { count: trashMigration.count }) }}</template>
-      </div>
-    </section>
-
     <!-- ══ 文件对账：存储对象 ↔ File 记录 ══ -->
     <section class="sa-card">
       <div class="sa-card-head">
@@ -252,52 +234,6 @@
       </template>
     </section>
 
-    <!-- ══ 记忆旧文件清理：迁移遗留的旧格式文件（summary.md/.ts、facts.md/.json 等） ══ -->
-    <section class="sa-card">
-      <div class="sa-card-head">
-        <div>
-          <h3 class="sa-card-title">{{ t('storageAuditUi.memoryTitle') }}</h3>
-          <p class="sa-card-sub">{{ t('storageAuditUi.memoryHint') }}</p>
-        </div>
-        <ActionButton variant="secondary" fit :disabled="memScanning" @click="scanLegacyMemory">
-          <Icon name="action.search" size="sm" />
-          {{ memScanning ? t('storageAuditExtra.scanning') : t('storageAuditExtra.scan') }}
-        </ActionButton>
-      </div>
-
-      <div v-if="memMsg" class="sa-inline-msg" :class="memMsgKind">{{ memMsg }}</div>
-
-      <template v-if="memReport">
-        <div v-if="!memReport.files.length" class="recon-ok"><RiCheckFill class="recon-ok__icon" aria-hidden="true" />{{ t('storageAuditExtra.noLegacy') }}</div>
-        <template v-else>
-          <div class="recon-summary">
-            {{ t('storageAuditExtra.legacySummary', { total: memReport.files.length, safe: memReport.safeCount }) }}
-          </div>
-          <div class="recon-block">
-            <div class="recon-block-title">
-              {{ t('storageAuditExtra.legacyList') }}
-              <span class="recon-bulk">
-                <ActionButton class="recon-act recon-act-del" variant="secondary" fit :disabled="memCleaning || !memReport.safeCount"
-                        @click="cleanupLegacy(memReport.files.filter(f => f.safeToDelete).map(f => f.key))">
-                  <Icon name="action.delete" size="sm" />{{ t('storageAuditExtra.cleanupSafe', { count: memReport.safeCount }) }}
-                </ActionButton>
-              </span>
-            </div>
-            <div v-for="f in memReport.files" :key="f.key" class="recon-row">
-              <span class="recon-name">{{ f.legacyFile }}</span>
-              <span class="recon-meta">
-                {{ f.key }} · {{ t('storageAuditExtra.replacedBy', { name: f.replacedBy }) }}
-                <template v-if="!f.safeToDelete"> · <span class="status-warning-text">{{ t('storageAuditExtra.unsafe') }}</span></template>
-              </span>
-              <span class="recon-row-acts">
-                <ActionButton class="recon-act recon-act-del" variant="secondary" fit :disabled="memCleaning || !f.safeToDelete"
-                        @click="cleanupLegacy([f.key])" :title="t('storageAuditExtra.deleteLegacy')"><Icon name="action.delete" size="sm" />{{ t('storageAuditExtra.delete') }}</ActionButton>
-              </span>
-            </div>
-          </div>
-        </template>
-      </template>
-    </section>
   </div>
 </template>
 
@@ -313,45 +249,6 @@ import FileSyncAdminPanel from '@/components/filesync/FileSyncAdminPanel.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()
-
-interface TrashMigrationReport { backend: string; count: number; items: Array<{ file_id: number; name: string; source_key: string; target_key: string }>; note?: string }
-const trashMigrating = ref(false)
-const trashMigration = ref<TrashMigrationReport | null>(null)
-const trashMigrationMsg = ref('')
-const trashMigrationKind = ref<'ok' | 'err'>('ok')
-
-async function scanTrashMigration() {
-  trashMigrating.value = true
-  trashMigrationMsg.value = ''
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/config/migrate-trash')
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.scanFailed', { message: '' }))
-    trashMigration.value = data
-  } catch (e) {
-    trashMigrationKind.value = 'err'
-    trashMigrationMsg.value = e instanceof Error ? e.message : String(e)
-  } finally { trashMigrating.value = false }
-}
-
-async function runTrashMigration() {
-  const ids = trashMigration.value?.items.map(item => item.file_id) || []
-  if (!ids.length || !await confirmDialog({ title: t('storageAuditExtra.migrationTitle'), message: t('storageAuditExtra.migrationConfirm', { count: ids.length }), tone: 'warning', confirmText: t('storageAuditExtra.migrationStart') })) return
-  trashMigrating.value = true
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/config/migrate-trash', {
-      method: 'POST', body: JSON.stringify({ file_ids: ids }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.migrationFailed', { message: '' }))
-    trashMigrationKind.value = data.skipped?.length ? 'err' : 'ok'
-    trashMigrationMsg.value = t('storageAuditExtra.migrated', { count: data.done.length }) + (data.skipped?.length ? t('storageAuditExtra.skipped', { count: data.skipped.length }) : '')
-    await scanTrashMigration()
-  } catch (e) {
-    trashMigrationKind.value = 'err'
-    trashMigrationMsg.value = e instanceof Error ? e.message : String(e)
-  } finally { trashMigrating.value = false }
-}
 
 // ── 文件对账（存储对象 ↔ File 记录）──────────────────────────────────────────
 const fileScanning = ref(false)
@@ -614,71 +511,6 @@ async function repairDirs() {
   }
 }
 
-// ── 记忆旧文件清理 ────────────────────────────────────────────────────────
-interface LegacyMemoryFile {
-  key: string
-  legacyFile: string
-  replacedBy: string
-  safeToDelete: boolean
-  size: number | null
-}
-interface LegacyMemoryReport {
-  files: LegacyMemoryFile[]
-  safeCount: number
-}
-
-const memScanning = ref(false)
-const memCleaning = ref(false)
-const memReport = ref<LegacyMemoryReport | null>(null)
-const memMsg = ref('')
-const memMsgKind = ref<'ok' | 'err'>('ok')
-
-async function scanLegacyMemory() {
-  if (memScanning.value) return
-  memScanning.value = true
-  memMsg.value = ''
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/legacy-files')
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.scanFailed', { message: '' }))
-    memReport.value = data
-  } catch (e) {
-    memMsgKind.value = 'err'
-    memMsg.value = t('storageAuditExtra.scanFailed', { message: e instanceof Error ? e.message : String(e) })
-    memReport.value = null
-  } finally {
-    memScanning.value = false
-  }
-}
-
-async function cleanupLegacy(keys: string[]) {
-  if (memCleaning.value || !keys.length) return
-  if (!await confirmDialog({ title: t('storageAuditExtra.cleanupTitle'), message: t('storageAuditExtra.cleanupConfirm', { count: keys.length }), tone: 'danger', confirmText: t('storageAuditExtra.permanentDelete') })) return
-  memCleaning.value = true
-  memMsg.value = ''
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/legacy-files/cleanup', {
-      method: 'POST',
-      body: JSON.stringify({ keys }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.cleanupFailed', { message: '' }))
-    const doneSet = new Set<string>(data.deleted || [])
-    if (memReport.value) {
-      memReport.value.files = memReport.value.files.filter(f => !doneSet.has(f.key))
-      memReport.value.safeCount = memReport.value.files.filter(f => f.safeToDelete).length
-    }
-    memMsgKind.value = data.skipped?.length ? 'err' : 'ok'
-    memMsg.value = data.skipped?.length
-      ? t('storageAuditExtra.deletedSkipped', { deleted: data.deleted.length, skipped: data.skipped.length })
-      : t('storageAuditExtra.deletedLegacy', { count: data.deleted.length })
-  } catch (e) {
-    memMsgKind.value = 'err'
-    memMsg.value = t('storageAuditExtra.cleanupFailed', { message: e instanceof Error ? e.message : String(e) })
-  } finally {
-    memCleaning.value = false
-  }
-}
 </script>
 
 <style scoped>
