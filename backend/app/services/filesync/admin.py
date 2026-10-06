@@ -117,6 +117,11 @@ async def get_admin_sync_status(
             # 这里只是用户存储根下的相对目录，不返回服务器绝对路径。
             "rootPath": row.root_path,
             "revision": row.revision,
+            "watcherStatus": row.watcher_status,
+            "needsReconcile": row.needs_reconcile,
+            "healthRevision": row.health_revision,
+            "gapRevision": row.gap_revision,
+            "healthErrorCode": row.health_error_code,
             "lastReconciledAt": _iso(row.last_reconciled_at),
             "updatedAt": _iso(row.updated_at),
             "pendingJournal": journals.get(FileSyncStatus.PENDING.value, 0),

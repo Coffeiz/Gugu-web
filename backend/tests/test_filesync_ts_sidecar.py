@@ -1,6 +1,8 @@
 import asyncio
+import json
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,7 +25,12 @@ async def test_ts_sidecar_reports_file_and_folder_events(tmp_path):
     await sidecar.start()
     try:
         await sidecar.watch(1, tmp_path)
-        await asyncio.sleep(0.05)
+        for _ in range(100):
+            event = await sidecar.next_event(timeout=0.1)
+            if event and event.get("event") == "ready":
+                break
+        else:
+            pytest.fail("监听未就绪")
         (tmp_path / "reports").mkdir()
         (tmp_path / "reports" / "today.txt").write_text("today", encoding="utf-8")
 
@@ -40,3 +47,36 @@ async def test_ts_sidecar_reports_file_and_folder_events(tmp_path):
         assert any(item.get("relative_path") == "reports/today.txt" and item.get("operation") == "create" for item in changes)
     finally:
         await sidecar.close()
+
+
+@pytest.mark.asyncio
+async def test_overflow_preserves_accepted_events_and_sticky_recovery_signal():
+    """连续溢出不能清空已收到的删除事件，也不能吞掉手动核对提示。"""
+    sidecar = FileSyncSidecar()
+    reader = asyncio.StreamReader()
+    sidecar._events = asyncio.Queue(maxsize=2)
+    sidecar._process = SimpleNamespace(stdout=reader, returncode=None)
+    for index in range(6):
+        reader.feed_data((json.dumps({
+            "kind": "event", "event": "change", "operation": "delete",
+            "relative_path": f"synthetic-{index}.txt",
+        }) + "\n").encode())
+    reader.feed_eof()
+    await sidecar._read_loop()
+    assert (await sidecar.next_event())["code"] == "python_event_queue_overflow"
+    assert (await sidecar.next_event())["relative_path"] == "synthetic-0.txt"
+    assert (await sidecar.next_event())["relative_path"] == "synthetic-1.txt"
+    assert await sidecar.next_event() is None
+
+
+@pytest.mark.asyncio
+async def test_reader_exit_does_not_report_process_as_healthy():
+    """协议输出已断开时，即使 OS 尚未回收进程也不能继续宣称可用。"""
+    sidecar = FileSyncSidecar()
+    reader = asyncio.StreamReader()
+    sidecar._process = SimpleNamespace(stdout=reader, returncode=None)
+    sidecar._reader_task = asyncio.create_task(sidecar._read_loop())
+    assert sidecar.running
+    reader.feed_eof()
+    await sidecar._reader_task
+    assert not sidecar.running

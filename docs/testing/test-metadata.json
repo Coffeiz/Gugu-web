@@ -1,4 +1,20 @@
 {
+  "backend/tests/test_filesync_watcher_health.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/health.py",
+    "keyBehavior": "监听恢复只更新健康状态，历史缺口保持待人工核对且迁移默认保护已有绑定",
+    "ci": "backend-pytest"
+  },
+  "backend/ts/packages/filesync-watcher/test/protocol-output.test.ts": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/ts/packages/filesync-watcher",
+    "productionEntry": "src/protocol-output.ts",
+    "keyBehavior": "输出拥塞时不丢已受理事件和控制响应，且保留待手动核对信号",
+    "ci": "backend-ts"
+  },
   "backend/tests/test_filesync_schema_retirement.py": {
     "domain": "filesync",
     "layer": "L2",
@@ -125,6 +141,14 @@
     "owner": "frontend/composables",
     "productionEntry": "frontend/src/composables/useFilesystemAuthorization.ts",
     "keyBehavior": "文件系统授权确认、完成与撤销遵循 API 边界",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/admin/filesync/FileSyncAdminPanel.test.ts": {
+    "domain": "filesync",
+    "layer": "L1",
+    "owner": "frontend/components/filesync",
+    "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
+    "keyBehavior": "待手动核对绑定在异常筛选中可见并展示恢复提示",
     "ci": "frontend-test"
   },
   "frontend/tests/files/composables/useFileBrowserWindow.test.ts": {

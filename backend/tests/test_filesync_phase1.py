@@ -835,9 +835,13 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
         File.deleted_at.is_(None),
     ))).one()
     original_id = created.id
+    original_version = created.version
 
-    # 更新
-    (root / "new.txt").write_text("v2-longer", encoding="utf-8")
+    # 等长且 mtime 不变的更新，也必须重新核对正文。
+    import os
+    previous_stat = (root / "new.txt").stat()
+    (root / "new.txt").write_text("v2", encoding="utf-8")
+    os.utime(root / "new.txt", ns=(previous_stat.st_atime_ns, previous_stat.st_mtime_ns))
     summary = await targeted.project_path_events(
         db, user_a.id, binding, root, targeted.PathEventBatch(changed={"new.txt"}),
     )
@@ -845,7 +849,8 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
     assert summary.updated == 1
     updated = await db.get(File, original_id)
     await db.refresh(updated)
-    assert updated.size_bytes == len("v2-longer")
+    assert updated.size_bytes == len("v2")
+    assert updated.version == original_version + 1
 
     # 改名 = unlink+add：同指纹且原路径已消失 → 移动重挂，不删旧建新
     (root / "new.txt").rename(root / "moved.txt")
@@ -1037,21 +1042,16 @@ async def test_resolve_conflict_cancel_marks_resolved(db, user_a, monkeypatch, t
 
 
 @pytest.mark.asyncio
-async def test_watcher_compensation_covers_inactive_user_bindings(db, user_a, user_b, monkeypatch, tmp_path):
-    """架构约束：活跃用户挂监听吃实时事件；不活跃用户不占监听、由日级强制补偿覆盖。
-
-    回归钉子：补偿调度一旦把「可补偿全集」误当「挂监听子集」（targets 与
-    watched 求交），不活跃绑定将永远失去日级对账，外部改动静默失联。
-    """
+async def test_watcher_does_not_scan_on_startup_and_keeps_manual_gap_visible(db, user_a, user_b, monkeypatch, tmp_path):
+    """启动只注册监听；监听 ready 不会导入历史文件或清除待人工核对标记。"""
     import asyncio
     from datetime import timedelta
 
     from app.core.tz import now_utc
 
-    import app.services.filesync.bindings as bindings
+    import app.services.filesync.bindings as bindings_service
     import app.services.filesync.protocol as protocol
     import app.services.filesync.reconcile as reconcile
-    import app.services.filesync.statcache as statcache
     import app.services.filesync.targeted as targeted
     import app.services.filesync.watcher as watcher
 
@@ -1060,12 +1060,10 @@ async def test_watcher_compensation_covers_inactive_user_bindings(db, user_a, us
     for module in (reconcile, targeted, watcher):
         monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
     settings = SimpleNamespace(
-        filesync=SimpleNamespace(
-            enabled=True, active_window_days=7, compensation_interval_seconds=86400,
-        ),
+        filesync=SimpleNamespace(enabled=True, active_window_days=7),
         storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
     )
-    for module in (reconcile, statcache, targeted, watcher, bindings):
+    for module in (reconcile, targeted, watcher, bindings_service):
         monkeypatch.setattr(module, "get_settings", lambda: settings)
 
     roots = {}
@@ -1075,7 +1073,7 @@ async def test_watcher_compensation_covers_inactive_user_bindings(db, user_a, us
         root.mkdir(parents=True)
         (root / "seed.txt").write_text("seed", encoding="utf-8")
         await reconcile.reconcile_local_directory(db, user.id)
-        # 监听启动前只存在于磁盘的新文件：A 靠监听首轮 reconcile，B 只能靠日级补偿
+        # 监听启动前出现的文件必须留给显式核对任务。
         (root / f"{probe}.txt").write_text(probe, encoding="utf-8")
         roots[user.id] = root
     user_a.is_active = True
@@ -1091,46 +1089,127 @@ async def test_watcher_compensation_covers_inactive_user_bindings(db, user_a, us
     class FakeSidecar:
         def __init__(self):
             self.watched = {}
+            self.events = asyncio.Queue()
+            self.registration_started = asyncio.Event()
+            self.release_registration = asyncio.Event()
 
         async def start(self):
             return None
 
         async def watch(self, binding_id, root):
             self.watched[binding_id] = root
+            self.registration_started.set()
+            await self.release_registration.wait()
+            await self.events.put({"event": "ready", "binding_id": binding_id})
 
         async def unwatch(self, binding_id):
             self.watched.pop(binding_id, None)
 
         async def next_event(self):
-            return None
+            try:
+                return self.events.get_nowait()
+            except asyncio.QueueEmpty:
+                return None
 
         async def close(self):
             return None
 
     sidecar = FakeSidecar()
-    # 模拟 uptime 短于日级间隔；新 manager 的首轮必须 force 全量投影。
-    monkeypatch.setattr(watcher.asyncio, "get_running_loop", lambda: SimpleNamespace(time=lambda: 100.0))
     manager = watcher.FileSyncWatcherManager(
-        refresh_interval=0.0, compensation_interval=86400.0, sidecar=sidecar,
+        refresh_interval=0.05, sidecar=sidecar,
     )
     stop_event = asyncio.Event()
     task = asyncio.create_task(manager.run(stop_event))
     try:
-        await asyncio.sleep(1.2)
+        await asyncio.wait_for(sidecar.registration_started.wait(), timeout=2.0)
+        live_path = roots[user_a.id] / "during-registration.txt"
+        live_path.write_text("及时投影", encoding="utf-8")
+        await sidecar.events.put({
+            "event": "change", "binding_id": bindings[user_a.id].id,
+            "operation": "create", "object_type": "file",
+            "relative_path": live_path.relative_to(sidecar.watched[bindings[user_a.id].id]).as_posix(),
+        })
+        for _ in range(100):
+            projected = await db.scalar(select(File.id).where(
+                File.user_id == user_a.id,
+                File.display_name == "during-registration",
+                File.deleted_at.is_(None),
+            ))
+            if projected is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert projected is not None, "watch() 未返回且尚未 ready 时，实时事件仍须完成 targeted 投影"
+        assert bindings[user_a.id].id not in manager._ready_bindings
     finally:
+        sidecar.release_registration.set()
+        for _ in range(100):
+            await db.refresh(bindings[user_a.id])
+            if bindings[user_a.id].watcher_status == "ready":
+                break
+            await asyncio.sleep(0.01)
         stop_event.set()
         await asyncio.wait_for(task, timeout=5.0)
 
     # 只有活跃用户占监听；不活跃绑定不占 inotify 资源
     assert set(sidecar.watched) == {bindings[user_a.id].id}
-    # 两个用户的监听期外新文件都被投影；B 无监听，只能来自日级强制补偿
     for user, probe in probes.items():
-        row = (await db.scalars(select(File).where(
+        row = await db.scalar(select(File).where(
             File.user_id == user.id, File.display_name == probe,
             File.deleted_at.is_(None),
-        ))).one()
-        assert row.size_bytes == len(probe)
-        await db.commit()
+        ))
+        assert row is None
+        binding = bindings[user.id]
+        await db.refresh(binding)
+        assert binding.needs_reconcile is True
+    assert bindings[user_a.id].watcher_status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_watcher_projection_retries_only_path_and_marks_manual_gap(db, user_a, monkeypatch, tmp_path):
+    """单路径失败只重试该路径；耗尽后提示手动核对，不退化为整树扫描。"""
+    import app.services.filesync.watcher as watcher
+
+    root = tmp_path / "watch-root"
+    root.mkdir()
+    (root / "unrelated.txt").write_text("do not discover", encoding="utf-8")
+    binding = await create_binding(
+        db, user_id=user_a.id, source="local_directory",
+        root_fingerprint="a" * 64, root_path=".",
+    )
+    await db.commit()
+
+    calls = 0
+
+    async def failed_projection(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise OSError("synthetic targeted failure")
+
+    monkeypatch.setattr(watcher, "project_path_events", failed_projection)
+    manager = watcher.FileSyncWatcherManager(sidecar=SimpleNamespace())
+    manager._binding_roots[binding.id] = (user_a.id, root, "bidirectional")
+    manager._queue_path_event({
+        "binding_id": binding.id,
+        "relative_path": "target.txt",
+        "operation": "create",
+        "object_type": "file",
+    })
+
+    for _ in range(manager.MAX_PATH_RETRIES):
+        await manager._project_pending()
+
+    assert calls == manager.MAX_PATH_RETRIES
+    assert manager._path_events == {}
+    unrelated = await db.scalar(select(File.id).where(
+        File.user_id == user_a.id,
+        File.display_name == "unrelated",
+        File.deleted_at.is_(None),
+    ))
+    assert unrelated is None, "单路径失败不得触发整树扫描并导入无关文件"
+    await db.refresh(binding)
+    assert binding.needs_reconcile is True
+    assert binding.watcher_status == "degraded"
+    assert binding.health_error_code == "path_projection_failed"
 
 
 @pytest.mark.asyncio

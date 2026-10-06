@@ -384,7 +384,7 @@ async def reconcile_local_directory(
             db, user_id, source=str(source), workspace_id=workspace_id, root=root,
         )
     # 快路径：size+mtime 未变直接复用上次内容指纹，跳过整文件哈希；
-    # 日级补偿扫描传 use_stat_cache=False 强制全量哈希自愈统计漂移。
+    # 显式完整核对可传 use_stat_cache=False 强制全量哈希，避免复用统计缓存。
     stat_cache = StatCache(user_id, binding.id) if use_stat_cache and not dry_run else None
     discard_hash_cache = not use_stat_cache and not dry_run
     physical = []

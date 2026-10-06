@@ -43,7 +43,6 @@ from app.services.filesync.reconcile import (
     _workspace_directory_id_for,
 )
 from app.services.filesync.snapshots import save_snapshot
-from app.services.filesync.statcache import StatCache
 from app.services.workspaces import workspace_shell_supported
 from app.services.storage.quota_limits import resolve_file_library_limit
 
@@ -135,7 +134,6 @@ async def _project_changed_file(
     workspace_directory_id: int | None,
     relative: str,
     latest: dict[tuple[str, str], FileSyncJournal],
-    stat_cache: StatCache | None,
     quota_headroom: int,
     summary_inout: dict,
 ) -> int:
@@ -157,11 +155,8 @@ async def _project_changed_file(
             db, user_id, path, user_root,
             workspace_directory_id=workspace_directory_id, base=root,
         )
-        observed = stat_cache.lookup(relative, path) if stat_cache else None
-        if observed is None:
-            observed = _stable_fingerprint(path)
-            if stat_cache:
-                stat_cache.store(relative, path, observed)
+        # 精确变更事件是重新核对正文的依据；size/mtime 相同也不能跳过哈希。
+        observed = _stable_fingerprint(path)
     except (OSError, ValueError):
         summary_inout["rejected"] += 1
         return 0
@@ -374,7 +369,7 @@ async def _project_folder_deleted(
     folder = await db.get(Folder, folder_id)
     if folder is None or folder.deleted_at is not None:
         return
-    # 保守删除：仍有活动文件或子目录时不动，交给日级补偿整树裁决。
+    # 保守删除：仍有活动文件或子目录时不动，需显式手动核对。
     live_file = await db.scalar(select(func.count()).select_from(File).where(
         File.folder_id == folder_id, File.deleted_at.is_(None),
     ))
@@ -429,7 +424,6 @@ async def project_path_events(
 
     scope_prefix = _scope_prefix(storage_root, root)
     latest = await _latest_journals(db, binding.id, batch.all_paths())
-    stat_cache = StatCache(user_id, binding.id)
     quota_limit = await _quota_limit(db, user_id)
     summary_inout: dict = {
         "created": 0, "updated": 0, "moved": 0, "deleted": 0, "rejected": 0,
@@ -448,7 +442,7 @@ async def project_path_events(
         # 按净字节增量逐项更新余量：新增/扩容扣减，缩小文件释放余量。
         quota_headroom -= await _project_changed_file(
             db, user_id, binding, root, storage_root, scope_prefix, user_root,
-            workspace_directory_id, relative, latest, stat_cache,
+            workspace_directory_id, relative, latest,
             quota_headroom, summary_inout,
         )
     if allow_delete:
@@ -460,9 +454,6 @@ async def project_path_events(
             await _project_folder_deleted(
                 db, user_id, binding, root, user_root, workspace_directory_id, relative, latest, summary_inout,
             )
-    if stat_cache is not None:
-        # 单点运行只覆盖个别路径，不裁剪整树 reconcile 攒下来的全量条目。
-        stat_cache.save(prune=False)
     binding.last_reconciled_at = now_utc()
     await db.flush()
     scanned = len(batch.changed) + len(batch.deleted) + len(batch.folders_created) + len(batch.folders_deleted)

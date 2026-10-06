@@ -8,6 +8,11 @@ export interface FileSyncBindingStatus {
   protocolVersion: number
   rootPath: string
   revision: number
+  watcherStatus: string
+  needsReconcile: boolean
+  healthRevision: number
+  gapRevision: number
+  healthErrorCode: string | null
   lastReconciledAt: string | null
   updatedAt: string | null
   pendingJournal: number

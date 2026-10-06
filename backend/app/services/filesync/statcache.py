@@ -1,8 +1,7 @@
 """已同步文件的 stat 缓存：size+mtime 未变则复用上次内容指纹，避免重复哈希。
 
-缓存按 (user, binding) 一份，落在 .filesync-snapshots 目录旁边；日级补偿扫描
-会带 use_stat_cache=False 强制全量哈希，统计信息相同但内容不同的漂移由那一轮
-自愈，所以这里允许 size+mtime 这个标准启发式。
+缓存按 (user, binding) 一份，落在 .filesync-snapshots 目录旁边；显式完整核对
+可带 use_stat_cache=False 强制全量哈希，绕过 size+mtime 启发式检查内容漂移。
 """
 from __future__ import annotations
 

@@ -59,6 +59,7 @@
           <div class="fs-row-main">
             <strong>#{{ binding.id }} · {{ binding.mode }}</strong>
             <span>{{ binding.rootPath }} · {{ binding.userId }}</span>
+            <small>{{ t('filesyncAdmin.watcherHealth', { status: binding.watcherStatus }) }} · {{ t(binding.needsReconcile ? 'filesyncAdmin.manualReconcileNeeded' : 'filesyncAdmin.noManualReconcileNeeded') }}<template v-if="binding.healthErrorCode"> · {{ binding.healthErrorCode }}</template></small>
             <small>{{ t('filesyncAdmin.revision') }} {{ binding.revision }} · {{ t('filesyncAdmin.conflictCount') }} {{ binding.pendingConflicts }}</small>
           </div>
           <div class="fs-actions">
@@ -141,7 +142,8 @@ const visibleBindings = computed(() => {
   if (!onlyIssues.value) return all
   return all.filter((binding) =>
     binding.pendingJournal > 0 || binding.failedJournal > 0 ||
-    binding.rejectedJournal > 0 || binding.pendingConflicts > 0,
+    binding.rejectedJournal > 0 || binding.pendingConflicts > 0 ||
+    binding.needsReconcile || !['ready', 'inactive', 'unknown'].includes(binding.watcherStatus),
   )
 })
 

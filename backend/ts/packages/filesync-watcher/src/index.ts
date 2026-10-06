@@ -1,9 +1,9 @@
 import { createInterface } from "node:readline";
+import { BoundedProtocolOutput, type ProtocolMessage } from "./protocol-output.ts";
 import {
   FILESYNC_MAX_PENDING_OUTPUT,
   FILESYNC_PROTOCOL_VERSION,
   FileSystemWatcher,
-  type WatchEvent,
 } from "./watcher.ts";
 
 type Request = {
@@ -14,40 +14,20 @@ type Request = {
   root?: string;
 };
 
-type Response = {
-  protocol: number;
-  kind: "response";
-  id?: string;
-  status: "ok" | "error";
-  code?: string;
-};
-
-const output: string[] = [];
+const output = new BoundedProtocolOutput(FILESYNC_MAX_PENDING_OUTPUT, FILESYNC_PROTOCOL_VERSION);
 let writing = false;
-let overflowReported = false;
 
-function writeMessage(message: Response | WatchEvent): void {
-  if (output.length >= FILESYNC_MAX_PENDING_OUTPUT) {
-    output.length = 0;
-    if (!overflowReported) {
-      output.push(JSON.stringify({
-        protocol: FILESYNC_PROTOCOL_VERSION,
-        kind: "event",
-        event: "needs_reconcile",
-        code: "output_overflow",
-      } satisfies WatchEvent) + "\n");
-      overflowReported = true;
-    }
-  }
-  output.push(JSON.stringify(message) + "\n");
+function writeMessage(message: ProtocolMessage): void {
+  output.enqueue(message);
   flushOutput();
 }
 
 function flushOutput(): void {
   if (writing) return;
   writing = true;
-  while (output.length) {
-    if (!process.stdout.write(output.shift()!)) {
+  while (output.hasPending) {
+    const message = output.take()!;
+    if (!process.stdout.write(JSON.stringify(message) + "\n")) {
       process.stdout.once("drain", () => {
         writing = false;
         flushOutput();
@@ -55,11 +35,10 @@ function flushOutput(): void {
       return;
     }
   }
-  overflowReported = false;
   writing = false;
 }
 
-function response(request: Request, status: Response["status"], code?: string): void {
+function response(request: Request, status: "ok" | "error", code?: string): void {
   writeMessage({
     protocol: FILESYNC_PROTOCOL_VERSION,
     kind: "response",
