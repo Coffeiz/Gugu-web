@@ -175,19 +175,23 @@ def _is_internal_key(k: str) -> bool:
 
     用户文件的 key 形如 ``<user_id>/<path>``（旧版也可能是
     ``u/<user_id>/<path>``）。用户根目录下的 ``.system``（RAG 等系统索引）、
-    ``.agent``（记忆）、``shell``（持久化 Shell 工作区）、``.voice``（语音暂存）
-    和 ``.video_cache``（视频转码缓存）由运行时直接管理，不会创建 ``File`` 记录，
+    ``.agent``（记忆）、``shell``（持久化 Shell 工作区）、``.voice``（语音暂存）、
+    ``.video_cache``（视频转码缓存）和 ``.data-portability``（归档导入/导出暂存、
+    回滚及分批导入对象）由运行时直接管理，不会创建 ``File`` 记录，
     不能作为孤儿文件参与对账。这里只忽略用户根目录下的这些命名空间，避免误伤
-    用户在普通目录中创建的同名文件夹。
+    用户在普通目录中创建的同名文件夹。顶层 ``_analytics`` 是 Agent 运行时
+    写入的全局诊断文档，也不属于用户文件库。
     """
     key = str(k)
     parts = [part for part in key.split("/") if part]
     user_path_parts = parts[2:] if len(parts) >= 3 and parts[0] == "u" else parts[1:]
     internal_user_root = bool(user_path_parts) and user_path_parts[0] in {
-        ".system", ".agent", "shell", ".voice", ".video_cache",
+        ".system", ".agent", "shell", ".voice", ".video_cache", ".data-portability",
+        "workspace",
     }
     return (
         internal_user_root
+        or key.startswith("_analytics/")
         or ".agent/" in key
         or ".chat_staging" in key
         or ".thumbs" in key
@@ -219,24 +223,28 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
     doctor_report = await folder_doctor.scan(db, storage)
 
     rows = (await db.execute(select(File))).scalars().all()
-    db_key_set = {f.storage_key for f in rows}
+    scoped_rows = [f for f in rows if not _is_internal_key(f.storage_key)]
+    db_key_set = {f.storage_key for f in scoped_rows}
     projs = {p.id: p.name for p in (await db.execute(select(Project))).scalars().all()}
 
     ghosts = [
         {"id": f.id, "name": f"{f.display_name}.{f.ext}", "space": f.space,
          "project": projs.get(f.project_id), "deleted": f.deleted_at is not None,
          "storage_key": f.storage_key}
-        for f in rows if f.storage_key not in all_keys
+        for f in scoped_rows if f.storage_key not in all_keys
     ]
     orphans = sorted(file_keys - db_key_set)
     return {
         "backend": cfg.storage.backend,
         "location": cfg.storage.local_path if cfg.storage.backend == "local"
                     else f"{cfg.storage.oss_bucket}/{cfg.storage.oss_prefix}",
-        "db_file_rows": len(rows),
+        "db_file_rows": len(scoped_rows),
         "storage_objects": len(file_keys),
         "matched": len(db_key_set & all_keys),
         "ghost_count": len(ghosts),
+        # UI 只展示前 300 条，但批量清理需要拿到本次扫描的完整候选集，
+        # 再按接口上限分批提交；每条仍会在修复接口内重新核实物理对象。
+        "ghost_ids": [f.id for f in scoped_rows if f.storage_key not in all_keys],
         "orphan_count": len(orphans),
         "ghosts": ghosts[:300],
         "orphans": orphans[:300],
@@ -473,6 +481,27 @@ class RepairRequest(BaseModel):
     keys: list[str]
     confirm: bool = False
 
+    @field_validator("keys")
+    @classmethod
+    def validate_keys(cls, value: list[str]) -> list[str]:
+        if not value or len(value) > 1000:
+            raise ValueError("单次最多处理 1000 个对象")
+        return list(dict.fromkeys(value))
+
+
+class GhostRepairRequest(BaseModel):
+    file_ids: list[int]
+    confirm: bool = False
+
+    @field_validator("file_ids")
+    @classmethod
+    def validate_file_ids(cls, value: list[int]) -> list[int]:
+        if not value or len(value) > 1000:
+            raise ValueError("单次最多处理 1000 条文件记录")
+        if any(file_id <= 0 for file_id in value):
+            raise ValueError("文件 ID 必须为正整数")
+        return list(dict.fromkeys(value))
+
 
 class PathMigrationItem(BaseModel):
     file_id: int
@@ -496,22 +525,102 @@ async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_d
     if not body.confirm:
         raise HTTPException(status_code=400, detail="对账修复必须显式确认")
     from app.services.storage import get_storage
+    from app.models import File
     storage = get_storage()
     done, failed = [], []
+    try:
+        listed_keys = set(await storage.list_keys())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"列出存储失败：{type(e).__name__}") from e
     for key in body.keys:
+        if _is_internal_key(key):
+            failed.append({"key": key, "error": "该路径不属于 File 文件库对账范围"})
+            continue
         try:
             if body.action == "delete":
+                if key not in listed_keys:
+                    failed.append({"key": key, "error": "物理对象已不存在，请重新扫描"})
+                    continue
+                exists_in_db = await db.scalar(
+                    select(File.id).where(File.storage_key == key).limit(1)
+                )  # ownership-exempt: 管理员对账接口仅核验物理孤儿是否已产生 File 记录。
+                if exists_in_db is not None:
+                    failed.append({"key": key, "error": "已存在对应文件记录，请重新扫描"})
+                    continue
                 await storage.delete(key)
                 done.append(key)
             else:
-                if await _import_orphan(db, key, storage):
-                    done.append(key)
-                else:
-                    failed.append({"key": key, "error": "无法从路径解析归属"})
+                try:
+                    async with db.begin_nested():
+                        if await _import_orphan(db, key, storage):
+                            done.append(key)
+                        else:
+                            failed.append({"key": key, "error": "无法从路径解析归属或对象已变化"})
+                except Exception as e:
+                    failed.append({"key": key, "error": _storage_repair_error(e)})
         except Exception as e:
-            failed.append({"key": key, "error": f"{type(e).__name__}: {e}"[:80]})
+            failed.append({"key": key, "error": _storage_repair_error(e)})
     await db.commit()
     return {"action": body.action, "done": len(done), "failed": failed, "done_keys": done}
+
+
+def _storage_repair_error(error: Exception) -> str:
+    if isinstance(error, PermissionError):
+        return "权限不足；未更改对象，请检查存储目录的属主与 ACL 后重试"
+    if isinstance(error, FileNotFoundError):
+        return "对象已不存在，请重新扫描"
+    return f"处理失败（{type(error).__name__}）；对象未确认处理，请重新扫描后重试"
+
+
+@router.post("/reconcile-storage/ghosts/repair")
+async def repair_ghost_records(body: GhostRepairRequest, db: AsyncSession = Depends(get_db)):
+    """确认物理对象仍缺失后，移除对应 File 记录；不触碰磁盘上的其他对象。"""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="移除幽灵文件记录必须显式确认")
+
+    import uuid
+    from app.core import events
+    from app.models import File
+    from app.services.storage import get_storage
+    from app.services.filesync.protocol import record_canonical_path_change
+
+    storage = get_storage()
+    done: list[int] = []
+    failed: list[dict[str, Any]] = []
+    removed_by_user: dict[Any, list[int]] = {}
+    for file_id in body.file_ids:
+        file = await db.get(File, file_id)  # ownership-exempt: 此路由受 require_admin 保护。
+        if file is None:
+            failed.append({"file_id": file_id, "error": "文件记录已不存在，请重新扫描"})
+            continue
+        if _is_internal_key(file.storage_key):
+            failed.append({"file_id": file_id, "error": "该路径不属于 File 文件库对账范围"})
+            continue
+        try:
+            info = await storage.stat(file.storage_key)
+            if info is not None:
+                failed.append({"file_id": file_id, "error": "物理文件已存在，请重新扫描"})
+                continue
+            async with db.begin_nested():
+                await record_canonical_path_change(
+                    db, user_id=file.user_id, storage_key=file.storage_key,
+                    operation="delete",
+                    change_id=f"admin-ghost-cleanup:{file.id}:{uuid.uuid4().hex}",
+                )
+                await db.delete(file)
+                await db.flush()
+            done.append(file_id)
+            removed_by_user.setdefault(file.user_id, []).append(file_id)
+        except Exception as e:
+            failed.append({"file_id": file_id, "error": _storage_repair_error(e)})
+
+    await db.commit()
+    for user_id, file_ids in removed_by_user.items():
+        try:
+            await events.publish(user_id, "files", file_op={"op": "remove", "kind": "file", "ids": file_ids})
+        except Exception as e:
+            diag_log("admin.reconcile_storage.ghost_cleanup.publish", e)
+    return {"done": done, "failed": failed}
 
 
 @router.get("/reconcile-storage/path-migration")

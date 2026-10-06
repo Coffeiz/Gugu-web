@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import select
 
 from app.api.v1 import config as config_api
@@ -19,8 +20,13 @@ def test_reconcile_skips_runtime_managed_user_namespaces(user_a):
     assert config_api._is_internal_key(f"{user_id}/shell/shell_recover_test.txt")
     assert config_api._is_internal_key(f"{user_id}/.voice/attachment.ogg")
     assert config_api._is_internal_key(f"{user_id}/.video_cache/transcoded.mp4")
+    assert config_api._is_internal_key(f"{user_id}/.data-portability/imports/job.gupi")
+    assert config_api._is_internal_key(f"{user_id}/.data-portability/rollback/job.gupa")
+    assert config_api._is_internal_key(f"{user_id}/.data-portability/imported/job/asset")
     assert config_api._is_internal_key(f"u/{user_id}/.system/rag/index.json")
     assert config_api._is_internal_key(f"u/{user_id}/shell/terminal.txt")
+    assert config_api._is_internal_key(f"u/{user_id}/.data-portability/imported/job/asset")
+    assert config_api._is_internal_key("_analytics/misread.md")
 
 
 def test_reconcile_does_not_skip_same_names_in_regular_user_directory(user_a):
@@ -28,6 +34,15 @@ def test_reconcile_does_not_skip_same_names_in_regular_user_directory(user_a):
 
     assert not config_api._is_internal_key(f"{user_id}/个人文件/shell/note.txt")
     assert not config_api._is_internal_key(f"{user_id}/个人文件/.system/note.txt")
+    assert not config_api._is_internal_key(f"{user_id}/个人文件/.data-portability/note.txt")
+
+
+def test_reconcile_excludes_workspace_runtime_files_but_not_user_library_paths(user_a):
+    user_id = str(user_a.id)
+
+    assert config_api._is_internal_key(f"{user_id}/workspace/default/.chrome-libs/libnss3.so")
+    assert config_api._is_internal_key(f"u/{user_id}/workspace/default/.git/objects/pack/data")
+    assert not config_api._is_internal_key(f"{user_id}/个人文件/workspace/note.txt")
 
 
 async def test_import_orphan_uses_stat_and_rejects_unresolved_project(db, user_a, user_b, tmp_path, monkeypatch):
@@ -84,6 +99,27 @@ async def test_import_orphan_creates_owned_file_and_advances_binding_watermark(
     )
     await db.refresh(binding)
     assert binding.dirty_revision == 1
+
+
+async def test_orphan_repair_rejects_workspace_objects_and_deletes_only_file_library_orphans(
+    db, user_a, tmp_path, monkeypatch,
+):
+    storage = LocalStorageBackend(Path(tmp_path))
+    workspace_key = f"{user_a.id}/workspace/default/.chrome-libs/libnss3.so"
+    library_key = f"{user_a.id}/个人文件/orphan.txt"
+    await storage.put(workspace_key, b"workspace")
+    await storage.put(library_key, b"orphan")
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+
+    result = await config_api.reconcile_repair(
+        config_api.RepairRequest(action="delete", keys=[workspace_key, library_key], confirm=True),
+        db=db,
+    )
+
+    assert result["done_keys"] == [library_key]
+    assert result["failed"] == [{"key": workspace_key, "error": "该路径不属于 File 文件库对账范围"}]
+    assert await storage.stat(workspace_key) is not None
+    assert await storage.stat(library_key) is None
 
 
 async def test_path_migration_rechecks_identity_uniqueness(db, user_a, tmp_path, monkeypatch):
@@ -151,6 +187,140 @@ async def test_path_migration_repair_advances_old_and_new_binding_paths(
     ]
     await db.refresh(binding)
     assert binding.dirty_revision == 2
+
+
+async def test_ghost_cleanup_removes_only_rows_whose_physical_object_is_still_missing(
+    db, user_a, tmp_path, monkeypatch,
+):
+    storage = LocalStorageBackend(Path(tmp_path))
+    missing = File(
+        user_id=user_a.id, display_name="missing", ext="png", space="personal",
+        storage_key=f"{user_a.id}/个人文件/missing.png",
+    )
+    restored = File(
+        user_id=user_a.id, display_name="restored", ext="png", space="personal",
+        storage_key=f"{user_a.id}/个人文件/restored.png",
+    )
+    runtime = File(
+        user_id=user_a.id, display_name="runtime", ext="pak", space="personal",
+        storage_key=f"{user_a.id}/workspace/default/.playwright-browsers/cache/runtime.pak",
+    )
+    db.add_all([missing, restored, runtime])
+    await storage.put(restored.storage_key, b"restored")
+    await db.commit()
+    await db.refresh(missing)
+    await db.refresh(restored)
+    await db.refresh(runtime)
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+    published = []
+
+    async def publish(*args, **kwargs):
+        published.append((args, kwargs))
+
+    monkeypatch.setattr("app.core.events.publish", publish)
+    result = await config_api.repair_ghost_records(
+        config_api.GhostRepairRequest(file_ids=[missing.id, restored.id, runtime.id], confirm=True), db=db,
+    )
+
+    assert result["done"] == [missing.id]
+    assert result["failed"] == [
+        {"file_id": restored.id, "error": "物理文件已存在，请重新扫描"},
+        {"file_id": runtime.id, "error": "该路径不属于 File 文件库对账范围"},
+    ]
+    assert await db.get(File, missing.id) is None
+    assert await db.get(File, restored.id) is not None
+    assert await db.get(File, runtime.id) is not None
+    assert len(published) == 1
+    assert published[0][1]["file_op"] == {"op": "remove", "kind": "file", "ids": [missing.id]}
+
+
+async def test_ghost_cleanup_keeps_row_when_storage_state_cannot_be_verified(db, user_a, monkeypatch):
+    file = File(
+        user_id=user_a.id, display_name="uncertain", ext="png", space="personal",
+        storage_key=f"{user_a.id}/个人文件/uncertain.png",
+    )
+    db.add(file)
+    await db.commit()
+    await db.refresh(file)
+
+    class UnverifiableStorage:
+        async def stat(self, _key):
+            raise PermissionError("private filesystem detail")
+
+    monkeypatch.setattr(storage_module, "get_storage", lambda: UnverifiableStorage())
+    published = []
+
+    async def publish(*args, **kwargs):
+        published.append((args, kwargs))
+
+    monkeypatch.setattr("app.core.events.publish", publish)
+    result = await config_api.repair_ghost_records(
+        config_api.GhostRepairRequest(file_ids=[file.id], confirm=True), db=db,
+    )
+
+    assert result["done"] == []
+    assert result["failed"] == [{
+        "file_id": file.id,
+        "error": "权限不足；未更改对象，请检查存储目录的属主与 ACL 后重试",
+    }]
+    assert await db.get(File, file.id) is not None
+    assert published == []
+
+
+async def test_storage_audit_returns_all_ghost_ids_while_limiting_preview_rows(
+    db, user_a, tmp_path, monkeypatch,
+):
+    from app.services.storage import folder_doctor
+
+    rows = [
+        File(
+            user_id=user_a.id, display_name=f"missing-{index}", ext="txt",
+            space="personal", storage_key=f"{user_a.id}/个人文件/missing-{index}.txt",
+        )
+        for index in range(301)
+    ]
+    workspace_row = File(
+        user_id=user_a.id, display_name="runtime-package", ext="pak", space="personal",
+        storage_key=f"{user_a.id}/workspace/default/.playwright-browsers/cache/runtime.pak",
+    )
+    db.add_all([*rows, workspace_row])
+    await db.commit()
+    storage = LocalStorageBackend(Path(tmp_path))
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+    monkeypatch.setattr(config_api, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(backend="local", local_path="test-storage"),
+    ))
+    async def empty_folder_report(*_args):
+        return SimpleNamespace(misplaced_files=[], truncated=False)
+
+    monkeypatch.setattr(folder_doctor, "scan", empty_folder_report)
+
+    report = await config_api.reconcile_storage(db=db)
+
+    assert report["ghost_count"] == 301
+    assert report["db_file_rows"] == 301
+    assert len(report["ghosts"]) == 300
+    assert len(report["ghost_ids"]) == 301
+    assert set(report["ghost_ids"]) == {row.id for row in rows}
+    assert workspace_row.id not in report["ghost_ids"]
+
+
+async def test_local_storage_stat_does_not_turn_permission_error_into_missing_object(
+    tmp_path, monkeypatch,
+):
+    storage = LocalStorageBackend(Path(tmp_path))
+    target = storage.root / "locked/file.txt"
+    original_stat = Path.stat
+
+    def stat_with_denial(path, *args, **kwargs):
+        if path == target:
+            raise PermissionError("permission details must not imply absence")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat_with_denial)
+
+    with pytest.raises(PermissionError):
+        await storage.stat("locked/file.txt")
 
 
 async def test_path_migration_reports_missing_file_ids(db, tmp_path, monkeypatch):

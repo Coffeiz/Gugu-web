@@ -335,6 +335,14 @@
     "keyBehavior": "管理员任务队列显示持久扫描计数；取消成功后立即呈现服务端终态并移除可取消操作",
     "ci": "frontend-test"
   },
+  "frontend/tests/admin/filesync/FileSyncAdminPanel.test.ts": {
+    "domain": "file-sync",
+    "layer": "L2",
+    "owner": "frontend/admin/filesync",
+    "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
+    "keyBehavior": "异步预览刷新真实计数并定位任务结果；失败任务显示服务端错误码",
+    "ci": "frontend-test"
+  },
   "frontend/e2e/filesync-admin.spec.ts": {
     "domain": "file-sync",
     "layer": "L3",
@@ -342,6 +350,14 @@
     "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
     "keyBehavior": "管理员文件同步预览不启动实际对账；差异对账必须通过统一确认弹窗，取消确认无副作用，已启动任务可取消并立即显示终态；解绑需确认且保留文件库数据",
     "ci": "manual-e2e"
+  },
+  "frontend/tests/admin/storage-audit/StorageAuditChecks.test.ts": {
+    "domain": "storage-audit",
+    "layer": "L2",
+    "owner": "frontend/admin/storage-audit",
+    "productionEntry": "frontend/src/views/Admin/StorageAudit/components/StorageAuditChecks.vue",
+    "keyBehavior": "仅清理文件库范围内、服务端复核仍缺失的幽灵记录；完整候选集超过批次上限时分批处理并显示进度，工作区记录始终排除",
+    "ci": "frontend-test"
   },
   "frontend/tests/mind/noteDraft.test.ts": {
     "domain": "mind-notes",

@@ -52,6 +52,54 @@ Object.assign(messages['en-US'], { storageAuditExtra: { storage: 'Storage', dbFi
 Object.assign((messages['zh-CN'] as Record<string, any>).storageAuditExtra, { trash: '回收站', failed: '{count} 个失败', repairResult: '已处理 {done} 个，失败 {failed} 个', actionMissing: '补齐缺失', actionOrphan: '清理孤儿', actionRelocate: '搬迁文件', noAction: '执行修复' })
 Object.assign((messages['ja-JP'] as Record<string, any>).storageAuditExtra, { trash: 'ごみ箱', failed: '{count} 件失敗', repairResult: '{done} 件を処理、{failed} 件失敗', actionMissing: '不足を補完', actionOrphan: '孤立を整理', actionRelocate: 'ファイルを移動', noAction: '修復を実行' })
 Object.assign((messages['en-US'] as Record<string, any>).storageAuditExtra, { trash: 'Trash', failed: '{count} failed', repairResult: 'Processed {done}; {failed} failed', actionMissing: 'Fill missing', actionOrphan: 'Clean orphans', actionRelocate: 'Move files', noAction: 'Repair' })
+Object.assign((messages['zh-CN'] as Record<string, any>).storageAuditExtra, {
+  auditScopeHint: '仅对账 File 文件库管理的文件；用户工作区及其中的沙盒工具、.git 等内容不属于清理范围。',
+  failedItems: '未处理成功的对象（{count}）',
+  retryFailed: '重试全部失败项',
+  retry: '重试',
+  removeGhostRecord: '移除记录',
+  removeGhostRecords: '移除列表记录（{count}）',
+  removeGhostRecordTitle: '只移除数据库中的失效记录，不会删除物理文件',
+  removeGhostTitle: '移除幽灵文件记录',
+  removeGhostConfirm: '将重新确认物理文件缺失，然后永久移除 {count} 条数据库记录。此操作不恢复文件内容。',
+  ghostCleanupHint: '仅移除数据库记录；服务端会再次检查物理文件，文件已恢复或状态无法确认时会跳过。',
+  ghostRepairResult: '已移除 {done} 条幽灵记录，失败 {failed} 条',
+  ghostCleanupProgress: '正在处理幽灵记录：{done} / {total}',
+  ghostCleanupProgressLabel: '幽灵记录清理进度',
+  ghostRepairInterrupted: '批量清理中断：已移除 {done} 条，失败 {failed} 条，剩余 {remaining} 条未提交。{message}',
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).storageAuditExtra, {
+  auditScopeHint: 'File ライブラリが管理するファイルのみを照合します。ユーザーのワークスペースと、その中のサンドボックスツールや .git などは対象外です。',
+  failedItems: '未処理のオブジェクト（{count}）',
+  retryFailed: '失敗分をすべて再試行',
+  retry: '再試行',
+  removeGhostRecord: '記録を削除',
+  removeGhostRecords: '一覧の記録を削除（{count}）',
+  removeGhostRecordTitle: '物理ファイルは削除せず、無効なデータベース記録のみ削除',
+  removeGhostTitle: 'ゴーストファイル記録を削除',
+  removeGhostConfirm: '物理ファイルが存在しないことを再確認してから、データベース記録 {count} 件を完全に削除します。ファイル内容は復元されません。',
+  ghostCleanupHint: 'データベース記録のみを削除します。サーバーが物理ファイルを再確認し、復元済みまたは状態を確認できない場合はスキップします。',
+  ghostRepairResult: 'ゴースト記録を {done} 件削除、失敗 {failed} 件',
+  ghostCleanupProgress: 'ゴースト記録を処理中：{done} / {total}',
+  ghostCleanupProgressLabel: 'ゴースト記録の削除進捗',
+  ghostRepairInterrupted: '一括削除が中断されました：{done} 件削除、{failed} 件失敗、残り {remaining} 件は未送信です。{message}',
+})
+Object.assign((messages['en-US'] as Record<string, any>).storageAuditExtra, {
+  auditScopeHint: 'Only files managed by the File library are reconciled. User workspaces and their sandbox tools or .git data are out of scope.',
+  failedItems: 'Unprocessed objects ({count})',
+  retryFailed: 'Retry all failed items',
+  retry: 'Retry',
+  removeGhostRecord: 'Remove record',
+  removeGhostRecords: 'Remove listed records ({count})',
+  removeGhostRecordTitle: 'Remove only the stale database record; do not delete a physical file',
+  removeGhostTitle: 'Remove ghost file records',
+  removeGhostConfirm: 'The server will recheck that the physical files are missing, then permanently remove {count} database records. This does not recover file contents.',
+  ghostCleanupHint: 'Only database records are removed. The server rechecks each object and skips files that have returned or whose state cannot be verified.',
+  ghostRepairResult: 'Removed {done} ghost records; {failed} failed',
+  ghostCleanupProgress: 'Processing ghost records: {done} / {total}',
+  ghostCleanupProgressLabel: 'Ghost record cleanup progress',
+  ghostRepairInterrupted: 'Bulk cleanup interrupted: removed {done}, failed {failed}, {remaining} not submitted. {message}',
+})
 Object.assign(messages['zh-CN'], { sharedUi: { info: '详细信息', download: '下载', delete: '删除', rename: '重命名', cut: '剪切', copy: '复制', moveToTrash: '移到回收站', downloadZip: '下载为 ZIP', cannotOperate: '此位置不可操作', createFolder: '新建文件夹', paste: '粘贴', clipboardEmpty: '剪贴板为空', selectionMode: '多选模式', gridView: '网格视图', listView: '列表视图', folderName: '文件夹名称', confirm: '确定', addWorkspace: '添加工作区', removeWorkspace: '删除工作区', save: '保存', saving: '保存中…', saveSuccess: '保存成功', saveFailed: '保存失败', nickname: '昵称', username: '用户名', email: '邮箱', uid: 'UID', joinedAt: '加入时间', clear: '清除', today: '今天', chooseDate: '选择日期', weekdays: ['日','一','二','三','四','五','六'] } })
 Object.assign(messages['ja-JP'], { sharedUi: { info: '詳細情報', download: 'ダウンロード', delete: '削除', rename: '名前を変更', cut: '切り取り', copy: 'コピー', moveToTrash: 'ごみ箱へ移動', downloadZip: 'ZIP としてダウンロード', cannotOperate: 'この場所は操作できません', createFolder: 'フォルダーを作成', paste: '貼り付け', clipboardEmpty: 'クリップボードは空です', selectionMode: '複数選択モード', gridView: 'グリッド表示', listView: 'リスト表示', folderName: 'フォルダー名', confirm: '確認', addWorkspace: 'ワークスペースを追加', removeWorkspace: 'ワークスペースを削除', save: '保存', saving: '保存中…', saveSuccess: '保存しました', saveFailed: '保存に失敗しました', nickname: 'ニックネーム', username: 'ユーザー名', email: 'メール', uid: 'UID', joinedAt: '参加日時', clear: 'クリア', today: '今日', chooseDate: '日付を選択', weekdays: ['日','月','火','水','木','金','土'] } })
 Object.assign(messages['en-US'], { sharedUi: { info: 'Details', download: 'Download', delete: 'Delete', rename: 'Rename', cut: 'Cut', copy: 'Copy', moveToTrash: 'Move to trash', downloadZip: 'Download as ZIP', cannotOperate: 'This location cannot be modified', createFolder: 'New folder', paste: 'Paste', clipboardEmpty: 'Clipboard is empty', selectionMode: 'Multi-select mode', gridView: 'Grid view', listView: 'List view', folderName: 'Folder name', confirm: 'Confirm', addWorkspace: 'Add workspace', removeWorkspace: 'Remove workspace', save: 'Save', saving: 'Saving…', saveSuccess: 'Saved', saveFailed: 'Save failed', nickname: 'Nickname', username: 'Username', email: 'Email', uid: 'UID', joinedAt: 'Joined', clear: 'Clear', today: 'Today', chooseDate: 'Choose date', weekdays: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], account: 'Account', preferences: 'Preferences', guguSettings: 'Gugu settings', connectGugu: 'Connect Gugu', modelConfig: 'Model configuration', modelConfigNav: 'Models', capabilityConfig: 'Capabilities', workspaces: 'Workspaces', deleteAccount: 'Delete account', confirmDeleteAccount: 'Delete this account?', deleteAccountDescription: 'The account and all data (projects, files, calendar, chats, and Gugu memory) will be permanently deleted. This cannot be undone.', passwordConfirmation: 'Enter your password to confirm', deleting: 'Deleting…', confirmDelete: 'Confirm deletion' } })

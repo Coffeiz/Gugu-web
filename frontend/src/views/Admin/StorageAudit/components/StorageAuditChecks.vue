@@ -48,6 +48,7 @@
         <div>
           <h3 class="sa-card-title">{{ t('storageAudit.fileAudit') }}</h3>
           <p class="sa-card-sub">{{ t('storageAudit.fileAuditHint') }}</p>
+          <p class="sa-card-sub">{{ t('storageAuditExtra.auditScopeHint') }}</p>
         </div>
           <ActionButton variant="secondary" fit :disabled="fileScanning" @click="scanFiles">
           <Icon name="action.search" size="sm" />
@@ -56,6 +57,24 @@
       </div>
 
       <div v-if="fileMsg" class="sa-inline-msg" :class="fileMsgKind">{{ fileMsg }}</div>
+      <div v-if="fileRepairFailures.length" class="recon-block repair-failures">
+        <div class="recon-block-title">
+          {{ t('storageAuditExtra.failedItems', { count: fileRepairFailures.length }) }}
+          <span class="recon-bulk" v-if="fileRepairAction">
+            <ActionButton class="recon-act" variant="secondary" fit :disabled="fileRepairing" @click="repairOrphans(fileRepairFailures.map(item => item.key), fileRepairAction!)">
+              <Icon name="action.refresh" size="sm" />{{ t('storageAuditExtra.retryFailed') }}
+            </ActionButton>
+          </span>
+        </div>
+        <div v-for="failure in fileRepairFailures" :key="failure.key" class="recon-row">
+          <span class="recon-meta">{{ failure.key }} · {{ failure.error }}</span>
+          <span class="recon-row-acts" v-if="fileRepairAction">
+            <ActionButton class="recon-act" variant="secondary" fit :disabled="fileRepairing" @click="repairOrphans([failure.key], fileRepairAction!)">
+              {{ t('storageAuditExtra.retry') }}
+            </ActionButton>
+          </span>
+        </div>
+      </div>
 
       <div v-if="fileReport" class="recon-report">
           <div v-if="fileReport.error" class="recon-err">{{ t('storageAudit.fileAudit') }}：{{ fileReport.error }}</div>
@@ -70,11 +89,37 @@
           </div>
           <div v-if="!fileReport.ghost_count && !fileReport.orphan_count && !fileReport.misplaced_count" class="recon-ok"><RiCheckFill class="recon-ok__icon" aria-hidden="true" />{{ t('storageAuditUi.healthy') }}</div>
           <div v-if="fileReport.ghost_count" class="recon-block">
-            <div class="recon-block-title">{{ t('storageAuditExtra.ghostRecords') }}</div>
+            <div class="recon-block-title">
+            {{ t('storageAuditExtra.ghostRecords') }}
+            <span class="recon-bulk">
+                <ActionButton class="recon-act recon-act-del" variant="secondary" fit :disabled="fileRepairing" @click="repairGhostRecords(fileReport.ghost_ids || fileReport.ghosts.map((item: GhostRecord) => item.id))">
+                  <Icon name="action.delete" size="sm" />{{ t('storageAuditExtra.removeGhostRecords', { count: fileReport.ghost_ids?.length ?? fileReport.ghosts.length }) }}
+                </ActionButton>
+            </span>
+            </div>
+            <div v-if="ghostCleanupProgress" class="recon-progress" aria-live="polite">
+              <div class="recon-meta">{{ t('storageAuditExtra.ghostCleanupProgress', { done: ghostCleanupProgress.done, total: ghostCleanupProgress.total }) }}</div>
+              <div
+                class="recon-progress-track"
+                role="progressbar"
+                :aria-label="t('storageAuditExtra.ghostCleanupProgressLabel')"
+                :aria-valuemin="0"
+                :aria-valuemax="ghostCleanupProgress.total"
+                :aria-valuenow="ghostCleanupProgress.done"
+              >
+                <div class="recon-progress-fill" :style="{ width: `${ghostCleanupProgress.done / ghostCleanupProgress.total * 100}%` }" />
+              </div>
+            </div>
             <div v-for="g in fileReport.ghosts" :key="g.id" class="recon-row">
               <span class="recon-name">{{ g.name }}</span>
               <span class="recon-meta">{{ g.space }}{{ g.project ? ' · ' + g.project : '' }}{{ g.deleted ? ' · ' + t('storageAuditExtra.trash') : '' }} · {{ g.storage_key }}</span>
+              <span class="recon-row-acts">
+                <ActionButton class="recon-act recon-act-del" variant="secondary" fit :disabled="fileRepairing" @click="repairGhostRecords([g.id])" :title="t('storageAuditExtra.removeGhostRecordTitle')">
+                  <Icon name="action.delete" size="sm" />{{ t('storageAuditExtra.removeGhostRecord') }}
+                </ActionButton>
+              </span>
             </div>
+            <div class="recon-meta">{{ t('storageAuditExtra.ghostCleanupHint') }}</div>
           </div>
           <div v-if="fileReport.orphan_count" class="recon-block">
             <div class="recon-block-title">
@@ -256,6 +301,10 @@ const fileRepairing = ref(false)
 const fileReport = ref<any | null>(null)
 const fileMsg = ref('')
 const fileMsgKind = ref<'ok' | 'err'>('ok')
+const fileRepairFailures = ref<{ key: string; error: string }[]>([])
+const fileRepairAction = ref<'import' | 'delete' | null>(null)
+const ghostCleanupProgress = ref<{ done: number; total: number } | null>(null)
+const GHOST_REPAIR_BATCH_SIZE = 300
 
 interface UserStorageItem {
   user_id: string
@@ -268,6 +317,14 @@ interface UserStorageItem {
   scheduled_tasks: number
   physical_files: number
   reason: 'missing_directory' | 'missing_files'
+}
+interface GhostRecord {
+  id: number
+  name: string
+  space: string
+  project: string | null
+  deleted: boolean
+  storage_key: string
 }
 interface UserStorageReport { backend: string; location: string; user_count: number; missing_directory_count: number; missing_file_user_count: number; users: UserStorageItem[] }
 const userScanning = ref(false)
@@ -364,6 +421,8 @@ async function scanFiles() {
   if (fileScanning.value) return
   fileScanning.value = true
   fileMsg.value = ''
+  fileRepairFailures.value = []
+  fileRepairAction.value = null
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage')
     const data = await res.json()
@@ -381,6 +440,7 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
   if (action === 'delete' && !await confirmDialog({ title: t('storageAuditExtra.orphanDeleteTitle'), message: t('storageAuditExtra.orphanDeleteConfirm', { count: keys.length }), tone: 'danger', confirmText: t('storageAuditExtra.permanentDelete') })) return
   fileRepairing.value = true
   fileMsg.value = ''
+  fileRepairFailures.value = []
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/repair', {
       method: 'POST',
@@ -388,14 +448,12 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.repairFailure', { message: '' }))
-    const doneSet = new Set<string>(data.done_keys || [])
-    if (fileReport.value?.orphans) {
-      fileReport.value.orphans = fileReport.value.orphans.filter((k: string) => !doneSet.has(k))
-      fileReport.value.orphan_count = fileReport.value.orphans.length
-    }
+    await scanFiles()
     if (data.failed?.length) {
       fileMsgKind.value = 'err'
-      fileMsg.value = t('storageAuditExtra.repairResult', { done: data.done, failed: data.failed.length }) + `: ` + data.failed.map((f: any) => `${f.key}: ${f.error}`).join('；')
+      fileMsg.value = t('storageAuditExtra.repairResult', { done: data.done, failed: data.failed.length })
+      fileRepairFailures.value = data.failed
+      fileRepairAction.value = action
     } else {
       fileMsgKind.value = 'ok'
       fileMsg.value = t('storageAuditExtra.repaired', { count: data.done, action: action === 'import' ? t('storageAuditExtra.actionImport') : t('storageAuditExtra.actionDelete') })
@@ -404,6 +462,56 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
     fileMsgKind.value = 'err'
     fileMsg.value = t('storageAuditExtra.repairFailure', { message: e instanceof Error ? e.message : String(e) })
   } finally {
+    fileRepairing.value = false
+  }
+}
+
+async function repairGhostRecords(fileIds: number[]) {
+  if (fileRepairing.value || !fileIds.length) return
+  const uniqueFileIds = [...new Set(fileIds)]
+  if (!await confirmDialog({
+    title: t('storageAuditExtra.removeGhostTitle'),
+    message: t('storageAuditExtra.removeGhostConfirm', { count: uniqueFileIds.length }),
+    tone: 'danger',
+    confirmText: t('storageAuditExtra.removeGhostRecord'),
+  })) return
+  fileRepairing.value = true
+  fileMsg.value = ''
+  const batches = Array.from(
+    { length: Math.ceil(uniqueFileIds.length / GHOST_REPAIR_BATCH_SIZE) },
+    (_, index) => uniqueFileIds.slice(index * GHOST_REPAIR_BATCH_SIZE, (index + 1) * GHOST_REPAIR_BATCH_SIZE),
+  )
+  if (batches.length > 1) ghostCleanupProgress.value = { done: 0, total: uniqueFileIds.length }
+  let doneCount = 0
+  let failedCount = 0
+  try {
+    for (const batch of batches) {
+      const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/ghosts/repair', {
+        method: 'POST',
+        body: JSON.stringify({ file_ids: batch, confirm: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || t('storageAuditExtra.repairFailure', { message: '' }))
+      doneCount += data.done?.length || 0
+      failedCount += data.failed?.length || 0
+      if (ghostCleanupProgress.value) ghostCleanupProgress.value.done += batch.length
+    }
+    await scanFiles()
+    fileMsgKind.value = failedCount ? 'err' : 'ok'
+    fileMsg.value = t('storageAuditExtra.ghostRepairResult', { done: doneCount, failed: failedCount })
+  } catch (e) {
+    fileMsgKind.value = 'err'
+    fileMsg.value = doneCount || failedCount
+      ? t('storageAuditExtra.ghostRepairInterrupted', {
+        done: doneCount,
+        failed: failedCount,
+        remaining: uniqueFileIds.length - (ghostCleanupProgress.value?.done ?? uniqueFileIds.length),
+        message: e instanceof Error ? e.message : String(e),
+      })
+      : t('storageAuditExtra.repairFailure', { message: e instanceof Error ? e.message : String(e) })
+    if (doneCount || failedCount) await scanFiles()
+  } finally {
+    ghostCleanupProgress.value = null
     fileRepairing.value = false
   }
 }
@@ -549,6 +657,9 @@ async function repairDirs() {
 .recon-err { color: var(--status-danger); font-weight: var(--font-weight-semibold); }
 .recon-block { margin-top: 10px; }
 .recon-block-title { font-weight: var(--font-weight-semibold); margin-bottom: 4px; color: var(--content-primary); }
+.recon-progress { display: grid; gap: 6px; margin: 8px 0 10px; }
+.recon-progress-track { height: var(--progress-track-height); overflow: hidden; border-radius: var(--progress-track-radius); background: var(--progress-track-bg); }
+.recon-progress-fill { height: 100%; border-radius: inherit; background: var(--progress-fill-bg); transition: width 0.2s ease; }
 .recon-row { padding: 4px 0; border-top: 1px solid var(--panel-divider); display: flex; gap: 8px; align-items: center; }
 .recon-name { font-weight: var(--font-weight-semibold); color: var(--content-primary); }
 .recon-meta { color: var(--content-secondary); word-break: break-all; flex: 1; min-width: 0; }
