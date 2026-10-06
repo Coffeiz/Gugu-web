@@ -24,6 +24,7 @@
             :allowed-dates="store.timeline.map(g => g.date)"
             :show-clear="false"
             :title="t('mind.chooseDate')"
+            @today="retriggerTodayJump"
           />
           <div class="mind-filter">
             <PhMagnifyingGlass :size="13" weight="bold" class="mf-icon" />
@@ -43,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { PhGraph, PhMagnifyingGlass, PhNotePencil, PhX } from '@phosphor-icons/vue'
 import { useMindStore } from '@/stores/mind'
@@ -58,6 +59,11 @@ const isNotes = computed(() => route.path.startsWith('/mind/notes'))
 const isCanvas = computed(() => route.path.startsWith('/mind/canvases'))
 const todayIso = computed(() => localDayKey(new Date()))   // 本地今天（不是 UTC）
 const { t } = useI18n()
+
+function retriggerTodayJump() {
+  store.jumpTarget = ''
+  void nextTick(() => { store.jumpTarget = todayIso.value })
+}
 
 // /mind 是侧栏唯一入口；把当前子视图记下来，下一次从侧栏回来时由路由重定向恢复它。
 watch(() => route.path, (path) => {

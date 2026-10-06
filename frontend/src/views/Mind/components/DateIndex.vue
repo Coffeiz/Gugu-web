@@ -115,21 +115,42 @@ function onDown(event: PointerEvent) {
   hoverIndex.value = null
   motion.begin(event.clientX, startPitch)
   const target = event.currentTarget as HTMLElement
+  const pointerId = event.pointerId
   target.setPointerCapture(event.pointerId)
-  const onMove = (moveEvent: PointerEvent) => motion.move(moveEvent.clientX, DRAG_RATIO)
-  const onUp = (upEvent: PointerEvent) => {
+  const onMove = (moveEvent: PointerEvent) => {
+    if (moveEvent.pointerId === pointerId) motion.move(moveEvent.clientX, DRAG_RATIO)
+  }
+  const cleanup = () => {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onCancel)
+    window.removeEventListener('blur', onBlur)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    target.removeEventListener('lostpointercapture', onLostPointerCapture)
     removeGestureListeners = null
-    if (target.hasPointerCapture(upEvent.pointerId)) target.releasePointerCapture(upEvent.pointerId)
-    motion.end(fraction === null ? null : Math.round(fraction))
   }
-  removeGestureListeners = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
+  const finish = (clickedIndex: number | null) => {
+    cleanup()
+    if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
+    motion.end(clickedIndex)
   }
+  const onUp = (upEvent: PointerEvent) => {
+    if (upEvent.pointerId !== pointerId) return
+    finish(fraction === null ? null : Math.round(fraction))
+  }
+  const onCancel = (cancelEvent: PointerEvent) => {
+    if (cancelEvent.pointerId === pointerId) finish(null)
+  }
+  const onBlur = () => finish(null)
+  const onVisibilityChange = () => { if (document.visibilityState === 'hidden') finish(null) }
+  const onLostPointerCapture = () => finish(null)
+  removeGestureListeners = cleanup
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onCancel)
+  window.addEventListener('blur', onBlur)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  target.addEventListener('lostpointercapture', onLostPointerCapture)
 }
 function onHover(event: PointerEvent) {
   if (dragging.value || animating.value || event.pointerType !== 'mouse') return

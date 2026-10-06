@@ -7,7 +7,7 @@
   <div class="dntp-page">
     <div class="dntp-bar">
       <div class="dntp-side"></div>
-      <SegmentedControl class="dntp-tabs" :active-index="0" style="--pill-radius: 999px">
+      <SegmentedControl class="mind-tabs dntp-tabs" :active-index="0" style="--pill-radius: 999px">
         <RouterLink to="/dev/notes-three-pane" class="dntp-tab on">
           <PhNotePencil :size="16" weight="bold" />
           {{ t('mind.notes') }}
@@ -30,6 +30,7 @@
           :allowed-dates="store.timeline.map(g => g.date)"
           :show-clear="false"
           :title="t('mind.chooseDate')"
+          @today="retriggerTodayJump"
         />
         <div class="mind-filter">
           <PhMagnifyingGlass :size="13" weight="bold" class="mf-icon" />
@@ -47,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PhGraph, PhMagnifyingGlass, PhNotePencil, PhX } from '@phosphor-icons/vue'
 import { showAppNotice } from '@/composables/core/useAppToast'
@@ -61,6 +62,11 @@ import NotesThreePaneView from '@/views/Mind/NotesThreePaneView.vue'
 const store = useMindStore()
 const { t } = useI18n()
 const todayIso = computed(() => localDayKey(new Date()))
+
+function retriggerTodayJump() {
+  store.jumpTarget = ''
+  void nextTick(() => { store.jumpTarget = todayIso.value })
+}
 
 /** 样例数据：id 一律负数，视图层对负 id 不做写操作；时间取相对现在，落位自然的今天/昨天分组 */
 function seedSample() {
@@ -183,7 +189,7 @@ function seedSample() {
   text-decoration: none; cursor: pointer; transition: color 0.15s;
 }
 .dntp-tab:hover { color: var(--color-primary); }
-.dntp-tab.on { color: var(--text-primary); background: var(--surface-card-solid); box-shadow: var(--elevation-card); }
+.dntp-tab.on { color: var(--text-primary); }
 
 :deep(.mind-cal-picker) { width: auto !important; }
 :deep(.mind-cal-picker .dp-input) {
