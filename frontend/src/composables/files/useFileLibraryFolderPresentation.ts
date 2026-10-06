@@ -31,7 +31,7 @@ export function useFileLibraryFolderPresentation() {
     return { background: 'rgba(123,127,178,0.1)', color: 'var(--color-primary)' }
   }
 
-  function folderListIcon(folder: FolderCardMeta) {
+  function folderListIcon(folder: Pick<FolderCardMeta, 'type' | 'status'>) {
     if (folder.type === 'personal') return PhUser
     if (folder.type === 'projects') return PhStack
     if (folder.type === 'trash') return PhTrash
@@ -42,7 +42,7 @@ export function useFileLibraryFolderPresentation() {
     return PhFolder
   }
 
-  function folderAccentColor(folder: FolderCardMeta) {
+  function folderAccentColor(folder: Pick<FolderCardMeta, 'type' | 'status' | 'color'>) {
     if (folder.type === 'personal') return '#967858'
     if (folder.type === 'projects') return '#6878a8'
     if (folder.type === 'trash') return '#987070'

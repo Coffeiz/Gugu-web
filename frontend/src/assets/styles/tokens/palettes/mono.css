@@ -1,5 +1,8 @@
 /* Page palette for the Mono family. */
 :root[data-palette='cafe'][data-theme='light'] {
+  /* 页面与实体面板保留中性明暗层次，降低主色染色，避免大面积底色偏红。 */
+  --theme-page: radial-gradient(900px 560px at 78% -8%,color-mix(in srgb,var(--theme-action-primary) 3.5%,transparent),transparent 62%),radial-gradient(700px 440px at 18% 110%,rgba(113,158,170,.035),transparent 65%),linear-gradient(180deg,color-mix(in srgb,var(--theme-action-primary) 2.5%,#f5f3f6),color-mix(in srgb,var(--theme-action-primary) 3%,#dfe1e7));
+  --theme-base: color-mix(in srgb,var(--theme-action-primary) 4%,#f7f5f8);
   --theme-action-primary: #715653;
   --theme-action-hover: #634a48;
   --theme-action-pressed: #543a38;

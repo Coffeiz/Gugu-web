@@ -150,6 +150,7 @@
   --calendar-weekend-bg: color-mix(in srgb,var(--status-danger) 3%,transparent);
   --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 7%,transparent);
   --calendar-weekend-selected-bg: color-mix(in srgb,var(--status-danger) 10%,transparent);
+  --calendar-weekend-range-edge-bg: color-mix(in srgb,var(--status-danger) 18%,transparent);
   --calendar-weekend-date-bg: color-mix(in srgb,var(--status-danger) 15%,transparent);
   --calendar-today-date-bg: var(--action-primary-bg);
   --calendar-chip-hover-overlay: var(--surface-hover-tint);

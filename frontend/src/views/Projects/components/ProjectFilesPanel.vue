@@ -31,7 +31,7 @@
               <FileBrowserGrid :layout-collection="layoutCollection" @empty-context="openPmCtx('empty', null, $event)">
                 <!-- 文件夹卡片（当前层） -->
                 <RuntimeFolderCard v-for="folder in sortedCurrentFolders" :key="folder.id"
-                  :card-props="{ displayName: folder.name, countLabel: t('filesUi.itemCount', { count: pmFolderCount(folder.id) }), accentColor, selected: pmSelectedFolderIds.has(folder.id), preSelected: pmPreviewFolderIds.has(folder.id), selectionMode: pmInSelectionMode }"
+                  :card-props="{ displayName: folder.name, countLabel: t('filesUi.itemCount', { count: pmFolderCount(folder.id) }), accentColor: folderAccentColor({ type: 'folder' }), selected: pmSelectedFolderIds.has(folder.id), preSelected: pmPreviewFolderIds.has(folder.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'folder', folder.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFolderIds.has(folder.id)"
@@ -42,9 +42,7 @@
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
                   >
                   <template #icon>
-                    <svg class="fd-big-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-                    </svg>
+                    <component :is="folderListIcon({ type: 'folder' })" class="fd-big-icon" :size="92" />
                   </template>
                   <template #actions>
                     <button class="file-card-btn" :title="renamingFolderId === folder.id ? t('filesViewUi.confirm') : t('filesViewUi.rename')"
@@ -147,7 +145,7 @@
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
                   >
                   <span class="lr-name-cell">
-                    <Icon name="file.folder" class="lr-folder-icon" :size="16" :style="{ color: accentColor }" />
+                    <component :is="folderListIcon({ type: 'folder' })" class="lr-folder-icon" :size="16" :style="{ color: folderAccentColor({ type: 'folder' }) }" />
                     <span class="lr-filename" :title="folder.name">
                       <RenameInput v-if="renamingFolderId === folder.id" v-model="folderRenameText"
                         @commit="commitFolderRename" @cancel="cancelFolderRename" />
@@ -281,10 +279,12 @@ import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vu
 import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.vue'
 import ProjectFileToolbar from '@/views/Projects/components/ProjectFileToolbar.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/shared/useLazyThumb'
+import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
 import { formatFileCreatedDate } from '@/utils/fileDate'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { t } = useI18n()
+const { folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
 const {
   fileViewMode, pmInSelectionMode,
   pmIsDragging, pmSelectionRect, bindPmGridEl, onPmGridMouseDown, onPmContentClick, openPmCtx,

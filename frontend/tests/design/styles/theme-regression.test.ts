@@ -171,6 +171,15 @@ describe('主题 CSS 回归契约', () => {
     expect(load('./tokens/themes/mono-dark.css')).toContain(activeBorder)
   })
 
+  it('Cafe 亮色页面背景降低暖色主色染色比例，避免整页偏红', () => {
+    const cafeLight = cssBlock(load('./tokens/palettes/mono.css'), ":root[data-palette='cafe'][data-theme='light']")
+    expect(cafeLight).toContain('--theme-page: radial-gradient(')
+    expect(cafeLight).toContain('var(--theme-action-primary) 2.5%,#f5f3f6')
+    expect(cafeLight).toContain('var(--theme-action-primary) 3%,#dfe1e7')
+    expect(cafeLight).toContain('--theme-base: color-mix(in srgb,var(--theme-action-primary) 4%,#f7f5f8)')
+    expect(cafeLight).not.toContain('var(--theme-action-primary) 6%')
+  })
+
   it('暗色玻璃页面渐变从较亮端向较暗端收束', () => {
     expect(materialCompositionCss).toContain(
       '--theme-page: linear-gradient(145deg,var(--palette-page-end) 0%,var(--palette-page-mid) 60%,var(--palette-page-start) 100%)',
