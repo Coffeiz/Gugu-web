@@ -103,6 +103,24 @@ async def _get_or_create_binding(
     return binding
 
 
+async def prepare_local_binding(
+    db: AsyncSession,
+    user_id,
+    *,
+    root_path: str = ".",
+    mode: str = FileSyncMode.BIDIRECTIONAL,
+) -> FileSyncBinding:
+    """校验并持久化绑定范围，但不扫描或投影任何文件。"""
+    if not is_file_sync_enabled() or not workspace_shell_supported():
+        raise ValueError("当前存储模式不支持本地文件同步")
+    if mode not in {item.value for item in FileSyncMode}:
+        raise ValueError("同步模式无效")
+    relative, root = resolve_local_binding_root(user_id, root_path)
+    return await _get_or_create_binding(
+        db, user_id, root_path=relative, root=root, mode=mode,
+    )
+
+
 async def _other_binding_roots(
     db: AsyncSession, user_id, binding: FileSyncBinding,
 ) -> list[Path]:

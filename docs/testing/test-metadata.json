@@ -7,6 +7,46 @@
     "keyBehavior": "监听恢复只更新健康状态，历史缺口保持待人工核对且迁移默认保护已有绑定",
     "ci": "backend-pytest"
   },
+  "backend/tests/test_filesync_reconcile_jobs.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/jobs.py",
+    "keyBehavior": "手动对账任务归属隔离、同绑定幂等排队、同用户串行执行、全局并发有界且失联不自动重试",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_scan.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/scan.py",
+    "keyBehavior": "完整磁盘清单与 File/Folder 有界归并检测新增/更新/缺失；重复路径或类型冲突不得误删，扫描取消/超时须等待线程退出",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_inventory.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/inventory.py",
+    "keyBehavior": "File/Folder 只按绑定范围与活动状态分页入清单，重复活动路径完整保留以便归并时标歧义",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_run_migration.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "alembic/versions/20261007000003_add_manual_filesync_runs.py",
+    "keyBehavior": "任务表迁移遇到历史重复活动文件路径时仍保留原记录并成功建表",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_runner.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/runner.py",
+    "keyBehavior": "初始化、确认修复、更新/移动/删除、失败部分结果、dry-run 无副作用及临时产物清理/进度有界符合任务契约",
+    "ci": "backend-pytest"
+  },
   "backend/ts/packages/filesync-watcher/test/protocol-output.test.ts": {
     "domain": "filesync",
     "layer": "L2",

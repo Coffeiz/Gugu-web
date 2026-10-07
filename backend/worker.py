@@ -513,6 +513,12 @@ async def serve():
     filesync_task = asyncio.create_task(
         FileSyncWatcherManager().run(_stop), name="filesync-watcher"
     )
+    from app.services.filesync.runner import run_reconcile_worker
+    filesync_reconcile_task = asyncio.create_task(run_reconcile_worker(
+        _stop,
+        worker_id=f"filesync-reconcile:{CONSUMER}",
+        session_factory=db_session._SessionLocal,
+    ), name="filesync-reconcile-worker")
     reflection_task = asyncio.create_task(_reflection_loop())
     cleanup_task = asyncio.create_task(_cleanup_loop())
     from app.services.data_portability.worker import run_portability_worker
@@ -547,6 +553,9 @@ async def serve():
         trash_purge_task,
         return_exceptions=True,
     )
+    # 核对 Worker 通过共享 stop event 让扫描线程/当前事务协作退出；不要取消协程，
+    # 否则 asyncio Future 取消后底层线程仍可能运行并与下一进程重叠。
+    await filesync_reconcile_task
     from agent.rag.injection import shutdown_background_recall_tasks
     await shutdown_background_recall_tasks()
     sched.shutdown()

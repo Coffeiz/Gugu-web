@@ -1,7 +1,9 @@
 """本地文件同步 API；OSS 模式只返回拒绝，不暴露伪造的目录状态。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field
 
 from app.core.security import get_current_user
@@ -10,14 +12,17 @@ from app.models import User
 from app.schemas import CamelModel
 from app.services.filesync import (
     FileSyncMode,
-    dry_run_local_binding,
     get_user_binding,
     list_user_bindings,
     list_user_conflicts,
     resolve_sync_conflict,
-    sync_local_binding,
-    enqueue_file_event,
-    deliver_file_event,
+    prepare_local_binding,
+    ReconcileRunError,
+    enqueue_reconcile_run,
+    get_reconcile_run,
+    list_reconcile_runs,
+    request_run_cancel,
+    serialize_reconcile_run,
 )
 
 router = APIRouter(prefix="/filesync", tags=["filesync"])
@@ -31,47 +36,12 @@ class BindingRequest(CamelModel):
 
 
 class ReconcileRequest(CamelModel):
+    confirm: bool = False
     allow_delete: bool = False
 
 
 class ConflictResolutionRequest(CamelModel):
     resolution: str
-
-
-def _summary(result):
-    summary = result.summary
-    return {
-        "scanned": summary.scanned,
-        "created": summary.created,
-        "updated": summary.updated,
-        "moved": summary.moved,
-        "deleted": summary.deleted,
-        "rejected": summary.rejected,
-        "conflicts": summary.conflicts,
-    }
-
-
-def _result(result):
-    return {
-        "bindingId": result.binding_id,
-        "mode": result.mode,
-        "rootPath": result.root_path,
-        "dryRun": result.dry_run,
-        "summary": _summary(result),
-        "conflictIds": list(result.conflict_ids),
-    }
-
-
-async def _queue_sync_event(db, user_id, result, *, source: str = "local_directory"):
-    summary = result.summary
-    if not any((summary.created, summary.updated, summary.moved, summary.deleted, summary.conflicts)):
-        return None
-    return await enqueue_file_event(
-        db, user_id,
-        operation="refresh",
-        entity_ids=summary.entity_ids,
-        source=source,
-    )
 
 
 @router.get("/bindings")
@@ -91,10 +61,20 @@ async def bindings(user: User = Depends(get_current_user), db=Depends(get_db)):
 @router.post("/dry-run")
 async def dry_run(body: BindingRequest, user: User = Depends(get_current_user), db=Depends(get_db)):
     try:
-        result = await dry_run_local_binding(db, user.id, root_path=body.root_path, mode=body.mode)
+        binding = await prepare_local_binding(
+            db, user.id, root_path=body.root_path, mode=body.mode,
+        )
+        run = await enqueue_reconcile_run(
+            db, user_id=user.id, binding_id=binding.id, action="dry_run",
+        )
+        await db.commit()
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ReconcileRunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _result(result)
+    return serialize_reconcile_run(run)
 
 
 @router.post("/bindings")
@@ -102,24 +82,24 @@ async def create_or_reconcile_binding(
     body: BindingRequest, user: User = Depends(get_current_user), db=Depends(get_db),
 ):
     try:
-        if not body.confirm:
-            result = await dry_run_local_binding(
-                db, user.id, root_path=body.root_path, mode=body.mode,
-            )
-        else:
-            result = await sync_local_binding(
-                db, user.id, root_path=body.root_path, mode=body.mode,
-                allow_delete=body.confirm_delete,
-            )
+        binding = await prepare_local_binding(
+            db, user.id, root_path=body.root_path, mode=body.mode,
+        )
+        action = "dry_run" if not body.confirm else (
+            "initialize" if binding.last_reconciled_at is None else "repair"
+        )
+        run = await enqueue_reconcile_run(
+            db, user_id=user.id, binding_id=binding.id, action=action,
+            allow_delete=bool(body.confirm and body.confirm_delete),
+        )
+        await db.commit()
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ReconcileRunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if body.confirm:
-        outbox = await _queue_sync_event(db, user.id, result)
-        await db.commit()
-        if outbox is not None:
-            await deliver_file_event(db, outbox)
-            await db.commit()
-    return _result(result)
+    return serialize_reconcile_run(run)
 
 
 @router.post("/bindings/{binding_id}/reconcile")
@@ -127,22 +107,56 @@ async def reconcile_binding(
     binding_id: int, body: ReconcileRequest,
     user: User = Depends(get_current_user), db=Depends(get_db),
 ):
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="对账执行必须显式确认")
     binding = await get_user_binding(db, user.id, binding_id)
     if binding is None or binding.source != "local_directory":
         raise HTTPException(status_code=404, detail="同步绑定不存在")
     try:
-        result = await sync_local_binding(
-            db, user.id, root_path=binding.root_path, mode=binding.mode,
+        run = await enqueue_reconcile_run(
+            db, user_id=user.id, binding_id=binding.id, action="repair",
             allow_delete=body.allow_delete,
         )
+        await db.commit()
+    except ReconcileRunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    outbox = await _queue_sync_event(db, user.id, result)
+    return serialize_reconcile_run(run)
+
+
+@router.get("/runs")
+async def runs(
+    binding_id: int | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    rows = await list_reconcile_runs(
+        db, user_id=user.id, binding_id=binding_id, limit=limit,
+    )
+    return [serialize_reconcile_run(row) for row in rows]
+
+
+@router.get("/runs/{run_id}")
+async def run_status(
+    run_id: UUID, user: User = Depends(get_current_user), db=Depends(get_db),
+):
+    row = await get_reconcile_run(db, run_id, user_id=user.id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="对账任务不存在")
+    return serialize_reconcile_run(row)
+
+
+@router.post("/runs/{run_id}/cancel")
+async def cancel_run(
+    run_id: UUID, user: User = Depends(get_current_user), db=Depends(get_db),
+):
+    row = await request_run_cancel(db, run_id, user_id=user.id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="对账任务不存在")
     await db.commit()
-    if outbox is not None:
-        await deliver_file_event(db, outbox)
-        await db.commit()
-    return _result(result)
+    return serialize_reconcile_run(row)
 
 
 @router.get("/conflicts")

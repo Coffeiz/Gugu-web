@@ -6,7 +6,7 @@ import re
 from enum import StrEnum
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redaction import diag_log
@@ -15,6 +15,30 @@ from app.models import FileSyncBinding, FileSyncJournal, Workspace
 from app.core.ownership import get_owned
 
 FILE_SYNC_PROTOCOL_VERSION = 1
+_PATH_LOCK_NAMESPACE = "filesync-path"
+
+
+async def lock_file_sync_paths(db: AsyncSession, user_id, storage_keys: list[str] | tuple[str, ...]) -> None:
+    """在事务内串行化同一用户、同一存储路径的实时与文件库写入。
+
+    File.storage_key 没有可安全补建的全局唯一约束（历史数据允许重复），因此
+    路径创建不能依赖“先查再插”。PostgreSQL advisory xact lock 作为双方共享的
+    对象级保护；SQLite 测试库由其事务/行行为验证，不发方言专属 SQL。
+    """
+    bind = db.bind
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    lock_keys = set()
+    for storage_key in storage_keys:
+        digest = hashlib.sha256(
+            f"{_PATH_LOCK_NAMESPACE}:{user_id}:{storage_key}".encode("utf-8")
+        ).digest()
+        lock_keys.add(int.from_bytes(digest[:8], "big", signed=True))
+    for lock_key in sorted(lock_keys):
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": lock_key},
+        )
 
 
 class FileSyncDisabled(RuntimeError):
@@ -151,6 +175,26 @@ async def record_canonical_file_change(
 
                 _, binding_root = resolve_local_binding_root(user_id, binding.root_path)
             if binding_root is None:
+                continue
+            if binding.mode == FileSyncMode.MIRROR_OUT:
+                # mirror_out 导出整个文件库到绑定目录，源文件通常不在该目录下；
+                # 因此不能先要求 storage_path.relative_to(binding_root)。revision
+                # 同时作为运行中导出的失效标记，完成时可补排一次覆盖新变化。
+                binding.revision += 1
+                await db.flush()
+                from app.services.filesync.jobs import ReconcileRunError, enqueue_reconcile_run
+
+                try:
+                    async with db.begin_nested():
+                        await enqueue_reconcile_run(
+                            db,
+                            user_id=user_id,
+                            binding_id=binding.id,
+                            action="mirror_out",
+                        )
+                except ReconcileRunError:
+                    # 运行中的任务会在收尾比较 binding.revision 并补排。
+                    pass
                 continue
             relative = storage_path.relative_to(binding_root).as_posix()
         except (OSError, ValueError):

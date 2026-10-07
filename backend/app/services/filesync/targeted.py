@@ -27,6 +27,7 @@ from app.services.filesync.protocol import (
     FileSyncSource,
     FileSyncStatus,
     build_idempotency_key,
+    lock_file_sync_paths,
     is_file_sync_enabled,
     record_change,
     validate_sync_path,
@@ -61,6 +62,15 @@ class PathEventBatch:
 
     def all_paths(self) -> set[str]:
         return self.changed | self.deleted | self.folders_created | self.folders_deleted
+
+
+@dataclass(frozen=True)
+class PathProjectionOptions:
+    """扫描投影的复核证据；普通实时事件使用默认选项。"""
+
+    allow_delete: bool = True
+    verified_files: dict[str, tuple[int, int, int, str]] | None = None
+    observed_folders: dict[str, str] | None = None
 
 
 async def _quota_limit(db: AsyncSession, user_id) -> int:
@@ -114,7 +124,7 @@ async def _find_move_source(
         row = (await db.execute(select(File).where(
             File.user_id == binding.user_id, File.storage_key == old_key,
             File.deleted_at.is_(None),
-        ))).scalar_one_or_none()
+        ).with_for_update())).scalar_one_or_none()
         if row is None:
             continue
         if (root / journal.relative_path).exists():
@@ -136,6 +146,7 @@ async def _project_changed_file(
     latest: dict[tuple[str, str], FileSyncJournal],
     quota_headroom: int,
     summary_inout: dict,
+    verified_file: tuple[int, int, int, str] | None = None,
 ) -> int:
     """单文件 create/update 投影；返回本次变更的净字节增量。
 
@@ -155,15 +166,22 @@ async def _project_changed_file(
             db, user_id, path, user_root,
             workspace_directory_id=workspace_directory_id, base=root,
         )
-        # 精确变更事件是重新核对正文的依据；size/mtime 相同也不能跳过哈希。
-        observed = _stable_fingerprint(path)
+        # 精确事件与手动扫描都必须核对正文；手动扫描可传入线程内刚复核的指纹，
+        # 避免把大文件哈希放回事件循环。
+        if verified_file is None:
+            observed = _stable_fingerprint(path)
+        else:
+            current = path.stat(follow_symlinks=False)
+            if (current.st_size, current.st_mtime_ns, current.st_ino) != verified_file[:3]:
+                raise ValueError("文件在扫描后发生变化")
+            observed = verified_file[3]
     except (OSError, ValueError):
         summary_inout["rejected"] += 1
         return 0
 
     row = (await db.execute(select(File).where(
         File.user_id == user_id, File.storage_key == key, File.deleted_at.is_(None),
-    ))).scalar_one_or_none()
+    ).with_for_update())).scalar_one_or_none()
     if row is None:
         source = await _find_move_source(db, binding, scope_prefix, relative, observed, root)
     else:
@@ -260,7 +278,7 @@ async def _project_deleted_file(
     key = scope_prefix + relative
     row = (await db.execute(select(File).where(
         File.user_id == user_id, File.storage_key == key, File.deleted_at.is_(None),
-    ))).scalar_one_or_none()
+    ).with_for_update())).scalar_one_or_none()
     # 行不存在说明移动投影已复用（或此前已处理）；盘上还在则事件过期，跳过。
     if row is None or (storage_root / key).exists():
         return
@@ -288,6 +306,7 @@ async def _project_folder_created(
     db: AsyncSession, user_id, binding: FileSyncBinding, root: Path,
     user_root: Path, workspace_directory_id: int | None, relative: str,
     latest: dict[tuple[str, str], FileSyncJournal], summary_inout: dict,
+    observed_fingerprint: str | None = None,
 ) -> None:
     directory = root / relative
     try:
@@ -315,7 +334,7 @@ async def _project_folder_created(
     )
     if folder_id is None:
         return
-    observed = _directory_fingerprint(directory)
+    observed = observed_fingerprint or _directory_fingerprint(directory)
     previous = latest.get(("folder", relative))
     if previous is not None and previous.observed_fingerprint == observed:
         return
@@ -349,6 +368,11 @@ async def _project_folder_deleted(
     parts = [item for item in relative.split("/") if item]
     if not parts:
         return
+    # unlinkDir 可能是过期事件；若扫描/事件到达后目录已重建，绝不能把新的
+    # 物理目录当成删除事实投影到文件库。
+    directory = root / relative
+    if directory.exists() or directory.is_symlink():
+        return
     try:
         if workspace_directory_id is not None:
             space, project_id = "workspace", None
@@ -366,17 +390,11 @@ async def _project_folder_deleted(
         return
     if folder_id is None:
         return
-    folder = await db.get(Folder, folder_id)
+    folder = await db.scalar(select(Folder).where(Folder.id == folder_id).with_for_update())
     if folder is None or folder.deleted_at is not None:
         return
     # 保守删除：仍有活动文件或子目录时不动，需显式手动核对。
-    live_file = await db.scalar(select(func.count()).select_from(File).where(
-        File.folder_id == folder_id, File.deleted_at.is_(None),
-    ))
-    live_child = await db.scalar(select(func.count()).select_from(Folder).where(
-        Folder.parent_id == folder_id, Folder.deleted_at.is_(None),
-    ))
-    if (live_file or 0) or (live_child or 0):
+    if await _folder_has_active_children(db, folder_id):
         return
     folder.deleted_at = now_utc()
     folder.version = int(folder.version or 1) + 1
@@ -397,6 +415,33 @@ async def _project_folder_deleted(
     summary_inout["journal_ids"].append(journal.id)
 
 
+async def _folder_has_active_children(db: AsyncSession, folder_id: int) -> bool:
+    live_file = await db.scalar(select(func.count()).select_from(File).where(
+        File.folder_id == folder_id, File.deleted_at.is_(None),
+    ))
+    if live_file:
+        return True
+    live_child = await db.scalar(select(func.count()).select_from(Folder).where(
+        Folder.parent_id == folder_id, Folder.deleted_at.is_(None),
+    ))
+    return bool(live_child)
+
+
+def _projection_roots(user_id, root: Path) -> tuple[Path, Path] | None:
+    """验证实时/手动投影根目录属于当前用户存储范围。"""
+    if not is_file_sync_enabled() or not workspace_shell_supported():
+        return None
+    storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
+    user_root = (storage_root / str(user_id)).resolve()
+    try:
+        root.relative_to(user_root)
+    except ValueError:
+        return None
+    if not root.exists() or not root.is_dir():
+        return None
+    return storage_root, user_root
+
+
 async def project_path_events(
     db: AsyncSession,
     user_id,
@@ -404,25 +449,24 @@ async def project_path_events(
     root: Path,
     batch: PathEventBatch,
     *,
-    allow_delete: bool = True,
+    options: PathProjectionOptions | None = None,
 ) -> SyncSummary:
     """把一批 sidecar 路径事件投影为 File/Folder 单点变更。"""
-    if not is_file_sync_enabled() or not workspace_shell_supported():
+    options = options or PathProjectionOptions()
+    roots = _projection_roots(user_id, root)
+    if roots is None:
         return SyncSummary(rejected=1)
-    settings = get_settings()
-    storage_root = Path(settings.storage.local_path).expanduser().resolve()
-    user_root = (storage_root / str(user_id)).resolve()
-    try:
-        root.relative_to(user_root)
-    except ValueError:
-        return SyncSummary(rejected=1)
-    if not root.exists() or not root.is_dir():
-        return SyncSummary(rejected=1)
+    storage_root, user_root = roots
     workspace_directory_id: int | None = None
     if binding.workspace_id is not None:
         workspace_directory_id = await _workspace_directory_id_for(db, user_id, binding.workspace_id)
 
     scope_prefix = _scope_prefix(storage_root, root)
+    await lock_file_sync_paths(
+        db,
+        user_id,
+        [scope_prefix + relative for relative in sorted(batch.all_paths())],
+    )
     latest = await _latest_journals(db, binding.id, batch.all_paths())
     quota_limit = await _quota_limit(db, user_id)
     summary_inout: dict = {
@@ -436,6 +480,7 @@ async def project_path_events(
     for relative in sorted(batch.folders_created):
         await _project_folder_created(
             db, user_id, binding, root, user_root, workspace_directory_id, relative, latest, summary_inout,
+            (options.observed_folders or {}).get(relative),
         )
     quota_headroom = quota_limit - await _live_storage_bytes(db, user_id)
     for relative in sorted(batch.changed):
@@ -443,9 +488,9 @@ async def project_path_events(
         quota_headroom -= await _project_changed_file(
             db, user_id, binding, root, storage_root, scope_prefix, user_root,
             workspace_directory_id, relative, latest,
-            quota_headroom, summary_inout,
+            quota_headroom, summary_inout, (options.verified_files or {}).get(relative),
         )
-    if allow_delete:
+    if options.allow_delete:
         for relative in sorted(batch.deleted):
             await _project_deleted_file(
                 db, user_id, binding, storage_root, scope_prefix, relative, latest, summary_inout,

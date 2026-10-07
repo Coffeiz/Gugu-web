@@ -16,12 +16,9 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import FileSyncBinding, FileSyncConflict, FileSyncJournal, FileSyncOutbox
 from app.services.filesync.bindings import (
-    BindingSyncResult,
     cleanup_stale_conflicts,
-    dry_run_local_binding,
     resolve_sync_conflict,
     resolve_local_binding_root,
-    sync_local_binding,
 )
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.protocol import FileSyncStatus, is_file_sync_enabled
@@ -205,51 +202,6 @@ async def get_admin_sync_status(
         },
         "generatedAt": now_utc().isoformat(),
     }
-
-
-async def admin_dry_run_binding(db: AsyncSession, binding_id: int) -> BindingSyncResult:
-    binding = await db.get(FileSyncBinding, binding_id)
-    if binding is None:
-        raise LookupError("同步绑定不存在")
-    if not workspace_shell_supported():
-        raise ValueError("当前存储模式不支持本地文件同步")
-    return await dry_run_local_binding(
-        db, binding.user_id, root_path=binding.root_path, mode=binding.mode
-    )
-
-
-async def admin_reconcile_binding(
-    db: AsyncSession,
-    binding_id: int,
-    *,
-    allow_delete: bool = False,
-) -> BindingSyncResult:
-    binding = await db.get(FileSyncBinding, binding_id)
-    if binding is None:
-        raise LookupError("同步绑定不存在")
-    if not workspace_shell_supported():
-        raise ValueError("当前存储模式不支持本地文件同步")
-    try:
-        _, root = resolve_local_binding_root(binding.user_id, binding.root_path)
-        await cleanup_stale_conflicts(db, binding, root=root)
-    except (OSError, ValueError, LookupError):
-        # 正式对账仍由后续同步流程返回具体错误；历史绑定失效时不阻塞其它绑定。
-        pass
-    result = await sync_local_binding(
-        db, binding.user_id, root_path=binding.root_path, mode=binding.mode,
-        allow_delete=allow_delete,
-    )
-    if result.summary.entity_ids or result.summary.conflicts:
-        outbox = await enqueue_file_event(
-            db, binding.user_id, operation="refresh", source="local_directory",
-            entity_ids=result.summary.entity_ids, revision=binding.revision,
-        )
-        await db.commit()
-        await deliver_file_event(db, outbox)
-        await db.commit()
-    else:
-        await db.commit()
-    return result
 
 
 async def admin_resolve_conflict(

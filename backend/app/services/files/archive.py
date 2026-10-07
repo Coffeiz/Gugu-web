@@ -25,7 +25,7 @@ from app.core.errors import Conflict, Invalid, NotFound
 from app.core.ownership import get_owned
 from app.core.redaction import diag_log
 from app.models import File, Folder, Project, WorkspaceDirectory
-from app.services.filesync.protocol import record_canonical_file_change
+from app.services.filesync.protocol import lock_file_sync_paths, record_canonical_file_change
 from app.services.storage import OSSStorageBackend, StorageBackend, get_storage
 from app.services.storage.key_strategy import KeyContext, PathMirrorStrategy
 from app.services.storage.keys import compose_logical_path
@@ -283,6 +283,7 @@ async def _store_file(
     storage_key = key_strategy.build_key(KeyContext(
         user_id=user_id, file_id=None, name=display_name, ext=ext, logical_path=logical_path,
     ))
+    await lock_file_sync_paths(db, user_id, [storage_key])
     if await storage.exists(storage_key):
         # DB 与物理存储短暂不一致时也不覆盖孤儿对象。
         match = re.match(r"^(.*) \((\d+)\)$", display_name)
@@ -297,6 +298,7 @@ async def _store_file(
                 display_name, storage_key = candidate, key
                 break
             number += 1
+    await lock_file_sync_paths(db, user_id, [storage_key])
     source.seek(0)
     await storage.put_stream(storage_key, source, size, mime_type)
     created_keys.append(storage_key)

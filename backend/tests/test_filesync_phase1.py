@@ -12,6 +12,7 @@ from app.models import (
     FileSyncBinding,
     FileSyncConflict,
     FileSyncJournal,
+    Folder,
     Project,
     Workspace,
 )
@@ -882,6 +883,17 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
     )
     await db.commit()
     assert summary.folders_created == 1
+    # 过期 unlinkDir 到达时物理目录已重建，不能把新目录软删除。
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(folders_deleted={"sub"}),
+    )
+    await db.commit()
+    assert summary.folders_deleted == 0
+    still_active = (await db.scalars(select(Folder).where(
+        Folder.user_id == user_a.id, Folder.name == "sub", Folder.deleted_at.is_(None),
+    ))).one()
+    assert still_active.deleted_at is None
+
     (root / "sub").rmdir()
     summary = await targeted.project_path_events(
         db, user_a.id, binding, root, targeted.PathEventBatch(folders_deleted={"sub"}),

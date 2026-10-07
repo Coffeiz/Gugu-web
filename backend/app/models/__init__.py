@@ -370,6 +370,49 @@ class FileSyncBinding(Base):
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
 
+class FileSyncReconcileRun(Base):
+    """用户/Admin 显式发起的手动目录核对任务。"""
+
+    __tablename__ = "file_sync_reconcile_runs"
+    __table_args__ = (
+        Index("ix_file_sync_reconcile_runs_claim", "status", "created_at"),
+        Index("ix_file_sync_reconcile_runs_user_created", "user_id", "created_at"),
+        Index(
+            "uq_file_sync_reconcile_active_binding", "binding_id", unique=True,
+            postgresql_where=text("status IN ('queued', 'running', 'cancelling')"),
+            sqlite_where=text("status IN ('queued', 'running', 'cancelling')"),
+        ),
+        Index(
+            "uq_file_sync_reconcile_running_user", "user_id", unique=True,
+            postgresql_where=text("status IN ('running', 'cancelling')"),
+            sqlite_where=text("status IN ('running', 'cancelling')"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid7)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    binding_id: Mapped[int] = mapped_column(ForeignKey("file_sync_bindings.id", ondelete="CASCADE"), index=True)
+    action: Mapped[str] = mapped_column(String(24))
+    allow_delete: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    status: Mapped[str] = mapped_column(String(24), default="queued", server_default="queued", index=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    binding_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    gap_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    root_fingerprint: Mapped[str] = mapped_column(String(64))
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    deadline_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    scanned_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    result_counts: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
 class FileSyncJournal(Base):
     """文件/文件夹变更幂等日志；路径仅允许是工作区内的规范相对路径。"""
     __tablename__ = "file_sync_journal"

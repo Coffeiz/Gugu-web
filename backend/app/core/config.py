@@ -209,6 +209,19 @@ class FileSyncSettings(BaseModel):
         7,
         description="活跃度门控：仅给最近 N 天活跃用户的绑定挂实时监听；其余绑定需手动核对（0 表示全部监听）",
     )
+    reconcile_execution_budget_seconds: int = Field(
+        1800, ge=60, le=7200, description="手动整树核对任务的总执行时限；超时失败，不自动续跑",
+    )
+    reconcile_max_concurrency: int = Field(
+        1, ge=1, le=8, description="跨用户手动整树核对的全局并发上限",
+    )
+    reconcile_manifest_max_bytes: int = Field(
+        4 * 1024 * 1024 * 1024, ge=64 * 1024 * 1024,
+        description="单次手动核对临时 SQLite 清单的最大磁盘占用",
+    )
+    reconcile_manifest_commit_entries: int = Field(
+        256, ge=16, le=4096, description="临时清单分批提交的目录项数量",
+    )
 
 
 class AIPresetItem(BaseModel):

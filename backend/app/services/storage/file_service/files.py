@@ -25,7 +25,7 @@ from app.services.storage.folders import resolve_folder_path
 from app.services.storage.key_strategy import KeyContext
 from app.services.storage.keys import compose_logical_path
 from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage, reconcile_user_storage
-from app.services.filesync.protocol import record_canonical_file_change
+from app.services.filesync.protocol import lock_file_sync_paths, record_canonical_file_change
 from app.services.storage.file_service.content_types import validated_rename_extension
 
 
@@ -172,6 +172,7 @@ class FileOps:
                 if used - existing.size_bytes + size_bytes > storage_limit_bytes:
                     raise Invalid("storage.full", "存储空间已满，无法上传")
             old_size_bytes = existing.size_bytes
+            await lock_file_sync_paths(self.db, user_id, [existing.storage_key])
             await _write_content(existing.storage_key)
             existing.size = _fmt_size(size_bytes)
             existing.size_bytes = size_bytes
@@ -200,8 +201,10 @@ class FileOps:
             project=project, project_id=project_id,
             project_year=project_year, project_month=project_month, folder_path=folder_path,
             workspace_directory=workspace_directory)
+        await lock_file_sync_paths(self.db, user_id, [base_key])
         resolved = await self.key_strategy.resolve_conflict(self.storage, base_key, display_name, ext)
         final_key, final_name = resolved.key, resolved.name
+        await lock_file_sync_paths(self.db, user_id, [final_key])
 
         if storage_limit_bytes is not None:
             if used + size_bytes > storage_limit_bytes:
@@ -285,8 +288,10 @@ class FileOps:
             project_year=project_year, project_month=project_month, folder_path=folder_path,
             workspace_directory=workspace_directory)
         if new_key != f.storage_key:
+            await lock_file_sync_paths(self.db, user_id, [f.storage_key, new_key])
             resolved = await self.key_strategy.resolve_conflict(self.storage, new_key, new_display, new_ext)
             new_key, new_display = resolved.key, resolved.name
+            await lock_file_sync_paths(self.db, user_id, [new_key])
             await self.storage.rename_file(f.storage_key, new_key)
             f.storage_key = new_key
             # 不清旧祖先：源文件夹仍存活，其空目录须持久（P1.2）；孤儿由文件夹级清理 + 对账工具兜底
@@ -327,6 +332,7 @@ class FileOps:
                 workspace_directory_id=workspace_directory.id if workspace_directory else None,
                 display_name=f.display_name, ext=f.ext,
             )
+            await lock_file_sync_paths(self.db, user_id, [existing.storage_key])
             await self.storage.put(existing.storage_key, data, f.mime_type)
             existing.size = f.size
             existing.size_bytes = f.size_bytes
@@ -348,8 +354,10 @@ class FileOps:
             project=project, project_id=project_id,
             project_year=project_year, project_month=project_month, folder_path=folder_path,
             workspace_directory=workspace_directory)
+        await lock_file_sync_paths(self.db, user_id, [base_key])
         resolved = await self.key_strategy.resolve_conflict(self.storage, base_key, f.display_name, f.ext)
         new_key, new_display = resolved.key, resolved.name
+        await lock_file_sync_paths(self.db, user_id, [new_key])
 
         await self.storage.put(new_key, data, f.mime_type)
         new_file = File(

@@ -21,7 +21,7 @@ from app.models import File
 from app.services.files.selection import move_file_to_trash_by_id, move_files_to_trash
 from app.services.storage import LocalStorageBackend, OSSStorageBackend
 from app.services.storage.file_service.files import _fmt_size
-from app.services.filesync.protocol import record_canonical_file_change
+from app.services.filesync.protocol import lock_file_sync_paths, record_canonical_file_change
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,7 @@ async def update_file_content(
     if len(data) > 1024 * 1024:
         raise FileContentError(400, "内容过大（上限 1MB）")
 
+    await lock_file_sync_paths(db, user_id, [file.storage_key])
     await storage.put(file.storage_key, data, file.mime_type or "text/markdown")
     file.size_bytes = len(data)
     file.size = _fmt_size(len(data))
