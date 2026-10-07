@@ -2,6 +2,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.events import publish_filesync_binding_health_changed
 from app.models import FileSyncBinding
 
 
@@ -28,4 +29,9 @@ async def update_binding_health(
         binding.health_revision += 1
     if changed or gap_detected:
         await db.commit()
+        await publish_filesync_binding_health_changed(
+            binding.user_id,
+            binding_id=binding.id,
+            revision=binding.health_revision,
+        )
     return True

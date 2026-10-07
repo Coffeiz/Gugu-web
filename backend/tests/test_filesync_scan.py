@@ -64,6 +64,23 @@ def test_symlink_makes_scan_incomplete_so_it_cannot_become_a_missing_delete(tmp_
     assert list((tmp_path / "tmp").glob("gugu-filesync-*.sqlite")) == []
 
 
+def test_manifest_budget_failure_removes_partial_manifest_and_never_returns_scan(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "entry.txt").write_text("new file")
+
+    with pytest.raises(ScanIncomplete, match="空间预算"):
+        scan_to_manifest(
+            root,
+            temp_directory=tmp_path / "tmp",
+            stop_event=Event(),
+            max_manifest_bytes=1,
+            commit_entries=1,
+        )
+
+    assert list((tmp_path / "tmp").glob("gugu-filesync-*.sqlite")) == []
+
+
 def test_unavailable_or_cancelled_scan_never_returns_a_complete_manifest(tmp_path: Path):
     with pytest.raises(ScanIncomplete):
         scan_to_manifest(
@@ -129,6 +146,54 @@ async def test_cancel_waits_for_scan_thread_exit_before_releasing_caller(tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stop_mode", ["cancel", "timeout"])
+async def test_stop_during_directory_traversal_joins_thread_before_releasing_slot(
+    tmp_path: Path, monkeypatch, stop_mode: str,
+):
+    import app.services.filesync.scan as scan
+
+    root = tmp_path / "root"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    (nested / "entry.txt").write_text("entry")
+    entered_nested = Event()
+    release_scandir = Event()
+    original_scandir = scan.os.scandir
+
+    def gated_scandir(path):
+        if Path(path) == nested:
+            entered_nested.set()
+            assert release_scandir.wait(timeout=3)
+        return original_scandir(path)
+
+    monkeypatch.setattr(scan.os, "scandir", gated_scandir)
+    stop = Event()
+    timeout = 0.02 if stop_mode == "timeout" else 10
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        task = asyncio.create_task(run_scan_in_thread(
+            executor,
+            root,
+            temp_directory=tmp_path / "tmp",
+            stop_event=stop,
+            max_manifest_bytes=1024 * 1024,
+            timeout_seconds=timeout,
+        ))
+        assert await asyncio.to_thread(entered_nested.wait, 2)
+        if stop_mode == "cancel":
+            task.cancel()
+            assert await asyncio.to_thread(stop.wait, 1)
+        else:
+            assert await asyncio.to_thread(stop.wait, 1)
+        assert not task.done()
+        release_scandir.set()
+        expected = asyncio.CancelledError if stop_mode == "cancel" else ScanTimedOut
+        with pytest.raises(expected):
+            await task
+
+    assert list((tmp_path / "tmp").glob("gugu-filesync-*.sqlite")) == []
+
+
+@pytest.mark.asyncio
 async def test_timeout_signals_and_joins_scan_thread_before_reporting_timeout(tmp_path: Path):
     exited = Event()
 
@@ -152,6 +217,69 @@ async def test_timeout_signals_and_joins_scan_thread_before_reporting_timeout(tm
             )
 
     assert exited.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_mode", ["cancel", "timeout"])
+async def test_cancel_during_real_file_hash_chunk_joins_thread_and_removes_manifest(
+    tmp_path: Path, monkeypatch, stop_mode: str,
+):
+    import app.services.filesync.scan as scan
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "large.bin").write_bytes(b"x" * (24 * 1024 * 1024))
+    chunk_read = Event()
+    release_reader = Event()
+    original_fdopen = scan.os.fdopen
+
+    class GatedReader:
+        def __init__(self, stream):
+            self.stream = stream
+            self.gated = False
+
+        def __enter__(self):
+            self.stream.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def read(self, size=-1):
+            value = self.stream.read(size)
+            if value and not self.gated:
+                self.gated = True
+                chunk_read.set()
+                assert release_reader.wait(timeout=3)
+            return value
+
+    def fdopen(descriptor, mode="r", *, closefd=True):
+        stream = original_fdopen(descriptor, mode, closefd=closefd)
+        return GatedReader(stream) if mode == "rb" else stream
+
+    monkeypatch.setattr(scan.os, "fdopen", fdopen)
+    stop = Event()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        task = asyncio.create_task(run_scan_in_thread(
+            executor,
+            root,
+            temp_directory=tmp_path / "tmp",
+            stop_event=stop,
+            max_manifest_bytes=8 * 1024 * 1024,
+            # 给工作线程稳定进入真实分块读取的时间，再验证超时能否 join。
+            timeout_seconds=1 if stop_mode == "timeout" else 10,
+        ))
+        assert await asyncio.to_thread(chunk_read.wait, 2)
+        if stop_mode == "cancel":
+            task.cancel()
+        assert await asyncio.to_thread(stop.wait, 1)
+        assert not task.done()
+        release_reader.set()
+        expected = asyncio.CancelledError if stop_mode == "cancel" else ScanTimedOut
+        with pytest.raises(expected):
+            await task
+
+    assert list((tmp_path / "tmp").glob("gugu-filesync-*.sqlite")) == []
 
 
 def test_complete_manifest_diff_is_bounded_and_marks_duplicate_or_type_conflicts_ambiguous(tmp_path: Path):

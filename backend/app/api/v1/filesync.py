@@ -23,6 +23,7 @@ from app.services.filesync import (
     list_reconcile_runs,
     request_run_cancel,
     serialize_reconcile_run,
+    notify_run_changed,
 )
 
 router = APIRouter(prefix="/filesync", tags=["filesync"])
@@ -54,6 +55,11 @@ async def bindings(user: User = Depends(get_current_user), db=Depends(get_db)):
         "rootPath": row.root_path,
         "status": row.status,
         "revision": row.revision,
+        "watcherStatus": row.watcher_status,
+        "needsReconcile": row.needs_reconcile,
+        "healthRevision": row.health_revision,
+        "gapRevision": row.gap_revision,
+        "healthErrorCode": row.health_error_code,
         "lastReconciledAt": row.last_reconciled_at.isoformat() if row.last_reconciled_at else None,
     } for row in rows]
 
@@ -68,6 +74,7 @@ async def dry_run(body: BindingRequest, user: User = Depends(get_current_user), 
             db, user_id=user.id, binding_id=binding.id, action="dry_run",
         )
         await db.commit()
+        await notify_run_changed(run)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ReconcileRunError as exc:
@@ -93,6 +100,7 @@ async def create_or_reconcile_binding(
             allow_delete=bool(body.confirm and body.confirm_delete),
         )
         await db.commit()
+        await notify_run_changed(run)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ReconcileRunError as exc:
@@ -118,6 +126,7 @@ async def reconcile_binding(
             allow_delete=body.allow_delete,
         )
         await db.commit()
+        await notify_run_changed(run)
     except ReconcileRunError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -156,6 +165,7 @@ async def cancel_run(
     if row is None:
         raise HTTPException(status_code=404, detail="对账任务不存在")
     await db.commit()
+    await notify_run_changed(row)
     return serialize_reconcile_run(row)
 
 

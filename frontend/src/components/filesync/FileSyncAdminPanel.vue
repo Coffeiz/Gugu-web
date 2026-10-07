@@ -75,8 +75,21 @@
         </div>
       </div>
 
-      <div v-if="dryResult" class="fs-result">
-        {{ t('filesyncAdmin.dryRunResult', { scanned: dryResult.summary.scanned, created: dryResult.summary.created, updated: dryResult.summary.updated, rejected: dryResult.summary.rejected, conflicts: dryResult.summary.conflicts }) }}
+      <div class="fs-block">
+        <div class="fs-block-title">{{ t('filesyncUser.recentRuns') }}</div>
+        <div v-if="!runs.length" class="fs-note">{{ t('filesyncUser.noRuns') }}</div>
+        <div v-for="run in runs" :key="run.id" class="fs-run">
+          <div class="fs-run-head">
+            <strong>#{{ run.bindingId }} · {{ t(`filesyncUser.action.${run.action}`) }} · {{ t(`filesyncUser.status.${run.status}`) }}</strong>
+            <ActionButton v-if="['queued', 'running', 'cancelling'].includes(run.status)" variant="secondary" fit :disabled="actionKey === `cancel-${run.id}`" @click="cancelRun(run)">
+              {{ t('filesyncUser.cancelRun') }}
+            </ActionButton>
+          </div>
+          <span>{{ t('filesyncUser.stage', { stage: t(`filesyncUser.stageName.${run.stage || 'unknown'}`) }) }} · {{ t('filesyncUser.scanned', { count: run.scannedCount }) }}</span>
+          <span>{{ resultSummary(run) }}</span>
+          <small v-if="run.errorCode" class="is-danger">{{ t('filesyncUser.error', { code: run.errorCode }) }}</small>
+          <small v-if="hasPartialResult(run)" class="is-warning">{{ t('filesyncUser.partialResult') }}</small>
+        </div>
       </div>
 
       <div v-if="status.conflicts.length" class="fs-block">
@@ -110,11 +123,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
-import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncActionResult } from '@/api/filesync'
+import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncRunStatus } from '@/api/filesync'
+import { useFileSyncAdminEvents } from '@/composables/filesync/useFileSyncAdminEvents'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -122,7 +136,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 const { t } = useI18n()
 const adminStore = useAdminStore()
 const status = ref<FileSyncAdminStatus | null>(null)
-const dryResult = ref<FileSyncActionResult | null>(null)
+const runs = ref<FileSyncRunStatus[]>([])
 const loading = ref(false)
 const syncSaving = ref(false)
 const error = ref('')
@@ -133,6 +147,8 @@ const resolutions = [
   { value: 'keep_both' as const, label: 'filesyncAdmin.keepBoth' },
   { value: 'cancel' as const, label: 'filesyncAdmin.cancelConflict' },
 ]
+let reloadQueued = false
+const adminEvents = useFileSyncAdminEvents(adminStore.authFetch, () => { void load() })
 
 // 绑定随 workspace 自动登记，健康绑定（无待处理/失败 journal、无冲突）对排查没有
 // 信息量；默认只列出有异常的，全量列表留给开关。
@@ -148,10 +164,23 @@ const visibleBindings = computed(() => {
 })
 
 async function load() {
-  if (loading.value) return
+  if (loading.value) {
+    reloadQueued = true
+    return
+  }
   loading.value = true
   error.value = ''
-  try { status.value = await filesyncAdminApi.status(adminStore.authFetch) }
+  try {
+    do {
+      reloadQueued = false
+      const [nextStatus, nextRuns] = await Promise.all([
+        filesyncAdminApi.status(adminStore.authFetch),
+        filesyncAdminApi.runs(adminStore.authFetch),
+      ])
+      status.value = nextStatus
+      runs.value = nextRuns
+    } while (reloadQueued)
+  }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { loading.value = false }
 }
@@ -176,7 +205,7 @@ async function toggleSync(enabled: boolean) {
 async function dryRun(bindingId: number) {
   actionKey.value = `dry-${bindingId}`
   error.value = ''
-  try { dryResult.value = await filesyncAdminApi.dryRun(adminStore.authFetch, bindingId) }
+  try { await filesyncAdminApi.dryRun(adminStore.authFetch, bindingId); await load() }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { actionKey.value = '' }
 }
@@ -199,7 +228,31 @@ async function resolve(conflictId: number, resolution: typeof resolutions[number
   finally { actionKey.value = '' }
 }
 
-onMounted(load)
+async function cancelRun(run: FileSyncRunStatus) {
+  if (!await confirmDialog({ title: t('filesyncUser.cancelTitle'), message: t('filesyncUser.cancelConfirm'), tone: 'warning', confirmText: t('filesyncUser.cancelRun') })) return
+  actionKey.value = `cancel-${run.id}`
+  error.value = ''
+  try { await filesyncAdminApi.cancelRun(adminStore.authFetch, run.id); await load() }
+  catch (e) { error.value = e instanceof Error ? e.message : String(e) }
+  finally { actionKey.value = '' }
+}
+
+function resultSummary(run: FileSyncRunStatus) {
+  const values = run.resultCounts
+  return t('filesyncUser.results', {
+    created: values.created ?? 0, updated: values.updated ?? 0, moved: values.moved ?? 0,
+    deleted: values.deleted ?? 0, skipped: values.skipped ?? 0,
+    conflicts: values.conflicts ?? 0, failed: values.failed ?? 0,
+  })
+}
+
+function hasPartialResult(run: FileSyncRunStatus) {
+  return ['failed', 'cancelled'].includes(run.status)
+    && ['created', 'updated', 'moved', 'deleted'].some(key => (run.resultCounts[key] ?? 0) > 0)
+}
+
+onMounted(() => { void load(); adminEvents.start() })
+onBeforeUnmount(adminEvents.stop)
 </script>
 
 <style scoped>
@@ -237,6 +290,10 @@ onMounted(load)
 .fs-row-main span,.fs-row-main small { color:var(--content-secondary); overflow-wrap:anywhere; }
 .fs-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; flex:0 0 auto; }
 .fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); font-size:var(--font-size-sm); }
+.fs-run { display:flex; flex-direction:column; gap:4px; padding:8px 0; border-top:1px solid var(--border-subtle); font-size:var(--font-size-xs); }
+.fs-run-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.fs-run-head strong,.fs-run span { min-width:0; overflow-wrap:anywhere; }
+.fs-run span { color:var(--content-secondary); }
 .fs-failure { border-top:1px solid var(--border-subtle); padding:7px 0; color:var(--status-danger); font-size:var(--font-size-xs); overflow-wrap:anywhere; }
 @media (max-width:720px) { .fs-head { flex-direction:column; } .fs-head-actions { width:100%; justify-content:space-between; } .fs-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .fs-row { align-items:flex-start; flex-direction:column; } .fs-actions { justify-content:flex-start; } .fs-banner { align-items:flex-start; flex-wrap:wrap; } .fs-banner-meta { margin-left:0; flex-basis:100%; } .fs-block-head { flex-direction:column; align-items:flex-start; gap:4px; } }
 </style>

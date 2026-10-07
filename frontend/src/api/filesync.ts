@@ -1,4 +1,70 @@
 /** Admin 文件同步 API 的类型和请求边界；页面不自行拼接同步业务请求。 */
+import { getCsrfHeaders, getToken } from '@/services/api'
+import { handleUnauthorized } from '@/services/authSession'
+
+const API_BASE = import.meta.env.VITE_API_URL ?? '/api/v1'
+
+export interface FileSyncRunStatus {
+  id: string
+  bindingId: number
+  action: 'dry_run' | 'repair' | 'initialize' | 'mirror_out'
+  allowDelete: boolean
+  status: 'queued' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled'
+  stage: string | null
+  scannedCount: number
+  resultCounts: Record<string, number>
+  errorCode: string | null
+  revision: number
+  cancelRequested: boolean
+  createdAt: string | null
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export interface FileSyncUserBinding {
+  id: number
+  source: string
+  mode: string
+  rootPath: string
+  status: string
+  revision: number
+  watcherStatus: string
+  needsReconcile: boolean
+  healthRevision: number
+  gapRevision: number
+  healthErrorCode: string | null
+  lastReconciledAt: string | null
+}
+
+async function userRequest<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(method === 'GET' ? {} : getCsrfHeaders()),
+    ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    method,
+    credentials: 'include',
+    headers: body === undefined ? headers : { ...headers, 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  if (response.status === 401) handleUnauthorized('user')
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(typeof data.detail === 'string' ? data.detail : `HTTP ${response.status}`)
+  }
+  return data as T
+}
+
+export const filesyncUserApi = {
+  bindings: () => userRequest<FileSyncUserBinding[]>('/filesync/bindings'),
+  runs: (limit = 20) => userRequest<FileSyncRunStatus[]>(`/filesync/runs?limit=${limit}`),
+  previewDefault: () => userRequest<FileSyncRunStatus>('/filesync/dry-run', 'POST', { rootPath: '.', mode: 'bidirectional' }),
+  preview: (binding: FileSyncUserBinding) => userRequest<FileSyncRunStatus>('/filesync/dry-run', 'POST', { rootPath: binding.rootPath, mode: binding.mode }),
+  initialize: (binding: FileSyncUserBinding) => userRequest<FileSyncRunStatus>('/filesync/bindings', 'POST', { rootPath: binding.rootPath, mode: binding.mode, confirm: true, confirmDelete: false }),
+  reconcile: (bindingId: number, allowDelete: boolean) => userRequest<FileSyncRunStatus>(`/filesync/bindings/${bindingId}/reconcile`, 'POST', { confirm: true, allowDelete }),
+  cancelRun: (runId: string) => userRequest<FileSyncRunStatus>(`/filesync/runs/${encodeURIComponent(runId)}/cancel`, 'POST'),
+}
+
 export interface FileSyncBindingStatus {
   id: number
   userId: string
@@ -87,11 +153,13 @@ async function read<T>(request: Promise<Response>): Promise<T> {
 
 export const filesyncAdminApi = {
   status: (fetcher: AdminFetch) => read<FileSyncAdminStatus>(fetcher('/api/v1/admin/filesync/status')),
+  runs: (fetcher: AdminFetch, limit = 50) => read<FileSyncRunStatus[]>(fetcher(`/api/v1/admin/filesync/runs?limit=${limit}`)),
+  cancelRun: (fetcher: AdminFetch, runId: string) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })),
   setEnabled: (fetcher: AdminFetch, enabled: boolean) => read<Record<string, unknown>>(fetcher('/api/v1/admin/config', {
     method: 'PATCH',
     body: JSON.stringify({ patch: { filesync: { enabled } } }),
   })),
-  dryRun: (fetcher: AdminFetch, bindingId: number) => read<FileSyncActionResult>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/dry-run`, { method: 'POST' })),
-  reconcile: (fetcher: AdminFetch, bindingId: number) => read<FileSyncActionResult>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/reconcile`, { method: 'POST', body: JSON.stringify({ confirm: true }) })),
+  dryRun: (fetcher: AdminFetch, bindingId: number) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/dry-run`, { method: 'POST' })),
+  reconcile: (fetcher: AdminFetch, bindingId: number) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/reconcile`, { method: 'POST', body: JSON.stringify({ confirm: true }) })),
   resolveConflict: (fetcher: AdminFetch, conflictId: number, resolution: FileSyncConflictResolution) => read<{ id: number; status: string; resolution: string }>(fetcher(`/api/v1/admin/filesync/conflicts/${conflictId}/resolve`, { method: 'POST', body: JSON.stringify({ resolution, confirm: resolution !== 'cancel' }) })),
 }

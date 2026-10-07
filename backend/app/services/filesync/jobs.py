@@ -8,6 +8,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.events import publish_filesync_binding_health_changed, publish_filesync_run_changed
 from app.core.tz import now_utc
 from app.models import FileSyncBinding, FileSyncReconcileRun
 
@@ -35,6 +36,19 @@ _EMPTY_RESULT_COUNTS = {
 
 class ReconcileRunError(ValueError):
     """可安全返回给调用方的任务状态错误。"""
+
+
+async def notify_run_changed(
+    row: FileSyncReconcileRun, *, coalesce: bool = False,
+) -> None:
+    """提交后发送轻量失效事件；任务快照仍以数据库为准。"""
+    await publish_filesync_run_changed(
+        row.user_id,
+        run_id=str(row.id),
+        binding_id=row.binding_id,
+        revision=row.revision,
+        coalesce=coalesce,
+    )
 
 
 async def enqueue_reconcile_run(
@@ -148,22 +162,34 @@ async def claim_next_run(
 
     # 不接管已失联任务：线程/事务可能仍在退出。租约过期只把任务变成明确失败，
     # 由用户显式重新从头发起，不自动重试或复用旧清单。
-    await db.execute(
-        update(FileSyncReconcileRun)
-        .where(
+    expired_rows = list((await db.scalars(
+        select(FileSyncReconcileRun).where(
             FileSyncReconcileRun.status.in_(RUNNING_STATUSES),
             FileSyncReconcileRun.lease_until <= timestamp,
-        )
-        .values(status="failed", stage="failed", error_code="worker_interrupted",
-                finished_at=timestamp, lease_owner=None, lease_until=None,
-                revision=FileSyncReconcileRun.revision + 1, updated_at=timestamp)
-    )
+        ).with_for_update(skip_locked=True)
+    )).all())
+    for expired in expired_rows:
+        expired.status = "failed"
+        expired.stage = "failed"
+        expired.error_code = "worker_interrupted"
+        expired.finished_at = timestamp
+        expired.lease_owner = None
+        expired.lease_until = None
+        expired.revision += 1
+        expired.updated_at = timestamp
+    await db.flush()
+
+    async def notify_expired() -> None:
+        for expired in expired_rows:
+            await notify_run_changed(expired)
+
     active_count = int(await db.scalar(select(func.count()).select_from(FileSyncReconcileRun).where(
         FileSyncReconcileRun.status.in_(RUNNING_STATUSES),
         FileSyncReconcileRun.lease_until > timestamp,
     )) or 0)
     if active_count >= concurrency:
         await db.commit()
+        await notify_expired()
         return None
     active_users = select(FileSyncReconcileRun.user_id).where(
         FileSyncReconcileRun.status.in_(RUNNING_STATUSES),
@@ -182,6 +208,7 @@ async def claim_next_run(
     row = result.scalar_one_or_none()
     if row is None:
         await db.commit()
+        await notify_expired()
         return None
     binding = await db.scalar(select(FileSyncBinding).where(
         FileSyncBinding.id == row.binding_id,
@@ -203,6 +230,8 @@ async def claim_next_run(
     row.revision += 1
     row.updated_at = timestamp
     await db.commit()
+    await notify_expired()
+    await notify_run_changed(row)
     return row if row.status == "running" else None
 
 
@@ -236,6 +265,7 @@ async def finish_run(
     error_code: str | None = None,
     stage: str | None = None,
     requeue_mirror_out_changes: bool = False,
+    reconciliation_complete: bool = False,
 ) -> bool:
     if status not in {"succeeded", "failed", "cancelled"}:
         raise ValueError("无效的任务终态")
@@ -261,31 +291,81 @@ async def finish_run(
     row.revision += 1
     row.updated_at = timestamp
     await db.flush()
+    if (
+        status == "succeeded"
+        and reconciliation_complete
+        and row.action in {"repair", "initialize"}
+    ):
+        health_changed = await _record_reconciliation_completion(db, row, timestamp)
+    else:
+        health_changed = None
     if requeue_mirror_out_changes and status == "succeeded" and row.action == "mirror_out":
-        binding = await db.scalar(select(FileSyncBinding).where(
-            FileSyncBinding.id == row.binding_id,
-            FileSyncBinding.user_id == row.user_id,
-            FileSyncBinding.status == "active",
-            FileSyncBinding.mode == "mirror_out",
-        ).with_for_update())
-        if (
-            binding is not None
-            and binding.root_fingerprint == row.root_fingerprint
-            and binding.revision > row.binding_revision
-        ):
-            db.add(FileSyncReconcileRun(
-                user_id=row.user_id,
-                binding_id=row.binding_id,
-                action="mirror_out",
-                allow_delete=False,
-                status="queued",
-                binding_revision=binding.revision,
-                gap_revision=binding.gap_revision,
-                root_fingerprint=binding.root_fingerprint,
-                result_counts=dict(_EMPTY_RESULT_COUNTS),
-            ))
+        await _requeue_mirror_out_changes(db, row)
     await db.commit()
+    if health_changed is not None:
+        await publish_filesync_binding_health_changed(
+            health_changed[0], binding_id=health_changed[1], revision=health_changed[2],
+        )
+    await notify_run_changed(row)
     return True
+
+
+async def _record_reconciliation_completion(
+    db: AsyncSession,
+    row: FileSyncReconcileRun,
+    timestamp: datetime,
+) -> tuple[object, int, int] | None:
+    binding = await db.scalar(select(FileSyncBinding).where(
+        FileSyncBinding.id == row.binding_id,
+        FileSyncBinding.user_id == row.user_id,
+        FileSyncBinding.status == "active",
+    ).with_for_update())
+    if binding is None or binding.root_fingerprint != row.root_fingerprint:
+        return None
+    binding.last_reconciled_at = timestamp
+    result_counts = row.result_counts or {}
+    unresolved = any(int(result_counts.get(key, 0) or 0) for key in (
+        "conflicts", "skipped", "failed",
+    ))
+    if (
+        row.action == "repair"
+        and binding.needs_reconcile
+        and binding.gap_revision == row.gap_revision
+        and not unresolved
+    ):
+        binding.needs_reconcile = False
+        binding.health_revision += 1
+        return binding.user_id, binding.id, binding.health_revision
+    return None
+
+
+async def _requeue_mirror_out_changes(
+    db: AsyncSession,
+    row: FileSyncReconcileRun,
+) -> None:
+    binding = await db.scalar(select(FileSyncBinding).where(
+        FileSyncBinding.id == row.binding_id,
+        FileSyncBinding.user_id == row.user_id,
+        FileSyncBinding.status == "active",
+        FileSyncBinding.mode == "mirror_out",
+    ).with_for_update())
+    if (
+        binding is None
+        or binding.root_fingerprint != row.root_fingerprint
+        or binding.revision <= row.binding_revision
+    ):
+        return
+    db.add(FileSyncReconcileRun(
+        user_id=row.user_id,
+        binding_id=row.binding_id,
+        action="mirror_out",
+        allow_delete=False,
+        status="queued",
+        binding_revision=binding.revision,
+        gap_revision=binding.gap_revision,
+        root_fingerprint=binding.root_fingerprint,
+        result_counts=dict(_EMPTY_RESULT_COUNTS),
+    ))
 
 
 def serialize_reconcile_run(row: FileSyncReconcileRun) -> dict:
@@ -327,7 +407,22 @@ async def update_run_progress(
         FileSyncReconcileRun.lease_owner == worker_id,
         FileSyncReconcileRun.status.in_(RUNNING_STATUSES),
     ).values(**values))
+    changed = None
+    if result.rowcount == 1:
+        changed = (await db.execute(select(
+            FileSyncReconcileRun.user_id,
+            FileSyncReconcileRun.binding_id,
+            FileSyncReconcileRun.revision,
+        ).where(FileSyncReconcileRun.id == run_id))).one_or_none()
     await db.commit()
+    if changed is not None:
+        await publish_filesync_run_changed(
+            changed.user_id,
+            run_id=str(run_id),
+            binding_id=changed.binding_id,
+            revision=changed.revision,
+            coalesce=True,
+        )
     return result.rowcount == 1
 
 

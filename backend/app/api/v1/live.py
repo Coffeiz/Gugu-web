@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -73,6 +74,40 @@ def _is_trash_purge_progress_event(value: Any) -> bool:
     )
 
 
+def _is_filesync_event(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if not (
+        value.get("protocol_version") == "live-event-v1"
+        and isinstance(value.get("event_id"), str)
+        and bool(value["event_id"])
+        and isinstance(value.get("binding_id"), int)
+        and not isinstance(value.get("binding_id"), bool)
+        and value["binding_id"] > 0
+        and isinstance(value.get("revision"), int)
+        and not isinstance(value.get("revision"), bool)
+        and value["revision"] >= 0
+        and isinstance(value.get("created_at"), str)
+    ):
+        return False
+    try:
+        datetime.fromisoformat(value["created_at"].replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if value.get("type") == "filesync.run.changed":
+        return isinstance(value.get("run_id"), str) and bool(value["run_id"])
+    return value.get("type") == "filesync.binding.health.changed"
+
+
+def _sanitize_filesync_event(value: dict) -> dict:
+    fields = {
+        "protocol_version", "event_id", "type", "binding_id", "revision", "created_at",
+    }
+    if value["type"] == "filesync.run.changed":
+        fields.add("run_id")
+    return {key: value[key] for key in fields if key in value}
+
+
 def _serialize_message(raw: Any) -> str | None:
     """过滤 Redis 中的非业务消息，返回一条完整 SSE data frame。"""
     if not isinstance(raw, str):
@@ -81,7 +116,9 @@ def _serialize_message(raw: Any) -> str | None:
         value = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    if not (_is_live_event(value) or _is_trash_purge_progress_event(value) or (
+    if _is_filesync_event(value):
+        value = _sanitize_filesync_event(value)
+    elif not (_is_live_event(value) or _is_trash_purge_progress_event(value) or (
         isinstance(value, dict)
         and isinstance(value.get("notification"), dict)
     ) or (
@@ -95,15 +132,19 @@ def _serialize_message(raw: Any) -> str | None:
     return f"data: {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
-async def _event_stream(request: Request, user_id: Any, active_check=None) -> AsyncIterator[str]:
+async def _event_stream(
+    request: Request,
+    channels: tuple[str, ...],
+    active_check=None,
+    active_user_id: Any = None,
+) -> AsyncIterator[str]:
     redis = get_redis()
     pubsub = redis.pubsub()
-    channels = (f"events:{user_id}", BROADCAST_CHANNEL)
     try:
         await pubsub.subscribe(*channels)
         yield ": connected\n\n"
         while not await request.is_disconnected():
-            if active_check is not None and not await active_check(user_id):
+            if active_check is not None and not await active_check(active_user_id):
                 yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
                 return
             message = await pubsub.get_message(
@@ -133,18 +174,34 @@ async def _event_stream(request: Request, user_id: Any, active_check=None) -> As
                 await close()
 
 
-@router.get("/stream")
-async def stream_live_events(
+def event_stream_response(
     request: Request,
-    user_id=Depends(get_current_user_id),
+    *,
+    channels: tuple[str, ...],
+    active_check=None,
+    active_user_id: Any = None,
 ) -> StreamingResponse:
-    """订阅当前用户的资源事件和全局通知，不创建或持有数据库连接。"""
+    """为已认证路由复用 SSE 传输；调用方必须先限定订阅频道。"""
     return StreamingResponse(
-        _event_stream(request, user_id, active_check=is_user_active),
+        _event_stream(request, channels, active_check, active_user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.get("/stream")
+async def stream_live_events(
+    request: Request,
+    user_id=Depends(get_current_user_id),
+) -> StreamingResponse:
+    """订阅当前用户的资源事件和全局通知，不创建或持有数据库连接。"""
+    return event_stream_response(
+        request,
+        channels=(f"events:{user_id}", BROADCAST_CHANNEL),
+        active_check=is_user_active,
+        active_user_id=user_id,
     )

@@ -300,6 +300,59 @@ async def publish_trash_purge_progress(
 
 
 BROADCAST_CHANNEL = "events:__broadcast__"
+FILESYNC_ADMIN_CHANNEL = "events:filesync-admin"
+
+
+async def _publish_filesync_event(
+    user_id, payload: dict, *, coalesce_key: str | None = None,
+) -> None:
+    """同一事件发给属主与受保护的 Admin 失效频道；内容不包含路径或扫描结果。"""
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    try:
+        redis = get_redis()
+        if coalesce_key is not None:
+            accepted = await redis.set(
+                f"filesync:sse:coalesce:{coalesce_key}",
+                payload["event_id"],
+                ex=1,
+                nx=True,
+            )
+            if not accepted:
+                return
+        await redis.publish(_channel(user_id), encoded)
+        await redis.publish(FILESYNC_ADMIN_CHANNEL, encoded)
+    except Exception:
+        # 任务/健康状态已持久化，Pub/Sub 仅作刷新提示，失败由首次加载/重连补读。
+        return
+
+
+async def publish_filesync_run_changed(
+    user_id, *, run_id: str, binding_id: int, revision: int,
+    coalesce: bool = False,
+) -> None:
+    run_id = str(run_id)
+    await _publish_filesync_event(user_id, {
+        "protocol_version": "live-event-v1",
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "type": "filesync.run.changed",
+        "run_id": run_id,
+        "binding_id": int(binding_id),
+        "revision": max(0, int(revision)),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }, coalesce_key=f"run:{run_id}" if coalesce else None)
+
+
+async def publish_filesync_binding_health_changed(
+    user_id, *, binding_id: int, revision: int,
+) -> None:
+    await _publish_filesync_event(user_id, {
+        "protocol_version": "live-event-v1",
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "type": "filesync.binding.health.changed",
+        "binding_id": int(binding_id),
+        "revision": max(0, int(revision)),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 async def broadcast(title: str, content: str = "", color: str = "#7b7fb2", nid=None,

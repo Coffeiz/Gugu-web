@@ -35,6 +35,7 @@ from .jobs import (
     list_reconcile_runs,
     request_run_cancel,
     serialize_reconcile_run,
+    notify_run_changed,
 )
 from .watcher import FileSyncWatcherManager
 
@@ -53,4 +54,5 @@ __all__ = [
     "FileSyncWatcherManager",
     "ReconcileRunError", "enqueue_reconcile_run", "get_reconcile_run",
     "list_reconcile_runs", "request_run_cancel", "serialize_reconcile_run",
+    "notify_run_changed",
 ]

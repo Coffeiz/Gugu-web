@@ -70,6 +70,7 @@
       <ActionButton v-if="currentType === 'root'" variant="primary" fit @click="workspaceDirectoryPanel?.openCreate()">
         <Icon name="admin.stack" :size="13" />{{ t('workspaceUi.createWorkspace') }}
       </ActionButton>
+      <FileSyncReconcilePanel v-if="currentType === 'root'" />
       <FileTrashToolbarActions v-if="currentType === 'trash'"
         :has-items="Boolean(contents.files.length || trashFolders.length)"
         :all-selected="allTrashSelected"
@@ -200,6 +201,7 @@ import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowser
 import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
 import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
+import FileSyncReconcilePanel from '@/components/filesync/FileSyncReconcilePanel.vue'
 import ArchiveOperationDialog from '@/views/Files/components/ArchiveOperationDialog.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'

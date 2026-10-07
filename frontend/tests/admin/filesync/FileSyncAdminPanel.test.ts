@@ -5,10 +5,21 @@ import FileSyncAdminPanel from '@/components/filesync/FileSyncAdminPanel.vue'
 
 const mocks = vi.hoisted(() => ({
   status: vi.fn(),
+  runs: vi.fn(),
+  invalidate: vi.fn(),
+  startEvents: vi.fn(),
+  stopEvents: vi.fn(),
 }))
 
 vi.mock('@/api/filesync', () => ({
-  filesyncAdminApi: { status: mocks.status },
+  filesyncAdminApi: { status: mocks.status, runs: mocks.runs },
+}))
+
+vi.mock('@/composables/filesync/useFileSyncAdminEvents', () => ({
+  useFileSyncAdminEvents: (_authFetch: unknown, onInvalidate: () => void) => {
+    mocks.invalidate.mockImplementation(onInvalidate)
+    return { start: mocks.startEvents, stop: mocks.stopEvents }
+  },
 }))
 
 vi.mock('@/stores/admin', () => ({
@@ -21,11 +32,11 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 vi.mock('@/composables/core/useConfirmDialog', () => ({
-  confirmDialog: vi.fn(),
+  confirmDialog: vi.fn().mockResolvedValue(true),
 }))
 
 vi.mock('@/components/common/controls/ActionButton.vue', () => ({
-  default: { template: '<button><slot /></button>' },
+  default: { inheritAttrs: false, template: '<button v-bind="$attrs"><slot /></button>' },
 }))
 
 vi.mock('@/components/common/controls/ToggleSwitch.vue', () => ({
@@ -60,6 +71,10 @@ afterEach(() => {
   app = undefined
   host = undefined
   mocks.status.mockReset()
+  mocks.runs.mockReset()
+  mocks.invalidate.mockReset()
+  mocks.startEvents.mockReset()
+  mocks.stopEvents.mockReset()
 })
 
 describe('FileSyncAdminPanel 监听缺口提示', () => {
@@ -94,6 +109,13 @@ describe('FileSyncAdminPanel 监听缺口提示', () => {
       },
       generatedAt: '2026-10-07T00:00:00Z',
     })
+    mocks.runs.mockResolvedValue([{
+      id: 'run-1', bindingId: 1, action: 'repair', allowDelete: false,
+      status: 'running', stage: 'scanning', scannedCount: 42,
+      resultCounts: { created: 2, updated: 1, moved: 0, deleted: 0, skipped: 0, conflicts: 0, failed: 0 },
+      errorCode: null, revision: 3, cancelRequested: false,
+      createdAt: null, startedAt: null, finishedAt: null,
+    }])
 
     const root = mountPanel()
     await flushUi()
@@ -103,5 +125,30 @@ describe('FileSyncAdminPanel 监听缺口提示', () => {
     expect(rows[0].textContent).toContain('filesyncAdmin.manualReconcileNeeded')
     expect(rows[0].textContent).toContain('filesyncAdmin.reconcile')
     expect(rows[0].textContent).toContain('watcher_error')
+    const run = root.querySelector('.fs-run')
+    expect(run?.textContent).toContain('filesyncUser.status.running')
+    expect(run?.textContent).toContain('filesyncUser.scanned')
+    expect(mocks.startEvents).toHaveBeenCalledOnce()
+  })
+
+  it('收到任务失效通知后重新读取 Admin 权威状态与任务进度', async () => {
+    mocks.status.mockResolvedValue({
+      featureEnabled: true, storageBackend: 'local', supported: true,
+      workspaceShellSupported: true, ignoredBindingCount: 0, bindings: [], conflicts: [],
+      failures: [], totals: { bindings: 0, journals: 0, pendingJournals: 0,
+        failedJournals: 0, rejectedJournals: 0, pendingConflicts: 0, pendingOutbox: 0 },
+      generatedAt: '2026-10-07T00:00:00Z',
+    })
+    mocks.runs.mockResolvedValue([])
+    mountPanel()
+    await flushUi()
+    mocks.status.mockClear()
+    mocks.runs.mockClear()
+
+    mocks.invalidate()
+    await flushUi()
+
+    expect(mocks.status).toHaveBeenCalledOnce()
+    expect(mocks.runs).toHaveBeenCalledOnce()
   })
 })

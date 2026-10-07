@@ -188,7 +188,7 @@
     "layer": "L1",
     "owner": "frontend/components/filesync",
     "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
-    "keyBehavior": "待手动核对绑定在异常筛选中可见并展示恢复提示",
+    "keyBehavior": "待手动核对绑定在异常筛选中可见，任务快照可显示进度且 SSE 失效通知触发权威状态补读",
     "ci": "frontend-test"
   },
   "frontend/tests/files/composables/useFileBrowserWindow.test.ts": {
@@ -270,6 +270,54 @@
     "productionEntry": "backend/app/services/files/trash_purge.py:run_trash_purge_worker",
     "keyBehavior": "清空任务全局限并发、用户隔离、完成冷却、提交后唤醒、向所有者推送进度及通知失败恢复",
     "ci": "backend-pytest"
+  },
+  "backend/tests/test_live_stream.py": {
+    "domain": "filesync-live-events",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/live.py",
+    "productionEntry": "backend/app/core/events.py:publish_filesync_run_changed",
+    "keyBehavior": "文件同步失效事件只发布安全标识、按任务合并进度且终态可通知；SSE 过滤拒绝畸形事件并剔除路径详情",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_ui_api.py": {
+    "domain": "filesync",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/filesync.py",
+    "productionEntry": "backend/app/api/v1/filesync.py:bindings",
+    "keyBehavior": "用户绑定快照返回监听健康与待手动核对状态，供用户侧恢复入口使用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/test_filesync_live_shell.py": {
+    "domain": "filesync-live-events",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync/watcher.py",
+    "productionEntry": "backend/app/services/filesync/targeted.py:project_path_events",
+    "keyBehavior": "临时根目录真实 Shell 创建、等长覆盖、删除依次即时更新 File 与 journal，不依赖手动整树核对",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/filesync/user-reconcile-panel.test.ts": {
+    "domain": "filesync",
+    "layer": "L1",
+    "owner": "frontend/components/filesync",
+    "productionEntry": "frontend/src/components/filesync/FileSyncReconcilePanel.vue",
+    "keyBehavior": "用户可先只读预检并显式初始化；监听恢复不清除待核对提示，SSE 通知会补读权威任务及部分结果",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/filesync/admin-events.test.ts": {
+    "domain": "filesync-live-events",
+    "layer": "L0",
+    "owner": "frontend/composables/filesync",
+    "productionEntry": "frontend/src/composables/filesync/useFileSyncAdminEvents.ts",
+    "keyBehavior": "Admin 首次连接与重连均触发权威快照补读，重复事件和旧修订不会导致多余刷新",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/filesync/live-store-events.test.ts": {
+    "domain": "filesync-live-events",
+    "layer": "L1",
+    "owner": "frontend/stores/live.ts",
+    "productionEntry": "frontend/src/stores/live.ts",
+    "keyBehavior": "用户级 SSE 分发 run 与 binding 健康失效事件，按各自修订忽略重复 ID 和旧状态",
+    "ci": "frontend-test"
   },
   "frontend/tests/mind/noteDraft.test.ts": {
     "domain": "mind-notes",

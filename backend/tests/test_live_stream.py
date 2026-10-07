@@ -126,11 +126,12 @@ async def test_event_stream_uses_user_and_broadcast_channels_and_closes_pubsub(m
     pubsub = _PubSub(request)
     monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
 
-    frames = [frame async for frame in live._event_stream(request, "user-1")]
+    channels = ("events:user-1", live.BROADCAST_CHANNEL)
+    frames = [frame async for frame in live._event_stream(request, channels)]
 
     assert frames[0] == ": connected\n\n"
     assert frames[1].startswith("data: ")
-    assert pubsub.subscribed == ("events:user-1", live.BROADCAST_CHANNEL)
+    assert pubsub.subscribed == channels
     assert pubsub.unsubscribed == pubsub.subscribed
     assert pubsub.closed is True
 
@@ -144,7 +145,9 @@ async def test_event_stream_stops_after_account_is_suspended(monkeypatch):
     async def inactive(_user_id):
         return False
 
-    frames = [frame async for frame in live._event_stream(request, "user-1", active_check=inactive)]
+    frames = [frame async for frame in live._event_stream(
+        request, ("events:user-1",), active_check=inactive, active_user_id="user-1",
+    )]
     assert frames == [": connected\n\n", "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"]
     assert pubsub.closed is True
 
@@ -155,10 +158,110 @@ async def test_event_stream_ends_cleanly_when_redis_disconnects(monkeypatch):
     pubsub = _DisconnectingPubSub(request)
     monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
 
-    frames = [frame async for frame in live._event_stream(request, "user-1")]
+    frames = [frame async for frame in live._event_stream(request, ("events:user-1",))]
 
     assert frames == [": connected\n\n", ": live connection reset; client will reconnect\n\n"]
     assert pubsub.closed is True
+
+
+@pytest.mark.parametrize("event", [
+    {
+        "protocol_version": "live-event-v1", "event_id": "evt-run-1",
+        "type": "filesync.run.changed", "run_id": "run-1", "binding_id": 7,
+        "revision": 3, "created_at": "2026-10-07T00:00:00+00:00",
+    },
+    {
+        "protocol_version": "live-event-v1", "event_id": "evt-health-1",
+        "type": "filesync.binding.health.changed", "binding_id": 7,
+        "revision": 4, "created_at": "2026-10-07T00:00:00+00:00",
+    },
+])
+def test_serialize_filesync_invalidation_exposes_only_safe_snapshot_keys(event):
+    unsafe = {**event, "root_path": "/private/user/files", "relative_path": "secret.txt"}
+    frame = live._serialize_message(json.dumps(unsafe))
+
+    assert frame is not None
+    serialized = json.loads(frame.removeprefix("data: ").strip())
+    assert serialized == event
+    assert "root_path" not in serialized
+    assert "relative_path" not in serialized
+
+
+def test_serialize_filesync_invalidation_rejects_invalid_revision_and_timestamp():
+    event = {
+        "protocol_version": "live-event-v1", "event_id": "evt-run-1",
+        "type": "filesync.run.changed", "run_id": "run-1", "binding_id": 7,
+        "revision": 3, "created_at": "2026-10-07T00:00:00+00:00",
+    }
+    assert live._serialize_message(json.dumps({**event, "revision": True})) is None
+    assert live._serialize_message(json.dumps({**event, "binding_id": 0})) is None
+    assert live._serialize_message(json.dumps({**event, "created_at": "not-a-date"})) is None
+    assert live._serialize_message(json.dumps({**event, "type": "filesync.unknown"})) is None
+
+
+@pytest.mark.asyncio
+async def test_publish_filesync_events_to_owner_and_admin_without_payload_details(monkeypatch):
+    class Redis:
+        def __init__(self):
+            self.published = []
+            self.throttle = {}
+
+        async def set(self, key, value, *, ex, nx):
+            assert ex == 1 and nx is True
+            if key in self.throttle:
+                return False
+            self.throttle[key] = value
+            return True
+
+        async def publish(self, channel, value):
+            self.published.append((channel, json.loads(value)))
+
+    redis = Redis()
+    monkeypatch.setattr(events, "get_redis", lambda: redis)
+    await events.publish_filesync_run_changed(
+        "user-1", run_id="run-1", binding_id=7, revision=2, coalesce=True,
+    )
+
+    assert [channel for channel, _ in redis.published] == [
+        "events:user-1", events.FILESYNC_ADMIN_CHANNEL,
+    ]
+    payload = redis.published[0][1]
+    assert payload["type"] == "filesync.run.changed"
+    assert payload["run_id"] == "run-1"
+    assert payload["revision"] == 2
+    assert not {"root_path", "relative_path", "scan_result"}.intersection(payload)
+
+
+@pytest.mark.asyncio
+async def test_coalesced_filesync_progress_drops_duplicate_window_but_keeps_terminal_publish(monkeypatch):
+    class Redis:
+        def __init__(self):
+            self.keys = set()
+            self.published = []
+
+        async def set(self, key, _value, **_kwargs):
+            if key in self.keys:
+                return False
+            self.keys.add(key)
+            return True
+
+        async def publish(self, channel, value):
+            self.published.append((channel, json.loads(value)))
+
+    redis = Redis()
+    monkeypatch.setattr(events, "get_redis", lambda: redis)
+    await events.publish_filesync_run_changed(
+        "user-1", run_id="run-1", binding_id=7, revision=2, coalesce=True,
+    )
+    await events.publish_filesync_run_changed(
+        "user-1", run_id="run-1", binding_id=7, revision=3, coalesce=True,
+    )
+    await events.publish_filesync_run_changed(
+        "user-1", run_id="run-1", binding_id=7, revision=4,
+    )
+
+    assert len(redis.published) == 4
+    assert redis.published[-1][1]["revision"] == 4
 
 
 @pytest.mark.asyncio

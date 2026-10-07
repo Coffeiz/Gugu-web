@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
@@ -18,10 +18,19 @@ from app.services.filesync.jobs import (
     list_reconcile_runs,
     request_run_cancel,
     serialize_reconcile_run,
+    notify_run_changed,
 )
+from app.core.events import FILESYNC_ADMIN_CHANNEL
+from app.api.v1.live import event_stream_response
 from sqlalchemy import select
 
 router = APIRouter(prefix="/admin/filesync", tags=["admin"])
+
+
+@router.get("/events")
+async def filesync_admin_events(request: Request):
+    """受 main.py Admin 鉴权保护的绑定/任务失效通知流。"""
+    return event_stream_response(request, channels=(FILESYNC_ADMIN_CHANNEL,))
 
 
 class BindingActionRequest(BaseModel):
@@ -54,6 +63,7 @@ async def binding_dry_run(binding_id: int, db: AsyncSession = Depends(get_db)):
             db, user_id=binding.user_id, binding_id=binding.id, action="dry_run",
         )
         await db.commit()
+        await notify_run_changed(run)
         return serialize_reconcile_run(run)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -83,6 +93,7 @@ async def binding_reconcile(
             db, user_id=binding.user_id, binding_id=binding.id, action="repair",
         )
         await db.commit()
+        await notify_run_changed(run)
         return serialize_reconcile_run(run)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -112,6 +123,7 @@ async def binding_initialize(
             db, user_id=binding.user_id, binding_id=binding.id, action="initialize",
         )
         await db.commit()
+        await notify_run_changed(run)
     except ReconcileRunError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return serialize_reconcile_run(run)
@@ -144,6 +156,7 @@ async def cancel_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
     if row is None:
         raise HTTPException(status_code=404, detail="对账任务不存在")
     await db.commit()
+    await notify_run_changed(row)
     return serialize_reconcile_run(row)
 
 

@@ -119,6 +119,90 @@ async def test_queued_cancel_is_terminal_but_running_cancel_waits_for_worker(db,
 
 
 @pytest.mark.asyncio
+async def test_complete_repair_without_delete_permission_clears_only_covered_gap(db, user_a):
+    binding = await _binding(db, user_a)
+    binding.needs_reconcile = True
+    binding.gap_revision = 5
+    await db.commit()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair", allow_delete=False,
+    )
+    claimed = await claim_next_run(db, "worker-a", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    claimed.result_counts = {
+        "created": 0, "updated": 0, "moved": 0, "deleted": 0,
+        "skipped": 0, "conflicts": 0, "failed": 0,
+    }
+    await db.commit()
+
+    assert await finish_run(
+        db, run.id, "worker-a", status="succeeded", reconciliation_complete=True,
+    )
+    await db.refresh(binding)
+
+    assert binding.last_reconciled_at is not None
+    assert binding.needs_reconcile is False
+    assert binding.health_revision == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_initialization_records_first_full_scan_without_erasing_gap(db, user_a):
+    binding = await _binding(db, user_a)
+    binding.needs_reconcile = True
+    await db.commit()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="initialize",
+    )
+    claimed = await claim_next_run(db, "worker-a", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+
+    assert await finish_run(
+        db, run.id, "worker-a", status="succeeded", reconciliation_complete=True,
+    )
+    await db.refresh(binding)
+
+    assert binding.last_reconciled_at is not None
+    assert binding.needs_reconcile is True
+
+
+@pytest.mark.asyncio
+async def test_repair_does_not_clear_new_gap_or_cancelled_run(db, user_a):
+    binding = await _binding(db, user_a)
+    binding.needs_reconcile = True
+    binding.gap_revision = 2
+    await db.commit()
+    run = await enqueue_reconcile_run(db, user_id=user_a.id, binding_id=binding.id, action="repair")
+    claimed = await claim_next_run(db, "worker-a", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    binding.gap_revision += 1
+    await db.commit()
+
+    assert await finish_run(
+        db, run.id, "worker-a", status="succeeded", reconciliation_complete=True,
+    )
+    await db.refresh(binding)
+    assert binding.last_reconciled_at is not None
+    assert binding.needs_reconcile is True
+    assert binding.health_revision == 0
+
+    reconciled_at = binding.last_reconciled_at
+    second = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair",
+    )
+    next_claim = await claim_next_run(db, "worker-a", now=now_utc())
+    assert next_claim is not None and next_claim.id == second.id
+    await request_run_cancel(db, second.id, user_id=user_a.id)
+    assert await finish_run(
+        db, second.id, "worker-a", status="succeeded", reconciliation_complete=True,
+    )
+    await db.refresh(binding)
+    cancelled = await get_reconcile_run(db, second.id)
+    assert cancelled is not None and cancelled.status == "cancelled"
+    assert binding.needs_reconcile is True
+    assert binding.last_reconciled_at == reconciled_at
+
+
+@pytest.mark.asyncio
 async def test_expired_worker_task_fails_instead_of_being_retried(db, user_a):
     binding = await _binding(db, user_a)
     run = await enqueue_reconcile_run(

@@ -32,6 +32,7 @@ from app.services.filesync.inventory import stage_database_inventory
 from app.services.filesync.jobs import (
     claim_next_run,
     finish_run,
+    notify_run_changed,
     renew_run_lease,
     update_run_progress,
 )
@@ -518,6 +519,7 @@ async def _project_batch(
         run.revision += 1
         run.updated_at = now_utc()
         await db.commit()
+        await notify_run_changed(run, coalesce=True)
         counts.clear()
         counts.update(updated)
         if outbox is not None:
@@ -583,10 +585,7 @@ async def _execute_scope(
         ))
         last_progress = (-1, -1)
         while not scan_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(scan_task), timeout=0.5)
-            except TimeoutError:
-                pass
+            await asyncio.wait({scan_task}, timeout=0.5)
             latest_progress = last_progress
             while True:
                 try:
@@ -625,6 +624,7 @@ async def _execute_scope(
             run.result_counts = counts
             run.revision += 1
             await db.commit()
+            await notify_run_changed(run, coalesce=True)
 
         for candidates in iter_reconcile_candidate_batches(manifest, batch_size=_DB_BATCH_SIZE):
             if worker_stop.is_set() or signals.stop.is_set():
@@ -671,6 +671,7 @@ async def _execute_scope(
                     run.revision += 1
                     run.updated_at = now_utc()
                     await db.commit()
+                    await notify_run_changed(run, coalesce=True)
             else:
                 projected = await _project_batch(
                     session_factory,
@@ -694,6 +695,7 @@ async def _execute_scope(
                 run.revision += 1
                 run.updated_at = now_utc()
                 await db.commit()
+                await notify_run_changed(run, coalesce=True)
 
         if signals.stop.is_set():
             raise InterruptedError("核对任务已停止")
@@ -832,6 +834,7 @@ async def _execute_mirror_out(
                 run.revision += 1
                 run.updated_at = now_utc()
                 await db.commit()
+                await notify_run_changed(run, coalesce=True)
         if signals.stop.is_set():
             if signals.cancelled.is_set():
                 return "cancelled", None, counts
@@ -867,6 +870,7 @@ async def _run_claimed(
     worker_id: str,
     worker_stop: asyncio.Event,
 ) -> None:
+    scope: _RunScope | None = None
     signals = _RunSignals(
         stop=new_scan_stop_event(),
         cancelled=asyncio.Event(),
@@ -915,26 +919,6 @@ async def _run_claimed(
                 current.result_counts = counts
                 current.revision += 1
                 current.updated_at = now_utc()
-                if (
-                    status == "succeeded"
-                    and scope.action == "repair"
-                    and scope.allow_delete
-                    and counts["conflicts"] == 0
-                    and counts["skipped"] == 0
-                    and counts["failed"] == 0
-                ):
-                    binding = await db.scalar(select(FileSyncBinding).where(
-                        FileSyncBinding.id == scope.binding_id,
-                        FileSyncBinding.user_id == scope.user_id,
-                        FileSyncBinding.status == "active",
-                    ).with_for_update())
-                    if (
-                        binding is not None
-                        and binding.root_fingerprint == scope.root_fingerprint
-                        and binding.gap_revision == scope.gap_revision
-                    ):
-                        binding.needs_reconcile = False
-                        binding.health_revision += 1
                 await db.commit()
             else:
                 await db.rollback()
@@ -942,9 +926,14 @@ async def _run_claimed(
             await finish_run(
                 db, run.id, worker_id, status=status, error_code=error_code,
                 stage="finished" if status == "succeeded" else status,
+                reconciliation_complete=(
+                    status == "succeeded"
+                    and scope is not None
+                    and scope.action in {"repair", "initialize"}
+                ),
                 requeue_mirror_out_changes=(
                     status == "succeeded"
-                    and "scope" in locals()
+                    and scope is not None
                     and scope.action == "mirror_out"
                 ),
             )

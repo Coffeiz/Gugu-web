@@ -30,6 +30,42 @@ export interface TrashPurgeProgressEvent {
   created_at: string
 }
 
+export interface FileSyncRunChangedEvent {
+  protocol_version: typeof LIVE_EVENT_PROTOCOL_VERSION
+  event_id: string
+  type: 'filesync.run.changed'
+  run_id: string
+  binding_id: number
+  revision: number
+  created_at: string
+}
+
+export interface FileSyncBindingHealthChangedEvent {
+  protocol_version: typeof LIVE_EVENT_PROTOCOL_VERSION
+  event_id: string
+  type: 'filesync.binding.health.changed'
+  binding_id: number
+  revision: number
+  created_at: string
+}
+
+export type FileSyncEventPayload = FileSyncRunChangedEvent | FileSyncBindingHealthChangedEvent
+
+export function isFileSyncEventPayload(value: unknown): value is FileSyncEventPayload {
+  if (!value || typeof value !== 'object') return false
+  const event = value as Record<string, unknown>
+  const common = event.protocol_version === LIVE_EVENT_PROTOCOL_VERSION
+    && typeof event.event_id === 'string' && event.event_id.length > 0
+    && Number.isSafeInteger(event.binding_id) && Number(event.binding_id) > 0
+    && Number.isSafeInteger(event.revision) && Number(event.revision) >= 0
+    && typeof event.created_at === 'string' && !Number.isNaN(Date.parse(event.created_at))
+  if (!common) return false
+  if (event.type === 'filesync.run.changed') {
+    return typeof event.run_id === 'string' && event.run_id.length > 0
+  }
+  return event.type === 'filesync.binding.health.changed'
+}
+
 export function isTrashPurgeProgressEvent(value: unknown): value is TrashPurgeProgressEvent {
   if (!value || typeof value !== 'object') return false
   const event = value as Record<string, unknown>
