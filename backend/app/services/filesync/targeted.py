@@ -2,8 +2,8 @@
 
 TS sidecar 的事件自带 relative_path/operation/object_type；本模块把一小批
 路径事件直接投影为 File/Folder 与 journal，不再对整个绑定根做全树对账。
-任何路径级失败按 rejected 记录（与整树 reconcile 的处置一致）；只有基础
-设施级异常才向上抛给 watcher 回退整树补偿。
+路径级失败按 rejected 记录；基础设施异常向 watcher 抛出，由 watcher 对精确
+路径做有限重试，耗尽后持久标记缺口并提示手动核对，不自动启动整树扫描。
 """
 from __future__ import annotations
 
@@ -72,6 +72,20 @@ class PathEventBatch:
 
     def all_paths(self) -> set[str]:
         return self.changed | self.deleted | self.folders_created | self.folders_deleted
+
+    def merge(self, newer: PathEventBatch) -> None:
+        """合并较新的事件；同一路径以较新操作为准。"""
+        newer_files = newer.changed | newer.deleted
+        self.changed.difference_update(newer_files)
+        self.deleted.difference_update(newer_files)
+        self.changed.update(newer.changed)
+        self.deleted.update(newer.deleted)
+
+        newer_folders = newer.folders_created | newer.folders_deleted
+        self.folders_created.difference_update(newer_folders)
+        self.folders_deleted.difference_update(newer_folders)
+        self.folders_created.update(newer.folders_created)
+        self.folders_deleted.update(newer.folders_deleted)
 
 
 async def _quota_limit(db: AsyncSession, user_id) -> int:

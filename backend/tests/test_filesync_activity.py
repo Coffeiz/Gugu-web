@@ -17,11 +17,14 @@ from app.models import FileSyncReconcileRun
 from sqlalchemy import select
 
 
-def test_filesync_configuration_has_no_implicit_periodic_integrity_scan():
+def test_filesync_configuration_has_bounded_parallel_scans_without_integrity_schedule():
     settings = FileSyncSettings()
 
     assert settings.compensation_interval_seconds == 86400
     assert not hasattr(settings, "integrity_interval_seconds")
+    assert settings.reconcile_concurrency == 2
+    assert settings.reconcile_hash_concurrency == 2
+    assert settings.reconcile_write_concurrency == 1
 
 
 @pytest.mark.asyncio
@@ -223,6 +226,7 @@ async def test_queued_daily_run_does_not_make_watcher_activity_unreliable(
     binding = FileSyncBinding(
         user_id=user_a.id, source="local_directory", status="active",
         root_path=".", root_fingerprint="d" * 64,
+        watcher_status="ready", needs_reconcile=False,
     )
     db.add(binding)
     await db.flush()

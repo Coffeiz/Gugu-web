@@ -824,16 +824,17 @@ async def test_watcher_tracks_only_active_users_and_leaves_scans_to_job_worker(d
 
 
 @pytest.mark.asyncio
-async def test_watcher_skips_buffered_paths_after_compensation_rollback(
+async def test_watcher_preserves_buffered_paths_after_targeted_rollback(
     db, user_a, monkeypatch, tmp_path,
 ):
     """数据库异常触发 rollback 后，本轮不再读取已过期的绑定 ORM 属性。
 
-    防止补偿扫描断连后，精确事件分支读取 `binding.user_id` 触发
-    MissingGreenlet；事件应转为整树回退，供后续新 Session 重试。
+    防止精确事件分支读取 `binding.user_id` 触发 MissingGreenlet；失败事件
+    应保留在精确路径缓冲区重试，而不是转为依赖基线的整树任务。
     """
     import asyncio
 
+    from app.models import FileSyncReconcileRun
     import app.services.filesync.watcher as watcher
 
     monkeypatch.setattr(watcher, "is_file_sync_enabled", lambda: True)
@@ -845,6 +846,7 @@ async def test_watcher_skips_buffered_paths_after_compensation_rollback(
     db.add(binding)
     await db.commit()
     await db.refresh(binding)
+    binding_id = binding.id
 
     root = tmp_path / str(user_a.id) / "个人文件"
     root.mkdir(parents=True)
@@ -871,7 +873,7 @@ async def test_watcher_skips_buffered_paths_after_compensation_rollback(
     monkeypatch.setattr(watcher, "_refresh_bindings", lambda _db: resolved([binding]))
 
     async def refresh_sidecar_bindings(_manager, _db, _bindings, _pending):
-        return {binding.id: (binding, root)}, {binding.id}
+        return {binding_id: (binding, root)}, {binding_id}
 
     async def fail_projection(*_args, **_kwargs):
         stop_event.set()
@@ -882,12 +884,16 @@ async def test_watcher_skips_buffered_paths_after_compensation_rollback(
     monkeypatch.setattr(watcher, "project_path_events", fail_projection)
 
     manager = watcher.FileSyncWatcherManager(refresh_interval=0, sidecar=FakeSidecar())
-    manager._path_events[binding.id] = path_batch
+    manager._path_events[binding_id] = path_batch
     stop_event = asyncio.Event()
     await asyncio.wait_for(manager.run(stop_event), timeout=2)
 
-    assert binding.id not in manager._path_events
-    assert binding.id in manager._pending_fallback
+    assert binding_id in manager._path_events
+    assert manager._path_events[binding_id].changed == {"deferred.txt"}
+    assert manager._path_event_retries[binding_id] == 1
+    assert (await db.scalars(select(FileSyncReconcileRun).where(
+        FileSyncReconcileRun.binding_id == binding_id,
+    ))).all() == []
 
 
 @pytest.mark.asyncio

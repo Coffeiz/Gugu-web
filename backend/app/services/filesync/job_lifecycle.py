@@ -125,6 +125,8 @@ async def enqueue_reconcile(
     if active is not None:
         if mode == "integrity_full":
             active.mode = mode
+        if active.status == "queued" and active.started_at is None:
+            active.gap_revision_at_start = int(binding.gap_revision or 0)
         active.dry_run = bool(active.dry_run and dry_run)
         active.allow_delete = bool(active.allow_delete and allow_delete)
         if active.reason != "manual":
@@ -143,6 +145,7 @@ async def enqueue_reconcile(
         allow_delete=allow_delete,
         status="queued",
         binding_revision=binding.scope_revision,
+        gap_revision_at_start=int(binding.gap_revision or 0),
         dirty_revision=binding.dirty_revision,
         priority_since=now_utc(),
         result_counts={},

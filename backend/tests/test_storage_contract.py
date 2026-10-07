@@ -220,6 +220,17 @@ async def test_stat(storage):
     assert info is not None and info.size == 5
 
 
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="平台不支持符号链接")
+async def test_stat_does_not_follow_symbolic_links(storage, tmp_path):
+    target = tmp_path / "outside.txt"
+    target.write_text("outside", encoding="utf-8")
+    (storage.root / "u/a").mkdir(parents=True)
+    (storage.root / "u/a/link.txt").symlink_to(target)
+
+    assert await storage.stat("u/a/link.txt") is None
+    assert "u/a/link.txt" not in await storage.list_keys()
+
+
 # ── P1.1 文件夹生命周期钩子（Local 真实目录语义；OSS 侧 no-op，无可断言）──────────
 
 async def test_ensure_folder_materializes_empty_dir(storage):

@@ -29,3 +29,25 @@ async def update_binding_health(
     if changed or gap_detected:
         await db.commit()
     return True
+
+
+def clear_reconcile_gap_if_current(
+    binding: FileSyncBinding,
+    *,
+    gap_revision_at_start: int,
+    mode: str,
+    dry_run: bool,
+    allow_delete: bool,
+) -> bool:
+    """只在完整修复覆盖既有缺口且监听仍健康时清除提示。"""
+    if (
+        mode != "integrity_full"
+        or dry_run
+        or not allow_delete
+        or binding.watcher_status != "ready"
+        or binding.health_error_code is not None
+        or binding.gap_revision != gap_revision_at_start
+    ):
+        return False
+    binding.needs_reconcile = False
+    return True

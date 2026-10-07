@@ -18,6 +18,7 @@ from app.models import (
 from app.services.filesync.job_errors import ProjectionSliceExpired
 from app.services.filesync.job_spec import ReconcileJobSpec
 from app.services.filesync.job_lifecycle import publish_scan_success, record_run_progress
+from app.services.filesync.health import clear_reconcile_gap_if_current
 from app.services.filesync.checkpoint import ScanCandidateEntries, ScanCheckpointStore
 from app.services.filesync.plan import (
     iter_reconcile_candidates, iter_success_baseline_entries,
@@ -176,7 +177,14 @@ def candidate_batches_after(
     candidates = iter_reconcile_candidates(
         scan.entries, previous, complete=scan.complete, start_after=cursor,
     )
-    for batch in _batches((item.relative_path for item in candidates), batch_size):
+    for batch in _batches(
+        (
+            item.relative_path for item in candidates
+            if item.operation not in {"protected", "excluded"}
+            and not (item.current is not None and item.current.object_type == "excluded")
+        ),
+        batch_size,
+    ):
         yield batch
 
 
@@ -289,7 +297,8 @@ async def apply_scan_projection(
     counts = dict(checkpoint_state.get("projection_counts") or {
         "scanned": len(scan.entries), "hashed": scan.hashed_count,
         "reused": scan.file_count - scan.hashed_count, "created": 0,
-        "updated": 0, "moved": 0, "deleted": 0, "rejected": 0, "conflicts": 0,
+        "updated": 0, "moved": 0, "deleted": 0, "rejected": 0,
+        "excluded": scan.excluded_count, "conflicts": 0,
     })
     await prepare_conflict_blocks(
         execution,
@@ -449,6 +458,13 @@ async def apply_scan_projection(
             # 下次扫描会以当前成功代次重新计算差异。
             binding.baseline_generation = staged_generation
             binding.baseline_dirty_revision = spec["dirty_revision"]
+            clear_reconcile_gap_if_current(
+                binding,
+                gap_revision_at_start=run.gap_revision_at_start,
+                mode=spec["mode"],
+                dry_run=spec["dry_run"],
+                allow_delete=spec["allow_delete"],
+            )
             binding.last_reconciled_at = now_utc()
             if spec["reason"] == "daily":
                 binding.last_daily_reconciled_at = now_utc()

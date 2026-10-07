@@ -55,23 +55,56 @@ def iter_reconcile_candidates(
     previous_items = iter(_ordered_items(previous, start_after))
     current_item = next(current_items, None)
     previous_item = next(previous_items, None)
+    excluded_roots: set[str] = set()
+
+    def is_excluded(path: str) -> bool:
+        parts = path.split("/")
+        for index in range(1, len(parts) + 1):
+            if "/".join(parts[:index]) in excluded_roots:
+                return True
+        return False
+
+    # `start_after` is used by resumable conflict inspection. Seed only excluded
+    # ancestors of the cursor; any later marker is encountered in merge order.
+    if start_after:
+        parts = start_after.split("/")
+        for index in range(1, len(parts) + 1):
+            prefix = "/".join(parts[:index])
+            try:
+                entry = current[prefix]
+            except KeyError:
+                continue
+            if entry.object_type == "excluded":
+                excluded_roots.add(prefix)
+
     while current_item is not None or previous_item is not None:
         if previous_item is None or (
             current_item is not None and current_item[0] < previous_item[0]
         ):
             path, entry = current_item
+            if entry.object_type == "excluded":
+                excluded_roots.add(path)
+                yield ReconcileCandidate("excluded", path, entry, None)
+                current_item = next(current_items, None)
+                continue
             yield ReconcileCandidate("added", path, entry, None)
             current_item = next(current_items, None)
             continue
         if current_item is None or previous_item[0] < current_item[0]:
             path, entry = previous_item
-            if complete:
+            if is_excluded(path):
+                yield ReconcileCandidate("protected", path, None, entry)
+            elif complete:
                 yield ReconcileCandidate("missing", path, None, entry)
             previous_item = next(previous_items, None)
             continue
         path, current_entry = current_item
         _, previous_entry = previous_item
-        operation = "unchanged" if current_entry == previous_entry else "changed"
+        if current_entry.object_type == "excluded":
+            excluded_roots.add(path)
+            operation = "protected"
+        else:
+            operation = "unchanged" if current_entry == previous_entry else "changed"
         yield ReconcileCandidate(operation, path, current_entry, previous_entry)
         current_item = next(current_items, None)
         previous_item = next(previous_items, None)
@@ -112,7 +145,13 @@ def iter_success_baseline_entries(
 ) -> Iterator[tuple[str, ScanEntry]]:
     """生成下一基线的有序流；删除同步关闭时保留尚未删除的旧条目。"""
     for candidate in iter_reconcile_candidates(current, previous, complete=True):
-        if is_blocked is not None and is_blocked(candidate.relative_path):
+        if candidate.operation == "protected":
+            if candidate.previous is not None:
+                yield candidate.relative_path, candidate.previous
+        elif candidate.operation == "excluded":
+            if candidate.current is not None:
+                yield candidate.relative_path, candidate.current
+        elif is_blocked is not None and is_blocked(candidate.relative_path):
             if candidate.previous is not None:
                 yield candidate.relative_path, candidate.previous
         elif candidate.current is not None:

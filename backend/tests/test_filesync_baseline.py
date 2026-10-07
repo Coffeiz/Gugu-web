@@ -37,6 +37,16 @@ def test_baseline_generation_round_trips_without_absolute_paths(monkeypatch, tmp
     assert "notes/today.md" in serialized
 
 
+def test_baseline_round_trips_skipped_symlink_marker(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    marker = ScanEntry("node_modules/.bin", "excluded", 0, 78, 90, fingerprint_version=FINGERPRINT_VERSION)
+
+    generation = store.stage(root_fingerprint="b" * 64, entries={marker.relative_path: marker})
+    manifest = store.load(generation, expected_root_fingerprint="b" * 64)
+
+    assert manifest.entries[marker.relative_path] == marker
+
+
 def test_baseline_rejects_wrong_scope_and_tampered_manifest(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     generation = store.stage(

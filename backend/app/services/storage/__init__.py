@@ -449,7 +449,7 @@ class LocalStorageBackend(StorageBackend):
         def _st():
             p = self.root / key
             try:
-                s = p.stat()
+                s = p.lstat()
             except FileNotFoundError:
                 return None
             if not stat.S_ISREG(s.st_mode):

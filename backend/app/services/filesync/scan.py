@@ -36,6 +36,7 @@ class ScanResult:
     checkpoint_state: Mapping | None = None
     checkpoint_entries: Mapping[str, ScanEntry] | None = None
     reset_prefixes: tuple[str, ...] = ()
+    excluded_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -236,10 +237,20 @@ def scan_binding_tree(
             "directory_count": directory_count,
             "hashed_count": hashed_count,
             "rejected_count": rejected_count,
+            "excluded_count": sum(
+                1 for _, entry in _iter_entries(entries) if entry.object_type == "excluded"
+            ),
         })
         return ScanResult(
             entries, False, file_count, directory_count, hashed_count,
             rejected_count, "slice_expired", cursor, entries, tuple(reset_prefixes),
+            sum(1 for _, entry in _iter_entries(entries) if entry.object_type == "excluded"),
+        )
+
+    def excluded_entry(relative: str, info) -> ScanEntry:
+        return ScanEntry(
+            relative, "excluded", 0, info.st_mtime_ns,
+            getattr(info, "st_ctime_ns", 0), None, FINGERPRINT_VERSION,
         )
 
     def identity(info) -> dict[str, int]:
@@ -321,22 +332,24 @@ def scan_binding_tree(
                                 f"{active_dir}/{child.name}" if active_dir else child.name,
                             )
                             prior_info = child.stat(follow_symlinks=False)
-                            if child.is_symlink():
-                                return ScanResult(
-                                    entries, False, file_count, directory_count, hashed_count,
-                                    rejected_count + 1, "unsafe_entry",
-                                )
+                            prior_is_symlink = child.is_symlink()
                             prior_entry = entries.get(prior_relative)
                             prior_is_directory = child.is_dir(follow_symlinks=False)
                             prior_is_file = child.is_file(follow_symlinks=False)
                             prior_matches = bool(
                                 prior_entry is not None
-                                and (prior_is_directory or prior_is_file)
-                                and prior_entry.object_type == ("folder" if prior_is_directory else "file")
-                                and prior_entry.size_bytes == (0 if prior_is_directory else prior_info.st_size)
+                                and (
+                                    (prior_is_symlink and prior_entry.object_type == "excluded")
+                                    or (
+                                        not prior_is_symlink
+                                        and (prior_is_directory or prior_is_file)
+                                        and prior_entry.object_type == ("folder" if prior_is_directory else "file")
+                                        and prior_entry.size_bytes == (0 if prior_is_directory else prior_info.st_size)
+                                    )
+                                )
                                 and prior_entry.mtime_ns == prior_info.st_mtime_ns
                                 and prior_entry.ctime_ns == getattr(prior_info, "st_ctime_ns", 0)
-                                and (prior_is_directory or prior_entry.fingerprint)
+                                and (prior_is_directory or prior_is_symlink or prior_entry.fingerprint)
                             )
                         except (OSError, ValueError):
                             prior_matches = False
@@ -344,7 +357,7 @@ def scan_binding_tree(
                             prior_is_directory = False
                         if not prior_matches:
                             if prior_relative:
-                                if prior_is_directory:
+                                if prior_is_directory or (prior_entry is not None and prior_entry.object_type == "folder"):
                                     delete_prefix = getattr(entries, "delete_prefix", None)
                                     if delete_prefix is not None:
                                         delete_prefix(prior_relative)
@@ -372,13 +385,30 @@ def scan_binding_tree(
                             f"{active_dir}/{child.name}" if active_dir else child.name,
                         )
                         info = child.stat(follow_symlinks=False)
-                        if child.is_symlink():
-                            rejected_count += 1
-                            return ScanResult(
-                                entries, False, file_count, directory_count, hashed_count,
-                                rejected_count, "unsafe_entry",
-                            )
                         candidate_old = entries.get(relative)
+                        if child.is_symlink():
+                            if (
+                                candidate_old is not None
+                                and candidate_old.object_type == "excluded"
+                                and candidate_old.mtime_ns == info.st_mtime_ns
+                                and candidate_old.ctime_ns == getattr(info, "st_ctime_ns", 0)
+                            ):
+                                active_ordinal = ordinal + 1
+                                continue
+                            if candidate_old is not None and candidate_old.object_type == "folder":
+                                delete_prefix = getattr(entries, "delete_prefix", None)
+                                if delete_prefix is not None:
+                                    delete_prefix(relative)
+                                else:
+                                    for saved_path in list(entries):
+                                        if saved_path == relative or saved_path.startswith(relative + "/"):
+                                            del entries[saved_path]
+                            if max_entries is not None and processed >= max_entries:
+                                return paused()
+                            entries[relative] = excluded_entry(relative, info)
+                            processed += 1
+                            active_ordinal = ordinal + 1
+                            continue
                         if child.is_dir(follow_symlinks=False):
                             candidate_matches = bool(
                                 candidate_old is not None
@@ -520,12 +550,18 @@ def scan_binding_tree(
         )
         for child_path, child in children:
             child_name = child_path.rpartition("/")[2]
-            digest.update(("d" if child.object_type == "folder" else "f").encode("ascii"))
+            kind = {"folder": "d", "file": "f", "excluded": "x"}.get(child.object_type)
+            if kind is None:
+                raise ValueError("未知扫描条目类型")
+            digest.update(kind.encode("ascii"))
             digest.update(b"\0")
             digest.update(child_name.encode("utf-8"))
             digest.update(b"\0")
             if child.fingerprint:
                 digest.update(bytes.fromhex(child.fingerprint))
+            elif child.object_type == "excluded":
+                digest.update(child.mtime_ns.to_bytes(8, "big", signed=False))
+                digest.update(child.ctime_ns.to_bytes(8, "big", signed=False))
             digest.update(b"\n")
         entries[relative] = ScanEntry(
             relative, "folder", 0, entry.mtime_ns, entry.ctime_ns, digest.hexdigest(),
@@ -534,4 +570,10 @@ def scan_binding_tree(
     return ScanResult(
         entries, True, file_count, directory_count, hashed_count,
         rejected_count,
+        excluded_count=sum(1 for _, entry in _iter_entries(entries) if entry.object_type == "excluded"),
     )
+
+
+def _iter_entries(entries):
+    iterator = getattr(entries, "iter_sorted", None)
+    yield from (iterator() if iterator is not None else entries.items())

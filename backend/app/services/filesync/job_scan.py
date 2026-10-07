@@ -162,6 +162,7 @@ def _completed_scan(context: ScanExecutionContext) -> ScanResult:
         int(state.get("directory_count", 0)),
         int(state.get("hashed_count", 0)),
         int(state.get("rejected_count", 0)),
+        excluded_count=int(state.get("excluded_count", 0)),
     )
 
 
@@ -237,6 +238,7 @@ def _commit_completed_scan(context: ScanExecutionContext, scan: ScanResult) -> N
         "directory_count": scan.directory_count,
         "hashed_count": scan.hashed_count,
         "rejected_count": scan.rejected_count,
+        "excluded_count": scan.excluded_count,
     }
     context.checkpoint_store.commit_scan_segment(state)
     context.checkpoint_state = state
@@ -255,5 +257,6 @@ async def _persist_scan_progress(
             "hashed": scan.hashed_count,
             "reused": scan.file_count - scan.hashed_count,
             "rejected": scan.rejected_count,
+            "excluded": scan.excluded_count,
         },
     )

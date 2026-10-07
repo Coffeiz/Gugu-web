@@ -211,12 +211,14 @@ async def test_reconcile_job_projects_files_and_publishes_baseline_after_scan(
     binding = FileSyncBinding(
         user_id=user_a.id, source="local_directory", status="active", root_path=".",
         root_fingerprint=root_fingerprint(user_root),
+        watcher_status="ready", needs_reconcile=True, gap_revision=3,
     )
     db.add(binding)
     await db.commit()
     await db.refresh(binding)
 
     queued = await jobs.enqueue_reconcile(db, binding, reason="bootstrap", mode="integrity_full")
+    assert queued.gap_revision_at_start == 3
     await db.commit()
     async with db_session._SessionLocal() as worker_db:
         claimed = await jobs.claim_due_job(worker_db)
@@ -236,6 +238,7 @@ async def test_reconcile_job_projects_files_and_publishes_baseline_after_scan(
     assert run.cumulative_runtime_seconds > 0
     assert refreshed_binding.baseline_generation == run.candidate_generation
     assert refreshed_binding.baseline_dirty_revision == refreshed_binding.dirty_revision
+    assert refreshed_binding.needs_reconcile is False
 
 
 @pytest.mark.asyncio

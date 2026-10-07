@@ -100,7 +100,7 @@
 
       <div v-if="dryResult" class="fs-result" :class="dryResult.status === 'failed' ? 'is-error' : dryResult.status === 'succeeded' ? 'is-success' : 'is-pending'" role="status" aria-live="polite">
         <template v-if="dryResult.status === 'succeeded'">
-          {{ t('filesyncAdmin.dryRunResult', { scanned: dryResult.resultCounts.scanned || 0, created: dryResult.resultCounts.created || 0, updated: dryResult.resultCounts.updated || 0, rejected: dryResult.resultCounts.rejected || 0, conflicts: dryResult.resultCounts.conflicts || 0 }) }}
+          {{ t('filesyncAdmin.dryRunResult', { scanned: dryResult.resultCounts.scanned || 0, created: dryResult.resultCounts.created || 0, updated: dryResult.resultCounts.updated || 0, rejected: dryResult.resultCounts.rejected || 0, excluded: dryResult.resultCounts.excluded || 0, conflicts: dryResult.resultCounts.conflicts || 0 }) }}
         </template>
         <template v-else>
           {{ t('filesyncAdmin.dryRunState', { status: runStatusLabel(dryResult), stage: runStageLabel(dryResult.stage) }) }}
@@ -109,19 +109,24 @@
       </div>
 
       <div v-if="status.reconcileRuns.length" ref="jobsSection" class="fs-block">
-        <div class="fs-block-title">{{ t('filesyncAdmin.jobs') }}</div>
+        <div class="fs-block-head">
+          <div class="fs-block-title">{{ t('filesyncAdmin.jobs') }}</div>
+          <span v-if="jobQueueCounts.active" class="fs-block-tools">
+            {{ t('filesyncAdmin.jobQueueSummary', { running: jobQueueCounts.running, queued: jobQueueCounts.queued, paused: jobQueueCounts.paused }) }}
+          </span>
+        </div>
         <div v-for="run in status.reconcileRuns" :key="run.id" class="fs-row">
           <div class="fs-row-main">
             <strong>{{ t('filesyncAdmin.jobState', { id: run.id.slice(0, 8), mode: run.mode, reason: runReasonLabel(run.reason), status: runStatusLabel(run), stage: runStageLabel(run.stage) }) }}</strong>
             <span v-if="run.progressTotal !== null">{{ t('filesyncAdmin.jobProgress', { current: run.progressCurrent, total: run.progressTotal }) }}</span>
             <span v-else-if="run.stage === 'scanning' && run.resultCounts.scanned !== undefined">
-              {{ t('filesyncAdmin.scanProgress', { scanned: run.resultCounts.scanned, hashed: run.resultCounts.hashed || 0, reused: run.resultCounts.reused || 0, rejected: run.resultCounts.rejected || 0 }) }}
+              {{ t('filesyncAdmin.scanProgress', { scanned: run.resultCounts.scanned, hashed: run.resultCounts.hashed || 0, reused: run.resultCounts.reused || 0, rejected: run.resultCounts.rejected || 0, excluded: run.resultCounts.excluded || 0 }) }}
             </span>
             <small v-if="run.pauseReason">{{ t('filesyncAdmin.pausedUntil', { reason: pauseReasonLabel(run.pauseReason), at: run.nextRunAt || '—' }) }}</small>
             <small v-if="run.errorCode && ['failed', 'interrupted'].includes(run.status)" class="fs-health-warning">
               {{ t('filesyncAdmin.jobError') }}：{{ run.errorCode }}
             </small>
-            <small v-else-if="run.status === 'succeeded'">{{ t('filesyncAdmin.dryRunResult', { scanned: run.resultCounts.scanned || 0, created: run.resultCounts.created || 0, updated: run.resultCounts.updated || 0, rejected: run.resultCounts.rejected || 0, conflicts: run.resultCounts.conflicts || 0 }) }}</small>
+          <small v-else-if="run.status === 'succeeded'">{{ t('filesyncAdmin.dryRunResult', { scanned: run.resultCounts.scanned || 0, created: run.resultCounts.created || 0, updated: run.resultCounts.updated || 0, rejected: run.resultCounts.rejected || 0, excluded: run.resultCounts.excluded || 0, conflicts: run.resultCounts.conflicts || 0 }) }}</small>
           </div>
           <div v-if="['queued', 'running', 'paused', 'cancelling'].includes(run.status)" class="fs-actions">
             <ActionButton variant="secondary" fit :disabled="run.status === 'cancelling'" @click="cancelRun(run.id)">
@@ -199,6 +204,13 @@ const reconcileSaving = ref(false)
 const error = ref('')
 const actionKey = ref('')
 const jobsSection = ref<HTMLElement | null>(null)
+const jobQueueCounts = computed(() => {
+  const runs = status.value?.reconcileRuns ?? []
+  const running = runs.filter((run) => ['running', 'cancelling'].includes(run.status)).length
+  const queued = runs.filter((run) => run.status === 'queued').length
+  const paused = runs.filter((run) => run.status === 'paused').length
+  return { running, queued, paused, active: running + queued + paused }
+})
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 const resolutions = [
   { value: 'keep_local' as const, label: 'filesyncAdmin.keepLocal' },

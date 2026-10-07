@@ -25,6 +25,8 @@ _SHARD_ENTRY_LIMIT = 1000
 def _supported_fingerprint_version(object_type: str, version) -> bool:
     if not isinstance(version, int):
         return False
+    if object_type == "excluded":
+        return version == FINGERPRINT_VERSION
     if object_type == "folder":
         return version in {2, FINGERPRINT_VERSION}
     return any(
@@ -101,7 +103,7 @@ class _BaselineEntries(Mapping[str, ScanEntry]):
             ctime_ns = value.get("ctime_ns")
             fingerprint = value.get("fingerprint")
             fingerprint_version = value.get("fingerprint_version")
-            if object_type not in {"file", "folder"} or any(
+            if object_type not in {"file", "folder", "excluded"} or any(
                 not isinstance(number, int) or number < 0
                 for number in (size, mtime_ns, ctime_ns)
             ):
@@ -194,7 +196,7 @@ class FileSyncBaselineStore:
         try:
             for raw_path, entry in source:
                 path = normalize_relative_path(raw_path)
-                if path != entry.relative_path or entry.object_type not in {"file", "folder"}:
+                if path != entry.relative_path or entry.object_type not in {"file", "folder", "excluded"}:
                     raise ValueError("快照条目无效")
                 if previous_path is not None and path <= previous_path:
                     raise ValueError("快照条目必须按规范路径严格递增")

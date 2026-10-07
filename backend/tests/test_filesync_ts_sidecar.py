@@ -1,6 +1,5 @@
 import asyncio
 import json
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,13 +14,9 @@ def test_ts_sidecar_default_artifact_is_in_backend_bin():
 
 
 @pytest.mark.asyncio
-async def test_ts_sidecar_reports_file_and_folder_events(tmp_path):
-    source = Path(__file__).parents[1] / "ts/packages/filesync-watcher/src/index.ts"
-    sidecar = FileSyncSidecar(command=[
-        shutil.which("node") or "node",
-        "--experimental-strip-types",
-        str(source),
-    ])
+async def test_ts_sidecar_built_artifact_reports_file_and_folder_events(tmp_path):
+    """验证部署实际使用的固定 bundle 可启动、注册监听并投递路径事件。"""
+    sidecar = FileSyncSidecar()
     await sidecar.start()
     try:
         await sidecar.watch(1, tmp_path)

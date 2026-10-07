@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.filesync.plan import build_reconcile_plan
+from app.services.filesync.plan import build_reconcile_plan, iter_success_baseline_entries
 from app.services.filesync.scan import ScanControl, ScanEntry, scan_binding_tree
 
 
@@ -236,17 +236,53 @@ def test_large_file_hash_resumes_from_bounded_digest_frontier(tmp_path):
 
 
 @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="平台不支持符号链接")
-def test_unsafe_entry_makes_scan_incomplete_and_prevents_deletion(tmp_path):
+def test_symlink_is_skipped_without_following_or_deleting_protected_paths(tmp_path):
     user_root = tmp_path / "synthetic-user"
     root = user_root / "workspace"
     root.mkdir(parents=True)
     target = user_root / "outside.txt"
     target.write_text("outside", encoding="utf-8")
     (root / "link.txt").symlink_to(target)
-    previous = {"known.txt": ScanEntry("known.txt", "file", 1, 1, 1, "old")}
+    outside_dir = tmp_path / "outside-dir"
+    outside_dir.mkdir()
+    (outside_dir / "secret.txt").write_text("secret", encoding="utf-8")
+    (root / "linked-dir").symlink_to(outside_dir, target_is_directory=True)
+    previous = {
+        "known.txt": ScanEntry("known.txt", "file", 1, 1, 1, "a" * 64),
+        "linked-dir/secret.txt": ScanEntry("linked-dir/secret.txt", "file", 6, 1, 1, "b" * 64),
+    }
 
     result = scan_binding_tree(root, user_root=user_root, previous=previous)
     plan = build_reconcile_plan(result, previous)
-    assert not result.complete
-    assert result.error_code == "unsafe_entry"
-    assert plan.missing == frozenset()
+    assert result.complete
+    assert result.error_code is None
+    assert result.excluded_count == 2
+    assert "linked-dir/secret.txt" not in result.entries
+    assert "link.txt" not in plan.added
+    assert plan.missing == frozenset({"known.txt"})
+    assert dict(iter_success_baseline_entries(
+        result.entries, previous, preserve_missing=False,
+    ))["linked-dir/secret.txt"] == previous["linked-dir/secret.txt"]
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="平台不支持符号链接")
+def test_replacing_scanned_directory_with_symlink_drops_stale_candidates(tmp_path):
+    user_root = tmp_path / "synthetic-user"
+    root = user_root / "workspace"
+    linked = root / "tool"
+    linked.mkdir(parents=True)
+    (linked / "old.txt").write_text("old", encoding="utf-8")
+    previous_scan = scan_binding_tree(root, user_root=user_root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "private.txt").write_text("private", encoding="utf-8")
+    (linked / "old.txt").unlink()
+    linked.rmdir()
+    linked.symlink_to(outside, target_is_directory=True)
+
+    result = scan_binding_tree(root, user_root=user_root, previous=previous_scan.entries)
+
+    assert result.complete
+    assert result.excluded_count == 1
+    assert "tool/old.txt" not in result.entries
+    assert "tool/private.txt" not in result.entries

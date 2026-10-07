@@ -227,14 +227,14 @@ class FileSyncSettings(BaseModel):
         description="文件对账每批投影的路径上限",
     )
     reconcile_concurrency: int = Field(
-        1, gt=0, le=4,
-        description="全局同时扫描用户数",
+        2, gt=0, le=4,
+        description="全局同时扫描用户数；同一用户仍串行",
     )
     reconcile_user_batch_size: int = Field(8, gt=0, le=64)
     reconcile_slice_seconds: float = Field(10.0, gt=0, le=1800)
     reconcile_scan_batch_size: int = Field(1000, gt=0, le=10000)
     reconcile_hash_chunk_bytes: int = Field(1_048_576, gt=0, le=16_777_216)
-    reconcile_hash_concurrency: int = Field(1, gt=0, le=8)
+    reconcile_hash_concurrency: int = Field(2, gt=0, le=8)
     reconcile_write_concurrency: int = Field(1, gt=0, le=8)
 
     @model_validator(mode="after")

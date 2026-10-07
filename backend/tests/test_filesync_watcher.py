@@ -1,4 +1,4 @@
-"""文件 watcher 的实时路径与整树补偿边界。"""
+"""文件 watcher 的实时路径、有限重试与手动核对边界。"""
 from __future__ import annotations
 
 import os
@@ -86,20 +86,46 @@ async def test_watcher_projects_path_event_without_queueing_reconcile_job(
     assert jobs == []
 
 
-async def test_watcher_retains_fallback_signal_while_background_reconcile_is_paused(
-    db, user_a, monkeypatch,
-):
-    """暂停整树回退时保留信号，避免丢失补偿请求或误报活动统计可靠。"""
-    from types import SimpleNamespace
-
+async def test_watcher_health_events_update_status_without_erasing_gap(db, user_a):
+    """ready 恢复监听健康；error 持久化新缺口，且 ready 不掩盖它。"""
     import app.services.filesync.watcher as watcher
 
-    enabled = False
-    real_set_activity_reliability = watcher.set_activity_reliability
-    real_enqueue_reconcile = watcher.enqueue_reconcile
-    monkeypatch.setattr(watcher, "get_settings", lambda: SimpleNamespace(
-        filesync=SimpleNamespace(background_reconcile_enabled=enabled),
-    ))
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", status="active",
+        root_path="个人文件", root_fingerprint="synthetic-root",
+        watcher_status="degraded", health_error_code="watcher_error",
+        needs_reconcile=True, gap_revision=2,
+    )
+    db.add(binding)
+    await db.commit()
+
+    class HealthEvents:
+        def __init__(self):
+            self.events = iter((
+                {"event": "ready", "binding_id": binding.id},
+                {"event": "error", "binding_id": binding.id, "code": "watcher_limit_exceeded"},
+                {"event": "ready", "binding_id": binding.id},
+            ))
+
+        async def next_event(self):
+            return next(self.events, None)
+
+    pending = set()
+    manager = watcher.FileSyncWatcherManager(sidecar=HealthEvents())
+    await manager._drain_events(pending, {binding.id}, db=db)
+    await db.refresh(binding)
+
+    assert binding.watcher_status == "ready"
+    assert binding.health_error_code is None
+    assert binding.needs_reconcile is True
+    assert binding.gap_revision == 3
+    assert pending == {binding.id}
+
+
+async def test_watcher_health_gap_does_not_enqueue_automatic_reconcile(db, user_a):
+    """监听缺口只持久标记为需手动核对，不排入依赖基线的整树任务。"""
+    import app.services.filesync.watcher as watcher
+
     binding = FileSyncBinding(
         user_id=user_a.id, source="local_directory", status="active",
         root_path="个人文件", root_fingerprint="synthetic-root",
@@ -107,37 +133,88 @@ async def test_watcher_retains_fallback_signal_while_background_reconcile_is_pau
     db.add(binding)
     await db.commit()
     manager = watcher.FileSyncWatcherManager(sidecar=object())
-    pending = {binding.id}
-    current = {binding.id: (binding, None)}
+    pending: set[int] = set()
 
-    async def forbidden(*_args, **_kwargs):
-        raise AssertionError("后台对账暂停时不应更新调度水位或排队回退任务")
+    class HealthEvents:
+        def __init__(self):
+            self.events = iter(({
+                "event": "error", "binding_id": binding.id,
+                "code": "python_event_queue_overflow",
+            },))
 
-    monkeypatch.setattr(watcher, "set_activity_reliability", forbidden)
-    monkeypatch.setattr(watcher, "enqueue_reconcile", forbidden)
+        async def next_event(self):
+            return next(self.events, None)
 
-    await manager._enqueue_pending_fallbacks(db, pending, current)
+    manager._sidecar = HealthEvents()
+    await manager._drain_events(pending, {binding.id}, db)
 
+    await db.refresh(binding)
     assert pending == {binding.id}
-    assert manager._pending_fallback == set()
+    assert binding.needs_reconcile is True
+    assert binding.health_error_code == "python_event_queue_overflow"
     assert (await db.scalars(select(FileSyncReconcileRun))).all() == []
 
-    enabled = True
-    monkeypatch.setattr(watcher, "get_settings", lambda: SimpleNamespace(
-        filesync=SimpleNamespace(background_reconcile_enabled=enabled),
-    ))
-    monkeypatch.setattr(watcher, "set_activity_reliability", real_set_activity_reliability)
-    monkeypatch.setattr(watcher, "enqueue_reconcile", real_enqueue_reconcile)
-    await manager._enqueue_pending_fallbacks(db, pending, current)
 
+async def test_path_event_batch_merge_keeps_newest_operation_per_path():
+    """失败重试与新事件合并时，同一路径保留时间较新的操作。"""
+    from app.services.filesync.targeted import PathEventBatch
+
+    pending = PathEventBatch(
+        changed={"update-then-delete.txt", "delete-then-update.txt"},
+        deleted={"stale-delete.txt"},
+        folders_created={"create-then-delete"},
+    )
+    newer = PathEventBatch(
+        deleted={"update-then-delete.txt"},
+        changed={"delete-then-update.txt"},
+        folders_deleted={"create-then-delete"},
+    )
+
+    pending.merge(newer)
+
+    assert pending.changed == {"delete-then-update.txt"}
+    assert pending.deleted == {"stale-delete.txt", "update-then-delete.txt"}
+    assert pending.folders_created == set()
+    assert pending.folders_deleted == {"create-then-delete"}
+
+
+async def test_watcher_retries_transient_targeted_failure_without_reconcile_job(
+    db, user_a, monkeypatch, tmp_path,
+):
+    """瞬时投影错误恢复后继续按精确路径完成，不依赖基线或整树任务。"""
+    import app.services.filesync.watcher as watcher
+    from app.services.filesync.summary import SyncSummary
+    from unittest.mock import AsyncMock
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    binding = FileSyncBinding(
+        user_id=user_a.id, source="local_directory", status="active",
+        root_path="个人文件", root_fingerprint="test-root",
+        watcher_status="ready", needs_reconcile=False,
+    )
+    db.add(binding)
+    await db.commit()
+    await db.refresh(binding)
+    binding_id = binding.id
+    project = AsyncMock(side_effect=(OSError("transient database failure"), SyncSummary()))
+    monkeypatch.setattr(watcher, "project_path_events", project)
+    manager = watcher.FileSyncWatcherManager(sidecar=object())
+    manager._path_events[binding_id] = watcher.PathEventBatch(changed={"note.txt"})
+    pending: set[int] = set()
+    current = {binding_id: (binding, root)}
+
+    await manager._project_path_events(db, current, pending)
+    assert binding_id in manager._path_events
+    assert manager._path_event_retries[binding_id] == 1
+
+    await manager._project_path_events(db, current, pending)
+
+    assert project.await_count == 2
+    assert manager._path_events == {}
+    assert manager._path_event_retries == {}
     assert pending == set()
-    assert manager._pending_fallback == set()
-    resumed_run = await db.scalar(select(FileSyncReconcileRun).where(
-        FileSyncReconcileRun.binding_id == binding.id,
-    ))
-    assert resumed_run is not None
-    assert resumed_run.reason == "event_fallback"
-    assert resumed_run.status == "queued"
+    assert (await db.scalars(select(FileSyncReconcileRun))).all() == []
 
 
 async def test_targeted_event_rehashes_content_when_size_and_mtime_are_unchanged(
@@ -214,10 +291,10 @@ async def test_targeted_event_rehashes_content_when_size_and_mtime_are_unchanged
     assert journals[-1].observed_fingerprint != old_fingerprint
 
 
-async def test_watcher_fallback_log_hides_exception_path_and_file_content(
+async def test_watcher_retry_log_hides_exception_path_and_file_content(
     db, user_a, monkeypatch, tmp_path, caplog,
 ):
-    """单点投影故障仍触发整树回退，但普通日志不泄漏异常中的路径或正文。"""
+    """精确路径重试日志不泄漏异常中的路径或正文。"""
     import logging
 
     import app.services.filesync.watcher as watcher
@@ -246,12 +323,18 @@ async def test_watcher_fallback_log_hides_exception_path_and_file_content(
     manager = watcher.FileSyncWatcherManager(sidecar=object())
     manager._path_events[binding_id] = watcher.PathEventBatch(changed={"note.txt"})
 
+    pending: set[int] = set()
     with caplog.at_level(logging.WARNING, logger=watcher.__name__):
-        await manager._project_path_events(db, {binding_id: (binding, root)})
+        for _ in range(watcher.MAX_TARGETED_PATH_RETRIES + 1):
+            await manager._project_path_events(
+                db, {binding_id: (binding, root)}, pending,
+            )
 
-    assert manager._pending_fallback == {binding_id}
-    assert len(diagnostic_errors) == 1
+    assert binding_id in pending
+    assert manager._path_events == {}
+    assert len(diagnostic_errors) == watcher.MAX_TARGETED_PATH_RETRIES + 1
     assert isinstance(diagnostic_errors[0], OSError)
-    assert "OSError" in caplog.text
+    assert "重试耗尽，需手动核对" in caplog.text
     assert secret not in caplog.text
     assert "private-file-body" not in caplog.text
+    assert (await db.scalars(select(FileSyncReconcileRun))).all() == []

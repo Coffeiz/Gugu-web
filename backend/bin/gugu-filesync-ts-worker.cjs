@@ -5340,6 +5340,45 @@ var require_chokidar = __commonJS({
 // src/index.ts
 var import_node_readline = require("node:readline");
 
+// src/protocol-output.ts
+var BoundedProtocolOutput = class {
+  queue = [];
+  overflowPending = false;
+  maximum;
+  protocol;
+  constructor(maximum, protocol) {
+    this.maximum = maximum;
+    this.protocol = protocol;
+  }
+  enqueue(message) {
+    if (this.queue.length >= this.maximum) {
+      this.overflowPending = true;
+      if (message.kind === "event") return;
+      const eventIndex = this.queue.findIndex((item) => item.kind === "event");
+      if (eventIndex < 0) throw new Error("\u534F\u8BAE\u63A7\u5236\u961F\u5217\u8D85\u9650");
+      this.queue.splice(eventIndex, 1);
+      this.queue.unshift(message);
+      return;
+    }
+    this.queue.push(message);
+  }
+  take() {
+    if (this.overflowPending) {
+      this.overflowPending = false;
+      return {
+        protocol: this.protocol,
+        kind: "event",
+        event: "needs_reconcile",
+        code: "output_overflow"
+      };
+    }
+    return this.queue.shift() ?? null;
+  }
+  get hasPending() {
+    return this.overflowPending || this.queue.length > 0;
+  }
+};
+
 // src/watcher.ts
 var import_node_path = require("node:path");
 var import_chokidar = __toESM(require_chokidar(), 1);
@@ -5355,21 +5394,25 @@ function relativePath(root, changedPath) {
 var FileSystemWatcher = class {
   bindings = /* @__PURE__ */ new Map();
   emit;
-  constructor(emit) {
+  createWatcher;
+  constructor(emit, createWatcher = import_chokidar.watch) {
     this.emit = emit;
+    this.createWatcher = createWatcher;
   }
   async watchBinding(bindingId, rootPath) {
     const root = (0, import_node_path.resolve)(rootPath);
     const current = this.bindings.get(bindingId);
     if (current?.root === root) {
-      this.emit({ protocol: FILESYNC_PROTOCOL_VERSION, kind: "event", event: "ready", binding_id: bindingId });
+      if (current.ready && !current.failed) {
+        this.emit({ protocol: FILESYNC_PROTOCOL_VERSION, kind: "event", event: "ready", binding_id: bindingId });
+      }
       return;
     }
     if (current) {
-      await current.watcher.close();
       this.bindings.delete(bindingId);
+      await current.watcher.close();
     }
-    const watcher = (0, import_chokidar.watch)(root, {
+    const watcher = this.createWatcher(root, {
       ignoreInitial: true,
       persistent: true,
       awaitWriteFinish: {
@@ -5381,8 +5424,11 @@ var FileSystemWatcher = class {
         return name.startsWith(".gugu-sync-") || name.endsWith(".gugu-part") || name.endsWith(".gugu-tmp");
       }
     });
-    this.bindings.set(bindingId, { root, watcher });
+    const binding = { root, watcher, ready: false, failed: false };
+    this.bindings.set(bindingId, binding);
+    const isCurrent = () => this.bindings.get(bindingId) === binding;
     const emitChange = (operation, objectType) => (path) => {
+      if (!isCurrent()) return;
       const relative2 = relativePath(root, path);
       if (!relative2) return;
       this.emit({
@@ -5400,27 +5446,28 @@ var FileSystemWatcher = class {
     watcher.on("unlink", emitChange("delete", "file"));
     watcher.on("addDir", emitChange("create", "folder"));
     watcher.on("unlinkDir", emitChange("delete", "folder"));
-    watcher.on("error", () => {
+    watcher.on("error", (error) => {
+      if (!isCurrent()) return;
+      binding.failed = true;
       this.emit({
         protocol: FILESYNC_PROTOCOL_VERSION,
         kind: "event",
         event: "error",
         binding_id: bindingId,
-        code: "watcher_error"
+        code: error.code === "ENOSPC" ? "watcher_limit_exceeded" : "watcher_error"
       });
     });
-    await new Promise((resolveReady) => {
-      watcher.once("ready", () => {
-        this.emit({ protocol: FILESYNC_PROTOCOL_VERSION, kind: "event", event: "ready", binding_id: bindingId });
-        resolveReady();
-      });
+    watcher.once("ready", () => {
+      if (!isCurrent() || binding.failed) return;
+      binding.ready = true;
+      this.emit({ protocol: FILESYNC_PROTOCOL_VERSION, kind: "event", event: "ready", binding_id: bindingId });
     });
   }
   async unwatchBinding(bindingId) {
     const binding = this.bindings.get(bindingId);
     if (!binding) return;
-    await binding.watcher.close();
     this.bindings.delete(bindingId);
+    await binding.watcher.close();
   }
   async close() {
     await Promise.all([...this.bindings.keys()].map((bindingId) => this.unwatchBinding(bindingId)));
@@ -5428,30 +5475,18 @@ var FileSystemWatcher = class {
 };
 
 // src/index.ts
-var output = [];
+var output = new BoundedProtocolOutput(FILESYNC_MAX_PENDING_OUTPUT, FILESYNC_PROTOCOL_VERSION);
 var writing = false;
-var overflowReported = false;
 function writeMessage(message) {
-  if (output.length >= FILESYNC_MAX_PENDING_OUTPUT) {
-    output.length = 0;
-    if (!overflowReported) {
-      output.push(JSON.stringify({
-        protocol: FILESYNC_PROTOCOL_VERSION,
-        kind: "event",
-        event: "needs_reconcile",
-        code: "output_overflow"
-      }) + "\n");
-      overflowReported = true;
-    }
-  }
-  output.push(JSON.stringify(message) + "\n");
+  output.enqueue(message);
   flushOutput();
 }
 function flushOutput() {
   if (writing) return;
   writing = true;
-  while (output.length) {
-    if (!process.stdout.write(output.shift())) {
+  while (output.hasPending) {
+    const message = output.take();
+    if (!process.stdout.write(JSON.stringify(message) + "\n")) {
       process.stdout.once("drain", () => {
         writing = false;
         flushOutput();
@@ -5459,7 +5494,6 @@ function flushOutput() {
       return;
     }
   }
-  overflowReported = false;
   writing = false;
 }
 function response(request, status, code) {

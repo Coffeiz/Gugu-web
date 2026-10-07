@@ -32,6 +32,7 @@ vi.mock('vue-i18n', async (importOriginal) => ({
     t: (key: string, values: Record<string, string | number> = {}) => {
       const labels: Record<string, string> = {
         'filesyncAdmin.jobs': '最近对账任务',
+        'filesyncAdmin.jobQueueSummary': '运行中 {running} · 排队 {queued} · 暂停 {paused}',
         'filesyncAdmin.jobState': '任务 {id} · {mode} · {reason} · {status} · 阶段 {stage}',
         'filesyncAdmin.scanProgress': '已检查 {scanned} 项 · 哈希 {hashed} · 复用 {reused} · 拒绝 {rejected}',
         'filesyncAdmin.statusRunning': '运行中',
@@ -141,6 +142,41 @@ describe('文件同步管理员任务队列', () => {
     expect(mocks.cancel).toHaveBeenCalledWith(mocks.authFetch, run.id)
     expect(host.textContent).toContain('已取消')
     expect([...host.querySelectorAll('button')].some(button => button.textContent?.includes('取消任务'))).toBe(false)
+  })
+
+  it('并发任务分别展示扫描进度并逐条轮询状态', async () => {
+    const secondRun = {
+      ...run, id: 'run-87654321-abcd', progressCurrent: 4,
+      resultCounts: { scanned: 4, hashed: 2, reused: 2, rejected: 0 },
+    }
+    mocks.status.mockResolvedValue({
+      ...statusWith('running'), reconcileRuns: [{ ...run }, secondRun],
+    })
+    mocks.run.mockImplementation(async (_auth: unknown, runId: string) => ({
+      ...(runId === run.id ? run : secondRun),
+      resultCounts: {
+        ...(runId === run.id ? run.resultCounts : secondRun.resultCounts),
+        scanned: runId === run.id ? 14 : 6,
+      },
+    }))
+
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(FileSyncAdminPanel)
+    app.mount(host)
+    await flushUi()
+
+    expect(host.textContent).toContain('运行中 2 · 排队 0 · 暂停 0')
+    expect(host.textContent).toContain('已检查 12 项 · 哈希 5 · 复用 7 · 拒绝 0')
+    expect(host.textContent).toContain('已检查 4 项 · 哈希 2 · 复用 2 · 拒绝 0')
+
+    await vi.advanceTimersByTimeAsync(1500)
+    await flushUi()
+
+    expect(mocks.run).toHaveBeenCalledTimes(2)
+    expect(mocks.run.mock.calls.map(([, runId]) => runId)).toEqual([run.id, secondRun.id])
+    expect(host.textContent).toContain('已检查 14 项')
+    expect(host.textContent).toContain('已检查 6 项')
   })
 
   it('单独暂停后台对账开关，不操作实时同步总开关', async () => {

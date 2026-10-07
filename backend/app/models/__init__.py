@@ -426,6 +426,7 @@ class FileSyncReconcileRun(Base):
     status: Mapped[str] = mapped_column(String(24), default="queued", server_default="queued", index=True)
     stage: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     binding_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    gap_revision_at_start: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     dirty_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     lease_token: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True)
     lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
