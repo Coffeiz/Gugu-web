@@ -50,6 +50,7 @@ interface RawTimelineEvent {
   toolInput?: unknown
   toolResult?: unknown
   toolStatus?: ChatMessage['toolStatus']
+  toolDurationMs?: number
   timelineOrder: number
   createdAt: string
 }
@@ -226,6 +227,7 @@ export function useChatSessions(options: {
               toolCallId: event.toolCallId, toolName: event.toolName, toolLabel: event.toolLabel,
               toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
               toolInput: event.toolInput, toolResult: event.toolResult,
+              toolDurationMs: event.toolDurationMs,
               time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit', timeZone: effectiveTimezone() }),
               _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
             },

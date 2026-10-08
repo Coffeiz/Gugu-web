@@ -67,6 +67,7 @@ export function mapSessionMessageDelta(
         toolName: event.toolName, toolLabel: event.toolLabel,
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
         toolInput: event.toolInput, toolResult: event.toolResult,
+        toolDurationMs: event.toolDurationMs,
         time: displayTime(event.createdAt), _timelineOrder: event.timelineOrder,
         _createdAt: event.createdAt, _syncKey: `timeline:${event.id}`,
       })

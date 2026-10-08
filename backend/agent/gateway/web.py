@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 from typing import AsyncGenerator
@@ -514,7 +515,7 @@ _gen_tasks: set = set()   # 持后台生成任务引用，防 GC（任务需脱�
 _session_gen_tasks: dict[int, dict[str, asyncio.Task]] = {}
 
 
-async def _close_running_tool_events(display_timeline: list, pub) -> None:
+async def _close_running_tool_events(display_timeline: list, pub, tool_started_at=None) -> None:
     """给仍在 running/waiting 的工具事件补「已停止」终态。
 
     工具执行中被取消时 CancelledError 直接打断派发，tool_done 永远不会发出；
@@ -525,14 +526,22 @@ async def _close_running_tool_events(display_timeline: list, pub) -> None:
     for item in display_timeline:
         if item.get("kind") != "tool" or item.get("toolStatus") not in ("queued", "running", "waiting"):
             continue
+        call_id = str(item.get("toolCallId") or "")
+        started_at = tool_started_at.pop(call_id, None) if tool_started_at and call_id else None
+        duration_ms = max(0, round((time.monotonic() - started_at) * 1000)) if started_at is not None else None
+        if duration_ms is not None:
+            item["toolDurationMs"] = duration_ms
         item["toolStatus"] = "cancelled"
-        await pub({
+        event = {
             "type": "tool_done",
             "tool_call_id": item.get("toolCallId"),
             "name": item.get("toolName"),
             "label": item.get("toolLabel"),
             "status": "cancelled",
-        })
+        }
+        if duration_ms is not None:
+            event["duration_ms"] = duration_ms
+        await pub(event)
 
 
 def cancel_local_generation(session_id: int, owner_run_id: str | None = None) -> bool:
@@ -723,6 +732,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     full_reply = ""
     canonical_reply = ""
     display_timeline = []   # 顶部已初始化（供 CancelledError 收尾读取），这里重置
+    tool_started_at: dict[str, float] = {}
     active_segment: dict | None = None
     current_run_id = ""
     current_round_id = ""
@@ -910,6 +920,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     await emit_clean(clean)
                 continue
             if etype == "tool_call":
+                call_id = str(evt.get("tool_call_id") or "")
+                if call_id and evt.get("status") != "queued":
+                    tool_started_at.setdefault(call_id, time.monotonic())
                 name = evt.get("name", "")
                 if name and not name.startswith("_") and name not in used_tools:
                     used_tools.append(name)
@@ -933,11 +946,16 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                         existing_item.update(timeline_item)
             if etype == "tool_done":
                 call_id = str(evt.get("tool_call_id") or "")
+                started_at = tool_started_at.pop(call_id, None) if call_id else None
+                if started_at is not None:
+                    evt["duration_ms"] = max(0, round((time.monotonic() - started_at) * 1000))
                 for item in reversed(display_timeline):
                     if item.get("kind") == "tool" and item.get("toolCallId") == call_id:
                         item["toolStatus"] = evt.get("status") or "success"
                         if "result" in evt:
                             item["toolResult"] = evt.get("result")
+                        if "duration_ms" in evt:
+                            item["toolDurationMs"] = evt["duration_ms"]
                         break
             if etype == "file" and evt.get("file"):
                 sent_files.append(evt["file"])   # 捕获以便持久化，仍转发给前端
@@ -980,7 +998,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             # 被打断的工具先补「已停止」终态：必须在 done 之前发（订阅端收到
             # done 即退出）；失败路径 error 事件后订阅端同样已退出，这里只需
             # 修正 timeline 供落库，合成事件的 pub 是无害冗余。
-            await _close_running_tool_events(display_timeline, _pub)
+            await _close_running_tool_events(display_timeline, _pub, tool_started_at)
             if cancelled:
                 await _pub({"type": "done", "cancelled": True})
             # 取消与生成错误采用不同的历史语义：用户主动取消时保留已完成轮次和
@@ -1079,7 +1097,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         # 被打断的工具先补「已停止」终态（live 合成 tool_done + timeline 修正），
         # 否则工具气泡在实时与刷新两端都永远停在「进行中」。
         try:
-            await _close_running_tool_events(display_timeline, _pub)
+            await _close_running_tool_events(display_timeline, _pub, tool_started_at)
             await persist_interrupted_run()
         except Exception:
             logger.exception("task.cancel 路径的部分展示产物持久化失败 session=%s", session_id)

@@ -16,6 +16,7 @@ Sink 形态（LLM18-005）：消费器是 async generator，按 Sink 配置决�
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
@@ -105,6 +106,7 @@ async def consume_agent_events(
     # 当前轮的展示时间线占位（首个 token 时创建）；工具项按流式顺序插在其后，
     # 轮次冲刷时回填清洗后的正文——镜像 gateway/web.py 的 display_timeline 语义。
     active_seg: dict | None = None
+    tool_started_at: dict[str, float] = {}
 
     def _close_active_seg(display_round: str) -> None:
         nonlocal active_seg
@@ -195,6 +197,14 @@ async def consume_agent_events(
                 })
             elif t in {"tool_call", "tool_done"}:
                 tool_event = dict(evt)
+                call_id = str(evt.get("tool_call_id") or "")
+                if t == "tool_call":
+                    if call_id and evt.get("status") != "queued":
+                        tool_started_at.setdefault(call_id, time.monotonic())
+                elif call_id:
+                    started_at = tool_started_at.pop(call_id, None)
+                    if started_at is not None:
+                        tool_event["duration_ms"] = max(0, round((time.monotonic() - started_at) * 1000))
                 outcome.tool_events.append(tool_event)
                 await _notify_tool_event(sink.on_tool_event, tool_event)
                 name = str(evt.get("name") or "")
@@ -226,6 +236,8 @@ async def consume_agent_events(
                             item["toolStatus"] = str(evt.get("status") or "success")
                             if "result" in evt:
                                 item["toolResult"] = evt.get("result")
+                            if "duration_ms" in tool_event:
+                                item["toolDurationMs"] = tool_event["duration_ms"]
                             break
             elif t == "interaction_required":
                 # ask_user 的交互回调会在生成器产出此事件后展示选择卡，并等待用户输入。
