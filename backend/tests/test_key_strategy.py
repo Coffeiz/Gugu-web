@@ -11,6 +11,7 @@ from app.services.storage.key_strategy import PathMirrorStrategy, KeyContext, Re
 # 覆盖全部分支：personal（根/子夹/嵌套 folder_path）、project（年月/无年月/带夹/嵌套）、mind、asset、非法字符
 CASES = [
     dict(uid=7, space="personal", display_name="doc", ext="TXT"),
+    dict(uid=7, space="personal", display_name=".gitconfig", ext=""),
     dict(uid=7, space="personal", display_name="doc", ext="TXT", folder_name="子/夹"),
     dict(uid=7, space="personal", display_name="doc", ext="TXT", folder_path="资料/会议纪要"),
     dict(uid=7, space="project", display_name="doc", ext="MD",

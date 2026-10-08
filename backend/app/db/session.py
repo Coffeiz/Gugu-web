@@ -180,6 +180,7 @@ _MIGRATIONS = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_width INTEGER NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_files_active_user_storage_key ON files (user_id, storage_key) WHERE deleted_at IS NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS content_json JSONB NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS references_json JSONB NULL",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS search_limit_daily INTEGER NULL",

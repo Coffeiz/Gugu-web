@@ -15,6 +15,7 @@ def test_build_key_personal():
     assert _build_key(7, 'personal', 'doc', 'TXT') == '7/个人文件/doc.txt'
     assert _build_key(7, 'personal', 'doc', 'TXT', folder_name='子/夹') == '7/个人文件/子_夹/doc.txt'
     assert _build_key(7, 'personal', 'doc', 'TXT', folder_path='资料/会议纪要') == '7/个人文件/资料/会议纪要/doc.txt'
+    assert _build_key(7, 'personal', '.gitconfig', '') == '7/个人文件/.gitconfig'
 
 
 def test_build_key_project():
@@ -47,6 +48,13 @@ async def test_resolve_conflict_bumps_on_collision(tmp_path):
     await storage.put('7/个人文件/doc.txt', b'x')
     key, name = await _resolve_conflict(storage, '7/个人文件/doc.txt', 'doc', 'txt')
     assert (key, name) == ('7/个人文件/doc(1).txt', 'doc(1)')
+
+
+async def test_resolve_conflict_without_extension_does_not_append_dot(tmp_path):
+    storage = LocalStorageBackend(tmp_path)
+    await storage.put('7/个人文件/config', b'x')
+    key, name = await _resolve_conflict(storage, '7/个人文件/config', 'config', '')
+    assert (key, name) == ('7/个人文件/config(1)', 'config(1)')
 
 
 async def test_resolve_conflict_non_local_backend_skips(tmp_path):

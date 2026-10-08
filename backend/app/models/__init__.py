@@ -580,6 +580,15 @@ class Project(Base):
 
 class File(Base):
     __tablename__ = "files"
+    __table_args__ = (
+        Index(
+            "uq_files_active_user_storage_key",
+            "user_id", "storage_key",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id:           Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:      Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)

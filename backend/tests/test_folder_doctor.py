@@ -162,6 +162,30 @@ async def test_misplaced_file_skips_missing_physical_object(db, user_a, tmp_path
     assert report.misplaced_files == []
 
 
+async def test_extensionless_file_with_trailing_dot_is_not_moved_or_renamed(db, user_a, tmp_path):
+    storage = _storage(tmp_path)
+    parent = await _folder_row(db, user_a, "仓库")
+    stale_key = f"{user_a.id}/个人文件/仓库/.gitconfig."
+    await storage.put(stale_key, b"config")
+    file_row = File(
+        user_id=user_a.id, display_name=".gitconfig.", ext="", folder_id=parent.id,
+        storage_key=stale_key,
+    )
+    db.add(file_row)
+    await db.commit()
+    await db.refresh(file_row)
+
+    first = await folder_doctor.repair(db, storage, user_id=user_a.id, relocate_files=True)
+    second = await folder_doctor.repair(db, storage, user_id=user_a.id, relocate_files=True)
+
+    assert first.misplaced_files == []
+    assert second.misplaced_files == []
+    assert first.relocated == second.relocated == 0
+    assert file_row.storage_key == stale_key
+    assert file_row.display_name == ".gitconfig."
+    assert await storage.get(stale_key) == b"config"
+
+
 async def test_misplaced_file_skips_mind_space(db, user_a, tmp_path):
     storage = _storage(tmp_path)
     stale_key = f"{user_a.id}/思维/旧画布 #1/note.md"

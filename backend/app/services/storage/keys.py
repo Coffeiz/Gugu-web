@@ -35,6 +35,11 @@ def _safe_name(name: str) -> str:
     return _INVALID_RE.sub("_", name)
 
 
+def _safe_filename(display_name: str, ext: str) -> str:
+    name = _safe_name(display_name)
+    return f"{name}.{ext.lower()}" if ext else name
+
+
 def _build_key(uid: int, space: str, display_name: str, ext: str,
                project_name: str = "", project_id: int = 0,
                project_year: str = "", project_month: str = "",
@@ -42,7 +47,7 @@ def _build_key(uid: int, space: str, display_name: str, ext: str,
                mind_map_title: str = "", mind_map_id: int = 0,
                workspace_directory_name: str = "") -> str:
     """构造存储 key。folder_path 是根到叶的目录链，folder_name 仅为旧调用兼容。"""
-    fname = f"{_safe_name(display_name)}.{ext.lower()}"
+    fname = _safe_filename(display_name, ext)
     # 旧 folder_name 的斜杠一直按非法文件名替换，不能因为新增层级能力悄悄变成真实目录；
     # 只有显式传入的 folder_path 才按 / 拆为父子目录。
     safe_folder_path = (
@@ -117,5 +122,5 @@ async def _resolve_conflict(storage, base_key: str, display_name: str, ext: str)
         n += 1
         name = f"{display_name}({n})"
         prefix = base_key.rsplit("/", 1)[0]
-        key = f"{prefix}/{_safe_name(name)}.{ext.lower()}"
+        key = f"{prefix}/{_safe_filename(name, ext)}"
     return key, name
