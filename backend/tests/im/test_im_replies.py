@@ -4,7 +4,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_im_display_preferences_reads_both_flags_with_legacy_defaults(monkeypatch):
+async def test_im_display_preferences_reads_explicit_values(monkeypatch):
     from agent.interactions.preferences import im_display_preferences
     from app.db import session as db_session
 
@@ -18,6 +18,29 @@ async def test_im_display_preferences_reads_both_flags_with_legacy_defaults(monk
         async def scalar(self, _query):
             class Row:
                 data = {"show_tool_interactions": True, "show_intermediate_replies": False}
+            return Row()
+
+    monkeypatch.setattr(db_session, "ensure_engine", lambda: None)
+    monkeypatch.setattr(db_session, "_SessionLocal", FakeDb)
+
+    assert await im_display_preferences("synthetic-user") == (True, False)
+
+
+@pytest.mark.asyncio
+async def test_im_display_preferences_default_missing_values_to_enabled_tools_and_hidden_intermediate(monkeypatch):
+    from agent.interactions.preferences import im_display_preferences
+    from app.db import session as db_session
+
+    class FakeDb:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def scalar(self, _query):
+            class Row:
+                data = {}
             return Row()
 
     monkeypatch.setattr(db_session, "ensure_engine", lambda: None)

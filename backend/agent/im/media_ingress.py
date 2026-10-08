@@ -36,6 +36,22 @@ class MediaSizeLimitError(ValueError):
 class MediaIngressResult:
     attachment_ids: list[str]
     size_limit_exceeded: bool = False
+    failure_notice: str | None = None
+
+
+async def ingest_telegram_media(
+    attachments: list,
+    quoted_attachments: list,
+    owner_id,
+    bot_id: str,
+    platform_message_id: str | None,
+) -> MediaIngressResult:
+    """平台分派门面；Telegram 下载器独立实现，沿用统一附件暂存结果。"""
+    from agent.im.media_ingress_telegram import ingest_telegram_media as ingest
+
+    return await ingest(
+        attachments, quoted_attachments, owner_id, bot_id, platform_message_id,
+    )
 
 
 class _SafeResolver(AbstractResolver):

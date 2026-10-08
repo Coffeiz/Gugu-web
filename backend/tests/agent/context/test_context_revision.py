@@ -19,7 +19,13 @@ class _Redis:
 @pytest.mark.parametrize("source", ["preferences", "timezone", "im_channels"])
 async def test_snapshot_inputs_bump_revision_without_sse_resource(source, monkeypatch):
     redis = _Redis()
+    invalidated = []
+
+    async def invalidate(user_id):
+        invalidated.append(user_id)
+
     monkeypatch.setattr(events, "get_redis", lambda: redis)
+    monkeypatch.setattr(events, "_invalidate_im_session_snapshots", invalidate)
 
     await events.bump_context_revision("user-1", source)
 
@@ -27,6 +33,7 @@ async def test_snapshot_inputs_bump_revision_without_sse_resource(source, monkey
         ("incr", "context-revision:user-1"),
         ("expire", "context-revision:user-1", 60 * 60 * 24 * 7),
     ]
+    assert invalidated == (["user-1"] if source == "im_channels" else [])
 
 
 @pytest.mark.asyncio

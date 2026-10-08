@@ -44,6 +44,12 @@ _PLATFORM_REPLY_CAPABILITIES = {
         REPLY_CAPABILITY_IMAGE,
         REPLY_CAPABILITY_REPLY,
     }),
+    "telegram": frozenset({
+        REPLY_CAPABILITY_TEXT,
+        REPLY_CAPABILITY_FILE,
+        REPLY_CAPABILITY_IMAGE,
+        REPLY_CAPABILITY_REPLY,
+    }),
 }
 
 

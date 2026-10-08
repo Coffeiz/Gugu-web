@@ -150,8 +150,8 @@ class BotUpdate(BaseModel):
 
 
 def _apply_group_chat_toggle(bot: UserBot, body: BotUpdate) -> None:
-    if body.group_chat_enabled is not None and bot.platform != "qq":
-        raise HTTPException(400, "该群聊开关仅适用于 QQ 机器人")
+    if body.group_chat_enabled is not None and bot.platform not in {"qq", "telegram"}:
+        raise HTTPException(400, "该群聊开关仅适用于 QQ 或 Telegram 机器人")
     if body.feishu_group_chat_enabled is not None and bot.platform != "feishu":
         raise HTTPException(400, "该群聊开关仅适用于飞书机器人")
     if body.group_chat_enabled is not None:

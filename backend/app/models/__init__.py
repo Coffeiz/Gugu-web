@@ -1461,18 +1461,18 @@ class UserBot(Base):
     app_secret: Mapped[str]      = mapped_column(EncryptedString, default="")
     sandbox:    Mapped[bool]     = mapped_column(Boolean, default=False)
     enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
-    # 群聊：是否处理群消息、群消息是否要求 @ 机器人才响应、是否记录普通群消息。
+    # 群聊：新 Bot 默认仅回应 @ 消息；是否记录普通群消息。
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # 飞书群聊开关独立于 QQ。NULL 表示旧版飞书连接，按历史行为默认开启。
     feishu_group_chat_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
-    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
+    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # 群聊记忆：分别控制本群公开记忆和群成员个人记忆的读取/沉淀。
     group_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     member_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     group_owner_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    # 群成员可用工具白名单；默认开放联网搜索 + 图片搜索 + 发网络图片，不暴露用户私有内容和写操作。
-    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "read_file", "send_file"])
+    # 群成员可用工具白名单；默认含群上下文搜索，不开放用户私有内容和写操作。
+    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "read_file", "send_file", "group_context_search"])
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
     group_message_format: Mapped[str] = mapped_column(String(16), default="compat")
     private_message_format: Mapped[str] = mapped_column(String(16), default="smart")

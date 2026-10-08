@@ -239,7 +239,7 @@ def _is_passive_group_payload(payload: dict) -> bool:
     读取数据库；这样被动消息才能在同一群的主动模型任务期间实时落库并推送前端。
     """
     return bool(
-        payload.get("platform") in {"qq", "feishu"}
+        payload.get("platform") in {"qq", "feishu", "telegram"}
         and payload.get("chat_type") == "group"
         and payload.get("chat_id")
         and (
@@ -366,7 +366,7 @@ async def _dispatch(msg_id: str, payload: dict):
 async def _hydrate_group_policy(payload: dict) -> dict:
     """在被动消息快速分流前补齐当前 Bot 的权威群策略。"""
     platform = payload.get("platform")
-    if platform not in {"qq", "feishu"} or payload.get("chat_type") != "group":
+    if platform not in {"qq", "feishu", "telegram"} or payload.get("chat_type") != "group":
         return payload
     from agent.im.permissions import resolve_group_policy
 

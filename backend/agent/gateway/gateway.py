@@ -25,6 +25,7 @@ PLATFORM_MODULE = {
     "feishu": "agent.gateway.feishu",
     "qq":  "agent.gateway.qq",
     "wechat": "agent.gateway.wechat",
+    "telegram": "agent.gateway.telegram",
 }
 _procs: dict[str, subprocess.Popen] = {}
 _procs_spec: dict[str, dict] = {}
@@ -85,6 +86,12 @@ def _spawn(key: str, spec: dict) -> subprocess.Popen:
             "WECHAT_BOT_ID": spec["id"], "WECHAT_BOT_TOKEN": spec["app_secret"],
             "WECHAT_BASE_URL": spec["app_id"], "WECHAT_OWNER": spec["owner"],
         })
+    elif spec["platform"] == "telegram":
+        env.update({
+            "TELEGRAM_BOT_ID": spec["id"],
+            "TELEGRAM_BOT_TOKEN": spec["app_secret"],
+            "TELEGRAM_OWNER": spec["owner"],
+        })
     else:  # qq
         env.update({
             "QQ_BOT_ID": spec["id"], "QQ_APP_ID": spec["app_id"],
@@ -115,6 +122,15 @@ def reconcile() -> None:
             _spawned_at[key] = now
             continue
         if p.poll() is None:
+            # Telegram Token 轮换后必须重建持有旧环境变量的子进程；只对新适配器
+            # 生效，避免改变既有 QQ/飞书/微信配置热更新语义。
+            if spec["platform"] == "telegram" and _procs_spec.get(key) != spec:
+                _kill(key, p)
+                _procs[key] = _spawn(key, spec)
+                _procs_spec[key] = spec
+                _spawned_at[key] = now
+                _fail_count.pop(key, None)
+                _next_retry_at.pop(key, None)
             continue   # 还活着
         # 进程已退出。key 在 _next_retry_at 里 = 已经分类过、正在退避等待中，
         # 不能再用旧的 _spawned_at 重新判断「秒崩」（退避越久，lived 会越长、误判成"不是秒崩"）。

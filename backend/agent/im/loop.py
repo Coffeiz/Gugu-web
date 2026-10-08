@@ -591,12 +591,12 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
 def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
     """判断是否只记录当前群消息而不触发回复。
 
-    网关始终接收 QQ 平台实际投递的群消息；这里仅负责回应方式的业务语义：
+    网关始终接收平台实际投递的群消息；这里仅负责回应方式的业务语义：
     ``record_only`` 记录全部消息，``reply_mentions`` 记录非 @ 消息，@ 消息
     继续进入模型回复流程。
     """
     return bool(
-        request.source in {"qq", "feishu"}
+        request.source in {"qq", "feishu", "telegram"}
         and request.chat_id
         and payload.get("chat_type") == "group"
         and (
@@ -747,9 +747,43 @@ async def dispatch_im_message(payload: dict):
     from agent.runtime import trace
     from agent.im.replies import send_agent_response, send_text
 
+    # Telegram owner 只能通过网页签发的一次性绑定码，在 Bot 私聊中显式绑定。
+    # 必须在构造 AgentRequest/调用模型前短路，避免验证码进入模型上下文或聊天历史。
+    if payload.get("platform") == "telegram" and payload.get("telegram_command") == "bind":
+        if payload.get("chat_type") != "c2c":
+            return None
+        from uuid import UUID
+        from app.services.im_identity import consume_telegram_binding_code
+
+        text_value = str(payload.get("text") or "")
+        parts = text_value.split(maxsplit=1)
+        code = parts[1] if len(parts) == 2 else ""
+        try:
+            bound = await consume_telegram_binding_code(
+                int(payload.get("channel_id") or 0),
+                UUID(str(payload.get("owner_user_id") or "")),
+                str(payload.get("platform_user_id") or ""),
+                code,
+            )
+        except (TypeError, ValueError):
+            bound = False
+        from agent.gateway.telegram import send_message
+        await send_message(
+            str(payload.get("chat_id") or payload.get("platform_user_id") or ""),
+            "绑定成功。" if bound else "绑定码无效、已过期或已使用，请回到咕咕设置重新生成。",
+            channel_id=str(payload.get("channel_id") or ""),
+            reply_to_message_id=str(payload.get("message_id") or "") or None,
+        )
+        if bound:
+            from app.core import events
+            await events.publish(
+                UUID(str(payload.get("owner_user_id"))), "im_channels", operation="refresh"
+            )
+        return None
+
     # Gateway 入口和 Redis 队列消费之间可能存在设置变化；worker 再读取对应
     # 平台 Bot 的策略，既阻止关闭后的旧消息，也确保两个 IM 不串用群聊开关。
-    if payload.get("platform") in {"qq", "feishu"} and payload.get("chat_type") == "group":
+    if payload.get("platform") in {"qq", "feishu", "telegram"} and payload.get("chat_type") == "group":
         platform = str(payload.get("platform"))
         group_settings = await resolve_group_policy(
             str(payload.get("channel_id") or ""), platform=platform
@@ -798,6 +832,24 @@ async def dispatch_im_message(payload: dict):
                 str(payload.get("channel_id") or ""),
                 str(payload["platform_bot_user_id"]),
             )
+    elif payload.get("platform") == "telegram" and (
+        payload.get("attachments") or payload.get("quoted_attachments")
+    ):
+        from agent.im.media_ingress import ingest_telegram_media
+
+        payload = dict(payload)
+        media_result = await ingest_telegram_media(
+            payload.get("attachments") or [],
+            payload.get("quoted_attachments") or [],
+            payload.get("owner_user_id"),
+            str(payload.get("channel_id") or ""),
+            payload.get("attachment_source_message_id"),
+        )
+        payload["attachments"] = media_result.attachment_ids
+        if media_result.failure_notice:
+            await send_text(payload, media_result.failure_notice)
+            if not payload["attachments"] and not str(payload.get("text") or "").strip():
+                return None
 
     platform_message = PlatformMessage.from_payload(payload)
     payload = platform_message.to_payload(payload)

@@ -14,6 +14,10 @@ DEFAULT_GROUP_TOOLS = ["web_search", "http_get", "image_search", "read_file", "s
 # 纯时间查询不读取用户数据，也不产生外部副作用；它属于系统 utility，
 # 不应因为群成员的业务工具白名单而无法发现或执行。
 SAFE_ALWAYS_ALLOWED_TOOLS = frozenset({"get_current_time"})
+# 固定 Adapter 和 Skill 生命周期入口只负责发现、委派或维护用户的 Prompt Skill；
+# 业务工具的实际调用仍会在 call_tool 的内层 dispatch 再走一次白名单校验。
+FIXED_ADAPTER_TOOLS = frozenset({"call_tool", "get_tool_schema", "use_skill", "ask_user"})
+SKILL_MANAGEMENT_TOOLS = frozenset({"list_skills", "create_skill", "update_skill", "delete_skill"})
 
 
 def _parse_bot_db_id(value: Optional[str]) -> Optional[int]:
@@ -47,6 +51,8 @@ def can_use_tool(name: str, allowed_tool_names: Optional[List[str]]) -> bool:
     """dispatch 层的第二道权限门；None 表示完整工具集。"""
     return (
         name in SAFE_ALWAYS_ALLOWED_TOOLS
+        or name in FIXED_ADAPTER_TOOLS
+        or name in SKILL_MANAGEMENT_TOOLS
         or allowed_tool_names is None
         or name in allowed_tool_names
     )

@@ -15,23 +15,24 @@
     <div class="pm-section-label">{{ t('profileImUi.messaging') }}</div>
     <template v-for="platform in platforms" :key="platform.key">
       <div class="pm-platform-block" :data-platform="platform.key">
-      <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t(platform.labelKey) }}</span><span class="pm-field-hint">{{ t(platform.hintKey) }}</span></div><button v-if="!botsOf(platform.key).length" class="pm-bind-btn" :disabled="connecting === platform.key" @click="startConnect(platform.key)">{{ connecting === platform.key ? t('profileImUi.generating') : t('profileImUi.scanToConnect') }}</button><span v-else class="pm-field-hint pm-bound-tag">{{ t('profileImUi.connectedRebind') }}</span></div>
+      <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t(platform.labelKey) }}</span><span class="pm-field-hint">{{ t(platform.hintKey) }}</span></div><button v-if="platform.key === 'telegram'" class="pm-bind-btn" :disabled="connecting === platform.key" @click="openTelegramForm(botsOf(platform.key)[0]?.id ?? 0)">{{ botsOf(platform.key).length ? t('profileImUi.replaceTelegramToken') : t('profileImUi.scanToConnect') }}</button><button v-else-if="!botsOf(platform.key).length" class="pm-bind-btn" :disabled="connecting === platform.key" @click="startConnect(platform.key)">{{ connecting === platform.key ? t('profileImUi.generating') : t('profileImUi.scanToConnect') }}</button><span v-else class="pm-field-hint pm-bound-tag">{{ t('profileImUi.connectedRebind') }}</span></div>
       <div v-for="bot in botsOf(platform.key)" :key="bot.id" class="pm-bot-item">
         <div class="pm-bot-item-top"><div class="pm-bot-info"><span class="pm-bot-name">{{ displayBotName(bot) }}<span v-if="bot.sandbox" class="pm-bot-tag">{{ t('profileImUi.sandbox') }}</span></span><span class="pm-bot-appid">{{ bot.app_id }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.enabled === true" :aria-label="bot.enabled === true ? t('profileImUi.disableBot') : t('profileImUi.enableBot')" @update:model-value="toggleBot(bot)" /><span class="pm-switch-label" :class="{ on: bot.enabled === true }">{{ bot.enabled === true ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span><button class="pm-bot-del" @click="removeBot(bot)">{{ t('profileImUi.deleteBot') }}</button></div>
-        <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.qqBinding') }}</span><span class="pm-field-hint">{{ t('profileImUi.qqBindingHint') }}</span></div><div class="pm-binding-code"><button v-if="!bot.owner_bound && (!bindingCodes[bot.id] || bindingCodes[bot.id].expiresIn <= 0)" type="button" class="pm-style-chip" :disabled="bindingBotId === bot.id" @click="createBindingCode(bot)">{{ bindingBotId === bot.id ? t('profileImUi.generating') : t('profileImUi.generateCode') }}</button><div v-if="bindingCodes[bot.id] && bindingCodes[bot.id].expiresIn > 0" class="pm-binding-code-result"><span class="pm-binding-code-command" :title="t('profileImUi.sendToBot')"><code class="pm-binding-code-value">{{ bindingCodes[bot.id].code }}</code></span><span class="pm-binding-code-expiry">{{ t('profileImUi.codeExpiry', { seconds: bindingCodes[bot.id].expiresIn }) }}</span><button type="button" class="pm-binding-copy-btn" :class="{ copied: copiedBindingBotId === bot.id }" :title="copiedBindingBotId === bot.id ? t('profileImUi.bindingCopied') : t('profileImUi.copyBinding')" @click="copyBindingCode(bot.id)"><Icon name="status.success" v-if="copiedBindingBotId === bot.id" :size="12" /><Icon name="action.copy" v-else :size="12" /><span>{{ copiedBindingBotId === bot.id ? t('profileImUi.copied') : t('profileImUi.copy') }}</span></button></div><span v-else-if="bot.owner_bound" class="pm-field-hint">{{ t('profileImUi.bound') }}</span><span v-else-if="bindingCodes[bot.id]" class="pm-field-hint">{{ t('profileImUi.codeExpired') }}</span><button v-if="bot.owner_bound" type="button" class="pm-style-chip pm-unbind-chip" @click="unbindQqIdentity(bot)">{{ t('profileImUi.unbindQq') }}</button></div></div>
-        <div v-if="platform.key === 'qq' || platform.key === 'feishu'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupChat') }}</span><span class="pm-field-hint">{{ t(platform.key === 'feishu' ? 'profileImUi.feishuGroupChatHint' : 'profileImUi.groupChatHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="groupChatEnabled(bot)" :aria-label="t('profileImUi.toggleGroupChat')" @update:model-value="toggleGroupChat(bot)" /><span class="pm-switch-label" :class="{ on: groupChatEnabled(bot) }">{{ groupChatEnabled(bot) ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
-        <div v-if="(platform.key === 'qq' || platform.key === 'feishu') && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">{{ t('profileImUi.responseMode') }}</span><span class="pm-help-row"><span class="pm-field-hint">{{ t(platform.key === 'feishu' ? 'profileImUi.feishuGroupResponseHint' : 'profileImUi.responseModeHint') }}</span><button v-if="platform.key === 'qq'" :ref="el => setHelpAnchorRef(bot.id, el)" type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">{{ t('profileImUi.guide') }}</button></span><PopupMenu v-if="platform.key === 'qq'" :show="helpPopBotId === bot.id" :anchor="helpAnchorRefs[bot.id]" popup-class="pm-help-popup-host"><div class="pm-help-pop" @click.stop><div class="pm-help-pop-title">{{ t('profileImUi.fullMessageTitle') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep1') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep2') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep3') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep4') }}</div><div class="pm-help-pop-note">{{ t('profileImUi.fullMessageNote') }}</div></div></PopupMenu></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ t(`profileImUi.${option.key === 'reply_all' ? 'replyAll' : option.key === 'reply_mentions' ? 'replyMentions' : 'recordOnly'}`) }}</button></div></div>
+        <div v-if="platform.key === 'qq' || platform.key === 'telegram'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t(platform.key === 'qq' ? 'profileImUi.qqBinding' : 'profileImUi.telegramBinding') }}</span><span class="pm-field-hint">{{ t(platform.key === 'qq' ? 'profileImUi.qqBindingHint' : 'profileImUi.telegramBindingHint') }}</span></div><div class="pm-binding-code"><button v-if="!bot.owner_bound && (!bindingCodes[bot.id] || bindingCodes[bot.id].expiresIn <= 0)" type="button" class="pm-style-chip" :disabled="bindingBotId === bot.id" @click="createBindingCode(bot)">{{ bindingBotId === bot.id ? t('profileImUi.generating') : t('profileImUi.generateCode') }}</button><div v-if="bindingCodes[bot.id] && bindingCodes[bot.id].expiresIn > 0" class="pm-binding-code-result"><span class="pm-binding-code-command" :title="t(platform.key === 'qq' ? 'profileImUi.sendToBot' : 'profileImUi.sendTelegramToBot')"><code class="pm-binding-code-value">{{ platform.key === 'qq' ? bindingCodes[bot.id].code : `/bind ${bindingCodes[bot.id].code}` }}</code></span><span class="pm-binding-code-expiry">{{ t('profileImUi.codeExpiry', { seconds: bindingCodes[bot.id].expiresIn }) }}</span><button type="button" class="pm-binding-copy-btn" :class="{ copied: copiedBindingBotId === bot.id }" :title="copiedBindingBotId === bot.id ? t('profileImUi.bindingCopied') : t('profileImUi.copyBinding')" @click="copyBindingCode(bot.id)"><Icon name="status.success" v-if="copiedBindingBotId === bot.id" :size="12" /><Icon name="action.copy" v-else :size="12" /><span>{{ copiedBindingBotId === bot.id ? t('profileImUi.copied') : t('profileImUi.copy') }}</span></button></div><span v-else-if="bot.owner_bound" class="pm-field-hint">{{ t('profileImUi.bound') }}</span><span v-else-if="bindingCodes[bot.id]" class="pm-field-hint">{{ t('profileImUi.codeExpired') }}</span><button v-if="platform.key === 'qq' && bot.owner_bound" type="button" class="pm-style-chip pm-unbind-chip" @click="unbindQqIdentity(bot)">{{ t('profileImUi.unbindQq') }}</button></div></div>
+        <div v-if="['qq', 'feishu', 'telegram'].includes(platform.key)" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupChat') }}</span><span class="pm-field-hint">{{ t(platform.key === 'feishu' ? 'profileImUi.feishuGroupChatHint' : platform.key === 'telegram' ? 'profileImUi.telegramGroupChatHint' : 'profileImUi.groupChatHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="groupChatEnabled(bot)" :aria-label="t('profileImUi.toggleGroupChat')" @update:model-value="toggleGroupChat(bot)" /><span class="pm-switch-label" :class="{ on: groupChatEnabled(bot) }">{{ groupChatEnabled(bot) ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
+        <div v-if="['qq', 'feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">{{ t('profileImUi.responseMode') }}</span><span class="pm-help-row"><span class="pm-field-hint">{{ t(platform.key === 'feishu' ? 'profileImUi.feishuGroupResponseHint' : platform.key === 'telegram' ? 'profileImUi.telegramGroupResponseHint' : 'profileImUi.responseModeHint') }}</span><button v-if="platform.key === 'qq' || platform.key === 'telegram'" :ref="el => setHelpAnchorRef(bot.id, el)" type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">{{ t('profileImUi.guide') }}</button></span><PopupMenu v-if="platform.key === 'qq' || platform.key === 'telegram'" :show="helpPopBotId === bot.id" :anchor="helpAnchorRefs[bot.id]" popup-class="pm-help-popup-host"><div class="pm-help-pop" @click.stop><div class="pm-help-pop-title">{{ t(platform.key === 'qq' ? 'profileImUi.fullMessageTitle' : 'profileImUi.telegramGroupGuideTitle') }}</div><template v-if="platform.key === 'qq'"><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep1') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep2') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep3') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.fullMessageStep4') }}</div><div class="pm-help-pop-note">{{ t('profileImUi.fullMessageNote') }}</div></template><template v-else><div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep1') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep2') }}</div><div class="pm-help-pop-step">{{ t('profileImUi.telegramGroupGuideStep3') }}</div><div class="pm-help-pop-note">{{ t('profileImUi.telegramGroupGuideNote') }}</div></template></div></PopupMenu></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ t(`profileImUi.${option.key === 'reply_all' ? 'replyAll' : option.key === 'reply_mentions' ? 'replyMentions' : 'recordOnly'}`) }}</button></div></div>
         <template v-if="platform.key === 'qq'">
           <MessageFormatSettings :bot="bot" @change="(scope, mode) => setMessageFormat(bot, scope, mode)" />
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.privateStreaming') }}</span><span class="pm-field-hint">{{ t('profileImUi.privateStreamingHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.private_streaming_enabled === true" :aria-label="t('profileImUi.togglePrivateStreaming')" @update:model-value="togglePrivateStreaming(bot)" /><span class="pm-switch-label" :class="{ on: bot.private_streaming_enabled === true }">{{ bot.private_streaming_enabled === true ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
         </template>
-        <GroupOwnerMemorySwitch v-if="(platform.key === 'feishu' || platform.key === 'qq') && groupChatEnabled(bot)" :enabled="bot.group_owner_memory_enabled === true" @change="value => updateBotSetting(bot.id, { group_owner_memory_enabled: value }, t('profileImUi.groupOwnerMemorySettingsFailed'))" />
-        <template v-if="(platform.key === 'qq' || platform.key === 'feishu') && groupChatEnabled(bot)">
+        <GroupOwnerMemorySwitch v-if="['feishu', 'qq', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" :enabled="bot.group_owner_memory_enabled === true" @change="value => updateBotSetting(bot.id, { group_owner_memory_enabled: value }, t('profileImUi.groupOwnerMemorySettingsFailed'))" />
+        <template v-if="['qq', 'feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)">
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberMemoryHint') }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.member_memory_enabled !== false" :aria-label="t('profileImUi.toggleMemberMemory')" @update:model-value="toggleMemory(bot, 'member_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.member_memory_enabled !== false }">{{ bot.member_memory_enabled !== false ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span></div>
         </template>
-        <div v-if="(platform.key === 'qq' || platform.key === 'feishu') && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.key === 'web_search' ? 'webSearchTools' : 'groupContextSearch'}`) }}</button></div></div>
+        <div v-if="['qq', 'feishu', 'telegram'].includes(platform.key) && groupChatEnabled(bot)" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberTools') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberToolsHint') }}</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ t(`profileImUi.${option.key === 'web_search' ? 'webSearchTools' : 'groupContextSearch'}`) }}</button></div></div>
       </div>
+      <form v-if="platform.key === 'telegram' && telegramFormBotId !== null" class="pm-telegram-connect" @submit.prevent="submitTelegramToken"><span class="pm-field-name">{{ t('profileImUi.telegramTokenLabel') }}</span><div class="pm-telegram-token-controls"><input id="telegram-bot-token" v-model="telegramToken" class="form-input" type="password" autocomplete="new-password" :aria-label="t('profileImUi.telegramTokenLabel')" :placeholder="t('profileImUi.telegramTokenPlaceholder')" :disabled="connecting === 'telegram'" /><button class="pm-style-chip" type="submit" :disabled="connecting === 'telegram' || !telegramToken.trim()">{{ connecting === 'telegram' ? t('profileImUi.connectingTelegram') : t(telegramFormBotId ? 'profileImUi.replaceTelegramToken' : 'profileImUi.connectTelegram') }}</button><button class="pm-style-chip" type="button" :disabled="connecting === 'telegram'" @click="closeTelegramForm">{{ t('profileImUi.cancel') }}</button></div><p class="pm-field-hint">{{ t('profileImUi.telegramTokenSecurityHint') }}</p></form>
       <div v-if="connect?.platform === platform.key" :ref="el => setConnectPanelRef(platform.key, el)" class="pm-qr-box"><canvas ref="connectCanvas" class="pm-qr-canvas"></canvas><div class="pm-qr-hint">{{ connectHint }}</div><button class="pm-qr-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
       </div>
     </template>
@@ -40,16 +41,17 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
+import { nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import Icon from '@/components/common/icons/Icon.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
-import { feishuConnectApi, qqConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
+import { feishuConnectApi, qqConnectApi, telegramConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import { beginOptimisticIntent, isOptimisticIntentCurrent, withOptimisticIntent } from '@/utils/optimisticIntent'
 import MessageFormatSettings from './MessageFormatSettings.vue'
 import { usePreferencesStore } from '@/stores/preferences'
+import { useLiveStore } from '@/stores/live'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import GroupOwnerMemorySwitch from './GroupOwnerMemorySwitch.vue'
 import { useI18n } from 'vue-i18n'
@@ -71,12 +73,16 @@ const groupToolOptions = [
   { key: 'group_context_search', label: '群上下文搜索', tools: ['group_context_search'] },
 ] as const
 const preferences = usePreferencesStore()
+const liveStore = useLiveStore()
 const { t } = useI18n()
 const platforms = [
   { key: 'feishu', labelKey: 'profileImUi.feishu', api: feishuConnectApi, hintKey: 'profileImUi.feishuHint' },
   { key: 'qq', labelKey: 'profileImUi.qq', api: qqConnectApi, hintKey: 'profileImUi.qqHint' },
   { key: 'wechat', labelKey: 'profileImUi.wechat', api: wechatConnectApi, hintKey: 'profileImUi.wechatHint' },
+  { key: 'telegram', labelKey: 'profileImUi.telegram', api: null, hintKey: 'profileImUi.telegramHint' },
 ]
+const telegramToken = ref('')
+const telegramFormBotId = ref<number | null>(null)
 const bots = ref<Bot[]>([]); const botsOf = (platform: string) => bots.value.filter(bot => bot.platform === platform)
 const helpPopBotId = ref<number | null>(null)
 const helpAnchorRefs = ref<Record<number, HTMLElement | null>>({})
@@ -92,7 +98,7 @@ function onDocClickCloseHelp(e: MouseEvent) {
   _helpPressInside = false
   helpPopBotId.value = null
 }
-const connecting = ref(''); const connect = ref<{ platform: string; id: string } | null>(null); const connectHint = ref(''); const connectErr = ref(''); const connectCanvas = ref<HTMLCanvasElement | null>(null); const bindingBotId = ref<number | null>(null); const bindingCodes = ref<Record<number, { code: string; expiresIn: number }>>({}); const copiedBindingBotId = ref<number | null>(null); let poll: ReturnType<typeof setInterval> | null = null; let bindingCountdown: ReturnType<typeof setInterval> | null = null; let bindingStatusPoll: ReturnType<typeof setInterval> | null = null; let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+const connecting = ref(''); const connect = ref<{ platform: string; id: string } | null>(null); const connectHint = ref(''); const connectErr = ref(''); const connectCanvas = ref<HTMLCanvasElement | null>(null); const bindingBotId = ref<number | null>(null); const bindingCodes = ref<Record<number, { code: string; expiresIn: number }>>({}); const copiedBindingBotId = ref<number | null>(null); let poll: ReturnType<typeof setInterval> | null = null; let bindingCountdown: ReturnType<typeof setInterval> | null = null; let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 const connectPanels = ref<Record<string, HTMLElement | null>>({})
 function setConnectPanelRef(platform: string, element: unknown) {
   connectPanels.value[platform] = element instanceof HTMLElement ? element : null
@@ -123,6 +129,8 @@ function displayBotName(bot: Bot): string {
       ? 'defaultQqBot'
       : bot.platform === 'wechat' && ['我的微信', '我的微信机器人'].includes(normalized)
         ? 'defaultWechatBot'
+        : bot.platform === 'telegram' && normalized === '我的telegram机器人'
+          ? 'defaultTelegramBot'
         : null
   return defaultKey ? t(`profileImUi.${defaultKey}`) : name
 }
@@ -157,7 +165,6 @@ async function loadBots() {
     if (boundIds.size) {
       bindingCodes.value = Object.fromEntries(Object.entries(bindingCodes.value).filter(([id]) => !boundIds.has(Number(id))))
     }
-    if (!Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) stopBindingStatusPoll()
   } catch {}
 }
 function updateBotSetting(botId: number, patch: BotSettingPatch, fallbackError: string): Promise<void> {
@@ -188,24 +195,41 @@ function updateBotSetting(botId: number, patch: BotSettingPatch, fallbackError: 
   return task
 }
 
-async function startConnect(platform: string) { const item = platforms.find(value => value.key === platform); if (!item) return; connecting.value = platform; connectErr.value = ''; try { const result = await item.api.start(); const id = result.poll_id || result.task_id; connect.value = { platform, id }; connectHint.value = t(`profileImUi.${platform}ConnectHint`); await nextTick(); const panel = connectPanels.value[platform]; if (typeof panel?.scrollIntoView === 'function') panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); await QRCode.toCanvas(connectCanvas.value, result.scan_url, { width: 180, margin: 1 }); startPoll(item) } catch (error) { connectErr.value = (error instanceof Error ? error.message : '') || t('profileImUi.qrGenerateFailed'); connect.value = null } finally { connecting.value = '' } }
-function startPoll(platform: (typeof platforms)[number]) { stopPoll(); let tries = 0; poll = setInterval(async () => { tries++; try { if (!connect.value) return; const result = await platform.api.poll(connect.value.id); if (result.status === 'success') { cancelConnect(); await loadBots() } else if (result.status === 'expired') { connectErr.value = t('profileImUi.qrExpired'); cancelConnect() } else if (result.status === 'fail') { connectErr.value = t('profileImUi.connectionFailedWithReason', { reason: result.reason || t('profileImUi.unknownError') }); cancelConnect() } } catch {} if (tries > 100) cancelConnect() }, 3000) }
+async function startConnect(platform: string) { const item = platforms.find(value => value.key === platform); if (!item?.api) return; connecting.value = platform; connectErr.value = ''; try { const result = await item.api.start(); const id = result.poll_id || result.task_id; connect.value = { platform, id }; connectHint.value = t(`profileImUi.${platform}ConnectHint`); await nextTick(); const panel = connectPanels.value[platform]; if (typeof panel?.scrollIntoView === 'function') panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); await QRCode.toCanvas(connectCanvas.value, result.scan_url, { width: 180, margin: 1 }); startPoll(item) } catch (error) { connectErr.value = (error instanceof Error ? error.message : '') || t('profileImUi.qrGenerateFailed'); connect.value = null } finally { connecting.value = '' } }
+function startPoll(platform: Exclude<(typeof platforms)[number], { api: null }>) { stopPoll(); let tries = 0; poll = setInterval(async () => { tries++; try { if (!connect.value) return; const result = await platform.api.poll(connect.value.id); if (result.status === 'success') { cancelConnect(); await loadBots() } else if (result.status === 'expired') { connectErr.value = t('profileImUi.qrExpired'); cancelConnect() } else if (result.status === 'fail') { connectErr.value = t('profileImUi.connectionFailedWithReason', { reason: result.reason || t('profileImUi.unknownError') }); cancelConnect() } } catch {} if (tries > 100) cancelConnect() }, 3000) }
 function stopPoll() { if (poll) { clearInterval(poll); poll = null } }
 function resumePoll() {
   if (!connect.value) return
   const platform = platforms.find(value => value.key === connect.value?.platform)
-  if (platform) startPoll(platform)
+  if (platform?.api) startPoll(platform as Exclude<(typeof platforms)[number], { api: null }>)
 }
 function cancelConnect() { stopPoll(); connect.value = null }
+function openTelegramForm(botId: number) { connectErr.value = ''; telegramToken.value = ''; telegramFormBotId.value = botId; void nextTick(() => { const input = document.getElementById('telegram-bot-token'); if (typeof input?.scrollIntoView === 'function') input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }) }
+function closeTelegramForm() { telegramFormBotId.value = null; telegramToken.value = '' }
+async function submitTelegramToken() {
+  const secret = telegramToken.value.trim()
+  const botId = telegramFormBotId.value
+  if (!secret || botId === null) return
+  connecting.value = 'telegram'
+  connectErr.value = ''
+  telegramToken.value = ''
+  try {
+    if (botId) await telegramConnectApi.replace(botId, secret)
+    else await telegramConnectApi.connect(secret)
+    closeTelegramForm()
+    await loadBots()
+  } catch (error) {
+    connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionFailed')
+  } finally {
+    connecting.value = ''
+  }
+}
 function toggleBot(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { enabled: !current.enabled }, t('profileImUi.connectionSettingsFailed')) }
-async function createBindingCode(bot: Bot) { bindingBotId.value = bot.id; connectErr.value = ''; try { const result = await userBotsApi.createQqBindingCode(bot.id); bindingCodes.value = { ...bindingCodes.value, [bot.id]: { code: result.code, expiresIn: result.expires_in } }; startBindingStatusPoll() } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.codeGenerateFailed') } finally { bindingBotId.value = null } }
+async function createBindingCode(bot: Bot) { bindingBotId.value = bot.id; connectErr.value = ''; try { const result = bot.platform === 'telegram' ? await telegramConnectApi.createBindingCode(bot.id) : await userBotsApi.createQqBindingCode(bot.id); bindingCodes.value = { ...bindingCodes.value, [bot.id]: { code: result.code, expiresIn: result.expires_in } } } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.codeGenerateFailed') } finally { bindingBotId.value = null } }
 function tickBindingCodes() {
   const next = Object.fromEntries(Object.entries(bindingCodes.value).map(([id, binding]) => [id, { ...binding, expiresIn: Math.max(0, binding.expiresIn - 1) }]))
   bindingCodes.value = next
-  if (!Object.values(next).some(binding => binding.expiresIn > 0)) stopBindingStatusPoll()
 }
-function startBindingStatusPoll() { stopBindingStatusPoll(); bindingStatusPoll = setInterval(() => { void loadBots() }, 3000) }
-function stopBindingStatusPoll() { if (bindingStatusPoll) { clearInterval(bindingStatusPoll); bindingStatusPoll = null } }
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text)
@@ -225,7 +249,7 @@ async function copyText(text: string) {
 async function copyBindingCode(botId: number) {
   const binding = bindingCodes.value[botId]
   if (!binding) return
-  const copied = await copyText(binding.code)
+  const copied = await copyText(botById(botId)?.platform === 'telegram' ? `/bind ${binding.code}` : binding.code)
   if (!copied) { connectErr.value = t('profileImUi.copyFailed'); return }
   copiedBindingBotId.value = botId
   if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
@@ -253,9 +277,9 @@ function toggleMemory(bot: Bot, field: 'group_memory_enabled' | 'member_memory_e
   const current = botById(bot.id)
   if (current) void updateBotSetting(bot.id, { [field]: current[field] !== false ? false : true }, '群聊记忆设置失败')
 }
-function groupResponseMode(bot: Bot): string { return bot.group_response_mode ?? (bot.group_read_enabled ? 'record_only' : bot.group_requires_at ? 'reply_mentions' : 'reply_all') }
+function groupResponseMode(bot: Bot): string { return bot.group_response_mode ?? (bot.group_read_enabled ? 'record_only' : (bot.group_requires_at ?? true) ? 'reply_mentions' : 'reply_all') }
 function setGroupResponseMode(bot: Bot, mode: string) { void updateBotSetting(bot.id, { group_response_mode: mode }, '群聊回应方式设置失败') }
-function groupTools(bot: Bot): string[] { return bot.group_allowed_tools?.map(name => name === 'inspect_images' ? 'read_file' : name) ?? ['web_search', 'http_get', 'image_search', 'read_file', 'send_file'] }
+function groupTools(bot: Bot): string[] { return bot.group_allowed_tools?.map(name => name === 'inspect_images' ? 'read_file' : name) ?? ['web_search', 'http_get', 'image_search', 'read_file', 'send_file', 'group_context_search'] }
 function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean { return option.tools.every(t => groupTools(bot).includes(t)) }
 function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
   const current = botById(bot.id)
@@ -276,12 +300,15 @@ function togglePrivateStreaming(bot: Bot) {
 async function removeBot(bot: Bot) { if (!await confirmDialog({ title: t('profileImUi.deleteBotTitle'), message: t('profileImUi.deleteBotMessage', { name: displayBotName(bot) }), tone: 'danger', confirmText: t('profileImUi.deleteBot') })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionFailed') } }
 onMounted(() => { void preferences.fetch(); loadBots(); bindingCountdown = setInterval(tickBindingCodes, 1000); document.addEventListener('mousedown', onDocPressCloseHelp, true); document.addEventListener('click', onDocClickCloseHelp) })
 onDeactivated(stopPoll)
-onDeactivated(stopBindingStatusPoll)
 onDeactivated(clearCopyFeedback)
 onDeactivated(onDocClickCloseHelp)
 onActivated(resumePoll)
-onActivated(() => { if (Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) startBindingStatusPoll() })
-onBeforeUnmount(() => { stopBindingStatusPoll(); if (bindingCountdown) clearInterval(bindingCountdown); if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); document.removeEventListener('mousedown', onDocPressCloseHelp, true); document.removeEventListener('click', onDocClickCloseHelp) })
+onActivated(() => { if (Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) void loadBots() })
+watch(() => liveStore.rev.im_channels, () => { void loadBots() })
+watch(() => liveStore.connected, connected => {
+  if (connected && Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) void loadBots()
+})
+onBeforeUnmount(() => { if (bindingCountdown) clearInterval(bindingCountdown); if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); document.removeEventListener('mousedown', onDocPressCloseHelp, true); document.removeEventListener('click', onDocClickCloseHelp) })
 </script>
 
 <style scoped>
@@ -291,6 +318,11 @@ onBeforeUnmount(() => { stopBindingStatusPoll(); if (bindingCountdown) clearInte
   border-top: 0;
 }
 
+.pm-platform-block > .pm-field-row > .pm-field-desc {
+  flex: 1;
+  min-width: 0;
+}
+
 .pm-binding-code {
   flex-shrink: 0;
   display: flex;
@@ -298,6 +330,33 @@ onBeforeUnmount(() => { stopBindingStatusPoll(); if (bindingCountdown) clearInte
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
+}
+
+.pm-telegram-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 12px;
+  border: 1px solid var(--subpanel-border);
+  border-radius: var(--radius-sm);
+  background: var(--subpanel-bg);
+}
+
+.pm-telegram-token-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pm-telegram-token-controls input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.pm-telegram-connect > .pm-field-hint {
+  margin: 0;
 }
 
 .pm-binding-code-result {

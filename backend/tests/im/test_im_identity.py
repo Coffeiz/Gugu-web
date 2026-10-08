@@ -64,7 +64,9 @@ async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
     access = await resolve_qq_group_access(db, bot.id, user_a.id, "member-1")
 
     assert access.role == "unknown"
-    assert access.allowed_tool_names == ["web_search", "http_get", "image_search", "read_file", "send_file"]
+    assert access.allowed_tool_names == ["web_search", "http_get", "image_search", "read_file", "send_file", "group_context_search"]
+    assert bot.group_requires_at is True
+    assert "group_context_search" in bot.group_allowed_tools
 
 
 async def test_group_context_search_only_reads_current_group(db, user_a, monkeypatch):
@@ -72,8 +74,8 @@ async def test_group_context_search_only_reads_current_group(db, user_a, monkeyp
     from agent.tools.group_context import _group_context_search
     from app.models import ConversationMessage, ConversationSession
 
-    current = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_id="group-a", title="群 A")
-    other = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_id="group-b", title="群 B")
+    current = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_type="group", chat_id="group-a", title="群 A")
+    other = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_type="group", chat_id="group-b", title="群 B")
     db.add_all([current, other])
     await db.flush()
     db.add_all([
@@ -94,7 +96,7 @@ async def test_group_context_search_accepts_multiple_keywords(db, user_a, monkey
     from agent.tools.group_context import _group_context_search
     from app.models import ConversationMessage, ConversationSession
 
-    current = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_id="group-a", title="群 A")
+    current = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_type="group", chat_id="group-a", title="群 A")
     db.add(current)
     await db.flush()
     db.add_all([
@@ -156,6 +158,17 @@ def test_tool_permission_filter_and_dispatch_gate_share_the_same_rule():
     assert can_use_tool("web_search", ["web_search"]) is True
     assert can_use_tool("files", ["web_search"]) is False
     assert can_use_tool("files", None) is True
+
+
+def test_skill_lifecycle_and_adapter_are_not_limited_by_group_tool_allowlist():
+    from agent.im.permissions import can_use_tool
+
+    assert can_use_tool("call_tool", []) is True
+    assert can_use_tool("get_tool_schema", []) is True
+    for name in ("list_skills", "create_skill", "update_skill", "delete_skill"):
+        assert can_use_tool(name, []) is True
+    # 绕过白名单的只有管理/适配入口，具体业务工具仍受原权限控制。
+    assert can_use_tool("http_get", []) is False
 
 
 def test_safe_time_tool_is_available_to_restricted_group_members():

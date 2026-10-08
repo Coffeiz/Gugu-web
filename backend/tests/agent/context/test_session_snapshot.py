@@ -110,8 +110,12 @@ def test_snapshot_revision_is_pending_metadata_not_hit_gate():
 def test_zero_snapshot_revision_is_a_valid_rag_version():
     from agent.rag.context import get_snapshot_revision, set_snapshot_revision
 
-    set_snapshot_revision(0)
-    assert get_snapshot_revision() == "0"
+    previous_revision = get_snapshot_revision()
+    try:
+        set_snapshot_revision(0)
+        assert get_snapshot_revision() == "0"
+    finally:
+        set_snapshot_revision(previous_revision or None)
 
 
 def test_legacy_snapshot_with_zero_context_revision_gets_rag_revision():
@@ -252,6 +256,45 @@ async def test_snapshot_serializes_zoneinfo_timezone_for_json():
     await ensure_snapshot(_Db(), session, load_context=load)
     assert session.session_context["user_tz"] == "Asia/Shanghai"
     assert snapshot_context(session)["user_tz"].key == "Asia/Shanghai"
+
+
+@pytest.mark.asyncio
+async def test_im_channel_change_invalidates_snapshots_for_all_platforms_without_cross_user_leak(
+    db, user_a, user_b,
+):
+    from agent.context.session_snapshot import invalidate_user_im_snapshots
+    from app.models import ConversationSession
+
+    platforms = ("qq", "feishu", "wechat", "telegram")
+    owned_sessions = []
+    for platform in platforms:
+        session = ConversationSession(
+            user_id=user_a.id, title="合成对话", source=platform, bot_id="bot-1",
+        )
+        initialize_snapshot(
+            session, system_prompt="system", snapshot_context=platform,
+            session_info={}, user_tz="UTC",
+        )
+        db.add(session)
+        owned_sessions.append(session)
+
+    another_users_session = ConversationSession(
+        user_id=user_b.id, title="合成对话", source="telegram", bot_id="bot-1",
+    )
+    initialize_snapshot(
+        another_users_session, system_prompt="system", snapshot_context="other",
+        session_info={}, user_tz="UTC",
+    )
+    db.add(another_users_session)
+    await db.commit()
+
+    invalidated_count = await invalidate_user_im_snapshots(user_a.id)
+
+    assert invalidated_count == len(platforms)
+    for session in [*owned_sessions, another_users_session]:
+        await db.refresh(session)
+    assert all(is_expired(session) for session in owned_sessions)
+    assert not is_expired(another_users_session)
 
 
 def test_snapshot_message_has_stable_boundary():

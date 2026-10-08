@@ -89,7 +89,7 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
     if not files:
         return result
     platform = payload.get("platform")
-    if platform not in ("feishu", "qq", "wechat"):
+    if platform not in ("feishu", "qq", "wechat", "telegram"):
         print(f"[im] {platform} 暂不支持发文件（{len(files)} 个）", flush=True)
         result.failed = len(files)
         result.reason = "这个平台暂时不能接收文件。"
@@ -154,6 +154,7 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
         if not isinstance(file_item, dict):
             result.failed += 1
             continue
+        file_size = 0
         file_id = file_item.get("file_id")
         attach_id = file_item.get("attach_id")
         try:
@@ -175,8 +176,16 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
                     continue
                 display_name = file_item.get("name") or meta.get("name") or "图片"
                 ext, storage_key = meta.get("ext", ""), meta["storage_key"]
+                file_size = meta.get("size", 0)
             else:
                 result.failed += 1
+                continue
+
+            if file_id:
+                file_size = record.size_bytes
+            if platform == "telegram" and isinstance(file_size, int) and file_size > 50_000_000:
+                result.failed += 1
+                result.reason = "Telegram 单个文件发送上限为 50 MB，请从文件库下载后分享。"
                 continue
 
             fname = f"{display_name}.{ext}"

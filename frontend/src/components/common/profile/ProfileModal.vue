@@ -322,6 +322,7 @@ async function doDeleteAccount() {
 .pm-palette-swatch.palette-sage { background: #84ab9e; }
 
 .pm-bind-btn {
+  flex: 0 0 auto; white-space: nowrap;
   padding: 6px 16px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent);
   font: 600 12px var(--font-sans); cursor: pointer; box-shadow: var(--elevation-card);
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard);

@@ -81,11 +81,24 @@ async def get_context_revision(user_id) -> int:
         return 0
 
 
+async def _invalidate_im_session_snapshots(user_id) -> None:
+    from agent.context.session_snapshot import invalidate_user_im_snapshots
+
+    await invalidate_user_im_snapshots(user_id)
+
+
 async def bump_context_revision(user_id, *resources: str) -> None:
-    """业务数据成功变更后递增版本，供 session snapshot 做新鲜度判断。"""
+    """递增上下文版本；IM 渠道变更还会立即失效所有平台会话快照。"""
     resource_names = {resource for resource in resources if isinstance(resource, str)}
     if not _CONTEXT_REVISION_SOURCES.intersection(resource_names):
         return
+    if "im_channels" in resource_names:
+        try:
+            await _invalidate_im_session_snapshots(user_id)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("app.core.events.invalidate_im_session_snapshots", exc)
     try:
         key = f"context-revision:{user_id}"
         redis = get_redis()

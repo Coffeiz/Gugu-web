@@ -45,6 +45,11 @@ async def test_group_policy_uses_platform_specific_enable_field(monkeypatch):
             group_requires_at=False, group_read_enabled=False,
             group_memory_enabled=True, member_memory_enabled=False,
         ),
+        14: SimpleNamespace(
+            platform="telegram", group_chat_enabled=True, feishu_group_chat_enabled=False,
+            group_requires_at=True, group_read_enabled=False,
+            group_memory_enabled=False, member_memory_enabled=True,
+        ),
     }
 
     class Session:
@@ -64,5 +69,6 @@ async def test_group_policy_uses_platform_specific_enable_field(monkeypatch):
     assert (await resolve_group_policy("12", "feishu")) == (False, True, True, False, True)
     # NULL 表示升级前的飞书连接，保持既有群聊可用行为。
     assert (await resolve_group_policy("13", "feishu")) == (True, False, False, True, False)
+    assert (await resolve_group_policy("14", "telegram")) == (True, True, False, False, True)
     # 平台错配不能通过另一个 IM 的 Bot 行绕过各自的开关。
     assert (await resolve_group_policy("12", "qq"))[0] is False

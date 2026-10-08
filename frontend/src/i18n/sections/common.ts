@@ -130,9 +130,9 @@ Object.assign((messages['en-US'] as Record<string, any>).chatUi, { cancelling: '
 Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { runFailed: '生成失败', runInterrupted: '已中断' })
 Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { runFailed: '生成に失敗しました', runInterrupted: '中断しました' })
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { runFailed: 'Generation failed', runInterrupted: 'Interrupted' })
-Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { qqOffline: 'QQ 离线', wechatOffline: '微信离线', feishuOffline: '飞书离线', resting: '休息中', online: '在线', restingHint: '咕咕精力用完了，歇会儿就回来～', onlineHint: '咕咕在线', offlineHint: '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它', voice: '语音' })
-Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { qqOffline: 'QQ オフライン', wechatOffline: 'WeChat オフライン', feishuOffline: 'Feishu オフライン', resting: '休憩中', online: 'オンライン', restingHint: 'Gugu は休憩中です。しばらくすると戻ります', onlineHint: 'Gugu はオンラインです', offlineHint: 'WeChat / QQ / Feishu に未接続です。タップして接続してください', voice: '音声' })
-Object.assign((messages['en-US'] as Record<string, any>).chatUi, { qqOffline: 'QQ offline', wechatOffline: 'WeChat offline', feishuOffline: 'Feishu offline', resting: 'Resting', online: 'Online', restingHint: 'Gugu is resting and will be back soon', onlineHint: 'Gugu is online', offlineHint: 'Gugu is not connected to WeChat, QQ, or Feishu. Tap to connect', voice: 'Voice' })
+Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { qqOffline: 'QQ 离线', wechatOffline: '微信离线', feishuOffline: '飞书离线', telegramOffline: 'Telegram 离线', resting: '休息中', online: '在线', restingHint: '咕咕精力用完了，歇会儿就回来～', onlineHint: '咕咕在线', offlineHint: '咕咕还没接到你的微信 / QQ / 飞书 / Telegram——点一下接上，随时随地找它', voice: '语音' })
+Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { qqOffline: 'QQ オフライン', wechatOffline: 'WeChat オフライン', feishuOffline: 'Feishu オフライン', telegramOffline: 'Telegram オフライン', resting: '休憩中', online: 'オンライン', restingHint: 'Gugu は休憩中です。しばらくすると戻ります', onlineHint: 'Gugu はオンラインです', offlineHint: 'WeChat / QQ / Feishu / Telegram に未接続です。タップして接続してください', voice: '音声' })
+Object.assign((messages['en-US'] as Record<string, any>).chatUi, { qqOffline: 'QQ offline', wechatOffline: 'WeChat offline', feishuOffline: 'Feishu offline', telegramOffline: 'Telegram offline', resting: 'Resting', online: 'Online', restingHint: 'Gugu is resting and will be back soon', onlineHint: 'Gugu is online', offlineHint: 'Gugu is not connected to WeChat, QQ, Feishu, or Telegram. Tap to connect', voice: 'Voice' })
 Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { conversation: '对话', waitingConfirmation: '等待你的确认', taskPausedWaiting: '任务已暂停，等待确认', contextCompacting: '正在整理上下文…', retrying: '模型服务繁忙，{seconds}s 后自动重试（{n}/{max}）…', providerBusyExhausted: '模型服务过载（上游 {tag}），已自动重试 {attempts} 次仍未恢复，请稍后再试 🙏', providerUnavailable: '模型服务暂时不可用（上游 {tag}），请稍后重试。', genericError: '咕咕开小差了 😵‍💫 麻烦再说一遍好吗？', noReply: '收到，但没有收到回复，请稍后再试。', networkError: '咕咕网络不太好 📡 可以再发一遍吗？', pendingQueue: '排队中', removeQueued: '移除这条排队消息', pendingQueuePersistFailed: '排队消息未能保存到服务器，暂时只保留在当前页面；请勿刷新，稍后重试。', pendingQueueDispatchConflict: '这条排队消息已被其他页面处理，请刷新队列后再试。' })
 Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { conversation: '会話', waitingConfirmation: '確認を待っています', taskPausedWaiting: 'タスクを一時停止中。確認を待っています', contextCompacting: 'コンテキストを整理中…', retrying: 'モデルが混み合っています。{seconds}秒後に自動再試行（{n}/{max}）…', providerBusyExhausted: 'モデルサービスが過負荷です（上流 {tag}）。自動再試行 {attempts} 回でも回復しませんでした。しばらくしてからお試しください 🙏', providerUnavailable: 'モデルサービスが一時的に利用できません（上流 {tag}）。後でもう一度お試しください。', genericError: 'Gugu に問題が発生しました。もう一度お試しください', noReply: '受信しましたが返信がありません。後でもう一度お試しください', networkError: 'Gugu のネットワークが不安定です。もう一度送信してください', pendingQueue: '待機中', removeQueued: 'この待機メッセージを削除', pendingQueuePersistFailed: 'キューのメッセージをサーバーに保存できませんでした。現在のページにのみ保持されています。更新せず、後でもう一度お試しください。', pendingQueueDispatchConflict: 'この待機メッセージは別のページで処理されました。キューを更新して再試行してください。' })
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { conversation: 'Conversation', waitingConfirmation: 'Waiting for your confirmation', taskPausedWaiting: 'Task paused; waiting for confirmation', contextCompacting: 'Organizing context…', retrying: 'Model busy, retrying in {seconds}s ({n}/{max})…', providerBusyExhausted: 'Model service overloaded (upstream {tag}); {attempts} automatic retries failed. Please try again shortly 🙏', providerUnavailable: 'Model service temporarily unavailable (upstream {tag}). Please retry later.', genericError: 'Gugu had a hiccup. Please try again', noReply: 'Received, but no reply arrived. Please try again later.', networkError: 'Gugu is having network trouble. Please send it again.', pendingQueue: 'Queued', removeQueued: 'Remove this queued message', pendingQueuePersistFailed: 'Could not save the queued message to the server. It is only on this page for now; do not refresh, and try again later.', pendingQueueDispatchConflict: 'Another page already handled this queued message. Refresh the queue and try again.' })
@@ -145,15 +145,18 @@ Object.assign((messages['en-US'] as Record<string, any>).chatUi, { internalError
 Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { feishu: '飞书', wechat: '微信', feishuQrHint: '手机飞书扫码 → 授权创建机器人，授权后自动连接', wechatQrHint: '手机微信扫码 → 授权后自动连接', qqQrHint: '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接', qrFailed: '生成二维码失败', qrExpired: '二维码已过期，请重新扫码', qrExpiredRetry: '二维码已过期，关闭后重新点击按钮', connectFailed: '连接失败：{reason}', unknown: '未知' })
 Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { feishu: 'Feishu', wechat: 'WeChat', feishuQrHint: 'スマホの Feishu で QR をスキャン → ボットを認証して接続', wechatQrHint: 'スマホの WeChat で QR をスキャン → 認証後に接続', qqQrHint: 'スマホの QQ で QR をスキャン → ボットを選んで認証', qrFailed: 'QR コードの生成に失敗しました', qrExpired: 'QR コードの有効期限が切れました。再度スキャンしてください', qrExpiredRetry: 'QR コードの有効期限が切れました。閉じてもう一度お試しください', connectFailed: '接続に失敗：{reason}', unknown: '不明' })
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { feishu: 'Feishu', wechat: 'WeChat', feishuQrHint: 'Scan with Feishu on your phone → authorize the bot to connect', wechatQrHint: 'Scan with WeChat on your phone → connect after authorization', qqQrHint: 'Scan with QQ on your phone → choose and authorize a bot', qrFailed: 'Failed to generate QR code', qrExpired: 'QR code expired. Please scan again', qrExpiredRetry: 'QR code expired. Close this and try again', connectFailed: 'Connection failed: {reason}', unknown: 'Unknown' })
+Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { telegram: 'Telegram', telegramSetupHint: 'Telegram 使用自建 Bot，请先在个人设置的「接入咕咕」中配置 Token。', openTelegramSettings: '打开 Telegram 设置' })
+Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { telegram: 'Telegram', telegramSetupHint: 'Telegram は自分の Bot を使用します。個人設定の「Gugu に接続」で Token を設定してください。', openTelegramSettings: 'Telegram 設定を開く' })
+Object.assign((messages['en-US'] as Record<string, any>).chatUi, { telegram: 'Telegram', telegramSetupHint: 'Telegram uses your own bot. Add its token in Personal settings → Connect Gugu.', openTelegramSettings: 'Open Telegram settings' })
 Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { voiceExpired: '这条语音过期啦（语音保留 30 天）🎤', voiceLoadFailed: '语音加载失败了 😵', voicePlayFailed: '语音播放失败 🎤', attachmentUploadFailed: '附件上传失败 😵', recordingSecureContext: '录音需要 HTTPS 或 localhost 安全环境 🎤 当前访问环境不支持麦克风。', recordingUnsupported: '这个浏览器不支持录音 🎤', recordingFailed: '没法录音 🎤', microphoneDenied: '没法录音 🎤 麦克风权限被拒了，请在浏览器设置中允许。', copied: '已复制', copy: '复制', copyFailed: '复制失败，请检查浏览器剪贴板权限' })
 Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { voiceExpired: 'この音声は期限切れです（保存期間は 30 日）🎤', voiceLoadFailed: '音声を読み込めませんでした 😵', voicePlayFailed: '音声を再生できませんでした 🎤', attachmentUploadFailed: '添付ファイルのアップロードに失敗しました 😵', recordingSecureContext: '録音には HTTPS または localhost が必要です 🎤 現在の環境ではマイクを利用できません。', recordingUnsupported: 'このブラウザーは録音に対応していません 🎤', recordingFailed: '録音できませんでした 🎤', microphoneDenied: '録音できませんでした 🎤 ブラウザー設定でマイクを許可してください。', copied: 'コピーしました', copy: 'コピー', copyFailed: 'コピーに失敗しました。ブラウザーのクリップボード権限を確認してください' })
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { voiceExpired: 'This voice message has expired (kept for 30 days) 🎤', voiceLoadFailed: 'Failed to load the voice message 😵', voicePlayFailed: 'Failed to play the voice message 🎤', attachmentUploadFailed: 'Attachment upload failed 😵', recordingSecureContext: 'Recording requires HTTPS or localhost 🎤 The current environment cannot access the microphone.', recordingUnsupported: 'This browser does not support recording 🎤', recordingFailed: 'Could not record 🎤', microphoneDenied: 'Could not record 🎤 Allow microphone access in your browser settings.', copied: 'Copied', copy: 'Copy', copyFailed: 'Copy failed. Check the browser clipboard permission.' })
 Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { yesterday: '昨天', qqFace: '[QQ表情]' })
 Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { yesterday: '昨日', qqFace: '[QQスタンプ]' })
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { yesterday: 'Yesterday', qqFace: '[QQ emoji]' })
-Object.assign((messages['zh-CN'] as Record<string, any>).llmExtraUi, { modelNamePlaceholder: '模型名称', bailianHint: '百炼建议使用业务空间专属域名：{url}（WorkspaceId 在控制台业务空间详情页查看）；通用域名仍可用' })
-Object.assign((messages['ja-JP'] as Record<string, any>).llmExtraUi, { modelNamePlaceholder: 'モデル名', bailianHint: 'DashScope は専用ワークスペースのエンドポイントを推奨します：{url}（WorkspaceId はコンソールで確認）；共通ドメインも利用できます' })
-Object.assign((messages['en-US'] as Record<string, any>).llmExtraUi, { modelNamePlaceholder: 'Model name', bailianHint: 'For DashScope, a workspace-specific endpoint is recommended: {url} (find the WorkspaceId in the console); the common domain also works' })
+Object.assign((messages['zh-CN'] as Record<string, any>).llmExtraUi, { modelNamePlaceholder: '模型名称', bailianHint: '百炼请使用当前协议对应的业务空间专属端点：{url}（将 WorkspaceId 替换为控制台中的业务空间 ID）', localApiFormatHint: '这些是可尝试的协议，不代表系统已探测服务端支持；请确认你的本地端点实现了所选协议。', ollamaApiFormatHint: '协议由你选择，系统不会探测服务端支持情况；Ollama 版本、模型和端点可能只支持协议子集。' })
+Object.assign((messages['ja-JP'] as Record<string, any>).llmExtraUi, { modelNamePlaceholder: 'モデル名', bailianHint: 'DashScope では選択した API 形式に対応する専用エンドポイントを使用してください：{url}（WorkspaceId をコンソールの ID に置き換えてください）', localApiFormatHint: '選択肢は試行可能なプロトコルです。サーバー対応を検出済みという意味ではありません。ローカルエンドポイントが選択した形式を実装していることを確認してください。', ollamaApiFormatHint: 'プロトコルはユーザーが選択します。サーバー対応は検出されず、Ollama のバージョン、モデル、エンドポイントによって対応範囲が異なります。' })
+Object.assign((messages['en-US'] as Record<string, any>).llmExtraUi, { modelNamePlaceholder: 'Model name', bailianHint: 'Use the workspace endpoint for the selected API format: {url} (replace WorkspaceId with the ID shown in the console)', localApiFormatHint: 'These are protocols you can try; the server has not been probed. Confirm that your local endpoint implements the selected protocol.', ollamaApiFormatHint: 'You choose the protocol; server support is not probed. Ollama version, model, and endpoint may support only a subset.' })
 Object.assign((messages['zh-CN'] as Record<string, any>).calendar, { eventName: '活动名称', allDay: '全天', descriptionOptional: '描述（可选）', reminder: '提醒', addReminder: '添加提醒', channel: '渠道' })
 Object.assign((messages['ja-JP'] as Record<string, any>).calendar, { eventName: '予定名', allDay: '終日', descriptionOptional: '説明（任意）', reminder: 'リマインダー', addReminder: 'リマインダーを追加', channel: 'チャンネル' })
 Object.assign((messages['en-US'] as Record<string, any>).calendar, { eventName: 'Event name', allDay: 'All day', descriptionOptional: 'Description (optional)', reminder: 'Reminder', addReminder: 'Add reminder', channel: 'Channel' })
@@ -238,6 +241,33 @@ Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { response
 Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { feishuGroupChatHint: '关闭后不再处理此飞书机器人收到的群消息', feishuGroupResponseHint: '飞书只会投递应用权限允许接收的消息；若仅订阅被提及事件，自动回复也只能处理这些消息' })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { feishuGroupChatHint: '無効にすると、この Feishu ボットはグループメッセージを処理しません', feishuGroupResponseHint: 'Feishu はアプリ権限で受信可能なメッセージのみ配信します。メンションのみ購読している場合、自動返信もそのメッセージに限られます' })
 Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { feishuGroupChatHint: 'When disabled, this Feishu bot will not process group messages', feishuGroupResponseHint: 'Feishu only delivers messages allowed by app permissions. If the app subscribes only to mentions, auto-replies can only handle those messages' })
+Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, {
+  telegramGroupChatHint: '开启后处理 Telegram 实际投递给 Bot 的群消息；暂不支持频道。Privacy Mode 开启时普通消息可能不可见。修改隐私模式后需重新将 Bot 加入群',
+  telegramGroupResponseHint: "只处理 Telegram 已投递给 Bot 的消息；Privacy Mode 下普通的 {'@'} 提及不一定会投递",
+  telegramGroupGuideTitle: "让 Telegram 群里的 {'@'} 咕咕生效",
+  telegramGroupGuideStep1: '1. 在 BotFather 中发送 /setprivacy，选择你的 Bot 并设为 Disable',
+  telegramGroupGuideStep2: '2. 将 Bot 移出群后重新添加，让隐私设置生效；也可以将 Bot 设为群管理员',
+  telegramGroupGuideStep3: '3. 确认咕咕的「群聊回应」已开启，并选择「被提及时回应」',
+  telegramGroupGuideNote: "Privacy Mode 开启时，普通文本中的 {'@'}用户名 通常不会投递给 Bot；关闭后即可按回应方式处理群消息。",
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, {
+  telegramGroupChatHint: '有効にすると Telegram が Bot に配信したグループメッセージを処理します。チャンネルには未対応です。Privacy Mode が有効な場合、通常のメッセージは届かないことがあります。設定変更後は Bot をグループに再追加してください',
+  telegramGroupResponseHint: "Telegram から Bot に配信されたメッセージのみ処理します。Privacy Mode では通常の {'@'} メンションが届かない場合があります",
+  telegramGroupGuideTitle: "Telegram グループで {'@'} 咕咕 を使う",
+  telegramGroupGuideStep1: '1. BotFather で /setprivacy を実行し、対象 Bot の設定を Disable にします',
+  telegramGroupGuideStep2: '2. 設定を反映するため Bot をグループから削除して再追加します。Bot を管理者にする方法もあります',
+  telegramGroupGuideStep3: '3. 咕咕の「グループ返信」を有効にし、「メンション時に返信」を選びます',
+  telegramGroupGuideNote: "Privacy Mode が有効だと、通常のテキスト内の {'@'}username は Bot に配信されないことがあります。無効にすると返信方法に応じて処理できます。",
+})
+Object.assign((messages['en-US'] as Record<string, any>).profileImUi, {
+  telegramGroupChatHint: 'Processes group messages actually delivered to the Telegram bot; channels are not supported yet. With Privacy Mode enabled, ordinary messages may be hidden. Re-add the bot after changing privacy mode.',
+  telegramGroupResponseHint: "Only messages delivered to the bot are handled. With Privacy Mode enabled, ordinary {'@'}mentions may not be delivered.",
+  telegramGroupGuideTitle: "Enable {'@'}mentions for your Telegram group bot",
+  telegramGroupGuideStep1: '1. In BotFather, send /setprivacy, select your bot, and set it to Disable.',
+  telegramGroupGuideStep2: '2. Remove the bot from the group and add it again to apply the setting, or make it a group admin.',
+  telegramGroupGuideStep3: '3. Enable Gugu group replies and choose “Reply when mentioned”.',
+  telegramGroupGuideNote: "With Privacy Mode enabled, ordinary {'@'}username text is usually not delivered to the bot. Disable it so Gugu can handle group messages according to the selected response mode.",
+})
 Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { groupOwnerMemorySettingsFailed: '群聊个人记忆设置失败' })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { groupOwnerMemorySettingsFailed: 'グループ個人メモリの設定に失敗しました' })
 Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { groupOwnerMemorySettingsFailed: 'Failed to update group personal memory settings' })
@@ -262,9 +292,9 @@ Object.assign((messages['en-US'] as Record<string, any>).profileByokUi, { embedd
 Object.assign((messages['zh-CN'] as Record<string, any>).profileByokUi, { apiKey: 'API Key', interfaceFormat: '接口格式', interfaceType: '接口类型', openaiCompatible: 'OpenAI 兼容', chatCompletions: 'Chat Completions', responses: 'Responses', anthropicCompatible: 'Anthropic 兼容', anthropicHint: 'Anthropic 兼容支持思考块、缓存和读取库内图片', cancel: '取消', saving: '保存中…', saveConfig: '保存配置' })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileByokUi, { apiKey: 'API Key', interfaceFormat: 'インターフェース形式', interfaceType: 'インターフェース種別', openaiCompatible: 'OpenAI 互換', chatCompletions: 'Chat Completions', responses: 'Responses', anthropicCompatible: 'Anthropic 互換', anthropicHint: 'Anthropic 互換は思考ブロック、キャッシュ、保存画像の読込に対応', cancel: 'キャンセル', saving: '保存中…', saveConfig: '設定を保存' })
 Object.assign((messages['en-US'] as Record<string, any>).profileByokUi, { apiKey: 'API key', interfaceFormat: 'Interface format', interfaceType: 'Interface type', openaiCompatible: 'OpenAI-compatible', chatCompletions: 'Chat Completions', responses: 'Responses', anthropicCompatible: 'Anthropic-compatible', anthropicHint: 'Anthropic compatibility supports thinking blocks, caching, and reading stored images', cancel: 'Cancel', saving: 'Saving…', saveConfig: 'Save configuration' })
-Object.assign((messages['zh-CN'] as Record<string, any>).profileByokUi, { dashscope: 'DashScope（百炼）', zhipuGlm: '智谱 GLM', deepseek: 'DeepSeek', minimax: 'MiniMax', mimo: 'MiMo（小米）', ollama: 'Ollama', localCompatible: '本地兼容服务', generalApi: '通用 API', codingPlan: 'Coding Plan', llamaCpp: 'llama.cpp', vllm: 'vLLM', otherCompatible: '其它兼容服务', localOllama: '本地 Ollama', ollamaCloud: 'Ollama Cloud', ollamaNative: 'Ollama 原生', image: '图片', video: '视频', audio: '音频', inheritDefault: '跟随默认设置', disableThinking: '关闭思考', adaptiveThinking: '自适应思考', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '超高', maximum: '最大' })
-Object.assign((messages['ja-JP'] as Record<string, any>).profileByokUi, { dashscope: 'DashScope', zhipuGlm: 'Zhipu GLM', deepseek: 'DeepSeek', minimax: 'MiniMax', mimo: 'MiMo（Xiaomi）', ollama: 'Ollama', localCompatible: 'ローカル互換サービス', generalApi: '汎用 API', codingPlan: 'Coding Plan', llamaCpp: 'llama.cpp', vllm: 'vLLM', otherCompatible: 'その他の互換サービス', localOllama: 'ローカル Ollama', ollamaCloud: 'Ollama Cloud', ollamaNative: 'Ollama ネイティブ', image: '画像', video: '動画', audio: '音声', inheritDefault: '既定の設定に従う', disableThinking: '思考を無効化', adaptiveThinking: '適応型思考', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '超高', maximum: '最大' })
-Object.assign((messages['en-US'] as Record<string, any>).profileByokUi, { dashscope: 'DashScope', zhipuGlm: 'Zhipu GLM', deepseek: 'DeepSeek', minimax: 'MiniMax', mimo: 'MiMo (Xiaomi)', ollama: 'Ollama', localCompatible: 'Local compatible service', generalApi: 'General API', codingPlan: 'Coding Plan', llamaCpp: 'llama.cpp', vllm: 'vLLM', otherCompatible: 'Other compatible service', localOllama: 'Local Ollama', ollamaCloud: 'Ollama Cloud', ollamaNative: 'Ollama native', image: 'Image', video: 'Video', audio: 'Audio', inheritDefault: 'Follow default settings', disableThinking: 'Disable thinking', adaptiveThinking: 'Adaptive thinking', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', maximum: 'Maximum' })
+Object.assign((messages['zh-CN'] as Record<string, any>).profileByokUi, { dashscope: 'DashScope（百炼）', zhipuGlm: '智谱 GLM', deepseek: 'DeepSeek', minimax: 'MiniMax', mimo: 'MiMo（小米）', ollama: 'Ollama', localCompatible: '本地兼容服务', generalApi: '通用 API', codingPlan: 'Coding Plan', llamaCpp: 'llama.cpp', vllm: 'vLLM', otherCompatible: '其它兼容服务', localOllama: '本地 Ollama', ollamaCloud: 'Ollama Cloud', ollamaNative: 'Ollama 原生', image: '图片', video: '视频', audio: '音频', inheritDefault: '跟随默认设置', enableThinking: '开启思考', disableThinking: '关闭思考', genericThinkingHint: '仅按所选协议发送通用开关字段；兼容端点或模型可能不支持，拒绝时会显示错误，不会自动重试。', adaptiveThinking: '自适应思考', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '超高', maximum: '最大' })
+Object.assign((messages['ja-JP'] as Record<string, any>).profileByokUi, { dashscope: 'DashScope', zhipuGlm: 'Zhipu GLM', deepseek: 'DeepSeek', minimax: 'MiniMax', mimo: 'MiMo（Xiaomi）', ollama: 'Ollama', localCompatible: 'ローカル互換サービス', generalApi: '汎用 API', codingPlan: 'Coding Plan', llamaCpp: 'llama.cpp', vllm: 'vLLM', otherCompatible: 'その他の互換サービス', localOllama: 'ローカル Ollama', ollamaCloud: 'Ollama Cloud', ollamaNative: 'Ollama ネイティブ', image: '画像', video: '動画', audio: '音声', inheritDefault: '既定の設定に従う', enableThinking: '思考を有効化', disableThinking: '思考を無効化', genericThinkingHint: '選択したプロトコルの共通フィールドのみ送信します。エンドポイントやモデルが未対応の場合、エラーを表示し自動再試行はしません。', adaptiveThinking: '適応型思考', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '超高', maximum: '最大' })
+Object.assign((messages['en-US'] as Record<string, any>).profileByokUi, { dashscope: 'DashScope', zhipuGlm: 'Zhipu GLM', deepseek: 'DeepSeek', minimax: 'MiniMax', mimo: 'MiMo (Xiaomi)', ollama: 'Ollama', localCompatible: 'Local compatible service', generalApi: 'General API', codingPlan: 'Coding Plan', llamaCpp: 'llama.cpp', vllm: 'vLLM', otherCompatible: 'Other compatible service', localOllama: 'Local Ollama', ollamaCloud: 'Ollama Cloud', ollamaNative: 'Ollama native', image: 'Image', video: 'Video', audio: 'Audio', inheritDefault: 'Follow default settings', enableThinking: 'Enable thinking', disableThinking: 'Disable thinking', genericThinkingHint: 'Only the selected protocol’s generic toggle fields are sent. The endpoint or model may reject them; errors are shown without automatic retry.', adaptiveThinking: 'Adaptive thinking', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', maximum: 'Maximum' })
 Object.assign((messages['zh-CN'] as Record<string, any>).calendarUi, { moreItems: '+{count} 更多', monthShort: '{month}月' })
 Object.assign((messages['ja-JP'] as Record<string, any>).calendarUi, { moreItems: '+{count} 件', monthShort: '{month}月' })
 Object.assign((messages['en-US'] as Record<string, any>).calendarUi, { moreItems: '+{count} more', monthShort: '{month}' })
@@ -289,9 +319,9 @@ Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { feishuCo
 Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { guide: '引导' })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { guide: 'ガイド' })
 Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { guide: 'Guide' })
-Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { defaultFeishuBot: '我的飞书机器人', defaultQqBot: '我的 QQ 机器人', defaultWechatBot: '我的微信机器人' })
-Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { defaultFeishuBot: '自分の Feishu ボット', defaultQqBot: '自分の QQ ボット', defaultWechatBot: '自分の WeChat ボット' })
-Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { defaultFeishuBot: 'My Feishu bot', defaultQqBot: 'My QQ bot', defaultWechatBot: 'My WeChat bot' })
+Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { defaultFeishuBot: '我的飞书机器人', defaultQqBot: '我的 QQ 机器人', defaultWechatBot: '我的微信机器人', defaultTelegramBot: '我的 Telegram 机器人' })
+Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { defaultFeishuBot: '自分の Feishu ボット', defaultQqBot: '自分の QQ ボット', defaultWechatBot: '自分の WeChat ボット', defaultTelegramBot: '自分の Telegram ボット' })
+Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { defaultFeishuBot: 'My Feishu bot', defaultQqBot: 'My QQ bot', defaultWechatBot: 'My WeChat bot', defaultTelegramBot: 'My Telegram bot' })
 Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, { groupChatHint: "开启后，咕咕会参与群聊，默认无需 {'@'} 机器人" })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, { groupChatHint: "有効にすると咕咕がグループに参加します。既定では {'@'} は不要です" })
 Object.assign((messages['en-US'] as Record<string, any>).profileImUi, { groupChatHint: "When enabled, Gugu joins group chats; {'@'}mention is not required by default" })
@@ -422,5 +452,44 @@ Object.assign((messages['en-US'] as Record<string, any>).adminSandbox, {
 Object.assign((messages['ja-JP'] as Record<string, any>).adminSandbox, {
   persistentQuota: 'OSS Shell 独立永続領域上限',
   persistentMb: 'OSS Shell 独立永続領域（MB）',
+})
+Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, {
+  telegram: 'Telegram（自带 Bot）',
+  telegramHint: '接入 BotFather 创建的 Bot；Token 加密保存，owner 需在私聊中绑定。要接收普通群消息，需关闭 Privacy Mode 或将 Bot 设为管理员',
+  connectTelegram: '验证并连接',
+  replaceTelegramToken: '更换 Token',
+  telegramTokenLabel: 'Bot Token',
+  telegramTokenPlaceholder: '从 BotFather 复制 Token',
+  connectingTelegram: '正在验证…',
+  telegramTokenSecurityHint: 'Token 仅提交到咕咕后端并加密保存；Telegram 官方 API 请求使用 HTTPS。',
+  telegramBinding: 'Telegram owner 身份绑定',
+  telegramBindingHint: '生成验证码后，在 Telegram 私聊 Bot 发送下方 /bind 命令',
+  sendTelegramToBot: '复制并发送给 Telegram Bot',
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, {
+  telegram: 'Telegram（自分の Bot）',
+  telegramHint: 'BotFather で作成した Bot を接続します。Token は暗号化保存され、owner は DM で連携します。通常のグループメッセージを受信するには Privacy Mode を無効にするか、Bot を管理者にしてください',
+  connectTelegram: '検証して接続',
+  replaceTelegramToken: 'Token を変更',
+  telegramTokenLabel: 'Bot Token',
+  telegramTokenPlaceholder: 'BotFather の Token を貼り付け',
+  connectingTelegram: '検証中…',
+  telegramTokenSecurityHint: 'Token は Gugu に送信後、暗号化して保存します。Telegram API への通信は HTTPS を使用します。',
+  telegramBinding: 'Telegram owner の連携',
+  telegramBindingHint: 'コードを生成し、Telegram の Bot との DM で /bind コマンドを送信してください',
+  sendTelegramToBot: 'コピーして Telegram Bot に送信',
+})
+Object.assign((messages['en-US'] as Record<string, any>).profileImUi, {
+  telegram: 'Telegram (your Bot)',
+  telegramHint: 'Connect a Bot created with BotFather. The token is encrypted at rest; bind the owner in a private chat. To receive ordinary group messages, disable Privacy Mode or make the Bot an administrator.',
+  connectTelegram: 'Verify and connect',
+  replaceTelegramToken: 'Replace token',
+  telegramTokenLabel: 'Bot token',
+  telegramTokenPlaceholder: 'Paste the token from BotFather',
+  connectingTelegram: 'Verifying…',
+  telegramTokenSecurityHint: 'The token is sent to Gugu and encrypted at rest. Telegram API requests use HTTPS.',
+  telegramBinding: 'Telegram owner identity',
+  telegramBindingHint: 'Generate a code, then send the /bind command below to your Bot in a private chat.',
+  sendTelegramToBot: 'Copy and send to Telegram Bot',
 })
 }

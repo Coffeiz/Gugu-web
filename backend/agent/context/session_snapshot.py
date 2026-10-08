@@ -352,6 +352,39 @@ def invalidate_snapshot(session) -> None:
     _record_snapshot_event(session, "invalidate")
 
 
+async def invalidate_user_im_snapshots(user_id) -> int:
+    """IM 渠道状态变化后，立即失效该账号所有平台的会话上下文。"""
+    from sqlalchemy import select
+    from sqlalchemy.orm import load_only
+
+    import app.db.session as db_session
+    from agent.im.context_policy import IM_SOURCES
+    from app.models import ConversationSession
+
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        result = await db.execute(
+            select(ConversationSession)
+            .options(load_only(
+                ConversationSession.id,
+                ConversationSession.context_epoch,
+                ConversationSession.snapshot_expires_at,
+                ConversationSession.snapshot_hash,
+                ConversationSession.session_info_hash,
+            ))
+            .where(
+                ConversationSession.user_id == user_id,
+                ConversationSession.source.in_(IM_SOURCES),
+            )
+        )
+        sessions = result.scalars().all()
+        for session in sessions:
+            invalidate_snapshot(session)
+        if sessions:
+            await db.commit()
+        return len(sessions)
+
+
 async def ensure_snapshot(
     db,
     session,

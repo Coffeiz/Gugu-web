@@ -310,7 +310,7 @@ async def test_scheduled_group_context_search_recalls_group_history(db, user_a):
 
     # 建群 session + 消息
     group = ConversationSession(
-        user_id=user_a.id, source="qq", bot_id="bot42", chat_id="g1", title="测试群",
+        user_id=user_a.id, source="qq", bot_id="bot42", chat_type="group", chat_id="g1", title="测试群",
     )
     db.add(group)
     await db.flush()

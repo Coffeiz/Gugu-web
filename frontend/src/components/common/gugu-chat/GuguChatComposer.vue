@@ -174,7 +174,9 @@ useRuntimeAction(async action => {
     return parseMindCanvasChatReference(node) ?? parseChatRuntimeReference(objectId)
   }).filter((item): item is ChatReference => item !== null)
   if (!references.length) return
-  if (!filesCache.loaded) await filesCache.load().catch(() => {})
+  if (!filesCache.loaded && references.some(reference => reference.type === 'file' || reference.type === 'folder')) {
+    await filesCache.load().catch(() => {})
+  }
   if (references.some(reference => reference.type === 'project') && !projectStore.projectsLoaded) {
     await projectStore.fetchProjects()
   }

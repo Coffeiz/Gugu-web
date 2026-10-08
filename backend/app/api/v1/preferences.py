@@ -111,8 +111,8 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         shellDangerousEnabled=bool(data.get("shell_dangerous_enabled", True)),
         automaticModeEnabled=bool(data.get("automatic_mode_enabled", False)),
         decisionGuardEnabled=bool(data.get("decision_guard_enabled", False)),
-        showToolInteractions=bool(data.get("show_tool_interactions", False)),
-        showIntermediateReplies=bool(data.get("show_intermediate_replies", True)),
+        showToolInteractions=bool(data.get("show_tool_interactions", True)),
+        showIntermediateReplies=bool(data.get("show_intermediate_replies", False)),
         toolInjectionMode=(
             data.get("tool_injection_mode", "full")
             if data.get("tool_injection_mode", "full") in _TOOL_INJECTION_MODES

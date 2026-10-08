@@ -110,6 +110,7 @@
           :bots-of="botsOf" :im-sessions-of="imSessionsOf"
           :web-sessions="webSessions" :session-id="sessionId"
           :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
+          :on-open-telegram-settings="onOpenTelegramSettings"
           :on-toggle-platform="toggleImPlatform" :on-set-connect-canvas="setConnectCanvas"
           :on-start-im-connect="startImConnect" :on-cancel-im-connect="cancelImConnect"
           :on-load-session="loadSession" :on-delete-session="deleteSession" :on-new-session="newSession"
@@ -164,6 +165,10 @@ interface QuotaInfo {
 
 const audioStore    = useAudioStore()
 const uiStore       = useUiStore()
+function onOpenTelegramSettings() {
+  uiStore.profileInitialNav = 'im'
+  uiStore.openProfile = true
+}
 const preferencesStore = usePreferencesStore()
 const router        = useRouter()
 const automaticModeGlobalEnabled = ref(false)
@@ -771,7 +776,7 @@ const energyExhausted = computed(() => {
          (q.limit_weekly != null && (q.used_weekly ?? 0) >= q.limit_weekly)
 })
 // 离线时随机显示「QQ/微信/飞书 离线」之一（每次打开换一个，暗示这些渠道还没接上）
-const _OFFLINE_LABEL_KEYS = ['qqOffline', 'wechatOffline', 'feishuOffline'] as const
+const _OFFLINE_LABEL_KEYS = ['qqOffline', 'wechatOffline', 'feishuOffline', 'telegramOffline'] as const
 const offlineLabel = ref('离线')
 function pickOfflineLabel() { offlineLabel.value = t(`chatUi.${_OFFLINE_LABEL_KEYS[Math.floor(Math.random() * _OFFLINE_LABEL_KEYS.length)]}`) }
 const presenceKind  = computed(() => energyExhausted.value ? 'resting' : (imOnline.value ? 'online' : 'offline'))

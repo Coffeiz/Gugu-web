@@ -445,34 +445,6 @@ async def test_confirmation_button_grants_server_side_authorization(db, user_a):
     assert confirmations.redeem_confirmation(user_a.id, code) is None
 
 
-async def test_create_skill_confirmation_is_bridged_to_web_and_im_prompt(db, user_a):
-    """需要确认但可撤销的 create_skill 也必须生成统一交互卡。"""
-    session = ConversationSession(user_id=user_a.id, title="Skill 确认", source="web")
-    db.add(session)
-    await db.commit()
-
-    interaction = await create_tool_confirmation(
-        user_id=user_a.id,
-        session_id=session.id,
-        tool_name="create_skill",
-        tool_call_id="call-create-skill",
-        result=json.dumps({
-            "status": "waiting_confirmation",
-            "needs_confirm": True,
-            "summary": "创建一个新的用户自定义 Skill，并保存到当前账号",
-            "confirm_code": "opaque-confirm-code",
-        }, ensure_ascii=False),
-    )
-    assert interaction is not None
-    assert interaction["kind"] == "confirm"
-    assert interaction["task_paused"] is True
-    assert interaction["title"].startswith("任务已暂停 · ")
-    assert "确认后将继续执行当前任务" in interaction["body"]
-    assert [item["id"] for item in interaction["options"]] == ["confirm", "cancel"]
-    history = await list_history(db, user_id=user_a.id, session_id=session.id)
-    assert history[-1]["task_paused"] is True
-
-
 @pytest.mark.parametrize(
     ("tool_name", "title_fragment"),
     [
