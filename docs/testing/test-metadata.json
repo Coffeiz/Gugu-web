@@ -95,28 +95,12 @@
     "keyBehavior": "预检和失败任务可删除，增量导入完成状态明确显示撤回限制",
     "ci": "frontend-test"
   },
-  "frontend/tests/filesync/user-reconcile-panel.test.ts": {
-    "domain": "filesync",
-    "layer": "L1",
-    "owner": "frontend/components/filesync",
-    "productionEntry": "frontend/src/components/filesync/FileSyncReconcilePanel.vue",
-    "keyBehavior": "用户可先只读预检并显式初始化；监听恢复不清除待核对提示，SSE 通知会补读权威任务及部分结果",
-    "ci": "frontend-test"
-  },
   "frontend/tests/filesync/admin-events.test.ts": {
     "domain": "filesync-live-events",
     "layer": "L0",
     "owner": "frontend/composables/filesync",
     "productionEntry": "frontend/src/composables/filesync/useFileSyncAdminEvents.ts",
     "keyBehavior": "Admin 首次连接与重连均触发权威快照补读，重复事件和旧修订不会导致多余刷新",
-    "ci": "frontend-test"
-  },
-  "frontend/tests/filesync/live-store-events.test.ts": {
-    "domain": "filesync-live-events",
-    "layer": "L1",
-    "owner": "frontend/stores/live.ts",
-    "productionEntry": "frontend/src/stores/live.ts",
-    "keyBehavior": "用户级 SSE 分发 run 与 binding 健康失效事件，按各自修订忽略重复 ID 和旧状态",
     "ci": "frontend-test"
   },
   "frontend/tests/admin/storage-audit/GhostRecordCleanup.test.ts": {
@@ -244,7 +228,7 @@
     "layer": "L1",
     "owner": "backend/app/api/v1/live.py",
     "productionEntry": "backend/app/core/events.py:publish_filesync_run_changed",
-    "keyBehavior": "文件同步失效事件只发布安全标识、按任务合并进度且终态可通知；SSE 过滤拒绝畸形事件并剔除路径详情",
+    "keyBehavior": "文件同步失效事件只发布到 Admin 频道、只携带安全标识并按任务合并进度；SSE 过滤拒绝畸形事件并剔除路径详情",
     "ci": "backend-pytest"
   },
   "backend/tests/scheduling/tasks/test_scheduled_task_schedule_rules.py": {
@@ -300,7 +284,7 @@
     "layer": "L2",
     "owner": "backend/app/services/filesync",
     "productionEntry": "app/services/filesync/jobs.py",
-    "keyBehavior": "手动对账任务归属隔离、同绑定幂等排队、同用户串行执行、全局并发有界且失联不自动重试",
+    "keyBehavior": "Admin 对账入口受保护、同绑定幂等排队、同用户串行执行、权限跳过不清除未完成状态且失联不自动重试",
     "ci": "backend-pytest"
   },
   "backend/tests/storage/filesync/test_filesync_run_migration.py": {
@@ -335,14 +319,6 @@
     "keyBehavior": "清理快照重构结构保留绑定、journal 与其他功能数据；活动任务阻止清理，重复执行安全",
     "ci": "backend-pytest"
   },
-  "backend/tests/storage/filesync/test_filesync_ui_api.py": {
-    "domain": "filesync",
-    "layer": "L1",
-    "owner": "backend/app/api/v1/filesync.py",
-    "productionEntry": "backend/app/api/v1/filesync.py:bindings",
-    "keyBehavior": "用户绑定快照返回监听健康与待手动核对状态，供用户侧恢复入口使用",
-    "ci": "backend-pytest"
-  },
   "backend/tests/storage/filesync/test_filesync_watcher_health.py": {
     "domain": "filesync",
     "layer": "L2",
@@ -366,5 +342,109 @@
     "productionEntry": "backend/app/api/v1/data_portability.py:delete_import",
     "keyBehavior": "仅任务所有者可删除已结束导入并清理其私有暂存对象",
     "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_bot_api.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/telegram.py",
+    "productionEntry": "backend/app/services/telegram_bot_api.py",
+    "keyBehavior": "Telegram API 固定 HTTPS 主机、禁用重定向、约束下载路径、代理失败关闭且不泄漏 Token",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_connect.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/telegram_connect.py",
+    "productionEntry": "backend/app/api/v1/telegram_connect.py",
+    "keyBehavior": "连接与换 Token 按所有权加密保存，失败不覆盖凭据，owner 绑定码限次且单次使用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_contract.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/models.py",
+    "keyBehavior": "Telegram 会话身份按平台、Bot 与群聊隔离，绑定命令在进入 Agent 前消费且停止命令作用域准确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_format.py": {
+    "domain": "im",
+    "layer": "L0",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/telegram_format.py",
+    "keyBehavior": "MarkdownV2 转义、链接安全与消息分块遵循 Telegram 字符及 UTF-16 长度限制",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_gateway.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/telegram.py",
+    "productionEntry": "backend/agent/gateway/telegram.py",
+    "keyBehavior": "长轮询游标仅在入队后推进，临时故障可恢复，出站限速、回复和 Token 轮换行为正确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_im_policy.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im/permissions.py",
+    "productionEntry": "backend/agent/im/permissions.py",
+    "keyBehavior": "owner、群成员及未知角色按 Bot 隔离，群聊记录、回复、记忆与上下文搜索遵循策略",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_media.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im/media_ingress_telegram.py",
+    "productionEntry": "backend/agent/im/media_ingress_telegram.py",
+    "keyBehavior": "媒体下载限制大小与归属，引用媒体仅复用同平台同消息附件，失败不暂存对象",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_message_parser.py": {
+    "domain": "im",
+    "layer": "L0",
+    "owner": "backend/agent/im/parsers/telegram.py",
+    "productionEntry": "backend/agent/im/parsers/telegram.py",
+    "keyBehavior": "命令实体按 UTF-16 偏移解析，身份提及、匿名发送者、引用和受支持媒体映射到统一 IM 协议",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_user_skill_manager_migration.py": {
+    "domain": "agent-skills",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261009000002_add_user_skill_manager.py",
+    "keyBehavior": "既有 Skill 迁移后仍由用户管理，缺失字段按兼容默认值填充",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/chat/GuguChatImConnect.test.ts": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "frontend/components/common/gugu-chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/GuguChatImConnect.vue",
+    "keyBehavior": "Telegram 连接入口跳转到个人设置并展示已有 Telegram 会话",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/composables/useFileLibraryNavigation.test.ts": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileLibraryNavigation.ts",
+    "keyBehavior": "搜索跳转优先恢复目标工作区与文件夹路径，并处理目标目录加载失败和历史导航",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/useProjectFileProjectSync.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useProjectFileProjectSync.ts",
+    "keyBehavior": "项目文件首开仅加载根目录，进入子目录按需请求并复用已加载目录缓存",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/skills/skillGroups.test.ts": {
+    "domain": "frontend-skills",
+    "layer": "L0",
+    "owner": "frontend/views/Skills",
+    "productionEntry": "frontend/src/views/Skills/skillGroups.ts",
+    "keyBehavior": "助手管理的 Skill 单独归组，旧记录与未标记记录默认归为用户管理",
+    "ci": "frontend-test"
   }
 }
