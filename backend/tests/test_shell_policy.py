@@ -735,6 +735,160 @@ async def test_run_shell_commits_preflight_before_waiting_for_process(monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("full_user_sandbox_write", [False, True])
+async def test_local_shell_uses_filesync_increment_and_skips_full_post_command_scan(
+    monkeypatch, full_user_sandbox_write,
+):
+    """覆盖当前写入范围的实时 filesync 负责记账时，Shell 跳过全盘扫描。"""
+    from agent.tools import shell as shell_tool
+
+    captured = []
+    settings = _sandbox_authorization_settings()
+    settings.filesync = SimpleNamespace(enabled=True)
+    _patch_run_shell_harness(monkeypatch, settings, captured)
+    monkeypatch.setattr(shell_tool, "_storage_backend", lambda: "local")
+
+    tracked_scopes = []
+
+    async def tracking_ready(*_args, include_all=False):
+        tracked_scopes.append(include_all)
+        return True
+
+    monkeypatch.setattr(
+        "app.services.filesync.bindings.shell_quota_tracking_ready",
+        tracking_ready,
+    )
+    from agent.security.shell_policy import ShellRisk, ShellScope
+
+    async def evaluate_with_filesystem_scope(*_args, **_kwargs):
+        return SimpleNamespace(
+            allowed=True, reason="允许在 sandbox 范围执行", risk=ShellRisk.SAFE,
+            needs_confirmation=False, workspace_id=7, scope=ShellScope.SANDBOX,
+            full_user_sandbox_write=full_user_sandbox_write,
+        )
+
+    monkeypatch.setattr(shell_tool, "evaluate", evaluate_with_filesystem_scope)
+    usage = {"used": 90, "limit": 100}
+
+    async def get_quota(_db, _user_id, category):
+        assert category == shell_tool.FILE_LIBRARY
+        return SimpleNamespace(used_bytes=usage["used"], limit_bytes=usage["limit"])
+
+    reconciliations = []
+
+    async def reconcile(_db, _user_id):
+        reconciliations.append(True)
+        usage["used"] = 105
+        return {shell_tool.FILE_LIBRARY: 105, shell_tool.SHELL_PERSISTENT: 0}
+
+    async def execute(_self, request, on_output=None):
+        captured.append(request)
+        return {
+            "ok": True, "exit_code": 0, "stdout": "done", "stderr": "",
+            "timed_out": False, "truncated": False, "cwd": ".",
+            "permission_revoked": False, "quota_exceeded": False,
+        }
+
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        execute_stream = execute
+
+    monkeypatch.setattr(shell_tool, "get_quota", get_quota)
+    monkeypatch.setattr(shell_tool, "reconcile_user_storage", reconcile)
+    monkeypatch.setattr(shell_tool, "SandboxdClient", Client)
+
+    result = await shell_tool._run_shell(_PolicyDB(), "user-1", {"command": "touch result"})
+
+    assert result["ok"] is True
+    request = captured[0]
+    assert request.quota_roots == ()
+    assert request.quota_bytes is None
+    assert reconciliations == []
+    assert tracked_scopes == [full_user_sandbox_write]
+
+    # 模拟 filesync 把命令期间新增文件的大小增量写到账本。
+    usage["used"] = 105
+    next_result = await shell_tool._run_shell(
+        _PolicyDB(), "user-1", {"command": "touch blocked-next-time"},
+    )
+    assert next_result["_audit_event"] == "quota_exceeded"
+    assert len(captured) == 1
+
+
+@pytest.mark.asyncio
+async def test_local_shell_keeps_post_command_reconcile_without_filesync(monkeypatch):
+    """未启用实时 filesync 时保留收尾校准，避免 Shell 文件漏记。"""
+    from agent.tools import shell as shell_tool
+
+    captured = []
+    settings = _sandbox_authorization_settings()
+    settings.filesync = SimpleNamespace(enabled=False)
+    _patch_run_shell_harness(monkeypatch, settings, captured)
+    monkeypatch.setattr(shell_tool, "_storage_backend", lambda: "local")
+
+    async def get_quota(_db, _user_id, category):
+        assert category == shell_tool.FILE_LIBRARY
+        return SimpleNamespace(used_bytes=0, limit_bytes=100)
+
+    reconciliations = []
+
+    async def reconcile(_db, _user_id):
+        reconciliations.append(True)
+        return {shell_tool.FILE_LIBRARY: 0, shell_tool.SHELL_PERSISTENT: 0}
+
+    async def execute(_self, request, on_output=None):
+        captured.append(request)
+        return {
+            "ok": True, "exit_code": 0, "stdout": "done", "stderr": "",
+            "timed_out": False, "truncated": False, "cwd": ".",
+            "permission_revoked": False, "quota_exceeded": False,
+        }
+
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        execute_stream = execute
+
+    monkeypatch.setattr(shell_tool, "get_quota", get_quota)
+    monkeypatch.setattr(shell_tool, "reconcile_user_storage", reconcile)
+    monkeypatch.setattr(shell_tool, "SandboxdClient", Client)
+
+    await shell_tool._run_shell(_PolicyDB(), "user-1", {"command": "touch result"})
+
+    assert reconciliations == [True]
+
+
+@pytest.mark.asyncio
+async def test_local_shell_blocks_from_over_limit_ledger_before_running_command(monkeypatch):
+    """账本已超额时，Shell 必须在执行前拒绝，且不为判断超额而扫描磁盘。"""
+    from agent.tools import shell as shell_tool
+
+    captured = []
+    _patch_run_shell_harness(monkeypatch, _sandbox_authorization_settings(), captured)
+    monkeypatch.setattr(shell_tool, "_storage_backend", lambda: "local")
+
+    async def get_quota(_db, _user_id, category):
+        assert category == shell_tool.FILE_LIBRARY
+        return SimpleNamespace(used_bytes=101, limit_bytes=100)
+
+    async def unexpected(*_args, **_kwargs):
+        pytest.fail("超额预检不应全量对账或启动命令")
+
+    monkeypatch.setattr(shell_tool, "get_quota", get_quota)
+    monkeypatch.setattr(shell_tool, "reconcile_user_storage", unexpected)
+    monkeypatch.setattr(shell_tool, "SandboxdClient", unexpected)
+
+    result = await shell_tool._run_shell(_PolicyDB(), "user-1", {"command": "touch blocked"})
+
+    assert result["_audit_event"] == "quota_exceeded"
+    assert "超过配额" in result["error"]
+    assert captured == []
+
+
+@pytest.mark.asyncio
 async def test_scheduled_task_cannot_bypass_dangerous_shell_confirmation(monkeypatch):
     """定时任务没有交互确认能力，危险命令仍在执行前拒绝。"""
     from agent.tools import shell as shell_tool

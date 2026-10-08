@@ -14,6 +14,10 @@ from app.models import FileSyncBinding, FileSyncReconcileRun
 
 ACTIVE_BINDING_STATUSES = ("queued", "running", "cancelling")
 RUNNING_STATUSES = ("running", "cancelling")
+RECONCILABLE_OVERFLOW_CODES = {
+    "python_event_queue_overflow",
+    "event_buffer_overflow",
+}
 _CLAIM_LOCK_KEY = 731904267
 _RUN_LEASE_SECONDS = 60
 _EMPTY_RESULT_COUNTS = {
@@ -328,12 +332,24 @@ async def _record_reconciliation_completion(
         "conflicts", "skipped", "failed",
     ))
     if (
-        row.action == "repair"
-        and binding.needs_reconcile
-        and binding.gap_revision == row.gap_revision
-        and not unresolved
+        row.action != "repair"
+        or binding.gap_revision != row.gap_revision
+        or unresolved
     ):
+        return None
+
+    # 全量修复覆盖了对应缺口后，队列/缓冲区溢出错误即可恢复；其他错误
+    # 可能表示监听器或绑定根目录仍不可用，不能因一次文件对账而清除。
+    changed = False
+    if binding.needs_reconcile:
         binding.needs_reconcile = False
+        changed = True
+    if binding.health_error_code in RECONCILABLE_OVERFLOW_CODES:
+        binding.health_error_code = None
+        if binding.watcher_status == "degraded":
+            binding.watcher_status = "ready"
+        changed = True
+    if changed:
         binding.health_revision += 1
         return binding.user_id, binding.id, binding.health_revision
     return None

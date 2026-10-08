@@ -12,6 +12,7 @@ type Request = {
   op?: "ping" | "watch" | "unwatch" | "refresh" | "shutdown";
   binding_id?: number;
   root?: string;
+  included_root_entries?: string[];
 };
 
 const output = new BoundedProtocolOutput(FILESYNC_MAX_PENDING_OUTPUT, FILESYNC_PROTOCOL_VERSION);
@@ -68,7 +69,7 @@ async function run(): Promise<void> {
       if (request.op === "ping") {
         response(request, "ok");
       } else if (request.op === "watch" && Number.isInteger(request.binding_id) && request.root) {
-        await watcher.watchBinding(request.binding_id!, request.root);
+        await watcher.watchBinding(request.binding_id!, request.root, request.included_root_entries);
         response(request, "ok");
       } else if (request.op === "unwatch" && Number.isInteger(request.binding_id)) {
         await watcher.unwatchBinding(request.binding_id!);

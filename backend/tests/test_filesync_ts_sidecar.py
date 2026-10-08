@@ -24,7 +24,7 @@ async def test_ts_sidecar_reports_file_and_folder_events(tmp_path):
     ])
     await sidecar.start()
     try:
-        await sidecar.watch(1, tmp_path)
+        await sidecar.watch(1, tmp_path, included_root_entries=("reports",))
         for _ in range(100):
             event = await sidecar.next_event(timeout=0.1)
             if event and event.get("event") == "ready":
@@ -39,7 +39,11 @@ async def test_ts_sidecar_reports_file_and_folder_events(tmp_path):
             event = await sidecar.next_event(timeout=0.1)
             if event is not None:
                 events.append(event)
-            if any(item.get("relative_path") == "reports/today.txt" for item in events):
+            changes = [item for item in events if item.get("event") == "change"]
+            if (
+                any(item.get("relative_path") == "reports" and item.get("object_type") == "folder" for item in changes)
+                and any(item.get("relative_path") == "reports/today.txt" for item in changes)
+            ):
                 break
 
         changes = [item for item in events if item.get("event") == "change"]

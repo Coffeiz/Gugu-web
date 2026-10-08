@@ -50,6 +50,23 @@ async def _binding(db, user, *, root_fingerprint="a" * 64):
     return row
 
 
+async def _finish_clean_repair(db, user, binding):
+    run = await enqueue_reconcile_run(
+        db, user_id=user.id, binding_id=binding.id, action="repair", allow_delete=False,
+    )
+    claimed = await claim_next_run(db, "worker-a", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    claimed.result_counts = {
+        "created": 0, "updated": 0, "moved": 0, "deleted": 0,
+        "skipped": 0, "conflicts": 0, "failed": 0,
+    }
+    await db.commit()
+    assert await finish_run(
+        db, run.id, "worker-a", status="succeeded", reconciliation_complete=True,
+    )
+    await db.refresh(binding)
+
+
 @pytest.mark.asyncio
 async def test_run_enqueue_is_owned_deduplicated_and_dry_run_cannot_delete(db, user_a, user_b):
     binding = await _binding(db, user_a)
@@ -118,30 +135,33 @@ async def test_queued_cancel_is_terminal_but_running_cancel_waits_for_worker(db,
     assert await finish_run(db, running.id, "worker-a", status="cancelled")
 
 
+@pytest.mark.parametrize(
+    "initial_state",
+    [
+        pytest.param((True, "python_event_queue_overflow", "ready", None), id="covered-gap"),
+        pytest.param((False, "python_event_queue_overflow", "ready", None), id="stale-overflow"),
+        pytest.param((True, "event_buffer_overflow", "ready", None), id="path-buffer-overflow"),
+        pytest.param((True, "sidecar_unavailable", "degraded", "sidecar_unavailable"),
+                     id="persistent-error"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_complete_repair_without_delete_permission_clears_only_covered_gap(db, user_a):
+async def test_clean_repair_clears_only_recovered_overflow_state(
+    db, user_a, initial_state,
+):
+    needs_reconcile, error_code, expected_status, expected_error = initial_state
     binding = await _binding(db, user_a)
-    binding.needs_reconcile = True
+    binding.needs_reconcile = needs_reconcile
     binding.gap_revision = 5
+    binding.watcher_status = "degraded"
+    binding.health_error_code = error_code
     await db.commit()
-    run = await enqueue_reconcile_run(
-        db, user_id=user_a.id, binding_id=binding.id, action="repair", allow_delete=False,
-    )
-    claimed = await claim_next_run(db, "worker-a", now=now_utc())
-    assert claimed is not None and claimed.id == run.id
-    claimed.result_counts = {
-        "created": 0, "updated": 0, "moved": 0, "deleted": 0,
-        "skipped": 0, "conflicts": 0, "failed": 0,
-    }
-    await db.commit()
-
-    assert await finish_run(
-        db, run.id, "worker-a", status="succeeded", reconciliation_complete=True,
-    )
-    await db.refresh(binding)
+    await _finish_clean_repair(db, user_a, binding)
 
     assert binding.last_reconciled_at is not None
     assert binding.needs_reconcile is False
+    assert binding.watcher_status == expected_status
+    assert binding.health_error_code == expected_error
     assert binding.health_revision == 1
 
 
@@ -170,6 +190,8 @@ async def test_repair_does_not_clear_new_gap_or_cancelled_run(db, user_a):
     binding = await _binding(db, user_a)
     binding.needs_reconcile = True
     binding.gap_revision = 2
+    binding.watcher_status = "degraded"
+    binding.health_error_code = "python_event_queue_overflow"
     await db.commit()
     run = await enqueue_reconcile_run(db, user_id=user_a.id, binding_id=binding.id, action="repair")
     claimed = await claim_next_run(db, "worker-a", now=now_utc())
@@ -183,6 +205,8 @@ async def test_repair_does_not_clear_new_gap_or_cancelled_run(db, user_a):
     await db.refresh(binding)
     assert binding.last_reconciled_at is not None
     assert binding.needs_reconcile is True
+    assert binding.watcher_status == "degraded"
+    assert binding.health_error_code == "python_event_queue_overflow"
     assert binding.health_revision == 0
 
     reconciled_at = binding.last_reconciled_at

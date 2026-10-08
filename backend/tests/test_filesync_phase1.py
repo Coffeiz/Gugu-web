@@ -14,6 +14,7 @@ from app.models import (
     FileSyncJournal,
     Folder,
     Project,
+    StorageQuotaLedger,
     Workspace,
 )
 from app.services.filesync import (
@@ -682,6 +683,174 @@ async def test_phase3_bidirectional_changes_after_baseline_create_conflict(db, u
 
 
 @pytest.mark.asyncio
+async def test_keep_local_advances_baseline_when_watcher_already_journaled_same_fingerprint(
+    db, user_a, monkeypatch, tmp_path,
+):
+    """保留本地必须新增冲突决策基线，避免复用旧 watcher journal 后原冲突重现。"""
+    from datetime import timedelta
+
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.snapshots as snapshots
+    from app.core.tz import now_utc
+
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    for module in (bindings, reconcile, protocol, snapshots):
+        monkeypatch.setattr(module, "get_settings", lambda: settings)
+    for module in (bindings, reconcile):
+        monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
+        monkeypatch.setattr(module, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(snapshots, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    path = root / "conflict.txt"
+    path.write_text("baseline", encoding="utf-8")
+    await sync_local_binding(db, user_a.id, root_path="个人文件", mode="bidirectional")
+    await db.commit()
+    row = (await db.scalars(select(File))).one()
+    binding = (await db.scalars(select(FileSyncBinding))).one()
+
+    path.write_text("local change", encoding="utf-8")
+    local_fingerprint = hashlib.sha256(b"local change").hexdigest()
+    remote_fingerprint = hashlib.sha256(b"remote change").hexdigest()
+    # watcher 已经为本地这个指纹写过 journal；稍后文件库端发生更新并成为最新 journal。
+    await record_change(
+        db, binding=binding, user_id=user_a.id, source="local_directory", operation="update",
+        relative_path="conflict.txt",
+        idempotency_key=build_idempotency_key(
+            source="local_directory", operation="update", relative_path="conflict.txt",
+            fingerprint=local_fingerprint,
+        ), observed_fingerprint=local_fingerprint, status="synced",
+    )
+    await db.commit()
+    await record_change(
+        db, binding=binding, user_id=user_a.id, source="file_api", operation="update",
+        relative_path="conflict.txt",
+        idempotency_key=build_idempotency_key(
+            source="file_api", operation="update", relative_path="conflict.txt",
+            fingerprint=remote_fingerprint,
+        ), observed_fingerprint=remote_fingerprint, status="synced",
+    )
+    row.updated_at = now_utc() + timedelta(seconds=1)
+    await db.commit()
+
+    conflict_ids = await bindings._pending_conflicts(db, user_a.id, binding, root)
+    await db.commit()
+    assert len(conflict_ids) == 1
+    conflict = await db.get(FileSyncConflict, conflict_ids[0])
+    assert conflict is not None
+
+    await resolve_sync_conflict(db, user_a.id, conflict.id, "keep_local")
+    await db.commit()
+
+    recreated = await bindings._pending_conflicts(db, user_a.id, binding, root)
+    assert recreated == ()
+    journals = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.relative_path == "conflict.txt",
+        FileSyncJournal.status == "synced",
+    ).order_by(FileSyncJournal.id.desc()))).all()
+    assert journals[0].observed_fingerprint == local_fingerprint
+    assert journals[0].id != journals[-1].id
+
+
+@pytest.mark.asyncio
+async def test_keep_local_uses_workspace_root_and_prevents_reconcile_conflict_reappearing(
+    db, user_a, monkeypatch, tmp_path,
+):
+    """workspace 绑定必须在正确目录记录本地基线，避免再次对账重复报冲突。"""
+    from datetime import timedelta
+
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.snapshots as snapshots
+    import app.services.workspaces as workspaces
+
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    for module in (bindings, protocol, reconcile, snapshots, workspaces):
+        monkeypatch.setattr(module, "get_settings", lambda: settings)
+    for module in (bindings, reconcile):
+        monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
+        monkeypatch.setattr(module, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(snapshots, "get_settings", lambda: settings)
+    monkeypatch.setattr(workspaces, "workspace_shell_supported", lambda: True)
+
+    project = Project(user_id=user_a.id, name="本地优先测试", start_date="2026-10-01")
+    db.add(project)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="项目工作区", kind="project",
+        project_id=project.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=workspace.id,
+        source="local_directory", status="active", root_path=".",
+        root_fingerprint="a" * 64, mode="bidirectional",
+    )
+    db.add(binding)
+    await db.flush()
+
+    root = await workspaces.resolve_workspace_root(db, user_a.id, workspace.id)
+    assert root is not None
+    relative = "guide.md"
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("local version", encoding="utf-8")
+    local_fingerprint = hashlib.sha256(b"local version").hexdigest()
+    file_row = File(
+        user_id=user_a.id, display_name="guide", ext="md", space="project",
+        project_id=project.id, storage_key=f"{user_a.id}/{root.relative_to(tmp_path / str(user_a.id)).as_posix()}/{relative}",
+        size="13", size_bytes=13, storage_backend="local",
+    )
+    db.add(file_row)
+    await db.flush()
+    remote_journal = await record_change(
+        db, binding=binding, user_id=user_a.id, source="file_api", operation="update",
+        relative_path=relative,
+        idempotency_key=build_idempotency_key(
+            source="file_api", operation="update", relative_path=relative,
+            fingerprint="b" * 64,
+        ), observed_fingerprint="b" * 64, status="synced",
+    )
+    file_row.updated_at = remote_journal.updated_at + timedelta(microseconds=1)
+    conflict = FileSyncConflict(
+        binding_id=binding.id, user_id=user_a.id, relative_path=relative,
+        source="local_directory", baseline_fingerprint="b" * 64,
+        local_fingerprint=local_fingerprint, remote_fingerprint="b" * 64,
+        status="pending",
+    )
+    db.add(conflict)
+    await db.commit()
+
+    await resolve_sync_conflict(db, user_a.id, conflict.id, "keep_local")
+    await db.commit()
+
+    assert conflict.status == "resolved"
+    assert conflict.resolution == "keep_local"
+    assert snapshots.snapshot_fingerprint(user_a.id, binding.id, relative) == local_fingerprint
+    journals = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.relative_path == relative,
+    ).order_by(FileSyncJournal.id.desc()))).all()
+    assert journals[0].observed_fingerprint == local_fingerprint
+    assert journals[0].updated_at >= file_row.updated_at
+    assert await bindings._pending_conflicts(db, user_a.id, binding, root) == ()
+
+
+@pytest.mark.asyncio
 async def test_phase3_conflict_keep_remote_and_keep_both_apply_snapshot(db, user_a, monkeypatch, tmp_path):
     import app.services.filesync.bindings as bindings
     import app.services.filesync.reconcile as reconcile
@@ -903,6 +1072,68 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
 
 
 @pytest.mark.asyncio
+async def test_targeted_projection_ignores_project_container_directories(
+    db, user_a, monkeypatch, tmp_path,
+):
+    """用户根 watcher 忽略项目年月/项目根容器，但仍登记项目内真实文件夹。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.statcache as statcache
+    import app.services.filesync.targeted as targeted
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(statcache, "get_settings", lambda: settings)
+    monkeypatch.setattr(targeted, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id)
+    project = Project(user_id=user_a.id, name="同步项目", start_date="2026-10-01")
+    db.add(project)
+    await db.flush()
+    project_root = root / "项目文件" / "2026" / "10" / f"同步项目 #{project.id}"
+    (project_root / "图表").mkdir(parents=True)
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=None, source="local_directory",
+        status="active", root_path=".", root_fingerprint="a" * 64,
+    )
+    db.add(binding)
+    await db.flush()
+
+    summary = await targeted.project_path_events(
+        db,
+        user_a.id,
+        binding,
+        root,
+        targeted.PathEventBatch(folders_created={
+            "项目文件/2026",
+            "项目文件/2026/10",
+            f"项目文件/2026/10/同步项目 #{project.id}",
+            f"项目文件/2026/10/同步项目 #{project.id}/图表",
+        }),
+    )
+    await db.commit()
+
+    folder = await db.scalar(select(Folder).where(
+        Folder.user_id == user_a.id,
+        Folder.project_id == project.id,
+        Folder.name == "图表",
+        Folder.deleted_at.is_(None),
+    ))
+    assert summary.rejected == 0
+    assert dict(summary.rejection_reasons) == {}
+    assert summary.folders_created == 1
+    assert folder is not None
+
+
+@pytest.mark.asyncio
 async def test_tool_create_file_advances_baseline_without_conflict(db, user_a, monkeypatch, tmp_path):
     """工具新建文件必须推进同步基线：同路径历史 journal（已删除旧版）不能让
     双向冲突检测把「工具单写两边」误判成两边都改过（咕咕天气产物误报案例）。"""
@@ -1097,6 +1328,11 @@ async def test_watcher_does_not_scan_on_startup_and_keeps_manual_gap_visible(db,
     bindings = {b.user_id: b for b in (await db.scalars(select(FileSyncBinding).where(
         FileSyncBinding.source == protocol.FileSyncSource.LOCAL_DIRECTORY,
     ))).all()}
+    for binding in bindings.values():
+        binding.needs_reconcile = False
+    await db.commit()
+    active_gap_revision = bindings[user_a.id].gap_revision
+    inactive_gap_revision = bindings[user_b.id].gap_revision
 
     class FakeSidecar:
         def __init__(self):
@@ -1108,7 +1344,7 @@ async def test_watcher_does_not_scan_on_startup_and_keeps_manual_gap_visible(db,
         async def start(self):
             return None
 
-        async def watch(self, binding_id, root):
+        async def watch(self, binding_id, root, *, included_root_entries=None):
             self.watched[binding_id] = root
             self.registration_started.set()
             await self.release_registration.wait()
@@ -1170,9 +1406,16 @@ async def test_watcher_does_not_scan_on_startup_and_keeps_manual_gap_visible(db,
             File.deleted_at.is_(None),
         ))
         assert row is None
-        binding = bindings[user.id]
-        await db.refresh(binding)
-        assert binding.needs_reconcile is True
+    active_binding = bindings[user_a.id]
+    inactive_binding = bindings[user_b.id]
+    await db.refresh(active_binding)
+    await db.refresh(inactive_binding)
+    # 普通监听器重启不计为缺口；停机期间的变化由每周完整扫描覆盖。
+    assert active_binding.needs_reconcile is False
+    assert active_binding.gap_revision == active_gap_revision
+    assert inactive_binding.needs_reconcile is False
+    assert inactive_binding.gap_revision == inactive_gap_revision
+    assert inactive_binding.watcher_status == "inactive"
     assert bindings[user_a.id].watcher_status == "ready"
 
 
@@ -1266,6 +1509,7 @@ async def test_targeted_batch_quota_headroom_accumulates_across_creates(db, user
     # a(60) 放行并扣减余量；b(60) > 剩余 36 → 拒绝，不能各自拿同一份余量
     assert summary.created == 1
     assert summary.rejected == 1
+    assert dict(summary.rejection_reasons) == {"quota_exceeded": 1}
     names = sorted((await db.scalars(select(File.display_name).where(
         File.user_id == user_a.id, File.deleted_at.is_(None),
     ))).all())
@@ -1279,7 +1523,127 @@ async def test_targeted_batch_quota_headroom_accumulates_across_creates(db, user
     await db.commit()
     assert update_summary.updated == 0
     assert update_summary.rejected == 1
+    assert dict(update_summary.rejection_reasons) == {"quota_exceeded": 1}
     row = (await db.scalars(select(File).where(
         File.user_id == user_a.id, File.display_name == "a", File.deleted_at.is_(None),
     ))).one()
     assert row.size_bytes == 60
+
+
+@pytest.mark.asyncio
+async def test_live_filesync_applies_quota_deltas_once(db, user_a, monkeypatch, tmp_path):
+    """实时 filesync 对新建/扩容/删除按字节增量更新账本，重放不重复计量。"""
+    import app.services.filesync.reconcile as reconcile
+    import app.services.filesync.protocol as protocol
+    import app.services.filesync.targeted as targeted
+    import app.services.storage.quota_ledger as quota_ledger
+
+    monkeypatch.setattr(reconcile, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(reconcile, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    settings = SimpleNamespace(
+        filesync=SimpleNamespace(enabled=True),
+        storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
+        quota=SimpleNamespace(default_storage_limit_bytes=5),
+        sandbox=SimpleNamespace(persistent_quota_bytes=100, ephemeral_quota_bytes=0),
+    )
+    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    monkeypatch.setattr(targeted, "get_settings", lambda: settings)
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: settings)
+
+    root = tmp_path / str(user_a.id) / "个人文件"
+    root.mkdir(parents=True)
+    (root / "base.txt").write_text("base", encoding="utf-8")
+    await reconcile.reconcile_local_directory(db, user_a.id)
+    await db.commit()
+    binding = (await db.scalars(select(FileSyncBinding).where(
+        FileSyncBinding.user_id == user_a.id,
+    ))).one()
+    user_a.storage_limit_bytes = 5
+
+    (root / "new.txt").write_text("v1", encoding="utf-8")
+    batch = targeted.PathEventBatch(changed={"new.txt"}, created_files={"new.txt"})
+    options = targeted.PathProjectionOptions(record_quota_deltas=True)
+    summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, batch, options=options,
+    )
+    await db.commit()
+    ledger = (await db.scalars(select(StorageQuotaLedger).where(
+        StorageQuotaLedger.user_id == user_a.id,
+        StorageQuotaLedger.category == "file_library",
+    ))).one()
+    await db.refresh(ledger)
+    assert summary.created == 1
+    assert ledger.used_bytes == 6  # 已有物理变更即使超限也必须如实入账
+
+    # 相同事件/指纹重放不会再次增加用量。
+    await targeted.project_path_events(db, user_a.id, binding, root, batch, options=options)
+    await db.commit()
+    await db.refresh(ledger)
+    assert ledger.used_bytes == 6
+
+    (root / "new.txt").write_text("v2-long", encoding="utf-8")
+    await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(changed={"new.txt"}), options=options,
+    )
+    await db.commit()
+    await db.refresh(ledger)
+    assert ledger.used_bytes == 11
+
+    (root / "new.txt").unlink()
+    await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(deleted={"new.txt"}), options=options,
+    )
+    await db.commit()
+    await db.refresh(ledger)
+    assert ledger.used_bytes == 4
+
+
+@pytest.mark.asyncio
+async def test_shell_quota_follows_only_ready_binding_covering_its_write_scope(db, user_a):
+    from app.services.filesync.bindings import shell_quota_tracking_ready
+
+    workspace = Workspace(user_id=user_a.id, name="同步工作区", enabled=True)
+    db.add(workspace)
+    await db.flush()
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=workspace.id, source="local_directory",
+        mode="bidirectional", status="active", root_path=".",
+        root_fingerprint="a" * 64, revision=1,
+        watcher_status="ready", needs_reconcile=False,
+    )
+    db.add(binding)
+    await db.flush()
+
+    assert await shell_quota_tracking_ready(db, user_a.id, workspace.id) is True
+    binding.needs_reconcile = True
+    await db.flush()
+    assert await shell_quota_tracking_ready(db, user_a.id, workspace.id) is False
+    assert await shell_quota_tracking_ready(
+        db, user_a.id, workspace.id, include_all=True,
+    ) is False
+
+    # 完整用户授权必须由覆盖整个用户存储根的 watcher 负责，单个 workspace
+    # 的 ready 状态不能代表 personal/project 的写入也已增量入账。
+    user_root_binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=None, source="local_directory",
+        mode="bidirectional", status="active", root_path=".",
+        root_fingerprint="b" * 64, revision=1,
+        watcher_status="ready", needs_reconcile=False,
+    )
+    db.add(user_root_binding)
+    await db.flush()
+    assert await shell_quota_tracking_ready(
+        db, user_a.id, workspace.id, include_all=True,
+    ) is True
+    assert await shell_quota_tracking_ready(db, user_a.id, None) is True
+
+    user_root_binding.watcher_status = "degraded"
+    await db.flush()
+    assert await shell_quota_tracking_ready(
+        db, user_a.id, workspace.id, include_all=True,
+    ) is False

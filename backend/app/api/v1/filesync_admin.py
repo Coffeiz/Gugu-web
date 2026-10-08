@@ -20,6 +20,7 @@ from app.services.filesync.jobs import (
     serialize_reconcile_run,
     notify_run_changed,
 )
+from app.services.workspaces import workspace_shell_supported
 from app.core.events import FILESYNC_ADMIN_CHANNEL
 from app.api.v1.live import event_stream_response
 from sqlalchemy import select
@@ -46,9 +47,10 @@ class ConflictActionRequest(BaseModel):
 @router.get("/status")
 async def sync_status(
     user_id: UUID | None = Query(None),
+    conflict_limit: int = Query(100, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_admin_sync_status(db, user_id=user_id)
+    return await get_admin_sync_status(db, user_id=user_id, conflict_limit=conflict_limit)
 
 
 @router.post("/bindings/{binding_id}/dry-run")
@@ -101,6 +103,72 @@ async def binding_reconcile(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/reconcile-issues")
+async def reconcile_issue_bindings(
+    body: BindingActionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """批量排入非破坏性修复核对。"""
+    from app.core.config import get_settings
+
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="批量对账必须显式确认")
+    if body.allow_delete:
+        raise HTTPException(status_code=400, detail="批量对账不允许删除文件库记录")
+    if get_settings().storage.backend != "local" or not workspace_shell_supported():
+        raise HTTPException(status_code=400, detail="当前存储模式不支持本地文件同步")
+
+    snapshot = await get_admin_sync_status(db)
+    issue_binding_ids = [
+        item["id"] for item in snapshot["bindings"]
+        if item["pendingJournal"] > 0
+        or item["failedJournal"] > 0
+        or item["rejectedJournal"] > 0
+        or item["pendingConflicts"] > 0
+        or item["needsReconcile"]
+        or item["watcherStatus"] not in {"ready", "inactive", "unknown"}
+    ]
+    bindings = list((await db.scalars(
+        select(FileSyncBinding)
+        .where(
+            FileSyncBinding.id.in_(issue_binding_ids),
+            FileSyncBinding.source == "local_directory",
+            FileSyncBinding.status == "active",
+            FileSyncBinding.mode != "mirror_out",
+        )
+        .order_by(FileSyncBinding.id)
+    )).all())
+    result = {
+        "eligible": len(bindings),
+        "queued": 0,
+        "busy": 0,
+        "skipped": 0,
+    }
+    changed_runs = []
+    for binding in bindings:
+        try:
+            run = await enqueue_reconcile_run(
+                db,
+                user_id=binding.user_id,
+                binding_id=binding.id,
+                action="repair",
+                allow_delete=False,
+            )
+        except LookupError:
+            result["skipped"] += 1
+            continue
+        except ReconcileRunError:
+            result["busy"] += 1
+            continue
+        result["queued"] += 1
+        changed_runs.append(run)
+
+    await db.commit()
+    for run in changed_runs:
+        await notify_run_changed(run)
+    return result
 
 
 @router.post("/bindings/{binding_id}/initialize")

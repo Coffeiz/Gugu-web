@@ -121,6 +121,105 @@ async def test_reconcile_records_actual_file_and_shell_usage(db, user_a, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_file_library_display_uses_ledger_without_scanning_directories(
+    db, user_a, tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
+    db.add(StorageQuotaLedger(
+        user_id=user_a.id,
+        category=quota_ledger.FILE_LIBRARY,
+        used_bytes=1234,
+        limit_bytes=4096,
+    ))
+    await db.flush()
+
+    async def fail_if_scanned(*_args, **_kwargs):
+        raise AssertionError("文件库展示用量不应遍历物理目录")
+
+    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", fail_if_scanned)
+    assert await quota_ledger.get_file_library_usage_snapshot(db, user_a.id) == 1234
+
+
+@pytest.mark.asyncio
+async def test_file_library_display_fallback_sums_only_live_file_rows(db, user_a):
+    db.add_all([
+        File(user_id=user_a.id, display_name="存活", ext="bin", storage_key="live", size_bytes=30),
+        File(
+            user_id=user_a.id, display_name="回收", ext="bin", storage_key="deleted", size_bytes=90,
+            deleted_at=datetime.now(timezone.utc),
+        ),
+    ])
+    await db.flush()
+
+    assert await quota_ledger.get_file_library_usage_snapshot(db, user_a.id) == 30
+
+
+@pytest.mark.asyncio
+async def test_storage_quota_measurement_remains_authoritative(db, user_a, tmp_path, monkeypatch):
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
+    root = tmp_path / str(user_a.id) / "workspace" / "default"
+    root.mkdir(parents=True)
+    (root / "unregistered.bin").write_bytes(b"actual")
+    db.add(StorageQuotaLedger(
+        user_id=user_a.id,
+        category=quota_ledger.FILE_LIBRARY,
+        used_bytes=1,
+        limit_bytes=4096,
+    ))
+    await db.flush()
+
+    from app.services.files.browser import get_storage_usage
+
+    assert await get_storage_usage(db, user_a.id) == len(b"actual")
+
+
+@pytest.mark.asyncio
+async def test_periodic_reconcile_does_not_overwrite_concurrent_ledger_delta(
+    db, user_a, tmp_path, monkeypatch,
+):
+    from datetime import timedelta
+
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
+    rows = [
+        StorageQuotaLedger(
+            user_id=user_a.id, category=category, used_bytes=10,
+            limit_bytes=4096, status="active",
+        )
+        for category in (
+            quota_ledger.FILE_LIBRARY,
+            quota_ledger.SHELL_PERSISTENT,
+            quota_ledger.SHELL_EPHEMERAL,
+        )
+    ]
+    db.add_all(rows)
+    await db.flush()
+
+    async def update_during_measurement(db_, _user_id):
+        row = await db_.scalar(select(StorageQuotaLedger).where(
+            StorageQuotaLedger.user_id == user_a.id,
+            StorageQuotaLedger.category == quota_ledger.FILE_LIBRARY,
+        ))
+        row.used_bytes = 50
+        row.updated_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+        await db_.flush()
+        return {}, {}
+
+    async def no_shell_usage(*_args):
+        return 0
+
+    monkeypatch.setattr(quota_ledger, "measure_shell_persistent_usage", no_shell_usage)
+    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", update_during_measurement)
+
+    await quota_ledger.reconcile_user_storage(
+        db, user_a.id, preserve_concurrent_updates=True,
+    )
+    await db.refresh(rows[0])
+
+    assert rows[0].used_bytes == 50
+    assert rows[0].last_reconciled_at is None
+
+
+@pytest.mark.asyncio
 async def test_local_workspace_files_and_shell_writes_share_user_limit(db, user_a, tmp_path, monkeypatch):
     monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
     user_a.storage_limit_bytes = 100

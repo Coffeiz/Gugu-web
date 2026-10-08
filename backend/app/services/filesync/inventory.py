@@ -25,6 +25,7 @@ async def stage_database_inventory(
     manifest: ScanManifest,
     max_manifest_bytes: int,
     stop_event: Event | None = None,
+    included_root_entries: frozenset[str] | None = None,
 ) -> tuple[int, int]:
     """分批收集完整范围内的活动记录；每页释放 DB session，不保留整树 ORM 对象。
 
@@ -36,7 +37,7 @@ async def stage_database_inventory(
         root = root.resolve(strict=True)
         root.relative_to(storage_root)
     except (OSError, ValueError) as exc:
-        raise ScanIncomplete("同步根目录已失效") from exc
+        raise ScanIncomplete("同步根目录已失效", code="binding_root_unavailable") from exc
     scope_prefix = root.relative_to(storage_root).as_posix().rstrip("/") + "/"
 
     file_count = await _stage_files(
@@ -47,6 +48,7 @@ async def stage_database_inventory(
         manifest=manifest,
         max_manifest_bytes=max_manifest_bytes,
         stop_event=stop_event,
+        included_root_entries=included_root_entries,
     )
     folder_count = await _stage_folders(
         session_factory,
@@ -57,6 +59,7 @@ async def stage_database_inventory(
         manifest=manifest,
         max_manifest_bytes=max_manifest_bytes,
         stop_event=stop_event,
+        included_root_entries=included_root_entries,
     )
     return file_count, folder_count
 
@@ -70,6 +73,7 @@ async def _stage_files(
     manifest: ScanManifest,
     max_manifest_bytes: int,
     stop_event: Event | None = None,
+    included_root_entries: frozenset[str] | None = None,
 ) -> int:
     last_id = 0
     staged = 0
@@ -83,6 +87,7 @@ async def _stage_files(
                     File.user_id == user_id,
                     File.deleted_at.is_(None),
                     File.storage_key.startswith(scope_prefix, autoescape=True),
+                    *([File.space.in_(("personal", "project"))] if included_root_entries is not None else []),
                     File.id > last_id,
                 )
                 .order_by(File.id)
@@ -92,7 +97,15 @@ async def _stage_files(
                 await db.rollback()
                 break
             last_id = rows[-1].id
-            relative_paths = [row.storage_key[len(scope_prefix):] for row in rows]
+            scoped_rows = [
+                row for row in rows
+                if included_root_entries is None
+                or row.storage_key[len(scope_prefix):].split("/", 1)[0] in included_root_entries
+            ]
+            if not scoped_rows:
+                await db.rollback()
+                continue
+            relative_paths = [row.storage_key[len(scope_prefix):] for row in scoped_rows]
             journals = (await db.execute(
                 select(
                     FileSyncJournal.relative_path,
@@ -131,7 +144,7 @@ async def _stage_files(
                     row.updated_at.timestamp() if row.updated_at else None,
                     journal_facts.get(row.storage_key[len(scope_prefix):], (None, None))[1],
                 )
-                for row in rows
+                for row in scoped_rows
             ]
             await db.rollback()
         connection = connect_manifest(manifest)
@@ -160,6 +173,7 @@ async def _stage_folders(
     manifest: ScanManifest,
     max_manifest_bytes: int,
     stop_event: Event | None = None,
+    included_root_entries: frozenset[str] | None = None,
 ) -> int:
     last_id = 0
     staged = 0
@@ -172,6 +186,7 @@ async def _stage_folders(
                 .where(
                     Folder.user_id == user_id,
                     Folder.deleted_at.is_(None),
+                    *([Folder.workspace_directory_id.is_(None)] if included_root_entries is not None else []),
                     Folder.id > last_id,
                 )
                 .order_by(Folder.id)
@@ -192,6 +207,11 @@ async def _stage_folders(
                     continue
                 # 绑定根本身可能有对应的 Folder 锚点，但它不是根内的子目录对象。
                 if relative == ".":
+                    continue
+                if (
+                    included_root_entries is not None
+                    and relative.split("/", 1)[0] not in included_root_entries
+                ):
                     continue
                 folder_paths.append((folder.id, relative, int(folder.version or 1)))
             journal_rows = (await db.execute(
@@ -231,6 +251,6 @@ def _ensure_manifest_within_budget(manifest: ScanManifest, max_manifest_bytes: i
     try:
         size = manifest.path.stat().st_size
     except OSError as exc:
-        raise ScanIncomplete("临时清单不可读取") from exc
+        raise ScanIncomplete("临时清单不可读取", code="scan_manifest_unavailable") from exc
     if size > max_manifest_bytes:
-        raise ScanIncomplete("临时清单超过空间预算")
+        raise ScanIncomplete("临时清单超过空间预算", code="scan_manifest_budget_exceeded")

@@ -25,7 +25,10 @@ from app.models import (
     FileSyncJournal,
     FileSyncOutbox,
     FileSyncReconcileRun,
+    Folder,
     User,
+    Workspace,
+    WorkspaceDirectory,
 )
 from app.services.filesync.jobs import (
     claim_next_run,
@@ -76,6 +79,36 @@ async def multi_session_filesync_db(tmp_path, user_a):
         await engine.dispose()
 
 
+def test_user_root_reconcile_only_projects_canonical_library_folders(
+    user_a, monkeypatch, tmp_path,
+):
+    """任务对账忽略项目年月/项目根容器，保留真实项目 Folder 与文件候选。"""
+    import app.services.filesync.runner as runner
+
+    settings = SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path)))
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    root = tmp_path / str(user_a.id)
+    scope = SimpleNamespace(user_id=user_a.id, root=root, workspace_id=None)
+    project_folder = "项目文件/2026/10/示例项目 #17/图表"
+
+    assert not runner._candidate_in_supported_space(
+        scope, "项目文件", object_type="folder",
+    )
+    assert not runner._candidate_in_supported_space(
+        scope, "项目文件/2026", object_type="folder",
+    )
+    assert not runner._candidate_in_supported_space(
+        scope, "项目文件/2026/10/示例项目 #17", object_type="folder",
+    )
+    assert runner._candidate_in_supported_space(
+        scope, project_folder, object_type="folder",
+    )
+    # 项目根目录中的文件仍属于项目文件库，不受文件夹容器过滤影响。
+    assert runner._candidate_in_supported_space(
+        scope, "项目文件/2026/10/示例项目 #17/方案.md", object_type="file",
+    )
+
+
 @pytest.mark.asyncio
 async def test_initialize_task_imports_disk_files_and_persists_terminal_results(
     db, user_a, monkeypatch,
@@ -91,6 +124,12 @@ async def test_initialize_task_imports_disk_files_and_persists_terminal_results(
     runtime_workspace = root / "workspace" / "default"
     runtime_workspace.mkdir(parents=True)
     (runtime_workspace / "不属于文件库.txt").write_text("keep out of File projection", encoding="utf-8")
+    workspace_file = File(
+        user_id=user_a.id, display_name="工作区旧记录", ext="txt", space="workspace",
+        storage_key=f"{user_a.id}/workspace/default/工作区旧记录.txt",
+    )
+    db.add(workspace_file)
+    await db.flush()
     monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
     monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
     monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
@@ -145,6 +184,11 @@ async def test_initialize_task_imports_disk_files_and_persists_terminal_results(
             File.user_id == user_a.id,
             File.storage_key == f"{user_a.id}/个人文件/新建.txt",
         ))
+        stored_workspace_file = await check.get(File, workspace_file.id)
+        runtime_library_file = await check.scalar(select(File).where(
+            File.user_id == user_a.id,
+            File.storage_key == f"{user_a.id}/workspace/default/不属于文件库.txt",
+        ))
         journals = list((await check.scalars(select(FileSyncJournal).where(
             FileSyncJournal.binding_id == binding.id,
         ))).all())
@@ -154,9 +198,11 @@ async def test_initialize_task_imports_disk_files_and_persists_terminal_results(
         stored_run.error_code,
         stored_run.result_counts,
     )
-    assert stored_run.scanned_count == 5
+    assert stored_run.scanned_count == 2
     assert stored_run.result_counts["created"] == 1
     assert file is not None and file.size_bytes == len(b"from disk")
+    assert stored_workspace_file is not None and stored_workspace_file.deleted_at is None
+    assert runtime_library_file is None
     assert any(item.object_type == "file" for item in journals)
     version = file.version
 
@@ -184,6 +230,54 @@ async def test_initialize_task_imports_disk_files_and_persists_terminal_results(
         ))).all())
     assert repaired_file is not None and repaired_file.version == version
     assert len(repeated_journals) == len(journals)
+
+
+@pytest.mark.asyncio
+async def test_user_root_with_only_workspace_records_is_an_empty_library_scope(
+    db, user_a, monkeypatch,
+):
+    """用户根绑定不把 workspace 记录算作文件库范围，也不因它们误判空扫描。"""
+    import app.services.filesync.runner as runner
+    import app.services.filesync.targeted as targeted
+
+    storage_root = Path(runner.get_settings().storage.local_path).expanduser().resolve()
+    root = storage_root / str(user_a.id)
+    runtime = root / "workspace" / "default"
+    runtime.mkdir(parents=True)
+    (runtime / "runtime.txt").write_text("workspace data", encoding="utf-8")
+    workspace_file = File(
+        user_id=user_a.id, display_name="运行时记录", ext="txt", space="workspace",
+        storage_key=f"{user_a.id}/workspace/default/运行时记录.txt",
+    )
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=None, source="local_directory",
+        mode="bidirectional", status="active", root_path=".",
+        root_fingerprint=_root_fingerprint(root),
+    )
+    db.add_all([workspace_file, binding])
+    await db.flush()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair",
+    )
+    await db.commit()
+
+    monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    claimed = await claim_next_run(db, "empty-library-scope", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(
+            db_session._SessionLocal, executor, claimed,
+            "empty-library-scope", asyncio.Event(),
+        )
+
+    async with db_session._SessionLocal() as check:
+        stored_run = await check.get(FileSyncReconcileRun, run.id)
+        stored_workspace_file = await check.get(File, workspace_file.id)
+    assert stored_run is not None and stored_run.status == "succeeded"
+    assert stored_run.scanned_count == 0
+    assert stored_workspace_file is not None and stored_workspace_file.deleted_at is None
 
 
 @pytest.mark.asyncio
@@ -242,6 +336,328 @@ async def test_dry_run_reports_plan_without_business_side_effects(db, user_a, mo
     assert files == []
     assert journals == []
     assert outbox == []
+
+
+@pytest.mark.asyncio
+async def test_repair_recreates_only_a_missing_empty_workspace_root(db, user_a, monkeypatch):
+    """恢复数据库后只允许重建确认为无旧 File/Folder 记录的空工作区目录。"""
+    from app.core.config import get_settings
+    import app.services.filesync.runner as runner
+    import app.services.filesync.targeted as targeted
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    directory = WorkspaceDirectory(
+        user_id=user_a.id, name="空工作区", directory_name="safe-empty",
+    )
+    db.add(directory)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="空工作区", kind="directory",
+        directory_id=directory.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+    root = storage_root / str(user_a.id) / "workspace" / directory.directory_name
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=workspace.id, source="local_directory",
+        mode="bidirectional", status="active", root_path=".",
+        root_fingerprint=_root_fingerprint(root),
+    )
+    db.add(binding)
+    await db.flush()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair",
+    )
+    await db.commit()
+
+    scope = await runner._load_scope(db_session._SessionLocal, run.id)
+
+    assert scope.root == root
+    assert root.is_dir()
+    assert list(root.iterdir()) == []
+    assert await db.scalar(select(File.id).where(File.user_id == user_a.id)) is None
+    assert await db.scalar(select(Folder.id).where(Folder.user_id == user_a.id)) is None
+
+    monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    claimed = await claim_next_run(db, "empty-root-test", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(
+            db_session._SessionLocal, executor, claimed,
+            "empty-root-test", asyncio.Event(),
+        )
+    async with db_session._SessionLocal() as check:
+        stored = await check.get(FileSyncReconcileRun, run.id)
+        assert stored is not None and stored.status == "succeeded"
+        assert stored.scanned_count == 0
+
+
+@pytest.mark.asyncio
+async def test_repair_refreshes_fingerprint_for_existing_empty_workspace_root(db, user_a, monkeypatch):
+    """数据库恢复后，空且无 File/Folder 记录的目录可只更新绑定指纹。"""
+    from app.core.config import get_settings
+    import app.services.filesync.runner as runner
+    import app.services.filesync.targeted as targeted
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    directory = WorkspaceDirectory(
+        user_id=user_a.id, name="空目录指纹恢复", directory_name="empty-fingerprint",
+    )
+    db.add(directory)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="空目录指纹恢复", kind="directory",
+        directory_id=directory.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+    root = storage_root / str(user_a.id) / "workspace" / directory.directory_name
+    root.mkdir(parents=True)
+    stale_fingerprint = "stale-binding-root-fingerprint"
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=workspace.id, source="local_directory",
+        mode="bidirectional", status="active", root_path=".",
+        root_fingerprint=stale_fingerprint,
+    )
+    db.add(binding)
+    await db.flush()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair",
+    )
+    await db.commit()
+
+    claimed = await claim_next_run(db, "empty-fingerprint-test", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(
+            db_session._SessionLocal, executor, claimed,
+            "empty-fingerprint-test", asyncio.Event(),
+        )
+
+    async with db_session._SessionLocal() as check:
+        stored_binding = await check.get(FileSyncBinding, binding.id)
+        stored_run = await check.get(FileSyncReconcileRun, run.id)
+        assert stored_binding is not None
+        assert stored_run is not None and stored_run.status == "succeeded"
+        assert stored_binding.root_fingerprint == _root_fingerprint(root)
+        assert stored_run.root_fingerprint == stored_binding.root_fingerprint
+        assert stored_binding.root_fingerprint != stale_fingerprint
+        assert await check.scalar(select(File.id).where(File.user_id == user_a.id)) is None
+        assert await check.scalar(select(Folder.id).where(Folder.user_id == user_a.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_repair_refreshes_stale_fingerprint_for_canonical_nonempty_workspace_without_deleting_records(
+    db, user_a, monkeypatch,
+):
+    """现存 canonical 根可刷新绑定指纹；旧记录和物理内容保持不变。"""
+    from app.core.config import get_settings
+    import app.services.filesync.runner as runner
+    import app.services.filesync.targeted as targeted
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    directory = WorkspaceDirectory(
+        user_id=user_a.id, name="已有数据工作区", directory_name="existing-data",
+    )
+    db.add(directory)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="已有数据工作区", kind="directory",
+        directory_id=directory.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+    root = storage_root / str(user_a.id) / "workspace" / directory.directory_name
+    root.mkdir(parents=True)
+    content = b"preserve existing content"
+    (root / "existing.txt").write_bytes(content)
+    file_row = File(
+        user_id=user_a.id, display_name="existing", ext="txt", space="workspace",
+        workspace_directory_id=directory.id,
+        storage_key=f"{user_a.id}/workspace/{directory.directory_name}/existing.txt",
+        size_bytes=len(content),
+    )
+    db.add(file_row)
+    await db.flush()
+    original_file_id = file_row.id
+    stale_fingerprint = "stale-binding-root-fingerprint"
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=workspace.id, source="local_directory",
+        mode="bidirectional", status="active", root_path=".",
+        root_fingerprint=stale_fingerprint,
+    )
+    db.add(binding)
+    await db.flush()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair", allow_delete=False,
+    )
+    await db.commit()
+
+    claimed = await claim_next_run(db, "existing-root-test", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(
+            db_session._SessionLocal, executor, claimed,
+            "existing-root-test", asyncio.Event(),
+        )
+
+    async with db_session._SessionLocal() as check:
+        stored_binding = await check.get(FileSyncBinding, binding.id)
+        stored_run = await check.get(FileSyncReconcileRun, run.id)
+        stored_file = await check.get(File, original_file_id)
+        assert stored_binding is not None
+        assert stored_run is not None and stored_run.status == "succeeded"
+        assert stored_binding.root_fingerprint == _root_fingerprint(root)
+        assert stored_run.root_fingerprint == stored_binding.root_fingerprint
+        assert stored_file is not None and stored_file.storage_key.endswith("/existing.txt")
+        assert stored_run.result_counts["deleted"] == 0
+        assert (root / "existing.txt").read_bytes() == content
+
+
+@pytest.mark.asyncio
+async def test_repair_rejects_symlink_when_it_overlaps_existing_library_record(db, user_a, monkeypatch, tmp_path):
+    """链接路径覆盖 File 记录时整轮不投影，避免链接被误当成缺失文件。"""
+    from app.core.config import get_settings
+    import app.services.filesync.runner as runner
+    import app.services.filesync.targeted as targeted
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    directory = WorkspaceDirectory(
+        user_id=user_a.id, name="链接边界工作区", directory_name="symlink-boundary",
+    )
+    db.add(directory)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="链接边界工作区", kind="directory",
+        directory_id=directory.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+    root = storage_root / str(user_a.id) / "workspace" / directory.directory_name
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    physical = outside / "existing.txt"
+    physical.write_bytes(b"keep physical data")
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+    file_row = File(
+        user_id=user_a.id, display_name="existing", ext="txt", space="workspace",
+        workspace_directory_id=directory.id,
+        storage_key=f"{user_a.id}/workspace/{directory.directory_name}/linked/existing.txt",
+        size_bytes=18,
+    )
+    db.add(file_row)
+    await db.flush()
+    original_file_id = file_row.id
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=workspace.id, source="local_directory",
+        mode="bidirectional", status="active", root_path=".",
+        root_fingerprint=_root_fingerprint(root),
+    )
+    db.add(binding)
+    await db.flush()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id,
+        action="repair", allow_delete=True,
+    )
+    await db.commit()
+
+    claimed = await claim_next_run(db, "symlink-overlap-test", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(
+            db_session._SessionLocal, executor, claimed,
+            "symlink-overlap-test", asyncio.Event(),
+        )
+
+    async with db_session._SessionLocal() as check:
+        stored_run = await check.get(FileSyncReconcileRun, run.id)
+        stored_file = await check.get(File, original_file_id)
+        assert stored_run is not None and stored_run.status == "failed"
+        assert stored_run.error_code == "scan_unsupported_symlink"
+        assert stored_file is not None and stored_file.deleted_at is None
+        assert physical.read_bytes() == b"keep physical data"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("record_kind", ["file", "folder"])
+async def test_repair_does_not_recreate_missing_root_when_old_records_exist(
+    db, user_a, monkeypatch, record_kind,
+):
+    """缺失根目录下仍有关联记录时拒绝空目录恢复，不改动旧记录。"""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.storage, "backend", "local")
+    storage_root = Path(settings.storage.local_path).expanduser().resolve()
+    directory = WorkspaceDirectory(
+        user_id=user_a.id, name="有历史的工作区", directory_name="has-history",
+    )
+    db.add(directory)
+    await db.flush()
+    workspace = Workspace(
+        user_id=user_a.id, name="有历史的工作区", kind="directory",
+        directory_id=directory.id, enabled=True,
+    )
+    db.add(workspace)
+    await db.flush()
+    root = storage_root / str(user_a.id) / "workspace" / directory.directory_name
+    if record_kind == "file":
+        db.add(File(
+            user_id=user_a.id, display_name="旧文件", ext="txt", space="workspace",
+            workspace_directory_id=directory.id,
+            storage_key=f"{user_a.id}/workspace/{directory.directory_name}/旧文件.txt",
+        ))
+    else:
+        db.add(Folder(user_id=user_a.id, workspace_directory_id=directory.id, name="旧文件夹"))
+    binding = FileSyncBinding(
+        user_id=user_a.id, workspace_id=workspace.id, source="local_directory",
+        mode="bidirectional", status="active", root_path=".",
+        root_fingerprint=_root_fingerprint(root),
+    )
+    db.add(binding)
+    await db.flush()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair",
+    )
+    await db.commit()
+
+    claimed = await claim_next_run(db, "protected-root-test", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(
+            db_session._SessionLocal, executor, claimed,
+            "protected-root-test", asyncio.Event(),
+        )
+
+    assert not root.exists()
+    async with db_session._SessionLocal() as check:
+        stored = await check.get(FileSyncReconcileRun, run.id)
+        assert stored is not None and stored.status == "failed"
+        assert stored.error_code == "root_recovery_blocked"
+        if record_kind == "file":
+            assert await check.scalar(select(File.id).where(File.user_id == user_a.id)) is not None
+        else:
+            assert await check.scalar(select(Folder.id).where(Folder.user_id == user_a.id)) is not None
 
 
 @pytest.mark.asyncio
@@ -372,6 +788,7 @@ async def test_manifest_budget_failure_does_not_delete_db_orphan(
         stored_run = await check.get(FileSyncReconcileRun, run.id)
         stored_orphan = await check.get(File, orphan.id)
     assert stored_run is not None and stored_run.status == "failed"
+    assert stored_run.error_code == "scan_manifest_budget_exceeded"
     assert stored_orphan is not None and stored_orphan.deleted_at is None
     assert stored_orphan.version == 2
 
@@ -834,6 +1251,57 @@ async def test_live_write_after_scan_verification_is_not_projected_from_stale_fi
         stored_run = await check.get(FileSyncReconcileRun, run.id)
     assert stored is not None and stored.version == 1 and stored.size_bytes == 3
     assert stored_run is not None and stored_run.result_counts["failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_version_checks_are_batched_and_keep_stale_scan_guard(db, user_a):
+    """批量复核保留版本/活动路径约束，同时避免每个扫描路径各发一条 SQL。"""
+    import app.services.filesync.runner as runner
+    from sqlalchemy import event
+
+    prefix = f"{user_a.id}/"
+    current = File(
+        user_id=user_a.id, display_name="当前文件", ext="txt", space="personal",
+        storage_key=f"{prefix}个人文件/当前.txt", version=4,
+    )
+    occupied = File(
+        user_id=user_a.id, display_name="占用路径", ext="txt", space="personal",
+        storage_key=f"{prefix}个人文件/占用.txt", version=1,
+    )
+    historical = File(
+        user_id=user_a.id, display_name="已软删除历史", ext="txt", space="personal",
+        storage_key=f"{prefix}个人文件/历史.txt", version=2, deleted_at=now_utc(),
+    )
+    db.add_all([current, occupied, historical])
+    await db.flush()
+    scope = SimpleNamespace(user_id=user_a.id, root=Path("/unused-for-file-candidates"))
+    candidates = [
+        runner.ReconcileCandidate(
+            "个人文件/当前.txt", "file", "update",
+            object_id=current.id, object_version=4,
+        ),
+        runner.ReconcileCandidate(
+            "个人文件/当前.txt", "file", "update",
+            object_id=current.id, object_version=3,
+        ),
+        runner.ReconcileCandidate("个人文件/新建.txt", "file", "create"),
+        runner.ReconcileCandidate("个人文件/占用.txt", "file", "create"),
+        runner.ReconcileCandidate("个人文件/历史.txt", "file", "create"),
+    ]
+    statements = []
+
+    def record_sql(_connection, _cursor, statement, _parameters, _context, _many):
+        if "files" in statement.lower():
+            statements.append(statement)
+
+    event.listen(db.bind.sync_engine, "before_cursor_execute", record_sql)
+    try:
+        valid = await runner._current_candidates(db, scope, candidates, prefix)
+    finally:
+        event.remove(db.bind.sync_engine, "before_cursor_execute", record_sql)
+
+    assert valid == {0, 2, 4}
+    assert len(statements) == 2
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from app.services.filesync.scan import (
     connect_manifest,
     iter_manifest_entries,
     iter_reconcile_candidate_batches,
+    manifest_exclusions_overlap_database,
     run_scan_in_thread,
     scan_to_manifest,
 )
@@ -47,21 +48,101 @@ def test_scan_streams_entries_to_private_manifest_and_hashes_every_file(tmp_path
     assert not manifest.path.exists()
 
 
-def test_symlink_makes_scan_incomplete_so_it_cannot_become_a_missing_delete(tmp_path: Path):
+def test_scan_finalizes_directory_when_prefix_sibling_sorts_before_child(tmp_path: Path):
+    """路径段排序必须让目录后代连续，避免前缀相似的兄弟项提前关闭目录栈。"""
+    root = tmp_path / "root"
+    (root / "branch").mkdir(parents=True)
+    (root / "branch" / "inside.txt").write_text("nested", encoding="utf-8")
+    (root / "branch-note.txt").write_text("sibling", encoding="utf-8")
+
+    manifest = scan_to_manifest(
+        root,
+        temp_directory=tmp_path / "tmp",
+        stop_event=Event(),
+        max_manifest_bytes=1024 * 1024,
+    )
+    try:
+        entries = {
+            row[0]: row
+            for batch in iter_manifest_entries(manifest)
+            for row in batch
+        }
+        assert manifest.scanned_count == 3
+        assert entries["branch"][1] == "directory"
+        assert entries["branch"][4]
+        assert entries["branch/inside.txt"][4]
+        assert entries["branch-note.txt"][4]
+    finally:
+        manifest.close()
+
+
+def test_user_root_scan_excludes_non_library_namespaces_before_traversal(tmp_path: Path):
+    root = tmp_path / "user"
+    (root / "个人文件").mkdir(parents=True)
+    (root / "个人文件" / "note.txt").write_text("library", encoding="utf-8")
+    runtime = root / "workspace" / "default" / "node_modules"
+    runtime.mkdir(parents=True)
+    for index in range(100):
+        (runtime / f"runtime-{index}.pak").write_bytes(b"runtime data")
+    (root / ".system").mkdir()
+    (root / ".system" / "internal.json").write_text("{}", encoding="utf-8")
+
+    manifest = scan_to_manifest(
+        root,
+        temp_directory=tmp_path / "tmp",
+        stop_event=Event(),
+        max_manifest_bytes=1024 * 1024,
+        included_root_entries=frozenset({"个人文件", "项目文件"}),
+    )
+    try:
+        rows = [row for batch in iter_manifest_entries(manifest) for row in batch]
+        assert manifest.scanned_count == 2
+        assert {row[0] for row in rows} == {"个人文件", "个人文件/note.txt"}
+    finally:
+        manifest.close()
+
+
+def test_symlinks_are_excluded_without_following_and_only_block_when_they_hide_library_records(
+    tmp_path: Path,
+):
     root = tmp_path / "root"
     outside = tmp_path / "outside.txt"
+    outside_dir = tmp_path / "outside-dir"
     root.mkdir()
+    outside_dir.mkdir()
+    (root / "safe.txt").write_text("safe", encoding="utf-8")
     outside.write_text("do not index")
     (root / "link.txt").symlink_to(outside)
+    (outside_dir / "hidden.txt").write_text("do not index", encoding="utf-8")
+    (root / "linked-dir").symlink_to(outside_dir, target_is_directory=True)
 
-    with pytest.raises(ScanIncomplete):
-        scan_to_manifest(
-            root,
-            temp_directory=tmp_path / "tmp",
-            stop_event=Event(),
-            max_manifest_bytes=1024 * 1024,
-        )
-    assert list((tmp_path / "tmp").glob("gugu-filesync-*.sqlite")) == []
+    manifest = scan_to_manifest(
+        root,
+        temp_directory=tmp_path / "tmp",
+        stop_event=Event(),
+        max_manifest_bytes=1024 * 1024,
+    )
+    try:
+        rows = [row for batch in iter_manifest_entries(manifest) for row in batch]
+        assert manifest.scanned_count == 1
+        assert manifest.rejected_count == 2
+        assert {row[0] for row in rows} == {"safe.txt"}
+        assert not manifest_exclusions_overlap_database(manifest)
+
+        connection = connect_manifest(manifest)
+        try:
+            connection.execute(
+                "INSERT INTO db_files "
+                "(id, relative_path, storage_key, size_bytes, version, display_name, ext, space) "
+                "VALUES (1, 'linked-dir/hidden.txt', 'user/workspace/linked-dir/hidden.txt', "
+                "7, 1, 'hidden', 'txt', 'workspace')"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        assert manifest_exclusions_overlap_database(manifest)
+    finally:
+        manifest.close()
 
 
 def test_manifest_budget_failure_removes_partial_manifest_and_never_returns_scan(tmp_path: Path):
@@ -69,7 +150,7 @@ def test_manifest_budget_failure_removes_partial_manifest_and_never_returns_scan
     root.mkdir()
     (root / "entry.txt").write_text("new file")
 
-    with pytest.raises(ScanIncomplete, match="空间预算"):
+    with pytest.raises(ScanIncomplete, match="空间预算") as error:
         scan_to_manifest(
             root,
             temp_directory=tmp_path / "tmp",
@@ -78,17 +159,20 @@ def test_manifest_budget_failure_removes_partial_manifest_and_never_returns_scan
             commit_entries=1,
         )
 
+    assert error.value.code == "scan_manifest_budget_exceeded"
+
     assert list((tmp_path / "tmp").glob("gugu-filesync-*.sqlite")) == []
 
 
 def test_unavailable_or_cancelled_scan_never_returns_a_complete_manifest(tmp_path: Path):
-    with pytest.raises(ScanIncomplete):
+    with pytest.raises(ScanIncomplete) as error:
         scan_to_manifest(
             tmp_path / "missing",
             temp_directory=tmp_path / "tmp",
             stop_event=Event(),
             max_manifest_bytes=1024 * 1024,
         )
+    assert error.value.code == "binding_root_unavailable"
     assert list((tmp_path / "tmp").glob("gugu-filesync-*.sqlite")) == []
 
     root = tmp_path / "root"
@@ -163,12 +247,13 @@ async def test_stop_during_directory_traversal_joins_thread_before_releasing_slo
     def gated_scandir(path):
         if Path(path) == nested:
             entered_nested.set()
-            assert release_scandir.wait(timeout=3)
+            assert release_scandir.wait(timeout=15)
         return original_scandir(path)
 
     monkeypatch.setattr(scan.os, "scandir", gated_scandir)
     stop = Event()
-    timeout = 0.02 if stop_mode == "timeout" else 10
+    # 给线程池线程充分时间进入受控目录；超时仍会发生在真实遍历阻塞期间。
+    timeout = 10 if stop_mode == "timeout" else 20
     with ThreadPoolExecutor(max_workers=1) as executor:
         task = asyncio.create_task(run_scan_in_thread(
             executor,
@@ -178,12 +263,12 @@ async def test_stop_during_directory_traversal_joins_thread_before_releasing_slo
             max_manifest_bytes=1024 * 1024,
             timeout_seconds=timeout,
         ))
-        assert await asyncio.to_thread(entered_nested.wait, 2)
+        assert await asyncio.to_thread(entered_nested.wait, 12)
         if stop_mode == "cancel":
             task.cancel()
             assert await asyncio.to_thread(stop.wait, 1)
         else:
-            assert await asyncio.to_thread(stop.wait, 1)
+            assert await asyncio.to_thread(stop.wait, 11)
         assert not task.done()
         release_scandir.set()
         expected = asyncio.CancelledError if stop_mode == "cancel" else ScanTimedOut

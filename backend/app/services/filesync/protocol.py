@@ -21,9 +21,9 @@ _PATH_LOCK_NAMESPACE = "filesync-path"
 async def lock_file_sync_paths(db: AsyncSession, user_id, storage_keys: list[str] | tuple[str, ...]) -> None:
     """在事务内串行化同一用户、同一存储路径的实时与文件库写入。
 
-    File.storage_key 没有可安全补建的全局唯一约束（历史数据允许重复），因此
-    路径创建不能依赖“先查再插”。PostgreSQL advisory xact lock 作为双方共享的
-    对象级保护；SQLite 测试库由其事务/行行为验证，不发方言专属 SQL。
+    活动 File 行由部分唯一索引兜底；PostgreSQL advisory xact lock 让实时同步与
+    文件库写入在查询/插入路径上串行，避免把唯一约束冲突暴露为普通并发错误。
+    SQLite 测试库不发方言专属锁 SQL，由唯一索引验证最终不变量。
     """
     bind = db.bind
     if bind is None or bind.dialect.name != "postgresql":
@@ -137,6 +137,42 @@ async def record_canonical_file_change(
     无法解析时，主文件写入仍然必须成功。workspace 绑定的 ``root_path`` 固定
     为 ``.``，因此必须解析真实 workspace 根后再计算 journal 相对路径。
     """
+    await _record_canonical_file_event(
+        db, user_id=user_id, storage_key=storage_key,
+        operation=FileSyncOperation.UPDATE,
+        change_id=observed_fingerprint,
+        observed_fingerprint=observed_fingerprint,
+    )
+
+
+async def record_canonical_file_delete(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    entity_id: int,
+    version: int,
+    change_id: str,
+) -> None:
+    """把文件库内确认的文件删除登记到覆盖它的本地目录绑定。"""
+    await _record_canonical_file_event(
+        db, user_id=user_id, storage_key=storage_key,
+        operation=FileSyncOperation.DELETE,
+        change_id=f"ghost:{entity_id}:version:{version}:{change_id}",
+        idempotency_fingerprint=f"ghost:{entity_id}:version:{version}:{change_id}",
+    )
+
+
+async def _record_canonical_file_event(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    operation: str,
+    change_id: str,
+    observed_fingerprint: str | None = None,
+    idempotency_fingerprint: str | None = None,
+) -> None:
     settings = get_settings()
     if not is_file_sync_enabled():
         return
@@ -153,6 +189,7 @@ async def record_canonical_file_change(
         storage_path.relative_to(user_root)
     except ValueError:
         return
+    await lock_file_sync_paths(db, user_id, [storage_key])
 
     bindings = (await db.scalars(select(FileSyncBinding).where(
         FileSyncBinding.user_id == user_id,
@@ -201,7 +238,6 @@ async def record_canonical_file_change(
             continue
         if not relative:
             continue
-        operation = FileSyncOperation.UPDATE
         try:
             # 用 savepoint 隔离同步 journal；即使同步校验/唯一键遇到异常，
             # 也不能回滚文件库本身已经完成的主事务。
@@ -211,7 +247,8 @@ async def record_canonical_file_change(
                     operation=operation, relative_path=relative,
                     idempotency_key=build_idempotency_key(
                         source=FileSyncSource.FILE_API, operation=operation,
-                        relative_path=relative, fingerprint=observed_fingerprint,
+                        relative_path=relative,
+                        fingerprint=idempotency_fingerprint or change_id or observed_fingerprint,
                     ), observed_fingerprint=observed_fingerprint,
                     status=FileSyncStatus.SYNCED,
                 )
@@ -219,7 +256,7 @@ async def record_canonical_file_change(
             return
         except Exception as exc:
             # canonical journal 是可选旁路；保留受限诊断，放行主文件写入。
-            diag_log("filesync.canonical_file_change", exc)
+            diag_log("filesync.canonical_file_event", exc)
 
 
 def validate_sync_path(root: Path, relative_path: str) -> Path:

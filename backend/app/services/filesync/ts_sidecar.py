@@ -79,8 +79,13 @@ class FileSyncSidecar:
         except OSError as exc:
             raise FileSyncSidecarUnavailable("TS 文件监听进程启动失败") from exc
 
-    async def watch(self, binding_id: int, root: Path) -> None:
-        await self._request("watch", binding_id=binding_id, root=str(root))
+    async def watch(
+        self, binding_id: int, root: Path, *, included_root_entries: tuple[str, ...] | None = None,
+    ) -> None:
+        await self._request(
+            "watch", binding_id=binding_id, root=str(root),
+            **({"included_root_entries": list(included_root_entries)} if included_root_entries else {}),
+        )
 
     async def unwatch(self, binding_id: int) -> None:
         await self._request("unwatch", binding_id=binding_id)

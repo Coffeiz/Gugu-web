@@ -26,6 +26,10 @@ _MAX_OPEN_DIRECTORIES = 64
 class ScanIncomplete(RuntimeError):
     """扫描无法证明覆盖完整根目录；调用方不得据此处理缺失项。"""
 
+    def __init__(self, message: str, *, code: str = "scan_incomplete") -> None:
+        super().__init__(message)
+        self.code = code
+
 
 class ScanTimedOut(TimeoutError):
     """扫描超过预算；调用方应在线程退出后结束任务。"""
@@ -77,7 +81,7 @@ def _digest_file(path: Path, stop_event: Event) -> tuple[int, int, str]:
         if (before.st_size, before.st_mtime_ns, before.st_ino) != (
             after.st_size, after.st_mtime_ns, after.st_ino,
         ) or (after.st_dev, after.st_ino) != (path_after.st_dev, path_after.st_ino) or byte_count != after.st_size:
-            raise ScanIncomplete("文件在扫描期间发生变化")
+            raise ScanIncomplete("文件在扫描期间发生变化", code="scan_file_changed")
         return after.st_size, after.st_mtime_ns, digest.hexdigest()
     finally:
         os.close(descriptor)
@@ -102,6 +106,9 @@ def _create_manifest_file(directory: Path) -> Path:
             "size_bytes INTEGER NOT NULL, mtime_ns INTEGER NOT NULL, fingerprint TEXT)"
         )
         connection.execute("CREATE INDEX ix_entries_kind_path ON entries(kind, relative_path)")
+        connection.execute(
+            "CREATE TABLE excluded_paths (relative_path TEXT PRIMARY KEY)"
+        )
         connection.execute(
             "CREATE TABLE db_files ("
             "id INTEGER PRIMARY KEY, relative_path TEXT NOT NULL, storage_key TEXT NOT NULL, "
@@ -132,19 +139,25 @@ def scan_to_manifest(
     max_manifest_bytes: int,
     commit_entries: int = 256,
     on_progress=None,
+    included_root_entries: frozenset[str] | None = None,
 ) -> ScanManifest:
-    """完整扫描一个已验证根目录；线程安全，无 DB/AsyncSession 访问。"""
+    """完整扫描一个已验证根目录；可限定根的一级命名空间，线程安全且不访问 DB。"""
     if root.is_symlink():
-        raise ScanIncomplete("同步根目录不可用")
+        raise ScanIncomplete("同步根目录不可用", code="binding_root_unavailable")
     try:
         root = root.resolve(strict=True)
     except OSError as exc:
-        raise ScanIncomplete("同步根目录不可用") from exc
+        raise ScanIncomplete("同步根目录不可用", code="binding_root_unavailable") from exc
     if not root.is_dir():
-        raise ScanIncomplete("同步根目录不可用")
-    temp_directory.mkdir(parents=True, exist_ok=True)
-    manifest_path = _create_manifest_file(temp_directory)
-    connection = sqlite3.connect(manifest_path)
+        raise ScanIncomplete("同步根目录不可用", code="binding_root_unavailable")
+    try:
+        temp_directory.mkdir(parents=True, exist_ok=True)
+        manifest_path = _create_manifest_file(temp_directory)
+        connection = sqlite3.connect(manifest_path)
+    except OSError as exc:
+        raise ScanIncomplete("无法创建临时扫描清单", code="scan_manifest_unavailable") from exc
+    except sqlite3.Error as exc:
+        raise ScanIncomplete("无法创建临时扫描清单", code="scan_manifest_unavailable") from exc
     scanned = rejected = pending = 0
     try:
         # DFS 持有每层一个 scandir 迭代器，不将宽目录一次性 list 化。
@@ -163,43 +176,58 @@ def scan_to_manifest(
                 item_path = Path(entry.path)
                 relative = item_path.relative_to(root).as_posix()
                 if len(relative.encode("utf-8")) > _MAX_RELATIVE_PATH_BYTES:
-                    raise ScanIncomplete("目录项路径超过支持长度")
+                    raise ScanIncomplete("目录项路径超过支持长度", code="scan_path_too_long")
+                if (
+                    included_root_entries is not None
+                    and len(iterator_stack) == 1
+                    and relative not in included_root_entries
+                ):
+                    # 用户存储根还承载工作区、运行时缓存等非文件库数据；它们不属于
+                    # 该绑定的核对范围，也不能阻塞文件库扫描或进入其差异清单。
+                    continue
                 try:
                     if _is_sync_temporary(item_path):
                         continue
                     if entry.is_symlink():
-                        # 符号链接可能遮蔽数据库中同路径的真实文件。将它静默略过
-                        # 会让后续“DB 有、清单无”变成误删候选，因此整轮不能宣称完整。
-                        raise ScanIncomplete("扫描范围包含不支持的符号链接")
-                    validate_sync_path(root, relative)
-                    if entry.is_dir(follow_symlinks=False):
-                        if len(iterator_stack) >= _MAX_OPEN_DIRECTORIES:
-                            raise ScanIncomplete("目录嵌套超过扫描资源上限")
+                        # 不跟随链接；后续与 DB 清单比对，若链接覆盖已有记录则整轮
+                        # 停止，避免把链接目标或被遮蔽路径误判成缺失并删除。
                         connection.execute(
-                            "INSERT INTO entries VALUES (?, 'directory', 0, 0, NULL)",
-                            (relative,),
+                            "INSERT OR IGNORE INTO excluded_paths VALUES (?)", (relative,),
                         )
+                        rejected += 1
                         pending += 1
-                        scanned += 1
-                        iterator_stack.append(os.scandir(item_path))
-                    elif entry.is_file(follow_symlinks=False):
-                        size, mtime_ns, fingerprint = _digest_file(item_path, stop_event)
-                        connection.execute(
-                            "INSERT INTO entries VALUES (?, 'file', ?, ?, ?)",
-                            (relative, size, mtime_ns, fingerprint),
-                        )
-                        pending += 1
-                        scanned += 1
                     else:
-                        continue
-                except (OSError, ValueError, ScanIncomplete) as exc:
-                    raise ScanIncomplete("目录遍历或文件读取不完整") from exc
+                        validate_sync_path(root, relative)
+                        if entry.is_dir(follow_symlinks=False):
+                            if len(iterator_stack) >= _MAX_OPEN_DIRECTORIES:
+                                raise ScanIncomplete("目录嵌套超过扫描资源上限", code="scan_depth_limit")
+                            connection.execute(
+                                "INSERT INTO entries VALUES (?, 'directory', 0, 0, NULL)",
+                                (relative,),
+                            )
+                            pending += 1
+                            scanned += 1
+                            iterator_stack.append(os.scandir(item_path))
+                        elif entry.is_file(follow_symlinks=False):
+                            size, mtime_ns, fingerprint = _digest_file(item_path, stop_event)
+                            connection.execute(
+                                "INSERT INTO entries VALUES (?, 'file', ?, ?, ?)",
+                                (relative, size, mtime_ns, fingerprint),
+                            )
+                            pending += 1
+                            scanned += 1
+                except ScanIncomplete:
+                    raise
+                except PermissionError as exc:
+                    raise ScanIncomplete("绑定范围内有目录或文件不可访问", code="scan_permission_denied") from exc
+                except (OSError, ValueError) as exc:
+                    raise ScanIncomplete("目录遍历或文件读取不完整", code="scan_scope_incomplete") from exc
                 if pending >= max(16, commit_entries):
                     connection.commit()
                     pending = 0
                     current_bytes = manifest_path.stat().st_size
                     if current_bytes > max_manifest_bytes:
-                        raise ScanIncomplete("临时清单超过空间预算")
+                        raise ScanIncomplete("临时清单超过空间预算", code="scan_manifest_budget_exceeded")
                     if on_progress is not None:
                         on_progress(scanned, current_bytes)
         finally:
@@ -211,16 +239,18 @@ def scan_to_manifest(
         connection.commit()
         manifest_bytes = manifest_path.stat().st_size
         if manifest_bytes > max_manifest_bytes:
-            raise ScanIncomplete("临时清单超过空间预算")
+            raise ScanIncomplete("临时清单超过空间预算", code="scan_manifest_budget_exceeded")
         if stop_event.is_set():
             raise InterruptedError("扫描已取消")
         if on_progress is not None:
             on_progress(scanned, manifest_bytes)
         return ScanManifest(manifest_path, scanned, rejected, manifest_bytes)
-    except BaseException:
+    except BaseException as exc:
         connection.rollback()
         connection.close()
         manifest_path.unlink(missing_ok=True)
+        if isinstance(exc, sqlite3.Error):
+            raise ScanIncomplete("临时扫描清单无法完整写入", code="scan_manifest_unavailable") from exc
         raise
     finally:
         if connection:
@@ -240,6 +270,7 @@ async def run_scan_in_thread(
     timeout_seconds: float,
     commit_entries: int = 256,
     on_progress=None,
+    included_root_entries: frozenset[str] | None = None,
     scanner: Callable[..., ScanManifest] = scan_to_manifest,
 ) -> ScanManifest:
     """在线程池扫描；取消/超时后发停止信号并等待工作线程真实退出。
@@ -258,6 +289,7 @@ async def run_scan_in_thread(
             max_manifest_bytes=max_manifest_bytes,
             commit_entries=commit_entries,
             on_progress=on_progress,
+            included_root_entries=included_root_entries,
         ),
     )
     try:
@@ -296,7 +328,21 @@ def _finalize_directory_fingerprints(connection: sqlite3.Connection, stop_event:
     """流式生成目录结构指纹；工作集只随目录深度增长。"""
     stack: list[tuple[str, Any]] = [("", hashlib.sha256())]
     updates: list[tuple[str, str]] = []
-    cursor = connection.execute("SELECT relative_path, kind FROM entries ORDER BY relative_path")
+
+    def compare_paths(left: str, right: str) -> int:
+        """按路径段排序，使目录及其所有后代在同一连续区间内。"""
+        left_parts = left.split("/")
+        right_parts = right.split("/")
+        for left_part, right_part in zip(left_parts, right_parts):
+            if left_part != right_part:
+                return -1 if left_part < right_part else 1
+        return (len(left_parts) > len(right_parts)) - (len(left_parts) < len(right_parts))
+
+    connection.create_collation("PATH_COMPONENTS", compare_paths)
+    cursor = connection.execute(
+        "SELECT relative_path, kind FROM entries "
+        "ORDER BY relative_path COLLATE PATH_COMPONENTS"
+    )
 
     def close_to(parent: str) -> None:
         while stack[-1][0] != parent:
@@ -408,6 +454,28 @@ def iter_reconcile_candidate_batches(
                         batch = []
         if batch:
             yield batch
+    finally:
+        connection.close()
+
+
+def manifest_exclusions_overlap_database(manifest: ScanManifest) -> bool:
+    """链接未被跟随；若其路径遮蔽既有 File/Folder 记录则扫描不可用于投影。"""
+    connection = sqlite3.connect(f"file:{manifest.path}?mode=ro", uri=True)
+    try:
+        row = connection.execute(
+            "SELECT 1 FROM excluded_paths AS excluded "
+            "JOIN ("
+            "  SELECT relative_path FROM db_files "
+            "  UNION SELECT relative_path FROM db_folders"
+            ") AS stored ON ("
+            "  stored.relative_path = excluded.relative_path OR ("
+            "    length(stored.relative_path) > length(excluded.relative_path) "
+            "    AND substr(stored.relative_path, 1, length(excluded.relative_path) + 1) "
+            "        = excluded.relative_path || '/'"
+            "  )"
+            ") LIMIT 1"
+        ).fetchone()
+        return row is not None
     finally:
         connection.close()
 

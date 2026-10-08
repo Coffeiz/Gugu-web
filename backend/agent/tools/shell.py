@@ -33,9 +33,7 @@ from app.services.workspaces import (
 from app.services.storage.quota_ledger import (
     FILE_LIBRARY,
     SHELL_PERSISTENT,
-    get_local_storage_quota_watch,
     get_quota,
-    measure_user_storage_usage,
     measure_shell_persistent_usage,
     record_usage,
     reconcile_user_storage,
@@ -216,7 +214,8 @@ async def _run_shell(db, user_id, args: dict):
     quota_roots = ()
     quota_bytes = None
     quota_before = None
-    shared_quota_before = None
+    local_quota_ledger = False
+    local_quota_filesync_ready = False
     result = None
     execution_error = None
     if decision.scope.value == "sandbox":
@@ -225,23 +224,25 @@ async def _run_shell(db, user_id, args: dict):
         if not ready:
             return {"error": reason, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
         if _storage_backend() == "local":
-            measured = await reconcile_user_storage(db, user_id)
-            quota_before = measured[SHELL_PERSISTENT]
-            shared_quota_before = measured[FILE_LIBRARY]
             shared_quota = await get_quota(db, user_id, FILE_LIBRARY)
-            if measured[FILE_LIBRARY] > shared_quota.limit_bytes:
+            if shared_quota.used_bytes > shared_quota.limit_bytes:
                 return {
                     "error": "用户存储空间已超过配额，请先清理文件或工作区后再执行命令",
                     "_risk": decision.risk.value,
                     "_scope": decision.scope.value,
                     "_audit_event": "quota_exceeded",
                 }
-            quota_roots, quota_bytes = await get_local_storage_quota_watch(
-                db, user_id, include_library=decision.full_user_sandbox_write,
-            )
-            # watcher 的阈值是 Workspace 树可占用的绝对大小，而不是剩余量；
-            # 已经超额的情况已在上面 fail closed。
-            quota_bytes = max(1, quota_bytes)
+            filesync_settings = getattr(get_settings(), "filesync", None)
+            if bool(getattr(filesync_settings, "enabled", False)):
+                from app.services.filesync.bindings import shell_quota_tracking_ready
+
+                local_quota_filesync_ready = await shell_quota_tracking_ready(
+                    db, user_id, decision.workspace_id,
+                    include_all=decision.full_user_sandbox_write,
+                )
+            # Local 共用配额以账本为执行前事实；文件同步开启时由实时路径事件
+            # 增量记账，完整校准由低频定时任务承担。
+            local_quota_ledger = True
         elif decision.workspace_id is None:
             # OSS 没有本地 Workspace 根，Shell 持久空间继续使用独立上限。
             measured = await reconcile_user_storage(db, user_id)
@@ -363,33 +364,23 @@ async def _run_shell(db, user_id, args: dict):
             ok=False, exit_code=None, stdout="", stderr=execution_error or "Shell 执行失败",
             timed_out=False, cwd=str(requested_cwd),
         )
-    if decision.scope.value == "sandbox" and quota_before is not None:
+    follows_filesync = local_quota_ledger and local_quota_filesync_ready
+    if decision.scope.value == "sandbox" and local_quota_ledger and not follows_filesync:
+        # 未启用实时同步或授权可写到同步根以外时，保留收尾校准，避免漏记。
+        await reconcile_user_storage(db, user_id)
+    elif decision.scope.value == "sandbox" and quota_before is not None:
         operation = (
             "build" if any(token in command for token in ("npm ", "pnpm ", "yarn ", "cargo ", "make ", "gradle ", "build"))
             else "shell_exec"
         )
-        if shared_quota_before is not None:
-            quota_after = await measure_user_storage_usage(db, user_id)
-            if quota_after <= shared_quota.limit_bytes:
-                await record_usage(
-                    db, user_id, category=FILE_LIBRARY,
-                    delta_bytes=quota_after - shared_quota_before,
-                    operation=operation, resource_type="shell", resource_id=session_id or "none",
-                    idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
-                    metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
-                )
-            # 超限时命令可能在两次监测间写入过量；记录实际状态，不让审计写入
-            # 因额度检查异常而遮蔽原始 Shell 结果。超限仍由 watcher 阻止继续运行。
-            await reconcile_user_storage(db, user_id)
-        else:
-            quota_after = await measure_shell_persistent_usage(db, user_id)
-            await record_usage(
-                db, user_id, category=SHELL_PERSISTENT,
-                delta_bytes=quota_after - quota_before,
-                operation=operation, resource_type="shell", resource_id=session_id or "none",
-                idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
-                metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
-            )
+        quota_after = await measure_shell_persistent_usage(db, user_id)
+        await record_usage(
+            db, user_id, category=SHELL_PERSISTENT,
+            delta_bytes=quota_after - quota_before,
+            operation=operation, resource_type="shell", resource_id=session_id or "none",
+            idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
+            metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
+        )
     if terminal_row is not None and not args.get("_defer_terminal_event"):
         from app.services.terminals import append_shell_result
         await append_shell_result(

@@ -27,6 +27,7 @@ from app.models import (
     FileSyncOutbox,
     FileSyncReconcileRun,
     Folder,
+    Workspace,
 )
 from app.services.filesync.inventory import stage_database_inventory
 from app.services.filesync.jobs import (
@@ -38,7 +39,7 @@ from app.services.filesync.jobs import (
 )
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.protocol import FileSyncSource
-from app.services.filesync.reconcile import _root_fingerprint
+from app.services.filesync.reconcile import _parse_directory_path, _root_fingerprint
 from app.services.filesync.snapshots import snapshot_fingerprint
 from app.services.filesync.scan import (
     ReconcileCandidate,
@@ -48,6 +49,7 @@ from app.services.filesync.scan import (
     connect_manifest,
     default_manifest_budget,
     iter_reconcile_candidate_batches,
+    manifest_exclusions_overlap_database,
     new_scan_stop_event,
     run_scan_in_thread,
     verify_changed_file_candidates,
@@ -97,11 +99,24 @@ class _RunSignals:
     lease_lost: asyncio.Event
 
 
+class _RootRecoveryBlocked(ScanIncomplete):
+    """目录身份不匹配且仍有关联内容时，拒绝自动重绑。"""
+
+
+class _BindingRootUnavailable(ScanIncomplete):
+    """绑定无法解析到有效 workspace 根目录。"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="binding_root_unavailable")
+
+
 def _empty_counts() -> dict[str, int]:
     return dict.fromkeys(_COUNTER_KEYS, 0)
 
 
-def _candidate_in_supported_space(scope: _RunScope, relative_path: str) -> bool:
+def _candidate_in_supported_space(
+    scope: _RunScope, relative_path: str, *, object_type: str | None = None,
+) -> bool:
     """整用户根绑定只投影文件库管理的个人/项目树，保留其它物理目录不动。"""
     if scope.workspace_id is not None:
         return True
@@ -113,7 +128,14 @@ def _candidate_in_supported_space(scope: _RunScope, relative_path: str) -> bool:
         return False
     relative_parts = Path(relative_path).parts if relative_path else ()
     parts = (*root_parts, *relative_parts)
-    return len(parts) >= 2 and parts[0] in {"个人文件", "项目文件"}
+    if len(parts) < 2 or parts[0] not in {"个人文件", "项目文件"}:
+        return False
+    if object_type != "folder":
+        return True
+
+    # 项目目录的年月层和项目根本身只是物理容器，不映射为 File Library Folder。
+    # 旧同步逻辑会跳过这些目录；任务化投影必须同样跳过，不能把它们记成失败。
+    return _parse_directory_path(user_root.joinpath(*parts), user_root) is not None
 
 
 def _is_namespace_root_candidate(scope: _RunScope, relative_path: str) -> bool:
@@ -190,6 +212,108 @@ def _manifest_path_prefix(root: Path) -> str:
     return root.resolve().relative_to(storage_root).as_posix().rstrip("/") + "/"
 
 
+async def _workspace_has_file_records(
+    db: AsyncSession, *, user_id, workspace: Workspace, root: Path,
+) -> bool:
+    """保守检查 workspace 关联及物理路径下是否仍有任何 File/Folder 行。"""
+    if workspace.kind == "directory" and workspace.directory_id is not None:
+        related_folder = select(Folder.id).where(
+            Folder.user_id == user_id,
+            Folder.workspace_directory_id == workspace.directory_id,
+        ).limit(1)
+        related_file = select(File.id).where(
+            File.user_id == user_id,
+            File.workspace_directory_id == workspace.directory_id,
+        ).limit(1)
+    elif workspace.kind == "project" and workspace.project_id is not None:
+        related_folder = select(Folder.id).where(
+            Folder.user_id == user_id,
+            Folder.project_id == workspace.project_id,
+        ).limit(1)
+        related_file = select(File.id).where(
+            File.user_id == user_id,
+            File.project_id == workspace.project_id,
+        ).limit(1)
+    else:
+        # Folder workspace 引用失效时无法证明安全；按已有记录处理并拒绝恢复。
+        return True
+
+    storage_prefix = _manifest_path_prefix(root)
+    path_file = select(File.id).where(
+        File.user_id == user_id,
+        File.storage_key.startswith(storage_prefix, autoescape=True),
+    ).limit(1)
+    return (
+        await db.scalar(related_folder) is not None
+        or await db.scalar(related_file) is not None
+        or await db.scalar(path_file) is not None
+    )
+
+
+async def _ensure_safe_empty_workspace_root(
+    db: AsyncSession, *, user_id, workspace_id: int | None, root: Path,
+) -> bool:
+    """只接受存储范围内、物理与数据库都为空的有效 workspace 根目录。"""
+    if workspace_id is None:
+        return False
+    storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
+    expected_user_root = storage_root / str(user_id)
+    try:
+        relative_to_user = root.resolve().relative_to(expected_user_root)
+    except ValueError:
+        return False
+    if not relative_to_user.parts or root.is_symlink():
+        return False
+    if any(parent.is_symlink() for parent in (root, *root.parents) if parent.exists()):
+        return False
+    workspace = await db.scalar(select(Workspace).where(
+        Workspace.id == workspace_id,
+        Workspace.user_id == user_id,
+        Workspace.enabled.is_(True),
+    ))
+    if workspace is None or await _workspace_has_file_records(db, user_id=user_id, workspace=workspace, root=root):
+        return False
+
+    if root.exists():
+        if not root.is_dir() or root.is_symlink():
+            return False
+        try:
+            if next(root.iterdir(), None) is not None:
+                return False
+        except OSError:
+            return False
+
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return root.is_dir() and not root.is_symlink()
+
+
+async def _is_canonical_existing_workspace_root(
+    db: AsyncSession, *, user_id, workspace_id: int | None, root: Path,
+) -> bool:
+    """验证现存根目录仍由当前有效 Workspace 唯一解析，不触碰目录内容。"""
+    if workspace_id is None or not root.exists() or not root.is_dir() or root.is_symlink():
+        return False
+    storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
+    expected_user_root = storage_root / str(user_id)
+    try:
+        relative_to_user = root.resolve().relative_to(expected_user_root)
+    except ValueError:
+        return False
+    if not relative_to_user.parts:
+        return False
+    if any(parent.is_symlink() for parent in (root, *root.parents) if parent.exists()):
+        return False
+    workspace = await db.scalar(select(Workspace).where(
+        Workspace.id == workspace_id,
+        Workspace.user_id == user_id,
+        Workspace.enabled.is_(True),
+    ))
+    return workspace is not None
+
+
 async def _load_scope(session_factory, run_id: UUID) -> _RunScope:
     from app.services.filesync.watcher import _binding_root
 
@@ -203,10 +327,39 @@ async def _load_scope(session_factory, run_id: UUID) -> _RunScope:
             FileSyncBinding.status == "active",
         ))
         if binding is None or binding.root_fingerprint != run.root_fingerprint:
-            raise ScanIncomplete("同步绑定已变化")
+            raise ScanIncomplete("同步绑定已变化", code="binding_changed")
         root = await _binding_root(db, binding)
-        if root is None or _root_fingerprint(root) != run.root_fingerprint:
-            raise ScanIncomplete("同步根目录不可用")
+        if root is None:
+            raise _BindingRootUnavailable("同步绑定没有有效的工作区根目录")
+        current_fingerprint = _root_fingerprint(root)
+        if (
+            (not root.is_dir() or current_fingerprint != run.root_fingerprint)
+            and run.action in {"repair", "initialize"}
+        ):
+            if root.is_dir():
+                # 根目录已由当前有效 Workspace 元数据解析，刷新的是绑定指纹，
+                # 不重建目录、不删除 File/Folder 记录；后续修复默认也不允许删除。
+                recovered = await _is_canonical_existing_workspace_root(
+                    db, user_id=run.user_id, workspace_id=binding.workspace_id, root=root,
+                )
+            else:
+                # 缺失目录只有在物理目录与 DB 关联记录都为空时才允许重建。
+                recovered = await _ensure_safe_empty_workspace_root(
+                    db, user_id=run.user_id, workspace_id=binding.workspace_id, root=root,
+                )
+            if not recovered:
+                raise _RootRecoveryBlocked("绑定目录路径已变化或缺失且仍有内容，为保护旧数据已停止自动重绑")
+            current_fingerprint = _root_fingerprint(root)
+            binding.root_fingerprint = current_fingerprint
+            binding.revision += 1
+            run.root_fingerprint = current_fingerprint
+            run.binding_revision = binding.revision
+            run.revision += 1
+            run.updated_at = now_utc()
+            await db.commit()
+            await notify_run_changed(run, coalesce=True)
+        if not root.is_dir() or root.is_symlink() or current_fingerprint != run.root_fingerprint:
+            raise _BindingRootUnavailable("同步根目录不存在、不可访问或身份已变化")
         scope = _RunScope(
             run_id=run.id,
             user_id=run.user_id,
@@ -289,10 +442,10 @@ async def _check_scope_before_batch(session_factory, scope: _RunScope, stop: Eve
             FileSyncBinding.status == "active",
         ).with_for_update())
         if binding is None or binding.root_fingerprint != scope.root_fingerprint:
-            raise ScanIncomplete("同步绑定已变化")
+            raise ScanIncomplete("同步绑定已变化", code="binding_changed")
         current_root = await _binding_root(db, binding)
         if current_root is None or _root_fingerprint(current_root) != scope.root_fingerprint:
-            raise ScanIncomplete("同步根目录不可用")
+            raise _BindingRootUnavailable("同步根目录不存在、不可访问或身份已变化")
         await db.rollback()
     return _manifest_path_prefix(scope.root)
 
@@ -310,50 +463,94 @@ async def _current_path_conflicts(
     return set(rows.all())
 
 
-async def _candidate_version_is_current(
+async def _current_candidates(
     db: AsyncSession,
     scope: _RunScope,
-    candidate: ReconcileCandidate,
+    candidates: list[ReconcileCandidate],
     storage_prefix: str,
-) -> bool:
-    if candidate.object_type == "file":
-        if candidate.operation == "create":
-            exists = await db.scalar(select(File.id).where(
+) -> set[int]:
+    """按批锁定并复核候选版本，避免每条路径单独往返数据库。"""
+    valid: set[int] = set()
+    file_creates = [
+        (index, candidate)
+        for index, candidate in enumerate(candidates)
+        if candidate.object_type == "file" and candidate.operation == "create"
+    ]
+    if file_creates:
+        expected_keys = {
+            storage_prefix + candidate.relative_path
+            for _, candidate in file_creates
+        }
+        existing_keys = set((await db.scalars(
+            select(File.storage_key).where(
                 File.user_id == scope.user_id,
-                File.storage_key == storage_prefix + candidate.relative_path,
+                File.storage_key.in_(expected_keys),
                 File.deleted_at.is_(None),
-            ).with_for_update())
-            return exists is None
-        row = await db.scalar(select(File).where(
-            File.id == candidate.object_id,
-            File.user_id == scope.user_id,
-            File.deleted_at.is_(None),
-        ).with_for_update())
-        return bool(
-            row is not None
+            ).order_by(File.storage_key).with_for_update()
+        )).all())
+        valid.update(
+            index for index, candidate in file_creates
+            if storage_prefix + candidate.relative_path not in existing_keys
+        )
+
+    file_rows = [
+        (index, candidate)
+        for index, candidate in enumerate(candidates)
+        if candidate.object_type == "file"
+        and candidate.operation != "create"
+        and candidate.object_id is not None
+    ]
+    if file_rows:
+        rows = (await db.scalars(
+            select(File).where(
+                File.id.in_({candidate.object_id for _, candidate in file_rows}),
+                File.user_id == scope.user_id,
+                File.deleted_at.is_(None),
+            ).order_by(File.id).with_for_update()
+        )).all()
+        rows_by_id = {row.id: row for row in rows}
+        valid.update(
+            index for index, candidate in file_rows
+            if (row := rows_by_id.get(candidate.object_id)) is not None
             and row.version == candidate.object_version
             and row.storage_key == storage_prefix + candidate.relative_path
         )
-    if candidate.object_type == "folder":
-        if candidate.operation == "create":
-            return True  # Folder 的活动范围唯一约束会与实时创建安全汇合。
-        row = await db.scalar(select(Folder).where(
-            Folder.id == candidate.object_id,
-            Folder.user_id == scope.user_id,
-            Folder.deleted_at.is_(None),
-        ).with_for_update())
-        if row is None or row.version != candidate.object_version:
-            return False
-        key = await folder_dir_key(db, scope.user_id, row)
-        if key is None:
-            return False
+
+    valid.update(
+        index for index, candidate in enumerate(candidates)
+        if candidate.object_type == "folder" and candidate.operation == "create"
+    )  # 活动范围唯一约束会与实时创建安全汇合。
+    folder_rows = [
+        (index, candidate)
+        for index, candidate in enumerate(candidates)
+        if candidate.object_type == "folder"
+        and candidate.operation != "create"
+        and candidate.object_id is not None
+    ]
+    if folder_rows:
+        rows = (await db.scalars(
+            select(Folder).where(
+                Folder.id.in_({candidate.object_id for _, candidate in folder_rows}),
+                Folder.user_id == scope.user_id,
+                Folder.deleted_at.is_(None),
+            ).order_by(Folder.id).with_for_update()
+        )).all()
+        rows_by_id = {row.id: row for row in rows}
         storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
-        try:
-            relative = (storage_root / key).resolve().relative_to(scope.root.resolve()).as_posix()
-        except (OSError, ValueError):
-            return False
-        return relative == candidate.relative_path
-    return False
+        for index, candidate in folder_rows:
+            row = rows_by_id.get(candidate.object_id)
+            if row is None or row.version != candidate.object_version:
+                continue
+            key = await folder_dir_key(db, scope.user_id, row)
+            if key is None:
+                continue
+            try:
+                relative = (storage_root / key).resolve().relative_to(scope.root.resolve()).as_posix()
+            except (OSError, ValueError):
+                continue
+            if relative == candidate.relative_path:
+                valid.add(index)
+    return valid
 
 
 def _count_plans(counts: dict[str, int], candidates: list[ReconcileCandidate]) -> None:
@@ -399,15 +596,20 @@ async def _project_batch(
         pending_conflicts = await _current_path_conflicts(
             db, scope.binding_id, [item.relative_path for item in candidates],
         )
+        current_candidates = await _current_candidates(
+            db, scope, candidates, storage_prefix,
+        )
         batch = PathEventBatch()
         observed_folders: dict[str, str] = {}
         verified_files_for_batch: dict[str, tuple[int, int, int, str]] = {}
         transaction_counts: dict[str, int] = {}
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates):
             if stop.is_set():
                 await db.rollback()
                 raise InterruptedError("核对任务已停止")
-            if not _candidate_in_supported_space(scope, candidate.relative_path):
+            if not _candidate_in_supported_space(
+                scope, candidate.relative_path, object_type=candidate.object_type,
+            ):
                 if _is_namespace_root_candidate(scope, candidate.relative_path):
                     continue
                 # 整用户根目录还包含 workspace、运行时缓存等非 File/Folder
@@ -420,7 +622,7 @@ async def _project_batch(
                     transaction_counts["conflicts"] = transaction_counts.get("conflicts", 0) + 1
                 continue
             if candidate.operation == "conflict":
-                if not await _candidate_version_is_current(db, scope, candidate, storage_prefix):
+                if index not in current_candidates:
                     transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                     continue
                 db.add(FileSyncConflict(
@@ -456,7 +658,7 @@ async def _project_batch(
             if candidate.operation == "delete" and candidate.relative_path not in missing_paths:
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
-            if not await _candidate_version_is_current(db, scope, candidate, storage_prefix):
+            if index not in current_candidates:
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
             if candidate.object_type == "file" and candidate.operation in {"create", "update"}:
@@ -494,6 +696,8 @@ async def _project_batch(
             transaction_counts["foldersUpdated"] = summary.folders_updated
             transaction_counts["foldersDeleted"] = summary.folders_deleted
             transaction_counts["failed"] = summary.rejected
+            for reason, count in summary.rejection_reasons:
+                transaction_counts[f"rejected_{reason}"] = count
             if summary.rejected:
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + summary.rejected
             if summary.entity_ids or summary.conflicts:
@@ -546,6 +750,13 @@ async def _execute_scope(
 ) -> tuple[str, str | None, dict[str, int]]:
     settings = get_settings().filesync
     max_manifest_bytes, commit_entries = default_manifest_budget()
+    storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
+    user_root = (storage_root / str(scope.user_id)).resolve()
+    included_root_entries = (
+        frozenset({"个人文件", "项目文件"})
+        if scope.workspace_id is None and scope.root.resolve() == user_root
+        else None
+    )
     temp_directory = Path(tempfile.mkdtemp(prefix=f"{_SCAN_TEMP_PREFIX}{scope.run_id}-"))
     manifest: ScanManifest | None = None
     counts = _empty_counts()
@@ -582,6 +793,7 @@ async def _execute_scope(
             timeout_seconds=max(0.01, (deadline - now_utc()).total_seconds()),
             commit_entries=commit_entries,
             on_progress=partial(_publish_latest_progress, progress),
+            included_root_entries=included_root_entries,
         ))
         last_progress = (-1, -1)
         while not scan_task.done():
@@ -610,9 +822,18 @@ async def _execute_scope(
             manifest=manifest,
             max_manifest_bytes=max_manifest_bytes,
             stop_event=signals.stop,
+            included_root_entries=included_root_entries,
         )
+        if manifest_exclusions_overlap_database(manifest):
+            raise ScanIncomplete(
+                "符号链接遮蔽了文件库记录；为保护旧记录未应用本次扫描",
+                code="scan_unsupported_symlink",
+            )
         if manifest.scanned_count == 0 and file_count + folder_count:
-            raise ScanIncomplete("空目录不能作为现存数据缺失的删除依据")
+            raise ScanIncomplete(
+                "文件库记录仍存在，但完整文件库范围为空；未应用扫描结果",
+                code="scan_empty_with_existing_records",
+            )
         storage_prefix = await _check_scope_before_batch(session_factory, scope, signals.stop)
         counts = _empty_counts()
         async with session_factory() as db:
@@ -707,7 +928,7 @@ async def _execute_scope(
                     FileSyncBinding.status == "active",
                 ))
                 if binding is None or _root_fingerprint(scope.root) != scope.root_fingerprint:
-                    raise ScanIncomplete("同步范围已变化")
+                    raise ScanIncomplete("同步范围已变化", code="binding_changed")
         if now_utc() >= await _current_deadline(session_factory, scope.run_id):
             signals.timed_out.set()
             signals.stop.set()
@@ -727,7 +948,7 @@ async def _execute_scope(
         return "failed", "worker_interrupted", counts
     except ScanIncomplete as exc:
         diag_log("filesync.reconcile_scan", exc)
-        return "failed", "scan_incomplete", counts
+        return "failed", exc.code, counts
     except Exception as exc:
         diag_log("filesync.reconcile_run", exc)
         return "failed", "reconcile_failed", counts
@@ -891,9 +1112,19 @@ async def _run_claimed(
             # 执行主体已经返回，先通知租约监控退出，再等待它收尾；反序会让
             # 成功任务永远卡在 monitor 的轮询循环中。
             signals.stop.set()
+        except _RootRecoveryBlocked as exc:
+            diag_log("filesync.root_recovery_blocked", exc)
+            status, error_code, counts = "failed", "root_recovery_blocked", _empty_counts()
+        except _BindingRootUnavailable as exc:
+            diag_log("filesync.binding_root_unavailable", exc)
+            status, error_code, counts = "failed", "binding_root_unavailable", _empty_counts()
         except ScanIncomplete as exc:
             diag_log("filesync.reconcile_scope", exc)
-            status, error_code, counts = "failed", "binding_unavailable", _empty_counts()
+            status, error_code, counts = (
+                "failed",
+                "binding_unavailable" if exc.code == "scan_incomplete" else exc.code,
+                _empty_counts(),
+            )
         except asyncio.CancelledError:
             signals.interrupted.set()
             signals.stop.set()

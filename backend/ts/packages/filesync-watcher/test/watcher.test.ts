@@ -1,10 +1,10 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import type { watch, FSWatcher } from "chokidar";
+import { watch as nativeWatch, type FSWatcher, type WatchOptions, type WatchListener } from "node:fs";
 import { FileSystemWatcher, type WatchEvent } from "../src/watcher.ts";
 
 const waitFor = async (events: WatchEvent[], predicate: (event: WatchEvent) => boolean): Promise<WatchEvent> => {
@@ -17,7 +17,7 @@ const waitFor = async (events: WatchEvent[], predicate: (event: WatchEvent) => b
   assert.fail("未收到预期文件事件");
 };
 
-test("TS watcher 监听文件和文件夹变化，不发送初始扫描事件", async (t) => {
+test("递归目录 watcher 跟踪创建、等长修改和删除，不发送初始扫描事件", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-test-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, "existing.txt"), "existing");
@@ -27,10 +27,17 @@ test("TS watcher 监听文件和文件夹变化，不发送初始扫描事件", 
   await watcher.watchBinding(1, root);
   await waitFor(events, (event) => event.event === "ready");
   assert.deepEqual(events.filter((event) => event.event === "change"), []);
+
   await mkdir(join(root, "folder"));
-  await writeFile(join(root, "folder", "created.txt"), "created");
+  await writeFile(join(root, "folder", "created.txt"), "first");
   await waitFor(events, (event) => event.event === "change" && event.relative_path === "folder" && event.object_type === "folder");
   await waitFor(events, (event) => event.event === "change" && event.relative_path === "folder/created.txt" && event.operation === "create");
+  await writeFile(join(root, "folder", "created.txt"), "other");
+  await waitFor(events, (event) => event.event === "change" && event.relative_path === "folder/created.txt" && event.operation === "update");
+  await rm(join(root, "folder"), { recursive: true });
+  await waitFor(events, (event) => event.event === "change" && event.relative_path === "folder/created.txt" && event.operation === "delete");
+  await waitFor(events, (event) => event.event === "change" && event.relative_path === "folder" && event.operation === "delete");
+
   await watcher.unwatchBinding(1);
   const count = events.length;
   await writeFile(join(root, "after-unwatch.txt"), "ignored");
@@ -38,45 +45,132 @@ test("TS watcher 监听文件和文件夹变化，不发送初始扫描事件", 
   assert.equal(events.length, count);
 });
 
-test("TS watcher 仅输出协议事件，不把物理路径写入 error 事件", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-test-"));
+test("用户根 binding 只索引允许的 File 库顶层目录", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-scope-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "个人文件"));
+  await mkdir(join(root, "workspace"));
+  await writeFile(join(root, "workspace", "ignored.txt"), "old");
   const events: WatchEvent[] = [];
   const watcher = new FileSystemWatcher((event) => events.push(event));
   t.after(() => watcher.close());
-  await watcher.watchBinding(7, root);
+  await watcher.watchBinding(9, root, ["个人文件", "项目文件"]);
   await waitFor(events, (event) => event.event === "ready");
-  assert.deepEqual(events.at(-1), { protocol: 1, kind: "event", event: "ready", binding_id: 7 });
-  assert.equal(events.some((event) => JSON.stringify(event).includes(root)), false);
+  await writeFile(join(root, "workspace", "ignored.txt"), "new");
+  await mkdir(join(root, "个人文件", "notes"));
+  await waitFor(events, (event) => event.event === "change" && event.relative_path === "个人文件/notes");
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(events.some((event) => event.relative_path?.startsWith("workspace/")), false);
 });
 
-test("注册不等待 ready，初始遍历期间创建、等长更新和删除仍输出", async () => {
-  const source = new EventEmitter();
-  const fake = Object.assign(source, { close: async () => {} }) as unknown as FSWatcher;
+test("递归目录 watcher 不跟随符号链接进入文件库扫描范围之外", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-root-"));
+  const outside = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-outside-"));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+  await symlink(outside, join(root, "linked-directory"), "dir");
+
   const events: WatchEvent[] = [];
-  const watcher = new FileSystemWatcher((event) => events.push(event), (() => fake) as typeof watch);
-  await watcher.watchBinding(1, "/synthetic/root");
-  await watcher.watchBinding(1, "/synthetic/root");
-  assert.equal(events.length, 0, "重复注册不能把尚未就绪伪装成 ready");
-  for (const event of ["add", "change", "unlink"]) source.emit(event, "/synthetic/root/item.txt");
-  assert.deepEqual(events.map((event) => event.operation), ["create", "update", "delete"]);
-  source.emit("ready");
-  assert.equal(events.at(-1)?.event, "ready");
-  await watcher.unwatchBinding(1);
-  const count = events.length;
-  source.emit("change", "/synthetic/root/item.txt");
-  assert.equal(events.length, count, "解绑后旧回调不得污染新监听");
+  const watcher = new FileSystemWatcher((event) => events.push(event));
+  t.after(() => watcher.close());
+  await watcher.watchBinding(8, root);
+  await waitFor(events, (event) => event.event === "ready");
+
+  await writeFile(join(outside, "outside.txt"), "outside");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual(events.filter((event) => event.event === "change"), []);
 });
 
-test("监听额度耗尽可见，随后 ready 或重复注册不掩盖失败", async () => {
-  const source = new EventEmitter();
-  const fake = Object.assign(source, { close: async () => {} }) as unknown as FSWatcher;
+test("新建的未登记符号链接不制造同步缺口，但替换已追踪文件仍需核对", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-symlink-event-"));
+  const outside = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-symlink-target-"));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+  await writeFile(join(root, "tracked.txt"), "tracked");
+  await writeFile(join(outside, "target.txt"), "target");
+
+  const source = Object.assign(new EventEmitter(), { close: () => {} }) as unknown as FSWatcher;
+  let listener: WatchListener<string> | undefined;
+  const createWatcher = ((_path: string, options: WatchOptions | WatchListener<string>, onEvent?: WatchListener<string>) => {
+    listener = typeof options === "function" ? options : onEvent;
+    return source;
+  }) as typeof import("node:fs").watch;
   const events: WatchEvent[] = [];
-  const watcher = new FileSystemWatcher((event) => events.push(event), (() => fake) as typeof watch);
-  await watcher.watchBinding(2, "/synthetic/root");
-  source.emit("error", Object.assign(new Error("private path"), { code: "ENOSPC" }));
-  source.emit("ready");
-  await watcher.watchBinding(2, "/synthetic/root");
-  assert.deepEqual(events, [{ protocol: 1, kind: "event", event: "error", binding_id: 2, code: "watcher_limit_exceeded" }]);
+  const watcher = new FileSystemWatcher((event) => events.push(event), createWatcher);
+  t.after(() => watcher.close());
+  await watcher.watchBinding(12, root);
+  await waitFor(events, (event) => event.event === "ready");
+
+  await symlink(join(outside, "target.txt"), join(root, "generated-link"));
+  listener?.("rename", "generated-link");
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(events.some((event) => event.event === "needs_reconcile"), false);
+  assert.equal(events.some((event) => event.event === "change" && event.relative_path === "generated-link"), false);
+
+  await rm(join(root, "tracked.txt"));
+  await symlink(join(outside, "target.txt"), join(root, "tracked.txt"));
+  listener?.("rename", "tracked.txt");
+  await waitFor(events, (event) => event.event === "needs_reconcile" && event.code === "watcher_symlink_changed");
+});
+
+test("目录 watcher 不随文件数增加，且同一目录只注册一次", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-native-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = Object.assign(new EventEmitter(), { close: () => {} }) as unknown as FSWatcher;
+  let listener: WatchListener<string> | undefined;
+  let watcherCreations = 0;
+  const createWatcher = ((_path: string, options: WatchOptions | WatchListener<string>, onEvent?: WatchListener<string>) => {
+    watcherCreations += 1;
+    listener = typeof options === "function" ? options : onEvent;
+    return source;
+  }) as typeof import("node:fs").watch;
+  const events: WatchEvent[] = [];
+  const watcher = new FileSystemWatcher((event) => events.push(event), createWatcher);
+  t.after(() => watcher.close());
+  await watcher.watchBinding(10, root);
+  await waitFor(events, (event) => event.event === "ready");
+  await writeFile(join(root, "probe.txt"), "probe");
+  listener?.("rename", "probe.txt");
+  await waitFor(events, (event) => event.event === "change" && event.relative_path === "probe.txt" && event.operation === "create");
+  assert.equal(watcherCreations, 1);
+  assert.equal(await readFile(join(root, "probe.txt"), "utf8"), "probe");
+});
+
+test("嵌套 binding 共享物理目录监听并各自收到正确相对路径", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-shared-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const nested = join(root, "nested");
+  await mkdir(nested);
+  const watchedPaths = new Set<string>();
+  const createWatcher = ((path: string, _options: WatchOptions | WatchListener<string>, listener?: WatchListener<string>) => {
+    watchedPaths.add(path);
+    return nativeWatch(path, { persistent: true }, typeof _options === "function" ? _options : listener!);
+  }) as typeof import("node:fs").watch;
+  const events: WatchEvent[] = [];
+  const watcher = new FileSystemWatcher((event) => events.push(event), createWatcher);
+  t.after(() => watcher.close());
+  await watcher.watchBinding(20, root);
+  await watcher.watchBinding(21, nested);
+  await waitFor(events, (event) => event.event === "ready" && event.binding_id === 20);
+  await waitFor(events, (event) => event.event === "ready" && event.binding_id === 21);
+  assert.equal(watchedPaths.size, 2, "根目录与嵌套目录各监听一次，嵌套目录不重复注册");
+
+  await writeFile(join(nested, "shared.txt"), "change");
+  await waitFor(events, (event) => event.event === "change" && event.binding_id === 20 && event.relative_path === "nested/shared.txt");
+  await waitFor(events, (event) => event.event === "change" && event.binding_id === 21 && event.relative_path === "shared.txt");
+});
+
+test("递归 watcher 建立时遇到 ENOSPC 只标记该 binding 的监听额度错误", async () => {
+  const events: WatchEvent[] = [];
+  const createWatcher = (() => {
+    throw Object.assign(new Error("private path"), { code: "ENOSPC" });
+  }) as typeof import("node:fs").watch;
+  const watcher = new FileSystemWatcher((event) => events.push(event), createWatcher);
+  await watcher.watchBinding(11, "/synthetic/root");
+  assert.deepEqual(events, [{ protocol: 1, kind: "event", event: "error", binding_id: 11, code: "watcher_limit_exceeded" }]);
   await watcher.close();
 });

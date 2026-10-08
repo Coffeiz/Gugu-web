@@ -19,7 +19,7 @@ from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.health import update_binding_health
 from app.services.filesync.protocol import FileSyncSource, create_binding, is_file_sync_enabled
 from app.services.filesync.reconcile import _root_fingerprint
-from app.services.filesync.targeted import PathEventBatch, project_path_events
+from app.services.filesync.targeted import PathEventBatch, PathProjectionOptions, project_path_events
 from app.services.filesync.ts_sidecar import FileSyncSidecar, FileSyncSidecarUnavailable
 from app.services.workspaces import resolve_workspace_root, workspace_shell_supported
 
@@ -79,6 +79,7 @@ class FileSyncWatcherManager:
         self.refresh_interval = refresh_interval
         self._sidecar = sidecar or FileSyncSidecar()
         self._binding_roots: dict[int, tuple[object, Path, str]] = {}
+        self._binding_scopes: dict[int, tuple[str, ...] | None] = {}
         self._path_events: dict[int, PathEventBatch] = {}
         self._retry_count: dict[int, int] = {}
         self._ready_bindings: set[int] = set()
@@ -117,9 +118,11 @@ class FileSyncWatcherManager:
         for path in newer.changed:
             older.deleted.discard(path)
             older.changed.add(path)
+        older.created_files.update(newer.created_files)
         for path in newer.deleted:
             older.changed.discard(path)
             older.deleted.add(path)
+            older.created_files.discard(path)
         for path in newer.folders_created:
             older.folders_deleted.discard(path)
             older.folders_created.add(path)
@@ -149,6 +152,7 @@ class FileSyncWatcherManager:
             if not is_file_sync_enabled() or not workspace_shell_supported():
                 await self._sidecar.close()
                 self._binding_roots.clear()
+                self._binding_scopes.clear()
                 self._ready_bindings.clear()
                 await self._wait(stop_event)
                 continue
@@ -158,19 +162,33 @@ class FileSyncWatcherManager:
                     bindings = await _refresh_bindings(db)
                     active_users = await self._active_user_ids(db, bindings)
                     current: dict[int, tuple[object, Path, str]] = {}
+                    current_scopes: dict[int, tuple[str, ...] | None] = {}
                     unavailable: list[int] = []
+                    inactive_ids = {
+                        binding.id for binding in bindings if binding.user_id not in active_users
+                    }
+                    storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
                     for binding in bindings:
+                        if binding.user_id not in active_users:
+                            continue
                         root = await _binding_root(db, binding)
                         if root is None or not root.is_dir():
                             unavailable.append(binding.id)
                             continue
                         current[binding.id] = (binding.user_id, root, binding.mode)
+                        user_root = (storage_root / str(binding.user_id)).resolve()
+                        current_scopes[binding.id] = (
+                            ("个人文件", "项目文件")
+                            if binding.workspace_id is None and root.resolve() == user_root
+                            else None
+                        )
                     await db.commit()
 
                 async with self._refresh_lock:
                     for binding_id in set(self._binding_roots) - set(current):
                         await self._sidecar.unwatch(binding_id)
                         self._binding_roots.pop(binding_id, None)
+                        self._binding_scopes.pop(binding_id, None)
                         self._ready_bindings.discard(binding_id)
                         self._discard_buffered_batch(binding_id)
                     for binding_id in unavailable:
@@ -184,34 +202,43 @@ class FileSyncWatcherManager:
                     for binding_id in set(self._binding_roots) - watch_ids:
                         await self._sidecar.unwatch(binding_id)
                         self._binding_roots.pop(binding_id, None)
+                        self._binding_scopes.pop(binding_id, None)
                         self._ready_bindings.discard(binding_id)
                         self._discard_buffered_batch(binding_id)
+                    for binding_id in inactive_ids:
                         if binding_id not in self._inactive_bindings:
-                            await self._health(binding_id, "inactive", gap=True)
+                            # 非活跃用户不监听；恢复活跃时的 watcher 启动会标记离线期间缺口。
+                            # 不要在每次 worker 重启时把未监听状态本身误报为同步缺口。
+                            await self._health(binding_id, "inactive")
                             self._inactive_bindings.add(binding_id)
                     for binding_id in sorted(watch_ids):
                         user_id, root, mode = current[binding_id]
                         self._unavailable_bindings.discard(binding_id)
+                        resumed_after_inactive = binding_id in self._inactive_bindings
                         self._inactive_bindings.discard(binding_id)
                         previous = self._binding_roots.get(binding_id)
+                        previous_scope = self._binding_scopes.get(binding_id)
+                        scope = current_scopes[binding_id]
                         self._binding_roots[binding_id] = (user_id, root, mode)
+                        self._binding_scopes[binding_id] = scope
                         rebuilding = binding_id in self._rebuild_bindings
                         if rebuilding and self._rebuild_attempts.get(binding_id, 0) >= self.MAX_PATH_RETRIES:
                             continue
-                        if previous != (user_id, root, mode) or rebuilding:
+                        if previous != (user_id, root, mode) or previous_scope != scope or rebuilding:
                             self._ready_bindings.discard(binding_id)
                             if rebuilding:
                                 await self._sidecar.unwatch(binding_id)
                                 self._rebuild_attempts[binding_id] = self._rebuild_attempts.get(binding_id, 0) + 1
                                 await self._health(binding_id, "starting")
                             else:
-                                await self._health(binding_id, "starting", gap=True)
-                            await self._sidecar.watch(binding_id, root)
-                    for binding_id in set(current) - watch_ids:
-                        self._unavailable_bindings.discard(binding_id)
-                        if binding_id not in self._inactive_bindings:
-                            await self._health(binding_id, "inactive", gap=True)
-                            self._inactive_bindings.add(binding_id)
+                                # 普通 worker 启动/重启本身不是 watcher 故障；停机期间的
+                                # 手工文件变化由周期完整扫描发现，不把所有绑定立即标红。
+                                await self._health(
+                                    binding_id,
+                                    "starting",
+                                    gap=previous is not None or resumed_after_inactive,
+                                )
+                            await self._sidecar.watch(binding_id, root, included_root_entries=scope)
             except asyncio.CancelledError:
                 raise
             except FileSyncSidecarUnavailable:
@@ -219,6 +246,7 @@ class FileSyncWatcherManager:
                     await self._health(binding_id, "failed", code="sidecar_unavailable", gap=True)
                 await self._sidecar.close()
                 self._binding_roots.clear()
+                self._binding_scopes.clear()
                 self._ready_bindings.clear()
             except Exception as exc:
                 logger.warning("[worker] 文件监听注册刷新失败 error=%s", type(exc).__name__)
@@ -256,6 +284,11 @@ class FileSyncWatcherManager:
             self._buffered_path_count += 1
         target.add(relative)
         opposite.discard(relative)
+        if object_type == "file":
+            if operation == "create":
+                batch.created_files.add(relative)
+            elif operation == "delete":
+                batch.created_files.discard(relative)
         return True
 
     async def _handle_event(self, event: dict) -> None:
@@ -303,7 +336,10 @@ class FileSyncWatcherManager:
                     ))
                     if binding is None:
                         continue
-                    summary = await project_path_events(db, user_id, binding, root, batch)
+                    summary = await project_path_events(
+                        db, user_id, binding, root, batch,
+                        options=PathProjectionOptions(record_quota_deltas=True),
+                    )
                     event_row = None
                     if _has_changes(summary):
                         event_row = await enqueue_file_event(

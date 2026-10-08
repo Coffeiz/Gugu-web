@@ -2,17 +2,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import FileSyncAdminPanel from '@/components/filesync/FileSyncAdminPanel.vue'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
 
 const mocks = vi.hoisted(() => ({
   status: vi.fn(),
   runs: vi.fn(),
+  resolveConflict: vi.fn(),
+  reconcileIssues: vi.fn(),
   invalidate: vi.fn(),
   startEvents: vi.fn(),
   stopEvents: vi.fn(),
 }))
 
 vi.mock('@/api/filesync', () => ({
-  filesyncAdminApi: { status: mocks.status, runs: mocks.runs },
+  filesyncAdminApi: { status: mocks.status, runs: mocks.runs, resolveConflict: mocks.resolveConflict, reconcileIssues: mocks.reconcileIssues },
 }))
 
 vi.mock('@/composables/filesync/useFileSyncAdminEvents', () => ({
@@ -72,6 +75,8 @@ afterEach(() => {
   host = undefined
   mocks.status.mockReset()
   mocks.runs.mockReset()
+  mocks.resolveConflict.mockReset()
+  mocks.reconcileIssues.mockReset()
   mocks.invalidate.mockReset()
   mocks.startEvents.mockReset()
   mocks.stopEvents.mockReset()
@@ -150,5 +155,194 @@ describe('FileSyncAdminPanel 监听缺口提示', () => {
 
     expect(mocks.status).toHaveBeenCalledOnce()
     expect(mocks.runs).toHaveBeenCalledOnce()
+  })
+
+  it('预览显示只读计划数量，安全阻止恢复时给出可操作原因', async () => {
+    mocks.status.mockResolvedValue({
+      featureEnabled: true, storageBackend: 'local', supported: true,
+      workspaceShellSupported: true, ignoredBindingCount: 0, bindings: [], conflicts: [],
+      failures: [], totals: { bindings: 0, journals: 0, pendingJournals: 0,
+        failedJournals: 0, rejectedJournals: 0, pendingConflicts: 0, pendingOutbox: 0 },
+      generatedAt: '2026-10-07T00:00:00Z',
+    })
+    mocks.runs.mockResolvedValue([
+      {
+        id: 'preview-1', bindingId: 4, action: 'dry_run', allowDelete: false,
+        status: 'succeeded', stage: 'finished', scannedCount: 12,
+        resultCounts: { plannedCreated: 2, plannedUpdated: 1, plannedDeleted: 3, conflicts: 1 },
+        errorCode: null, revision: 1, cancelRequested: false,
+        createdAt: null, startedAt: null, finishedAt: null,
+      },
+      {
+        id: 'repair-1', bindingId: 5, action: 'repair', allowDelete: false,
+        status: 'failed', stage: 'failed', scannedCount: 0,
+        resultCounts: {}, errorCode: 'root_recovery_blocked', revision: 1,
+        cancelRequested: false, createdAt: null, startedAt: null, finishedAt: null,
+      },
+      {
+        id: 'repair-2', bindingId: 6, action: 'repair', allowDelete: false,
+        status: 'failed', stage: 'failed', scannedCount: 0,
+        resultCounts: {}, errorCode: 'binding_root_unavailable', revision: 1,
+        cancelRequested: false, createdAt: null, startedAt: null, finishedAt: null,
+      },
+    ])
+
+    const root = mountPanel()
+    await flushUi()
+
+    const runs = root.querySelectorAll('.fs-run')
+    expect(runs).toHaveLength(3)
+    expect(runs[0].textContent).toContain('filesyncUser.previewResults')
+    expect(runs[0].textContent).not.toContain('filesyncUser.results')
+    expect(runs[1].textContent).toContain('filesyncUser.rootRecoveryBlocked')
+    expect(runs[2].textContent).toContain('filesyncUser.bindingRootUnavailable')
+  })
+
+  it('路径投影失败展示脱敏原因分类而不是只显示总失败码', async () => {
+    mocks.status.mockResolvedValue({
+      featureEnabled: true, storageBackend: 'local', supported: true,
+      workspaceShellSupported: true, ignoredBindingCount: 0, bindings: [], conflicts: [],
+      failures: [], totals: { bindings: 0, journals: 0, pendingJournals: 0,
+        failedJournals: 0, rejectedJournals: 0, pendingConflicts: 0, pendingOutbox: 0 },
+      generatedAt: '2026-10-07T00:00:00Z',
+    })
+    mocks.runs.mockResolvedValue([{
+      id: 'repair-projection', bindingId: 42, action: 'repair', allowDelete: false,
+      status: 'failed', stage: 'failed', scannedCount: 10,
+      resultCounts: { failed: 3, skipped: 3, rejected_quota_exceeded: 2, rejected_file_unavailable: 1 },
+      errorCode: 'path_projection_failed', revision: 1, cancelRequested: false,
+      createdAt: null, startedAt: null, finishedAt: null,
+    }])
+
+    const root = mountPanel()
+    await flushUi()
+
+    const text = root.querySelector('.fs-run')?.textContent || ''
+    expect(text).toContain('filesyncUser.projectionFailed')
+    expect(text).toContain('filesyncUser.projectionReason.quota_exceeded 2')
+    expect(text).toContain('filesyncUser.projectionReason.file_unavailable 1')
+  })
+})
+
+describe('FileSyncAdminPanel 批量排入异常对账', () => {
+  it('只对异常有效绑定显示批量排队入口，且请求服务端重新判定', async () => {
+    const bindings = [
+      {
+        id: 1, userId: 'synthetic-user', source: 'local_directory', mode: 'bidirectional',
+        status: 'active', protocolVersion: 1, rootPath: '.', revision: 0,
+        watcherStatus: 'degraded', needsReconcile: true, healthRevision: 1, gapRevision: 1,
+        healthErrorCode: 'watcher_error', lastReconciledAt: null, updatedAt: null,
+        pendingJournal: 0, failedJournal: 0, rejectedJournal: 0, pendingConflicts: 0,
+      },
+      {
+        id: 2, userId: 'synthetic-user', source: 'local_directory', mode: 'bidirectional',
+        status: 'active', protocolVersion: 1, rootPath: 'other', revision: 0,
+        watcherStatus: 'ready', needsReconcile: false, healthRevision: 1, gapRevision: 0,
+        healthErrorCode: null, lastReconciledAt: null, updatedAt: null,
+        pendingJournal: 0, failedJournal: 0, rejectedJournal: 0, pendingConflicts: 0,
+      },
+    ]
+    const status = {
+      featureEnabled: true, storageBackend: 'local', supported: true,
+      workspaceShellSupported: true, ignoredBindingCount: 0, bindings,
+      conflicts: [], failures: [], totals: {
+        bindings: 2, journals: 0, pendingJournals: 0, failedJournals: 0,
+        rejectedJournals: 0, pendingConflicts: 0, pendingOutbox: 0,
+      }, generatedAt: '2026-10-07T00:00:00Z',
+    }
+    mocks.status.mockResolvedValue(status)
+    mocks.runs.mockResolvedValue([])
+    mocks.reconcileIssues.mockResolvedValue({
+      eligible: 1, queued: 1, busy: 0, skipped: 0,
+    })
+
+    const root = mountPanel()
+    await flushUi()
+    const button = root.querySelector<HTMLButtonElement>('.fs-block-head button')
+    expect(button?.textContent).toContain('filesyncAdmin.queueIssues')
+    button?.click()
+    await flushUi()
+
+    expect(confirmDialog).toHaveBeenCalled()
+    expect(mocks.reconcileIssues).toHaveBeenCalledTimes(1)
+    expect(root.querySelector('.fs-message.is-success')?.textContent).toContain('filesyncAdmin.queueIssuesResult')
+  })
+})
+
+describe('FileSyncAdminPanel 批量处理冲突', () => {
+  function conflict(id: number) {
+    return {
+      id, bindingId: 7, userId: 'synthetic-user', relativePath: `folder/file-${id}.txt`,
+      source: 'local_directory', status: 'pending', hasBaseline: true,
+      hasLocal: true, hasRemote: true, createdAt: null,
+    }
+  }
+
+  function status(conflicts: ReturnType<typeof conflict>[], pendingConflicts = conflicts.length) {
+    return {
+      featureEnabled: true, storageBackend: 'local', supported: true, workspaceShellSupported: true,
+      ignoredBindingCount: 0, bindings: [], conflicts, failures: [],
+      totals: {
+        bindings: 0, journals: 0, pendingJournals: 0, failedJournals: 0,
+        rejectedJournals: 0, pendingConflicts, pendingOutbox: 0,
+      },
+      generatedAt: '2026-10-07T00:00:00Z',
+    }
+  }
+
+  it('确认后逐条应用同一策略并在界面报告完成数', async () => {
+    const conflicts = [conflict(11), conflict(12), conflict(13)]
+    mocks.status.mockResolvedValue(status(conflicts))
+    mocks.runs.mockResolvedValue([])
+    mocks.resolveConflict.mockResolvedValue({ status: 'resolved', resolution: 'keep_local' })
+
+    const root = mountPanel()
+    await flushUi()
+    const bulkButtons = root.querySelectorAll('.fs-bulk-actions button')
+    expect(bulkButtons).toHaveLength(4)
+    bulkButtons.item(0)?.click()
+    await flushUi()
+
+    expect(mocks.resolveConflict).toHaveBeenCalledTimes(3)
+    expect(mocks.resolveConflict.mock.calls.map(([ , id, resolution ]) => [id, resolution])).toEqual([
+      [11, 'keep_local'], [12, 'keep_local'], [13, 'keep_local'],
+    ])
+    await vi.waitFor(() => {
+      expect(root.querySelector('.fs-message.is-success')?.textContent).toContain('filesyncAdmin.bulkResolveResult')
+    })
+  })
+
+  it('冲突列表被截断时禁用批量操作，不会只处理部分记录', async () => {
+    mocks.status.mockResolvedValue(status([conflict(11)], 244))
+    mocks.runs.mockResolvedValue([])
+
+    const root = mountPanel()
+    await flushUi()
+
+    const bulkButtons = [...root.querySelectorAll<HTMLButtonElement>('.fs-bulk-actions button')]
+    expect(bulkButtons).toHaveLength(4)
+    expect(bulkButtons.every((button) => button.disabled)).toBe(true)
+    expect(root.querySelector('.fs-block-head + .fs-note')?.textContent).toContain('filesyncAdmin.bulkListIncomplete')
+    expect(mocks.resolveConflict).not.toHaveBeenCalled()
+  })
+
+  it('单条失败时继续处理后续冲突并报告部分成功', async () => {
+    const conflicts = [conflict(21), conflict(22), conflict(23)]
+    mocks.status.mockResolvedValue(status(conflicts))
+    mocks.runs.mockResolvedValue([])
+    mocks.resolveConflict
+      .mockResolvedValueOnce({ status: 'resolved', resolution: 'keep_local' })
+      .mockRejectedValueOnce(new Error('synthetic conflict failure'))
+      .mockResolvedValueOnce({ status: 'resolved', resolution: 'keep_local' })
+
+    const root = mountPanel()
+    await flushUi()
+    root.querySelectorAll<HTMLButtonElement>('.fs-bulk-actions button').item(0)?.click()
+    await flushUi()
+
+    expect(mocks.resolveConflict).toHaveBeenCalledTimes(3)
+    await vi.waitFor(() => {
+      expect(root.querySelector('.fs-message.is-error')?.textContent).toContain('filesyncAdmin.bulkResolveResult')
+    })
   })
 })

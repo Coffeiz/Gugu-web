@@ -524,6 +524,8 @@ async def serve():
     from app.core import video_cache_gc as _video_cache_gc  # noqa: F401  # 触发内置任务 @scheduler.register（视频转码缓存清理），须在 sched.start() 之前 import
     from app.core import storage_snapshots as _storage_snapshots  # noqa: F401  # 触发内置任务 @scheduler.register（存储用量快照，PRD-STORAGE-2），须在 sched.start() 之前 import
     from app.core import rag_index_gc as _rag_index_gc  # noqa: F401  # 触发 RAG 用户索引 TTL 清理任务
+    from app.services.filesync import periodic as _filesync_periodic  # noqa: F401  # 注册每周完整核对任务
+    from app.services.storage import quota_periodic as _quota_periodic  # noqa: F401  # 注册每周配额完整校准
     sched.start()
     try:
         await schedtasks.reconcile()             # 立即从 DB 加载一遍

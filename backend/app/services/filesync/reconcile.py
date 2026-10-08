@@ -53,6 +53,7 @@ class SyncSummary:
     folders_deleted: int = 0
     journal_ids: tuple[int, ...] = ()
     entity_ids: tuple[int, ...] = ()
+    rejection_reasons: tuple[tuple[str, int], ...] = ()
 
 
 _HASH_CHUNK_BYTES = 1024 * 1024

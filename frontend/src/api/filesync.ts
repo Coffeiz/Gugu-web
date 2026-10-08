@@ -140,6 +140,13 @@ export interface FileSyncActionResult {
   conflictIds: number[]
 }
 
+export interface FileSyncBulkEnqueueResult {
+  eligible: number
+  queued: number
+  busy: number
+  skipped: number
+}
+
 export type FileSyncConflictResolution = 'keep_local' | 'keep_remote' | 'keep_both' | 'cancel'
 
 type AdminFetch = (url: string, options?: RequestInit) => Promise<Response>
@@ -152,7 +159,7 @@ async function read<T>(request: Promise<Response>): Promise<T> {
 }
 
 export const filesyncAdminApi = {
-  status: (fetcher: AdminFetch) => read<FileSyncAdminStatus>(fetcher('/api/v1/admin/filesync/status')),
+  status: (fetcher: AdminFetch, conflictLimit = 5000) => read<FileSyncAdminStatus>(fetcher(`/api/v1/admin/filesync/status?conflict_limit=${conflictLimit}`)),
   runs: (fetcher: AdminFetch, limit = 50) => read<FileSyncRunStatus[]>(fetcher(`/api/v1/admin/filesync/runs?limit=${limit}`)),
   cancelRun: (fetcher: AdminFetch, runId: string) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })),
   setEnabled: (fetcher: AdminFetch, enabled: boolean) => read<Record<string, unknown>>(fetcher('/api/v1/admin/config', {
@@ -161,5 +168,6 @@ export const filesyncAdminApi = {
   })),
   dryRun: (fetcher: AdminFetch, bindingId: number) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/dry-run`, { method: 'POST' })),
   reconcile: (fetcher: AdminFetch, bindingId: number) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/reconcile`, { method: 'POST', body: JSON.stringify({ confirm: true }) })),
+  reconcileIssues: (fetcher: AdminFetch) => read<FileSyncBulkEnqueueResult>(fetcher('/api/v1/admin/filesync/reconcile-issues', { method: 'POST', body: JSON.stringify({ confirm: true }) })),
   resolveConflict: (fetcher: AdminFetch, conflictId: number, resolution: FileSyncConflictResolution) => read<{ id: number; status: string; resolution: string }>(fetcher(`/api/v1/admin/filesync/conflicts/${conflictId}/resolve`, { method: 'POST', body: JSON.stringify({ resolution, confirm: resolution !== 'cancel' }) })),
 }

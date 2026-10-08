@@ -33,7 +33,7 @@ from app.services.filesync.snapshots import (
     save_snapshot,
     snapshot_fingerprint,
 )
-from app.services.workspaces import workspace_shell_supported
+from app.services.workspaces import resolve_workspace_root, workspace_shell_supported
 from app.services.storage import get_storage
 
 
@@ -56,6 +56,41 @@ def _normalize_root_path(value: str | None) -> str:
     if value in {".", "./", ""}:
         return "."
     return normalize_relative_path(value)
+
+
+async def shell_quota_tracking_ready(
+    db: AsyncSession, user_id, workspace_id: int | None, *, include_all: bool = False,
+) -> bool:
+    """确认 Filesync watcher 覆盖 Shell 可写范围，才能跳过全量配额校准。"""
+    ready = (
+        FileSyncBinding.user_id == user_id,
+        FileSyncBinding.source == FileSyncSource.LOCAL_DIRECTORY,
+        FileSyncBinding.status == "active",
+        FileSyncBinding.mode != FileSyncMode.MIRROR_OUT,
+        FileSyncBinding.watcher_status == "ready",
+        FileSyncBinding.needs_reconcile.is_(False),
+    )
+    if include_all or workspace_id is None:
+        # 完整用户沙盒可写到个人文件和项目文件；必须有覆盖整个用户存储根
+        # 的绑定。普通未绑定会话使用默认 Workspace，也由这条根绑定覆盖。
+        return await db.scalar(select(FileSyncBinding.id).where(
+            *ready,
+            FileSyncBinding.workspace_id.is_(None),
+            FileSyncBinding.root_path == ".",
+        ).limit(1)) is not None
+
+    workspace_binding_id = await db.scalar(select(FileSyncBinding.id).where(
+        *ready,
+        FileSyncBinding.workspace_id == workspace_id,
+    ).limit(1))
+    if workspace_binding_id is not None:
+        return True
+    # 整个用户存储根上的 watcher 也覆盖单个 workspace 会话；反向不成立。
+    return await db.scalar(select(FileSyncBinding.id).where(
+        *ready,
+        FileSyncBinding.workspace_id.is_(None),
+        FileSyncBinding.root_path == ".",
+    ).limit(1)) is not None
 
 
 def resolve_local_binding_root(user_id, root_path: str | None) -> tuple[str, Path]:
@@ -478,9 +513,19 @@ async def resolve_sync_conflict(
     binding = await get_owned(db, FileSyncBinding, conflict.binding_id, user_id)
     if binding is None:
         raise LookupError("同步绑定不存在")
-    _, root = resolve_local_binding_root(user_id, binding.root_path)
+    if binding.workspace_id is not None:
+        root = await resolve_workspace_root(db, user_id, binding.workspace_id)
+        if root is None:
+            raise LookupError("同步工作区不可用")
+    else:
+        _, root = resolve_local_binding_root(user_id, binding.root_path)
     candidate = root / conflict.relative_path
-    observed = _fingerprint(candidate) if candidate.is_file() and not candidate.is_symlink() else None
+    try:
+        observed = _fingerprint(candidate) if candidate.is_file() and not candidate.is_symlink() else None
+    except OSError as exc:
+        raise ValueError("本地文件无法读取，不能保留本地") from exc
+    if resolution == "keep_local" and observed is None:
+        raise ValueError("本地文件不存在，不能保留本地")
     if resolution == "cancel":
         # 只解除冲突标记，不动盘上文件；必须同样落 resolved，
         # 否则冲突永远留在 pending 列表里（点「取消冲突」看起来毫无反应）。
@@ -510,7 +555,11 @@ async def resolve_sync_conflict(
             operation="update", relative_path=conflict.relative_path,
             idempotency_key=build_idempotency_key(
                 source=FileSyncSource.LOCAL_DIRECTORY, operation="update",
-                relative_path=conflict.relative_path, fingerprint=observed,
+                relative_path=conflict.relative_path,
+                # 普通路径事件按内容指纹幂等；冲突解决则是一次新的基线决策。
+                # 若复用 watcher 早先为相同内容生成的键，record_change 会返回旧
+                # journal，数据库侧更新仍晚于该基线，下一次对账就会重新报同一冲突。
+                fingerprint=f"{observed or 'missing'}:conflict:{conflict.id}",
             ), observed_fingerprint=observed, status=FileSyncStatus.SYNCED,
         )
         save_snapshot(user_id, binding.id, conflict.relative_path, candidate)

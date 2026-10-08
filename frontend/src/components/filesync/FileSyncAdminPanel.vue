@@ -42,11 +42,18 @@
       </div>
 
       <div v-if="status.ignoredBindingCount" class="fs-note">{{ t('filesyncAdmin.ignoredBindings', { count: status.ignoredBindingCount }) }}</div>
+      <div v-if="bulkMessage" class="fs-message" :class="bulkFailed ? 'is-error' : 'is-success'">{{ bulkMessage }}</div>
 
       <div v-if="status.bindings.length" class="fs-block">
         <div class="fs-block-head">
           <div class="fs-block-title">{{ t('filesyncAdmin.bindingList') }}</div>
           <div class="fs-block-tools">
+            <ActionButton fit
+                          :disabled="Boolean(actionKey) || Boolean(bulkProgress) || !status.supported || !queueableIssueCount"
+                          @click="reconcileIssues">
+              <Icon name="action.refresh" size="sm" />
+              {{ actionKey === 'bulk-reconcile' ? t('filesyncAdmin.queueingIssues') : t('filesyncAdmin.queueIssues', { count: queueableIssueCount }) }}
+            </ActionButton>
             <span class="fs-block-stats">{{ t('filesyncAdmin.bindingStats', { shown: visibleBindings.length, total: status.bindings.length }) }}</span>
             <label class="fs-toggle">
               <ToggleSwitch size="sm" :model-value="onlyIssues" :aria-label="t('filesyncAdmin.onlyIssues')" @update:model-value="onlyIssues = $event" />
@@ -87,13 +94,28 @@
           </div>
           <span>{{ t('filesyncUser.stage', { stage: t(`filesyncUser.stageName.${run.stage || 'unknown'}`) }) }} · {{ t('filesyncUser.scanned', { count: run.scannedCount }) }}</span>
           <span>{{ resultSummary(run) }}</span>
-          <small v-if="run.errorCode" class="is-danger">{{ t('filesyncUser.error', { code: run.errorCode }) }}</small>
+          <small v-if="run.errorCode" class="is-danger">{{ runErrorMessage(run) }}</small>
           <small v-if="hasPartialResult(run)" class="is-warning">{{ t('filesyncUser.partialResult') }}</small>
         </div>
       </div>
 
       <div v-if="status.conflicts.length" class="fs-block">
-        <div class="fs-block-title">{{ t('filesyncAdmin.conflictList') }}</div>
+        <div class="fs-block-head">
+          <div class="fs-block-title">{{ t('filesyncAdmin.conflictList') }} · {{ status.conflicts.length }} / {{ status.totals.pendingConflicts }}</div>
+          <div class="fs-actions fs-bulk-actions">
+            <ActionButton v-for="resolution in resolutions" :key="`bulk-${resolution.value}`" variant="secondary" fit
+                          :class="{ 'is-danger': resolution.value === 'keep_remote' }"
+                          :disabled="Boolean(actionKey) || Boolean(bulkProgress) || status.conflicts.length !== status.totals.pendingConflicts"
+                          @click="resolveAll(resolution.value)">
+              {{ bulkProgress?.resolution === resolution.value
+                ? t('filesyncAdmin.bulkProgress', { done: bulkProgress.completed, total: bulkProgress.total })
+                : t('filesyncAdmin.bulkResolve', { resolution: t(resolution.label), count: status.totals.pendingConflicts }) }}
+            </ActionButton>
+          </div>
+        </div>
+        <p v-if="status.conflicts.length !== status.totals.pendingConflicts" class="fs-note">
+          {{ t('filesyncAdmin.bulkListIncomplete', { shown: status.conflicts.length, total: status.totals.pendingConflicts }) }}
+        </p>
         <div v-for="conflict in status.conflicts" :key="conflict.id" class="fs-row">
           <div class="fs-row-main">
             <strong>#{{ conflict.id }} · {{ conflict.relativePath }}</strong>
@@ -102,7 +124,7 @@
           <div class="fs-actions">
             <ActionButton v-for="resolution in resolutions" :key="resolution.value" variant="secondary" fit
                           :class="{ 'is-danger': resolution.value === 'keep_remote' }"
-                          :disabled="actionKey === `conflict-${conflict.id}`" @click="resolve(conflict.id, resolution.value)">
+                          :disabled="Boolean(actionKey) || Boolean(bulkProgress)" @click="resolve(conflict.id, resolution.value)">
               <Icon :name="resolution.value === 'cancel' ? 'action.close' : 'status.check-circle'" size="sm" />
               {{ t(resolution.label) }}
             </ActionButton>
@@ -141,6 +163,9 @@ const loading = ref(false)
 const syncSaving = ref(false)
 const error = ref('')
 const actionKey = ref('')
+const bulkProgress = ref<{ resolution: string; completed: number; total: number } | null>(null)
+const bulkMessage = ref('')
+const bulkFailed = ref(false)
 const resolutions = [
   { value: 'keep_local' as const, label: 'filesyncAdmin.keepLocal' },
   { value: 'keep_remote' as const, label: 'filesyncAdmin.keepRemote' },
@@ -153,14 +178,18 @@ const adminEvents = useFileSyncAdminEvents(adminStore.authFetch, () => { void lo
 // 绑定随 workspace 自动登记，健康绑定（无待处理/失败 journal、无冲突）对排查没有
 // 信息量；默认只列出有异常的，全量列表留给开关。
 const onlyIssues = ref(true)
+const anomalousBindings = computed(() => (status.value?.bindings ?? []).filter((binding) =>
+  binding.pendingJournal > 0 || binding.failedJournal > 0 ||
+  binding.rejectedJournal > 0 || binding.pendingConflicts > 0 ||
+  binding.needsReconcile || !['ready', 'inactive', 'unknown'].includes(binding.watcherStatus),
+))
+const queueableIssueCount = computed(() => anomalousBindings.value.filter((binding) =>
+  binding.source === 'local_directory' && binding.status === 'active' && binding.mode !== 'mirror_out',
+).length)
 const visibleBindings = computed(() => {
   const all = status.value?.bindings ?? []
   if (!onlyIssues.value) return all
-  return all.filter((binding) =>
-    binding.pendingJournal > 0 || binding.failedJournal > 0 ||
-    binding.rejectedJournal > 0 || binding.pendingConflicts > 0 ||
-    binding.needsReconcile || !['ready', 'inactive', 'unknown'].includes(binding.watcherStatus),
-  )
+  return anomalousBindings.value
 })
 
 async function load() {
@@ -219,6 +248,31 @@ async function reconcile(bindingId: number) {
   finally { actionKey.value = '' }
 }
 
+async function reconcileIssues() {
+  if (!status.value?.supported || !queueableIssueCount.value || actionKey.value || bulkProgress.value) return
+  const accepted = await confirmDialog({
+    title: t('filesyncAdmin.queueIssuesTitle'),
+    message: t('filesyncAdmin.queueIssuesConfirm', { count: queueableIssueCount.value }),
+    tone: 'warning',
+    confirmText: t('filesyncAdmin.queueIssuesConfirmButton'),
+  })
+  if (!accepted) return
+  actionKey.value = 'bulk-reconcile'
+  error.value = ''
+  bulkMessage.value = ''
+  bulkFailed.value = false
+  try {
+    const result = await filesyncAdminApi.reconcileIssues(adminStore.authFetch)
+    bulkMessage.value = t('filesyncAdmin.queueIssuesResult', { ...result })
+    bulkFailed.value = false
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    actionKey.value = ''
+  }
+}
+
 async function resolve(conflictId: number, resolution: typeof resolutions[number]['value']) {
   if (resolution !== 'cancel' && !await confirmDialog({ title: t('filesyncAdmin.resolveTitle'), message: t('filesyncAdmin.resolveConfirm'), tone: resolution === 'keep_remote' ? 'danger' : 'warning', confirmText: t('filesyncAdmin.confirmResolve') })) return
   actionKey.value = `conflict-${conflictId}`
@@ -226,6 +280,55 @@ async function resolve(conflictId: number, resolution: typeof resolutions[number
   try { await filesyncAdminApi.resolveConflict(adminStore.authFetch, conflictId, resolution); await load() }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { actionKey.value = '' }
+}
+
+async function resolveAll(resolution: typeof resolutions[number]['value']) {
+  if (bulkProgress.value || actionKey.value) return
+  error.value = ''
+  bulkMessage.value = ''
+  let latest: FileSyncAdminStatus
+  try {
+    latest = await filesyncAdminApi.status(adminStore.authFetch)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+    return
+  }
+  status.value = latest
+  const conflicts = [...latest.conflicts]
+  const total = latest.totals.pendingConflicts
+  if (!total || conflicts.length !== total) {
+    bulkFailed.value = true
+    bulkMessage.value = t('filesyncAdmin.bulkListIncomplete', { shown: conflicts.length, total })
+    return
+  }
+  const selectedResolution = resolutions.find((item) => item.value === resolution)
+  if (!selectedResolution) return
+  const accepted = await confirmDialog({
+    title: t('filesyncAdmin.bulkResolveTitle'),
+    message: t('filesyncAdmin.bulkResolveConfirm', {
+      count: total,
+      resolution: t(selectedResolution.label),
+    }),
+    tone: resolution === 'keep_remote' ? 'danger' : 'warning',
+    confirmText: t('filesyncAdmin.confirmResolve'),
+  })
+  if (!accepted) return
+
+  bulkFailed.value = false
+  bulkProgress.value = { resolution, completed: 0, total }
+  let failed = 0
+  for (const conflict of conflicts) {
+    try {
+      await filesyncAdminApi.resolveConflict(adminStore.authFetch, conflict.id, resolution)
+    } catch {
+      failed += 1
+    }
+    bulkProgress.value.completed += 1
+  }
+  bulkProgress.value = null
+  bulkFailed.value = failed > 0
+  bulkMessage.value = t('filesyncAdmin.bulkResolveResult', { completed: total - failed, failed })
+  await load()
 }
 
 async function cancelRun(run: FileSyncRunStatus) {
@@ -239,11 +342,52 @@ async function cancelRun(run: FileSyncRunStatus) {
 
 function resultSummary(run: FileSyncRunStatus) {
   const values = run.resultCounts
+  if (run.action === 'dry_run') {
+    return t('filesyncUser.previewResults', {
+      scanned: run.scannedCount,
+      created: values.plannedCreated ?? 0,
+      updated: values.plannedUpdated ?? 0,
+      deleted: values.plannedDeleted ?? 0,
+      conflicts: values.conflicts ?? 0,
+    })
+  }
   return t('filesyncUser.results', {
     created: values.created ?? 0, updated: values.updated ?? 0, moved: values.moved ?? 0,
     deleted: values.deleted ?? 0, skipped: values.skipped ?? 0,
     conflicts: values.conflicts ?? 0, failed: values.failed ?? 0,
   })
+}
+
+function runErrorMessage(run: FileSyncRunStatus) {
+  if (run.errorCode === 'root_recovery_blocked') return t('filesyncUser.rootRecoveryBlocked')
+  if (run.errorCode === 'binding_root_unavailable') return t('filesyncUser.bindingRootUnavailable')
+  if (run.errorCode === 'scan_incomplete' || run.errorCode === 'scan_scope_incomplete') return t('filesyncUser.scanIncomplete')
+  if (run.errorCode === 'scan_permission_denied') return t('filesyncUser.scanPermissionDenied')
+  if (run.errorCode === 'scan_manifest_unavailable') return t('filesyncUser.scanManifestUnavailable')
+  if (run.errorCode === 'scan_manifest_budget_exceeded') return t('filesyncUser.scanManifestBudgetExceeded')
+  if (run.errorCode === 'scan_empty_with_existing_records') return t('filesyncUser.scanEmptyWithRecords')
+  if (run.errorCode === 'scan_unsupported_symlink') return t('filesyncUser.scanUnsupportedSymlink')
+  if (['scan_file_changed', 'scan_depth_limit', 'scan_path_too_long'].includes(run.errorCode || '')) return t('filesyncUser.scanIncomplete')
+  if (run.errorCode === 'binding_changed') return t('filesyncUser.bindingChanged')
+  if (run.errorCode === 'path_projection_failed') {
+    const labels: Record<string, string> = {
+      invalid_or_unsupported_path: t('filesyncUser.projectionReason.invalid_or_unsupported_path'),
+      file_unavailable: t('filesyncUser.projectionReason.file_unavailable'),
+      file_filesystem_error: t('filesyncUser.projectionReason.file_filesystem_error'),
+      folder_unavailable: t('filesyncUser.projectionReason.folder_unavailable'),
+      folder_filesystem_error: t('filesyncUser.projectionReason.folder_filesystem_error'),
+      folder_outside_file_library_scope: t('filesyncUser.projectionReason.folder_outside_file_library_scope'),
+      quota_exceeded: t('filesyncUser.projectionReason.quota_exceeded'),
+      projection_root_unavailable: t('filesyncUser.projectionReason.projection_root_unavailable'),
+    }
+    const details = Object.entries(labels)
+      .map(([reason, label]) => ({ label, count: run.resultCounts[`rejected_${reason}`] ?? 0 }))
+      .filter(item => item.count > 0)
+      .map(item => `${item.label} ${item.count}`)
+    const base = t('filesyncUser.projectionFailed')
+    return details.length ? `${base}：${details.join('、')}` : `${base}。`
+  }
+  return t('filesyncUser.error', { code: run.errorCode })
 }
 
 function hasPartialResult(run: FileSyncRunStatus) {
@@ -290,6 +434,8 @@ onBeforeUnmount(adminEvents.stop)
 .fs-row-main span,.fs-row-main small { color:var(--content-secondary); overflow-wrap:anywhere; }
 .fs-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; flex:0 0 auto; }
 .fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); font-size:var(--font-size-sm); }
+.fs-message.is-success { color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); }
+.fs-bulk-actions { max-width:100%; }
 .fs-run { display:flex; flex-direction:column; gap:4px; padding:8px 0; border-top:1px solid var(--border-subtle); font-size:var(--font-size-xs); }
 .fs-run-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .fs-run-head strong,.fs-run span { min-width:0; overflow-wrap:anywhere; }

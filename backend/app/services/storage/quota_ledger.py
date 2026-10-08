@@ -120,6 +120,25 @@ async def measure_user_storage_usage(db: AsyncSession, user_id: Any) -> int:
     return file_bytes + sum(unregistered.values())
 
 
+async def get_file_library_usage_snapshot(db: AsyncSession, user_id: Any) -> int:
+    """快速读取文件库页面展示用量，不扫描物理目录。
+
+    配额校验与显式对账仍使用 ``measure_user_storage_usage``；页面展示优先读由写入
+    和对账流程维护的账本。老账号尚无账本行时，回退到存活 File 记录汇总，避免在
+    普通页面请求中创建账本或遍历整个用户目录。
+    """
+    used_bytes = (await db.execute(select(StorageQuotaLedger.used_bytes).where(
+        StorageQuotaLedger.user_id == user_id,
+        StorageQuotaLedger.category == FILE_LIBRARY,
+    ))).scalar_one_or_none()
+    if used_bytes is not None:
+        return int(used_bytes)
+    return int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
+        File.user_id == user_id,
+        File.deleted_at.is_(None),
+    ))).scalar_one() or 0)
+
+
 async def get_local_storage_quota_watch(
     db: AsyncSession, user_id: Any, *, include_library: bool,
 ) -> tuple[tuple[Path, ...], int]:
@@ -183,6 +202,7 @@ async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[
                 root_path=str(root) if category == SHELL_PERSISTENT else None,
                 limit_bytes=limits[category],
                 used_bytes=initial_usage[category],
+                last_reconciled_at=now_utc(),
                 status="active",
             )
             db.add(row)
@@ -244,9 +264,19 @@ async def record_usage(
     db: AsyncSession, user_id: Any, *, category: str, delta_bytes: int,
     operation: str, idempotency_key: str, resource_type: str | None = None,
     resource_id: str | int | None = None, metadata: dict[str, Any] | None = None,
+    allow_over_limit: bool = False,
 ) -> StorageQuotaLedger:
-    """原子地记录用量事件；重复事件不会再次增加用量。"""
+    """原子记录用量事件；重复事件不会重复增加。
+
+    ``allow_over_limit`` 仅用于观察已发生的外部文件系统变更：账本必须反映真实占用，
+    即使它已超额；后续受控写入会基于超额账本拒绝执行。
+    """
     row = await get_quota(db, user_id, category)
+    # 多个文件写入并发时串行应用增量，避免两个事务读到同一旧值后互相覆盖。
+    row = (await db.execute(select(StorageQuotaLedger).where(
+        StorageQuotaLedger.user_id == user_id,
+        StorageQuotaLedger.category == category,
+    ).with_for_update().execution_options(populate_existing=True))).scalar_one()
     existing = (await db.execute(select(StorageQuotaEvent).where(
         StorageQuotaEvent.user_id == user_id,
         StorageQuotaEvent.idempotency_key == idempotency_key,
@@ -256,7 +286,7 @@ async def record_usage(
     next_used = row.used_bytes + int(delta_bytes)
     if next_used < 0:
         raise ValueError("配额用量不能为负数")
-    if next_used + row.reserved_bytes > row.limit_bytes:
+    if next_used + row.reserved_bytes > row.limit_bytes and not allow_over_limit:
         raise ValueError("存储空间已满")
     row.used_bytes = next_used
     row.updated_at = now_utc()
@@ -265,10 +295,14 @@ async def record_usage(
         and getattr(get_settings().storage, "backend", "local") == "local"
     ):
         shared_row = await get_quota(db, user_id, FILE_LIBRARY)
+        shared_row = (await db.execute(select(StorageQuotaLedger).where(
+            StorageQuotaLedger.user_id == user_id,
+            StorageQuotaLedger.category == FILE_LIBRARY,
+        ).with_for_update().execution_options(populate_existing=True))).scalar_one()
         shared_used = shared_row.used_bytes + int(delta_bytes)
         if shared_used < 0:
             raise ValueError("配额用量不能为负数")
-        if shared_used + shared_row.reserved_bytes > shared_row.limit_bytes:
+        if shared_used + shared_row.reserved_bytes > shared_row.limit_bytes and not allow_over_limit:
             raise ValueError("存储空间已满")
         shared_row.used_bytes = shared_used
         shared_row.updated_at = now_utc()
@@ -282,8 +316,24 @@ async def record_usage(
     return row
 
 
-async def reconcile_user_storage(db: AsyncSession, user_id: Any) -> dict[str, int]:
-    """重新测量持久空间总量与 Shell 明细，并写入校准事件。"""
+async def reconcile_user_storage(
+    db: AsyncSession, user_id: Any, *, preserve_concurrent_updates: bool = False,
+) -> dict[str, int]:
+    """重新测量持久空间总量与 Shell 明细，并写入校准事件。
+
+    定时校准可启用 ``preserve_concurrent_updates``：扫描期间若有正常写入更新账本，
+    本次校准放弃覆盖，避免用扫描开始前的旧物理快照抹掉并发增量。下一轮会重试。
+    显式管理校验和 Shell 收尾仍可使用默认的强制校准语义。
+    """
+    initial_rows = {}
+    if preserve_concurrent_updates:
+        rows = (await db.scalars(select(StorageQuotaLedger).where(
+            StorageQuotaLedger.user_id == user_id,
+        ).execution_options(populate_existing=True))).all()
+        initial_rows = {
+            row.category: (int(row.used_bytes), row.updated_at)
+            for row in rows
+        }
     file_bytes = int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
         File.user_id == user_id, File.deleted_at.is_(None),
     ))).scalar_one() or 0)
@@ -297,6 +347,16 @@ async def reconcile_user_storage(db: AsyncSession, user_id: Any) -> dict[str, in
         SHELL_PERSISTENT: shell_bytes,
         SHELL_EPHEMERAL: 0,
     }
+    if preserve_concurrent_updates:
+        rows = (await db.scalars(select(StorageQuotaLedger).where(
+            StorageQuotaLedger.user_id == user_id,
+        ).with_for_update().execution_options(populate_existing=True))).all()
+        current_rows = {
+            row.category: (int(row.used_bytes), row.updated_at)
+            for row in rows
+        }
+        if current_rows != initial_rows:
+            return measured
     for category, actual in measured.items():
         row = await get_quota(db, user_id, category)
         delta = actual - row.used_bytes
@@ -337,5 +397,6 @@ async def verify_user_storage_space(db: AsyncSession, user_id: Any) -> dict[str,
 __all__ = [
     "FILE_LIBRARY", "SHELL_PERSISTENT", "SHELL_EPHEMERAL", "DEFAULT_WORKSPACE_FOLDER_NAME",
     "ensure_user_storage_space", "ensure_all_user_storage_spaces", "get_quota",
-    "measure_shell_persistent_usage", "record_usage", "reconcile_user_storage", "verify_user_storage_space",
+    "get_file_library_usage_snapshot", "measure_shell_persistent_usage", "record_usage",
+    "reconcile_user_storage", "verify_user_storage_space",
 ]

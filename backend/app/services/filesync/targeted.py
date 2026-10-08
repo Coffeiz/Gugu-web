@@ -17,10 +17,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+
+def _record_rejection(summary: dict, reason: str) -> None:
+    summary["rejected"] += 1
+    reasons = summary["rejection_reasons"]
+    reasons[reason] = reasons.get(reason, 0) + 1
+
+
+def _path_rejection_reason(exc: BaseException, *, object_type: str) -> str:
+    if isinstance(exc, PermissionError):
+        return f"{object_type}_unavailable"
+    if isinstance(exc, OSError):
+        return f"{object_type}_filesystem_error"
+    return "invalid_or_unsupported_path"
+
 from app.core.config import get_settings
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
-from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project, User
+from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project, StorageQuotaLedger, User
 from app.services.files.previews import delete_thumb_cache
 from app.services.filesync.protocol import (
     FileSyncOperation,
@@ -53,6 +67,7 @@ class PathEventBatch:
     """同一绑定在相邻两次 drain 之间累积的路径事件；changed/deleted 互斥收敛。"""
 
     changed: set[str] = field(default_factory=set)
+    created_files: set[str] = field(default_factory=set)
     deleted: set[str] = field(default_factory=set)
     folders_created: set[str] = field(default_factory=set)
     folders_deleted: set[str] = field(default_factory=set)
@@ -71,6 +86,7 @@ class PathProjectionOptions:
     allow_delete: bool = True
     verified_files: dict[str, tuple[int, int, int, str]] | None = None
     observed_folders: dict[str, str] | None = None
+    record_quota_deltas: bool = False
 
 
 async def _quota_limit(db: AsyncSession, user_id) -> int:
@@ -147,6 +163,10 @@ async def _project_changed_file(
     quota_headroom: int,
     summary_inout: dict,
     verified_file: tuple[int, int, int, str] | None = None,
+    *,
+    record_quota_delta: bool = False,
+    created_event: bool = False,
+    observed_external_change: bool = False,
 ) -> int:
     """单文件 create/update 投影；返回本次变更的净字节增量。
 
@@ -175,8 +195,8 @@ async def _project_changed_file(
             if (current.st_size, current.st_mtime_ns, current.st_ino) != verified_file[:3]:
                 raise ValueError("文件在扫描后发生变化")
             observed = verified_file[3]
-    except (OSError, ValueError):
-        summary_inout["rejected"] += 1
+    except (OSError, ValueError) as exc:
+        _record_rejection(summary_inout, _path_rejection_reason(exc, object_type="file"))
         return 0
 
     row = (await db.execute(select(File).where(
@@ -192,8 +212,8 @@ async def _project_changed_file(
         if previous is not None and previous.observed_fingerprint == observed:
             return 0
         size_delta = path.stat().st_size - int(row.size_bytes or 0)
-        if size_delta > quota_headroom:
-            summary_inout["rejected"] += 1
+        if size_delta > quota_headroom and not observed_external_change:
+            _record_rejection(summary_inout, "quota_exceeded")
             return 0
         row.size_bytes = path.stat().st_size
         row.size = str(path.stat().st_size)
@@ -213,8 +233,8 @@ async def _project_changed_file(
     elif source is not None:
         row = source
         size_delta = path.stat().st_size - int(row.size_bytes or 0)
-        if size_delta > quota_headroom:
-            summary_inout["rejected"] += 1
+        if size_delta > quota_headroom and not observed_external_change:
+            _record_rejection(summary_inout, "quota_exceeded")
             return 0
         old_key = row.storage_key
         row.storage_key = key
@@ -233,11 +253,11 @@ async def _project_changed_file(
         old_journal = latest.get(("file", old_key.removeprefix(scope_prefix)))
         baseline = old_journal.observed_fingerprint if old_journal else None
     else:
-        if path.stat().st_size > quota_headroom:
-            summary_inout["rejected"] += 1
+        size_delta = path.stat().st_size if created_event or not observed_external_change else 0
+        if size_delta > quota_headroom and not observed_external_change:
+            _record_rejection(summary_inout, "quota_exceeded")
             return 0
         stat = path.stat()
-        size_delta = stat.st_size
         row = File(
             user_id=user_id, display_name=display_name, ext=ext, space=space,
             project_id=project_id, folder_id=folder_id,
@@ -263,6 +283,15 @@ async def _project_changed_file(
     latest[("file", relative)] = journal
     summary_inout["journal_ids"].append(journal.id)
     summary_inout["entity_ids"].append(row.id)
+    if record_quota_delta and size_delta:
+        from app.services.storage.quota_ledger import FILE_LIBRARY, record_usage
+
+        await record_usage(
+            db, user_id, category=FILE_LIBRARY, delta_bytes=size_delta,
+            operation="filesync_increment", resource_type="file", resource_id=row.id,
+            idempotency_key=f"filesync-quota:{journal.id}",
+            allow_over_limit=True,
+        )
     try:
         save_snapshot(user_id, binding.id, relative, path)
     except OSError:
@@ -274,6 +303,7 @@ async def _project_deleted_file(
     db: AsyncSession, user_id, binding: FileSyncBinding, storage_root: Path,
     scope_prefix: str, relative: str,
     latest: dict[tuple[str, str], FileSyncJournal], summary_inout: dict,
+    *, record_quota_delta: bool = False,
 ) -> None:
     key = scope_prefix + relative
     row = (await db.execute(select(File).where(
@@ -282,6 +312,7 @@ async def _project_deleted_file(
     # 行不存在说明移动投影已复用（或此前已处理）；盘上还在则事件过期，跳过。
     if row is None or (storage_root / key).exists():
         return
+    deleted_size = int(row.size_bytes or 0)
     row.deleted_at = now_utc()
     row.version = int(row.version or 1) + 1
     row.updated_at = now_utc()
@@ -300,6 +331,15 @@ async def _project_deleted_file(
         observed_fingerprint=None, status=FileSyncStatus.SYNCED,
     )
     summary_inout["journal_ids"].append(journal.id)
+    if record_quota_delta and deleted_size:
+        from app.services.storage.quota_ledger import FILE_LIBRARY, record_usage
+
+        await record_usage(
+            db, user_id, category=FILE_LIBRARY, delta_bytes=-deleted_size,
+            operation="filesync_increment", resource_type="file", resource_id=row.id,
+            idempotency_key=f"filesync-quota:{journal.id}",
+            allow_over_limit=True,
+        )
 
 
 async def _project_folder_created(
@@ -318,13 +358,14 @@ async def _project_folder_created(
         else:
             parsed = _parse_directory_path(directory, user_root)
             if parsed is None:
-                summary_inout["rejected"] += 1
+                # 用户根目录下的年月层、项目根等只是组织容器，并非文件库 Folder。
+                # 旧版全量同步会跳过它们；精确事件也应保持为无副作用的忽略。
                 return
             space, project_id, folder_names = parsed
         if project_id is not None and await get_owned(db, Project, project_id, user_id) is None:
             raise ValueError("项目不属于当前用户")
-    except (OSError, ValueError):
-        summary_inout["rejected"] += 1
+    except (OSError, ValueError) as exc:
+        _record_rejection(summary_inout, _path_rejection_reason(exc, object_type="folder"))
         return
 
     from app.services.filesync.reconcile import _ensure_folder_path
@@ -385,8 +426,8 @@ async def _project_folder_deleted(
             db, user_id, space=space, project_id=project_id, folder_names=parts,
             workspace_directory_id=workspace_directory_id,
         )
-    except (OSError, ValueError):
-        summary_inout["rejected"] += 1
+    except (OSError, ValueError) as exc:
+        _record_rejection(summary_inout, _path_rejection_reason(exc, object_type="folder"))
         return
     if folder_id is None:
         return
@@ -455,7 +496,7 @@ async def project_path_events(
     options = options or PathProjectionOptions()
     roots = _projection_roots(user_id, root)
     if roots is None:
-        return SyncSummary(rejected=1)
+        return SyncSummary(rejected=1, rejection_reasons=(("projection_root_unavailable", 1),))
     storage_root, user_root = roots
     workspace_directory_id: int | None = None
     if binding.workspace_id is not None:
@@ -471,6 +512,7 @@ async def project_path_events(
     quota_limit = await _quota_limit(db, user_id)
     summary_inout: dict = {
         "created": 0, "updated": 0, "moved": 0, "deleted": 0, "rejected": 0,
+        "rejection_reasons": {},
         "folders_created": 0, "folders_updated": 0, "folders_deleted": 0,
         "journal_ids": [], "entity_ids": [],
     }
@@ -482,18 +524,36 @@ async def project_path_events(
             db, user_id, binding, root, user_root, workspace_directory_id, relative, latest, summary_inout,
             (options.observed_folders or {}).get(relative),
         )
-    quota_headroom = quota_limit - await _live_storage_bytes(db, user_id)
+    record_changed_deltas = options.record_quota_deltas
+    if options.record_quota_deltas:
+        from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota
+
+        ledger_existed = await db.scalar(select(StorageQuotaLedger.id).where(
+            StorageQuotaLedger.user_id == user_id,
+            StorageQuotaLedger.category == FILE_LIBRARY,
+        )) is not None
+        quota = await get_quota(db, user_id, FILE_LIBRARY)
+        quota_headroom = quota_limit - int(quota.used_bytes) - int(quota.reserved_bytes)
+        # 首次建账会先测量当前磁盘事实：新建/修改文件已包含在该快照中，不能再加一次；
+        # 删除仍需扣掉数据库里此前登记的大小。
+        record_changed_deltas = ledger_existed
+    else:
+        quota_headroom = quota_limit - await _live_storage_bytes(db, user_id)
     for relative in sorted(batch.changed):
         # 按净字节增量逐项更新余量：新增/扩容扣减，缩小文件释放余量。
         quota_headroom -= await _project_changed_file(
             db, user_id, binding, root, storage_root, scope_prefix, user_root,
             workspace_directory_id, relative, latest,
             quota_headroom, summary_inout, (options.verified_files or {}).get(relative),
+            record_quota_delta=record_changed_deltas,
+            created_event=relative in batch.created_files,
+            observed_external_change=options.record_quota_deltas,
         )
     if options.allow_delete:
         for relative in sorted(batch.deleted):
             await _project_deleted_file(
                 db, user_id, binding, storage_root, scope_prefix, relative, latest, summary_inout,
+                record_quota_delta=options.record_quota_deltas,
             )
         for relative in sorted(batch.folders_deleted, key=lambda item: item.count("/"), reverse=True):
             await _project_folder_deleted(
@@ -507,6 +567,7 @@ async def project_path_events(
         created=summary_inout["created"], updated=summary_inout["updated"],
         moved=summary_inout["moved"], deleted=summary_inout["deleted"],
         rejected=summary_inout["rejected"],
+        rejection_reasons=tuple(sorted(summary_inout["rejection_reasons"].items())),
         folders_created=summary_inout["folders_created"],
         folders_updated=summary_inout["folders_updated"],
         folders_deleted=summary_inout["folders_deleted"],

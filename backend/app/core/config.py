@@ -210,7 +210,7 @@ class FileSyncSettings(BaseModel):
         description="活跃度门控：仅给最近 N 天活跃用户的绑定挂实时监听；其余绑定需手动核对（0 表示全部监听）",
     )
     reconcile_execution_budget_seconds: int = Field(
-        1800, ge=60, le=7200, description="手动整树核对任务的总执行时限；超时失败，不自动续跑",
+        7200, ge=60, le=7200, description="整树完整核对任务的总执行时限；超时失败，不自动续跑",
     )
     reconcile_max_concurrency: int = Field(
         1, ge=1, le=8, description="跨用户手动整树核对的全局并发上限",

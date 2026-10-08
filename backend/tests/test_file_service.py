@@ -12,10 +12,11 @@ from sqlalchemy import select
 import app.services.storage.file_service.folders as folders_mod
 from app.core.errors import Conflict, Invalid, NotFound
 from app.core.tz import now_utc
-from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project
+from app.models import File, FileSyncBinding, FileSyncJournal, Folder, Project, StorageQuotaLedger
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService
 from app.services.storage.file_service.files import _is_overwrite_requested
+from app.services.storage.quota_ledger import FILE_LIBRARY
 
 
 def _svc(db, tmp_path):
@@ -210,6 +211,67 @@ async def test_create_file_overwrite(db, user_a, tmp_path):
     assert r2.was_overwrite and r2.file.id == r1.file.id and r2.file.size_bytes == 5
     assert r2.file.version == old_version + 1
     assert await svc.storage.get(r2.file.storage_key) == b"newer"
+
+
+@pytest.mark.asyncio
+async def test_file_write_uses_ledger_without_scanning_user_directories(
+    db, user_a, tmp_path, monkeypatch,
+):
+    """账本已初始化后，普通文件写入必须只应用增量，不再递归测量物理目录。"""
+    import app.services.storage.quota_ledger as quota_ledger
+
+    ledger = StorageQuotaLedger(
+        user_id=user_a.id, category=FILE_LIBRARY, used_bytes=12,
+        limit_bytes=100, status="active",
+    )
+    db.add(ledger)
+    await db.flush()
+
+    async def unexpected_scan(*_args, **_kwargs):
+        pytest.fail("正常文件写入不应扫描用户目录")
+
+    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", unexpected_scan)
+    svc = _svc(db, tmp_path)
+    await _create(svc, user_a.id, "incremental", "TXT", data=b"1234")
+    await db.flush()
+
+    await db.refresh(ledger)
+    assert ledger.used_bytes == 16
+
+
+@pytest.mark.asyncio
+async def test_copy_overwrite_records_only_target_size_delta(db, user_a, tmp_path):
+    svc = _svc(db, tmp_path)
+    destination = await svc.create_folder(
+        user_a.id, name="目标", parent_id=None, project_id=None,
+    )
+    source_folder = await svc.create_folder(
+        user_a.id, name="来源", parent_id=None, project_id=None,
+    )
+    target = await _create(
+        svc, user_a.id, "同名", "TXT", data=b"ab", folder_id=destination.id,
+    )
+    source = await _create(
+        svc, user_a.id, "同名", "TXT", data=b"12345", folder_id=source_folder.id,
+    )
+    await db.commit()
+    ledger = await db.scalar(select(StorageQuotaLedger).where(
+        StorageQuotaLedger.user_id == user_a.id,
+        StorageQuotaLedger.category == FILE_LIBRARY,
+    ))
+    assert ledger.used_bytes == 7
+
+    result = await svc.copy_file(
+        user_a.id, source.file.id, folder_id=destination.id, project_id=None,
+        on_conflict="overwrite", overwrite_file_id=target.file.id,
+    )
+    await db.commit()
+    await db.refresh(ledger)
+
+    assert result.was_overwrite
+    assert result.file.id == target.file.id
+    assert result.file.size_bytes == 5
+    assert ledger.used_bytes == 10
 
 
 @pytest.mark.parametrize(("on_conflict", "file_id", "expected"), [
