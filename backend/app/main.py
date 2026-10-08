@@ -275,6 +275,8 @@ async def lifespan(app: FastAPI):
     from agent.rag.ts_sidecar import close_lexical_clients, close_rank_clients
     await _shutdown_step("RAG lexical worker", close_lexical_clients)
     await _shutdown_step("RAG rank worker", close_rank_clients)
+    from agent.gateway.qq import close_qq_http_session
+    await _shutdown_step("QQ HTTP 连接池", close_qq_http_session)
     from app.db.session import dispose_engine
     await _shutdown_step("数据库连接池", dispose_engine)
 

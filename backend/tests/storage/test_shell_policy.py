@@ -623,7 +623,7 @@ def _allowed_decision(needs_confirmation=False):
     )
 
 
-def _patch_run_shell_harness(monkeypatch, settings, captured, *, db=None):
+def _patch_run_shell_harness(monkeypatch, settings, captured, *, db=None, request_ids=None):
     """给 _run_shell 打通到 sandboxd 客户端为止的最小桩件。"""
     from agent.tools import shell as shell_tool
 
@@ -638,6 +638,8 @@ def _patch_run_shell_harness(monkeypatch, settings, captured, *, db=None):
             if db is not None:
                 assert db.commit_count == 1
             captured.append(request.command)
+            if request_ids is not None:
+                request_ids.append(request.request_id)
             raise SandboxdUnavailable("测试桩到此为止")
 
     monkeypatch.setattr(shell_tool, "get_settings", lambda: settings)
@@ -717,6 +719,25 @@ async def test_runtime_command_reaches_sandbox_executor_regardless_of_filesystem
         assert captured == ["npm install"]
         assert result["ok"] is False
         assert "测试桩到此为止" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_each_shell_command_gets_its_own_sandbox_cancel_id(monkeypatch):
+    """同一 Agent 轮次的并行 Shell 命令必须能被独立取消。"""
+    from agent.tools import shell as shell_tool
+
+    request_ids = []
+    _patch_run_shell_harness(
+        monkeypatch, _sandbox_authorization_settings(), [], request_ids=request_ids,
+    )
+    args = {"command": "pwd", "_run_id": "same-agent-run"}
+
+    await shell_tool._run_shell(_PolicyDB(), "user-1", dict(args))
+    await shell_tool._run_shell(_PolicyDB(), "user-1", dict(args))
+
+    assert len(request_ids) == 2
+    assert all(request_ids)
+    assert len(set(request_ids)) == 2
 
 
 @pytest.mark.asyncio

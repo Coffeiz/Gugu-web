@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 
 import app.db.session as _db_session
 
@@ -323,7 +324,8 @@ async def _run_shell(db, user_id, args: dict):
                         quota_bytes=quota_bytes,
                         network_profile=network_profile,
                         egress_expires_at=egress_expires_at,
-                        request_id=str(args.get("_run_id") or "") or None,
+                        # 一个 Agent 轮次可能并行发起多个 Shell 调用，取消 ID 必须按命令区分。
+                        request_id=uuid.uuid4().hex,
                         personal_root=str(personal_root) if personal_root else None,
                         project_root=str(project_root) if project_root else None,
                         personal_read_only=not decision.full_user_sandbox_write,

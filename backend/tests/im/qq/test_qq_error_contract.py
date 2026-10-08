@@ -176,17 +176,18 @@ async def test_qq_request_raises_qq_api_error_without_raw_body_in_message(monkey
             return False
 
     class _FakeSession:
-        def request(self, method, url, json=None, headers=None, timeout=None):
+        def request(
+            self, method, url, json=None, headers=None, timeout=None,
+            trace_request_ctx=None,
+        ):
             return _FakeResp()
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
     monkeypatch.setattr(qq, "_send_token", _fake_send_token)
-    monkeypatch.setattr(qq.aiohttp, "ClientSession", lambda *a, **kw: _FakeSession())
+
+    async def _fake_http_session():
+        return _FakeSession()
+
+    monkeypatch.setattr(qq, "_get_qq_http_session", _fake_http_session)
 
     with pytest.raises(qq.QQAPIError) as ei:
         await qq._qq_request("bot-1", "POST", "/v2/users/ou_1/messages", json_body={"a": 1})

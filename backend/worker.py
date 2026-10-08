@@ -501,7 +501,7 @@ async def _heartbeat():
             await asyncio.sleep(1)
 
 
-async def serve():
+async def _serve():
     await R.ensure_group(STREAM, GROUP)
     await R.ensure_group("memory:reflection", REFLECTION_GROUP)
     await R.ensure_group("memory:cleanup", CLEANUP_GROUP)
@@ -590,6 +590,17 @@ async def serve():
     print("[worker] stopped", flush=True)
 
 
+async def serve():
+    """worker 生命周期持有 QQ HTTP 连接池，优雅或异常退出时均释放。"""
+    from agent.gateway.qq import close_qq_http_session, start_qq_http_session
+
+    await start_qq_http_session()
+    try:
+        await _serve()
+    finally:
+        await close_qq_http_session()
+
+
 async def _reconcile_loop():
     """每 30s 从 DB 对账定时任务（增/删/改/开关即时生效，无需重启）。"""
     from app import scheduled_tasks as schedtasks
@@ -665,6 +676,12 @@ async def _emergency_shutdown(*, tasks=None) -> None:
             task.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
+
+    try:
+        from agent.gateway.qq import close_qq_http_session
+        await close_qq_http_session()
+    except Exception as exc:
+        print(f"[worker] 异常退出释放 QQ HTTP 连接池失败: {type(exc).__name__}", flush=True)
 
     try:
         from agent.rag.injection import shutdown_background_recall_tasks
