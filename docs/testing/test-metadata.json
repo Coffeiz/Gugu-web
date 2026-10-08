@@ -598,5 +598,13 @@
     "productionEntry": "frontend/src/assets/styles/tokens/semantic.css",
     "keyBehavior": "所有浅色配色和材质下分隔线及虚线边界均与浅色背景保持可见对比",
     "ci": "runtime-integration"
+  },
+  "frontend/e2e/project-file-drag-experimental.spec.ts": {
+    "domain": "file-library",
+    "layer": "L3",
+    "owner": "frontend/e2e",
+    "productionEntry": "frontend/src/views/Projects/components/ProjectFilesPanel.vue",
+    "keyBehavior": "项目文件区拖拽完成目标命中、持久化移动和目标目录导航",
+    "ci": "experimental"
   }
 }

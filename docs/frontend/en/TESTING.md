@@ -3,7 +3,7 @@
 ## Test Layers
 
 - Put all Vitest tests under `frontend/tests/<feature-domain>/`, grouping pure functions, stores, composables, InteractionSync, race logic, and style regressions by product feature or cross-module domain. Keep `frontend/src/` for production code only.
-- Test cross-component page flows with Playwright under frontend/e2e/. Stable primary paths belong to test:e2e:stable; drag and experimental flows belong to test:e2e:experimental.
+- Test cross-component page flows with Playwright under frontend/e2e/. Deterministic paths belong to test:e2e:stable. Filesystem cases must create unique fixtures and clean up only those fixtures after each test; they must not depend on existing test-account content.
 - E2E uses an already running devserver by default. Change the environment with PLAYWRIGHT_BASE_URL instead of starting another frontend/backend inside the test.
 
 ## Common Commands

@@ -84,7 +84,9 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ### CI 只接确定性的关键路径
 
-CI 的 Runtime integration workflow 执行 `test:e2e:stable`；当前稳定列表包含 `smoke`、`calendar`、`chat`、`file-lifecycle`、`mind-canvas-runtime`、`scheduled-task-ui`、`scheduled-task-run`、`theme-divider`。以 `frontend/package.json` 的脚本和 workflow 调用为准，调整列表时同步更新本文。
+CI 的 Runtime integration workflow 执行 `test:e2e:stable`；当前稳定列表包含 `smoke`、`calendar`、`chat`、`file-lifecycle`、`file-drag-runtime`、`filesystem-phases`、`mind-canvas-runtime`、`scheduled-task-ui`、`scheduled-task-run`、`theme-divider`。文件系统 E2E 必须创建唯一 fixture，并在每例结束时精确清理，不能依赖测试账号已有文件或项目，也不能因缺少既有数据而跳过。以 `frontend/package.json` 的脚本和 workflow 调用为准，调整列表时同步更新本文。
+
+项目文件区 Runtime 拖拽单独由 `test:e2e:experimental` 运行。当前浏览器复现中，项目文件卡片松手后代理没有结束、服务端移动请求也未发出；在修复该交互前不要把这两条用例纳入稳定 CI。
 
 新增用例接 CI 的标准：
 - 不依赖测试账号的既有数据（每轮 CI 全新数据库）。

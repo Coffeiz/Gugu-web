@@ -703,12 +703,48 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
   const nTarget = targetFolderId as number | null
   const workspaceDirectoryId = currentWorkspaceDirectoryId()
   const backups = nFileIds.map(id => cacheStore.getFile(id)).filter(Boolean) as FileMeta[]
+  let refreshedAfterCompensationFailure = false
   await InteractionSync.execute({
     scope: 'file.move', entityKey: `file-move:${nFileIds.join(',')}`,
     apply: () => nFileIds.forEach(id => cacheStore.updateFile(id, { folderId: nTarget })),
     afterMutate: loadContents,
-    request: mutation => Promise.all(nFileIds.map(id => fileActions.moveFile(id, nTarget, null, { mutationId: mutation.mutationId }, workspaceDirectoryId))),
-    rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId })),
+    request: async mutation => {
+      const results = await Promise.allSettled(nFileIds.map(id =>
+        fileActions.moveFile(id, nTarget, null, { mutationId: mutation.mutationId }, workspaceDirectoryId),
+      ))
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (!failed) return results.map(result => (result as PromiseFulfilledResult<FileMeta>).value)
+
+      // 多文件移动由多个单文件请求组成；Promise.all 一旦拒绝会留下已经提交的文件。
+      // 补偿已成功项，维持 UI 暴露的“整体回滚”行为。
+      const movedIds = results.flatMap((result, index) => result.status === 'fulfilled' ? [nFileIds[index]] : [])
+      const compensation = await Promise.allSettled(movedIds.map(id => {
+        const original = backups.find(file => file.id === id)
+        if (!original) throw new Error('缺少文件移动前状态')
+        return fileActions.moveFile(
+          id,
+          original.folderId,
+          original.projectId,
+          undefined,
+          original.workspaceDirectoryId ?? null,
+        )
+      }))
+      if (compensation.some(result => result.status === 'rejected')) {
+        // 补偿也失败时，先把服务端实际状态拉回缓存，避免 rollback 显示一个虚假的全量回滚。
+        await cacheStore.refresh()
+        refreshedAfterCompensationFailure = true
+        throw new Error('多文件移动失败，且部分文件无法恢复；已刷新实际状态')
+      }
+      throw failed.reason
+    },
+    rollback: () => {
+      if (refreshedAfterCompensationFailure) return
+      backups.forEach(f => cacheStore.updateFile(f.id, {
+        folderId: f.folderId,
+        projectId: f.projectId,
+        workspaceDirectoryId: f.workspaceDirectoryId ?? null,
+      }))
+    },
     onError: err => console.error('[Files] 移动失败:', (err as Error).message),
   })
 }
