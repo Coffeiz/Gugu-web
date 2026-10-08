@@ -69,13 +69,16 @@
             {{ t('storageAuditExtra.misplaced') }} <b :class="{ 'status-warning-text': fileReport.misplaced_count }">{{ fileReport.misplaced_count || 0 }}</b>
           </div>
           <div v-if="!fileReport.ghost_count && !fileReport.orphan_count && !fileReport.misplaced_count" class="recon-ok"><RiCheckFill class="recon-ok__icon" aria-hidden="true" />{{ t('storageAuditUi.healthy') }}</div>
-          <div v-if="fileReport.ghost_count" class="recon-block">
-            <div class="recon-block-title">{{ t('storageAuditExtra.ghostRecords') }}</div>
-            <div v-for="g in fileReport.ghosts" :key="g.id" class="recon-row">
-              <span class="recon-name">{{ g.name }}</span>
-              <span class="recon-meta">{{ g.space }}{{ g.project ? ' · ' + g.project : '' }}{{ g.deleted ? ' · ' + t('storageAuditExtra.trash') : '' }} · {{ g.storage_key }}</span>
-            </div>
-          </div>
+          <GhostRecordCleanup
+            v-if="fileReport.ghost_count"
+            :ghost-count="fileReport.ghost_count"
+            :ghost-ids="fileReport.ghost_ids"
+            :ghosts="fileReport.ghosts || []"
+            :disabled="fileRepairing"
+            @busy-change="fileRepairing = $event"
+            @message="setFileMessage"
+            @refresh="scanFiles($event)"
+          />
           <div v-if="fileReport.orphan_count" class="recon-block">
             <div class="recon-block-title">
               {{ t('storageAuditExtra.orphanFiles') }}
@@ -246,6 +249,7 @@ import Checkbox from '@/components/common/controls/Checkbox.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { RiCheckFill } from '@remixicon/vue'
 import FileSyncAdminPanel from '@/components/filesync/FileSyncAdminPanel.vue'
+import GhostRecordCleanup from './components/GhostRecordCleanup.vue'
 
 const adminStore = useAdminStore()
 const { t } = useI18n()
@@ -360,10 +364,15 @@ async function repairPathMigration() {
   } finally { pathRepairing.value = false }
 }
 
-async function scanFiles() {
+function setFileMessage(message: { text: string; kind: 'ok' | 'err' }) {
+  fileMsg.value = message.text
+  fileMsgKind.value = message.kind
+}
+
+async function scanFiles(preserveMessage = false) {
   if (fileScanning.value) return
   fileScanning.value = true
-  fileMsg.value = ''
+  if (!preserveMessage) fileMsg.value = ''
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage')
     const data = await res.json()

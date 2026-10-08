@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import time
+import uuid
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -183,10 +184,12 @@ def _is_internal_key(k: str) -> bool:
     parts = [part for part in key.split("/") if part]
     user_path_parts = parts[2:] if len(parts) >= 3 and parts[0] == "u" else parts[1:]
     internal_user_root = bool(user_path_parts) and user_path_parts[0] in {
-        ".system", ".agent", "shell", ".voice", ".video_cache",
+        ".system", ".agent", "shell", ".voice", ".video_cache", ".data-portability",
+        "workspace",
     }
     return (
         internal_user_root
+        or key.startswith("_analytics/")
         or ".agent/" in key
         or ".chat_staging" in key
         or ".thumbs" in key
@@ -218,24 +221,26 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
     doctor_report = await folder_doctor.scan(db, storage)
 
     rows = (await db.execute(select(File))).scalars().all()
-    db_key_set = {f.storage_key for f in rows}
+    scoped_rows = [f for f in rows if not _is_internal_key(f.storage_key)]
+    db_key_set = {f.storage_key for f in scoped_rows}
     projs = {p.id: p.name for p in (await db.execute(select(Project))).scalars().all()}
 
     ghosts = [
         {"id": f.id, "name": f"{f.display_name}.{f.ext}", "space": f.space,
          "project": projs.get(f.project_id), "deleted": f.deleted_at is not None,
          "storage_key": f.storage_key}
-        for f in rows if f.storage_key not in all_keys
+        for f in scoped_rows if f.storage_key not in all_keys
     ]
     orphans = sorted(file_keys - db_key_set)
     return {
         "backend": cfg.storage.backend,
         "location": cfg.storage.local_path if cfg.storage.backend == "local"
                     else f"{cfg.storage.oss_bucket}/{cfg.storage.oss_prefix}",
-        "db_file_rows": len(rows),
+        "db_file_rows": len(scoped_rows),
         "storage_objects": len(file_keys),
         "matched": len(db_key_set & all_keys),
         "ghost_count": len(ghosts),
+        "ghost_ids": [f.id for f in scoped_rows if f.storage_key not in all_keys],
         "orphan_count": len(orphans),
         "ghosts": ghosts[:300],
         "orphans": orphans[:300],
@@ -378,16 +383,26 @@ def _parse_path_migration_key(key: str) -> dict | None:
         return None
     project_id = None
     project_index = None
+    project_name = None
     for index, part in enumerate(parts[2:-1], start=2):
         match = re.search(r"#(\d+)$", part)
         if match:
             project_id = int(match.group(1))
             project_index = index
+            project_name = part[:match.start()].rstrip()
             break
-    if project_id is None or project_index is None:
+    if project_id is None or project_index is None or not project_name or len(project_name) > 200:
         return None
+    start_date = None
+    if project_index >= 4:
+        year, month = parts[project_index - 2:project_index]
+        if year.isdigit() and len(year) == 4 and month.isdigit():
+            month_value = int(month)
+            if 1 <= month_value <= 12:
+                start_date = f"{int(year):04d}-{month_value:02d}-01"
     return {
         "user_id": user_id, "space": "project", "project_id": project_id,
+        "project_name": project_name, "project_start_date": start_date,
         "folder_parts": parts[project_index + 1:-1], "display_name": name,
         "ext": ext.lower(),
     }
@@ -397,55 +412,104 @@ def _same_file_scope(file, parsed: dict) -> bool:
     return file.space == parsed["space"] and file.project_id == parsed["project_id"]
 
 
-async def _import_orphan(db, key: str, storage) -> bool:
+async def _import_orphan(db, key: str, storage) -> tuple[bool, str | None]:
     """按已验证的 path-mirror key 导入孤儿文件，不猜测不完整的归属。"""
     import mimetypes
     import uuid
+    from sqlalchemy import text
     from app.models import File, Project, User
 
     parsed = _parse_path_migration_key(key)
     if parsed is None:
-        return False
+        return False, "存储路径无法解析"
     uid_text = parsed["user_id"]
     uid = uuid.UUID(uid_text)
     if not await db.get(User, uid):
-        return False
+        return False, "文件所有者不存在"
     # 修复接口也可能被手工传入重复 key；不能让同一物理对象产生第二条 File。
     existing = (await db.execute(select(File).where(File.storage_key == key))).scalars().first()
     if existing is not None:
-        return False
+        return False, "文件记录已存在，请重新扫描"
 
     info = await storage.stat(key)
     if info is None:
-        return False
+        return False, "物理文件已不存在，请重新扫描"
 
     fname = key.rsplit("/", 1)[-1]
     name, _, ext = fname.rpartition(".")
     if not name:
         name, ext = fname, ""
     project_id = parsed["project_id"]
+    project = None
     if project_id is not None:
         project = await db.get(Project, project_id)
-        if project is None or str(project.user_id) != uid_text:
-            return False
-    folder_id = await _resolve_import_folder(db, uid, project_id, parsed["folder_parts"])
-    if parsed["folder_parts"] and folder_id is None:
-        return False
-    db.add(File(
-        user_id=uid, display_name=name, ext=ext.lower(), space=parsed["space"],
-        project_id=project_id, folder_id=folder_id, storage_key=key,
-        size=_fmt_size(info.size), size_bytes=info.size,
-        mime_type=mimetypes.guess_type(fname)[0],
-    ))
-    return True
+        if project is not None and str(project.user_id) != uid_text:
+            return False, "所属项目不存在或不属于文件所有者"
+        if project is not None and project.deleted_at is not None:
+            return False, "所属项目在回收站中，请先恢复项目后重试"
+
+    class _ImportRejected(Exception):
+        pass
+
+    try:
+        # 单个对象的项目、目录、文件记录同成同败；不能因目录无效遗留空项目。
+        async with db.begin_nested():
+            if project_id is not None and project is None:
+                if not parsed.get("project_name"):
+                    raise _ImportRejected("项目路径不完整，无法恢复原项目")
+                if db.bind.dialect.name == "postgresql":
+                    # 显式恢复历史主键前阻止并发自动分配，并确保 sequence 不落后于该 ID。
+                    await db.execute(text("LOCK TABLE projects IN EXCLUSIVE MODE"))
+                    project = await db.get(Project, project_id)
+                    if project is not None:
+                        if str(project.user_id) != uid_text:
+                            raise _ImportRejected("所属项目不存在或不属于文件所有者")
+                        if project.deleted_at is not None:
+                            raise _ImportRejected("所属项目在回收站中，请先恢复项目后重试")
+                if project is None:
+                    project = Project(
+                        id=project_id, user_id=uid, name=parsed["project_name"],
+                        start_date=parsed.get("project_start_date"),
+                    )
+                    db.add(project)
+                    await db.flush()
+                    if db.bind.dialect.name == "postgresql":
+                        sequence = await db.scalar(text(
+                            "SELECT pg_get_serial_sequence('projects', 'id')"
+                        ))
+                        if sequence:
+                            current = await db.scalar(text(
+                                "SELECT pg_sequence_last_value(CAST(:sequence AS regclass))"
+                            ), {"sequence": sequence})
+                            if current is None or current < project_id:
+                                await db.execute(text(
+                                    "SELECT setval(CAST(:sequence AS regclass), :value, true)"
+                                ), {"sequence": sequence, "value": project_id})
+
+            folder_id = await _resolve_import_folder(
+                db, uid, project_id, parsed["folder_parts"], create_missing=True,
+            )
+            if parsed["folder_parts"] and folder_id is None:
+                raise _ImportRejected("目录路径无效，或对应目录已删除")
+            db.add(File(
+                user_id=uid, display_name=name, ext=ext.lower(), space=parsed["space"],
+                project_id=project_id, folder_id=folder_id, storage_key=key,
+                size=_fmt_size(info.size), size_bytes=info.size,
+                mime_type=mimetypes.guess_type(fname)[0],
+            ))
+    except _ImportRejected as exc:
+        return False, str(exc)
+    return True, None
 
 
-async def _resolve_import_folder(db, user_id, project_id: int | None, folder_parts: list[str]) -> int | None:
-    """按物理路径逐级解析文件夹，避免嵌套文件误挂到第一级目录。"""
+async def _resolve_import_folder(
+    db, user_id, project_id: int | None, folder_parts: list[str], *, create_missing: bool = False,
+) -> int | None:
+    """按物理路径逐级解析文件夹；孤儿导入可为缺失的活动目录补建元数据。"""
     from app.models import Folder
 
     parent_id = None
-    for name in folder_parts:
+    for index, name in enumerate(folder_parts):
         folder = (await db.execute(select(Folder).where(
             Folder.user_id == user_id,
             Folder.project_id == project_id if project_id is not None else Folder.project_id.is_(None),
@@ -453,9 +517,35 @@ async def _resolve_import_folder(db, user_id, project_id: int | None, folder_par
             Folder.name == name,
             Folder.deleted_at.is_(None),
         ))).scalars().first()
-        if folder is None:
+        if folder is not None:
+            parent_id = folder.id
+            continue
+        if not create_missing:
             return None
-        parent_id = folder.id
+        # 不自动复活软删除目录：它可能包含用户有意删除、但物理清理尚未完成的数据。
+        deleted_folder = (await db.execute(select(Folder.id).where(
+            Folder.user_id == user_id,
+            Folder.project_id == project_id if project_id is not None else Folder.project_id.is_(None),
+            Folder.parent_id == parent_id if parent_id is not None else Folder.parent_id.is_(None),
+            Folder.name == name,
+            Folder.deleted_at.is_not(None),
+        ))).scalars().first()
+        if deleted_folder is not None or any(not part or len(part) > 200 for part in folder_parts):
+            return None
+
+        # 先查询到第一个缺失层级，再以 savepoint 补齐剩余目录；避免文件夹约束错误
+        # 使本次管理操作的外层事务进入失败状态。
+        from app.services.storage.folder_tree import SqlAlchemyFolderTree
+
+        tree = SqlAlchemyFolderTree(db)
+        async with db.begin_nested():
+            for missing_name in folder_parts[index:]:
+                folder = await tree.create(
+                    user_id, name=missing_name, parent_id=parent_id,
+                    project_id=project_id,
+                )
+                parent_id = folder.id
+        break
     return parent_id
 
 
@@ -463,6 +553,20 @@ class RepairRequest(BaseModel):
     action: Literal["delete", "import"]
     keys: list[str]
     confirm: bool = False
+
+
+class GhostRepairRequest(BaseModel):
+    file_ids: list[int]
+    confirm: bool = False
+
+    @field_validator("file_ids")
+    @classmethod
+    def validate_file_ids(cls, value: list[int]) -> list[int]:
+        if not value or len(value) > 1000:
+            raise ValueError("单次最多处理 1000 条文件记录")
+        if any(file_id <= 0 for file_id in value):
+            raise ValueError("文件 ID 必须为正整数")
+        return list(dict.fromkeys(value))
 
 
 class PathMigrationItem(BaseModel):
@@ -493,14 +597,75 @@ async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_d
                 await storage.delete(key)
                 done.append(key)
             else:
-                if await _import_orphan(db, key, storage):
+                imported, reason = await _import_orphan(db, key, storage)
+                if imported:
                     done.append(key)
                 else:
-                    failed.append({"key": key, "error": "无法从路径解析归属"})
+                    failed.append({"key": key, "error": reason or "无法从路径解析归属"})
         except Exception as e:
-            failed.append({"key": key, "error": f"{type(e).__name__}: {e}"[:80]})
+            diag_log("admin.reconcile_storage.repair", e)
+            failed.append({"key": key, "error": f"处理失败（{type(e).__name__}）"})
     await db.commit()
     return {"action": body.action, "done": len(done), "failed": failed, "done_keys": done}
+
+
+def _storage_repair_error(error: Exception) -> str:
+    if isinstance(error, PermissionError):
+        return "权限不足；未更改记录，请检查存储目录权限后重试"
+    if isinstance(error, FileNotFoundError):
+        return "物理文件已不存在，请重新扫描"
+    return f"处理失败（{type(error).__name__}）；记录未更改，请重新扫描后重试"
+
+
+@router.post("/reconcile-storage/ghosts/repair")
+async def repair_ghost_records(body: GhostRepairRequest, db: AsyncSession = Depends(get_db)):
+    """确认物理文件仍缺失后移除 File 记录；不触碰存储对象。"""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="移除幽灵文件记录必须显式确认")
+
+    from app.core import events
+    from app.models import File
+    from app.services.filesync.protocol import record_canonical_file_delete
+    from app.services.storage import get_storage
+
+    storage = get_storage()
+    done: list[int] = []
+    failed: list[dict[str, Any]] = []
+    removed_by_user: dict[Any, list[int]] = {}
+    for file_id in body.file_ids:
+        file = await db.get(File, file_id)  # ownership-exempt: 此路由仅由 Admin 路由依赖保护。
+        if file is None:
+            failed.append({"file_id": file_id, "error": "文件记录已不存在，请重新扫描"})
+            continue
+        if _is_internal_key(file.storage_key):
+            failed.append({"file_id": file_id, "error": "该路径不属于 File 文件库对账范围"})
+            continue
+        try:
+            info = await storage.stat(file.storage_key)
+            if info is not None:
+                failed.append({"file_id": file_id, "error": "物理文件已存在，请重新扫描"})
+                continue
+            async with db.begin_nested():
+                await record_canonical_file_delete(
+                    db, user_id=file.user_id, storage_key=file.storage_key,
+                    entity_id=file.id, version=file.version, change_id=uuid.uuid4().hex,
+                )
+                await db.delete(file)
+                await db.flush()
+            done.append(file_id)
+            removed_by_user.setdefault(file.user_id, []).append(file_id)
+        except Exception as error:
+            failed.append({"file_id": file_id, "error": _storage_repair_error(error)})
+
+    await db.commit()
+    for user_id, file_ids in removed_by_user.items():
+        try:
+            await events.publish(
+                user_id, "files", file_op={"op": "remove", "kind": "file", "ids": file_ids},
+            )
+        except Exception as error:
+            diag_log("admin.reconcile_storage.ghost_cleanup.publish", error)
+    return {"done": done, "failed": failed}
 
 
 @router.get("/reconcile-storage/path-migration")

@@ -180,6 +180,19 @@ async def test_list_keys(storage):
     assert {"u/a/1.txt", "u/a/2.txt"} <= keys
 
 
+async def test_list_keys_propagates_traversal_permission_errors(tmp_path, monkeypatch):
+    storage = LocalStorageBackend(tmp_path)
+
+    def denied_walk(_root, *, onerror):
+        onerror(PermissionError("permission details"))
+        return iter(())
+
+    monkeypatch.setattr(storage_module.os, "walk", denied_walk)
+
+    with pytest.raises(PermissionError):
+        await storage.list_keys()
+
+
 async def test_delete_prefix_scoped(storage):
     await storage.put("user-a/x.txt", b"1")
     await storage.put("user-b/y.txt", b"2")

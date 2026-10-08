@@ -342,10 +342,35 @@ class LocalStorageBackend(StorageBackend):
         import asyncio
 
         def _walk():
-            if not self.root.exists():
+            try:
+                root_stat = self.root.stat()
+            except FileNotFoundError:
                 return []
-            return [p.relative_to(self.root).as_posix()
-                    for p in self.root.rglob("*") if p.is_file()]
+            if not stat.S_ISDIR(root_stat.st_mode):
+                return []
+
+            keys: list[str] = []
+
+            def raise_walk_error(error: OSError) -> None:
+                raise error
+
+            for directory, dirnames, filenames in os.walk(self.root, onerror=raise_walk_error):
+                dirnames[:] = [
+                    name for name in dirnames
+                    if not (Path(directory) / name).is_symlink()
+                ]
+                for filename in filenames:
+                    path = Path(directory) / filename
+                    if path.is_symlink():
+                        continue
+                    try:
+                        file_stat = path.stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        # 并发删除的对象已不属于本次清单。
+                        continue
+                    if stat.S_ISREG(file_stat.st_mode):
+                        keys.append(path.relative_to(self.root).as_posix())
+            return keys
         return await asyncio.to_thread(_walk)
 
     async def list_keys_prefix(
@@ -433,9 +458,12 @@ class LocalStorageBackend(StorageBackend):
     async def stat(self, key: str) -> StorageObjectInfo | None:
         def _st():
             p = self.root / key
-            if not p.is_file():
+            try:
+                s = p.stat()
+            except FileNotFoundError:
                 return None
-            s = p.stat()
+            if not stat.S_ISREG(s.st_mode):
+                return None
             return StorageObjectInfo(size=s.st_size, mtime=s.st_mtime)
         return await asyncio.to_thread(_st)
 
