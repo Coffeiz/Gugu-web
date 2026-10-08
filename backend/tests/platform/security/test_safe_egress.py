@@ -21,6 +21,18 @@ def test_proxy_url_requires_a_separate_auth_field():
         safe_egress.validate_proxy_url("http://proxy.example:3128/path")
 
 
+def test_httpx_proxy_uses_decrypted_auth_without_embedding_it_in_url(monkeypatch):
+    monkeypatch.setattr(safe_egress, "_proxy_auth", lambda _settings: ("proxy-user", "proxy-pass"))
+
+    proxy = safe_egress.build_httpx_proxy(SafeEgressSettings(
+        enabled=True, proxy_url="http://proxy.example:3128",
+    ))
+
+    assert str(proxy.url) == "http://proxy.example:3128"
+    assert proxy.auth == ("proxy-user", "proxy-pass")
+    assert "proxy-pass" not in str(proxy.url)
+
+
 @pytest.mark.asyncio
 async def test_client_classifies_tls_certificate_failures_separately(monkeypatch):
     async def resolve(_self, _url):
