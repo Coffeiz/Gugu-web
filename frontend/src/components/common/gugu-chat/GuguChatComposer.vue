@@ -147,13 +147,13 @@ function insertReferenceChip(reference: ChatReference) {
     .some(item => item.type === reference.type && item.id === reference.id)) return
   let label: string
   if (reference.type === 'folder') {
-    label = filesCache.getFolder(Number(reference.id))?.name ?? `Folder ${reference.id}`
+    label = filesCache.getFolder(Number(reference.id))?.name || reference.label || `Folder ${reference.id}`
   } else if (reference.type === 'project') {
     label = projectStore.projects.find(project => project.id === Number(reference.id))?.name ?? `Project ${reference.id}`
   } else if (reference.type === 'event' || reference.type === 'canvas_note') {
     label = reference.label || `${reference.type === 'event' ? 'Activity' : 'Canvas note'} ${reference.id}`
   } else {
-    label = filesCache.getFile(Number(reference.id))?.displayName ?? `File ${reference.id}`
+    label = filesCache.getFile(Number(reference.id))?.displayName || reference.label || `File ${reference.id}`
   }
   editor.chain().focus('end')
     .insertContent({ type: 'mindRef', attrs: { refType: reference.type, refId: reference.id, label } })
@@ -171,12 +171,15 @@ useRuntimeAction(async action => {
     const node = Number.isInteger(nodeId)
       ? mindStore.canvasItems.find(item => item.nodeId === nodeId)?.node
       : undefined
-    return parseMindCanvasChatReference(node) ?? parseChatRuntimeReference(objectId)
+    const reference = parseMindCanvasChatReference(node) ?? parseChatRuntimeReference(objectId)
+    if (!reference || reference.label.trim()) return reference
+    const nameSelector = reference.type === 'folder' ? '.fd-name, .lr-filename' : '.fc-name, .lr-filename'
+    const nameElement = element?.querySelector<HTMLElement>(nameSelector)
+    const editingName = nameElement?.querySelector<HTMLInputElement>('input')?.value.trim()
+    const sourceLabel = editingName || nameElement?.textContent?.trim()
+    return sourceLabel ? { ...reference, label: sourceLabel } : reference
   }).filter((item): item is ChatReference => item !== null)
   if (!references.length) return
-  if (!filesCache.loaded && references.some(reference => reference.type === 'file' || reference.type === 'folder')) {
-    await filesCache.load().catch(() => {})
-  }
   if (references.some(reference => reference.type === 'project') && !projectStore.projectsLoaded) {
     await projectStore.fetchProjects()
   }

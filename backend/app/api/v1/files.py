@@ -246,6 +246,29 @@ async def file_tree(
     )
 
 
+@router.get("/{fid}", response_model=FileResponse)
+async def get_file(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按 ID 读取单个存活文件，供引用卡片按需加载，避免拉取全量文件库。"""
+    row = (await db.execute(
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(
+            File.id == fid,
+            File.user_id == current_user.id,
+            File.deleted_at.is_(None),
+        )
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    file, project_name, project_color, folder_name = row
+    return to_file_response(file, project_name, color_value(project_color), folder_name)
+
+
 @router.post("/archive", response_model=FileResponse, status_code=201)
 async def create_archive(
     body: ArchiveRequest,
