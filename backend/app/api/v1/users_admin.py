@@ -8,7 +8,11 @@ from typing import Optional
 import calendar
 
 from app.db.session import get_db
-from app.models import User, AgentUsage, File, SecurityEvent, StorageQuotaLedger
+from app.models import User, AgentUsage, SecurityEvent
+from app.services.storage.quota_ledger import (
+    get_file_library_usage_by_user,
+    get_file_record_usage_by_user,
+)
 from app.api.v1.audit_log import write_log
 from pydantic import BaseModel, Field
 
@@ -75,24 +79,10 @@ async def list_users(
 
     from app.core.config import get_settings
 
-    storage_stmt = (
-        select(File.user_id, func.sum(File.size_bytes).label("storage"))
-        .where(File.deleted_at.is_(None))
-        .group_by(File.user_id)
-    )
-    storage_result = await db.execute(storage_stmt)
-    storage_map = {str(row.user_id): row.storage for row in storage_result}
+    storage_map = await get_file_record_usage_by_user(db)
     if get_settings().storage.backend == "local":
-        total_usage_stmt = select(
-            StorageQuotaLedger.user_id,
-            StorageQuotaLedger.used_bytes,
-        ).where(StorageQuotaLedger.category == "file_library")
-        total_usage_result = await db.execute(total_usage_stmt)
-        for row in total_usage_result:
-            uid = str(row.user_id)
-            # Local 账本的 file_library 行是文件库 + 全部可写持久根的总量；
-            # 不能再加 Shell 明细，否则 Workspace 用量会重复计算。
-            storage_map[uid] = int(row.used_bytes or 0)
+        # Local 的 file_library 账本已含所有可写持久根，不能再加 Shell 明细。
+        storage_map.update(await get_file_library_usage_by_user(db))
 
     items = []
     for u in users:

@@ -3,14 +3,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.db.session import get_db
-from app.models import User, UserBot
+from app.models import User
 from app.services.telegram_bot_api import TelegramBotApiError, call, validate_bot_token
+from app.services.telegram_connections import (
+    create_telegram_bot,
+    find_telegram_bot_by_platform_id,
+    get_owned_telegram_bot,
+    get_telegram_bot_for_user,
+    lock_telegram_unique_keys,
+)
 
 router = APIRouter(prefix="/me/telegram/connect", tags=["telegram-connect"])
 
@@ -58,17 +63,6 @@ async def _touch(user_id) -> None:
         diag_log("app.api.telegram_connect.reload_gateway", exc)
 
 
-async def _lock_unique_keys(db: AsyncSession, *keys: str) -> None:
-    """PostgreSQL advisory transaction locks close concurrent Bot-ID upsert races."""
-    bind = db.get_bind()
-    if bind.dialect.name != "postgresql":
-        return
-    for key in sorted(set(keys)):
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"telegram-userbot:{key}"}
-        )
-
-
 @router.post("")
 async def connect(
     body: TelegramTokenIn,
@@ -77,28 +71,20 @@ async def connect(
 ):
     verified = await _verify(body.token)
     platform_id = str(verified["info"]["id"])
-    await _lock_unique_keys(db, platform_id, str(current_user.id))
-    owner_bot = (await db.execute(select(UserBot).where(
-        UserBot.user_id == current_user.id, UserBot.platform == "telegram"
-    ))).scalars().first()
+    await lock_telegram_unique_keys(db, platform_id, str(current_user.id))
+    owner_bot = await get_telegram_bot_for_user(db, current_user.id)
     if owner_bot:
         raise HTTPException(409, "每个咕咕账号只能接入一个 Telegram Bot；请使用替换凭据")
-    duplicate = (await db.execute(select(UserBot).where(
-        UserBot.platform == "telegram", UserBot.app_id == platform_id
-    ))).scalars().first()
+    duplicate = await find_telegram_bot_by_platform_id(db, platform_id)
     if duplicate:
         raise HTTPException(409, "这个 Telegram Bot 已关联其他咕咕账号")
-    bot = UserBot(
+    bot = await create_telegram_bot(
+        db,
         user_id=current_user.id,
-        platform="telegram",
         name=_bot_name(verified["info"]),
-        app_id=platform_id,
-        app_secret=verified["token"],
-        bot_platform_user_id=platform_id,
-        enabled=True,
-        group_chat_enabled=False,
+        platform_id=platform_id,
+        token=verified["token"],
     )
-    db.add(bot)
     await db.commit()
     await db.refresh(bot)
     await _touch(current_user.id)
@@ -112,15 +98,15 @@ async def replace_token(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    bot = await get_owned(db, UserBot, bot_id, current_user.id)
-    if not bot or bot.platform != "telegram":
+    bot = await get_owned_telegram_bot(db, bot_id, current_user.id)
+    if not bot:
         raise HTTPException(404, "Telegram 机器人不存在")
     verified = await _verify(body.token)
     platform_id = str(verified["info"]["id"])
-    await _lock_unique_keys(db, platform_id)
-    duplicate = (await db.execute(select(UserBot).where(
-        UserBot.platform == "telegram", UserBot.app_id == platform_id, UserBot.id != bot.id
-    ))).scalars().first()
+    await lock_telegram_unique_keys(db, platform_id)
+    duplicate = await find_telegram_bot_by_platform_id(
+        db, platform_id, excluding_bot_id=bot.id,
+    )
     if duplicate:
         raise HTTPException(409, "这个 Telegram Bot 已关联其他咕咕账号")
     if platform_id != bot.app_id:
@@ -145,8 +131,8 @@ async def create_binding_code(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    bot = await get_owned(db, UserBot, bot_id, current_user.id)
-    if not bot or bot.platform != "telegram":
+    bot = await get_owned_telegram_bot(db, bot_id, current_user.id)
+    if not bot:
         raise HTTPException(404, "Telegram 机器人不存在")
     if bot.owner_platform_user_id:
         raise HTTPException(409, "Telegram owner 身份已经绑定")

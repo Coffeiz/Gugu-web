@@ -26,6 +26,26 @@ DEFAULT_WORKSPACE_FOLDER_NAME = "default"
 _CATEGORIES = (FILE_LIBRARY, SHELL_PERSISTENT, SHELL_EPHEMERAL)
 
 
+async def get_file_library_usage_by_user(db: AsyncSession) -> dict[str, int]:
+    """返回管理面板使用的文件库与本地持久空间总量。"""
+    rows = (await db.execute(
+        select(StorageQuotaLedger.user_id, StorageQuotaLedger.used_bytes).where(
+            StorageQuotaLedger.category == FILE_LIBRARY,
+        )
+    )).all()
+    return {str(user_id): int(used_bytes or 0) for user_id, used_bytes in rows}
+
+
+async def get_file_record_usage_by_user(db: AsyncSession) -> dict[str, int]:
+    """聚合存活文件记录用量，供非本地存储的管理面板使用。"""
+    rows = (await db.execute(
+        select(File.user_id, func.sum(File.size_bytes)).where(
+            File.deleted_at.is_(None),
+        ).group_by(File.user_id)
+    )).all()
+    return {str(user_id): int(used_bytes or 0) for user_id, used_bytes in rows}
+
+
 def _limits(user: User) -> dict[str, int]:
     settings = get_settings()
     local_storage = getattr(settings.storage, "backend", "local") == "local"

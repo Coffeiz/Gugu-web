@@ -42,6 +42,22 @@ async def test_local_download_budget_includes_workspace_shell_usage_and_preserve
     assert await quota_ledger.get_file_library_download_budget(db, user_a.id, 500) == (0, 0)
 
 
+@pytest.mark.asyncio
+async def test_admin_file_record_usage_sums_live_rows_per_owner(db, user_a, user_b):
+    db.add_all([
+        File(user_id=user_a.id, display_name="第一份", ext="bin", storage_key="a-1", size_bytes=30),
+        File(user_id=user_a.id, display_name="第二份", ext="bin", storage_key="a-2", size_bytes=12),
+        File(user_id=user_a.id, display_name="已删除", ext="bin", storage_key="a-3", size_bytes=90,
+             deleted_at=datetime.now(timezone.utc)),
+        File(user_id=user_b.id, display_name="他人文件", ext="bin", storage_key="b-1", size_bytes=7),
+    ])
+    await db.flush()
+
+    usage = await quota_ledger.get_file_record_usage_by_user(db)
+
+    assert usage == {str(user_a.id): 42, str(user_b.id): 7}
+
+
 def _settings(tmp_path):
     return SimpleNamespace(
         storage=SimpleNamespace(local_path=str(tmp_path), backend="local"),
@@ -152,6 +168,23 @@ async def test_file_library_display_fallback_sums_only_live_file_rows(db, user_a
     await db.flush()
 
     assert await quota_ledger.get_file_library_usage_snapshot(db, user_a.id) == 30
+
+
+@pytest.mark.asyncio
+async def test_admin_storage_usage_map_uses_only_aggregate_file_library_rows(db, user_a):
+    db.add_all([
+        StorageQuotaLedger(
+            user_id=user_a.id, category=quota_ledger.FILE_LIBRARY,
+            used_bytes=1234, limit_bytes=4096,
+        ),
+        StorageQuotaLedger(
+            user_id=user_a.id, category=quota_ledger.SHELL_PERSISTENT,
+            used_bytes=234, limit_bytes=4096,
+        ),
+    ])
+    await db.flush()
+
+    assert await quota_ledger.get_file_library_usage_by_user(db) == {str(user_a.id): 1234}
 
 
 @pytest.mark.asyncio

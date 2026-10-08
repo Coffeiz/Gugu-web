@@ -9,8 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
 from app.db.session import get_db
-from app.models import FileSyncBinding
-from app.services.filesync.admin import admin_resolve_conflict, get_admin_sync_status
+from app.services.filesync.admin import (
+    admin_resolve_conflict,
+    get_admin_binding,
+    get_admin_sync_status,
+    list_admin_issue_bindings,
+)
 from app.services.filesync.jobs import (
     ReconcileRunError,
     enqueue_reconcile_run,
@@ -23,7 +27,6 @@ from app.services.filesync.jobs import (
 from app.services.workspaces import workspace_shell_supported
 from app.core.events import FILESYNC_ADMIN_CHANNEL
 from app.api.v1.live import event_stream_response
-from sqlalchemy import select
 
 router = APIRouter(prefix="/admin/filesync", tags=["admin"])
 
@@ -56,9 +59,7 @@ async def sync_status(
 @router.post("/bindings/{binding_id}/dry-run")
 async def binding_dry_run(binding_id: int, db: AsyncSession = Depends(get_db)):
     try:
-        binding = await db.scalar(select(FileSyncBinding).where(
-            FileSyncBinding.id == binding_id,
-        ))
+        binding = await get_admin_binding(db, binding_id)
         if binding is None:
             raise LookupError("同步绑定不存在")
         run = await enqueue_reconcile_run(
@@ -86,9 +87,7 @@ async def binding_reconcile(
     if body.allow_delete:
         raise HTTPException(status_code=400, detail="删除同步对象请使用逐项恢复入口")
     try:
-        binding = await db.scalar(select(FileSyncBinding).where(
-            FileSyncBinding.id == binding_id,
-        ))
+        binding = await get_admin_binding(db, binding_id)
         if binding is None:
             raise LookupError("同步绑定不存在")
         run = await enqueue_reconcile_run(
@@ -130,16 +129,7 @@ async def reconcile_issue_bindings(
         or item["needsReconcile"]
         or item["watcherStatus"] not in {"ready", "inactive", "unknown"}
     ]
-    bindings = list((await db.scalars(
-        select(FileSyncBinding)
-        .where(
-            FileSyncBinding.id.in_(issue_binding_ids),
-            FileSyncBinding.source == "local_directory",
-            FileSyncBinding.status == "active",
-            FileSyncBinding.mode != "mirror_out",
-        )
-        .order_by(FileSyncBinding.id)
-    )).all())
+    bindings = await list_admin_issue_bindings(db, issue_binding_ids)
     result = {
         "eligible": len(bindings),
         "queued": 0,
@@ -181,9 +171,7 @@ async def binding_initialize(
         raise HTTPException(status_code=400, detail="初始化必须显式确认")
     if body.allow_delete:
         raise HTTPException(status_code=400, detail="初始化不能删除文件库记录")
-    binding = await db.scalar(select(FileSyncBinding).where(
-        FileSyncBinding.id == binding_id,
-    ))
+    binding = await get_admin_binding(db, binding_id)
     if binding is None:
         raise HTTPException(status_code=404, detail="同步绑定不存在")
     try:

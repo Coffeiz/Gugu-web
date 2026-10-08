@@ -97,6 +97,20 @@ async def list_all_file_rows(db: AsyncSession, user_id: int):
     return result.all()
 
 
+async def get_file_detail_row(db: AsyncSession, user_id, file_id: int):
+    """读取单个存活文件及其项目/文件夹展示信息。"""
+    return (await db.execute(
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(
+            File.id == file_id,
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+        )
+    )).first()
+
+
 async def get_file_summary(db: AsyncSession, user_id: int, recent_limit: int):
     """读取轻量总数和有限的最近文件，不物化完整文件库。"""
     total_count = (await db.execute(
@@ -318,6 +332,13 @@ async def count_user_files(
         root_only=root_only,
     )
     return (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+
+
+async def count_file_rows_for_user(db: AsyncSession, user_id) -> int:
+    """统计某用户所有 File 行，包含软删除项，用于存储完整性核对。"""
+    return int((await db.execute(
+        select(func.count(File.id)).where(File.user_id == user_id)
+    )).scalar_one())
 
 
 async def get_user_file(db: AsyncSession, user_id, file_id):

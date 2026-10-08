@@ -19,7 +19,7 @@ from app.schemas import (
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
 from app.services.files.browser import (
-    get_file_summary, get_file_tree_rows, get_file_version_snapshot, get_storage_usage,
+    get_file_detail_row, get_file_summary, get_file_tree_rows, get_file_version_snapshot, get_storage_usage,
     list_existing_file_rows, list_file_rows,
 )
 from app.services.storage.quota_ledger import get_file_library_usage_snapshot
@@ -253,16 +253,7 @@ async def get_file(
     db: AsyncSession = Depends(get_db),
 ):
     """按 ID 读取单个存活文件，供引用卡片按需加载，避免拉取全量文件库。"""
-    row = (await db.execute(
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(
-            File.id == fid,
-            File.user_id == current_user.id,
-            File.deleted_at.is_(None),
-        )
-    )).first()
+    row = await get_file_detail_row(db, current_user.id, fid)
     if row is None:
         raise HTTPException(status_code=404, detail="文件不存在")
     file, project_name, project_color, folder_name = row

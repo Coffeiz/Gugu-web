@@ -25,6 +25,24 @@ from app.services.filesync.protocol import FileSyncStatus, is_file_sync_enabled
 from app.services.workspaces import resolve_workspace_root, workspace_shell_supported
 
 
+async def get_admin_binding(db: AsyncSession, binding_id: int) -> FileSyncBinding | None:
+    """按管理端绑定 ID 读取同步绑定。"""
+    return await db.get(FileSyncBinding, binding_id)
+
+
+async def list_admin_issue_bindings(db: AsyncSession, binding_ids: list[int]) -> list[FileSyncBinding]:
+    """列出仍处于可修复状态的本地双向绑定。"""
+    if not binding_ids:
+        return []
+    query = select(FileSyncBinding).where(
+        FileSyncBinding.id.in_(binding_ids),
+        FileSyncBinding.source == "local_directory",
+        FileSyncBinding.status == "active",
+        FileSyncBinding.mode != "mirror_out",
+    ).order_by(FileSyncBinding.id)
+    return list((await db.scalars(query)).all())
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 

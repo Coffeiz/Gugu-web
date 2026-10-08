@@ -16,7 +16,7 @@ from starlette.datastructures import Headers
 
 from app.api.v1 import files as files_api
 from app.core.errors import Invalid, NotFound
-from app.models import File, Project, UndoOperation
+from app.models import File, Folder, Project, UndoOperation
 from app.schemas import FileCopyBody, FileUpdate
 from app.services.storage import LocalStorageBackend
 
@@ -92,6 +92,32 @@ async def test_upload_project_shapes_response(db, user_a):
 async def test_upload_project_not_found(db, user_a):
     with pytest.raises(Invalid):
         await _do_upload(db, user_a, b"x", "a.txt", space="project", project_id=999)
+
+
+async def test_file_detail_returns_related_labels_and_hides_other_users_rows(db, user_a, user_b):
+    project = Project(user_id=user_a.id, name="合成项目", color="cyan", start_date="2026-10-01")
+    db.add(project)
+    await db.flush()
+    folder = Folder(user_id=user_a.id, project_id=project.id, name="资料")
+    owned = File(
+        user_id=user_a.id, display_name="说明", ext="MD", space="project",
+        project_id=project.id, folder=folder, size="12 B", size_bytes=12,
+        storage_key=f"{user_a.id}/项目文件/说明.md",
+    )
+    private = File(
+        user_id=user_b.id, display_name="私有", ext="TXT", space="personal",
+        size="1 B", size_bytes=1, storage_key=f"{user_b.id}/个人文件/私有.txt",
+    )
+    db.add_all([owned, private])
+    await db.commit()
+    await db.refresh(owned)
+
+    response = await files_api.get_file(owned.id, current_user=user_a, db=db)
+
+    assert (response.project_name, response.folder_name, response.size_bytes) == ("合成项目", "资料", 12)
+    with pytest.raises(HTTPException) as raised:
+        await files_api.get_file(private.id, current_user=user_a, db=db)
+    assert raised.value.status_code == 404
 
 
 async def test_file_summary_returns_total_count_and_only_requested_recent_rows(db, user_a):

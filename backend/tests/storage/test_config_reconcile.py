@@ -6,6 +6,7 @@ from app.api.v1 import config as config_api
 from app.models import File, Folder, Project
 from app.services import storage as storage_module
 from app.services.storage import LocalStorageBackend
+from app.services.storage import reconciliation
 
 
 def test_reconcile_skips_runtime_managed_user_namespaces(user_a):
@@ -48,7 +49,7 @@ async def test_import_orphan_uses_stat_and_rejects_unresolved_project(db, user_a
         raise AssertionError("导入孤儿文件不应把整个对象读进内存")
 
     monkeypatch.setattr(storage, "get", forbidden_get)
-    assert await config_api._import_orphan(db, key, storage) == (
+    assert await reconciliation.import_orphan_file(db, key, storage) == (
         False, "所属项目不存在或不属于文件所有者",
     )
 
@@ -61,9 +62,9 @@ async def test_import_orphan_restores_missing_project_from_original_path(
     key = f"{user_a.id}/项目文件/2026/10/已丢失项目 #{project_id}/目录/文件.md"
     await storage.put(key, b"orphan content")
 
-    assert config_api._parse_path_migration_key(key)["project_name"] == "已丢失项目"
-    assert config_api._parse_path_migration_key(key)["project_start_date"] == "2026-10-01"
-    assert await config_api._import_orphan(db, key, storage) == (True, None)
+    assert reconciliation.parse_path_migration_key(key)["project_name"] == "已丢失项目"
+    assert reconciliation.parse_path_migration_key(key)["project_start_date"] == "2026-10-01"
+    assert await reconciliation.import_orphan_file(db, key, storage) == (True, None)
     await db.commit()
 
     project = await db.get(Project, project_id)
@@ -87,7 +88,7 @@ async def test_import_orphan_reuses_recovered_project_for_sibling_files(db, user
     ]
     for key in keys:
         await storage.put(key, b"orphan content")
-        assert await config_api._import_orphan(db, key, storage) == (True, None)
+        assert await reconciliation.import_orphan_file(db, key, storage) == (True, None)
     await db.commit()
 
     projects = (await db.execute(select(Project).where(Project.id == project_id))).scalars().all()
@@ -107,7 +108,7 @@ async def test_import_orphan_rolls_back_project_when_path_folder_is_invalid(db, 
     )
     await storage.put(key, b"orphan content")
 
-    assert await config_api._import_orphan(db, key, storage) == (
+    assert await reconciliation.import_orphan_file(db, key, storage) == (
         False, "目录路径无效，或对应目录已删除",
     )
     await db.commit()
@@ -125,7 +126,7 @@ async def test_import_orphan_creates_owned_file_with_stat_size(db, user_a, tmp_p
         raise AssertionError("导入孤儿文件不应把整个对象读进内存")
 
     monkeypatch.setattr(storage, "get", forbidden_get)
-    assert await config_api._import_orphan(db, key, storage) == (True, None)
+    assert await reconciliation.import_orphan_file(db, key, storage) == (True, None)
     await db.commit()
     row = (await db.execute(select(File).where(File.storage_key == key))).scalars().one()
     assert row.user_id == user_a.id
@@ -147,7 +148,7 @@ async def test_import_orphan_recreates_missing_nested_project_folders(
     await storage.put(key, b"orphan content")
     monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
 
-    assert await config_api._import_orphan(db, key, storage) == (True, None)
+    assert await reconciliation.import_orphan_file(db, key, storage) == (True, None)
     await db.commit()
 
     folders = (await db.execute(
@@ -182,7 +183,7 @@ async def test_import_orphan_does_not_recreate_a_soft_deleted_folder(
     await storage.put(key, b"orphan content")
     monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
 
-    assert await config_api._import_orphan(db, key, storage) == (
+    assert await reconciliation.import_orphan_file(db, key, storage) == (
         False, "目录路径无效，或对应目录已删除",
     )
     await db.commit()
@@ -207,7 +208,7 @@ async def test_import_orphan_rejects_soft_deleted_project(db, user_a, tmp_path):
     key = f"{user_a.id}/项目文件/2026/10/回收站项目 #{project.id}/文件.md"
     await storage.put(key, b"orphan content")
 
-    assert await config_api._import_orphan(db, key, storage) == (
+    assert await reconciliation.import_orphan_file(db, key, storage) == (
         False, "所属项目在回收站中，请先恢复项目后重试",
     )
 
