@@ -253,6 +253,7 @@ class UserSkill(Base):
     body:              Mapped[str] = mapped_column(Text)
     related_tools:     Mapped[list] = mapped_column(JSON, default=list)
     source:            Mapped[str] = mapped_column(String(16), default="user")
+    managed_by:        Mapped[str] = mapped_column(String(16), default="user", server_default="user")
     enabled:           Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     content_digest:    Mapped[str] = mapped_column(String(64))
     created_at:        Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)

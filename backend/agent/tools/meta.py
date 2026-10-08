@@ -17,7 +17,7 @@ from agent.tools.tool_contract import invalid_tool_call_payload, normalize_tool_
 async def _get_tool_schema(db, user_id, args: dict):
     """获取本轮需要的业务工具 Schema；只读，不执行任何业务操作。"""
     from agent.im import imctx
-    from agent.im.permissions import can_use_tool
+    from agent.im.permissions import SKILL_MANAGEMENT_TOOLS, can_use_tool
     from agent.tools import registry
     from agent.tools.base import current_dispatch_tool_snapshot
 
@@ -42,7 +42,9 @@ async def _get_tool_schema(db, user_id, args: dict):
         for name in candidates:
             if name in declared or len(declared) >= 12:
                 continue
-            if tool_snapshot.get(name) is None or not can_use_tool(name, allowed):
+            if tool_snapshot.get(name) is None or (
+                name not in SKILL_MANAGEMENT_TOOLS and not can_use_tool(name, allowed)
+            ):
                 continue
             declared.append(name)
             accepted = True

@@ -217,10 +217,15 @@ def test_catalog_routes_user_skill_creation_to_create_skill():
         )},
         skills={},
     )
-    block = catalog_block(snapshot)
-    assert "创建用户自定义技能" in block
+    block = catalog_block(snapshot, kind="skill")
+    assert "用户明确要求保存、创建或修改" in block
+    assert "managed_by=user" in block
+    assert "managed_by=assistant" in block
+    assert "稳定、反复出现的工作流程" in block
+    assert "至少重复出现两次" in block
+    assert "一次性任务" in block
+    assert "关联工具只是流程说明和使用建议，不会授予工具权限" in block
     assert "不要把 `create_skill` 误当成 `create_project`" in block
-    assert "related_tools 使用空数组 []" in block
 
 
 def test_skill_management_tools_are_registered_on_demand_not_in_meta_schema():
@@ -264,15 +269,20 @@ def test_skill_management_is_discoverable_without_being_a_provider_tool():
 
 @pytest.mark.anyio
 async def test_get_tool_schema_can_discover_skill_management_tools_on_demand():
+    from agent.im import imctx
     from agent.tools.meta import _get_tool_schema
 
-    result = await _get_tool_schema(None, None, {
-        "tools": ["list_skills", "create_skill", "update_skill", "delete_skill"],
-    })
+    imctx.set_im("qq", "message-1", "bot-1", "group-1", allowed_tool_names=[])
+    try:
+        result = await _get_tool_schema(None, None, {
+            "tools": ["list_skills", "create_skill", "update_skill", "delete_skill", "http_get"],
+        })
+    finally:
+        imctx.clear()
 
     assert result == {
         "tool_schemas": ["list_skills", "create_skill", "update_skill", "delete_skill"],
-        "rejected": [],
+        "rejected": ["http_get"],
     }
 
 

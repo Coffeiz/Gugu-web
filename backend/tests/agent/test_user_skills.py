@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import select
 
 from agent.capabilities.errors import CapabilityRegistrationError
@@ -10,7 +9,7 @@ from agent.capabilities.skill_registry import SkillCapabilityRegistry, validate_
 from agent.tools import registry as tool_registry
 from agent.tools.skill_management import _create_skill, _list_skills
 from agent.tools.meta import _use_skill
-from agent.interactions.confirmations import confirmation_payload, redeem_confirmation
+from agent.interactions.confirmations import confirmation_payload
 from agent.tools.base import Tool, reset_dispatch_session, set_dispatch_session
 from app.models import UserSkill
 
@@ -51,15 +50,12 @@ def test_user_skill_validator_rejects_invalid_fields(user_a, field, value):
 @pytest.mark.asyncio
 async def test_user_skill_is_owned_and_only_enabled_metadata_is_exposed(db, user_a, user_b):
     registry = SkillCapabilityRegistry()
-    allowed = set(tool_registry._tools)
-    await registry.create_user_skill(db, user_a.id, allowed_tool_names=allowed, **_payload())
+    await registry.create_user_skill(db, user_a.id, **_payload())
     await registry.create_user_skill(
-        db, user_b.id, allowed_tool_names=allowed,
-        **_payload(slug="other-briefing", name="另一份简报"),
+        db, user_b.id, **_payload(slug="other-briefing", name="另一份简报"),
     )
     hidden = await registry.create_user_skill(
-        db, user_a.id, allowed_tool_names=allowed,
-        **_payload(slug="disabled-briefing", name="停用简报"),
+        db, user_a.id, **_payload(slug="disabled-briefing", name="停用简报"),
     )
     hidden.enabled = False
     await db.commit()
@@ -72,18 +68,15 @@ async def test_user_skill_is_owned_and_only_enabled_metadata_is_exposed(db, user
 @pytest.mark.asyncio
 async def test_list_skills_returns_only_current_users_metadata_without_bodies(db, user_a, user_b):
     registry = SkillCapabilityRegistry()
-    allowed = set(tool_registry._tools)
     disabled = await registry.create_user_skill(
-        db, user_a.id, allowed_tool_names=allowed, **_payload(name="停用简报"),
+        db, user_a.id, **_payload(name="停用简报"),
     )
     await registry.create_user_skill(
-        db, user_b.id, allowed_tool_names=allowed,
-        **_payload(slug="private-briefing", name="其他用户的简报"),
+        db, user_b.id, **_payload(slug="private-briefing", name="其他用户的简报"),
     )
     disabled.enabled = False
     await registry.create_user_skill(
-        db, user_a.id, allowed_tool_names=allowed,
-        **_payload(slug="weekly-review", name="每周复盘"),
+        db, user_a.id, **_payload(slug="weekly-review", name="每周复盘"),
     )
     await db.commit()
 
@@ -111,27 +104,23 @@ async def test_list_skills_requires_account_context():
 @pytest.mark.asyncio
 async def test_user_skill_rejects_unknown_tool_and_duplicate_slug(db, user_a):
     registry = SkillCapabilityRegistry()
-    allowed = set(tool_registry._tools)
     with pytest.raises(CapabilityRegistrationError, match="未知工具"):
         await registry.create_user_skill(
-            db, user_a.id, allowed_tool_names=allowed,
-            **_payload(related_tools=["does-not-exist"]),
+            db, user_a.id, **_payload(related_tools=["does-not-exist"]),
         )
-    with pytest.raises(CapabilityRegistrationError, match="不可用"):
-        await registry.create_user_skill(
-            db, user_a.id, allowed_tool_names=set(), **_payload(),
-        )
-    await registry.create_user_skill(db, user_a.id, allowed_tool_names=allowed, **_payload())
+    # 工具关联只描述流程，不依赖当前会话权限，也不授予调用权。
+    row = await registry.create_user_skill(db, user_a.id, **_payload())
+    assert row.related_tools == ["http_get"]
     with pytest.raises(CapabilityRegistrationError, match="同 slug"):
         await registry.create_user_skill(
-            db, user_a.id, allowed_tool_names=allowed, **_payload(name="另一个晨报"),
+            db, user_a.id, **_payload(name="另一个晨报"),
         )
 
 
 @pytest.mark.asyncio
 async def test_user_skill_is_merged_into_user_capability_index(db, user_a):
     await SkillCapabilityRegistry().create_user_skill(
-        db, user_a.id, allowed_tool_names=set(tool_registry._tools), **_payload(),
+        db, user_a.id, **_payload(),
     )
     index = await CapabilityIndex.from_registries_for_user(db, user_a.id)
     assert "morning-briefing" in index._skills
@@ -148,7 +137,7 @@ async def test_user_skill_is_merged_into_user_capability_index(db, user_a):
 async def test_use_skill_loads_owned_body_and_refreshes_digest(db, user_a):
     registry = SkillCapabilityRegistry()
     row = await registry.create_user_skill(
-        db, user_a.id, allowed_tool_names=set(tool_registry._tools), **_payload(),
+        db, user_a.id, **_payload(),
     )
     first = await _use_skill(db, user_a.id, {"name": row.slug})
     assert first["content"] == row.body
@@ -168,8 +157,7 @@ async def test_use_skill_loads_owned_body_and_refreshes_digest(db, user_a):
     assert already_loaded["already_loaded"] is True
 
     row = await registry.update_user_skill(
-        db, user_a.id, row.slug, allowed_tool_names=set(tool_registry._tools),
-        body="更新后的用户 Skill 正文。",
+        db, user_a.id, row.slug, body="更新后的用户 Skill 正文。",
     )
     dispatch_token = set_dispatch_session(
         None, skill_state=loaded_state,
@@ -194,46 +182,57 @@ async def test_create_skill_adapter_uses_registry_and_returns_structured_result(
         "description_short": "把当天事项整理成复盘清单",
         "related_tools": [],
         "body": "按完成、阻塞和下一步三个部分输出。",
+        "managed_by": "user",
     }
-    blocked = await _create_skill(db, user_a.id, args)
-    payload = confirmation_payload(blocked)
-    assert payload is not None
-    assert redeem_confirmation(user_a.id, payload["confirm_code"]) == 5
     result = await _create_skill(db, user_a.id, args)
     assert result["success"] is True
     assert result["skill"]["slug"].startswith("user-skill-")
+    assert result["skill"]["managed_by"] == "user"
 
 
 @pytest.mark.asyncio
-async def test_create_skill_requires_confirmation_before_persisting(db, user_a):
-    """创建 Skill 必须先进入统一确认门，不能只因关联工具是只读工具就直接落库。"""
-    args = {
-        "name": "带确认的复盘",
-        "description_short": "保存复盘方法",
-        "related_tools": ["http_get"],
-        "body": "先收集资料，再整理结论。",
-    }
-    blocked = await _create_skill(db, user_a.id, args)
-    payload = confirmation_payload(blocked)
-    assert payload is not None
-    assert payload["status"] == "waiting_confirmation"
-    assert payload["confirm_code"]
-    assert await db.scalar(select(UserSkill).where(UserSkill.owner_id == user_a.id)) is None
-
-    assert redeem_confirmation(user_a.id, payload["confirm_code"]) == 5
-    created = await _create_skill(db, user_a.id, args)
-    assert created["success"] is True
-
-
 @pytest.mark.asyncio
-async def test_create_skill_adapter_rejects_unavailable_tool(db, user_a):
+async def test_create_skill_adapter_rejects_unknown_tool_reference(db, user_a):
     result = await _create_skill(db, user_a.id, {
         "name": "受限技能",
         "description_short": "不应关联未授权工具",
         "related_tools": ["does-not-exist"],
         "body": "只是一段指导文本。",
+        "managed_by": "assistant",
     })
     assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_skill_manager_controls_agent_delete_confirmation(db, user_a):
+    from agent.tools.skill_management import _delete_skill
+
+    registry = SkillCapabilityRegistry()
+    user_skill = await registry.create_user_skill(db, user_a.id, **_payload())
+    await db.commit()
+    blocked = await _delete_skill(db, user_a.id, {"slug": user_skill.slug})
+    confirmation = confirmation_payload(blocked)
+    assert confirmation is not None
+    assert await db.scalar(select(UserSkill).where(UserSkill.slug == user_skill.slug)) is not None
+
+    assistant_skill = await registry.create_user_skill(
+        db, user_a.id,
+        **_payload(slug="assistant-routine", name="咕咕整理的流程", managed_by="assistant"),
+    )
+    await db.commit()
+    deleted = await _delete_skill(db, user_a.id, {"slug": assistant_skill.slug})
+    assert deleted["success"] is True
+    assert deleted["_confirm_gate_authorized"] == "confirmation_gate"
+    assert await db.scalar(select(UserSkill).where(UserSkill.slug == assistant_skill.slug)) is None
+
+
+def test_skill_creation_is_not_permission_or_confirmation_gated():
+    from agent.tools.skill_management import SKILL_MANAGEMENT_TOOLS
+
+    tools = {tool.name: tool for tool in SKILL_MANAGEMENT_TOOLS}
+    assert tools["create_skill"].requires_confirmation is False
+    assert tools["create_skill"].mutates is True
+    assert tools["create_skill"].input_schema["properties"]["managed_by"]["enum"] == ["user", "assistant"]
 
 
 def _mcp_tool(name="mcp_notes_search"):
@@ -299,6 +298,7 @@ async def test_skill_api_accepts_active_mcp_and_preserves_link_while_disabled(db
     )
     created = await user_skills.create_skill(payload, user_a, db)
     assert created["related_tools"] == ["mcp_notes_search"]
+    assert created["managed_by"] == "user"
 
     state.enabled = False
     updated = await user_skills.update_skill(
@@ -308,20 +308,38 @@ async def test_skill_api_accepts_active_mcp_and_preserves_link_while_disabled(db
     )
     assert updated["name"] == "更新名称"
     assert updated["related_tools"] == ["mcp_notes_search"]
-    with pytest.raises(HTTPException) as exc_info:
-        await user_skills.update_skill(
-            "mcp-skill",
-            user_skills.UserSkillPatch(related_tools=["mcp_notes_search", "mcp_unavailable_tool"]),
-            user_a, db,
-        )
-    assert exc_info.value.status_code == 422
+    assert updated["managed_by"] == "user"
+    updated = await user_skills.update_skill(
+        "mcp-skill",
+        user_skills.UserSkillPatch(related_tools=["mcp_notes_search", "mcp_unavailable_tool"]),
+        user_a, db,
+    )
+    assert updated["related_tools"] == ["mcp_notes_search", "mcp_unavailable_tool"]
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_takes_over_assistant_managed_skill(db, user_a):
+    row = await SkillCapabilityRegistry().create_user_skill(
+        db, user_a.id,
+        **_payload(slug="assistant-routine", name="咕咕整理的流程", managed_by="assistant"),
+    )
+    await db.commit()
+
+    from app.api.v1 import user_skills
+    updated = await user_skills.update_skill(
+        row.slug,
+        user_skills.UserSkillPatch(description_short="用户接管后的描述"),
+        user_a, db,
+    )
+    assert updated["description_short"] == "用户接管后的描述"
+    assert updated["managed_by"] == "user"
 
 
 @pytest.mark.asyncio
 async def test_skill_mcp_related_tools_are_only_injected_when_dynamic_tool_is_available(db, user_a):
     tool = _mcp_tool()
     row = await SkillCapabilityRegistry().create_user_skill(
-        db, user_a.id, allowed_tool_names={tool.name}, dynamic_tools=[tool],
+        db, user_a.id, dynamic_tools=[tool],
         **_payload(slug="mcp-skill", related_tools=[tool.name]),
     )
     await db.commit()
@@ -336,7 +354,7 @@ async def test_skill_mcp_related_tools_are_only_injected_when_dynamic_tool_is_av
 
 
 @pytest.mark.asyncio
-async def test_agent_skill_creation_accepts_only_mcp_tools_in_current_run_snapshot(db, user_a):
+async def test_agent_skill_creation_can_reference_mcp_tools_without_permission_grant(db, user_a):
     tool = _mcp_tool()
     snapshot = tool_registry.snapshot_with_extras([tool])
     token = set_dispatch_session(None, tool_snapshot=snapshot)
@@ -345,13 +363,11 @@ async def test_agent_skill_creation_accepts_only_mcp_tools_in_current_run_snapsh
             "slug": "mcp-agent-skill", "name": "MCP 技能",
             "description_short": "通过 MCP 搜索笔记",
             "related_tools": [tool.name], "body": "搜索相关笔记并总结。",
+            "managed_by": "assistant",
         }
-        blocked = await _create_skill(db, user_a.id, args)
-        confirmation = confirmation_payload(blocked)
-        assert confirmation is not None
-        redeem_confirmation(user_a.id, confirmation["confirm_code"])
         created = await _create_skill(db, user_a.id, args)
         assert created["success"] is True
         assert created["skill"]["related_tools"] == [tool.name]
+        assert created["skill"]["managed_by"] == "assistant"
     finally:
         reset_dispatch_session(token)

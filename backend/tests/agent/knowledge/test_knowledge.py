@@ -313,13 +313,15 @@ def test_knowledge_reflection_limits_candidates_and_validates_operations():
     assert candidate_request({"knowledge_candidate": {"should_reflect": "true", "query": "规则"}}) == (False, "")
 
 
-def test_knowledge_reflection_prompt_covers_tool_and_person_knowledge():
+def test_knowledge_reflection_routes_operational_workflows_to_skills():
     from agent.knowledge.reflection import load_prompt
 
     prompt = load_prompt()
-    assert "工具使用与效率经验" in prompt
+    assert "Knowledge 主要回答“什么是事实、已确认的约定是什么”" in prompt
+    assert "Skill 回答“遇到一类任务时如何操作”" in prompt
+    assert "可复用操作流程、工具使用技巧" in prompt
+    assert "应在 Knowledge 输出中返回 `ignore`" in prompt
     assert "人物与关系知识" in prompt
-    assert "工具调用失败本身不值得保存" in prompt
     assert "不同人物使用能区分主体的 `topic`" in prompt
     assert "高风险个人信息" in prompt
     assert '"keywords"' in prompt

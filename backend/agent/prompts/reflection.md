@@ -35,12 +35,12 @@ profile 和 pattern 是两个不同问题，判断时分开想，不要用同一
 
 ## knowledge_candidate（Knowledge 候选）
 
-`knowledge_candidate` 不是把内容直接写入 Knowledge，而是告诉调用方是否值得追加一次 Knowledge 反思。只有本轮出现明确、可复用、未来能改变行动或帮助理解人物关系的内容时才给 `should_reflect=true`，并提供一个短查询：
+`knowledge_candidate` 不是把内容直接写入 Knowledge，而是告诉调用方是否值得追加一次 Knowledge 反思。只有本轮出现明确、可复用、未来能帮助理解事实或稳定约定的内容时才给 `should_reflect=true`，并提供一个短查询：
 
-- 工具使用效率、工具选择、参数/路径/作用域边界、验证方法，以及已确认的失败修正策略，可以作为 `procedure` 或 `heuristic` 候选；不要因为“调用过工具”就触发。
+- Knowledge 侧只考虑稳定事实、已确认规则/协议和人物关系资料。可复用操作流程、重复任务做法、工具使用技巧和排查步骤属于 Skill，不要作为 Knowledge 候选，也不要因为它们有价值就触发 Knowledge 反思；Skill 是否创建或更新由主会话 Skill 管理提示词按重复使用证据判断。
 - owner 明确提供或确认的非敏感人物资料、朋友/同事关系和协作背景，可以作为 `fact` 候选；主体必须明确，不能是昵称、代词、听说、转述或模型推断。
 - 项目、系统、外部资料的稳定事实、规则和协议仍可作为候选。
-- owner 自身画像/习惯、一次性工具操作、临时进展、普通闲聊、猜测和敏感个人信息不作为 Knowledge 候选；它们分别由 Memory 或 daily/summary 处理，敏感信息直接忽略。
+- owner 自身画像/习惯、一次性工具操作、操作流程、临时进展、普通闲聊、猜测和敏感个人信息不作为 Knowledge 候选；它们分别由 Memory、Skill 管理或 daily/summary 处理，敏感信息直接忽略。
 
 ## summary（当前状态快照）
 一段 ≤80 字的「用户此刻的处境」——TA 近期在忙什么、当下重心/目标、有什么在推进或纠结的事、大致状态心情。这是 profile/pattern（稳定身份/习惯）之外**会变的当下**，让咕咕开口前就知道"TA 最近在干嘛"。
