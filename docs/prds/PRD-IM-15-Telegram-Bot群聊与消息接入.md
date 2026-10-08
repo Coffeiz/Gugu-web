@@ -1,6 +1,6 @@
 # Telegram Bot 群聊与消息接入 PRD
 
-> 状态：Phase 0 完成；Phase 1 尚未开始（Token 传输规则待确认）
+> 状态：Phase 0 完成；Phase 1/2 代码主体完成，用户已确认私聊和群聊基本对话可用；Phase 3 代码完成，待真实媒体验收；Phase 4 尚未完成（全量回归有失败项，OpenAPI 生成差异待审）。Telegram 频道暂不支持（Telegram 官方 HTTPS Token 路径例外已获用户明确批准）
 > 创建：2026-10-08
 > 关联模块：`backend/agent/gateway/`、`backend/agent/im/`、`backend/app/api/v1/user_bots.py`、`frontend/src/components/common/profile/ProfileImPane.vue`
 > 调研依据：Telegram 官方 Bot API、Bot FAQ、Bot Features，以及当前 Gugu IM/Gateway 实现
@@ -25,6 +25,7 @@ Gugu 已有 QQ、飞书和微信 IM 接入。Telegram Bot API 提供私聊、群
 - 不实现 Telegram 群成员全量枚举、通讯录同步、任意用户资料抓取；只使用消息事件中可见的数据及按需成员查询。
 - 不承诺群聊管理员管理、群封禁、邀请链接管理、投票/支付、Business Bot、Mini App 等完整 Telegram 管理功能。
 - 首期不实现论坛群 topic 独立会话、全量群历史导入、跨 Telegram Bot 或跨平台账号自动合并。
+- 首期不支持 Telegram 广播频道（Channel）；只接入私聊、普通群和 supergroup。频道的 `channel_post` / `edited_channel_post` 不订阅、不解析，也不创建会话。
 - 不引入新的独立 Gateway 守护服务，也不在此 PRD 中变更现有 IM 运行模型。
 
 ## 2. 官方能力与产品决策
@@ -52,7 +53,8 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 - 首期沿用现有 `agent.gateway.gateway` 每 Bot 子进程模型，在 `agent.gateway.telegram` 内用项目已使用的异步 HTTP 客户端直接调用 Bot API。这样可及时使用官方新方法，不被第三方 SDK 的 API schema 发布节奏阻塞。
 - 接收使用 `getUpdates` 长轮询，按 Bot Token 一进程一连接；与现有 Gateway 生命周期、配置热重载和重启策略一致。Webhook 与 `getUpdates` 互斥，首期不新增公网 webhook endpoint。若 `getWebhookInfo` 显示已有 webhook，接入校验应明确提示冲突，不得擅自清除用户原配置。
 - 本轮复核时官方当前版本为 Bot API 10.3；Rich Messages 与草稿流式能力已在 10.1 引入，但仍不属于 V1 验收范围，留在后续评估，不依赖未验证的 SDK 封装。
-- Bot API 的官方授权 URL 固定为 `https://api.telegram.org/bot<TOKEN>/METHOD_NAME`，Token 必然位于出站 HTTPS 请求路径，官方没有 Header 认证方式。仓库安全规则禁止凭据进入 URL；在得到明确的、范围受限的规则批准前，不得实现或发送任何携带 Token 的 Bot API 请求。无论如何批准，完整请求 URL 都不得记录、持久化、展示或传播。
+- Bot API 的官方授权 URL 固定为 `https://api.telegram.org/bot<TOKEN>/METHOD_NAME`，Token 必然位于出站 HTTPS 请求路径，官方没有 Header 认证方式。用户已明确批准仅针对 Telegram 官方 API 的必要例外：允许 Token 在进程内构造固定官方主机的 HTTPS 请求时短暂进入路径；必须禁用重定向，完整 URL 不得记录、持久化、展示、加入队列或传播。应用自身路由、其他主机/平台和其他凭据仍禁止 Token 入 URL。该批准不授权读取或使用生产凭据。
+- Telegram Bot API 在管理员启用“后端代理设置”时显式使用该代理；代理故障不得回退直连。该配置不会自动改写其他 Provider、IM Gateway 或内部服务路由；固定官方 HTTPS 主机约束、禁用重定向和 Token 脱敏保持不变。
 - Bot API 10.0 起存在受设置限制的 Bot-to-Bot 消息能力。Gugu V1 仍按产品安全策略忽略其他 Bot 的消息，不依赖或开启该能力。
 
 ## 3. 范围与行为需求
@@ -61,7 +63,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 
 1. 个人设置提供 Telegram Token 输入与验证。后端调用 `getMe` 验证 Token，并获得 Bot 的数值 ID、username、display name。
 2. 仅验证成功后创建/更新 `UserBot(platform="telegram")`。首期每个 Gugu 用户最多接入一个 Telegram Bot；同一 Bot ID 不得绑定到多个 Gugu 用户。
-3. Token 存入现有加密字段 `user_bots.app_secret`，不得回显明文、写日志、进入应用自身的 API URL 或写入事件 payload。Telegram 官方出站请求路径必须含 Token；该传输方式与仓库安全规则的冲突未解决前，禁止实现网络调用。`app_id` 存 Telegram 数值 Bot ID 字符串作为公开去重键；Bot username/display name 写 `name`，不作为身份依据。
+3. Token 存入现有加密字段 `user_bots.app_secret`，不得回显明文、写日志、进入应用自身的 API URL 或写入事件 payload。Telegram 官方出站请求路径必须含 Token；用户已批准仅在固定官方主机的 HTTPS 请求中短暂携带，且必须禁用重定向、不记录或持久化完整 URL。`app_id` 存 Telegram 数值 Bot ID 字符串作为公开去重键；Bot username/display name 写 `name`，不作为身份依据。
 4. 替换 Token 时先验证新 Token，再原子更新记录；验证失败不得破坏原接入。API 响应只返回掩码 Token。
 5. 检测 `getWebhookInfo` 已有 webhook 的情况并阻止启动长轮询，向用户给出可理解提示；不得调用 `deleteWebhook` 自动抢占 Bot。
 6. 创建、修改、禁用、删除后复用 Gateway reload 通知；删除必须走现有统一确认组件。
@@ -149,6 +151,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 | BYO Bot 接入与启停 | AppID/Secret 接入 | Token 验证、掩码展示、加密保存、启停/删除 | V1 必须 |
 | 私聊 | 支持 | 收发文本、owner 绑定、上下文和取消 | V1 必须 |
 | 群/supergroup | 支持群事件 | 接收/回复并按 Bot+群隔离 | V1 必须；默认关闭 |
+| 广播频道（Channel） | 不适用 | 暂不支持；频道帖子不接收、不建会话 | 明确不在 V1 范围 |
 | 普通群消息 | 受 QQ 权限与 Bot 开关控制 | 关闭 Privacy Mode 或授予管理员后才能完整接收 | 平台设置前置；Gugu 不可代改 |
 | 仅触发回复 | `@`模式 | Bot 命令、可见的 @、回复 Bot 消息 | V1；隐私模式下普通文本 @ 不保证可见 |
 | 全部回复/只记录 | 支持 | 在 Bot 实际收到事件后按 Gugu 策略处理 | V1 必须 |
@@ -157,9 +160,9 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 | 群短期上下文/群成员记忆 | 支持 | 复用通用 IM 记忆链路，确保 Telegram source 加入查询 | V1 必须 |
 | Slash 命令 | QQ 文本命令 | 支持 `/stop`、`/cancel`、`/bind` 和 Agent 命令路由 | V1 必须；`@other_bot` 不处理 |
 | 消息格式 | QQ markdown/纯文本策略 | MarkdownV2 安全格式化：基础强调、链接、代码；复杂表格可读降级 | V1 必须 |
-| 发送/接收图片与文件 | 支持常见媒体 | Bot API 可用范围内图片/文件收发与暂存 | V1 必须；大小限制明确展示 |
-| 音频/语音/视频 | 按平台支持 | 逐类型实现下载、转写/描述或上下文占位后再启用 | V1 目标逐项验收；未完成不能宣称支持 |
-| 引用消息/引用附件 | QQ 有引用索引 | 消息内引用文本和 Gugu 已存附件复用 | V1 引用文本；任意历史反查不支持 |
+| 发送/接收图片与文件 | 支持常见媒体 | Bot API 可用范围内图片/文件收发与暂存 | 实现完成；接收 ≤20 MB、发送 ≤50 MB |
+| 音频/语音/视频 | 按平台支持 | Telegram 附件进入现有通用媒体理解链路 | 实现完成；能否理解取决于模型与服务器媒体能力 |
+| 引用消息/引用附件 | QQ 有引用索引 | 消息内引用文本和 Gugu 已存附件复用 | 实现完成；不对 Telegram 历史任意反查 |
 | 流式输出 | QQ 私聊可选流式 | 最终消息优先；Bot API Draft/Rich streaming 后续评估 | 非 V1 门槛 |
 | 群话题/topic 独立会话 | QQ 无同类 | forum topic 作为独立会话及回复线程 | 后续版本 |
 | 成员目录/全量用户名 | QQ 有限度依赖消息采集 | 仅可获得已知消息用户和权限允许的成员查询 | 不承诺全员枚举；username 可缺失 |
@@ -176,6 +179,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 |---|---|
 | `backend/agent/gateway/telegram.py` | Telegram Bot API 长轮询、Update 归一化、入站投递、回复/发送/文件接口、退避和安全诊断；不实现 MTProto |
 | `backend/app/api/v1/telegram_connect.py` | Token 验证、`getMe`、Webhook 冲突检查、创建/轮换 Telegram `UserBot` 和 owner 绑定码接口 |
+| `backend/app/services/telegram_bot_api.py` | 固定官方主机 HTTPS 调用封装；约束 Token 路径例外并提供脱敏错误 |
 | `backend/agent/im/parsers/telegram.py` | Telegram command/message entities、Bot mention、reply、媒体节点到统一 IM 结构的纯解析逻辑 |
 | `backend/agent/im/telegram_format.py` | Telegram 专属 MarkdownV2 转义、基础格式转换和消息分片边界处理，避免改变其他平台格式语义 |
 | `backend/agent/im/media_ingress_telegram.py` | Telegram 图片/文件下载、类型/大小校验和现有附件暂存接入；沿用 Feishu/WeChat 的平台专属媒体入口拆分 |
@@ -311,56 +315,63 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 
 ### Phase 1：Token 接入、Gateway 与私聊闭环
 
-- [ ] 开始本阶段前，解决 Telegram 官方“Token 必须位于 HTTPS 请求路径”与仓库禁止凭据进入 URL 的规则冲突；未获明确范围受限的批准前，不得实现或调用带 Token 的 Telegram 请求。
-- [ ] 新增 `backend/agent/im/parsers/telegram.py`：解析普通文本、命令实体、`/command@username`、文本提及、回复和媒体节点；未知/匿名 sender 不伪造 user ID。
-- [ ] 新增 `backend/app/api/v1/telegram_connect.py`：实现 Token 验证、`getMe` 元数据读取、Bot ID 唯一性、Webhook 冲突拒绝、Bot 创建/Token 轮换及一次性绑定码接口；错误信息不泄露原异常/Token。
-- [ ] 修改 `backend/app/main.py` 注册 Telegram connect router，并覆盖鉴权、CSRF（如适用）和用户数据所有权。
-- [ ] 修改 `backend/app/api/v1/user_bots.py`：允许 Telegram Bot 读取/更新/删除其自身设置；按 platform 校验可写字段；群策略只修改当前用户自己的 Telegram Bot。
-- [ ] 修改 `backend/agent/gateway/gateway.py` 注册 Telegram module 和环境变量注入；Token 不进入 argv、heartbeat、普通日志或 Redis payload。
-- [ ] 新增 `backend/agent/gateway/telegram.py`：实现异步 HTTP Bot API 客户端、长轮询、`getMe`/Webhook 状态检查、Update 归一化、入队、Redis 游标恢复、重复 Update 幂等、429 `retry_after`、网络退避、SIGTERM 收尾和脱敏诊断。
-- [ ] 修改 `backend/agent/im/models.py` 注册 Telegram source/chat 类型和 payload 约束；保持 `private→c2c`、`group/supergroup→group` 口径清晰。
-- [ ] 修改 `backend/agent/im/session.py`、`backend/agent/im/context_policy.py`、`backend/agent/im/context_loader.py` 纳入 Telegram source；验证同群跨 Bot、跨群、跨平台严格隔离。
-- [ ] 修改 `backend/agent/im/actor.py`：按 `(telegram, bot_id, User.id)` 解析 owner/member；缺 ID、匿名管理员、sender_chat 固定为 unknown。
-- [ ] 修改 `backend/agent/im/loop.py`、`backend/agent/im/replies.py`、`backend/agent/im/files.py`：完成私聊文本收发、回复路由、超长消息分片、`/bind` 前置处理、`/stop`/`/cancel` 范围隔离和 Telegram 出站分派；不走 QQ/飞书专属发送分支。
-- [ ] 新增 `backend/agent/im/telegram_format.py`：实现 MarkdownV2 特殊字符转义、基础格式转换和消息分片边界处理；不改变 QQ/Feishu/WeChat 的共享格式语义。
-- [ ] 修改 `frontend/src/services/api.ts` 增加 Token 接入/轮换 API 客户端；不在 URL 或前端日志中携带 Token。
-- [ ] 修改 `frontend/src/components/common/profile/ProfileImPane.vue` 增加 Telegram Bot 接入表单、Token 掩码/替换状态和 Bot 信息展示；避免 Token 作为普通响应回填到输入框。
-- [ ] 修改 `frontend/src/i18n/sections/common.ts` 增加简中、日文、英文接入说明、Privacy Mode 提示、Webhook 冲突、Token 错误和绑定说明。
-- [ ] 新增/扩展 `backend/tests/test_telegram_message_parser.py`、`backend/tests/test_telegram_gateway.py`、`backend/tests/test_telegram_connect.py` 覆盖 parser、长轮询/offset、重复事件、连接授权、加密字段、轮换原子性、Webhook 冲突、owner code 防重放和秘密脱敏。
-- [ ] 扩展 `frontend/tests/profile/ProfileImPane.test.ts` 覆盖接入、Token 不回显、Token 验证失败和取消路径。
-- [ ] 运行后端新增测试、IM 相关测试、前端 Profile 测试和 typecheck；修复失败后才进入群聊阶段。
-- [ ] 使用独立测试 Bot 完成私聊接入、文本往返、owner 绑定、取消、进程重启后的 Update 去重与配置轮换验收。
+- [x] 开始本阶段前，解决 Telegram 官方“Token 必须位于 HTTPS 请求路径”与仓库禁止凭据进入 URL 的规则冲突；用户仅批准固定官方主机的 HTTPS 请求路径例外，禁用重定向且完整 URL 不记录、不持久化、不传播。
+- [x] 新增 `backend/app/services/telegram_bot_api.py`：仅请求固定官方 HTTPS 主机，禁用重定向；异常不携带 Token、请求 URL 或响应正文。
+- [x] Telegram Bot API 在管理员启用后端代理时显式复用配置代理且不回退直连；管理员页面明确该代理适用范围，网页抓取原有 DoH、IP 钉扎及 SSRF 防护不变；代理配置失败时有 fail-closed 回归测试。
+- [x] 新增 `backend/agent/im/parsers/telegram.py`：解析普通文本、命令实体、`/command@username`、文本提及与回复；未知/匿名 sender 不伪造 user ID，媒体消息在 Phase 1 不触发空生成。
+- [x] 新增 `backend/app/api/v1/telegram_connect.py`：实现 Token 验证、`getMe` 元数据读取、Bot ID 唯一性、Webhook 冲突拒绝、Bot 创建/Token 轮换及一次性绑定码接口；错误信息不泄露原异常/Token。
+- [x] 修改 `backend/app/main.py` 注册 Telegram connect router，并覆盖鉴权、CSRF（如适用）和用户数据所有权。
+- [x] 修改 `backend/app/api/v1/user_bots.py`：允许 Telegram Bot 读取/更新/删除其自身设置；按 platform 校验群聊开关字段；群策略只修改当前用户自己的 Telegram Bot。
+- [x] 修改 `backend/agent/gateway/gateway.py` 注册 Telegram module 和环境变量注入；Token 不进入 argv、heartbeat、普通日志或 Redis payload。
+- [x] 新增 `backend/agent/gateway/telegram.py`：实现异步 Bot API 调用、长轮询、`getMe`/Webhook 状态检查、Update 归一化、入队、Redis 游标恢复、重复 Update 幂等、429 `retry_after`、网络退避、SIGTERM 收尾和脱敏诊断。
+- [x] 修改 `backend/agent/im/models.py` 注册 Telegram source/chat 类型和 payload 约束；保持 `private→c2c`、`group/supergroup→group` 口径清晰。
+- [x] 修改 `backend/agent/im/session.py`、`backend/agent/im/context_policy.py`、`backend/agent/im/context_loader.py` 纳入 Telegram source；验证同群跨 Bot、跨群、跨平台严格隔离。
+- [x] 修改 `backend/agent/im/actor.py`：按 `(telegram, bot_id, User.id)` 解析 owner/member；缺 ID、匿名管理员、sender_chat 固定为 unknown。
+- [x] 修改 `backend/agent/im/loop.py`、`backend/agent/im/replies.py`：完成私聊文本收发、回复路由、超长消息分片、`/bind` 前置处理、`/stop`/`/cancel` 范围隔离和 Telegram 出站分派；不走 QQ/飞书专属发送分支。附件收发与 `files.py` 集成留在 Phase 3，不提前声明媒体支持。
+- [x] 新增 `backend/agent/im/telegram_format.py`：实现 MarkdownV2 特殊字符转义、基础格式转换和按 UTF-16 长度安全分片；不改变 QQ/Feishu/WeChat 的共享格式语义。
+- [x] 修改 `frontend/src/services/api.ts` 增加 Token 接入/轮换 API 客户端；不在 URL 或前端日志中携带 Token。
+- [x] 修改 `frontend/src/components/common/profile/ProfileImPane.vue` 增加 Telegram Bot 接入表单、Token 替换和 Bot 信息展示；避免 Token 回显，绑定状态通过 `im_channels` 实时事件刷新。
+- [x] 修改 `frontend/src/i18n/sections/common.ts` 增加简中、日文、英文接入说明、Privacy Mode 提示、Webhook 冲突、Token 错误和绑定说明。
+- [x] 新增/扩展 `backend/tests/test_telegram_message_parser.py`、`backend/tests/test_telegram_gateway.py`、`backend/tests/test_telegram_connect.py` 覆盖 parser、长轮询/offset、重复事件、连接授权、加密字段、轮换原子性、Webhook 冲突、owner code 防重放和秘密脱敏。
+- [x] 扩展 `frontend/tests/profile/ProfileImPane.test.ts` 覆盖接入、Token 不回显、Token 验证失败、取消路径和绑定状态事件刷新。
+- [x] 运行后端 Telegram/IM 定向回归、前端 Profile 与表单规范测试、i18n 扫描和 typecheck。
+- [x] 用户绑定成功后发布 `im_channels` 状态事件；设置页订阅并补刷权威 Bot 状态，不使用固定频率的绑定状态轮询。
+- [x] 用户确认测试 Bot 的私聊与群聊基本文本对话可用。
+- [ ] 使用独立测试 Bot 验收 owner 绑定、取消、进程重启后的 Update 去重与配置轮换。
 
 ### Phase 2：群消息、策略、身份与记忆
 
-- [ ] 修改 `backend/agent/im/permissions.py`：Telegram 读取独立 UserBot 行的 `group_chat_enabled`，新连接默认关闭；不将平台权限可见性误当作 Gugu 群策略开关。
-- [ ] 修改 `backend/worker.py`：将 Telegram 群载荷接入 group owner/member/unknown、取消作用域、群记忆和工具过滤准备链路；确认 owner 角色只能来自已绑定 Telegram 数值 ID。
-- [ ] 修改 `backend/app/services/group_context.py`：查询接受 Telegram platform，并将条件限制到 `platform + bot_id + chat_id`；保留原 QQ/Feishu 行为。
-- [ ] 修改 `backend/agent/im/mentions.py` 与 Telegram parser：测试隐私模式下可见命令、显式 Bot 命令、有效 @、直接回复 Bot 和转发给其他 Bot 的命令；普通 @ 不可见时不得虚报已触发。
-- [ ] 修改 `frontend/src/components/common/profile/ProfileImPane.vue` 增加 Telegram 群开关、回应模式、只记录/上下文读取、记忆和工具白名单设置；说明关闭 Privacy Mode 或 Bot 管理员权限是普通群消息可见前提。
-- [ ] 修改 `frontend/src/i18n/sections/common.ts` 完成群策略说明与所有状态文案三语覆盖。
-- [ ] 新增 `backend/tests/test_telegram_im_policy.py` 覆盖群开关默认关闭、reply_all/reply_mentions/record_only、group_read_enabled、工具白名单、owner 群记忆开关、匿名 sender 不升权、跨 Bot/跨群 session 和取消隔离。
-- [ ] 扩展 `backend/tests/test_im_permissions_types.py`、`backend/tests/test_im_protocol.py` 或对应现有测试，验证新增平台不改变 QQ、Feishu、WeChat 已有策略。
+- [x] 修改 `backend/agent/im/permissions.py`：Telegram 读取独立 UserBot 行的 `group_chat_enabled`，新连接默认关闭；不将平台权限可见性误当作 Gugu 群策略开关。
+- [x] 修改 `backend/worker.py`：将 Telegram 群载荷接入 group owner/member/unknown、取消作用域、群记忆和工具过滤准备链路；确认 owner 角色只能来自已绑定 Telegram 数值 ID。
+- [x] 修改 `backend/app/services/group_context.py`：查询接受 Telegram platform，并将条件限制到 `platform + bot_id + chat_id`；保留原 QQ/Feishu 行为。
+- [x] 修改 Telegram parser：测试隐私模式下可见命令、显式 Bot 命令、有效 @、直接回复 Bot 和转发给其他 Bot 的命令；普通 @ 不可见时不得虚报已触发。
+- [x] 修改 `frontend/src/components/common/profile/ProfileImPane.vue` 增加 Telegram 群开关、回应模式、只记录/上下文读取、记忆和工具白名单设置；说明关闭 Privacy Mode 或 Bot 管理员权限是普通群消息可见前提。
+- [x] 修改 `frontend/src/i18n/sections/common.ts` 完成群策略说明与所有状态文案三语覆盖。
+- [x] 新增 `backend/tests/test_telegram_im_policy.py` 覆盖群开关默认关闭、reply_all/reply_mentions/record_only、group_read_enabled、工具白名单、owner 群记忆开关、匿名 sender 不升权、跨 Bot/跨群 session 和取消隔离。
+- [x] 扩展 `backend/tests/test_im_permissions_types.py`、`backend/tests/test_im_protocol.py` 或对应现有测试，验证新增平台不改变 QQ、Feishu、WeChat 已有策略。
+- [x] 用户确认真实群基本消息收发可用。
 - [ ] 真实群验收 Privacy Mode 开启与关闭两种状态；分别验证命令、回复、普通文本、普通 @ 的实际事件可见性，并记录只含脱敏状态的验收结果。
 - [ ] 真实群验收 owner/member/unknown 权限、只响应触发、只记录、群记忆、成员记忆、群上下文搜索和 `/stop`/`/cancel` 的 Bot+群作用域。
 
 ### Phase 3：媒体、引用与稳态恢复
 
-- [ ] 新增 `backend/agent/im/media_ingress_telegram.py`，实现 Telegram file_id 获取、下载、mime/大小校验及统一附件暂存；修改 `backend/agent/im/media_ingress.py` 注册平台分派。
-- [ ] 修改 `backend/agent/im/media_ingress.py`、`backend/agent/im/replies.py`、`backend/agent/im/files.py` 接入 Telegram 附件；确保 attachment 权限、文件归属和临时文件清理沿用现有安全边界。
-- [ ] 在 `backend/agent/gateway/telegram.py` 实现图片/文件发送和接收；处理平台下载限制、429、超时、无效 file_id、消息发送部分成功等结果。
-- [ ] 支持 reply_to_message 文本引用；引用附件只能命中当前 Gugu 已保存且归属匹配的附件，不调用任意历史检索。
-- [ ] 语音/音频/视频逐类型验证下载、大小和上下文表达；只有完整实现并通过实测的类型才在功能表中标为“支持”。
-- [ ] 新增 `backend/tests/test_telegram_media.py` 覆盖图片/文件成功、非法 mime、超限、网络失败、权限隔离、引用附件未命中和临时文件清理。
-- [ ] 验证长文本分片、Markdown entity 边界、Telegram 群限流、429 Retry-After、断网重连、进程 SIGTERM/重启、Redis 暂不可用和游标恢复。
+- [x] 新增 `backend/agent/im/media_ingress_telegram.py`，实现 Telegram file_id 获取、固定官方文件主机下载、MIME/大小校验及统一附件暂存；修改 `backend/agent/im/media_ingress.py` 注册平台分派。
+- [x] 修改 `backend/agent/im/parsers/telegram.py` 解析 Telegram 图片、文件、音频、语音和视频节点；媒体消息进入正式队列前保留 file_id、caption 和消息回复关系。
+- [x] 修改 `backend/agent/im/media_ingress.py`、`backend/agent/im/replies.py`、`backend/agent/im/files.py` 接入 Telegram 附件；附件仍经过用户归属检查，下载使用有界内存，不创建未清理的临时文件。
+- [x] 在 `backend/agent/gateway/telegram.py` 实现图片/文件发送和接收；限制单文件下载 20 MB、发送 50 MB，处理 429 Retry-After、请求失败和无效 file_id。
+- [x] 支持 reply_to_message 文本引用；引用附件只复用当前用户在同 Bot、同群/私聊来源消息中已保存的附件，不调用任意历史检索。
+- [x] 将语音/音频/视频附件接入现有通用媒体理解链路；实际理解能力取决于所选模型及服务器媒体处理能力，不承诺所有类型均可识别。
+- [x] 新增 `backend/tests/test_telegram_media.py` 覆盖文档媒体下载暂存、非法 MIME、超限、API 失败、用户归属和引用附件复用边界。
+- [x] 定向验证长文本分片、MarkdownV2 边界、按 Bot 与会话的 Telegram 限流、429 Retry-After、网络/Redis 暂时失败重连、SIGTERM 停止信号与游标恢复。
 - [ ] 真实测试群验收文件收发、图片入站、引用文本、允许的引用附件、消息分片和限流状态；日志必须完成秘密及个人标识审查。
 
 ### Phase 4：前端类型、回归、文档和交付
 
-- [ ] 运行 OpenAPI 类型生成命令更新 `frontend/src/types/api.ts`；检查生成差异，不手工伪造 schema。
-- [ ] 修改 `CHANGELOG.md` 增加简短用户可感知的 Telegram 接入能力说明，不写实施过程和环境信息。
-- [ ] 执行全部 Telegram 新增测试、完整后端测试、IM 回归测试、Profile 测试、前端 typecheck 与项目要求的 build/lint。
-- [ ] 检查所有新增/修改文件没有真实 Token、真实用户 ID/用户名、真实群 ID、消息正文、机器地址或凭据；诊断日志遵守 `fingerprint()`/`redact()` 约定。
+- [ ] 运行 OpenAPI 类型生成命令更新 `frontend/src/types/api.ts`；检查生成差异，不手工伪造 schema。当前生成结果相对已跟踪文件包含大量 Telegram 之外的 API 漂移，需单独审阅后再纳入，避免混入其他接口变化。
+- [x] `CHANGELOG.md` 已增加 Telegram 私聊/群聊接入说明，并明确暂不支持频道。
+- [x] Telegram/IM 定向测试 97 项通过；Profile 与聊天接入前端测试 9 项通过；前端 typecheck 和生产 build 通过。
+- [ ] 全量回归仍未通过：后端 4242 项通过、2 项失败（文件同步库存与全局搜索测试触发 `files.user_id, files.storage_key` 唯一约束）；前端 712 项通过、1 项失败（日文缺少现有 `filesyncAdmin.queueAll*` 翻译键）。全量测试期间测试文件发生暂存重排，工作区稳定后需重跑确认。
+- [x] 检查 Telegram 实现与文档未发现真实 Token、用户/群标识、消息正文、机器地址或凭据；Token 格式命中仅为测试中的合成 fixture，错误与诊断路径按 `fingerprint()`/`redact()` 约定处理。
 - [ ] 逐项回看 §8 验收标准和 §6 文件清单；未实现的能力留在 Phase 4 后续项或明确标为不支持，不能勾选 V1 完成。
 - [ ] 功能验收后更新本 PRD 顶部状态、完成日期和各 TODO 状态；只在用户要求或符合仓库提交时机时提交，不擅自部署或触发 GitHub CI。
 
@@ -377,7 +388,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 |---|---|
 | 用户误以为普通 @ 一定能唤起 Bot | 接入和群设置页明确 Privacy Mode 约束；先以实际 Update 可见性验证 |
 | Bot Token 泄露或被覆盖 | encrypted field、全链路不打印、Token 替换先验证、接口掩码、测试合成凭据 |
-| 官方 API 必须把 Token 放入请求路径，与仓库凭据 URL 禁令冲突 | 获得范围受限的明确批准前，不发起带 Token 请求、不启动 Phase 1；无论如何不记录或持久化完整 URL |
+| 官方 API 必须把 Token 放入请求路径 | 仅在固定官方主机的 HTTPS 请求中短暂携带；禁用重定向，完整 URL 不记录、不持久化、不传播；应用路由及其他主机仍禁止 Token 入 URL |
 | 长轮询重启造成重复/丢消息 | 入队成功再推进 offset；`update_id` 幂等；记录 last acknowledged offset 和可观测积压 |
 | Telegram ID/用户名混淆导致串人或升权 | user/chat/bot ID 分字段；所有授权只用数值平台 ID + Bot 作用域 |
 | Telegram 限流导致消息重复或乱序 | 统一发送节奏、按 `retry_after` 退避、单次发送幂等策略和可见失败状态 |

@@ -7,20 +7,13 @@
 
 ## [Unreleased]
 
-### What's New
-
-- **Telegram integration**: connect a personal bot for private and group chats; channels are not supported yet.
-
-### 新功能
-
-- **Telegram 接入**：支持连接个人 Bot，在私聊和群聊中与咕咕对话；暂不支持频道。
-
 ## [1.6.1] - 2026-10-08
 
 ### What's New
 
 #### New Features
 
+- **Telegram integration**: connect a personal bot for private and group chats; channels are not supported yet.
 - **Manual file reconciliation**: inspect file-sync changes and queue an asynchronous reconciliation with visible progress.
 - **Project summaries and file context**: maintain a concise project summary and include project file overviews in Agent context.
 - **Local storage quotas**: apply a consistent persistent-storage quota to Local users.
@@ -55,6 +48,7 @@
 
 #### 新功能
 
+- **Telegram 接入**：支持连接个人 Bot，在私聊和群聊中与咕咕对话；暂不支持频道。
 - **手动文件对账**：查看文件同步变更，并发起可查看进度的异步对账。
 - **项目摘要与文件上下文**：维护简短项目摘要，并将项目文件概览加入 Agent 上下文。
 - **Local 存储配额**：为 Local 用户统一持久化空间配额。
