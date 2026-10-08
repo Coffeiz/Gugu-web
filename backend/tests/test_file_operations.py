@@ -1,4 +1,4 @@
-"""agent/tools/files/documents.py 单元补测（CRAP 治理 P1）。
+"""agent/tools/files/file_operations.py 单元补测（CRAP 治理 P1）。
 
 覆盖：create_file 批量校验、read_file 类型分流、edit 单/批量模式矩阵、
 rename 单/批量（含 format 修双后缀）、save_uploaded_file 暂存附件入库。
@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from agent.tools.files.documents import (
+from agent.tools.files.file_operations import (
     _create_file,
     _edit_file,
     _read_file,
@@ -76,7 +76,7 @@ async def test_create_file_batch_validations_and_isolation(db, user_a, storage):
 # ── _read_file：类型分流 ──────────────────────────────────────────────────
 
 async def test_read_file_text_branch_and_guards(db, user_a, storage, monkeypatch):
-    from agent.tools.files.documents import _read_file
+    from agent.tools.files.file_operations import _read_file
 
     f = await _mk_file(db, user_a, storage)
     result = await _read_file(db, user_a.id, {"file_id": f.id})
@@ -102,18 +102,18 @@ async def test_read_file_text_branch_and_guards(db, user_a, storage, monkeypatch
 
 
 async def test_read_file_image_and_media_branches(db, user_a, storage, monkeypatch):
-    from agent.tools.files import documents
+    from agent.tools.files import file_operations
     from app.core import chat_attach
 
     png = await _mk_file(db, user_a, storage, name="图.png", content="\x89PNG",
                          mime_type="image/png")
     monkeypatch.setattr(chat_attach, "image_ready", lambda *a: False)
-    no_vision = json.loads(await documents._read_file(db, user_a.id, {"file_id": png.id}))
+    no_vision = json.loads(await file_operations._read_file(db, user_a.id, {"file_id": png.id}))
     assert "无法识别图像内容" in no_vision["error"]
 
     monkeypatch.setattr(chat_attach, "image_ready", lambda *a: True)
     monkeypatch.setattr(chat_attach, "image_block", lambda data, ext: {"type": "image"})
-    block = await documents._read_file(db, user_a.id, {"file_id": png.id})
+    block = await file_operations._read_file(db, user_a.id, {"file_id": png.id})
     assert block["_image_block"] == {"type": "image"} and "已打开图片" in block["note"]
 
     async def fake_read_media(f, **kwargs):
@@ -122,19 +122,19 @@ async def test_read_file_image_and_media_branches(db, user_a, storage, monkeypat
     monkeypatch.setattr("agent.tools.media_reader.read_media", fake_read_media)
     audio = await _mk_file(db, user_a, storage, name="语音.mp3", content="x",
                            mime_type="audio/mpeg")
-    assert await documents._read_file(db, user_a.id, {"file_id": audio.id}) == {"media": audio.id}
+    assert await file_operations._read_file(db, user_a.id, {"file_id": audio.id}) == {"media": audio.id}
 
     # SVG 走文本源码路径，不伪装成图片块
     svg = await _mk_file(db, user_a, storage, name="矢量.svg",
                          content="<svg><circle r='1'/></svg>", mime_type="image/svg+xml")
-    svg_result = await documents._read_file(db, user_a.id, {"file_id": svg.id})
+    svg_result = await file_operations._read_file(db, user_a.id, {"file_id": svg.id})
     assert "<svg>" in svg_result["content"]
 
 
 # ── _edit_file / _edit_one：模式矩阵与防护 ────────────────────────────────
 
 async def test_edit_file_single_modes_and_guards(db, user_a, storage):
-    from agent.tools.files.documents import _edit_file
+    from agent.tools.files.file_operations import _edit_file
 
     f = await _mk_file(db, user_a, storage, content="hello world\n")
 
@@ -166,7 +166,7 @@ async def test_edit_file_single_modes_and_guards(db, user_a, storage):
 
 
 async def test_edit_file_shrink_warning_and_oversize(db, user_a, storage):
-    from agent.tools.files.documents import _edit_file
+    from agent.tools.files.file_operations import _edit_file
 
     f = await _mk_file(db, user_a, storage, content="长" * 400)
     shrunk = await _edit_file(db, user_a.id, {"file_id": f.id, "mode": "replace", "content": "短"})
@@ -182,7 +182,7 @@ async def test_edit_file_shrink_warning_and_oversize(db, user_a, storage):
 
 
 async def test_edit_file_batch_reports_per_item(db, user_a, storage):
-    from agent.tools.files.documents import _edit_file
+    from agent.tools.files.file_operations import _edit_file
 
     f1 = await _mk_file(db, user_a, storage, name="甲.md", content="AAA\n")
     f2 = await _mk_file(db, user_a, storage, name="乙.md", content="BBB\n")
@@ -201,7 +201,7 @@ async def test_edit_file_batch_reports_per_item(db, user_a, storage):
 # ── _rename_file：单/批量与 format 修正 ───────────────────────────────────
 
 async def test_rename_file_single_batch_and_format(db, user_a, storage):
-    from agent.tools.files.documents import _rename_file
+    from agent.tools.files.file_operations import _rename_file
 
     f = await _mk_file(db, user_a, storage, name="旧名.md")
 
@@ -331,7 +331,7 @@ def _fake_attach(monkeypatch, metas, data=b"attach-bytes", fail_read=False):
 
 
 async def test_save_uploaded_file_guards_and_single(db, user_a, storage, monkeypatch):
-    from agent.tools.files.documents import _save_uploaded_file
+    from agent.tools.files.file_operations import _save_uploaded_file
 
     err = await _save_uploaded_file(db, user_a.id, {"source": "attach_id"})
     assert err == {"error": "source=attach_id 时必须提供 attach_id"}
@@ -357,7 +357,7 @@ async def test_save_uploaded_file_guards_and_single(db, user_a, storage, monkeyp
 
 
 async def test_save_uploaded_file_batch_mixed(db, user_a, storage, monkeypatch):
-    from agent.tools.files.documents import _save_uploaded_file
+    from agent.tools.files.file_operations import _save_uploaded_file
 
     not_list = json.loads(await _save_uploaded_file(db, user_a.id, {"attach_ids": "a1"}))
     assert "attach_ids 需要是数组" in not_list["error"]

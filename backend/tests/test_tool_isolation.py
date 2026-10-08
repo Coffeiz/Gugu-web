@@ -266,7 +266,7 @@ async def test_list_dir_does_not_inherit_bound_workspace_directory(db, user_a, m
         workspace_directory_id=workspace.id, storage_key="workspace-note",
     ))
 
-    import agent.tools.files.documents as file_documents
+    import agent.tools.files.file_operations as file_operations
 
     async def bound_workspace(*_args, **_kwargs):
         return {
@@ -276,7 +276,7 @@ async def test_list_dir_does_not_inherit_bound_workspace_directory(db, user_a, m
             "workspace_directory_id": workspace.id,
         }
 
-    monkeypatch.setattr(file_documents, "_bound_workspace_target", bound_workspace)
+    monkeypatch.setattr(file_operations, "_bound_workspace_target", bound_workspace)
 
     result = await _list_dir(db, user_a.id, {"queries": ["已看"]})
 
@@ -440,10 +440,10 @@ async def test_rename_one_rejects_binary_to_text_format_change(db, user_a, monke
     """图片等二进制后缀（不在 _DOC_MIME）不允许借 rename 变成 .py 等文本格式——
     改后缀不重写内容，只会产出内容对不上的坏文件。"""
     from app.models import File as FileModel
-    from agent.tools.files import documents
+    from agent.tools.files import file_operations
 
     f = await _mk(db, FileModel(user_id=user_a.id, display_name="weather_week_南京_2026-09-10",
                                 ext="png", mime_type="image/png", storage_key="k"))
-    monkeypatch.setattr(documents, "get_storage", lambda: types.SimpleNamespace(rename_file=None))
-    r = await documents._rename_one(db, user_a.id, f, "天气周报v1", "py")
+    monkeypatch.setattr(file_operations, "get_storage", lambda: types.SimpleNamespace(rename_file=None))
+    r = await file_operations._rename_one(db, user_a.id, f, "天气周报v1", "py")
     assert r.get("error") and "不能仅通过改后缀" in r["error"]

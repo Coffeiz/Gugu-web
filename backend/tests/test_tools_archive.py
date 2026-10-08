@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from agent.tools.files.documents import FilesSkill
+from agent.tools.files.file_operations import FilesSkill
 from agent.tools.base import registry
 from agent.tools.files.transfer import _compress_files, _extract_files
 from app.core.events import RESOURCE_BY_TOOL

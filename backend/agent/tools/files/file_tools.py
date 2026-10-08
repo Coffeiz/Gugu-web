@@ -1,7 +1,7 @@
 """文件工具定义。"""
 from agent.tools.base import Tool
 
-from .documents import (
+from .file_operations import (
     _DOC_MIME, _copy_file, _create_file, _delete_file, _edit_file, _list_dir,
     _rename_file,
 )

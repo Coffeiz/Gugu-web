@@ -19,8 +19,8 @@
         "behavior": "确认结果的布尔值和标准化字符串判定"
       },
       {
-        "pattern": "agent.tools.files.documents.x__valid_file_ids*",
-        "source": "backend/agent/tools/files/documents.py",
+        "pattern": "agent.tools.files.file_operations.x__valid_file_ids*",
+        "source": "backend/agent/tools/files/file_operations.py",
         "tests": ["backend/tests/test_agent_file_folder_parity.py"],
         "behavior": "批量删除参数必须进入软删除流程，文件移入回收站而非漏删"
       },

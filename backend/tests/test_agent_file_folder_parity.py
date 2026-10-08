@@ -3,7 +3,7 @@ from pathlib import Path
 import json
 import pytest
 
-from agent.tools.files.documents import _valid_file_ids
+from agent.tools.files.file_operations import _valid_file_ids
 from app.core.tz import now_utc
 from app.services.storage import LocalStorageBackend
 from app.services.storage.file_service import FileService

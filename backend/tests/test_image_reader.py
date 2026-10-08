@@ -26,7 +26,7 @@ def test_shared_image_policy_rejects_unsupported_format(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_file_history_attachment_uses_shared_media_reader(monkeypatch):
     from agent.tools import media_reader
-    from agent.tools.files import documents
+    from agent.tools.files import file_operations
 
     async def get_meta(user_id, attach_id):
         assert (user_id, attach_id) == ("user-1", "attach-1")
@@ -44,7 +44,7 @@ async def test_read_file_history_attachment_uses_shared_media_reader(monkeypatch
     monkeypatch.setattr(chat_attach, "get_meta", get_meta)
     monkeypatch.setattr(media_reader, "read_stored_image", read_stored_image)
 
-    result = await documents._read_file(None, "user-1", {"attach_id": "attach-1"})
+    result = await file_operations._read_file(None, "user-1", {"attach_id": "attach-1"})
 
     assert result == {
         "_image_block": {"type": "image", "test": True},
@@ -60,7 +60,7 @@ def test_shared_image_policy_blocks_without_vision_capability(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_read_file_mixed_batch_preserves_text_and_media_order(monkeypatch):
-    from agent.tools.files import documents
+    from agent.tools.files import file_operations
 
     results = {
         1: {"content": "正文 A", "_source_size_bytes": 10},
@@ -73,7 +73,7 @@ async def test_read_file_mixed_batch_preserves_text_and_media_order(monkeypatch)
         return dict(results[item["file_id"]])
 
     monkeypatch.setattr("agent.tools.files.read._read_file_single", read_one)
-    result = await documents._read_file(None, "user-1", {"items": [
+    result = await file_operations._read_file(None, "user-1", {"items": [
         {"file_id": 1, "title": "文本"},
         {"file_id": 2, "title": "图片"},
         {"file_id": 3, "title": "音频"},
@@ -89,18 +89,18 @@ async def test_read_file_mixed_batch_preserves_text_and_media_order(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_read_file_batch_caps_items_and_rejects_mixed_top_level_source():
-    from agent.tools.files import documents
+    from agent.tools.files import file_operations
 
-    mixed = await documents._read_file(None, "user-1", {"file_id": 9, "items": [{"file_id": 1}]})
+    mixed = await file_operations._read_file(None, "user-1", {"file_id": 9, "items": [{"file_id": 1}]})
     assert "不能同时提供单文件来源" in mixed
 
-    too_many = await documents._read_file(None, "user-1", {"items": [{"file_id": n} for n in range(21)]})
+    too_many = await file_operations._read_file(None, "user-1", {"items": [{"file_id": n} for n in range(21)]})
     assert "最多读取 20 个" in too_many
 
 
 @pytest.mark.asyncio
 async def test_read_file_batch_passes_remaining_byte_budget_to_each_item(monkeypatch):
-    from agent.tools.files import documents
+    from agent.tools.files import file_operations
     from agent.tools.media_reader import MEDIA_BATCH_MAX_BYTES
     budgets = []
 
@@ -110,7 +110,7 @@ async def test_read_file_batch_passes_remaining_byte_budget_to_each_item(monkeyp
         return {"content": "ok", "_source_size_bytes": size}
 
     monkeypatch.setattr("agent.tools.files.read._read_file_single", read_one)
-    result = await documents._read_file(None, "user-1", {"items": [{"file_id": 1}, {"file_id": 2}]})
+    result = await file_operations._read_file(None, "user-1", {"items": [{"file_id": 1}, {"file_id": 2}]})
 
     assert budgets == [MEDIA_BATCH_MAX_BYTES, MEDIA_BATCH_MAX_BYTES - 40 * 1024 * 1024]
     assert "成功 2 项" in result["_media_content"][0]["text"]
@@ -119,25 +119,25 @@ async def test_read_file_batch_passes_remaining_byte_budget_to_each_item(monkeyp
 @pytest.mark.asyncio
 async def test_read_file_group_restriction_blocks_private_text(monkeypatch):
     from agent.im import imctx
-    from agent.tools.files import documents
+    from agent.tools.files import file_operations
 
     monkeypatch.setattr(imctx, "get_im", lambda: {"im_role": "member"})
-    assert documents._restricted_file_reader()
+    assert file_operations._restricted_file_reader()
     monkeypatch.setattr(imctx, "get_im", lambda: {"platform": "qq"})
-    assert documents._restricted_file_reader()  # 有 IM 上下文但身份不完整时失败关闭
+    assert file_operations._restricted_file_reader()  # 有 IM 上下文但身份不完整时失败关闭
 
     async def resolve(db, user_id, args):
         return SimpleNamespace(ext="md", display_name="private", id=1), None
 
-    monkeypatch.setattr(documents, "_resolve_file", resolve)
-    result = await documents._read_file_single(None, "owner-1", {"file_id": 1}, restricted=True)
+    monkeypatch.setattr(file_operations, "_resolve_file", resolve)
+    result = await file_operations._read_file_single(None, "owner-1", {"file_id": 1}, restricted=True)
     assert "只能读取图片文件" in result
 
 
 @pytest.mark.asyncio
 async def test_read_file_can_read_history_voice_attachment(monkeypatch):
     from agent.tools import media_reader
-    from agent.tools.files import documents
+    from agent.tools.files import file_operations
 
     async def get_meta(user_id, attach_id):
         return {
@@ -153,6 +153,6 @@ async def test_read_file_can_read_history_voice_attachment(monkeypatch):
     monkeypatch.setattr(chat_attach, "get_meta", get_meta)
     monkeypatch.setattr(media_reader, "read_media", read_media)
 
-    assert await documents._read_file(None, "user-1", {"attach_id": "voice-1"}) == {
+    assert await file_operations._read_file(None, "user-1", {"attach_id": "voice-1"}) == {
         "content": "已转写语音",
     }

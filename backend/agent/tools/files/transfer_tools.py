@@ -1,7 +1,7 @@
 """文件工具定义。"""
 from agent.tools.base import Tool
 
-from .documents import _save_uploaded_file
+from .file_operations import _save_uploaded_file
 from .transfer import (
     _compress_files, _extract_files, _list_recent_attachments,
     _present_file, _send_file,

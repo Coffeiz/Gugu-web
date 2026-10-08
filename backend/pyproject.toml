@@ -6,7 +6,7 @@ source_paths = [
 only_mutate = [
     "agent/context/budget.py",
     "agent/interactions/confirmations.py",
-    "agent/tools/files/documents.py",
+    "agent/tools/files/file_operations.py",
     "app/core/ownership.py",
     "app/services/conversation_pending_queue.py",
     "app/services/storage/file_service/files.py",

@@ -1,4 +1,4 @@
-"""文件文档操作：文本/Office 文件的列表、读取、编辑与管理。
+"""文件操作工具实现：目录列表、文本编辑与文件创建、上传和管理。
 
 改名、创建、复制复用 FileService；其他文档操作使用 `_fmt_size`/`color_value`、
 `app.services.storage.trash`（`move_file_to_trash`）与
@@ -759,7 +759,7 @@ async def _copy_file(db, user_id, args: dict):
 
 
 
-# 保留旧导入路径；新实现位于 read.py。
+# 读取工具的实现位于 read.py；这里重导出供文件工具包注册。
 from .read import (  # noqa: E402
     _batch_text_result, _file_item_label, _file_item_source_count,
     _read_file, _read_file_single, _read_history_media, _restricted_file_reader,

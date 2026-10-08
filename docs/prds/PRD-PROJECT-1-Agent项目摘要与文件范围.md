@@ -3,7 +3,7 @@
 > 状态：✅ 已完成并通过针对性验证
 > 创建：2026-10-06
 > 最近更新：2026-10-06
-> 关联模块：`backend/agent/tools/projects.py`、`backend/agent/tools/files/documents.py`、`backend/agent/context/`
+> 关联模块：`backend/agent/tools/projects.py`、`backend/agent/tools/files/file_operations.py`、`backend/agent/context/`
 > 背景参考：项目 305 文件库检索问题复盘及本轮设计讨论
 
 ## 0. 实际状态
@@ -65,7 +65,7 @@ backend/app/core/projects.py                                        【修改】
 backend/app/services/project_context.py                             【新增】项目资料聚合与投影
 backend/app/services/files/browser.py                               【修改】根层文件过滤
 backend/agent/tools/projects.py                                     【修改】摘要维护及项目详情
-backend/agent/tools/files/documents.py                              【修改】目录查询范围与校验
+backend/agent/tools/files/file_operations.py                        【修改】目录查询范围与校验
 backend/agent/tools/files/file_tools.py                             【修改】工具 schema 和说明
 backend/agent/context/loaders.py                                    【修改】既有入选项目的批量计数
 backend/agent/context/builder.py                                    【修改】既有 snapshot 增补资料

@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from agent.context import builder, loaders
-from agent.tools.files.documents import _list_dir
+from agent.tools.files.file_operations import _list_dir
 from agent.tools.projects import _create_project, _get_project, _update_project
 from app.api.v1.projects import _to_resp
 from app.models import File, Folder, Project

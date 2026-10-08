@@ -45,7 +45,7 @@ def _restricted_file_reader() -> bool:
 async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False,
                             max_source_bytes: int | None = None):
     from app.core import doctext
-    from .documents import READ_MAX_BYTES, _is_text_file_record, _resolve_file, get_storage
+    from .file_operations import READ_MAX_BYTES, _is_text_file_record, _resolve_file, get_storage
 
     attach_id = str(args.get("attach_id") or "").strip()
     url = str(args.get("url") or args.get("image_url") or args.get("img_src") or "").strip()
