@@ -1005,7 +1005,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 }
 :deep(.msg-link-buttons .interaction-actions) {
   display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%;
-  margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle);
+  margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider);
 }
 :deep(.msg-link-buttons .interaction-option) {
   flex: 0 1 auto; min-width: 0; max-width: 100%; height: auto; min-height: 34px;

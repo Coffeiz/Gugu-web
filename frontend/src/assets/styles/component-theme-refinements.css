@@ -202,7 +202,7 @@ html[data-theme='light'][data-family='glass'] .chat-window {
 /* Mono 亮色也沿用单一外框契约，不恢复局部高光。 */
 html[data-theme='light'][data-family='mono'] .chat-window {
   --gugu-chat-highlight: var(--highlight-strong);
-  border-top-color: var(--border-strong);
+  border-top-color: var(--chrome-glass-border);
 }
 
 /* Glass 使用浅色玻璃边缘；Mono 侧栏边界沿用主题语义令牌，不继承白色 Aero 高光。 */

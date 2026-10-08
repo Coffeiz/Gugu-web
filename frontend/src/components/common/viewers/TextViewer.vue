@@ -799,7 +799,7 @@ onBeforeUnmount(() => {
 /* ── md 编辑模式底部操作条 ── */
 .tv-edit-bar {
   flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
-  padding: 10px 16px; border-top: 1px solid var(--border-default); background: var(--surface-raised);
+  padding: 10px 16px; border-top: 1px solid var(--content-divider); background: var(--surface-raised);
 }
 .tv-edit-error { flex: 1; font-size: 12px; color: var(--status-danger); }
 .tv-edit-btn {
@@ -826,7 +826,7 @@ onBeforeUnmount(() => {
    必须在所有 CodeMirror 场景（代码文件 + Markdown 编辑）覆盖，不能只写在 md-wrap 上。 */
 .tv-edit-cm-wrap :deep(.cm-gutters) {
   background: var(--surface-panel);
-  border-right: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--content-divider);
   color: var(--content-tertiary);
   /* 行号数字不继承 cm-content 的字体，必须单独指定，否则落在浏览器默认等宽上 */
   font-family: var(--font-family-mono);
@@ -860,7 +860,7 @@ onBeforeUnmount(() => {
 /* 折叠占位符：默认写死白底 #eee + 灰边，暗色下是突兀的白块。改令牌软底 + 虚线边。 */
 .tv-edit-cm-wrap :deep(.cm-foldPlaceholder) {
   background: var(--surface-soft);
-  border: 1px dashed var(--border-default);
+  border: 1px dashed var(--content-outline);
   color: var(--content-tertiary);
   border-radius: 6px;
   margin: 0 6px;

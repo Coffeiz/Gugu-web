@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 function load(relativePath: string) {
@@ -25,6 +25,14 @@ function cssSelectors(css: string) {
   return [...source.matchAll(/([^{}]+)\{/g)]
     .map(match => match[1].trim())
     .filter(Boolean)
+}
+
+function frontendStyleFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return frontendStyleFiles(path)
+    return /\.(?:vue|css)$/.test(entry.name) ? [path] : []
+  })
 }
 
 const mindCss = load('./adoption/mind.css')
@@ -80,6 +88,7 @@ const paletteTokens = [
   '--theme-brand-logo-color',
   '--theme-brand-logo-filter',
   '--theme-divider',
+  '--theme-divider-color',
   '--theme-scrollbar-thumb',
   '--theme-scrollbar-thumb-hover',
 ]
@@ -126,6 +135,12 @@ describe('主题 CSS 回归契约', () => {
       expect(css, `${name} palette`).toContain(`data-palette='${name}'`)
       expect(css, `${name} palette`).toContain("data-theme='light'")
       expect(css, `${name} palette`).toContain("data-theme='dark'")
+      for (const mode of ['light', 'dark']) {
+        const themeBlock = cssBlock(css, `:root[data-palette='${name}'][data-theme='${mode}']`)
+        const navDividerColor = themeBlock.match(/--theme-divider-color:\s*([^;]+)/)?.[1]
+        const navGradientColor = themeBlock.match(/--theme-divider:\s*linear-gradient\(90deg,\s*transparent,\s*([^\s]+)\s+20%/)?.[1]
+        expect(navDividerColor, `${name} ${mode} solid divider color`).toBe(navGradientColor)
+      }
       for (const token of paletteTokens) {
         expect(css, `${name} palette missing ${token}`).toContain(`${token}:`)
       }
@@ -447,7 +462,7 @@ describe('主题 CSS 回归契约', () => {
     expect(fileSelectionToolbarVue).toContain('background: var(--control-bg)')
     expect(fileSelectionToolbarVue).toContain('background: var(--danger-button-bg)')
     expect(fileSelectionToolbarVue).toContain('background: var(--popup-divider)')
-    expect(semanticCss).toContain('--content-divider: color-mix(in srgb, var(--theme-content-primary) 10%, transparent)')
+    expect(semanticCss).toContain('--content-divider: var(--theme-divider-color)')
     expect(componentSurfacesCss).toContain('--popup-divider: var(--content-divider)')
     expect(componentSurfacesCss).toContain('--panel-divider: var(--content-divider)')
     expect(fileSelectionToolbarVue).not.toMatch(/(?:#(?:[0-9a-f]{3,8})\b|rgba?\()/i)
@@ -643,6 +658,31 @@ describe('主题 CSS 回归契约', () => {
   it('工具气泡内部内容分割线使用内容分隔色，避免亮色主题变成纯白', () => {
     expect(guguChatToolBubbleVue).toContain('border-top: 1px solid var(--panel-divider)')
     expect(guguChatToolBubbleVue).not.toContain('border-top: 1px solid var(--border-default)')
+  })
+
+  it('内容分隔线和虚线边界统一使用随前景色变化的语义 token', () => {
+    expect(semanticCss).toContain('--content-divider: var(--theme-divider-color)')
+    expect(semanticCss).toMatch(/--content-outline:\s*color-mix\(in srgb,\s*var\(--theme-content-primary\) 10%, transparent\)/)
+    expect(componentCss).toContain('--inline-action-border: var(--content-outline);')
+
+    const glassBorderToken = /var\(--border-(?:hairline|subtle|default|strong|hover)\)/
+    const separatorProperty = /^border-(?:top|bottom|left|right)(?:-color)?$/
+    const dottedOutlineProperty = /^border(?:-(?:top|bottom|left|right))?$/
+    const violations: string[] = []
+
+    for (const file of frontendStyleFiles(resolve(process.cwd(), 'src'))) {
+      const source = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const match of source.matchAll(/(?:^|[;{}])\s*(border(?:-(?:top|bottom|left|right)(?:-color)?|))\s*:\s*([^;{}]+)/g)) {
+        const [, property, value] = match
+        const isSeparator = separatorProperty.test(property)
+        const isDottedOutline = dottedOutlineProperty.test(property) && /\b(?:dashed|dotted)\b/.test(value)
+        if ((isSeparator || isDottedOutline) && glassBorderToken.test(value)) {
+          violations.push(`${file}: ${property}: ${value.trim()}`)
+        }
+      }
+    }
+
+    expect(violations).toEqual([])
   })
 
   it('咕咕聊天窗口离场时保留玻璃材质，避免 blur 先于淡出消失', () => {

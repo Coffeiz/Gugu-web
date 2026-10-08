@@ -432,7 +432,7 @@ onBeforeUnmount(adminEvents.stop)
 .fs-block-head .fs-block-title { margin-bottom:0; }
 .fs-block-tools { display:flex; align-items:center; gap:10px; font-size:var(--font-size-xs); color:var(--content-secondary); }
 .fs-toggle { display:flex; align-items:center; gap:6px; cursor:pointer; }
-.fs-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid var(--border-subtle); }
+.fs-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid var(--content-divider); }
 .fs-row-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; font-size:var(--font-size-sm); }
 .fs-row-main strong { overflow-wrap:anywhere; }
 .fs-row-main span,.fs-row-main small { color:var(--content-secondary); overflow-wrap:anywhere; }
@@ -440,10 +440,10 @@ onBeforeUnmount(adminEvents.stop)
 .fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); font-size:var(--font-size-sm); }
 .fs-message.is-success { color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); }
 .fs-bulk-actions { max-width:100%; }
-.fs-run { display:flex; flex-direction:column; gap:4px; padding:8px 0; border-top:1px solid var(--border-subtle); font-size:var(--font-size-xs); }
+.fs-run { display:flex; flex-direction:column; gap:4px; padding:8px 0; border-top:1px solid var(--content-divider); font-size:var(--font-size-xs); }
 .fs-run-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .fs-run-head strong,.fs-run span { min-width:0; overflow-wrap:anywhere; }
 .fs-run span { color:var(--content-secondary); }
-.fs-failure { border-top:1px solid var(--border-subtle); padding:7px 0; color:var(--status-danger); font-size:var(--font-size-xs); overflow-wrap:anywhere; }
+.fs-failure { border-top:1px solid var(--content-divider); padding:7px 0; color:var(--status-danger); font-size:var(--font-size-xs); overflow-wrap:anywhere; }
 @media (max-width:720px) { .fs-head { flex-direction:column; } .fs-head-actions { width:100%; justify-content:space-between; } .fs-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .fs-row { align-items:flex-start; flex-direction:column; } .fs-actions { justify-content:flex-start; } .fs-banner { align-items:flex-start; flex-wrap:wrap; } .fs-banner-meta { margin-left:0; flex-basis:100%; } .fs-block-head { flex-direction:column; align-items:flex-start; gap:4px; } }
 </style>

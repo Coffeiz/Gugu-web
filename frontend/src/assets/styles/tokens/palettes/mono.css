@@ -13,6 +13,7 @@
   --theme-brand-logo-color: #715653;
   --theme-brand-logo-filter: brightness(0) saturate(100%) invert(42%) sepia(17%) saturate(570%) hue-rotate(355deg) brightness(88%) contrast(88%);
   --theme-divider: linear-gradient(90deg,transparent,rgba(42,35,49,.085) 20%,rgba(42,35,49,.085) 80%,transparent);
+  --theme-divider-color: rgba(42,35,49,.085);
   --theme-success: #5e8877;
   --theme-warning: #917451;
   --theme-danger: #a65d60;
@@ -32,6 +33,7 @@
   --theme-brand-logo-color: #ba9992;
   --theme-brand-logo-filter: brightness(0) saturate(100%) invert(76%) sepia(17%) saturate(410%) hue-rotate(355deg) brightness(94%) contrast(88%);
   --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.075) 20%,rgba(255,255,255,.075) 80%,transparent);
+  --theme-divider-color: rgba(255,255,255,.075);
   --theme-gugu-chat-send-bg: linear-gradient(135deg,#a6827a,#ba9992);
   --theme-success: #92b9a7;
   --theme-warning: #c5a77f;

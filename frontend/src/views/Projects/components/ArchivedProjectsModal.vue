@@ -194,7 +194,7 @@ function formatDate(value: string | null | undefined): string {
 .ap-modal { display: flex; flex-direction: column; max-height: 70vh; }
 .ap-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 18px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0;
+  padding: 16px 18px; border-bottom: 1px solid var(--content-divider); flex-shrink: 0;
 }
 .ap-heading { display:flex; align-items:baseline; gap:8px; min-width:0; }
 .ap-title { font-size: 15px; font-weight: 700; color: var(--content-primary); }
