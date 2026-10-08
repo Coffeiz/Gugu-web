@@ -3,6 +3,7 @@ import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { filesApi } from '@/services/api'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import type { Router } from 'vue-router'
@@ -63,6 +64,7 @@ export function useChatActions(options: {
   // 预览不了（非白名单类型/已删除）才退回跳文件库定位。
   // 咕咕实际会发两种格式：gugu://open-file/<id> 和 gugu://open-object/file/<id>，都接。
   async function openFileFromLink(id: number) {
+    const accountEpoch = getAccountBoundaryEpoch()
     const previewStore = usePreviewStore()
     const previewBlobCache = usePreviewBlobCache()
     const existing = previewStore.windows.find(win => win.file.id === id)?.file
@@ -83,12 +85,14 @@ export function useChatActions(options: {
     let streamUrl: string | undefined
     try {
       const result = await filesApi.getStreamUrl(id)
+      if (accountEpoch !== getAccountBoundaryEpoch()) return
       f = result.file
       streamUrl = result.url
-      previewBlobCache.rememberFile(f, liveStore.rev.files)
+      previewBlobCache.rememberFile(f, liveStore.rev.files, accountEpoch)
     } catch {
       // 与文件已删除或无法预览时一致，交由文件库展示定位结果。
     }
+    if (accountEpoch !== getAccountBoundaryEpoch()) return
     if (f && isPreviewable(f.ext, f.mimeType)) {
       previewStore.open(f, null, false, streamUrl)
       return

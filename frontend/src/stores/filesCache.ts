@@ -24,6 +24,13 @@ export type FolderMeta = components['schemas']['FolderResponse'] & {
   workspaceDirectoryId?: number | null
 }
 
+export interface DirectorySnapshotScope {
+  space: 'personal' | 'project' | 'workspace'
+  projectId?: number
+  folderId?: number
+  workspaceDirectoryId?: number
+}
+
 let _lastVersion: string | number | null = null
 let _visibilityBound = false
 let _pendingLiveRefresh = false
@@ -235,14 +242,51 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     else allFolders.value.splice(index, 1, normalized)
   }
 
-  // 文件库目录按需加载时，只把可见实体放进操作缓存，不将局部数据标记为全量 loaded。
-  function mergeDirectorySnapshot(files: FileMeta[], folders: FolderMeta[]) {
-    const fileById = new Map(allFiles.value.map(file => [file.id, file]))
-    files.forEach(file => fileById.set(file.id, file))
-    allFiles.value = [...fileById.values()]
-    const folderById = new Map(allFolders.value.map(folder => [folder.id, folder]))
-    folders.forEach(folder => folderById.set(folder.id, folder))
-    allFolders.value = [...folderById.values()]
+  function fileBelongsToDirectory(file: FileMeta, scope: DirectorySnapshotScope): boolean {
+    if (scope.folderId != null) return file.folderId === scope.folderId
+    if (scope.space === 'workspace') {
+      return file.space === 'workspace' && file.workspaceDirectoryId === scope.workspaceDirectoryId && file.folderId == null
+    }
+    if (scope.space === 'project') return file.projectId === scope.projectId && file.folderId == null
+    return file.space === 'personal' && file.projectId == null && file.workspaceDirectoryId == null && file.folderId == null
+  }
+
+  function folderBelongsToDirectory(folder: FolderMeta, scope: DirectorySnapshotScope): boolean {
+    if (scope.folderId != null) return folder.parentId === scope.folderId
+    if (scope.space === 'workspace') {
+      return folder.workspaceDirectoryId === scope.workspaceDirectoryId && folder.parentId == null
+    }
+    if (scope.space === 'project') return folder.projectId === scope.projectId && folder.parentId == null
+    return folder.projectId == null && folder.workspaceDirectoryId == null && folder.parentId == null
+  }
+
+  // 目录 API 返回的是该目录的权威快照：替换同一目录成员，保留其他未加载目录。
+  function replaceDirectorySnapshot(scope: DirectorySnapshotScope, files: FileMeta[], folders: FolderMeta[]) {
+    const incomingFolderIds = new Set(folders.map(folder => folder.id))
+    const removedFolderIds = new Set<number>()
+    allFolders.value.filter(folder => folderBelongsToDirectory(folder, scope) && !incomingFolderIds.has(folder.id))
+      .forEach(folder => removedFolderIds.add(folder.id))
+    let foundDescendant = true
+    while (foundDescendant) {
+      foundDescendant = false
+      for (const folder of allFolders.value) {
+        if (folder.parentId != null && removedFolderIds.has(folder.parentId) && !removedFolderIds.has(folder.id)) {
+          removedFolderIds.add(folder.id)
+          foundDescendant = true
+        }
+      }
+    }
+
+    const nextFiles = new Map(allFiles.value.filter(file =>
+      !fileBelongsToDirectory(file, scope) && (file.folderId == null || !removedFolderIds.has(file.folderId)),
+    ).map(file => [file.id, file]))
+    files.forEach(file => nextFiles.set(file.id, file))
+    allFiles.value = [...nextFiles.values()]
+    const nextFolders = new Map(allFolders.value.filter(folder =>
+      !folderBelongsToDirectory(folder, scope) && !removedFolderIds.has(folder.id),
+    ).map(folder => [folder.id, folder]))
+    folders.forEach(folder => nextFolders.set(folder.id, folder))
+    allFolders.value = [...nextFolders.values()]
   }
 
   function removeFolder(id: number) {
@@ -325,6 +369,6 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     getPersonalRootFolders, getProjectRootFolders, getSubFolders, getWorkspaceFolders,
     addFile, removeFile, removeFiles, updateFile, getFile, ensureFile,
     addFolder, removeFolder, updateFolder, getFolder,
-    mergeDirectorySnapshot,
+    replaceDirectorySnapshot,
   }
 })

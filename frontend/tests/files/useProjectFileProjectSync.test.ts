@@ -25,7 +25,7 @@ describe('项目文件目录按需加载', () => {
   it('首次打开项目只读项目根目录，进入子目录时按需读取且不调用全量接口', async () => {
     const project = ref({ id: 41 } as Project | null)
     const folderStack = ref<FolderMeta[]>([])
-    const mergeDirectorySnapshot = vi.fn()
+    const replaceDirectorySnapshot = vi.fn()
     let sync!: ReturnType<typeof useProjectFileProjectSync>
 
     scope.run(() => {
@@ -36,11 +36,11 @@ describe('项目文件目录按需加载', () => {
         resetNavigation: vi.fn(),
         showNewFolder: ref(false),
         resetDraft: vi.fn(),
-        fileCacheStore: { loaded: false, mergeDirectorySnapshot },
+        fileCacheStore: { loaded: false, replaceDirectorySnapshot },
       })
     })
 
-    await vi.waitFor(() => expect(mergeDirectorySnapshot).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(replaceDirectorySnapshot).toHaveBeenCalledOnce())
     expect(filesApi.list).toHaveBeenNthCalledWith(1, { space: 'project', projectId: 41, folderId: undefined })
     expect(foldersApi.list).toHaveBeenNthCalledWith(1, { projectId: 41, parentId: undefined })
     expect(sync.isDirectoryLoaded(41, null)).toBe(true)
@@ -56,11 +56,11 @@ describe('项目文件目录按需加载', () => {
     expect(sync.isDirectoryLoaded(41, 93)).toBe(true)
     expect(filesApi.all).not.toHaveBeenCalled()
     expect(foldersApi.all).not.toHaveBeenCalled()
-    expect(mergeDirectorySnapshot).toHaveBeenCalledTimes(2)
+    expect(replaceDirectorySnapshot).toHaveBeenCalledTimes(2)
   })
 
   it('项目全量缓存已就绪时不重复请求目录', async () => {
-    const mergeDirectorySnapshot = vi.fn()
+    const replaceDirectorySnapshot = vi.fn()
     let sync!: ReturnType<typeof useProjectFileProjectSync>
     scope.run(() => {
       sync = useProjectFileProjectSync({
@@ -70,13 +70,13 @@ describe('项目文件目录按需加载', () => {
         resetNavigation: vi.fn(),
         showNewFolder: ref(false),
         resetDraft: vi.fn(),
-        fileCacheStore: { loaded: true, mergeDirectorySnapshot },
+        fileCacheStore: { loaded: true, replaceDirectorySnapshot },
       })
     })
 
     await sync.ensureDirectoryLoaded(41)
     expect(filesApi.list).not.toHaveBeenCalled()
     expect(foldersApi.list).not.toHaveBeenCalled()
-    expect(mergeDirectorySnapshot).not.toHaveBeenCalled()
+    expect(replaceDirectorySnapshot).not.toHaveBeenCalled()
   })
 })

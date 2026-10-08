@@ -118,6 +118,18 @@ describe('预览窗口复用', () => {
     expect(store.windows[0].reloadToken).toBe(0)
   })
 
+  it('账号切换重置关闭所有文件窗口与抽屉', () => {
+    const store = usePreviewStore()
+    store.open({ id: 1, ext: 'PNG', displayName: '旧账号文件' })
+    store.open({ id: 2, ext: 'PDF', displayName: '旧账号文档' })
+
+    store.resetAccountState()
+
+    expect(store.windows).toEqual([])
+    expect(store.singleFile).toBeNull()
+    expect(store.singleSiblings).toEqual([])
+  })
+
   it('只有实时事件明确命中当前文件时才刷新预览', () => {
     const event = (overrides: Record<string, unknown> = {}) => ({
       protocol_version: 'live-event-v1' as const,

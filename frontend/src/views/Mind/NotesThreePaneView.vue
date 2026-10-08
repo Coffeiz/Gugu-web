@@ -28,8 +28,8 @@
                 role="button"
                 tabindex="0"
                 :data-note-id="note.id"
-                @click="selectedId = note.id"
-                @keydown.enter.prevent="selectedId = note.id"
+                @click="selectNote(note.id)"
+                @keydown.enter.prevent="selectNote(note.id)"
               >
                 <div class="ni-head">
                   <span class="ni-time">{{ timeHM(note) }}</span>
@@ -187,6 +187,7 @@ import { useLiveStore } from '@/stores/live'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
+import { commitNoteEdit } from '@/composables/mind/noteEditCommit'
 import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd, combineTitleBody } from '@/composables/mind/useMindEditor'
 import { vMindPreview } from './directives/mindPreview'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
@@ -265,19 +266,10 @@ watch(() => store.timeline, (groups) => {
   if (!groups.length) selectedId.value = null
 }, { immediate: true })
 
-watch(() => store.jumpTarget, date => {
-  if (!date || !listRef.value) return
-  if (store.timeline.some(group => group.date === date)) {
-    scrollToDate(date, 'smooth')
-  } else if (date === todayKey && store.timeline.length) {
-    showAppNotice(t('mind.noToday'))
-    scrollToDate(store.timeline[0].date, 'smooth')
-  }
-})
-
 // live 更新不能在编辑中覆盖当前草稿；编辑结束后再读取服务端事实。
 const refreshAfterEdit = ref(false)
 const committingEdit = ref(false)
+let restoringSelection = false
 watch(() => liveStore.rev.mind, () => {
   if (editing.value || committingEdit.value) refreshAfterEdit.value = true
   else void store.fetchNotes()
@@ -473,7 +465,7 @@ function removeEmptyDraft(note: MindNote) {
 const pendingNewId = ref<number | null>(null)
 
 async function createNew() {
-  if (editing.value) await finishEdit()
+  if (editing.value && !(await finishEdit())) return
   const unsavedDraft = pendingNewId.value == null
     ? null
     : store.notes.find(note => note.id === pendingNewId.value) ?? null
@@ -500,14 +492,17 @@ async function selectAndEdit(id: number) {
 
 async function finishEdit() {
   const note = selected.value
-  if (!note) return
-  committingEdit.value = true
-  let saved = false
-  try { saved = await applyEdit(note) } finally {
-    editing.value = false
-    committingEdit.value = false
+  if (!note) return false
+  const saved = await commitNoteEdit(editing, committingEdit, () => applyEdit(note))
+  if (saved) {
+    await flushLiveRefresh()
   }
-  if (saved) await flushLiveRefresh()
+  return saved
+}
+
+function selectNote(id: number) {
+  if (committingEdit.value && id !== selectedId.value) return
+  selectedId.value = id
 }
 
 /** 把编辑态的标题和正文拼回 contentMd，再落库或更新样例数据。 */
@@ -545,14 +540,20 @@ async function applyEdit(note: MindNote): Promise<boolean> {
 // 切换选中便签即退出编辑；除显式「取消」外所有退出路径默认保存。此时 selected 已指向
 // 新条目，按 oldId 从 notes 里找回被切走的那条再收尾；保存失败时保留草稿以便重试。
 watch(selectedId, async (_newId, oldId) => {
+  if (restoringSelection) {
+    restoringSelection = false
+    return
+  }
   if (!editing.value) return
-  editing.value = false
   const prev = oldId == null ? null : store.notes.find(n => n.id === oldId) ?? null
   if (!prev) return
-  committingEdit.value = true
-  let saved = false
-  try { saved = await applyEdit(prev) } finally { committingEdit.value = false }
-  if (saved) await flushLiveRefresh()
+  const saved = await commitNoteEdit(editing, committingEdit, () => applyEdit(prev))
+  if (saved) {
+    await flushLiveRefresh()
+  } else if (oldId != null) {
+    restoringSelection = true
+    selectedId.value = oldId
+  }
 })
 
 // ── 颜色：卡片上的颜色球，点击弹出选择（含默认纸色），选完球即新色 ──

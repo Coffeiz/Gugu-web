@@ -1,11 +1,11 @@
 import { nextTick, ref, watch, type Ref } from 'vue'
 import { filesApi, foldersApi } from '@/services/api'
-import type { FileMeta, FolderMeta } from '@/stores/filesCache'
+import type { DirectorySnapshotScope, FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 
 type FileCacheLike = {
   loaded: boolean
-  mergeDirectorySnapshot: (files: FileMeta[], folders: FolderMeta[]) => void
+  replaceDirectorySnapshot: (scope: DirectorySnapshotScope, files: FileMeta[], folders: FolderMeta[]) => void
 }
 
 /** 项目切换时同步文件工作区导航与全局缓存，避免弹窗层重复维护生命周期细节。 */
@@ -34,7 +34,10 @@ export function useProjectFileProjectSync(options: {
       foldersApi.list({ projectId, parentId: folderId ?? undefined }),
     ]).then(([files, folders]) => {
       if (options.project()?.id !== projectId) return
-      options.fileCacheStore.mergeDirectorySnapshot(files as FileMeta[], folders as FolderMeta[])
+      options.fileCacheStore.replaceDirectorySnapshot(
+        { space: 'project', projectId, ...(folderId != null ? { folderId } : {}) },
+        files as FileMeta[], folders as FolderMeta[],
+      )
       loadedDirectories.add(key)
     }).catch(() => {
       // 加载失败时不标记目录，重新进入时允许重试。

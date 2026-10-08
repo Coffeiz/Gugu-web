@@ -270,5 +270,11 @@ export const usePreviewStore = defineStore('preview', () => {
     singleSiblings.value = []
   }
 
-  return { windows, singleFile, singleSiblings, file, open, openVirtual, close, closeWindow, bringToFront, navigate }
+  function resetAccountState() {
+    windows.value = []
+    close()
+    _nextId = 1
+  }
+
+  return { windows, singleFile, singleSiblings, file, open, openVirtual, close, closeWindow, bringToFront, navigate, resetAccountState }
 })

@@ -12,6 +12,8 @@ import { useLiveStore } from './live'
 import { useFilesCacheStore } from './filesCache'
 import { useProjectStore } from './projects'
 import { useMindStore } from './mind'
+import { usePreviewStore } from './preview'
+import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { onboardingGuideState } from '@/composables/onboarding/useOnboardingGuide'
 import { onboardingProjectId, onboardingSeedState } from '@/composables/onboarding/useOnboardingSeed'
 import { setUserTimezone } from '@/utils/userTimezone'
@@ -33,6 +35,8 @@ function resetAccountState() {
   useFilesCacheStore().resetAccountState()
   useProjectStore().resetAccountState()
   useMindStore().resetAccountState()
+  usePreviewBlobCache().clear()
+  usePreviewStore().resetAccountState()
   onboardingProjectId.value = null
   onboardingSeedState.value = null
   onboardingGuideState.value = null

@@ -5,6 +5,7 @@ import {
   previewBlobCacheKey,
   usePreviewBlobCache,
 } from '@/composables/shared/usePreviewBlobCache'
+import { beginAccountBoundary, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 describe('usePreviewBlobCache', () => {
   beforeEach(() => {
@@ -17,8 +18,8 @@ describe('usePreviewBlobCache', () => {
   })
 
   it('按文件 id 区分库文件和聊天附件，并命中后刷新 LRU 顺序', () => {
-    expect(previewBlobCacheKey({ id: 7 })).toBe('file:7:0')
-    expect(previewBlobCacheKey({ attach_id: 'a-7', id: 7 })).toBe('attach:a-7')
+    expect(previewBlobCacheKey({ id: 7 })).toBe(`account:${getAccountBoundaryEpoch()}:file:7:0`)
+    expect(previewBlobCacheKey({ attach_id: 'a-7', id: 7 })).toBe(`account:${getAccountBoundaryEpoch()}:attach:a-7`)
 
     const cache = usePreviewBlobCache()
     cache.put('file:1', 'blob:1')
@@ -29,8 +30,8 @@ describe('usePreviewBlobCache', () => {
   })
 
   it('文件正文版本变化时使用不同缓存键', () => {
-    expect(previewBlobCacheKey({ id: 7, version: 1 })).toBe('file:7:1')
-    expect(previewBlobCacheKey({ id: 7, version: 2 })).toBe('file:7:2')
+    expect(previewBlobCacheKey({ id: 7, version: 1 })).toBe(`account:${getAccountBoundaryEpoch()}:file:7:1`)
+    expect(previewBlobCacheKey({ id: 7, version: 2 })).toBe(`account:${getAccountBoundaryEpoch()}:file:7:2`)
   })
 
   it('超过 20 条时只释放最久未使用的 blob，缓存中的 URL 不随组件卸载释放', () => {
@@ -55,5 +56,23 @@ describe('usePreviewBlobCache', () => {
 
     expect(cache.get('file:1')).toBe('blob:v2')
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:v1')
+  })
+
+  it('账号边界清空旧预览元数据并拒绝迟到的旧账号下载', () => {
+    const cache = usePreviewBlobCache()
+    const oldEpoch = getAccountBoundaryEpoch()
+    const oldKey = cache.keyOf({ id: 42, version: 1 })
+    cache.put(oldKey, 'blob:account-a', oldEpoch)
+    cache.rememberFile({ id: 42, version: 1 }, 0, oldEpoch)
+
+    beginAccountBoundary()
+    cache.clear()
+
+    expect(cache.get(oldKey)).toBeNull()
+    expect(cache.getFile(42)).toBeNull()
+    expect(cache.put(oldKey, 'blob:late-account-a', oldEpoch)).toBe(false)
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:account-a')
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:late-account-a')
+    expect(cache.keyOf({ id: 42, version: 1 })).not.toBe(oldKey)
   })
 })

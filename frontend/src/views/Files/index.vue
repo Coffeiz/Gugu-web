@@ -216,6 +216,7 @@ import { type NavSeg, type FolderCard as FolderCardMeta } from '@/utils/filesNav
 import { useFilesNav } from '@/composables/files/useFilesNav'
 import { useFileLibraryNavigation } from '@/composables/files/useFileLibraryNavigation'
 import { useFileLibraryDirectory } from '@/composables/files/useFileLibraryDirectory'
+import { watchDebouncedRevision } from '@/composables/shared/liveRevisionRefresh'
 import { useFileLibrarySorting } from '@/composables/files/useFileLibrarySorting'
 import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelection'
 import { useFileLibraryBatchActions } from '@/composables/files/useFileLibraryBatchActions'
@@ -458,17 +459,11 @@ watch(uploadSignal, () => {
 })
 
 // 目录是服务端按需快照，不依赖 filesCache 的全量刷新事件；外部文件变化时只刷新当前视图。
-let directoryRefreshTimer: ReturnType<typeof setTimeout> | null = null
-watch(() => live.resourceEvent, (event) => {
-  if (!event || event.resource !== 'files') return
-  // 包括本标签页自身操作：mutation 的乐观更新先发生，事件在服务端提交后到达，
-  // 再拉一次当前目录可避免请求竞态把旧列表覆盖回来。短暂防抖合并批量事件。
-  if (directoryRefreshTimer) clearTimeout(directoryRefreshTimer)
-  directoryRefreshTimer = setTimeout(() => {
-    directoryRefreshTimer = null
-    loadContents()
-  }, 120)
-})
+const stopWatchingFileRevision = watchDebouncedRevision(
+  () => live.rev.files,
+  () => { loadContents() },
+  120,
+)
 
 // ── 统一选择、多选与框选 ──
 const selection = useFileLibrarySelection({
@@ -762,8 +757,7 @@ useRuntimeAction(action => {
 })
 
 onUnmounted(() => {
-  if (directoryRefreshTimer) clearTimeout(directoryRefreshTimer)
-  directoryRefreshTimer = null
+  stopWatchingFileRevision()
   if (runtime.surfaces.get(runtimeBrowserSurfaceId)?.generation === browserSurfaceGeneration) {
     runtime.surfaces.unregister(runtimeBrowserSurfaceId, browserSurfaceGeneration)
   }

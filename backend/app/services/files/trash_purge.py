@@ -5,6 +5,7 @@ import logging
 from datetime import timedelta
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
@@ -214,7 +215,19 @@ async def _claim(session_factory, worker_id: str) -> int | None:
         job.lease_until = now + _LEASE
         if job.started_at is None:
             job.started_at = now
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            # 数据库唯一部分索引是跨进程的最终互斥保障；并发 worker 输掉 claim 时
+            # 视为没有可领取任务，而不是把正常竞争记成 worker 故障。
+            running_id = (await db.execute(select(TrashPurgeJob.id).where(
+                TrashPurgeJob.status == 'running',
+                TrashPurgeJob.lease_until > now,
+            ).limit(1))).scalar_one_or_none()
+            if running_id is None:
+                raise
+            return None
         return job.id
 
 

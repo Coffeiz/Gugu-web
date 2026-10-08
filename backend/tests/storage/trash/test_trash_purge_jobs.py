@@ -5,6 +5,8 @@ import json
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.v1 import trash as trash_api
 from app.core import events
@@ -27,6 +29,19 @@ async def test_global_worker_claims_at_most_one_purge(db, user_a, user_b):
 
     assert first is not None
     assert second is None
+
+
+async def test_database_constraint_rejects_two_running_purge_jobs(db, user_a, user_b):
+    db.add(TrashPurgeJob(user_id=user_a.id, status='running', snapshot_at=now_utc(), progress_total=1))
+    await db.commit()
+
+    db.add(TrashPurgeJob(user_id=user_b.id, status='running', snapshot_at=now_utc(), progress_total=1))
+    with pytest.raises(IntegrityError):
+        await db.commit()
+    await db.rollback()
+
+    running = (await db.execute(select(TrashPurgeJob).where(TrashPurgeJob.status == 'running'))).scalars().all()
+    assert len(running) == 1
 
 
 async def test_purge_job_status_cannot_be_read_by_another_user(db, user_a, user_b):

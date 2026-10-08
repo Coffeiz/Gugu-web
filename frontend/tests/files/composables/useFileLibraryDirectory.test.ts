@@ -31,7 +31,7 @@ describe('文件库目录按需加载', () => {
   })
 
   function setup(type: string, segment: NavSeg | null) {
-    const mergeDirectorySnapshot = vi.fn()
+    const replaceDirectorySnapshot = vi.fn()
     const currentType = ref(type)
     const currentSeg = ref(segment)
     const loading = ref(false)
@@ -44,14 +44,14 @@ describe('文件库目录按需加载', () => {
         getProjectRootFolders: () => [], getProjectRootFiles: () => [],
         getSubFolders: () => [], getFolderFiles: () => [],
         getWorkspaceFolders: () => [], getWorkspaceFiles: () => [],
-        mergeDirectorySnapshot,
+        replaceDirectorySnapshot,
       },
       currentType,
       currentSeg,
       loading,
       sortKey: ref('name'), sortDir: ref('asc'),
     })
-    return { ...directory, currentType, currentSeg, loading, mergeDirectorySnapshot }
+    return { ...directory, currentType, currentSeg, loading, replaceDirectorySnapshot }
   }
 
   it('个人根目录只请求该目录数据，不触发全量 files/folders API', async () => {
@@ -64,7 +64,7 @@ describe('文件库目录按需加载', () => {
     expect(foldersApi.list).toHaveBeenCalledWith({ projectId: undefined, parentId: undefined, workspaceDirectoryId: undefined })
     expect(filesApi.all).not.toHaveBeenCalled()
     expect(foldersApi.all).not.toHaveBeenCalled()
-    expect(page.mergeDirectorySnapshot).toHaveBeenCalledWith([file], [folder])
+    expect(page.replaceDirectorySnapshot).toHaveBeenCalledWith({ space: 'personal' }, [file], [folder])
   })
 
   it('根页面用聚合计数显示个人根目录项目数，不为计数下载全量列表', async () => {

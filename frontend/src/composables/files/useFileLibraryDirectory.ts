@@ -1,7 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { filesApi, foldersApi, trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
-import type { FileMeta, FolderMeta } from '@/stores/filesCache'
+import type { DirectorySnapshotScope, FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 import { doneYear, doneMonth } from '@/utils/fileParse'
 import { statusFolders, yearFolders, monthFolders } from '@/utils/projectFolderCards'
@@ -24,7 +24,7 @@ interface DirectoryCacheStore {
   getFolderFiles: (folderId: number) => FileMeta[]
   getWorkspaceFolders: (workspaceDirectoryId: number, parentId?: number | null) => FolderMeta[]
   getWorkspaceFiles: (workspaceDirectoryId: number, folderId?: number | null) => FileMeta[]
-  mergeDirectorySnapshot: (files: FileMeta[], folders: FolderMeta[]) => void
+  replaceDirectorySnapshot: (scope: DirectorySnapshotScope, files: FileMeta[], folders: FolderMeta[]) => void
 }
 
 interface ScopedDirectoryState {
@@ -85,7 +85,12 @@ async function loadScopedDirectory(type: string, segment: NavSeg | null, state: 
     if (!state.isCurrent()) return
     const fileRows = files as FileMeta[]
     const folderRows = folders as FolderMeta[]
-    state.cacheStore.mergeDirectorySnapshot(fileRows, folderRows)
+    state.cacheStore.replaceDirectorySnapshot({
+      space,
+      ...(projectId != null ? { projectId } : {}),
+      ...(folderId != null ? { folderId } : {}),
+      ...(workspaceDirectoryId != null ? { workspaceDirectoryId } : {}),
+    }, fileRows, folderRows)
     const folderItems = folderRows.map(folder => ({
       id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
       displayName: folder.name, color: segment?.color ?? null,

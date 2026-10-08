@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { filesApi, type FileSummaryResponse } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { useProjectStore } from '@/stores/projects'
@@ -57,6 +57,7 @@ import ProjectList from './components/ProjectList.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
 import FilePanel   from './components/FilePanel.vue'
 import { useI18n } from 'vue-i18n'
+import { watchDebouncedRevision } from '@/composables/shared/liveRevisionRefresh'
 
 const projectStore = useProjectStore()
 const { t } = useI18n()
@@ -64,10 +65,8 @@ const liveStore = useLiveStore()
 const summary = ref<FileSummaryResponse | null>(null)
 const fileCount = computed(() => summary.value?.totalCount ?? '—')
 let summaryRequest = 0
-let eventRefreshTimer = 0
 
 async function loadFileSummary() {
-  window.clearTimeout(eventRefreshTimer)
   const request = ++summaryRequest
   try {
     const result = await filesApi.summary()
@@ -77,14 +76,14 @@ async function loadFileSummary() {
   }
 }
 
-watch(() => liveStore.resourceEvent, event => {
-  if (event?.resource !== 'files') return
-  window.clearTimeout(eventRefreshTimer)
-  eventRefreshTimer = window.setTimeout(() => { void loadFileSummary() }, 250)
-})
+const stopWatchingFileRevision = watchDebouncedRevision(
+  () => liveStore.rev.files,
+  () => { void loadFileSummary() },
+  250,
+)
 
 onMounted(() => { void loadFileSummary() })
-onBeforeUnmount(() => window.clearTimeout(eventRefreshTimer))
+onBeforeUnmount(stopWatchingFileRevision)
 </script>
 
 <style scoped>
