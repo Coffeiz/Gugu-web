@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { buildFileLinkIndex, resolveRelativeFileLink } from '@/utils/fileLinks'
+import { buildFileLinkIndex, isRelativeFileLink, isSiblingFileLink, resolveRelativeFileLink } from '@/utils/fileLinks'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 
 const folders = [
@@ -41,5 +41,14 @@ describe('resolveRelativeFileLink', () => {
     for (const href of ['https://example.com/a.md', 'mailto:test@example.com', '#section', 'javascript:alert(1)']) {
       expect(resolveRelativeFileLink(href, { projectId: 7 }, files, folders)).toBeNull()
     }
+  })
+
+  it('区分站内相对链接与可用当前目录索引解析的同目录链接', () => {
+    expect(isRelativeFileLink('https://example.com/a.md')).toBe(false)
+    expect(isRelativeFileLink('#section')).toBe(false)
+    expect(isRelativeFileLink('../guide.md')).toBe(true)
+    expect(isSiblingFileLink('./cover%20art.png?raw=1#preview')).toBe(true)
+    expect(isSiblingFileLink('../guide.md')).toBe(false)
+    expect(isSiblingFileLink('assets/cover.png')).toBe(false)
   })
 })

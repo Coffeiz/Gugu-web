@@ -70,7 +70,6 @@
       <ActionButton v-if="currentType === 'root'" variant="primary" fit @click="workspaceDirectoryPanel?.openCreate()">
         <Icon name="admin.stack" :size="13" />{{ t('workspaceUi.createWorkspace') }}
       </ActionButton>
-      <FileSyncReconcilePanel v-if="currentType === 'root'" />
       <FileTrashToolbarActions v-if="currentType === 'trash'"
         :has-items="Boolean(contents.files.length || trashFolders.length)"
         :all-selected="allTrashSelected"
@@ -201,7 +200,6 @@ import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowser
 import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
 import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
-import FileSyncReconcilePanel from '@/components/filesync/FileSyncReconcilePanel.vue'
 import ArchiveOperationDialog from '@/views/Files/components/ArchiveOperationDialog.vue'
 import { useClipboardStore } from '@/stores/clipboard'
 import { uploadSignal } from '@/services/cache'
@@ -437,9 +435,13 @@ onMounted(async () => {
     return
   }
   await Promise.all([
-    projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
-    // 只有从全局搜索直接定位时才需要完整索引；普通文件库导航按当前目录加载。
-    target && !cacheStore.loaded ? cacheStore.load() : Promise.resolve(),
+    target?.workspaceDirectoryId == null && projectStore.projects.length === 0
+      ? projectStore.fetchProjects?.()
+      : Promise.resolve(),
+    // 只有缺少工作区路径元数据的旧式定位才需要全量索引；工作区搜索跳转按目录加载。
+    target && target.workspaceDirectoryId == null && !cacheStore.loaded
+      ? cacheStore.load()
+      : Promise.resolve(),
   ])
   if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
 })

@@ -83,6 +83,23 @@ async def test_list_trash_folders_excludes_live(db, user_a):
     assert out == []
 
 
+async def test_trash_counts_counts_top_level_units_without_loading_items(db, user_a):
+    folder, _ = await _mk_folder_with_file(db, user_a, "deleted-folder")
+    await folders_api.delete_folder(folder.id, current_user=user_a, origin=None, db=db)
+    db.add_all([
+        File(user_id=user_a.id, display_name="standalone", ext="TXT", storage_key="personal/standalone",
+             deleted_at=now_utc()),
+        File(user_id=user_a.id, display_name="live", ext="TXT", storage_key="personal/live"),
+    ])
+    await db.commit()
+
+    counts = await trash_api.trash_counts(current_user=user_a, db=db)
+
+    assert counts.file_count == 1
+    assert counts.folder_count == 1
+    assert counts.total_count == 2
+
+
 async def test_trash_folder_endpoints_isolate_other_users(db, user_a, user_b):
     folder, _ = await _mk_folder_with_file(db, user_b, "他人的回收站")
     await folders_api.delete_folder(folder.id, current_user=user_b, origin=None, db=db)

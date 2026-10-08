@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 
-from app.api.v1.search import _run_ilike_search, run_global_search
-from app.models import File, Folder, MindCanvasItem, MindMap, MindNode, Project, ScheduledTask, UserMcpServer, UserSkill
+from app.api.v1.search import _run_ilike_search, _run_index_search, run_global_search
+from app.models import (
+    File, Folder, KnowledgeIndexEntry, MindCanvasItem, MindMap, MindNode, Project, ScheduledTask,
+    UserMcpServer, UserSkill, WorkspaceDirectory,
+)
 from agent.tools.global_search import _global_search
 import app.api.v1.search as search_api
 
@@ -22,6 +25,64 @@ async def test_run_global_search_matches_file_ext_case_insensitively(db, user_a)
     assert result["total"] == 1
     assert result["groups"][0]["type"] == "file"
     assert result["groups"][0]["items"][0]["title"] == "prototype.HTML"
+
+
+async def test_global_search_workspace_results_include_scoped_parent_path(db, user_a, monkeypatch):
+    directory = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="开发工作区", directory_name="dev-workspace",
+    ))
+    root = await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=directory.id, name="源码",
+    ))
+    nested = await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=directory.id,
+        parent_id=root.id, name="前端",
+    ))
+    file = await _mk(db, File(
+        user_id=user_a.id, display_name="workspace-target", ext="ts",
+        storage_key="workspace-target", size=20, space="workspace",
+        workspace_directory_id=directory.id, folder_id=nested.id,
+    ))
+
+    file_result = await _run_ilike_search(db, user_a.id, "workspace-target", types=["file"])
+    file_item = file_result["groups"][0]["items"][0]
+    assert file_item["workspace_directory_id"] == directory.id
+    assert file_item["workspace_directory_name"] == "开发工作区"
+    assert file_item["folder_path"] == [
+        {"id": root.id, "name": "源码"},
+        {"id": nested.id, "name": "前端"},
+    ]
+    assert file_item["subtitle"].startswith("工作区 · 开发工作区 · 源码/前端")
+
+    folder_result = await _run_ilike_search(db, user_a.id, "前端", types=["folder"])
+    folder_item = folder_result["groups"][0]["items"][0]
+    assert folder_item["workspace_directory_id"] == directory.id
+    assert folder_item["workspace_directory_name"] == "开发工作区"
+    assert folder_item["folder_path"] == [{"id": root.id, "name": "源码"}]
+
+    await _mk(db, KnowledgeIndexEntry(
+        owner_user_id=user_a.id, source_type="file", source_id=str(file.id),
+        document_id=f"file:{file.id}", document_version="1", content_hash="a" * 64,
+    ))
+
+    async def indexed_hit(*_args, **_kwargs):
+        document = type("Document", (), {
+            "source_type": "file", "source_id": str(file.id), "content": "workspace-target",
+        })()
+        return [type("Hit", (), {"document": document})()]
+
+    monkeypatch.setattr(search_api, "search_persistent_index", indexed_hit)
+    indexed_result = await _run_index_search(
+        db, user_a.id, "workspace-target", per_type=6, types=["file"],
+        queries=["workspace-target"], mode="OR", language="zh-CN",
+    )
+    indexed_item = indexed_result["groups"][0]["items"][0]
+    assert indexed_item["workspace_directory_id"] == directory.id
+    assert indexed_item["workspace_directory_name"] == "开发工作区"
+    assert indexed_item["folder_path"] == [
+        {"id": root.id, "name": "源码"},
+        {"id": nested.id, "name": "前端"},
+    ]
 
 
 async def test_global_search_can_fall_back_to_ilike_backend(db, user_a, monkeypatch):

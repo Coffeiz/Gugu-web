@@ -176,11 +176,11 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
         files: [],
       }
       const rootCountRequest = cacheStore.loaded ? Promise.resolve(null) : filesApi.tree()
-      Promise.all([trashApi.list(), trashApi.listFolders(), rootCountRequest]).then(([files, folders, tree]) => {
+      Promise.all([trashApi.counts(), rootCountRequest]).then(([trashCounts, tree]) => {
         const personalFolder = contents.value.folders.find(folder => folder.id === 'personal')
         if (personalFolder && tree) personalFolder.count = tree.personalRootCount
         const trashFolder = contents.value.folders.find(folder => folder.id === 'trash')
-        if (trashFolder) trashFolder.count = files.length + folders.length
+        if (trashFolder) trashFolder.count = trashCounts.totalCount
       }).catch(() => {})
       return
     }

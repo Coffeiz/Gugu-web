@@ -12,6 +12,7 @@ from app.schemas import (
     BatchDeleteBody,
     FileResponse,
     FolderResponse,
+    TrashCountsResponse,
     TrashFolderContentsResponse,
     TrashFolderResponse,
     TrashPurgeJobResponse,
@@ -23,6 +24,7 @@ from app.services.files.trash import (
     permanently_delete_file,
     permanently_delete_folder,
     get_top_level_deleted_folder,
+    get_trash_counts,
     list_top_level_deleted_folders,
     list_top_level_deleted_folders_with_counts,
     list_trash_file_rows,
@@ -36,11 +38,23 @@ from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import folder_dir_key
 from app.services.files.trash_purge import enqueue_purge, get_active_job, get_owned_job
-
 router = APIRouter(prefix="/trash", tags=["trash"])
 
 TRASH_DAYS = 30
 _log = logging.getLogger("app.api.v1.trash")
+
+
+@router.get("/counts", response_model=TrashCountsResponse)
+async def trash_counts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    file_count, folder_count = await get_trash_counts(db, current_user.id)
+    return TrashCountsResponse(
+        file_count=file_count,
+        folder_count=folder_count,
+        total_count=file_count + folder_count,
+    )
 
 
 # ── GET /trash ────────────────────────────────────────────────────────────────

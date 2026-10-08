@@ -15,11 +15,11 @@ from app.core.upload_stream import spool_upload
 from app.db.session import get_db
 from app.models import File, Folder, Project, User  # orm-exempt: 文件归档接口的模型引用随现有遗留查询，files Service 收口时一并移除
 from app.schemas import (
-    CamelModel, FileResponse, FileStreamResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
+    CamelModel, FileResponse, FileStreamResponse, FileSummaryResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
 from app.services.files.browser import (
-    get_file_tree_rows, get_file_version_snapshot, get_storage_usage,
+    get_file_summary, get_file_tree_rows, get_file_version_snapshot, get_storage_usage,
     list_existing_file_rows, list_file_rows,
 )
 from app.services.storage.quota_ledger import get_file_library_usage_snapshot
@@ -168,7 +168,20 @@ async def list_files(
     return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows]
 
 
-# ── GET /files/all ────────────────────────────────────────────────────────────
+# ── GET /files/summary and /files/all ─────────────────────────────────────────
+
+@router.get("/summary", response_model=FileSummaryResponse)
+async def file_summary(
+    recent_limit: int = Query(default=12, ge=1, le=30),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    total_count, rows = await get_file_summary(db, current_user.id, recent_limit)
+    return FileSummaryResponse(
+        total_count=total_count,
+        recent_files=[to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows],
+    )
+
 
 @router.get("/all", response_model=list[FileResponse])
 async def list_all_files(

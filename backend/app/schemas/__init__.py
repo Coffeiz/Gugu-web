@@ -311,6 +311,11 @@ class FileResponse(CamelModel):
     version: int = 1
 
 
+class FileSummaryResponse(CamelModel):
+    total_count: int
+    recent_files: list[FileResponse]
+
+
 class FileStreamResponse(CamelModel):
     file: FileResponse
     url: str
@@ -407,6 +412,12 @@ class FolderResponse(CamelModel):
 class TrashFolderResponse(FolderResponse):
     """回收站里的顶层已删文件夹（P2.3）：deleted_at 供前端显示删除时间/30 天过期倒计时。"""
     deleted_at: str
+
+
+class TrashCountsResponse(CamelModel):
+    file_count: int
+    folder_count: int
+    total_count: int
 
 
 class TrashFolderContentsResponse(CamelModel):

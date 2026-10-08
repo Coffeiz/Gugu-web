@@ -46,6 +46,7 @@ export function useFileUpload(options: FileUploadOptions) {
       projectId: context.projectId,
       baseFolderId: context.folderId,
       workspaceDirectoryId: context.workspaceDirectoryId,
+      existingFolders: prepared.existingFolders,
       folderGroups: prepared.folderGroups,
       decisions: prepared.decisions,
       createGhost: queue.createGhost,

@@ -1,4 +1,4 @@
-from sqlalchemy import or_, select, func
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -91,6 +91,25 @@ async def list_trash_file_rows(db: AsyncSession, user_id):
             or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
         ).order_by(File.deleted_at.desc())
     )).all()
+
+
+async def get_trash_counts(db: AsyncSession, user_id) -> tuple[int, int]:
+    """只统计回收站顶层恢复单元数量，避免为根目录计数载入完整内容。"""
+    file_count = (await db.execute(
+        select(func.count(File.id))
+        .outerjoin(Folder, File.folder_id == Folder.id)
+        .where(
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
+        )
+    )).scalar_one()
+    folder_count = (await db.execute(
+        top_level_deleted_folders_stmt(user_id)
+        .with_only_columns(func.count(Folder.id))
+        .order_by(None)
+    )).scalar_one()
+    return file_count, folder_count
 
 
 async def list_trash_folder_contents_rows(db: AsyncSession, user_id, folder_id: int):

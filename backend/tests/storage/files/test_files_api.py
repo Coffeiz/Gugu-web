@@ -94,6 +94,24 @@ async def test_upload_project_not_found(db, user_a):
         await _do_upload(db, user_a, b"x", "a.txt", space="project", project_id=999)
 
 
+async def test_file_summary_returns_total_count_and_only_requested_recent_rows(db, user_a):
+    rows = [
+        File(user_id=user_a.id, display_name=f"file-{index}", ext="TXT", storage_key=f"personal/{index}")
+        for index in range(4)
+    ]
+    deleted = File(user_id=user_a.id, display_name="deleted", ext="TXT", storage_key="personal/deleted",
+                   deleted_at=datetime.now(timezone.utc))
+    db.add_all([*rows, deleted])
+    await db.commit()
+
+    result = await files_api.file_summary(recent_limit=2, current_user=user_a, db=db)
+
+    assert result.total_count == 4
+    assert len(result.recent_files) == 2
+    assert result.recent_files[0].id > result.recent_files[1].id
+    assert all(file.display_name != "deleted" for file in result.recent_files)
+
+
 async def test_patch_rename_endpoint(db, user_a):
     up = await _do_upload(db, user_a, b"1", "old.txt")
     r = await files_api.update_file(up.id, FileUpdate(display_name="new"),

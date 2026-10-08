@@ -11,6 +11,11 @@ import { getAuthDeviceId } from '@/utils/authDevice'
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
 
+export interface FileSummaryResponse {
+  totalCount: number
+  recentFiles: Schemas['FileResponse'][]
+}
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
 export interface SiteConfig {
@@ -433,6 +438,7 @@ export const filesApi = {
     personalCount: number
     personalRootCount: number
   }>('/files/tree'),
+  summary: (recentLimit = 12) => get<FileSummaryResponse>(`/files/summary?recent_limit=${recentLimit}`),
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
@@ -538,6 +544,7 @@ export interface UserSkillItem {
   related_tools: string[]
   body: string
   source: string
+  managed_by: 'user' | 'assistant'
   enabled: boolean
   content_digest: string
   created_at: string | null
@@ -713,11 +720,12 @@ export const mindApi = {
 export type ApiFolderResponse = Schemas['FolderResponse'] & { workspaceDirectoryId?: number | null }
 export const foldersApi = {
   all:  ()                              => get<ApiFolderResponse[]>('/folders/all'),
-  list: ({ projectId, parentId, workspaceDirectoryId }: { projectId?: number; parentId?: number; workspaceDirectoryId?: number } = {}) => {
+  list: ({ projectId, parentId, workspaceDirectoryId, allInScope }: { projectId?: number; parentId?: number; workspaceDirectoryId?: number; allInScope?: boolean } = {}) => {
     const params = new URLSearchParams()
     if (projectId != null) params.set('project_id', String(projectId))
     if (parentId  != null) params.set('parent_id',  String(parentId))
     if (workspaceDirectoryId != null) params.set('workspace_directory_id', String(workspaceDirectoryId))
+    if (allInScope) params.set('all_in_scope', 'true')
     const qs = params.toString()
     return get<ApiFolderResponse[]>(qs ? `/folders?${qs}` : '/folders')
   },
@@ -791,6 +799,7 @@ export interface TrashFolderContents {
 }
 
 export const trashApi = {
+  counts:        ()           => get<{ fileCount: number; folderCount: number; totalCount: number }>('/trash/counts'),
   list:          ()           => get<Schemas['FileResponse'][]>('/trash'),
   listFolders:   ()           => get<TrashFolderMeta[]>('/trash/folders'),
   listFolderContents: (id: number) => get<TrashFolderContents>(`/trash/folders/${id}/contents`),
@@ -1068,4 +1077,11 @@ export const feishuConnectApi = {
 export const wechatConnectApi = {
   start: ()               => request('POST', '/me/wechat/connect'),
   poll:  (taskId: string) => request('GET',  `/me/wechat/connect/${taskId}`),
+}
+
+// Telegram Bot Token 仅通过请求体提交，绝不拼入应用自身 URL。
+export const telegramConnectApi = {
+  connect: (token: string) => request('POST', '/me/telegram/connect', { token }),
+  replace: (botId: number, token: string) => request('PUT', `/me/telegram/connect/${botId}`, { token }),
+  createBindingCode: (botId: number) => request('POST', `/me/telegram/connect/${botId}/binding-code`),
 }

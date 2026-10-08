@@ -29,6 +29,23 @@ function normalizedName(value: string) {
   return value.normalize('NFC').toLocaleLowerCase()
 }
 
+export function isRelativeFileLink(href: string): boolean {
+  if (!href || href.startsWith('#') || href.startsWith('/') || href.startsWith('//')) return false
+  if (/^[a-z][a-z\d+.-]*:/i.test(href)) return false
+  return Boolean(decodePath(href.split('#', 1)[0].split('?', 1)[0])?.length)
+}
+
+export function isSiblingFileLink(href: string): boolean {
+  if (!isRelativeFileLink(href)) return false
+  try {
+    const parts = decodeURIComponent(href.split('#', 1)[0].split('?', 1)[0])
+      .split('/').filter(part => part && part !== '.')
+    return parts.length === 1 && !parts.includes('..')
+  } catch {
+    return false
+  }
+}
+
 function fileNames(file: FileMeta): string[] {
   const displayName = file.displayName ?? ''
   const ext = (file.ext ?? '').replace(/^\./, '')
@@ -80,8 +97,7 @@ function buildFileLinkLookup(files: FileMeta[], folders: FolderMeta[]): FileLink
 
   return {
     resolve(href, context) {
-      if (!href || href.startsWith('#') || href.startsWith('/') || href.startsWith('//')) return null
-      if (/^[a-z][a-z\d+.-]*:/i.test(href)) return null
+      if (!isRelativeFileLink(href)) return null
 
       const cleanHref = href.split('#', 1)[0].split('?', 1)[0]
       const parts = decodePath(cleanHref)

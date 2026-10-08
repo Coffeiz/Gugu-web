@@ -97,6 +97,25 @@ async def list_all_file_rows(db: AsyncSession, user_id: int):
     return result.all()
 
 
+async def get_file_summary(db: AsyncSession, user_id: int, recent_limit: int):
+    """读取轻量总数和有限的最近文件，不物化完整文件库。"""
+    total_count = (await db.execute(
+        select(func.count(File.id)).where(
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+        )
+    )).scalar_one()
+    recent_rows = (await db.execute(
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(File.user_id == user_id, File.deleted_at.is_(None))
+        .order_by(File.id.desc())
+        .limit(recent_limit)
+    )).all()
+    return total_count, recent_rows
+
+
 async def list_existing_file_rows(db: AsyncSession, storage, user_id: int):
     """列出全部文件。
 
@@ -436,6 +455,7 @@ async def list_folder_rows_with_file_counts(
     workspace_directory_id=None,
     parent_id=None,
     all_folders=False,
+    all_in_scope=False,
 ):
     """查询文件夹及其直属存活文件数，统一应用用户和软删边界。"""
     stmt = select(Folder).where(
@@ -448,9 +468,12 @@ async def list_folder_rows_with_file_counts(
             else Folder.project_id.is_(None),
             Folder.workspace_directory_id == workspace_directory_id if workspace_directory_id is not None
             else Folder.workspace_directory_id.is_(None),
-            Folder.parent_id == parent_id if parent_id is not None
-            else Folder.parent_id.is_(None),
         )
+        if not all_in_scope:
+            stmt = stmt.where(
+                Folder.parent_id == parent_id if parent_id is not None
+                else Folder.parent_id.is_(None),
+            )
     folders = (await db.execute(stmt.order_by(Folder.created_at))).scalars().all()
     if not folders:
         return []

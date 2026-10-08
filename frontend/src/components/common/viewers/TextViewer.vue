@@ -51,13 +51,13 @@ import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBefo
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
-import { filesApi } from '@/services/api'
+import { filesApi, foldersApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
 import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
-import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
+import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
-import { resolveRelativeFileLink, buildFileLinkIndex } from '@/utils/fileLinks'
+import { resolveRelativeFileLink, buildFileLinkIndex, isRelativeFileLink, isSiblingFileLink } from '@/utils/fileLinks'
 
 const { t } = useI18n()
 
@@ -543,13 +543,40 @@ async function onMdClick(e: MouseEvent) {
   const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null
   if (!anchor || !props.fileContext?.id) return
   const href = anchor.getAttribute('href')
-  if (!href) return
-  if (!filesCache.loaded) await filesCache.load()
+  if (!href || !isRelativeFileLink(href)) return
+  let files = filesCache.allFiles
+  let folders = filesCache.allFolders
+  if (!filesCache.loaded && isSiblingFileLink(href)) {
+    const context = props.fileContext
+    const space = context.space ?? (context.projectId != null ? 'project' : 'personal')
+    try {
+      ;[files, folders] = await Promise.all([
+        filesApi.list({
+          space,
+          projectId: context.projectId ?? undefined,
+          folderId: context.folderId ?? undefined,
+          workspaceDirectoryId: context.workspaceDirectoryId ?? undefined,
+        }) as Promise<FileMeta[]>,
+        foldersApi.list({
+          projectId: context.projectId ?? undefined,
+          parentId: context.folderId ?? undefined,
+          workspaceDirectoryId: context.workspaceDirectoryId ?? undefined,
+        }) as Promise<FolderMeta[]>,
+      ])
+    } catch {
+      return
+    }
+  } else if (!filesCache.loaded) {
+    // 跨目录相对路径需要祖先链；暂沿用完整索引确保 ../ 与多级路径语义不变。
+    await filesCache.load()
+    files = filesCache.allFiles
+    folders = filesCache.allFolders
+  }
   const resolved = resolveRelativeFileLink(
     href,
     { folderId: props.fileContext.folderId, projectId: props.fileContext.projectId },
-    filesCache.allFiles,
-    filesCache.allFolders,
+    files,
+    folders,
   )
   if (!resolved) return
 
@@ -610,13 +637,7 @@ async function resolveMdRelativeImages() {
   releaseMdObjectUrls()
   let files = filesCache.allFiles
   let folders = filesCache.allFolders
-  const siblingImagesOnly = localImages.every(img => {
-    try {
-      const segments = decodeURIComponent((img.getAttribute('src') || '').split(/[?#]/, 1)[0])
-        .split('/').filter(part => part && part !== '.')
-      return segments.length === 1 && !segments.includes('..')
-    } catch { return false }
-  })
+  const siblingImagesOnly = localImages.every(img => isSiblingFileLink(img.getAttribute('src') || ''))
   if (!filesCache.loaded && siblingImagesOnly) {
     // 最常见的 ./image.png 只需查询 Markdown 所在目录；无须下载用户全部文件及文件夹索引。
     try {

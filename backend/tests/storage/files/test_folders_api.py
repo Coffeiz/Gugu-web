@@ -34,6 +34,24 @@ async def test_create_endpoint(db, user_a):
     assert r.name == "资料" and r.file_count == 0 and r.parent_id is None
 
 
+async def test_list_all_in_scope_includes_descendants_without_leaking_other_users(db, user_a, user_b):
+    parent = await _create(db, user_a, "资料")
+    child = await _create(db, user_a, "子目录", parent_id=parent.id)
+    await _create(db, user_b, "他人目录")
+
+    roots = await folders_api.list_folders(
+        project_id=None, workspace_directory_id=None, parent_id=None, all_in_scope=False,
+        current_user=user_a, db=db,
+    )
+    scoped = await folders_api.list_folders(
+        project_id=None, workspace_directory_id=None, parent_id=None, all_in_scope=True,
+        current_user=user_a, db=db,
+    )
+
+    assert [folder.id for folder in roots] == [parent.id]
+    assert {folder.id for folder in scoped} == {parent.id, child.id}
+
+
 async def test_create_duplicate_conflict(db, user_a):
     await _create(db, user_a, "dup")
     with pytest.raises(Conflict):

@@ -72,8 +72,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { filesApi } from '@/services/api'
+import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick, type PropType } from 'vue'
+import { filesApi, type FileSummaryResponse } from '@/services/api'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useProjectStore } from '@/stores/projects'
@@ -89,17 +89,20 @@ import Icon from '@/components/common/icons/Icon.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 
 const panelRef      = ref<HTMLElement | null>(null)
+const props = defineProps({
+  files: { type: Array as PropType<FileSummaryResponse['recentFiles']>, default: () => [] },
+})
+const emit = defineEmits<{ (event: 'refresh'): void }>()
 const colCount      = ref(4) // ResizeObserver 更新后覆盖
 const displayCount  = computed(() => Math.max(1, colCount.value - 1)) // 1 行，上传按钮占 1 格
 const cardVisible   = ref(false) // 面板是否已进入视口（触发过 card 加载）
 // 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
 const dragging      = ref(false)
 const uploadOpen    = ref(false)
-// 统一到全局 filesCache store（原来是 services/cache 那第三套独立缓存）。「最近文件」= 全部文件按
-// id 倒序（新文件 id 更大）取前几个。增删改走 store 增量 API，任何页面/SSE 改了 store，这里自动更新。
+// Dashboard 只消费后端限量返回的最近文件；不为展示几张卡片初始化全局文件索引。
 const store         = useFilesCacheStore()
 const { t } = useI18n()
-const rawFiles      = computed(() => [...store.allFiles].sort((a, b) => b.id - a.id))
+const rawFiles      = computed(() => [...props.files].sort((a, b) => b.id - a.id))
 const thumbMap      = shallowRef<Record<number, { version?: number; tiny?: string | null; card?: string | null }>>({}) // id → 当前正文版本的缩略图，shallowRef 批量更新减少 trigger 次数
 const renamingId    = ref<number | string | null>(null)
 const renameText    = ref('')
@@ -201,13 +204,15 @@ async function commitRename(f: any) {
   renameExtension.value = ''
   if (name === f.name && nextExtension === f.ext) return
   const previous = store.getFile(f.id)
+  const snapshot = previous ?? f._raw
   try {
     await InteractionSync.execute({
       scope: 'file.dashboard-rename', entityKey: `file:${f.id}`,
-      apply: () => store.updateFile(f.id, { displayName: name, ext: nextExtension }),
-      rollback: () => { if (previous) store.updateFile(f.id, { displayName: previous.displayName, ext: previous.ext }) },
+      apply: () => { if (store.loaded) store.updateFile(f.id, { displayName: name, ext: nextExtension }) },
+      rollback: () => { if (store.loaded) store.updateFile(f.id, { displayName: snapshot.displayName, ext: snapshot.ext }) },
       request: mutation => filesApi.update(f.id, { displayName: name, ...(extension ? { ext: extension } : {}) }, { mutationId: mutation.mutationId }),
     })
+    emit('refresh')
   } catch { /* 统一事务已回滚 */ }
 }
 
@@ -228,34 +233,34 @@ async function deleteFile(f: any) {
     tone: 'danger',
     confirmText: t('filesViewUi.moveToTrash'),
   })) return
-  const previous = store.getFile(f.id)
+  const previous = store.getFile(f.id) ?? f._raw
   try {
     await InteractionSync.execute({
       scope: 'file.dashboard-delete', entityKey: `file:${f.id}`,
-      apply: () => store.removeFile(f.id),
-      rollback: () => { if (previous) store.addFile(previous) },
+      apply: () => { if (store.loaded) store.removeFile(f.id) },
+      rollback: () => { if (store.loaded) store.addFile(previous) },
       request: mutation => filesApi.delete(f.id, { mutationId: mutation.mutationId }),
       onCommit: () => clearThumbCache(f.id),
     })
+    emit('refresh')
   } catch { /* 统一事务已回滚 */ }
 }
 
 async function onUploaded() {
   uploadOpen.value = false
-  // 上传走 store 全量刷新拿到新文件（也会被后端 SSE 兜一次）；store 是全局单源，别处也随之更新
-  store.refresh()
+  emit('refresh')
 }
 
 // minmax(130px, 1fr) + gap:8px + padding:20px*2 → cols = floor((w - 40 + 8) / 138)
 function calcCols(width: number) { return Math.max(1, Math.floor((width - 32) / 138)) }
 
-// rawFiles 是从 store 派生的 computed；变化时（首帧、store 刷新、SSE、别处增删改）加载缩略图。
-// store 的 SSE 订阅 + visibilitychange 兜底都在 store 内部，FilePanel 不再自持刷新逻辑。
+// 最近文件变化时只为当前可见卡片加载缩略图，不预热整个账户的图片。
 watch(rawFiles, (list) => {
   if (!list?.length) return
-  preloadTinyThumbs(list)
-  loadThumbs(list.slice(0, displayCount.value))
-  if (cardVisible.value) loadCards(list.slice(0, displayCount.value))
+  const visible = list.slice(0, displayCount.value)
+  preloadTinyThumbs(visible)
+  loadThumbs(visible)
+  if (cardVisible.value) loadCards(visible)
 }, { immediate: true })
 
 // 面板变宽时 displayCount 增大，补加载新出现文件的缩略图
@@ -270,10 +275,6 @@ watch(displayCount, (newCount, oldCount) => {
 let _panelObs: ResizeObserver | null = null
 let _resizeObs: ResizeObserver | null = null
 onMounted(() => {
-  // 确保全局 store 已加载（不经文件库页也能有数据）；已加载/加载中则不重复拉。首帧缩略图由上面
-  // 的 watch(rawFiles, {immediate:true}) 处理，store 数据到位后自动触发。
-  if (!store.loaded && !store.loading) store.load()
-
   if (panelRef.value) {
     colCount.value = calcCols(panelRef.value.offsetWidth)
     _resizeObs = new ResizeObserver(([entry]) => {
@@ -304,7 +305,7 @@ const files = computed(() =>
     _raw:         f,
     name:         f.displayName,
     ext:          f.ext,
-    size:         f.versions?.[0]?.size ?? '—',
+    size:         f.size || '—',
     project:      f.projectName ?? '未分类',
     projectColor: f.projectColor ?? '#8a8fa8',
   }))

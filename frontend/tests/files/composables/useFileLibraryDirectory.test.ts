@@ -8,7 +8,7 @@ import type { NavSeg } from '@/utils/filesNav'
 vi.mock('@/services/api', () => ({
   filesApi: { list: vi.fn(), all: vi.fn(), tree: vi.fn(), version: vi.fn() },
   foldersApi: { list: vi.fn(), all: vi.fn() },
-  trashApi: { list: vi.fn(), listFolders: vi.fn() },
+  trashApi: { counts: vi.fn(), list: vi.fn(), listFolders: vi.fn() },
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -25,6 +25,7 @@ describe('文件库目录按需加载', () => {
     vi.mocked(filesApi.list).mockResolvedValue([file] as never)
     vi.mocked(filesApi.tree).mockResolvedValue({ projects: [], personalCount: 1, personalRootCount: 2 })
     vi.mocked(foldersApi.list).mockResolvedValue([folder] as never)
+    vi.mocked(trashApi.counts).mockResolvedValue({ fileCount: 3, folderCount: 2, totalCount: 5 })
     vi.mocked(trashApi.list).mockResolvedValue([] as never)
     vi.mocked(trashApi.listFolders).mockResolvedValue([] as never)
   })
@@ -71,8 +72,12 @@ describe('文件库目录按需加载', () => {
 
     page.loadContents()
     await vi.waitFor(() => expect(page.contents.value.folders.find(item => item.id === 'personal')?.count).toBe(2))
+    await vi.waitFor(() => expect(page.contents.value.folders.find(item => item.id === 'trash')?.count).toBe(5))
 
     expect(filesApi.tree).toHaveBeenCalledOnce()
+    expect(trashApi.counts).toHaveBeenCalledOnce()
+    expect(trashApi.list).not.toHaveBeenCalled()
+    expect(trashApi.listFolders).not.toHaveBeenCalled()
     expect(filesApi.all).not.toHaveBeenCalled()
     expect(foldersApi.all).not.toHaveBeenCalled()
   })
