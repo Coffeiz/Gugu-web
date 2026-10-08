@@ -327,6 +327,27 @@ describe('FileSyncAdminPanel 批量处理冲突', () => {
     expect(mocks.resolveConflict).not.toHaveBeenCalled()
   })
 
+  it('本地文件缺失时仅提供适用的单项操作并禁用批量处理', async () => {
+    const missing = { ...conflict(31), hasLocal: false, hasRemote: true }
+    mocks.status.mockResolvedValue(status([missing]))
+    mocks.runs.mockResolvedValue([])
+
+    const root = mountPanel()
+    await flushUi()
+
+    const bulkButtons = [...root.querySelectorAll<HTMLButtonElement>('.fs-bulk-actions button')]
+    expect(bulkButtons).toHaveLength(4)
+    expect(bulkButtons.every((button) => button.disabled)).toBe(true)
+    expect(root.querySelector('.fs-block-head + .fs-note')?.textContent).toContain('filesyncAdmin.bulkMissingLocalDisabled')
+    expect(root.querySelector('.fs-row-main small')?.textContent).toContain('filesyncAdmin.missingLocalConflictHint')
+    const conflictButtons = [...root.querySelectorAll<HTMLButtonElement>('.fs-row .fs-actions button')]
+    expect(conflictButtons).toHaveLength(2)
+    expect(conflictButtons.map((button) => button.textContent)).toEqual([
+      expect.stringContaining('filesyncAdmin.keepRemote'),
+      expect.stringContaining('filesyncAdmin.cancelConflict'),
+    ])
+  })
+
   it('单条失败时继续处理后续冲突并报告部分成功', async () => {
     const conflicts = [conflict(21), conflict(22), conflict(23)]
     mocks.status.mockResolvedValue(status(conflicts))

@@ -11,6 +11,7 @@ from agent.tools.skill_management import _create_skill, _list_skills
 from agent.tools.meta import _use_skill
 from agent.interactions.confirmations import confirmation_payload
 from agent.tools.base import Tool, reset_dispatch_session, set_dispatch_session
+from agent.im import imctx
 from app.models import UserSkill
 
 
@@ -233,6 +234,36 @@ def test_skill_creation_is_not_permission_or_confirmation_gated():
     assert tools["create_skill"].requires_confirmation is False
     assert tools["create_skill"].mutates is True
     assert tools["create_skill"].input_schema["properties"]["managed_by"]["enum"] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_group_member_cannot_discover_or_update_owner_skill(db, user_a):
+    from agent.tools.meta import _get_tool_schema
+
+    skill = await SkillCapabilityRegistry().create_user_skill(db, user_a.id, **_payload())
+    await db.commit()
+    imctx.set_im(
+        "qq", "member-message", "bot-1", "group-1", "member-1", "group",
+        allowed_tool_names=[], im_role="member",
+    )
+    try:
+        schema_result = await _get_tool_schema(
+            db, user_a.id, {"tools": ["update_skill"]},
+        )
+        assert "tool_schemas" not in schema_result
+        assert schema_result["rejected"] == ["update_skill"]
+
+        result_json, artifact = await tool_registry.dispatch(
+            user_a.id,
+            "update_skill",
+            {"slug": skill.slug, "body": "群成员注入的内容"},
+        )
+        assert artifact is None
+        assert "没有使用该工具的权限" in result_json
+        await db.refresh(skill)
+        assert skill.body == _payload()["body"]
+    finally:
+        imctx.clear()
 
 
 def _mcp_tool(name="mcp_notes_search"):

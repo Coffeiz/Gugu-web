@@ -47,12 +47,18 @@ def filter_tool_names(system_tool_names: List[str], allowed_tool_names: Optional
     return result
 
 
-def can_use_tool(name: str, allowed_tool_names: Optional[List[str]]) -> bool:
-    """dispatch 层的第二道权限门；None 表示完整工具集。"""
+def can_use_tool(
+    name: str,
+    allowed_tool_names: Optional[List[str]],
+    *,
+    im_role: str | None = None,
+) -> bool:
+    """dispatch 层的第二道权限门；Skill 管理仅网页用户和已认证 owner 可用。"""
+    if name in SKILL_MANAGEMENT_TOOLS:
+        return im_role in {None, "owner"}
     return (
         name in SAFE_ALWAYS_ALLOWED_TOOLS
         or name in FIXED_ADAPTER_TOOLS
-        or name in SKILL_MANAGEMENT_TOOLS
         or allowed_tool_names is None
         or name in allowed_tool_names
     )

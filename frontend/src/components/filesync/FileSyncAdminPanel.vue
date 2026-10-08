@@ -108,7 +108,7 @@
           <div class="fs-actions fs-bulk-actions">
             <ActionButton v-for="resolution in resolutions" :key="`bulk-${resolution.value}`" variant="secondary" fit
                           :class="{ 'is-danger': resolution.value === 'keep_remote' }"
-                          :disabled="Boolean(actionKey) || Boolean(bulkProgress) || status.conflicts.length !== status.totals.pendingConflicts"
+                          :disabled="Boolean(actionKey) || Boolean(bulkProgress) || status.conflicts.length !== status.totals.pendingConflicts || hasMissingLocalConflicts"
                           @click="resolveAll(resolution.value)">
               {{ bulkProgress?.resolution === resolution.value
                 ? t('filesyncAdmin.bulkProgress', { done: bulkProgress.completed, total: bulkProgress.total })
@@ -119,13 +119,17 @@
         <p v-if="status.conflicts.length !== status.totals.pendingConflicts" class="fs-note">
           {{ t('filesyncAdmin.bulkListIncomplete', { shown: status.conflicts.length, total: status.totals.pendingConflicts }) }}
         </p>
+        <p v-if="hasMissingLocalConflicts" class="fs-note">
+          {{ t('filesyncAdmin.bulkMissingLocalDisabled') }}
+        </p>
         <div v-for="conflict in status.conflicts" :key="conflict.id" class="fs-row">
           <div class="fs-row-main">
             <strong>#{{ conflict.id }} · {{ conflict.relativePath }}</strong>
             <span>{{ t('filesyncAdmin.bindingRef') }} #{{ conflict.bindingId }} · {{ conflict.userId }}</span>
+            <small v-if="!conflict.hasLocal">{{ t('filesyncAdmin.missingLocalConflictHint') }}</small>
           </div>
           <div class="fs-actions">
-            <ActionButton v-for="resolution in resolutions" :key="resolution.value" variant="secondary" fit
+            <ActionButton v-for="resolution in (conflict.hasLocal ? resolutions : missingLocalResolutions)" :key="resolution.value" variant="secondary" fit
                           :class="{ 'is-danger': resolution.value === 'keep_remote' }"
                           :disabled="Boolean(actionKey) || Boolean(bulkProgress)" @click="resolve(conflict.id, resolution.value)">
               <Icon :name="resolution.value === 'cancel' ? 'action.close' : 'status.check-circle'" size="sm" />
@@ -175,6 +179,12 @@ const resolutions = [
   { value: 'keep_both' as const, label: 'filesyncAdmin.keepBoth' },
   { value: 'cancel' as const, label: 'filesyncAdmin.cancelConflict' },
 ]
+const missingLocalResolutions = resolutions.filter((resolution) =>
+  resolution.value === 'keep_remote' || resolution.value === 'cancel',
+)
+const hasMissingLocalConflicts = computed(() =>
+  status.value?.conflicts.some((conflict) => !conflict.hasLocal) ?? false,
+)
 let reloadQueued = false
 const adminEvents = useFileSyncAdminEvents(adminStore.authFetch, () => { void load() })
 

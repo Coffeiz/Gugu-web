@@ -41,6 +41,18 @@ Object.assign(filesyncAdminUiBase['en-US'], {
   manualReconcileNeeded: 'Changes may be unsynced; run a manual reconciliation',
   noManualReconcileNeeded: 'No known watcher gaps',
 })
+Object.assign(filesyncAdminUiBase['zh-CN'], {
+  missingLocalConflictHint: '本地文件缺失：保留云端会尝试从文件库恢复到绑定目录；取消冲突会保留文件库记录并关闭此冲突。若要删除文件库记录，请在存储对账中单独确认。',
+  bulkMissingLocalDisabled: '含本地文件缺失项：请逐项处理，批量操作已禁用。',
+})
+Object.assign(filesyncAdminUiBase['ja-JP'], {
+  missingLocalConflictHint: 'ローカルファイルがありません。「リモートを保持」はファイルライブラリからバインド先への復元を試みます。「競合をキャンセル」はライブラリの記録を残して競合を閉じます。記録を削除する場合は、ストレージ照合で個別に確認してください。',
+  bulkMissingLocalDisabled: 'ローカルファイルがない項目が含まれています。個別に処理してください。一括操作は無効です。',
+})
+Object.assign(filesyncAdminUiBase['en-US'], {
+  missingLocalConflictHint: 'The local file is missing. “Keep remote” attempts to restore it from the file library to the bound directory; “Cancel conflict” keeps the library record and closes this conflict. To delete the library record, confirm it individually in Storage Reconciliation.',
+  bulkMissingLocalDisabled: 'Some conflicts have no local file. Handle them individually; bulk actions are disabled.',
+})
 
 export const filesyncAdminUi = filesyncAdminUiBase
 

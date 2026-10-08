@@ -22,6 +22,7 @@ from app.models import (
     ConversationSession,
     File,
     FileSyncBinding,
+    FileSyncConflict,
     FileSyncJournal,
     FileSyncOutbox,
     FileSyncReconcileRun,
@@ -1362,6 +1363,18 @@ def _assert_optional_repair_quota(quota, *, ledger_preexists: bool, expected_byt
         assert quota is None
 
 
+def test_mirror_out_partial_export_failure_has_failed_terminal_state():
+    from app.services.filesync.runner import _mirror_out_terminal_state
+
+    counts = {"exported": 4, "failed": 1, "skipped": 0}
+    status, error_code, persisted_counts = _mirror_out_terminal_state(counts)
+    assert (status, error_code) == ("failed", "mirror_out_partial_failure")
+    assert persisted_counts == counts
+
+    complete = {"exported": 4, "failed": 0, "skipped": 0}
+    assert _mirror_out_terminal_state(complete) == ("succeeded", None, complete)
+
+
 @pytest.mark.parametrize("ledger_preexists", [True, False])
 @pytest.mark.asyncio
 async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file_delete(
@@ -1431,6 +1444,8 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     os.utime(changed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
     deleted_path.unlink()
     move_source.rename(move_target)
+    offline_new_path = nested / "离线新增.txt"
+    offline_new_path.write_bytes(b"new file")
     if ledger_preexists:
         # 模拟既有额度账本；另一组用例覆盖首次删除时初始化账本。
         db.add(StorageQuotaLedger(
@@ -1471,14 +1486,14 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
 
     assert stored_run is not None and stored_run.status == "succeeded"
     assert stored_run.result_counts["updated"] == 1
+    assert stored_run.result_counts["created"] == 1
     assert stored_run.result_counts["deleted"] == 1
     assert stored_run.result_counts["moved"] == 1
     assert updated is not None and updated.version == original_version + 1
     assert deleted is not None and deleted.deleted_at is not None
     assert moved is not None and moved.storage_key == f"{user_a.id}/个人文件/分类/移动后.txt"
     # 无账本时不在任务中途建立偏离磁盘事实的局部基线。
-    _assert_optional_repair_quota(quota, ledger_preexists=ledger_preexists, expected_bytes=19)
-
+    _assert_optional_repair_quota(quota, ledger_preexists=ledger_preexists, expected_bytes=27)
     changed_path.write_bytes(b"reject")
     move_target.write_bytes(b"move updated")
     monkeypatch.setattr(runner, "_DB_BATCH_SIZE", 2)
@@ -1531,6 +1546,89 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
         ledger_preexists=ledger_preexists,
         expected_bytes=expected_active_bytes,
     )
+
+
+@pytest.mark.asyncio
+async def test_non_deleting_repair_persists_missing_file_as_actionable_conflict(
+    db, user_a,
+):
+    import app.services.filesync.runner as runner
+    from app.services.filesync.scan import ReconcileCandidate
+
+    storage_root = Path(runner.get_settings().storage.local_path).expanduser().resolve()
+    root = storage_root / str(user_a.id)
+    (root / "个人文件").mkdir(parents=True)
+    binding = FileSyncBinding(
+        user_id=user_a.id,
+        workspace_id=None,
+        source="local_directory",
+        mode="bidirectional",
+        status="active",
+        root_path=".",
+        root_fingerprint=_root_fingerprint(root),
+    )
+    row = File(
+        user_id=user_a.id,
+        display_name="已离线删除",
+        ext="txt",
+        space="personal",
+        storage_key=f"{user_a.id}/个人文件/已离线删除.txt",
+        size="6",
+        size_bytes=6,
+        version=3,
+    )
+    db.add_all([binding, row])
+    await db.flush()
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair", allow_delete=False,
+    )
+    await db.commit()
+    claimed = await claim_next_run(db, "conflict-test", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+
+    scope = runner._RunScope(
+        run_id=claimed.id,
+        user_id=user_a.id,
+        binding_id=binding.id,
+        root=root,
+        mode=binding.mode,
+        workspace_id=None,
+        root_fingerprint=binding.root_fingerprint,
+        gap_revision=claimed.gap_revision,
+        action="repair",
+        allow_delete=False,
+    )
+    candidate = ReconcileCandidate(
+        relative_path="个人文件/已离线删除.txt",
+        object_type="file",
+        operation="delete",
+        object_id=row.id,
+        object_version=row.version,
+        baseline_fingerprint="a" * 64,
+    )
+    counts = runner._empty_counts()
+    await runner._project_batch(
+        db_session._SessionLocal,
+        scope,
+        "conflict-test",
+        [candidate],
+        storage_prefix=f"{user_a.id}/",
+        verified_files={},
+        missing_paths={candidate.relative_path},
+        counts=counts,
+        stop=Event(),
+    )
+
+    pending = await db.scalar(select(FileSyncConflict).where(
+        FileSyncConflict.binding_id == binding.id,
+        FileSyncConflict.relative_path == candidate.relative_path,
+        FileSyncConflict.status == "pending",
+    ))
+    assert pending is not None and pending.local_fingerprint is None
+    assert pending.remote_fingerprint == candidate.baseline_fingerprint
+    assert counts["conflicts"] == 1
+    await db.refresh(row)
+    assert row.deleted_at is None
 
 
 @pytest.mark.asyncio

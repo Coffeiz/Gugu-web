@@ -642,11 +642,6 @@ async def _project_batch(
                     status="pending",
                 ))
                 continue
-            if candidate.operation == "delete" and (
-                scope.action != "repair" or not scope.allow_delete
-            ):
-                transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
-                continue
             if scope.action == "initialize" and candidate.operation == "update":
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
@@ -663,8 +658,32 @@ async def _project_batch(
             if index not in current_candidates:
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
+            if candidate.operation == "delete" and (
+                scope.action != "repair" or not scope.allow_delete
+            ):
+                if candidate.object_type == "file":
+                    db.add(FileSyncConflict(
+                        binding_id=scope.binding_id,
+                        user_id=scope.user_id,
+                        relative_path=candidate.relative_path,
+                        source=FileSyncSource.LOCAL_DIRECTORY,
+                        baseline_fingerprint=candidate.baseline_fingerprint,
+                        local_fingerprint=None,
+                        remote_fingerprint=(
+                            snapshot_fingerprint(
+                                scope.user_id, scope.binding_id, candidate.relative_path,
+                            ) or candidate.baseline_fingerprint
+                        ),
+                        status="pending",
+                    ))
+                    transaction_counts["conflicts"] = transaction_counts.get("conflicts", 0) + 1
+                else:
+                    transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
+                continue
             if candidate.object_type == "file" and candidate.operation in {"create", "update"}:
                 batch.changed.add(candidate.relative_path)
+                if candidate.operation == "create":
+                    batch.created_files.add(candidate.relative_path)
             elif candidate.object_type == "folder" and candidate.operation in {"create", "update"}:
                 batch.folders_created.add(candidate.relative_path)
                 if candidate.observed_fingerprint:
@@ -1084,13 +1103,20 @@ async def _execute_mirror_out(
             signals.timed_out.set()
             signals.stop.set()
             return "failed", "execution_timeout", counts
-        return "succeeded", None, counts
+        return _mirror_out_terminal_state(counts)
     except ScanIncomplete as exc:
         diag_log("filesync.mirror_out", exc)
         return "failed", "binding_unavailable", counts
     except Exception as exc:
         diag_log("filesync.mirror_out", exc)
         return "failed", "mirror_out_failed", counts
+
+
+def _mirror_out_terminal_state(counts: dict[str, int]) -> tuple[str, str | None, dict[str, int]]:
+    """只有所有候选均成功导出时，反向导出任务才报告 succeeded。"""
+    if counts["failed"]:
+        return "failed", "mirror_out_partial_failure", counts
+    return "succeeded", None, counts
 
 
 async def _current_deadline(session_factory, run_id: UUID):

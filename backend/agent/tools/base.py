@@ -582,6 +582,10 @@ class SkillRegistry:
         from agent.im.permissions import can_use_tool
         current_im = imctx.get_im()
         allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None
+        im_role = (
+            (current_im.get("im_role") or "unknown")
+            if current_im is not None else None
+        )
         snapshot = current_dispatch_tool_snapshot()
 
         def _resolve_tool(n: str):
@@ -597,7 +601,7 @@ class SkillRegistry:
             if salvaged is not None and _resolve_tool(salvaged) is not None:
                 _log.info("工具名污染兜底：%r → %r", name, salvaged)
                 name, resolved_tool = salvaged, _resolve_tool(salvaged)
-        if not can_use_tool(name, allowed_tool_names):
+        if not can_use_tool(name, allowed_tool_names, im_role=im_role):
             _log_traj(name, user_id, args, False, "当前群聊身份没有使用该工具的权限", t0)
             payload = enrich_tool_error(name, {"error": "当前群聊身份没有使用该工具的权限"})
             return json.dumps(payload, ensure_ascii=False), None

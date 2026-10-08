@@ -160,14 +160,16 @@ def test_tool_permission_filter_and_dispatch_gate_share_the_same_rule():
     assert can_use_tool("files", None) is True
 
 
-def test_skill_lifecycle_and_adapter_are_not_limited_by_group_tool_allowlist():
+def test_skill_lifecycle_is_owner_only_while_adapters_remain_available_to_members():
     from agent.im.permissions import can_use_tool
 
     assert can_use_tool("call_tool", []) is True
     assert can_use_tool("get_tool_schema", []) is True
     for name in ("list_skills", "create_skill", "update_skill", "delete_skill"):
-        assert can_use_tool(name, []) is True
-    # 绕过白名单的只有管理/适配入口，具体业务工具仍受原权限控制。
+        assert can_use_tool(name, [], im_role="owner") is True
+        assert can_use_tool(name, [], im_role="member") is False
+        assert can_use_tool(name, [], im_role="unknown") is False
+    # 适配器仍可供群成员发现获准工具，具体业务工具继续受原白名单限制。
     assert can_use_tool("http_get", []) is False
 
 

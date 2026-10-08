@@ -12,7 +12,7 @@ import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -128,26 +128,47 @@ async def _find_move_source(
     db: AsyncSession, binding: FileSyncBinding, scope_prefix: str,
     relative: str, observed: str, root: Path,
 ) -> File | None:
-    """同指纹且原路径已消失 → 视为移动，复用原 File 行而不是删旧建新。"""
-    journals = (await db.scalars(select(FileSyncJournal).where(
+    """仅在最新 Journal 对应唯一活动 File 且旧物理路径已消失时复用身份。
+
+    相同内容不是文件身份。遇到多个已消失的同指纹候选时宁可新建记录，也不猜测
+    哪个 File 被移动；候选上限用于限制常见相同内容文件造成的查询工作集。
+    """
+    ranked = select(
+        FileSyncJournal.relative_path.label("relative_path"),
+        FileSyncJournal.observed_fingerprint.label("observed_fingerprint"),
+        func.row_number().over(
+            partition_by=FileSyncJournal.relative_path,
+            order_by=FileSyncJournal.id.desc(),
+        ).label("path_rank"),
+    ).where(
         FileSyncJournal.binding_id == binding.id,
         FileSyncJournal.status == FileSyncStatus.SYNCED,
         FileSyncJournal.object_type == "file",
-        FileSyncJournal.observed_fingerprint == observed,
         FileSyncJournal.relative_path != relative,
-    ).order_by(FileSyncJournal.id.desc()).limit(10))).all()
-    for journal in journals:
-        old_key = scope_prefix + journal.relative_path
-        row = (await db.execute(select(File).where(
-            File.user_id == binding.user_id, File.storage_key == old_key,
+    ).subquery()
+    rows = (await db.execute(
+        select(File, ranked.c.relative_path)
+        .join(
+            ranked,
+            File.storage_key == literal(scope_prefix) + ranked.c.relative_path,
+        )
+        .where(
+            File.user_id == binding.user_id,
             File.deleted_at.is_(None),
-        ).with_for_update())).scalar_one_or_none()
-        if row is None:
-            continue
-        if (root / journal.relative_path).exists():
-            continue
-        return row
-    return None
+            ranked.c.path_rank == 1,
+            ranked.c.observed_fingerprint == observed,
+        )
+        .order_by(File.id)
+        .limit(257)
+        .with_for_update()
+    )).all()
+    if len(rows) > 256:
+        return None
+    missing = [
+        row for row, old_relative in rows
+        if not (root / old_relative).exists()
+    ]
+    return missing[0] if len(missing) == 1 else None
 
 
 async def _project_changed_file(
@@ -221,20 +242,32 @@ async def _project_changed_file(
 
     if row is not None and source is None:
         previous = latest.get(("file", relative))
-        if previous is not None and previous.observed_fingerprint == observed:
+        stat = path.stat()
+        expected_mime_type = mimetypes.guess_type(path.name)[0]
+        if previous is not None and previous.observed_fingerprint == observed and (
+            row.size_bytes == stat.st_size
+            and row.display_name == display_name
+            and row.ext == ext
+            and row.space == space
+            and row.project_id == project_id
+            and row.folder_id == folder_id
+            and row.workspace_directory_id == file_ws_dir_id
+            and row.mime_type == expected_mime_type
+        ):
             return 0
-        size_delta = path.stat().st_size - int(row.size_bytes or 0)
+        size_delta = stat.st_size - int(row.size_bytes or 0)
         if size_delta > quota_headroom and not observed_external_change:
             _record_rejection(summary_inout, "quota_exceeded")
             return 0
-        row.size_bytes = path.stat().st_size
-        row.size = str(path.stat().st_size)
+        row.size_bytes = stat.st_size
+        row.size = str(stat.st_size)
         row.display_name = display_name
         row.ext = ext
         row.space = space
         row.project_id = project_id
         row.folder_id = folder_id
         row.workspace_directory_id = file_ws_dir_id
+        row.mime_type = expected_mime_type
         row.version = int(row.version or 1) + 1
         row.updated_at = now_utc()
         # 文件正文变了，旧缩略图即使仍在磁盘也不能继续返回。
@@ -433,13 +466,14 @@ async def _project_folder_deleted(
     try:
         if workspace_directory_id is not None:
             space, project_id = "workspace", None
+            folder_names = parts
         else:
             parsed = _parse_directory_path(root / relative, user_root)
             if parsed is None:
                 return
-            space, project_id, _ = parsed
+            space, project_id, folder_names = parsed
         folder_id = await _find_folder_path(
-            db, user_id, space=space, project_id=project_id, folder_names=parts,
+            db, user_id, space=space, project_id=project_id, folder_names=folder_names,
             workspace_directory_id=workspace_directory_id,
         )
     except (OSError, ValueError) as exc:
@@ -575,7 +609,6 @@ async def project_path_events(
             await _project_folder_deleted(
                 db, user_id, binding, root, user_root, workspace_directory_id, relative, latest, summary_inout,
             )
-    binding.last_reconciled_at = now_utc()
     await db.flush()
     scanned = len(batch.changed) + len(batch.deleted) + len(batch.folders_created) + len(batch.folders_deleted)
     return SyncSummary(

@@ -982,9 +982,7 @@ async def test_reconcile_stat_cache_skips_rehash(db, user_a, monkeypatch, tmp_pa
     assert calls["count"] >= 1  # 日级兜底强制全量哈希
 
 
-@pytest.mark.asyncio
-async def test_targeted_projection_handles_create_update_move_delete(db, user_a, monkeypatch, tmp_path):
-    """sidecar 精确事件按路径单点投影：创建/更新/移动重挂/软删除/空目录。"""
+async def _prepare_targeted_personal_binding(db, user_a, monkeypatch, tmp_path):
     import app.services.filesync.reconcile as reconcile
     import app.services.filesync.protocol as protocol
     import app.services.filesync.statcache as statcache
@@ -1011,6 +1009,15 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
     binding = (await db.scalars(select(FileSyncBinding).where(
         FileSyncBinding.user_id == user_a.id,
     ))).one()
+    return reconcile, targeted, root, binding
+
+
+@pytest.mark.asyncio
+async def test_targeted_projection_handles_create_update_move_delete(db, user_a, monkeypatch, tmp_path):
+    """sidecar 精确事件按路径单点投影：创建/更新/移动重挂/软删除/空目录。"""
+    reconcile, targeted, root, binding = await _prepare_targeted_personal_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
 
     # watcher 读取事件时文件还在变化，或随后被删除：过期/中间态不应把绑定降级；
     # 随后的精确删除事件仍须正常软删除已有 File 行。
@@ -1122,10 +1129,86 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
 
 
 @pytest.mark.asyncio
-async def test_targeted_projection_ignores_project_container_directories(
+async def test_same_fingerprint_does_not_guess_between_multiple_file_moves(
     db, user_a, monkeypatch, tmp_path,
 ):
-    """用户根 watcher 忽略项目年月/项目根容器，但仍登记项目内真实文件夹。"""
+    _, targeted, root, binding = await _prepare_targeted_personal_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
+    for name in ("same-a.txt", "same-b.txt"):
+        (root / name).write_text("same payload", encoding="utf-8")
+    await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(changed={"same-a.txt", "same-b.txt"}),
+    )
+    await db.commit()
+    old_rows = list((await db.scalars(select(File).where(
+        File.user_id == user_a.id,
+        File.storage_key.in_({
+            f"{user_a.id}/个人文件/same-a.txt",
+            f"{user_a.id}/个人文件/same-b.txt",
+        }),
+        File.deleted_at.is_(None),
+    ))).all())
+    old_ids = {row.id for row in old_rows}
+
+    (root / "same-a.txt").rename(root / "same-c.txt")
+    (root / "same-b.txt").rename(root / "same-d.txt")
+    result = await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(
+            changed={"same-c.txt", "same-d.txt"},
+            deleted={"same-a.txt", "same-b.txt"},
+        ),
+    )
+    await db.commit()
+    new_rows = list((await db.scalars(select(File).where(
+        File.user_id == user_a.id,
+        File.storage_key.in_({
+            f"{user_a.id}/个人文件/same-c.txt",
+            f"{user_a.id}/个人文件/same-d.txt",
+        }),
+        File.deleted_at.is_(None),
+    ))).all())
+    old_rows = list((await db.scalars(select(File).where(File.id.in_(old_ids)))).all())
+
+    assert result.moved == 0 and result.created == 2
+    assert len(new_rows) == 2 and not (old_ids & {row.id for row in new_rows})
+    assert all(row.deleted_at is not None for row in old_rows)
+
+
+@pytest.mark.asyncio
+async def test_same_journal_fingerprint_repairs_stale_file_metadata(
+    db, user_a, monkeypatch, tmp_path,
+):
+    _, targeted, root, binding = await _prepare_targeted_personal_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
+    row = (await db.scalars(select(File).where(
+        File.user_id == user_a.id,
+        File.storage_key.endswith("/个人文件/base.txt"),
+    ))).one()
+    last_full_reconcile = binding.last_reconciled_at
+    row.size = "999"
+    row.size_bytes = 999
+    row.display_name = "错误元数据"
+    row.ext = "bin"
+    row.mime_type = "application/octet-stream"
+    await db.flush()
+
+    result = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={"base.txt"}),
+    )
+    await db.flush()
+    await db.refresh(row)
+
+    assert result.updated == 1
+    assert (row.size_bytes, row.size, row.display_name, row.ext) == (4, "4", "base", "txt")
+    assert row.mime_type == "text/plain"
+    assert binding.last_reconciled_at == last_full_reconcile
+
+
+async def _prepare_project_container_binding(db, user_a, monkeypatch, tmp_path):
     import app.services.filesync.reconcile as reconcile
     import app.services.filesync.protocol as protocol
     import app.services.filesync.statcache as statcache
@@ -1156,6 +1239,17 @@ async def test_targeted_projection_ignores_project_container_directories(
     )
     db.add(binding)
     await db.flush()
+    return targeted, root, project, project_root, binding
+
+
+@pytest.mark.asyncio
+async def test_targeted_projection_ignores_project_container_directories(
+    db, user_a, monkeypatch, tmp_path,
+):
+    """用户根 watcher 忽略项目年月/项目根容器，但仍登记项目内真实文件夹。"""
+    targeted, root, project, _, binding = await _prepare_project_container_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
 
     summary = await targeted.project_path_events(
         db,
@@ -1181,6 +1275,53 @@ async def test_targeted_projection_ignores_project_container_directories(
     assert dict(summary.rejection_reasons) == {}
     assert summary.folders_created == 1
     assert folder is not None
+
+
+@pytest.mark.asyncio
+async def test_user_root_folder_deletion_resolves_logical_personal_and_project_paths(
+    db, user_a, monkeypatch, tmp_path,
+):
+    targeted, root, project, project_root, binding = await _prepare_project_container_binding(
+        db, user_a, monkeypatch, tmp_path,
+    )
+    await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(folders_created={
+            f"项目文件/2026/10/同步项目 #{project.id}/图表",
+        }),
+    )
+    personal_path = root / "个人文件" / "资料"
+    personal_path.mkdir(parents=True)
+    await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(folders_created={"个人文件/资料"}),
+    )
+    await db.commit()
+    project_folder = await db.scalar(select(Folder).where(
+        Folder.user_id == user_a.id, Folder.project_id == project.id,
+        Folder.name == "图表", Folder.deleted_at.is_(None),
+    ))
+    personal_folder = await db.scalar(select(Folder).where(
+        Folder.user_id == user_a.id, Folder.project_id.is_(None),
+        Folder.name == "资料", Folder.deleted_at.is_(None),
+    ))
+    assert project_folder is not None and personal_folder is not None
+
+    (project_root / "图表").rmdir()
+    personal_path.rmdir()
+    result = await targeted.project_path_events(
+        db, user_a.id, binding, root,
+        targeted.PathEventBatch(folders_deleted={
+            f"项目文件/2026/10/同步项目 #{project.id}/图表",
+            "个人文件/资料",
+        }),
+    )
+    await db.commit()
+    await db.refresh(project_folder)
+    await db.refresh(personal_folder)
+
+    assert result.folders_deleted == 2
+    assert project_folder.deleted_at is not None and personal_folder.deleted_at is not None
 
 
 @pytest.mark.asyncio

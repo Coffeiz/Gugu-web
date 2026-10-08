@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Event
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
 from app.models import File, FileSyncJournal, Folder
@@ -106,19 +106,27 @@ async def _stage_files(
                 await db.rollback()
                 continue
             relative_paths = [row.storage_key[len(scope_prefix):] for row in scoped_rows]
+            ranked_journals = select(
+                FileSyncJournal.relative_path.label("relative_path"),
+                FileSyncJournal.observed_fingerprint.label("observed_fingerprint"),
+                FileSyncJournal.updated_at.label("updated_at"),
+                func.row_number().over(
+                    partition_by=FileSyncJournal.relative_path,
+                    order_by=FileSyncJournal.id.desc(),
+                ).label("path_rank"),
+            ).where(
+                FileSyncJournal.binding_id == binding_id,
+                FileSyncJournal.status == FileSyncStatus.SYNCED,
+                FileSyncJournal.object_type == "file",
+                FileSyncJournal.relative_path.in_(relative_paths),
+            ).subquery()
             journals = (await db.execute(
                 select(
-                    FileSyncJournal.relative_path,
-                    FileSyncJournal.observed_fingerprint,
-                    FileSyncJournal.updated_at,
+                    ranked_journals.c.relative_path,
+                    ranked_journals.c.observed_fingerprint,
+                    ranked_journals.c.updated_at,
                 )
-                .where(
-                    FileSyncJournal.binding_id == binding_id,
-                    FileSyncJournal.status == FileSyncStatus.SYNCED,
-                    FileSyncJournal.object_type == "file",
-                    FileSyncJournal.relative_path.in_(relative_paths),
-                )
-                .order_by(FileSyncJournal.id.desc())
+                .where(ranked_journals.c.path_rank == 1)
             )).all()
             journal_facts: dict[str, tuple[str | None, float | None]] = {}
             for relative_path, fingerprint, updated_at in journals:
