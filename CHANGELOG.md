@@ -7,15 +7,83 @@
 
 ## [Unreleased]
 
-### Improvements
+### What's New
 
-- **分体 Compose 更新**：提供带签名校验、停服备份和离线迁移的 Docker 更新入口。
-- **文件预览**：聊天文件链接可直接打开单文件预览，重复打开复用缓存；其他文件变化不再刷新当前预览。
-- **回收站**：清空操作改为后台执行，离开页面后继续处理，重新打开可查看进度。
-- **Agent 中断**：上下文压缩期间也可取消运行，不再等待压缩完成或显示错误气泡。
-- **数据导出**：已删除的时间流笔记不再携带标题和正文进入归档。
-- **视觉一致性**：优化日历框选边界与周末底色、Cafe 亮色背景，统一项目文件区的文件夹图标。
-- **文件同步**：新增用户手动预检与异步对账入口，并在管理端展示任务进度和监听健康状态。
+- **Telegram integration**: connect a personal bot for private and group chats; channels are not supported yet.
+
+### 新功能
+
+- **Telegram 接入**：支持连接个人 Bot，在私聊和群聊中与咕咕对话；暂不支持频道。
+
+## [1.6.1] - 2026-10-08
+
+### What's New
+
+#### New Features
+
+- **Manual file reconciliation**: inspect file-sync changes and queue an asynchronous reconciliation with visible progress.
+- **Project summaries and file context**: maintain a concise project summary and include project file overviews in Agent context.
+- **Local storage quotas**: apply a consistent persistent-storage quota to Local users.
+- **Feishu group controls**: configure group permissions and invoke the Agent with @ mentions.
+
+#### Improvements
+
+- **File synchronization**: improve watcher reliability, provide reconciliation status in the admin panel, and add periodic full checks alongside incremental updates.
+- **File library performance**: load the current directory on demand, reuse cached data, and avoid downloading the full file index for ordinary Markdown previews.
+- **Project board performance**: defer archived/deleted lists and collapsed completed cards until requested, and use aggregated project file counts.
+- **Tool feedback**: record tool-call duration in conversation history so it remains visible after reopening a session.
+- **File and interface details**: improve thumbnail clarity, support extensionless file names safely, and refine note interactions, calendar styling, and checkbox hit areas.
+- **Deployment updates**: provide a safer update entry point for split Compose deployments.
+
+#### Fixes
+
+- Exclude deleted notes' titles and bodies from data exports.
+- Allow Agent runs to be cancelled while context compression is in progress.
+- Refresh file previews for the affected resource and run recycle-bin emptying in the background.
+- Improve storage reconciliation and cleanup of orphaned file records.
+- Preserve file identity when creating extensionless files and constrain storage keys.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- None listed.
+
+### 更新内容
+
+#### 新功能
+
+- **手动文件对账**：查看文件同步变更，并发起可查看进度的异步对账。
+- **项目摘要与文件上下文**：维护简短项目摘要，并将项目文件概览加入 Agent 上下文。
+- **Local 存储配额**：为 Local 用户统一持久化空间配额。
+- **飞书群聊控制**：配置群权限，并通过 @ 提及调用 Agent。
+
+#### 改进
+
+- **文件同步**：提升实时监听可靠性，在管理端显示对账状态，并增加定期完整核验与日常增量更新。
+- **文件库性能**：按需加载当前目录、复用缓存；普通 Markdown 预览不再拉取全量文件索引。
+- **项目看板性能**：归档/删除列表和折叠的已完成项目按需加载，项目文件数改用聚合计数。
+- **工具反馈**：将工具调用耗时保存到会话记录，重新打开会话后仍可查看。
+- **文件与界面细节**：提升缩略图清晰度，安全支持无扩展名文件，并改进笔记交互、日历样式和复选框点击区域。
+- **部署更新**：为分体 Compose 部署提供更安全的更新入口。
+
+#### 修复
+
+- 数据导出不再包含已删除笔记的标题和正文。
+- 上下文压缩期间可以取消 Agent 运行。
+- 文件预览只因对应资源变化而刷新；清空回收站改为后台执行。
+- 改进存储对账并清理孤儿文件记录。
+- 创建无扩展名文件时保留正确文件身份，并约束存储键。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
 
 ## [1.6.0] - 2026-10-05
 
