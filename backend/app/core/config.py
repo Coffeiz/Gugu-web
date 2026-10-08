@@ -86,7 +86,7 @@ class AISettings(BaseModel):
     model: str = Field("qwen-max", description="使用模型")
     max_tokens: int = Field(8000, gt=0, description="最大输出 token 数")
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
-    thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
+    thinking: str = Field("", description="思考控制: 空=跟随端点默认 | disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
     reasoning_persistence: Literal["off", "continuation"] = Field("off", description="跨请求推理状态: off | continuation")
     image: bool = Field(False, description="模型是否支持图片输入。后台「检测」按钮探测后写入，亦可手动改")
@@ -233,7 +233,7 @@ class AIPresetItem(BaseModel):
     model: str = ""
     max_tokens: int = Field(8000, gt=0)
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
-    thinking: str = "disabled"
+    thinking: str = ""
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
     reasoning_persistence: Literal["off", "continuation"] = "off"
     image: bool = False

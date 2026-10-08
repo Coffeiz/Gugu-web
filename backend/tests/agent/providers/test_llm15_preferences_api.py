@@ -80,13 +80,21 @@ def test_tool_injection_mode_defaults_to_full(monkeypatch):
     assert result.toolInjectionMode == "full"
 
 
-def test_intermediate_reply_preference_defaults_to_enabled_and_can_be_disabled(monkeypatch):
+def test_im_display_preferences_use_new_defaults_and_preserve_saved_choices(monkeypatch):
     monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(
         agent=SimpleNamespace(personality_preference_enabled=False),
     ))
 
-    assert preferences_api._to_response({}).showIntermediateReplies is True
-    assert preferences_api._to_response({"show_intermediate_replies": False}).showIntermediateReplies is False
+    defaults = preferences_api._to_response({})
+    assert defaults.showToolInteractions is True
+    assert defaults.showIntermediateReplies is False
+
+    saved = preferences_api._to_response({
+        "show_tool_interactions": False,
+        "show_intermediate_replies": True,
+    })
+    assert saved.showToolInteractions is False
+    assert saved.showIntermediateReplies is True
 
 
 @pytest.mark.asyncio

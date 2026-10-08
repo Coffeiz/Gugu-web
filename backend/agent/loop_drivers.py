@@ -293,7 +293,8 @@ class AnthropicDriver:
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
         client = providers.build_anthropic_client(ai, _timeout)
-        thinking_param = adapter.build_anthropic_thinking_params(ai)
+        generic_thinking = providers.generic_thinking_params(ai, "anthropic")
+        thinking_param = generic_thinking or adapter.build_anthropic_thinking_params(ai)
 
         # system_text 来自 build_split 的稳定前缀；动态上下文已经移到 messages。
         if system_text:
@@ -564,7 +565,8 @@ class OpenAIDriver:
         _timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
         client = providers.build_openai_client(ai, _timeout)
 
-        think_kwargs = adapter.build_openai_thinking_kwargs(ai)
+        generic_thinking = providers.generic_thinking_params(ai, "openai")
+        think_kwargs = generic_thinking or adapter.build_openai_thinking_kwargs(ai)
 
         ctx = _OpenAICtx(
             tools=tools, max_tokens=ai.max_tokens,

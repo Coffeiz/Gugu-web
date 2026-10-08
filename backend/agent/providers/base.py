@@ -7,9 +7,54 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import urlparse
 
 
 ApiFormat = Literal["anthropic", "openai", "responses"]
+
+
+def generic_thinking_toggle_supported(ai, api_format: str) -> bool:
+    """判断配置是否处于通用兼容模式，且当前公共协议有通用思考开关映射。"""
+    if api_format not in {"openai", "responses", "anthropic"}:
+        return False
+    provider = (getattr(ai, "provider", "") or "").strip().lower()
+    base_url = (getattr(ai, "base_url", "") or "").strip()
+    if provider == "local":
+        return True
+    if provider == "ollama":
+        return getattr(ai, "ollama_api_mode", "native") != "native"
+
+    if not base_url and provider == "openai":
+        base_url = "https://api.openai.com/v1"
+    elif not base_url and provider == "anthropic":
+        base_url = "https://api.anthropic.com/v1"
+    hostname = (urlparse(base_url).hostname or "").lower()
+    if provider == "openai":
+        return hostname != "api.openai.com" and api_format in {"openai", "responses"}
+    if provider == "anthropic":
+        return hostname != "api.anthropic.com" and api_format == "anthropic"
+
+    # 已有专用适配器的 Provider 仍按其模型能力声明处理；未识别的 Provider
+    # 以及未选择专用 Provider 的自定义端点属于通用兼容模式。
+    specific_providers = {
+        "qwen", "glm", "glm-coding", "deepseek", "minimax", "mimo",
+    }
+    return provider not in specific_providers and api_format == "openai"
+
+
+def generic_thinking_params(ai, api_format: str) -> dict:
+    """按公共协议映射通用兼容端点的显式思考开关。默认状态完全省略字段。"""
+    if not generic_thinking_toggle_supported(ai, api_format):
+        return {}
+    thinking = getattr(ai, "thinking", None)
+    if thinking not in {"disabled", "adaptive"}:
+        return {}
+    enabled = thinking == "adaptive"
+    if api_format == "openai":
+        return {"reasoning_effort": "high" if enabled else "none"}
+    if api_format == "responses":
+        return {"reasoning": {"effort": "medium" if enabled else "none"}}
+    return {"thinking": {"type": "adaptive" if enabled else "disabled"}}
 
 
 @dataclass(frozen=True)
@@ -83,12 +128,13 @@ class ProviderAdapter:
         return ReasoningCapabilities()
 
     def _reasoning_effort(self, ai, api_format: str) -> str | None:
+        capabilities = self.reasoning_capabilities(ai, api_format)
         if getattr(ai, "thinking", None) == "disabled":
-            return None
+            return "none" if "none" in capabilities.efforts else None
         value = (getattr(ai, "reasoning_effort", "") or "").lower()
         if not value:
             return None
-        return self.reasoning_capabilities(ai, api_format).provider_effort(value)
+        return capabilities.provider_effort(value)
 
     def build_responses_reasoning_params(self, ai) -> dict:
         """构造 Responses API 推理档位；不支持或默认配置时省略字段。"""

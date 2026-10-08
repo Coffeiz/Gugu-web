@@ -8,7 +8,10 @@ from __future__ import annotations
 from copy import copy
 
 from .anthropic import AnthropicAdapter
-from .base import MediaLimits, ProviderAdapter, ProviderCapabilities
+from .base import (
+    MediaLimits, ProviderAdapter, ProviderCapabilities, ReasoningCapabilities,
+    generic_thinking_params, generic_thinking_toggle_supported,
+)
 from .deepseek import DeepSeekAdapter
 from .glm import GlmAdapter, GlmCodingAdapter
 from .mimo import MimoAdapter
@@ -42,6 +45,28 @@ _REGISTRY: dict[str, ProviderAdapter] = {
 }
 
 
+def _api_format_options(adapter, ai) -> dict[str, object]:
+    supported = adapter.supported_api_formats(ai)
+    user_selectable = adapter.name in {"local", "ollama"}
+    selectable = (["native"] if adapter.name == "ollama" else []) + list(supported)
+    urls = {}
+    for api_format in selectable:
+        updates = {"ollama_api_mode": "native"} if api_format == "native" else {"api_format": api_format}
+        if adapter.name == "ollama" and api_format != "native":
+            updates["ollama_api_mode"] = "openai"
+        candidate = _copy_with_updates(ai, updates)
+        urls[api_format] = adapter.default_base_url_for(candidate)
+    return {
+        "supported_api_formats": list(supported),
+        "selectable_api_formats": selectable,
+        "default_base_urls": urls,
+        "default_api_format": "native" if adapter.name == "ollama" else adapter.capabilities(
+            getattr(ai, "model", "") or "",
+        ).api_format,
+        "api_format_source": "user_selectable" if user_selectable else "provider_declared",
+    }
+
+
 def capability_snapshot(ai) -> dict[str, object]:
     """返回后台诊断可展示的静态能力声明。
 
@@ -52,7 +77,11 @@ def capability_snapshot(ai) -> dict[str, object]:
     model = getattr(ai, "model", "") or ""
     capabilities = adapter.capabilities(model)
     selected_api_format = adapter.protocol_format(ai)
+    generic_thinking = generic_thinking_toggle_supported(ai, selected_api_format)
     reasoning = adapter.reasoning_capabilities(ai, selected_api_format)
+    if generic_thinking:
+        # 通用协议只提供开/关，不泄漏具体 Provider 的档位选项。
+        reasoning = ReasoningCapabilities()
     overrides = getattr(ai, "capability_overrides", None) or {}
     values = {field: getattr(capabilities, field) for field in (
         "thinking", "structured_json", "structured_schema", "tools", "parallel_tools",
@@ -60,17 +89,23 @@ def capability_snapshot(ai) -> dict[str, object]:
     for field, value in overrides.items():
         if field in values and isinstance(value, bool):
             values[field] = value
+    format_options = _api_format_options(adapter, ai)
+
     return {
         "provider": adapter.name,
         "model": model,
         "default_base_url": adapter.default_base_url_for(ai),
-        "default_api_format": capabilities.api_format,
+        "default_base_urls": format_options["default_base_urls"],
+        "default_api_format": format_options["default_api_format"],
         "api_format": capabilities.api_format,
         "selected_api_format": selected_api_format,
-        "supported_api_formats": list(adapter.supported_api_formats(ai)),
+        "supported_api_formats": format_options["supported_api_formats"],
+        "selectable_api_formats": format_options["selectable_api_formats"],
+        "api_format_source": format_options["api_format_source"],
         "reasoning_modes": list(reasoning.modes),
         "reasoning_efforts": list(reasoning.efforts),
         "supports_adaptive_thinking": reasoning.supports_adaptive_thinking,
+        "generic_thinking_toggle_supported": generic_thinking,
         "cache_mode": capabilities.cache_mode,
         "thinking": values["thinking"],
         "structured_json": values["structured_json"],
@@ -87,10 +122,12 @@ def capability_snapshot(ai) -> dict[str, object]:
 def filter_reasoning_config(ai):
     """返回只保留当前 Provider/模型/API 格式支持的推理配置副本。
 
-    旧配置继续可读，但能力未知或已不匹配时按模型默认处理，不修改持久化配置。
+    仅为当前请求过滤不适用于所选 Provider/协议的选项，不迁移或改写持久化配置。
     """
     adapter = adapter_for(ai)
     api_format = adapter.protocol_format(ai)
+    if generic_thinking_toggle_supported(ai, api_format):
+        return _filter_generic_thinking_config(ai)
     supported_formats = adapter.supported_api_formats(ai)
     reasoning = adapter.reasoning_capabilities(ai, api_format) \
         if api_format in supported_formats else None
@@ -103,6 +140,17 @@ def filter_reasoning_config(ai):
     if thinking and thinking not in modes and not (thinking == "adaptive" and effort_is_supported and not modes):
         updates["thinking"] = None
     if effort and (not effort_is_supported or thinking == "disabled"):
+        updates["reasoning_effort"] = ""
+    if not updates:
+        return ai
+    return ai.model_copy(update=updates) if hasattr(ai, "model_copy") else _copy_with_updates(ai, updates)
+
+
+def _filter_generic_thinking_config(ai):
+    updates = {}
+    if getattr(ai, "thinking", None) not in {None, "", "disabled", "adaptive"}:
+        updates["thinking"] = None
+    if getattr(ai, "reasoning_effort", None):
         updates["reasoning_effort"] = ""
     if not updates:
         return ai

@@ -10,7 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.providers import adapter_for, capability_snapshot, filter_reasoning_config
+from agent.providers import (
+    adapter_for, capability_snapshot, filter_reasoning_config,
+    generic_thinking_params,
+)
 
 
 def _ai(provider: str = "", model: str = "", base_url: str = "") -> SimpleNamespace:
@@ -65,12 +68,6 @@ def test_bailian_qwen3_capabilities_and_thinking_toggle():
     assert adapter.capabilities("qwen3.8-max").thinking
     assert adapter.capabilities("qwen3.8-max").structured_json
     assert adapter.capabilities("qwen3.8-max").structured_schema
-    assert adapter.supported_api_formats(SimpleNamespace(
-        provider="qwen", model="qwen3.8-max"
-    )) == ("openai", "responses")
-    assert adapter.supported_api_formats(SimpleNamespace(
-        provider="qwen", model="qwen-max"
-    )) == ("openai", "responses")
     assert adapter.reasoning_capabilities(SimpleNamespace(
         provider="qwen", model="qwen3.8-max"
     ), "responses").efforts == (
@@ -102,6 +99,35 @@ def test_bailian_qwen3_capabilities_and_thinking_toggle():
             "json_schema": {"name": "gugu_output", "schema": {"type": "object"}},
         }
     }
+
+
+def test_bailian_qwen_anthropic_protocol_endpoint_and_reasoning():
+    adapter = adapter_for(_ai(provider="qwen", model="qwen3.8-max"))
+    assert adapter.supported_api_formats(SimpleNamespace(
+        provider="qwen", model="qwen3.8-max"
+    )) == ("openai", "responses", "anthropic")
+    assert adapter.supported_api_formats(SimpleNamespace(
+        provider="qwen", model="qwen-max"
+    )) == ("openai", "responses")
+    anthropic_ai = SimpleNamespace(
+        provider="qwen", model="qwen3.8-max", api_format="anthropic",
+        base_url="https://workspace.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        api_key="test-key", thinking="adaptive", reasoning_effort="high",
+    )
+    assert adapter.default_base_url_for(anthropic_ai) == (
+        "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic"
+    )
+    request = adapter.diagnostic_request(anthropic_ai)
+    assert request["path"] == "/v1/messages"
+    assert request["headers"]["x-api-key"] == "test-key"
+    assert adapter.reasoning_capabilities(anthropic_ai, "anthropic").efforts == (
+        "none", "minimal", "low", "medium", "high", "xhigh", "max")
+    assert adapter.build_anthropic_thinking_params(anthropic_ai) == {
+        "thinking": {"type": "enabled"}, "output_config": {"effort": "xhigh"},
+    }
+    assert adapter.build_anthropic_thinking_params(
+        anthropic_ai, thinking="disabled",
+    ) == {"thinking": {"type": "disabled"}}
 
 
 def test_bailian_legacy_qwen_does_not_receive_qwen3_parameters():
@@ -159,16 +185,79 @@ def test_adapter_for_glm_uses_openai_compatible_endpoint():
     assert not adapter.supports_active_cache("glm-5.2")
 
 
-def test_old_reasoning_values_are_ignored_when_current_model_format_does_not_support_them():
-    old_generic = SimpleNamespace(
+def test_generic_compatibility_thinking_toggle_uses_protocol_mapping_only():
+    endpoint = SimpleNamespace(
+        provider="custom-compatible", model="private-model", base_url="https://gateway.example/v1",
+        api_format="openai", thinking="", reasoning_effort="",
+    )
+    assert generic_thinking_params(endpoint, "openai") == {}
+    local_endpoint = SimpleNamespace(
+        provider="local", model="private-model", base_url="https://gateway.example/v1",
+        api_format="responses", thinking=None, reasoning_effort="",
+    )
+    assert generic_thinking_params(local_endpoint, "responses") == {}
+    local_endpoint.api_format = "anthropic"
+    assert generic_thinking_params(local_endpoint, "anthropic") == {}
+
+    endpoint.thinking = "adaptive"
+    assert generic_thinking_params(endpoint, "openai") == {"reasoning_effort": "high"}
+    local_endpoint.thinking = "adaptive"
+    assert generic_thinking_params(local_endpoint, "responses") == {"reasoning": {"effort": "medium"}}
+    assert generic_thinking_params(local_endpoint, "anthropic") == {"thinking": {"type": "adaptive"}}
+
+    endpoint.thinking = "disabled"
+    assert generic_thinking_params(endpoint, "openai") == {"reasoning_effort": "none"}
+    local_endpoint.thinking = "disabled"
+    assert generic_thinking_params(local_endpoint, "responses") == {"reasoning": {"effort": "none"}}
+    assert generic_thinking_params(local_endpoint, "anthropic") == {"thinking": {"type": "disabled"}}
+
+
+def test_generic_thinking_toggle_does_not_override_known_provider_mapping():
+    official_openai = SimpleNamespace(
+        provider="openai", model="gpt-6-sol", base_url="https://api.openai.com/v1",
+        api_format="openai", thinking="adaptive", reasoning_effort="high",
+    )
+    assert generic_thinking_params(official_openai, "openai") == {}
+
+    dedicated_qwen = SimpleNamespace(
+        provider="qwen", model="qwen3.8-max", base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_format="openai", thinking="adaptive", reasoning_effort="high",
+    )
+    assert generic_thinking_params(dedicated_qwen, "openai") == {}
+
+
+def test_generic_config_filter_removes_effort_but_keeps_explicit_toggle():
+    generic = SimpleNamespace(
         provider="custom-compatible", model="private-model", base_url="https://gateway.example/v1",
         api_format="openai", thinking="adaptive", reasoning_effort="high",
     )
-    filtered = filter_reasoning_config(old_generic)
-    assert filtered is not old_generic
-    assert filtered.thinking is None
+    filtered = filter_reasoning_config(generic)
+    assert filtered is not generic
+    assert filtered.thinking == "adaptive"
     assert filtered.reasoning_effort == ""
-    assert old_generic.thinking == "adaptive"  # 旧配置对象不被原地修改
+    assert generic.thinking == "adaptive"
+
+
+def test_openai_and_anthropic_drivers_apply_generic_toggle_to_request_context(monkeypatch):
+    from agent import providers
+    from agent.loop_drivers import AnthropicDriver, OpenAIDriver
+    from agent.context.assembly.area import MessageArea
+
+    monkeypatch.setattr(providers, "build_openai_client", lambda *_args: object())
+    chat_ai = SimpleNamespace(
+        provider="custom-compatible", model="private-model", base_url="https://gateway.example/v1",
+        api_format="openai", thinking="disabled", reasoning_effort="", max_tokens=128,
+    )
+    _, chat_context = OpenAIDriver().prepare([], chat_ai, [], None)
+    assert chat_context.think_kwargs == {"reasoning_effort": "none"}
+
+    monkeypatch.setattr(providers, "build_anthropic_client", lambda *_args: object())
+    messages_ai = SimpleNamespace(
+        provider="local", model="private-model", base_url="https://gateway.example/v1",
+        api_format="anthropic", thinking="adaptive", reasoning_effort="high", max_tokens=128,
+    )
+    _, messages_context = AnthropicDriver().prepare([], messages_ai, MessageArea(), None)
+    assert messages_context.thinking_param == {"thinking": {"type": "adaptive"}}
 
 
 def test_supported_reasoning_effort_requires_adaptive_mode():
@@ -191,6 +280,9 @@ def test_unknown_model_capability_snapshot_offers_default_without_reasoning_cont
     assert snapshot["supported_api_formats"] == ["openai", "responses"]
     assert snapshot["reasoning_modes"] == []
     assert snapshot["reasoning_efforts"] == []
+    assert snapshot["api_format_source"] == "provider_declared"
+    assert snapshot["selectable_api_formats"] == ["openai", "responses"]
+    assert snapshot["default_base_urls"]["responses"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 def test_glm_53_protocols_effort_and_protocol_specific_endpoints():
@@ -235,14 +327,20 @@ def test_glm_53_protocols_effort_and_protocol_specific_endpoints():
     coding = adapter_for(_ai(provider="glm-coding", model="glm-5.3"))
     assert coding.supported_api_formats(SimpleNamespace(
         provider="glm-coding", model="glm-5.3"
-    )) == ("openai",)
+    )) == ("openai", "responses", "anthropic")
+    assert coding.resolve_base_url(SimpleNamespace(
+        provider="glm-coding", model="glm-5.3", api_format="responses", base_url=""
+    )) == "https://open.bigmodel.cn/api/v1"
+    assert coding.resolve_base_url(SimpleNamespace(
+        provider="glm-coding", model="glm-5.3", api_format="anthropic", base_url=""
+    )) == "https://open.bigmodel.cn/api/anthropic"
     coding_by_url = adapter_for(_ai(
         provider="glm", model="glm-5.3", base_url="https://open.bigmodel.cn/api/coding/paas/v4",
     ))
     assert coding_by_url.name == "glm-coding"
     assert coding_by_url.supported_api_formats(SimpleNamespace(
         provider="glm", model="glm-5.3", base_url="https://open.bigmodel.cn/api/coding/paas/v4",
-    )) == ("openai",)
+    )) == ("openai", "responses", "anthropic")
 
 
 def test_glm_thinking_parameters_are_model_scoped():
@@ -343,6 +441,36 @@ def test_adapter_for_ollama_local_and_cloud_defaults():
         "http://127.0.0.1:11434/api"
     assert adapter.resolve_base_url(SimpleNamespace(provider="ollama", base_url="", ollama_mode="cloud")) == \
         "https://ollama.com/api"
+    snapshot = capability_snapshot(SimpleNamespace(
+        provider="ollama", model="qwen3:8b", api_format="", ollama_api_mode="native",
+    ))
+    assert snapshot["api_format_source"] == "user_selectable"
+    assert snapshot["default_api_format"] == "native"
+    assert snapshot["selectable_api_formats"] == ["native", "openai", "responses", "anthropic"]
+    assert snapshot["default_base_urls"]["native"] == "http://127.0.0.1:11434/api"
+    assert snapshot["default_base_urls"]["anthropic"] == "http://127.0.0.1:11434/v1"
+
+
+def test_local_capability_snapshot_distinguishes_user_selectable_formats_and_default_urls():
+    snapshot = capability_snapshot(SimpleNamespace(
+        provider="local", model="custom-model", api_format="responses", local_runtime="vllm",
+    ))
+    assert snapshot["api_format_source"] == "user_selectable"
+    assert snapshot["supported_api_formats"] == ["openai", "responses", "anthropic"]
+    assert snapshot["selectable_api_formats"] == snapshot["supported_api_formats"]
+    assert snapshot["default_api_format"] == "openai"
+    assert snapshot["default_base_urls"] == {
+        "openai": "http://127.0.0.1:8000/v1",
+        "responses": "http://127.0.0.1:8000/v1",
+        "anthropic": "http://127.0.0.1:8000/v1",
+    }
+    generic = capability_snapshot(SimpleNamespace(
+        provider="custom-compatible", model="private-model", base_url="https://gateway.example/v1",
+        api_format="openai",
+    ))
+    assert generic["generic_thinking_toggle_supported"] is True
+    assert generic["reasoning_modes"] == []
+    assert generic["reasoning_efforts"] == []
 
 
 def test_ollama_openai_compatibility_keeps_v1_endpoint():
@@ -548,7 +676,7 @@ def test_compatible_endpoints_do_not_inherit_official_provider_reasoning_options
     )
     assert anthropic.reasoning_capabilities(anthropic_ai, "anthropic").modes == ()
     filtered = filter_reasoning_config(anthropic_ai)
-    assert filtered.thinking is None
+    assert filtered.thinking == "adaptive"
     assert filtered.reasoning_effort == ""
 
     chat_only = SimpleNamespace(

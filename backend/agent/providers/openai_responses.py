@@ -355,7 +355,11 @@ async def complete_branch(
     }
     if instructions:
         request["instructions"] = instructions
-    request.update(adapter.build_responses_reasoning_params(ai))
+    from agent import providers
+    request.update(
+        providers.generic_thinking_params(ai, "responses")
+        or adapter.build_responses_reasoning_params(ai)
+    )
     if json_mode:
         response_format = adapter.build_structured_output(ai).get("response_format")
         if isinstance(response_format, dict):
@@ -470,7 +474,11 @@ class OpenAIResponsesDriver:
             "tools": ctx.tools,
             "stream": True,
         }
-        request.update(ctx.adapter.build_responses_reasoning_params(ctx.ai))
+        from agent import providers
+        request.update(
+            providers.generic_thinking_params(ctx.ai, "responses")
+            or ctx.adapter.build_responses_reasoning_params(ctx.ai)
+        )
         if ctx.reasoning_replay_enabled:
             replay_params = getattr(
                 ctx.adapter, "build_responses_reasoning_replay_params", None,

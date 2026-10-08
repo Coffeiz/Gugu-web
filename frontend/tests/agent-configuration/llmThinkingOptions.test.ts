@@ -37,4 +37,19 @@ describe('模型思考选项快照', () => {
     )
     expect(options.map(option => option.value)).toEqual(['default', 'disabled', 'low', 'high'])
   })
+
+  it('通用兼容模式只显示默认、开启和关闭，不提供深度档位', () => {
+    const options = buildThinkingOptionsForIdentity(
+      {
+        generic_thinking_toggle_supported: true,
+        reasoning_modes: ['adaptive', 'disabled'],
+        reasoning_efforts: ['low', 'medium', 'high'],
+      },
+      'custom|private-model',
+      'custom|private-model',
+      translate,
+    )
+    expect(options.map(option => option.value)).toEqual(['default', 'adaptive', 'disabled'])
+    expect(options[1].label).toBe('profileByokUi.enableThinking')
+  })
 })
