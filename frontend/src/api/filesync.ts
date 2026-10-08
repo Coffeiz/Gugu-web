@@ -1,8 +1,4 @@
 /** Admin 文件同步 API 的类型和请求边界；页面不自行拼接同步业务请求。 */
-import { getCsrfHeaders, getToken } from '@/services/api'
-import { handleUnauthorized } from '@/services/authSession'
-
-const API_BASE = import.meta.env.VITE_API_URL ?? '/api/v1'
 
 export interface FileSyncRunStatus {
   id: string
@@ -19,50 +15,6 @@ export interface FileSyncRunStatus {
   createdAt: string | null
   startedAt: string | null
   finishedAt: string | null
-}
-
-export interface FileSyncUserBinding {
-  id: number
-  source: string
-  mode: string
-  rootPath: string
-  status: string
-  revision: number
-  watcherStatus: string
-  needsReconcile: boolean
-  healthRevision: number
-  gapRevision: number
-  healthErrorCode: string | null
-  lastReconciledAt: string | null
-}
-
-async function userRequest<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {
-    ...(method === 'GET' ? {} : getCsrfHeaders()),
-    ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
-  }
-  const response = await fetch(`${API_BASE}${path}`, {
-    method,
-    credentials: 'include',
-    headers: body === undefined ? headers : { ...headers, 'Content-Type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  })
-  if (response.status === 401) handleUnauthorized('user')
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    throw new Error(typeof data.detail === 'string' ? data.detail : `HTTP ${response.status}`)
-  }
-  return data as T
-}
-
-export const filesyncUserApi = {
-  bindings: () => userRequest<FileSyncUserBinding[]>('/filesync/bindings'),
-  runs: (limit = 20) => userRequest<FileSyncRunStatus[]>(`/filesync/runs?limit=${limit}`),
-  previewDefault: () => userRequest<FileSyncRunStatus>('/filesync/dry-run', 'POST', { rootPath: '.', mode: 'bidirectional' }),
-  preview: (binding: FileSyncUserBinding) => userRequest<FileSyncRunStatus>('/filesync/dry-run', 'POST', { rootPath: binding.rootPath, mode: binding.mode }),
-  initialize: (binding: FileSyncUserBinding) => userRequest<FileSyncRunStatus>('/filesync/bindings', 'POST', { rootPath: binding.rootPath, mode: binding.mode, confirm: true, confirmDelete: false }),
-  reconcile: (bindingId: number, allowDelete: boolean) => userRequest<FileSyncRunStatus>(`/filesync/bindings/${bindingId}/reconcile`, 'POST', { confirm: true, allowDelete }),
-  cancelRun: (runId: string) => userRequest<FileSyncRunStatus>(`/filesync/runs/${encodeURIComponent(runId)}/cancel`, 'POST'),
 }
 
 export interface FileSyncBindingStatus {
