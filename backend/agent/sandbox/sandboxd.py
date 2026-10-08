@@ -288,7 +288,7 @@ class SandboxdServer:
         )
         personal_root = self._validate_root(request.personal_root) if request.personal_root else None
         project_root = self._validate_root(request.project_root) if request.project_root else None
-        quota_root = self._validate_root(request.quota_root) if request.quota_root else None
+        quota_roots = tuple(self._validate_root(root) for root in request.quota_roots)
         request_id = uuid.uuid4().hex
         request_key = request.request_id or request_id
         self._active_tasks[request_key] = asyncio.current_task()
@@ -318,7 +318,7 @@ class SandboxdServer:
                     cwd=request.cwd,
                     timeout=request.timeout,
                     max_output_chars=request.max_output_chars,
-                    quota_root=quota_root,
+                    quota_roots=quota_roots,
                     quota_bytes=request.quota_bytes,
                     network_profile=request.network_profile,
                     on_output=emit_output,

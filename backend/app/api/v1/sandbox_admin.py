@@ -158,6 +158,7 @@ def _response():
     )
     terminal_entry_enabled, pty_enabled = terminal_capabilities(settings, sandbox_ready=state == "ready")
     return {
+        "storage_backend": getattr(getattr(settings, "storage", None), "backend", "local"),
         "enabled": bool(cfg.enabled),
         "manager_mode": manager_mode,
         "full_user_sandbox_authorization_enabled": bool(cfg.full_user_sandbox_authorization_enabled),

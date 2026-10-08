@@ -179,7 +179,7 @@ class SandboxSettings(BaseModel):
     output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")
     pty_output_limit_bytes: int = Field(120 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 单会话输出上限")
     pty_output_rate_bytes: int = Field(256 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 每秒输出上限")
-    persistent_quota_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 持久空间配额")
+    persistent_quota_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="OSS 后端每用户 Shell 独立持久空间配额")
     ephemeral_quota_bytes: int = Field(1024 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 临时构建/cache 配额")
     sandboxd_socket: str = Field(
         default_factory=lambda: os.getenv(
@@ -312,7 +312,7 @@ class AgentBehaviorSettings(BaseModel):
 class QuotaSettings(BaseModel):
     default_token_limit_6h:      Optional[int] = Field(None, description="全局 6 小时 Token 上限（None=不限制）")
     default_token_limit_weekly:  Optional[int] = Field(None, description="全局每周 Token 上限（None=不限制）")
-    default_storage_limit_bytes: Optional[int] = Field(None, description="全局存储空间上限（None=不限制）")
+    default_storage_limit_bytes: Optional[int] = Field(None, description="全局默认用户存储上限；Local 含文件库与工作区，OSS 限文件库（None=不限制）")
     default_search_limit_daily:  Optional[int] = Field(None, description="全局每日联网搜索次数上限（None=不限制）")
 
 

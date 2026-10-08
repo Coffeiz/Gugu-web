@@ -60,6 +60,13 @@ from app.services.undo.files import file_snapshot, operation_state, ref_for, sav
 router = APIRouter(prefix="/files", tags=["files"])
 
 
+def _storage_limit(user: User) -> int | None:
+    """优先使用明确的用户空间额度；0 是有效的零额度。"""
+    if user.storage_limit_bytes is not None:
+        return int(user.storage_limit_bytes)
+    return get_settings().quota.default_storage_limit_bytes
+
+
 class ArchiveRequest(CamelModel):
     file_ids: list[int] = Field(default_factory=list)
     folder_ids: list[int] = Field(default_factory=list)
@@ -117,7 +124,7 @@ _UNDO_CONTENT_MAX = 64 * 1024 * 1024
 
 async def _upload_capacity(db, current_user, on_conflict: str, overwrite_file_id: int | None):
     """返回实际总配额与本次请求可消费的剩余空间。"""
-    limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    limit = _storage_limit(current_user)
     if limit is None:
         return None, 2**63 - 1
     used = await get_storage_usage(db, current_user.id)
@@ -193,7 +200,7 @@ async def files_storage(
 ):
     """返回当前用户的存储用量与上限。"""
     used = await get_storage_usage(db, current_user.id)
-    limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    limit = _storage_limit(current_user)
     return {"used_bytes": used, "limit_bytes": limit}
 
 
@@ -445,7 +452,7 @@ async def presign_upload(
             body.folder_id,
             body.on_conflict,
             body.overwrite_file_id,
-            current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
+            _storage_limit(current_user),
             workspace_directory_id=body.workspace_directory_id,
         )
     except UploadTargetError as error:
@@ -521,7 +528,7 @@ async def confirm_upload(
             workspace_directory_id=body.workspace_directory_id,
             stage_name=body.stage_name,
             overwrite_file_id=body.overwrite_file_id,
-            storage_limit_bytes=current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
+            storage_limit_bytes=_storage_limit(current_user),
         max_file_bytes=None,
         )
     except UploadTargetError as error:

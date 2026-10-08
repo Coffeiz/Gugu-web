@@ -65,10 +65,6 @@ def all_files_query(user_id: int) -> Select:
     )
 
 
-def storage_usage_query(user_id: int) -> Select:
-    return select(func.sum(File.size_bytes)).where(File.user_id == user_id, File.deleted_at.is_(None))
-
-
 async def list_file_rows(
     db: AsyncSession,
     user_id: int,
@@ -113,9 +109,10 @@ async def list_existing_file_rows(db: AsyncSession, storage, user_id: int):
 
 
 async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
-    """返回当前用户已使用的存储字节数。"""
-    result = await db.execute(storage_usage_query(user_id))
-    return result.scalar() or 0
+    """返回用户当前配额口径的实际用量。"""
+    from app.services.storage.quota_ledger import measure_user_storage_usage
+
+    return await measure_user_storage_usage(db, user_id)
 
 
 async def get_file_version_snapshot(db: AsyncSession, user_id: int):

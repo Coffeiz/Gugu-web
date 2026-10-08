@@ -18,7 +18,7 @@ import struct
 import termios
 from uuid import uuid4
 from pathlib import Path
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from app.core.config import SandboxSettings
 
@@ -602,6 +602,7 @@ exec bash --noprofile --norc -i
         authorization_check: Callable[[], Awaitable[bool]] | None = None,
         on_output: Callable[[str, str], Awaitable[None]] | None = None,
         quota_root: str | Path | None = None,
+        quota_roots: Sequence[str | Path] | None = None,
         quota_bytes: int | None = None,
         network_profile: str | None = None,
     ) -> ShellResult:
@@ -612,6 +613,14 @@ exec bash --noprofile --norc -i
         )
         timeout_value = max(0.1, min(float(timeout if timeout is not None else self.settings.timeout_seconds), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars if max_output_chars is not None else self.settings.output_limit_bytes), _MAX_OUTPUT))
+        quota_paths = tuple(dict.fromkeys(
+            Path(path).expanduser().resolve(strict=True)
+            for path in ([*(quota_roots or ()), *([quota_root] if quota_root else [])])
+        ))
+        if quota_paths and quota_bytes is None:
+            raise ValueError("quota_bytes 必须与 quota_roots 一起提供")
+        if quota_bytes is not None and not quota_paths:
+            raise ValueError("quota_bytes 缺少 quota_roots")
 
         process = await asyncio.create_subprocess_exec(
             *docker_argv,
@@ -629,10 +638,7 @@ exec bash --noprofile --norc -i
         cancelled = False
         wait_task = asyncio.create_task(process.wait())
         auth_task = asyncio.create_task(LocalWorkspaceExecutor._watch_authorization(authorization_check)) if authorization_check else None
-        quota_path = Path(quota_root).expanduser().resolve(strict=True) if quota_root else None
-        if quota_path is not None and quota_bytes is None:
-            raise ValueError("quota_bytes 必须与 quota_root 一起提供")
-        quota_task = asyncio.create_task(self._watch_quota(quota_path, quota_bytes)) if quota_path else None
+        quota_task = asyncio.create_task(self._watch_quota(quota_paths, quota_bytes)) if quota_paths else None
         quota_exceeded = False
         try:
             tasks = {wait_task} | ({auth_task} if auth_task else set()) | ({quota_task} if quota_task else set())
@@ -680,12 +686,15 @@ exec bash --noprofile --norc -i
         )
 
     @staticmethod
-    async def _watch_quota(root: Path | None, limit: int | None) -> bool:
+    async def _watch_quota(root: Path | Sequence[Path] | None, limit: int | None) -> bool:
         if root is None or limit is None:
+            return False
+        roots = (root,) if isinstance(root, Path) else tuple(root)
+        if not roots:
             return False
         while True:
             try:
-                if measure_directory(root) > limit:
+                if sum(measure_directory(path) for path in roots) > limit:
                     return True
             except OSError:
                 return True

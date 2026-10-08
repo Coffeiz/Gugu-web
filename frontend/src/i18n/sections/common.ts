@@ -393,4 +393,34 @@ Object.assign((messages['ja-JP'] as Record<string, any>).auth, {
   forgotHint: '登録時のユーザー名またはメールを入力してください。アカウントのメールアドレスに再設定メールを送信します。',
   resetSentTo: '{email} に再設定リンクを送信しました。受信箱と迷惑メールを確認してください。',
 })
+Object.assign((messages['zh-CN'] as Record<string, any>).adminQuota, {
+  storage: 'Local 文件库 + 工作区总额度 / OSS 文件库额度',
+})
+Object.assign((messages['en-US'] as Record<string, any>).adminQuota, {
+  storage: 'Local total (file library + workspace) / OSS file-library quota',
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).adminQuota, {
+  storage: 'Local 合計（ファイルライブラリ + Workspace）/ OSS ファイルライブラリ上限',
+})
+Object.assign((messages['zh-CN'] as Record<string, any>).adminUsers, {
+  storageUsage: '用户空间用量',
+})
+Object.assign((messages['en-US'] as Record<string, any>).adminUsers, {
+  storageUsage: 'User storage usage',
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).adminUsers, {
+  storageUsage: 'ユーザーストレージ使用量',
+})
+Object.assign((messages['zh-CN'] as Record<string, any>).adminSandbox, {
+  persistentQuota: 'OSS Shell 独立持久空间上限',
+  persistentMb: 'OSS Shell 独立持久空间（MB）',
+})
+Object.assign((messages['en-US'] as Record<string, any>).adminSandbox, {
+  persistentQuota: 'OSS Shell persistent-space limit',
+  persistentMb: 'OSS Shell persistent space (MB)',
+})
+Object.assign((messages['ja-JP'] as Record<string, any>).adminSandbox, {
+  persistentQuota: 'OSS Shell 独立永続領域上限',
+  persistentMb: 'OSS Shell 独立永続領域（MB）',
+})
 }

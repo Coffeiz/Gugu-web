@@ -1,7 +1,8 @@
 """用户存储空间统一账本。
 
-账本只记录三类真正占用域：文件库、Shell 持久空间和 Shell 临时空间。
-下载、构建和 Shell 是 operation，不重复创建配额判断。目录对账采用实际
+账本保留三类用量明细：用户持久空间、Shell 持久目录明细和 Shell 临时空间。
+Local 用户持久空间按 File 记录 + 未登记 Workspace/Shell 文件合计；OSS 文件库与
+Shell 持久空间仍分别限额。下载、构建和 Shell 是 operation，不重复创建配额判断。目录对账采用实际
 文件系统测量，数据库文件库采用存活 File 行汇总；两者都保留校准事件。
 """
 from __future__ import annotations
@@ -27,17 +28,60 @@ _CATEGORIES = (FILE_LIBRARY, SHELL_PERSISTENT, SHELL_EPHEMERAL)
 
 def _limits(user: User) -> dict[str, int]:
     settings = get_settings()
+    local_storage = getattr(settings.storage, "backend", "local") == "local"
     return {
         FILE_LIBRARY: resolve_file_library_limit(
             user.storage_limit_bytes, settings.quota.default_storage_limit_bytes,
         ),
-        SHELL_PERSISTENT: int(settings.sandbox.persistent_quota_bytes),
+        # Local 的 Shell 与文件库共用 FILE_LIBRARY 总额度；该行只保留 Shell
+        # 实际用量明细。OSS 没有可合并的本地 Workspace，继续使用独立 Shell 上限。
+        SHELL_PERSISTENT: (2**63 - 1) if local_storage else int(settings.sandbox.persistent_quota_bytes),
         SHELL_EPHEMERAL: int(settings.sandbox.ephemeral_quota_bytes),
     }
 
 
 def _shell_root(user_id: Any) -> Path:
     return (Path(get_settings().storage.local_path).resolve() / str(user_id) / "workspace").resolve()
+
+
+def _local_quota_roots(user_id: Any) -> dict[str, Path]:
+    user_root = Path(get_settings().storage.local_path).expanduser().resolve() / str(user_id)
+    return {
+        "workspace": (user_root / "workspace").resolve(),
+        "personal": (user_root / "个人文件").resolve(),
+        "project": (user_root / "项目文件").resolve(),
+    }
+
+
+async def _measure_local_unregistered_bytes(
+    db: AsyncSession, user_id: Any,
+) -> tuple[dict[str, int], dict[str, int]]:
+    """测量本地可写持久根目录的物理字节与未登记字节。"""
+    roots = _local_quota_roots(user_id)
+    rows = (await db.execute(select(File.storage_key, File.size_bytes).where(
+        File.user_id == user_id, File.deleted_at.is_(None),
+    ))).all()
+    registered_by_root = {name: 0 for name in roots}
+    physical_by_root = {
+        name: measure_directory(path) if path.is_dir() else 0
+        for name, path in roots.items()
+    }
+    storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
+    for storage_key, size_bytes in rows:
+        file_path = (storage_root / storage_key).resolve()
+        for name, root in roots.items():
+            try:
+                file_path.relative_to(root)
+            except ValueError:
+                continue
+            if file_path.is_file():
+                registered_by_root[name] += int(size_bytes or 0)
+            break
+    unregistered_by_root = {
+        name: max(0, physical_by_root[name] - registered_by_root[name])
+        for name in roots
+    }
+    return unregistered_by_root, registered_by_root
 
 
 async def _unregistered_shell_bytes(db: AsyncSession, user_id: Any, root: Path) -> int:
@@ -59,8 +103,48 @@ async def _unregistered_shell_bytes(db: AsyncSession, user_id: Any, root: Path) 
 
 async def measure_shell_persistent_usage(db: AsyncSession, user_id: Any) -> int:
     """按账本口径测量 Shell 持久空间用量，排除已登记的 Workspace 文件。"""
-    root = ensure_sandbox_root(_shell_root(user_id))
+    root = _shell_root(user_id)
+    if not root.is_dir():
+        return 0
     return await _unregistered_shell_bytes(db, user_id, root)
+
+
+async def measure_user_storage_usage(db: AsyncSession, user_id: Any) -> int:
+    """测量用户额度用量；Local 将未登记的 Workspace/Shell 文件并入文件库总额度。"""
+    file_bytes = int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
+        File.user_id == user_id, File.deleted_at.is_(None),
+    ))).scalar_one() or 0)
+    if getattr(get_settings().storage, "backend", "local") != "local":
+        return file_bytes
+    unregistered, _registered = await _measure_local_unregistered_bytes(db, user_id)
+    return file_bytes + sum(unregistered.values())
+
+
+async def get_local_storage_quota_watch(
+    db: AsyncSession, user_id: Any, *, include_library: bool,
+) -> tuple[tuple[Path, ...], int]:
+    """返回 Shell 本轮可写持久根目录及其合计物理字节上限。
+
+    Workspace 始终可写；只有完整用户授权时个人/项目根才可写并加入实时监测。
+    已登记文件按 DB 字节计量，未监测根的未登记字节先从可用额度中预留。
+    """
+    all_roots = _local_quota_roots(user_id)
+    watched_names = ("workspace", "personal", "project") if include_library else ("workspace",)
+    watched = set(watched_names)
+    unregistered, registered = await _measure_local_unregistered_bytes(db, user_id)
+    user = await db.get(User, user_id)
+    if user is None:
+        raise ValueError("用户不存在")
+    limit = _limits(user)[FILE_LIBRARY]
+    file_bytes = int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
+        File.user_id == user_id, File.deleted_at.is_(None),
+    ))).scalar_one() or 0)
+    unmonitored_unregistered = sum(
+        unregistered[name] for name in all_roots if name not in watched
+    )
+    watched_registered = sum(registered[name] for name in watched)
+    watched_limit = max(0, limit - file_bytes - unmonitored_unregistered + watched_registered)
+    return tuple(all_roots[name] for name in watched_names), watched_limit
 
 
 async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[StorageQuotaLedger]:
@@ -77,6 +161,16 @@ async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[
         File.user_id == user_id, File.deleted_at.is_(None),
     ))).scalar_one() or 0)
     existing_shell_bytes = await _unregistered_shell_bytes(db, user_id, root)
+    local_storage = getattr(get_settings().storage, "backend", "local") == "local"
+    existing_local_unregistered = 0
+    if local_storage:
+        unregistered, _ = await _measure_local_unregistered_bytes(db, user_id)
+        existing_local_unregistered = sum(unregistered.values())
+    initial_usage = {
+        FILE_LIBRARY: existing_file_bytes + existing_local_unregistered,
+        SHELL_PERSISTENT: existing_shell_bytes,
+        SHELL_EPHEMERAL: 0,
+    }
     result: list[StorageQuotaLedger] = []
     for category in _CATEGORIES:
         row = (await db.execute(select(StorageQuotaLedger).where(
@@ -88,7 +182,7 @@ async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[
                 user_id=user_id, category=category,
                 root_path=str(root) if category == SHELL_PERSISTENT else None,
                 limit_bytes=limits[category],
-                used_bytes={FILE_LIBRARY: existing_file_bytes, SHELL_PERSISTENT: existing_shell_bytes, SHELL_EPHEMERAL: 0}[category],
+                used_bytes=initial_usage[category],
                 status="active",
             )
             db.add(row)
@@ -133,7 +227,7 @@ async def get_quota(db: AsyncSession, user_id: Any, category: str) -> StorageQuo
 async def get_file_library_download_budget(
     db: AsyncSession, user_id: Any, default_limit_bytes: int | None,
 ) -> tuple[int | None, int | None]:
-    """返回文件库容量上限与当前可用字节数，供下载在接收正文前限流。"""
+    """返回文件库/Local 用户空间容量与可用字节数，供下载前限流。"""
     user = await db.get(User, user_id)
     limit_bytes = (
         user.storage_limit_bytes
@@ -142,12 +236,7 @@ async def get_file_library_download_budget(
     )
     if limit_bytes is None:
         return None, None
-    used_bytes = int((await db.execute(
-        select(func.coalesce(func.sum(File.size_bytes), 0)).where(
-            File.user_id == user_id,
-            File.deleted_at.is_(None),
-        )
-    )).scalar_one() or 0)
+    used_bytes = await measure_user_storage_usage(db, user_id)
     return int(limit_bytes), max(int(limit_bytes) - used_bytes, 0)
 
 
@@ -171,6 +260,18 @@ async def record_usage(
         raise ValueError("存储空间已满")
     row.used_bytes = next_used
     row.updated_at = now_utc()
+    if (
+        category == SHELL_PERSISTENT
+        and getattr(get_settings().storage, "backend", "local") == "local"
+    ):
+        shared_row = await get_quota(db, user_id, FILE_LIBRARY)
+        shared_used = shared_row.used_bytes + int(delta_bytes)
+        if shared_used < 0:
+            raise ValueError("配额用量不能为负数")
+        if shared_used + shared_row.reserved_bytes > shared_row.limit_bytes:
+            raise ValueError("存储空间已满")
+        shared_row.used_bytes = shared_used
+        shared_row.updated_at = now_utc()
     db.add(StorageQuotaEvent(
         user_id=user_id, category=category, operation=operation,
         delta_bytes=int(delta_bytes), resource_type=resource_type,
@@ -182,13 +283,18 @@ async def record_usage(
 
 
 async def reconcile_user_storage(db: AsyncSession, user_id: Any) -> dict[str, int]:
-    """重新测量文件库与 Shell 持久目录，并写入校准事件。"""
+    """重新测量持久空间总量与 Shell 明细，并写入校准事件。"""
     file_bytes = int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
         File.user_id == user_id, File.deleted_at.is_(None),
     ))).scalar_one() or 0)
+    shell_bytes = await measure_shell_persistent_usage(db, user_id)
+    local_storage = getattr(get_settings().storage, "backend", "local") == "local"
+    local_unregistered: dict[str, int] = {}
+    if local_storage:
+        local_unregistered, _ = await _measure_local_unregistered_bytes(db, user_id)
     measured = {
-        FILE_LIBRARY: file_bytes,
-        SHELL_PERSISTENT: await measure_shell_persistent_usage(db, user_id),
+        FILE_LIBRARY: file_bytes + sum(local_unregistered.values()),
+        SHELL_PERSISTENT: shell_bytes,
         SHELL_EPHEMERAL: 0,
     }
     for category, actual in measured.items():

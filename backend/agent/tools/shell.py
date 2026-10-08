@@ -31,13 +31,24 @@ from app.services.workspaces import (
     workspace_shell_supported,
 )
 from app.services.storage.quota_ledger import (
+    FILE_LIBRARY,
     SHELL_PERSISTENT,
+    get_local_storage_quota_watch,
+    get_quota,
+    measure_user_storage_usage,
     measure_shell_persistent_usage,
     record_usage,
     reconcile_user_storage,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _storage_backend() -> str:
+    settings = get_settings()
+    storage = getattr(settings, "storage", None)
+    # 轻量单测可能只提供 sandbox 设置；实际 AppSettings 总会显式声明后端。
+    return str(getattr(storage, "backend", "oss"))
 
 
 def _audit(**fields) -> None:
@@ -202,8 +213,10 @@ async def _run_shell(db, user_id, args: dict):
     if root is None:
         return {"error": "当前 Shell 范围没有可用的本地目录，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
     quota_root = None
+    quota_roots = ()
     quota_bytes = None
     quota_before = None
+    shared_quota_before = None
     result = None
     execution_error = None
     if decision.scope.value == "sandbox":
@@ -211,9 +224,26 @@ async def _run_shell(db, user_id, args: dict):
         ready, reason = sandbox_readiness(sandbox_settings)
         if not ready:
             return {"error": reason, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
-        # 文件库/项目工作区沿用文件服务自己的存储配额；只有未绑定 workspace
-        # 时才检查独立 Shell 持久目录，避免把项目文件误计入 Shell 配额。
-        if decision.workspace_id is None:
+        if _storage_backend() == "local":
+            measured = await reconcile_user_storage(db, user_id)
+            quota_before = measured[SHELL_PERSISTENT]
+            shared_quota_before = measured[FILE_LIBRARY]
+            shared_quota = await get_quota(db, user_id, FILE_LIBRARY)
+            if measured[FILE_LIBRARY] > shared_quota.limit_bytes:
+                return {
+                    "error": "用户存储空间已超过配额，请先清理文件或工作区后再执行命令",
+                    "_risk": decision.risk.value,
+                    "_scope": decision.scope.value,
+                    "_audit_event": "quota_exceeded",
+                }
+            quota_roots, quota_bytes = await get_local_storage_quota_watch(
+                db, user_id, include_library=decision.full_user_sandbox_write,
+            )
+            # watcher 的阈值是 Workspace 树可占用的绝对大小，而不是剩余量；
+            # 已经超额的情况已在上面 fail closed。
+            quota_bytes = max(1, quota_bytes)
+        elif decision.workspace_id is None:
+            # OSS 没有本地 Workspace 根，Shell 持久空间继续使用独立上限。
             measured = await reconcile_user_storage(db, user_id)
             quota_before = measured[SHELL_PERSISTENT]
             if quota_before > sandbox_settings.persistent_quota_bytes:
@@ -223,8 +253,8 @@ async def _run_shell(db, user_id, args: dict):
                     "_scope": decision.scope.value,
                     "_audit_event": "quota_exceeded",
                 }
-        quota_root = root if decision.workspace_id is None else None
-        quota_bytes = sandbox_settings.persistent_quota_bytes if decision.workspace_id is None else None
+            quota_root = root
+            quota_bytes = sandbox_settings.persistent_quota_bytes
     terminal_row = None
     from app.services.terminals import ensure_agent_terminal, get_terminal
     requested_terminal_id = str(args.get("_terminal_id") or "").strip()
@@ -299,6 +329,7 @@ async def _run_shell(db, user_id, args: dict):
                         timeout=float(args.get("timeout", 30)),
                         max_output_chars=int(args.get("max_output_chars", 12_000)),
                         quota_root=str(quota_root) if quota_root else None,
+                        quota_roots=tuple(str(path) for path in quota_roots),
                         quota_bytes=quota_bytes,
                         network_profile=network_profile,
                         egress_expires_at=egress_expires_at,
@@ -332,19 +363,33 @@ async def _run_shell(db, user_id, args: dict):
             ok=False, exit_code=None, stdout="", stderr=execution_error or "Shell 执行失败",
             timed_out=False, cwd=str(requested_cwd),
         )
-    if decision.scope.value == "sandbox" and decision.workspace_id is None and quota_before is not None:
-        quota_after = await measure_shell_persistent_usage(db, user_id)
+    if decision.scope.value == "sandbox" and quota_before is not None:
         operation = (
             "build" if any(token in command for token in ("npm ", "pnpm ", "yarn ", "cargo ", "make ", "gradle ", "build"))
             else "shell_exec"
         )
-        await record_usage(
-            db, user_id, category=SHELL_PERSISTENT,
-            delta_bytes=quota_after - quota_before,
-            operation=operation, resource_type="shell", resource_id=session_id or "none",
-            idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
-            metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
-        )
+        if shared_quota_before is not None:
+            quota_after = await measure_user_storage_usage(db, user_id)
+            if quota_after <= shared_quota.limit_bytes:
+                await record_usage(
+                    db, user_id, category=FILE_LIBRARY,
+                    delta_bytes=quota_after - shared_quota_before,
+                    operation=operation, resource_type="shell", resource_id=session_id or "none",
+                    idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
+                    metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
+                )
+            # 超限时命令可能在两次监测间写入过量；记录实际状态，不让审计写入
+            # 因额度检查异常而遮蔽原始 Shell 结果。超限仍由 watcher 阻止继续运行。
+            await reconcile_user_storage(db, user_id)
+        else:
+            quota_after = await measure_shell_persistent_usage(db, user_id)
+            await record_usage(
+                db, user_id, category=SHELL_PERSISTENT,
+                delta_bytes=quota_after - quota_before,
+                operation=operation, resource_type="shell", resource_id=session_id or "none",
+                idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
+                metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
+            )
     if terminal_row is not None and not args.get("_defer_terminal_event"):
         from app.services.terminals import append_shell_result
         await append_shell_result(

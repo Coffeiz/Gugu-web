@@ -43,6 +43,7 @@ class User(Base):
     token_limit_monthly:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     token_limit_6h:       Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     token_limit_weekly:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    # Local 为文件库 + Workspace/Shell 的单用户总额度；OSS 仍仅限制文件库。
     storage_limit_bytes:  Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
     search_limit_daily:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     quota_window_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)

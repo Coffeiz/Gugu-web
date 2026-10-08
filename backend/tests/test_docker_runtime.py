@@ -1,5 +1,6 @@
 """Docker 沙盒运行时探测测试。"""
 
+import asyncio
 import json
 import re
 import socket
@@ -977,7 +978,40 @@ def test_sandboxd_request_round_trips_as_json():
     assert value["root"] == "/data/user/shell"
     assert value["command"] == "pwd"
     assert value["quota_root"] == "/data/user/shell"
+    assert value["quota_roots"] == []
     assert value["quota_bytes"] == 512
+
+
+def test_sandboxd_request_round_trips_multiple_quota_roots():
+    import json
+    from agent.sandbox.protocol import ExecuteRequest
+
+    request = ExecuteRequest(
+        "/data/user/workspace", "touch /personal/new-file",
+        quota_roots=("/data/user/workspace", "/data/user/个人文件", "/data/user/项目文件"),
+        quota_bytes=1024,
+    )
+    restored = ExecuteRequest.from_dict(json.loads(request.to_json()))
+    assert restored.quota_roots == (
+        "/data/user/workspace", "/data/user/个人文件", "/data/user/项目文件",
+    )
+    assert restored.quota_bytes == 1024
+
+
+@pytest.mark.asyncio
+async def test_shell_quota_watcher_sums_only_authorized_roots(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    workspace = tmp_path / "workspace"
+    personal = tmp_path / "personal"
+    workspace.mkdir()
+    personal.mkdir()
+    (workspace / "output.bin").write_bytes(b"w" * 4)
+    (personal / "output.bin").write_bytes(b"p" * 7)
+
+    assert await DockerSandboxExecutor._watch_quota((workspace, personal), 10) is True
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(DockerSandboxExecutor._watch_quota((workspace,), 10), timeout=0.03)
 
 
 def test_sandboxd_request_round_trips_authorized_workspace_mounts():
@@ -1219,6 +1253,10 @@ def test_sandboxd_rejects_non_finite_egress_expiry():
             "command": "curl https://example.com",
             "network_profile": "egress",
             "egress_expires_at": "Infinity",
+        })
+    with pytest.raises(ValueError, match="quota_roots"):
+        ExecuteRequest.from_dict({
+            "root": "/data/user/shell", "command": "pwd", "quota_bytes": 1024,
         })
 
 

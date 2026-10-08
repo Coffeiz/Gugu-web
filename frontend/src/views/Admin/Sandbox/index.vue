@@ -20,7 +20,7 @@
       <div class="panel-card">
       <div class="config-row"><span>{{ t('adminSandbox.image') }}</span><code>{{ status.image }}</code></div>
       <div class="config-row"><span>{{ t('adminSandbox.digest') }}</span><code>{{ status.image_digest || t('adminSandbox.notConfigured') }}</code></div>
-      <div class="config-row"><span>{{ t('adminSandbox.persistentQuota') }}</span><strong>{{ formatBytes(status.persistent_quota_bytes) }}</strong></div>
+      <div v-if="status.storage_backend === 'oss'" class="config-row"><span>{{ t('adminSandbox.persistentQuota') }}</span><strong>{{ formatBytes(status.persistent_quota_bytes) }}</strong></div>
       <div class="config-row"><span>{{ t('adminSandbox.ephemeralQuota') }}</span><strong>{{ formatBytes(status.ephemeral_quota_bytes) }}</strong></div>
       <div class="config-row"><span>{{ t('adminSandbox.networkPolicy') }}</span><strong>{{ status.network_profile === 'none' ? t('adminSandbox.offline') : status.network_profile }}</strong></div>
       <div class="config-row config-row-switch">
@@ -55,7 +55,7 @@
       <div class="config-row"><span>{{ t('adminSandbox.lifecycle') }}</span><strong>{{ status.lifecycle_mode === 'ephemeral' ? t('adminSandbox.oneShot') : status.lifecycle_mode }}</strong></div>
       <p class="section-note">{{ t('adminSandbox.policyHint') }}</p>
       <div class="quota-editor">
-        <div class="quota-field"><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.persistentMb')" /></div>
+        <div v-if="status.storage_backend === 'oss'" class="quota-field"><span>{{ t('adminSandbox.persistentMb') }}</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.persistentMb')" /></div>
         <div class="quota-field"><span>{{ t('adminSandbox.ephemeralMb') }}</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" :aria-label="t('adminSandbox.ephemeralMb')" /></div>
         <div class="quota-actions"><span v-if="quotaMessage" class="action-message" :class="{ error: quotaError }">{{ quotaMessage }}</span><ActionButton variant="secondary" fit :disabled="quotaSaving" @click="resetQuotaDraft">{{ t('adminSandbox.undo') }}</ActionButton><ActionButton fit :disabled="quotaSaving" @click="saveQuotas">{{ quotaSaving ? t('adminSandbox.saving') : t('adminSandbox.saveRuntimeConfig') }}</ActionButton></div>
       </div>
@@ -77,6 +77,7 @@ import SandboxRuntimeStatus from './components/SandboxRuntimeStatus.vue'
 import { useI18n } from 'vue-i18n'
 
 type SandboxStatus = {
+  storage_backend: 'local' | 'oss'
   manager_mode: string
   manager_ready: boolean
   manager_message: string
@@ -112,7 +113,7 @@ const { t } = useI18n()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
-const status = reactive<SandboxStatus>({ manager_mode: 'disabled', manager_ready: false, manager_message: '', enabled: true, full_user_sandbox_authorization_enabled: true, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, rootless_required: false, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 1073741824, network_profile: 'egress', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
+const status = reactive<SandboxStatus>({ storage_backend: 'local', manager_mode: 'disabled', manager_ready: false, manager_message: '', enabled: true, full_user_sandbox_authorization_enabled: true, terminal_mode: 'auto', terminal_entry_enabled: false, pty_enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, rootless_required: false, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 1073741824, network_profile: 'egress', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
 const quotaDraft = reactive({ persistentMb: 512, ephemeralMb: 1024 })
 const quotaSaving = ref(false)
 const quotaMessage = ref('')
