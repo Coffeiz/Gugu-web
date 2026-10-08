@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
+import { filesApi, foldersApi, trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { Project } from '@/types/project'
 import { doneYear, doneMonth } from '@/utils/fileParse'
@@ -24,6 +24,86 @@ interface DirectoryCacheStore {
   getFolderFiles: (folderId: number) => FileMeta[]
   getWorkspaceFolders: (workspaceDirectoryId: number, parentId?: number | null) => FolderMeta[]
   getWorkspaceFiles: (workspaceDirectoryId: number, folderId?: number | null) => FileMeta[]
+  mergeDirectorySnapshot: (files: FileMeta[], folders: FolderMeta[]) => void
+}
+
+interface ScopedDirectoryState {
+  cacheStore: DirectoryCacheStore
+  contents: Ref<{ folders: FolderCardMeta[]; files: FileMeta[] }>
+  loading: Ref<boolean>
+  snapshots: Map<string, { folders: FolderCardMeta[]; files: FileMeta[] }>
+  snapshotKey: string
+  isCurrent: () => boolean
+}
+
+const MAX_SCOPED_SNAPSHOTS = 8
+const MAX_SCOPED_SNAPSHOT_ITEMS = 2000
+
+function rememberScopedSnapshot(
+  snapshots: Map<string, { folders: FolderCardMeta[]; files: FileMeta[] }>,
+  key: string,
+  snapshot: { folders: FolderCardMeta[]; files: FileMeta[] },
+) {
+  if (snapshot.folders.length + snapshot.files.length > MAX_SCOPED_SNAPSHOT_ITEMS) {
+    snapshots.delete(key)
+    return
+  }
+  snapshots.delete(key)
+  snapshots.set(key, snapshot)
+  while (snapshots.size > MAX_SCOPED_SNAPSHOTS) {
+    const oldest = snapshots.keys().next().value
+    if (oldest == null) break
+    snapshots.delete(oldest)
+  }
+}
+
+async function loadScopedDirectory(type: string, segment: NavSeg | null, state: ScopedDirectoryState) {
+  const projectId = type === 'project' ? segment?.id : segment?.projectId
+  const folderId = type === 'folder' ? segment?.folderId : undefined
+  const workspaceDirectoryId = type === 'workspace' || segment?.space === 'workspace'
+    ? segment?.workspaceDirectoryId
+    : undefined
+  const space = workspaceDirectoryId != null ? 'workspace' : projectId != null ? 'project' : 'personal'
+  const cached = state.snapshots.get(state.snapshotKey)
+  if (cached) {
+    rememberScopedSnapshot(state.snapshots, state.snapshotKey, cached)
+    state.contents.value = { folders: [...cached.folders], files: [...cached.files] }
+    state.loading.value = false
+  } else {
+    // 不要在目标目录请求完成前继续展示上一个目录（尤其是根目录分类卡片）。
+    state.contents.value = { folders: [], files: [] }
+    state.loading.value = true
+  }
+
+  try {
+    const [files, folders] = await Promise.all([
+      filesApi.list({ space, projectId: projectId ?? undefined, folderId: folderId ?? undefined,
+        workspaceDirectoryId: workspaceDirectoryId ?? undefined }),
+      foldersApi.list({ projectId: projectId ?? undefined, parentId: folderId ?? undefined,
+        workspaceDirectoryId: workspaceDirectoryId ?? undefined }),
+    ])
+    if (!state.isCurrent()) return
+    const fileRows = files as FileMeta[]
+    const folderRows = folders as FolderMeta[]
+    state.cacheStore.mergeDirectorySnapshot(fileRows, folderRows)
+    const folderItems = folderRows.map(folder => ({
+      id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
+      displayName: folder.name, color: segment?.color ?? null,
+      projectId: folder.projectId ?? projectId ?? null,
+      ...(workspaceDirectoryId != null ? { space: 'workspace', workspaceDirectoryId } : {}),
+      count: folder.fileCount,
+    }))
+    const snapshot = { folders: folderItems, files: fileRows }
+    rememberScopedSnapshot(state.snapshots, state.snapshotKey, snapshot)
+    state.contents.value = { folders: [...folderItems], files: fileRows }
+  } catch (error) {
+    if (state.isCurrent()) {
+      if (!cached) state.contents.value = { folders: [], files: [] }
+      console.error('[Files] 加载目录失败:', error instanceof Error ? error.message : String(error))
+    }
+  } finally {
+    if (state.isCurrent()) state.loading.value = false
+  }
 }
 
 interface DirectoryOptions {
@@ -43,6 +123,7 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
   const trashFolders = ref<TrashFolderMeta[]>([])
   const expandedTrashFolders = ref(new Set<number>())
   const trashFolderContents = ref<Record<number, TrashFolderContents>>({})
+  const scopedSnapshots = new Map<string, { folders: FolderCardMeta[]; files: FileMeta[] }>()
   const sortedTrashFolders = computed(() => [...trashFolders.value].sort((a, b) => {
     const dir = sortDir.value === 'asc' ? 1 : -1
     if (sortKey.value === 'createdAt') return dir * a.deletedAt.localeCompare(b.deletedAt)
@@ -68,8 +149,14 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     }
   }
 
+  let requestSequence = 0
+
   function loadContents() {
+    requestSequence++
+    const sequence = requestSequence
+    loading.value = false
     const type = currentType.value
+    const segment = currentSeg.value
     if (type !== 'trash') {
       trashFolders.value = []
       expandedTrashFolders.value.clear()
@@ -88,7 +175,10 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
         ],
         files: [],
       }
-      Promise.all([trashApi.list(), trashApi.listFolders()]).then(([files, folders]) => {
+      const rootCountRequest = cacheStore.loaded ? Promise.resolve(null) : filesApi.tree()
+      Promise.all([trashApi.list(), trashApi.listFolders(), rootCountRequest]).then(([files, folders, tree]) => {
+        const personalFolder = contents.value.folders.find(folder => folder.id === 'personal')
+        if (personalFolder && tree) personalFolder.count = tree.personalRootCount
         const trashFolder = contents.value.folders.find(folder => folder.id === 'trash')
         if (trashFolder) trashFolder.count = files.length + folders.length
       }).catch(() => {})
@@ -108,6 +198,13 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     }
 
     if (type === 'personal') {
+      if (!cacheStore.loaded) {
+        void loadScopedDirectory(type, segment, {
+          cacheStore, contents, loading, snapshots: scopedSnapshots, snapshotKey: 'personal-root',
+          isCurrent: () => requestSequence === sequence,
+        })
+        return
+      }
       const folderItems = cacheStore.getPersonalRootFolders().map(folder => ({
         id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
         displayName: folder.name, color: null, space: 'personal',
@@ -151,6 +248,14 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     if (type === 'project') {
       const segment = currentSeg.value
       if (segment?.id == null) return
+      if (!cacheStore.loaded) {
+        void loadScopedDirectory(type, segment, {
+          cacheStore, contents, loading, snapshots: scopedSnapshots,
+          snapshotKey: `project:${segment.id}:root`,
+          isCurrent: () => requestSequence === sequence,
+        })
+        return
+      }
       const projectId = segment.id
       const folderItems = cacheStore.getProjectRootFolders(projectId).map(folder => ({
         id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
@@ -164,6 +269,17 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     if (type === 'folder') {
       const segment = currentSeg.value
       if (segment?.folderId == null) return
+      if (!cacheStore.loaded) {
+        const scope = segment.space === 'workspace'
+          ? `workspace:${segment.workspaceDirectoryId}`
+          : segment.projectId != null ? `project:${segment.projectId}` : 'personal'
+        void loadScopedDirectory(type, segment, {
+          cacheStore, contents, loading, snapshots: scopedSnapshots,
+          snapshotKey: `${scope}:folder:${segment.folderId}`,
+          isCurrent: () => requestSequence === sequence,
+        })
+        return
+      }
       if (segment.space === 'workspace' && segment.workspaceDirectoryId != null) {
         const workspaceDirectoryId = segment.workspaceDirectoryId
         const folderId = segment.folderId
@@ -191,6 +307,14 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     if (type === 'workspace') {
       const directoryId = currentSeg.value?.workspaceDirectoryId
       if (directoryId == null) return
+      if (!cacheStore.loaded) {
+        void loadScopedDirectory(type, segment, {
+          cacheStore, contents, loading, snapshots: scopedSnapshots,
+          snapshotKey: `workspace:${directoryId}:root`,
+          isCurrent: () => requestSequence === sequence,
+        })
+        return
+      }
       const folderItems = cacheStore.getWorkspaceFolders(directoryId).map(folder => ({
         id: `f:${folder.id}`, type: 'folder', folderId: folder.id,
         displayName: folder.name, color: null, space: 'workspace',

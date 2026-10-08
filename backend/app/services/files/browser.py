@@ -44,7 +44,7 @@ def file_listing_query(
         stmt = stmt.where(File.folder_id == folder_id)
     elif project_id is not None and space == "project":
         stmt = stmt.where(File.folder_id.is_(None))
-    elif project_id is None and space == "personal":
+    elif project_id is None and space in {"personal", "workspace"}:
         stmt = stmt.where(File.folder_id.is_(None))
     if mind_map_id is not None:
         stmt = stmt.where(File.mind_map_id == mind_map_id)
@@ -133,7 +133,7 @@ async def get_file_version_snapshot(db: AsyncSession, user_id: int):
 
 
 async def get_file_tree_rows(db: AsyncSession, user_id: int):
-    """查询文件库树所需的项目文件计数、项目行和个人文件计数。"""
+    """查询文件库树与根目录卡片所需的聚合计数和项目行。"""
     project_file_rows = await db.execute(
         select(File.project_id, func.count().label("cnt"))
         .where(
@@ -156,7 +156,25 @@ async def get_file_tree_rows(db: AsyncSession, user_id: int):
             File.deleted_at.is_(None),
         )
     )
-    return project_file_rows.all(), project_rows.scalars().all(), personal_count.scalar_one()
+    personal_root_count = await db.execute(select(
+        select(func.count()).select_from(File).where(
+            File.user_id == user_id,
+            File.space == "personal",
+            File.folder_id.is_(None),
+            File.deleted_at.is_(None),
+        ).scalar_subquery()
+        + select(func.count()).select_from(Folder).where(
+            Folder.user_id == user_id,
+            Folder.project_id.is_(None),
+            Folder.workspace_directory_id.is_(None),
+            Folder.parent_id.is_(None),
+            Folder.deleted_at.is_(None),
+        ).scalar_subquery()
+    ))
+    return (
+        project_file_rows.all(), project_rows.scalars().all(),
+        personal_count.scalar_one(), personal_root_count.scalar_one(),
+    )
 
 
 async def folder_download_rows(db: AsyncSession, user_id: int, folder_id: int):

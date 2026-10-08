@@ -18,7 +18,11 @@ from app.schemas import (
     CamelModel, FileResponse, FileStreamResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
-from app.services.files.browser import get_file_tree_rows, get_file_version_snapshot, get_storage_usage, list_existing_file_rows, list_file_rows
+from app.services.files.browser import (
+    get_file_tree_rows, get_file_version_snapshot, get_storage_usage,
+    list_existing_file_rows, list_file_rows,
+)
+from app.services.storage.quota_ledger import get_file_library_usage_snapshot
 from app.services.files.response import color_value, to_file_response, to_related_file_response
 from app.services.files.upload import (
     UploadTargetError,
@@ -199,7 +203,7 @@ async def files_storage(
     db: AsyncSession = Depends(get_db),
 ):
     """返回当前用户的存储用量与上限。"""
-    used = await get_storage_usage(db, current_user.id)
+    used = await get_file_library_usage_snapshot(db, current_user.id)
     limit = _storage_limit(current_user)
     return {"used_bytes": used, "limit_bytes": limit}
 
@@ -213,7 +217,7 @@ async def file_tree(
 ):
     uid = current_user.id
 
-    project_rows, projects, personal_count = await get_file_tree_rows(db, uid)
+    project_rows, projects, personal_count, personal_root_count = await get_file_tree_rows(db, uid)
     count_map = {pid: count for pid, count in project_rows}
 
     tree_projects = [
@@ -222,7 +226,11 @@ async def file_tree(
         for p in projects
     ]
 
-    return FileTreeResponse(projects=tree_projects, personal_count=personal_count)
+    return FileTreeResponse(
+        projects=tree_projects,
+        personal_count=personal_count,
+        personal_root_count=personal_root_count,
+    )
 
 
 @router.post("/archive", response_model=FileResponse, status_code=201)

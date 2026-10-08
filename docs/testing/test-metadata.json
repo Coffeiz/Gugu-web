@@ -7,6 +7,14 @@
     "keyBehavior": "监听恢复只更新健康状态，历史缺口保持待人工核对且迁移默认保护已有绑定",
     "ci": "backend-pytest"
   },
+  "backend/tests/test_filesync_periodic.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/periodic.py",
+    "keyBehavior": "每周完整核对只排入活跃窗口内到期绑定，任务幂等且失败限频，默认不自动软删除 DB 行",
+    "ci": "backend-pytest"
+  },
   "backend/tests/test_filesync_reconcile_jobs.py": {
     "domain": "filesync",
     "layer": "L2",
@@ -20,7 +28,7 @@
     "layer": "L2",
     "owner": "backend/app/services/filesync",
     "productionEntry": "app/services/filesync/scan.py",
-    "keyBehavior": "完整磁盘清单与 File/Folder 有界归并检测新增/更新/缺失；重复路径或类型冲突不得误删，扫描取消/超时须等待线程退出",
+    "keyBehavior": "完整磁盘清单与 File/Folder 有界归并检测新增/更新/缺失；重复路径或类型冲突不得误删，路径段排序保证目录后代连续，扫描取消/超时须等待线程退出",
     "ci": "backend-pytest"
   },
   "backend/tests/test_filesync_inventory.py": {
@@ -44,7 +52,7 @@
     "layer": "L2",
     "owner": "backend/app/services/filesync",
     "productionEntry": "app/services/filesync/runner.py",
-    "keyBehavior": "初始化、确认修复、更新/移动/删除、失败部分结果、dry-run 无副作用及临时产物清理/进度有界符合任务契约",
+    "keyBehavior": "初始化与修复只恢复无旧记录的空根并校正指纹，保留旧内容；更新/移动/删除、失败部分结果、dry-run 无副作用及临时产物清理/进度有界符合任务契约",
     "ci": "backend-pytest"
   },
   "backend/ts/packages/filesync-watcher/test/protocol-output.test.ts": {
@@ -188,7 +196,7 @@
     "layer": "L1",
     "owner": "frontend/components/filesync",
     "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
-    "keyBehavior": "待手动核对绑定在异常筛选中可见，任务快照可显示进度且 SSE 失效通知触发权威状态补读",
+    "keyBehavior": "异常绑定、任务状态和冲突批量结果可见；一键对账仅排入异常有效绑定，服务端复核后复用排队任务并跳过忙碌绑定；冲突列表截断时阻止批量处理",
     "ci": "frontend-test"
   },
   "frontend/tests/files/composables/useFileBrowserWindow.test.ts": {
@@ -319,12 +327,44 @@
     "keyBehavior": "用户级 SSE 分发 run 与 binding 健康失效事件，按各自修订忽略重复 ID 和旧状态",
     "ci": "frontend-test"
   },
+  "frontend/tests/admin/storage-audit/GhostRecordCleanup.test.ts": {
+    "domain": "storage-audit",
+    "layer": "L2",
+    "owner": "frontend/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
+    "productionEntry": "frontend/src/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
+    "keyBehavior": "幽灵记录清理需确认后分批提交完整记录 ID、展示进度并刷新；取消确认不发请求",
+    "ci": "frontend-test"
+  },
   "frontend/tests/mind/noteDraft.test.ts": {
     "domain": "mind-notes",
     "layer": "L0",
     "owner": "frontend/mind",
     "productionEntry": "frontend/src/views/Mind/utils/noteDraft.ts",
     "keyBehavior": "未编辑空白草稿离开时不创建笔记；正文或仅标题草稿只持久化一次并保留 capturedAt",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/projects/composables/useProjectCollectionModals.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "frontend/composables/projects",
+    "productionEntry": "frontend/src/composables/projects/useProjectCollectionModals.ts",
+    "keyBehavior": "项目看板初次进入不请求归档与回收站列表，只有用户打开对应弹窗才加载",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/projects/composables/useProjectFileCounts.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "frontend/composables/projects",
+    "productionEntry": "frontend/src/composables/projects/useProjectFileCounts.ts",
+    "keyBehavior": "项目文件徽标使用聚合计数接口，并把连续文件变更合并为一次刷新而不加载全量清单",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/projects/done/DoneGroup.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "frontend/views/Projects/components/done",
+    "productionEntry": "frontend/src/views/Projects/components/done/DoneGroup.vue",
+    "keyBehavior": "折叠的完成项目年月组不挂载内部卡片，展开后才创建卡片组件",
     "ci": "frontend-test"
   }
 }

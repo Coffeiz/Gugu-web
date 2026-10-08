@@ -596,19 +596,55 @@ async function resolveMdRelativeImages() {
   const root = mdRoot.value
   const fileContext = props.fileContext
   if (!root || !fileContext?.id || !isRealFile.value) return
-  if (!filesCache.loaded) await filesCache.load()
+  const localImages = [...root.querySelectorAll<HTMLImageElement>('img[src]')].filter(img => {
+    const src = img.getAttribute('src') || ''
+    return Boolean(src) && !src.startsWith('#') && !src.startsWith('/') && !src.startsWith('//')
+      && !/^[a-z][a-z\d+.-]*:/i.test(src)
+  })
+  // 普通 Markdown 文档不需要文件路径索引，避免预览一篇文档就拉全量文件/文件夹。
+  if (!localImages.length) return
   if (mdRoot.value !== root) return   // 等待期间文件已切走
   const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
   const token    = localStorage.getItem('user_token') ?? ''
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
   releaseMdObjectUrls()
-  // 索引一次构建 O(N)，每张图 O(1) 查找；逐图全量扫描在大文件库上会拖到秒级
-  const index = buildFileLinkIndex(filesCache.allFiles, filesCache.allFolders)
+  let files = filesCache.allFiles
+  let folders = filesCache.allFolders
+  const siblingImagesOnly = localImages.every(img => {
+    try {
+      const segments = decodeURIComponent((img.getAttribute('src') || '').split(/[?#]/, 1)[0])
+        .split('/').filter(part => part && part !== '.')
+      return segments.length === 1 && !segments.includes('..')
+    } catch { return false }
+  })
+  if (!filesCache.loaded && siblingImagesOnly) {
+    // 最常见的 ./image.png 只需查询 Markdown 所在目录；无须下载用户全部文件及文件夹索引。
+    try {
+      files = await filesApi.list({
+        space: fileContext.space ?? (fileContext.projectId != null ? 'project' : 'personal'),
+        projectId: fileContext.projectId ?? undefined,
+        folderId: fileContext.folderId ?? undefined,
+        workspaceDirectoryId: fileContext.workspaceDirectoryId ?? undefined,
+      }) as FileMeta[]
+      folders = []
+    } catch {
+      return // 图片路径解析失败不影响正文预览
+    }
+    if (mdRoot.value !== root) return
+  } else if (!filesCache.loaded) {
+    // 跨目录相对路径需要祖先链；暂沿用完整索引确保 ../ 与多级路径语义不变。
+    await filesCache.load()
+    if (mdRoot.value !== root) return
+    files = filesCache.allFiles
+    folders = filesCache.allFolders
+  }
+  // 索引一次构建 O(N)，每张图 O(1) 查找；逐图全量扫描在大文件库上会拖到秒级。
+  const index = buildFileLinkIndex(files, folders)
   const resolve = (href: string) => index.resolve(href, {
     folderId: fileContext.folderId,
     projectId: fileContext.projectId,
   })
-  for (const img of [...root.querySelectorAll<HTMLImageElement>('img[src]')]) {
+  for (const img of localImages) {
     const src = img.getAttribute('src') || ''
     if (!src || src.startsWith('#') || src.startsWith('/') || src.startsWith('//')) continue
     if (/^[a-z][a-z\d+.-]*:/i.test(src)) continue

@@ -428,7 +428,11 @@ export const filesApi = {
     const qs = new URLSearchParams(p).toString()
     return get<Schemas['FileResponse'][]>(`/files${qs ? '?' + qs : ''}`)
   },
-  tree:    ()         => get('/files/tree'),
+  tree:    ()         => get<{
+    projects: Array<{ id: number; name: string; color: string; totalCount: number }>
+    personalCount: number
+    personalRootCount: number
+  }>('/files/tree'),
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),

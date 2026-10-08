@@ -168,7 +168,9 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
 
   // ── 乐观更新：文件 ────────────────────────────────────────────────────────
   function addFile(file: FileMeta) {
-    allFiles.value = [file, ...allFiles.value]
+    const index = allFiles.value.findIndex(item => item.id === file.id)
+    if (index < 0) allFiles.value = [file, ...allFiles.value]
+    else allFiles.value.splice(index, 1, file)
   }
 
   function removeFile(id: number) {
@@ -192,14 +194,27 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   // 上传链路新建的文件夹可能不带 fileCount（useFileUpload 的 onFolderCreated 未标该字段）——
   // 新建文件夹本就 0 文件，缺省补 0，保证入库的都是完整 FolderMeta。
   function addFolder(folder: { id: number; name: string; projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
-    allFolders.value = [...allFolders.value, {
+    const normalized: FolderMeta = {
       id: folder.id, name: folder.name,
       projectId: folder.projectId ?? null,
       workspaceDirectoryId: folder.workspaceDirectoryId ?? null,
       parentId:  folder.parentId ?? null,
       fileCount: folder.fileCount ?? 0,
       version:   folder.version ?? 1,
-    }]
+    }
+    const index = allFolders.value.findIndex(item => item.id === folder.id)
+    if (index < 0) allFolders.value = [...allFolders.value, normalized]
+    else allFolders.value.splice(index, 1, normalized)
+  }
+
+  // 文件库目录按需加载时，只把可见实体放进操作缓存，不将局部数据标记为全量 loaded。
+  function mergeDirectorySnapshot(files: FileMeta[], folders: FolderMeta[]) {
+    const fileById = new Map(allFiles.value.map(file => [file.id, file]))
+    files.forEach(file => fileById.set(file.id, file))
+    allFiles.value = [...fileById.values()]
+    const folderById = new Map(allFolders.value.map(folder => [folder.id, folder]))
+    folders.forEach(folder => folderById.set(folder.id, folder))
+    allFolders.value = [...folderById.values()]
   }
 
   function removeFolder(id: number) {
@@ -279,5 +294,6 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     getPersonalRootFolders, getProjectRootFolders, getSubFolders, getWorkspaceFolders,
     addFile, removeFile, removeFiles, updateFile, getFile,
     addFolder, removeFolder, updateFolder, getFolder,
+    mergeDirectorySnapshot,
   }
 })

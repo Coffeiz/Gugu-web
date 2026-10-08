@@ -436,6 +436,7 @@ class ProjectTreeEntry(CamelModel):
 class FileTreeResponse(CamelModel):
     projects: list[ProjectTreeEntry]
     personal_count: int
+    personal_root_count: int
 
 
 # ── CalendarEvent ─────────────────────────────────────────────────────────────

@@ -32,7 +32,12 @@
     <FileUploadGhostCard v-for="g in visibleUploads" :key="g.uid" :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress" :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" :status-text="g.statusText" :indeterminate="g.indeterminate" data-flip-target />
     <FileUploadButton v-if="showUploadButton" mode="grid" data-flip-target @select="handleFileInput" />
   </FileBrowserGrid>
-  <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" variant="grid" />
+  <FileBrowserEmptyState
+    v-if="contents.folders.length === 0 && contents.files.length === 0 && (loading || !canUpload)"
+    variant="grid"
+    :loading="loading"
+    :text="loading ? t('common.status.loading') : undefined"
+  />
 </template>
 
 <script setup lang="ts">

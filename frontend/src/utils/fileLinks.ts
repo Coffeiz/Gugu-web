@@ -44,12 +44,12 @@ interface FileLinkLookup {
 }
 
 function buildFileLinkLookup(files: FileMeta[], folders: FolderMeta[]): FileLinkLookup {
+  const byId = new Map(folders.map(folder => [folder.id, folder]))
   const folderPaths = new Map<number, string[]>()
   const pathOf = (folderId: number | null | undefined): string[] => {
     if (folderId == null) return []
     const cached = folderPaths.get(folderId)
     if (cached) return cached
-    const byId = new Map(folders.map(folder => [folder.id, folder]))
     const result: string[] = []
     const seen = new Set<number>()
     let current = byId.get(folderId)

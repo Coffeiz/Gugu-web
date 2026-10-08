@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { resolveRelativeFileLink } from '@/utils/fileLinks'
+import { buildFileLinkIndex, resolveRelativeFileLink } from '@/utils/fileLinks'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 
 const folders = [
@@ -28,6 +28,13 @@ describe('resolveRelativeFileLink', () => {
     const result = resolveRelativeFileLink('2026/剧情', { projectId: 7 }, files, folders)
     expect(result).toEqual({ kind: 'folder', folder: folders[1] })
     expect(resolveRelativeFileLink('2026/剧情/海边的曼彻斯特.md', { projectId: 8 }, files, folders)).toBeNull()
+  })
+
+  it('仅有当前目录文件时仍可解析 Markdown 同目录图片，不需要完整文件夹树', () => {
+    const sibling = { id: 12, displayName: 'cover', ext: 'png', folderId: 2, projectId: 7 } as FileMeta
+    const index = buildFileLinkIndex([sibling], [])
+
+    expect(index.resolve('./cover.png', { folderId: 2, projectId: 7 })).toEqual({ kind: 'file', file: sibling })
   })
 
   it('does not take over external or unsafe links', () => {

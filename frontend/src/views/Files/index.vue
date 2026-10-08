@@ -235,7 +235,7 @@ import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryF
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
-import { workspacesApi, CLIENT_ID, type WorkspaceDirectory } from '@/services/api'
+import { workspacesApi, type WorkspaceDirectory } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/shared/useSorting'
@@ -438,7 +438,8 @@ onMounted(async () => {
   }
   await Promise.all([
     projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
-    cacheStore.loaded ? Promise.resolve() : cacheStore.load(),
+    // 只有从全局搜索直接定位时才需要完整索引；普通文件库导航按当前目录加载。
+    target && !cacheStore.loaded ? cacheStore.load() : Promise.resolve(),
   ])
   if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
 })
@@ -449,28 +450,22 @@ watch(() => uiStore.pendingFileTarget, (target) => {
 })
 
 watch(uploadSignal, () => {
-  // 上传信号由 uploadFiles 直接写入缓存；这里做一次静默后台刷新以纠偏
-  cacheStore.refresh().then(() => loadContents())
-  fetchStorage()
-})
-
-// 文件库数据变了（本页乐观更新 / 咕咕·IM·其它标签页经 filesCache 刷新或 remove 快路径）→ 重新投影当前视图。
-// contents 是 loadContents 从 store getter 手动投影的本地快照，不是 computed，故 store 数据一变就得重投。
-// 刷新/patch 的决策与「回声抑制」全在 filesCache 里统一做（见 filesCache.ts canonical event 消费）；本页不再自己
-// 订阅 rev.files 重拉，避免与 filesCache 重复全量拉、并让回声抑制对本页同样生效（本页发起的改动不会再多刷一次）。
-watch([() => cacheStore.allFiles, () => cacheStore.allFolders], () => {
+  // 上传链路会更新当前文件；仅重载可见目录，不为一次上传重新拉全库。
   loadContents()
   fetchStorage()
 })
 
-// 回收站列表不在 filesCache 里（filesCache 只装未删除文件），files 事件触发 cacheStore
-// refresh 后缓存通常无变化、上面的 watch 不会触发 → 回收站视图停在旧数据（咕咕清空/
-// 还原回收站后网页要手动刷新才能看到的根因）。这里对 files 事件补一次回收站重拉；
-// 本标签页自己发起的改动（origin 回声）已由对应 action 调过 loadContents，跳过免重复。
+// 目录是服务端按需快照，不依赖 filesCache 的全量刷新事件；外部文件变化时只刷新当前视图。
+let directoryRefreshTimer: ReturnType<typeof setTimeout> | null = null
 watch(() => live.resourceEvent, (event) => {
   if (!event || event.resource !== 'files') return
-  if (event.origin && event.origin === CLIENT_ID) return
-  loadContents()
+  // 包括本标签页自身操作：mutation 的乐观更新先发生，事件在服务端提交后到达，
+  // 再拉一次当前目录可避免请求竞态把旧列表覆盖回来。短暂防抖合并批量事件。
+  if (directoryRefreshTimer) clearTimeout(directoryRefreshTimer)
+  directoryRefreshTimer = setTimeout(() => {
+    directoryRefreshTimer = null
+    loadContents()
+  }, 120)
 })
 
 // ── 统一选择、多选与框选 ──
@@ -765,6 +760,8 @@ useRuntimeAction(action => {
 })
 
 onUnmounted(() => {
+  if (directoryRefreshTimer) clearTimeout(directoryRefreshTimer)
+  directoryRefreshTimer = null
   if (runtime.surfaces.get(runtimeBrowserSurfaceId)?.generation === browserSurfaceGeneration) {
     runtime.surfaces.unregister(runtimeBrowserSurfaceId, browserSurfaceGeneration)
   }
