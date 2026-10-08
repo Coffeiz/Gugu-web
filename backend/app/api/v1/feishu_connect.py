@@ -121,7 +121,7 @@ async def poll(
         else:
             bot = UserBot(user_id=current_user.id, platform="feishu",
                           name="我的飞书机器人", app_id=client_id, app_secret=client_secret,
-                          sandbox=False, enabled=True)
+                          sandbox=False, enabled=True, feishu_group_chat_enabled=True)
             db.add(bot)
         await db.commit()
         await db.refresh(bot)

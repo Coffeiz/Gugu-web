@@ -178,7 +178,7 @@ def test_platform_reply_from_text_preserves_group_reply_route():
     assert reply.text == "完成啦"
 
 
-def test_record_only_group_policy_matches_all_qq_messages():
+def test_record_only_group_policy_matches_group_im_messages():
     request = AgentRequest(
         message="群里的普通消息",
         user_id="owner-1",
@@ -191,10 +191,10 @@ def test_record_only_group_policy_matches_all_qq_messages():
     assert should_record_passive_group(request, base) is True
     assert should_record_passive_group(request, {**base, "group_mentioned": True}) is True
     request.source = "feishu"
-    assert should_record_passive_group(request, base) is False
+    assert should_record_passive_group(request, base) is True
 
 
-def test_reply_mentions_records_unmentioned_qq_messages_without_replying():
+def test_reply_mentions_records_unmentioned_group_messages_without_replying():
     request = AgentRequest(
         message="群里的普通消息",
         user_id="owner-1",
@@ -216,6 +216,9 @@ def test_reply_mentions_records_unmentioned_qq_messages_without_replying():
     assert should_record_passive_group(
         request, {**policy, "group_requires_at": False}
     ) is False
+    request.source = "feishu"
+    assert should_record_passive_group(request, policy) is True
+    assert should_record_passive_group(request, {**policy, "group_mentioned": True}) is False
 
 
 def test_passive_group_payload_can_bypass_active_agent_task():
@@ -237,3 +240,38 @@ def test_passive_group_payload_can_bypass_active_agent_task():
         "group_mentioned": True,
     }) is False
     assert _is_passive_group_payload({**base, "group_requires_at": False}) is False
+    feishu = {**base, "platform": "feishu"}
+    assert _is_passive_group_payload({**feishu, "group_read_enabled": True}) is True
+    assert _is_passive_group_payload({
+        **feishu,
+        "group_requires_at": True,
+        "group_mentioned": False,
+    }) is True
+
+
+@pytest.mark.asyncio
+async def test_worker_hydrates_feishu_group_policy_before_passive_routing(monkeypatch):
+    from worker import _hydrate_group_policy
+
+    calls = []
+
+    async def resolve(bot_id, platform="qq"):
+        calls.append((bot_id, platform))
+        return True, True, False, False, True
+
+    monkeypatch.setattr("agent.im.permissions.resolve_group_policy", resolve)
+    original = {
+        "platform": "feishu", "channel_id": "12", "chat_type": "group",
+        "group_mentioned": False,
+    }
+    updated = await _hydrate_group_policy(original)
+
+    assert calls == [("12", "feishu")]
+    assert updated == {
+        **original,
+        "group_requires_at": True,
+        "group_read_enabled": False,
+        "group_memory_enabled": False,
+        "member_memory_enabled": True,
+    }
+    assert "group_requires_at" not in original

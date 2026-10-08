@@ -42,6 +42,38 @@ async def test_setting_roundtrip_and_actor_isolation(db, user_a, user_b):
 
 
 @pytest.mark.asyncio
+async def test_qq_and_feishu_group_toggles_are_platform_scoped(db, user_a, monkeypatch):
+    from fastapi import HTTPException
+    from app.api.v1 import user_bots
+    from app.api.v1.user_bots import BotUpdate, update_my_bot
+
+    async def no_op(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(user_bots, "_touch_gateway", no_op)
+    from app.core import events
+    monkeypatch.setattr(events, "bump_context_revision", no_op)
+    qq = UserBot(user_id=user_a.id, platform="qq", app_id="qq-app")
+    feishu = UserBot(user_id=user_a.id, platform="feishu", app_id="fs-app")
+    db.add_all([qq, feishu])
+    await db.commit()
+
+    await update_my_bot(qq.id, BotUpdate(group_chat_enabled=True), user_a, db)
+    await update_my_bot(feishu.id, BotUpdate(feishu_group_chat_enabled=False), user_a, db)
+    assert qq.group_chat_enabled is True
+    assert feishu.feishu_group_chat_enabled is False
+
+    with pytest.raises(HTTPException) as qq_cross_write:
+        await update_my_bot(qq.id, BotUpdate(feishu_group_chat_enabled=True), user_a, db)
+    assert qq_cross_write.value.status_code == 400
+    with pytest.raises(HTTPException) as feishu_cross_write:
+        await update_my_bot(feishu.id, BotUpdate(group_chat_enabled=True), user_a, db)
+    assert feishu_cross_write.value.status_code == 400
+    assert qq.group_chat_enabled is True
+    assert feishu.feishu_group_chat_enabled is False
+
+
+@pytest.mark.asyncio
 async def test_im_request_reads_database_setting_not_payload(db, user_a):
     from agent.im.loop import prepare_request
     from agent.im.models import ChatTarget, PlatformMessage, PlatformSender

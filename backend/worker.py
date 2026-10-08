@@ -239,7 +239,7 @@ def _is_passive_group_payload(payload: dict) -> bool:
     读取数据库；这样被动消息才能在同一群的主动模型任务期间实时落库并推送前端。
     """
     return bool(
-        payload.get("platform") == "qq"
+        payload.get("platform") in {"qq", "feishu"}
         and payload.get("chat_type") == "group"
         and payload.get("chat_id")
         and (
@@ -298,6 +298,7 @@ async def _dispatch(msg_id: str, payload: dict):
     if claim == "busy":
         # 另一个 worker 仍持有有效租约；不能 ACK 尚未完成的原处理。
         return
+    payload = await _hydrate_group_policy(payload)
     key = conversation_key(payload)
     if not key.scope_id:
         # 路由字段缺失（理论上不该发生）：退化成按 msg_id 各自成轮，不合并、不跟别的会话共用锁。
@@ -360,6 +361,26 @@ async def _dispatch(msg_id: str, payload: dict):
             _user_flush[key] = nt
             _flush_tasks.add(nt)
             nt.add_done_callback(_flush_tasks.discard)
+
+
+async def _hydrate_group_policy(payload: dict) -> dict:
+    """在被动消息快速分流前补齐当前 Bot 的权威群策略。"""
+    platform = payload.get("platform")
+    if platform not in {"qq", "feishu"} or payload.get("chat_type") != "group":
+        return payload
+    from agent.im.permissions import resolve_group_policy
+
+    settings = await resolve_group_policy(
+        str(payload.get("channel_id") or ""), platform=str(platform)
+    )
+    result = dict(payload)
+    result.update({
+        "group_requires_at": settings[1],
+        "group_read_enabled": settings[2],
+        "group_memory_enabled": settings[3],
+        "member_memory_enabled": settings[4],
+    })
+    return result
 
 
 async def run_once(block_ms: int = 5000) -> int:

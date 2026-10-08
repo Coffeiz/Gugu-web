@@ -238,6 +238,43 @@ def _feishu_mentions_current_bot(message, open_id: str | None) -> bool:
     return False
 
 
+def _feishu_mention_field(item, field: str):
+    return item.get(field) if isinstance(item, dict) else getattr(item, field, None)
+
+
+def _feishu_resolve_mention_text(message, text: str) -> str:
+    """将飞书正文里的 @占位符按事件 mentions 映射为显示名。"""
+    for item in getattr(message, "mentions", None) or []:
+        key = _feishu_mention_field(item, "key")
+        name = _feishu_mention_field(item, "name")
+        if not isinstance(key, str) or not key or not isinstance(name, str) or not name:
+            continue
+        text = text.replace(key, f"@{name.lstrip('@＠')}")
+    return text
+
+
+def _feishu_bot_open_id(api_client) -> str | None:
+    """启动时读取当前应用机器人的 open_id，供群消息精确判断 @ 目标。"""
+    try:
+        request = (
+            lark.BaseRequest.builder()
+            .http_method(lark.HttpMethod.GET)
+            .uri("/open-apis/bot/v3/info")
+            .token_types({lark.AccessTokenType.TENANT})
+            .build()
+        )
+        response = api_client.request(request)
+        if not response.success() or not response.raw or not response.raw.content:
+            return None
+        body = json.loads(response.raw.content)
+        bot = body.get("bot") or (body.get("data") or {}).get("bot") or {}
+        open_id = bot.get("open_id")
+        return open_id if isinstance(open_id, str) and open_id else None
+    except Exception as exc:
+        diag_log("agent.gateway.feishu.bot_identity", exc)
+        return None
+
+
 def _do_react(client, message_id: str, emoji_type: str) -> bool:
     """给某条消息加表情回应（同步，给 asyncio.to_thread 用）。失败返回 False。"""
     try:
@@ -271,7 +308,13 @@ async def react(channel_id: str, message_id: str, emoji_type: str) -> bool:
     return await asyncio.to_thread(_do_react, _clients[channel_id], message_id, emoji_type)
 
 
-def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: str = ""):
+def _make_on_message(
+    channel_id: str,
+    owner: str,
+    api_client,
+    expected_app_id: str = "",
+    bot_open_id: str | None = None,
+):
     def _on_message(data: P2ImMessageReceiveV1) -> None:
         if _drop_misrouted_event(data, expected_app_id, channel_id):
             return
@@ -296,6 +339,7 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
             text = _ingest_interactive(msg)
         else:
             return  # 表情/位置/合并转发等暂不处理
+        text = _feishu_resolve_mention_text(msg, text)
         if not text and not attachments:
             return
         open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
@@ -325,7 +369,8 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         }
         # 飞书 SDK 版本可能把 at 节点解析到 mentions，也可能已将其从 text 中移除。
         # 只把明确指向当前 bot 的 mention 标为 True，不根据可见 @ 文本猜测。
-        payload["bot_mentioned"] = _feishu_mentions_current_bot(msg, open_id)
+        payload["bot_mentioned"] = _feishu_mentions_current_bot(msg, bot_open_id)
+        payload["group_mentioned"] = payload["bot_mentioned"]
         # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
         from agent.security import logsafe
         print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "
@@ -382,11 +427,16 @@ def serve() -> None:
     if not app_id or not app_secret:
         raise SystemExit("缺少 FEISHU_APP_ID / FEISHU_APP_SECRET 环境变量（应由 gateway 注入）。")
     api_client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()   # 下载收到的文件/图片用
+    bot_open_id = _feishu_bot_open_id(api_client)
+    if not bot_open_id:
+        print(f"[feishu:{channel_id}] 无法读取机器人身份，群 @命令识别不可用", flush=True)
     # 表情事件空处理器：咕咕加表情后飞书会回推 reaction.created 事件，不注册的话 lark 每条都报
     # 「processor not found」ERROR 刷屏（看着像断开，其实不是）。注册个 no-op 吞掉即可。
     handler = (
         lark.EventDispatcherHandler.builder("", "")
-        .register_p2_im_message_receive_v1(_make_on_message(channel_id, owner, api_client, app_id))
+        .register_p2_im_message_receive_v1(
+            _make_on_message(channel_id, owner, api_client, app_id, bot_open_id)
+        )
         .register_p2_card_action_trigger(lambda data: _handle_card_action(data, owner))
         .register_p2_im_message_reaction_created_v1(lambda data: None)
         .register_p2_im_message_reaction_deleted_v1(lambda data: None)

@@ -596,7 +596,7 @@ def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
     继续进入模型回复流程。
     """
     return bool(
-        request.source == "qq"
+        request.source in {"qq", "feishu"}
         and request.chat_id
         and payload.get("chat_type") == "group"
         and (
@@ -747,13 +747,20 @@ async def dispatch_im_message(payload: dict):
     from agent.runtime import trace
     from agent.im.replies import send_agent_response, send_text
 
-    # Gateway 入口已经会拦截关闭状态的群消息，但开关变化与 Redis 队列消费
-    # 之间可能存在时间差；worker 再检查一次，避免旧消息误进入权限校验并向
-    # 用户显示“群聊身份没有使用该工具的权限”。
-    if payload.get("platform") == "qq" and payload.get("chat_type") == "group":
-        group_settings = await resolve_group_policy(str(payload.get("channel_id") or ""))
+    # Gateway 入口和 Redis 队列消费之间可能存在设置变化；worker 再读取对应
+    # 平台 Bot 的策略，既阻止关闭后的旧消息，也确保两个 IM 不串用群聊开关。
+    if payload.get("platform") in {"qq", "feishu"} and payload.get("chat_type") == "group":
+        platform = str(payload.get("platform"))
+        group_settings = await resolve_group_policy(
+            str(payload.get("channel_id") or ""), platform=platform
+        )
         if not group_settings[0]:
             return None
+        payload = dict(payload)
+        payload["group_requires_at"] = group_settings[1]
+        payload["group_read_enabled"] = group_settings[2]
+        payload["group_memory_enabled"] = group_settings[3]
+        payload["member_memory_enabled"] = group_settings[4]
 
     if payload.get("platform") == "qq":
         raw_attachments = payload.get("attachments") or []

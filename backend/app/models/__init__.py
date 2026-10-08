@@ -1453,6 +1453,8 @@ class UserBot(Base):
     enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
     # 群聊：是否处理群消息、群消息是否要求 @ 机器人才响应、是否记录普通群消息。
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 飞书群聊开关独立于 QQ。NULL 表示旧版飞书连接，按历史行为默认开启。
+    feishu_group_chat_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
     group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # 群聊记忆：分别控制本群公开记忆和群成员个人记忆的读取/沉淀。

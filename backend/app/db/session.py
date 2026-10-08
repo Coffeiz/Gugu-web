@@ -150,6 +150,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 _MIGRATIONS = [
+    # 飞书群聊开关独立存储；NULL 保留旧版连接原有的群聊启用行为。
+    "ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS feishu_group_chat_enabled BOOLEAN NULL",
     # 非 Alembic 的部署初始化也需补齐提醒配置列；旧提醒在活动修改前推导并保存。
     "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS reminder_lead_minutes INTEGER",
     # 兼容已通过旧基线初始化、但尚未执行 IM tombstone 增量迁移的数据库。

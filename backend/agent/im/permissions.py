@@ -126,8 +126,8 @@ async def resolve_group_owner_memory(actor, bot_id: str) -> bool:
                     and bot.platform == actor.platform and bot.group_owner_memory_enabled)
 
 
-async def resolve_group_policy(bot_id: str) -> tuple[bool, bool, bool, bool, bool]:
-    """读取 QQ 群策略：回应开关、@规则、静默记录和两类记忆开关。"""
+async def resolve_group_policy(bot_id: str, platform: str = "qq") -> tuple[bool, bool, bool, bool, bool]:
+    """读取指定 IM Bot 的群策略；未知 Bot 或平台不匹配时关闭群聊。"""
     import app.db.session as db_session
     from app.models import UserBot
 
@@ -138,8 +138,12 @@ async def resolve_group_policy(bot_id: str) -> tuple[bool, bool, bool, bool, boo
         return False, True, False, True, True
     async with db_session._SessionLocal() as db:
         bot = await db.get(UserBot, bot_db_id)
-        if not bot:
+        if not bot or bot.platform != platform:
             return False, True, False, True, True
-        return bot.group_chat_enabled, bot.group_requires_at, (
+        enabled = (
+            bot.group_chat_enabled if platform == "qq"
+            else (bot.feishu_group_chat_enabled is not False if platform == "feishu" else False)
+        )
+        return enabled, bot.group_requires_at, (
             bot.group_read_enabled if bot.group_requires_at else False
         ), bot.group_memory_enabled, bot.member_memory_enabled

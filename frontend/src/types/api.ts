@@ -4632,6 +4632,8 @@ export interface components {
             enabled?: boolean | null;
             /** Group Chat Enabled */
             group_chat_enabled?: boolean | null;
+            /** Feishu Group Chat Enabled */
+            feishu_group_chat_enabled?: boolean | null;
             /** Group Requires At */
             group_requires_at?: boolean | null;
             /** Group Read Enabled */
