@@ -1,8 +1,7 @@
-"""知识技能：knowledge 条目的保存、更新、删除与直读。
+"""知识技能：knowledge 条目的保存、更新、删除与检索。
 
-读取边界（PRD-KNOWLEDGE-2）：read_knowledge 直读 KnowledgeStore，不经过
-BM25 索引——写入即可读，强一致。search_memory 只负责记忆（profile/pattern/
-daily/memory），不再承担知识检索；索引仅服务被动召回。
+read_knowledge 的关键词查询走统一 Knowledge BM25 索引；按 knowledge_id 精确读取仍直读
+KnowledgeStore。索引异步更新，刚保存或更新的知识可能稍后才出现在关键词检索中。
 """
 from datetime import datetime, timezone
 
@@ -10,8 +9,8 @@ from agent.knowledge.store import KnowledgeStore
 from agent.tools.base import BaseSkill, Tool
 from app.core.tz import ctx_tz
 
-_LIST_DEFAULT_LIMIT = 50
-_LIST_MAX_LIMIT = 200
+_SEARCH_DEFAULT_LIMIT = 5
+_SEARCH_MAX_LIMIT = 25
 
 
 def _entry_summary(entry) -> dict:
@@ -40,44 +39,74 @@ async def _read_knowledge(db, user_id, args: dict):
     if entry_id:
         entry = await store.get(entry_id)
         if entry is None:
-            return {"error": "知识条目不存在或已停用；省略 knowledge_id 可列举现有条目"}
+            return {"error": "知识条目不存在或已停用；可用 keyword 进行 BM25 搜索"}
         payload = _entry_summary(entry)
         payload.update({"content": entry.content, "version": entry.version})
         return {"success": True, "entry": payload}
 
     scope_type = str(args.get("scope") or "").strip().lower()
-    keyword = str(args.get("keyword") or "").strip().lower()
+    keyword = str(args.get("keyword") or "").strip()
+    if not keyword:
+        return {"error": "请提供 keyword 进行 BM25 检索，或提供 knowledge_id 精确读取完整条目"}
     try:
-        limit = int(args.get("limit", _LIST_DEFAULT_LIMIT) or _LIST_DEFAULT_LIMIT)
+        limit = int(args.get("limit", _SEARCH_DEFAULT_LIMIT) or _SEARCH_DEFAULT_LIMIT)
     except (TypeError, ValueError):
-        return {"error": f"limit 必须是 1 到 {_LIST_MAX_LIMIT} 的整数"}
-    if not 1 <= limit <= _LIST_MAX_LIMIT:
-        return {"error": f"limit 必须是 1 到 {_LIST_MAX_LIMIT} 的整数"}
+        return {"error": f"limit 必须是 1 到 {_SEARCH_MAX_LIMIT} 的整数"}
+    if not 1 <= limit <= _SEARCH_MAX_LIMIT:
+        return {"error": f"limit 必须是 1 到 {_SEARCH_MAX_LIMIT} 的整数"}
 
-    entries = await store.list()
-    if scope_type:
-        entries = [item for item in entries if item.scope.type == scope_type]
-    if keyword:
-        def _matches(item) -> bool:
-            haystack = " ".join([
-                item.title, item.content, item.topic, item.description,
-                " ".join(item.keywords),
-            ]).lower()
-            return keyword in haystack
-        entries = [item for item in entries if _matches(item)]
+    from agent.rag.models import Scope
+    from agent.rag.service import search_knowledge
 
-    total = len(entries)
-    entries = entries[:limit]
+    recall = await search_knowledge(
+        user_id,
+        keyword,
+        scope=Scope(owner_user_id=str(user_id), scope_type=scope_type or "owner"),
+        source="knowledge",
+        strategy="bm25",
+        limit=limit,
+        mode="tool",
+        db=db,
+    )
+    # BM25 可返回同一条知识的多个命中片段。合并到一个条目，避免重复占用上下文，
+    # 同时保留 knowledge_id 供后续精确读取、更新或删除使用。
+    grouped: dict[str, dict] = {}
+    for hit in recall.get("results", []):
+        entry_id = str(hit.get("source_id") or "")
+        if not entry_id:
+            continue
+        content = str(hit.get("text") or "")
+        existing = grouped.get(entry_id)
+        if existing is not None:
+            if content and content not in existing["content"]:
+                existing["content"] = f'{existing["content"]}\n\n{content}'.strip()
+            continue
+        grouped[entry_id] = {
+            "knowledge_id": entry_id,
+            "title": hit.get("title", ""),
+            "topic": hit.get("topic", ""),
+            "description": hit.get("description", ""),
+            "keywords": hit.get("keywords", ""),
+            "confidence": hit.get("confidence", ""),
+            "source_type": hit.get("source_type", ""),
+            "source_ref": hit.get("source_ref", ""),
+            "source_label": hit.get("source_label", ""),
+            "content": content,
+            "score": hit.get("score"),
+            "updated_at": hit.get("updated_at"),
+            "version": hit.get("version", ""),
+        }
+    entries = list(grouped.values())
     result = {
         "success": True,
-        "total": total,
+        "query": keyword,
+        "strategy": "bm25",
         "returned": len(entries),
-        "entries": [_entry_summary(item) for item in entries],
+        "has_more": bool(recall.get("has_more")),
+        "entries": entries,
     }
-    if total > len(entries):
-        result["note"] = f"共 {total} 条，仅返回最新 {len(entries)} 条；可用 keyword 缩小范围或调大 limit（上限 {_LIST_MAX_LIMIT}）"
     if not entries:
-        result["note"] = "没有匹配的知识条目；keyword 过滤是对标题、正文、主题、描述与关键词的包含匹配"
+        result["note"] = "BM25 索引中没有命中；刚保存或更新的知识可能尚未完成索引同步"
     return result
 
 
@@ -196,23 +225,20 @@ class KnowledgeSkill(BaseSkill):
     tools = [
         Tool(
             name="read_knowledge", label="读取知识",
-            description_short='直读知识条目：按 id 精确读，或列举/过滤全部知识。',
+            description_short='BM25 搜索知识；传 knowledge_id 可精确读取完整条目。',
             description=(
-                "直接读取已保存的知识条目，写入即可读，没有索引延迟。"
-                "传 knowledge_id 时返回单条完整正文；省略时为列举模式，返回全部启用条目的清单"
-                "（标题、描述、关键词、id、按用户时区显示的 ISO 创建/更新时间等，不含正文），可用 scope 按 scope 类型过滤、"
-                "keyword 对标题/正文/主题/描述/关键词做包含匹配、limit 控制条数——这就是知识搜索入口。"
-                "需要查某条知识的完整内容、确认刚保存的知识、或查找旧知识时都用本工具："
-                "省略 knowledge_id 的列举模式本身就是全量搜索（keyword 对标题/正文/主题/描述/关键词"
-                "做包含匹配，写入即可读、覆盖全部条目），不依赖检索索引、没有延迟。"
+                "搜索已保存的知识条目。传 keyword 时使用 BM25 检索知识索引，支持关键词或自然语言问题；"
+                "返回相关片段、知识元数据和 knowledge_id。多个片段会合并到同一条知识结果。"
+                "索引异步更新，刚保存或更新的内容可能稍后才搜到；保存/更新回执中的 id 可用于立即按 knowledge_id 精确直读。"
+                "可用 scope 按条目 scope 类型过滤，limit 控制结果条数。"
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "knowledge_id": {"type": "string"},
                     "scope": {"type": "string", "description": "按条目 scope 类型过滤，如 owner"},
-                    "keyword": {"type": "string"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": _LIST_MAX_LIMIT},
+                    "keyword": {"type": "string", "description": "BM25 查询词或自然语言问题；与 knowledge_id 二选一"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": _SEARCH_MAX_LIMIT},
                 },
             },
             handler=_read_knowledge,
@@ -232,8 +258,8 @@ class KnowledgeSkill(BaseSkill):
                 "description 用一句触发式描述说明未来什么情况下需要这条知识，"
                 "不超过150字符，帮助日后判断这条知识和当前任务是否相关；"
                 "省略时只能靠标题和主题判断。"
-                "保存成功后 read_knowledge 立即可读到该条目，无需重复验证；"
-                "检索索引异步更新，只影响被动召回，不影响直读。"
+                "保存回执表示条目已持久化；BM25 索引异步更新，刚保存的内容可能稍后才可通过 keyword 搜到。"
+                "需要立即核对时，用回执中的 id 调 read_knowledge(knowledge_id=...) 精确直读。"
             ),
             input_schema={
                 "type": "object",
@@ -267,7 +293,7 @@ class KnowledgeSkill(BaseSkill):
                 "（最多10个，非字符串元素自动转为字符串）；description 提供时用一句触发式描述"
                 "说明何时需要这条知识（不超过150字符）。"
                 "内容与关键词都没有变化时不产生新版本。"
-                "更新成功后 read_knowledge 立即可读到新内容；检索索引异步更新，只影响被动召回。"
+                "更新成功后可通过 knowledge_id 立即直读新内容；BM25 搜索索引异步更新，搜索结果可能短暂滞后。"
             ),
             input_schema={
                 "type": "object",
