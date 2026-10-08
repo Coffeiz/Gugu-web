@@ -15,7 +15,7 @@ const testLike = files.filter(file =>
 )
 
 const known = file => (
-  /^backend\/tests\/test_[^/]+\.py$/.test(file)
+  /^backend\/tests\/.+\.py$/.test(file)
   || /^backend\/test_[^/]+\.py$/.test(file)
   || /^backend\/scripts\/diagnostics\/test_[^/]+\.py$/.test(file)
   || /^scripts\/release\/test_[^/]+\.py$/.test(file)

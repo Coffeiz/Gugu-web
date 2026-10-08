@@ -566,7 +566,7 @@ const { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjec
   fileCacheStore,
 })
 
-let projectDirectoryRefreshTimer: ReturnType<typeof window.setTimeout> | null = null
+let projectDirectoryRefreshTimer: number | null = null
 watch(() => liveStore.resourceEvent, event => {
   const projectId = props.project?.id
   if (event?.resource !== 'files' || projectId == null || fileCacheStore.loaded) return

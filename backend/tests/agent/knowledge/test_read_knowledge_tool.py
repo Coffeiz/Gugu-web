@@ -1,10 +1,7 @@
-"""read_knowledge 直读工具回归（PRD-KNOWLEDGE-2）。
-
-读取直读 KnowledgeStore、不经过 BM25 索引：写入即可读；支持 id 精确读与
-列举/scope/keyword 过滤；跨用户不可见。
-"""
-import pytest
+"""Knowledge 工具契约：BM25 搜索与 knowledge_id 强一致直读。"""
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from agent.knowledge.models import KnowledgeEntry, KnowledgeScope, KnowledgeSource
 from agent.knowledge.store import KnowledgeStore
@@ -20,19 +17,19 @@ def knowledge_storage(tmp_path, monkeypatch):
     return backend
 
 
-async def _save(db_user, title: str, content: str, *, topic: str = "", description: str = ""):
-    store = KnowledgeStore(db_user)
+async def _save(user_id: str, title: str, content: str):
     entry = KnowledgeEntry.create(
-        title=title, content=content, topic=topic, description=description,
-        scope=KnowledgeScope(owner_user_id=db_user),
+        title=title,
+        content=content,
+        scope=KnowledgeScope(owner_user_id=user_id),
         source=KnowledgeSource("user", label="测试"),
     )
-    await store.save(entry)
+    await KnowledgeStore(user_id).save(entry)
     return entry
 
 
 @pytest.mark.asyncio
-async def test_read_by_id_returns_full_content(knowledge_storage):
+async def test_read_by_id_returns_persisted_full_content(knowledge_storage):
     saved = KnowledgeEntry.create(
         title="部署规范", content="发布前必须跑完 CI 双工作流", topic="运维",
         scope=KnowledgeScope(owner_user_id="user-a"),
@@ -54,58 +51,102 @@ async def test_read_by_id_returns_full_content(knowledge_storage):
 
 
 @pytest.mark.asyncio
-async def test_read_unknown_id_gives_guidance(knowledge_storage):
-    result = await _read_knowledge(None, "user-a", {"knowledge_id": "nope"})
+async def test_keyword_search_uses_owner_scoped_bm25_and_collapses_chunks(
+    knowledge_storage, monkeypatch,
+):
+    captured = {}
 
-    assert "error" in result
-    assert "列举" in result["error"]
+    async def search_knowledge(user_id, query, **kwargs):
+        captured.update(user_id=user_id, query=query, **kwargs)
+        return {
+            "has_more": True,
+            "results": [
+                {
+                    "source_id": "knowledge-1", "title": "部署规范", "text": "第一段命中",
+                    "score": 0.9, "version": 3,
+                },
+                {
+                    "source_id": "knowledge-1", "title": "部署规范", "text": "第二段命中",
+                    "score": 0.8, "version": 3,
+                },
+                {
+                    "source_id": "knowledge-2", "title": "发布流程", "text": "另一条知识",
+                    "score": 0.7,
+                },
+            ],
+        }
+
+    monkeypatch.setattr("agent.rag.service.search_knowledge", search_knowledge)
+
+    result = await _read_knowledge(
+        "db-session", "user-a", {"keyword": "发布如何回滚", "limit": 4, "scope": "owner"},
+    )
+
+    assert captured["user_id"] == "user-a"
+    assert captured["query"] == "发布如何回滚"
+    assert captured["scope"].owner_user_id == "user-a"
+    assert captured["scope"].scope_type == "owner"
+    assert (captured["source"], captured["strategy"], captured["mode"]) == (
+        "knowledge", "bm25", "tool",
+    )
+    assert captured["limit"] == 4
+    assert captured["db"] == "db-session"
+    assert result["strategy"] == "bm25"
+    assert result["has_more"] is True
+    assert [entry["knowledge_id"] for entry in result["entries"]] == [
+        "knowledge-1", "knowledge-2",
+    ]
+    assert result["entries"][0]["content"] == "第一段命中\n\n第二段命中"
+    assert result["entries"][0]["version"] == 3
 
 
 @pytest.mark.asyncio
-async def test_list_mode_returns_summaries_without_content(knowledge_storage):
-    await _save("user-a", "部署规范", "发布前跑 CI", topic="运维", description="发布时需要")
-    await _save("user-a", "命名约定", "分支用 kebab-case", topic="协作")
+async def test_keyword_search_is_scoped_to_the_requesting_user(knowledge_storage, monkeypatch):
+    captured_scope = None
 
-    result = await _read_knowledge(None, "user-a", {})
+    async def search_knowledge(_user_id, _query, **kwargs):
+        nonlocal captured_scope
+        captured_scope = kwargs["scope"]
+        return {"results": [], "has_more": False}
+
+    monkeypatch.setattr("agent.rag.service.search_knowledge", search_knowledge)
+
+    result = await _read_knowledge(None, "user-b", {"keyword": "私有决策"})
 
     assert result["success"] is True
-    assert result["total"] == 2 and result["returned"] == 2
-    assert all("content" not in entry for entry in result["entries"])
-    titles = {entry["title"] for entry in result["entries"]}
-    assert titles == {"部署规范", "命名约定"}
+    assert captured_scope.owner_user_id == "user-b"
+    assert captured_scope.scope_type == "owner"
 
 
 @pytest.mark.asyncio
-async def test_keyword_filter_matches_content_and_title(knowledge_storage):
-    await _save("user-a", "部署规范", "发布前跑 CI 双工作流", topic="运维")
-    await _save("user-a", "命名约定", "分支用 kebab-case", topic="协作")
+async def test_missing_query_and_out_of_range_limit_are_rejected_before_search(
+    knowledge_storage, monkeypatch,
+):
+    async def unexpected_search(*_args, **_kwargs):
+        pytest.fail("无效工具参数不能发起 BM25 检索")
 
-    hit = await _read_knowledge(None, "user-a", {"keyword": "kebab"})
-    assert hit["total"] == 1
-    assert hit["entries"][0]["title"] == "命名约定"
+    monkeypatch.setattr("agent.rag.service.search_knowledge", unexpected_search)
 
-    none = await _read_knowledge(None, "user-a", {"keyword": "不存在的词"})
-    assert none["total"] == 0
-    assert "note" in none
+    missing_query = await _read_knowledge(None, "user-a", {})
+    invalid_limit = await _read_knowledge(None, "user-a", {"keyword": "部署", "limit": 26})
 
-
-@pytest.mark.asyncio
-async def test_limit_caps_and_reports_total(knowledge_storage):
-    for index in range(4):
-        await _save("user-a", f"条目{index}", f"内容{index}")
-
-    result = await _read_knowledge(None, "user-a", {"limit": 2})
-
-    assert result["total"] == 4 and result["returned"] == 2
-    assert "缩小范围" in result["note"]
+    assert "keyword" in missing_query["error"]
+    assert "limit" in invalid_limit["error"]
 
 
 @pytest.mark.asyncio
-async def test_cross_user_isolation(knowledge_storage):
-    await _save("user-a", "A 的秘密", "只有 user-a 能读")
+async def test_foreign_id_is_not_readable(knowledge_storage):
+    saved = await _save("user-a", "个人策略", "仅 user-a 可见")
 
-    result = await _read_knowledge(None, "user-b", {})
+    result = await _read_knowledge(None, "user-b", {"knowledge_id": saved.id})
 
-    assert result["total"] == 0
-    single = await _read_knowledge(None, "user-b", {"knowledge_id": (await KnowledgeStore("user-a").list())[0].id})
-    assert "error" in single
+    assert "error" in result
+    assert "entry" not in result
+
+
+@pytest.mark.asyncio
+async def test_unknown_id_points_to_keyword_search(knowledge_storage):
+    result = await _read_knowledge(None, "user-a", {"knowledge_id": "missing-id"})
+
+    assert "error" in result
+    assert "keyword" in result["error"]

@@ -395,7 +395,7 @@ async def test_cancel_during_real_file_hash_chunk_joins_thread_and_removes_manif
             if value and not self.gated:
                 self.gated = True
                 chunk_read.set()
-                assert release_reader.wait(timeout=3)
+                assert release_reader.wait(timeout=30)
             return value
 
     def fdopen(descriptor, mode="r", *, closefd=True):
@@ -412,17 +412,28 @@ async def test_cancel_during_real_file_hash_chunk_joins_thread_and_removes_manif
             stop_event=stop,
             max_manifest_bytes=8 * 1024 * 1024,
             # 给工作线程稳定进入真实分块读取的时间，再验证超时能否 join。
-            timeout_seconds=1 if stop_mode == "timeout" else 10,
+            timeout_seconds=5 if stop_mode == "timeout" else 30,
         ))
-        assert await asyncio.to_thread(chunk_read.wait, 2)
-        if stop_mode == "cancel":
-            task.cancel()
-        assert await asyncio.to_thread(stop.wait, 1)
-        assert not task.done()
-        release_reader.set()
-        expected = asyncio.CancelledError if stop_mode == "cancel" else ScanTimedOut
-        with pytest.raises(expected):
-            await task
+        try:
+            # 线程池启动受整机负载影响；以文件分块读取事件同步，不用短睡眠假设调度时序。
+            assert await asyncio.to_thread(chunk_read.wait, 10)
+            if stop_mode == "cancel":
+                task.cancel()
+            assert await asyncio.to_thread(stop.wait, 10)
+            assert not task.done()
+            release_reader.set()
+            expected = asyncio.CancelledError if stop_mode == "cancel" else ScanTimedOut
+            with pytest.raises(expected):
+                await task
+        finally:
+            # 即使断言失败也放开真实文件读取线程，避免留下阻塞的 executor worker。
+            release_reader.set()
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, ScanTimedOut):
+                pass
 
     assert list((tmp_path / "tmp").glob("gugu-filesync-*.sqlite")) == []
 

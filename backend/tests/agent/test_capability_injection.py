@@ -268,11 +268,19 @@ def test_skill_management_is_discoverable_without_being_a_provider_tool():
 
 
 @pytest.mark.anyio
-async def test_get_tool_schema_can_discover_skill_management_tools_on_demand():
+@pytest.mark.parametrize("im_role,can_discover", [
+    ("owner", True),
+    ("member", False),
+    ("unknown", False),
+])
+async def test_get_tool_schema_skill_management_respects_im_owner_boundary(im_role, can_discover):
     from agent.im import imctx
     from agent.tools.meta import _get_tool_schema
 
-    imctx.set_im("qq", "message-1", "bot-1", "group-1", allowed_tool_names=[])
+    imctx.set_im(
+        "qq", "message-1", "bot-1", "group-1",
+        allowed_tool_names=[], im_role=im_role,
+    )
     try:
         result = await _get_tool_schema(None, None, {
             "tools": ["list_skills", "create_skill", "update_skill", "delete_skill", "http_get"],
@@ -280,10 +288,16 @@ async def test_get_tool_schema_can_discover_skill_management_tools_on_demand():
     finally:
         imctx.clear()
 
-    assert result == {
-        "tool_schemas": ["list_skills", "create_skill", "update_skill", "delete_skill"],
-        "rejected": ["http_get"],
-    }
+    if can_discover:
+        assert result == {
+            "tool_schemas": ["list_skills", "create_skill", "update_skill", "delete_skill"],
+            "rejected": ["http_get"],
+        }
+    else:
+        assert result == {
+            "error": "没有可获取 Schema 的已授权工具",
+            "rejected": ["list_skills", "create_skill", "update_skill", "delete_skill", "http_get"],
+        }
 
 
 @pytest.mark.anyio

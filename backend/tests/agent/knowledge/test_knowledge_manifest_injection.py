@@ -93,12 +93,11 @@ async def test_load_knowledge_overview_filters_to_owner_scope_and_newest_first(k
 
 
 def test_build_split_manifest_truncation_is_disclosed():
-    """截断必须如实告知：清单超 40 条时标注剩余数量并引导 read_knowledge 列举。"""
+    """截断清单要披露仍有较早条目，避免模型把有限快照当成完整清单。"""
     knowledge = [{"title": f"条目{i}", "topic": "", "description": "x"} for i in range(45)]
     text = _snapshot(knowledge)
     assert "以上仅显示最新" in text
     assert "45 条更早条目未列出" in text or "更早条目未列出" in text
-    assert "read_knowledge 列举" in text
 
 
 def test_build_split_manifest_within_cap_has_no_truncation_note():
@@ -107,8 +106,11 @@ def test_build_split_manifest_within_cap_has_no_truncation_note():
     assert "未列出" not in text
 
 
-def test_build_split_guidance_mentions_listing_for_ids():
-    """清单不含 id：引导语必须说明先列举拿 id 再直读。"""
+def test_build_split_guides_knowledge_search_and_exact_lookup():
+    """知识快照引导模型用关键词检索，再用结果 ID 读取完整正文。"""
     text = _snapshot([{"title": "某条", "topic": "", "description": "x"}])
     assert "不含正文也不含 id" in text
-    assert "拿到 knowledge_id 再按 id 直读" in text
+    assert "read_knowledge" in text
+    assert "BM25 搜索" in text
+    assert "knowledge_id" in text
+    assert "按 id 直读全文" in text

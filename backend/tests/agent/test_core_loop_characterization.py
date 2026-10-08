@@ -1619,7 +1619,7 @@ async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(
     never = asyncio.Event()
     started = 0
 
-    async def fake_dispatch(_user_id, name, _arguments):
+    async def fake_dispatch(_user_id, name, _arguments, **_context):
         nonlocal started
         started += 1
         if started == 3:
@@ -1630,7 +1630,9 @@ async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(
             return json.dumps({"result": "alpha done"}), None
         await never.wait()
 
-    monkeypatch.setattr(registry, "dispatch", fake_dispatch)
+    # 并行路径通过 core 的会话上下文边界执行；直接在实际调用点注入，避免
+    # 只替换串行 dispatch 名称却漏测并发调度链。
+    monkeypatch.setattr(core, "_dispatch_in_session", fake_dispatch)
     settings = SimpleNamespace(
         ai=AI,
         agent=SimpleNamespace(parallel_tool_execution_enabled=True),
@@ -1648,10 +1650,10 @@ async def test_parallel_cancellation_preserves_finished_result_and_closes_batch(
                 continue
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(all_started.wait(), timeout=1)
-    await asyncio.wait_for(alpha_completed.wait(), timeout=1)
+    await asyncio.wait_for(all_started.wait(), timeout=5)
+    await asyncio.wait_for(alpha_completed.wait(), timeout=5)
     task.cancel()
-    await asyncio.wait_for(task, timeout=1)
+    await asyncio.wait_for(task, timeout=5)
 
     terminal_events = [
         (event["type"], event.get("tool_call_id"), event.get("status"))

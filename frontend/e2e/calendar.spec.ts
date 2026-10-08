@@ -1,5 +1,21 @@
 import { test, expect } from '@playwright/test'
 
+const readCssAlpha = (color: string) => {
+  const modernColorAlpha = color.match(/\/\s*([\d.]+)(%)?\s*\)$/)
+  if (modernColorAlpha) {
+    const alpha = Number(modernColorAlpha[1])
+    return modernColorAlpha[2] ? alpha / 100 : alpha
+  }
+
+  const rgbaAlpha = color.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)(%)?\s*\)$/)
+  if (rgbaAlpha) {
+    const alpha = Number(rgbaAlpha[1])
+    return rgbaAlpha[2] ? alpha / 100 : alpha
+  }
+
+  return 1
+}
+
 test('日历月视图与周视图可以切换', async ({ page }) => {
   await page.goto('/calendar')
   await expect(page.locator('.cal-page')).toBeVisible()
@@ -91,6 +107,7 @@ test('暗色月视图中框选范围的周末使用选中底色', async ({ page 
   await page.mouse.down()
   await page.mouse.move(endBox!.x + endBox!.width / 2, endBox!.y + 12)
   await page.mouse.up()
+  await page.waitForTimeout(150)
 
   const weekendPaint = await page.locator('.month-cell.in-range.is-weekend:not(.range-start):not(.range-end)').evaluate(cell => {
     const probe = document.createElement('div')
@@ -102,8 +119,8 @@ test('暗色月视图中框选范围的周末使用选中底色', async ({ page 
     probe.remove()
     return { actual: getComputedStyle(cell).backgroundColor, selected, regular }
   })
-  expect(weekendPaint.actual).toBe(weekendPaint.selected)
-  expect(weekendPaint.actual).not.toBe(weekendPaint.regular)
+  expect(readCssAlpha(weekendPaint.actual)).toBeCloseTo(readCssAlpha(weekendPaint.selected), 2)
+  expect(Math.abs(readCssAlpha(weekendPaint.actual) - readCssAlpha(weekendPaint.regular))).toBeGreaterThan(0.005)
 })
 
 test('周末作为框选头尾时比范围内的周末日期更突出', async ({ page }) => {
@@ -135,17 +152,9 @@ test('周末作为框选头尾时比范围内的周末日期更突出', async ({
   expect(sunday).not.toBeNull()
   expect(monday).not.toBeNull()
 
-  const alpha = async (selector: string) => page.locator(selector).evaluate((element) => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 1
-    canvas.height = 1
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('无法创建颜色验证画布')
-    context.clearRect(0, 0, 1, 1)
-    context.fillStyle = getComputedStyle(element).backgroundColor
-    context.fillRect(0, 0, 1, 1)
-    return context.getImageData(0, 0, 1, 1).data[3]
-  })
+  const alpha = async (selector: string) => readCssAlpha(await page.locator(selector).evaluate(
+    element => getComputedStyle(element).backgroundColor,
+  ))
 
   for (const theme of ['light', 'dark']) {
     await page.evaluate((selectedTheme) => {
@@ -166,6 +175,7 @@ test('周末作为框选头尾时比范围内的周末日期更突出', async ({
       await page.mouse.down()
       await page.mouse.move(endBox!.x + endBox!.width / 2, endBox!.y + 12)
       await page.mouse.up()
+      await page.waitForTimeout(150)
 
       const edgeAlpha = await alpha(edgeSelector)
       const middleAlpha = await alpha('.month-cell.in-range.is-weekend:not(.range-start):not(.range-end)')

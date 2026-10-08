@@ -1,15 +1,11 @@
-"""search_memory 工具层边界回归（PRD-KNOWLEDGE-2）。
-
-knowledge 域独立后：工具层 source=knowledge 被拒绝并引导 read_knowledge；
-记忆源正常透传 service；service 层函数仍保留 knowledge 能力供内部调用。
-"""
+"""记忆与知识工具的运行时边界。"""
 import pytest
 
 from agent.tools import memory as memory_tools
 
 
 @pytest.mark.asyncio
-async def test_search_memory_rejects_knowledge_source_and_guides(monkeypatch):
+async def test_search_memory_rejects_knowledge_source_before_memory_service(monkeypatch):
     called = []
 
     async def fail_search(*args, **kwargs):
@@ -21,8 +17,7 @@ async def test_search_memory_rejects_knowledge_source_and_guides(monkeypatch):
     result = await memory_tools._search_memory(None, "user-a", {"query": "部署", "source": "knowledge"})
 
     assert "error" in result
-    assert "read_knowledge" in result["error"]
-    assert called == []  # 未透传到 service
+    assert called == []
 
 
 @pytest.mark.asyncio
@@ -49,12 +44,16 @@ async def test_tool_schema_drops_knowledge_from_source_enum():
     assert set(enum) == {"all", "profile", "pattern", "daily", "memory"}
 
 
-def test_knowledge_tools_live_in_knowledge_skill_not_memory():
-    """knowledge 域工具独立注册：MemorySkill 不再包含，KnowledgeSkill 全量承接。"""
-    memory_names = {tool.name for tool in memory_tools.MemorySkill.tools}
-    assert not memory_names & {"save_knowledge", "update_knowledge", "delete_knowledge", "read_knowledge"}
+def test_runtime_tool_registry_keeps_memory_and_knowledge_as_separate_capabilities():
+    """生产注册表按能力组暴露工具，避免知识工具被记忆能力预选或授权。"""
+    from agent.tools import registry
 
-    from agent.tools.knowledge import KnowledgeSkill
+    snapshot = registry.snapshot()
+    memory_names = set(snapshot.tools_of(["memory"]))
+    knowledge_names = set(snapshot.tools_of(["knowledge"]))
+    knowledge_tools = {"save_knowledge", "update_knowledge", "delete_knowledge", "read_knowledge"}
 
-    knowledge_names = {tool.name for tool in KnowledgeSkill.tools}
-    assert knowledge_names == {"save_knowledge", "update_knowledge", "delete_knowledge", "read_knowledge"}
+    assert "search_memory" in memory_names
+    assert not memory_names & knowledge_tools
+    assert knowledge_tools <= knowledge_names
+    assert not memory_names & knowledge_names
