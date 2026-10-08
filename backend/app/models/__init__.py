@@ -1446,8 +1446,8 @@ class SearchUsage(Base):
 class UserBot(Base):
     """用户自带机器人（Bring-Your-Own）：每用户存自己的 bot 凭据，咕咕为其起独立网关。
 
-    目前用于 QQ（platform=qq）。消息归属于该 bot 的咕咕账号；QQ owner 的
-    平台身份另通过一次性验证码绑定，用于群聊权限判断，不作为跨 Bot 的全局身份。
+    消息归属于该 bot 的咕咕账号；需要验证的平台 owner 身份按 Bot 作用域保存，
+    用于权限判断，不作为跨 Bot 的全局身份。
     """
     __tablename__ = "user_bots"
 
@@ -1478,10 +1478,10 @@ class UserBot(Base):
     private_message_format: Mapped[str] = mapped_column(String(16), default="smart")
     # QQ C2C 私聊是否使用官方 stream_messages；群聊永远不走该接口。
     private_streaming_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # QQ 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局 QQ ID 使用。
+    # QQ/Telegram 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局身份使用。
     owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
-    # QQ 当前 Bot 的平台身份 ID，用于精确展示 @机器人。
+    # Bot 当前平台身份 ID，用于精确展示 @机器人。
     bot_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 

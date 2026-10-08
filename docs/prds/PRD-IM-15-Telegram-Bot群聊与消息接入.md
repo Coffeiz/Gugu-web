@@ -1,6 +1,6 @@
 # Telegram Bot 群聊与消息接入 PRD
 
-> 状态：📝 待评审（方案草案，未实施）
+> 状态：Phase 0 完成；Phase 1 尚未开始（Token 传输规则待确认）
 > 创建：2026-10-08
 > 关联模块：`backend/agent/gateway/`、`backend/agent/im/`、`backend/app/api/v1/user_bots.py`、`frontend/src/components/common/profile/ProfileImPane.vue`
 > 调研依据：Telegram 官方 Bot API、Bot FAQ、Bot Features，以及当前 Gugu IM/Gateway 实现
@@ -51,7 +51,9 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 - 使用官方 HTTPS Bot API。Telegram 官方提供 API 文档和按语言分类的社区库清单；没有官方维护的 Python Bot SDK 承诺。
 - 首期沿用现有 `agent.gateway.gateway` 每 Bot 子进程模型，在 `agent.gateway.telegram` 内用项目已使用的异步 HTTP 客户端直接调用 Bot API。这样可及时使用官方新方法，不被第三方 SDK 的 API schema 发布节奏阻塞。
 - 接收使用 `getUpdates` 长轮询，按 Bot Token 一进程一连接；与现有 Gateway 生命周期、配置热重载和重启策略一致。Webhook 与 `getUpdates` 互斥，首期不新增公网 webhook endpoint。若 `getWebhookInfo` 显示已有 webhook，接入校验应明确提示冲突，不得擅自清除用户原配置。
-- Bot API 10.1 Rich Messages 作为后续增强能力评估；首期采用兼容范围更广的普通消息格式化能力，不依赖未验证的 SDK 封装。
+- 本轮复核时官方当前版本为 Bot API 10.3；Rich Messages 与草稿流式能力已在 10.1 引入，但仍不属于 V1 验收范围，留在后续评估，不依赖未验证的 SDK 封装。
+- Bot API 的官方授权 URL 固定为 `https://api.telegram.org/bot<TOKEN>/METHOD_NAME`，Token 必然位于出站 HTTPS 请求路径，官方没有 Header 认证方式。仓库安全规则禁止凭据进入 URL；在得到明确的、范围受限的规则批准前，不得实现或发送任何携带 Token 的 Bot API 请求。无论如何批准，完整请求 URL 都不得记录、持久化、展示或传播。
+- Bot API 10.0 起存在受设置限制的 Bot-to-Bot 消息能力。Gugu V1 仍按产品安全策略忽略其他 Bot 的消息，不依赖或开启该能力。
 
 ## 3. 范围与行为需求
 
@@ -59,7 +61,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 
 1. 个人设置提供 Telegram Token 输入与验证。后端调用 `getMe` 验证 Token，并获得 Bot 的数值 ID、username、display name。
 2. 仅验证成功后创建/更新 `UserBot(platform="telegram")`。首期每个 Gugu 用户最多接入一个 Telegram Bot；同一 Bot ID 不得绑定到多个 Gugu 用户。
-3. Token 存入现有加密字段 `user_bots.app_secret`，不得回显明文、写日志、放 URL 或写入事件 payload。`app_id` 存 Telegram 数值 Bot ID 字符串作为公开去重键；Bot username/display name 写 `name`，不作为身份依据。
+3. Token 存入现有加密字段 `user_bots.app_secret`，不得回显明文、写日志、进入应用自身的 API URL 或写入事件 payload。Telegram 官方出站请求路径必须含 Token；该传输方式与仓库安全规则的冲突未解决前，禁止实现网络调用。`app_id` 存 Telegram 数值 Bot ID 字符串作为公开去重键；Bot username/display name 写 `name`，不作为身份依据。
 4. 替换 Token 时先验证新 Token，再原子更新记录；验证失败不得破坏原接入。API 响应只返回掩码 Token。
 5. 检测 `getWebhookInfo` 已有 webhook 的情况并阻止启动长轮询，向用户给出可理解提示；不得调用 `deleteWebhook` 自动抢占 Bot。
 6. 创建、修改、禁用、删除后复用 Gateway reload 通知；删除必须走现有统一确认组件。
@@ -68,7 +70,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 
 1. `agent.gateway.gateway` 注册 Telegram 模块，并通过环境变量传递 bot ID、Token 和 owner Gugu ID；秘密不出现在进程 argv、普通日志或 health heartbeat。
 2. `agent.gateway.telegram` 使用 `getMe`/`getUpdates` 长轮询；支持启动、退出、网络错误退避、配置变更重启和 Bot API 429 `retry_after`。
-3. 每个 Update 先规范化并投递到现有 `im:inbound` 队列，成功后才推进 `offset=update_id+1`；将 last acknowledged `update_id` 持久化在 Redis 的 Bot 作用域键中，重复 Update 通过 `update_id` 做跨重启幂等，避免重连重复触发 Agent。若队列投递与游标写入之间进程崩溃，允许重投但必须由幂等层去重。平台更新最多保留时长有限，不能把队列故障静默视为已消费。
+3. 每个 Update 按顺序进入现有 `im:inbound` 队列。Redis Lua 原子完成 `XADD`、Bot 作用域去重标记和“最后已入队 update_id”游标写入；只有完整处理本次响应中的 Update 后，下一次 `getUpdates` 才使用 `offset=last_enqueued_update_id+1` 确认它们。去重键为 `(UserBot.id, update_id)`，保留 48 小时；游标也按 Bot 隔离，保留 6 天。重启时只在游标存在时续用 offset，否则不传 offset，从 Telegram 最早未确认更新继续；6 天过期可避免 Telegram 连续一周无新 Update 后随机重置 update_id 时沿用陈旧 offset。队列或 Redis 故障不得推进 offset。
 4. 忽略 Bot 自己发出的事件；默认不处理其他 Bot 的消息。拒绝未知 Update 类型时应记录脱敏类型诊断，不记录正文或原始 payload。
 5. 接收私聊、普通群与 supergroup 的文字消息及服务事件。首期仅为文字群消息提供完整 Agent loop；不可处理的消息类型不得误触发空内容生成。
 
@@ -98,6 +100,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 1. 普通文本支持安全格式化；首期覆盖粗体、斜体、链接、行内代码和代码块。MarkdownV2 必须正确转义特殊字符并有行为测试；复杂表格/不支持结构转为可读纯文本，不得拼接未经校验的 HTML。
 2. 回复接口支持普通发文、回复已有消息、拆分超长文本，并遵循 Telegram 单消息限制；消息拆分不得切断 UTF-8 字符或 Markdown 实体。
 3. 支持私聊/群聊发送图片和文件、入站图片/文件的暂存与安全校验；语音/视频作为兼容性单列，只有实现下载、大小限制、mime 校验及上下文描述后才标为支持。不得因平台文件下载失败把 URL 当成本地附件。
+   - 当前官方云端 Bot API 限制：`getFile` 下载上限 20 MB；multipart 上传照片上限 10 MB、其他文件上限 50 MB。实现应集中表达这些运行限制，并在官方限制变更时复核，不承诺超出能力的文件。
 4. 首期普通回答为最终消息发送；编辑式逐段流式输出不作为上线门槛。后续评估 Bot API streaming draft / Rich Messages，并通过平台实测确定私聊和群聊行为。
 5. 已有 `reply_to_message` 可提供引用文本；引用附件复用只能按可验证的消息 ID 查找当前 Gugu 已保存的附件，不得任意访问 Telegram 历史消息。
 6. 按 Telegram rate limit 处理 429 与重试时间；同一群发送节奏由共享发送层控制，避免工具摘要/分片造成消息轰炸。
@@ -109,7 +112,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 | 业务实体 | Telegram 来源 | Gugu 规范字段/存储 | 映射规则与边界 |
 |---|---|---|---|
 | Gugu 用户 | 当前登录账户 | `UserBot.user_id` / 入站 `owner_user_id` | 数据所有者，不等于 Telegram 用户 ID |
-| Telegram Bot Token | BotFather | `UserBot.app_secret`（加密） | 唯一秘密；API 只回掩码，日志/URL/入站队列禁止出现 |
+| Telegram Bot Token | BotFather | `UserBot.app_secret`（加密） | 唯一秘密；应用 API、日志、队列、仓库和持久化 URL 禁止出现；官方出站请求路径必含 Token，须先获安全规则例外 |
 | Telegram Bot 平台 ID | `getMe.id` | `UserBot.app_id` 与 `bot_platform_user_id` | 数值 ID 字符串；username 不作 Bot 主键 |
 | Telegram Bot 用户名 | `getMe.username` | `UserBot.name` 或展示元数据 | 可变、可能缺失；仅展示和命令提示，不作授权依据 |
 | Gugu Bot 记录 | 数据库主键 | `UserBot.id` → IM `channel_id`/`bot_id` | 与 Telegram Bot ID 不同，用于隔离同一 Gugu 用户的连接和群策略 |
@@ -181,6 +184,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 | `backend/tests/test_telegram_im_policy.py` | Telegram 群开关默认关闭、回应模式、权限角色、取消隔离和群上下文隔离测试 |
 | `backend/tests/test_telegram_message_parser.py` | command 后缀、文本实体、@Bot、引用及匿名/频道 sender 边界测试 |
 | `backend/tests/test_telegram_media.py` | 文件类型、大小限制、资源下载、临时失败和附件暂存行为测试 |
+| `backend/tests/test_telegram_contract.py` | Phase 0 统一消息类型、跨平台/Bot 会话隔离、owner/匿名身份与群默认关闭行为测试 |
 
 ### 6.2 修改
 
@@ -228,7 +232,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 - `PUT /api/v1/me/telegram/connect/{bot_id}`：先校验新 Token，再轮换密钥并触发 Gateway reload。
 - `POST /api/v1/me/telegram/connect/{bot_id}/binding-code`：生成一次性 owner 绑定 code；如果实现可复用 QQ 通用绑定服务，复用后本接口只负责平台路由。
 - `PATCH /api/v1/me/bots/{bot_id}`：允许 Telegram 更新 `enabled`、`group_chat_enabled` 与已有群策略；校验该 Bot 归当前用户所有。
-- 删除走既有 UserBot 删除能力和统一确认路径。最终路由形式以现有 API 风格为准，但不能将 Token 放进 URL。
+- 删除走既有 UserBot 删除能力和统一确认路径。最终路由形式以现有 API 风格为准；应用自身路由不得包含 Token。官方出站 API 请求的 Token 路径冲突按 §2.3 的安全门处理。
 
 ### 7.2 入站事件契约（示意）
 
@@ -293,19 +297,21 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 | Phase 1：连接与私聊 | Token 验证、Gateway 长轮询、私聊文本、owner 绑定、回复/取消、基本格式、设置页接入 | 独立测试 Bot 私聊端到端通过，Token 全链路安全 |
 | Phase 2：群安全与权限 | 群设置 UI/API、消息可见性说明、owner/member/unknown、群上下文/记忆、工具白名单 | Privacy Mode 两种设置及权限矩阵通过真实群验收 |
 | Phase 3：消息拓展 | 图片/文件、引用、消息分片、限流/重启恢复 | 每个声明支持的媒体类型均有行为测试和真实平台验收 |
-| Phase 4：增强能力（后续） | Rich Messages、流式草稿、forum topic | 单独评审；不阻塞 V1 完成，不得把未实现项标记为支持 |
+| Phase 4：回归与交付 | OpenAPI 类型、完整回归、文档、安全审查和交付复查 | V1 验收标准与文件清单逐项复核完成 |
+| Phase 5：独立后续评估 | Rich Messages、流式草稿、forum topic | 单独评审；不阻塞 V1 完成，不得把未实现项标记为支持 |
 
 ### Phase 0：契约与回归基线
 
-- [ ] 复核实施时 Telegram Bot API 版本、`getMe`、`getUpdates`、`getWebhookInfo`、消息/文件限额、MarkdownV2 与 429 规则；只采用官方文档确认的字段和行为。
-- [ ] 冻结接入接口、`UserBot` 字段映射和入站事件 schema；确认 `group_chat_enabled` 对 Telegram 新 Bot 默认关闭，且不继承 Feishu 的 nullable 默认行为。
-- [ ] 冻结长轮询游标方案：Redis Bot 作用域键保存已确认 `update_id`；确认 XADD 成功后才推进 offset；定义重复投递的持久幂等键和进程崩溃窗口行为。
-- [ ] 明确首期不支持 forum topic 独立 session、全量群成员枚举、Rich Messages streaming；从 API/UI 文案中排除这些承诺。
-- [ ] 先为平台 source/session 隔离、匿名 sender 权限、群总开关默认值、跨平台同 ID 不串数据建立行为测试。
-- [ ] 确认测试环境只使用合成 Bot Token、用户 ID、群 ID 和消息，不读取或写入 `backend/.env`、`backend/config.override.json`。
+- [x] 复核官方 Bot API 10.3、`getMe`、`getUpdates`、`getWebhookInfo`、媒体限额、MarkdownV2 与 429 `retry_after`；只采用官方文档确认的字段和行为。Bot API 10.1 Rich Messages 和 Bot-to-Bot 能力不纳入 V1。
+- [x] 冻结接入接口、`UserBot` 字段映射和入站事件 schema；Telegram 新 Bot 的 `group_chat_enabled` 默认关闭，不继承 Feishu nullable 默认行为。
+- [x] 冻结长轮询游标：以 Gugu `UserBot.id` 作为 Redis Bot 作用域；Lua 原子执行 Stream `XADD`、`(bot_id, update_id)` 去重标记和游标更新；只有本次返回的 Update 全部可靠入队后才在下次请求使用 `offset=last_enqueued_update_id+1`。Update 去重保留 48 小时、游标保留 6 天；游标过期时不传 offset，以兼容 Telegram 一周无更新后随机重置 update_id 的规则。任何队列/Redis 错误都不得推进 offset。
+- [x] 明确首期不支持 forum topic 独立 session、全量群成员枚举、Rich Messages streaming；不在 API/UI 承诺这些能力。
+- [x] 为平台 source/session 隔离、匿名 sender 权限、群开关默认值、跨平台相同外部 ID 不串数据建立行为测试；测试使用合成数据。
+- [x] 测试经仓库内存数据库与假 Redis 基座隔离，只使用合成 Bot Token、用户 ID、群 ID 和消息；不读取或写入 `backend/.env`、`backend/config.override.json`。
 
 ### Phase 1：Token 接入、Gateway 与私聊闭环
 
+- [ ] 开始本阶段前，解决 Telegram 官方“Token 必须位于 HTTPS 请求路径”与仓库禁止凭据进入 URL 的规则冲突；未获明确范围受限的批准前，不得实现或调用带 Token 的 Telegram 请求。
 - [ ] 新增 `backend/agent/im/parsers/telegram.py`：解析普通文本、命令实体、`/command@username`、文本提及、回复和媒体节点；未知/匿名 sender 不伪造 user ID。
 - [ ] 新增 `backend/app/api/v1/telegram_connect.py`：实现 Token 验证、`getMe` 元数据读取、Bot ID 唯一性、Webhook 冲突拒绝、Bot 创建/Token 轮换及一次性绑定码接口；错误信息不泄露原异常/Token。
 - [ ] 修改 `backend/app/main.py` 注册 Telegram connect router，并覆盖鉴权、CSRF（如适用）和用户数据所有权。
@@ -371,6 +377,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 |---|---|
 | 用户误以为普通 @ 一定能唤起 Bot | 接入和群设置页明确 Privacy Mode 约束；先以实际 Update 可见性验证 |
 | Bot Token 泄露或被覆盖 | encrypted field、全链路不打印、Token 替换先验证、接口掩码、测试合成凭据 |
+| 官方 API 必须把 Token 放入请求路径，与仓库凭据 URL 禁令冲突 | 获得范围受限的明确批准前，不发起带 Token 请求、不启动 Phase 1；无论如何不记录或持久化完整 URL |
 | 长轮询重启造成重复/丢消息 | 入队成功再推进 offset；`update_id` 幂等；记录 last acknowledged offset 和可观测积压 |
 | Telegram ID/用户名混淆导致串人或升权 | user/chat/bot ID 分字段；所有授权只用数值平台 ID + Bot 作用域 |
 | Telegram 限流导致消息重复或乱序 | 统一发送节奏、按 `retry_after` 退避、单次发送幂等策略和可见失败状态 |
@@ -382,7 +389,7 @@ Telegram `User.id` 是成员身份主键；事件通常同时带 `first_name`，
 - [Telegram Bot API](https://core.telegram.org/bots/api)
 - [Telegram Bots FAQ：Bot 能收到哪些群消息、长轮询与 Webhook](https://core.telegram.org/bots/faq)
 - [Telegram Bot Features：Privacy Mode、命令和消息格式](https://core.telegram.org/bots/features)
-- [Bot API Changelog：Bot API 10.1 Rich Messages](https://core.telegram.org/bots/api-changelog)
+- [Telegram Bot API Changelog](https://core.telegram.org/bots/api-changelog)
 - [Telegram 官方列出的 Bot API 社区库示例](https://core.telegram.org/bots/samples)
 
-> 本 PRD 描述目标设计而非已完成能力。平台 API 可能演进；进入实施前需复核 Bot API 当前版本、消息/文件限制及 Rich Messages 实际可用性。
+> 本 PRD 描述目标设计而非已完成能力。官方资料于 2026-10-08 复核；平台 API 可能演进，后续阶段以当时官方文档复核为准。
