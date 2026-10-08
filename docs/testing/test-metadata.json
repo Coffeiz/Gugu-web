@@ -590,5 +590,13 @@
     "productionEntry": "frontend/src/composables/shared/liveRevisionRefresh.ts",
     "keyBehavior": "连续 revision 变化合并为一次权威刷新，停止监听后不再触发刷新",
     "ci": "frontend-test"
+  },
+  "frontend/e2e/theme-divider.spec.ts": {
+    "domain": "frontend-ui",
+    "layer": "L3",
+    "owner": "frontend/e2e",
+    "productionEntry": "frontend/src/assets/styles/tokens/semantic.css",
+    "keyBehavior": "所有浅色配色和材质下分隔线及虚线边界均与浅色背景保持可见对比",
+    "ci": "runtime-integration"
   }
 }

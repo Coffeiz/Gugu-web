@@ -1,32 +1,39 @@
 {
   "items": [
     {
-      "file": "backend/tests/platform/security/test_phase3_filesystem_policy.py",
-      "owner": "backend/filesystem-security",
-      "reason": "当前平台不支持软链接或硬链接时动态跳过对应边界用例",
-      "replacement": "平台支持时执行完整链接边界；其余工作区文件策略用例始终执行",
-      "expiresOn": "2026-09-30"
-    },
-    {
       "file": "backend/tests/terminal/test_shell_sandbox.py",
       "owner": "backend/terminal-runtime",
       "reason": "平台不支持软链接或硬链接时动态跳过",
       "replacement": "平台支持时执行完整沙箱边界；保留同领域路径测试",
-      "expiresOn": "2026-09-30"
+      "expiresOn": "2026-11-30"
+    },
+    {
+      "file": "backend/tests/agent/test_romaji.py",
+      "owner": "backend/agent-search",
+      "reason": "可选日语词典依赖未安装时跳过真词典读音基准；替身测试始终验证转换契约",
+      "replacement": "部署测试环境安装小型日语词典后运行真读音基准",
+      "expiresOn": "2026-11-30"
+    },
+    {
+      "file": "backend/tests/platform/deployment/test_offline_migration_postgres.py",
+      "owner": "backend/deployment",
+      "reason": "真实 PostgreSQL/Docker 集成默认关闭以隔离运行资源，需显式启用",
+      "replacement": "发布前在隔离容器环境使用 GUGU_RUN_DOCKER_INTEGRATION=1 运行",
+      "expiresOn": "2026-11-30"
     },
     {
       "file": "frontend/e2e/file-drag-runtime.spec.ts",
       "owner": "frontend/e2e",
       "reason": "测试账号没有可拖拽文件卡",
       "replacement": "接入独立文件 fixture 后恢复稳定 E2E",
-      "expiresOn": "2026-09-30"
+      "expiresOn": "2026-11-30"
     },
     {
       "file": "frontend/e2e/filesystem-phases.spec.ts",
       "owner": "frontend/e2e",
       "reason": "测试账号目录、文件或回收站数据不足",
       "replacement": "使用独立测试账号或 mock 数据",
-      "expiresOn": "2026-09-30"
+      "expiresOn": "2026-11-30"
     }
   ]
 }

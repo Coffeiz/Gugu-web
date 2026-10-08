@@ -84,7 +84,7 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
 
 ### CI 只接确定性的关键路径
 
-CI 的 Runtime integration workflow 执行 `test:e2e:stable`；当前稳定列表包含 `smoke`、`calendar`、`chat`、`file-lifecycle`、`mind-canvas-runtime`、`scheduled-task-ui`、`scheduled-task-run`。以 `frontend/package.json` 的脚本和 workflow 调用为准，调整列表时同步更新本文。
+CI 的 Runtime integration workflow 执行 `test:e2e:stable`；当前稳定列表包含 `smoke`、`calendar`、`chat`、`file-lifecycle`、`mind-canvas-runtime`、`scheduled-task-ui`、`scheduled-task-run`、`theme-divider`。以 `frontend/package.json` 的脚本和 workflow 调用为准，调整列表时同步更新本文。
 
 新增用例接 CI 的标准：
 - 不依赖测试账号的既有数据（每轮 CI 全新数据库）。

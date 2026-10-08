@@ -140,10 +140,28 @@ def test_capture_rejects_missing_session_or_empty_reply():
 
 def test_capture_never_uses_redis_or_db():
     """拓扑钉死的回归锚点：快照模块不得引入 Redis/DB 依赖（§6.1 进程内边界）。"""
+    import ast
     import inspect
-    source = inspect.getsource(rs)
-    assert "get_redis" not in source
-    assert "_SessionLocal" not in source
+
+    tree = ast.parse(inspect.getsource(rs))
+    imported_modules = set()
+    imported_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imported_modules.add(module)
+            imported_modules.update(f"{module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.Name):
+            imported_names.add(node.id)
+
+    forbidden_modules = {
+        "app.db", "app.db.session", "app.core.redis", "redis",
+    }
+    forbidden_names = {"get_redis", "get_redis_sync", "_SessionLocal"}
+    assert not imported_modules.intersection(forbidden_modules)
+    assert not imported_names.intersection(forbidden_names)
 
 
 # ── provider 缓存能力白名单（§6.7 第一关）─────────────────────────────────

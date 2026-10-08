@@ -176,11 +176,42 @@ async def test_canvas_single_record_includes_relation_summary(rest_env):
 
 
 @pytest.mark.asyncio
-async def test_durable_recovery_wired_at_startup():
-    """启动恢复循环必须在 main lifespan 注册（事件丢失/重启后可重放）。"""
-    import inspect
+async def test_durable_recovery_runs_for_application_lifespan(monkeypatch):
+    """应用启动时注册 RAG 恢复，关闭时停止，覆盖进程重启后的恢复契约。"""
+    import asyncio
 
+    import agent.events.bus as event_bus
+    import app.db.session as db_session
     from app import main
 
-    source = inspect.getsource(main)
-    assert "start_rag_index_recovery()" in source
+    recovery_calls = []
+
+    def start_recovery():
+        recovery_calls.append("start")
+
+    async def stop_recovery():
+        recovery_calls.append("stop")
+
+    async def idle_loop():
+        await asyncio.Event().wait()
+
+    def fail_db_probe():
+        raise RuntimeError("isolated test database is unavailable")
+
+    monkeypatch.setattr(main, "RUN_STARTUP_MIGRATIONS", False)
+    monkeypatch.setattr(db_session, "ensure_engine", fail_db_probe)
+    monkeypatch.setattr(main, "_auto_cleanup_loop", idle_loop)
+    monkeypatch.setattr(main, "_filesync_outbox_loop", idle_loop)
+    monkeypatch.setattr(main, "flush_log_queue", idle_loop)
+    monkeypatch.setattr(event_bus, "start_rag_index_recovery", start_recovery)
+    monkeypatch.setattr(event_bus, "stop_rag_index_recovery", stop_recovery)
+
+    async def run_shutdown_step(_name, operation, **_kwargs):
+        await operation()
+
+    monkeypatch.setattr(main, "_shutdown_step", run_shutdown_step)
+
+    async with main.lifespan(main.app):
+        assert recovery_calls == ["start"]
+
+    assert recovery_calls == ["start", "stop"]

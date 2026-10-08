@@ -13,12 +13,17 @@ function git(args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
 }
 
-let base = process.env.GITHUB_BASE_SHA
+let base = process.env.GITHUB_BASE_SHA?.trim()
 if (!base) {
   try {
-    base = git(['merge-base', 'HEAD', 'origin/main']) || 'HEAD'
+    base = git(['merge-base', 'HEAD', 'origin/main'])
   } catch {
-    base = 'HEAD'
+    console.error('[测试元数据] 无法确定比较基线；请提供 GITHUB_BASE_SHA，或准备 origin/main。')
+    process.exit(2)
+  }
+  if (!base) {
+    console.error('[测试元数据] merge-base 结果为空；拒绝使用 HEAD 自比较。')
+    process.exit(2)
   }
 }
 let names = []
