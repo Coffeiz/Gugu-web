@@ -888,7 +888,7 @@ onBeforeUnmount(() => {
 .tv-edit-cm-wrap :deep(.cm-dropCursor) {
   border-left-color: var(--content-primary);
 }
-.tv-edit-cm-wrap :deep(.cm-content) { caret-color: var(--content-primary); }
+.tv-edit-cm-wrap :deep(.cm-content) { caret-color: var(--input-caret-color); }
 .tv-edit-cm-wrap :deep(.cm-content ::selection) {
   /* CM 的 drawSelection 已经自绘选区底色；原生 ::selection 若再画一遍会双层叠加，
      深浅不一致且文字抗锯齿随底色变化（观感上忽粗忽细）。这里置为透明，只留 CM 自绘层。 */

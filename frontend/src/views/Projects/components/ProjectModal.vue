@@ -903,7 +903,7 @@ const filePanelContext = {
   font-family: var(--font-sans); line-height: 1.2; outline: none;
   padding: 7px 11px; margin: 0 -11px 0 0;
   border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
-  background: transparent; caret-color: var(--color-primary);
+  background: transparent; caret-color: var(--input-caret-color);
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }

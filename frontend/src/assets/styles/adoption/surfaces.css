@@ -79,7 +79,7 @@ html[data-theme][data-family] .rename-input-inline {
   color: var(--input-fg);
   background: var(--input-bg);
   border-color: var(--input-border);
-  caret-color: var(--action-primary);
+  caret-color: var(--input-caret-color);
 }
 html[data-theme][data-family] .form-input:hover,
 html[data-theme][data-family] .title-edit-input:hover,

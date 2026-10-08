@@ -49,7 +49,7 @@
   outline: none;
   background: var(--rename-input-bg); border: 1px solid var(--rename-input-border);
   border-radius: var(--rename-input-radius); padding: var(--rename-input-padding);
-  font: inherit; color: var(--rename-input-fg); caret-color: var(--action-primary);
+  font: inherit; color: var(--rename-input-fg); caret-color: var(--input-caret-color);
   box-shadow: var(--input-hover-shadow);
   user-select: text;
   text-align: left;

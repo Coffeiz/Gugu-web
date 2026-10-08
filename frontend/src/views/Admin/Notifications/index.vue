@@ -219,7 +219,7 @@ onMounted(loadHistory)
   background: var(--input-bg); border: 1px solid var(--input-border);
   border-radius: 10px; padding: 9px 12px;
   font-size: 13px; color: var(--input-fg); font-family: inherit;
-  outline: none; caret-color: var(--action-primary);
+  outline: none; caret-color: var(--input-caret-color);
   box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }

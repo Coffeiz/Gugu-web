@@ -190,6 +190,8 @@
   --input-bg-hover: var(--input-bg);
   --input-bg-focus: var(--surface-floating);
   --input-fg: var(--content-primary);
+  /* 输入光标使用主题强调色，与正文前景区分，并随主题配色自动反转明暗。 */
+  --input-caret-color: var(--action-primary);
   --input-placeholder: var(--content-tertiary);
   --input-border: color-mix(in srgb,var(--content-primary) 11%,transparent);
   --input-border-hover: var(--action-outline);
