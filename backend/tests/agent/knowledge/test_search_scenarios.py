@@ -82,10 +82,12 @@ async def test_scenario_romaji_search_matches_note_content(db, user_a):
 
 async def test_scenario_group_search_stays_in_current_group(db, user_a):
     current = await _add(db, ConversationSession(
-        user_id=user_a.id, source="qq", bot_id="scenario-bot", chat_id="scenario-group-a", title="群 A",
+        user_id=user_a.id, source="qq", bot_id="scenario-bot", chat_type="group",
+        chat_id="scenario-group-a", title="群 A",
     ))
     other = await _add(db, ConversationSession(
-        user_id=user_a.id, source="qq", bot_id="scenario-bot", chat_id="scenario-group-b", title="群 B",
+        user_id=user_a.id, source="qq", bot_id="scenario-bot", chat_type="group",
+        chat_id="scenario-group-b", title="群 B",
     ))
     await _add(db, ConversationMessage(session_id=current.id, role="user", content="部署方案"))
     await _add(db, ConversationMessage(session_id=other.id, role="user", content="部署方案"))

@@ -42,7 +42,7 @@ async def test_setting_roundtrip_and_actor_isolation(db, user_a, user_b):
 
 
 @pytest.mark.asyncio
-async def test_qq_and_feishu_group_toggles_are_platform_scoped(db, user_a, monkeypatch):
+async def test_qq_telegram_and_feishu_group_toggles_are_platform_scoped(db, user_a, user_b, monkeypatch):
     from fastapi import HTTPException
     from app.api.v1 import user_bots
     from app.api.v1.user_bots import BotUpdate, update_my_bot
@@ -54,13 +54,17 @@ async def test_qq_and_feishu_group_toggles_are_platform_scoped(db, user_a, monke
     from app.core import events
     monkeypatch.setattr(events, "bump_context_revision", no_op)
     qq = UserBot(user_id=user_a.id, platform="qq", app_id="qq-app")
+    telegram = UserBot(user_id=user_a.id, platform="telegram", app_id="telegram-app")
     feishu = UserBot(user_id=user_a.id, platform="feishu", app_id="fs-app")
-    db.add_all([qq, feishu])
+    other_telegram = UserBot(user_id=user_b.id, platform="telegram", app_id="other-telegram-app")
+    db.add_all([qq, telegram, feishu, other_telegram])
     await db.commit()
 
     await update_my_bot(qq.id, BotUpdate(group_chat_enabled=True), user_a, db)
+    await update_my_bot(telegram.id, BotUpdate(group_chat_enabled=True), user_a, db)
     await update_my_bot(feishu.id, BotUpdate(feishu_group_chat_enabled=False), user_a, db)
     assert qq.group_chat_enabled is True
+    assert telegram.group_chat_enabled is True
     assert feishu.feishu_group_chat_enabled is False
 
     with pytest.raises(HTTPException) as qq_cross_write:
@@ -69,8 +73,13 @@ async def test_qq_and_feishu_group_toggles_are_platform_scoped(db, user_a, monke
     with pytest.raises(HTTPException) as feishu_cross_write:
         await update_my_bot(feishu.id, BotUpdate(group_chat_enabled=True), user_a, db)
     assert feishu_cross_write.value.status_code == 400
+    with pytest.raises(HTTPException) as other_owner_write:
+        await update_my_bot(other_telegram.id, BotUpdate(group_chat_enabled=True), user_a, db)
+    assert other_owner_write.value.status_code == 404
     assert qq.group_chat_enabled is True
+    assert telegram.group_chat_enabled is True
     assert feishu.feishu_group_chat_enabled is False
+    assert other_telegram.group_chat_enabled is False
 
 
 @pytest.mark.asyncio
