@@ -5,6 +5,12 @@ const filesyncAdminUiBase = {
 } as const
 
 Object.assign(filesyncAdminUiBase['zh-CN'], {
+  queueAll: '一键排入全部对账（{count}）',
+  queueingAll: '正在排队…',
+  queueAllTitle: '排入全部同步绑定对账',
+  queueAllConfirm: '将为全部 {count} 个有效普通本地绑定排入完整修复核对，不受当前筛选或可见行影响。已有排队任务会复用，存在未完成任务的绑定会跳过。本操作不会删除物理文件或数据库记录，是否继续？',
+  queueAllConfirmButton: '确认排入',
+  queueAllResult: '批量排队完成：队列中 {queued} 个，已有其他未完成任务跳过 {busy} 个，状态变化跳过 {skipped} 个（符合条件 {eligible} 个）。',
   watcherHealth: '监听状态：{status}',
   manualReconcileNeeded: '可能存在未同步变化，请手动核对',
   noManualReconcileNeeded: '暂无已知监听缺口',
