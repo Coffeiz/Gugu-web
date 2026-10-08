@@ -13,9 +13,7 @@ import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 import {
   isLiveEventPayload,
-  isFileSyncEventPayload,
   isTrashPurgeProgressEvent,
-  type FileSyncEventPayload,
   type LiveEventPayload,
   type TrashPurgeProgressEvent,
 } from '@/types/live-events'
@@ -34,11 +32,9 @@ export const useLiveStore = defineStore('live', () => {
   // 所有实时变化统一通过 canonical 事件传递；业务 store 自己决定增量应用或重拉。
   const resourceEvent = ref<(LiveEventPayload & { _t: number }) | null>(null)
   const trashPurgeEvent = ref<(TrashPurgeProgressEvent & { _t: number }) | null>(null)
-  const fileSyncEvent = ref<(FileSyncEventPayload & { _t: number }) | null>(null)
   let _seq = 0
   const seenEventIds = new Set<string>()
   const lastCanonicalRevision = new Map<string, number>()
-  const lastFileSyncRevision = new Map<string, number>()
 
   // 同步拿 uiStore（Pinia 允许在 setup 里调其他 store）
   const uiStore = useUiStore()
@@ -141,17 +137,6 @@ export const useLiveStore = defineStore('live', () => {
                 trashPurgeEvent.value = { ...evt, _t: ++_seq }
                 continue
               }
-              if (isFileSyncEventPayload(evt)) {
-                if (!rememberEvent(evt.event_id)) continue
-                const key = evt.type === 'filesync.run.changed'
-                  ? `run:${evt.run_id}`
-                  : `binding:${evt.binding_id}`
-                const previousRevision = lastFileSyncRevision.get(key)
-                if (previousRevision != null && evt.revision <= previousRevision) continue
-                lastFileSyncRevision.set(key, evt.revision)
-                fileSyncEvent.value = { ...evt, _t: ++_seq }
-                continue
-              }
               if (isLiveEventPayload(evt)) {
                 const canonical = evt as LiveEventPayload
                 if (!rememberEvent(canonical.event_id)) continue
@@ -203,17 +188,15 @@ export const useLiveStore = defineStore('live', () => {
     Object.keys(rev).forEach(resource => { rev[resource] = 0 })
     resourceEvent.value = null
     trashPurgeEvent.value = null
-    fileSyncEvent.value = null
     seenEventIds.clear()
     lastCanonicalRevision.clear()
-    lastFileSyncRevision.clear()
     _catchUpTimers.forEach(clearTimeout)
     _catchUpTimers = []
     retry = 0
     everConnected = false
   }
 
-  return { rev, connected, resourceEvent, trashPurgeEvent, fileSyncEvent, bump, connect, disconnect, resetAccountState }
+  return { rev, connected, resourceEvent, trashPurgeEvent, bump, connect, disconnect, resetAccountState }
 })
 
 function _sleep(ms: number) {
