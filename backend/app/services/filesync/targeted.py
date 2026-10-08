@@ -47,6 +47,7 @@ from app.services.filesync.protocol import (
     validate_sync_path,
 )
 from app.services.filesync.reconcile import (
+    FileChangedDuringRead,
     SyncSummary,
     _directory_fingerprint,
     _classify_path,
@@ -196,8 +197,16 @@ async def _project_changed_file(
         else:
             current = path.stat(follow_symlinks=False)
             if (current.st_size, current.st_mtime_ns, current.st_ino) != verified_file[:3]:
-                raise ValueError("文件在扫描后发生变化")
+                raise FileChangedDuringRead("文件在扫描后发生变化")
             observed = verified_file[3]
+    except (FileNotFoundError, FileChangedDuringRead):
+        if verified_file is not None:
+            # 手动对账的复核证据已失效，不能作为成功覆盖项；保留缺口等待再次核对。
+            _record_rejection(summary_inout, "file_io")
+            return 0
+        # watcher 事件排队期间文件可能已被删除、移动或仍在写入；这是过期/中间态事件，
+        # 后续 unlink/change 会补齐事实，不应把正常文件活动记为同步缺口。
+        return 0
     except (OSError, ValueError) as exc:
         _record_rejection(summary_inout, _path_rejection_reason(exc, object_type="file"))
         return 0
@@ -354,7 +363,11 @@ async def _project_folder_created(
     directory = root / relative
     try:
         validate_sync_path(root, relative)
+        if not directory.exists() and not directory.is_symlink():
+            return
         if not directory.is_dir() or directory.is_symlink():
+            if not directory.exists() and not directory.is_symlink():
+                return
             raise ValueError("目录不存在或是符号链接")
         if workspace_directory_id is not None:
             space, project_id, folder_names = "workspace", None, list(directory.relative_to(root).parts)

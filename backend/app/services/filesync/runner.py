@@ -948,6 +948,9 @@ async def _execute_scope(
             signals.timed_out.set()
             signals.stop.set()
             raise ScanTimedOut("核对任务超过执行期限")
+        if counts["permissionSkipped"]:
+            # 可读范围的投影可以保留，但未覆盖权限受限子树不能声明完整核对成功。
+            return "failed", "scan_permission_denied", counts
         if counts["failed"]:
             return "failed", "path_projection_failed", counts
         return "succeeded", None, counts

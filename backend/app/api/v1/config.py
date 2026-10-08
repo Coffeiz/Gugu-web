@@ -201,24 +201,23 @@ def _is_internal_key(k: str) -> bool:
 
 @router.get("/reconcile-storage")
 async def reconcile_storage(db: AsyncSession = Depends(get_db)):
-    """存储 ↔ DB 文件表对账（**只读，不改任何数据**）。以实际存储为准判断文件到底在不在：
+    """物理存储对象 ↔ File 表对账（**只读，不改任何数据**）。以实际存储为准判断文件到底在不在：
     - 幽灵记录：DB 有行，但物理文件缺失（app 里看得到、点开 404）
     - 孤儿文件：物理文件存在，但 DB 没有对应记录（app 里看不见）
+
+    目录缺失、孤儿目录和文件位置漂移由 folder-doctor 独立扫描，避免重复遍历。
     """
     from app.models import File, Project
     from app.services.storage import get_storage
     cfg = get_settings()
     storage = get_storage()
     try:
-        all_keys = set(await storage.list_keys())
+        all_keys = set(await storage.list_keys_filtered(lambda key: not _is_internal_key(key)))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"列出存储失败：{type(e).__name__}: {e}")
-    file_keys = {k for k in all_keys if not _is_internal_key(k)}
-
-    # 仅比较 storage_key 会漏掉“DB 和物理文件都指向同一个旧路径、但文件夹归属已变”的历史错位。
-    # 复用目录对账的路径真源，把这类文件一并呈现在文件对账入口。
-    from app.services.storage import folder_doctor
-    doctor_report = await folder_doctor.scan(db, storage)
+        diag_log("admin.reconcile_storage.scan", e)
+        detail = "存储目录权限不足，扫描未完成；未生成缺失文件结论" if isinstance(e, PermissionError) else "列出存储失败，扫描未完成"
+        raise HTTPException(status_code=500, detail=detail) from e
+    file_keys = all_keys
 
     rows = (await db.execute(select(File))).scalars().all()
     scoped_rows = [f for f in rows if not _is_internal_key(f.storage_key)]
@@ -244,9 +243,7 @@ async def reconcile_storage(db: AsyncSession = Depends(get_db)):
         "orphan_count": len(orphans),
         "ghosts": ghosts[:300],
         "orphans": orphans[:300],
-        "misplaced_count": len(doctor_report.misplaced_files),
-        "misplaced_files": doctor_report.misplaced_files[:300],
-        "truncated": len(ghosts) > 300 or len(orphans) > 300 or doctor_report.truncated,
+        "truncated": len(ghosts) > 300 or len(orphans) > 300,
     }
 
 
@@ -675,7 +672,7 @@ async def scan_path_migration(db: AsyncSession = Depends(get_db)):
     from app.services.storage import get_storage
 
     storage = get_storage()
-    keys = {k for k in await storage.list_keys() if not _is_internal_key(k)}
+    keys = set(await storage.list_keys_filtered(lambda key: not _is_internal_key(key)))
     rows = (await db.execute(select(File).where(File.deleted_at.is_(None)))).scalars().all()
     by_identity: dict[tuple, list] = {}
     for file in rows:

@@ -93,14 +93,42 @@ class SandboxdPtyClient:
 
 
 class SandboxdClient:
+    _cancel_timeout = 1.0
+
     def __init__(self, socket_path: str | Path, *, connect_timeout: float = 2.0):
         self.socket_path = str(socket_path)
         self.connect_timeout = connect_timeout
+
+    async def prepare_filesync_access(self, workspace_root: str | Path) -> None:
+        """请求 sandboxd 在单个已授权 workspace 内修复 watcher ACL。"""
+        writer = None
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path), timeout=self.connect_timeout,
+            )
+            writer.write((json.dumps({
+                "operation": "filesync_prepare", "root": str(workspace_root),
+            }) + "\n").encode("utf-8"))
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout=125)
+            value = json.loads(line.decode("utf-8"))
+            if not isinstance(value, dict) or not value.get("ok"):
+                raise SandboxdUnavailable("文件同步工作区权限初始化失败")
+        except (OSError, asyncio.TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            raise SandboxdUnavailable("sandboxd 文件同步权限助手不可用") from exc
+        finally:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except OSError:
+                    pass
 
     async def execute(self, request: ExecuteRequest) -> dict[str, Any]:
         return await self.execute_stream(request)
 
     async def cancel(self, request_id: str) -> bool:
+        writer = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(self.socket_path), timeout=self.connect_timeout,
@@ -108,12 +136,17 @@ class SandboxdClient:
             writer.write((json.dumps({"operation": "cancel", "request_id": request_id}) + "\n").encode())
             await writer.drain()
             line = await asyncio.wait_for(reader.readline(), timeout=self.connect_timeout)
-            writer.close()
-            await writer.wait_closed()
             value = json.loads(line.decode("utf-8"))
             return bool(value.get("cancelled"))
         except (OSError, asyncio.TimeoutError, ValueError, json.JSONDecodeError):
             return False
+        finally:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except OSError:
+                    pass
 
     async def execute_stream(self, request: ExecuteRequest, on_output=None) -> dict[str, Any]:
         try:
@@ -142,6 +175,17 @@ class SandboxdClient:
                         await on_output(str(value.get("stream") or "stdout"), str(value.get("data") or ""))
                     continue
                 return value
+        except asyncio.CancelledError:
+            # 关闭执行连接只会断开输出流；sandboxd 中的任务仍可能继续运行。
+            # 用独立控制连接通知它取消，并严格限制清理等待时间。
+            if request.request_id:
+                cancel_task = asyncio.create_task(self.cancel(request.request_id))
+                try:
+                    await asyncio.wait_for(asyncio.shield(cancel_task), timeout=self._cancel_timeout)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    cancel_task.cancel()
+                    await asyncio.gather(cancel_task, return_exceptions=True)
+            raise
         except (OSError, asyncio.TimeoutError) as exc:
             raise SandboxdUnavailable("sandboxd 连接中断，未执行命令") from exc
         finally:

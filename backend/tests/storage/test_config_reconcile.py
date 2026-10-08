@@ -102,7 +102,8 @@ async def test_import_orphan_rolls_back_project_when_path_folder_is_invalid(db, 
     project_id = 987656
     key = (
         f"{user_a.id}/项目文件/2026/10/不可留下空项目 #{project_id}/"
-        f"{'超' * 201}/文件.md"
+        # 使用单字节合成目录，超过业务 200 字符上限但不超过文件系统单段字节限制。
+        f"{'x' * 201}/文件.md"
     )
     await storage.put(key, b"orphan content")
 
@@ -315,10 +316,10 @@ async def test_storage_audit_returns_complete_ghost_ids_and_excludes_workspace_r
         storage=SimpleNamespace(backend="local", local_path="test-storage"),
     ))
 
-    async def empty_folder_report(*_args):
-        return SimpleNamespace(misplaced_files=[], truncated=False)
+    async def unexpected_directory_scan(*_args):
+        raise AssertionError("文件对账不应重复执行目录扫描")
 
-    monkeypatch.setattr(folder_doctor, "scan", empty_folder_report)
+    monkeypatch.setattr(folder_doctor, "scan", unexpected_directory_scan)
     report = await config_api.reconcile_storage(db=db)
 
     assert report["ghost_count"] == 301
@@ -327,6 +328,9 @@ async def test_storage_audit_returns_complete_ghost_ids_and_excludes_workspace_r
     assert len(report["ghost_ids"]) == 301
     assert set(report["ghost_ids"]) == {row.id for row in rows}
     assert runtime.id not in report["ghost_ids"]
+    assert report["truncated"] is True
+    assert "misplaced_count" not in report
+    assert "misplaced_files" not in report
 
 
 async def test_local_storage_stat_propagates_permission_error_instead_of_reporting_missing(
@@ -349,6 +353,42 @@ async def test_local_storage_stat_propagates_permission_error_instead_of_reporti
         await storage.stat("locked/file.txt")
 
 
+async def test_storage_reconcile_prunes_private_workspace_before_walking(
+    db, user_a, tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace
+
+    storage = LocalStorageBackend(Path(tmp_path))
+    ordinary_key = f"{user_a.id}/个人文件/note.txt"
+    await storage.put(ordinary_key, b"file library object")
+    private_dir = storage.root / str(user_a.id) / "workspace" / "default" / ".local"
+    private_dir.mkdir(parents=True)
+    (private_dir / "runtime-cache").write_text("not a file-library object")
+
+    original_walk = storage_module.os.walk
+    visited = []
+
+    def track_walk(*args, **kwargs):
+        for directory, dirnames, filenames in original_walk(*args, **kwargs):
+            current = Path(directory)
+            visited.append(current)
+            if current == private_dir:
+                raise AssertionError("文件对账遍历了已排除的 workspace 私有目录")
+            yield directory, dirnames, filenames
+
+    monkeypatch.setattr(storage_module.os, "walk", track_walk)
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+    monkeypatch.setattr(config_api, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(backend="local", local_path="test-storage"),
+    ))
+
+    report = await config_api.reconcile_storage(db=db)
+
+    assert report["storage_objects"] == 1
+    assert report["orphans"] == [ordinary_key]
+    assert private_dir not in visited
+
+
 async def test_path_migration_rechecks_identity_uniqueness(db, user_a, tmp_path, monkeypatch):
     storage = LocalStorageBackend(Path(tmp_path))
     old_key = f"{user_a.id}/个人文件/old.txt"
@@ -369,6 +409,35 @@ async def test_path_migration_rechecks_identity_uniqueness(db, user_a, tmp_path,
     result = await config_api.repair_path_migration(body, db=db)
     assert result["done"] == []
     assert result["failed"][0]["error"] == "路径身份不再唯一，请重新扫描"
+
+
+async def test_path_migration_scan_prunes_private_workspace_before_walking(
+    db, user_a, tmp_path, monkeypatch,
+):
+    storage = LocalStorageBackend(Path(tmp_path))
+    private_dir = storage.root / str(user_a.id) / "workspace" / "default" / ".local"
+    private_dir.mkdir(parents=True)
+    (private_dir / "runtime-cache").write_text("not a file-library object")
+
+    original_walk = storage_module.os.walk
+    visited = []
+
+    def track_walk(*args, **kwargs):
+        for directory, dirnames, filenames in original_walk(*args, **kwargs):
+            current = Path(directory)
+            visited.append(current)
+            if current == private_dir:
+                raise AssertionError("路径归属扫描遍历了已排除的 workspace 私有目录")
+            yield directory, dirnames, filenames
+
+    monkeypatch.setattr(storage_module.os, "walk", track_walk)
+    monkeypatch.setattr(storage_module, "get_storage", lambda: storage)
+
+    report = await config_api.scan_path_migration(db=db)
+
+    assert report["candidate_count"] == 0
+    assert report["ambiguous_count"] == 0
+    assert private_dir not in visited
 
 
 async def test_path_migration_reports_missing_file_ids(db, tmp_path, monkeypatch):

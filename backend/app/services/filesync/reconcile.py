@@ -61,6 +61,10 @@ _CACHE_ADVISE_THRESHOLD_BYTES = 8 * 1024 * 1024
 _CACHE_ADVISE_INTERVAL_BYTES = 8 * 1024 * 1024
 
 
+class FileChangedDuringRead(ValueError):
+    """读取期间文件仍在变化；等待后续 watcher 事件，不作为路径故障。"""
+
+
 def _advise_drop_cache(fd: int, offset: int, length: int, advice: int) -> bool:
     fadvise = getattr(os, "posix_fadvise", None)
     if fadvise is None:
@@ -101,7 +105,7 @@ def _stable_fingerprint(path: Path, *, discard_cache: bool = False) -> str:
     digest = _fingerprint(path, discard_cache=should_discard_cache)
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-        raise ValueError("文件仍在写入")
+        raise FileChangedDuringRead("文件仍在写入")
     return digest
 
 
@@ -554,6 +558,8 @@ async def reconcile_local_directory(
                     if stat_cache:
                         stat_cache.store(relative, path, observed)
                 planned_fingerprints[key] = observed
+            except FileChangedDuringRead:
+                continue
             except (OSError, ValueError):
                 continue
             candidates = [
@@ -600,6 +606,8 @@ async def reconcile_local_directory(
                 observed = _stable_fingerprint(path, discard_cache=discard_hash_cache)
                 if stat_cache:
                     stat_cache.store(relative, path, observed)
+        except FileChangedDuringRead:
+            continue
         except (OSError, ValueError):
             rejected += 1
             continue
@@ -690,6 +698,8 @@ async def reconcile_local_directory(
                 observed = _stable_fingerprint(path, discard_cache=discard_hash_cache)
                 if stat_cache:
                     stat_cache.store(relative, path, observed)
+        except FileChangedDuringRead:
+            continue
         except (OSError, ValueError):
             rejected += 1
             continue

@@ -49,6 +49,24 @@ def test_sync_path_rejects_symlink_escape(tmp_path):
         validate_sync_path(tmp_path, "link/secret.txt")
 
 
+def test_stable_fingerprint_marks_concurrent_write_as_transient(tmp_path, monkeypatch):
+    """哈希前后文件变化要被识别为临时写入，不混入非法路径计数。"""
+    import app.services.filesync.reconcile as reconcile
+
+    path = tmp_path / "changing.txt"
+    path.write_text("before", encoding="utf-8")
+    fingerprint = reconcile._fingerprint
+
+    def change_after_read(target, **kwargs):
+        digest = fingerprint(target, **kwargs)
+        target.write_text("after write", encoding="utf-8")
+        return digest
+
+    monkeypatch.setattr(reconcile, "_fingerprint", change_after_read)
+    with pytest.raises(reconcile.FileChangedDuringRead):
+        reconcile._stable_fingerprint(path)
+
+
 def test_filesync_is_enabled_by_default():
     assert FileSyncSettings().enabled is True
 
@@ -993,6 +1011,38 @@ async def test_targeted_projection_handles_create_update_move_delete(db, user_a,
     binding = (await db.scalars(select(FileSyncBinding).where(
         FileSyncBinding.user_id == user_a.id,
     ))).one()
+
+    # watcher 读取事件时文件还在变化，或随后被删除：过期/中间态不应把绑定降级；
+    # 随后的精确删除事件仍须正常软删除已有 File 行。
+    with monkeypatch.context() as changing_read:
+        changing_read.setattr(
+            targeted,
+            "_stable_fingerprint",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                reconcile.FileChangedDuringRead("合成的并发写入")
+            ),
+        )
+        transient = await targeted.project_path_events(
+            db, user_a.id, binding, root, targeted.PathEventBatch(changed={"base.txt"}),
+        )
+    assert transient.rejected == 0
+    assert transient.rejection_reasons == ()
+
+    base_file = (await db.scalars(select(File).where(
+        File.user_id == user_a.id, File.storage_key.endswith("/个人文件/base.txt"),
+    ))).one()
+    (root / "base.txt").unlink()
+    stale = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(changed={"base.txt"}),
+    )
+    assert stale.rejected == 0
+    deleted_summary = await targeted.project_path_events(
+        db, user_a.id, binding, root, targeted.PathEventBatch(deleted={"base.txt"}),
+    )
+    await db.commit()
+    await db.refresh(base_file)
+    assert deleted_summary.deleted == 1
+    assert base_file.deleted_at is not None
 
     # 创建
     (root / "new.txt").write_text("v1", encoding="utf-8")

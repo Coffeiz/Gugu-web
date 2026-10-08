@@ -235,6 +235,55 @@ async def test_initialize_task_imports_disk_files_and_persists_terminal_results(
 
 
 @pytest.mark.asyncio
+async def test_permission_excluded_subtree_cannot_finish_reconcile_as_success(
+    db, user_a, monkeypatch,
+):
+    """可读文件可以投影，但无法覆盖的子树必须保留失败和缺口，不误删旧记录。"""
+    import app.services.filesync.runner as runner
+    import app.services.filesync.scan as scan
+    import app.services.filesync.targeted as targeted
+
+    root = Path(runner.get_settings().storage.local_path).resolve() / str(user_a.id)
+    personal = root / "个人文件"
+    locked = personal / "受限"
+    locked.mkdir(parents=True)
+    (personal / "可读.txt").write_text("合成内容")
+    old = File(user_id=user_a.id, display_name="旧文件", ext="txt", space="personal",
+               storage_key=f"{user_a.id}/个人文件/受限/旧文件.txt")
+    binding = FileSyncBinding(user_id=user_a.id, source="local_directory", mode="bidirectional",
+                              status="active", root_path=".", root_fingerprint=_root_fingerprint(root),
+                              needs_reconcile=True)
+    db.add_all([old, binding])
+    await db.flush()
+    run = await enqueue_reconcile_run(db, user_id=user_a.id, binding_id=binding.id,
+                                      action="repair", allow_delete=True)
+    await db.commit()
+    original_scandir = os.scandir
+
+    def deny_subtree(path):
+        if Path(path) == locked:
+            raise PermissionError("合成目录不可访问")
+        return original_scandir(path)
+
+    monkeypatch.setattr(scan.os, "scandir", deny_subtree)
+    monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
+    claimed = await claim_next_run(db, "runner-test", now=now_utc())
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await _run_claimed(db_session._SessionLocal, executor, claimed, "runner-test", asyncio.Event())
+    async with db_session._SessionLocal() as check:
+        stored = await check.get(FileSyncReconcileRun, run.id)
+        preserved = await check.get(File, old.id)
+        health = await check.get(FileSyncBinding, binding.id)
+    assert stored.status == "failed"
+    assert stored.error_code == "scan_permission_denied"
+    assert stored.result_counts["permissionSkipped"] == 1
+    assert preserved.deleted_at is None
+    assert health.needs_reconcile is True
+
+
+@pytest.mark.asyncio
 async def test_user_root_with_only_workspace_records_is_an_empty_library_scope(
     db, user_a, monkeypatch,
 ):

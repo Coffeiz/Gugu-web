@@ -21,6 +21,7 @@ from app.services.filesync.health import update_binding_health
 from app.services.filesync.protocol import FileSyncSource, create_binding, is_file_sync_enabled
 from app.services.filesync.reconcile import _root_fingerprint
 from app.services.filesync.targeted import PathEventBatch, PathProjectionOptions, project_path_events
+from agent.sandbox.client import SandboxdClient, SandboxdUnavailable
 from app.services.filesync.ts_sidecar import FileSyncSidecar, FileSyncSidecarUnavailable
 from app.services.workspaces import resolve_workspace_root, workspace_shell_supported
 
@@ -174,6 +175,12 @@ class FileSyncWatcherManager:
                 await db.rollback()
                 return
             await db.commit()
+
+    async def _prepare_filesync_access(self, root: Path) -> None:
+        """按需给 watcher 进程修复沙盒私有目录的 ACL。"""
+        sandbox_settings = get_settings().sandbox
+        socket_path = sandbox_settings.sandboxd_socket
+        await SandboxdClient(socket_path, connect_timeout=3).prepare_filesync_access(root)
 
     def _discard_buffered_batch(self, binding_id: int) -> None:
         batch = self._path_events.pop(binding_id, None)
@@ -384,6 +391,23 @@ class FileSyncWatcherManager:
             targets = [binding_id] if isinstance(binding_id, int) else list(self._binding_roots)
             for target in targets:
                 if target in self._binding_roots:
+                    if (
+                        kind == "needs_reconcile" and code == "watcher_permission_denied"
+                        and get_settings().sandbox.manager_mode in {"embedded", "external"}
+                        and self._rebuild_attempts.get(target, 0) < self.MAX_PATH_RETRIES
+                    ):
+                        binding_spec = self._binding_roots[target]
+                        await self._sidecar.unwatch(target)
+                        self._ready_bindings.discard(target)
+                        self._rebuild_bindings.add(target)
+                        try:
+                            await self._prepare_filesync_access(binding_spec[1])
+                        except SandboxdUnavailable:
+                            await self._health(
+                                target, "degraded", code="workspace_permission_repair_failed", gap=True,
+                            )
+                            await self._enqueue_gap_repair(target)
+                            continue
                     await self._health(target, "degraded", code=code, gap=True)
                     if kind == "needs_reconcile":
                         await self._enqueue_gap_repair(target)
