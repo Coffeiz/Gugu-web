@@ -112,15 +112,16 @@ test('暗色月视图中框选范围的周末使用选中底色', async ({ page 
   const weekendPaint = await page.locator('.month-cell.in-range.is-weekend:not(.range-start):not(.range-end)').evaluate(cell => {
     const probe = document.createElement('div')
     probe.style.backgroundColor = 'var(--calendar-weekend-selected-bg)'
-    document.body.append(probe)
+    // 探针必须继承日历单元格的主题变量；放在 body 会绕过 .cal-page 的局部 token。
+    cell.append(probe)
     const selected = getComputedStyle(probe).backgroundColor
     probe.style.backgroundColor = 'var(--calendar-weekend-bg)'
     const regular = getComputedStyle(probe).backgroundColor
     probe.remove()
     return { actual: getComputedStyle(cell).backgroundColor, selected, regular }
   })
-  expect(readCssAlpha(weekendPaint.actual)).toBeCloseTo(readCssAlpha(weekendPaint.selected), 2)
-  expect(Math.abs(readCssAlpha(weekendPaint.actual) - readCssAlpha(weekendPaint.regular))).toBeGreaterThan(0.005)
+  expect(weekendPaint.actual).toBe(weekendPaint.selected)
+  expect(weekendPaint.actual).not.toBe(weekendPaint.regular)
 })
 
 test('周末作为框选头尾时比范围内的周末日期更突出', async ({ page }) => {
