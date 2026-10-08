@@ -1,27 +1,52 @@
-from sqlalchemy.dialects import sqlite
+from app.core.tz import now_utc
+from app.models import File, Folder, WorkspaceDirectory
+from app.services.files.browser import get_file_tree_rows, list_file_rows
 
-from app.models import File, Folder
-from app.services.files.browser import file_listing_query, get_file_tree_rows
 
+async def test_workspace_listing_returns_only_live_files_from_the_requested_root_and_folder(db, user_a):
+    workspace = WorkspaceDirectory(
+        user_id=user_a.id, name="测试工作区", directory_name="test-workspace",
+    )
+    other_workspace = WorkspaceDirectory(
+        user_id=user_a.id, name="另一个工作区", directory_name="other-workspace",
+    )
+    folder = Folder(
+        user_id=user_a.id, name="子目录", workspace_directory=workspace,
+    )
+    db.add_all([workspace, other_workspace, folder])
+    await db.flush()
 
-def test_workspace_root_listing_excludes_nested_files():
-    statement = file_listing_query(
-        7, space="workspace", workspace_directory_id=12,
+    db.add_all([
+        File(
+            user_id=user_a.id, display_name="工作区根文件", ext="TXT", space="workspace",
+            workspace_directory=workspace, storage_key="workspace/root.txt",
+        ),
+        File(
+            user_id=user_a.id, display_name="子目录文件", ext="TXT", space="workspace",
+            workspace_directory=workspace, folder=folder, storage_key="workspace/child.txt",
+        ),
+        File(
+            user_id=user_a.id, display_name="其他工作区文件", ext="TXT", space="workspace",
+            workspace_directory=other_workspace, storage_key="other-workspace/root.txt",
+        ),
+        File(
+            user_id=user_a.id, display_name="已删除文件", ext="TXT", space="workspace",
+            workspace_directory=workspace, storage_key="workspace/deleted.txt",
+            deleted_at=now_utc(),
+        ),
+    ])
+    await db.flush()
+
+    root_rows = await list_file_rows(
+        db, user_a.id, space="workspace", workspace_directory_id=workspace.id,
+    )
+    folder_rows = await list_file_rows(
+        db, user_a.id, space="workspace", workspace_directory_id=workspace.id,
+        folder_id=folder.id,
     )
 
-    sql = str(statement.compile(dialect=sqlite.dialect()))
-    assert "files.folder_id IS NULL" in sql
-    assert "files.workspace_directory_id = ?" in sql
-
-
-def test_workspace_folder_listing_keeps_exact_folder_scope():
-    statement = file_listing_query(
-        7, space="workspace", workspace_directory_id=12, folder_id=34,
-    )
-
-    sql = str(statement.compile(dialect=sqlite.dialect()))
-    assert "files.folder_id = ?" in sql
-    assert "files.folder_id IS NULL" not in sql
+    assert {row[0].display_name for row in root_rows} == {"工作区根文件"}
+    assert {row[0].display_name for row in folder_rows} == {"子目录文件"}
 
 
 async def test_file_tree_summary_counts_only_personal_root_files_and_folders(db, user_a):
