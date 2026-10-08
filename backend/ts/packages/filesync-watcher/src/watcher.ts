@@ -102,6 +102,12 @@ export class FileSystemWatcher {
     this.emit({ protocol: FILESYNC_PROTOCOL_VERSION, kind: "event", event: "ready", binding_id: bindingId });
   }
 
+  private reportPermissionGap(bindingId: number, binding: Binding): void {
+    // 单个私有子目录（例如 chmod 0700 的缓存目录）不应令整个工作区停止监听。
+    // 用脱敏错误码标记局部覆盖缺口，其他可访问目录仍保持实时同步。
+    this.reportGap(bindingId, binding, "watcher_permission_denied");
+  }
+
   private reportGap(bindingId: number, binding: Binding, code: string): void {
     if (binding.gapReported || !this.isCurrent(bindingId, binding)) return;
     binding.gapReported = true;
@@ -151,6 +157,10 @@ export class FileSystemWatcher {
       });
     } catch (error) {
       const errno = error as NodeJS.ErrnoException;
+      if (errno.code === "EACCES" || errno.code === "EPERM") {
+        this.reportPermissionGap(bindingId, binding);
+        return;
+      }
       this.emitError(bindingId, binding, errno.code === "ENOSPC" ? "watcher_limit_exceeded" : "watcher_error");
       return;
     }
@@ -164,6 +174,10 @@ export class FileSystemWatcher {
         const subscriber = this.bindings.get(subscriberId);
         if (!subscriber) continue;
         subscriber.watchedDirectories.delete(absolute);
+        if (error.code === "EACCES" || error.code === "EPERM") {
+          this.reportPermissionGap(subscriberId, subscriber);
+          continue;
+        }
         this.emitError(subscriberId, subscriber, error.code === "ENOSPC" ? "watcher_limit_exceeded" : "watcher_error");
       }
     });
@@ -189,7 +203,7 @@ export class FileSystemWatcher {
       const changedDuringScan = [...binding.pending];
       binding.pending.clear();
       for (const path of changedDuringScan) await this.processPath(bindingId, binding, path, "rename");
-      if (!binding.failed && !binding.gapReported && this.isCurrent(bindingId, binding)) {
+      if (!binding.failed && this.isCurrent(bindingId, binding)) {
         binding.ready = true;
         this.emitReady(bindingId);
       }
@@ -208,6 +222,11 @@ export class FileSystemWatcher {
       children = await readdir(directory, { withFileTypes: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return;
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (prefix && (code === "EACCES" || code === "EPERM")) {
+        this.reportPermissionGap(bindingId, binding);
+        return;
+      }
       throw error;
     }
     for (const child of children) {

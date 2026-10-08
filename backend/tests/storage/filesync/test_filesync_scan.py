@@ -145,6 +145,66 @@ def test_symlinks_are_excluded_without_following_and_only_block_when_they_hide_l
         manifest.close()
 
 
+def test_permission_denied_subtree_does_not_block_visible_files_or_delete_hidden_records(
+    tmp_path: Path, monkeypatch,
+):
+    """私有 0700 子目录不能中断整棵同步树，也不能让其中旧记录变成删除候选。"""
+    import app.services.filesync.scan as scan
+
+    root = tmp_path / "root"
+    private = root / "private"
+    visible = root / "visible"
+    private.mkdir(parents=True)
+    visible.mkdir()
+    (visible / "new.png").write_bytes(b"new image")
+    real_scandir = scan.os.scandir
+
+    def deny_private(path):
+        if Path(path).resolve() == private.resolve():
+            raise PermissionError("synthetic private directory")
+        return real_scandir(path)
+
+    monkeypatch.setattr(scan.os, "scandir", deny_private)
+    manifest = scan_to_manifest(
+        root,
+        temp_directory=tmp_path / "tmp",
+        stop_event=Event(),
+        max_manifest_bytes=1024 * 1024,
+    )
+    try:
+        connection = connect_manifest(manifest)
+        try:
+            connection.execute(
+                "INSERT INTO db_files "
+                "(id, relative_path, storage_key, size_bytes, version, display_name, ext, space) "
+                "VALUES (1, 'private/old.png', 'user/workspace/private/old.png', "
+                "7, 1, 'old', 'png', 'workspace')"
+            )
+            connection.commit()
+            exclusions = connection.execute(
+                "SELECT relative_path, reason FROM excluded_paths"
+            ).fetchall()
+        finally:
+            connection.close()
+
+        candidates = [
+            item
+            for batch in iter_reconcile_candidate_batches(manifest)
+            for item in batch
+        ]
+        assert manifest.scanned_count == 3
+        assert manifest.rejected_count == 1
+        assert manifest.permission_excluded_count == 1
+        assert exclusions == [("private", "permission")]
+        assert not manifest_exclusions_overlap_database(manifest)
+        assert [(item.relative_path, item.operation) for item in candidates] == [
+            ("visible", "create"),
+            ("visible/new.png", "create"),
+        ]
+    finally:
+        manifest.close()
+
+
 def test_manifest_budget_failure_removes_partial_manifest_and_never_returns_scan(tmp_path: Path):
     root = tmp_path / "root"
     root.mkdir()

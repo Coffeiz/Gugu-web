@@ -30,7 +30,6 @@ async def update_binding_health(
     if changed or gap_detected:
         await db.commit()
         await publish_filesync_binding_health_changed(
-            binding.user_id,
             binding_id=binding.id,
             revision=binding.health_revision,
         )

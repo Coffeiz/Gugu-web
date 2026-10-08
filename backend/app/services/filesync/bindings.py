@@ -58,41 +58,6 @@ def _normalize_root_path(value: str | None) -> str:
     return normalize_relative_path(value)
 
 
-async def shell_quota_tracking_ready(
-    db: AsyncSession, user_id, workspace_id: int | None, *, include_all: bool = False,
-) -> bool:
-    """确认 Filesync watcher 覆盖 Shell 可写范围，才能跳过全量配额校准。"""
-    ready = (
-        FileSyncBinding.user_id == user_id,
-        FileSyncBinding.source == FileSyncSource.LOCAL_DIRECTORY,
-        FileSyncBinding.status == "active",
-        FileSyncBinding.mode != FileSyncMode.MIRROR_OUT,
-        FileSyncBinding.watcher_status == "ready",
-        FileSyncBinding.needs_reconcile.is_(False),
-    )
-    if include_all or workspace_id is None:
-        # 完整用户沙盒可写到个人文件和项目文件；必须有覆盖整个用户存储根
-        # 的绑定。普通未绑定会话使用默认 Workspace，也由这条根绑定覆盖。
-        return await db.scalar(select(FileSyncBinding.id).where(
-            *ready,
-            FileSyncBinding.workspace_id.is_(None),
-            FileSyncBinding.root_path == ".",
-        ).limit(1)) is not None
-
-    workspace_binding_id = await db.scalar(select(FileSyncBinding.id).where(
-        *ready,
-        FileSyncBinding.workspace_id == workspace_id,
-    ).limit(1))
-    if workspace_binding_id is not None:
-        return True
-    # 整个用户存储根上的 watcher 也覆盖单个 workspace 会话；反向不成立。
-    return await db.scalar(select(FileSyncBinding.id).where(
-        *ready,
-        FileSyncBinding.workspace_id.is_(None),
-        FileSyncBinding.root_path == ".",
-    ).limit(1)) is not None
-
-
 def resolve_local_binding_root(user_id, root_path: str | None) -> tuple[str, Path]:
     """只允许绑定当前用户 local storage 根下的相对目录。"""
     relative = _normalize_root_path(root_path)

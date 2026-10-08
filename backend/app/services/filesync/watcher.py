@@ -1,4 +1,4 @@
-"""本地文件事实源的 TS watcher supervisor；整树核对只由显式任务触发。"""
+"""本地文件事实源的 TS watcher supervisor；缺口修复交给持久化任务队列。"""
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +15,7 @@ from app.core.tz import now_utc
 from app.db import session as db_session
 from app.models import FileSyncBinding, User, Workspace
 from app.services.filesync.bindings import resolve_local_binding_root
+from app.services.filesync.jobs import ReconcileRunError, enqueue_reconcile_run
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.health import update_binding_health
 from app.services.filesync.protocol import FileSyncSource, create_binding, is_file_sync_enabled
@@ -28,6 +29,60 @@ def _has_changes(summary) -> bool:
     return bool(
         summary.created or summary.updated or summary.moved or summary.deleted
         or summary.folders_created or summary.folders_updated or summary.folders_deleted
+    )
+
+
+def _projection_rejection_code(summary) -> str:
+    """只将固定原因码和聚合计数写入绑定健康状态，不保存路径或文件名。"""
+    labels = {
+        "invalid_or_unsupported_path": "invalid",
+        "file_unavailable": "file_missing",
+        "file_filesystem_error": "file_io",
+        "folder_unavailable": "folder_missing",
+        "folder_filesystem_error": "folder_io",
+        "quota_exceeded": "quota",
+        "projection_root_unavailable": "root",
+        "snapshot_unavailable": "snapshot",
+    }
+    totals: dict[str, int] = {}
+    for reason, count in summary.rejection_reasons:
+        if count:
+            label = labels.get(reason, "other")
+            totals[label] = totals.get(label, 0) + int(count)
+    reasons = sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+    if not reasons:
+        return "path_projection_rejected"
+
+    prefix = "path_projection_rejected:"
+    details: list[str] = []
+    for label, count in reasons:
+        item = f"{label}={count}"
+        candidate = f"{prefix}{','.join((*details, item))}"
+        if len(candidate) > 64:
+            remainder = len(reasons) - len(details)
+            item = f"other={remainder}"
+            candidate = f"{prefix}{','.join((*details, item))}"
+            if len(candidate) > 64:
+                return "path_projection_rejected:multiple"
+            return candidate
+        details.append(item)
+    return f"{prefix}{','.join(details)}"
+
+
+_RETRYABLE_PROJECTION_REJECTIONS = {
+    "file_unavailable",
+    "file_filesystem_error",
+    "folder_unavailable",
+    "folder_filesystem_error",
+    "projection_root_unavailable",
+    "snapshot_unavailable",
+}
+
+
+def _has_retryable_projection_rejection(summary) -> bool:
+    return any(
+        reason in _RETRYABLE_PROJECTION_REJECTIONS and count > 0
+        for reason, count in summary.rejection_reasons
     )
 
 
@@ -96,6 +151,29 @@ class FileSyncWatcherManager:
             await update_binding_health(
                 db, binding_id, status=status, error_code=code, gap_detected=gap,
             )
+
+    async def _enqueue_gap_repair(self, binding_id: int) -> None:
+        """把监听缺口转成持久化的、禁止自动删除的修复任务。"""
+        async with db_session._SessionLocal() as db:
+            binding = await db.scalar(select(FileSyncBinding).where(
+                FileSyncBinding.id == binding_id,
+                FileSyncBinding.status == "active",
+                FileSyncBinding.mode != "mirror_out",
+            ))
+            if binding is None:
+                return
+            try:
+                await enqueue_reconcile_run(
+                    db,
+                    user_id=binding.user_id,
+                    binding_id=binding.id,
+                    action="repair",
+                    allow_delete=False,
+                )
+            except (LookupError, ReconcileRunError):
+                await db.rollback()
+                return
+            await db.commit()
 
     def _discard_buffered_batch(self, binding_id: int) -> None:
         batch = self._path_events.pop(binding_id, None)
@@ -307,6 +385,8 @@ class FileSyncWatcherManager:
             for target in targets:
                 if target in self._binding_roots:
                     await self._health(target, "degraded", code=code, gap=True)
+                    if kind == "needs_reconcile":
+                        await self._enqueue_gap_repair(target)
                     if kind == "error" and isinstance(target, int):
                         self._rebuild_bindings.add(target)
             return
@@ -314,6 +394,7 @@ class FileSyncWatcherManager:
             if isinstance(binding_id, int) and binding_id in self._binding_roots:
                 if not self._queue_path_event(event):
                     await self._health(binding_id, "degraded", code="event_buffer_overflow", gap=True)
+                    await self._enqueue_gap_repair(binding_id)
 
     async def _project_pending(self) -> None:
         for binding_id in tuple(self._path_events):
@@ -352,7 +433,12 @@ class FileSyncWatcherManager:
                         await db.commit()
                 self._retry_count.pop(binding_id, None)
                 if summary.rejected:
-                    await self._health(binding_id, "degraded", code="path_projection_rejected", gap=True)
+                    await self._health(
+                        binding_id, "degraded",
+                        code=_projection_rejection_code(summary), gap=True,
+                    )
+                    if _has_retryable_projection_rejection(summary):
+                        await self._enqueue_gap_repair(binding_id)
             except asyncio.CancelledError:
                 self._restore_batch(binding_id, batch)
                 raise
@@ -364,6 +450,7 @@ class FileSyncWatcherManager:
                 else:
                     self._retry_count.pop(binding_id, None)
                     await self._health(binding_id, "degraded", code="path_projection_failed", gap=True)
+                    await self._enqueue_gap_repair(binding_id)
                 logger.warning("[worker] 文件单路径投影失败 binding=%s error=%s", binding_id, type(exc).__name__)
 
     async def _consume_loop(self, stop_event: asyncio.Event) -> None:

@@ -40,6 +40,7 @@ class ScanManifest:
     path: Path
     scanned_count: int
     rejected_count: int
+    permission_excluded_count: int
     manifest_bytes: int
 
     def close(self) -> None:
@@ -107,7 +108,7 @@ def _create_manifest_file(directory: Path) -> Path:
         )
         connection.execute("CREATE INDEX ix_entries_kind_path ON entries(kind, relative_path)")
         connection.execute(
-            "CREATE TABLE excluded_paths (relative_path TEXT PRIMARY KEY)"
+            "CREATE TABLE excluded_paths (relative_path TEXT PRIMARY KEY, reason TEXT NOT NULL)"
         )
         connection.execute(
             "CREATE TABLE db_files ("
@@ -158,20 +159,36 @@ def scan_to_manifest(
         raise ScanIncomplete("无法创建临时扫描清单", code="scan_manifest_unavailable") from exc
     except sqlite3.Error as exc:
         raise ScanIncomplete("无法创建临时扫描清单", code="scan_manifest_unavailable") from exc
-    scanned = rejected = pending = 0
+    scanned = rejected = permission_excluded = pending = 0
     try:
         # DFS 持有每层一个 scandir 迭代器，不将宽目录一次性 list 化。
-        iterator_stack = [os.scandir(root)]
+        iterator_stack = [("", os.scandir(root))]
         from app.services.filesync.reconcile import _is_sync_temporary
+
+        def exclude(relative_path: str, reason: str) -> None:
+            connection.execute(
+                "INSERT OR IGNORE INTO excluded_paths (relative_path, reason) VALUES (?, ?)",
+                (relative_path, reason),
+            )
 
         try:
             while iterator_stack:
                 if stop_event.is_set():
                     raise InterruptedError("扫描已取消")
                 try:
-                    entry = next(iterator_stack[-1])
+                    entry = next(iterator_stack[-1][1])
                 except StopIteration:
-                    iterator_stack.pop().close()
+                    iterator_stack.pop()[1].close()
+                    continue
+                except PermissionError as exc:
+                    inaccessible = iterator_stack[-1][0]
+                    if not inaccessible:
+                        raise ScanIncomplete("同步根目录不可访问", code="binding_root_unavailable") from exc
+                    exclude(inaccessible, "permission")
+                    iterator_stack.pop()[1].close()
+                    rejected += 1
+                    permission_excluded += 1
+                    pending += 1
                     continue
                 item_path = Path(entry.path)
                 relative = item_path.relative_to(root).as_posix()
@@ -191,12 +208,20 @@ def scan_to_manifest(
                     if entry.is_symlink():
                         # 不跟随链接；后续与 DB 清单比对，若链接覆盖已有记录则整轮
                         # 停止，避免把链接目标或被遮蔽路径误判成缺失并删除。
-                        connection.execute(
-                            "INSERT OR IGNORE INTO excluded_paths VALUES (?)", (relative,),
-                        )
+                        exclude(relative, "symlink")
                         rejected += 1
                         pending += 1
                     else:
+                        if (
+                            included_root_entries is not None
+                            and relative.split("/", 1)[0] == "项目文件"
+                            and entry.is_file(follow_symlinks=False)
+                            and len(relative.split("/")) < 5
+                        ):
+                            # 项目文件根、年份层和月份层属于组织容器；这些层级中的
+                            # 文件没有项目归属，应从预览和修复候选中排除。
+                            exclude(relative, "out_of_scope")
+                            continue
                         validate_sync_path(root, relative)
                         if entry.is_dir(follow_symlinks=False):
                             if len(iterator_stack) >= _MAX_OPEN_DIRECTORIES:
@@ -207,7 +232,14 @@ def scan_to_manifest(
                             )
                             pending += 1
                             scanned += 1
-                            iterator_stack.append(os.scandir(item_path))
+                            try:
+                                iterator_stack.append((relative, os.scandir(item_path)))
+                            except PermissionError:
+                                # 只跳过当前子树；已有 File/Folder 记录不能因此被误删。
+                                exclude(relative, "permission")
+                                rejected += 1
+                                permission_excluded += 1
+                                pending += 1
                         elif entry.is_file(follow_symlinks=False):
                             size, mtime_ns, fingerprint = _digest_file(item_path, stop_event)
                             connection.execute(
@@ -218,8 +250,11 @@ def scan_to_manifest(
                             scanned += 1
                 except ScanIncomplete:
                     raise
-                except PermissionError as exc:
-                    raise ScanIncomplete("绑定范围内有目录或文件不可访问", code="scan_permission_denied") from exc
+                except PermissionError:
+                    exclude(relative, "permission")
+                    rejected += 1
+                    permission_excluded += 1
+                    pending += 1
                 except (OSError, ValueError) as exc:
                     raise ScanIncomplete("目录遍历或文件读取不完整", code="scan_scope_incomplete") from exc
                 if pending >= max(16, commit_entries):
@@ -231,7 +266,7 @@ def scan_to_manifest(
                     if on_progress is not None:
                         on_progress(scanned, current_bytes)
         finally:
-            for iterator in iterator_stack:
+            for _, iterator in iterator_stack:
                 iterator.close()
         connection.commit()
         _finalize_directory_fingerprints(connection, stop_event)
@@ -244,7 +279,9 @@ def scan_to_manifest(
             raise InterruptedError("扫描已取消")
         if on_progress is not None:
             on_progress(scanned, manifest_bytes)
-        return ScanManifest(manifest_path, scanned, rejected, manifest_bytes)
+        return ScanManifest(
+            manifest_path, scanned, rejected, permission_excluded, manifest_bytes,
+        )
     except BaseException as exc:
         connection.rollback()
         connection.close()
@@ -432,6 +469,16 @@ def iter_reconcile_candidate_batches(
             "LEFT JOIN entries ON entries.relative_path = paths.relative_path "
             "LEFT JOIN file_rows ON file_rows.relative_path = paths.relative_path "
             "LEFT JOIN folder_rows ON folder_rows.relative_path = paths.relative_path "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM excluded_paths AS excluded "
+            "  WHERE excluded.reason IN ('permission', 'out_of_scope') AND ("
+            "    paths.relative_path = excluded.relative_path OR ("
+            "      length(paths.relative_path) > length(excluded.relative_path) "
+            "      AND substr(paths.relative_path, 1, length(excluded.relative_path) + 1) "
+            "          = excluded.relative_path || '/'"
+            "    )"
+            "  )"
+            ") "
             "ORDER BY paths.relative_path"
         )
         batch: list[ReconcileCandidate] = []
@@ -473,7 +520,7 @@ def manifest_exclusions_overlap_database(manifest: ScanManifest) -> bool:
             "    AND substr(stored.relative_path, 1, length(excluded.relative_path) + 1) "
             "        = excluded.relative_path || '/'"
             "  )"
-            ") LIMIT 1"
+            ") WHERE excluded.reason = 'symlink' LIMIT 1"
         ).fetchone()
         return row is not None
     finally:

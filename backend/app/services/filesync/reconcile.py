@@ -264,7 +264,7 @@ async def _classify_path(
     *,
     workspace_directory_id: int | None = None,
     base: Path | None = None,
-):
+) -> tuple[str, int | None, int | None, str, str, int | None] | None:
     """把 canonical 本地路径解析为 File 的归属字段。
 
     directory 型工作区绑定例外：物理根就是工作区目录本身（workspace/、
@@ -306,6 +306,10 @@ async def _classify_path(
             raise ValueError("项目不属于当前用户")
         space = "project"
         folder_names = list(rest[3:])
+    elif space_root == "项目文件":
+        # 项目文件根、年份层和月份层是组织容器，不是项目空间；
+        # 这些层级里的文件没有项目归属，忽略而不污染绑定健康状态。
+        return None
     else:
         raise ValueError("同步只支持个人文件和项目文件")
     display_name, ext = _file_name(Path(filename))
@@ -581,11 +585,14 @@ async def reconcile_local_directory(
             continue
         try:
             validate_sync_path(root, relative)
-            space, project_id, folder_id, display_name, ext, file_ws_dir_id = await _classify_path(
+            classification = await _classify_path(
                 db, user_id, path, user_root,
                 workspace_directory_id=workspace_directory_id,
                 base=root,
             )
+            if classification is None:
+                continue
+            space, project_id, folder_id, display_name, ext, file_ws_dir_id = classification
             observed = planned_fingerprints.get(key)
             if observed is None:
                 observed = stat_cache.lookup(relative, path) if stat_cache else None
@@ -692,13 +699,14 @@ async def reconcile_local_directory(
             location = ("workspace", None, None, workspace_directory_id)
         if location is None:
             try:
-                (
-                    space, project_id, folder_id, display_name, ext, file_ws_dir_id,
-                ) = await _classify_path(
+                classification = await _classify_path(
                     db, user_id, path, user_root,
                     workspace_directory_id=workspace_directory_id,
                     base=root,
                 )
+                if classification is None:
+                    continue
+                space, project_id, folder_id, display_name, ext, file_ws_dir_id = classification
             except (OSError, ValueError):
                 rejected += 1
                 continue

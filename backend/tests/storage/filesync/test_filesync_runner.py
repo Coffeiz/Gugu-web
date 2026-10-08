@@ -26,6 +26,7 @@ from app.models import (
     FileSyncOutbox,
     FileSyncReconcileRun,
     Folder,
+    StorageQuotaLedger,
     User,
     Workspace,
     WorkspaceDirectory,
@@ -42,6 +43,7 @@ from app.services.filesync.runner import (
     _run_claimed,
     run_reconcile_worker,
 )
+from app.services.storage.quota_ledger import FILE_LIBRARY
 
 
 @pytest_asyncio.fixture
@@ -1304,9 +1306,17 @@ async def test_candidate_version_checks_are_batched_and_keep_stale_scan_guard(db
     assert len(statements) == 2
 
 
+def _assert_optional_repair_quota(quota, *, ledger_preexists: bool, expected_bytes: int) -> None:
+    if ledger_preexists:
+        assert quota is not None and quota.used_bytes == expected_bytes
+    else:
+        assert quota is None
+
+
+@pytest.mark.parametrize("ledger_preexists", [True, False])
 @pytest.mark.asyncio
 async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file_delete(
-    db, user_a, monkeypatch,
+    db, user_a, monkeypatch, ledger_preexists,
 ):
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
@@ -1372,6 +1382,15 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     os.utime(changed_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
     deleted_path.unlink()
     move_source.rename(move_target)
+    if ledger_preexists:
+        # 模拟既有额度账本；另一组用例覆盖首次删除时初始化账本。
+        db.add(StorageQuotaLedger(
+            user_id=user_a.id,
+            category=FILE_LIBRARY,
+            used_bytes=28,
+            limit_bytes=10**12,
+        ))
+        await db.commit()
     repair = await enqueue_reconcile_run(
         db,
         user_id=user_a.id,
@@ -1396,6 +1415,10 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
         updated = await check.scalar(select(File).where(File.id == changed_file.id))
         deleted = await check.scalar(select(File).where(File.id == deleted_file.id))
         moved = await check.scalar(select(File).where(File.id == moved_file_id))
+        quota = await check.scalar(select(StorageQuotaLedger).where(
+            StorageQuotaLedger.user_id == user_a.id,
+            StorageQuotaLedger.category == FILE_LIBRARY,
+        ))
 
     assert stored_run is not None and stored_run.status == "succeeded"
     assert stored_run.result_counts["updated"] == 1
@@ -1404,6 +1427,8 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     assert updated is not None and updated.version == original_version + 1
     assert deleted is not None and deleted.deleted_at is not None
     assert moved is not None and moved.storage_key == f"{user_a.id}/个人文件/分类/移动后.txt"
+    # 无账本时不在任务中途建立偏离磁盘事实的局部基线。
+    _assert_optional_repair_quota(quota, ledger_preexists=ledger_preexists, expected_bytes=19)
 
     changed_path.write_bytes(b"reject")
     move_target.write_bytes(b"move updated")
@@ -1437,12 +1462,26 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     async with db_session._SessionLocal() as check:
         partial_run = await check.get(FileSyncReconcileRun, partial.id)
         unchanged = await check.scalar(select(File).where(File.id == changed_file.id))
+        active_files = (await check.scalars(select(File).where(
+            File.user_id == user_a.id,
+            File.deleted_at.is_(None),
+        ))).all()
+        quota_after_partial = await check.scalar(select(StorageQuotaLedger).where(
+            StorageQuotaLedger.user_id == user_a.id,
+            StorageQuotaLedger.category == FILE_LIBRARY,
+        ))
 
     assert partial_run is not None and partial_run.status == "failed"
     assert partial_run.error_code == "path_projection_failed"
     assert partial_run.result_counts["failed"] == 1
     assert partial_run.result_counts["updated"] + partial_run.result_counts["foldersUpdated"] > 0
     assert unchanged is not None and unchanged.version >= updated.version
+    expected_active_bytes = sum(int(file.size_bytes or 0) for file in active_files)
+    _assert_optional_repair_quota(
+        quota_after_partial,
+        ledger_preexists=ledger_preexists,
+        expected_bytes=expected_active_bytes,
+    )
 
 
 @pytest.mark.asyncio

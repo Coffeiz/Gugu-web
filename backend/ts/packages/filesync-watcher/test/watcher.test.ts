@@ -174,3 +174,30 @@ test("递归 watcher 建立时遇到 ENOSPC 只标记该 binding 的监听额度
   assert.deepEqual(events, [{ protocol: 1, kind: "event", event: "error", binding_id: 11, code: "watcher_limit_exceeded" }]);
   await watcher.close();
 });
+
+test("局部 EACCES 子目录不会停止其他工作区路径的实时监听", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gugu-filesync-ts-private-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "private"));
+
+  const createWatcher = ((path: string, options: WatchOptions | WatchListener<string>, listener?: WatchListener<string>) => {
+    if (path.endsWith("/private")) {
+      throw Object.assign(new Error("private directory"), { code: "EACCES" });
+    }
+    return nativeWatch(path, { persistent: true }, typeof options === "function" ? options : listener!);
+  }) as typeof import("node:fs").watch;
+  const events: WatchEvent[] = [];
+  const watcher = new FileSystemWatcher((event) => events.push(event), createWatcher);
+  t.after(() => watcher.close());
+  await watcher.watchBinding(14, root);
+  await waitFor(events, (event) => event.event === "ready" && event.binding_id === 14);
+  assert.ok(events.some(
+    (event) => event.event === "needs_reconcile" && event.code === "watcher_permission_denied",
+  ));
+
+  await writeFile(join(root, "visible.png"), "image");
+  await waitFor(events, (event) =>
+    event.event === "change" && event.relative_path === "visible.png" && event.operation === "create",
+  );
+  assert.equal(events.some((event) => event.event === "error" && event.binding_id === 14), false);
+});

@@ -200,7 +200,7 @@ def test_serialize_filesync_invalidation_rejects_invalid_revision_and_timestamp(
 
 
 @pytest.mark.asyncio
-async def test_publish_filesync_events_to_owner_and_admin_without_payload_details(monkeypatch):
+async def test_publish_filesync_events_only_to_admin_without_payload_details(monkeypatch):
     class Redis:
         def __init__(self):
             self.published = []
@@ -219,11 +219,11 @@ async def test_publish_filesync_events_to_owner_and_admin_without_payload_detail
     redis = Redis()
     monkeypatch.setattr(events, "get_redis", lambda: redis)
     await events.publish_filesync_run_changed(
-        "user-1", run_id="run-1", binding_id=7, revision=2, coalesce=True,
+        run_id="run-1", binding_id=7, revision=2, coalesce=True,
     )
 
     assert [channel for channel, _ in redis.published] == [
-        "events:user-1", events.FILESYNC_ADMIN_CHANNEL,
+        events.FILESYNC_ADMIN_CHANNEL,
     ]
     payload = redis.published[0][1]
     assert payload["type"] == "filesync.run.changed"
@@ -251,16 +251,16 @@ async def test_coalesced_filesync_progress_drops_duplicate_window_but_keeps_term
     redis = Redis()
     monkeypatch.setattr(events, "get_redis", lambda: redis)
     await events.publish_filesync_run_changed(
-        "user-1", run_id="run-1", binding_id=7, revision=2, coalesce=True,
+        run_id="run-1", binding_id=7, revision=2, coalesce=True,
     )
     await events.publish_filesync_run_changed(
-        "user-1", run_id="run-1", binding_id=7, revision=3, coalesce=True,
+        run_id="run-1", binding_id=7, revision=3, coalesce=True,
     )
     await events.publish_filesync_run_changed(
-        "user-1", run_id="run-1", binding_id=7, revision=4,
+        run_id="run-1", binding_id=7, revision=4,
     )
 
-    assert len(redis.published) == 4
+    assert len(redis.published) == 2
     assert redis.published[-1][1]["revision"] == 4
 
 

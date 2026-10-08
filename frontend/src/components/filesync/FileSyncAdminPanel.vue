@@ -93,8 +93,11 @@
             </ActionButton>
           </div>
           <span>{{ t('filesyncUser.stage', { stage: t(`filesyncUser.stageName.${run.stage || 'unknown'}`) }) }} · {{ t('filesyncUser.scanned', { count: run.scannedCount }) }}</span>
-          <span>{{ resultSummary(run) }}</span>
-          <small v-if="run.errorCode" class="is-danger">{{ runErrorMessage(run) }}</small>
+              <span>{{ resultSummary(run) }}</span>
+              <small v-if="run.resultCounts.permissionSkipped" class="is-warning">
+                {{ t('filesyncUser.permissionSkipped', { count: run.resultCounts.permissionSkipped }) }}
+              </small>
+              <small v-if="run.errorCode" class="is-danger">{{ runErrorMessage(run) }}</small>
           <small v-if="hasPartialResult(run)" class="is-warning">{{ t('filesyncUser.partialResult') }}</small>
         </div>
       </div>
@@ -355,6 +358,7 @@ function resultSummary(run: FileSyncRunStatus) {
     created: values.created ?? 0, updated: values.updated ?? 0, moved: values.moved ?? 0,
     deleted: values.deleted ?? 0, skipped: values.skipped ?? 0,
     conflicts: values.conflicts ?? 0, failed: values.failed ?? 0,
+    permissionSkipped: values.permissionSkipped ?? 0,
   })
 }
 

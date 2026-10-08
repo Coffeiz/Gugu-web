@@ -214,8 +214,6 @@ async def _run_shell(db, user_id, args: dict):
     quota_roots = ()
     quota_bytes = None
     quota_before = None
-    local_quota_ledger = False
-    local_quota_filesync_ready = False
     result = None
     execution_error = None
     if decision.scope.value == "sandbox":
@@ -232,17 +230,8 @@ async def _run_shell(db, user_id, args: dict):
                     "_scope": decision.scope.value,
                     "_audit_event": "quota_exceeded",
                 }
-            filesync_settings = getattr(get_settings(), "filesync", None)
-            if bool(getattr(filesync_settings, "enabled", False)):
-                from app.services.filesync.bindings import shell_quota_tracking_ready
-
-                local_quota_filesync_ready = await shell_quota_tracking_ready(
-                    db, user_id, decision.workspace_id,
-                    include_all=decision.full_user_sandbox_write,
-                )
-            # Local 共用配额以账本为执行前事实；文件同步开启时由实时路径事件
-            # 增量记账，完整校准由低频定时任务承担。
-            local_quota_ledger = True
+            # Local 共用配额以账本为执行前事实；全量校准由独立修复/周期任务
+            # 承担，不放在单次 Shell 请求中。
         elif decision.workspace_id is None:
             # OSS 没有本地 Workspace 根，Shell 持久空间继续使用独立上限。
             measured = await reconcile_user_storage(db, user_id)
@@ -364,11 +353,7 @@ async def _run_shell(db, user_id, args: dict):
             ok=False, exit_code=None, stdout="", stderr=execution_error or "Shell 执行失败",
             timed_out=False, cwd=str(requested_cwd),
         )
-    follows_filesync = local_quota_ledger and local_quota_filesync_ready
-    if decision.scope.value == "sandbox" and local_quota_ledger and not follows_filesync:
-        # 未启用实时同步或授权可写到同步根以外时，保留收尾校准，避免漏记。
-        await reconcile_user_storage(db, user_id)
-    elif decision.scope.value == "sandbox" and quota_before is not None:
+    if decision.scope.value == "sandbox" and quota_before is not None:
         operation = (
             "build" if any(token in command for token in ("npm ", "pnpm ", "yarn ", "cargo ", "make ", "gradle ", "build"))
             else "shell_exec"

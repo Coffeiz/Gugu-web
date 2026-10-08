@@ -27,6 +27,7 @@ from app.models import (
     FileSyncOutbox,
     FileSyncReconcileRun,
     Folder,
+    StorageQuotaLedger,
     Workspace,
 )
 from app.services.filesync.inventory import stage_database_inventory
@@ -67,7 +68,7 @@ from app.services.workspaces import workspace_shell_supported
 _COUNTER_KEYS = (
     "created", "updated", "moved", "deleted", "skipped", "conflicts", "failed",
     "foldersCreated", "foldersUpdated", "foldersDeleted", "plannedCreated", "plannedUpdated",
-    "plannedDeleted", "exported",
+    "plannedDeleted", "exported", "permissionSkipped",
 )
 _POLL_SECONDS = 1.0
 _LEASE_RENEW_SECONDS = 15.0
@@ -576,6 +577,7 @@ async def _project_batch(
     missing_paths: set[str],
     counts: dict[str, int],
     stop: Event,
+    record_repair_change_deltas: bool = False,
 ) -> bool:
     if stop.is_set():
         raise InterruptedError("核对任务已停止")
@@ -684,6 +686,7 @@ async def _project_batch(
                 batch,
                 options=PathProjectionOptions(
                     allow_delete=scope.action == "repair" and scope.allow_delete,
+                    record_quota_deltas=record_repair_change_deltas,
                     verified_files=verified_files_for_batch,
                     observed_folders=observed_folders,
                 ),
@@ -752,6 +755,7 @@ async def _execute_scope(
     max_manifest_bytes, commit_entries = default_manifest_budget()
     storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
     user_root = (storage_root / str(scope.user_id)).resolve()
+    record_repair_change_deltas = False
     included_root_entries = (
         frozenset({"个人文件", "项目文件"})
         if scope.workspace_id is None and scope.root.resolve() == user_root
@@ -769,6 +773,15 @@ async def _execute_scope(
             raise ScanIncomplete("反向导出任务与绑定模式不匹配")
         if not workspace_shell_supported():
             raise ScanIncomplete("当前存储模式不支持本地文件同步")
+        if scope.action == "repair":
+            from app.services.storage.quota_ledger import FILE_LIBRARY
+
+            async with session_factory() as db:
+                record_repair_change_deltas = await db.scalar(select(StorageQuotaLedger.id).where(
+                    StorageQuotaLedger.user_id == scope.user_id,
+                    StorageQuotaLedger.category == FILE_LIBRARY,
+                )) is not None
+                await db.rollback()
         storage_prefix = await _check_scope_before_batch(session_factory, scope, signals.stop)
         async with session_factory() as db:
             await update_run_progress(
@@ -836,6 +849,7 @@ async def _execute_scope(
             )
         storage_prefix = await _check_scope_before_batch(session_factory, scope, signals.stop)
         counts = _empty_counts()
+        counts["permissionSkipped"] = manifest.permission_excluded_count
         async with session_factory() as db:
             run = await db.get(FileSyncReconcileRun, scope.run_id)
             if run is None or run.lease_owner != worker_id:
@@ -904,6 +918,7 @@ async def _execute_scope(
                     missing_paths=missing_paths,
                     counts=counts,
                     stop=signals.stop,
+                    record_repair_change_deltas=record_repair_change_deltas,
                 )
                 if not projected:
                     raise InterruptedError("任务执行权已失效")

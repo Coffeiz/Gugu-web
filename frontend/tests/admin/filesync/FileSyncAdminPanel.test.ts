@@ -169,7 +169,7 @@ describe('FileSyncAdminPanel 监听缺口提示', () => {
       {
         id: 'preview-1', bindingId: 4, action: 'dry_run', allowDelete: false,
         status: 'succeeded', stage: 'finished', scannedCount: 12,
-        resultCounts: { plannedCreated: 2, plannedUpdated: 1, plannedDeleted: 3, conflicts: 1 },
+        resultCounts: { plannedCreated: 2, plannedUpdated: 1, plannedDeleted: 3, conflicts: 1, permissionSkipped: 2 },
         errorCode: null, revision: 1, cancelRequested: false,
         createdAt: null, startedAt: null, finishedAt: null,
       },
@@ -194,6 +194,7 @@ describe('FileSyncAdminPanel 监听缺口提示', () => {
     expect(runs).toHaveLength(3)
     expect(runs[0].textContent).toContain('filesyncUser.previewResults')
     expect(runs[0].textContent).not.toContain('filesyncUser.results')
+    expect(runs[0].textContent).toContain('filesyncUser.permissionSkipped')
     expect(runs[1].textContent).toContain('filesyncUser.rootRecoveryBlocked')
     expect(runs[2].textContent).toContain('filesyncUser.bindingRootUnavailable')
   })

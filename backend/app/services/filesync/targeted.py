@@ -182,10 +182,13 @@ async def _project_changed_file(
             return 0
         validate_sync_path(root, relative)
         _safe_storage_key(storage_root, path)
-        space, project_id, folder_id, display_name, ext, file_ws_dir_id = await _classify_path(
+        classification = await _classify_path(
             db, user_id, path, user_root,
             workspace_directory_id=workspace_directory_id, base=root,
         )
+        if classification is None:
+            return 0
+        space, project_id, folder_id, display_name, ext, file_ws_dir_id = classification
         # 精确事件与手动扫描都必须核对正文；手动扫描可传入线程内刚复核的指纹，
         # 避免把大文件哈希放回事件循环。
         if verified_file is None:
@@ -295,7 +298,7 @@ async def _project_changed_file(
     try:
         save_snapshot(user_id, binding.id, relative, path)
     except OSError:
-        summary_inout["rejected"] += 1
+        _record_rejection(summary_inout, "snapshot_unavailable")
     return size_delta
 
 

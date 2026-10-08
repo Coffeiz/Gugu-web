@@ -35,6 +35,7 @@ _EMPTY_RESULT_COUNTS = {
     "plannedUpdated": 0,
     "plannedDeleted": 0,
     "exported": 0,
+    "permissionSkipped": 0,
 }
 
 
@@ -47,7 +48,6 @@ async def notify_run_changed(
 ) -> None:
     """提交后发送轻量失效事件；任务快照仍以数据库为准。"""
     await publish_filesync_run_changed(
-        row.user_id,
         run_id=str(row.id),
         binding_id=row.binding_id,
         revision=row.revision,
@@ -308,7 +308,7 @@ async def finish_run(
     await db.commit()
     if health_changed is not None:
         await publish_filesync_binding_health_changed(
-            health_changed[0], binding_id=health_changed[1], revision=health_changed[2],
+            binding_id=health_changed[0], revision=health_changed[1],
         )
     await notify_run_changed(row)
     return True
@@ -318,7 +318,7 @@ async def _record_reconciliation_completion(
     db: AsyncSession,
     row: FileSyncReconcileRun,
     timestamp: datetime,
-) -> tuple[object, int, int] | None:
+) -> tuple[int, int] | None:
     binding = await db.scalar(select(FileSyncBinding).where(
         FileSyncBinding.id == row.binding_id,
         FileSyncBinding.user_id == row.user_id,
@@ -329,7 +329,7 @@ async def _record_reconciliation_completion(
     binding.last_reconciled_at = timestamp
     result_counts = row.result_counts or {}
     unresolved = any(int(result_counts.get(key, 0) or 0) for key in (
-        "conflicts", "skipped", "failed",
+        "conflicts", "skipped", "failed", "permissionSkipped",
     ))
     if (
         row.action != "repair"
@@ -338,20 +338,25 @@ async def _record_reconciliation_completion(
     ):
         return None
 
-    # 全量修复覆盖了对应缺口后，队列/缓冲区溢出错误即可恢复；其他错误
-    # 可能表示监听器或绑定根目录仍不可用，不能因一次文件对账而清除。
+    # 全量修复覆盖对应缺口后，可清除由事件丢失或单路径投影失败造成的状态；
+    # 其他错误可能表示监听器或绑定根目录仍不可用，不能因一次文件对账而清除。
     changed = False
     if binding.needs_reconcile:
         binding.needs_reconcile = False
         changed = True
-    if binding.health_error_code in RECONCILABLE_OVERFLOW_CODES:
+    error_code = binding.health_error_code or ""
+    if (
+        error_code in RECONCILABLE_OVERFLOW_CODES
+        or error_code == "path_projection_failed"
+        or error_code.startswith("path_projection_rejected:")
+    ):
         binding.health_error_code = None
         if binding.watcher_status == "degraded":
             binding.watcher_status = "ready"
         changed = True
     if changed:
         binding.health_revision += 1
-        return binding.user_id, binding.id, binding.health_revision
+        return binding.id, binding.health_revision
     return None
 
 
@@ -426,14 +431,12 @@ async def update_run_progress(
     changed = None
     if result.rowcount == 1:
         changed = (await db.execute(select(
-            FileSyncReconcileRun.user_id,
             FileSyncReconcileRun.binding_id,
             FileSyncReconcileRun.revision,
         ).where(FileSyncReconcileRun.id == run_id))).one_or_none()
     await db.commit()
     if changed is not None:
         await publish_filesync_run_changed(
-            changed.user_id,
             run_id=str(run_id),
             binding_id=changed.binding_id,
             revision=changed.revision,

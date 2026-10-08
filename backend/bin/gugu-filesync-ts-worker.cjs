@@ -105,6 +105,9 @@ var FileSystemWatcher = class {
   emitReady(bindingId) {
     this.emit({ protocol: FILESYNC_PROTOCOL_VERSION, kind: "event", event: "ready", binding_id: bindingId });
   }
+  reportPermissionGap(bindingId, binding) {
+    this.reportGap(bindingId, binding, "watcher_permission_denied");
+  }
   reportGap(bindingId, binding, code) {
     if (binding.gapReported || !this.isCurrent(bindingId, binding)) return;
     binding.gapReported = true;
@@ -152,6 +155,10 @@ var FileSystemWatcher = class {
       });
     } catch (error) {
       const errno = error;
+      if (errno.code === "EACCES" || errno.code === "EPERM") {
+        this.reportPermissionGap(bindingId, binding);
+        return;
+      }
       this.emitError(bindingId, binding, errno.code === "ENOSPC" ? "watcher_limit_exceeded" : "watcher_error");
       return;
     }
@@ -165,6 +172,10 @@ var FileSystemWatcher = class {
         const subscriber = this.bindings.get(subscriberId);
         if (!subscriber) continue;
         subscriber.watchedDirectories.delete(absolute);
+        if (error.code === "EACCES" || error.code === "EPERM") {
+          this.reportPermissionGap(subscriberId, subscriber);
+          continue;
+        }
         this.emitError(subscriberId, subscriber, error.code === "ENOSPC" ? "watcher_limit_exceeded" : "watcher_error");
       }
     });
@@ -188,7 +199,7 @@ var FileSystemWatcher = class {
       const changedDuringScan = [...binding.pending];
       binding.pending.clear();
       for (const path of changedDuringScan) await this.processPath(bindingId, binding, path, "rename");
-      if (!binding.failed && !binding.gapReported && this.isCurrent(bindingId, binding)) {
+      if (!binding.failed && this.isCurrent(bindingId, binding)) {
         binding.ready = true;
         this.emitReady(bindingId);
       }
@@ -206,6 +217,11 @@ var FileSystemWatcher = class {
       children = await (0, import_promises.readdir)(directory, { withFileTypes: true });
     } catch (error) {
       if (error?.code === "ENOENT") return;
+      const code = error?.code;
+      if (prefix && (code === "EACCES" || code === "EPERM")) {
+        this.reportPermissionGap(bindingId, binding);
+        return;
+      }
       throw error;
     }
     for (const child of children) {

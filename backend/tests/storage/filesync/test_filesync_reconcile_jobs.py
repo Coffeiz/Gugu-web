@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.core.tz import now_utc
@@ -17,15 +16,6 @@ from app.services.filesync.jobs import (
     finish_run,
     get_reconcile_run,
     request_run_cancel,
-)
-from app.api.v1.filesync import (
-    BindingRequest,
-    ReconcileRequest,
-    cancel_run,
-    create_or_reconcile_binding,
-    dry_run,
-    reconcile_binding,
-    run_status,
 )
 from app.api.v1.filesync_admin import (
     BindingActionRequest,
@@ -227,6 +217,39 @@ async def test_repair_does_not_clear_new_gap_or_cancelled_run(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_repair_with_permission_skips_does_not_clear_incomplete_scan_state(db, user_a):
+    binding = await _binding(db, user_a)
+    binding.needs_reconcile = True
+    binding.gap_revision = 5
+    binding.watcher_status = "degraded"
+    binding.health_error_code = "watcher_permission_denied"
+    await db.commit()
+
+    run = await enqueue_reconcile_run(
+        db, user_id=user_a.id, binding_id=binding.id, action="repair",
+    )
+    claimed = await claim_next_run(db, "worker-a", now=now_utc())
+    assert claimed is not None and claimed.id == run.id
+    claimed.result_counts = {
+        "created": 2, "updated": 0, "moved": 0, "deleted": 0,
+        "skipped": 0, "conflicts": 0, "failed": 0,
+        "permissionSkipped": 1,
+    }
+    await db.commit()
+
+    assert await finish_run(
+        db, run.id, "worker-a", status="succeeded", reconciliation_complete=True,
+    )
+    await db.refresh(binding)
+
+    assert binding.last_reconciled_at is not None
+    assert binding.needs_reconcile is True
+    assert binding.watcher_status == "degraded"
+    assert binding.health_error_code == "watcher_permission_denied"
+    assert binding.health_revision == 0
+
+
+@pytest.mark.asyncio
 async def test_expired_worker_task_fails_instead_of_being_retried(db, user_a):
     binding = await _binding(db, user_a)
     run = await enqueue_reconcile_run(
@@ -247,49 +270,9 @@ async def test_expired_worker_task_fails_instead_of_being_retried(db, user_a):
 
 
 @pytest.mark.asyncio
-async def test_user_and_admin_entrypoints_enqueue_tasks_without_waiting_for_scan(
-    db, user_a, user_b, monkeypatch,
-):
-    import app.api.v1.filesync as user_api
-
+async def test_admin_entrypoints_enqueue_tasks_without_waiting_for_scan(db, user_a):
     binding = await _binding(db, user_a)
     await db.commit()
-    async def prepared_binding(*_args, **_kwargs):
-        return binding
-    monkeypatch.setattr(user_api, "prepare_local_binding", prepared_binding)
-
-    user_run = await dry_run(
-        BindingRequest(root_path=".", mode="bidirectional"), user=user_a, db=db,
-    )
-    assert user_run["bindingId"] == binding.id
-    assert user_run["status"] == "queued"
-    with pytest.raises(HTTPException) as missing:
-        await run_status(UUID(user_run["id"]), user=user_b, db=db)
-    assert missing.value.status_code == 404
-
-    await cancel_run(UUID(user_run["id"]), user=user_a, db=db)
-    stored = await get_reconcile_run(db, UUID(user_run["id"]), user_id=user_a.id)
-    assert stored is not None and stored.status == "cancelled"
-
-    initialized = await create_or_reconcile_binding(
-        BindingRequest(root_path=".", mode="bidirectional", confirm=True),
-        user=user_a,
-        db=db,
-    )
-    assert initialized["action"] == "initialize"
-    assert initialized["allowDelete"] is False
-    await cancel_run(UUID(initialized["id"]), user=user_a, db=db)
-
-    repair = await reconcile_binding(
-        binding.id,
-        ReconcileRequest(confirm=True, allow_delete=True),
-        user=user_a,
-        db=db,
-    )
-    assert repair["action"] == "repair"
-    assert repair["allowDelete"] is True
-    await cancel_run(UUID(repair["id"]), user=user_a, db=db)
-
     admin_init = await admin_initialize(
         binding.id,
         BindingActionRequest(confirm=True),
@@ -301,6 +284,14 @@ async def test_user_and_admin_entrypoints_enqueue_tasks_without_waiting_for_scan
     admin_run = await admin_dry_run(binding.id, db=db)
     assert admin_run["status"] == "queued"
     assert admin_run["bindingId"] == binding.id
+
+
+def test_reconciliation_routes_are_available_only_under_admin_api():
+    from app.main import app
+
+    paths = set(app.openapi()["paths"])
+    assert not any(path.startswith("/api/v1/filesync/") for path in paths)
+    assert "/api/v1/admin/filesync/bindings/{binding_id}/reconcile" in paths
 
 
 @pytest.mark.asyncio
