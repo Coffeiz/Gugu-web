@@ -440,6 +440,7 @@ export const filesApi = {
   }>('/files/tree'),
   summary: (recentLimit = 12) => get<FileSummaryResponse>(`/files/summary?recent_limit=${recentLimit}`),
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
+  get:     (id: number) => get<Schemas['FileResponse']>(`/files/${id}`),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
   archive: (data: { fileIds: number[]; folderIds: number[]; folderId?: number | null; name?: string }) =>

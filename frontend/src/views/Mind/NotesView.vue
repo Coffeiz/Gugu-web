@@ -69,20 +69,31 @@ let highlightTimer: ReturnType<typeof setTimeout> | null = null
 // 高亮路由 query 指定的便签。已在本页时聊天卡片点击不会重新挂载组件
 // （query 相同时 push 还是 no-op，GuguChat 会派发 gugu:open-object 事件），
 // 所以 onMounted / watch query / 自定义事件三个入口都接同一处理。
-async function highlightRequestedNote() {
+async function highlightRequestedNote(requestedId = Number(route.query.object_id)) {
   if (!store.loaded) await store.fetchNotes()
-  const requestedId = Number(route.query.object_id)
+  if (!Number.isFinite(requestedId)) return
+  while (!store.notes.some(note => note.id === requestedId) && store.hasMore && !store.loadingMore) {
+    const countBefore = store.notes.length
+    await store.loadMoreNotes()
+    if (store.notes.length === countBefore) break
+  }
   if (!store.notes.some(note => note.id === requestedId)) return
   highlightId.value = requestedId
   if (highlightTimer) clearTimeout(highlightTimer)
   highlightTimer = setTimeout(() => { highlightId.value = null }, 2200)
   // 用完即清，避免刷新页面重复高亮；replace 不产生历史记录
-  await router.replace({ query: { ...route.query, object_id: undefined } })
+  if (Number(route.query.object_id) === requestedId) {
+    await router.replace({ query: { ...route.query, object_id: undefined } })
+  }
 }
 onMounted(highlightRequestedNote)
-watch(() => route.query.object_id, highlightRequestedNote)
-window.addEventListener('gugu:open-object', highlightRequestedNote as EventListener)
-onBeforeUnmount(() => window.removeEventListener('gugu:open-object', highlightRequestedNote as EventListener))
+watch(() => route.query.object_id, () => { void highlightRequestedNote() })
+function onOpenObjectEvent(event: Event) {
+  const detail = (event as CustomEvent<{ type?: string; id?: number | string }>).detail
+  if (detail?.type === 'note' && detail.id != null) void highlightRequestedNote(Number(detail.id))
+}
+window.addEventListener('gugu:open-object', onOpenObjectEvent)
+onBeforeUnmount(() => window.removeEventListener('gugu:open-object', onOpenObjectEvent))
 // 进面板默认展开底部捕捉条，光标直接待输入——降低"想到就记"的操作成本，不用先点一下才能打字。
 // 复用 captureRef.expand()（跟 jumpTarget=今天且当天没记录时那条路径同一个方法），内部本来
 // 就会在展开后 focus 编辑器。
@@ -944,6 +955,12 @@ async function onCreated(md: string, capturedAt?: string) {
 }
 
 async function onSave(note: MindNote, md: string) {
+  if (note.id < 0) {
+    store.notes = store.notes.map(item => item.id === note.id
+      ? { ...item, contentMd: md, version: item.version + 1, updatedAt: new Date().toISOString() }
+      : item)
+    return
+  }
   try {
     await store.updateNote(note.id, { contentMd: md, version: note.version })
   } catch (e) {
@@ -966,6 +983,10 @@ async function onToggleTask(note: MindNote, idx: number) {
 /** 点色板选颜色：只改 color 这一个字段，不牵动 contentMd/version 冲突判定那一套——
  *  颜色纯粹是个人视觉标记，两端都在改同一条内容才需要担心覆盖，颜色不需要。 */
 async function onColor(note: MindNote, color: string | null) {
+  if (note.id < 0) {
+    store.notes = store.notes.map(item => item.id === note.id ? { ...item, color } : item)
+    return
+  }
   try {
     await store.updateNote(note.id, { color, version: note.version })
   } catch {
@@ -974,6 +995,10 @@ async function onColor(note: MindNote, color: string | null) {
 }
 
 async function onDelete(note: MindNote) {
+  if (note.id < 0) {
+    store.notes = store.notes.filter(item => item.id !== note.id)
+    return
+  }
   try {
     await store.deleteNote(note.id)
   } catch {

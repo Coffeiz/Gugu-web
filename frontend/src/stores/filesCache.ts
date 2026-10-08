@@ -33,6 +33,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const allFolders = ref<FolderMeta[]>([])
   const loaded     = ref(false)
   const loading    = ref(false)
+  const fileLookups = new Map<string, Promise<FileMeta | null>>()
 
   // ── 索引 ──────────────────────────────────────────────────────────────────
   // files key: folderId (int) | 'workspace:{directoryId}' | 'proj:{id}' | 'personal'
@@ -144,6 +145,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     allFolders.value = []
     loaded.value = false
     loading.value = false
+    fileLookups.clear()
     _lastVersion = null
     _pendingLiveRefresh = false
   }
@@ -188,6 +190,32 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
 
   function getFile(id: number) {
     return allFiles.value.find(f => f.id === id) ?? null
+  }
+
+  /** Mind 画布只需读取实际引用的文件；按 ID 加载并合并缓存，不触发文件库全量扫描。 */
+  async function ensureFile(id: number): Promise<FileMeta | null> {
+    const cached = getFile(id)
+    if (cached) return cached
+    if (loaded.value) return null
+
+    const epoch = getAccountBoundaryEpoch()
+    const key = `${epoch}:${id}`
+    const pending = fileLookups.get(key)
+    if (pending) return pending
+
+    const lookup = filesApi.get(id).then(file => {
+      if (epoch !== getAccountBoundaryEpoch()) return null
+      const normalized = file as FileMeta
+      addFile(normalized)
+      return normalized
+    }).catch(error => {
+      if ((error as { status?: number }).status === 404) return null
+      throw error
+    }).finally(() => {
+      fileLookups.delete(key)
+    })
+    fileLookups.set(key, lookup)
+    return lookup
   }
 
   // ── 乐观更新：文件夹 ──────────────────────────────────────────────────────
@@ -280,7 +308,10 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   watch(() => useLiveStore().resourceEvent, (event) => {
     if (!event || event.resource !== 'files') return
     if (!loaded.value) {
-      _pendingLiveRefresh = true
+      // Mind 的按 ID 查询会建立局部缓存，但不代表完整文件库已加载。实时事件仍需更新已缓存的
+      // 引用实体；只有无法应用的变更才留待之后的全量 load 补齐。
+      const applied = applyCanonicalEvent(event)
+      if (!applied && event.operation !== 'delete') _pendingLiveRefresh = true
       return
     }
     eventQueue.receive(event)
@@ -292,7 +323,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     getPersonalRootFiles, getProjectRootFiles, getFolderFiles,
     getWorkspaceFiles,
     getPersonalRootFolders, getProjectRootFolders, getSubFolders, getWorkspaceFolders,
-    addFile, removeFile, removeFiles, updateFile, getFile,
+    addFile, removeFile, removeFiles, updateFile, getFile, ensureFile,
     addFolder, removeFolder, updateFolder, getFolder,
     mergeDirectorySnapshot,
   }

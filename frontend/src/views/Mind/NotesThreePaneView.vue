@@ -27,6 +27,7 @@
                 :class="[note.color ? `tint-${note.color}` : '', { selected: note.id === selectedId }]"
                 role="button"
                 tabindex="0"
+                :data-note-id="note.id"
                 @click="selectedId = note.id"
                 @keydown.enter.prevent="selectedId = note.id"
               >
@@ -71,7 +72,7 @@
             <div v-if="store.loadingMore" class="ntp-state">{{ t('common.status.loading') }}</div>
           </template>
         </div>
-      <!-- 新建先进入本地草稿；有标题或正文后才创建服务端记录 -->
+        <!-- 新建先进入本地草稿；完成编辑后才创建服务端记录 -->
         <ActionButton variant="secondary" fit class="ntp-new" @click="createNew">
           <PhPlus :size="14" weight="bold" />
           {{ t('mindThreePane.new') }}
@@ -99,19 +100,19 @@
             <div v-if="selectedTitle || nodeRef" class="rp-divider"></div>
             <!-- 只读正文复用 NoteCard 同一套 mdToPreviewHtml + 全局 .md-preview 样式：
                  待办勾选、引用 chip、代码块、引用块的行为和主题适配免费拿到 -->
-            <div class="rp-body-wrap scroll-surface scroll-surface--editor">
-              <article v-if="selectedBody" class="rp-body md-preview" @click="onBodyClick" v-mind-preview="previewHtml"></article>
+            <div class="rp-body-wrap scroll-surface scroll-surface--editor" @click="onBodyClick">
+              <article v-if="selectedBody" class="rp-body md-preview" v-mind-preview="previewHtml"></article>
               <div v-else class="rp-empty-note">
                 {{ selectedTitle ? t('mindThreePane.titleOnly') : t('mindThreePane.emptyNote') }}
               </div>
             </div>
             <!-- 底部操作区：与编辑态 Done/Cancel 同一位置；删除带文字，四个按钮统一形态 -->
             <div class="rp-foot">
-              <ActionButton variant="secondary" fit @click="startEdit()">
+              <ActionButton variant="secondary" fit class="rp-foot-action" @click="startEdit()">
                 <PhPencilSimple :size="14" weight="bold" />
                 {{ t('mindUi.edit') }}
               </ActionButton>
-              <ActionButton variant="danger" fit @click="onDelete">
+              <ActionButton variant="danger" fit class="rp-foot-action" @click="onDelete">
                 <PhTrash :size="14" weight="bold" />
                 {{ t('mindUi.delete') }}
               </ActionButton>
@@ -121,14 +122,16 @@
                正文进 NoteEditor；完成时 combineTitleBody 拼回 contentMd，与卡片编辑同一约定 -->
           <template v-else>
             <div class="rp-title-row">
-              <input
+              <textarea
                 ref="titleInputRef"
                 v-model="editTitle"
                 class="rp-title-input"
-                type="text"
+                rows="1"
+                :aria-label="t('mind.titleOptional')"
                 :placeholder="t('mind.titleOptional')"
+                @input="resizeTitleInput"
                 @keydown.enter.prevent
-              >
+              ></textarea>
             </div>
             <div class="rp-divider"></div>
             <NoteEditor ref="noteEditorRef" v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
@@ -174,11 +177,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { MindConflictError, useMindStore } from '@/stores/mind'
+import { useLiveStore } from '@/stores/live'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
@@ -192,6 +197,9 @@ import DateIndex from './components/DateIndex.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 
 const store = useMindStore()
+const liveStore = useLiveStore()
+const route = useRoute()
+const router = useRouter()
 const projectStore = useProjectStore()
 const filesCache = useFilesCacheStore()
 const { t } = useI18n()
@@ -200,11 +208,13 @@ const { openMindRef } = useMindRefActions()
 const listRef = ref<HTMLElement | null>(null)
 const selectedId = ref<number | null>(null)
 const dateIndexGroups = computed(() => [...store.timeline].reverse().map(group => ({ date: group.date, count: group.items.length })))
-const dateIndexCenter = ref(0)
+// 时间流默认最新日期在首项；滑条刻度反向排列，因此最新日期是最后一个索引。
+const dateIndexCenter = ref(Math.max(0, store.timeline.length - 1))
 const dateNavigationActive = ref(false)
 
 onMounted(() => {
-  if (!store.loaded) void store.fetchNotes().catch(() => { /* 网络/后端不可用：全局拦截器已报错，列表落空态即可 */ })
+  if (!store.loaded) void store.fetchNotes().then(() => openRequestedNote()).catch(() => { /* 全局拦截器已提示；留在空态供用户重试 */ })
+  else void openRequestedNote()
   document.addEventListener('click', closeColorPicker)
 })
 onBeforeUnmount(() => {
@@ -222,6 +232,31 @@ onBeforeUnmount(() => {
 // 这里按 id 重新 find，保证读到的是最新字段。
 const selected = computed(() => store.notes.find(n => n.id === selectedId.value) ?? null)
 
+// 聊天跳转可通过 query 首次进入，也可在本页重复点击时通过 gugu:open-object 事件触发。
+async function openRequestedNote(requestedId = Number(route.query.object_id)) {
+  if (!Number.isFinite(requestedId)) return
+  while (!store.notes.some(note => note.id === requestedId) && store.hasMore && !store.loadingMore) {
+    const countBefore = store.notes.length
+    await store.loadMoreNotes()
+    if (store.notes.length === countBefore) break
+  }
+  const note = store.notes.find(item => item.id === requestedId)
+  if (!note) return
+  selectedId.value = requestedId
+  await nextTick()
+  listRef.value?.querySelector<HTMLElement>(`[data-note-id="${requestedId}"]`)?.scrollIntoView({ block: 'nearest' })
+  if (Number(route.query.object_id) === requestedId) {
+    await router.replace({ query: { ...route.query, object_id: undefined } })
+  }
+}
+watch(() => route.query.object_id, value => { if (value != null) void openRequestedNote(Number(value)) })
+function onOpenObjectEvent(event: Event) {
+  const detail = (event as CustomEvent<{ type?: string; id?: number | string }>).detail
+  if (detail?.type === 'note' && detail.id != null) void openRequestedNote(Number(detail.id))
+}
+window.addEventListener('gugu:open-object', onOpenObjectEvent)
+onBeforeUnmount(() => window.removeEventListener('gugu:open-object', onOpenObjectEvent))
+
 // 列表变化（筛选 / 删除 / 首载）后选中项不在了 → 顺位选最新的第一条，避免右侧开天窗
 watch(() => store.timeline, (groups) => {
   if (groups.length && !groups.some(g => g.items.some(n => n.id === selectedId.value))) {
@@ -229,6 +264,29 @@ watch(() => store.timeline, (groups) => {
   }
   if (!groups.length) selectedId.value = null
 }, { immediate: true })
+
+watch(() => store.jumpTarget, date => {
+  if (!date || !listRef.value) return
+  if (store.timeline.some(group => group.date === date)) {
+    scrollToDate(date, 'smooth')
+  } else if (date === todayKey && store.timeline.length) {
+    showAppNotice(t('mind.noToday'))
+    scrollToDate(store.timeline[0].date, 'smooth')
+  }
+})
+
+// live 更新不能在编辑中覆盖当前草稿；编辑结束后再读取服务端事实。
+const refreshAfterEdit = ref(false)
+const committingEdit = ref(false)
+watch(() => liveStore.rev.mind, () => {
+  if (editing.value || committingEdit.value) refreshAfterEdit.value = true
+  else void store.fetchNotes()
+})
+async function flushLiveRefresh() {
+  if (!refreshAfterEdit.value || editing.value) return
+  refreshAfterEdit.value = false
+  await store.fetchNotes()
+}
 
 // ── 列表条目的展示拆分 ──
 function partsOf(note: MindNote) { return splitMindTitleBody(note.contentMd) }
@@ -310,7 +368,7 @@ function onBodyClick(e: MouseEvent) {
   const note = selected.value
   if (!note) return
   if (target instanceof HTMLInputElement && target.dataset.taskIdx !== undefined) {
-    if (note.id < 0) { e.preventDefault(); return }   // 样例数据不写后端
+    if (note.id < 0) { e.preventDefault(); void onSave(note, toggleTaskInMd(note.contentMd, Number(target.dataset.taskIdx))); return }
     // 保留原生勾选，乐观正文原位同步状态；失败时 Store 负责回滚。
     const idx = Number(target.dataset.taskIdx)
     void onSave(note, toggleTaskInMd(note.contentMd, idx))
@@ -332,6 +390,12 @@ function onBodyClick(e: MouseEvent) {
 }
 
 async function onSave(note: MindNote, md: string, title?: string | null) {
+  if (note.id < 0) {
+    store.notes = store.notes.map(item => item.id === note.id
+      ? { ...item, contentMd: md, ...(title !== undefined ? { title } : {}), version: item.version + 1, updatedAt: new Date().toISOString() }
+      : item)
+    return true
+  }
   try {
     await store.updateNote(note.id, {
       contentMd: md,
@@ -342,19 +406,31 @@ async function onSave(note: MindNote, md: string, title?: string | null) {
     if (e instanceof MindConflictError) {
       await store.fetchNotes()
       showAppNotice(t('mind.updatedElsewhere'))
+      return false
     } else {
       showAppError(t('mind.saveFailed'))
+      return false
     }
   }
+  return true
 }
 
 // ── 阅读窗格编辑态：标题独占输入位 + 正文进 NoteEditor（与卡片编辑同一台 TipTap）──
 const editing = ref(false)
 const editTitle = ref('')
 const editMd = ref('')
-const titleInputRef = ref<HTMLInputElement | null>(null)
+const titleInputRef = ref<HTMLTextAreaElement | null>(null)
 const noteEditorRef = ref<{ focusAtLineUnit: (unit: number) => void } | null>(null)
 const readingRef = ref<HTMLElement | null>(null)
+
+function resizeTitleInput() {
+  const el = titleInputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight)
+  const lineCount = lineHeight > 0 ? Math.max(1, Math.round(el.scrollHeight / lineHeight)) : 1
+  el.style.height = `${lineCount * lineHeight}px`
+}
 
 /** 进编辑态后把窗格和页面级滚动都归零：TipTap autofocus 的 scrollIntoView 会把
  *  overflow:hidden 窗格的滚动意图转嫁给 .page-content 祖先，表现为整页上跳、顶部区域变窄 */
@@ -372,6 +448,7 @@ async function startEdit(lineUnit: number | null = null) {
   editMd.value = parts.body
   editing.value = true
   await nextTick()
+  resizeTitleInput()
   await new Promise(resolve => requestAnimationFrame(resolve))
   settleReadingScroll()
   // 从正文点进来的：光标落到被点的块（NoteEditor 的 focusAtLineUnit 会顺带重算补全下拉）；
@@ -384,6 +461,7 @@ function cancelEdit() {
   editing.value = false
   // 新建笔记尚未落库，取消时只丢弃本地草稿。
   if (note && pendingNewId.value === note.id) removeEmptyDraft(note)
+  void flushLiveRefresh()
 }
 
 /** 新建草稿尚未落库，删除只影响当前前端状态。 */
@@ -395,7 +473,6 @@ function removeEmptyDraft(note: MindNote) {
 const pendingNewId = ref<number | null>(null)
 
 async function createNew() {
-  // 正在编辑别的便签：退出即保存，先收掉再建新草稿
   if (editing.value) await finishEdit()
   const unsavedDraft = pendingNewId.value == null
     ? null
@@ -414,8 +491,7 @@ async function createNew() {
   await selectAndEdit(draft.id)
 }
 
-/** 选中刚建的草稿再进编辑：watch(selectedId) 是 pre-flush，同步紧跟的 editing=true 会被它
- *  顶掉，必须等选中切换渲染完一帧后再开编辑态 */
+/** 等待选中状态渲染后再切入编辑，避免选中 watcher 覆盖编辑态。 */
 async function selectAndEdit(id: number) {
   selectedId.value = id
   await nextTick()
@@ -424,41 +500,46 @@ async function selectAndEdit(id: number) {
 
 async function finishEdit() {
   const note = selected.value
-  editing.value = false
   if (!note) return
-  await applyEdit(note)
+  committingEdit.value = true
+  let saved = false
+  try { saved = await applyEdit(note) } finally {
+    editing.value = false
+    committingEdit.value = false
+  }
+  if (saved) await flushLiveRefresh()
 }
 
-/** 把还在编辑态的标题+正文拼回 contentMd 落库/落内存；刚建的空草稿则直接删掉不留垃圾行。
- *  完成按钮和「切走即保存」共用这一条收尾路径，语义保持一致 */
-async function applyEdit(note: MindNote) {
+/** 把编辑态的标题和正文拼回 contentMd，再落库或更新样例数据。 */
+async function applyEdit(note: MindNote): Promise<boolean> {
   const md = combineTitleBody(editTitle.value.trim(), editMd.value)
   const title = editTitle.value.trim() || null
   if (pendingNewId.value === note.id) {
     if (!md.trim() && !title) {
       removeEmptyDraft(note)
-      return
+      return true
     }
     try {
       const created = await persistMindNoteDraft(note, md, title, data => store.createNote(data))
-      if (!created) return
+      if (!created) return false
       store.notes = store.notes.filter(item => item.id !== note.id)
       if (selectedId.value === note.id) selectedId.value = created.id
       pendingNewId.value = null
     } catch {
       showAppError(t('mind.recordFailed'))
+      return false
     }
-    return
+    return true
   }
-  if (md === note.contentMd && title === note.title) return
+  if (md === note.contentMd && title === note.title) return true
   if (note.id < 0) {
     // 样例数据（负 id）只改内存态，绝不落库
     store.notes = store.notes.map(n => n.id === note.id
       ? { ...n, title, contentMd: md, version: n.version + 1, updatedAt: new Date().toISOString() }
       : n)
-    return
+    return true
   }
-  await onSave(note, md, title)
+  return await onSave(note, md, title)
 }
 
 // 切换选中便签即退出编辑；除显式「取消」外所有退出路径默认保存。此时 selected 已指向
@@ -468,7 +549,10 @@ watch(selectedId, async (_newId, oldId) => {
   editing.value = false
   const prev = oldId == null ? null : store.notes.find(n => n.id === oldId) ?? null
   if (!prev) return
-  await applyEdit(prev)
+  committingEdit.value = true
+  let saved = false
+  try { saved = await applyEdit(prev) } finally { committingEdit.value = false }
+  if (saved) await flushLiveRefresh()
 })
 
 // ── 颜色：卡片上的颜色球，点击弹出选择（含默认纸色），选完球即新色 ──
@@ -555,7 +639,7 @@ watch(() => store.jumpTarget, (date) => {
 watch(dateIndexGroups, async () => {
   await nextTick()
   updateDateIndexFromList()
-}, { flush: 'post' })
+}, { flush: 'post', immediate: true })
 
 function scrollToDate(date: string, behavior: ScrollBehavior) {
   const list = listRef.value
@@ -739,7 +823,7 @@ function onListScroll() {
 .ni-task { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); }
 
 /* 新建笔记：列表底部整宽胶囊，标准 ActionButton 只接管几何宽度 */
-.ntp-new { width: 100%; flex: none; margin-top: 8px; }
+.ntp-new { width: 100%; height: 38px; min-height: 38px; flex: none; margin-top: 8px; }
 
 /* ── 栏 2+3：阅读 + 信息同一块玻璃 ── */
 .ntp-detail {
@@ -758,14 +842,14 @@ function onListScroll() {
 .ntp-detail.tint-blue  { --ntp-detail-note-paper: var(--note-paper-blue); }
 .ntp-detail.tint-teal  { --ntp-detail-note-paper: var(--note-paper-teal); }
 .ntp-detail.empty { grid-template-columns: minmax(0, 1fr); }
-/* 只读态底部 16px = 编辑态 12px 窗格边距 + ne-toolbar 自带 4px 底 padding，
-   两种模式的按钮底缘才在同一水平线上 */
+/* 只读态按钮距窗格底部 10px；编辑态工具栏自带 4px 底 padding，
+   因此窗格自身留 6px，两种模式的按钮底缘保持同高。 */
 .ntp-reading {
   flex: 1; min-width: 0; min-height: 0;
-  display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 16px;
+  display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 10px;
 }
-/* 编辑态：窗格底部只留 12px，别让钉底的工具栏下面空一截 */
-.ntp-reading.editing { overflow: hidden; padding-bottom: 12px; }
+/* 编辑态：工具栏自带 4px 底 padding，外层留 6px，与只读态 10px 对齐。 */
+.ntp-reading.editing { overflow: hidden; padding-bottom: 6px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
 .rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }
 /* 浏览器原生 input 的文字垂直居中与 h1 字形基线有约 1px 的差异，预览标题微调对齐编辑态。 */
@@ -776,12 +860,13 @@ function onListScroll() {
 /* 编辑态复用阅读态标题行与分割线结构；显式覆盖全局输入框控件高度，避免通用
    表单尺寸和下边距把标题基线与分割线间距挤偏。 */
 .rp-title-input {
-  flex: 1; min-width: 0; width: 100%; height: 1.35em; box-sizing: border-box; padding: 0;
+  position: relative; top: 1px;
+  flex: 1; min-width: 0; width: 100%; min-height: 1.35em; box-sizing: border-box; padding: 0;
   border: 0;
   border-radius: 0; outline: none; background: transparent;
   margin: 0;
   font: 700 23px/1.35 var(--font-sans); color: var(--text-primary);
-  caret-color: var(--color-primary);
+  caret-color: var(--input-caret-color); resize: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .rp-title-input::placeholder { color: var(--text-secondary); opacity: 0.55; font-weight: 500; }
 .ntp-reading.editing .rp-title-row:focus-within + .rp-divider { border-bottom-color: color-mix(in srgb, var(--color-primary) 40%, transparent); }
@@ -799,6 +884,7 @@ function onListScroll() {
   --action-secondary-border: color-mix(in srgb, var(--content-primary) 24%, transparent);
   --action-secondary-border-hover: color-mix(in srgb, var(--content-primary) 40%, transparent);
 }
+.rp-foot-action { height: 38px; min-height: 38px; }
 /* 宽窗格顶层块间距统一锁 3px：mind-content 的 0.2em 是 em 口径，15px 标题算 3px、
    14px 正文算 2.8px 混着不齐；窗格字号已锁 14/15px，间距钉成同值，两模式同源一致 */
 .rp-body > * + *,

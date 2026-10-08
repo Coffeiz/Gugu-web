@@ -533,8 +533,8 @@ describe('主题 CSS 回归契约', () => {
     const adminLayoutVue = load('../../layouts/AdminLayout.vue')
     expect(adminLayoutVue).toContain('backdrop-filter: var(--popup-blur);')
 
-    const mindIndexVue = load('../../views/Mind/index.vue')
-    const mindTabs = cssBlock(mindIndexVue, '.mind-tabs {')
+    const mindToolbarVue = load('../../views/Mind/components/MindToolbar.vue')
+    const mindTabs = cssBlock(mindToolbarVue, '.mind-tabs {')
     expect(mindTabs).toContain('backdrop-filter: var(--glass-blur)')
     expect(mindTabs).toContain('-webkit-backdrop-filter: var(--glass-blur)')
 
