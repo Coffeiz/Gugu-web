@@ -781,8 +781,8 @@ function onListScroll() {
 .ni-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
 .ni-time { font-size: 11px; color: var(--text-secondary); opacity: 0.85; font-variant-numeric: tabular-nums; flex: none; }
 .ni-title {
-  flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--text-primary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.4; font-weight: 600; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-bottom: 1px; margin-bottom: -1px;
 }
 .ni-preview {
   font-size: 12.5px; color: var(--text-secondary); line-height: 1.55;
