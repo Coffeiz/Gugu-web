@@ -20,7 +20,7 @@ export interface EmptyTrashProgress {
 interface TrashPurgeOptions {
   api: TrashPurgeApi
   loadContents: () => void
-  refreshCache: () => void | Promise<void>
+  refreshCache: () => void | Promise<void | boolean>
   fetchStorage: () => void | Promise<void>
 }
 

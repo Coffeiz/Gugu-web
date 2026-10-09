@@ -130,7 +130,7 @@
           </div>
           <div class="fs-actions">
             <ActionButton v-for="resolution in (conflict.hasLocal ? resolutions : missingLocalResolutions)" :key="resolution.value" variant="secondary" fit
-                          :class="{ 'is-danger': resolution.value === 'keep_remote' }"
+                          :class="{ 'is-danger': resolution.value === 'keep_remote' || resolution.value === 'confirm_delete' }"
                           :disabled="Boolean(actionKey) || Boolean(bulkProgress)" @click="resolve(conflict.id, resolution.value)">
               <Icon :name="resolution.value === 'cancel' ? 'action.close' : 'status.check-circle'" size="sm" />
               {{ t(resolution.label) }}
@@ -156,7 +156,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
-import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncRunStatus } from '@/api/filesync'
+import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncConflictResolution, type FileSyncRunStatus } from '@/api/filesync'
 import { useFileSyncAdminEvents } from '@/composables/filesync/useFileSyncAdminEvents'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
@@ -179,9 +179,10 @@ const resolutions = [
   { value: 'keep_both' as const, label: 'filesyncAdmin.keepBoth' },
   { value: 'cancel' as const, label: 'filesyncAdmin.cancelConflict' },
 ]
-const missingLocalResolutions = resolutions.filter((resolution) =>
-  resolution.value === 'keep_remote' || resolution.value === 'cancel',
-)
+const missingLocalResolutions = [
+  ...resolutions.filter((resolution) => resolution.value === 'keep_remote' || resolution.value === 'cancel'),
+  { value: 'confirm_delete' as const, label: 'filesyncAdmin.confirmMissingDelete' },
+]
 const hasMissingLocalConflicts = computed(() =>
   status.value?.conflicts.some((conflict) => !conflict.hasLocal) ?? false,
 )
@@ -286,8 +287,8 @@ async function reconcileIssues() {
   }
 }
 
-async function resolve(conflictId: number, resolution: typeof resolutions[number]['value']) {
-  if (resolution !== 'cancel' && !await confirmDialog({ title: t('filesyncAdmin.resolveTitle'), message: t('filesyncAdmin.resolveConfirm'), tone: resolution === 'keep_remote' ? 'danger' : 'warning', confirmText: t('filesyncAdmin.confirmResolve') })) return
+async function resolve(conflictId: number, resolution: FileSyncConflictResolution) {
+  if (resolution !== 'cancel' && !await confirmDialog({ title: t('filesyncAdmin.resolveTitle'), message: t(resolution === 'confirm_delete' ? 'filesyncAdmin.confirmMissingDeleteMessage' : 'filesyncAdmin.resolveConfirm'), tone: resolution === 'keep_remote' || resolution === 'confirm_delete' ? 'danger' : 'warning', confirmText: t('filesyncAdmin.confirmResolve') })) return
   actionKey.value = `conflict-${conflictId}`
   error.value = ''
   try { await filesyncAdminApi.resolveConflict(adminStore.authFetch, conflictId, resolution); await load() }

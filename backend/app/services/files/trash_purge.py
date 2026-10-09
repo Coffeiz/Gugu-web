@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -247,6 +247,37 @@ async def _fail(
     return None
 
 
+async def _renew_lease_in_session(
+    db: AsyncSession, job_id: int, owner: str, now=None,
+) -> bool:
+    now = now or now_utc()
+    with db.no_autoflush:
+        result = await db.execute(update(TrashPurgeJob).where(
+            TrashPurgeJob.id == job_id,
+            TrashPurgeJob.status == "running",
+            TrashPurgeJob.lease_owner == owner,
+            TrashPurgeJob.lease_until > now,
+        ).values(lease_until=now + _LEASE))
+    return result.rowcount == 1
+
+
+async def _maintain_lease(job_id: int, owner: str, session_factory, lost: asyncio.Event) -> None:
+    interval = max(0.05, _LEASE.total_seconds() / 3)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            async with session_factory() as db:
+                renewed = await _renew_lease_in_session(db, job_id, owner)
+                await db.commit()
+            if not renewed:
+                lost.set()
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            diag_log("files.trash_purge.lease", exc)
+
+
 async def _next_batch(db: AsyncSession, job: TrashPurgeJob) -> list[tuple[str, int]]:
     files = await list_deleted_files(
         db, job.user_id, _BATCH_SIZE, deleted_before=job.snapshot_at
@@ -278,16 +309,28 @@ async def _delete_batch(
                 for deleted_id in deleted_ids:
                     delete_thumb_cache(deleted_id)
         job.progress_current += 1
-    job.lease_until = now_utc() + _LEASE
+    now = now_utc()
+    if not await _renew_lease_in_session(db, job.id, job.lease_owner, now):
+        raise RuntimeError("回收站清理任务租约已失效")
+    job.lease_until = now + _LEASE
     await db.commit()
 
 
 async def _complete(db: AsyncSession, job: TrashPurgeJob) -> None:
-    job.status = "completed"
-    job.error_code = None
-    job.finished_at = now_utc()
-    job.lease_owner = None
-    job.lease_until = None
+    now = now_utc()
+    with db.no_autoflush:
+        result = await db.execute(update(TrashPurgeJob).where(
+            TrashPurgeJob.id == job.id,
+            TrashPurgeJob.status == "running",
+            TrashPurgeJob.lease_owner == job.lease_owner,
+            TrashPurgeJob.lease_until > now,
+        ).values(
+            status="completed", error_code=None, finished_at=now,
+            lease_owner=None, lease_until=None,
+        ))
+    if result.rowcount != 1:
+        raise RuntimeError("回收站清理任务租约已失效")
+    await db.refresh(job)
     await db.commit()
 
 
@@ -296,43 +339,49 @@ async def _process(job_id: int, worker_id: str, session_factory) -> None:
 
     storage = get_storage()
     user_id = None
-    while True:
-        async with session_factory() as db:
-            job = await db.get(TrashPurgeJob, job_id)
-            if not job or job.status != "running" or job.lease_owner != worker_id:
-                return
-            user_id = job.user_id
-            work = await _next_batch(db, job)
-            if not work:
-                await _complete(db, job)
-                await events.publish_trash_purge_progress(
-                    user_id, job_id=job.id, status=job.status,
-                    progress_current=job.progress_current,
-                    progress_total=job.progress_total, failed_count=job.failed_count,
-                )
-                break
-            try:
-                await _delete_batch(db, job, work, storage)
-                await events.publish_trash_purge_progress(
-                    user_id, job_id=job.id, status=job.status,
-                    progress_current=job.progress_current,
-                    progress_total=job.progress_total, failed_count=job.failed_count,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                await db.rollback()
-                diag_log("files.trash_purge.process", exc)
-                _log.warning("回收站清理任务失败 job_id=%s error=%s", job_id, type(exc).__name__)
-                failed_job = await _fail(db, job_id, worker_id, "purge_failed")
-                if failed_job is not None:
+    lease_lost = asyncio.Event()
+    lease_task = asyncio.create_task(_maintain_lease(job_id, worker_id, session_factory, lease_lost))
+    try:
+        while True:
+            async with session_factory() as db:
+                job = await db.get(TrashPurgeJob, job_id)
+                if not job or job.status != "running" or job.lease_owner != worker_id or lease_lost.is_set():
+                    return
+                user_id = job.user_id
+                work = await _next_batch(db, job)
+                if not work:
+                    await _complete(db, job)
                     await events.publish_trash_purge_progress(
-                        failed_job.user_id, job_id=failed_job.id, status=failed_job.status,
-                        progress_current=failed_job.progress_current,
-                        progress_total=failed_job.progress_total,
-                        failed_count=failed_job.failed_count,
+                        user_id, job_id=job.id, status=job.status,
+                        progress_current=job.progress_current,
+                        progress_total=job.progress_total, failed_count=job.failed_count,
                     )
-                return
+                    break
+                try:
+                    await _delete_batch(db, job, work, storage)
+                    await events.publish_trash_purge_progress(
+                        user_id, job_id=job.id, status=job.status,
+                        progress_current=job.progress_current,
+                        progress_total=job.progress_total, failed_count=job.failed_count,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    await db.rollback()
+                    diag_log("files.trash_purge.process", exc)
+                    _log.warning("回收站清理任务失败 job_id=%s error=%s", job_id, type(exc).__name__)
+                    failed_job = await _fail(db, job_id, worker_id, "purge_failed")
+                    if failed_job is not None:
+                        await events.publish_trash_purge_progress(
+                            failed_job.user_id, job_id=failed_job.id, status=failed_job.status,
+                            progress_current=failed_job.progress_current,
+                            progress_total=failed_job.progress_total,
+                            failed_count=failed_job.failed_count,
+                        )
+                    return
+    finally:
+        lease_task.cancel()
+        await asyncio.gather(lease_task, return_exceptions=True)
 
     if user_id is not None:
         await events.publish(user_id, "files")

@@ -135,15 +135,18 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     _bindVisibility()
   }
 
-  async function refresh() {
+  async function refresh(): Promise<boolean> {
     const requestEpoch = getAccountBoundaryEpoch()
     try {
       const [files, folders, ver] = await Promise.all([filesApi.all(), foldersApi.all(), filesApi.version()])
-      if (requestEpoch !== getAccountBoundaryEpoch()) return
+      if (requestEpoch !== getAccountBoundaryEpoch()) return false
       allFiles.value   = files
       allFolders.value = folders
       _lastVersion = ver?.version ?? null
-    } catch { /* 静默失败 */ }
+      return true
+    } catch {
+      return false
+    }
   }
 
   function resetAccountState() {

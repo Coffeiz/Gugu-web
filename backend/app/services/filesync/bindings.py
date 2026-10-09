@@ -13,6 +13,7 @@ from app.core.tz import now_utc
 from app.models import File, FileSyncBinding, FileSyncConflict, FileSyncJournal
 from app.services.filesync.protocol import (
     FileSyncMode,
+    FileSyncOperation,
     FileSyncSource,
     FileSyncStatus,
     create_binding,
@@ -470,7 +471,7 @@ async def resolve_sync_conflict(
 ) -> FileSyncConflict:
     if not workspace_shell_supported():
         raise LookupError("OSS 存储模式不支持文件同步")
-    if resolution not in {"keep_local", "keep_remote", "keep_both", "cancel"}:
+    if resolution not in {"keep_local", "keep_remote", "keep_both", "confirm_delete", "cancel"}:
         raise ValueError("冲突处理方式无效")
     conflict = await get_owned(db, FileSyncConflict, conflict_id, user_id)
     if conflict is None or conflict.status != "pending":
@@ -485,12 +486,63 @@ async def resolve_sync_conflict(
     else:
         _, root = resolve_local_binding_root(user_id, binding.root_path)
     candidate = root / conflict.relative_path
+    resolved_candidate = candidate.resolve(strict=False)
+    try:
+        resolved_candidate.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError("冲突路径超出绑定目录，不能处理") from exc
     try:
         observed = _fingerprint(candidate) if candidate.is_file() and not candidate.is_symlink() else None
     except OSError as exc:
         raise ValueError("本地文件无法读取，不能保留本地") from exc
     if resolution == "keep_local" and observed is None:
         raise ValueError("本地文件不存在，不能保留本地")
+    if resolution == "confirm_delete":
+        if observed is not None or candidate.is_symlink() or candidate.exists():
+            raise ValueError("本地路径已存在，不能确认删除")
+        user_root = _user_root(user_id)
+        root_relative = root.resolve().relative_to(user_root).as_posix()
+        storage_prefix = f"{user_id}/" if root_relative == "." else f"{user_id}/{root_relative.rstrip('/')}/"
+        file = (await db.execute(select(File).where(
+            File.user_id == user_id,
+            File.storage_key == storage_prefix + conflict.relative_path,
+            File.deleted_at.is_(None),
+        ).with_for_update())).scalar_one_or_none()
+        if file is None:
+            raise ValueError("找不到对应的活动文件记录，无法确认删除")
+        now = now_utc()
+        size_bytes = int(file.size_bytes or 0)
+        file.deleted_at = now
+        file.version = int(file.version or 1) + 1
+        file.updated_at = now
+        from app.services.files.previews import delete_thumb_cache
+        from app.services.storage.quota_ledger import FILE_LIBRARY, record_usage
+
+        delete_thumb_cache(file.id, Path(get_settings().storage.local_path).expanduser().resolve())
+        if size_bytes:
+            await record_usage(
+                db, user_id, category=FILE_LIBRARY, delta_bytes=-size_bytes,
+                operation="filesync_confirm_delete", resource_type="file", resource_id=file.id,
+                idempotency_key=f"filesync-confirm-delete:{conflict.id}",
+                allow_over_limit=True,
+            )
+        await record_change(
+            db, binding=binding, user_id=user_id, source=FileSyncSource.LOCAL_DIRECTORY,
+            operation=FileSyncOperation.DELETE, relative_path=conflict.relative_path,
+            idempotency_key=build_idempotency_key(
+                source=FileSyncSource.LOCAL_DIRECTORY,
+                operation=FileSyncOperation.DELETE,
+                relative_path=conflict.relative_path,
+                fingerprint=f"confirmed-delete:{conflict.id}",
+            ), baseline_fingerprint=conflict.remote_fingerprint or conflict.baseline_fingerprint,
+            observed_fingerprint=None, status=FileSyncStatus.SYNCED,
+        )
+        conflict.status = "resolved"
+        conflict.resolution = resolution
+        conflict.resolved_at = now
+        conflict.updated_at = now
+        await db.flush()
+        return conflict
     if resolution == "cancel":
         # 只解除冲突标记，不动盘上文件；必须同样落 resolved，
         # 否则冲突永远留在 pending 列表里（点「取消冲突」看起来毫无反应）。

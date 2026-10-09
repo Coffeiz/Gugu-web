@@ -1476,6 +1476,85 @@ async def test_resolve_conflict_cancel_marks_resolved(db, user_a, monkeypatch, t
 
 
 @pytest.mark.asyncio
+async def test_resolve_missing_file_conflict_with_explicit_delete(db, user_a, monkeypatch, tmp_path):
+    import app.services.filesync.bindings as bindings
+    import app.services.filesync.protocol as protocol
+    from app.models import FileSyncConflict, FileSyncJournal, StorageQuotaLedger
+    from app.services.storage.quota_ledger import FILE_LIBRARY
+
+    monkeypatch.setattr(bindings, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
+    settings = SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path)))
+    monkeypatch.setattr(bindings, "get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.storage.quota_ledger.get_settings", lambda: settings)
+
+    user_root = tmp_path / str(user_a.id)
+    user_root.mkdir(parents=True)
+    binding = await create_binding(
+        db, user_id=user_a.id, source="local_directory", root_fingerprint="d" * 64,
+        root_path=".",
+    )
+    file = File(
+        user_id=user_a.id, display_name="missing", ext="txt",
+        storage_key=f"{user_a.id}/missing.txt", size_bytes=12,
+    )
+    db.add(file)
+    conflict = FileSyncConflict(
+        binding_id=binding.id, user_id=user_a.id, relative_path="missing.txt",
+        status="pending", remote_fingerprint="a" * 64,
+    )
+    db.add(conflict)
+    quota = StorageQuotaLedger(
+        user_id=user_a.id, category=FILE_LIBRARY, limit_bytes=100, used_bytes=12,
+        reserved_bytes=0, status="active",
+    )
+    db.add(quota)
+    await db.flush()
+
+    resolved = await bindings.resolve_sync_conflict(
+        db, user_a.id, conflict.id, "confirm_delete",
+    )
+    await db.commit()
+    await db.refresh(file)
+    await db.refresh(quota)
+    journal = (await db.scalars(select(FileSyncJournal).where(
+        FileSyncJournal.binding_id == binding.id,
+        FileSyncJournal.relative_path == "missing.txt",
+    ))).one()
+
+    assert resolved.status == "resolved" and resolved.resolution == "confirm_delete"
+    assert file.deleted_at is not None
+    assert quota.used_bytes == 0
+    assert journal.operation == "delete" and journal.status == "synced"
+
+
+@pytest.mark.asyncio
+async def test_confirm_delete_refuses_if_missing_path_has_reappeared(db, user_a, monkeypatch, tmp_path):
+    import app.services.filesync.bindings as bindings
+
+    monkeypatch.setattr(bindings, "workspace_shell_supported", lambda: True)
+    monkeypatch.setattr(bindings, "get_settings", lambda: SimpleNamespace(
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+    ))
+    user_root = tmp_path / str(user_a.id)
+    user_root.mkdir(parents=True)
+    binding = await create_binding(
+        db, user_id=user_a.id, source="local_directory", root_fingerprint="e" * 64,
+        root_path=".",
+    )
+    (user_root / "missing.txt").write_text("back", encoding="utf-8")
+    conflict = FileSyncConflict(
+        binding_id=binding.id, user_id=user_a.id, relative_path="missing.txt",
+        status="pending",
+    )
+    db.add(conflict)
+    await db.flush()
+
+    with pytest.raises(ValueError, match="本地路径已存在"):
+        await bindings.resolve_sync_conflict(db, user_a.id, conflict.id, "confirm_delete")
+
+
+@pytest.mark.asyncio
 async def test_watcher_does_not_scan_on_startup_and_keeps_manual_gap_visible(db, user_a, user_b, monkeypatch, tmp_path):
     """启动只注册监听；监听 ready 不会导入历史文件或清除待人工核对标记。"""
     import asyncio

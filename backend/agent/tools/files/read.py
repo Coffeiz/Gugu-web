@@ -65,11 +65,26 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
             "note": f"已读取网络图片{title_note}，见随附图像。",
         }
     if attach_id:
+        if restricted:
+            from agent.im import imctx
+
+            current_im = imctx.get_im() or {}
+            allowed_ids = current_im.get("current_attachment_ids") or ()
+            if attach_id not in allowed_ids:
+                return json.dumps(
+                    {"error": "群聊成员和未识别身份只能读取当前消息提供的图片附件"},
+                    ensure_ascii=False,
+                )
         return await _read_history_media(
             user_id, attach_id, restricted=restricted, max_source_bytes=max_source_bytes,
         )
+    if restricted and args.get("file_id") is not None:
+        return json.dumps(
+            {"error": "群聊成员和未识别身份只能读取当前会话明确提供的图片附件"},
+            ensure_ascii=False,
+        )
     if restricted and args.get("file"):
-        return json.dumps({"error": "群聊成员和未识别身份只能按 file_id 读取图片"}, ensure_ascii=False)
+        return json.dumps({"error": "群聊成员和未识别身份只能读取当前会话明确提供的图片附件"}, ensure_ascii=False)
 
     f, _err = await _resolve_file(db, user_id, args)
     if _err:

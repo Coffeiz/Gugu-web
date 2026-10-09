@@ -43,6 +43,11 @@ def _dedup_key(bot_id: str, update_id: int) -> str:
     return f"im:telegram:{bot_id}:update:{update_id}"
 
 
+def _is_new_message_update(update: dict) -> bool:
+    """编辑消息不能重新触发 Agent 或有副作用的工具调用。"""
+    return isinstance(update.get("message"), dict)
+
+
 async def _persist_update(bot_id: str, update_id: int, payload: dict | None) -> None:
     import json
 
@@ -210,7 +215,7 @@ async def _run() -> None:
     while not _STOP.is_set():
         try:
             cursor = await redis.get(_cursor_key(bot_id))
-            payload: dict[str, object] = {"timeout": 50, "allowed_updates": ["message", "edited_message"]}
+            payload: dict[str, object] = {"timeout": 50, "allowed_updates": ["message"]}
             if cursor is not None:
                 payload["offset"] = int(cursor) + 1
             updates = await call(token, "getUpdates", payload=payload, timeout=60)
@@ -220,6 +225,9 @@ async def _run() -> None:
             for update in sorted((item for item in updates if isinstance(item, dict)), key=lambda item: int(item.get("update_id", -1))):
                 update_id = update.get("update_id")
                 if not isinstance(update_id, int):
+                    continue
+                if not _is_new_message_update(update):
+                    await _persist_update(bot_id, update_id, None)
                     continue
                 normalized = normalize_message(
                     update,

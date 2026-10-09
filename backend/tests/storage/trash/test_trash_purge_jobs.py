@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -14,7 +15,7 @@ from app.core.tz import now_utc
 from app.db import session as db_session
 from app.models import File, TrashPurgeJob
 from app.services.files import trash_purge
-from app.services.files.trash_purge import _claim
+from app.services.files.trash_purge import _claim, _renew_lease_in_session
 
 
 async def test_global_worker_claims_at_most_one_purge(db, user_a, user_b):
@@ -42,6 +43,25 @@ async def test_database_constraint_rejects_two_running_purge_jobs(db, user_a, us
 
     running = (await db.execute(select(TrashPurgeJob).where(TrashPurgeJob.status == 'running'))).scalars().all()
     assert len(running) == 1
+
+
+async def test_purge_lease_renews_only_for_current_unexpired_owner(db, user_a):
+    now = now_utc()
+    job = TrashPurgeJob(
+        user_id=user_a.id, status="running", lease_owner="worker-one",
+        lease_until=now + timedelta(seconds=30), snapshot_at=now, progress_total=1,
+    )
+    db.add(job)
+    await db.commit()
+    original_until = job.lease_until
+
+    assert await _renew_lease_in_session(db, job.id, "worker-one", now)
+    await db.commit()
+    await db.refresh(job)
+    assert job.lease_until > original_until
+
+    assert not await _renew_lease_in_session(db, job.id, "worker-two", now)
+    assert not await _renew_lease_in_session(db, job.id, "worker-one", job.lease_until + timedelta(seconds=1))
 
 
 async def test_purge_job_status_cannot_be_read_by_another_user(db, user_a, user_b):

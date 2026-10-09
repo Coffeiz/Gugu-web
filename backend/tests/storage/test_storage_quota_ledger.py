@@ -298,6 +298,32 @@ async def test_local_workspace_files_and_shell_writes_share_user_limit(db, user_
 
 
 @pytest.mark.asyncio
+async def test_importing_precounted_physical_file_does_not_double_count_quota(
+    db, user_a, tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
+    path = tmp_path / str(user_a.id) / "workspace" / "default" / "imported.bin"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"x" * 23)
+
+    rows = await quota_ledger.ensure_user_storage_space(db, user_a)
+    file_quota = next(row for row in rows if row.category == quota_ledger.FILE_LIBRARY)
+    baseline = file_quota.used_bytes
+    await db.flush()
+    db.add(File(
+        user_id=user_a.id, display_name="imported", ext="bin",
+        storage_key=f"{user_a.id}/workspace/default/imported.bin", size_bytes=23,
+        space="workspace",
+    ))
+    await db.flush()
+
+    measured = await quota_ledger.reconcile_user_storage(db, user_a.id)
+
+    assert measured[quota_ledger.FILE_LIBRARY] == baseline == 23
+    assert file_quota.used_bytes == 23
+
+
+@pytest.mark.asyncio
 async def test_full_shell_authorization_watches_all_persistent_user_roots(db, user_a, tmp_path, monkeypatch):
     monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
     user_a.storage_limit_bytes = 100

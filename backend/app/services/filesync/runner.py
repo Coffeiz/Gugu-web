@@ -27,7 +27,6 @@ from app.models import (
     FileSyncOutbox,
     FileSyncReconcileRun,
     Folder,
-    StorageQuotaLedger,
     Workspace,
 )
 from app.services.filesync.inventory import stage_database_inventory
@@ -774,6 +773,8 @@ async def _execute_scope(
     max_manifest_bytes, commit_entries = default_manifest_budget()
     storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
     user_root = (storage_root / str(scope.user_id)).resolve()
+    # 修复扫描读取的是已存在的物理目录；其文件可能早已计入未登记物理用量，
+    # 不能仅凭新增 File 记录就再次增加账本。完整投影成功后统一按物理事实校准。
     record_repair_change_deltas = False
     included_root_entries = (
         frozenset({"个人文件", "项目文件"})
@@ -792,15 +793,6 @@ async def _execute_scope(
             raise ScanIncomplete("反向导出任务与绑定模式不匹配")
         if not workspace_shell_supported():
             raise ScanIncomplete("当前存储模式不支持本地文件同步")
-        if scope.action == "repair":
-            from app.services.storage.quota_ledger import FILE_LIBRARY
-
-            async with session_factory() as db:
-                record_repair_change_deltas = await db.scalar(select(StorageQuotaLedger.id).where(
-                    StorageQuotaLedger.user_id == scope.user_id,
-                    StorageQuotaLedger.category == FILE_LIBRARY,
-                )) is not None
-                await db.rollback()
         storage_prefix = await _check_scope_before_batch(session_factory, scope, signals.stop)
         async with session_factory() as db:
             await update_run_progress(
@@ -972,6 +964,12 @@ async def _execute_scope(
             return "failed", "scan_permission_denied", counts
         if counts["failed"]:
             return "failed", "path_projection_failed", counts
+        if scope.action == "repair":
+            from app.services.storage.quota_ledger import reconcile_user_storage
+
+            async with session_factory() as db:
+                await reconcile_user_storage(db, scope.user_id)
+                await db.commit()
         return "succeeded", None, counts
     except ScanTimedOut:
         return "failed", "execution_timeout", counts

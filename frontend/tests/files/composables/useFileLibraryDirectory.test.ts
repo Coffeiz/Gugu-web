@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { filesApi, foldersApi, trashApi } from '@/services/api'
 import { useFileLibraryDirectory } from '@/composables/files/useFileLibraryDirectory'
 import type { NavSeg } from '@/utils/filesNav'
+import { beginAccountBoundary } from '@/utils/accountBoundary'
 
 vi.mock('@/services/api', () => ({
   filesApi: { list: vi.fn(), all: vi.fn(), tree: vi.fn(), version: vi.fn() },
@@ -132,5 +133,24 @@ describe('文件库目录按需加载', () => {
     expect(page.loading.value).toBe(false)
     resolveFiles([])
     resolveFolders([])
+  })
+
+  it('账号切换后丢弃旧账号尚未返回的目录响应', async () => {
+    const page = setup('personal', { type: 'personal' })
+    let resolveFiles!: (rows: unknown[]) => void
+    let resolveFolders!: (rows: unknown[]) => void
+    vi.mocked(filesApi.list).mockImplementationOnce(() => new Promise(resolve => { resolveFiles = resolve }) as never)
+    vi.mocked(foldersApi.list).mockImplementationOnce(() => new Promise(resolve => { resolveFolders = resolve }) as never)
+
+    page.loadContents()
+    beginAccountBoundary()
+    await nextTick()
+    resolveFiles([file])
+    resolveFolders([folder])
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(page.contents.value).toEqual({ folders: [], files: [] })
+    expect(page.replaceDirectorySnapshot).not.toHaveBeenCalled()
   })
 })

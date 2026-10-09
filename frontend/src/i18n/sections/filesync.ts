@@ -54,6 +54,19 @@ Object.assign(filesyncAdminUiBase['en-US'], {
   bulkMissingLocalDisabled: 'Some conflicts have no local file. Handle them individually; bulk actions are disabled.',
 })
 
+Object.assign(filesyncAdminUiBase['zh-CN'], {
+  confirmMissingDelete: '确认缺失并删除记录',
+  confirmMissingDeleteMessage: '将把文件库中对应的文件记录移入回收站，并记下已确认的删除；不会删除磁盘上的其他文件。此操作不可直接撤销，请确认该路径确实不需要恢复。',
+})
+Object.assign(filesyncAdminUiBase['ja-JP'], {
+  confirmMissingDelete: '欠落を確認して記録を削除',
+  confirmMissingDeleteMessage: '対応するファイル記録をゴミ箱へ移し、削除を記録します。他のディスク上のファイルは削除しません。パスを復元する必要がないことを確認してください。',
+})
+Object.assign(filesyncAdminUiBase['en-US'], {
+  confirmMissingDelete: 'Confirm missing and delete record',
+  confirmMissingDeleteMessage: 'Move the matching file record to trash and record the confirmed deletion. No other disk files will be deleted. Confirm that this path does not need to be restored.',
+})
+
 export const filesyncAdminUi = filesyncAdminUiBase
 
 export const filesyncUserUi = {

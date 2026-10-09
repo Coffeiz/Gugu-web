@@ -388,6 +388,7 @@ def bind_im_context(request: AgentRequest, payload: dict, *, show_tool_interacti
         request.allowed_tool_names,
         request.im_role,
         show_tool_interactions,
+        [str(item) for item in (request.attachments or [])],
     )
 
 

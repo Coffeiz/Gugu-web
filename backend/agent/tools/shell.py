@@ -34,6 +34,7 @@ from app.services.workspaces import (
 from app.services.storage.quota_ledger import (
     FILE_LIBRARY,
     SHELL_PERSISTENT,
+    get_local_storage_quota_watch,
     get_quota,
     measure_shell_persistent_usage,
     record_usage,
@@ -215,6 +216,7 @@ async def _run_shell(db, user_id, args: dict):
     quota_roots = ()
     quota_bytes = None
     quota_before = None
+    local_quota_watch = False
     result = None
     execution_error = None
     if decision.scope.value == "sandbox":
@@ -231,8 +233,10 @@ async def _run_shell(db, user_id, args: dict):
                     "_scope": decision.scope.value,
                     "_audit_event": "quota_exceeded",
                 }
-            # Local 共用配额以账本为执行前事实；全量校准由独立修复/周期任务
-            # 承担，不放在单次 Shell 请求中。
+            quota_roots, quota_bytes = await get_local_storage_quota_watch(
+                db, user_id, include_library=decision.full_user_sandbox_write,
+            )
+            local_quota_watch = True
         elif decision.workspace_id is None:
             # OSS 没有本地 Workspace 根，Shell 持久空间继续使用独立上限。
             measured = await reconcile_user_storage(db, user_id)
@@ -368,6 +372,10 @@ async def _run_shell(db, user_id, args: dict):
             idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
             metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
         )
+    elif decision.scope.value == "sandbox" and local_quota_watch:
+        # Shell 可直接写入未登记文件；执行器负责在运行期间限额，收尾时以物理事实
+        # 校准账本，避免后续命令仍依据过期用量放行。
+        await reconcile_user_storage(db, user_id)
     if terminal_row is not None and not args.get("_defer_terminal_event"):
         from app.services.terminals import append_shell_result
         await append_shell_result(

@@ -99,7 +99,7 @@ export interface FileSyncBulkEnqueueResult {
   skipped: number
 }
 
-export type FileSyncConflictResolution = 'keep_local' | 'keep_remote' | 'keep_both' | 'cancel'
+export type FileSyncConflictResolution = 'keep_local' | 'keep_remote' | 'keep_both' | 'confirm_delete' | 'cancel'
 
 type AdminFetch = (url: string, options?: RequestInit) => Promise<Response>
 

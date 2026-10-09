@@ -82,6 +82,10 @@ async def test_long_poll_resumes_after_last_atomically_enqueued_update(monkeypat
                     "message_id": 32, "chat": {"id": 7001, "type": "private"},
                     "from": {"id": 7001, "first_name": "测试"}, "text": "后到消息",
                 }},
+                {"update_id": 913, "edited_message": {
+                    "message_id": 31, "chat": {"id": 7001, "type": "private"},
+                    "from": {"id": 7001, "first_name": "测试"}, "text": "/delete_everything",
+                }},
                 {"update_id": 911, "message": {
                     "message_id": 31, "chat": {"id": 7001, "type": "private"},
                     "from": {"id": 7001, "first_name": "测试"}, "text": "先到消息",
@@ -103,7 +107,8 @@ async def test_long_poll_resumes_after_last_atomically_enqueued_update(monkeypat
 
     update_calls = [payload for method, payload, _timeout in calls if method == "getUpdates"]
     assert update_calls[0].get("offset") is None
-    assert update_calls[1]["offset"] == 913
+    assert update_calls[0]["allowed_updates"] == ["message"]
+    assert update_calls[1]["offset"] == 914
     assert [item["platform_event_id"] for item in enqueued] == ["911", "912"]
     assert [item["text"] for item in enqueued] == ["先到消息", "后到消息"]
 

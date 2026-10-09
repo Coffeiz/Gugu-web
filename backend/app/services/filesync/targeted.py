@@ -291,6 +291,7 @@ async def _project_changed_file(
         row.workspace_directory_id = file_ws_dir_id
         row.size_bytes = path.stat().st_size
         row.size = str(path.stat().st_size)
+        row.mime_type = mimetypes.guess_type(path.name)[0]
         row.version = int(row.version or 1) + 1
         row.updated_at = now_utc()
         operation = FileSyncOperation.MOVE

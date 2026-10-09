@@ -177,7 +177,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
@@ -187,7 +187,7 @@ import { useLiveStore } from '@/stores/live'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
-import { commitNoteEdit } from '@/composables/mind/noteEditCommit'
+import { canLeaveNoteEditor, commitNoteEdit } from '@/composables/mind/noteEditCommit'
 import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd, combineTitleBody } from '@/composables/mind/useMindEditor'
 import { vMindPreview } from './directives/mindPreview'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
@@ -463,6 +463,8 @@ function removeEmptyDraft(note: MindNote) {
 }
 // ── 新建：先造本地空草稿，提交有效内容时才创建服务端记录 ──
 const pendingNewId = ref<number | null>(null)
+
+onBeforeRouteLeave(() => canLeaveNoteEditor(editing.value, finishEdit))
 
 async function createNew() {
   if (editing.value && !(await finishEdit())) return

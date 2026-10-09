@@ -15,3 +15,11 @@ export async function commitNoteEdit(
     committing.value = false
   }
 }
+
+/** 页面离开时，未保存成功就阻止导航，避免组件卸载丢弃正在编辑的正文。 */
+export async function canLeaveNoteEditor(
+  editing: boolean,
+  finishEdit: () => Promise<boolean>,
+): Promise<boolean> {
+  return !editing || finishEdit()
+}

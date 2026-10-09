@@ -758,7 +758,7 @@ async def test_run_shell_commits_preflight_before_waiting_for_process(monkeypatc
 @pytest.mark.asyncio
 @pytest.mark.parametrize("full_user_sandbox_write", [False, True])
 @pytest.mark.parametrize("filesync_enabled", [False, True])
-async def test_local_shell_uses_quota_ledger_without_post_command_scan(
+async def test_local_shell_monitors_quota_and_reconciles_after_command(
     monkeypatch, full_user_sandbox_write, filesync_enabled,
 ):
     """本地 Shell 不因 watcher 状态或 filesync 开关同步扫描；账本超额仍阻止后续命令。"""
@@ -810,14 +810,29 @@ async def test_local_shell_uses_quota_ledger_without_post_command_scan(
     monkeypatch.setattr(shell_tool, "get_quota", get_quota)
     monkeypatch.setattr(shell_tool, "reconcile_user_storage", reconcile)
     monkeypatch.setattr(shell_tool, "SandboxdClient", Client)
+    from pathlib import Path
+
+    watched = []
+
+    async def quota_watch(_db, _user_id, *, include_library):
+        watched.append(include_library)
+        roots = [Path("/tmp/quota-workspace")]
+        if include_library:
+            roots.extend((Path("/tmp/quota-personal"), Path("/tmp/quota-project")))
+        return tuple(roots), 100
+
+    monkeypatch.setattr(shell_tool, "get_local_storage_quota_watch", quota_watch)
 
     result = await shell_tool._run_shell(_PolicyDB(), "user-1", {"command": "touch result"})
 
     assert result["ok"] is True
     request = captured[0]
-    assert request.quota_roots == ()
-    assert request.quota_bytes is None
-    assert reconciliations == []
+    assert request.quota_roots == ("/tmp/quota-workspace",) + (
+        ("/tmp/quota-personal", "/tmp/quota-project") if full_user_sandbox_write else ()
+    )
+    assert request.quota_bytes == 100
+    assert watched == [full_user_sandbox_write]
+    assert reconciliations == [True]
 
     # 模拟执行后的账本更新；下次调用仍依据账本拦截超额写入。
     usage["used"] = 105

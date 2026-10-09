@@ -43,7 +43,7 @@ class BindingActionRequest(BaseModel):
 
 
 class ConflictActionRequest(BaseModel):
-    resolution: Literal["keep_local", "keep_remote", "keep_both", "cancel"]
+    resolution: Literal["keep_local", "keep_remote", "keep_both", "confirm_delete", "cancel"]
     confirm: bool = False
 
 

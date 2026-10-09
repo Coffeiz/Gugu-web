@@ -731,9 +731,10 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
       }))
       if (compensation.some(result => result.status === 'rejected')) {
         // 补偿也失败时，先把服务端实际状态拉回缓存，避免 rollback 显示一个虚假的全量回滚。
-        await cacheStore.refresh()
-        refreshedAfterCompensationFailure = true
-        throw new Error('多文件移动失败，且部分文件无法恢复；已刷新实际状态')
+        refreshedAfterCompensationFailure = await cacheStore.refresh()
+        throw new Error(refreshedAfterCompensationFailure
+          ? '多文件移动失败，部分文件无法恢复；已刷新实际状态'
+          : '多文件移动失败，部分文件无法恢复，且未能读取服务端状态；请刷新文件库核对结果')
       }
       throw failed.reason
     },
@@ -745,7 +746,10 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
         workspaceDirectoryId: f.workspaceDirectoryId ?? null,
       }))
     },
-    onError: err => console.error('[Files] 移动失败:', (err as Error).message),
+    onError: err => {
+      console.error('[Files] 移动失败:', (err as Error).message)
+      showAppError((err as Error).message)
+    },
   })
 }
 

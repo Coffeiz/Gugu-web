@@ -1,4 +1,4 @@
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { filesApi, foldersApi, trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import type { DirectorySnapshotScope, FileMeta, FolderMeta } from '@/stores/filesCache'
@@ -6,6 +6,7 @@ import type { Project } from '@/types/project'
 import { doneYear, doneMonth } from '@/utils/fileParse'
 import { statusFolders, yearFolders, monthFolders } from '@/utils/projectFolderCards'
 import { projectStatusLabelKey } from '@/utils/projectStages'
+import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import type { NavSeg, FolderCard as FolderCardMeta } from '@/utils/filesNav'
 
 interface DirectoryProjectStore {
@@ -58,6 +59,8 @@ function rememberScopedSnapshot(
 }
 
 async function loadScopedDirectory(type: string, segment: NavSeg | null, state: ScopedDirectoryState) {
+  const accountEpoch = getAccountBoundaryEpoch()
+  const isCurrent = () => state.isCurrent() && accountEpoch === getAccountBoundaryEpoch()
   const projectId = type === 'project' ? segment?.id : segment?.projectId
   const folderId = type === 'folder' ? segment?.folderId : undefined
   const workspaceDirectoryId = type === 'workspace' || segment?.space === 'workspace'
@@ -82,7 +85,7 @@ async function loadScopedDirectory(type: string, segment: NavSeg | null, state: 
       foldersApi.list({ projectId: projectId ?? undefined, parentId: folderId ?? undefined,
         workspaceDirectoryId: workspaceDirectoryId ?? undefined }),
     ])
-    if (!state.isCurrent()) return
+    if (!isCurrent()) return
     const fileRows = files as FileMeta[]
     const folderRows = folders as FolderMeta[]
     state.cacheStore.replaceDirectorySnapshot({
@@ -102,12 +105,12 @@ async function loadScopedDirectory(type: string, segment: NavSeg | null, state: 
     rememberScopedSnapshot(state.snapshots, state.snapshotKey, snapshot)
     state.contents.value = { folders: [...folderItems], files: fileRows }
   } catch (error) {
-    if (state.isCurrent()) {
+    if (isCurrent()) {
       if (!cached) state.contents.value = { folders: [], files: [] }
       console.error('[Files] 加载目录失败:', error instanceof Error ? error.message : String(error))
     }
   } finally {
-    if (state.isCurrent()) state.loading.value = false
+    if (isCurrent()) state.loading.value = false
   }
 }
 
@@ -155,10 +158,22 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
   }
 
   let requestSequence = 0
+  if (getCurrentScope()) onScopeDispose(() => { requestSequence += 1 })
+  watch(accountBoundaryEpoch, () => {
+    requestSequence += 1
+    scopedSnapshots.clear()
+    contents.value = { folders: [], files: [] }
+    trashFolders.value = []
+    expandedTrashFolders.value.clear()
+    trashFolderContents.value = {}
+    loading.value = false
+  }, { flush: 'sync' })
 
   function loadContents() {
     requestSequence++
     const sequence = requestSequence
+    const accountEpoch = getAccountBoundaryEpoch()
+    const isCurrent = () => requestSequence === sequence && accountEpoch === getAccountBoundaryEpoch()
     loading.value = false
     const type = currentType.value
     const segment = currentSeg.value
@@ -182,6 +197,7 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
       }
       const rootCountRequest = cacheStore.loaded ? Promise.resolve(null) : filesApi.tree()
       Promise.all([trashApi.counts(), rootCountRequest]).then(([trashCounts, tree]) => {
+        if (!isCurrent()) return
         const personalFolder = contents.value.folders.find(folder => folder.id === 'personal')
         if (personalFolder && tree) personalFolder.count = tree.personalRootCount
         const trashFolder = contents.value.folders.find(folder => folder.id === 'trash')
@@ -194,11 +210,12 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
       loading.value = true
       Promise.all([trashApi.list(), trashApi.listFolders()])
         .then(([files, folders]) => {
+          if (!isCurrent()) return
           contents.value = { folders: [], files }
           trashFolders.value = folders
         })
-        .catch(error => console.error('[Files]', (error as Error).message))
-        .finally(() => { loading.value = false })
+        .catch(error => { if (isCurrent()) console.error('[Files]', (error as Error).message) })
+        .finally(() => { if (isCurrent()) loading.value = false })
       return
     }
 

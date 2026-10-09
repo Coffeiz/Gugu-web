@@ -24,7 +24,7 @@ export interface FileLibraryTrashActionOptions {
   trashFolderContents: Ref<Record<number, TrashFolderContents>>
   loadContents: () => void
   clearSelection: () => void
-  refreshCache: () => void | Promise<void>
+  refreshCache: () => void | Promise<void | boolean>
   fetchStorage: () => void | Promise<void>
 }
 
