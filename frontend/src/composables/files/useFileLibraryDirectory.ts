@@ -349,7 +349,23 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
     }
   }
 
+  /** 删除文件时同步剔除当前视图和所有按需目录快照，避免旧快照重新显示已删卡片。 */
+  function removeFilesFromSnapshots(fileIds: number[]) {
+    if (!fileIds.length) return
+    const removedIds = new Set(fileIds)
+    contents.value = {
+      ...contents.value,
+      files: contents.value.files.filter(file => !removedIds.has(file.id)),
+    }
+    for (const [key, snapshot] of scopedSnapshots) {
+      const files = snapshot.files.filter(file => !removedIds.has(file.id))
+      if (files.length !== snapshot.files.length) {
+        scopedSnapshots.set(key, { ...snapshot, files })
+      }
+    }
+  }
+
   watch(locale, () => loadContents())
 
-  return { contents, trashFolders, expandedTrashFolders, trashFolderContents, sortedTrashFolders, loadContents }
+  return { contents, trashFolders, expandedTrashFolders, trashFolderContents, sortedTrashFolders, loadContents, removeFilesFromSnapshots }
 }

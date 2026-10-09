@@ -135,6 +135,29 @@ describe('文件库目录按需加载', () => {
     resolveFolders([])
   })
 
+  it('删除后先剔除所有旧目录快照，并阻止删除前请求把卡片复活', async () => {
+    const page = setup('personal', { type: 'personal' })
+    page.loadContents()
+    await vi.waitFor(() => expect(page.contents.value.files).toEqual([file]))
+
+    let resolvePreDelete!: (rows: FileMeta[]) => void
+    vi.mocked(filesApi.list)
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePreDelete = resolve }) as never)
+      .mockResolvedValueOnce([] as never)
+    page.loadContents() // 删除前启动的目录读取仍会返回旧列表
+
+    page.removeFilesFromSnapshots([file.id])
+    expect(page.contents.value.files).toEqual([])
+    page.loadContents() // 删除提交后重新读取权威目录
+    await vi.waitFor(() => expect(page.contents.value.files).toEqual([]))
+
+    resolvePreDelete([file])
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(page.contents.value.files).toEqual([])
+  })
+
   it('账号切换后丢弃旧账号尚未返回的目录响应', async () => {
     const page = setup('personal', { type: 'personal' })
     let resolveFiles!: (rows: unknown[]) => void

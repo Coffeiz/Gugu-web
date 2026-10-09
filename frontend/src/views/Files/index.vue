@@ -548,6 +548,7 @@ const batchActions = useFileLibraryBatchActions({
   getCurrentFolderName: () => currentSeg.value?.name ?? null,
   clearSelection,
   loadContents,
+  removeFilesFromSnapshots: directory.removeFilesFromSnapshots,
   pruneHistoryForFolders: pruneHistoryForFolders,
   fetchStorage,
   getDestination: () => {
@@ -629,7 +630,7 @@ function deleteSelected() {
   return batchActions.deleteSelected()
 }
 
-const filePageActions = useFileLibraryFileActions({ cacheStore, fileActions, selectedIds, loadContents, fetchStorage })
+const filePageActions = useFileLibraryFileActions({ cacheStore, fileActions, selectedIds, loadContents, removeFilesFromSnapshots: directory.removeFilesFromSnapshots, fetchStorage })
 const { downloadFile, deleteSingleFile } = filePageActions
 
 // ── 重命名 ──
@@ -942,19 +943,23 @@ async function ctxDelete() {
     count: ids.length,
     name: ctx.value.target && 'displayName' in ctx.value.target ? ctx.value.target.displayName : undefined,
   })) return
-  // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，n  // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
-  const backups = ids.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
+  // 等服务端确认后再更新缓存，避免删除中的卡片先消失、随后被旧快照重新显示。
   await InteractionSync.execute({
     scope: 'file.batch-delete', entityKey: `file-batch-delete:${ids.join(',')}`,
-    apply: () => {
-      cacheStore.removeFiles(ids)
-      selectedIds.value = new Set()
-    },
-    afterMutate: loadContents,
+    apply: () => {},
     request: mutation => Promise.all(ids.map(id => fileActions.deleteFile(id, { mutationId: mutation.mutationId }))),
-    onCommit: fetchStorage,
-    rollback: () => backups.forEach(f => cacheStore.addFile(f)),
-    onError: e => console.error('[Files] 删除失败:', (e as Error).message),
+    onCommit: () => {
+      cacheStore.removeFiles(ids)
+      directory.removeFilesFromSnapshots(ids)
+      selectedIds.value = new Set()
+      loadContents()
+      void fetchStorage()
+    },
+    rollback: () => {},
+    onError: e => {
+      console.error('[Files] 删除失败:', (e as Error).message)
+      loadContents()
+    },
   })
 }
 
