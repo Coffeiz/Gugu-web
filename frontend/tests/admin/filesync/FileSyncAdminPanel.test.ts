@@ -341,10 +341,11 @@ describe('FileSyncAdminPanel 批量处理冲突', () => {
     expect(root.querySelector('.fs-block-head + .fs-note')?.textContent).toContain('filesyncAdmin.bulkMissingLocalDisabled')
     expect(root.querySelector('.fs-row-main small')?.textContent).toContain('filesyncAdmin.missingLocalConflictHint')
     const conflictButtons = [...root.querySelectorAll<HTMLButtonElement>('.fs-row .fs-actions button')]
-    expect(conflictButtons).toHaveLength(2)
+    expect(conflictButtons).toHaveLength(3)
     expect(conflictButtons.map((button) => button.textContent)).toEqual([
       expect.stringContaining('filesyncAdmin.keepRemote'),
       expect.stringContaining('filesyncAdmin.cancelConflict'),
+      expect.stringContaining('filesyncAdmin.confirmMissingDelete'),
     ])
   })
 

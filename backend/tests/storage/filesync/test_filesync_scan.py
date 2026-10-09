@@ -416,10 +416,10 @@ async def test_cancel_during_real_file_hash_chunk_joins_thread_and_removes_manif
         ))
         try:
             # 线程池启动受整机负载影响；以文件分块读取事件同步，不用短睡眠假设调度时序。
-            assert await asyncio.to_thread(chunk_read.wait, 10)
+            assert await asyncio.to_thread(chunk_read.wait, 30)
             if stop_mode == "cancel":
                 task.cancel()
-            assert await asyncio.to_thread(stop.wait, 10)
+            assert await asyncio.to_thread(stop.wait, 30)
             assert not task.done()
             release_reader.set()
             expected = asyncio.CancelledError if stop_mode == "cancel" else ScanTimedOut

@@ -1356,11 +1356,8 @@ async def test_candidate_version_checks_are_batched_and_keep_stale_scan_guard(db
     assert len(statements) == 2
 
 
-def _assert_optional_repair_quota(quota, *, ledger_preexists: bool, expected_bytes: int) -> None:
-    if ledger_preexists:
-        assert quota is not None and quota.used_bytes == expected_bytes
-    else:
-        assert quota is None
+def _assert_reconciled_repair_quota(quota, *, expected_bytes: int) -> None:
+    assert quota is not None and quota.used_bytes == expected_bytes
 
 
 def test_mirror_out_partial_export_failure_has_failed_terminal_state():
@@ -1492,8 +1489,8 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     assert updated is not None and updated.version == original_version + 1
     assert deleted is not None and deleted.deleted_at is not None
     assert moved is not None and moved.storage_key == f"{user_a.id}/个人文件/分类/移动后.txt"
-    # 无账本时不在任务中途建立偏离磁盘事实的局部基线。
-    _assert_optional_repair_quota(quota, ledger_preexists=ledger_preexists, expected_bytes=27)
+    # 只有完整修复成功后才按物理事实校准，并为原先无账本的用户建立账本。
+    _assert_reconciled_repair_quota(quota, expected_bytes=27)
     changed_path.write_bytes(b"reject")
     move_target.write_bytes(b"move updated")
     monkeypatch.setattr(runner, "_DB_BATCH_SIZE", 2)
@@ -1526,10 +1523,6 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     async with db_session._SessionLocal() as check:
         partial_run = await check.get(FileSyncReconcileRun, partial.id)
         unchanged = await check.scalar(select(File).where(File.id == changed_file.id))
-        active_files = (await check.scalars(select(File).where(
-            File.user_id == user_a.id,
-            File.deleted_at.is_(None),
-        ))).all()
         quota_after_partial = await check.scalar(select(StorageQuotaLedger).where(
             StorageQuotaLedger.user_id == user_a.id,
             StorageQuotaLedger.category == FILE_LIBRARY,
@@ -1540,12 +1533,8 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     assert partial_run.result_counts["failed"] == 1
     assert partial_run.result_counts["updated"] + partial_run.result_counts["foldersUpdated"] > 0
     assert unchanged is not None and unchanged.version >= updated.version
-    expected_active_bytes = sum(int(file.size_bytes or 0) for file in active_files)
-    _assert_optional_repair_quota(
-        quota_after_partial,
-        ledger_preexists=ledger_preexists,
-        expected_bytes=expected_active_bytes,
-    )
+    # 部分失败不校准账本，保留最近一次完整修复的物理用量快照。
+    _assert_reconciled_repair_quota(quota_after_partial, expected_bytes=27)
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,4 @@
+import json
 import pytest
 from types import SimpleNamespace
 
@@ -131,7 +132,10 @@ async def test_read_file_group_restriction_blocks_private_text(monkeypatch):
 
     monkeypatch.setattr(file_operations, "_resolve_file", resolve)
     result = await file_operations._read_file_single(None, "owner-1", {"file_id": 1}, restricted=True)
-    assert "只能读取图片文件" in result
+    response = json.loads(result)
+    assert response.get("error")
+    assert "content" not in response
+    assert "private" not in result
 
 
 @pytest.mark.asyncio

@@ -26,7 +26,8 @@ async def isolated_filesync_session(tmp_path, monkeypatch):
     """用多连接文件 SQLite 模拟生产多 session，避免 StaticPool 共用单连接竞态。"""
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{tmp_path / 'filesync-shell.sqlite'}",
-        connect_args={"check_same_thread": False},
+        # watcher 轮询与投影会在独立连接上并发读写；让 SQLite 等待短写事务完成。
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -84,7 +85,8 @@ async def test_shell_create_equal_size_update_and_delete_project_without_manual_
         session.add_all([user, binding])
         await session.commit()
 
-    manager = FileSyncWatcherManager(refresh_interval=0.05)
+    # 根目录注册刷新不需要与事件消费同频；降低测试库的无效读写竞争。
+    manager = FileSyncWatcherManager(refresh_interval=0.2)
     stop = asyncio.Event()
     observed_events = []
     projection_errors = []
