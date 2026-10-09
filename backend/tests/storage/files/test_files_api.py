@@ -16,7 +16,7 @@ from starlette.datastructures import Headers
 
 from app.api.v1 import files as files_api
 from app.core.errors import Invalid, NotFound
-from app.models import File, Folder, Project, UndoOperation
+from app.models import File, Folder, Project, StorageQuotaLedger, UndoOperation
 from app.schemas import FileCopyBody, FileUpdate
 from app.services.storage import LocalStorageBackend
 
@@ -282,6 +282,29 @@ async def test_upload_over_limit_rejects_without_artifacts(db, user_a, monkeypat
         await _do_upload(db, user_a, b"0123456789", "大文件.txt")
     assert ei.value.status_code == 413
     assert (await db.execute(select(File))).scalars().all() == []
+
+
+async def test_upload_capacity_uses_quota_ledger_without_scanning_directories(
+    db, user_a, monkeypatch,
+):
+    """已初始化的用户上传时读取账本，避免每次请求遍历整个本地存储树。"""
+    import app.services.storage.quota_ledger as quota_ledger
+
+    user_a.storage_limit_bytes = 100
+    db.add(StorageQuotaLedger(
+        user_id=user_a.id, category=quota_ledger.FILE_LIBRARY,
+        used_bytes=40, reserved_bytes=10, limit_bytes=100, status="active",
+    ))
+    await db.flush()
+
+    async def unexpected_scan(*_args, **_kwargs):
+        pytest.fail("已有配额账本时上传容量检查不应递归扫描目录")
+
+    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", unexpected_scan)
+    limit, available = await files_api._upload_capacity(db, user_a, "keep_both", None)
+
+    assert limit == 100
+    assert available == 50
 
 
 def _request_with_undo_context():

@@ -196,6 +196,23 @@ async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[
         raise ValueError("用户不存在")
     root = ensure_sandbox_root(_shell_root(user_id))
     limits = _limits(user_obj)
+    rows = (await db.execute(
+        select(StorageQuotaLedger).where(StorageQuotaLedger.user_id == user_id)
+    )).scalars().all()
+    rows_by_category = {row.category: row for row in rows}
+
+    # 账本齐全时，物理目录扫描的结果不会被使用：现有行只更新 limit/root_path，
+    # used_bytes 由增量记账和显式对账维护。启动时全用户回填会逐用户调用本函数，
+    # 因而必须避免每次重启、每个 worker 都递归遍历全部用户目录。
+    if all(category in rows_by_category for category in _CATEGORIES):
+        for category in _CATEGORIES:
+            row = rows_by_category[category]
+            row.limit_bytes = limits[category]
+            if category == SHELL_PERSISTENT:
+                row.root_path = str(root)
+        await db.flush()
+        return [rows_by_category[category] for category in _CATEGORIES]
+
     existing_file_bytes = int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
         File.user_id == user_id, File.deleted_at.is_(None),
     ))).scalar_one() or 0)
@@ -212,10 +229,7 @@ async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[
     }
     result: list[StorageQuotaLedger] = []
     for category in _CATEGORIES:
-        row = (await db.execute(select(StorageQuotaLedger).where(
-            StorageQuotaLedger.user_id == user_id,
-            StorageQuotaLedger.category == category,
-        ))).scalar_one_or_none()
+        row = rows_by_category.get(category)
         if row is None:
             row = StorageQuotaLedger(
                 user_id=user_id, category=category,

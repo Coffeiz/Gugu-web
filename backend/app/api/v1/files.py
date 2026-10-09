@@ -19,7 +19,7 @@ from app.schemas import (
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
 from app.services.files.browser import (
-    get_file_detail_row, get_file_summary, get_file_tree_rows, get_file_version_snapshot, get_storage_usage,
+    get_file_detail_row, get_file_summary, get_file_tree_rows, get_file_version_snapshot,
     list_existing_file_rows, list_file_rows,
 )
 from app.services.storage.quota_ledger import get_file_library_usage_snapshot
@@ -127,16 +127,20 @@ _UNDO_CONTENT_MAX = 64 * 1024 * 1024
 
 
 async def _upload_capacity(db, current_user, on_conflict: str, overwrite_file_id: int | None):
-    """返回实际总配额与本次请求可消费的剩余空间。"""
+    """从存储账本读取上传配额，避免每次请求递归扫描用户目录。"""
     limit = _storage_limit(current_user)
     if limit is None:
         return None, 2**63 - 1
-    used = await get_storage_usage(db, current_user.id)
+    from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota
+
+    quota = await get_quota(db, current_user.id, FILE_LIBRARY)
+    used = int(quota.used_bytes or 0)
+    reserved = int(quota.reserved_bytes or 0)
     reclaimable = 0
     if on_conflict == "overwrite" and overwrite_file_id is not None:
         existing = await get_owned(db, File, overwrite_file_id, current_user.id)
         reclaimable = int(existing.size_bytes or 0) if existing else 0
-    return limit, max(int(limit) - int(used) + reclaimable, 0)
+    return limit, max(int(limit) - used - reserved + reclaimable, 0)
 
 # 版本摘要是无副作用查询，遇到迁移/对账等 DDL 造成的短暂死锁时可以安全重试。
 # ── GET /files ────────────────────────────────────────────────────────────────

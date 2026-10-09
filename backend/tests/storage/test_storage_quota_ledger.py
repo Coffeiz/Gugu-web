@@ -91,6 +91,36 @@ async def test_user_space_initialization_is_idempotent(db, user_a, tmp_path, mon
 
 
 @pytest.mark.asyncio
+async def test_existing_user_ledgers_refresh_limits_without_scanning_directories(
+    db, user_a, tmp_path, monkeypatch,
+):
+    """账本已齐全时重启回填只更新配置，不重复递归测量用户目录。"""
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
+    rows = await quota_ledger.ensure_user_storage_space(db, user_a)
+    rows_by_category = {row.category: row for row in rows}
+    rows_by_category[quota_ledger.FILE_LIBRARY].used_bytes = 37
+    rows_by_category[quota_ledger.SHELL_EPHEMERAL].used_bytes = 5
+    user_a.storage_limit_bytes = 8192
+    await db.flush()
+
+    async def unexpected_scan(*_args, **_kwargs):
+        raise AssertionError("已初始化账本不应触发递归目录扫描")
+
+    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", unexpected_scan)
+    monkeypatch.setattr(quota_ledger, "_unregistered_shell_bytes", unexpected_scan)
+
+    refreshed = await quota_ledger.ensure_user_storage_space(db, user_a)
+    refreshed_by_category = {row.category: row for row in refreshed}
+
+    assert refreshed_by_category[quota_ledger.FILE_LIBRARY].limit_bytes == 8192
+    assert refreshed_by_category[quota_ledger.FILE_LIBRARY].used_bytes == 37
+    assert refreshed_by_category[quota_ledger.SHELL_PERSISTENT].root_path == str(
+        tmp_path / str(user_a.id) / "workspace"
+    )
+    assert refreshed_by_category[quota_ledger.SHELL_EPHEMERAL].used_bytes == 5
+
+
+@pytest.mark.asyncio
 async def test_usage_event_is_idempotent_and_rejects_over_quota(db, user_a, tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     settings.storage.backend = "oss"

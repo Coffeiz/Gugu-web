@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, Request
@@ -235,9 +236,15 @@ async def lifespan(app: FastAPI):
         try:
             from app.db.session import _SessionLocal
             from app.services.storage.quota_ledger import ensure_all_user_storage_spaces
+            storage_init_started = time.monotonic()
             async with _SessionLocal() as storage_db:
                 count = await ensure_all_user_storage_spaces(storage_db)
-            logger.info("用户持久空间已初始化并登记配额：%d 个用户", count)
+            storage_init_ms = (time.monotonic() - storage_init_started) * 1000
+            logger.info(
+                "用户持久空间已初始化并登记配额：%d 个用户，耗时 %.1f ms",
+                count,
+                storage_init_ms,
+            )
         except Exception as e:
             # 初始化失败不能伪造“已完成”；单用户访问时仍会重复校验并补齐。
             logger.warning("用户持久空间初始化失败：%s", e)
