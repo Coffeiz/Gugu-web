@@ -33,7 +33,13 @@ vi.mock('@/stores/admin', () => ({
 
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
-  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+  return {
+    ...actual,
+    useI18n: () => ({
+      t: (key: string, values?: Record<string, unknown>) =>
+        `${key}${values ? ` ${Object.values(values).join(' ')}` : ''}`,
+    }),
+  }
 })
 
 vi.mock('@/composables/core/useConfirmDialog', () => ({
@@ -104,7 +110,7 @@ describe('FileSyncAdminPanel 监听缺口提示', () => {
     const root = mountPanel()
     await flushUi()
 
-    expect(root.querySelector('.fs-capacity-stats')?.textContent).toContain('60000')
+    expect(root.querySelector('.fs-capacity-stats')?.textContent).toContain('60,000')
     expect(root.querySelector('.fs-capacity-stats')?.textContent).toContain('filesyncAdmin.watcherAtWarning')
     const input = root.querySelector<HTMLInputElement>('.fs-capacity-limit input')!
     input.value = '524288'
@@ -297,7 +303,7 @@ describe('FileSyncAdminPanel 批量排入异常对账', () => {
 
     const root = mountPanel()
     await flushUi()
-    const button = root.querySelector<HTMLButtonElement>('.fs-block-head button')
+    const button = root.querySelector<HTMLButtonElement>('.fs-block-tools button')
     expect(button?.textContent).toContain('filesyncAdmin.queueIssues')
     button?.click()
     await flushUi()
