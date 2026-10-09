@@ -7,7 +7,6 @@ export const RAG_WORKER_VERSION = "0.6.1" as const;
 export type RagSourceType =
   | "memory"
   | "project"
-  | "file"
   | "journal"
   | "canvas"
   | "conversation"
@@ -71,7 +70,6 @@ export type RagSourceBatch = {
   /** 各来源使用自己的 canonical record；具体字段由来源适配器校验。 */
   memory?: Record<string, unknown>[];
   project?: Record<string, unknown>[];
-  files?: Record<string, unknown>[];
   note?: Record<string, unknown>[];
   canvas?: Record<string, unknown>[];
   calendar?: Record<string, unknown>[];

@@ -324,10 +324,18 @@ class QuotaSettings(BaseModel):
 
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
-    rag_auto_sources: list[Literal["memory", "knowledge", "project", "file", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
-        default_factory=lambda: ["memory", "knowledge", "project", "file", "canvas", "note", "calendar", "scheduled_task", "conversation"],
-        description="自动 Knowledge RAG 允许召回的来源；显式工具不受此开关影响",
+    rag_auto_sources: list[Literal["memory", "knowledge", "project", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
+        default_factory=lambda: ["memory", "knowledge", "project", "canvas", "note", "calendar", "scheduled_task", "conversation"],
+        description="自动 Knowledge RAG 允许召回的来源；旧配置中的 file 会被忽略，文件通过 CRUD 工具访问",
     )
+
+    @field_validator("rag_auto_sources", mode="before")
+    @classmethod
+    def ignore_file_rag_source(cls, value):
+        """兼容升级前保存的配置，但不再启用文件 RAG。"""
+        if isinstance(value, (list, tuple)):
+            return [source for source in value if source != "file"]
+        return value
     ts_rank_scoring_version: Literal["confidence-v4", "confidence-v1"] = Field(
         "confidence-v4",
         description="TS 候选评分器版本；confidence-v4 为生产默认，confidence-v1 仅作短期回滚开关",

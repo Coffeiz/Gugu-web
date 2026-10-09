@@ -39,7 +39,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
     """
 
     SOURCE_ORDER = (
-        "memory", "knowledge", "project", "file", "canvas", "note",
+        "memory", "knowledge", "project", "canvas", "note",
         "calendar", "scheduled_task", "conversation",
     )
 
@@ -324,8 +324,8 @@ class UnifiedQueryRetriever(UnifiedRetriever):
             valid = [value for value in scopes if isinstance(value, Scope)]
             if name == "project":
                 valid = [value for value in normalize_memory_scopes(owner, scopes) if value.scope_type == "owner"][:1]
-            elif name in {"file", "canvas", "note"}:
-                types = {"file": {"owner", "project", "folder"}, "canvas": {"owner", "project"}, "note": {"owner"}}[name]
+            elif name in {"canvas", "note"}:
+                types = {"canvas": {"owner", "project"}, "note": {"owner"}}[name]
                 valid = [value for value in valid if value.scope_type in types]
             elif name in {"calendar", "scheduled_task"}:
                 valid = [value for value in valid if value.scope_type == "owner"]
@@ -341,7 +341,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
         if first.source_type == "project":
             adapter = first.adapter
             return IndexedSourceRetriever(owner, db=adapter._db,
-                                          db_factory=adapter._db_factory, source_type="file"), owner
+                                          db_factory=adapter._db_factory, source_type="knowledge"), owner
         return first, owner
 
     def _resolve_rank_rows(self, ts_index, response, memory_scopes, *, owner_user_id: str | None = None):
@@ -364,7 +364,7 @@ class UnifiedQueryRetriever(UnifiedRetriever):
                 )
             if document is None:
                 # 冷恢复时 Python 侧可能没有持久化文档副本，但 TS 仍会返回
-                # citation/text。不要因此静默丢掉 knowledge/file/project 等结果。
+                # citation/text。不要因此静默丢掉 knowledge/project 等结果。
                 citation = row.get("citation") if isinstance(row.get("citation"), dict) else {}
                 source_type = str(citation.get("source_type") or row.get("source_type") or "")
                 source_id = str(citation.get("source_id") or "")

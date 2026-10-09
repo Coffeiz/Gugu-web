@@ -23,7 +23,6 @@ _CONTEXT_REVISION_SOURCES = _CONTEXT_RESOURCES | {"preferences", "timezone", "im
 _DATA_RUNTIME_RESOURCES = {"projects", "files", "sessions", "conversation"}
 _RAG_SOURCES_BY_RESOURCE: dict[str, tuple[str, ...]] = {
     "projects": ("project",),
-    "files": ("file",),
     "sessions": ("conversation",),
     "conversation": ("conversation",),
     "calendar": ("calendar",),

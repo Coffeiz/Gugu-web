@@ -24,7 +24,7 @@ bin/gugu-rag-ts-worker.mjs --version
 
 ## 责任边界
 
-- Worker 可通过 Data Runtime 按 Python 认证授权后传入的 owner 只读加载持久索引与受支持的 source 数据；也可处理 Python 写侧投影后提交的 patch/replace。它不负责用户身份认证、ACL 或业务授权事实。
+- Worker 可通过 Data Runtime 按 Python 认证授权后传入的 owner 只读加载持久索引与受支持的 source 数据；文件库不属于 RAG 来源，文件访问由独立 CRUD 工具完成。Worker 也可处理 Python 写侧投影后提交的 patch/replace；它不负责用户身份认证、ACL 或业务授权事实。
 - 数据库读取必须绑定 owner；未实现的 scope 必须 fail-closed。文件正文和 Memory 私有内容仅通过显式 StorageReader 访问，不拼接任意路径；Python 仍负责最终 owner/scope 复核。
 - TS 运行时不执行业务主数据或持久索引写事务；RAG-9 的事件编排、KnowledgeIndexEntry 更新和向量写入仍由 Python 写路径负责。
 - 查询时 worker 通过 owner-bound 专用 IPC 接收临时 embedding 配置，在 TS 发起 provider 请求并生成 query vector；公网目标由 Python 复用 URL 安全校验后 pin，支持 Node 标准 HTTP(S) proxy 环境变量，禁用自动重定向。凭据不记录、不持久化、不回显。
