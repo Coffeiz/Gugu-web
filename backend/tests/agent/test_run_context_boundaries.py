@@ -56,6 +56,29 @@ async def test_prepare_run_preserves_current_media_with_optional_reference(
                    if isinstance(block, dict))
 
 
+@pytest.mark.asyncio
+async def test_prepare_run_reuses_rag_context_started_during_mcp_discovery(monkeypatch):
+    """上游并发预取的 RAG 结果直接组装，不重复触发一次召回。"""
+    precomputed = {"tail": [], "blocks": [], "injected": False}
+
+    async def unexpected_rag(*_args, **_kwargs):
+        raise AssertionError("不应重复调用自动 RAG")
+
+    monkeypatch.setattr("agent.rag.injection.build_automatic_rag_context", unexpected_rag)
+    monkeypatch.setattr(audit, "context_layout_audit", lambda **kwargs: None)
+
+    prepared = await run_context.prepare_run(
+        system_prompt="固定规则", snapshot_context="快照", history=[],
+        req=SimpleNamespace(message="测试查询"), user_tz=timezone.utc,
+        strip_thinking=False, use_anthropic=False, current_text="测试查询",
+        images=[], media=[], model_cfg=SimpleNamespace(image_detail="auto"),
+        stance_text=None, snapshot_injection=None,
+        prepared_rag_context=precomputed,
+    )
+
+    assert prepared.rag_context is precomputed
+
+
 def test_message_time_reminder_uses_message_timestamp_and_user_timezone():
     from zoneinfo import ZoneInfo
 

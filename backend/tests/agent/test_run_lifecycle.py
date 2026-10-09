@@ -210,6 +210,9 @@ async def test_preparation_sessions_all_closed_before_execution(db, user_a, monk
     async def fake_mcp(user_id, settings, allowed=None):
         return []
 
+    async def fake_rag_context(*_args, **_kwargs):
+        return {"tail": [], "blocks": [], "injected": False}
+
     async def fake_capability(tool_names, settings, *, db=None, owner_id=None, query="",
                               user_skill_metadata=None, dynamic_tools=()):
         return None
@@ -235,6 +238,7 @@ async def test_preparation_sessions_all_closed_before_execution(db, user_a, monk
 
     monkeypatch.setattr(_sess, "_SessionLocal", recording_factory)
     monkeypatch.setattr(run_preparation, "_load_mcp_tools", fake_mcp)
+    monkeypatch.setattr(run_context, "build_run_rag_context", fake_rag_context)
     monkeypatch.setattr(run_preparation, "_capability_context", fake_capability)
     monkeypatch.setattr(run_preparation, "_pin_session_user_skill_metadata", lambda *a, **k: False)
     monkeypatch.setattr(run_preparation, "LLMRunner", _StubRunner)

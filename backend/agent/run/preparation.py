@@ -14,6 +14,8 @@ collect/stream（以及后续 web）入口共用的唯一准备实现：会话�
 """
 from __future__ import annotations
 
+import asyncio
+
 from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
 
@@ -64,6 +66,31 @@ async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
         return tools
     allowed = set(allowed_tool_names)
     return [tool for tool in tools if tool.name in allowed]
+
+
+async def load_mcp_tools_and_rag_context(
+    user_id, settings, allowed_tool_names, req, *, history, snapshot_context,
+    user_message=None, resume_interaction=False,
+):
+    """并发准备 MCP 工具目录与自动 RAG；任一侧异常/取消时收回另一侧任务。"""
+    mcp_task = asyncio.create_task(
+        _load_mcp_tools(user_id, settings, allowed_tool_names)
+    )
+    rag_task = asyncio.create_task(
+        run_context.build_run_rag_context(
+            req, history=history, snapshot_text=snapshot_context,
+            user_message=user_message, resume_interaction=resume_interaction,
+        )
+    )
+    try:
+        mcp_tools, rag_context = await asyncio.gather(mcp_task, rag_task)
+        return mcp_tools, rag_context
+    except BaseException:
+        for task in (mcp_task, rag_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(mcp_task, rag_task, return_exceptions=True)
+        raise
 
 
 def _session_user_skill_metadata(session):
@@ -488,7 +515,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
-    mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
+    mcp_tools, precomputed_rag_context = await load_mcp_tools_and_rag_context(
+        user_id, settings, req.allowed_tool_names, req,
+        history=history, snapshot_context=snapshot_context, user_message=user_message,
+    )
     modelctx.set_usage_context(
         user_id, session_id, scenario="mcp" if mcp_tools else "chat",
     )
@@ -532,6 +562,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         session=session,
         snapshot=snapshot,
         history_stats=history_stats,
+        prepared_rag_context=precomputed_rag_context,
     )
 
     return PreparedExecution(

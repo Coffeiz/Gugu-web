@@ -691,7 +691,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     # Web 后台生成与 IM 共用能力目录：简介/catalog 模式注入工具短描述和字段签名；
     # full-schema 模式只补用户 Skill，工具 Schema 保持 Provider 的原始完整注入。
     from agent.run.preparation import (
-        _load_mcp_tools,
+        load_mcp_tools_and_rag_context,
         _pin_session_user_skill_metadata, _session_user_skill_metadata,
         prepare_run_capabilities,
     )
@@ -703,7 +703,11 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             modelctx.set_model_cfg(model_cfg)   # 后台任务经 create_task 继承此绑定
             from app.byok.service import resolve_and_bind_user_embedding
             await resolve_and_bind_user_embedding(settings, db, user_id)   # 记忆/RAG 向量化走用户 embedding 凭据（PRD-SEC-2）
-        mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
+        mcp_tools, precomputed_rag_context = await load_mcp_tools_and_rag_context(
+            user_id, settings, req.allowed_tool_names, req,
+            history=history, snapshot_context=snapshot_context,
+            user_message=user_message, resume_interaction=resume_interaction,
+        )
         modelctx.set_usage_context(
             user_id, session_id, scenario="mcp" if mcp_tools else "chat",
         )
@@ -821,6 +825,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             session=session,
             snapshot=snapshot,
             history_stats=history_stats,
+            prepared_rag_context=precomputed_rag_context,
         )
         rag_context = prepared.rag_context
         stance_to_persist = prepared.stance_to_persist

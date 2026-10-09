@@ -82,6 +82,9 @@ async def test_preparation_parity_between_collect_and_stream_modes(db, user_a, u
     async def fake_mcp(user_id, settings, allowed=None):
         return []
 
+    async def fake_rag_context(*_args, **_kwargs):
+        return {"tail": [], "blocks": [], "injected": False}
+
     async def fake_capability(tool_names, settings, *, db=None, owner_id=None, query="",
                               user_skill_metadata=None, dynamic_tools=()):
         return None
@@ -105,6 +108,7 @@ async def test_preparation_parity_between_collect_and_stream_modes(db, user_a, u
             self.kwargs = kwargs
 
     monkeypatch.setattr(run_preparation, "_load_mcp_tools", fake_mcp)
+    monkeypatch.setattr(run_context, "build_run_rag_context", fake_rag_context)
     monkeypatch.setattr(run_preparation, "_capability_context", fake_capability)
 
     async def allow_shell(_db, _user_id, _session_id, names, **_kwargs):
