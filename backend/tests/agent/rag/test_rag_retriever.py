@@ -181,7 +181,7 @@ async def test_database_retrievers_use_independent_sessions_for_parallel_recall(
         IndexedSourceRetriever(
             "user-a", db_factory=session_factory, source_type=source_type,
         )
-        for source_type in ("file", "canvas", "note", "conversation")
+        for source_type in ("knowledge", "canvas", "note", "conversation")
     ]
 
     async def use_session(retriever):

@@ -123,7 +123,8 @@ async def rag_env(monkeypatch, tmp_path):
         return _fake_projection(records)
     monkeypatch.setattr(pipeline, "records_to_write_documents", fake_project)
 
-    return owner_id, worker, session_factory
+    yield owner_id, worker, session_factory
+    await engine.dispose()
 
 
 async def _seed_entry(owner_id, entry_id: str, content: str) -> None:
@@ -297,10 +298,10 @@ async def test_handle_event_routes_by_source_id(monkeypatch, rag_env):
         user_id=owner_id, source_type="knowledge", source_id="k-9", operation="upsert")) is True
     assert await pipeline.handle_rag_index_event(RagIndexUpdated(
         user_id=owner_id, source_type="knowledge", source_id="", operation="upsert")) is True
+    # 旧索引记录仍可能因清理任务产生事件，但文件来源已不再进入 RAG。
     assert await pipeline.handle_rag_index_event(RagIndexUpdated(
         user_id=owner_id, source_type="file", source_id="f-1", operation="upsert")) is True
-    # file 现在也带 id 走文档级（Phase 2）
-    assert routed == [("k-9", "upsert"), ("knowledge", "upsert"), ("f-1", "upsert")]
+    assert routed == [("k-9", "upsert"), ("knowledge", "upsert")]
 
 
 @pytest.mark.asyncio

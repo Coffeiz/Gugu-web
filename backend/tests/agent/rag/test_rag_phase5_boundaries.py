@@ -1,7 +1,7 @@
 """PRD-RAG-9 Phase 5：Knowledge 边界与来源真实变更回归。
 
 覆盖：仅关键词/描述变化的版本戳、删除后恢复、projection 事务失败不落脏、
-向量部分失败不破坏 lexical 投影（幂等重放收敛）、文件夹移动旧 scope 清理、
+向量部分失败不破坏 lexical 投影（幂等重放收敛）、知识条目范围移动旧 scope 清理、
 owner scope 隔离。不启动真实 TS worker（同其他 delta 测试用 fake）。
 """
 from __future__ import annotations
@@ -25,12 +25,8 @@ from app.services.storage import LocalStorageBackend
 def _fake_projection(records):
     documents = []
     for record, scope in records:
-        if record["source_type"] == "file":
-            # 文件来源与 TS fileAdapter 对齐：只投影文件名，不读取正文或阶段文本。
-            parts = [record["title"]]
-        else:
-            body = record.get("content") or ""
-            parts = [p for p in body.split("|") if p and p.strip()]
+        body = record.get("content") or ""
+        parts = [p for p in body.split("|") if p and p.strip()]
         version_parts = record.get("version_parts") or []
         version = (str(version_parts[1]) if len(version_parts) > 1 else None) \
             or str(record.get("document_version") or "1").split(":")[0]
@@ -103,7 +99,8 @@ async def kb_env(monkeypatch, tmp_path):
     async def fake_project(owner_user_id, source_type, records, **_kwargs):
         return _fake_projection(records)
     monkeypatch.setattr(pipeline, "records_to_write_documents", fake_project)
-    return owner_ids[0], owner_ids[1], worker, session_factory
+    yield owner_ids[0], owner_ids[1], worker, session_factory
+    await engine.dispose()
 
 
 def _entry_payload(entry_id: str, content: str, *, keywords=("关键词",), description="") -> dict:
@@ -245,74 +242,6 @@ async def test_vector_partial_failure_keeps_lexical_and_replays_idempotent(kb_en
 
 
 @pytest.mark.asyncio
-async def test_stage_move_does_not_change_filename_index(kb_env):
-    """阶段变化不读取正文，也不改变只包含文件名的索引。"""
-    from agent.rag.index_builder import build_single_source_record
-    from app.models import File
-
-    owner_id, _owner_b, _worker, session_factory = kb_env
-    async with session_factory() as db:
-        from app.services.storage import get_storage as _get_storage
-
-        await _get_storage().put(
-            f"{owner_id}/p5/move.md", "移动一段|移动二段".encode("utf-8"), "text/markdown",
-        )
-        row = File(
-            user_id=owner_id, display_name="移动我.md", ext="md", space="project",
-            storage_key=f"{owner_id}/p5/move.md", size_bytes=6,
-            mime_type="text/markdown", version=1, stage_name="阶段一",
-        )
-        db.add(row)
-        await db.commit()
-        await db.refresh(row)
-        file_id = str(row.id)
-        from agent.rag.index_builder import build_source_records
-
-        records = await build_source_records(db, owner_id, "file")
-        documents = _fake_projection(records) if records else []
-        if documents:
-            await replace_source_documents(db, owner_id, "file", documents)
-        await db.commit()
-        # 移动到新阶段 + version 推进
-        row.stage_name = "阶段二"
-        row.version = 2
-        await db.commit()
-
-    async with session_factory() as db:
-        record = await build_single_source_record(db, owner_id, "file", file_id)
-    assert record is not None
-    stats: dict = {}
-    count = await pipeline.update_document(owner_id, "file", file_id, stats_out=stats)
-    assert stats["status"] == "no_change"
-    async with session_factory() as db:
-        rows = await load_index_documents(db, owner_id, source_types={"file"})
-    mine = [r for r in rows if r.source_id == file_id]
-    assert count == len(mine)
-    # 文件索引只保留文件名；阶段变化不应把正文或阶段文本写入索引。
-    assert all(r.content == "移动我.md" for r in mine)
-    assert all(r.title == "移动我.md" for r in mine)
-
-
-def _fake_projection_knowledge(records):
-    """file 投影与 test_rag_file_project_delta 同款（version_parts 取位）。"""
-    documents = []
-    for record, scope in records:
-        parts = [p for p in record["content"].split("|") if p]
-        version_parts = record.get("version_parts") or []
-        version = str(version_parts[1]) if len(version_parts) > 1 else "1"
-        source_id = str(record.get("source_id") or record.get("id"))
-        for index, part in enumerate(parts):
-            documents.append(IndexDocument(
-                document_id=f"{source_id}:{version}:{index}",
-                source_type=record["source_type"], source_id=source_id,
-                scope=scope, title=record["title"], summary=record.get("summary", ""),
-                content=part, version=version, chunk_index=index,
-                chunk_count=len(parts),
-                parent_document_id=str(record.get("parent_id") or source_id),
-            ))
-    return documents
-
-
 @pytest.mark.asyncio
 async def test_owner_scope_isolation_on_patch(kb_env):
     """owner 隔离：A 的文档级 patch 不触碰 B 的任何投影行。"""

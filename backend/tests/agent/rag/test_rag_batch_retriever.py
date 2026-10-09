@@ -26,19 +26,18 @@ class _StubRetriever:
 
 
 def test_persistent_specs_scope_matrix():
-    """file/canvas/note/project 各自允许的 scope 类型被正确收口。"""
+    """活动持久来源允许的 scope 类型被正确收口。"""
     owner = Scope("synthetic-owner")
     project = Scope("synthetic-owner", scope_type="project", scope_id="p1")
     folder = Scope("synthetic-owner", scope_type="folder", scope_id="f1")
     group = Scope("synthetic-owner", scope_type="group", scope_id="g1")
     stubs = [_StubRetriever("synthetic-owner", name)
-             for name in ("file", "canvas", "note", "calendar", "scheduled_task", "conversation")]
+             for name in ("canvas", "note", "calendar", "scheduled_task", "conversation")]
     specs, allowed = UnifiedQueryRetriever([])._persistent_specs(
         stubs, [owner, project, folder, group], limit=5)
     by_source = {}
     for spec in specs:
         by_source.setdefault(next(iter(spec["source_types"])), []).append(spec["scope"].scope_type)
-    assert sorted(by_source["file"]) == ["folder", "owner", "project"]
     assert sorted(by_source["canvas"]) == ["owner", "project"]
     assert by_source["note"] == ["owner"]
     assert by_source["calendar"] == ["owner"]
@@ -50,16 +49,22 @@ def test_persistent_specs_scope_matrix():
     assert all(spec["limit"] == 5 for spec in specs)
 
 
+def test_file_is_not_an_indexed_source():
+    """文件正文检索已改由文件工具承担，不能重新注册为持久 RAG 来源。"""
+    with pytest.raises(ValueError, match="不支持的统一来源"):
+        IndexedSourceRetriever("synthetic-owner", source_type="file")
+
+
 def test_source_order_includes_calendar_sources():
     """日历和定时任务必须进入统一查询的稳定来源顺序。"""
     assert UnifiedQueryRetriever.SOURCE_ORDER == (
-        "memory", "knowledge", "project", "file", "canvas", "note",
+        "memory", "knowledge", "project", "canvas", "note",
         "calendar", "scheduled_task", "conversation",
     )
 
 
 @pytest.mark.parametrize("source_type", [
-    "file", "canvas", "note", "calendar", "scheduled_task", "conversation", "knowledge",
+    "canvas", "note", "calendar", "scheduled_task", "conversation", "knowledge",
 ])
 def test_indexed_source_retriever_accepts_every_unified_persistent_source(source_type):
     """Python 来源容器必须覆盖 TS unified_query 已注册的持久化来源。"""

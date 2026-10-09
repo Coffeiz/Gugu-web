@@ -10,8 +10,8 @@ from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
 SCOPE = Scope("synthetic-owner")
 
 
-def _file_doc():
-    return IndexDocument("file-1", "file", "1", SCOPE, "文件", "", "缓存文件正文", "1")
+def _knowledge_doc():
+    return IndexDocument("knowledge-1", "knowledge", "1", SCOPE, "知识", "", "缓存知识正文", "1")
 
 
 def _memory_doc():
@@ -50,20 +50,20 @@ def _selected_row(document, document_key, *, confidence=0.9):
     }
 
 
-def _canned_response(file_doc, memory_doc, file_key, memory_key, *, fallback=None):
+def _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key, *, fallback=None):
     return {
         "selected": [
-            _selected_row(file_doc, file_key),
+            _selected_row(knowledge_doc, knowledge_key),
             _selected_row(memory_doc, memory_key, confidence=0.7),
         ],
         "stats": {"candidate_count": 2, "accepted_count": 2, "top_confidence": 0.9,
                   "threshold": 0.35, "preferred_threshold": 0.55,
                   "selection_mode": "confidence", "scoring_version": "confidence-v4",
-                  "elapsed_ms": 3, "source_diagnostics": {"file": {"candidate_count": 1}}},
+                  "elapsed_ms": 3, "source_diagnostics": {"knowledge": {"candidate_count": 1}}},
         "fusion": {"fusion": "hybrid-rrf", "vector_doc_count": 1,
                    "vector_version": "prov:model:2", "fallback": fallback},
-        "document_counts": {"file": 3, "memory": 1},
-        "source_groups": {"file": {"candidate_count": 1, "hit_count": 1},
+        "document_counts": {"knowledge": 3, "memory": 1},
+        "source_groups": {"knowledge": {"candidate_count": 1, "hit_count": 1},
                           "memory": {"candidate_count": 1, "hit_count": 1}},
         "probe": {"stage_ms": {"bm25_scoring": 4, "worker_total": 9},
                   "counts": {"candidate_pool": 2}},
@@ -145,18 +145,18 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
 
     probe_updates = []
     monkeypatch.setattr(br, "probe_update", lambda **values: probe_updates.append(values))
-    file_doc, memory_doc = _file_doc(), _memory_doc()
-    file_key, memory_key = _worker_document_key(file_doc), _worker_document_key(memory_doc)
-    canned = _canned_response(file_doc, memory_doc, file_key, memory_key)
+    knowledge_doc, memory_doc = _knowledge_doc(), _memory_doc()
+    knowledge_key, memory_key = _worker_document_key(knowledge_doc), _worker_document_key(memory_doc)
+    canned = _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key)
     calls, index = _install_unified_stubs(
         monkeypatch, canned=canned, vector_map={memory_key: [0.3, 0.4]},
         memory_documents=[memory_doc])
-    index.documents_by_id[file_key] = file_doc
+    index.documents_by_id[knowledge_key] = knowledge_doc
 
     token = set_conversation_before_message_id(7)
     try:
         retriever = UnifiedQueryRetriever([
-            _StubRetriever("synthetic-owner", "file"),
+            _StubRetriever("synthetic-owner", "knowledge"),
             _StubRetriever("synthetic-owner", "memory"),
         ])
         batches = await retriever.retrieve("缓存", scope=SCOPE, rank_options={"limit": 3})
@@ -171,7 +171,7 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
 
     assert calls["query"]["before_message_id"] == 7
     assert calls["query"]["query_embedding"]["api_key"] == "synthetic-secret"
-    assert calls["query"]["source_order"] == ["memory", "file"]
+    assert calls["query"]["source_order"] == ["memory", "knowledge"]
     assert calls["query"]["candidate_limit"] == 20
     assert calls["query"]["rank_options"]["limit"] == 3
     assert [spec.get("corpus") for spec in calls["query"]["searches"]] == [None, "transient"]
@@ -190,9 +190,9 @@ async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
     assert batch.rank_stats["candidate_count"] == 2
     assert len(batch.rank_rows) == 2
     candidate, text, row = batch.rank_rows[0]
-    assert candidate.document is file_doc
+    assert candidate.document is knowledge_doc
     assert candidate.raw_score == 1.5
-    assert text == file_doc.content
+    assert text == knowledge_doc.content
     assert row["confidence"] == 0.9
     memory_candidate = batch.rank_rows[1][0]
     assert memory_candidate.document.content == memory_doc.content
@@ -240,12 +240,12 @@ def test_unified_retriever_rechecks_owner_before_returning_ts_rows():
     """Python 在 TS 返回后仍复核 owner，sidecar 响应不能越过最终 ACL。"""
     from agent.rag.batch_retriever import UnifiedQueryRetriever
 
-    foreign = _file_doc()
+    foreign = _knowledge_doc()
     foreign = IndexDocument(
         foreign.document_id, foreign.source_type, foreign.source_id,
         Scope("other-owner"), foreign.title, foreign.summary, foreign.content, foreign.version,
     )
-    key = "file:file-1:0"
+    key = "knowledge:knowledge-1:0"
     index = SimpleNamespace(
         documents_by_id={key: foreign},
         client=SimpleNamespace(owner_user_id="synthetic-owner"),
@@ -267,8 +267,8 @@ async def test_unified_retriever_fallback_labels_follow_python_facts(monkeypatch
     其余情况采纳 worker 回报。"""
     from agent.rag.batch_retriever import UnifiedQueryRetriever
 
-    file_doc = _file_doc()
-    file_key = "file:file-1:0"
+    knowledge_doc = _knowledge_doc()
+    knowledge_key = "knowledge:knowledge-1:0"
     cases = [
         ("auto", False, None, "embedding_disabled"),
         ("auto", True, "embedding_cache_unavailable", "embedding_cache_unavailable"),
@@ -277,9 +277,9 @@ async def test_unified_retriever_fallback_labels_follow_python_facts(monkeypatch
         ("bm25", False, None, "lexical_only"),
         ("bm25", True, None, "lexical_only"),
     ]
-    retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "file")])
+    retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "knowledge")])
     for strategy, enabled, worker_fallback, expected in cases:
-        canned = _canned_response(file_doc, _memory_doc(), file_key, "memory:daily-1:0",
+        canned = _canned_response(knowledge_doc, _memory_doc(), knowledge_key, "memory:daily-1:0",
                                   fallback=worker_fallback)
         calls, _index = _install_unified_stubs(monkeypatch, canned=canned,
                                                embedding_enabled=enabled)
@@ -317,8 +317,8 @@ async def test_service_assembles_pre_ranked_result():
     """统一查询主链：service 跳过二次排序，直接装配 worker 已排序结果。"""
     from agent.rag.service import UnifiedRecallService
 
-    file_doc = _file_doc()
-    batch = _pre_ranked_batch([_triple(file_doc)])
+    knowledge_doc = _knowledge_doc()
+    batch = _pre_ranked_batch([_triple(knowledge_doc)])
 
     async def retrieve(query, **kwargs):
         return [batch]
@@ -335,10 +335,10 @@ async def test_service_assembles_pre_ranked_result():
     assert response["stage_ms"]["unified.retrieve_ms"] == 5
     assert response["source_diagnostics"]["unified"]["engine"] == "typescript"
     item = response["results"][0]
-    assert item["text"] == file_doc.content
+    assert item["text"] == knowledge_doc.content
     assert item["confidence"] == 0.9
-    assert item["citation"] == {"chunk_id": file_doc.chunk_id}
-    assert item["citations"] == [{"chunk_id": file_doc.chunk_id}]
+    assert item["citation"] == {"chunk_id": knowledge_doc.chunk_id}
+    assert item["citations"] == [{"chunk_id": knowledge_doc.chunk_id}]
 
 
 @pytest.mark.asyncio
@@ -346,8 +346,8 @@ async def test_service_pre_ranked_permission_recheck_drops_foreign_scope():
     """预排序装配保留第二道权限防线：越权候选从交付行剔除且不回补预算。"""
     from agent.rag.service import UnifiedRecallService
 
-    owned, foreign = _file_doc(), IndexDocument(
-        "file-2", "file", "2", Scope("other-owner"), "文件", "", "越权正文", "1")
+    owned, foreign = _knowledge_doc(), IndexDocument(
+        "knowledge-2", "knowledge", "2", Scope("other-owner"), "知识", "", "越权正文", "1")
     batch = _pre_ranked_batch([_triple(owned), _triple(foreign)])
 
     async def retrieve(query, **kwargs):
@@ -370,8 +370,8 @@ async def test_service_pre_ranked_permission_recheck_keeps_row_pairing():
     from agent.rag.service import UnifiedRecallService
 
     foreign = IndexDocument(
-        "file-2", "file", "2", Scope("other-owner"), "文件", "", "越权正文", "1")
-    owned = _file_doc()
+        "knowledge-2", "knowledge", "2", Scope("other-owner"), "知识", "", "越权正文", "1")
+    owned = _knowledge_doc()
     batch = _pre_ranked_batch([_triple(foreign), _triple(owned, text="自有正文")])
 
     async def retrieve(query, **kwargs):

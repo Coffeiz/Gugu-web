@@ -57,7 +57,7 @@ async def test_index_rebuild_reprojects_all_sources_and_reloads_ts_index(monkeyp
 
     async def _rebuild_source(user_id, source_type, *, operation):
         calls.append((str(user_id), source_type, operation))
-        return 3 if source_type == "file" else 1
+        return 1
 
     async def _revision(db, user_id):
         return "rag:v2:revision-1"
@@ -78,6 +78,7 @@ async def test_index_rebuild_reprojects_all_sources_and_reloads_ts_index(monkeyp
     await config_api._rebuild_index_worker(["user-1"])
 
     assert {source_type for _, source_type, _ in calls} == set(pipeline.INDEX_REBUILD_SOURCE_TYPES)
+    assert "file" not in pipeline.INDEX_REBUILD_SOURCE_TYPES
     assert len(calls) == len(pipeline.INDEX_REBUILD_SOURCE_TYPES)
     assert all(operation == "admin-index-rebuild" for _, _, operation in calls)
     assert fake_client.loads == [("user-1", "rag:v2:revision-1", "")]
@@ -87,7 +88,7 @@ async def test_index_rebuild_reprojects_all_sources_and_reloads_ts_index(monkeyp
     assert status["status"] == "done"
     assert status["done"] == 1
     assert status["total"] == 1
-    assert status["documents"] == 2 + 3 + (len(pipeline.INDEX_REBUILD_SOURCE_TYPES) - 2)
+    assert status["documents"] == 2 + len(pipeline.INDEX_REBUILD_SOURCE_TYPES) - 1
     assert status["failed_users"] == 0
     assert status["failed_sources"] == 0
 
