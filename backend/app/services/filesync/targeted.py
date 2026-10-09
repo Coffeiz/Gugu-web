@@ -147,8 +147,8 @@ async def _find_move_source(
         FileSyncJournal.object_type == "file",
         FileSyncJournal.relative_path != relative,
     ).subquery()
-    rows = (await db.execute(
-        select(File, ranked.c.relative_path)
+    candidates = (await db.execute(
+        select(File.id, ranked.c.relative_path)
         .join(
             ranked,
             File.storage_key == literal(scope_prefix) + ranked.c.relative_path,
@@ -161,13 +161,30 @@ async def _find_move_source(
         )
         .order_by(File.id)
         .limit(257)
+    )).all()
+    if len(candidates) > 256:
+        return None
+
+    # PostgreSQL rejects FOR UPDATE on a SELECT that contains a window-function
+    # subquery. Discover candidates first, then lock only the File rows in a
+    # separate query and revalidate their active storage keys.
+    candidate_paths = {file_id: old_relative for file_id, old_relative in candidates}
+    if not candidate_paths:
+        return None
+    rows = (await db.scalars(
+        select(File)
+        .where(
+            File.id.in_(candidate_paths),
+            File.user_id == binding.user_id,
+            File.deleted_at.is_(None),
+        )
+        .order_by(File.id)
         .with_for_update()
     )).all()
-    if len(rows) > 256:
-        return None
     missing = [
-        row for row, old_relative in rows
-        if not (root / old_relative).exists()
+        row for row in rows
+        if row.storage_key == f"{scope_prefix}{candidate_paths[row.id]}"
+        and not (root / candidate_paths[row.id]).exists()
     ]
     return missing[0] if len(missing) == 1 else None
 
