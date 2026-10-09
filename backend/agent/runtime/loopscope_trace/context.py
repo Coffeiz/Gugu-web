@@ -296,10 +296,13 @@ def install_context_hooks(context_loaders: Any, context_builder: Any):
         ("load_projects", "database", "DB · Projects"),
         ("load_user_tz", "database", "DB · User timezone"),
         ("load_events", "database", "DB · Calendar events"),
+        ("load_recent_notes", "database", "DB · Recent notes"),
         ("load_files_overview", "database", "DB · Files overview"),
         ("load_style_prefs", "database", "DB · Reply style preferences"),
         ("load_memory", "memory", "Memory retrieval"),
+        ("load_dynamic_memory", "memory", "Dynamic memory"),
         ("load_im_channels", "context", "IM channel state"),
+        ("load_knowledge_overview", "knowledge", "Knowledge overview"),
     ):
         _wrap_context_loader(context_loaders, name, kind=kind, label=label)
 

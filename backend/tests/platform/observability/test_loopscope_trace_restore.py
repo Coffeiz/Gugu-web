@@ -1,5 +1,6 @@
 """LoopScope 跨进程 trace 恢复回归测试。"""
 
+import asyncio
 from types import SimpleNamespace
 
 from agent.context import builder, session_system
@@ -115,3 +116,53 @@ def test_context_builder_span_measures_only_prompt_assembly(monkeypatch):
         "knowledge_count": 0,
     }
     assert span.duration_ms is not None and span.duration_ms >= 0
+
+
+def test_preparation_loader_results_include_slow_context_sources(monkeypatch):
+    """最近笔记、动态记忆和知识清单耗时应可在 Trace 中单独定位。"""
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+
+    async def load_recent_notes(*_args):
+        return [{"title": "合成笔记"}]
+
+    async def load_dynamic_memory(*_args):
+        return {"summary": "合成记忆"}
+
+    async def load_knowledge_overview(*_args):
+        return [{"title": "合成知识"}]
+
+    context_loaders = SimpleNamespace(
+        load_recent_notes=load_recent_notes,
+        load_dynamic_memory=load_dynamic_memory,
+        load_knowledge_overview=load_knowledge_overview,
+    )
+    context_builder = SimpleNamespace(build_split=lambda *_args, **_kwargs: ("", "", ""))
+    install_context_hooks(context_loaders, context_builder)
+
+    run = state._ScopeRun(
+        id="run-preparation-loaders", trace_id="trace-preparation-loaders",
+        session_key="gugu:web:test", external_session_id="test",
+        source="web", started_at=state._now(),
+    )
+    token = state._scope_run.set(run)
+
+    async def read_sources():
+        await context_loaders.load_recent_notes("synthetic-user")
+        await context_loaders.load_dynamic_memory("synthetic-user")
+        await context_loaders.load_knowledge_overview("synthetic-user")
+
+    try:
+        asyncio.run(read_sources())
+    finally:
+        state._scope_run.reset(token)
+
+    spans = {span.name: span for span in run.pending_context_spans}
+    assert set(spans) == {
+        "DB · Recent notes",
+        "Dynamic memory",
+        "Knowledge overview",
+    }
+    assert spans["DB · Recent notes"].attributes["rows"] == 1
+    assert spans["Dynamic memory"].attributes["rows"] == 1
+    assert spans["Knowledge overview"].attributes["rows"] == 1
+    assert all(span.duration_ms is not None for span in spans.values())
