@@ -1393,6 +1393,10 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     changed_path.write_bytes(b"before")
     deleted_path.write_bytes(b"remove me")
     move_source.write_bytes(b"move contents")
+    # 修复扫描面对账时数据库用量正好占满额度；仍须导入磁盘上的新事实，
+    # 再由完整扫描收尾校准（删除项会在同一轮释放空间）。
+    initial_file_bytes = len(b"before") + len(b"remove me") + len(b"move contents")
+    user_a.storage_limit_bytes = initial_file_bytes
     monkeypatch.setattr(runner, "workspace_shell_supported", lambda: True)
     monkeypatch.setattr(targeted, "workspace_shell_supported", lambda: True)
     monkeypatch.setattr(targeted, "is_file_sync_enabled", lambda: True)
@@ -1442,14 +1446,15 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     deleted_path.unlink()
     move_source.rename(move_target)
     offline_new_path = nested / "离线新增.txt"
-    offline_new_path.write_bytes(b"new file")
+    offline_content = b"new external fact exceeds the full quota"
+    offline_new_path.write_bytes(offline_content)
     if ledger_preexists:
         # 模拟既有额度账本；另一组用例覆盖首次删除时初始化账本。
         db.add(StorageQuotaLedger(
             user_id=user_a.id,
             category=FILE_LIBRARY,
-            used_bytes=28,
-            limit_bytes=10**12,
+            used_bytes=initial_file_bytes,
+            limit_bytes=initial_file_bytes,
         ))
         await db.commit()
     repair = await enqueue_reconcile_run(
@@ -1476,6 +1481,10 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
         updated = await check.scalar(select(File).where(File.id == changed_file.id))
         deleted = await check.scalar(select(File).where(File.id == deleted_file.id))
         moved = await check.scalar(select(File).where(File.id == moved_file_id))
+        offline_new = await check.scalar(select(File).where(
+            File.user_id == user_a.id,
+            File.storage_key == f"{user_a.id}/个人文件/分类/离线新增.txt",
+        ))
         quota = await check.scalar(select(StorageQuotaLedger).where(
             StorageQuotaLedger.user_id == user_a.id,
             StorageQuotaLedger.category == FILE_LIBRARY,
@@ -1489,8 +1498,10 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     assert updated is not None and updated.version == original_version + 1
     assert deleted is not None and deleted.deleted_at is not None
     assert moved is not None and moved.storage_key == f"{user_a.id}/个人文件/分类/移动后.txt"
-    # 只有完整修复成功后才按物理事实校准，并为原先无账本的用户建立账本。
-    _assert_reconciled_repair_quota(quota, expected_bytes=27)
+    assert offline_new is not None and offline_new.size_bytes == len(offline_content)
+    # 完整修复会如实登记超额的磁盘事实，再统一校准账本，而非拒绝导入。
+    expected_physical_bytes = len(b"after!") + len(b"move contents") + len(offline_content)
+    _assert_reconciled_repair_quota(quota, expected_bytes=expected_physical_bytes)
     changed_path.write_bytes(b"reject")
     move_target.write_bytes(b"move updated")
     monkeypatch.setattr(runner, "_DB_BATCH_SIZE", 2)
@@ -1533,8 +1544,10 @@ async def test_confirmed_repair_hashes_same_stat_update_and_applies_missing_file
     assert partial_run.result_counts["failed"] == 1
     assert partial_run.result_counts["updated"] + partial_run.result_counts["foldersUpdated"] > 0
     assert unchanged is not None and unchanged.version >= updated.version
-    # 部分失败不校准账本，保留最近一次完整修复的物理用量快照。
-    _assert_reconciled_repair_quota(quota_after_partial, expected_bytes=27)
+    # 部分失败不校准账本，保留最近一次完整修复的物理用量快照（含已记录超额事实）。
+    _assert_reconciled_repair_quota(
+        quota_after_partial, expected_bytes=expected_physical_bytes,
+    )
 
 
 @pytest.mark.asyncio

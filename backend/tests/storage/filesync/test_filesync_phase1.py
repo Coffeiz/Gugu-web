@@ -1475,8 +1475,11 @@ async def test_resolve_conflict_cancel_marks_resolved(db, user_a, monkeypatch, t
     assert row.resolved_at is not None
 
 
+@pytest.mark.parametrize("ledger_preexists", [True, False])
 @pytest.mark.asyncio
-async def test_resolve_missing_file_conflict_with_explicit_delete(db, user_a, monkeypatch, tmp_path):
+async def test_resolve_missing_file_conflict_with_explicit_delete(
+    db, user_a, monkeypatch, tmp_path, ledger_preexists,
+):
     import app.services.filesync.bindings as bindings
     import app.services.filesync.protocol as protocol
     from app.models import FileSyncConflict, FileSyncJournal, StorageQuotaLedger
@@ -1484,7 +1487,11 @@ async def test_resolve_missing_file_conflict_with_explicit_delete(db, user_a, mo
 
     monkeypatch.setattr(bindings, "workspace_shell_supported", lambda: True)
     monkeypatch.setattr(protocol, "is_file_sync_enabled", lambda: True)
-    settings = SimpleNamespace(storage=SimpleNamespace(local_path=str(tmp_path)))
+    settings = SimpleNamespace(
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+        quota=SimpleNamespace(default_storage_limit_bytes=100),
+        sandbox=SimpleNamespace(persistent_quota_bytes=100, ephemeral_quota_bytes=0),
+    )
     monkeypatch.setattr(bindings, "get_settings", lambda: settings)
     monkeypatch.setattr("app.services.storage.quota_ledger.get_settings", lambda: settings)
 
@@ -1504,11 +1511,12 @@ async def test_resolve_missing_file_conflict_with_explicit_delete(db, user_a, mo
         status="pending", remote_fingerprint="a" * 64,
     )
     db.add(conflict)
-    quota = StorageQuotaLedger(
-        user_id=user_a.id, category=FILE_LIBRARY, limit_bytes=100, used_bytes=12,
-        reserved_bytes=0, status="active",
-    )
-    db.add(quota)
+    if ledger_preexists:
+        quota = StorageQuotaLedger(
+            user_id=user_a.id, category=FILE_LIBRARY, limit_bytes=100, used_bytes=12,
+            reserved_bytes=0, status="active",
+        )
+        db.add(quota)
     await db.flush()
 
     resolved = await bindings.resolve_sync_conflict(
@@ -1516,6 +1524,11 @@ async def test_resolve_missing_file_conflict_with_explicit_delete(db, user_a, mo
     )
     await db.commit()
     await db.refresh(file)
+    quota = await db.scalar(select(StorageQuotaLedger).where(
+        StorageQuotaLedger.user_id == user_a.id,
+        StorageQuotaLedger.category == FILE_LIBRARY,
+    ))
+    assert quota is not None
     await db.refresh(quota)
     journal = (await db.scalars(select(FileSyncJournal).where(
         FileSyncJournal.binding_id == binding.id,

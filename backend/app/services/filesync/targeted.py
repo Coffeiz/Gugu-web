@@ -88,6 +88,7 @@ class PathProjectionOptions:
     verified_files: dict[str, tuple[int, int, int, str]] | None = None
     observed_folders: dict[str, str] | None = None
     record_quota_deltas: bool = False
+    enforce_quota: bool = True
 
 
 async def _quota_limit(db: AsyncSession, user_id) -> int:
@@ -189,6 +190,7 @@ async def _project_changed_file(
     record_quota_delta: bool = False,
     created_event: bool = False,
     observed_external_change: bool = False,
+    enforce_quota: bool = True,
 ) -> int:
     """单文件 create/update 投影；返回本次变更的净字节增量。
 
@@ -256,7 +258,7 @@ async def _project_changed_file(
         ):
             return 0
         size_delta = stat.st_size - int(row.size_bytes or 0)
-        if size_delta > quota_headroom and not observed_external_change:
+        if enforce_quota and size_delta > quota_headroom and not observed_external_change:
             _record_rejection(summary_inout, "quota_exceeded")
             return 0
         row.size_bytes = stat.st_size
@@ -278,7 +280,7 @@ async def _project_changed_file(
     elif source is not None:
         row = source
         size_delta = path.stat().st_size - int(row.size_bytes or 0)
-        if size_delta > quota_headroom and not observed_external_change:
+        if enforce_quota and size_delta > quota_headroom and not observed_external_change:
             _record_rejection(summary_inout, "quota_exceeded")
             return 0
         old_key = row.storage_key
@@ -300,7 +302,7 @@ async def _project_changed_file(
         baseline = old_journal.observed_fingerprint if old_journal else None
     else:
         size_delta = path.stat().st_size if created_event or not observed_external_change else 0
-        if size_delta > quota_headroom and not observed_external_change:
+        if enforce_quota and size_delta > quota_headroom and not observed_external_change:
             _record_rejection(summary_inout, "quota_exceeded")
             return 0
         stat = path.stat()
@@ -599,6 +601,7 @@ async def project_path_events(
             record_quota_delta=record_changed_deltas,
             created_event=relative in batch.created_files,
             observed_external_change=options.record_quota_deltas,
+            enforce_quota=options.enforce_quota,
         )
     if options.allow_delete:
         for relative in sorted(batch.deleted):

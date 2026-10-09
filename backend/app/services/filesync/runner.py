@@ -705,6 +705,9 @@ async def _project_batch(
                 options=PathProjectionOptions(
                     allow_delete=scope.action == "repair" and scope.allow_delete,
                     record_quota_deltas=record_repair_change_deltas,
+                    # 修复扫描投影的是已经存在于磁盘的事实；即使导入后暂时超额也
+                    # 必须登记，完整扫描成功后再统一校准账本，不能丢弃真实文件。
+                    enforce_quota=scope.action != "repair",
                     verified_files=verified_files_for_batch,
                     observed_folders=observed_folders,
                 ),

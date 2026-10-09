@@ -512,11 +512,16 @@ async def resolve_sync_conflict(
             raise ValueError("找不到对应的活动文件记录，无法确认删除")
         now = now_utc()
         size_bytes = int(file.size_bytes or 0)
+        from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage
+
+        if size_bytes:
+            # 先以文件仍处于活动状态时的 DB/磁盘事实建立账本基线，再扣除这条
+            # 记录。若先软删除，首次建账会漏掉它，随后负增量会把用量扣成负数。
+            await get_quota(db, user_id, FILE_LIBRARY)
         file.deleted_at = now
         file.version = int(file.version or 1) + 1
         file.updated_at = now
         from app.services.files.previews import delete_thumb_cache
-        from app.services.storage.quota_ledger import FILE_LIBRARY, record_usage
 
         delete_thumb_cache(file.id, Path(get_settings().storage.local_path).expanduser().resolve())
         if size_bytes:
