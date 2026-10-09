@@ -9,13 +9,15 @@ const mocks = vi.hoisted(() => ({
   runs: vi.fn(),
   resolveConflict: vi.fn(),
   reconcileIssues: vi.fn(),
+  setWatchHardLimit: vi.fn(),
+  expandWatchLimit: vi.fn(),
   invalidate: vi.fn(),
   startEvents: vi.fn(),
   stopEvents: vi.fn(),
 }))
 
 vi.mock('@/api/filesync', () => ({
-  filesyncAdminApi: { status: mocks.status, runs: mocks.runs, resolveConflict: mocks.resolveConflict, reconcileIssues: mocks.reconcileIssues },
+  filesyncAdminApi: { status: mocks.status, runs: mocks.runs, resolveConflict: mocks.resolveConflict, reconcileIssues: mocks.reconcileIssues, setWatchHardLimit: mocks.setWatchHardLimit, expandWatchLimit: mocks.expandWatchLimit },
 }))
 
 vi.mock('@/composables/filesync/useFileSyncAdminEvents', () => ({
@@ -77,12 +79,48 @@ afterEach(() => {
   mocks.runs.mockReset()
   mocks.resolveConflict.mockReset()
   mocks.reconcileIssues.mockReset()
+  mocks.setWatchHardLimit.mockReset()
+  mocks.expandWatchLimit.mockReset()
   mocks.invalidate.mockReset()
   mocks.startEvents.mockReset()
   mocks.stopEvents.mockReset()
 })
 
 describe('FileSyncAdminPanel 监听缺口提示', () => {
+  it('管理员可读取容量并保存硬上限或手动扩一档', async () => {
+    mocks.status.mockResolvedValue({
+      featureEnabled: true, storageBackend: 'local', supported: true,
+      workspaceShellSupported: true, ignoredBindingCount: 0, bindings: [], conflicts: [], failures: [],
+      totals: { bindings: 0, journals: 0, pendingJournals: 0, failedJournals: 0,
+        rejectedJournals: 0, pendingConflicts: 0, pendingOutbox: 0 },
+      watcherCapacity: { available: true, uid: 1001, usage: 60000, limit: 65536, hardLimit: 1024000,
+        percent: 91.55, autoThreshold: 52429, warningThreshold: 58983, atWarningThreshold: true,
+        nextLimit: 131072, atHardLimit: false, lastExpansionAt: null },
+      generatedAt: '2026-10-07T00:00:00Z',
+    })
+    mocks.runs.mockResolvedValue([])
+    mocks.setWatchHardLimit.mockResolvedValue({})
+    mocks.expandWatchLimit.mockResolvedValue({ expanded: true })
+    const root = mountPanel()
+    await flushUi()
+
+    expect(root.querySelector('.fs-capacity-stats')?.textContent).toContain('60000')
+    expect(root.querySelector('.fs-capacity-stats')?.textContent).toContain('filesyncAdmin.watcherAtWarning')
+    const input = root.querySelector<HTMLInputElement>('.fs-capacity-limit input')!
+    input.value = '524288'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushUi()
+    const saveButton = [...root.querySelectorAll('button')].find(button => button.textContent?.includes('saveWatcherLimit'))
+    saveButton?.click()
+    await flushUi()
+    expect(mocks.setWatchHardLimit).toHaveBeenCalledWith(expect.any(Function), 524288)
+
+    const expandButton = [...root.querySelectorAll('button')].find(button => button.textContent?.includes('expandWatcherLimit'))
+    expandButton?.click()
+    await flushUi()
+    expect(mocks.expandWatchLimit).toHaveBeenCalledWith(expect.any(Function))
+  })
+
   it('默认异常筛选显示待手动核对绑定及恢复入口', async () => {
     mocks.status.mockResolvedValue({
       featureEnabled: true,

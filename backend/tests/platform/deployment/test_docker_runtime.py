@@ -2093,7 +2093,7 @@ def test_systemd_templates_pin_rootless_socket():
         assert 'GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock' in text
     start_script = (backend / "start.sh").read_text(encoding="utf-8")
     assert ('SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd '
-            'gugu-backend gugu-worker gugu-gateway"' in start_script)
+            'gugu-inotify-limitd gugu-backend gugu-worker gugu-gateway"' in start_script)
     assert "ensure_systemd_runtime_dirs" in start_script
     assert 'mkdir -p "$data_dir" "$LOG_DIR" "$rag_index_dir"' in start_script
     assert 'systemctl show gugu-rag-sidecar -p User --value' in start_script

@@ -18,6 +18,7 @@ from app.services.filesync.bindings import resolve_local_binding_root
 from app.services.filesync.jobs import ReconcileRunError, enqueue_reconcile_run
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.health import update_binding_health
+from app.services.filesync.inotify_limit_client import InotifyLimitUnavailable, request_limit_agent
 from app.services.filesync.protocol import FileSyncSource, create_binding, is_file_sync_enabled
 from app.services.filesync.reconcile import _root_fingerprint
 from app.services.filesync.targeted import PathEventBatch, PathProjectionOptions, project_path_events
@@ -143,6 +144,7 @@ class FileSyncWatcherManager:
         self._rebuild_attempts: dict[int, int] = {}
         self._unavailable_bindings: set[int] = set()
         self._inactive_bindings: set[int] = set()
+        self._watcher_limit_seen: int | None = None
         self._refresh_lock = asyncio.Lock()
         self._buffered_path_count = 0
         self._buffered_path_keys: set[tuple[int, str]] = set()
@@ -181,6 +183,25 @@ class FileSyncWatcherManager:
         sandbox_settings = get_settings().sandbox
         socket_path = sandbox_settings.sandboxd_socket
         await SandboxdClient(socket_path, connect_timeout=3).prepare_filesync_access(root)
+
+    async def _expand_watcher_capacity_if_needed(self) -> None:
+        """占用到 80% 时自动扩容；检测手工/自动扩容后恢复失败的 binding。"""
+        try:
+            result = await request_limit_agent(
+                "auto_expand", get_settings().filesync.watch_hard_limit,
+            )
+        except InotifyLimitUnavailable:
+            return
+        current_limit = result.get("limit")
+        grew = isinstance(current_limit, int) and self._watcher_limit_seen is not None \
+            and current_limit > self._watcher_limit_seen
+        self._watcher_limit_seen = current_limit if isinstance(current_limit, int) else self._watcher_limit_seen
+        if not result.get("expanded") and not grew:
+            return
+        # ENOSPC binding 已进入 rebuild；清除短重试熔断，让它在新额度下重新注册。
+        for binding_id in tuple(self._binding_roots):
+            if binding_id in self._rebuild_bindings:
+                self._rebuild_attempts.pop(binding_id, None)
 
     def _discard_buffered_batch(self, binding_id: int) -> None:
         batch = self._path_events.pop(binding_id, None)
@@ -243,6 +264,7 @@ class FileSyncWatcherManager:
                 continue
             try:
                 await self._sidecar.start()
+                await self._expand_watcher_capacity_if_needed()
                 async with db_session._SessionLocal() as db:
                     bindings = await _refresh_bindings(db)
                     active_users = await self._active_user_ids(db, bindings)

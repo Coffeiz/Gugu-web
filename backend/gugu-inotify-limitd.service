@@ -1,0 +1,33 @@
+[Unit]
+Description=咕咕受限 inotify 监听容量管理器
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=__RUN_USER__
+ExecStartPre=/usr/bin/install -d -o root -g __RUN_USER__ -m 0750 /run/gugu-inotify-limitd
+ExecStartPre=/usr/bin/rm -f /run/gugu-inotify-limitd/limitd.sock
+ExecStart=/usr/bin/python3 /usr/local/libexec/gugu/inotify_limitd.py
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ReadOnlyPaths=/proc/sys
+ReadWritePaths=/proc/sys/fs/inotify/max_user_watches /run/gugu-inotify-limitd /var/lib/gugu-inotify-limitd
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+MemoryMax=128M
+TasksMax=16
+LimitNOFILE=128
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

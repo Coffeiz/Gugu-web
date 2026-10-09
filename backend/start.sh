@@ -20,8 +20,8 @@ WORKERS="${WORKERS:-1}"
 LOG_DIR="${APP_DIR}/logs"
 LOG_FILE="${LOG_DIR}/gugu.log"
 PID_FILE="${APP_DIR}/.gugu.pid"
-# 生产核心 owner：FastAPI、Python IM worker/gateway 与 sandboxd；实时事件入口也由 FastAPI 提供。
-SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-backend gugu-worker gugu-gateway"
+# 应用常驻服务及受限的宿主机 inotify 容量管理器。
+SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-inotify-limitd gugu-backend gugu-worker gugu-gateway"
 
 # ── 工具函数 ────────────────────────────────────────────
 log()  { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
@@ -359,7 +359,7 @@ cmd_foreground() {
 }
 
 cmd_install() {
-    # egress 引导 + 五个核心常驻服务：rag-sidecar、sandboxd、web(uvicorn)、IM worker、IM gateway。
+    # 安装核心应用服务与受限 inotify 容量服务；只有后者以 root 运行，代码安装到 root-owned 路径。
     # TS RAG worker 由 rag-sidecar 宿主统一托管（unix socket 共享热索引）；
     # 后端进程在 socket 不可达时自动回退进程内 spawn。
     local services="$SYSTEMD_SERVICES"
@@ -432,6 +432,13 @@ cmd_install() {
     chown -R "$run_user":"$run_user" "${APP_DIR}/../Gugu-data/users" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index" "${APP_DIR}/config.override.json"
     chown "$run_user":"$run_user" "${APP_DIR}/.env"
 
+    # 以 root 所有的副本运行，避免应用账号替换特权代码；服务只开放固定的 inotify 操作。
+    install -d -o root -g root -m 0755 /usr/local/libexec/gugu
+    install -d -o root -g root -m 0700 /var/lib/gugu-inotify-limitd
+    install -o root -g root -m 0755 \
+        "${APP_DIR}/scripts/runtime/inotify_limitd.py" \
+        /usr/local/libexec/gugu/inotify_limitd.py
+
     # egress 引导脚本由 systemd 通过 /bin/sh 调用，安装时仍规范化为公共只读可执行，
     # 避免 Git/归档/同步工具丢失 mode 后再次出现 203/EXEC，也允许服务用户与部署者不同。
     local egress_script="${APP_DIR}/scripts/runtime/sandbox_egress_init.sh"
@@ -473,7 +480,7 @@ cmd_install() {
     check_systemd_services
     log ""
     log "常用命令（egress / sandboxd / web / IM 大脑 / IM 网关）："
-    log "  systemctl status gugu-sandbox-egress gugu-sandboxd gugu-backend gugu-worker gugu-gateway"
+    log "  systemctl status gugu-sandbox-egress gugu-sandboxd gugu-inotify-limitd gugu-backend gugu-worker gugu-gateway"
     log "  journalctl -u gugu-worker -f        # IM 大脑日志"
     log "  journalctl -u gugu-gateway -f    # IM 网关日志"
     log "  systemctl restart gugu-worker       # 改了 agent 代码后重启大脑"
@@ -506,7 +513,7 @@ case "${1:-start}" in
   status       查看状态 + 健康检查
   logs         实时跟踪日志（Ctrl+C 退出）
   foreground   前台启动（带 --reload，用于调试）
-  install      安装为 systemd 服务（egress + sandboxd + gugu-backend + worker + gateway）
+  install      安装为 systemd 服务（含受限 inotify 容量管理器）
 
 环境变量:
   HOST=0.0.0.0           监听地址

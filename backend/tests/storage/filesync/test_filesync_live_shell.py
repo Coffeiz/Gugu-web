@@ -56,7 +56,9 @@ async def test_shell_create_equal_size_update_and_delete_project_without_manual_
     root = storage_root / str(user_id)
     (root / "个人文件").mkdir(parents=True)
     settings = SimpleNamespace(
-        filesync=SimpleNamespace(enabled=True, active_window_days=7),
+        filesync=SimpleNamespace(
+            enabled=True, active_window_days=7, watch_hard_limit=1_024_000,
+        ),
         storage=SimpleNamespace(backend="local", local_path=str(storage_root)),
         quota=SimpleNamespace(default_storage_limit_bytes=1024 * 1024),
     )

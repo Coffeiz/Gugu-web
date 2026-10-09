@@ -80,6 +80,20 @@ export interface FileSyncAdminStatus {
     pendingConflicts: number
     pendingOutbox: number
   }
+  watcherCapacity: {
+    available: boolean
+    uid?: number
+    usage?: number
+    limit?: number
+    hardLimit?: number
+    percent?: number
+    nextLimit?: number
+    autoThreshold?: number
+    warningThreshold?: number
+    atWarningThreshold?: boolean
+    atHardLimit?: boolean
+    lastExpansionAt?: string | null
+  }
   generatedAt: string
 }
 
@@ -118,6 +132,11 @@ export const filesyncAdminApi = {
     method: 'PATCH',
     body: JSON.stringify({ patch: { filesync: { enabled } } }),
   })),
+  setWatchHardLimit: (fetcher: AdminFetch, watchHardLimit: number) => read<Record<string, unknown>>(fetcher('/api/v1/admin/config', {
+    method: 'PATCH',
+    body: JSON.stringify({ patch: { filesync: { watch_hard_limit: watchHardLimit } } }),
+  })),
+  expandWatchLimit: (fetcher: AdminFetch) => read<Record<string, unknown>>(fetcher('/api/v1/admin/filesync/watcher-capacity/expand', { method: 'POST' })),
   dryRun: (fetcher: AdminFetch, bindingId: number) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/dry-run`, { method: 'POST' })),
   reconcile: (fetcher: AdminFetch, bindingId: number) => read<FileSyncRunStatus>(fetcher(`/api/v1/admin/filesync/bindings/${bindingId}/reconcile`, { method: 'POST', body: JSON.stringify({ confirm: true }) })),
   reconcileIssues: (fetcher: AdminFetch) => read<FileSyncBulkEnqueueResult>(fetcher('/api/v1/admin/filesync/reconcile-issues', { method: 'POST', body: JSON.stringify({ confirm: true }) })),

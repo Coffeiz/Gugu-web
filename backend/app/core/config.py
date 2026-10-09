@@ -209,6 +209,12 @@ class FileSyncSettings(BaseModel):
         7,
         description="活跃度门控：仅给最近 N 天活跃用户的绑定挂实时监听；其余绑定需手动核对（0 表示全部监听）",
     )
+    watch_hard_limit: int = Field(
+        1024000,
+        ge=65536,
+        le=1024000,
+        description="inotify watcher 自动扩容硬上限；Admin 可热更新，环境变量只提供初始默认值",
+    )
     reconcile_execution_budget_seconds: int = Field(
         7200, ge=60, le=7200, description="整树完整核对任务的总执行时限；超时失败，不自动续跑",
     )

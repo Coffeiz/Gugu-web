@@ -34,6 +34,12 @@ from app.services.storage.reconciliation import (
     storage_repair_error as _storage_repair_error,
 )
 from agent.sandbox.docker_runtime import sandbox_readiness
+from app.services.filesync.inotify_limit_client import (
+    InotifyLimitUnavailable,
+    request_limit_agent,
+    validate_hard_limit,
+    validate_hard_limit_for_usage,
+)
 
 router = APIRouter(prefix="/admin/config", tags=["admin"])
 
@@ -62,6 +68,49 @@ class ConfigPatch(BaseModel):
     patch: dict[str, Any]
 
 
+async def _validate_watch_hard_limit(filesync_patch: dict[str, Any]) -> None:
+    if "watch_hard_limit" not in filesync_patch:
+        return
+    try:
+        candidate_limit = validate_hard_limit(filesync_patch["watch_hard_limit"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    current_limit = get_settings().filesync.watch_hard_limit
+    if candidate_limit >= current_limit:
+        return
+    try:
+        capacity = await request_limit_agent("status", current_limit)
+    except InotifyLimitUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="宿主机 watcher 管理服务不可用，无法安全降低硬上限",
+        ) from exc
+    try:
+        validate_hard_limit_for_usage(candidate_limit, capacity["usage"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _validate_filesync_patch(filesync_patch: Any) -> None:
+    if filesync_patch is None:
+        return
+    if not isinstance(filesync_patch, dict):
+        raise HTTPException(status_code=400, detail="filesync 配置必须是对象")
+
+    unknown_fields = set(filesync_patch) - FileSyncSettings.model_fields.keys()
+    if unknown_fields:
+        raise HTTPException(status_code=400, detail="包含不支持的文件同步配置项")
+    if "enabled" in filesync_patch and type(filesync_patch["enabled"]) is not bool:
+        raise HTTPException(status_code=400, detail="filesync.enabled 必须是布尔值")
+
+    await _validate_watch_hard_limit(filesync_patch)
+
+    settings = get_settings()
+    FileSyncSettings.model_validate({**settings.filesync.model_dump(), **filesync_patch})
+    if filesync_patch.get("enabled") is True and settings.storage.backend != "local":
+        raise HTTPException(status_code=400, detail="OSS 存储模式不支持本地文件自动同步")
+
+
 @router.patch("")
 async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = Depends(get_db)):
     import traceback as _tb
@@ -70,6 +119,7 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         agent_patch = body.patch.get("agent")
         sandbox_patch = body.patch.get("sandbox")
         filesync_patch = body.patch.get("filesync")
+        await _validate_filesync_patch(filesync_patch)
         smtp_patch = body.patch.get("smtp")
         if isinstance(smtp_patch, dict) and "registration_verification_enabled" in smtp_patch:
             if type(smtp_patch["registration_verification_enabled"]) is not bool:
@@ -104,17 +154,6 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
                     status_code=400,
                     detail="sandbox.full_user_sandbox_authorization_enabled 必须是布尔值",
                 )
-        if isinstance(filesync_patch, dict):
-            if "enabled" in filesync_patch and type(filesync_patch["enabled"]) is not bool:
-                raise HTTPException(status_code=400, detail="filesync.enabled 必须是布尔值")
-            FileSyncSettings.model_validate({
-                **get_settings().filesync.model_dump(),
-                **filesync_patch,
-            })
-            if filesync_patch.get("enabled") is True and get_settings().storage.backend != "local":
-                raise HTTPException(status_code=400, detail="OSS 存储模式不支持本地文件自动同步")
-        elif filesync_patch is not None:
-            raise HTTPException(status_code=400, detail="filesync 配置必须是对象")
         if isinstance(agent_patch, dict) and any(
             agent_patch.get(field) is True
             for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled")

@@ -1586,7 +1586,9 @@ async def test_watcher_does_not_scan_on_startup_and_keeps_manual_gap_visible(db,
     for module in (reconcile, targeted, watcher):
         monkeypatch.setattr(module, "workspace_shell_supported", lambda: True)
     settings = SimpleNamespace(
-        filesync=SimpleNamespace(enabled=True, active_window_days=7),
+        filesync=SimpleNamespace(
+            enabled=True, active_window_days=7, watch_hard_limit=1_024_000,
+        ),
         storage=SimpleNamespace(backend="local", local_path=str(tmp_path)),
     )
     for module in (reconcile, targeted, watcher, bindings_service):

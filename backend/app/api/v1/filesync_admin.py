@@ -9,11 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
 from app.db.session import get_db
+from app.core.config import get_settings
 from app.services.filesync.admin import (
     admin_resolve_conflict,
     get_admin_binding,
     get_admin_sync_status,
     list_admin_issue_bindings,
+)
+from app.services.filesync.inotify_limit_client import (
+    InotifyLimitUnavailable,
+    request_limit_agent,
 )
 from app.services.filesync.jobs import (
     ReconcileRunError,
@@ -53,7 +58,30 @@ async def sync_status(
     conflict_limit: int = Query(100, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_admin_sync_status(db, user_id=user_id, conflict_limit=conflict_limit)
+    result = await get_admin_sync_status(db, user_id=user_id, conflict_limit=conflict_limit)
+    hard_limit = get_settings().filesync.watch_hard_limit
+    try:
+        capacity = await request_limit_agent("status", hard_limit)
+        result["watcherCapacity"] = {
+            "available": True, **{key: value for key, value in capacity.items() if key != "ok"},
+        }
+    except InotifyLimitUnavailable:
+        result["watcherCapacity"] = {"available": False, "hardLimit": hard_limit}
+    return result
+
+
+@router.post("/watcher-capacity/expand")
+async def expand_watcher_capacity():
+    """手工把宿主机 watcher 上限提升一个档位，不允许指定任意 sysctl 值。"""
+    try:
+        result = await request_limit_agent(
+            "expand", get_settings().filesync.watch_hard_limit,
+        )
+    except InotifyLimitUnavailable as exc:
+        raise HTTPException(status_code=503, detail="宿主机 watcher 管理服务不可用") from exc
+    if not result.get("expanded"):
+        raise HTTPException(status_code=409, detail="当前容量已达到配置硬上限")
+    return result
 
 
 @router.post("/bindings/{binding_id}/dry-run")

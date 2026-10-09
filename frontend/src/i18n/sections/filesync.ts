@@ -5,6 +5,28 @@ const filesyncAdminUiBase = {
 } as const
 
 Object.assign(filesyncAdminUiBase['zh-CN'], {
+  watcherCapacityTitle: 'inotify 监听容量', watcherCapacityDescription: '按当前 Worker 的 Linux UID 统计；达到当前上限 80% 时自动扩容一档。',
+  watcherManagerUnavailable: '宿主机扩容服务不可用；当前部署尚未连接受限的 Linux 管理服务。',
+  watcherHardLimit: '硬上限', saveWatcherLimit: '保存上限', expandWatcherLimit: '立即扩容一档',
+  watcherUid: 'Linux UID {uid}', watcherUsage: '使用 {usage} / {limit}', watcherPercent: '占用 {percent}%', watcherThreshold: '80% 扩容阈值 {count}', watcherAtWarning: '已达到 90% 告警线',
+  watcherNextLimit: '下一档 {count}', watcherLastExpansion: '最近扩容 {time}', watcherNeverExpanded: '尚未扩容', watcherLimitInvalid: '硬上限需为 65536 到 1024000 的整数。',
+})
+Object.assign(filesyncAdminUiBase['ja-JP'], {
+  watcherCapacityTitle: 'inotify 監視容量', watcherCapacityDescription: '現在の Worker の Linux UID を集計し、上限の 80% で自動的に 1 段階拡張します。',
+  watcherManagerUnavailable: 'ホスト拡張サービスを利用できません。この環境は Linux 管理サービスに接続されていません。',
+  watcherHardLimit: '上限', saveWatcherLimit: '上限を保存', expandWatcherLimit: '今すぐ 1 段階拡張',
+  watcherUid: 'Linux UID {uid}', watcherUsage: '使用量 {usage} / {limit}', watcherPercent: '{percent}% 使用', watcherThreshold: '80% 拡張しきい値 {count}', watcherAtWarning: '90% の警告しきい値に到達',
+  watcherNextLimit: '次の段階 {count}', watcherLastExpansion: '最終拡張 {time}', watcherNeverExpanded: '拡張履歴なし', watcherLimitInvalid: '上限は 65536～1024000 の整数です。',
+})
+Object.assign(filesyncAdminUiBase['en-US'], {
+  watcherCapacityTitle: 'inotify watch capacity', watcherCapacityDescription: 'Counts watches for the Worker Linux UID; expands one tier at 80% of the current limit.',
+  watcherManagerUnavailable: 'Host expansion service is unavailable; this deployment is not connected to the restricted Linux manager.',
+  watcherHardLimit: 'Hard limit', saveWatcherLimit: 'Save limit', expandWatcherLimit: 'Expand one tier now',
+  watcherUid: 'Linux UID {uid}', watcherUsage: 'Usage {usage} / {limit}', watcherPercent: '{percent}% used', watcherThreshold: '80% expansion threshold {count}', watcherAtWarning: '90% warning threshold reached',
+  watcherNextLimit: 'Next tier {count}', watcherLastExpansion: 'Last expansion {time}', watcherNeverExpanded: 'Never expanded', watcherLimitInvalid: 'The hard limit must be an integer from 65536 to 1024000.',
+})
+
+Object.assign(filesyncAdminUiBase['zh-CN'], {
   queueAll: '一键排入全部对账（{count}）',
   queueingAll: '正在排队…',
   queueAllTitle: '排入全部同步绑定对账',

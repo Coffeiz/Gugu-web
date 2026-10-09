@@ -41,6 +41,38 @@
         <div class="fs-metric"><span>{{ t('filesyncAdmin.outbox') }}</span><b :class="{ warn: status.totals.pendingOutbox }">{{ status.totals.pendingOutbox }}</b></div>
       </div>
 
+      <div class="fs-block fs-watcher-capacity">
+        <div class="fs-block-head">
+          <div>
+            <div class="fs-block-title">{{ t('filesyncAdmin.watcherCapacityTitle') }}</div>
+            <div class="fs-note">{{ capacityDescription }}</div>
+          </div>
+          <div class="fs-capacity-actions">
+            <div class="fs-capacity-limit">
+              <span>{{ t('filesyncAdmin.watcherHardLimit') }}</span>
+              <input v-model="watchHardLimitInput" class="form-input" type="number" min="65536" max="1024000" step="1"
+                     :aria-label="t('filesyncAdmin.watcherHardLimit')" :disabled="capacitySaving" />
+              <ActionButton fit :disabled="capacitySaving || !hardLimitDirty" @click="saveWatchHardLimit">
+                {{ capacitySaving ? t('filesyncAdmin.working') : t('filesyncAdmin.saveWatcherLimit') }}
+              </ActionButton>
+            </div>
+            <ActionButton v-if="status.watcherCapacity?.available" fit :disabled="capacitySaving || status.watcherCapacity?.atHardLimit" @click="expandWatchLimit">
+              <Icon name="action.refresh" size="sm" />
+              {{ t('filesyncAdmin.expandWatcherLimit') }}
+            </ActionButton>
+          </div>
+        </div>
+        <div v-if="status.watcherCapacity?.available" class="fs-capacity-stats" :class="{ 'is-warning': status.watcherCapacity.atWarningThreshold }">
+          <span>{{ t('filesyncAdmin.watcherUid', { uid: status.watcherCapacity.uid }) }}</span>
+          <span>{{ t('filesyncAdmin.watcherUsage', { usage: formatCount(status.watcherCapacity.usage), limit: formatCount(status.watcherCapacity.limit) }) }}</span>
+          <span>{{ t('filesyncAdmin.watcherPercent', { percent: status.watcherCapacity.percent }) }}</span>
+          <span>{{ t('filesyncAdmin.watcherThreshold', { count: formatCount(status.watcherCapacity.autoThreshold) }) }}</span>
+          <span v-if="status.watcherCapacity.atWarningThreshold">{{ t('filesyncAdmin.watcherAtWarning') }}</span>
+          <span>{{ t('filesyncAdmin.watcherNextLimit', { count: formatCount(status.watcherCapacity.nextLimit) }) }}</span>
+          <span>{{ t('filesyncAdmin.watcherLastExpansion', { time: formatTime(status.watcherCapacity.lastExpansionAt) }) }}</span>
+        </div>
+      </div>
+
       <div v-if="status.ignoredBindingCount" class="fs-note">{{ t('filesyncAdmin.ignoredBindings', { count: status.ignoredBindingCount }) }}</div>
       <div v-if="bulkMessage" class="fs-message" :class="bulkFailed ? 'is-error' : 'is-success'">{{ bulkMessage }}</div>
 
@@ -169,6 +201,8 @@ const runs = ref<FileSyncRunStatus[]>([])
 const loading = ref(false)
 const syncSaving = ref(false)
 const error = ref('')
+const capacitySaving = ref(false)
+const watchHardLimitInput = ref('1024000')
 const actionKey = ref('')
 const bulkProgress = ref<{ resolution: string; completed: number; total: number } | null>(null)
 const bulkMessage = ref('')
@@ -200,6 +234,10 @@ const anomalousBindings = computed(() => (status.value?.bindings ?? []).filter((
 const queueableIssueCount = computed(() => anomalousBindings.value.filter((binding) =>
   binding.source === 'local_directory' && binding.status === 'active' && binding.mode !== 'mirror_out',
 ).length)
+const hardLimitDirty = computed(() => Number(watchHardLimitInput.value) !== status.value?.watcherCapacity?.hardLimit)
+const capacityDescription = computed(() => status.value?.watcherCapacity?.available
+  ? t('filesyncAdmin.watcherCapacityDescription')
+  : t('filesyncAdmin.watcherManagerUnavailable'))
 const visibleBindings = computed(() => {
   const all = status.value?.bindings ?? []
   if (!onlyIssues.value) return all
@@ -220,12 +258,58 @@ async function load() {
         filesyncAdminApi.status(adminStore.authFetch),
         filesyncAdminApi.runs(adminStore.authFetch),
       ])
+      const preserveInput = status.value !== null && hardLimitDirty.value
       status.value = nextStatus
+      if (typeof nextStatus.watcherCapacity?.hardLimit === 'number'
+        && !preserveInput) {
+        watchHardLimitInput.value = String(nextStatus.watcherCapacity.hardLimit)
+      }
       runs.value = nextRuns
     } while (reloadQueued)
   }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { loading.value = false }
+}
+
+function formatCount(value: number | undefined) {
+  return typeof value === 'number' ? new Intl.NumberFormat().format(value) : '—'
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return t('filesyncAdmin.watcherNeverExpanded')
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
+}
+
+async function saveWatchHardLimit() {
+  const limit = Number(watchHardLimitInput.value)
+  if (!Number.isInteger(limit) || limit < 65536 || limit > 1024000) {
+    error.value = t('filesyncAdmin.watcherLimitInvalid')
+    return
+  }
+  capacitySaving.value = true
+  error.value = ''
+  try {
+    await filesyncAdminApi.setWatchHardLimit(adminStore.authFetch, limit)
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    capacitySaving.value = false
+  }
+}
+
+async function expandWatchLimit() {
+  capacitySaving.value = true
+  error.value = ''
+  try {
+    await filesyncAdminApi.expandWatchLimit(adminStore.authFetch)
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    capacitySaving.value = false
+  }
 }
 
 async function toggleSync(enabled: boolean) {
@@ -436,6 +520,11 @@ onBeforeUnmount(adminEvents.stop)
 .fs-metric span { display:block; color:var(--content-secondary); font-size:var(--font-size-xs); margin-bottom:4px; }
 .fs-metric b { font-size:var(--font-size-lg); }
 .fs-metric b.warn { color:var(--status-warning); }
+.fs-capacity-actions,.fs-capacity-limit,.fs-capacity-stats { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.fs-capacity-limit { color:var(--content-secondary); font-size:var(--font-size-xs); }
+.fs-capacity-limit .form-input { width:125px; min-width:0; }
+.fs-capacity-stats { margin-top:8px; gap:8px 16px; color:var(--content-secondary); font-size:var(--font-size-xs); }
+.fs-capacity-stats.is-warning { color:var(--status-warning); }
 .fs-note,.fs-footnote { color:var(--content-secondary); font-size:var(--font-size-xs); line-height:var(--line-height-body); }
 .fs-block { margin-top:14px; }
 .fs-block-title { font-size:var(--font-size-sm); font-weight:var(--font-weight-bold); margin-bottom:7px; }
