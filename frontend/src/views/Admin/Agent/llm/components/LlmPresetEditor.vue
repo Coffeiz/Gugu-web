@@ -237,7 +237,9 @@ const formatLabels: Record<string, string> = {
 }
 function interfaceOptionsFor(draft: LlmPresetDraft | null) {
   if (!draft) return []
-  const snapshot = capabilitySnapshotIdentity.value === capabilityIdentityFor(draft)
+  // API 格式选项属于当前 Provider；切换模型时继续展示上一份同供应商声明，
+  // 避免每次输入都因能力快照刷新而卸载整个选择器。模型能力仍按 identity 单独校验。
+  const snapshot = capabilitySnapshot.value?.provider === draft.provider
     ? capabilitySnapshot.value as ProviderApiFormatSnapshot | null
     : null
   const supported = apiFormatsFromSnapshot(snapshot, draft.provider)
@@ -301,7 +303,7 @@ watch(
     const requestId = ++capabilityRequestId
     const previousSnapshot = capabilitySnapshot.value
     const identity = capabilityIdentityFor(draft)
-    if (capabilitySnapshotIdentity.value !== identity) {
+    if (capabilitySnapshot.value?.provider !== draft?.provider) {
       capabilitySnapshot.value = null
       capabilitySnapshotIdentity.value = ''
     }
