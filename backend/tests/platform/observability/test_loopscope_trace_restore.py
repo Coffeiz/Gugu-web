@@ -1,7 +1,10 @@
 """LoopScope 跨进程 trace 恢复回归测试。"""
 
+from types import SimpleNamespace
+
+from agent.context import builder, session_system
 from agent.runtime.loopscope_trace import state
-from agent.runtime.loopscope_trace.context import record_shell_prompt_sources
+from agent.runtime.loopscope_trace.context import install_context_hooks, record_shell_prompt_sources
 from agent.runtime.loopscope_trace.hooks import _argument_shape
 
 
@@ -75,3 +78,40 @@ def test_shell_prompt_sources_record_stable_and_dynamic_parts(monkeypatch):
     assert dynamic.kind == "context"
     assert dynamic.attributes["role"] == "dynamic_permissions"
     assert dynamic.output["content"] == "## 本轮 Shell 权限状态（动态）"
+
+
+def test_context_builder_span_measures_only_prompt_assembly(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    context_builder = SimpleNamespace(
+        build_split=builder.build_split,
+        _PROMPTS_DIR=session_system._PROMPTS_DIR,
+        _STATUS_ZH=builder._STATUS_ZH,
+        _files_block=lambda files, _names: builder._files_block(files),
+        _memory_block=builder._memory_block,
+        _style_block=session_system._style_block,
+        _skills_index_block=session_system._skills_index_block,
+    )
+    install_context_hooks(SimpleNamespace(), context_builder)
+    run = state._ScopeRun(
+        id="run-context-builder", trace_id="trace-context-builder",
+        session_key="gugu:web:test", external_session_id="test",
+        source="web", started_at=state._now(),
+    )
+    token = state._scope_run.set(run)
+    try:
+        context_builder.build_split("default", "合成用户", [], [])
+    finally:
+        state._scope_run.reset(token)
+
+    spans = [span for span in run.pending_context_spans if span.name == "Context assembly & prompt"]
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes["phase"] == "build_split"
+    assert span.input == {
+        "prompt_name": "default",
+        "project_count": 0,
+        "event_count": 0,
+        "skill_count": 0,
+        "knowledge_count": 0,
+    }
+    assert span.duration_ms is not None and span.duration_ms >= 0

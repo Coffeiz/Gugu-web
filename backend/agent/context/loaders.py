@@ -11,7 +11,6 @@ from sqlalchemy.orm import selectinload
 from app.core.tz import now_utc, resolve_tz, today_str
 from app.models import CalendarEvent, File, Folder, MindNode, Project, User
 from app.services.project_context import load_project_file_overviews
-from app.services.storage.folders import resolve_folder_path
 
 PERSONAL_FILES_RECENT_LIMIT = 20
 PROJECT_CONTEXT_LIMITS = {"pending": 5, "active": 10, "done": 3}
@@ -109,6 +108,7 @@ async def load_files_overview(db, user_id, recent: int = PERSONAL_FILES_RECENT_L
         select(Folder).where(
             Folder.user_id == user_id,
             Folder.project_id.is_(None),
+            Folder.workspace_directory_id.is_(None),
             Folder.parent_id.is_(None),
             Folder.deleted_at.is_(None),
         )
@@ -139,14 +139,12 @@ async def load_files_overview(db, user_id, recent: int = PERSONAL_FILES_RECENT_L
         )
         .order_by(File.updated_at.desc()).limit(recent_limit)
     )).scalars().all()
-    # 一级目录不需要展开子树；路径解析仅用于保留个人库根目录下的可读路径。
+    # 查询结果已经限定为个人库根目录；它们的路径就是自身名称，无需逐目录
+    # 再查一次父链。避免目录较多时产生 N+1 次数据库往返。
     fmap = {}
     folder_rows = []
     for folder in folders:
-        resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
-        if not resolved:
-            continue
-        _, path = resolved
+        path = folder.name
         fmap[folder.id] = path
         folder_rows.append({
             "id": folder.id, "name": folder.name, "path": path,

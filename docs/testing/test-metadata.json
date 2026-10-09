@@ -191,6 +191,14 @@
     "keyBehavior": "上下文保护统一按最近 run 的完整 round 窗口执行",
     "ci": "backend-pytest"
   },
+  "backend/tests/agent/context/test_context_loader_query_scaling.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/loaders.py:load_files_overview",
+    "keyBehavior": "个人库根目录数量增长时文件概览查询数保持有界，工作区目录不混入个人目录",
+    "ci": "backend-pytest"
+  },
   "backend/tests/agent/providers/test_model_reasoning_policy.py": {
     "domain": "agent-reasoning",
     "layer": "L1",
@@ -213,6 +221,14 @@
     "owner": "backend/app",
     "productionEntry": "app/services/filesystem_authorization.py",
     "keyBehavior": "文件系统授权开关、确认流程与审计记录安全",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_group_file_read_boundary.py": {
+    "domain": "agent-file-tools",
+    "layer": "L1",
+    "owner": "backend/agent/tools/files",
+    "productionEntry": "agent/tools/files/read.py",
+    "keyBehavior": "群聊成员只能读取当前消息明确提供的图片附件，不能按 Owner 文件 ID 或历史附件探测私人文件",
     "ci": "backend-pytest"
   },
   "backend/tests/platform/deployment/test_bundle_runtime.py": {

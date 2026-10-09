@@ -405,9 +405,18 @@ def ensure_hooks() -> None:
             model_name = str(getattr(ai, "model", "") or "")
             system_est = _estimate_tokens(plain_system, model_name)
             messages_est = _estimate_tokens(messages, model_name)
+            preparation_span = run.span(
+                "context",
+                "Preparation to provider input",
+                {"scope": "run_start_to_provider_loop_entry"},
+                code=_code_ref(original_builder_build),
+            )
+            # 这段计时覆盖 Run 开始到 Provider loop 入口，包含快照加载、上下文
+            # 查询及组装；真正的 build_split 耗时由 traced_build 单独记录。
+            preparation_span.started_at = run.started_at
             ctx_span = run.span(
                 "context",
-                "Context assembly & prompt",
+                "Provider input snapshot",
                 {
                     "system_prompt": plain_system,
                     "snapshot": _trace_snapshot(messages),
@@ -418,6 +427,7 @@ def ensure_hooks() -> None:
                         **message_area_diagnostics(messages),
                     },
                 },
+                parent_span_id=preparation_span.id,
                 code=_code_ref(original_builder_build),
                 token_impact={
                     "system_tokens_estimate": system_est,
@@ -426,12 +436,14 @@ def ensure_hooks() -> None:
                 },
                 note="Full application-visible prompt, snapshot, and history at loop entry",
             )
-            ctx_span.started_at = run.started_at
             ctx_span.finish({
                 # OpenAI 兼容接口把 system 放在 messages[0]；Context span 仍展示
                 # provider 实际会消费的完整 system，避免 LoopScope 看见空值。
                 "system_prompt": effective_system,
                 "message_count": len(provider_message_rows(messages)),
+            })
+            preparation_span.finish({
+                "provider_input_message_count": len(provider_message_rows(messages)),
             })
             run.attach_context_spans(ctx_span.id)
 
