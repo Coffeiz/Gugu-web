@@ -43,7 +43,7 @@ from app.services.files.actions import (
     resolve_local_file_stream,
     update_file_content as update_file_content_service,
 )
-from app.services.storage import get_storage
+from app.services.storage import OSSStorageBackend, get_storage
 from app.services.storage.file_service import FileService
 from app.services.files.selection import build_batch_zip
 from app.services.files.archive import compress_files, extract_file
@@ -479,6 +479,11 @@ async def presign_upload(
 ):
     """检查存储后端：OSS 时签发 presigned PUT URL；本地时返回 {mode:'proxy'}。"""
     storage = get_storage()
+    # 本地代理上传随后会完整经过 /files 的配额、归属与冲突校验。
+    # 这里若继续准备 presign target，会调用旧的物理用量对账并递归扫描用户目录；
+    # 本地模式根本不会使用签名 URL，因此直接返回代理模式。
+    if not isinstance(storage, OSSStorageBackend):
+        return {"mode": "proxy"}
     try:
         target = await prepare_presign_target(
             db,
@@ -498,19 +503,18 @@ async def presign_upload(
         raise HTTPException(error.status_code, error.detail) from error
 
     upload_url = await presign_upload_url(storage, target, body.mime_type)
-    if upload_url is not None:
-        return {
-            "mode": "oss",
-            "upload_url": upload_url,
-            # 客户端只是把这个值原样带回 /confirm，不解析它的含义——这里给的是临时
-            # 直传 key，不是最终存储位置，浏览器 PUT 不会碰到任何已有的真实文件。
-            "storage_key": target.staging_key,
-            "final_name": target.final_name,
-            "ext": target.ext,
-            "overwrite_file_id": target.overwrite_file_id,
-        }
-
-    return {"mode": "proxy"}
+    if upload_url is None:
+        return {"mode": "proxy"}
+    return {
+        "mode": "oss",
+        "upload_url": upload_url,
+        # 客户端只是把这个值原样带回 /confirm，不解析它的含义——这里给的是临时
+        # 直传 key，不是最终存储位置，浏览器 PUT 不会碰到任何已有的真实文件。
+        "storage_key": target.staging_key,
+        "final_name": target.final_name,
+        "ext": target.ext,
+        "overwrite_file_id": target.overwrite_file_id,
+    }
 
 
 # ── POST /files/confirm ───────────────────────────────────────────────────────

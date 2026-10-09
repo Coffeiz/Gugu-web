@@ -55,6 +55,22 @@ async def test_upload_endpoint(db, user_a):
     assert r.size_bytes == 5
 
 
+async def test_local_presign_uses_proxy_without_scanning_storage(db, user_a, monkeypatch):
+    """本地上传弹窗的 presign 探测应直接回退代理；真实配额校验由 /files 完成，
+    避免上传开始前为无用的签名目标递归扫描用户物理目录。"""
+    async def unexpected_target_preparation(*_args, **_kwargs):
+        raise AssertionError("本地代理模式不应准备 presign target")
+
+    monkeypatch.setattr(files_api, "prepare_presign_target", unexpected_target_preparation)
+    result = await files_api.presign_upload(
+        files_api.PresignRequest(filename="sample.clip", size_bytes=100),
+        current_user=user_a,
+        db=db,
+    )
+
+    assert result == {"mode": "proxy"}
+
+
 async def test_upload_keep_both_conflict(db, user_a):
     await _do_upload(db, user_a, b"1", "a.txt")
     r2 = await _do_upload(db, user_a, b"2", "a.txt")
