@@ -35,6 +35,9 @@ class GlmAdapter(ProviderAdapter):
         # 协议是 GLM 通用 API 的接入能力，不随当前选择的模型改变。
         return ("openai", "responses", "anthropic")
 
+    def responses_store_value(self, ai) -> bool | None:
+        return False if self.protocol_format(ai) == "responses" else None
+
     def default_base_url_for(self, ai) -> str:
         protocol = self.protocol_format(ai)
         if protocol == "responses":

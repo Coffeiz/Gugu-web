@@ -397,6 +397,47 @@ class _FakeResponsesClient:
         return _FakeResponsesStream(list(self.events))
 
 
+@pytest.mark.parametrize(("provider", "base_url", "expected_store"), [
+    ("openai", "https://api.openai.com/v1", False),
+    ("openai", "https://gateway.example/v1", None),
+    ("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", False),
+    ("glm", "https://open.bigmodel.cn/api/v1", False),
+    ("deepseek", "https://api.deepseek.com", None),
+    ("minimax", "https://api.minimaxi.com/v1", None),
+    ("mimo", "https://api.xiaomimimo.com/v1", None),
+])
+@pytest.mark.asyncio
+async def test_responses_driver_uses_provider_storage_policy(provider, base_url, expected_store):
+    """只对已确认支持的端点发送 store=false，未知兼容字段保持省略。"""
+    response = {
+        "id": "resp-storage-policy",
+        "output": [],
+        "usage": {"input_tokens": 2, "output_tokens": 1},
+    }
+    client = _FakeResponsesClient([
+        SimpleNamespace(type="response.output_text.delta", delta="OK"),
+        SimpleNamespace(type="response.completed", response=SimpleNamespace(
+            model_dump=lambda: response,
+        )),
+    ])
+    ai = SimpleNamespace(
+        provider=provider, base_url=base_url, api_format="responses",
+        model="synthetic-model", max_tokens=100, reasoning_effort="",
+    )
+    ctx = _ResponsesCtx([], 100, ai.model, "system", _responses_adapter(), ai)
+    messages = MessageArea.from_canonical_messages([{"role": "user", "content": "合成请求"}])
+
+    async for _kind, _value in OpenAIResponsesDriver().run_round(client, ctx, messages):
+        pass
+
+    request = client.requests[0]
+    if expected_store is None:
+        assert "store" not in request
+    else:
+        assert request["store"] is expected_store
+    assert "previous_response_id" not in request
+
+
 class _ResponsesStatusError(Exception):
     def __init__(self, status_code):
         self.status_code = status_code

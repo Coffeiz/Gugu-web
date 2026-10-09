@@ -234,6 +234,7 @@ async def probe_multimodal_capability(
                         {"type": "input_text", "text": content[0]["text"]},
                         {"type": "input_image", "image_url": image["url"], "detail": image["detail"]},
                     ]}],
+                    **providers.responses_store_params(target),
                 )
             else:
                 await client.chat.completions.create(

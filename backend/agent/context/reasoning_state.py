@@ -79,6 +79,11 @@ def model_state_fingerprints(ai: Any, *, provider: str, api_format: str,
 
     endpoint = urlsplit(str(getattr(ai, "base_url", "") or ""))
     endpoint_identity = (endpoint.scheme.lower(), endpoint.hostname, endpoint.port, endpoint.path.rstrip("/"))
+    responses_store = None
+    if api_format == "responses":
+        from agent import providers
+
+        responses_store = providers.responses_store_value(ai)
     model_config = {
         "provider": str(provider),
         "api_format": str(api_format),
@@ -92,7 +97,7 @@ def model_state_fingerprints(ai: Any, *, provider: str, api_format: str,
         "thinking": getattr(ai, "thinking", None),
         "reasoning_effort": getattr(ai, "reasoning_effort", None),
         "thinking_budget": getattr(ai, "thinking_budget", None),
-        "store": bool(getattr(ai, "store", True)),
+        "responses_store": responses_store,
         "include_encrypted_reasoning": getattr(ai, "include_encrypted_reasoning", None),
     }
     return configuration_fingerprint(model_config), configuration_fingerprint(reasoning_config)

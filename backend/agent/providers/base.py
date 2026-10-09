@@ -118,6 +118,10 @@ class ProviderAdapter:
         """是否确认支持 Responses 的 ``prompt_cache_key`` 请求字段。"""
         return False
 
+    def responses_store_value(self, ai) -> bool | None:
+        """返回 Responses 的服务端存储参数；None 表示省略未确认的兼容字段。"""
+        return None
+
     def supported_api_formats(self, ai) -> tuple[ApiFormat, ...]:
         """返回该 Provider 已声明的公共协议；默认只开放当前默认协议。"""
         model = getattr(ai, "model", "") or ""

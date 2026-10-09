@@ -351,11 +351,11 @@ async def complete_branch(
         "input": _responses_input(wire_history),
         "max_output_tokens": max_output_tokens,
         "tools": branch_tools,
-        "store": bool(getattr(ai, "store", True)),
     }
+    from agent import providers
+    request.update(providers.responses_store_params(ai))
     if instructions:
         request["instructions"] = instructions
-    from agent import providers
     request.update(
         providers.generic_thinking_params(ai, "responses")
         or adapter.build_responses_reasoning_params(ai)
@@ -485,7 +485,7 @@ class OpenAIResponsesDriver:
             )
             if callable(replay_params):
                 request.update(replay_params(ctx.ai))
-        request["store"] = bool(getattr(ctx.ai, "store", True))
+        request.update(providers.responses_store_params(ctx.ai))
         # Responses 的自动前缀缓存需要稳定的路由 key 才能跨 run 复用；key
         # 只由实际固定前缀身份组成，不包含本轮用户消息或动态工具结果。
         prompt_cache_key = _responses_prompt_cache_key(ctx)

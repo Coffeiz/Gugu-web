@@ -189,6 +189,17 @@ def adapter_for(ai) -> ProviderAdapter:
     return _DEFAULT
 
 
+def responses_store_value(ai) -> bool | None:
+    """返回当前 Responses 端点已确认的存储设置；未知字段保持省略。"""
+    return adapter_for(ai).responses_store_value(ai)
+
+
+def responses_store_params(ai) -> dict[str, bool]:
+    """返回当前 Responses 端点需要发送的存储参数；未知字段保持省略。"""
+    value = responses_store_value(ai)
+    return {} if value is None else {"store": value}
+
+
 def build_anthropic_client(ai, timeout):
     from anthropic import AsyncAnthropic
 

@@ -364,12 +364,13 @@ async def test_complete_messages_uses_responses_protocol_and_native_tool_schema(
         lambda ai: _Adapter(
             protocol_format=lambda ai: "responses",
             supports_responses_prompt_cache_key=lambda ai: False,
+            responses_store_value=lambda ai: False,
             build_responses_reasoning_params=lambda ai: {"reasoning": {"effort": "low"}},
             build_structured_output=lambda ai: {},
         ))
     ai = SimpleNamespace(
         model="qwen-test", provider="qwen", api_format="responses",
-        reasoning_effort="low", store=False,
+        reasoning_effort="low",
     )
     tools = [{"type": "function", "name": "read_file", "parameters": {"type": "object"}}]
     usage = []

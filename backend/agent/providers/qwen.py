@@ -52,6 +52,9 @@ class QwenAdapter(ProviderAdapter):
     def supports_explicit_cache(self, model: str = "") -> bool:
         return self.supports_active_cache(model)
 
+    def responses_store_value(self, ai) -> bool | None:
+        return False if self.protocol_format(ai) == "responses" else None
+
     def uses_single_history_cache_anchor(self, model: str = "") -> bool:
         # Token Plan 的 OpenAI 兼容端点对多个历史 cache_control 锚点命中不稳定；
         # 保留系统前缀锚点，只发送最新稳定历史尾锚点。
