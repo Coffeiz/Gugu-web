@@ -79,7 +79,7 @@ async def _validate_watch_hard_limit(filesync_patch: dict[str, Any]) -> None:
     if candidate_limit >= current_limit:
         return
     try:
-        capacity = await request_limit_agent("status", current_limit)
+        capacity = await request_limit_agent("status")
     except InotifyLimitUnavailable as exc:
         raise HTTPException(
             status_code=503,

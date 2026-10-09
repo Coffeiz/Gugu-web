@@ -448,6 +448,9 @@ cmd_install() {
         err "${APP_DIR}/.env 未配置 ADMIN_PASSWORD；请先设置管理员密码。"
         exit 1
     fi
+    detect_venv
+    local inotify_default_hard_limit
+    inotify_default_hard_limit="$(cd "$APP_DIR" && "$VENV_DIR/bin/python" -c 'from app.core.config import get_settings; print(get_settings().filesync.watch_hard_limit)')"
     chmod 600 "${APP_DIR}/config.override.json"
     chmod 600 "${APP_DIR}/.env"
     # Admin 配置使用同目录临时文件原子替换；目录需允许服务用户创建临时文件。
@@ -494,6 +497,7 @@ cmd_install() {
             -e "s#__RUN_UID__#${run_uid}#g" \
             -e "s#__RUN_HOME__#${run_home}#g" \
             -e "s#__DATA_DIR__#${data_dir}#g" \
+            -e "s#__INOTIFY_DEFAULT_HARD_LIMIT__#${inotify_default_hard_limit}#g" \
             "${APP_DIR}/${s}.service" > "/etc/systemd/system/${s}.service"
     done
 

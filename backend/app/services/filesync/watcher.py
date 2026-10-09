@@ -187,9 +187,7 @@ class FileSyncWatcherManager:
     async def _expand_watcher_capacity_if_needed(self) -> None:
         """占用到 80% 时自动扩容；检测手工/自动扩容后恢复失败的 binding。"""
         try:
-            result = await request_limit_agent(
-                "auto_expand", get_settings().filesync.watch_hard_limit,
-            )
+            result = await request_limit_agent("auto_expand")
         except InotifyLimitUnavailable:
             return
         current_limit = result.get("limit")

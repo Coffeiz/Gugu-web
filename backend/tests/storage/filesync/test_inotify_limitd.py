@@ -1,5 +1,9 @@
 """保护 watcher 容量在阈值、档位边界和 Admin 硬上限下的可观察行为。"""
 import importlib.util
+import json
+import os
+import socket
+import threading
 from pathlib import Path
 
 import pytest
@@ -63,6 +67,79 @@ def test_hard_limit_rejects_values_outside_supported_range():
             limitd.next_tier(65_536, invalid)
 
 
+def test_host_manager_uses_current_admin_config_instead_of_request_limit(tmp_path, monkeypatch):
+    config = tmp_path / "config.override.json"
+    config.write_text(json.dumps({"filesync": {"watch_hard_limit": 131_072}}), encoding="utf-8")
+    monkeypatch.setattr(limitd, "CONFIG_OVERRIDE_PATH", config)
+    observed = {}
+
+    def status(uid, hard_limit):
+        observed.update(uid=uid, hard_limit=hard_limit)
+        return {"hardLimit": hard_limit}
+
+    monkeypatch.setattr(limitd, "snapshot", status)
+    result = limitd.dispatch(
+        {"operation": "status", "hardLimit": limitd.ABSOLUTE_MAX}, uid=1001,
+    )
+
+    assert result["hardLimit"] == 131_072
+    assert observed == {"uid": 1001, "hard_limit": 131_072}
+
+
+def test_host_manager_fails_closed_on_invalid_admin_hard_limit(tmp_path):
+    config = tmp_path / "config.override.json"
+    config.write_text(json.dumps({"filesync": {"watch_hard_limit": limitd.ABSOLUTE_MAX + 1}}), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        limitd.configured_hard_limit(config, default_limit=limitd.ABSOLUTE_MAX)
+
+
+def test_incomplete_socket_request_times_out_and_server_accepts_next_request(monkeypatch):
+    monkeypatch.setattr(limitd, "REQUEST_READ_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(limitd, "dispatch", lambda request, uid: {"uid": uid})
+    monkeypatch.setattr(limitd, "peer_uid", lambda request: 1001)
+    socket_path = Path("/tmp") / f"gugu-inotify-{os.getpid()}-{threading.get_ident()}.sock"
+    server = limitd.Server(str(socket_path), limitd.Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(socket_path))
+            client.sendall(b'{"operation":"status"}')
+            timed_out = json.loads(client.recv(4096))
+            assert timed_out["ok"] is False
+
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(socket_path))
+            client.sendall(b'{"operation":"status"}\n')
+            completed = json.loads(client.recv(4096))
+            assert completed["ok"] is True, completed
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+        socket_path.unlink(missing_ok=True)
+
+
+def test_server_rejects_connections_when_all_worker_slots_are_busy(monkeypatch):
+    socket_path = Path("/tmp") / f"gugu-inotify-{os.getpid()}-{threading.get_ident()}.sock"
+    server = limitd.Server(str(socket_path), limitd.Handler)
+    # Exercise saturation without timing-dependent thread scheduling.
+    acquired = [limitd._connection_slots.acquire(blocking=False) for _ in range(limitd.MAX_CONNECTIONS)]
+    assert all(acquired)
+    closed = []
+    monkeypatch.setattr(server, "shutdown_request", closed.append)
+    try:
+        request = object()
+        server.process_request(request, None)
+        assert closed == [request]
+    finally:
+        for _ in acquired:
+            limitd._connection_slots.release()
+        server.server_close()
+        socket_path.unlink(missing_ok=True)
+
+
 def test_admin_hard_limit_cannot_be_lowered_below_current_watch_usage():
     from app.services.filesync.inotify_limit_client import validate_hard_limit_for_usage
 
@@ -83,7 +160,7 @@ async def test_admin_manual_expansion_uses_one_tier_and_reports_host_manager_una
     monkeypatch.setattr(admin, "get_settings", lambda: SimpleNamespace(
         filesync=SimpleNamespace(watch_hard_limit=1_024_000),
     ))
-    async def expanded(_operation, _hard_limit):
+    async def expanded(_operation):
         return {"ok": True, "expanded": True, "limit": 131_072}
 
     monkeypatch.setattr(admin, "request_limit_agent", expanded)
@@ -91,7 +168,7 @@ async def test_admin_manual_expansion_uses_one_tier_and_reports_host_manager_una
         "ok": True, "expanded": True, "limit": 131_072,
     }
 
-    async def unavailable(_operation, _hard_limit):
+    async def unavailable(_operation):
         raise InotifyLimitUnavailable("offline")
 
     monkeypatch.setattr(admin, "request_limit_agent", unavailable)
@@ -116,7 +193,7 @@ async def test_capacity_growth_releases_watcher_retry_circuit_breaker(
     import app.services.filesync.watcher as watcher_module
     from app.services.filesync.watcher import FileSyncWatcherManager
 
-    async def expanded(_operation, _hard_limit):
+    async def expanded(_operation):
         return result
 
     monkeypatch.setattr(watcher_module, "request_limit_agent", expanded)
@@ -151,7 +228,7 @@ async def test_admin_config_refuses_limit_below_live_watcher_usage(monkeypatch):
     settings = SimpleNamespace(filesync=FileSyncConfig(), storage=SimpleNamespace(backend="local"))
     monkeypatch.setattr(config_api, "get_settings", lambda: settings)
 
-    async def live_capacity(_operation, _hard_limit):
+    async def live_capacity(_operation):
         return {"usage": 70_000}
 
     monkeypatch.setattr(config_api, "request_limit_agent", live_capacity)

@@ -61,7 +61,7 @@ async def sync_status(
     result = await get_admin_sync_status(db, user_id=user_id, conflict_limit=conflict_limit)
     hard_limit = get_settings().filesync.watch_hard_limit
     try:
-        capacity = await request_limit_agent("status", hard_limit)
+        capacity = await request_limit_agent("status")
         result["watcherCapacity"] = {
             "available": True, **{key: value for key, value in capacity.items() if key != "ok"},
         }
@@ -74,9 +74,7 @@ async def sync_status(
 async def expand_watcher_capacity():
     """手工把宿主机 watcher 上限提升一个档位，不允许指定任意 sysctl 值。"""
     try:
-        result = await request_limit_agent(
-            "expand", get_settings().filesync.watch_hard_limit,
-        )
+        result = await request_limit_agent("expand")
     except InotifyLimitUnavailable as exc:
         raise HTTPException(status_code=503, detail="宿主机 watcher 管理服务不可用") from exc
     if not result.get("expanded"):

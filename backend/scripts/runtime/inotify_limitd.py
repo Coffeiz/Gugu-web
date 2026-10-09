@@ -15,9 +15,16 @@ from pathlib import Path
 SOCKET_PATH = "/run/gugu-inotify-limitd/limitd.sock"
 STATE_PATH = Path("/var/lib/gugu-inotify-limitd/last-expansion")
 SYSCTL_PATH = Path("/proc/sys/fs/inotify/max_user_watches")
+CONFIG_OVERRIDE_PATH = Path(os.getenv(
+    "GUGU_CONFIG_OVERRIDE_FILE", "/run/gugu-inotify-limitd/config.override.json",
+))
 TIERS = (65_536, 131_072, 262_144, 524_288, 1_024_000)
 ABSOLUTE_MAX = 1_024_000
+DEFAULT_HARD_LIMIT = os.getenv("GUGU_INOTIFY_DEFAULT_HARD_LIMIT", str(ABSOLUTE_MAX))
+REQUEST_READ_TIMEOUT_SECONDS = 3.0
+MAX_CONNECTIONS = 8
 _lock = threading.Lock()
+_connection_slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
 _count_cache: dict[int, tuple[float, int]] = {}
 try:
     _last_expansion_at: str | None = STATE_PATH.read_text(encoding="ascii").strip() or None
@@ -58,6 +65,56 @@ def next_tier(current: int, hard_limit: int) -> int:
         raise ValueError("invalid hard limit")
     tier = next((value for value in TIERS if value > current), hard_limit)
     return min(tier, hard_limit)
+
+
+def configured_hard_limit(
+    config_path: Path | None = None,
+    default_limit: str | int | None = None,
+) -> int:
+    """读取服务端策略；请求内容不能提高 Admin 当前配置的上限。"""
+    config_path = config_path or CONFIG_OVERRIDE_PATH
+    default_limit = DEFAULT_HARD_LIMIT if default_limit is None else default_limit
+    try:
+        default = int(default_limit)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid configured hard limit") from exc
+    if not TIERS[0] <= default <= ABSOLUTE_MAX:
+        raise ValueError("invalid configured hard limit")
+
+    try:
+        override = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        override = {}
+    if not isinstance(override, dict):
+        raise ValueError("invalid config override")
+    filesync = override.get("filesync", {}) or {}
+    if not isinstance(filesync, dict):
+        raise ValueError("invalid filesync config")
+    hard_limit = filesync.get("watch_hard_limit", default)
+    if type(hard_limit) is not int or not TIERS[0] <= hard_limit <= ABSOLUTE_MAX:
+        raise ValueError("invalid configured hard limit")
+    return hard_limit
+
+
+def dispatch(request: dict, uid: int) -> dict:
+    """只按宿主机读取到的可信策略执行固定操作。"""
+    hard_limit = configured_hard_limit()
+    operation = request.get("operation")
+    if operation == "status":
+        return snapshot(uid, hard_limit)
+    if operation == "auto_expand":
+        return expand(uid, hard_limit, automatic=True)
+    if operation == "expand":
+        return expand(uid, hard_limit, automatic=False)
+    raise ValueError("unsupported operation")
+
+
+def peer_uid(request: socket.socket) -> int:
+    """返回 Unix Socket 对端 UID（仅用于按 UID 统计 watcher）。"""
+    _pid, uid, _gid = struct.unpack(
+        "3i", request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")),
+    )
+    return uid
 
 
 def snapshot(
@@ -118,24 +175,15 @@ def expand(
 class Handler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
         try:
+            self.request.settimeout(REQUEST_READ_TIMEOUT_SECONDS)
             raw = self.rfile.readline(4097)
             if len(raw) > 4096 or not raw.endswith(b"\n"):
                 raise ValueError("invalid request size")
             request = json.loads(raw)
-            operation = request.get("operation")
-            hard_limit = request.get("hardLimit")
-            if type(hard_limit) is not int or not TIERS[0] <= hard_limit <= ABSOLUTE_MAX:
-                raise ValueError("invalid hard limit")
-            _pid, uid, _gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            if operation == "status":
-                result = snapshot(uid, hard_limit)
-            elif operation == "auto_expand":
-                result = expand(uid, hard_limit, automatic=True)
-            elif operation == "expand":
-                result = expand(uid, hard_limit, automatic=False)
-            else:
-                raise ValueError("unsupported operation")
-            response = {"ok": True, **result}
+            if not isinstance(request, dict):
+                raise ValueError("invalid request")
+            uid = peer_uid(self.request)
+            response = {"ok": True, **dispatch(request, uid)}
         except Exception as exc:
             # Only fixed error class is returned; host paths and exception details stay private.
             response = {"ok": False, "error": type(exc).__name__}
@@ -145,6 +193,23 @@ class Handler(socketserver.StreamRequestHandler):
 class Server(socketserver.ThreadingUnixStreamServer):
     allow_reuse_address = True
     daemon_threads = True
+    request_queue_size = MAX_CONNECTIONS
+
+    def process_request(self, request, client_address) -> None:
+        if not _connection_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            _connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            _connection_slots.release()
 
 
 def main() -> None:

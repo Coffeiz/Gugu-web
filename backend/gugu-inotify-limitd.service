@@ -9,6 +9,9 @@ Group=__RUN_USER__
 RuntimeDirectory=gugu-inotify-limitd
 RuntimeDirectoryMode=0750
 ExecStartPre=/usr/bin/rm -f /run/gugu-inotify-limitd/limitd.sock
+BindReadOnlyPaths=__APP_DIR__/config.override.json:/run/gugu-inotify-limitd/config.override.json
+Environment="GUGU_CONFIG_OVERRIDE_FILE=/run/gugu-inotify-limitd/config.override.json"
+Environment="GUGU_INOTIFY_DEFAULT_HARD_LIMIT=__INOTIFY_DEFAULT_HARD_LIMIT__"
 ExecStart=/usr/bin/python3 /usr/local/libexec/gugu/inotify_limitd.py
 Restart=always
 RestartSec=2

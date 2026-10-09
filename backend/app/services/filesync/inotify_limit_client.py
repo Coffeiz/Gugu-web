@@ -33,8 +33,7 @@ def validate_hard_limit_for_usage(value: int, usage: int) -> int:
     return value
 
 
-async def request_limit_agent(operation: str, hard_limit: int) -> dict[str, Any]:
-    validate_hard_limit(hard_limit)
+async def request_limit_agent(operation: str) -> dict[str, Any]:
     if operation not in {"status", "auto_expand", "expand"}:
         raise ValueError("不支持的 inotify 管理操作")
     writer: asyncio.StreamWriter | None = None
@@ -42,7 +41,7 @@ async def request_limit_agent(operation: str, hard_limit: int) -> dict[str, Any]
         reader, writer = await asyncio.wait_for(
             asyncio.open_unix_connection(SOCKET_PATH), timeout=2.0,
         )
-        writer.write((json.dumps({"operation": operation, "hardLimit": hard_limit}) + "\n").encode())
+        writer.write((json.dumps({"operation": operation}) + "\n").encode())
         await writer.drain()
         line = await asyncio.wait_for(reader.readline(), timeout=3.0)
         if not line or len(line) > 4096:
