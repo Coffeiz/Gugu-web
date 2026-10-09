@@ -1675,7 +1675,9 @@ async def test_watcher_does_not_scan_on_startup_and_keeps_manual_gap_visible(db,
         assert bindings[user_a.id].id not in manager._ready_bindings
     finally:
         sidecar.release_registration.set()
-        for _ in range(100):
+        # 回归测试全量串行运行时，数据库状态更新可能被其他后台 I/O 延后；
+        # 注册已释放后仍保留有限等待，最终仍必须观察到持久化 ready。
+        for _ in range(500):
             await db.refresh(bindings[user_a.id])
             if bindings[user_a.id].watcher_status == "ready":
                 break
