@@ -214,6 +214,10 @@ async def run_loop(
                             fixed_prefix_size=messages.fixed_prefix_size,
                             protected_from=protected_from,
                             protected_anchor_index=run_start_index,
+                            # 与持久历史重建使用同一条上一 run 保留边界；否则
+                            # run 内会把上一 run 的保留轮次压进摘要，而 DB baseline
+                            # 仍保留原文，下一 run 重建后请求前缀就会发生变化。
+                            protected_previous_from=messages.protected_history_start,
                             model_cfg=ai,
                             system_text=system_text,
                             # 分支复用本 run 的工具声明，保持可缓存前缀一致。

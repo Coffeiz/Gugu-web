@@ -73,6 +73,8 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 2026-10-03：反思快照复用 Area 的不可变 ProviderConversation，包含冻结 `request_prefix`，排除 dynamic tail；压缩与反思不得把已投影的 wire 消息转成裸列表再走 canonical renderer。持久历史重建不承诺命中率。缓存探针的资格估算与指纹必须基于完整前缀，不得使用 trace 展示裁剪后的内容。合成 MiniMax-M3 三组 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-10-03.md`。
 
+2026-10-09：跨 run 压缩时，向压缩器传入 `MessageArea.protected_history_start`，让当前 run 的压缩边界与后续持久历史重建一致，避免把上一 run 的保留轮次并入摘要、却在下一 run 从数据库恢复其原文。合成消息 MiniMax A/B 的第二轮 cache_ratio 从旧路径 0.87% 提升到修复路径 99.84%；这只验证 provider 输入前缀行为，未验证已运行服务的 LoopScope trace。详见 `docs/reports/2026-10-09-OPT-跨run压缩前缀连续性.md`。
+
 owner 闲置反思触发的会话压缩，应先在捕获主请求快照的同一进程内执行；worker 仅在短 TTL 协调标记过期后作为进程退出时的接管路径。压缩复用快照前缀必须逐条验证模型身份、持久化行边界和消息序列，不能精确对齐时安全回退到数据库重建路径。完整快照不得写入 Redis/数据库/日志；该路径改善前缀一致性，但不承诺特定 provider 的缓存命中率。
 
 反思前的 90% 判定遵循上述统一口径：同进程主请求快照携带的最近一轮 provider `context_input` 优先；没有有效实际用量时才估算。压缩前缀允许纯文本字符串与单个 text block 等价，工具块和其他结构必须严格对齐；对齐成功后发送原始主请求前缀。2026-09-26 的合成 MiniMax-M3 A/B 见 `docs/reports/OPT-Cache-Strategy-2026-09-26.md`。
