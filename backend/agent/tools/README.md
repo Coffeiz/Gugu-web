@@ -79,7 +79,7 @@ Tool(
 枚举长列表或权限事实。完整 `description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
 `related_skills` 和 `source` 用于能力目录，不承担第二套权限判断。
 
-生产环境只保留两种注入模式：全量模式（`full`）是默认模式，向 provider 发送工具源码中的规范 Schema；简介模式（`description`）是可选的低成本模式，提供能力目录和固定 Adapter，业务工具需要调用时再按需获取 Schema。新工具不再维护“完整 Schema 再运行时精简”的两套定义：`input_schema` 本身就是 provider、按需获取和执行校验的共同契约。原始旧版完整 Schema 只作为迁移前快照和测试基准。
+生产环境只保留两种注入模式：简介模式（`description`）是默认模式，提供能力目录和固定 Adapter，业务工具需要调用时再按需获取 Schema；全量模式（`full`）向 provider 发送工具源码中的规范 Schema，供用户按需选择。新工具不再维护“完整 Schema 再运行时精简”的两套定义：`input_schema` 本身就是 provider、按需获取和执行校验的共同契约。原始旧版完整 Schema 只作为迁移前快照和测试基准。
 
 Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`anyOf`、`allOf`、`if/then` 和边界约束表达机器可校验事实；字段级 `description`、`title`、`default`、`example/examples` 默认不写。只有日期格式、清空语义、资源边界等无法可靠结构化表达的信息，才保留一句短说明。注册期 lint 负责拒绝不合规范的新增定义，不在运行时悄悄删除字段说明。
 

@@ -77,6 +77,7 @@ async def preview_user_email(body: UserEmailPreview, user: User = Depends(get_cu
 _DEFAULT_VIEWS = {"projects", "calendar", "files", "mind"}
 _TOOL_INJECTION_MODES = {"description", "full"}
 _LEGACY_TOOL_INJECTION_MODES = {"catalog": "description", "compact_schema": "full", "full_schema": "full"}
+_DEFAULT_TOOL_INJECTION_MODE = "description"
 _SUPPORTED_LOCALES = {"zh-CN", "ja-JP", "en-US"}
 _MAX_PERSONALITY_UPLOAD_BYTES = 40_000
 async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
@@ -94,6 +95,13 @@ async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
 def _to_response(data: dict, personality: str | None = None) -> PreferencesResponse:
     personality_enabled = bool(personality and data.get("personality_preference_enabled", False))
     personality_available = bool(get_settings().agent.personality_preference_enabled)
+    stored_tool_mode = data.get("tool_injection_mode")
+    if stored_tool_mode is None:
+        tool_mode = _DEFAULT_TOOL_INJECTION_MODE
+    elif stored_tool_mode in _TOOL_INJECTION_MODES:
+        tool_mode = stored_tool_mode
+    else:
+        tool_mode = _LEGACY_TOOL_INJECTION_MODES.get(stored_tool_mode, "full")
     return PreferencesResponse(
         locale=data.get("locale") if data.get("locale") in _SUPPORTED_LOCALES else None,
         theme=data.get("theme", "light") if data.get("theme", "light") in {"light", "dark", "system"} else "light",
@@ -113,11 +121,7 @@ def _to_response(data: dict, personality: str | None = None) -> PreferencesRespo
         decisionGuardEnabled=bool(data.get("decision_guard_enabled", False)),
         showToolInteractions=bool(data.get("show_tool_interactions", True)),
         showIntermediateReplies=bool(data.get("show_intermediate_replies", False)),
-        toolInjectionMode=(
-            data.get("tool_injection_mode", "full")
-            if data.get("tool_injection_mode", "full") in _TOOL_INJECTION_MODES
-            else _LEGACY_TOOL_INJECTION_MODES.get(data.get("tool_injection_mode"), "full")
-        ),
+        toolInjectionMode=tool_mode,
         personalityPreference=personality,
         personalityPreferenceEnabled=personality_enabled,
         personalityPreferenceRevision=preference_revision(data),

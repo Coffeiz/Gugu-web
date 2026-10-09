@@ -57,7 +57,7 @@ class _Db:
         ("compact_schema", "full"),
         ("full_schema", "full"),
         ("unknown", "full"),
-        (None, "full"),
+        (None, "description"),
     ],
 )
 def test_tool_injection_mode_response_uses_only_canonical_values(monkeypatch, stored, expected):
@@ -70,14 +70,14 @@ def test_tool_injection_mode_response_uses_only_canonical_values(monkeypatch, st
     assert result.toolInjectionMode == expected
 
 
-def test_tool_injection_mode_defaults_to_full(monkeypatch):
+def test_tool_injection_mode_defaults_to_description(monkeypatch):
     monkeypatch.setattr(preferences_api, "get_settings", lambda: SimpleNamespace(
         agent=SimpleNamespace(personality_preference_enabled=False),
     ))
 
     result = preferences_api._to_response({})
 
-    assert result.toolInjectionMode == "full"
+    assert result.toolInjectionMode == "description"
 
 
 def test_im_display_preferences_use_new_defaults_and_preserve_saved_choices(monkeypatch):

@@ -683,7 +683,7 @@ class PreferencesResponse(CamelModel):
     decisionGuardEnabled: bool = False        # 行动跟进守卫；默认关闭
     showToolInteractions: bool = True         # IM 是否展示工具调用过程；默认开启
     showIntermediateReplies: bool = False     # IM 是否展示运行中的中间轮次回复；默认关闭
-    toolInjectionMode: str = "full"         # description = 简介模式；full = 全量模式，默认全量
+    toolInjectionMode: str = "description"  # description = 简介模式；full = 全量模式，默认简介
     personalityPreference: Optional[str] = None
     personalityPreferenceEnabled: bool = False
     personalityPreferenceRevision: int = 0

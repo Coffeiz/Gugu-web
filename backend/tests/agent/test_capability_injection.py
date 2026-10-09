@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -491,7 +492,7 @@ async def test_full_schema_preference_keeps_skill_metadata_context(monkeypatch):
 
     class FakeDB:
         async def scalar(self, _statement):
-            return SimpleNamespace(data={})
+            return SimpleNamespace(data={"tool_injection_mode": "full"})
 
     async def fake_skill_context(*args, **kwargs):
         assert args == (["search"],)
@@ -507,6 +508,35 @@ async def test_full_schema_preference_keeps_skill_metadata_context(monkeypatch):
     )
 
     assert result is marker
+
+
+@pytest.mark.anyio
+async def test_unset_tool_injection_preference_uses_description_context(monkeypatch):
+    from agent.run import preparation
+    from agent.capabilities import injector
+
+    marker = object()
+
+    class FakeDB:
+        async def scalar(self, _statement):
+            return SimpleNamespace(data={})
+
+    async def fake_fixed_context(*args, **kwargs):
+        assert args == (["search"],)
+        assert kwargs["db"] is db
+        assert kwargs["owner_id"] == "owner-1"
+        return marker
+
+    db = FakeDB()
+    monkeypatch.setattr(injector, "build_fixed_adapter_context_for_user", fake_fixed_context)
+    monkeypatch.setattr(injector, "build_skill_metadata_context_for_user", AsyncMock())
+
+    result = await preparation._capability_context(
+        ["search"], SimpleNamespace(), db=db, owner_id="owner-1",
+    )
+
+    assert result is marker
+    injector.build_skill_metadata_context_for_user.assert_not_awaited()
 
 
 def test_llm_runner_accepts_dynamic_capability_context_without_changing_default_api():

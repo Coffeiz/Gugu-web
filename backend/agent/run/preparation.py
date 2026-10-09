@@ -135,7 +135,7 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
         row = await session.scalar(select(UserPreferences).where(UserPreferences.user_id == owner_id))
         stored_mode = (row.data or {}).get("tool_injection_mode") if row else None
         if stored_mode is None:
-            return True
+            return False
         return stored_mode not in {"description", "catalog"}
 
     if db is None and owner_id is not None:
