@@ -4,6 +4,27 @@ from types import SimpleNamespace
 
 from agent.tools.text_edit import select_numbered_lines
 
+
+def _display_file_name(display_name: str, ext: str) -> str:
+    """FILE/空扩展名是无后缀哨兵，展示时不拼出伪后缀。"""
+    return display_name if not ext or ext.lower() == "file" else f"{display_name}.{ext}"
+
+
+def _decode_extensionless_text(data: bytes) -> str | None:
+    """只把可严格解码且不含二进制控制字符的无后缀内容当作文本。"""
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
+    has_binary_control = any(
+        (ord(char) < 32 and char not in "\n\r\t\f") or 0x7f <= ord(char) <= 0x9f
+        for char in text
+    )
+    if has_binary_control:
+        return None
+    return text
+
+
 async def _read_history_media(user_id, attach_id: str, *, restricted: bool = False,
                               max_source_bytes: int | None = None):
     from app.core import chat_attach
@@ -90,6 +111,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
     if _err:
         return _err
     ext = f.ext.lower()
+    file_name = _display_file_name(f.display_name, ext)
 
     from agent.tools.media_reader import IMAGE_EXTS, MEDIA_EXTS, read_media
     if restricted and ext not in IMAGE_EXTS:
@@ -101,14 +123,21 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
         if ext in IMAGE_EXTS:
             return {"_image_block": result["block"],
                     "_source_size_bytes": result.get("_source_size_bytes", 0),
-                    "note": f"已打开图片《{f.display_name}.{f.ext}》，见随附图像。"}
+                    "note": f"已打开图片《{file_name}》，见随附图像。"}
         return result
 
     # SVG 保留为源码读取，不伪装成不可栅格化的视觉输入。
     is_doc = ext in doctext.EXTRACTABLE      # PDF/docx/xlsx/pptx 等，需工具提取文本
     is_text = _is_text_file_record(f)
-    if not is_text and not is_doc:
-        return json.dumps({"error": f"不支持读取该类型（{f.ext}），支持文本、PDF/Office、图片、音频和视频"})
+    extensionless = ext in {"", "file"}
+    mime_type = (f.mime_type or "").lower()
+    can_sniff_extensionless_text = extensionless and (
+        not mime_type or mime_type in {"application/octet-stream", "binary/octet-stream"}
+        or mime_type.startswith("text/")
+    )
+    if not is_text and not is_doc and not can_sniff_extensionless_text:
+        label = ext or "无扩展名"
+        return json.dumps({"error": f"不支持读取该类型（{label}），支持文本、PDF/Office、图片、音频和视频"})
     cap = doctext.EXTRACT_MAX_BYTES if is_doc else READ_MAX_BYTES
     if (f.size_bytes or 0) > cap:
         return json.dumps({"error": f"文件过大（{f.size}），超出可读上限"})
@@ -121,7 +150,13 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
             if info.size > max_source_bytes:
                 return json.dumps({"error": "本批次剩余容量不足，未读取该文件"}, ensure_ascii=False)
         data = await storage.get(f.storage_key)
-        text = await doctext.extract_text(data, ext)   # 文本类直接 decode；文档走 pdftotext/LibreOffice
+        if extensionless:
+            text = _decode_extensionless_text(data)
+            if text is None:
+                label = ext or "无扩展名"
+                return json.dumps({"error": f"不支持读取该类型（{label}），内容不是 UTF-8 文本"})
+        else:
+            text = await doctext.extract_text(data, ext)   # 文本类直接 decode；文档走 pdftotext/LibreOffice
     except Exception as e:
         return json.dumps({"error": f"读取失败：{str(e)[:80]}"})
     target_lines = args.get("target_lines", "all")
@@ -131,7 +166,7 @@ async def _read_file_single(db, user_id, args: dict, *, restricted: bool = False
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
     return {
         "file_id": f.id,
-        "name": f"{f.display_name}.{f.ext}",
+        "name": file_name,
         "content": selected_content,
         "numbered_content": selected_numbered,
         "line_range": {"start": selected_range[0], "end": selected_range[1]},
