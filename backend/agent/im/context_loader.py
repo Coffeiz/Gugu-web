@@ -195,7 +195,9 @@ async def load_context_data(
     notes = await loaders.load_recent_notes(db, user_id)
     files_overview = await loaders.load_files_overview(db, user_id)
     style_prefs = await loaders.load_style_prefs(db, user_id)
-    memory = await loaders.load_memory(user_id, query) if memory_enabled else {}
+    memory = await loaders.load_memory(
+        user_id, query, prefer_recent=True,
+    ) if memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
     im_memory = await load_im_memory(request)
     knowledge = await loaders.load_knowledge_overview(user_id)

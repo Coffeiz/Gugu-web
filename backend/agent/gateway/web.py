@@ -112,7 +112,9 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             events = await loaders.load_events(db, user_id, tz=user_tz)
             notes = await loaders.load_recent_notes(db, user_id)
             files_overview = await loaders.load_files_overview(db, user_id)
-            memory = await loaders.load_memory(user_id, req.message) if SYSTEM_MEMORY_ENABLED else {}
+            memory = await loaders.load_memory(
+                user_id, req.message, prefer_recent=True,
+            ) if SYSTEM_MEMORY_ENABLED else {}
             im_channels = await loaders.load_im_channels(user_id)
             knowledge = await loaders.load_knowledge_overview(user_id)
             static_prompt, snapshot_context, _ = builder.build_split(

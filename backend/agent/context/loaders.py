@@ -163,11 +163,11 @@ async def load_files_overview(db, user_id, recent: int = PERSONAL_FILES_RECENT_L
     }
 
 
-async def load_memory(user_id, query: str = "") -> dict:
+async def load_memory(user_id, query: str = "", *, prefer_recent: bool = False) -> dict:
     """读取用户 .agent/ 记忆，返回 profile/pattern/daily/memory/summary（缺失为空串）。
-    query = 当前用户消息（可选）：传入则 pattern 超上限时按相关性优先挑（见 store.render_pattern）。"""
+    query = 当前用户消息（可选）：传入则超限记忆按相关性优先挑；无向量兜底可选择优先保留最新章节。"""
     from agent.memory import store
-    return await store.read_memory(user_id, query)
+    return await store.read_memory(user_id, query, prefer_recent=prefer_recent)
 
 
 async def load_dynamic_memory(user_id) -> dict:
