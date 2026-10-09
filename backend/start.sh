@@ -22,11 +22,25 @@ LOG_FILE="${LOG_DIR}/gugu.log"
 PID_FILE="${APP_DIR}/.gugu.pid"
 # 应用常驻服务及受限的宿主机 inotify 容量管理器。
 SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-inotify-limitd gugu-backend gugu-worker gugu-gateway"
+SYSTEMD_OPTIONAL_SERVICES="gugu-inotify-limitd"
 
 # ── 工具函数 ────────────────────────────────────────────
 log()  { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { log "WARN: $*"; }
 err()  { log "ERROR: $*"; }
+
+systemd_runtime_services() {
+    local service services=""
+    for service in $SYSTEMD_SERVICES; do
+        if [[ " $SYSTEMD_OPTIONAL_SERVICES " == *" $service "* ]] \
+            && ! systemctl cat "${service}.service" >/dev/null 2>&1; then
+            warn "可选 systemd 服务未安装，跳过：$service" >&2
+            continue
+        fi
+        services="${services:+$services }$service"
+    done
+    printf '%s' "$services"
+}
 
 detect_venv() {
     if [ -d "$VENV_DIR" ]; then return 0; fi
@@ -74,10 +88,12 @@ check_systemd_services() {
     local delay="${GUGU_SYSTEMD_CHECK_DELAY:-1}"
     local stable_checks="${GUGU_SYSTEMD_STABLE_CHECKS:-3}"
     local attempt service all_active consecutive=0
+    local services
+    services="$(systemd_runtime_services)"
 
     for ((attempt = 1; attempt <= attempts; attempt++)); do
         all_active=1
-        for service in $SYSTEMD_SERVICES; do
+        for service in $services; do
             if ! systemctl is-active --quiet "$service"; then
                 all_active=0
             fi
@@ -96,7 +112,7 @@ check_systemd_services() {
     done
 
     err "systemd 服务未全部处于 active 状态："
-    for service in $SYSTEMD_SERVICES; do
+    for service in $services; do
         systemctl --no-pager --lines=12 status "$service" || true
     done
     return 1
@@ -213,8 +229,10 @@ cleanup_gugu_port() {
 cmd_start() {
     if use_systemd; then
         validate_runtime_config
-        log "使用 systemd 启动：${SYSTEMD_SERVICES}"
-        systemctl start $SYSTEMD_SERVICES
+        local services
+        services="$(systemd_runtime_services)"
+        log "使用 systemd 启动：${services}"
+        systemctl start $services
         check_systemd_services
         return 0
     fi
@@ -253,8 +271,10 @@ cmd_start() {
 
 cmd_stop() {
     if use_systemd; then
-        log "使用 systemd 停止：${SYSTEMD_SERVICES}"
-        systemctl stop $SYSTEMD_SERVICES
+        local services
+        services="$(systemd_runtime_services)"
+        log "使用 systemd 停止：${services}"
+        systemctl stop $services
         cleanup_gugu_port
         return 0
     fi
@@ -285,10 +305,12 @@ cmd_stop() {
 cmd_restart() {
     if use_systemd; then
         validate_runtime_config
-        log "使用 systemd 重启：${SYSTEMD_SERVICES}"
-        systemctl stop $SYSTEMD_SERVICES
+        local services
+        services="$(systemd_runtime_services)"
+        log "使用 systemd 重启：${services}"
+        systemctl stop $services
         cleanup_gugu_port
-        systemctl start $SYSTEMD_SERVICES
+        systemctl start $services
         check_systemd_services
         return 0
     fi
@@ -303,7 +325,9 @@ cmd_cleanup_port() {
 
 cmd_status() {
     if use_systemd; then
-        systemctl --no-pager --lines=5 status $SYSTEMD_SERVICES
+        local services
+        services="$(systemd_runtime_services)"
+        systemctl --no-pager --lines=5 status $services
         return $?
     fi
     if is_running; then
