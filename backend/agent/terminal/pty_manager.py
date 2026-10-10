@@ -10,9 +10,10 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from agent.sandbox.protocol import WorkspaceMount
+if TYPE_CHECKING:
+    from agent.sandbox.protocol import WorkspaceMount
 
 _log = logging.getLogger(__name__)
 
@@ -279,7 +280,17 @@ class PtyManager:
 
     @staticmethod
     def _finish_output_queue(queue: asyncio.Queue[bytes | None]) -> None:
-        """清除订阅者积压并确保终态哨兵可入队，避免消费者永久等待。"""
+        """保留正常退出前已入队的输出，并保证消费者最终收到终态哨兵。"""
+        try:
+            queue.put_nowait(None)
+        except asyncio.QueueFull:
+            # 满队列无法容纳哨兵时只丢弃最旧的一条，保留较新的终端输出。
+            queue.get_nowait()
+            queue.put_nowait(None)
+
+    @staticmethod
+    def _discard_pending_output_and_finish(queue: asyncio.Queue[bytes | None]) -> None:
+        """队列溢出时丢弃积压并立即投递终态，避免慢读端无限滞留。"""
         while True:
             try:
                 queue.get_nowait()
@@ -306,7 +317,7 @@ class PtyManager:
                     except asyncio.QueueFull:
                         # 读端落后时终止连接，不能无限制堆积 PTY 输出。
                         session.output_queues.discard(queue)
-                        self._finish_output_queue(queue)
+                        self._discard_pending_output_and_finish(queue)
         finally:
             async with self._lock:
                 owns_session = self._sessions.get(session.terminal_id) is session

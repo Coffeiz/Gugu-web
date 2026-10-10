@@ -88,6 +88,33 @@ async def test_manager_subscribes_before_starting_output_pump():
 
 
 @pytest.mark.asyncio
+async def test_manager_preserves_pending_output_when_pty_exits_normally():
+    """输出泵先结束、消费者后读取时，正常退出不能丢掉已排队的终端输出。"""
+    bridge = FakeBridge()
+    manager = PtyManager(bridge)
+    session, queue = await manager.start_with_subscription(spec())
+    handle = bridge.handles[0][1]
+    handle.output_queue.put_nowait(b"hello\n")
+    handle.output_queue.put_nowait(None)
+
+    await asyncio.wait_for(session.output_task, timeout=1)
+
+    assert queue.get_nowait() == b"hello\n"
+    assert queue.get_nowait() is None
+
+
+def test_manager_keeps_newest_pending_output_when_normal_finish_queue_is_full():
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=2)
+    queue.put_nowait(b"oldest")
+    queue.put_nowait(b"newest")
+
+    PtyManager._finish_output_queue(queue)
+
+    assert queue.get_nowait() == b"newest"
+    assert queue.get_nowait() is None
+
+
+@pytest.mark.asyncio
 async def test_manager_reaps_detached_pty_and_forces_close():
     bridge = FakeBridge()
     manager = PtyManager(bridge, detached_ttl_seconds=5)
