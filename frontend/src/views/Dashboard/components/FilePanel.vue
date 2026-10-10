@@ -22,7 +22,6 @@
         </template>
         <template #name>
           <RenameInput v-if="renamingId === f.id" v-model="renameText" :extension="f.ext.toUpperCase() === 'FILE' || !f.name ? undefined : renameExtension" @update:extension="renameExtension = $event"
-            :extension-required="f.ext.toUpperCase() !== 'FILE' && !!f.name"
             @commit="commitRename(f)" @cancel="cancelRename" />
           <template v-else>{{ f.name }}</template>
         </template>
@@ -191,13 +190,15 @@ async function commitRename(f: any) {
   const normalizedExtension = normalizeEditableExtension(renameExtension.value)
   const isLegacyDotfile = !f.name && f.ext.toUpperCase() !== 'FILE'
   if (!name) { cancelRename(); return }
-  if (normalizedExtension == null || (!normalizedExtension && f.ext.toUpperCase() !== 'FILE' && !isLegacyDotfile)) {
+  if (normalizedExtension == null) {
     showAppError(t('filesUi.extensionInvalid'))
     await nextTick()
     panelRef.value?.querySelector<HTMLInputElement>('.rename-file-extension-input')?.focus()
     return
   }
-  const extension = isLegacyDotfile ? 'FILE' : normalizedExtension || undefined
+  const extension = isLegacyDotfile
+    ? 'FILE'
+    : normalizedExtension || (f.ext.toUpperCase() === 'FILE' ? undefined : 'FILE')
   const nextExtension = extension ?? f.ext
   renamingId.value = null
   renameText.value = ''

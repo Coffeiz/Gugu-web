@@ -21,12 +21,14 @@ export function useProjectFileRename(options: {
     const file = editingFile.value
     const normalizedExtension = normalizeEditableExtension(renameExtension.value)
     const isLegacyDotfile = file?.displayName === '' && file.ext.toUpperCase() !== 'FILE'
-    if (id != null && (normalizedExtension == null || (!normalizedExtension && file?.ext.toUpperCase() !== 'FILE' && !isLegacyDotfile))) {
+    if (id != null && normalizedExtension == null) {
       options.onInvalidExtension?.()
       nextTick(() => document.querySelector<HTMLInputElement>('.rename-file-extension-input')?.focus())
       return
     }
-    const extension = isLegacyDotfile ? 'FILE' : normalizedExtension || undefined
+    const extension = isLegacyDotfile
+      ? 'FILE'
+      : normalizedExtension || (file?.ext.toUpperCase() === 'FILE' ? undefined : 'FILE')
     if (id == null || !name) { cancelRename(); return }
     if (file?.displayName === name && (extension ?? file.ext) === file.ext) { cancelRename(); return }
     void options.renameFile(id, name, extension)
