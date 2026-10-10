@@ -486,6 +486,8 @@ def test_cache_diagnostics_only_exposes_sizes_and_digests():
     diagnostics = _cache_diagnostics(messages, Context())
 
     assert diagnostics["cache_supported"] is True
+    assert diagnostics["stable_prefix_tokens_estimate"] > 0
+    assert "cache_anchor_tokens_estimate" not in diagnostics
     assert diagnostics["conversation_messages"] == 2
     assert diagnostics["cache_anchor_indices"]
     assert diagnostics["cache_anchor_last_index"] == 0

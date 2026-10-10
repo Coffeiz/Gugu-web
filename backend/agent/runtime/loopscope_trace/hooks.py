@@ -661,7 +661,7 @@ def ensure_hooks() -> None:
                     "prompt_tokens_estimate": round_prompt_est,
                     "prompt_growth_estimate": growth,
                     "tool_schema_tokens_estimate": cache_diag.get("tool_schema_tokens_estimate", 0),
-                    "cache_anchor_tokens_estimate": cache_diag.get("cache_anchor_tokens_estimate", 0),
+                    "stable_prefix_tokens_estimate": cache_diag.get("stable_prefix_tokens_estimate", 0),
                 },
                 round=round_index,
                 provider=getattr(ai, "provider", ""),

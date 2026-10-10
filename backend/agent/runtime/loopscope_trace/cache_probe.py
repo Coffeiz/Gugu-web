@@ -80,7 +80,11 @@ def build_cache_round(*, at: float, provider: str, model: str, api_format: str,
         "cache_read_tokens": int(usage.get("cache_read", 0) or 0),
         "cache_write_tokens": int(usage.get("cache_write", 0) or 0),
         "cache_hit_ratio": float(usage.get("cache_ratio", 0) or 0),
-        "stable_prefix_tokens": int(cache_diag.get("cache_anchor_tokens_estimate", 0) or 0),
+        "stable_prefix_tokens_estimate": int(
+            cache_diag.get("stable_prefix_tokens_estimate", 0)
+            or cache_diag.get("cache_anchor_tokens_estimate", 0)
+            or 0
+        ),
         "stable_prefix_digest": str(cache_diag.get("cache_prefix_digest", "") or ""),
         "stable_message_count": int(cache_diag.get("stable_message_count", 0) or 0),
         "prefix_unchanged": prefix_unchanged,
@@ -120,8 +124,12 @@ def _eligible(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
         and previous.get("cache_supported")
         and current.get("cache_supported")
         and min(
-            int(previous.get("stable_prefix_tokens", 0) or 0),
-            int(current.get("stable_prefix_tokens", 0) or 0),
+            int(previous.get(
+                "stable_prefix_tokens_estimate", previous.get("stable_prefix_tokens", 0),
+            ) or 0),
+            int(current.get(
+                "stable_prefix_tokens_estimate", current.get("stable_prefix_tokens", 0),
+            ) or 0),
         ) >= MIN_PREFIX_TOKENS
         and float(previous.get("cache_hit_ratio", 0) or 0) >= MIN_PREVIOUS_HIT_RATIO
     )
@@ -180,7 +188,7 @@ def _event(previous: dict[str, Any], current: dict[str, Any], gap: float,
 def _usage_snapshot(value: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "provider", "model", "api_format", "input_tokens", "cache_read_tokens",
-        "cache_write_tokens", "cache_hit_ratio", "stable_prefix_tokens",
+        "cache_write_tokens", "cache_hit_ratio", "stable_prefix_tokens_estimate",
         "stable_prefix_digest", "tool_schema_digest", "system_digest",
         "memory_digest", "summary_digest",
     )

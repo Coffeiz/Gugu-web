@@ -18,7 +18,7 @@ def _round(*, at, ratio, input_tokens=100_000, cache_read=None, **extra):
         "input_tokens": input_tokens,
         "cache_read_tokens": int(input_tokens * ratio) if cache_read is None else cache_read,
         "cache_hit_ratio": ratio,
-        "stable_prefix_tokens": 40_000,
+        "stable_prefix_tokens_estimate": 40_000,
         "stable_prefix_digest": "same-prefix",
         "tool_schema_digest": "same-tools",
         "system_digest": "same-system",
@@ -108,7 +108,7 @@ def test_cache_drop_ignores_cold_small_or_unsupported_requests():
     cold = detect_cache_drop(_round(at=100.0, ratio=0.1), _round(at=104.0, ratio=0.0))
     small = detect_cache_drop(
         _round(at=100.0, ratio=0.9),
-        _round(at=104.0, ratio=0.0, input_tokens=10_000, stable_prefix_tokens=10_000),
+        _round(at=104.0, ratio=0.0, input_tokens=10_000, stable_prefix_tokens_estimate=10_000),
     )
     unsupported = detect_cache_drop(
         _round(at=100.0, ratio=0.9),
@@ -242,6 +242,32 @@ def test_reflection_observation_flags_low_hit_only_for_supported_long_prefix(mon
     assert supported["cache_low_hit"] is True
     assert unsupported["probe_eligible"] is False
     assert unsupported["cache_low_hit"] is False
+
+
+def test_round_probe_keeps_prefix_estimate_separate_from_provider_cache_usage():
+    from agent.runtime.loopscope_trace.cache_probe import build_cache_round
+
+    sample = build_cache_round(
+        at=1.0,
+        provider="mimo",
+        model="mimo-v2.6-flash",
+        api_format="responses",
+        cache_diag={
+            "cache_supported": False,
+            "stable_prefix_tokens_estimate": 62_758,
+            "cache_prefix_digest": "stable-digest",
+            "stable_message_count": 33,
+        },
+        usage={"input": 45_941, "cache_read": 35_776, "cache_ratio": 0.778738},
+        system_digest="system-digest",
+        context={"memory_injected": False, "memory_digest": "", "summary_digest": ""},
+        prefix_unchanged=True,
+    )
+
+    assert sample["cache_supported"] is False
+    assert sample["stable_prefix_tokens_estimate"] == 62_758
+    assert sample["cache_read_tokens"] == 35_776
+    assert "stable_prefix_tokens" not in sample
 
 
 def test_reflection_probe_counts_full_provider_prefix_without_trace_truncation():

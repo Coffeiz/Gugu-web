@@ -20,6 +20,21 @@
       </div>
     </header>
 
+    <section v-if="cacheDiagnostics" class="cache-diagnostic" aria-label="缓存诊断">
+      <div class="cache-diagnostic-metrics">
+        <div>
+          <span>稳定前缀估算</span>
+          <strong>~{{ formatCompactNumber(stablePrefixTokensEstimate, '—') }}</strong>
+        </div>
+        <div>
+          <span>Provider 实际 Cache read</span>
+          <strong>{{ providerCacheReadLabel }}</strong>
+        </div>
+      </div>
+      <p>前缀长度是咕咕侧估算；Cache read 来自 Provider 返回的 usage。两者口径不同，不能当作缓存推进量比较。</p>
+      <p v-if="cacheDiagnostics.cache_supported === false">适配器未声明咕咕侧主动缓存能力；被动命中由 Provider 决定。</p>
+    </section>
+
     <div class="panel-actions">
       <button v-if="sourceContent" :class="{ active: open.content }" @click="toggle('content')">Content</button>
       <button v-if="assembly" :class="{ active: open.assembly }" @click="toggle('assembly')">Assembly</button>
@@ -221,6 +236,19 @@ const assembly = computed(() => {
   const input = props.span.input as any
   return input && typeof input === 'object' && input.assembly ? input.assembly : null
 })
+const cacheDiagnostics = computed(() => {
+  const value = assembly.value?.cache
+  return value && typeof value === 'object' ? value as Record<string, unknown> : null
+})
+const stablePrefixTokensEstimate = computed(() => {
+  const value = cacheDiagnostics.value?.stable_prefix_tokens_estimate
+    ?? cacheDiagnostics.value?.cache_anchor_tokens_estimate
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+})
+const providerCacheReadLabel = computed(() => {
+  const value = props.span.usage?.cache_read
+  return typeof value === 'number' ? formatCompactNumber(value, '0') : '未返回'
+})
 const diagnostics = computed(() => {
   const value = assembly.value?.canonical_context
   return value && typeof value === 'object' ? value : null
@@ -348,7 +376,7 @@ const tokenChips = computed(() => {
   const chips: string[] = []
   if (u.input) chips.push(`in ${fmtTokens(u.input)}`)
   if (u.output) chips.push(`out ${fmtTokens(u.output)}`)
-  if (u.cache_read) chips.push(`cache ${fmtTokens(u.cache_read)}`)
+  if (u.cache_read) chips.push(`cache hit ${fmtTokens(u.cache_read)}`)
   if (t.prompt_tokens_actual && t.prompt_tokens_source === 'provider') chips.push(`prompt ${fmtTokens(t.prompt_tokens_actual)}`)
   else if (t.estimated_input_tokens) chips.push(`~${fmtTokens(t.estimated_input_tokens)} context`)
   else if (t.prompt_tokens_estimate) chips.push(`~${fmtTokens(t.prompt_tokens_estimate)} prompt`)
@@ -364,6 +392,12 @@ const tokenChips = computed(() => {
 
 <style scoped>
 .span-card { overflow:hidden; border-radius:var(--radius-md); }
+.cache-diagnostic { display:grid; gap:6px; margin:0 12px 10px 15px; padding:9px 11px; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-soft); color:var(--content-secondary); font-size:11px; }
+.cache-diagnostic-metrics { display:flex; flex-wrap:wrap; gap:8px 22px; }
+.cache-diagnostic-metrics div { display:grid; gap:2px; min-width:0; }
+.cache-diagnostic-metrics span { color:var(--content-tertiary); }
+.cache-diagnostic-metrics strong { color:var(--content-primary); font:600 12px var(--font-mono); }
+.cache-diagnostic p { margin:0; color:var(--content-tertiary); line-height:1.45; }
 .span-card.child { margin-left:20px; box-shadow:none; background:color-mix(in srgb,var(--surface-card) 82%,transparent); }
 .span-head { display:grid; grid-template-columns:4px minmax(0,1fr) auto; gap:11px; align-items:stretch; min-height:58px; }
 .kind-rail { background:var(--trace-context); }
