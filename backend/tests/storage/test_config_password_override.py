@@ -158,6 +158,31 @@ async def test_admin_parallel_tool_toggle_persists_in_override(tmp_path, monkeyp
     assert effective.agent.parallel_tool_max_concurrency == 5
 
 
+def test_stale_admin_config_documents_merge_without_losing_other_worker_updates(
+    tmp_path, monkeypatch,
+):
+    """两个 Worker 基于同一旧配置更新不同字段时，后写入者不得覆盖前者。"""
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({
+        "agent": {"max_tool_calls": 10, "parallel_tool_execution_enabled": False},
+    }), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+
+    worker_a = cfg.read_override_document()
+    worker_b = cfg.read_override_document()
+    worker_a["agent"]["max_tool_calls"] = 20
+    worker_b["agent"]["parallel_tool_execution_enabled"] = True
+
+    cfg.write_override_json(worker_a)
+    cfg.write_override_json(worker_b)
+
+    persisted = json.loads(fake.read_text(encoding="utf-8"))
+    assert persisted["agent"] == {
+        "max_tool_calls": 20,
+        "parallel_tool_execution_enabled": True,
+    }
+
+
 def test_apply_override_prefers_new_admin_automatic_mode_over_legacy(tmp_path, monkeypatch):
     fake = tmp_path / "config.override.json"
     fake.write_text(json.dumps({

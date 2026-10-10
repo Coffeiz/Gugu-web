@@ -585,6 +585,12 @@ async def run_loop(
                 yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
+                from app.core.errors import AppError
+                if isinstance(e, AppError):
+                    if reasoning_state is not None:
+                        await reasoning_state.failed(e.code)
+                    yield f"data: {_core.json.dumps({'type': 'error', 'detail': e.public_message}, ensure_ascii=False)}\n\n"
+                    return
                 if reasoning_state is not None:
                     await reasoning_state.failed("provider_rejected")
                 from agent.context.budget import is_context_overflow_error
@@ -656,6 +662,21 @@ async def run_loop(
             _record_provider_round_diagnostic(
                 run_id=run_id, round_id=round_id, ai=ai, driver=driver, ctx=ctx, result=result,
             )
+
+            finish_reason = str(result.finish_reason or "").lower()
+            round_incomplete = bool(result.incomplete_reason) or finish_reason in {
+                "length", "max_tokens", "incomplete",
+            }
+            if round_incomplete:
+                if reasoning_state is not None:
+                    await reasoning_state.failed("provider_incomplete")
+                detail = (
+                    "模型响应不完整，未执行其中的工具调用。请缩短请求或调高输出 Token 预算后重试。"
+                    if result.tool_calls else
+                    "模型输出未完整结束；当前内容可能被截断，请继续追问或调高输出 Token 预算。"
+                )
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                return
 
             _requires_tools = result.requires_tools
             if _requires_tools is None:

@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.core.tz import now_utc
 from app.models import StorageQuotaLedger
-from app.services.storage.quota_ledger import FILE_LIBRARY
+from app.services.storage.quota_ledger import FILE_LIBRARY, StorageScanBusyError
 from app.services.storage.quota_periodic import reconcile_due_storage_users
 
 
@@ -87,3 +87,32 @@ async def test_periodic_quota_reconcile_honors_batch_limit(db, user_a, user_b, m
 
     assert count == 1
     assert len(processed) == 1
+
+
+@pytest.mark.asyncio
+async def test_periodic_quota_scan_busy_defers_remaining_users(db, user_a, user_b, monkeypatch):
+    timestamp = now_utc()
+    user_a.is_active = user_b.is_active = True
+    db.add_all([
+        StorageQuotaLedger(
+            user_id=user_id, category=FILE_LIBRARY, used_bytes=0,
+            limit_bytes=100, status="active",
+            last_reconciled_at=timestamp - timedelta(days=8),
+        )
+        for user_id in (user_a.id, user_b.id)
+    ])
+    await db.flush()
+    attempted = []
+
+    async def busy(_db, user_id, *, preserve_concurrent_updates):
+        attempted.append(user_id)
+        raise StorageScanBusyError()
+
+    monkeypatch.setattr(
+        "app.services.storage.quota_periodic.reconcile_user_storage", busy,
+    )
+
+    count = await reconcile_due_storage_users(db, now=timestamp, batch_size=2)
+
+    assert count == 0
+    assert len(attempted) == 1

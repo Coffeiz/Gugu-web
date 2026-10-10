@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.sandbox.quota import ensure_sandbox_root, measure_directory
 from app.core.config import get_settings
+from app.core.errors import RetryableError
 from app.core.tz import now_utc
 from app.models import File, StorageQuotaEvent, StorageQuotaLedger, User
 from app.services.storage.quota_limits import (
@@ -37,8 +38,28 @@ _STORAGE_SCAN_EXECUTOR = ThreadPoolExecutor(
 _STORAGE_SCAN_ADMISSION = BoundedSemaphore(2)
 
 
-class StorageScanBusyError(RuntimeError):
-    """配额扫描线程均被占用时拒绝排入无界任务队列。"""
+class StorageScanBusyError(RetryableError):
+    """扫描槽位繁忙时返回可识别、可稍后重试的业务状态。"""
+
+    status_hint = 503
+    retry_after_seconds = 5
+
+    def __init__(self):
+        super().__init__(
+            "storage.scan_busy", "存储容量校准繁忙，请稍后重试",
+        )
+
+
+class StorageQuotaNotReadyError(RetryableError):
+    """归档热路径缺少账本时 fail closed，不以目录全扫作为隐式初始化。"""
+
+    status_hint = 503
+    retry_after_seconds = 5
+
+    def __init__(self):
+        super().__init__(
+            "storage.quota_not_ready", "存储配额账本尚未就绪，请稍后重试",
+        )
 
 
 def _finish_storage_scan(future: Future) -> None:
@@ -53,7 +74,7 @@ def _finish_storage_scan(future: Future) -> None:
 async def _run_storage_scan(function, *args):
     """把目录遍历放进有界线程池；取消立即返回，线程在后台协作退出。"""
     if not _STORAGE_SCAN_ADMISSION.acquire(blocking=False):
-        raise StorageScanBusyError("配额扫描资源繁忙，请稍后重试")
+        raise StorageScanBusyError()
     loop = asyncio.get_running_loop()
     stop_event = Event()
     try:

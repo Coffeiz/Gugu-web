@@ -16,6 +16,8 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -27,6 +29,73 @@ OVERRIDE_FILE = Path(
         str(Path(__file__).parent.parent.parent / "config.override.json"),
     )
 )
+
+
+class OverrideDocument(dict):
+    """携带读取基线的运行配置；写回时只合并本次修改过的叶子字段。"""
+
+    def __init__(self, data: dict):
+        super().__init__(data)
+        self.baseline = deepcopy(data)
+
+
+def read_override_document() -> OverrideDocument:
+    """读取并校验运行配置，供需要 read-modify-write 的 Admin 路由使用。"""
+    try:
+        data = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8")) if OVERRIDE_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("用户运行配置文件损坏，已拒绝覆盖写入") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("用户运行配置文件格式无效，已拒绝覆盖写入")
+    return OverrideDocument(data)
+
+
+def _merge_override_document(latest: dict, edited: dict, baseline: dict) -> dict:
+    """将文档相对读取基线的改动合入最新配置，保留其他 Worker 的不相关更新。"""
+    merged = deepcopy(latest)
+
+    def apply(target: dict, current: dict, original: dict) -> None:
+        for key in original.keys() | current.keys():
+            old_exists = key in original
+            new_exists = key in current
+            old_value = original.get(key)
+            new_value = current.get(key)
+            if old_exists == new_exists and old_value == new_value:
+                continue
+            if (
+                old_exists and new_exists
+                and isinstance(old_value, dict)
+                and isinstance(new_value, dict)
+            ):
+                latest_value = target.get(key)
+                if not isinstance(latest_value, dict):
+                    latest_value = {}
+                else:
+                    latest_value = deepcopy(latest_value)
+                apply(latest_value, new_value, old_value)
+                target[key] = latest_value
+            elif new_exists:
+                target[key] = deepcopy(new_value)
+            else:
+                target.pop(key, None)
+
+    apply(merged, edited, baseline)
+    return merged
+
+
+@contextmanager
+def _override_file_lock():
+    """跨进程串行化配置读取/合并/发布；锁文件与配置同目录且不替换 inode。"""
+    OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = OVERRIDE_FILE.with_name(f".{OVERRIDE_FILE.name}.lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 def normalize_dimensions(value: Any) -> int:
@@ -766,6 +835,15 @@ def _deep_merge(base: dict, override: dict) -> None:
 
 
 def write_override_json(data: dict, *, project_inotify_policy: bool = False) -> None:
+    """跨进程锁定后原子发布配置与关联策略投影。"""
+    with _override_file_lock():
+        if isinstance(data, OverrideDocument):
+            latest = read_override_document()
+            data = _merge_override_document(latest, data, data.baseline)
+        _write_override_json_unlocked(data, project_inotify_policy=project_inotify_policy)
+
+
+def _write_override_json_unlocked(data: dict, *, project_inotify_policy: bool = False) -> None:
     """原子写入用户配置；策略投影失败时回滚主配置，避免静默部分成功。"""
     OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
     if project_inotify_policy:
@@ -1102,6 +1180,7 @@ def _migrate_multimodal_override() -> None:
         override = json.loads(original)
         if not isinstance(override, dict):
             raise ValueError("配置文件根节点必须是对象")
+        baseline_override = deepcopy(override)
 
         changed = False
         ai = override.get("ai")
@@ -1140,7 +1219,9 @@ def _migrate_multimodal_override() -> None:
             backup.write(original)
             backup.flush()
             os.fsync(backup.fileno())
-        write_override_json(override)
+        document = OverrideDocument(override)
+        document.baseline = baseline_override
+        write_override_json(document)
         stat = OVERRIDE_FILE.stat()
         _multimodal_override_migration_signature = (
             str(OVERRIDE_FILE.resolve()), stat.st_mtime_ns, stat.st_size
@@ -1172,13 +1253,12 @@ async def save_override(patch: dict) -> AppSettings:
             **get_settings().filesync.model_dump(),
             **raw_filesync,
         })
-    existing = {}
-    if OVERRIDE_FILE.exists():
-        existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
-        if not isinstance(existing, dict):
-            raise ValueError("配置文件根节点必须是对象")
-    _merge_override_patch(existing, patch)
-    write_override_json(existing, project_inotify_policy="filesync" in patch)
+    with _override_file_lock():
+        existing = read_override_document()
+        _merge_override_patch(existing, patch)
+        _write_override_json_unlocked(
+            existing, project_inotify_policy="filesync" in patch,
+        )
     invalidate_settings_cache()
     new_settings = get_settings()
     if "redis" in patch:

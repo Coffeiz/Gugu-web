@@ -1029,6 +1029,41 @@ async def test_responses_failure_falls_back_with_current_tools(monkeypatch):
     assert events == ["chat"]
 
 
+async def test_incomplete_responses_tool_call_is_not_dispatched(monkeypatch, dispatched):
+    """输出截断时即使带有工具调用，也不得产生外部副作用。"""
+    import agent.core as core_module
+
+    class _IncompleteDriver:
+        api_format = "responses"
+        continuation_available = True
+
+        def prepare(self, *_args, **_kwargs):
+            return object(), SimpleNamespace()
+
+        async def run_round(self, *_args, **_kwargs):
+            yield ("done", RoundResult(
+                text="开始处理",
+                tool_calls=[core.loop_drivers.NormalizedToolCall(
+                    "call-incomplete", "create_project", {"name": "合成项目"},
+                )],
+                requires_tools=True,
+                finish_reason="incomplete",
+                incomplete_reason="max_output_tokens",
+            ))
+
+    monkeypatch.setattr(core_module, "OpenAIResponsesDriver", _IncompleteDriver)
+    ai = SimpleNamespace(**{**AI.__dict__, "api_format": "responses", "context_tokens": 1000})
+    runner = make_runner(tool_names=["create_project"], settings=SimpleNamespace(ai=ai))
+
+    events, _text, errors = await drain(runner._run_responses(
+        "u", "sys", [{"role": "user", "content": "建项目"}], ai,
+    ))
+
+    assert dispatched == []
+    assert events["error"] == 1
+    assert "未执行其中的工具调用" in errors[0]
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 新增：原冒烟脚本没覆盖的分支——三条防幻觉守卫 + 空回复兜底
 # ══════════════════════════════════════════════════════════════════════════

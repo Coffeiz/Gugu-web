@@ -21,7 +21,19 @@ from agent.providers.openai_responses import (
     _responses_instructions,
     _responses_prompt_cache_key,
 )
+from agent.providers.base import ResponsesInputCapabilities
 from agent.usage import normalize_responses_usage
+
+_TEST_MEDIA = ResponsesInputCapabilities(
+    image=True,
+    audio_formats=frozenset({"mp3", "wav", "flac", "m4a", "ogg"}),
+    video=True,
+)
+_TEXT_ONLY = ResponsesInputCapabilities()
+
+
+def _project_responses_input(messages, *, media=_TEST_MEDIA):
+    return _responses_input(messages, media=media)
 
 
 def _anthropic_result():
@@ -41,6 +53,7 @@ def _responses_adapter():
     return SimpleNamespace(
         render_history=lambda messages: messages.provider_projection(),
         build_responses_reasoning_params=lambda _ai: {},
+        responses_input_capabilities=lambda _ai: _TEST_MEDIA,
     )
 
 
@@ -61,7 +74,7 @@ def test_responses_reasoning_belongs_to_latest_tool_only_round():
     assert rendered[:3] == items[:3]
     assert rendered[3] == reasoning[0]
     assert rendered[4:] == items[3:]
-    assert _responses_input(rendered) == rendered
+    assert _project_responses_input(rendered) == rendered
 
 
 def test_anthropic_private_state_restores_original_interleaved_order():
@@ -101,7 +114,7 @@ def test_responses_input_converts_chat_text_blocks_without_changing_other_blocks
         },
     ]
 
-    assert _responses_input(messages) == [{
+    assert _project_responses_input(messages) == [{
         "role": "user",
         "content": [
             {"type": "input_text", "text": "第一段", "source": "history"},
@@ -155,7 +168,10 @@ async def test_responses_request_sends_projected_tool_image_as_input_image_not_t
         raise RuntimeError("stop after capturing request")
 
     client = SimpleNamespace(responses=SimpleNamespace(create=create))
-    ai = SimpleNamespace(model="mimo-test", max_tokens=100, reasoning_effort="")
+    ai = SimpleNamespace(
+        model="mimo-test", max_tokens=100, reasoning_effort="",
+        image=True, audio=True, video=True,
+    )
     ctx = _ResponsesCtx([], 100, "mimo-test", "system", _responses_adapter(), ai)
 
     with pytest.raises(RuntimeError, match="stop after capturing request"):
@@ -191,7 +207,7 @@ async def test_responses_request_sends_projected_tool_image_as_input_image_not_t
 
 
 def test_responses_input_omits_empty_messages_but_preserves_nonempty_structured_blocks():
-    assert _responses_input([
+    assert _project_responses_input([
         {"role": "assistant", "content": ""},
         {"role": "assistant", "content": "  \n"},
         {"role": "user", "content": []},
@@ -211,7 +227,7 @@ def test_responses_input_omits_empty_messages_but_preserves_nonempty_structured_
 
 
 def test_responses_input_converts_text_blocks_on_assistant_tool_call_messages():
-    assert _responses_input([{
+    assert _project_responses_input([{
         "role": "assistant",
         "content": [{"type": "text", "text": "准备调用工具"}],
         "tool_calls": [{
@@ -243,7 +259,7 @@ def test_responses_input_replays_output_item_id_separately_from_call_id():
     block = persisted[0]["content"][0]
     projected = _openai_tool_call(block)
 
-    assert _responses_input([{"role": "assistant", "tool_calls": [projected]}]) == [{
+    assert _project_responses_input([{"role": "assistant", "tool_calls": [projected]}]) == [{
         "type": "function_call", "id": "fc_456", "call_id": "call_123",
         "name": "probe", "arguments": "{}",
     }]
@@ -256,13 +272,57 @@ def test_responses_input_assigns_stable_unique_ids_to_legacy_tool_calls():
         {"id": "legacy-call-1", "function": {"name": "probe", "arguments": "{}"}},
     ]}]
 
-    first = _responses_input(messages)
-    second = _responses_input(messages)
+    first = _project_responses_input(messages)
+    second = _project_responses_input(messages)
     item_ids = [item["id"] for item in first]
 
     assert first == second
     assert len(item_ids) == len(set(item_ids)) == 3
     assert all(item_id.startswith("fc_legacy_") for item_id in item_ids)
+
+
+def test_responses_input_rejects_media_not_declared_by_provider():
+    from app.core.errors import Invalid
+
+    with pytest.raises(Invalid, match="不支持该音频格式"):
+        _responses_input([{
+            "role": "user",
+            "content": [{"type": "input_audio", "input_audio": {
+                "data": "data:audio/flac;base64,QUJD",
+            }}],
+        }], media=ResponsesInputCapabilities(audio_formats=frozenset({"mp3", "wav"})))
+
+    with pytest.raises(Invalid, match="不支持视频输入"):
+        _responses_input([{
+            "role": "user",
+            "content": [{"type": "video_url", "video_url": {"url": "https://media.example/video.mp4"}}],
+        }], media=_TEXT_ONLY)
+
+    with pytest.raises(Invalid, match="未启用图片输入"):
+        _responses_input([{
+            "role": "user", "content": [{"type": "input_image", "image_url": "data:image/png;base64,AAAA"}],
+        }], media=_TEXT_ONLY)
+
+    with pytest.raises(Invalid, match="不支持该音频格式"):
+        _responses_input([{
+            "role": "user",
+            "content": [{"type": "input_audio", "input_audio": {
+                "data": "data:audio/mpeg;base64,QUJD", "format": "flac",
+            }}],
+        }], media=ResponsesInputCapabilities(audio_formats=frozenset({"mp3", "wav", "flac"})))
+
+
+def test_official_openai_responses_audio_formats_are_explicitly_bounded():
+    from agent.providers.openai import OpenAIAdapter
+
+    adapter = OpenAIAdapter()
+    capabilities = adapter.responses_input_capabilities(SimpleNamespace(
+        provider="openai", base_url="https://api.openai.com/v1",
+        audio=True, video=True,
+    ))
+
+    assert capabilities.audio_formats == frozenset({"mp3", "wav"})
+    assert capabilities.video is False
 
 
 def test_chat_completions_projection_strips_responses_item_metadata():

@@ -93,6 +93,30 @@ class ProviderCapabilities:
     video: bool = False
 
 
+@dataclass(frozen=True)
+class ResponsesInputCapabilities:
+    """特定 Responses Provider/模型端点已验证的多模态输入格式。"""
+
+    image: bool = False
+    audio_formats: frozenset[str] = frozenset()
+    video: bool = False
+
+
+def configured_responses_input_capabilities(
+    ai, *, audio_formats: frozenset[str] = frozenset(), supports_video: bool = False,
+) -> ResponsesInputCapabilities:
+    """将显式模型开关限制在当前 Provider 声明支持的输入格式内。"""
+    overrides = getattr(ai, "capability_overrides", None) or {}
+    image = overrides.get("image", getattr(ai, "image", False)) is True
+    audio = overrides.get("audio", getattr(ai, "audio", False)) is True
+    video = supports_video and overrides.get("video", getattr(ai, "video", False)) is True
+    return ResponsesInputCapabilities(
+        image=image,
+        audio_formats=audio_formats if audio else frozenset(),
+        video=video,
+    )
+
+
 class ProviderAdapter:
     """单个供应商/模型族的调用差异。
 
@@ -110,6 +134,10 @@ class ProviderAdapter:
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         return ProviderCapabilities(api_format=self.api_format, cache_mode=self.cache_mode,
                                     thinking=self.supports_thinking_toggle)
+
+    def responses_input_capabilities(self, ai) -> ResponsesInputCapabilities:
+        """声明 Responses 输入格式能力；未知 Provider 默认仅支持文本。"""
+        return configured_responses_input_capabilities(ai)
 
     def supports_active_cache(self, model: str = "") -> bool:
         return self.capabilities(model).cache_mode == "active"

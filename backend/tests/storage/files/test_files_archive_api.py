@@ -1,5 +1,6 @@
 """文件库归档 API：薄壳提交与实时事件契约。"""
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from app.api.v1 import files as files_api
@@ -7,6 +8,7 @@ from app.core.errors import Conflict, Invalid, NotFound
 from app.models import File, Folder
 from app.services.files import archive as archive_service
 from app.services.storage import LocalStorageBackend
+from app.services.storage.quota_ledger import StorageQuotaNotReadyError
 
 
 @pytest.fixture
@@ -28,6 +30,64 @@ async def _file(db, storage, user, name, content=b"archive api"):
     db.add(row)
     await db.flush()
     return row
+
+
+@pytest.mark.asyncio
+async def test_unlimited_archive_quota_skips_full_storage_reconciliation(monkeypatch):
+    class _UserLookup:
+        async def get(self, *_args):
+            return SimpleNamespace(storage_limit_bytes=-1)
+
+        async def execute(self, *_args):
+            raise AssertionError("不限额路径不应查询配额账本")
+
+    monkeypatch.setattr(
+        archive_service, "get_settings",
+        lambda: SimpleNamespace(quota=SimpleNamespace(default_storage_limit_bytes=100)),
+    )
+
+    assert await archive_service._quota_remaining(_UserLookup(), "synthetic-user") == archive_service.UNLIMITED_BYTES
+
+
+@pytest.mark.asyncio
+async def test_limited_archive_quota_uses_ledger_without_full_reconciliation(monkeypatch):
+    quota_row = SimpleNamespace(limit_bytes=100, used_bytes=70, reserved_bytes=10)
+
+    class _UserLookup:
+        async def get(self, *_args):
+            return SimpleNamespace(storage_limit_bytes=100)
+
+        async def execute(self, *_args):
+            return SimpleNamespace(scalar_one_or_none=lambda: quota_row)
+
+        async def flush(self):
+            return None
+
+    monkeypatch.setattr(
+        archive_service, "get_settings",
+        lambda: SimpleNamespace(quota=SimpleNamespace(default_storage_limit_bytes=100)),
+    )
+    remaining = await archive_service._quota_remaining(_UserLookup(), "synthetic-user")
+
+    assert remaining == 20
+
+
+@pytest.mark.asyncio
+async def test_limited_archive_does_not_initialize_missing_quota_ledger(monkeypatch):
+    class _UserLookup:
+        async def get(self, *_args):
+            return SimpleNamespace(storage_limit_bytes=100)
+
+        async def execute(self, *_args):
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    monkeypatch.setattr(
+        archive_service, "get_settings",
+        lambda: SimpleNamespace(quota=SimpleNamespace(default_storage_limit_bytes=100)),
+    )
+
+    with pytest.raises(StorageQuotaNotReadyError):
+        await archive_service._quota_remaining(_UserLookup(), "synthetic-user")
 
 
 async def test_archive_api_creates_file_and_publishes_entity(db, user_a, storage, monkeypatch):

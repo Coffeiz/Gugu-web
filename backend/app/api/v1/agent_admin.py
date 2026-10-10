@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import case, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
+from app.core.config import get_settings, read_override_document, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage, User, UserMcpServer
 from app.services import multimodal_probe, provider_reasoning_state
@@ -59,15 +59,7 @@ def _effective_input_tokens(
 # ── 预设辅助函数 ──────────────────────────────────────────────────────────────
 
 def _read_override() -> dict:
-    if not OVERRIDE_FILE.exists():
-        return {}
-    try:
-        data = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError("用户运行配置文件损坏，已拒绝覆盖写入") from exc
-    if not isinstance(data, dict):
-        raise RuntimeError("用户运行配置文件格式无效，已拒绝覆盖写入")
-    return data
+    return read_override_document()
 
 
 def _write_override(data: dict):

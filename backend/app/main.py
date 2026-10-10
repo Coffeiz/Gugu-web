@@ -532,8 +532,10 @@ from app.core.errors import AppError
 async def app_error_handler(request: Request, exc: AppError):
     # 领域异常（FileService/FolderTree 等抛）→ 与 HTTPException 同形状：{"detail": 文案}。
     # public_message 是已知可外发的静态业务文案，直接返回。
+    retry_after = getattr(exc, "retry_after_seconds", None)
+    headers = {"Retry-After": str(int(retry_after))} if retry_after else None
     return JSONResponse(status_code=getattr(exc, "status_hint", 400),
-                        content={"detail": exc.public_message})
+                        content={"detail": exc.public_message}, headers=headers)
 
 
 @app.exception_handler(Exception)

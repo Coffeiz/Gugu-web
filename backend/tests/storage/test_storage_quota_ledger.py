@@ -25,6 +25,22 @@ def test_file_library_limit_uses_none_not_truthiness(user_limit, global_limit, e
 
 
 @pytest.mark.asyncio
+async def test_storage_scan_busy_maps_to_retryable_http_503_with_retry_after():
+    from starlette.requests import Request
+    from app.main import app_error_handler
+
+    request = Request({
+        "type": "http", "method": "POST", "path": "/storage/reconcile",
+        "headers": [], "scheme": "https", "server": ("example.test", 443),
+        "client": ("test", 1),
+    })
+    response = await app_error_handler(request, quota_ledger.StorageScanBusyError())
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "5"
+
+
+@pytest.mark.asyncio
 async def test_local_download_budget_includes_workspace_shell_usage_and_preserves_zero_limit(db, user_a, tmp_path, monkeypatch):
     monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
     db.add_all([

@@ -10,7 +10,9 @@ from app.core import redis as R
 from app.core import scheduler
 from app.core.tz import now_utc
 from app.models import StorageQuotaLedger, User
-from app.services.storage.quota_ledger import FILE_LIBRARY, reconcile_user_storage
+from app.services.storage.quota_ledger import (
+    FILE_LIBRARY, StorageScanBusyError, reconcile_user_storage,
+)
 
 _RECONCILE_INTERVAL = timedelta(days=7)
 _BATCH_SIZE = 4
@@ -45,6 +47,10 @@ async def reconcile_due_storage_users(
             completed += 1
         except Exception as exc:
             await db.rollback()
+            if isinstance(exc, StorageScanBusyError):
+                # 两个物理扫描槽位已满时停止本批，留待下一个调度周期重试，
+                # 避免逐用户重复撞上同一资源拥塞。
+                break
             from app.core.redaction import diag_log
 
             diag_log("storage.quota_periodic_reconcile", exc)
