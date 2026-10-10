@@ -25,7 +25,7 @@ MiMo 文档将 `cached_tokens` 描述为缓存命中的输入 token，但没有�
 
 ## LoopScope 可读性改进
 
-为避免把本地估算误读成 Provider 缓存进度，相关诊断字段已使用 `stable_prefix_tokens_estimate` 命名；详情卡分别展示“稳定前缀估算”和“Provider 实际 Cache read”，并说明两者口径不同。兼容读取旧 trace 字段。定向后端测试、LoopScope 前端类型检查与生产构建均已通过。
+本地估算字段仍保留在内部 Trace 中，用于缓存突降与反思探针的资格诊断；Provider 实际 Cache read 继续通过 usage 展示。详情卡中单独展示估算值的区块已移除，避免把不同口径的估算与实际缓存用量并列比较。生产构建已更新，不再包含旧区块。
 
 ## 后续验证
 
