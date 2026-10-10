@@ -1008,6 +1008,14 @@ async def dispatch_im_message(payload: dict):
     web_stream_failed = False
     if web_stream_started:
         await genstream.begin(web_stream_session_id, owner_run_id=web_stream_owner_id)
+        # 已打开的 Web 会话不会自动轮询 genstream；用 run 状态事件通知前端接上
+        # 下方实时流。消息 append 事件早于 begin，不能承担这个职责。
+        from app.core import events
+        await events.publish_agent_run_changed(
+            user_id,
+            session_id=web_stream_session_id,
+            status="running",
+        )
 
     async def _publish_web_event(event: dict) -> None:
         if not web_stream_started or not isinstance(event, dict):

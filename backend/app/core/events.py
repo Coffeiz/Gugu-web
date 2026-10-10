@@ -71,6 +71,25 @@ def _channel(user_id) -> str:
     return f"events:{user_id}"
 
 
+async def publish_agent_run_changed(user_id, *, session_id: int, status: str) -> bool:
+    """通知用户级 live 流某会话的 Agent run 状态变化，不触发资源失效副作用。"""
+    if status not in {"running", "completed", "failed"}:
+        return False
+    payload = {
+        "protocol_version": "live-event-v1",
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "type": "agent.run.changed",
+        "session_id": int(session_id),
+        "status": status,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        return False
+    return True
+
+
 async def get_context_revision(user_id) -> int:
     """读取用户业务上下文版本；不存在时从 0 开始。"""
     try:

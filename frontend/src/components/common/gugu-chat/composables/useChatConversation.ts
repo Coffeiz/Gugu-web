@@ -459,7 +459,17 @@ export function useChatConversation(options: {
   watch(() => liveStore.connected, (connected) => {
     if (connected) {
       void refreshSessionPendingQueue()
-      if (sessionId.value != null) void refreshSessionMessages(sessionId.value)
+      if (sessionId.value != null) {
+        const activeSessionId = sessionId.value
+        void refreshSessionMessages(activeSessionId).then(async () => {
+          const state = await agentApi.getSessionState(String(activeSessionId))
+          if (
+            state.active
+            && sessionId.value === activeSessionId
+            && !streaming.value
+          ) void resumeStream(activeSessionId)
+        }).catch(() => {})
+      }
     }
   }, { immediate: true })
 
@@ -478,6 +488,12 @@ export function useChatConversation(options: {
   // connected watcher 执行，避免本标签页自己的乐观消息被 rev 触发重复补回。
   watch(() => liveStore.rev.sessions, () => {
     void fetchSessions()
+  })
+
+  watch(() => liveStore.agentRunEvent, (event) => {
+    if (!event || event.status !== 'running' || sessionId.value !== event.session_id || streaming.value) return
+    // IM run 开始时通过用户级 live 事件通知；只续接当前正在看的会话。
+    void resumeStream(event.session_id)
   })
 
   // 跨端事件只作为失效通知；正文从数据库按 after_id 拉取，避免漏回放和重复追加。

@@ -74,6 +74,29 @@ def _is_trash_purge_progress_event(value: Any) -> bool:
     )
 
 
+def _is_agent_run_changed_event(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return (
+        value.get("protocol_version") == "live-event-v1"
+        and isinstance(value.get("event_id"), str)
+        and bool(value["event_id"])
+        and value.get("type") == "agent.run.changed"
+        and isinstance(value.get("session_id"), int)
+        and not isinstance(value.get("session_id"), bool)
+        and value["session_id"] > 0
+        and value.get("status") in {"running", "completed", "failed"}
+        and isinstance(value.get("created_at"), str)
+    )
+
+
+def _sanitize_agent_run_changed_event(value: dict) -> dict:
+    fields = {
+        "protocol_version", "event_id", "type", "session_id", "status", "created_at",
+    }
+    return {key: value[key] for key in fields if key in value}
+
+
 def _is_filesync_event(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
@@ -118,6 +141,8 @@ def _serialize_message(raw: Any) -> str | None:
         return None
     if _is_filesync_event(value):
         value = _sanitize_filesync_event(value)
+    elif _is_agent_run_changed_event(value):
+        value = _sanitize_agent_run_changed_event(value)
     elif not (_is_live_event(value) or _is_trash_purge_progress_event(value) or (
         isinstance(value, dict)
         and isinstance(value.get("notification"), dict)

@@ -12,8 +12,10 @@ import { reactive, ref } from 'vue'
 import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 import {
+  isAgentRunChangedEvent,
   isLiveEventPayload,
   isTrashPurgeProgressEvent,
+  type AgentRunChangedEvent,
   type LiveEventPayload,
   type TrashPurgeProgressEvent,
 } from '@/types/live-events'
@@ -32,6 +34,7 @@ export const useLiveStore = defineStore('live', () => {
   // 所有实时变化统一通过 canonical 事件传递；业务 store 自己决定增量应用或重拉。
   const resourceEvent = ref<(LiveEventPayload & { _t: number }) | null>(null)
   const trashPurgeEvent = ref<(TrashPurgeProgressEvent & { _t: number }) | null>(null)
+  const agentRunEvent = ref<(AgentRunChangedEvent & { _t: number }) | null>(null)
   let _seq = 0
   const seenEventIds = new Set<string>()
   const lastCanonicalRevision = new Map<string, number>()
@@ -137,6 +140,11 @@ export const useLiveStore = defineStore('live', () => {
                 trashPurgeEvent.value = { ...evt, _t: ++_seq }
                 continue
               }
+              if (isAgentRunChangedEvent(evt)) {
+                if (!rememberEvent(evt.event_id)) continue
+                agentRunEvent.value = { ...evt, _t: ++_seq }
+                continue
+              }
               if (isLiveEventPayload(evt)) {
                 const canonical = evt as LiveEventPayload
                 if (!rememberEvent(canonical.event_id)) continue
@@ -188,6 +196,7 @@ export const useLiveStore = defineStore('live', () => {
     Object.keys(rev).forEach(resource => { rev[resource] = 0 })
     resourceEvent.value = null
     trashPurgeEvent.value = null
+    agentRunEvent.value = null
     seenEventIds.clear()
     lastCanonicalRevision.clear()
     _catchUpTimers.forEach(clearTimeout)
@@ -196,7 +205,7 @@ export const useLiveStore = defineStore('live', () => {
     everConnected = false
   }
 
-  return { rev, connected, resourceEvent, trashPurgeEvent, bump, connect, disconnect, resetAccountState }
+  return { rev, connected, resourceEvent, trashPurgeEvent, agentRunEvent, bump, connect, disconnect, resetAccountState }
 })
 
 function _sleep(ms: number) {
