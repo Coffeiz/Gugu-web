@@ -65,7 +65,9 @@ router = APIRouter(prefix="/files", tags=["files"])
 
 
 def _storage_limit(user: User) -> int | None:
-    """优先使用明确的用户空间额度；0 是有效的零额度。"""
+    """优先使用用户覆盖；-1 明确不限额，0 是有效的零额度。"""
+    if user.storage_limit_bytes == -1:
+        return None
     if user.storage_limit_bytes is not None:
         return int(user.storage_limit_bytes)
     return get_settings().quota.default_storage_limit_bytes

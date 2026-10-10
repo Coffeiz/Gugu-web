@@ -224,6 +224,40 @@ async def test_cancelled_quota_measurement_stops_its_worker_scan(db, user_a, tmp
 
 
 @pytest.mark.asyncio
+async def test_cancelled_uninterruptible_scan_returns_and_admission_stays_bounded():
+    started = [Event(), Event()]
+    finished = [Event(), Event()]
+    release = Event()
+    call_count = 0
+
+    def blocked_scan(*, stop_event):
+        nonlocal call_count
+        index = call_count
+        call_count += 1
+        started[index].set()
+        release.wait(2)
+        finished[index].set()
+        return 1
+
+    first = asyncio.create_task(quota_ledger._run_storage_scan(blocked_scan))
+    assert await asyncio.to_thread(started[0].wait, 1)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(first, timeout=0.1)
+    assert not finished[0].is_set()
+
+    second = asyncio.create_task(quota_ledger._run_storage_scan(blocked_scan))
+    assert await asyncio.to_thread(started[1].wait, 1)
+    with pytest.raises(quota_ledger.StorageScanBusyError):
+        await quota_ledger._run_storage_scan(blocked_scan)
+
+    release.set()
+    assert await second == 1
+    assert await asyncio.to_thread(finished[0].wait, 1)
+    assert await quota_ledger._run_storage_scan(lambda *, stop_event: 2) == 2
+
+
+@pytest.mark.asyncio
 async def test_file_library_display_uses_ledger_without_scanning_directories(
     db, user_a, tmp_path, monkeypatch,
 ):

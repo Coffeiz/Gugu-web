@@ -294,7 +294,19 @@ async def update_quota(
     for field in ("token_limit_6h", "token_limit_weekly", "storage_limit_bytes", "search_limit_daily"):
         if field in body:
             v = body[field]
-            setattr(user, field, int(v) if v is not None else None)
+            if v is None:
+                setattr(user, field, None)
+                continue
+            try:
+                value = int(v)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="配额必须是整数或 null") from None
+            minimum = -1 if field in {
+                "token_limit_6h", "token_limit_weekly", "storage_limit_bytes",
+            } else 0
+            if value < minimum:
+                raise HTTPException(status_code=422, detail="配额值无效")
+            setattr(user, field, value)
 
     await db.commit()
     username = getattr(request.state, "admin_username", "admin")

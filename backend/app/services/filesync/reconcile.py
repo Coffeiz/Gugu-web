@@ -36,7 +36,10 @@ from app.services.filesync.snapshots import save_snapshot
 from app.services.filesync.statcache import StatCache
 from app.services.storage.folders import folder_dir_key
 from app.services.files.previews import delete_thumb_cache
-from app.services.storage.quota_limits import resolve_file_library_limit
+from app.services.storage.quota_limits import (
+    is_unlimited_limit,
+    resolve_file_library_limit,
+)
 
 
 @dataclass(frozen=True)
@@ -387,6 +390,7 @@ async def reconcile_local_directory(
         user.storage_limit_bytes if user else None,
         getattr(quota_settings, "default_storage_limit_bytes", None),
     )
+    enforce_quota = not is_unlimited_limit(quota_limit)
 
     if binding is None:
         binding = await _binding_for(
@@ -628,7 +632,7 @@ async def reconcile_local_directory(
             consumed.add(candidate.id)
         if candidate is not None:
             size_delta = path.stat().st_size - int(candidate.size_bytes or 0)
-            if size_delta > quota_headroom:
+            if enforce_quota and size_delta > quota_headroom:
                 rejected += 1
                 continue
             old_key = candidate.storage_key
@@ -651,7 +655,7 @@ async def reconcile_local_directory(
             baseline = old_journal.observed_fingerprint if old_journal else None
         else:
             stat = path.stat()
-            if stat.st_size > quota_headroom:
+            if enforce_quota and stat.st_size > quota_headroom:
                 rejected += 1
                 continue
             candidate = File(
@@ -755,7 +759,7 @@ async def reconcile_local_directory(
         )
         if content_changed or location_changed:
             size_delta = path.stat().st_size - int(row.size_bytes or 0)
-            if content_changed and size_delta > quota_headroom:
+            if enforce_quota and content_changed and size_delta > quota_headroom:
                 rejected += 1
                 continue
             if content_changed:

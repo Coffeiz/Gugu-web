@@ -8,10 +8,10 @@ Shell 持久空间仍分别限额。下载、构建和 Shell 是 operation，不
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from threading import Event
+from threading import BoundedSemaphore, Event
 from typing import Any
 
 from sqlalchemy import func, select
@@ -21,7 +21,10 @@ from agent.sandbox.quota import ensure_sandbox_root, measure_directory
 from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import File, StorageQuotaEvent, StorageQuotaLedger, User
-from app.services.storage.quota_limits import resolve_file_library_limit
+from app.services.storage.quota_limits import (
+    is_unlimited_limit,
+    resolve_file_library_limit,
+)
 
 FILE_LIBRARY = "file_library"
 SHELL_PERSISTENT = "shell_persistent"
@@ -31,24 +34,43 @@ _CATEGORIES = (FILE_LIBRARY, SHELL_PERSISTENT, SHELL_EPHEMERAL)
 _STORAGE_SCAN_EXECUTOR = ThreadPoolExecutor(
     max_workers=2, thread_name_prefix="storage-quota-scan",
 )
+_STORAGE_SCAN_ADMISSION = BoundedSemaphore(2)
+
+
+class StorageScanBusyError(RuntimeError):
+    """配额扫描线程均被占用时拒绝排入无界任务队列。"""
+
+
+def _finish_storage_scan(future: Future) -> None:
+    """在线程结束时回收准入名额，并消费后台异常。"""
+    try:
+        future.exception()
+    except BaseException:
+        pass
+    _STORAGE_SCAN_ADMISSION.release()
 
 
 async def _run_storage_scan(function, *args):
-    """把目录遍历放进固定大小的线程池；取消时通知扫描尽快退出并等待回收。"""
+    """把目录遍历放进有界线程池；取消立即返回，线程在后台协作退出。"""
+    if not _STORAGE_SCAN_ADMISSION.acquire(blocking=False):
+        raise StorageScanBusyError("配额扫描资源繁忙，请稍后重试")
     loop = asyncio.get_running_loop()
     stop_event = Event()
-    scan = loop.run_in_executor(
-        _STORAGE_SCAN_EXECUTOR,
-        partial(function, *args, stop_event=stop_event),
-    )
     try:
-        return await asyncio.shield(scan)
+        scan = _STORAGE_SCAN_EXECUTOR.submit(
+            partial(function, *args, stop_event=stop_event),
+        )
+    except BaseException:
+        _STORAGE_SCAN_ADMISSION.release()
+        raise
+    scan.add_done_callback(_finish_storage_scan)
+    wrapped_scan = asyncio.wrap_future(scan, loop=loop)
+    try:
+        return await asyncio.shield(wrapped_scan)
     except asyncio.CancelledError:
         stop_event.set()
-        try:
-            await asyncio.shield(scan)
-        except BaseException:
-            pass
+        # 线程可能正卡在不可中断的文件系统调用。不要让 wait_for 的取消清理
+        # 等它返回；done callback 会在真正结束后回收准入名额。
         raise
 
 
@@ -216,11 +238,15 @@ async def get_local_storage_quota_watch(
     all_roots = _local_quota_roots(user_id)
     watched_names = ("workspace", "personal", "project") if include_library else ("workspace",)
     watched = set(watched_names)
-    unregistered, registered = await _measure_local_unregistered_bytes(db, user_id)
     user = await db.get(User, user_id)
     if user is None:
         raise ValueError("用户不存在")
     limit = _limits(user)[FILE_LIBRARY]
+    watched_roots = tuple(all_roots[name] for name in watched_names)
+    if is_unlimited_limit(limit):
+        return watched_roots, limit
+
+    unregistered, registered = await _measure_local_unregistered_bytes(db, user_id)
     file_bytes = int((await db.execute(select(func.coalesce(func.sum(File.size_bytes), 0)).where(
         File.user_id == user_id, File.deleted_at.is_(None),
     ))).scalar_one() or 0)
@@ -229,7 +255,7 @@ async def get_local_storage_quota_watch(
     )
     watched_registered = sum(registered[name] for name in watched)
     watched_limit = max(0, limit - file_bytes - unmonitored_unregistered + watched_registered)
-    return tuple(all_roots[name] for name in watched_names), watched_limit
+    return watched_roots, watched_limit
 
 
 async def ensure_user_storage_space(db: AsyncSession, user: User | Any) -> list[StorageQuotaLedger]:
@@ -321,6 +347,16 @@ async def get_quota(db: AsyncSession, user_id: Any, category: str) -> StorageQuo
         row = (await db.execute(select(StorageQuotaLedger).where(
             StorageQuotaLedger.user_id == user_id, StorageQuotaLedger.category == category,
         ))).scalar_one()
+    else:
+        # 配额配置可热更新。不要让账本沿用上次启动时的限额，否则刚切为无限制时，
+        # 旧账本行仍会拒绝文件写入；这里只刷新上限，不扫描或重算实际用量。
+        user = await db.get(User, user_id)
+        if user is None:
+            raise ValueError("用户不存在")
+        current_limit = _limits(user)[category]
+        if row.limit_bytes != current_limit:
+            row.limit_bytes = current_limit
+            await db.flush()
     return row
 
 
@@ -329,12 +365,11 @@ async def get_file_library_download_budget(
 ) -> tuple[int | None, int | None]:
     """返回文件库/Local 用户空间容量与可用字节数，供下载前限流。"""
     user = await db.get(User, user_id)
-    limit_bytes = (
-        user.storage_limit_bytes
-        if user and user.storage_limit_bytes is not None
-        else default_limit_bytes
+    limit_bytes = resolve_file_library_limit(
+        user.storage_limit_bytes if user else None,
+        default_limit_bytes,
     )
-    if limit_bytes is None:
+    if is_unlimited_limit(limit_bytes):
         return None, None
     used_bytes = await measure_user_storage_usage(db, user_id)
     return int(limit_bytes), max(int(limit_bytes) - used_bytes, 0)
@@ -366,7 +401,11 @@ async def record_usage(
     next_used = row.used_bytes + int(delta_bytes)
     if next_used < 0:
         raise ValueError("配额用量不能为负数")
-    if next_used + row.reserved_bytes > row.limit_bytes and not allow_over_limit:
+    if (
+        not allow_over_limit
+        and not is_unlimited_limit(row.limit_bytes)
+        and next_used + row.reserved_bytes > row.limit_bytes
+    ):
         raise ValueError("存储空间已满")
     row.used_bytes = next_used
     row.updated_at = now_utc()
@@ -382,7 +421,11 @@ async def record_usage(
         shared_used = shared_row.used_bytes + int(delta_bytes)
         if shared_used < 0:
             raise ValueError("配额用量不能为负数")
-        if shared_used + shared_row.reserved_bytes > shared_row.limit_bytes and not allow_over_limit:
+        if (
+            not allow_over_limit
+            and not is_unlimited_limit(shared_row.limit_bytes)
+            and shared_used + shared_row.reserved_bytes > shared_row.limit_bytes
+        ):
             raise ValueError("存储空间已满")
         shared_row.used_bytes = shared_used
         shared_row.updated_at = now_utc()

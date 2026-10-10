@@ -39,6 +39,7 @@ from app.services.storage.quota_ledger import (
     record_usage,
     reconcile_user_storage,
 )
+from app.services.storage.quota_limits import is_unlimited_limit
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,10 @@ async def _run_shell(db, user_id, args: dict):
             return {"error": reason, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
         if _storage_backend() == "local":
             shared_quota = await get_quota(db, user_id, FILE_LIBRARY)
-            if shared_quota.used_bytes > shared_quota.limit_bytes:
+            if (
+                not is_unlimited_limit(shared_quota.limit_bytes)
+                and shared_quota.used_bytes > shared_quota.limit_bytes
+            ):
                 return {
                     "error": "用户存储空间已超过配额，请先清理文件或工作区后再执行命令",
                     "_risk": decision.risk.value,

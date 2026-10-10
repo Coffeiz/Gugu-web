@@ -12,7 +12,7 @@ import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,10 @@ from app.services.filesync.reconcile import (
 )
 from app.services.filesync.snapshots import save_snapshot
 from app.services.workspaces import workspace_shell_supported
-from app.services.storage.quota_limits import resolve_file_library_limit
+from app.services.storage.quota_limits import (
+    is_unlimited_limit,
+    resolve_file_library_limit,
+)
 
 
 @dataclass
@@ -138,7 +141,9 @@ async def _find_move_source(
         FileSyncJournal.binding_id == binding.id,
         FileSyncJournal.status == FileSyncStatus.SYNCED,
         FileSyncJournal.object_type == "file",
-        literal(scope_prefix) + FileSyncJournal.relative_path == File.storage_key,
+        FileSyncJournal.relative_path == func.substr(
+            File.storage_key, len(scope_prefix) + 1,
+        ),
     ).order_by(FileSyncJournal.id.desc()).limit(1).correlate(File).scalar_subquery()
     candidates = (await db.execute(
         select(File.id, File.storage_key)
@@ -589,19 +594,28 @@ async def project_path_events(
         )
     record_changed_deltas = options.record_quota_deltas
     if options.record_quota_deltas:
-        from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota
+        from app.services.storage.quota_ledger import FILE_LIBRARY
 
         ledger_existed = await db.scalar(select(StorageQuotaLedger.id).where(
             StorageQuotaLedger.user_id == user_id,
             StorageQuotaLedger.category == FILE_LIBRARY,
         )) is not None
-        quota = await get_quota(db, user_id, FILE_LIBRARY)
-        quota_headroom = quota_limit - int(quota.used_bytes) - int(quota.reserved_bytes)
+        if is_unlimited_limit(quota_limit):
+            quota_headroom = quota_limit
+        else:
+            from app.services.storage.quota_ledger import get_quota
+
+            quota = await get_quota(db, user_id, FILE_LIBRARY)
+            quota_headroom = quota_limit - int(quota.used_bytes) - int(quota.reserved_bytes)
         # 首次建账会先测量当前磁盘事实：新建/修改文件已包含在该快照中，不能再加一次；
         # 删除仍需扣掉数据库里此前登记的大小。
         record_changed_deltas = ledger_existed
     else:
-        quota_headroom = quota_limit - await _live_storage_bytes(db, user_id)
+        quota_headroom = (
+            quota_limit - await _live_storage_bytes(db, user_id)
+            if not is_unlimited_limit(quota_limit)
+            else quota_limit
+        )
     for relative in sorted(batch.changed):
         # 按净字节增量逐项更新余量：新增/扩容扣减，缩小文件释放余量。
         quota_headroom -= await _project_changed_file(
@@ -611,7 +625,9 @@ async def project_path_events(
             record_quota_delta=record_changed_deltas,
             created_event=relative in batch.created_files,
             observed_external_change=options.record_quota_deltas,
-            enforce_quota=options.enforce_quota,
+            enforce_quota=(
+                options.enforce_quota and not is_unlimited_limit(quota_limit)
+            ),
         )
     if options.allow_delete:
         for relative in sorted(batch.deleted):

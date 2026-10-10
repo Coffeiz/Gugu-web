@@ -69,29 +69,32 @@ async def _usage_since(db, user_id, since: datetime) -> int:
     return result.scalar() or 0
 
 
+def resolve_token_limit(user_limit: int | None, global_limit: int | None) -> int | None:
+    """用户未单独设置时继承全局值；-1 明确不限额，0 是有效额度。"""
+    if user_limit == -1:
+        return None
+    return global_limit if user_limit is None else user_limit
+
+
 async def is_exhausted(db, user_id, settings) -> bool:
     """6h 或周配额是否已耗尽；6h 窗口按用户对话懒启动。"""
-    if await has_active_byok_llm(db, user_id, settings):
-        return False
-    from app.models import User, AgentUsage
+    from app.models import User
     u = await db.get(User, user_id)
     if u is None:
         return False
+    limit_6h = resolve_token_limit(u.token_limit_6h, settings.quota.default_token_limit_6h)
+    limit_w = resolve_token_limit(u.token_limit_weekly, settings.quota.default_token_limit_weekly)
+    if limit_6h is None and limit_w is None:
+        return False
+    if await has_active_byok_llm(db, user_id, settings):
+        return False
+
     now = now_utc()
-    window_start = await ensure_six_h_window(db, user_id, now)
-
-    async def _used(since: datetime) -> int:
-        r = await db.execute(
-            select(func.sum(AgentUsage.tokens_in + AgentUsage.tokens_out))
-            .where(and_(AgentUsage.user_id == user_id, AgentUsage.created_at >= since, AgentUsage.is_byok.is_(False)))
-        )
-        return r.scalar() or 0
-
-    limit_6h = u.token_limit_6h or settings.quota.default_token_limit_6h
-    if limit_6h is not None and await _used(window_start) >= limit_6h:
-        return True
-    limit_w = u.token_limit_weekly or settings.quota.default_token_limit_weekly
-    if limit_w is not None and await _used(_week_start(now)) >= limit_w:
+    if limit_6h is not None:
+        window_start = await ensure_six_h_window(db, user_id, now)
+        if await _usage_since(db, user_id, window_start) >= limit_6h:
+            return True
+    if limit_w is not None and await _usage_since(db, user_id, _week_start(now)) >= limit_w:
         return True
     return False
 
@@ -104,15 +107,15 @@ async def cap_usage(db, user_id, settings, tin: int, tout: int) -> tuple[int, in
     - 6h 已满 → 返回 `(0, 0)`，记账侧据此不写 `AgentUsage`（=冻结）；
     - 无上限（未设且全局默认 None）→ 原样返回。
     """
-    if await has_active_byok_llm(db, user_id, settings):
-        return tin, tout
-    from app.models import User, AgentUsage
+    from app.models import User
 
     u = await db.get(User, user_id)
     if u is None:
         return tin, tout
-    limit_6h = u.token_limit_6h or settings.quota.default_token_limit_6h
+    limit_6h = resolve_token_limit(u.token_limit_6h, settings.quota.default_token_limit_6h)
     if limit_6h is None:
+        return tin, tout
+    if await has_active_byok_llm(db, user_id, settings):
         return tin, tout
     window_start = await ensure_six_h_window(db, user_id)
     remaining = limit_6h - (await _usage_since(db, user_id, window_start))

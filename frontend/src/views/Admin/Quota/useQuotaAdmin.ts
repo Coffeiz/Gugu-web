@@ -33,13 +33,11 @@ export function useQuotaAdmin(adminStore: AdminStore, configStore: ConfigStore) 
     finally { loading.value = false }
   }
   function onSearch() { /* 过滤由 allUsers computed 同步完成 */ }
-  const editTarget = ref<any | null>(null); const editSaving = ref(false); const maskMousedownSelf = ref(false)
-  const editForm = reactive<{ token6h: number | null; tokenWeek: number | null; storageGB: number | null; searchDaily: number | null }>({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
-  function openEdit(user: any) { editTarget.value = user; editForm.token6h = user.token_limit_6h ?? null; editForm.tokenWeek = user.token_limit_weekly ?? null; editForm.storageGB = user.storage_limit_bytes != null ? +(user.storage_limit_bytes / 1073741824).toFixed(2) : null; editForm.searchDaily = user.search_limit_daily ?? null }
-  async function saveEdit() {
+  const editTarget = ref<any | null>(null); const editSaving = ref(false)
+  function openEdit(user: any) { editTarget.value = user }
+  async function saveEdit(body: Record<string, number | null>) {
     if (!editTarget.value) return; editSaving.value = true
     try {
-      const body = { token_limit_6h: editForm.token6h != null ? Number(editForm.token6h) : null, token_limit_weekly: editForm.tokenWeek != null ? Number(editForm.tokenWeek) : null, storage_limit_bytes: editForm.storageGB != null ? Math.round(Number(editForm.storageGB) * 1073741824) : null, search_limit_daily: editForm.searchDaily != null ? Number(editForm.searchDaily) : null }
       const res = await adminStore.authFetch(`/api/v1/admin/users/${editTarget.value.id}/quota`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const data = await res.json()
       editTarget.value.token_limit_6h = data.token_limit_6h; editTarget.value.token_limit_weekly = data.token_limit_weekly; editTarget.value.storage_limit_bytes = data.storage_limit_bytes; editTarget.value.search_limit_daily = data.search_limit_daily; editTarget.value = null
     } finally { editSaving.value = false }
@@ -56,5 +54,5 @@ export function useQuotaAdmin(adminStore: AdminStore, configStore: ConfigStore) 
   const tokenBarStyle = (u: any) => { const pct = u.token_limit_weekly ? Math.min(100, (u.tokens_week / u.token_limit_weekly) * 100) : 0; return { width: pct + '%', background: pct >= 90 ? 'rgba(220,80,80,0.85)' : pct >= 70 ? 'rgba(220,160,60,0.85)' : 'rgba(80,160,200,0.75)' } }
   const storageBarStyle = (u: any) => { const pct = u.storage_limit_bytes ? Math.min(100, (u.storage_used / u.storage_limit_bytes) * 100) : 0; return { width: pct + '%', background: pct >= 90 ? 'rgba(220,80,80,0.85)' : pct >= 70 ? 'rgba(220,160,60,0.85)' : 'rgba(80,200,140,0.75)' } }
   onMounted(async () => { await configStore.fetchConfig(); loadGlobalDraft(); void loadUsers() })
-  return { globalDraft, globalSaving, globalSaved, saveGlobal, allItems, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, maskMousedownSelf, editForm, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, fmtBytes, tokenBarStyle, storageBarStyle }
+  return { globalDraft, globalSaving, globalSaved, saveGlobal, allItems, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, fmtBytes, tokenBarStyle, storageBarStyle }
 }

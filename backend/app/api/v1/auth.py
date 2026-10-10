@@ -600,8 +600,12 @@ async def get_quota(
     effective_in = byok_month["tokens_in"] + byok_month["cache_read"] + byok_month["cache_write"]
     cache_rate = byok_month["cache_read"] / effective_in if effective_in else 0
 
-    limit_6h = None if has_byok else (current_user.token_limit_6h or settings.quota.default_token_limit_6h)
-    limit_weekly = None if has_byok else (current_user.token_limit_weekly or settings.quota.default_token_limit_weekly)
+    limit_6h = None if has_byok else _quota.resolve_token_limit(
+        current_user.token_limit_6h, settings.quota.default_token_limit_6h,
+    )
+    limit_weekly = None if has_byok else _quota.resolve_token_limit(
+        current_user.token_limit_weekly, settings.quota.default_token_limit_weekly,
+    )
 
     return {
         "used_6h":      used_6h,
