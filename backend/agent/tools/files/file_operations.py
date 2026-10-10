@@ -403,22 +403,27 @@ async def _edit_one(db, user_id, f, spec: dict) -> dict:
 
 async def _edit_file(db, user_id, args: dict):
     """改文本文件。单个：file + mode + content/find/replace。
-    批量：edits=[{file 或 file_id, mode, content/find/replace}, ...]——一次改多个（多文件统一查找替换、
-    或各文件不同编辑都行），省去 N 次调用。逐项回报成功/失败。"""
+    批量：可在顶层指定 file/file_id 和 mode 作为条目默认值，也可逐项指定；
+    每项仍独立执行并回报成功/失败。"""
     items = args.get("edits")
     if items:
         edited, failed = [], []
+        defaults = {"mode": args["mode"]} if "mode" in args else {}
+        target_defaults = {key: args[key] for key in ("file", "file_id") if key in args}
         for it in items:
             if not isinstance(it, dict):
                 failed.append({"item": it, "error": "每项需是 {file, mode, ...}"})
                 continue
-            f, _err = await _resolve_file(db, user_id, it)
+            edit = {**defaults, **it}
+            if not any(key in edit for key in ("file", "file_id")):
+                edit.update(target_defaults)
+            f, _err = await _resolve_file(db, user_id, edit)
             if _err:
-                failed.append({"item": it.get("file") or it.get("file_id"), "error": "没找到这个文件"})
+                failed.append({"item": edit.get("file") or edit.get("file_id"), "error": "没找到这个文件"})
                 continue
-            r = await _edit_one(db, user_id, f, it)
+            r = await _edit_one(db, user_id, f, edit)
             (edited if r.get("success") else failed).append(
-                r if r.get("success") else {"item": it.get("file") or it.get("file_id"), **r})
+                r if r.get("success") else {"item": edit.get("file") or edit.get("file_id"), **r})
         return {"success": True, "edited_count": len(edited), "failed_count": len(failed),
                 "edited": edited, "failed": failed}
     # 单个

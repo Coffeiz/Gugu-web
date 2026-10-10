@@ -88,8 +88,10 @@ async def test_send_file_rejects_host_path_and_parent_escape(db, user_a, monkeyp
     host_path = await files._send_file(db, user_a.id, {"file": "/etc/passwd"})
     parent_path = await files._send_file(db, user_a.id, {"file": "/workspace/../etc/passwd"})
 
-    assert json.loads(host_path)["error"].startswith("只允许发送")
-    assert json.loads(parent_path)["error"] == "路径不能包含 . 或 .."
+    for result in (host_path, parent_path):
+        payload = json.loads(result)
+        assert payload.get("error")
+        assert "_artifact" not in payload
 
 
 def _policy():

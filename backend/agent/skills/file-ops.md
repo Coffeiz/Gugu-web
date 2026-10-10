@@ -3,7 +3,7 @@ name: 文件操作
 description_long: 移动/改名/编辑/创建/保存文件、列文件或核对文件存在性、引用文件给跳转链接时——拿批量入口用法、核对与防覆盖做法
 description_short: 用户要查找、创建、编辑、移动或引用文件时使用。
 category: files
-related_tools: list_dir, read_file, grep, edit_file, create_file, rename_file, move_items, copy_file, create_folder, delete_file, rename_folder, delete_folder, send_file, list_recent_attachments, save_uploaded_file, web_download
+related_tools: list_dir, read_file, grep, edit_file, create_file, rename_file, move_items, copy_file, create_folder, delete_file, rename_folder, delete_folder, send_file, present_file, list_recent_attachments, save_uploaded_file, web_download
 emoji: 📂
 ---
 
@@ -23,6 +23,8 @@ emoji: 📂
 
 ## 查询与批量入口
 - 文件库不参与自动 RAG。查文件名/目录用 `list_dir`，按正文关键词定位用 `grep`，再用 `read_file` 精读；创建或修改必须走相应 CRUD 工具，并遵循本技能后续的权限、覆盖与确认规则。
+- 用户要求打开/展示文件，或播放文件库中的音乐时，先用 `list_dir`/`grep` 定位目标，再用 `present_file`；音频会交给网页播放器播放。用户要识别、转录或分析音频内容时用 `read_file`；只有明确要求发送/分享附件时才用 `send_file`。
+- 文件引用统一使用 `file_id` 或 `list_dir`/`grep` 返回的 `/personal/...`、`/project/...`、`/workspace/...` 逻辑路径；读取、编辑、重命名、删除、复制和展示等引用文件记录的工具共用路径映射。逻辑路径只定位已登记文件，不是宿主机路径；文件尚未出现在列表时，先确认是否已登记/同步，不要重复尝试同一路径。`send_file` 还支持受控的沙盒路径发送未登记产物，这是发送附件的专用能力，不代表其他工具可直接读写磁盘路径。
 - 文件库位图可用 `read_file(file_id=...)` 查看；聊天历史附件可用 `read_file(attach_id=...)` 回读。图片、音频、视频和文本/文档可在同一次 `read_file(items=[...])` 中混合批量读取，最多 20 项、源文件总量最多 64 MiB；每项失败会单独报告，不影响其它项。网络 URL 只支持图片，图片搜索候选使用 `read_file(items=[{url: img_src, title: ..., result_id: ...}, ...])`；不接受网页 URL、本地路径或 `file:///`。所有图片来源共用同一格式白名单、视觉能力、大小限制和图像处理策略。SVG 按源码文本读取，不伪装成视觉图片。
 - 需要在个人、项目或当前授权 Workspace 文件正文中定位关键词时使用 `grep`；它返回 `file_id`、逻辑路径、原始物理行号、命中行和可选上下文，不执行 Shell。`context_lines` 控制命中行前后各显示多少行，`limit` 控制总命中数。定位后用 `read_file(target_lines=...)` 精读，不能把 `global_search` 当正文检索。
 - **查询多个候选文件名时优先一次传 `list_dir.queries`**：默认 OR，避免为了不同关键词重复查询；只有用户明确要求同时满足多个词时才使用 `mode: "AND"`。
@@ -43,7 +45,9 @@ emoji: 📂
 - `append`：末尾追加，只传 `content`。
 - `find_replace`：局部替换，只传 `find` 和 `replace`，不要传整篇 `content`。
 - `line_edit`：按行更新或删除，只传 `line_edits`。
-- 批量编辑时，每个 `edits` 项都遵循同一模式规则。调用失败若提示 `rule: not`，先按当前 `mode` 删除不兼容字段，不要原样重试。
+- 同一文件批量编辑时，可在顶层提供 `file`/`file_id` 和默认 `mode`，每个 `edits` 项填写自己的操作字段；未在条目中提供的顶层默认值会继承，条目显式值优先。多文件批量编辑时，每个 `edits` 项填写自己的文件标识和 `mode`。
+- 批量 `find_replace` 示例：`{"file_id":1,"mode":"find_replace","edits":[{"find":"旧一","replace":"新一"},{"find":"旧二","replace":"新二"}]}`。
+- 调用失败若提示 `rule: not`，先按当前 `mode` 删除不兼容字段，不要原样重试。
 
 ### 编辑后反馈「改了啥」
 - 改完文件**一定要告诉用户这次具体改了什么**，别只说"改好了"。**不用详细**，一句话即可——照 `edit_file` 回执里的 `change` 字段说（如"把『喝水』换成『收集科技新闻』了"、"末尾追加了一段"、"按第 8～11 行更新了内容"），让用户知道动了哪儿。

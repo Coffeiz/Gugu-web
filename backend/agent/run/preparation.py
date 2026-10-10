@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 
+from app.core.chat_attach import image_ready
 from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
 
@@ -199,7 +200,7 @@ def _apply_capability_context(system_prompt: str, snapshot_context: str, context
 async def prepare_run_capabilities(
     db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
     *, session=None, query="", user_skill_metadata=None, dynamic_tools=(),
-    subject_type="session", subject_id=None, workspace_id=None,
+    subject_type="session", subject_id=None, workspace_id=None, source="web",
 ):
     """统一组装本轮工具与提示词；入口只提供会话或任务授权主体。
 
@@ -207,6 +208,11 @@ async def prepare_run_capabilities(
     调用方负责短事务、执行器与传输生命周期，不重复实现权限组装。
     """
     from agent.security.shell_policy import build_dynamic_prompt
+
+    # present_file 的副作用是把文件推送到当前网页；实际 IM 请求不应把它交给模型。
+    # 按本轮入口 source 判断，而不是 session.source：用户可从网页继续 IM 来源的历史会话。
+    if source in IM_SOURCES:
+        tool_names = [name for name in tool_names if name != "present_file"]
 
     subject = dict(session=session, subject_type=subject_type,
                    subject_id=subject_id, workspace_id=workspace_id)
@@ -236,7 +242,10 @@ def prepare_scheduled_context(system_prompt, snapshot_context, user_tz, prompt, 
     fixed_parts = [session_snapshot.snapshot_message(snapshot_context)] if snapshot_context else []
     area, batch = run_context.assemble_run_area(
         system_prompt=system_prompt, fixed_parts=fixed_parts, history=[],
-        render_options={"api_format": "anthropic" if use_anthropic else "openai"},
+        render_options={
+            "api_format": "anthropic" if use_anthropic else "openai",
+            "allow_tool_images": image_ready(),
+        },
         use_anthropic=use_anthropic, stance=builder.stance_block(memory),
         current_user={"role": "user", "content": build_user_content(prompt, [], use_anthropic)},
     )
@@ -529,7 +538,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         tool_names, system_prompt, snapshot_context, capability_context = await prepare_run_capabilities(
             tool_db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
             session=session, query=aug_text,
-            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
+            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
         )
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)

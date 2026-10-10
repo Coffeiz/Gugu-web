@@ -158,6 +158,8 @@ def test_tool_permission_filter_and_dispatch_gate_share_the_same_rule():
     assert can_use_tool("web_search", ["web_search"]) is True
     assert can_use_tool("files", ["web_search"]) is False
     assert can_use_tool("files", None) is True
+    assert can_use_tool("present_file", None, platform="telegram") is False
+    assert can_use_tool("present_file", None, platform=None) is True
 
 
 def test_skill_lifecycle_is_owner_only_while_adapters_remain_available_to_members():

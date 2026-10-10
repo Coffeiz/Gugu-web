@@ -1,7 +1,9 @@
 """文件正文检索语料查询：grep 工具的 ORM 边界收口在 Service 层。"""
 from __future__ import annotations
 
-from sqlalchemy import select
+from pathlib import PurePosixPath
+
+from sqlalchemy import or_, select
 
 from app.core.ownership import get_owned
 from app.models import File, Folder, Project, WorkspaceDirectory
@@ -19,6 +21,51 @@ async def list_grep_candidates(
         ).order_by(File.updated_at.desc())
     )).scalars().all()
     return list(rows)
+
+
+def normalize_file_logical_path(value: str | None) -> str | None:
+    """验证并规范化文件工具共用的虚拟逻辑路径。"""
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    if not text.startswith("/") or "\\" in text or "\x00" in text:
+        raise ValueError("路径必须是 /personal、/project 或 /workspace 下的逻辑路径")
+    raw_parts = text[1:].split("/")
+    if any(part in {"", ".", ".."} for part in raw_parts):
+        raise ValueError("路径不能包含空目录、. 或 ..")
+    parts = PurePosixPath(text).parts
+    if len(parts) < 2 or parts[0] != "/" or parts[1] not in {"personal", "project", "workspace"}:
+        raise ValueError("路径只允许 /personal、/project 或 /workspace")
+    if any(part in {"", ".", ".."} for part in parts[2:]):
+        raise ValueError("路径不能包含 . 或 ..")
+    return "/" + "/".join(parts[1:])
+
+
+async def find_user_file_by_logical_path(db, *, user_id: str, path: str) -> list[File]:
+    """按 grep/list_dir 使用的逻辑路径精确定位当前用户已登记文件。"""
+    from sqlalchemy import literal
+
+    normalized = normalize_file_logical_path(path)
+    if normalized is None:
+        return []
+    parts = normalized.split("/")
+    if len(parts) < 3:
+        raise ValueError("文件路径还需要包含文件名")
+    space, filename = parts[1], parts[-1]
+    stmt = select(File).where(
+        File.user_id == user_id,
+        File.deleted_at.is_(None),
+        File.space == space,
+        or_(
+            File.display_name == filename,
+            File.display_name + literal(".") + File.ext == filename,
+        ),
+    )
+    candidates = list((await db.scalars(stmt)).all())
+    if not candidates:
+        return []
+    paths = await resolve_grep_candidate_paths(db, user_id=user_id, files=candidates)
+    return [file for file in candidates if paths.get(file.id) == normalized]
 
 
 def _safe_component(value: object) -> str:

@@ -19,7 +19,7 @@ from app.models import (
     File, Folder, Project, ScheduledTask, WorkspaceDirectory,
 )
 
-from agent.tools.files import _list_dir, _resolve_file, _resolve_key, _resolve_target
+from agent.tools.files import _list_dir, _normalize_send_path, _resolve_file, _resolve_key, _resolve_target
 from agent.tools.projects import _resolve_project, _update_project
 from agent.tools.calendar import _resolve_event
 from agent.tools.clients import _resolve_client
@@ -59,6 +59,54 @@ async def test_file_resolve_owner_ok(db, user_b):
     f = await _mk(db, File(user_id=user_b.id, display_name="mine", ext="md", storage_key="k"))
     got, err = await _resolve_file(db, user_b.id, {"file_id": f.id})
     assert err is None and got.id == f.id
+
+
+async def test_file_resolve_maps_workspace_logical_path_to_owned_record(db, user_a):
+    workspace = await _mk(db, WorkspaceDirectory(
+        user_id=user_a.id, name="默认工作区", directory_name="default", is_default=True,
+    ))
+    root = await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=workspace.id, name="weather",
+    ))
+    charts = await _mk(db, Folder(
+        user_id=user_a.id, workspace_directory_id=workspace.id,
+        parent_id=root.id, name="charts",
+    ))
+    file = await _mk(db, File(
+        user_id=user_a.id, space="workspace", workspace_directory_id=workspace.id,
+        folder_id=charts.id, display_name="weather_hour", ext="png", storage_key="k",
+    ))
+
+    got, err = await _resolve_file(
+        db, user_a.id, {"file": "/workspace/default/weather/charts/weather_hour.png"},
+    )
+
+    assert err is None and got.id == file.id
+
+
+async def test_file_resolve_logical_path_does_not_cross_user(db, user_a, user_b):
+    workspace = await _mk(db, WorkspaceDirectory(
+        user_id=user_b.id, name="默认工作区", directory_name="default", is_default=True,
+    ))
+    file = await _mk(db, File(
+        user_id=user_b.id, space="workspace", workspace_directory_id=workspace.id,
+        display_name="secret", ext="md", storage_key="k",
+    ))
+
+    got, err = await _resolve_file(
+        db, user_a.id, {"file": "/workspace/default/secret.md"},
+    )
+
+    assert got is None and _is_err(err)
+    assert str(file.id) not in err
+
+
+def test_send_path_uses_shared_logical_path_validation():
+    root, relative, error = _normalize_send_path("/workspace/default/weather/chart.png")
+    assert (root, relative.as_posix(), error) == ("workspace", "default/weather/chart.png", None)
+
+    root, relative, error = _normalize_send_path("/workspace/default/../private.txt")
+    assert root is None and relative is None and error
 
 
 async def test_resolve_key_cross_user_project(db, user_a, user_b):

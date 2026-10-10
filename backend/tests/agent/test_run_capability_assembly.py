@@ -55,3 +55,19 @@ async def test_run_removes_shell_when_live_policy_cannot_supply_state(monkeypatc
     assert capability.call_args.args[0] == names
     assert system == "静态系统"
     assert snapshot == "冻结快照"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("source", "expected_present"), [("telegram", False), ("web", True)])
+async def test_present_file_is_available_by_current_entry_not_session_origin(
+    monkeypatch, source, expected_present,
+):
+    """IM 入站不暴露网页播放器工具；网页继续 IM 历史会话仍保留该能力。"""
+    monkeypatch.setattr(preparation, "_filter_shell_tool", AsyncMock(side_effect=lambda _db, _user, _session_id, names, **_kwargs: names))
+    monkeypatch.setattr(preparation, "_capability_context", AsyncMock(return_value=None))
+    names, *_ = await preparation.prepare_run_capabilities(
+        None, "synthetic-user", 7, ["read_file", "present_file"], SimpleNamespace(),
+        "静态系统", "冻结快照", source=source,
+        session=SimpleNamespace(source="telegram"),
+    )
+    assert ("present_file" in names) is expected_present

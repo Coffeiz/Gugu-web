@@ -714,7 +714,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         tool_names, system_prompt, snapshot_context, capability_context = await prepare_run_capabilities(
             db, user_id, session_id, all_system_tool_names(), settings, system_prompt, snapshot_context,
             session=session, query=req.message,
-            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
+            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
         )
     if capability_context is not None:
         if _pin_session_user_skill_metadata(session, capability_context):

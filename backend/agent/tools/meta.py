@@ -48,6 +48,7 @@ async def _get_tool_schema(db, user_id, args: dict):
                 continue
             if tool_snapshot.get(name) is None or not can_use_tool(
                 name, allowed, im_role=im_role,
+                platform=current_im.get("platform") if current_im else None,
             ):
                 continue
             declared.append(name)

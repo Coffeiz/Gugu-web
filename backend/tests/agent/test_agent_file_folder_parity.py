@@ -297,7 +297,7 @@ async def test_agent_edit_file_updates_content_and_metadata(db, user_a, tmp_path
 
     edited = await agent_files._edit_file(
         db, user_a.id,
-        {"file_id": file.id, "mode": "line_edit", "line_edits": [{"target_lines": "all", "content": "新内容"}]},
+        {"file": "/personal/编辑测试.md", "mode": "line_edit", "line_edits": [{"target_lines": "all", "content": "新内容"}]},
     )
 
     assert edited["success"] is True

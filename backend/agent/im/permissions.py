@@ -52,8 +52,11 @@ def can_use_tool(
     allowed_tool_names: Optional[List[str]],
     *,
     im_role: str | None = None,
+    platform: str | None = None,
 ) -> bool:
     """dispatch 层的第二道权限门；Skill 管理仅网页用户和已认证 owner 可用。"""
+    if name == "present_file" and platform:
+        return False
     if name in SKILL_MANAGEMENT_TOOLS:
         return im_role in {None, "owner"}
     return (
