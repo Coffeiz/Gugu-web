@@ -490,7 +490,7 @@ async function recoverImport(job: DataImportJob) {
 }
 
 function statusLabel(status: string) {
-  const key = ['queued', 'running', 'canceling', 'ready', 'failed', 'canceled'].includes(status) ? status : 'running'
+  const key = ['queued', 'running', 'canceling', 'ready', 'failed', 'canceled', 'expired'].includes(status) ? status : 'unknown'
   return t(`profileDataUi.${key}`)
 }
 function exportStageLabel(stage: string | null) {
