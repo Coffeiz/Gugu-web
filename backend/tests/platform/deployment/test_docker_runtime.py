@@ -1382,6 +1382,48 @@ def test_cleanup_orphan_pty_containers_only_uses_fixed_namespace(monkeypatch):
     assert calls[1] == ["/usr/bin/docker", "rm", "-f", "a" * 12]
 
 
+def test_force_remove_pty_container_removes_only_generated_container(monkeypatch):
+    from agent.sandbox import docker_runtime
+    import pytest
+
+    calls = []
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda name: "/usr/bin/docker")
+
+    class Result:
+        def __init__(self, returncode=0, stderr=""):
+            self.returncode = returncode
+            self.stderr = stderr
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return Result()
+
+    monkeypatch.setattr(docker_runtime.subprocess, "run", run)
+    container_name = "gugu-pty-" + "a" * 32
+
+    assert docker_runtime.force_remove_pty_container(container_name) is True
+    assert calls == [
+        ["/usr/bin/docker", "inspect", "--format={{.Id}}", container_name],
+        ["/usr/bin/docker", "rm", "--force", container_name],
+    ]
+    with pytest.raises(ValueError, match="标识无效"):
+        docker_runtime.force_remove_pty_container("gugu-sandbox-user-data")
+
+
+def test_force_remove_pty_container_treats_missing_container_case_insensitively(monkeypatch):
+    from agent.sandbox import docker_runtime
+
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        docker_runtime.subprocess, "run",
+        lambda *_args, **_kwargs: type("Result", (), {
+            "returncode": 1, "stderr": "Error: no such object: gugu-pty-test",
+        })(),
+    )
+
+    assert docker_runtime.force_remove_pty_container("gugu-pty-" + "d" * 32) is False
+
+
 def test_sandbox_override_includes_sandboxd_socket(monkeypatch, tmp_path):
     from app.core.config import AppSettings
 

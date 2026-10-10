@@ -28,6 +28,7 @@ from .docker_runtime import (
     docker_environment,
     docker_network_available,
     docker_sandbox_readiness,
+    force_remove_pty_container,
     probe_sandbox_runtime,
     valid_egress_proxy,
     valid_egress_network_name,
@@ -256,6 +257,10 @@ class SandboxdServer:
                 await self._require_runtime_ready()
                 await self._handle_pty(value, reader, writer)
                 return
+            elif operation == "pty_terminate":
+                container_name = str(value.get("container_name") or "")
+                terminated = await asyncio.to_thread(force_remove_pty_container, container_name)
+                response = {"ok": True, "terminated": terminated}
             elif operation == "stdio_open":
                 await self._require_runtime_ready()
                 await self._handle_stdio(value, reader, writer)

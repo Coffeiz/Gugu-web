@@ -605,10 +605,16 @@ async def terminate_terminal_view(terminal_id: str, user: User = Depends(get_cur
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, operation=TerminalOperation.TERMINATE)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
+    if row.mode == TerminalMode.INTERACTIVE_PTY.value and row.pty_sandbox_id:
+        try:
+            await SandboxdClient(get_settings().sandbox.sandboxd_socket).terminate_pty(row.pty_sandbox_id)
+        except Exception as exc:
+            # 不把仍可能存活的 PTY 错误标记成已停止；允许用户重试停止。
+            raise HTTPException(status_code=503, detail="终端进程停止失败，请重试") from exc
     await terminate_terminal_record(db, row)
     await db.commit()
-    # 先提交 terminated 再关 PTY，WebSocket 的异步退出回调才能保留用户的
-    # 主动停止状态，不会把它覆盖成 exited。
+    # 共享 sandboxd 已按持久化容器标识停止进程；当前 worker 的本地句柄仅用于
+    # 释放 WebSocket/PTY 资源，不能作为跨 worker 终止的唯一依据。
     if row.mode == TerminalMode.INTERACTIVE_PTY.value:
         manager = get_pty_manager()
         if manager.get(row.id) is not None:

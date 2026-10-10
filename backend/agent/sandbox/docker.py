@@ -28,6 +28,7 @@ from .bundle_runtime import bundle_directory
 from .docker_runtime import (
     docker_environment,
     docker_container_mount_source,
+    force_remove_pty_container,
     resolved_image_digest,
     sandbox_root_label,
     valid_egress_network_name,
@@ -76,7 +77,13 @@ class DockerPtyHandle:
         if self._closed:
             return
         self._closed = True
+        remove_error = None
         try:
+            if self.sandbox_id.startswith("gugu-pty-"):
+                try:
+                    await asyncio.to_thread(force_remove_pty_container, self.sandbox_id)
+                except Exception as exc:
+                    remove_error = exc
             if self.process.returncode is None:
                 await asyncio.to_thread(
                     os.killpg, self.process.pid, signal.SIGKILL if force else signal.SIGTERM,
@@ -88,6 +95,8 @@ class DockerPtyHandle:
                     await self.process.wait()
         finally:
             os.close(self.master_fd)
+        if remove_error is not None:
+            raise RuntimeError("PTY 容器强制移除失败") from remove_error
 
     async def output(self):
         while not self._closed:

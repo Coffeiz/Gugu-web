@@ -289,7 +289,6 @@ class PtyManager:
                 session.output_bytes += len(chunk)
                 session.output_window_bytes += len(chunk)
                 if session.output_bytes > self.max_output_bytes or session.output_window_bytes > self.max_output_rate:
-                    await session.handle.close(force=True)
                     break
                 for queue in tuple(session.output_queues):
                     try:
@@ -299,15 +298,21 @@ class PtyManager:
                         session.output_queues.discard(queue)
                         queue.put_nowait(None)
         finally:
+            async with self._lock:
+                owns_session = self._sessions.get(session.terminal_id) is session
+                if owns_session:
+                    self._sessions.pop(session.terminal_id, None)
+            if owns_session:
+                try:
+                    await session.handle.close(force=True)
+                except Exception as exc:
+                    _log.warning("terminal_pty_handle_close_failed error=%s", type(exc).__name__)
             for queue in tuple(session.output_queues):
                 session.output_queues.discard(queue)
                 try:
                     queue.put_nowait(None)
                 except asyncio.QueueFull:
                     pass
-            async with self._lock:
-                if self._sessions.get(session.terminal_id) is session:
-                    self._sessions.pop(session.terminal_id, None)
 
     async def _remove(self, terminal_id: str) -> None:
         async with self._lock:

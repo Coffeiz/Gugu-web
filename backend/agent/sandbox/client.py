@@ -148,6 +148,34 @@ class SandboxdClient:
                 except OSError:
                     pass
 
+    async def terminate_pty(self, container_name: str) -> bool:
+        """经共享 sandboxd 按容器标识停止 PTY，允许请求落在其他 Web worker。"""
+        writer = None
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path), timeout=self.connect_timeout,
+            )
+            writer.write((json.dumps({
+                "operation": "pty_terminate", "container_name": container_name,
+            }) + "\n").encode())
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout=15)
+            value = json.loads(line.decode("utf-8"))
+            if not isinstance(value, dict) or not value.get("ok"):
+                raise SandboxdUnavailable("sandboxd 无法停止 PTY 容器")
+            return bool(value.get("terminated"))
+        except SandboxdUnavailable:
+            raise
+        except (OSError, asyncio.TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            raise SandboxdUnavailable("sandboxd PTY 停止请求失败") from exc
+        finally:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except OSError:
+                    pass
+
     async def execute_stream(self, request: ExecuteRequest, on_output=None) -> dict[str, Any]:
         try:
             reader, writer = await asyncio.wait_for(

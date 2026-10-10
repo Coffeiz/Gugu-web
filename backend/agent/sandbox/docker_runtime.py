@@ -174,6 +174,37 @@ def cleanup_orphan_pty_containers(*, timeout_seconds: float = 5.0) -> int:
         return 0
 
 
+def force_remove_pty_container(container_name: str, *, timeout_seconds: float = 10.0) -> bool:
+    """按 sandboxd 生成的固定名称强制移除一个 PTY 容器；容器已退出时可重复调用。"""
+    if not re.fullmatch(r"gugu-pty-[0-9a-f]{32}", container_name):
+        raise ValueError("PTY 容器标识无效")
+    docker = shutil.which("docker")
+    if not docker:
+        raise RuntimeError("Docker 执行器不可用，无法停止 PTY 容器")
+    env = docker_environment()
+    try:
+        inspected = subprocess.run(
+            [docker, "inspect", "--format={{.Id}}", container_name],
+            capture_output=True, text=True, timeout=timeout_seconds,
+            env=env, check=False,
+        )
+        if inspected.returncode != 0:
+            inspect_error = inspected.stderr.casefold()
+            if "no such object" in inspect_error or "no such container" in inspect_error:
+                return False
+            raise RuntimeError("无法确认 PTY 容器状态")
+        removed = subprocess.run(
+            [docker, "rm", "--force", container_name],
+            capture_output=True, text=True, timeout=timeout_seconds,
+            env=env, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("强制停止 PTY 容器失败") from exc
+    if removed.returncode != 0:
+        raise RuntimeError("强制停止 PTY 容器失败")
+    return True
+
+
 def image_available(image: str, digest: str, *, timeout_seconds: float = 3.0) -> bool:
     """确认固定 digest 或 Compose bootstrap 解析的 digest 已加载到目标 daemon。"""
     if not image or not valid_image_digest(digest):
