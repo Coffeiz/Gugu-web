@@ -37,3 +37,20 @@ def test_describe_llm_error_classifies_network_failures_without_upstream_tag():
     assert info.message_key == "chatUi.networkError"
     assert info.message_params == {"tag": "", "attempts": 0}
     assert info.text == "咕咕网络不太好 📡 可以再发一遍吗？"
+
+
+def test_describe_llm_error_classifies_remote_protocol_error_and_records_context(monkeypatch):
+    import agent.errors as errors
+
+    class RemoteProtocolError(Exception):
+        pass
+
+    captured = []
+    monkeypatch.setattr(errors, "diag_log", lambda where, error: captured.append((where, error)))
+    error = RemoteProtocolError("synthetic stream closed")
+    info = describe_llm_error(error, diagnostic_context="agent.llm.call run_id=run-test budget=10")
+
+    assert info.code == "network_error"
+    assert len(captured) == 1 and captured[0][1] is error
+    assert "agent.llm.call" in captured[0][0]
+    assert "budget=10" in captured[0][0]

@@ -72,6 +72,25 @@ async def test_collect_initializes_context_usage_metadata():
     assert result[-1]["compaction_applied"] is False
 
 
+async def test_collect_keeps_provider_round_diagnostics_without_content():
+    async def stream():
+        yield "data: " + json.dumps({
+            "type": "_provider_usage", "round_id": "round-1", "input": 24,
+            "context_input": 24, "output": 10, "output_token_budget": 10,
+            "finish_reason": "incomplete", "incomplete_reason": "max_output_tokens",
+            "prompt": "不得进入诊断元数据", "response": "不得进入诊断元数据",
+        }, ensure_ascii=False) + "\n\n"
+
+    result = await _collect(stream(), include_meta=True)
+    assert result[-1]["provider_rounds"] == [{
+        "round_id": "round-1", "input": 24, "context_input": 24, "output": 10,
+        "output_token_budget": 10, "finish_reason": "incomplete",
+        "incomplete_reason": "max_output_tokens",
+    }]
+    assert "prompt" not in result[-1]["provider_rounds"][0]
+    assert "response" not in result[-1]["provider_rounds"][0]
+
+
 def test_scheduled_collect_result_keeps_files_separate_from_meta():
     """回归：定时执行不能把 `_collect` 的附件列表错位当成元数据。"""
     files = [{"attach_id": "attachment-1", "name": "结果.png"}]

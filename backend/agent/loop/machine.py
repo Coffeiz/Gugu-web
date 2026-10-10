@@ -41,6 +41,60 @@ def _allow_tool_images(model_cfg: Any) -> bool:
     return chat_attach.image_ready(model_cfg)
 
 
+def _llm_diagnostic_tag(value: Any) -> str:
+    text = str(value or "unknown")[:80]
+    return "".join(char for char in text if char.isalnum() or char in "._-:") or "unknown"
+
+
+def _llm_diagnostic_context(run_id: str, round_id: str, ai: Any, driver: Any, ctx: Any) -> str:
+    """构造不含 prompt、工具参数、响应正文或凭据的 provider 诊断关联信息。"""
+
+    budget = getattr(ctx, "max_tokens", getattr(ctx, "max_output_tokens", None))
+    try:
+        budget = max(0, int(budget)) if budget is not None else "unknown"
+    except (TypeError, ValueError):
+        budget = "unknown"
+    return (
+        f"agent.llm.call run_id={_llm_diagnostic_tag(run_id)} round={_llm_diagnostic_tag(round_id)} "
+        f"provider={_llm_diagnostic_tag(getattr(ai, 'provider', None))} "
+        f"model={_llm_diagnostic_tag(getattr(ai, 'model', None) or getattr(ctx, 'model', None))} "
+        f"format={_llm_diagnostic_tag(getattr(driver, 'api_format', None))} output_token_budget={budget}"
+    )
+
+
+def _record_provider_round_diagnostic(
+    *, run_id: str, round_id: str, ai: Any, driver: Any, ctx: Any, result: Any,
+) -> None:
+    """只记录截断、不完整或空结果等异常轮次的无内容诊断字段。"""
+    finish_reason = str(result.finish_reason or "").lower()
+    incomplete_reason = str(result.incomplete_reason or "").lower()
+    if not (
+        incomplete_reason
+        or finish_reason in {"length", "max_tokens", "incomplete", "failed"}
+        or (result.output_token_budget and result.usage_out >= result.output_token_budget)
+        or (not result.text.strip() and not result.tool_calls)
+    ):
+        return
+
+    from app.core.redaction import diag_log_raw
+    diag_log_raw(
+        "agent.llm.round_incomplete",
+        json.dumps({
+            "run_id": run_id,
+            "round_id": round_id,
+            "provider": _llm_diagnostic_tag(getattr(ai, "provider", None)),
+            "model": _llm_diagnostic_tag(getattr(ai, "model", None) or getattr(ctx, "model", None)),
+            "api_format": _llm_diagnostic_tag(driver.api_format),
+            "output_token_budget": result.output_token_budget,
+            "output_tokens": int(result.usage_out or 0),
+            "finish_reason": result.finish_reason,
+            "incomplete_reason": result.incomplete_reason,
+            "has_text": bool(result.text.strip()),
+            "tool_call_count": len(result.tool_calls or []),
+        }, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
 async def run_loop(
     runner: Any,
     driver: Any,
@@ -377,6 +431,7 @@ async def run_loop(
             result = None
             round_number += 1
             round_id = f"round-{round_number}"
+            diagnostic_context = _llm_diagnostic_context(run_id, round_id, ai, driver, ctx)
             run_round_start_indices.append((
                 round_number,
                 len(messages.provider_projection()),
@@ -524,7 +579,9 @@ async def run_loop(
                 # 429 限流与 529 过载同属「上游忙」，按状态码判定、与具体 SDK 解耦
                 # （anthropic/openai 两条链路的重试用尽都落到这里）
                 attempts_done = int(getattr(e, "attempt", 0) or 0)
-                error_info = describe_llm_error(e, attempts=attempts_done)
+                error_info = describe_llm_error(
+                    e, attempts=attempts_done, diagnostic_context=diagnostic_context,
+                )
                 yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
@@ -564,10 +621,7 @@ async def run_loop(
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
                 error_info = describe_llm_error(
                     e,
-                    diagnostic_context=(
-                        f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
-                        f"format={driver.api_format}"
-                    ),
+                    diagnostic_context=diagnostic_context,
                 )
                 yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
@@ -595,6 +649,12 @@ async def run_loop(
                 output=int(result.usage_out or 0),
                 cache_read=int(result.cache_tokens or 0),
                 cache_write=int(result.cache_write_tokens or 0),
+                output_token_budget=result.output_token_budget,
+                finish_reason=result.finish_reason,
+                incomplete_reason=result.incomplete_reason,
+            )
+            _record_provider_round_diagnostic(
+                run_id=run_id, round_id=round_id, ai=ai, driver=driver, ctx=ctx, result=result,
             )
 
             _requires_tools = result.requires_tools

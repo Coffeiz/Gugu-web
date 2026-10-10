@@ -12,7 +12,7 @@ from agent.context import audit, compress_conv, assembly, session_history
 from agent.context import dynamic_tail, session_snapshot
 from agent.context.history import build_history_parts
 from agent.context.references import prepend_reference_context
-from app.core.chat_attach import build_user_content
+from app.core.chat_attach import build_user_content, image_ready
 
 
 @dataclass
@@ -186,6 +186,7 @@ async def prepare_run(
     from agent import providers
     render_options = {
         "api_format": providers.adapter_for(model_cfg).protocol_format(model_cfg),
+        "allow_tool_images": image_ready(model_cfg),
         "request": req,
         "user_tz": user_tz,
         "strip_thinking": strip_thinking,
@@ -199,6 +200,7 @@ async def prepare_run(
     history_parts, prior_run_parts_start = build_history_parts(
         effective_history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking,
+        allow_tool_images=render_options["allow_tool_images"],
         protected_message_ids=prior_run_message_ids,
         return_protected_start=True,
     )

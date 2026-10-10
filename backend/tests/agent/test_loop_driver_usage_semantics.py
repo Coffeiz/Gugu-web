@@ -134,6 +134,21 @@ async def test_openai_no_cache_keeps_prompt_tokens():
 
 
 @pytest.mark.asyncio
+async def test_openai_round_reports_finish_reason_and_output_budget():
+    chunk = SimpleNamespace(
+        usage=None,
+        choices=[SimpleNamespace(
+            finish_reason="length",
+            delta=SimpleNamespace(content=None, reasoning_content=None, tool_calls=[]),
+        )],
+    )
+    result = await _collect_openai([chunk])
+
+    assert result.finish_reason == "length"
+    assert result.output_token_budget == 100
+
+
+@pytest.mark.asyncio
 async def test_openai_driver_merges_system_messages_before_sending():
     chunk = SimpleNamespace(
         usage=SimpleNamespace(prompt_tokens=10, completion_tokens=1,

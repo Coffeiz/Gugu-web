@@ -139,15 +139,78 @@ def _responses_tools(tools: list[dict]) -> list[dict]:
 
 
 def _responses_content(content: Any) -> Any:
-    """把 Chat Completions 文本内容块转成 Responses input 内容块。"""
+    """把 OpenAI conversation 内容块转成 Responses input 内容块。"""
     if not isinstance(content, list):
         return content or ""
-    return [
-        {**part, "type": "input_text"}
-        if isinstance(part, dict) and part.get("type") == "text"
-        else part
-        for part in content
-    ]
+    converted = []
+    for part in content:
+        if not isinstance(part, dict):
+            converted.append(part)
+        elif part.get("type") == "text":
+            converted.append({**part, "type": "input_text"})
+        elif part.get("type") == "image_url":
+            # canonical history 使用 Chat Completions 的 image_url 形状；
+            # Responses API 必须收到 input_image，不能把图片块原样发送或序列化为文字。
+            image_url = part.get("image_url")
+            if isinstance(image_url, dict):
+                input_image = {
+                    "type": "input_image",
+                    "image_url": image_url.get("url") or "",
+                }
+                detail = part.get("detail") or image_url.get("detail")
+                if detail:
+                    input_image["detail"] = detail
+                converted.append(input_image)
+            else:
+                converted.append({**part, "type": "input_image"})
+        elif part.get("type") == "video_url":
+            # MiMo/OpenAI Chat 的 video_url 是嵌套对象；Responses 用 input_video，
+            # video_url 字段本身是 URL 字符串。
+            video_url = part.get("video_url")
+            if isinstance(video_url, dict):
+                input_video = {
+                    "type": "input_video",
+                    "video_url": video_url.get("url") or "",
+                }
+                for key in ("fps", "media_resolution"):
+                    if part.get(key) is not None:
+                        input_video[key] = part[key]
+                converted.append(input_video)
+            else:
+                converted.append({**part, "type": "input_video"})
+        elif part.get("type") == "input_audio":
+            # Chat content 的本地音频通常以 data URL 携带；Responses 的
+            # input_audio.data 使用纯 base64，并要求 format 单独传递。
+            audio = part.get("input_audio")
+            data = audio.get("data") if isinstance(audio, dict) else None
+            if isinstance(data, str) and data.startswith("data:"):
+                header, separator, payload = data.partition(",")
+                media_type = header[5:].split(";", 1)[0].lower()
+                audio_format = {
+                    "audio/mpeg": "mp3",
+                    "audio/mp3": "mp3",
+                    "audio/wav": "wav",
+                    "audio/x-wav": "wav",
+                    "audio/mp4": "m4a",
+                    "audio/flac": "flac",
+                    "audio/ogg": "ogg",
+                }.get(media_type)
+                if separator and ";base64" in header and audio_format:
+                    converted.append({
+                        "type": "input_audio",
+                        "input_audio": {
+                            **audio,
+                            "data": payload,
+                            "format": audio.get("format") or audio_format,
+                        },
+                    })
+                else:
+                    converted.append(part)
+            else:
+                converted.append(part)
+        else:
+            converted.append(part)
+    return converted
 
 
 def _responses_content_is_empty(content: Any) -> bool:
@@ -524,6 +587,8 @@ class OpenAIResponsesDriver:
         output_items: dict[str, dict] = {}
         tool_buf: dict[str, dict] = {}
         usage_in = usage_out = cache_read = cache_write = 0
+        response_status = None
+        incomplete_reason = None
         try:
             async for event in stream:
                 event_type = str(getattr(event, "type", "") or "")
@@ -548,10 +613,16 @@ class OpenAIResponsesDriver:
                     if isinstance(item, dict):
                         key = str(item.get("id") or item.get("call_id") or len(output_items))
                         output_items[key] = copy.deepcopy(item)
-                elif event_type == "response.completed":
+                elif event_type in {"response.completed", "response.incomplete", "response.failed"}:
                     response = getattr(event, "response", None)
                     response_data = response.model_dump() if hasattr(response, "model_dump") else response
                     if isinstance(response_data, dict):
+                        response_status = str(response_data.get("status") or "") or None
+                        details = response_data.get("incomplete_details") or {}
+                        if isinstance(details, dict):
+                            incomplete_reason = str(details.get("reason") or "") or None
+                        if event_type == "response.failed":
+                            incomplete_reason = "provider_failed"
                         usage = response_data.get("usage") or {}
                         from agent.usage import normalize_responses_usage
 
@@ -572,6 +643,10 @@ class OpenAIResponsesDriver:
                 await stream.close()
             except Exception:
                 pass
+
+        if response_status == "failed":
+            # 不把失败事件伪装成空的正常轮次；异常由共享 Agent 层按统一路径记录。
+            raise RuntimeError("Responses API returned a failed response")
 
         ordered = list(output_items.values())
         tool_payload = []
@@ -609,6 +684,9 @@ class OpenAIResponsesDriver:
             text=content, tool_calls=normalized, requires_tools=bool(normalized),
             usage_in=usage_in, usage_out=usage_out,
             cache_tokens=cache_read, cache_write_tokens=cache_write,
+            output_token_budget=ctx.max_output_tokens,
+            finish_reason=response_status,
+            incomplete_reason=incomplete_reason,
             raw=_ResponsesRaw(
                 content=content, tool_calls_payload=tool_payload, output_items=ordered,
             ),

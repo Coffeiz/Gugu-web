@@ -264,7 +264,8 @@ async def _collect(
     meta = {"tool_names": outcome.tool_names, "mutated": outcome.mutated,
             "interactions": outcome.interactions, "tool_events": outcome.tool_events,
             "compaction_applied": outcome.compaction_applied,
-            "context_input": outcome.context_input, "round_texts": outcome.round_texts}
+            "context_input": outcome.context_input, "round_texts": outcome.round_texts,
+            "provider_rounds": outcome.provider_rounds}
     return result + (meta,) if include_meta else result
 
 

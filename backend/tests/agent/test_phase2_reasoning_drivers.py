@@ -88,7 +88,15 @@ def test_responses_input_converts_chat_text_blocks_without_changing_other_blocks
             "content": [
                 {"type": "text", "text": "第一段", "source": "history"},
                 {"type": "input_text", "text": "第二段"},
-                {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                {"type": "image_url", "image_url": {
+                    "url": "data:image/png;base64,AAAA", "detail": "auto",
+                }},
+                {"type": "input_audio", "input_audio": {
+                    "data": "data:audio/wav;base64,QUJD",
+                }},
+                {"type": "video_url", "video_url": {
+                    "url": "data:video/mp4;base64,REVG",
+                }, "fps": 2, "media_resolution": "default"},
             ],
         },
     ]
@@ -98,10 +106,88 @@ def test_responses_input_converts_chat_text_blocks_without_changing_other_blocks
         "content": [
             {"type": "input_text", "text": "第一段", "source": "history"},
             {"type": "input_text", "text": "第二段"},
-            {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+            {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "auto"},
+            {"type": "input_audio", "input_audio": {"data": "QUJD", "format": "wav"}},
+            {"type": "input_video", "video_url": "data:video/mp4;base64,REVG",
+             "fps": 2, "media_resolution": "default"},
         ],
     }]
     assert messages[0]["content"][0]["type"] == "text"
+
+
+@pytest.mark.asyncio
+async def test_responses_request_sends_projected_tool_image_as_input_image_not_text():
+    """read_file 图片经历史投影后，最终 Responses 请求仍保留为图片输入。"""
+    from agent.context.assembly import MessageArea, MessageBatch
+
+    area = MessageArea(render_options={
+        "api_format": "responses",
+        "allow_tool_images": True,
+    })
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{
+            "type": "tool_call", "id": "call-image", "name": "read_file",
+            "arguments": {"file_id": 7},
+        }]},
+        {"role": "user", "content": [{
+            "type": "tool_result", "tool_call_id": "call-image", "content": [
+                {"type": "text", "text": "已打开图片，见随附图像。"},
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": "AQID",
+                }},
+            ],
+        }]},
+        {"role": "user", "content": [
+            {"type": "text", "text": "请分析这段音视频。"},
+            {"type": "input_audio", "input_audio": {
+                "data": "data:audio/wav;base64,QUJD",
+            }},
+            {"type": "video_url", "video_url": {
+                "url": "data:video/mp4;base64,REVG",
+            }, "fps": 2, "media_resolution": "default"},
+        ]},
+    ], metadata={"round_id": "round-image"}))
+
+    requests = []
+
+    async def create(**kwargs):
+        requests.append(kwargs)
+        raise RuntimeError("stop after capturing request")
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    ai = SimpleNamespace(model="mimo-test", max_tokens=100, reasoning_effort="")
+    ctx = _ResponsesCtx([], 100, "mimo-test", "system", _responses_adapter(), ai)
+
+    with pytest.raises(RuntimeError, match="stop after capturing request"):
+        async for _ in OpenAIResponsesDriver().run_round(client, ctx, area):
+            pass
+
+    request_items = requests[0]["input"]
+    tool_output = next(item for item in request_items if item.get("type") == "function_call_output")
+    assert tool_output["output"] == "已打开图片，见随附图像。"
+    assert "AQID" not in tool_output["output"]
+    image_message = next(
+        item for item in request_items
+        if item.get("role") == "user"
+        and isinstance(item.get("content"), list)
+        and any(part.get("type") == "input_image" for part in item["content"])
+    )
+    assert image_message["content"] == [
+        {"type": "input_text", "text": "工具返回了以下图片，请结合工具文字结果继续处理。"},
+        {"type": "input_image", "image_url": "data:image/png;base64,AQID", "detail": "auto"},
+    ]
+    audio_video_message = next(
+        item for item in request_items
+        if item.get("role") == "user"
+        and isinstance(item.get("content"), list)
+        and any(part.get("type") == "input_video" for part in item["content"])
+    )
+    assert audio_video_message["content"] == [
+        {"type": "input_text", "text": "请分析这段音视频。"},
+        {"type": "input_audio", "input_audio": {"data": "QUJD", "format": "wav"}},
+        {"type": "input_video", "video_url": "data:video/mp4;base64,REVG",
+         "fps": 2, "media_resolution": "default"},
+    ]
 
 
 def test_responses_input_omits_empty_messages_but_preserves_nonempty_structured_blocks():
@@ -395,6 +481,32 @@ class _FakeResponsesClient:
     async def create(self, **kwargs):
         self.requests.append(kwargs)
         return _FakeResponsesStream(list(self.events))
+
+
+@pytest.mark.asyncio
+async def test_responses_driver_preserves_incomplete_reason_and_output_budget():
+    response = {
+        "id": "resp-incomplete",
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+        "output": [],
+        "usage": {"input_tokens": 20, "output_tokens": 10},
+    }
+    client = _FakeResponsesClient([
+        SimpleNamespace(type="response.output_text.delta", delta="截断"),
+        SimpleNamespace(type="response.incomplete", response=SimpleNamespace(model_dump=lambda: response)),
+    ])
+    ai = SimpleNamespace(model="gpt-test", max_tokens=10, reasoning_effort="")
+    ctx = _ResponsesCtx([], 10, "gpt-test", "system", _responses_adapter(), ai)
+    results = [value async for kind, value in OpenAIResponsesDriver().run_round(
+        client, ctx, MessageArea.from_canonical_messages([{"role": "user", "content": "合成提问"}]),
+    ) if kind == "done"]
+    result = results[0]
+
+    assert result.finish_reason == "incomplete"
+    assert result.incomplete_reason == "max_output_tokens"
+    assert result.output_token_budget == 10
+    assert result.usage_out == 10
 
 
 @pytest.mark.parametrize(("provider", "base_url", "expected_store"), [

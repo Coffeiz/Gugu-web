@@ -44,6 +44,7 @@ class RunOutcome:
     cache_read: int = 0
     cache_write: int = 0
     context_input: int = 0
+    provider_rounds: list[dict] = field(default_factory=list)
     files: list = field(default_factory=list)
     tool_names: list = field(default_factory=list)
     interactions: list = field(default_factory=list)
@@ -171,6 +172,16 @@ async def consume_agent_events(
                 outcome.tokens_out = evt.get("output", 0)
                 outcome.cache_read = evt.get("cache_read", 0) or 0
                 outcome.cache_write = evt.get("cache_write", 0) or 0
+            elif t == "_provider_usage":
+                # 共享 provider 轮次诊断仅保留预算、结束原因和计数；不记录正文/Prompt。
+                outcome.provider_rounds.append({
+                    key: evt[key]
+                    for key in (
+                        "run_id", "round_id", "input", "context_input", "output", "cache_read",
+                        "cache_write", "output_token_budget", "finish_reason", "incomplete_reason",
+                    )
+                    if key in evt
+                })
             elif t == "_context_compaction":
                 outcome.compaction_applied = bool(evt.get("applied")) or outcome.compaction_applied
             elif t == "token":
