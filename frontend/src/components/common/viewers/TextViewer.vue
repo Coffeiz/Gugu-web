@@ -54,6 +54,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import { filesApi, foldersApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
 import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
+import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
@@ -443,18 +444,14 @@ async function getMermaid() {
 
 function configureMermaid(mermaid: NonNullable<typeof mermaidApi>): void {
   const dark = isDarkTheme()
+  const colors = resolveMermaidThemeColors(dark)
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
     htmlLabels: false,
     theme: dark ? 'dark' : 'default',
     themeVariables: {
-      primaryColor: cssToken('--surface-card-solid', dark ? '#24212b' : '#ffffff'),
-      primaryTextColor: cssToken('--text-primary', dark ? '#f2eff7' : '#272532'),
-      primaryBorderColor: cssToken('--border-default', dark ? 'rgba(255,255,255,.16)' : 'rgba(42,35,49,.12)'),
-      lineColor: cssToken('--text-secondary', dark ? '#c9c3d5' : '#67647a'),
-      secondaryColor: cssToken('--surface-panel', dark ? '#2c2835' : '#f3f2f7'),
-      tertiaryColor: cssToken('--surface-hover', dark ? '#363140' : '#ebeaf2'),
+      ...colors,
       fontFamily: cssToken('--font-family-sans', 'Inter, sans-serif'),
     },
   })
