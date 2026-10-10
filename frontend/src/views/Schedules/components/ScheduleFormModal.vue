@@ -108,10 +108,10 @@
         <span>{{ t('schedules.sendTo') }}</span>
         <div class="chans">
           <template v-for="channel in CHANNELS" :key="channel.value">
-            <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value)"
+            <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value) || form.channels.includes(channel.value)"
               :model-value="form.channels.includes(channel.value)"
               @update:model-value="toggleChannel(channel.value, $event)">
-              {{ channel.label }}
+              {{ channel.label }}<template v-if="form.channels.includes(channel.value) && !props.imChannels.includes(channel.value)">（{{ t('scheduleUi.channelUnavailablePreserved') }}）</template>
             </Checkbox>
           </template>
         </div>
@@ -234,11 +234,6 @@ function blankForm() {
     workspaceId: null as number | null, filesystemAuthorized: false,
   }
 }
-function filterChannels(channels: string[]) {
-  const allowed = ['web', 'email', ...props.imChannels]
-  const filtered = channels.filter(channel => allowed.includes(channel))
-  return filtered.length ? filtered : ['web']
-}
 function resetForm() {
   const parsed = props.task ? parseCron(props.task.cron) : { mode: 'daily' as RepeatMode, time: '09:00' }
   const taskKind = props.task?.schedule_kind
@@ -247,7 +242,7 @@ function resetForm() {
       channel === 'chat' ? ['web'] : channel === 'im' ? ['feishu', 'qq', 'wechat', 'telegram'] : [channel]))]
     : ['web']
   Object.assign(form, props.task
-    ? { name: props.task.name, payload: props.task.payload, time: parsed.time, channels: filterChannels(channels) }
+    ? { name: props.task.name, payload: props.task.payload, time: parsed.time, channels }
     : blankForm())
   weeklyDays.value = parsed.weeklyDays?.length ? [...parsed.weeklyDays] : [new Date().getDay()]
   const targets = props.task?.delivery_targets as Record<string, any> | undefined

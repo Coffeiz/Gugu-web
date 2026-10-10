@@ -116,6 +116,13 @@ def _delivery_configs(im_delivery: dict | None, qq_delivery: dict | None) -> dic
     return configs
 
 
+def _ensure_single_group_target(targets: dict | None, channels: list[str]) -> None:
+    """一份定时任务正文只能注入一个群的记忆并投递到该作用域。"""
+    from app.scheduled_tasks import _active_delivery_targets, _has_multiple_group_targets
+    if _has_multiple_group_targets(_active_delivery_targets(targets, set(channels))):
+        raise HTTPException(400, "一个定时任务目前只能设置一个群聊投递目标")
+
+
 async def _resolve_web_delivery_targets(
     db: AsyncSession, user: User, channels: list[str], *,
     im_delivery: dict | None = None, qq_delivery: dict | None = None,
@@ -132,6 +139,7 @@ async def _resolve_web_delivery_targets(
             # 改其他字段/渠道时保留原目标，避免把指定群悄悄改成私聊；
             # 即使暂时取消渠道勾选也保留选择，重新勾选后仍回到原目标。
             targets[platform] = old[platform]
+    _ensure_single_group_target(targets, channels)
     return targets or None
 
 

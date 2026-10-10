@@ -144,6 +144,67 @@ async def test_wechat_is_not_a_group_delivery_target(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_rest_delivery_targets_reject_multiple_group_scopes(db, user_a, monkeypatch):
+    from fastapi import HTTPException
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+
+    monkeypatch.setattr(scheduled, "owner_private_targets", AsyncMock(return_value={}))
+
+    async def resolve(_db, _user, platform, _config):
+        return {platform: {
+            "platform": platform, "chat_type": "group", "chat_id": f"{platform}-group",
+            "channel_id": f"{platform}-bot", "puid": "owner",
+        }}
+
+    monkeypatch.setattr(scheduled_api, "_resolve_im_delivery", resolve)
+    with pytest.raises(HTTPException) as exc_info:
+        await scheduled_api._resolve_web_delivery_targets(
+            db, user_a, ["qq", "telegram"],
+            im_delivery={"qq": {"mode": "group"}, "telegram": {"mode": "group"}},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "只能设置一个群聊" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_rest_validation_ignores_preserved_group_targets_for_unselected_channels(db, user_a, monkeypatch):
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+
+    monkeypatch.setattr(scheduled, "owner_private_targets", AsyncMock(return_value={}))
+    monkeypatch.setattr(scheduled_api, "_resolve_im_delivery", AsyncMock(return_value={
+        "qq": {"platform": "qq", "chat_type": "group", "chat_id": "active-group"},
+    }))
+
+    targets = await scheduled_api._resolve_web_delivery_targets(
+        db, user_a, ["qq"], im_delivery={"qq": {"mode": "group"}},
+        existing={"telegram": {
+            "platform": "telegram", "chat_type": "group", "chat_id": "preserved-group",
+        }},
+    )
+
+    assert targets["qq"]["chat_id"] == "active-group"
+    assert targets["telegram"]["chat_id"] == "preserved-group"
+
+
+def test_legacy_task_with_multiple_group_targets_is_detected_fail_closed():
+    import app.scheduled_tasks as scheduled
+
+    targets = {
+        "qq": {"chat_type": "group", "chat_id": "qq-group"},
+        "telegram": {"chat_type": "group", "chat_id": "telegram-group"},
+    }
+
+    assert scheduled._has_multiple_group_targets(targets)
+    assert not scheduled._has_multiple_group_targets({
+        "qq": {"chat_type": "group", "chat_id": "qq-group"},
+        "telegram": {"chat_type": "c2c", "chat_id": None},
+    })
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("initial", "requested", "expected"),
     [([], ["send_email"], ["send_email"]), (["send_email"], [], [])],
@@ -404,7 +465,8 @@ async def test_legacy_task_uses_owner_private_target(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_task_passes_structured_target_to_delivery(monkeypatch, db, user_a):
+@pytest.mark.parametrize("target_case", ["single", "multiple", "unselected"])
+async def test_execute_task_guards_active_group_scope_before_delivery(monkeypatch, db, user_a, target_case):
     import app.scheduled_tasks as scheduled
     from app.models import ScheduledTask
 
@@ -416,12 +478,19 @@ async def test_execute_task_passes_structured_target_to_delivery(monkeypatch, db
             "channel_id": "bot-1",
         }
     }
+    channels = "qq"
+    if target_case != "single":
+        target["telegram"] = {
+            "platform": "telegram", "chat_type": "group", "chat_id": "telegram-group",
+        }
+        if target_case == "multiple":
+            channels = "qq,telegram"
     task = ScheduledTask(
         user_id=user_a.id,
         name="群提醒",
         payload="提醒我检查群消息",
         cron="0 9 * * *",
-        channels="qq",
+        channels=channels,
         delivery_targets=target,
     )
     db.add(task)
@@ -435,8 +504,17 @@ async def test_execute_task_passes_structured_target_to_delivery(monkeypatch, db
 
     result = await scheduled.execute_task(task.id)
 
-    assert result == {"QQ": "已发送"}
-    assert deliver.await_args.args == (user_a.id, "群提醒", "提醒正文", {"qq"}, target)
+    if target_case == "multiple":
+        assert result == {"错误": "一个定时任务目前只能设置一个群聊投递目标"}
+        run_agent.assert_not_awaited()
+        deliver.assert_not_awaited()
+        await db.refresh(task)
+        assert task.last_run_at is None
+    else:
+        assert result == {"QQ": "已发送"}
+        expected_targets = {"qq": target["qq"]} if target_case == "unselected" else target
+        assert deliver.await_args.args == (user_a.id, "群提醒", "提醒正文", {"qq"}, expected_targets)
+        assert run_agent.await_args.kwargs["target_map"] == expected_targets
 
 
 @pytest.mark.asyncio

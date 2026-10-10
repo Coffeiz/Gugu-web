@@ -373,7 +373,12 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             if not t or not t.enabled:
                 return {"错误": "任务不存在或已停用"}
             payload, uid, name = t.payload or "", t.user_id, t.name
-            target_map = t.delivery_targets
+            chans = {c for c in (t.channels or "").split(",") if c}
+            target_map = _active_delivery_targets(t.delivery_targets, chans)
+            if _has_multiple_group_targets(target_map):
+                # 旧数据或绕过 REST 的写入也必须 fail closed，不能把某个群的
+                # MemoryScope 注入后再将同一正文广播到其他群。
+                return {"错误": "一个定时任务目前只能设置一个群聊投递目标"}
             authorized_tools = t.authorized_tools or []
             email_attachment_file_ids = getattr(t, "email_attachment_file_ids", None) or []
             workspace_id = t.workspace_id
@@ -393,7 +398,6 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 or filesystem_policy.full_user_sandbox
                 or get_settings().storage.backend == "oss"
             )
-            chans = {c for c in (t.channels or "").split(",") if c}
             is_once = task_schedule_kind(t) == "once"
             if is_task_ended(t):
                 return {"错误": "任务已结束"}
@@ -737,6 +741,24 @@ def _detect_group_target(target_map: dict | None) -> dict | None:
                 tgt = {**tgt, "platform": channel}
             return tgt
     return None
+
+
+def _has_multiple_group_targets(target_map: dict | None) -> bool:
+    if not isinstance(target_map, dict):
+        return False
+    return sum(
+        1 for target in target_map.values()
+        if isinstance(target, dict) and target.get("chat_type") == "group" and target.get("chat_id")
+    ) > 1
+
+
+def _active_delivery_targets(target_map: dict | None, channels: set[str]) -> dict:
+    """过滤暂停/未选渠道保留的目标；历史 ``im`` 别名仍表示全部 IM。"""
+    if not isinstance(target_map, dict):
+        return {}
+    if "im" in channels:
+        return target_map
+    return {channel: target for channel, target in target_map.items() if channel in channels}
 
 
 async def _inject_group_context(user_id, target_map, prompt: str) -> tuple[str | None, str]:
