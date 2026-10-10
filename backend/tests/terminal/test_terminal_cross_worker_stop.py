@@ -139,5 +139,64 @@ async def test_terminate_api_uses_shared_sandboxd_when_local_manager_has_no_sess
     assert result["status"] == "terminated"
 
 
+@pytest.mark.asyncio
+async def test_terminate_api_publishes_success_when_local_pty_close_loses_socket_race(monkeypatch):
+    """sandboxd 已停止容器后，本地 socket 关闭竞争不能吞掉终态通知。"""
+    from app.api.v1 import terminals
+
+    row = SimpleNamespace(
+        id="terminal-test", owner_id="owner-test", session_id=None,
+        mode="interactive-pty", pty_sandbox_id="gugu-pty-" + "f" * 32,
+    )
+    published = []
+
+    class Db:
+        async def commit(self):
+            return None
+
+    class Manager:
+        def get(self, terminal_id):
+            return object()
+
+        async def terminate(self, terminal_id, *, force=False):
+            raise BrokenPipeError("PTY socket 已关闭")
+
+    class Client:
+        def __init__(self, socket_path):
+            pass
+
+        async def terminate_pty(self, container_name):
+            return True
+
+    async def authorized(*args, **kwargs):
+        return SimpleNamespace(allowed=True)
+
+    async def terminate_record(_db, target):
+        target.status = "terminated"
+
+    async def publish(*args, **kwargs):
+        published.append(args)
+
+    monkeypatch.setattr(terminals, "get_terminal", lambda *_args: _async_value(row))
+    monkeypatch.setattr(terminals, "authorize_operation", authorized)
+    monkeypatch.setattr(terminals, "terminate_terminal_record", terminate_record)
+    monkeypatch.setattr(terminals, "get_pty_manager", lambda: Manager())
+    monkeypatch.setattr(terminals, "SandboxdClient", Client)
+    monkeypatch.setattr(terminals, "serialize_terminal", lambda target: {
+        "id": target.id, "status": target.status,
+    })
+    monkeypatch.setattr(terminals, "get_settings", lambda: SimpleNamespace(
+        sandbox=SimpleNamespace(sandboxd_socket="/tmp/test-sandboxd.sock"),
+    ))
+    monkeypatch.setattr(terminals.events, "publish", publish)
+
+    result = await terminals.terminate_terminal_view(
+        "terminal-test", user=SimpleNamespace(id="owner-test"), db=Db(), request=None,
+    )
+
+    assert result["status"] == "terminated"
+    assert published
+
+
 async def _async_value(value):
     return value

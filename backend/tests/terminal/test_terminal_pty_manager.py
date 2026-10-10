@@ -118,6 +118,25 @@ async def test_manager_closes_pty_when_output_exceeds_session_limit():
 
 
 @pytest.mark.asyncio
+async def test_manager_signals_subscriber_when_output_queue_overflows():
+    """慢读端队列溢出时丢弃积压并投递终态，防止 WebSocket 永久等待。"""
+    bridge = FakeBridge()
+    manager = PtyManager(bridge)
+    session = await manager.start(spec())
+    queue = await manager.subscribe("term-test")
+    for index in range(queue.maxsize):
+        queue.put_nowait(f"buffered-{index}".encode())
+
+    await bridge.handles[0][1].output_queue.put(b"new-output")
+    await bridge.handles[0][1].output_queue.put(None)
+
+    await asyncio.wait_for(session.output_task, timeout=1)
+    assert await asyncio.wait_for(queue.get(), timeout=1) is None
+    assert manager.get("term-test") is None
+    assert bridge.handles[0][1].closed == [True]
+
+
+@pytest.mark.asyncio
 async def test_manager_unsubscribes_disconnected_output_queue():
     bridge = FakeBridge()
     manager = PtyManager(bridge)

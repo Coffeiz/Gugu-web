@@ -277,6 +277,16 @@ class PtyManager:
         """返回当前进程快照；调用方只能把它用于状态校正，不能据此恢复假进程。"""
         return [session.snapshot() for session in self._sessions.values()]
 
+    @staticmethod
+    def _finish_output_queue(queue: asyncio.Queue[bytes | None]) -> None:
+        """清除订阅者积压并确保终态哨兵可入队，避免消费者永久等待。"""
+        while True:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        queue.put_nowait(None)
+
     async def _pump_output(self, session: ManagedPty) -> None:
         try:
             async for chunk in session.handle.output():
@@ -296,7 +306,7 @@ class PtyManager:
                     except asyncio.QueueFull:
                         # 读端落后时终止连接，不能无限制堆积 PTY 输出。
                         session.output_queues.discard(queue)
-                        queue.put_nowait(None)
+                        self._finish_output_queue(queue)
         finally:
             async with self._lock:
                 owns_session = self._sessions.get(session.terminal_id) is session
@@ -309,10 +319,7 @@ class PtyManager:
                     _log.warning("terminal_pty_handle_close_failed error=%s", type(exc).__name__)
             for queue in tuple(session.output_queues):
                 session.output_queues.discard(queue)
-                try:
-                    queue.put_nowait(None)
-                except asyncio.QueueFull:
-                    pass
+                self._finish_output_queue(queue)
 
     async def _remove(self, terminal_id: str) -> None:
         async with self._lock:

@@ -620,8 +620,12 @@ async def terminate_terminal_view(terminal_id: str, user: User = Depends(get_cur
         if manager.get(row.id) is not None:
             try:
                 await manager.terminate(row.id, force=True)
-            except LookupError:
-                pass
+            except Exception as exc:
+                # sandboxd 已确认容器停止且数据库已提交；本 worker 的句柄关闭仅是
+                # best-effort，不能让 socket 竞争关闭把成功结果变成 HTTP 500。
+                logger.warning(
+                    "terminal_pty_local_cleanup_failed error=%s", type(exc).__name__,
+                )
     await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
                          operation="append", entity_id=row.id,
                          event_payload={"terminal_id": row.id, "terminal": serialize_terminal(row)})
