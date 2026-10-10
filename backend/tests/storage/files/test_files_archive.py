@@ -10,9 +10,10 @@ import pytest
 from sqlalchemy import select
 
 from app.core.errors import Conflict, Invalid, NotFound
-from app.models import File, Folder, Project
+from app.models import File, Folder, Project, StorageQuotaLedger
 from app.services.files.archive import compress_files, extract_file
 from app.services.storage import LocalStorageBackend
+from app.services.storage.quota_ledger import FILE_LIBRARY
 
 
 async def _file(db, storage, user_id, name, data, *, folder_id=None, folder_path=""):
@@ -309,6 +310,16 @@ async def test_extract_checks_live_quota_before_writing(db, user_a, tmp_path):
     payload = buffer.getvalue()
     archive_file = await _file(db, storage, user_a.id, "quota.zip", payload)
     user_a.storage_limit_bytes = len(payload) + 3
+    # 归档热路径只读取账本，不负责在请求中初始化并全量扫描用户空间。
+    # 模拟已完成初始化且压缩包本身已计入占用的用户，剩余容量应为 3 字节。
+    db.add(StorageQuotaLedger(
+        user_id=user_a.id,
+        category=FILE_LIBRARY,
+        limit_bytes=len(payload) + 3,
+        used_bytes=len(payload),
+        reserved_bytes=0,
+        status="active",
+    ))
     await db.flush()
     before_files = len((await db.execute(select(File))).scalars().all())
 
