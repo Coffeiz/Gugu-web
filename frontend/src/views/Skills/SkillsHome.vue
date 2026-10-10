@@ -3,7 +3,22 @@
     <div v-if="error" class="error-banner">{{ error }} <button @click="load">{{ t('skills.retry') }}</button></div>
     <div v-if="loading" class="empty-state">{{ t('skills.loading') }}</div>
     <div v-else-if="!skills.length" class="empty-state"><Icon name="resource.skill" :size="32" /><strong>{{ t('skills.emptyTitle') }}</strong><span>{{ t('skills.emptyHint') }}</span><ActionButton fit @click="openChatSetup">{{ t('skills.createFirst') }}</ActionButton></div>
-    <div v-else class="skill-list scroll-surface scroll-surface--compact"><SkillCard v-for="skill in skills" :key="skill.slug" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" /></div>
+    <div v-else class="skill-list scroll-surface scroll-surface--compact">
+      <section class="skill-group" aria-labelledby="user-skills-heading">
+        <h2 id="user-skills-heading" class="skill-group-title">{{ t('skills.managedByUser') }}</h2>
+        <div v-if="userSkills.length" class="skill-group-grid">
+          <SkillCard v-for="skill in userSkills" :key="skill.slug" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
+        </div>
+        <p v-else class="skill-group-empty">{{ t('skills.userManagedEmpty') }}</p>
+      </section>
+      <section class="skill-group" aria-labelledby="assistant-skills-heading">
+        <h2 id="assistant-skills-heading" class="skill-group-title">{{ t('skills.managedByAssistant') }}</h2>
+        <div v-if="assistantSkills.length" class="skill-group-grid">
+          <SkillCard v-for="skill in assistantSkills" :key="skill.slug" :skill="skill" @toggle="toggleSkill" @edit="openEdit" @remove="removeSkill" />
+        </div>
+        <p v-else class="skill-group-empty">{{ t('skills.assistantManagedEmpty') }}</p>
+      </section>
+    </div>
       <SkillForm
         :key="formKey"
         :show="formOpen"
@@ -22,7 +37,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -34,11 +49,15 @@ import { useUserSkills } from '@/composables/skills/useUserSkills'
 import SkillCard from './components/SkillCard.vue'
 import SkillForm from './components/SkillForm.vue'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
+import { groupSkillsByManager } from './skillGroups'
 
 const {
   skills, tools, toolsLoaded, toolsLoading, toolsError,
   loading, saving, error, load, loadTools, save, toggle, remove,
 } = useUserSkills()
+const groupedSkills = computed(() => groupSkillsByManager(skills.value))
+const userSkills = computed(() => groupedSkills.value.user)
+const assistantSkills = computed(() => groupedSkills.value.assistant)
 const { t } = useI18n()
 const props = defineProps<{ createRequest?: number }>()
 const uiStore = useUiStore()
@@ -81,11 +100,15 @@ async function removeSkill(skill: UserSkillItem) {
 
 <style scoped>
 .skills-home { min-height:0; height:100%; display:flex; flex-direction:column; }
-.skill-list { flex:1; min-height:0; overflow-y:auto; column-count:2; column-gap:12px; margin:0 -8px; padding:10px 8px 16px; }
-.skill-list :deep(.skill-card) { margin:0 0 12px; }
+.skill-list { flex:1; min-height:0; overflow-y:auto; margin:0 -8px; padding:10px 8px 16px; }
+.skill-group + .skill-group { margin-top:20px; padding-top:16px; border-top:1px solid var(--content-divider); }
+.skill-group-title { margin:0 0 12px; color:var(--text-primary); font-size:14px; font-weight:600; }
+.skill-group-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
+.skill-group-grid :deep(.skill-card) { height:100%; }
+.skill-group-empty { margin:0; padding:14px; border:1px dashed var(--content-outline); border-radius:var(--radius-md); color:var(--text-secondary); font-size:12px; text-align:center; }
 .empty-state { min-height:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--content-secondary); }
 .empty-state strong { color:var(--content-primary); }.empty-state span { font-size:12px; }
 .error-banner { padding:10px 12px; border-radius:var(--radius-sm); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
 .error-banner button { margin-left:10px; border:0; background:transparent; color:inherit; cursor:pointer; }
-@media (max-width:720px) { .skill-list { column-count:1; } }
+@media (max-width:720px) { .skill-group-grid { grid-template-columns:1fr; } }
 </style>

@@ -1,0 +1,685 @@
+"""PRD-LLM-2 Phase 1-3 的轻量协议回归。"""
+
+import asyncio
+import json
+from datetime import datetime, timedelta
+
+import pytest
+
+from agent.interactions.events import INTERACTION_REQUIRED, ROUND_START
+from agent.interactions.stream_events import decode_event, encode_event
+from app.models import ConversationMessage, ConversationSession, InteractionPrompt
+from app.core.tz import now_utc
+from app.services.interactions import (
+    _hash_token,
+    consume_action,
+    consume_choice_text,
+    consume_custom_text,
+    consume_text,
+    create_agent_prompt,
+    create_tool_confirmation,
+    create_prompt,
+    CUSTOM_REPLY_OPTION_ID,
+    list_history,
+    wait_for_resolution,
+)
+
+
+def test_schema_dict_accepts_legacy_json_string_and_rejects_invalid_values():
+    from app.services.interactions import _schema_dict
+
+    assert _schema_dict('{"options":[{"id":"a"}]}')["options"][0]["id"] == "a"
+    assert _schema_dict("not-json") == {}
+    assert _schema_dict(["not", "an", "object"]) == {}
+
+
+def test_shell_confirmation_error_envelope_reaches_interaction_bridge():
+    """Shell 的嵌套确认结果必须仍然生成网页/IM 确认交互。"""
+    from agent.interactions.confirmations import confirmation_payload
+
+    payload = confirmation_payload({
+        "error": json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "允许当前会话临时访问公网",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    })
+
+    assert payload is not None
+    assert payload["needs_confirm"] is True
+    assert payload["confirm_code"] == "opaque-confirm-code"
+
+
+def test_confirmation_protocol_accepts_direct_and_nested_results():
+    from agent.interactions.confirmations import confirmation_payload, is_block
+
+    direct = json.dumps({"status": "waiting_confirmation", "needs_confirm": True})
+    nested = {"error": direct, "_audit_event": "confirmation_required"}
+
+    assert confirmation_payload(direct)["needs_confirm"] is True
+    assert confirmation_payload(nested)["status"] == "waiting_confirmation"
+    assert is_block(direct)
+    assert is_block(nested)
+
+
+def test_event_identity_survives_round_trip():
+    line = encode_event(
+        INTERACTION_REQUIRED,
+        run_id="run-test",
+        round_id="round-2",
+        tool_call_id="call-7",
+        seq=9,
+        prompt_id=12,
+    )
+    event = decode_event(line)
+    assert event is not None
+    assert event["run_id"] == "run-test"
+    assert event["round_id"] == "round-2"
+    assert event["tool_call_id"] == "call-7"
+    assert event["seq"] == 9
+
+
+def test_action_tokens_are_stored_as_one_way_hashes():
+    token = "short-lived-action-token"
+    assert _hash_token(token) != token
+    assert _hash_token(token) == _hash_token(token)
+
+
+def test_round_event_name_remains_stable():
+    assert decode_event(encode_event(ROUND_START, run_id="r", round_id="1", seq=1))["type"] == ROUND_START
+
+
+def test_ask_user_tool_is_registered_with_bounded_schema():
+    from agent.tools import registry
+
+    tool = registry.get("ask_user")
+    assert tool is not None
+    assert tool.input_schema["additionalProperties"] is False
+    assert tool.input_schema["properties"]["options"]["maxItems"] == 8
+    assert "allow_text_input" not in tool.input_schema["properties"]
+    assert "title" in tool.input_schema["required"]
+
+
+def test_qq_ask_user_text_fallback_lists_options_without_exposing_tokens():
+    from agent.interactions.qq import format_text_fallback
+
+    text = format_text_fallback({
+        "title": "选一个",
+        "body": "请选择处理方式",
+        "options": [
+            {"id": "keep", "label": "保留"},
+            {"id": "remove", "label": "删除", "token": "secret-token"},
+        ],
+        "allow_text_input": False,
+    })
+    assert "1. 保留" in text
+    assert "2. 删除" in text
+    assert "请在网页点击选项" in text
+    assert "secret-token" not in text
+
+
+async def _make_interaction_session(db, user):
+    session = ConversationSession(user_id=user.id, title="交互测试", source="web")
+    db.add(session)
+    await db.flush()
+    db.add(ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="触发交互",
+    ))
+    db.add(ConversationMessage(
+        session_id=session.id,
+        role="assistant",
+        content="",
+        content_json=[{"type": "tool_call", "id": "call-1", "name": "ask_user", "arguments": {}}],
+    ))
+    pending_message = ConversationMessage(
+        session_id=session.id,
+        role="user",
+        content="",
+        content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": '{"status":"waiting_input"}'}],
+    )
+    db.add(pending_message)
+    await db.commit()
+    return session, pending_message
+
+
+async def test_ask_user_button_result_is_stored_for_run_resume(db, user_a):
+    """按钮结果写进 resolved_result，运行侧据此恢复本轮工具往返。
+
+    工具往返不在这里改写：交互期间那一轮 batch 还没落库（只在 run 收尾时写），
+    用户的选择由运行侧回填到内存消息与 canonical 快照，落库时自然带上
+    （见 MessageArea.replace_tool_result）。
+    """
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="choice",
+        title="选择",
+        body="选一个",
+        options=[{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+        context={"tool_call_id": "call-1"},
+    )
+    await db.commit()
+    result = await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-1"
+    )
+    assert result["result"]["option_id"] == "a"
+    await db.refresh(prompt)
+    assert prompt.schema_json["resolved_result"]["option_id"] == "a"
+
+
+async def test_ask_user_tool_result_creates_waiting_prompt(db, user_a):
+    session = ConversationSession(user_id=user_a.id, title="交互回归", source="qq")
+    db.add(session)
+    await db.commit()
+
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-ask-user",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "请选择",
+            "body": "请选择下一步",
+            "options": [
+                {"id": "talk", "label": "继续聊"},
+                {"id": "sleep", "label": "去睡觉"},
+            ],
+        },
+    )
+
+    assert prompt.session_id == session.id
+    assert prompt.kind == "choice"
+    assert [item["id"] for item in actions] == ["talk", "sleep", CUSTOM_REPLY_OPTION_ID]
+    assert prompt.schema_json["source"] == "agent"
+    assert prompt.schema_json["allow_text_input"] is True
+
+
+@pytest.mark.asyncio
+async def test_question_prompt_without_options_still_offers_custom_reply(db, user_a):
+    """开放性提问（question、0 选项）也必须有自定义回复兜底按钮。
+
+    token 只随选项生成：0 选项时 rendered=[] 意味着网页端没有任何回答入口，
+    用户打字只能进消息排队。兜底后走与 choice 相同的两步式文本回答。
+    """
+    session = ConversationSession(user_id=user_a.id, title="开放提问", source="web")
+    db.add(session)
+    await db.commit()
+
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-open-question",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "question",
+            "title": "这个文件夹建在哪、叫什么？",
+            "body": "告诉我两点就行",
+            "options": [],
+        },
+    )
+
+    assert prompt.kind == "question"
+    assert prompt.schema_json["options"] == [
+        {"id": CUSTOM_REPLY_OPTION_ID, "label": "自定义回复", "action_type": "custom_reply"},
+    ]
+    assert [item["id"] for item in actions] == [CUSTOM_REPLY_OPTION_ID]
+
+    custom = actions[0]
+    awaiting = await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id,
+        token=custom["token"], event_id="evt-open-activate",
+    )
+    assert awaiting["result"]["status"] == "awaiting_text"
+    answered = await consume_text(
+        db, user_id=user_a.id, prompt_id=prompt.id,
+        text="建在个人文件库，叫「插画参考」", event_id="evt-open-text",
+    )
+    assert answered["result"]["status"] == "answered"
+    stored = await db.get(InteractionPrompt, prompt.id)
+    assert stored.status == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_im_plain_text_answers_question_prompt_with_fallback_button(db, user_a):
+    """兜底按钮不算真实选项：IM 用户不点按钮、直接打字仍能回答开放性提问。"""
+    session = ConversationSession(user_id=user_a.id, title="IM 直答", source="qq")
+    db.add(session)
+    await db.commit()
+
+    prompt, _actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-im-open",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "question",
+            "title": "想看哪块的新闻？",
+            "body": "随便说说就行",
+            "options": [],
+        },
+    )
+    await db.commit()
+
+    result = await consume_custom_text(
+        db, user_id=user_a.id, session_id=session.id,
+        text="看看 F1", event_id="evt-im-open",
+    )
+    assert result is not None
+    assert result["result"]["status"] == "answered"
+    assert result["prompt_id"] == prompt.id
+    stored = await db.get(InteractionPrompt, prompt.id)
+    assert stored.status == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_list_history_keeps_selected_choice_after_refresh(db, user_a):
+    """刷新会话后，已消费的选择仍应作为已完成交互卡恢复。"""
+    session = ConversationSession(user_id=user_a.id, title="选择恢复", source="web")
+    db.add(session)
+    await db.commit()
+
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-refresh-choice",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "请选择",
+            "body": "刷新后仍应看得到结果",
+            "options": [
+                {"id": "keep", "label": "保留"},
+                {"id": "archive", "label": "归档"},
+            ],
+        },
+    )
+    selected = next(item for item in actions if item["id"] == "keep")
+    await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id,
+        token=selected["token"], event_id="evt-refresh-choice",
+    )
+
+    history = await list_history(db, user_id=user_a.id, session_id=session.id)
+    restored = next(item for item in history if item["id"] == prompt.id)
+    assert restored["resolved"] is True
+    assert restored["selected_option_id"] == "keep"
+    assert restored["response_text"] == "保留"
+
+
+async def test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-custom",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "请选择",
+            "body": "请选择下一步",
+            "options": [
+                {"id": "keep", "label": "保留"},
+                {"id": "remove", "label": "删除"},
+            ],
+        },
+    )
+    custom = next(item for item in actions if item["id"] == CUSTOM_REPLY_OPTION_ID)
+    awaiting = await consume_action(
+        db,
+        user_id=user_a.id,
+        prompt_id=prompt.id,
+        token=custom["token"],
+        event_id="evt-custom-choice",
+    )
+    assert awaiting["result"]["status"] == "awaiting_text"
+    stored_prompt = await db.get(InteractionPrompt, prompt.id)
+    assert stored_prompt.status == "active"
+    assert stored_prompt.schema_json["custom_input_active"] is True
+
+    answered = await consume_text(
+        db,
+        user_id=user_a.id,
+        prompt_id=prompt.id,
+        text="改成归档",
+        event_id="evt-custom-text",
+    )
+    assert answered["result"]["status"] == "answered"
+    assert answered["result"]["text"] == "改成归档"
+    stored_prompt = await db.get(InteractionPrompt, prompt.id)
+    assert stored_prompt.status == "resolved"
+
+
+async def test_im_custom_reply_option_then_text_resolves_agent_prompt(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, _actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-im-custom",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "请选择",
+            "body": "请选择下一步",
+            "options": [{"id": "one", "label": "选项一"}, {"id": "two", "label": "选项二"}],
+        },
+    )
+    awaiting = await consume_choice_text(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        text="自定义回复",
+        event_id="evt-im-custom-choice",
+    )
+    assert awaiting["result"]["status"] == "awaiting_text"
+    answered = await consume_text(
+        db,
+        user_id=user_a.id,
+        prompt_id=prompt.id,
+        text="使用我的方案",
+        event_id="evt-im-custom-text",
+    )
+    assert answered["result"]["text"] == "使用我的方案"
+
+
+async def test_system_prompt_cannot_enable_custom_reply(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="confirm",
+        title="确认操作",
+        body="是否继续",
+        options=[{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+        allow_text_input=True,
+    )
+    assert [item["id"] for item in actions] == ["confirm", "cancel"]
+    assert prompt.schema_json["source"] == "system"
+    assert prompt.schema_json["allow_text_input"] is False
+    with pytest.raises(ValueError, match="不接受文本回答"):
+        await consume_text(db, user_id=user_a.id, prompt_id=prompt.id, text="绕过确认")
+
+
+async def test_confirmation_button_grants_server_side_authorization(db, user_a):
+    """确认按钮：确认码兑换服务端授权；结果里不再携带任何模型可复述的凭证。"""
+    from agent.interactions import confirmations
+
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    code = confirmations.needs_confirmation({}, "将删除 2 个文件", user_a.id)
+    code = json.loads(code)["confirm_code"]
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="confirm",
+        title="确认：批量删除",
+        body="将删除 2 个文件",
+        options=[{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+        context={"tool_call_id": "call-1", "confirm_code": code},
+    )
+    await db.commit()
+    result = await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-confirm"
+    )
+    assert result["result"]["status"] == "confirmed"
+    assert result["result"]["confirm"] is True
+    assert "confirm_token" not in result["result"]
+    # 授权记录只在服务端；写入对话的结果不应出现任何凭证，也不再要求模型重新调用。
+    assert code not in json.dumps(result["result"], ensure_ascii=False)
+    assert "重新调用" not in result["result"]["text"]
+    await db.refresh(prompt)
+    assert prompt.schema_json["resolved_result"]["status"] == "confirmed"
+    # 兑换后确认码一次性作废。
+    assert confirmations.redeem_confirmation(user_a.id, code) is None
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "title_fragment"),
+    [
+        ("create_scheduled_task", "新建定时任务"),
+        ("update_scheduled_task", "更新定时任务"),
+        ("canvas_batch", "批量编排画布"),
+    ],
+)
+async def test_confirmable_tool_result_is_bridged_to_confirmation(
+    db, user_a, tool_name, title_fragment,
+):
+    """条件式授权/批量删除确认都必须生成确认卡。"""
+    session = ConversationSession(user_id=user_a.id, title="工具确认", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name=tool_name,
+        tool_call_id=f"call-{tool_name}",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "需要用户确认后继续执行本次操作",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+
+    assert interaction is not None
+    assert interaction["kind"] == "confirm"
+    assert interaction["task_paused"] is True
+    assert title_fragment in interaction["title"]
+    assert [item["id"] for item in interaction["options"]] == ["confirm", "cancel"]
+    assert "opaque-confirm-code" not in json.dumps(interaction, ensure_ascii=False)
+    history = await list_history(db, user_id=user_a.id, session_id=session.id)
+    assert history[-1]["task_paused"] is True
+
+
+async def test_unmarked_scheduled_task_tool_does_not_bridge_confirmation_payload(db, user_a):
+    """确认桥仍只接受显式声明可确认的工具，普通查询工具不能靠返回字段伪造确认卡。"""
+    session = ConversationSession(user_id=user_a.id, title="普通查询", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name="list_scheduled_tasks",
+        tool_call_id="call-list-scheduled-tasks",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "不应由查询工具创建确认卡",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+
+    assert interaction is None
+
+
+async def test_dynamic_mcp_tool_confirmation_is_bridged(db, user_a, monkeypatch):
+    """动态 MCP 工具不在全局 registry：确认结果也必须桥接成统一按钮卡。
+
+    回归 2026-09-18 search_image 确认循环——桥当时只认 registry 工具，MCP
+    工具的 needs_confirm 结果没有按钮，模型复读 JSON、用户回「继续」也无法
+    兑换确认码，确认门无限循环。
+    """
+    from types import SimpleNamespace
+
+    from agent.mcp.manager import mcp_manager
+    from agent.mcp.models import McpToolMeta
+    from uuid import uuid4
+
+    server_id = uuid4()
+    meta = McpToolMeta(
+        server_id=server_id, server_name="zhipu_image_search", tool_name="search_image",
+        prefixed_name="mcp_zhipu_image_search_search_image",
+        description_short="搜图", input_schema={"type": "object", "properties": {}},
+    )
+    def _fake_meta(uid, name):
+        return meta if name == meta.prefixed_name else None
+    monkeypatch.setattr(mcp_manager, "meta_for_prefixed_tool", _fake_meta)
+
+    session = ConversationSession(user_id=user_a.id, title="MCP 确认", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name="mcp_zhipu_image_search_search_image",
+        tool_call_id="call-mcp-search",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "调用 MCP 工具 [zhipu_image_search] search_image",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+    assert interaction is not None
+    assert interaction["kind"] == "confirm"
+    assert interaction["task_paused"] is True
+    assert "zhipu_image_search" in interaction["title"]
+    assert [item["id"] for item in interaction["options"]] == ["confirm", "cancel"]
+    # 确认码只进 context 供兑换，不进事件外发字段
+    assert "opaque-confirm-code" not in json.dumps(
+        {k: v for k, v in interaction.items() if k != "context"}, ensure_ascii=False)
+
+
+async def test_dynamic_mcp_unknown_tool_does_not_bridge(db, user_a):
+    """registry 与 MCP 运行时都查不到的工具：伪造 needs_confirm 不桥接。"""
+    session = ConversationSession(user_id=user_a.id, title="未知工具", source="web")
+    db.add(session)
+    await db.commit()
+
+    interaction = await create_tool_confirmation(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_name="mcp_unknown_server_do_things",
+        tool_call_id="call-unknown",
+        result=json.dumps({
+            "status": "waiting_confirmation",
+            "needs_confirm": True,
+            "summary": "不应桥接",
+            "confirm_code": "opaque-confirm-code",
+        }, ensure_ascii=False),
+    )
+    assert interaction is None
+
+
+async def test_confirm_text_fallback_resolves_confirm_prompt(db, user_a):
+    """确认按钮发送失败后的序号/文字回退，必须消费 confirm Prompt。"""
+    from app.services.interactions import consume_choice_text
+
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="confirm",
+        title="确认操作",
+        body="是否继续",
+        options=[{"id": "confirm", "label": "确认"}, {"id": "cancel", "label": "取消"}],
+        context={"tool_call_id": "call-1"},
+    )
+    await db.commit()
+
+    result = await consume_choice_text(
+        db, user_id=user_a.id, session_id=session.id, text="1", event_id="evt-confirm-text"
+    )
+
+    assert result is not None
+    assert result["kind"] == "confirm"
+    assert result["option_id"] == "confirm"
+    assert result["result"]["status"] == "selected"
+    assert actions[0]["id"] == "confirm"
+
+
+async def test_agent_text_answer_resolves_agent_prompt(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="question",
+        title="补充信息",
+        body="请填写项目名",
+        options=[],
+        context={"tool_call_id": "call-1"},
+        allow_text_input=True,
+        source="agent",
+    )
+    await db.commit()
+    # 0 选项也要有自定义回复兜底按钮（网页回答入口依赖随选项生成的 token）。
+    assert [item["id"] for item in actions] == [CUSTOM_REPLY_OPTION_ID]
+    # 兜底按钮不算真实选项：不先激活自定义输入、直接打字仍然可消费。
+    result = await consume_text(
+        db, user_id=user_a.id, prompt_id=prompt.id, text="旅行项目", event_id="evt-2"
+    )
+    assert result["result"]["status"] == "answered"
+    assert result["result"]["text"] == "旅行项目"
+
+
+async def test_wait_for_resolution_returns_same_interaction_result(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="choice",
+        title="选择",
+        body="选一个",
+        options=[{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+        context={"tool_call_id": "call-1"},
+    )
+    await db.commit()
+    waiting = asyncio.create_task(wait_for_resolution(
+        user_id=user_a.id, prompt_id=prompt.id, timeout_seconds=1,
+    ))
+    await asyncio.sleep(0.02)
+    await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id, token=actions[1]["token"], event_id="evt-wait"
+    )
+    result = await waiting
+    assert result is not None
+    assert result["option_id"] == "b"
+
+
+async def test_wait_for_resolution_stops_and_closes_prompt_on_cancel(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, _actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="choice",
+        title="选择",
+        body="选一个",
+        options=[{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+    )
+    await db.commit()
+    cancelled = False
+
+    async def cancel_check():
+        return cancelled
+
+    waiting = asyncio.create_task(wait_for_resolution(
+        user_id=user_a.id,
+        prompt_id=prompt.id,
+        timeout_seconds=1,
+        cancel_check=cancel_check,
+    ))
+    await asyncio.sleep(0.02)
+    cancelled = True
+    result = await waiting
+    assert result == {"status": "cancelled", "prompt_id": prompt.id}
+    await db.refresh(prompt)
+    assert prompt.status == "cancelled"

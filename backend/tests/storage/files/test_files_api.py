@@ -1,0 +1,384 @@
+"""P0.3b file REST 端点 —— delegate 到 FileService 后端到端行为 + 响应 shape 不变。
+
+同 test_folders_api：直接调路由函数（current_user/db/origin 显式传），不起 TestClient。
+FileService(db) 内部走 get_storage()，用 monkeypatch 指向 tmp_path 本地后端；事件广播 noop。
+"""
+import io
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from fastapi import BackgroundTasks, HTTPException, UploadFile
+from pydantic import ValidationError
+from sqlalchemy import select
+from starlette.datastructures import Headers
+
+from app.api.v1 import files as files_api
+from app.core.errors import Invalid, NotFound
+from app.models import File, Folder, Project, StorageQuotaLedger, UndoOperation
+from app.schemas import FileCopyBody, FileUpdate
+from app.services.storage import LocalStorageBackend
+
+
+@pytest.fixture(autouse=True)
+def _storage_and_events(tmp_path, monkeypatch):
+    storage = LocalStorageBackend(Path(tmp_path))
+    # FileService(db) 默认 get_storage()（在 file_service 命名空间导入），指向临时本地后端
+    monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
+    monkeypatch.setattr(files_api, "get_storage", lambda: storage)
+
+    async def _noop(*a, **k):
+        pass
+    monkeypatch.setattr(files_api.events, "publish", _noop)
+    return storage
+
+
+def _upload(data: bytes, filename: str, content_type: str = "text/plain") -> UploadFile:
+    return UploadFile(file=io.BytesIO(data), filename=filename,
+                      headers=Headers({"content-type": content_type}))
+
+
+async def _do_upload(db, user, data, filename, **kw):
+    return await files_api.upload_file(
+        BackgroundTasks(), file=_upload(data, filename, kw.pop("content_type", "text/plain")),
+        current_user=user, origin=None, db=db,
+        space=kw.pop("space", "personal"), project_id=kw.pop("project_id", None),
+        folder_id=kw.pop("folder_id", None), stage_name=kw.pop("stage_name", ""),
+        mind_map_id=kw.pop("mind_map_id", None), on_conflict=kw.pop("on_conflict", "keep_both"),
+        overwrite_file_id=kw.pop("overwrite_file_id", None))
+
+
+async def test_upload_endpoint(db, user_a):
+    r = await _do_upload(db, user_a, b"hello", "报告.pdf")
+    assert r.display_name == "报告" and r.ext == "PDF" and r.space == "personal"
+    assert r.size_bytes == 5
+
+
+async def test_local_presign_uses_proxy_without_scanning_storage(db, user_a, monkeypatch):
+    """本地上传弹窗的 presign 探测应直接回退代理；真实配额校验由 /files 完成，
+    避免上传开始前为无用的签名目标递归扫描用户物理目录。"""
+    async def unexpected_target_preparation(*_args, **_kwargs):
+        raise AssertionError("本地代理模式不应准备 presign target")
+
+    monkeypatch.setattr(files_api, "prepare_presign_target", unexpected_target_preparation)
+    result = await files_api.presign_upload(
+        files_api.PresignRequest(filename="sample.clip", size_bytes=100),
+        current_user=user_a,
+        db=db,
+    )
+
+    assert result == {"mode": "proxy"}
+
+
+async def test_upload_keep_both_conflict(db, user_a):
+    await _do_upload(db, user_a, b"1", "a.txt")
+    r2 = await _do_upload(db, user_a, b"2", "a.txt")
+    assert r2.display_name == "a(1)"
+
+
+async def test_check_conflicts_keeps_batch_response_shape(db, user_a):
+    await _do_upload(db, user_a, b"1", "a.txt")
+    body = files_api.ConflictCheckRequest(items=[
+        files_api.ConflictCheckItem(filename="a.txt"),
+        files_api.ConflictCheckItem(filename="b.txt"),
+    ])
+    result = await files_api.check_conflicts(body, current_user=user_a, db=db)
+    assert [item["conflict"] for item in result] == [True, False]
+
+
+async def test_upload_overwrite(db, user_a):
+    r1 = await _do_upload(db, user_a, b"old", "a.txt")
+    old_version = r1.version
+    r2 = await _do_upload(db, user_a, b"newer", "a.txt",
+                          on_conflict="overwrite", overwrite_file_id=r1.id)
+    assert r2.id == r1.id and r2.size_bytes == 5
+    assert r2.version == old_version + 1
+
+
+async def test_upload_project_shapes_response(db, user_a):
+    p = Project(user_id=user_a.id, name="设计", start_date="2026-03-15")
+    db.add(p)
+    await db.commit()
+    await db.refresh(p)
+    r = await _do_upload(db, user_a, b"x", "图.png", space="project", project_id=p.id)
+    assert r.project_id == p.id and r.project_name == "设计"
+
+
+async def test_upload_project_not_found(db, user_a):
+    with pytest.raises(Invalid):
+        await _do_upload(db, user_a, b"x", "a.txt", space="project", project_id=999)
+
+
+async def test_file_detail_returns_related_labels_and_hides_other_users_rows(db, user_a, user_b):
+    project = Project(user_id=user_a.id, name="合成项目", color="cyan", start_date="2026-10-01")
+    db.add(project)
+    await db.flush()
+    folder = Folder(user_id=user_a.id, project_id=project.id, name="资料")
+    owned = File(
+        user_id=user_a.id, display_name="说明", ext="MD", space="project",
+        project_id=project.id, folder=folder, size="12 B", size_bytes=12,
+        storage_key=f"{user_a.id}/项目文件/说明.md",
+    )
+    private = File(
+        user_id=user_b.id, display_name="私有", ext="TXT", space="personal",
+        size="1 B", size_bytes=1, storage_key=f"{user_b.id}/个人文件/私有.txt",
+    )
+    db.add_all([owned, private])
+    await db.commit()
+    await db.refresh(owned)
+
+    response = await files_api.get_file(owned.id, current_user=user_a, db=db)
+
+    assert (response.project_name, response.folder_name, response.size_bytes) == ("合成项目", "资料", 12)
+    with pytest.raises(HTTPException) as raised:
+        await files_api.get_file(private.id, current_user=user_a, db=db)
+    assert raised.value.status_code == 404
+
+
+async def test_file_summary_returns_total_count_and_only_requested_recent_rows(db, user_a):
+    rows = [
+        File(user_id=user_a.id, display_name=f"file-{index}", ext="TXT", storage_key=f"personal/{index}")
+        for index in range(4)
+    ]
+    deleted = File(user_id=user_a.id, display_name="deleted", ext="TXT", storage_key="personal/deleted",
+                   deleted_at=datetime.now(timezone.utc))
+    db.add_all([*rows, deleted])
+    await db.commit()
+
+    result = await files_api.file_summary(recent_limit=2, current_user=user_a, db=db)
+
+    assert result.total_count == 4
+    assert len(result.recent_files) == 2
+    assert result.recent_files[0].id > result.recent_files[1].id
+    assert all(file.display_name != "deleted" for file in result.recent_files)
+
+
+async def test_patch_rename_endpoint(db, user_a):
+    up = await _do_upload(db, user_a, b"1", "old.txt")
+    r = await files_api.update_file(up.id, FileUpdate(display_name="new"),
+                                    current_user=user_a, origin=None, db=db)
+    assert r.display_name == "new"
+
+
+async def test_patch_extension_endpoint_updates_suffix_only(db, user_a):
+    up = await _do_upload(db, user_a, b"unchanged", "notes.txt")
+    file_row = await db.get(File, up.id)
+    r = await files_api.update_file(up.id, FileUpdate(ext="md"),
+                                    current_user=user_a, origin=None, db=db)
+    assert r.ext == "MD"
+    assert r.display_name == "notes"
+    assert r.mime_type == up.mime_type
+    await db.refresh(file_row)
+    assert await files_api.get_storage().get(file_row.storage_key) == b"unchanged"
+
+
+@pytest.mark.parametrize("extension", ["", "FILE", "waytoolonggg", "bad.ext", "坏"])
+def test_file_update_rejects_invalid_extension(extension):
+    with pytest.raises(ValidationError):
+        FileUpdate(ext=extension)
+
+
+async def test_patch_not_found(db, user_a):
+    with pytest.raises(NotFound):
+        await files_api.update_file(999, FileUpdate(display_name="x"),
+                                    current_user=user_a, origin=None, db=db)
+
+
+async def test_copy_endpoint(db, user_a):
+    up = await _do_upload(db, user_a, b"body", "doc.txt")
+    r = await files_api.copy_file(up.id, FileCopyBody(folder_id=None, project_id=None),
+                                  current_user=user_a, origin=None, db=db)
+    assert r.id != up.id and r.display_name == "doc(1)"
+
+
+async def test_copy_not_found(db, user_a):
+    with pytest.raises(NotFound):
+        await files_api.copy_file(999, FileCopyBody(folder_id=None, project_id=None),
+                                  current_user=user_a, origin=None, db=db)
+
+
+async def test_download_endpoint_reads_owned_file(db, user_a):
+    uploaded = await _do_upload(db, user_a, b"download-body", "report.txt")
+    response = await files_api.download_file(uploaded.id, current_user=user_a, db=db)
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    assert body == b"download-body"
+    # 图片预览会反复打开同一文件，响应必须带缓存头，浏览器才能免重复下载
+    assert response.headers["cache-control"] == "private, max-age=300"
+    assert response.media_type == "text/plain"
+    # 流式响应头先于读盘发出，Content-Length 必须是物理对象真实大小（历史
+    # size_bytes 脏数据不能进头，否则 uvicorn 失配断连）
+    assert response.headers["content-length"] == "13"
+
+
+async def test_download_missing_on_disk_returns_404(db, user_a):
+    uploaded = await _do_upload(db, user_a, b"body", "gone.txt")
+    row = (await db.execute(select(File).where(File.id == uploaded.id))).scalar_one()
+    # 直接删物理文件，模拟「库里有记录、盘上没有」
+    storage = files_api.get_storage()
+    (storage.root / row.storage_key).unlink()
+    with pytest.raises(HTTPException) as exc:
+        await files_api.download_file(uploaded.id, current_user=user_a, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_download_deleted_file_returns_404(db, user_a):
+    uploaded = await _do_upload(db, user_a, b"body", "trashed.txt")
+    row = (await db.execute(select(File).where(File.id == uploaded.id))).scalar_one()
+    row.deleted_at = datetime.now(tz=timezone.utc)
+    await db.commit()
+    with pytest.raises(HTTPException) as exc:
+        await files_api.download_file(uploaded.id, current_user=user_a, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_stream_deleted_file_returns_404(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"0123456789", "audio.mp3", content_type="audio/mpeg")
+    row = (await db.execute(select(File).where(File.id == uploaded.id))).scalar_one()
+    row.deleted_at = datetime.now(tz=timezone.utc)
+    await db.commit()
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    with pytest.raises(HTTPException) as exc:
+        await files_api.stream_file(uploaded.id, token="stream-token", request=None, db=db)
+    assert exc.value.status_code == 404
+
+
+async def test_stream_dl_serves_attachment_disposition(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"0123456789", "audio.mp3", content_type="audio/mpeg")
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    response = await files_api.stream_file(
+        uploaded.id, token="stream-token", dl=1, request=None, db=db,
+    )
+    assert response.headers["content-disposition"].startswith("attachment; filename*=UTF-8''")
+
+
+async def test_stream_endpoint_serves_http_range_without_reading_whole_file(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"0123456789", "audio.mp3", content_type="audio/mpeg")
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+    request = SimpleNamespace(headers={"range": "bytes=3-6"})
+    response = await files_api.stream_file(
+        uploaded.id, token="stream-token", request=request, db=db,
+    )
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    assert response.status_code == 206
+    assert response.headers["content-range"] == "bytes 3-6/10"
+    assert body == b"3456"
+
+
+async def test_stream_empty_file_returns_zero_length_body(db, user_a, monkeypatch):
+    uploaded = await _do_upload(db, user_a, b"", "empty.txt")
+    monkeypatch.setattr(files_api, "verify_stream_token", lambda token: (uploaded.id, user_a.id))
+
+    response = await files_api.stream_file(
+        uploaded.id, token="stream-token", request=None, db=db,
+    )
+    body = b"".join([chunk async for chunk in response.body_iterator])
+
+    assert response.status_code == 200
+    assert response.headers["content-length"] == "0"
+    assert body == b""
+
+
+# ── 分块流式上传（内存峰值与上限解耦）────────────────────────────────────────
+
+async def test_upload_stream_writes_exact_content(db, user_a):
+    r = await _do_upload(db, user_a, b"hello-stream-bytes", "流式.txt")
+    assert r.size_bytes == 18
+    row = (await db.execute(
+        select(File).where(File.display_name == "流式")
+    )).scalars().one()
+    storage = files_api.get_storage()
+    assert await storage.get(row.storage_key) == b"hello-stream-bytes"
+
+
+async def test_upload_over_limit_rejects_without_artifacts(db, user_a, monkeypatch):
+    """超过用户总容量必须在收流途中拒绝：不建 File 行、不落任何存储对象。"""
+    user_a.storage_limit_bytes = 4
+    with pytest.raises(HTTPException) as ei:
+        await _do_upload(db, user_a, b"0123456789", "大文件.txt")
+    assert ei.value.status_code == 413
+    assert (await db.execute(select(File))).scalars().all() == []
+
+
+async def test_upload_capacity_uses_quota_ledger_without_scanning_directories(
+    db, user_a, monkeypatch,
+):
+    """已初始化的用户上传时读取账本，避免每次请求遍历整个本地存储树。"""
+    import app.services.storage.quota_ledger as quota_ledger
+
+    user_a.storage_limit_bytes = 100
+    db.add(StorageQuotaLedger(
+        user_id=user_a.id, category=quota_ledger.FILE_LIBRARY,
+        used_bytes=40, reserved_bytes=10, limit_bytes=100, status="active",
+    ))
+    await db.flush()
+
+    async def unexpected_scan(*_args, **_kwargs):
+        pytest.fail("已有配额账本时上传容量检查不应递归扫描目录")
+
+    monkeypatch.setattr(quota_ledger, "_measure_local_unregistered_bytes", unexpected_scan)
+    limit, available = await files_api._upload_capacity(db, user_a, "keep_both", None)
+
+    assert limit == 100
+    assert available == 50
+
+
+def _request_with_undo_context():
+    # record_forward 没有 X-Undo-Context-ID 就不记撤销；直调路由时用假 request 带上。
+    return SimpleNamespace(headers={"X-Undo-Context-ID": "ctx-test"})
+
+
+async def test_oversized_overwrite_skips_undo_record(db, user_a, monkeypatch):
+    """超过 undo 内容上限的覆盖上传：不记撤销操作（否则留存两份全量正文）。"""
+    r1 = await _do_upload(db, user_a, b"old-content", "a.txt")
+    monkeypatch.setattr(files_api, "_UNDO_CONTENT_MAX", 4)
+    r2 = await files_api.upload_file(
+        BackgroundTasks(), file=_upload(b"new-content-long", "a.txt"),
+        current_user=user_a, origin=None, db=db, space="personal",
+        project_id=None, folder_id=None, stage_name="", mind_map_id=None,
+        on_conflict="overwrite", overwrite_file_id=r1.id,
+        request=_request_with_undo_context())
+    assert r2.id == r1.id
+    assert (await db.execute(select(UndoOperation))).scalars().all() == []
+
+
+async def test_normal_overwrite_still_records_undo(db, user_a):
+    r1 = await _do_upload(db, user_a, b"old", "a.txt")
+    await files_api.upload_file(
+        BackgroundTasks(), file=_upload(b"new", "a.txt"),
+        current_user=user_a, origin=None, db=db, space="personal",
+        project_id=None, folder_id=None, stage_name="", mind_map_id=None,
+        on_conflict="overwrite", overwrite_file_id=r1.id,
+        request=_request_with_undo_context())
+    ops = (await db.execute(select(UndoOperation))).scalars().all()
+    assert len(ops) == 1
+
+
+# ── 图片探针：header 直读，假图不整包进内存 ─────────────────────────────────
+
+def _png_bytes(w=3, h=5):
+    from io import BytesIO
+    from PIL import Image as PILImage
+    buf = BytesIO()
+    PILImage.new("RGB", (w, h), (200, 10, 10)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def test_upload_real_image_gets_dimensions(db, user_a):
+    body = _png_bytes(4, 7)
+    await _do_upload(db, user_a, body, "真图.png", content_type="image/png")
+    row = (await db.execute(
+        select(File).where(File.display_name == "真图")
+    )).scalars().one()
+    assert (row.img_width, row.img_height) == (4, 7)
+
+
+async def test_upload_fake_image_dims_none(db, user_a):
+    """mime 是用户可控输入：假 PNG 探不到尺寸就 None，不能为宽高整包读。"""
+    body = b"\x89PNG\r\n\x1a\n" + b"\x00" * (128 * 1024)
+    r = await _do_upload(db, user_a, body, "假图.png", content_type="image/png")
+    row = (await db.execute(
+        select(File).where(File.display_name == "假图")
+    )).scalars().one()
+    assert row.img_width is None and row.img_height is None
+    assert r.size_bytes == len(body)

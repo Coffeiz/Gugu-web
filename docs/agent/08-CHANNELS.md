@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | Web | HTTP API；流式响应使用 SSE | `app.api.v1.agent`、`agent.gateway.web` | Agent SSE、普通 API 响应 | 主要网页对话入口 |
 | QQ | QQ Bot Gateway WebSocket | `agent.gateway.qq` -> Redis Stream -> `agent.im.loop` | QQ Bot HTTP API；文本、Markdown、文件、键盘和群成员 mention | 已接入 C2C 和群聊 |
-| 微信 | iLink HTTP long-poll (`getupdates`) | `agent.gateway.wechat` -> Redis Stream -> `agent.im.loop` | iLink HTTP API；文本和媒体，回复依赖 `context_token` | 已接入私聊、群聊、引用和媒体 |
+| 微信 | iLink HTTP long-poll (`getupdates`) | `agent.gateway.wechat` -> Redis Stream -> `agent.im.loop` | iLink HTTP API；文本和媒体，回复依赖 `context_token` | 官方 ClawBot 当前仅开放私聊；普通微信群聊受平台限制 |
 | 飞书 | Lark SDK WebSocket 事件连接 | `agent.gateway.feishu` -> Redis Stream -> `agent.im.loop` | 飞书消息 API；文本、卡片、文件和图片 | 已接入私聊、群聊、交互卡片和媒体 |
 
 `backend/app/core/events.py` 的用户级 Redis Pub/Sub -> SSE 是网页资源实时更新总线，不是 IM 渠道，也不替代 QQ/微信/飞书的入站连接。终端的 PTY WebSocket 是另一套交互协议，同样不属于本文的 IM Gateway。
@@ -26,7 +26,7 @@
 | 增量 token 流 | 完整，Agent SSE | 降级为按 Round 发送 | 降级为按 Round 发送 | 降级为按 Round 发送 |
 | 多 Round 分段 | Web 事件流展示 | 完整，独立发送每个非空 Round | 完整，统一收集后发送 | 完整，统一收集后发送 |
 | 私聊 | 完整 | C2C | c2c | p2p 归一为 c2c |
-| 群聊 | 不适用 | 完整，支持 @/被动记录策略 | 完整，依赖 iLink 群字段 | 完整，依赖 chat_id |
+| 群聊 | 不适用 | 完整，支持 @/被动记录策略 | 不支持：官方 ClawBot/iLink 当前未开放普通微信群聊 | 完整，依赖 chat_id |
 | 引用文本 | 完整 | 完整，独立 `quoted_text` | 不支持还原文字原文；仅保留平台摘要或不支持占位 | 完整，解析回复引用 |
 | 引用附件 | Web attachment reference | 完整 | 支持识别图片/文件等引用媒体，下载/解密后暂存 | 完整，媒体适配 |
 | 图片/文件入站 | 上传附件 | 完整 | 完整，含 iLink 媒体解密 | 完整 |
@@ -43,6 +43,8 @@
 | 网页资源实时更新 | 用户级 SSE | 通过后端事件反映到 Web | 通过后端事件反映到 Web | 通过后端事件反映到 Web |
 
 “网页资源实时更新”指 Web 的 `live-event-v1` 用户事件流，不表示 QQ、微信或飞书收到资源变更推送；IM 渠道只有在实际发送出站消息时才会触达平台用户。平台能力不对称时，统一语义优先，展示形式由 `agent.im.replies` 和对应 Gateway 负责。
+
+微信的限制针对本项目接入的官方 ClawBot/iLink 入口：当前仅支持与 Bot 私聊，不能加入普通微信群或接收群内消息。这是平台能力边界，不是咕咕的群聊路由、权限或消息处理故障；不要通过非官方协议或客户端模拟绕过。
 
 ## 1.2 消息架构图
 

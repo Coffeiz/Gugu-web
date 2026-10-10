@@ -515,9 +515,7 @@ async def search_memory(
         session_factory = db_session._SessionLocal
         if session_factory is None:
             raise RuntimeError("RAG 数据库会话工厂未初始化")
-    # 记忆专用检索（PRD-KNOWLEDGE-2）：knowledge 已独立（直读走 read_knowledge
-    # 工具、召回走 search_knowledge），这里不再挂 knowledge 检索器；未知 source
-    # 走 MemoryRetriever 的来源过滤自然返回空结果。
+    # 记忆检索只挂载记忆来源；无效 source 由 MemoryRetriever 的来源过滤返回空结果。
     retrievers = [MemoryRetriever(user_id, source_filter=source)]
     from agent.rag.batch_retriever import UnifiedQueryRetriever
 
@@ -574,7 +572,7 @@ async def search_knowledge(
     limit: int = DEFAULT_RESULTS, mode: str = "automatic", db=None, db_factory=None,
     exclude_content_hashes: set[str] | None = None,
 ) -> dict:
-    """统一 Knowledge 入口：注册 memory、knowledge、project、file、canvas、note、conversation 来源。
+    """统一 Knowledge 入口：注册 memory、knowledge、project、canvas、note、conversation 来源。
 
     `search_memory` 保持记忆专用工具语义；自动召回和跨来源入口使用本函数。
     """
@@ -603,7 +601,6 @@ async def search_knowledge(
         MemoryRetriever(user_id),
         IndexedSourceRetriever(user_id, db=db, source_type="knowledge"),
         ProjectRetriever(user_id, db=db, db_factory=db_factory),
-        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="file"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="canvas"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="note"),
         IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="calendar"),

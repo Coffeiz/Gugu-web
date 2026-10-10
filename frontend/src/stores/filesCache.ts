@@ -24,6 +24,13 @@ export type FolderMeta = components['schemas']['FolderResponse'] & {
   workspaceDirectoryId?: number | null
 }
 
+export interface DirectorySnapshotScope {
+  space: 'personal' | 'project' | 'workspace'
+  projectId?: number
+  folderId?: number
+  workspaceDirectoryId?: number
+}
+
 let _lastVersion: string | number | null = null
 let _visibilityBound = false
 let _pendingLiveRefresh = false
@@ -33,6 +40,11 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const allFolders = ref<FolderMeta[]>([])
   const loaded     = ref(false)
   const loading    = ref(false)
+  const fileLookups = new Map<string, Promise<FileMeta | null>>()
+
+  // 画布文件卡会在节点更新时按 ID 读取文件。缓存数组用于列表/目录视图，单项读取则用
+  // 这个惰性索引，避免每张卡都在线性扫描整个文件缓存。
+  const _fileById = computed(() => new Map(allFiles.value.map(file => [file.id, file])))
 
   // ── 索引 ──────────────────────────────────────────────────────────────────
   // files key: folderId (int) | 'workspace:{directoryId}' | 'proj:{id}' | 'personal'
@@ -127,15 +139,18 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     _bindVisibility()
   }
 
-  async function refresh() {
+  async function refresh(): Promise<boolean> {
     const requestEpoch = getAccountBoundaryEpoch()
     try {
       const [files, folders, ver] = await Promise.all([filesApi.all(), foldersApi.all(), filesApi.version()])
-      if (requestEpoch !== getAccountBoundaryEpoch()) return
+      if (requestEpoch !== getAccountBoundaryEpoch()) return false
       allFiles.value   = files
       allFolders.value = folders
       _lastVersion = ver?.version ?? null
-    } catch { /* 静默失败 */ }
+      return true
+    } catch {
+      return false
+    }
   }
 
   function resetAccountState() {
@@ -144,6 +159,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     allFolders.value = []
     loaded.value = false
     loading.value = false
+    fileLookups.clear()
     _lastVersion = null
     _pendingLiveRefresh = false
   }
@@ -168,7 +184,9 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
 
   // ── 乐观更新：文件 ────────────────────────────────────────────────────────
   function addFile(file: FileMeta) {
-    allFiles.value = [file, ...allFiles.value]
+    const index = allFiles.value.findIndex(item => item.id === file.id)
+    if (index < 0) allFiles.value = [file, ...allFiles.value]
+    else allFiles.value.splice(index, 1, file)
   }
 
   function removeFile(id: number) {
@@ -185,21 +203,97 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   }
 
   function getFile(id: number) {
-    return allFiles.value.find(f => f.id === id) ?? null
+    return _fileById.value.get(id) ?? null
+  }
+
+  /** Mind 画布只需读取实际引用的文件；按 ID 加载并合并缓存，不触发文件库全量扫描。 */
+  async function ensureFile(id: number): Promise<FileMeta | null> {
+    const cached = getFile(id)
+    if (cached) return cached
+    if (loaded.value) return null
+
+    const epoch = getAccountBoundaryEpoch()
+    const key = `${epoch}:${id}`
+    const pending = fileLookups.get(key)
+    if (pending) return pending
+
+    const lookup = filesApi.get(id).then(file => {
+      if (epoch !== getAccountBoundaryEpoch()) return null
+      const normalized = file as FileMeta
+      addFile(normalized)
+      return normalized
+    }).catch(error => {
+      if ((error as { status?: number }).status === 404) return null
+      throw error
+    }).finally(() => {
+      fileLookups.delete(key)
+    })
+    fileLookups.set(key, lookup)
+    return lookup
   }
 
   // ── 乐观更新：文件夹 ──────────────────────────────────────────────────────
   // 上传链路新建的文件夹可能不带 fileCount（useFileUpload 的 onFolderCreated 未标该字段）——
   // 新建文件夹本就 0 文件，缺省补 0，保证入库的都是完整 FolderMeta。
   function addFolder(folder: { id: number; name: string; projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; fileCount?: number; version?: number }) {
-    allFolders.value = [...allFolders.value, {
+    const normalized: FolderMeta = {
       id: folder.id, name: folder.name,
       projectId: folder.projectId ?? null,
       workspaceDirectoryId: folder.workspaceDirectoryId ?? null,
       parentId:  folder.parentId ?? null,
       fileCount: folder.fileCount ?? 0,
       version:   folder.version ?? 1,
-    }]
+    }
+    const index = allFolders.value.findIndex(item => item.id === folder.id)
+    if (index < 0) allFolders.value = [...allFolders.value, normalized]
+    else allFolders.value.splice(index, 1, normalized)
+  }
+
+  function fileBelongsToDirectory(file: FileMeta, scope: DirectorySnapshotScope): boolean {
+    if (scope.folderId != null) return file.folderId === scope.folderId
+    if (scope.space === 'workspace') {
+      return file.space === 'workspace' && file.workspaceDirectoryId === scope.workspaceDirectoryId && file.folderId == null
+    }
+    if (scope.space === 'project') return file.projectId === scope.projectId && file.folderId == null
+    return file.space === 'personal' && file.projectId == null && file.workspaceDirectoryId == null && file.folderId == null
+  }
+
+  function folderBelongsToDirectory(folder: FolderMeta, scope: DirectorySnapshotScope): boolean {
+    if (scope.folderId != null) return folder.parentId === scope.folderId
+    if (scope.space === 'workspace') {
+      return folder.workspaceDirectoryId === scope.workspaceDirectoryId && folder.parentId == null
+    }
+    if (scope.space === 'project') return folder.projectId === scope.projectId && folder.parentId == null
+    return folder.projectId == null && folder.workspaceDirectoryId == null && folder.parentId == null
+  }
+
+  // 目录 API 返回的是该目录的权威快照：替换同一目录成员，保留其他未加载目录。
+  function replaceDirectorySnapshot(scope: DirectorySnapshotScope, files: FileMeta[], folders: FolderMeta[]) {
+    const incomingFolderIds = new Set(folders.map(folder => folder.id))
+    const removedFolderIds = new Set<number>()
+    allFolders.value.filter(folder => folderBelongsToDirectory(folder, scope) && !incomingFolderIds.has(folder.id))
+      .forEach(folder => removedFolderIds.add(folder.id))
+    let foundDescendant = true
+    while (foundDescendant) {
+      foundDescendant = false
+      for (const folder of allFolders.value) {
+        if (folder.parentId != null && removedFolderIds.has(folder.parentId) && !removedFolderIds.has(folder.id)) {
+          removedFolderIds.add(folder.id)
+          foundDescendant = true
+        }
+      }
+    }
+
+    const nextFiles = new Map(allFiles.value.filter(file =>
+      !fileBelongsToDirectory(file, scope) && (file.folderId == null || !removedFolderIds.has(file.folderId)),
+    ).map(file => [file.id, file]))
+    files.forEach(file => nextFiles.set(file.id, file))
+    allFiles.value = [...nextFiles.values()]
+    const nextFolders = new Map(allFolders.value.filter(folder =>
+      !folderBelongsToDirectory(folder, scope) && !removedFolderIds.has(folder.id),
+    ).map(folder => [folder.id, folder]))
+    folders.forEach(folder => nextFolders.set(folder.id, folder))
+    allFolders.value = [...nextFolders.values()]
   }
 
   function removeFolder(id: number) {
@@ -265,7 +359,10 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   watch(() => useLiveStore().resourceEvent, (event) => {
     if (!event || event.resource !== 'files') return
     if (!loaded.value) {
-      _pendingLiveRefresh = true
+      // Mind 的按 ID 查询会建立局部缓存，但不代表完整文件库已加载。实时事件仍需更新已缓存的
+      // 引用实体；只有无法应用的变更才留待之后的全量 load 补齐。
+      const applied = applyCanonicalEvent(event)
+      if (!applied && event.operation !== 'delete') _pendingLiveRefresh = true
       return
     }
     eventQueue.receive(event)
@@ -277,7 +374,8 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     getPersonalRootFiles, getProjectRootFiles, getFolderFiles,
     getWorkspaceFiles,
     getPersonalRootFolders, getProjectRootFolders, getSubFolders, getWorkspaceFolders,
-    addFile, removeFile, removeFiles, updateFile, getFile,
+    addFile, removeFile, removeFiles, updateFile, getFile, ensureFile,
     addFolder, removeFolder, updateFolder, getFolder,
+    replaceDirectorySnapshot,
   }
 })

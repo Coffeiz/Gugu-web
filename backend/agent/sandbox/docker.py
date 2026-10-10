@@ -14,11 +14,13 @@ import os
 import pty
 import signal
 import shutil
+import subprocess
 import struct
 import termios
 from uuid import uuid4
 from pathlib import Path
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from urllib.parse import urlparse
 
 from app.core.config import SandboxSettings
 
@@ -26,6 +28,7 @@ from .bundle_runtime import bundle_directory
 from .docker_runtime import (
     docker_environment,
     docker_container_mount_source,
+    force_remove_pty_container,
     resolved_image_digest,
     sandbox_root_label,
     valid_egress_network_name,
@@ -74,7 +77,13 @@ class DockerPtyHandle:
         if self._closed:
             return
         self._closed = True
+        remove_error = None
         try:
+            if self.sandbox_id.startswith("gugu-pty-"):
+                try:
+                    await asyncio.to_thread(force_remove_pty_container, self.sandbox_id)
+                except Exception as exc:
+                    remove_error = exc
             if self.process.returncode is None:
                 await asyncio.to_thread(
                     os.killpg, self.process.pid, signal.SIGKILL if force else signal.SIGTERM,
@@ -86,6 +95,8 @@ class DockerPtyHandle:
                     await self.process.wait()
         finally:
             os.close(self.master_fd)
+        if remove_error is not None:
+            raise RuntimeError("PTY 容器强制移除失败") from remove_error
 
     async def output(self):
         while not self._closed:
@@ -236,7 +247,7 @@ class DockerSandboxExecutor:
         self.image = _image_ref(settings)
         self._daemon_host_data_root: str | None = None
         self._daemon_host_data_root_resolved = False
-    def _daemon_mount_src_for(self, path: Path) -> Path:
+    def _daemon_mount_src_for(self, path: Path, *, initialize_acl: bool = True) -> Path:
         """解析目标 daemon 可见的 bind 源；embedded 与 app 共享容器内路径。"""
         from app.core.config import get_settings
 
@@ -248,9 +259,10 @@ class DockerSandboxExecutor:
                 resolved.relative_to(logical_root)
             except (OSError, ValueError) as exc:
                 raise ValueError("内置沙盒挂载路径超出授权数据目录，已拒绝创建容器") from exc
-            from .rootless_permissions import ensure_sandbox_acl
-            if not ensure_sandbox_acl(resolved):
-                raise ValueError("内置 Rootless 沙盒挂载权限初始化失败，已拒绝创建容器")
+            if initialize_acl:
+                from .rootless_permissions import ensure_sandbox_acl
+                if not ensure_sandbox_acl(resolved):
+                    raise ValueError("内置 Rootless 沙盒挂载权限初始化失败，已拒绝创建容器")
             return resolved
         if not self._daemon_host_data_root_resolved:
             self._daemon_host_data_root = self._resolve_external_host_data_root()
@@ -261,6 +273,67 @@ class DockerSandboxExecutor:
             return Path(self._daemon_host_data_root) / path.relative_to(logical_root)
         except ValueError as exc:
             return path
+
+    def build_filesync_acl_argv(self, workspace_root: str | Path) -> list[str]:
+        """为一个已授权工作区修复 Rootless 文件权限，不触碰工作区以外路径。
+
+        helper 仍以沙盒 UID 运行，因此只能调整它自己创建的 inode。非 root Worker
+        仅在实际 UID 与本地 Rootless daemon socket 属主一致时使用此 helper；容器
+        user namespace 中的 UID 0 映射到该安装用户。不假定宿主 UID/GID。
+        助手只能修复沙盒属主的对象；成功返回不代表整个目录可读，后续监听与
+        对账仍须独立验证覆盖范围，不能据此清除缺口。
+        """
+        root = Path(workspace_root).expanduser().resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("文件同步工作区根目录必须是目录")
+        # 该 helper 正是为修复子目录 ACL；不能先以应用身份递归初始化 ACL，
+        # 否则遇到沙盒私有目录时会在 helper 启动前失败。
+        source = self._daemon_mount_src_for(root, initialize_acl=False)
+        command = (
+            "set -eu; "
+            "find /workspace -xdev -type d ! -uid 65532 "
+            "\\( ! -readable -o ! -executable \\) -prune -o -uid 65532 -type d "
+            "-exec setfacl -m u:0:rwx,d:u:0:rwx {} +; "
+            "find /workspace -xdev -type d ! -uid 65532 "
+            "\\( ! -readable -o ! -executable \\) -prune -o -uid 65532 -type f "
+            "-exec setfacl -m u:0:rwX {} +"
+        )
+        return [
+            self.docker_path, "run", "--rm", "--pull=never", "--network=none",
+            "--pids-limit=16", "--cpus=0.5", "--memory=134217728",
+            "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+            "--security-opt=apparmor=docker-default", f"--user={_CONTAINER_USER}",
+            f"--mount=type=bind,src={source},dst=/workspace",
+            self.image, "/bin/bash", "-lc", command,
+        ]
+
+    def prepare_filesync_access(self, workspace_root: str | Path) -> None:
+        """在已授权 workspace 内为 watcher 主体修复沙盒创建项的 ACL。"""
+        root = Path(workspace_root).expanduser().resolve(strict=True)
+        if os.geteuid() != 0:
+            self._ensure_filesync_worker_matches_rootless_daemon()
+        argv = self.build_filesync_acl_argv(workspace_root)
+        result = subprocess.run(
+            argv, cwd=self.root, env=docker_environment(),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=120, check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("文件同步工作区权限修复失败")
+
+    @staticmethod
+    def _ensure_filesync_worker_matches_rootless_daemon() -> None:
+        """非 root Worker 只在其 UID 与本地 Rootless daemon 一致时使用 UID 0 ACL。"""
+        docker_host = docker_environment().get("DOCKER_HOST", "")
+        parsed = urlparse(docker_host)
+        if parsed.scheme != "unix" or not parsed.path:
+            raise RuntimeError("文件同步权限助手需要本地 Rootless Docker socket")
+        try:
+            daemon_uid = Path(parsed.path).stat().st_uid
+        except OSError as exc:
+            raise RuntimeError("无法确认 Rootless Docker 用户身份") from exc
+        if daemon_uid != os.geteuid():
+            raise RuntimeError("文件同步 Worker 与 Rootless Docker 用户不一致")
 
     def _resolve_external_host_data_root(self) -> str | None:
         """保留分体部署显式路径及旧 Compose 展开错误值的兼容解析。"""
@@ -602,6 +675,7 @@ exec bash --noprofile --norc -i
         authorization_check: Callable[[], Awaitable[bool]] | None = None,
         on_output: Callable[[str, str], Awaitable[None]] | None = None,
         quota_root: str | Path | None = None,
+        quota_roots: Sequence[str | Path] | None = None,
         quota_bytes: int | None = None,
         network_profile: str | None = None,
     ) -> ShellResult:
@@ -612,6 +686,14 @@ exec bash --noprofile --norc -i
         )
         timeout_value = max(0.1, min(float(timeout if timeout is not None else self.settings.timeout_seconds), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars if max_output_chars is not None else self.settings.output_limit_bytes), _MAX_OUTPUT))
+        quota_paths = tuple(dict.fromkeys(
+            Path(path).expanduser().resolve(strict=True)
+            for path in ([*(quota_roots or ()), *([quota_root] if quota_root else [])])
+        ))
+        if quota_paths and quota_bytes is None:
+            raise ValueError("quota_bytes 必须与 quota_roots 一起提供")
+        if quota_bytes is not None and not quota_paths:
+            raise ValueError("quota_bytes 缺少 quota_roots")
 
         process = await asyncio.create_subprocess_exec(
             *docker_argv,
@@ -629,10 +711,7 @@ exec bash --noprofile --norc -i
         cancelled = False
         wait_task = asyncio.create_task(process.wait())
         auth_task = asyncio.create_task(LocalWorkspaceExecutor._watch_authorization(authorization_check)) if authorization_check else None
-        quota_path = Path(quota_root).expanduser().resolve(strict=True) if quota_root else None
-        if quota_path is not None and quota_bytes is None:
-            raise ValueError("quota_bytes 必须与 quota_root 一起提供")
-        quota_task = asyncio.create_task(self._watch_quota(quota_path, quota_bytes)) if quota_path else None
+        quota_task = asyncio.create_task(self._watch_quota(quota_paths, quota_bytes)) if quota_paths else None
         quota_exceeded = False
         try:
             tasks = {wait_task} | ({auth_task} if auth_task else set()) | ({quota_task} if quota_task else set())
@@ -680,12 +759,15 @@ exec bash --noprofile --norc -i
         )
 
     @staticmethod
-    async def _watch_quota(root: Path | None, limit: int | None) -> bool:
+    async def _watch_quota(root: Path | Sequence[Path] | None, limit: int | None) -> bool:
         if root is None or limit is None:
+            return False
+        roots = (root,) if isinstance(root, Path) else tuple(root)
+        if not roots:
             return False
         while True:
             try:
-                if measure_directory(root) > limit:
+                if sum(measure_directory(path) for path in roots) > limit:
                     return True
             except OSError:
                 return True

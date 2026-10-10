@@ -11,6 +11,7 @@ from app.services.files.browser import (
     get_user_folder,
     list_user_folders,
 )
+from app.services.files.corpus import find_user_file_by_logical_path
 from app.services.projects import get_user_project
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key
@@ -243,40 +244,67 @@ async def _resolve_create_location(db, user_id, args: dict):
 
 
 
+async def _resolve_file_path(db, user_id, name: str):
+    """把逻辑路径解析为当前用户已登记的唯一文件。"""
+    if name.startswith("file://"):
+        return None, json.dumps({
+            "error": "不接受 file:// 本地 URI；请使用 /personal、/project 或 /workspace 下的逻辑路径。",
+        }, ensure_ascii=False)
+    if name.startswith("/"):
+        try:
+            rows = await find_user_file_by_logical_path(db, user_id=user_id, path=name)
+        except ValueError as exc:
+            return None, json.dumps({"error": str(exc)}, ensure_ascii=False)
+        if not rows:
+            return None, json.dumps({
+                "error": "逻辑路径未匹配到已登记的文件；请先用 list_dir 确认路径和文件是否已同步。",
+            }, ensure_ascii=False)
+        if len(rows) > 1:
+            return None, json.dumps({
+                "error": "逻辑路径匹配到多个文件记录，请用 file_id 指定。",
+                "candidates": [{"id": file.id, "name": f"{file.display_name}.{file.ext}"} for file in rows[:10]],
+            }, ensure_ascii=False)
+        return rows[0], None
+
+
+async def _resolve_file_name(db, user_id, name: str):
+    """按文件名定位，绑定工作区优先但不限制文件库其余空间。"""
+    base = name.rsplit(".", 1)[0] if "." in name else name
+    workspace_target = await _bound_workspace_target(db, user_id)
+    scoped = {}
+    if workspace_target:
+        scoped = {
+            "space": workspace_target["space"],
+            "project_id": workspace_target.get("project_id"),
+            "folder_id": workspace_target.get("folder_id"),
+            "workspace_directory_id": workspace_target.get("workspace_directory_id"),
+            "root": workspace_target.get("kind") == "project",
+        }
+    rows = await find_user_files_by_name(db, user_id, base, **scoped)
+    if not rows and scoped:
+        # 绑定围栏只约束 Shell；按名查找在绑定落点找不到时放宽到全库，
+        # 让绑定会话也能按名操作个人/项目空间的文件（重名仍要求指明 id）。
+        rows = await find_user_files_by_name(db, user_id, base)
+    if not rows:
+        return None, json.dumps({"error": f"未找到文件「{name}」"})
+    if len(rows) > 1:
+        return None, json.dumps({"error": f"有多个匹配「{name}」的文件，请指明",
+                                 "candidates": [{"id": f.id, "name": f"{f.display_name}.{f.ext}",
+                                                 "space": f.space, "folder_id": f.folder_id} for f in rows[:10]]})
+    return rows[0], None
+
+
 async def _resolve_file(db, user_id, args):
-    """按 file_id 或文件名 file 定位（仅未删除文件）；返回 (File|None, 错误JSON|None)。"""
+    """按 file_id、文件名或用户逻辑路径定位存活文件记录。"""
     fid = args.get("file_id")
     if fid:
         f = await get_user_file(db, user_id, fid)
-        if not f:
-            return None, json.dumps({"error": "文件不存在"})
-        return f, None
-    name = args.get("file")
+        return (f, None) if f else (None, json.dumps({"error": "文件不存在"}))
+    name = str(args.get("file") or "").strip()
+    if name.startswith(("/", "file://")):
+        return await _resolve_file_path(db, user_id, name)
     if name:
-        name = str(name).strip()
-        base = name.rsplit(".", 1)[0] if "." in name else name
-        workspace_target = await _bound_workspace_target(db, user_id)
-        scoped = {}
-        if workspace_target:
-            scoped = {
-                "space": workspace_target["space"],
-                "project_id": workspace_target.get("project_id"),
-                "folder_id": workspace_target.get("folder_id"),
-                "workspace_directory_id": workspace_target.get("workspace_directory_id"),
-                "root": workspace_target.get("kind") == "project",
-            }
-        rows = await find_user_files_by_name(db, user_id, base, **scoped)
-        if not rows and scoped:
-            # 绑定围栏只约束 Shell；按名查找在绑定落点找不到时放宽到全库，
-            # 让绑定会话也能按名操作个人/项目空间的文件（重名仍要求指明 id）。
-            rows = await find_user_files_by_name(db, user_id, base)
-        if not rows:
-            return None, json.dumps({"error": f"未找到文件「{name}」"})
-        if len(rows) > 1:
-            return None, json.dumps({"error": f"有多个匹配「{name}」的文件，请指明",
-                                     "candidates": [{"id": f.id, "name": f"{f.display_name}.{f.ext}",
-                                                     "space": f.space, "folder_id": f.folder_id} for f in rows[:10]]})
-        return rows[0], None
+        return await _resolve_file_name(db, user_id, name)
     return None, json.dumps({"error": "需提供 file_id 或文件名 file"})
 async def _folder_by_name(
     db, user_id, name, space=None, project_id=None, workspace_directory_id=None,

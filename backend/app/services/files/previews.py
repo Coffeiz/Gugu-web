@@ -15,7 +15,9 @@ from app.models import File
 from app.services.storage import get_storage
 
 
-THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (192, 82)}
+# 卡片图按最长边 768px 生成，避免纵向长图在横向卡片里 cover 后被大幅放大。
+# v2 文件名让已有低分辨率磁盘缓存自动失效。
+THUMB_SIZE_MAP = {"tiny": (20, 75), "card": (768, 92)}
 THUMB_SEM = asyncio.Semaphore(max(1, (os.cpu_count() or 2) - 1))
 XLSX_PREVIEW_CACHE_MAX = 4
 XLSX_PREVIEW_CACHE_MAX_BYTES = 128 * 1024 * 1024
@@ -478,20 +480,21 @@ def thumb_dir() -> Path:
 
 
 def thumb_path(file_id: int, size: str) -> Path:
-    return thumb_dir() / f"{file_id}_{size}.webp"
+    return thumb_dir() / f"{file_id}_{size}_v2.webp"
 
 
 def delete_thumb_cache(file_id: int, storage_root: Path | None = None) -> None:
     # 对账时传入实际扫描根对应的 storage root，测试和多实例运行不会误删默认配置目录。
     directory = (storage_root / ".thumbs") if storage_root is not None else thumb_dir()
     for size in ("tiny", "card"):
-        for extension in (".webp", ".jpg"):
-            path = directory / f"{file_id}_{size}{extension}"
-            try:
-                if path.exists():
-                    path.unlink()
-            except OSError:
-                pass
+        for version in ("", "_v2"):
+            for extension in (".webp", ".jpg"):
+                path = directory / f"{file_id}_{size}{version}{extension}"
+                try:
+                    if path.exists():
+                        path.unlink()
+                except OSError:
+                    pass
 
 
 def generate_thumbs_sync(raw: bytes, file_id: int, sizes: tuple = ("tiny",)) -> None:
@@ -514,7 +517,7 @@ def generate_thumbs_sync(raw: bytes, file_id: int, sizes: tuple = ("tiny",)) -> 
         output.thumbnail((max_px, max_px), Image.LANCZOS)
         buffer = io.BytesIO()
         output.save(buffer, format="WEBP", quality=quality)
-        (directory / f"{file_id}_{size_name}.webp").write_bytes(buffer.getvalue())
+        (directory / f"{file_id}_{size_name}_v2.webp").write_bytes(buffer.getvalue())
 
 
 def generate_thumb_jpeg_fallback(raw: bytes, size: str) -> bytes | None:

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import type { FileLibraryNavigationTarget } from '@/utils/filesNav'
 import { ref, computed } from 'vue'
 import { playGuguSfx } from '@/services/sfx'
 
@@ -41,7 +42,7 @@ export const useUiStore = defineStore('ui', () => {
   const profileInitialNav = ref<string | null>(null)
   const pendingChatSession   = ref<unknown>(null)
   const pendingChatPrefill   = ref<string | null>(null)
-  const pendingFileTarget    = ref<{ kind: string; id: number } | null>(null)
+  const pendingFileTarget    = ref<FileLibraryNavigationTarget | null>(null)
   const pendingChatMessageId = ref<number | null>(null)   // 对话搜索命中消息时，跳转后滚到该消息
   const pendingCalendarEvent = ref<{ id: number; date?: string } | null>(null)   // { id, date } 日程搜索跳转
   const pendingNoteId = ref<number | null>(null)   // 思维笔记搜索跳转后打开对应便签的编辑态

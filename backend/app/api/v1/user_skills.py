@@ -107,7 +107,7 @@ def _serialize(row: UserSkill) -> dict:
         "description_long": row.description_long,
         "category": row.category, "related_tools": list(row.related_tools or ()),
         "body": row.body,
-        "source": row.source, "enabled": bool(row.enabled),
+        "source": row.source, "managed_by": row.managed_by or "user", "enabled": bool(row.enabled),
         "content_digest": row.content_digest,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -131,19 +131,18 @@ async def _write_skill(
     values = dict(values)
     enabled = values.pop("enabled", True if slug is None else None)
     try:
-        _, allowed_tool_names, dynamic_tools = await _tools_for_skill_update(
+        _, _, dynamic_tools = await _tools_for_skill_update(
             user_id, values.get("related_tools") or [],
         )
         if slug is None:
             row = await _registry.create_user_skill(
-                db, user_id, allowed_tool_names=allowed_tool_names,
-                dynamic_tools=dynamic_tools, **values,
+                db, user_id, dynamic_tools=dynamic_tools, managed_by="user", **values,
             )
             row.enabled = enabled
         else:
             row = await _registry.update_user_skill(
-                db, user_id, slug, allowed_tool_names=allowed_tool_names,
-                dynamic_tools=dynamic_tools, enabled=enabled, **values,
+                db, user_id, slug, dynamic_tools=dynamic_tools,
+                enabled=enabled, managed_by="user", **values,
             )
             if row is None:
                 raise HTTPException(404, "Skill 不存在")

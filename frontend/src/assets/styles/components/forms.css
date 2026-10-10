@@ -1,4 +1,40 @@
 /* 跨页面复用的基础表单控件结构样式；主题状态由 adoption/forms.css 提供。 */
+:where(
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='button']):not([type='submit']):not([type='reset']):not([type='image']),
+  textarea,
+  [contenteditable]:not([contenteditable='false'])
+) {
+  caret-color: var(--input-caret-color);
+}
+
+@supports (caret-shape: bar) {
+  :where(
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='button']):not([type='submit']):not([type='reset']):not([type='image']),
+    textarea,
+    [contenteditable]:not([contenteditable='false'])
+  ) {
+    caret-shape: bar;
+  }
+}
+
+@keyframes app-input-caret-fade {
+  0%, 80%, 100% { caret-color: transparent; }
+  15%, 65% { caret-color: var(--input-caret-color); }
+}
+
+@supports (caret-animation: manual) {
+  @media (prefers-reduced-motion: no-preference) {
+    :where(
+      input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='button']):not([type='submit']):not([type='reset']):not([type='image']),
+      textarea,
+      [contenteditable]:not([contenteditable='false'])
+    ):focus {
+      caret-animation: manual;
+      animation: app-input-caret-fade 1s ease-in-out infinite;
+    }
+  }
+}
+
 .title-edit-input {
   background: var(--input-bg);
   border: 1px solid var(--input-border);
@@ -8,7 +44,7 @@
   font-weight: 700; line-height: 1.2;
   font-family: var(--font-sans); color: var(--text-primary);
   box-shadow: var(--input-hover-shadow);
-  caret-color: var(--action-primary);
+  caret-color: var(--input-caret-color);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .title-edit-input:focus {

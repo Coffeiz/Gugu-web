@@ -80,17 +80,6 @@ export type ProjectRecord = RagSourceRecord & {
   id: number;
 };
 
-export type FileMetadataRecord = RagSourceRecord & {
-  source_type: "file";
-  id: number;
-  display_name: string;
-  ext?: string;
-  mime_type?: string;
-  project_id?: number | null;
-  folder_id?: number | null;
-  size_bytes: number;
-};
-
 export type ConversationRecord = RagSourceRecord & {
   source_type: "conversation";
   id: number;

@@ -873,14 +873,14 @@ function setEditProvider(key: string) {
   const pv = PROVIDERS.value.find(p => p.key === key)
   if (!pv || !target) return
   target.provider = key
-  target.base_url = pv.base_url
+  target.base_url = ''
   target.model    = pv.model
   // mimo 同时提供两套 API：默认 openai 格式；切到别的 provider 清掉（走自动判定）
   target.api_format = key === 'mimo' ? 'openai' : ''
   target.deployment_mode = key === 'local' ? 'local' : 'cloud'
   target.ollama_mode = key === 'ollama' ? 'local' : (target.ollama_mode || 'local')
   if (key === 'ollama') {
-    target.ollama_api_mode = target.ollama_api_mode || 'native'
+    target.ollama_api_mode = 'native'
     target.ollama_keep_alive = target.ollama_keep_alive || '5m'
   }
   modelOptions.value = []
@@ -893,11 +893,11 @@ function setEditProviderSelection(selection: string) {
   const target = editTarget.value
   if (!target || !variant) return
   if (provider === 'glm') {
-    target.base_url = variant === 'coding'
-      ? 'https://open.bigmodel.cn/api/coding/paas/v4'
-      : 'https://open.bigmodel.cn/api/paas/v4'
+    target.provider = variant === 'coding' ? 'glm-coding' : 'glm'
+    target.base_url = ''
   } else if (provider === 'local') {
     target.local_runtime = variant
+    target.base_url = ''
   } else if (provider === 'ollama' && (variant === 'local' || variant === 'cloud')) {
     setOllamaMode(variant)
   }
@@ -906,23 +906,18 @@ function setEditProviderSelection(selection: string) {
 function setOllamaMode(mode: 'local' | 'cloud') {
   if (!editTarget.value || editTarget.value.provider !== 'ollama') return
   editTarget.value.ollama_mode = mode
-  editTarget.value.base_url = mode === 'cloud'
-    ? 'https://ollama.com/v1'
-    : 'http://127.0.0.1:11434/v1'
+  editTarget.value.base_url = ''
   if (mode === 'local') editTarget.value.api_key = ''
   modelOptions.value = []
   modelListError.value = ''
 }
 
-// 选 API 格式时，同步切换 mimo 端点后缀（host 保留，只改 /v1 ↔ /anthropic）
+// 协议对应的默认端点由 Provider 能力快照提供；手填的自定义 URL 保持不变。
 function pickApiFormat(fmt: string) {
   const target = editTarget.value
   if (!target) return
+  if (target.provider === 'glm' && (target.base_url || '').includes('/api/coding/')) target.provider = 'glm-coding'
   target.api_format = fmt
-  const bu = (target.base_url || '').replace(/\/(v1|anthropic)\/?$/, '')
-  if (bu.includes('xiaomimimo')) {
-    target.base_url = bu + (fmt === 'anthropic' ? '/anthropic' : '/v1')
-  }
   modelOptions.value = []
   modelListError.value = ''
 }

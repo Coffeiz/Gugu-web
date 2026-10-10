@@ -11,7 +11,14 @@ import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
-import { isLiveEventPayload, type LiveEventPayload } from '@/types/live-events'
+import {
+  isAgentRunChangedEvent,
+  isLiveEventPayload,
+  isTrashPurgeProgressEvent,
+  type AgentRunChangedEvent,
+  type LiveEventPayload,
+  type TrashPurgeProgressEvent,
+} from '@/types/live-events'
 import { usePreviewStore } from '@/stores/preview'
 import { isUnauthorizedResponse } from '@/services/authSession'
 
@@ -26,6 +33,8 @@ export const useLiveStore = defineStore('live', () => {
 
   // 所有实时变化统一通过 canonical 事件传递；业务 store 自己决定增量应用或重拉。
   const resourceEvent = ref<(LiveEventPayload & { _t: number }) | null>(null)
+  const trashPurgeEvent = ref<(TrashPurgeProgressEvent & { _t: number }) | null>(null)
+  const agentRunEvent = ref<(AgentRunChangedEvent & { _t: number }) | null>(null)
   let _seq = 0
   const seenEventIds = new Set<string>()
   const lastCanonicalRevision = new Map<string, number>()
@@ -40,6 +49,16 @@ export const useLiveStore = defineStore('live', () => {
 
   function bump(resource: string) {
     if (resource in rev) rev[resource]++
+  }
+
+  function rememberEvent(eventId: string) {
+    if (seenEventIds.has(eventId)) return false
+    seenEventIds.add(eventId)
+    if (seenEventIds.size > 512) {
+      const oldest = seenEventIds.values().next().value
+      if (typeof oldest === 'string') seenEventIds.delete(oldest)
+    }
+    return true
   }
 
   // 咕咕 present_file 推送：可见标签页直接打开全局预览；后台标签页只弹通知，不抢焦点。
@@ -116,14 +135,19 @@ export const useLiveStore = defineStore('live', () => {
                 running = false
                 break
               }
+              if (isTrashPurgeProgressEvent(evt)) {
+                if (!rememberEvent(evt.event_id)) continue
+                trashPurgeEvent.value = { ...evt, _t: ++_seq }
+                continue
+              }
+              if (isAgentRunChangedEvent(evt)) {
+                if (!rememberEvent(evt.event_id)) continue
+                agentRunEvent.value = { ...evt, _t: ++_seq }
+                continue
+              }
               if (isLiveEventPayload(evt)) {
                 const canonical = evt as LiveEventPayload
-                if (seenEventIds.has(canonical.event_id)) continue
-                seenEventIds.add(canonical.event_id)
-                if (seenEventIds.size > 512) {
-                  const oldest = seenEventIds.values().next().value
-                  if (typeof oldest === 'string') seenEventIds.delete(oldest)
-                }
+                if (!rememberEvent(canonical.event_id)) continue
                 const previousRevision = lastCanonicalRevision.get(canonical.resource)
                 if (previousRevision != null && canonical.revision <= previousRevision) continue
                 if (previousRevision != null && canonical.revision > previousRevision + 1) bump(canonical.resource)
@@ -171,6 +195,8 @@ export const useLiveStore = defineStore('live', () => {
     disconnect()
     Object.keys(rev).forEach(resource => { rev[resource] = 0 })
     resourceEvent.value = null
+    trashPurgeEvent.value = null
+    agentRunEvent.value = null
     seenEventIds.clear()
     lastCanonicalRevision.clear()
     _catchUpTimers.forEach(clearTimeout)
@@ -179,7 +205,7 @@ export const useLiveStore = defineStore('live', () => {
     everConnected = false
   }
 
-  return { rev, connected, resourceEvent, bump, connect, disconnect, resetAccountState }
+  return { rev, connected, resourceEvent, trashPurgeEvent, agentRunEvent, bump, connect, disconnect, resetAccountState }
 })
 
 function _sleep(ms: number) {

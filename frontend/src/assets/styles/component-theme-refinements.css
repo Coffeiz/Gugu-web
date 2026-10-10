@@ -100,15 +100,17 @@ html[data-theme][data-family] .cal-page .wv-dhead.weekend::after,
 html[data-theme][data-family] .cal-page .wv-ad-hover.weekend {
   background: var(--calendar-weekend-hover-bg) !important;
 }
-html[data-theme][data-family] .cal-page .month-cell.is-today.is-weekend,
-html[data-theme][data-family] .cal-page .month-cell.in-range.is-weekend {
+html[data-theme][data-family] .cal-page .month-cell.is-today.is-weekend {
   background: var(--calendar-weekend-hover-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.is-selected.is-weekend,
-html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend,
-html[data-theme][data-family] .cal-page .month-cell.range-end.is-weekend,
+html[data-theme][data-family] .cal-page .month-cell.in-range.is-weekend,
 html[data-theme][data-family] .cal-page .wv-ad-sel.weekend {
   background: var(--calendar-weekend-selected-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend,
+html[data-theme][data-family] .cal-page .month-cell.range-end.is-weekend {
+  background: var(--calendar-weekend-range-edge-bg) !important;
 }
 html[data-theme][data-family] .cal-page .month-cell.is-selected:not(.is-today).is-weekend .cell-num,
 html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend .cell-num,
@@ -200,7 +202,7 @@ html[data-theme='light'][data-family='glass'] .chat-window {
 /* Mono 亮色也沿用单一外框契约，不恢复局部高光。 */
 html[data-theme='light'][data-family='mono'] .chat-window {
   --gugu-chat-highlight: var(--highlight-strong);
-  border-top-color: var(--border-strong);
+  border-top-color: var(--chrome-glass-border);
 }
 
 /* Glass 使用浅色玻璃边缘；Mono 侧栏边界沿用主题语义令牌，不继承白色 Aero 高光。 */

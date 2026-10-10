@@ -34,9 +34,9 @@ export const devToolRegistry: DevToolEntry[] = [
     descriptionKey: 'devHome.tools.email.description',
   },
   {
-    path: '/dev/notes-three-pane',
-    labelKey: 'devHome.tools.notesThreePane.label',
-    eyebrowKey: 'devHome.tools.notesThreePane.eyebrow',
-    descriptionKey: 'devHome.tools.notesThreePane.description',
+    path: '/dev/notes-timeline',
+    labelKey: 'devHome.tools.notesTimeline.label',
+    eyebrowKey: 'devHome.tools.notesTimeline.eyebrow',
+    descriptionKey: 'devHome.tools.notesTimeline.description',
   },
 ]

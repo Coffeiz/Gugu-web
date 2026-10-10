@@ -13,6 +13,7 @@ from app.core.tz import now_utc
 from app.models import File, FileSyncBinding, FileSyncConflict, FileSyncJournal
 from app.services.filesync.protocol import (
     FileSyncMode,
+    FileSyncOperation,
     FileSyncSource,
     FileSyncStatus,
     create_binding,
@@ -33,7 +34,7 @@ from app.services.filesync.snapshots import (
     save_snapshot,
     snapshot_fingerprint,
 )
-from app.services.workspaces import workspace_shell_supported
+from app.services.workspaces import resolve_workspace_root, workspace_shell_supported
 from app.services.storage import get_storage
 
 
@@ -101,6 +102,24 @@ async def _get_or_create_binding(
         binding.status = "active"
         await db.flush()
     return binding
+
+
+async def prepare_local_binding(
+    db: AsyncSession,
+    user_id,
+    *,
+    root_path: str = ".",
+    mode: str = FileSyncMode.BIDIRECTIONAL,
+) -> FileSyncBinding:
+    """校验并持久化绑定范围，但不扫描或投影任何文件。"""
+    if not is_file_sync_enabled() or not workspace_shell_supported():
+        raise ValueError("当前存储模式不支持本地文件同步")
+    if mode not in {item.value for item in FileSyncMode}:
+        raise ValueError("同步模式无效")
+    relative, root = resolve_local_binding_root(user_id, root_path)
+    return await _get_or_create_binding(
+        db, user_id, root_path=relative, root=root, mode=mode,
+    )
 
 
 async def _other_binding_roots(
@@ -452,7 +471,7 @@ async def resolve_sync_conflict(
 ) -> FileSyncConflict:
     if not workspace_shell_supported():
         raise LookupError("OSS 存储模式不支持文件同步")
-    if resolution not in {"keep_local", "keep_remote", "keep_both", "cancel"}:
+    if resolution not in {"keep_local", "keep_remote", "keep_both", "confirm_delete", "cancel"}:
         raise ValueError("冲突处理方式无效")
     conflict = await get_owned(db, FileSyncConflict, conflict_id, user_id)
     if conflict is None or conflict.status != "pending":
@@ -460,9 +479,75 @@ async def resolve_sync_conflict(
     binding = await get_owned(db, FileSyncBinding, conflict.binding_id, user_id)
     if binding is None:
         raise LookupError("同步绑定不存在")
-    _, root = resolve_local_binding_root(user_id, binding.root_path)
+    if binding.workspace_id is not None:
+        root = await resolve_workspace_root(db, user_id, binding.workspace_id)
+        if root is None:
+            raise LookupError("同步工作区不可用")
+    else:
+        _, root = resolve_local_binding_root(user_id, binding.root_path)
     candidate = root / conflict.relative_path
-    observed = _fingerprint(candidate) if candidate.is_file() and not candidate.is_symlink() else None
+    resolved_candidate = candidate.resolve(strict=False)
+    try:
+        resolved_candidate.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError("冲突路径超出绑定目录，不能处理") from exc
+    try:
+        observed = _fingerprint(candidate) if candidate.is_file() and not candidate.is_symlink() else None
+    except OSError as exc:
+        raise ValueError("本地文件无法读取，不能保留本地") from exc
+    if resolution == "keep_local" and observed is None:
+        raise ValueError("本地文件不存在，不能保留本地")
+    if resolution == "confirm_delete":
+        if observed is not None or candidate.is_symlink() or candidate.exists():
+            raise ValueError("本地路径已存在，不能确认删除")
+        user_root = _user_root(user_id)
+        root_relative = root.resolve().relative_to(user_root).as_posix()
+        storage_prefix = f"{user_id}/" if root_relative == "." else f"{user_id}/{root_relative.rstrip('/')}/"
+        file = (await db.execute(select(File).where(
+            File.user_id == user_id,
+            File.storage_key == storage_prefix + conflict.relative_path,
+            File.deleted_at.is_(None),
+        ).with_for_update())).scalar_one_or_none()
+        if file is None:
+            raise ValueError("找不到对应的活动文件记录，无法确认删除")
+        now = now_utc()
+        size_bytes = int(file.size_bytes or 0)
+        from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage
+
+        if size_bytes:
+            # 先以文件仍处于活动状态时的 DB/磁盘事实建立账本基线，再扣除这条
+            # 记录。若先软删除，首次建账会漏掉它，随后负增量会把用量扣成负数。
+            await get_quota(db, user_id, FILE_LIBRARY)
+        file.deleted_at = now
+        file.version = int(file.version or 1) + 1
+        file.updated_at = now
+        from app.services.files.previews import delete_thumb_cache
+
+        delete_thumb_cache(file.id, Path(get_settings().storage.local_path).expanduser().resolve())
+        if size_bytes:
+            await record_usage(
+                db, user_id, category=FILE_LIBRARY, delta_bytes=-size_bytes,
+                operation="filesync_confirm_delete", resource_type="file", resource_id=file.id,
+                idempotency_key=f"filesync-confirm-delete:{conflict.id}",
+                allow_over_limit=True,
+            )
+        await record_change(
+            db, binding=binding, user_id=user_id, source=FileSyncSource.LOCAL_DIRECTORY,
+            operation=FileSyncOperation.DELETE, relative_path=conflict.relative_path,
+            idempotency_key=build_idempotency_key(
+                source=FileSyncSource.LOCAL_DIRECTORY,
+                operation=FileSyncOperation.DELETE,
+                relative_path=conflict.relative_path,
+                fingerprint=f"confirmed-delete:{conflict.id}",
+            ), baseline_fingerprint=conflict.remote_fingerprint or conflict.baseline_fingerprint,
+            observed_fingerprint=None, status=FileSyncStatus.SYNCED,
+        )
+        conflict.status = "resolved"
+        conflict.resolution = resolution
+        conflict.resolved_at = now
+        conflict.updated_at = now
+        await db.flush()
+        return conflict
     if resolution == "cancel":
         # 只解除冲突标记，不动盘上文件；必须同样落 resolved，
         # 否则冲突永远留在 pending 列表里（点「取消冲突」看起来毫无反应）。
@@ -492,7 +577,11 @@ async def resolve_sync_conflict(
             operation="update", relative_path=conflict.relative_path,
             idempotency_key=build_idempotency_key(
                 source=FileSyncSource.LOCAL_DIRECTORY, operation="update",
-                relative_path=conflict.relative_path, fingerprint=observed,
+                relative_path=conflict.relative_path,
+                # 普通路径事件按内容指纹幂等；冲突解决则是一次新的基线决策。
+                # 若复用 watcher 早先为相同内容生成的键，record_change 会返回旧
+                # journal，数据库侧更新仍晚于该基线，下一次对账就会重新报同一冲突。
+                fingerprint=f"{observed or 'missing'}:conflict:{conflict.id}",
             ), observed_fingerprint=observed, status=FileSyncStatus.SYNCED,
         )
         save_snapshot(user_id, binding.id, conflict.relative_path, candidate)

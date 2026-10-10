@@ -348,7 +348,7 @@ const tokenChips = computed(() => {
   const chips: string[] = []
   if (u.input) chips.push(`in ${fmtTokens(u.input)}`)
   if (u.output) chips.push(`out ${fmtTokens(u.output)}`)
-  if (u.cache_read) chips.push(`cache ${fmtTokens(u.cache_read)}`)
+  if (u.cache_read) chips.push(`cache hit ${fmtTokens(u.cache_read)}`)
   if (t.prompt_tokens_actual && t.prompt_tokens_source === 'provider') chips.push(`prompt ${fmtTokens(t.prompt_tokens_actual)}`)
   else if (t.estimated_input_tokens) chips.push(`~${fmtTokens(t.estimated_input_tokens)} context`)
   else if (t.prompt_tokens_estimate) chips.push(`~${fmtTokens(t.prompt_tokens_estimate)} prompt`)

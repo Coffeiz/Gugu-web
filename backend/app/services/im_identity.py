@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import UserBot
 
-DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["web_search", "http_get", "image_search", "read_file", "send_file"]
+DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["web_search", "http_get", "image_search", "read_file", "send_file", "group_context_search"]
 
 
 def normalize_group_allowed_tools(configured: object) -> List[str]:
@@ -62,6 +62,85 @@ async def create_qq_binding_code(bot_id: int, owner_user_id: UUID) -> tuple[str,
     redis = R.get_redis()
     await redis.set(_qq_binding_key(bot_id), json.dumps(payload), ex=QQ_BINDING_CODE_TTL)
     return code, QQ_BINDING_CODE_TTL
+
+
+def _platform_binding_key(platform: str, bot_id: int) -> str:
+    if platform == "qq":
+        return _qq_binding_key(bot_id)
+    return f"im:{platform}-binding:{bot_id}"
+
+
+def _hash_platform_binding_code(platform: str, bot_id: int, user_id: UUID, code: str) -> str:
+    message = f"{platform}:{bot_id}:{user_id}:{code}".encode("utf-8")
+    secret = get_settings().secret_key.encode("utf-8")
+    return hmac.new(secret, message, hashlib.sha256).hexdigest()
+
+
+async def create_telegram_binding_code(bot_id: int, owner_user_id: UUID) -> tuple[str, int]:
+    """创建 Telegram 私聊显式绑定码；仅明文返回已认证的个人设置页面。"""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    payload = {
+        "user_id": str(owner_user_id),
+        "code_hash": _hash_platform_binding_code("telegram", bot_id, owner_user_id, code),
+        "challenge_id": secrets.token_urlsafe(12),
+    }
+    await R.get_redis().set(
+        _platform_binding_key("telegram", bot_id), json.dumps(payload), ex=QQ_BINDING_CODE_TTL
+    )
+    return code, QQ_BINDING_CODE_TTL
+
+
+async def consume_telegram_binding_code(
+    bot_id: int, owner_user_id: UUID, platform_user_id: str, code: str,
+) -> bool:
+    """只在绑定码正确、未过期且 Telegram owner 字段为空时原子绑定。"""
+    normalized = "".join(str(code).split())
+    if not platform_user_id or len(normalized) != 6 or not normalized.isdigit():
+        return False
+    import app.db.session as db_session
+    from sqlalchemy import update
+
+    if db_session._engine is None:
+        db_session._build_engine()
+    key = _platform_binding_key("telegram", bot_id)
+    redis = R.get_redis()
+    raw = await redis.get(key)
+    try:
+        payload = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        payload = {}
+    if payload.get("user_id") != str(owner_user_id):
+        return False
+    challenge_id = str(payload.get("challenge_id") or "")
+    if not challenge_id:
+        return False
+    attempts_key = f"im:telegram-binding-attempts:{bot_id}:{challenge_id}"
+    attempts = await redis.incr(attempts_key)
+    if attempts == 1:
+        await redis.expire(attempts_key, QQ_BINDING_CODE_TTL)
+    if attempts > QQ_BINDING_CODE_MAX_ATTEMPTS:
+        return False
+    expected = _hash_platform_binding_code("telegram", bot_id, owner_user_id, normalized)
+    if not hmac.compare_digest(str(payload.get("code_hash") or ""), expected):
+        return False
+    # 使用条件更新确保同一 code 并发时只有一个平台身份能成为 owner。
+    async with db_session._SessionLocal() as db:
+        result = await db.execute(
+            update(UserBot)
+            .where(
+                UserBot.id == bot_id,
+                UserBot.user_id == owner_user_id,
+                UserBot.platform == "telegram",
+                UserBot.owner_platform_user_id.is_(None),
+            )
+            .values(owner_platform_user_id=platform_user_id, owner_bound_at=now_utc())
+        )
+        await db.commit()
+    if result.rowcount != 1:
+        await redis.delete(key, attempts_key)
+        return False
+    await redis.delete(key, attempts_key)
+    return True
 
 
 async def consume_qq_binding_code(
@@ -139,6 +218,8 @@ async def consume_qq_binding_code(
         await redis.delete(_qq_binding_key(bot_id))
         return False
     await redis.delete(_qq_binding_key(bot_id), attempts_key)
+    from app.core import events
+    await events.publish(owner_user_id, "im_channels", operation="refresh")
     return True
 
 
@@ -174,7 +255,11 @@ async def bind_qq_owner_if_unbound(
             )
         )
         await db.commit()
-    return result.rowcount == 1
+    bound = result.rowcount == 1
+    if bound:
+        from app.core import events
+        await events.publish(owner_user_id, "im_channels", operation="refresh")
+    return bound
 
 
 class QQGroupAccess:

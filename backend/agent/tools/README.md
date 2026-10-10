@@ -14,7 +14,7 @@
 | `skill_management.py` | 用户 Prompt Skill 的创建、更新、删除工具；以独立的按需工具组注册，复用 Skill 注册服务、权限校验和确认门 | Skill 正文加载、普通业务工具注册 |
 | `text_edit.py` | 通用正文行级编辑契约和安全校验 | 具体文件、笔记或 Skill 的持久化 |
 | `filesystem_policy.py` | 把当前 Session/定时任务 dispatch 主体适配到统一 filesystem policy | 保存授权事实、创建 grant、实现第二套权限判断 |
-| `files/` / `trash.py` | 文件库与回收站领域工具；按 `documents.py`、`folders.py`、`locations.py`、`transfer.py` 分职责组织，写操作调用 `filesystem_policy.py` | 自行复制 Session/任务授权规则 |
+| `files/` / `trash.py` | 文件库与回收站领域工具；按 `file_operations.py`、`folders.py`、`locations.py`、`transfer.py` 分职责组织，写操作调用 `filesystem_policy.py` | 自行复制 Session/任务授权规则 |
 | `shell.py` | 受控 Shell 执行入口 | 绕过 sandbox 或提供任意越权操作 |
 | 其他领域文件 | 项目、文件、日历、记忆、画布等各自资源的工具 | 跨领域的通用 Adapter |
 
@@ -79,7 +79,7 @@ Tool(
 枚举长列表或权限事实。完整 `description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
 `related_skills` 和 `source` 用于能力目录，不承担第二套权限判断。
 
-生产环境只保留两种注入模式：全量模式（`full`）是默认模式，向 provider 发送工具源码中的规范 Schema；简介模式（`description`）是可选的低成本模式，提供能力目录和固定 Adapter，业务工具需要调用时再按需获取 Schema。新工具不再维护“完整 Schema 再运行时精简”的两套定义：`input_schema` 本身就是 provider、按需获取和执行校验的共同契约。原始旧版完整 Schema 只作为迁移前快照和测试基准。
+生产环境只保留两种注入模式：简介模式（`description`）是默认模式，提供能力目录和固定 Adapter，业务工具需要调用时再按需获取 Schema；全量模式（`full`）向 provider 发送工具源码中的规范 Schema，供用户按需选择。新工具不再维护“完整 Schema 再运行时精简”的两套定义：`input_schema` 本身就是 provider、按需获取和执行校验的共同契约。原始旧版完整 Schema 只作为迁移前快照和测试基准。
 
 Schema 的默认规范是：用类型、枚举、必填、互斥、`oneOf`、`anyOf`、`allOf`、`if/then` 和边界约束表达机器可校验事实；字段级 `description`、`title`、`default`、`example/examples` 默认不写。只有日期格式、清空语义、资源边界等无法可靠结构化表达的信息，才保留一句短说明。注册期 lint 负责拒绝不合规范的新增定义，不在运行时悄悄删除字段说明。
 

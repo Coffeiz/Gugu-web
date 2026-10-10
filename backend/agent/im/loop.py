@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, List, Optional
 
 from agent.im.actor import ActorContext, ActorResolver
@@ -55,6 +56,25 @@ def choose_instant_reaction(text: str, has_media: bool) -> tuple[str, str]:
         if any(keyword in normalized for keyword in keywords):
             return random.choice(replies), emoji
     return random.choice(_QUICK_DEFAULT[1]), _QUICK_DEFAULT[0]
+
+
+async def display_tool_event(
+    payload: dict,
+    event: dict,
+    *,
+    show_tool_interactions: bool,
+    publish_web_event,
+    feishu_tool_summary=None,
+) -> None:
+    """保持 Web 镜像独立，再按用户偏好选择 IM 工具状态呈现。"""
+    await publish_web_event(event)
+    if not show_tool_interactions:
+        return
+    if feishu_tool_summary is not None and await feishu_tool_summary.handle_tool_event(event):
+        return
+    from agent.im.replies import send_tool_event
+
+    await send_tool_event(payload, event)
 
 
 @dataclass(frozen=True)
@@ -368,6 +388,7 @@ def bind_im_context(request: AgentRequest, payload: dict, *, show_tool_interacti
         request.allowed_tool_names,
         request.im_role,
         show_tool_interactions,
+        [str(item) for item in (request.attachments or [])],
     )
 
 
@@ -571,12 +592,12 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
 def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
     """判断是否只记录当前群消息而不触发回复。
 
-    网关始终接收 QQ 平台实际投递的群消息；这里仅负责回应方式的业务语义：
+    网关始终接收平台实际投递的群消息；这里仅负责回应方式的业务语义：
     ``record_only`` 记录全部消息，``reply_mentions`` 记录非 @ 消息，@ 消息
     继续进入模型回复流程。
     """
     return bool(
-        request.source == "qq"
+        request.source in {"qq", "feishu", "telegram"}
         and request.chat_id
         and payload.get("chat_type") == "group"
         and (
@@ -727,13 +748,54 @@ async def dispatch_im_message(payload: dict):
     from agent.runtime import trace
     from agent.im.replies import send_agent_response, send_text
 
-    # Gateway 入口已经会拦截关闭状态的群消息，但开关变化与 Redis 队列消费
-    # 之间可能存在时间差；worker 再检查一次，避免旧消息误进入权限校验并向
-    # 用户显示“群聊身份没有使用该工具的权限”。
-    if payload.get("platform") == "qq" and payload.get("chat_type") == "group":
-        group_settings = await resolve_group_policy(str(payload.get("channel_id") or ""))
+    # Telegram owner 只能通过网页签发的一次性绑定码，在 Bot 私聊中显式绑定。
+    # 必须在构造 AgentRequest/调用模型前短路，避免验证码进入模型上下文或聊天历史。
+    if payload.get("platform") == "telegram" and payload.get("telegram_command") == "bind":
+        if payload.get("chat_type") != "c2c":
+            return None
+        from uuid import UUID
+        from app.services.im_identity import consume_telegram_binding_code
+
+        text_value = str(payload.get("text") or "")
+        parts = text_value.split(maxsplit=1)
+        code = parts[1] if len(parts) == 2 else ""
+        try:
+            bound = await consume_telegram_binding_code(
+                int(payload.get("channel_id") or 0),
+                UUID(str(payload.get("owner_user_id") or "")),
+                str(payload.get("platform_user_id") or ""),
+                code,
+            )
+        except (TypeError, ValueError):
+            bound = False
+        from agent.gateway.telegram import send_message
+        await send_message(
+            str(payload.get("chat_id") or payload.get("platform_user_id") or ""),
+            "绑定成功。" if bound else "绑定码无效、已过期或已使用，请回到咕咕设置重新生成。",
+            channel_id=str(payload.get("channel_id") or ""),
+            reply_to_message_id=str(payload.get("message_id") or "") or None,
+        )
+        if bound:
+            from app.core import events
+            await events.publish(
+                UUID(str(payload.get("owner_user_id"))), "im_channels", operation="refresh"
+            )
+        return None
+
+    # Gateway 入口和 Redis 队列消费之间可能存在设置变化；worker 再读取对应
+    # 平台 Bot 的策略，既阻止关闭后的旧消息，也确保两个 IM 不串用群聊开关。
+    if payload.get("platform") in {"qq", "feishu", "telegram"} and payload.get("chat_type") == "group":
+        platform = str(payload.get("platform"))
+        group_settings = await resolve_group_policy(
+            str(payload.get("channel_id") or ""), platform=platform
+        )
         if not group_settings[0]:
             return None
+        payload = dict(payload)
+        payload["group_requires_at"] = group_settings[1]
+        payload["group_read_enabled"] = group_settings[2]
+        payload["group_memory_enabled"] = group_settings[3]
+        payload["member_memory_enabled"] = group_settings[4]
 
     if payload.get("platform") == "qq":
         raw_attachments = payload.get("attachments") or []
@@ -771,6 +833,24 @@ async def dispatch_im_message(payload: dict):
                 str(payload.get("channel_id") or ""),
                 str(payload["platform_bot_user_id"]),
             )
+    elif payload.get("platform") == "telegram" and (
+        payload.get("attachments") or payload.get("quoted_attachments")
+    ):
+        from agent.im.media_ingress import ingest_telegram_media
+
+        payload = dict(payload)
+        media_result = await ingest_telegram_media(
+            payload.get("attachments") or [],
+            payload.get("quoted_attachments") or [],
+            payload.get("owner_user_id"),
+            str(payload.get("channel_id") or ""),
+            payload.get("attachment_source_message_id"),
+        )
+        payload["attachments"] = media_result.attachment_ids
+        if media_result.failure_notice:
+            await send_text(payload, media_result.failure_notice)
+            if not payload["attachments"] and not str(payload.get("text") or "").strip():
+                return None
 
     platform_message = PlatformMessage.from_payload(payload)
     payload = platform_message.to_payload(payload)
@@ -928,6 +1008,14 @@ async def dispatch_im_message(payload: dict):
     web_stream_failed = False
     if web_stream_started:
         await genstream.begin(web_stream_session_id, owner_run_id=web_stream_owner_id)
+        # 已打开的 Web 会话不会自动轮询 genstream；用 run 状态事件通知前端接上
+        # 下方实时流。消息 append 事件早于 begin，不能承担这个职责。
+        from app.core import events
+        await events.publish_agent_run_changed(
+            user_id,
+            session_id=web_stream_session_id,
+            status="running",
+        )
 
     async def _publish_web_event(event: dict) -> None:
         if not web_stream_started or not isinstance(event, dict):
@@ -952,6 +1040,12 @@ async def dispatch_im_message(payload: dict):
                     await _publish_web_event(event)
             yield line
 
+    feishu_tool_summary = None
+    if platform == "feishu" and show_tool_interactions:
+        from agent.gateway.feishu_tool_summary import FeishuToolSummaryStream
+
+        feishu_tool_summary = FeishuToolSummaryStream()
+
     shown_interaction_ids: set[int] = set()
     sent_round_indices: set[int] = set()
     immediate_round_index = 0
@@ -965,13 +1059,13 @@ async def dispatch_im_message(payload: dict):
         # 才能在 Runner 阻塞等待前把按钮发出去。工具状态开关不能影响这个必需交互。
         if qq_private_streaming:
             qq_private_streaming = False
-    async def _show_tool_event(event: dict) -> None:
-        """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
-        await _publish_web_event(event)
-        if not show_tool_interactions:
-            return
-        from agent.im.replies import send_tool_event
-        await send_tool_event(payload, event)
+    tool_event_callback = partial(
+        display_tool_event,
+        payload,
+        show_tool_interactions=show_tool_interactions,
+        publish_web_event=_publish_web_event,
+        feishu_tool_summary=feishu_tool_summary,
+    )
 
     async def _show_round(text: str) -> bool:
         """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
@@ -1032,20 +1126,24 @@ async def dispatch_im_message(payload: dict):
             token_iter = agent_loop.run_stream(
                 req,
                 on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
+                on_tool_event=tool_event_callback,
             )
             stream_sent, resp = await feishu.send_text_stream(
                 str(receive_id or ""), _mirror_stream(token_iter),
                 channel_id=payload.get("channel_id"),
                 show_intermediate_replies=show_intermediate_replies,
+                tool_summary=feishu_tool_summary,
             )
+            if resp is None and stream_sent:
+                # 卡片已经可见但流没有产出最终响应；不能重新执行同一 Run。
+                raise RuntimeError("飞书流式回复已发送卡片，但未收到最终响应")
             if resp is None:
                 # 没有可用飞书凭据时，流式网关不会消费生成器；继续走统一收集出口，
                 # 避免消息已入历史却没有任何回复。
                 resp = await agent_loop.run_collect(
                     req,
                     on_interaction=_show_im_interaction,
-                    on_tool_event=_show_tool_event,
+                    on_tool_event=tool_event_callback,
                     on_round=_show_round,
                 )
             reply_text = ""
@@ -1054,7 +1152,7 @@ async def dispatch_im_message(payload: dict):
             token_iter = agent_loop.run_stream(
                 req,
                 on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
+                on_tool_event=tool_event_callback,
             )
             stream_sent, resp, reply_text = await send_qq_stream_by_round(
                 payload, _mirror_stream(token_iter),
@@ -1064,7 +1162,7 @@ async def dispatch_im_message(payload: dict):
             resp = await agent_loop.run_collect(
                 req,
                 on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
+                on_tool_event=tool_event_callback,
                 on_round=_show_round,
             )
             reply_text = ""

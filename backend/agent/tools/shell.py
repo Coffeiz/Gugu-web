@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 
 import app.db.session as _db_session
 
@@ -31,13 +32,23 @@ from app.services.workspaces import (
     workspace_shell_supported,
 )
 from app.services.storage.quota_ledger import (
+    FILE_LIBRARY,
     SHELL_PERSISTENT,
+    get_quota,
     measure_shell_persistent_usage,
     record_usage,
     reconcile_user_storage,
 )
+from app.services.storage.quota_limits import is_unlimited_limit
 
 logger = logging.getLogger(__name__)
+
+
+def _storage_backend() -> str:
+    settings = get_settings()
+    storage = getattr(settings, "storage", None)
+    # 轻量单测可能只提供 sandbox 设置；实际 AppSettings 总会显式声明后端。
+    return str(getattr(storage, "backend", "oss"))
 
 
 def _audit(**fields) -> None:
@@ -202,6 +213,7 @@ async def _run_shell(db, user_id, args: dict):
     if root is None:
         return {"error": "当前 Shell 范围没有可用的本地目录，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
     quota_root = None
+    quota_roots = ()
     quota_bytes = None
     quota_before = None
     result = None
@@ -211,9 +223,22 @@ async def _run_shell(db, user_id, args: dict):
         ready, reason = sandbox_readiness(sandbox_settings)
         if not ready:
             return {"error": reason, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
-        # 文件库/项目工作区沿用文件服务自己的存储配额；只有未绑定 workspace
-        # 时才检查独立 Shell 持久目录，避免把项目文件误计入 Shell 配额。
-        if decision.workspace_id is None:
+        if _storage_backend() == "local":
+            shared_quota = await get_quota(db, user_id, FILE_LIBRARY)
+            if (
+                not is_unlimited_limit(shared_quota.limit_bytes)
+                and shared_quota.used_bytes > shared_quota.limit_bytes
+            ):
+                return {
+                    "error": "用户存储空间已超过配额，请先清理文件或工作区后再执行命令",
+                    "_risk": decision.risk.value,
+                    "_scope": decision.scope.value,
+                    "_audit_event": "quota_exceeded",
+                }
+            # 禁止在 Shell 热路径调用全量容量对账：递归遍历用户目录会让每次命令启动等待扫描完成。
+            # Local 共用配额先读账本；允许本次命令越限，账本确认超额后再阻止后续命令。
+        elif decision.workspace_id is None:
+            # OSS 没有本地 Workspace 根，Shell 持久空间继续使用独立上限。
             measured = await reconcile_user_storage(db, user_id)
             quota_before = measured[SHELL_PERSISTENT]
             if quota_before > sandbox_settings.persistent_quota_bytes:
@@ -223,8 +248,8 @@ async def _run_shell(db, user_id, args: dict):
                     "_scope": decision.scope.value,
                     "_audit_event": "quota_exceeded",
                 }
-        quota_root = root if decision.workspace_id is None else None
-        quota_bytes = sandbox_settings.persistent_quota_bytes if decision.workspace_id is None else None
+            quota_root = root
+            quota_bytes = sandbox_settings.persistent_quota_bytes
     terminal_row = None
     from app.services.terminals import ensure_agent_terminal, get_terminal
     requested_terminal_id = str(args.get("_terminal_id") or "").strip()
@@ -299,10 +324,12 @@ async def _run_shell(db, user_id, args: dict):
                         timeout=float(args.get("timeout", 30)),
                         max_output_chars=int(args.get("max_output_chars", 12_000)),
                         quota_root=str(quota_root) if quota_root else None,
+                        quota_roots=tuple(str(path) for path in quota_roots),
                         quota_bytes=quota_bytes,
                         network_profile=network_profile,
                         egress_expires_at=egress_expires_at,
-                        request_id=str(args.get("_run_id") or "") or None,
+                        # 一个 Agent 轮次可能并行发起多个 Shell 调用，取消 ID 必须按命令区分。
+                        request_id=uuid.uuid4().hex,
                         personal_root=str(personal_root) if personal_root else None,
                         project_root=str(project_root) if project_root else None,
                         personal_read_only=not decision.full_user_sandbox_write,
@@ -332,12 +359,12 @@ async def _run_shell(db, user_id, args: dict):
             ok=False, exit_code=None, stdout="", stderr=execution_error or "Shell 执行失败",
             timed_out=False, cwd=str(requested_cwd),
         )
-    if decision.scope.value == "sandbox" and decision.workspace_id is None and quota_before is not None:
-        quota_after = await measure_shell_persistent_usage(db, user_id)
+    if decision.scope.value == "sandbox" and quota_before is not None:
         operation = (
             "build" if any(token in command for token in ("npm ", "pnpm ", "yarn ", "cargo ", "make ", "gradle ", "build"))
             else "shell_exec"
         )
+        quota_after = await measure_shell_persistent_usage(db, user_id)
         await record_usage(
             db, user_id, category=SHELL_PERSISTENT,
             delta_bytes=quota_after - quota_before,

@@ -43,6 +43,7 @@ class User(Base):
     token_limit_monthly:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     token_limit_6h:       Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     token_limit_weekly:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    # Local 为文件库 + Workspace/Shell 的单用户总额度；OSS 仍仅限制文件库。
     storage_limit_bytes:  Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
     search_limit_daily:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     quota_window_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
@@ -252,6 +253,7 @@ class UserSkill(Base):
     body:              Mapped[str] = mapped_column(Text)
     related_tools:     Mapped[list] = mapped_column(JSON, default=list)
     source:            Mapped[str] = mapped_column(String(16), default="user")
+    managed_by:        Mapped[str] = mapped_column(String(16), default="user", server_default="user")
     enabled:           Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     content_digest:    Mapped[str] = mapped_column(String(64))
     created_at:        Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
@@ -360,8 +362,56 @@ class FileSyncBinding(Base):
     root_path: Mapped[str] = mapped_column(String(1000), default=".", server_default=".")
     root_fingerprint: Mapped[str] = mapped_column(String(64))
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    watcher_status: Mapped[str] = mapped_column(String(24), default="unknown", server_default="unknown")
+    needs_reconcile: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    health_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    gap_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    health_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class FileSyncReconcileRun(Base):
+    """用户/Admin 显式发起的手动目录核对任务。"""
+
+    __tablename__ = "file_sync_reconcile_runs"
+    __table_args__ = (
+        Index("ix_file_sync_reconcile_runs_claim", "status", "created_at"),
+        Index("ix_file_sync_reconcile_runs_user_created", "user_id", "created_at"),
+        Index(
+            "uq_file_sync_reconcile_active_binding", "binding_id", unique=True,
+            postgresql_where=text("status IN ('queued', 'running', 'cancelling')"),
+            sqlite_where=text("status IN ('queued', 'running', 'cancelling')"),
+        ),
+        Index(
+            "uq_file_sync_reconcile_running_user", "user_id", unique=True,
+            postgresql_where=text("status IN ('running', 'cancelling')"),
+            sqlite_where=text("status IN ('running', 'cancelling')"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid7)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    binding_id: Mapped[int] = mapped_column(ForeignKey("file_sync_bindings.id", ondelete="CASCADE"), index=True)
+    action: Mapped[str] = mapped_column(String(24))
+    allow_delete: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    status: Mapped[str] = mapped_column(String(24), default="queued", server_default="queued", index=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    binding_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    gap_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    root_fingerprint: Mapped[str] = mapped_column(String(64))
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    deadline_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    scanned_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    result_counts: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
 
@@ -371,6 +421,10 @@ class FileSyncJournal(Base):
     __table_args__ = (
         UniqueConstraint("binding_id", "idempotency_key", name="uq_file_sync_journal_idempotency"),
         Index("ix_file_sync_journal_binding_revision", "binding_id", "revision"),
+        Index(
+            "ix_file_sync_journal_latest_path",
+            "binding_id", "status", "object_type", "relative_path", "id",
+        ),
         Index("ix_file_sync_journal_user_status", "user_id", "status"),
     )
 
@@ -495,6 +549,7 @@ class Project(Base):
     id:            Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:       Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name:          Mapped[str]           = mapped_column(String(200))
+    summary:       Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
     client:        Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     status:        Mapped[str]           = mapped_column(String(20),  default="pending")
     start_date:    Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
@@ -531,6 +586,15 @@ class Project(Base):
 
 class File(Base):
     __tablename__ = "files"
+    __table_args__ = (
+        Index(
+            "uq_files_active_user_storage_key",
+            "user_id", "storage_key",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id:           Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:      Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -1387,8 +1451,8 @@ class SearchUsage(Base):
 class UserBot(Base):
     """用户自带机器人（Bring-Your-Own）：每用户存自己的 bot 凭据，咕咕为其起独立网关。
 
-    目前用于 QQ（platform=qq）。消息归属于该 bot 的咕咕账号；QQ owner 的
-    平台身份另通过一次性验证码绑定，用于群聊权限判断，不作为跨 Bot 的全局身份。
+    消息归属于该 bot 的咕咕账号；需要验证的平台 owner 身份按 Bot 作用域保存，
+    用于权限判断，不作为跨 Bot 的全局身份。
     """
     __tablename__ = "user_bots"
 
@@ -1402,25 +1466,27 @@ class UserBot(Base):
     app_secret: Mapped[str]      = mapped_column(EncryptedString, default="")
     sandbox:    Mapped[bool]     = mapped_column(Boolean, default=False)
     enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
-    # 群聊：是否处理群消息、群消息是否要求 @ 机器人才响应、是否记录普通群消息。
+    # 群聊：新 Bot 默认仅回应 @ 消息；是否记录普通群消息。
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
+    # 飞书群聊开关独立于 QQ。NULL 表示旧版飞书连接，按历史行为默认开启。
+    feishu_group_chat_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
+    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # 群聊记忆：分别控制本群公开记忆和群成员个人记忆的读取/沉淀。
     group_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     member_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     group_owner_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    # 群成员可用工具白名单；默认开放联网搜索 + 图片搜索 + 发网络图片，不暴露用户私有内容和写操作。
-    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "read_file", "send_file"])
+    # 群成员可用工具白名单；默认含群上下文搜索，不开放用户私有内容和写操作。
+    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "read_file", "send_file", "group_context_search"])
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
     group_message_format: Mapped[str] = mapped_column(String(16), default="compat")
     private_message_format: Mapped[str] = mapped_column(String(16), default="smart")
     # QQ C2C 私聊是否使用官方 stream_messages；群聊永远不走该接口。
     private_streaming_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # QQ 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局 QQ ID 使用。
+    # QQ/Telegram 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局身份使用。
     owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
-    # QQ 当前 Bot 的平台身份 ID，用于精确展示 @机器人。
+    # Bot 当前平台身份 ID，用于精确展示 @机器人。
     bot_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
@@ -1730,5 +1796,44 @@ class DataPortableIdentity(Base):
     target_type: Mapped[str] = mapped_column(String(80))
     target_id: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+
+class TrashPurgeJob(Base):
+    """用户清空回收站的持久后台任务。"""
+
+    __tablename__ = "trash_purge_jobs"
+    __table_args__ = (
+        Index(
+            "uq_trash_purge_jobs_user_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+            sqlite_where=text("status IN ('queued', 'running')"),
+        ),
+        Index(
+            "uq_trash_purge_jobs_global_running",
+            "status",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+            sqlite_where=text("status = 'running'"),
+        ),
+        Index("ix_trash_purge_jobs_claim", "status", "lease_until", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    snapshot_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
 
 from app.models.mcp import UserMcpServer  # noqa: E402  (PRD-MCP-1)

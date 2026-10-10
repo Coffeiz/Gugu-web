@@ -20,13 +20,27 @@ WORKERS="${WORKERS:-1}"
 LOG_DIR="${APP_DIR}/logs"
 LOG_FILE="${LOG_DIR}/gugu.log"
 PID_FILE="${APP_DIR}/.gugu.pid"
-# 生产核心 owner：FastAPI、Python IM worker/gateway 与 sandboxd；实时事件入口也由 FastAPI 提供。
-SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-backend gugu-worker gugu-gateway"
+# 应用常驻服务及受限的宿主机 inotify 容量管理器。
+SYSTEMD_SERVICES="gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-inotify-limitd gugu-backend gugu-worker gugu-gateway"
+SYSTEMD_OPTIONAL_SERVICES="gugu-inotify-limitd"
 
 # ── 工具函数 ────────────────────────────────────────────
 log()  { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { log "WARN: $*"; }
 err()  { log "ERROR: $*"; }
+
+systemd_runtime_services() {
+    local service services=""
+    for service in $SYSTEMD_SERVICES; do
+        if [[ " $SYSTEMD_OPTIONAL_SERVICES " == *" $service "* ]] \
+            && ! systemctl cat "${service}.service" >/dev/null 2>&1; then
+            warn "可选 systemd 服务未安装，跳过：$service" >&2
+            continue
+        fi
+        services="${services:+$services }$service"
+    done
+    printf '%s' "$services"
+}
 
 detect_venv() {
     if [ -d "$VENV_DIR" ]; then return 0; fi
@@ -74,10 +88,12 @@ check_systemd_services() {
     local delay="${GUGU_SYSTEMD_CHECK_DELAY:-1}"
     local stable_checks="${GUGU_SYSTEMD_STABLE_CHECKS:-3}"
     local attempt service all_active consecutive=0
+    local services
+    services="$(systemd_runtime_services)"
 
     for ((attempt = 1; attempt <= attempts; attempt++)); do
         all_active=1
-        for service in $SYSTEMD_SERVICES; do
+        for service in $services; do
             if ! systemctl is-active --quiet "$service"; then
                 all_active=0
             fi
@@ -96,7 +112,7 @@ check_systemd_services() {
     done
 
     err "systemd 服务未全部处于 active 状态："
-    for service in $SYSTEMD_SERVICES; do
+    for service in $services; do
         systemctl --no-pager --lines=12 status "$service" || true
     done
     return 1
@@ -213,8 +229,10 @@ cleanup_gugu_port() {
 cmd_start() {
     if use_systemd; then
         validate_runtime_config
-        log "使用 systemd 启动：${SYSTEMD_SERVICES}"
-        systemctl start $SYSTEMD_SERVICES
+        local services
+        services="$(systemd_runtime_services)"
+        log "使用 systemd 启动：${services}"
+        systemctl start $services
         check_systemd_services
         return 0
     fi
@@ -253,8 +271,10 @@ cmd_start() {
 
 cmd_stop() {
     if use_systemd; then
-        log "使用 systemd 停止：${SYSTEMD_SERVICES}"
-        systemctl stop $SYSTEMD_SERVICES
+        local services
+        services="$(systemd_runtime_services)"
+        log "使用 systemd 停止：${services}"
+        systemctl stop $services
         cleanup_gugu_port
         return 0
     fi
@@ -285,10 +305,12 @@ cmd_stop() {
 cmd_restart() {
     if use_systemd; then
         validate_runtime_config
-        log "使用 systemd 重启：${SYSTEMD_SERVICES}"
-        systemctl stop $SYSTEMD_SERVICES
+        local services
+        services="$(systemd_runtime_services)"
+        log "使用 systemd 重启：${services}"
+        systemctl stop $services
         cleanup_gugu_port
-        systemctl start $SYSTEMD_SERVICES
+        systemctl start $services
         check_systemd_services
         return 0
     fi
@@ -303,7 +325,9 @@ cmd_cleanup_port() {
 
 cmd_status() {
     if use_systemd; then
-        systemctl --no-pager --lines=5 status $SYSTEMD_SERVICES
+        local services
+        services="$(systemd_runtime_services)"
+        systemctl --no-pager --lines=5 status $services
         return $?
     fi
     if is_running; then
@@ -359,7 +383,7 @@ cmd_foreground() {
 }
 
 cmd_install() {
-    # egress 引导 + 五个核心常驻服务：rag-sidecar、sandboxd、web(uvicorn)、IM worker、IM gateway。
+    # 安装核心应用服务与受限 inotify 容量服务；只有后者以 root 运行，代码安装到 root-owned 路径。
     # TS RAG worker 由 rag-sidecar 宿主统一托管（unix socket 共享热索引）；
     # 后端进程在 socket 不可达时自动回退进程内 spawn。
     local services="$SYSTEMD_SERVICES"
@@ -424,6 +448,9 @@ cmd_install() {
         err "${APP_DIR}/.env 未配置 ADMIN_PASSWORD；请先设置管理员密码。"
         exit 1
     fi
+    detect_venv
+    local inotify_default_hard_limit
+    inotify_default_hard_limit="$(cd "$APP_DIR" && "$VENV_DIR/bin/python" -c 'from app.core.config import get_settings; print(get_settings().filesync.watch_hard_limit)')"
     chmod 600 "${APP_DIR}/config.override.json"
     chmod 600 "${APP_DIR}/.env"
     # Admin 配置使用同目录临时文件原子替换；目录需允许服务用户创建临时文件。
@@ -431,6 +458,19 @@ cmd_install() {
     chmod 775 "${APP_DIR}"
     chown -R "$run_user":"$run_user" "${APP_DIR}/../Gugu-data/users" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index" "${APP_DIR}/config.override.json"
     chown "$run_user":"$run_user" "${APP_DIR}/.env"
+
+    # 以 root 所有的副本运行，避免应用账号替换特权代码；服务只开放固定的 inotify 操作。
+    install -d -o root -g root -m 0755 /usr/local/libexec/gugu
+    install -d -o root -g "$run_user" -m 0710 /var/lib/gugu-inotify-limitd
+    install -d -o "$run_user" -g "$run_user" -m 0700 /var/lib/gugu-inotify-limitd/policy
+    if [ ! -e /var/lib/gugu-inotify-limitd/last-expansion ]; then
+        install -o root -g root -m 0600 /dev/null /var/lib/gugu-inotify-limitd/last-expansion
+    fi
+    GUGU_INOTIFY_POLICY_DIR=/var/lib/gugu-inotify-limitd/policy \
+        "$VENV_DIR/bin/python" -c 'import json; from app.core.config import OVERRIDE_FILE, write_inotify_policy_projection; write_inotify_policy_projection(json.loads(OVERRIDE_FILE.read_text(encoding="utf-8")))'
+    install -o root -g root -m 0755 \
+        "${APP_DIR}/scripts/runtime/inotify_limitd.py" \
+        /usr/local/libexec/gugu/inotify_limitd.py
 
     # egress 引导脚本由 systemd 通过 /bin/sh 调用，安装时仍规范化为公共只读可执行，
     # 避免 Git/归档/同步工具丢失 mode 后再次出现 203/EXEC，也允许服务用户与部署者不同。
@@ -463,6 +503,7 @@ cmd_install() {
             -e "s#__RUN_UID__#${run_uid}#g" \
             -e "s#__RUN_HOME__#${run_home}#g" \
             -e "s#__DATA_DIR__#${data_dir}#g" \
+            -e "s#__INOTIFY_DEFAULT_HARD_LIMIT__#${inotify_default_hard_limit}#g" \
             "${APP_DIR}/${s}.service" > "/etc/systemd/system/${s}.service"
     done
 
@@ -473,7 +514,7 @@ cmd_install() {
     check_systemd_services
     log ""
     log "常用命令（egress / sandboxd / web / IM 大脑 / IM 网关）："
-    log "  systemctl status gugu-sandbox-egress gugu-sandboxd gugu-backend gugu-worker gugu-gateway"
+    log "  systemctl status gugu-sandbox-egress gugu-sandboxd gugu-inotify-limitd gugu-backend gugu-worker gugu-gateway"
     log "  journalctl -u gugu-worker -f        # IM 大脑日志"
     log "  journalctl -u gugu-gateway -f    # IM 网关日志"
     log "  systemctl restart gugu-worker       # 改了 agent 代码后重启大脑"
@@ -506,7 +547,7 @@ case "${1:-start}" in
   status       查看状态 + 健康检查
   logs         实时跟踪日志（Ctrl+C 退出）
   foreground   前台启动（带 --reload，用于调试）
-  install      安装为 systemd 服务（egress + sandboxd + gugu-backend + worker + gateway）
+  install      安装为 systemd 服务（含受限 inotify 容量管理器）
 
 环境变量:
   HOST=0.0.0.0           监听地址

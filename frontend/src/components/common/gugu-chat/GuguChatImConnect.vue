@@ -25,6 +25,10 @@
             <div class="im-qr-hint">{{ connectHint }}</div>
             <button class="im-qr-cancel" @click="onCancelImConnect">{{ t('common.actions.cancel') }}</button>
           </div>
+          <template v-else-if="p.key === 'telegram'">
+            <div class="im-telegram-setup-hint">{{ t('chatUi.telegramSetupHint') }}</div>
+            <button class="im-connect-btn" @click="onOpenTelegramSettings">{{ t('chatUi.openTelegramSettings') }}</button>
+          </template>
           <template v-else>
             <button class="im-connect-btn" :disabled="connecting === p.key" @click="onStartImConnect(p.key)">
               {{ connecting === p.key ? t('chatUi.generatingQr') : t('chatUi.scanConnect') }}
@@ -60,6 +64,7 @@ defineProps<{
   connectErr: string
   connecting: string
   formatSessionTime: (raw?: string) => string
+  onOpenTelegramSettings: () => void
   onTogglePlatform: (key: ImPlatformKey) => void
   onSetConnectCanvas: (el: Element | import('vue').ComponentPublicInstance | null) => void
   onStartImConnect: (key: ImPlatformKey) => void
@@ -133,6 +138,7 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
 .im-connect-btn:active:not(:disabled) { transform:translateY(1px); }
 .im-connect-btn:disabled { opacity:.6; cursor:default; }
 .im-qr-box { display:flex; flex-direction:column; align-items:center; gap:var(--space-sm); padding:var(--space-md) var(--space-sm); }
+.im-telegram-setup-hint { padding:var(--space-xs) var(--space-sm); color:var(--content-secondary); font-size:var(--font-size-xs); line-height:var(--line-height-body); }
 .im-qr-canvas { width:160px; height:160px; border-radius:var(--radius-sm); background:#fff; padding:var(--space-xs); box-sizing:border-box; box-shadow:var(--elevation-card); }
 .im-qr-hint { font-size:var(--font-size-xs); color:var(--content-secondary); text-align:center; line-height:var(--line-height-body); }
 .im-qr-err { font-size:var(--font-size-xs); color:var(--status-danger); padding:var(--space-xs) 0; }

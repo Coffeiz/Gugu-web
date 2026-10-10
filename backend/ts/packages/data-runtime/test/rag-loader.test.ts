@@ -11,7 +11,6 @@ test("Data Runtime RAG loader 按来源生成统一 batch", async () => {
   const batch = await loadRagBatch(runtime, { ownerId: "owner-1" });
   assert.deepEqual(batch, {
     project: [{ id: "project", source_type: "project" }],
-    files: [{ id: "file", source_type: "file" }],
     conversations: [{ id: "conversation", source_type: "conversation" }],
     knowledge: [{ id: "knowledge", source_type: "knowledge" }],
     canvas: [{ id: "canvas", source_type: "canvas" }],

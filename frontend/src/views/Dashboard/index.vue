@@ -43,30 +43,47 @@
     </div>
 
     <!-- 底部：文件 -->
-    <FilePanel />
+    <FilePanel :files="summary?.recentFiles ?? []" @refresh="loadFileSummary" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { filesApi, type FileSummaryResponse } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
 import { useProjectStore } from '@/stores/projects'
-import { useFilesCacheStore } from '@/stores/filesCache'
 import StatCard    from './components/StatCard.vue'
 import ProjectList from './components/ProjectList.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
 import FilePanel   from './components/FilePanel.vue'
 import { useI18n } from 'vue-i18n'
+import { watchDebouncedRevision } from '@/composables/shared/liveRevisionRefresh'
 
 const projectStore = useProjectStore()
 const { t } = useI18n()
-// 统一到全局 filesCache store（原来 Dashboard 单独走 services/cache 的第三套缓存）。store 自带
-// 版本门控加载 + SSE + visibilitychange，FilePanel 与这里的文件总数都从它派生，单一数据源。
-const store = useFilesCacheStore()
-const fileCount = computed(() => store.loaded ? store.allFiles.length : '—')
+const liveStore = useLiveStore()
+const summary = ref<FileSummaryResponse | null>(null)
+const fileCount = computed(() => summary.value?.totalCount ?? '—')
+let summaryRequest = 0
 
-onMounted(() => {
-  if (!store.loaded && !store.loading) store.load()
-})
+async function loadFileSummary() {
+  const request = ++summaryRequest
+  try {
+    const result = await filesApi.summary()
+    if (request === summaryRequest) summary.value = result
+  } catch {
+    if (request === summaryRequest) summary.value = null
+  }
+}
+
+const stopWatchingFileRevision = watchDebouncedRevision(
+  () => liveStore.rev.files,
+  () => { void loadFileSummary() },
+  250,
+)
+
+onMounted(() => { void loadFileSummary() })
+onBeforeUnmount(stopWatchingFileRevision)
 </script>
 
 <style scoped>

@@ -1,7 +1,7 @@
 """文件工具定义。"""
 from agent.tools.base import Tool
 
-from .documents import (
+from .file_operations import (
     _DOC_MIME, _copy_file, _create_file, _delete_file, _edit_file, _list_dir,
     _rename_file,
 )
@@ -11,8 +11,12 @@ from .read import _read_file
 FILE_TOOLS = [
         Tool(
             name="list_dir", label="浏览目录",
-            description_short='浏览目录：文件夹只列当前层直属子目录，不递归；未指定目录时列根级文件夹。',
+            description_short='浏览目录：可显式查项目根层、项目递归清单或具体文件夹。',
             description="列出文件与当前层直属子文件夹，可按空间、项目、工作区或目录筛选；文件仍按传入条件过滤，不传位置条件时覆盖当前用户所有可访问空间。"
+                        "项目查询优先显式指定 scope：scope=project_root + space=project + project_id 只查项目根层；"
+                        "scope=project_recursive + 相同项目参数列出项目全部层级的文件与文件夹；"
+                        "scope=folder 必须搭配真实 folder_id 查具体目录。项目本身不是 folder，不能把 project_id 填进 folder_id。"
+                        "为兼容旧调用，不传 scope 时保留原行为；需要判断项目根层是否为空时不要依赖旧行为。"
                         "folder 传目录名（支持 a/b/c 式路径，也可用 folder_id/parent_id 传 id），限定该目录的子文件夹与直属文件。"
                         "folders 只返回当前层的直属子目录，不递归展开；未传目录时只返回各空间根目录下的文件夹。需要深入时，再对目标子目录传 folder_id 调用。"
                         "返回 {shown, total, files, folders}：total/shown 只统计文件——shown<total 说明未取完，"
@@ -25,6 +29,10 @@ FILE_TOOLS = [
                 "properties": {
                     "space": {"type": "string", "enum": ["project", "workspace", "personal"]},
                     "project_id": {"type": "integer"},
+                    "scope": {
+                        "type": "string",
+                        "enum": ["project_root", "project_recursive", "folder"],
+                    },
                     "workspace_directory_id": {"type": "integer"},
                     "folder": {"type": "string"},
                     "folder_id": {"type": "integer"},
@@ -44,8 +52,8 @@ FILE_TOOLS = [
         ),
         Tool(
             name="read_file", label="读取文件",
-            description_short='读取一个或一批文件/媒体；图片、音频、视频可直接交给模型分析。',
-            description="读取文件库、聊天附件或图片 URL；单个来源使用 file_id/file/attach_id/url，多个来源放在 items 数组，一次最多 20 项、源文件总量最多 64 MiB。URL 仅允许网络图片，并执行安全校验与下载限制；文件库支持文本、文档、图片、音频和视频，历史聊天附件支持图片/音频/视频，其他附件先保存到文件库再读。媒体按当前模型能力交付原生内容或音频转写。图片共用格式白名单、视觉能力、大小限制与图像处理策略；SVG 按源码文本读取。每个 items 项只能指定一种来源，可选 title/result_id 标记结果；某项失败不影响其他项。文本/文档可用 target_lines 按原始物理行读取，支持 all、8、8-11、8,11，默认 all。不要传本地路径或 file:/// URI。",
+            description_short='读取文件库、附件或图片；Shell 路径支持逻辑路径或 file_id。',
+            description="读取文件库、聊天附件或图片 URL；单个来源使用 file_id/file/attach_id/url，多个来源放在 items 数组，一次最多 20 项、源文件总量最多 64 MiB。文件库引用可用 list_dir/grep 返回的 /personal、/project、/workspace 逻辑路径或 file_id；路径仅映射已登记的文件记录，不是宿主机路径。URL 仅允许网络图片，并执行安全校验与下载限制；文件库支持文本、文档、图片、音频和视频，历史聊天附件支持图片/音频/视频，其他附件先保存到文件库再读。媒体按当前模型能力交付原生内容或音频转写。图片共用格式白名单、视觉能力、大小限制与图像处理策略；SVG 按源码文本读取。每个 items 项只能指定一种来源，可选 title/result_id 标记结果；某项失败不影响其他项。文本/文档可用 target_lines 按原始物理行读取，支持 all、8、8-11、8,11，默认 all。不接受 file:/// URI。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -112,13 +120,14 @@ FILE_TOOLS = [
         ),
         Tool(
             name="edit_file", label="修改文件",
-            description_short='修改 UTF-8 文本；单项编辑模式互斥，批量编辑时每个条目分别选择一种操作。',
-            description="修改 UTF-8 文本文件；支持整体替换、追加、查找替换和按 target_lines 更新/删除指定行，多个文件用 edits 批量处理。target_lines 支持 8、8-11、8,11，content 为空表示删除；行号以最新 read_file 内容为准，多个范围不能重叠。",
+            description_short='修改 UTF-8 文本；支持单项编辑与批量编辑。',
+            description="修改 UTF-8 文本文件；file/file_id 可使用 list_dir/grep 返回的 /personal、/project、/workspace 逻辑路径或 file_id，路径仅映射已登记文件，不是宿主机路径。支持整体替换、追加、查找替换和按 target_lines 更新/删除指定行。单文件批量编辑可在顶层提供 file/file_id 与默认 mode，edits 中逐项提供操作内容；多文件批量编辑则每个 edits 条目提供自己的文件标识和 mode。条目字段可覆盖顶层默认值。target_lines 支持 8、8-11、8,11，content 为空表示删除；行号以最新 read_file 内容为准，多个范围不能重叠。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "edits": {
                         "type": "array",
+                        "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
@@ -131,6 +140,10 @@ FILE_TOOLS = [
                                 "line_edits": {"type": "array", "items": {"type": "object", "properties": {"target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"}, "content": {"type": "string"}, "expected": {"type": "string"}}, "required": ["target_lines", "content"], "additionalProperties": False}},
                             },
                             "required": ["mode"],
+                            "oneOf": [
+                                {"required": ["file_id"], "not": {"required": ["file"]}},
+                                {"required": ["file"], "not": {"required": ["file_id"]}},
+                            ],
                             "allOf": [
                                 {
                                     "if": {"required": ["mode"], "properties": {"mode": {"const": "replace"}}},
@@ -166,17 +179,30 @@ FILE_TOOLS = [
                     "line_edits": {"type": "array", "items": {"type": "object", "properties": {"target_lines": {"type": "string", "pattern": "^(all|[0-9]+([-,][0-9]+)?)$"}, "content": {"type": "string"}, "expected": {"type": "string"}}, "required": ["target_lines", "content"], "additionalProperties": False}},
                 },
                 "allOf": [
-                    {"if": {"required": ["mode"], "properties": {"mode": {"const": "replace"}}}, "then": {"required": ["content"], "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}, {"required": ["line_edits"]}]}}},
-                    {"if": {"required": ["mode"], "properties": {"mode": {"const": "line_edit"}}}, "then": {"required": ["line_edits"], "not": {"anyOf": [{"required": ["content"]}, {"required": ["find"]}, {"required": ["replace"]}]}}},
                     {
-                        "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
+                        "if": {"required": ["edits"]},
+                        "then": {
+                            "not": {
+                                "anyOf": [
+                                    {"required": ["content"]},
+                                    {"required": ["find"]},
+                                    {"required": ["replace"]},
+                                    {"required": ["line_edits"]},
+                                ]
+                            }
+                        },
+                    },
+                    {"if": {"required": ["mode"], "properties": {"mode": {"const": "replace"}}, "not": {"required": ["edits"]}}, "then": {"required": ["content"], "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}, {"required": ["line_edits"]}]}}},
+                    {"if": {"required": ["mode"], "properties": {"mode": {"const": "line_edit"}}, "not": {"required": ["edits"]}}, "then": {"required": ["line_edits"], "not": {"anyOf": [{"required": ["content"]}, {"required": ["find"]}, {"required": ["replace"]}]}}},
+                    {
+                        "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}, "not": {"required": ["edits"]}},
                         "then": {
                             "required": ["content"],
                             "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}, {"required": ["line_edits"]}]},
                         },
                     },
                     {
-                        "if": {"required": ["mode"], "properties": {"mode": {"const": "find_replace"}}},
+                        "if": {"required": ["mode"], "properties": {"mode": {"const": "find_replace"}}, "not": {"required": ["edits"]}},
                         "then": {
                             "required": ["find", "replace"],
                             "not": {"anyOf": [{"required": ["content"]}, {"required": ["line_edits"]}]},
@@ -234,7 +260,7 @@ FILE_TOOLS = [
         Tool(
             name="rename_file", label="重命名文件",
             description_short='重命名文件；可选修改扩展名。',
-            description="重命名文件，可单个或批量。new_name 含后缀时按完整文件名修改（如 docker-compose.yml、.env）；不含点时保留原后缀。可选 format 显式指定扩展名，支持自定义后缀，不是格式转换。只改名称，不改变文件内容、MIME 或所属目录；改后缀不能把二进制变成文本。",
+            description="重命名文件，可单个或批量。file/file_id 可使用 list_dir/grep 返回的逻辑路径或 file_id；路径仅定位已登记文件。new_name 含后缀时按完整文件名修改（如 docker-compose.yml、.env）；不含点时保留原后缀。可选 format 显式指定扩展名，支持自定义后缀，不是格式转换。只改名称，不改变文件内容、MIME 或所属目录；改后缀不能把二进制变成文本。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -263,7 +289,7 @@ FILE_TOOLS = [
         Tool(
             name="copy_file", label="复制文件",
             description_short='复制文件。',
-            description="复制一份文件到目标位置（target.folder 填文件夹名；不填则在原位复制一份）。",
+            description="复制一份文件到目标位置；file/file_id 可使用 list_dir/grep 返回的逻辑路径或 file_id，路径仅定位已登记文件。（target.folder 填文件夹名；不填则在原位复制一份）。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -294,7 +320,7 @@ FILE_TOOLS = [
         Tool(
             name="delete_file", label="删除文件",
             description_short='删除文件到回收站。',
-            description="删除一个或多个文件（移入回收站，30 天内可还原，非永久删除）。单项传 file_id/file，批量传 file_ids。",
+            description="删除一个或多个文件（移入回收站，30 天内可还原，非永久删除）。单项传 file_id/file，file 可使用 list_dir/grep 返回的逻辑路径；批量传 file_ids。路径仅定位已登记文件。",
             input_schema={
                 "type": "object",
                 "properties": {

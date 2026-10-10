@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.ownership import get_owned
 from app.models import File, Folder
 from app.services.storage.trash import move_file_to_trash
+from app.services.filesync.protocol import lock_file_sync_paths
 
 
 async def build_batch_zip(
@@ -89,6 +90,7 @@ async def move_files_to_trash(
             File.deleted_at.is_(None),
         )
     )).scalars().all()
+    await lock_file_sync_paths(db, user_id, [file.storage_key for file in rows])
     for file in rows:
         await move_file_to_trash(storage, file)
         file.deleted_at = deleted_at
@@ -107,6 +109,7 @@ async def move_file_to_trash_by_id(
     file = await get_owned(db, File, file_id, user_id)
     if not file or file.deleted_at is not None:
         return False
+    await lock_file_sync_paths(db, user_id, [file.storage_key])
     await move_file_to_trash(storage, file)
     file.deleted_at = deleted_at
     file.version = int(file.version or 1) + 1

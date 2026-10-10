@@ -110,11 +110,12 @@ import { formatFileCreatedDate } from '@/utils/fileDate'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isTextExt, isVideoExt, isAudioExt } from '@/stores/preview'
+import { isImageExt, isTextExt, isVideoExt, isAudioExt, isPreviewAffectedByFileEvent } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
 import { fmtBytes } from '@/utils/fileSize'
+import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 const props = defineProps({
   show: Boolean,
@@ -204,8 +205,15 @@ function withCacheBust(url: string, refresh: boolean): string {
 }
 
 let loadSequence = 0
+watch(accountBoundaryEpoch, () => {
+  loadSequence += 1
+  revoke()
+  loading.value = false
+  error.value = null
+}, { flush: 'sync' })
 async function load(file: Partial<FileMeta>, refresh = false) {
   const sequence = ++loadSequence
+  const accountEpoch = getAccountBoundaryEpoch()
   revoke()
   currentCacheKey.value = ''   // 先按旧 key 判定上一个 blob 是否在缓存里，再清掉防串位
   loading.value    = true
@@ -219,7 +227,7 @@ async function load(file: Partial<FileMeta>, refresh = false) {
   try {
     if (isVideoExt(file.ext)) {
       const { url } = await filesApi.getStreamUrl(file.id!)
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       videoSrc.value = withCacheBust(url, refresh)
     } else {
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
@@ -233,26 +241,30 @@ async function load(file: Partial<FileMeta>, refresh = false) {
         ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
         : `${BASE_URL}/files/${file.id!}/download`) + bust
       const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       let blob = await res.blob()
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       // PDF 走 iframe 原生渲染，blob 必须是 application/pdf，否则浏览器可能当下载/空白
       if (file.ext?.toUpperCase() === 'PDF' && blob.type !== 'application/pdf') {
         blob = new Blob([blob], { type: 'application/pdf' })
       }
       const url = URL.createObjectURL(blob)
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) {
+        URL.revokeObjectURL(url)
+        return
+      }
       blobUrl.value = url
       // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
-      previewBlobCache.put(key, url)
+      previewBlobCache.put(key, url, accountEpoch)
       currentCacheKey.value = key
     }
   } catch (e) {
-    if (sequence !== loadSequence) return
+    if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
     error.value = t('files.loadFailed', { message: e instanceof Error ? e.message : String(e) })
   } finally {
-    if (sequence === loadSequence) {
+    if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch()) {
       loading.value    = false
         }
   }
@@ -265,8 +277,7 @@ watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined]
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
-  if (event?.resource !== 'files') return
-  if (event?.origin === CLIENT_ID) return
+  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.file?.id, event)) return
   if (props.show && props.file && !props.file.attach_id) load(props.file, true)
 })
 

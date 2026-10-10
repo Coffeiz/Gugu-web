@@ -44,6 +44,12 @@ _PLATFORM_REPLY_CAPABILITIES = {
         REPLY_CAPABILITY_IMAGE,
         REPLY_CAPABILITY_REPLY,
     }),
+    "telegram": frozenset({
+        REPLY_CAPABILITY_TEXT,
+        REPLY_CAPABILITY_FILE,
+        REPLY_CAPABILITY_IMAGE,
+        REPLY_CAPABILITY_REPLY,
+    }),
 }
 
 
@@ -124,11 +130,17 @@ def extract_platform_user_id(payload: Dict[str, Any]) -> str:
 def normalize_chat_type(platform: str, chat_type: Any) -> str:
     """将各平台的会话类型归一到 IM 内部协议。
 
-    飞书私聊事件使用 ``p2p``，权限和会话路由内部统一使用 ``c2c``。
+    飞书私聊事件使用 ``p2p``；Telegram 使用 ``private`` / ``supergroup``。
+    权限和会话路由分别统一为 ``c2c`` / ``group``。
     """
     value = str(chat_type or "").strip().lower()
     if platform == "feishu" and value == "p2p":
         return "c2c"
+    if platform == "telegram":
+        if value == "private":
+            return "c2c"
+        if value in {"group", "supergroup"}:
+            return "group"
     return value
 
 

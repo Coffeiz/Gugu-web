@@ -124,7 +124,7 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 .interaction-bubble { width: min(360px, 88%); box-sizing: border-box; margin: 0; padding: 14px; border: 1px solid var(--border-default); border-radius: var(--card-radius); background: var(--surface-card-solid); color: var(--content-primary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); }
 .interaction-title { color: var(--content-primary); font-size: var(--font-size-md); font-weight: 650; line-height: var(--line-height-ui); }
 .interaction-body { margin-top: 5px; color: var(--content-secondary); font-size: var(--font-size-sm); line-height: var(--line-height-body); white-space: pre-wrap; }
-.interaction-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle); }
+.interaction-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider); }
 .interaction-actions :deep(.interaction-option) {
   flex: 0 1 auto;
   min-width: 0;
@@ -144,7 +144,7 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
   overflow-wrap: anywhere;
 }
 .interaction-custom-hint { margin-top: 8px; color: var(--content-secondary); font-size: var(--font-size-xs); }
-.interaction-secrets { display: grid; gap: 9px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle); }
+.interaction-secrets { display: grid; gap: 9px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider); }
 .interaction-secret-field { display: grid; gap: 5px; color: var(--content-secondary); font-size: var(--font-size-xs); }
 .interaction-secret-field input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 7px 9px; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--surface-input); color: var(--content-primary); }
 .interaction-secret-submit { justify-self: start; margin-top: 2px; }

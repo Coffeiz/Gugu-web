@@ -22,6 +22,7 @@ export interface FileLibraryBatchActionOptions {
   getCurrentFolderName: () => string | null | undefined
   clearSelection: () => void
   loadContents: () => void
+  removeFilesFromSnapshots: (fileIds: number[]) => void
   pruneHistoryForFolders: (ids: number[]) => void
   fetchStorage: () => void | Promise<void>
   getDestination: () => { folderId: number | null; projectId: number | null; workspaceDirectoryId: number | null }
@@ -63,23 +64,10 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
     if (!fileIds.length && !folderIds.length) return
     if (!await confirmFileDeletion('selected', { count: fileIds.length + folderIds.length })) return
 
-    const fileBackups = fileIds.map(id => options.cacheStore.getFile(id)).filter((file): file is FileMeta => file != null)
-    const folderBackups = folderIds.map(id => options.cacheStore.getFolder(id)).filter((folder): folder is FolderMeta => folder != null)
     try {
       await InteractionSync.execute({
         scope: 'file.batch-delete', entityKey: `file-batch-delete:${fileIds.join(',')}:${folderIds.join(',')}`,
-        apply: () => {
-          options.clearSelection()
-          options.cacheStore.removeFiles(fileIds)
-          options.pruneHistoryForFolders(folderIds)
-          folderIds.forEach(id => options.cacheStore.removeFolder(id))
-          options.loadContents()
-        },
-        rollback: () => {
-          fileBackups.forEach(file => options.cacheStore.addFile(file))
-          folderBackups.forEach(folder => options.cacheStore.addFolder(folder))
-          options.loadContents()
-        },
+        apply: () => {},
         request: async mutation => {
           await Promise.all([
             fileIds.length ? options.fileActions.batchDelete(fileIds, { mutationId: mutation.mutationId }) : Promise.resolve(),
@@ -87,8 +75,20 @@ export function useFileLibraryBatchActions(options: FileLibraryBatchActionOption
           ])
           return null
         },
-        onCommit: options.fetchStorage,
-        onError: error => console.error('[Files] 批量删除失败:', error instanceof Error ? error.message : String(error)),
+        onCommit: () => {
+          options.cacheStore.removeFiles(fileIds)
+          options.removeFilesFromSnapshots(fileIds)
+          options.pruneHistoryForFolders(folderIds)
+          folderIds.forEach(id => options.cacheStore.removeFolder(id))
+          options.clearSelection()
+          options.loadContents()
+          void options.fetchStorage()
+        },
+        rollback: () => {},
+        onError: error => {
+          console.error('[Files] 批量删除失败:', error instanceof Error ? error.message : String(error))
+          options.loadContents()
+        },
       })
     } catch { /* 错误已回滚并记录 */ }
   }

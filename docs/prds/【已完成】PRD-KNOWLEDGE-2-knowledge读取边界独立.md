@@ -1,8 +1,8 @@
 # PRD-KNOWLEDGE-2：knowledge 读取边界独立与 read_knowledge 工具
 
-> 状态：Phase 1 已实施完成（随 v1.2.3 发布）；2026-09-16 复核结论——**search_memory 收窄维持不变**（不加回 knowledge），旧知识发现缺口由 read_knowledge 列举模式（自带全量 keyword 搜索）+ 清单截断如实提示解决
+> 状态：Phase 1 已实施完成（随 v1.2.3 发布）；2026-10-09 实施调整——`read_knowledge(keyword=...)` 改为复用 Knowledge BM25，`knowledge_id` 保持直读；`search_memory` 仍只服务记忆。
 > 创建：2026-09-13
-> 最近更新：2026-09-16（二次修订）
+> 最近更新：2026-10-09（检索实现调整；下文原始方案保留为历史决策记录）
 > 关联模块：`backend/agent/tools/memory.py`、`backend/agent/tools/knowledge.py`、`backend/agent/knowledge/store.py`、`backend/agent/rag/service.py`、`backend/agent/context/builder.py`、`backend/agent/knowledge/reflection.py`
 > 背景参考：PRD-KNOWLEDGE-1（统一知识系统，已完成）；PRD-MEM-1（记忆召回工具与混合检索）
 
@@ -10,9 +10,9 @@
 
 | 能力/结果 | 状态 | 说明 |
 |---|---|---|
-| knowledge 精确读取走索引（原痛点） | ✅ 已解决 | `read_knowledge` 直读 + 列举模式自带全量 keyword 搜索（写入即可读、覆盖全部条目）；`search_memory(source=knowledge)` 仍返回引导文案 |
-| `read_knowledge` 直读工具 | ✅ | `agent/tools/knowledge.py`：id 精确读 + 列举（scope/keyword 过滤、上限），直读 `KnowledgeStore` 写入即可读 |
-| `search_memory` 收窄为记忆专用 | ✅ 维持 | 曾短暂评估加回 knowledge 检索，因确认 `read_knowledge` 列举模式已是全量搜索（包含匹配、写入即可读）而放弃；收窄边界与引导文案保持 v1.2.3 现状 |
+| knowledge 关键词搜索 | ✅ | `read_knowledge(keyword=...)` 复用 Knowledge BM25；异步索引可能有短暂延迟 |
+| `read_knowledge` 精确读取 | ✅ | `agent/tools/knowledge.py`：按 `knowledge_id` 直读完整条目；关键词查询返回 BM25 相关片段 |
+| `search_memory` 收窄为记忆专用 | ✅ | 只检索 profile/pattern/daily/memory；工具描述不混入知识检索说明 |
 | knowledge 工具独立注册 | ✅ | save/update/delete/read_knowledge 迁入独立 `KnowledgeSkill`，工具名与参数契约不变 |
 | 配套（计数钉/技能文档/i18n/被动注入文案） | ✅ | capability 计数钉、`toolNames.ts` 三语、skills 文档无「search_memory 搜知识」残留、被动注入引导改指 read_knowledge |
 | KN2-004 devserver 实测 + devlog | 🔲 | 单测全绿（test_read_knowledge_tool + test_search_memory_boundary 10 passed），5173 实测与 devlog 记录未做 |

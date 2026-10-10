@@ -91,7 +91,7 @@ html[data-theme][data-family] .event-form-body .reminder-label { color: var(--co
 html[data-theme][data-family] .event-form-body .nextday-tag {
   color: var(--selection-fg); background: var(--selection-bg);
 }
-html[data-theme][data-family] .event-form-body .reminder-section { border-top-color: var(--border-subtle); }
+html[data-theme][data-family] .event-form-body .reminder-section { border-top-color: var(--content-divider); }
 html[data-theme][data-family] .event-form-body .reminder-del { color: var(--status-warning); }
 html[data-theme][data-family] .event-form-body .reminder-del:hover { background: var(--status-warning-bg); }
 html[data-theme][data-family] .event-form-body .reminder-add-toggle {

@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -22,7 +23,6 @@ _CONTEXT_REVISION_SOURCES = _CONTEXT_RESOURCES | {"preferences", "timezone", "im
 _DATA_RUNTIME_RESOURCES = {"projects", "files", "sessions", "conversation"}
 _RAG_SOURCES_BY_RESOURCE: dict[str, tuple[str, ...]] = {
     "projects": ("project",),
-    "files": ("file",),
     "sessions": ("conversation",),
     "conversation": ("conversation",),
     "calendar": ("calendar",),
@@ -71,6 +71,25 @@ def _channel(user_id) -> str:
     return f"events:{user_id}"
 
 
+async def publish_agent_run_changed(user_id, *, session_id: int, status: str) -> bool:
+    """通知用户级 live 流某会话的 Agent run 状态变化，不触发资源失效副作用。"""
+    if status not in {"running", "completed", "failed"}:
+        return False
+    payload = {
+        "protocol_version": "live-event-v1",
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "type": "agent.run.changed",
+        "session_id": int(session_id),
+        "status": status,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        return False
+    return True
+
+
 async def get_context_revision(user_id) -> int:
     """读取用户业务上下文版本；不存在时从 0 开始。"""
     try:
@@ -80,11 +99,24 @@ async def get_context_revision(user_id) -> int:
         return 0
 
 
+async def _invalidate_im_session_snapshots(user_id) -> None:
+    from agent.context.session_snapshot import invalidate_user_im_snapshots
+
+    await invalidate_user_im_snapshots(user_id)
+
+
 async def bump_context_revision(user_id, *resources: str) -> None:
-    """业务数据成功变更后递增版本，供 session snapshot 做新鲜度判断。"""
+    """递增上下文版本；IM 渠道变更还会立即失效所有平台会话快照。"""
     resource_names = {resource for resource in resources if isinstance(resource, str)}
     if not _CONTEXT_REVISION_SOURCES.intersection(resource_names):
         return
+    if "im_channels" in resource_names:
+        try:
+            await _invalidate_im_session_snapshots(user_id)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("app.core.events.invalidate_im_session_snapshots", exc)
     try:
         key = f"context-revision:{user_id}"
         redis = get_redis()
@@ -271,7 +303,86 @@ async def publish(user_id, *resources: str, origin: str | None = None,
     return True
 
 
+async def publish_trash_purge_progress(
+    user_id, *, job_id: int, status: str, progress_current: int,
+    progress_total: int, failed_count: int,
+) -> bool:
+    """推送回收站清理进度；任务表仍是权威状态，SSE 只负责及时通知。"""
+    payload = {
+        "protocol_version": "live-event-v1",
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "type": "task.progress",
+        "task_type": "trash_purge",
+        "task_id": job_id,
+        "status": status,
+        "progress_current": progress_current,
+        "progress_total": progress_total,
+        "failed_count": failed_count,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await asyncio.wait_for(
+            get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False)),
+            timeout=0.5,
+        )
+    except Exception:
+        return False
+    return True
+
+
 BROADCAST_CHANNEL = "events:__broadcast__"
+FILESYNC_ADMIN_CHANNEL = "events:filesync-admin"
+
+
+async def _publish_filesync_event(
+    payload: dict, *, coalesce_key: str | None = None,
+) -> None:
+    """只向受保护的 Admin 失效频道发送事件，不向普通用户实时流暴露对账状态。"""
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    try:
+        redis = get_redis()
+        if coalesce_key is not None:
+            accepted = await redis.set(
+                f"filesync:sse:coalesce:{coalesce_key}",
+                payload["event_id"],
+                ex=1,
+                nx=True,
+            )
+            if not accepted:
+                return
+        await redis.publish(FILESYNC_ADMIN_CHANNEL, encoded)
+    except Exception:
+        # 任务/健康状态已持久化，Pub/Sub 仅作刷新提示，失败由首次加载/重连补读。
+        return
+
+
+async def publish_filesync_run_changed(
+    *, run_id: str, binding_id: int, revision: int,
+    coalesce: bool = False,
+) -> None:
+    run_id = str(run_id)
+    await _publish_filesync_event({
+        "protocol_version": "live-event-v1",
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "type": "filesync.run.changed",
+        "run_id": run_id,
+        "binding_id": int(binding_id),
+        "revision": max(0, int(revision)),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }, coalesce_key=f"run:{run_id}" if coalesce else None)
+
+
+async def publish_filesync_binding_health_changed(
+    *, binding_id: int, revision: int,
+) -> None:
+    await _publish_filesync_event({
+        "protocol_version": "live-event-v1",
+        "event_id": f"evt-{uuid.uuid4().hex}",
+        "type": "filesync.binding.health.changed",
+        "binding_id": int(binding_id),
+        "revision": max(0, int(revision)),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 async def broadcast(title: str, content: str = "", color: str = "#7b7fb2", nid=None,

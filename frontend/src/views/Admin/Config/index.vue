@@ -17,6 +17,7 @@
     <div class="cards-wrap">
 
       <OutboundNetworkSettings />
+      <ImPlatformSettings v-model="draft.im" />
 
       <!-- ── 数据库 ── -->
       <section id="sec-db" class="config-card">
@@ -279,6 +280,7 @@ import FeedbackEmailSettings from './components/FeedbackEmailSettings.vue'
 import RegistrationVerificationSettings from './components/RegistrationVerificationSettings.vue'
 import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
 import OutboundNetworkSettings from './components/OutboundNetworkSettings.vue'
+import ImPlatformSettings from './components/ImPlatformSettings.vue'
 import { useSystemSmtpConfiguration } from './composables/useSystemSmtpConfiguration'
 
 const { t } = useI18n()
@@ -295,6 +297,7 @@ const draft = reactive({
     alert_email_enabled: false,
     alert_email_recipients: [],
   })),
+  im: JSON.parse(JSON.stringify(configStore.cfg.im)),
 })
 const { smtpConfigured } = useSystemSmtpConfiguration(
   () => draft.smtp,
@@ -309,6 +312,7 @@ onMounted(async () => {
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
+  Object.assign(draft.im, configStore.cfg.im)
 })
 
 // ── 连接字符串预览 ────────────────────────────────────────────────────────
@@ -448,6 +452,7 @@ async function save() {
     storage: { ...draft.storage },
     smtp:    { ...draft.smtp },
     security: { ...draft.security },
+    im: { ...draft.im },
   })
 }
 
@@ -458,6 +463,7 @@ function resetDraft() {
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
+  Object.assign(draft.im, configStore.cfg.im)
   testStatus.db    = null
   testStatus.redis = null
   testStatus.oss   = null

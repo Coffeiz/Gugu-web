@@ -1,6 +1,7 @@
 <template>
-  <div :class="variant === 'list' ? 'list-empty' : 'grid-empty'">
-    <svg v-if="variant === 'trash'" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.3">
+  <div :class="variant === 'list' ? 'list-empty' : 'grid-empty'" :role="loading ? 'status' : undefined" :aria-live="loading ? 'polite' : undefined">
+    <span v-if="loading" class="file-browser-loading-spinner" aria-hidden="true"></span>
+    <svg v-else-if="variant === 'trash'" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.3">
       <path d="M5 8h22M10 8V6h12v2M13 13v7M19 13v7M6 8l1.5 15a2 2 0 002 1.8h13a2 2 0 002-1.8L26 8"/>
     </svg>
     <svg v-else-if="variant === 'grid'" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.3">
@@ -17,6 +18,7 @@
 defineProps({
   variant: { type: String as () => 'grid' | 'list' | 'trash', default: 'grid' },
   text: { type: String, default: '暂无文件' },
+  loading: { type: Boolean, default: false },
 })
 </script>
 
@@ -30,4 +32,6 @@ defineProps({
   gap: 10px; padding: 72px 0;
   font-size: 12px; color: var(--text-secondary); opacity: 0.5;
 }
+.file-browser-loading-spinner { width:20px; height:20px; border:2px solid var(--border-subtle); border-top-color:var(--action-primary); border-radius:50%; animation:file-browser-spin .75s linear infinite; }
+@keyframes file-browser-spin { to { transform:rotate(360deg); } }
 </style>

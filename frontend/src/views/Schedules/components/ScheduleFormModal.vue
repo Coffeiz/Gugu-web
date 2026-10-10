@@ -37,8 +37,8 @@
             :class="{ on: repeatMode === opt.v }" @click="setRepeatMode(opt.v)">{{ opt.label }}</button>
         </div>
         <div v-if="repeatMode === 'weekly'" class="weekly-days" data-testid="schedule-weekly-days">
-          <button v-for="(name, day) in weekdayNames" :key="day" type="button" class="repeat-tab"
-            :class="{ on: weeklyDays.includes(day) }" @click="toggleWeeklyDay(day)">{{ name }}</button>
+          <button v-for="weekday in weekdayOptions" :key="weekday.day" type="button" class="repeat-tab"
+            :class="{ on: weeklyDays.includes(weekday.day) }" @click="toggleWeeklyDay(weekday.day)">{{ weekday.name }}</button>
         </div>
         <div v-if="repeatMode === 'interval'" class="interval-presets">
             <button v-for="minutes in INTERVAL_PRESETS" :key="minutes" type="button" class="interval-preset"
@@ -108,16 +108,19 @@
         <span>{{ t('schedules.sendTo') }}</span>
         <div class="chans">
           <template v-for="channel in CHANNELS" :key="channel.value">
-            <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value)"
+            <Checkbox v-if="channel.value === 'web' || channel.value === 'email' || props.imChannels.includes(channel.value) || form.channels.includes(channel.value)"
               :model-value="form.channels.includes(channel.value)"
               @update:model-value="toggleChannel(channel.value, $event)">
-              {{ channel.label }}
+              {{ channel.label }}<template v-if="form.channels.includes(channel.value) && !props.imChannels.includes(channel.value)">（{{ t('scheduleUi.channelUnavailablePreserved') }}）</template>
             </Checkbox>
           </template>
         </div>
-        <div v-if="form.channels.includes('qq')" class="qq-delivery-field" data-testid="schedule-qq-delivery">
-          <SelectPopup :model-value="qqTarget" :options="qqTargetOptions" popup-class="qq-target-popup"
-            auto-flip @update:model-value="setQqTarget" />
+        <div v-for="platform in IM_DELIVERY_PLATFORMS" :key="platform"
+          v-show="form.channels.includes(platform)" class="qq-delivery-field"
+          :data-testid="`schedule-${platform}-delivery`">
+          <span>{{ deliveryPlatformLabel(platform) }}</span>
+          <SelectPopup :model-value="deliveryTargets[platform]" :options="deliveryTargetOptions(platform)" popup-class="qq-target-popup"
+            auto-flip @update:model-value="setDeliveryTarget(platform, $event)" />
         </div>
       </div>
 
@@ -142,6 +145,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import SelectPopup from '@/components/common/controls/SelectPopup.vue'
 import { scheduledTasksApi } from '@/services/api'
+import { usePreferencesStore } from '@/stores/preferences'
 import {
   buildCron,
   combineScheduleDateTime,
@@ -150,7 +154,7 @@ import {
   splitScheduleDateTime,
   type RepeatMode,
 } from '../utils/scheduleCron'
-import { buildQqDeliveryFields, buildQqTargetOptions } from '../utils/qqDelivery'
+import { buildImDeliveryFields, buildImTargetOptions, IM_DELIVERY_PLATFORMS, type ImDeliveryPlatform, type ImDeliveryGroup } from '@/utils/imDelivery'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -167,6 +171,7 @@ const emit = defineEmits<{
   (event: 'save', data: Record<string, any>): void
 }>()
 const { t, tm } = useI18n()
+const prefsStore = usePreferencesStore()
 
 const REPEAT_OPTS = computed<{ v: RepeatMode; label: string }[]>(() => [
   { v: 'once', label: t('schedules.once') }, { v: 'interval', label: t('schedules.minutes') }, { v: 'daily', label: t('schedules.daily') },
@@ -179,6 +184,7 @@ const CHANNELS = computed(() => [
   { value: 'feishu', label: t('schedules.feishu') },
   { value: 'qq', label: t('schedules.qq') },
   { value: 'wechat', label: t('schedules.wechat') },
+  { value: 'telegram', label: t('schedules.telegram') },
 ])
 const workspaceOptions = computed(() => [
   { value: '', label: t('schedules.workspaceRoot') },
@@ -186,15 +192,10 @@ const workspaceOptions = computed(() => [
 ])
 const repeatMode = ref<RepeatMode>('daily')
 const weeklyDays = ref<number[]>([1])
-const qqTarget = ref('private')
-const initialQqTarget = ref('private')
-const qqGroups = ref<{ chat_id: string; title: string }[]>([])
-const qqTargetOptions = computed(() => buildQqTargetOptions(
-  qqGroups.value,
-  qqTarget.value,
-  t('schedules.qqPrivate'),
-  chatId => t('scheduleUi.qqGroupUnavailable', { chatId }),
-))
+const deliveryTargets = reactive<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
+const initialDeliveryTargets = reactive<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
+const deliveryGroups = reactive<Record<ImDeliveryPlatform, ImDeliveryGroup[]>>({ qq: [], feishu: [], telegram: [] })
+const privateAvailable = reactive<Record<ImDeliveryPlatform, boolean>>({ qq: true, feishu: false, telegram: false })
 const intervalMinutes = ref(5)
 const intervalPreset = ref('5')
 const startDate = ref('')
@@ -233,25 +234,25 @@ function blankForm() {
     workspaceId: null as number | null, filesystemAuthorized: false,
   }
 }
-function filterChannels(channels: string[]) {
-  const allowed = ['web', 'email', ...props.imChannels]
-  const filtered = channels.filter(channel => allowed.includes(channel))
-  return filtered.length ? filtered : ['web']
-}
 function resetForm() {
   const parsed = props.task ? parseCron(props.task.cron) : { mode: 'daily' as RepeatMode, time: '09:00' }
   const taskKind = props.task?.schedule_kind
   const channels: string[] = props.task
     ? [...new Set<string>((props.task.channels || []).flatMap((channel: string) =>
-      channel === 'chat' ? ['web'] : channel === 'im' ? ['feishu', 'qq', 'wechat'] : [channel]))]
+      channel === 'chat' ? ['web'] : channel === 'im' ? ['feishu', 'qq', 'wechat', 'telegram'] : [channel]))]
     : ['web']
   Object.assign(form, props.task
-    ? { name: props.task.name, payload: props.task.payload, time: parsed.time, channels: filterChannels(channels) }
+    ? { name: props.task.name, payload: props.task.payload, time: parsed.time, channels }
     : blankForm())
   weeklyDays.value = parsed.weeklyDays?.length ? [...parsed.weeklyDays] : [new Date().getDay()]
   const targets = props.task?.delivery_targets as Record<string, any> | undefined
-  qqTarget.value = targets?.qq?.chat_type === 'group' && targets.qq.chat_id ? String(targets.qq.chat_id) : 'private'
-  initialQqTarget.value = qqTarget.value
+  for (const platform of IM_DELIVERY_PLATFORMS) {
+    const target = targets?.[platform]
+    deliveryTargets[platform] = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id) : 'private'
+    initialDeliveryTargets[platform] = deliveryTargets[platform]
+    deliveryGroups[platform] = []
+    privateAvailable[platform] = platform === 'qq'
+  }
   repeatMode.value = taskKind === 'once' ? 'once' : (taskKind === 'interval' ? 'interval' : parsed.mode)
   intervalMinutes.value = parsed.intervalMinutes ?? 5
   intervalPreset.value = INTERVAL_PRESETS.includes(intervalMinutes.value) ? String(intervalMinutes.value) : 'custom'
@@ -266,18 +267,30 @@ function resetForm() {
   formErr.value = ''
   nextTick(() => { nameRef.value?.focus(); resizePayload() })
 }
-watch(() => props.show, show => { if (show) { resetForm(); void loadQqTargets() } })
-async function loadQqTargets() {
-  if (!props.imChannels.includes('qq')) return
-  try {
-    const res = await scheduledTasksApi.listQqTargets()
-    qqGroups.value = res.groups
-  } catch {
-    qqGroups.value = []
-  }
+watch(() => props.show, show => { if (show) { resetForm(); void loadDeliveryTargets() } })
+async function loadDeliveryTargets() {
+  const platforms = IM_DELIVERY_PLATFORMS.filter(platform => props.imChannels.includes(platform))
+  await Promise.all(platforms.map(async platform => {
+    try {
+      const res = await scheduledTasksApi.listDeliveryTargets(platform)
+      deliveryGroups[platform] = res.groups
+      privateAvailable[platform] = res.private_available
+    } catch {
+      deliveryGroups[platform] = []
+      privateAvailable[platform] = false
+    }
+  }))
 }
-function setQqTarget(value: string) {
-  qqTarget.value = value
+function deliveryPlatformLabel(platform: ImDeliveryPlatform) {
+  return t(`schedules.${platform}`)
+}
+function deliveryTargetOptions(platform: ImDeliveryPlatform) {
+  const privateLabel = privateAvailable[platform] ? t('schedules.qqPrivate') : t('schedules.privateUnavailable')
+  return buildImTargetOptions(deliveryGroups[platform], deliveryTargets[platform], privateLabel,
+    chatId => t('scheduleUi.groupUnavailable', { chatId }))
+}
+function setDeliveryTarget(platform: ImDeliveryPlatform, value: string) {
+  deliveryTargets[platform] = value
 }
 function resizePayload() {
   const element = payloadRef.value
@@ -305,7 +318,14 @@ function setRepeatMode(mode: RepeatMode) {
   }
   repeatMode.value = mode
 }
-const weekdayNames = computed(() => tm('sharedUi.weekdays') as string[])
+const weekdayOptions = computed(() => {
+  const names = tm('sharedUi.weekdays') as string[]
+  const firstDay = prefsStore.calendarWeekStart === 'sunday' ? 0 : 1
+  return Array.from({ length: 7 }, (_, offset) => {
+    const day = (firstDay + offset) % 7
+    return { day, name: names[day] }
+  })
+})
 function toggleWeeklyDay(day: number) {
   const days = new Set(weeklyDays.value)
   if (days.has(day)) days.delete(day)
@@ -342,9 +362,9 @@ function toggleChannel(channel: string, checked: boolean) {
   else channels.delete(channel)
   form.channels = [...channels]
 }
-function qqDeliveryFields() {
-  return buildQqDeliveryFields(
-    Boolean(props.task), initialQqTarget.value, qqTarget.value, form.channels.includes('qq'),
+function imDeliveryFields() {
+  return buildImDeliveryFields(
+    Boolean(props.task), initialDeliveryTargets, deliveryTargets, form.channels,
   )
 }
 function submit() {
@@ -361,7 +381,7 @@ function submit() {
       schedule_kind: 'once', cron: null, interval_minutes: null,
       start_at: startAt, end_at: null,
       channels: [...form.channels], enabled: props.task ? props.task.enabled : true,
-      ...qqDeliveryFields(),
+      ...imDeliveryFields(),
       workspace_id: form.workspaceId,
       filesystem_authorized: form.filesystemAuthorized,
     })
@@ -392,7 +412,7 @@ function submit() {
       start_at: startAt,
       end_at: endAt,
       channels: [...form.channels], enabled: props.task ? props.task.enabled : true,
-      ...qqDeliveryFields(),
+      ...imDeliveryFields(),
       workspace_id: form.workspaceId,
       filesystem_authorized: form.filesystemAuthorized,
     })
@@ -452,10 +472,14 @@ function submit() {
 .interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
 .interval-preset:hover { border-color: var(--option-border-hover); }
 .interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); }
-.chans { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.chans { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
 .chans :deep(.app-checkbox) { min-width: 0; }
-.chans :deep(.app-checkbox__label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qq-delivery-field { margin-top: 8px; }
+.chans :deep(.app-checkbox__label) { min-width: 0; white-space: nowrap; }
+.qq-delivery-field {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; margin-top: 8px;
+  color: var(--content-secondary); font-size: 12px; line-height: 1.45;
+}
+.qq-delivery-field > span { display: block; min-width: 0; line-height: 1.45; }
 .qq-delivery-field :deep(.select-popup) { display: block; }
 .qq-delivery-field :deep(.select-popup-trigger) { width: 100%; box-sizing: border-box; }
 :global(.qq-target-popup) { max-height: 260px; overflow-y: auto; }

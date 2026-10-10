@@ -20,9 +20,9 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const shellDangerousEnabled = ref(true)
   const automaticModeEnabled = ref(false)
   const decisionGuardEnabled = ref(false)
-  const showToolInteractions = ref(false)
-  const showIntermediateReplies = ref(true)
-  const toolInjectionMode = ref<'description' | 'full'>('full')
+  const showToolInteractions = ref(true)
+  const showIntermediateReplies = ref(false)
+  const toolInjectionMode = ref<'description' | 'full'>('description')
   const personalityPreference = ref('')
   const personalityPreferenceEnabled = ref(false)
   const personalityPreferenceAvailable = ref(true)
@@ -66,9 +66,9 @@ export const usePreferencesStore = defineStore('preferences', () => {
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? true
       automaticModeEnabled.value = (data as any).automaticModeEnabled === true
       decisionGuardEnabled.value = (data as any).decisionGuardEnabled === true
-      showToolInteractions.value = (data as any).showToolInteractions ?? false
-      showIntermediateReplies.value = (data as any).showIntermediateReplies ?? true
-      toolInjectionMode.value = (data as any).toolInjectionMode === 'description' ? 'description' : 'full'
+      showToolInteractions.value = (data as any).showToolInteractions ?? true
+      showIntermediateReplies.value = (data as any).showIntermediateReplies ?? false
+      toolInjectionMode.value = (data as any).toolInjectionMode === 'full' ? 'full' : 'description'
       personalityPreference.value = data.personalityPreference ?? ''
       personalityPreferenceEnabled.value = data.personalityPreferenceEnabled ?? false
       personalityPreferenceAvailable.value = data.personalityPreferenceAvailable ?? true

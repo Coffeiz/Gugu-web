@@ -1,6 +1,47 @@
 from .base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
+_ANTHROPIC_MODEL_PREFIXES = (
+    "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus",
+    "qwen3.7-flash", "qwen3.6-max", "qwen3.6-plus", "qwen3.6-flash",
+    "qwen3.5-plus", "qwen3.5-flash", "qwen3-max", "qwen3-coder-next",
+    "qwen3-coder-plus", "qwen3-coder-flash", "qwen3-vl-plus",
+    "qwen3-vl-flash", "qwen-vl-max", "qwen-vl-plus", "qwen-plus",
+    "qwen-flash", "qwen-turbo", "qwen3.6-27b", "qwen3.5-397b-a17b",
+    "qwen3.5-122b-a10b", "qwen3.5-27b", "qwen3.5-35b-a3b",
+    "qwen3.8-2.4t-a95b", "qwen3.8-27b",
+)
+
+
+def _supports_anthropic_model(model: str) -> bool:
+    normalized = (model or "").strip().lower()
+    return any(normalized == prefix or normalized.startswith(f"{prefix}-")
+               for prefix in _ANTHROPIC_MODEL_PREFIXES)
+
+
+def _anthropic_reasoning_capabilities(model: str) -> ReasoningCapabilities:
+    if not model.strip().lower().startswith(("qwen3.8-max", "qwen3.8-flash")):
+        return ReasoningCapabilities()
+    return ReasoningCapabilities(
+        modes=("disabled", "adaptive"),
+        efforts=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+        effort_map=(("minimal", "low"), ("high", "xhigh"), ("max", "xhigh")),
+    )
+
+
+def _anthropic_thinking_params(
+    ai, capabilities: ReasoningCapabilities, thinking: str | None = None,
+) -> dict:
+    value = thinking if thinking is not None else getattr(ai, "thinking", "disabled")
+    if value not in capabilities.modes:
+        return {}
+    params = {"thinking": {"type": "disabled" if value == "disabled" else "enabled"}}
+    effort = capabilities.provider_effort((getattr(ai, "reasoning_effort", "") or "").lower())
+    if value != "disabled" and effort:
+        params["output_config"] = {"effort": effort}
+    return params
+
+
 class QwenAdapter(ProviderAdapter):
     name = "qwen"
     api_format = "openai"
@@ -10,6 +51,9 @@ class QwenAdapter(ProviderAdapter):
 
     def supports_explicit_cache(self, model: str = "") -> bool:
         return self.supports_active_cache(model)
+
+    def responses_store_value(self, ai) -> bool | None:
+        return False if self.protocol_format(ai) == "responses" else None
 
     def uses_single_history_cache_anchor(self, model: str = "") -> bool:
         # Token Plan 的 OpenAI 兼容端点对多个历史 cache_control 锚点命中不稳定；
@@ -27,8 +71,17 @@ class QwenAdapter(ProviderAdapter):
         return (model or "").strip().lower().startswith("qwen3.8")
 
     def supported_api_formats(self, ai):
-        # 百炼接入支持的协议属于 Provider 能力；模型专属推理参数仍单独按型号过滤。
-        return ("openai", "responses")
+        # Anthropic Messages 仅对百炼文档列出的千问模型开放；旧 qwen-max
+        # 等模型不因同属百炼而自动继承该能力。
+        model = (getattr(ai, "model", "") or "").strip().lower()
+        formats = ("openai", "responses")
+        return (*formats, "anthropic") if _supports_anthropic_model(model) else formats
+
+    def default_base_url_for(self, ai) -> str:
+        if self.protocol_format(ai) == "anthropic":
+            # 百炼按量 Anthropic 端点需要把 WorkspaceId 替换成实际业务空间 ID。
+            return "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic"
+        return self.default_base_url
 
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         # 百炼能力按模型族收窄：老的 qwen-max 不能因为 provider 名称相同就
@@ -42,6 +95,8 @@ class QwenAdapter(ProviderAdapter):
 
     def reasoning_capabilities(self, ai, api_format: str) -> ReasoningCapabilities:
         model = getattr(ai, "model", "") or ""
+        if api_format == "anthropic":
+            return _anthropic_reasoning_capabilities(model)
         if api_format == "openai" and self._qwen3_model(model):
             if self._supports_effort(model):
                 return ReasoningCapabilities(
@@ -67,6 +122,11 @@ class QwenAdapter(ProviderAdapter):
         if getattr(ai, "thinking", "disabled") == "disabled":
             return {"reasoning": {"effort": "none"}}
         return super().build_responses_reasoning_params(ai)
+
+    def build_anthropic_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
+        return _anthropic_thinking_params(
+            ai, self.reasoning_capabilities(ai, "anthropic"), thinking,
+        )
 
     def build_openai_thinking_kwargs(self, ai, *, thinking: str | None = None) -> dict:
         model = getattr(ai, "model", "") or ""

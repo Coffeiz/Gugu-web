@@ -11,6 +11,11 @@ import { getAuthDeviceId } from '@/utils/authDevice'
 // 后端 Pydantic 模型（由 OpenAPI 生成，见 npm run gen:types）。高频实体直接复用，前后端对齐。
 type Schemas = components['schemas']
 
+export interface FileSummaryResponse {
+  totalCount: number
+  recentFiles: Schemas['FileResponse'][]
+}
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
 export interface SiteConfig {
@@ -66,11 +71,37 @@ export const UNDO_CONTEXT_ID = getUndoContextId()
 
 export interface RequestMeta { mutationId?: string; undoGroupId?: string; headers?: Record<string, string> }
 
+// 同一标签页中多个页面/全局组件可能在启动时同时读取同一资源。只合并进行中的
+// GET；请求结束后立即移除，显式刷新仍会访问服务端。
+const inFlightGetRequests = new Map<string, Promise<unknown>>()
+
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
 async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
                                 signal?: AbortSignal, meta?: RequestMeta): Promise<T> {
   const token = getToken()
+  // 不合并无 bearer token 的请求（可能依赖不可见的 HttpOnly 会话 Cookie），也不合并
+  // 带取消信号或调用方自定义头的请求，避免改变其身份或取消语义。
+  const canDeduplicate = method.toUpperCase() === 'GET' && !!token && !signal && !meta && body === null
+  if (!canDeduplicate) return performRequest<T>(method, path, body, isForm, signal, meta, token)
+
+  const key = JSON.stringify([token, path])
+  const cloneResult = (value: T): T =>
+    value === null || value === undefined || typeof value !== 'object' ? value : JSON.parse(JSON.stringify(value)) as T
+  const existing = inFlightGetRequests.get(key)
+  if (existing) return (existing as Promise<T>).then(cloneResult)
+
+  const pending = performRequest<T>(method, path, body, isForm, signal, meta, token)
+  inFlightGetRequests.set(key, pending)
+  const clearPending = () => {
+    if (inFlightGetRequests.get(key) === pending) inFlightGetRequests.delete(key)
+  }
+  void pending.then(clearPending, clearPending)
+  return pending.then(cloneResult)
+}
+
+async function performRequest<T>(method: string, path: string, body: any, isForm: boolean,
+                                 signal: AbortSignal | undefined, meta: RequestMeta | undefined, token: string): Promise<T> {
   const headers: Record<string, string> = {
     'X-Client-Id': CLIENT_ID,
     ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
@@ -317,6 +348,7 @@ export interface ScheduledTaskInput {
   channels?: string[]
   enabled?: boolean
   qq_delivery?: { mode: 'private' } | { mode: 'group'; chat_id: string } | null
+  im_delivery?: Partial<Record<'qq' | 'feishu' | 'telegram', { mode: 'private' } | { mode: 'group'; chat_id: string }>>
   event_id?: number | null
   authorized_tools?: string[]
   email_attachment_file_ids?: number[]
@@ -341,6 +373,7 @@ export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedul
 export const scheduledTasksApi = {
   list:         ()                  => get<{ tasks: ScheduledTaskResponse[] }>('/scheduled-tasks'),
   listQqTargets: ()                 => get<{ groups: { chat_id: string; title: string }[] }>('/scheduled-tasks/qq-targets'),
+  listDeliveryTargets: (platform: 'qq' | 'feishu' | 'telegram') => get<{ private_available: boolean; groups: { chat_id: string; title: string }[] }>(`/scheduled-tasks/delivery-targets/${platform}`),
   listForEvent: (eventId: number)   => get(`/scheduled-tasks?event_id=${eventId}`),   // 某日历活动绑定的提醒
   create:       (data: Partial<ScheduledTaskInput>)         => post<ScheduledTaskResponse>('/scheduled-tasks', data),
   update:       (id: number, data: Partial<ScheduledTaskInput>, meta?: RequestMeta) => patch<ScheduledTaskResponse>(`/scheduled-tasks/${id}`, data, meta),
@@ -428,8 +461,14 @@ export const filesApi = {
     const qs = new URLSearchParams(p).toString()
     return get<Schemas['FileResponse'][]>(`/files${qs ? '?' + qs : ''}`)
   },
-  tree:    ()         => get('/files/tree'),
+  tree:    ()         => get<{
+    projects: Array<{ id: number; name: string; color: string; totalCount: number }>
+    personalCount: number
+    personalRootCount: number
+  }>('/files/tree'),
+  summary: (recentLimit = 12) => get<FileSummaryResponse>(`/files/summary?recent_limit=${recentLimit}`),
   all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
+  get:     (id: number) => get<Schemas['FileResponse']>(`/files/${id}`),
   version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
   archive: (data: { fileIds: number[]; folderIds: number[]; folderId?: number | null; name?: string }) =>
@@ -478,8 +517,8 @@ export const filesApi = {
     post<{ filename: string; conflict: boolean; existing_file: any }[]>('/files/check-conflicts', {
       items: items.map(it => ({ filename: it.filename, space: it.space, project_id: it.projectId ?? null, folder_id: it.folderId ?? null, workspace_directory_id: it.workspaceDirectoryId ?? null })),
     }),
-  // 返回 { url: "https://..." }，后端签名 URL，有效期短（5~10 分钟）
-  getStreamUrl: (id: number) => get(`/files/${id}/stream-url`),
+  // 返回单文件信息和短时效签名 URL，供预览入口避免加载整个文件库。
+  getStreamUrl: (id: number) => get<{ file: Schemas['FileResponse']; url: string }>(`/files/${id}/stream-url`),
   xlsxPreview: (id: number) => get<{
     version: number
     sheets: Array<{
@@ -534,6 +573,7 @@ export interface UserSkillItem {
   related_tools: string[]
   body: string
   source: string
+  managed_by: 'user' | 'assistant'
   enabled: boolean
   content_digest: string
   created_at: string | null
@@ -709,11 +749,12 @@ export const mindApi = {
 export type ApiFolderResponse = Schemas['FolderResponse'] & { workspaceDirectoryId?: number | null }
 export const foldersApi = {
   all:  ()                              => get<ApiFolderResponse[]>('/folders/all'),
-  list: ({ projectId, parentId, workspaceDirectoryId }: { projectId?: number; parentId?: number; workspaceDirectoryId?: number } = {}) => {
+  list: ({ projectId, parentId, workspaceDirectoryId, allInScope }: { projectId?: number; parentId?: number; workspaceDirectoryId?: number; allInScope?: boolean } = {}) => {
     const params = new URLSearchParams()
     if (projectId != null) params.set('project_id', String(projectId))
     if (parentId  != null) params.set('parent_id',  String(parentId))
     if (workspaceDirectoryId != null) params.set('workspace_directory_id', String(workspaceDirectoryId))
+    if (allInScope) params.set('all_in_scope', 'true')
     const qs = params.toString()
     return get<ApiFolderResponse[]>(qs ? `/folders?${qs}` : '/folders')
   },
@@ -773,12 +814,21 @@ export const foldersApi = {
 
 // ── Trash ─────────────────────────────────────────────────────────────────────
 export type TrashFolderMeta = Schemas['TrashFolderResponse']
+export interface TrashPurgeJob {
+  id: number
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progressCurrent: number
+  progressTotal: number
+  failedCount: number
+  errorCode?: string | null
+}
 export interface TrashFolderContents {
   folders: TrashFolderMeta[]
   files: Schemas['FileResponse'][]
 }
 
 export const trashApi = {
+  counts:        ()           => get<{ fileCount: number; folderCount: number; totalCount: number }>('/trash/counts'),
   list:          ()           => get<Schemas['FileResponse'][]>('/trash'),
   listFolders:   ()           => get<TrashFolderMeta[]>('/trash/folders'),
   listFolderContents: (id: number) => get<TrashFolderContents>(`/trash/folders/${id}/contents`),
@@ -786,7 +836,10 @@ export const trashApi = {
   restoreFolder: (id: number) => post(`/trash/folders/${id}/restore`, {}),
   hardDeleteFolder: (id: number) => del(`/trash/folders/${id}`),
   hardDelete:    (id: number) => del(`/trash/${id}`),
-  empty:         ()           => del('/trash'),
+  startEmpty:    ()           => post<TrashPurgeJob>('/trash/empty', {}),
+  activeEmpty:   ()           => get<TrashPurgeJob | null>('/trash/empty/active'),
+  getEmptyJob:   (id: number) => get<TrashPurgeJob>(`/trash/empty/${id}`),
+  empty:         ()           => del<TrashPurgeJob>('/trash'),
 }
 
 // ── Clients ────────────────────────────────────────────────────────────────────
@@ -1053,4 +1106,11 @@ export const feishuConnectApi = {
 export const wechatConnectApi = {
   start: ()               => request('POST', '/me/wechat/connect'),
   poll:  (taskId: string) => request('GET',  `/me/wechat/connect/${taskId}`),
+}
+
+// Telegram Bot Token 仅通过请求体提交，绝不拼入应用自身 URL。
+export const telegramConnectApi = {
+  connect: (token: string) => request('POST', '/me/telegram/connect', { token }),
+  replace: (botId: number, token: string) => request('PUT', `/me/telegram/connect/${botId}`, { token }),
+  createBindingCode: (botId: number) => request('POST', `/me/telegram/connect/${botId}/binding-code`),
 }

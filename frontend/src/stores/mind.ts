@@ -536,12 +536,14 @@ export const useMindStore = defineStore('mind', () => {
     const reordered = ordered
       .filter(entry => entry.item.id !== itemId)
       .concat({ item: target.item, z: ordered.length })
-    canvasItems.value = reordered.map(({ item, z }) => ({
-      ...item,
-      x: item.id === itemId ? x : item.x,
-      y: item.id === itemId ? y : item.y,
-      z,
-    }))
+    canvasItems.value = reordered.map(({ item, z }) => {
+      const nextX = item.id === itemId ? x : item.x
+      const nextY = item.id === itemId ? y : item.y
+      // 仅替换位置或层级确实变化的节点，保持其他卡片的 prop 身份稳定，避免文件卡等
+      // 子组件因无关节点置顶而全部重新计算和渲染。
+      if (item.x === nextX && item.y === nextY && item.z === z) return item
+      return { ...item, x: nextX, y: nextY, z }
+    })
     // 抽屉 placeholder 还没有服务端 id。regrab 的位置已同步写入本地，等首次 create 返回
     // 真实 id 后 addProjectRefOptimistic 会读取这里的最新 x/y 再 flush；禁止把负 id 发给 API。
     if (pendingProjectRefCreates.has(itemId)) return
@@ -558,12 +560,10 @@ export const useMindStore = defineStore('mind', () => {
       }
         const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
         if (currentIndex !== -1) {
-          canvasItems.value = normalizeCanvasZ(canvasItems.value)
-            .map(({ item, z }) => ({
-              ...item,
-              z,
-              ...(item.id === itemId ? { ...updated, clientKey: item.clientKey } : {}),
-            }))
+          canvasItems.value = normalizeCanvasZ(canvasItems.value).map(({ item, z }) => {
+            if (item.id === itemId) return { ...item, z, ...updated, clientKey: item.clientKey }
+            return item.z === z ? item : { ...item, z }
+          })
         }
       } catch (error) {
         // 后续拖拽可能已经产生了更新，不能用旧快照覆盖更新后的本地状态。

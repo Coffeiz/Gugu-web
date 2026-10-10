@@ -15,7 +15,6 @@ from app.models import (
     CalendarEvent,
     ConversationMessage,
     ConversationSession,
-    File,
     MindCanvasItem,
     MindMap,
     MindNode,
@@ -48,19 +47,6 @@ def _iso_or_none(value) -> str | None:
 def _version_parts(*parts) -> list[str]:
     """版本输入字段统一序列化为字符串（datetime 用 isoformat），与 TS 适配器逐位对齐。"""
     return [part.isoformat() if hasattr(part, "isoformat") else str(part or "") for part in parts]
-
-
-def file_record(row, body: str = "") -> dict:
-    return {
-        "source_type": "file", "id": str(row.id), "title": row.display_name,
-        "ext": row.ext or "", "mime_type": row.mime_type or "",
-        "project_id": str(row.project_id or ""), "folder_id": str(row.folder_id or ""),
-        "space": row.space or "", "stage_name": row.stage_name or "",
-        # 文件 RAG 只建立文件名索引；正文仍由文件预览/读取链路按需获取。
-        "content": "",
-        "version_parts": _version_parts(row.id, row.version, row.updated_at),
-        "updated_at": _iso_or_none(row.updated_at),
-    }
 
 
 def note_record(row) -> dict:
@@ -146,20 +132,11 @@ async def build_single_source_record(
 ) -> tuple[dict, Scope] | None:
     """单对象读取：只加载一个对象的 canonical record（PRD-RAG-9 文档级增量）。
 
-    支持 file/project/calendar/note/canvas。主数据不存在/已删除/不可索引时
+    支持 project/calendar/note/canvas。主数据不存在/已删除/不可索引时
     返回 None（调用方按删除收敛）。knowledge 走
     KnowledgeAdapter.build_source_record_for（文件库存储，不需要 db）。
     """
     owner_scope = Scope(owner_user_id=str(owner_user_id), scope_type="owner")
-    if source_type == "file":
-        row = (await db.execute(select(File).where(
-            File.user_id == owner_user_id,
-            File.id == int(source_id),
-            File.deleted_at.is_(None),
-        ))).scalar_one_or_none()
-        if row is None:
-            return None
-        return file_record(row), owner_scope
     if source_type == "project":
         row = (await db.execute(select(Project).where(
             Project.user_id == owner_user_id,
@@ -258,11 +235,6 @@ async def build_source_records(db, owner_user_id: object, source_type: str) -> l
         return await KnowledgeAdapter(owner_user_id).build_source_records()
     if source_type == "project":
         return await ProjectAdapter(owner_user_id, db=db).build_source_records(scope=owner_scope)
-    if source_type == "file":
-        rows = (await db.execute(select(File).where(
-            File.user_id == owner_user_id, File.deleted_at.is_(None),
-        ).order_by(File.updated_at.desc(), File.id.desc()))).scalars().all()
-        return [(file_record(row), owner_scope) for row in rows]
     if source_type == "note":
         rows = (await db.execute(select(MindNode).where(
             MindNode.user_id == owner_user_id,
@@ -367,8 +339,7 @@ async def records_to_write_documents(
 ) -> list[IndexDocument]:
     """把授权 source record 经 TS canonical projection 转为持久化文档。
 
-    record 按条数与估算字节双阈值分块投递：整来源单行 JSONL 会超过 worker
-    流上限（32MB），file 语料涨过该线后来源级重建持续失败（09-10 起）。
+    record 按条数与估算字节双阈值分块投递，避免大来源的单次 IPC 超过 worker 流上限。
     """
     from app.core.config import get_settings
 
@@ -429,7 +400,7 @@ async def build_source_documents(db, owner_user_id: object, source_type: str) ->
 
 
 INDEX_SOURCE_TYPES = (
-    "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
+    "memory", "knowledge", "project", "note", "canvas", "calendar", "scheduled_task", "conversation",
 )
 
 

@@ -95,13 +95,14 @@ async def _write(key: str, text: str) -> None:
     await get_storage().put(key, text.encode("utf-8"), "text/markdown")
 
 
-async def read_memory(user_id, query: str = "") -> dict:
+async def read_memory(user_id, query: str = "", *, prefer_recent: bool = False) -> dict:
     """返回 {profile, pattern, memory, daily, summary, summary_ts, stance, stance_ts, lens}，缺失为空串/None。
     profile = 用户画像(身份/稳定喜好，最多直注入 50 条，超出由 RAG 按需召回)；pattern = 行为/决策模式(结构化，最多直注入 50 条，超出时按相关性挑)。
     stance = 上轮反思判的相处姿态（= perception.intent），stance_ts 给新鲜度闸用（见 behaviors.select）。
     summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
     lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。
     query = 当前用户消息（可选）：pattern 超注入上限时用它做相关性优先挑选，见 render_pattern。
+    prefer_recent = 无向量兜底时从 memory.md 末尾挑最新章节；仅 snapshot 组装开启。
     first_ts = 最早一条 pattern 的 epoch（≈「开始了解 TA」的时间锚点，给注入侧时长计算用——
     时长由系统算好喂模型、禁模型自估，见 proposals/反馈信号系统-设计.md §4.3）。"""
     raw_profile = await read_profile_list(user_id)
@@ -126,7 +127,10 @@ async def read_memory(user_id, query: str = "") -> dict:
                     mem_vec_map = {k: v.get("v") for k, v in mv.items() if v.get("t") == tag}
     profile = render_profile(raw_profile)   # 固定最多直注入 PROFILE_INJECT_MAX 条，剩余由 RAG 按需召回
     pattern = render_pattern(raw_patterns, query, query_vec if pattern_over else None, pattern_vec_map)  # 有向量走 cosine，无则词法
-    memory  = retrieve_memory_block(memory_doc, query_vec if mem_over else None, mem_vec_map)  # 超预算挑相关段，无向量则整篇
+    memory = retrieve_memory_block(
+        memory_doc, query_vec if mem_over else None, mem_vec_map,
+        prefer_recent=prefer_recent,
+    )  # 超预算按相关性挑段；snapshot 无向量兜底优先保留末尾新章节
     first_ts = min((item.get("ts") for item in raw_patterns if item.get("ts")), default=None)
     # daily 的落盘内容不能因为上下文预算被删除；这里只限制本轮注入，且 daily 新内容在顶部。
     daily   = (await _read(_key(user_id, "daily.md"))).strip()[:DAILY_INJECT_CHARS]
@@ -685,20 +689,58 @@ async def sync_memory_vecs(
         return 0
 
 
-def retrieve_memory_block(memory_text: str, query_vec, vec_map, budget: int = MEMORY_INJECT_CHARS) -> str:
-    """memory.md 语义检索：超预算 + 有 query 向量 → 按 cosine 挑相关块拼到预算内（保原文顺序）；
-    否则/无向量/覆盖不足 → 保留开头预算内容，保证注入不超过硬上限。"""
+def _latest_memory_suffix(memory_text: str, budget: int) -> str:
+    """从长期记忆末尾挑最近的完整事件章节；单个最新章节超限时保留其开头。"""
+    if budget <= 0:
+        return ""
+    headings = list(re.finditer(r"(?m)^##\s+记录长期记忆：.+$", memory_text))
+    if not headings:
+        return memory_text[-budget:].lstrip()
+
+    sections = []
+    for index, match in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(memory_text)
+        section = memory_text[match.start():end].strip()
+        if section:
+            sections.append(section)
+
+    selected = []
+    used = 0
+    for section in reversed(sections):
+        separator = 2 if selected else 0
+        if used + separator + len(section) <= budget:
+            selected.append(section)
+            used += separator + len(section)
+            continue
+        if not selected:
+            # 至少让最新事件的标题、日期和开头背景进入 snapshot。
+            return section[:budget].rstrip()
+        break
+    return "\n\n".join(reversed(selected))
+
+
+def retrieve_memory_block(
+    memory_text: str, query_vec, vec_map, budget: int = MEMORY_INJECT_CHARS,
+    *, prefer_recent: bool = False,
+) -> str:
+    """超预算时按相关性挑向量块；无向量时可为 snapshot 优先保留末尾的新章节。"""
     memory_text = (memory_text or "").strip()
     if len(memory_text) <= budget:
         return memory_text
-    if not query_vec or not vec_map:
+
+    def fallback() -> str:
+        if prefer_recent:
+            return _latest_memory_suffix(memory_text, budget)
         return memory_text[:budget].rstrip()
+
+    if not query_vec or not vec_map:
+        return fallback()
     from agent.memory.embedding import cosine
     chunks = _memory_chunks(memory_text)
     # 覆盖不足（多数块没缓存向量，如刚启用还没重嵌）→ 别乱挑，退回整篇
     covered = sum(1 for c in chunks if vec_map.get(_chunk_key(c)))
     if covered < max(1, len(chunks) // 2):
-        return memory_text[:budget].rstrip()
+        return fallback()
     scored = [(cosine(query_vec, vec_map.get(_chunk_key(c)) or []), i, c) for i, c in enumerate(chunks)]
     scored.sort(key=lambda x: -x[0])
     picked, used = [], 0

@@ -3,9 +3,9 @@ import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import { useEmbeddingRebuild } from '../runtime-config/useEmbeddingRebuild'
 
-// 自动召回来源白名单（与后端 SearchSettings.rag_auto_sources 的 Literal 集合一致）。
+// 自动召回来源白名单（文件库通过 CRUD 工具访问，不参加 RAG）。
 export const RAG_SOURCE_KEYS = [
-  'memory', 'knowledge', 'project', 'file', 'canvas', 'note', 'calendar', 'scheduled_task', 'conversation',
+  'memory', 'knowledge', 'project', 'canvas', 'note', 'calendar', 'scheduled_task', 'conversation',
 ] as const
 
 export function useMemoryRecallConfig() {

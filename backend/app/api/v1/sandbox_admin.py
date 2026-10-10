@@ -22,7 +22,9 @@ from agent.sandbox.docker_runtime import (
     valid_egress_proxy,
     valid_image_digest,
 )
-from app.core.config import get_settings, invalidate_settings_cache, write_override_json
+from app.core.config import (
+    get_settings, invalidate_settings_cache, read_override_document, write_override_json,
+)
 from app.core.events import publish
 from app.db.session import get_db
 from app.models import User
@@ -158,6 +160,7 @@ def _response():
     )
     terminal_entry_enabled, pty_enabled = terminal_capabilities(settings, sandbox_ready=state == "ready")
     return {
+        "storage_backend": getattr(getattr(settings, "storage", None), "backend", "local"),
         "enabled": bool(cfg.enabled),
         "manager_mode": manager_mode,
         "full_user_sandbox_authorization_enabled": bool(cfg.full_user_sandbox_authorization_enabled),
@@ -344,15 +347,7 @@ async def clear_user_sandboxes(body: SandboxLifecycleRequest):
 
 
 def _read_override() -> dict:
-    from app.core.config import OVERRIDE_FILE
-    import json
-
-    if not OVERRIDE_FILE.exists():
-        return {}
     try:
-        value = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        return read_override_document()
+    except RuntimeError as exc:
         raise HTTPException(status_code=500, detail="配置文件不可读") from exc
-    if not isinstance(value, dict):
-        raise HTTPException(status_code=500, detail="配置文件格式无效")
-    return value

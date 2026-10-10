@@ -64,7 +64,7 @@ async function load(id: number) {
       id: e.id, name: e.title, date: e.date ?? '', time: e.time || '', endTime: e.endTime || '',
       description: e.description || '', allDay: !e.time, version: e.version,
     }
-    await Promise.all([form.loadReminders(loadedEvent), form.loadQqTargets()])
+    await Promise.all([form.loadReminders(loadedEvent), form.loadImTargets()])
     // 快速连点两张活动卡时，较早请求可能后返回；不能让它覆盖最新一次打开目标。
     if (seq === loadSeq && eventModalStore.openEventId === id) event.value = loadedEvent
   } catch {

@@ -2,6 +2,18 @@
 from .base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
 
 
+_GLM53_RESPONSES_REASONING = ReasoningCapabilities(
+    modes=("disabled", "adaptive"),
+    efforts=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+    effort_map=(
+        ("minimal", "none"),
+        ("low", "high"),
+        ("medium", "high"),
+        ("xhigh", "max"),
+    ),
+)
+
+
 class GlmAdapter(ProviderAdapter):
     """GLM 通用 API 适配器。
 
@@ -22,6 +34,9 @@ class GlmAdapter(ProviderAdapter):
     def supported_api_formats(self, ai):
         # 协议是 GLM 通用 API 的接入能力，不随当前选择的模型改变。
         return ("openai", "responses", "anthropic")
+
+    def responses_store_value(self, ai) -> bool | None:
+        return False if self.protocol_format(ai) == "responses" else None
 
     def default_base_url_for(self, ai) -> str:
         protocol = self.protocol_format(ai)
@@ -54,9 +69,9 @@ class GlmAdapter(ProviderAdapter):
     def reasoning_capabilities(self, ai, api_format: str) -> ReasoningCapabilities:
         model = getattr(ai, "model", "") or ""
         if self._glm53(model):
-            if api_format == "openai":
-                return ReasoningCapabilities(modes=("adaptive",), efforts=("low", "high", "max"))
-            # 模型文档列出了这两个协议的端点，但没有明确思考参数的协议映射。
+            if api_format == "responses":
+                return _GLM53_RESPONSES_REASONING
+            # 未核实 Chat/Anthropic 思考映射，使用端点默认。
             return ReasoningCapabilities()
         if api_format == "openai" and self._supports_thinking(model):
             return ReasoningCapabilities(modes=("disabled", "adaptive"))
@@ -65,7 +80,7 @@ class GlmAdapter(ProviderAdapter):
     def build_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         model = getattr(ai, "model", "") or ""
         if self._glm53(model):
-            # GLM-5.3 固定启用思考，不向服务端发送关闭开关。
+            # GLM-5.3 的 Chat 思考开关尚无当前官方文档依据，不主动发送字段。
             return {}
         if not self._supports_thinking(model):
             return {}
@@ -75,23 +90,24 @@ class GlmAdapter(ProviderAdapter):
     def build_structured_output(self, ai, schema: dict | None = None) -> dict:
         return {"response_format": {"type": "json_object"}}
 
-
 class GlmCodingAdapter(GlmAdapter):
-    """GLM Coding Plan 专属 OpenAI 兼容端点。
+    """GLM Coding Plan 适配器。
 
-    Coding Plan 的模型能力与通用 GLM API 共用适配规则，但端点和套餐
-    鉴权边界不同，因此在 provider 层保留独立身份，便于 Admin 明确配置。
+    Coding Plan 的模型能力与通用 GLM API 共用规则，但套餐身份独立；
+    不同 API 格式由对应的 GLM 端点承载。
     """
 
     name = "glm-coding"
     default_base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
 
     def supported_api_formats(self, ai):
-        # Coding Plan 目前仅允许 Chat Completion 协议。
-        return ("openai",)
+        # Coding Plan 也提供 Anthropic/Responses 接入；各协议使用各自套餐端点。
+        return ("openai", "responses", "anthropic")
 
     def default_base_url_for(self, ai) -> str:
-        return self.default_base_url
+        if self.protocol_format(ai) == "openai":
+            return self.default_base_url
+        return super().default_base_url_for(ai)
 
     def _supports_image(self, model: str) -> bool:
         # 官方 Coding Plan 接入示例要求关闭图片能力，保持保守声明。

@@ -14,6 +14,7 @@
         :bots-of="botsOf" :im-sessions-of="imSessionsOf" :session-id="sessionId"
         :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
         :format-session-time="formatSessionTime"
+        :on-open-telegram-settings="onOpenTelegramSettings"
         :on-toggle-platform="onTogglePlatform" :on-set-connect-canvas="onSetConnectCanvas"
         :on-start-im-connect="onStartImConnect" :on-cancel-im-connect="onCancelImConnect"
         :on-load-session="onLoadSession" :on-delete-session="onDeleteSession" :on-rename-session="onRenameSession"
@@ -76,6 +77,7 @@ defineProps<{
   connectHint: string
   connectErr: string
   connecting: string
+  onOpenTelegramSettings: () => void
   onTogglePlatform: (key: ImPlatformKey) => void
   onSetConnectCanvas: (el: Element | ComponentPublicInstance | null) => void
   onStartImConnect: (key: ImPlatformKey) => void

@@ -374,7 +374,8 @@ def _ordered_canonical_content(
 
 
 def _openai_history_message(message, request, *, strip_thinking: bool = False,
-                            content_json=None, strip_history_images: bool = True) -> list[dict]:
+                            content_json=None, strip_history_images: bool = True,
+                            allow_tool_images: bool = False) -> list[dict]:
     if content_json is None:
         content_json = getattr(message, "content_json", None)
     if content_json is None:
@@ -397,17 +398,28 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
     reasoning_parts: list[str] = []
     tool_calls: list[dict] = []
     tool_results: list[dict] = []
+    tool_media_parts: list[dict] = []
     canonical_events: list[dict] = []
     for block in blocks:
         block_type = block.get("type")
         if block_type in ("tool_use", "tool_call"):
             tool_calls.append(_openai_tool_call(block))
         elif block_type == "tool_result":
+            # Canonical 工具结果可能包含 text + image block。不能用 content_text
+            # 把 image.source.data 序列化成数百 KB 的 base64 普通文本；Provider
+            # 历史应与 live driver 一样，把媒体放进独立的多模态 user 消息。
+            from agent.providers.message_utils import _openai_tool_result
+
+            result_text, media_parts = _openai_tool_result(
+                block.get("content", ""),
+                allow_images=allow_tool_images and not strip_history_images,
+            )
             tool_results.append({
                 "role": "tool",
                 "tool_call_id": str(block.get("tool_call_id") or block.get("tool_use_id") or ""),
-                "content": content_text(block.get("content", "")),
+                "content": result_text,
             })
+            tool_media_parts.extend(media_parts)
         elif block_type in (
             "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
             "stance-context", "time-context", "runtime-context",
@@ -461,11 +473,20 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
         result.append({"role": message.role, "content": "\n".join(text_parts)})
 
     result.extend(tool_results)
+    if tool_media_parts:
+        result.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "工具返回了以下图片，请结合工具文字结果继续处理。"},
+                *tool_media_parts,
+            ],
+        })
     return result or [{"role": message.role, "content": content_text(content_json)}]
 
 
 def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                         user_tz=None, strip_thinking: bool = False,
+                        allow_tool_images: bool = False,
                         protected_message_ids: set[int] | None = None,
                         return_protected_start: bool = False) -> list[dict] | tuple[list[dict], int | None]:
     """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。
@@ -582,6 +603,7 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                 message, request, strip_thinking=strip_thinking,
                 content_json=content_json,
                 strip_history_images=getattr(message, "_canonical_restored", True),
+                allow_tool_images=allow_tool_images,
             ))
 
     return (parts, protected_start) if return_protected_start else parts
@@ -603,6 +625,7 @@ def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
 
     options = dict(options or {})
     use_anthropic = options.get("api_format") == "anthropic"
+    allow_tool_images = bool(options.get("allow_tool_images", False))
     records = []
     for entry in snapshot.entries:
         record = entry.canonical_message
@@ -648,6 +671,7 @@ def render_canonical_area_snapshot(snapshot, *, source=None, options=None):
         use_anthropic=use_anthropic,
         user_tz=options.get("user_tz"),
         strip_thinking=bool(options.get("strip_thinking", False)),
+        allow_tool_images=allow_tool_images,
     )
     fixed_prefix_size = int(getattr(source, "fixed_prefix_size", 0) or 0)
     fixed_prefix = list(getattr(source, "request_prefix", ())[:fixed_prefix_size])

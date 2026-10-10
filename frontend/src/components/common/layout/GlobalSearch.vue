@@ -56,6 +56,7 @@ import { searchApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useI18n } from 'vue-i18n'
+import type { FileLibraryNavigationTarget } from '@/utils/filesNav'
 
 // 类型图标与侧边栏导航保持一致，具体图标由语义注册表统一解析。
 const TYPE_ICON = {
@@ -77,7 +78,19 @@ const projectStore = useProjectStore()
 const uiStore      = useUiStore()
 const { t } = useI18n()
 
-interface SearchItem { id: number | string; title: string; subtitle?: string; date?: string; message_id?: number; canvas_id?: number; slug?: string; enabled?: boolean }
+interface SearchItem {
+  id: number | string
+  title: string
+  subtitle?: string
+  date?: string
+  message_id?: number
+  canvas_id?: number
+  slug?: string
+  enabled?: boolean
+  workspace_directory_id?: number
+  workspace_directory_name?: string
+  folder_path?: Array<{ id: number; name: string }>
+}
 interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note' | 'canvas_note' | 'skill' | 'mcp' | 'scheduled_task'; label: string; items: SearchItem[] }
 
 const wrapEl  = ref<HTMLElement | null>(null)
@@ -156,7 +169,15 @@ function go(type: string, it: SearchItem) {
     uiStore.pendingProjectHighlight = numericId   // 跳转后高亮项目卡，不打开编辑弹窗
     router.push('/projects')
   } else if (type === 'file' || type === 'folder') {
-    uiStore.pendingFileTarget = { kind: type, id: numericId }   // 文件库监听后定位到对应目录
+    const target: FileLibraryNavigationTarget = { kind: type, id: numericId }
+    if (Number.isSafeInteger(it.workspace_directory_id) && it.workspace_directory_id! > 0) {
+      target.workspaceDirectoryId = it.workspace_directory_id
+      target.workspaceDirectoryName = it.workspace_directory_name || '工作区'
+      target.folderPath = Array.isArray(it.folder_path)
+        ? it.folder_path.filter(folder => Number.isSafeInteger(folder.id) && folder.id > 0 && typeof folder.name === 'string')
+        : []
+    }
+    uiStore.pendingFileTarget = target   // 文件库监听后定位到对应目录
     router.push('/files')
   } else if (type === 'event') {
     uiStore.pendingCalendarEvent = { id: numericId, date: it.date }

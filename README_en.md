@@ -32,7 +32,7 @@ This is a *Vibe Coding project*. Issues and pull requests are welcome.
 | Sandbox execution | Run Shell commands in an isolated environment with working-directory and resource boundaries |
 | Multi-user and tenancy | User accounts, account-level data isolation, and independent configuration |
 | Permissions and security | Identity, resource ownership, session permissions, an admin console, and confirmation gates for dangerous operations |
-| Messaging | QQ, WeChat, and Feishu integrations with direct messages, group chats, normalized messages, shared context, and notifications |
+| Messaging | QQ, WeChat, and Feishu integrations; direct-message and group-chat availability varies by platform |
 | Admin console | Models, BYOK, search, mail notifications and subscription publishing, file storage, logs, and system services; users can also configure personal SMTP for proactive mail and scheduled-task reports |
 | Internationalization | Chinese, English, and Japanese UI support with centralized frontend translations |
 | Observability | LoopScope views for Agent Loops, tokens, cache, tool calls, and performance diagnostics |
@@ -108,7 +108,7 @@ Try it at [www.gugugu.site](https://www.gugugu.site), or deploy it locally using
     <td width="25%" valign="top">
       <img src="docs/assets/IM-messages-3.gif" width="100%" alt="Gugu on another messaging platform">
       <h3>Multi-platform Support</h3>
-      <p>Continue using Gugu's Agent capabilities across platforms, including context-aware group workflows with member isolation.</p>
+      <p>Continue using Gugu's Agent capabilities across platforms, with group context and member isolation where the platform supports group chats.</p>
     </td>
   </tr>
 </table>
@@ -126,7 +126,7 @@ Gugu's tools are organized by capability groups. The Agent selects the appropria
 | Search and information | Search the web and workspace, and extract webpage content | “Look up the latest documentation for this library” |
 | Canvas and relationships | Create notes and organize relationships between projects, files, and events | “Turn these ideas into a relationship map” |
 | Scheduled tasks | Run recurring work on a schedule and report the results | “Send me a project progress email every Monday” |
-| Messaging | Talk through QQ, WeChat, Feishu, and other channels; receive notifications | “Check the project status in the group” |
+| Messaging | Talk through QQ, WeChat, Feishu, and other channels; group-chat availability depends on the platform | “Check the project status on a platform that supports group chats” |
 | Email | Send proactive mail through personal SMTP and deliver scheduled-task reports | “Email this summary to the client” |
 | Shell and sandbox | Run commands, process files, and execute scripts within permission and resource boundaries | “Check the build and generate a report” |
 | Images and media | Analyze images and work with visual information | “Find the issue in this screenshot” |
@@ -255,12 +255,14 @@ The same Agent Loop can be entered from the Web and messaging channels. Channels
 | Text conversation | Supported | Supported | Supported | Supported |
 | Streaming output | Token streaming | C2C streaming; round-based in groups | Round-based | Streaming card updates |
 | Direct messages | Supported | C2C | Supported | Supported |
-| Group chats | N/A | @ mentions and group policies | Supported | Supported |
+| Group chats | N/A | @ mentions and group policies | Not supported: official ClawBot currently supports direct chats only | Supported |
 | Message quotes | Supported | Text and attachment quotes | Media quotes; limited raw text | Reply quotes |
 | Mention Gugu | Supported | Supported | Platform-dependent | Supported |
 | Files and images | Supported | Supported | Supported | Supported |
 | Voice input | Browser upload | Platform-dependent | Transcription | Platform-dependent |
 | Interactive replies | Web UI | Inline Keyboard | Text options | Interactive cards |
+
+> The WeChat column refers to the currently integrated official ClawBot/iLink entry point. It does not currently expose ordinary WeChat group chats. This is a platform capability limitation, not a Gugu group-chat handling bug; integration can be reevaluated if the platform opens group access.
 
 ### Agent Loop
 
@@ -397,7 +399,7 @@ Because Gugu's Agent can read and modify real projects, files, calendars, and ex
 
 - Business resources use a centralized ownership check. Missing resources and resources owned by another user have the same external response to reduce enumeration risk.
 - Projects, files, notes, memories, Knowledge / RAG, and workspaces are isolated by user and workspace.
-- QQ, WeChat, and Feishu preserve platform user, group, and sender identity. Group memory, knowledge, tool permissions, and workspace access are further restricted by group and member scope.
+- Platforms that support group chats (such as QQ and Feishu) preserve platform user, group, and sender identity. Group memory, knowledge, tool permissions, and workspace access are further restricted by group and member scope. The official WeChat ClawBot currently supports direct chats only.
 
 ### Agent Tool Security
 

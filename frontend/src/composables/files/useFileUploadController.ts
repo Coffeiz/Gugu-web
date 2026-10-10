@@ -1,6 +1,7 @@
 import type { UploadItem } from '@/composables/files/useFileUploadCore'
 import { checkUploadConflicts, uploadFilesWithFolders } from '@/composables/files/useFileUploadCore'
 import type { ConflictDecision, ConflictItem } from '@/components/common/overlays/UploadConflictDialog.vue'
+import { foldersApi, type ApiFolderResponse } from '@/services/api'
 import { splitName } from '@/utils/fileParse'
 
 export interface UploadGroup {
@@ -19,12 +20,14 @@ export interface PreparedUploadBatch {
   items: UploadItem[]
   decisions: Map<string, ConflictDecision>
   folderGroups: UploadGroup[]
+  existingFolders?: ApiFolderResponse[]
 }
 
 export interface UploadLifecycleOptions<G, F extends { id: number; projectId?: number | null; parentId?: number | null; name: string }> {
   projectId: number | null
   baseFolderId: number | null
   workspaceDirectoryId?: number | null
+  existingFolders?: ApiFolderResponse[]
   folderGroups: UploadGroup[]
   decisions: Map<string, ConflictDecision>
   createGhost: (name: string, ext: string) => G
@@ -49,8 +52,9 @@ export async function resolveUploadConflicts(
   items: UploadItem[],
   context: UploadConflictContext,
   showDialog: (conflicts: ConflictItem[]) => Promise<Map<string, ConflictDecision>>,
+  existingFolders?: ApiFolderResponse[],
 ): Promise<{ items: UploadItem[]; decisions: Map<string, ConflictDecision> }> {
-  const conflicts = await checkUploadConflicts(items, context)
+  const conflicts = await checkUploadConflicts(items, context, existingFolders)
   if (!conflicts.length) return { items, decisions: new Map() }
   const decisions = await showDialog(conflicts)
   return {
@@ -65,10 +69,15 @@ export async function prepareUploadBatch(
   context: UploadConflictContext,
   showDialog: (conflicts: ConflictItem[]) => Promise<Map<string, ConflictDecision>>,
 ): Promise<PreparedUploadBatch> {
-  const resolved = await resolveUploadConflicts(items, context, showDialog)
+  const needsFolderIndex = items.some(item => item.relativePath.includes('/'))
+  const existingFolders = needsFolderIndex
+    ? await foldersApi.list({ projectId: context.projectId ?? undefined, workspaceDirectoryId: context.workspaceDirectoryId ?? undefined, allInScope: true })
+    : undefined
+  const resolved = await resolveUploadConflicts(items, context, showDialog, existingFolders)
   return {
     ...resolved,
     folderGroups: getTopLevelUploadGroups(resolved.items),
+    existingFolders,
   }
 }
 
@@ -103,6 +112,7 @@ export async function executeUploadLifecycle<
     projectId: options.projectId,
     baseFolderId: options.baseFolderId,
     workspaceDirectoryId: options.workspaceDirectoryId,
+    existingFolders: options.existingFolders,
     onFolderCreated: (folder) => {
       options.onFolderCreated(
         folder as F,

@@ -17,7 +17,7 @@ body:has(.design-page) {
 html[data-theme][data-family] .design-page .design-hero {
   min-height: 58px;
   background-color: color-mix(in srgb,var(--surface-glass) 84%,transparent);
-  border-bottom-color: var(--border-subtle);
+  border-bottom-color: var(--content-divider);
   box-shadow: var(--topbar-shadow);
 }
 
@@ -150,7 +150,7 @@ html[data-theme][data-family] .design-page .scrollbar-style-card .token-meta::af
   display:block;
   margin-top:var(--space-sm);
   padding-top:var(--space-sm);
-  border-top:1px solid var(--border-hairline);
+  border-top:1px solid var(--content-divider);
   color:var(--content-tertiary);
   font-size:var(--font-size-xs);
   line-height:2.2;

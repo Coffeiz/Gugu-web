@@ -38,6 +38,7 @@ def _out(b: UserBot) -> dict:
         "sandbox": b.sandbox,
         "enabled": b.enabled,
         "group_chat_enabled": b.group_chat_enabled,
+        "feishu_group_chat_enabled": b.feishu_group_chat_enabled,
         "group_requires_at": b.group_requires_at,
         "group_read_enabled": b.group_read_enabled,
         "group_memory_enabled": b.group_memory_enabled,
@@ -68,7 +69,8 @@ async def list_my_bots(
     rows = (await db.execute(
         select(UserBot).where(UserBot.user_id == current_user.id).order_by(UserBot.id)
     )).scalars().all()
-    return {"items": [_out(b) for b in rows]}
+    from app.services.im_platforms import enabled_im_platforms
+    return {"items": [_out(b) for b in rows], "supported_platforms": list(enabled_im_platforms())}
 
 
 class BotIn(BaseModel):
@@ -85,6 +87,8 @@ async def create_my_bot(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.services.im_platforms import require_im_platform_enabled
+    require_im_platform_enabled("qq")
     if not body.app_id or not body.app_secret:
         raise HTTPException(400, "请填写 AppID 和 AppSecret")
     existing = (await db.execute(
@@ -135,6 +139,7 @@ class BotUpdate(BaseModel):
     sandbox: bool | None = None
     enabled: bool | None = None
     group_chat_enabled: bool | None = None
+    feishu_group_chat_enabled: bool | None = None
     group_requires_at: bool | None = None
     group_read_enabled: bool | None = None
     group_memory_enabled: bool | None = None
@@ -147,6 +152,17 @@ class BotUpdate(BaseModel):
     private_streaming_enabled: bool | None = None
 
 
+def _apply_group_chat_toggle(bot: UserBot, body: BotUpdate) -> None:
+    if body.group_chat_enabled is not None and bot.platform not in {"qq", "telegram"}:
+        raise HTTPException(400, "该群聊开关仅适用于 QQ 或 Telegram 机器人")
+    if body.feishu_group_chat_enabled is not None and bot.platform != "feishu":
+        raise HTTPException(400, "该群聊开关仅适用于飞书机器人")
+    if body.group_chat_enabled is not None:
+        bot.group_chat_enabled = body.group_chat_enabled
+    if body.feishu_group_chat_enabled is not None:
+        bot.feishu_group_chat_enabled = body.feishu_group_chat_enabled
+
+
 @router.put("/{bot_id}")
 async def update_my_bot(
     bot_id: int,
@@ -157,6 +173,7 @@ async def update_my_bot(
     bot = await get_owned(db, UserBot, bot_id, current_user.id)
     if not bot:
         raise HTTPException(404, "机器人不存在")
+    _apply_group_chat_toggle(bot, body)
     if body.name is not None:
         bot.name = body.name
     if body.app_id is not None:
@@ -168,8 +185,6 @@ async def update_my_bot(
         bot.sandbox = body.sandbox
     if body.enabled is not None:
         bot.enabled = body.enabled
-    if body.group_chat_enabled is not None:
-        bot.group_chat_enabled = body.group_chat_enabled
     if body.group_requires_at is not None:
         bot.group_requires_at = body.group_requires_at
     if body.group_read_enabled is not None:

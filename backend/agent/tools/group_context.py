@@ -1,4 +1,4 @@
-"""只搜索当前 QQ 群会话的短期上下文，不触碰用户其他对话。"""
+"""只搜索当前 IM 群会话的短期上下文，不触碰用户其他对话。"""
 
 from agent.im.imctx import get_im
 from agent.memory.scoped_store import read_scope_json
@@ -159,8 +159,10 @@ async def _group_context_search(db, user_id, args: dict):
     im = get_im() or {}
     # 缺 channel_id（bot_id）时查询会退化成 bot_id IS NULL，基本搜不到——明确报不可用，
     # 不给「可用但搜不到」的假信心（P2）。
+    platform = str(im.get("platform") or "")
     if (
-        im.get("chat_type") != "group"
+        platform not in {"qq", "feishu", "telegram"}
+        or im.get("chat_type") != "group"
         or not im.get("chat_id")
         or not im.get("channel_id")
     ):
@@ -178,13 +180,13 @@ async def _group_context_search(db, user_id, args: dict):
             # 已经进了热路径——用 read_scope_json 只读 members.json 一个文件，不要为了这一个
             # 文件把 profile/summary/daily/memory 全部读一遍（code review 复审发现：Phase 2.9
             # 之后 read_scope() 在这条路径上白白多打好几次存储请求，OSS 后端尤其明显）。
-            scope = MemoryScope(user_id, "qq", im.get("channel_id"), "group", im["chat_id"])
+            scope = MemoryScope(user_id, platform, im.get("channel_id"), "group", im["chat_id"])
             members_data = await read_scope_json(scope, "members.json")
             members = members_data.get("members") if isinstance(members_data, dict) else {}
             return members if isinstance(members, dict) else {}
 
         resolved = await _resolve_speaker(
-            db, user_id, "qq", im.get("channel_id"), im["chat_id"], speaker, _load_members,
+            db, user_id, platform, im.get("channel_id"), im["chat_id"], speaker, _load_members,
         )
         if resolved.get("ambiguous"):
             return resolved
@@ -192,7 +194,8 @@ async def _group_context_search(db, user_id, args: dict):
             return resolved
         speaker_id = resolved.get("platform_user_id")
     rows = await search_group_messages(
-        db, user_id, im["chat_id"], im.get("channel_id"), speaker_id, search_queries, mode, limit,
+        db, user_id, im["chat_id"], im.get("channel_id"), speaker_id,
+        search_queries, mode, limit, platform=platform,
     )
     return {
         "keyword": keyword,
@@ -222,7 +225,7 @@ class GroupContextSkill(BaseSkill):
             name="group_context_search",
             label="搜当前群上下文",
             description_short='搜索当前群消息；支持按发言人筛选。',
-            description="只搜索当前 QQ 群消息，可按关键词或发言人筛选；不会读取其他群、私聊或网页历史。",
+            description="只搜索当前 QQ、飞书或 Telegram 群消息，可按关键词或发言人筛选；不会读取其他群、私聊或网页历史。",
             input_schema={
                 "type": "object",
                 "properties": {

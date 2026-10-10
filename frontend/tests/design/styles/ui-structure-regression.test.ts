@@ -630,10 +630,10 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(projectModal).not.toContain('async function withPmLayoutNav')
   })
 
-  it('浮动预览拖动四边共用 125% 虚拟视口边界', () => {
+  it('浮动预览顶部保持可见，左右和底部保留 125% 虚拟视口空间', () => {
     expect(floatPreview).toContain('const DRAG_OVERSCAN_RATIO = .25')
     expect(floatPreview).toContain('const minX = -overscanX')
-    expect(floatPreview).toContain('const minY = -overscanY')
+    expect(floatPreview).toContain('const minY = 0')
     expect(floatPreview).toContain('window.innerWidth + overscanX - w.value')
     expect(floatPreview).toContain('window.innerHeight + overscanY - h.value')
     expect(floatPreview).toContain('x.value = clamp(nextX, minX, maxX)')

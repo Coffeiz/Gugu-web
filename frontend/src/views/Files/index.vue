@@ -216,6 +216,7 @@ import { type NavSeg, type FolderCard as FolderCardMeta } from '@/utils/filesNav
 import { useFilesNav } from '@/composables/files/useFilesNav'
 import { useFileLibraryNavigation } from '@/composables/files/useFileLibraryNavigation'
 import { useFileLibraryDirectory } from '@/composables/files/useFileLibraryDirectory'
+import { watchDebouncedRevision } from '@/composables/shared/liveRevisionRefresh'
 import { useFileLibrarySorting } from '@/composables/files/useFileLibrarySorting'
 import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelection'
 import { useFileLibraryBatchActions } from '@/composables/files/useFileLibraryBatchActions'
@@ -233,7 +234,7 @@ import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryF
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
-import { workspacesApi, CLIENT_ID, type WorkspaceDirectory } from '@/services/api'
+import { workspacesApi, type WorkspaceDirectory } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/shared/useSorting'
@@ -435,8 +436,13 @@ onMounted(async () => {
     return
   }
   await Promise.all([
-    projectStore.projects.length === 0 ? projectStore.fetchProjects?.() : Promise.resolve(),
-    cacheStore.loaded ? Promise.resolve() : cacheStore.load(),
+    target?.workspaceDirectoryId == null && projectStore.projects.length === 0
+      ? projectStore.fetchProjects?.()
+      : Promise.resolve(),
+    // 只有缺少工作区路径元数据的旧式定位才需要全量索引；工作区搜索跳转按目录加载。
+    target && target.workspaceDirectoryId == null && !cacheStore.loaded
+      ? cacheStore.load()
+      : Promise.resolve(),
   ])
   if (target) { jumpToTarget(target) } else { restoreNav(); loadContents() }
 })
@@ -447,29 +453,17 @@ watch(() => uiStore.pendingFileTarget, (target) => {
 })
 
 watch(uploadSignal, () => {
-  // 上传信号由 uploadFiles 直接写入缓存；这里做一次静默后台刷新以纠偏
-  cacheStore.refresh().then(() => loadContents())
-  fetchStorage()
-})
-
-// 文件库数据变了（本页乐观更新 / 咕咕·IM·其它标签页经 filesCache 刷新或 remove 快路径）→ 重新投影当前视图。
-// contents 是 loadContents 从 store getter 手动投影的本地快照，不是 computed，故 store 数据一变就得重投。
-// 刷新/patch 的决策与「回声抑制」全在 filesCache 里统一做（见 filesCache.ts canonical event 消费）；本页不再自己
-// 订阅 rev.files 重拉，避免与 filesCache 重复全量拉、并让回声抑制对本页同样生效（本页发起的改动不会再多刷一次）。
-watch([() => cacheStore.allFiles, () => cacheStore.allFolders], () => {
+  // 上传链路会更新当前文件；仅重载可见目录，不为一次上传重新拉全库。
   loadContents()
   fetchStorage()
 })
 
-// 回收站列表不在 filesCache 里（filesCache 只装未删除文件），files 事件触发 cacheStore
-// refresh 后缓存通常无变化、上面的 watch 不会触发 → 回收站视图停在旧数据（咕咕清空/
-// 还原回收站后网页要手动刷新才能看到的根因）。这里对 files 事件补一次回收站重拉；
-// 本标签页自己发起的改动（origin 回声）已由对应 action 调过 loadContents，跳过免重复。
-watch(() => live.resourceEvent, (event) => {
-  if (!event || event.resource !== 'files') return
-  if (event.origin && event.origin === CLIENT_ID) return
-  loadContents()
-})
+// 目录是服务端按需快照，不依赖 filesCache 的全量刷新事件；外部文件变化时只刷新当前视图。
+const stopWatchingFileRevision = watchDebouncedRevision(
+  () => live.rev.files,
+  () => { loadContents() },
+  120,
+)
 
 // ── 统一选择、多选与框选 ──
 const selection = useFileLibrarySelection({
@@ -554,6 +548,7 @@ const batchActions = useFileLibraryBatchActions({
   getCurrentFolderName: () => currentSeg.value?.name ?? null,
   clearSelection,
   loadContents,
+  removeFilesFromSnapshots: directory.removeFilesFromSnapshots,
   pruneHistoryForFolders: pruneHistoryForFolders,
   fetchStorage,
   getDestination: () => {
@@ -635,7 +630,7 @@ function deleteSelected() {
   return batchActions.deleteSelected()
 }
 
-const filePageActions = useFileLibraryFileActions({ cacheStore, fileActions, selectedIds, loadContents, fetchStorage })
+const filePageActions = useFileLibraryFileActions({ cacheStore, fileActions, selectedIds, loadContents, removeFilesFromSnapshots: directory.removeFilesFromSnapshots, fetchStorage })
 const { downloadFile, deleteSingleFile } = filePageActions
 
 // ── 重命名 ──
@@ -709,13 +704,53 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
   const nTarget = targetFolderId as number | null
   const workspaceDirectoryId = currentWorkspaceDirectoryId()
   const backups = nFileIds.map(id => cacheStore.getFile(id)).filter(Boolean) as FileMeta[]
+  let refreshedAfterCompensationFailure = false
   await InteractionSync.execute({
     scope: 'file.move', entityKey: `file-move:${nFileIds.join(',')}`,
     apply: () => nFileIds.forEach(id => cacheStore.updateFile(id, { folderId: nTarget })),
     afterMutate: loadContents,
-    request: mutation => Promise.all(nFileIds.map(id => fileActions.moveFile(id, nTarget, null, { mutationId: mutation.mutationId }, workspaceDirectoryId))),
-    rollback: () => backups.forEach(f => cacheStore.updateFile(f.id, { folderId: f.folderId })),
-    onError: err => console.error('[Files] 移动失败:', (err as Error).message),
+    request: async mutation => {
+      const results = await Promise.allSettled(nFileIds.map(id =>
+        fileActions.moveFile(id, nTarget, null, { mutationId: mutation.mutationId }, workspaceDirectoryId),
+      ))
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (!failed) return results.map(result => (result as PromiseFulfilledResult<FileMeta>).value)
+
+      // 多文件移动由多个单文件请求组成；Promise.all 一旦拒绝会留下已经提交的文件。
+      // 补偿已成功项，维持 UI 暴露的“整体回滚”行为。
+      const movedIds = results.flatMap((result, index) => result.status === 'fulfilled' ? [nFileIds[index]] : [])
+      const compensation = await Promise.allSettled(movedIds.map(id => {
+        const original = backups.find(file => file.id === id)
+        if (!original) throw new Error('缺少文件移动前状态')
+        return fileActions.moveFile(
+          id,
+          original.folderId,
+          original.projectId,
+          undefined,
+          original.workspaceDirectoryId ?? null,
+        )
+      }))
+      if (compensation.some(result => result.status === 'rejected')) {
+        // 补偿也失败时，先把服务端实际状态拉回缓存，避免 rollback 显示一个虚假的全量回滚。
+        refreshedAfterCompensationFailure = await cacheStore.refresh()
+        throw new Error(refreshedAfterCompensationFailure
+          ? '多文件移动失败，部分文件无法恢复；已刷新实际状态'
+          : '多文件移动失败，部分文件无法恢复，且未能读取服务端状态；请刷新文件库核对结果')
+      }
+      throw failed.reason
+    },
+    rollback: () => {
+      if (refreshedAfterCompensationFailure) return
+      backups.forEach(f => cacheStore.updateFile(f.id, {
+        folderId: f.folderId,
+        projectId: f.projectId,
+        workspaceDirectoryId: f.workspaceDirectoryId ?? null,
+      }))
+    },
+    onError: err => {
+      console.error('[Files] 移动失败:', (err as Error).message)
+      showAppError((err as Error).message)
+    },
   })
 }
 
@@ -763,6 +798,7 @@ useRuntimeAction(action => {
 })
 
 onUnmounted(() => {
+  stopWatchingFileRevision()
   if (runtime.surfaces.get(runtimeBrowserSurfaceId)?.generation === browserSurfaceGeneration) {
     runtime.surfaces.unregister(runtimeBrowserSurfaceId, browserSurfaceGeneration)
   }
@@ -907,19 +943,23 @@ async function ctxDelete() {
     count: ids.length,
     name: ctx.value.target && 'displayName' in ctx.value.target ? ctx.value.target.displayName : undefined,
   })) return
-  // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，n  // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
-  const backups = ids.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
+  // 等服务端确认后再更新缓存，避免删除中的卡片先消失、随后被旧快照重新显示。
   await InteractionSync.execute({
     scope: 'file.batch-delete', entityKey: `file-batch-delete:${ids.join(',')}`,
-    apply: () => {
-      cacheStore.removeFiles(ids)
-      selectedIds.value = new Set()
-    },
-    afterMutate: loadContents,
+    apply: () => {},
     request: mutation => Promise.all(ids.map(id => fileActions.deleteFile(id, { mutationId: mutation.mutationId }))),
-    onCommit: fetchStorage,
-    rollback: () => backups.forEach(f => cacheStore.addFile(f)),
-    onError: e => console.error('[Files] 删除失败:', (e as Error).message),
+    onCommit: () => {
+      cacheStore.removeFiles(ids)
+      directory.removeFilesFromSnapshots(ids)
+      selectedIds.value = new Set()
+      loadContents()
+      void fetchStorage()
+    },
+    rollback: () => {},
+    onError: e => {
+      console.error('[Files] 删除失败:', (e as Error).message)
+      loadContents()
+    },
   })
 }
 

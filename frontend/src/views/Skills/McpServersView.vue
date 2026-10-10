@@ -255,7 +255,7 @@ onBeforeUnmount(() => window.removeEventListener(RESOURCE_REFRESH_EVENTS.mcp, on
 .empty-state strong { color:var(--content-primary); }.empty-state span { max-width:420px; font-size:12px; text-align:center; }
 .error-banner { padding:10px 12px; border-radius:var(--radius-sm); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
 .error-banner button { margin-left:10px; border:0; background:transparent; color:inherit; cursor:pointer; }
-.mcp-footer { display:flex; align-items:center; gap:14px; flex-shrink:0; border-top:1px solid var(--border-default); padding:14px 8px 0; }
+.mcp-footer { display:flex; align-items:center; gap:14px; flex-shrink:0; border-top:1px solid var(--content-divider); padding:14px 8px 0; }
 .mcp-muted { color:var(--content-secondary); font-size:12px; }
 @media (max-width:720px) { .mcp-list { column-count:1; } }
 </style>

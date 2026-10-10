@@ -7,6 +7,7 @@ interface ProjectFileCache {
   getSubFolders(parentId: number): FolderMeta[]
   getProjectRootFiles(projectId: number): FileMeta[]
   getFolderFiles(folderId: number): FileMeta[]
+  getFolder(folderId: number): FolderMeta | null
   allFolders: FolderMeta[]
 }
 
@@ -19,8 +20,9 @@ interface ProjectFileCache {
 export function useProjectFileWorkspace(options: {
   projectId: () => number | null | undefined
   fileCacheStore: ProjectFileCache
+  isDirectoryLoaded: (projectId: number, folderId: number) => boolean
 }) {
-  const { projectId, fileCacheStore } = options
+  const { projectId, fileCacheStore, isDirectoryLoaded } = options
   const fileViewMode = ref<'grid' | 'list'>('grid')
   const openFolders = ref(new Set<number>())
   const {
@@ -54,7 +56,9 @@ export function useProjectFileWorkspace(options: {
   const currentFolderFiles = computed(() => currentFiles.value)
 
   function pmFolderCount(folderId: number) {
-    return fileCacheStore.getFolderFiles(folderId).length
+    const pid = projectId() ?? -1
+    if (isDirectoryLoaded(pid, folderId)) return fileCacheStore.getFolderFiles(folderId).length
+    return fileCacheStore.getFolder(folderId)?.fileCount ?? fileCacheStore.getFolderFiles(folderId).length
   }
 
   const totalFileCount = computed(() => {

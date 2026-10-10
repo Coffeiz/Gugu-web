@@ -21,13 +21,16 @@ async def live_speaker_index(db, user_id, platform, bot_id, chat_id):
     ))).all()
 
 
-async def search_group_messages(db, user_id, chat_id, bot_id, speaker_id, queries, mode, limit):
+async def search_group_messages(
+    db, user_id, chat_id, bot_id, speaker_id, queries, mode, limit, *, platform="qq",
+):
     query = select(ConversationMessage).join(
         ConversationSession, ConversationMessage.session_id == ConversationSession.id,
     ).where(
         ConversationSession.user_id == user_id,
-        ConversationSession.source == "qq",
+        ConversationSession.source == platform,
         ConversationSession.bot_id == bot_id,
+        ConversationSession.chat_type == "group",
         ConversationSession.chat_id == chat_id,
         ConversationMessage.content_json.is_(None),
     ).order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id)).limit(limit)

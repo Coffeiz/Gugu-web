@@ -23,9 +23,10 @@ from app.core import redis as R
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import User, UserBot
+from app.services.im_platforms import im_platform_dependency
 from agent.gateway.wechat_client import ILinkClient
 
-router = APIRouter(prefix="/me/wechat/connect", tags=["wechat-connect"])
+router = APIRouter(prefix="/me/wechat/connect", tags=["wechat-connect"], dependencies=[Depends(im_platform_dependency("wechat"))])
 
 TASK_TTL = 600  # 10 分钟
 

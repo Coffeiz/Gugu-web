@@ -283,6 +283,7 @@ const {
 } = useProjectFileWorkspace({
   projectId: () => props.project?.id ?? null,
   fileCacheStore,
+  isDirectoryLoaded: (projectId, folderId) => isDirectoryLoaded(projectId, folderId),
 })
 const projectFileMutations = useProjectFileMutations({
   fileActions,
@@ -350,10 +351,8 @@ function onPmContentClick() {
   onPmContentClickImpl()
 }
 
-// Tier 3：数据从全局 filesCache store 派生（currentFiles/currentFolders/pmFolderCount）。所有增删改
-// 只需更新 store（updateFile/updateFolder/removeFile/removeFolder/addFile/addFolder），视图自动跟随——
-// 不再各自 refetch、维护本地缓存、手工调计数徽标、或判断「刷哪一层」。删的都是当前层子项，视图自动
-// 消失、导航路径不含它们，无需重置导航（仅清理指向已删文件夹的历史快照）。
+// 当前目录数据合并进 filesCache store（currentFiles/currentFolders/pmFolderCount）。增删改继续走
+// 同一份 store；未访问的目录按需请求，避免项目首开等待全账户文件索引。
 
 // ── 拖动移动 ──────────────────────────────────────────────────────────────────
 const { moveFolders: movePmFoldersInto, moveFiles: movePmFilesInto } = useProjectFileDragMoves({
@@ -449,10 +448,27 @@ function withPmDirectNav(mutate: () => void): void {
   if (hasActivePmMove()) return
   mutate()
 }
-function pmEnterFolderWrapped(folder: FolderMeta): void { withPmDirectNav(() => pmEnterFolder(folder)) }
-function pmNavigateToWrapped(idx: number): void { withPmDirectNav(() => pmNavigateTo(idx)) }
-function pmGoBackWrapped(): void { withPmDirectNav(() => pmGoBack()) }
-function pmGoForwardWrapped(): void { withPmDirectNav(() => pmGoForward()) }
+function loadCurrentProjectDirectory(): void {
+  const projectId = props.project?.id
+  if (projectId == null) return
+  void ensureDirectoryLoaded(projectId, folderStack.value.at(-1)?.id ?? null)
+}
+function pmEnterFolderWrapped(folder: FolderMeta): void {
+  withPmDirectNav(() => pmEnterFolder(folder))
+  loadCurrentProjectDirectory()
+}
+function pmNavigateToWrapped(idx: number): void {
+  withPmDirectNav(() => pmNavigateTo(idx))
+  loadCurrentProjectDirectory()
+}
+function pmGoBackWrapped(): void {
+  withPmDirectNav(() => pmGoBack())
+  loadCurrentProjectDirectory()
+}
+function pmGoForwardWrapped(): void {
+  withPmDirectNav(() => pmGoForward())
+  loadCurrentProjectDirectory()
+}
 
 // collection / layout key 继续供当前目录内的真实 Runtime 拖拽与布局识别使用；它们不再参与目录 Presence。
 const pmLayoutCollection = computed(() => `project-files:${props.project?.id ?? 'none'}`)
@@ -540,7 +556,7 @@ async function deleteFolderCard(folder: FolderMeta) {
 }
 
 // 外部（Agent/IM）修改日期时同步本地状态（project?.id 不变，但日期值变了）
-const { initializing } = useProjectFileProjectSync({
+const { initializing, ensureDirectoryLoaded, isDirectoryLoaded, invalidateProjectDirectories } = useProjectFileProjectSync({
   project: () => props.project,
   openFolders,
   folderStack,
@@ -549,6 +565,16 @@ const { initializing } = useProjectFileProjectSync({
   resetDraft: resetProjectDraft,
   fileCacheStore,
 })
+
+let projectDirectoryRefreshTimer: number | null = null
+watch(() => liveStore.resourceEvent, event => {
+  const projectId = props.project?.id
+  if (event?.resource !== 'files' || projectId == null || fileCacheStore.loaded) return
+  invalidateProjectDirectories(projectId)
+  window.clearTimeout(projectDirectoryRefreshTimer ?? undefined)
+  projectDirectoryRefreshTimer = window.setTimeout(loadCurrentProjectDirectory, 180)
+})
+onUnmounted(() => window.clearTimeout(projectDirectoryRefreshTimer ?? undefined))
 
 // 外部（Agent/IM）修改项目时实时同步进打开中的草稿：store 的 live 事件会整体
 // 替换 projects 里的对象，props.project 引用随之更新；按字段合并，用户已编辑的
@@ -877,7 +903,7 @@ const filePanelContext = {
   font-family: var(--font-sans); line-height: 1.2; outline: none;
   padding: 7px 11px; margin: 0 -11px 0 0;
   border: 1px solid transparent; border-radius: 10px; corner-shape: squircle;
-  background: transparent; caret-color: var(--color-primary);
+  background: transparent; caret-color: var(--input-caret-color);
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }

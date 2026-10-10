@@ -20,18 +20,16 @@ describe('项目文件分段重命名', () => {
     expect(renameFile).toHaveBeenCalledWith(file.id, 'manual', 'PDF')
   })
 
-  it('清空已有后缀时不提交并保留编辑状态', () => {
+  it('清空已有后缀时改为无后缀文件并退出编辑状态', () => {
     const file = makeFile('TXT')
     const renameFile = vi.fn()
-    const onInvalidExtension = vi.fn()
-    const rename = useProjectFileRename({ renameFile, renameFolder: vi.fn(), onInvalidExtension })
+    const rename = useProjectFileRename({ renameFile, renameFolder: vi.fn() })
     rename.startRename(file)
     rename.renameExtension.value = ''
 
     rename.commitRename()
 
-    expect(renameFile).not.toHaveBeenCalled()
-    expect(onInvalidExtension).toHaveBeenCalledOnce()
-    expect(rename.renamingFileId.value).toBe(file.id)
+    expect(renameFile).toHaveBeenCalledWith(file.id, 'guide', 'FILE')
+    expect(rename.renamingFileId.value).toBeNull()
   })
 })

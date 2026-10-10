@@ -5,6 +5,27 @@ import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelec
 /** 回归：folder 与 file 是两张独立自增主键表，id 会撞号；Shift 范围选择的
  * 查找必须同时匹配 type，否则会锚进另一张表的同号项目，范围整体错位。 */
 describe('useFileLibrarySelection shift 范围选择', () => {
+  it('Shift 点击根目录分类卡只导航，不进入多选', () => {
+    const rootCard = { id: 'trash', type: 'trash', name: '回收站' } as never
+    const enterFolder = vi.fn()
+    const sel = useFileLibrarySelection({
+      containerRef: ref(null),
+      currentType: ref('root'),
+      getFolders: () => [rootCard],
+      getFiles: () => [],
+      getTrashFolders: () => [],
+      enterFolder,
+      openPreview: vi.fn(),
+      isPreviewable: () => true,
+    })
+
+    sel.handleFolderClick(rootCard, { shiftKey: true, currentTarget: null } as unknown as MouseEvent)
+
+    expect(enterFolder).toHaveBeenCalledWith(rootCard)
+    expect(sel.selectedFolderKeys.value.size).toBe(0)
+    expect(sel.inSelectionMode.value).toBe(false)
+  })
+
   it('file 与 folder 撞号时范围选择按 type 定位', () => {
     const folders = [{ id: 20 }]
     const files = [

@@ -36,7 +36,10 @@ from app.services.filesync.snapshots import save_snapshot
 from app.services.filesync.statcache import StatCache
 from app.services.storage.folders import folder_dir_key
 from app.services.files.previews import delete_thumb_cache
-from app.services.storage.quota_limits import resolve_file_library_limit
+from app.services.storage.quota_limits import (
+    is_unlimited_limit,
+    resolve_file_library_limit,
+)
 
 
 @dataclass(frozen=True)
@@ -53,11 +56,16 @@ class SyncSummary:
     folders_deleted: int = 0
     journal_ids: tuple[int, ...] = ()
     entity_ids: tuple[int, ...] = ()
+    rejection_reasons: tuple[tuple[str, int], ...] = ()
 
 
 _HASH_CHUNK_BYTES = 1024 * 1024
 _CACHE_ADVISE_THRESHOLD_BYTES = 8 * 1024 * 1024
 _CACHE_ADVISE_INTERVAL_BYTES = 8 * 1024 * 1024
+
+
+class FileChangedDuringRead(ValueError):
+    """读取期间文件仍在变化；等待后续 watcher 事件，不作为路径故障。"""
 
 
 def _advise_drop_cache(fd: int, offset: int, length: int, advice: int) -> bool:
@@ -100,7 +108,7 @@ def _stable_fingerprint(path: Path, *, discard_cache: bool = False) -> str:
     digest = _fingerprint(path, discard_cache=should_discard_cache)
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-        raise ValueError("文件仍在写入")
+        raise FileChangedDuringRead("文件仍在写入")
     return digest
 
 
@@ -263,7 +271,7 @@ async def _classify_path(
     *,
     workspace_directory_id: int | None = None,
     base: Path | None = None,
-):
+) -> tuple[str, int | None, int | None, str, str, int | None] | None:
     """把 canonical 本地路径解析为 File 的归属字段。
 
     directory 型工作区绑定例外：物理根就是工作区目录本身（workspace/、
@@ -305,6 +313,10 @@ async def _classify_path(
             raise ValueError("项目不属于当前用户")
         space = "project"
         folder_names = list(rest[3:])
+    elif space_root == "项目文件":
+        # 项目文件根、年份层和月份层是组织容器，不是项目空间；
+        # 这些层级里的文件没有项目归属，忽略而不污染绑定健康状态。
+        return None
     else:
         raise ValueError("同步只支持个人文件和项目文件")
     display_name, ext = _file_name(Path(filename))
@@ -378,13 +390,14 @@ async def reconcile_local_directory(
         user.storage_limit_bytes if user else None,
         getattr(quota_settings, "default_storage_limit_bytes", None),
     )
+    enforce_quota = not is_unlimited_limit(quota_limit)
 
     if binding is None:
         binding = await _binding_for(
             db, user_id, source=str(source), workspace_id=workspace_id, root=root,
         )
     # 快路径：size+mtime 未变直接复用上次内容指纹，跳过整文件哈希；
-    # 日级补偿扫描传 use_stat_cache=False 强制全量哈希自愈统计漂移。
+    # 显式完整核对可传 use_stat_cache=False 强制全量哈希，避免复用统计缓存。
     stat_cache = StatCache(user_id, binding.id) if use_stat_cache and not dry_run else None
     discard_hash_cache = not use_stat_cache and not dry_run
     physical = []
@@ -549,6 +562,8 @@ async def reconcile_local_directory(
                     if stat_cache:
                         stat_cache.store(relative, path, observed)
                 planned_fingerprints[key] = observed
+            except FileChangedDuringRead:
+                continue
             except (OSError, ValueError):
                 continue
             candidates = [
@@ -580,11 +595,14 @@ async def reconcile_local_directory(
             continue
         try:
             validate_sync_path(root, relative)
-            space, project_id, folder_id, display_name, ext, file_ws_dir_id = await _classify_path(
+            classification = await _classify_path(
                 db, user_id, path, user_root,
                 workspace_directory_id=workspace_directory_id,
                 base=root,
             )
+            if classification is None:
+                continue
+            space, project_id, folder_id, display_name, ext, file_ws_dir_id = classification
             observed = planned_fingerprints.get(key)
             if observed is None:
                 observed = stat_cache.lookup(relative, path) if stat_cache else None
@@ -592,6 +610,8 @@ async def reconcile_local_directory(
                 observed = _stable_fingerprint(path, discard_cache=discard_hash_cache)
                 if stat_cache:
                     stat_cache.store(relative, path, observed)
+        except FileChangedDuringRead:
+            continue
         except (OSError, ValueError):
             rejected += 1
             continue
@@ -612,7 +632,7 @@ async def reconcile_local_directory(
             consumed.add(candidate.id)
         if candidate is not None:
             size_delta = path.stat().st_size - int(candidate.size_bytes or 0)
-            if size_delta > quota_headroom:
+            if enforce_quota and size_delta > quota_headroom:
                 rejected += 1
                 continue
             old_key = candidate.storage_key
@@ -635,7 +655,7 @@ async def reconcile_local_directory(
             baseline = old_journal.observed_fingerprint if old_journal else None
         else:
             stat = path.stat()
-            if stat.st_size > quota_headroom:
+            if enforce_quota and stat.st_size > quota_headroom:
                 rejected += 1
                 continue
             candidate = File(
@@ -682,6 +702,8 @@ async def reconcile_local_directory(
                 observed = _stable_fingerprint(path, discard_cache=discard_hash_cache)
                 if stat_cache:
                     stat_cache.store(relative, path, observed)
+        except FileChangedDuringRead:
+            continue
         except (OSError, ValueError):
             rejected += 1
             continue
@@ -691,13 +713,14 @@ async def reconcile_local_directory(
             location = ("workspace", None, None, workspace_directory_id)
         if location is None:
             try:
-                (
-                    space, project_id, folder_id, display_name, ext, file_ws_dir_id,
-                ) = await _classify_path(
+                classification = await _classify_path(
                     db, user_id, path, user_root,
                     workspace_directory_id=workspace_directory_id,
                     base=root,
                 )
+                if classification is None:
+                    continue
+                space, project_id, folder_id, display_name, ext, file_ws_dir_id = classification
             except (OSError, ValueError):
                 rejected += 1
                 continue
@@ -736,7 +759,7 @@ async def reconcile_local_directory(
         )
         if content_changed or location_changed:
             size_delta = path.stat().st_size - int(row.size_bytes or 0)
-            if content_changed and size_delta > quota_headroom:
+            if enforce_quota and content_changed and size_delta > quota_headroom:
                 rejected += 1
                 continue
             if content_changed:

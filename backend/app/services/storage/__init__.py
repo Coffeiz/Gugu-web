@@ -7,6 +7,7 @@ import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
@@ -156,6 +157,10 @@ class StorageBackend(ABC):
     @abstractmethod
     async def list_keys(self) -> list[str]:
         """列出存储里所有对象 key（对账用；含 .agent/.chat_staging 等内部 key，由调用方过滤）"""
+
+    async def list_keys_filtered(self, include_key: Callable[[str], bool]) -> list[str]:
+        """列出符合条件的对象；默认实现过滤完整清单。"""
+        return [key for key in await self.list_keys() if include_key(key)]
 
     async def list_keys_prefix(
         self, prefix: str, *, cursor: str | None = None, limit: int = 500,
@@ -339,13 +344,50 @@ class LocalStorageBackend(StorageBackend):
         return (self.root / key).is_file()
 
     async def list_keys(self) -> list[str]:
+        return await self.list_keys_filtered(lambda _key: True)
+
+    async def list_keys_filtered(self, include_key: Callable[[str], bool]) -> list[str]:
+        """遍历时剪枝排除的目录，避免触碰不属于文件库的私有运行目录。"""
         import asyncio
 
         def _walk():
-            if not self.root.exists():
+            try:
+                root_stat = self.root.stat()
+            except FileNotFoundError:
                 return []
-            return [p.relative_to(self.root).as_posix()
-                    for p in self.root.rglob("*") if p.is_file()]
+            if not stat.S_ISDIR(root_stat.st_mode):
+                return []
+
+            keys: list[str] = []
+
+            def raise_walk_error(error: OSError) -> None:
+                raise error
+
+            for directory, dirnames, filenames in os.walk(self.root, onerror=raise_walk_error):
+                base_key = Path(directory).relative_to(self.root).as_posix()
+                if base_key == ".":
+                    base_key = ""
+                dirnames[:] = [
+                    name for name in dirnames
+                    if not (Path(directory) / name).is_symlink()
+                    and include_key(f"{base_key}/{name}".lstrip("/") + "/")
+                ]
+                for filename in filenames:
+                    path = Path(directory) / filename
+                    if path.is_symlink():
+                        continue
+                    key = path.relative_to(self.root).as_posix()
+                    if not include_key(key):
+                        continue
+                    try:
+                        file_stat = path.stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        # 并发删除的对象已不属于本次清单。
+                        continue
+                    if stat.S_ISREG(file_stat.st_mode):
+                        keys.append(key)
+            return keys
+
         return await asyncio.to_thread(_walk)
 
     async def list_keys_prefix(
@@ -369,7 +411,12 @@ class LocalStorageBackend(StorageBackend):
                     return
                 if not base.is_dir() or base.is_symlink():
                     return
-                for directory, dirnames, filenames in os.walk(base, followlinks=False):
+                def raise_walk_error(error: OSError) -> None:
+                    raise error
+
+                for directory, dirnames, filenames in os.walk(
+                    base, followlinks=False, onerror=raise_walk_error,
+                ):
                     dirnames[:] = [name for name in dirnames if not (Path(directory) / name).is_symlink()]
                     for filename in filenames:
                         path = Path(directory) / filename
@@ -433,9 +480,12 @@ class LocalStorageBackend(StorageBackend):
     async def stat(self, key: str) -> StorageObjectInfo | None:
         def _st():
             p = self.root / key
-            if not p.is_file():
+            try:
+                s = p.stat()
+            except FileNotFoundError:
                 return None
-            s = p.stat()
+            if not stat.S_ISREG(s.st_mode):
+                return None
             return StorageObjectInfo(size=s.st_size, mtime=s.st_mtime)
         return await asyncio.to_thread(_st)
 

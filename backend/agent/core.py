@@ -300,14 +300,18 @@ class LLMRunner:
         包裹 `LLMRunner._run_loop`（FR-LLM25-001）。
         """
         from agent.loop.machine import run_loop
+        from agent.runtime.cancellation import RunCancellationRequested
 
-        async for line in run_loop(
-            self, driver, user_id, messages, ai,
-            system_text=system_text,
-            session_id=session_id, session=session,
-            on_interaction=on_interaction, reasoning_state=reasoning_state,
-        ):
-            yield line
+        try:
+            async for line in run_loop(
+                self, driver, user_id, messages, ai,
+                system_text=system_text,
+                session_id=session_id, session=session,
+                on_interaction=on_interaction, reasoning_state=reasoning_state,
+            ):
+                yield line
+        except RunCancellationRequested:
+            yield encode_event("_cancelled")
 
 
     def __init__(self, tool_names: list[str], settings, capability_context=None, locale: str | None = None,

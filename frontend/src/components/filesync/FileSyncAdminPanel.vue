@@ -41,12 +41,51 @@
         <div class="fs-metric"><span>{{ t('filesyncAdmin.outbox') }}</span><b :class="{ warn: status.totals.pendingOutbox }">{{ status.totals.pendingOutbox }}</b></div>
       </div>
 
+      <div class="fs-block fs-watcher-capacity">
+        <div class="fs-block-head">
+          <div>
+            <div class="fs-block-title">{{ t('filesyncAdmin.watcherCapacityTitle') }}</div>
+            <div class="fs-note">{{ capacityDescription }}</div>
+          </div>
+          <div class="fs-capacity-actions">
+            <div class="fs-capacity-limit">
+              <span>{{ t('filesyncAdmin.watcherHardLimit') }}</span>
+              <input v-model="watchHardLimitInput" class="form-input" type="number" min="65536" max="1024000" step="1"
+                     :aria-label="t('filesyncAdmin.watcherHardLimit')" :disabled="capacitySaving" />
+              <ActionButton fit :disabled="capacitySaving || !hardLimitDirty" @click="saveWatchHardLimit">
+                {{ capacitySaving ? t('filesyncAdmin.working') : t('filesyncAdmin.saveWatcherLimit') }}
+              </ActionButton>
+            </div>
+            <ActionButton v-if="status.watcherCapacity?.available" fit :disabled="capacitySaving || status.watcherCapacity?.atHardLimit" @click="expandWatchLimit">
+              <Icon name="action.refresh" size="sm" />
+              {{ t('filesyncAdmin.expandWatcherLimit') }}
+            </ActionButton>
+          </div>
+        </div>
+        <div v-if="status.watcherCapacity?.available" class="fs-capacity-stats" :class="{ 'is-warning': status.watcherCapacity.atWarningThreshold }">
+          <span>{{ t('filesyncAdmin.watcherUid', { uid: status.watcherCapacity.uid }) }}</span>
+          <span>{{ t('filesyncAdmin.watcherUsage', { usage: formatCount(status.watcherCapacity.usage), limit: formatCount(status.watcherCapacity.limit) }) }}</span>
+          <span>{{ t('filesyncAdmin.watcherPercent', { percent: status.watcherCapacity.percent }) }}</span>
+          <span>{{ t('filesyncAdmin.watcherThreshold', { count: formatCount(status.watcherCapacity.autoThreshold) }) }}</span>
+          <span v-if="status.watcherCapacity.atWarningThreshold">{{ t('filesyncAdmin.watcherAtWarning') }}</span>
+          <span>{{ t('filesyncAdmin.watcherNextLimit', { count: formatCount(status.watcherCapacity.nextLimit) }) }}</span>
+          <span>{{ t('filesyncAdmin.watcherLastExpansion', { time: formatTime(status.watcherCapacity.lastExpansionAt) }) }}</span>
+        </div>
+      </div>
+
       <div v-if="status.ignoredBindingCount" class="fs-note">{{ t('filesyncAdmin.ignoredBindings', { count: status.ignoredBindingCount }) }}</div>
+      <div v-if="bulkMessage" class="fs-message" :class="bulkFailed ? 'is-error' : 'is-success'">{{ bulkMessage }}</div>
 
       <div v-if="status.bindings.length" class="fs-block">
         <div class="fs-block-head">
           <div class="fs-block-title">{{ t('filesyncAdmin.bindingList') }}</div>
           <div class="fs-block-tools">
+            <ActionButton fit
+                          :disabled="Boolean(actionKey) || Boolean(bulkProgress) || !status.supported || !queueableIssueCount"
+                          @click="reconcileIssues">
+              <Icon name="action.refresh" size="sm" />
+              {{ actionKey === 'bulk-reconcile' ? t('filesyncAdmin.queueingIssues') : t('filesyncAdmin.queueIssues', { count: queueableIssueCount }) }}
+            </ActionButton>
             <span class="fs-block-stats">{{ t('filesyncAdmin.bindingStats', { shown: visibleBindings.length, total: status.bindings.length }) }}</span>
             <label class="fs-toggle">
               <ToggleSwitch size="sm" :model-value="onlyIssues" :aria-label="t('filesyncAdmin.onlyIssues')" @update:model-value="onlyIssues = $event" />
@@ -59,6 +98,7 @@
           <div class="fs-row-main">
             <strong>#{{ binding.id }} · {{ binding.mode }}</strong>
             <span>{{ binding.rootPath }} · {{ binding.userId }}</span>
+            <small>{{ t('filesyncAdmin.watcherHealth', { status: binding.watcherStatus }) }} · {{ t(binding.needsReconcile ? 'filesyncAdmin.manualReconcileNeeded' : 'filesyncAdmin.noManualReconcileNeeded') }}<template v-if="binding.healthErrorCode"> · {{ binding.healthErrorCode }}</template></small>
             <small>{{ t('filesyncAdmin.revision') }} {{ binding.revision }} · {{ t('filesyncAdmin.conflictCount') }} {{ binding.pendingConflicts }}</small>
           </div>
           <div class="fs-actions">
@@ -74,21 +114,56 @@
         </div>
       </div>
 
-      <div v-if="dryResult" class="fs-result">
-        {{ t('filesyncAdmin.dryRunResult', { scanned: dryResult.summary.scanned, created: dryResult.summary.created, updated: dryResult.summary.updated, rejected: dryResult.summary.rejected, conflicts: dryResult.summary.conflicts }) }}
+      <div class="fs-block">
+        <div class="fs-block-title">{{ t('filesyncUser.recentRuns') }}</div>
+        <div v-if="!runs.length" class="fs-note">{{ t('filesyncUser.noRuns') }}</div>
+        <div v-for="run in runs" :key="run.id" class="fs-run">
+          <div class="fs-run-head">
+            <strong>#{{ run.bindingId }} · {{ t(`filesyncUser.action.${run.action}`) }} · {{ t(`filesyncUser.status.${run.status}`) }}</strong>
+            <ActionButton v-if="['queued', 'running', 'cancelling'].includes(run.status)" variant="secondary" fit :disabled="actionKey === `cancel-${run.id}`" @click="cancelRun(run)">
+              {{ t('filesyncUser.cancelRun') }}
+            </ActionButton>
+          </div>
+          <span>{{ t('filesyncUser.stage', { stage: t(`filesyncUser.stageName.${run.stage || 'unknown'}`) }) }} · {{ t('filesyncUser.scanned', { count: run.scannedCount }) }}</span>
+              <span>{{ resultSummary(run) }}</span>
+              <small v-if="run.resultCounts.permissionSkipped" class="is-warning">
+                {{ t('filesyncUser.permissionSkipped', { count: run.resultCounts.permissionSkipped }) }}
+              </small>
+              <small v-if="run.errorCode" class="is-danger">{{ runErrorMessage(run) }}</small>
+          <small v-if="hasPartialResult(run)" class="is-warning">{{ t('filesyncUser.partialResult') }}</small>
+        </div>
       </div>
 
       <div v-if="status.conflicts.length" class="fs-block">
-        <div class="fs-block-title">{{ t('filesyncAdmin.conflictList') }}</div>
+        <div class="fs-block-head">
+          <div class="fs-block-title">{{ t('filesyncAdmin.conflictList') }} · {{ status.conflicts.length }} / {{ status.totals.pendingConflicts }}</div>
+          <div class="fs-actions fs-bulk-actions">
+            <ActionButton v-for="resolution in resolutions" :key="`bulk-${resolution.value}`" variant="secondary" fit
+                          :class="{ 'is-danger': resolution.value === 'keep_remote' }"
+                          :disabled="Boolean(actionKey) || Boolean(bulkProgress) || status.conflicts.length !== status.totals.pendingConflicts || hasMissingLocalConflicts"
+                          @click="resolveAll(resolution.value)">
+              {{ bulkProgress?.resolution === resolution.value
+                ? t('filesyncAdmin.bulkProgress', { done: bulkProgress.completed, total: bulkProgress.total })
+                : t('filesyncAdmin.bulkResolve', { resolution: t(resolution.label), count: status.totals.pendingConflicts }) }}
+            </ActionButton>
+          </div>
+        </div>
+        <p v-if="status.conflicts.length !== status.totals.pendingConflicts" class="fs-note">
+          {{ t('filesyncAdmin.bulkListIncomplete', { shown: status.conflicts.length, total: status.totals.pendingConflicts }) }}
+        </p>
+        <p v-if="hasMissingLocalConflicts" class="fs-note">
+          {{ t('filesyncAdmin.bulkMissingLocalDisabled') }}
+        </p>
         <div v-for="conflict in status.conflicts" :key="conflict.id" class="fs-row">
           <div class="fs-row-main">
             <strong>#{{ conflict.id }} · {{ conflict.relativePath }}</strong>
             <span>{{ t('filesyncAdmin.bindingRef') }} #{{ conflict.bindingId }} · {{ conflict.userId }}</span>
+            <small v-if="!conflict.hasLocal">{{ t('filesyncAdmin.missingLocalConflictHint') }}</small>
           </div>
           <div class="fs-actions">
-            <ActionButton v-for="resolution in resolutions" :key="resolution.value" variant="secondary" fit
-                          :class="{ 'is-danger': resolution.value === 'keep_remote' }"
-                          :disabled="actionKey === `conflict-${conflict.id}`" @click="resolve(conflict.id, resolution.value)">
+            <ActionButton v-for="resolution in (conflict.hasLocal ? resolutions : missingLocalResolutions)" :key="resolution.value" variant="secondary" fit
+                          :class="{ 'is-danger': resolution.value === 'keep_remote' || resolution.value === 'confirm_delete' }"
+                          :disabled="Boolean(actionKey) || Boolean(bulkProgress)" @click="resolve(conflict.id, resolution.value)">
               <Icon :name="resolution.value === 'cancel' ? 'action.close' : 'status.check-circle'" size="sm" />
               {{ t(resolution.label) }}
             </ActionButton>
@@ -109,11 +184,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
-import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncActionResult } from '@/api/filesync'
+import { filesyncAdminApi, type FileSyncAdminStatus, type FileSyncConflictResolution, type FileSyncRunStatus } from '@/api/filesync'
+import { useFileSyncAdminEvents } from '@/composables/filesync/useFileSyncAdminEvents'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -121,37 +197,119 @@ import Icon from '@/components/common/icons/Icon.vue'
 const { t } = useI18n()
 const adminStore = useAdminStore()
 const status = ref<FileSyncAdminStatus | null>(null)
-const dryResult = ref<FileSyncActionResult | null>(null)
+const runs = ref<FileSyncRunStatus[]>([])
 const loading = ref(false)
 const syncSaving = ref(false)
 const error = ref('')
+const capacitySaving = ref(false)
+const watchHardLimitInput = ref('1024000')
 const actionKey = ref('')
+const bulkProgress = ref<{ resolution: string; completed: number; total: number } | null>(null)
+const bulkMessage = ref('')
+const bulkFailed = ref(false)
 const resolutions = [
   { value: 'keep_local' as const, label: 'filesyncAdmin.keepLocal' },
   { value: 'keep_remote' as const, label: 'filesyncAdmin.keepRemote' },
   { value: 'keep_both' as const, label: 'filesyncAdmin.keepBoth' },
   { value: 'cancel' as const, label: 'filesyncAdmin.cancelConflict' },
 ]
+const missingLocalResolutions = [
+  ...resolutions.filter((resolution) => resolution.value === 'keep_remote' || resolution.value === 'cancel'),
+  { value: 'confirm_delete' as const, label: 'filesyncAdmin.confirmMissingDelete' },
+]
+const hasMissingLocalConflicts = computed(() =>
+  status.value?.conflicts.some((conflict) => !conflict.hasLocal) ?? false,
+)
+let reloadQueued = false
+const adminEvents = useFileSyncAdminEvents(adminStore.authFetch, () => { void load() })
 
 // 绑定随 workspace 自动登记，健康绑定（无待处理/失败 journal、无冲突）对排查没有
 // 信息量；默认只列出有异常的，全量列表留给开关。
 const onlyIssues = ref(true)
+const anomalousBindings = computed(() => (status.value?.bindings ?? []).filter((binding) =>
+  binding.pendingJournal > 0 || binding.failedJournal > 0 ||
+  binding.rejectedJournal > 0 || binding.pendingConflicts > 0 ||
+  binding.needsReconcile || !['ready', 'inactive', 'unknown'].includes(binding.watcherStatus),
+))
+const queueableIssueCount = computed(() => anomalousBindings.value.filter((binding) =>
+  binding.source === 'local_directory' && binding.status === 'active' && binding.mode !== 'mirror_out',
+).length)
+const hardLimitDirty = computed(() => Number(watchHardLimitInput.value) !== status.value?.watcherCapacity?.hardLimit)
+const capacityDescription = computed(() => status.value?.watcherCapacity?.available
+  ? t('filesyncAdmin.watcherCapacityDescription')
+  : t('filesyncAdmin.watcherManagerUnavailable'))
 const visibleBindings = computed(() => {
   const all = status.value?.bindings ?? []
   if (!onlyIssues.value) return all
-  return all.filter((binding) =>
-    binding.pendingJournal > 0 || binding.failedJournal > 0 ||
-    binding.rejectedJournal > 0 || binding.pendingConflicts > 0,
-  )
+  return anomalousBindings.value
 })
 
 async function load() {
-  if (loading.value) return
+  if (loading.value) {
+    reloadQueued = true
+    return
+  }
   loading.value = true
   error.value = ''
-  try { status.value = await filesyncAdminApi.status(adminStore.authFetch) }
+  try {
+    do {
+      reloadQueued = false
+      const [nextStatus, nextRuns] = await Promise.all([
+        filesyncAdminApi.status(adminStore.authFetch),
+        filesyncAdminApi.runs(adminStore.authFetch),
+      ])
+      const preserveInput = status.value !== null && hardLimitDirty.value
+      status.value = nextStatus
+      if (typeof nextStatus.watcherCapacity?.hardLimit === 'number'
+        && !preserveInput) {
+        watchHardLimitInput.value = String(nextStatus.watcherCapacity.hardLimit)
+      }
+      runs.value = nextRuns
+    } while (reloadQueued)
+  }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { loading.value = false }
+}
+
+function formatCount(value: number | undefined) {
+  return typeof value === 'number' ? new Intl.NumberFormat().format(value) : '—'
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return t('filesyncAdmin.watcherNeverExpanded')
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
+}
+
+async function saveWatchHardLimit() {
+  const limit = Number(watchHardLimitInput.value)
+  if (!Number.isInteger(limit) || limit < 65536 || limit > 1024000) {
+    error.value = t('filesyncAdmin.watcherLimitInvalid')
+    return
+  }
+  capacitySaving.value = true
+  error.value = ''
+  try {
+    await filesyncAdminApi.setWatchHardLimit(adminStore.authFetch, limit)
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    capacitySaving.value = false
+  }
+}
+
+async function expandWatchLimit() {
+  capacitySaving.value = true
+  error.value = ''
+  try {
+    await filesyncAdminApi.expandWatchLimit(adminStore.authFetch)
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    capacitySaving.value = false
+  }
 }
 
 async function toggleSync(enabled: boolean) {
@@ -174,7 +332,7 @@ async function toggleSync(enabled: boolean) {
 async function dryRun(bindingId: number) {
   actionKey.value = `dry-${bindingId}`
   error.value = ''
-  try { dryResult.value = await filesyncAdminApi.dryRun(adminStore.authFetch, bindingId) }
+  try { await filesyncAdminApi.dryRun(adminStore.authFetch, bindingId); await load() }
   catch (e) { error.value = e instanceof Error ? e.message : String(e) }
   finally { actionKey.value = '' }
 }
@@ -188,8 +346,33 @@ async function reconcile(bindingId: number) {
   finally { actionKey.value = '' }
 }
 
-async function resolve(conflictId: number, resolution: typeof resolutions[number]['value']) {
-  if (resolution !== 'cancel' && !await confirmDialog({ title: t('filesyncAdmin.resolveTitle'), message: t('filesyncAdmin.resolveConfirm'), tone: resolution === 'keep_remote' ? 'danger' : 'warning', confirmText: t('filesyncAdmin.confirmResolve') })) return
+async function reconcileIssues() {
+  if (!status.value?.supported || !queueableIssueCount.value || actionKey.value || bulkProgress.value) return
+  const accepted = await confirmDialog({
+    title: t('filesyncAdmin.queueIssuesTitle'),
+    message: t('filesyncAdmin.queueIssuesConfirm', { count: queueableIssueCount.value }),
+    tone: 'warning',
+    confirmText: t('filesyncAdmin.queueIssuesConfirmButton'),
+  })
+  if (!accepted) return
+  actionKey.value = 'bulk-reconcile'
+  error.value = ''
+  bulkMessage.value = ''
+  bulkFailed.value = false
+  try {
+    const result = await filesyncAdminApi.reconcileIssues(adminStore.authFetch)
+    bulkMessage.value = t('filesyncAdmin.queueIssuesResult', { ...result })
+    bulkFailed.value = false
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    actionKey.value = ''
+  }
+}
+
+async function resolve(conflictId: number, resolution: FileSyncConflictResolution) {
+  if (resolution !== 'cancel' && !await confirmDialog({ title: t('filesyncAdmin.resolveTitle'), message: t(resolution === 'confirm_delete' ? 'filesyncAdmin.confirmMissingDeleteMessage' : 'filesyncAdmin.resolveConfirm'), tone: resolution === 'keep_remote' || resolution === 'confirm_delete' ? 'danger' : 'warning', confirmText: t('filesyncAdmin.confirmResolve') })) return
   actionKey.value = `conflict-${conflictId}`
   error.value = ''
   try { await filesyncAdminApi.resolveConflict(adminStore.authFetch, conflictId, resolution); await load() }
@@ -197,7 +380,122 @@ async function resolve(conflictId: number, resolution: typeof resolutions[number
   finally { actionKey.value = '' }
 }
 
-onMounted(load)
+async function resolveAll(resolution: typeof resolutions[number]['value']) {
+  if (bulkProgress.value || actionKey.value) return
+  error.value = ''
+  bulkMessage.value = ''
+  let latest: FileSyncAdminStatus
+  try {
+    latest = await filesyncAdminApi.status(adminStore.authFetch)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+    return
+  }
+  status.value = latest
+  const conflicts = [...latest.conflicts]
+  const total = latest.totals.pendingConflicts
+  if (!total || conflicts.length !== total) {
+    bulkFailed.value = true
+    bulkMessage.value = t('filesyncAdmin.bulkListIncomplete', { shown: conflicts.length, total })
+    return
+  }
+  const selectedResolution = resolutions.find((item) => item.value === resolution)
+  if (!selectedResolution) return
+  const accepted = await confirmDialog({
+    title: t('filesyncAdmin.bulkResolveTitle'),
+    message: t('filesyncAdmin.bulkResolveConfirm', {
+      count: total,
+      resolution: t(selectedResolution.label),
+    }),
+    tone: resolution === 'keep_remote' ? 'danger' : 'warning',
+    confirmText: t('filesyncAdmin.confirmResolve'),
+  })
+  if (!accepted) return
+
+  bulkFailed.value = false
+  bulkProgress.value = { resolution, completed: 0, total }
+  let failed = 0
+  for (const conflict of conflicts) {
+    try {
+      await filesyncAdminApi.resolveConflict(adminStore.authFetch, conflict.id, resolution)
+    } catch {
+      failed += 1
+    }
+    bulkProgress.value.completed += 1
+  }
+  bulkProgress.value = null
+  bulkFailed.value = failed > 0
+  bulkMessage.value = t('filesyncAdmin.bulkResolveResult', { completed: total - failed, failed })
+  await load()
+}
+
+async function cancelRun(run: FileSyncRunStatus) {
+  if (!await confirmDialog({ title: t('filesyncUser.cancelTitle'), message: t('filesyncUser.cancelConfirm'), tone: 'warning', confirmText: t('filesyncUser.cancelRun') })) return
+  actionKey.value = `cancel-${run.id}`
+  error.value = ''
+  try { await filesyncAdminApi.cancelRun(adminStore.authFetch, run.id); await load() }
+  catch (e) { error.value = e instanceof Error ? e.message : String(e) }
+  finally { actionKey.value = '' }
+}
+
+function resultSummary(run: FileSyncRunStatus) {
+  const values = run.resultCounts
+  if (run.action === 'dry_run') {
+    return t('filesyncUser.previewResults', {
+      scanned: run.scannedCount,
+      created: values.plannedCreated ?? 0,
+      updated: values.plannedUpdated ?? 0,
+      deleted: values.plannedDeleted ?? 0,
+      conflicts: values.conflicts ?? 0,
+    })
+  }
+  return t('filesyncUser.results', {
+    created: values.created ?? 0, updated: values.updated ?? 0, moved: values.moved ?? 0,
+    deleted: values.deleted ?? 0, skipped: values.skipped ?? 0,
+    conflicts: values.conflicts ?? 0, failed: values.failed ?? 0,
+    permissionSkipped: values.permissionSkipped ?? 0,
+  })
+}
+
+function runErrorMessage(run: FileSyncRunStatus) {
+  if (run.errorCode === 'root_recovery_blocked') return t('filesyncUser.rootRecoveryBlocked')
+  if (run.errorCode === 'binding_root_unavailable') return t('filesyncUser.bindingRootUnavailable')
+  if (run.errorCode === 'scan_incomplete' || run.errorCode === 'scan_scope_incomplete') return t('filesyncUser.scanIncomplete')
+  if (run.errorCode === 'scan_permission_denied') return t('filesyncUser.scanPermissionDenied')
+  if (run.errorCode === 'scan_manifest_unavailable') return t('filesyncUser.scanManifestUnavailable')
+  if (run.errorCode === 'scan_manifest_budget_exceeded') return t('filesyncUser.scanManifestBudgetExceeded')
+  if (run.errorCode === 'scan_empty_with_existing_records') return t('filesyncUser.scanEmptyWithRecords')
+  if (run.errorCode === 'scan_unsupported_symlink') return t('filesyncUser.scanUnsupportedSymlink')
+  if (['scan_file_changed', 'scan_depth_limit', 'scan_path_too_long'].includes(run.errorCode || '')) return t('filesyncUser.scanIncomplete')
+  if (run.errorCode === 'binding_changed') return t('filesyncUser.bindingChanged')
+  if (run.errorCode === 'path_projection_failed') {
+    const labels: Record<string, string> = {
+      invalid_or_unsupported_path: t('filesyncUser.projectionReason.invalid_or_unsupported_path'),
+      file_unavailable: t('filesyncUser.projectionReason.file_unavailable'),
+      file_filesystem_error: t('filesyncUser.projectionReason.file_filesystem_error'),
+      folder_unavailable: t('filesyncUser.projectionReason.folder_unavailable'),
+      folder_filesystem_error: t('filesyncUser.projectionReason.folder_filesystem_error'),
+      folder_outside_file_library_scope: t('filesyncUser.projectionReason.folder_outside_file_library_scope'),
+      quota_exceeded: t('filesyncUser.projectionReason.quota_exceeded'),
+      projection_root_unavailable: t('filesyncUser.projectionReason.projection_root_unavailable'),
+    }
+    const details = Object.entries(labels)
+      .map(([reason, label]) => ({ label, count: run.resultCounts[`rejected_${reason}`] ?? 0 }))
+      .filter(item => item.count > 0)
+      .map(item => `${item.label} ${item.count}`)
+    const base = t('filesyncUser.projectionFailed')
+    return details.length ? `${base}：${details.join('、')}` : `${base}。`
+  }
+  return t('filesyncUser.error', { code: run.errorCode })
+}
+
+function hasPartialResult(run: FileSyncRunStatus) {
+  return ['failed', 'cancelled'].includes(run.status)
+    && ['created', 'updated', 'moved', 'deleted'].some(key => (run.resultCounts[key] ?? 0) > 0)
+}
+
+onMounted(() => { void load(); adminEvents.start() })
+onBeforeUnmount(adminEvents.stop)
 </script>
 
 <style scoped>
@@ -222,6 +520,11 @@ onMounted(load)
 .fs-metric span { display:block; color:var(--content-secondary); font-size:var(--font-size-xs); margin-bottom:4px; }
 .fs-metric b { font-size:var(--font-size-lg); }
 .fs-metric b.warn { color:var(--status-warning); }
+.fs-capacity-actions,.fs-capacity-limit,.fs-capacity-stats { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.fs-capacity-limit { color:var(--content-secondary); font-size:var(--font-size-xs); }
+.fs-capacity-limit .form-input { width:125px; min-width:0; }
+.fs-capacity-stats { margin-top:8px; gap:8px 16px; color:var(--content-secondary); font-size:var(--font-size-xs); }
+.fs-capacity-stats.is-warning { color:var(--status-warning); }
 .fs-note,.fs-footnote { color:var(--content-secondary); font-size:var(--font-size-xs); line-height:var(--line-height-body); }
 .fs-block { margin-top:14px; }
 .fs-block-title { font-size:var(--font-size-sm); font-weight:var(--font-weight-bold); margin-bottom:7px; }
@@ -229,12 +532,18 @@ onMounted(load)
 .fs-block-head .fs-block-title { margin-bottom:0; }
 .fs-block-tools { display:flex; align-items:center; gap:10px; font-size:var(--font-size-xs); color:var(--content-secondary); }
 .fs-toggle { display:flex; align-items:center; gap:6px; cursor:pointer; }
-.fs-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid var(--border-subtle); }
+.fs-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid var(--content-divider); }
 .fs-row-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; font-size:var(--font-size-sm); }
 .fs-row-main strong { overflow-wrap:anywhere; }
 .fs-row-main span,.fs-row-main small { color:var(--content-secondary); overflow-wrap:anywhere; }
 .fs-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; flex:0 0 auto; }
 .fs-result { margin-top:12px; padding:9px 11px; border-radius:9px; color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); font-size:var(--font-size-sm); }
-.fs-failure { border-top:1px solid var(--border-subtle); padding:7px 0; color:var(--status-danger); font-size:var(--font-size-xs); overflow-wrap:anywhere; }
+.fs-message.is-success { color:var(--status-success); background:color-mix(in srgb,var(--status-success) 10%,transparent); }
+.fs-bulk-actions { max-width:100%; }
+.fs-run { display:flex; flex-direction:column; gap:4px; padding:8px 0; border-top:1px solid var(--content-divider); font-size:var(--font-size-xs); }
+.fs-run-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.fs-run-head strong,.fs-run span { min-width:0; overflow-wrap:anywhere; }
+.fs-run span { color:var(--content-secondary); }
+.fs-failure { border-top:1px solid var(--content-divider); padding:7px 0; color:var(--status-danger); font-size:var(--font-size-xs); overflow-wrap:anywhere; }
 @media (max-width:720px) { .fs-head { flex-direction:column; } .fs-head-actions { width:100%; justify-content:space-between; } .fs-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .fs-row { align-items:flex-start; flex-direction:column; } .fs-actions { justify-content:flex-start; } .fs-banner { align-items:flex-start; flex-wrap:wrap; } .fs-banner-meta { margin-left:0; flex-basis:100%; } .fs-block-head { flex-direction:column; align-items:flex-start; gap:4px; } }
 </style>

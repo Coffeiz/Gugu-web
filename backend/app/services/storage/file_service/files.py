@@ -24,12 +24,14 @@ from app.models import File, Project, WorkspaceDirectory
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.key_strategy import KeyContext
 from app.services.storage.keys import compose_logical_path
-from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage, reconcile_user_storage
-from app.services.filesync.protocol import record_canonical_file_change
+from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage
+from app.services.filesync.protocol import lock_file_sync_paths, record_canonical_file_change
 from app.services.storage.file_service.content_types import validated_rename_extension
 
 
 def _fmt_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
     if size_bytes >= 1_000_000:
         return f"{size_bytes / 1_000_000:.1f} MB"
     return f"{size_bytes / 1024:.0f} KB"
@@ -58,7 +60,7 @@ class FileOps:
         self.key_strategy = key_strategy
 
     async def _sum_used(self, user_id) -> int:
-        await reconcile_user_storage(self.db, user_id)
+        # 正常写入由 record_usage 维护账本增量；不要在每次上传/覆盖前遍历用户目录。
         return (await get_quota(self.db, user_id, FILE_LIBRARY)).used_bytes
 
     @staticmethod
@@ -172,6 +174,13 @@ class FileOps:
                 if used - existing.size_bytes + size_bytes > storage_limit_bytes:
                     raise Invalid("storage.full", "存储空间已满，无法上传")
             old_size_bytes = existing.size_bytes
+            await lock_file_sync_paths(self.db, user_id, [existing.storage_key])
+            await record_usage(
+                self.db, user_id, category=FILE_LIBRARY,
+                delta_bytes=size_bytes - old_size_bytes,
+                operation=ledger_operation, resource_type="file", resource_id=existing.id,
+                idempotency_key=f"file-overwrite:{existing.id}:{uuid4().hex}",
+            )
             await _write_content(existing.storage_key)
             existing.size = _fmt_size(size_bytes)
             existing.size_bytes = size_bytes
@@ -185,12 +194,6 @@ class FileOps:
                 self.db, user_id=user_id, storage_key=existing.storage_key,
                 observed_fingerprint=content_fingerprint,
             )
-            await record_usage(
-                self.db, user_id, category=FILE_LIBRARY,
-                delta_bytes=size_bytes - old_size_bytes,
-                operation=ledger_operation, resource_type="file", resource_id=existing.id,
-                idempotency_key=f"file-overwrite:{existing.id}:{uuid4().hex}",
-            )
             return FileResult(existing, project, folder_name or None, was_overwrite=True)
 
         # 常规上传（同名自动加后缀）
@@ -200,14 +203,15 @@ class FileOps:
             project=project, project_id=project_id,
             project_year=project_year, project_month=project_month, folder_path=folder_path,
             workspace_directory=workspace_directory)
+        await lock_file_sync_paths(self.db, user_id, [base_key])
         resolved = await self.key_strategy.resolve_conflict(self.storage, base_key, display_name, ext)
         final_key, final_name = resolved.key, resolved.name
+        await lock_file_sync_paths(self.db, user_id, [final_key])
 
         if storage_limit_bytes is not None:
             if used + size_bytes > storage_limit_bytes:
                 raise Invalid("storage.full", "存储空间已满，无法上传")
 
-        await _write_content(final_key)
         db_file = File(
             user_id=user_id, display_name=final_name, ext=ext, space=space,
             project_id=project_id if space == "project" else None,
@@ -219,16 +223,17 @@ class FileOps:
         )
         self.db.add(db_file)
         await self.db.flush()
+        await record_usage(
+            self.db, user_id, category=FILE_LIBRARY, delta_bytes=size_bytes,
+            operation=ledger_operation, resource_type="file", resource_id=db_file.id,
+            idempotency_key=f"file-upload:{db_file.id}",
+        )
+        await _write_content(final_key)
         # 新建也要推进同步基线：该路径可能存在历史 journal（旧版本已删除），
         # 缺这条记录会让双向冲突检测把「工具单写两边」误判成两边都改过。
         await record_canonical_file_change(
             self.db, user_id=user_id, storage_key=db_file.storage_key,
             observed_fingerprint=content_fingerprint,
-        )
-        await record_usage(
-            self.db, user_id, category=FILE_LIBRARY, delta_bytes=size_bytes,
-            operation=ledger_operation, resource_type="file", resource_id=db_file.id,
-            idempotency_key=f"file-upload:{db_file.id}",
         )
         return FileResult(db_file, project, folder_name or None)
 
@@ -285,8 +290,10 @@ class FileOps:
             project_year=project_year, project_month=project_month, folder_path=folder_path,
             workspace_directory=workspace_directory)
         if new_key != f.storage_key:
+            await lock_file_sync_paths(self.db, user_id, [f.storage_key, new_key])
             resolved = await self.key_strategy.resolve_conflict(self.storage, new_key, new_display, new_ext)
             new_key, new_display = resolved.key, resolved.name
+            await lock_file_sync_paths(self.db, user_id, [new_key])
             await self.storage.rename_file(f.storage_key, new_key)
             f.storage_key = new_key
             # 不清旧祖先：源文件夹仍存活，其空目录须持久（P1.2）；孤儿由文件夹级清理 + 对账工具兜底
@@ -327,6 +334,15 @@ class FileOps:
                 workspace_directory_id=workspace_directory.id if workspace_directory else None,
                 display_name=f.display_name, ext=f.ext,
             )
+            old_size_bytes = int(existing.size_bytes or 0)
+            next_version = int(existing.version or 1) + 1
+            await lock_file_sync_paths(self.db, user_id, [existing.storage_key])
+            await record_usage(
+                self.db, user_id, category=FILE_LIBRARY,
+                delta_bytes=int(f.size_bytes or 0) - old_size_bytes,
+                operation="file_copy_overwrite", resource_type="file", resource_id=existing.id,
+                idempotency_key=f"file-copy-overwrite:{existing.id}:{next_version}",
+            )
             await self.storage.put(existing.storage_key, data, f.mime_type)
             existing.size = f.size
             existing.size_bytes = f.size_bytes
@@ -334,7 +350,7 @@ class FileOps:
             existing.img_width = f.img_width
             existing.img_height = f.img_height
             existing.stage_name = f.stage_name
-            existing.version = int(existing.version or 1) + 1
+            existing.version = next_version
             existing.updated_at = now_utc()
             await self.db.flush()
             await record_canonical_file_change(
@@ -348,10 +364,13 @@ class FileOps:
             project=project, project_id=project_id,
             project_year=project_year, project_month=project_month, folder_path=folder_path,
             workspace_directory=workspace_directory)
+        await lock_file_sync_paths(self.db, user_id, [base_key])
         resolved = await self.key_strategy.resolve_conflict(self.storage, base_key, f.display_name, f.ext)
         new_key, new_display = resolved.key, resolved.name
+        await lock_file_sync_paths(self.db, user_id, [new_key])
 
-        await self.storage.put(new_key, data, f.mime_type)
+        # 先建立准确基线；否则首次建账会把待复制文件计入扫描，再被增量重复计入。
+        await get_quota(self.db, user_id, FILE_LIBRARY)
         new_file = File(
             user_id=user_id, display_name=new_display, ext=f.ext, storage_key=new_key,
             size=f.size, size_bytes=f.size_bytes, mime_type=f.mime_type, space=new_space,
@@ -361,13 +380,14 @@ class FileOps:
         )
         self.db.add(new_file)
         await self.db.flush()
-        await record_canonical_file_change(
-            self.db, user_id=user_id, storage_key=new_file.storage_key,
-            observed_fingerprint=hashlib.sha256(data).hexdigest(),
-        )
         await record_usage(
             self.db, user_id, category=FILE_LIBRARY, delta_bytes=new_file.size_bytes,
             operation="file_copy", resource_type="file", resource_id=new_file.id,
             idempotency_key=f"file-copy:{new_file.id}",
+        )
+        await self.storage.put(new_key, data, f.mime_type)
+        await record_canonical_file_change(
+            self.db, user_id=user_id, storage_key=new_file.storage_key,
+            observed_fingerprint=hashlib.sha256(data).hexdigest(),
         )
         return FileResult(new_file, project, folder_name or None)

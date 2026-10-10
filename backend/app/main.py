@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, Request
@@ -34,9 +35,9 @@ from app.api.v1 import services_admin as services_admin_router
 from app.api.v1 import qq_connect as qq_connect_router
 from app.api.v1 import feishu_connect as feishu_connect_router
 from app.api.v1 import wechat_connect as wechat_connect_router
+from app.api.v1 import telegram_connect as telegram_connect_router
 from app.api.v1 import preferences as preferences_router
 from app.api.v1 import workspaces as workspaces_router
-from app.api.v1 import filesync as filesync_router
 from app.api.v1 import terminals as terminals_router
 from app.api.v1 import scheduled_tasks as scheduled_tasks_router
 from app.api.v1 import agent_admin as agent_admin_router
@@ -235,9 +236,15 @@ async def lifespan(app: FastAPI):
         try:
             from app.db.session import _SessionLocal
             from app.services.storage.quota_ledger import ensure_all_user_storage_spaces
+            storage_init_started = time.monotonic()
             async with _SessionLocal() as storage_db:
                 count = await ensure_all_user_storage_spaces(storage_db)
-            logger.info("用户持久空间已初始化并登记配额：%d 个用户", count)
+            storage_init_ms = (time.monotonic() - storage_init_started) * 1000
+            logger.info(
+                "用户持久空间已初始化并登记配额：%d 个用户，耗时 %.1f ms",
+                count,
+                storage_init_ms,
+            )
         except Exception as e:
             # 初始化失败不能伪造“已完成”；单用户访问时仍会重复校验并补齐。
             logger.warning("用户持久空间初始化失败：%s", e)
@@ -275,6 +282,8 @@ async def lifespan(app: FastAPI):
     from agent.rag.ts_sidecar import close_lexical_clients, close_rank_clients
     await _shutdown_step("RAG lexical worker", close_lexical_clients)
     await _shutdown_step("RAG rank worker", close_rank_clients)
+    from agent.gateway.qq import close_qq_http_session
+    await _shutdown_step("QQ HTTP 连接池", close_qq_http_session)
     from app.db.session import dispose_engine
     await _shutdown_step("数据库连接池", dispose_engine)
 
@@ -390,7 +399,6 @@ app.include_router(track_router.router,       prefix="/api/v1")
 app.include_router(preferences_router.router, prefix="/api/v1")
 app.include_router(workspaces_router.router, prefix="/api/v1")
 app.include_router(workspaces_router.workspace_directories_router, prefix="/api/v1")
-app.include_router(filesync_router.router, prefix="/api/v1")
 app.include_router(terminals_router.router, prefix="/api/v1")
 app.include_router(scheduled_tasks_router.router, prefix="/api/v1")
 app.include_router(feedback_router.router,    prefix="/api/v1")
@@ -400,6 +408,7 @@ app.include_router(user_bots_router.router,      prefix="/api/v1")
 app.include_router(qq_connect_router.router,     prefix="/api/v1")
 app.include_router(feishu_connect_router.router, prefix="/api/v1")
 app.include_router(wechat_connect_router.router, prefix="/api/v1")
+app.include_router(telegram_connect_router.router, prefix="/api/v1")
 app.include_router(onboarding_router,            prefix="/api/v1")   # 新手引导（用户鉴权，作用于自己）
 
 # ── Admin 路由（需要 Admin token）──
@@ -523,8 +532,10 @@ from app.core.errors import AppError
 async def app_error_handler(request: Request, exc: AppError):
     # 领域异常（FileService/FolderTree 等抛）→ 与 HTTPException 同形状：{"detail": 文案}。
     # public_message 是已知可外发的静态业务文案，直接返回。
+    retry_after = getattr(exc, "retry_after_seconds", None)
+    headers = {"Retry-After": str(int(retry_after))} if retry_after else None
     return JSONResponse(status_code=getattr(exc, "status_hint", 400),
-                        content={"detail": exc.public_message})
+                        content={"detail": exc.public_message}, headers=headers)
 
 
 @app.exception_handler(Exception)

@@ -1,4 +1,4 @@
-import { foldersApi, filesApi } from '@/services/api'
+import { foldersApi, filesApi, type ApiFolderResponse } from '@/services/api'
 import { pLimit, UPLOAD_CONCURRENCY } from '@/utils/concurrency'
 
 /** 一个待上传项：文件本体 + 相对路径（无子文件夹时就是文件名本身）。 */
@@ -59,14 +59,14 @@ export function filesToItems(files: FileList | File[]): UploadItem[] {
 }
 
 // ── 文件夹树解析：按 relativePath 里的目录部分，创建缺失的子文件夹（同名复用，不重复建）──
-// 一次性拉全量文件夹建索引，逐级 resolve + 结果缓存——文件夹数量在个人使用场景下不大，
-// 换一次 /folders/all 比逐级查询/为每个文件重复创建同名文件夹更简单可靠。
+// 只读取目标个人/项目/工作区空间中的目录，再逐级 resolve + 结果缓存；不扫描用户其他空间。
 export async function resolveFolderTree(
   items: UploadItem[],
   opts: {
     projectId?: number | null
     baseFolderId?: number | null
     workspaceDirectoryId?: number | null
+    existingFolders?: ApiFolderResponse[]
     /** 每新建一个文件夹（非复用已有的）就同步回调一次——宿主用它把新文件夹实时插进自己的
      * 本地缓存/列表（如 filesCache store 的 addFolder），否则上传完文件夹「看不见」，得等
      * 手动刷新页面重新拉取才会出现（本地缓存不会自己知道服务端多了这条）。 */
@@ -84,7 +84,7 @@ export async function resolveFolderTree(
   }
 
   const projectId = opts.projectId ?? null
-  const all = await foldersApi.all()
+  const all = opts.existingFolders ?? await foldersApi.list({ projectId: projectId ?? undefined, workspaceDirectoryId: opts.workspaceDirectoryId ?? undefined, allInScope: true })
   // `${parentId ?? 'root'}:${name}` -> id，只认同一空间（同项目 / 同个人根）下的文件夹，
   // 避免把「项目 A 下的 docs」错认成「项目 B 下同名 docs」
   const byParentName = new Map<string, number>()
@@ -133,6 +133,7 @@ export async function resolveFolderTree(
 export async function checkUploadConflicts(
   items: UploadItem[],
   opts: { space: string; projectId?: number | null; folderId?: number | null; workspaceDirectoryId?: number | null },
+  existingFolders?: ApiFolderResponse[],
 ): Promise<{ filename: string; existingFile: any }[]> {
   const baseFolderId = opts.folderId ?? null
   const projectId = opts.projectId ?? null
@@ -140,10 +141,10 @@ export async function checkUploadConflicts(
   // 目录路径 → 已存在文件夹 id（不创建）。null=落点本身/根；undefined=路径上有新建段（目标是新文件夹）。
   let resolveDir: (path: string) => number | null | undefined = () => baseFolderId
   if (items.some(it => it.relativePath.includes('/'))) {
-    const all = await foldersApi.all()
+    const all = existingFolders ?? await foldersApi.list({ projectId: projectId ?? undefined, workspaceDirectoryId: opts.workspaceDirectoryId ?? undefined, allInScope: true })
     const byParentName = new Map<string, number>()
     for (const f of all) {
-      if ((f.projectId ?? null) !== projectId) continue
+      if ((f.projectId ?? null) !== projectId || (f.workspaceDirectoryId ?? null) !== (opts.workspaceDirectoryId ?? null)) continue
       byParentName.set(`${f.parentId ?? 'root'}:${f.name}`, f.id)
     }
     const cache = new Map<string, number | null | undefined>([['', baseFolderId]])
@@ -192,6 +193,7 @@ export async function uploadFilesWithFolders(
     projectId?: number | null
     baseFolderId?: number | null
     workspaceDirectoryId?: number | null
+    existingFolders?: ApiFolderResponse[]
     concurrency?: number
     onFolderCreated?: (folder: { id: number; projectId?: number | null; parentId?: number | null; name: string }) => void
     uploadOne: (file: File, folderId: number | null, relativePath: string) => Promise<any>

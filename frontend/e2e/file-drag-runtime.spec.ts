@@ -25,21 +25,25 @@ test.afterEach(async ({ page }) => {
   const names = [...createdNames]
   createdNames.clear()
   if (!names.length) return
-  await page.evaluate(async (targetNames) => {
+  await page.evaluate(async targetNames => {
     const token = localStorage.getItem('user_token')
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
     const matches = new Set(targetNames)
-    const allFiles = await fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : [])
-    for (const file of allFiles.filter((item: { displayName?: string }) => matches.has(item.displayName))) {
-      await fetch(`/api/v1/files/${file.id}`, { method: 'DELETE', headers })
+    if (targetNames.length) {
+      const allFiles = await fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : [])
+      for (const file of allFiles.filter((item: { displayName?: string }) => matches.has(item.displayName))) {
+        await fetch(`/api/v1/files/${file.id}`, { method: 'DELETE', headers })
+      }
     }
-    const allFolders = await fetch('/api/v1/folders/all', { headers }).then(response => response.ok ? response.json() : [])
-    // 先删根文件夹；服务端会递归处理子文件夹和文件，子项即使随后返回 404 也不影响清理。
-    const folders = allFolders
-      .filter((item: { name?: string }) => matches.has(item.name))
-      .sort((a: { parentId?: number | null }, b: { parentId?: number | null }) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))
-    for (const folder of folders) {
-      await fetch(`/api/v1/folders/${folder.id}`, { method: 'DELETE', headers })
+    if (targetNames.length) {
+      const allFolders = await fetch('/api/v1/folders/all', { headers }).then(response => response.ok ? response.json() : [])
+      // 先删根文件夹；服务端会递归处理子文件夹和文件，子项即使随后返回 404 也不影响清理。
+      const folders = allFolders
+        .filter((item: { name?: string }) => matches.has(item.name))
+        .sort((a: { parentId?: number | null }, b: { parentId?: number | null }) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))
+      for (const folder of folders) {
+        await fetch(`/api/v1/folders/${folder.id}`, { method: 'DELETE', headers })
+      }
     }
   }, names)
 })
@@ -91,13 +95,29 @@ async function uploadTextFile(root: Locator, name: string) {
   createdNames.add(name)
 }
 
-async function waitForMovedFile(page: Page, ...fileNames: string[]) {
-  // 拖拽先更新本地缓存，API 提交随后完成；重新加载后再断言，确保验证的是
-  // 服务端持久化结果，而不是恰好命中的一次前端乐观状态。
+async function waitForMovedFile(page: Page, folderPath: string[], ...fileNames: string[]) {
+  // 拖拽先更新本地缓存，API 提交随后完成；刷新后直接核对服务端记录及目标目录，
+  // 避免路由重载回到文件库首页后把“没重新导航”误判成数据未持久化。
   await page.reload()
-  for (const fileName of fileNames) {
-    await expect(page.locator('.fc-card', { hasText: fileName })).toBeVisible({ timeout: 10000 })
-  }
+  await expect.poll(async () => page.evaluate(async ({ folderPath, fileNames }) => {
+    const token = localStorage.getItem('user_token')
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const [folders, files] = await Promise.all([
+      fetch('/api/v1/folders/all', { headers }).then(response => response.ok ? response.json() : []),
+      fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : []),
+    ])
+    let targetFolderId: number | null = null
+    for (const folderName of folderPath) {
+      const folder = folders.find((item: { name?: string; parentId?: number | null }) =>
+        item.name === folderName && (targetFolderId == null || item.parentId === targetFolderId),
+      )
+      if (!folder) return false
+      targetFolderId = folder.id
+    }
+    return fileNames.every(fileName => files.some((file: { displayName?: string; folderId?: number | null }) =>
+      file.displayName === fileName && file.folderId === targetFolderId,
+    ))
+  }, { folderPath, fileNames })).toBe(true)
 }
 
 async function waitForMoveRuntime(page: Page) {
@@ -136,7 +156,7 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
     // Runtime pointer 事务收尾期间直接派发语义 click，避免再次走拖拽指针序列；
     // 目录进入仍由文件夹卡片的真实 click handler 完成。
     await target.evaluate(element => (element as HTMLElement).click())
-    await waitForMovedFile(page, baseName)
+    await waitForMovedFile(page, [workspaceName, folderName], baseName)
   })
 
   test('单文件拖到面包屑返回上一层', async ({ page }) => {
@@ -168,9 +188,8 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
 
     const root = page.locator('.files-page')
     const viewport = root.locator('.files-main')
+    await uploadTextFile(root, `e2e-bottom-${Date.now()}`)
     const cards = root.locator('.fc-card')
-    const cardCount = await cards.count()
-    test.skip(cardCount === 0, '没有可拖拽文件卡')
 
     // 将内容推到真正的滚动底部，覆盖“最后一行卡片被抓起”的边界。
     await viewport.evaluate((element) => {
@@ -229,7 +248,7 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     // 落地后点文件夹应该正常导航进入，不是切换选中（见 selectModeForced 回归修复）
     await waitForMoveRuntime(page)
     await target.click()
-    await waitForMovedFile(page, nameA, nameB)
+    await waitForMovedFile(page, [workspaceName, folderName], nameA, nameB)
   })
 
   test('文件和文件夹混合多选后拖入文件夹', async ({ page }) => {
@@ -345,69 +364,24 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     await expect(root.locator('.fc-card', { hasText: nameA })).toBeVisible({ timeout: 10000 })
     await expect(root.locator('.fc-card', { hasText: nameB })).toBeVisible({ timeout: 10000 })
     await expect(target).toContainText('0 项', { timeout: 10000 })
-  })
-})
-
-test.describe('项目文件区：Runtime 拖拽', () => {
-  async function openFirstProject(page: Page): Promise<Locator> {
-    await page.goto('/projects')
-    const project = page.locator('.proj-card').first()
-    await project.waitFor({ state: 'visible', timeout: 10000 })
-    await project.click()
-    const root = page.locator('.project-modal-root')
-    await expect(root).toBeVisible()
-    await expect(root.locator('.file-browser-panel')).toBeVisible()
-    return root
-  }
-
-  test('单文件拖入文件夹', async ({ page }) => {
-    const root = await openFirstProject(page)
-    const workspaceName = `e2e-pm-drag-root-${Date.now()}`
-    const folderName = `e2e-pm-drag-target-${Date.now()}`
-    await createFolder(root, workspaceName)
-    await enterFolder(root, workspaceName)
-    await createFolder(root, folderName)
-
-    const baseName = `e2e-pmfile-${Date.now()}`
-    await uploadTextFile(root, baseName)
-
-    const card = root.locator('.fc-card', { hasText: baseName })
-    const target = root.locator('.folder-card', { hasText: folderName })
-    await dragOnto(page, card, target)
-
-    await expect(root.locator('.fc-card', { hasText: baseName })).toHaveCount(0, { timeout: 10000 })
-    await waitForMoveRuntime(page)
-    await target.evaluate(element => (element as HTMLElement).click())
-    await expect(root.locator('.fc-card', { hasText: baseName })).toBeVisible({ timeout: 10000 })
-  })
-
-  test('多选两个文件拖入文件夹，落地后能正常进入目标文件夹', async ({ page }) => {
-    const root = await openFirstProject(page)
-    const workspaceName = `e2e-pmmulti-root-${Date.now()}`
-    const folderName = `e2e-pmmulti-target-${Date.now()}`
-    await createFolder(root, workspaceName)
-    await enterFolder(root, workspaceName)
-    await createFolder(root, folderName)
-
-    const nameA = `e2e-pma-${Date.now()}`
-    const nameB = `e2e-pmb-${Date.now()}`
-    await uploadTextFile(root, nameA)
-    await uploadTextFile(root, nameB)
-
-    const cardA = root.locator('.fc-card', { hasText: nameA })
-    const cardB = root.locator('.fc-card', { hasText: nameB })
-    await cardA.click({ modifiers: [multiSelectModifier] })
-    await cardB.click({ modifiers: [multiSelectModifier] })
-
-    const target = root.locator('.folder-card', { hasText: folderName })
-    await dragOnto(page, cardA, target, { x: 10, y: 10 })
-
-    await expect(root.locator('.fc-card', { hasText: nameA })).toHaveCount(0, { timeout: 10000 })
-    await expect(root.locator('.fc-card', { hasText: nameB })).toHaveCount(0, { timeout: 10000 })
-
-    await waitForMoveRuntime(page)
-    await target.evaluate(element => (element as HTMLElement).click())
-    await expect(root.locator('.fc-card', { hasText: nameA })).toBeVisible({ timeout: 10000 })
-    await expect(root.locator('.fc-card', { hasText: nameB })).toBeVisible({ timeout: 10000 })
+    await page.reload()
+    const persistedFolders = await page.evaluate(async ({ workspaceName, folderName, fileNames }) => {
+      const token = localStorage.getItem('user_token')
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const [folders, files] = await Promise.all([
+        fetch('/api/v1/folders/all', { headers }).then(response => response.json()),
+        fetch('/api/v1/files/all', { headers }).then(response => response.json()),
+      ])
+      const source = folders.find((folder: { name: string }) => folder.name === workspaceName)
+      const target = folders.find((folder: { name: string; parentId: number }) => folder.name === folderName && folder.parentId === source?.id)
+      return {
+        targetFileCount: files.filter((file: { folderId: number | null }) => file.folderId === target?.id).length,
+        sourceFileIds: files.filter((file: { displayName: string; folderId: number | null }) =>
+          fileNames.includes(file.displayName) && file.folderId === source?.id,
+        ).map((file: { displayName: string }) => file.displayName).sort(),
+      }
+    }, { workspaceName, folderName, fileNames: [nameA, nameB] })
+    expect(persistedFolders.targetFileCount).toBe(0)
+    expect(persistedFolders.sourceFileIds).toEqual([nameA, nameB].sort())
   })
 })

@@ -32,6 +32,18 @@ x-gugu-data-mount: &gugu-data-mount
   bind:
     create_host_path: true
 
+x-inotify-limit-environment: &inotify-limit-environment
+  FILESYNC__WATCH_HARD_LIMIT: ${FILESYNC_WATCH_HARD_LIMIT:-1024000}
+  FILESYNC__WATCH_LIMIT_SOCKET: /run/gugu-inotify-limitd/limitd.sock
+x-inotify-limit-group: &inotify-limit-group "${GUGU_INOTIFY_LIMIT_GID:-65534}"
+x-inotify-limit-socket-mount: &inotify-limit-socket-mount
+  type: bind
+  source: ${GUGU_INOTIFY_LIMIT_SOCKET_DIR:-/run/gugu-inotify-limitd}
+  target: /run/gugu-inotify-limitd
+  read_only: true
+  bind:
+    create_host_path: true
+
 services:
   postgres:
     logging: *json-file-logging
@@ -115,11 +127,13 @@ services:
     # sandboxd 用 SO_PEERCRED 校验连接方进程；backend 与 sandboxd 分属不同容器时
     # 跨 PID namespace 无法翻译 peer pid（返回 0 被判"请求进程无效"），共享 host pid namespace。
     pid: "host"
+    group_add: [*inotify-limit-group]
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
     env_file:
       - ./backend/.env
     environment:
+      <<: *inotify-limit-environment
       GUGU_UPDATE_DEPLOYMENT_MODE: split_compose
       PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
       GUGU_LOG_FILE: /app/logs/gugu.log
@@ -158,6 +172,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - *gugu-data-mount
+      - *inotify-limit-socket-mount
       - gugu_config:/config
       - sandbox_socket:/run/gugu
       - gugu_logs:/app/logs
@@ -166,6 +181,7 @@ services:
   worker:
     logging: *json-file-logging
     image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    group_add: [*inotify-limit-group]
     command: ["python", "-m", "worker"]
     # Worker 没有 HTTP 健康端点，避免继承 backend 镜像的 /health 探针。
     healthcheck:
@@ -173,6 +189,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      <<: *inotify-limit-environment
       GUGU_LOG_FILE: /app/logs/gugu-worker.log
       DB__HOST: ${GUGU_DB_HOST:-postgres}
       DB__PORT: ${GUGU_DB_PORT:-5432}
@@ -209,6 +226,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - *gugu-data-mount
+      - *inotify-limit-socket-mount
       - gugu_config:/config
       - sandbox_socket:/run/gugu
       - gugu_logs:/app/logs

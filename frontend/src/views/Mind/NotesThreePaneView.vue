@@ -3,71 +3,81 @@
     <!-- 栏 1：按日期分组的便签列表（竖列）。数据走 useMindStore 的 timeline（filterQ 已在
          store 内生效），与现行 NotesView 共享同一份数据源与筛选状态。 -->
     <section class="ntp-list">
-      <div ref="listRef" class="ntp-list-scroll" @scroll="onListScroll">
-        <div v-if="store.loading && !store.loaded" class="ntp-state">{{ t('common.status.loading') }}</div>
-        <template v-else>
-          <template v-for="group in store.timeline" :key="group.date">
-            <div class="ntp-day-label" :data-date="group.date">
-              <span>{{ dayLabel(group.date) }}</span>
-              <span class="n">{{ t('mindThreePane.count', { count: group.items.length }) }}</span>
-            </div>
-            <div
-              v-for="note in group.items"
-              :key="note.id"
-              class="ntp-item"
-              :class="[note.color ? `tint-${note.color}` : '', { selected: note.id === selectedId }]"
-              role="button"
-              tabindex="0"
-              @click="selectedId = note.id"
-              @keydown.enter.prevent="selectedId = note.id"
-            >
-              <div class="ni-head">
-                <span class="ni-time">{{ timeHM(note) }}</span>
-                <span v-if="titleOf(note)" class="ni-title">{{ titleOf(note) }}</span>
+      <div class="ntp-list-surface">
+        <DateIndex
+          v-if="dateIndexGroups.length"
+          class="ntp-date-index"
+          :groups="dateIndexGroups"
+          :center-frac="dateIndexCenter"
+          @scrub="onDateScrub"
+          @snap="onDateSnap"
+        />
+        <div ref="listRef" class="ntp-list-scroll scroll-surface--hidden" @scroll="onListScroll">
+          <div v-if="store.loading && !store.loaded" class="ntp-state">{{ t('common.status.loading') }}</div>
+          <template v-else>
+            <template v-for="group in store.timeline" :key="group.date">
+              <div class="ntp-day-label" :data-date="group.date">
+                <span>{{ dayLabel(group.date) }}</span>
+                <span class="n">{{ t('mindThreePane.count', { count: group.items.length }) }}</span>
               </div>
-              <div class="ni-preview" :class="{ 'no-title': !titleOf(note) }">{{ previewOf(note) }}</div>
-              <div class="ni-foot">
-                <!-- 颜色球：显示当前颜色，点击向右展开抽屉选择（含默认纸色）；选完球即新色 -->
-                <span class="color-dot-wrap">
-                  <button
-                    class="ni-dot-btn"
-                    :class="[note.color || 'none', { open: openColorFor === note.id }]"
-                    :title="note.color ? t(`mindUi.colors.${note.color}`) : t('mindUi.defaultColor')"
-                    @click.stop="toggleColorPicker(note.id)"
-                  ></button>
-                  <span class="color-drawer" :class="{ open: openColorFor === note.id }" @click.stop>
-                    <!-- 抽屉只列「可选的其他颜色」：当前色就在球上不重复出现；无色时球即默认，默认项也不进抽屉 -->
+              <div
+                v-for="note in group.items"
+                :key="note.id"
+                class="ntp-item"
+                :class="[note.color ? `tint-${note.color}` : '', { selected: note.id === selectedId }]"
+                role="button"
+                tabindex="0"
+                :data-note-id="note.id"
+                @click="selectNote(note.id)"
+                @keydown.enter.prevent="selectNote(note.id)"
+              >
+                <div class="ni-head">
+                  <span class="ni-time">{{ timeHM(note) }}</span>
+                  <span v-if="titleOf(note)" class="ni-title">{{ titleOf(note) }}</span>
+                </div>
+                <div class="ni-preview" :class="{ 'no-title': !titleOf(note) }">{{ previewOf(note) }}</div>
+                <div class="ni-foot">
+                  <!-- 颜色球：显示当前颜色，点击向右展开抽屉选择（含默认纸色）；选完球即新色 -->
+                  <span class="color-dot-wrap">
                     <button
-                      v-if="note.color"
-                      class="pop-dot none"
-                      :title="t('mindUi.defaultColor')"
-                      @click="pickColor(note, null)"
+                      class="ni-dot-btn"
+                      :class="[note.color || 'none', { open: openColorFor === note.id }]"
+                      :title="note.color ? t(`mindUi.colors.${note.color}`) : t('mindUi.defaultColor')"
+                      @click.stop="toggleColorPicker(note.id)"
                     ></button>
-                    <button
-                      v-for="c in NOTE_COLORS.filter(c => c !== note.color)" :key="c"
-                      class="pop-dot" :class="c"
-                      :title="t(`mindUi.colors.${c}`)"
-                      @click="pickColor(note, c)"
-                    ></button>
+                    <span class="color-drawer" :class="{ open: openColorFor === note.id }" @click.stop>
+                      <!-- 抽屉只列「可选的其他颜色」：当前色就在球上不重复出现；无色时球即默认，默认项也不进抽屉 -->
+                      <button
+                        v-if="note.color"
+                        class="pop-dot none"
+                        :title="t('mindUi.defaultColor')"
+                        @click="pickColor(note, null)"
+                      ></button>
+                      <button
+                        v-for="c in NOTE_COLORS.filter(c => c !== note.color)" :key="c"
+                        class="pop-dot" :class="c"
+                        :title="t(`mindUi.colors.${c}`)"
+                        @click="pickColor(note, c)"
+                      ></button>
+                    </span>
                   </span>
-                </span>
-                <span v-if="taskCount(note)" class="ni-task">
-                  <PhCheckSquare :size="13" weight="bold" />
-                  {{ taskCount(note) }}
-                </span>
+                  <span v-if="taskCount(note)" class="ni-task">
+                    <PhCheckSquare :size="13" weight="bold" />
+                    {{ taskCount(note) }}
+                  </span>
+                </div>
               </div>
-            </div>
+            </template>
+            <div v-if="!store.timeline.length" class="ntp-state">{{ t('mind.noRecords') }}</div>
+            <div v-if="store.loadingMore" class="ntp-state">{{ t('common.status.loading') }}</div>
           </template>
-          <div v-if="!store.timeline.length" class="ntp-state">{{ t('mind.noRecords') }}</div>
-          <div v-if="store.loadingMore" class="ntp-state">{{ t('common.status.loading') }}</div>
-        </template>
+        </div>
+        <!-- 新建先进入本地草稿；完成编辑后才创建服务端记录 -->
+        <ActionButton variant="secondary" fit class="ntp-new" @click="createNew">
+          <PhPlus :size="14" weight="bold" />
+          {{ t('mindThreePane.new') }}
+        </ActionButton>
       </div>
-      <!-- 新建：进编辑态的空草稿。本地样例模式造负 id 草稿不落库；真实模式走 createNote，
-           取消（未写内容）则把刚建的空便签删掉，不留垃圾行 -->
-      <ActionButton variant="secondary" fit class="ntp-new" @click="createNew">
-        <PhPlus :size="14" weight="bold" />
-        {{ t('mindThreePane.new') }}
-      </ActionButton>
     </section>
 
     <!-- 栏 2+3：阅读窗格与信息栏合并为同一块玻璃面板，中间只用内容色细分隔线 -->
@@ -90,16 +100,19 @@
             <div v-if="selectedTitle || nodeRef" class="rp-divider"></div>
             <!-- 只读正文复用 NoteCard 同一套 mdToPreviewHtml + 全局 .md-preview 样式：
                  待办勾选、引用 chip、代码块、引用块的行为和主题适配免费拿到 -->
-            <div class="rp-body-wrap">
-              <article class="rp-body md-preview" @click="onBodyClick" v-mind-preview="previewHtml"></article>
+            <div class="rp-body-wrap scroll-surface scroll-surface--editor" @click="onBodyClick">
+              <article v-if="selectedBody" class="rp-body md-preview" v-mind-preview="previewHtml"></article>
+              <div v-else class="rp-empty-note">
+                {{ selectedTitle ? t('mindThreePane.titleOnly') : t('mindThreePane.emptyNote') }}
+              </div>
             </div>
             <!-- 底部操作区：与编辑态 Done/Cancel 同一位置；删除带文字，四个按钮统一形态 -->
             <div class="rp-foot">
-              <ActionButton variant="secondary" fit @click="startEdit()">
+              <ActionButton variant="secondary" fit class="rp-foot-action" @click="startEdit()">
                 <PhPencilSimple :size="14" weight="bold" />
                 {{ t('mindUi.edit') }}
               </ActionButton>
-              <ActionButton variant="danger" fit @click="onDelete">
+              <ActionButton variant="danger" fit class="rp-foot-action" @click="onDelete">
                 <PhTrash :size="14" weight="bold" />
                 {{ t('mindUi.delete') }}
               </ActionButton>
@@ -108,14 +121,19 @@
           <!-- 编辑态：标题独占输入位（无标题便签也有地方写标题，且永久保留标题位），
                正文进 NoteEditor；完成时 combineTitleBody 拼回 contentMd，与卡片编辑同一约定 -->
           <template v-else>
-            <input
-              ref="titleInputRef"
-              v-model="editTitle"
-              class="rp-title-input"
-              type="text"
-              :placeholder="t('mind.titleOptional')"
-              @keydown.enter.prevent
-            >
+            <div class="rp-title-row">
+              <textarea
+                ref="titleInputRef"
+                v-model="editTitle"
+                class="rp-title-input"
+                rows="1"
+                :aria-label="t('mind.titleOptional')"
+                :placeholder="t('mind.titleOptional')"
+                @input="resizeTitleInput"
+                @keydown.enter.prevent
+              ></textarea>
+            </div>
+            <div class="rp-divider"></div>
             <NoteEditor ref="noteEditorRef" v-model="editMd" :autofocus="true" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
               <template #foot-actions>
                 <ActionButton variant="primary" fit @click="finishEdit">
@@ -159,22 +177,30 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { PhArrowSquareOut, PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { MindConflictError, useMindStore } from '@/stores/mind'
+import { useLiveStore } from '@/stores/live'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
+import { canLeaveNoteEditor, commitNoteEdit } from '@/composables/mind/noteEditCommit'
 import { mdToPreviewHtml, splitMindTitleBody, toggleTaskInMd, combineTitleBody } from '@/composables/mind/useMindEditor'
 import { vMindPreview } from './directives/mindPreview'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 import type { MindNote } from '@/services/api'
+import { persistMindNoteDraft } from './utils/noteDraft'
 import NoteEditor from './components/NoteEditor.vue'
+import DateIndex from './components/DateIndex.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 
 const store = useMindStore()
+const liveStore = useLiveStore()
+const route = useRoute()
+const router = useRouter()
 const projectStore = useProjectStore()
 const filesCache = useFilesCacheStore()
 const { t } = useI18n()
@@ -182,18 +208,55 @@ const { openMindRef } = useMindRefActions()
 
 const listRef = ref<HTMLElement | null>(null)
 const selectedId = ref<number | null>(null)
+const dateIndexGroups = computed(() => [...store.timeline].reverse().map(group => ({ date: group.date, count: group.items.length })))
+// 时间流默认最新日期在首项；滑条刻度反向排列，因此最新日期是最后一个索引。
+const dateIndexCenter = ref(Math.max(0, store.timeline.length - 1))
+const dateNavigationActive = ref(false)
 
 onMounted(() => {
-  if (!store.loaded) void store.fetchNotes().catch(() => { /* 网络/后端不可用：全局拦截器已报错，列表落空态即可 */ })
+  if (!store.loaded) void store.fetchNotes().then(() => openRequestedNote()).catch(() => { /* 全局拦截器已提示；留在空态供用户重试 */ })
+  else void openRequestedNote()
   document.addEventListener('click', closeColorPicker)
 })
 onBeforeUnmount(() => {
+  const draftId = pendingNewId.value
+  const draft = draftId == null ? null : store.notes.find(note => note.id === draftId) ?? null
+  if (draft) {
+    const content = editing.value ? combineTitleBody(editTitle.value.trim(), editMd.value) : draft.contentMd
+    if (!content.trim()) removeEmptyDraft(draft)
+    else if (editing.value) void applyEdit(draft)
+  }
   document.removeEventListener('click', closeColorPicker)
 })
 
 // 当前选中的便签。数据刷新（勾待办 / 其他端改动）后 store.notes 是同引用替换，
 // 这里按 id 重新 find，保证读到的是最新字段。
 const selected = computed(() => store.notes.find(n => n.id === selectedId.value) ?? null)
+
+// 聊天跳转可通过 query 首次进入，也可在本页重复点击时通过 gugu:open-object 事件触发。
+async function openRequestedNote(requestedId = Number(route.query.object_id)) {
+  if (!Number.isFinite(requestedId)) return
+  while (!store.notes.some(note => note.id === requestedId) && store.hasMore && !store.loadingMore) {
+    const countBefore = store.notes.length
+    await store.loadMoreNotes()
+    if (store.notes.length === countBefore) break
+  }
+  const note = store.notes.find(item => item.id === requestedId)
+  if (!note) return
+  selectedId.value = requestedId
+  await nextTick()
+  listRef.value?.querySelector<HTMLElement>(`[data-note-id="${requestedId}"]`)?.scrollIntoView({ block: 'nearest' })
+  if (Number(route.query.object_id) === requestedId) {
+    await router.replace({ query: { ...route.query, object_id: undefined } })
+  }
+}
+watch(() => route.query.object_id, value => { if (value != null) void openRequestedNote(Number(value)) })
+function onOpenObjectEvent(event: Event) {
+  const detail = (event as CustomEvent<{ type?: string; id?: number | string }>).detail
+  if (detail?.type === 'note' && detail.id != null) void openRequestedNote(Number(detail.id))
+}
+window.addEventListener('gugu:open-object', onOpenObjectEvent)
+onBeforeUnmount(() => window.removeEventListener('gugu:open-object', onOpenObjectEvent))
 
 // 列表变化（筛选 / 删除 / 首载）后选中项不在了 → 顺位选最新的第一条，避免右侧开天窗
 watch(() => store.timeline, (groups) => {
@@ -203,15 +266,31 @@ watch(() => store.timeline, (groups) => {
   if (!groups.length) selectedId.value = null
 }, { immediate: true })
 
+// live 更新不能在编辑中覆盖当前草稿；编辑结束后再读取服务端事实。
+const refreshAfterEdit = ref(false)
+const committingEdit = ref(false)
+let restoringSelection = false
+watch(() => liveStore.rev.mind, () => {
+  if (editing.value || committingEdit.value) refreshAfterEdit.value = true
+  else void store.fetchNotes()
+})
+async function flushLiveRefresh() {
+  if (!refreshAfterEdit.value || editing.value) return
+  refreshAfterEdit.value = false
+  await store.fetchNotes()
+}
+
 // ── 列表条目的展示拆分 ──
 function partsOf(note: MindNote) { return splitMindTitleBody(note.contentMd) }
-function titleOf(note: MindNote) { return partsOf(note).titleRaw.trim() }
+function titleOf(note: MindNote) { return partsOf(note).titleRaw.trim() || note.title?.trim() || '' }
 function taskCount(note: MindNote) { return (note.contentMd.match(/^\s*-\s\[[ xX]\]/gm) ?? []).length }
 
 /** 列表预览：纯文本口径，剥掉 md 标记与 [[type:id|label]] 的锚点语法只留 label */
 function previewOf(note: MindNote) {
   const body = partsOf(note).body || note.contentMd
-  return plainText(body).slice(0, 120)
+  const preview = plainText(body).slice(0, 120)
+  if (preview) return preview
+  return titleOf(note) ? t('mindThreePane.titleOnly') : t('mindThreePane.emptyNote')
 }
 function plainText(md: string) {
   return md
@@ -228,7 +307,8 @@ function plainText(md: string) {
 
 // ── 阅读窗格 ──
 const selectedTitle = computed(() => (selected.value ? titleOf(selected.value) : ''))
-const previewHtml = computed(() => mdToPreviewHtml(selected.value ? partsOf(selected.value).body : ''))
+const selectedBody = computed(() => (selected.value ? partsOf(selected.value).body.trim() : ''))
+const previewHtml = computed(() => mdToPreviewHtml(selectedBody.value))
 
 /** 正文字数：剥掉 md 语法与引用锚点后按非空白字符计（中文口径） */
 const wordCount = computed(() => {
@@ -280,7 +360,7 @@ function onBodyClick(e: MouseEvent) {
   const note = selected.value
   if (!note) return
   if (target instanceof HTMLInputElement && target.dataset.taskIdx !== undefined) {
-    if (note.id < 0) { e.preventDefault(); return }   // 样例数据不写后端
+    if (note.id < 0) { e.preventDefault(); void onSave(note, toggleTaskInMd(note.contentMd, Number(target.dataset.taskIdx))); return }
     // 保留原生勾选，乐观正文原位同步状态；失败时 Store 负责回滚。
     const idx = Number(target.dataset.taskIdx)
     void onSave(note, toggleTaskInMd(note.contentMd, idx))
@@ -301,26 +381,48 @@ function onBodyClick(e: MouseEvent) {
   void startEdit(lineEl ? Number(lineEl.dataset.lineUnit) : null)
 }
 
-async function onSave(note: MindNote, md: string) {
+async function onSave(note: MindNote, md: string, title?: string | null) {
+  if (note.id < 0) {
+    store.notes = store.notes.map(item => item.id === note.id
+      ? { ...item, contentMd: md, ...(title !== undefined ? { title } : {}), version: item.version + 1, updatedAt: new Date().toISOString() }
+      : item)
+    return true
+  }
   try {
-    await store.updateNote(note.id, { contentMd: md, version: note.version })
+    await store.updateNote(note.id, {
+      contentMd: md,
+      ...(title !== undefined ? { title } : {}),
+      version: note.version,
+    })
   } catch (e) {
     if (e instanceof MindConflictError) {
       await store.fetchNotes()
       showAppNotice(t('mind.updatedElsewhere'))
+      return false
     } else {
       showAppError(t('mind.saveFailed'))
+      return false
     }
   }
+  return true
 }
 
 // ── 阅读窗格编辑态：标题独占输入位 + 正文进 NoteEditor（与卡片编辑同一台 TipTap）──
 const editing = ref(false)
 const editTitle = ref('')
 const editMd = ref('')
-const titleInputRef = ref<HTMLInputElement | null>(null)
+const titleInputRef = ref<HTMLTextAreaElement | null>(null)
 const noteEditorRef = ref<{ focusAtLineUnit: (unit: number) => void } | null>(null)
 const readingRef = ref<HTMLElement | null>(null)
+
+function resizeTitleInput() {
+  const el = titleInputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight)
+  const lineCount = lineHeight > 0 ? Math.max(1, Math.round(el.scrollHeight / lineHeight)) : 1
+  el.style.height = `${lineCount * lineHeight}px`
+}
 
 /** 进编辑态后把窗格和页面级滚动都归零：TipTap autofocus 的 scrollIntoView 会把
  *  overflow:hidden 窗格的滚动意图转嫁给 .page-content 祖先，表现为整页上跳、顶部区域变窄 */
@@ -334,10 +436,11 @@ function settleReadingScroll() {
 async function startEdit(lineUnit: number | null = null) {
   if (!selected.value) return
   const parts = splitMindTitleBody(selected.value.contentMd)
-  editTitle.value = parts.titleRaw
+  editTitle.value = parts.titleRaw || selected.value.title || ''
   editMd.value = parts.body
   editing.value = true
   await nextTick()
+  resizeTitleInput()
   await new Promise(resolve => requestAnimationFrame(resolve))
   settleReadingScroll()
   // 从正文点进来的：光标落到被点的块（NoteEditor 的 focusAtLineUnit 会顺带重算补全下拉）；
@@ -347,51 +450,42 @@ async function startEdit(lineUnit: number | null = null) {
 }
 function cancelEdit() {
   const note = selected.value
-  const hadContent = !!combineTitleBody(editTitle.value.trim(), editMd.value).trim()
   editing.value = false
-  // 新建后取消且没写任何内容：把空草稿删掉，不留垃圾行（负 id 只删内存，真实 id 走软删）
-  if (note && pendingNewId.value === note.id && !hadContent) removeEmptyDraft(note)
+  // 新建笔记尚未落库，取消时只丢弃本地草稿。
+  if (note && pendingNewId.value === note.id) removeEmptyDraft(note)
+  void flushLiveRefresh()
 }
 
-/** 删掉「刚建、还没写内容」的草稿：负 id 只删内存，真实 id 走软删 */
+/** 新建草稿尚未落库，删除只影响当前前端状态。 */
 function removeEmptyDraft(note: MindNote) {
   pendingNewId.value = null
-  if (note.id < 0) {
-    store.notes = store.notes.filter(n => n.id !== note.id)
-  } else {
-    void store.deleteNote(note.id).catch(() => showAppError(t('mind.deleteFailed')))
-  }
+  store.notes = store.notes.filter(n => n.id !== note.id)
 }
-// ── 新建：建一条空草稿并直接进编辑态 ──
-// pendingNewId 记录"本次会话刚建、还没写内容"的草稿，取消时删掉
+// ── 新建：先造本地空草稿，提交有效内容时才创建服务端记录 ──
 const pendingNewId = ref<number | null>(null)
 
+onBeforeRouteLeave(() => canLeaveNoteEditor(editing.value, finishEdit))
+
 async function createNew() {
-  // 正在编辑别的便签：退出即保存，先收掉再建新草稿
-  if (editing.value) await finishEdit()
-  if (store.notes.some(n => n.id < 0)) {
-    // 本地样例模式：造负 id 草稿，只进内存
-    const now = new Date().toISOString()
-    const draft: MindNote = {
-      id: -Date.now(), kind: 'note', title: null, color: null, contentMd: '',
-      capturedAt: now, createdAt: now, updatedAt: now, version: 1,
-    }
-    store.notes = [draft, ...store.notes]
-    pendingNewId.value = draft.id
-    await selectAndEdit(draft.id)
+  if (editing.value && !(await finishEdit())) return
+  const unsavedDraft = pendingNewId.value == null
+    ? null
+    : store.notes.find(note => note.id === pendingNewId.value) ?? null
+  if (unsavedDraft) {
+    await selectAndEdit(unsavedDraft.id)
     return
   }
-  try {
-    const created = await store.createNote({ contentMd: '' })
-    pendingNewId.value = created.id
-    await selectAndEdit(created.id)
-  } catch {
-    showAppError(t('mind.recordFailed'))
+  const now = new Date().toISOString()
+  const draft: MindNote = {
+    id: -Date.now(), kind: 'note', title: null, color: null, contentMd: '',
+    capturedAt: now, createdAt: now, updatedAt: now, version: 1,
   }
+  store.notes = [draft, ...store.notes]
+  pendingNewId.value = draft.id
+  await selectAndEdit(draft.id)
 }
 
-/** 选中刚建的草稿再进编辑：watch(selectedId) 是 pre-flush，同步紧跟的 editing=true 会被它
- *  顶掉，必须等选中切换渲染完一帧后再开编辑态 */
+/** 等待选中状态渲染后再切入编辑，避免选中 watcher 覆盖编辑态。 */
 async function selectAndEdit(id: number) {
   selectedId.value = id
   await nextTick()
@@ -400,41 +494,68 @@ async function selectAndEdit(id: number) {
 
 async function finishEdit() {
   const note = selected.value
-  editing.value = false
-  if (!note) return
-  await applyEdit(note)
-  if (pendingNewId.value === note.id) pendingNewId.value = null
+  if (!note) return false
+  const saved = await commitNoteEdit(editing, committingEdit, () => applyEdit(note))
+  if (saved) {
+    await flushLiveRefresh()
+  }
+  return saved
 }
 
-/** 把还在编辑态的标题+正文拼回 contentMd 落库/落内存；刚建的空草稿则直接删掉不留垃圾行。
- *  完成按钮和「切走即保存」共用这一条收尾路径，语义保持一致 */
-async function applyEdit(note: MindNote) {
+function selectNote(id: number) {
+  if (committingEdit.value && id !== selectedId.value) return
+  selectedId.value = id
+}
+
+/** 把编辑态的标题和正文拼回 contentMd，再落库或更新样例数据。 */
+async function applyEdit(note: MindNote): Promise<boolean> {
   const md = combineTitleBody(editTitle.value.trim(), editMd.value)
-  if (pendingNewId.value === note.id && !md.trim()) {
-    removeEmptyDraft(note)
-    return
+  const title = editTitle.value.trim() || null
+  if (pendingNewId.value === note.id) {
+    if (!md.trim() && !title) {
+      removeEmptyDraft(note)
+      return true
+    }
+    try {
+      const created = await persistMindNoteDraft(note, md, title, data => store.createNote(data))
+      if (!created) return false
+      store.notes = store.notes.filter(item => item.id !== note.id)
+      if (selectedId.value === note.id) selectedId.value = created.id
+      pendingNewId.value = null
+    } catch {
+      showAppError(t('mind.recordFailed'))
+      return false
+    }
+    return true
   }
-  if (md === note.contentMd) return
+  if (md === note.contentMd && title === note.title) return true
   if (note.id < 0) {
     // 样例数据（负 id）只改内存态，绝不落库
     store.notes = store.notes.map(n => n.id === note.id
-      ? { ...n, title: editTitle.value.trim() || null, contentMd: md, version: n.version + 1, updatedAt: new Date().toISOString() }
+      ? { ...n, title, contentMd: md, version: n.version + 1, updatedAt: new Date().toISOString() }
       : n)
-    return
+    return true
   }
-  await onSave(note, md)
+  return await onSave(note, md, title)
 }
 
 // 切换选中便签即退出编辑；除显式「取消」外所有退出路径默认保存。此时 selected 已指向
-// 新条目，按 oldId 从 notes 里找回被切走的那条再收尾；先把 editing 置 false，让新条目
-// 以阅读态渲染、保存请求在后台走完
+// 新条目，按 oldId 从 notes 里找回被切走的那条再收尾；保存失败时保留草稿以便重试。
 watch(selectedId, async (_newId, oldId) => {
+  if (restoringSelection) {
+    restoringSelection = false
+    return
+  }
   if (!editing.value) return
-  editing.value = false
   const prev = oldId == null ? null : store.notes.find(n => n.id === oldId) ?? null
   if (!prev) return
-  await applyEdit(prev)
-  if (pendingNewId.value === prev.id) pendingNewId.value = null
+  const saved = await commitNoteEdit(editing, committingEdit, () => applyEdit(prev))
+  if (saved) {
+    await flushLiveRefresh()
+  } else if (oldId != null) {
+    restoringSelection = true
+    selectedId.value = oldId
+  }
 })
 
 // ── 颜色：卡片上的颜色球，点击弹出选择（含默认纸色），选完球即新色 ──
@@ -508,14 +629,73 @@ function dayLabel(date: string) {
 // 日历选择日期 → 列表滚到对应日期分组（DatePicker 的 allowed-dates 已限定只选有记录的日期）
 watch(() => store.jumpTarget, (date) => {
   if (!date || !listRef.value) return
-  listRef.value.querySelector<HTMLElement>(`.ntp-day-label[data-date="${date}"]`)
-    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  if (store.timeline.some(group => group.date === date)) {
+    scrollToDate(date, 'smooth')
+    return
+  }
+  if (date === todayKey && store.timeline.length) {
+    showAppNotice(t('mind.noToday'))
+    // 时间流按日期倒序；今天没有便签时，落到最近的已有日期。
+    scrollToDate(store.timeline[0].date, 'smooth')
+  }
 })
+watch(dateIndexGroups, async () => {
+  await nextTick()
+  updateDateIndexFromList()
+}, { flush: 'post', immediate: true })
+
+function scrollToDate(date: string, behavior: ScrollBehavior) {
+  const list = listRef.value
+  const label = list?.querySelector<HTMLElement>(`.ntp-day-label[data-date="${date}"]`)
+  if (!list || !label) return
+  const listTop = list.getBoundingClientRect().top
+  const labelTop = label.getBoundingClientRect().top
+  list.scrollTo({ top: list.scrollTop + labelTop - listTop - listContentInset(list), behavior })
+}
+
+function listContentInset(list: HTMLElement) {
+  const paddingTop = Number.parseFloat(getComputedStyle(list).paddingTop)
+  return Number.isFinite(paddingTop) ? paddingTop : 0
+}
+
+function updateDateIndexFromList() {
+  const list = listRef.value
+  if (!list) return
+  const labels = [...list.querySelectorAll<HTMLElement>('.ntp-day-label[data-date]')]
+  if (!labels.length) return
+  const listTop = list.getBoundingClientRect().top + listContentInset(list) + 1
+  let active = labels[0]
+  for (const label of labels) {
+    if (label.getBoundingClientRect().top > listTop) break
+    active = label
+  }
+  const index = dateIndexGroups.value.findIndex(group => group.date === active.dataset.date)
+  if (index >= 0) dateIndexCenter.value = index
+}
+
+function dateAtFraction(fraction: number) {
+  const index = Math.max(0, Math.min(dateIndexGroups.value.length - 1, Math.round(fraction)))
+  return dateIndexGroups.value[index]?.date ?? ''
+}
+
+function onDateScrub(fraction: number) {
+  dateNavigationActive.value = true
+  const date = dateAtFraction(fraction)
+  if (date) scrollToDate(date, 'instant')
+}
+
+function onDateSnap(date: string) {
+  dateNavigationActive.value = false
+  const index = dateIndexGroups.value.findIndex(group => group.date === date)
+  if (index >= 0) dateIndexCenter.value = index
+  scrollToDate(date, 'instant')
+}
 
 // 列表滚近底部 → 追加更早的日期（与时间流的 load-more 同一份数据通道）
 function onListScroll() {
   const el = listRef.value
   if (!el) return
+  if (!dateNavigationActive.value) updateDateIndexFromList()
   if (el.scrollTop + el.clientHeight < el.scrollHeight - 240) return
   if (store.hasMore && !store.loadingMore) void store.loadMoreNotes()
 }
@@ -529,12 +709,33 @@ function onListScroll() {
 }
 
 /* ── 栏 1：日期分组列表 ── */
-.ntp-list { flex: 0 0 316px; min-height: 0; display: flex; flex-direction: column; }
+.ntp-list {
+  /* Flex 项默认 min-width:auto，会被便签预览中的长无空格字符串撑开，覆盖固定栏宽。 */
+  flex: 0 0 316px; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.ntp-list-surface {
+  flex: 1; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+}
+.ntp-list-surface > .ntp-date-index {
+  flex: none; position: relative; z-index: 2;
+  /* 让滚动视口覆盖可见滑条的大半段；滑条在上层，卡片滚过时由视口 mask 渐隐。 */
+  height: 82px; margin: 0 2px -66px;
+}
 .ntp-list-scroll {
-  flex: 1; min-height: 0; overflow-y: auto; padding: 2px 2px 16px;
-  /* 底部渐变淡出：卡片滚出可视区前先溶解进背景（新建按钮下方接住），不再生硬截断 */
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent);
+  /* 补回被覆盖的上半段，让卡片初始位置保持不变。 */
+  /* 横向扩展滚动视口并补足内容内边距，给卡片外阴影留空间且不改变卡片几何位置。 */
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto; margin-inline: -6px; padding: 28px 8px 16px;
+  /* 顶部渐变淡出到日期滑条下方，底部渐隐到新建按钮上方，避免卡片硬切。 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 64px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 64px), transparent 100%);
 }
 .ntp-state { padding: 28px 12px; font-size: 12.5px; color: var(--text-secondary); }
 .ntp-day-label {
@@ -549,14 +750,28 @@ function onListScroll() {
   /* 不能加 overflow:hidden——颜色弹层要从卡片向上弹出，裁剪会把弹层吃掉 */
   background: var(--surface-card-solid); border: 1px solid transparent; border-radius: var(--radius-md);
   box-shadow: var(--elevation-card); cursor: pointer; color: inherit; font-family: inherit;
-  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  transition: var(--card-motion), box-shadow var(--motion-hover-card) ease;
 }
-.ntp-item:hover { transform: translateY(-1px); box-shadow: var(--elevation-card-hover); }
+.ntp-item:hover { transform: translateY(-1px); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
 .ntp-item:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .ntp-item.selected {
-  border-color: var(--mind-note-border-selected);
-  box-shadow: var(--mind-note-shadow-selected);
+  border-color: var(--action-outline);
+  box-shadow: var(--control-focus-shadow), var(--elevation-card-hover);
 }
+.ntp-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--card-hover-overlay);
+  box-shadow: inset 0 1px 0 var(--highlight-soft);
+  opacity: 0;
+  transition: opacity var(--hover-motion-card);
+  pointer-events: none;
+}
+.ntp-item:hover::after,
+.ntp-item.selected::after { opacity: 1; }
+.ntp-item > * { position: relative; z-index: 1; }
 /* 便签四色 tint 消费主题 token（tokens/components/mind.css 定义亮暗两套值）——
    不能像 NoteCard 旧底稿那样硬编码浅色 rgb，暗色下会变成浅底配浅字不可读 */
 .ntp-item.tint-amber { background: var(--note-paper-amber); }
@@ -566,8 +781,8 @@ function onListScroll() {
 .ni-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
 .ni-time { font-size: 11px; color: var(--text-secondary); opacity: 0.85; font-variant-numeric: tabular-nums; flex: none; }
 .ni-title {
-  flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--text-primary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.4; font-weight: 600; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-bottom: 1px; margin-bottom: -1px;
 }
 .ni-preview {
   font-size: 12.5px; color: var(--text-secondary); line-height: 1.55;
@@ -611,54 +826,68 @@ function onListScroll() {
 .ni-task { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); }
 
 /* 新建笔记：列表底部整宽胶囊，标准 ActionButton 只接管几何宽度 */
-.ntp-new { width: 100%; flex: none; margin-top: 10px; }
+.ntp-new { width: 100%; height: 38px; min-height: 38px; flex: none; margin-top: 8px; }
 
 /* ── 栏 2+3：阅读 + 信息同一块玻璃 ── */
 .ntp-detail {
   flex: 1; min-width: 0; min-height: 0;
   display: grid; grid-template-columns: minmax(0, 1fr) 264px;
-  background: linear-gradient(var(--ntp-detail-note-tint), var(--ntp-detail-note-tint)), var(--glass-bg);
+  background: var(--ntp-detail-note-paper);
   border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
   box-shadow: var(--glass-shadow);
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   overflow: hidden;
-  --ntp-detail-note-tint: transparent;
-  --ntp-detail-note-paper: transparent;
+  --ntp-detail-note-paper: var(--glass-bg);
 }
 .ntp-detail[class*="tint-"] { border-color: color-mix(in srgb, var(--glass-border) 90%, var(--ntp-detail-note-paper)); }
-.ntp-detail.tint-amber { --ntp-detail-note-paper: var(--note-paper-amber); --ntp-detail-note-tint: color-mix(in srgb, var(--note-paper-amber) 50%, transparent); }
-.ntp-detail.tint-coral { --ntp-detail-note-paper: var(--note-paper-coral); --ntp-detail-note-tint: color-mix(in srgb, var(--note-paper-coral) 50%, transparent); }
-.ntp-detail.tint-blue  { --ntp-detail-note-paper: var(--note-paper-blue);  --ntp-detail-note-tint: color-mix(in srgb, var(--note-paper-blue) 50%, transparent); }
-.ntp-detail.tint-teal  { --ntp-detail-note-paper: var(--note-paper-teal);  --ntp-detail-note-tint: color-mix(in srgb, var(--note-paper-teal) 50%, transparent); }
+.ntp-detail.tint-amber { --ntp-detail-note-paper: var(--note-paper-amber); }
+.ntp-detail.tint-coral { --ntp-detail-note-paper: var(--note-paper-coral); }
+.ntp-detail.tint-blue  { --ntp-detail-note-paper: var(--note-paper-blue); }
+.ntp-detail.tint-teal  { --ntp-detail-note-paper: var(--note-paper-teal); }
 .ntp-detail.empty { grid-template-columns: minmax(0, 1fr); }
-/* 只读态底部 16px = 编辑态 12px 窗格边距 + ne-toolbar 自带 4px 底 padding，
-   两种模式的按钮底缘才在同一水平线上 */
-.ntp-reading { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 16px; }
-/* 编辑态：窗格底部只留 12px，别让钉底的工具栏下面空一截 */
-.ntp-reading.editing { overflow: hidden; padding-bottom: 12px; }
+/* 只读态按钮距窗格底部 10px；编辑态工具栏自带 4px 底 padding，
+   因此窗格自身留 6px，两种模式的按钮底缘保持同高。 */
+.ntp-reading {
+  flex: 1; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 10px;
+}
+/* 编辑态：工具栏自带 4px 底 padding，外层留 6px，与只读态 10px 对齐。 */
+.ntp-reading.editing { overflow: hidden; padding-bottom: 6px; }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
 .rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }
-.rp-title { font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
+/* 浏览器原生 input 的文字垂直居中与 h1 字形基线有约 1px 的差异，预览标题微调对齐编辑态。 */
+.rp-title { position: relative; top: 1px; font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
 /* 标题→分割线→正文的节奏（12/14）与编辑态标题 h1 的 padding/margin 严格同值，
    两种模式切换时标题、分割线、正文的相对位置不动 */
 .rp-divider { border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent); margin: 12px 0 14px; }
-/* 编辑态常驻标题输入位：字级/下分割线与阅读态 rp-title + rp-divider 严格同值，
-   「标题文字→线→正文」的节奏两种模式一致；输入框本体透明无描边，只保留底线 */
+/* 编辑态复用阅读态标题行与分割线结构；显式覆盖全局输入框控件高度，避免通用
+   表单尺寸和下边距把标题基线与分割线间距挤偏。 */
 .rp-title-input {
-  flex: none; width: 100%; box-sizing: border-box; padding: 0 0 12px;
-  border: 0; border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+  position: relative; top: 1px;
+  flex: 1; min-width: 0; width: 100%; min-height: 1.35em; box-sizing: border-box; padding: 0;
+  border: 0;
   border-radius: 0; outline: none; background: transparent;
-  margin: 0 0 14px;
+  margin: 0;
   font: 700 23px/1.35 var(--font-sans); color: var(--text-primary);
-  caret-color: var(--color-primary);
+  caret-color: var(--input-caret-color); resize: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .rp-title-input::placeholder { color: var(--text-secondary); opacity: 0.55; font-weight: 500; }
-.rp-title-input:focus { border-bottom-color: color-mix(in srgb, var(--color-primary) 40%, transparent); }
+.ntp-reading.editing .rp-title-row:focus-within + .rp-divider { border-bottom-color: color-mix(in srgb, var(--color-primary) 40%, transparent); }
 /* 正文区自占剩余高度滚动，底部操作区（编辑/删除）钉在窗格底部，与编辑态 Done/Cancel 同位 */
-.rp-body-wrap { flex: 1; min-height: 0; overflow-y: auto; }
+.rp-body-wrap {
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
+  --scrollbar-overlay-right-offset: 20px;
+}
+.rp-empty-note { margin-top: 14px; color: var(--text-secondary); font-size: 13px; }
 .rp-body { font-size: 14px; margin-top: 14px; }
 .rp-divider ~ .rp-body-wrap .rp-body { margin-top: 0; }
 .rp-foot { flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
+.rp-foot .app-action-button.is-secondary {
+  --action-secondary-bg: var(--surface-card-solid);
+  --action-secondary-border: color-mix(in srgb, var(--content-primary) 24%, transparent);
+  --action-secondary-border-hover: color-mix(in srgb, var(--content-primary) 40%, transparent);
+}
+.rp-foot-action { height: 38px; min-height: 38px; }
 /* 宽窗格顶层块间距统一锁 3px：mind-content 的 0.2em 是 em 口径，15px 标题算 3px、
    14px 正文算 2.8px 混着不齐；窗格字号已锁 14/15px，间距钉成同值，两模式同源一致 */
 .rp-body > * + *,

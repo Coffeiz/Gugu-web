@@ -239,7 +239,7 @@ def _is_passive_group_payload(payload: dict) -> bool:
     读取数据库；这样被动消息才能在同一群的主动模型任务期间实时落库并推送前端。
     """
     return bool(
-        payload.get("platform") == "qq"
+        payload.get("platform") in {"qq", "feishu", "telegram"}
         and payload.get("chat_type") == "group"
         and payload.get("chat_id")
         and (
@@ -298,6 +298,7 @@ async def _dispatch(msg_id: str, payload: dict):
     if claim == "busy":
         # 另一个 worker 仍持有有效租约；不能 ACK 尚未完成的原处理。
         return
+    payload = await _hydrate_group_policy(payload)
     key = conversation_key(payload)
     if not key.scope_id:
         # 路由字段缺失（理论上不该发生）：退化成按 msg_id 各自成轮，不合并、不跟别的会话共用锁。
@@ -360,6 +361,26 @@ async def _dispatch(msg_id: str, payload: dict):
             _user_flush[key] = nt
             _flush_tasks.add(nt)
             nt.add_done_callback(_flush_tasks.discard)
+
+
+async def _hydrate_group_policy(payload: dict) -> dict:
+    """在被动消息快速分流前补齐当前 Bot 的权威群策略。"""
+    platform = payload.get("platform")
+    if platform not in {"qq", "feishu", "telegram"} or payload.get("chat_type") != "group":
+        return payload
+    from agent.im.permissions import resolve_group_policy
+
+    settings = await resolve_group_policy(
+        str(payload.get("channel_id") or ""), platform=str(platform)
+    )
+    result = dict(payload)
+    result.update({
+        "group_requires_at": settings[1],
+        "group_read_enabled": settings[2],
+        "group_memory_enabled": settings[3],
+        "member_memory_enabled": settings[4],
+    })
+    return result
 
 
 async def run_once(block_ms: int = 5000) -> int:
@@ -480,7 +501,7 @@ async def _heartbeat():
             await asyncio.sleep(1)
 
 
-async def serve():
+async def _serve():
     await R.ensure_group(STREAM, GROUP)
     await R.ensure_group("memory:reflection", REFLECTION_GROUP)
     await R.ensure_group("memory:cleanup", CLEANUP_GROUP)
@@ -503,6 +524,8 @@ async def serve():
     from app.core import video_cache_gc as _video_cache_gc  # noqa: F401  # 触发内置任务 @scheduler.register（视频转码缓存清理），须在 sched.start() 之前 import
     from app.core import storage_snapshots as _storage_snapshots  # noqa: F401  # 触发内置任务 @scheduler.register（存储用量快照，PRD-STORAGE-2），须在 sched.start() 之前 import
     from app.core import rag_index_gc as _rag_index_gc  # noqa: F401  # 触发 RAG 用户索引 TTL 清理任务
+    from app.services.filesync import periodic as _filesync_periodic  # noqa: F401  # 注册每周完整核对任务
+    from app.services.storage import quota_periodic as _quota_periodic  # noqa: F401  # 注册每周配额完整校准
     sched.start()
     try:
         await schedtasks.reconcile()             # 立即从 DB 加载一遍
@@ -513,12 +536,22 @@ async def serve():
     filesync_task = asyncio.create_task(
         FileSyncWatcherManager().run(_stop), name="filesync-watcher"
     )
+    from app.services.filesync.runner import run_reconcile_worker
+    filesync_reconcile_task = asyncio.create_task(run_reconcile_worker(
+        _stop,
+        worker_id=f"filesync-reconcile:{CONSUMER}",
+        session_factory=db_session._SessionLocal,
+    ), name="filesync-reconcile-worker")
     reflection_task = asyncio.create_task(_reflection_loop())
     cleanup_task = asyncio.create_task(_cleanup_loop())
     from app.services.data_portability.worker import run_portability_worker
     portability_task = asyncio.create_task(run_portability_worker(
         _stop, worker_id=f"portability:{CONSUMER}", session_factory=db_session._SessionLocal,
     ), name="data-portability-worker")
+    from app.services.files.trash_purge import run_trash_purge_worker
+    trash_purge_task = asyncio.create_task(run_trash_purge_worker(
+        _stop, worker_id=f"trash-purge:{CONSUMER}", session_factory=db_session._SessionLocal,
+    ), name="trash-purge-worker")
     while not _stop.is_set():
         try:
             await run_once()
@@ -537,10 +570,15 @@ async def serve():
     reflection_task.cancel()
     cleanup_task.cancel()
     portability_task.cancel()
+    trash_purge_task.cancel()
     await asyncio.gather(
         hb, sched_task, filesync_task, reflection_task, cleanup_task, portability_task,
+        trash_purge_task,
         return_exceptions=True,
     )
+    # 核对 Worker 通过共享 stop event 让扫描线程/当前事务协作退出；不要取消协程，
+    # 否则 asyncio Future 取消后底层线程仍可能运行并与下一进程重叠。
+    await filesync_reconcile_task
     from agent.rag.injection import shutdown_background_recall_tasks
     await shutdown_background_recall_tasks()
     sched.shutdown()
@@ -550,6 +588,17 @@ async def serve():
     from app.db.session import dispose_engine
     await dispose_engine()
     print("[worker] stopped", flush=True)
+
+
+async def serve():
+    """worker 生命周期持有 QQ HTTP 连接池，优雅或异常退出时均释放。"""
+    from agent.gateway.qq import close_qq_http_session, start_qq_http_session
+
+    await start_qq_http_session()
+    try:
+        await _serve()
+    finally:
+        await close_qq_http_session()
 
 
 async def _reconcile_loop():
@@ -627,6 +676,12 @@ async def _emergency_shutdown(*, tasks=None) -> None:
             task.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
+
+    try:
+        from agent.gateway.qq import close_qq_http_session
+        await close_qq_http_session()
+    except Exception as exc:
+        print(f"[worker] 异常退出释放 QQ HTTP 连接池失败: {type(exc).__name__}", flush=True)
 
     try:
         from agent.rag.injection import shutdown_background_recall_tasks

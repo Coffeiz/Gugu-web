@@ -9,7 +9,6 @@ import type { UnifiedRecallOptions } from "./types.ts";
 const SOURCE_PRIORITY: Record<string, number> = {
   memory: 0,
   project: 10,
-  file: 20,
   calendar: 30,
   scheduled_task: 35,
   journal: 30,

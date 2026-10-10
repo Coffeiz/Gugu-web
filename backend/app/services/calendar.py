@@ -9,7 +9,7 @@ from app.core.schedule_rules import SCHEDULE_TZ
 from app.core.tz import local_now
 from app.models import CalendarEvent, Project, ScheduledTask
 
-_REMINDER_CHANNELS = {"web", "feishu", "qq", "wechat"}
+_REMINDER_CHANNELS = {"web", "feishu", "qq", "wechat", "telegram"}
 
 
 async def create_event(db, user_id, *, title, date, time, end_time, event_type, project_id):

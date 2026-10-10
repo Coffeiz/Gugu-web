@@ -87,4 +87,25 @@ describe('filesCache 空间索引', () => {
     expect(store.getWorkspaceFolders(34)).toEqual([rootFolder])
     expect(store.getWorkspaceFolders(34, 20)).toEqual([nestedFolder])
   })
+
+  it('权威目录快照删除本目录旧成员及其子树，不影响其他未加载目录', () => {
+    const store = useFilesCacheStore()
+    store.allFiles = [
+      file({ id: 1, displayName: '已删除根文件' }),
+      file({ id: 2, displayName: '子目录文件', folderId: 20 }),
+      file({ id: 3, displayName: '其他项目文件', space: 'project', projectId: 9 }),
+      file({ id: 4, displayName: '其他工作区文件', space: 'workspace', workspaceDirectoryId: 34 }),
+    ]
+    store.allFolders = [
+      folder({ id: 20, name: '已删除目录' }),
+      folder({ id: 21, name: '后代目录', parentId: 20 }),
+      folder({ id: 22, name: '其他项目目录', projectId: 9 }),
+      folder({ id: 23, name: '其他工作区目录', workspaceDirectoryId: 34 }),
+    ]
+
+    store.replaceDirectorySnapshot({ space: 'personal' }, [], [])
+
+    expect(store.allFiles.map(item => item.id)).toEqual([3, 4])
+    expect(store.allFolders.map(item => item.id)).toEqual([22, 23])
+  })
 })

@@ -25,7 +25,7 @@ class AgentRequest:
     platform_user_id: Optional[str] = None  # 当前 IM 发言人的平台身份标识
     platform_user_name: Optional[str] = None  # 当前 IM 发言人的平台显示名，仅用于称呼
     platform_bot_user_id: Optional[str] = None  # 当前 IM Bot 的平台身份标识，用于 mention 展示
-    source: str = "web"           # "web" | "qq" | "openclaw"
+    source: str = "web"           # web | qq | feishu | wechat | telegram | openclaw
     attachments: list = field(default_factory=list)   # 聊天附件 attach_id（仅 web）
     references: list = field(default_factory=list)    # 网页聊天中用户明确选择的业务对象引用
     reference_context: Optional[str] = None           # 已解析的网页引用上下文（仅当前 Web run）

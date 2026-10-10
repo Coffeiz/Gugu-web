@@ -24,8 +24,9 @@ from app.db.session import get_db
 from app.models import FilesystemAuthorizationGrant, ScheduledTask, User
 from app.services.calendar import event_base_datetime, event_reminder_lead_minutes, find_event_reminder_by_cron
 from app.services.scheduled_tasks import (
-    find_qq_group_session,
+    find_im_group_session,
     get_enabled_user_bot,
+    list_im_group_sessions,
     list_qq_group_sessions,
     validate_task_workspace,
 )
@@ -44,7 +45,8 @@ router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 _TRIAL_WAIT_SECONDS = 180
 _trial_tasks: set[asyncio.Task] = set()
 
-_CHANNELS = {"web", "email", "feishu", "qq", "wechat", "im", "chat"}   # email=注册邮箱；chat=web、im=全部 IM（历史别名）
+_CHANNELS = {"web", "email", "feishu", "qq", "wechat", "telegram", "im", "chat"}   # email=注册邮箱；chat=web、im=全部 IM（历史别名）
+_IM_TARGET_PLATFORMS = {"qq", "feishu", "telegram"}
 
 
 def _schedule_error(exc: ScheduleValidationError) -> HTTPException:
@@ -73,36 +75,72 @@ def _norm_authorized_tools(tools: list[str] | None) -> list[str]:
     return ["send_email"] if tools and "send_email" in tools else []
 
 
-async def _resolve_qq_delivery(db: AsyncSession, user: User, qq_delivery: dict | None) -> dict | None:
-    """网页端 QQ 投递目标解析：private=owner 私聊，group=指定群会话。
-
-    群目标字段与 agent 工具的 current_group 产物同构（platform/chat_type/chat_id/
-    puid/channel_id），投递层不需要区分来源。
-    """
-    mode = (qq_delivery or {}).get("mode")
-    if mode not in {"private", "group"}:
-        raise HTTPException(400, "qq_delivery.mode 只能是 private 或 group")
-    from app.scheduled_tasks import owner_private_targets
-
+async def _resolve_im_delivery(db: AsyncSession, user: User, platform: str, config: dict | None) -> dict:
+    """验证一个 IM 投递目标属于当前用户，并生成可持久化的目标引用。"""
+    if platform not in _IM_TARGET_PLATFORMS:
+        raise HTTPException(400, "不支持该 IM 投递平台")
+    mode = (config or {}).get("mode")
     if mode == "private":
-        return await owner_private_targets(db, user.id, ["qq"])
-    chat_id = str((qq_delivery or {}).get("chat_id") or "").strip()
+        from app.scheduled_tasks import owner_private_targets
+        targets = await owner_private_targets(db, user.id, [platform])
+        target = (targets or {}).get(platform)
+        if not target or (platform != "qq" and not target.get("puid")):
+            raise HTTPException(400, f"{platform} 尚无可用私聊目标，请先与 Bot 私聊")
+        return {platform: target}
+    if mode != "group":
+        raise HTTPException(400, "投递目标 mode 只能是 private 或 group")
+    chat_id = str((config or {}).get("chat_id") or "").strip()
     if not chat_id:
         raise HTTPException(400, "群投递需要 chat_id")
-    # 会话归属校验：只允许投递到自己的 QQ 群会话，防越权填任意 group_openid
-    session = await find_qq_group_session(db, user.id, chat_id)
+    bot = await get_enabled_user_bot(db, user.id, platform)
+    if bot is None:
+        raise HTTPException(400, f"{platform} Bot 未连接或已停用")
+    session = await find_im_group_session(db, user.id, platform, chat_id, bot.id)
     if session is None:
-        raise HTTPException(400, "找不到该 QQ 群会话，请先让咕咕在群里说过话")
-    bot = await get_enabled_user_bot(db, user.id, "qq")
-    return {
-        "qq": {
-            "platform": "qq",
-            "chat_type": "group",
-            "chat_id": chat_id,
-            "puid": bot.owner_platform_user_id if bot else None,
-            "channel_id": str(bot.id) if bot else None,
-        }
-    }
+        raise HTTPException(400, "找不到该群会话，请先让咕咕在群里收到一条消息")
+    return {platform: {
+        "platform": platform,
+        "chat_type": "group",
+        "chat_id": chat_id,
+        "puid": bot.owner_platform_user_id,
+        "channel_id": str(bot.id),
+    }}
+
+
+def _delivery_configs(im_delivery: dict | None, qq_delivery: dict | None) -> dict[str, dict]:
+    configs = {key: value for key, value in (im_delivery or {}).items()
+               if key in _IM_TARGET_PLATFORMS and isinstance(value, dict)}
+    # Compatibility for older clients that still submit qq_delivery.
+    if "qq" not in configs and isinstance(qq_delivery, dict):
+        configs["qq"] = qq_delivery
+    return configs
+
+
+def _ensure_single_group_target(targets: dict | None, channels: list[str]) -> None:
+    """一份定时任务正文只能注入一个群的记忆并投递到该作用域。"""
+    from app.scheduled_tasks import _active_delivery_targets, _has_multiple_group_targets
+    if _has_multiple_group_targets(_active_delivery_targets(targets, set(channels))):
+        raise HTTPException(400, "一个定时任务目前只能设置一个群聊投递目标")
+
+
+async def _resolve_web_delivery_targets(
+    db: AsyncSession, user: User, channels: list[str], *,
+    im_delivery: dict | None = None, qq_delivery: dict | None = None,
+    existing: dict | None = None,
+) -> dict | None:
+    from app.scheduled_tasks import owner_private_targets
+    targets = await owner_private_targets(db, user.id, channels) or {}
+    old = existing if isinstance(existing, dict) else {}
+    configs = _delivery_configs(im_delivery, qq_delivery)
+    for platform in _IM_TARGET_PLATFORMS:
+        if platform in configs and platform in channels:
+            targets.update(await _resolve_im_delivery(db, user, platform, configs[platform]))
+        elif platform in old:
+            # 改其他字段/渠道时保留原目标，避免把指定群悄悄改成私聊；
+            # 即使暂时取消渠道勾选也保留选择，重新勾选后仍回到原目标。
+            targets[platform] = old[platform]
+    _ensure_single_group_target(targets, channels)
+    return targets or None
 
 
 @router.get("/qq-targets")
@@ -116,6 +154,26 @@ async def list_qq_targets(user: User = Depends(get_current_user), db: AsyncSessi
     for row in rows:
         groups.setdefault(row.chat_id, row.title or "未命名群会话")
     return {"groups": [{"chat_id": chat_id, "title": title} for chat_id, title in groups.items()]}
+
+
+@router.get("/delivery-targets/{platform}")
+async def list_delivery_targets(platform: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """返回用户已建立的群目标及私聊可用状态；不回显平台 ID 以外的凭证。"""
+    if platform not in _IM_TARGET_PLATFORMS:
+        raise HTTPException(404, "不支持该 IM 平台")
+    bot = await get_enabled_user_bot(db, user.id, platform)
+    if bot is None:
+        return {"private_available": False, "groups": []}
+    from app.scheduled_tasks import owner_private_targets
+    private_targets = await owner_private_targets(db, user.id, [platform]) or {}
+    private_available = platform == "qq" or bool((private_targets.get(platform) or {}).get("puid"))
+    rows = await list_im_group_sessions(db, user.id, platform, bot.id)
+    groups: dict[str, str] = {}
+    for row in rows:
+        chat_id = str(row.chat_id)
+        groups.setdefault(chat_id, row.title or "未命名群会话")
+    return {"private_available": private_available,
+            "groups": [{"chat_id": chat_id, "title": title} for chat_id, title in groups.items()]}
 
 
 def _to_resp(t: ScheduledTask) -> dict:
@@ -154,6 +212,8 @@ class TaskCreate(BaseModel):
     # QQ 投递目标：{"mode":"private"} 或 {"mode":"group","chat_id":群会话 chat_id}；
     # 省略=沿用私聊默认。仅在 channels 含 qq 时生效。
     qq_delivery: dict | None = None
+    # IM 目标：{qq|feishu|telegram: {mode: private|group, chat_id?}}；微信只支持私聊。
+    im_delivery: dict[str, dict] | None = None
     enabled: bool = True
     event_id: int | None = None   # 绑定到某日历事件（活动面板加的提醒）；省略=独立任务
     authorized_tools: list[str] = Field(default_factory=list)
@@ -171,6 +231,7 @@ class TaskUpdate(BaseModel):
     end_at: datetime | None = None
     channels: list[str] | None = None
     qq_delivery: dict | None = None
+    im_delivery: dict[str, dict] | None = None
     enabled: bool | None = None
     authorized_tools: list[str] | None = None
     workspace_id: int | None = None
@@ -271,11 +332,10 @@ async def create_task(
         workspace_id=workspace_id,
         email_attachment_file_ids=email_attachment_file_ids,
     )
-    from app.scheduled_tasks import owner_private_targets
-    if body.qq_delivery is not None and "qq" in body.channels:
-        t.delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
-    else:
-        t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
+    t.delivery_targets = await _resolve_web_delivery_targets(
+        db, user, body.channels,
+        im_delivery=body.im_delivery, qq_delivery=body.qq_delivery,
+    )
     if body.event_id is not None:
         t.reminder_lead_minutes = event_reminder_lead_minutes(t, event_base_datetime(ev))
     db.add(t)
@@ -369,21 +429,15 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.name = body.name
     if body.payload is not None:
         t.payload = body.payload
-    if body.channels is not None or "qq_delivery" in body.model_fields_set:
+    if body.channels is not None or "qq_delivery" in body.model_fields_set or "im_delivery" in body.model_fields_set:
         next_channels = body.channels if body.channels is not None else [c for c in (t.channels or "").split(",") if c]
         t.channels = _norm_channels(next_channels)
-        if "qq" in next_channels and "qq_delivery" in body.model_fields_set and body.qq_delivery is not None:
-            t.delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
-        elif "qq_delivery" in body.model_fields_set or body.channels is not None:
-            from app.scheduled_tasks import owner_private_targets
-            next_targets = await owner_private_targets(db, user.id, next_channels)
-            if "qq_delivery" not in body.model_fields_set:
-                # 旧客户端只改渠道时不能静默把已绑定群覆盖成 owner 私聊。
-                existing_targets = t.delivery_targets if isinstance(t.delivery_targets, dict) else {}
-                existing_qq_target = existing_targets.get("qq")
-                if existing_qq_target is not None:
-                    next_targets = {**(next_targets or {}), "qq": existing_qq_target}
-            t.delivery_targets = next_targets
+        t.delivery_targets = await _resolve_web_delivery_targets(
+            db, user, next_channels,
+            im_delivery=body.im_delivery if "im_delivery" in body.model_fields_set else None,
+            qq_delivery=body.qq_delivery if "qq_delivery" in body.model_fields_set else None,
+            existing=t.delivery_targets,
+        )
     # 页面上的保存动作是用户重新确认任务意图；显式传授权时允许单独授予或撤销，
     # 内容或投递设置变更但未传授权时则自动撤销旧的持久权限。
     if body.authorized_tools is not None:
@@ -530,6 +584,7 @@ class TestNotify(BaseModel):
     channels: list[str] = ["web"]
     name: str = "活动提醒"
     qq_delivery: dict | None = None
+    im_delivery: dict[str, dict] | None = None
 
 
 @router.post("/test-notify")
@@ -541,9 +596,9 @@ async def test_notify(body: TestNotify, user: User = Depends(get_current_user), 
     chans = {c for c in (body.channels or []) if c in _CHANNELS} or {"web"}
     name = (body.name or "活动提醒").strip()
     text = f"这是一条测试提醒——「{name}」。如果你收到了这条消息，说明提醒渠道工作正常。"
-    delivery_targets = None
-    if "qq" in chans and body.qq_delivery is not None:
-        delivery_targets = await _resolve_qq_delivery(db, user, body.qq_delivery)
+    delivery_targets = await _resolve_web_delivery_targets(
+        db, user, list(chans), im_delivery=body.im_delivery, qq_delivery=body.qq_delivery,
+    )
     # 渠道投递可能等待外部 IM 接口，不能让认证用的请求会话跨越整个投递过程。
     await db.close()
     from app import scheduled_tasks as ST

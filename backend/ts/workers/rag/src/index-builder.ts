@@ -3,7 +3,6 @@ import { buildDocuments, validScope } from "./adapters/base.ts";
 import { calendarAdapter, type CalendarSourceRecord } from "./adapters/calendar.ts";
 import { canvasAdapter, type CanvasSourceRecord } from "./adapters/canvas.ts";
 import { conversationAdapter, type ConversationSourceRecord } from "./adapters/conversations.ts";
-import { fileAdapter, type FileSourceRecord } from "./adapters/files.ts";
 import { noteAdapter, type NoteSourceRecord } from "./adapters/note.ts";
 import { scheduledTaskAdapter } from "./adapters/scheduled-tasks.ts";
 
@@ -22,7 +21,6 @@ export function buildSourceDocuments(batch: RagSourceBatch): RagDocument[] {
   return [
     ...buildGenericDocuments((batch.memory || []) as RagSourceRecord[]),
     ...buildGenericDocuments((batch.project || []) as RagSourceRecord[]),
-    ...fileAdapter.toDocuments((batch.files || []) as FileSourceRecord[]),
     ...noteAdapter.toDocuments((batch.note || []) as NoteSourceRecord[]),
     ...canvasAdapter.toDocuments((batch.canvas || []) as CanvasSourceRecord[]),
     ...calendarAdapter.toDocuments((batch.calendar || []) as unknown as Parameters<typeof calendarAdapter.toDocuments>[0]),

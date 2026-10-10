@@ -16,16 +16,31 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import FileSyncBinding, FileSyncConflict, FileSyncJournal, FileSyncOutbox
 from app.services.filesync.bindings import (
-    BindingSyncResult,
     cleanup_stale_conflicts,
-    dry_run_local_binding,
     resolve_sync_conflict,
     resolve_local_binding_root,
-    sync_local_binding,
 )
 from app.services.filesync.outbox import deliver_file_event, enqueue_file_event
 from app.services.filesync.protocol import FileSyncStatus, is_file_sync_enabled
 from app.services.workspaces import resolve_workspace_root, workspace_shell_supported
+
+
+async def get_admin_binding(db: AsyncSession, binding_id: int) -> FileSyncBinding | None:
+    """按管理端绑定 ID 读取同步绑定。"""
+    return await db.get(FileSyncBinding, binding_id)
+
+
+async def list_admin_issue_bindings(db: AsyncSession, binding_ids: list[int]) -> list[FileSyncBinding]:
+    """列出仍处于可修复状态的本地双向绑定。"""
+    if not binding_ids:
+        return []
+    query = select(FileSyncBinding).where(
+        FileSyncBinding.id.in_(binding_ids),
+        FileSyncBinding.source == "local_directory",
+        FileSyncBinding.status == "active",
+        FileSyncBinding.mode != "mirror_out",
+    ).order_by(FileSyncBinding.id)
+    return list((await db.scalars(query)).all())
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -117,6 +132,11 @@ async def get_admin_sync_status(
             # 这里只是用户存储根下的相对目录，不返回服务器绝对路径。
             "rootPath": row.root_path,
             "revision": row.revision,
+            "watcherStatus": row.watcher_status,
+            "needsReconcile": row.needs_reconcile,
+            "healthRevision": row.health_revision,
+            "gapRevision": row.gap_revision,
+            "healthErrorCode": row.health_error_code,
             "lastReconciledAt": _iso(row.last_reconciled_at),
             "updatedAt": _iso(row.updated_at),
             "pendingJournal": journals.get(FileSyncStatus.PENDING.value, 0),
@@ -200,51 +220,6 @@ async def get_admin_sync_status(
         },
         "generatedAt": now_utc().isoformat(),
     }
-
-
-async def admin_dry_run_binding(db: AsyncSession, binding_id: int) -> BindingSyncResult:
-    binding = await db.get(FileSyncBinding, binding_id)
-    if binding is None:
-        raise LookupError("同步绑定不存在")
-    if not workspace_shell_supported():
-        raise ValueError("当前存储模式不支持本地文件同步")
-    return await dry_run_local_binding(
-        db, binding.user_id, root_path=binding.root_path, mode=binding.mode
-    )
-
-
-async def admin_reconcile_binding(
-    db: AsyncSession,
-    binding_id: int,
-    *,
-    allow_delete: bool = False,
-) -> BindingSyncResult:
-    binding = await db.get(FileSyncBinding, binding_id)
-    if binding is None:
-        raise LookupError("同步绑定不存在")
-    if not workspace_shell_supported():
-        raise ValueError("当前存储模式不支持本地文件同步")
-    try:
-        _, root = resolve_local_binding_root(binding.user_id, binding.root_path)
-        await cleanup_stale_conflicts(db, binding, root=root)
-    except (OSError, ValueError, LookupError):
-        # 正式对账仍由后续同步流程返回具体错误；历史绑定失效时不阻塞其它绑定。
-        pass
-    result = await sync_local_binding(
-        db, binding.user_id, root_path=binding.root_path, mode=binding.mode,
-        allow_delete=allow_delete,
-    )
-    if result.summary.entity_ids or result.summary.conflicts:
-        outbox = await enqueue_file_event(
-            db, binding.user_id, operation="refresh", source="local_directory",
-            entity_ids=result.summary.entity_ids, revision=binding.revision,
-        )
-        await db.commit()
-        await deliver_file_event(db, outbox)
-        await db.commit()
-    else:
-        await db.commit()
-    return result
 
 
 async def admin_resolve_conflict(

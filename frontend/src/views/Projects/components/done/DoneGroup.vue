@@ -18,7 +18,7 @@
         <span class="month-name">{{ group.label }}</span><span class="month-cnt">{{ group.items.length }}</span><FlipChevron :open="group.open" :size="8" />
       </button>
       <div :key="`${group.key}-cards`" class="month-folder" data-layout-content :data-layout-key="`${group.year}${group.month}`" :data-layout-open="group.open ? 'true' : 'false'">
-        <DoneCardList :projects="group.items" :is-project-detached="isProjectDetached" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
+        <DoneCardList v-if="group.open" :projects="group.items" :is-project-detached="isProjectDetached" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
       </div>
     </div>
   </template>
@@ -29,7 +29,7 @@
         <span class="year-label undated">{{ group.label }}</span><span class="year-cnt">{{ group.items.length }}</span>
       </button>
       <div class="year-folder" data-layout-content data-layout-key="__undated" :data-layout-open="isUndatedOpen ? 'true' : 'false'">
-        <DoneCardList :projects="group.items" :is-project-detached="isProjectDetached" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
+        <DoneCardList v-if="isUndatedOpen" :projects="group.items" :is-project-detached="isProjectDetached" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
       </div>
     </div>
   </template>

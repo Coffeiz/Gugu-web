@@ -12,6 +12,18 @@ class OllamaAdapter(ProviderAdapter):
     native_default_base_url = "http://127.0.0.1:11434/api"
     native_cloud_base_url = "https://ollama.com/api"
 
+    def supported_api_formats(self, ai):
+        # 公共协议由用户根据所连接的 Ollama 服务端/版本选择；原生 API
+        # 继续通过 ollama_api_mode 单独表达，不混入公共协议集合。
+        return ("openai", "responses", "anthropic")
+
+    def default_base_url_for(self, ai) -> str:
+        if getattr(ai, "ollama_api_mode", "native") == "native":
+            return self.native_cloud_base_url if getattr(ai, "ollama_mode", "local") == "cloud" \
+                else self.native_default_base_url
+        return self.cloud_base_url if getattr(ai, "ollama_mode", "local") == "cloud" \
+            else self.default_base_url
+
     def resolve_base_url(self, ai) -> str:
         if getattr(ai, "ollama_api_mode", "native") == "native":
             return self.resolve_native_base_url(ai)

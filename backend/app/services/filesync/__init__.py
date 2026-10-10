@@ -21,12 +21,22 @@ from .bindings import (
     get_user_binding,
     list_user_bindings,
     list_user_conflicts,
+    prepare_local_binding,
     resolve_local_binding_root,
     resolve_sync_conflict,
     sync_local_binding,
     sync_existing_binding,
 )
 from .outbox import deliver_file_event, deliver_pending_file_events, enqueue_file_event
+from .jobs import (
+    ReconcileRunError,
+    enqueue_reconcile_run,
+    get_reconcile_run,
+    list_reconcile_runs,
+    request_run_cancel,
+    serialize_reconcile_run,
+    notify_run_changed,
+)
 from .watcher import FileSyncWatcherManager
 
 __all__ = [
@@ -38,7 +48,11 @@ __all__ = [
     "BindingSyncResult", "dry_run_local_binding", "sync_local_binding",
     "sync_existing_binding",
     "get_user_binding", "list_user_bindings", "list_user_conflicts",
+    "prepare_local_binding",
     "resolve_local_binding_root", "resolve_sync_conflict",
     "enqueue_file_event", "deliver_file_event", "deliver_pending_file_events",
     "FileSyncWatcherManager",
+    "ReconcileRunError", "enqueue_reconcile_run", "get_reconcile_run",
+    "list_reconcile_runs", "request_run_cancel", "serialize_reconcile_run",
+    "notify_run_changed",
 ]

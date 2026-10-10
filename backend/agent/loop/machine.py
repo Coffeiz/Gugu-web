@@ -18,6 +18,7 @@ from agent import core as _core
 from agent.context.assembly.area import MessageArea
 from agent.errors import describe_llm_error
 from agent.loop import watchdog as _watchdog
+from agent.runtime.cancellation import RunCancellation, RunCancellationRequested
 
 _parallel_traj_log = logging.getLogger("agent.traj")
 
@@ -38,6 +39,60 @@ def _allow_tool_images(model_cfg: Any) -> bool:
     # 与当前用户附件 resolve_for_message 使用同一套显式配置/能力判断，不能只看
     # provider capability snapshot：用户手动开启 image 时 snapshot 可能仍未探测。
     return chat_attach.image_ready(model_cfg)
+
+
+def _llm_diagnostic_tag(value: Any) -> str:
+    text = str(value or "unknown")[:80]
+    return "".join(char for char in text if char.isalnum() or char in "._-:") or "unknown"
+
+
+def _llm_diagnostic_context(run_id: str, round_id: str, ai: Any, driver: Any, ctx: Any) -> str:
+    """构造不含 prompt、工具参数、响应正文或凭据的 provider 诊断关联信息。"""
+
+    budget = getattr(ctx, "max_tokens", getattr(ctx, "max_output_tokens", None))
+    try:
+        budget = max(0, int(budget)) if budget is not None else "unknown"
+    except (TypeError, ValueError):
+        budget = "unknown"
+    return (
+        f"agent.llm.call run_id={_llm_diagnostic_tag(run_id)} round={_llm_diagnostic_tag(round_id)} "
+        f"provider={_llm_diagnostic_tag(getattr(ai, 'provider', None))} "
+        f"model={_llm_diagnostic_tag(getattr(ai, 'model', None) or getattr(ctx, 'model', None))} "
+        f"format={_llm_diagnostic_tag(getattr(driver, 'api_format', None))} output_token_budget={budget}"
+    )
+
+
+def _record_provider_round_diagnostic(
+    *, run_id: str, round_id: str, ai: Any, driver: Any, ctx: Any, result: Any,
+) -> None:
+    """只记录截断、不完整或空结果等异常轮次的无内容诊断字段。"""
+    finish_reason = str(result.finish_reason or "").lower()
+    incomplete_reason = str(result.incomplete_reason or "").lower()
+    if not (
+        incomplete_reason
+        or finish_reason in {"length", "max_tokens", "incomplete", "failed"}
+        or (result.output_token_budget and result.usage_out >= result.output_token_budget)
+        or (not result.text.strip() and not result.tool_calls)
+    ):
+        return
+
+    from app.core.redaction import diag_log_raw
+    diag_log_raw(
+        "agent.llm.round_incomplete",
+        json.dumps({
+            "run_id": run_id,
+            "round_id": round_id,
+            "provider": _llm_diagnostic_tag(getattr(ai, "provider", None)),
+            "model": _llm_diagnostic_tag(getattr(ai, "model", None) or getattr(ctx, "model", None)),
+            "api_format": _llm_diagnostic_tag(driver.api_format),
+            "output_token_budget": result.output_token_budget,
+            "output_tokens": int(result.usage_out or 0),
+            "finish_reason": result.finish_reason,
+            "incomplete_reason": result.incomplete_reason,
+            "has_text": bool(result.text.strip()),
+            "tool_call_count": len(result.tool_calls or []),
+        }, ensure_ascii=False, separators=(",", ":")),
+    )
 
 
 async def run_loop(
@@ -207,17 +262,26 @@ async def run_loop(
             area_revision = messages.revision
             try:
                 try:
-                    result = await compaction.compact_context(
-                        messages, session_id=session_id,
-                        fixed_prefix_size=messages.fixed_prefix_size,
-                        protected_from=protected_from,
-                        protected_anchor_index=run_start_index,
-                        model_cfg=ai,
-                        system_text=system_text,
-                        # 分支要带上本 run 的工具声明，provider 才算得出同一份可缓存
-                        # 前缀（详见 compaction._generate_append_summary）。
-                        branch_tools=getattr(ctx, "tools", None),
+                    result = await RunCancellation(session_id).dispatch(
+                        lambda: compaction.compact_context(
+                            messages, session_id=session_id,
+                            fixed_prefix_size=messages.fixed_prefix_size,
+                            protected_from=protected_from,
+                            protected_anchor_index=run_start_index,
+                            # 与持久历史重建使用同一条上一 run 保留边界；否则
+                            # run 内会把上一 run 的保留轮次压进摘要，而 DB baseline
+                            # 仍保留原文，下一 run 重建后请求前缀就会发生变化。
+                            protected_previous_from=messages.protected_history_start,
+                            model_cfg=ai,
+                            system_text=system_text,
+                            # 分支复用本 run 的工具声明，保持可缓存前缀一致。
+                            branch_tools=getattr(ctx, "tools", None),
+                        ),
+                        request_id=None,
                     )
+                except RunCancellationRequested:
+                    # 中断不是摘要失败，不得转入确定性裁切或继续下一轮。
+                    raise
                 except Exception as exc:
                     # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成
                     # “开小差”并丢掉本轮已有输出。
@@ -367,6 +431,7 @@ async def run_loop(
             result = None
             round_number += 1
             round_id = f"round-{round_number}"
+            diagnostic_context = _llm_diagnostic_context(run_id, round_id, ai, driver, ctx)
             run_round_start_indices.append((
                 round_number,
                 len(messages.provider_projection()),
@@ -514,10 +579,18 @@ async def run_loop(
                 # 429 限流与 529 过载同属「上游忙」，按状态码判定、与具体 SDK 解耦
                 # （anthropic/openai 两条链路的重试用尽都落到这里）
                 attempts_done = int(getattr(e, "attempt", 0) or 0)
-                error_info = describe_llm_error(e, attempts=attempts_done)
+                error_info = describe_llm_error(
+                    e, attempts=attempts_done, diagnostic_context=diagnostic_context,
+                )
                 yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
+                from app.core.errors import AppError
+                if isinstance(e, AppError):
+                    if reasoning_state is not None:
+                        await reasoning_state.failed(e.code)
+                    yield f"data: {_core.json.dumps({'type': 'error', 'detail': e.public_message}, ensure_ascii=False)}\n\n"
+                    return
                 if reasoning_state is not None:
                     await reasoning_state.failed("provider_rejected")
                 from agent.context.budget import is_context_overflow_error
@@ -554,10 +627,7 @@ async def run_loop(
                 _core._log.error("LLM 调用中途出错：%s", type(e).__name__)
                 error_info = describe_llm_error(
                     e,
-                    diagnostic_context=(
-                        f"agent.core.main_loop provider={getattr(ai, 'provider', '') or 'unknown'} "
-                        f"format={driver.api_format}"
-                    ),
+                    diagnostic_context=diagnostic_context,
                 )
                 yield f"data: {_core.json.dumps(error_info.as_event(), ensure_ascii=False)}\n\n"
                 return
@@ -585,7 +655,28 @@ async def run_loop(
                 output=int(result.usage_out or 0),
                 cache_read=int(result.cache_tokens or 0),
                 cache_write=int(result.cache_write_tokens or 0),
+                output_token_budget=result.output_token_budget,
+                finish_reason=result.finish_reason,
+                incomplete_reason=result.incomplete_reason,
             )
+            _record_provider_round_diagnostic(
+                run_id=run_id, round_id=round_id, ai=ai, driver=driver, ctx=ctx, result=result,
+            )
+
+            finish_reason = str(result.finish_reason or "").lower()
+            round_incomplete = bool(result.incomplete_reason) or finish_reason in {
+                "length", "max_tokens", "incomplete",
+            }
+            if round_incomplete:
+                if reasoning_state is not None:
+                    await reasoning_state.failed("provider_incomplete")
+                detail = (
+                    "模型响应不完整，未执行其中的工具调用。请缩短请求或调高输出 Token 预算后重试。"
+                    if result.tool_calls else
+                    "模型输出未完整结束；当前内容可能被截断，请继续追问或调高输出 Token 预算。"
+                )
+                yield f"data: {_core.json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+                return
 
             _requires_tools = result.requires_tools
             if _requires_tools is None:

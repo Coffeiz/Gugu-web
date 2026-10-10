@@ -139,6 +139,9 @@ def parse_upload_filename(filename: str) -> Tuple[str, str]:
     # 含多个点的名称（如 .env.local）仍按最后一个点拆分。
     if filename.startswith(".") and filename.count(".") == 1 and len(filename) > 1:
         return filename, "FILE"
+    # 上传端偶尔会把无扩展名点文件传成末尾带点的名字；末尾点不是一个扩展名。
+    if filename.endswith(".") and len(filename) > 1:
+        return filename[:-1], "FILE"
     parts = filename.rsplit('.', 1)
     return parts[0], parts[1].upper()[:10] if len(parts) > 1 else 'FILE'
 
