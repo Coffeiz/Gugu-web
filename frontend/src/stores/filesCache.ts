@@ -42,6 +42,10 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   const loading    = ref(false)
   const fileLookups = new Map<string, Promise<FileMeta | null>>()
 
+  // 画布文件卡会在节点更新时按 ID 读取文件。缓存数组用于列表/目录视图，单项读取则用
+  // 这个惰性索引，避免每张卡都在线性扫描整个文件缓存。
+  const _fileById = computed(() => new Map(allFiles.value.map(file => [file.id, file])))
+
   // ── 索引 ──────────────────────────────────────────────────────────────────
   // files key: folderId (int) | 'workspace:{directoryId}' | 'proj:{id}' | 'personal'
   const _fileIdx = computed(() => {
@@ -199,7 +203,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   }
 
   function getFile(id: number) {
-    return allFiles.value.find(f => f.id === id) ?? null
+    return _fileById.value.get(id) ?? null
   }
 
   /** Mind 画布只需读取实际引用的文件；按 ID 加载并合并缓存，不触发文件库全量扫描。 */
