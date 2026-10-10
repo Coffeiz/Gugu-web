@@ -100,6 +100,50 @@ async def test_rest_task_channel_update_without_qq_delivery_preserves_existing_g
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("platform", ["feishu", "telegram"])
+async def test_im_group_delivery_target_is_scoped_to_users_current_bot(db, user_a, user_b, platform):
+    from fastapi import HTTPException
+    from app.api.v1.scheduled_tasks import _resolve_im_delivery
+    from app.models import ConversationSession, UserBot
+
+    bot = UserBot(
+        user_id=user_a.id, platform=platform, app_id=f"{platform}-app",
+        owner_platform_user_id="owner-platform-user",
+    )
+    db.add(bot)
+    await db.flush()
+    db.add(ConversationSession(
+        user_id=user_a.id, source=platform, bot_id=str(bot.id), chat_type="group",
+        chat_id="group-a", title="可选群",
+    ))
+    db.add(ConversationSession(
+        user_id=user_b.id, source=platform, bot_id="other-bot", chat_type="group",
+        chat_id="group-b", title="他人的群",
+    ))
+    await db.commit()
+
+    target = await _resolve_im_delivery(db, user_a, platform, {"mode": "group", "chat_id": "group-a"})
+    assert target[platform]["chat_type"] == "group"
+    assert target[platform]["chat_id"] == "group-a"
+    assert target[platform]["channel_id"] == str(bot.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _resolve_im_delivery(db, user_a, platform, {"mode": "group", "chat_id": "group-b"})
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_wechat_is_not_a_group_delivery_target(db, user_a):
+    from fastapi import HTTPException
+    from app.api.v1.scheduled_tasks import _resolve_im_delivery
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _resolve_im_delivery(db, user_a, "wechat", {"mode": "group", "chat_id": "group-a"})
+    assert exc_info.value.status_code == 400
+    assert "不支持该 IM 投递平台" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("initial", "requested", "expected"),
     [([], ["send_email"], ["send_email"]), (["send_email"], [], [])],

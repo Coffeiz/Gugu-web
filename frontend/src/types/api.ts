@@ -6524,6 +6524,15 @@ export interface components {
              *     ]
              */
             channels: string[];
+            im_delivery?: {
+                [key: string]: {
+                    mode: "private" | "group";
+                    chat_id?: string;
+                };
+            } | null;
+            qq_delivery?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Enabled
              * @default true
@@ -6561,6 +6570,15 @@ export interface components {
             end_at?: string | null;
             /** Channels */
             channels?: string[] | null;
+            im_delivery?: {
+                [key: string]: {
+                    mode: "private" | "group";
+                    chat_id?: string;
+                };
+            } | null;
+            qq_delivery?: {
+                [key: string]: unknown;
+            } | null;
             /** Enabled */
             enabled?: boolean | null;
             /** Authorized Tools */
@@ -6651,6 +6669,12 @@ export interface components {
             name: string;
             qq_delivery?: {
                 [key: string]: unknown;
+            } | null;
+            im_delivery?: {
+                [key: string]: {
+                    mode: "private" | "group";
+                    chat_id?: string;
+                };
             } | null;
         };
         /** TokenResponse */

@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### What's New
+
+- **Scheduled task and event delivery**: add Telegram notifications, private/group destination selection for Feishu and Telegram, and weekly schedule ordering based on the user's week-start preference.
+
+### 更新内容
+
+- **定时任务与活动提醒**：支持 Telegram 通知、飞书和 Telegram 的私聊/群聊目标选择；每周任务按用户设置的一周起始日排列星期。
+
 ## [1.6.1] - 2026-10-08
 
 ### What's New

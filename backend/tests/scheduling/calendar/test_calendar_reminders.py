@@ -48,6 +48,18 @@ async def test_repeated_add_for_same_fire_time_is_idempotent(db, user_a):
     assert len(rows) == 1
 
 
+async def test_calendar_reminder_accepts_telegram_channel(db, user_a):
+    event = await _event(db, user_a)
+
+    created, error = await replace_event_reminders(db, user_a.id, event, [
+        {"lead_minutes": 15, "channels": ["web", "telegram"]},
+    ])
+
+    assert error is None
+    assert len(created) == 1
+    assert created[0].channels == "web,telegram"
+
+
 async def test_scheduled_task_api_returns_existing_event_reminder(db, user_a):
     event = await _event(db, user_a)
     body = TaskCreate(

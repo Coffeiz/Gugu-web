@@ -449,7 +449,12 @@ async def me(current_user: User = Depends(get_current_user), db: AsyncSession = 
     from sqlalchemy import select as _select
     im_channels = []
     feishu_reach = await get_imreach(current_user.id, "feishu")
-    if feishu_reach:
+    feishu_bot = await db.scalar(_select(UserBot).where(
+        UserBot.user_id == current_user.id,
+        UserBot.platform == "feishu",
+        UserBot.enabled == True,
+    ))
+    if feishu_bot or feishu_reach:
         im_channels.append("feishu")
     qq_bot = await db.scalar(_select(UserBot).where(
         UserBot.user_id == current_user.id,
@@ -458,9 +463,20 @@ async def me(current_user: User = Depends(get_current_user), db: AsyncSession = 
     ))
     if qq_bot:
         im_channels.append("qq")
-    wechat_reach = await get_imreach(current_user.id, "wechat")
-    if wechat_reach:
+    wechat_bot = await db.scalar(_select(UserBot).where(
+        UserBot.user_id == current_user.id,
+        UserBot.platform == "wechat",
+        UserBot.enabled == True,
+    ))
+    if wechat_bot or await get_imreach(current_user.id, "wechat"):
         im_channels.append("wechat")
+    telegram_bot = await db.scalar(_select(UserBot).where(
+        UserBot.user_id == current_user.id,
+        UserBot.platform == "telegram",
+        UserBot.enabled == True,
+    ))
+    if telegram_bot:
+        im_channels.append("telegram")
     current_user._im_channels = im_channels
     return UserResponse.from_user(current_user)
 

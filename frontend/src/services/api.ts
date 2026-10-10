@@ -322,6 +322,7 @@ export interface ScheduledTaskInput {
   channels?: string[]
   enabled?: boolean
   qq_delivery?: { mode: 'private' } | { mode: 'group'; chat_id: string } | null
+  im_delivery?: Partial<Record<'qq' | 'feishu' | 'telegram', { mode: 'private' } | { mode: 'group'; chat_id: string }>>
   event_id?: number | null
   authorized_tools?: string[]
   email_attachment_file_ids?: number[]
@@ -346,6 +347,7 @@ export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedul
 export const scheduledTasksApi = {
   list:         ()                  => get<{ tasks: ScheduledTaskResponse[] }>('/scheduled-tasks'),
   listQqTargets: ()                 => get<{ groups: { chat_id: string; title: string }[] }>('/scheduled-tasks/qq-targets'),
+  listDeliveryTargets: (platform: 'qq' | 'feishu' | 'telegram') => get<{ private_available: boolean; groups: { chat_id: string; title: string }[] }>(`/scheduled-tasks/delivery-targets/${platform}`),
   listForEvent: (eventId: number)   => get(`/scheduled-tasks?event_id=${eventId}`),   // 某日历活动绑定的提醒
   create:       (data: Partial<ScheduledTaskInput>)         => post<ScheduledTaskResponse>('/scheduled-tasks', data),
   update:       (id: number, data: Partial<ScheduledTaskInput>, meta?: RequestMeta) => patch<ScheduledTaskResponse>(`/scheduled-tasks/${id}`, data, meta),
