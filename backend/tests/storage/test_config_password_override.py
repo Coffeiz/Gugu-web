@@ -239,20 +239,114 @@ def test_inotify_policy_projection_tracks_atomic_override_replacements(tmp_path,
     monkeypatch.setattr(cfg, "OVERRIDE_FILE", override)
     monkeypatch.setenv("GUGU_INOTIFY_POLICY_DIR", str(policy_dir))
 
-    cfg.write_override_json({"filesync": {"watch_hard_limit": 131072}})
+    cfg.write_override_json(
+        {"filesync": {"watch_hard_limit": 131072}}, project_inotify_policy=True,
+    )
     policy = policy_dir / "policy.json"
     first_inode = policy.stat().st_ino
     assert json.loads(policy.read_text(encoding="utf-8")) == {
         "filesync": {"watch_hard_limit": 131072},
     }
 
-    cfg.write_override_json({"filesync": {"watch_hard_limit": 262144}})
+    cfg.write_override_json(
+        {"filesync": {"watch_hard_limit": 262144}}, project_inotify_policy=True,
+    )
 
     assert policy.stat().st_ino != first_inode
     assert json.loads(policy.read_text(encoding="utf-8")) == {
         "filesync": {"watch_hard_limit": 262144},
     }
     assert policy.stat().st_mode & 0o777 == 0o600
+    assert list(policy_dir.glob("*.tmp")) == []
+
+
+def test_inotify_policy_projection_uses_environment_default_when_override_omits_limit(
+    tmp_path, monkeypatch,
+):
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    monkeypatch.setenv("GUGU_INOTIFY_POLICY_DIR", str(policy_dir))
+    monkeypatch.setenv("FILESYNC__WATCH_HARD_LIMIT", "131072")
+
+    cfg.write_inotify_policy_projection({"ai": {"model": "test-model"}})
+
+    assert json.loads((policy_dir / "policy.json").read_text(encoding="utf-8")) == {
+        "filesync": {"watch_hard_limit": 131072},
+    }
+
+
+@pytest.mark.asyncio
+async def test_unrelated_admin_setting_save_does_not_depend_on_policy_directory(
+    tmp_path, monkeypatch,
+):
+    override = tmp_path / "config.override.json"
+    override.write_text(
+        '{"filesync":{"watch_hard_limit":131072},"ai":{"model":"old-model"}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", override)
+    monkeypatch.setenv("GUGU_INOTIFY_POLICY_DIR", str(tmp_path / "missing-policy"))
+    monkeypatch.setattr(
+        cfg, "get_settings",
+        lambda: cfg.AppSettings(db=cfg.DatabaseSettings(password="Test_db_password_123")),
+    )
+
+    await cfg.save_override({"ai": {"model": "new-model"}})
+
+    assert json.loads(override.read_text(encoding="utf-8"))["ai"]["model"] == "new-model"
+
+
+def test_changed_hard_limit_fails_before_override_when_policy_directory_is_missing(
+    tmp_path, monkeypatch,
+):
+    override = tmp_path / "config.override.json"
+    original = b'{"filesync":{"watch_hard_limit":131072}}\n'
+    override.write_bytes(original)
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", override)
+    monkeypatch.setenv("GUGU_INOTIFY_POLICY_DIR", str(tmp_path / "missing-policy"))
+
+    with pytest.raises(FileNotFoundError, match="策略目录尚未初始化"):
+        cfg.write_override_json(
+            {"filesync": {"watch_hard_limit": 262144}}, project_inotify_policy=True,
+        )
+
+    assert override.read_bytes() == original
+
+
+def test_inotify_policy_publish_failure_rolls_back_override_and_policy(
+    tmp_path, monkeypatch,
+):
+    override = tmp_path / "config.override.json"
+    override.write_text('{"ai":{"model":"old-model"}}\n', encoding="utf-8")
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    policy = policy_dir / "policy.json"
+    policy.write_text('{"filesync":{"watch_hard_limit":131072}}\n', encoding="utf-8")
+    original_override = override.read_bytes()
+    original_policy = policy.read_bytes()
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", override)
+    monkeypatch.setenv("GUGU_INOTIFY_POLICY_DIR", str(policy_dir))
+    original_replace = cfg.os.replace
+    should_fail = True
+
+    def fail_policy_publish_once(source, destination):
+        nonlocal should_fail
+        if Path(destination) == policy and should_fail:
+            should_fail = False
+            raise OSError("simulated policy publish failure")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(cfg.os, "replace", fail_policy_publish_once)
+
+    with pytest.raises(OSError, match="simulated policy publish failure"):
+        cfg.write_override_json({
+            "ai": {"model": "new-model"},
+            "filesync": {"watch_hard_limit": 262144},
+        }, project_inotify_policy=True)
+
+    assert override.read_bytes() == original_override
+    assert policy.read_bytes() == original_policy
+    assert list(tmp_path.glob("*.tmp")) == []
     assert list(policy_dir.glob("*.tmp")) == []
 
 

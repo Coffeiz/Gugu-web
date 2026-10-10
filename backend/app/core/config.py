@@ -765,51 +765,240 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[k] = v
 
 
-def write_override_json(data: dict) -> None:
-    """原子写入用户运行配置，避免读到半截 JSON 或留下半写文件。"""
+def write_override_json(data: dict, *, project_inotify_policy: bool = False) -> None:
+    """原子写入用户配置；策略投影失败时回滚主配置，避免静默部分成功。"""
     OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if project_inotify_policy:
+        try:
+            original = OVERRIDE_FILE.read_bytes()
+        except FileNotFoundError:
+            original = None
+        staged_policy = _prepare_inotify_policy_projection(data)
+    else:
+        original = None
+        staged_policy = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{OVERRIDE_FILE.name}.",
+            suffix=".tmp",
+            dir=OVERRIDE_FILE.parent,
+            text=True,
+        )
+    except BaseException:
+        _discard_staged_policy(staged_policy)
+        raise
+    override_written = False
+    main_phase_completed = False
+    try:
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, ensure_ascii=False, indent=2))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temp_name, 0o600)
+            try:
+                os.replace(temp_name, OVERRIDE_FILE)
+            except OSError as exc:
+                # systemd ProtectSystem=strict 配合只读目录时，目标文件本身可写，
+                # 但临时文件无法通过 rename 替换目标。仅对明确的 EBUSY 原位写入。
+                if exc.errno != errno.EBUSY:
+                    raise
+                override_written = True
+                with open(OVERRIDE_FILE, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(data, ensure_ascii=False, indent=2))
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(OVERRIDE_FILE, 0o600)
+                os.unlink(temp_name)
+            else:
+                override_written = True
+            dir_fd = os.open(OVERRIDE_FILE.parent, os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except BaseException:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            if override_written:
+                _restore_override_bytes(original)
+                override_written = False
+            raise
+
+        main_phase_completed = True
+        _publish_staged_policy(staged_policy)
+    except BaseException as projection_error:
+        rollback_errors = []
+        if main_phase_completed and staged_policy is not None:
+            try:
+                _restore_policy_projection(staged_policy)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if main_phase_completed and override_written:
+            try:
+                _restore_override_bytes(original)
+                override_written = False
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if rollback_errors:
+            raise RuntimeError(
+                "inotify 策略发布失败，补偿回滚未完整成功；需检查配置状态"
+            ) from rollback_errors[0]
+        raise projection_error
+    finally:
+        _discard_staged_policy(staged_policy)
+
+
+def _restore_override_bytes(original: bytes | None) -> None:
+    """补偿恢复主配置；仅在策略投影提交失败后调用。"""
+    if original is None:
+        try:
+            OVERRIDE_FILE.unlink()
+        except FileNotFoundError:
+            pass
+        return
     fd, temp_name = tempfile.mkstemp(
-        prefix=f".{OVERRIDE_FILE.name}.",
+        prefix=f".{OVERRIDE_FILE.name}.rollback.",
         suffix=".tmp",
         dir=OVERRIDE_FILE.parent,
-        text=True,
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, ensure_ascii=False, indent=2))
-            handle.write("\n")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(original)
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(temp_name, 0o600)
-        os.replace(temp_name, OVERRIDE_FILE)
+        try:
+            os.replace(temp_name, OVERRIDE_FILE)
+        except OSError as exc:
+            if exc.errno != errno.EBUSY:
+                raise
+            with open(OVERRIDE_FILE, "wb") as handle:
+                handle.write(original)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(OVERRIDE_FILE, 0o600)
+            os.unlink(temp_name)
         dir_fd = os.open(OVERRIDE_FILE.parent, os.O_DIRECTORY)
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
-    except OSError as exc:
-        # systemd ProtectSystem=strict 配合只读目录时，目标文件本身可写，
-        # 但临时文件无法通过 rename 替换目标。仅对明确的 EBUSY 原位写入，
-        # 其他错误继续保留原子写入的失败语义。
-        if exc.errno == errno.EBUSY:
-            with open(OVERRIDE_FILE, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(data, ensure_ascii=False, indent=2))
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(OVERRIDE_FILE, 0o600)
-            try:
-                os.unlink(temp_name)
-            except FileNotFoundError:
-                pass
-            write_inotify_policy_projection(data)
-            return
+    except BaseException:
         try:
             os.unlink(temp_name)
         except FileNotFoundError:
             pass
         raise
-    write_inotify_policy_projection(data)
+
+
+def _discard_staged_policy(staged: tuple[Path, str, bytes | None] | None) -> None:
+    if staged is None:
+        return
+    try:
+        os.unlink(staged[1])
+    except FileNotFoundError:
+        pass
+
+
+def _effective_watch_hard_limit(data: dict) -> int:
+    filesync = data.get("filesync", {}) or {}
+    if not isinstance(filesync, dict):
+        raise ValueError("filesync 配置必须是对象")
+    environment_defaults = AppSettings().filesync.model_dump()
+    return FileSyncSettings.model_validate({
+        **environment_defaults,
+        **filesync,
+    }).watch_hard_limit
+
+
+def _restore_policy_projection(staged: tuple[Path, str, bytes | None]) -> None:
+    """策略发布出错时恢复 helper 看到的上一版策略。"""
+    target, _temp_name, original = staged
+    if original is None:
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            pass
+    else:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=".policy.rollback.", suffix=".tmp", dir=target.parent,
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(original)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temp_name, 0o600)
+            os.replace(temp_name, target)
+        except BaseException:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            raise
+    dir_fd = os.open(target.parent, os.O_DIRECTORY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _prepare_inotify_policy_projection(
+    data: dict, raw_policy_dir: str | Path | None = None,
+) -> tuple[Path, str, bytes | None] | None:
+    raw_policy_dir = raw_policy_dir or os.getenv("GUGU_INOTIFY_POLICY_DIR")
+    if not raw_policy_dir:
+        return None
+    # BaseSettings 读取进程环境与 .env；Admin override 再覆盖环境默认值。
+    hard_limit = _effective_watch_hard_limit(data)
+    target = Path(raw_policy_dir) / "policy.json"
+    if not target.parent.is_dir():
+        raise FileNotFoundError("inotify 策略目录尚未初始化")
+    try:
+        original_policy = target.read_bytes()
+    except FileNotFoundError:
+        original_policy = None
+    fd, temp_name = tempfile.mkstemp(
+        prefix=".policy.", suffix=".tmp", dir=target.parent, text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(
+                {"filesync": {"watch_hard_limit": hard_limit}},
+                handle,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+    return target, temp_name, original_policy
+
+
+def _publish_staged_policy(
+    staged: tuple[Path, str, bytes | None] | None,
+) -> None:
+    if staged is None:
+        return
+    target, temp_name, _original_policy = staged
+    os.replace(temp_name, target)
+    dir_fd = os.open(target.parent, os.O_DIRECTORY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def write_inotify_policy_projection(
@@ -819,46 +1008,11 @@ def write_inotify_policy_projection(
     raw_policy_dir = policy_dir or os.getenv("GUGU_INOTIFY_POLICY_DIR")
     if not raw_policy_dir:
         return
-    filesync = data.get("filesync", {}) or {}
-    if not isinstance(filesync, dict):
-        raise ValueError("filesync 配置必须是对象")
-    validated = FileSyncSettings.model_validate(filesync)
-    target = Path(raw_policy_dir) / "policy.json"
-    if not target.parent.is_dir():
-        raise FileNotFoundError("inotify 策略目录尚未初始化")
-    fd, temp_name = tempfile.mkstemp(
-        prefix=".policy.", suffix=".tmp", dir=target.parent, text=True,
-    )
+    staged = _prepare_inotify_policy_projection(data, raw_policy_dir)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(
-                {"filesync": {"watch_hard_limit": validated.watch_hard_limit}},
-                handle,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temp_name, 0o600)
-        os.replace(temp_name, target)
-        dir_fd = os.open(target.parent, os.O_DIRECTORY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-    except OSError:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-        raise
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-        raise
+        _publish_staged_policy(staged)
+    finally:
+        _discard_staged_policy(staged)
 
 
 # ── 配置缓存（mtime 感知，多 worker 安全）───────────────────────────────────
@@ -1024,7 +1178,7 @@ async def save_override(patch: dict) -> AppSettings:
         if not isinstance(existing, dict):
             raise ValueError("配置文件根节点必须是对象")
     _merge_override_patch(existing, patch)
-    write_override_json(existing)
+    write_override_json(existing, project_inotify_policy="filesync" in patch)
     invalidate_settings_cache()
     new_settings = get_settings()
     if "redis" in patch:

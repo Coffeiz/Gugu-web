@@ -96,12 +96,18 @@ def test_host_manager_observes_admin_limit_after_atomic_source_replacement(tmp_p
     monkeypatch.setattr(config, "OVERRIDE_FILE", override)
     monkeypatch.setenv("GUGU_INOTIFY_POLICY_DIR", str(policy_dir))
 
-    config.write_override_json({"filesync": {"watch_hard_limit": 131_072}})
+    config.write_override_json(
+        {"filesync": {"watch_hard_limit": 131_072}},
+        project_inotify_policy=True,
+    )
     first_inode = policy_file.stat().st_ino
     monkeypatch.setattr(limitd, "CONFIG_OVERRIDE_PATH", policy_file)
     assert limitd.configured_hard_limit() == 131_072
 
-    config.write_override_json({"filesync": {"watch_hard_limit": 262_144}})
+    config.write_override_json(
+        {"filesync": {"watch_hard_limit": 262_144}},
+        project_inotify_policy=True,
+    )
 
     assert policy_file.stat().st_ino != first_inode
     assert limitd.configured_hard_limit() == 262_144
