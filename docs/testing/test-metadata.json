@@ -1,4 +1,12 @@
 {
+  "frontend/tests/services/apiInFlightDedup.test.ts": {
+    "domain": "frontend-api",
+    "layer": "L0",
+    "owner": "frontend/services",
+    "productionEntry": "frontend/src/services/api.ts",
+    "keyBehavior": "同一用户的完全相同并发 GET 合并为一个请求且各调用方获得独立结果；请求结束后刷新、不同用户或不同路径仍独立请求",
+    "ci": "frontend-test"
+  },
   "backend/ts/packages/filesync-watcher/test/protocol-output.test.ts": {
     "domain": "filesync",
     "layer": "L2",

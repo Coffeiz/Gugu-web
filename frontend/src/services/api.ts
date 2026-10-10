@@ -71,11 +71,37 @@ export const UNDO_CONTEXT_ID = getUndoContextId()
 
 export interface RequestMeta { mutationId?: string; undoGroupId?: string; headers?: Record<string, string> }
 
+// 同一标签页中多个页面/全局组件可能在启动时同时读取同一资源。只合并进行中的
+// GET；请求结束后立即移除，显式刷新仍会访问服务端。
+const inFlightGetRequests = new Map<string, Promise<unknown>>()
+
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
 async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
                                 signal?: AbortSignal, meta?: RequestMeta): Promise<T> {
   const token = getToken()
+  // 不合并无 bearer token 的请求（可能依赖不可见的 HttpOnly 会话 Cookie），也不合并
+  // 带取消信号或调用方自定义头的请求，避免改变其身份或取消语义。
+  const canDeduplicate = method.toUpperCase() === 'GET' && !!token && !signal && !meta && body === null
+  if (!canDeduplicate) return performRequest<T>(method, path, body, isForm, signal, meta, token)
+
+  const key = JSON.stringify([token, path])
+  const cloneResult = (value: T): T =>
+    value === null || value === undefined || typeof value !== 'object' ? value : JSON.parse(JSON.stringify(value)) as T
+  const existing = inFlightGetRequests.get(key)
+  if (existing) return (existing as Promise<T>).then(cloneResult)
+
+  const pending = performRequest<T>(method, path, body, isForm, signal, meta, token)
+  inFlightGetRequests.set(key, pending)
+  const clearPending = () => {
+    if (inFlightGetRequests.get(key) === pending) inFlightGetRequests.delete(key)
+  }
+  void pending.then(clearPending, clearPending)
+  return pending.then(cloneResult)
+}
+
+async function performRequest<T>(method: string, path: string, body: any, isForm: boolean,
+                                 signal: AbortSignal | undefined, meta: RequestMeta | undefined, token: string): Promise<T> {
   const headers: Record<string, string> = {
     'X-Client-Id': CLIENT_ID,
     ...(['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
