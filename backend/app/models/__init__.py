@@ -421,6 +421,10 @@ class FileSyncJournal(Base):
     __table_args__ = (
         UniqueConstraint("binding_id", "idempotency_key", name="uq_file_sync_journal_idempotency"),
         Index("ix_file_sync_journal_binding_revision", "binding_id", "revision"),
+        Index(
+            "ix_file_sync_journal_latest_path",
+            "binding_id", "status", "object_type", "relative_path", "id",
+        ),
         Index("ix_file_sync_journal_user_status", "user_id", "status"),
     )
 

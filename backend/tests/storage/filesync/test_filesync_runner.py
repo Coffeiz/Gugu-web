@@ -713,10 +713,10 @@ async def test_repair_does_not_recreate_missing_root_when_old_records_exist(
 
 
 @pytest.mark.asyncio
-async def test_empty_scan_without_history_does_not_delete_existing_library_file(
+async def test_empty_scan_without_history_creates_reviewable_conflict(
     db, user_a, monkeypatch,
 ):
-    """空根无法证明 DB 文件已删除；无快照也不能把空清单当成缺失依据。"""
+    """空根不自动删除 DB 文件，但应把缺失状态交给管理端逐项确认。"""
     import app.services.filesync.runner as runner
     import app.services.filesync.targeted as targeted
 
@@ -771,8 +771,15 @@ async def test_empty_scan_without_history_does_not_delete_existing_library_file(
     async with db_session._SessionLocal() as check:
         stored_run = await check.get(FileSyncReconcileRun, run.id)
         stored_file = await check.get(File, existing.id)
+        conflict = await check.scalar(select(FileSyncConflict).where(
+            FileSyncConflict.binding_id == binding.id,
+            FileSyncConflict.relative_path == "个人文件/遗留文件.txt",
+            FileSyncConflict.status == "pending",
+        ))
 
-    assert stored_run is not None and stored_run.status == "failed"
+    assert stored_run is not None and stored_run.status == "succeeded"
+    assert stored_run.result_counts["conflicts"] == 1
+    assert conflict is not None and conflict.local_fingerprint is None
     assert stored_file is not None and stored_file.deleted_at is None
     assert stored_file.version == 3
 

@@ -576,6 +576,7 @@ async def _project_batch(
     missing_paths: set[str],
     counts: dict[str, int],
     stop: Event,
+    allow_delete: bool | None = None,
     record_repair_change_deltas: bool = False,
 ) -> bool:
     if stop.is_set():
@@ -601,6 +602,7 @@ async def _project_batch(
             db, scope, candidates, storage_prefix,
         )
         batch = PathEventBatch()
+        allow_delete = scope.allow_delete if allow_delete is None else allow_delete
         observed_folders: dict[str, str] = {}
         verified_files_for_batch: dict[str, tuple[int, int, int, str]] = {}
         transaction_counts: dict[str, int] = {}
@@ -658,7 +660,7 @@ async def _project_batch(
                 transaction_counts["skipped"] = transaction_counts.get("skipped", 0) + 1
                 continue
             if candidate.operation == "delete" and (
-                scope.action != "repair" or not scope.allow_delete
+                scope.action != "repair" or not allow_delete
             ):
                 if candidate.object_type == "file":
                     db.add(FileSyncConflict(
@@ -703,7 +705,7 @@ async def _project_batch(
                 scope.root,
                 batch,
                 options=PathProjectionOptions(
-                    allow_delete=scope.action == "repair" and scope.allow_delete,
+                    allow_delete=scope.action == "repair" and allow_delete,
                     record_quota_deltas=record_repair_change_deltas,
                     # 修复扫描投影的是已经存在于磁盘的事实；即使导入后暂时超额也
                     # 必须登记，完整扫描成功后再统一校准账本，不能丢弃真实文件。
@@ -856,11 +858,11 @@ async def _execute_scope(
                 "符号链接遮蔽了文件库记录；为保护旧记录未应用本次扫描",
                 code="scan_unsupported_symlink",
             )
-        if manifest.scanned_count == 0 and file_count + folder_count:
-            raise ScanIncomplete(
-                "文件库记录仍存在，但完整文件库范围为空；未应用扫描结果",
-                code="scan_empty_with_existing_records",
-            )
+        # 空目录无法证明“过去登记的文件确实应该全部删除”。仍允许进入差异处理，
+        # 但本轮强制关闭自动删除，让缺失文件进入人工冲突处置，而不是任务直接失败。
+        allow_delete_for_scan = scope.allow_delete and not (
+            manifest.scanned_count == 0 and file_count + folder_count > 0
+        )
         storage_prefix = await _check_scope_before_batch(session_factory, scope, signals.stop)
         counts = _empty_counts()
         counts["permissionSkipped"] = manifest.permission_excluded_count
@@ -932,6 +934,7 @@ async def _execute_scope(
                     missing_paths=missing_paths,
                     counts=counts,
                     stop=signals.stop,
+                    allow_delete=allow_delete_for_scan,
                     record_repair_change_deltas=record_repair_change_deltas,
                 )
                 if not projected:
@@ -970,8 +973,22 @@ async def _execute_scope(
         if scope.action == "repair":
             from app.services.storage.quota_ledger import reconcile_user_storage
 
+            quota_deadline = await _current_deadline(session_factory, scope.run_id)
+            quota_timeout = (quota_deadline - now_utc()).total_seconds()
+            if quota_timeout <= 0:
+                signals.timed_out.set()
+                signals.stop.set()
+                raise ScanTimedOut("核对任务超过执行期限")
             async with session_factory() as db:
-                await reconcile_user_storage(db, scope.user_id)
+                try:
+                    await asyncio.wait_for(
+                        reconcile_user_storage(db, scope.user_id),
+                        timeout=quota_timeout,
+                    )
+                except asyncio.TimeoutError as exc:
+                    signals.timed_out.set()
+                    signals.stop.set()
+                    raise ScanTimedOut("配额校准超过核对任务期限") from exc
                 await db.commit()
         return "succeeded", None, counts
     except ScanTimedOut:

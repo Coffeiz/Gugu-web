@@ -134,30 +134,20 @@ async def _find_move_source(
     相同内容不是文件身份。遇到多个已消失的同指纹候选时宁可新建记录，也不猜测
     哪个 File 被移动；候选上限用于限制常见相同内容文件造成的查询工作集。
     """
-    ranked = select(
-        FileSyncJournal.relative_path.label("relative_path"),
-        FileSyncJournal.observed_fingerprint.label("observed_fingerprint"),
-        func.row_number().over(
-            partition_by=FileSyncJournal.relative_path,
-            order_by=FileSyncJournal.id.desc(),
-        ).label("path_rank"),
-    ).where(
+    latest_fingerprint = select(FileSyncJournal.observed_fingerprint).where(
         FileSyncJournal.binding_id == binding.id,
         FileSyncJournal.status == FileSyncStatus.SYNCED,
         FileSyncJournal.object_type == "file",
-        FileSyncJournal.relative_path != relative,
-    ).subquery()
+        literal(scope_prefix) + FileSyncJournal.relative_path == File.storage_key,
+    ).order_by(FileSyncJournal.id.desc()).limit(1).correlate(File).scalar_subquery()
     candidates = (await db.execute(
-        select(File.id, ranked.c.relative_path)
-        .join(
-            ranked,
-            File.storage_key == literal(scope_prefix) + ranked.c.relative_path,
-        )
+        select(File.id, File.storage_key)
         .where(
             File.user_id == binding.user_id,
             File.deleted_at.is_(None),
-            ranked.c.path_rank == 1,
-            ranked.c.observed_fingerprint == observed,
+            File.storage_key.startswith(scope_prefix, autoescape=True),
+            File.storage_key != f"{scope_prefix}{relative}",
+            latest_fingerprint == observed,
         )
         .order_by(File.id)
         .limit(257)
@@ -168,7 +158,10 @@ async def _find_move_source(
     # PostgreSQL rejects FOR UPDATE on a SELECT that contains a window-function
     # subquery. Discover candidates first, then lock only the File rows in a
     # separate query and revalidate their active storage keys.
-    candidate_paths = {file_id: old_relative for file_id, old_relative in candidates}
+    candidate_paths = {
+        file_id: storage_key[len(scope_prefix):]
+        for file_id, storage_key in candidates
+    }
     if not candidate_paths:
         return None
     rows = (await db.scalars(

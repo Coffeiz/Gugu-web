@@ -22,6 +22,7 @@ Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin
 Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
 Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
 Environment="GUGU_SANDBOX_MANAGER_MODE=external"
+Environment="GUGU_INOTIFY_POLICY_DIR=/var/lib/gugu-inotify-limitd/policy"
 Environment="DB_STARTUP_TIMEOUT=10"
 # DDL 由 deploy/migrate 步骤单独执行，禁止 2 个 uvicorn worker 在业务流量启动时建表。
 Environment="GUGU_STARTUP_MIGRATIONS=0"
@@ -43,7 +44,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 # 运行时需要写的目标（必须真实存在，否则 systemd namespace 报 226）
-ReadWritePaths=__DATA_DIR__ __APP_DIR__ __APP_DIR__/logs __APP_DIR__/var/rag-index __APP_DIR__/config.override.json
+ReadWritePaths=__DATA_DIR__ __APP_DIR__ __APP_DIR__/logs __APP_DIR__/var/rag-index __APP_DIR__/config.override.json /var/lib/gugu-inotify-limitd/policy
 
 [Install]
 WantedBy=multi-user.target

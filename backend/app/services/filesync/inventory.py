@@ -222,19 +222,28 @@ async def _stage_folders(
                 ):
                     continue
                 folder_paths.append((folder.id, relative, int(folder.version or 1)))
+            ranked_folder_journals = select(
+                FileSyncJournal.relative_path.label("relative_path"),
+                FileSyncJournal.observed_fingerprint.label("observed_fingerprint"),
+                func.row_number().over(
+                    partition_by=FileSyncJournal.relative_path,
+                    order_by=FileSyncJournal.id.desc(),
+                ).label("path_rank"),
+            ).where(
+                FileSyncJournal.binding_id == binding_id,
+                FileSyncJournal.status == FileSyncStatus.SYNCED,
+                FileSyncJournal.object_type == "folder",
+                FileSyncJournal.relative_path.in_([path for _, path, _ in folder_paths]),
+            ).subquery()
             journal_rows = (await db.execute(
-                select(FileSyncJournal.relative_path, FileSyncJournal.observed_fingerprint)
-                .where(
-                    FileSyncJournal.binding_id == binding_id,
-                    FileSyncJournal.status == FileSyncStatus.SYNCED,
-                    FileSyncJournal.object_type == "folder",
-                    FileSyncJournal.relative_path.in_([path for _, path, _ in folder_paths]),
-                )
-                .order_by(FileSyncJournal.id.desc())
+                select(
+                    ranked_folder_journals.c.relative_path,
+                    ranked_folder_journals.c.observed_fingerprint,
+                ).where(ranked_folder_journals.c.path_rank == 1)
             )).all() if folder_paths else []
-            fingerprints: dict[str, str | None] = {}
-            for relative_path, fingerprint in journal_rows:
-                fingerprints.setdefault(relative_path, fingerprint)
+            fingerprints = {
+                relative_path: fingerprint for relative_path, fingerprint in journal_rows
+            }
             values = [
                 (folder_id, relative, version, fingerprints.get(relative))
                 for folder_id, relative, version in folder_paths

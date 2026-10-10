@@ -232,6 +232,30 @@ def test_write_override_json_is_atomic_and_private(tmp_path, monkeypatch):
     assert list(tmp_path.glob("*.tmp")) == []
 
 
+def test_inotify_policy_projection_tracks_atomic_override_replacements(tmp_path, monkeypatch):
+    override = tmp_path / "config.override.json"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", override)
+    monkeypatch.setenv("GUGU_INOTIFY_POLICY_DIR", str(policy_dir))
+
+    cfg.write_override_json({"filesync": {"watch_hard_limit": 131072}})
+    policy = policy_dir / "policy.json"
+    first_inode = policy.stat().st_ino
+    assert json.loads(policy.read_text(encoding="utf-8")) == {
+        "filesync": {"watch_hard_limit": 131072},
+    }
+
+    cfg.write_override_json({"filesync": {"watch_hard_limit": 262144}})
+
+    assert policy.stat().st_ino != first_inode
+    assert json.loads(policy.read_text(encoding="utf-8")) == {
+        "filesync": {"watch_hard_limit": 262144},
+    }
+    assert policy.stat().st_mode & 0o777 == 0o600
+    assert list(policy_dir.glob("*.tmp")) == []
+
+
 def test_write_override_json_falls_back_for_systemd_ebusy(tmp_path, monkeypatch):
     """ProtectSystem 只允许原位写入时，配置更新仍可完成。"""
     import errno

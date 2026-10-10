@@ -1,4 +1,6 @@
+import asyncio
 from datetime import datetime, timezone
+from threading import Event, Timer
 from types import SimpleNamespace
 
 import pytest
@@ -164,6 +166,61 @@ async def test_reconcile_records_actual_file_and_shell_usage(db, user_a, tmp_pat
         )
     )).scalar_one()
     assert row.last_reconciled_at is not None
+
+
+@pytest.mark.asyncio
+async def test_slow_quota_directory_measurement_does_not_block_event_loop(
+    db, user_a, tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
+    root = tmp_path / str(user_a.id) / "workspace"
+    root.mkdir(parents=True)
+    scan_started = Event()
+    release_scan = Event()
+
+    def slow_measure(_path, *, stop_event):
+        scan_started.set()
+        while not stop_event.is_set() and not release_scan.wait(0.01):
+            pass
+        if stop_event.is_set():
+            raise InterruptedError("配额测量已取消")
+        return 0
+
+    monkeypatch.setattr(quota_ledger, "measure_directory", slow_measure)
+    scan = asyncio.create_task(quota_ledger._measure_local_unregistered_bytes(db, user_a.id))
+    release_timer = Timer(0.25, release_scan.set)
+    release_timer.start()
+    try:
+        assert await asyncio.to_thread(scan_started.wait, 1)
+        loop_pulse = asyncio.Event()
+        asyncio.get_running_loop().call_later(0.05, loop_pulse.set)
+        await asyncio.wait_for(loop_pulse.wait(), timeout=0.15)
+    finally:
+        release_scan.set()
+        release_timer.cancel()
+    assert await scan == ({"workspace": 0, "personal": 0, "project": 0}, {
+        "workspace": 0, "personal": 0, "project": 0,
+    })
+
+
+@pytest.mark.asyncio
+async def test_cancelled_quota_measurement_stops_its_worker_scan(db, user_a, tmp_path, monkeypatch):
+    monkeypatch.setattr(quota_ledger, "get_settings", lambda: _settings(tmp_path))
+    (tmp_path / str(user_a.id) / "workspace").mkdir(parents=True)
+    scan_started = Event()
+
+    def cancellable_measure(_path, *, stop_event):
+        scan_started.set()
+        while not stop_event.wait(0.01):
+            pass
+        raise InterruptedError("配额测量已取消")
+
+    monkeypatch.setattr(quota_ledger, "measure_directory", cancellable_measure)
+    scan = asyncio.create_task(quota_ledger._measure_local_unregistered_bytes(db, user_a.id))
+    assert await asyncio.to_thread(scan_started.wait, 1)
+    scan.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(scan, timeout=1)
 
 
 @pytest.mark.asyncio

@@ -80,7 +80,21 @@ async def test_inventory_stages_only_active_rows_inside_binding_and_keeps_duplic
         observed_fingerprint="f" * 64,
         status=FileSyncStatus.SYNCED,
     )
-    db.add_all([*active_rows, deleted_row, journal])
+    folder_journals = [
+        FileSyncJournal(
+            binding_id=binding.id,
+            user_id=user_a.id,
+            idempotency_key=f"folder-version-{version}",
+            source="local_directory",
+            operation="update",
+            object_type="folder",
+            relative_path="个人文件/目录",
+            observed_fingerprint=f"{version:064x}",
+            status=FileSyncStatus.SYNCED,
+        )
+        for version in range(1, 40)
+    ]
+    db.add_all([*active_rows, deleted_row, journal, *folder_journals])
     await db.commit()
 
     manifest = scan_to_manifest(
@@ -114,13 +128,13 @@ async def test_inventory_stages_only_active_rows_inside_binding_and_keeps_duplic
                 ("个人文件/文档.txt",),
             ).fetchone()[0]
             folder_path = connection.execute(
-                "SELECT relative_path FROM db_folders WHERE id = ?",
+                "SELECT relative_path, fingerprint FROM db_folders WHERE id = ?",
                 (folder.id,),
-            ).fetchone()[0]
+            ).fetchone()
 
         assert duplicate_count == 2
         assert staged_deleted_count == 0
         assert fingerprint == "f" * 64
-        assert folder_path == "个人文件/目录"
+        assert folder_path == ("个人文件/目录", f"{39:064x}")
     finally:
         manifest.close()

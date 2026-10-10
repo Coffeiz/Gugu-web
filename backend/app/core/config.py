@@ -802,7 +802,52 @@ def write_override_json(data: dict) -> None:
                 os.unlink(temp_name)
             except FileNotFoundError:
                 pass
+            write_inotify_policy_projection(data)
             return
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+    write_inotify_policy_projection(data)
+
+
+def write_inotify_policy_projection(
+    data: dict, *, policy_dir: Path | None = None,
+) -> None:
+    """原子更新特权 helper 专用的小型策略文件，不暴露完整 Admin 配置。"""
+    raw_policy_dir = policy_dir or os.getenv("GUGU_INOTIFY_POLICY_DIR")
+    if not raw_policy_dir:
+        return
+    filesync = data.get("filesync", {}) or {}
+    if not isinstance(filesync, dict):
+        raise ValueError("filesync 配置必须是对象")
+    validated = FileSyncSettings.model_validate(filesync)
+    target = Path(raw_policy_dir) / "policy.json"
+    if not target.parent.is_dir():
+        raise FileNotFoundError("inotify 策略目录尚未初始化")
+    fd, temp_name = tempfile.mkstemp(
+        prefix=".policy.", suffix=".tmp", dir=target.parent, text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(
+                {"filesync": {"watch_hard_limit": validated.watch_hard_limit}},
+                handle,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+        os.replace(temp_name, target)
+        dir_fd = os.open(target.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
         try:
             os.unlink(temp_name)
         except FileNotFoundError:

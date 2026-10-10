@@ -83,8 +83,8 @@ def configured_hard_limit(
 
     try:
         override = json.loads(config_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        override = {}
+    except FileNotFoundError as exc:
+        raise ValueError("missing inotify policy") from exc
     if not isinstance(override, dict):
         raise ValueError("invalid config override")
     filesync = override.get("filesync", {}) or {}

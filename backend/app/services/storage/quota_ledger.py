@@ -7,7 +7,11 @@ Shell 持久空间仍分别限额。下载、构建和 Shell 是 operation，不
 """
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from sqlalchemy import func, select
@@ -24,6 +28,74 @@ SHELL_PERSISTENT = "shell_persistent"
 SHELL_EPHEMERAL = "shell_ephemeral"
 DEFAULT_WORKSPACE_FOLDER_NAME = "default"
 _CATEGORIES = (FILE_LIBRARY, SHELL_PERSISTENT, SHELL_EPHEMERAL)
+_STORAGE_SCAN_EXECUTOR = ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="storage-quota-scan",
+)
+
+
+async def _run_storage_scan(function, *args):
+    """把目录遍历放进固定大小的线程池；取消时通知扫描尽快退出并等待回收。"""
+    loop = asyncio.get_running_loop()
+    stop_event = Event()
+    scan = loop.run_in_executor(
+        _STORAGE_SCAN_EXECUTOR,
+        partial(function, *args, stop_event=stop_event),
+    )
+    try:
+        return await asyncio.shield(scan)
+    except asyncio.CancelledError:
+        stop_event.set()
+        try:
+            await asyncio.shield(scan)
+        except BaseException:
+            pass
+        raise
+
+
+def _measure_local_roots(
+    roots: dict[str, Path], storage_root: Path, rows: list[tuple[str, int]], *,
+    stop_event: Event,
+) -> tuple[dict[str, int], dict[str, int]]:
+    registered_by_root = {name: 0 for name in roots}
+    physical_by_root = {
+        name: measure_directory(path, stop_event=stop_event) if path.is_dir() else 0
+        for name, path in roots.items()
+    }
+    for storage_key, size_bytes in rows:
+        if stop_event.is_set():
+            raise InterruptedError("配额测量已取消")
+        file_path = (storage_root / storage_key).resolve()
+        for name, root in roots.items():
+            try:
+                file_path.relative_to(root)
+            except ValueError:
+                continue
+            if file_path.is_file():
+                registered_by_root[name] += int(size_bytes or 0)
+            break
+    unregistered_by_root = {
+        name: max(0, physical_by_root[name] - registered_by_root[name])
+        for name in roots
+    }
+    return unregistered_by_root, registered_by_root
+
+
+def _measure_unregistered_shell(
+    root: Path, rows: list[tuple[str, int]], *, stop_event: Event,
+) -> int:
+    registered = 0
+    storage_root = root.parent.parent
+    for storage_key, size_bytes in rows:
+        if stop_event.is_set():
+            raise InterruptedError("配额测量已取消")
+        path = (storage_root / storage_key).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            continue
+        if path.is_file():
+            registered += int(size_bytes or 0)
+    return max(0, measure_directory(root, stop_event=stop_event) - registered)
 
 
 async def get_file_library_usage_by_user(db: AsyncSession) -> dict[str, int]:
@@ -81,27 +153,10 @@ async def _measure_local_unregistered_bytes(
     rows = (await db.execute(select(File.storage_key, File.size_bytes).where(
         File.user_id == user_id, File.deleted_at.is_(None),
     ))).all()
-    registered_by_root = {name: 0 for name in roots}
-    physical_by_root = {
-        name: measure_directory(path) if path.is_dir() else 0
-        for name, path in roots.items()
-    }
     storage_root = Path(get_settings().storage.local_path).expanduser().resolve()
-    for storage_key, size_bytes in rows:
-        file_path = (storage_root / storage_key).resolve()
-        for name, root in roots.items():
-            try:
-                file_path.relative_to(root)
-            except ValueError:
-                continue
-            if file_path.is_file():
-                registered_by_root[name] += int(size_bytes or 0)
-            break
-    unregistered_by_root = {
-        name: max(0, physical_by_root[name] - registered_by_root[name])
-        for name in roots
-    }
-    return unregistered_by_root, registered_by_root
+    return await _run_storage_scan(
+        _measure_local_roots, roots, storage_root, rows,
+    )
 
 
 async def _unregistered_shell_bytes(db: AsyncSession, user_id: Any, root: Path) -> int:
@@ -109,16 +164,7 @@ async def _unregistered_shell_bytes(db: AsyncSession, user_id: Any, root: Path) 
     rows = (await db.execute(select(File.storage_key, File.size_bytes).where(
         File.user_id == user_id, File.workspace_directory_id.isnot(None), File.deleted_at.is_(None)
     ))).all()
-    registered = 0
-    for storage_key, size_bytes in rows:
-        path = (root.parent.parent / storage_key).resolve()
-        try:
-            path.relative_to(root)
-        except ValueError:
-            continue
-        if path.is_file():
-            registered += int(size_bytes or 0)
-    return max(0, measure_directory(root) - registered)
+    return await _run_storage_scan(_measure_unregistered_shell, root, rows)
 
 
 async def measure_shell_persistent_usage(db: AsyncSession, user_id: Any) -> int:

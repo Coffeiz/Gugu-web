@@ -86,12 +86,40 @@ def test_host_manager_uses_current_admin_config_instead_of_request_limit(tmp_pat
     assert observed == {"uid": 1001, "hard_limit": 131_072}
 
 
+def test_host_manager_observes_admin_limit_after_atomic_source_replacement(tmp_path, monkeypatch):
+    from app.core import config
+
+    override = tmp_path / "config.override.json"
+    policy_dir = tmp_path / "policy"
+    policy_dir.mkdir()
+    policy_file = policy_dir / "policy.json"
+    monkeypatch.setattr(config, "OVERRIDE_FILE", override)
+    monkeypatch.setenv("GUGU_INOTIFY_POLICY_DIR", str(policy_dir))
+
+    config.write_override_json({"filesync": {"watch_hard_limit": 131_072}})
+    first_inode = policy_file.stat().st_ino
+    monkeypatch.setattr(limitd, "CONFIG_OVERRIDE_PATH", policy_file)
+    assert limitd.configured_hard_limit() == 131_072
+
+    config.write_override_json({"filesync": {"watch_hard_limit": 262_144}})
+
+    assert policy_file.stat().st_ino != first_inode
+    assert limitd.configured_hard_limit() == 262_144
+
+
 def test_host_manager_fails_closed_on_invalid_admin_hard_limit(tmp_path):
     config = tmp_path / "config.override.json"
     config.write_text(json.dumps({"filesync": {"watch_hard_limit": limitd.ABSOLUTE_MAX + 1}}), encoding="utf-8")
 
     with pytest.raises(ValueError):
         limitd.configured_hard_limit(config, default_limit=limitd.ABSOLUTE_MAX)
+
+
+def test_host_manager_fails_closed_when_policy_file_is_missing(tmp_path):
+    with pytest.raises(ValueError, match="missing inotify policy"):
+        limitd.configured_hard_limit(
+            tmp_path / "missing-policy.json", default_limit=limitd.ABSOLUTE_MAX,
+        )
 
 
 def test_incomplete_socket_request_times_out_and_server_accepts_next_request(monkeypatch):

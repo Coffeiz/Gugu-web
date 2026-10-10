@@ -461,7 +461,13 @@ cmd_install() {
 
     # 以 root 所有的副本运行，避免应用账号替换特权代码；服务只开放固定的 inotify 操作。
     install -d -o root -g root -m 0755 /usr/local/libexec/gugu
-    install -d -o root -g root -m 0700 /var/lib/gugu-inotify-limitd
+    install -d -o root -g "$run_user" -m 0710 /var/lib/gugu-inotify-limitd
+    install -d -o "$run_user" -g "$run_user" -m 0700 /var/lib/gugu-inotify-limitd/policy
+    if [ ! -e /var/lib/gugu-inotify-limitd/last-expansion ]; then
+        install -o root -g root -m 0600 /dev/null /var/lib/gugu-inotify-limitd/last-expansion
+    fi
+    GUGU_INOTIFY_POLICY_DIR=/var/lib/gugu-inotify-limitd/policy \
+        "$VENV_DIR/bin/python" -c 'import json; from app.core.config import OVERRIDE_FILE, write_inotify_policy_projection; write_inotify_policy_projection(json.loads(OVERRIDE_FILE.read_text(encoding="utf-8")))'
     install -o root -g root -m 0755 \
         "${APP_DIR}/scripts/runtime/inotify_limitd.py" \
         /usr/local/libexec/gugu/inotify_limitd.py
