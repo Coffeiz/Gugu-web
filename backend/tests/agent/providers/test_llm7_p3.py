@@ -157,7 +157,10 @@ async def test_local_capability_probe_classifies_tool_and_json_server_rejection(
 async def test_admin_preset_response_masks_api_key(monkeypatch):
     override = {"ai_presets": {"active_id": "", "items": []}}
     monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
-    monkeypatch.setattr(agent_admin, "_write_override", lambda value: None)
+    monkeypatch.setattr(
+        agent_admin, "_mutate_presets",
+        lambda mutator: mutator(override, agent_admin._ensure_presets(override)),
+    )
 
     result = await agent_admin.create_llm_preset(agent_admin.PresetCreate(
         name="本地测试模型", provider="local", api_key="secret-local-key",
@@ -203,7 +206,10 @@ async def test_capability_fingerprint_changes_when_model_changes(monkeypatch):
         "base_url": "http://127.0.0.1:8000/v1", "model": "model-a", "api_key": "",
     }]}}
     monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
-    monkeypatch.setattr(agent_admin, "_write_override", lambda value: None)
+    monkeypatch.setattr(
+        agent_admin, "_mutate_presets",
+        lambda mutator: mutator(override, agent_admin._ensure_presets(override)),
+    )
     monkeypatch.setattr(agent_admin, "_probe_local_capabilities", probe_capabilities)
 
     first = await agent_admin.probe_llm_capabilities("local-1")
@@ -240,7 +246,10 @@ async def test_media_probe_persists_definitive_capabilities(monkeypatch):
     }
     override = {"ai_presets": {"active_id": "vision-1", "items": [item]}}
     monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
-    monkeypatch.setattr(agent_admin, "_write_override", lambda value: None)
+    monkeypatch.setattr(
+        agent_admin, "_mutate_presets",
+        lambda mutator: mutator(override, agent_admin._ensure_presets(override)),
+    )
 
     async def fake_probe(target, *, dim):
         return (dim == "image"), 200, "明确结果"

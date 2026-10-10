@@ -29,6 +29,10 @@ def _preset(**extra):
 async def test_capability_override_persists_and_invalidates_active_runtime(monkeypatch):
     override = {"ai_presets": {"active_id": "local-1", "items": [_preset()]}}
     monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
+    monkeypatch.setattr(
+        agent_admin, "_mutate_presets",
+        lambda mutator: mutator(override, agent_admin._ensure_presets(override)),
+    )
 
     result = await agent_admin.update_capability_overrides(
         "local-1", {"tools": True, "structured_json": True})
@@ -44,6 +48,10 @@ async def test_capability_override_persists_and_invalidates_active_runtime(monke
 async def test_capability_probe_persists_fingerprint_and_results(monkeypatch):
     override = {"ai_presets": {"active_id": "local-1", "items": [_preset()]}}
     monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
+    monkeypatch.setattr(
+        agent_admin, "_mutate_presets",
+        lambda mutator: mutator(override, agent_admin._ensure_presets(override)),
+    )
     monkeypatch.setattr(agent_admin, "_probe_local_capabilities", probe_capabilities)
 
     result = await agent_admin.probe_llm_capabilities("local-1")

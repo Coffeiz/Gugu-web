@@ -11,11 +11,14 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from pydantic import ValidationError
 
+from app.api.v1 import agent_admin
 from app.core import config as cfg
 
 
@@ -181,6 +184,64 @@ def test_stale_admin_config_documents_merge_without_losing_other_worker_updates(
         "max_tool_calls": 20,
         "parallel_tool_execution_enabled": True,
     }
+
+
+def test_stale_workers_creating_the_same_config_section_keep_both_fields(
+    override_path,
+):
+    worker_a = cfg.read_override_document()
+    worker_b = cfg.read_override_document()
+    worker_a["agent"] = {"max_tool_calls": 20}
+    worker_b["agent"] = {"parallel_tool_execution_enabled": True}
+
+    cfg.write_override_json(worker_a)
+    cfg.write_override_json(worker_b)
+
+    persisted = json.loads(override_path.read_text(encoding="utf-8"))
+    assert persisted["agent"] == {
+        "max_tool_calls": 20,
+        "parallel_tool_execution_enabled": True,
+    }
+
+
+def test_concurrent_preset_creates_mutate_latest_array_under_file_lock(override_path):
+    override_path.write_text(json.dumps({
+        "ai_presets": {"active_id": "p1", "items": [{"id": "p1"}]},
+    }), encoding="utf-8")
+    start_together = Barrier(2)
+
+    def create_preset(preset_id: str) -> None:
+        start_together.wait()
+
+        def append(latest):
+            latest["ai_presets"]["items"].append({"id": preset_id})
+
+        cfg.mutate_override_json(append)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        list(workers.map(create_preset, ("p2", "p3")))
+
+    persisted = json.loads(override_path.read_text(encoding="utf-8"))
+    assert {item["id"] for item in persisted["ai_presets"]["items"]} == {
+        "p1", "p2", "p3",
+    }
+
+
+@pytest.mark.asyncio
+async def test_preset_create_endpoints_append_to_persisted_latest_array(override_path):
+    override_path.write_text(json.dumps({
+        "ai_presets": {"active_id": "p1", "items": [{"id": "p1"}]},
+    }), encoding="utf-8")
+
+    await agent_admin.create_llm_preset(agent_admin.PresetCreate(
+        name="测试模型二", provider="local",
+    ))
+    await agent_admin.create_llm_preset(agent_admin.PresetCreate(
+        name="测试模型三", provider="local",
+    ))
+
+    persisted = json.loads(override_path.read_text(encoding="utf-8"))
+    assert len(persisted["ai_presets"]["items"]) == 3
 
 
 def test_apply_override_prefers_new_admin_automatic_mode_over_legacy(tmp_path, monkeypatch):

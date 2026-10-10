@@ -19,7 +19,7 @@ import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -73,6 +73,15 @@ def _merge_override_document(latest: dict, edited: dict, baseline: dict) -> dict
                 else:
                     latest_value = deepcopy(latest_value)
                 apply(latest_value, new_value, old_value)
+                target[key] = latest_value
+            elif new_exists and isinstance(new_value, dict):
+                # 新增配置段也按叶子合并，保留其他 Worker 并发创建的同段字段。
+                latest_value = target.get(key)
+                if not isinstance(latest_value, dict):
+                    latest_value = {}
+                else:
+                    latest_value = deepcopy(latest_value)
+                apply(latest_value, new_value, {})
                 target[key] = latest_value
             elif new_exists:
                 target[key] = deepcopy(new_value)
@@ -841,6 +850,17 @@ def write_override_json(data: dict, *, project_inotify_policy: bool = False) -> 
             latest = read_override_document()
             data = _merge_override_document(latest, data, data.baseline)
         _write_override_json_unlocked(data, project_inotify_policy=project_inotify_policy)
+
+
+def mutate_override_json(
+    mutator: Callable[[OverrideDocument], Any], *, project_inotify_policy: bool = False,
+) -> Any:
+    """在进程锁内读取最新配置、执行单次操作并发布，适用于数组型资源 CRUD。"""
+    with _override_file_lock():
+        latest = read_override_document()
+        result = mutator(latest)
+        _write_override_json_unlocked(latest, project_inotify_policy=project_inotify_policy)
+    return result
 
 
 def _write_override_json_unlocked(data: dict, *, project_inotify_policy: bool = False) -> None:
