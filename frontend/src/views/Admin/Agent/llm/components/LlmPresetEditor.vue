@@ -96,7 +96,7 @@
               <AdminSelect :model-value="thinkingSelection(draft)" :options="thinkingOptions"
                 :placeholder="t('profileByokUi.thinkingPlaceholder')"
                 class="thinking-select" @update:model-value="pickThinking(draft, String($event))" />
-              <div v-if="capabilitySnapshot?.generic_thinking_toggle_supported === true" class="thinking-hint">
+              <div class="thinking-hint">
                 {{ t('profileByokUi.genericThinkingHint') }}
               </div>
             </div>
