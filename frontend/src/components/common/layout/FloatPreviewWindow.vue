@@ -202,7 +202,8 @@ const isDocx = computed(() => props.win.file.ext?.toUpperCase() === 'DOCX')
 
 // ── 位置 / 尺寸（本地 reactive，同步回 store） ──────────────────────────────
 const x = ref(props.win.x)
-const y = ref(props.win.y)
+// 历史位置可能来自旧版的顶部越界范围，初始化时一并拉回视口内。
+const y = ref(Math.max(0, props.win.y))
 // PPTX 由渲染器按容器宽度自适应；首次隐藏渲染也要给它一个接近最终尺寸的
 // 布局盒，避免先按默认小窗口渲染再放大。
 const w = ref(isPptx.value ? Math.round(window.innerWidth * 0.72) : props.win.w)
@@ -749,7 +750,7 @@ function previewDragBounds() {
   const overscanX = window.innerWidth * DRAG_OVERSCAN_RATIO
   const overscanY = window.innerHeight * DRAG_OVERSCAN_RATIO
   const minX = -overscanX
-  const minY = -overscanY
+  const minY = 0
   return {
     minX,
     maxX: Math.max(minX, window.innerWidth + overscanX - w.value),
