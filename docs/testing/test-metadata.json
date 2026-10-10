@@ -503,6 +503,14 @@
     "keyBehavior": "项目摘要和文件概览在 Agent 详情、snapshot、文件范围及数据导出间一致并保持用户隔离",
     "ci": "backend-pytest"
   },
+  "backend/tests/projects/test_project_trash.py": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "backend/app/services",
+    "productionEntry": "backend/app/services/projects.py",
+    "keyBehavior": "项目列表只统计归属项目的直属存活文件，并为无文件项目返回零",
+    "ci": "backend-pytest"
+  },
   "backend/tests/storage/files/test_file_listing_scope.py": {
     "domain": "storage",
     "layer": "L1",

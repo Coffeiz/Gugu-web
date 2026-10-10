@@ -37,6 +37,35 @@ async def test_deleted_project_list_only_contains_projects_within_retention(db, 
 
 
 @pytest.mark.asyncio
+async def test_project_list_counts_only_live_root_files_for_owned_projects(db, user_a, user_b):
+    project = await _save(db, Project(user_id=user_a.id, name="项目文件计数"))
+    empty_project = await _save(db, Project(user_id=user_a.id, name="无文件项目"))
+    other_project = await _save(db, Project(user_id=user_b.id, name="其他用户项目"))
+    folder = await _save(db, Folder(user_id=user_a.id, project_id=project.id, name="子目录"))
+    await _save(db, File(
+        user_id=user_a.id, project_id=project.id, display_name="根目录文件", ext="md",
+        storage_key=f"{user_a.id}/project/root.md",
+    ))
+    await _save(db, File(
+        user_id=user_a.id, project_id=project.id, folder_id=folder.id,
+        display_name="子目录文件", ext="md", storage_key=f"{user_a.id}/project/folder.md",
+    ))
+    await _save(db, File(
+        user_id=user_a.id, project_id=project.id, display_name="已删除文件", ext="md",
+        storage_key=f"{user_a.id}/project/deleted.md", deleted_at=now_utc(),
+    ))
+    await _save(db, File(
+        user_id=user_b.id, project_id=other_project.id, display_name="他人文件", ext="md",
+        storage_key=f"{user_b.id}/project/other.md",
+    ))
+
+    rows = await list_project_rows(db, user_a.id, archived=False)
+
+    counts = {row.id: file_count for row, file_count in rows}
+    assert counts == {project.id: 1, empty_project.id: 0}
+
+
+@pytest.mark.asyncio
 async def test_restore_deleted_project_restores_event_and_reminder(db, user_a, monkeypatch):
     stamp = now_utc() - timedelta(days=2)
     project = await _save(db, Project(
