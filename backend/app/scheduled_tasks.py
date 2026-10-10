@@ -1008,6 +1008,9 @@ def _scheduled_delivery_targets(chans: set) -> str:
 # ── IM 投递 ──────────────────────────────────────────────────────────────────
 async def _has_enabled_bot(user_id, platform: str) -> bool:
     """该用户在该平台是否有 enabled 的 bot。保险二：解绑后即使地址残留也不投递。"""
+    from app.services.im_platforms import is_im_platform_enabled
+    if not is_im_platform_enabled(platform):
+        return False
     import app.db.session as ss
     from app.models import UserBot
     from sqlalchemy import select

@@ -27,8 +27,9 @@ from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.db.session import get_db
 from app.models import User, UserBot
+from app.services.im_platforms import im_platform_dependency
 
-router = APIRouter(prefix="/me/feishu/connect", tags=["feishu-connect"])
+router = APIRouter(prefix="/me/feishu/connect", tags=["feishu-connect"], dependencies=[Depends(im_platform_dependency("feishu"))])
 
 # 国内飞书；国际版 Lark 为 https://accounts.larksuite.com（如需再加 domain 参数）
 ACCOUNTS = "https://accounts.feishu.cn"

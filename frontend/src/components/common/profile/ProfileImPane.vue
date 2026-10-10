@@ -41,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import Icon from '@/components/common/icons/Icon.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
@@ -75,12 +75,15 @@ const groupToolOptions = [
 const preferences = usePreferencesStore()
 const liveStore = useLiveStore()
 const { t } = useI18n()
-const platforms = [
+const allPlatforms = [
   { key: 'feishu', labelKey: 'profileImUi.feishu', api: feishuConnectApi, hintKey: 'profileImUi.feishuHint' },
   { key: 'qq', labelKey: 'profileImUi.qq', api: qqConnectApi, hintKey: 'profileImUi.qqHint' },
   { key: 'wechat', labelKey: 'profileImUi.wechat', api: wechatConnectApi, hintKey: 'profileImUi.wechatHint' },
   { key: 'telegram', labelKey: 'profileImUi.telegram', api: null, hintKey: 'profileImUi.telegramHint' },
 ]
+const supportedPlatforms = ref(allPlatforms.map(platform => platform.key))
+const platforms = computed(() => allPlatforms.filter(platform => supportedPlatforms.value.includes(platform.key)))
+type Platform = typeof allPlatforms[number]
 const telegramToken = ref('')
 const telegramFormBotId = ref<number | null>(null)
 const bots = ref<Bot[]>([]); const botsOf = (platform: string) => bots.value.filter(bot => bot.platform === platform)
@@ -154,6 +157,7 @@ async function loadBots() {
   try {
     const result = await userBotsApi.list()
     if (seq !== botsLoadSeq) return
+    if (Array.isArray(result.supported_platforms)) supportedPlatforms.value = result.supported_platforms
     // GET 发出后若又发生了乐观写，即使该写很快结算，当前响应也可能读到提交前快照。
     // 丢掉这份响应并重取，不能让旧 list 覆盖已经立即呈现给用户的新状态。
     if (startRevision !== settingsRevision || pendingSettingWrites.size) {
@@ -195,13 +199,13 @@ function updateBotSetting(botId: number, patch: BotSettingPatch, fallbackError: 
   return task
 }
 
-async function startConnect(platform: string) { const item = platforms.find(value => value.key === platform); if (!item?.api) return; connecting.value = platform; connectErr.value = ''; try { const result = await item.api.start(); const id = result.poll_id || result.task_id; connect.value = { platform, id }; connectHint.value = t(`profileImUi.${platform}ConnectHint`); await nextTick(); const panel = connectPanels.value[platform]; if (typeof panel?.scrollIntoView === 'function') panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); await QRCode.toCanvas(connectCanvas.value, result.scan_url, { width: 180, margin: 1 }); startPoll(item) } catch (error) { connectErr.value = (error instanceof Error ? error.message : '') || t('profileImUi.qrGenerateFailed'); connect.value = null } finally { connecting.value = '' } }
-function startPoll(platform: Exclude<(typeof platforms)[number], { api: null }>) { stopPoll(); let tries = 0; poll = setInterval(async () => { tries++; try { if (!connect.value) return; const result = await platform.api.poll(connect.value.id); if (result.status === 'success') { cancelConnect(); await loadBots() } else if (result.status === 'expired') { connectErr.value = t('profileImUi.qrExpired'); cancelConnect() } else if (result.status === 'fail') { connectErr.value = t('profileImUi.connectionFailedWithReason', { reason: result.reason || t('profileImUi.unknownError') }); cancelConnect() } } catch {} if (tries > 100) cancelConnect() }, 3000) }
+async function startConnect(platform: string) { const item = platforms.value.find(value => value.key === platform); if (!item?.api) return; connecting.value = platform; connectErr.value = ''; try { const result = await item.api.start(); const id = result.poll_id || result.task_id; connect.value = { platform, id }; connectHint.value = t(`profileImUi.${platform}ConnectHint`); await nextTick(); const panel = connectPanels.value[platform]; if (typeof panel?.scrollIntoView === 'function') panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); await QRCode.toCanvas(connectCanvas.value, result.scan_url, { width: 180, margin: 1 }); startPoll(item) } catch (error) { connectErr.value = (error instanceof Error ? error.message : '') || t('profileImUi.qrGenerateFailed'); connect.value = null } finally { connecting.value = '' } }
+function startPoll(platform: Exclude<Platform, { api: null }>) { stopPoll(); let tries = 0; poll = setInterval(async () => { tries++; try { if (!connect.value) return; const result = await platform.api.poll(connect.value.id); if (result.status === 'success') { cancelConnect(); await loadBots() } else if (result.status === 'expired') { connectErr.value = t('profileImUi.qrExpired'); cancelConnect() } else if (result.status === 'fail') { connectErr.value = t('profileImUi.connectionFailedWithReason', { reason: result.reason || t('profileImUi.unknownError') }); cancelConnect() } } catch {} if (tries > 100) cancelConnect() }, 3000) }
 function stopPoll() { if (poll) { clearInterval(poll); poll = null } }
 function resumePoll() {
   if (!connect.value) return
-  const platform = platforms.find(value => value.key === connect.value?.platform)
-  if (platform?.api) startPoll(platform as Exclude<(typeof platforms)[number], { api: null }>)
+  const platform = platforms.value.find(value => value.key === connect.value?.platform)
+  if (platform?.api) startPoll(platform as Exclude<Platform, { api: null }>)
 }
 function cancelConnect() { stopPoll(); connect.value = null }
 function openTelegramForm(botId: number) { connectErr.value = ''; telegramToken.value = ''; telegramFormBotId.value = botId; void nextTick(() => { const input = document.getElementById('telegram-bot-token'); if (typeof input?.scrollIntoView === 'function') input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }) }
@@ -303,7 +307,7 @@ onDeactivated(stopPoll)
 onDeactivated(clearCopyFeedback)
 onDeactivated(onDocClickCloseHelp)
 onActivated(resumePoll)
-onActivated(() => { if (Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) void loadBots() })
+onActivated(() => { void loadBots() })
 watch(() => liveStore.rev.im_channels, () => { void loadBots() })
 watch(() => liveStore.connected, connected => {
   if (connected && Object.values(bindingCodes.value).some(binding => binding.expiresIn > 0)) void loadBots()

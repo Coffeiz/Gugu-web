@@ -94,6 +94,20 @@ describe('个人设置中的 IM 群权限', () => {
     expect(host.querySelector('.toggle-switch[aria-label="profileImUi.toggleIntermediateReplies"]')?.getAttribute('aria-pressed')).toBe('false')
   })
 
+  it('按服务端公布的支持平台隐藏全局关闭的平台接入入口', async () => {
+    mocks.list.mockResolvedValue({ items: [], supported_platforms: ['qq', 'telegram'] })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(ProfileImPane)
+    app.mount(host)
+    await flushUi()
+
+    expect(host.querySelector('[data-platform="qq"]')).not.toBeNull()
+    expect(host.querySelector('[data-platform="telegram"]')).not.toBeNull()
+    expect(host.querySelector('[data-platform="feishu"]')).toBeNull()
+    expect(host.querySelector('[data-platform="wechat"]')).toBeNull()
+  })
+
   it('新 Bot 缺少群策略字段时默认仅回应 @ 并启用群上下文搜索', async () => {
     mocks.list.mockResolvedValue({ items: [{
       id: 9, platform: 'telegram', enabled: true, group_chat_enabled: true,

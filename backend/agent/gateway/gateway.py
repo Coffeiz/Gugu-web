@@ -46,6 +46,7 @@ async def _fetch_userbots() -> list[dict]:
         S._build_engine()
     from sqlalchemy import select
     from app.models import UserBot
+    from app.services.im_platforms import is_im_platform_enabled
     async with S._SessionLocal() as db:
         rows = (await db.execute(
             select(UserBot).where(UserBot.enabled.is_(True))
@@ -54,7 +55,7 @@ async def _fetch_userbots() -> list[dict]:
             "id": str(b.id), "platform": b.platform,
             "app_id": b.app_id, "app_secret": b.app_secret,
             "sandbox": b.sandbox, "owner": str(b.user_id),
-        } for b in rows]
+        } for b in rows if is_im_platform_enabled(b.platform)]
 
 
 def _desired() -> dict[str, dict]:

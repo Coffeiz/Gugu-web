@@ -543,6 +543,15 @@ class SecuritySettings(BaseModel):
         return list(dict.fromkeys(normalized))
 
 
+class IMPlatformSettings(BaseModel):
+    """全局 IM 平台支持开关；关闭只暂停接入，不删除用户绑定或历史数据。"""
+
+    feishu: bool = True
+    qq: bool = True
+    wechat: bool = True
+    telegram: bool = True
+
+
 class EmbeddingSettings(BaseModel):
     """向量 embedding 模型——**独立于聊天/语音模型，单独 pin**（见 docs/agent/参考/咕咕改进方案-MaiBot借鉴.md 改进一）。
 
@@ -593,6 +602,7 @@ class AppSettings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    im: IMPlatformSettings = Field(default_factory=IMPlatformSettings)
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
     byok: BYOKSettings = Field(default_factory=BYOKSettings)
     mcp: McpSettings = Field(default_factory=McpSettings)
@@ -753,6 +763,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["security"] = SecuritySettings.model_validate(merged)
 
+            if "im" in override:
+                merged = {**self.im.model_dump(), **{
+                    k: v for k, v in (override["im"] or {}).items()
+                    if k in IMPlatformSettings.model_fields
+                }}
+                updates["im"] = IMPlatformSettings.model_validate(merged)
+
             if "agent" in override:
                 merged = _merge_agent_override(self.agent.model_dump(), override["agent"])
                 updates["agent"] = AgentBehaviorSettings.model_construct(**merged)
@@ -775,7 +792,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok", "mcp", "safe_egress"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "im", "voice", "embedding", "sandbox", "filesync", "byok", "mcp", "safe_egress"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

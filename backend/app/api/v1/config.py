@@ -19,7 +19,7 @@ from pydantic import BaseModel, field_validator
 from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import FileSyncSettings, SmtpSettings, get_settings, save_override
+from app.core.config import FileSyncSettings, IMPlatformSettings, SmtpSettings, get_settings, save_override
 from app.core.redaction import diag_log, redact
 from app.db.session import create_all_tables, reset_engine, get_db
 from app.services.multimodal_probe import make_silent_wav
@@ -111,6 +111,19 @@ async def _validate_filesync_patch(filesync_patch: Any) -> None:
         raise HTTPException(status_code=400, detail="OSS 存储模式不支持本地文件自动同步")
 
 
+def _validate_im_patch(im_patch: Any) -> None:
+    if im_patch is None:
+        return
+    if not isinstance(im_patch, dict):
+        raise HTTPException(status_code=400, detail="im 配置必须是对象")
+    unknown_fields = set(im_patch) - IMPlatformSettings.model_fields.keys()
+    if unknown_fields:
+        raise HTTPException(status_code=400, detail="包含不支持的 IM 平台")
+    if any(type(enabled) is not bool for enabled in im_patch.values()):
+        raise HTTPException(status_code=400, detail="IM 平台开关必须是布尔值")
+    IMPlatformSettings.model_validate({**get_settings().im.model_dump(), **im_patch})
+
+
 @router.patch("")
 async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = Depends(get_db)):
     import traceback as _tb
@@ -120,6 +133,8 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         sandbox_patch = body.patch.get("sandbox")
         filesync_patch = body.patch.get("filesync")
         await _validate_filesync_patch(filesync_patch)
+        im_patch = body.patch.get("im")
+        _validate_im_patch(im_patch)
         smtp_patch = body.patch.get("smtp")
         if isinstance(smtp_patch, dict) and "registration_verification_enabled" in smtp_patch:
             if type(smtp_patch["registration_verification_enabled"]) is not bool:

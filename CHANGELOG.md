@@ -7,25 +7,19 @@
 
 ## [Unreleased]
 
-### What's New
-
-- **Scheduled task and event delivery**: add Telegram notifications, private/group destination selection for Feishu and Telegram, and weekly schedule ordering based on the user's week-start preference.
-
-### 更新内容
-
-- **定时任务与活动提醒**：支持 Telegram 通知、飞书和 Telegram 的私聊/群聊目标选择；每周任务按用户设置的一周起始日排列星期。
-
-## [1.6.1] - 2026-10-08
+## [1.7.0] - 2026-10-10
 
 ### What's New
 
 #### New Features
 
 - **Telegram integration**: connect a personal bot for private and group chats; channels are not supported yet.
+- **IM platform controls and delivery**: administrators can enable or disable supported IM platforms; configure private/group destinations for Feishu and Telegram, with Telegram scheduled notifications and weekly schedules honoring the user's week-start preference.
 - **Manual file reconciliation**: inspect file-sync changes and queue an asynchronous reconciliation with visible progress.
 - **Project summaries and file context**: maintain a concise project summary and include project file overviews in Agent context.
 - **Local storage quotas**: apply a consistent persistent-storage quota to Local users.
 - **Feishu group controls**: configure group permissions and invoke the Agent with @ mentions.
+- **Reusable Skills**: let the Assistant manage reusable skills in addition to user-created skills.
 
 #### Improvements
 
@@ -33,7 +27,11 @@
 - **File library performance**: load the current directory on demand, reuse cached data, and avoid downloading the full file index for ordinary Markdown previews.
 - **Project board performance**: defer archived/deleted lists and collapsed completed cards until requested, and use aggregated project file counts.
 - **Tool feedback**: record tool-call duration in conversation history so it remains visible after reopening a session.
+- **Agent context and file tools**: prepare RAG and MCP tools in parallel, prioritize recent long-term memory, remove automatic file-content RAG indexing, and use consistent logical paths across file tools.
+- **Model diagnostics and multimodal history**: improve provider capability handling and preserve multimodal tool results in conversation history; clarify context-preparation and cache diagnostics in LoopScope.
+- **Terminal and conversation resilience**: improve cross-worker terminal cancellation, output delivery, and recovery of live IM conversations in the web client.
 - **File and interface details**: improve thumbnail clarity, support extensionless file names safely, and refine note interactions, calendar styling, and checkbox hit areas.
+- **Mind and preview experience**: improve the notes layout, Mermaid diagrams, floating previews, and on-demand loading of referenced files.
 - **Deployment updates**: provide a safer update entry point for split Compose deployments.
 
 #### Fixes
@@ -43,6 +41,11 @@
 - Refresh file previews for the affected resource and run recycle-bin emptying in the background.
 - Improve storage reconciliation and cleanup of orphaned file records.
 - Preserve file identity when creating extensionless files and constrain storage keys.
+- Improve terminal stop handling and ensure output consumers receive a completion signal when buffers fill.
+- Prevent concurrent model preset edits from overwriting each other and retain visible settings guidance while editing.
+- Avoid stale IM connection state when the active platform configuration changes.
+- Avoid unnecessary full-storage scans on upload, archive, and Shell hot paths while retaining explicit reconciliation for quota accuracy.
+- Preserve pending terminal output on normal exit and improve file-view refresh and export-state reporting.
 
 #### Contributors
 
@@ -57,10 +60,12 @@
 #### 新功能
 
 - **Telegram 接入**：支持连接个人 Bot，在私聊和群聊中与咕咕对话；暂不支持频道。
+- **IM 平台管理与消息投递**：管理员可启停支持的 IM 平台；支持配置飞书、Telegram 的私聊/群聊投递目标，Telegram 定时通知按用户的一周起始日排列周计划。
 - **手动文件对账**：查看文件同步变更，并发起可查看进度的异步对账。
 - **项目摘要与文件上下文**：维护简短项目摘要，并将项目文件概览加入 Agent 上下文。
 - **Local 存储配额**：为 Local 用户统一持久化空间配额。
 - **飞书群聊控制**：配置群权限，并通过 @ 提及调用 Agent。
+- **可复用技能**：除用户创建的技能外，支持咕咕维护常用技能。
 
 #### 改进
 
@@ -68,7 +73,11 @@
 - **文件库性能**：按需加载当前目录、复用缓存；普通 Markdown 预览不再拉取全量文件索引。
 - **项目看板性能**：归档/删除列表和折叠的已完成项目按需加载，项目文件数改用聚合计数。
 - **工具反馈**：将工具调用耗时保存到会话记录，重新打开会话后仍可查看。
+- **Agent 上下文与文件工具**：并行准备 RAG 与 MCP 工具、优先注入较新的长期记忆、停止自动索引文件内容，并统一文件工具的逻辑路径映射。
+- **模型诊断与多模态历史**：完善 Provider 能力处理和多模态工具结果的历史保存，并细化 LoopScope 的上下文准备与缓存诊断。
+- **终端与会话韧性**：改进跨工作进程的终端中断与输出交付，并增强 IM 会话在网页端的实时续接。
 - **文件与界面细节**：提升缩略图清晰度，安全支持无扩展名文件，并改进笔记交互、日历样式和复选框点击区域。
+- **思维导图与预览体验**：优化笔记布局、Mermaid 图表、浮动预览以及引用文件的按需加载。
 - **部署更新**：为分体 Compose 部署提供更安全的更新入口。
 
 #### 修复
@@ -78,6 +87,11 @@
 - 文件预览只因对应资源变化而刷新；清空回收站改为后台执行。
 - 改进存储对账并清理孤儿文件记录。
 - 创建无扩展名文件时保留正确文件身份，并约束存储键。
+- 改进终端停止流程；输出队列已满时仍能通知消费者结束。
+- 避免并发编辑模型预设时相互覆盖，并在编辑期间保持设置提示可见。
+- IM 平台配置变化后及时更新连接状态，避免继续显示失效入口。
+- 避免上传、归档和 Shell 热路径执行不必要的全存储扫描，同时保留显式对账以维护配额准确性。
+- 正常退出时保留待发送的终端输出，并改进文件视图刷新和导出状态展示。
 
 #### 贡献者
 

@@ -69,7 +69,8 @@ async def list_my_bots(
     rows = (await db.execute(
         select(UserBot).where(UserBot.user_id == current_user.id).order_by(UserBot.id)
     )).scalars().all()
-    return {"items": [_out(b) for b in rows]}
+    from app.services.im_platforms import enabled_im_platforms
+    return {"items": [_out(b) for b in rows], "supported_platforms": list(enabled_im_platforms())}
 
 
 class BotIn(BaseModel):
@@ -86,6 +87,8 @@ async def create_my_bot(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.services.im_platforms import require_im_platform_enabled
+    require_im_platform_enabled("qq")
     if not body.app_id or not body.app_secret:
         raise HTTPException(400, "请填写 AppID 和 AppSecret")
     existing = (await db.execute(
