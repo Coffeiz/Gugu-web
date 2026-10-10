@@ -622,5 +622,125 @@
     "productionEntry": "frontend/src/views/Projects/components/ProjectFilesPanel.vue",
     "keyBehavior": "项目文件区拖拽完成目标命中、持久化移动和目标目录导航",
     "ci": "experimental"
+  },
+  "backend/tests/agent/context/test_tool_media_projection.py": {
+    "domain": "agent-multimodal",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/assembly",
+    "keyBehavior": "工具结果中的图像在实时和历史投影中保持多模态内容，不进入文本和文本 Token 估算",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/memory/test_memory_prompt_contract.py": {
+    "domain": "agent-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "agent/memory/reflection.py 与 agent/memory/memory_compress.py",
+    "keyBehavior": "记忆提示词保留有回顾价值的日常事实并区分计划候选与实际结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_run_preparation_parallel.py": {
+    "domain": "agent-run-preparation",
+    "layer": "L1",
+    "owner": "backend/agent/run",
+    "productionEntry": "agent/run/preparation.py",
+    "keyBehavior": "MCP 发现与 RAG 召回并行执行，保留消息水位且 MCP 失败时取消召回并传播原始错误",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/observability/test_loopscope_trace_restore.py": {
+    "domain": "loopscope-observability",
+    "layer": "L1",
+    "owner": "backend/agent/runtime/loopscope_trace",
+    "productionEntry": "agent/runtime/loopscope_trace 与 agent/context/builder.py",
+    "keyBehavior": "跨进程 trace 恢复、工具参数脱敏以及上下文准备阶段耗时归属保持正确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/test_im_platform_settings.py": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/im_platforms.py 与 app/core/config.py",
+    "keyBehavior": "即时通讯平台默认全开、配置可局部覆盖且 Admin 更新拒绝未知或非布尔值",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/test_orm_boundaries.py": {
+    "domain": "orm-boundary-checks",
+    "layer": "L0",
+    "owner": "backend/scripts/checks",
+    "productionEntry": "scripts/checks/check_orm_boundaries.py",
+    "keyBehavior": "ORM 棘轮识别 SQLAlchemy constructor，同时不把同名函数声明和普通对象 update 方法误判为 ORM",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_upload_stream.py": {
+    "domain": "file-upload",
+    "layer": "L1",
+    "owner": "backend/app/core",
+    "productionEntry": "app/core/upload_stream.py",
+    "keyBehavior": "上传校验复用 multipart 临时流、限制实际读取量并在异常时关闭流",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_inotify_limitd.py": {
+    "domain": "filesync-watcher-capacity",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "scripts/runtime/inotify_limitd.py 与 app/services/filesync",
+    "keyBehavior": "Watcher 容量按阈值分档扩展并严格受 Admin 硬上限约束，管理服务的策略热更新和连接超时可靠",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/terminal/test_terminal_cross_worker_stop.py": {
+    "domain": "terminal-lifecycle",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/terminals.py",
+    "productionEntry": "app/api/v1/terminals.py 与 agent/terminal/pty_manager.py",
+    "keyBehavior": "跨 Worker 终止通过共享 sandboxd 生效，PTY 关闭竞争不阻止成功状态与事件发布",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/admin/ImPlatformSettings.test.ts": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Config",
+    "productionEntry": "frontend/src/views/Admin/Config/components/ImPlatformSettings.vue",
+    "keyBehavior": "管理员切换单个平台开关只更新被切换的平台并呈现当前配置状态",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/admin/agent/LlmPresetEditor.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent",
+    "productionEntry": "frontend/src/views/Admin/Agent/llm/components/LlmPresetEditor.vue",
+    "keyBehavior": "模型预设编辑、保存及多模态能力配置保持表单状态和提交数据一致",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/composables/useFileLibraryFileActions.test.ts": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileLibraryFileActions.ts",
+    "keyBehavior": "删除请求确认成功前保留文件卡片和选择状态，成功后才同步缓存与目录视图",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/profile/preferences-tool-injection.test.ts": {
+    "domain": "agent-preferences",
+    "layer": "L1",
+    "owner": "frontend/stores",
+    "productionEntry": "frontend/src/stores/preferences.ts",
+    "keyBehavior": "用户偏好加载时工具调用信息与中间回复使用产品约定默认值并正确注入状态",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/schedules/ScheduleFormModal.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "frontend/views/Schedules",
+    "productionEntry": "frontend/src/views/Schedules/components/ScheduleFormModal.vue",
+    "keyBehavior": "编辑任务时保留管理员暂时关闭的平台渠道，新建任务仍不能选择未开放平台",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/utils/imDelivery.test.ts": {
+    "domain": "im-delivery",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/imDelivery.ts",
+    "keyBehavior": "即时通讯投递目标选项符合平台能力，未修改的既有目标不被重新序列化覆盖",
+    "ci": "frontend-test"
   }
 }
