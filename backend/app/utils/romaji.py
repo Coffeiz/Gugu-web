@@ -97,6 +97,17 @@ def _romaji_candidates(text: str, language: str = "zh-CN") -> list[str]:
     return list(dict.fromkeys(_normalize_romaji(item.lower()) for item in candidates))
 
 
+def indexed_romaji_candidates(text: str) -> list[str]:
+    """返回文件名索引需要的中、日、英 locale 候选，避免索引依赖当前用户语言。"""
+    if not text:
+        return []
+    return list(dict.fromkeys(
+        candidate
+        for language in ("zh-CN", "ja-JP", "en-US")
+        for candidate in _romaji_candidates(text, language)
+    ))
+
+
 def to_romaji(text: str, language: str = "zh-CN") -> str:
     """把文本转为小写罗马音字符串（去空格），用于子串匹配。"""
     return _romaji_candidates(text, language)[0] if text else ""

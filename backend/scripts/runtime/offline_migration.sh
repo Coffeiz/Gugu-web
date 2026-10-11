@@ -36,6 +36,7 @@ tar -tf "$BACKUP_DIR/users.tar" >/dev/null
 printf 'manual-recovery\n' > "$BACKUP_DIR/recovery-required"
 echo '[offline-migration] 完整数据库与 users 备份完成，开始迁移。'
 alembic upgrade head
+PYTHONPATH=. python scripts/backfill_global_search_romaji.py --batch-size 500
 python -m scripts.migrations.migrate_workspace_layout --allow-real-data --apply --services-stopped
 python -m scripts.migrations.migrate_workspace_layout --allow-real-data --check
 python -m updater.database_check

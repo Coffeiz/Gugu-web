@@ -1,7 +1,7 @@
 """站内全局搜索：一个或多个关键词跨项目/文件/文件夹/日程/客户/对话/Skill 检索（按 user_id 隔离）。
 
-简单子串匹配（ILIKE %关键词%），对中文也有效、无需建全文索引。各类型各取前 N 条，
-分组返回，供顶栏全局搜索框下拉展示 + 点击跳转。对话同时搜会话标题与消息正文。
+各类型各取前 N 条，分组返回，供顶栏全局搜索框下拉展示 + 点击跳转。文本子串查询统一使用
+PostgreSQL ILIKE，由 pg_trgm GIN 索引加速；对话同时搜会话标题与消息正文。
 
 `run_global_search` 是查询核心，路由和 agent 工具（`agent/tools/global_search.py`）
 共用——路由给下拉框用小 per_type，工具给模型用更大的 per_type，避免各写一套。
@@ -18,10 +18,6 @@ from app.models import (
     User, Project, File, Folder, WorkspaceDirectory, CalendarEvent, Client, MindCanvasItem, MindMap, MindNode, UserSkill,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
-from app.core.config import get_settings
-from app.models import KnowledgeIndexEntry
-from agent.rag.persistent_store import search_persistent_index
-from agent.rag.ts_sidecar import TsSidecarUnavailable
 from app.services.conversations import (
     list_messages_for_search_scan,
     list_sessions_for_search_scan,
@@ -29,7 +25,7 @@ from app.services.conversations import (
     search_session_titles,
 )
 from app.services.user_preferences import get_user_locale
-from app.services.files.browser import list_recent_folders_for_search, search_user_folders
+from app.services.files.browser import search_user_folders
 from app.services.search import search_global_mcp_servers, search_global_scheduled_tasks
 from app.services.storage.folders import folder_location_subtitle, resolve_folder_chain
 
@@ -45,8 +41,6 @@ ALL_TYPES = ["project", "file", "folder", "event", "client", "conversation", "no
 # 所有参与全局搜索的文本字段统一在这里登记；新增字段只需补这一张表。
 ROMAJI_FIELDS = {
     "project": ("name", "client", "current_stage"),
-    "file": ("display_name", "ext"),
-    "folder": ("name",),
     "event": ("title", "description", "client"),
     "client": ("name", "contact", "email", "phone", "notes"),
     "note": ("title", "content_plain"),
@@ -90,6 +84,15 @@ def _romaji_matches_object(obj, kind: str, queries: list[str], language: str) ->
         _romaji_matches_any(getattr(obj, field, ""), queries, language)
         for field in ROMAJI_FIELDS[kind]
     )
+
+
+def _romaji_alias_conditions(column, queries: list[str]):
+    """为拼音查询构建别名列子串条件；别名列由 pg_trgm GIN 索引加速。"""
+    return [
+        column.ilike(f"%{query.lower().replace(' ', '')}%")
+        for query in queries
+        if is_romaji_query(query)
+    ]
 
 
 def _primary_rank(column, q: str):
@@ -229,16 +232,20 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                        _primary_rank(File.display_name, q), File.updated_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
-            seen = {f.id for f in rows}
-            scan = (await db.execute(
-                select(File).where(File.user_id == uid, File.deleted_at.is_(None))
-                .order_by(File.updated_at.desc()).limit(ROMAJI_SCAN)
-            )).scalars().all()
-            for f in scan:
-                if f.id not in seen and _romaji_matches_object(f, "file", search_queries, language):
-                    rows.append(f); seen.add(f.id)
-                    if len(rows) >= per_type:
-                        break
+            alias_conditions = _romaji_alias_conditions(File.search_romaji, search_queries)
+            if alias_conditions:
+                seen = {f.id for f in rows}
+                alias_rows = (await db.execute(
+                    select(File).where(
+                        File.user_id == uid,
+                        File.deleted_at.is_(None),
+                        File.search_romaji.is_not(None),
+                        *([File.id.not_in(seen)] if seen else []),
+                        or_(*alias_conditions),
+                    ).order_by(File.updated_at.desc(), File.id.desc())
+                    .limit(per_type - len(rows))
+                )).scalars().all()
+                rows.extend(alias_rows)
         if rows:
             items = await _file_search_items(db, uid, rows)
             groups.append({"type": "file", "label": "文件", "items": items})
@@ -247,13 +254,20 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
     if wanted is None or "folder" in wanted:
         rows = await search_user_folders(db, uid, search_queries, mode, q, per_type)
         if use_romaji and len(rows) < per_type:
-            seen = {fo.id for fo in rows}
-            scan = await list_recent_folders_for_search(db, uid, ROMAJI_SCAN)
-            for fo in scan:
-                if fo.id not in seen and _romaji_matches_object(fo, "folder", search_queries, language):
-                    rows.append(fo); seen.add(fo.id)
-                    if len(rows) >= per_type:
-                        break
+            alias_conditions = _romaji_alias_conditions(Folder.search_romaji, search_queries)
+            if alias_conditions:
+                seen = {fo.id for fo in rows}
+                alias_rows = (await db.execute(
+                    select(Folder).where(
+                        Folder.user_id == uid,
+                        Folder.deleted_at.is_(None),
+                        Folder.search_romaji.is_not(None),
+                        *([Folder.id.not_in(seen)] if seen else []),
+                        or_(*alias_conditions),
+                    ).order_by(Folder.created_at.desc(), Folder.id.desc())
+                    .limit(per_type - len(rows))
+                )).scalars().all()
+                rows.extend(alias_rows)
         if rows:
             items = await _folder_search_items(db, uid, rows)
             groups.append({"type": "folder", "label": "文件夹", "items": items})
@@ -535,131 +549,15 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
             "queries": search_queries, "mode": mode, "total": total, "groups": groups}
 
 
-INDEXED_SEARCH_TYPES = {"project", "file", "note"}
-INDEXED_LABELS = {"project": "项目", "file": "文件", "note": "便签"}
-
-
-async def _run_index_search(
-    db: AsyncSession, user_id, q: str, *, per_type: int,
-    types: list[str] | None, queries: list[str] | None, mode: str, language: str,
-) -> dict:
-    """使用持久化索引搜索已完成建索引的来源，其余来源交给原 ILIKE 查询。"""
-    original_query = (q or "").strip()
-    search_queries = normalize_queries(original_query, queries)
-    normalized_mode = normalize_mode(mode)
-    wanted = set(types) if types else set(ALL_TYPES)
-    indexed_types = wanted & INDEXED_SEARCH_TYPES
-    ilike_types = wanted - INDEXED_SEARCH_TYPES
-    if not indexed_types:
-        return await _run_ilike_search(
-            db, user_id, q, per_type=per_type, types=types,
-            queries=queries, mode=normalized_mode, language=language,
-        )
-
-    # 没有任何索引行的来源仍走 ILIKE，避免索引尚未重建时静默丢结果。
-    indexed_rows = (await db.execute(
-        select(KnowledgeIndexEntry.source_type).where(
-            KnowledgeIndexEntry.owner_user_id == user_id,
-            KnowledgeIndexEntry.source_type.in_(indexed_types),
-            KnowledgeIndexEntry.deleted_at.is_(None),
-        ).distinct()
-    )).scalars().all()
-    ready_types = indexed_types & set(indexed_rows)
-    ilike_types |= indexed_types - ready_types
-    groups_by_type: dict[str, dict] = {}
-    if ready_types and search_queries:
-        hits = []
-        for source in sorted(ready_types):
-            try:
-                hits.extend(await search_persistent_index(
-                    db, user_id, " ".join(search_queries),
-                    source_types={source}, limit=max(per_type * 3, per_type),
-                ))
-            except TsSidecarUnavailable:
-                # 词法 worker 未部署或临时不可用时，继续走同类型 ILIKE，避免全局搜索 500。
-                ilike_types.add(source)
-        # 一个业务对象可能有多个 chunk，只保留最高分 chunk，保持每类输出条数稳定。
-        hit_ids: dict[str, list[str]] = {source: [] for source in ready_types}
-        hit_docs: dict[tuple[str, str], object] = {}
-        for hit in hits:
-            source = hit.document.source_type
-            source_id = hit.document.source_id
-            key = (source, source_id)
-            if source_id not in hit_ids.setdefault(source, []):
-                hit_ids[source].append(source_id)
-                hit_docs[key] = hit.document
-            if len(hit_ids[source]) >= per_type:
-                continue
-
-        for source in ready_types:
-            ids = hit_ids.get(source, [])[:per_type]
-            if not ids:
-                continue
-            if source == "project":
-                rows = (await db.execute(select(Project).where(
-                    Project.user_id == user_id, Project.deleted_at.is_(None), Project.id.in_([int(i) for i in ids if str(i).isdigit()]),
-                ))).scalars().all()
-                by_id = {str(row.id): row for row in rows}
-                items = [{"id": row.id, "title": row.name,
-                          "subtitle": " · ".join(filter(None, [row.client, row.status]))}
-                         for key in ids if (row := by_id.get(str(key)))]
-            elif source == "file":
-                rows = (await db.execute(select(File).where(
-                    File.user_id == user_id, File.deleted_at.is_(None),
-                    File.id.in_([int(i) for i in ids if str(i).isdigit()]),
-                ))).scalars().all()
-                by_id = {str(row.id): row for row in rows}
-                items = [await _file_search_item(db, user_id, row)
-                         for key in ids if (row := by_id.get(str(key)))]
-            else:
-                rows = (await db.execute(select(MindNode).where(
-                    MindNode.user_id == user_id, MindNode.kind == "note",
-                    MindNode.deleted_at.is_(None),
-                    MindNode.id.in_([int(i) for i in ids if str(i).isdigit()]),
-                ))).scalars().all()
-                by_id = {str(row.id): row for row in rows}
-                items = [{"id": row.id,
-                          "title": row.title or "无标题便签",
-                          "subtitle": _snippet_for_queries(
-                              hit_docs[(source, str(row.id))].content, search_queries),
-                          "version": row.version}
-                         for key in ids if (row := by_id.get(str(key)))]
-            if items:
-                groups_by_type[source] = {"type": source, "label": INDEXED_LABELS[source], "items": items}
-
-    if ilike_types:
-        ilike_result = await _run_ilike_search(
-            db, user_id, q, per_type=per_type, types=sorted(ilike_types),
-            queries=queries, mode=normalized_mode, language=language,
-        )
-        groups_by_type.update({group["type"]: group for group in ilike_result["groups"]})
-    groups = [groups_by_type[source] for source in ALL_TYPES if source in groups_by_type]
-    return {"query": original_query or " ".join(search_queries),
-            "queries": search_queries, "mode": normalized_mode,
-            "total": sum(len(group["items"]) for group in groups), "groups": groups}
-
-
 async def run_global_search(db: AsyncSession, user_id, q: str, *,
                             per_type: int = PER_TYPE, types: list[str] | None = None,
                             queries: list[str] | None = None, mode: str = "OR",
                             language: str | None = None) -> dict:
-    """统一全局搜索入口；Admin 可在索引与 ILIKE 之间热切换。"""
-    search_queries = normalize_queries(q, queries)
+    """统一全局搜索入口；所有文本来源走 PostgreSQL 子串查询和 GIN trigram 索引。"""
     if language not in {"zh-CN", "ja-JP", "en-US"}:
         language = await get_user_locale(db, user_id)
     language = language if language in {"zh-CN", "ja-JP", "en-US"} else "zh-CN"
-    # 持久化索引按原文检索，无法执行拼音/罗马音转换；这类查询必须走
-    # ILIKE 扫描分支，才能覆盖 SudachiPy/romkan2 的候选读音。
-    if any(is_romaji_query(query) for query in search_queries):
-        return await _run_ilike_search(
-            db, user_id, q, per_type=per_type, types=types,
-            queries=queries, mode=mode, language=language,
-        )
-    if get_settings().search.global_search_backend == "ilike":
-        return await _run_ilike_search(
-            db, user_id, q, per_type=per_type, types=types, queries=queries, mode=mode, language=language,
-        )
-    return await _run_index_search(
+    return await _run_ilike_search(
         db, user_id, q, per_type=per_type, types=types, queries=queries, mode=mode, language=language,
     )
 

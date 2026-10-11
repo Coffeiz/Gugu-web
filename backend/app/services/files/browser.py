@@ -458,16 +458,6 @@ async def search_user_folders(db, user_id, queries, mode, primary_query: str, li
     )).scalars().all()
 
 
-async def list_recent_folders_for_search(db, user_id, limit: int):
-    """返回当前用户最近创建的存活文件夹，供拼音搜索扫描。"""
-    return (await db.execute(
-        select(Folder).where(
-            Folder.user_id == user_id,
-            Folder.deleted_at.is_(None),
-        ).order_by(Folder.created_at.desc()).limit(limit)
-    )).scalars().all()
-
-
 async def list_folder_rows_with_file_counts(
     db: AsyncSession,
     user_id,

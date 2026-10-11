@@ -600,6 +600,8 @@ class File(Base):
     user_id:      Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     display_name: Mapped[str]           = mapped_column(String(300))
     ext:          Mapped[str]           = mapped_column(String(20))
+    # 持久化拼音/罗马音候选；NULL 表示旧数据尚未完成后台回填。
+    search_romaji: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 所属空间：project | mind | asset | personal | workspace
     space:        Mapped[str]           = mapped_column(String(20), default="personal")
     workspace_directory_id: Mapped[Optional[int]] = mapped_column(
@@ -685,6 +687,8 @@ class Folder(Base):
     )
     parent_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     name:       Mapped[str]           = mapped_column(String(200))
+    # 持久化拼音/罗马音候选；NULL 表示旧数据尚未完成后台回填。
+    search_romaji: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
     version:    Mapped[int]           = mapped_column(Integer, default=1)    # 乐观锁位（P2.6，同 Project 的 409 并发模式）

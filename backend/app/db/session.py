@@ -26,6 +26,9 @@ def _build_engine():
     global _engine, _SessionLocal, _engine_loop
     if _engine is not None and _SessionLocal is not None:
         return
+    from app.search.romaji_index import register_romaji_search_alias_listener
+
+    register_romaji_search_alias_listener()
     settings = get_settings()
     _engine = create_async_engine(
         settings.db.url,
@@ -180,6 +183,15 @@ _MIGRATIONS = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_width INTEGER NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS search_romaji TEXT NULL",
+    "ALTER TABLE folders ADD COLUMN IF NOT EXISTS search_romaji TEXT NULL",
+    """CREATE TABLE IF NOT EXISTS global_search_backfill_state (
+        name VARCHAR(100) PRIMARY KEY,
+        completed_at TIMESTAMPTZ NULL
+    )""",
+    "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+    "CREATE INDEX IF NOT EXISTS ix_search_files_romaji_trgm ON files USING gin (search_romaji gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS ix_search_folders_romaji_trgm ON folders USING gin (search_romaji gin_trgm_ops)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_files_active_user_storage_key ON files (user_id, storage_key) WHERE deleted_at IS NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS content_json JSONB NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS references_json JSONB NULL",

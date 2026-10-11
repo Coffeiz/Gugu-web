@@ -419,6 +419,13 @@ echo "[entrypoint] alembic upgrade head ..."
 alembic upgrade head
 python -m scripts.migrations.migrate_workspace_layout --allow-real-data --check
 
+# 文件/文件夹拼音别名只在首轮自动回填；完成标记存在时，脚本立即退出，不重扫业务表。
+# 只由 Web 主进程触发，避免 worker/gateway 并发启动时重复执行。
+if [ "${1:-}" = "uvicorn" ] || [ "${1:-}" = "nginx" ]; then
+    echo "[entrypoint] 检查文件/文件夹拼音别名回填状态 ..."
+    PYTHONPATH=. python scripts/backfill_global_search_romaji.py --batch-size 500
+fi
+
 # Knowledge 主存储把创建/更新时间统一为 ISO 8601 UTC。应用入口在服务接流量前
 # 执行可重跑迁移；其他 worker/gateway 由 KnowledgeStore 的用户级迁移门禁保护。
 if [ "${1:-}" = "uvicorn" ] || [ "${1:-}" = "nginx" ]; then
