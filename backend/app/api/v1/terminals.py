@@ -605,17 +605,27 @@ async def terminate_terminal_view(terminal_id: str, user: User = Depends(get_cur
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, operation=TerminalOperation.TERMINATE)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
+    if row.mode == TerminalMode.INTERACTIVE_PTY.value and row.pty_sandbox_id:
+        try:
+            await SandboxdClient(get_settings().sandbox.sandboxd_socket).terminate_pty(row.pty_sandbox_id)
+        except Exception as exc:
+            # 不把仍可能存活的 PTY 错误标记成已停止；允许用户重试停止。
+            raise HTTPException(status_code=503, detail="终端进程停止失败，请重试") from exc
     await terminate_terminal_record(db, row)
     await db.commit()
-    # 先提交 terminated 再关 PTY，WebSocket 的异步退出回调才能保留用户的
-    # 主动停止状态，不会把它覆盖成 exited。
+    # 共享 sandboxd 已按持久化容器标识停止进程；当前 worker 的本地句柄仅用于
+    # 释放 WebSocket/PTY 资源，不能作为跨 worker 终止的唯一依据。
     if row.mode == TerminalMode.INTERACTIVE_PTY.value:
         manager = get_pty_manager()
         if manager.get(row.id) is not None:
             try:
                 await manager.terminate(row.id, force=True)
-            except LookupError:
-                pass
+            except Exception as exc:
+                # sandboxd 已确认容器停止且数据库已提交；本 worker 的句柄关闭仅是
+                # best-effort，不能让 socket 竞争关闭把成功结果变成 HTTP 500。
+                logger.warning(
+                    "terminal_pty_local_cleanup_failed error=%s", type(exc).__name__,
+                )
     await events.publish(user.id, "terminals", origin=request.headers.get("X-Client-Id") if request else None,
                          operation="append", entity_id=row.id,
                          event_payload={"terminal_id": row.id, "terminal": serialize_terminal(row)})

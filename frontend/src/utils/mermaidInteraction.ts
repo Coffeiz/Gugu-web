@@ -60,6 +60,7 @@ export function bindMermaidInteractions(container: HTMLElement): void {
       if (action === 'zoom-in') changeScale(1.25)
       if (action === 'reset') reset()
     })
+    controls.addEventListener('dblclick', (event) => event.stopPropagation())
     container.appendChild(controls)
   }
   const onPointerDown = (event: PointerEvent) => {

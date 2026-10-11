@@ -17,8 +17,8 @@ function onChange(event: Event) { emit('update:modelValue', (event.currentTarget
 </script>
 
 <style scoped>
-.app-checkbox { display:inline-flex; align-items:center; gap:7px; min-height:20px; color:var(--content-primary); font:13px var(--font-sans); cursor:pointer; user-select:none; }
-.app-checkbox > input { position:absolute; width:1px; height:1px; margin:-1px; opacity:0; pointer-events:none; }
+.app-checkbox { position:relative; display:inline-flex; align-items:center; gap:7px; min-height:20px; color:var(--content-primary); font:13px var(--font-sans); cursor:pointer; user-select:none; }
+.app-checkbox > input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; pointer-events:none; }
 .app-checkbox__box { position:relative; isolation:isolate; display:grid; place-items:center; flex:0 0 var(--control-checkbox-size); width:var(--control-checkbox-size); height:var(--control-checkbox-size); box-sizing:border-box; border:var(--control-checkbox-border-width) solid var(--control-checkbox-border); border-radius:var(--control-checkbox-radius); corner-shape:squircle; background:var(--control-checkbox-bg); color:var(--control-checkbox-mark); box-shadow:var(--control-checkbox-shadow); transition:border-color var(--motion-hover-control) var(--motion-ease-standard); }
 .app-checkbox__box::before { content:''; position:absolute; z-index:0; inset:calc(-1 * var(--control-checkbox-fill-inset)); border-radius:var(--control-checkbox-radius); corner-shape:squircle; background:var(--control-checkbox-bg-checked); opacity:0; pointer-events:none; transition:opacity var(--motion-hover-control) var(--motion-ease-standard); }
 .app-checkbox__mark { position:relative; z-index:1; display:block; opacity:0; transform:scale(.4); transform-origin:center; transition:opacity var(--motion-hover-control) var(--motion-ease-standard),transform var(--motion-hover-control) var(--motion-ease-standard); }

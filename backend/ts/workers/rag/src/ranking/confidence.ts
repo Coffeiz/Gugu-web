@@ -20,7 +20,6 @@ export const SOURCE_QUALITY_V4: Record<string, number> = {
   knowledge: 1.0,
   memory: 0.8,
   project: 0.8,
-  file: 0.8,
   journal: 0.8,
   note: 0.8,
   calendar: 0.8,
@@ -47,7 +46,6 @@ export function confidenceV4(
 export const SOURCE_QUALITY: Record<string, number> = {
   memory: 0.8,
   project: 0.9,
-  file: 0.8,
   canvas: 0.75,
   conversation: 0.65,
   journal: 0.7,

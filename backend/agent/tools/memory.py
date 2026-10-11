@@ -85,11 +85,8 @@ async def _search_memory(db, user_id, args: dict):
     source = str(args.get("source") or "all").strip().lower()
     scope = str(args.get("scope") or "auto").strip().lower()
     strategy = str(args.get("strategy") or "auto").strip().lower()
-    if source == "knowledge":
-        # 知识域已独立（PRD-KNOWLEDGE-2）：精确读取走 read_knowledge 直读工具
-        return {"error": "知识检索已独立：用 read_knowledge 直读或列举知识条目；search_memory 只搜记忆（profile/pattern/daily/memory）"}
     if source not in {"all", "profile", "pattern", "daily", "memory"}:
-        return {"error": "source 只能是 all、profile、pattern、daily 或 memory（知识用 read_knowledge）"}
+        return {"error": "source 只能是 all、profile、pattern、daily 或 memory"}
     if strategy not in {"auto", "bm25", "embedding"}:
         return {"error": "strategy 只能是 auto、bm25 或 embedding"}
     try:
@@ -137,8 +134,7 @@ class MemorySkill(BaseSkill):
         name="search_memory", label="搜索记忆",
         description_short='搜索历史记忆；可按 scope/source/strategy 筛选，省略筛选项用默认值',
         description=(
-            "搜索用户的历史记忆、事件和对话背景，只覆盖 profile/pattern/daily/memory。"
-            "不含知识条目：已保存的事实与规则用 read_knowledge 直读或列举。"
+            "搜索用户的历史记忆、事件和对话背景，来源为 profile/pattern/daily/memory。"
             "记忆检索走索引，刚保存的内容可能有短暂延迟；以保存回执为准，确需复查时下一轮再搜。"
         ),
         input_schema={

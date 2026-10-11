@@ -311,6 +311,16 @@ class FileResponse(CamelModel):
     version: int = 1
 
 
+class FileSummaryResponse(CamelModel):
+    total_count: int
+    recent_files: list[FileResponse]
+
+
+class FileStreamResponse(CamelModel):
+    file: FileResponse
+    url: str
+
+
 class BatchDeleteBody(CamelModel):
     ids: list[int]
 
@@ -404,10 +414,25 @@ class TrashFolderResponse(FolderResponse):
     deleted_at: str
 
 
+class TrashCountsResponse(CamelModel):
+    file_count: int
+    folder_count: int
+    total_count: int
+
+
 class TrashFolderContentsResponse(CamelModel):
     """回收站顶层文件夹的直属内容，只读查看，不改变整体恢复单元语义。"""
     folders: list[TrashFolderResponse] = Field(default_factory=list)
     files: list[FileResponse] = Field(default_factory=list)
+
+
+class TrashPurgeJobResponse(CamelModel):
+    id: int
+    status: Literal["queued", "running", "completed", "failed"]
+    progress_current: int
+    progress_total: int
+    failed_count: int
+    error_code: Optional[str] = None
 
 
 # ── File Tree ─────────────────────────────────────────────────────────────────
@@ -422,6 +447,7 @@ class ProjectTreeEntry(CamelModel):
 class FileTreeResponse(CamelModel):
     projects: list[ProjectTreeEntry]
     personal_count: int
+    personal_root_count: int
 
 
 # ── CalendarEvent ─────────────────────────────────────────────────────────────
@@ -655,9 +681,9 @@ class PreferencesResponse(CamelModel):
     shellDangerousEnabled: bool = False       # 用户级全部 Shell 命令权限，危险操作仍需确认
     automaticModeEnabled: bool = False        # 用户级自动模式；默认关闭
     decisionGuardEnabled: bool = False        # 行动跟进守卫；默认关闭
-    showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
-    showIntermediateReplies: bool = True       # IM 是否展示运行中的中间轮次回复；默认保持现有行为
-    toolInjectionMode: str = "full"         # description = 简介模式；full = 全量模式，默认全量
+    showToolInteractions: bool = True         # IM 是否展示工具调用过程；默认开启
+    showIntermediateReplies: bool = False     # IM 是否展示运行中的中间轮次回复；默认关闭
+    toolInjectionMode: str = "description"  # description = 简介模式；full = 全量模式，默认简介
     personalityPreference: Optional[str] = None
     personalityPreferenceEnabled: bool = False
     personalityPreferenceRevision: int = 0

@@ -62,6 +62,16 @@ def _source_line(lines: list[str], line: int) -> str:
     return lines[line - 1].strip()[:160]
 
 
+def _has_bare_orm_constructor(code: str) -> bool:
+    """识别裸 SQLAlchemy constructor，排除同名 Python 函数声明。"""
+    pattern = re.compile(r"(?<![\w.])(select|update|delete|insert)\s*\(")
+    for match in pattern.finditer(code):
+        if re.search(r"(?:async\s+)?def\s*$", code[:match.start()]):
+            continue
+        return True
+    return False
+
+
 def scan() -> list[Finding]:
     findings: list[Finding] = []
     for area, root in SCAN_ROOTS.items():
@@ -133,9 +143,7 @@ def scan_added_lines(base: str) -> list[str]:
             continue
         # 只匹配 select(...)/update(...)/delete(...)/insert(...) 这类裸 constructor；
         # 前面的负向约束排除 result.update(...) 等普通对象方法。
-        bare_constructor = bool(re.search(
-            r"(?<![\w.])(select|update|delete|insert)\s*\(", code,
-        ))
+        bare_constructor = _has_bare_orm_constructor(code)
         session_orm = any(token in code for token in (
             "db.get(", "session.get(", "self.db.get(",
             "db.execute(", "db.delete(", "db.add(",

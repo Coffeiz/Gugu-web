@@ -108,7 +108,7 @@ def session_scope_filters(
     / ``_persist_push_im``）在调用方 fail closed，**禁止**退化成"同 user 同平台所有
     私聊串一起"。这是上下文隔离边界，不依赖"网关一定会传 sender id"的隐式假设。
     """
-    if source not in {"feishu", "qq", "wechat"}:
+    if source not in IM_SOURCES:
         return []
     filters = [
         model.source == source,
@@ -178,7 +178,7 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
     from app.models import ConversationSession
 
     # P1-2 fail closed：IM 私聊缺 platform_user_id 时直接拒绝
-    if request.source in {"feishu", "qq", "wechat"} and not request.chat_id:
+    if request.source in IM_SOURCES and not request.chat_id:
         puid = getattr(request, "platform_user_id", None)
         if not puid:
             raise ValueError(

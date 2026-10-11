@@ -40,7 +40,7 @@ class RecordSpec:
 RECORD_SPECS = (
     RecordSpec("preferences", "preferences", UserPreferences, "user_id", "id", ("data_json",), json_fields=("data_json",), sanitize="preferences"),
     RecordSpec("project", "projects", Project, "user_id", "id", (
-        "name", "client", "status", "start_date", "deadline", "color", "progress",
+        "name", "summary", "client", "status", "start_date", "deadline", "color", "progress",
         "stages_json", "current_stage", "priority", "archived", "done_at"), json_fields=("stages_json",)),
     RecordSpec("client", "clients", Client, "user_id", "id", ("name", "contact", "email", "phone", "notes")),
     RecordSpec("workspace_directory", "workspaces", WorkspaceDirectory, "user_id", "id",
@@ -103,7 +103,7 @@ RECORD_SPECS = (
     RecordSpec("smtp_config", "connections", UserSmtpConfig, "user_id", "id",
         ("host", "port", "user", "from_addr", "use_ssl", "updated_at"), sanitize="connection"),
     RecordSpec("bot_config", "connections", UserBot, "user_id", "id", (
-        "platform", "name", "app_id", "sandbox", "group_chat_enabled", "group_requires_at",
+        "platform", "name", "app_id", "sandbox", "group_chat_enabled", "feishu_group_chat_enabled", "group_requires_at",
         "group_read_enabled", "group_memory_enabled", "member_memory_enabled", "group_message_format",
         "private_message_format", "private_streaming_enabled", "created_at"), sanitize="bot"),
     RecordSpec("mcp_config", "connections", UserMcpServer, "user_id", "id", (
@@ -255,6 +255,13 @@ async def project_record(
         fields[field_name] = _json_value(
             _decode_json(value) if name in spec.json_fields else value
         )
+
+    # 软删除的时间流笔记只作为关系墓碑迁移，不能把用户已删除的标题或正文带进归档。
+    # 保留记录身份和 deleted_at，确保其他仍存在的关系可以稳定解析，且导入后不会复活。
+    if spec.record_type == "mind_node" and row.kind == "note" and row.deleted_at is not None:
+        fields["title"] = None
+        fields["content_md"] = ""
+        fields["content_plain"] = ""
 
     relations: list[PortableRelation] = []
     for source_field, relation_name, target_type in spec.refs:

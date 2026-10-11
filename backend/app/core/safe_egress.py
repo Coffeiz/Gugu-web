@@ -99,22 +99,30 @@ def _httpcore_proxy(settings: SafeEgressSettings) -> httpcore.Proxy:
     )
 
 
+def build_httpx_proxy(settings: SafeEgressSettings) -> httpx.Proxy:
+    """把管理员配置的代理转换为 HTTPX 代理，复用已加密的认证信息。"""
+    return _to_httpx_proxy(_httpcore_proxy(settings))
+
+
+def _to_httpx_proxy(proxy: httpcore.Proxy) -> httpx.Proxy:
+    scheme = proxy.url.scheme.decode("ascii")
+    host = proxy.url.host.decode("ascii")
+    if b":" in proxy.url.host and not host.startswith("["):
+        host = f"[{host}]"
+    url = f"{scheme}://{host}:{proxy.url.port}"
+    auth = (
+        (proxy.auth[0].decode("utf-8"), proxy.auth[1].decode("utf-8"))
+        if proxy.auth else None
+    )
+    return httpx.Proxy(url, auth=auth, headers=proxy.headers, ssl_context=proxy.ssl_context)
+
+
 async def _query_doh(host: str, record_type: str, proxy: httpcore.Proxy) -> list[dict]:
     """经显式代理查询受控 DoH；不使用环境代理，也不回退系统 DNS。"""
     try:
-        proxy_scheme = proxy.url.scheme.decode("ascii")
-        proxy_host = proxy.url.host.decode("ascii")
-        if b":" in proxy.url.host and not proxy_host.startswith("["):
-            proxy_host = f"[{proxy_host}]"
-        proxy_url = f"{proxy_scheme}://{proxy_host}:{proxy.url.port}"
-        httpx_proxy = httpx.Proxy(
-            proxy_url,
-            auth=(proxy.auth[0].decode("utf-8"), proxy.auth[1].decode("utf-8")) if proxy.auth else None,
-            headers=proxy.headers,
-            ssl_context=proxy.ssl_context,
-        )
+        configured_proxy = _to_httpx_proxy(proxy)
         async with httpx.AsyncClient(
-            proxy=httpx_proxy,
+            proxy=configured_proxy,
             trust_env=False,
             timeout=httpx.Timeout(10.0),
             follow_redirects=False,

@@ -28,7 +28,7 @@ INDEX_CACHE_TTL_SECONDS = 30 * 60
 PER_OWNER_CACHE_BYTES = 128 * 1024 * 1024
 GLOBAL_CACHE_BYTES = 512 * 1024 * 1024
 DEFAULT_SOURCE_TYPES = (
-    "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
+    "memory", "knowledge", "project", "note", "canvas", "calendar", "scheduled_task", "conversation",
 )
 
 
@@ -522,6 +522,7 @@ class KnowledgeIndexCache:
             func.max(KnowledgeIndexEntry.indexed_at),
         ).where(
             KnowledgeIndexEntry.owner_user_id == owner_user_id,
+            KnowledgeIndexEntry.source_type != "file",
         ).group_by(KnowledgeIndexEntry.source_type))).all()
         if not rows:
             return None

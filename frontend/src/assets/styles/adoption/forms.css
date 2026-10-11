@@ -22,7 +22,7 @@ html[data-theme][data-family] :is(
   color: var(--input-fg);
   background: var(--input-bg);
   border: 1px solid var(--input-border);
-  caret-color: var(--action-primary);
+  caret-color: var(--input-caret-color);
   box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
@@ -63,7 +63,7 @@ html[data-theme][data-family] .admin-main :is(
   border: 1px solid var(--input-border);
   color: var(--input-fg);
   box-shadow: none;
-  caret-color: var(--action-primary);
+  caret-color: var(--input-caret-color);
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
 html[data-theme][data-family] .admin-main :is(

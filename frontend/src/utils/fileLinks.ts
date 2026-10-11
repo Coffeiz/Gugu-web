@@ -29,6 +29,23 @@ function normalizedName(value: string) {
   return value.normalize('NFC').toLocaleLowerCase()
 }
 
+export function isRelativeFileLink(href: string): boolean {
+  if (!href || href.startsWith('#') || href.startsWith('/') || href.startsWith('//')) return false
+  if (/^[a-z][a-z\d+.-]*:/i.test(href)) return false
+  return Boolean(decodePath(href.split('#', 1)[0].split('?', 1)[0])?.length)
+}
+
+export function isSiblingFileLink(href: string): boolean {
+  if (!isRelativeFileLink(href)) return false
+  try {
+    const parts = decodeURIComponent(href.split('#', 1)[0].split('?', 1)[0])
+      .split('/').filter(part => part && part !== '.')
+    return parts.length === 1 && !parts.includes('..')
+  } catch {
+    return false
+  }
+}
+
 function fileNames(file: FileMeta): string[] {
   const displayName = file.displayName ?? ''
   const ext = (file.ext ?? '').replace(/^\./, '')
@@ -44,12 +61,12 @@ interface FileLinkLookup {
 }
 
 function buildFileLinkLookup(files: FileMeta[], folders: FolderMeta[]): FileLinkLookup {
+  const byId = new Map(folders.map(folder => [folder.id, folder]))
   const folderPaths = new Map<number, string[]>()
   const pathOf = (folderId: number | null | undefined): string[] => {
     if (folderId == null) return []
     const cached = folderPaths.get(folderId)
     if (cached) return cached
-    const byId = new Map(folders.map(folder => [folder.id, folder]))
     const result: string[] = []
     const seen = new Set<number>()
     let current = byId.get(folderId)
@@ -80,8 +97,7 @@ function buildFileLinkLookup(files: FileMeta[], folders: FolderMeta[]): FileLink
 
   return {
     resolve(href, context) {
-      if (!href || href.startsWith('#') || href.startsWith('/') || href.startsWith('//')) return null
-      if (/^[a-z][a-z\d+.-]*:/i.test(href)) return null
+      if (!isRelativeFileLink(href)) return null
 
       const cleanHref = href.split('#', 1)[0].split('?', 1)[0]
       const parts = decodePath(cleanHref)

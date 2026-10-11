@@ -50,6 +50,17 @@ def is_network_error(error: BaseException) -> bool:
     """识别连接/超时类错误，不读取或返回上游响应正文。"""
     if isinstance(error, (ConnectionError, TimeoutError)):
         return True
+    # httpx/httpcore 的 RemoteProtocolError 表示响应流在协议层意外中断，
+    # 并不一定继承 Python 的 ConnectionError；它属于传输失败而不是模型拒答。
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__.lower() in {
+            "remoteprotocolerror", "protocolerror", "readerror", "writeerror",
+        }:
+            return True
+        current = current.__cause__ or current.__context__
     blob = f"{type(error).__module__}.{type(error).__name__} {error}".lower()
     return any(k in blob for k in (
         "timeout", "connect", "network", "ssl", "econnreset", "read operation",
@@ -70,6 +81,10 @@ def describe_llm_error(
     )
 
     attempts = max(0, int(attempts or 0))
+    # 所有 provider 失败（包括连接中断/协议错误）都进入受限诊断出口；常规日志和
+    # 用户事件只保留脱敏分类。调用方可附带 run/provider/model/预算等非内容关联字段。
+    diagnostic_id = secrets.token_hex(8).upper()
+    diag_log(f"{diagnostic_context} diagnostic_id={diagnostic_id}", error)
     provider_error = is_provider_http_error(error)
     tag = upstream_status_tag(error) if provider_error else ""
     status_code = upstream_status_code(error) if provider_error else None
@@ -78,14 +93,7 @@ def describe_llm_error(
 
     minimax_details = minimax_error_details(error)
     if provider_error and minimax_details is not None:
-        diagnostic_id = secrets.token_hex(8).upper()
         error_type = minimax_details.error_type or "-"
-        diag_log(
-            f"{diagnostic_context} provider=minimax status={status_code} "
-            f"error_code={minimax_details.code} error_type={error_type} "
-            f"request_id={minimax_details.request_id or '-'} diagnostic_id={diagnostic_id}",
-            error,
-        )
         request_id = minimax_details.request_id or "-"
         return LLMErrorPresentation(
             code="provider_minimax_error",
@@ -148,8 +156,6 @@ def describe_llm_error(
             message_params=params,
             text=f"上游模型服务返回错误（{tag}）{suffix}。这是供应商服务端错误，请稍后重试。",
         )
-    diagnostic_id = secrets.token_hex(8).upper()
-    diag_log(f"{diagnostic_context} diagnostic_id={diagnostic_id}", error)
     return LLMErrorPresentation(
         code="internal_error",
         message_key="chatUi.internalError",

@@ -46,6 +46,10 @@ def content_text(content) -> str:
         return "\n".join(part for part in (content_text(item) for item in content) if part)
     if isinstance(content, dict):
         block_type = content.get("type")
+        if block_type in {"image", "image_url", "input_image"}:
+            return "[图片]"
+        if block_type in {"input_audio", "audio", "video_url"}:
+            return "[媒体]"
         if block_type == "text":
             return str(content.get("text") or "")
         if block_type in {"reasoning", "reasoning_content"}:

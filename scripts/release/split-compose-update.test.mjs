@@ -30,6 +30,7 @@ if [[ "$1" == --host ]]; then
   esac
   exit 0
 fi
+if [[ "$1" == run ]]; then exit 0; fi
 if [[ "$1" == inspect ]]; then
   if [[ "$*" == *'json .Mounts'* ]]; then echo '[{"Destination":"/data","Source":"/synthetic/data"}]'; exit 0; fi
   if [[ "$*" == *backend-id* || "$*" == *sandboxd-id* ]]; then echo 'docker.io/coffeiz/gugu-web-backend:v1.2.1'; else echo 'docker.io/coffeiz/gugu-web-frontend:v1.2.1'; fi
@@ -81,6 +82,7 @@ function fixture() {
   fs.writeFileSync(path.join(root, 'docker-compose.prod.yml'), 'services: {}\n')
   fs.writeFileSync(path.join(bin, 'docker'), mockDocker, { mode: 0o755 })
   fs.writeFileSync(path.join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  fs.writeFileSync(path.join(bin, 'flock'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
   fs.writeFileSync(path.join(root, 'manager.state'), 'running')
   fs.writeFileSync(path.join(root, 'manager-control'), `#!/bin/bash
 set -e
@@ -103,8 +105,8 @@ esac
   return { root, bin, log: path.join(root, 'docker.log') }
 }
 
-function run(f, extraEnv = {}) {
-  return spawnSync('bash', [script, path.join(f.root, 'manifest.json')], {
+function run(f, extraEnv = {}, args = [path.join(f.root, 'manifest.json')]) {
+  return spawnSync('bash', [script, ...args], {
     cwd: f.root, encoding: 'utf8', env: {
       ...process.env, PATH: `${f.bin}:${process.env.PATH}`, MOCK_DOCKER_LOG: f.log,
       COMPOSE_PROJECT_DIR: f.root, COMPOSE_FILE: path.join(f.root, 'docker-compose.prod.yml'),
@@ -116,6 +118,24 @@ function run(f, extraEnv = {}) {
     },
   })
 }
+
+test('Docker 更新入口要求显式确认并在拉取前验证两个官方镜像签名', () => {
+  const f = fixture()
+  try {
+    const missingConfirmation = run(f, {}, ['--manifest', path.join(f.root, 'manifest.json')])
+    assert.notEqual(missingConfirmation.status, 0)
+    assert.match(missingConfirmation.stderr, /--confirm/)
+    assert.equal(fs.existsSync(f.log), false, '缺少确认时不得调用 Docker')
+
+    const result = run(f, {}, ['--manifest', path.join(f.root, 'manifest.json'), '--confirm'])
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`)
+    const log = fs.readFileSync(f.log, 'utf8')
+    const signatureChecks = [...log.matchAll(/run --rm ghcr\.io\/sigstore\/cosign/g)].map((match) => match.index)
+    assert.equal(signatureChecks.length, 2, 'backend 与 frontend 都必须验签')
+    assert.ok(signatureChecks[0] < log.indexOf('pull migrate backend worker gateway frontend'))
+    assert.ok(signatureChecks[1] < log.indexOf('pull migrate backend worker gateway frontend'))
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }) }
+})
 
 test('分体更新备份配置与数据库，验证迁移后按固定服务顺序重建并保留数据卷', () => {
   const f = fixture()
@@ -135,7 +155,9 @@ test('分体更新备份配置与数据库，验证迁移后按固定服务顺�
     assert.ok(migration < log.indexOf('up -d --no-deps --force-recreate backend'))
     assert.doesNotMatch(log, /down -v|system prune/)
     const backupRoot = path.join(f.root, 'backup')
-    const backup = path.join(backupRoot, fs.readdirSync(backupRoot)[0])
+    const backupName = fs.readdirSync(backupRoot).find((name) => name.startsWith('split-update-'))
+    assert.ok(backupName)
+    const backup = path.join(backupRoot, backupName)
     assert.equal(fs.readFileSync(path.join(backup, 'backend.env'), 'utf8'), 'ADMIN_PASSWORD=synthetic\n')
     assert.match(fs.readFileSync(path.join(backup, 'postgres.sql'), 'utf8'), /PostgreSQL database cluster dump/)
     const archive = spawnSync('tar', ['-tf', path.join(backup, 'users.tar')], { encoding: 'utf8' })
@@ -190,7 +212,8 @@ for (const failure of ['MOCK_FAIL_HEALTH', 'MOCK_FAIL_MIGRATION']) {
       assert.doesNotMatch(log, /up -d --pull never/)
       assert.doesNotMatch(log, /force-recreate worker gateway frontend/)
       assert.match(result.stderr, /禁止只降级镜像/)
-      const backup = path.join(f.root, 'backup', fs.readdirSync(path.join(f.root, 'backup'))[0])
+      const backupName = fs.readdirSync(path.join(f.root, 'backup')).find((name) => name.startsWith('split-update-'))
+      const backup = path.join(f.root, 'backup', backupName)
       assert.equal(fs.readFileSync(path.join(backup, 'recovery-required'), 'utf8').trim(), 'manual-recovery')
     } finally { fs.rmSync(f.root, { recursive: true, force: true }) }
   })

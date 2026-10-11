@@ -1,0 +1,386 @@
+"""Phase 5 统一查询：retriever 单 IPC、预排序装配与影子隔离的单元契约。"""
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+
+import pytest
+
+from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
+from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
+
+SCOPE = Scope("synthetic-owner")
+
+
+def _knowledge_doc():
+    return IndexDocument("knowledge-1", "knowledge", "1", SCOPE, "知识", "", "缓存知识正文", "1")
+
+
+def _memory_doc():
+    return IndexDocument("daily-1", "memory", "daily", SCOPE, "记忆", "", "缓存记忆正文", "v1")
+
+
+class _StubRetriever:
+    """满足 UnifiedQueryRetriever 检索调度所需的最小来源桩。"""
+
+    def __init__(self, user_id, source_type):
+        self.user_id = user_id
+        self.source_type = source_type
+        self.source_filter = None
+
+    @asynccontextmanager
+    async def session_scope(self):
+        yield object()
+
+
+def _selected_row(document, document_key, *, confidence=0.9):
+    return {
+        "document_key": document_key, "text": document.content, "confidence": confidence,
+        "source_quality": 0.8, "normalized_score": 1.0, "fused_score": 0.5,
+        "raw_score": 1.5, "citation": {"chunk_id": document.chunk_id},
+        "citations": [{"chunk_id": document.chunk_id}],
+        "document": {
+            "id": document_key, "source_type": document.source_type,
+            "source_id": document.source_id, "title": document.title,
+            "summary": document.summary, "content": document.content,
+            "document_version": document.version, "parent_id": document.parent_document_id,
+            "chunk_index": document.chunk_index, "chunk_count": document.chunk_count,
+            "scope_type": document.scope.scope_type, "scope_id": document.scope.scope_id,
+            "platform": document.scope.platform, "bot_id": document.scope.bot_id,
+            "group_id": document.scope.group_id, "metadata": document.metadata,
+        },
+    }
+
+
+def _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key, *, fallback=None):
+    return {
+        "selected": [
+            _selected_row(knowledge_doc, knowledge_key),
+            _selected_row(memory_doc, memory_key, confidence=0.7),
+        ],
+        "stats": {"candidate_count": 2, "accepted_count": 2, "top_confidence": 0.9,
+                  "threshold": 0.35, "preferred_threshold": 0.55,
+                  "selection_mode": "confidence", "scoring_version": "confidence-v4",
+                  "elapsed_ms": 3, "source_diagnostics": {"knowledge": {"candidate_count": 1}}},
+        "fusion": {"fusion": "hybrid-rrf", "vector_doc_count": 1,
+                   "vector_version": "prov:model:2", "fallback": fallback},
+        "document_counts": {"knowledge": 3, "memory": 1},
+        "source_groups": {"knowledge": {"candidate_count": 1, "hit_count": 1},
+                          "memory": {"candidate_count": 1, "hit_count": 1}},
+        "probe": {"stage_ms": {"bm25_scoring": 4, "worker_total": 9},
+                  "counts": {"candidate_pool": 2}},
+    }
+
+
+def _install_unified_stubs(monkeypatch, *, canned, vector_map=None, model_tag="prov:model:2",
+                           memory_documents=None, embedding_enabled=True):
+    """打桩索引准备、瞬态语料上传、TS query embedding 与统一查询 IPC。"""
+    import agent.memory.embedding as embedding_mod
+    from agent.rag import batch_retriever as br
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    calls = {}
+
+    async def prepare_memory(owner, scopes, *, source_filter, snapshot_revision,
+                             snapshot_text, vector_version):
+        calls["memory"] = {
+            "owner": owner, "scopes": scopes, "source_filter": source_filter,
+            "snapshot_revision": snapshot_revision, "snapshot_text": snapshot_text,
+            "vector_version": vector_version,
+        }
+        return {
+            "transient_revision": "ts-memory-revision",
+            "document_count": len(memory_documents or []),
+            "vector_count": len(vector_map or []), "memory_source": "owner-index+daily",
+            "probe": {"stage_ms": {"owner_document_read_and_adapt": 12},
+                      "counts": {"selected_documents": len(memory_documents or [])},
+                      "cache": {"owner_cache_hit": False}},
+        }
+
+    async def unified_query(query, *, searches, query_embedding, source_order,
+                            candidate_limit, rank_options, before_message_id=None,
+                            vector_version=None):
+        calls["query"] = {"query": query, "searches": searches, "query_embedding": query_embedding,
+                          "source_order": source_order, "candidate_limit": candidate_limit,
+                          "rank_options": rank_options, "before_message_id": before_message_id,
+                          "vector_version": vector_version}
+        return canned
+
+    index = SimpleNamespace(
+        client=SimpleNamespace(
+            owner_user_id="synthetic-owner", prepare_memory=prepare_memory,
+            _transient_revision="ts-memory-revision",
+        ),
+        unified_query=unified_query, documents_by_id={},
+    )
+
+    @asynccontextmanager
+    async def session_scope():
+        yield object()
+
+    async def get(*args, **kwargs):
+        calls["prepare"] = True
+        return index
+
+    monkeypatch.setattr(br, "get_index_cache", lambda: SimpleNamespace(get=get))
+    monkeypatch.setattr(embedding_mod, "model_tag", lambda: model_tag)
+    query_settings = ({
+        "provider": "synthetic", "base_url": "http://127.0.0.1:8999/v1",
+        "pinned_ip": "127.0.0.1",
+        "model": "synthetic-embedding", "dimensions": 2,
+        "api_key": "synthetic-secret", "multimodal": False,
+    } if embedding_enabled else None)
+    monkeypatch.setattr(embedding_mod, "query_settings", lambda: query_settings)
+
+    return calls, index
+
+
+@pytest.mark.asyncio
+async def test_unified_retriever_single_ipc_delivers_rank_rows(monkeypatch):
+    """统一查询一次 IPC 完成召回+融合+排序，rank_rows 回连 Python 文档。"""
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+    from agent.rag.context import (
+        reset_conversation_before_message_id, set_conversation_before_message_id,
+    )
+    from agent.rag import batch_retriever as br
+    from agent.rag.ts_sidecar import _worker_document_key
+
+    probe_updates = []
+    monkeypatch.setattr(br, "probe_update", lambda **values: probe_updates.append(values))
+    knowledge_doc, memory_doc = _knowledge_doc(), _memory_doc()
+    knowledge_key, memory_key = _worker_document_key(knowledge_doc), _worker_document_key(memory_doc)
+    canned = _canned_response(knowledge_doc, memory_doc, knowledge_key, memory_key)
+    calls, index = _install_unified_stubs(
+        monkeypatch, canned=canned, vector_map={memory_key: [0.3, 0.4]},
+        memory_documents=[memory_doc])
+    index.documents_by_id[knowledge_key] = knowledge_doc
+
+    token = set_conversation_before_message_id(7)
+    try:
+        retriever = UnifiedQueryRetriever([
+            _StubRetriever("synthetic-owner", "knowledge"),
+            _StubRetriever("synthetic-owner", "memory"),
+        ])
+        batches = await retriever.retrieve("缓存", scope=SCOPE, rank_options={"limit": 3})
+    finally:
+        reset_conversation_before_message_id(token)
+
+    assert list(calls) == ["prepare", "memory", "query"]
+    assert calls["memory"]["owner"] == "synthetic-owner"
+    assert calls["memory"]["scopes"][0].scope_type == "owner"
+    assert calls["memory"]["source_filter"] == "all"
+    assert calls["memory"]["vector_version"] == "prov:model:2"
+
+    assert calls["query"]["before_message_id"] == 7
+    assert calls["query"]["query_embedding"]["api_key"] == "synthetic-secret"
+    assert calls["query"]["source_order"] == ["memory", "knowledge"]
+    assert calls["query"]["candidate_limit"] == 20
+    assert calls["query"]["rank_options"]["limit"] == 3
+    assert [spec.get("corpus") for spec in calls["query"]["searches"]] == [None, "transient"]
+    assert any(update.get("memory", {}).get("prepare", {}).get("stage_ms", {}).get(
+        "owner_document_read_and_adapt") == 12 for update in probe_updates)
+    assert any(update.get("worker", {}).get("stage_ms", {}).get("bm25_scoring") == 4
+               for update in probe_updates)
+
+    assert len(batches) == 1
+    batch = batches[0]
+    assert batch.source_type == "unified"
+    assert batch.fallback_reason is None
+    assert batch.candidate_count == 2
+    assert batch.metadata["engine"] == "typescript"
+    assert batch.metadata["unified_query"] == "True"
+    assert batch.rank_stats["candidate_count"] == 2
+    assert len(batch.rank_rows) == 2
+    candidate, text, row = batch.rank_rows[0]
+    assert candidate.document is knowledge_doc
+    assert candidate.raw_score == 1.5
+    assert text == knowledge_doc.content
+    assert row["confidence"] == 0.9
+    memory_candidate = batch.rank_rows[1][0]
+    assert memory_candidate.document.content == memory_doc.content
+
+
+def test_unified_retriever_reconstructs_persistent_row_after_cold_restore():
+    """TS 冷恢复没有 Python 文档副本时，仍保留持久化来源的选中行。"""
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    retriever = UnifiedQueryRetriever([])
+    row = {
+        "id": "knowledge:entry-1:0",
+        "document_key": "knowledge:entry-1:0",
+        "text": "蒙扎弯道中英名对照\nT6：Roggia",
+        "raw_score": 5.8,
+        "confidence": 0.87,
+        "citation": {
+            "source_type": "knowledge",
+            "source_id": "knowledge-entry-1",
+            "title": "蒙扎弯道中英名对照",
+            "chunk_id": "knowledge:entry-1:0",
+            "version": "1",
+        },
+    }
+    index = SimpleNamespace(
+        documents_by_id={},
+        client=SimpleNamespace(owner_user_id="synthetic-owner"),
+    )
+
+    rows = retriever._resolve_rank_rows(
+        index, {"selected": [row]}, [], owner_user_id="synthetic-owner",
+    )
+
+    assert len(rows) == 1
+    candidate, text, resolved = rows[0]
+    assert candidate.document.source_type == "knowledge"
+    assert candidate.document.source_id == "knowledge-entry-1"
+    assert candidate.document.title == "蒙扎弯道中英名对照"
+    assert candidate.document.content == row["text"]
+    assert text == row["text"]
+    assert resolved is row
+
+
+def test_unified_retriever_rechecks_owner_before_returning_ts_rows():
+    """Python 在 TS 返回后仍复核 owner，sidecar 响应不能越过最终 ACL。"""
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    foreign = _knowledge_doc()
+    foreign = IndexDocument(
+        foreign.document_id, foreign.source_type, foreign.source_id,
+        Scope("other-owner"), foreign.title, foreign.summary, foreign.content, foreign.version,
+    )
+    key = "knowledge:knowledge-1:0"
+    index = SimpleNamespace(
+        documents_by_id={key: foreign},
+        client=SimpleNamespace(owner_user_id="synthetic-owner"),
+    )
+    retriever = UnifiedQueryRetriever([])
+
+    rows = retriever._resolve_rank_rows(
+        index, {"selected": [_selected_row(foreign, key)]}, [],
+        owner_user_id="synthetic-owner",
+    )
+
+    assert not rows
+
+
+@pytest.mark.asyncio
+async def test_unified_retriever_fallback_labels_follow_python_facts(monkeypatch):
+    """fallback 标签按 Python 侧事实判定：auto 策略下关闭=embedding_disabled；
+    bm25 策略 embedding 根本不参与，标 lexical_only 而非误导性的 disabled；
+    其余情况采纳 worker 回报。"""
+    from agent.rag.batch_retriever import UnifiedQueryRetriever
+
+    knowledge_doc = _knowledge_doc()
+    knowledge_key = "knowledge:knowledge-1:0"
+    cases = [
+        ("auto", False, None, "embedding_disabled"),
+        ("auto", True, "embedding_cache_unavailable", "embedding_cache_unavailable"),
+        ("auto", True, None, None),
+        # bm25 策略：embedding 未参与，不得标成 embedding_disabled。
+        ("bm25", False, None, "lexical_only"),
+        ("bm25", True, None, "lexical_only"),
+    ]
+    retriever = UnifiedQueryRetriever([_StubRetriever("synthetic-owner", "knowledge")])
+    for strategy, enabled, worker_fallback, expected in cases:
+        canned = _canned_response(knowledge_doc, _memory_doc(), knowledge_key, "memory:daily-1:0",
+                                  fallback=worker_fallback)
+        calls, _index = _install_unified_stubs(monkeypatch, canned=canned,
+                                               embedding_enabled=enabled)
+        batches = await retriever.retrieve("缓存", scope=SCOPE, strategy=strategy)
+        assert batches[0].fallback_reason == expected, (strategy, enabled, worker_fallback)
+        if enabled:
+            assert calls["query"]["query_embedding"] is not None or strategy == "bm25"
+        else:
+            # 未配置 embedding 时不传短生命周期 provider 配置，worker 直接词法检索。
+            assert calls["query"]["query_embedding"] is None
+
+
+def _pre_ranked_batch(triples, *, metadata=None):
+    return RetrievalBatch(
+        source_type="unified", rank_rows=tuple(triples), rank_stats={
+            "candidate_count": len(triples), "accepted_count": len(triples),
+            "top_confidence": 0.9, "threshold": 0.35, "preferred_threshold": 0.55,
+            "selection_mode": "confidence", "scoring_version": "confidence-v4",
+            "elapsed_ms": 2,
+        },
+        metadata=metadata or {"engine": "typescript", "cache_hit": "True",
+                              "retrieve_ms": "5", "fusion": "hybrid-rrf"},
+        candidate_count=len(triples), index_source="persistent-ts",
+    )
+
+
+def _triple(document, *, text=None):
+    row = _selected_row(document, "unused", confidence=0.9)
+    candidate = RecallCandidate.from_result(RecallResult(document, 1.5), rank=1)
+    return (candidate, text or document.content, row)
+
+
+@pytest.mark.asyncio
+async def test_service_assembles_pre_ranked_result():
+    """统一查询主链：service 跳过二次排序，直接装配 worker 已排序结果。"""
+    from agent.rag.service import UnifiedRecallService
+
+    knowledge_doc = _knowledge_doc()
+    batch = _pre_ranked_batch([_triple(knowledge_doc)])
+
+    async def retrieve(query, **kwargs):
+        return [batch]
+
+    response = await UnifiedRecallService(SimpleNamespace(retrieve=retrieve)).search(
+        "缓存", scope=SCOPE)
+    assert response["engine"] == "typescript"
+    assert response["sources"] == ["unified"]
+    assert response["strategy"] == "hybrid"
+    assert response["accepted_count"] == 1
+    assert response["permission_rejected"] == 0
+    assert response["cache_entries"] == 1
+    assert response["sidecar_reused"] is None
+    assert response["stage_ms"]["unified.retrieve_ms"] == 5
+    assert response["source_diagnostics"]["unified"]["engine"] == "typescript"
+    item = response["results"][0]
+    assert item["text"] == knowledge_doc.content
+    assert item["confidence"] == 0.9
+    assert item["citation"] == {"chunk_id": knowledge_doc.chunk_id}
+    assert item["citations"] == [{"chunk_id": knowledge_doc.chunk_id}]
+
+
+@pytest.mark.asyncio
+async def test_service_pre_ranked_permission_recheck_drops_foreign_scope():
+    """预排序装配保留第二道权限防线：越权候选从交付行剔除且不回补预算。"""
+    from agent.rag.service import UnifiedRecallService
+
+    owned, foreign = _knowledge_doc(), IndexDocument(
+        "knowledge-2", "knowledge", "2", Scope("other-owner"), "知识", "", "越权正文", "1")
+    batch = _pre_ranked_batch([_triple(owned), _triple(foreign)])
+
+    async def retrieve(query, **kwargs):
+        return [batch]
+
+    response = await UnifiedRecallService(SimpleNamespace(retrieve=retrieve)).search(
+        "缓存", scope=SCOPE)
+    assert response["permission_rejected"] == 1
+    assert [item["text"] for item in response["results"]] == [owned.content]
+    assert response["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_service_pre_ranked_permission_recheck_keeps_row_pairing():
+    """越权候选排在合法候选之前时，过滤不得错位配对。
+
+    回归：旧实现只过滤 candidate 再和原 rank_rows 从头 zip，会把越权候选的
+    正文/citation/分数行拼到合法候选上（[foreign, owned] 排列才暴露）。
+    """
+    from agent.rag.service import UnifiedRecallService
+
+    foreign = IndexDocument(
+        "knowledge-2", "knowledge", "2", Scope("other-owner"), "知识", "", "越权正文", "1")
+    owned = _knowledge_doc()
+    batch = _pre_ranked_batch([_triple(foreign), _triple(owned, text="自有正文")])
+
+    async def retrieve(query, **kwargs):
+        return [batch]
+
+    response = await UnifiedRecallService(SimpleNamespace(retrieve=retrieve)).search(
+        "缓存", scope=SCOPE)
+    assert response["permission_rejected"] == 1
+    item = response["results"][0]
+    assert item["text"] == "自有正文"
+    assert item["citation"] == {"chunk_id": owned.chunk_id}
+    assert item["citations"] == [{"chunk_id": owned.chunk_id}]

@@ -25,8 +25,9 @@ from app.core import redis as R
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import User, UserBot
+from app.services.im_platforms import im_platform_dependency
 
-router = APIRouter(prefix="/me/qq/connect", tags=["qq-connect"])
+router = APIRouter(prefix="/me/qq/connect", tags=["qq-connect"], dependencies=[Depends(im_platform_dependency("qq"))])
 
 PORTAL_HOST = os.getenv("QQ_PORTAL_HOST", "q.qq.com")
 CREATE_URL = f"https://{PORTAL_HOST}/lite/create_bind_task"

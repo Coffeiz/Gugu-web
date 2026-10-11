@@ -1,6 +1,9 @@
 from urllib.parse import urlparse
 
-from .base import ApiFormat, ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
+from .base import (
+    ApiFormat, ProviderAdapter, ProviderCapabilities, ReasoningCapabilities,
+    ResponsesInputCapabilities, configured_responses_input_capabilities,
+)
 
 
 class OpenAIAdapter(ProviderAdapter):
@@ -30,6 +33,11 @@ class OpenAIAdapter(ProviderAdapter):
         base_url = (getattr(ai, "base_url", "") or "https://api.openai.com/v1").strip()
         return urlparse(base_url).hostname == "api.openai.com"
 
+    def responses_store_value(self, ai) -> bool | None:
+        if self.supports_responses_prompt_cache_key(ai):
+            return False
+        return None
+
     def build_responses_reasoning_replay_params(self, ai) -> dict:
         # encrypted_content 是 OpenAI 官方 Responses 的显式 include 项；不要把
         # OpenAI-compatible 服务假定为支持这个扩展字段。
@@ -39,6 +47,10 @@ class OpenAIAdapter(ProviderAdapter):
 
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         return ProviderCapabilities(api_format="openai", cache_mode="active", tools=True)
+
+    def responses_input_capabilities(self, ai) -> ResponsesInputCapabilities:
+        # 兼容端点仅在显式配置音频能力时发送官方格式；视频不作为通用协议能力推断。
+        return configured_responses_input_capabilities(ai, audio_formats=frozenset({"mp3", "wav"}))
 
     def supported_api_formats(self, ai) -> tuple[ApiFormat, ...]:
         if (getattr(ai, "provider", "") or "").lower() == "openai":

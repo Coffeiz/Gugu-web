@@ -17,7 +17,7 @@ interface ImConnectState { platform: string; id: string | number }
 // ImPlatformKey 从 chatTypes.ts 引入（GuguChatSidebar.vue 的函数类型 props 也要用同一个
 // 类型别名，strictFunctionTypes 下两边收窄成不同类型会报参数逆变错误）。
 interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<any> }
-interface ImPlatform { key: ImPlatformKey; label: string; api: ImPlatformApi }
+interface ImPlatform { key: ImPlatformKey; label: string; api: ImPlatformApi | null }
 
 /**
  * IM（飞书/QQ/微信）接入的唯一状态所有权：Bot 列表、侧栏「扫码连接」抽屉、聊天内
@@ -36,23 +36,29 @@ export function useChatImConnect(options: {
   fetchSessions: () => Promise<void>
 }) {
   const t = i18n.global.t
-  const platformLabel = (key: ImPlatformKey) => key === 'feishu' ? t('chatUi.feishu') : key === 'wechat' ? t('chatUi.wechat') : 'QQ'
+  const platformLabel = (key: ImPlatformKey) => key === 'feishu' ? t('chatUi.feishu') : key === 'wechat' ? t('chatUi.wechat') : key === 'telegram' ? t('chatUi.telegram') : 'QQ'
   const IM_PLATFORMS: ImPlatform[] = [
     { key: 'feishu',  label: 'Feishu', api: feishuConnectApi },
     { key: 'qq',   label: 'QQ',   api: qqConnectApi },
     { key: 'wechat',  label: 'WeChat', api: wechatConnectApi },
+    { key: 'telegram', label: 'Telegram', api: null },
   ]
   const bots   = ref<Bot[]>([])
-  const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false })
+  const supportedPlatforms = ref<ImPlatformKey[]>(IM_PLATFORMS.map(platform => platform.key))
+  const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false, telegram: false })
   // Sidebar 只需要 key/label 展示，api 对象（feishuConnectApi 等）留在这里，
   // startImConnect/openChatImBind 仍按 IM_PLATFORMS.find(...) 查找。
-  const imPlatformOptions = computed(() => IM_PLATFORMS.map(p => ({ key: p.key, label: platformLabel(p.key) })))
-  const imOnline = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
+  const imPlatformOptions = computed(() => IM_PLATFORMS.filter(p => supportedPlatforms.value.includes(p.key)).map(p => ({ key: p.key, label: platformLabel(p.key) })))
+  const imOnline = computed(() => bots.value.some(b => b.enabled && supportedPlatforms.value.includes(b.platform as ImPlatformKey)))
   const imHighlight = ref(false)
   const botsOf = (platform: ImPlatformKey) => bots.value.filter(b => b.platform === platform)
 
   async function loadBots() {
-    try { const r = await userBotsApi.list(); bots.value = r.items || [] } catch {}
+    try {
+      const r = await userBotsApi.list()
+      bots.value = r.items || []
+      if (Array.isArray(r.supported_platforms)) supportedPlatforms.value = r.supported_platforms
+    } catch {}
   }
   function toggleImPlatform(key: ImPlatformKey) { imOpen[key] = !imOpen[key] }
 
@@ -60,7 +66,7 @@ export function useChatImConnect(options: {
   async function promptConnectIM() {
     if (!options.expanded.value) await options.enterExpanded()
     else loadBots()
-    IM_PLATFORMS.forEach(p => { imOpen[p.key] = true })
+    supportedPlatforms.value.forEach(platform => { imOpen[platform] = true })
     await nextTick()
     options.sidebarRef.value?.imGroupEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     imHighlight.value = false   // 重置以便点第二次也能重放动画
@@ -80,7 +86,7 @@ export function useChatImConnect(options: {
 
   async function startImConnect(platform: ImPlatformKey) {
     const p = IM_PLATFORMS.find(x => x.key === platform)
-    if (!p) return
+    if (!p?.api || !supportedPlatforms.value.includes(platform)) return
     connecting.value = platform; connectErr.value = ''
     try {
       const r = await p.api.start()
@@ -98,7 +104,7 @@ export function useChatImConnect(options: {
       connect.value = null
     } finally { connecting.value = '' }
   }
-  function _startImPoll(p: ImPlatform) {
+  function _startImPoll(p: ImPlatform & { api: ImPlatformApi }) {
     _stopImPoll()
     let tries = 0
     connectPoll = setInterval(async () => {
@@ -124,7 +130,7 @@ export function useChatImConnect(options: {
 
   async function openChatImBind(platform: string) {
     const p = IM_PLATFORMS.find(x => x.key === platform)
-    if (!p) return
+    if (!p?.api || !supportedPlatforms.value.includes(p.key)) return
     _stopChatBindPoll()
     chatBind.platform = platform; chatBind.label = platformLabel(p.key)
     chatBind.err = ''; chatBind.hint = ''; chatBind.id = null; chatBind.open = true
@@ -144,7 +150,7 @@ export function useChatImConnect(options: {
       chatBind.err = e?.message || t('chatUi.qrFailed')
     }
   }
-  function _startChatBindPoll(p: ImPlatform) {
+  function _startChatBindPoll(p: ImPlatform & { api: ImPlatformApi }) {
     _stopChatBindPoll()
     let tries = 0
     chatBindPoll = setInterval(async () => {

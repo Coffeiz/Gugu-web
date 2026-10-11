@@ -18,21 +18,28 @@ def project_trash_cutoff():
 
 async def list_project_rows(db, user_id, *, archived: bool, deleted: bool = False):
     """查询项目列表及根目录存活文件数；删除列表只保留 30 天内墓碑。"""
-    file_count = (
-        select(func.count(File.id))
-        .where(
-            File.deleted_at.is_(None),
-            File.project_id == Project.id,
-            File.folder_id.is_(None),
-        )
-        .correlate(Project)
-        .scalar_subquery()
-    )
-    stmt = select(Project, file_count.label("fc")).where(Project.user_id == user_id)
+    project_filters = [Project.user_id == user_id]
     if deleted:
-        stmt = stmt.where(Project.deleted_at.is_not(None), Project.deleted_at > project_trash_cutoff())
+        project_filters.extend((
+            Project.deleted_at.is_not(None),
+            Project.deleted_at > project_trash_cutoff(),
+        ))
     else:
-        stmt = stmt.where(Project.archived == archived, Project.deleted_at.is_(None))
+        project_filters.extend((Project.archived == archived, Project.deleted_at.is_(None)))
+
+    project_scope = select(Project.id).where(*project_filters).subquery()
+    file_counts = (
+        select(File.project_id, func.count(File.id).label("fc"))
+        .join(project_scope, project_scope.c.id == File.project_id)
+        .where(File.deleted_at.is_(None), File.folder_id.is_(None))
+        .group_by(File.project_id)
+        .subquery()
+    )
+    stmt = (
+        select(Project, func.coalesce(file_counts.c.fc, 0).label("fc"))
+        .outerjoin(file_counts, file_counts.c.project_id == Project.id)
+        .where(*project_filters)
+    )
     result = await db.execute(stmt.order_by(Project.deleted_at.desc() if deleted else Project.created_at.desc()))
     return result.all()
 

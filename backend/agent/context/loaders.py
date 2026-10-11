@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.tz import now_utc, resolve_tz, today_str
 from app.models import CalendarEvent, File, Folder, MindNode, Project, User
-from app.services.storage.folders import resolve_folder_path
+from app.services.project_context import load_project_file_overviews
 
 PERSONAL_FILES_RECENT_LIMIT = 20
 PROJECT_CONTEXT_LIMITS = {"pending": 5, "active": 10, "done": 3}
@@ -46,6 +46,11 @@ async def load_projects(db, user_id) -> list:
     for status in ("pending", "active", "done"):
         ordered = sorted(grouped.get(status, []), key=project_sort_key)
         selected.extend(ordered[:PROJECT_CONTEXT_LIMITS[status]])
+    file_overviews = await load_project_file_overviews(
+        db, user_id, [project.id for project in selected],
+    )
+    for project in selected:
+        project._agent_file_overview = file_overviews[project.id]
     return selected
 
 
@@ -103,6 +108,7 @@ async def load_files_overview(db, user_id, recent: int = PERSONAL_FILES_RECENT_L
         select(Folder).where(
             Folder.user_id == user_id,
             Folder.project_id.is_(None),
+            Folder.workspace_directory_id.is_(None),
             Folder.parent_id.is_(None),
             Folder.deleted_at.is_(None),
         )
@@ -133,14 +139,12 @@ async def load_files_overview(db, user_id, recent: int = PERSONAL_FILES_RECENT_L
         )
         .order_by(File.updated_at.desc()).limit(recent_limit)
     )).scalars().all()
-    # 一级目录不需要展开子树；路径解析仅用于保留个人库根目录下的可读路径。
+    # 查询结果已经限定为个人库根目录；它们的路径就是自身名称，无需逐目录
+    # 再查一次父链。避免目录较多时产生 N+1 次数据库往返。
     fmap = {}
     folder_rows = []
     for folder in folders:
-        resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
-        if not resolved:
-            continue
-        _, path = resolved
+        path = folder.name
         fmap[folder.id] = path
         folder_rows.append({
             "id": folder.id, "name": folder.name, "path": path,
@@ -159,11 +163,11 @@ async def load_files_overview(db, user_id, recent: int = PERSONAL_FILES_RECENT_L
     }
 
 
-async def load_memory(user_id, query: str = "") -> dict:
+async def load_memory(user_id, query: str = "", *, prefer_recent: bool = False) -> dict:
     """读取用户 .agent/ 记忆，返回 profile/pattern/daily/memory/summary（缺失为空串）。
-    query = 当前用户消息（可选）：传入则 pattern 超上限时按相关性优先挑（见 store.render_pattern）。"""
+    query = 当前用户消息（可选）：传入则超限记忆按相关性优先挑；无向量兜底可选择优先保留最新章节。"""
     from agent.memory import store
-    return await store.read_memory(user_id, query)
+    return await store.read_memory(user_id, query, prefer_recent=prefer_recent)
 
 
 async def load_dynamic_memory(user_id) -> dict:

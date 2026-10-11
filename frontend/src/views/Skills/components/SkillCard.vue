@@ -6,6 +6,7 @@
     </div>
     <div class="sc-when">
       <span class="sc-slug">{{ props.skill.slug }}</span>
+      <span class="sc-manager">{{ t(props.skill.managed_by === 'assistant' ? 'skills.managedByAssistant' : 'skills.managedByUser') }}</span>
       <span v-if="props.skill.related_tools.length">{{ t('skills.relatedTools', { count: props.skill.related_tools.length }) }}</span>
     </div>
     <p v-if="props.skill.description_short" class="sc-desc">{{ props.skill.description_short }}</p>
@@ -64,6 +65,7 @@ function fmtDate(value: string | null) {
 .sc-when { display: flex; gap: 10px; min-width: 0; font-size: 12px; color: var(--text-secondary); }
 .sc-when span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-slug { font-family: var(--font-mono); }
+.sc-manager { flex: 0 0 auto; }
 .sc-desc { margin: 0; padding: 6px 9px; border-radius: 8px; background: var(--surface-soft); font-size: 12px; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
 .sc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
 .sc-updated { font-size: 11px; color: var(--text-secondary); opacity: 0.75; }

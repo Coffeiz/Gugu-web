@@ -31,6 +31,15 @@ x-gugu-data-mount: &gugu-data-mount
   bind:
     create_host_path: true
 
+x-inotify-limit-group: &inotify-limit-group "${GUGU_INOTIFY_LIMIT_GID:-65534}"
+x-inotify-limit-socket-mount: &inotify-limit-socket-mount
+  type: bind
+  source: ${GUGU_INOTIFY_LIMIT_SOCKET_DIR:-/run/gugu-inotify-limitd}
+  target: /run/gugu-inotify-limitd
+  read_only: true
+  bind:
+    create_host_path: true
+
 x-app-environment: &app-environment
   GUGU_UNIFIED_APP: "1"
   # PostgreSQL/Redis 由应用镜像内置托管，避免与 Compose 重复启动同类服务。
@@ -56,6 +65,8 @@ x-app-environment: &app-environment
   REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
   PUBLIC_APP_URL: ${GUGU_PUBLIC_APP_URL:-http://localhost:9595}
   STORAGE__LOCAL_PATH: /data/users
+  FILESYNC__WATCH_HARD_LIMIT: ${FILESYNC_WATCH_HARD_LIMIT:-1024000}
+  FILESYNC__WATCH_LIMIT_SOCKET: /run/gugu-inotify-limitd/limitd.sock
   CREDENTIALS_MASTER_KEY_FILE: /data/byok/.byok-master-key
   GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
   SEARCH__SEARXNG_URL: http://searxng:8080
@@ -89,6 +100,7 @@ services:
     # embedded Rootless Docker 需要外层容器开放 user namespace/syscall 能力；
     # daemon 在容器内以非 root 用户运行，app 不挂载宿主 Docker Socket。
     privileged: true
+    group_add: [*inotify-limit-group]
     ports:
       - "${GUGU_HTTP_PORT:-9595}:9595"
     # 首次启动生成的密钥、数据库密码和管理员密码保存到 Gugu-data/.env。
@@ -98,6 +110,7 @@ services:
       GUGU_UPDATE_DEPLOYMENT_MODE: integrated_compose
     volumes:
       - *gugu-data-mount
+      - *inotify-limit-socket-mount
       - legacy_pgdata:/legacy-pgdata:ro
       - legacy_redisdata:/legacy-redisdata:ro
       - gugu_config:/config

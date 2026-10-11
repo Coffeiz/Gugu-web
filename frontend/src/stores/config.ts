@@ -98,6 +98,12 @@ export const useConfigStore = defineStore('config', () => {
     filesync: {
       enabled: false,
     },
+    im: {
+      feishu: true,
+      qq: true,
+      wechat: true,
+      telegram: true,
+    },
     agent: {
       parallel_tool_execution_enabled: true,
       parallel_tool_max_concurrency: 5,
@@ -120,7 +126,7 @@ export const useConfigStore = defineStore('config', () => {
     },
     search: {
       rag_enabled: true,
-      rag_auto_sources: ['memory', 'knowledge', 'project', 'file', 'canvas', 'note', 'calendar', 'scheduled_task', 'conversation'],
+      rag_auto_sources: ['memory', 'knowledge', 'project', 'canvas', 'note', 'calendar', 'scheduled_task', 'conversation'],
       capability_rag_enabled: false,
       capability_rag_shadow: true,
       capability_rag_limit: 5,
@@ -180,6 +186,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.embedding) { secretSet.embeddingApiKey = data.embedding.api_key === '****'; Object.assign(cfg.embedding, sanitizeForEdit(data.embedding)) }
       if (data.sandbox) Object.assign(cfg.sandbox, data.sandbox)
       if (data.filesync) Object.assign(cfg.filesync, data.filesync)
+      if (data.im) Object.assign(cfg.im, data.im)
       if (data.agent)   Object.assign(cfg.agent,   data.agent)
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))

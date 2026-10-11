@@ -15,6 +15,7 @@ import uuid
 import json
 import subprocess
 import threading
+from uuid import UUID
 from pathlib import Path
 
 from app.core.config import get_settings
@@ -27,6 +28,7 @@ from .docker_runtime import (
     docker_environment,
     docker_network_available,
     docker_sandbox_readiness,
+    force_remove_pty_container,
     probe_sandbox_runtime,
     valid_egress_proxy,
     valid_egress_network_name,
@@ -255,6 +257,10 @@ class SandboxdServer:
                 await self._require_runtime_ready()
                 await self._handle_pty(value, reader, writer)
                 return
+            elif operation == "pty_terminate":
+                container_name = str(value.get("container_name") or "")
+                terminated = await asyncio.to_thread(force_remove_pty_container, container_name)
+                response = {"ok": True, "terminated": terminated}
             elif operation == "stdio_open":
                 await self._require_runtime_ready()
                 await self._handle_stdio(value, reader, writer)
@@ -270,6 +276,9 @@ class SandboxdServer:
             elif operation == "execute":
                 await self._require_runtime_ready()
                 response = await self._execute_request(value, writer)
+            elif operation == "filesync_prepare":
+                await self._require_runtime_ready()
+                response = await self._prepare_filesync_access(value)
             else:
                 raise ValueError("sandboxd operation 无效")
         except Exception as exc:
@@ -288,7 +297,7 @@ class SandboxdServer:
         )
         personal_root = self._validate_root(request.personal_root) if request.personal_root else None
         project_root = self._validate_root(request.project_root) if request.project_root else None
-        quota_root = self._validate_root(request.quota_root) if request.quota_root else None
+        quota_roots = tuple(self._validate_root(root) for root in request.quota_roots)
         request_id = uuid.uuid4().hex
         request_key = request.request_id or request_id
         self._active_tasks[request_key] = asyncio.current_task()
@@ -318,7 +327,7 @@ class SandboxdServer:
                     cwd=request.cwd,
                     timeout=request.timeout,
                     max_output_chars=request.max_output_chars,
-                    quota_root=quota_root,
+                    quota_roots=quota_roots,
                     quota_bytes=request.quota_bytes,
                     network_profile=request.network_profile,
                     on_output=emit_output,
@@ -340,6 +349,25 @@ class SandboxdServer:
             "permission_revoked": result.permission_revoked,
             "quota_exceeded": result.quota_exceeded,
         }
+
+    async def _prepare_filesync_access(self, value: dict) -> dict:
+        """只在单个用户独立数据目录内，为明确授权的根修复同步 ACL。"""
+        root = self._validate_root(str(value.get("root") or ""))
+        users_root = Path(get_settings().storage.local_path).expanduser().resolve()
+        try:
+            relative = root.relative_to(users_root)
+        except ValueError as exc:
+            raise ValueError("文件同步权限目标必须位于用户独立数据目录内") from exc
+        if not relative.parts:
+            raise ValueError("文件同步权限目标必须位于用户独立数据目录内")
+        try:
+            UUID(relative.parts[0])
+        except ValueError as exc:
+            raise ValueError("文件同步权限目标的用户目录无效") from exc
+
+        executor = DockerSandboxExecutor(root, get_settings().sandbox)
+        await asyncio.to_thread(executor.prepare_filesync_access, root)
+        return {"ok": True}
 
     async def _handle_stdio(self, value: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """在受控 Docker 沙盒内桥接一个长驻 MCP stdio server。"""

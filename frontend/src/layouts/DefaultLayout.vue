@@ -150,7 +150,8 @@ function onGlobalUploaded() {
 }
 
 onMounted(async () => {
-  await authStore.fetchMe()
+  // 受保护页面的路由守卫已经读取过当前用户；避免布局重复请求阻塞首页数据加载。
+  if (!authStore.user) await authStore.fetchMe()
   if (authStore.isLoggedIn) {
     audioStore.restore()
     prefsStore.fetch()

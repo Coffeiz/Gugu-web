@@ -53,6 +53,32 @@ def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[di
     """把已知旧调用转换为当前契约，禁止猜测业务数据。"""
     normalized = dict(instance)
     adaptations: list[str] = []
+    if tool_name == "edit_file" and isinstance(normalized.get("edits"), list):
+        # 同一文件的批量局部编辑常把 file_id/mode 放在顶层；将这些明确声明的
+        # 默认值补到各项，避免与单项编辑字段混淆。条目显式值优先。
+        defaults = {"mode": normalized["mode"]} if "mode" in normalized else {}
+        target_defaults = {
+            key: normalized[key] for key in ("file", "file_id") if key in normalized
+        }
+        if defaults or target_defaults:
+            inherited = False
+            edits = []
+            for item in normalized["edits"]:
+                if not isinstance(item, dict):
+                    edits.append(item)
+                    continue
+                merged = dict(item)
+                for key, value in defaults.items():
+                    if key not in merged:
+                        merged[key] = value
+                        inherited = True
+                if not any(key in merged for key in ("file", "file_id")):
+                    merged.update(target_defaults)
+                    inherited = inherited or bool(target_defaults)
+                edits.append(merged)
+            normalized["edits"] = edits
+            if inherited:
+                adaptations.append("edit_file.edits:inherited_defaults")
     if tool_name in {"save_knowledge", "update_knowledge"}:
         keywords = normalized.get("keywords")
         if isinstance(keywords, str):
@@ -672,6 +698,20 @@ def invalid_input_payload(
             "mode=replace（整份替换）或 append（末尾追加）：只传 content；",
             "mode=find_replace（局部替换）：只传 find 和 replace；",
             "mode=line_edit（按行编辑）：只传 line_edits。不要把不同模式的字段放在同一次编辑里。",
+        ]
+    if tool_name == "edit_file" and any(
+        item.get("rule") in {"required", "oneOf"} and item.get("path", "").startswith("edits.")
+        for item in bounded
+    ):
+        payload["next_action"] = (
+            "批量编辑时，每项都要有文件标识和对应操作内容；可在顶层提供 file/file_id 与 mode "
+            "作为默认值，再在 edits 各项填写 find/replace、content 或 line_edits。"
+            "如果不提供顶层默认值，就在每项中填写 file/file_id 和 mode。"
+        )
+        hints = [
+            *hints,
+            '同一文件多次查找替换示例：{"file_id":1,"mode":"find_replace","edits":[{"find":"旧一","replace":"新一"},{"find":"旧二","replace":"新二"}]}。',
+            '多文件示例：{"edits":[{"file_id":1,"mode":"find_replace","find":"旧","replace":"新"},{"file_id":2,"mode":"append","content":"追加"}]}。',
         ]
     if tool_name in {"note_create", "note_update"}:
         payload["next_action"] = "笔记结构错误，请按 schema_hints 重建完整 blocks；不要沿用原来的嵌套结构或 item 包装。"

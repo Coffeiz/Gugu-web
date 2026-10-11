@@ -40,6 +40,7 @@ async def complete_text(ai, prompt: str, *, max_tokens: int = 800,
                 response = await client.responses.create(
                     model=ai.model, max_output_tokens=budget,
                     input=[{"role": "user", "content": prompt}],
+                    **providers.responses_store_params(ai),
                     **adapter.build_responses_reasoning_params(ai))
                 text = _responses_output_text(response)
             else:

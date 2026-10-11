@@ -51,13 +51,14 @@ import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBefo
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
-import { filesApi } from '@/services/api'
+import { filesApi, foldersApi } from '@/services/api'
 import { sanitizeHtml, splitYamlFrontmatter } from '@/utils/markdown'
 import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
-import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
+import { resolveMermaidThemeColors } from '@/utils/mermaidTheme'
+import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
-import { resolveRelativeFileLink, buildFileLinkIndex } from '@/utils/fileLinks'
+import { resolveRelativeFileLink, buildFileLinkIndex, isRelativeFileLink, isSiblingFileLink } from '@/utils/fileLinks'
 
 const { t } = useI18n()
 
@@ -443,18 +444,14 @@ async function getMermaid() {
 
 function configureMermaid(mermaid: NonNullable<typeof mermaidApi>): void {
   const dark = isDarkTheme()
+  const colors = resolveMermaidThemeColors(dark)
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
     htmlLabels: false,
     theme: dark ? 'dark' : 'default',
     themeVariables: {
-      primaryColor: cssToken('--surface-card-solid', dark ? '#24212b' : '#ffffff'),
-      primaryTextColor: cssToken('--text-primary', dark ? '#f2eff7' : '#272532'),
-      primaryBorderColor: cssToken('--border-default', dark ? 'rgba(255,255,255,.16)' : 'rgba(42,35,49,.12)'),
-      lineColor: cssToken('--text-secondary', dark ? '#c9c3d5' : '#67647a'),
-      secondaryColor: cssToken('--surface-panel', dark ? '#2c2835' : '#f3f2f7'),
-      tertiaryColor: cssToken('--surface-hover', dark ? '#363140' : '#ebeaf2'),
+      ...colors,
       fontFamily: cssToken('--font-family-sans', 'Inter, sans-serif'),
     },
   })
@@ -543,13 +540,40 @@ async function onMdClick(e: MouseEvent) {
   const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null
   if (!anchor || !props.fileContext?.id) return
   const href = anchor.getAttribute('href')
-  if (!href) return
-  if (!filesCache.loaded) await filesCache.load()
+  if (!href || !isRelativeFileLink(href)) return
+  let files = filesCache.allFiles
+  let folders = filesCache.allFolders
+  if (!filesCache.loaded && isSiblingFileLink(href)) {
+    const context = props.fileContext
+    const space = context.space ?? (context.projectId != null ? 'project' : 'personal')
+    try {
+      ;[files, folders] = await Promise.all([
+        filesApi.list({
+          space,
+          projectId: context.projectId ?? undefined,
+          folderId: context.folderId ?? undefined,
+          workspaceDirectoryId: context.workspaceDirectoryId ?? undefined,
+        }) as Promise<FileMeta[]>,
+        foldersApi.list({
+          projectId: context.projectId ?? undefined,
+          parentId: context.folderId ?? undefined,
+          workspaceDirectoryId: context.workspaceDirectoryId ?? undefined,
+        }) as Promise<FolderMeta[]>,
+      ])
+    } catch {
+      return
+    }
+  } else if (!filesCache.loaded) {
+    // 跨目录相对路径需要祖先链；暂沿用完整索引确保 ../ 与多级路径语义不变。
+    await filesCache.load()
+    files = filesCache.allFiles
+    folders = filesCache.allFolders
+  }
   const resolved = resolveRelativeFileLink(
     href,
     { folderId: props.fileContext.folderId, projectId: props.fileContext.projectId },
-    filesCache.allFiles,
-    filesCache.allFolders,
+    files,
+    folders,
   )
   if (!resolved) return
 
@@ -596,19 +620,49 @@ async function resolveMdRelativeImages() {
   const root = mdRoot.value
   const fileContext = props.fileContext
   if (!root || !fileContext?.id || !isRealFile.value) return
-  if (!filesCache.loaded) await filesCache.load()
+  const localImages = [...root.querySelectorAll<HTMLImageElement>('img[src]')].filter(img => {
+    const src = img.getAttribute('src') || ''
+    return Boolean(src) && !src.startsWith('#') && !src.startsWith('/') && !src.startsWith('//')
+      && !/^[a-z][a-z\d+.-]*:/i.test(src)
+  })
+  // 普通 Markdown 文档不需要文件路径索引，避免预览一篇文档就拉全量文件/文件夹。
+  if (!localImages.length) return
   if (mdRoot.value !== root) return   // 等待期间文件已切走
   const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
   const token    = localStorage.getItem('user_token') ?? ''
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
   releaseMdObjectUrls()
-  // 索引一次构建 O(N)，每张图 O(1) 查找；逐图全量扫描在大文件库上会拖到秒级
-  const index = buildFileLinkIndex(filesCache.allFiles, filesCache.allFolders)
+  let files = filesCache.allFiles
+  let folders = filesCache.allFolders
+  const siblingImagesOnly = localImages.every(img => isSiblingFileLink(img.getAttribute('src') || ''))
+  if (!filesCache.loaded && siblingImagesOnly) {
+    // 最常见的 ./image.png 只需查询 Markdown 所在目录；无须下载用户全部文件及文件夹索引。
+    try {
+      files = await filesApi.list({
+        space: fileContext.space ?? (fileContext.projectId != null ? 'project' : 'personal'),
+        projectId: fileContext.projectId ?? undefined,
+        folderId: fileContext.folderId ?? undefined,
+        workspaceDirectoryId: fileContext.workspaceDirectoryId ?? undefined,
+      }) as FileMeta[]
+      folders = []
+    } catch {
+      return // 图片路径解析失败不影响正文预览
+    }
+    if (mdRoot.value !== root) return
+  } else if (!filesCache.loaded) {
+    // 跨目录相对路径需要祖先链；暂沿用完整索引确保 ../ 与多级路径语义不变。
+    await filesCache.load()
+    if (mdRoot.value !== root) return
+    files = filesCache.allFiles
+    folders = filesCache.allFolders
+  }
+  // 索引一次构建 O(N)，每张图 O(1) 查找；逐图全量扫描在大文件库上会拖到秒级。
+  const index = buildFileLinkIndex(files, folders)
   const resolve = (href: string) => index.resolve(href, {
     folderId: fileContext.folderId,
     projectId: fileContext.projectId,
   })
-  for (const img of [...root.querySelectorAll<HTMLImageElement>('img[src]')]) {
+  for (const img of localImages) {
     const src = img.getAttribute('src') || ''
     if (!src || src.startsWith('#') || src.startsWith('/') || src.startsWith('//')) continue
     if (/^[a-z][a-z\d+.-]*:/i.test(src)) continue
@@ -742,7 +796,7 @@ onBeforeUnmount(() => {
 /* ── md 编辑模式底部操作条 ── */
 .tv-edit-bar {
   flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
-  padding: 10px 16px; border-top: 1px solid var(--border-default); background: var(--surface-raised);
+  padding: 10px 16px; border-top: 1px solid var(--content-divider); background: var(--surface-raised);
 }
 .tv-edit-error { flex: 1; font-size: 12px; color: var(--status-danger); }
 .tv-edit-btn {
@@ -769,7 +823,7 @@ onBeforeUnmount(() => {
    必须在所有 CodeMirror 场景（代码文件 + Markdown 编辑）覆盖，不能只写在 md-wrap 上。 */
 .tv-edit-cm-wrap :deep(.cm-gutters) {
   background: var(--surface-panel);
-  border-right: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--content-divider);
   color: var(--content-tertiary);
   /* 行号数字不继承 cm-content 的字体，必须单独指定，否则落在浏览器默认等宽上 */
   font-family: var(--font-family-mono);
@@ -803,7 +857,7 @@ onBeforeUnmount(() => {
 /* 折叠占位符：默认写死白底 #eee + 灰边，暗色下是突兀的白块。改令牌软底 + 虚线边。 */
 .tv-edit-cm-wrap :deep(.cm-foldPlaceholder) {
   background: var(--surface-soft);
-  border: 1px dashed var(--border-default);
+  border: 1px dashed var(--content-outline);
   color: var(--content-tertiary);
   border-radius: 6px;
   margin: 0 6px;
@@ -831,7 +885,7 @@ onBeforeUnmount(() => {
 .tv-edit-cm-wrap :deep(.cm-dropCursor) {
   border-left-color: var(--content-primary);
 }
-.tv-edit-cm-wrap :deep(.cm-content) { caret-color: var(--content-primary); }
+.tv-edit-cm-wrap :deep(.cm-content) { caret-color: var(--input-caret-color); }
 .tv-edit-cm-wrap :deep(.cm-content ::selection) {
   /* CM 的 drawSelection 已经自绘选区底色；原生 ::selection 若再画一遍会双层叠加，
      深浅不一致且文字抗锯齿随底色变化（观感上忽粗忽细）。这里置为透明，只留 CM 自绘层。 */

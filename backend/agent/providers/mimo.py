@@ -1,4 +1,7 @@
-from .base import ProviderAdapter, ProviderCapabilities, ReasoningCapabilities
+from .base import (
+    ProviderAdapter, ProviderCapabilities, ReasoningCapabilities,
+    ResponsesInputCapabilities, configured_responses_input_capabilities,
+)
 
 
 class MimoAdapter(ProviderAdapter):
@@ -16,6 +19,11 @@ class MimoAdapter(ProviderAdapter):
     def supported_api_formats(self, ai):
         # MiMo 官方同时提供 Chat Completions、Responses 和 Anthropic Messages。
         return ("openai", "responses", "anthropic")
+
+    def responses_input_capabilities(self, ai) -> ResponsesInputCapabilities:
+        return configured_responses_input_capabilities(
+            ai, audio_formats=self._AUDIO_EXTS, supports_video=True,
+        )
 
     def default_base_url_for(self, ai) -> str:
         if self.protocol_format(ai) == "anthropic":

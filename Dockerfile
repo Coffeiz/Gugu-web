@@ -71,7 +71,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ── Stage 2.5：从固定上游源码构建修复版 Cosign ───────────────────────────────
 # Cosign v3.1.3 官方镜像内的 Go 依赖已被 Trivy 标记为高危漏洞。
 # 保持官方签名版本与固定源码提交，只更新已修复的 Go 依赖并使用修复版工具链。
-FROM golang:1.26.6-trixie AS cosign-build
+FROM golang:1.26.9-trixie AS cosign-build
 
 WORKDIR /src
 
@@ -85,6 +85,7 @@ RUN mkdir -p /out \
     && go mod edit \
         -require=golang.org/x/crypto@v0.55.0 \
         -require=golang.org/x/mod@v0.40.0 \
+        -require=golang.org/x/net@v0.60.0 \
         -require=golang.org/x/text@v0.39.0 \
         -require=google.golang.org/grpc@v1.83.2 \
     && go mod tidy \
@@ -94,12 +95,38 @@ RUN mkdir -p /out \
         -o /out/cosign ./cmd/cosign \
     && /out/cosign version
 
+# Compose v5.6.0 上游二进制由 Go 1.26.8 构建，仍含已修复的 Go 标准库和 x/net 漏洞。
+# 从固定上游提交重建，使用修复版工具链与 x/net，避免把漏洞二进制带入应用镜像。
+FROM golang:1.26.9-trixie AS compose-build
+
+ARG HTTPS_PROXY
+ENV HTTPS_PROXY=${HTTPS_PROXY} \
+    https_proxy=${HTTPS_PROXY}
+
+WORKDIR /src
+
+ADD --checksum=sha256:ad5c45235d360b43c7ad630dc9257ff2f3b1419b9cae26c1572bb801642173c6 \
+    https://github.com/docker/compose/archive/42f48072bbf92ee9b0e43f9fdf2008d03546e7ca.tar.gz \
+    /tmp/compose.tar.gz
+
+RUN mkdir -p /src /out \
+    && tar -xzf /tmp/compose.tar.gz --strip-components=1 -C /src \
+    && rm /tmp/compose.tar.gz \
+    && go mod edit -require=golang.org/x/net@v0.60.0 \
+    && go mod tidy \
+    && go mod verify \
+    && CGO_ENABLED=0 go build -trimpath -tags=e2e \
+        -ldflags="-w -X github.com/docker/compose/v5/internal.Version=v5.6.0" \
+        -o /out/docker-compose ./cmd \
+    && /out/docker-compose version
+
 # ── Stage 3：后端生产运行时 + 前端静态产物 ──────────────────────────────────
 # Docker CLI 供受控更新器和显式启用的内嵌 sandbox manager 使用。
 FROM python:3.14-slim-trixie
 
 # 应用包更新需要容器内独立验签；只把固定上游提交构建的 Cosign CLI 复制进运行镜像，不带 Docker socket。
 COPY --from=cosign-build /out/cosign /usr/local/bin/cosign
+COPY --from=compose-build /out/docker-compose /out/docker-compose
 
 ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
 
@@ -211,23 +238,13 @@ RUN node bin/gugu-filesync-ts-worker.cjs --version
 
 # ── 自更新工具链（执行器并入 app 进程，PRD-ADMIN-2 §1.1）───────────────────
 # 签名校验随定位修订移除，仅保留 compose 插件供更新流程重建容器。
-# v5.5.1：内嵌 containerd v2.3.4 / docker-cli v29.7.2 均高于 trivy 门要求的修复版
+# Compose v5.6.0 从固定上游提交以修复版 Go 工具链重建，避免携带已知 Go 漏洞。
+# 内嵌 containerd / docker-cli 均高于 trivy 门要求的修复版
 # （v2.39.2 因此被扫出 57 个 HIGH/CRITICAL，2026-09-16 docker-release 失败根因）。
 # updater 资产（固定更新脚本/manifest 校验器/schema）落到 /opt/gugu-updater。
-# 支持受限构建网络通过标准 Docker build proxy args 下载官方 Compose 插件。
-ARG DOCKER_COMPOSE_VERSION=v5.5.1
-# TARGETARCH 是 BuildKit 预定义 ARG，stage 内必须显式声明才能引用，否则展开为空串（URL 404）
-ARG TARGETARCH
-# compose 发布资源用 uname 风格命名（x86_64/aarch64），与 TARGETARCH（amd64/arm64）不同名
-RUN mkdir -p /usr/local/libexec/docker/cli-plugins
-RUN compose_arch="$(case "${TARGETARCH:-amd64}" in amd64) echo x86_64 ;; arm64) echo aarch64 ;; *) echo "不支持的 Docker Compose 架构: ${TARGETARCH}" >&2; exit 1 ;; esac)" \
-    && compose_url="https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${compose_arch}" \
-    && if [ -n "${HTTPS_PROXY:-}" ]; then \
-        curl --proxy "${HTTPS_PROXY}" -fsSL "$compose_url" -o /usr/local/libexec/docker/cli-plugins/docker-compose; \
-    else \
-        curl -fsSL "$compose_url" -o /usr/local/libexec/docker/cli-plugins/docker-compose; \
-    fi \
-    && chmod 0755 /usr/local/libexec/docker/cli-plugins/docker-compose \
+# Compose 插件由上方 compose-build 阶段编译并复制，不使用含已知漏洞的预编译二进制。
+RUN mkdir -p /usr/local/libexec/docker/cli-plugins \
+    && install -m 0755 /out/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose \
     && docker compose version
 RUN cd /opt/gugu/image-app && python3 -c "import updater.daemon, updater.client"
 

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
+import { RiSkipLeftFill, RiSkipRightFill } from '@remixicon/vue'
 import { iconRegistry, resolveIcon } from '@/components/common/icons/iconRegistry'
 
 describe('图标语义注册表', () => {
@@ -19,6 +20,12 @@ describe('图标语义注册表', () => {
 
   it('固定播放器使用实心图标，未固定状态保留线框图标', () => {
     expect(iconRegistry['canvas.pin']).not.toBe(iconRegistry['canvas.pin-off'])
+  })
+
+  it('播放器上一首和下一首使用对应方向的跳曲图标', () => {
+    expect(iconRegistry['media.skip-left']).toBe(RiSkipLeftFill)
+    expect(iconRegistry['media.skip-right']).toBe(RiSkipRightFill)
+    expect(iconRegistry['media.skip-left']).not.toBe(iconRegistry['media.skip-right'])
   })
 
   it('未注册语义直接报错，避免静默显示错误图标', () => {

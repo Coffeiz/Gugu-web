@@ -446,21 +446,39 @@ async def me(current_user: User = Depends(get_current_user), db: AsyncSession = 
         await db.commit()
     from app.models import UserBot
     from app.scheduled_tasks import get_imreach
+    from app.services.im_platforms import is_im_platform_enabled
     from sqlalchemy import select as _select
     im_channels = []
-    feishu_reach = await get_imreach(current_user.id, "feishu")
-    if feishu_reach:
+    feishu_enabled = is_im_platform_enabled("feishu")
+    feishu_reach = await get_imreach(current_user.id, "feishu") if feishu_enabled else None
+    feishu_bot = await db.scalar(_select(UserBot).where(
+        UserBot.user_id == current_user.id,
+        UserBot.platform == "feishu",
+        UserBot.enabled == True,
+    ))
+    if feishu_enabled and (feishu_bot or feishu_reach):
         im_channels.append("feishu")
     qq_bot = await db.scalar(_select(UserBot).where(
         UserBot.user_id == current_user.id,
         UserBot.platform == "qq",
         UserBot.enabled == True,
     ))
-    if qq_bot:
+    if is_im_platform_enabled("qq") and qq_bot:
         im_channels.append("qq")
-    wechat_reach = await get_imreach(current_user.id, "wechat")
-    if wechat_reach:
+    wechat_bot = await db.scalar(_select(UserBot).where(
+        UserBot.user_id == current_user.id,
+        UserBot.platform == "wechat",
+        UserBot.enabled == True,
+    ))
+    if is_im_platform_enabled("wechat") and (wechat_bot or await get_imreach(current_user.id, "wechat")):
         im_channels.append("wechat")
+    telegram_bot = await db.scalar(_select(UserBot).where(
+        UserBot.user_id == current_user.id,
+        UserBot.platform == "telegram",
+        UserBot.enabled == True,
+    ))
+    if is_im_platform_enabled("telegram") and telegram_bot:
+        im_channels.append("telegram")
     current_user._im_channels = im_channels
     return UserResponse.from_user(current_user)
 
@@ -600,8 +618,12 @@ async def get_quota(
     effective_in = byok_month["tokens_in"] + byok_month["cache_read"] + byok_month["cache_write"]
     cache_rate = byok_month["cache_read"] / effective_in if effective_in else 0
 
-    limit_6h = None if has_byok else (current_user.token_limit_6h or settings.quota.default_token_limit_6h)
-    limit_weekly = None if has_byok else (current_user.token_limit_weekly or settings.quota.default_token_limit_weekly)
+    limit_6h = None if has_byok else _quota.resolve_token_limit(
+        current_user.token_limit_6h, settings.quota.default_token_limit_6h,
+    )
+    limit_weekly = None if has_byok else _quota.resolve_token_limit(
+        current_user.token_limit_weekly, settings.quota.default_token_limit_weekly,
+    )
 
     return {
         "used_6h":      used_6h,

@@ -15,11 +15,6 @@ import { i18n } from '@/i18n'
 
 export type MindRefState = 'available' | 'missing' | 'unknown'
 
-// 同一批笔记可能同时解析多个文件引用；短时合并版本刷新，避免每个引用都单独请求文件列表。
-let fileRefreshPromise: Promise<void> | null = null
-let fileRefreshAt = 0
-const FILE_REFRESH_COOLDOWN_MS = 5000
-
 export function useMindRefActions() {
   const projectStore = useProjectStore()
   const eventModalStore = useEventModalStore()
@@ -32,20 +27,12 @@ export function useMindRefActions() {
     return (error as { status?: number }).status === 404
   }
 
-  async function refreshFilesIfNeeded() {
-    const now = Date.now()
-    if (now - fileRefreshAt < FILE_REFRESH_COOLDOWN_MS) return
-    if (!fileRefreshPromise) {
-      fileRefreshPromise = filesCache.refresh().finally(() => {
-        fileRefreshAt = Date.now()
-        fileRefreshPromise = null
-      })
-    }
-    await fileRefreshPromise
-  }
-
   /** 本体删除后保留标题快照；网络异常不能误标成「已删除」。 */
-  async function resolveMindRef(refType: string, refId: number | string): Promise<MindRefState> {
+  async function resolveMindRef(
+    refType: string,
+    refId: number | string,
+    fetchUncachedFile = false,
+  ): Promise<MindRefState> {
     // 历史类型的 id 都是数字；mcp 等字符串 id 的类型在上面 openMindRef 已短路处理
     const numericId = Number(refId)
     if (refType === 'project') {
@@ -55,14 +42,17 @@ export function useMindRefActions() {
       return projectStore.projects.some(project => project.id === numericId) ? 'available' : 'missing'
     }
     if (refType === 'file') {
-      if (!filesCache.loaded) await filesCache.load()
-      if (!filesCache.loaded) return 'unknown'
-      await refreshFilesIfNeeded()
-      return filesCache.getFile(numericId) ? 'available' : 'missing'
-
+      if (filesCache.getFile(numericId)) return 'available'
+      if (filesCache.loaded) return 'missing'
+      if (!fetchUncachedFile) return 'unknown'
+      try {
+        return await filesCache.ensureFile(numericId) ? 'available' : 'missing'
+      } catch {
+        return 'unknown'
+      }
     }
     if (refType === 'folder') {
-      if (!filesCache.loaded) await filesCache.load()
+      // 便签预览不应为了验证一个目录引用而加载全账户目录树。
       if (!filesCache.loaded) return 'unknown'
       return filesCache.getFolder(numericId) ? 'available' : 'missing'
     }
@@ -86,8 +76,10 @@ export function useMindRefActions() {
   }
 
   async function openFile(id: number) {
-    if (!filesCache.loaded) await filesCache.load()
-    const file = filesCache.getFile(id)
+    let file = filesCache.getFile(id)
+    if (!file && !filesCache.loaded) {
+      try { file = await filesCache.ensureFile(id) } catch { /* 网络错误不当作对象已删除 */ }
+    }
     if (!file) {
       showAppNotice(i18n.global.t('mindUi.referenceMissing'))
       return
@@ -138,7 +130,16 @@ export function useMindRefActions() {
       await router.push({ path: '/schedules', query: { task: String(refId) } })
       return true
     }
-    const state = await resolveMindRef(refType, refId)
+    if (refType === 'folder') {
+      const state = await resolveMindRef(refType, refId)
+      if (state === 'missing') {
+        showAppNotice(i18n.global.t('mindUi.referenceMissing'))
+        return false
+      }
+      await openFolder(Number(refId))
+      return true
+    }
+    const state = await resolveMindRef(refType, refId, refType === 'file')
     if (state === 'missing') {
       showAppNotice(i18n.global.t('mindUi.referenceMissing'))
       return false
@@ -148,7 +149,6 @@ export function useMindRefActions() {
     const numericId = Number(refId)
     if (refType === 'project') projectStore.openModal({ id: numericId })
     else if (refType === 'file') await openFile(numericId)
-    else if (refType === 'folder') await openFolder(numericId)
     else if (refType === 'event') eventModalStore.openModal(numericId)
     else if (refType === 'conversation') await openConversationMessage(numericId)
     return true

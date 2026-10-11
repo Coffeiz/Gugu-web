@@ -166,18 +166,30 @@ import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
-import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
+import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
 import { getCachedThumb, getThumb } from '@/composables/shared/useThumbCache'
 import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
 import { useLiveStore } from '@/stores/live'
 import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
 import { formatFileCreatedDate } from '@/utils/fileDate'
+import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 // 类型见下
 const props = defineProps({ win: { type: Object as PropType<PreviewWindow>, required: true } })
 const { t } = useI18n()
 const previewStore = usePreviewStore()
 const previewBlobCache = usePreviewBlobCache()
+const mountAccountEpoch = getAccountBoundaryEpoch()
+watch(accountBoundaryEpoch, () => {
+  loadSequence += 1
+  previewBlobCache.release(currentCacheKey.value, blobUrl.value)
+  currentCacheKey.value = ''
+  blobUrl.value = null
+  videoSrc.value = null
+  placeholderSrc.value = null
+  loading.value = false
+  error.value = null
+}, { flush: 'sync' })
 
 // ESC 只关最顶层窗口（统一走 windowz：谁 z 最大关谁）
 const _unregEsc = registerEsc({
@@ -190,7 +202,8 @@ const isDocx = computed(() => props.win.file.ext?.toUpperCase() === 'DOCX')
 
 // ── 位置 / 尺寸（本地 reactive，同步回 store） ──────────────────────────────
 const x = ref(props.win.x)
-const y = ref(props.win.y)
+// 历史位置可能来自旧版的顶部越界范围，初始化时一并拉回视口内。
+const y = ref(Math.max(0, props.win.y))
 // PPTX 由渲染器按容器宽度自适应；首次隐藏渲染也要给它一个接近最终尺寸的
 // 布局盒，避免先按默认小窗口渲染再放大。
 const w = ref(isPptx.value ? Math.round(window.innerWidth * 0.72) : props.win.w)
@@ -340,9 +353,9 @@ async function svgIntrinsicAspect(url: string): Promise<number | null> {
   return null
 }
 
-function fitVectorWindow(nw: number, nh: number, url: string, sequence: number) {
+function fitVectorWindow(nw: number, nh: number, url: string, sequence: number, accountEpoch: number) {
   const apply = (w: number, h: number) => {
-    if (sequence !== loadSequence) return
+    if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
     const vs = vectorWindowScale(w, h)
     fitWindow(Math.round(w * vs), Math.round(h * vs))
   }
@@ -446,6 +459,8 @@ function withCacheBust(url: string, refresh: boolean): string {
 
 async function load(f: Partial<FileMeta>, refresh = false) {
   const sequence = ++loadSequence
+  const accountEpoch = getAccountBoundaryEpoch()
+  if (accountEpoch !== mountAccountEpoch) return
   previewBlobCache.release(currentCacheKey.value, blobUrl.value)
   blobUrl.value = null
   currentCacheKey.value = ''
@@ -474,20 +489,33 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   }
   const token   = localStorage.getItem('user_token') ?? ''
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  previewBlobCache.rememberFile(f, undefined, accountEpoch)
+  let initialStreamUrl = props.win.streamUrl
+  props.win.streamUrl = undefined
+  const getStreamUrl = async (id: number) => {
+    if (initialStreamUrl) {
+      const url = initialStreamUrl
+      initialStreamUrl = undefined
+      return { url }
+    }
+    return filesApi.getStreamUrl(id)
+  }
 
   try {
     if (isVideoExt(f.ext)) {
       let url
       if (f.attach_id) {
         const res = await fetch(withCacheBust(`${BASE_URL}/agent/attachment/${f.attach_id}/download`, refresh), { headers, credentials: 'include', cache: 'no-cache' })
-        if (sequence !== loadSequence) return
+        if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
         if (isUnauthorizedResponse(res)) return
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        url = URL.createObjectURL(await res.blob())
+        const blob = await res.blob()
+        if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+        url = URL.createObjectURL(blob)
         videoSrc.value = url
       } else {
-        const stream = await filesApi.getStreamUrl(f.id!)
-        if (sequence !== loadSequence) return
+        const stream = await getStreamUrl(f.id!)
+        if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
         url = withCacheBust(stream.url, refresh)
         videoSrc.value = url
       }
@@ -504,7 +532,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
           resolve()
         }
         vid.onloadedmetadata = () => {
-          if (sequence === loadSequence) {
+          if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch()) {
             const vw = vid.videoWidth || 720, vh = vid.videoHeight || 404
             contentSize.value = `${vw} × ${vh}`
             fitWindow(vw, vh)
@@ -512,12 +540,12 @@ async function load(f: Partial<FileMeta>, refresh = false) {
           finish()
         }
         vid.onerror = () => {
-          if (sequence === loadSequence) fitWindow(720, 404)
+          if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch()) fitWindow(720, 404)
           finish()
         }
         vid.src = url
       })
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
     } else if (isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType) || isOfficeExt(f.ext)) {
       const expectsText = !isOfficeExt(f.ext) && (isTextExt(f.ext, f.mimeType) || !!props.win.textFallback)
       const bust = refresh ? `?_t=${Date.now()}` : ''   // 刷新时绕开浏览器缓存，确保拿到改后的新内容
@@ -526,31 +554,15 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (!bust) {
         const cached = previewBlobCache.get(key)
         if (cached) {
-          try {
-            const cachedResponse = await fetch(cached)
-            if (cachedResponse.ok) {
-              const cachedBlob = await cachedResponse.blob()
-              const textBlob = expectsText ? await normalizeTextBlob(cachedBlob) : cachedBlob
-              if (textBlob) {
-                let cachedUrl = cached
-                if (textBlob !== cachedBlob) {
-                  cachedUrl = URL.createObjectURL(textBlob)
-                  previewBlobCache.put(key, cachedUrl)
-                }
-                if (expectsText) f.mimeType = 'text/plain'
-                blobUrl.value = cachedUrl
-                // DOCX 使用预览器初始几何，避免下载完成时被通用窗口适配先撑成高窗。
-                if (isDocx.value) ready.value = true
-                else if (!ready.value && !isPptx.value && !isOffice.value) {
-                  fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
-                }
-                return
-              }
-            }
-          } catch {
-            // blob URL 可能在热更新或窗口销毁后失效，丢弃后重新下载原文件。
+          // 缓存只返回仍由缓存持有的 object URL，直接复用即可。
+          // 再 fetch/blob/解码会让命中缓存后仍完整读取一次正文。
+          if (expectsText) f.mimeType = 'text/plain'
+          blobUrl.value = cached
+          if (isDocx.value) ready.value = true
+          else if (!ready.value && !isPptx.value && !isOffice.value) {
+            fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.86))
           }
-          previewBlobCache.discard(key, cached)
+          return
         }
       }
       if (isXlsx.value && f.id != null && !f.attach_id) {
@@ -565,14 +577,14 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       } else {
         let stream: { url: string }
         try {
-          stream = await filesApi.getStreamUrl(f.id!)
+          stream = await getStreamUrl(f.id!)
         } catch (error) {
           throw new Error(`获取流地址失败：${error instanceof Error ? error.message : error}`)
         }
         dlUrl = withCacheBust(stream.url, refresh)
       }
       const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const downloadedBlob = await res.blob()
@@ -580,10 +592,13 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (!textBlob) throw new Error(t('viewerUi.notTextFile'))
       if (expectsText) f.mimeType = 'text/plain'
       const url = URL.createObjectURL(textBlob)
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) {
+        URL.revokeObjectURL(url)
+        return
+      }
       blobUrl.value = url
       // 强制刷新也要替换同一 key 的旧 blob，避免关闭后再次打开回到旧内容。
-      previewBlobCache.put(key, url)
+      previewBlobCache.put(key, url, accountEpoch)
       currentCacheKey.value = key
       if (isDocx.value) {
         ready.value = true
@@ -599,10 +614,10 @@ async function load(f: Partial<FileMeta>, refresh = false) {
         blobUrl.value = cached
         const img = new Image()
         img.onload = () => {
-          if (sequence !== loadSequence) return
+          if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
           contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
           if (!ready.value) {
-            if (isVector.value) fitVectorWindow(img.naturalWidth, img.naturalHeight, blobUrl.value ?? '', sequence)
+            if (isVector.value) fitVectorWindow(img.naturalWidth, img.naturalHeight, blobUrl.value ?? '', sequence, accountEpoch)
             else fitWindow(img.naturalWidth, img.naturalHeight)
           }
         }
@@ -621,7 +636,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
               if (isUnauthorizedResponse(r)) return null
               return r.ok ? r.blob() : null
             }).then(b => {
-              if (sequence === loadSequence && b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
+              if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch() && b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
             }).catch(() => {})
         } else {
           const cachedThumb = refresh ? null : getCachedThumb(f.id!, 'card', f.version)
@@ -629,7 +644,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
             placeholderSrc.value = cachedThumb
           } else {
             getThumb(f.id!, 'card', f.version).then((url: string | null | undefined) => {
-              if (sequence === loadSequence && url && !imageReady.value) placeholderSrc.value = url
+              if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch() && url && !imageReady.value) placeholderSrc.value = url
             })
           }
         }
@@ -638,36 +653,40 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       if (f.attach_id) {
         dlUrl = `${BASE_URL}/agent/attachment/${f.attach_id}/download${bust}`
       } else {
-        const stream = await filesApi.getStreamUrl(f.id!)
+        const stream = await getStreamUrl(f.id!)
         dlUrl = withCacheBust(stream.url, refresh)
       }
       const res = await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       if (isUnauthorizedResponse(res)) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       const url  = URL.createObjectURL(blob)
+      if (accountEpoch !== getAccountBoundaryEpoch()) {
+        URL.revokeObjectURL(url)
+        return
+      }
       blobUrl.value = url
-      previewBlobCache.put(key, url)
+      previewBlobCache.put(key, url, accountEpoch)
       const img = new Image()
       img.onload = () => {
-        if (sequence !== loadSequence) return
+        if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
         contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
         // 窗口尺寸只由打开时的第一张图决定（同上），这里只在窗口还没显示过时才定尺。
         if (!ready.value) {
-          if (isVector.value) fitVectorWindow(img.naturalWidth, img.naturalHeight, url, sequence)
+          if (isVector.value) fitVectorWindow(img.naturalWidth, img.naturalHeight, url, sequence, accountEpoch)
           else fitWindow(img.naturalWidth, img.naturalHeight)
         }
       }
       img.src = url
     }
   } catch (e) {
-    if (sequence !== loadSequence) return
+    if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
     error.value = '加载失败：' + (e instanceof Error ? e.message : e)
     if (!refresh || !ready.value) fitWindow(480, 300)
   } finally {
-    if (sequence === loadSequence) loading.value = false
+    if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch()) loading.value = false
   }
 }
 
@@ -683,6 +702,7 @@ watch(
 function onTextContentSaved(content: string, fileKey: string | number | null) {
   // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
   // blobUrl 回传给编辑器，导致每次自动保存都重新加载并打断光标/撤销栈。
+  if (getAccountBoundaryEpoch() !== mountAccountEpoch) return
   const currentFileKey = props.win.file.id ?? props.win.file.attach_id ?? null
   if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
   const key = previewBlobCache.keyOf(props.win.file)
@@ -693,8 +713,7 @@ function onTextContentSaved(content: string, fileKey: string | number | null) {
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
-  if (event?.resource !== 'files') return
-  if (event?.origin === CLIENT_ID) return
+  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.win.file.id, event)) return
   if (!props.win.file.attach_id) load(props.win.file, true)
 })
 
@@ -731,7 +750,7 @@ function previewDragBounds() {
   const overscanX = window.innerWidth * DRAG_OVERSCAN_RATIO
   const overscanY = window.innerHeight * DRAG_OVERSCAN_RATIO
   const minX = -overscanX
-  const minY = -overscanY
+  const minY = 0
   return {
     minX,
     maxX: Math.max(minX, window.innerWidth + overscanX - w.value),
@@ -811,6 +830,7 @@ function onResizeUp() {
 }
 
 onUnmounted(() => {
+  loadSequence += 1
   _unregEsc()
   _unregArrowNav()
   previewBlobCache.release(currentCacheKey.value, blobUrl.value)

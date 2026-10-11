@@ -216,7 +216,7 @@ html[data-theme='dark'][data-family] .auth-page .ack-input:checked + .ack-box {
 
 html[data-theme='dark'][data-family] .privacy-page .privacy-header {
   background: color-mix(in srgb,var(--surface-floating) 72%,transparent);
-  border-bottom-color: var(--border-subtle);
+  border-bottom-color: var(--chrome-glass-border);
 }
 
 html[data-theme='dark'][data-family] .privacy-page :is(.back-link, .header-brand) {
@@ -236,7 +236,7 @@ html[data-theme='dark'][data-family] .privacy-page .md-content blockquote {
 }
 
 html[data-theme='dark'][data-family] .privacy-page .md-content hr {
-  border-top-color: var(--border-subtle);
+  border-top-color: var(--content-divider);
 }
 
 html[data-theme='dark'][data-family] .privacy-page .md-content code {
@@ -247,11 +247,11 @@ html[data-theme='dark'][data-family] .privacy-page .md-content code {
 html[data-theme='dark'][data-family] .privacy-page .md-content th {
   color: var(--content-primary);
   background: var(--surface-soft);
-  border-bottom-color: var(--border-default);
+  border-bottom-color: var(--content-divider);
 }
 
 html[data-theme='dark'][data-family] .privacy-page .md-content td {
-  border-bottom-color: var(--border-subtle);
+  border-bottom-color: var(--content-divider);
 }
 
 html[data-theme='dark'][data-family] .privacy-page .md-content a {

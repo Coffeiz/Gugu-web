@@ -44,6 +44,50 @@ function executableSource(source) {
 
 function domainFor(file) {
   const value = file.toLowerCase()
+  const backendTestCategory = value.match(/^backend\/tests\/([^/]+)(?:\/([^/]+))?\//)
+  const category = backendTestCategory?.[2]
+    ? `${backendTestCategory[1]}/${backendTestCategory[2]}`
+    : backendTestCategory?.[1]
+  const backendCategoryDomains = {
+    agent: 'agent-provider',
+    'agent/chat': 'im',
+    'agent/context': 'context',
+    'agent/knowledge': 'memory-rag',
+    'agent/mcp': 'agent-provider',
+    'agent/memory': 'memory-rag',
+    'agent/providers': 'agent-provider',
+    'agent/rag': 'memory-rag',
+    'platform/admin': 'security',
+    'platform/auth': 'security',
+    'platform/deployment': 'deployment',
+    'platform/email': 'im',
+    'platform/observability': 'terminal-runtime',
+    'platform/preferences': 'agent-provider',
+    'platform/realtime': 'realtime',
+    'platform/security': 'security',
+    'platform/usage': 'agent-provider',
+    'platform/utilities': 'other',
+    'scheduling/calendar': 'schedule',
+    'scheduling/events': 'schedule',
+    'scheduling/tasks': 'schedule',
+    'storage/data_portability': 'data-portability',
+    'storage/files': 'storage',
+    'storage/filesync': 'filesync',
+    'storage/trash': 'storage',
+    im: 'im',
+    'im/feishu': 'im',
+    'im/qq': 'im',
+    'im/telegram': 'im',
+    filesync: 'filesync',
+    storage: 'storage',
+    projects: 'mind-project',
+    mind: 'mind-project',
+    terminal: 'terminal-runtime',
+    media: 'storage',
+  }
+  if (category && backendCategoryDomains[category]) {
+    return backendCategoryDomains[category]
+  }
   const domains = [
     ['security', /security|ownership|confirm|redaction|url_security|auth_cookie|account|admin_|config_|onboarding|error_redaction/],
     ['context', /context|compaction|canonical|session|cache_prefix|modelctx|cache_|cross_call_cache|assembly|prefix_optimization|locale_continuous|history_/],
@@ -116,7 +160,10 @@ function inventoryItem(file, kind) {
 }
 
 const items = [
-  ...gitFiles('backend/tests/test_*.py').map(file => inventoryItem(file, 'pytest')),
+  ...Array.from(new Set([
+    ...gitFiles('backend/tests/test_*.py'),
+    ...gitFiles('backend/tests/**/test_*.py'),
+  ])).map(file => inventoryItem(file, 'pytest')),
   ...gitFiles('backend/scripts/diagnostics').filter(file => /\/test_[^/]+\.py$/.test(file)).map(file => inventoryItem(file, 'diagnostic-script')),
   ...gitFiles('backend/ts').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'node-test')),
   ...gitFiles('loopscope').filter(file => file.endsWith('.test.ts')).map(file => inventoryItem(file, 'node-test')),

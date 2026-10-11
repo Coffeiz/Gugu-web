@@ -340,7 +340,7 @@ def record_anthropic_request_diagnostics(
         cache_keys = (
             "cache_supported", "conversation_messages", "cache_anchor_count",
             "cache_anchor_indices", "cache_anchor_last_index",
-            "cache_anchor_tokens_estimate", "cache_state_revision",
+            "stable_prefix_tokens_estimate", "cache_state_revision",
             "cache_baseline_digest", "cache_latest_digest", "cache_prefix_digest",
             "cache_base_prefix_digest", "stable_message_count", "stable_prefix_digest",
             "tool_schema_digest",

@@ -6,7 +6,7 @@ import re
 from enum import StrEnum
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redaction import diag_log
@@ -15,6 +15,30 @@ from app.models import FileSyncBinding, FileSyncJournal, Workspace
 from app.core.ownership import get_owned
 
 FILE_SYNC_PROTOCOL_VERSION = 1
+_PATH_LOCK_NAMESPACE = "filesync-path"
+
+
+async def lock_file_sync_paths(db: AsyncSession, user_id, storage_keys: list[str] | tuple[str, ...]) -> None:
+    """在事务内串行化同一用户、同一存储路径的实时与文件库写入。
+
+    活动 File 行由部分唯一索引兜底；PostgreSQL advisory xact lock 让实时同步与
+    文件库写入在查询/插入路径上串行，避免把唯一约束冲突暴露为普通并发错误。
+    SQLite 测试库不发方言专属锁 SQL，由唯一索引验证最终不变量。
+    """
+    bind = db.bind
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    lock_keys = set()
+    for storage_key in storage_keys:
+        digest = hashlib.sha256(
+            f"{_PATH_LOCK_NAMESPACE}:{user_id}:{storage_key}".encode("utf-8")
+        ).digest()
+        lock_keys.add(int.from_bytes(digest[:8], "big", signed=True))
+    for lock_key in sorted(lock_keys):
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": lock_key},
+        )
 
 
 class FileSyncDisabled(RuntimeError):
@@ -113,6 +137,42 @@ async def record_canonical_file_change(
     无法解析时，主文件写入仍然必须成功。workspace 绑定的 ``root_path`` 固定
     为 ``.``，因此必须解析真实 workspace 根后再计算 journal 相对路径。
     """
+    await _record_canonical_file_event(
+        db, user_id=user_id, storage_key=storage_key,
+        operation=FileSyncOperation.UPDATE,
+        change_id=observed_fingerprint,
+        observed_fingerprint=observed_fingerprint,
+    )
+
+
+async def record_canonical_file_delete(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    entity_id: int,
+    version: int,
+    change_id: str,
+) -> None:
+    """把文件库内确认的文件删除登记到覆盖它的本地目录绑定。"""
+    await _record_canonical_file_event(
+        db, user_id=user_id, storage_key=storage_key,
+        operation=FileSyncOperation.DELETE,
+        change_id=f"ghost:{entity_id}:version:{version}:{change_id}",
+        idempotency_fingerprint=f"ghost:{entity_id}:version:{version}:{change_id}",
+    )
+
+
+async def _record_canonical_file_event(
+    db: AsyncSession,
+    *,
+    user_id,
+    storage_key: str,
+    operation: str,
+    change_id: str,
+    observed_fingerprint: str | None = None,
+    idempotency_fingerprint: str | None = None,
+) -> None:
     settings = get_settings()
     if not is_file_sync_enabled():
         return
@@ -129,6 +189,7 @@ async def record_canonical_file_change(
         storage_path.relative_to(user_root)
     except ValueError:
         return
+    await lock_file_sync_paths(db, user_id, [storage_key])
 
     bindings = (await db.scalars(select(FileSyncBinding).where(
         FileSyncBinding.user_id == user_id,
@@ -152,12 +213,31 @@ async def record_canonical_file_change(
                 _, binding_root = resolve_local_binding_root(user_id, binding.root_path)
             if binding_root is None:
                 continue
+            if binding.mode == FileSyncMode.MIRROR_OUT:
+                # mirror_out 导出整个文件库到绑定目录，源文件通常不在该目录下；
+                # 因此不能先要求 storage_path.relative_to(binding_root)。revision
+                # 同时作为运行中导出的失效标记，完成时可补排一次覆盖新变化。
+                binding.revision += 1
+                await db.flush()
+                from app.services.filesync.jobs import ReconcileRunError, enqueue_reconcile_run
+
+                try:
+                    async with db.begin_nested():
+                        await enqueue_reconcile_run(
+                            db,
+                            user_id=user_id,
+                            binding_id=binding.id,
+                            action="mirror_out",
+                        )
+                except ReconcileRunError:
+                    # 运行中的任务会在收尾比较 binding.revision 并补排。
+                    pass
+                continue
             relative = storage_path.relative_to(binding_root).as_posix()
         except (OSError, ValueError):
             continue
         if not relative:
             continue
-        operation = FileSyncOperation.UPDATE
         try:
             # 用 savepoint 隔离同步 journal；即使同步校验/唯一键遇到异常，
             # 也不能回滚文件库本身已经完成的主事务。
@@ -167,7 +247,8 @@ async def record_canonical_file_change(
                     operation=operation, relative_path=relative,
                     idempotency_key=build_idempotency_key(
                         source=FileSyncSource.FILE_API, operation=operation,
-                        relative_path=relative, fingerprint=observed_fingerprint,
+                        relative_path=relative,
+                        fingerprint=idempotency_fingerprint or change_id or observed_fingerprint,
                     ), observed_fingerprint=observed_fingerprint,
                     status=FileSyncStatus.SYNCED,
                 )
@@ -175,7 +256,7 @@ async def record_canonical_file_change(
             return
         except Exception as exc:
             # canonical journal 是可选旁路；保留受限诊断，放行主文件写入。
-            diag_log("filesync.canonical_file_change", exc)
+            diag_log("filesync.canonical_file_event", exc)
 
 
 def validate_sync_path(root: Path, relative_path: str) -> Path:

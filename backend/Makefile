@@ -192,19 +192,21 @@ install:     ## 装成 systemd 服务（egress + sandboxd + web + IM worker + IM
 	@$(MAKE) sandbox-acl-prepare
 	./start.sh install
 
-uninstall:   ## 卸载 systemd 服务（rag-sidecar + egress + 四个核心服务，并清理旧实时事件服务）
-	for s in gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-backend gugu-worker gugu-gateway; do \
+uninstall:   ## 卸载 systemd 服务，并清理 inotify helper 与其状态标记
+	for s in gugu-rag-sidecar gugu-sandbox-egress gugu-sandboxd gugu-inotify-limitd gugu-backend gugu-worker gugu-gateway; do \
 	  systemctl stop $$s 2>/dev/null || true; \
 	  systemctl disable $$s 2>/dev/null || true; \
 	  rm -f /etc/systemd/system/$$s.service; \
 	done
+	rm -f /usr/local/libexec/gugu/inotify_limitd.py /var/lib/gugu-inotify-limitd/last-expansion
+	rmdir /usr/local/libexec/gugu /var/lib/gugu-inotify-limitd 2>/dev/null || true
 	for s in gugu-live; do \
 	  systemctl stop $$s 2>/dev/null || true; \
 	  systemctl disable $$s 2>/dev/null || true; \
 	  rm -f /etc/systemd/system/$$s.service; \
 	done
 	systemctl daemon-reload
-	@echo "已卸载 systemd 核心服务，并清理旧 gugu-live 实时事件服务"
+	@echo "已卸载 systemd 服务；已删除 inotify helper 和已知状态标记，非空目录会保留"
 
 # ── 清理 ─────────────────────────────────────────────────
 clean:       ## 清缓存 + 日志 + pid（不删 venv / Gugu-data/users / override）

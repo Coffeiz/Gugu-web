@@ -16,8 +16,10 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -27,6 +29,82 @@ OVERRIDE_FILE = Path(
         str(Path(__file__).parent.parent.parent / "config.override.json"),
     )
 )
+
+
+class OverrideDocument(dict):
+    """携带读取基线的运行配置；写回时只合并本次修改过的叶子字段。"""
+
+    def __init__(self, data: dict):
+        super().__init__(data)
+        self.baseline = deepcopy(data)
+
+
+def read_override_document() -> OverrideDocument:
+    """读取并校验运行配置，供需要 read-modify-write 的 Admin 路由使用。"""
+    try:
+        data = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8")) if OVERRIDE_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("用户运行配置文件损坏，已拒绝覆盖写入") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("用户运行配置文件格式无效，已拒绝覆盖写入")
+    return OverrideDocument(data)
+
+
+def _merge_override_document(latest: dict, edited: dict, baseline: dict) -> dict:
+    """将文档相对读取基线的改动合入最新配置，保留其他 Worker 的不相关更新。"""
+    merged = deepcopy(latest)
+
+    def apply(target: dict, current: dict, original: dict) -> None:
+        for key in original.keys() | current.keys():
+            old_exists = key in original
+            new_exists = key in current
+            old_value = original.get(key)
+            new_value = current.get(key)
+            if old_exists == new_exists and old_value == new_value:
+                continue
+            if (
+                old_exists and new_exists
+                and isinstance(old_value, dict)
+                and isinstance(new_value, dict)
+            ):
+                latest_value = target.get(key)
+                if not isinstance(latest_value, dict):
+                    latest_value = {}
+                else:
+                    latest_value = deepcopy(latest_value)
+                apply(latest_value, new_value, old_value)
+                target[key] = latest_value
+            elif new_exists and isinstance(new_value, dict):
+                # 新增配置段也按叶子合并，保留其他 Worker 并发创建的同段字段。
+                latest_value = target.get(key)
+                if not isinstance(latest_value, dict):
+                    latest_value = {}
+                else:
+                    latest_value = deepcopy(latest_value)
+                apply(latest_value, new_value, {})
+                target[key] = latest_value
+            elif new_exists:
+                target[key] = deepcopy(new_value)
+            else:
+                target.pop(key, None)
+
+    apply(merged, edited, baseline)
+    return merged
+
+
+@contextmanager
+def _override_file_lock():
+    """跨进程串行化配置读取/合并/发布；锁文件与配置同目录且不替换 inode。"""
+    OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = OVERRIDE_FILE.with_name(f".{OVERRIDE_FILE.name}.lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 def normalize_dimensions(value: Any) -> int:
@@ -86,7 +164,7 @@ class AISettings(BaseModel):
     model: str = Field("qwen-max", description="使用模型")
     max_tokens: int = Field(8000, gt=0, description="最大输出 token 数")
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
-    thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
+    thinking: str = Field("", description="思考控制: 空=跟随端点默认 | disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
     reasoning_persistence: Literal["off", "continuation"] = Field("off", description="跨请求推理状态: off | continuation")
     image: bool = Field(False, description="模型是否支持图片输入。后台「检测」按钮探测后写入，亦可手动改")
@@ -179,7 +257,7 @@ class SandboxSettings(BaseModel):
     output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")
     pty_output_limit_bytes: int = Field(120 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 单会话输出上限")
     pty_output_rate_bytes: int = Field(256 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 每秒输出上限")
-    persistent_quota_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 持久空间配额")
+    persistent_quota_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="OSS 后端每用户 Shell 独立持久空间配额")
     ephemeral_quota_bytes: int = Field(1024 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 临时构建/cache 配额")
     sandboxd_socket: str = Field(
         default_factory=lambda: os.getenv(
@@ -207,11 +285,26 @@ class FileSyncSettings(BaseModel):
     )
     active_window_days: int = Field(
         7,
-        description="活跃度门控：仅给最近 N 天活跃用户的绑定挂实时监听，其余只走日级补偿扫描（0 表示全部监听）",
+        description="活跃度门控：仅给最近 N 天活跃用户的绑定挂实时监听；其余绑定需手动核对（0 表示全部监听）",
     )
-    compensation_interval_seconds: float = Field(
-        86400.0,
-        description="全量补偿扫描间隔（秒）；事件路径失效时的兜底，默认一天一次",
+    watch_hard_limit: int = Field(
+        1024000,
+        ge=65536,
+        le=1024000,
+        description="inotify watcher 自动扩容硬上限；Admin 可热更新，环境变量只提供初始默认值",
+    )
+    reconcile_execution_budget_seconds: int = Field(
+        7200, ge=60, le=7200, description="整树完整核对任务的总执行时限；超时失败，不自动续跑",
+    )
+    reconcile_max_concurrency: int = Field(
+        1, ge=1, le=8, description="跨用户手动整树核对的全局并发上限",
+    )
+    reconcile_manifest_max_bytes: int = Field(
+        4 * 1024 * 1024 * 1024, ge=64 * 1024 * 1024,
+        description="单次手动核对临时 SQLite 清单的最大磁盘占用",
+    )
+    reconcile_manifest_commit_entries: int = Field(
+        256, ge=16, le=4096, description="临时清单分批提交的目录项数量",
     )
 
 
@@ -224,7 +317,7 @@ class AIPresetItem(BaseModel):
     model: str = ""
     max_tokens: int = Field(8000, gt=0)
     context_tokens: int = Field(128000, gt=1, description="模型总上下文窗口 token 数；服务商上限需按模型规格手动确认")
-    thinking: str = "disabled"
+    thinking: str = ""
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
     reasoning_persistence: Literal["off", "continuation"] = "off"
     image: bool = False
@@ -303,16 +396,24 @@ class AgentBehaviorSettings(BaseModel):
 class QuotaSettings(BaseModel):
     default_token_limit_6h:      Optional[int] = Field(None, description="全局 6 小时 Token 上限（None=不限制）")
     default_token_limit_weekly:  Optional[int] = Field(None, description="全局每周 Token 上限（None=不限制）")
-    default_storage_limit_bytes: Optional[int] = Field(None, description="全局存储空间上限（None=不限制）")
+    default_storage_limit_bytes: Optional[int] = Field(None, description="全局默认用户存储上限；Local 含文件库与工作区，OSS 限文件库（None=不限制）")
     default_search_limit_daily:  Optional[int] = Field(None, description="全局每日联网搜索次数上限（None=不限制）")
 
 
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
-    rag_auto_sources: list[Literal["memory", "knowledge", "project", "file", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
-        default_factory=lambda: ["memory", "knowledge", "project", "file", "canvas", "note", "calendar", "scheduled_task", "conversation"],
-        description="自动 Knowledge RAG 允许召回的来源；显式工具不受此开关影响",
+    rag_auto_sources: list[Literal["memory", "knowledge", "project", "canvas", "note", "calendar", "scheduled_task", "conversation"]] = Field(
+        default_factory=lambda: ["memory", "knowledge", "project", "canvas", "note", "calendar", "scheduled_task", "conversation"],
+        description="自动 Knowledge RAG 允许召回的来源；旧配置中的 file 会被忽略，文件通过 CRUD 工具访问",
     )
+
+    @field_validator("rag_auto_sources", mode="before")
+    @classmethod
+    def ignore_file_rag_source(cls, value):
+        """兼容升级前保存的配置，但不再启用文件 RAG。"""
+        if isinstance(value, (list, tuple)):
+            return [source for source in value if source != "file"]
+        return value
     ts_rank_scoring_version: Literal["confidence-v4", "confidence-v1"] = Field(
         "confidence-v4",
         description="TS 候选评分器版本；confidence-v4 为生产默认，confidence-v1 仅作短期回滚开关",
@@ -442,6 +543,15 @@ class SecuritySettings(BaseModel):
         return list(dict.fromkeys(normalized))
 
 
+class IMPlatformSettings(BaseModel):
+    """全局 IM 平台支持开关；关闭只暂停接入，不删除用户绑定或历史数据。"""
+
+    feishu: bool = True
+    qq: bool = True
+    wechat: bool = True
+    telegram: bool = True
+
+
 class EmbeddingSettings(BaseModel):
     """向量 embedding 模型——**独立于聊天/语音模型，单独 pin**（见 docs/agent/参考/咕咕改进方案-MaiBot借鉴.md 改进一）。
 
@@ -492,6 +602,7 @@ class AppSettings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    im: IMPlatformSettings = Field(default_factory=IMPlatformSettings)
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
     byok: BYOKSettings = Field(default_factory=BYOKSettings)
     mcp: McpSettings = Field(default_factory=McpSettings)
@@ -652,6 +763,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["security"] = SecuritySettings.model_validate(merged)
 
+            if "im" in override:
+                merged = {**self.im.model_dump(), **{
+                    k: v for k, v in (override["im"] or {}).items()
+                    if k in IMPlatformSettings.model_fields
+                }}
+                updates["im"] = IMPlatformSettings.model_validate(merged)
+
             if "agent" in override:
                 merged = _merge_agent_override(self.agent.model_dump(), override["agent"])
                 updates["agent"] = AgentBehaviorSettings.model_construct(**merged)
@@ -674,7 +792,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "filesync", "byok", "mcp", "safe_egress"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "im", "voice", "embedding", "sandbox", "filesync", "byok", "mcp", "safe_egress"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]
@@ -742,55 +860,274 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[k] = v
 
 
-def write_override_json(data: dict) -> None:
-    """原子写入用户运行配置，避免读到半截 JSON 或留下半写文件。"""
+def write_override_json(data: dict, *, project_inotify_policy: bool = False) -> None:
+    """跨进程锁定后原子发布配置与关联策略投影。"""
+    with _override_file_lock():
+        if isinstance(data, OverrideDocument):
+            latest = read_override_document()
+            data = _merge_override_document(latest, data, data.baseline)
+        _write_override_json_unlocked(data, project_inotify_policy=project_inotify_policy)
+
+
+def mutate_override_json(
+    mutator: Callable[[OverrideDocument], Any], *, project_inotify_policy: bool = False,
+) -> Any:
+    """在进程锁内读取最新配置、执行单次操作并发布，适用于数组型资源 CRUD。"""
+    with _override_file_lock():
+        latest = read_override_document()
+        result = mutator(latest)
+        _write_override_json_unlocked(latest, project_inotify_policy=project_inotify_policy)
+    return result
+
+
+def _write_override_json_unlocked(data: dict, *, project_inotify_policy: bool = False) -> None:
+    """原子写入用户配置；策略投影失败时回滚主配置，避免静默部分成功。"""
     OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if project_inotify_policy:
+        try:
+            original = OVERRIDE_FILE.read_bytes()
+        except FileNotFoundError:
+            original = None
+        staged_policy = _prepare_inotify_policy_projection(data)
+    else:
+        original = None
+        staged_policy = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{OVERRIDE_FILE.name}.",
+            suffix=".tmp",
+            dir=OVERRIDE_FILE.parent,
+            text=True,
+        )
+    except BaseException:
+        _discard_staged_policy(staged_policy)
+        raise
+    override_written = False
+    main_phase_completed = False
+    try:
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, ensure_ascii=False, indent=2))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temp_name, 0o600)
+            try:
+                os.replace(temp_name, OVERRIDE_FILE)
+            except OSError as exc:
+                # systemd ProtectSystem=strict 配合只读目录时，目标文件本身可写，
+                # 但临时文件无法通过 rename 替换目标。仅对明确的 EBUSY 原位写入。
+                if exc.errno != errno.EBUSY:
+                    raise
+                override_written = True
+                with open(OVERRIDE_FILE, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(data, ensure_ascii=False, indent=2))
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(OVERRIDE_FILE, 0o600)
+                os.unlink(temp_name)
+            else:
+                override_written = True
+            dir_fd = os.open(OVERRIDE_FILE.parent, os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except BaseException:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            if override_written:
+                _restore_override_bytes(original)
+                override_written = False
+            raise
+
+        main_phase_completed = True
+        _publish_staged_policy(staged_policy)
+    except BaseException as projection_error:
+        rollback_errors = []
+        if main_phase_completed and staged_policy is not None:
+            try:
+                _restore_policy_projection(staged_policy)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if main_phase_completed and override_written:
+            try:
+                _restore_override_bytes(original)
+                override_written = False
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if rollback_errors:
+            raise RuntimeError(
+                "inotify 策略发布失败，补偿回滚未完整成功；需检查配置状态"
+            ) from rollback_errors[0]
+        raise projection_error
+    finally:
+        _discard_staged_policy(staged_policy)
+
+
+def _restore_override_bytes(original: bytes | None) -> None:
+    """补偿恢复主配置；仅在策略投影提交失败后调用。"""
+    if original is None:
+        try:
+            OVERRIDE_FILE.unlink()
+        except FileNotFoundError:
+            pass
+        return
     fd, temp_name = tempfile.mkstemp(
-        prefix=f".{OVERRIDE_FILE.name}.",
+        prefix=f".{OVERRIDE_FILE.name}.rollback.",
         suffix=".tmp",
         dir=OVERRIDE_FILE.parent,
-        text=True,
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, ensure_ascii=False, indent=2))
-            handle.write("\n")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(original)
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(temp_name, 0o600)
-        os.replace(temp_name, OVERRIDE_FILE)
+        try:
+            os.replace(temp_name, OVERRIDE_FILE)
+        except OSError as exc:
+            if exc.errno != errno.EBUSY:
+                raise
+            with open(OVERRIDE_FILE, "wb") as handle:
+                handle.write(original)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(OVERRIDE_FILE, 0o600)
+            os.unlink(temp_name)
         dir_fd = os.open(OVERRIDE_FILE.parent, os.O_DIRECTORY)
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
-    except OSError as exc:
-        # systemd ProtectSystem=strict 配合只读目录时，目标文件本身可写，
-        # 但临时文件无法通过 rename 替换目标。仅对明确的 EBUSY 原位写入，
-        # 其他错误继续保留原子写入的失败语义。
-        if exc.errno == errno.EBUSY:
-            with open(OVERRIDE_FILE, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(data, ensure_ascii=False, indent=2))
-                handle.write("\n")
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _discard_staged_policy(staged: tuple[Path, str, bytes | None] | None) -> None:
+    if staged is None:
+        return
+    try:
+        os.unlink(staged[1])
+    except FileNotFoundError:
+        pass
+
+
+def _effective_watch_hard_limit(data: dict) -> int:
+    filesync = data.get("filesync", {}) or {}
+    if not isinstance(filesync, dict):
+        raise ValueError("filesync 配置必须是对象")
+    environment_defaults = AppSettings().filesync.model_dump()
+    return FileSyncSettings.model_validate({
+        **environment_defaults,
+        **filesync,
+    }).watch_hard_limit
+
+
+def _restore_policy_projection(staged: tuple[Path, str, bytes | None]) -> None:
+    """策略发布出错时恢复 helper 看到的上一版策略。"""
+    target, _temp_name, original = staged
+    if original is None:
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            pass
+    else:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=".policy.rollback.", suffix=".tmp", dir=target.parent,
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(original)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.chmod(OVERRIDE_FILE, 0o600)
+            os.chmod(temp_name, 0o600)
+            os.replace(temp_name, target)
+        except BaseException:
             try:
                 os.unlink(temp_name)
             except FileNotFoundError:
                 pass
-            return
+            raise
+    dir_fd = os.open(target.parent, os.O_DIRECTORY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _prepare_inotify_policy_projection(
+    data: dict, raw_policy_dir: str | Path | None = None,
+) -> tuple[Path, str, bytes | None] | None:
+    raw_policy_dir = raw_policy_dir or os.getenv("GUGU_INOTIFY_POLICY_DIR")
+    if not raw_policy_dir:
+        return None
+    # BaseSettings 读取进程环境与 .env；Admin override 再覆盖环境默认值。
+    hard_limit = _effective_watch_hard_limit(data)
+    target = Path(raw_policy_dir) / "policy.json"
+    if not target.parent.is_dir():
+        raise FileNotFoundError("inotify 策略目录尚未初始化")
+    try:
+        original_policy = target.read_bytes()
+    except FileNotFoundError:
+        original_policy = None
+    fd, temp_name = tempfile.mkstemp(
+        prefix=".policy.", suffix=".tmp", dir=target.parent, text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(
+                {"filesync": {"watch_hard_limit": hard_limit}},
+                handle,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+    except BaseException:
         try:
             os.unlink(temp_name)
         except FileNotFoundError:
             pass
         raise
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-        raise
+    return target, temp_name, original_policy
+
+
+def _publish_staged_policy(
+    staged: tuple[Path, str, bytes | None] | None,
+) -> None:
+    if staged is None:
+        return
+    target, temp_name, _original_policy = staged
+    os.replace(temp_name, target)
+    dir_fd = os.open(target.parent, os.O_DIRECTORY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def write_inotify_policy_projection(
+    data: dict, *, policy_dir: Path | None = None,
+) -> None:
+    """原子更新特权 helper 专用的小型策略文件，不暴露完整 Admin 配置。"""
+    raw_policy_dir = policy_dir or os.getenv("GUGU_INOTIFY_POLICY_DIR")
+    if not raw_policy_dir:
+        return
+    staged = _prepare_inotify_policy_projection(data, raw_policy_dir)
+    try:
+        _publish_staged_policy(staged)
+    finally:
+        _discard_staged_policy(staged)
 
 
 # ── 配置缓存（mtime 感知，多 worker 安全）───────────────────────────────────
@@ -880,6 +1217,7 @@ def _migrate_multimodal_override() -> None:
         override = json.loads(original)
         if not isinstance(override, dict):
             raise ValueError("配置文件根节点必须是对象")
+        baseline_override = deepcopy(override)
 
         changed = False
         ai = override.get("ai")
@@ -918,7 +1256,9 @@ def _migrate_multimodal_override() -> None:
             backup.write(original)
             backup.flush()
             os.fsync(backup.fileno())
-        write_override_json(override)
+        document = OverrideDocument(override)
+        document.baseline = baseline_override
+        write_override_json(document)
         stat = OVERRIDE_FILE.stat()
         _multimodal_override_migration_signature = (
             str(OVERRIDE_FILE.resolve()), stat.st_mtime_ns, stat.st_size
@@ -950,13 +1290,12 @@ async def save_override(patch: dict) -> AppSettings:
             **get_settings().filesync.model_dump(),
             **raw_filesync,
         })
-    existing = {}
-    if OVERRIDE_FILE.exists():
-        existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
-        if not isinstance(existing, dict):
-            raise ValueError("配置文件根节点必须是对象")
-    _merge_override_patch(existing, patch)
-    write_override_json(existing)
+    with _override_file_lock():
+        existing = read_override_document()
+        _merge_override_patch(existing, patch)
+        _write_override_json_unlocked(
+            existing, project_inotify_policy="filesync" in patch,
+        )
     invalidate_settings_cache()
     new_settings = get_settings()
     if "redis" in patch:

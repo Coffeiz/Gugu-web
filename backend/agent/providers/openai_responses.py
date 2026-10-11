@@ -10,7 +10,9 @@ from typing import Any
 
 from agent.context.budget import is_context_overflow_error
 from agent.context.canonical_context import digest
+from agent.providers.base import ResponsesInputCapabilities
 from agent.providers.message_utils import _openai_tool_result, render_provider_history
+from app.core.errors import Invalid
 
 
 class ResponsesCompatibilityError(RuntimeError):
@@ -138,16 +140,112 @@ def _responses_tools(tools: list[dict]) -> list[dict]:
     return result
 
 
-def _responses_content(content: Any) -> Any:
-    """把 Chat Completions 文本内容块转成 Responses input 内容块。"""
+def _responses_image_part(part: dict, media: ResponsesInputCapabilities) -> dict:
+    if not media.image:
+        raise Invalid(
+            "provider.responses_image_unsupported",
+            "当前模型的 Responses 接口未启用图片输入，未发送图片内容。",
+        )
+    image_url = part.get("image_url")
+    if not isinstance(image_url, dict):
+        return {**part, "type": "input_image"}
+    converted = {"type": "input_image", "image_url": image_url.get("url") or ""}
+    detail = part.get("detail") or image_url.get("detail")
+    if detail:
+        converted["detail"] = detail
+    return converted
+
+
+def _responses_video_part(part: dict, media: ResponsesInputCapabilities) -> dict:
+    if not media.video:
+        raise Invalid(
+            "provider.responses_video_unsupported",
+            "当前模型的 Responses 接口不支持视频输入，未发送视频内容。",
+        )
+    video_url = part.get("video_url")
+    if not isinstance(video_url, dict):
+        return {**part, "type": "input_video"}
+    converted = {"type": "input_video", "video_url": video_url.get("url") or ""}
+    for key in ("fps", "media_resolution"):
+        if part.get(key) is not None:
+            converted[key] = part[key]
+    return converted
+
+
+def _responses_audio_part(part: dict, media: ResponsesInputCapabilities) -> dict:
+    """只转换目标 Provider 声明支持的格式；拒绝时不把原始载荷发往上游。"""
+    audio = part.get("input_audio")
+    if not isinstance(audio, dict) or not media.audio_formats:
+        raise Invalid(
+            "provider.responses_audio_unsupported",
+            "当前模型的 Responses 接口未声明音频输入能力，未发送音频内容。",
+        )
+    data = audio.get("data")
+    if isinstance(data, str) and data.startswith("data:"):
+        header, separator, payload = data.partition(",")
+        media_type = header[5:].split(";", 1)[0].lower()
+        audio_format = {
+            "audio/mpeg": "mp3", "audio/mp3": "mp3",
+            "audio/wav": "wav", "audio/x-wav": "wav",
+            "audio/mp4": "m4a", "audio/flac": "flac", "audio/ogg": "ogg",
+        }.get(media_type)
+        declared_format = str(audio.get("format") or audio_format or "").lower()
+        if not (
+            separator and ";base64" in header
+            and audio_format in media.audio_formats
+            and declared_format == audio_format
+        ):
+            raise Invalid(
+                "provider.responses_audio_format_unsupported",
+                "当前 Responses 接口不支持该音频格式，未发送音频内容。",
+            )
+        return {
+            "type": "input_audio",
+            "input_audio": {
+                **audio, "data": payload,
+                "format": audio_format,
+            },
+        }
+    audio_format = str(audio.get("format") or "").lower()
+    if audio_format not in media.audio_formats:
+        raise Invalid(
+            "provider.responses_audio_format_unsupported",
+            "当前 Responses 接口不支持该音频格式，未发送音频内容。",
+        )
+    return part
+
+
+def _responses_content(content: Any, media: ResponsesInputCapabilities) -> Any:
+    """把 OpenAI conversation 内容块转成 Responses input 内容块。"""
     if not isinstance(content, list):
         return content or ""
-    return [
-        {**part, "type": "input_text"}
-        if isinstance(part, dict) and part.get("type") == "text"
-        else part
-        for part in content
-    ]
+    converted = []
+    for part in content:
+        if not isinstance(part, dict):
+            converted.append(part)
+            continue
+        kind = part.get("type")
+        if kind == "text":
+            converted.append({**part, "type": "input_text"})
+        elif kind == "image_url":
+            converted.append(_responses_image_part(part, media))
+        elif kind == "video_url":
+            converted.append(_responses_video_part(part, media))
+        elif kind == "input_audio":
+            converted.append(_responses_audio_part(part, media))
+        elif kind == "input_image" and not media.image:
+            raise Invalid(
+                "provider.responses_image_unsupported",
+                "当前模型的 Responses 接口未启用图片输入，未发送图片内容。",
+            )
+        elif kind == "input_video" and not media.video:
+            raise Invalid(
+                "provider.responses_video_unsupported",
+                "当前模型的 Responses 接口不支持视频输入，未发送视频内容。",
+            )
+        else:
+            converted.append(part)
+    return converted
 
 
 def _responses_content_is_empty(content: Any) -> bool:
@@ -166,7 +264,9 @@ def _responses_content_is_empty(content: Any) -> bool:
     return False
 
 
-def _responses_input(messages: list[dict]) -> list[dict]:
+def _responses_input(
+    messages: list[dict], *, media: ResponsesInputCapabilities,
+) -> list[dict]:
     """将现有 OpenAI 投影转换成 Responses input items。"""
     items: list[dict] = []
     legacy_call_occurrences: dict[str, int] = {}
@@ -183,7 +283,7 @@ def _responses_input(messages: list[dict]) -> list[dict]:
             if message.get("content"):
                 items.append({
                     "role": "assistant",
-                    "content": _responses_content(message["content"]),
+                    "content": _responses_content(message["content"], media),
                 })
             for call in message["tool_calls"]:
                 function = call.get("function") or {}
@@ -216,7 +316,7 @@ def _responses_input(messages: list[dict]) -> list[dict]:
             })
             continue
         if role in {"user", "assistant"}:
-            content = _responses_content(message.get("content"))
+            content = _responses_content(message.get("content"), media)
             if _responses_content_is_empty(content):
                 # 丢弃空数组/空文本块，但保留图像等非文本输入块。
                 continue
@@ -348,14 +448,20 @@ async def complete_branch(
     branch_tools = list(tools or ())
     request = {
         "model": ai.model,
-        "input": _responses_input(wire_history),
+        "input": _responses_input(
+            wire_history, media=adapter.responses_input_capabilities(ai),
+        ),
         "max_output_tokens": max_output_tokens,
         "tools": branch_tools,
-        "store": bool(getattr(ai, "store", True)),
     }
+    from agent import providers
+    request.update(providers.responses_store_params(ai))
     if instructions:
         request["instructions"] = instructions
-    request.update(adapter.build_responses_reasoning_params(ai))
+    request.update(
+        providers.generic_thinking_params(ai, "responses")
+        or adapter.build_responses_reasoning_params(ai)
+    )
     if json_mode:
         response_format = adapter.build_structured_output(ai).get("response_format")
         if isinstance(response_format, dict):
@@ -448,7 +554,10 @@ class OpenAIResponsesDriver:
         projection = render_provider_history(messages, ctx.adapter)
         full_rendered = projection.to_messages()
         request_input = _insert_responses_reasoning_items(
-            _responses_input(full_rendered),
+            _responses_input(
+                full_rendered,
+                media=ctx.adapter.responses_input_capabilities(ctx.ai),
+            ),
             ctx.reasoning_items if ctx.reasoning_replay_enabled else None,
         )
         if not request_input:
@@ -470,14 +579,18 @@ class OpenAIResponsesDriver:
             "tools": ctx.tools,
             "stream": True,
         }
-        request.update(ctx.adapter.build_responses_reasoning_params(ctx.ai))
+        from agent import providers
+        request.update(
+            providers.generic_thinking_params(ctx.ai, "responses")
+            or ctx.adapter.build_responses_reasoning_params(ctx.ai)
+        )
         if ctx.reasoning_replay_enabled:
             replay_params = getattr(
                 ctx.adapter, "build_responses_reasoning_replay_params", None,
             )
             if callable(replay_params):
                 request.update(replay_params(ctx.ai))
-        request["store"] = bool(getattr(ctx.ai, "store", True))
+        request.update(providers.responses_store_params(ctx.ai))
         # Responses 的自动前缀缓存需要稳定的路由 key 才能跨 run 复用；key
         # 只由实际固定前缀身份组成，不包含本轮用户消息或动态工具结果。
         prompt_cache_key = _responses_prompt_cache_key(ctx)
@@ -516,6 +629,8 @@ class OpenAIResponsesDriver:
         output_items: dict[str, dict] = {}
         tool_buf: dict[str, dict] = {}
         usage_in = usage_out = cache_read = cache_write = 0
+        response_status = None
+        incomplete_reason = None
         try:
             async for event in stream:
                 event_type = str(getattr(event, "type", "") or "")
@@ -540,10 +655,16 @@ class OpenAIResponsesDriver:
                     if isinstance(item, dict):
                         key = str(item.get("id") or item.get("call_id") or len(output_items))
                         output_items[key] = copy.deepcopy(item)
-                elif event_type == "response.completed":
+                elif event_type in {"response.completed", "response.incomplete", "response.failed"}:
                     response = getattr(event, "response", None)
                     response_data = response.model_dump() if hasattr(response, "model_dump") else response
                     if isinstance(response_data, dict):
+                        response_status = str(response_data.get("status") or "") or None
+                        details = response_data.get("incomplete_details") or {}
+                        if isinstance(details, dict):
+                            incomplete_reason = str(details.get("reason") or "") or None
+                        if event_type == "response.failed":
+                            incomplete_reason = "provider_failed"
                         usage = response_data.get("usage") or {}
                         from agent.usage import normalize_responses_usage
 
@@ -564,6 +685,10 @@ class OpenAIResponsesDriver:
                 await stream.close()
             except Exception:
                 pass
+
+        if response_status == "failed":
+            # 不把失败事件伪装成空的正常轮次；异常由共享 Agent 层按统一路径记录。
+            raise RuntimeError("Responses API returned a failed response")
 
         ordered = list(output_items.values())
         tool_payload = []
@@ -601,6 +726,9 @@ class OpenAIResponsesDriver:
             text=content, tool_calls=normalized, requires_tools=bool(normalized),
             usage_in=usage_in, usage_out=usage_out,
             cache_tokens=cache_read, cache_write_tokens=cache_write,
+            output_token_budget=ctx.max_output_tokens,
+            finish_reason=response_status,
+            incomplete_reason=incomplete_reason,
             raw=_ResponsesRaw(
                 content=content, tool_calls_payload=tool_payload, output_items=ordered,
             ),

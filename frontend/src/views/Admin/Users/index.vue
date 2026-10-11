@@ -59,7 +59,10 @@
             <span class="col-usage">
               <span class="usage-wrap">
                 <span class="usage-num">{{ fmtTokens(u.tokens_week) }}</span>
-                <template v-if="u.token_limit_weekly">
+                <template v-if="u.token_limit_weekly === -1">
+                  <span class="usage-limit">/ {{ t('adminQuota.unlimited') }}</span>
+                </template>
+                <template v-else-if="u.token_limit_weekly > 0">
                   <span class="usage-bar-bg">
                     <span class="usage-bar-fill" :style="tokenBarStyle(u)"></span>
                   </span>
@@ -70,7 +73,10 @@
             <span class="col-storage">
               <span class="usage-wrap">
                 <span class="usage-num">{{ fmtBytes(u.storage_used) }}</span>
-                <template v-if="u.storage_limit_bytes">
+                <template v-if="u.storage_limit_bytes === -1">
+                  <span class="usage-limit">/ {{ t('adminQuota.unlimited') }}</span>
+                </template>
+                <template v-else-if="u.storage_limit_bytes > 0">
                   <span class="usage-bar-bg">
                     <span class="usage-bar-fill" :style="storageBarStyle(u)"></span>
                   </span>

@@ -12,7 +12,7 @@ from app.services.storage import get_storage
 
 from .models import KnowledgeEntry, KnowledgeScope, KnowledgeSource
 from .timestamp_migration import (
-    _epoch_timestamp, _iso_timestamp, _map_timestamps,
+    _epoch_timestamp, _iso_timestamp, _list_user_entry_keys, _map_timestamps,
     migrate_user_knowledge_timestamps,
 )
 
@@ -169,10 +169,7 @@ class KnowledgeStore:
     async def list(self, *, scope: KnowledgeScope | None = None, active_only: bool = True) -> list[KnowledgeEntry]:
         await self._ensure_timestamp_format()
         storage = get_storage()
-        try:
-            keys = await storage.list_keys()
-        except Exception:
-            return []
+        keys = await _list_user_entry_keys(storage, self.user_id)
         semaphore = asyncio.Semaphore(KNOWLEDGE_DOCUMENT_LOAD_CONCURRENCY)
 
         async def load_one(key: str) -> KnowledgeEntry | None:

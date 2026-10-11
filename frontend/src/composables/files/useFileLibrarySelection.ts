@@ -146,6 +146,12 @@ export function useFileLibrarySelection(options: FileLibrarySelectionOptions) {
     })
   function handleFolderClick(folder: { id: number | string }, event: MouseEvent) {
     if (pressStartedOutside(event)) return
+    // 文件库根目录里的“个人文件 / 项目文件 / 回收站”是导航入口，不是可批量操作的
+    // 普通文件夹。即使按住 Shift/Ctrl 点击，也应进入对应视图，不能把导航卡片加入多选。
+    if (options.currentType.value === 'root') {
+      options.enterFolder(folder as FolderCardMeta)
+      return
+    }
     if (event.shiftKey) {
       const hadAnchor = lastAnchorIndex.value >= 0
       if (!range('folder', folder.id)) state.selectOnlyFolder(folder.id)

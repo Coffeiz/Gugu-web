@@ -7,7 +7,7 @@ from .locations import (
     _location_receipt, _norm_target, _resolve_create_location, _resolve_file,
     _resolve_key, _target_loc,
 )
-from .documents import (
+from .file_operations import (
     TEXT_EXTS, READ_MAX_BYTES, _DOC_MIME, _DOC_EXT, _DOC_EXT_ALIASES,
     _CREATE_NAME_EXT_RE, _CREATE_SPACES, _CREATE_BINARY_EXTS,
     _is_text_file_record, _split_create_name, _strip_ext, _resolve_file,

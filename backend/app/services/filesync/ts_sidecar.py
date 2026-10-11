@@ -27,6 +27,7 @@ class FileSyncSidecar:
         self._reader_task: asyncio.Task | None = None
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._events: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=20_000)
+        self._overflow_pending = False
         self._sequence = 0
         self._lock = asyncio.Lock()
 
@@ -37,7 +38,10 @@ class FileSyncSidecar:
 
     @property
     def running(self) -> bool:
-        return self._process is not None and self._process.returncode is None
+        return (
+            self._process is not None and self._process.returncode is None
+            and self._reader_task is not None and not self._reader_task.done()
+        )
 
     async def start(self) -> None:
         if self.running:
@@ -47,6 +51,7 @@ class FileSyncSidecar:
         async with self._lock:
             if self.running:
                 return
+            await self.close()
             await self._start_process()
             try:
                 await self._request_unlocked("ping")
@@ -74,13 +79,26 @@ class FileSyncSidecar:
         except OSError as exc:
             raise FileSyncSidecarUnavailable("TS 文件监听进程启动失败") from exc
 
-    async def watch(self, binding_id: int, root: Path) -> None:
-        await self._request("watch", binding_id=binding_id, root=str(root))
+    async def watch(
+        self, binding_id: int, root: Path, *, included_root_entries: tuple[str, ...] | None = None,
+    ) -> None:
+        await self._request(
+            "watch", binding_id=binding_id, root=str(root),
+            **({"included_root_entries": list(included_root_entries)} if included_root_entries else {}),
+        )
 
     async def unwatch(self, binding_id: int) -> None:
         await self._request("unwatch", binding_id=binding_id)
 
     async def next_event(self, timeout: float = 0.0) -> dict[str, Any] | None:
+        if self._overflow_pending:
+            self._overflow_pending = False
+            return {
+                "protocol": FILESYNC_PROTOCOL_VERSION,
+                "kind": "event",
+                "event": "needs_reconcile",
+                "code": "python_event_queue_overflow",
+            }
         try:
             if timeout:
                 return await asyncio.wait_for(self._events.get(), timeout=timeout)
@@ -115,6 +133,7 @@ class FileSyncSidecar:
             if not self.running:
                 if not self.command or not Path(self.command[-1]).exists():
                     raise FileSyncSidecarUnavailable("TS 文件监听制品不可用")
+                await self.close()
                 await self._start_process()
                 await self._request_unlocked("ping")
             return await self._request_unlocked(op, **payload)
@@ -166,15 +185,9 @@ class FileSyncSidecar:
                     try:
                         self._events.put_nowait(message)
                     except asyncio.QueueFull:
-                        # 丢弃事件前先放入不可丢失的恢复信号；reconcile 会重建完整状态。
-                        while not self._events.empty():
-                            self._events.get_nowait()
-                        self._events.put_nowait({
-                            "protocol": FILESYNC_PROTOCOL_VERSION,
-                            "kind": "event",
-                            "event": "needs_reconcile",
-                            "code": "python_event_queue_overflow",
-                        })
+                        # 保留已接收的精确事件；恢复标记独立于满队列，后续溢出不能挤掉它。
+                        # 该标记只表示需显式核对，不代表自动触发整树扫描。
+                        self._overflow_pending = True
         finally:
             error = FileSyncSidecarUnavailable("TS 文件监听进程已退出")
             for future in self._pending.values():

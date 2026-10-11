@@ -12,12 +12,13 @@ interface FileActionsOptions {
   fileActions: ReturnType<typeof useFileActions>
   selectedIds: Ref<Set<number>>
   loadContents: () => void
+  removeFilesFromSnapshots: (fileIds: number[]) => void
   fetchStorage: () => void | Promise<void>
 }
 
 /** 文件库单文件动作适配；项目文件区保留自己的项目缓存和刷新策略。 */
 export function useFileLibraryFileActions(options: FileActionsOptions) {
-  const { cacheStore, fileActions, selectedIds, loadContents, fetchStorage } = options
+  const { cacheStore, fileActions, selectedIds, loadContents, removeFilesFromSnapshots, fetchStorage } = options
   const { t } = useI18n()
 
   async function downloadFile(file: FileMeta) {
@@ -31,18 +32,23 @@ export function useFileLibraryFileActions(options: FileActionsOptions) {
 
   async function deleteSingleFile(file: FileMeta) {
     if (!await confirmFileDeletion('file', { name: file.displayName })) return
-    const backup = cacheStore.getFile(file.id)
     await InteractionSync.execute({
       scope: 'file.delete', entityKey: `file:${file.id}`,
-      apply: () => {
-        cacheStore.removeFile(file.id)
-        selectedIds.value = new Set([...selectedIds.value].filter(id => id !== file.id))
-      },
-      afterMutate: loadContents,
+      apply: () => {},
       request: mutation => fileActions.deleteFile(file.id, { mutationId: mutation.mutationId }),
-      onCommit: fetchStorage,
-      rollback: () => { if (backup) cacheStore.addFile(backup) },
-      onError: error => console.error('[Files] 删除失败:', (error as Error).message),
+      onCommit: () => {
+        cacheStore.removeFile(file.id)
+        removeFilesFromSnapshots([file.id])
+        selectedIds.value = new Set([...selectedIds.value].filter(id => id !== file.id))
+        // 请求成功后再刷新，避免预提交快照重显，也避免乐观消失后回跳。
+        loadContents()
+        void fetchStorage()
+      },
+      rollback: () => {},
+      onError: error => {
+        console.error('[Files] 删除失败:', (error as Error).message)
+        loadContents()
+      },
     })
   }
 

@@ -595,7 +595,7 @@ async function setPriority(n: number) {
 .tp-del:hover { opacity: 1 !important; background: var(--status-danger-bg); color: var(--status-danger); }
 .tp-empty { font-size: 12px; color: var(--text-secondary); opacity: 0.55; text-align: center; padding: 6px 0 4px; }
 .tp-add {
-  width: 100%; padding: 6px; border: 1px dashed var(--border-subtle);
+  width: 100%; padding: 6px; border: 1px dashed var(--content-outline);
   background: none; border-radius: 9px; font-size: 12px; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans); transition: background 0.12s, color 0.12s, border-color 0.12s;
 }

@@ -567,7 +567,12 @@ export function useChatStream(options: {
               messages.value[toolIndex].toolStatus = evt.status || 'success'
               if (evt.result !== undefined) messages.value[toolIndex].toolResult = evt.result
               const startedAt = (messages.value[toolIndex] as ChatMessage & { _toolStartedAt?: number })._toolStartedAt
-              if (startedAt) messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
+              const serverDurationMs = Number(evt.duration_ms)
+              if (Number.isFinite(serverDurationMs) && serverDurationMs >= 0) {
+                messages.value[toolIndex].toolDurationMs = serverDurationMs
+              } else if (startedAt) {
+                messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
+              }
             } else if (live() && evt.name) {
               recordStreamDiagnostic({ session: sid, sequence: Number(evt.diagnostic_seq) || null,
                 matched: false }, '工具终态补建')

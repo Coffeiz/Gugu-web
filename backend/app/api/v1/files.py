@@ -15,10 +15,14 @@ from app.core.upload_stream import spool_upload
 from app.db.session import get_db
 from app.models import File, Folder, Project, User  # orm-exempt: 文件归档接口的模型引用随现有遗留查询，files Service 收口时一并移除
 from app.schemas import (
-    CamelModel, FileResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
+    CamelModel, FileResponse, FileStreamResponse, FileSummaryResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
-from app.services.files.browser import get_file_tree_rows, get_file_version_snapshot, get_storage_usage, list_existing_file_rows, list_file_rows
+from app.services.files.browser import (
+    get_file_detail_row, get_file_summary, get_file_tree_rows, get_file_version_snapshot,
+    list_existing_file_rows, list_file_rows,
+)
+from app.services.storage.quota_ledger import get_file_library_usage_snapshot
 from app.services.files.response import color_value, to_file_response, to_related_file_response
 from app.services.files.upload import (
     UploadTargetError,
@@ -39,7 +43,7 @@ from app.services.files.actions import (
     resolve_local_file_stream,
     update_file_content as update_file_content_service,
 )
-from app.services.storage import get_storage
+from app.services.storage import OSSStorageBackend, get_storage
 from app.services.storage.file_service import FileService
 from app.services.files.selection import build_batch_zip
 from app.services.files.archive import compress_files, extract_file
@@ -58,6 +62,15 @@ from app.services.undo import UndoService
 from app.services.undo.files import file_snapshot, operation_state, ref_for, save_content_artifacts
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+def _storage_limit(user: User) -> int | None:
+    """优先使用用户覆盖；-1 明确不限额，0 是有效的零额度。"""
+    if user.storage_limit_bytes == -1:
+        return None
+    if user.storage_limit_bytes is not None:
+        return int(user.storage_limit_bytes)
+    return get_settings().quota.default_storage_limit_bytes
 
 
 class ArchiveRequest(CamelModel):
@@ -116,16 +129,20 @@ _UNDO_CONTENT_MAX = 64 * 1024 * 1024
 
 
 async def _upload_capacity(db, current_user, on_conflict: str, overwrite_file_id: int | None):
-    """返回实际总配额与本次请求可消费的剩余空间。"""
-    limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    """从存储账本读取上传配额，避免每次请求递归扫描用户目录。"""
+    limit = _storage_limit(current_user)
     if limit is None:
         return None, 2**63 - 1
-    used = await get_storage_usage(db, current_user.id)
+    from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota
+
+    quota = await get_quota(db, current_user.id, FILE_LIBRARY)
+    used = int(quota.used_bytes or 0)
+    reserved = int(quota.reserved_bytes or 0)
     reclaimable = 0
     if on_conflict == "overwrite" and overwrite_file_id is not None:
         existing = await get_owned(db, File, overwrite_file_id, current_user.id)
         reclaimable = int(existing.size_bytes or 0) if existing else 0
-    return limit, max(int(limit) - int(used) + reclaimable, 0)
+    return limit, max(int(limit) - used - reserved + reclaimable, 0)
 
 # 版本摘要是无副作用查询，遇到迁移/对账等 DDL 造成的短暂死锁时可以安全重试。
 # ── GET /files ────────────────────────────────────────────────────────────────
@@ -157,7 +174,20 @@ async def list_files(
     return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows]
 
 
-# ── GET /files/all ────────────────────────────────────────────────────────────
+# ── GET /files/summary and /files/all ─────────────────────────────────────────
+
+@router.get("/summary", response_model=FileSummaryResponse)
+async def file_summary(
+    recent_limit: int = Query(default=12, ge=1, le=30),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    total_count, rows = await get_file_summary(db, current_user.id, recent_limit)
+    return FileSummaryResponse(
+        total_count=total_count,
+        recent_files=[to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows],
+    )
+
 
 @router.get("/all", response_model=list[FileResponse])
 async def list_all_files(
@@ -192,8 +222,8 @@ async def files_storage(
     db: AsyncSession = Depends(get_db),
 ):
     """返回当前用户的存储用量与上限。"""
-    used = await get_storage_usage(db, current_user.id)
-    limit = current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes
+    used = await get_file_library_usage_snapshot(db, current_user.id)
+    limit = _storage_limit(current_user)
     return {"used_bytes": used, "limit_bytes": limit}
 
 
@@ -206,7 +236,7 @@ async def file_tree(
 ):
     uid = current_user.id
 
-    project_rows, projects, personal_count = await get_file_tree_rows(db, uid)
+    project_rows, projects, personal_count, personal_root_count = await get_file_tree_rows(db, uid)
     count_map = {pid: count for pid, count in project_rows}
 
     tree_projects = [
@@ -215,7 +245,25 @@ async def file_tree(
         for p in projects
     ]
 
-    return FileTreeResponse(projects=tree_projects, personal_count=personal_count)
+    return FileTreeResponse(
+        projects=tree_projects,
+        personal_count=personal_count,
+        personal_root_count=personal_root_count,
+    )
+
+
+@router.get("/{fid}", response_model=FileResponse)
+async def get_file(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按 ID 读取单个存活文件，供引用卡片按需加载，避免拉取全量文件库。"""
+    row = await get_file_detail_row(db, current_user.id, fid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    file, project_name, project_color, folder_name = row
+    return to_file_response(file, project_name, color_value(project_color), folder_name)
 
 
 @router.post("/archive", response_model=FileResponse, status_code=201)
@@ -433,6 +481,11 @@ async def presign_upload(
 ):
     """检查存储后端：OSS 时签发 presigned PUT URL；本地时返回 {mode:'proxy'}。"""
     storage = get_storage()
+    # 本地代理上传随后会完整经过 /files 的配额、归属与冲突校验。
+    # 这里若继续准备 presign target，会调用旧的物理用量对账并递归扫描用户目录；
+    # 本地模式根本不会使用签名 URL，因此直接返回代理模式。
+    if not isinstance(storage, OSSStorageBackend):
+        return {"mode": "proxy"}
     try:
         target = await prepare_presign_target(
             db,
@@ -445,26 +498,25 @@ async def presign_upload(
             body.folder_id,
             body.on_conflict,
             body.overwrite_file_id,
-            current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
+            _storage_limit(current_user),
             workspace_directory_id=body.workspace_directory_id,
         )
     except UploadTargetError as error:
         raise HTTPException(error.status_code, error.detail) from error
 
     upload_url = await presign_upload_url(storage, target, body.mime_type)
-    if upload_url is not None:
-        return {
-            "mode": "oss",
-            "upload_url": upload_url,
-            # 客户端只是把这个值原样带回 /confirm，不解析它的含义——这里给的是临时
-            # 直传 key，不是最终存储位置，浏览器 PUT 不会碰到任何已有的真实文件。
-            "storage_key": target.staging_key,
-            "final_name": target.final_name,
-            "ext": target.ext,
-            "overwrite_file_id": target.overwrite_file_id,
-        }
-
-    return {"mode": "proxy"}
+    if upload_url is None:
+        return {"mode": "proxy"}
+    return {
+        "mode": "oss",
+        "upload_url": upload_url,
+        # 客户端只是把这个值原样带回 /confirm，不解析它的含义——这里给的是临时
+        # 直传 key，不是最终存储位置，浏览器 PUT 不会碰到任何已有的真实文件。
+        "storage_key": target.staging_key,
+        "final_name": target.final_name,
+        "ext": target.ext,
+        "overwrite_file_id": target.overwrite_file_id,
+    }
 
 
 # ── POST /files/confirm ───────────────────────────────────────────────────────
@@ -521,7 +573,7 @@ async def confirm_upload(
             workspace_directory_id=body.workspace_directory_id,
             stage_name=body.stage_name,
             overwrite_file_id=body.overwrite_file_id,
-            storage_limit_bytes=current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
+            storage_limit_bytes=_storage_limit(current_user),
         max_file_bytes=None,
         )
     except UploadTargetError as error:
@@ -899,18 +951,19 @@ async def xlsx_preview_image(
 
 # ── GET /files/{fid}/stream-url ──────────────────────────────────────────────
 
-@router.get("/{fid}/stream-url")
+@router.get("/{fid}/stream-url", response_model=FileStreamResponse)
 async def get_stream_url(
     fid: int,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     f = await get_owned(db, File, fid, current_user.id)
-    if not f:
+    if not f or f.deleted_at is not None:
         raise HTTPException(404, "文件不存在")
 
     storage = get_storage()
     return {
+        "file": to_file_response(f),
         "url": await build_stream_url(
             storage,
             storage_key=f.storage_key,

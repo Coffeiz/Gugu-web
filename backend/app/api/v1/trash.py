@@ -12,8 +12,10 @@ from app.schemas import (
     BatchDeleteBody,
     FileResponse,
     FolderResponse,
+    TrashCountsResponse,
     TrashFolderContentsResponse,
     TrashFolderResponse,
+    TrashPurgeJobResponse,
 )
 from app.core.security import get_current_user, get_client_id
 from app.core import events
@@ -22,11 +24,11 @@ from app.services.files.trash import (
     permanently_delete_file,
     permanently_delete_folder,
     get_top_level_deleted_folder,
+    get_trash_counts,
     list_top_level_deleted_folders,
     list_top_level_deleted_folders_with_counts,
     list_trash_file_rows,
     list_trash_folder_contents_rows,
-    empty_trash as empty_trash_service,
     restore_file_by_id,
     restore_files_by_ids,
 )
@@ -35,11 +37,24 @@ from app.services.files.response import color_value, to_file_response
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import folder_dir_key
-
+from app.services.files.trash_purge import enqueue_purge, get_active_job, get_owned_job
 router = APIRouter(prefix="/trash", tags=["trash"])
 
 TRASH_DAYS = 30
 _log = logging.getLogger("app.api.v1.trash")
+
+
+@router.get("/counts", response_model=TrashCountsResponse)
+async def trash_counts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    file_count, folder_count = await get_trash_counts(db, current_user.id)
+    return TrashCountsResponse(
+        file_count=file_count,
+        folder_count=folder_count,
+        total_count=file_count + folder_count,
+    )
 
 
 # ── GET /trash ────────────────────────────────────────────────────────────────
@@ -191,20 +206,51 @@ async def hard_delete_file(
     await events.publish(current_user.id, "files", origin=origin)
 
 
-# ── DELETE /trash （清空回收站）──────────────────────────────────────────────
+# ── 回收站清空后台任务 ───────────────────────────────────────────────────────
 
-@router.delete("", status_code=204)
-async def empty_trash(
+async def _enqueue_empty_trash(current_user: User, db: AsyncSession):
+    try:
+        job, _created = await enqueue_purge(db, current_user.id)
+    except TimeoutError:
+        raise HTTPException(429, "刚完成清空，请稍后再试", headers={"Retry-After": "30"})
+    return job
+
+
+@router.post("/empty", response_model=TrashPurgeJobResponse, status_code=202)
+async def start_empty_trash(
     current_user: User = Depends(get_current_user),
-    origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    roots = await list_top_level_deleted_folders(db, current_user.id)
-    fids = await empty_trash_service(db, get_storage(), current_user.id, roots)
-    await db.commit()
-    for fid in fids:
-        delete_thumb_cache(fid)
-    await events.publish(current_user.id, "files", origin=origin)
+    return await _enqueue_empty_trash(current_user, db)
+
+
+@router.get("/empty/active", response_model=TrashPurgeJobResponse | None)
+async def active_empty_trash(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_active_job(db, current_user.id)
+
+
+@router.get("/empty/{job_id}", response_model=TrashPurgeJobResponse)
+async def get_empty_trash_job(
+    job_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    job = await get_owned_job(db, current_user.id, job_id)
+    if not job:
+        raise HTTPException(404, "清空任务不存在")
+    return job
+
+
+@router.delete("", response_model=TrashPurgeJobResponse, status_code=202)
+async def empty_trash(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """兼容旧客户端，但同样进入后台队列，避免长时间占用 HTTP 请求。"""
+    return await _enqueue_empty_trash(current_user, db)
 
 
 # ── 自动清理过期文件 + 文件夹（P2.5，由 main.py 在启动时调用）────────────────────

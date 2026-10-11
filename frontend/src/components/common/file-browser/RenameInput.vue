@@ -20,7 +20,6 @@
           class="rename-input-inline rename-file-extension-input"
           :value="props.extension"
           :aria-label="t('filesUi.fileExtension')"
-          :required="props.extensionRequired"
           maxlength="10"
           pattern="[A-Za-z0-9_-]{1,10}"
           :title="t('filesUi.extensionInvalid')"
@@ -58,11 +57,10 @@ import { useI18n } from 'vue-i18n'
  * 样式（.rename-sizer / .rename-ghost / .rename-input-inline）在 global.css 统一维护。
  * 文件名可额外传 extension，显示为名称与后缀两个输入段；文件夹继续使用单输入框。
  */
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   modelValue: string
   extension?: string
-  extensionRequired?: boolean
-}>(), { extensionRequired: false })
+}>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:extension': [value: string]

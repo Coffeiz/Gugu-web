@@ -97,10 +97,10 @@ function bind(element: HTMLElement) {
   if (Number.isFinite(surfaceRightOffset) && Math.abs(surfaceRightOffset) > 0.01) {
     thumb.style.setProperty('--scrollbar-overlay-right-offset', `${surfaceRightOffset}px`)
   }
-  // 抽屉和聊天窗一样是独立的浮动滚动宿主。把滑块挂进宿主后，它会跟随宿主的
-  // transform/width 动画移动；否则会先挂到 body，以浏览器右边为参照闪入抽屉。
-  const owner = element.closest<HTMLElement>('.chat-window, .drawer-shell, .bm-card, .notif-popup')
-  if (owner) thumb.classList.add('overlay-scrollbar--chat')
+  // 独立浮层作为滚动宿主时，把滑块挂在宿主内部以共享层级并跟随其动画；
+  // 否则滑块会挂到 body，可能被浮层遮挡或在浮层淡出后残留。
+  const owner = element.closest<HTMLElement>('.chat-window, .drawer-shell, .bm-card, .notif-popup, .gs-panel')
+  if (owner) thumb.classList.add('overlay-scrollbar--owner')
   if (element.closest('.drawer-shell')) thumb.classList.add('overlay-scrollbar--drawer')
   if (element.closest('.notif-popup')) thumb.classList.add('overlay-scrollbar--notif')
   const thumbHost = owner ?? document.body

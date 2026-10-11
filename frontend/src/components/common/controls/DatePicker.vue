@@ -83,7 +83,7 @@
           <!-- 快捷 -->
           <div v-if="!yearMode" class="dp-footer">
             <button v-if="showClear" class="dp-clear" @click.stop="clear">{{ t('sharedUi.clear') }}</button>
-            <button class="dp-today" @click.stop="select(todayIso)">{{ t('sharedUi.today') }}</button>
+            <button class="dp-today" @click.stop="selectToday">{{ t('sharedUi.today') }}</button>
           </div>
         </div>
     </PopupMenu>
@@ -117,7 +117,7 @@ const props = defineProps({
   // 真的把字段清空有意义的场景保留默认显示
   showClear: { type: Boolean, default: true },
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'today'])
 
 const open       = ref(false)
 const wrapRef    = ref<HTMLElement | null>(null)
@@ -209,10 +209,19 @@ function isDisabled(iso: string) {
   return false
 }
 
-function select(iso: string) {
-  if (isDisabled(iso)) return
+function select(iso: string, allowDateWithoutEntry = false) {
+  if (props.min && iso < props.min) return
+  if (props.max && iso > props.max) return
+  if (!allowDateWithoutEntry && allowedSet.value && !allowedSet.value.has(iso)) return
   emit('update:modelValue', iso)
   open.value = false
+  return true
+}
+
+function selectToday() {
+  const alreadyToday = props.modelValue === todayIso
+  if (!select(todayIso, true)) return
+  if (alreadyToday) emit('today')
 }
 
 function calcPopupStyle() {

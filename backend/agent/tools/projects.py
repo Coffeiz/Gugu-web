@@ -26,6 +26,7 @@ from app.services.projects import (
     project_colors,
     soft_delete_project_full,
 )
+from app.services.project_context import load_project_file_overviews, project_context_metadata
 from app.services.storage import get_storage
 
 from app.core import events
@@ -82,6 +83,8 @@ async def _update_project(db, user_id, args: dict):
     for field in ("deadline", "start_date", "client", "name"):
         if field in args:
             fields[field] = args[field]
+    if "summary" in args:
+        fields["summary"] = args["summary"]
     error = await _commit_project_intent(db, p, user_id, fields)
     if error:
         return error
@@ -140,6 +143,7 @@ async def _create_project(db, user_id, args: dict):
         )
         p = build_project(user_id, {
             "name": args["name"],
+            "summary": args.get("summary"),
             "client": args.get("client"),
             "status": args.get("status", "pending"),
             "deadline": args["deadline"],
@@ -469,8 +473,11 @@ async def _get_project(db, user_id, args: dict):
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
         return _err
+    overview = await load_project_file_overviews(db, user_id, [p.id])
+    context = project_context_metadata(p, overview[p.id])
     return {
         "id": p.id, "name": p.name, "status": p.status, "priority": p.priority,
+        "summary": context["summary"], "files": context["files"],
         "client": p.client, "start_date": p.start_date, "deadline": p.deadline,
         "color": project_color_key(p.color),
         "current_stage": p.current_stage, "archived": p.archived,
@@ -608,7 +615,7 @@ class ProjectsSkill(BaseSkill):
             name="update_project",
             label="更新项目",
             description_short="修改项目；可调整优先级，none 清除优先级。",
-            description="修改项目的状态、截止日期、开始日期、客户名称、优先级；start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
+            description="修改项目的状态、截止日期、开始日期、客户名称、优先级或项目摘要；summary 是给咕咕维护的项目近况，最多 200 个字符，传空字符串或 null 清空；它不替代 status、阶段或日期。start_date/deadline 传日期字符串，系统统一归一为 YYYY-MM-DD。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -619,6 +626,7 @@ class ProjectsSkill(BaseSkill):
                     "start_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
                     "client":     {"type": "string"},
                     "name":       {"type": "string"},
+                    "summary":   {"type": ["string", "null"], "maxLength": 200},
                     "priority":   {"type": "string", "enum": ["high", "medium", "low", "none"]},
                 },
                 "required": [],
@@ -630,12 +638,13 @@ class ProjectsSkill(BaseSkill):
             name="create_project",
             label="新建项目",
             description_short='创建项目；stages 可用名称数组 ["开发","上线"]，也可用带待办的对象数组；省略时使用默认阶段',
-            description="创建项目，必须填写开始日期和截止日期（YYYY-MM-DD），可设置颜色、优先级和阶段。stages 必须是非空数组，可用名称简写 [\"开发\",\"上线\"]，或对象 {label: 阶段名, todos: [待办文本]}，例如 [{\"label\":\"设计\",\"todos\":[\"整理需求\"]}]；省略 stages 时使用默认阶段。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或视觉描述。",
+            description="创建项目，必须填写开始日期和截止日期（YYYY-MM-DD），可设置颜色、优先级、阶段和最多 200 字符的项目摘要。summary 是给咕咕维护的近况，不替代项目状态或阶段。stages 必须是非空数组，可用名称简写 [\"开发\",\"上线\"]，或对象 {label: 阶段名, todos: [待办文本]}，例如 [{\"label\":\"设计\",\"todos\":[\"整理需求\"]}]；省略 stages 时使用默认阶段。color 只能传语义色名 amber、sage、teal、sky、indigo、lavender、rose、sunset；不要传 CSS、十六进制或视觉描述。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "name":       {"type": "string"},
                     "client":     {"type": "string"},
+                    "summary":    {"type": ["string", "null"], "maxLength": 200},
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
                     "deadline":   {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
                     "start_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
@@ -704,7 +713,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="get_project", label="项目详情",
             description_short="读取项目结构。",
-            description="获取单个项目的完整结构：状态、日期、客户、当前阶段，以及每个阶段（含 key/label）下的待办列表（含 id/text/done）。管理阶段或待办前先用它看清结构。",
+            description="获取单个项目的完整结构：状态、日期、客户、当前阶段、summary（咕咕维护的项目近况）、项目文件概览（总文件数、根层文件数、目录数），以及每个阶段（含 key/label）下的待办列表（含 id/text/done）。文件概览只给数量；查看文件明细时用 list_dir(space=project, project_id=项目ID, scope=project_root)，不要把项目 ID 当 folder_id。管理阶段或待办前先用它看清结构。",
             input_schema={
                 "type": "object",
                 "properties": {

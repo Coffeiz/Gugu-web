@@ -8,7 +8,6 @@ import type {
   ConversationRecord,
   DataAccessContext,
   DataReadResult,
-  FileMetadataRecord,
   CanvasRecord,
   KnowledgeRecord,
   MemoryRecord,
@@ -25,7 +24,7 @@ const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2_000;
 const CONVERSATION_CONTEXT_MAX_CHARS = 600;
 const RAG_TOKENIZER_VERSION = "ts-jieba-words-v3";
-const RAG_PROJECTION_VERSION = "rag-projection-v4";
+const RAG_PROJECTION_VERSION = "rag-projection-v5";
 
 function conversationContext(value: unknown): string {
   return Array.from(String(value || "")).slice(0, CONVERSATION_CONTEXT_MAX_CHARS).join("");
@@ -147,7 +146,7 @@ export class DataRuntime {
 
   async loadRagSourcesCached(
     context: DataAccessContext,
-    source: "project" | "file" | "conversation" | "knowledge" | "memory" | "canvas",
+    source: "project" | "conversation" | "knowledge" | "memory" | "canvas",
     revision: string,
     options: ReadOptions = {},
   ): Promise<CachedReadResult<RagSourceRecord>> {
@@ -223,48 +222,6 @@ export class DataRuntime {
     return { records, nextAfterId: records.length === limit ? Number(records.at(-1)?.id) : undefined };
   }
 
-  async loadFileMetadata(
-    context: DataAccessContext,
-    options: ReadOptions = {},
-  ): Promise<DataReadResult<FileMetadataRecord>> {
-    const ownerId = assertOwnerScope(context);
-    const limit = limitOf(options.limit);
-    const afterId = afterIdOf(options.afterId);
-    const rows = await this.query(() => this.sql`
-      SELECT id, display_name, ext, space, project_id, folder_id,
-             mime_type, size_bytes, version, updated_at
-      FROM files
-      WHERE user_id = ${ownerId} AND deleted_at IS NULL AND id > ${afterId}
-      ORDER BY id ASC
-      LIMIT ${limit}
-    `);
-    const records = rows.map((row) => ({
-      id: Number(row.id),
-      source_type: "file" as const,
-      scope: ownerScope(ownerId),
-      title: String(row.display_name || "未命名文件"),
-      content: [
-        `文件：${row.display_name || "未命名文件"}`,
-        row.ext ? `类型：${row.ext}` : "",
-        row.space ? `空间：${row.space}` : "",
-      ].filter(Boolean).join("\n"),
-      document_version: String(row.version || 1),
-      updated_at: row.updated_at?.toISOString?.() ?? String(row.updated_at || ""),
-      display_name: String(row.display_name || "未命名文件"),
-      ext: row.ext ? String(row.ext) : undefined,
-      mime_type: row.mime_type ? String(row.mime_type) : undefined,
-      project_id: row.project_id == null ? null : Number(row.project_id),
-      folder_id: row.folder_id == null ? null : Number(row.folder_id),
-      size_bytes: Number(row.size_bytes || 0),
-      metadata: {
-        space: String(row.space || ""),
-        project_id: row.project_id == null ? "" : String(row.project_id),
-        folder_id: row.folder_id == null ? "" : String(row.folder_id),
-      },
-    }));
-    return { records, nextAfterId: records.length === limit ? Number(records.at(-1)?.id) : undefined };
-  }
-
   async loadConversationMessages(
     context: DataAccessContext,
     options: ReadOptions = {},
@@ -324,7 +281,8 @@ export class DataRuntime {
              group_id, document_id, parent_document_id, document_version, chunk_index,
              chunk_count, title, summary, content, metadata_json, source_updated_at
       FROM knowledge_index_entries
-      WHERE owner_user_id = ${ownerId} AND deleted_at IS NULL AND id > ${afterId}
+      WHERE owner_user_id = ${ownerId} AND source_type = 'knowledge'
+        AND deleted_at IS NULL AND id > ${afterId}
       ORDER BY id ASC
       LIMIT ${limit}
     `);
@@ -432,7 +390,7 @@ export class DataRuntime {
              document_id, parent_document_id, document_version, chunk_index, chunk_count,
              title, summary, content, metadata_json, source_updated_at
       FROM knowledge_index_entries
-      WHERE owner_user_id = ${ownerId}
+      WHERE owner_user_id = ${ownerId} AND source_type <> 'file'
       ORDER BY id ASC
     `);
     probe.stage_ms.database_query = Math.max(0, Math.round(performance.now() - stageStarted));
@@ -492,7 +450,8 @@ export class DataRuntime {
              document_version, chunk_index, chunk_count,
              title, summary, content, metadata_json, source_updated_at
       FROM knowledge_index_entries
-      WHERE owner_user_id = ${ownerId} AND (indexed_at, id) > (${cursorDate}, ${cursorId})
+      WHERE owner_user_id = ${ownerId} AND source_type <> 'file'
+        AND (indexed_at, id) > (${cursorDate}, ${cursorId})
       ORDER BY indexed_at ASC, id ASC
       LIMIT ${limit}
     `);
@@ -528,7 +487,7 @@ export class DataRuntime {
     const rows = await this.query(() => this.sql`
       SELECT source_type, MAX(indexed_at) AS max_indexed_at
       FROM knowledge_index_entries
-      WHERE owner_user_id = ${ownerId}
+      WHERE owner_user_id = ${ownerId} AND source_type <> 'file'
       GROUP BY source_type
       ORDER BY source_type
     `);
@@ -580,11 +539,10 @@ export class DataRuntime {
 
   async loadRagSources(
     context: DataAccessContext,
-    source: "project" | "file" | "conversation" | "knowledge" | "memory" | "canvas",
+    source: "project" | "conversation" | "knowledge" | "memory" | "canvas",
     options: ReadOptions = {},
   ): Promise<DataReadResult<RagSourceRecord>> {
     if (source === "project") return this.loadProjects(context, options);
-    if (source === "file") return this.loadFileMetadata(context, options);
     if (source === "conversation") return this.loadConversationMessages(context, options);
     if (source === "knowledge") return this.loadKnowledge(context, options);
     if (source === "canvas") return this.loadCanvas(context, options);

@@ -124,8 +124,8 @@
               <span class="quota-cell">
                 <span class="quota-used">{{ fmtTokens(u.tokens_week) }}</span>
                 <span class="quota-sep">/</span>
-                <span class="quota-limit">{{ fmtTokens(u.token_limit_weekly) || '—' }}</span>
-                <span class="usage-bar-bg" v-if="u.token_limit_weekly">
+                <span class="quota-limit">{{ u.token_limit_weekly === -1 ? t('adminQuota.unlimited') : (fmtTokens(u.token_limit_weekly) || '—') }}</span>
+                <span class="usage-bar-bg" v-if="u.token_limit_weekly > 0">
                   <span class="usage-bar-fill token-fill" :style="tokenBarStyle(u)"></span>
                 </span>
               </span>
@@ -134,8 +134,8 @@
               <span class="quota-cell">
                 <span class="quota-used">{{ fmtBytes(u.storage_used) }}</span>
                 <span class="quota-sep">/</span>
-                <span class="quota-limit">{{ fmtBytes(u.storage_limit_bytes) }}</span>
-                <span class="usage-bar-bg" v-if="u.storage_limit_bytes">
+                <span class="quota-limit">{{ u.storage_limit_bytes === -1 ? t('adminQuota.unlimited') : fmtBytes(u.storage_limit_bytes) }}</span>
+                <span class="usage-bar-bg" v-if="u.storage_limit_bytes > 0">
                   <span class="usage-bar-fill storage-fill" :style="storageBarStyle(u)"></span>
                 </span>
               </span>
@@ -180,8 +180,8 @@
               <span class="usage-text">{{ fmtBytes(u.storage_used) }}</span>
             </span>
             <span class="col-status">
-              <span class="quota-badge" :class="(u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes || u.search_limit_daily != null) ? 'custom' : 'default'">
-                {{ (u.token_limit_6h || u.token_limit_weekly || u.storage_limit_bytes || u.search_limit_daily != null) ? t('adminQuota.custom') : t('adminQuota.globalDefault') }}
+              <span class="quota-badge" :class="(u.token_limit_6h != null || u.token_limit_weekly != null || u.storage_limit_bytes != null || u.search_limit_daily != null) ? 'custom' : 'default'">
+                {{ (u.token_limit_6h != null || u.token_limit_weekly != null || u.storage_limit_bytes != null || u.search_limit_daily != null) ? t('adminQuota.custom') : t('adminQuota.globalDefault') }}
               </span>
             </span>
             <span class="col-action">
@@ -192,84 +192,12 @@
       </div>
     </div>
 
-    <!-- 配额编辑弹窗 -->
-    <Teleport to="body">
-      <div v-if="editTarget" class="modal-mask" @mousedown.self="maskMousedownSelf = true" @mouseup.self="maskMousedownSelf && (editTarget = null); maskMousedownSelf = false">
-        <div class="modal-box">
-          <p class="modal-title">{{ t('adminQuota.editQuota') }}</p>
-          <p class="modal-subtitle">{{ editTarget.display_name || editTarget.username }}</p>
-
-          <div class="quota-fields quota-fields--single" style="margin-top:18px">
-            <div class="quota-field">
-              <label class="qf-label">{{ t('adminQuota.token6h') }}
-                <span class="qf-hint">{{ t('adminQuota.burstHint') }}</span>
-              </label>
-              <div class="qf-input-row">
-                <input v-model.number="editForm.token6h" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.followGlobal')" />
-                <span class="qf-unit">tokens</span>
-              </div>
-              <div class="qf-presets">
-                <button class="preset-chip" @click="editForm.token6h = null">{{ t('adminQuota.unlimited') }}</button>
-                <button class="preset-chip" @click="editForm.token6h = 50000">{{ t('adminQuota.tokensWan', { count: 5 }) }}</button>
-                <button class="preset-chip" @click="editForm.token6h = 100000">{{ t('adminQuota.tokensWan', { count: 10 }) }}</button>
-                <button class="preset-chip" @click="editForm.token6h = 300000">{{ t('adminQuota.tokensWan', { count: 30 }) }}</button>
-              </div>
-            </div>
-            <div class="quota-field">
-              <label class="qf-label">{{ t('adminQuota.tokenWeek') }}
-                <span class="qf-hint">{{ t('adminQuota.mondayReset') }}</span>
-              </label>
-              <div class="qf-input-row">
-                <input v-model.number="editForm.tokenWeek" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.followGlobal')" />
-                <span class="qf-unit">tokens</span>
-              </div>
-              <div class="qf-presets">
-                <button class="preset-chip" @click="editForm.tokenWeek = null">{{ t('adminQuota.unlimited') }}</button>
-                <button class="preset-chip" @click="editForm.tokenWeek = 200000">{{ t('adminQuota.tokensWan', { count: 20 }) }}</button>
-                <button class="preset-chip" @click="editForm.tokenWeek = 500000">{{ t('adminQuota.tokensWan', { count: 50 }) }}</button>
-                <button class="preset-chip" @click="editForm.tokenWeek = 1000000">{{ t('adminQuota.tokensWan', { count: 100 }) }}</button>
-              </div>
-            </div>
-            <div class="quota-field">
-              <label class="qf-label">{{ t('adminQuota.storage') }}</label>
-              <div class="qf-input-row">
-                <input v-model.number="editForm.storageGB" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.followGlobal')" />
-                <span class="qf-unit">GB</span>
-              </div>
-              <div class="qf-presets">
-                <button class="preset-chip" @click="editForm.storageGB = null">{{ t('adminQuota.unlimited') }}</button>
-                <button class="preset-chip" @click="editForm.storageGB = 5">5 GB</button>
-                <button class="preset-chip" @click="editForm.storageGB = 20">20 GB</button>
-                <button class="preset-chip" @click="editForm.storageGB = 50">50 GB</button>
-                <button class="preset-chip" @click="editForm.storageGB = 100">100 GB</button>
-              </div>
-            </div>
-            <div class="quota-field">
-              <label class="qf-label">{{ t('adminQuota.searchDaily') }}
-                <span class="qf-hint">{{ t('adminQuota.dayReset') }}</span>
-              </label>
-              <div class="qf-input-row">
-                <input v-model.number="editForm.searchDaily" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.followGlobal')" />
-                <span class="qf-unit">{{ t('adminQuota.timesUnit') }}</span>
-              </div>
-              <div class="qf-presets">
-                <button class="preset-chip" @click="editForm.searchDaily = null">{{ t('adminQuota.unlimited') }}</button>
-                <button class="preset-chip" @click="editForm.searchDaily = 10">{{ t('adminQuota.times', { count: 10 }) }}</button>
-                <button class="preset-chip" @click="editForm.searchDaily = 30">{{ t('adminQuota.times', { count: 30 }) }}</button>
-                <button class="preset-chip" @click="editForm.searchDaily = 100">{{ t('adminQuota.times', { count: 100 }) }}</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="modal-actions">
-            <button class="btn-cancel" @click="editTarget = null">{{ t('adminQuota.cancel') }}</button>
-            <button class="btn-confirm" @click="saveEdit" :disabled="editSaving">
-              {{ editSaving ? t('adminQuota.saving') : t('adminQuota.confirm') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <UserQuotaEditDialog
+      :user="editTarget"
+      :saving="editSaving"
+      @cancel="editTarget = null"
+      @save="saveEdit"
+    />
   </div>
 </template>
 
@@ -280,12 +208,13 @@ import { useI18n } from 'vue-i18n'
 import { useConfigStore } from '@/stores/config'
 import { useQuotaAdmin } from './useQuotaAdmin'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
+import UserQuotaEditDialog from './components/UserQuotaEditDialog.vue'
 
 const adminStore  = useAdminStore()
 const { t } = useI18n()
 const configStore = useConfigStore()
 const quotaAdmin = useQuotaAdmin(adminStore, configStore)
-const { globalDraft, globalSaving, globalSaved, saveGlobal, allItems, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, maskMousedownSelf, editForm, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, fmtBytes, tokenBarStyle, storageBarStyle } = quotaAdmin
+const { globalDraft, globalSaving, globalSaved, saveGlobal, allItems, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, fmtBytes, tokenBarStyle, storageBarStyle } = quotaAdmin
 
 /* PHASE7_QUOTA_OLD_BEGIN
 // ── 全局配额 ──────────────────────────────────────────────────────────────────
@@ -486,7 +415,6 @@ PHASE7_QUOTA_OLD_END */
 .quota-fields {
   display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
 }
-.quota-fields--single { grid-template-columns: 1fr; gap: 16px; }
 .quota-field { display: flex; flex-direction: column; gap: 8px; }
 .qf-label {
   display: flex; align-items: center; gap: 8px;
@@ -606,39 +534,6 @@ PHASE7_QUOTA_OLD_END */
   height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px;
   outline: none; width: 160px;
 }
-
-/* 弹窗 */
-.modal-mask {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.55);
-  backdrop-filter: blur(4px);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 9100;
-}
-.modal-box {
-  background: rgba(18,20,36,0.96);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 16px; padding: 28px 28px 24px; width: 420px;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
-}
-.modal-title    { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.92); margin-bottom: 6px; }
-.modal-subtitle { font-size: 13px; color: rgba(255,255,255,0.35); }
-.modal-actions  { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
-.btn-cancel {
-  padding: 7px 18px; border-radius: 9px; font-size: 13px; cursor: pointer;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.55); transition: all 0.15s;
-}
-.btn-cancel:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
-.btn-confirm {
-  display: flex; align-items: center; gap: 6px;
-  padding: 7px 18px; border-radius: 9px; border: none;
-  background: var(--action-primary-bg);
-  color: var(--content-on-accent); font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: background-color 0.15s;
-  box-shadow: none;
-}
-.btn-confirm:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
-.btn-confirm:disabled { opacity: 0.5; cursor: default; }
 
 /* 最后一行下边距 */
 .section-wrap:last-child { padding-bottom: 32px; }

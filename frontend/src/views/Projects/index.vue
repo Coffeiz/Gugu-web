@@ -31,9 +31,11 @@ import { runtime, type MoveAction } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { showAppError } from '@/composables/core/useAppToast'
 import { useProjectStore } from '@/stores/projects'
-import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
+import { useLiveStore } from '@/stores/live'
 import { useProjectColumnViews } from '@/composables/projects/useProjectColumnViews'
+import { useProjectFileCounts } from '@/composables/projects/useProjectFileCounts'
+import { useProjectCollectionModals } from '@/composables/projects/useProjectCollectionModals'
 import type { Project } from '@/types/project'
 import { projectIdFromRuntimeObjectId } from '@/utils/projectDrop'
 import KanbanColumn from './components/KanbanColumn.vue'
@@ -41,10 +43,15 @@ import DoneColumn   from './components/DoneColumn.vue'
 import ArchivedProjectsModal from './components/ArchivedProjectsModal.vue'
 
 const projectStore = useProjectStore()
-const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
-const showArchived = ref(false)
-const showDeleted = ref(false)
+const liveStore = useLiveStore()
+const { showArchived, showDeleted } = useProjectCollectionModals({
+  loadArchived: projectStore.fetchArchivedProjects,
+  loadDeleted: projectStore.fetchDeletedProjects,
+})
+const { counts: liveFileCounts, refresh: refreshProjectFileCounts } = useProjectFileCounts(
+  computed(() => liveStore.rev.files),
+)
 const ownershipRevisions = reactive(new Map<string, number>())
 const controlledProjectIds = reactive(new Set<string>())
 const stopOwnershipSubscription = runtime.onOwnershipChange((objectId) => {
@@ -68,16 +75,9 @@ watch(() => projectStore.error, (message) => {
   if (!message) return
   showAppError(message)
 })
-// 打开弹层仍兜底调一次（比如首次预取失败），但已加载过的话 fetchArchivedProjects 内部会直接
-// 短路跳过，不会再触发那下「加载中」闪烁——数据早在页面挂载时后台预取好了（见下）。
-watch(showArchived, v => { if (v) projectStore.fetchArchivedProjects() })
-watch(showDeleted, v => { if (v) projectStore.fetchDeletedProjects() })
-
 onMounted(() => {
-  if (!cacheStore.loaded && !cacheStore.loading) cacheStore.load()
-  // 归档列表页面一进来就后台预取，避免用户点开归档按钮那一下要等网络往返、闪一下「加载中」
-  if (!projectStore.archivedLoaded && !projectStore.archivedLoading) projectStore.fetchArchivedProjects()
-  if (!projectStore.deletedLoaded && !projectStore.deletedLoading) projectStore.fetchDeletedProjects()
+  // 看板只需要项目文件计数；不要为此下载完整文件/文件夹清单。
+  void refreshProjectFileCounts()
 })
 
 useRuntimeAction(action => {
@@ -152,18 +152,9 @@ const nonDoneColumns = computed(() =>
   projectStore.kanbanColumns.filter(c => c.key !== 'done')
 )
 
-const liveFileCounts = computed(() => {
-  const m = new Map()
-  for (const f of cacheStore.allFiles) {
-    const pid = f.projectId
-    if (pid != null) m.set(pid, (m.get(pid) ?? 0) + 1)
-  }
-  return m
-})
-
 const { columnProjects } = useProjectColumnViews({
   projects: computed(() => projectStore.projects),
-  liveFileCounts: computed(() => cacheStore.loaded ? liveFileCounts.value : null),
+  liveFileCounts: computed(() => liveFileCounts.value),
 })
 
 function openNewWithStatus(status) {

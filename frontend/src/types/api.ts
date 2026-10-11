@@ -2714,30 +2714,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/config/migrate-trash": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Scan Legacy Trash
-         * @description 扫描旧版按 file_id 分目录的本地回收站对象，只读。
-         */
-        get: operations["scan_legacy_trash_api_v1_admin_config_migrate_trash_get"];
-        put?: never;
-        /**
-         * Migrate Legacy Trash
-         * @description 迁移指定旧回收站对象；只处理扫描结果对应的已删除文件，不覆盖目标文件。
-         */
-        post: operations["migrate_legacy_trash_api_v1_admin_config_migrate_trash_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/admin/config/reconcile-storage/repair": {
         parameters: {
             query?: never;
@@ -2960,9 +2936,8 @@ export interface paths {
         /**
          * Memory Cleanup Apply
          * @description 一键执行上一次 preview 存下来的全部结果——不重新调 LLM，预览看到的就是真删/真搬的。
-         *     五件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
+         *     四件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
          *     ③ 把误进 profile 的阶段性事件迁去 memory.md ④ 把旧 daily.md 改成按日期分组的新格式
-         *     ⑤ 清掉已迁移完的遗留 facts.json/facts.md。
          *     执行完清掉 Redis 里的 plan，防止同一份 plan 被误重复应用（比如两次点了确认）。
          */
         post: operations["memory_cleanup_apply_api_v1_admin_config_memory_cleanup_apply_post"];
@@ -3460,47 +3435,6 @@ export interface paths {
          */
         put: operations["update_state_labels_api_v1_admin_agent_state_labels_put"];
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/agent/memory/legacy-files": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Scan Legacy Memory Files
-         * @description 扫描所有用户的 .agent/ 目录，列出已被新文件取代、可安全清理的旧记忆文件。
-         */
-        get: operations["scan_legacy_memory_files_api_v1_admin_agent_memory_legacy_files_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/agent/memory/legacy-files/cleanup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Cleanup Legacy Memory Files
-         * @description 删除指定的旧记忆文件 key。逐个重新核实「新文件已存在」才删——防止扫描和点击清理之间
-         *     数据发生变化（比如恰好这时候又读到旧文件触发了一次新的迁移写入）导致误删。
-         */
-        post: operations["cleanup_legacy_memory_files_api_v1_admin_agent_memory_legacy_files_cleanup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4698,6 +4632,8 @@ export interface components {
             enabled?: boolean | null;
             /** Group Chat Enabled */
             group_chat_enabled?: boolean | null;
+            /** Feishu Group Chat Enabled */
+            feishu_group_chat_enabled?: boolean | null;
             /** Group Requires At */
             group_requires_at?: boolean | null;
             /** Group Read Enabled */
@@ -5493,11 +5429,6 @@ export interface components {
             text: string;
             /** Event Id */
             event_id?: string | null;
-        };
-        /** LegacyFilesCleanup */
-        LegacyFilesCleanup: {
-            /** Keys */
-            keys: string[];
         };
         /** LocalizedEmailContent */
         LocalizedEmailContent: {
@@ -6593,6 +6524,15 @@ export interface components {
              *     ]
              */
             channels: string[];
+            im_delivery?: {
+                [key: string]: {
+                    mode: "private" | "group";
+                    chat_id?: string;
+                };
+            } | null;
+            qq_delivery?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Enabled
              * @default true
@@ -6630,6 +6570,15 @@ export interface components {
             end_at?: string | null;
             /** Channels */
             channels?: string[] | null;
+            im_delivery?: {
+                [key: string]: {
+                    mode: "private" | "group";
+                    chat_id?: string;
+                };
+            } | null;
+            qq_delivery?: {
+                [key: string]: unknown;
+            } | null;
             /** Enabled */
             enabled?: boolean | null;
             /** Authorized Tools */
@@ -6721,6 +6670,12 @@ export interface components {
             qq_delivery?: {
                 [key: string]: unknown;
             } | null;
+            im_delivery?: {
+                [key: string]: {
+                    mode: "private" | "group";
+                    chat_id?: string;
+                };
+            } | null;
         };
         /** TokenResponse */
         TokenResponse: {
@@ -6777,11 +6732,6 @@ export interface components {
             version: number;
             /** Deletedat */
             deletedAt: string;
-        };
-        /** TrashMigrationRequest */
-        TrashMigrationRequest: {
-            /** File Ids */
-            file_ids: number[];
         };
         /** UpdateProfile */
         UpdateProfile: {
@@ -12474,59 +12424,6 @@ export interface operations {
             };
         };
     };
-    scan_legacy_trash_api_v1_admin_config_migrate_trash_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    migrate_legacy_trash_api_v1_admin_config_migrate_trash_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TrashMigrationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     reconcile_repair_api_v1_admin_config_reconcile_storage_repair_post: {
         parameters: {
             query?: never;
@@ -13716,59 +13613,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["StateLabelsUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    scan_legacy_memory_files_api_v1_admin_agent_memory_legacy_files_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    cleanup_legacy_memory_files_api_v1_admin_agent_memory_legacy_files_cleanup_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LegacyFilesCleanup"];
             };
         };
         responses: {

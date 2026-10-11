@@ -35,15 +35,15 @@
             <div class="byok-editor-title">{{ t('profileByokUi.editTitle') }}</div>
             <div class="byok-form-grid">
               <div class="provider-selection-row" :class="{ 'provider-selection-row--single': !childProviderOptionsFor(editors[item.id]).length }">
-                <ProviderSelect :model-value="editors[item.id].provider" :providers="providerOptionsFor(editors[item.id].capability)" @update:model-value="applyProvider(editors[item.id], $event)" />
+                <ProviderSelect :model-value="editors[item.id].provider === 'glm-coding' ? 'glm' : editors[item.id].provider" :providers="providerOptionsFor(editors[item.id].capability)" @update:model-value="applyProvider(editors[item.id], $event)" />
                 <ProviderSelect v-if="childProviderOptionsFor(editors[item.id]).length" :model-value="childSelectionFor(editors[item.id])" :providers="childProviderOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.selectChild')" @update:model-value="applyProviderChild(editors[item.id], $event)" />
               </div>
-              <InterfaceTypeSelect v-if="interfaceOptionsFor(editors[item.id]).length" :label="t('profileByokUi.interfaceFormat')" :model-value="editors[item.id].api_format || defaultInterfaceFor(editors[item.id].provider)" :options="interfaceOptionsFor(editors[item.id])" :hint="editors[item.id].provider === 'mimo' ? t('profileByokUi.anthropicHint') : undefined" @update:model-value="applyInterface(editors[item.id], String($event))" />
+              <InterfaceTypeSelect v-if="interfaceOptionsFor(editors[item.id]).length" :label="t('profileByokUi.interfaceFormat')" :model-value="editors[item.id].api_format || defaultInterfaceFor(editors[item.id].provider)" :options="interfaceOptionsFor(editors[item.id])" :hint="interfaceHintFor(editors[item.id])" @update:model-value="applyInterface(editors[item.id], String($event))" />
               <input v-model="editors[item.id].base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
               <input v-model="editors[item.id].value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKeyKeep')" />
               <div class="model-picker" :ref="el => setModelPickerRef(item.id, el)"><div class="model-picker-row"><input v-model="editors[item.id].model" class="form-input" :placeholder="group.value === 'speech_to_text' ? t('profileByokUi.speechModelOptional') : t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && editor?.id === item.id" :anchor="modelAnchor" popup-class="model-options"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
               <input v-if="editors[item.id].capability === 'embedding'" v-model.number="editors[item.id].dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
-              <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /></div><div v-if="supportsReasoningPersistence(editors[item.id])" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="setting-choice-row__options pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: editors[item.id].reasoning_persistence === option.key }" @click="editors[item.id].reasoning_persistence = option.key">{{ option.label }}</button></div></div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
+              <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /><div v-if="usesGenericThinkingToggle(editors[item.id])" class="byok-subsection-hint">{{ t('profileByokUi.genericThinkingHint') }}</div></div><div v-if="supportsReasoningPersistence(editors[item.id])" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="setting-choice-row__options pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: editors[item.id].reasoning_persistence === option.key }" @click="editors[item.id].reasoning_persistence = option.key">{{ option.label }}</button></div></div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <MultimodalCapabilities v-if="editors[item.id].capability === 'llm'" :model="editors[item.id]" :dims="localizedMediaDimensions" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="mediaTesting" @probe="probeMedia" />
             </div>
             <div class="byok-editor-actions"><div v-if="mediaFeedbackTarget === String(item.id) && mediaFeedback" class="byok-editor-feedback pm-msg" :class="mediaFeedbackType" role="status">{{ mediaFeedback }}</div><button class="pm-style-chip" :disabled="testing === item.id" @click="test(item, editors[item.id])">{{ testing === item.id ? t('profileByokUi.testing') : t('profileByokUi.test') }}</button><button class="pm-style-chip" @click="closeEditor(item.id)">{{ t('profileByokUi.cancel') }}</button><button class="pm-style-chip active" :disabled="saving || !editors[item.id].provider" @click="saveEditor(item.id)">{{ saving ? t('profileByokUi.saving') : t('profileByokUi.saveConfig') }}</button></div>
@@ -60,10 +60,10 @@
             <div class="byok-editor-title">{{ t('profileByokUi.addConfig', { label: t(group.labelKey) }) }}</div>
             <div class="byok-form-grid">
               <div class="provider-selection-row" :class="{ 'provider-selection-row--single': !childProviderOptionsFor(newEditor).length }">
-                <ProviderSelect :model-value="newEditor.provider" :providers="providerOptionsFor(newEditor.capability)" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderTo(newEditor, $event)" />
+                <ProviderSelect :model-value="newEditor.provider === 'glm-coding' ? 'glm' : newEditor.provider" :providers="providerOptionsFor(newEditor.capability)" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderTo(newEditor, $event)" />
                 <ProviderSelect v-if="childProviderOptionsFor(newEditor).length" :model-value="childSelectionFor(newEditor)" :providers="childProviderOptionsFor(newEditor)" :placeholder="t('profileByokUi.selectChild')" :popup-class="onboarding ? 'onboarding-provider-popup' : ''" @update:model-value="applyProviderChild(newEditor, $event)" />
               </div>
-              <InterfaceTypeSelect v-if="interfaceOptionsFor(newEditor).length" :label="t('profileByokUi.interfaceFormat')" :model-value="newEditor.api_format || defaultInterfaceFor(newEditor.provider)" :options="interfaceOptionsFor(newEditor)" :hint="newEditor.provider === 'mimo' ? t('profileByokUi.anthropicHint') : undefined" @update:model-value="applyInterface(newEditor, String($event))" />
+              <InterfaceTypeSelect v-if="interfaceOptionsFor(newEditor).length" :label="t('profileByokUi.interfaceFormat')" :model-value="newEditor.api_format || defaultInterfaceFor(newEditor.provider)" :options="interfaceOptionsFor(newEditor)" :hint="interfaceHintFor(newEditor)" @update:model-value="applyInterface(newEditor, String($event))" />
               <input v-model="newEditor.base_url" class="form-input" :placeholder="t('profileByokUi.baseUrlOptional')" />
               <input v-model="newEditor.value" class="form-input" type="password" autocomplete="new-password" :placeholder="t('profileByokUi.apiKey')" />
               <div class="model-picker"><div class="model-picker-row"><input v-model="newEditor.model" class="form-input" :placeholder="t('profileByokUi.modelOptional')" /><button type="button" class="pm-style-chip" :disabled="modelLoading" @mousedown.prevent @click="fetchModels($event)">{{ modelLoading ? t('profileByokUi.gettingModels') : t('profileByokUi.getModels') }}</button></div><PopupMenu :show="modelMenuOpen && newEditor !== null" :anchor="modelAnchor" :popup-class="onboarding ? 'model-options onboarding-model-popup' : 'model-options'"><div v-if="modelError" class="model-option-hint err">{{ modelError }}</div><div v-else-if="!modelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModels') }}</div><div v-else-if="!filteredModelOptions.length" class="model-option-hint">{{ t('profileByokUi.noModelsMatch', { kw: modelFilterKeyword }) }}</div><button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option" @click="selectModel(model)">{{ model }}</button></PopupMenu></div>
@@ -72,6 +72,7 @@
                 <div class="byok-subsection">
                   <div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div>
                   <AdminSelect v-model="newEditor.thinking_mode" :options="thinkingOptionsFor(newEditor)" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(newEditor, $event)" />
+                  <div v-if="usesGenericThinkingToggle(newEditor)" class="byok-subsection-hint">{{ t('profileByokUi.genericThinkingHint') }}</div>
                 </div>
                 <div v-if="supportsReasoningPersistence(newEditor)" class="byok-subsection">
                   <div class="setting-choice-row">
@@ -121,7 +122,7 @@ import MultimodalCapabilities from '@/components/common/controls/MultimodalCapab
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useI18n } from 'vue-i18n'
-import { apiFormatsForProvider, defaultApiFormatForProvider, MODEL_PROVIDERS, retainApiFormatForProvider, type ModelProvider } from '@/utils/modelProviders'
+import { apiFormatsForProvider, apiFormatsFromSnapshot, defaultApiFormatFromSnapshot, defaultApiFormatForProvider, defaultBaseUrlFromSnapshot, MODEL_PROVIDERS, retainApiFormatFromSnapshot, type ModelProvider } from '@/utils/modelProviders'
 import { buildThinkingOptionsForIdentity } from '@/utils/llmThinkingOptions'
 
 type ReasoningPersistence = 'off' | 'continuation'
@@ -163,14 +164,31 @@ function capabilityKeyFor(draft: Pick<Editor, 'provider' | 'model' | 'api_format
 function capabilityIdentityFor(draft: Pick<Editor, 'provider' | 'model' | 'ollama_mode' | 'ollama_api_mode' | 'local_runtime'>) {
   return [draft.provider, draft.model, draft.ollama_mode, draft.ollama_api_mode, draft.local_runtime].join('|')
 }
-function interfaceOptionsFor(draft: Pick<Editor, 'provider' | 'model' | 'api_format' | 'base_url' | 'ollama_mode' | 'ollama_api_mode' | 'local_runtime'> | null) {
+function interfaceOptionsFor(draft: Pick<Editor, 'capability' | 'provider' | 'model' | 'api_format' | 'base_url' | 'ollama_mode' | 'ollama_api_mode' | 'local_runtime'> | null) {
   if (!draft) return []
-  const options = apiFormatsForProvider(draft.provider, draft.base_url).map((key: string) => ({ key, label: t(apiFormatLabels[key] || key) }))
-  return draft.provider === 'ollama' ? [{ key: 'native', label: t(apiFormatLabels.native) }, ...options] : options
+  const snapshot = capabilitySnapshotIdentity.value === capabilityIdentityFor(draft) ? capabilitySnapshot.value : null
+  const formats = draft.capability === 'llm'
+    ? apiFormatsFromSnapshot(snapshot, draft.provider)
+    : apiFormatsForProvider(draft.provider, draft.base_url, draft.model)
+  const options = formats.map((key: string) => ({ key, label: t(apiFormatLabels[key] || key) }))
+  return draft.provider === 'ollama' && !options.some(option => option.key === 'native')
+    ? [{ key: 'native', label: t(apiFormatLabels.native) }, ...options]
+    : options
 }
 function defaultInterfaceFor(provider: string) {
+  const draft = activeCapabilityDraft.value
+  if (draft?.provider === provider && draft.capability === 'llm' && capabilitySnapshotIdentity.value === capabilityIdentityFor(draft)) {
+    return defaultApiFormatFromSnapshot(capabilitySnapshot.value, provider) || draft.api_format || ''
+  }
   if (provider === 'ollama' && (editor.value?.ollama_api_mode || newEditor.value?.ollama_api_mode || 'native') === 'native') return 'native'
   return defaultApiFormatForProvider(provider)
+}
+function interfaceHintFor(draft: Pick<Editor, 'provider' | 'api_format'>) {
+  if (draft.provider === 'local') return t('llmExtraUi.localApiFormatHint')
+  if (draft.provider === 'ollama') return t('llmExtraUi.ollamaApiFormatHint')
+  if (draft.provider === 'mimo') return t('profileByokUi.anthropicHint')
+  if (draft.provider === 'qwen') return t('llmExtraUi.bailianHint', { url: draft.api_format === 'anthropic' ? 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic' : 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' })
+  return undefined
 }
 function displayInterfaceFor(item: Pick<Item, 'provider' | 'api_format'>) {
   if (item.api_format) return item.api_format
@@ -190,12 +208,9 @@ function supportsReasoningPersistence(draft: Pick<Editor, 'provider' | 'api_form
   return format === 'responses' || format === 'anthropic'
 }
 function applyInterface(draft: Editor, value: string) {
+  if (draft.provider === 'glm' && draft.base_url.includes('/api/coding/')) draft.provider = 'glm-coding'
   draft.api_format = value
   if (draft.provider === 'ollama') draft.ollama_api_mode = value === 'native' ? 'native' : 'openai'
-  if (draft.provider === 'mimo') {
-    const origin = (draft.base_url || '').replace(/\/(v1|anthropic)\/?$/, '')
-    if (origin) draft.base_url = `${origin}/${value === 'anthropic' ? 'anthropic' : 'v1'}`
-  }
   if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'
 }
 const { t } = useI18n()
@@ -237,12 +252,21 @@ watch(() => {
     if (requestId !== capabilityRequestId || key !== (activeCapabilityDraft.value ? capabilityKeyFor(activeCapabilityDraft.value) : '')) return
     capabilitySnapshot.value = snapshot
     capabilitySnapshotKey.value = key
-    if ((!draft.base_url || (previousSnapshot?.default_base_url && draft.base_url === previousSnapshot.default_base_url)) && snapshot.default_base_url) {
-      draft.base_url = snapshot.default_base_url
-    }
     capabilitySnapshotIdentity.value = capabilityIdentityFor(draft)
-    if (draft.api_format !== 'native') {
-      draft.api_format = retainApiFormatForProvider(draft.provider, draft.api_format || '', draft.base_url)
+    const selectedFormat = draft.api_format || defaultApiFormatFromSnapshot(snapshot, draft.provider)
+    const retainedFormat = retainApiFormatFromSnapshot(snapshot, draft.provider, selectedFormat)
+    if (draft.api_format && retainedFormat !== draft.api_format) {
+      draft.api_format = retainedFormat
+      if (draft.provider === 'ollama') draft.ollama_api_mode = retainedFormat === 'native' ? 'native' : 'openai'
+    }
+    const defaultUrls = [
+      ...Object.values((snapshot.default_base_urls || {}) as Record<string, string>),
+      ...Object.values((previousSnapshot?.default_base_urls || {}) as Record<string, string>),
+      previousSnapshot?.default_base_url || '',
+    ]
+    if (!draft.base_url || defaultUrls.includes(draft.base_url)) {
+      const defaultUrl = defaultBaseUrlFromSnapshot(snapshot, retainedFormat)
+      if (defaultUrl) draft.base_url = defaultUrl
     }
     if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
   } catch {
@@ -268,6 +292,10 @@ function thinkingOptionsFor(draft: Pick<Editor, 'provider' | 'model' | 'api_form
     t,
   )
 }
+function usesGenericThinkingToggle(draft: Pick<Editor, 'provider' | 'model' | 'api_format' | 'base_url' | 'ollama_mode' | 'ollama_api_mode' | 'local_runtime'>) {
+  return capabilitySnapshot.value?.generic_thinking_toggle_supported === true
+    && capabilitySnapshotIdentity.value === capabilityIdentityFor(draft)
+}
 function thinkingModeFor(thinking: Editor['thinking'], effort: string | null): ThinkingMode {
   if (thinking === 'disabled') return 'disabled'
   if (thinking === 'adaptive' && ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort || '')) return effort as ThinkingMode
@@ -285,13 +313,15 @@ function providerOptionsFor(capability: string) {
   return providersFor(capability).map(provider => ({ key: provider.value, label: t(provider.labelKey) }))
 }
 function providerLabel(value: string) {
-  const provider = modelProviders.find(item => item.value === value)
+  const provider = modelProviders.find(item => item.value === (value === 'glm-coding' ? 'glm' : value))
   return provider ? t(provider.labelKey) : value
 }
 function childProviderOptionsFor(draft: Pick<Editor, 'provider' | 'base_url' | 'local_runtime' | 'ollama_mode'>) {
-  return (providerChildren[draft.provider] || []).map(child => ({ key: child.key, label: t(child.labelKey) }))
+  const parentProvider = draft.provider === 'glm-coding' ? 'glm' : draft.provider
+  return (providerChildren[parentProvider] || []).map(child => ({ key: child.key, label: t(child.labelKey) }))
 }
 function childSelectionFor(draft: Pick<Editor, 'provider' | 'base_url' | 'local_runtime' | 'ollama_mode'>) {
+  if (draft.provider === 'glm-coding') return 'coding'
   if (draft.provider === 'glm') return (draft.base_url || '').includes('/api/coding/') ? 'coding' : 'general'
   if (draft.provider === 'local') return draft.local_runtime || 'other'
   if (draft.provider === 'ollama') return draft.ollama_mode || ((draft.base_url || '').includes('ollama.com') ? 'cloud' : 'local')
@@ -304,7 +334,8 @@ function applyProvider(draft: Editor, value: string) {
   draft.provider = value
   const provider = modelProviders.find(item => item.value === value)
   if (!provider) return
-  draft.base_url = provider.base_url
+  draft.base_url = ''
+  if (value === 'ollama') draft.ollama_api_mode = 'native'
   draft.model = draft.capability === 'embedding'
     ? (embeddingModelSeeds[value] ?? '')
     : provider.model
@@ -313,13 +344,16 @@ function applyProvider(draft: Editor, value: string) {
   if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
 }
 function applyProviderChild(draft: Editor, value: string) {
-  if (draft.provider === 'glm') {
-    draft.base_url = value === 'coding' ? 'https://open.bigmodel.cn/api/coding/paas/v4' : 'https://open.bigmodel.cn/api/paas/v4'
+  if (draft.provider === 'glm' || draft.provider === 'glm-coding') {
+    draft.provider = value === 'coding' ? 'glm-coding' : 'glm'
+    draft.base_url = ''
   } else if (draft.provider === 'local') {
     draft.local_runtime = value
+    draft.base_url = ''
+    draft.base_url = ''
   } else if (draft.provider === 'ollama') {
     draft.ollama_mode = value
-    draft.base_url = value === 'cloud' ? 'https://ollama.com/v1' : 'http://127.0.0.1:11434/v1'
+    draft.base_url = ''
     if (value === 'local') draft.value = ''
   }
 }

@@ -21,11 +21,20 @@ class LocalAdapter(ProviderAdapter):
     api_format = "openai"
     cache_mode = "none"
 
+    def supported_api_formats(self, ai):
+        # 本地接入代表用户配置的端点类型；列出可尝试的协议，不代表探测或
+        # 保证用户服务端实现了该协议及其全部可选能力。
+        return ("openai", "responses", "anthropic")
+
     DEFAULT_BASE_URLS = {
         "llama.cpp": "http://127.0.0.1:8080/v1",
         "vllm": "http://127.0.0.1:8000/v1",
         "other": "http://127.0.0.1:8000/v1",
     }
+
+    def default_base_url_for(self, ai) -> str:
+        runtime = getattr(ai, "local_runtime", "other") or "other"
+        return self.DEFAULT_BASE_URLS.get(runtime, self.DEFAULT_BASE_URLS["other"])
 
     def resolve_base_url(self, ai) -> str:
         configured = (getattr(ai, "base_url", "") or "").strip()

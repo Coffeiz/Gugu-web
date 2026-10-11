@@ -13,8 +13,6 @@ POST   /api/v1/admin/agent/llm-presets/{id}/test     → 连通性测试
 GET    /api/v1/admin/agent/llm-presets/{id}/models   → 获取服务商模型列表（已保存预设）
 POST   /api/v1/admin/agent/llm-presets/models-preview → 用临时配置获取模型列表（新建时）
 
-GET    /api/v1/admin/agent/memory/legacy-files          → 扫描已被新文件取代的旧记忆文件（迁移遗留）
-POST   /api/v1/admin/agent/memory/legacy-files/cleanup  → 删除指定的旧记忆文件
 """
 
 import asyncio
@@ -25,13 +23,15 @@ from app.core.tz import now_utc, resolve_tz
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Callable, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
+from app.core.config import (
+    get_settings, mutate_override_json, read_override_document, write_override_json,
+)
 from app.db.session import get_db
 from app.models import AgentUsage, User, UserMcpServer
 from app.services import multimodal_probe, provider_reasoning_state
@@ -61,21 +61,27 @@ def _effective_input_tokens(
 # ── 预设辅助函数 ──────────────────────────────────────────────────────────────
 
 def _read_override() -> dict:
-    if not OVERRIDE_FILE.exists():
-        return {}
-    try:
-        data = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError("用户运行配置文件损坏，已拒绝覆盖写入") from exc
-    if not isinstance(data, dict):
-        raise RuntimeError("用户运行配置文件格式无效，已拒绝覆盖写入")
-    return data
+    return read_override_document()
 
 
 def _write_override(data: dict):
     write_override_json(data)
     from app.core.config import invalidate_settings_cache
     invalidate_settings_cache()
+
+
+def _mutate_override(mutator: Callable[[dict], Any]) -> Any:
+    result = mutate_override_json(mutator)
+    from app.core.config import invalidate_settings_cache
+    invalidate_settings_cache()
+    return result
+
+
+def _mutate_presets(mutator: Callable[[dict, dict], Any]) -> Any:
+    """持锁读取最新配置后执行预设操作，避免基于旧数组整段覆盖。"""
+    return _mutate_override(
+        lambda override: mutator(override, _ensure_presets(override)),
+    )
 
 
 async def _invalidate_reasoning_states(db: AsyncSession | None) -> None:
@@ -771,9 +777,10 @@ async def get_usage(month: str | None = None, model: str | None = None,
 async def list_llm_presets():
     override = _read_override()
     had_presets = "ai_presets" in override
-    presets = _ensure_presets(override)
     if not had_presets:
-        _write_override(override)
+        _mutate_presets(lambda _override, _presets: None)
+        override = _read_override()
+    presets = _ensure_presets(override)
     from types import SimpleNamespace
     from agent.providers import capability_snapshot
     items = []
@@ -809,15 +816,19 @@ async def set_llm_strategy(body: StrategyUpdate, db: AsyncSession = Depends(get_
         raise HTTPException(400, "strategy 只能是 active / pool / router")
     if body.pool_mode is not None and body.pool_mode not in ("random", "round_robin", "least_loaded"):
         raise HTTPException(400, "pool_mode 只能是 random / round_robin / least_loaded")
-    override = _read_override()
-    presets = _ensure_presets(override)
-    if body.strategy is not None:
-        presets["strategy"] = body.strategy
-    if body.pool_mode is not None:
-        presets["pool_mode"] = body.pool_mode
-    _write_override(override)
+    def update_strategy(override: dict, presets: dict) -> dict:
+        if body.strategy is not None:
+            presets["strategy"] = body.strategy
+        if body.pool_mode is not None:
+            presets["pool_mode"] = body.pool_mode
+        return {
+            "strategy": presets.get("strategy", "active"),
+            "pool_mode": presets.get("pool_mode", "random"),
+        }
+
+    result = _mutate_presets(update_strategy)
     await _invalidate_reasoning_states(db)
-    return {"strategy": presets.get("strategy", "active"), "pool_mode": presets.get("pool_mode", "random")}
+    return result
 
 
 # 同步到 `ai`（当前激活段）的字段 + 默认值——create/update/activate 三处共用，**单一来源**：
@@ -869,8 +880,6 @@ class PresetCreate(BaseModel):
 async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_db)):
     if body.max_tokens >= body.context_tokens:
         raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
-    override = _read_override()
-    presets = _ensure_presets(override)
     new_id = f"p_{_uuid.uuid4().hex[:8]}"
     item = {
         "id": new_id,
@@ -898,11 +907,13 @@ async def create_llm_preset(body: PresetCreate, db: AsyncSession = Depends(get_d
         "capability_checked_at": body.capability_checked_at,
         "capability_fingerprint": body.capability_fingerprint,
     }
-    presets["items"].append(item)
-    if not presets.get("active_id"):
-        presets["active_id"] = new_id
-        override["ai"] = _ai_segment(item)
-    _write_override(override)
+    def create(override: dict, presets: dict) -> None:
+        presets["items"].append(item)
+        if not presets.get("active_id"):
+            presets["active_id"] = new_id
+            override["ai"] = _ai_segment(item)
+
+    _mutate_presets(create)
     await _invalidate_reasoning_states(db)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
@@ -934,92 +945,64 @@ class PresetUpdate(BaseModel):
 
 @router.put("/llm-presets/{preset_id}")
 async def update_llm_preset(preset_id: str, body: PresetUpdate, db: AsyncSession = Depends(get_db)):
-    override = _read_override()
-    presets = _ensure_presets(override)
-    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
-    if not item:
-        raise HTTPException(404, "预设不存在")
-    next_max_tokens = body.max_tokens if body.max_tokens is not None else int(item.get("max_tokens", 8000))
-    next_context_tokens = body.context_tokens if body.context_tokens is not None else int(item.get("context_tokens", 128000))
-    if next_max_tokens >= next_context_tokens:
-        raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
-    if body.name is not None:
-        item["name"] = body.name
-    if body.provider is not None:
-        item["provider"] = body.provider
-    if body.api_key:
-        item["api_key"] = body.api_key
-    if body.base_url is not None:
-        item["base_url"] = body.base_url
-    if body.model is not None:
-        item["model"] = body.model
-    if body.max_tokens is not None:
-        item["max_tokens"] = body.max_tokens
-    if body.context_tokens is not None:
-        item["context_tokens"] = body.context_tokens
-    if body.thinking is not None:
-        item["thinking"] = body.thinking
-    if body.reasoning_effort is not None:
-        item["reasoning_effort"] = body.reasoning_effort
-    if body.reasoning_persistence is not None:
-        item["reasoning_persistence"] = body.reasoning_persistence
-    if body.image is not None:
-        item["image"] = body.image
-    if body.image_detail is not None:
-        item["image_detail"] = body.image_detail if body.image_detail in ("auto", "low", "high", "original") else "auto"
-    if body.video is not None:
-        item["video"] = body.video
-    if body.audio is not None:
-        item["audio"] = body.audio
-    if body.api_format is not None:
-        item["api_format"] = body.api_format
-    if body.ollama_mode is not None:
-        item["ollama_mode"] = body.ollama_mode
-    if body.ollama_api_mode is not None:
-        item["ollama_api_mode"] = body.ollama_api_mode
-    if body.ollama_keep_alive is not None:
-        item["ollama_keep_alive"] = body.ollama_keep_alive
-    if body.deployment_mode is not None:
-        item["deployment_mode"] = body.deployment_mode
-    if body.local_runtime is not None:
-        item["local_runtime"] = body.local_runtime
-    if body.capability_overrides is not None:
-        item["capability_overrides"] = body.capability_overrides
-        item["capability_checked_at"] = ""
-        item["capability_fingerprint"] = ""
-    if body.in_pool is not None:
-        item["in_pool"] = body.in_pool
-    if presets.get("active_id") == preset_id:
-        override["ai"] = _ai_segment(item)
-    _write_override(override)
+    def update(override: dict, presets: dict) -> dict:
+        item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+        if not item:
+            raise HTTPException(404, "预设不存在")
+        next_max_tokens = body.max_tokens if body.max_tokens is not None else int(item.get("max_tokens", 8000))
+        next_context_tokens = body.context_tokens if body.context_tokens is not None else int(item.get("context_tokens", 128000))
+        if next_max_tokens >= next_context_tokens:
+            raise HTTPException(422, "最大输出 token 数必须小于模型总上下文窗口")
+        for field in (
+            "name", "provider", "base_url", "model", "max_tokens", "context_tokens",
+            "thinking", "reasoning_effort", "reasoning_persistence", "image", "video",
+            "audio", "image_detail", "api_format", "ollama_mode", "ollama_api_mode",
+            "ollama_keep_alive", "deployment_mode", "local_runtime", "in_pool",
+        ):
+            value = getattr(body, field)
+            if value is not None:
+                if field == "image_detail" and value not in ("auto", "low", "high", "original"):
+                    value = "auto"
+                item[field] = value
+        if body.api_key:
+            item["api_key"] = body.api_key
+        if body.capability_overrides is not None:
+            item["capability_overrides"] = body.capability_overrides
+            item["capability_checked_at"] = ""
+            item["capability_fingerprint"] = ""
+        if presets.get("active_id") == preset_id:
+            override["ai"] = _ai_segment(item)
+        return dict(item)
+
+    item = _mutate_presets(update)
     await _invalidate_reasoning_states(db)
     return {**item, "api_key": _mask_key(item["api_key"])}
 
 
 @router.delete("/llm-presets/{preset_id}")
 async def delete_llm_preset(preset_id: str, db: AsyncSession = Depends(get_db)):
-    override = _read_override()
-    presets = _ensure_presets(override)
-    if len(presets.get("items", [])) <= 1:
-        raise HTTPException(400, "至少保留一个预设")
-    if presets.get("active_id") == preset_id:
-        raise HTTPException(400, "无法删除当前激活的预设，请先切换到其他预设")
-    presets["items"] = [it for it in presets["items"] if it["id"] != preset_id]
-    _write_override(override)
+    def delete(_override: dict, presets: dict) -> None:
+        if len(presets.get("items", [])) <= 1:
+            raise HTTPException(400, "至少保留一个预设")
+        if presets.get("active_id") == preset_id:
+            raise HTTPException(400, "无法删除当前激活的预设，请先切换到其他预设")
+        presets["items"] = [it for it in presets["items"] if it["id"] != preset_id]
+
+    _mutate_presets(delete)
     await _invalidate_reasoning_states(db)
     return {"deleted": preset_id}
 
 
 @router.post("/llm-presets/{preset_id}/activate")
 async def activate_llm_preset(preset_id: str, db: AsyncSession = Depends(get_db)):
-    override = _read_override()
-    presets = _ensure_presets(override)
-    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
-    if not item:
-        raise HTTPException(404, "预设不存在")
-    presets["active_id"] = preset_id
-    override["ai"] = _ai_segment(item)
-    _write_override(override)
+    def activate(override: dict, presets: dict) -> None:
+        item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+        if not item:
+            raise HTTPException(404, "预设不存在")
+        presets["active_id"] = preset_id
+        override["ai"] = _ai_segment(item)
+
+    _mutate_presets(activate)
     await _invalidate_reasoning_states(db)
     return {"active_id": preset_id}
 
@@ -1120,17 +1103,27 @@ async def probe_llm_capabilities(preset_id: str, db: AsyncSession = Depends(get_
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
     if not item:
         raise HTTPException(404, "预设不存在")
+    item = dict(item)
     if item.get("provider") == "ollama" and item.get("ollama_api_mode", "native") == "native":
         raise HTTPException(400, "Ollama 原生模式请使用连通性/多模态检测；能力探测接口仅支持 OpenAI 兼容模式")
-    result = await _probe_local_capabilities(item)
     fingerprint = _capability_fingerprint(item)
+    result = await _probe_local_capabilities(item)
     checked_at = now_utc().isoformat()
-    item["capability_checked_at"] = checked_at
-    item["capability_fingerprint"] = fingerprint
-    item["capability_probe"] = result
-    if presets.get("active_id") == preset_id:
-        override["ai"] = _ai_segment(item)
-    _write_override(override)
+
+    def save_probe(override: dict, presets: dict) -> dict:
+        latest_item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+        if not latest_item:
+            raise HTTPException(404, "预设不存在")
+        if _capability_fingerprint(latest_item) != fingerprint:
+            raise HTTPException(409, "探测期间预设已更改，请重新探测")
+        latest_item["capability_checked_at"] = checked_at
+        latest_item["capability_fingerprint"] = fingerprint
+        latest_item["capability_probe"] = result
+        if presets.get("active_id") == preset_id:
+            override["ai"] = _ai_segment(latest_item)
+        return dict(latest_item)
+
+    item = _mutate_presets(save_probe)
     await _invalidate_reasoning_states(db)
     from types import SimpleNamespace
     from agent import providers
@@ -1140,20 +1133,21 @@ async def probe_llm_capabilities(preset_id: str, db: AsyncSession = Depends(get_
 
 @router.put("/llm-presets/{preset_id}/capability-overrides")
 async def update_capability_overrides(preset_id: str, body: dict[str, bool], db: AsyncSession = Depends(get_db)):
-    override = _read_override()
-    presets = _ensure_presets(override)
-    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
-    if not item:
-        raise HTTPException(404, "预设不存在")
     allowed = {"thinking", "structured_json", "structured_schema", "tools", "parallel_tools", "image", "audio", "video"}
     if any(key not in allowed or not isinstance(value, bool) for key, value in body.items()):
         raise HTTPException(400, "能力覆盖字段或值无效")
-    item["capability_overrides"] = body
-    item["capability_checked_at"] = ""
-    item["capability_fingerprint"] = ""
-    if presets.get("active_id") == preset_id:
-        override["ai"] = _ai_segment(item)
-    _write_override(override)
+
+    def update(override: dict, presets: dict) -> None:
+        item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+        if not item:
+            raise HTTPException(404, "预设不存在")
+        item["capability_overrides"] = dict(body)
+        item["capability_checked_at"] = ""
+        item["capability_fingerprint"] = ""
+        if presets.get("active_id") == preset_id:
+            override["ai"] = _ai_segment(item)
+
+    _mutate_presets(update)
     await _invalidate_reasoning_states(db)
     return {"capability_overrides": body}
 
@@ -1281,6 +1275,7 @@ async def probe_media_preset(preset_id: str, dim: str = "", db: AsyncSession = D
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
     if not item:
         raise HTTPException(404, "预设不存在")
+    item = dict(item)
     dims = [dim] if dim else ["image", "video", "audio"]
     if any(d not in ("image", "video", "audio") for d in dims):
         raise HTTPException(400, "dim 仅支持 image/video/audio")
@@ -1288,12 +1283,21 @@ async def probe_media_preset(preset_id: str, dim: str = "", db: AsyncSession = D
     from types import SimpleNamespace
     from agent.providers import capability_snapshot
     declared_capabilities = capability_snapshot(SimpleNamespace(**item))
+    fingerprint = _capability_fingerprint(item)
 
     results = await _run_multimodal_probe(item, dims)
-    _apply_multimodal_probe(item, results)
-    if presets.get("active_id") == preset_id:
-        override["ai"] = _ai_segment(item)
-    _write_override(override)
+
+    def save_probe(override: dict, presets: dict) -> None:
+        latest_item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+        if not latest_item:
+            raise HTTPException(404, "预设不存在")
+        if _capability_fingerprint(latest_item) != fingerprint:
+            raise HTTPException(409, "探测期间预设已更改，请重新探测")
+        _apply_multimodal_probe(latest_item, results)
+        if presets.get("active_id") == preset_id:
+            override["ai"] = _ai_segment(latest_item)
+
+    _mutate_presets(save_probe)
     await _invalidate_reasoning_states(db)
     if len(dims) == 1:
         d = dims[0]
@@ -1347,72 +1351,6 @@ async def update_state_labels(body: StateLabelsUpdate):
     override["state_labels"] = {"overrides": clean}
     _write_override(override)
     return {"ok": True, "count": len(clean)}
-
-
-# ── 记忆旧文件清理：迁移类改动（facts.md/facts.json→pattern.json、summary.md+summary.ts→
-# summary.json）为了不影响读旧数据的用户，旧文件从不自动删，长期堆在存储里。这里给个 admin
-# 入口手动扫描+清（跟 StorageAudit 的孤儿文件对账同一套「先扫、勾选、再删」交互）。────────
-
-# 旧文件名 → 取代它的新文件名；只有新文件已存在（=已经迁移过、旧文件确认不再被读）才判定可删，
-# 防止误删还没被迁移读过一次的原始数据。
-_LEGACY_MEMORY_FILES = {
-    "summary.md": "summary.json",
-    "summary.ts": "summary.json",
-    "facts.md": "pattern.json",
-    "facts.json": "pattern.json",
-}
-
-
-@router.get("/memory/legacy-files")
-async def scan_legacy_memory_files():
-    """扫描所有用户的 .agent/ 目录，列出已被新文件取代、可安全清理的旧记忆文件。"""
-    from app.services.storage import get_storage
-    storage = get_storage()
-    all_keys = await storage.list_keys()
-    found = []
-    for key in all_keys:
-        parts = key.split("/")
-        if len(parts) < 3 or parts[-2] != ".agent":
-            continue
-        name = parts[-1]
-        new_name = _LEGACY_MEMORY_FILES.get(name)
-        if not new_name:
-            continue
-        new_key = "/".join(parts[:-1] + [new_name])
-        safe = await storage.exists(new_key)
-        info = await storage.stat(key)
-        found.append({
-            "key": key, "legacyFile": name, "replacedBy": new_name,
-            "safeToDelete": safe, "size": info.size if info else None,
-        })
-    found.sort(key=lambda x: (not x["safeToDelete"], x["key"]))
-    return {"files": found, "safeCount": sum(1 for f in found if f["safeToDelete"])}
-
-
-class LegacyFilesCleanup(BaseModel):
-    keys: list[str]
-
-
-@router.post("/memory/legacy-files/cleanup")
-async def cleanup_legacy_memory_files(body: LegacyFilesCleanup):
-    """删除指定的旧记忆文件 key。逐个重新核实「新文件已存在」才删——防止扫描和点击清理之间
-    数据发生变化（比如恰好这时候又读到旧文件触发了一次新的迁移写入）导致误删。"""
-    from app.services.storage import get_storage
-    storage = get_storage()
-    deleted, skipped = [], []
-    for key in body.keys or []:
-        parts = key.split("/")
-        if len(parts) < 3 or parts[-2] != ".agent":
-            skipped.append(key)
-            continue
-        new_name = _LEGACY_MEMORY_FILES.get(parts[-1])
-        new_key = "/".join(parts[:-1] + [new_name]) if new_name else None
-        if not new_key or not await storage.exists(new_key):
-            skipped.append(key)
-            continue
-        await storage.delete(key)
-        deleted.append(key)
-    return {"deleted": deleted, "skipped": skipped}
 
 
 @router.get("/memory/im-scopes")

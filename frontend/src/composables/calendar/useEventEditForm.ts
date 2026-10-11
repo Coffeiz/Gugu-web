@@ -7,7 +7,7 @@ import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useLiveStore } from '@/stores/live'
 import { InteractionSync } from '@/interaction/sync/InteractionSync'
-import { buildQqDeliveryFields, type QqDelivery } from '@/utils/qqDelivery'
+import { buildImDeliveryFields, IM_DELIVERY_PLATFORMS, type ImDeliveryPlatform, type ImDeliveryGroup } from '@/utils/imDelivery'
 
 export interface EventDraft {
   name: string
@@ -36,7 +36,7 @@ export const LEAD_OPTIONS = [
   { label: '提前 1 天',   min: 1440 },
   { label: '提前 2 天',   min: 2880 },
 ]
-export const CHAN_LABEL: Record<string, string> = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信' }
+export const CHAN_LABEL: Record<string, string> = { web: 'web', feishu: '飞书', qq: 'QQ', wechat: '微信', telegram: 'Telegram' }
 
 // 结束时间早于开始时间 → 视为次日（跨午夜）。HH:MM 已零填充，直接字符串比较即可
 export function isNextDay(start: string | null | undefined, end: string | null | undefined) {
@@ -70,17 +70,18 @@ export function useEventEditForm() {
 
   const reminders          = ref<Reminder[]>([])       // [{ id?, leadMin }]，可多个
   const reminderChannels   = ref<string[]>(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
-  const qqTarget            = ref('private')
-  const initialQqTarget     = ref('private')
-  const qqGroups             = ref<{ chat_id: string; title: string }[]>([])
+  const deliveryTargets = ref<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
+  const initialDeliveryTargets = ref<Record<ImDeliveryPlatform, string>>({ qq: 'private', feishu: 'private', telegram: 'private' })
+  const deliveryGroups = ref<Record<ImDeliveryPlatform, ImDeliveryGroup[]>>({ qq: [], feishu: [], telegram: [] })
+  const privateAvailable = ref<Record<ImDeliveryPlatform, boolean>>({ qq: true, feishu: false, telegram: false })
   const removedReminderIds = ref<number[]>([])         // 编辑里删掉的已存在提醒 id，保存时真删
   const saving             = ref(false)
 
   function resetReminder() {
     reminders.value = []
     reminderChannels.value = ['web']
-    qqTarget.value = 'private'
-    initialQqTarget.value = 'private'
+    deliveryTargets.value = { qq: 'private', feishu: 'private', telegram: 'private' }
+    initialDeliveryTargets.value = { ...deliveryTargets.value }
     removedReminderIds.value = []
   }
   function leadLabelOf(min: number) { return LEAD_OPTIONS.find(o => o.min === min)?.label || `提前 ${min} 分钟` }
@@ -108,9 +109,12 @@ export function useEventEditForm() {
       const tasks = (await scheduledTasksApi.listForEvent(ev.id))?.tasks || []
       if (!tasks.length) return
       reminderChannels.value = (tasks[0].channels && tasks[0].channels.length) ? tasks[0].channels : ['web']
-      const target = (tasks[0].delivery_targets as Record<string, any> | undefined)?.qq
-      qqTarget.value = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id) : 'private'
-      initialQqTarget.value = qqTarget.value
+      const targets = tasks[0].delivery_targets as Record<string, any> | undefined
+      for (const platform of IM_DELIVERY_PLATFORMS) {
+        const target = targets?.[platform]
+        deliveryTargets.value[platform] = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id) : 'private'
+      }
+      initialDeliveryTargets.value = { ...deliveryTargets.value }
       reminders.value = tasks.map((t: any) => {
         let leadMin = 0
         if (t.schedule_kind === 'once' && t.start_at) {
@@ -122,30 +126,26 @@ export function useEventEditForm() {
     } catch { /* 保持 reset 态 */ }
   }
 
-  async function loadQqTargets() {
-    if (!imChannels.value.includes('qq')) {
-      qqGroups.value = []
-      return
-    }
-    try {
-      const result = await scheduledTasksApi.listQqTargets()
-      qqGroups.value = result.groups
-    } catch {
-      qqGroups.value = []
-    }
+  async function loadImTargets() {
+    const platforms = IM_DELIVERY_PLATFORMS.filter(platform => imChannels.value.includes(platform))
+    await Promise.all(platforms.map(async platform => {
+      try {
+        const result = await scheduledTasksApi.listDeliveryTargets(platform)
+        deliveryGroups.value[platform] = result.groups
+        privateAvailable.value[platform] = result.private_available
+      } catch {
+        deliveryGroups.value[platform] = []
+        privateAvailable.value[platform] = false
+      }
+    }))
   }
 
-  function setQqTarget(value: string) {
-    qqTarget.value = value
+  function setDeliveryTarget(platform: ImDeliveryPlatform, value: string) {
+    deliveryTargets.value[platform] = value
   }
 
-  function qqDeliveryFields(isEditing: boolean): { qq_delivery?: QqDelivery } {
-    return buildQqDeliveryFields(
-      isEditing,
-      initialQqTarget.value,
-      qqTarget.value,
-      reminderChannels.value.includes('qq'),
-    )
+  function imDeliveryFields(isEditing: boolean) {
+    return buildImDeliveryFields(isEditing, initialDeliveryTargets.value, deliveryTargets.value, reminderChannels.value)
   }
 
   // 保存活动后调用：对账该活动的提醒——删掉移除的、改已存在的渠道/时刻、建新增的
@@ -160,7 +160,7 @@ export function useEventEditForm() {
           schedule_kind: 'once' as const,
           start_at: _reminderAtIso(date, time, r.leadMin),
           channels: reminderChannels.value,
-          ...qqDeliveryFields(Boolean(r.id)),
+          ...imDeliveryFields(Boolean(r.id)),
         }
         if (r.id) await scheduledTasksApi.update(r.id, data)
         else { const t = await scheduledTasksApi.create({ ...data, event_id: eventId }); r.id = t?.id ?? null }
@@ -174,7 +174,7 @@ export function useEventEditForm() {
     return scheduledTasksApi.testNotify({
       channels: reminderChannels.value,
       name: name || '活动提醒',
-      ...qqDeliveryFields(false),
+      ...imDeliveryFields(false),
     })
   }
 
@@ -217,9 +217,9 @@ export function useEventEditForm() {
   }
 
   return {
-    imChannels, reminders, reminderChannels, qqTarget, qqGroups, removedReminderIds,
+    imChannels, reminders, reminderChannels, deliveryTargets, deliveryGroups, privateAvailable, removedReminderIds,
     resetReminder, leadLabelOf, toggleReminderChannel, addReminder, removeReminderAt,
-    loadReminders, loadQqTargets, setQqTarget, applyReminders, testReminderChannels, saving,
+    loadReminders, loadImTargets, setDeliveryTarget, imDeliveryFields, applyReminders, testReminderChannels, saving,
     saveEvent, deleteEvent,
   }
 }

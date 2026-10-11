@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y \
-       bash ca-certificates curl ffmpeg fontconfig fonts-noto-cjk git jq less libssh2-1 nodejs npm \
+       acl bash ca-certificates curl ffmpeg fontconfig fonts-noto-cjk git jq less libssh2-1 nodejs npm \
        python-is-python3 python3 python3-matplotlib python3-pil python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && fc-cache -f \

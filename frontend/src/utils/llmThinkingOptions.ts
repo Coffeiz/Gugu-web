@@ -2,6 +2,7 @@ export interface ReasoningCapabilities {
   reasoning_modes?: readonly string[]
   reasoning_efforts?: readonly string[]
   supports_adaptive_thinking?: boolean
+  generic_thinking_toggle_supported?: boolean
 }
 
 export interface ThinkingOption {
@@ -25,6 +26,13 @@ export function buildThinkingOptions(
 ): ThinkingOption[] {
   const modes = capabilities?.reasoning_modes || []
   const options: ThinkingOption[] = [{ value: 'default', label: translate('profileByokUi.inheritDefault') }]
+  if (capabilities?.generic_thinking_toggle_supported === true) {
+    options.push(
+      { value: 'adaptive', label: translate('profileByokUi.enableThinking') },
+      { value: 'disabled', label: translate('profileByokUi.disableThinking') },
+    )
+    return options
+  }
   if (modes.includes('disabled')) options.push({ value: 'disabled', label: translate('profileByokUi.disableThinking') })
   if (modes.includes('adaptive') && capabilities?.supports_adaptive_thinking === true) {
     options.push({ value: 'adaptive', label: translate('profileByokUi.adaptiveThinking') })

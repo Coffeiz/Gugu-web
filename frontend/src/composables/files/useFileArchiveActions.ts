@@ -24,7 +24,7 @@ export interface FileArchiveActionsOptions {
     getFile(id: number): FileMeta | null
     getFolder(id: number): FolderMeta | null
     addFile(file: FileMeta): void
-    refresh(): Promise<void>
+    refresh(): Promise<void | boolean>
   }
   getSelectedFileIds: () => number[]
   getSelectedFolderKeys: () => Array<number | string>

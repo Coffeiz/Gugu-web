@@ -21,15 +21,20 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.errors import Conflict, Invalid, NotFound
 from app.core.ownership import get_owned
 from app.core.redaction import diag_log
-from app.models import File, Folder, Project, WorkspaceDirectory
-from app.services.filesync.protocol import record_canonical_file_change
+from app.models import File, Folder, Project, StorageQuotaLedger, User, WorkspaceDirectory
+from app.services.filesync.protocol import lock_file_sync_paths, record_canonical_file_change
 from app.services.storage import OSSStorageBackend, StorageBackend, get_storage
 from app.services.storage.key_strategy import KeyContext, PathMirrorStrategy
 from app.services.storage.keys import compose_logical_path
-from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, reconcile_user_storage, record_usage
+from app.services.storage.quota_ledger import (
+    FILE_LIBRARY, StorageQuotaNotReadyError, is_unlimited_limit,
+    record_usage,
+)
+from app.services.storage.quota_limits import UNLIMITED_BYTES, resolve_file_library_limit
 
 MAX_COMPRESS_SOURCE_BYTES = 512 * 1024 * 1024
 MAX_EXTRACT_BYTES = 2 * 1024 * 1024 * 1024
@@ -161,9 +166,28 @@ async def _target_for_file(db: AsyncSession, user_id, file: File, folder_id: int
 
 
 async def _quota_remaining(db: AsyncSession, user_id) -> int:
-    await reconcile_user_storage(db, user_id)
-    row = await get_quota(db, user_id, FILE_LIBRARY)
-    return max(0, int(row.limit_bytes) - int(row.used_bytes) - int(row.reserved_bytes))
+    user = await db.get(User, user_id)
+    if user is None:
+        raise NotFound("user.not_found", "用户不存在")
+    configured_limit = resolve_file_library_limit(
+        user.storage_limit_bytes,
+        get_settings().quota.default_storage_limit_bytes,
+    )
+    if is_unlimited_limit(configured_limit):
+        return UNLIMITED_BYTES
+
+    quota = (await db.execute(select(StorageQuotaLedger).where(
+        StorageQuotaLedger.user_id == user_id,
+        StorageQuotaLedger.category == FILE_LIBRARY,
+    ))).scalar_one_or_none()
+    if quota is None:
+        # get_quota() 会在账本缺失时初始化用户空间；Local 初始化会递归测量
+        # 物理目录，因此归档热路径只读现有账本，缺行时明确重试而不全盘扫描。
+        raise StorageQuotaNotReadyError()
+    if quota.limit_bytes != configured_limit:
+        quota.limit_bytes = configured_limit
+        await db.flush()
+    return max(0, int(quota.limit_bytes) - int(quota.used_bytes) - int(quota.reserved_bytes))
 
 
 def _logical_path(target: _Target, folder_path: str | None = None) -> str:
@@ -283,6 +307,7 @@ async def _store_file(
     storage_key = key_strategy.build_key(KeyContext(
         user_id=user_id, file_id=None, name=display_name, ext=ext, logical_path=logical_path,
     ))
+    await lock_file_sync_paths(db, user_id, [storage_key])
     if await storage.exists(storage_key):
         # DB 与物理存储短暂不一致时也不覆盖孤儿对象。
         match = re.match(r"^(.*) \((\d+)\)$", display_name)
@@ -297,6 +322,7 @@ async def _store_file(
                 display_name, storage_key = candidate, key
                 break
             number += 1
+    await lock_file_sync_paths(db, user_id, [storage_key])
     source.seek(0)
     await storage.put_stream(storage_key, source, size, mime_type)
     created_keys.append(storage_key)

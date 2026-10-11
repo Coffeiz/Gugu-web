@@ -113,6 +113,10 @@ class RoundResult:
                                         # 缓存的输入，既不在 usage_in 也不在 cache_tokens 里，
                                         # 但同样是真实上下文占用，漏记会低估压缩阈值。
     raw: Any = None                    # 驱动私有：给 append_* 方法用的原始数据
+    # 仅用于诊断：provider 实际结束原因和请求输出预算，不进入对话历史。
+    output_token_budget: int | None = None
+    finish_reason: str | None = None
+    incomplete_reason: str | None = None
 
 
 class LoopDriver(Protocol):
@@ -293,7 +297,8 @@ class AnthropicDriver:
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
         client = providers.build_anthropic_client(ai, _timeout)
-        thinking_param = adapter.build_anthropic_thinking_params(ai)
+        generic_thinking = providers.generic_thinking_params(ai, "anthropic")
+        thinking_param = generic_thinking or adapter.build_anthropic_thinking_params(ai)
 
         # system_text 来自 build_split 的稳定前缀；动态上下文已经移到 messages。
         if system_text:
@@ -451,6 +456,8 @@ class AnthropicDriver:
             usage_in=final.usage.input_tokens, usage_out=final.usage.output_tokens,
             cache_tokens=getattr(final.usage, "cache_read_input_tokens", 0) or 0,
             cache_write_tokens=getattr(final.usage, "cache_creation_input_tokens", 0) or 0,
+            output_token_budget=ctx.max_tokens,
+            finish_reason=str(getattr(final, "stop_reason", "") or "") or None,
             raw=raw_blocks,
         ))
 
@@ -564,7 +571,8 @@ class OpenAIDriver:
         _timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
         client = providers.build_openai_client(ai, _timeout)
 
-        think_kwargs = adapter.build_openai_thinking_kwargs(ai)
+        generic_thinking = providers.generic_thinking_params(ai, "openai")
+        think_kwargs = generic_thinking or adapter.build_openai_thinking_kwargs(ai)
 
         ctx = _OpenAICtx(
             tools=tools, max_tokens=ai.max_tokens,
@@ -639,6 +647,7 @@ class OpenAIDriver:
             reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400
             tool_buf: dict[int, dict] = {}   # index → {id, name, args}，流式分片累积
             total_in = total_out = total_cache = 0
+            finish_reason = None
             stream = None
             try:
                 stream = await client.chat.completions.create(
@@ -668,6 +677,7 @@ class OpenAIDriver:
                         total_in += max(0, prompt_tokens - cache_hit)
                     if not chunk.choices:
                         continue
+                    finish_reason = getattr(chunk.choices[0], "finish_reason", None) or finish_reason
                     delta = chunk.choices[0].delta
                     _rc = getattr(delta, "reasoning_content", None)
                     if _rc:
@@ -737,6 +747,7 @@ class OpenAIDriver:
         yield ("done", RoundResult(
             text=content, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=total_in, usage_out=total_out, cache_tokens=total_cache,
+            output_token_budget=ctx.max_tokens, finish_reason=finish_reason,
             raw=_OpenAIRaw(content=content, reasoning=reasoning, tool_calls_payload=ordered),
         ))
 
@@ -905,6 +916,8 @@ class OllamaDriver:
         content = ""
         thinking = ""
         tool_calls = []
+        usage_in = usage_out = 0
+        finish_reason = None
         async with client.stream("POST", f"{ctx.base_url}/chat", json=payload) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -933,9 +946,8 @@ class OllamaDriver:
                 if chunk.get("done"):
                     usage_in = int(chunk.get("prompt_eval_count") or 0)
                     usage_out = int(chunk.get("eval_count") or 0)
+                    finish_reason = str(chunk.get("done_reason") or "") or None
                     break
-            else:
-                usage_in = usage_out = 0
 
         normalized = [NormalizedToolCall(
             id=call["id"], name=call["function"]["name"], input=call["function"]["arguments"]
@@ -943,6 +955,7 @@ class OllamaDriver:
         yield ("done", RoundResult(
             text=content, tool_calls=normalized, requires_tools=bool(normalized),
             usage_in=usage_in, usage_out=usage_out,
+            output_token_budget=ctx.max_tokens, finish_reason=finish_reason,
             raw=_OllamaRaw(content=content, thinking=thinking, tool_calls_payload=tool_calls),
         ))
 

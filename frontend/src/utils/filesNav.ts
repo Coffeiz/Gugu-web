@@ -20,6 +20,15 @@ export interface NavSeg {
   workspaceDirectoryId?: number | null
 }
 
+export interface FileLibraryNavigationTarget {
+  kind: 'file' | 'folder'
+  id: number
+  workspaceDirectoryId?: number
+  workspaceDirectoryName?: string
+  /** 从工作区根到目标所在目录；文件夹搜索目标不包含目标文件夹本身。 */
+  folderPath?: Array<{ id: number; name: string }>
+}
+
 // 文件夹「卡片视图模型」——loadContents 投影出的 6 种卡（personal/projects/trash/folder/
 // status/year/month/project）的并集：公共字段必填，各变体字段可选。非 FolderMeta（那是库存原型）。
 export interface FolderCard {

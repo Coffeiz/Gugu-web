@@ -62,15 +62,12 @@
         <button class="chan-chip" :class="{ on: form.reminderChannels.value.includes('web') }" @click="form.toggleReminderChannel('web')">web</button>
         <button v-for="ch in form.imChannels.value" :key="ch" class="chan-chip" :class="{ on: form.reminderChannels.value.includes(ch) }" @click="form.toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
       </div>
-      <div v-if="form.reminderChannels.value.includes('qq')" class="qq-delivery-field">
-        <span>{{ t('schedules.qqDelivery') }}</span>
-        <SelectPopup
-          :model-value="form.qqTarget.value"
-          :options="qqTargetOptions"
-          popup-class="event-qq-target-popup"
-          auto-flip
-          @update:model-value="form.setQqTarget"
-        />
+      <div v-for="platform in IM_DELIVERY_PLATFORMS" :key="platform"
+        v-show="form.reminderChannels.value.includes(platform)" class="qq-delivery-field">
+        <span>{{ deliveryPlatformLabel(platform) }}</span>
+        <SelectPopup :model-value="form.deliveryTargets.value[platform]"
+          :options="deliveryTargetOptions(platform)" popup-class="event-qq-target-popup"
+          auto-flip @update:model-value="form.setDeliveryTarget(platform, $event)" />
       </div>
       <button class="reminder-test-bar" @click="emit('test-reminder')"><Icon name="action.send" :size="11" /> {{ t('common.actions.testSend') }}</button>
     </div>
@@ -78,7 +75,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 import Checkbox from '@/components/common/controls/Checkbox.vue'
@@ -87,7 +84,7 @@ import TimeInput from '@/components/common/controls/TimeInput.vue'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import ContextMenu from '@/components/common/overlays/ContextMenu.vue'
 import SelectPopup from '@/components/common/controls/SelectPopup.vue'
-import { buildQqTargetOptions } from '@/utils/qqDelivery'
+import { buildImTargetOptions, IM_DELIVERY_PLATFORMS, type ImDeliveryPlatform } from '@/utils/imDelivery'
 import {
   LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
   type EventDraft, type useEventEditForm,
@@ -101,12 +98,16 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ (e: 'save'): void; (e: 'close'): void; (e: 'test-reminder'): void }>()
 const { t } = useI18n()
-const qqTargetOptions = computed(() => buildQqTargetOptions(
-  props.form.qqGroups.value,
-  props.form.qqTarget.value,
-  t('schedules.qqPrivate'),
-  chatId => t('scheduleUi.qqGroupUnavailable', { chatId }),
-))
+function deliveryPlatformLabel(platform: ImDeliveryPlatform) {
+  return t(`schedules.${platform}`)
+}
+function deliveryTargetOptions(platform: ImDeliveryPlatform) {
+  const privateLabel = props.form.privateAvailable.value[platform] ? t('schedules.qqPrivate') : t('schedules.privateUnavailable')
+  return buildImTargetOptions(
+    props.form.deliveryGroups.value[platform], props.form.deliveryTargets.value[platform], privateLabel,
+    chatId => t('scheduleUi.groupUnavailable', { chatId }),
+  )
+}
 
 // 提前量下拉：标准列表弹窗（ContextMenu + FlipChevron），替代原生 select。
 // 提醒项是列表，用打开项下标区分各行的菜单状态。

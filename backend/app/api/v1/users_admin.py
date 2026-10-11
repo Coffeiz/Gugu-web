@@ -8,7 +8,11 @@ from typing import Optional
 import calendar
 
 from app.db.session import get_db
-from app.models import User, AgentUsage, File, SecurityEvent
+from app.models import User, AgentUsage, SecurityEvent
+from app.services.storage.quota_ledger import (
+    get_file_library_usage_by_user,
+    get_file_record_usage_by_user,
+)
 from app.api.v1.audit_log import write_log
 from pydantic import BaseModel, Field
 
@@ -73,12 +77,12 @@ async def list_users(
     h6_result = await db.execute(h6_stmt)
     h6_map = {str(row.user_id): row.tokens for row in h6_result}
 
-    storage_stmt = (
-        select(File.user_id, func.sum(File.size_bytes).label("storage"))
-        .group_by(File.user_id)
-    )
-    storage_result = await db.execute(storage_stmt)
-    storage_map = {str(row.user_id): row.storage for row in storage_result}
+    from app.core.config import get_settings
+
+    storage_map = await get_file_record_usage_by_user(db)
+    if get_settings().storage.backend == "local":
+        # Local 的 file_library 账本已含所有可写持久根，不能再加 Shell 明细。
+        storage_map.update(await get_file_library_usage_by_user(db))
 
     items = []
     for u in users:
@@ -290,7 +294,19 @@ async def update_quota(
     for field in ("token_limit_6h", "token_limit_weekly", "storage_limit_bytes", "search_limit_daily"):
         if field in body:
             v = body[field]
-            setattr(user, field, int(v) if v is not None else None)
+            if v is None:
+                setattr(user, field, None)
+                continue
+            try:
+                value = int(v)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="配额必须是整数或 null") from None
+            minimum = -1 if field in {
+                "token_limit_6h", "token_limit_weekly", "storage_limit_bytes",
+            } else 0
+            if value < minimum:
+                raise HTTPException(status_code=422, detail="配额值无效")
+            setattr(user, field, value)
 
     await db.commit()
     username = getattr(request.state, "admin_username", "admin")

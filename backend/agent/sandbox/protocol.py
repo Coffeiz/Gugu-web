@@ -72,6 +72,7 @@ class ExecuteRequest:
     timeout: float = 30
     max_output_chars: int = 12_000
     quota_root: str | None = None
+    quota_roots: tuple[str, ...] = ()
     quota_bytes: int | None = None
     network_profile: Literal["none", "egress"] = "none"
     egress_expires_at: float | None = None
@@ -92,6 +93,13 @@ class ExecuteRequest:
         timeout = float(value.get("timeout", 30))
         max_output_chars = int(value.get("max_output_chars", 12_000))
         quota_root = str(value.get("quota_root") or "").strip() or None
+        roots_value = value.get("quota_roots") or []
+        if not isinstance(roots_value, list) or len(roots_value) > 8:
+            raise ValueError("sandboxd quota_roots 无效")
+        quota_roots = tuple(dict.fromkeys(
+            [str(item).strip() for item in roots_value if str(item).strip()]
+            + ([quota_root] if quota_root else [])
+        ))
         quota_value = value.get("quota_bytes")
         quota_bytes = int(quota_value) if quota_value is not None else None
         network_profile = str(value.get("network_profile") or "none")
@@ -110,8 +118,8 @@ class ExecuteRequest:
             raise ValueError("断网请求不能携带 egress 授权")
         if quota_bytes is not None and quota_bytes < 1:
             raise ValueError("sandboxd quota_bytes 无效")
-        if quota_bytes is not None and not quota_root:
-            raise ValueError("sandboxd quota_bytes 缺少 quota_root")
+        if quota_bytes is not None and not quota_roots:
+            raise ValueError("sandboxd quota_bytes 缺少 quota_roots")
         workspace_mounts, primary_workspace = _parse_workspace_mounts(value)
         if not 0.1 <= timeout <= 300:
             raise ValueError("sandboxd timeout 超出允许范围")
@@ -125,6 +133,7 @@ class ExecuteRequest:
             timeout=timeout,
             max_output_chars=max_output_chars,
             quota_root=quota_root,
+            quota_roots=quota_roots,
             quota_bytes=quota_bytes,
             network_profile=network_profile,
             egress_expires_at=egress_expires_at,
@@ -146,6 +155,7 @@ class ExecuteRequest:
             "timeout": self.timeout,
             "max_output_chars": self.max_output_chars,
             "quota_root": self.quota_root,
+            "quota_roots": list(self.quota_roots),
             "quota_bytes": self.quota_bytes,
             "network_profile": self.network_profile,
             "egress_expires_at": self.egress_expires_at,

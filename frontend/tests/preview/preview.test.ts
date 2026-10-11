@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { isPreviewable, isTextExt, isTextFallbackCandidate, isCsvExt, normalizeTextBlob } from '@/stores/preview'
-import { isPreviewReloadRequested, usePreviewStore } from '@/stores/preview'
+import { isPreviewAffectedByFileEvent, isPreviewReloadRequested, usePreviewStore } from '@/stores/preview'
 
 describe('文件预览类型判断', () => {
   it('允许未知扩展名通过文本 MIME 预览和编辑', () => {
@@ -116,5 +116,36 @@ describe('预览窗口复用', () => {
     expect(store.windows).toHaveLength(1)
     expect(store.windows[0].file.displayName).toBe('新名称')
     expect(store.windows[0].reloadToken).toBe(0)
+  })
+
+  it('账号切换重置关闭所有文件窗口与抽屉', () => {
+    const store = usePreviewStore()
+    store.open({ id: 1, ext: 'PNG', displayName: '旧账号文件' })
+    store.open({ id: 2, ext: 'PDF', displayName: '旧账号文档' })
+
+    store.resetAccountState()
+
+    expect(store.windows).toEqual([])
+    expect(store.singleFile).toBeNull()
+    expect(store.singleSiblings).toEqual([])
+  })
+
+  it('只有实时事件明确命中当前文件时才刷新预览', () => {
+    const event = (overrides: Record<string, unknown> = {}) => ({
+      protocol_version: 'live-event-v1' as const,
+      event_id: 'evt-preview',
+      type: 'resource.changed' as const,
+      resource: 'files' as const,
+      operation: 'update' as const,
+      revision: 1,
+      created_at: '2026-10-05T00:00:00Z',
+      ...overrides,
+    })
+
+    expect(isPreviewAffectedByFileEvent(17, event({ entity_id: 18 }))).toBe(false)
+    expect(isPreviewAffectedByFileEvent(17, event({ entity_id: '17' }))).toBe(true)
+    expect(isPreviewAffectedByFileEvent(17, event({ entity_ids: [18, 17] }))).toBe(true)
+    expect(isPreviewAffectedByFileEvent(17, event({ entity_id: 17, payload: { kind: 'folder' } }))).toBe(false)
+    expect(isPreviewAffectedByFileEvent(17, event({ operation: 'refresh' }))).toBe(false)
   })
 })

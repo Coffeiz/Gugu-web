@@ -68,6 +68,32 @@ async def list_qq_group_sessions(db, user_id):
     )).scalars().all()
 
 
+async def list_im_group_sessions(db, user_id, platform: str, bot_id: int | None = None):
+    """列出指定用户、平台和 Bot 下可选的群会话。"""
+    query = select(ConversationSession).where(
+        ConversationSession.user_id == user_id,
+        ConversationSession.source == platform,
+        ConversationSession.chat_type == "group",
+        ConversationSession.chat_id.isnot(None),
+    )
+    if bot_id is not None:
+        query = query.where(ConversationSession.bot_id == str(bot_id))
+    return (await db.execute(query.order_by(ConversationSession.id.desc()))).scalars().all()
+
+
+async def find_im_group_session(db, user_id, platform: str, chat_id: str, bot_id: int | None = None):
+    """按用户归属校验 IM 群目标，防止客户端提交其他用户的会话 ID。"""
+    query = select(ConversationSession).where(
+        ConversationSession.user_id == user_id,
+        ConversationSession.source == platform,
+        ConversationSession.chat_type == "group",
+        ConversationSession.chat_id == chat_id,
+    )
+    if bot_id is not None:
+        query = query.where(ConversationSession.bot_id == str(bot_id))
+    return (await db.execute(query.order_by(ConversationSession.id.desc()))).scalars().first()
+
+
 async def get_enabled_user_bot(db, user_id, platform: str):
     """返回当前用户指定平台最早创建的启用 Bot。"""
     return (await db.execute(

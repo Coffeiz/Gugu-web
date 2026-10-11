@@ -159,7 +159,7 @@ async def load_parent_documents(
     """读取一个父文档（单 source_id）的全部持久 chunk（文档级增量入口）。
 
     用 source_id 列定位：parent_document_id 的取值因来源而异（project 是
-    "project:<id>"，file/knowledge 是裸 id），source_id 恒为裸对象 id。
+    "project:<id>"，knowledge 是裸 id），source_id 恒为裸对象 id。
     """
     rows = (await db.execute(select(KnowledgeIndexEntry).where(
         KnowledgeIndexEntry.owner_user_id == owner_user_id,
@@ -243,6 +243,7 @@ async def load_index_documents(
     query = select(KnowledgeIndexEntry).where(
         KnowledgeIndexEntry.owner_user_id == owner_user_id,
         KnowledgeIndexEntry.deleted_at.is_(None),
+        KnowledgeIndexEntry.source_type != "file",
     ).order_by(KnowledgeIndexEntry.id.asc())
     if source_types:
         query = query.where(KnowledgeIndexEntry.source_type.in_(source_types))
@@ -256,6 +257,7 @@ async def count_index_entries(db, owner_user_id: object) -> dict[str, int]:
         select(KnowledgeIndexEntry.source_type).where(
             KnowledgeIndexEntry.owner_user_id == owner_user_id,
             KnowledgeIndexEntry.deleted_at.is_(None),
+            KnowledgeIndexEntry.source_type != "file",
         )
     )).scalars().all()
     counts: dict[str, int] = {}
@@ -276,9 +278,9 @@ async def search_persistent_index(
 ) -> list[RecallResult]:
     """在统一 lexical index 上查询持久化 chunk；权限先由 owner 收窄。"""
     requested_limit = max(1, min(int(limit), 50))
-    types = sorted(source_types or {
-        "memory", "knowledge", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
-    })
+    types = sorted((source_types or {
+        "memory", "knowledge", "project", "note", "canvas", "calendar", "scheduled_task", "conversation",
+    }) - {"file"})
     from agent.rag.index_cache import get_index_cache
     from agent.rag.context import get_snapshot_revision
 

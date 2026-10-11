@@ -1057,7 +1057,7 @@ onBeforeUnmount(() => {
 .office-container :deep(.docx-wrapper > section.docx) {
   margin: 0 auto;
   box-shadow: 0 1px 6px rgb(0 0 0 / 0.25);
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--content-divider);
   overflow: hidden;
 }
 .office-container :deep(.docx-wrapper > section.docx:last-child) {

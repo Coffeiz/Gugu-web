@@ -44,7 +44,7 @@ def file_listing_query(
         stmt = stmt.where(File.folder_id == folder_id)
     elif project_id is not None and space == "project":
         stmt = stmt.where(File.folder_id.is_(None))
-    elif project_id is None and space == "personal":
+    elif project_id is None and space in {"personal", "workspace"}:
         stmt = stmt.where(File.folder_id.is_(None))
     if mind_map_id is not None:
         stmt = stmt.where(File.mind_map_id == mind_map_id)
@@ -63,10 +63,6 @@ def all_files_query(user_id: int) -> Select:
         .where(File.user_id == user_id, File.deleted_at.is_(None))
         .order_by(File.created_at.desc())
     )
-
-
-def storage_usage_query(user_id: int) -> Select:
-    return select(func.sum(File.size_bytes)).where(File.user_id == user_id, File.deleted_at.is_(None))
 
 
 async def list_file_rows(
@@ -101,6 +97,39 @@ async def list_all_file_rows(db: AsyncSession, user_id: int):
     return result.all()
 
 
+async def get_file_detail_row(db: AsyncSession, user_id, file_id: int):
+    """读取单个存活文件及其项目/文件夹展示信息。"""
+    return (await db.execute(
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(
+            File.id == file_id,
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+        )
+    )).first()
+
+
+async def get_file_summary(db: AsyncSession, user_id: int, recent_limit: int):
+    """读取轻量总数和有限的最近文件，不物化完整文件库。"""
+    total_count = (await db.execute(
+        select(func.count(File.id)).where(
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+        )
+    )).scalar_one()
+    recent_rows = (await db.execute(
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(File.user_id == user_id, File.deleted_at.is_(None))
+        .order_by(File.id.desc())
+        .limit(recent_limit)
+    )).all()
+    return total_count, recent_rows
+
+
 async def list_existing_file_rows(db: AsyncSession, storage, user_id: int):
     """列出全部文件。
 
@@ -113,9 +142,10 @@ async def list_existing_file_rows(db: AsyncSession, storage, user_id: int):
 
 
 async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
-    """返回当前用户已使用的存储字节数。"""
-    result = await db.execute(storage_usage_query(user_id))
-    return result.scalar() or 0
+    """返回用户当前配额口径的实际用量。"""
+    from app.services.storage.quota_ledger import measure_user_storage_usage
+
+    return await measure_user_storage_usage(db, user_id)
 
 
 async def get_file_version_snapshot(db: AsyncSession, user_id: int):
@@ -136,7 +166,7 @@ async def get_file_version_snapshot(db: AsyncSession, user_id: int):
 
 
 async def get_file_tree_rows(db: AsyncSession, user_id: int):
-    """查询文件库树所需的项目文件计数、项目行和个人文件计数。"""
+    """查询文件库树与根目录卡片所需的聚合计数和项目行。"""
     project_file_rows = await db.execute(
         select(File.project_id, func.count().label("cnt"))
         .where(
@@ -159,7 +189,25 @@ async def get_file_tree_rows(db: AsyncSession, user_id: int):
             File.deleted_at.is_(None),
         )
     )
-    return project_file_rows.all(), project_rows.scalars().all(), personal_count.scalar_one()
+    personal_root_count = await db.execute(select(
+        select(func.count()).select_from(File).where(
+            File.user_id == user_id,
+            File.space == "personal",
+            File.folder_id.is_(None),
+            File.deleted_at.is_(None),
+        ).scalar_subquery()
+        + select(func.count()).select_from(Folder).where(
+            Folder.user_id == user_id,
+            Folder.project_id.is_(None),
+            Folder.workspace_directory_id.is_(None),
+            Folder.parent_id.is_(None),
+            Folder.deleted_at.is_(None),
+        ).scalar_subquery()
+    ))
+    return (
+        project_file_rows.all(), project_rows.scalars().all(),
+        personal_count.scalar_one(), personal_root_count.scalar_one(),
+    )
 
 
 async def folder_download_rows(db: AsyncSession, user_id: int, folder_id: int):
@@ -198,6 +246,7 @@ def _user_files_stmt(
     user_id,
     *, space=None, project_id=None, folder_id=None,
     workspace_directory_id=None, ext=None, queries=None, mode=None,
+    root_only: bool = False,
 ):
     """构造 list_dir 共用的存活文件过滤条件（搜索与计数必须同口径）。"""
     stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
@@ -207,6 +256,8 @@ def _user_files_stmt(
         stmt = stmt.where(File.project_id == project_id)
     if folder_id is not None:
         stmt = stmt.where(File.folder_id == folder_id)
+    elif root_only:
+        stmt = stmt.where(File.folder_id.is_(None))
     if workspace_directory_id is not None:
         stmt = stmt.where(File.workspace_directory_id == workspace_directory_id)
     if ext:
@@ -228,6 +279,7 @@ async def search_user_files(
     ext=None,
     queries=None,
     mode=None,
+    root_only: bool = False,
     limit=100,
     offset=0,
     sort="updated",
@@ -241,6 +293,7 @@ async def search_user_files(
         user_id, space=space, project_id=project_id, folder_id=folder_id,
         workspace_directory_id=workspace_directory_id, ext=ext,
         queries=queries, mode=mode,
+        root_only=root_only,
     )
     if sort == "name":
         # 名字升序 + id 兜底：分页遍历时顺序稳定，同名文件（不同 ext/space）也不漏重
@@ -263,6 +316,7 @@ async def count_user_files(
     ext=None,
     queries=None,
     mode=None,
+    root_only: bool = False,
 ):
     """与 search_user_files 完全同口径的总数（不含 limit）。
 
@@ -275,8 +329,16 @@ async def count_user_files(
         user_id, space=space, project_id=project_id, folder_id=folder_id,
         workspace_directory_id=workspace_directory_id, ext=ext,
         queries=queries, mode=mode,
+        root_only=root_only,
     )
     return (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+
+
+async def count_file_rows_for_user(db: AsyncSession, user_id) -> int:
+    """统计某用户所有 File 行，包含软删除项，用于存储完整性核对。"""
+    return int((await db.execute(
+        select(func.count(File.id)).where(File.user_id == user_id)
+    )).scalar_one())
 
 
 async def get_user_file(db: AsyncSession, user_id, file_id):
@@ -414,6 +476,7 @@ async def list_folder_rows_with_file_counts(
     workspace_directory_id=None,
     parent_id=None,
     all_folders=False,
+    all_in_scope=False,
 ):
     """查询文件夹及其直属存活文件数，统一应用用户和软删边界。"""
     stmt = select(Folder).where(
@@ -426,9 +489,12 @@ async def list_folder_rows_with_file_counts(
             else Folder.project_id.is_(None),
             Folder.workspace_directory_id == workspace_directory_id if workspace_directory_id is not None
             else Folder.workspace_directory_id.is_(None),
-            Folder.parent_id == parent_id if parent_id is not None
-            else Folder.parent_id.is_(None),
         )
+        if not all_in_scope:
+            stmt = stmt.where(
+                Folder.parent_id == parent_id if parent_id is not None
+                else Folder.parent_id.is_(None),
+            )
     folders = (await db.execute(stmt.order_by(Folder.created_at))).scalars().all()
     if not folders:
         return []

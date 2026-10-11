@@ -67,7 +67,7 @@ export function useCalendarEventForm(options: EventFormOptions) {
     addBtnRef.value = anchor
     newEvent.value = { name: '', ...addDefaults(), description: '', allDay: false }
     resetReminder()
-    void eventForm.loadQqTargets()
+    void eventForm.loadImTargets()
     const button = addBtnRef.value
     if (button) {
       const buttonRect = button.getBoundingClientRect()

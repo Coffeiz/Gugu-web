@@ -249,7 +249,8 @@ def _cache_diagnostics(
             "cache_anchor_count": len(anchors),
             "cache_anchor_indices": anchors,
             "cache_anchor_last_index": max(anchors) if anchors else None,
-            "cache_anchor_tokens_estimate": anchor_token_estimate,
+            # 应用侧稳定前缀的 token 估算，不是 Provider 实际缓存命中量。
+            "stable_prefix_tokens_estimate": anchor_token_estimate,
             "cache_state_revision": cache_plan.next_state.revision,
             "cache_baseline_digest": cache_plan.baseline_digest,
             "cache_latest_digest": cache_plan.latest_digest,

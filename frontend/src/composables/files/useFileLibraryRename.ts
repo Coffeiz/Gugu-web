@@ -28,13 +28,15 @@ async function commitFileRename(input: {
   const previous = options.getFile(fileId)
   const normalizedExtension = normalizeEditableExtension(rawExtension)
   const isLegacyDotfile = previous?.displayName === '' && previous.ext.toUpperCase() !== 'FILE'
-  if (normalizedExtension == null || (!normalizedExtension && previous?.ext.toUpperCase() !== 'FILE' && !isLegacyDotfile)) {
+  if (normalizedExtension == null) {
     options.onInvalidExtension?.()
     nextTick(() => document.querySelector<HTMLInputElement>('.rename-file-extension-input')?.focus())
     return
   }
 
-  const extension = isLegacyDotfile ? 'FILE' : normalizedExtension || undefined
+  const extension = isLegacyDotfile
+    ? 'FILE'
+    : normalizedExtension || (previous?.ext.toUpperCase() === 'FILE' ? undefined : 'FILE')
   const nextExtension = extension ?? previous?.ext ?? 'FILE'
   if (previous && previous.displayName === name && previous.ext === nextExtension) {
     closeEditor()

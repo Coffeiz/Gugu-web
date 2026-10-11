@@ -1,0 +1,336 @@
+"""LoopDriver usage 口径回归测试。
+
+两条 provider 路径的 usage 语义不同，RoundResult 必须统一成：
+usage_in = 未命中缓存的新增输入，cache_tokens = 缓存命中，两者相加才是总输入。
+
+- Anthropic：split 口径，input_tokens 天然不含 cache_read_input_tokens，直接透传。
+- OpenAI 兼容（DeepSeek/Qwen/OpenAI）：prompt_tokens 已包含缓存命中
+  （prompt = hit + miss），必须在驱动层扣掉，否则统计层 tokens_in + cache_read
+  会把命中部分重复计入总量、缓存率分母虚大（PR #42 审核发现的 P1）。
+"""
+from types import SimpleNamespace
+
+import pytest
+
+from agent.context.assembly import MessageArea
+from agent.loop_drivers import AnthropicDriver, OpenAIDriver
+
+
+def _openai_ctx():
+    return SimpleNamespace(
+        model="deepseek-chat", max_tokens=100,
+        think_kwargs={}, tools=[],
+        supports_active_cache=False, supports_explicit_cache=False,
+        adapter=SimpleNamespace(
+            render_history=lambda messages: messages.provider_projection(),
+            uses_single_history_cache_anchor=lambda _model: False,
+            build_tool_params=lambda ai, tools: {},
+            build_openai_cache_kwargs=lambda ai: {},
+        ),
+        ai=SimpleNamespace(model="deepseek-chat"),
+    )
+
+
+class _FakeOpenAIStream:
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    def __aiter__(self):
+        self._iter = iter(self._chunks)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+class _FakeOpenAIClient:
+    def __init__(self, chunks):
+        self._chunks = chunks
+        self.kwargs = None
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    async def _create(self, **kwargs):
+        self.kwargs = kwargs
+        return _FakeOpenAIStream(self._chunks)
+
+
+async def _collect_openai(chunks):
+    driver = OpenAIDriver()
+    client = _FakeOpenAIClient(chunks)
+    result = None
+    async for kind, val in driver.run_round(
+        client, _openai_ctx(), MessageArea.from_canonical_messages(),
+    ):
+        if kind == "done":
+            result = val
+    return result
+
+
+@pytest.mark.asyncio
+async def test_openai_replays_private_reasoning_without_canonical_persistence():
+    """兼容端工具轮仍收到本 Run 的 reasoning，但 Area 正文和持久增量均不含它。"""
+    from agent.context.assembly import MessageBatch
+
+    area = MessageArea.from_canonical_messages([{"role": "user", "content": "合成提问"}])
+    area.append_batch(MessageBatch.from_canonical_messages([
+        {"role": "assistant", "content": [{"type": "tool_call", "id": "private-call",
+                                               "name": "search", "arguments": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_call_id": "private-call",
+                                         "content": "合成回执"}]},
+    ], metadata={"round_id": "round-1"}))
+    area.private_reasoning_by_call["private-call"] = "合成私有推理"
+    client = _FakeOpenAIClient([])
+    async for _kind, _value in OpenAIDriver().run_round(client, _openai_ctx(), area):
+        pass
+    assistant = next(message for message in client.kwargs["messages"] if message.get("tool_calls"))
+    assert assistant["reasoning_content"] == "合成私有推理"
+    assert "合成私有推理" not in str(area.snapshot().messages)
+    assert "合成私有推理" not in str(area.persistence_delta(outcome="success"))
+
+
+@pytest.mark.asyncio
+async def test_openai_prompt_tokens_subtracts_deepseek_cache_hit():
+    # DeepSeek 语义：prompt_tokens=100 包含 cache_hit=80 → usage_in 应为 20
+    chunk = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=100, completion_tokens=5,
+                              prompt_cache_hit_tokens=80,
+                              prompt_tokens_details=None),
+        choices=[],
+    )
+    result = await _collect_openai([chunk])
+    assert result.usage_in == 20
+    assert result.cache_tokens == 80
+    assert result.usage_out == 5
+
+
+@pytest.mark.asyncio
+async def test_openai_prompt_tokens_subtracts_details_cached_tokens():
+    # OpenAI/Qwen 语义：prompt_tokens_details.cached_tokens 是 prompt_tokens 的子集
+    chunk = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=100, completion_tokens=5,
+                              prompt_cache_hit_tokens=0,
+                              prompt_tokens_details=SimpleNamespace(cached_tokens=60)),
+        choices=[],
+    )
+    result = await _collect_openai([chunk])
+    assert result.usage_in == 40
+    assert result.cache_tokens == 60
+
+
+@pytest.mark.asyncio
+async def test_openai_no_cache_keeps_prompt_tokens():
+    chunk = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=100, completion_tokens=5,
+                              prompt_cache_hit_tokens=0,
+                              prompt_tokens_details=None),
+        choices=[],
+    )
+    result = await _collect_openai([chunk])
+    assert result.usage_in == 100
+    assert result.cache_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_openai_round_reports_finish_reason_and_output_budget():
+    chunk = SimpleNamespace(
+        usage=None,
+        choices=[SimpleNamespace(
+            finish_reason="length",
+            delta=SimpleNamespace(content=None, reasoning_content=None, tool_calls=[]),
+        )],
+    )
+    result = await _collect_openai([chunk])
+
+    assert result.finish_reason == "length"
+    assert result.output_token_budget == 100
+
+
+@pytest.mark.asyncio
+async def test_openai_driver_merges_system_messages_before_sending():
+    chunk = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=1,
+                              prompt_cache_hit_tokens=0,
+                              prompt_tokens_details=None),
+        choices=[],
+    )
+    client = _FakeOpenAIClient([chunk])
+    messages = MessageArea.from_canonical_messages([
+        {"role": "system", "content": "基础人格"},
+        {"role": "system", "content": "session snapshot"},
+        {"role": "user", "content": "当前问题"},
+    ], fixed_prefix_size=2)
+
+    async for _kind, _value in OpenAIDriver().run_round(
+        client, _openai_ctx(), messages,
+    ):
+        pass
+
+    assert client.kwargs["messages"] == [
+        {
+            "role": "system",
+            "content": "基础人格\n\n---\n\nsession snapshot",
+        },
+        {"role": "user", "content": "当前问题"},
+    ]
+    assert messages.provider_projection()[1]["role"] == "system"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_split_usage_passes_through(monkeypatch):
+    # Anthropic 口径：input_tokens 本来就不含 cache_read，必须原样透传，不能再扣
+    import agent.core as core
+
+    final = SimpleNamespace(
+        content=[],
+        usage=SimpleNamespace(input_tokens=20, output_tokens=5,
+                              cache_read_input_tokens=80),
+    )
+
+    async def fake_stream_round(_client, _kwargs, _adapter):
+        yield ("final", final)
+
+    monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+    ctx = SimpleNamespace(
+        model="claude-fake", max_tokens=100, tools=[],
+        system_param={}, thinking_param={}, generation_param={},
+        supports_active_cache=False,
+        adapter=SimpleNamespace(render_history=lambda area: area.provider_projection()),
+    )
+    driver = AnthropicDriver()
+    result = None
+    async for kind, val in driver.run_round(
+        object(), ctx, MessageArea.from_canonical_messages(),
+    ):
+        if kind == "done":
+            result = val
+    assert result.usage_in == 20
+    assert result.cache_tokens == 80
+    assert result.usage_out == 5
+
+
+@pytest.mark.asyncio
+async def test_anthropic_restored_blocks_do_not_flatten_dynamic_tail(monkeypatch):
+    import agent.core as core
+
+    captured = {}
+    final = SimpleNamespace(
+        content=[],
+        usage=SimpleNamespace(
+            input_tokens=5, output_tokens=1,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ),
+    )
+
+    async def fake_stream_round(_client, kwargs, _adapter):
+        captured.update(kwargs)
+        yield ("final", final)
+
+    monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+    messages = MessageArea.from_canonical_messages([
+        {"role": "system", "content": [{"type": "text", "text": "稳定快照"}]},
+        {"role": "user", "content": [{"type": "text", "text": "当前问题"}]},
+    ])
+    messages.configure_request(fixed_prefix=(), render_options={"api_format": "anthropic"})
+    messages.set_dynamic_tail([{
+        "role": "user",
+        "content": [{"type": "text", "text": "当前时间提醒"}],
+    }])
+    ctx = SimpleNamespace(
+        model="claude-test", max_tokens=32, tools=[],
+        system_param={}, thinking_param={}, generation_param={},
+        supports_active_cache=True,
+        restored_blocks=[{"type": "thinking", "thinking": "已恢复状态"}],
+        adapter=SimpleNamespace(render_history=lambda area: area.provider_projection()),
+    )
+
+    async for _kind, _value in AnthropicDriver().run_round(object(), ctx, messages):
+        pass
+
+    outbound = captured["messages"]
+    assert isinstance(outbound, list)
+    outbound_conversation = outbound[:3]
+    outbound_tail = outbound[3:]
+    assert [message["role"] for message in outbound_conversation] == [
+        "user", "assistant", "user",
+    ]
+    assert outbound_conversation[1]["content"][0]["thinking"] == "已恢复状态"
+    assert outbound_tail == [{
+        "role": "user", "content": [{"type": "text", "text": "当前时间提醒"}],
+    }]
+    assert not any(
+        "cache_control" in block
+        for message in outbound_tail
+        for block in (message.get("content") or [])
+        if isinstance(block, dict)
+    )
+    assert len(messages.provider_projection()) == 3
+    assert ctx.restored_blocks is None
+
+
+@pytest.mark.asyncio
+async def test_anthropic_tool_name_cleanup_is_reused_for_dispatch_and_history(monkeypatch):
+    """provider 工具名被污染时，RoundResult 与回放历史必须使用同一个干净名称。"""
+    import agent.core as core
+
+    final = SimpleNamespace(
+        content=[{
+            "type": "tool_use",
+            "id": "call-1",
+            "name": "list_dir]<]minimax[",
+            "input": {"space": "workspace"},
+        }],
+        usage=SimpleNamespace(
+            input_tokens=10, output_tokens=1,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ),
+    )
+
+    async def fake_stream_round(_client, _kwargs, _adapter):
+        yield ("final", final)
+
+    monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+    ctx = SimpleNamespace(
+        model="minimax-test", max_tokens=32, tools=[],
+        system_param={}, thinking_param={}, generation_param={},
+        supports_active_cache=False,
+        adapter=SimpleNamespace(
+            render_history=lambda area: area.provider_projection(),
+            stream_sanitize_markers=lambda: ("]<]minimax",),
+        ),
+    )
+
+    result = None
+    async for kind, value in AnthropicDriver().run_round(
+        object(), ctx, MessageArea.from_canonical_messages(),
+    ):
+        if kind == "done":
+            result = value
+
+    assert result.tool_calls[0].name == "list_dir"
+    assert result.raw[0]["name"] == "list_dir"
+
+
+def test_anthropic_projection_sanitizes_provider_copy_without_mutating_area():
+    """出站配对清洗不得改写 canonical Area。"""
+    messages = MessageArea.from_canonical_messages([
+        {"role": "system", "content": [{"type": "text", "text": "snapshot"}]},
+        {"role": "user", "content": [{
+            "type": "text",
+            "text": "[system-reminder]\n姿态提醒\n[/system-reminder]",
+        }]},
+        {"role": "user", "content": [{"type": "text", "text": "当前任务"}]},
+        {"role": "user", "content": [{
+            "type": "time-context",
+            "text": "[system-reminder]\n当前时间：2026-09-05 12:45\n[/system-reminder]",
+        }]},
+    ])
+
+    messages.configure_request(fixed_prefix=(), render_options={"api_format": "anthropic"})
+    before = messages.snapshot()
+    rendered = messages.provider_projection()
+    assert len(rendered) == 4
+    assert rendered[-1]["content"][0]["type"] == "text"
+    assert messages.snapshot() == before

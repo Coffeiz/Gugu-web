@@ -10,6 +10,20 @@ html[data-family='mono'] .mind-tabs {
   backdrop-filter: var(--chrome-glass-blur);
   -webkit-backdrop-filter: var(--chrome-glass-blur);
 }
+/* .mind-tabs 只负责分段控件轨道，选中药丸由 SegmentedControl 内部独立绘制。Mono 需要
+   给这个内部滑块单独描边；边框放在测量尺寸内，避免改变药丸与选项的对齐。 */
+html[data-family='mono'] .mind-tabs .seg-pill {
+  border: 1px solid var(--border-strong);
+  box-sizing: border-box;
+}
+/* 三栏笔记的新建按钮使用共享 ActionButton 次要变体；仅在此入口覆盖它的边框令牌。 */
+html[data-family='mono'] .ntp-new {
+  --action-secondary-border: var(--border-strong);
+  --action-secondary-border-hover: var(--border-strong);
+}
+html[data-family='mono'] .ntp-item {
+  border-color: var(--border-strong);
+}
 html[data-theme][data-family] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
   --glass-card-blur: var(--glass-blur);
 }

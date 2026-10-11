@@ -10,9 +10,10 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from agent.sandbox.protocol import WorkspaceMount
+if TYPE_CHECKING:
+    from agent.sandbox.protocol import WorkspaceMount
 
 _log = logging.getLogger(__name__)
 
@@ -277,6 +278,26 @@ class PtyManager:
         """返回当前进程快照；调用方只能把它用于状态校正，不能据此恢复假进程。"""
         return [session.snapshot() for session in self._sessions.values()]
 
+    @staticmethod
+    def _finish_output_queue(queue: asyncio.Queue[bytes | None]) -> None:
+        """保留正常退出前已入队的输出，并保证消费者最终收到终态哨兵。"""
+        try:
+            queue.put_nowait(None)
+        except asyncio.QueueFull:
+            # 满队列无法容纳哨兵时只丢弃最旧的一条，保留较新的终端输出。
+            queue.get_nowait()
+            queue.put_nowait(None)
+
+    @staticmethod
+    def _discard_pending_output_and_finish(queue: asyncio.Queue[bytes | None]) -> None:
+        """队列溢出时丢弃积压并立即投递终态，避免慢读端无限滞留。"""
+        while True:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        queue.put_nowait(None)
+
     async def _pump_output(self, session: ManagedPty) -> None:
         try:
             async for chunk in session.handle.output():
@@ -289,7 +310,6 @@ class PtyManager:
                 session.output_bytes += len(chunk)
                 session.output_window_bytes += len(chunk)
                 if session.output_bytes > self.max_output_bytes or session.output_window_bytes > self.max_output_rate:
-                    await session.handle.close(force=True)
                     break
                 for queue in tuple(session.output_queues):
                     try:
@@ -297,17 +317,20 @@ class PtyManager:
                     except asyncio.QueueFull:
                         # 读端落后时终止连接，不能无限制堆积 PTY 输出。
                         session.output_queues.discard(queue)
-                        queue.put_nowait(None)
+                        self._discard_pending_output_and_finish(queue)
         finally:
+            async with self._lock:
+                owns_session = self._sessions.get(session.terminal_id) is session
+                if owns_session:
+                    self._sessions.pop(session.terminal_id, None)
+            if owns_session:
+                try:
+                    await session.handle.close(force=True)
+                except Exception as exc:
+                    _log.warning("terminal_pty_handle_close_failed error=%s", type(exc).__name__)
             for queue in tuple(session.output_queues):
                 session.output_queues.discard(queue)
-                try:
-                    queue.put_nowait(None)
-                except asyncio.QueueFull:
-                    pass
-            async with self._lock:
-                if self._sessions.get(session.terminal_id) is session:
-                    self._sessions.pop(session.terminal_id, None)
+                self._finish_output_queue(queue)
 
     async def _remove(self, terminal_id: str) -> None:
         async with self._lock:

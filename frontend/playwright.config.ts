@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test'
 
-export const authFile = 'playwright/.auth/user.json'
+export const authFile = process.env.PLAYWRIGHT_AUTH_FILE ?? 'playwright/.auth/user.json'
 
 /**
  * E2E 默认连接已启动的 devserver；Gugu-web 的开发服务由 devserver 管理，

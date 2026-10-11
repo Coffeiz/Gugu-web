@@ -13,7 +13,19 @@ function git(args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
 }
 
-const base = process.env.GITHUB_BASE_SHA || 'HEAD'
+let base = process.env.GITHUB_BASE_SHA?.trim()
+if (!base) {
+  try {
+    base = git(['merge-base', 'HEAD', 'origin/main'])
+  } catch {
+    console.error('[测试元数据] 无法确定比较基线；请提供 GITHUB_BASE_SHA，或准备 origin/main。')
+    process.exit(2)
+  }
+  if (!base) {
+    console.error('[测试元数据] merge-base 结果为空；拒绝使用 HEAD 自比较。')
+    process.exit(2)
+  }
+}
 let names = []
 try {
   names = git(['diff', '--name-status', '--diff-filter=A', `${base}...HEAD`]).split('\n').filter(Boolean)
@@ -75,4 +87,4 @@ if (errors.length) {
   for (const error of errors) console.error(`- ${error}`)
   process.exit(1)
 }
-console.log(`[测试元数据] 通过：检查新增测试 ${added.size} 个；要求 domain/layer/owner/productionEntry/keyBehavior/ci。`)
+console.log(`[测试元数据] 通过：基线 ${base}，检查新增测试 ${added.size} 个；要求 domain/layer/owner/productionEntry/keyBehavior/ci。`)

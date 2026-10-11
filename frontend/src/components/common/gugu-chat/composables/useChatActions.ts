@@ -2,7 +2,9 @@ import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import { useFilesCacheStore } from '@/stores/filesCache'
+import { usePreviewBlobCache } from '@/composables/shared/usePreviewBlobCache'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { filesApi } from '@/services/api'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import type { Router } from 'vue-router'
 import { i18n } from '@/i18n'
@@ -62,11 +64,37 @@ export function useChatActions(options: {
   // 预览不了（非白名单类型/已删除）才退回跳文件库定位。
   // 咕咕实际会发两种格式：gugu://open-file/<id> 和 gugu://open-object/file/<id>，都接。
   async function openFileFromLink(id: number) {
-    const filesCache = useFilesCacheStore()
-    if (!filesCache.loaded) await filesCache.load()
-    const f = filesCache.allFiles.find(item => item.id === id)
+    const accountEpoch = getAccountBoundaryEpoch()
+    const previewStore = usePreviewStore()
+    const previewBlobCache = usePreviewBlobCache()
+    const existing = previewStore.windows.find(win => win.file.id === id)?.file
+      ?? (previewStore.singleFile?.id === id ? previewStore.singleFile : null)
+    if (existing) {
+      previewStore.open(existing)
+      return
+    }
+
+    // 同一页面内重开时先命中正文缓存，避免为了签名地址再等待一次服务器请求。
+    const cachedFile = previewBlobCache.getFile(id, liveStore.rev.files)
+    if (cachedFile && previewBlobCache.get(previewBlobCache.keyOf(cachedFile))) {
+      previewStore.open(cachedFile)
+      return
+    }
+
+    let f: Awaited<ReturnType<typeof filesApi.getStreamUrl>>['file'] | null = null
+    let streamUrl: string | undefined
+    try {
+      const result = await filesApi.getStreamUrl(id)
+      if (accountEpoch !== getAccountBoundaryEpoch()) return
+      f = result.file
+      streamUrl = result.url
+      previewBlobCache.rememberFile(f, liveStore.rev.files, accountEpoch)
+    } catch {
+      // 与文件已删除或无法预览时一致，交由文件库展示定位结果。
+    }
+    if (accountEpoch !== getAccountBoundaryEpoch()) return
     if (f && isPreviewable(f.ext, f.mimeType)) {
-      usePreviewStore().open(f)
+      previewStore.open(f, null, false, streamUrl)
       return
     }
     uiStore.pendingFileTarget = { kind: 'file', id }

@@ -14,10 +14,25 @@ _ENTRY_MARKER = "/.agent/knowledge/entries/"
 _FORMAT_MARKER = "/.agent/knowledge/.timestamps-iso-v1"
 _TIMESTAMP_KEYS = {"created_at", "updated_at", "checked_at"}
 _MIGRATION_MARKER_CONTENT = b"knowledge-timestamps=iso8601-utc-v1\n"
+_LIST_PAGE_SIZE = 500
 
 
 class KnowledgeTimestampMigrationError(RuntimeError):
     """Knowledge 时间格式迁移失败。"""
+
+
+async def _list_user_entry_keys(storage, user_id: object) -> list[str]:
+    """分页读取单用户知识目录，避免遍历其他用户或工作区文件。"""
+    prefix = f"{user_id}{_ENTRY_MARKER}"
+    keys: list[str] = []
+    cursor = None
+    while True:
+        page, cursor = await storage.list_keys_prefix(
+            prefix, cursor=cursor, limit=_LIST_PAGE_SIZE,
+        )
+        keys.extend(key for key in page if key.startswith(prefix) and key.endswith(".md"))
+        if cursor is None:
+            return keys
 
 
 def _iso_timestamp(value: object) -> str:
@@ -156,7 +171,10 @@ async def migrate_user_knowledge_timestamps(
         prefix = f"{user}{_ENTRY_MARKER}"
         converted = 0
         try:
-            keys = _known_keys if _known_keys is not None else await storage.list_keys()
+            keys = (
+                _known_keys if _known_keys is not None
+                else await _list_user_entry_keys(storage, user_id)
+            )
             for key in keys:
                 if not key.startswith(prefix) or not key.endswith(".md"):
                     continue

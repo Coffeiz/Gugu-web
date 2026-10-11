@@ -200,6 +200,6 @@ defineExpose({ listRef })
 .ci-batch-delete:hover { background: color-mix(in srgb, var(--status-danger) 14%, var(--surface-soft)); border-color: var(--status-danger); }
 .ci-clear-selection { color: var(--content-secondary); background: var(--surface-soft); }
 .ci-clear-selection:hover { color: var(--content-primary); background: var(--action-soft-hover); border-color: var(--action-outline); }
-.canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed var(--border-subtle); border-radius: 6px; background: var(--surface-soft); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
+.canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed var(--content-outline); border-radius: 6px; background: var(--surface-soft); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
 .canvas-create-card:hover { background: var(--action-soft); border-color: var(--action-outline); color: var(--action-primary); }
 </style>

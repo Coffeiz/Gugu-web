@@ -188,6 +188,14 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(folderPresentation).toContain("if (folder.type === 'status') return STATUS_COLOR")
   })
 
+  it('项目文件区复用文件库的文件夹图标与强调色映射', () => {
+    expect(projectFilesPanel).toContain("useFileLibraryFolderPresentation")
+    expect(projectFilesPanel).toContain("folderListIcon({ type: 'folder' })")
+    expect(projectFilesPanel).toContain("folderAccentColor({ type: 'folder' })")
+    expect(projectFilesPanel).not.toContain(':style="{ color: accentColor }"')
+    expect(projectFilesPanel).not.toContain('<svg class="fd-big-icon"')
+  })
+
   it('文件卡 hover/图片预框选不会覆盖 selected，亮色 full-card preview 由 FileCard 自己统一拥有', () => {
     expect(fileCard).toContain('.fc-card:hover:not(.selected):not(.pre-selected)')
     expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) .fc-thumb-area::after')

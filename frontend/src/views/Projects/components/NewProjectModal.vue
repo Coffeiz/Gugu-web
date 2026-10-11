@@ -549,7 +549,7 @@ function handleCreate() {
   font-family: var(--font-sans); line-height: 1.2; outline: none;
   padding: 7px 8px; margin: 0;
   border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; corner-shape: squircle;
-  background: rgba(255,255,255,0.72); caret-color: var(--color-primary);   /* 与下方字段框统一：0.72 白底 + 0.1 边框 */
+  background: rgba(255,255,255,0.72); caret-color: var(--input-caret-color);   /* 与下方字段框统一：0.72 白底 + 0.1 边框 */
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
@@ -606,7 +606,7 @@ input[type="text"], input:not([type]):not(.name-input):not(.header-name-input) {
   font-family: var(--font-sans); outline: none;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
   box-sizing: border-box;
-  caret-color: var(--action-primary);
+  caret-color: var(--input-caret-color);
 }
 input:not(.name-input):not(.header-name-input)::placeholder { color: var(--input-placeholder); }
 input:not(.name-input):not(.header-name-input):hover:not(:disabled) {

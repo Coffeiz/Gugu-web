@@ -333,9 +333,9 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
     """将统一回复交给对应 Gateway。"""
     platform = payload.get("platform")
     from agent.outbound import sanitize_im_links
-    text = sanitize_im_links(reply.text) if platform in {"qq", "feishu", "wechat"} else reply.text
+    text = sanitize_im_links(reply.text) if platform in {"qq", "feishu", "wechat", "telegram"} else reply.text
     unsupported = reply.unsupported_capabilities(platform or "")
-    if unsupported and platform in {"qq", "feishu", "wechat"}:
+    if unsupported and platform in {"qq", "feishu", "wechat", "telegram"}:
         from agent.security import logsafe
         print(
             f"[im] {platform} 不支持回复能力: {','.join(unsupported)} "
@@ -383,6 +383,14 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
             payload.get("context_token", ""),
         )
         return result is not False
+    elif platform == "telegram" and reply.target.id:
+        from agent.gateway import telegram
+        return await telegram.send_message(
+            reply.target.id,
+            text,
+            channel_id=str(payload.get("channel_id") or ""),
+            reply_to_message_id=reply.reply_to_message_id,
+        )
     else:
         from agent.security import logsafe
         print(
@@ -408,7 +416,23 @@ async def send_file(payload: dict, *, storage_key: str, ext: str, display_name: 
         return await _send_file_feishu(payload, ext, data, fname)
     if platform == "qq":
         return await _send_file_qq(payload, storage_key, ext, display_name, fname)
+    if platform == "telegram":
+        return await _send_file_telegram(payload, storage_key, fname)
     return False
+
+
+async def _send_file_telegram(payload: dict, storage_key: str, fname: str) -> bool:
+    from agent.gateway import telegram
+    from app.services.storage import get_storage
+
+    target_id = payload.get("chat_id") if payload.get("chat_type") == "group" else payload.get("platform_user_id")
+    if not target_id:
+        return False
+    data = await get_storage().get(storage_key)
+    return await telegram.send_file(
+        str(target_id), data, fname, channel_id=str(payload.get("channel_id") or ""),
+        reply_to_message_id=str(payload.get("message_id") or "") or None,
+    )
 
 
 async def _send_file_wechat(payload: dict, storage_key: str, ext: str, fname: str) -> bool:

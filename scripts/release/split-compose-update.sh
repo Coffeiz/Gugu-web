@@ -1,19 +1,77 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 分体 Compose 固定服务更新入口。仅由挂载 Docker socket 的 updater sidecar 调用；
+# 分体 Compose 的 Docker 更新入口。可由受限 updater 调用，也可由管理员在部署主机执行；
 # 不修改用户 Compose/.env，不允许任意服务名，不执行 down -v 或全局清理。
 
-ROOT_DIR="${COMPOSE_PROJECT_DIR:?必须指定 Compose 项目目录}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${COMPOSE_PROJECT_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.prod.yml}"
-MANIFEST="${1:-}"
-BACKUP_ROOT="${BACKUP_ROOT:?必须指定受保护的 updater 备份目录}"
-VALIDATOR="${UPDATE_VALIDATOR:-/opt/gugu-updater/scripts/release/validate-update-manifest.mjs}"
-SCHEMA="${UPDATE_SCHEMA:-/opt/gugu-updater/deploy/update-manifest.schema.json}"
+MANIFEST=""
+CONFIRMED=false
+VERIFY_SIGNATURES=false
+BACKUP_ROOT="${BACKUP_ROOT:-}"
+VALIDATOR="${UPDATE_VALIDATOR:-$SCRIPT_DIR/validate-update-manifest.mjs}"
+SCHEMA="${UPDATE_SCHEMA:-$SCRIPT_DIR/../../deploy/update-manifest.schema.json}"
+
+usage() {
+  cat <<'EOF'
+用法：scripts/release/split-compose-update.sh --manifest <update-manifest.json> --confirm
+
+环境变量：
+  COMPOSE_PROJECT_DIR  分体 Compose 部署目录，默认使用当前仓库根目录
+  COMPOSE_PROJECT_NAME Compose 项目名；若原部署用了 -p/自定义项目名则必须设置
+  COMPOSE_FILE         Compose 文件，默认 docker-compose.prod.yml
+  BACKUP_ROOT          受保护的备份目录，必须显式指定
+  EXTERNAL_SANDBOX_CONTROL / EXTERNAL_SANDBOX_DOCKER_HOST
+                       分体部署使用外置 Sandbox 时必填
+
+此入口会校验发布镜像签名，依次拉取镜像、停止业务与 Sandbox、备份数据库和 users、
+执行离线迁移并验证，然后才启动新版本。普通 Compose/NAS“拉取并重建”按钮不能替代此流程。
+EOF
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --manifest)
+      [[ $# -ge 2 && -z "$MANIFEST" ]] || { echo '缺少或重复指定 --manifest' >&2; exit 2; }
+      MANIFEST="$2"
+      VERIFY_SIGNATURES=true
+      shift 2
+      ;;
+    --confirm)
+      CONFIRMED=true
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "未知参数：$1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      # 保留受限 updater 的旧调用形式；该调用方已在执行前验证发布签名。
+      [[ -z "$MANIFEST" ]] || { echo '只能指定一个 manifest' >&2; exit 2; }
+      MANIFEST="$1"
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$MANIFEST" ]] || { echo '必须指定 --manifest' >&2; exit 2; }
+if [[ "$VERIFY_SIGNATURES" == true && "$CONFIRMED" != true ]]; then
+  echo 'Docker 更新必须显式传入 --confirm' >&2
+  exit 2
+fi
+[[ -n "$BACKUP_ROOT" ]] || { echo '必须指定受保护的 BACKUP_ROOT 备份目录' >&2; exit 2; }
 [[ -n "$MANIFEST" && -f "$MANIFEST" ]] || { echo 'manifest 文件不存在' >&2; exit 2; }
 [[ -f "$COMPOSE_FILE" && -f "$VALIDATOR" && -f "$SCHEMA" ]] || { echo '分体更新所需固定文件缺失' >&2; exit 1; }
 [[ -f "$ROOT_DIR/backend/.env" && ! -L "$ROOT_DIR/backend/.env" ]] || { echo 'backend/.env 缺失或不是普通文件' >&2; exit 1; }
-command -v docker >/dev/null && command -v node >/dev/null || { echo 'Docker CLI 或 Node.js 不可用' >&2; exit 1; }
+command -v docker >/dev/null && command -v node >/dev/null && command -v flock >/dev/null || { echo 'Docker CLI、Node.js 或 flock 不可用' >&2; exit 1; }
 
 node "$VALIDATOR" --schema "$SCHEMA" >/dev/null
 node "$VALIDATOR" "$MANIFEST" >/dev/null
@@ -21,7 +79,6 @@ node "$VALIDATOR" "$MANIFEST" >/dev/null
 COMPOSE=(docker compose --project-directory "$ROOT_DIR" -f "$COMPOSE_FILE" --profile sandbox)
 CONFIG="$("${COMPOSE[@]}" config --format json)"
 SERVICES="$(printf '%s' "$CONFIG" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(Object.keys(JSON.parse(s).services||{}).sort().join("\n")))')"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTERNAL_SANDBOX=false
 MANAGER_EXTERNAL="$(printf '%s' "$CONFIG" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(String(JSON.parse(s).services?.backend?.environment?.GUGU_SANDBOX_MANAGER_MODE==="external")))')"
 if ! grep -qx sandboxd <<<"$SERVICES" || [[ "$MANAGER_EXTERNAL" == true ]]; then
@@ -41,6 +98,20 @@ TARGET_BACKEND="$(sed -n '1p' <<<"$IMAGES")"
 TARGET_FRONTEND="$(sed -n '2p' <<<"$IMAGES")"
 [[ "$TARGET_BACKEND" =~ ^(docker\.io|ghcr\.io)/coffeiz/gugu-web-backend@sha256:[a-f0-9]{64}$ ]] || { echo 'backend 镜像不符合白名单' >&2; exit 1; }
 [[ "$TARGET_FRONTEND" =~ ^(docker\.io|ghcr\.io)/coffeiz/gugu-web-frontend@sha256:[a-f0-9]{64}$ ]] || { echo 'frontend 镜像不符合白名单' >&2; exit 1; }
+
+# 主机侧 Docker 更新入口不能依赖 updater daemon 的验签步骤，故在本地再次验证官方发布身份。
+COSIGN_VERIFIER_IMAGE='ghcr.io/sigstore/cosign/cosign@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8'
+COSIGN_IDENTITY_REGEXP='^https://github\.com/Coffeiz/Gugu-web/\.github/workflows/docker-release\.yml@refs/tags/v.*$'
+COSIGN_OIDC_ISSUER='https://token.actions.githubusercontent.com'
+if [[ "$VERIFY_SIGNATURES" == true ]]; then
+  echo '验证 backend/frontend 发布签名'
+  for image in "$TARGET_BACKEND" "$TARGET_FRONTEND"; do
+    docker run --rm "$COSIGN_VERIFIER_IMAGE" verify \
+      --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
+      --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+      "$image" >/dev/null
+  done
+fi
 
 PULL_SERVICES=(migrate backend worker gateway frontend)
 SANDBOXD_UPDATE=false
@@ -63,6 +134,11 @@ DB_USER="${GUGU_DB_USER:-gugu}"
 DB_NAME="${GUGU_DB_NAME:-gugu}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="$BACKUP_ROOT/split-update-$STAMP"
+LOCK_DIR="$BACKUP_ROOT/.split-compose-update"
+mkdir -p "$LOCK_DIR"
+chmod 700 "$LOCK_DIR"
+exec 9>"$LOCK_DIR/update.lock"
+flock -n 9 || { echo '另一个分体 Compose 更新正在运行，拒绝并发更新' >&2; exit 1; }
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 cp "$ROOT_DIR/backend/.env" "$BACKUP_DIR/backend.env"

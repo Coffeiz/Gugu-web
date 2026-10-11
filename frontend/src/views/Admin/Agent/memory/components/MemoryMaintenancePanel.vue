@@ -19,18 +19,17 @@
       </div>
       <div v-if="mem.status === 'done'" class="behavior-item full-row result-block memory-subpanel">
         <div class="result-head">
-          <span class="behavior-desc">{{ userCount === 0 ? t('memoryMaintenanceUi.completedEmpty') : t('memoryMaintenanceUi.completed', { users: userCount, removed: totalRemoved, moved: totalMoved, events: totalProfileEvents, daily: totalDaily, legacy: totalLegacy }) }}</span>
+          <span class="behavior-desc">{{ userCount === 0 ? t('memoryMaintenanceUi.completedEmpty') : t('memoryMaintenanceUi.completed', { users: userCount, removed: totalRemoved, moved: totalMoved, events: totalProfileEvents, daily: totalDaily }) }}</span>
           <button v-if="userCount > 0" type="button" class="btn-ghost detail-btn" @click="mem.expanded = !mem.expanded">{{ mem.expanded ? t('memoryMaintenanceUi.collapseDetails') : t('memoryMaintenanceUi.details') }}</button>
         </div>
         <div v-if="mem.expanded && userCount > 0" class="mem-cleanup-detail">
           <div v-for="(item, uid) in mem.plan" :key="uid">
-            <template v-if="item.removed_texts?.length || item.moved_texts?.length || item.profile_event_texts?.length || item.daily_texts?.length || item.legacy_files?.length">
+            <template v-if="item.removed_texts?.length || item.moved_texts?.length || item.profile_event_texts?.length || item.daily_texts?.length">
               <div class="mem-cleanup-uid">{{ uid }}（{{ t('memoryMaintenanceUi.itemCount', { count: item.total }) }}）</div>
               <div v-for="(text, i) in item.removed_texts" :key="`r${i}`" class="mem-cleanup-text">· [{{ t('memoryMaintenanceUi.removedTag') }}] {{ text }}</div>
               <div v-for="(text, i) in item.moved_texts" :key="`m${i}`" class="mem-cleanup-text moved">· [{{ t('memoryMaintenanceUi.movedTag') }}] {{ text }}</div>
               <div v-for="(text, i) in item.profile_event_texts" :key="`pe${i}`" class="mem-cleanup-text profile-event">· [{{ t('memoryMaintenanceUi.profileEventTag') }}] {{ text }}</div>
               <div v-for="(text, i) in item.daily_texts" :key="`d${i}`" class="mem-cleanup-text daily">· [{{ t('memoryMaintenanceUi.dailyTag') }}] {{ text }}</div>
-              <div v-for="(file, i) in item.legacy_files" :key="`l${i}`" class="mem-cleanup-text legacy">· [{{ t('memoryMaintenanceUi.legacyTag') }}] {{ file }}</div>
             </template>
             <div v-else-if="item.error" class="mem-cleanup-uid error">{{ uid }}：{{ item.error }}</div>
           </div>
@@ -79,7 +78,7 @@ import { useImMemoryMaintenance } from '../useImMemoryMaintenance'
 const adminStore = useAdminStore()
 const { t } = useI18n()
 const memory = useMemoryMaintenance(adminStore)
-const { state: mem, userCount, totalRemoved, totalMoved, totalProfileEvents, totalDaily, totalLegacy, applyMsg, startPreview, apply } = memory
+const { state: mem, userCount, totalRemoved, totalMoved, totalProfileEvents, totalDaily, applyMsg, startPreview, apply } = memory
 const imMemory = useImMemoryMaintenance(adminStore)
 const { state: imScopes, preview: imPreview, startPreview: startImPreview, apply: applyIm } = imMemory
 </script>
@@ -110,7 +109,7 @@ const { state: imScopes, preview: imPreview, startPreview: startImPreview, apply
 .mem-cleanup-uid { margin-top:8px; color:var(--content-primary); font-size:var(--font-size-sm,12px); line-height:var(--line-height-ui,1.4); }
 .mem-cleanup-uid:first-child { margin-top:0; }
 .mem-cleanup-text { padding-left:4px; color:var(--content-secondary); font-size:var(--font-size-sm,12px); line-height:var(--line-height-body,1.6); }
-.mem-cleanup-text.moved { color:var(--action-primary); }.mem-cleanup-text.profile-event { color:var(--status-warning); }.mem-cleanup-text.daily { color:var(--status-info); }.mem-cleanup-text.legacy { color:var(--content-tertiary); }
+.mem-cleanup-text.moved { color:var(--action-primary); }.mem-cleanup-text.profile-event { color:var(--status-warning); }.mem-cleanup-text.daily { color:var(--status-info); }
 .im-memory-result { margin-top:12px; padding:12px; }.im-memory-result.memory-subpanel { padding: 12px; }.im-memory-summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }.im-memory-summary-grid > div { min-width:0; padding:10px 8px; border:1px solid var(--panel-glass-border); border-radius:var(--radius-sm); background:var(--surface-soft); text-align:center; }.im-memory-summary-grid strong { display:block; color:var(--content-primary); font-size:18px; line-height:1.2; }.im-memory-summary-grid span { display:block; margin-top:4px; color:var(--content-tertiary); font-size:11px; }.im-memory-platforms { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }.im-memory-platform { padding:5px 9px; border-radius:var(--radius-pill); background:var(--selection-bg); color:var(--content-secondary); font-size:11px; }.im-memory-maintenance-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; }.im-memory-progress { display:flex; gap:12px; margin-top:10px; color:var(--content-secondary); font-size:12px; }
 .behavior-desc { color: var(--content-tertiary); font-size: 12px; }
 .save-hint { color:var(--status-success); font-size:var(--font-size-sm,12px); line-height:var(--line-height-ui,1.4); }

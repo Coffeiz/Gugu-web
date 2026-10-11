@@ -37,12 +37,13 @@ Python 认证、身份与 scope 授权
 | `memory` | profile、daily、pattern 等 Memory | `memory` | 走 Memory 专用重建和向量同步 |
 | `knowledge` | 用户 Knowledge 条目 | `knowledge` | 主数据是用户目录下的 Knowledge Markdown |
 | `project` | 项目、阶段、待办 | `projects` | 通过项目适配器生成文档 |
-| `file` | 文件库文件和文件夹记录 | `files` | 只索引已授权的文件名和文件元数据，不读取文件正文 |
 | `note` | 思维便签 | `mind` | 与画布资源共用 mind 事件 |
 | `canvas` | 思维画布节点 | `mind` | 与便签资源共用 mind 事件 |
 | `calendar` | 日历事件 | `calendar` | 只生成 owner 范围内文档 |
 | `scheduled_task` | 定时任务 | `scheduled_tasks` | 只生成 owner 范围内文档 |
 | `conversation` | 会话消息 | `sessions` / `conversation` | 支持消息水位过滤 |
+
+文件库不参与自动 RAG。咕咕需要定位或读写文件时，使用文件 CRUD 工具（如 `list_dir`、`grep`、`read_file`、`edit_file`）；这些工具的授权与确认规则独立于 RAG。
 
 资源到来源的集中映射位于 `backend/app/core/events.py` 的
 `_RAG_SOURCES_BY_RESOURCE`。新增业务资源时必须同时检查：写入事件、映射、来源适配器和索引测试。

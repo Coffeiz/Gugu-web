@@ -13,7 +13,7 @@ class IndexedSourceRetriever:
     """把持久化索引来源接入统一查询链；文档投影由 TS Worker 完成。"""
 
     SUPPORTED_SOURCE_TYPES = frozenset({
-        "file", "canvas", "note", "calendar", "scheduled_task", "conversation", "knowledge",
+        "canvas", "note", "calendar", "scheduled_task", "conversation", "knowledge",
     })
 
     def __init__(self, user_id: object, *, db=None, db_factory=None, source_type: str):

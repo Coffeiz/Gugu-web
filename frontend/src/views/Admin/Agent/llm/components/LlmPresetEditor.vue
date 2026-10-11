@@ -23,7 +23,7 @@
                   :model-value="childSelection"
                   :providers="childProviderOptions"
                   :placeholder="t('llmExtraUi.childOption')"
-                  @update:model-value="$emit('set-provider', `${draft.provider}|${$event}`)"
+                  @update:model-value="$emit('set-provider', `${draft.provider === 'glm-coding' ? 'glm' : draft.provider}|${$event}`)"
                 />
               </div>
             </div>
@@ -33,7 +33,7 @@
               :label="t('adminLlmUi.interfaceFormat')"
               :model-value="interfaceValue(draft)"
               :options="interfaceOptionsFor(draft)"
-              :hint="draft.provider === 'mimo' ? t('llmExtraUi.multimodalHint') : undefined"
+              :hint="draft.provider === 'mimo' ? t('llmExtraUi.multimodalHint') : draft.provider === 'local' ? t('llmExtraUi.localApiFormatHint') : draft.provider === 'ollama' ? t('llmExtraUi.ollamaApiFormatHint') : undefined"
               @update:model-value="pickInterface(draft, String($event))"
             />
 
@@ -41,7 +41,7 @@
               <label>{{ t('llmExtraUi.baseUrl') }}</label>
               <input v-model="draft.base_url" :placeholder="draft.provider === 'ollama' ? 'http://127.0.0.1:11434/v1' : 'https://…'" class="modal-input" />
               <div v-if="draft.provider === 'qwen'" class="modal-hint">
-                {{ t('llmExtraUi.bailianHint', { url: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' }) }}
+                {{ t('llmExtraUi.bailianHint', { url: draft.api_format === 'anthropic' ? 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic' : 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' }) }}
               </div>
             </div>
 
@@ -96,6 +96,9 @@
               <AdminSelect :model-value="thinkingSelection(draft)" :options="thinkingOptions"
                 :placeholder="t('profileByokUi.thinkingPlaceholder')"
                 class="thinking-select" @update:model-value="pickThinking(draft, String($event))" />
+              <div class="thinking-hint">
+                {{ t('profileByokUi.genericThinkingHint') }}
+              </div>
             </div>
 
             <div v-if="supportsReasoningPersistence(draft)" class="modal-field">
@@ -165,7 +168,7 @@ import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import ProviderSelect from '../../components/ProviderSelect.vue'
 import InterfaceTypeSelect from '../../components/InterfaceTypeSelect.vue'
-import { apiFormatsForProvider, defaultApiFormatForProvider, retainApiFormatForProvider } from '@/utils/modelProviders'
+import { apiFormatsFromSnapshot, defaultApiFormatFromSnapshot, defaultApiFormatForProvider, defaultBaseUrlFromSnapshot, retainApiFormatFromSnapshot, type ProviderApiFormatSnapshot } from '@/utils/modelProviders'
 import LocalCapabilityOverrides from '../../components/LocalCapabilityOverrides.vue'
 import MultimodalCapabilities from '@/components/common/controls/MultimodalCapabilities.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
@@ -216,6 +219,7 @@ const providerOptions = computed(() => providerGroups.value.map(({ children: _ch
 const providerSelection = computed(() => {
   const draft = props.draft
   if (!draft) return ''
+  if (draft.provider === 'glm-coding') return 'glm|coding'
   if (draft.provider === 'glm') return `glm|${(draft.base_url || '').includes('/api/coding/') ? 'coding' : 'general'}`
   if (draft.provider === 'local') return `local|${draft.local_runtime || 'other'}`
   if (draft.provider === 'ollama') return `ollama|${draft.ollama_mode || 'local'}`
@@ -223,7 +227,8 @@ const providerSelection = computed(() => {
 })
 const childSelection = computed(() => providerSelection.value.split('|')[1] || '')
 const childProviderOptions = computed(() => {
-  const provider = providerGroups.value.find(item => item.key === props.draft?.provider)
+  const providerKey = props.draft?.provider === 'glm-coding' ? 'glm' : props.draft?.provider
+  const provider = providerGroups.value.find(item => item.key === providerKey)
   return (provider?.children || []).map(child => ({ key: child.key, label: child.label }))
 })
 const formatLabels: Record<string, string> = {
@@ -232,13 +237,22 @@ const formatLabels: Record<string, string> = {
 }
 function interfaceOptionsFor(draft: LlmPresetDraft | null) {
   if (!draft) return []
-  const supported = apiFormatsForProvider(draft.provider, draft.base_url)
-  const options = supported.map((key: string) => ({ key, label: t(formatLabels[key] || key) }))
-  return draft.provider === 'ollama' ? [{ key: 'native', label: t(formatLabels.native) }, ...options] : options
+  // API 格式选项属于当前 Provider；切换模型时继续展示上一份同供应商声明，
+  // 避免每次输入都因能力快照刷新而卸载整个选择器。模型能力仍按 identity 单独校验。
+  const snapshot = capabilitySnapshot.value?.provider === draft.provider
+    ? capabilitySnapshot.value as ProviderApiFormatSnapshot | null
+    : null
+  const supported = apiFormatsFromSnapshot(snapshot, draft.provider)
+  const options = supported.map(key => ({ key, label: t(formatLabels[key] || key) }))
+  return draft.provider === 'ollama' && !options.some(option => option.key === 'native')
+    ? [{ key: 'native', label: t(formatLabels.native) }, ...options]
+    : options
 }
 function interfaceValue(draft: LlmPresetDraft) {
-  if (draft.provider === 'ollama' && (draft.ollama_api_mode || 'native') === 'native') return 'native'
-  return String(draft.api_format || defaultApiFormatForProvider(draft.provider))
+  const snapshot = capabilitySnapshotIdentity.value === capabilityIdentityFor(draft)
+    ? capabilitySnapshot.value as ProviderApiFormatSnapshot | null
+    : null
+  return String(draft.api_format || defaultApiFormatFromSnapshot(snapshot, draft.provider) || (draft.provider === 'ollama' && (draft.ollama_api_mode || 'native') === 'native' ? 'native' : defaultApiFormatForProvider(draft.provider)))
 }
 function supportsReasoningPersistence(draft: LlmPresetDraft | null) {
   if (!draft) return false
@@ -269,6 +283,7 @@ const thinkingOptions = computed(() => {
 })
 function thinkingSelection(draft: LlmPresetDraft) {
   if (!draft.thinking) return 'default'
+  if (capabilitySnapshot.value?.generic_thinking_toggle_supported === true) return String(draft.thinking)
   return draft.thinking === 'adaptive' && draft.reasoning_effort
     ? String(draft.reasoning_effort)
     : String(draft.thinking)
@@ -288,7 +303,7 @@ watch(
     const requestId = ++capabilityRequestId
     const previousSnapshot = capabilitySnapshot.value
     const identity = capabilityIdentityFor(draft)
-    if (capabilitySnapshotIdentity.value !== identity) {
+    if (capabilitySnapshot.value?.provider !== draft?.provider) {
       capabilitySnapshot.value = null
       capabilitySnapshotIdentity.value = ''
     }
@@ -304,12 +319,24 @@ watch(
       const latest = props.draft
       if (requestId !== capabilityRequestId || !latest || key !== [latest.provider, latest.model, latest.api_format, latest.base_url, latest.ollama_api_mode, latest.ollama_mode, latest.local_runtime].join('|')) return
       capabilitySnapshot.value = snapshot
-      if ((!latest.base_url || (previousSnapshot?.default_base_url && latest.base_url === previousSnapshot.default_base_url)) && snapshot.default_base_url) latest.base_url = snapshot.default_base_url
       capabilitySnapshotIdentity.value = capabilityIdentityFor(latest)
       capabilitySnapshotKey.value = capabilityKeyFor(latest)
-      latest.api_format = retainApiFormatForProvider(
-        latest.provider, String(latest.api_format || ''), latest.base_url,
-      )
+      const defaultFormat = defaultApiFormatFromSnapshot(snapshot, latest.provider)
+      const selectedFormat = String(latest.api_format || defaultFormat)
+      const retainedFormat = retainApiFormatFromSnapshot(snapshot, latest.provider, selectedFormat)
+      if (latest.api_format && retainedFormat !== latest.api_format) {
+        latest.api_format = retainedFormat
+        if (latest.provider === 'ollama') latest.ollama_api_mode = retainedFormat === 'native' ? 'native' : 'openai'
+      }
+      const defaultUrls = [
+        ...Object.values((snapshot.default_base_urls || {}) as Record<string, string>),
+        ...Object.values(((previousSnapshot?.default_base_urls || {}) as Record<string, string>)),
+        previousSnapshot?.default_base_url || '',
+      ]
+      if (!latest.base_url || defaultUrls.includes(latest.base_url)) {
+        const defaultUrl = defaultBaseUrlFromSnapshot(snapshot, retainedFormat)
+        if (defaultUrl) latest.base_url = defaultUrl
+      }
       if (!thinkingOptions.value.some(option => option.value === thinkingSelection(latest))) pickThinking(latest, 'default')
     } catch {
       if (requestId === capabilityRequestId && props.draft) pickThinking(props.draft, 'default')

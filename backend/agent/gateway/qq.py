@@ -41,6 +41,91 @@ STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
 _ref_indexes: dict[tuple[str, str], QQRefIndex] = {}
 _stream_seq_fallback = 0
+_QQ_HTTP_KEEPALIVE_SECONDS = 300.0
+_QQ_HTTP_SESSION: aiohttp.ClientSession | None = None
+
+
+def _qq_http_trace_config() -> aiohttp.TraceConfig:
+    """记录连接复用、DNS 与建连阶段，不把请求参数或正文放入诊断上下文。"""
+    config = aiohttp.TraceConfig()
+
+    async def _dns_started(_session, trace_ctx, _params):
+        request_ctx = getattr(trace_ctx, "trace_request_ctx", None)
+        if isinstance(request_ctx, dict):
+            request_ctx["dns_started"] = time.perf_counter()
+
+    async def _dns_finished(_session, trace_ctx, _params):
+        request_ctx = getattr(trace_ctx, "trace_request_ctx", None)
+        if isinstance(request_ctx, dict) and "dns_started" in request_ctx:
+            request_ctx["dns_ms"] = (
+                time.perf_counter() - request_ctx.pop("dns_started")
+            ) * 1000
+
+    async def _connection_started(_session, trace_ctx, _params):
+        request_ctx = getattr(trace_ctx, "trace_request_ctx", None)
+        if isinstance(request_ctx, dict):
+            request_ctx["connection_started"] = time.perf_counter()
+
+    async def _connection_finished(_session, trace_ctx, _params):
+        request_ctx = getattr(trace_ctx, "trace_request_ctx", None)
+        if isinstance(request_ctx, dict) and "connection_started" in request_ctx:
+            request_ctx["connect_ms"] = (
+                time.perf_counter() - request_ctx.pop("connection_started")
+            ) * 1000
+
+    async def _mark_connection_reused(_session, trace_ctx, _params):
+        request_ctx = getattr(trace_ctx, "trace_request_ctx", None)
+        if isinstance(request_ctx, dict):
+            request_ctx["connection_reused"] = True
+
+    config.on_dns_resolvehost_start.append(_dns_started)
+    config.on_dns_resolvehost_end.append(_dns_finished)
+    config.on_connection_create_start.append(_connection_started)
+    config.on_connection_create_end.append(_connection_finished)
+    config.on_connection_reuseconn.append(_mark_connection_reused)
+    return config
+
+
+async def start_qq_http_session() -> aiohttp.ClientSession:
+    """为当前进程的 asyncio loop 创建 QQ REST 连接池。"""
+    global _QQ_HTTP_SESSION
+    if _QQ_HTTP_SESSION is None or _QQ_HTTP_SESSION.closed:
+        connector = aiohttp.TCPConnector(
+            keepalive_timeout=_QQ_HTTP_KEEPALIVE_SECONDS,
+            limit=100,
+            limit_per_host=32,
+        )
+        _QQ_HTTP_SESSION = aiohttp.ClientSession(
+            connector=connector,
+            trace_configs=[_qq_http_trace_config()],
+        )
+    return _QQ_HTTP_SESSION
+
+
+async def close_qq_http_session() -> None:
+    """关闭当前进程持有的 QQ REST 连接池。"""
+    global _QQ_HTTP_SESSION
+    session, _QQ_HTTP_SESSION = _QQ_HTTP_SESSION, None
+    if session is not None and not session.closed:
+        await session.close()
+
+
+async def _get_qq_http_session() -> aiohttp.ClientSession:
+    return await start_qq_http_session()
+
+
+def _qq_endpoint_kind(path: str) -> str:
+    """把接口路径归类，避免日志暴露路径中的用户或消息标识。"""
+    normalized = path.lower()
+    if "/messages" in normalized:
+        return "message"
+    if "/files" in normalized:
+        return "file"
+    if "keyboard" in normalized:
+        return "interaction"
+    if normalized.endswith("/gateway"):
+        return "gateway"
+    return "other"
 
 
 def _qq_ref_index(owner: str, channel_id: str) -> QQRefIndex:
@@ -153,7 +238,9 @@ def _qq_api_base(sandbox: bool) -> str:
 
 
 async def _qq_access_token(app_id: str, secret: str) -> str:
-    async with aiohttp.ClientSession() as sess:
+    started = time.perf_counter()
+    try:
+        sess = await _get_qq_http_session()
         async with sess.post(
             _QQ_TOKEN_URL,
             json={"appId": app_id, "clientSecret": secret},
@@ -161,6 +248,16 @@ async def _qq_access_token(app_id: str, secret: str) -> str:
             timeout=aiohttp.ClientTimeout(total=15),
         ) as resp:
             data = await resp.json()
+    except Exception as exc:
+        _log.info(
+            "[qq-http] method=POST endpoint=access_token result=%s request_ms=%.1f",
+            type(exc).__name__, (time.perf_counter() - started) * 1000,
+        )
+        raise
+    _log.info(
+        "[qq-http] method=POST endpoint=access_token status=%s request_ms=%.1f",
+        resp.status, (time.perf_counter() - started) * 1000,
+    )
     token = data.get("access_token", "")
     if not token:
         # 上游响应体可能回显请求里的 appId/secret 片段，绝不能拼进异常消息（P2-b §5）；
@@ -171,7 +268,9 @@ async def _qq_access_token(app_id: str, secret: str) -> str:
 
 
 async def _qq_access_token_with_ttl(app_id: str, secret: str) -> tuple[str, int]:
-    async with aiohttp.ClientSession() as sess:
+    started = time.perf_counter()
+    try:
+        sess = await _get_qq_http_session()
         async with sess.post(
             _QQ_TOKEN_URL,
             json={"appId": app_id, "clientSecret": secret},
@@ -179,6 +278,16 @@ async def _qq_access_token_with_ttl(app_id: str, secret: str) -> tuple[str, int]
             timeout=aiohttp.ClientTimeout(total=15),
         ) as resp:
             data = await resp.json()
+    except Exception as exc:
+        _log.info(
+            "[qq-http] method=POST endpoint=access_token result=%s request_ms=%.1f",
+            type(exc).__name__, (time.perf_counter() - started) * 1000,
+        )
+        raise
+    _log.info(
+        "[qq-http] method=POST endpoint=access_token status=%s request_ms=%.1f",
+        resp.status, (time.perf_counter() - started) * 1000,
+    )
     token = data.get("access_token", "")
     if not token:
         diag_log_raw("agent.gateway.qq._qq_access_token_with_ttl", f"data={data}")
@@ -187,13 +296,25 @@ async def _qq_access_token_with_ttl(app_id: str, secret: str) -> tuple[str, int]
 
 
 async def _qq_gateway_url(token: str, sandbox: bool) -> str:
-    async with aiohttp.ClientSession() as sess:
+    started = time.perf_counter()
+    try:
+        sess = await _get_qq_http_session()
         async with sess.get(
             f"{_qq_api_base(sandbox)}/gateway",
             headers={"Authorization": f"QQBot {token}"},
             timeout=aiohttp.ClientTimeout(total=15),
         ) as resp:
             data = await resp.json()
+    except Exception as exc:
+        _log.info(
+            "[qq-http] method=GET endpoint=gateway result=%s request_ms=%.1f",
+            type(exc).__name__, (time.perf_counter() - started) * 1000,
+        )
+        raise
+    _log.info(
+        "[qq-http] method=GET endpoint=gateway status=%s request_ms=%.1f",
+        resp.status, (time.perf_counter() - started) * 1000,
+    )
     url = data.get("url", "")
     if not url:
         diag_log_raw("agent.gateway.qq._qq_gateway_url", f"data={data}")
@@ -687,7 +808,7 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
         await asyncio.sleep(delay)
 
 
-def serve() -> None:
+async def _serve() -> None:
     app_id = os.environ.get("QQ_APP_ID", "")
     secret = os.environ.get("QQ_APP_SECRET", "")
     sandbox = os.environ.get("QQ_SANDBOX", "0") in ("1", "true", "True")
@@ -697,7 +818,15 @@ def serve() -> None:
         raise SystemExit("缺少 QQ_APP_ID / QQ_APP_SECRET 环境变量（应由 gateway 注入）。")
     from agent.security import logsafe
     print(f"[qq:{logsafe.fingerprint(channel_id)}] 网关启动（raw WebSocket, sandbox={sandbox}）…", flush=True)
-    asyncio.run(_run_raw_ws(app_id, secret, sandbox, channel_id, owner))
+    await start_qq_http_session()
+    try:
+        await _run_raw_ws(app_id, secret, sandbox, channel_id, owner)
+    finally:
+        await close_qq_http_session()
+
+
+def serve() -> None:
+    asyncio.run(_serve())
 
 
 # ── 发送（worker 用，按 bot id 现查 DB 取凭据，raw HTTP 直连 QQ Bot API，不再依赖 botpy）──
@@ -816,12 +945,28 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
                       json_body: dict | None = None, retry_on_401: bool = True):
     """raw HTTP 调 QQ Bot API；401 时清缓存重取 token 重试一次（幂等：读token+重发同一请求，
     未产生额外副作用，安全）。其余非 2xx 抛 QQAPIError，由调用方按 _qq_is_transient 判定是否重试。"""
-    token, base = await _send_token(channel_id)
-    async with aiohttp.ClientSession() as sess:
-        async with sess.request(
+    auth_started = time.perf_counter()
+    from agent.runtime import trace
+    trace_id = trace.get_trace()
+    try:
+        token, base = await _send_token(channel_id)
+    except Exception as exc:
+        _log.info(
+            "[qq-http] trace=%s method=%s endpoint=%s result=auth_%s auth_ms=%.1f",
+            trace_id or "-", method, _qq_endpoint_kind(path), type(exc).__name__,
+            (time.perf_counter() - auth_started) * 1000,
+        )
+        raise
+    auth_ms = (time.perf_counter() - auth_started) * 1000
+    session = await _get_qq_http_session()
+    request_trace = {"connection_reused": False}
+    request_started = time.perf_counter()
+    try:
+        async with session.request(
             method, f"{base}{path}", json=json_body,
             headers={"Authorization": f"QQBot {token}", "Content-Type": "application/json"},
             timeout=aiohttp.ClientTimeout(total=20),
+            trace_request_ctx=request_trace,
         ) as resp:
             status = resp.status
             try:
@@ -830,6 +975,26 @@ async def _qq_request(channel_id: str, method: str, path: str, *,
                 # 响应体不是合法 JSON（QQ 偶尔回纯文本错误页）：退化取文本，不影响 status 判定，
                 # 广吞合理——这里只是"尽量拿到点诊断信息"，拿不到也不影响后面的状态码分支。
                 data = await resp.text()
+    except Exception as exc:
+        _log.info(
+            "[qq-http] trace=%s method=%s endpoint=%s result=%s auth_ms=%.1f request_ms=%.1f "
+            "dns_ms=%s connect_setup_ms=%s reused=%s",
+            trace_id or "-", method, _qq_endpoint_kind(path), type(exc).__name__, auth_ms,
+            (time.perf_counter() - request_started) * 1000,
+            f"{request_trace['dns_ms']:.1f}" if "dns_ms" in request_trace else "-",
+            f"{request_trace['connect_ms']:.1f}" if "connect_ms" in request_trace else "-",
+            request_trace["connection_reused"],
+        )
+        raise
+    request_ms = (time.perf_counter() - request_started) * 1000
+    _log.info(
+        "[qq-http] trace=%s method=%s endpoint=%s status=%s auth_ms=%.1f request_ms=%.1f "
+        "dns_ms=%s connect_setup_ms=%s reused=%s",
+        trace_id or "-", method, _qq_endpoint_kind(path), status, auth_ms, request_ms,
+        f"{request_trace['dns_ms']:.1f}" if "dns_ms" in request_trace else "-",
+        f"{request_trace['connect_ms']:.1f}" if "connect_ms" in request_trace else "-",
+        request_trace["connection_reused"],
+    )
     if status in (200, 201, 204):
         return data
     if status == 401 and retry_on_401:

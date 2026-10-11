@@ -9,6 +9,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 
 from .rootless_permissions import ensure_sandbox_acl
 
@@ -27,16 +28,20 @@ class SandboxQuotaSnapshot:
         return self.used_bytes > self.limit_bytes
 
 
-def measure_directory(root: str | Path) -> int:
+def measure_directory(root: str | Path, *, stop_event: Event | None = None) -> int:
     """统计目录中普通文件占用的逻辑字节数，不跟随软链接。"""
     base = Path(root).expanduser().resolve(strict=True)
     if not base.is_dir():
         raise ValueError("配额根目录必须是目录")
     total = 0
     for current, dirs, files in os.walk(base, followlinks=False):
+        if stop_event is not None and stop_event.is_set():
+            raise InterruptedError("配额测量已取消")
         current_path = Path(current)
         dirs[:] = [name for name in dirs if not (current_path / name).is_symlink()]
         for name in files:
+            if stop_event is not None and stop_event.is_set():
+                raise InterruptedError("配额测量已取消")
             path = current_path / name
             try:
                 if path.is_symlink():

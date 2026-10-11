@@ -1,0 +1,990 @@
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_email_delivery_uses_reminder_template_and_is_not_retried(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=(True, "已发送"))
+    monkeypatch.setattr(scheduled, "_deliver_email", send)
+
+    result = await scheduled.deliver_to_channels("user-1", "每日汇总", "正文", {"email"})
+
+    assert result == {"邮件": "已发送"}
+    send.assert_awaited_once_with("user-1", "每日汇总", "正文")
+    assert scheduled._delivery_succeeded(result)
+
+
+@pytest.mark.asyncio
+async def test_email_delivery_failure_is_visible_and_not_success(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=(False, "发送失败（smtp_timeout）"))
+    monkeypatch.setattr(scheduled, "_deliver_email", send)
+
+    result = await scheduled.deliver_to_channels("user-1", "每日汇总", "正文", {"email"})
+
+    assert result == {"邮件": "发送失败（smtp_timeout）"}
+    assert not scheduled._delivery_succeeded(result)
+    send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial", "requested", "expected"),
+    [([], ["send_email"], ["send_email"]), (["send_email"], [], [])],
+)
+async def test_rest_task_update_can_change_authorized_tools_alone(
+    db, user_a, monkeypatch, initial, requested, expected
+):
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="邮件授权任务",
+        payload="保持原指令",
+        cron="0 9 * * *",
+        channels="web",
+        authorized_tools=initial,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    monkeypatch.setattr(scheduled_api.events, "publish", AsyncMock())
+
+    result = await scheduled_api.update_task(
+        task.id,
+        scheduled_api.TaskUpdate(authorized_tools=requested),
+        user_a,
+        db,
+    )
+
+    assert result["authorized_tools"] == expected
+    assert result["payload"] == "保持原指令"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channels", [["qq", "web"], ["web"]])
+async def test_rest_task_channel_update_without_qq_delivery_preserves_existing_group_target(
+    db, user_a, monkeypatch, channels,
+):
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    from app.models import ScheduledTask
+
+    original_target = {
+        "qq": {
+            "platform": "qq", "chat_type": "group", "chat_id": "legacy-group",
+            "puid": "owner-platform-user", "channel_id": "bot-1",
+        }
+    }
+    task = ScheduledTask(
+        user_id=user_a.id, name="旧群提醒", payload="保持群目标",
+        cron="0 9 * * *", channels="qq,web", delivery_targets=original_target,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    monkeypatch.setattr(scheduled_api.events, "publish", AsyncMock())
+
+    await scheduled_api.update_task(
+        task.id, scheduled_api.TaskUpdate(channels=channels), user_a, db,
+    )
+
+    await db.refresh(task)
+    assert task.delivery_targets["qq"] == original_target["qq"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", ["feishu", "telegram"])
+async def test_im_group_delivery_target_is_scoped_to_users_current_bot(db, user_a, user_b, platform):
+    from fastapi import HTTPException
+    from app.api.v1.scheduled_tasks import _resolve_im_delivery
+    from app.models import ConversationSession, UserBot
+
+    bot = UserBot(
+        user_id=user_a.id, platform=platform, app_id=f"{platform}-app",
+        owner_platform_user_id="owner-platform-user",
+    )
+    db.add(bot)
+    await db.flush()
+    db.add(ConversationSession(
+        user_id=user_a.id, source=platform, bot_id=str(bot.id), chat_type="group",
+        chat_id="group-a", title="可选群",
+    ))
+    db.add(ConversationSession(
+        user_id=user_b.id, source=platform, bot_id="other-bot", chat_type="group",
+        chat_id="group-b", title="他人的群",
+    ))
+    await db.commit()
+
+    target = await _resolve_im_delivery(db, user_a, platform, {"mode": "group", "chat_id": "group-a"})
+    assert target[platform]["chat_type"] == "group"
+    assert target[platform]["chat_id"] == "group-a"
+    assert target[platform]["channel_id"] == str(bot.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _resolve_im_delivery(db, user_a, platform, {"mode": "group", "chat_id": "group-b"})
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_wechat_is_not_a_group_delivery_target(db, user_a):
+    from fastapi import HTTPException
+    from app.api.v1.scheduled_tasks import _resolve_im_delivery
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _resolve_im_delivery(db, user_a, "wechat", {"mode": "group", "chat_id": "group-a"})
+    assert exc_info.value.status_code == 400
+    assert "不支持该 IM 投递平台" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_rest_delivery_targets_reject_multiple_group_scopes(db, user_a, monkeypatch):
+    from fastapi import HTTPException
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+
+    monkeypatch.setattr(scheduled, "owner_private_targets", AsyncMock(return_value={}))
+
+    async def resolve(_db, _user, platform, _config):
+        return {platform: {
+            "platform": platform, "chat_type": "group", "chat_id": f"{platform}-group",
+            "channel_id": f"{platform}-bot", "puid": "owner",
+        }}
+
+    monkeypatch.setattr(scheduled_api, "_resolve_im_delivery", resolve)
+    with pytest.raises(HTTPException) as exc_info:
+        await scheduled_api._resolve_web_delivery_targets(
+            db, user_a, ["qq", "telegram"],
+            im_delivery={"qq": {"mode": "group"}, "telegram": {"mode": "group"}},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "只能设置一个群聊" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_rest_validation_ignores_preserved_group_targets_for_unselected_channels(db, user_a, monkeypatch):
+    from app.api.v1 import scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+
+    monkeypatch.setattr(scheduled, "owner_private_targets", AsyncMock(return_value={}))
+    monkeypatch.setattr(scheduled_api, "_resolve_im_delivery", AsyncMock(return_value={
+        "qq": {"platform": "qq", "chat_type": "group", "chat_id": "active-group"},
+    }))
+
+    targets = await scheduled_api._resolve_web_delivery_targets(
+        db, user_a, ["qq"], im_delivery={"qq": {"mode": "group"}},
+        existing={"telegram": {
+            "platform": "telegram", "chat_type": "group", "chat_id": "preserved-group",
+        }},
+    )
+
+    assert targets["qq"]["chat_id"] == "active-group"
+    assert targets["telegram"]["chat_id"] == "preserved-group"
+
+
+def test_legacy_task_with_multiple_group_targets_is_detected_fail_closed():
+    import app.scheduled_tasks as scheduled
+
+    targets = {
+        "qq": {"chat_type": "group", "chat_id": "qq-group"},
+        "telegram": {"chat_type": "group", "chat_id": "telegram-group"},
+    }
+
+    assert scheduled._has_multiple_group_targets(targets)
+    assert not scheduled._has_multiple_group_targets({
+        "qq": {"chat_type": "group", "chat_id": "qq-group"},
+        "telegram": {"chat_type": "c2c", "chat_id": None},
+    })
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial", "requested", "expected"),
+    [([], ["send_email"], ["send_email"]), (["send_email"], [], [])],
+)
+async def test_agent_task_update_can_change_authorized_tools_alone(
+    db, user_a, initial, requested, expected
+):
+    from app.models import ScheduledTask
+    from agent.tools.scheduled_tasks import _update_scheduled_task
+
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="Agent 邮件授权任务",
+        payload="保持原指令",
+        cron="0 9 * * *",
+        channels="web",
+        authorized_tools=initial,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    result = await _update_scheduled_task(
+        db,
+        user_a.id,
+        {"task_id": task.id, "authorized_tools": requested},
+    )
+
+    assert result["authorized_tools"] == expected
+    assert result["instruction"] == "保持原指令"
+
+
+@pytest.mark.asyncio
+async def test_group_delivery_mode_captures_current_qq_group():
+    from agent.im import imctx
+    from agent.tools.scheduled_tasks import _resolve_delivery_targets
+
+    imctx.set_im(
+        "qq",
+        "message-1",
+        "bot-1",
+        "group-1",
+        "owner-1",
+        "group",
+    )
+    try:
+        channels, targets, error = await _resolve_delivery_targets(
+            None, "user-1", ["qq"], "current_group"
+        )
+    finally:
+        imctx.clear()
+
+    assert error is None
+    assert targets == {
+        "qq": {
+            "platform": "qq",
+            "chat_type": "group",
+            "chat_id": "group-1",
+            "puid": "owner-1",
+            "channel_id": "bot-1",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_group_delivery_mode_rejects_web_context():
+    from agent.tools.scheduled_tasks import _resolve_delivery_targets
+
+    channels, targets, error = await _resolve_delivery_targets(
+        None, "user-1", ["qq"], "current_group"
+    )
+    assert channels == ["qq"]
+
+    assert targets is None
+    assert "只有在 QQ 群聊中" in error
+
+
+@pytest.mark.asyncio
+async def test_group_delivery_mode_requires_confirmation_when_omitted():
+    from agent.im import imctx
+    from agent.tools.scheduled_tasks import (
+        _delivery_mode_confirmation_error,
+        _group_delivery_mode_required,
+    )
+
+    imctx.set_im(
+        "qq",
+        "message-2",
+        "bot-2",
+        "group-2",
+        "member-2",
+        "group",
+    )
+    try:
+        assert _group_delivery_mode_required(["qq"], None)
+        assert not _group_delivery_mode_required(["qq"], "owner_private")
+        assert not _group_delivery_mode_required(["qq"], "current_group")
+        assert "请先确认投递位置" in _delivery_mode_confirmation_error()
+    finally:
+        imctx.clear()
+
+
+@pytest.mark.asyncio
+async def test_delivery_uses_task_target_instead_of_recent_reach(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=True)
+    persist = AsyncMock()
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_persist_push_im", persist)
+
+    target = {
+        "chat_type": "group",
+        "chat_id": "group-1",
+        "puid": "owner-1",
+        "channel_id": "bot-1",
+    }
+    result = await scheduled.deliver_to_channels(
+        "user-1", "任务", "正文", {"qq"}, {"qq": target}
+    )
+
+    assert result == {"QQ": "已发送"}
+    assert send.await_args.args == ("user-1", "⏰ 任务\n\n正文", "qq", target)
+    persist.assert_awaited_once_with("user-1", "qq", "任务", "正文", target, files=None)
+
+
+@pytest.mark.asyncio
+async def test_delivery_with_all_attachments_sent_stays_success(monkeypatch):
+    """图片全部发出去了，结果照旧是「已发送」——不能因为多了 files 参数就把
+    原本就成功的场景也判错。"""
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=True)
+    persist = AsyncMock()
+    deliver_files = AsyncMock(return_value=(2, 2))
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_persist_push_im", persist)
+    monkeypatch.setattr(scheduled, "_deliver_im_files", deliver_files)
+
+    target = {"chat_type": "group", "chat_id": "group-1", "puid": "owner-1", "channel_id": "bot-1"}
+    files = [{"attach_id": "a1", "name": "图1"}, {"attach_id": "a2", "name": "图2"}]
+    result = await scheduled.deliver_to_channels(
+        "user-1", "任务", "正文", {"qq"}, {"qq": target}, files=files
+    )
+
+    assert result == {"QQ": "已发送"}
+    deliver_files.assert_awaited_once_with("user-1", "qq", target, files)
+
+
+@pytest.mark.asyncio
+async def test_delivery_with_failed_attachments_is_not_reported_success(monkeypatch):
+    """图片没全发出去：即使文字发成功了，也不能报「已发送」——这是 P1 bug 的
+    核心场景：附件失败必须能让 _delivery_succeeded() 判定失败，一次性任务
+    才不会被静默删除。"""
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=True)
+    persist = AsyncMock()
+    deliver_files = AsyncMock(return_value=(0, 2))   # 两张全挂
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_persist_push_im", persist)
+    monkeypatch.setattr(scheduled, "_deliver_im_files", deliver_files)
+
+    target = {"chat_type": "group", "chat_id": "group-1", "puid": "owner-1", "channel_id": "bot-1"}
+    files = [{"attach_id": "a1"}, {"attach_id": "a2"}]
+    result = await scheduled.deliver_to_channels(
+        "user-1", "任务", "正文", {"qq"}, {"qq": target}, files=files
+    )
+
+    assert result == {"QQ": "文字已发送，附件发送失败（0/2）"}
+    assert not scheduled._delivery_succeeded(result)
+
+
+@pytest.mark.asyncio
+async def test_web_only_delivery_with_files_reports_no_attachment_support(monkeypatch, db, user_a):
+    """网页通知目前不支持带图——选了带图任务但只勾了网页渠道时，结果必须如实
+    说明图片没有随通知显示，不能跟没有 files 时一样报「已发送」（否则用户会
+    以为图已经推过去了，实际网页通知里什么都没有）。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import events as _ev
+
+    monkeypatch.setattr(_ev, "publish", AsyncMock(return_value=True))
+
+    result = await scheduled.deliver_to_channels(
+        user_a.id, "任务", "正文", {"web"}, files=[{"attach_id": "a1"}]
+    )
+
+    assert result == {"web 通知": "已发送（网页通知不支持附件，图片未随通知显示）"}
+    assert not scheduled._delivery_succeeded(result)
+
+
+@pytest.mark.asyncio
+async def test_deliver_im_files_delegates_to_shared_sender_with_owner(monkeypatch):
+    """定时任务沿用统一 IM 附件出口，并传入文件属主供发送器做授权校验。"""
+    import app.scheduled_tasks as scheduled
+    from types import SimpleNamespace
+
+    send_files = AsyncMock(return_value=SimpleNamespace(sent=2, requested=3))
+    monkeypatch.setattr("agent.im.files.send_files", send_files)
+
+    target = {"chat_type": "group", "chat_id": "group-1", "puid": "owner-1", "channel_id": "bot-1"}
+    files = [{"file_id": 17}, {"attach_id": "a1"}]
+    assert await scheduled._deliver_im_files("owner-1", "qq", target, files) == (2, 3)
+
+    payload = send_files.await_args.args[0]
+    assert payload == {
+        "platform": "qq",
+        "channel_id": "bot-1",
+        "chat_id": "group-1",
+        "platform_user_id": "owner-1",
+        "chat_type": "group",
+        "context_token": "",
+        "owner_user_id": "owner-1",
+    }
+    assert send_files.await_args.args[1] is files
+
+
+@pytest.mark.asyncio
+async def test_legacy_task_never_uses_recent_group_reach(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=False)
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_legacy_private_target", AsyncMock(return_value=None))
+
+    result = await scheduled.deliver_to_channels(
+        "user-1", "旧任务", "正文", {"qq"}, delivery_targets=None
+    )
+
+    assert result == {"QQ": "无可触达地址（先给该 bot 发条消息）"}
+    send.assert_awaited_once_with("user-1", "⏰ 旧任务\n\n正文", "qq", None)
+
+
+@pytest.mark.asyncio
+async def test_legacy_task_uses_owner_private_target(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=True)
+    persist = AsyncMock()
+    target = {
+        "platform": "qq",
+        "chat_type": "c2c",
+        "chat_id": None,
+        "puid": "owner-1",
+        "channel_id": "bot-1",
+    }
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_legacy_private_target", AsyncMock(return_value=target))
+    monkeypatch.setattr(scheduled, "_persist_push_im", persist)
+
+    result = await scheduled.deliver_to_channels(
+        "user-1", "旧任务", "正文", {"qq"}, delivery_targets=None
+    )
+
+    assert result == {"QQ": "已发送"}
+    send.assert_awaited_once_with("user-1", "⏰ 旧任务\n\n正文", "qq", target)
+    persist.assert_awaited_once_with("user-1", "qq", "旧任务", "正文", target, files=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_case", ["single", "multiple", "unselected"])
+async def test_execute_task_guards_active_group_scope_before_delivery(monkeypatch, db, user_a, target_case):
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    target = {
+        "qq": {
+            "chat_type": "group",
+            "chat_id": "group-1",
+            "puid": "owner-1",
+            "channel_id": "bot-1",
+        }
+    }
+    channels = "qq"
+    if target_case != "single":
+        target["telegram"] = {
+            "platform": "telegram", "chat_type": "group", "chat_id": "telegram-group",
+        }
+        if target_case == "multiple":
+            channels = "qq,telegram"
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="群提醒",
+        payload="提醒我检查群消息",
+        cron="0 9 * * *",
+        channels=channels,
+        delivery_targets=target,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    run_agent = AsyncMock(return_value=("提醒正文", [], "success"))
+    deliver = AsyncMock(return_value={"QQ": "已发送"})
+    monkeypatch.setattr(scheduled, "_run_agent", run_agent)
+    monkeypatch.setattr(scheduled, "deliver_to_channels", deliver)
+
+    result = await scheduled.execute_task(task.id)
+
+    if target_case == "multiple":
+        assert result == {"错误": "一个定时任务目前只能设置一个群聊投递目标"}
+        run_agent.assert_not_awaited()
+        deliver.assert_not_awaited()
+        await db.refresh(task)
+        assert task.last_run_at is None
+    else:
+        assert result == {"QQ": "已发送"}
+        expected_targets = {"qq": target["qq"]} if target_case == "unselected" else target
+        assert deliver.await_args.args == (user_a.id, "群提醒", "提醒正文", {"qq"}, expected_targets)
+        assert run_agent.await_args.kwargs["target_map"] == expected_targets
+
+
+@pytest.mark.asyncio
+async def test_update_group_target_confirmation_does_not_mutate_task(monkeypatch):
+    from agent.im import imctx
+    import agent.tools.scheduled_tasks as skill
+
+    task = SimpleNamespace(
+        channels="qq",
+        payload="旧指令",
+        name="任务",
+        cron="0 9 * * *",
+    )
+    monkeypatch.setattr(
+        skill,
+        "_resolve_task",
+        AsyncMock(return_value=(task, None)),
+    )
+    db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+    imctx.set_im(
+        "qq",
+        "message-3",
+        "bot-3",
+        "group-3",
+        "member-3",
+        "group",
+    )
+    try:
+        result = await skill._update_scheduled_task(
+            db,
+            "user-1",
+            {"task": "任务", "instruction": "新指令", "channels": ["qq"]},
+        )
+    finally:
+        imctx.clear()
+
+    assert "确认投递位置" in result
+    assert task.payload == "旧指令"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_trial_does_not_hold_request_db_session_during_agent(monkeypatch):
+    from types import SimpleNamespace
+
+    import app.api.v1.scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+
+    events = []
+    db = SimpleNamespace(
+        close=AsyncMock(side_effect=lambda: events.append("close")),
+    )
+    user = SimpleNamespace(id="user-1")
+    owned_task = SimpleNamespace(schedule_kind="cron", cron="0 9 * * *", end_at=None, last_run_failed=False)
+    monkeypatch.setattr(scheduled_api, "_owned", AsyncMock(return_value=owned_task))
+    execute = AsyncMock(
+        side_effect=lambda *args, **kwargs: events.append("execute") or {"网页通知": "已发送"}
+    )
+    monkeypatch.setattr(scheduled, "execute_task", execute)
+
+    result = await scheduled_api.run_now(42, user, db)
+
+    assert result["ok"] is True
+    assert events == ["close", "execute"]
+    execute.assert_awaited_once_with(42, is_trial=True)
+
+
+@pytest.mark.asyncio
+async def test_trial_timeout_does_not_cancel_delivery_task(monkeypatch):
+    import app.api.v1.scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+
+    events = []
+    db = SimpleNamespace(close=AsyncMock())
+    user = SimpleNamespace(id="user-1")
+    owned_task = SimpleNamespace(schedule_kind="cron", cron="0 9 * * *", end_at=None, last_run_failed=False)
+    monkeypatch.setattr(scheduled_api, "_owned", AsyncMock(return_value=owned_task))
+    monkeypatch.setattr(scheduled_api, "_TRIAL_WAIT_SECONDS", 0)
+
+    async def execute(*args, **kwargs):
+        await asyncio.sleep(0.01)
+        events.append("delivered")
+        return {"QQ": "已发送"}
+
+    import asyncio
+
+    monkeypatch.setattr(scheduled, "execute_task", execute)
+    result = await scheduled_api.run_now(42, user, db)
+
+    assert result["pending"] is True
+    await asyncio.sleep(0.02)
+    assert events == ["delivered"]
+
+
+@pytest.mark.asyncio
+async def test_trial_does_not_update_last_run_at(monkeypatch, db, user_a):
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="试运行不计入正式执行",
+        payload="只测试一次",
+        cron="0 9 * * *",
+        channels="web",
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("测试正文", [], "success")))
+    monkeypatch.setattr(
+        scheduled,
+        "deliver_to_channels",
+        AsyncMock(return_value={"web 通知": "已发送"}),
+    )
+
+    result = await scheduled.execute_task(task.id, is_trial=True)
+
+    assert result == {"web 通知": "已发送"}
+    await db.refresh(task)
+    assert task.last_run_at is None
+
+
+@pytest.mark.asyncio
+async def test_web_delivery_persists_and_publishes_notification(monkeypatch, db, user_a):
+    """定时任务 Web 渠道必须落通知中心，并发布实时通知，不能只返回假成功。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import events
+    from app.models import SiteNotification
+    from sqlalchemy import select
+
+    publish = AsyncMock(return_value=True)
+    monkeypatch.setattr(events, "publish", publish)
+
+    result = await scheduled.deliver_to_channels(
+        user_a.id, "每日快讯", "今天的结果", {"web"}, files=None,
+    )
+
+    assert result == {"web 通知": "已发送"}
+    publish.assert_awaited_once()
+    assert publish.await_args.kwargs["notification"]["title"] == "每日快讯"
+    record = await db.scalar(select(SiteNotification).where(
+        SiteNotification.target == str(user_a.id),
+        SiteNotification.title == "每日快讯",
+    ))
+    assert record is not None
+    assert record.content == "今天的结果"
+    assert record.persist is True
+    assert record.bubble is True
+
+
+@pytest.mark.asyncio
+async def test_web_delivery_reports_saved_when_realtime_publish_fails(monkeypatch, db, user_a):
+    """Redis 实时发布失败时仍保留通知中心记录，但不能报告实时已发送。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import events
+    from app.models import SiteNotification
+    from sqlalchemy import select
+
+    monkeypatch.setattr(events, "publish", AsyncMock(return_value=False))
+
+    result = await scheduled.deliver_to_channels(
+        user_a.id, "任务结果", "已保存的结果", {"web"}, files=None,
+    )
+
+    assert result == {"web 通知": "已保存（实时提示失败）"}
+    assert await db.scalar(select(SiteNotification).where(
+        SiteNotification.target == str(user_a.id),
+        SiteNotification.title == "任务结果",
+    )) is not None
+    assert scheduled._delivery_succeeded(result)
+
+
+@pytest.mark.asyncio
+async def test_once_task_is_kept_when_execution_or_delivery_fails(monkeypatch, db, user_a):
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="失败后可恢复",
+        payload="执行一次操作",
+        cron="@once:2099-01-01T09:00:00+08:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, 1, tzinfo=timezone.utc),
+        channels="web",
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [], "success")))
+    monkeypatch.setattr(
+        scheduled,
+        "deliver_to_channels",
+        AsyncMock(return_value={"web 通知": "发送失败"}),
+    )
+
+    result = await scheduled.execute_task(task.id)
+
+    assert result == {"web 通知": "发送失败"}
+    await db.refresh(task)
+    assert task.last_run_at is not None
+    assert task.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_once_task_is_deleted_only_after_successful_delivery(monkeypatch, db, user_a):
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="成功后删除",
+        payload="发送一次提醒",
+        cron="@once:2099-01-01T09:00:00+08:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, 1, tzinfo=timezone.utc),
+        channels="web",
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    task_id = task.id
+
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [], "success")))
+    monkeypatch.setattr(
+        scheduled,
+        "deliver_to_channels",
+        AsyncMock(return_value={"web 通知": "已发送"}),
+    )
+    monkeypatch.setattr(scheduled, "_notify_tasks_changed", AsyncMock())
+
+    result = await scheduled.execute_task(task_id)
+
+    assert result == {"web 通知": "已发送"}
+    db.expire_all()
+    assert await db.get(ScheduledTask, task_id) is None
+
+
+@pytest.mark.asyncio
+async def test_delivery_reports_gateway_false_as_failed(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    monkeypatch.setattr(scheduled, "_has_enabled_bot", AsyncMock(return_value=True))
+    send_text = AsyncMock(return_value=False)
+    import agent.im.replies as replies
+    monkeypatch.setattr(replies, "send_text", send_text)
+
+    target = {
+        "platform": "qq",
+        "channel_id": "bot-1",
+        "chat_id": None,
+        "puid": "owner-1",
+        "chat_type": "c2c",
+    }
+    result = await scheduled._deliver_im(
+        "user-1", "测试正文", "qq", target
+    )
+
+    assert result is False
+    send_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delivery_distinguishes_target_failure_from_missing_target(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    target = {
+        "chat_type": "c2c",
+        "chat_id": None,
+        "puid": "owner-1",
+        "channel_id": "bot-1",
+    }
+    monkeypatch.setattr(scheduled, "_legacy_private_target", AsyncMock(return_value=target))
+    monkeypatch.setattr(scheduled, "_deliver_im", AsyncMock(return_value=False))
+
+    result = await scheduled.deliver_to_channels(
+        "user-1", "任务", "正文", {"qq"}, delivery_targets=None
+    )
+
+    assert result == {"QQ": "发送失败（请检查该平台连接）"}
+
+
+@pytest.mark.asyncio
+async def test_execute_task_rejects_concurrent_execution_of_same_task(monkeypatch, db, user_a):
+    """PRD 要求「获取任务级锁，同一任务运行时跳过重复触发」——试运行（Web 进程）和
+    调度触发（Worker 进程）调的是同一个 execute_task()，用户连点两次试运行、或者
+    试运行跟调度触发撞在一起，都不能并行跑同一个 task_id，否则会重复调
+    create_project/update_file 这类有副作用的工具。这里用一个卡住的 _run_agent
+    模拟"正在执行"，验证第二次调用会立刻拿不到锁、而不是排队等待或并行执行。
+    """
+    import asyncio
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id, name="锁测试", payload="占位", cron="@once:2099-01-01T00:00:00",
+        schedule_kind="once", start_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        channels="qq", delivery_targets=None,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_run_agent(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return "正文", [], "success"
+
+    monkeypatch.setattr(scheduled, "_run_agent", slow_run_agent)
+    monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"QQ": "已发送"}))
+
+    first = asyncio.create_task(scheduled.execute_task(task.id, is_trial=True))
+    await asyncio.wait_for(entered.wait(), timeout=5)
+
+    second_result = await scheduled.execute_task(task.id, is_trial=True)
+    assert second_result == {"错误": "任务正在执行，请稍后再试"}
+
+    release.set()
+    first_result = await asyncio.wait_for(first, timeout=5)
+    assert first_result == {"QQ": "已发送"}
+
+    # 锁释放后同一个 task_id 应该能再次正常执行，不会被残留的锁永久卡住。
+    third_result = await scheduled.execute_task(task.id, is_trial=True)
+    assert third_result == {"QQ": "已发送"}
+
+
+# ── PR #9 复审 P1 回归测试 ──────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_persist_push_im_private_uses_owner_session_key(monkeypatch, db, user_a):
+    """P1-1：定时任务私聊推送走 owner_session key（im:owner-session:{uid}:...），
+    不再用群聊 imsession key。
+
+    复现场景：owner binding 指向 session A（真实私聊 session），DB 里存在一个
+    同 peer 重复的 session B（updated_at 更新）；推送必须写到 A（owner binding
+    路由目标），不能误用群聊 key 撞到 B。
+    """
+    import app.scheduled_tasks as scheduled
+    from app.models import ConversationSession
+
+    # 制造两个同 peer 的 session：A 是 owner binding 指向的真实私聊；B 是 updated_at
+    # 较新的"噪声" session（PR #9 背景：存量同 peer 重复 session）。
+    # A 是 owner binding 指向的真实私聊 session（source="web"，bind_session 只接受
+    # web/None 源）；B 是 source="qq" 的同 peer 噪声 session。
+    sess_a = ConversationSession(
+        user_id=user_a.id, title="真实私聊", source="web", bot_id="bot-1",
+        chat_id=None, platform_user_id="owner-puid", chat_type="c2c",
+    )
+    sess_b = ConversationSession(
+        user_id=user_a.id, title="噪声 session", source="qq", bot_id="bot-1",
+        chat_id=None, platform_user_id="owner-puid", chat_type="c2c",
+    )
+    db.add_all([sess_a, sess_b])
+    await db.commit()
+    await db.refresh(sess_a); await db.refresh(sess_b)
+
+    # owner binding 指向 A
+    from app.core import redis as R
+    from agent.im.owner_session import bind_session
+    from app.models import ConversationMessage
+    from sqlalchemy import select
+    await bind_session(db, user_a.id, "qq", "owner-puid", sess_a.id, "bot-1")
+
+    target = {
+        "platform": "qq",
+        "chat_type": "c2c",
+        "chat_id": None,
+        "puid": "owner-puid",
+        "channel_id": "bot-1",
+    }
+    await scheduled._persist_push_im(user_a.id, "qq", "测试任务", "推送正文", target=target)
+
+    # 推送应写入 owner binding 指向的 A
+    msgs_a = (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == sess_a.id)
+    )).scalars().all()
+    msgs_b = (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == sess_b.id)
+    )).scalars().all()
+    assert any("推送正文" in (m.content or "") for m in msgs_a), \
+        f"推送应写入 owner binding 指向的 A，实际 A 消息={[(m.content or '')[:50] for m in msgs_a]}"
+    assert not any("推送正文" in (m.content or "") for m in msgs_b), \
+        f"推送不应误入噪声 session B，实际 B 消息={[(m.content or '')[:50] for m in msgs_b]}"
+
+
+@pytest.mark.asyncio
+async def test_persist_push_im_group_uses_imsession_key(monkeypatch, db, user_a):
+    """P1-1 群聊侧：定时任务群聊推送仍走 imsession key（与群聊主路径一致）。"""
+    import app.scheduled_tasks as scheduled
+    from app.models import ConversationSession, ConversationMessage
+    from sqlalchemy import select
+
+    sess = ConversationSession(
+        user_id=user_a.id, title="群聊", source="qq", bot_id="bot-1",
+        chat_id="group-1", platform_user_id=None, chat_type="group",
+    )
+    db.add(sess)
+    await db.commit()
+    await db.refresh(sess)
+
+    target = {
+        "platform": "qq",
+        "chat_type": "group",
+        "chat_id": "group-1",
+        "puid": "owner-puid",
+        "channel_id": "bot-1",
+    }
+    await scheduled._persist_push_im(user_a.id, "qq", "群任务", "群聊正文", target=target)
+
+    msgs = (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == sess.id)
+    )).scalars().all()
+    assert any("群聊正文" in (m.content or "") for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_persist_push_im_private_missing_puid_returns_early(monkeypatch, db, user_a):
+    """P1-2 fail closed：_persist_push_im 私聊缺 puid 时直接 return，
+    不创建 session、不写库——避免用空 sender id 撞到任何已有私聊 session。
+    """
+    import app.scheduled_tasks as scheduled
+    from app.models import ConversationSession, ConversationMessage
+    from sqlalchemy import select, func
+
+    target = {
+        "platform": "qq",
+        "chat_type": "c2c",
+        "chat_id": None,
+        "puid": None,   # 缺
+        "channel_id": "bot-1",
+    }
+    await scheduled._persist_push_im(user_a.id, "qq", "任务", "正文", target=target)
+
+    # 不应创建任何 session 或 message
+    sess_count = (await db.execute(
+        select(func.count()).select_from(ConversationSession)
+        .where(ConversationSession.user_id == user_a.id)
+    )).scalar_one()
+    msg_count = (await db.execute(
+        select(func.count()).select_from(ConversationMessage)
+    )).scalar_one()
+    assert sess_count == 0
+    assert msg_count == 0
+
+
+# ── 工具层：delivery_mode=current_group 必须带 qq 渠道 ─────────────────────
+
+@pytest.mark.asyncio
+async def test_current_group_without_qq_channel_auto_adds_qq():
+    """回归：创建任务传 channels=["web"] + delivery_mode=current_group 曾被静默接受，
+    落成 web 渠道、delivery_targets 为空，用户以为会发群。现在自动补上 qq 渠道（只发群，
+    不激活私聊），并继续走群绑定流程；非群聊上下文中明确报错而不是静默成功。"""
+    import json
+
+    from agent.tools.scheduled_tasks import _resolve_delivery_targets
+
+    channels, targets, error = await _resolve_delivery_targets(None, "user-1", ["web"], "current_group")
+    assert "qq" in channels
+    assert targets is None
+    assert json.loads(error)["error"] == "只有在 QQ 群聊中才能把定时任务绑定到当前群"
+
+
+@pytest.mark.asyncio
+async def test_non_group_mode_does_not_add_qq():
+    from agent.tools.scheduled_tasks import _resolve_delivery_targets
+
+    channels, targets, error = await _resolve_delivery_targets(None, "user-1", ["web"], "owner_private")
+    assert channels == ["web"]
+    assert targets is None and error is None

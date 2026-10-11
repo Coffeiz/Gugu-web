@@ -6,6 +6,8 @@
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/wechat.py`、`backend/worker.py`、`backend/agent/runner.py`
 > 关联文档：[`【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md`](./【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`08-CHANNELS.md`](../agent/08-CHANNELS.md)、[`09-MESSAGE-PROTOCOL.md`](../agent/09-MESSAGE-PROTOCOL.md)
 
+> 当前平台边界（2026-10-07）：本文提及微信 `wechat_group_id`、群聊归一化及群作用域测试，描述的是 Gugu 内部协议/处理能力，不代表当前官方 ClawBot/iLink 能提供真实微信群聊事件。官方 ClawBot 当前仅支持私聊；普通微信群聊未开放，属于平台限制。
+
 ## 0. 实施状态
 
 | 阶段 | 状态 | 说明 |
@@ -542,7 +544,7 @@ PlatformMessage
 - ✅ QQ/飞书普通 intent shortcut 已由 worker 转交 `agent/im/loop.py` 决策和执行；仅“取消”保留 Gateway 即时控制信号，保证正在运行的任务能及时中断。附件消息不会被 shortcut 提前吞掉。
 - ✅ 即时 reaction 的关键词选择已移入 `agent/im/loop.py`；Gateway 只负责调用平台 reaction API，不再持有关键词业务规则。即时 ack、typing 仍保留在 Gateway/typing adapter，且不决定是否调用 Agent 或改变业务权限。
 - ✅ `PlatformReply` 已加入文本/引用/文件/图片/Keyboard/流式能力枚举、part 类型推导和平台能力校验；文本、文件和流式 fallback 均经 `agent/im/replies.py` 统一分发，`files.py` 只保留文件解析、存储读取和大小限制。
-- ✅ 三平台（飞书、QQ、微信）收发、引用、附件、群聊身份和重连已完成人工验收（2026-08-04）。
+- ✅ 飞书、QQ、微信私聊收发、引用、附件和重连，以及内部群聊协议路径已完成人工验收（2026-08-04）；该记录不表示官方微信 ClawBot 提供真实微信群聊入口。
 
 Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和三平台人工验收均已完成。Phase 5 进一步把 worker 顶层编排和 session/reply 收尾收回 IM Loop。
 
@@ -559,7 +561,7 @@ Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和�
 
 2. **修复平台协议归一化**
    - ✅ `PlatformMessage.from_payload()` 统一处理微信群 ID，不在 worker 中添加平台分支；QQ 群事件若同时提供 `user_openid` 与 `member_openid`，优先沿用绑定使用的 `user_openid`，避免同一发言人的 owner 身份在私聊/群聊之间断裂。
-   - ✅ 已补 QQ/飞书/微信私聊与群聊归一化、跨群/跨 Bot scope、群成员与 owner 的回归测试；真实 Gateway 事件仍需三平台各做一次人工验收。
+   - ✅ 已补 QQ/飞书/微信私聊与内部群聊消息形态的归一化、跨群/跨 Bot scope、群成员与 owner 的回归测试；微信群聊用例是内部协议测试。真实 Gateway 验收按官方入口能力执行：QQ/飞书覆盖群聊，微信仅覆盖私聊。
 
 3. **补齐身份安全边界**
    - 🟡 飞书已使用连接时保存的 owner `open_id` 做 Bot 作用域 owner/member 查询；QQ 继续使用一次性绑定身份；微信群聊缺少可验证 owner 身份时固定降级 `unknown`，私聊仍沿用个人 Bot 入口语义。该差异是平台能力限制，不是未收口的业务分支。

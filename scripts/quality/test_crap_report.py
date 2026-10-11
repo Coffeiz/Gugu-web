@@ -44,11 +44,11 @@ def test_scope_is_explicit_repo_relative_and_files_exist():
         ("typescript", "frontend/src/utils/optimisticMutation.ts"),
     ]
     assert validated[0]["tests"] == [
-        "backend/tests/test_context_budget.py",
-        "backend/tests/test_session_history.py",
+        "backend/tests/agent/context/test_context_budget.py",
+        "backend/tests/agent/context/test_session_history.py",
     ]
     assert validated[0]["function_tests"]["truncate_messages"] == [
-        "backend/tests/test_context_budget.py"
+        "backend/tests/agent/context/test_context_budget.py"
     ]
 
 
@@ -179,7 +179,7 @@ def test_failed_test_process_is_reported_without_capturing_output(monkeypatch, t
     entry = {
         "language": "python",
         "source": "backend/agent/context/budget.py",
-        "tests": ["backend/tests/test_context_budget.py"],
+        "tests": ["backend/tests/agent/context/test_context_budget.py"],
         "domain": "测试",
         "layer": "L0",
         "ci": "不阻断",

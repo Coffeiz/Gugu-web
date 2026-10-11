@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.core.security import get_current_user
+from app.core.ownership import get_owned
 from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
-    User, Project, File, Folder, CalendarEvent, Client, MindCanvasItem, MindMap, MindNode, UserSkill,
+    User, Project, File, Folder, WorkspaceDirectory, CalendarEvent, Client, MindCanvasItem, MindMap, MindNode, UserSkill,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
 from app.core.config import get_settings
@@ -30,7 +31,7 @@ from app.services.conversations import (
 from app.services.user_preferences import get_user_locale
 from app.services.files.browser import list_recent_folders_for_search, search_user_folders
 from app.services.search import search_global_mcp_servers, search_global_scheduled_tasks
-from app.services.storage.folders import folder_location_subtitle
+from app.services.storage.folders import folder_location_subtitle, resolve_folder_chain
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -101,6 +102,78 @@ def _primary_rank(column, q: str):
     )
 
 
+async def _workspace_navigation_data(db: AsyncSession, user_id, resource: File | Folder) -> dict | None:
+    """给搜索跳转提供工作区根目录和父目录链，避免前端扫描全库还原路径。"""
+    workspace_directory_id = resource.workspace_directory_id
+    if workspace_directory_id is None:
+        return None
+    directory = await get_owned(db, WorkspaceDirectory, workspace_directory_id, user_id)
+    if not directory or directory.deleted_at is not None:
+        return None
+
+    is_file = isinstance(resource, File)
+    folder_id = resource.folder_id if is_file else resource.id
+    folder_path = []
+    if folder_id is not None:
+        chain = await resolve_folder_chain(db, user_id, folder_id, None, workspace_directory_id)
+        if chain is None:
+            return None
+        if not is_file:
+            chain = chain[:-1]
+        folder_path = [{"id": folder.id, "name": folder.name} for folder in chain]
+
+    return {
+        "workspace_directory_id": directory.id,
+        "workspace_directory_name": directory.name,
+        "folder_path": folder_path,
+    }
+
+
+async def _file_search_items(db: AsyncSession, user_id, files: list[File]) -> list[dict]:
+    return [await _file_search_item(db, user_id, file) for file in files]
+
+
+async def _folder_search_item(db: AsyncSession, user_id, folder: Folder) -> dict:
+    item = {
+        "id": folder.id,
+        "title": folder.name,
+        "subtitle": await folder_location_subtitle(db, user_id, folder),
+    }
+    if folder.workspace_directory_id is not None:
+        location = await _workspace_navigation_data(db, user_id, folder)
+        if location is not None:
+            item.update(location)
+    return item
+
+
+async def _folder_search_items(db: AsyncSession, user_id, folders: list[Folder]) -> list[dict]:
+    return [await _folder_search_item(db, user_id, folder) for folder in folders]
+
+
+async def _file_search_item(db: AsyncSession, user_id, file: File) -> dict:
+    space_label = {
+        "project": "项目", "mind": "思维", "asset": "素材",
+        "personal": "个人", "workspace": "工作区",
+    }.get(file.space, file.space)
+    item = {
+        "id": file.id,
+        "title": f"{file.display_name}.{file.ext}" if file.ext else file.display_name,
+        "subtitle": f"{space_label} · {file.size}".strip(" ·")
+        if file.space == "workspace"
+        else f"{space_label}空间 · {file.size}".strip(" ·"),
+    }
+    if file.space == "workspace" and file.workspace_directory_id is not None:
+        location = await _workspace_navigation_data(db, user_id, file)
+        if location is not None:
+            item.update(location)
+            item["subtitle"] = " · ".join(filter(None, [
+                f"工作区 · {location['workspace_directory_name']}",
+                "/".join(folder["name"] for folder in location["folder_path"]),
+                file.size,
+            ]))
+    return item
+
+
 async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                             per_type: int = PER_TYPE, types: list[str] | None = None,
                             queries: list[str] | None = None, mode: str = "OR",
@@ -167,12 +240,8 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                     if len(rows) >= per_type:
                         break
         if rows:
-            _space = {"project": "项目", "mind": "思维", "asset": "素材", "personal": "个人"}
-            groups.append({"type": "file", "label": "文件", "items": [
-                {"id": f.id, "title": f"{f.display_name}.{f.ext}" if f.ext else f.display_name,
-                 "subtitle": f"{_space.get(f.space, f.space)}空间 · {f.size}".strip(" ·")}
-                for f in rows
-            ]})
+            items = await _file_search_items(db, uid, rows)
+            groups.append({"type": "file", "label": "文件", "items": items})
 
     # ── 文件夹：名 ──
     if wanted is None or "folder" in wanted:
@@ -186,11 +255,8 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                     if len(rows) >= per_type:
                         break
         if rows:
-            groups.append({"type": "folder", "label": "文件夹", "items": [
-                {"id": fo.id, "title": fo.name,
-                 "subtitle": await folder_location_subtitle(db, uid, fo)}
-                for fo in rows
-            ]})
+            items = await _folder_search_items(db, uid, rows)
+            groups.append({"type": "folder", "label": "文件夹", "items": items})
 
     # ── 日程/事件：标题/描述/客户 ──
     if wanted is None or "event" in wanted:
@@ -543,10 +609,7 @@ async def _run_index_search(
                     File.id.in_([int(i) for i in ids if str(i).isdigit()]),
                 ))).scalars().all()
                 by_id = {str(row.id): row for row in rows}
-                space = {"project": "项目", "mind": "思维", "asset": "素材", "personal": "个人"}
-                items = [{"id": row.id,
-                          "title": f"{row.display_name}.{row.ext}" if row.ext else row.display_name,
-                          "subtitle": f"{space.get(row.space, row.space)}空间 · {row.size}".strip(" ·")}
+                items = [await _file_search_item(db, user_id, row)
                          for key in ids if (row := by_id.get(str(key)))]
             else:
                 rows = (await db.execute(select(MindNode).where(

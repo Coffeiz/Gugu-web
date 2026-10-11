@@ -1,91 +1,19 @@
 {
-  "backend/tests/test_model_reasoning_policy.py": {
-    "domain": "agent-reasoning",
-    "layer": "L1",
-    "owner": "backend/agent",
-    "productionEntry": "agent/llm/llm_select.py",
-    "keyBehavior": "模型配置决定推理持久化策略，缺省值安全关闭",
-    "ci": "backend-pytest"
+  "frontend/tests/services/apiInFlightDedup.test.ts": {
+    "domain": "frontend-api",
+    "layer": "L0",
+    "owner": "frontend/services",
+    "productionEntry": "frontend/src/services/api.ts",
+    "keyBehavior": "同一用户的完全相同并发 GET 合并为一个请求且各调用方获得独立结果；请求结束后刷新、不同用户或不同路径仍独立请求",
+    "ci": "frontend-test"
   },
-  "backend/tests/test_phase2_reasoning_drivers.py": {
-    "domain": "agent-reasoning",
-    "layer": "L1",
-    "owner": "backend/agent",
-    "productionEntry": "agent/loop_drivers.py",
-    "keyBehavior": "Provider 推理状态提取、恢复与 Responses 链路保持一致",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_phase3_filesystem_policy.py": {
-    "domain": "filesystem-security",
-    "layer": "L1",
-    "owner": "backend/app",
-    "productionEntry": "app/services/filesystem_authorization.py",
-    "keyBehavior": "工作区目录边界与文件工具写权限策略正确执行",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_phase4_filesystem_authorization.py": {
-    "domain": "filesystem-security",
-    "layer": "L1",
-    "owner": "backend/app",
-    "productionEntry": "app/services/filesystem_authorization.py",
-    "keyBehavior": "文件系统授权开关、确认流程与审计记录安全",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_reasoning_state.py": {
-    "domain": "agent-reasoning",
-    "layer": "L1",
-    "owner": "backend/agent",
-    "productionEntry": "agent/context/reasoning_state.py",
-    "keyBehavior": "Provider 推理状态隔离、指纹校验、过期与冲突处理",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_scheduled_task_schedule_rules.py": {
-    "domain": "scheduled-tasks",
-    "layer": "L1",
-    "owner": "backend/app",
-    "productionEntry": "app/core/schedule_rules.py",
-    "keyBehavior": "单次、间隔和 cron 任务的独立起止时间窗口校验",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_scheduled_task_workspace.py": {
-    "domain": "scheduled-tasks",
-    "layer": "L1",
-    "owner": "backend/app",
-    "productionEntry": "app/services/scheduled_tasks.py",
-    "keyBehavior": "定时任务工作区归属与任务级文件授权隔离",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_bundle_runtime.py": {
-    "domain": "sandbox-deployment",
-    "layer": "L1",
-    "owner": "backend/agent/sandbox",
-    "productionEntry": "agent/sandbox/bundle_runtime.py",
-    "keyBehavior": "内置 runtime 只从校验过的离线归档导入并核对镜像身份",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_context_retention.py": {
-    "domain": "agent-context",
-    "layer": "L1",
-    "owner": "backend/agent/context",
-    "productionEntry": "agent/context/retention.py",
-    "keyBehavior": "上下文保护统一按最近 run 的完整 round 窗口执行",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_im_interrupted_run_persistence.py": {
-    "domain": "agent-cancellation",
-    "layer": "L1",
-    "owner": "backend/agent/im",
-    "productionEntry": "agent/im/loop.py",
-    "keyBehavior": "IM 中断后已生成的部分回复会持久化供下一轮继续使用",
-    "ci": "backend-pytest"
-  },
-  "backend/tests/test_run_cancellation.py": {
-    "domain": "agent-cancellation",
-    "layer": "L1",
-    "owner": "backend/agent/runtime",
-    "productionEntry": "agent/runtime/cancellation.py",
-    "keyBehavior": "共享取消信号同时停止工具和 Sandbox 请求且完成结果优先",
-    "ci": "backend-pytest"
+  "backend/ts/packages/filesync-watcher/test/protocol-output.test.ts": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/ts/packages/filesync-watcher",
+    "productionEntry": "src/protocol-output.ts",
+    "keyBehavior": "输出拥塞时不丢已受理事件和控制响应，且保留待手动核对信号",
+    "ci": "backend-ts"
   },
   "scripts/release/test_build_embedded_sandbox_bundle.py": {
     "domain": "sandbox-deployment",
@@ -103,20 +31,20 @@
     "keyBehavior": "候选 app 必须保留基础配置并通过离线 bundle 与 Shell smoke 校验",
     "ci": "docker-release"
   },
-  "backend/tests/test_shell_prompt.py": {
-    "domain": "shell-security",
-    "layer": "L1",
-    "owner": "backend/agent",
-    "productionEntry": "agent/context/session_system.py",
-    "keyBehavior": "Shell 动态权限提示词仅在工具实际可用时注入且可重复调用",
-    "ci": "backend-pytest"
-  },
   "frontend/tests/filesystem/useFilesystemAuthorization.test.ts": {
     "domain": "frontend-scheduling",
     "layer": "L0",
     "owner": "frontend/composables",
     "productionEntry": "frontend/src/composables/useFilesystemAuthorization.ts",
     "keyBehavior": "文件系统授权确认、完成与撤销遵循 API 边界",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/admin/filesync/FileSyncAdminPanel.test.ts": {
+    "domain": "filesync",
+    "layer": "L1",
+    "owner": "frontend/components/filesync",
+    "productionEntry": "frontend/src/components/filesync/FileSyncAdminPanel.vue",
+    "keyBehavior": "异常绑定、任务状态和冲突批量结果可见；一键对账仅排入异常有效绑定，服务端复核后复用排队任务并跳过忙碌绑定；冲突列表截断时阻止批量处理",
     "ci": "frontend-test"
   },
   "frontend/tests/files/composables/useFileBrowserWindow.test.ts": {
@@ -167,7 +95,271 @@
     "keyBehavior": "工具卡片长名称和说明可省略显示且悬停可读取全文",
     "ci": "test:fast"
   },
-  "backend/tests/test_data_portability_import_delete_api.py": {
+  "frontend/tests/profile/ProfileDataPortabilityPane.test.ts": {
+    "domain": "data-portability",
+    "layer": "L1",
+    "owner": "frontend/profile",
+    "productionEntry": "frontend/src/components/common/profile/ProfileDataPortabilityPane.vue",
+    "keyBehavior": "预检和失败任务可删除，增量导入完成状态明确显示撤回限制",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/filesync/admin-events.test.ts": {
+    "domain": "filesync-live-events",
+    "layer": "L0",
+    "owner": "frontend/composables/filesync",
+    "productionEntry": "frontend/src/composables/filesync/useFileSyncAdminEvents.ts",
+    "keyBehavior": "Admin 首次连接与重连均触发权威快照补读，重复事件和旧修订不会导致多余刷新",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/admin/storage-audit/GhostRecordCleanup.test.ts": {
+    "domain": "storage-audit",
+    "layer": "L2",
+    "owner": "frontend/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
+    "productionEntry": "frontend/src/views/Admin/StorageAudit/components/GhostRecordCleanup.vue",
+    "keyBehavior": "幽灵记录清理需确认后分批提交完整记录 ID、展示进度并刷新；取消确认不发请求",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/mind/noteDraft.test.ts": {
+    "domain": "mind-notes",
+    "layer": "L0",
+    "owner": "frontend/mind",
+    "productionEntry": "frontend/src/views/Mind/utils/noteDraft.ts",
+    "keyBehavior": "未编辑空白草稿离开时不创建笔记；正文或仅标题草稿只持久化一次并保留 capturedAt",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/projects/composables/useProjectCollectionModals.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "frontend/composables/projects",
+    "productionEntry": "frontend/src/composables/projects/useProjectCollectionModals.ts",
+    "keyBehavior": "项目看板初次进入不请求归档与回收站列表，只有用户打开对应弹窗才加载",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/projects/composables/useProjectFileCounts.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "frontend/composables/projects",
+    "productionEntry": "frontend/src/composables/projects/useProjectFileCounts.ts",
+    "keyBehavior": "项目文件徽标使用聚合计数接口，并把连续文件变更合并为一次刷新而不加载全量清单",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/projects/done/DoneGroup.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "frontend/views/Projects/components/done",
+    "productionEntry": "frontend/src/views/Projects/components/done/DoneGroup.vue",
+    "keyBehavior": "折叠的完成项目年月组不挂载内部卡片，展开后才创建卡片组件",
+    "ci": "frontend-test"
+  },
+  "backend/tests/im/test_im_interrupted_run_persistence.py": {
+    "domain": "agent-cancellation",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "agent/im/loop.py",
+    "keyBehavior": "IM 中断后已生成的部分回复会持久化供下一轮继续使用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_phase2_reasoning_drivers.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/loop_drivers.py",
+    "keyBehavior": "Provider 推理状态提取、恢复与 Responses 链路保持一致",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_reasoning_state.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/context/reasoning_state.py",
+    "keyBehavior": "Provider 推理状态隔离、指纹校验、过期与冲突处理",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_run_cancellation.py": {
+    "domain": "agent-cancellation",
+    "layer": "L1",
+    "owner": "backend/agent/runtime",
+    "productionEntry": "agent/runtime/cancellation.py",
+    "keyBehavior": "共享取消信号同时停止工具和 Sandbox 请求且完成结果优先",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/terminal/test_shell_prompt.py": {
+    "domain": "shell-security",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/context/session_system.py",
+    "keyBehavior": "Shell 动态权限提示词仅在工具实际可用时注入且可重复调用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_context_retention.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/retention.py",
+    "keyBehavior": "上下文保护统一按最近 run 的完整 round 窗口执行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/context/test_context_loader_query_scaling.py": {
+    "domain": "agent-context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/loaders.py:load_files_overview",
+    "keyBehavior": "个人库根目录数量增长时文件概览查询数保持有界，工作区目录不混入个人目录",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/providers/test_model_reasoning_policy.py": {
+    "domain": "agent-reasoning",
+    "layer": "L1",
+    "owner": "backend/agent",
+    "productionEntry": "agent/llm/llm_select.py",
+    "keyBehavior": "模型配置决定推理持久化策略，缺省值安全关闭",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/security/test_phase3_filesystem_policy.py": {
+    "domain": "filesystem-security",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/filesystem_authorization.py",
+    "keyBehavior": "工作区目录边界与文件工具写权限策略正确执行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/security/test_phase4_filesystem_authorization.py": {
+    "domain": "filesystem-security",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/filesystem_authorization.py",
+    "keyBehavior": "文件系统授权开关、确认流程与审计记录安全",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_group_file_read_boundary.py": {
+    "domain": "agent-file-tools",
+    "layer": "L1",
+    "owner": "backend/agent/tools/files",
+    "productionEntry": "agent/tools/files/read.py",
+    "keyBehavior": "群聊成员只能读取当前消息明确提供的图片附件，不能按 Owner 文件 ID 或历史附件探测私人文件",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/deployment/test_bundle_runtime.py": {
+    "domain": "sandbox-deployment",
+    "layer": "L1",
+    "owner": "backend/agent/sandbox",
+    "productionEntry": "agent/sandbox/bundle_runtime.py",
+    "keyBehavior": "内置 runtime 只从校验过的离线归档导入并核对镜像身份",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/realtime/test_live_stream.py": {
+    "domain": "filesync-live-events",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/live.py",
+    "productionEntry": "backend/app/core/events.py:publish_filesync_run_changed",
+    "keyBehavior": "文件同步失效事件只发布到 Admin 频道、只携带安全标识并按任务合并进度；SSE 过滤拒绝畸形事件并剔除路径详情",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/scheduling/tasks/test_scheduled_task_schedule_rules.py": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/core/schedule_rules.py",
+    "keyBehavior": "单次、间隔和 cron 任务的独立起止时间窗口校验",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/scheduling/tasks/test_scheduled_task_workspace.py": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/scheduled_tasks.py",
+    "keyBehavior": "定时任务工作区归属与任务级文件授权隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_file_stream_preview.py": {
+    "domain": "file-preview",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/files.py",
+    "productionEntry": "backend/app/api/v1/files.py:get_stream_url",
+    "keyBehavior": "单文件预览同时返回文件元数据与流地址，跨用户和已删除文件均拒绝且不生成地址",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_inventory.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/inventory.py",
+    "keyBehavior": "File/Folder 只按绑定范围与活动状态分页入清单，重复活动路径完整保留以便归并时标歧义",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_live_shell.py": {
+    "domain": "filesync-live-events",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync/watcher.py",
+    "productionEntry": "backend/app/services/filesync/targeted.py:project_path_events",
+    "keyBehavior": "临时根目录真实 Shell 创建、等长覆盖、删除依次即时更新 File 与 journal，不依赖手动整树核对",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_periodic.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/periodic.py",
+    "keyBehavior": "每周完整核对只排入活跃窗口内到期绑定，任务幂等且失败限频，默认不自动软删除 DB 行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_reconcile_jobs.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/jobs.py",
+    "keyBehavior": "Admin 对账入口受保护、同绑定幂等排队、同用户串行执行、权限跳过不清除未完成状态且失联不自动重试",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_run_migration.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "alembic/versions/20261007000003_add_manual_filesync_runs.py",
+    "keyBehavior": "任务表迁移遇到历史重复活动文件路径时仍保留原记录并成功建表",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_runner.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/runner.py",
+    "keyBehavior": "初始化与修复只恢复无旧记录的空根并校正指纹，保留旧内容；更新/移动/删除、失败部分结果、dry-run 无副作用及临时产物清理/进度有界符合任务契约",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_scan.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/scan.py",
+    "keyBehavior": "完整磁盘清单与 File/Folder 有界归并检测新增/更新/缺失；重复路径或类型冲突不得误删，路径段排序保证目录后代连续，扫描取消/超时须等待线程退出",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_schema_retirement.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "alembic/versions/20261007000001_retire_filesync_snapshot_schema.py",
+    "keyBehavior": "清理快照重构结构保留绑定、journal 与其他功能数据；活动任务阻止清理，重复执行安全",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_watcher_health.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/health.py",
+    "keyBehavior": "监听恢复只更新健康状态，历史缺口保持待人工核对且迁移默认保护已有绑定",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/trash/test_trash_purge_jobs.py": {
+    "domain": "trash-purge",
+    "layer": "L1",
+    "owner": "backend/app/services/files/trash_purge.py",
+    "productionEntry": "backend/app/services/files/trash_purge.py:run_trash_purge_worker",
+    "keyBehavior": "清空任务全局限并发、用户隔离、完成冷却、提交后唤醒、向所有者推送进度及通知失败恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/data_portability/test_data_portability_import_delete_api.py": {
     "domain": "data-portability",
     "layer": "L1",
     "owner": "backend/services/data_portability",
@@ -175,12 +367,396 @@
     "keyBehavior": "仅任务所有者可删除已结束导入并清理其私有暂存对象",
     "ci": "backend-pytest"
   },
-  "frontend/tests/profile/ProfileDataPortabilityPane.test.ts": {
-    "domain": "data-portability",
+  "backend/tests/im/telegram/test_telegram_bot_api.py": {
+    "domain": "im",
     "layer": "L1",
-    "owner": "frontend/profile",
-    "productionEntry": "frontend/src/components/common/profile/ProfileDataPortabilityPane.vue",
-    "keyBehavior": "预检和失败任务可删除，增量导入完成状态明确显示撤回限制",
+    "owner": "backend/agent/gateway/telegram.py",
+    "productionEntry": "backend/app/services/telegram_bot_api.py",
+    "keyBehavior": "Telegram API 固定 HTTPS 主机、禁用重定向、约束下载路径、代理失败关闭且不泄漏 Token",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_connect.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/telegram_connect.py",
+    "productionEntry": "backend/app/api/v1/telegram_connect.py",
+    "keyBehavior": "连接与换 Token 按所有权加密保存，失败不覆盖凭据，owner 绑定码限次且单次使用",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_contract.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/models.py",
+    "keyBehavior": "Telegram 会话身份按平台、Bot 与群聊隔离，绑定命令在进入 Agent 前消费且停止命令作用域准确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_format.py": {
+    "domain": "im",
+    "layer": "L0",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/telegram_format.py",
+    "keyBehavior": "MarkdownV2 转义、链接安全与消息分块遵循 Telegram 字符及 UTF-16 长度限制",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_gateway.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/telegram.py",
+    "productionEntry": "backend/agent/gateway/telegram.py",
+    "keyBehavior": "长轮询游标仅在入队后推进，临时故障可恢复，出站限速、回复和 Token 轮换行为正确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_im_policy.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im/permissions.py",
+    "productionEntry": "backend/agent/im/permissions.py",
+    "keyBehavior": "owner、群成员及未知角色按 Bot 隔离，群聊记录、回复、记忆与上下文搜索遵循策略",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_media.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im/media_ingress_telegram.py",
+    "productionEntry": "backend/agent/im/media_ingress_telegram.py",
+    "keyBehavior": "媒体下载限制大小与归属，引用媒体仅复用同平台同消息附件，失败不暂存对象",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/telegram/test_telegram_message_parser.py": {
+    "domain": "im",
+    "layer": "L0",
+    "owner": "backend/agent/im/parsers/telegram.py",
+    "productionEntry": "backend/agent/im/parsers/telegram.py",
+    "keyBehavior": "命令实体按 UTF-16 偏移解析，身份提及、匿名发送者、引用和受支持媒体映射到统一 IM 协议",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_user_skill_manager_migration.py": {
+    "domain": "agent-skills",
+    "layer": "L2",
+    "owner": "backend/alembic/versions",
+    "productionEntry": "backend/alembic/versions/20261009000002_add_user_skill_manager.py",
+    "keyBehavior": "既有 Skill 迁移后仍由用户管理，缺失字段按兼容默认值填充",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/chat/GuguChatImConnect.test.ts": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "frontend/components/common/gugu-chat",
+    "productionEntry": "frontend/src/components/common/gugu-chat/GuguChatImConnect.vue",
+    "keyBehavior": "Telegram 连接入口跳转到个人设置并展示已有 Telegram 会话",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/composables/useFileLibraryNavigation.test.ts": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileLibraryNavigation.ts",
+    "keyBehavior": "搜索跳转优先恢复目标工作区与文件夹路径，并处理目标目录加载失败和历史导航",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/useProjectFileProjectSync.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useProjectFileProjectSync.ts",
+    "keyBehavior": "项目文件首开仅加载根目录，进入子目录按需请求并复用已加载目录缓存",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/skills/skillGroups.test.ts": {
+    "domain": "frontend-skills",
+    "layer": "L0",
+    "owner": "frontend/views/Skills",
+    "productionEntry": "frontend/src/views/Skills/skillGroups.ts",
+    "keyBehavior": "助手管理的 Skill 单独归组，旧记录与未标记记录默认归为用户管理",
+    "ci": "frontend-test"
+  },
+  "backend/tests/agent/knowledge/test_read_knowledge_tool.py": {
+    "domain": "memory-rag",
+    "layer": "L1",
+    "owner": "backend/agent/tools",
+    "productionEntry": "backend/agent/tools/knowledge.py",
+    "keyBehavior": "knowledge 关键词请求走 BM25，按 id 直读全文且保持 owner 隔离和稳定结果元数据",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/feishu/test_feishu_tool_summary.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/gateway",
+    "productionEntry": "backend/agent/gateway/feishu_tool_summary.py",
+    "keyBehavior": "飞书工具事件按调用 ID 更新折叠摘要，正文分组、取消态、回退和详情长度遵循消息契约",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/test_im_permissions_types.py": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/permissions.py",
+    "keyBehavior": "非数字 Bot 身份拒绝授权，群策略按平台开关隔离并保留旧飞书空值语义",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/security/test_filesync_workspace_permissions.py": {
+    "domain": "security",
+    "layer": "L2",
+    "owner": "backend/agent/sandbox",
+    "productionEntry": "backend/agent/sandbox/docker.py",
+    "keyBehavior": "ACL 助手只访问授权工作区并使用动态 Rootless 身份，拒绝越界路径和不匹配的 daemon 所有者",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_project_agent_context.py": {
+    "domain": "context",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "backend/agent/context/builder.py",
+    "keyBehavior": "项目摘要和文件概览在 Agent 详情、snapshot、文件范围及数据导出间一致并保持用户隔离",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/projects/test_project_trash.py": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "backend/app/services",
+    "productionEntry": "backend/app/services/projects.py",
+    "keyBehavior": "项目列表只统计归属项目的直属存活文件，并为无文件项目返回零",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_file_listing_scope.py": {
+    "domain": "storage",
+    "layer": "L1",
+    "owner": "backend/app/services/files",
+    "productionEntry": "backend/app/services/files/browser.py",
+    "keyBehavior": "工作区根目录仅返回直属存活文件，子目录查询严格限定父目录并排除其他工作区",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_ts_sidecar.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/ts_sidecar.py",
+    "keyBehavior": "TS sidecar 文件与目录事件可解析，输出拥塞保留恢复信号且进程退出不得报告健康",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_watcher_permissions.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/watcher.py",
+    "keyBehavior": "权限缺口经授权 Sandboxd IPC 修复后重建 watcher，修复失败仍暴露缺口并安排核对",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_config_reconcile.py": {
+    "domain": "storage-audit",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/config.py",
+    "productionEntry": "backend/app/api/v1/config.py:_import_orphan",
+    "keyBehavior": "存储核对保护运行时命名空间，仅导入可归属的孤儿文件，并在路径、所有权或物理校验失败时安全拒绝",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_file_active_storage_key_uniqueness.py": {
+    "domain": "storage",
+    "layer": "L1",
+    "owner": "backend/app/models",
+    "productionEntry": "backend/app/models/__init__.py:File",
+    "keyBehavior": "同一用户同一活动 storage key 唯一，不同用户和软删除历史记录可保留相同 key",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_quota_periodic.py": {
+    "domain": "storage",
+    "layer": "L2",
+    "owner": "backend/app/services/storage",
+    "productionEntry": "backend/app/services/storage/quota_periodic.py",
+    "keyBehavior": "周期配额核对只处理到期活跃用户并遵循单轮批次上限",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_storage_quota_ledger.py": {
+    "domain": "storage",
+    "layer": "L2",
+    "owner": "backend/app/services/storage",
+    "productionEntry": "backend/app/services/storage/quota_ledger.py",
+    "keyBehavior": "文件与 Shell 用量按权威计量入账，增量核对不覆盖并发变更且配额上限隔离正确",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/admin/storage-audit/ReconciliationPanels.test.ts": {
+    "domain": "storage-audit",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/StorageAudit/components",
+    "productionEntry": "frontend/src/views/Admin/StorageAudit/components/FileObjectReconciliation.vue",
+    "keyBehavior": "文件扫描分开呈现幽灵记录与孤儿文件，目录错位只走目录修复接口且取消删除确认不发请求",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/common/DatePicker.test.ts": {
+    "domain": "frontend-ui",
+    "layer": "L1",
+    "owner": "frontend/components/common/controls",
+    "productionEntry": "frontend/src/components/common/controls/DatePicker.vue",
+    "keyBehavior": "今天快捷入口不受 allowed-dates 排除影响，且当前已是今天时仍通知调用方重新定位",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/composables/useFileLibraryDirectory.test.ts": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileLibraryDirectory.ts",
+    "keyBehavior": "目录按需请求并复用已缓存快照，切换目标时先清除旧目录内容以免短暂显示错目录文件",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/mind/noteEditCommit.test.ts": {
+    "domain": "mind-notes",
+    "layer": "L0",
+    "owner": "frontend/composables/mind",
+    "productionEntry": "frontend/src/composables/mind/noteEditCommit.ts",
+    "keyBehavior": "保存失败保留编辑态供重试，只有保存成功后才退出编辑",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/profile/ProfileImPane.test.ts": {
+    "domain": "im",
+    "layer": "L1",
+    "owner": "frontend/components/common/profile",
+    "productionEntry": "frontend/src/components/common/profile/ProfileImPane.vue",
+    "keyBehavior": "平台群聊策略仅提交当前 Bot 对应字段，Telegram 连接、替换和群组策略入口对用户正确呈现",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/shared/liveRevisionRefresh.test.ts": {
+    "domain": "live-events",
+    "layer": "L0",
+    "owner": "frontend/composables/shared",
+    "productionEntry": "frontend/src/composables/shared/liveRevisionRefresh.ts",
+    "keyBehavior": "连续 revision 变化合并为一次权威刷新，停止监听后不再触发刷新",
+    "ci": "frontend-test"
+  },
+  "frontend/e2e/theme-divider.spec.ts": {
+    "domain": "frontend-ui",
+    "layer": "L3",
+    "owner": "frontend/e2e",
+    "productionEntry": "frontend/src/assets/styles/tokens/semantic.css",
+    "keyBehavior": "所有浅色配色和材质下分隔线及虚线边界均与浅色背景保持可见对比",
+    "ci": "runtime-integration"
+  },
+  "frontend/e2e/project-file-drag-experimental.spec.ts": {
+    "domain": "file-library",
+    "layer": "L3",
+    "owner": "frontend/e2e",
+    "productionEntry": "frontend/src/views/Projects/components/ProjectFilesPanel.vue",
+    "keyBehavior": "项目文件区拖拽完成目标命中、持久化移动和目标目录导航",
+    "ci": "experimental"
+  },
+  "backend/tests/agent/context/test_tool_media_projection.py": {
+    "domain": "agent-multimodal",
+    "layer": "L1",
+    "owner": "backend/agent/context",
+    "productionEntry": "agent/context/assembly",
+    "keyBehavior": "工具结果中的图像在实时和历史投影中保持多模态内容，不进入文本和文本 Token 估算",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/memory/test_memory_prompt_contract.py": {
+    "domain": "agent-memory",
+    "layer": "L1",
+    "owner": "backend/agent/memory",
+    "productionEntry": "agent/memory/reflection.py 与 agent/memory/memory_compress.py",
+    "keyBehavior": "记忆提示词保留有回顾价值的日常事实并区分计划候选与实际结果",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/agent/test_run_preparation_parallel.py": {
+    "domain": "agent-run-preparation",
+    "layer": "L1",
+    "owner": "backend/agent/run",
+    "productionEntry": "agent/run/preparation.py",
+    "keyBehavior": "MCP 发现与 RAG 召回并行执行，保留消息水位且 MCP 失败时取消召回并传播原始错误",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/observability/test_loopscope_trace_restore.py": {
+    "domain": "loopscope-observability",
+    "layer": "L1",
+    "owner": "backend/agent/runtime/loopscope_trace",
+    "productionEntry": "agent/runtime/loopscope_trace 与 agent/context/builder.py",
+    "keyBehavior": "跨进程 trace 恢复、工具参数脱敏以及上下文准备阶段耗时归属保持正确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/test_im_platform_settings.py": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "backend/app",
+    "productionEntry": "app/services/im_platforms.py 与 app/core/config.py",
+    "keyBehavior": "即时通讯平台默认全开、配置可局部覆盖且 Admin 更新拒绝未知或非布尔值",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/platform/test_orm_boundaries.py": {
+    "domain": "orm-boundary-checks",
+    "layer": "L0",
+    "owner": "backend/scripts/checks",
+    "productionEntry": "scripts/checks/check_orm_boundaries.py",
+    "keyBehavior": "ORM 棘轮识别 SQLAlchemy constructor，同时不把同名函数声明和普通对象 update 方法误判为 ORM",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_upload_stream.py": {
+    "domain": "file-upload",
+    "layer": "L1",
+    "owner": "backend/app/core",
+    "productionEntry": "app/core/upload_stream.py",
+    "keyBehavior": "上传校验复用 multipart 临时流、限制实际读取量并在异常时关闭流",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_inotify_limitd.py": {
+    "domain": "filesync-watcher-capacity",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "scripts/runtime/inotify_limitd.py 与 app/services/filesync",
+    "keyBehavior": "Watcher 容量按阈值分档扩展并严格受 Admin 硬上限约束，管理服务的策略热更新和连接超时可靠",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/terminal/test_terminal_cross_worker_stop.py": {
+    "domain": "terminal-lifecycle",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/terminals.py",
+    "productionEntry": "app/api/v1/terminals.py 与 agent/terminal/pty_manager.py",
+    "keyBehavior": "跨 Worker 终止通过共享 sandboxd 生效，PTY 关闭竞争不阻止成功状态与事件发布",
+    "ci": "backend-pytest"
+  },
+  "frontend/tests/admin/ImPlatformSettings.test.ts": {
+    "domain": "im-platform-settings",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Config",
+    "productionEntry": "frontend/src/views/Admin/Config/components/ImPlatformSettings.vue",
+    "keyBehavior": "管理员切换单个平台开关只更新被切换的平台并呈现当前配置状态",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/admin/agent/LlmPresetEditor.test.ts": {
+    "domain": "agent-configuration",
+    "layer": "L1",
+    "owner": "frontend/views/Admin/Agent",
+    "productionEntry": "frontend/src/views/Admin/Agent/llm/components/LlmPresetEditor.vue",
+    "keyBehavior": "模型预设编辑、保存及多模态能力配置保持表单状态和提交数据一致",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/files/composables/useFileLibraryFileActions.test.ts": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "frontend/composables/files",
+    "productionEntry": "frontend/src/composables/files/useFileLibraryFileActions.ts",
+    "keyBehavior": "删除请求确认成功前保留文件卡片和选择状态，成功后才同步缓存与目录视图",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/profile/preferences-tool-injection.test.ts": {
+    "domain": "agent-preferences",
+    "layer": "L1",
+    "owner": "frontend/stores",
+    "productionEntry": "frontend/src/stores/preferences.ts",
+    "keyBehavior": "用户偏好加载时工具调用信息与中间回复使用产品约定默认值并正确注入状态",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/schedules/ScheduleFormModal.test.ts": {
+    "domain": "scheduled-tasks",
+    "layer": "L1",
+    "owner": "frontend/views/Schedules",
+    "productionEntry": "frontend/src/views/Schedules/components/ScheduleFormModal.vue",
+    "keyBehavior": "编辑任务时保留管理员暂时关闭的平台渠道，新建任务仍不能选择未开放平台",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/utils/imDelivery.test.ts": {
+    "domain": "im-delivery",
+    "layer": "L0",
+    "owner": "frontend/utils",
+    "productionEntry": "frontend/src/utils/imDelivery.ts",
+    "keyBehavior": "即时通讯投递目标选项符合平台能力，未修改的既有目标不被重新序列化覆盖",
     "ci": "frontend-test"
   }
 }

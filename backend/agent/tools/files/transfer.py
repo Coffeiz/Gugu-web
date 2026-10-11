@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 
 from app.core.redaction import redact
 from app.core.safe_egress import SafeEgressClient, SafeEgressError
+from app.services.files.corpus import normalize_file_logical_path
 from agent.tools.filesystem_policy import current_filesystem_policy
 
 
@@ -72,10 +73,6 @@ async def _extract_files(db, user_id, args: dict):
     }
 
 
-# send_file 允许读取的逻辑沙盒根。这里刻意不接受宿主机绝对路径，避免模型
-# 把执行器日志里的本机路径当成可发送路径，越过用户沙箱边界。
-_SEND_PATH_ROOTS = frozenset({"personal", "project", "workspace"})
-
 def _normalize_send_path(value: str) -> tuple[str | None, PurePosixPath | None, str | None]:
     """解析 send_file 的逻辑路径，不把它解释成宿主机路径。"""
     text = str(value or "").strip()
@@ -84,15 +81,15 @@ def _normalize_send_path(value: str) -> tuple[str | None, PurePosixPath | None, 
         text = text[len("gugu-sandbox:"):]
     if not text.startswith("/"):
         return None, None, None
-    if "\\" in text or "\x00" in text:
-        return None, None, "路径格式不受支持，只能使用 /workspace、/personal 或 /project 下的路径"
-    path = PurePosixPath(text)
+    try:
+        normalized = normalize_file_logical_path(text)
+    except ValueError as exc:
+        return None, None, str(exc)
+    path = PurePosixPath(normalized)
     parts = path.parts
-    if len(parts) < 3 or parts[0] != "/" or parts[1] not in _SEND_PATH_ROOTS:
-        return None, None, "只允许发送 /workspace、/personal 或 /project 下的文件"
+    if len(parts) < 3:
+        return None, None, "文件路径需要包含空间和文件名"
     relative = PurePosixPath(*parts[2:])
-    if any(part in {"", ".", ".."} for part in relative.parts):
-        return None, None, "路径不能包含 . 或 .."
     return parts[1], relative, None
 
 

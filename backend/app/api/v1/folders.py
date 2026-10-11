@@ -53,6 +53,7 @@ async def list_folders(
     project_id: Optional[int] = None,
     workspace_directory_id: Optional[int] = None,
     parent_id:  Optional[int] = None,
+    all_in_scope: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -67,7 +68,7 @@ async def list_folders(
 
     folder_rows = await list_folder_rows_with_file_counts(
         db, current_user.id, project_id=project_id, parent_id=parent_id,
-        workspace_directory_id=workspace_directory_id)
+        workspace_directory_id=workspace_directory_id, all_in_scope=all_in_scope)
 
     return [
         FolderResponse(id=f.id, project_id=f.project_id, workspace_directory_id=f.workspace_directory_id, parent_id=f.parent_id,

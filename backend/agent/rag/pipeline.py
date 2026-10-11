@@ -22,7 +22,7 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = (0.05, 0.1)
 _locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 INDEX_EVENT_SOURCE_TYPES = {
-    "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation", "knowledge",
+    "project", "note", "canvas", "calendar", "scheduled_task", "conversation", "knowledge",
 }
 INDEX_REBUILD_SOURCE_TYPES = ("memory", *sorted(INDEX_EVENT_SOURCE_TYPES))
 
@@ -172,7 +172,7 @@ async def _replace_worker_index(
         raise
 
 
-DOCUMENT_PATCH_SOURCE_TYPES = {"knowledge", "file", "project", "calendar", "note", "canvas"}
+DOCUMENT_PATCH_SOURCE_TYPES = {"knowledge", "project", "calendar", "note", "canvas"}
 
 
 async def update_document(
@@ -181,7 +181,7 @@ async def update_document(
 ) -> int:
     """文档级增量：只读取/投影/写入发生变化的单个对象（PRD-RAG-9）。
 
-    支持 knowledge/file/project（三者都有稳定的单对象 canonical record）。
+    支持 knowledge/project（两者都有稳定的单对象 canonical record）。
     DB 持久索引按 chunk 增量替换；knowledge 额外做向量 upsert/delete；
     TS worker patch 失败时回退来源级 replace（mode 显式记 source_replace）。
     返回该文档当前 chunk 数。
@@ -292,9 +292,11 @@ async def update_document(
 async def handle_rag_index_event(event) -> bool:
     """处理非 Memory 来源索引事件，失败重试但不阻塞主业务写入。
 
-    knowledge/file/project 事件带 source_id 时走文档级增量；其余保持来源级
+    旧版本排队的 file 事件直接消费，不再重建文件索引；knowledge/project 事件带 source_id 时走文档级增量；其余保持来源级
     全量重建（无 id 的批量事件、管理端校准）。
     """
+    if event.source_type == "file":
+        return True
     started = time.monotonic()
     use_document_patch = (
         event.source_type in DOCUMENT_PATCH_SOURCE_TYPES

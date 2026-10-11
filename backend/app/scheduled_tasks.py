@@ -8,6 +8,7 @@ worker 进程每 ~30s 调 `reconcile()`：从 `scheduled_tasks` 表读启用任�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -372,7 +373,12 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             if not t or not t.enabled:
                 return {"错误": "任务不存在或已停用"}
             payload, uid, name = t.payload or "", t.user_id, t.name
-            target_map = t.delivery_targets
+            chans = {c for c in (t.channels or "").split(",") if c}
+            target_map = _active_delivery_targets(t.delivery_targets, chans)
+            if _has_multiple_group_targets(target_map):
+                # 旧数据或绕过 REST 的写入也必须 fail closed，不能把某个群的
+                # MemoryScope 注入后再将同一正文广播到其他群。
+                return {"错误": "一个定时任务目前只能设置一个群聊投递目标"}
             authorized_tools = t.authorized_tools or []
             email_attachment_file_ids = getattr(t, "email_attachment_file_ids", None) or []
             workspace_id = t.workspace_id
@@ -392,7 +398,6 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 or filesystem_policy.full_user_sandbox
                 or get_settings().storage.backend == "oss"
             )
-            chans = {c for c in (t.channels or "").split(",") if c}
             is_once = task_schedule_kind(t) == "once"
             if is_task_ended(t):
                 return {"错误": "任务已结束"}
@@ -738,6 +743,24 @@ def _detect_group_target(target_map: dict | None) -> dict | None:
     return None
 
 
+def _has_multiple_group_targets(target_map: dict | None) -> bool:
+    if not isinstance(target_map, dict):
+        return False
+    return sum(
+        1 for target in target_map.values()
+        if isinstance(target, dict) and target.get("chat_type") == "group" and target.get("chat_id")
+    ) > 1
+
+
+def _active_delivery_targets(target_map: dict | None, channels: set[str]) -> dict:
+    """过滤暂停/未选渠道保留的目标；历史 ``im`` 别名仍表示全部 IM。"""
+    if not isinstance(target_map, dict):
+        return {}
+    if "im" in channels:
+        return target_map
+    return {channel: target for channel, target in target_map.items() if channel in channels}
+
+
 async def _inject_group_context(user_id, target_map, prompt: str) -> tuple[str | None, str]:
     """群定时任务：set_im + 拼群 memory 到 user prompt 开头。
 
@@ -909,14 +932,14 @@ async def _run_agent_execution(
 
 
 # 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qq"）
-_CHAN_PLATFORM = {"feishu": "feishu", "qq": "qq", "wechat": "wechat"}
-_PLAT_LABEL = {"feishu": "飞书", "qq": "QQ", "wechat": "微信"}
+_CHAN_PLATFORM = {"feishu": "feishu", "qq": "qq", "wechat": "wechat", "telegram": "telegram"}
+_PLAT_LABEL = {"feishu": "飞书", "qq": "QQ", "wechat": "微信", "telegram": "Telegram"}
 
 
 async def owner_private_targets(db, user_id, channels: set | list[str] | None) -> dict | None:
     """为网页创建的任务解析固定私聊目标，不依赖最近一次 IM 会话。"""
     channels = set(channels or [])
-    wanted = {"qq": "qq", "feishu": "feishu", "wechat": "wechat"}
+    wanted = {"qq": "qq", "feishu": "feishu", "wechat": "wechat", "telegram": "telegram"}
     selected = {channel: platform for channel, platform in wanted.items() if channel in channels}
     if not selected:
         return None
@@ -925,6 +948,23 @@ async def owner_private_targets(db, user_id, channels: set | list[str] | None) -
 
     targets = {}
     for channel, platform in selected.items():
+        if platform == "wechat":
+            # 微信 iLink 没有独立 owner 绑定；只允许使用最近一次已验证的私聊目标。
+            reach = await get_imreach_private(user_id, platform)
+            bot = (await db.execute(
+                select(UserBot).where(
+                    UserBot.user_id == _as_uuid(user_id),
+                    UserBot.platform == platform,
+                    UserBot.enabled.is_(True),
+                ).order_by(UserBot.id.asc())
+            )).scalars().first()
+            if (bot and reach and str(reach.get("channel_id")) == str(bot.id)
+                    and reach.get("puid") and reach.get("context_token")):
+                targets[channel] = {
+                    "platform": platform, "chat_type": "c2c", "chat_id": None,
+                    "puid": reach["puid"], "channel_id": reach.get("channel_id"),
+                }
+            continue
         row = (
             await db.execute(
                 select(UserBot)
@@ -946,6 +986,32 @@ async def owner_private_targets(db, user_id, channels: set | list[str] | None) -
     return targets
 
 
+def _imreach_target_key(user_id, platform: str, chat_type: str, target_id: str) -> str:
+    # Platform IDs are opaque user input; hash them before including them in Redis keys.
+    fingerprint = hashlib.sha256(target_id.encode("utf-8")).hexdigest()[:32]
+    return f"imreach-target:{user_id}:{platform}:{chat_type}:{fingerprint}"
+
+
+async def get_imreach_target(user_id, platform: str, chat_type: str, target_id: str) -> dict | None:
+    """读取目标级 IM 路由。微信主动发送依赖每个会话最新的 context_token。"""
+    from app.core import redis as R
+    try:
+        raw = await R.get_redis().get(_imreach_target_key(user_id, platform, chat_type, target_id))
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def get_imreach_private(user_id, platform: str) -> dict | None:
+    """返回最近一条私聊路由，群消息不能覆盖私聊目标。"""
+    from app.core import redis as R
+    try:
+        raw = await R.get_redis().get(f"imreach-private:{user_id}:{platform}")
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
 def _scheduled_delivery_targets(chans: set) -> str:
     """把任务配置转换成模型可理解的投递范围；只描述配置，不承诺实际触达。"""
     labels = []
@@ -964,6 +1030,9 @@ def _scheduled_delivery_targets(chans: set) -> str:
 # ── IM 投递 ──────────────────────────────────────────────────────────────────
 async def _has_enabled_bot(user_id, platform: str) -> bool:
     """该用户在该平台是否有 enabled 的 bot。保险二：解绑后即使地址残留也不投递。"""
+    from app.services.im_platforms import is_im_platform_enabled
+    if not is_im_platform_enabled(platform):
+        return False
     import app.db.session as ss
     from app.models import UserBot
     from sqlalchemy import select
@@ -976,6 +1045,21 @@ async def _has_enabled_bot(user_id, platform: str) -> bool:
             )
         )).first()
     return row is not None
+
+
+async def _hydrate_im_target(user_id, platform: str, reach: dict | None) -> dict | None:
+    """微信任务仅保存聊天目标引用；发送前读取该目标最近的 iLink context_token。"""
+    if not reach or platform != "wechat" or reach.get("context_token"):
+        return reach
+    target_id = reach.get("chat_id") if reach.get("chat_type") == "group" else reach.get("puid")
+    if not target_id:
+        return reach
+    fresh = await get_imreach_target(
+        user_id, platform,
+        "group" if reach.get("chat_type") == "group" else "c2c",
+        str(target_id),
+    )
+    return {**reach, "context_token": fresh.get("context_token", "")} if fresh else reach
 
 
 async def _legacy_private_target(user_id, platform: str) -> dict | None:
@@ -1025,6 +1109,7 @@ async def _deliver_im(
     reach = target or await _legacy_private_target(user_id, platform)
     if not reach:
         return False   # 该平台没用过/无可触达地址，跳过
+    reach = await _hydrate_im_target(user_id, platform, reach)
     payload = {
         "platform": platform or reach.get("platform"),
         "channel_id": reach.get("channel_id"),
@@ -1136,7 +1221,7 @@ async def _deliver_im_files(user_id, platform: str, target: dict | None, files: 
     返回 (成功张数, 总张数)——调用方据此判断是否要把渠道结果从"已发送"降级，不能像以前
     那样只看文字发没发，图片全挂了也照样标"已发送"（一次性任务因此被当成功删掉）。
     每张独立 best-effort：单张失败不影响其它张继续尝试，但最终统计必须如实反映失败。"""
-    reach = target or await _legacy_private_target(user_id, platform)
+    reach = await _hydrate_im_target(user_id, platform, target or await _legacy_private_target(user_id, platform))
     if not reach:
         return 0, len(files)
     payload = {
@@ -1173,6 +1258,11 @@ async def save_imreach(user_id, platform, channel_id, chat_id, puid, context_tok
         # 按平台键（精确投递）+ 最近键（兜底/旧逻辑），都 90 天滚动刷新
         await r.set(_reach_key(user_id, platform), data, ex=90 * 86400)
         await r.set(_reach_key(user_id), data, ex=90 * 86400)
+        chat_type = "group" if chat_id else "c2c"
+        if platform == "wechat" and chat_type == "c2c" and puid:
+            # 保留最近私聊目标；后续群消息不会把活动提醒误投到群。
+            await r.set(_imreach_target_key(user_id, platform, chat_type, str(puid)), data, ex=90 * 86400)
+            await r.set(f"imreach-private:{user_id}:{platform}", data, ex=90 * 86400)
     except Exception:
         pass
 

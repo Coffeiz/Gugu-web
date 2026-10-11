@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import time
+import uuid
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -18,11 +19,27 @@ from pydantic import BaseModel, field_validator
 from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.config import FileSyncSettings, SmtpSettings, get_settings, save_override
+from app.core.config import FileSyncSettings, IMPlatformSettings, SmtpSettings, get_settings, save_override
 from app.core.redaction import diag_log, redact
 from app.db.session import create_all_tables, reset_engine, get_db
 from app.services.multimodal_probe import make_silent_wav
+from app.services.files.browser import count_file_rows_for_user
+from app.services.storage.reconciliation import (
+    delete_ghost_record,
+    import_orphan_file as _import_orphan,
+    is_internal_storage_key as _is_internal_key,
+    parse_path_migration_key as _parse_path_migration_key,
+    resolve_import_folder as _resolve_import_folder,
+    same_file_scope as _same_file_scope,
+    storage_repair_error as _storage_repair_error,
+)
 from agent.sandbox.docker_runtime import sandbox_readiness
+from app.services.filesync.inotify_limit_client import (
+    InotifyLimitUnavailable,
+    request_limit_agent,
+    validate_hard_limit,
+    validate_hard_limit_for_usage,
+)
 
 router = APIRouter(prefix="/admin/config", tags=["admin"])
 
@@ -51,6 +68,62 @@ class ConfigPatch(BaseModel):
     patch: dict[str, Any]
 
 
+async def _validate_watch_hard_limit(filesync_patch: dict[str, Any]) -> None:
+    if "watch_hard_limit" not in filesync_patch:
+        return
+    try:
+        candidate_limit = validate_hard_limit(filesync_patch["watch_hard_limit"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    current_limit = get_settings().filesync.watch_hard_limit
+    if candidate_limit >= current_limit:
+        return
+    try:
+        capacity = await request_limit_agent("status")
+    except InotifyLimitUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="宿主机 watcher 管理服务不可用，无法安全降低硬上限",
+        ) from exc
+    try:
+        validate_hard_limit_for_usage(candidate_limit, capacity["usage"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _validate_filesync_patch(filesync_patch: Any) -> None:
+    if filesync_patch is None:
+        return
+    if not isinstance(filesync_patch, dict):
+        raise HTTPException(status_code=400, detail="filesync 配置必须是对象")
+
+    unknown_fields = set(filesync_patch) - FileSyncSettings.model_fields.keys()
+    if unknown_fields:
+        raise HTTPException(status_code=400, detail="包含不支持的文件同步配置项")
+    if "enabled" in filesync_patch and type(filesync_patch["enabled"]) is not bool:
+        raise HTTPException(status_code=400, detail="filesync.enabled 必须是布尔值")
+
+    await _validate_watch_hard_limit(filesync_patch)
+
+    settings = get_settings()
+    FileSyncSettings.model_validate({**settings.filesync.model_dump(), **filesync_patch})
+    if filesync_patch.get("enabled") is True and settings.storage.backend != "local":
+        raise HTTPException(status_code=400, detail="OSS 存储模式不支持本地文件自动同步")
+
+
+def _validate_im_patch(im_patch: Any) -> None:
+    if im_patch is None:
+        return
+    if not isinstance(im_patch, dict):
+        raise HTTPException(status_code=400, detail="im 配置必须是对象")
+    unknown_fields = set(im_patch) - IMPlatformSettings.model_fields.keys()
+    if unknown_fields:
+        raise HTTPException(status_code=400, detail="包含不支持的 IM 平台")
+    if any(type(enabled) is not bool for enabled in im_patch.values()):
+        raise HTTPException(status_code=400, detail="IM 平台开关必须是布尔值")
+    IMPlatformSettings.model_validate({**get_settings().im.model_dump(), **im_patch})
+
+
 @router.patch("")
 async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = Depends(get_db)):
     import traceback as _tb
@@ -59,6 +132,9 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         agent_patch = body.patch.get("agent")
         sandbox_patch = body.patch.get("sandbox")
         filesync_patch = body.patch.get("filesync")
+        await _validate_filesync_patch(filesync_patch)
+        im_patch = body.patch.get("im")
+        _validate_im_patch(im_patch)
         smtp_patch = body.patch.get("smtp")
         if isinstance(smtp_patch, dict) and "registration_verification_enabled" in smtp_patch:
             if type(smtp_patch["registration_verification_enabled"]) is not bool:
@@ -93,17 +169,6 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
                     status_code=400,
                     detail="sandbox.full_user_sandbox_authorization_enabled 必须是布尔值",
                 )
-        if isinstance(filesync_patch, dict):
-            if "enabled" in filesync_patch and type(filesync_patch["enabled"]) is not bool:
-                raise HTTPException(status_code=400, detail="filesync.enabled 必须是布尔值")
-            FileSyncSettings.model_validate({
-                **get_settings().filesync.model_dump(),
-                **filesync_patch,
-            })
-            if filesync_patch.get("enabled") is True and get_settings().storage.backend != "local":
-                raise HTTPException(status_code=400, detail="OSS 存储模式不支持本地文件自动同步")
-        elif filesync_patch is not None:
-            raise HTTPException(status_code=400, detail="filesync 配置必须是对象")
         if isinstance(agent_patch, dict) and any(
             agent_patch.get(field) is True
             for field in ("shell_enabled", "shell_system_enabled", "shell_dangerous_enabled")
@@ -169,79 +234,51 @@ async def init_db():
 
 # ── 存储 ↔ DB 对账（只读）────────────────────────────────────────────────
 
-def _is_internal_key(k: str) -> bool:
-    """判断是否为不由 ``File`` 表管理的存储对象。
-
-    用户文件的 key 形如 ``<user_id>/<path>``（旧版也可能是
-    ``u/<user_id>/<path>``）。用户根目录下的 ``.system``（RAG 等系统索引）、
-    ``.agent``（记忆）、``shell``（持久化 Shell 工作区）、``.voice``（语音暂存）
-    和 ``.video_cache``（视频转码缓存）由运行时直接管理，不会创建 ``File`` 记录，
-    不能作为孤儿文件参与对账。这里只忽略用户根目录下的这些命名空间，避免误伤
-    用户在普通目录中创建的同名文件夹。
-    """
-    key = str(k)
-    parts = [part for part in key.split("/") if part]
-    user_path_parts = parts[2:] if len(parts) >= 3 and parts[0] == "u" else parts[1:]
-    internal_user_root = bool(user_path_parts) and user_path_parts[0] in {
-        ".system", ".agent", "shell", ".voice", ".video_cache",
-    }
-    return (
-        internal_user_root
-        or ".agent/" in key
-        or ".chat_staging" in key
-        or ".thumbs" in key
-        or "_thumb" in key
-        or ".thumbcache" in key
-        or key.startswith("avatars/")
-    )
-
-
 @router.get("/reconcile-storage")
 async def reconcile_storage(db: AsyncSession = Depends(get_db)):
-    """存储 ↔ DB 文件表对账（**只读，不改任何数据**）。以实际存储为准判断文件到底在不在：
+    """物理存储对象 ↔ File 表对账（**只读，不改任何数据**）。以实际存储为准判断文件到底在不在：
     - 幽灵记录：DB 有行，但物理文件缺失（app 里看得到、点开 404）
     - 孤儿文件：物理文件存在，但 DB 没有对应记录（app 里看不见）
+
+    目录缺失、孤儿目录和文件位置漂移由 folder-doctor 独立扫描，避免重复遍历。
     """
     from app.models import File, Project
     from app.services.storage import get_storage
     cfg = get_settings()
     storage = get_storage()
     try:
-        all_keys = set(await storage.list_keys())
+        all_keys = set(await storage.list_keys_filtered(lambda key: not _is_internal_key(key)))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"列出存储失败：{type(e).__name__}: {e}")
-    file_keys = {k for k in all_keys if not _is_internal_key(k)}
-
-    # 仅比较 storage_key 会漏掉“DB 和物理文件都指向同一个旧路径、但文件夹归属已变”的历史错位。
-    # 复用目录对账的路径真源，把这类文件一并呈现在文件对账入口。
-    from app.services.storage import folder_doctor
-    doctor_report = await folder_doctor.scan(db, storage)
+        diag_log("admin.reconcile_storage.scan", e)
+        detail = "存储目录权限不足，扫描未完成；未生成缺失文件结论" if isinstance(e, PermissionError) else "列出存储失败，扫描未完成"
+        raise HTTPException(status_code=500, detail=detail) from e
+    file_keys = all_keys
 
     rows = (await db.execute(select(File))).scalars().all()
-    db_key_set = {f.storage_key for f in rows}
+    scoped_rows = [f for f in rows if not _is_internal_key(f.storage_key)]
+    db_key_set = {f.storage_key for f in scoped_rows}
     projs = {p.id: p.name for p in (await db.execute(select(Project))).scalars().all()}
 
     ghosts = [
         {"id": f.id, "name": f"{f.display_name}.{f.ext}", "space": f.space,
          "project": projs.get(f.project_id), "deleted": f.deleted_at is not None,
          "storage_key": f.storage_key}
-        for f in rows if f.storage_key not in all_keys
+        for f in scoped_rows if f.storage_key not in all_keys
     ]
     orphans = sorted(file_keys - db_key_set)
     return {
         "backend": cfg.storage.backend,
         "location": cfg.storage.local_path if cfg.storage.backend == "local"
                     else f"{cfg.storage.oss_bucket}/{cfg.storage.oss_prefix}",
-        "db_file_rows": len(rows),
+        "db_file_rows": len(scoped_rows),
         "storage_objects": len(file_keys),
         "matched": len(db_key_set & all_keys),
         "ghost_count": len(ghosts),
+        "ghost_ids": [f.id for f in scoped_rows if f.storage_key not in all_keys],
         "orphan_count": len(orphans),
         "ghosts": ghosts[:300],
         "orphans": orphans[:300],
-        "misplaced_count": len(doctor_report.misplaced_files),
-        "misplaced_files": doctor_report.misplaced_files[:300],
-        "truncated": len(ghosts) > 300 or len(orphans) > 300 or doctor_report.truncated,
+        "truncated": len(ghosts) > 300 or len(orphans) > 300,
     }
 
 
@@ -259,7 +296,7 @@ class UserStorageRepairRequest(BaseModel):
 
 async def _scan_users_without_storage(db: AsyncSession) -> tuple[object, list[dict]]:
     """扫描本地存储中目录缺失或 DB 文件全部没有物理对象的账号；不适用于 OSS。"""
-    from app.models import File, Project, ScheduledTask, User
+    from app.models import Project, ScheduledTask, User
     from app.services.storage import LocalStorageBackend, get_storage
 
     storage = get_storage()
@@ -275,7 +312,7 @@ async def _scan_users_without_storage(db: AsyncSession) -> tuple[object, list[di
         has_user_dir = any((storage.root / prefix.rstrip("/")).is_dir() for prefix in user_prefixes)
         physical_files = sum(1 for key in storage_keys if key.startswith(user_prefixes))
         counts = {
-            "files": await db.scalar(select(func.count()).select_from(File).where(File.user_id == user.id)),
+            "files": await count_file_rows_for_user(db, user.id),
             "projects": await db.scalar(select(func.count()).select_from(Project).where(Project.user_id == user.id)),
             "scheduled_tasks": await db.scalar(select(func.count()).select_from(ScheduledTask).where(ScheduledTask.user_id == user.id)),
         }
@@ -344,125 +381,24 @@ async def repair_users_without_storage(body: UserStorageRepairRequest, db: Async
     return {"done": done, "skipped": skipped}
 
 
-def _fmt_size(n: float) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024 or unit == "GB":
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
-        n /= 1024
-    return f"{n:.1f} GB"
-
-
-def _parse_path_migration_key(key: str) -> dict | None:
-    """解析 path-mirror key 的稳定归属部分，不做数据库查询。"""
-    import re
-    import uuid as _uuid
-
-    parts = key.split("/")
-    if len(parts) < 3:
-        return None
-    if any(part in {"", ".", ".."} for part in parts):
-        return None
-    try:
-        user_id = str(_uuid.UUID(parts[0]))
-    except ValueError:
-        return None
-    name, dot, ext = parts[-1].rpartition(".")
-    if not dot:
-        name, ext = parts[-1], ""
-    if parts[1] == "个人文件":
-        return {
-            "user_id": user_id, "space": "personal", "project_id": None,
-            "folder_parts": parts[2:-1], "display_name": name, "ext": ext.lower(),
-        }
-    if parts[1] != "项目文件":
-        return None
-    project_id = None
-    project_index = None
-    for index, part in enumerate(parts[2:-1], start=2):
-        match = re.search(r"#(\d+)$", part)
-        if match:
-            project_id = int(match.group(1))
-            project_index = index
-            break
-    if project_id is None or project_index is None:
-        return None
-    return {
-        "user_id": user_id, "space": "project", "project_id": project_id,
-        "folder_parts": parts[project_index + 1:-1], "display_name": name,
-        "ext": ext.lower(),
-    }
-
-
-def _same_file_scope(file, parsed: dict) -> bool:
-    return file.space == parsed["space"] and file.project_id == parsed["project_id"]
-
-
-async def _import_orphan(db, key: str, storage) -> bool:
-    """按已验证的 path-mirror key 导入孤儿文件，不猜测不完整的归属。"""
-    import mimetypes
-    import uuid
-    from app.models import File, Project, User
-
-    parsed = _parse_path_migration_key(key)
-    if parsed is None:
-        return False
-    uid_text = parsed["user_id"]
-    uid = uuid.UUID(uid_text)
-    if not await db.get(User, uid):
-        return False
-    # 修复接口也可能被手工传入重复 key；不能让同一物理对象产生第二条 File。
-    existing = (await db.execute(select(File).where(File.storage_key == key))).scalars().first()
-    if existing is not None:
-        return False
-
-    info = await storage.stat(key)
-    if info is None:
-        return False
-
-    fname = key.rsplit("/", 1)[-1]
-    name, _, ext = fname.rpartition(".")
-    if not name:
-        name, ext = fname, ""
-    project_id = parsed["project_id"]
-    if project_id is not None:
-        project = await db.get(Project, project_id)
-        if project is None or str(project.user_id) != uid_text:
-            return False
-    folder_id = await _resolve_import_folder(db, uid, project_id, parsed["folder_parts"])
-    if parsed["folder_parts"] and folder_id is None:
-        return False
-    db.add(File(
-        user_id=uid, display_name=name, ext=ext.lower(), space=parsed["space"],
-        project_id=project_id, folder_id=folder_id, storage_key=key,
-        size=_fmt_size(info.size), size_bytes=info.size,
-        mime_type=mimetypes.guess_type(fname)[0],
-    ))
-    return True
-
-
-async def _resolve_import_folder(db, user_id, project_id: int | None, folder_parts: list[str]) -> int | None:
-    """按物理路径逐级解析文件夹，避免嵌套文件误挂到第一级目录。"""
-    from app.models import Folder
-
-    parent_id = None
-    for name in folder_parts:
-        folder = (await db.execute(select(Folder).where(
-            Folder.user_id == user_id,
-            Folder.project_id == project_id if project_id is not None else Folder.project_id.is_(None),
-            Folder.parent_id == parent_id if parent_id is not None else Folder.parent_id.is_(None),
-            Folder.name == name,
-            Folder.deleted_at.is_(None),
-        ))).scalars().first()
-        if folder is None:
-            return None
-        parent_id = folder.id
-    return parent_id
-
-
 class RepairRequest(BaseModel):
     action: Literal["delete", "import"]
     keys: list[str]
     confirm: bool = False
+
+
+class GhostRepairRequest(BaseModel):
+    file_ids: list[int]
+    confirm: bool = False
+
+    @field_validator("file_ids")
+    @classmethod
+    def validate_file_ids(cls, value: list[int]) -> list[int]:
+        if not value or len(value) > 1000:
+            raise ValueError("单次最多处理 1000 条文件记录")
+        if any(file_id <= 0 for file_id in value):
+            raise ValueError("文件 ID 必须为正整数")
+        return list(dict.fromkeys(value))
 
 
 class PathMigrationItem(BaseModel):
@@ -479,63 +415,6 @@ class PathMigrationRequest(BaseModel):
             raise ValueError("单次路径迁移最多处理 1000 项")
 
 
-class TrashMigrationRequest(BaseModel):
-    file_ids: list[int]
-
-
-@router.get("/migrate-trash")
-async def scan_legacy_trash(db: AsyncSession = Depends(get_db)):
-    """扫描旧版按 file_id 分目录的本地回收站对象，只读。"""
-    from app.models import File
-    from app.services.storage import LocalStorageBackend, get_storage
-    from app.services.storage.keys import _resolve_conflict
-    from app.services.storage.trash import is_legacy_trash_key, original_storage_key, to_trash_key
-
-    storage = get_storage()
-    if not isinstance(storage, LocalStorageBackend):
-        return {"backend": "oss", "items": [], "note": "当前不是本地存储，无需迁移。"}
-    rows = (await db.execute(select(File).where(File.deleted_at.isnot(None)))).scalars().all()
-    items = []
-    for f in rows:
-        if not is_legacy_trash_key(f) or not await storage.exists(f.storage_key):
-            continue
-        original = await original_storage_key(f, db)
-        target, _ = await _resolve_conflict(storage, to_trash_key(f.user_id, original, f.display_name, f.ext), f.display_name, f.ext)
-        items.append({"file_id": f.id, "name": f.display_name, "ext": f.ext,
-                      "source_key": f.storage_key, "target_key": target,
-                      "conflict": await storage.exists(target)})
-    return {"backend": "local", "items": items, "count": len(items)}
-
-
-@router.post("/migrate-trash")
-async def migrate_legacy_trash(body: TrashMigrationRequest, db: AsyncSession = Depends(get_db)):
-    """迁移指定旧回收站对象；只处理扫描结果对应的已删除文件，不覆盖目标文件。"""
-    from app.models import File
-    from app.services.storage import LocalStorageBackend, get_storage
-    from app.services.storage.keys import _resolve_conflict
-    from app.services.storage.trash import is_legacy_trash_key, original_storage_key, to_trash_key
-
-    storage = get_storage()
-    if not isinstance(storage, LocalStorageBackend):
-        raise HTTPException(status_code=409, detail="当前不是本地存储，无需迁移")
-    rows = (await db.execute(select(File).where(File.id.in_(body.file_ids), File.deleted_at.isnot(None)))).scalars().all()
-    done, skipped = [], []
-    for f in rows:
-        if not is_legacy_trash_key(f) or not await storage.exists(f.storage_key):
-            skipped.append({"file_id": f.id, "reason": "不是可迁移的旧回收站对象"})
-            continue
-        original = await original_storage_key(f, db)
-        target, _ = await _resolve_conflict(storage, to_trash_key(f.user_id, original, f.display_name, f.ext), f.display_name, f.ext)
-        if await storage.exists(target):
-            skipped.append({"file_id": f.id, "reason": "目标已存在，未覆盖"})
-            continue
-        await storage.rename_file(f.storage_key, target)
-        f.storage_key = target
-        done.append(f.id)
-    await db.commit()
-    return {"done": done, "skipped": skipped}
-
-
 @router.post("/reconcile-storage/repair")
 async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_db)):
     """对账修复（**会改数据**）：delete 删孤儿物理文件；import 把孤儿重建成 DB 记录。"""
@@ -550,14 +429,49 @@ async def reconcile_repair(body: RepairRequest, db: AsyncSession = Depends(get_d
                 await storage.delete(key)
                 done.append(key)
             else:
-                if await _import_orphan(db, key, storage):
+                imported, reason = await _import_orphan(db, key, storage)
+                if imported:
                     done.append(key)
                 else:
-                    failed.append({"key": key, "error": "无法从路径解析归属"})
+                    failed.append({"key": key, "error": reason or "无法从路径解析归属"})
         except Exception as e:
-            failed.append({"key": key, "error": f"{type(e).__name__}: {e}"[:80]})
+            diag_log("admin.reconcile_storage.repair", e)
+            failed.append({"key": key, "error": f"处理失败（{type(e).__name__}）"})
     await db.commit()
     return {"action": body.action, "done": len(done), "failed": failed, "done_keys": done}
+
+
+@router.post("/reconcile-storage/ghosts/repair")
+async def repair_ghost_records(body: GhostRepairRequest, db: AsyncSession = Depends(get_db)):
+    """确认物理文件仍缺失后移除 File 记录；不触碰存储对象。"""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="移除幽灵文件记录必须显式确认")
+
+    from app.core import events
+    from app.services.storage import get_storage
+
+    storage = get_storage()
+    done: list[int] = []
+    failed: list[dict[str, Any]] = []
+    removed_by_user: dict[Any, list[int]] = {}
+    for file_id in body.file_ids:
+        file, error = await delete_ghost_record(db, file_id, storage)
+        if error:
+            failed.append({"file_id": file_id, "error": error})
+            continue
+        assert file is not None
+        done.append(file_id)
+        removed_by_user.setdefault(file.user_id, []).append(file_id)
+
+    await db.commit()
+    for user_id, file_ids in removed_by_user.items():
+        try:
+            await events.publish(
+                user_id, "files", file_op={"op": "remove", "kind": "file", "ids": file_ids},
+            )
+        except Exception as error:
+            diag_log("admin.reconcile_storage.ghost_cleanup.publish", error)
+    return {"done": done, "failed": failed}
 
 
 @router.get("/reconcile-storage/path-migration")
@@ -567,7 +481,7 @@ async def scan_path_migration(db: AsyncSession = Depends(get_db)):
     from app.services.storage import get_storage
 
     storage = get_storage()
-    keys = {k for k in await storage.list_keys() if not _is_internal_key(k)}
+    keys = set(await storage.list_keys_filtered(lambda key: not _is_internal_key(key)))
     rows = (await db.execute(select(File).where(File.deleted_at.is_(None)))).scalars().all()
     by_identity: dict[tuple, list] = {}
     for file in rows:
@@ -1328,12 +1242,12 @@ async def index_rebuild_status():
         return {"status": "idle"}
 
 
-# ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 画像事件迁 memory + daily 改格式 + 清遗留文件
+# ── 记忆一键维护：pattern 复核删除 + 身份内容搬去 profile + 画像事件迁 memory + daily 改格式
 # （2026-07-09，见 scripts/maintenance/refresh_memory.py）────────────────────────────────────
 # 预览(preview) 和真删(apply) 分两步：预览只跑一次 LLM 判断（review + split，各 3 次投票，
 # dry_run），结果连同具体 fact id 存 Redis；apply 直接按存下来的 id 执行，**不重新调用 LLM**——
 # 同一批数据前后两次调用结果可能差很多（今天踩过：40%→94%），"预览看到的" 必须等于 "真删的"，
-# 不能是"重新掷一次骰子"。画像事件迁移 / daily 迁格式 / legacy 文件清理都是确定性改写，
+# 不能是"重新掷一次骰子"。画像事件迁移 / daily 迁格式都是确定性改写，
 # 没有 LLM 参与，但也一起挂进 preview/apply，保持一个入口做完。
 _MEM_CLEANUP_KEY = "mem_cleanup:plan"
 _MEM_CLEANUP_STALE_SECONDS = 600
@@ -1346,7 +1260,7 @@ async def _memory_cleanup_revision(user_id: str, storage) -> str:
     digest = hashlib.sha256()
     for name in (
         "pattern.json", "profile.json", "daily.md", "memory.md",
-        "facts.json", "facts.md", "facts_vec.json",
+        "facts.json", "facts.md",
     ):
         key = _key(user_id, name)
         digest.update(name.encode("utf-8"))
@@ -1359,7 +1273,6 @@ async def _memory_cleanup_revision(user_id: str, storage) -> str:
 
 async def _mem_cleanup_worker(user_ids: list[str]) -> None:
     from scripts.maintenance.refresh_memory import _migrate_daily, _migrate_profile_events, _review_patterns, _split_profile
-    from agent.memory.store import _key, PATTERN_FILE
     from app.services.storage import get_storage
     from app.core.redis import get_redis
     r = get_redis()
@@ -1381,12 +1294,7 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
             source_revision = await _memory_cleanup_revision(uid, storage)
             total_batches += int(review.get("batch_count") or 0) + int(split.get("batch_count") or 0)
             completed_batches += int(review.get("successful_batches") or 0) + int(split.get("successful_batches") or 0)
-            legacy_files = []
-            if await storage.exists(_key(uid, PATTERN_FILE)):
-                for legacy_name in ("facts.json", "facts.md", "facts_vec.json"):
-                    if await storage.exists(_key(uid, legacy_name)):
-                        legacy_files.append(legacy_name)
-            if review.get("removed") or split.get("moved") or profile_events.get("migrated") or daily.get("migrated") or legacy_files:
+            if review.get("removed") or split.get("moved") or profile_events.get("migrated") or daily.get("migrated"):
                 plan[uid] = {
                     "removed_ids": review.get("removed_ids", []), "removed_texts": review.get("removed_texts", []),
                     "moved_ids": split.get("moved_ids", []), "moved_texts": split.get("moved_texts", []),
@@ -1394,7 +1302,6 @@ async def _mem_cleanup_worker(user_ids: list[str]) -> None:
                     "profile_event_texts": profile_events.get("moved_texts", []),
                     "daily_migrated": daily.get("migrated", 0),
                     "daily_texts": daily.get("migrated_texts", []),
-                    "legacy_files": legacy_files,
                     "total": review.get("total", 0),
                     "source_revision": source_revision,
                     "batch_count": int(review.get("batch_count") or 0) + int(split.get("batch_count") or 0),
@@ -1455,13 +1362,11 @@ async def memory_cleanup_status():
 @router.post("/memory-cleanup/apply")
 async def memory_cleanup_apply():
     """一键执行上一次 preview 存下来的全部结果——不重新调 LLM，预览看到的就是真删/真搬的。
-    五件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
+    四件事都做：① 删 pattern 里过时的条目 ② 把该属于画像的条目搬进 profile.json
     ③ 把误进 profile 的阶段性事件迁去 memory.md ④ 把旧 daily.md 改成按日期分组的新格式
-    ⑤ 清掉已迁移完的遗留 facts.json/facts.md。
     执行完清掉 Redis 里的 plan，防止同一份 plan 被误重复应用（比如两次点了确认）。"""
     from app.core.redis import get_redis
     from agent.memory import store
-    from agent.memory.store import _key
     from app.services.storage import get_storage
     from scripts.maintenance.refresh_memory import _migrate_profile_events
     r = get_redis()
@@ -1474,7 +1379,7 @@ async def memory_cleanup_apply():
         raise HTTPException(400, "预览还没跑完，等它跑完再确认")
     if not data.get("plan_ready", False):
         raise HTTPException(400, "记忆维护预览包含失败用户，请重新生成预览")
-    applied_users, applied_total, moved_total, profile_event_total, daily_total, legacy_total = 0, 0, 0, 0, 0, 0
+    applied_users, applied_total, moved_total, profile_event_total, daily_total = 0, 0, 0, 0, 0
     for uid, p in (data.get("plan") or {}).items():
         expected_revision = p.get("source_revision")
         if not expected_revision or expected_revision != await _memory_cleanup_revision(uid, storage):
@@ -1513,13 +1418,6 @@ async def memory_cleanup_apply():
             daily_total += int(daily.get("migrated") or 0)
             touched = True
 
-        for legacy_name in (p.get("legacy_files") or []):
-            legacy_key = _key(uid, legacy_name)
-            if await storage.exists(legacy_key):
-                await storage.delete(legacy_key)
-                legacy_total += 1
-                touched = True
-
         if touched:
             applied_users += 1
     await r.delete(_MEM_CLEANUP_KEY)
@@ -1527,7 +1425,7 @@ async def memory_cleanup_apply():
         "ok": True, "users_applied": applied_users,
         "total_removed": applied_total, "total_moved": moved_total,
         "total_profile_events_migrated": profile_event_total,
-        "total_daily_migrated": daily_total, "legacy_files_removed": legacy_total,
+        "total_daily_migrated": daily_total,
     }
 
 

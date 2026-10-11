@@ -106,6 +106,22 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
         source = args.get("source")
         im_channels = args.get("im_channels") or {}
 
+        record_context_source(
+            "context",
+            "Context assembly & prompt",
+            input={
+                "prompt_name": prompt_name,
+                "project_count": len(projects),
+                "event_count": len(events),
+                "skill_count": len(skills or ()),
+                "knowledge_count": len(args.get("knowledge") or ()),
+            },
+            attributes={"phase": "build_split"},
+            code_target=original_build,
+            started_at=start,
+            ended_at=end,
+        )
+
         # 先把真正读取的 prompt 文件逐个登记。prompt 模板包含占位符，因此记录 raw；最终展开值在
         # Context Assembly 的完整 system_prompt 与下面各 runtime fragment 里查看。
         prompt_dir = getattr(context_builder, "_PROMPTS_DIR", None)
@@ -280,10 +296,13 @@ def install_context_hooks(context_loaders: Any, context_builder: Any):
         ("load_projects", "database", "DB · Projects"),
         ("load_user_tz", "database", "DB · User timezone"),
         ("load_events", "database", "DB · Calendar events"),
+        ("load_recent_notes", "database", "DB · Recent notes"),
         ("load_files_overview", "database", "DB · Files overview"),
         ("load_style_prefs", "database", "DB · Reply style preferences"),
         ("load_memory", "memory", "Memory retrieval"),
+        ("load_dynamic_memory", "memory", "Dynamic memory"),
         ("load_im_channels", "context", "IM channel state"),
+        ("load_knowledge_overview", "knowledge", "Knowledge overview"),
     ):
         _wrap_context_loader(context_loaders, name, kind=kind, label=label)
 

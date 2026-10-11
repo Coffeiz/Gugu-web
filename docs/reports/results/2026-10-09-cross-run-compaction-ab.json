@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-09",
+  "provider": "minimax",
+  "model": "MiniMax-M3.1-Flash-Preview",
+  "synthetic_history_messages": 30,
+  "usage_recorded": false,
+  "results": {
+    "before_fix": {
+      "round1": {
+        "fresh_input": 9746,
+        "cache_read": 188,
+        "cache_write": 0,
+        "total_input": 9934,
+        "cache_ratio": 0.0189
+      },
+      "round2": {
+        "fresh_input": 14578,
+        "cache_read": 128,
+        "cache_write": 0,
+        "total_input": 14706,
+        "cache_ratio": 0.0087
+      }
+    },
+    "after_fix": {
+      "round1": {
+        "fresh_input": 14495,
+        "cache_read": 188,
+        "cache_write": 0,
+        "total_input": 14683,
+        "cache_ratio": 0.0128
+      },
+      "round2": {
+        "fresh_input": 24,
+        "cache_read": 14683,
+        "cache_write": 0,
+        "total_input": 14707,
+        "cache_ratio": 0.9984
+      }
+    }
+  },
+  "side_effects": {
+    "database_access": "read_only_model_config",
+    "business_database_writes": false,
+    "usage_ledger_writes": false,
+    "user_content_used": false,
+    "temporary_result_files": false
+  }
+}

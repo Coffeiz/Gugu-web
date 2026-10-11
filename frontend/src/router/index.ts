@@ -136,7 +136,7 @@ const routes: RouteRecordRaw[] = [
           {
             path: 'notes',
             name: 'MindNotes',
-            component: () => import('@/views/Mind/NotesView.vue'),
+            component: () => import('@/views/Mind/NotesThreePaneView.vue'),
             meta: { title: 'navigation.mind', fullBleed: true },
           },
           {
@@ -175,13 +175,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/DevEmail.vue'),
         meta: { title: 'devEmail.title' },
       }] : []),
-      // 三栏板式笔记页原型：仅 dev 注册；验证通过后用于替换 Mind/NotesView.vue，本路由随之删除。
-      // fullBleed 与 /mind 同口径：隐藏 topbar、去掉布局留白，内容区从导航栏右缘开始
+      // 原时间轴保留为临时 DEV 预览；UI9 响应式实现完成后移除该入口。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/notes-timeline',
+        name: 'DevNotesTimeline',
+        component: () => import('@/views/DevNotesTimeline.vue'),
+        meta: { title: 'devHome.tools.notesTimeline.label', fullBleed: true },
+      }] : []),
+      // 旧预览地址仅为 DEV 书签兼容；生产构建不暴露该临时入口。
       ...(import.meta.env.DEV ? [{
         path: 'dev/notes-three-pane',
-        name: 'DevNotesThreePane',
-        component: () => import('@/views/DevNotesThreePane.vue'),
-        meta: { title: 'devHome.tools.notesThreePane.label', fullBleed: true },
+        name: 'DevNotesThreePaneLegacy',
+        redirect: '/dev/notes-timeline',
       }] : []),
     ],
   },

@@ -12,7 +12,7 @@ from agent.context import audit, compress_conv, assembly, session_history
 from agent.context import dynamic_tail, session_snapshot
 from agent.context.history import build_history_parts
 from agent.context.references import prepend_reference_context
-from app.core.chat_attach import build_user_content
+from app.core.chat_attach import build_user_content, image_ready
 
 
 @dataclass
@@ -88,6 +88,43 @@ def _bind_persisted_user_message(batch, user_message: Any, resume_interaction: b
         )
 
 
+async def _build_rag_context(
+    req: Any, *, effective_history: list, snapshot_text: str,
+    current_message_id: int | None,
+) -> dict:
+    """在当前任务上下文中构建 RAG，并绑定本轮 conversation 排他水位。"""
+    from agent.rag import context as rag_request_context
+    from agent.rag.injection import build_automatic_rag_context
+
+    watermark_token = rag_request_context.set_conversation_before_message_id(
+        current_message_id
+    )
+    try:
+        return await build_automatic_rag_context(
+            req, req.message, history=effective_history, snapshot_text=snapshot_text,
+        )
+    finally:
+        rag_request_context.reset_conversation_before_message_id(watermark_token)
+
+
+async def build_run_rag_context(
+    req: Any, *, history: list, snapshot_text: str, user_message: Any = None,
+    resume_interaction: bool = False,
+) -> dict:
+    """为准备阶段提前启动 RAG；有效历史和水位规则与消息组装保持一致。"""
+    effective_history = _effective_history(
+        history, user_message=user_message, resume_interaction=resume_interaction,
+    )
+    current_message_id = (
+        getattr(user_message, "id", None)
+        if user_message is not None and not resume_interaction else None
+    )
+    return await _build_rag_context(
+        req, effective_history=effective_history, snapshot_text=snapshot_text,
+        current_message_id=current_message_id,
+    )
+
+
 def assemble_run_area(
     *, system_prompt, fixed_parts, history, render_options, use_anthropic,
     current_user, stance=None, previous_stance_digest=None, message_time=None,
@@ -130,6 +167,7 @@ async def prepare_run(
     session: Any = None,
     snapshot: Any = None,
     history_stats: Any = None,
+    prepared_rag_context: dict | None = None,
 ) -> PreparedRun:
     """按固定顺序组装消息，并返回本轮 RAG 持久化信息。"""
     fixed_parts = compress_conv.fixed_context_parts(snapshot_injection)
@@ -148,6 +186,7 @@ async def prepare_run(
     from agent import providers
     render_options = {
         "api_format": providers.adapter_for(model_cfg).protocol_format(model_cfg),
+        "allow_tool_images": image_ready(model_cfg),
         "request": req,
         "user_tz": user_tz,
         "strip_thinking": strip_thinking,
@@ -161,6 +200,7 @@ async def prepare_run(
     history_parts, prior_run_parts_start = build_history_parts(
         effective_history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking,
+        allow_tool_images=render_options["allow_tool_images"],
         protected_message_ids=prior_run_message_ids,
         return_protected_start=True,
     )
@@ -170,20 +210,14 @@ async def prepare_run(
             user_message.sent_at, user_tz,
         )
 
-    # 当前用户消息在进入 Agent 前已经落库。自动 conversation RAG 必须以它的 id
-    # 作为排他水位，只允许召回本轮之前的消息；ContextVar 会随自动召回创建的
-    # asyncio task 一起复制，因此即使超时后任务后台收尾，也不会串到其它请求。
-    from agent.rag import context as rag_request_context
-    from agent.rag.injection import build_automatic_rag_context
-    watermark_token = rag_request_context.set_conversation_before_message_id(
-        current_message_id
-    )
-    try:
-        rag_context = await build_automatic_rag_context(
-            req, req.message, history=effective_history, snapshot_text=snapshot_context,
+    # Web/IM 可以在 MCP 工具发现期间预先启动这项独立召回；不提供预计算结果的
+    # 调用方仍走相同水位和有效历史规则。
+    rag_context = prepared_rag_context
+    if rag_context is None:
+        rag_context = await _build_rag_context(
+            req, effective_history=effective_history, snapshot_text=snapshot_context,
+            current_message_id=current_message_id,
         )
-    finally:
-        rag_request_context.reset_conversation_before_message_id(watermark_token)
     images = images or []
     media = media or []
 

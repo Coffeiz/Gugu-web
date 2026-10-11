@@ -1,4 +1,4 @@
-from sqlalchemy import or_, select, func
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -12,7 +12,7 @@ class RestoreParentTrashError(Exception):
     """文件所属文件夹仍在回收站，不能单独恢复。"""
 
 
-def top_level_deleted_folders_stmt(user_id=None):
+def top_level_deleted_folders_stmt(user_id=None, deleted_before=None):
     """构造回收站顶层文件夹查询。
 
     用户回收站传入 ``user_id`` 做归属隔离；过期清理任务不传用户，执行全局清理。
@@ -28,6 +28,8 @@ def top_level_deleted_folders_stmt(user_id=None):
     )
     if user_id is not None:
         stmt = stmt.where(Folder.user_id == user_id)
+    if deleted_before is not None:
+        stmt = stmt.where(Folder.deleted_at <= deleted_before)
     return stmt.order_by(Folder.deleted_at.desc())
 
 
@@ -58,21 +60,22 @@ async def get_top_level_deleted_folder(db: AsyncSession, user_id, folder_id: int
     )).scalar_one_or_none()
 
 
-async def list_deleted_files(db: AsyncSession, user_id, limit: int):
+async def list_deleted_files(db: AsyncSession, user_id, limit: int, deleted_before=None):
     """列出当前用户回收站中的独立文件。"""
-    return (await db.execute(
-        select(File).outerjoin(Folder, File.folder_id == Folder.id).where(
+    stmt = select(File).outerjoin(Folder, File.folder_id == Folder.id).where(
             File.user_id == user_id,
             File.deleted_at.isnot(None),
             or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
-        ).order_by(File.deleted_at.desc()).limit(limit)
-    )).scalars().all()
+        )
+    if deleted_before is not None:
+        stmt = stmt.where(File.deleted_at <= deleted_before)
+    return (await db.execute(stmt.order_by(File.deleted_at.desc()).limit(limit))).scalars().all()
 
 
-async def list_deleted_folders(db: AsyncSession, user_id, limit: int):
+async def list_deleted_folders(db: AsyncSession, user_id, limit: int, deleted_before=None):
     """列出当前用户回收站中的顶层文件夹。"""
     return (await db.execute(
-        top_level_deleted_folders_stmt(user_id).limit(limit)
+        top_level_deleted_folders_stmt(user_id, deleted_before).limit(limit)
     )).scalars().all()
 
 
@@ -88,6 +91,25 @@ async def list_trash_file_rows(db: AsyncSession, user_id):
             or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
         ).order_by(File.deleted_at.desc())
     )).all()
+
+
+async def get_trash_counts(db: AsyncSession, user_id) -> tuple[int, int]:
+    """只统计回收站顶层恢复单元数量，避免为根目录计数载入完整内容。"""
+    file_count = (await db.execute(
+        select(func.count(File.id))
+        .outerjoin(Folder, File.folder_id == Folder.id)
+        .where(
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
+        )
+    )).scalar_one()
+    folder_count = (await db.execute(
+        top_level_deleted_folders_stmt(user_id)
+        .with_only_columns(func.count(Folder.id))
+        .order_by(None)
+    )).scalar_one()
+    return file_count, folder_count
 
 
 async def list_trash_folder_contents_rows(db: AsyncSession, user_id, folder_id: int):
@@ -222,7 +244,6 @@ async def restore_files_by_ids(
         file.deleted_at = None
     return [file.id for file in files]
 
-
 async def permanently_delete_folder(
     db: AsyncSession,
     storage,
@@ -264,32 +285,3 @@ async def permanently_delete_folder(
         except Exception:
             pass
     return [file.id for file in files]
-
-
-async def empty_trash(
-    db: AsyncSession,
-    storage,
-    user_id: int,
-    root_folders: list[Folder],
-) -> list[int]:
-    """清理当前用户回收站内容，返回待清理缩略图的文件 ID。"""
-    files = (await db.execute(
-        select(File).where(File.user_id == user_id, File.deleted_at.isnot(None))
-    )).scalars().all()
-    file_ids = [file.id for file in files]
-    for file in files:
-        try:
-            await storage.delete(file.storage_key)
-        except Exception:
-            pass
-        await db.delete(file)
-
-    for root in root_folders:
-        dir_key = await folder_dir_key(db, root.user_id, root)
-        await db.delete(root)
-        if dir_key:
-            try:
-                await storage.remove_folder(dir_key)
-            except Exception:
-                pass
-    return file_ids

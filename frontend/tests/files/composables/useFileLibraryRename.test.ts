@@ -81,7 +81,7 @@ describe('文件库分段重命名', () => {
     expect(renameFile).toHaveBeenCalledWith(7, '.gitconfig', 'FILE', { mutationId: 'mutation-1' })
   })
 
-  it('已有后缀被清空时保留编辑状态并拒绝提交', async () => {
+  it('已有后缀被清空时保存为无后缀文件', async () => {
     const file = createFile('TXT')
     const { rename, renameFile, updateFile, onInvalidExtension } = createRename(file)
     rename.startFile(file)
@@ -90,9 +90,9 @@ describe('文件库分段重命名', () => {
 
     await rename.commit()
 
-    expect(onInvalidExtension).toHaveBeenCalledOnce()
-    expect(rename.renamingFileId.value).toBe(file.id)
-    expect(renameFile).not.toHaveBeenCalled()
-    expect(updateFile).not.toHaveBeenCalled()
+    expect(onInvalidExtension).not.toHaveBeenCalled()
+    expect(rename.renamingFileId.value).toBeNull()
+    expect(renameFile).toHaveBeenCalledWith(7, 'readme', 'FILE', { mutationId: 'mutation-1' })
+    expect(updateFile).toHaveBeenCalledWith(7, { displayName: 'readme', ext: 'FILE' })
   })
 })

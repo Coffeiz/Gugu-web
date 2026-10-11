@@ -1,7 +1,7 @@
 """文件工具定义。"""
 from agent.tools.base import Tool
 
-from .documents import _save_uploaded_file
+from .file_operations import _save_uploaded_file
 from .transfer import (
     _compress_files, _extract_files, _list_recent_attachments,
     _present_file, _send_file,
@@ -91,8 +91,9 @@ TRANSFER_TOOLS = [
         Tool(
             name="present_file", label="在网页展示文件",
             description_short='把文件直接推到用户当前网页上打开预览。',
-            description="把文件库里的文件直接推到用户当前网页上打开预览（图片/音频/视频/文档立即展示）。"
-                        "仅在用户明确要求「打开/展示/给我看」某个文件时调用；不产生聊天附件，IM 会话里不可用。",
+            description="把文件库里的文件推到网页端打开预览（图片/音频/视频/文档立即展示；音频会交给网页播放器播放）。"
+                        "file/file_id 可使用 list_dir/grep 返回的逻辑路径或 file_id，路径仅定位已登记文件。"
+                        "用户明确要求打开、展示文件或播放文件库音频时调用；不产生聊天附件。",
             input_schema={
                 "type": "object",
                 "properties": {

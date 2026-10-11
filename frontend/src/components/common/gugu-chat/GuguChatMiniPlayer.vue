@@ -51,14 +51,14 @@
         </div>
         <div class="mp-transport">
           <button class="mp-btn mp-btn--icon mp-btn--track" :title="t('chatUi.previousTrack')" :aria-label="t('chatUi.previousTrack')" :disabled="playlist.length < 2" @click="onPrevious">
-            <Icon name="action.back" :size="15" />
+            <Icon name="media.skip-left" :size="15" />
           </button>
           <button class="mp-btn mp-btn--transport" :title="playing ? t('chatUi.pauseAudio') : t('chatUi.playAudio')" :aria-label="playing ? t('chatUi.pauseAudio') : t('chatUi.playAudio')" @click="onToggle">
             <Icon name="media.play-fill" v-if="!playing" :size="16" />
             <Icon name="media.pause" v-else :size="16" />
           </button>
           <button class="mp-btn mp-btn--icon mp-btn--track" :title="t('chatUi.nextTrack')" :aria-label="t('chatUi.nextTrack')" :disabled="playlist.length < 2" @click="onNext">
-            <Icon name="action.next" :size="15" />
+            <Icon name="media.skip-right" :size="15" />
           </button>
         </div>
         <div class="mp-vol-group">

@@ -1220,11 +1220,10 @@ async function handle(state: State, transient: State, request: RagRequest): Prom
   }
   if (request.op === "tokenize") return { status: "ok", version: VERSION, tokens: tokenizeRaw(String(request.text ?? "")) };
   if (request.op === "adapt") {
-    const batchKey = request.source_type === "file"
-      ? "files"
-      : request.source_type === "conversation"
-        ? "conversations"
-        : request.source_type;
+    if (request.source_type === "file") {
+      return { status: "error", code: "unsupported_source", message: "文件不属于 RAG 来源" };
+    }
+    const batchKey = request.source_type === "conversation" ? "conversations" : request.source_type;
     const batch = { [batchKey]: request.records } as RagSourceBatch;
     const documents = buildSourceDocuments(batch);
     return { status: "ok", version: VERSION, documents, document_count: documents.length };

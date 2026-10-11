@@ -36,14 +36,14 @@ html[data-theme][data-family] .design-page .scrollbar-overflow-surface {
   scrollbar-gutter:stable;
   padding:var(--space-sm);
   background:var(--surface-soft);
-  border-bottom:1px solid var(--border-hairline);
+  border-bottom:1px solid var(--content-divider);
 }
 html[data-theme][data-family] .design-page .scrollbar-overflow-content { min-width:620px; }
 html[data-theme][data-family] .design-page .scrollbar-live-surface span,
 html[data-theme][data-family] .design-page .scrollbar-overflow-content span {
   display:block;
   padding:var(--space-xs) var(--space-sm);
-  border-bottom:1px solid var(--border-hairline);
+  border-bottom:1px solid var(--content-divider);
   color:var(--content-secondary);
   font-size:var(--font-size-xs);
   line-height:var(--line-height-body);

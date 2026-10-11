@@ -14,6 +14,9 @@ collect/stream（以及后续 web）入口共用的唯一准备实现：会话�
 """
 from __future__ import annotations
 
+import asyncio
+
+from app.core.chat_attach import image_ready
 from app.core.config import get_settings
 from app.core.tz import set_ctx_tz
 
@@ -66,6 +69,31 @@ async def _load_mcp_tools(user_id, settings, allowed_tool_names=None):
     return [tool for tool in tools if tool.name in allowed]
 
 
+async def load_mcp_tools_and_rag_context(
+    user_id, settings, allowed_tool_names, req, *, history, snapshot_context,
+    user_message=None, resume_interaction=False,
+):
+    """并发准备 MCP 工具目录与自动 RAG；任一侧异常/取消时收回另一侧任务。"""
+    mcp_task = asyncio.create_task(
+        _load_mcp_tools(user_id, settings, allowed_tool_names)
+    )
+    rag_task = asyncio.create_task(
+        run_context.build_run_rag_context(
+            req, history=history, snapshot_text=snapshot_context,
+            user_message=user_message, resume_interaction=resume_interaction,
+        )
+    )
+    try:
+        mcp_tools, rag_context = await asyncio.gather(mcp_task, rag_task)
+        return mcp_tools, rag_context
+    except BaseException:
+        for task in (mcp_task, rag_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(mcp_task, rag_task, return_exceptions=True)
+        raise
+
+
 def _session_user_skill_metadata(session):
     """读取当前会话冻结的用户 Skill 目录；缺失时返回 None，允许首次建立。"""
     from agent.capabilities.skill_registry import deserialize_user_skill_metadata
@@ -108,7 +136,7 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
         row = await session.scalar(select(UserPreferences).where(UserPreferences.user_id == owner_id))
         stored_mode = (row.data or {}).get("tool_injection_mode") if row else None
         if stored_mode is None:
-            return True
+            return False
         return stored_mode not in {"description", "catalog"}
 
     if db is None and owner_id is not None:
@@ -172,7 +200,7 @@ def _apply_capability_context(system_prompt: str, snapshot_context: str, context
 async def prepare_run_capabilities(
     db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
     *, session=None, query="", user_skill_metadata=None, dynamic_tools=(),
-    subject_type="session", subject_id=None, workspace_id=None,
+    subject_type="session", subject_id=None, workspace_id=None, source="web",
 ):
     """统一组装本轮工具与提示词；入口只提供会话或任务授权主体。
 
@@ -180,6 +208,11 @@ async def prepare_run_capabilities(
     调用方负责短事务、执行器与传输生命周期，不重复实现权限组装。
     """
     from agent.security.shell_policy import build_dynamic_prompt
+
+    # present_file 的副作用是把文件推送到当前网页；实际 IM 请求不应把它交给模型。
+    # 按本轮入口 source 判断，而不是 session.source：用户可从网页继续 IM 来源的历史会话。
+    if source in IM_SOURCES:
+        tool_names = [name for name in tool_names if name != "present_file"]
 
     subject = dict(session=session, subject_type=subject_type,
                    subject_id=subject_id, workspace_id=workspace_id)
@@ -209,7 +242,10 @@ def prepare_scheduled_context(system_prompt, snapshot_context, user_tz, prompt, 
     fixed_parts = [session_snapshot.snapshot_message(snapshot_context)] if snapshot_context else []
     area, batch = run_context.assemble_run_area(
         system_prompt=system_prompt, fixed_parts=fixed_parts, history=[],
-        render_options={"api_format": "anthropic" if use_anthropic else "openai"},
+        render_options={
+            "api_format": "anthropic" if use_anthropic else "openai",
+            "allow_tool_images": image_ready(),
+        },
         use_anthropic=use_anthropic, stance=builder.stance_block(memory),
         current_user={"role": "user", "content": build_user_content(prompt, [], use_anthropic)},
     )
@@ -488,7 +524,10 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
 
     use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(all_system_tool_names(), req.allowed_tool_names)
-    mcp_tools = await _load_mcp_tools(user_id, settings, req.allowed_tool_names)
+    mcp_tools, precomputed_rag_context = await load_mcp_tools_and_rag_context(
+        user_id, settings, req.allowed_tool_names, req,
+        history=history, snapshot_context=snapshot_context, user_message=user_message,
+    )
     modelctx.set_usage_context(
         user_id, session_id, scenario="mcp" if mcp_tools else "chat",
     )
@@ -499,7 +538,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         tool_names, system_prompt, snapshot_context, capability_context = await prepare_run_capabilities(
             tool_db, user_id, session_id, tool_names, settings, system_prompt, snapshot_context,
             session=session, query=aug_text,
-            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools,
+            user_skill_metadata=user_skill_metadata, dynamic_tools=mcp_tools, source=req.source,
         )
     if capability_context is not None:
         _pin_session_user_skill_metadata(session, capability_context)
@@ -532,6 +571,7 @@ async def prepare_agent_run(req: AgentRequest, *, non_streaming: bool) -> Prepar
         session=session,
         snapshot=snapshot,
         history_stats=history_stats,
+        prepared_rag_context=precomputed_rag_context,
     )
 
     return PreparedExecution(

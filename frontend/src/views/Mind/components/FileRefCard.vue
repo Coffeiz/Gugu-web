@@ -29,9 +29,8 @@
       </template>
     </CardAffordances>
   </FileCard>
-  <!-- filesCache 还没加载完（画布常常是用户没先逛过文件库/Dashboard 就直接进来的入口，
-       全局缓存这时是空的）跟"文件真的被删了"是两回事，但两者都会让 file 算出来是
-       undefined。之前统一走下面 .fr-missing 那套扁平墓碑布局，摆过一次手算的灰色骨架去
+  <!-- 按 ID 读取单个引用文件期间，使用同一 FileCard 展示快照占位；请求失败时保留可重试态，
+       只有明确 404 或完整缓存确认不存在才显示删除快照。之前统一走 .fr-missing 扁平墓碑布局，摆过一次手算的灰色骨架去
        占位模仿缩略图区的高度，但手算怎么都跟真卡片对不上（试过固定高度、试过 flex:1 吃
        剩余空间，兜来兜去总有几像素差，卡片时高时低）——根源是想拿"照抄的近似值"硬凑"真实
        组件量出来的自然高度"，两者永远不可能精确相等。真正稳妥的做法是干脆直接用同一个
@@ -40,7 +39,7 @@
        只是图标区换成缩略图区的内容，两者本来就同高，总高度天然分毫不差，不需要再猜一个
        数字出来跟它对齐。 -->
   <FileCard
-    v-else-if="!filesCache.loaded"
+    v-else-if="!fileLookupFinished || fileLookupFailed"
     ref="fileCardRef"
     class="fr-card"
     :class="{ connecting, 'connection-target': !!connectionTargetSide }"
@@ -55,15 +54,15 @@
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
-    <template #meta>{{ t('common.status.loading') }}</template>
+    <template #meta>{{ fileLookupFailed ? t('mindUi.fileLoadFailed') : t('common.status.loading') }}</template>
     <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
       <template #actions>
       <button class="del" :title="t('filesUi.removeFromCanvas')" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
       </template>
     </CardAffordances>
   </FileCard>
-  <!-- 缓存已经加载完、确实找不到这个文件——这才是真的"已删除"，跟上面"还在等缓存"是两种
-       性质完全不同的状态，但同样用 FileCard 渲染（不再是独立的扁平墓碑布局）：ext 用创建
+  <!-- 单文件接口明确 404 或完整缓存确实找不到这个文件时才显示"已删除"，跟上面的加载/网络
+       错误状态区分开，同样用 FileCard 渲染（不再是独立的扁平墓碑布局）：ext 用创建
        引用时缓存的 node.refSnapshot.ext（没有就退化成跟"加载中"分支一样的空角标），
        hasThumb 恒 false（缩略图数据没缓存，也不需要跟真卡片的缩略图高度对齐——图标区
        本来就和缩略图区同高）。跟真实文件卡视觉/尺寸完全一致，只有 meta 那行文字不同。 -->
@@ -132,8 +131,26 @@ function onEnter() {
 function onLeave() { isHovering.value = false; emit('hover', props.item, false) }
 
 const filesCache = useFilesCacheStore()
-onMounted(() => { if (!filesCache.loaded) filesCache.load() })
 const file = computed(() => filesCache.getFile(props.item.node.refId ?? -1))
+const fileLookupFinished = ref(Boolean(file.value) || filesCache.loaded)
+const fileLookupFailed = ref(false)
+async function loadReferencedFile() {
+  const fileId = props.item.node.refId
+  if (fileId == null || file.value || filesCache.loaded) {
+    fileLookupFinished.value = true
+    return
+  }
+  fileLookupFinished.value = false
+  fileLookupFailed.value = false
+  try {
+    await filesCache.ensureFile(fileId)
+  } catch {
+    fileLookupFailed.value = true
+  } finally {
+    fileLookupFinished.value = true
+  }
+}
+onMounted(() => { void loadReferencedFile() })
 const cardStyle = computed(() => {
   const { w } = itemSize(props.item)
   return { position: 'absolute', left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}` }
@@ -181,6 +198,7 @@ const { onPointerDown } = useMindRuntimeObject({
 })
 function onOpen() {
   if (file.value) emit('open', props.item)
+  else if (fileLookupFailed.value) void loadReferencedFile()
 }
 </script>
 

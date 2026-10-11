@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 from uuid import UUID
 
-from app.services.storage.keys import _safe_name, _resolve_conflict
+from app.services.storage.keys import _resolve_conflict, _safe_filename
 
 
 @dataclass
@@ -37,10 +37,10 @@ class KeyStrategy(Protocol):
 
 
 class PathMirrorStrategy:
-    """路径镜像：key = `{uid}/{logical_path}/{safe_name}.{ext}`。可挂盘浏览；移动=物理搬（relocate）。"""
+    """路径镜像：扩展名为空时保留原文件名，否则追加小写扩展名。"""
 
     def build_key(self, ctx: KeyContext) -> str:
-        return f"{ctx.user_id}/{ctx.logical_path}/{_safe_name(ctx.name)}.{ctx.ext.lower()}"
+        return f"{ctx.user_id}/{ctx.logical_path}/{_safe_filename(ctx.name, ctx.ext)}"
 
     async def resolve_conflict(self, storage, base_key: str, display_name: str, ext: str) -> ResolvedKey:
         key, name = await _resolve_conflict(storage, base_key, display_name, ext)

@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import PurePosixPath
 
-from app.services.files.corpus import list_grep_candidates, resolve_grep_candidate_paths
+from app.services.files.corpus import (
+    list_grep_candidates,
+    normalize_file_logical_path,
+    resolve_grep_candidate_paths,
+)
 from app.services.storage import get_storage
 
 _SEARCH_SPACES = ("personal", "project", "workspace")
@@ -21,18 +24,7 @@ _READ_CONCURRENCY = 8
 
 
 def _normalise_path(value: str | None) -> str | None:
-    if value in (None, ""):
-        return None
-    text = str(value).strip()
-    if not text.startswith("/") or "\\" in text or "\x00" in text:
-        raise ValueError("path 必须是 /personal、/project 或 /workspace 下的逻辑路径")
-    path = PurePosixPath(text)
-    parts = path.parts
-    if len(parts) < 2 or parts[0] != "/" or parts[1] not in _SEARCH_SPACES:
-        raise ValueError("path 只允许 /personal、/project 或 /workspace")
-    if any(part in {"", ".", ".."} for part in parts[2:]):
-        raise ValueError("path 不能包含 . 或 ..")
-    return "/" + "/".join(parts[1:])
+    return normalize_file_logical_path(value)
 
 
 def _path_is_under(path: str, prefix: str | None) -> bool:

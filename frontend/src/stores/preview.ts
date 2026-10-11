@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { nextZ } from '@/composables/core/windowz'
 import type { FileMeta } from '@/stores/filesCache'
+import type { LiveEventPayload } from '@/types/live-events'
 
 // 预览窗口也承载聊天附件等非库文件，故用 Partial<FileMeta>（只需 id/ext，其余按需）
 type PreviewFile = Partial<FileMeta>
@@ -9,6 +10,8 @@ type PreviewFile = Partial<FileMeta>
 export interface PreviewWindow {
   id: number
   file: PreviewFile
+  /** 聊天文件链接预取的短时效地址，仅用于首次加载。 */
+  streamUrl?: string
   /** 聊天气泡等要求读取最新内容的入口递增此值，通知现有窗口绕过 blob 缓存重载。 */
   reloadToken: number
   /** 未知扩展名：下载后再按内容判定是否进入文本查看器。 */
@@ -24,6 +27,21 @@ export interface PreviewWindow {
 /** 首次挂载的强刷标记仅消费一次；之后只有计数发生变化才代表新的强刷请求。 */
 export function isPreviewReloadRequested(currentToken: number, previousToken?: number): boolean {
   return previousToken === undefined ? currentToken > 0 : currentToken !== previousToken
+}
+
+/** 仅当实时文件事件明确指向当前文件时，才刷新已打开的预览。 */
+export function isPreviewAffectedByFileEvent(
+  fileId: string | number | null | undefined,
+  event: LiveEventPayload | null | undefined,
+): boolean {
+  if (fileId == null || event?.resource !== 'files') return false
+  const payload = event.payload && typeof event.payload === 'object'
+    ? event.payload as { kind?: unknown }
+    : null
+  if (payload?.kind === 'folder') return false
+
+  const ids = [event.entity_id, ...(event.entity_ids ?? [])]
+  return ids.some(id => id != null && String(id) === String(fileId))
 }
 
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
@@ -141,14 +159,15 @@ export const usePreviewStore = defineStore('preview', () => {
 
   // siblings：调用方传同目录下的完整文件列表（可选），供图片预览左右切换用；
   // 只在图片间导航，siblings 里混着非图片文件会被 navigate() 自动跳过。
-  function open(f: PreviewFile, siblings: PreviewFile[] | null = null, forceRefresh = false) {
+  function open(f: PreviewFile, siblings: PreviewFile[] | null = null, forceRefresh = false, streamUrl?: string) {
     // Office（前端 HTML 渲染）与图片/视频/文本一样走浮动窗口；抽屉留给 PDF。
     if (isOfficeExt(f.ext)) {
       const existing = windows.value.find(w => w.file.id === f.id)
       if (existing) {
         existing.file = f
+        if (streamUrl) existing.streamUrl = streamUrl
         existing.siblings = siblings || []
-        if (forceRefresh) existing.reloadToken++
+        if (forceRefresh || streamUrl) existing.reloadToken++
         bringToFront(existing.id)
         return
       }
@@ -158,6 +177,7 @@ export const usePreviewStore = defineStore('preview', () => {
       windows.value.push({
         id:       _nextId++,
         file:     f,
+        streamUrl,
         reloadToken: forceRefresh ? 1 : 0,
         siblings: siblings || [],
         x:      Math.round((window.innerWidth  - PW) / 2) + idx * 30,
@@ -173,9 +193,10 @@ export const usePreviewStore = defineStore('preview', () => {
       const existing = windows.value.find(w => w.file.id === f.id)
       if (existing) {
         existing.file = f
+        if (streamUrl) existing.streamUrl = streamUrl
         existing.textFallback = isTextFallbackCandidate(f.ext, f.mimeType)
         existing.siblings = siblings || []
-        if (forceRefresh) existing.reloadToken++
+        if (forceRefresh || streamUrl) existing.reloadToken++
         bringToFront(existing.id)
         return
       }
@@ -184,6 +205,7 @@ export const usePreviewStore = defineStore('preview', () => {
       windows.value.push({
         id:       _nextId++,
         file:     f,
+        streamUrl,
         textFallback: isTextFallbackCandidate(f.ext, f.mimeType),
         reloadToken: forceRefresh ? 1 : 0,
         siblings: siblings || [],
@@ -248,5 +270,11 @@ export const usePreviewStore = defineStore('preview', () => {
     singleSiblings.value = []
   }
 
-  return { windows, singleFile, singleSiblings, file, open, openVirtual, close, closeWindow, bringToFront, navigate }
+  function resetAccountState() {
+    windows.value = []
+    close()
+    _nextId = 1
+  }
+
+  return { windows, singleFile, singleSiblings, file, open, openVirtual, close, closeWindow, bringToFront, navigate, resetAccountState }
 })

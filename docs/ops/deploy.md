@@ -880,9 +880,24 @@ sudo journalctl -u gugu-gateway -f                    # 看频道起停日志
 
 ### 7.0.1 Docker Compose 生产镜像更新
 
-正式版本由 GitHub Actions 构建一体化 `gugu-web` 与拆分 backend/frontend 镜像并发布到 Docker Hub、GHCR。Compose 镜像更新由 Docker/Compose 管理器执行；Gugu 不提供 Admin 一键镜像更新，也不运行 updater sidecar 或挂载宿主 Docker Socket。使用 Docker 管理器拉取新版本并重建 Compose 项目时，保留原 `.env`、Compose 配置、数据库及 `/data`、`/config` 等数据映射。不要使用 `docker compose down -v` 或无范围的 `docker system prune`。
+正式版本由 GitHub Actions 构建一体化 `gugu-web` 与拆分 backend/frontend 镜像并发布到 Docker Hub、GHCR。Docker/NAS 管理器负责容器运行，但**分体 Compose 更新必须使用仓库提供的 `split-compose-update.sh` 作为 Docker 更新入口**；它会在一次更新事务中验证发布镜像签名、拉取目标镜像、停止业务与外置 Sandbox、备份数据库和 `users`、执行离线迁移与数据库校验，最后才重建并健康检查服务。该流程不经过 Admin，也不给业务容器挂宿主 Docker Socket。
 
-Compose 更新会启动新版本应用并按发布迁移数据库；更新前应通过部署平台或数据库工具备份数据。Docker/Compose 管理器不一定具备应用感知的数据库预检或自动回滚能力，失败恢复由部署管理员使用平台回退镜像并检查迁移兼容性。Admin 的“版本更新”页对 Compose 只显示此手动更新边界，不会拉取镜像或操作 Docker daemon。
+分体 Compose 更新示例（从与目标版本匹配的仓库代码目录执行；`update-manifest.json` 是对应 GitHub Release 附件）：
+
+```bash
+COMPOSE_PROJECT_DIR=<部署目录> \
+COMPOSE_PROJECT_NAME=<现有Compose项目名> \
+COMPOSE_FILE=<部署目录>/docker-compose.prod.yml \
+BACKUP_ROOT=<受保护的备份目录> \
+EXTERNAL_SANDBOX_CONTROL=<外置Sandbox停服控制器> \
+EXTERNAL_SANDBOX_DOCKER_HOST=unix://<Rootless-Docker-socket> \
+bash scripts/release/split-compose-update.sh \
+  --manifest <update-manifest.json> --confirm
+```
+
+`COMPOSE_PROJECT_NAME` 只在现有部署通过 `-p` 或 Docker 平台自定义过项目名时设置，必须与旧项目完全一致。若部署不使用外置 Sandbox，可省略最后两个环境变量；若 Compose 配置了 external manager，脚本会在缺少可验证的停服控制器或 Rootless socket 时拒绝迁移。备份目录应位于受保护且空间充足的位置。脚本校验 backend/frontend 的官方 Cosign 发布身份，并以文件锁阻止并发更新；任一停服、备份、迁移、校验或健康检查失败时，业务不会自动恢复到可能与部分迁移数据不兼容的旧镜像，需按同一组备份执行恢复。
+
+普通 `docker compose pull/up`、Docker Desktop、fnOS 或群晖的“拉取并重建”按钮没有通用的应用更新前钩子，不能保证旧 backend/worker/gateway 和外置 Sandbox 已停止，因此不能安全承担工作区离线迁移。要在这类平台上更新，请将部署更新任务配置为调用上述脚本；若平台不能执行更新前命令，就不能对该平台宣称支持自动离线迁移。不要以绕过入口检查、单独运行 `migrate` 容器或直接重建服务替代此流程。不要使用 `docker compose down -v` 或无范围的 `docker system prune`。
 
 #### Admin 在线更新与部署模式支持状态
 
@@ -890,7 +905,7 @@ Compose 更新会启动新版本应用并按发布迁移数据库；更新前应
 
 单容器应用包更新要求管理员身份与一次性二次确认；更新能力不进入 Agent 工具注册表。应用包必须通过固定发布身份的 Cosign blob 签名及 SHA-256 校验。Compose、单容器整镜像与基础运行时更新统一由 Docker/Compose 或 NAS Docker 管理器负责；`GUGU_SELF_UPDATE=off` 可关闭单容器应用包更新。
 
-从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须在停服状态下完成旧 PostgreSQL/Redis 数据迁移，并保留原卷作为恢复来源。新一体化更新流程会先停止 app；`compose-update.sh` 随后调用 `gugu-offline-migrate --services-stopped`，备份 PostgreSQL 和完整 `users` 存储，再执行 workspace 布局迁移与校验。迁移未成功时不得启动新业务版本，也不得删除旧卷。手动替换镜像时必须遵循同一停服、备份、迁移、校验顺序，不可仅靠普通 `docker compose up` 代替迁移。保留根目录 `.env`、`Gugu-data` 和旧数据卷。默认 Compose 不包含 updater sidecar，Admin 不提供 Compose 镜像自更新。
+从旧版默认 Compose（独立 `postgres`/`redis` 服务 + `pgdata`/`redisdata` 卷）升级到内置数据库前，必须在停服状态下完成旧 PostgreSQL/Redis 数据迁移，并保留原卷作为恢复来源。新一体化更新流程会先停止 app；`compose-update.sh` 随后调用 `gugu-offline-migrate --services-stopped`，备份 PostgreSQL 和完整 `users` 存储，再执行 workspace 布局迁移与校验。分体 Compose 使用 `split-compose-update.sh` 完成等价的离线步骤。迁移未成功时不得启动新业务版本，也不得删除旧卷；不能仅靠普通 `docker compose up` 代替迁移。保留根目录 `.env`、`Gugu-data` 和旧数据卷。Compose 文件不包含 updater sidecar，Admin 不提供 Compose 镜像自更新。
 
 单容器应用包更新使用官方 unified 镜像内置的固定 Cosign 校验器，并要求可写持久 `/data`；仅更新应用代码。源码/systemd 部署不支持 Admin 在线 Docker 镜像更新。
 

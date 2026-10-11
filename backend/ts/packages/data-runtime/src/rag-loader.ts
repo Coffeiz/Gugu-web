@@ -2,20 +2,19 @@ import type { RagSourceBatch } from "../../contracts/src/rag.ts";
 import { assertOwnerScope, type DataAccessContext, type DataReadResult, type MemoryRecord, type StorageReader } from "./contracts.ts";
 import { DataRuntime } from "./runtime.ts";
 
-export type DataRuntimeRagSources = "project" | "file" | "conversation" | "knowledge" | "canvas";
+export type DataRuntimeRagSources = "project" | "conversation" | "knowledge" | "canvas";
 
 /** 将 Data Runtime 的 canonical 读取结果转换为 TS RAG 的 batch。 */
 export async function loadRagBatch(
   runtime: DataRuntime,
   context: DataAccessContext,
-  sources: readonly DataRuntimeRagSources[] = ["project", "file", "conversation", "knowledge", "canvas"],
+  sources: readonly DataRuntimeRagSources[] = ["project", "conversation", "knowledge", "canvas"],
 ): Promise<RagSourceBatch> {
   const batch: RagSourceBatch = {};
   for (const source of sources) {
     const result = await runtime.loadRagSources(context, source);
     const records = result.records as Record<string, unknown>[];
     if (source === "project") batch.project = records;
-    if (source === "file") batch.files = records;
     if (source === "conversation") batch.conversations = records;
     if (source === "knowledge") batch.knowledge = records;
     if (source === "canvas") batch.canvas = records;
@@ -28,7 +27,7 @@ export async function loadRagBatchCached(
   runtime: DataRuntime,
   context: DataAccessContext,
   revision: string,
-  sources: readonly DataRuntimeRagSources[] = ["project", "file", "conversation", "knowledge", "canvas"],
+  sources: readonly DataRuntimeRagSources[] = ["project", "conversation", "knowledge", "canvas"],
 ): Promise<{ batch: RagSourceBatch; cache: Record<string, { hit: boolean; revision: string }> }> {
   const batch: RagSourceBatch = {};
   const cache: Record<string, { hit: boolean; revision: string }> = {};
@@ -36,7 +35,6 @@ export async function loadRagBatchCached(
     const result = await runtime.loadRagSourcesCached(context, source, revision);
     const records = result.records as Record<string, unknown>[];
     if (source === "project") batch.project = records;
-    if (source === "file") batch.files = records;
     if (source === "conversation") batch.conversations = records;
     if (source === "knowledge") batch.knowledge = records;
     if (source === "canvas") batch.canvas = records;

@@ -1,31 +1,23 @@
-"""上传请求体的分块收流：内存峰值与单文件上限解耦。
-
-端点把 UploadFile 按 1MB 分块读进 SpooledTemporaryFile（小文件驻内存、
-大文件自动滚盘到系统临时目录），边收边计数并算 sha256；超过 limit 立刻
-抛 HTTPException，不再把整个请求体 materialize 成单个 bytes 对象。
-"""
+"""校验 multipart 临时流并计算摘要，不重复复制上传正文。"""
 from __future__ import annotations
 
 import hashlib
-import tempfile
-
 from fastapi import HTTPException
 from starlette.datastructures import UploadFile
 
 _SPOOL_CHUNK = 1024 * 1024
-_SPOOL_RAM_MAX = 8 * 1024 * 1024
-
-
 async def spool_upload(file: UploadFile, *, limit: int, status_code: int, message: str):
-    """分块收流，返回 (spool, 总字节数, sha256 hex)；spool 位置在 0。
+    """校验原始上传流，返回 (stream, 总字节数, sha256 hex)，流位置在 0。
 
-    超限或读流异常时 spool 已关闭。后续消费方（storage.put_stream / stage_stream）
-    负责 seek(0) 并在用完后 close。
+    multipart 解析器已经把正文写入 UploadFile 的 SpooledTemporaryFile。直接在
+    这条流上分块计数和计算摘要，避免把大文件再写一份临时副本；后续存储消费方
+    负责 seek(0) 并在用完后关闭 UploadFile。
     """
-    spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_RAM_MAX)
+    stream = file.file
     digest = hashlib.sha256()
     total = 0
     try:
+        await file.seek(0)
         while True:
             chunk = await file.read(_SPOOL_CHUNK)
             if not chunk:
@@ -34,9 +26,8 @@ async def spool_upload(file: UploadFile, *, limit: int, status_code: int, messag
             if total > limit:
                 raise HTTPException(status_code=status_code, detail=message)
             digest.update(chunk)
-            spool.write(chunk)
     except BaseException:
-        spool.close()
+        await file.close()
         raise
-    spool.seek(0)
-    return spool, total, digest.hexdigest()
+    await file.seek(0)
+    return stream, total, digest.hexdigest()
