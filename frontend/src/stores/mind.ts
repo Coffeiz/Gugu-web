@@ -561,7 +561,7 @@ export const useMindStore = defineStore('mind', () => {
         const currentIndex = canvasItems.value.findIndex(item => item.id === itemId)
         if (currentIndex !== -1) {
           canvasItems.value = normalizeCanvasZ(canvasItems.value).map(({ item, z }) => {
-            if (item.id === itemId) return { ...item, z, ...updated, clientKey: item.clientKey }
+            if (item.id === itemId) return { ...item, ...updated, clientKey: item.clientKey }
             return item.z === z ? item : { ...item, z }
           })
         }
