@@ -7,14 +7,6 @@
 
 ## [Unreleased]
 
-### Improvements
-
-- **Canvas file-card dragging**: keep unchanged cards stable during z-order updates to avoid rerendering heavy previews, including images, while dragging.
-
-### 改进
-
-- **画布文件卡拖动**：卡片层级变化时复用未变化的卡片，避免图片等重型预览随拖动重复渲染，提升拖动响应。
-
 ## [1.7.0] - 2026-10-10
 
 ### What's New
@@ -40,6 +32,7 @@
 - **Terminal and conversation resilience**: improve cross-worker terminal cancellation, output delivery, and recovery of live IM conversations in the web client.
 - **File and interface details**: improve thumbnail clarity, support extensionless file names safely, and refine note interactions, calendar styling, and checkbox hit areas.
 - **Mind and preview experience**: improve the notes layout, Mermaid diagrams, floating previews, and on-demand loading of referenced files.
+- **Canvas file-card dragging**: keep unchanged cards stable during z-order updates to avoid rerendering heavy previews, including images, while dragging.
 - **Deployment updates**: provide a safer update entry point for split Compose deployments.
 
 #### Fixes
@@ -86,6 +79,7 @@
 - **终端与会话韧性**：改进跨工作进程的终端中断与输出交付，并增强 IM 会话在网页端的实时续接。
 - **文件与界面细节**：提升缩略图清晰度，安全支持无扩展名文件，并改进笔记交互、日历样式和复选框点击区域。
 - **思维导图与预览体验**：优化笔记布局、Mermaid 图表、浮动预览以及引用文件的按需加载。
+- **画布文件卡拖动**：卡片层级变化时复用未变化的卡片，避免图片等重型预览随拖动重复渲染，提升拖动响应。
 - **部署更新**：为分体 Compose 部署提供更安全的更新入口。
 
 #### 修复
