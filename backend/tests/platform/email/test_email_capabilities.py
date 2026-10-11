@@ -9,7 +9,7 @@ def test_system_email_requires_complete_admin_smtp_configuration():
     )))
     assert not is_system_email_available(AppSettings(smtp=SmtpSettings(
         host="smtp.example.test", user="mailer@example.test", password="secret",
-        from_addr="not-an-email",
+        from_addr="mailer@",
     )))
 
 

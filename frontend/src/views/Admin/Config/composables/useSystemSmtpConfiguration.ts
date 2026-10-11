@@ -13,7 +13,8 @@ export function useSystemSmtpConfiguration(
 ) {
   const smtpConfigured = computed(() => {
     const config = smtp()
-    const fromAddress = (config.from_addr || config.user).trim()
+    const senderField = config.from_addr.trim()
+    const fromAddress = (senderField.includes('@') ? senderField : config.user).trim()
     return Boolean(config.host.trim())
       && Boolean(config.user.trim())
       && Boolean(config.password || storedPasswordConfigured())
