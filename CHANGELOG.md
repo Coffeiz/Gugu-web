@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### Improvements
+
+- **Canvas file-card dragging**: keep unchanged cards stable during z-order updates to avoid rerendering heavy previews, including images, while dragging.
+
+### 改进
+
+- **画布文件卡拖动**：卡片层级变化时复用未变化的卡片，避免图片等重型预览随拖动重复渲染，提升拖动响应。
+
 ## [1.7.0] - 2026-10-10
 
 ### What's New
