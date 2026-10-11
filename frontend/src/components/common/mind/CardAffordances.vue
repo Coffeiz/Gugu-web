@@ -121,8 +121,8 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
 }
 
 .card-affordances.is-actions-inline .card-affordances__actions {
-  position: static;
-  margin-left: auto;
+  top: 0;
+  right: 0;
   pointer-events: auto;
 }
 

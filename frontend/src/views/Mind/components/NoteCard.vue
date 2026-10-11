@@ -37,7 +37,7 @@
     <!-- 只读态：真标题（# 打头）才单独摘出来放头部；纯正文/待办/列表整段就是正文，
          不凭空造一条"标题"，编辑/删除按钮改浮在卡右上角。hover 出编辑/删除 -->
     <template v-else>
-      <div v-if="isHeading" class="nc-head">
+      <div v-if="isHeading" class="nc-head" :class="{ 'has-visible-actions': isHovering && !runtimeHoverSuppressed }">
         <span class="nc-title" @click="startEditAt('title')">{{ title }}</span>
         <CardAffordances :hovering="isHovering && !editing && !runtimeHoverSuppressed" actions-placement="inline" :node-id="null">
           <template #actions>
@@ -573,6 +573,7 @@ defineExpose({ rootEl: cardRef })
   display: flex; align-items: center; gap: 6px;
   margin-bottom: 4px; position: relative; z-index: 1;
 }
+.nc-head.has-visible-actions .nc-title { padding-right: 46px; box-sizing: border-box; }
 /* 只有正文存在时才分割——纯标题便签不该悬空挂一条线 */
 .nc-head:has(+ .nc-body) {
   padding-bottom: 7px;
