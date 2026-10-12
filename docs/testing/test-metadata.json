@@ -55,6 +55,14 @@
     "keyBehavior": "大目录只渲染可见窗口且框选继续命中未挂载文件",
     "ci": "frontend-test"
   },
+  "frontend/tests/preview/VideoViewer.test.ts": {
+    "domain": "file-preview",
+    "layer": "L1",
+    "owner": "frontend/components/common/viewers",
+    "productionEntry": "frontend/src/components/common/viewers/VideoViewer.vue",
+    "keyBehavior": "播放或加载过期签名视频时刷新地址并恢复；主动暂停中断 play 请求不会变成播放器错误",
+    "ci": "frontend-test"
+  },
   "frontend/tests/design/consoleBanner.test.ts": {
     "domain": "frontend-ui",
     "layer": "L0",

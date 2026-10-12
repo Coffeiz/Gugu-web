@@ -48,7 +48,7 @@
     <div class="fpw-body">
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
-      <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
+      <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" :refresh-src="!win.file.attach_id ? refreshVideoSource : undefined" />
       <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
       <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" />
       <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
@@ -264,6 +264,16 @@ const currentCacheKey = ref('')
 let loadSequence = 0
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+async function refreshVideoSource(): Promise<string> {
+  const fileId = props.win.file.id
+  if (typeof fileId !== 'number') throw new Error('无法刷新视频地址')
+  const { url } = await filesApi.getStreamUrl(fileId)
+  if (props.win.file.id !== fileId || getAccountBoundaryEpoch() !== mountAccountEpoch) {
+    throw new DOMException('预览已切换', 'AbortError')
+  }
+  return url
+}
+
 const TITLE_H  = 40
 const PAD      = 48
 // 「card」缩略图上限（须与后端 files.py 的 _THUMB_SIZE_MAP["card"] 保持一致）：
