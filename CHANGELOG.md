@@ -7,16 +7,6 @@
 
 ## [Unreleased]
 
-### Fixes
-
-- Apply global-search AND/OR modes consistently to pinyin aliases.
-- Keep group-chat messages out of the private MCP credential-input flow.
-
-### 修复
-
-- 全局搜索中的拼音别名遵循 AND/OR 查询模式。
-- 群聊消息不再进入 MCP 私聊密钥输入流程。
-
 ## [1.7.1] - 2026-10-12
 
 ### What's New
@@ -44,6 +34,8 @@
 - Keep file-library counts responsive and fix stale navigation and cache behavior during file operations.
 - Keep unsupported reference types out of canvas search results.
 - Reject invalid MCP HTTP header credentials and report endpoint, authentication, and protocol failures without exposing secret values.
+- Apply global-search AND/OR modes consistently to pinyin aliases.
+- Keep group-chat messages out of the private MCP credential-input flow.
 
 #### Contributors
 
@@ -78,6 +70,8 @@
 - 提升文件库计数响应速度，并修复文件操作期间的导航与缓存问题。
 - 画布搜索结果不再包含不支持的引用类型。
 - 拒绝无效的 MCP HTTP Header 凭据，并改进 endpoint、认证和协议错误提示，避免泄漏密钥内容。
+- 全局搜索中的拼音别名遵循 AND/OR 查询模式。
+- 群聊消息不再进入 MCP 私聊密钥输入流程。
 
 #### 贡献者
 
