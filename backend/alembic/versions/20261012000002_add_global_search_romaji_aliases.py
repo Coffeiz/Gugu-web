@@ -11,6 +11,7 @@ revision = "20261012000002"
 down_revision = "20261012000001"
 branch_labels = None
 depends_on = None
+bootstrap_on_empty_database = True
 
 
 def upgrade():

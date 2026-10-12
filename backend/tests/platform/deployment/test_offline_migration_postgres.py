@@ -17,7 +17,10 @@ pytestmark = pytest.mark.skipif(
 
 
 def _run(*args, **kwargs):
-    return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs)
+    try:
+        return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as exc:
+        raise AssertionError(exc.stderr or exc.stdout) from exc
 
 
 def test_real_postgres_workspace_upgrade_and_backup_restore(tmp_path):
@@ -57,6 +60,7 @@ def test_real_postgres_workspace_upgrade_and_backup_restore(tmp_path):
             pytest.fail("临时 PostgreSQL 未就绪")
         info = json.loads(_run("docker", "inspect", container).stdout)[0]
         env["DB__PORT"] = info["NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"]
+        _run(str(Path(sys.executable).parent / "alembic"), "upgrade", "head", env=env, cwd=tmp_path)
         for tool in ("pg_dump", "pg_restore"):
             wrapper = bin_dir / tool
             wrapper.write_text(f'#!/bin/bash\nexec docker exec {container} {tool} "$@"\n')
@@ -67,13 +71,10 @@ import asyncio
 from uuid import UUID
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from app.core.config import get_settings
-from app.db.base import Base
 from app.models import User, WorkspaceDirectory
 import onboarding.models
 async def seed():
     engine=create_async_engine(get_settings().db.url)
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
     async with async_sessionmaker(engine)() as db:
         db.add(User(id=UUID("{uid}"), username="moon", email="moon@example.test", hashed_password="unused"))
         await db.flush()
@@ -82,11 +83,10 @@ async def seed():
     await engine.dispose()
 asyncio.run(seed())
 ''', env=env, cwd=tmp_path)
-        _run(str(Path(sys.executable).parent / "alembic"), "stamp", "head", env=env, cwd=tmp_path)
         check = [sys.executable, "-m", "scripts.migrations.migrate_workspace_layout", "--allow-real-data", "--check"]
         blocked = subprocess.run(check, env=env, cwd=tmp_path, capture_output=True)
         assert blocked.returncode != 0
-        _run("bash", str(BACKEND / "scripts/runtime/offline_migration.sh"), env=env, cwd=tmp_path)
+        _run("bash", str(BACKEND / "scripts/runtime/offline_migration.sh"), env=env, cwd=BACKEND)
         _run(*check, env=env, cwd=tmp_path)
         assert (legacy / "default/keep.txt").read_text() == "preserved"
         first_backup = next((data / "migration-backups").iterdir())
@@ -98,8 +98,72 @@ asyncio.run(seed())
                         "SELECT directory_name FROM workspace_directories").stdout.strip()
         assert restored == "workspace"
         assert _run("tar", "-xOf", str(first_backup / "users.tar"), f"users/{uid}/workspace/keep.txt").stdout == "preserved"
-        _run("bash", str(BACKEND / "scripts/runtime/offline_migration.sh"), env=env, cwd=tmp_path)
+        _run("bash", str(BACKEND / "scripts/runtime/offline_migration.sh"), env=env, cwd=BACKEND)
         assert (legacy / "default/keep.txt").read_text() == "preserved"
         assert not (legacy / "default/default").exists()
+    finally:
+        subprocess.run(["docker", "rm", "-f", "-v", container], capture_output=True)
+
+
+def test_empty_postgres_bootstrap_installs_custom_search_and_paging_objects(tmp_path):
+    """新库 ORM 建表后仍安装 ORM metadata 未声明的搜索/分页数据库对象。"""
+    container = f"gugu-empty-db-test-{uuid4().hex[:12]}"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{Path(sys.executable).parent}:{os.environ['PATH']}",
+        "PYTHONPATH": str(BACKEND),
+        "GUGU_DATA_DIR": str(tmp_path / "data"),
+        "GUGU_CONFIG_OVERRIDE_FILE": str(tmp_path / "unused-config.json"),
+        "DB__HOST": "127.0.0.1",
+        "DB__NAME": "synthetic",
+        "DB__USER": "synthetic",
+        "DB__PASSWORD": "synthetic-test-only",
+    }
+    config = (BACKEND / "alembic.ini").read_text().replace(
+        "script_location = alembic", f"script_location = {BACKEND / 'alembic'}",
+    )
+    (tmp_path / "alembic.ini").write_text(config)
+    try:
+        _run("docker", "run", "-d", "--name", container,
+             "--publish", "127.0.0.1::5432",
+             "--env", "POSTGRES_USER=synthetic", "--env", "POSTGRES_DB=synthetic",
+             "--env", "POSTGRES_PASSWORD=synthetic-test-only", "postgres:18-alpine")
+        for _ in range(60):
+            ready = subprocess.run(["docker", "exec", container, "pg_isready", "-U", "synthetic"],
+                                   capture_output=True)
+            if ready.returncode == 0:
+                break
+            time.sleep(0.5)
+        else:
+            pytest.fail("临时 PostgreSQL 未就绪")
+
+        info = json.loads(_run("docker", "inspect", container).stdout)[0]
+        env["DB__PORT"] = info["NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"]
+        migration = subprocess.run(
+            [str(Path(sys.executable).parent / "alembic"), "upgrade", "head"],
+            env=env, cwd=tmp_path, capture_output=True, text=True,
+        )
+        assert migration.returncode == 0, migration.stderr
+
+        collation = _run("docker", "exec", container, "psql", "-U", "synthetic", "-d", "synthetic",
+                         "-Atc", "SELECT count(*) FROM pg_collation WHERE collname = 'gugu_natural_zh'").stdout.strip()
+        assert collation == "1"
+        file_indexes = _run(
+            "docker", "exec", container, "psql", "-U", "synthetic", "-d", "synthetic", "-Atc",
+            "SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() "
+            "AND indexname LIKE 'ix_files_page_%'",
+        ).stdout.strip()
+        assert file_indexes == "6"
+        folder_indexes = _run(
+            "docker", "exec", container, "psql", "-U", "synthetic", "-d", "synthetic", "-Atc",
+            "SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() "
+            "AND indexname LIKE 'ix_folders_page_%'",
+        ).stdout.strip()
+        assert folder_indexes == "2"
+        version = _run("docker", "exec", container, "psql", "-U", "synthetic", "-d", "synthetic",
+                       "-Atc", "SELECT version_num FROM alembic_version").stdout.strip()
+        assert version == "20261012000004"
     finally:
         subprocess.run(["docker", "rm", "-f", "-v", container], capture_output=True)

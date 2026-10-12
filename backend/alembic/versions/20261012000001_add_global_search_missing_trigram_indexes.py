@@ -11,6 +11,7 @@ revision = "20261012000001"
 down_revision = "20261010000001"
 branch_labels = None
 depends_on = None
+bootstrap_on_empty_database = True
 
 
 _INDEXES = (
