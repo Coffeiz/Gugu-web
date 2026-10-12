@@ -37,7 +37,7 @@ class McpClientError(Exception):
     def __init__(self, message: str, kind: str = "protocol"):
         super().__init__(message)
         self.message = message
-        self.kind = kind            # timeout | network | http | protocol
+        self.kind = kind            # timeout | network | http | auth | configuration | protocol
 
 
 def error_payload(exc: McpClientError) -> dict[str, str]:
@@ -211,6 +211,13 @@ class McpClient:
                 raise McpClientError(
                     "无法连接 MCP server，请检查地址与网络", kind="network"
                 ) from exc
+            except (UnicodeError, httpx.InvalidURL, httpx.LocalProtocolError) as exc:
+                # HTTPX 组装请求头时可能直接抛 UnicodeEncodeError；不能让配置值
+                # 的编码细节逃出客户端，也不能把 secret 放进错误文案。
+                raise McpClientError(
+                    "MCP 请求配置无效，请检查 HTTP Header 名称和凭据格式",
+                    kind="configuration",
+                ) from exc
 
             try:
                 # 重定向一律不跟随（未校验的目的地不请求）
@@ -221,6 +228,21 @@ class McpClient:
                 if resp.status_code == 202:
                     return {}
                 if resp.status_code >= 400:
+                    if resp.status_code in {401, 403}:
+                        raise McpClientError(
+                            f"MCP server 认证失败（HTTP {resp.status_code}），请检查凭据配置",
+                            kind="auth",
+                        )
+                    if resp.status_code == 405:
+                        raise McpClientError(
+                            "目标返回 HTTP 405：该地址不接受 MCP 的 POST 请求，请确认 endpoint 指向 Streamable HTTP MCP 服务",
+                            kind="configuration",
+                        )
+                    if 400 <= resp.status_code < 500:
+                        raise McpClientError(
+                            f"MCP server 拒绝请求（HTTP {resp.status_code}），请检查 endpoint 路径和协议配置",
+                            kind="configuration",
+                        )
                     raise McpClientError(
                         f"MCP server 返回错误状态码 {resp.status_code}", kind="http"
                     )

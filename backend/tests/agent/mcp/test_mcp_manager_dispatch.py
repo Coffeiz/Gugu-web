@@ -59,6 +59,21 @@ def _config(user_id, *, name="demo", confirm_mode="auto"):
     )
 
 
+def test_connection_error_details_only_marks_transient_failures_retryable():
+    from agent.mcp.manager import _ServerRuntime, connection_error_details
+
+    runtime = _ServerRuntime(config=_config(uuid4()))
+    runtime.last_error_kind = "configuration"
+    configuration = connection_error_details(runtime)
+    assert configuration["retryable"] is False
+    assert "修正" in configuration["next_action"]
+
+    runtime.last_error_kind = "timeout"
+    timeout = connection_error_details(runtime)
+    assert timeout["retryable"] is True
+    assert "重试" in timeout["next_action"]
+
+
 async def _configs(configs):
     for config in configs:
         yield config

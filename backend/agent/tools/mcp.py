@@ -260,6 +260,8 @@ async def _manage_mcp_servers(db, user_id, args: dict):
         return {"success": True, "server_id": str(server_id), "message": "MCP server 已删除。"}
 
     if action == "test_connection":
+        from agent.mcp.manager import connection_error_details
+
         config = McpToolManager._config_from_row(server)
         runtime = await mcp_manager.refresh_config(config)
         state = runtime.effective_state() if runtime else "unloaded"
@@ -269,6 +271,7 @@ async def _manage_mcp_servers(db, user_id, args: dict):
             "tool_count": tool_count,
             "tools": sorted(runtime.tools) if runtime and state == "ok" else [],
             "error": runtime.last_error if runtime and state != "ok" else None,
+            **connection_error_details(runtime if state != "ok" else None),
             "message": "连接成功。" if state == "ok" else None,
         }
 
@@ -286,15 +289,20 @@ class McpSkill(BaseSkill):
             "除 list/add 外的动作优先使用 server_id；也可以使用 list 返回的唯一 name 定位服务。"
             "HTTP 服务通过 credential_slots 描述凭据注入位置（header 或 query）；"
             "凭据值不会出现在工具参数中，而是在需要时通过通用加密输入交互收集。"
-            "add 和 remove 会要求用户确认（enable/disable 可逆、不设门）；list 会返回当前运行时已加载的工具名；为空时只能核对保存的配置，不能证明网络连接或凭据有效，必须以 test_connection 成功为准。"
+            "服务名支持中文、字母、数字、下划线和连字符，长度 1-64；HTTP endpoint 必须是实际可达的 MCP Streamable HTTP 地址，不要使用 example.com 或 mock 域名。"
+            "HTTP Header 凭据必须为 ASCII；Bearer 前缀请包含所需空格，例如 'Bearer '。"
+            "add 和 remove 会要求用户确认（enable/disable 可逆、不设门）；list 会返回当前运行时已加载的工具名；为空时只能核对保存的配置，不能证明网络连接或凭据有效，必须以 test_connection 返回 ok=true 为准。"
+            "test_connection 返回 ok=false 时不要声称成功或重复相同调用；按 error_kind、retryable 和 next_action 处理。"
         ),
         input_schema={
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["list", "add", "update", "enable", "disable", "remove", "test_connection"]},
                 "server_id": {"type": "string", "maxLength": 64},
-                "name": {"type": "string", "maxLength": 64},
-                "endpoint": {"type": "string", "maxLength": 1000},
+                "name": {"type": "string", "minLength": 1, "maxLength": 64,
+                         "description": "支持中文、字母、数字、下划线和连字符，例如 mock_mcp 或 mock-mcp。"},
+                "endpoint": {"type": "string", "maxLength": 1000,
+                             "description": "实际 MCP Streamable HTTP endpoint；不要填 example.com、mock.test 等占位域名。"},
                 "transport": {"type": "string", "enum": ["http", "stdio"]},
                 "command": {"type": "string", "maxLength": 1000},
                 "credential_slots": {
@@ -306,7 +314,8 @@ class McpSkill(BaseSkill):
                             "label": {"type": "string", "maxLength": 120},
                             "target": {"type": "string", "enum": ["header", "query"]},
                             "name": {"type": "string", "maxLength": 256},
-                            "prefix": {"type": "string", "maxLength": 120},
+                            "prefix": {"type": "string", "maxLength": 120,
+                                       "description": "按原样拼接在凭据前；Bearer 认证请写 'Bearer ' 并保留尾随空格。"},
                         },
                         "required": ["id", "label", "target", "name"],
                     },

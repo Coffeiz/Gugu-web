@@ -1,13 +1,14 @@
 """用户侧 MCP server 配置接口（PRD-MCP-1 FR-MCP-1/4/6）。
 
 - CRUD + 连接测试 + 已载入工具列表；越权访问他人 server 一律 404。
-- endpoint 属不可信外部地址：保存/更新时强制 url_is_safe 前置校验。
+- endpoint 属不可信外部地址：保存时做格式和字面 IP 检查；真实 DNS/IP 校验在连接时钉扎。
 - 凭据编辑视图对 owner 明文回显（产品定稿：只在传输与落库加密，前端可见可改）；
   值提交后信封加密落库；对话内 secret prompt 通道保持独立，凭据不进模型上下文。
 - 上限：每用户 server 数、单 server 工具白名单长度；超限返回人话 400。
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import re
@@ -25,7 +26,7 @@ from app.byok.crypto import decrypt_envelope, encrypt_envelope
 from app.core.config import get_settings
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
-from app.core.url_security import url_is_safe
+from app.core.url_security import is_blocked_ip
 from app.core.tz import now_utc
 from app.db.session import get_db
 from app.models import User, UserMcpServer
@@ -76,10 +77,10 @@ async def mcp_status(user: User = Depends(get_current_user)):
 
 def _validate_name(name: str) -> str:
     name = (name or "").strip()
-    if not re.fullmatch(r"[\w]{1,64}", name, flags=re.UNICODE):
+    if not re.fullmatch(r"[\w-]{1,64}", name, flags=re.UNICODE):
         raise HTTPException(
             status_code=400,
-            detail="名称只能包含中文、字母、数字和下划线（1-64 位）",
+            detail="名称只能包含中文、字母、数字、下划线和连字符（1-64 位）",
         )
     return name
 
@@ -106,9 +107,26 @@ def _validate_common(confirm_mode: str | None, timeout_seconds: int | None,
 
 def _check_endpoint(endpoint: str) -> str:
     endpoint = (endpoint or "").strip()
-    reason = url_is_safe(endpoint)
-    if reason:
-        raise HTTPException(status_code=400, detail=f"endpoint 校验失败：{reason}")
+    try:
+        parsed = urlsplit(endpoint)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="endpoint URL 格式无效") from exc
+    if parsed.scheme not in {"http", "https"} or not host:
+        raise HTTPException(status_code=400, detail="endpoint 必须是包含主机名的 HTTP/HTTPS URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise HTTPException(status_code=400, detail="endpoint 不能包含内嵌账号或密码")
+    if port is not None and not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail="endpoint 端口无效")
+    try:
+        literal_ip = ipaddress.ip_address(host)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None and is_blocked_ip(literal_ip):
+        raise HTTPException(status_code=400, detail="endpoint 不能指向内网或本机地址")
+    # 域名解析和公网 IP 钉扎只在 MCPClient 实际连接时进行。保存配置时解析 DNS
+    # 会把临时 DNS 故障误报成配置错误；连接边界仍通过 resolve_pinned_ip 防 SSRF。
     return endpoint
 
 
@@ -290,6 +308,12 @@ def _store_credential_values(row: UserMcpServer, values: dict[str, str] | None,
             raise HTTPException(status_code=400, detail="单个凭据值不能超过 4096 字符")
         if text:
             cleaned[slot_id] = text
+    try:
+        from agent.mcp.credentials import validate_header_credentials
+
+        validate_header_credentials(slot_defs, cleaned)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if cleaned:
         try:
             ciphertext, nonce, wrapped_key = encrypt_envelope(
@@ -499,7 +523,7 @@ async def delete_server(server_id: str, user: User = Depends(get_current_user),
 async def test_connection(server_id: str, user: User = Depends(get_current_user),
                           db: AsyncSession = Depends(get_db)):
     """连接测试：initialize + tools/list，返回人话结果与工具数（FR-MCP-6）。"""
-    from agent.mcp.manager import McpToolManager, mcp_manager
+    from agent.mcp.manager import McpToolManager, connection_error_details, mcp_manager
 
     row = await _get_owned_server(db, server_id, user)
     config = McpToolManager._config_from_row(row)
@@ -509,6 +533,7 @@ async def test_connection(server_id: str, user: User = Depends(get_current_user)
             "ok": False,
             "error": (runtime.last_error if runtime else "MCP server 未能建立连接"),
             "tools": [],
+            **connection_error_details(runtime),
         }
     tool_names = [meta.tool_name for meta in runtime.metas.values()]
     return {"ok": True, "tool_count": len(tool_names), "tools": tool_names[:64]}

@@ -26,7 +26,7 @@ from agent.interactions.confirmations import (
     target_confirmation_identity,
 )
 from agent.interactions.automatic_mode import ACTION
-from agent.mcp.client import McpClient
+from agent.mcp.client import McpClient, McpClientError
 from agent.mcp.models import McpServerConfig, McpToolMeta, SCOPE_USER
 from agent.mcp.schema_adapter import (
     build_mcp_tool,
@@ -65,6 +65,7 @@ class _ServerRuntime:
     metas: dict[str, McpToolMeta] = field(default_factory=dict)   # prefixed → meta（含原始名）
     state: str = _OK_STATE
     last_error: str | None = None
+    last_error_kind: str | None = None
     consecutive_failures: int = 0
     backoff_until: float = 0.0
     client: Any | None = None
@@ -77,6 +78,26 @@ class _ServerRuntime:
 
     def effective_state(self) -> str:
         return _BACKOFF_STATE if self.in_backoff() else self.state
+
+
+def connection_error_details(runtime: _ServerRuntime | None) -> dict[str, Any]:
+    """给管理工具/API 提供一致的连接失败分类与下一步提示。"""
+    kind = runtime.last_error_kind if runtime else None
+    if kind == "configuration":
+        next_action = "修正 MCP endpoint 或凭据配置后再测试；不要重复提交相同配置。"
+    elif kind == "auth":
+        next_action = "核对服务要求的凭据名称、前缀和密钥值后再测试。"
+    elif kind in {"timeout", "network", "http"}:
+        next_action = "确认服务和网络恢复后再重试。"
+    elif kind is None:
+        next_action = None
+    else:
+        next_action = "检查 MCP 服务返回的协议错误，再决定是否修改配置。"
+    return {
+        "error_kind": kind,
+        "retryable": kind in {"timeout", "network", "http"},
+        "next_action": next_action,
+    }
 
 
 class McpToolManager:
@@ -427,7 +448,12 @@ class McpToolManager:
         runtime.tools.clear()
         runtime.metas.clear()
 
-        client = await self._new_client(config, settings)
+        try:
+            client = await self._new_client(config, settings)
+        except McpClientError as exc:
+            self._record_failure(key, runtime, exc.message, exc.kind)
+            self._runtimes[key] = runtime
+            return runtime
         if client is None:
             self._record_failure(key, runtime, "MCP stdio 沙盒不可用", "network")
             self._runtimes[key] = runtime
@@ -507,6 +533,7 @@ class McpToolManager:
         runtime.state = _OK_STATE
         runtime.consecutive_failures = 0
         runtime.last_error = None
+        runtime.last_error_kind = None
         runtime.last_used_at = time.monotonic()
         runtime.stdio_restarts = 0
         if config.transport == "stdio":
@@ -644,8 +671,8 @@ class McpToolManager:
                     config.endpoint, config.credential_slots, config.credential_values,
                 )
             except ValueError as exc:
-                _log.warning("MCP server [%s] 凭据槽位未满足：%s", config.name, str(exc))
-                return None
+                # 不把无效 HTTP 凭据误报成 stdio 沙盒不可用。
+                raise McpClientError(str(exc), kind="configuration") from exc
             client_kwargs = {
                 "headers": headers,
                 "timeout_seconds": float(config.timeout_seconds or settings.mcp.default_timeout_seconds),
@@ -674,12 +701,14 @@ class McpToolManager:
         runtime.state = _OK_STATE
         runtime.consecutive_failures = 0
         runtime.last_error = None
+        runtime.last_error_kind = None
 
     def _record_failure(self, key, runtime: _ServerRuntime, message: str, kind: str) -> None:
         from app.core.config import get_settings
 
         settings = get_settings()
         runtime.last_error = message
+        runtime.last_error_kind = kind
         if kind in _CALL_FAIL_KINDS:
             runtime.consecutive_failures += 1
             if runtime.consecutive_failures >= settings.mcp.failure_threshold:

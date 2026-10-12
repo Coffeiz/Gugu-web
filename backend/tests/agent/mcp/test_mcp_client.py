@@ -250,3 +250,32 @@ def test_query_credentials_are_added_only_to_request_url():
         }
 
     asyncio.run(run())
+
+
+def test_invalid_header_credentials_are_structured_and_secret_safe():
+    async def run():
+        secret = "Bearer 测试凭据"
+        client = McpClient(
+            "https://mcp.example.com/rpc",
+            headers={"Authorization": secret},
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={})),
+        )
+        result = await client.list_tools()
+        assert result["error_kind"] == "configuration"
+        assert "Header" in result["error"]
+        assert secret not in result["error"]
+
+    asyncio.run(run())
+
+
+def test_http_405_is_reported_as_endpoint_configuration_error():
+    async def run():
+        client = McpClient(
+            "https://mcp.example.com/rpc",
+            transport=httpx.MockTransport(lambda _request: httpx.Response(405)),
+        )
+        result = await client.list_tools()
+        assert result["error_kind"] == "configuration"
+        assert "Streamable HTTP MCP" in result["error"]
+
+    asyncio.run(run())

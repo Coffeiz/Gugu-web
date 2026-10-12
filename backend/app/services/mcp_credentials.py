@@ -13,6 +13,7 @@ from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import InteractionPrompt, McpSecretInput, User, UserMcpServer
 from app.services.secret_prompts import resolved_prompt_result, validate_secret_values
+from agent.mcp.credentials import validate_header_credentials
 
 
 async def consume_mcp_secret_prompt(
@@ -72,6 +73,10 @@ async def store_mcp_credentials_for_prompt(
     }
     if not slot_ids or set(normalized) != slot_ids:
         raise HTTPException(status_code=400, detail="凭据槽位不匹配")
+    try:
+        validate_header_credentials(list(server.credential_slots or []), normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         ciphertext, nonce, wrapped_key = encrypt_envelope(
             json.dumps(normalized, ensure_ascii=False), allow_empty=False,

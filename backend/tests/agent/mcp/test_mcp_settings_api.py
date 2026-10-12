@@ -15,12 +15,6 @@ from app.api.v1 import mcp_settings as api
 from app.models import ConversationSession, InteractionPrompt, UserMcpServer
 
 
-@pytest.fixture(autouse=True)
-def _safe_url(monkeypatch):
-    """单测不碰真实 DNS：endpoint 前置校验直接放行公网、拒绝内网样例由专门用例覆盖。"""
-    monkeypatch.setattr(api, "url_is_safe", lambda url: None if "internal" not in url else "该地址指向内网/本机，出于安全考虑不予下载")
-
-
 @pytest.fixture
 def mcp_on(monkeypatch):
     from app.core.config import get_settings
@@ -58,6 +52,11 @@ async def test_name_conflict_and_invalid_names(db, user_a):
         user=user_a, db=db,
     )
     assert created["name"] == "高德"
+    kebab_name = await api.create_server(
+        api.McpServerCreate(name="mock-mcp", endpoint="https://mcp.example.com/kebab"),
+        user=user_a, db=db,
+    )
+    assert kebab_name["name"] == "mock-mcp"
     with pytest.raises(HTTPException):
         await api.create_server(api.McpServerCreate(name="我的 server!", endpoint="https://mcp.example.com"),
                                 user=user_a, db=db)
@@ -66,10 +65,19 @@ async def test_name_conflict_and_invalid_names(db, user_a):
 async def test_url_validation_rejected(db, user_a):
     with pytest.raises(HTTPException) as exc:
         await api.create_server(
-            api.McpServerCreate(name="intranet", endpoint="https://internal.server/rpc"),
+            api.McpServerCreate(name="intranet", endpoint="http://127.0.0.1/rpc"),
             user=user_a, db=db,
         )
     assert "内网" in exc.value.detail
+
+
+async def test_save_endpoint_does_not_require_dns_resolution(db, user_a):
+    """保存可解析性暂不可用的域名不发外网请求；实际连接仍由 pinned resolver 校验。"""
+    created = await api.create_server(
+        api.McpServerCreate(name="dns_pending", endpoint="https://mcp.unresolvable.invalid/mcp"),
+        user=user_a, db=db,
+    )
+    assert created["endpoint"] == "https://mcp.unresolvable.invalid/mcp"
 
 
 async def test_server_limit_rejected(db, user_a, monkeypatch):
@@ -957,6 +965,79 @@ async def test_credential_values_echo_and_roundtrip(db, user_a):
             user=user_a, db=db,
         )
     assert "未知槽位" in exc.value.detail
+
+
+async def test_non_ascii_header_credential_is_rejected_before_storage(db, user_a):
+    created = await api.create_server(
+        api.McpServerCreate(
+            name="ascii_header",
+            endpoint="https://m.example.com/mcp",
+            credential_slots=[{
+                "id": "api_key", "label": "API Key", "target": "header",
+                "name": "Authorization", "prefix": "Bearer ",
+            }],
+        ),
+        user=user_a, db=db,
+    )
+    with pytest.raises(HTTPException) as exc:
+        await api.update_server(
+            created["id"], api.McpServerPatch(credential_values={"api_key": "测试凭据"}),
+            user=user_a, db=db,
+        )
+    assert "ASCII" in exc.value.detail
+    row = await db.scalar(select(UserMcpServer).where(UserMcpServer.id == UUID(created["id"])))
+    assert not row.encrypted_credentials
+
+
+async def test_secret_prompt_can_retry_after_invalid_header_credential(db, user_a):
+    from app.models import ConversationSession
+    from app.services.interactions import create_agent_prompt
+    from app.services.mcp_credentials import consume_mcp_secret_prompt
+
+    created = await api.create_server(
+        api.McpServerCreate(
+            name="prompt_header",
+            endpoint="https://m.example.com/mcp",
+            credential_slots=[{
+                "id": "api_key", "label": "API Key", "target": "header",
+                "name": "Authorization", "prefix": "Bearer ",
+            }],
+        ),
+        user=user_a, db=db,
+    )
+    session = ConversationSession(user_id=user_a.id, title="MCP 凭据", source="web")
+    db.add(session)
+    await db.commit()
+    prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="invalid-header-retry",
+        tool_name="manage_mcp_servers", payload={
+            "_interaction": "ask_user",
+            "kind": "form",
+            "title": "补全凭据",
+            "secret_fields": [{"name": "api_key", "label": "API Key", "type": "secret"}],
+            "secret_target": {"kind": "mcp_credentials", "server_id": created["id"]},
+        },
+    )
+    await db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await consume_mcp_secret_prompt(
+            prompt, {"api_key": "测试凭据"}, user=user_a, db=db,
+        )
+    assert exc.value.status_code == 400
+    assert "测试凭据" not in exc.value.detail
+    assert prompt.status == "active"
+
+    saved = await consume_mcp_secret_prompt(
+        prompt, {"api_key": "valid-test-key"}, user=user_a, db=db,
+    )
+    assert saved["ok"] is True
+    stored_prompt = await db.scalar(
+        select(InteractionPrompt).where(InteractionPrompt.id == prompt.id)
+    )
+    assert stored_prompt.status == "resolved"
+    row = await db.scalar(select(UserMcpServer).where(UserMcpServer.id == UUID(created["id"])))
+    assert row.encrypted_credentials
 
 
 async def test_legacy_headers_surface_in_edit_view_and_migrate_on_save(db, user_a):
