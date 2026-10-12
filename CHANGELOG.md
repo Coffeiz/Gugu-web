@@ -15,6 +15,7 @@
 
 - **Global search**: search file and folder names across the full library, including pinyin queries.
 - **Bounded file browsing**: load large directories and recycle-bin contents in pages, with cached results and folder counts.
+- **Secure MCP credential prompts**: complete missing MCP credentials in web and IM conversations; values are encrypted at rest and excluded from chat history and model context.
 
 #### Improvements
 
@@ -24,12 +25,15 @@
 - **Mind and canvas**: improve empty and loading states, canvas reference filtering, note title layout, and drag transitions.
 - **Tool feedback**: localize active tool-call labels to match the completed tool cards.
 - **Scheduled tasks**: remove the tool-call count ceiling.
+- **MCP setup**: load server runtime status asynchronously and provide actionable authentication, configuration, and network diagnostics.
+- **Credential form**: align secure-save and cancel actions as equal-width buttons.
 
 #### Fixes
 
 - Validate SMTP sender display names correctly.
 - Keep file-library counts responsive and fix stale navigation and cache behavior during file operations.
 - Keep unsupported reference types out of canvas search results.
+- Reject invalid MCP HTTP header credentials and report endpoint, authentication, and protocol failures without exposing secret values.
 
 #### Contributors
 
@@ -45,6 +49,7 @@
 
 - **全局搜索**：支持跨全量文件库搜索文件名和文件夹名，并支持拼音查询。
 - **有界文件浏览**：大目录和回收站改为分页加载，并复用缓存、显示文件夹计数。
+- **MCP 凭据安全补全**：支持在 Web 和 IM 会话中补全 MCP 凭据；凭据加密保存，不进入聊天记录或模型上下文。
 
 #### 改进
 
@@ -54,12 +59,15 @@
 - **思维与画布**：优化空状态和加载状态，改进画布引用筛选、便签标题布局及拖动过渡。
 - **工具反馈**：调用中的工具名称与完成后的工具卡片保持当前界面语言一致。
 - **定时任务**：取消工具调用次数上限。
+- **MCP 服务配置**：运行状态改为异步加载，并区分认证、配置和网络错误，提供可执行的排查建议。
+- **凭据输入表单**：安全保存与取消按钮并排等宽显示。
 
 #### 修复
 
 - 正确校验 SMTP 发件人显示名。
 - 提升文件库计数响应速度，并修复文件操作期间的导航与缓存问题。
 - 画布搜索结果不再包含不支持的引用类型。
+- 拒绝无效的 MCP HTTP Header 凭据，并改进 endpoint、认证和协议错误提示，避免泄漏密钥内容。
 
 #### 贡献者
 
