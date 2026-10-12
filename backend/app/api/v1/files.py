@@ -15,13 +15,14 @@ from app.core.upload_stream import spool_upload
 from app.db.session import get_db
 from app.models import File, Folder, Project, User  # orm-exempt: 文件归档接口的模型引用随现有遗留查询，files Service 收口时一并移除
 from app.schemas import (
-    CamelModel, FileLocationResponse, FileResponse, FileStreamResponse, FileSummaryResponse, FileUpdate, FolderResponse, PageResponse, ResolveFilePathsRequest, ResolvedFilePath,
+    CamelModel, FileLibraryCountsResponse, FileLocationResponse, FileResponse, FileStreamResponse, FileSummaryResponse, FileUpdate, FolderResponse, PageResponse, ResolveFilePathsRequest, ResolvedFilePath,
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
 from app.services.files.browser import (
-    get_file_detail_row, get_file_summary, get_folder_path_rows,
+    count_personal_library_items, get_file_detail_row, get_file_summary, get_folder_path_rows,
     list_file_page_rows, resolve_relative_file_paths,
 )
+from app.services.files.trash import count_trash_root_items
 from app.services.storage.quota_ledger import get_file_library_usage_snapshot
 from app.services.files.response import color_value, to_file_response, to_related_file_response
 from app.services.files.upload import (
@@ -189,6 +190,17 @@ async def file_summary(
     return FileSummaryResponse(
         recent_files=[to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows],
     )
+
+
+@router.get("/library-counts", response_model=FileLibraryCountsResponse)
+async def file_library_counts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """只返回个人文件和回收站根列表计数，不读取实体列表。"""
+    personal_count = await count_personal_library_items(db, current_user.id)
+    trash_count = await count_trash_root_items(db, current_user.id)
+    return FileLibraryCountsResponse(personal_count=personal_count, trash_count=trash_count)
 
 
 # ── GET /files/storage ───────────────────────────────────────────────────────

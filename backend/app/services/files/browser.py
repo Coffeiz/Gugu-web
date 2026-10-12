@@ -369,6 +369,28 @@ async def get_file_summary(db: AsyncSession, user_id: int, recent_limit: int):
     return recent_rows
 
 
+async def count_personal_library_items(db: AsyncSession, user_id: int) -> int:
+    """统计个人空间全部活动文件与文件夹，返回卡片需要的总项数。"""
+    file_count = await db.scalar(
+        select(func.count(File.id)).where(
+            File.user_id == user_id,
+            File.space == "personal",
+            File.folder_id.is_(None),
+            File.deleted_at.is_(None),
+        )
+    )
+    folder_count = await db.scalar(
+        select(func.count(Folder.id)).where(
+            Folder.user_id == user_id,
+            Folder.project_id.is_(None),
+            Folder.workspace_directory_id.is_(None),
+            Folder.parent_id.is_(None),
+            Folder.deleted_at.is_(None),
+        )
+    )
+    return int(file_count or 0) + int(folder_count or 0)
+
+
 async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
     """返回用户当前配额口径的实际用量。"""
     from app.services.storage.quota_ledger import measure_user_storage_usage

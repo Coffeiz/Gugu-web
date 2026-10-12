@@ -469,6 +469,7 @@ function pageQuery(params: CursorPageParams): URLSearchParams {
 }
 
 export const filesApi = {
+  libraryCounts: () => get<{ personalCount: number; trashCount: number }>('/files/library-counts'),
   page: (filters: FileListParams & CursorPageParams = {}) => {
     const params = pageQuery(filters)
     for (const [key, value] of Object.entries(filters)) {

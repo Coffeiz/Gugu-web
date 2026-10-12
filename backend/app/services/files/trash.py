@@ -98,6 +98,26 @@ async def list_trash_file_page_rows(db: AsyncSession, user_id, *, limit: int, cu
     return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
 
 
+async def count_trash_root_items(db: AsyncSession, user_id) -> int:
+    """统计回收站根列表可见的独立文件和顶层文件夹。"""
+    file_count = await db.scalar(
+        select(func.count(File.id))
+        .select_from(File)
+        .outerjoin(Folder, File.folder_id == Folder.id)
+        .where(
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
+        )
+    )
+    folder_count = await db.scalar(
+        select(func.count()).select_from(
+            top_level_deleted_folders_stmt(user_id).order_by(None).subquery()
+        )
+    )
+    return int(file_count or 0) + int(folder_count or 0)
+
+
 async def list_trash_folder_page_rows(db: AsyncSession, user_id, *, limit: int, cursor: str | None):
     scope = {"resource": "trash_folders", "sort": "deletedAt_desc_id_desc"}
     stmt = top_level_deleted_folders_stmt(user_id)

@@ -227,6 +227,22 @@ export function useFileLibraryDirectory(options: DirectoryOptions) {
         ],
         files: [],
       }
+      const loadLibraryCounts = filesApi.libraryCounts
+      if (loadLibraryCounts) {
+        void loadLibraryCounts().then(counts => {
+          if (!isCurrent()) return
+          contents.value = {
+            ...contents.value,
+            folders: contents.value.folders.map(folder => ({
+              ...folder,
+              ...(folder.id === 'personal' ? { count: counts.personalCount } : {}),
+              ...(folder.id === 'trash' ? { count: counts.trashCount } : {}),
+            })),
+          }
+        }).catch(() => {
+          // 根目录仍可用；统计失败时保留未知态，不影响文件浏览。
+        })
+      }
       return
     }
 

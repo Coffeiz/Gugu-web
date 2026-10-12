@@ -327,6 +327,11 @@ class FileSummaryResponse(CamelModel):
     recent_files: list[FileResponse]
 
 
+class FileLibraryCountsResponse(CamelModel):
+    personal_count: int
+    trash_count: int
+
+
 class FileStreamResponse(CamelModel):
     file: FileResponse
     url: str
