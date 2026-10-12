@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 
 def artifact_sse(artifact: dict) -> str:
@@ -23,15 +24,20 @@ class EventSequencer:
     工具参数日志（与原实现同一约束）。
     """
 
-    def __init__(self, run_id: str, start: int = 0):
+    def __init__(self, run_id: str, start: int = 0, *, encoder: Callable | None = None):
         self.run_id = run_id
         self.seq = start
+        self._encoder = encoder
 
     def next_event(self, event_type: str, **payload) -> str:
         """编码一条带 run_id/seq 的事件；返回完整 SSE 行。"""
         self.seq += 1
-        from agent.interactions.stream_events import encode_event
-        return encode_event(
+        encoder = self._encoder
+        if encoder is None:
+            from agent.interactions.stream_events import encode_event
+
+            encoder = encode_event
+        return encoder(
             event_type,
             run_id=self.run_id,
             seq=self.seq,

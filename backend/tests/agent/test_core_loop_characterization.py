@@ -756,15 +756,78 @@ async def test_mcp_confirm_replay_enters_credential_prompt_without_loop(monkeypa
     ])
     messages = [{"role": "user", "content": "帮我添加飞猪 MCP 服务"}]
 
-    ev, text, errors = await drain(
-        make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1)
+    frames = []
+    async for chunk in make_runner()._run_anthropic("u", "sys", messages, AI, session_id=1):
+        try:
+            frames.append(json.loads(chunk[len("data: "):]))
+        except (TypeError, ValueError):
+            continue
+    ev = collections.Counter(frame.get("type") for frame in frames)
+    text = "".join(
+        frame.get("content", "") for frame in frames if frame.get("type") == "token"
     )
+    errors = [frame.get("detail", "") for frame in frames if frame.get("type") == "error"]
 
     assert calls == ["manage_mcp_servers", "manage_mcp_servers"]
     assert prompt_calls == ["manage_mcp_servers"]
     assert ev["interaction_required"] == 2
     assert "MCP 服务已添加" in text
     assert errors == []
+    assert "MCP 凭据已安全保存" not in json.dumps(frames, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("tool_name", ["ask_user", "manage_mcp_servers"])
+async def test_resolved_user_interaction_closes_waiting_tool_event(monkeypatch, dispatched, tool_name):
+    """用户提交提问/凭据表单后，工具气泡结束等待且展示事件不泄漏输入内容。"""
+    interaction_payload = {
+        "_interaction": "ask_user",
+        "kind": "form",
+        "title": "补全信息",
+        "body": "请填写信息",
+        "options": [],
+        "allow_text_input": True,
+    }
+
+    async def fake_dispatch(_uid, _name, _inp):
+        return json.dumps(interaction_payload, ensure_ascii=False), None
+
+    async def fake_create_agent_prompt(**_kwargs):
+        return SimpleNamespace(
+            id=919,
+            kind="form",
+            title="补全信息",
+            body="请填写信息",
+            schema_json={"allow_text_input": True},
+            expires_at=SimpleNamespace(isoformat=lambda: "2026-10-12T23:00:00+08:00"),
+        ), []
+
+    async def fake_wait_for_resolution(**_kwargs):
+        return {"status": "answered", "text": "private-user-answer"}
+
+    monkeypatch.setattr(core.registry, "dispatch", fake_dispatch)
+    monkeypatch.setattr("app.services.interactions.create_agent_prompt", fake_create_agent_prompt)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+    patch_anthropic(monkeypatch, [
+        msg([TU(tool_name, "interaction-call", {})]),
+        msg([TX("已收到补充信息")]),
+    ])
+
+    frames = []
+    async for chunk in make_runner()._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "继续"}], AI, session_id=1,
+    ):
+        try:
+            frames.append(json.loads(chunk[len("data: "):]))
+        except Exception:
+            continue
+
+    tool_events = [
+        frame for frame in frames
+        if frame.get("type") == "tool_done" and frame.get("tool_call_id") == "interaction-call"
+    ]
+    assert [event.get("status") for event in tool_events] == ["waiting", "success"]
+    assert "private-user-answer" not in json.dumps(tool_events, ensure_ascii=False)
+    assert any(frame.get("type") == "_new_round" for frame in frames)
 
 
 async def test_confirmed_replay_result_reaches_canonical_batch(monkeypatch, dispatched):
