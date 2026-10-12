@@ -8,7 +8,7 @@ import pytest
 
 from agent.interactions.events import INTERACTION_REQUIRED, ROUND_START
 from agent.interactions.stream_events import decode_event, encode_event
-from app.models import ConversationMessage, ConversationSession, InteractionPrompt
+from app.models import ConversationMessage, ConversationSession, InteractionRequest
 from app.core.tz import now_utc
 from app.services.interactions import (
     _hash_token,
@@ -266,7 +266,7 @@ async def test_question_prompt_without_options_still_offers_custom_reply(db, use
         text="建在个人文件库，叫「插画参考」", event_id="evt-open-text",
     )
     assert answered["result"]["status"] == "answered"
-    stored = await db.get(InteractionPrompt, prompt.id)
+    stored = await db.get(InteractionRequest, prompt.id)
     assert stored.status == "resolved"
 
 
@@ -299,7 +299,7 @@ async def test_im_plain_text_answers_question_prompt_with_fallback_button(db, us
     assert result is not None
     assert result["result"]["status"] == "answered"
     assert result["prompt_id"] == prompt.id
-    stored = await db.get(InteractionPrompt, prompt.id)
+    stored = await db.get(InteractionRequest, prompt.id)
     assert stored.status == "resolved"
 
 
@@ -366,7 +366,7 @@ async def test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted(d
         event_id="evt-custom-choice",
     )
     assert awaiting["result"]["status"] == "awaiting_text"
-    stored_prompt = await db.get(InteractionPrompt, prompt.id)
+    stored_prompt = await db.get(InteractionRequest, prompt.id)
     assert stored_prompt.status == "active"
     assert stored_prompt.schema_json["custom_input_active"] is True
 
@@ -379,7 +379,7 @@ async def test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted(d
     )
     assert answered["result"]["status"] == "answered"
     assert answered["result"]["text"] == "改成归档"
-    stored_prompt = await db.get(InteractionPrompt, prompt.id)
+    stored_prompt = await db.get(InteractionRequest, prompt.id)
     assert stored_prompt.status == "resolved"
 
 

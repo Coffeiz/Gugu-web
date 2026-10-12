@@ -24,7 +24,7 @@ QQ Keyboard / 飞书交互卡片 / Web 按钮 / 微信文本链接
 返回“已发送”结果
 ```
 
-`ask_user` 仍只负责“用户点击后要把答案回传给 Agent，并恢复原 Run”的场景。链接按钮本身是非阻塞的出站动作，不创建 `InteractionPrompt`、不生成一次性 action token，也不等待用户点击。
+`ask_user` 仍只负责“用户点击后要把答案回传给 Agent，并恢复原 Run”的场景。链接按钮本身是非阻塞的出站动作，不创建 `InteractionRequest`、不生成一次性 action token，也不等待用户点击。
 
 ## 1. 背景与问题
 
@@ -61,7 +61,7 @@ QQ Keyboard / 飞书交互卡片 / Web 按钮 / 微信文本链接
 ## 3. 非目标
 
 - 不把所有普通 Agent 回复自动转换成按钮。
-- 不修改 `ask_user` 的 `InteractionPrompt`、`InteractionAction`、暂停、恢复、过期和消费协议。
+- 不修改 `ask_user` 的 `InteractionRequest`、`InteractionAction`、暂停、恢复、过期和消费协议。
 - 不为链接按钮创建可点击回调，不追踪用户是否真的打开了网页。
 - 不让按钮点击直接执行 Gugu 后端业务；需要服务端动作时使用 `ask_user`、工具确认门或业务回调。
 - 不保证 `myapp://`、`intent://` 等任意第三方协议在 QQ、飞书或 Web 客户端中可用；是否能拉起由客户端和操作系统决定。
@@ -253,7 +253,7 @@ QQ 跳转按钮使用官方 Keyboard action：
 要求：
 
 - 复用现有飞书卡片构造和发送出口，但不注册 `card.action.trigger` 回调；
-- 不为静态链接创建 `InteractionPrompt`；
+- 不为静态链接创建 `InteractionRequest`；
 - 需要飞书端内跳转时使用 HTTPS AppLink/应用链接；
 - 若客户端不支持目标行为，卡片发送失败或不可用时退回文本链接；
 - 保持现有 `ask_user` 卡片的 token、回调、过期和消费逻辑独立。
@@ -396,7 +396,7 @@ QQ、飞书 Gateway 只负责把已校验的统一 part 转成平台 wire payloa
 - URL 校验拒绝危险 scheme、空/超长/控制字符输入和凭据 URL。
 - URL 校验接受合法 HTTP(S)、系统入口和自定义 App Scheme，不依赖域名白名单。
 - 工具结果正确返回 `sent`、`sent_with_fallback`、`rejected`、`failed`、`unsupported`。
-- `send_link_buttons` 不创建 `InteractionPrompt`，不调用 `consume_action()`。
+- `send_link_buttons` 不创建 `InteractionRequest`，不调用 `consume_action()`。
 - QQ 使用跳转 action type，现有 `ask_user` 仍使用回调 action type。
 - 飞书使用 `open_url`，不生成 `card.action.trigger` token。
 
@@ -438,6 +438,6 @@ QQ、飞书 Gateway 只负责把已校验的统一 part 转成平台 wire payloa
 
 ## 16. 后续扩展
 
-如果未来需要“点击按钮后通知咕咕并继续任务”，应新增明确的交互动作类型，例如 `await_click`，复用 `InteractionPrompt/Action` 的身份、过期和消费协议；不能把 `send_link_buttons` 改成隐式等待，也不能仅凭 URL 点击推断业务成功。
+如果未来需要“点击按钮后通知咕咕并继续任务”，应新增明确的交互动作类型，例如 `await_click`，复用 `InteractionRequest/Action` 的身份、过期和消费协议；不能把 `send_link_buttons` 改成隐式等待，也不能仅凭 URL 点击推断业务成功。
 
 如果未来需要更强的平台治理，可以增加按平台的 Scheme 配置或审核状态；这不作为当前工具服务端的 URL 过滤前置条件。当前模型可以生成非危险自定义协议，但客户端是否支持由平台和操作系统决定。

@@ -7,7 +7,7 @@ PostgreSQL ILIKE，由 pg_trgm GIN 索引加速；对话同时搜会话标题与
 共用——路由给下拉框用小 per_type，工具给模型用更大的 per_type，避免各写一套。
 """
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -74,25 +74,26 @@ def _snippet_for_queries(text: str, queries: list[str]) -> str:
     return _snippet(text, queries[0]) if queries else (text or "")[:60].strip()
 
 
-def _romaji_matches_any(text: str, queries: list[str], language: str) -> bool:
-    return any(romaji_match(text or "", query, language) for query in queries)
-
-
-def _romaji_matches_object(obj, kind: str, queries: list[str], language: str) -> bool:
-    """按统一字段注册表匹配对象，避免各搜索分支遗漏可搜索文本。"""
-    return any(
-        _romaji_matches_any(getattr(obj, field, ""), queries, language)
-        for field in ROMAJI_FIELDS[kind]
-    )
-
-
-def _romaji_alias_conditions(column, queries: list[str]):
-    """为拼音查询构建别名列子串条件；别名列由 pg_trgm GIN 索引加速。"""
-    return [
-        column.ilike(f"%{query.lower().replace(' ', '')}%")
+def _romaji_matches_object(obj, kind: str, queries: list[str], language: str, mode: str) -> bool:
+    """按统一字段注册表匹配对象，并遵守全局搜索的 AND/OR 语义。"""
+    fields = [str(getattr(obj, field, "") or "") for field in ROMAJI_FIELDS[kind]]
+    matches = [
+        any(query.casefold() in value.casefold() for value in fields)
+        or (is_romaji_query(query) and any(romaji_match(value, query, language) for value in fields))
         for query in queries
-        if is_romaji_query(query)
     ]
+    return all(matches) if mode == "AND" else any(matches)
+
+
+def _romaji_search_condition(columns, alias_column, queries: list[str], mode: str):
+    """普通字段与拼音别名按每个关键词合并，再应用统一 AND/OR 语义。"""
+    terms = []
+    for query in queries:
+        alternatives = [column.ilike(f"%{query}%") for column in columns]
+        if is_romaji_query(query):
+            alternatives.append(alias_column.ilike(f"%{query.lower().replace(' ', '')}%"))
+        terms.append(or_(*alternatives))
+    return and_(*terms) if mode == "AND" else or_(*terms)
 
 
 def _primary_rank(column, q: str):
@@ -211,7 +212,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(Project.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for p in scan:
-                if p.id not in seen and _romaji_matches_object(p, "project", search_queries, language):
+                if p.id not in seen and _romaji_matches_object(p, "project", search_queries, language, mode):
                     rows.append(p); seen.add(p.id)
                     if len(rows) >= per_type:
                         break
@@ -232,8 +233,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                        _primary_rank(File.display_name, q), File.updated_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
-            alias_conditions = _romaji_alias_conditions(File.search_romaji, search_queries)
-            if alias_conditions:
+            if use_romaji:
                 seen = {f.id for f in rows}
                 alias_rows = (await db.execute(
                     select(File).where(
@@ -241,7 +241,9 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                         File.deleted_at.is_(None),
                         File.search_romaji.is_not(None),
                         *([File.id.not_in(seen)] if seen else []),
-                        or_(*alias_conditions),
+                        _romaji_search_condition(
+                            [File.display_name, File.ext], File.search_romaji, search_queries, mode,
+                        ),
                     ).order_by(File.updated_at.desc(), File.id.desc())
                     .limit(per_type - len(rows))
                 )).scalars().all()
@@ -254,8 +256,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
     if wanted is None or "folder" in wanted:
         rows = await search_user_folders(db, uid, search_queries, mode, q, per_type)
         if use_romaji and len(rows) < per_type:
-            alias_conditions = _romaji_alias_conditions(Folder.search_romaji, search_queries)
-            if alias_conditions:
+            if use_romaji:
                 seen = {fo.id for fo in rows}
                 alias_rows = (await db.execute(
                     select(Folder).where(
@@ -263,7 +264,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                         Folder.deleted_at.is_(None),
                         Folder.search_romaji.is_not(None),
                         *([Folder.id.not_in(seen)] if seen else []),
-                        or_(*alias_conditions),
+                        _romaji_search_condition([Folder.name], Folder.search_romaji, search_queries, mode),
                     ).order_by(Folder.created_at.desc(), Folder.id.desc())
                     .limit(per_type - len(rows))
                 )).scalars().all()
@@ -291,7 +292,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(CalendarEvent.date.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for e in scan:
-                if e.id not in seen and _romaji_matches_object(e, "event", search_queries, language):
+                if e.id not in seen and _romaji_matches_object(e, "event", search_queries, language, mode):
                     rows.append(e); seen.add(e.id)
                     if len(rows) >= per_type:
                         break
@@ -320,7 +321,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(Client.created_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for c in scan:
-                if c.id not in seen and _romaji_matches_object(c, "client", search_queries, language):
+                if c.id not in seen and _romaji_matches_object(c, "client", search_queries, language, mode):
                     rows.append(c); seen.add(c.id)
                     if len(rows) >= per_type:
                         break
@@ -355,7 +356,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(UserSkill.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for skill in scan:
-                if skill.id not in seen and _romaji_matches_object(skill, "skill", search_queries, language):
+                if skill.id not in seen and _romaji_matches_object(skill, "skill", search_queries, language, mode):
                     rows.append(skill); seen.add(skill.id)
                     if len(rows) >= per_type:
                         break
@@ -429,7 +430,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
             )).scalars().all()
             for n in scan:
                 # 便签正文通常较短；日记正文也应支持罗马音检索。
-                if n.id not in seen and _romaji_matches_object(n, "note", search_queries, language):
+                if n.id not in seen and _romaji_matches_object(n, "note", search_queries, language, mode):
                     rows.append(n); seen.add(n.id)
                     if len(rows) >= per_type:
                         break
@@ -486,7 +487,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 .limit(ROMAJI_SCAN)
             )).all()
             for node, canvas_id in scan:
-                if node.id not in seen and _romaji_matches_object(node, "canvas_note", search_queries, language):
+                if node.id not in seen and _romaji_matches_object(node, "canvas_note", search_queries, language, mode):
                     rows.append((node, canvas_id)); seen.add(node.id)
                     if len(rows) >= per_type:
                         break
@@ -521,7 +522,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
             # 拼音/罗马音扫描对话标题
             sess_scan = await list_sessions_for_search_scan(db, uid, ROMAJI_SCAN)
             for s in sess_scan:
-                if s.id not in conv and _romaji_matches_object(s, "conversation", search_queries, language):
+                if s.id not in conv and _romaji_matches_object(s, "conversation", search_queries, language, mode):
                     conv[s.id] = {"id": s.id, "title": s.title, "subtitle": "对话"}
                     if len(conv) >= per_type:
                         break
@@ -530,7 +531,7 @@ async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                 message_scan = await list_messages_for_search_scan(db, uid, ROMAJI_SCAN)
                 for message, session_title in message_scan:
                     if message.session_id not in conv and _romaji_matches_object(
-                        message, "message", search_queries, language,
+                        message, "message", search_queries, language, mode,
                     ):
                         conv[message.session_id] = {
                             "id": message.session_id, "title": session_title,

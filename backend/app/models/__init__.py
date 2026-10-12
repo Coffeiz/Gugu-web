@@ -1113,8 +1113,8 @@ class ConversationMessage(Base):
     canonical_batch: Mapped[Optional["ConversationBatch"]] = relationship(back_populates="messages")
 
 
-class InteractionPrompt(Base):
-    """等待用户选择/确认的短时交互提示。"""
+class InteractionRequest(Base):
+    """等待用户响应的一次短时交互请求。"""
 
     __tablename__ = "interaction_prompts"
 
@@ -1131,8 +1131,12 @@ class InteractionPrompt(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 
+# 兼容仍通过旧名称导入模型的扩展；新代码统一使用 InteractionRequest。
+InteractionPrompt = InteractionRequest
+
+
 class InteractionAction(Base):
-    """Prompt 下的单次动作；数据库只保存动作 token 的摘要。"""
+    """交互请求下的单次动作；数据库只保存动作 token 的摘要。"""
 
     __tablename__ = "interaction_actions"
 

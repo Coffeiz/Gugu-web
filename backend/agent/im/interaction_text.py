@@ -46,7 +46,7 @@ async def has_active_interaction(*, user_id: Any, platform: str,
     if not user_id or not platform or not platform_user_id:
         return False
     from app.db import session as db_session
-    from app.models import InteractionPrompt
+    from app.models import InteractionRequest
     from app.core.tz import now_utc
     from sqlalchemy import func, select
 
@@ -60,11 +60,11 @@ async def has_active_interaction(*, user_id: Any, platform: str,
         )
         if not candidate_ids:
             return False
-        count = await db.scalar(select(func.count()).select_from(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id.in_(candidate_ids),
-            InteractionPrompt.status == "active",
-            InteractionPrompt.expires_at > now_utc(),
+        count = await db.scalar(select(func.count()).select_from(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id.in_(candidate_ids),
+            InteractionRequest.status == "active",
+            InteractionRequest.expires_at > now_utc(),
         ))
         return bool(count)
 
@@ -145,12 +145,6 @@ async def consume_mcp_secret_payload(payload: dict) -> bool:
             return True
         from agent.im.replies import send_text
 
-        if mode == "group_blocked":
-            await send_text(
-                {**payload, "message_id": None},
-                "群聊不接收 MCP 凭据。请打开私密网页表单，或改用 Bot 私聊完成输入。",
-            )
-            return True
         if mode == "private_ended":
             await send_text({**payload, "message_id": None}, "凭据交互已结束，请重新发起后再输入。")
             return True

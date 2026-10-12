@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+### Fixes
+
+- Apply global-search AND/OR modes consistently to pinyin aliases.
+- Keep group-chat messages out of the private MCP credential-input flow.
+
+### 修复
+
+- 全局搜索中的拼音别名遵循 AND/OR 查询模式。
+- 群聊消息不再进入 MCP 私聊密钥输入流程。
+
 ## [1.7.1] - 2026-10-12
 
 ### What's New

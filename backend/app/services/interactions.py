@@ -11,7 +11,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
-from app.models import ConversationSession, InteractionAction, InteractionPrompt
+from app.models import ConversationSession, InteractionAction, InteractionRequest
 from agent.interactions.confirmations import confirmation_payload
 
 CUSTOM_REPLY_OPTION_ID = "__custom_reply__"
@@ -49,7 +49,7 @@ async def create_prompt(
     allow_text_input: bool = False,
     source: str = "system",
     expires_minutes: int = 10,
-) -> tuple[InteractionPrompt, list[dict]]:
+) -> tuple[InteractionRequest, list[dict]]:
     """创建 Prompt，并返回仅用于当前响应的明文 action token。"""
     session = await db.scalar(
         select(ConversationSession).where(
@@ -63,11 +63,11 @@ async def create_prompt(
     now = now_utc()
     expires_at = now + timedelta(minutes=max(1, min(expires_minutes, 30)))
     await db.execute(
-        update(InteractionPrompt)
+        update(InteractionRequest)
         .where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-            InteractionPrompt.status == "active",
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+            InteractionRequest.status == "active",
         )
         .values(status="cancelled", resolved_at=now)
     )
@@ -86,7 +86,7 @@ async def create_prompt(
             "label": CUSTOM_REPLY_LABEL,
             "action_type": "custom_reply",
         })
-    prompt = InteractionPrompt(
+    prompt = InteractionRequest(
         user_id=user_id,
         session_id=session_id,
         kind=kind,
@@ -129,7 +129,7 @@ async def create_agent_prompt(
     tool_call_id: str,
     tool_name: str,
     payload: dict,
-) -> tuple[InteractionPrompt, list[dict]] | None:
+) -> tuple[InteractionRequest, list[dict]] | None:
     """把 ``ask_user`` 的工具结果绑定到当前 Agent session。"""
     from app.core.redaction import diag_log_raw
 
@@ -262,9 +262,9 @@ async def wait_for_resolution(
         now = asyncio.get_running_loop().time()
         if cancel_check is not None and await cancel_check():
             async with db_session._SessionLocal() as db:
-                prompt = await db.scalar(select(InteractionPrompt).where(
-                    InteractionPrompt.id == prompt_id,
-                    InteractionPrompt.user_id == user_id,
+                prompt = await db.scalar(select(InteractionRequest).where(
+                    InteractionRequest.id == prompt_id,
+                    InteractionRequest.user_id == user_id,
                 ))
                 if prompt is not None and prompt.status == "active":
                     prompt.status = "cancelled"
@@ -275,9 +275,9 @@ async def wait_for_resolution(
             await heartbeat()
             next_heartbeat = now + 20
         async with db_session._SessionLocal() as db:
-            prompt = await db.scalar(select(InteractionPrompt).where(
-                InteractionPrompt.id == prompt_id,
-                InteractionPrompt.user_id == user_id,
+            prompt = await db.scalar(select(InteractionRequest).where(
+                InteractionRequest.id == prompt_id,
+                InteractionRequest.user_id == user_id,
             ))
             if prompt is None:
                 return None
@@ -290,9 +290,9 @@ async def wait_for_resolution(
         await asyncio.sleep(0.25)
     # 超时后立即落库，避免刷新或其他客户端继续把它当成活动确认项。
     async with db_session._SessionLocal() as db:
-        prompt = await db.scalar(select(InteractionPrompt).where(
-            InteractionPrompt.id == prompt_id,
-            InteractionPrompt.user_id == user_id,
+        prompt = await db.scalar(select(InteractionRequest).where(
+            InteractionRequest.id == prompt_id,
+            InteractionRequest.user_id == user_id,
         ))
         if prompt is not None and prompt.status == "active":
             prompt.status = "expired"
@@ -312,9 +312,9 @@ async def consume_action(
     """原子消费动作；返回给 Agent bridge 的受控结果，不返回 token。"""
     now = now_utc()
     prompt = await db.scalar(
-        select(InteractionPrompt).where(
-            InteractionPrompt.id == prompt_id,
-            InteractionPrompt.user_id == user_id,
+        select(InteractionRequest).where(
+            InteractionRequest.id == prompt_id,
+            InteractionRequest.user_id == user_id,
         )
     )
     if prompt is None:
@@ -467,9 +467,9 @@ async def consume_text(
 ) -> dict:
     """消费允许文本回答的 Prompt；文本回答同样只能恢复一次。"""
     now = now_utc()
-    prompt = await db.scalar(select(InteractionPrompt).where(
-        InteractionPrompt.id == prompt_id,
-        InteractionPrompt.user_id == user_id,
+    prompt = await db.scalar(select(InteractionRequest).where(
+        InteractionRequest.id == prompt_id,
+        InteractionRequest.user_id == user_id,
     ).with_for_update())
     if prompt is None:
         raise LookupError("交互不存在")
@@ -533,13 +533,13 @@ async def consume_choice_text(
         return None
     now = now_utc()
     prompt = await db.scalar(
-        select(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-            InteractionPrompt.kind.in_(("choice", "confirm")),
-            InteractionPrompt.status == "active",
-            InteractionPrompt.expires_at > now,
-        ).order_by(InteractionPrompt.created_at.desc()).with_for_update()
+        select(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+            InteractionRequest.kind.in_(("choice", "confirm")),
+            InteractionRequest.status == "active",
+            InteractionRequest.expires_at > now,
+        ).order_by(InteractionRequest.created_at.desc()).with_for_update()
     )
     if prompt is None:
         return None
@@ -644,12 +644,12 @@ async def consume_custom_text(
     """消费 Agent ask_user 的自定义回答；系统交互永远不会命中此路径。"""
     now = now_utc()
     prompts = (await db.execute(
-        select(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-            InteractionPrompt.status == "active",
-            InteractionPrompt.expires_at > now,
-        ).order_by(InteractionPrompt.created_at.desc())
+        select(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+            InteractionRequest.status == "active",
+            InteractionRequest.expires_at > now,
+        ).order_by(InteractionRequest.created_at.desc())
     )).scalars().all()
     for prompt in prompts:
         schema = _schema_dict(prompt.schema_json)
@@ -676,12 +676,12 @@ async def consume_custom_text(
 async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
     now = now_utc()
     rows = (await db.execute(
-        select(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-            InteractionPrompt.status == "active",
-            InteractionPrompt.expires_at > now,
-        ).order_by(InteractionPrompt.created_at.desc())
+        select(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+            InteractionRequest.status == "active",
+            InteractionRequest.expires_at > now,
+        ).order_by(InteractionRequest.created_at.desc())
     )).scalars().all()
     result: list[dict] = []
     for prompt in rows:
@@ -753,12 +753,12 @@ async def trim_finished_interactions(
     消息存在——不随消息裁切会无限累积挤占会话历史。active（待回复的确认门/选择卡）
     一律保留（其生命周期由 expires_at 与消费流程负责）。返回删除行数。"""
     conditions = [
-        InteractionPrompt.session_id == session_id,
-        InteractionPrompt.status.in_(("resolved", "expired", "cancelled")),
+        InteractionRequest.session_id == session_id,
+        InteractionRequest.status.in_(("resolved", "expired", "cancelled")),
     ]
     if created_before is not None:
-        conditions.append(InteractionPrompt.created_at < created_before)
-    result = await db.execute(delete(InteractionPrompt).where(*conditions))
+        conditions.append(InteractionRequest.created_at < created_before)
+    result = await db.execute(delete(InteractionRequest).where(*conditions))
     return result.rowcount or 0
 
 
@@ -766,10 +766,10 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
     """返回会话全部交互气泡；活动项轮换 token，已完成项只保留展示数据。"""
     now = now_utc()
     prompts = (await db.execute(
-        select(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-        ).order_by(InteractionPrompt.created_at)
+        select(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+        ).order_by(InteractionRequest.created_at)
     )).scalars().all()
     result: list[dict] = []
     changed = False

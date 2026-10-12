@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.byok.crypto import decrypt_envelope, encrypt_envelope
 from app.core.tz import now_utc
-from app.models import ConversationSession, InteractionPrompt, McpSecretInput, UserMcpServer
+from app.models import ConversationSession, InteractionRequest, McpSecretInput, UserMcpServer
 from app.services.secret_prompts import validate_secret_values
 
 IM_SOURCES = {"qq", "feishu", "wechat", "telegram"}
@@ -35,7 +35,7 @@ class McpSecretBinding:
     platform_user_id: str
 
 
-def _schema(prompt: InteractionPrompt) -> dict:
+def _schema(prompt: InteractionRequest) -> dict:
     return prompt.schema_json if isinstance(prompt.schema_json, dict) else {}
 
 
@@ -49,7 +49,7 @@ def _clear_payload(staging: McpSecretInput, status: str) -> None:
 async def create_im_secret_staging(
     db: AsyncSession,
     *,
-    prompt: InteractionPrompt,
+    prompt: InteractionRequest,
     session: ConversationSession,
     server_id: str,
 ) -> McpSecretInput | None:
@@ -93,7 +93,7 @@ async def create_im_secret_staging(
 async def stage_prompt_if_private_mcp(
     db: AsyncSession,
     *,
-    prompt: InteractionPrompt,
+    prompt: InteractionRequest,
     context: dict,
 ) -> bool:
     target = context.get("secret_target") if isinstance(context, dict) else None
@@ -109,8 +109,8 @@ async def stage_prompt_if_private_mcp(
     return stage is not None
 
 
-async def find_im_secret_prompt(db: AsyncSession, payload: dict) -> tuple[str, InteractionPrompt, McpSecretInput | None] | None:
-    """按完整 IM 会话身份查找活动凭据交互；群聊只返回拒绝门，不创建输入态。"""
+async def find_im_secret_prompt(db: AsyncSession, payload: dict) -> tuple[str, InteractionRequest, McpSecretInput | None] | None:
+    """按完整 IM 会话身份查找活动凭据交互；仅支持一对一 IM 私聊。"""
     try:
         user_id = UUID(str(payload.get("owner_user_id") or ""))
     except (TypeError, ValueError, AttributeError):
@@ -129,10 +129,8 @@ async def find_im_secret_prompt(db: AsyncSession, payload: dict) -> tuple[str, I
         return await _find_private_im_secret_prompt(
             db, user_id=user_id, payload=payload, now=now,
         )
-    if chat_type == "group" and chat_id:
-        return await _find_group_im_secret_prompt(
-            db, user_id=user_id, payload=payload, now=now,
-        )
+    # 群聊不进入 IM 凭据输入流程。群来源的 MCP prompt 只供 Web 私密表单恢复；
+    # 普通群消息必须继续走正常消息处理，不能因存在活动 prompt 而被 secret handler 消费。
     return None
 
 
@@ -142,13 +140,13 @@ async def _find_private_im_secret_prompt(
     user_id: UUID,
     payload: dict,
     now: datetime,
-) -> tuple[str, InteractionPrompt, McpSecretInput] | None:
+) -> tuple[str, InteractionRequest, McpSecretInput] | None:
     platform = str(payload.get("platform") or "")
     bot_id = str(payload.get("channel_id") or payload.get("bot_id") or "")
     platform_user_id = str(payload.get("platform_user_id") or "")
     rows = (await db.execute(
-        select(McpSecretInput, InteractionPrompt)
-        .join(InteractionPrompt, InteractionPrompt.id == McpSecretInput.prompt_id)
+        select(McpSecretInput, InteractionRequest)
+        .join(InteractionRequest, InteractionRequest.id == McpSecretInput.prompt_id)
         .where(
             McpSecretInput.user_id == user_id,
             McpSecretInput.platform == platform,
@@ -156,8 +154,8 @@ async def _find_private_im_secret_prompt(
             McpSecretInput.chat_type == "c2c",
             McpSecretInput.chat_id.is_(None),
             McpSecretInput.platform_user_id == platform_user_id,
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == McpSecretInput.session_id,
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == McpSecretInput.session_id,
         ).order_by(McpSecretInput.prompt_id.desc())
     )).all()
     event_id = str(payload.get("message_id") or payload.get("platform_message_id") or "")
@@ -175,45 +173,13 @@ async def _find_private_im_secret_prompt(
     return None
 
 
-async def _find_group_im_secret_prompt(
-    db: AsyncSession,
-    *,
-    user_id: UUID,
-    payload: dict,
-    now: datetime,
-) -> tuple[str, InteractionPrompt, None] | None:
-    platform = str(payload.get("platform") or "")
-    bot_id = str(payload.get("channel_id") or payload.get("bot_id") or "")
-    chat_id = str(payload.get("chat_id") or "")
-    prompts = (await db.scalars(
-        select(InteractionPrompt)
-        .join(ConversationSession, ConversationSession.id == InteractionPrompt.session_id)
-        .where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.status == "active",
-            InteractionPrompt.expires_at > now,
-            ConversationSession.user_id == user_id,
-            ConversationSession.source == platform,
-            ConversationSession.bot_id == bot_id,
-            ConversationSession.chat_type == "group",
-            ConversationSession.chat_id == chat_id,
-        ).order_by(InteractionPrompt.created_at.desc())
-    )).all()
-    for prompt in prompts:
-        context = _schema(prompt).get("context")
-        target = context.get("secret_target") if isinstance(context, dict) else None
-        if isinstance(target, dict) and target.get("kind") == "mcp_credentials":
-            return "group_blocked", prompt, None
-    return None
-
-
 async def cancel_mcp_secret_prompt_web(
-    db: AsyncSession, *, prompt: InteractionPrompt, user_id: UUID,
+    db: AsyncSession, *, prompt: InteractionRequest, user_id: UUID,
 ) -> dict:
     """登录态 Web 取消；不依赖 IM 来源/群聊类型，授权只看 prompt owner。"""
-    stored = await db.scalar(select(InteractionPrompt).where(
-        InteractionPrompt.id == prompt.id,
-        InteractionPrompt.user_id == user_id,
+    stored = await db.scalar(select(InteractionRequest).where(
+        InteractionRequest.id == prompt.id,
+        InteractionRequest.user_id == user_id,
     ).with_for_update())
     if stored is None:
         raise HTTPException(status_code=404, detail="凭据输入不存在")
@@ -261,11 +227,11 @@ async def cancel_active_secret_staging(
 async def _bound_stage(
     db: AsyncSession,
     binding: McpSecretBinding,
-) -> tuple[InteractionPrompt, McpSecretInput]:
+) -> tuple[InteractionRequest, McpSecretInput]:
     now = now_utc()
-    prompt = await db.scalar(select(InteractionPrompt).where(
-        InteractionPrompt.id == binding.prompt_id,
-        InteractionPrompt.user_id == binding.user_id,
+    prompt = await db.scalar(select(InteractionRequest).where(
+        InteractionRequest.id == binding.prompt_id,
+        InteractionRequest.user_id == binding.user_id,
     ).with_for_update())
     if prompt is None:
         raise HTTPException(status_code=404, detail="凭据输入不存在")
@@ -373,9 +339,9 @@ async def consume_mcp_secret_action(
     from app.models import InteractionAction
     from app.services.interactions import _hash_token
 
-    prompt = await db.scalar(select(InteractionPrompt).where(
-        InteractionPrompt.id == prompt_id,
-        InteractionPrompt.user_id == user_id,
+    prompt = await db.scalar(select(InteractionRequest).where(
+        InteractionRequest.id == prompt_id,
+        InteractionRequest.user_id == user_id,
     ).with_for_update())
     if prompt is None:
         return None
@@ -442,7 +408,7 @@ async def consume_mcp_secret_action(
 
 
 def _resolve_secret_prompt(
-    prompt: InteractionPrompt,
+    prompt: InteractionRequest,
     stage: McpSecretInput,
     *,
     status: str,
@@ -490,7 +456,7 @@ async def _commit_complete_secret(
     user_id: UUID,
     values: dict[str, str],
 ) -> bool:
-    prompt = await db.get(InteractionPrompt, stage.prompt_id)
+    prompt = await db.get(InteractionRequest, stage.prompt_id)
     if prompt is None or prompt.user_id != user_id or prompt.status != "active":
         _clear_payload(stage, "failed")
         return False
@@ -563,9 +529,9 @@ async def cleanup_expired_mcp_secret_inputs(db: AsyncSession, *, now: datetime |
     ))).all())
     if not expired_ids:
         return 0
-    prompts = list((await db.scalars(select(InteractionPrompt).where(
-        InteractionPrompt.id.in_(expired_ids),
-        InteractionPrompt.status == "active",
+    prompts = list((await db.scalars(select(InteractionRequest).where(
+        InteractionRequest.id.in_(expired_ids),
+        InteractionRequest.status == "active",
     ).with_for_update())).all())
     for prompt in prompts:
         prompt.status = "expired"

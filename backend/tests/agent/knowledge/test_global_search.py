@@ -283,3 +283,20 @@ async def test_global_search_and_requires_every_keyword(db, user_a):
     )
 
     assert [item["title"] for item in result["groups"][0]["items"]] == ["部署上线方案"]
+
+
+async def test_global_search_romaji_and_requires_every_alias_keyword(db, user_a):
+    await _mk(db, File(
+        user_id=user_a.id, display_name="第一份素材", ext="png",
+        search_romaji="xingchen", storage_key="romaji-one", size=10,
+    ))
+    await _mk(db, File(
+        user_id=user_a.id, display_name="第二份素材", ext="png",
+        search_romaji="xingchen beijing", storage_key="romaji-both", size=10,
+    ))
+
+    result = await run_global_search(
+        db, user_a.id, "", queries=["xingchen", "beijing"], types=["file"], mode="AND",
+    )
+
+    assert [item["title"] for item in result["groups"][0]["items"]] == ["第二份素材.png"]

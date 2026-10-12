@@ -101,7 +101,7 @@ async def test_im_context_routes_to_outbound_layer(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_never_creates_interaction_or_consumes_action():
-    """§14.1：链接按钮不走 InteractionPrompt/Action 协议——结果不含 _interaction 标记。"""
+    """§14.1：链接按钮不走 InteractionRequest/Action 协议——结果不含 _interaction 标记。"""
     from agent.im import imctx
     monkeypatch = pytest.MonkeyPatch()
     try:

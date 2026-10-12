@@ -84,7 +84,7 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 
 凭据明文不得进入：
 
-- `ConversationMessage`、`InteractionPrompt.schema_json.resolved_result`、工具调用/返回历史；
+- `ConversationMessage`、`InteractionRequest.schema_json.resolved_result`、工具调用/返回历史；
 - LLM 请求、RAG、LoopScope、SSE/会话广播、审计日志和应用可见日志；
 - 错误消息、重试文本、异常上下文或诊断编号关联数据。
 
@@ -133,7 +133,7 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 
 ### 5.1 数据库影响
 
-- 优先复用现有 `InteractionPrompt` 生命周期和 MCP credential slot，不复制 server 配置，也不改变凭据主密钥格式。
+- 优先复用现有 `InteractionRequest` 生命周期和 MCP credential slot，不复制 server 配置，也不改变凭据主密钥格式。
 - 如需暂存多字段提交，只能增加密文与 TTL 元数据；不得在 migration、JSON schema 或日志中引入明文字段。
 - migration 必须能清除过期/孤立的 staging 数据；降级仅删除新增暂存结构，不影响现有 MCP server 与已保存凭据。
 - 若实现评估发现无法以可维护方式建立密文暂存，应将 IM 直输收窄为单字段 prompt；多字段仍走 Web 表单，并在实施前更新本 PRD，不得退化为明文暂存。
@@ -142,7 +142,7 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 
 代码核对结果：
 
-- `manage_mcp_servers` 已创建带 `secret_fields` 与 `secret_target` 的 `ask_user` prompt；`create_agent_prompt` 将字段定义和 MCP server 目标保存在 `InteractionPrompt.schema_json`，不包含凭据值。prompt 创建时会取消同一 session 里原有的 active prompt。
+- `manage_mcp_servers` 已创建带 `secret_fields` 与 `secret_target` 的 `ask_user` prompt；`create_agent_prompt` 将字段定义和 MCP server 目标保存在 `InteractionRequest.schema_json`，不包含凭据值。prompt 创建时会取消同一 session 里原有的 active prompt。
 - Web 已有独立 `POST /agent/interactions/{prompt_id}/secrets`。API 以当前登录用户查询 prompt，`consume_mcp_secret_prompt` 再校验 prompt 状态、字段集合与用户拥有的 MCP server，使用既有 envelope 加密更新 credential slots，并只写入不含值的完成结果。当前没有按群聊类型拒绝 Web 提交的检查。
 - IM 交互渲染遇到 `secret_fields` 时只发送网页入口提示；QQ/飞书按钮和 IM 文本选项目前统一走普通 `consume_action` / `consume_text_choice`，会按普通选项语义结束 prompt，不能直接复用为凭据输入状态转换。
 - `dispatch_im_message` 在普通持久化、被动群记录、快捷命令和 Agent 执行前消费文本选项，但媒体接入发生得更早。凭据拦截必须在媒体副作用及所有普通消息路径之前完成；附件消息不能作为凭据字段输入。
@@ -233,5 +233,5 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 - **平台侧保留**：是所选 IM 入口的平台行为，不作为咕咕拒绝 direct input 的理由；咕咕仍只承诺控制自身系统的数据路径。
 - **群聊禁止 direct input**：由于群成员可见是当前会话参与范围，咕咕不应将群内密钥输入当作受保护通道。
 - **Web 恢复群会话允许**：授权以 Web 登录态与 prompt/server 所有权为准；入口是 Web 私密表单，不能因历史会话来源是群聊而拒绝。
-- **普通 ask_user 不复用**：当前文本回答会写入 `InteractionPrompt.schema_json.resolved_result` 并回填运行记录，不能承载密钥。
+- **普通 ask_user 不复用**：当前文本回答会写入 `InteractionRequest.schema_json.resolved_result` 并回填运行记录，不能承载密钥。
 - **先加密后替换**：多字段不能明文暂存，也不能逐字段提前覆盖正式凭据；需保证全量提交原子生效。

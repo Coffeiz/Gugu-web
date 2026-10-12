@@ -11,22 +11,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.byok.crypto import encrypt_envelope
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
-from app.models import InteractionPrompt, McpSecretInput, User, UserMcpServer
+from app.models import InteractionRequest, McpSecretInput, User, UserMcpServer
 from app.services.secret_prompts import resolved_prompt_result, validate_secret_values
 from agent.mcp.credentials import validate_header_credentials
 
 
 async def consume_mcp_secret_prompt(
-    prompt: InteractionPrompt,
+    prompt: InteractionRequest,
     values: dict[str, str],
     *,
     user: User,
     db: AsyncSession,
 ) -> dict:
     """将通用 secret prompt 的值写入 MCP 统一加密凭据槽位。"""
-    stored_prompt = await db.scalar(select(InteractionPrompt).where(
-        InteractionPrompt.id == prompt.id,
-        InteractionPrompt.user_id == user.id,
+    stored_prompt = await db.scalar(select(InteractionRequest).where(
+        InteractionRequest.id == prompt.id,
+        InteractionRequest.user_id == user.id,
     ).with_for_update())
     if stored_prompt is None:
         raise HTTPException(status_code=404, detail="敏感信息输入不存在")
@@ -57,7 +57,7 @@ async def consume_mcp_secret_prompt(
 
 async def store_mcp_credentials_for_prompt(
     db: AsyncSession,
-    prompt: InteractionPrompt,
+    prompt: InteractionRequest,
     server: UserMcpServer,
     normalized: dict[str, str],
 ) -> None:

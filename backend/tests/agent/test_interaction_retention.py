@@ -13,14 +13,14 @@ from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.core.tz import now_utc
-from app.models import InteractionPrompt, User
+from app.models import InteractionRequest, User
 
 
 def _prompt(user_id, session_id: int, status: str, *, created_at=None,
             expires_in: timedelta = timedelta(hours=1),
-            resolved_at=None) -> InteractionPrompt:
+            resolved_at=None) -> InteractionRequest:
     now = now_utc()
-    return InteractionPrompt(
+    return InteractionRequest(
         user_id=user_id, session_id=session_id, kind="choice",
         title="t", body="", schema_json={"kind": "choice", "options": []},
         status=status, expires_at=now + expires_in,
@@ -51,7 +51,7 @@ async def test_trim_finished_interactions_keeps_active(db, interaction_user):
 
     assert removed == 3
     left = (await db.execute(
-        select(InteractionPrompt).where(InteractionPrompt.session_id == 11)
+        select(InteractionRequest).where(InteractionRequest.session_id == 11)
     )).scalars().all()
     assert [p.status for p in left] == ["active"]
 
@@ -71,7 +71,7 @@ async def test_trim_respects_created_before_boundary(db, interaction_user):
 
     assert removed == 1
     left = (await db.execute(
-        select(InteractionPrompt).where(InteractionPrompt.session_id == 12)
+        select(InteractionRequest).where(InteractionRequest.session_id == 12)
     )).scalars().all()
     assert len(left) == 1
     assert left[0].created_at == recent
@@ -89,6 +89,6 @@ async def test_trim_scoped_to_session(db, interaction_user):
     await trim_finished_interactions(db, session_id=31)
 
     left = (await db.execute(
-        select(InteractionPrompt).where(InteractionPrompt.session_id == 32)
+        select(InteractionRequest).where(InteractionRequest.session_id == 32)
     )).scalars().all()
     assert len(left) == 1

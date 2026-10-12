@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.api.v1 import mcp_settings as api
-from app.models import ConversationSession, InteractionPrompt, UserMcpServer
+from app.models import ConversationSession, InteractionRequest, UserMcpServer
 
 
 @pytest.fixture
@@ -442,7 +442,7 @@ async def test_credentials_prompt_is_sealed_and_resolves_for_web_group_session(d
         prompt, {"Authorization": "Bearer hidden-secret"}, user=user_a, db=db,
     )
     assert result == {"ok": True, "prompt_id": prompt.id}
-    stored = await db.get(InteractionPrompt, prompt.id)
+    stored = await db.get(InteractionRequest, prompt.id)
     assert stored.status == "resolved"
     assert "hidden-secret" not in json.dumps(stored.schema_json)
     history = await list_history(db, user_id=user_a.id, session_id=session.id)
@@ -511,7 +511,7 @@ async def test_im_secret_staging_is_scope_bound_encrypted_and_commits_atomically
     assert saved["status"] == "completed"
     await db.commit()
     await db.refresh(server)
-    prompt = await db.get(InteractionPrompt, prompt.id)
+    prompt = await db.get(InteractionRequest, prompt.id)
     await db.refresh(stage)
     assert json.loads(decrypt_envelope(
         server.encrypted_credentials, server.credentials_nonce,
@@ -581,8 +581,8 @@ async def test_im_secret_staging_refuses_group_and_cross_bot_scope(db, user_a):
             },
         },
     }
-    await db.execute(update(InteractionPrompt).where(
-        InteractionPrompt.id == private_prompt.id,
+    await db.execute(update(InteractionRequest).where(
+        InteractionRequest.id == private_prompt.id,
     ).values(schema_json=mismatched_schema))
     await db.commit()
     with pytest.raises(HTTPException) as server_error:
@@ -715,15 +715,15 @@ async def test_im_secret_cancel_is_idempotent_and_expiry_cleanup_removes_staging
     expiry_stage.expires_at = now_utc() - timedelta(seconds=1)
     await db.commit()
     assert await cleanup_expired_mcp_secret_inputs(db) == 1
-    assert await db.get(InteractionPrompt, expired_prompt.id) is None or (
-        (await db.get(InteractionPrompt, expired_prompt.id)).status == "expired"
+    assert await db.get(InteractionRequest, expired_prompt.id) is None or (
+        (await db.get(InteractionRequest, expired_prompt.id)).status == "expired"
     )
     assert await db.scalar(select(McpSecretInput).where(
         McpSecretInput.prompt_id == expired_prompt.id,
     )) is None
 
 
-async def test_im_secret_input_is_intercepted_before_history_and_group_scope_is_refused(db, user_a, monkeypatch):
+async def test_im_secret_input_is_private_only_and_group_messages_are_not_consumed(db, user_a, monkeypatch):
     from app.models import ConversationMessage, McpSecretInput
     from app.services.interactions import create_agent_prompt, list_history
     from app.services.mcp_secret_inputs import McpSecretBinding, start_mcp_secret_input
@@ -781,7 +781,7 @@ async def test_im_secret_input_is_intercepted_before_history_and_group_scope_is_
         "platform_user_id": "owner-a", "chat_type": "c2c", "message_id": "secret-event",
         "text": "private-value-123", "attachments": [],
     }) is True
-    private_prompt = await db.get(InteractionPrompt, private_prompt.id)
+    private_prompt = await db.get(InteractionRequest, private_prompt.id)
     stage = await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == private_prompt.id))
     messages = (await db.scalars(select(ConversationMessage))).all()
     assert private_prompt.status == "resolved"
@@ -813,12 +813,14 @@ async def test_im_secret_input_is_intercepted_before_history_and_group_scope_is_
     next_stage = await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == next_prompt.id))
     assert next_stage.status == "pending_choice"
 
+    sent_before_group_message = len(sent)
     assert await consume_mcp_secret_payload({
         "platform": "qq", "channel_id": "bot-a", "owner_user_id": str(user_a.id),
         "chat_type": "group", "chat_id": "group-a",
         "message_id": "group-event", "text": "maybe-secret", "attachments": [],
-    }) is True
-    assert "群聊不接收 MCP 凭据" in sent[-1]
+    }) is False
+    assert len(sent) == sent_before_group_message
+    assert await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == group_prompt.id)) is None
 
 
 async def test_im_secret_callback_is_bound_to_private_actor_and_web_can_cancel_group_prompt(db, user_a):
@@ -901,7 +903,7 @@ async def test_im_secret_callback_is_bound_to_private_actor_and_web_can_cancel_g
     cancelled = await cancel_mcp_secret_prompt_web(db, prompt=group_prompt, user_id=user_a.id)
     await db.commit()
     assert cancelled["status"] == "cancelled"
-    assert (await db.get(InteractionPrompt, group_prompt.id)).status == "resolved"
+    assert (await db.get(InteractionRequest, group_prompt.id)).status == "resolved"
 
 
 async def test_endpoint_credentials_are_encrypted_and_masked(db, user_a):
@@ -1033,7 +1035,7 @@ async def test_secret_prompt_can_retry_after_invalid_header_credential(db, user_
     )
     assert saved["ok"] is True
     stored_prompt = await db.scalar(
-        select(InteractionPrompt).where(InteractionPrompt.id == prompt.id)
+        select(InteractionRequest).where(InteractionRequest.id == prompt.id)
     )
     assert stored_prompt.status == "resolved"
     row = await db.scalar(select(UserMcpServer).where(UserMcpServer.id == UUID(created["id"])))
