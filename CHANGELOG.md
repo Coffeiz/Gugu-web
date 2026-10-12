@@ -7,16 +7,6 @@
 
 ## [Unreleased]
 
-### 改进
-
-- 减轻 Markdown 预览表格行的悬停底色，避免整行高亮过重。
-
-### 修复
-
-- 确保全新 PostgreSQL 初始化时创建全局搜索与文件分页数据库对象。
-- 为无 Alembic 版本记录的旧数据库补齐文件分页索引，避免标记为最新后仍长期缺失索引。
-- 修复视频预览地址续签期间切换来源时的竞态。
-
 ## [1.7.1] - 2026-10-12
 
 ### What's New
@@ -37,6 +27,7 @@
 - **Scheduled tasks**: remove the tool-call count ceiling.
 - **MCP setup**: load server runtime status asynchronously and provide actionable authentication, configuration, and network diagnostics.
 - **Credential form**: align secure-save and cancel actions as equal-width buttons.
+- **Markdown previews**: lighten table-row hover highlighting for better readability.
 
 #### Fixes
 
@@ -46,6 +37,9 @@
 - Reject invalid MCP HTTP header credentials and report endpoint, authentication, and protocol failures without exposing secret values.
 - Apply global-search AND/OR modes consistently to pinyin aliases.
 - Keep group-chat messages out of the private MCP credential-input flow.
+- Install global-search and file-pagination database objects during fresh PostgreSQL bootstrap.
+- Add file-pagination indexes when bootstrapping legacy databases without an Alembic version record.
+- Fix a race when switching video sources while a preview URL is being renewed.
 
 #### Contributors
 
@@ -73,6 +67,7 @@
 - **定时任务**：取消工具调用次数上限。
 - **MCP 服务配置**：运行状态改为异步加载，并区分认证、配置和网络错误，提供可执行的排查建议。
 - **凭据输入表单**：安全保存与取消按钮并排等宽显示。
+- **Markdown 预览**：减轻表格行悬停底色，提升内容可读性。
 
 #### 修复
 
@@ -82,6 +77,9 @@
 - 拒绝无效的 MCP HTTP Header 凭据，并改进 endpoint、认证和协议错误提示，避免泄漏密钥内容。
 - 全局搜索中的拼音别名遵循 AND/OR 查询模式。
 - 群聊消息不再进入 MCP 私聊密钥输入流程。
+- 全新 PostgreSQL 初始化时安装全局搜索和文件分页数据库对象。
+- 无 Alembic 版本记录的旧数据库初始化时补齐文件分页索引。
+- 修复视频预览地址续签期间切换来源时的竞态。
 
 #### 贡献者
 
