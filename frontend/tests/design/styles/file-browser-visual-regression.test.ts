@@ -158,7 +158,7 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
 
   it('FolderCard 只拥有状态结构和动态 accent 混合，主题值统一由 component token 提供', () => {
     expect(folderCard).toContain('--folder-card-bg: color-mix(in srgb,var(--fd-color,#8888a0) 6%,var(--folder-card-bg-base));')
-    expect(folderCard).toContain('--folder-card-border: color-mix(in srgb,var(--fd-color,#8888a0) 14%,var(--folder-card-border-base));')
+    expect(folderCard).toContain('--folder-card-border: color-mix(in srgb,var(--fd-color,#8888a0) var(--folder-card-border-accent,14%),var(--folder-card-border-base));')
     expect(folderCard).toContain('background: var(--folder-card-bg);')
     expect(folderCard).toContain('border: 1px solid var(--folder-card-border);')
     expect(folderCard).toContain('.folder-card:hover:not(.selected):not(.pre-selected)')

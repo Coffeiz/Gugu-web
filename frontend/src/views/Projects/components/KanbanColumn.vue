@@ -14,13 +14,14 @@
       <span class="col-count">{{ projects.length }}</span>
     </div>
 
-    <div ref="colBodyRef" class="col-body scroll-surface scroll-surface--compact">
+    <div ref="colBodyRef" class="col-body scroll-surface scroll-surface--compact" data-layout-role="track" data-scroll-viewport>
       <!-- 位移动画统一由 Runtime FLIP 驱动，这里不需要 TransitionGroup 的位置捕获。 -->
       <div class="kanban-card-list">
         <Teleport v-for="project in projects" :key="project.id" to="body" :disabled="!isProjectDetached(String(project.id))">
           <ProjectCard
             v-memo="[project.id, project.status, project.currentStage, project.progress, project.stages, project.doneAt, project._stageBeforeDone, project.fileCount, project.priority, project.name, project.client, project.color, project.startDate, project.deadline, project.version]"
             :project="project"
+            data-layout-role="card"
             @click="$emit('card-click', project)"
           />
         </Teleport>
@@ -105,6 +106,7 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 .col-body {
   display: flex; flex-direction: column; gap: 8px;
   flex: 1; overflow-y: auto;
+  overflow-anchor: none;
   min-width: 0; box-sizing: border-box;
   overflow-x: hidden;
   /* scroll-surface reserves the gutter before overflow and the global scrollbar contract owns

@@ -16,14 +16,16 @@
                :name="`mcp-secret-${field.name}`" :disabled="submitting || expired"
                :aria-label="field.label" spellcheck="false" required />
       </div>
-      <ActionButton class="interaction-secret-submit" fit type="submit"
-                    :disabled="resolved || submitting || expired || !secretsReady">
-        {{ t('chatUi.submitSecretFields') }}
-      </ActionButton>
-      <ActionButton class="interaction-secret-cancel" fit type="button"
-                    :disabled="resolved || submitting || expired" @click="cancelSecrets">
-        {{ t('common.actions.cancel') }}
-      </ActionButton>
+      <div class="interaction-secret-actions">
+        <ActionButton class="interaction-secret-submit" type="submit"
+                      :disabled="resolved || submitting || expired || !secretsReady">
+          {{ t('chatUi.submitSecretFields') }}
+        </ActionButton>
+        <ActionButton class="interaction-secret-cancel" type="button"
+                      :disabled="resolved || submitting || expired" @click="cancelSecrets">
+          {{ t('common.actions.cancel') }}
+        </ActionButton>
+      </div>
     </form>
     <div v-if="customInputActive" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
     <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
@@ -160,7 +162,8 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 .interaction-secrets { display: grid; gap: 9px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider); }
 .interaction-secret-field { display: grid; gap: 5px; color: var(--content-secondary); font-size: var(--font-size-xs); }
 .interaction-secret-field input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 7px 9px; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--surface-input); color: var(--content-primary); }
-.interaction-secret-submit { justify-self: start; margin-top: 2px; }
+.interaction-secret-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-width: 100%; margin-top: 2px; }
+.interaction-secret-actions :deep(.app-action-button) { width: 100%; min-width: 0; }
 .interaction-response { margin-top: 8px; padding: 7px 9px; border-radius: var(--control-radius); background: var(--surface-soft); color: var(--content-secondary); font-size: var(--font-size-sm); white-space: pre-wrap; }
 .interaction-resolved { margin-top: 8px; color: var(--content-tertiary); font-size: var(--font-size-xs); }
 </style>
