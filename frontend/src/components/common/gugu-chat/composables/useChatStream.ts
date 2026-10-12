@@ -16,6 +16,18 @@ import { recordStreamDiagnostic } from './chatStreamDiagnostics'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
+function localizedToolStatusLabel(event: { name?: string; label?: string; input?: unknown }): string {
+  let toolName = event.name || ''
+  // call_tool 是固定 Adapter，实际工具名在 input.name 中，和完成后的工具卡片保持一致。
+  if (toolName === 'call_tool' && event.input && typeof event.input === 'object') {
+    const target = (event.input as { name?: unknown }).name
+    if (typeof target === 'string' && target.trim()) toolName = target.trim()
+  }
+  const key = `toolNames.${toolName}`
+  if (toolName && i18n.global.te(key)) return i18n.global.t(key)
+  return event.label || event.name || i18n.global.t('chatUi.toolCall')
+}
+
 export interface QueuedMessage extends QueuedMessagePayload {
   queueId: string
   sessionId: number | null
@@ -533,8 +545,8 @@ export function useChatStream(options: {
                 await options.scrollBottom()
               }
             }
-            // label 已由后端解析（含「状态命名」覆盖 + 复查前缀）；气泡常驻，仅替换文字。
-            if (live()) options.setStatus({ kind: 'text', label: evt.label || evt.name })
+            // 活动气泡与完成后的工具卡片都按稳定工具名翻译；服务端 label 仅作未知工具的 fallback。
+            if (live()) options.setStatus({ kind: 'text', label: localizedToolStatusLabel(evt) })
           } else if (evt.type === 'tool_done') {
             // 改动类工具一完成就即时 bump 对应资源（走已连好的对话流，不等回合末、不靠 best-effort
             // 的 events SSE）→ 文件预览 / 项目卡 / 日历当场刷新。视图是全局的，切走也该刷，故不受 live() 限制。
