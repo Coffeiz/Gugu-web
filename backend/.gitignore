@@ -2,6 +2,7 @@
 config.override.json
 config.override.json.backup-multimodal-*
 .config.override.json.multimodal-migration.lock
+.config.override.json.lock
 uploads/
 __pycache__/
 *.pyc
