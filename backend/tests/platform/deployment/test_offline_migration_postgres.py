@@ -105,8 +105,11 @@ asyncio.run(seed())
         subprocess.run(["docker", "rm", "-f", "-v", container], capture_output=True)
 
 
-def test_empty_postgres_bootstrap_installs_custom_search_and_paging_objects(tmp_path):
-    """新库 ORM 建表后仍安装 ORM metadata 未声明的搜索/分页数据库对象。"""
+@pytest.mark.parametrize("legacy_schema_without_version", [False, True])
+def test_postgres_bootstrap_installs_custom_search_and_paging_objects(
+    tmp_path, legacy_schema_without_version,
+):
+    """空库和无 Alembic 版本表的旧 schema 都会安装自定义搜索/分页对象。"""
     container = f"gugu-empty-db-test-{uuid4().hex[:12]}"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -141,6 +144,26 @@ def test_empty_postgres_bootstrap_installs_custom_search_and_paging_objects(tmp_
 
         info = json.loads(_run("docker", "inspect", container).stdout)[0]
         env["DB__PORT"] = info["NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"]
+        if legacy_schema_without_version:
+            _run(
+                sys.executable,
+                "-c",
+                "import asyncio; from app.db.session import create_all_tables; asyncio.run(create_all_tables())",
+                env=env,
+                cwd=BACKEND,
+            )
+            old_version = _run(
+                "docker", "exec", container, "psql", "-U", "synthetic", "-d", "synthetic", "-Atc",
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() "
+                "AND table_name = 'alembic_version'",
+            ).stdout.strip()
+            assert old_version == "0"
+            old_page_indexes = _run(
+                "docker", "exec", container, "psql", "-U", "synthetic", "-d", "synthetic", "-Atc",
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND "
+                "(indexname LIKE 'ix_files_page_%' OR indexname LIKE 'ix_folders_page_%')",
+            ).stdout.strip()
+            assert old_page_indexes == "0"
         migration = subprocess.run(
             ["bash", str(BACKEND / "scripts/migrations/bootstrap_database.sh")],
             env=env, cwd=BACKEND, capture_output=True, text=True,

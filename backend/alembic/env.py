@@ -4,8 +4,6 @@ import os
 import sys
 
 from alembic import context
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, pool, text
 from sqlalchemy.engine import Connection
@@ -23,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app.db.base import Base
 import app.models  # noqa
 import onboarding.models  # noqa  # 独立子系统的表也纳入 metadata
+from app.db.alembic_bootstrap import apply_bootstrap_revisions
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -54,20 +53,14 @@ def _bootstrap_empty_database(connection: Connection) -> bool:
         connection.commit()
         return False
 
-    script = ScriptDirectory.from_config(config)
     Base.metadata.create_all(connection)
     # 当前 ORM metadata 是新库的 schema 基线。少数 revision 还承载 ORM
     # 无法表达的数据库对象；只有显式声明可在该基线上幂等执行的 revision
     # 才在 stamp head 前补跑，避免新库跳过 collation、表达式索引等对象。
     connection.commit()
-    migration_context = MigrationContext.configure(connection)
-    with migration_context.begin_transaction():
-        with Operations.context(migration_context):
-            revisions = reversed(list(script.walk_revisions()))
-            for revision in revisions:
-                if getattr(revision.module, "bootstrap_on_empty_database", False):
-                    revision.module.upgrade()
+    apply_bootstrap_revisions(connection, config)
 
+    script = ScriptDirectory.from_config(config)
     head = script.get_current_head()
     connection.execute(text(
         "CREATE TABLE IF NOT EXISTS alembic_version "

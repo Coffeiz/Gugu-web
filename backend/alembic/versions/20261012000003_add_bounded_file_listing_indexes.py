@@ -12,6 +12,8 @@ down_revision = "20261012000002"
 branch_labels = None
 depends_on = None
 bootstrap_on_empty_database = True
+# 无版本表的旧库只允许补齐这一组已验证幂等的分页对象，不重放其他历史 revision。
+bootstrap_on_legacy_database = True
 
 
 _INDEXES = (

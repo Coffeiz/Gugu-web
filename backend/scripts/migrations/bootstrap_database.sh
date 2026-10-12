@@ -53,6 +53,7 @@ from app.db.session import create_all_tables
 
 asyncio.run(create_all_tables())
 PY
+        python -m scripts.migrations.apply_legacy_compatibility_revisions
         alembic stamp head
         exit 0
         ;;
