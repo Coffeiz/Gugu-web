@@ -1,12 +1,16 @@
 <template>
   <div class="brand" :class="`brand--${variant}`">
     <div class="brand-mark" aria-hidden="true">
-      <img v-if="variant === 'auth'" src="/logo-large2.png" alt="" />
-      <span v-else class="brand-mark-mask" />
+      <span class="brand-mark-mask" :class="{ 'brand-mark-mask--auth': variant === 'auth' }" />
     </div>
     <div class="brand-content">
-      <img v-if="variant === 'auth'" class="brand-wordmark" src="/logo-text2.png" alt="咕咕" />
-      <span v-else class="brand-wordmark-mask" aria-hidden="true" />
+      <span
+        class="brand-wordmark-mask"
+        :class="{ 'brand-wordmark-mask--auth': variant === 'auth' }"
+        :aria-hidden="variant !== 'auth'"
+        :role="variant === 'auth' ? 'img' : undefined"
+        :aria-label="variant === 'auth' ? '咕咕' : undefined"
+      />
       <span v-if="subtitle" class="brand-subtitle">{{ subtitle }}</span>
     </div>
   </div>
@@ -57,6 +61,11 @@ withDefaults(defineProps<{
   mask-image: url('/logo-small.png');
 }
 
+.brand-mark-mask--auth {
+  -webkit-mask-image: url('/logo-large2.png');
+  mask-image: url('/logo-large2.png');
+}
+
 .brand-wordmark-mask {
   width: 100%;
   height: 100%;
@@ -64,16 +73,9 @@ withDefaults(defineProps<{
   mask-image: url('/logo-text.png');
 }
 
-.brand--auth .brand-mark,
-.brand--auth .brand-wordmark {
-  filter: var(--brand-logo-filter, brightness(0) saturate(100%) invert(48%) sepia(12%) saturate(1060%) hue-rotate(198deg) brightness(88%) contrast(88%));
-}
-
-.brand-mark img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: contain;
+.brand-wordmark-mask--auth {
+  -webkit-mask-image: url('/logo-text2.png');
+  mask-image: url('/logo-text2.png');
 }
 
 .brand-content {
@@ -124,7 +126,7 @@ withDefaults(defineProps<{
   justify-content: center;
 }
 
-.brand--auth .brand-wordmark {
+.brand--auth .brand-wordmark-mask {
   width: 158px;
   height: 80px;
 }
