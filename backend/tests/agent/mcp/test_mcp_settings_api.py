@@ -434,6 +434,201 @@ async def test_credentials_prompt_is_sealed_and_resolves_without_echoing_value(d
     assert "hidden-secret" not in json.dumps(history)
 
 
+async def test_im_secret_staging_is_scope_bound_encrypted_and_commits_atomically(db, user_a):
+    from app.byok.crypto import decrypt_envelope
+    from app.models import McpSecretInput
+    from app.services.interactions import create_agent_prompt
+    from app.services.mcp_secret_inputs import (
+        McpSecretBinding,
+        consume_mcp_secret_field,
+        start_mcp_secret_input,
+    )
+
+    server = UserMcpServer(
+        user_id=user_a.id, scope="user", name="private_input",
+        endpoint="https://m.example.com/mcp", credential_slots=[
+            {"id": "client_id", "label": "Client ID", "target": "header", "name": "X-Client"},
+            {"id": "client_secret", "label": "Client Secret", "target": "header", "name": "X-Secret"},
+        ],
+    )
+    session = ConversationSession(
+        user_id=user_a.id, title="private input", source="qq", bot_id="bot-a",
+        platform_user_id="owner-a", chat_type="c2c",
+    )
+    db.add_all([server, session])
+    await db.commit()
+    prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="call-private-input",
+        tool_name="manage_mcp_servers", payload={
+            "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+            "secret_fields": [
+                {"name": "client_id", "label": "Client ID", "type": "secret"},
+                {"name": "client_secret", "label": "Client Secret", "type": "secret"},
+            ],
+            "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+        },
+    )
+    stage = await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == prompt.id))
+    assert stage is not None and stage.status == "pending_choice"
+    assert stage.platform == "qq" and stage.bot_id == "bot-a"
+
+    binding = McpSecretBinding(
+        prompt_id=prompt.id, user_id=user_a.id, platform="qq", bot_id="bot-a",
+        chat_type="c2c", chat_id=None, platform_user_id="owner-a",
+    )
+    started = await start_mcp_secret_input(db, binding=binding, event_id="event-choice")
+    assert started["status"] == "awaiting_secret"
+
+    field = await consume_mcp_secret_field(
+        db, binding=binding,
+        event_id="event-field-1", value="sample-client-id",
+    )
+    assert field["status"] == "awaiting_secret"
+    stage = await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == prompt.id))
+    assert stage.encrypted_payload and "sample-client-id" not in stage.encrypted_payload
+    assert "sample-client-id" not in json.dumps(prompt.schema_json)
+
+    saved = await consume_mcp_secret_field(
+        db, binding=binding,
+        event_id="event-field-2", value="sample-client-secret",
+    )
+    assert saved["status"] == "completed"
+    await db.commit()
+    await db.refresh(server)
+    prompt = await db.get(InteractionPrompt, prompt.id)
+    await db.refresh(stage)
+    assert json.loads(decrypt_envelope(
+        server.encrypted_credentials, server.credentials_nonce,
+        server.encrypted_credentials_key, key_version=server.credentials_key_version,
+    )) == {"client_id": "sample-client-id", "client_secret": "sample-client-secret"}
+    assert stage.status == "completed" and stage.encrypted_payload == ""
+    assert prompt.status == "resolved"
+    assert "sample-client-secret" not in json.dumps(prompt.schema_json)
+
+
+async def test_im_secret_staging_refuses_group_and_cross_bot_scope(db, user_a):
+    from app.models import McpSecretInput
+    from app.services.interactions import create_agent_prompt
+    from app.services.mcp_secret_inputs import McpSecretBinding, start_mcp_secret_input
+
+    server = UserMcpServer(
+        user_id=user_a.id, scope="user", name="group_input", endpoint="https://m.example.com",
+        credential_slots=[{"id": "key", "label": "Key", "target": "header", "name": "X-Key"}],
+    )
+    group_session = ConversationSession(
+        user_id=user_a.id, title="group", source="qq", bot_id="bot-a",
+        chat_id="group-a", platform_user_id="member-a", chat_type="group",
+    )
+    private_session = ConversationSession(
+        user_id=user_a.id, title="private", source="qq", bot_id="bot-a",
+        platform_user_id="owner-a", chat_type="c2c",
+    )
+    db.add_all([server, group_session, private_session])
+    await db.commit()
+    payload = {
+        "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+        "secret_fields": [{"name": "key", "label": "Key", "type": "secret"}],
+        "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+    }
+    group_prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=group_session.id, tool_call_id="call-group",
+        tool_name="manage_mcp_servers", payload=payload,
+    )
+    private_prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=private_session.id, tool_call_id="call-private",
+        tool_name="manage_mcp_servers", payload=payload,
+    )
+    assert await db.scalar(select(McpSecretInput).where(
+        McpSecretInput.prompt_id == group_prompt.id,
+    )) is None
+
+    with pytest.raises(HTTPException) as error:
+        await start_mcp_secret_input(
+            db,
+            binding=McpSecretBinding(
+                prompt_id=private_prompt.id, user_id=user_a.id, platform="qq",
+                bot_id="different-bot", chat_type="c2c", chat_id=None,
+                platform_user_id="owner-a",
+            ),
+            event_id="event-wrong-bot",
+        )
+    assert error.value.status_code == 404
+
+
+async def test_im_secret_cancel_is_idempotent_and_expiry_cleanup_removes_staging(db, user_a):
+    from datetime import timedelta
+    from app.core.tz import now_utc
+    from app.models import McpSecretInput
+    from app.services.interactions import create_agent_prompt
+    from app.services.mcp_secret_inputs import (
+        McpSecretBinding,
+        cancel_mcp_secret_input,
+        cleanup_expired_mcp_secret_inputs,
+        start_mcp_secret_input,
+    )
+
+    server = UserMcpServer(
+        user_id=user_a.id, scope="user", name="cancel_input", endpoint="https://m.example.com",
+        credential_slots=[{"id": "key", "label": "Key", "target": "header", "name": "X-Key"}],
+        encrypted_credentials="existing-ciphertext",
+    )
+    session = ConversationSession(
+        user_id=user_a.id, title="cancel", source="qq", bot_id="bot-a",
+        platform_user_id="owner-a", chat_type="c2c",
+    )
+    db.add_all([server, session])
+    await db.commit()
+    prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="call-cancel",
+        tool_name="manage_mcp_servers", payload={
+            "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+            "secret_fields": [{"name": "key", "label": "Key", "type": "secret"}],
+            "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+        },
+    )
+    binding = McpSecretBinding(
+        prompt_id=prompt.id, user_id=user_a.id, platform="qq", bot_id="bot-a",
+        chat_type="c2c", chat_id=None, platform_user_id="owner-a",
+    )
+    await start_mcp_secret_input(db, binding=binding, event_id="cancel-start")
+    cancelled = await cancel_mcp_secret_input(db, binding=binding, event_id="cancel-event")
+    duplicate = await cancel_mcp_secret_input(db, binding=binding, event_id="cancel-event")
+    assert cancelled["status"] == "cancelled"
+    assert duplicate["status"] in {"cancelled", "duplicate"}
+    await db.commit()
+    stage = await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == prompt.id))
+    await db.refresh(server)
+    assert stage.encrypted_payload == "" and stage.status == "cancelled"
+    assert server.encrypted_credentials == "existing-ciphertext"
+
+    expiry_session = ConversationSession(
+        user_id=user_a.id, title="expiry", source="qq", bot_id="bot-a",
+        platform_user_id="owner-a", chat_type="c2c",
+    )
+    db.add(expiry_session)
+    await db.commit()
+    expired_prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=expiry_session.id, tool_call_id="call-expiry",
+        tool_name="manage_mcp_servers", payload={
+            "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+            "secret_fields": [{"name": "key", "label": "Key", "type": "secret"}],
+            "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+        },
+    )
+    expiry_stage = await db.scalar(select(McpSecretInput).where(
+        McpSecretInput.prompt_id == expired_prompt.id,
+    ))
+    expiry_stage.expires_at = now_utc() - timedelta(seconds=1)
+    await db.commit()
+    assert await cleanup_expired_mcp_secret_inputs(db) == 1
+    assert await db.get(InteractionPrompt, expired_prompt.id) is None or (
+        (await db.get(InteractionPrompt, expired_prompt.id)).status == "expired"
+    )
+    assert await db.scalar(select(McpSecretInput).where(
+        McpSecretInput.prompt_id == expired_prompt.id,
+    )) is None
+
+
 async def test_endpoint_credentials_are_encrypted_and_masked(db, user_a):
     created = await api.create_server(
         api.McpServerCreate(

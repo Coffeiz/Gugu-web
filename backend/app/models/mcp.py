@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.tz import now_utc
@@ -64,3 +64,43 @@ class UserMcpServer(Base):
     tool_allowlist:  Mapped[list]           = mapped_column(JSON, default=list)
     created_at:      Mapped[datetime]       = mapped_column(UtcDateTime, default=now_utc)
     updated_at:      Mapped[datetime]       = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class McpSecretInput(Base):
+    """IM MCP 凭据输入的短时状态；字段值只允许存 envelope 密文。"""
+
+    __tablename__ = "mcp_secret_inputs"
+    __table_args__ = (
+        UniqueConstraint("prompt_id", name="uq_mcp_secret_inputs_prompt"),
+        Index("ix_mcp_secret_inputs_expiry_status", "expires_at", "status"),
+        Index("ix_mcp_secret_inputs_im_scope", "platform", "bot_id", "chat_type", "chat_id", "platform_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prompt_id: Mapped[int] = mapped_column(
+        ForeignKey("interaction_prompts.id", ondelete="CASCADE"), nullable=False,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    server_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("user_mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    bot_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    chat_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    chat_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    platform_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending_choice")
+    next_field_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consumed_event_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    encrypted_payload: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    payload_nonce: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    encrypted_data_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    key_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)

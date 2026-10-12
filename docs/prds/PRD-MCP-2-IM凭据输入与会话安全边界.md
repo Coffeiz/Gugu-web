@@ -159,6 +159,14 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 5. 恢复原 Run 时只回填固定的成功/取消/失败结果，不包含字段值；凭据值不得出现在 prompt schema、普通消息、Web genstream/SSE 或可见/诊断日志。错误只返回固定结果码/文案。
 6. 深链只携带非授权的 prompt ID；前端需在登录并载入会话交互后定位所属 Web/IM session 并打开相应会话，真实授权仍由登录态及 prompt/server ownership 校验完成。
 
+### 5.3 Phase 1 实施记录（2026-10-12）
+
+- 新增 `mcp_secret_inputs`：prompt 唯一关联，绑定 owner、私聊平台/Bot/会话身份及用户级 MCP server；用户、会话、prompt、server 删除时由外键级联清理。
+- 仅身份信息完整的 IM 私聊创建 staging；Web/群聊不创建可消费状态。逐字段输入使用既有 envelope 加密，完成前不写正式凭据；所有字段齐备后与 prompt 终态、staging 清密文共用同一事务提交点，Web 整表提交复用该提交点。
+- 输入、取消按 DB 行锁和持久化事件 ID 去重；取消/新 prompt 替换立即清空密文。Worker 每分钟清理过期 staging，并把关联活动 prompt 置为 expired。
+- `MCP2-012` 延后到 Phase 2：callback/text fallback 必须与 IM 专用消息拦截同时上线，避免按钮先被现有通用消费器解析。
+- 定向验证：`tests/agent/mcp/test_mcp_settings_api.py` 与 `tests/agent/test_interaction_protocol.py` 共 57 项通过；迁移链 head 为 `20261012000004`。未运行线上 IM 手动验证，该项归入 Phase 3 验收。
+
 ## 6. 完整实施 TODO
 
 ### Phase 0：现状与边界核对
@@ -170,15 +178,17 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 
 ### Phase 1：共享 secret 状态机
 
-- [ ] `MCP2-010` 定义状态转换：`pending_choice → awaiting_secret → completed | cancelled | expired | failed`，所有转换幂等并有 TTL。
-- [ ] `MCP2-011` 实现输入状态绑定：用户、平台、Bot、私聊 ID、平台用户 ID、session、prompt、MCP server；状态不匹配时不消费为密钥。
-- [ ] `MCP2-012` 实现输入/取消选择以及 callback/text fallback；确认普通 ask_user 的自定义回复行为不变。
-- [ ] `MCP2-013` 实现逐字段校验和加密 staging；不接受未知字段，不在持久层、日志或错误中保留明文。
-- [ ] `MCP2-014` 实现全部字段齐备后的原子更新、prompt 一次消费、密文暂存清除及 Run 恢复；失败时保留旧凭据。
-- [ ] `MCP2-015` 实现过期、取消、server 删除、用户解绑和孤儿 prompt 的密文暂存清理。
+- [x] `MCP2-010` 定义状态转换：`pending_choice → awaiting_secret → completed | cancelled | expired | failed`，所有转换幂等并有 TTL。
+- [x] `MCP2-011` 实现输入状态绑定：用户、平台、Bot、私聊 ID、平台用户 ID、session、prompt、MCP server；状态不匹配时不消费为密钥。
+- [x] `MCP2-013` 实现逐字段校验和加密 staging；不接受未知字段，不在持久层、日志或错误中保留明文。
+- [x] `MCP2-014` 实现全部字段齐备后的原子更新、prompt 一次消费、密文暂存清除及 Run 恢复；失败时保留旧凭据。
+- [x] `MCP2-015` 实现过期、取消、server 删除、用户解绑和孤儿 prompt 的密文暂存清理。
+
+> Phase 1 不发布 IM 选项入口。`MCP2-012` 的按钮 callback 与文本降级必须和 Phase 2 的专用消息拦截一并接入；若先启用选项，旧通用交互消费器会错误地把它当普通选择消费。
 
 ### Phase 2：IM 与 Web 接入
 
+- [ ] `MCP2-012` 接入输入/取消选择及 callback/text fallback，并确认普通 ask_user 自定义回复语义不变。
 - [ ] `MCP2-020` 将 secret input 拦截放在普通消息写库、快捷命令、Agent/LLM、RAG 和群被动记录之前。
 - [ ] `MCP2-021` 所有 IM 一对一会话支持一致的“输入凭据/取消”流程；输入原文不走普通聊天、不会回显，也不会广播给 Web 会话订阅者。
 - [ ] `MCP2-022` 所有 IM 群消息拒绝直接凭据输入；提供转 Web 私密表单/私聊的明确说明，避免将密钥误写入群历史。

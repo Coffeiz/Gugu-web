@@ -71,6 +71,9 @@ async def create_prompt(
         )
         .values(status="cancelled", resolved_at=now)
     )
+    # secret staging 与被替换的 prompt 同一事务终止，避免旧交互仍可继续收集字段。
+    from app.services.mcp_secret_inputs import cancel_active_secret_staging
+    await cancel_active_secret_staging(db, user_id=user_id, session_id=session_id)
     # 只有 Agent 主动调用 ask_user 才能开启自定义回答。系统确认/系统选择即使
     # 误传 allow_text_input，也必须在统一创建入口被强制关闭。
     allow_custom_reply = source == "agent" and bool(allow_text_input)
@@ -210,6 +213,8 @@ async def create_agent_prompt(
             allow_text_input=not bool(secret_fields),
             source="agent",
         )
+        from app.services.mcp_secret_inputs import stage_prompt_if_private_mcp
+        await stage_prompt_if_private_mcp(db, prompt=prompt, context=context)
         if authorization == "user_sandbox":
             from app.services.filesystem_authorization import record_filesystem_authorization_request
 

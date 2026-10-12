@@ -486,6 +486,31 @@ async def _cleanup_loop():
             await asyncio.sleep(2)
 
 
+async def _mcp_secret_expiry_loop():
+    """周期回收 IM MCP 凭据输入的过期密文 staging。"""
+    from app.db import session as db_session
+    from app.services.mcp_secret_inputs import cleanup_expired_mcp_secret_inputs
+
+    while not _stop.is_set():
+        try:
+            if db_session._SessionLocal is not None:
+                async with db_session._SessionLocal() as db:
+                    removed = await cleanup_expired_mcp_secret_inputs(db)
+                    if removed:
+                        await db.commit()
+                    else:
+                        await db.rollback()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            # 只记录异常类型，不打印事件或凭据相关数据。
+            print(f"[worker] MCP 凭据暂存清理出错: {type(exc).__name__}", flush=True)
+        try:
+            await asyncio.wait_for(_stop.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def _heartbeat():
     from app.core import health
     from app.core import scheduler as sched
@@ -544,6 +569,9 @@ async def _serve():
     ), name="filesync-reconcile-worker")
     reflection_task = asyncio.create_task(_reflection_loop())
     cleanup_task = asyncio.create_task(_cleanup_loop())
+    mcp_secret_expiry_task = asyncio.create_task(
+        _mcp_secret_expiry_loop(), name="mcp-secret-expiry"
+    )
     from app.services.data_portability.worker import run_portability_worker
     portability_task = asyncio.create_task(run_portability_worker(
         _stop, worker_id=f"portability:{CONSUMER}", session_factory=db_session._SessionLocal,
@@ -569,10 +597,11 @@ async def _serve():
     filesync_task.cancel()
     reflection_task.cancel()
     cleanup_task.cancel()
+    mcp_secret_expiry_task.cancel()
     portability_task.cancel()
     trash_purge_task.cancel()
     await asyncio.gather(
-        hb, sched_task, filesync_task, reflection_task, cleanup_task, portability_task,
+        hb, sched_task, filesync_task, reflection_task, cleanup_task, mcp_secret_expiry_task, portability_task,
         trash_purge_task,
         return_exceptions=True,
     )
