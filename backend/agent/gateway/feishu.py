@@ -15,10 +15,10 @@ lark 无 stop()，单连接断不掉 → 一个 bot 一个子进程，由 gatewa
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
+import threading
 import time
 import uuid
 
@@ -32,6 +32,66 @@ from app.core.redaction import diag_log, diag_log_raw, redact
 STREAM = R.IM_INBOUND_STREAM
 
 _FEISHU_STALE_MSG_THRESHOLD_MS = 20_000
+
+
+class _GatewayAsyncRunner:
+    """为同步飞书回调提供进程级常驻事件循环，稳定复用异步数据库连接池。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            ready = threading.Event()
+
+            def run_loop() -> None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                self._loop = loop
+                ready.set()
+                loop.run_forever()
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.close()
+
+            self._thread = threading.Thread(
+                target=run_loop, name="feishu-async-runner", daemon=True,
+            )
+            self._thread.start()
+            ready.wait()
+
+    def submit(self, coroutine):
+        self.start()
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            raise RuntimeError("飞书异步执行环境不可用")
+        return asyncio.run_coroutine_threadsafe(coroutine, loop)
+
+    def run(self, coroutine):
+        return self.submit(coroutine).result()
+
+    def stop(self) -> None:
+        with self._lock:
+            thread, loop = self._thread, self._loop
+            if thread is None or loop is None:
+                return
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not threading.current_thread():
+            thread.join(timeout=5)
+        with self._lock:
+            if self._thread is thread and not thread.is_alive():
+                self._thread = None
+                self._loop = None
+
+
+_gateway_async_runner = _GatewayAsyncRunner()
 
 
 from agent.im.media_ingress_feishu import (
@@ -208,23 +268,16 @@ def _handle_card_action(data, owner: str, bot_id: str = ""):
             owner, prompt_id, token, event_id, bot_id=bot_id,
             platform_user_id=operator_id,
         )
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # 仅供离线测试或非 SDK 调用路径；正式 WebSocket 回调总有运行中的 loop。
-            asyncio.run(coroutine)
-            message = "已选择，继续处理。"
-        else:
-            task = loop.create_task(coroutine)
+        future = _gateway_async_runner.submit(coroutine)
 
-            def _report_card_action_failure(done_task) -> None:
-                try:
-                    done_task.result()
-                except Exception as exc:
-                    diag_log("agent.gateway.feishu.interaction", exc)
+        def _report_card_action_failure(done_task) -> None:
+            try:
+                done_task.result()
+            except Exception as exc:
+                diag_log("agent.gateway.feishu.interaction", exc)
 
-            task.add_done_callback(_report_card_action_failure)
-            message = "已收到操作；如已开启凭据输入，请在当前私聊逐项发送字段值，回复“取消”可终止。"
+        future.add_done_callback(_report_card_action_failure)
+        message = "已收到操作；如已开启凭据输入，请在当前私聊逐项发送字段值，回复“取消”可终止。"
         completed_card = build_completed_card_payload(message)
     except (LookupError, ValueError):
         message = "这个选项已过期或已经处理过了。"
@@ -334,15 +387,9 @@ def _make_on_message(
     def _secret_preflight(payload: dict) -> bool:
         from agent.im.interaction_text import consume_mcp_secret_payload
 
-        coroutine = consume_mcp_secret_payload(payload)
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coroutine)
-        # Lark 的同步回调偶尔运行在带 loop 的 SDK 线程；在独立短线程执行异步
-        # DB/发送路径，回调等待结果后才允许媒体下载或普通消息处理继续。
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            return executor.submit(asyncio.run, coroutine).result()
+        # 回调为同步接口；投递到进程级常驻 loop，避免每条消息创建新 loop，
+        # 也避免与卡片 action 分属不同 loop 导致异步连接池反复重建。
+        return _gateway_async_runner.run(consume_mcp_secret_payload(payload))
 
     def _on_message(data: P2ImMessageReceiveV1) -> None:
         if _drop_misrouted_event(data, expected_app_id, channel_id):
@@ -488,7 +535,11 @@ def serve() -> None:
     )
     ws_client = lark.ws.Client(app_id, app_secret, event_handler=handler, log_level=lark.LogLevel.INFO)
     print(f"[feishu:{channel_id}] 网关启动（owner={owner}），WebSocket 长连接中…", flush=True)
-    ws_client.start()  # 同步阻塞，SDK 自带断线重连
+    _gateway_async_runner.start()
+    try:
+        ws_client.start()  # 同步阻塞，SDK 自带断线重连
+    finally:
+        _gateway_async_runner.stop()
 
 
 # ── 发送（worker 用，按 bot id 现查 DB 取凭据，缓存 lark.Client）──
