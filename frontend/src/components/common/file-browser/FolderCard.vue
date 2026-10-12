@@ -59,9 +59,10 @@ defineProps({
    accent 是逐卡动态值，不能提前在 :root 上求值。 */
 .folder-card {
   --folder-card-bg: color-mix(in srgb,var(--fd-color,#8888a0) 6%,var(--folder-card-bg-base));
-  --folder-card-border: color-mix(in srgb,var(--fd-color,#8888a0) 14%,var(--folder-card-border-base));
-  --folder-card-bg-hover: color-mix(in srgb,var(--fd-color,#8888a0) 8%,var(--folder-card-bg-base));
-  --folder-card-border-hover: color-mix(in srgb,var(--fd-color,#8888a0) 18%,var(--folder-card-border-base));
+  --folder-card-border: color-mix(in srgb,var(--fd-color,#8888a0) var(--folder-card-border-accent,14%),var(--folder-card-border-base));
+  --folder-card-bg-hover: var(--file-card-bg-hover);
+  --folder-card-border-hover: var(--file-card-border-hover);
+  --folder-card-shadow-hover: var(--file-card-shadow-hover);
 
   position: relative;
   min-height: 122px;
