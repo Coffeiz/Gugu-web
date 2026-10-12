@@ -9,7 +9,7 @@
         :class="{ 'brand-wordmark-mask--auth': variant === 'auth' }"
         :aria-hidden="variant !== 'auth'"
         :role="variant === 'auth' ? 'img' : undefined"
-        :aria-label="variant === 'auth' ? '咕咕' : undefined"
+        :aria-label="variant === 'auth' ? t('chatUi.gugu') : undefined"
       />
       <span v-if="subtitle" class="brand-subtitle">{{ subtitle }}</span>
     </div>
@@ -17,6 +17,10 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 withDefaults(defineProps<{
   variant?: 'auth' | 'sidebar' | 'admin'
   subtitle?: string
