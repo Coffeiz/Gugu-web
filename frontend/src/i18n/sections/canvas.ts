@@ -7,4 +7,7 @@ export function applyCanvasSection(messages: Record<'zh-CN' | 'ja-JP' | 'en-US',
   Object.assign((messages['zh-CN'] as Record<string, any>).mindUi, { unnamedFile: '未命名文件', fileLoadFailed: '文件暂时无法加载，点击重试' })
   Object.assign((messages['ja-JP'] as Record<string, any>).mindUi, { unnamedFile: '無題のファイル', fileLoadFailed: 'ファイルを読み込めません。クリックして再試行' })
   Object.assign((messages['en-US'] as Record<string, any>).mindUi, { unnamedFile: 'Unnamed file', fileLoadFailed: 'File unavailable. Click to retry.' })
+  Object.assign((messages['zh-CN'] as Record<string, any>).mindUi, { searchTargetMissing: '搜索命中的画布或便签已不存在。' })
+  Object.assign((messages['ja-JP'] as Record<string, any>).mindUi, { searchTargetMissing: '検索結果のキャンバスまたはメモは見つかりません。' })
+  Object.assign((messages['en-US'] as Record<string, any>).mindUi, { searchTargetMissing: 'The canvas or note from this search result no longer exists.' })
 }

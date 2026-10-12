@@ -1,7 +1,7 @@
 <template>
   <div class="mcp-page" :aria-busy="loading">
     <div v-if="error" class="error-banner" role="alert">
-      {{ error }} <button type="button" @click="load">{{ t('skills.retry') }}</button>
+      {{ error }} <button type="button" @click="retryLoad">{{ t('skills.retry') }}</button>
     </div>
 
     <template v-if="loaded">
@@ -16,7 +16,8 @@
           v-for="item in items"
           :key="item.id"
           :server="item"
-          :busy="busyId === item.id"
+          :busy="busyId === item.id || checkingIds.has(item.id)"
+          :status-checking="checkingIds.has(item.id)"
           @toggle="toggle"
           @test="test"
           @reconnect="reconnect"
@@ -45,6 +46,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
@@ -55,8 +57,11 @@ import McpCard from './components/McpCard.vue'
 import McpServerFormModal from './components/McpServerFormModal.vue'
 import type { McpServerDraft } from './components/mcp-types'
 import { notifyResourceChanged, RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
+import { useMcpStatusLoader } from './composables/useMcpStatusLoader'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const props = defineProps<{ createRequest?: number }>()
 const uiStore = useUiStore()
 const loading = ref(false)
@@ -70,23 +75,55 @@ const maxServers = ref(5)
 const editor = ref(false)
 const editing = ref<McpServerItem | null>(null)
 const formKey = ref(0)
+const statusLoader = useMcpStatusLoader()
+const checkingIds = statusLoader.checkingIds
+let dispatchingMcpChange = false
+let listGeneration = 0
 
 watch(() => props.createRequest, (request, previous) => {
   if (request && request !== previous) openCreate()
 })
 
-async function load() {
+async function load(refreshMissingStatuses = true) {
+  const currentGeneration = ++listGeneration
+  statusLoader.cancel()
   loading.value = true
   error.value = ''
   try {
     const result = await mcpApi.list()
+    if (currentGeneration !== listGeneration) return
     items.value = result.items
     maxServers.value = result.max_servers
     loaded.value = true
+    if (refreshMissingStatuses) {
+      void statusLoader.refresh(items.value, (serverId, status) => {
+        const server = items.value.find(candidate => candidate.id === serverId)
+        if (!server || !server.enabled) return
+        server.state = status.state
+        server.loaded_tool_count = status.tool_count
+        server.loaded_tool_names = status.tool_names ?? []
+      })
+    }
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : t('skillsMcpUi.loadFailed')
+    if (currentGeneration === listGeneration) {
+      error.value = cause instanceof Error ? cause.message : t('skillsMcpUi.loadFailed')
+    }
   } finally {
-    loading.value = false
+    if (currentGeneration === listGeneration) loading.value = false
+  }
+}
+
+function retryLoad() {
+  void load()
+}
+
+function broadcastMcpChange() {
+  // 当前页面已自行刷新列表；只通知侧栏、技能等其他消费者，避免重复触发本页加载。
+  dispatchingMcpChange = true
+  try {
+    notifyResourceChanged('mcp')
+  } finally {
+    dispatchingMcpChange = false
   }
 }
 
@@ -108,6 +145,23 @@ function openEdit(item: McpServerItem) {
   editor.value = true
 }
 
+async function openRequestedServer() {
+  const requestedId = typeof route.query.server === 'string' ? route.query.server : ''
+  if (!requestedId) return
+  if (!loaded.value) await load(false)
+  if (!loaded.value) {
+    await router.replace({ query: { ...route.query, server: undefined } })
+    return
+  }
+  const target = items.value.find(item => item.id === requestedId)
+  if (!target) {
+    showAppError(t('skillsMcpUi.targetMissing'))
+  } else {
+    openEdit(target)
+  }
+  await router.replace({ query: { ...route.query, server: undefined } })
+}
+
 function closeEditor() {
   editor.value = false
   editing.value = null
@@ -127,7 +181,7 @@ async function save(draft: McpServerDraft) {
     const saved = editing.value
       ? await mcpApi.update(editing.value.id, payload)
       : await mcpApi.create(payload)
-    notifyResourceChanged('mcp')
+    broadcastMcpChange()
     let runtime: { ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string } | null = null
     if (draft.enabled) {
       runtime = await mcpApi.reconnect(saved.id)
@@ -135,7 +189,7 @@ async function save(draft: McpServerDraft) {
     }
     closeEditor()
     if (!runtime || runtime.ok) showAppSuccess(t('skillsMcpUi.saved'))
-    await load()
+    await load(false)
     const refreshed = items.value.find(candidate => candidate.id === saved.id)
     if (refreshed && runtime) {
       refreshed.state = runtime.state
@@ -157,7 +211,7 @@ async function test(item: McpServerItem) {
     const result = await mcpApi.test(item.id)
     if (result.ok) showAppSuccess(t('skillsMcpUi.testSuccess', { count: result.tool_count ?? 0 }))
     else showAppError(result.error || t('skillsMcpUi.testFailed'))
-    await load()
+    await load(false)
     const refreshed = items.value.find(candidate => candidate.id === item.id)
     if (refreshed) {
       refreshed.state = result.ok ? 'ok' : 'error'
@@ -175,10 +229,10 @@ async function reconnect(item: McpServerItem) {
   busyId.value = item.id
   try {
     const result = await mcpApi.reconnect(item.id)
-    notifyResourceChanged('mcp')
+    broadcastMcpChange()
     if (result.ok) showAppSuccess(t('skillsMcpUi.reconnectSuccess', { count: result.tool_count }))
     else showAppError(result.error || t('skillsMcpUi.testFailed'))
-    await load()
+    await load(false)
     const refreshed = items.value.find(candidate => candidate.id === item.id)
     if (refreshed) {
       refreshed.state = result.state
@@ -196,11 +250,11 @@ async function toggle(item: McpServerItem) {
   busyId.value = item.id
   try {
     await mcpApi.update(item.id, { enabled: !item.enabled })
-    notifyResourceChanged('mcp')
+    broadcastMcpChange()
     if (!item.enabled) {
       const result = await mcpApi.reconnect(item.id)
       if (!result.ok) showAppError(result.error || t('skillsMcpUi.testFailed'))
-      await load()
+      await load(false)
       const refreshed = items.value.find(candidate => candidate.id === item.id)
       if (refreshed) {
         refreshed.state = result.state
@@ -209,7 +263,7 @@ async function toggle(item: McpServerItem) {
       }
       return
     }
-    await load()
+    await load(false)
   } catch (cause) {
     showAppError(cause instanceof Error ? cause.message : t('skillsMcpUi.saveFailed'))
   } finally {
@@ -228,9 +282,9 @@ async function remove(item: McpServerItem) {
   busyId.value = item.id
   try {
     await mcpApi.remove(item.id)
-    notifyResourceChanged('mcp')
+    broadcastMcpChange()
     showAppSuccess(t('skillsMcpUi.deleted'))
-    await load()
+    await load(false)
   } catch (cause) {
     showAppError(cause instanceof Error ? cause.message : t('skillsMcpUi.deleteFailed'))
   } finally {
@@ -238,12 +292,20 @@ async function remove(item: McpServerItem) {
   }
 }
 
-const onMcpChanged = () => { void load() }
+const onMcpChanged = () => {
+  if (!dispatchingMcpChange) void load()
+}
 onMounted(() => {
   window.addEventListener(RESOURCE_REFRESH_EVENTS.mcp, onMcpChanged)
-  void load()
+  if (typeof route.query.server === 'string') void openRequestedServer()
+  else void load()
 })
-onBeforeUnmount(() => window.removeEventListener(RESOURCE_REFRESH_EVENTS.mcp, onMcpChanged))
+watch(() => route.query.server, () => { void openRequestedServer() })
+onBeforeUnmount(() => {
+  listGeneration += 1
+  statusLoader.cancel()
+  window.removeEventListener(RESOURCE_REFRESH_EVENTS.mcp, onMcpChanged)
+})
 </script>
 
 <style scoped>

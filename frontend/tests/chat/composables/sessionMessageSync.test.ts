@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
 import { agentApi } from '@/services/api'
-import { createSessionMessageSynchronizer, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
+import { createSessionMessageSynchronizer, ensureSessionMessageLoaded, mergeSessionMessageDelta } from '@/components/common/gugu-chat/composables/sessionMessageSync'
 
-vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn() } }))
+vi.mock('@/services/api', () => ({ agentApi: { getMessages: vi.fn(), getMessagesBefore: vi.fn() } }))
 
 const message = (id: number, key: string, text: string): ChatMessage => ({
   id, role: 'ai', text, time: '', _syncKey: key,
@@ -39,7 +39,10 @@ describe('mergeSessionMessageDelta', () => {
 })
 
 describe('session message refresh', () => {
-  beforeEach(() => vi.mocked(agentApi.getMessages).mockReset())
+  beforeEach(() => {
+    vi.mocked(agentApi.getMessages).mockReset()
+    vi.mocked(agentApi.getMessagesBefore).mockReset()
+  })
 
   it('maps persisted ids into stable keys and fetches only after the current cursor', async () => {
     const sessionId = ref<number | null>(12)
@@ -77,6 +80,71 @@ describe('session message refresh', () => {
     sessionId.value = 13
     resolveRequest({ messages: [{ id: 1, role: 'user', content: 'stale', createdAt: '' }], pagination: { newestId: 1 } })
     await pending
+    expect(messages.value).toEqual([])
+  })
+})
+
+describe('search result message loading', () => {
+  it('loads a bounded page around an older hit and makes it available for navigation', async () => {
+    const messages = ref<ChatMessage[]>([{
+      ...message(1, 'message:500', 'latest'), dbId: 500,
+      _createdAt: '2026-09-02T00:00:00Z', _timelineOrder: 500000,
+    }])
+    vi.mocked(agentApi.getMessagesBefore).mockResolvedValue({
+      messages: [{ id: 17, role: 'user', content: 'older hit', createdAt: '2026-09-01T00:00:00Z' }],
+      timelineEvents: [], toolEvents: [],
+    } as any)
+
+    const found = await ensureSessionMessageLoaded({
+      sessionId: 12,
+      messageId: 17,
+      messages,
+      mkid: () => 2,
+      resolveSpeaker: role => ({ role }),
+    })
+
+    expect(found).toBe(true)
+    expect(agentApi.getMessagesBefore).toHaveBeenCalledWith('12', 18, 200)
+    expect(messages.value.map(item => item.dbId)).toEqual([17, 500])
+    expect(messages.value.find(item => item.dbId === 17)?.text).toBe('older hit')
+  })
+
+  it('does not claim a search hit was loaded when it is outside the owned session page', async () => {
+    const messages = ref<ChatMessage[]>([])
+    vi.mocked(agentApi.getMessagesBefore).mockResolvedValue({ messages: [], timelineEvents: [], toolEvents: [] } as any)
+
+    const found = await ensureSessionMessageLoaded({
+      sessionId: 12,
+      messageId: 99,
+      messages,
+      mkid: () => 1,
+      resolveSpeaker: role => ({ role }),
+    })
+
+    expect(found).toBe(false)
+    expect(messages.value).toEqual([])
+  })
+
+  it('discards a history page if the user switches sessions before it returns', async () => {
+    const messages = ref<ChatMessage[]>([])
+    let finish!: (value: any) => void
+    vi.mocked(agentApi.getMessagesBefore).mockReturnValue(new Promise(resolve => { finish = resolve }) as any)
+    const activeSession = ref(12)
+    const loading = ensureSessionMessageLoaded({
+      sessionId: 12,
+      messageId: 17,
+      messages,
+      mkid: () => 1,
+      resolveSpeaker: role => ({ role }),
+      isCurrent: () => activeSession.value === 12,
+    })
+    activeSession.value = 13
+    finish({
+      messages: [{ id: 17, role: 'user', content: 'stale session hit', createdAt: '2026-09-01T00:00:00Z' }],
+      timelineEvents: [], toolEvents: [],
+    })
+
+    await expect(loading).resolves.toBe(false)
     expect(messages.value).toEqual([])
   })
 })

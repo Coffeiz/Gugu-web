@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from app.api.v1.mind import (
     add_canvas_item, create_canvas, create_note, create_ref_node, create_relation,
     canvas_note_location, create_canvas_note, delete_canvas, delete_note, list_canvas_items, list_canvas_relations,
-    list_canvases, list_notes,
+    get_note, list_canvases, list_notes,
     ref_suggest, remove_canvas_item, update_canvas, update_canvas_item, update_canvas_note, update_note,
 )
 from app.api.v1 import mind as mind_api
@@ -127,6 +127,20 @@ async def test_timeline_hides_soft_deleted_and_other_users_notes(db, user_a, use
 
     rows = await list_notes(limit=50, offset=0, current_user=user_a, db=db)
     assert [r.id for r in rows] == [keep.id]
+
+
+@pytest.mark.asyncio
+async def test_get_note_by_id_is_owner_scoped_and_hides_deleted_notes(db, user_a, user_b):
+    own = await _new_note(db, user_a, content="自己的目标便签")
+    other = await _new_note(db, user_b, content="其他用户便签")
+    deleted = await _new_note(db, user_a, content="已删除便签")
+    await delete_note(deleted.id, current_user=user_a, db=db)
+
+    assert (await get_note(own.id, current_user=user_a, db=db)).content_md == "自己的目标便签"
+    for note_id in (other.id, deleted.id):
+        with pytest.raises(HTTPException) as error:
+            await get_note(note_id, current_user=user_a, db=db)
+        assert error.value.status_code == 404
 
 
 @pytest.mark.asyncio

@@ -149,6 +149,59 @@ async def test_list_servers_does_not_connect_and_returns_existing_runtime_state(
     ]
 
 
+async def test_load_server_status_checks_only_requested_owned_enabled_server(
+    db, user_a, monkeypatch, mcp_on,
+):
+    from agent.mcp.manager import mcp_manager
+
+    created = await api.create_server(
+        api.McpServerCreate(name="status_check", endpoint="https://m.example.com"),
+        user=user_a,
+        db=db,
+    )
+    calls = []
+
+    async def ensure_status(config):
+        calls.append(config.id)
+        return {
+            "ok": True,
+            "state": "ok",
+            "tool_count": 2,
+            "tool_names": ["status_check_first", "status_check_second"],
+            "error": None,
+        }
+
+    monkeypatch.setattr(mcp_manager, "ensure_server_status", ensure_status)
+    result = await api.load_server_status(created["id"], user=user_a, db=db)
+
+    assert result["ok"] is True
+    assert result["tool_count"] == 2
+    assert calls == [UUID(created["id"])]
+
+
+async def test_load_server_status_does_not_connect_disabled_server(db, user_a, monkeypatch):
+    from agent.mcp.manager import mcp_manager
+
+    created = await api.create_server(
+        api.McpServerCreate(
+            name="disabled_status_check",
+            endpoint="https://m.example.com",
+            enabled=False,
+        ),
+        user=user_a,
+        db=db,
+    )
+
+    async def unexpected_connection(_config):
+        raise AssertionError("停用的 MCP server 不应建立连接")
+
+    monkeypatch.setattr(mcp_manager, "ensure_server_status", unexpected_connection)
+    result = await api.load_server_status(created["id"], user=user_a, db=db)
+
+    assert result["state"] == "disabled"
+    assert result["tool_count"] == 0
+
+
 async def test_delete_removes_row(db, user_a):
     created = await api.create_server(api.McpServerCreate(name="gone", endpoint="https://m.example.com"),
                                       user=user_a, db=db)

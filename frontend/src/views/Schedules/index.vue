@@ -71,14 +71,27 @@ const {
 // 聊天卡片点击是 router.push：已在 /schedules 时组件不会重新挂载，query 相同时
 // push 也是 no-op（此时 GuguChat 派发 gugu:open-object 事件），所以三种入口都要接。
 async function openRequestedTask() {
-  await load()
-  const requestedId = Number(route.query.object_id)
-  const task = tasks.value.find(item => Number(item.id) === requestedId)
-  if (!task) return
-  openEdit(task)
-  // 用完即清：object_id 留在地址栏的话，关掉弹窗后一刷新又会弹出来。
-  // replace 不产生历史记录；清空会触发上面的 watch，但 NaN 匹配不到任务，是安全的空操作。
-  await router.replace({ query: { ...route.query, object_id: undefined } })
+  const requestedValue = route.query.object_id
+  if (typeof requestedValue !== 'string') return
+  const requestedId = Number(requestedValue)
+  try {
+    if (!Number.isSafeInteger(requestedId) || requestedId <= 0) {
+      showAppError(t('schedules.targetMissing'))
+      return
+    }
+    await load()
+    const task = tasks.value.find(item => Number(item.id) === requestedId)
+    if (!task) showAppError(t('schedules.targetMissing'))
+    else openEdit(task)
+  } catch (error) {
+    showAppError(errorMessage(error))
+  } finally {
+    // 用完即清：object_id 留在地址栏的话，关掉弹窗后一刷新又会弹出来。
+    // replace 不产生历史记录；目标缺失或加载失败时也要清理，避免旧目标再次误开。
+    if (route.query.object_id === requestedValue) {
+      await router.replace({ query: { ...route.query, object_id: undefined } })
+    }
+  }
 }
 async function loadWorkspaces() {
   try {
@@ -95,8 +108,12 @@ async function loadWorkspaces() {
     workspaceSupported.value = false
   }
 }
-onMounted(() => { void loadWorkspaces(); void openRequestedTask() })
-watch(() => route.query.object_id, openRequestedTask)
+onMounted(() => {
+  void loadWorkspaces()
+  if (typeof route.query.object_id === 'string') void openRequestedTask()
+  else void load()
+})
+watch(() => route.query.object_id, value => { if (typeof value === 'string') void openRequestedTask() })
 window.addEventListener('gugu:open-object', openRequestedTask as EventListener)
 onBeforeUnmount(() => window.removeEventListener('gugu:open-object', openRequestedTask as EventListener))
 

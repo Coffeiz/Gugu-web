@@ -514,6 +514,25 @@ async def test_connection(server_id: str, user: User = Depends(get_current_user)
     return {"ok": True, "tool_count": len(tool_names), "tools": tool_names[:64]}
 
 
+@router.post("/servers/{server_id}/load_status")
+async def load_server_status(server_id: str, user: User = Depends(get_current_user),
+                             db: AsyncSession = Depends(get_db)):
+    """按需建立启用服务的运行时；列表 GET 本身保持无外网连接。"""
+    from agent.mcp.manager import McpToolManager, mcp_manager
+
+    row = await _get_owned_server(db, server_id, user)
+    if not row.enabled or not get_settings().mcp.enabled:
+        return {
+            "ok": False,
+            "state": "disabled",
+            "tool_count": 0,
+            "tool_names": [],
+            "error": None,
+        }
+    config = McpToolManager._config_from_row(row)
+    return await mcp_manager.ensure_server_status(config)
+
+
 @router.post("/servers/{server_id}/reconnect")
 async def reconnect_server(server_id: str, user: User = Depends(get_current_user),
                            db: AsyncSession = Depends(get_db)):

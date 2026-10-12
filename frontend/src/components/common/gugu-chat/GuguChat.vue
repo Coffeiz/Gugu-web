@@ -199,7 +199,10 @@ watch(() => uiStore.pendingChatSession, async (id) => {
   const msgId = uiStore.pendingChatMessageId
   uiStore.pendingChatSession = null
   uiStore.pendingChatMessageId = null
-  if (msgId) { await conversation._revealMessage(msgId); conversation._flashChatMessage(msgId) }
+  if (msgId) {
+    if (await conversation._revealMessage(msgId)) conversation._flashChatMessage(msgId)
+    else showAppError(t('chatUi.messageUnavailable'))
+  }
 })
 
 // gugu:// 协议链接（复制代码/绑定 IM/打开文件）+ 工具完成后的前端刷新通知，收在 useChatActions。

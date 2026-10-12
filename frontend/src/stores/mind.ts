@@ -61,6 +61,8 @@ export const useMindStore = defineStore('mind', () => {
   const loaded  = ref(false)
   const loadingMore = ref(false)
   const hasMore = ref(true)
+  let loadedNoteRows = 0
+  const pagedNoteIds = new Set<number>()
   const filterQ = ref('')   // 胶囊条的便签筛选（客户端过滤已加载的便签）
   const languageFilterIds = ref<Set<number> | null>(null)
   let languageFilterSeq = 0
@@ -161,7 +163,11 @@ export const useMindStore = defineStore('mind', () => {
     try {
       const firstPage = await mindApi.listNotes(NOTE_PAGE_SIZE, 0)
       if (requestEpoch !== getAccountBoundaryEpoch()) return
-      notes.value = firstPage
+      const retainedTargets = notes.value.filter(note => !pagedNoteIds.has(note.id))
+      pagedNoteIds.clear()
+      for (const note of firstPage) pagedNoteIds.add(note.id)
+      loadedNoteRows = firstPage.length
+      notes.value = [...new Map([...retainedTargets, ...firstPage].map(note => [note.id, note])).values()].sort(byCapturedDesc)
       hasMore.value = firstPage.length === NOTE_PAGE_SIZE
       loaded.value = true
     } finally {
@@ -169,8 +175,22 @@ export const useMindStore = defineStore('mind', () => {
     }
   }
 
+  async function fetchNoteById(id: number) {
+    const cached = notes.value.find(note => note.id === id)
+    if (cached) return cached
+    const requestEpoch = getAccountBoundaryEpoch()
+    const note = await mindApi.getNote(id)
+    if (requestEpoch !== getAccountBoundaryEpoch()) return null
+    const existing = notes.value.find(item => item.id === note.id)
+    if (existing) return existing
+    notes.value = [...notes.value, note].sort(byCapturedDesc)
+    return note
+  }
+
   function resetAccountState() {
     notes.value = []
+    loadedNoteRows = 0
+    pagedNoteIds.clear()
     canvases.value = []
     canvasItems.value = []
     canvasRelations.value = []
@@ -197,10 +217,10 @@ export const useMindStore = defineStore('mind', () => {
     if (!loaded.value || loading.value || loadingMore.value || !hasMore.value) return
     loadingMore.value = true
     try {
-      const page = await mindApi.listNotes(NOTE_PAGE_SIZE, notes.value.length)
-      const known = new Set(notes.value.map(note => note.id))
-      const appended = page.filter(note => !known.has(note.id))
-      if (appended.length) notes.value = [...notes.value, ...appended].sort(byCapturedDesc)
+      const page = await mindApi.listNotes(NOTE_PAGE_SIZE, loadedNoteRows)
+      loadedNoteRows += page.length
+      for (const note of page) pagedNoteIds.add(note.id)
+      if (page.length) notes.value = [...new Map([...notes.value, ...page].map(note => [note.id, note])).values()].sort(byCapturedDesc)
       hasMore.value = page.length === NOTE_PAGE_SIZE
     } finally {
       loadingMore.value = false
@@ -209,6 +229,10 @@ export const useMindStore = defineStore('mind', () => {
 
   async function createNote(data: MindNoteCreate): Promise<MindNote> {
     const created = await mindApi.createNote(data)
+    if (loaded.value) {
+      loadedNoteRows += 1
+      pagedNoteIds.add(created.id)
+    }
     notes.value = [created, ...notes.value].sort(byCapturedDesc)
     return created
   }
@@ -249,6 +273,7 @@ export const useMindStore = defineStore('mind', () => {
   /** 软删：后端只写 deleted_at（墓碑），这里从列表里摘掉即可 */
   async function deleteNote(id: number) {
     await mindApi.deleteNote(id)
+    if (pagedNoteIds.delete(id)) loadedNoteRows = Math.max(0, loadedNoteRows - 1)
     notes.value = notes.value.filter(n => n.id !== id)
   }
 
@@ -748,9 +773,16 @@ export const useMindStore = defineStore('mind', () => {
     if (kind === 'note') {
       const note = value as MindNote
       const index = notes.value.findIndex(item => item.id === Number(event.entity_id))
-      if (event.operation === 'delete') { if (index >= 0) notes.value.splice(index, 1); return index >= 0 }
+      if (event.operation === 'delete') {
+        if (pagedNoteIds.delete(Number(event.entity_id))) loadedNoteRows = Math.max(0, loadedNoteRows - 1)
+        if (index >= 0) notes.value.splice(index, 1)
+        return index >= 0
+      }
       if (index >= 0) notes.value.splice(index, 1, note)
-      else if (event.operation === 'create') notes.value = [note, ...notes.value].sort(byCapturedDesc)
+      else if (event.operation === 'create') {
+        if (loaded.value) { loadedNoteRows += 1; pagedNoteIds.add(note.id) }
+        notes.value = [note, ...notes.value].sort(byCapturedDesc)
+      }
       else return false
       return true
     }
@@ -778,7 +810,7 @@ export const useMindStore = defineStore('mind', () => {
   })
 
   return {
-    notes, loading, loaded, loadingMore, hasMore, filterQ, jumpTarget, timeline, fetchNotes, loadMoreNotes, resetAccountState, createNote, updateNote, deleteNote,
+    notes, loading, loaded, loadingMore, hasMore, filterQ, jumpTarget, timeline, fetchNotes, fetchNoteById, loadMoreNotes, resetAccountState, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, deleteCanvas, deleteCanvases, loadCanvas, addNoteToCanvas, updateCanvasItem,
     addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, addOptimisticCanvasRelation, replaceOptimisticCanvasRelation, rollbackOptimisticCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,

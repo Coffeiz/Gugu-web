@@ -44,6 +44,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import type { UserSkillItem, UserSkillWrite } from '@/services/api'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { showAppError } from '@/composables/core/useAppToast'
 import { useUiStore } from '@/stores/ui'
 import { useUserSkills } from '@/composables/skills/useUserSkills'
 import SkillCard from './components/SkillCard.vue'
@@ -74,8 +75,12 @@ watch(() => props.createRequest, (request, previous) => {
 async function openRequestedSkill() {
   const slug = typeof route.query.skill === 'string' ? route.query.skill : ''
   if (!slug) return
-  const target = skills.value.find(skill => skill.slug === slug)
-  if (!target) return
+  const target = skills.value.find(skill => skill.slug === slug || String(skill.id) === slug)
+  if (!target) {
+    if (!error.value) showAppError(t('skills.targetMissing'))
+    await router.replace({ query: { ...route.query, skill: undefined } })
+    return
+  }
   openEdit(target)
   await router.replace({ query: { ...route.query, skill: undefined } })
 }

@@ -1,6 +1,7 @@
 """MCP1-005/006 回归：动态工具快照、用户隔离、调用路由与 server 退避。"""
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -61,6 +62,38 @@ def _config(user_id, *, name="demo", confirm_mode="auto"):
 async def _configs(configs):
     for config in configs:
         yield config
+
+
+@pytest.mark.asyncio
+async def test_concurrent_runtime_requests_share_one_mcp_connection(monkeypatch):
+    """页面状态探测与 Agent 同时需要同一 server 时，不重复连接和拉取工具。"""
+    manager = manager_module.McpToolManager()
+    config = _config(uuid4())
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def load_runtime(_settings, requested_config):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        runtime = manager_module._ServerRuntime(config=requested_config)
+        manager._runtimes[(manager._user_key(config.user_id), config.id)] = runtime
+        return runtime
+
+    monkeypatch.setattr(manager, "_load_runtime", load_runtime)
+    first = asyncio.create_task(manager._ensure_runtime(object(), config))
+    await started.wait()
+    second = asyncio.create_task(manager._ensure_runtime(object(), config))
+    await asyncio.sleep(0)
+
+    assert calls == 1
+    release.set()
+    first_runtime, second_runtime = await asyncio.gather(first, second)
+
+    assert first_runtime is second_runtime
+    assert calls == 1
 
 
 @pytest.mark.asyncio

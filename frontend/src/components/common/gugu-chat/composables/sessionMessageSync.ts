@@ -109,6 +109,27 @@ export function mergeSessionMessageDelta(
   return result
 }
 
+/** 搜索命中较早历史消息时，按目标 ID 一次读取有界历史页并并入当前时间线。 */
+export async function ensureSessionMessageLoaded(options: {
+  sessionId: number
+  messageId: number
+  messages: Ref<ChatMessage[]>
+  mkid: () => number
+  resolveSpeaker: SpeakerResolver
+  isCurrent?: () => boolean
+}): Promise<boolean> {
+  if (options.messages.value.some(message => message.dbId === options.messageId)) return true
+  if (options.isCurrent && !options.isCurrent()) return false
+  const data = await agentApi.getMessagesBefore(String(options.sessionId), options.messageId + 1, 200)
+  if (options.isCurrent && !options.isCurrent()) return false
+  if (!(data.messages || []).some((message: { id: number }) => Number(message.id) === options.messageId)) return false
+  const incoming = mapSessionMessageDelta(data, options.mkid, options.resolveSpeaker)
+  options.messages.value = sortSessionTimelineMessages(
+    mergeSessionMessageDelta(options.messages.value, incoming),
+  )
+  return options.messages.value.some(message => message.dbId === options.messageId)
+}
+
 export function createSessionMessageSynchronizer(options: {
   messages: Ref<ChatMessage[]>
   sessionId: Ref<number | null>

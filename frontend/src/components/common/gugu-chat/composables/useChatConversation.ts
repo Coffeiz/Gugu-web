@@ -7,6 +7,7 @@ import type { ChatMessage, ChatFile, ChatSession, ChatReference } from '../chatT
 import { renderMd } from '../markdown'
 import { displayQQFaces } from '../messageDisplay'
 import { SESSION_KEY, LAST_SESSION_KEY } from '../chatConstants'
+import { ensureSessionMessageLoaded } from './sessionMessageSync'
 import { getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
 import { useChatStream } from './useChatStream'
 import { useChatSessions } from './useChatSessions'
@@ -240,11 +241,28 @@ export function useChatConversation(options: {
   // scrollToIndex 滚过去（数据本来就在 messages 里，不用管它当前有没有挂 DOM），
   // 等它挂载出来再交给 _flashChatMessage 做高亮。
   async function _revealMessage(dbId: number) {
-    const idx = messages.value.findIndex(m => m.dbId === dbId)
-    if (idx === -1) return
+    let idx = messages.value.findIndex(m => m.dbId === dbId)
+    if (idx === -1 && sessionId.value != null) {
+      const sessionIdAtRequest = sessionId.value
+      try {
+        await ensureSessionMessageLoaded({
+          sessionId: sessionIdAtRequest,
+          messageId: dbId,
+          messages,
+          mkid,
+          resolveSpeaker,
+          isCurrent: () => sessionId.value === sessionIdAtRequest,
+        })
+      } catch {
+        return false
+      }
+      idx = messages.value.findIndex(m => m.dbId === dbId)
+    }
+    if (idx === -1) return false
     stick.value = false   // 跳去的多半是历史消息，不该被当成「回到底部」处理
     options.messageListRef.value?.scrollToIndex(idx, { align: 'center', behavior: 'auto' })
     await nextTick()
+    return true
   }
 
   let flashRequest = 0

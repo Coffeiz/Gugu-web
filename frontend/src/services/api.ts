@@ -433,6 +433,7 @@ export const mcpApi = {
   update: (id: string, data: Record<string, unknown>) => patch<McpServerItem>(`/mcp/servers/${encodeURIComponent(id)}`, data),
   remove: (id: string) => del(`/mcp/servers/${encodeURIComponent(id)}`),
   test: (id: string) => post<{ ok: boolean; error?: string; tool_count?: number; tools?: string[] }>(`/mcp/servers/${encodeURIComponent(id)}/test_connection`, {}),
+  loadStatus: (id: string) => post<{ ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string | null }>(`/mcp/servers/${encodeURIComponent(id)}/load_status`, {}),
   reconnect: (id: string) => post<{ ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string }>(`/mcp/servers/${encodeURIComponent(id)}/reconnect`, {}),
   tools: (id: string) => get(`/mcp/servers/${encodeURIComponent(id)}/tools`),
 }
@@ -1039,6 +1040,8 @@ export const agentApi = {
     const query = params.toString()
     return get(`/agent/sessions/${sessionId}/messages${query ? `?${query}` : ''}`)
   },
+  getMessagesBefore: (sessionId: string, beforeId: number, limit = 200) =>
+    get(`/agent/sessions/${sessionId}/messages?before_id=${encodeURIComponent(String(beforeId))}&limit=${encodeURIComponent(String(limit))}`),
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
   listImportedDraftQueues: () => get<{ queues: Array<{ queue_id: string; items: Array<{ key: number; queue_id: string; session_id: null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }> }>('/agent/pending-queues/imported-drafts'),

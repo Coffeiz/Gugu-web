@@ -15,8 +15,8 @@
     </div>
     <div class="sc-when">
       <span>{{ transportLabel }}</span>
-      <span>{{ t('skillsMcpUi.toolCount', { count: props.server.loaded_tool_count ?? 0 }) }}</span>
-      <span>{{ statusLabel }}</span>
+      <span>{{ props.statusChecking ? t('skillsMcpUi.loadingTools') : t('skillsMcpUi.toolCount', { count: props.server.loaded_tool_count ?? 0 }) }}</span>
+      <span>{{ props.statusChecking ? `${t('skillsMcpUi.enabled')} · ${t('skillsMcpUi.checking')}` : statusLabel }}</span>
     </div>
     <p class="sc-desc" :title="connectionTarget">{{ connectionTarget }}</p>
     <p v-if="props.server.has_credentials" class="sc-credential">{{ t('skillsMcpUi.credentialsConfigured') }}</p>
@@ -25,7 +25,7 @@
       <span class="sc-acts">
         <button class="card-link-btn" :disabled="props.busy" @click="$emit('test', props.server)">{{ props.busy ? t('skillsMcpUi.testing') : t('skillsMcpUi.test') }}</button>
         <button class="card-link-btn" :disabled="props.busy" @click="$emit('reconnect', props.server)">{{ t('skillsMcpUi.reconnect') }}</button>
-        <button class="card-link-btn" @click="$emit('edit', props.server)">{{ t('skillsMcpUi.edit') }}</button>
+        <button class="card-link-btn" :disabled="props.busy" @click="$emit('edit', props.server)">{{ t('skillsMcpUi.edit') }}</button>
         <button class="card-link-btn danger" :disabled="props.busy" @click="$emit('remove', props.server)">{{ t('skillsMcpUi.delete') }}</button>
       </span>
     </div>
@@ -38,7 +38,7 @@ import { useI18n } from 'vue-i18n'
 import ToggleSwitch from '@/components/common/controls/ToggleSwitch.vue'
 import type { McpServerItem } from '@/services/api'
 
-const props = defineProps<{ server: McpServerItem; busy?: boolean }>()
+const props = defineProps<{ server: McpServerItem; busy?: boolean; statusChecking?: boolean }>()
 defineEmits<{
   (event: 'toggle' | 'test' | 'reconnect' | 'edit' | 'remove', server: McpServerItem): void
 }>()

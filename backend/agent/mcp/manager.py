@@ -84,6 +84,7 @@ class McpToolManager:
 
     def __init__(self):
         self._runtimes: dict[tuple[UUID, UUID], _ServerRuntime] = {}
+        self._runtime_load_locks: dict[tuple[UUID, UUID], asyncio.Lock] = {}
         self._idle_reaper_task: asyncio.Task | None = None
 
     # ── 声明侧：轮次组装时按用户合并 ──
@@ -208,11 +209,38 @@ class McpToolManager:
         """强制按给定配置重新发现工具，并把结果写入运行时缓存。"""
         from app.core.config import get_settings
 
-        self.invalidate_server(config.user_id, config.id)
-        runtime = await self._load_runtime(get_settings(), config)
-        # 失败时 _load_runtime 可能返回 None，但仍会把诊断状态写入缓存；
-        # 连接测试需要把该状态中的真实错误返回给调用方。
-        return runtime or self._runtimes.get((self._user_key(config.user_id), config.id))
+        key = (self._user_key(config.user_id), config.id)
+        lock = self._runtime_load_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            self.invalidate_server(config.user_id, config.id)
+            runtime = await self._ensure_runtime_locked(get_settings(), config)
+            # 失败时 _load_runtime 可能返回 None，但仍会把诊断状态写入缓存；
+            # 连接测试需要把该状态中的真实错误返回给调用方。
+            return runtime or self._runtimes.get(key)
+
+    async def ensure_server_status(self, config: McpServerConfig) -> dict:
+        """按需加载单个启用服务并返回可安全展示的运行状态。"""
+        from app.core.config import get_settings
+
+        key = (self._user_key(config.user_id), config.id)
+        runtime = await self._ensure_runtime(get_settings(), config)
+        runtime = runtime or self._runtimes.get(key)
+        if runtime is None:
+            return {
+                "ok": False,
+                "state": _ERROR_STATE,
+                "tool_count": 0,
+                "tool_names": [],
+                "error": None,
+            }
+        state = runtime.effective_state()
+        return {
+            "ok": state == _OK_STATE,
+            "state": state,
+            "tool_count": len(runtime.tools) if state == _OK_STATE else 0,
+            "tool_names": sorted(runtime.tools) if state == _OK_STATE else [],
+            "error": sanitize_error(runtime.last_error) if runtime.last_error else None,
+        }
 
     def server_states(self, user_id) -> list[dict]:
         """设置页连接状态：正常/错误/退避中 + 载入的工具数（FR-MCP-6）。"""
@@ -350,6 +378,15 @@ class McpToolManager:
     async def _ensure_runtime(self, settings, config: McpServerConfig) -> _ServerRuntime | None:
         """惰性装载：配置未变且已装载/退避中直接用缓存；否则重拉 tools/list。"""
         key = (self._user_key(config.user_id), config.id)
+        lock = self._runtime_load_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            return await self._ensure_runtime_locked(settings, config)
+
+    async def _ensure_runtime_locked(
+        self, settings, config: McpServerConfig,
+    ) -> _ServerRuntime | None:
+        """调用方持有该 server 的加载锁时检查或建立运行时。"""
+        key = (self._user_key(config.user_id), config.id)
         runtime = self._runtimes.get(key)
         if runtime is not None:
             # 配置可能由另一个 worker 保存；必须先比较版本，再判断旧运行时
@@ -369,7 +406,8 @@ class McpToolManager:
             ):
                 await runtime.client.aclose()
                 runtime.client = None
-            if runtime.config == config and runtime.tools:
+            # 空工具列表也是一次成功发现的有效结果，不能仅凭 tools 为空就重复连接。
+            if runtime.config == config and runtime.effective_state() == _OK_STATE:
                 return runtime
         return await self._load_runtime(settings, config)
 

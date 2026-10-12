@@ -13,7 +13,7 @@
           @snap="onDateSnap"
         />
         <div ref="listRef" class="ntp-list-scroll scroll-surface--hidden" @scroll="onListScroll">
-          <div v-if="store.loading && !store.loaded" class="ntp-state">{{ t('common.status.loading') }}</div>
+          <div v-if="store.loading && !store.loaded && !store.notes.length" class="ntp-state">{{ t('common.status.loading') }}</div>
           <template v-else>
             <template v-for="group in store.timeline" :key="group.date">
               <div class="ntp-day-label" :data-date="group.date">
@@ -214,7 +214,11 @@ const dateIndexCenter = ref(Math.max(0, store.timeline.length - 1))
 const dateNavigationActive = ref(false)
 
 onMounted(() => {
-  if (!store.loaded) void store.fetchNotes().then(() => openRequestedNote()).catch(() => { /* 全局拦截器已提示；留在空态供用户重试 */ })
+  if (!store.loaded) {
+    // 搜索目标按 ID 读取，不等时间流首屏或逐页遍历；首屏并行加载用于填充周边时间线。
+    void store.fetchNotes().catch(() => { /* 全局拦截器已提示；留在空态供用户重试 */ })
+    if (route.query.object_id != null) void openRequestedNote()
+  }
   else void openRequestedNote()
   document.addEventListener('click', closeColorPicker)
 })
@@ -236,13 +240,19 @@ const selected = computed(() => store.notes.find(n => n.id === selectedId.value)
 // 聊天跳转可通过 query 首次进入，也可在本页重复点击时通过 gugu:open-object 事件触发。
 async function openRequestedNote(requestedId = Number(route.query.object_id)) {
   if (!Number.isFinite(requestedId)) return
-  while (!store.notes.some(note => note.id === requestedId) && store.hasMore && !store.loadingMore) {
-    const countBefore = store.notes.length
-    await store.loadMoreNotes()
-    if (store.notes.length === countBefore) break
+  let note = store.notes.find(item => item.id === requestedId)
+  try {
+    note ??= await store.fetchNoteById(requestedId) ?? undefined
+  } catch {
+    note = undefined
   }
-  const note = store.notes.find(item => item.id === requestedId)
-  if (!note) return
+  if (!note) {
+    showAppNotice(t('mind.noteMissing'))
+    if (Number(route.query.object_id) === requestedId) {
+      await router.replace({ query: { ...route.query, object_id: undefined } })
+    }
+    return
+  }
   selectedId.value = requestedId
   await nextTick()
   listRef.value?.querySelector<HTMLElement>(`[data-note-id="${requestedId}"]`)?.scrollIntoView({ block: 'nearest' })
