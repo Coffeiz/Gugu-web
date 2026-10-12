@@ -38,7 +38,7 @@
               <PdfViewer v-if="isPdf" :blobUrl="blobUrl ?? undefined" />
               <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" :upscale="isVectorImage" />
               <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" />
-              <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" />
+              <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" :refresh-src="refreshVideoSource" />
 
             </template>
           </div>
@@ -205,6 +205,14 @@ function withCacheBust(url: string, refresh: boolean): string {
 }
 
 let loadSequence = 0
+async function refreshVideoSource(): Promise<string> {
+  const id = props.file?.id
+  if (typeof id !== 'number') throw new Error('无法刷新视频地址')
+  const { url } = await filesApi.getStreamUrl(id)
+  if (!props.show || props.file?.id !== id) throw new DOMException('预览已切换', 'AbortError')
+  return url
+}
+
 watch(accountBoundaryEpoch, () => {
   loadSequence += 1
   revoke()

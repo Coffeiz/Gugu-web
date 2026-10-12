@@ -600,6 +600,8 @@ class File(Base):
     user_id:      Mapped[UUID]          = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     display_name: Mapped[str]           = mapped_column(String(300))
     ext:          Mapped[str]           = mapped_column(String(20))
+    # 持久化拼音/罗马音候选；NULL 表示旧数据尚未完成后台回填。
+    search_romaji: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 所属空间：project | mind | asset | personal | workspace
     space:        Mapped[str]           = mapped_column(String(20), default="personal")
     workspace_directory_id: Mapped[Optional[int]] = mapped_column(
@@ -685,6 +687,8 @@ class Folder(Base):
     )
     parent_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     name:       Mapped[str]           = mapped_column(String(200))
+    # 持久化拼音/罗马音候选；NULL 表示旧数据尚未完成后台回填。
+    search_romaji: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
     version:    Mapped[int]           = mapped_column(Integer, default=1)    # 乐观锁位（P2.6，同 Project 的 409 并发模式）
@@ -1109,8 +1113,8 @@ class ConversationMessage(Base):
     canonical_batch: Mapped[Optional["ConversationBatch"]] = relationship(back_populates="messages")
 
 
-class InteractionPrompt(Base):
-    """等待用户选择/确认的短时交互提示。"""
+class InteractionRequest(Base):
+    """等待用户响应的一次短时交互请求。"""
 
     __tablename__ = "interaction_prompts"
 
@@ -1127,8 +1131,12 @@ class InteractionPrompt(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 
+# 兼容仍通过旧名称导入模型的扩展；新代码统一使用 InteractionRequest。
+InteractionPrompt = InteractionRequest
+
+
 class InteractionAction(Base):
-    """Prompt 下的单次动作；数据库只保存动作 token 的摘要。"""
+    """交互请求下的单次动作；数据库只保存动作 token 的摘要。"""
 
     __tablename__ = "interaction_actions"
 
@@ -1836,4 +1844,4 @@ class TrashPurgeJob(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
 
-from app.models.mcp import UserMcpServer  # noqa: E402  (PRD-MCP-1)
+from app.models.mcp import McpSecretInput, UserMcpServer  # noqa: E402  (PRD-MCP-1)

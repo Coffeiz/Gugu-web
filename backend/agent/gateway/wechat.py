@@ -123,6 +123,18 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
 
     # 下载+解密+暂存媒体：当前消息附件 + 引用里的图片附件一并入队。
     media_items = non_text + quoted_items
+    # 凭据输入必须早于媒体下载/暂存拦截；微信 worker 的统一 dispatch 已有
+    # 同一检查，这里再前移到 gateway，避免敏感态消息产生媒体副作用。
+    from agent.im.interaction_text import consume_mcp_secret_payload
+
+    if await consume_mcp_secret_payload({
+        "platform": "wechat", "channel_id": channel_id, "owner_user_id": owner,
+        "platform_user_id": from_user, "message_id": context_token,
+        "chat_type": "group" if group_id else "c2c", "chat_id": group_id or None,
+        "context_token": context_token, "text": text,
+        "attachments": [{"pending_media": True}] if media_items else [],
+    }):
+        return
     attachments = await _ingest_wechat_media(media_items, owner) if media_items else []
     from agent.runtime import trace
     tid = trace.new_trace()

@@ -70,6 +70,11 @@ html[data-family='mono'] :is(.mind-project-card, .drawer-project-card, .pr-card)
 html[data-family='mono'] :is(.mind-project-card, .drawer-project-card, .pr-card)[data-runtime-proxy-content='true'][data-runtime-phase='landing']::after {
   opacity: 0 !important;
 }
+/* 画布项目卡的主题渐变本身绘制在 ::before 上。landing 时保留透明会让代理始终只显示抓取玻璃，
+   直到代理销毁才露出真实卡片；恢复伪元素不透明度，让它沿用卡片原有 transition 淡回底色。 */
+html[data-family='mono'] .mind-project-card[data-runtime-proxy-content='true'][data-runtime-phase='landing']::before {
+  opacity: 1 !important;
+}
 
 html[data-theme='dark'][data-family] .note-card[data-runtime-proxy-content='true'] {
   background: var(--note-surface) !important;

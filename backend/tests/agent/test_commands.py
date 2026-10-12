@@ -175,7 +175,7 @@ async def test_new_removes_old_interactions_without_touching_other_sessions(db, 
     from datetime import timedelta
 
     from app.core.tz import now_utc
-    from app.models import ConversationMessage, InteractionAction, InteractionPrompt
+    from app.models import ConversationMessage, InteractionAction, InteractionRequest
     from app.services.interactions import list_history
 
     session = ConversationSession(user_id=user_a.id, title="重置目标", source="web")
@@ -188,18 +188,18 @@ async def test_new_removes_old_interactions_without_touching_other_sessions(db, 
         session_id=session.id, role="user", content="旧对话内容", created_at=now,
     ))
     prompts = [
-        InteractionPrompt(
+        InteractionRequest(
             user_id=user_a.id, session_id=session.id, kind="choice", title="旧待选择",
             body="选择一个选项", schema_json={"options": [{"id": "yes", "label": "是"}]},
             status="active", expires_at=now + timedelta(hours=1), created_at=now,
         ),
-        InteractionPrompt(
+        InteractionRequest(
             user_id=user_a.id, session_id=session.id, kind="choice", title="旧已完成",
             body="已提交的选择", schema_json={"options": [{"id": "no", "label": "否"}]},
             status="resolved", expires_at=now + timedelta(hours=1), resolved_at=now,
             created_at=now + timedelta(seconds=1),
         ),
-        InteractionPrompt(
+        InteractionRequest(
             user_id=user_a.id, session_id=other_session.id, kind="choice", title="另一会话卡片",
             body="保持不变", schema_json={"options": []}, status="active",
             expires_at=now + timedelta(hours=1), created_at=now,

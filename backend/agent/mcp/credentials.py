@@ -8,6 +8,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 _SLOT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 _PLACEHOLDER = re.compile(r"\{\{secret:([A-Za-z0-9][A-Za-z0-9_-]{0,63})\}\}")
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,8 @@ def normalize_slots(raw) -> list[dict[str, str]]:
             raise ValueError("凭据槽位 id 无效或重复")
         if target not in {"header", "query"} or not name or len(name) > 256:
             raise ValueError("凭据槽位必须指定 header 或 query 及字段名")
+        if target == "header" and not _HEADER_NAME.fullmatch(name):
+            raise ValueError("HTTP Header 名称格式无效，请使用 ASCII 字母、数字或合法标点")
         if not label or len(label) > 120 or len(prefix) > 120:
             raise ValueError("凭据槽位标签或前缀过长")
         seen_ids.add(slot_id)
@@ -48,6 +51,23 @@ def normalize_slots(raw) -> list[dict[str, str]]:
 
 def secret_fields(slots: list[dict[str, str]]) -> list[dict[str, str]]:
     return [{"name": slot["id"], "label": slot["label"], "type": "secret"} for slot in slots]
+
+
+def validate_header_credentials(slots: list[dict[str, str]], values: dict[str, str]) -> None:
+    """在保存/发出 HTTP Header 前拒绝无法编码或有注入风险的凭据值。"""
+    for slot in slots:
+        if slot.get("target") != "header":
+            continue
+        value = values.get(slot["id"])
+        if value is None:
+            continue
+        injected = slot.get("prefix", "") + value
+        try:
+            injected.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise ValueError("HTTP Header 凭据只能使用 ASCII 字符；请检查密钥值和前缀") from exc
+        if any(ord(char) < 32 or ord(char) == 127 for char in injected):
+            raise ValueError("HTTP Header 凭据不能包含换行或控制字符")
 
 
 def legacy_slots(headers: dict[str, str], query: dict[str, str]) -> tuple[list[dict[str, str]], dict[str, str]]:
@@ -65,6 +85,7 @@ def legacy_slots(headers: dict[str, str], query: dict[str, str]) -> tuple[list[d
 def assemble_credentials(endpoint: str, slots: list[dict[str, str]], values: dict[str, str] | None) -> tuple[str, dict[str, str], dict[str, str]]:
     """在请求边界组装凭据；返回值只允许留在当前运行时内。"""
     values = values or {}
+    validate_header_credentials(slots, values)
     headers: dict[str, str] = {}
     query: dict[str, str] = {}
     url = endpoint

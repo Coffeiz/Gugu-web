@@ -350,6 +350,10 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 先标记 active，再创建脱离请求的后台任务。否则新会话刚收到 session_id
         # 时点击中断会看到 active=false，cancel 请求会错过这次生成。
         await genstream.begin(session_id, owner_run_id=owner_run_id)
+        from app.core import events
+        await events.publish_agent_run_changed(
+            user_id, session_id=session_id, status="running",
+        )
         if req.pending_queue_item_key is not None or (is_new_session and req.pending_queue_id):
             from app.services.conversation_pending_queue import publish_session_pending_queue_changed
             await publish_session_pending_queue_changed(
@@ -1141,6 +1145,15 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         from agent.llm.llm_select import release as _release_model
         _release_model(model_cfg)
         await genstream.end(session_id, owner_run_id=owner_run_id)
+        try:
+            from app.core import events
+            await events.publish_agent_run_changed(
+                req.user_id,
+                session_id=session_id,
+                status="failed" if generation_failed or cancelled else "completed",
+            )
+        except Exception:
+            pass
         from app.services.conversation_pending_queue import publish_session_pending_queue_changed
         await publish_session_pending_queue_changed(
             req.user_id, session_id, origin=getattr(req, "origin", None),
@@ -1239,6 +1252,10 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 # begin 之后立即补回来，避免出现「无租约的活跃快照」被孤儿回收。
                 await genstream.begin(session_id, owner_run_id=claimed)
                 await genstream.claim_lease(session_id, claimed)
+                from app.core import events
+                await events.publish_agent_run_changed(
+                    req.user_id, session_id=session_id, status="running",
+                )
             # 从这一刻起本 run 已接管快照（旧的取消标记已被 begin 清掉），
             # 心跳开始按本 run 的取消标记工作。
             run_begun = True
@@ -1347,3 +1364,9 @@ async def _finalize_preflight_failure(target, model_cfg=None, error=None,
         _release_model(model_cfg)
     finally:
         await genstream.end(target.session_id, owner_run_id=target.run_id)
+        from app.core import events
+        await events.publish_agent_run_changed(
+            target.user_id,
+            session_id=target.session_id,
+            status="failed" if error is not None or cancelled else "completed",
+        )

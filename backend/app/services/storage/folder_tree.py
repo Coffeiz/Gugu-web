@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Conflict, Invalid, NotFound
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
+from app.search.romaji_index import build_romaji_search_text
 from app.models import Folder, Project, WorkspaceDirectory
 
 
@@ -195,7 +196,12 @@ class SqlAlchemyFolderTree:
                     update(Folder)
                     .where(Folder.id == folder_id, Folder.user_id == user_id,
                            Folder.deleted_at.is_(None), Folder.version == client_version)
-                    .values(name=new_name, version=Folder.version + 1, updated_at=now_utc())
+                    .values(
+                        name=new_name,
+                        search_romaji=build_romaji_search_text(new_name),
+                        version=Folder.version + 1,
+                        updated_at=now_utc(),
+                    )
                 )
         except IntegrityError as exc:
             if await self._active_name_exists(

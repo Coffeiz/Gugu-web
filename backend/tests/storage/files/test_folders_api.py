@@ -6,11 +6,12 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.api.v1 import folders as folders_api
 from app.core.errors import Conflict, Invalid, NotFound
 from app.models import Project
-from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename
+from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename, ResolveFolderPathsRequest
 from app.services.storage import LocalStorageBackend
 
 
@@ -34,22 +35,46 @@ async def test_create_endpoint(db, user_a):
     assert r.name == "资料" and r.file_count == 0 and r.parent_id is None
 
 
-async def test_list_all_in_scope_includes_descendants_without_leaking_other_users(db, user_a, user_b):
+async def test_folder_page_is_direct_children_and_has_hard_bound(db, user_a, user_b):
     parent = await _create(db, user_a, "资料")
     child = await _create(db, user_a, "子目录", parent_id=parent.id)
     await _create(db, user_b, "他人目录")
 
-    roots = await folders_api.list_folders(
-        project_id=None, workspace_directory_id=None, parent_id=None, all_in_scope=False,
-        current_user=user_a, db=db,
+    roots = await folders_api.list_folder_page(
+        project_id=None, workspace_directory_id=None, parent_id=None, limit=1, cursor=None,
+        sort_by='createdAt', sort_order='desc', current_user=user_a, db=db,
     )
-    scoped = await folders_api.list_folders(
-        project_id=None, workspace_directory_id=None, parent_id=None, all_in_scope=True,
+
+    assert [folder.id for folder in roots['items']] == [parent.id]
+    assert roots['has_more'] is False
+    assert child.id not in {folder.id for folder in roots['items']}
+
+
+async def test_resolve_folder_paths_returns_only_requested_owned_prefixes(db, user_a, user_b):
+    parent = await _create(db, user_a, "资料")
+    child = await _create(db, user_a, "图片", parent_id=parent.id)
+    unrelated = await _create(db, user_a, "其他")
+    await _create(db, user_b, "资料")
+
+    rows = await folders_api.resolve_folder_paths(
+        ResolveFolderPathsRequest(paths=["资料/图片", "资料/缺失", "其他"]),
         current_user=user_a, db=db,
     )
 
-    assert [folder.id for folder in roots] == [parent.id]
-    assert {folder.id for folder in scoped} == {parent.id, child.id}
+    assert {row.id for row in rows} == {parent.id, child.id, unrelated.id}
+    assert all(row.id != 0 for row in rows)
+
+
+async def test_resolve_folder_paths_cannot_escape_or_cross_base_scope(db, user_a):
+    folder = await _create(db, user_a, "目录")
+    with pytest.raises(ValidationError):
+        ResolveFolderPathsRequest(paths=["../越界"])
+
+    rows = await folders_api.resolve_folder_paths(
+        ResolveFolderPathsRequest(parent_id=folder.id, paths=["子目录"]),
+        current_user=user_a, db=db,
+    )
+    assert rows == []
 
 
 async def test_create_duplicate_conflict(db, user_a):

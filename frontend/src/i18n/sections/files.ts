@@ -5,6 +5,7 @@ export const filesUi = {
 } as const
 
 Object.assign(filesUi['zh-CN'], {
+  loading: '加载中…', loadMoreFolders: '加载更多文件夹',
   fileNameWithoutExtension: '文件名（不含后缀）', fileExtension: '文件后缀', extensionInvalid: '请输入 1 到 10 位字母、数字、下划线或连字符；不能使用 FILE。',
   compress: '压缩', extract: '解压', archiveCompressTitle: '压缩所选内容', archiveExtractTitle: '解压文件',
   archiveCompressHint: '所选文件与文件夹将在当前目录打包为 ZIP；源内容上限为 512 MB。',
@@ -17,6 +18,8 @@ Object.assign(filesUi['zh-CN'], {
   archiveFailed: '操作失败，请稍后重试。',
   downloadFailed: '下载失败，请稍后重试。',
 })
+Object.assign(filesUi['ja-JP'], { loading: '読み込み中…', loadMoreFolders: 'フォルダーをさらに表示' })
+Object.assign(filesUi['en-US'], { loading: 'Loading…', loadMoreFolders: 'Load more folders' })
 Object.assign(filesUi['ja-JP'], {
   fileNameWithoutExtension: 'ファイル名（拡張子なし）', fileExtension: 'ファイル拡張子', extensionInvalid: '拡張子は英数字、アンダースコア、ハイフンの 1～10 文字で入力してください。FILE は使用できません。',
   compress: '圧縮', extract: '解凍', archiveCompressTitle: '選択項目を圧縮', archiveExtractTitle: 'ファイルを解凍',
@@ -52,6 +55,9 @@ export const filesViewUi = {
 Object.assign(filesViewUi['zh-CN'], { extractTo: '解压' })
 Object.assign(filesViewUi['ja-JP'], { extractTo: '解凍' })
 Object.assign(filesViewUi['en-US'], { extractTo: 'Extract' })
+Object.assign(filesViewUi['zh-CN'], { loadMore: '加载更多', loadingMore: '正在加载更多…', pageLimitReached: '已达到本地保留上限，请缩小目录范围后继续浏览。' })
+Object.assign(filesViewUi['ja-JP'], { loadMore: 'さらに読み込む', loadingMore: 'さらに読み込み中…', pageLimitReached: 'ローカル保持上限に達しました。範囲を絞ってください。' })
+Object.assign(filesViewUi['en-US'], { loadMore: 'Load more', loadingMore: 'Loading more…', pageLimitReached: 'The local browsing limit is reached. Narrow the directory to continue.' })
 
 export const workspaceUi = {
   'zh-CN': { workspaceDirectories: '工作区', workspaceDirectoriesHint: '位于文件库根目录的独立工作空间，默认工作区不可删除。', createWorkspace: '新建工作区', createWorkspaceHint: '工作区会直接创建在文件库根目录，并作为沙盒的独立目录。', workspaceNamePlaceholder: '工作区名称', defaultWorkspace: '默认', workspaceFileUnit: '文件', workspaceFolderUnit: '文件夹', loadingWorkspaces: '正在加载工作区…', noWorkspaces: '暂无工作区', workspaceLoadFailed: '工作区加载失败', workspaceCreateFailed: '工作区创建失败', renameWorkspace: '重命名工作区', workspaceRenameFailed: '工作区重命名失败', workspaceDeleteFailed: '工作区删除失败', deleteWorkspaceTitle: '删除工作区', deleteWorkspaceMessage: '确认删除「{name}」？\n将删除其中 {files} 个文件、{folders} 个文件夹，并解除 {sessions} 个会话和 {tasks} 个定时任务的绑定。', deleteWorkspace: '删除工作区' },

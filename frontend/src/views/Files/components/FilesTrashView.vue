@@ -34,6 +34,7 @@
           <div v-if="trashFolderContents[folder.id]?.folders.length === 0 && trashFolderContents[folder.id]?.files.length === 0" class="trash-folder-empty">{{ t('filesViewUi.emptyFolder') }}</div>
           <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row"><Icon name="file.folder" :size="14" /><span>{{ child.name }}</span><small>{{ t('filesViewUi.fileCount', { count: child.fileCount }) }}</small></div>
           <div v-for="file in trashFolderContents[folder.id]?.files || []" :key="`trash-child-file-${file.id}`" class="trash-child-row file"><component :is="fileListIcon(file.ext)" :size="14" :style="{ color: fileIconColor(file.ext) }" /><span>{{ file.displayName }}.{{ file.ext.toLowerCase() }}</span></div>
+          <button v-if="trashFolderCursors[folder.id]?.folderHasMore || trashFolderCursors[folder.id]?.fileHasMore" class="trash-load-more" @click.stop="loadMoreTrashFolderContents(folder.id)">{{ t('filesViewUi.loadMore') }}</button>
         </div>
       </div>
     </template>
@@ -60,7 +61,7 @@ import type { PropType } from 'vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { t } = useI18n()
-const { trashFolders, contents, sortedContents, sortedTrashFolders, expandedTrashFolders, trashFolderContents, sortKey, sortDir, onSortSelect, inSelectionMode, selectedTrashFolderIds, selectedIds, previewFolderKeys, previewFileIds, handleTrashFolderClick, toggleTrashFolder, restoreTrashFolder, hardDeleteTrashFolder, handleTrashFileClick, restoreFile, hardDeleteFile, fileListIcon, fileIconColor, formatDate, daysLeft, loading } = props.context
+const { trashFolders, contents, sortedContents, sortedTrashFolders, expandedTrashFolders, trashFolderContents, trashFolderCursors, loadMoreTrashFolderContents, sortKey, sortDir, onSortSelect, inSelectionMode, selectedTrashFolderIds, selectedIds, previewFolderKeys, previewFileIds, handleTrashFolderClick, toggleTrashFolder, restoreTrashFolder, hardDeleteTrashFolder, handleTrashFileClick, restoreFile, hardDeleteFile, fileListIcon, fileIconColor, formatDate, daysLeft, loading } = props.context
 </script>
 
 <style scoped>

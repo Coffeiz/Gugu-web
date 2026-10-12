@@ -7,13 +7,13 @@
     <video
       ref="videoRef"
       class="vv-video"
-      :src="src"
+      :src="activeSrc"
       :controls="visible"
       playsinline
       preload="metadata"
       @volumechange="persistVolume"
       @error="onError"
-      @play="playing = true"
+      @play="onPlay"
       @pause="playing = false"
       @ended="playing = false"
     ></video>
@@ -38,21 +38,30 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch, type PropType } from 'vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const props = defineProps({
   src: { type: String, default: null },
+  refreshSrc: { type: Function as PropType<() => Promise<string>>, default: undefined },
 })
 
 const videoRef = ref<HTMLVideoElement | null>(null)
+const activeSrc = ref(props.src)
 const error    = ref(false)
 const playing  = ref(false)
 const visible  = ref(false)
 const VIDEO_VOLUME_KEY = 'gugu_video_volume'
 
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+const VIDEO_SOURCE_REFRESH_AFTER_MS = 8 * 60 * 1000
+let sourceCreatedAt = Date.now()
+let sourceRefreshAttempted = false
+let sourceRefreshPromise: Promise<boolean> | null = null
+let sourceGeneration = 0
+let cancelMetadataWait: (() => void) | null = null
+let mounted = true
 
 function readSavedVolume(): number | null {
   try {
@@ -94,7 +103,11 @@ function onMouseLeave() {
 }
 
 // ── 视频控制 ──────────────────────────────────────────
-watch(() => props.src, () => {
+watch(() => props.src, (src) => {
+  sourceGeneration += 1
+  activeSrc.value = src
+  sourceCreatedAt = Date.now()
+  sourceRefreshAttempted = false
   error.value   = false
   playing.value = false
   if (videoRef.value) {
@@ -103,17 +116,119 @@ watch(() => props.src, () => {
   }
 })
 
-function onError() { error.value = true }
+function sourceNeedsRefresh() {
+  return Date.now() - sourceCreatedAt >= VIDEO_SOURCE_REFRESH_AFTER_MS
+}
 
-function togglePlay() {
+function isAbortError(reason: unknown) {
+  return reason instanceof DOMException && reason.name === 'AbortError'
+}
+
+function waitForMetadata(video: HTMLVideoElement): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>
+    const cleanup = () => {
+      clearTimeout(timer)
+      video.removeEventListener('loadedmetadata', onLoaded)
+      video.removeEventListener('error', onFailed)
+      cancelMetadataWait = null
+    }
+    const finish = (reason?: unknown) => {
+      cleanup()
+      if (reason) reject(reason)
+      else resolve()
+    }
+    const onLoaded = () => finish()
+    const onFailed = () => finish(new Error('视频源刷新后仍无法读取媒体信息'))
+    cancelMetadataWait = () => finish(new DOMException('播放器已关闭', 'AbortError'))
+    timer = setTimeout(() => finish(new Error('等待视频源刷新超时')), 15_000)
+    video.addEventListener('loadedmetadata', onLoaded, { once: true })
+    video.addEventListener('error', onFailed, { once: true })
+    video.load()
+  })
+}
+
+async function refreshSource(resumePlayback: boolean): Promise<boolean> {
+  if (!props.refreshSrc || sourceRefreshAttempted) return false
+  if (sourceRefreshPromise) return sourceRefreshPromise
+
+  const video = videoRef.value
+  if (!video) return false
+  const generation = sourceGeneration
+  sourceRefreshAttempted = true
+  const position = video.currentTime
+  sourceRefreshPromise = (async () => {
+    try {
+      video.pause()
+      const newSrc = await props.refreshSrc?.()
+      if (!mounted || generation !== sourceGeneration || !newSrc) return false
+      activeSrc.value = newSrc
+      sourceCreatedAt = Date.now()
+      error.value = false
+      await nextTick()
+      if (!mounted || generation !== sourceGeneration || !videoRef.value) return false
+      await waitForMetadata(videoRef.value)
+      // 等待媒体元数据期间可能已切换到另一条视频，不能把旧视频进度/播放状态应用到新源。
+      if (!mounted || generation !== sourceGeneration || !videoRef.value) return false
+      if (Number.isFinite(position)) videoRef.value.currentTime = position
+      sourceRefreshAttempted = false
+      if (resumePlayback) await videoRef.value.play()
+      return true
+    } catch (reason) {
+      if (mounted && !isAbortError(reason)) error.value = true
+      return false
+    } finally {
+      sourceRefreshPromise = null
+    }
+  })()
+  return sourceRefreshPromise
+}
+
+function onError() {
+  if (sourceRefreshPromise) return
+  if (sourceNeedsRefresh() && props.refreshSrc && !sourceRefreshAttempted) {
+    void refreshSource(!videoRef.value?.paused)
+    return
+  }
+  error.value = true
+}
+
+function onPlay() {
+  playing.value = true
+  if (sourceNeedsRefresh() && props.refreshSrc && !sourceRefreshAttempted) {
+    void refreshSource(true)
+  }
+}
+
+async function togglePlay() {
   const v = videoRef.value
   if (!v) return
-  v.paused ? v.play() : v.pause()
+  if (!v.paused) {
+    v.pause()
+    showBtn()
+    return
+  }
+  if (sourceNeedsRefresh() && props.refreshSrc && !sourceRefreshAttempted) {
+    if (!await refreshSource(false)) return
+  }
+  try {
+    await v.play()
+  } catch (reason) {
+    // 用户快速暂停、切源或关闭播放器时，浏览器会正常拒绝尚未完成的 play()。
+    if (isAbortError(reason)) return
+    if (sourceNeedsRefresh() && props.refreshSrc && !sourceRefreshAttempted) {
+      await refreshSource(true)
+    } else {
+      error.value = true
+    }
+  }
   showBtn()
 }
 
 onUnmounted(() => {
+  mounted = false
   clearTimeout(hideTimer ?? undefined)
+  cancelMetadataWait?.()
 })
 </script>
 

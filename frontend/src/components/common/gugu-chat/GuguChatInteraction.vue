@@ -16,10 +16,16 @@
                :name="`mcp-secret-${field.name}`" :disabled="submitting || expired"
                :aria-label="field.label" spellcheck="false" required />
       </div>
-      <ActionButton class="interaction-secret-submit" fit type="submit"
-                    :disabled="resolved || submitting || expired || !secretsReady">
-        {{ t('chatUi.submitSecretFields') }}
-      </ActionButton>
+      <div class="interaction-secret-actions">
+        <ActionButton class="interaction-secret-submit" type="submit"
+                      :disabled="resolved || submitting || expired || !secretsReady">
+          {{ t('chatUi.submitSecretFields') }}
+        </ActionButton>
+        <ActionButton class="interaction-secret-cancel" type="button"
+                      :disabled="resolved || submitting || expired" @click="cancelSecrets">
+          {{ t('common.actions.cancel') }}
+        </ActionButton>
+      </div>
     </form>
     <div v-if="customInputActive" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
     <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
@@ -61,6 +67,7 @@ const isPausedConfirmation = computed(() => Boolean(
   || (props.msg.interaction?.kind === 'confirm' && props.msg.interaction?.toolCallId),
 ))
 const displayOptions = computed(() => (props.msg.interaction?.options || [])
+  .filter(() => !secretFields.value.length)
   .filter(option => !(option.id === CUSTOM_REPLY_OPTION_ID && customInputActive.value))
   .map(option => option.id === CUSTOM_REPLY_OPTION_ID
     ? { ...option, label: t('chatUi.customReply') }
@@ -73,6 +80,7 @@ const secretsReady = computed(() => secretFields.value.length > 0
 const emit = defineEmits<{
   select: [msg: ChatMessage, option: { id: string; label: string; token: string }]
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
+  secretCancel: [msg: ChatMessage]
 }>()
 function submitSecrets() {
   if (!secretsReady.value || resolved.value || submitting.value || expired.value) return
@@ -81,6 +89,12 @@ function submitSecrets() {
   emit('secretSubmit', props.msg, Object.fromEntries(
     secretFields.value.map(field => [field.name, secretValues.value[field.name] || '']),
   ))
+}
+function cancelSecrets() {
+  if (resolved.value || submitting.value || expired.value) return
+  submitting.value = true
+  if (props.msg.interaction) props.msg.interaction.submitting = true
+  emit('secretCancel', props.msg)
 }
 function selectOption(option: { id: string; label: string; token: string }) {
   if (resolved.value || submitting.value || expired.value) return
@@ -109,8 +123,9 @@ watch(() => props.msg.interaction?.resolved, (value) => {
   resolved.value = Boolean(value)
   scheduleExpiry()
 })
-watch(() => props.msg.interaction?.submitting, (value) => {
+watch(() => props.msg.interaction?.submitting, (value, previous) => {
   submitting.value = Boolean(value)
+  if (previous && !value) secretValues.value = {}
 })
 watch(() => props.msg.interaction?.resolved, (value) => {
   if (value) secretValues.value = {}
@@ -147,7 +162,8 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 .interaction-secrets { display: grid; gap: 9px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider); }
 .interaction-secret-field { display: grid; gap: 5px; color: var(--content-secondary); font-size: var(--font-size-xs); }
 .interaction-secret-field input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 7px 9px; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--surface-input); color: var(--content-primary); }
-.interaction-secret-submit { justify-self: start; margin-top: 2px; }
+.interaction-secret-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-width: 100%; margin-top: 2px; }
+.interaction-secret-actions :deep(.app-action-button) { width: 100%; min-width: 0; }
 .interaction-response { margin-top: 8px; padding: 7px 9px; border-radius: var(--control-radius); background: var(--surface-soft); color: var(--content-secondary); font-size: var(--font-size-sm); white-space: pre-wrap; }
 .interaction-resolved { margin-top: 8px; color: var(--content-tertiary); font-size: var(--font-size-xs); }
 </style>

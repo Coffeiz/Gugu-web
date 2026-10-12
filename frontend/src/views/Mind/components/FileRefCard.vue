@@ -132,11 +132,11 @@ function onLeave() { isHovering.value = false; emit('hover', props.item, false) 
 
 const filesCache = useFilesCacheStore()
 const file = computed(() => filesCache.getFile(props.item.node.refId ?? -1))
-const fileLookupFinished = ref(Boolean(file.value) || filesCache.loaded)
+const fileLookupFinished = ref(Boolean(file.value))
 const fileLookupFailed = ref(false)
 async function loadReferencedFile() {
   const fileId = props.item.node.refId
-  if (fileId == null || file.value || filesCache.loaded) {
+  if (fileId == null || file.value) {
     fileLookupFinished.value = true
     return
   }

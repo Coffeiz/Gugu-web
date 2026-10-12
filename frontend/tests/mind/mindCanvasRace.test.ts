@@ -5,6 +5,8 @@ import { beginAccountBoundary } from '@/utils/accountBoundary'
 
 const { api } = vi.hoisted(() => ({
   api: {
+    listNotes: vi.fn(),
+    getNote: vi.fn(),
     listCanvases: vi.fn(),
     listCanvasItems: vi.fn(),
     listCanvasRelations: vi.fn(),
@@ -38,6 +40,7 @@ describe('画布加载竞态', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    api.listNotes.mockResolvedValue([])
     api.listCanvases.mockResolvedValue([canvas(1), canvas(2)])
     api.deleteCanvas.mockResolvedValue(undefined)
   })
@@ -137,5 +140,32 @@ describe('画布加载竞态', () => {
     await expect(loading).resolves.toBe(false)
     expect(store.activeCanvasId).toBeNull()
     expect(store.canvasItems).toEqual([])
+  })
+})
+
+describe('便签搜索目标按 ID 加载', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.listNotes.mockResolvedValue([])
+  })
+
+  it('直接加入不在首屏的搜索目标，继续分页仍使用服务端行偏移', async () => {
+    const note = (id: number, capturedAt: string) => ({
+      id, kind: 'note', title: null, contentMd: `便签 ${id}`, contentPlain: `便签 ${id}`,
+      color: null, version: 1, capturedAt, createdAt: capturedAt, updatedAt: capturedAt,
+    })
+    const firstPage = Array.from({ length: 100 }, (_, index) => note(index + 1, `2026-10-${String(12 - Math.floor(index / 10)).padStart(2, '0')}T00:00:00Z`))
+    const target = note(9999, '2020-01-01T00:00:00Z')
+    api.getNote.mockResolvedValue(target)
+    api.listNotes.mockResolvedValueOnce(firstPage).mockResolvedValueOnce([note(101, '2019-01-01T00:00:00Z')])
+
+    const store = useMindStore()
+    await store.fetchNoteById(target.id)
+    await store.fetchNotes()
+    await store.loadMoreNotes()
+
+    expect(store.notes.some(item => item.id === target.id)).toBe(true)
+    expect(api.listNotes).toHaveBeenNthCalledWith(2, 100, 100)
   })
 })

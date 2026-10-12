@@ -8,7 +8,7 @@ import pytest
 
 from agent.interactions.events import INTERACTION_REQUIRED, ROUND_START
 from agent.interactions.stream_events import decode_event, encode_event
-from app.models import ConversationMessage, ConversationSession, InteractionPrompt
+from app.models import ConversationMessage, ConversationSession, InteractionRequest
 from app.core.tz import now_utc
 from app.services.interactions import (
     _hash_token,
@@ -78,6 +78,29 @@ def test_event_identity_survives_round_trip():
     assert event["round_id"] == "round-2"
     assert event["tool_call_id"] == "call-7"
     assert event["seq"] == 9
+
+
+async def test_secret_input_preflight_short_circuits_im_dispatch_before_binding_commands(monkeypatch):
+    """避免凭据文本在统一 dispatch 中落入绑定码、消息历史或 Agent 路径。"""
+    from agent.im import interaction_text
+    from agent.im.loop import dispatch_im_message
+
+    observed = []
+
+    async def consume_secret(payload):
+        observed.append(payload)
+        return True
+
+    monkeypatch.setattr(interaction_text, "consume_mcp_secret_payload", consume_secret)
+    result = await dispatch_im_message({
+        "platform": "telegram", "telegram_command": "bind", "text": "bind sensitive-value",
+        "owner_user_id": "owner", "channel_id": "bot", "platform_user_id": "user",
+        "chat_type": "c2c", "chat_id": "chat", "message_id": "event",
+    })
+
+    assert result is None
+    assert len(observed) == 1
+    assert observed[0]["text"] == "bind sensitive-value"
 
 
 def test_action_tokens_are_stored_as_one_way_hashes():
@@ -243,7 +266,7 @@ async def test_question_prompt_without_options_still_offers_custom_reply(db, use
         text="建在个人文件库，叫「插画参考」", event_id="evt-open-text",
     )
     assert answered["result"]["status"] == "answered"
-    stored = await db.get(InteractionPrompt, prompt.id)
+    stored = await db.get(InteractionRequest, prompt.id)
     assert stored.status == "resolved"
 
 
@@ -276,7 +299,7 @@ async def test_im_plain_text_answers_question_prompt_with_fallback_button(db, us
     assert result is not None
     assert result["result"]["status"] == "answered"
     assert result["prompt_id"] == prompt.id
-    stored = await db.get(InteractionPrompt, prompt.id)
+    stored = await db.get(InteractionRequest, prompt.id)
     assert stored.status == "resolved"
 
 
@@ -343,7 +366,7 @@ async def test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted(d
         event_id="evt-custom-choice",
     )
     assert awaiting["result"]["status"] == "awaiting_text"
-    stored_prompt = await db.get(InteractionPrompt, prompt.id)
+    stored_prompt = await db.get(InteractionRequest, prompt.id)
     assert stored_prompt.status == "active"
     assert stored_prompt.schema_json["custom_input_active"] is True
 
@@ -356,7 +379,7 @@ async def test_agent_custom_reply_keeps_prompt_waiting_until_text_is_submitted(d
     )
     assert answered["result"]["status"] == "answered"
     assert answered["result"]["text"] == "改成归档"
-    stored_prompt = await db.get(InteractionPrompt, prompt.id)
+    stored_prompt = await db.get(InteractionRequest, prompt.id)
     assert stored_prompt.status == "resolved"
 
 

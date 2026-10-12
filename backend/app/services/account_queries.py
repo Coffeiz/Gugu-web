@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.models import AgentUsage, EmailChangeRequest, User, UserPreferences
 
@@ -14,6 +16,27 @@ async def create_user_preferences(db, user_id, data: dict) -> UserPreferences:
     db.add(row)
     await db.flush()
     return row
+
+
+async def get_or_create_user_preferences(db, user_id) -> UserPreferences:
+    """并发安全地取得偏好行，避免首次页面加载与设置写入同时插入时撞唯一键。"""
+    dialect = db.get_bind().dialect.name
+    insert = {
+        "postgresql": postgres_insert,
+        "sqlite": sqlite_insert,
+    }.get(dialect)
+    if insert is None:
+        existing = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_id))
+        if existing is not None:
+            return existing
+        return await create_user_preferences(db, user_id, {})
+
+    await db.execute(
+        insert(UserPreferences)
+        .values(user_id=user_id, data_json="{}")
+        .on_conflict_do_nothing(index_elements=[UserPreferences.user_id])
+    )
+    return await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user_id))
 
 
 async def get_user_by_id(db, user_id):

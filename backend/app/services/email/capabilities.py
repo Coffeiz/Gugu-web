@@ -17,7 +17,8 @@ def is_system_email_configured(settings: AppSettings | None = None) -> bool:
     host = smtp.host.strip()
     user = smtp.user.strip()
     password = smtp.password
-    from_addr = (smtp.from_addr or user).strip()
+    sender_field = smtp.from_addr.strip()
+    from_addr = (sender_field if "@" in sender_field else user).strip()
     parsed_address = parseaddr(from_addr)[1]
     return bool(
         host

@@ -32,7 +32,7 @@ function mountActions() {
   } as FileMeta
   const removeGhost = vi.fn()
   const createExtractionGhost = vi.fn(() => removeGhost)
-  const refresh = vi.fn().mockResolvedValue(undefined)
+  const invalidatePages = vi.fn()
   let actions!: ReturnType<typeof useFileArchiveActions>
   const app = createApp({
     setup() {
@@ -41,7 +41,7 @@ function mountActions() {
           getFile: () => archive,
           getFolder: () => null,
           addFile: vi.fn(),
-          refresh,
+          invalidatePages,
         },
         getSelectedFileIds: () => [],
         getSelectedFolderKeys: () => [],
@@ -56,7 +56,7 @@ function mountActions() {
   const host = document.createElement('div')
   document.body.appendChild(host)
   app.mount(host)
-  return { actions, archive, app, host, createExtractionGhost, refresh, removeGhost }
+  return { actions, archive, app, host, createExtractionGhost, invalidatePages, removeGhost }
 }
 
 describe('文件库归档操作', () => {
@@ -65,7 +65,7 @@ describe('文件库归档操作', () => {
     showAppError.mockReset()
   })
 
-  it('提交解压后立即关闭弹窗，以文件夹 ghost 表示进行中并在刷新后移除', async () => {
+  it('提交解压后立即关闭弹窗，以文件夹 ghost 表示进行中并失效已缓存目录页', async () => {
     let resolveUnarchive!: (value: unknown) => void
     unarchive.mockReturnValue(new Promise(resolve => { resolveUnarchive = resolve }))
     const mounted = mountActions()
@@ -79,7 +79,7 @@ describe('文件库归档操作', () => {
 
     resolveUnarchive({ file_count: 11, folder_count: 1, skipped_count: 0 })
     await submission
-    expect(mounted.refresh).toHaveBeenCalledOnce()
+    expect(mounted.invalidatePages).toHaveBeenCalledOnce()
     expect(mounted.removeGhost).toHaveBeenCalledOnce()
     expect(showAppError).not.toHaveBeenCalled()
 

@@ -110,7 +110,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { ChatMessage, GuguSession, TraceRun } from '../types'
 import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '../services/gugu'
-import { getRun, getRunSpans, listRuns } from '../services/api'
+import { getRun, getRunSpans, listRuns, subscribeTraceEvents } from '../services/api'
 import SessionMonitor from '../components/SessionMonitor.vue'
 import { buildTraceRounds } from '../utils/runExport'
 import { prettyJson } from '../utils/prettyJson'
@@ -143,6 +143,7 @@ const conversationScrollTop = ref(0)
 const monitorScrollTop = ref(0)
 const connected = ref(!!loadBootstrap())
 const activeSession = computed(() => sessions.value.find(s => s.id === activeId.value))
+let stopTraceEvents: (() => void) | null = null
 
 async function refreshSessions() {
   if (!connected.value) return
@@ -153,6 +154,25 @@ async function refreshRuns() {
   const source = activeSession.value?.source || 'web'
   runs.value = await listRuns(activeId.value, source, { limit: 20 }).catch(() => [])
   hasOlderRuns.value = runs.value.length >= 20
+}
+async function refreshLiveRun(runId: string) {
+  const [detail, page] = await Promise.all([
+    getRun(runId, { includeSpans: false }),
+    getRunSpans(runId, { limit: 100, offset: 0 }),
+  ])
+  runDetails.value = { ...runDetails.value, [runId]: { ...detail, spans: page.items ?? [] } }
+  spanOffsets.value = { ...spanOffsets.value, [runId]: page.items?.length ?? 0 }
+  spanHasMore.value = { ...spanHasMore.value, [runId]: Boolean(page.hasMore) }
+}
+function onTraceEvent(event: { run_id: string; session_key: string; status: string }) {
+  const source = activeSession.value?.source || 'web'
+  if (!activeId.value || event.session_key !== `gugu:${source}:${activeId.value}`) return
+  void (async () => {
+    await refreshRuns()
+    if (sessionView.value !== 'monitor') return
+    if (!monitorFocusRunId.value) monitorFocusRunId.value = event.run_id
+    if (monitorFocusRunId.value === event.run_id) await refreshLiveRun(event.run_id)
+  })().catch(() => {})
 }
 async function loadOlderRuns() {
   if (!activeId.value || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
@@ -440,9 +460,13 @@ async function onBootstrap() {
 }
 onMounted(async () => {
   window.addEventListener('loopscope:bootstrap', onBootstrap)
+  stopTraceEvents = subscribeTraceEvents(onTraceEvent)
   await onBootstrap()
 })
-onUnmounted(() => window.removeEventListener('loopscope:bootstrap', onBootstrap))
+onUnmounted(() => {
+  window.removeEventListener('loopscope:bootstrap', onBootstrap)
+  stopTraceEvents?.()
+})
 </script>
 
 <style scoped>

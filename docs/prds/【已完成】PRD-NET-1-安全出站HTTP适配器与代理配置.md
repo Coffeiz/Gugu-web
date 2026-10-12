@@ -1,9 +1,11 @@
 # PRD-NET-1：安全出站 HTTP 适配器与代理配置
 
-> 状态：Phase 0–2 已实施；Phase 3 评估完成，其他用途待单独决策
+> 状态：已完成；Phase 0–3 的适配器实现、接入范围和验收均已完成，其他用途由独立需求管理
 > 创建：2026-10-02
-> 最近更新：2026-10-02
+> 最近更新：2026-10-12
 > 关联模块：`backend/app/core/url_security.py`、`backend/app/core/pinned_http.py`、`backend/app/core/safe_egress.py`、`backend/app/api/v1/safe_egress_admin.py`、`backend/agent/tools/web.py`、`backend/agent/tools/search.py`、`backend/agent/tools/deep_research.py`、`backend/agent/mcp/client.py`、`backend/agent/tools/files/transfer.py`、Admin 运行配置
+
+本 PRD 定义的安全出站适配器、Admin 代理配置、模型可控公网内容工具接入及其他出站客户端边界评估均已完成并通过验收。Provider API、MCP 等固定端点是否使用代理属于独立用途决策，不是本 PRD 的未完成项。
 
 ## 0. 决策摘要
 
@@ -249,7 +251,7 @@ PoC 必须同时验证连接确实钉扎目标 IP。代理不支持时停止并�
 - 不修改用户 `backend/.env`、`backend/config.override.json` 或 devserver 同名配置，除非后续用户明确授权具体字段和目标环境。
 - 不新增“按镜像类型默认关闭 SSRF”的构建逻辑。
 
-## 11. 未决项与推荐决策
+## 11. 已定决策与范围外事项
 
 | 问题 | 推荐决策 |
 |---|---|
@@ -260,10 +262,10 @@ PoC 必须同时验证连接确实钉扎目标 IP。代理不支持时停止并�
 | 代理白名单如何确定 | 连通性测试只验证有限样例；完整白名单/路由规则由代理服务配置决定，不在应用内猜测或扫描 |
 | Phase 0 PoC 失败如何处理 | 停止安全代理实现并评估代理能力或受控 egress gateway，不降级为直接交给代理解析域名 |
 
-## 12. 实施完成定义
+## 12. 完成验收
 
-- Phase 0 的连接钉扎与 TLS 原域名身份验证通过。
-- Phase 1 的代理配置和 `http_get` 行为按第 8 节验收。
-- 无 SSRF 绕过、无失败直连降级、无敏感凭据/正文日志泄漏。
-- 其他工具仍在各自范围内运行；未迁移工具的网络策略被清楚记录，不宣称“所有工具已统一”。
-- 只有完成并验证的阶段才标记完成；PoC 未通过时 PRD 保持待实施并记录原因。
+- [x] Phase 0 的连接钉扎与 TLS 原域名身份验证通过。
+- [x] Phase 1 的代理配置和 `http_get` 行为按第 8 节验收。
+- [x] Phase 2 的文件与图片下载迁移、重定向逐跳重新校验和配置快照行为通过验收。
+- [x] 无 SSRF 绕过、无失败直连降级、无敏感凭据/正文日志泄漏。
+- [x] Phase 3 完成其他出站客户端边界评估；未迁移用途和独立授权策略已记录，不将本 PRD 扩张为全局代理改造。

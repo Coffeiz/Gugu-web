@@ -224,7 +224,7 @@ chmod 600 "$BACKUP_DIR/users.tar"
 tar -tf "$BACKUP_DIR/users.tar" >/dev/null
 echo '独立执行数据库与工作区离线迁移'
 "${COMPOSE[@]}" run --rm --no-deps --entrypoint bash backend -ec \
-  'alembic upgrade head && python -m scripts.migrations.migrate_workspace_layout --allow-real-data --apply --services-stopped'
+  'alembic upgrade head && PYTHONPATH=. python scripts/backfill_global_search_romaji.py --batch-size 500 && python -m scripts.migrations.migrate_workspace_layout --allow-real-data --apply --services-stopped'
 "${COMPOSE[@]}" run --rm --no-deps --entrypoint python backend -m updater.database_check
 echo '重新创建分体 backend'
 "${COMPOSE[@]}" up -d --no-deps --force-recreate backend

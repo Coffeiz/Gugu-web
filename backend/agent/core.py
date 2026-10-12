@@ -71,6 +71,7 @@ def _replace_tool_result(message_area, *, tool_call_id: str, result: dict) -> bo
     ) is not None
 from agent.loop.events import artifact_sse as _artifact_sse
 from agent.loop.models import PendingInteraction as _PendingInteraction
+from agent.loop.models import RunState as _RunState
 from agent.loop import rounds as loop_rounds
 from agent.loop.interactions import (
     CANCEL_CLOSE_TEXT as _CANCEL_CLOSE_TEXT,
@@ -294,12 +295,12 @@ class LLMRunner:
                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
                          reasoning_state=None
                          ) -> AsyncGenerator[str, None]:
-        """兼容转发：实现体在 `agent.loop.machine.run_loop`（PRD-LLM-25 LLM25-013）。
+        """兼容转发：实现体在 `agent.loop.runner.run_loop`（PRD-LLM-25 LLM25-013）。
 
         本方法必须继续挂在 `LLMRunner` 类上——LoopScope hooks 按类属性替换并
         包裹 `LLMRunner._run_loop`（FR-LLM25-001）。
         """
-        from agent.loop.machine import run_loop
+        from agent.loop.runner import run_loop
         from agent.runtime.cancellation import RunCancellationRequested
 
         try:

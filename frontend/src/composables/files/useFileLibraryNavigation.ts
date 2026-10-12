@@ -3,6 +3,7 @@ import type { Project } from '@/types/project'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { FileLibraryNavigationTarget, NavSeg, FolderCard as FolderCardMeta } from '@/utils/filesNav'
 import { doneYear, doneMonth } from '@/utils/fileParse'
+import { filesApi, foldersApi } from '@/services/api'
 
 type NavigationTarget = FileLibraryNavigationTarget | null
 
@@ -12,8 +13,6 @@ interface NavigationOptions {
     kanbanColumns: Array<{ key: string; label: string }>
   }
   cacheStore: {
-    loaded: boolean
-    load: () => Promise<void>
     getFolder: (id: number) => FolderMeta | null | undefined
     getFile: (id: number) => FileMeta | null | undefined
   }
@@ -33,40 +32,27 @@ interface TargetPathDependencies {
 }
 
 async function resolveTargetPath(target: FileLibraryNavigationTarget, deps: TargetPathDependencies): Promise<NavSeg[] | null> {
-  if (target.workspaceDirectoryId != null) {
-    return [
-      {
-        type: 'workspace',
-        name: target.workspaceDirectoryName || '工作区',
-        color: null,
-        space: 'workspace',
-        workspaceDirectoryId: target.workspaceDirectoryId,
-      },
-      ...(target.folderPath ?? []).map(folder => ({
-        type: 'folder',
-        folderId: folder.id,
-        name: folder.name,
-        color: null,
-        space: 'workspace',
-        workspaceDirectoryId: target.workspaceDirectoryId,
-      })),
-    ]
-  }
-
-  if (!deps.cacheStore.loaded) await deps.cacheStore.load()
   if (target.kind === 'folder') {
-    const folder = deps.cacheStore.getFolder(target.id)
-    return folder
-      ? [...deps.basePath(folder.projectId), ...deps.folderChain(folder.id).map(deps.folderSegment)]
-      : null
+    const { folder: rawFolder, ancestors } = await foldersApi.location(target.id)
+    const folder = rawFolder as FolderMeta
+    const workspaceId = folder.workspaceDirectoryId ?? target.workspaceDirectoryId
+    const chain = ancestors as FolderMeta[]
+    if (workspaceId != null) return [
+      { type: 'workspace', name: target.workspaceDirectoryName || '工作区', color: null, space: 'workspace', workspaceDirectoryId: workspaceId },
+      ...chain.map(item => ({ type: 'folder', folderId: item.id, name: item.name, color: null, space: 'workspace', workspaceDirectoryId: workspaceId })),
+    ]
+    return [...deps.basePath(folder.projectId), ...chain.map(deps.folderSegment)]
   }
 
-  const file = deps.cacheStore.getFile(target.id)
-  return file
-    ? file.folderId != null
-      ? [...deps.basePath(file.projectId), ...deps.folderChain(file.folderId).map(deps.folderSegment)]
-      : deps.basePath(file.projectId)
-    : null
+  const { file: rawFile, folder_path } = await filesApi.location(target.id)
+  const file = rawFile as FileMeta
+  const workspaceId = file.workspaceDirectoryId ?? target.workspaceDirectoryId
+  const chain = folder_path as FolderMeta[]
+  if (workspaceId != null) return [
+    { type: 'workspace', name: target.workspaceDirectoryName || '工作区', color: null, space: 'workspace', workspaceDirectoryId: workspaceId },
+    ...chain.map(item => ({ type: 'folder', folderId: item.id, name: item.name, color: null, space: 'workspace', workspaceDirectoryId: workspaceId })),
+  ]
+  return [...deps.basePath(file.projectId), ...chain.map(deps.folderSegment)]
 }
 
 export function useFileLibraryNavigation(options: NavigationOptions) {
@@ -157,7 +143,12 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
 
   async function jumpToTarget(target: NavigationTarget) {
     if (!target) return
-    const path = await resolveTargetPath(target, { cacheStore, folderChain, basePath, folderSegment })
+    let path: NavSeg[] | null
+    try {
+      path = await resolveTargetPath(target, { cacheStore, folderChain, basePath, folderSegment })
+    } catch {
+      return
+    }
     if (!path) return
     clearSelection()
     navPath.value = path

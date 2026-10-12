@@ -9,6 +9,7 @@ from agent.loop import rounds
 from agent.loop.provider import provider_context_usage
 from agent.loop.events import EventSequencer, artifact_sse
 from agent.loop.models import PendingInteraction, RoundOutcome, RunState
+from agent.loop.reply_runtime import ReplyDecisionBindings, ReplyRuntime, ReplyState
 
 
 # ── rounds.usage_compaction_due / overflow ───────────────────────────────────
@@ -90,6 +91,82 @@ def test_pending_interaction_replay_field():
 def test_round_outcome_defaults():
     outcome = RoundOutcome()
     assert outcome.tool_calls == [] and outcome.stopped_reason is None
+
+
+def _reply_runtime():
+    locale = SimpleNamespace(
+        narration_nudge="do the work",
+        intent_nudge="act now",
+        colon_nudge="finish the sentence",
+        tool_required_nudge="use a tool",
+        decision_nudge="reconsider",
+    )
+    state = ReplyState()
+    runtime = ReplyRuntime(
+        state,
+        ReplyDecisionBindings(
+            looks_like_narration=lambda text, _locale: text.startswith("I am checking"),
+            announces_intent=lambda text, _locale: text.startswith("I will"),
+            ends_with_colon=lambda text: text.endswith(":") or text.endswith("："),
+            is_tool_progress_only=lambda text, _locale: text == "Searching…",
+            is_decision_dodge=lambda _request, text, _locale: text == "No change needed",
+            guard_locale=lambda _locale: locale,
+        ),
+    )
+    return runtime, state
+
+
+def test_reply_runtime_retries_narration_once_then_suppresses_guard_retry_text():
+    runtime, state = _reply_runtime()
+    result = SimpleNamespace()
+
+    first = runtime.decide(
+        final_text="I am checking the files", result=result,
+        round_tool_called=False, verify_mode=False, requires_tools=False,
+        user_request="check files", locale="en", decision_guard_enabled=False,
+    )
+    assert (first.action, first.retry_kind, first.prompt) == ("retry", "guard", "do the work")
+    assert state.guard_retry_pending
+
+    retry = runtime.decide(
+        final_text="I already checked it", result=result,
+        round_tool_called=False, verify_mode=False, requires_tools=False,
+        user_request="check files", locale="en", decision_guard_enabled=False,
+    )
+    assert retry.action == "complete_after_guard"
+    assert retry.visible_text is None
+    assert not state.guard_retry_pending
+
+
+def test_reply_runtime_allows_completed_colon_retry_but_tool_round_clears_pending_state():
+    runtime, state = _reply_runtime()
+    result = SimpleNamespace()
+    decision = runtime.decide(
+        final_text="The answer is:", result=result,
+        round_tool_called=False, verify_mode=False, requires_tools=False,
+        user_request="answer", locale="en", decision_guard_enabled=False,
+    )
+    assert decision.prompt == "finish the sentence"
+
+    state.tool_round_started()
+    assert state.any_tool_called
+    assert not state.guard_retry_pending
+    assert not state.colon_retry_pending
+    assert state.guard_retry_buf == []
+
+
+def test_reply_runtime_empty_reply_has_one_retry_before_fallback():
+    runtime, _state = _reply_runtime()
+    result = SimpleNamespace()
+    args = dict(
+        final_text="", result=result, round_tool_called=False,
+        verify_mode=False, requires_tools=False, user_request="hello",
+        locale="en", decision_guard_enabled=False,
+    )
+    assert runtime.decide(**args).retry_kind == "empty"
+    fallback = runtime.decide(**args)
+    assert fallback.action == "continue_checks"
+    assert fallback.visible_text
 
 
 # ── events ────────────────────────────────────────────────────────────────────

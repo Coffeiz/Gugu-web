@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile, File as FastAPIFile, Form
 from jose import JWTError, jwt
@@ -15,13 +15,14 @@ from app.core.upload_stream import spool_upload
 from app.db.session import get_db
 from app.models import File, Folder, Project, User  # orm-exempt: 文件归档接口的模型引用随现有遗留查询，files Service 收口时一并移除
 from app.schemas import (
-    CamelModel, FileResponse, FileStreamResponse, FileSummaryResponse, FileUpdate, FileTreeResponse, ProjectTreeEntry,
+    CamelModel, FileLibraryCountsResponse, FileLocationResponse, FileResponse, FileStreamResponse, FileSummaryResponse, FileUpdate, FolderResponse, PageResponse, ResolveFilePathsRequest, ResolvedFilePath,
     BatchDeleteBody, FileCopyBody, BatchDownloadBody,
 )
 from app.services.files.browser import (
-    get_file_detail_row, get_file_summary, get_file_tree_rows, get_file_version_snapshot,
-    list_existing_file_rows, list_file_rows,
+    count_personal_library_items, get_file_detail_row, get_file_summary, get_folder_path_rows,
+    list_file_page_rows, resolve_relative_file_paths,
 )
+from app.services.files.trash import count_trash_root_items
 from app.services.storage.quota_ledger import get_file_library_usage_snapshot
 from app.services.files.response import color_value, to_file_response, to_related_file_response
 from app.services.files.upload import (
@@ -62,6 +63,38 @@ from app.services.undo import UndoService
 from app.services.undo.files import file_snapshot, operation_state, ref_for, save_content_artifacts
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+
+@router.get("", response_model=PageResponse[FileResponse])
+@router.get("/page", response_model=PageResponse[FileResponse], include_in_schema=False)
+async def list_file_page(
+    limit: int = Query(default=100, ge=1, le=200),
+    cursor: Optional[str] = None,
+    sort_by: Literal["name", "type", "stage", "createdAt", "size", "id"] = "createdAt",
+    sort_order: Literal["asc", "desc"] = "desc",
+    space: Optional[str] = None,
+    project_id: Optional[int] = None,
+    folder_id: Optional[int] = None,
+    workspace_directory_id: Optional[int] = None,
+    mind_map_id: Optional[int] = None,
+    ext: Optional[str] = None,
+    q: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """分页读取当前逻辑目录的文件。"""
+    page = await list_file_page_rows(
+        db, current_user.id, limit=limit, cursor=cursor,
+        sort_by=sort_by, sort_order=sort_order,
+        space=space, project_id=project_id, folder_id=folder_id,
+        workspace_directory_id=workspace_directory_id, mind_map_id=mind_map_id,
+        ext=ext, query=q,
+    )
+    return {
+        "items": [to_file_response(row[0], row[1], color_value(row[2]), row[3]) for row in page["items"]],
+        "next_cursor": page["next_cursor"],
+        "has_more": page["has_more"],
+    }
 
 
 def _storage_limit(user: User) -> int | None:
@@ -145,36 +178,7 @@ async def _upload_capacity(db, current_user, on_conflict: str, overwrite_file_id
     return limit, max(int(limit) - used - reserved + reclaimable, 0)
 
 # 版本摘要是无副作用查询，遇到迁移/对账等 DDL 造成的短暂死锁时可以安全重试。
-# ── GET /files ────────────────────────────────────────────────────────────────
-
-@router.get("", response_model=list[FileResponse])
-async def list_files(
-    space: Optional[str] = None,
-    project_id: Optional[int] = None,
-    folder_id: Optional[int] = None,
-    workspace_directory_id: Optional[int] = None,
-    mind_map_id: Optional[int] = None,
-    ext: Optional[str] = None,
-    q: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    rows = await list_file_rows(
-        db,
-        current_user.id,
-        space=space,
-        project_id=project_id,
-        folder_id=folder_id,
-        workspace_directory_id=workspace_directory_id,
-        mind_map_id=mind_map_id,
-        ext=ext,
-        query=q,
-    )
-
-    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows]
-
-
-# ── GET /files/summary and /files/all ─────────────────────────────────────────
+# ── GET /files/summary ────────────────────────────────────────────────────────
 
 @router.get("/summary", response_model=FileSummaryResponse)
 async def file_summary(
@@ -182,36 +186,21 @@ async def file_summary(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    total_count, rows = await get_file_summary(db, current_user.id, recent_limit)
+    rows = await get_file_summary(db, current_user.id, recent_limit)
     return FileSummaryResponse(
-        total_count=total_count,
         recent_files=[to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows],
     )
 
 
-@router.get("/all", response_model=list[FileResponse])
-async def list_all_files(
+@router.get("/library-counts", response_model=FileLibraryCountsResponse)
+async def file_library_counts(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    rows, changed = await list_existing_file_rows(db, get_storage(), current_user.id)
-    if changed:
-        await db.commit()
-
-    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in rows]
-
-
-# ── GET /files/version ────────────────────────────────────────────────────────
-
-@router.get("/version")
-async def files_version(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """返回文件表状态摘要，用于前端感知服务端变更（删除/修改均会改变结果）。"""
-    count, max_updated, max_deleted = await get_file_version_snapshot(db, current_user.id)
-    version = f"{count}:{max_updated}:{max_deleted}"
-    return {"version": version}
+    """只返回个人文件和回收站根列表计数，不读取实体列表。"""
+    personal_count = await count_personal_library_items(db, current_user.id)
+    trash_count = await count_trash_root_items(db, current_user.id)
+    return FileLibraryCountsResponse(personal_count=personal_count, trash_count=trash_count)
 
 
 # ── GET /files/storage ───────────────────────────────────────────────────────
@@ -227,31 +216,6 @@ async def files_storage(
     return {"used_bytes": used, "limit_bytes": limit}
 
 
-# ── GET /files/tree ───────────────────────────────────────────────────────────
-
-@router.get("/tree", response_model=FileTreeResponse)
-async def file_tree(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    uid = current_user.id
-
-    project_rows, projects, personal_count, personal_root_count = await get_file_tree_rows(db, uid)
-    count_map = {pid: count for pid, count in project_rows}
-
-    tree_projects = [
-        ProjectTreeEntry(id=p.id, name=p.name, color=color_value(p.color) or p.color,
-                         total_count=count_map.get(p.id, 0))
-        for p in projects
-    ]
-
-    return FileTreeResponse(
-        projects=tree_projects,
-        personal_count=personal_count,
-        personal_root_count=personal_root_count,
-    )
-
-
 @router.get("/{fid}", response_model=FileResponse)
 async def get_file(
     fid: int,
@@ -264,6 +228,59 @@ async def get_file(
         raise HTTPException(status_code=404, detail="文件不存在")
     file, project_name, project_color, folder_name = row
     return to_file_response(file, project_name, color_value(project_color), folder_name)
+
+
+@router.get("/{fid}/location", response_model=FileLocationResponse)
+async def get_file_location(
+    fid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按文件 ID 读取导航所需位置与有界祖先链。"""
+    row = await get_file_detail_row(db, current_user.id, fid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    file, project_name, project_color, folder_name = row
+    folders = []
+    if file.folder_id is not None:
+        path_rows = await get_folder_path_rows(
+            db, current_user.id, file.folder_id,
+            expected_scope=(file.project_id, file.workspace_directory_id),
+        )
+        if path_rows is None:
+            raise HTTPException(status_code=404, detail="文件位置不存在")
+        folders = [
+            {"id": item.id, "project_id": item.project_id,
+             "workspace_directory_id": item.workspace_directory_id,
+             "parent_id": item.parent_id, "name": item.name,
+             "file_count": 0, "version": item.version}
+            for item in path_rows
+        ]
+    return FileLocationResponse(
+        file=to_file_response(file, project_name, color_value(project_color), folder_name),
+        folder_path=folders,
+    )
+
+
+@router.post("/{fid}/resolve-paths", response_model=list[ResolvedFilePath])
+async def resolve_file_paths(
+    fid: int,
+    body: ResolveFilePathsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    resolved = await resolve_relative_file_paths(db, current_user.id, fid, body.paths)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="来源文件不存在")
+    return [ResolvedFilePath(
+        path=path,
+        file=to_file_response(row[0], row[1], color_value(row[2]), row[3]) if row else None,
+        folder=FolderResponse(
+            id=folder.id, project_id=folder.project_id,
+            workspace_directory_id=folder.workspace_directory_id,
+            parent_id=folder.parent_id, name=folder.name,
+        ) if folder else None,
+    ) for path, row, folder in resolved]
 
 
 @router.post("/archive", response_model=FileResponse, status_code=201)

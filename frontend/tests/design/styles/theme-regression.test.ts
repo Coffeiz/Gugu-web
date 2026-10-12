@@ -65,6 +65,7 @@ const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
 const materialCompositionCss = load('./tokens/themes/material-composition.css')
 const componentThemeRefinementsCss = load('./component-theme-refinements.css')
 const semanticCss = load('./tokens/semantic.css')
+const brandComponent = readFileSync(resolve(process.cwd(), 'src/components/common/layout/Brand.vue'), 'utf8')
 const themeCss = [
   load('./tokens/themes/glass-light.css'),
   load('./tokens/themes/glass-dark.css'),
@@ -86,7 +87,6 @@ const paletteTokens = [
   '--theme-brand-gradient',
   '--theme-fab-gradient',
   '--theme-brand-logo-color',
-  '--theme-brand-logo-filter',
   '--theme-divider',
   '--theme-divider-color',
   '--theme-scrollbar-thumb',
@@ -148,6 +148,9 @@ describe('主题 CSS 回归契约', () => {
     for (const token of paletteTokens) {
       expect(themeCss, `family owns ${token}`).not.toContain(`${token}:`)
     }
+    expect(semanticCss).toContain('--brand-logo-color: var(--theme-brand-logo-color);')
+    expect(brandComponent).toContain('background: var(--brand-logo-color);')
+    expect(brandComponent).toContain('mask-image: url(\'/logo-text.png\');')
   })
 
   it('面板颜色与视觉材质分层，palette 改色不吞掉 family 效果', () => {

@@ -149,7 +149,6 @@
   --folder-card-bg-base: rgba(255,255,255,.82);
   --folder-card-border-base: rgba(255,255,255,.92);
   --folder-card-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 5px rgba(80,90,110,.06);
-  --folder-card-shadow-hover: inset 0 1px 0 rgba(255,255,255,.90), 0 7px 22px rgba(80,90,110,.12);
   --folder-card-bg-selected: rgba(255,255,255,.92);
   --folder-card-border-selected: rgba(123,127,178,.55);
   --folder-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
@@ -313,7 +312,6 @@ html[data-theme='light'][data-family='mono'] {
   --folder-card-bg-base: var(--surface-card-solid);
   --folder-card-border-base: var(--border-strong);
   --folder-card-shadow: var(--elevation-card);
-  --folder-card-shadow-hover: var(--elevation-card-hover);
   --folder-card-bg-selected: var(--surface-raised);
   --folder-card-border-selected: var(--action-outline);
   --folder-card-shadow-selected: 0 0 0 2px var(--selection-bg), var(--elevation-card);
@@ -321,6 +319,7 @@ html[data-theme='light'][data-family='mono'] {
   --folder-card-bg-preselected: var(--action-soft);
   --folder-card-border-preselected: var(--action-outline);
   --folder-card-shadow-preselected: 0 0 0 1px var(--selection-bg), var(--elevation-card);
+  --folder-card-border-accent: 0%;
 }
 
 /* Glass 亮色的 mist 保留 Aero 基线；其他调色板的文件/文件夹选择态必须随主题主色映射。 */
@@ -421,7 +420,6 @@ html[data-theme='dark'][data-family] {
   --folder-card-bg-base: var(--surface-card-solid);
   --folder-card-border-base: var(--border-strong);
   --folder-card-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow);
-  --folder-card-shadow-hover: inset 0 1px 0 var(--highlight-soft), var(--card-shadow-hover);
   --folder-card-bg-selected: var(--surface-raised);
   --folder-card-border-selected: var(--action-outline);
   --folder-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
@@ -451,4 +449,8 @@ html[data-theme='dark'][data-family] {
   --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 94%,transparent);
   --runtime-drag-glass-border: var(--border-hover);
   --runtime-drag-glass-shadow: 0 22px 50px rgba(0,0,0,.38);
+}
+
+html[data-theme='dark'][data-family='mono'] {
+  --folder-card-border-accent: 0%;
 }

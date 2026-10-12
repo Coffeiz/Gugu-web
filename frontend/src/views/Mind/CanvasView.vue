@@ -159,15 +159,21 @@ function transferRelationRuntimeConnection(fromId: number, toId: number) {
 }
 
 onMounted(async () => {
-  // 项目抽屉会在首屏就被打开，项目数据不能等笔记/画布请求串行完成后才开始拉；否则抽屉
-  // 先按空内容横向展开、请求回来才突然长高。三份独立数据并行加载，抽屉首次展开就有稳定高度。
-  await Promise.all([
-    !store.loaded ? store.fetchNotes() : Promise.resolve(),
-    !store.canvasesLoaded ? store.fetchCanvases() : Promise.resolve(),
-    !projectStore.projectsLoaded && !projectStore.loading ? projectStore.fetchProjects() : Promise.resolve(),
-  ])
+  // 目标画布只等画布目录和自身内容；便签与项目抽屉数据后台并行加载，不阻塞搜索定位。
+  if (!store.loaded) void store.fetchNotes().catch(() => {})
+  if (!projectStore.projectsLoaded && !projectStore.loading) void projectStore.fetchProjects().catch(() => {})
+  if (!store.canvasesLoaded) await store.fetchCanvases()
   const requestedId = await consumeObjectId()
-  await ensureCanvas(requestedId)
+  const pendingTarget = uiStore.pendingCanvasTarget
+  if (pendingTarget && store.canvases.some(canvas => canvas.id === pendingTarget.canvasId)) {
+    await activateCanvas(pendingTarget.canvasId)
+  } else {
+    if (pendingTarget) {
+      uiStore.pendingCanvasTarget = null
+      showAppError(t('mindUi.searchTargetMissing'))
+    }
+    await ensureCanvas(requestedId)
+  }
   await consumePendingCanvasTarget()
 })
 watch(() => uiStore.pendingCanvasTarget, () => { void consumePendingCanvasTarget() })
@@ -205,14 +211,24 @@ async function ensureCanvas(requestedId?: number) {
 async function consumePendingCanvasTarget() {
   const target = uiStore.pendingCanvasTarget
   if (!target) return
+  if (!store.canvasesLoaded) return
+  if (!store.canvases.some(canvas => canvas.id === target.canvasId)) {
+    if (uiStore.pendingCanvasTarget === target) uiStore.pendingCanvasTarget = null
+    showAppError(t('mindUi.searchTargetMissing'))
+    return
+  }
   if (activeCanvasId.value !== target.canvasId) await activateCanvas(target.canvasId)
+  if (!canvasReady.value || activeCanvasId.value !== target.canvasId) {
+    if (uiStore.pendingCanvasTarget === target) uiStore.pendingCanvasTarget = null
+    return
+  }
   await nextTick()
   if (uiStore.pendingCanvasTarget !== target) return
   const item = store.canvasItems.find(current => current.nodeId === target.nodeId && current.canvasId === target.canvasId)
   if (item) {
     const { w, h } = itemSize(item)
     canvasRef.value?.centerOn(item.x + w / 2, item.y + h / 2)
-  }
+  } else showAppError(t('mindUi.searchTargetMissing'))
   uiStore.pendingCanvasTarget = null
 }
 

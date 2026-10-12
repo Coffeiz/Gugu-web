@@ -145,7 +145,7 @@
   --calendar-today-cell-bg: color-mix(in srgb,var(--action-primary) 7%,transparent);
   --calendar-range-cell-bg: color-mix(in srgb,var(--action-primary) 8%,transparent);
   --calendar-selected-cell-bg: color-mix(in srgb,var(--action-primary) 10%,transparent);
-  --calendar-range-edge-bg: color-mix(in srgb,var(--action-primary) 16%,transparent);
+  --calendar-range-edge-bg: color-mix(in srgb,var(--action-primary) 26%,transparent);
   --calendar-weekend-fg: color-mix(in srgb,var(--status-danger) 85%,transparent);
   --calendar-weekend-bg: color-mix(in srgb,var(--status-danger) 3%,transparent);
   --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 7%,transparent);

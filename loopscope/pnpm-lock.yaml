@@ -10,6 +10,9 @@ importers:
 
   apps/collector:
     dependencies:
+      '@loopscope/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@loopscope/storage':
         specifier: workspace:*
         version: link:../../packages/storage

@@ -115,7 +115,8 @@ function cancel() {
 /* 标题：纯文本，无 hover 浮出效果（侧边栏模式，按内容收缩，wrap 用 flex: 1 撑满） */
 .exp-session-title {
   flex: 1; min-width: 0;
-  font-size: 12.5px; line-height: 17px; color: var(--text-primary);
+  /* 小窗展开时会缩放整个面板，行盒需给 g/p/q 等下伸字形留足空间。 */
+  font-size: 12.5px; line-height: 1.5; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* 顶部标题栏模式：与项目编辑卡标题同款（默认像纯文本，悬停/聚焦浮出编辑框）。

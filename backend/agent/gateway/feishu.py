@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 import time
 import uuid
 
@@ -31,6 +32,66 @@ from app.core.redaction import diag_log, diag_log_raw, redact
 STREAM = R.IM_INBOUND_STREAM
 
 _FEISHU_STALE_MSG_THRESHOLD_MS = 20_000
+
+
+class _GatewayAsyncRunner:
+    """为同步飞书回调提供进程级常驻事件循环，稳定复用异步数据库连接池。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            ready = threading.Event()
+
+            def run_loop() -> None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                self._loop = loop
+                ready.set()
+                loop.run_forever()
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.close()
+
+            self._thread = threading.Thread(
+                target=run_loop, name="feishu-async-runner", daemon=True,
+            )
+            self._thread.start()
+            ready.wait()
+
+    def submit(self, coroutine):
+        self.start()
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            raise RuntimeError("飞书异步执行环境不可用")
+        return asyncio.run_coroutine_threadsafe(coroutine, loop)
+
+    def run(self, coroutine):
+        return self.submit(coroutine).result()
+
+    def stop(self) -> None:
+        with self._lock:
+            thread, loop = self._thread, self._loop
+            if thread is None or loop is None:
+                return
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not threading.current_thread():
+            thread.join(timeout=5)
+        with self._lock:
+            if self._thread is thread and not thread.is_alive():
+                self._thread = None
+                self._loop = None
+
+
+_gateway_async_runner = _GatewayAsyncRunner()
 
 
 from agent.im.media_ingress_feishu import (
@@ -159,31 +220,43 @@ def _drop_stale_event(data, channel_id: str, now_ms: int | None = None) -> bool:
 
 
 async def _consume_card_action(owner: str, prompt_id: int, token: str,
-                               event_id: str | None) -> dict:
+                               event_id: str | None, *, bot_id: str = "",
+                               platform_user_id: str = "") -> dict:
     """在飞书回调协程中消费统一 Prompt Action。"""
     from uuid import UUID
     from app.db import session as db_session
     from app.services.interactions import consume_action
+    from app.services.mcp_secret_inputs import consume_mcp_secret_action
 
     db_session.ensure_engine()
     if db_session._SessionLocal is None:
         raise RuntimeError("数据库不可用")
     async with db_session._SessionLocal() as db:
+        user_id = UUID(str(owner))
+        result = await consume_mcp_secret_action(
+            db, user_id=user_id, prompt_id=prompt_id, token=token,
+            event_id=str(event_id or ""), platform="feishu", bot_id=bot_id,
+            platform_user_id=platform_user_id, chat_type="c2c", chat_id=None,
+        )
+        if result is not None:
+            return result
         return await consume_action(
             db,
-            user_id=UUID(str(owner)),
+            user_id=user_id,
             prompt_id=prompt_id,
             token=token,
             event_id=event_id,
         )
 
 
-def _handle_card_action(data, owner: str):
+def _handle_card_action(data, owner: str, bot_id: str = ""):
     """处理飞书 card.action.trigger；在 SDK 当前 event loop 调度消费任务。"""
     from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
     from agent.interactions.feishu import decode_action_value, build_completed_card_payload
 
     event = getattr(data, "event", None)
+    operator = getattr(event, "operator", None)
+    operator_id = str(getattr(operator, "open_id", "") or "")
     action = getattr(event, "action", None)
     value = getattr(action, "value", None) if action is not None else None
     completed_card = None
@@ -191,24 +264,20 @@ def _handle_card_action(data, owner: str):
         prompt_id, token = decode_action_value(value)
         header = getattr(data, "header", None)
         event_id = getattr(header, "event_id", None)
-        coroutine = _consume_card_action(owner, prompt_id, token, event_id)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # 仅供离线测试或非 SDK 调用路径；正式 WebSocket 回调总有运行中的 loop。
-            asyncio.run(coroutine)
-            message = "已选择，继续处理。"
-        else:
-            task = loop.create_task(coroutine)
+        coroutine = _consume_card_action(
+            owner, prompt_id, token, event_id, bot_id=bot_id,
+            platform_user_id=operator_id,
+        )
+        future = _gateway_async_runner.submit(coroutine)
 
-            def _report_card_action_failure(done_task) -> None:
-                try:
-                    done_task.result()
-                except Exception as exc:
-                    diag_log("agent.gateway.feishu.interaction", exc)
+        def _report_card_action_failure(done_task) -> None:
+            try:
+                done_task.result()
+            except Exception as exc:
+                diag_log("agent.gateway.feishu.interaction", exc)
 
-            task.add_done_callback(_report_card_action_failure)
-            message = "已收到选择，继续处理。"
+        future.add_done_callback(_report_card_action_failure)
+        message = "已收到操作；如已开启凭据输入，请在当前私聊逐项发送字段值，回复“取消”可终止。"
         completed_card = build_completed_card_payload(message)
     except (LookupError, ValueError):
         message = "这个选项已过期或已经处理过了。"
@@ -315,6 +384,13 @@ def _make_on_message(
     expected_app_id: str = "",
     bot_open_id: str | None = None,
 ):
+    def _secret_preflight(payload: dict) -> bool:
+        from agent.im.interaction_text import consume_mcp_secret_payload
+
+        # 回调为同步接口；投递到进程级常驻 loop，避免每条消息创建新 loop，
+        # 也避免与卡片 action 分属不同 loop 导致异步连接池反复重建。
+        return _gateway_async_runner.run(consume_mcp_secret_payload(payload))
+
     def _on_message(data: P2ImMessageReceiveV1) -> None:
         if _drop_misrouted_event(data, expected_app_id, channel_id):
             return
@@ -325,6 +401,22 @@ def _make_on_message(
         if not msg:
             return
         mt = msg.message_type
+        open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
+        preflight_text = ""
+        if mt == "text":
+            try:
+                preflight_text = ((json.loads(msg.content) if msg.content else {}) or {}).get("text", "").strip()
+            except (json.JSONDecodeError, TypeError):
+                preflight_text = ""
+        normalized_chat_type = "group" if msg.chat_type == "group" else "c2c"
+        if _secret_preflight({
+            "platform": "feishu", "channel_id": channel_id, "owner_user_id": owner,
+            "platform_user_id": open_id or "", "chat_id": msg.chat_id if normalized_chat_type == "group" else None,
+            "chat_type": normalized_chat_type, "message_id": msg.message_id,
+            "text": preflight_text,
+            "attachments": [] if mt == "text" else [{"pending_media": True}],
+        }):
+            return
         attachments: list = []
         if mt == "text":
             try:
@@ -342,7 +434,6 @@ def _make_on_message(
         text = _feishu_resolve_mention_text(msg, text)
         if not text and not attachments:
             return
-        open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
         from agent.runtime import trace
         tid = trace.new_trace()
 
@@ -437,14 +528,18 @@ def serve() -> None:
         .register_p2_im_message_receive_v1(
             _make_on_message(channel_id, owner, api_client, app_id, bot_open_id)
         )
-        .register_p2_card_action_trigger(lambda data: _handle_card_action(data, owner))
+        .register_p2_card_action_trigger(lambda data: _handle_card_action(data, owner, channel_id))
         .register_p2_im_message_reaction_created_v1(lambda data: None)
         .register_p2_im_message_reaction_deleted_v1(lambda data: None)
         .build()
     )
     ws_client = lark.ws.Client(app_id, app_secret, event_handler=handler, log_level=lark.LogLevel.INFO)
     print(f"[feishu:{channel_id}] 网关启动（owner={owner}），WebSocket 长连接中…", flush=True)
-    ws_client.start()  # 同步阻塞，SDK 自带断线重连
+    _gateway_async_runner.start()
+    try:
+        ws_client.start()  # 同步阻塞，SDK 自带断线重连
+    finally:
+        _gateway_async_runner.stop()
 
 
 # ── 发送（worker 用，按 bot id 现查 DB 取凭据，缓存 lark.Client）──

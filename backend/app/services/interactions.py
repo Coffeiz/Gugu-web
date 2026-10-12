@@ -11,11 +11,24 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tz import now_utc
-from app.models import ConversationSession, InteractionAction, InteractionPrompt
+from app.models import ConversationSession, InteractionAction, InteractionRequest
 from agent.interactions.confirmations import confirmation_payload
 
 CUSTOM_REPLY_OPTION_ID = "__custom_reply__"
 CUSTOM_REPLY_LABEL = "自定义回复"
+
+
+async def get_user_prompt(
+    db: AsyncSession, *, user_id, prompt_id: int, for_update: bool = False,
+) -> InteractionRequest | None:
+    """按用户归属读取交互；敏感字段提交时可在同一事务内锁定记录。"""
+    stmt = select(InteractionRequest).where(
+        InteractionRequest.id == prompt_id,
+        InteractionRequest.user_id == user_id,
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return await db.scalar(stmt)
 
 
 def _hash_token(token: str) -> str:
@@ -49,7 +62,7 @@ async def create_prompt(
     allow_text_input: bool = False,
     source: str = "system",
     expires_minutes: int = 10,
-) -> tuple[InteractionPrompt, list[dict]]:
+) -> tuple[InteractionRequest, list[dict]]:
     """创建 Prompt，并返回仅用于当前响应的明文 action token。"""
     session = await db.scalar(
         select(ConversationSession).where(
@@ -63,14 +76,17 @@ async def create_prompt(
     now = now_utc()
     expires_at = now + timedelta(minutes=max(1, min(expires_minutes, 30)))
     await db.execute(
-        update(InteractionPrompt)
+        update(InteractionRequest)
         .where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-            InteractionPrompt.status == "active",
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+            InteractionRequest.status == "active",
         )
         .values(status="cancelled", resolved_at=now)
     )
+    # secret staging 与被替换的 prompt 同一事务终止，避免旧交互仍可继续收集字段。
+    from app.services.mcp_secret_inputs import cancel_active_secret_staging
+    await cancel_active_secret_staging(db, user_id=user_id, session_id=session_id)
     # 只有 Agent 主动调用 ask_user 才能开启自定义回答。系统确认/系统选择即使
     # 误传 allow_text_input，也必须在统一创建入口被强制关闭。
     allow_custom_reply = source == "agent" and bool(allow_text_input)
@@ -83,7 +99,7 @@ async def create_prompt(
             "label": CUSTOM_REPLY_LABEL,
             "action_type": "custom_reply",
         })
-    prompt = InteractionPrompt(
+    prompt = InteractionRequest(
         user_id=user_id,
         session_id=session_id,
         kind=kind,
@@ -126,7 +142,7 @@ async def create_agent_prompt(
     tool_call_id: str,
     tool_name: str,
     payload: dict,
-) -> tuple[InteractionPrompt, list[dict]] | None:
+) -> tuple[InteractionRequest, list[dict]] | None:
     """把 ``ask_user`` 的工具结果绑定到当前 Agent session。"""
     from app.core.redaction import diag_log_raw
 
@@ -161,6 +177,17 @@ async def create_agent_prompt(
         secret_fields = normalize_secret_fields(raw_secret_fields) or []
         if not secret_fields:
             return reject("invalid_secret_fields")
+    raw_secret_target = payload.get("secret_target")
+    is_mcp_secret = bool(
+        secret_fields
+        and isinstance(raw_secret_target, dict)
+        and raw_secret_target.get("kind") == "mcp_credentials"
+    )
+    if is_mcp_secret:
+        normalized = [
+            {"id": "input_credentials", "label": "输入凭据", "action_type": "mcp_secret_input"},
+            {"id": "cancel", "label": "取消", "action_type": "mcp_secret_cancel"},
+        ]
     title = str(payload.get("title") or "需要你的回答").strip()[:120]
     body = str(payload.get("body") or "").strip()[:1000]
     authorization = str(payload.get("authorization") or "").strip()
@@ -210,6 +237,14 @@ async def create_agent_prompt(
             allow_text_input=not bool(secret_fields),
             source="agent",
         )
+        from app.services.mcp_secret_inputs import stage_prompt_if_private_mcp
+        has_private_stage = await stage_prompt_if_private_mcp(db, prompt=prompt, context=context)
+        if is_mcp_secret and not has_private_stage:
+            # Web secret form remains available, but an IM prompt without a private
+            # scope must never publish input actions that could be consumed generically.
+            await db.execute(delete(InteractionAction).where(InteractionAction.prompt_id == prompt.id))
+            prompt.schema_json = {**_schema_dict(prompt.schema_json), "options": []}
+            rendered = []
         if authorization == "user_sandbox":
             from app.services.filesystem_authorization import record_filesystem_authorization_request
 
@@ -240,9 +275,9 @@ async def wait_for_resolution(
         now = asyncio.get_running_loop().time()
         if cancel_check is not None and await cancel_check():
             async with db_session._SessionLocal() as db:
-                prompt = await db.scalar(select(InteractionPrompt).where(
-                    InteractionPrompt.id == prompt_id,
-                    InteractionPrompt.user_id == user_id,
+                prompt = await db.scalar(select(InteractionRequest).where(
+                    InteractionRequest.id == prompt_id,
+                    InteractionRequest.user_id == user_id,
                 ))
                 if prompt is not None and prompt.status == "active":
                     prompt.status = "cancelled"
@@ -253,9 +288,9 @@ async def wait_for_resolution(
             await heartbeat()
             next_heartbeat = now + 20
         async with db_session._SessionLocal() as db:
-            prompt = await db.scalar(select(InteractionPrompt).where(
-                InteractionPrompt.id == prompt_id,
-                InteractionPrompt.user_id == user_id,
+            prompt = await db.scalar(select(InteractionRequest).where(
+                InteractionRequest.id == prompt_id,
+                InteractionRequest.user_id == user_id,
             ))
             if prompt is None:
                 return None
@@ -268,9 +303,9 @@ async def wait_for_resolution(
         await asyncio.sleep(0.25)
     # 超时后立即落库，避免刷新或其他客户端继续把它当成活动确认项。
     async with db_session._SessionLocal() as db:
-        prompt = await db.scalar(select(InteractionPrompt).where(
-            InteractionPrompt.id == prompt_id,
-            InteractionPrompt.user_id == user_id,
+        prompt = await db.scalar(select(InteractionRequest).where(
+            InteractionRequest.id == prompt_id,
+            InteractionRequest.user_id == user_id,
         ))
         if prompt is not None and prompt.status == "active":
             prompt.status = "expired"
@@ -290,9 +325,9 @@ async def consume_action(
     """原子消费动作；返回给 Agent bridge 的受控结果，不返回 token。"""
     now = now_utc()
     prompt = await db.scalar(
-        select(InteractionPrompt).where(
-            InteractionPrompt.id == prompt_id,
-            InteractionPrompt.user_id == user_id,
+        select(InteractionRequest).where(
+            InteractionRequest.id == prompt_id,
+            InteractionRequest.user_id == user_id,
         )
     )
     if prompt is None:
@@ -314,6 +349,14 @@ async def consume_action(
     context = dict(action.context_json or {})
     is_custom_reply = action.option_id == CUSTOM_REPLY_OPTION_ID or action.action_type == "custom_reply"
     schema = _schema_dict(prompt.schema_json)
+    context_for_prompt = schema.get("context") if isinstance(schema.get("context"), dict) else {}
+    secret_target = context_for_prompt.get("secret_target")
+    if (
+        schema.get("secret_fields")
+        and isinstance(secret_target, dict)
+        and secret_target.get("kind") == "mcp_credentials"
+    ):
+        raise ValueError("敏感信息交互必须通过专用入口处理")
     if is_custom_reply and (schema.get("source") != "agent" or not bool(schema.get("allow_text_input"))):
         raise ValueError("该交互不接受自定义回答")
     action.status = "consumed"
@@ -437,9 +480,9 @@ async def consume_text(
 ) -> dict:
     """消费允许文本回答的 Prompt；文本回答同样只能恢复一次。"""
     now = now_utc()
-    prompt = await db.scalar(select(InteractionPrompt).where(
-        InteractionPrompt.id == prompt_id,
-        InteractionPrompt.user_id == user_id,
+    prompt = await db.scalar(select(InteractionRequest).where(
+        InteractionRequest.id == prompt_id,
+        InteractionRequest.user_id == user_id,
     ).with_for_update())
     if prompt is None:
         raise LookupError("交互不存在")
@@ -449,6 +492,9 @@ async def consume_text(
         await db.commit()
         raise ValueError("交互已过期")
     schema = _schema_dict(prompt.schema_json)
+    secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
+    if schema.get("secret_fields") and isinstance(secret_target, dict) and secret_target.get("kind") == "mcp_credentials":
+        raise ValueError("敏感信息交互必须通过专用入口处理")
     if schema.get("source") != "agent" or not bool(schema.get("allow_text_input")):
         raise ValueError("该交互不接受文本回答")
     # 两步式只针对真实选择项；仅带自定义回复兜底按钮的提问（开放性问题）在文本
@@ -500,17 +546,20 @@ async def consume_choice_text(
         return None
     now = now_utc()
     prompt = await db.scalar(
-        select(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-            InteractionPrompt.kind.in_(("choice", "confirm")),
-            InteractionPrompt.status == "active",
-            InteractionPrompt.expires_at > now,
-        ).order_by(InteractionPrompt.created_at.desc()).with_for_update()
+        select(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+            InteractionRequest.kind.in_(("choice", "confirm")),
+            InteractionRequest.status == "active",
+            InteractionRequest.expires_at > now,
+        ).order_by(InteractionRequest.created_at.desc()).with_for_update()
     )
     if prompt is None:
         return None
     schema = _schema_dict(prompt.schema_json)
+    secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
+    if schema.get("secret_fields") and isinstance(secret_target, dict) and secret_target.get("kind") == "mcp_credentials":
+        return None
     options = [item for item in schema.get("options", []) if isinstance(item, dict)]
     if not options:
         return None
@@ -608,12 +657,12 @@ async def consume_custom_text(
     """消费 Agent ask_user 的自定义回答；系统交互永远不会命中此路径。"""
     now = now_utc()
     prompts = (await db.execute(
-        select(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-            InteractionPrompt.status == "active",
-            InteractionPrompt.expires_at > now,
-        ).order_by(InteractionPrompt.created_at.desc())
+        select(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+            InteractionRequest.status == "active",
+            InteractionRequest.expires_at > now,
+        ).order_by(InteractionRequest.created_at.desc())
     )).scalars().all()
     for prompt in prompts:
         schema = _schema_dict(prompt.schema_json)
@@ -640,16 +689,22 @@ async def consume_custom_text(
 async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
     now = now_utc()
     rows = (await db.execute(
-        select(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-            InteractionPrompt.status == "active",
-            InteractionPrompt.expires_at > now,
-        ).order_by(InteractionPrompt.created_at.desc())
+        select(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+            InteractionRequest.status == "active",
+            InteractionRequest.expires_at > now,
+        ).order_by(InteractionRequest.created_at.desc())
     )).scalars().all()
     result: list[dict] = []
     for prompt in rows:
         schema = _schema_dict(prompt.schema_json)
+        secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
+        is_mcp_secret = bool(
+            schema.get("secret_fields")
+            and isinstance(secret_target, dict)
+            and secret_target.get("kind") == "mcp_credentials"
+        )
         actions = (await db.execute(
             select(InteractionAction).where(
                 InteractionAction.prompt_id == prompt.id,
@@ -658,7 +713,16 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
             ).order_by(InteractionAction.id)
         )).scalars().all()
         options = []
-        for action in actions:
+        has_private_secret_stage = False
+        if is_mcp_secret:
+            from app.models import McpSecretInput
+
+            has_private_secret_stage = bool(await db.scalar(select(McpSecretInput.id).where(
+                McpSecretInput.prompt_id == prompt.id,
+                McpSecretInput.status.in_(("pending_choice", "awaiting_secret")),
+                McpSecretInput.expires_at > now,
+            )))
+        for action in (actions if not is_mcp_secret or has_private_secret_stage else []):
             token = secrets.token_urlsafe(24)
             action.token_hash = _hash_token(token)
             options.append({
@@ -702,12 +766,12 @@ async def trim_finished_interactions(
     消息存在——不随消息裁切会无限累积挤占会话历史。active（待回复的确认门/选择卡）
     一律保留（其生命周期由 expires_at 与消费流程负责）。返回删除行数。"""
     conditions = [
-        InteractionPrompt.session_id == session_id,
-        InteractionPrompt.status.in_(("resolved", "expired", "cancelled")),
+        InteractionRequest.session_id == session_id,
+        InteractionRequest.status.in_(("resolved", "expired", "cancelled")),
     ]
     if created_before is not None:
-        conditions.append(InteractionPrompt.created_at < created_before)
-    result = await db.execute(delete(InteractionPrompt).where(*conditions))
+        conditions.append(InteractionRequest.created_at < created_before)
+    result = await db.execute(delete(InteractionRequest).where(*conditions))
     return result.rowcount or 0
 
 
@@ -715,22 +779,28 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
     """返回会话全部交互气泡；活动项轮换 token，已完成项只保留展示数据。"""
     now = now_utc()
     prompts = (await db.execute(
-        select(InteractionPrompt).where(
-            InteractionPrompt.user_id == user_id,
-            InteractionPrompt.session_id == session_id,
-        ).order_by(InteractionPrompt.created_at)
+        select(InteractionRequest).where(
+            InteractionRequest.user_id == user_id,
+            InteractionRequest.session_id == session_id,
+        ).order_by(InteractionRequest.created_at)
     )).scalars().all()
     result: list[dict] = []
     changed = False
     for prompt in prompts:
         schema = _schema_dict(prompt.schema_json)
+        secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
+        is_mcp_secret = bool(
+            schema.get("secret_fields")
+            and isinstance(secret_target, dict)
+            and secret_target.get("kind") == "mcp_credentials"
+        )
         actions = (await db.execute(
             select(InteractionAction).where(InteractionAction.prompt_id == prompt.id).order_by(InteractionAction.id)
         )).scalars().all()
         options = []
         selected = None
         schema_options = schema.get("options", [])
-        for action in actions:
+        for action in ([] if is_mcp_secret else actions):
             label = next(
                 (str(item.get("label") or "") for item in schema_options
                  if str(item.get("id") or "") == action.option_id),

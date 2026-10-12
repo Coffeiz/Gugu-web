@@ -26,6 +26,9 @@ def _build_engine():
     global _engine, _SessionLocal, _engine_loop
     if _engine is not None and _SessionLocal is not None:
         return
+    from app.search.romaji_index import register_romaji_search_alias_listener
+
+    register_romaji_search_alias_listener()
     settings = get_settings()
     _engine = create_async_engine(
         settings.db.url,
@@ -180,6 +183,15 @@ _MIGRATIONS = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_width INTEGER NULL",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS search_romaji TEXT NULL",
+    "ALTER TABLE folders ADD COLUMN IF NOT EXISTS search_romaji TEXT NULL",
+    """CREATE TABLE IF NOT EXISTS global_search_backfill_state (
+        name VARCHAR(100) PRIMARY KEY,
+        completed_at TIMESTAMPTZ NULL
+    )""",
+    "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+    "CREATE INDEX IF NOT EXISTS ix_search_files_romaji_trgm ON files USING gin (search_romaji gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS ix_search_folders_romaji_trgm ON folders USING gin (search_romaji gin_trgm_ops)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_files_active_user_storage_key ON files (user_id, storage_key) WHERE deleted_at IS NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS content_json JSONB NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS references_json JSONB NULL",
@@ -208,6 +220,13 @@ async def create_all_tables():
         await conn.execute(text("SET LOCAL lock_timeout = '3s'"))
         await conn.execute(text("SET LOCAL statement_timeout = '15s'"))
         await conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _MIGRATION_LOCK_KEY})
+        # 空库由 metadata.create_all 初始化时不会经过创建数据库级对象的 Alembic
+        # revision；文件分页查询依赖此排序规则，因此必须在服务启动建表前补齐。
+        if conn.dialect.name == "postgresql":
+            await conn.execute(text(
+                'CREATE COLLATION IF NOT EXISTS "gugu_natural_zh" '
+                "(provider = icu, locale = 'zh-u-kn-true')"
+            ))
         await conn.run_sync(Base.metadata.create_all)
         for sql in _MIGRATIONS:
             await conn.execute(text(sql))

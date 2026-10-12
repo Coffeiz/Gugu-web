@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.v1 import agent as agent_api
-from app.models import ConversationMessage, ConversationSession
+from app.models import ConversationMessage, ConversationSession, UserMcpServer
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +43,52 @@ async def test_get_session_messages_404_for_foreign_or_missing_session(db, user_
     with pytest.raises(HTTPException) as missing:
         await agent_api.get_session_messages(424242, current_user=user_a, db=db)
     assert missing.value.status_code == 404
+
+
+async def test_web_secret_link_and_submit_are_owner_scoped_for_group_session(db, user_a, user_b):
+    from app.api.v1.agent import SecretInteractionRequest
+    from app.services.interactions import create_agent_prompt
+
+    server = UserMcpServer(
+        user_id=user_a.id, scope="user", name="group_web_secret",
+        endpoint="https://m.example.com", credential_slots=[
+            {"id": "key", "label": "Key", "target": "header", "name": "X-Key"},
+        ],
+    )
+    session = ConversationSession(
+        user_id=user_a.id, title="group secret", source="qq", bot_id="bot-a",
+        chat_type="group", chat_id="group-a", platform_user_id="member-a",
+    )
+    db.add_all([server, session])
+    await db.commit()
+    prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=session.id, tool_call_id="group-web-secret",
+        tool_name="manage_mcp_servers", payload={
+            "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+            "secret_fields": [{"name": "key", "label": "Key", "type": "secret"}],
+            "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+        },
+    )
+    await db.commit()
+
+    assert await agent_api.get_interaction_session(
+        prompt.id, current_user=user_a, db=db,
+    ) == {"session_id": session.id}
+    with pytest.raises(HTTPException) as link_denied:
+        await agent_api.get_interaction_session(prompt.id, current_user=user_b, db=db)
+    assert link_denied.value.status_code == 404
+    with pytest.raises(HTTPException) as submit_denied:
+        await agent_api.submit_secret_interaction(
+            prompt.id, SecretInteractionRequest(values={"key": "private-value"}),
+            current_user=user_b, db=db,
+        )
+    assert submit_denied.value.status_code == 404
+
+    result = await agent_api.submit_secret_interaction(
+        prompt.id, SecretInteractionRequest(values={"key": "private-value"}),
+        current_user=user_a, db=db,
+    )
+    assert result == {"ok": True, "prompt_id": prompt.id}
 
 
 async def test_get_session_messages_window_filters_and_has_more(db, user_a):

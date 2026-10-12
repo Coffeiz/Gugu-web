@@ -12,7 +12,6 @@ import { getAuthDeviceId } from '@/utils/authDevice'
 type Schemas = components['schemas']
 
 export interface FileSummaryResponse {
-  totalCount: number
   recentFiles: Schemas['FileResponse'][]
 }
 
@@ -434,6 +433,7 @@ export const mcpApi = {
   update: (id: string, data: Record<string, unknown>) => patch<McpServerItem>(`/mcp/servers/${encodeURIComponent(id)}`, data),
   remove: (id: string) => del(`/mcp/servers/${encodeURIComponent(id)}`),
   test: (id: string) => post<{ ok: boolean; error?: string; tool_count?: number; tools?: string[] }>(`/mcp/servers/${encodeURIComponent(id)}/test_connection`, {}),
+  loadStatus: (id: string) => post<{ ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string | null }>(`/mcp/servers/${encodeURIComponent(id)}/load_status`, {}),
   reconnect: (id: string) => post<{ ok: boolean; state: string; tool_count: number; tool_names?: string[]; error?: string }>(`/mcp/servers/${encodeURIComponent(id)}/reconnect`, {}),
   tools: (id: string) => get(`/mcp/servers/${encodeURIComponent(id)}/tools`),
 }
@@ -448,28 +448,49 @@ interface FileListParams {
   ext?: string
   q?: string
 }
+export interface CursorPage<T> {
+  items: T[]
+  next_cursor: string | null
+  has_more: boolean
+}
+export interface CursorPageParams {
+  limit?: number
+  cursor?: string | null
+  sortBy?: 'name' | 'type' | 'stage' | 'createdAt' | 'size' | 'id'
+  sortOrder?: 'asc' | 'desc'
+}
+
+function pageQuery(params: CursorPageParams): URLSearchParams {
+  const query = new URLSearchParams()
+  if (params.limit != null) query.set('limit', String(params.limit))
+  if (params.cursor) query.set('cursor', params.cursor)
+  if (params.sortBy) query.set('sort_by', params.sortBy)
+  if (params.sortOrder) query.set('sort_order', params.sortOrder)
+  return query
+}
+
 export const filesApi = {
-  list: ({ space, projectId, folderId, workspaceDirectoryId, mindMapId, ext, q }: FileListParams = {}) => {
-    const p: Record<string, any> = {}
-    if (space      != null) p.space       = space
-    if (projectId  != null) p.project_id  = projectId
-    if (folderId   != null) p.folder_id   = folderId
-    if (workspaceDirectoryId != null) p.workspace_directory_id = workspaceDirectoryId
-    if (mindMapId  != null) p.mind_map_id = mindMapId
-    if (ext        != null) p.ext         = ext
-    if (q          != null) p.q           = q
-    const qs = new URLSearchParams(p).toString()
-    return get<Schemas['FileResponse'][]>(`/files${qs ? '?' + qs : ''}`)
+  libraryCounts: () => get<{ personalCount: number; trashCount: number }>('/files/library-counts'),
+  page: (filters: FileListParams & CursorPageParams = {}) => {
+    const params = pageQuery(filters)
+    for (const [key, value] of Object.entries(filters)) {
+      if (value == null || ['limit', 'cursor', 'sortBy', 'sortOrder'].includes(key)) continue
+      const name = key.replace(/[A-Z]/g, match => `_${match.toLowerCase()}`)
+      params.set(name, String(value))
+    }
+    return get<CursorPage<Schemas['FileResponse']>>(`/files?${params}`)
   },
-  tree:    ()         => get<{
-    projects: Array<{ id: number; name: string; color: string; totalCount: number }>
-    personalCount: number
-    personalRootCount: number
-  }>('/files/tree'),
+  location: (id: number) => get<{
+    file: Schemas['FileResponse']
+    folder_path: Array<Schemas['FolderResponse']>
+  }>(`/files/${id}/location`),
+  resolvePaths: (id: number, paths: string[]) => post<Array<{
+    path: string
+    file: Schemas['FileResponse'] | null
+    folder: ApiFolderResponse | null
+  }>>(`/files/${id}/resolve-paths`, { paths }),
   summary: (recentLimit = 12) => get<FileSummaryResponse>(`/files/summary?recent_limit=${recentLimit}`),
-  all:     ()         => get<Schemas['FileResponse'][]>('/files/all'),
   get:     (id: number) => get<Schemas['FileResponse']>(`/files/${id}`),
-  version: ()         => get('/files/version'),
   storage: ()         => get('/files/storage'),
   archive: (data: { fileIds: number[]; folderIds: number[]; folderId?: number | null; name?: string }) =>
     post<Schemas['FileResponse']>('/files/archive', data),
@@ -713,6 +734,7 @@ export interface MindCanvasNoteCreate {
 
 export const mindApi = {
   listNotes:  (limit = 50, offset = 0) => get<MindNote[]>(`/mind/notes?limit=${limit}&offset=${offset}`),
+  getNote:    (id: number) => get<MindNote>(`/mind/notes/${id}`),
   createNote: (data: MindNoteCreate)             => post<MindNote>('/mind/notes', data),
   updateNote: (id: number, data: MindNoteUpdate, meta?: RequestMeta) => patch<MindNote>(`/mind/notes/${id}`, data, meta),
   deleteNote: (id: number, meta?: RequestMeta)                       => del(`/mind/notes/${id}`, meta),
@@ -748,16 +770,25 @@ export const mindApi = {
 // ── Folders ───────────────────────────────────────────────────────────────────
 export type ApiFolderResponse = Schemas['FolderResponse'] & { workspaceDirectoryId?: number | null }
 export const foldersApi = {
-  all:  ()                              => get<ApiFolderResponse[]>('/folders/all'),
-  list: ({ projectId, parentId, workspaceDirectoryId, allInScope }: { projectId?: number; parentId?: number; workspaceDirectoryId?: number; allInScope?: boolean } = {}) => {
-    const params = new URLSearchParams()
-    if (projectId != null) params.set('project_id', String(projectId))
-    if (parentId  != null) params.set('parent_id',  String(parentId))
-    if (workspaceDirectoryId != null) params.set('workspace_directory_id', String(workspaceDirectoryId))
-    if (allInScope) params.set('all_in_scope', 'true')
-    const qs = params.toString()
-    return get<ApiFolderResponse[]>(qs ? `/folders?${qs}` : '/folders')
+  page: (filters: { projectId?: number; parentId?: number; workspaceDirectoryId?: number } & CursorPageParams = {}) => {
+    const params = pageQuery(filters)
+    if (filters.projectId != null) params.set('project_id', String(filters.projectId))
+    if (filters.parentId != null) params.set('parent_id', String(filters.parentId))
+    if (filters.workspaceDirectoryId != null) params.set('workspace_directory_id', String(filters.workspaceDirectoryId))
+    return get<CursorPage<ApiFolderResponse>>(`/folders?${params}`)
   },
+  get: (id: number) => get<ApiFolderResponse>(`/folders/${id}`),
+  location: (id: number) => get<{
+    folder: ApiFolderResponse
+    ancestors: ApiFolderResponse[]
+  }>(`/folders/${id}/location`),
+  resolvePaths: (filters: { projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; paths: string[] }) =>
+    post<ApiFolderResponse[]>('/folders/resolve-paths', {
+      projectId: filters.projectId ?? null,
+      workspaceDirectoryId: filters.workspaceDirectoryId ?? null,
+      parentId: filters.parentId ?? null,
+      paths: filters.paths,
+    }),
   create: (projectId: number | null, name: string, parentId: number | null = null, workspaceDirectoryId: number | null = null) => post<ApiFolderResponse>('/folders', {
     ...(projectId != null ? { projectId } : {}),
     ...(parentId  != null ? { parentId  } : {}),
@@ -822,16 +853,26 @@ export interface TrashPurgeJob {
   failedCount: number
   errorCode?: string | null
 }
-export interface TrashFolderContents {
+export interface TrashFolderContentsPage {
+  folders: CursorPage<TrashFolderMeta>
+  files: CursorPage<Schemas['FileResponse']>
+}
+/** UI 中已经连续加载的有限目录内容，不是后端数组响应。 */
+export interface TrashFolderContentsSnapshot {
   folders: TrashFolderMeta[]
   files: Schemas['FileResponse'][]
 }
 
 export const trashApi = {
-  counts:        ()           => get<{ fileCount: number; folderCount: number; totalCount: number }>('/trash/counts'),
-  list:          ()           => get<Schemas['FileResponse'][]>('/trash'),
-  listFolders:   ()           => get<TrashFolderMeta[]>('/trash/folders'),
-  listFolderContents: (id: number) => get<TrashFolderContents>(`/trash/folders/${id}/contents`),
+  page: (params: CursorPageParams = {}) => get<CursorPage<Schemas['FileResponse']>>(`/trash/page?${pageQuery(params)}`),
+  foldersPage: (params: CursorPageParams = {}) => get<CursorPage<TrashFolderMeta>>(`/trash/folders/page?${pageQuery(params)}`),
+  folderContentsPage: (id: number, params: { limit?: number; folderCursor?: string | null; fileCursor?: string | null } = {}) => {
+    const query = new URLSearchParams()
+    if (params.limit != null) query.set('limit', String(params.limit))
+    if (params.folderCursor) query.set('folder_cursor', params.folderCursor)
+    if (params.fileCursor) query.set('file_cursor', params.fileCursor)
+    return get<TrashFolderContentsPage>(`/trash/folders/${id}/contents/page?${query}`)
+  },
   restore:       (id: number) => post(`/trash/${id}/restore`, {}),
   restoreFolder: (id: number) => post(`/trash/folders/${id}/restore`, {}),
   hardDeleteFolder: (id: number) => del(`/trash/folders/${id}`),
@@ -1000,7 +1041,10 @@ export const agentApi = {
     const query = params.toString()
     return get(`/agent/sessions/${sessionId}/messages${query ? `?${query}` : ''}`)
   },
+  getMessagesBefore: (sessionId: string, beforeId: number, limit = 200) =>
+    get(`/agent/sessions/${sessionId}/messages?before_id=${encodeURIComponent(String(beforeId))}&limit=${encodeURIComponent(String(limit))}`),
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
+  getInteractionSession: (promptId: number) => get<{ session_id: number }>(`/agent/interactions/${promptId}/session`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
   listImportedDraftQueues: () => get<{ queues: Array<{ queue_id: string; items: Array<{ key: number; queue_id: string; session_id: null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }> }>('/agent/pending-queues/imported-drafts'),
   updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>

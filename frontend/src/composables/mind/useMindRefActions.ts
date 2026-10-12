@@ -43,7 +43,6 @@ export function useMindRefActions() {
     }
     if (refType === 'file') {
       if (filesCache.getFile(numericId)) return 'available'
-      if (filesCache.loaded) return 'missing'
       if (!fetchUncachedFile) return 'unknown'
       try {
         return await filesCache.ensureFile(numericId) ? 'available' : 'missing'
@@ -52,9 +51,12 @@ export function useMindRefActions() {
       }
     }
     if (refType === 'folder') {
-      // 便签预览不应为了验证一个目录引用而加载全账户目录树。
-      if (!filesCache.loaded) return 'unknown'
-      return filesCache.getFolder(numericId) ? 'available' : 'missing'
+      if (filesCache.getFolder(numericId)) return 'available'
+      try {
+        return await filesCache.ensureFolder(numericId) ? 'available' : 'missing'
+      } catch {
+        return 'unknown'
+      }
     }
     if (refType === 'event') {
       try {
@@ -77,7 +79,7 @@ export function useMindRefActions() {
 
   async function openFile(id: number) {
     let file = filesCache.getFile(id)
-    if (!file && !filesCache.loaded) {
+    if (!file) {
       try { file = await filesCache.ensureFile(id) } catch { /* 网络错误不当作对象已删除 */ }
     }
     if (!file) {

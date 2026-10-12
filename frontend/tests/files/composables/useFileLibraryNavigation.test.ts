@@ -2,12 +2,13 @@ import { createApp, h, ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import { useFileLibraryNavigation } from '@/composables/files/useFileLibraryNavigation'
 import type { FileLibraryNavigationTarget, NavSeg } from '@/utils/filesNav'
+import { filesApi, foldersApi } from '@/services/api'
+
+vi.mock('@/services/api', () => ({ filesApi: { location: vi.fn() }, foldersApi: { location: vi.fn() } }))
 
 function mountNavigation() {
   const navPath = ref<NavSeg[]>([])
   const cacheStore = {
-    loaded: false,
-    load: vi.fn().mockResolvedValue(undefined),
     getFolder: vi.fn(),
     getFile: vi.fn(),
   }
@@ -44,11 +45,16 @@ describe('文件库全局搜索定位', () => {
       id: kind === 'file' ? 91 : 73,
       workspaceDirectoryId: 12,
       workspaceDirectoryName: '开发工作区',
-      folderPath: [
-        { id: 34, name: '源码' },
-        { id: 56, name: '前端' },
-      ],
+      folderPath: [{ id: 34, name: '源码' }, { id: 56, name: '前端' }],
     }
+    vi.mocked(filesApi.location).mockResolvedValue({
+      file: { projectId: null, workspaceDirectoryId: 12 } as never,
+      folder_path: [{ id: 34, name: '源码' }, { id: 56, name: '前端' }] as never,
+    } as never)
+    vi.mocked(foldersApi.location).mockResolvedValue({
+      folder: { id: 73, name: '目标', projectId: null, workspaceDirectoryId: 12 } as never,
+      ancestors: [{ id: 34, name: '源码' }, { id: 56, name: '前端' }] as never,
+    } as never)
 
     try {
       await mounted.navigation.jumpToTarget(target)
@@ -67,7 +73,7 @@ describe('文件库全局搜索定位', () => {
           space: 'workspace', workspaceDirectoryId: 12,
         },
       ])
-      expect(mounted.cacheStore.load).not.toHaveBeenCalled()
+      expect(kind === 'file' ? filesApi.location : foldersApi.location).toHaveBeenCalledWith(target.id)
       expect(mounted.loadContents).toHaveBeenCalledOnce()
       expect(mounted.saveNav).toHaveBeenCalledOnce()
       expect(mounted.clearSelection).toHaveBeenCalledOnce()

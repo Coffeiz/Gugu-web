@@ -8,7 +8,6 @@
   --theme-sidebar-active-bg: var(--theme-card-solid);
   --theme-sidebar-active-fg: #6b6fa0;
   --theme-brand-logo-color: #7779ab;
-  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(48%) sepia(12%) saturate(1060%) hue-rotate(198deg) brightness(88%) contrast(88%);
   --theme-divider: linear-gradient(90deg,transparent,rgba(0,0,0,.07) 20%,rgba(0,0,0,.07) 80%,transparent);
   --theme-divider-color: rgba(0,0,0,.07);
   --theme-success: #5a9e88;
@@ -28,7 +27,6 @@
   --theme-focus: rgba(149,144,196,.42);
   --theme-sidebar-active-fg: #c2bee3;
   --theme-brand-logo-color: #918cb8;
-  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(60%) sepia(16%) saturate(560%) hue-rotate(202deg) brightness(92%) contrast(90%);
   --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.12) 80%,transparent);
   --theme-divider-color: rgba(255,255,255,.12);
   --theme-success: #80b4a2;

@@ -138,7 +138,6 @@ export const useConfigStore = defineStore('config', () => {
       searxng_engines: 'baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google',
       searxng_image_engines: '',
       max_results: 5,
-      global_search_backend: 'ilike',
       ts_sidecar_index_ttl_seconds: 30 * 24 * 3600,
       similar_image_provider: 'baidu_qianfan',
       similar_image_enabled: false,

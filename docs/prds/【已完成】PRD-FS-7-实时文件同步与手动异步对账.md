@@ -1,8 +1,8 @@
 # PRD-FS-7 实时文件同步与完整异步对账
 
-> 状态：实施中；每周严格完整扫描方案已确认，尚未完成 devserver 部署验收。
+> 状态：实时同步、完整异步对账、管理界面及相关测试均已完成。
 > 创建：2026-10-07
-> 最近更新：2026-10-08；调整为每周严格完整扫描、扩展执行时限，并明确普通 worker 重启不制造缺口。
+> 最近更新：2026-10-12；实现及验收测试完成。
 > 运行实现基线：`a0ed9ccb8`，保留上一轮非文件同步提交。
 > 替代范围：旧「PRD-FS-6 文件同步快照与增量对账」；不替代同编号的 Agent 办公文档结构化编辑需求。
 > 旧重构归档：`codex/archive-filesync-snapshot-20261007`，提交 `04f3391762e476412659d9cf10a4184f0c42954f`。
@@ -105,7 +105,7 @@ frontend/src/
 └── i18n/sections/filesync.ts                   # 现有·改造：三语状态、错误、确认与部分结果文案
 
 docs/
-└── prds/PRD-FS-7-实时文件同步与手动异步对账.md  # 当前需求、阶段 TODO 与验收证据
+└── prds/【已完成】PRD-FS-7-实时文件同步与手动异步对账.md  # 当前需求、阶段 TODO 与验收证据
 ```
 
 其中 SSE 传输、过滤与重连链路涉及 `backend/app/api/v1/live.py`、`backend/app/core/events.py`、`frontend/src/types/live-events.ts` 和 `frontend/src/composables/filesync/useFileSyncAdminEvents.ts`；任务状态的权威来源仍是 API/数据库，不将 SSE 当作任务日志。对账状态和任务变更只发送到 Admin 事件流。

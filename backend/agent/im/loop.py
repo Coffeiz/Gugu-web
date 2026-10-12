@@ -748,6 +748,12 @@ async def dispatch_im_message(payload: dict):
     from agent.runtime import trace
     from agent.im.replies import send_agent_response, send_text
 
+    # 在绑定命令、媒体下载、普通消息持久化、被动群记录和 Agent 前消费凭据输入。
+    from agent.im.interaction_text import consume_mcp_secret_payload
+
+    if await consume_mcp_secret_payload(payload):
+        return None
+
     # Telegram owner 只能通过网页签发的一次性绑定码，在 Bot 私聊中显式绑定。
     # 必须在构造 AgentRequest/调用模型前短路，避免验证码进入模型上下文或聊天历史。
     if payload.get("platform") == "telegram" and payload.get("telegram_command") == "bind":
@@ -779,7 +785,7 @@ async def dispatch_im_message(payload: dict):
             from app.core import events
             await events.publish(
                 UUID(str(payload.get("owner_user_id"))), "im_channels", operation="refresh"
-            )
+        )
         return None
 
     # Gateway 入口和 Redis 队列消费之间可能存在设置变化；worker 再读取对应
@@ -1179,6 +1185,12 @@ async def dispatch_im_message(payload: dict):
             if not web_stream_failed:
                 await _publish_web_event({"type": "done", "source": platform})
             await genstream.end(web_stream_session_id, owner_run_id=web_stream_owner_id)
+            from app.core import events
+            await events.publish_agent_run_changed(
+                user_id,
+                session_id=web_stream_session_id,
+                status="failed" if web_stream_failed else "completed",
+            )
             from app.services.conversation_pending_queue import publish_session_pending_queue_changed
             await publish_session_pending_queue_changed(user_id, web_stream_session_id)
 

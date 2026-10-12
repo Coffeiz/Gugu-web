@@ -52,6 +52,9 @@ async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeyp
     async def stale_action(*_args, **_kwargs):
         raise ValueError("动作无效或已使用")
 
+    async def no_secret_action(*_args, **_kwargs):
+        return None
+
     protocol_acks = []
     user_replies = []
 
@@ -64,6 +67,7 @@ async def test_stale_group_interaction_is_acknowledged_in_original_group(monkeyp
 
     monkeypatch.setattr(db_session, "_SessionLocal", _SessionFactory())
     monkeypatch.setattr(interactions, "consume_action", stale_action)
+    monkeypatch.setattr("app.services.mcp_secret_inputs.consume_mcp_secret_action", no_secret_action)
     monkeypatch.setattr(qq, "_ack_qq_interaction", fake_protocol_ack)
     monkeypatch.setattr(qq, "_qq_ack", fake_qq_ack)
 

@@ -120,6 +120,9 @@ async def test_qq_binding_command_is_consumed_before_agent_enqueue(monkeypatch):
     acked = []
     produced = []
 
+    async def no_secret_prompt(*_args, **_kwargs):
+        return False
+
     async def fake_consume(bot_id, owner_user_id, platform_user_id, code):
         assert bot_id == 18
         assert str(owner_user_id) == "00000000-0000-0000-0000-000000000001"
@@ -134,6 +137,7 @@ async def test_qq_binding_command_is_consumed_before_agent_enqueue(monkeypatch):
         produced.append(args)
 
     monkeypatch.setattr("app.services.im_identity.consume_qq_binding_code", fake_consume)
+    monkeypatch.setattr("agent.im.interaction_text.consume_mcp_secret_payload", no_secret_prompt)
     monkeypatch.setattr(qq, "_qq_ack", fake_ack)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 

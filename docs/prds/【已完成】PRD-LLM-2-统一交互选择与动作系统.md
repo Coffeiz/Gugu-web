@@ -73,10 +73,10 @@
 
 ## 1. 交互类型
 
-统一对象为 `InteractionPrompt`，由 Agent 或工具层创建：
+统一对象为 `InteractionRequest`，由 Agent 或工具层创建。代码类型使用 Request 以区别 LLM/MCP Prompt；现有数据库表 `interaction_prompts` 与关联列 `prompt_id` 暂保留，避免无必要的数据迁移：
 
 ```text
-InteractionPrompt
+InteractionRequest
 ├── kind: choice | confirm | question | form
 ├── title
 ├── body
@@ -290,7 +290,7 @@ ChatToolCall
 - 回调验证由飞书 SDK 的事件加密/verification token 机制负责；生产环境不得注册空校验配置。
 - 不把 action token 写入可见日志、消息正文或持久化业务上下文；日志只记录固定原因和指纹。
 - 飞书卡片失败不能阻塞原 Run；发送失败必须落回同一份文本选项，保证用户仍可直接回复。
-- 卡片更新是展示优化，真实状态以 `InteractionPrompt/InteractionAction` 原子消费结果为准。
+- 卡片更新是展示优化，真实状态以 `InteractionRequest/InteractionAction` 原子消费结果为准。
 
 ### IM 独立出站契约
 
@@ -349,7 +349,7 @@ tool_call_result：独立工具完成/失败消息
 ```text
 Agent / Tool 判断需要输入
         ↓
-创建 InteractionPrompt 和一次性 actions
+创建 InteractionRequest 和一次性 actions
         ↓
 当前任务进入 WAITING_INPUT
         ↓
@@ -412,12 +412,12 @@ Agent / Tool 判断需要输入
 
 ## 3. 数据模型
 
-### 3.1 InteractionPrompt
+### 3.1 InteractionRequest
 
 Prompt 可以先以内存/会话状态存在，跨进程和需要恢复的动作必须落库。业务上下文只保存引用，不保存聊天原文或上游响应。
 
 ```text
-InteractionPrompt
+InteractionRequest
 ├── id
 ├── session_id
 ├── gugu_user_id
@@ -552,7 +552,7 @@ Guguchat 是优先适配端：
 QQ 是 Guguchat 之外的第一个 IM adapter：
 
 ```text
-InteractionPrompt
+InteractionRequest
   → QQ Keyboard message payload
   → QQ WebSocket interaction event
   → action_token 校验

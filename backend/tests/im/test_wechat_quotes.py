@@ -203,3 +203,28 @@ async def test_wechat_quoted_image_is_ingested_and_enqueued(monkeypatch):
     assert produced[0]["attachments"] == ["att_quote_1"]
     assert produced[0]["typing_ticket"] == "ticket_1"
     assert produced[0]["trace_id"]
+
+
+async def test_wechat_secret_preflight_precedes_media_download(monkeypatch):
+    """凭据输入态的媒体事件必须在微信网关下载/暂存前被消费。"""
+    seen_payloads = []
+
+    async def consume_secret(payload):
+        seen_payloads.append(payload)
+        return True
+
+    async def should_not_ingest(*_args, **_kwargs):
+        raise AssertionError("secret preflight must run before media ingestion")
+
+    monkeypatch.setattr("agent.im.interaction_text.consume_mcp_secret_payload", consume_secret)
+    monkeypatch.setattr(wechat, "_ingest_wechat_media", should_not_ingest)
+    msg = _wechat_text_msg(item_list=[{
+        "type": 2,
+        "image_item": {"media": {"full_url": "https://example.test/image.jpg"}},
+    }])
+
+    await wechat._handle_msg(msg, "test-bot", "test-owner", SimpleNamespace())
+
+    assert seen_payloads[0]["platform"] == "wechat"
+    assert seen_payloads[0]["chat_type"] == "c2c"
+    assert seen_payloads[0]["attachments"] == [{"pending_media": True}]

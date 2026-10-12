@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, File as FastAPIFile, HTTPException, UploadFile
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -17,6 +16,7 @@ from app.services.personality_preferences import (
 )
 from app.services.email.capabilities import is_system_email_available
 from app.services.email.queries import get_user_smtp as get_user_smtp_record, save_user_smtp
+from app.services.account_queries import get_or_create_user_preferences
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -81,15 +81,7 @@ _DEFAULT_TOOL_INJECTION_MODE = "description"
 _SUPPORTED_LOCALES = {"zh-CN", "ja-JP", "en-US"}
 _MAX_PERSONALITY_UPLOAD_BYTES = 40_000
 async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
-    result = await db.execute(
-        select(UserPreferences).where(UserPreferences.user_id == user.id)
-    )
-    prefs = result.scalar_one_or_none()
-    if prefs is None:
-        prefs = UserPreferences(user_id=user.id, data_json="{}")
-        db.add(prefs)
-        await db.flush()
-    return prefs
+    return await get_or_create_user_preferences(db, user.id)
 
 
 def _to_response(data: dict, personality: str | None = None) -> PreferencesResponse:

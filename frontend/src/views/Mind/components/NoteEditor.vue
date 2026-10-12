@@ -150,7 +150,7 @@ const props = withDefaults(defineProps<{
   // 样式/插入抽屉保持展开（默认收起）。宽版阅读窗格（三栏笔记原型）空间足够，
   // 不自动折叠；窄卡片场景维持默认交互。
   expandDrawers?: boolean
-}>(), { placeholder: '写点什么…', compact: false, autofocus: false, floatToolbar: false, editReady: true, expandDrawers: false })
+}>(), { compact: false, autofocus: false, floatToolbar: false, editReady: true, expandDrawers: false })
 
 const emit = defineEmits<{
   (e: 'update:modelValue', md: string): void
@@ -369,7 +369,7 @@ function insertHorizontalRule() { editor.value?.chain().focus().setHorizontalRul
 
 const editor = useEditor({
   content: markdownToDoc(props.modelValue) as any,
-  extensions: mindExtensions(props.placeholder) as any,
+  extensions: mindExtensions(props.placeholder ?? t('mindEditorUi.bodyPlaceholder')) as any,
   // TipTap 的 autofocus:true 默认落在文档开头；便签/捕捉条打开编辑器都是接着写，光标要落在
   // 文字最后面，跟 defineExpose 里那个 focus('end') 保持一致
   autofocus: props.autofocus ? 'end' : false,

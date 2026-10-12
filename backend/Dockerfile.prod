@@ -118,6 +118,7 @@ COPY backend/updater ./updater
 COPY backend/agent ./agent
 COPY backend/onboarding ./onboarding
 COPY backend/scripts/migrations ./scripts/migrations
+COPY backend/scripts/backfill_global_search_romaji.py ./scripts/backfill_global_search_romaji.py
 COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/worker.py ./worker.py

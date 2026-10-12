@@ -26,14 +26,6 @@
         subClass="warn"
         glowColor="rgba(176,120,88,0.12)"
       />
-      <StatCard
-        :label="t('dashboardUi.totalFiles')"
-        :value="fileCount"
-        :sub-prefix="t('dashboardUi.thisAccount')"
-        :sub-text="t('dashboardUi.totalFiles')"
-        subClass="up"
-        glowColor="rgba(196,175,200,0.12)"
-      />
     </div>
 
     <!-- 中间行：项目列表 + 日历 -->
@@ -48,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { filesApi, type FileSummaryResponse } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { useProjectStore } from '@/stores/projects'
@@ -63,7 +55,6 @@ const projectStore = useProjectStore()
 const { t } = useI18n()
 const liveStore = useLiveStore()
 const summary = ref<FileSummaryResponse | null>(null)
-const fileCount = computed(() => summary.value?.totalCount ?? '—')
 let summaryRequest = 0
 
 async function loadFileSummary() {

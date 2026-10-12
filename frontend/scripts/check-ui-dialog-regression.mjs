@@ -48,7 +48,7 @@ const projectActionsSource = readFileSync(projectActionsPath, 'utf8')
 const requiredProjectContracts = [
   'confirmDialog(',
   "projects.deleteTitle",
-  "projects.deleteMessage",
+  "projects.deleteContentsMessage",
   'projectStore.deleteProject',
 ]
 const missingProjectContracts = requiredProjectContracts.filter(contract => !projectActionsSource.includes(contract))

@@ -156,6 +156,16 @@ async def list_notes(
     return [_to_resp(n) for n in rows]
 
 
+@router.get("/notes/{nid}", response_model=MindNodeResponse)
+async def get_note(
+    nid: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按 ID 读取当前用户的一条活动便签，供精确搜索跳转使用。"""
+    return _to_resp(await _get_live_note(db, nid, current_user.id))
+
+
 @router.post("/notes", response_model=MindNodeResponse, status_code=201)
 async def create_note(
     body: MindNoteCreate,

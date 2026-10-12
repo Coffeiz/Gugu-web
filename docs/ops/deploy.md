@@ -456,6 +456,25 @@ server {
         try_files $uri $uri/ /admin/index.html;
     }
 
+    # Vite hash 资源可长期缓存；缺失的旧 hash 必须返回 404，不能回退为 SPA HTML。
+    location ^~ /admin/assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+    location = /admin/index.html {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache, must-revalidate" always;
+    }
+
+    location ^~ /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+    location = /index.html {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache, must-revalidate" always;
+    }
+
     # 字体是静态二进制资源，缺失时不能回退到 index.html，否则浏览器只会静默放弃字体。
     location ^~ /fonts/ {
         try_files $uri =404;
@@ -507,7 +526,23 @@ sudo nginx -t && sudo systemctl reload nginx
   ```
 - **伪静态**（网站 → 配置 → 伪静态）：SPA 路由回退（主站 + 后台两个独立入口，顺序不能颠倒）
   ```nginx
+  location ^~ /admin/assets/ {
+      try_files $uri =404;
+      add_header Cache-Control "public, max-age=31536000, immutable" always;
+  }
+  location = /admin/index.html {
+      try_files $uri =404;
+      add_header Cache-Control "no-cache, must-revalidate" always;
+  }
   location /admin { try_files $uri $uri/ /admin/index.html; }
+  location ^~ /assets/ {
+      try_files $uri =404;
+      add_header Cache-Control "public, max-age=31536000, immutable" always;
+  }
+  location = /index.html {
+      try_files $uri =404;
+      add_header Cache-Control "no-cache, must-revalidate" always;
+  }
   location /      { try_files $uri $uri/ /index.html; }
   ```
   > 后台路由 base 为 `/admin`，所有 admin 页面 URL 形如 `/admin/config`、`/admin/login`，刷新时命中第一条规则。本地 admin dev server（`corepack pnpm --filter gugu-web run dev:admin`）也需从 `localhost:5174/admin/` 访问。

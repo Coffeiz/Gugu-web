@@ -1,6 +1,6 @@
-from types import SimpleNamespace
-
+import asyncio
 import json
+from types import SimpleNamespace
 
 from agent.gateway import feishu
 
@@ -160,3 +160,15 @@ def test_feishu_message_still_reaches_stream_when_shortcut_redis_fails(monkeypat
 
     assert len(produced) == 1
     assert produced[0]["platform"] == "feishu"
+def test_feishu_gateway_async_runner_reuses_loop_for_sequential_preflights():
+    runner = feishu._GatewayAsyncRunner()
+
+    async def loop_identity():
+        return id(asyncio.get_running_loop())
+
+    try:
+        first_loop = runner.run(loop_identity())
+        second_loop = runner.run(loop_identity())
+        assert first_loop == second_loop
+    finally:
+        runner.stop()

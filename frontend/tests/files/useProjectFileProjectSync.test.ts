@@ -1,82 +1,71 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, ref, type EffectScope } from 'vue'
-import { filesApi, foldersApi } from '@/services/api'
-import type { FolderMeta } from '@/stores/filesCache'
+import { filesApi, foldersApi, type CursorPage } from '@/services/api'
+import type { DirectoryPageState, FileMeta, FolderMeta } from '@/stores/filesCache'
 import { useProjectFileProjectSync } from '@/composables/files/useProjectFileProjectSync'
 import type { Project } from '@/types/project'
 
 vi.mock('@/services/api', () => ({
-  filesApi: { list: vi.fn(), all: vi.fn() },
-  foldersApi: { list: vi.fn(), all: vi.fn() },
+  filesApi: { page: vi.fn() },
+  foldersApi: { page: vi.fn() },
 }))
 
-describe('项目文件目录按需加载', () => {
-  let scope: EffectScope
+const cursorPage = <T>(items: T[]): CursorPage<T> => ({ items, next_cursor: null, has_more: false })
 
+describe('项目文件目录按需分页', () => {
+  let scope: EffectScope
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(filesApi.list).mockResolvedValue([] as never)
-    vi.mocked(foldersApi.list).mockResolvedValue([] as never)
+    vi.mocked(filesApi.page).mockResolvedValue(cursorPage<FileMeta>([]) as never)
+    vi.mocked(foldersApi.page).mockResolvedValue(cursorPage<FolderMeta>([]) as never)
     scope = effectScope()
   })
-
   afterEach(() => scope.stop())
 
-  it('首次打开项目只读项目根目录，进入子目录时按需读取且不调用全量接口', async () => {
+  it('打开项目只读根目录页，进入子目录时按需读取，并合并重复导航请求', async () => {
     const project = ref({ id: 41 } as Project | null)
     const folderStack = ref<FolderMeta[]>([])
-    const replaceDirectorySnapshot = vi.fn()
+    const setDirectoryPage = vi.fn()
+    const getDirectory = vi.fn(() => null as DirectoryPageState | null)
     let sync!: ReturnType<typeof useProjectFileProjectSync>
-
     scope.run(() => {
       sync = useProjectFileProjectSync({
-        project: () => project.value,
-        openFolders: ref(new Set<number>()),
-        folderStack,
-        resetNavigation: vi.fn(),
-        showNewFolder: ref(false),
-        resetDraft: vi.fn(),
-        fileCacheStore: { loaded: false, replaceDirectorySnapshot },
+        project: () => project.value, openFolders: ref(new Set<number>()), folderStack,
+        resetNavigation: vi.fn(), showNewFolder: ref(false), resetDraft: vi.fn(),
+        sortBy: () => 'createdAt', sortOrder: () => 'desc',
+        fileCacheStore: { getDirectory, setDirectoryPage, invalidatePages: vi.fn() },
       })
     })
-
-    await vi.waitFor(() => expect(replaceDirectorySnapshot).toHaveBeenCalledOnce())
-    expect(filesApi.list).toHaveBeenNthCalledWith(1, { space: 'project', projectId: 41, folderId: undefined })
-    expect(foldersApi.list).toHaveBeenNthCalledWith(1, { projectId: 41, parentId: undefined })
+    await vi.waitFor(() => expect(setDirectoryPage).toHaveBeenCalledOnce())
+    expect(filesApi.page).toHaveBeenNthCalledWith(1, { space: 'project', projectId: 41, folderId: undefined, sortBy: 'createdAt', sortOrder: 'desc' })
+    expect(foldersApi.page).toHaveBeenNthCalledWith(1, { projectId: 41, parentId: undefined, sortBy: 'createdAt', sortOrder: 'desc' })
     expect(sync.isDirectoryLoaded(41, null)).toBe(true)
 
-    await Promise.all([
-      sync.ensureDirectoryLoaded(41, 93),
-      sync.ensureDirectoryLoaded(41, 93),
-    ])
-
-    expect(filesApi.list).toHaveBeenCalledTimes(2)
-    expect(filesApi.list).toHaveBeenNthCalledWith(2, { space: 'project', projectId: 41, folderId: 93 })
-    expect(foldersApi.list).toHaveBeenNthCalledWith(2, { projectId: 41, parentId: 93 })
+    await Promise.all([sync.ensureDirectoryLoaded(41, 93), sync.ensureDirectoryLoaded(41, 93)])
+    expect(filesApi.page).toHaveBeenCalledTimes(2)
+    expect(filesApi.page).toHaveBeenNthCalledWith(2, { space: 'project', projectId: 41, folderId: 93, sortBy: 'createdAt', sortOrder: 'desc' })
+    expect(foldersApi.page).toHaveBeenNthCalledWith(2, { projectId: 41, parentId: 93, sortBy: 'createdAt', sortOrder: 'desc' })
     expect(sync.isDirectoryLoaded(41, 93)).toBe(true)
-    expect(filesApi.all).not.toHaveBeenCalled()
-    expect(foldersApi.all).not.toHaveBeenCalled()
-    expect(replaceDirectorySnapshot).toHaveBeenCalledTimes(2)
+    expect(setDirectoryPage).toHaveBeenCalledTimes(2)
   })
 
-  it('项目全量缓存已就绪时不重复请求目录', async () => {
-    const replaceDirectorySnapshot = vi.fn()
+  it('目录页缓存命中时不重复请求', async () => {
+    const cached = { files: [], folders: [], fileCursor: null, folderCursor: null, fileHasMore: false, folderHasMore: false }
+    const setDirectoryPage = vi.fn()
+    const getDirectory = vi.fn(() => cached)
     let sync!: ReturnType<typeof useProjectFileProjectSync>
     scope.run(() => {
       sync = useProjectFileProjectSync({
-        project: () => null,
-        openFolders: ref(new Set<number>()),
-        folderStack: ref<FolderMeta[]>([]),
-        resetNavigation: vi.fn(),
-        showNewFolder: ref(false),
-        resetDraft: vi.fn(),
-        fileCacheStore: { loaded: true, replaceDirectorySnapshot },
+        project: () => null, openFolders: ref(new Set<number>()), folderStack: ref<FolderMeta[]>([]),
+        resetNavigation: vi.fn(), showNewFolder: ref(false), resetDraft: vi.fn(),
+        sortBy: () => 'createdAt', sortOrder: () => 'desc',
+        fileCacheStore: { getDirectory, setDirectoryPage, invalidatePages: vi.fn() },
       })
     })
-
     await sync.ensureDirectoryLoaded(41)
-    expect(filesApi.list).not.toHaveBeenCalled()
-    expect(foldersApi.list).not.toHaveBeenCalled()
-    expect(replaceDirectorySnapshot).not.toHaveBeenCalled()
+    expect(getDirectory).toHaveBeenCalledWith({ space: 'project', projectId: 41, sortBy: 'createdAt', sortOrder: 'desc' })
+    expect(filesApi.page).not.toHaveBeenCalled()
+    expect(foldersApi.page).not.toHaveBeenCalled()
+    expect(setDirectoryPage).not.toHaveBeenCalled()
   })
 })

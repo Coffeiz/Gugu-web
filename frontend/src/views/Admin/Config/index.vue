@@ -115,19 +115,7 @@
             <h3>{{ t('configUi.globalSearch') }}</h3>
             <p>{{ t('configUi.globalSearchHint') }}</p>
           </div>
-          <div class="search-provider-group">
-            <AdminSelect
-              class="search-provider-select"
-              :model-value="draft.search.global_search_backend"
-              :options="[
-                { value: 'index', label: t('configUi.persistentIndex') },
-                { value: 'ilike', label: t('configUi.ilike') },
-              ]"
-              :aria-label="t('configUi.searchLabel')"
-              @update:model-value="draft.search.global_search_backend = $event"
-            />
-            <p class="config-card-note">{{ t('configUi.searchHint') }}</p>
-          </div>
+          <p class="config-card-note">{{ t('configUi.globalSearchIndexInfo') }}</p>
         </div>
       </section>
 
@@ -290,7 +278,6 @@ const adminStore  = useAdminStore()
 const draft = reactive({
   db:      JSON.parse(JSON.stringify(configStore.cfg.db)),
   redis:   JSON.parse(JSON.stringify(configStore.cfg.redis)),
-  search:  JSON.parse(JSON.stringify(configStore.cfg.search)),
   storage: JSON.parse(JSON.stringify(configStore.cfg.storage)),
   smtp:    JSON.parse(JSON.stringify(configStore.cfg.smtp)),
   security: JSON.parse(JSON.stringify(configStore.cfg.security ?? {
@@ -308,7 +295,6 @@ onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(draft.db,      configStore.cfg.db)
   Object.assign(draft.redis,   configStore.cfg.redis)
-  Object.assign(draft.search,  configStore.cfg.search)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
@@ -448,7 +434,6 @@ async function save() {
   await configStore.saveConfig({
     db:      { ...draft.db },
     redis:   { ...draft.redis },
-    search:  { global_search_backend: draft.search.global_search_backend },
     storage: { ...draft.storage },
     smtp:    { ...draft.smtp },
     security: { ...draft.security },
@@ -459,7 +444,6 @@ async function save() {
 function resetDraft() {
   Object.assign(draft.db,      configStore.cfg.db)
   Object.assign(draft.redis,   configStore.cfg.redis)
-  Object.assign(draft.search,  configStore.cfg.search)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
@@ -541,9 +525,7 @@ async function testSmtp() {
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field-grid :deep(.span2) { grid-column: span 2; }
 
-.search-provider-group { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; margin-left: auto; min-width: 0; }
 .config-card-note { margin: 0; color: rgba(255,255,255,0.35); font-size: 12px; line-height: 1.5; text-align: right; }
-.search-provider-select { flex-shrink: 0; }
 .search-config-card .card-head { margin-bottom: 0; }
 
 .toggle-group { display: flex; gap: 6px; margin-bottom: 16px; }

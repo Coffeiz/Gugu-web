@@ -32,21 +32,22 @@ class RunState:
     """
 
     run_id: str
-    session_id: str | None = None
+    session_id: int | str | None = None
 
     # ── 轮次与预算（FR-LLM25-008：安全上限不可丢失）───────────────────────
     round_number: int = 0
+    task_rounds: int = 0
     tool_call_count: int = 0
     verify_rounds: int = 0
-    absolute_rounds_used: int = 0
+    round_start_indices: list[tuple[int, int]] = field(default_factory=list)
 
     # ── provider / usage ─────────────────────────────────────────────────
     run_context_usage: int = 0
     hard_budget_retries: int = 0
+    total_usage_in: int = 0
     total_usage_out: int = 0
-
-    # ── 守卫 ───────────────────────────────────────────────────────────────
-    guard_retry_count: int = 0
+    total_cache_read: int = 0
+    total_cache_write: int = 0
 
     # ── 交互现场（同一时刻至多一个 pending）──────────────────────────────
     pending: PendingInteraction | None = None

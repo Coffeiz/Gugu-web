@@ -210,6 +210,8 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
     from agent.interactions.qq import format_text_fallback
 
     platform = payload.get("platform")
+    if prompt.get("secret_fields") and payload.get("chat_type") == "group":
+        prompt = {**prompt, "group_secret_blocked": True}
     if platform == "feishu" and prompt.get("options"):
         from agent.gateway import feishu
 
@@ -226,7 +228,7 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
     # 用尽。交互本身不需要绑定原消息，改发主动消息，避免 40034128/40034031
     # 让 Web 有提示但群聊看不到，也避免模型 run 长时间等待不可见的选择。
     interaction_payload = {**payload, "message_id": None}
-    text = format_text_fallback(prompt)
+    text = format_text_fallback(prompt, platform="qq")
     if prompt.get("options"):
         from agent.gateway import qq
 
@@ -238,10 +240,10 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
         }
         # 键盘发送失败时复用同一份 QQ 降级文案，明确告诉用户可以回复序号；
         # 不能退回平台无关的“请在网页点击”，否则 QQ 端没有可用恢复路径。
-        text = format_text_fallback(keyboard_prompt)
+        text = format_text_fallback(keyboard_prompt, platform="qq")
         if target_id and await qq.send_keyboard(
             target_id,
-            format_text_fallback(keyboard_prompt),
+            format_text_fallback(keyboard_prompt, platform="qq"),
             keyboard_prompt,
             channel_id=payload.get("channel_id") or "",
             msg_id=None,

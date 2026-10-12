@@ -14,7 +14,7 @@ async def handle(user_id, session_id: int | None, arg: str, locale: str | None =
 
     from agent.security.shell_policy import session_shell_lock
     from app.db import session as db_session
-    from app.models import ConversationMessage, ConversationSession, InteractionAction, InteractionPrompt
+    from app.models import ConversationMessage, ConversationSession, InteractionAction, InteractionRequest
     from app.services.conversation_cleanup import cleanup_storage_refs, remove_messages_with_attachments
 
     async with session_shell_lock(session_id):
@@ -33,15 +33,15 @@ async def handle(user_id, session_id: int | None, arg: str, locale: str | None =
             await db.execute(
                 delete(InteractionAction).where(
                     InteractionAction.prompt_id.in_(
-                        select(InteractionPrompt.id).where(
-                            InteractionPrompt.session_id == session_id,
+                        select(InteractionRequest.id).where(
+                            InteractionRequest.session_id == session_id,
                         )
                     )
                 )
             )
             await db.execute(
-                delete(InteractionPrompt).where(
-                    InteractionPrompt.session_id == session_id,
+                delete(InteractionRequest).where(
+                    InteractionRequest.session_id == session_id,
                 )
             )
             await db.execute(

@@ -188,8 +188,7 @@ function go(type: string, it: SearchItem) {
   } else if (type === 'client') {
     Message.info('客户页面还在开发中，先在项目里看吧～')
   } else if (type === 'note') {
-    uiStore.pendingNoteId = numericId   // NotesView 监听后定位到对应日期并打开编辑态
-    router.push('/mind/notes')
+    router.push({ path: '/mind/notes', query: { object_id: String(numericId) } })
   } else if (type === 'canvas_note') {
     const canvasId = Number(it.canvas_id)
     if (Number.isSafeInteger(canvasId) && canvasId > 0 && Number.isSafeInteger(numericId) && numericId > 0) {
@@ -201,7 +200,7 @@ function go(type: string, it: SearchItem) {
   } else if (type === 'mcp') {
     router.push({ path: '/mcp', query: { server: String(it.id) } })
   } else if (type === 'scheduled_task') {
-    router.push({ path: '/schedules', query: { task: String(it.id) } })
+    router.push({ path: '/schedules', query: { object_id: String(it.id) } })
   }
 }
 

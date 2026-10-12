@@ -26,7 +26,7 @@ from agent.interactions.confirmations import (
     target_confirmation_identity,
 )
 from agent.interactions.automatic_mode import ACTION
-from agent.mcp.client import McpClient
+from agent.mcp.client import McpClient, McpClientError
 from agent.mcp.models import McpServerConfig, McpToolMeta, SCOPE_USER
 from agent.mcp.schema_adapter import (
     build_mcp_tool,
@@ -65,6 +65,7 @@ class _ServerRuntime:
     metas: dict[str, McpToolMeta] = field(default_factory=dict)   # prefixed → meta（含原始名）
     state: str = _OK_STATE
     last_error: str | None = None
+    last_error_kind: str | None = None
     consecutive_failures: int = 0
     backoff_until: float = 0.0
     client: Any | None = None
@@ -79,11 +80,32 @@ class _ServerRuntime:
         return _BACKOFF_STATE if self.in_backoff() else self.state
 
 
+def connection_error_details(runtime: _ServerRuntime | None) -> dict[str, Any]:
+    """给管理工具/API 提供一致的连接失败分类与下一步提示。"""
+    kind = runtime.last_error_kind if runtime else None
+    if kind == "configuration":
+        next_action = "修正 MCP endpoint 或凭据配置后再测试；不要重复提交相同配置。"
+    elif kind == "auth":
+        next_action = "核对服务要求的凭据名称、前缀和密钥值后再测试。"
+    elif kind in {"timeout", "network", "http"}:
+        next_action = "确认服务和网络恢复后再重试。"
+    elif kind is None:
+        next_action = None
+    else:
+        next_action = "检查 MCP 服务返回的协议错误，再决定是否修改配置。"
+    return {
+        "error_kind": kind,
+        "retryable": kind in {"timeout", "network", "http"},
+        "next_action": next_action,
+    }
+
+
 class McpToolManager:
     """按用户维护 MCP 工具的装载、缓存与执行。"""
 
     def __init__(self):
         self._runtimes: dict[tuple[UUID, UUID], _ServerRuntime] = {}
+        self._runtime_load_locks: dict[tuple[UUID, UUID], asyncio.Lock] = {}
         self._idle_reaper_task: asyncio.Task | None = None
 
     # ── 声明侧：轮次组装时按用户合并 ──
@@ -208,11 +230,38 @@ class McpToolManager:
         """强制按给定配置重新发现工具，并把结果写入运行时缓存。"""
         from app.core.config import get_settings
 
-        self.invalidate_server(config.user_id, config.id)
-        runtime = await self._load_runtime(get_settings(), config)
-        # 失败时 _load_runtime 可能返回 None，但仍会把诊断状态写入缓存；
-        # 连接测试需要把该状态中的真实错误返回给调用方。
-        return runtime or self._runtimes.get((self._user_key(config.user_id), config.id))
+        key = (self._user_key(config.user_id), config.id)
+        lock = self._runtime_load_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            self.invalidate_server(config.user_id, config.id)
+            runtime = await self._ensure_runtime_locked(get_settings(), config)
+            # 失败时 _load_runtime 可能返回 None，但仍会把诊断状态写入缓存；
+            # 连接测试需要把该状态中的真实错误返回给调用方。
+            return runtime or self._runtimes.get(key)
+
+    async def ensure_server_status(self, config: McpServerConfig) -> dict:
+        """按需加载单个启用服务并返回可安全展示的运行状态。"""
+        from app.core.config import get_settings
+
+        key = (self._user_key(config.user_id), config.id)
+        runtime = await self._ensure_runtime(get_settings(), config)
+        runtime = runtime or self._runtimes.get(key)
+        if runtime is None:
+            return {
+                "ok": False,
+                "state": _ERROR_STATE,
+                "tool_count": 0,
+                "tool_names": [],
+                "error": None,
+            }
+        state = runtime.effective_state()
+        return {
+            "ok": state == _OK_STATE,
+            "state": state,
+            "tool_count": len(runtime.tools) if state == _OK_STATE else 0,
+            "tool_names": sorted(runtime.tools) if state == _OK_STATE else [],
+            "error": sanitize_error(runtime.last_error) if runtime.last_error else None,
+        }
 
     def server_states(self, user_id) -> list[dict]:
         """设置页连接状态：正常/错误/退避中 + 载入的工具数（FR-MCP-6）。"""
@@ -350,6 +399,15 @@ class McpToolManager:
     async def _ensure_runtime(self, settings, config: McpServerConfig) -> _ServerRuntime | None:
         """惰性装载：配置未变且已装载/退避中直接用缓存；否则重拉 tools/list。"""
         key = (self._user_key(config.user_id), config.id)
+        lock = self._runtime_load_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            return await self._ensure_runtime_locked(settings, config)
+
+    async def _ensure_runtime_locked(
+        self, settings, config: McpServerConfig,
+    ) -> _ServerRuntime | None:
+        """调用方持有该 server 的加载锁时检查或建立运行时。"""
+        key = (self._user_key(config.user_id), config.id)
         runtime = self._runtimes.get(key)
         if runtime is not None:
             # 配置可能由另一个 worker 保存；必须先比较版本，再判断旧运行时
@@ -369,7 +427,8 @@ class McpToolManager:
             ):
                 await runtime.client.aclose()
                 runtime.client = None
-            if runtime.config == config and runtime.tools:
+            # 空工具列表也是一次成功发现的有效结果，不能仅凭 tools 为空就重复连接。
+            if runtime.config == config and runtime.effective_state() == _OK_STATE:
                 return runtime
         return await self._load_runtime(settings, config)
 
@@ -389,7 +448,12 @@ class McpToolManager:
         runtime.tools.clear()
         runtime.metas.clear()
 
-        client = await self._new_client(config, settings)
+        try:
+            client = await self._new_client(config, settings)
+        except McpClientError as exc:
+            self._record_failure(key, runtime, exc.message, exc.kind)
+            self._runtimes[key] = runtime
+            return runtime
         if client is None:
             self._record_failure(key, runtime, "MCP stdio 沙盒不可用", "network")
             self._runtimes[key] = runtime
@@ -469,6 +533,7 @@ class McpToolManager:
         runtime.state = _OK_STATE
         runtime.consecutive_failures = 0
         runtime.last_error = None
+        runtime.last_error_kind = None
         runtime.last_used_at = time.monotonic()
         runtime.stdio_restarts = 0
         if config.transport == "stdio":
@@ -606,8 +671,8 @@ class McpToolManager:
                     config.endpoint, config.credential_slots, config.credential_values,
                 )
             except ValueError as exc:
-                _log.warning("MCP server [%s] 凭据槽位未满足：%s", config.name, str(exc))
-                return None
+                # 不把无效 HTTP 凭据误报成 stdio 沙盒不可用。
+                raise McpClientError(str(exc), kind="configuration") from exc
             client_kwargs = {
                 "headers": headers,
                 "timeout_seconds": float(config.timeout_seconds or settings.mcp.default_timeout_seconds),
@@ -636,12 +701,14 @@ class McpToolManager:
         runtime.state = _OK_STATE
         runtime.consecutive_failures = 0
         runtime.last_error = None
+        runtime.last_error_kind = None
 
     def _record_failure(self, key, runtime: _ServerRuntime, message: str, kind: str) -> None:
         from app.core.config import get_settings
 
         settings = get_settings()
         runtime.last_error = message
+        runtime.last_error_kind = kind
         if kind in _CALL_FAIL_KINDS:
             runtime.consecutive_failures += 1
             if runtime.consecutive_failures >= settings.mcp.failure_threshold:
