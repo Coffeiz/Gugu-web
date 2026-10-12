@@ -51,7 +51,13 @@ case "$command_name" in
     ;;
   ps)
     if [[ "\${MOCK_SANDBOXD_RUNNING:-true}" == true ]]; then
-      printf '%s\\n' app sandboxd
+      if [[ "\${MOCK_STREAM_RUNNING_SERVICES:-false}" == true ]]; then
+        printf '%s\\n' app
+        sleep 0.05
+        printf '%s\\n' sandboxd
+      else
+        printf '%s\\n' app sandboxd
+      fi
     else
       printf '%s\\n' postgres app
     fi
@@ -154,6 +160,19 @@ test('更新器从独立代码目录运行时仍使用部署目录和固定校�
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
     fs.rmSync(updaterCode, { recursive: true, force: true })
+  }
+})
+
+test('Compose 继续输出运行服务时仍能识别 app 并完成备份', () => {
+  const fixture = createFixture()
+  try {
+    const result = runUpdate(fixture, { MOCK_STREAM_RUNNING_SERVICES: 'true' })
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`)
+    const backupRoot = path.join(fixture.root, 'backup')
+    const backupDir = path.join(backupRoot, fs.readdirSync(backupRoot)[0])
+    assert.equal(fs.readFileSync(path.join(backupDir, 'postgres.sql'), 'utf8'), 'fake database dump\n')
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true })
   }
 })
 
