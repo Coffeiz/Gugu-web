@@ -162,7 +162,8 @@ async def _permanent_delete(db, user_id, args: dict):
         args,
         f"将永久删除 {preview}，共 {len(names)} 项，删除后无法恢复",
         user_id,
-        purpose=confirm.ACTION,
+        # 永久删除必须由用户明确确认；自动模式不能替用户授权不可逆删除。
+        purpose=confirm.ConfirmationPurpose.REQUIRED_ACTION,
         action="permanent_delete_trash",
         targets={
             **({"file_id": file_ids} if file_ids else {}),

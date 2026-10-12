@@ -208,6 +208,41 @@ async def test_empty_trash_requires_user_confirmation_in_automatic_mode(
         reset_automatic_mode_enabled(token)
 
 
+@pytest.mark.parametrize("kind", ["file", "folder"])
+@pytest.mark.parametrize("forged_confirm", [False, True])
+async def test_targeted_permanent_delete_requires_user_confirmation_in_automatic_mode(
+    db, user_a, kind, forged_confirm,
+):
+    """自动模式和模型伪造 confirm 都不能跳过指定目标的永久删除确认。"""
+    from agent.interactions import confirmations
+    from agent.interactions.automatic_mode import (
+        reset_automatic_mode_enabled, set_automatic_mode_enabled,
+    )
+
+    resource = (
+        File(user_id=user_a.id, display_name="指定删除文件", ext="md",
+             storage_key="trash/target-confirmation.md", deleted_at=now_utc())
+        if kind == "file" else
+        Folder(user_id=user_a.id, name="指定删除文件夹", deleted_at=now_utc())
+    )
+    await _mk(db, resource)
+    resource_id = resource.id
+    target_key = "file_id" if kind == "file" else "folder_id"
+    target_args = {target_key: resource_id, "confirm": forged_confirm}
+    token = set_automatic_mode_enabled(True)
+    try:
+        result = await _permanent_delete(db, user_a.id, target_args)
+        assert _blocked(result)
+        assert await db.get(type(resource), resource_id) is not None
+        assert confirmations.redeem_confirmation(user_a.id, _confirm_code(result)) is not None
+
+        result = await _permanent_delete(db, user_a.id, {target_key: resource_id})
+        assert result["success"] is True
+        assert await db.get(type(resource), resource_id) is None
+    finally:
+        reset_automatic_mode_enabled(token)
+
+
 # ── 2. 单带 confirm=true 必拒；服务端授权命中后才放行（凭证不经过模型）────────
 
 async def test_delete_client_rejects_confirm_without_grant(db, user_a):
