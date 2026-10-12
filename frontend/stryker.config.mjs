@@ -2,7 +2,7 @@ export default {
   plugins: ['@stryker-mutator/vitest-runner', '@stryker-mutator/typescript-checker'],
   mutate: ['src/utils/optimisticMutation.ts'],
   testRunner: 'vitest',
-  testFiles: ['test/optimisticMutation.test.ts'],
+  testFiles: ['tests/files/optimisticMutation.test.ts'],
   checkers: ['typescript'],
   tsconfigFile: 'tsconfig.mutation.json',
   reporters: ['clear-text', 'json'],
