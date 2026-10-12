@@ -82,22 +82,21 @@
    .glass-card class and its unrelated radius/transition/shadow ownership. */
 html[data-family='mono'] {
   --mind-system-card-blur: none;
-}
 
-html[data-theme='dark'][data-family] {
-  --note-highlight: var(--border-highlight);
-
-  /* The notes calendar trigger uses the same input contract as DatePicker in dark mode, but keeps
-     the Mind-specific circular geometry and accent icon. */
+  /* Mono 日期触发器沿用通用输入控件的底色与边界，只保留 Mind 自己的圆形几何。 */
   --mind-calendar-trigger-bg: var(--input-bg);
-  --mind-calendar-trigger-border: var(--input-border);
+  --mind-calendar-trigger-border: var(--border-strong);
   --mind-calendar-trigger-shadow: none;
   --mind-calendar-trigger-bg-hover: var(--input-bg-hover);
-  --mind-calendar-trigger-border-hover: var(--input-border-hover);
+  --mind-calendar-trigger-border-hover: var(--border-hover);
   --mind-calendar-trigger-shadow-hover: var(--input-hover-shadow);
   --mind-calendar-trigger-bg-open: var(--input-bg-focus);
   --mind-calendar-trigger-border-open: var(--input-border-focus);
   --mind-calendar-trigger-shadow-open: var(--input-focus-shadow);
+}
+
+html[data-theme='dark'][data-family] {
+  --note-highlight: var(--border-highlight);
 
   /* Dark notes stay chromatic but are mixed mostly into the dark solid card surface; this avoids
      the light-mode pastel RGB values becoming glowing slabs at night. */
