@@ -715,18 +715,6 @@ async def run_loop(
                                        reason="not_applied")
 
             if result.tool_calls:
-                scheduled_tool_limit = getattr(runner, "tool_call_limit_per_run", None)
-                if (
-                    getattr(runner, "fail_on_tool_call_limit", False)
-                    and scheduled_tool_limit is not None
-                    and tool_calls_used + len(result.tool_calls) > scheduled_tool_limit
-                ):
-                    _core._log.warning(
-                        "[core] 定时任务工具调用达到上限：used=%s limit=%s",
-                        tool_calls_used, scheduled_tool_limit,
-                    )
-                    yield f"data: {_core.json.dumps({'type': 'error', 'detail': f'定时任务达到工具调用上限（{scheduled_tool_limit} 次）'}, ensure_ascii=False)}\n\n"
-                    return
                 if guard_retry_pending:
                     guard_retry_pending = False
                     colon_retry_pending = False

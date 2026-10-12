@@ -1847,14 +1847,14 @@ async def test_parallel_dispatch_exception_is_isolated_and_not_exposed(monkeypat
     assert "private diagnostic sentinel" not in canonical
 
 
-async def test_scheduled_agent_loop_fails_before_dispatch_above_30_calls(monkeypatch, dispatched):
-    """定时 run 保留 30 次专属上限，超额批次不派发并返回失败事件供外层重试。"""
+async def test_scheduled_agent_loop_allows_more_than_30_tool_calls_within_round_budget(monkeypatch, dispatched):
+    """定时 run 只受模型轮次限制，31 次工具调用仍可完成并正常返回。"""
     from agent.scheduled import ScheduledLLMRunner
 
     patch_anthropic(monkeypatch, [
         msg([TU("get_project", str(index), {"project_id": index + 1})])
         for index in range(31)
-    ])
+    ] + [msg([TX("已完成")])])
     runner = ScheduledLLMRunner([], SimpleNamespace(ai=AI))
     ev, text, errors = await drain(runner._run_anthropic(
         "u", "sys", MessageArea.from_canonical_messages([
@@ -1862,10 +1862,10 @@ async def test_scheduled_agent_loop_fails_before_dispatch_above_30_calls(monkeyp
         ]), AI,
     ))
 
-    assert dispatched == ["get_project"] * 30
-    assert errors == ["定时任务达到工具调用上限（30 次）"]
-    assert text == ""
-    assert ev["tool_done"] == 30
+    assert dispatched == ["get_project"] * 31
+    assert errors == []
+    assert text == "已完成"
+    assert ev["tool_done"] == 31
 
 
 async def test_scheduled_agent_loop_has_100_round_limit(monkeypatch, dispatched):
@@ -1878,11 +1878,8 @@ async def test_scheduled_agent_loop_has_100_round_limit(monkeypatch, dispatched)
     ])
     runner = ScheduledLLMRunner([], SimpleNamespace(ai=AI))
     assert runner.round_limit_per_run == 100
-    assert runner.tool_call_limit_per_run == 30
-    # 将轮次压到 2 以便快速验证同一控制路径；单独禁用工具限额，避免先触发 30 次工具限制。
+    # 将轮次压到 2 以便快速验证定时任务唯一的模型轮次限制。
     runner.round_limit_per_run = 2
-    runner.tool_call_limit_per_run = None
-    runner.fail_on_tool_call_limit = False
     ev, _text, errors = await drain(runner._run_anthropic(
         "u", "sys", MessageArea.from_canonical_messages([
             {"role": "user", "content": "定时查询任务"},
