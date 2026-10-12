@@ -7,6 +7,68 @@
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-12
+
+### What's New
+
+#### New Features
+
+- **Global search**: search file and folder names across the full library, including pinyin queries.
+- **Bounded file browsing**: load large directories and recycle-bin contents in pages, with cached results and folder counts.
+
+#### Improvements
+
+- **Search and file navigation**: use database indexes for name search, improve global-search navigation, and load referenced files on demand.
+- **Live run visibility**: show cross-worker Agent run updates in LoopScope.
+- **Web delivery**: cache SPA entry points and static assets more effectively.
+- **Mind and canvas**: improve empty and loading states, canvas reference filtering, note title layout, and drag transitions.
+- **Tool feedback**: localize active tool-call labels to match the completed tool cards.
+- **Scheduled tasks**: remove the tool-call count ceiling.
+
+#### Fixes
+
+- Validate SMTP sender display names correctly.
+- Keep file-library counts responsive and fix stale navigation and cache behavior during file operations.
+- Keep unsupported reference types out of canvas search results.
+
+#### Contributors
+
+- None listed.
+
+#### Feedback & Issue Reporters
+
+- None listed.
+
+### 更新内容
+
+#### 新功能
+
+- **全局搜索**：支持跨全量文件库搜索文件名和文件夹名，并支持拼音查询。
+- **有界文件浏览**：大目录和回收站改为分页加载，并复用缓存、显示文件夹计数。
+
+#### 改进
+
+- **搜索与文件导航**：使用数据库索引加速名称搜索，改进全局搜索跳转，并按需加载引用文件。
+- **运行状态**：LoopScope 可实时显示跨工作进程的 Agent 运行更新。
+- **网页加载**：优化 SPA 入口和静态资源缓存。
+- **思维与画布**：优化空状态和加载状态，改进画布引用筛选、便签标题布局及拖动过渡。
+- **工具反馈**：调用中的工具名称与完成后的工具卡片保持当前界面语言一致。
+- **定时任务**：取消工具调用次数上限。
+
+#### 修复
+
+- 正确校验 SMTP 发件人显示名。
+- 提升文件库计数响应速度，并修复文件操作期间的导航与缓存问题。
+- 画布搜索结果不再包含不支持的引用类型。
+
+#### 贡献者
+
+- 暂无。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.7.0] - 2026-10-10
 
 ### What's New
