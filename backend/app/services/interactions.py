@@ -164,6 +164,17 @@ async def create_agent_prompt(
         secret_fields = normalize_secret_fields(raw_secret_fields) or []
         if not secret_fields:
             return reject("invalid_secret_fields")
+    raw_secret_target = payload.get("secret_target")
+    is_mcp_secret = bool(
+        secret_fields
+        and isinstance(raw_secret_target, dict)
+        and raw_secret_target.get("kind") == "mcp_credentials"
+    )
+    if is_mcp_secret:
+        normalized = [
+            {"id": "input_credentials", "label": "输入凭据", "action_type": "mcp_secret_input"},
+            {"id": "cancel", "label": "取消", "action_type": "mcp_secret_cancel"},
+        ]
     title = str(payload.get("title") or "需要你的回答").strip()[:120]
     body = str(payload.get("body") or "").strip()[:1000]
     authorization = str(payload.get("authorization") or "").strip()
@@ -214,7 +225,13 @@ async def create_agent_prompt(
             source="agent",
         )
         from app.services.mcp_secret_inputs import stage_prompt_if_private_mcp
-        await stage_prompt_if_private_mcp(db, prompt=prompt, context=context)
+        has_private_stage = await stage_prompt_if_private_mcp(db, prompt=prompt, context=context)
+        if is_mcp_secret and not has_private_stage:
+            # Web secret form remains available, but an IM prompt without a private
+            # scope must never publish input actions that could be consumed generically.
+            await db.execute(delete(InteractionAction).where(InteractionAction.prompt_id == prompt.id))
+            prompt.schema_json = {**_schema_dict(prompt.schema_json), "options": []}
+            rendered = []
         if authorization == "user_sandbox":
             from app.services.filesystem_authorization import record_filesystem_authorization_request
 
@@ -319,6 +336,14 @@ async def consume_action(
     context = dict(action.context_json or {})
     is_custom_reply = action.option_id == CUSTOM_REPLY_OPTION_ID or action.action_type == "custom_reply"
     schema = _schema_dict(prompt.schema_json)
+    context_for_prompt = schema.get("context") if isinstance(schema.get("context"), dict) else {}
+    secret_target = context_for_prompt.get("secret_target")
+    if (
+        schema.get("secret_fields")
+        and isinstance(secret_target, dict)
+        and secret_target.get("kind") == "mcp_credentials"
+    ):
+        raise ValueError("敏感信息交互必须通过专用入口处理")
     if is_custom_reply and (schema.get("source") != "agent" or not bool(schema.get("allow_text_input"))):
         raise ValueError("该交互不接受自定义回答")
     action.status = "consumed"
@@ -454,6 +479,9 @@ async def consume_text(
         await db.commit()
         raise ValueError("交互已过期")
     schema = _schema_dict(prompt.schema_json)
+    secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
+    if schema.get("secret_fields") and isinstance(secret_target, dict) and secret_target.get("kind") == "mcp_credentials":
+        raise ValueError("敏感信息交互必须通过专用入口处理")
     if schema.get("source") != "agent" or not bool(schema.get("allow_text_input")):
         raise ValueError("该交互不接受文本回答")
     # 两步式只针对真实选择项；仅带自定义回复兜底按钮的提问（开放性问题）在文本
@@ -516,6 +544,9 @@ async def consume_choice_text(
     if prompt is None:
         return None
     schema = _schema_dict(prompt.schema_json)
+    secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
+    if schema.get("secret_fields") and isinstance(secret_target, dict) and secret_target.get("kind") == "mcp_credentials":
+        return None
     options = [item for item in schema.get("options", []) if isinstance(item, dict)]
     if not options:
         return None
@@ -655,6 +686,12 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
     result: list[dict] = []
     for prompt in rows:
         schema = _schema_dict(prompt.schema_json)
+        secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
+        is_mcp_secret = bool(
+            schema.get("secret_fields")
+            and isinstance(secret_target, dict)
+            and secret_target.get("kind") == "mcp_credentials"
+        )
         actions = (await db.execute(
             select(InteractionAction).where(
                 InteractionAction.prompt_id == prompt.id,
@@ -663,7 +700,16 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
             ).order_by(InteractionAction.id)
         )).scalars().all()
         options = []
-        for action in actions:
+        has_private_secret_stage = False
+        if is_mcp_secret:
+            from app.models import McpSecretInput
+
+            has_private_secret_stage = bool(await db.scalar(select(McpSecretInput.id).where(
+                McpSecretInput.prompt_id == prompt.id,
+                McpSecretInput.status.in_(("pending_choice", "awaiting_secret")),
+                McpSecretInput.expires_at > now,
+            )))
+        for action in (actions if not is_mcp_secret or has_private_secret_stage else []):
             token = secrets.token_urlsafe(24)
             action.token_hash = _hash_token(token)
             options.append({
@@ -729,13 +775,19 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
     changed = False
     for prompt in prompts:
         schema = _schema_dict(prompt.schema_json)
+        secret_target = (schema.get("context") or {}).get("secret_target") if isinstance(schema.get("context"), dict) else None
+        is_mcp_secret = bool(
+            schema.get("secret_fields")
+            and isinstance(secret_target, dict)
+            and secret_target.get("kind") == "mcp_credentials"
+        )
         actions = (await db.execute(
             select(InteractionAction).where(InteractionAction.prompt_id == prompt.id).order_by(InteractionAction.id)
         )).scalars().all()
         options = []
         selected = None
         schema_options = schema.get("options", [])
-        for action in actions:
+        for action in ([] if is_mcp_secret else actions):
             label = next(
                 (str(item.get("label") or "") for item in schema_options
                  if str(item.get("id") or "") == action.option_id),

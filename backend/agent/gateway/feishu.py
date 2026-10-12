@@ -15,6 +15,7 @@ lark 无 stop()，单连接断不掉 → 一个 bot 一个子进程，由 gatewa
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
@@ -159,31 +160,43 @@ def _drop_stale_event(data, channel_id: str, now_ms: int | None = None) -> bool:
 
 
 async def _consume_card_action(owner: str, prompt_id: int, token: str,
-                               event_id: str | None) -> dict:
+                               event_id: str | None, *, bot_id: str = "",
+                               platform_user_id: str = "") -> dict:
     """在飞书回调协程中消费统一 Prompt Action。"""
     from uuid import UUID
     from app.db import session as db_session
     from app.services.interactions import consume_action
+    from app.services.mcp_secret_inputs import consume_mcp_secret_action
 
     db_session.ensure_engine()
     if db_session._SessionLocal is None:
         raise RuntimeError("数据库不可用")
     async with db_session._SessionLocal() as db:
+        user_id = UUID(str(owner))
+        result = await consume_mcp_secret_action(
+            db, user_id=user_id, prompt_id=prompt_id, token=token,
+            event_id=str(event_id or ""), platform="feishu", bot_id=bot_id,
+            platform_user_id=platform_user_id, chat_type="c2c", chat_id=None,
+        )
+        if result is not None:
+            return result
         return await consume_action(
             db,
-            user_id=UUID(str(owner)),
+            user_id=user_id,
             prompt_id=prompt_id,
             token=token,
             event_id=event_id,
         )
 
 
-def _handle_card_action(data, owner: str):
+def _handle_card_action(data, owner: str, bot_id: str = ""):
     """处理飞书 card.action.trigger；在 SDK 当前 event loop 调度消费任务。"""
     from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
     from agent.interactions.feishu import decode_action_value, build_completed_card_payload
 
     event = getattr(data, "event", None)
+    operator = getattr(event, "operator", None)
+    operator_id = str(getattr(operator, "open_id", "") or "")
     action = getattr(event, "action", None)
     value = getattr(action, "value", None) if action is not None else None
     completed_card = None
@@ -191,7 +204,10 @@ def _handle_card_action(data, owner: str):
         prompt_id, token = decode_action_value(value)
         header = getattr(data, "header", None)
         event_id = getattr(header, "event_id", None)
-        coroutine = _consume_card_action(owner, prompt_id, token, event_id)
+        coroutine = _consume_card_action(
+            owner, prompt_id, token, event_id, bot_id=bot_id,
+            platform_user_id=operator_id,
+        )
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -208,7 +224,7 @@ def _handle_card_action(data, owner: str):
                     diag_log("agent.gateway.feishu.interaction", exc)
 
             task.add_done_callback(_report_card_action_failure)
-            message = "已收到选择，继续处理。"
+            message = "已收到操作；如已开启凭据输入，请在当前私聊逐项发送字段值，回复“取消”可终止。"
         completed_card = build_completed_card_payload(message)
     except (LookupError, ValueError):
         message = "这个选项已过期或已经处理过了。"
@@ -315,6 +331,19 @@ def _make_on_message(
     expected_app_id: str = "",
     bot_open_id: str | None = None,
 ):
+    def _secret_preflight(payload: dict) -> bool:
+        from agent.im.interaction_text import consume_mcp_secret_payload
+
+        coroutine = consume_mcp_secret_payload(payload)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+        # Lark 的同步回调偶尔运行在带 loop 的 SDK 线程；在独立短线程执行异步
+        # DB/发送路径，回调等待结果后才允许媒体下载或普通消息处理继续。
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, coroutine).result()
+
     def _on_message(data: P2ImMessageReceiveV1) -> None:
         if _drop_misrouted_event(data, expected_app_id, channel_id):
             return
@@ -325,6 +354,22 @@ def _make_on_message(
         if not msg:
             return
         mt = msg.message_type
+        open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
+        preflight_text = ""
+        if mt == "text":
+            try:
+                preflight_text = ((json.loads(msg.content) if msg.content else {}) or {}).get("text", "").strip()
+            except (json.JSONDecodeError, TypeError):
+                preflight_text = ""
+        normalized_chat_type = "group" if msg.chat_type == "group" else "c2c"
+        if _secret_preflight({
+            "platform": "feishu", "channel_id": channel_id, "owner_user_id": owner,
+            "platform_user_id": open_id or "", "chat_id": msg.chat_id if normalized_chat_type == "group" else None,
+            "chat_type": normalized_chat_type, "message_id": msg.message_id,
+            "text": preflight_text,
+            "attachments": [] if mt == "text" else [{"pending_media": True}],
+        }):
+            return
         attachments: list = []
         if mt == "text":
             try:
@@ -342,7 +387,6 @@ def _make_on_message(
         text = _feishu_resolve_mention_text(msg, text)
         if not text and not attachments:
             return
-        open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
         from agent.runtime import trace
         tid = trace.new_trace()
 
@@ -437,7 +481,7 @@ def serve() -> None:
         .register_p2_im_message_receive_v1(
             _make_on_message(channel_id, owner, api_client, app_id, bot_open_id)
         )
-        .register_p2_card_action_trigger(lambda data: _handle_card_action(data, owner))
+        .register_p2_card_action_trigger(lambda data: _handle_card_action(data, owner, channel_id))
         .register_p2_im_message_reaction_created_v1(lambda data: None)
         .register_p2_im_message_reaction_deleted_v1(lambda data: None)
         .build()

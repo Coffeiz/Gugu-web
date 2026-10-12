@@ -1044,6 +1044,7 @@ export const agentApi = {
   getMessagesBefore: (sessionId: string, beforeId: number, limit = 200) =>
     get(`/agent/sessions/${sessionId}/messages?before_id=${encodeURIComponent(String(beforeId))}&limit=${encodeURIComponent(String(limit))}`),
   listSessionInteractions: (sessionId: string) => get<{ items: Array<Record<string, any>> }>(`/agent/sessions/${sessionId}/interactions`),
+  getInteractionSession: (promptId: number) => get<{ session_id: number }>(`/agent/interactions/${promptId}/session`),
   getPendingQueue: (queueId: string) => get<{ sessionId: number | null; items: Array<{ key: number; queue_id: string; session_id: number | null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }>(`/agent/pending-queues/${encodeURIComponent(queueId)}`),
   listImportedDraftQueues: () => get<{ queues: Array<{ queue_id: string; items: Array<{ key: number; queue_id: string; session_id: null; claimed: boolean; text: string; attachments: any[]; references: any[] }> }> }>('/agent/pending-queues/imported-drafts'),
   updatePendingQueue: (queueId: string, items: Array<{ key: number; text: string; attachments: any[]; references: any[] }>) =>

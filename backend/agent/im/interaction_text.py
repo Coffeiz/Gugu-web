@@ -119,3 +119,107 @@ async def consume_text_choice(
 
 
 __all__ = ["consume_text_choice", "has_active_interaction"]
+
+
+async def consume_mcp_secret_payload(payload: dict) -> bool:
+    """在媒体接入、普通消息持久化和 Agent 路径前消费凭据输入。"""
+    from app.db import session as db_session
+    from app.services.mcp_secret_inputs import (
+        McpSecretBinding,
+        cancel_mcp_secret_input,
+        consume_mcp_secret_field,
+        find_im_secret_prompt,
+        start_mcp_secret_input,
+    )
+
+    db_session.ensure_engine()
+    if db_session._SessionLocal is None:
+        return False
+    async with db_session._SessionLocal() as db:
+        found = await find_im_secret_prompt(db, payload)
+        if found is None:
+            return False
+        mode, prompt, stage = found
+        from agent.im.replies import send_text
+
+        if mode == "group_blocked":
+            await send_text(
+                {**payload, "message_id": None},
+                "群聊不接收 MCP 凭据。请打开私密网页表单，或改用 Bot 私聊完成输入。",
+            )
+            return True
+        if mode == "private_ended":
+            await send_text({**payload, "message_id": None}, "凭据交互已结束，请重新发起后再输入。")
+            return True
+        assert stage is not None
+        binding = McpSecretBinding(
+            prompt_id=prompt.id,
+            user_id=stage.user_id,
+            platform=stage.platform,
+            bot_id=stage.bot_id,
+            chat_type=stage.chat_type,
+            chat_id=stage.chat_id,
+            platform_user_id=stage.platform_user_id,
+        )
+        event_id = str(payload.get("message_id") or payload.get("platform_message_id") or "")
+        text = str(payload.get("text") or "").strip()
+        normalized = text.casefold()
+        cancel_requested = normalized in {"取消", "cancel"}
+        choice_cancel_requested = cancel_requested or normalized == "2"
+        start_requested = normalized in {"输入凭据", "输入", "开始输入", "1"}
+        has_attachments = bool(payload.get("attachments") or payload.get("quoted_attachments") or payload.get("emoji_refs"))
+
+        if stage.status == "pending_choice":
+            if not choice_cancel_requested and not start_requested:
+                return False
+            if not event_id:
+                await send_text({**payload, "message_id": None}, "凭据交互无法确认，请重新发起。")
+                return True
+            try:
+                if choice_cancel_requested:
+                    result = await cancel_mcp_secret_input(db, binding=binding, event_id=event_id)
+                else:
+                    result = await start_mcp_secret_input(db, binding=binding, event_id=event_id)
+            except Exception:
+                await db.rollback()
+                await send_text({**payload, "message_id": None}, "凭据交互已结束或无法处理，请重新发起。")
+                return True
+            await db.commit()
+            if result["status"] == "awaiting_secret":
+                fields = (prompt.schema_json or {}).get("secret_fields", []) if isinstance(prompt.schema_json, dict) else []
+                label = str(fields[0].get("label") or "凭据") if fields and isinstance(fields[0], dict) else "凭据"
+                await send_text({**payload, "message_id": None}, f"请发送「{label}」的值。取消输入请发送“取消”。")
+            elif result["status"] == "cancelled":
+                await send_text({**payload, "message_id": None}, "已取消凭据输入。")
+            return True
+
+        if stage.status != "awaiting_secret":
+            return False
+        if has_attachments or not text:
+            await send_text({**payload, "message_id": None}, "凭据请以纯文本逐项发送；取消输入请发送“取消”。")
+            return True
+        if not event_id:
+            await send_text({**payload, "message_id": None}, "凭据输入无法确认，请重新发起。")
+            return True
+        try:
+            if cancel_requested:
+                result = await cancel_mcp_secret_input(db, binding=binding, event_id=event_id)
+            else:
+                result = await consume_mcp_secret_field(
+                    db, binding=binding, event_id=event_id, value=text,
+                )
+        except Exception:
+            await db.rollback()
+            await send_text({**payload, "message_id": None}, "凭据字段无效或输入已结束，请重新发起。")
+            return True
+        await db.commit()
+        if result["status"] == "awaiting_secret":
+            fields = (prompt.schema_json or {}).get("secret_fields", []) if isinstance(prompt.schema_json, dict) else []
+            index = int(result.get("field_index") or 0)
+            label = str(fields[index].get("label") or "凭据") if index < len(fields) and isinstance(fields[index], dict) else "凭据"
+            await send_text({**payload, "message_id": None}, f"请继续发送「{label}」的值。取消输入请发送“取消”。")
+        elif result["status"] == "completed":
+            await send_text({**payload, "message_id": None}, "凭据已安全保存。")
+        elif result["status"] == "cancelled":
+            await send_text({**payload, "message_id": None}, "已取消凭据输入。")
+        return True

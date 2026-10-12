@@ -84,6 +84,7 @@
       :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
       :on-interaction-select="onInteractionSelect"
       :on-secret-submit="onSecretSubmit"
+      :on-secret-cancel="onSecretCancel"
       :on-reference-click="onReferenceClick"
       :on-prompt-connect="promptConnectIM"
       :on-filesystem-authorization="toggleSessionAuthorization"
@@ -365,7 +366,8 @@ onMounted(() => {
   }).catch(() => {})
   // 恢复上次会话：① 本标签刷新 → sessionStorage 仍在，直接接续；② 重开浏览器（sessionStorage 已清）
   //   → 仅当设置「重开接续上次」打开时，从 localStorage 的最近一段接续；否则开新对话。
-  const saved = sessionStorage.getItem(SESSION_KEY)
+  const hasSecretPromptLink = Boolean(router.currentRoute.value.query.mcp_credential_prompt)
+  const saved = hasSecretPromptLink ? null : sessionStorage.getItem(SESSION_KEY)
               || (reopenResume.value ? localStorage.getItem(LAST_SESSION_KEY) : null)
   if (saved) {
     messages.value = []   // 续聊：立刻清掉默认问候占位，避免 loadSession 异步加载期间 animateGreeting 闪问候
@@ -383,7 +385,28 @@ onMounted(() => {
     // 全新对话（无可恢复会话）才需要默认问候 → 此刻后台生成；刷新/接续停在老会话时不空跑。
     prefetchGreeting()
   }
+  if (hasSecretPromptLink) void openSecretPromptLink()
 })
+
+async function openSecretPromptLink() {
+  const rawPromptId = router.currentRoute.value.query.mcp_credential_prompt
+  const promptId = Number(Array.isArray(rawPromptId) ? rawPromptId[0] : rawPromptId)
+  if (!Number.isSafeInteger(promptId) || promptId <= 0) return
+  open.value = true
+  expanded.value = true
+  try {
+    const { session_id: targetSessionId } = await agentApi.getInteractionSession(promptId)
+    if (!Number.isSafeInteger(targetSessionId) || targetSessionId <= 0) return
+    await loadSession(targetSessionId, true)
+    if (sessionId.value === targetSessionId) {
+      await router.replace({
+        query: { ...router.currentRoute.value.query, mcp_credential_prompt: undefined },
+      })
+    }
+  } catch {
+    _chatTip(t('chatUi.messageUnavailable'))
+  }
+}
 onUnmounted(() => {
   stopPendingQueueRecovery = true
   window.removeEventListener('gugu-quota-changed', onQuotaChanged)
@@ -619,6 +642,33 @@ async function onSecretSubmit(_msg: ChatMessage, values: Record<string, string>)
   } catch {
     if (_msg.interaction) _msg.interaction.submitting = false
     _chatTip(t('chatUi.secretSubmitFailed'))
+  }
+}
+
+async function onSecretCancel(_msg: ChatMessage) {
+  const promptId = _msg.interaction?.promptId
+  if (!promptId || !_msg.interaction?.secretFields?.length) return
+  try {
+    const token = getToken()
+    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/secrets/cancel`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+    if (isUnauthorizedResponse(res)) return
+    if (!res.ok) {
+      if (_msg.interaction) _msg.interaction.submitting = false
+      _chatTip(t('chatUi.interactionSubmitFailed'))
+      return
+    }
+    if (_msg.interaction) {
+      _msg.interaction.submitting = false
+      _msg.interaction.resolved = true
+      _msg.interaction.selectedOptionId = 'cancel'
+      _msg.interaction.responseText = t('chatUi.confirmationCancelled')
+    }
+  } catch {
+    if (_msg.interaction) _msg.interaction.submitting = false
+    _chatTip(t('chatUi.interactionSubmitFailed'))
   }
 }
 

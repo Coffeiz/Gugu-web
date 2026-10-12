@@ -95,16 +95,112 @@ async def stage_prompt_if_private_mcp(
     *,
     prompt: InteractionPrompt,
     context: dict,
-) -> None:
+) -> bool:
     target = context.get("secret_target") if isinstance(context, dict) else None
     if not isinstance(target, dict) or target.get("kind") != "mcp_credentials":
-        return
+        return False
     session = await db.get(ConversationSession, prompt.session_id)
-    if session is not None:
-        await create_im_secret_staging(
-            db, prompt=prompt, session=session,
-            server_id=str(target.get("server_id") or ""),
-        )
+    if session is None:
+        return False
+    stage = await create_im_secret_staging(
+        db, prompt=prompt, session=session,
+        server_id=str(target.get("server_id") or ""),
+    )
+    return stage is not None
+
+
+async def find_im_secret_prompt(db: AsyncSession, payload: dict) -> tuple[str, InteractionPrompt, McpSecretInput | None] | None:
+    """按完整 IM 会话身份查找活动凭据交互；群聊只返回拒绝门，不创建输入态。"""
+    try:
+        user_id = UUID(str(payload.get("owner_user_id") or ""))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    platform = str(payload.get("platform") or "")
+    bot_id = str(payload.get("channel_id") or payload.get("bot_id") or "")
+    chat_type = str(payload.get("chat_type") or "")
+    chat_id = str(payload.get("chat_id") or "") or None
+    platform_user_id = str(payload.get("platform_user_id") or "")
+    if platform not in IM_SOURCES or not bot_id or not platform_user_id:
+        return None
+    now = now_utc()
+
+    if chat_type == "c2c" and chat_id is None:
+        stage = await db.scalar(select(McpSecretInput).where(
+            McpSecretInput.user_id == user_id,
+            McpSecretInput.platform == platform,
+            McpSecretInput.bot_id == bot_id,
+            McpSecretInput.chat_type == "c2c",
+            McpSecretInput.chat_id.is_(None),
+            McpSecretInput.platform_user_id == platform_user_id,
+            McpSecretInput.status.in_(tuple(ACTIVE_STATES)),
+        ).order_by(McpSecretInput.prompt_id.desc()))
+        if stage is None:
+            return None
+        prompt = await db.scalar(select(InteractionPrompt).where(
+            InteractionPrompt.id == stage.prompt_id,
+            InteractionPrompt.user_id == user_id,
+            InteractionPrompt.session_id == stage.session_id,
+        ))
+        if prompt is not None:
+            mode = "private" if prompt.status == "active" and prompt.expires_at > now else "private_ended"
+            return mode, prompt, stage
+        return None
+
+    if chat_type != "group" or not chat_id:
+        return None
+    prompts = (await db.scalars(
+        select(InteractionPrompt)
+        .join(ConversationSession, ConversationSession.id == InteractionPrompt.session_id)
+        .where(
+            InteractionPrompt.user_id == user_id,
+            InteractionPrompt.status == "active",
+            InteractionPrompt.expires_at > now,
+            ConversationSession.user_id == user_id,
+            ConversationSession.source == platform,
+            ConversationSession.bot_id == bot_id,
+            ConversationSession.chat_type == "group",
+            ConversationSession.chat_id == chat_id,
+        ).order_by(InteractionPrompt.created_at.desc())
+    )).all()
+    for prompt in prompts:
+        context = _schema(prompt).get("context")
+        target = context.get("secret_target") if isinstance(context, dict) else None
+        if isinstance(target, dict) and target.get("kind") == "mcp_credentials":
+            return "group_blocked", prompt, None
+    return None
+
+
+async def cancel_mcp_secret_prompt_web(
+    db: AsyncSession, *, prompt: InteractionPrompt, user_id: UUID,
+) -> dict:
+    """登录态 Web 取消；不依赖 IM 来源/群聊类型，授权只看 prompt owner。"""
+    stored = await db.scalar(select(InteractionPrompt).where(
+        InteractionPrompt.id == prompt.id,
+        InteractionPrompt.user_id == user_id,
+    ).with_for_update())
+    if stored is None:
+        raise HTTPException(status_code=404, detail="凭据输入不存在")
+    schema = _schema(stored)
+    context = schema.get("context") if isinstance(schema.get("context"), dict) else {}
+    target = context.get("secret_target")
+    if not schema.get("secret_fields") or not isinstance(target, dict) or target.get("kind") != "mcp_credentials":
+        raise HTTPException(status_code=400, detail="当前交互不支持凭据取消")
+    if stored.status != "active" or stored.expires_at <= now_utc():
+        raise HTTPException(status_code=409, detail="凭据输入已结束")
+    stage = await db.scalar(select(McpSecretInput).where(
+        McpSecretInput.prompt_id == stored.id,
+        McpSecretInput.user_id == user_id,
+    ).with_for_update())
+    if stage is not None and stage.status in ACTIVE_STATES:
+        _clear_payload(stage, "cancelled")
+    stored.status = "resolved"
+    stored.resolved_at = now_utc()
+    stored.schema_json = {**schema, "resolved_result": {
+        "kind": stored.kind, "status": "cancelled", "prompt_id": stored.id,
+        "option_id": "cancel", "value": None, "text": "已取消凭据输入",
+    }}
+    await db.flush()
+    return {"ok": True, "prompt_id": stored.id, "status": "cancelled"}
 
 
 async def cancel_active_secret_staging(
@@ -147,7 +243,19 @@ async def _bound_stage(
     ).with_for_update())
     if stage is None:
         raise HTTPException(status_code=404, detail="凭据输入不存在")
-    if prompt.session_id != stage.session_id:
+    context = _schema(prompt).get("context")
+    target = context.get("secret_target") if isinstance(context, dict) else None
+    try:
+        target_server_id = UUID(str(target.get("server_id") or "")) if isinstance(target, dict) else None
+    except (TypeError, ValueError, AttributeError):
+        target_server_id = None
+    if (
+        prompt.session_id != stage.session_id
+        or not isinstance(target, dict)
+        or target.get("kind") != "mcp_credentials"
+        or target_server_id != stage.server_id
+        or not _schema(prompt).get("secret_fields")
+    ):
         raise HTTPException(status_code=404, detail="凭据输入不存在")
     if stage.expires_at <= now or prompt.expires_at <= now:
         # 这里仅拒绝消费；后台 TTL 清理器负责在独立事务中标记 prompt 并回收密文。
@@ -209,6 +317,86 @@ async def cancel_mcp_secret_input(
     }}
     await db.flush()
     return {"status": "cancelled", "prompt_id": binding.prompt_id}
+
+
+async def consume_mcp_secret_action(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    prompt_id: int,
+    token: str,
+    event_id: str,
+    platform: str,
+    bot_id: str,
+    platform_user_id: str,
+    chat_type: str,
+    chat_id: str | None,
+) -> dict | None:
+    """只消费绑定的私聊凭据按钮，绝不让通用 ask_user action 结束 secret prompt。"""
+    from app.models import InteractionAction
+    from app.services.interactions import _hash_token
+
+    prompt = await db.scalar(select(InteractionPrompt).where(
+        InteractionPrompt.id == prompt_id,
+        InteractionPrompt.user_id == user_id,
+    ).with_for_update())
+    if prompt is None:
+        return None
+    schema = _schema(prompt)
+    context = schema.get("context") if isinstance(schema.get("context"), dict) else {}
+    target = context.get("secret_target")
+    if not schema.get("secret_fields") or not isinstance(target, dict) or target.get("kind") != "mcp_credentials":
+        return None
+    action = await db.scalar(select(InteractionAction).where(
+        InteractionAction.prompt_id == prompt_id,
+        InteractionAction.token_hash == _hash_token(token),
+    ).with_for_update())
+    if action is None or action.expires_at <= now_utc():
+        raise HTTPException(status_code=409, detail="凭据交互已结束")
+    if action.status != "pending":
+        if event_id and action.consumed_event_id == event_id:
+            return {"status": "duplicate", "prompt_id": prompt_id}
+        raise HTTPException(status_code=409, detail="凭据交互已结束")
+    stage = await db.scalar(select(McpSecretInput).where(
+        McpSecretInput.prompt_id == prompt_id,
+        McpSecretInput.user_id == user_id,
+        McpSecretInput.platform == platform,
+        McpSecretInput.bot_id == bot_id,
+        McpSecretInput.chat_type == "c2c",
+        McpSecretInput.chat_id.is_(None),
+        McpSecretInput.platform_user_id == platform_user_id,
+    ).with_for_update())
+    if (
+        stage is None
+        or chat_type != "c2c"
+        or chat_id
+        or prompt.session_id != stage.session_id
+        or stage.status not in ACTIVE_STATES
+        or stage.expires_at <= now_utc()
+        or prompt.status != "active"
+        or action.option_id not in {"input_credentials", "cancel"}
+    ):
+        raise HTTPException(status_code=404, detail="凭据交互不存在")
+    # 输入按钮只允许从等待选择态启动。若点击重放发生在已输入状态，
+    # 不应先记录事件或消费 action，否则会留下未提交的部分状态变更。
+    if action.option_id == "input_credentials" and stage.status != "pending_choice":
+        return {"status": "already_started", "prompt_id": prompt_id}
+    binding = McpSecretBinding(
+        prompt_id=prompt_id, user_id=user_id, platform=platform, bot_id=bot_id,
+        chat_type="c2c", chat_id=None, platform_user_id=platform_user_id,
+    )
+    if not _remember_event(stage, event_id):
+        return {"status": "duplicate", "prompt_id": prompt_id}
+    action.status = "consumed"
+    action.consumed_at = now_utc()
+    action.consumed_event_id = event_id
+    if action.option_id == "cancel":
+        result = await cancel_mcp_secret_input(db, binding=binding, event_id=f"{event_id}:cancel")
+        await db.commit()
+        return result
+    stage.status = "awaiting_secret"
+    await db.commit()
+    return {"status": "awaiting_secret", "prompt_id": prompt_id, "field_index": 0}
 
 
 def _resolve_secret_prompt(

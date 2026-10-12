@@ -188,12 +188,19 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 
 ### Phase 2：IM 与 Web 接入
 
-- [ ] `MCP2-012` 接入输入/取消选择及 callback/text fallback，并确认普通 ask_user 自定义回复语义不变。
-- [ ] `MCP2-020` 将 secret input 拦截放在普通消息写库、快捷命令、Agent/LLM、RAG 和群被动记录之前。
-- [ ] `MCP2-021` 所有 IM 一对一会话支持一致的“输入凭据/取消”流程；输入原文不走普通聊天、不会回显，也不会广播给 Web 会话订阅者。
-- [ ] `MCP2-022` 所有 IM 群消息拒绝直接凭据输入；提供转 Web 私密表单/私聊的明确说明，避免将密钥误写入群历史。
-- [ ] `MCP2-023` Web secret form 走统一业务服务；Web 恢复的 IM 群 session 可以提交，不按 `chat_type=group` 误拒绝。
-- [ ] `MCP2-024` 补齐 IM 到 Web 的 prompt 深链定位；不得把凭据值或可直接授权的 secret 放入 URL。若不在本次实施，明确标成独立后续项。
+- [x] `MCP2-012` 接入输入/取消选择及 callback/text fallback；普通 ask_user 仍走原有通用交互消费路径。
+- [x] `MCP2-020` 在 IM 入口尽早拦截：QQ/飞书/微信在媒体下载和普通消息处理前，Telegram 及统一 worker dispatch 在历史写入、快捷命令、Agent/LLM、RAG 和群被动记录前。
+- [x] `MCP2-021` IM 私聊支持“输入凭据/取消”；消息原文只进入专用校验与加密暂存，不走普通聊天，也不回显或广播。
+- [x] `MCP2-022` 群聊不创建 IM staging，凭据 prompt 的群消息 fail-closed，并提示转 Web 私密表单或 Bot 私聊。
+- [x] `MCP2-023` Web secret form/cancel 走 owner-scoped secret endpoint；按登录用户和 prompt/server 所有权授权，不因原始 session 为群聊而拒绝。
+- [x] `MCP2-024` IM 提示链接只携带非授权 prompt ID；登录后按 owner-scoped API 查找所属会话并定位交互，不把 secret 或授权 token 放入 URL。
+
+### 5.4 Phase 2 实施记录（2026-10-12）
+
+- QQ、飞书原生 action callback 使用专用凭据消费器并校验 owner、Bot、平台操作者和私聊范围；重复 callback 作为重复事件处理。其他 IM 使用文本选项，普通 ask_user 仍由通用交互服务消费。
+- 凭据消息预检位于 IM 普通消息流程之前。QQ/飞书/微信先于媒体接入；Telegram 及统一 worker dispatch 先于历史和 Agent 路径。群 prompt 的群内消息被安全拦截并提示 Web/私聊入口，不创建群凭据 staging。
+- Web 凭据输入与取消使用登录态独立 API；取消支持群来源历史 session。prompt 深链只含 prompt ID，前端通过 owner-scoped session API 定位会话；prompt ID 本身不构成授权。
+- 定向验证：`tests/agent/mcp/test_mcp_settings_api.py` 与 `tests/agent/test_interaction_protocol.py` 共 59 项通过；`frontend/tests/chat/GuguChatInteraction.test.ts` 共 4 项通过；前端 typecheck 与 `compileall -q app agent` 通过；`git diff --check` 通过。全量测试及真实 IM 平台手动验收留在 Phase 3。
 
 ### Phase 3：安全与回归验证
 

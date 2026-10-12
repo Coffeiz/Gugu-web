@@ -452,6 +452,18 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     face_only = has_qq_face and not _strip_qq_face_markers(raw_text)
     text = _normalize_qq_faces(raw_text)
     msg_id = data.get("id") or ""
+    # 在引用解析、附件 staging 和绑定码/快捷命令处理前检查安全输入态；
+    # 凭据消息不应触发任何普通消息副作用。
+    from agent.im.interaction_text import consume_mcp_secret_payload
+
+    if await consume_mcp_secret_payload({
+        "platform": "qq", "channel_id": channel_id, "owner_user_id": owner,
+        "platform_user_id": sender_id, "message_id": msg_id,
+        "chat_type": chat_type, "chat_id": chat_id or None,
+        "text": text, "attachments": data.get("attachments") or [],
+        "emoji_refs": face_ids if face_only else [],
+    }):
+        return
     if chat_type == "c2c":
         # QQ 扫码连接只返回 Bot 凭据，不返回当前私聊用户的 openid。
         # 首次私聊作为 owner 身份来源，后续群聊权限再复用这个绑定结果。
@@ -639,18 +651,25 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
     try:
         from app.db import session as db_session
         from app.services.interactions import consume_action
+        from app.services.mcp_secret_inputs import consume_mcp_secret_action
         db_session.ensure_engine()
         if db_session._SessionLocal is None:
             return
         result = None
         async with db_session._SessionLocal() as db:
-            result = await consume_action(
-                db,
-                user_id=UUID(str(owner)),
-                prompt_id=event["prompt_id"],
-                token=event["token"],
-                event_id=event.get("event_id"),
+            user_id = UUID(str(owner))
+            result = await consume_mcp_secret_action(
+                db, user_id=user_id, prompt_id=event["prompt_id"], token=event["token"],
+                event_id=str(event.get("event_id") or ""), platform="qq", bot_id=channel_id,
+                platform_user_id=str(event["platform_user_id"]),
+                chat_type=str(event.get("chat_type") or "c2c"),
+                chat_id=event.get("chat_id"),
             )
+            if result is None:
+                result = await consume_action(
+                    db, user_id=user_id, prompt_id=event["prompt_id"], token=event["token"],
+                    event_id=event.get("event_id"),
+                )
     except (LookupError, ValueError):
         await _ack_qq_interaction(channel_id, interaction_id, code=3)
         # 交互回调的 event_id 不是 QQ 消息 msg_id，不能用于消息回复，否则会触发
@@ -683,6 +702,12 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
             channel_id, chat_type, target_id,
             "请直接发送你的回复，咕咕会继续处理。", None,
         )
+        return
+    if result.get("status") == "awaiting_secret":
+        await _qq_ack(channel_id, chat_type, target_id, "请发送凭据字段值；取消输入请发送“取消”。", None)
+        return
+    if result.get("status") == "cancelled" and result.get("prompt_id"):
+        await _qq_ack(channel_id, chat_type, target_id, "已取消凭据输入。", None)
         return
     await _qq_ack(
         channel_id,

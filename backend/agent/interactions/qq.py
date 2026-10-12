@@ -99,7 +99,7 @@ def format_text_fallback(prompt: dict[str, Any], *, platform: str | None = None)
     if options:
         choices = "\n".join(f"{index}. {label}" for index, label in enumerate(options, 1))
         instruction = "请在网页点击选项。"
-        if platform in {"wechat", "feishu"}:
+        if platform in {"qq", "wechat", "feishu", "telegram"}:
             instruction = "请直接回复选项序号或选项文字。"
         if prompt.get("native_keyboard"):
             instruction = "请点击下方按钮；若未显示按钮，可回复选项序号或选项文字。"
@@ -116,7 +116,11 @@ def format_text_fallback(prompt: dict[str, Any], *, platform: str | None = None)
         except Exception:
             base_url = ""
         link = f"{base_url}/?mcp_credential_prompt={int(prompt['prompt_id'])}" if base_url and prompt.get("prompt_id") else base_url
-        instruction = "请打开网页继续补全 MCP 凭据。"
+        instruction = (
+            "群聊不接收凭据。请在登录后的私密网页表单中填写，或改用 Bot 私聊。"
+            if prompt.get("group_secret_blocked")
+            else "请打开网页继续补全 MCP 凭据。"
+        )
         if link:
             instruction += f"\n{link}"
         return f"{title}\n{body}\n{instruction}"

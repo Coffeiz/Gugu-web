@@ -19,6 +19,7 @@
             @open-file="$emit('openFile', $event)" @download="$emit('download', $event)" @action-click="$emit('actionClick', $event)"
             @interaction-select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)"
             @secret-submit="(selectedMsg, values) => $emit('secretSubmit', selectedMsg, values)"
+            @secret-cancel="selectedMsg => $emit('secretCancel', selectedMsg)"
             @reference-click="$emit('referenceClick', $event)"
           />
         </div>
@@ -76,6 +77,7 @@ defineEmits<{
   actionClick: [e: MouseEvent]
   interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string }]
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
+  secretCancel: [msg: ChatMessage]
   referenceClick: [reference: ChatReference]
 }>()
 

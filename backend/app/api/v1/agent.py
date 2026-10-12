@@ -190,6 +190,27 @@ async def list_session_interactions(
     return {"items": await interactions.list_history(db, user_id=current_user.id, session_id=session_id)}
 
 
+@router.get("/interactions/{prompt_id}/session")
+async def get_interaction_session(
+    prompt_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """解析非授权 prompt 深链，只向其 owner 返回所属会话 ID。"""
+    prompt = await db.scalar(select(InteractionPrompt).where(
+        InteractionPrompt.id == prompt_id,
+        InteractionPrompt.user_id == current_user.id,
+    ))
+    if prompt is None:
+        raise HTTPException(404, "交互不存在")
+    schema = prompt.schema_json if isinstance(prompt.schema_json, dict) else {}
+    context = schema.get("context") if isinstance(schema.get("context"), dict) else {}
+    target = context.get("secret_target")
+    if not schema.get("secret_fields") or not isinstance(target, dict) or target.get("kind") != "mcp_credentials":
+        raise HTTPException(404, "交互不存在")
+    return {"session_id": prompt.session_id}
+
+
 @router.post("/interactions/{prompt_id}/respond")
 async def respond_interaction(
     prompt_id: int,
@@ -236,6 +257,26 @@ async def submit_secret_interaction(
     return await consume_mcp_secret_prompt(
         prompt, body.values, user=current_user, db=db,
     )
+
+
+@router.post("/interactions/{prompt_id}/secrets/cancel")
+async def cancel_secret_interaction(
+    prompt_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """登录态 Web 取消 secret prompt；历史 IM 群会话也允许走此私密入口。"""
+    prompt = await db.scalar(select(InteractionPrompt).where(
+        InteractionPrompt.id == prompt_id,
+        InteractionPrompt.user_id == current_user.id,
+    ))
+    if prompt is None:
+        raise HTTPException(404, "凭据输入不存在")
+    from app.services.mcp_secret_inputs import cancel_mcp_secret_prompt_web
+
+    result = await cancel_mcp_secret_prompt_web(db, prompt=prompt, user_id=current_user.id)
+    await db.commit()
+    return result
 
 
 @router.post("/interactions/{prompt_id}/resume")

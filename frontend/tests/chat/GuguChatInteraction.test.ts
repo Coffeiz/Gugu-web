@@ -67,6 +67,31 @@ describe('GuguChatInteraction', () => {
     expect(mounted.host.querySelector('.interaction-resolved')?.textContent).toContain('chatUi.confirmationSubmitting')
   })
 
+  it('MCP 密码表单不展示通用交互 token，并提供专用取消事件', async () => {
+    const msg = interactionMessage([
+      { id: 'input_credentials', label: '输入凭据', token: 'input-token' },
+      { id: 'cancel', label: '取消', token: 'cancel-token' },
+    ])
+    msg.interaction!.secretFields = [{ name: 'key', label: '服务 Key', type: 'secret' }]
+    const onSecretCancel = vi.fn()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(defineComponent({
+      setup: () => () => h(GuguChatInteraction, { msg, onSecretCancel }),
+    }))
+    app.mount(host)
+    mounted = { app, host, onSelect: vi.fn() }
+
+    expect(host.querySelector('.interaction-actions')).toBeNull()
+    expect(host.querySelector('input[type="password"]')).not.toBeNull()
+    const cancel = host.querySelector('.interaction-secret-cancel') as HTMLButtonElement
+    cancel.click()
+    await Promise.resolve()
+
+    expect(onSecretCancel).toHaveBeenCalledWith(msg)
+    expect(cancel.disabled).toBe(true)
+  })
+
   it('长选项的静态布局契约允许收缩、换行并限制在气泡宽度内', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/components/common/gugu-chat/GuguChatInteraction.vue'), 'utf8')
     const style = source.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? ''

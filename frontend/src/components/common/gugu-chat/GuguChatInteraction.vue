@@ -20,6 +20,10 @@
                     :disabled="resolved || submitting || expired || !secretsReady">
         {{ t('chatUi.submitSecretFields') }}
       </ActionButton>
+      <ActionButton class="interaction-secret-cancel" fit type="button"
+                    :disabled="resolved || submitting || expired" @click="cancelSecrets">
+        {{ t('common.actions.cancel') }}
+      </ActionButton>
     </form>
     <div v-if="customInputActive" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
     <div v-if="resolved && msg.interaction?.responseText" class="interaction-response">
@@ -61,6 +65,7 @@ const isPausedConfirmation = computed(() => Boolean(
   || (props.msg.interaction?.kind === 'confirm' && props.msg.interaction?.toolCallId),
 ))
 const displayOptions = computed(() => (props.msg.interaction?.options || [])
+  .filter(() => !secretFields.value.length)
   .filter(option => !(option.id === CUSTOM_REPLY_OPTION_ID && customInputActive.value))
   .map(option => option.id === CUSTOM_REPLY_OPTION_ID
     ? { ...option, label: t('chatUi.customReply') }
@@ -73,6 +78,7 @@ const secretsReady = computed(() => secretFields.value.length > 0
 const emit = defineEmits<{
   select: [msg: ChatMessage, option: { id: string; label: string; token: string }]
   secretSubmit: [msg: ChatMessage, values: Record<string, string>]
+  secretCancel: [msg: ChatMessage]
 }>()
 function submitSecrets() {
   if (!secretsReady.value || resolved.value || submitting.value || expired.value) return
@@ -81,6 +87,12 @@ function submitSecrets() {
   emit('secretSubmit', props.msg, Object.fromEntries(
     secretFields.value.map(field => [field.name, secretValues.value[field.name] || '']),
   ))
+}
+function cancelSecrets() {
+  if (resolved.value || submitting.value || expired.value) return
+  submitting.value = true
+  if (props.msg.interaction) props.msg.interaction.submitting = true
+  emit('secretCancel', props.msg)
 }
 function selectOption(option: { id: string; label: string; token: string }) {
   if (resolved.value || submitting.value || expired.value) return
@@ -109,8 +121,9 @@ watch(() => props.msg.interaction?.resolved, (value) => {
   resolved.value = Boolean(value)
   scheduleExpiry()
 })
-watch(() => props.msg.interaction?.submitting, (value) => {
+watch(() => props.msg.interaction?.submitting, (value, previous) => {
   submitting.value = Boolean(value)
+  if (previous && !value) secretValues.value = {}
 })
 watch(() => props.msg.interaction?.resolved, (value) => {
   if (value) secretValues.value = {}

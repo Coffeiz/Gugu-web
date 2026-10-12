@@ -629,6 +629,140 @@ async def test_im_secret_cancel_is_idempotent_and_expiry_cleanup_removes_staging
     )) is None
 
 
+async def test_im_secret_input_is_intercepted_before_history_and_group_scope_is_refused(db, user_a, monkeypatch):
+    from app.models import ConversationMessage, McpSecretInput
+    from app.services.interactions import create_agent_prompt, list_history
+    from app.services.mcp_secret_inputs import McpSecretBinding, start_mcp_secret_input
+    from agent.im.interaction_text import consume_mcp_secret_payload
+    import agent.im.replies as replies
+
+    server = UserMcpServer(
+        user_id=user_a.id, scope="user", name="preflight_secret",
+        endpoint="https://m.example.com/mcp", credential_slots=[
+            {"id": "key", "label": "Access key", "target": "header", "name": "X-Key"},
+        ],
+    )
+    private_session = ConversationSession(
+        user_id=user_a.id, title="private", source="qq", bot_id="bot-a",
+        platform_user_id="owner-a", chat_type="c2c",
+    )
+    group_session = ConversationSession(
+        user_id=user_a.id, title="group", source="qq", bot_id="bot-a",
+        chat_id="group-a", platform_user_id="member-a", chat_type="group",
+    )
+    db.add_all([server, private_session, group_session])
+    await db.commit()
+    secret_payload = {
+        "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+        "secret_fields": [{"name": "key", "label": "Access key", "type": "secret"}],
+        "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+    }
+    private_prompt, _ = await create_agent_prompt(
+        user_id=user_a.id, session_id=private_session.id, tool_call_id="private-secret",
+        tool_name="manage_mcp_servers", payload=secret_payload,
+    )
+    group_prompt, group_actions = await create_agent_prompt(
+        user_id=user_a.id, session_id=group_session.id, tool_call_id="group-secret",
+        tool_name="manage_mcp_servers", payload=secret_payload,
+    )
+    await db.commit()
+    assert group_actions == []
+    assert await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == group_prompt.id)) is None
+
+    binding = McpSecretBinding(
+        prompt_id=private_prompt.id, user_id=user_a.id, platform="qq", bot_id="bot-a",
+        chat_type="c2c", chat_id=None, platform_user_id="owner-a",
+    )
+    await start_mcp_secret_input(db, binding=binding, event_id="start-private")
+    await db.commit()
+    sent: list[str] = []
+
+    async def capture_reply(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", capture_reply)
+    assert await consume_mcp_secret_payload({
+        "platform": "qq", "channel_id": "bot-a", "owner_user_id": str(user_a.id),
+        "platform_user_id": "owner-a", "chat_type": "c2c", "message_id": "secret-event",
+        "text": "private-value-123", "attachments": [],
+    }) is True
+    private_prompt = await db.get(InteractionPrompt, private_prompt.id)
+    stage = await db.scalar(select(McpSecretInput).where(McpSecretInput.prompt_id == private_prompt.id))
+    messages = (await db.scalars(select(ConversationMessage))).all()
+    assert private_prompt.status == "resolved"
+    assert stage.status == "completed" and stage.encrypted_payload == ""
+    assert messages == []
+    assert "private-value-123" not in "".join(sent)
+    assert "private-value-123" not in json.dumps(await list_history(
+        db, user_id=user_a.id, session_id=private_session.id,
+    ))
+
+    assert await consume_mcp_secret_payload({
+        "platform": "qq", "channel_id": "bot-a", "owner_user_id": str(user_a.id),
+        "platform_user_id": "member-a", "chat_type": "group", "chat_id": "group-a",
+        "message_id": "group-event", "text": "maybe-secret", "attachments": [],
+    }) is True
+    assert "群聊不接收 MCP 凭据" in sent[-1]
+
+
+async def test_im_secret_callback_is_bound_to_private_actor_and_web_can_cancel_group_prompt(db, user_a):
+    from app.services.interactions import create_agent_prompt, list_history
+    from app.services.mcp_secret_inputs import consume_mcp_secret_action, cancel_mcp_secret_prompt_web
+
+    server = UserMcpServer(
+        user_id=user_a.id, scope="user", name="callback_secret", endpoint="https://m.example.com",
+        credential_slots=[{"id": "key", "label": "Key", "target": "header", "name": "X-Key"}],
+    )
+    private_session = ConversationSession(
+        user_id=user_a.id, title="private", source="feishu", bot_id="bot-feishu",
+        platform_user_id="owner-open-id", chat_type="c2c",
+    )
+    group_session = ConversationSession(
+        user_id=user_a.id, title="group", source="feishu", bot_id="bot-feishu",
+        chat_id="group-open-id", platform_user_id="member-open-id", chat_type="group",
+    )
+    db.add_all([server, private_session, group_session])
+    await db.commit()
+    secret_payload = {
+        "_interaction": "ask_user", "kind": "form", "title": "补全凭据",
+        "secret_fields": [{"name": "key", "label": "Key", "type": "secret"}],
+        "secret_target": {"kind": "mcp_credentials", "server_id": str(server.id)},
+    }
+    private_prompt, actions = await create_agent_prompt(
+        user_id=user_a.id, session_id=private_session.id, tool_call_id="private-callback",
+        tool_name="manage_mcp_servers", payload=secret_payload,
+    )
+    group_prompt, group_actions = await create_agent_prompt(
+        user_id=user_a.id, session_id=group_session.id, tool_call_id="group-web-cancel",
+        tool_name="manage_mcp_servers", payload=secret_payload,
+    )
+    await db.commit()
+    assert [item["id"] for item in actions] == ["input_credentials", "cancel"]
+    assert group_actions == []
+    with pytest.raises(HTTPException) as error:
+        await consume_mcp_secret_action(
+            db, user_id=user_a.id, prompt_id=private_prompt.id, token=actions[0]["token"],
+            event_id="wrong-actor", platform="feishu", bot_id="bot-feishu",
+            platform_user_id="other-open-id", chat_type="c2c", chat_id=None,
+        )
+    assert error.value.status_code == 404
+
+    started = await consume_mcp_secret_action(
+        db, user_id=user_a.id, prompt_id=private_prompt.id, token=actions[0]["token"],
+        event_id="right-actor", platform="feishu", bot_id="bot-feishu",
+        platform_user_id="owner-open-id", chat_type="c2c", chat_id=None,
+    )
+    assert started["status"] == "awaiting_secret"
+    group_history = await list_history(db, user_id=user_a.id, session_id=group_session.id)
+    assert group_history[0]["secret_fields"][0]["name"] == "key"
+    assert group_history[0]["options"] == []
+    cancelled = await cancel_mcp_secret_prompt_web(db, prompt=group_prompt, user_id=user_a.id)
+    await db.commit()
+    assert cancelled["status"] == "cancelled"
+    assert (await db.get(InteractionPrompt, group_prompt.id)).status == "resolved"
+
+
 async def test_endpoint_credentials_are_encrypted_and_masked(db, user_a):
     created = await api.create_server(
         api.McpServerCreate(
