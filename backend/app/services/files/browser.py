@@ -375,7 +375,8 @@ async def count_personal_library_items(db: AsyncSession, user_id: int) -> int:
         select(func.count(File.id)).where(
             File.user_id == user_id,
             File.space == "personal",
-            File.folder_id.is_(None),
+            _file_scope_key_column() == 0,
+            func.coalesce(File.folder_id, literal_column("0")) == 0,
             File.deleted_at.is_(None),
         )
     )
@@ -384,7 +385,8 @@ async def count_personal_library_items(db: AsyncSession, user_id: int) -> int:
             Folder.user_id == user_id,
             Folder.project_id.is_(None),
             Folder.workspace_directory_id.is_(None),
-            Folder.parent_id.is_(None),
+            func.coalesce(Folder.project_id, Folder.workspace_directory_id, literal_column("0")) == 0,
+            func.coalesce(Folder.parent_id, literal_column("0")) == 0,
             Folder.deleted_at.is_(None),
         )
     )

@@ -111,9 +111,9 @@ async def count_trash_root_items(db: AsyncSession, user_id) -> int:
         )
     )
     folder_count = await db.scalar(
-        select(func.count()).select_from(
-            top_level_deleted_folders_stmt(user_id).order_by(None).subquery()
-        )
+        top_level_deleted_folders_stmt(user_id)
+        .with_only_columns(func.count(Folder.id))
+        .order_by(None)
     )
     return int(file_count or 0) + int(folder_count or 0)
 
