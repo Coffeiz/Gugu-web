@@ -168,6 +168,8 @@ async function refreshSource(resumePlayback: boolean): Promise<boolean> {
       await nextTick()
       if (!mounted || generation !== sourceGeneration || !videoRef.value) return false
       await waitForMetadata(videoRef.value)
+      // 等待媒体元数据期间可能已切换到另一条视频，不能把旧视频进度/播放状态应用到新源。
+      if (!mounted || generation !== sourceGeneration || !videoRef.value) return false
       if (Number.isFinite(position)) videoRef.value.currentTime = position
       sourceRefreshAttempted = false
       if (resumePlayback) await videoRef.value.play()

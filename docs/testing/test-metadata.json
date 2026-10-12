@@ -60,7 +60,7 @@
     "layer": "L1",
     "owner": "frontend/components/common/viewers",
     "productionEntry": "frontend/src/components/common/viewers/VideoViewer.vue",
-    "keyBehavior": "播放或加载过期签名视频时刷新地址并恢复；主动暂停中断 play 请求不会变成播放器错误",
+    "keyBehavior": "播放或加载过期签名视频时刷新地址并恢复；切源竞态不串用播放进度；主动暂停中断 play 请求不会变成播放器错误",
     "ci": "frontend-test"
   },
   "frontend/tests/design/consoleBanner.test.ts": {
