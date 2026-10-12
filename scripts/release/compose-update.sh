@@ -71,7 +71,8 @@ fi
 
 PREVIOUS_IMAGES=$("${COMPOSE[@]}" config --images)
 SANDBOXD_WAS_RUNNING=false
-if "${COMPOSE[@]}" ps --status running --services | grep -qx sandboxd; then
+RUNNING_SERVICES=$("${COMPOSE[@]}" ps --status running --services)
+if grep -qx sandboxd <<<"$RUNNING_SERVICES"; then
   SANDBOXD_WAS_RUNNING=true
 fi
 
@@ -114,7 +115,8 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 fi
 printf '%s\n' "$PREVIOUS_IMAGES" > "$BACKUP_DIR/previous-images.txt"
 
-if "${COMPOSE[@]}" ps --status running --services | grep -qx "$DATABASE_SERVICE"; then
+RUNNING_SERVICES=$("${COMPOSE[@]}" ps --status running --services)
+if grep -qx "$DATABASE_SERVICE" <<<"$RUNNING_SERVICES"; then
   if [[ "$DATABASE_SERVICE" == postgres ]]; then
     [[ -n "${GUGU_DB_PASSWORD:-}" ]] || { echo '外置 PostgreSQL 更新前必须设置 GUGU_DB_PASSWORD' >&2; exit 1; }
     "${COMPOSE[@]}" exec -T postgres pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_DIR/postgres.sql"
