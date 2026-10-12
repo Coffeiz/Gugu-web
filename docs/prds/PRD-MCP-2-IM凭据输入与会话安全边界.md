@@ -1,6 +1,6 @@
 # PRD-MCP-2：IM 凭据输入与会话安全边界
 
-> 状态：待实施
+> 状态：实施中
 > 创建：2026-10-11
 > 关联模块：`backend/agent/im/`、`backend/agent/interactions/`、`backend/agent/tools/mcp.py`、`backend/app/services/interactions.py`、`backend/app/services/mcp_credentials.py`、`backend/app/api/v1/agent.py`、`frontend/src/components/common/gugu-chat/`
 > 前置能力：`docs/prds/PRD-MCP-1-MCP工具接入.md` 中的用户级 MCP server、凭据槽位和 secret prompt
@@ -138,14 +138,35 @@ Web 与 IM 最终都调用 `mcp_credentials` 的同一业务提交服务：验�
 - migration 必须能清除过期/孤立的 staging 数据；降级仅删除新增暂存结构，不影响现有 MCP server 与已保存凭据。
 - 若实现评估发现无法以可维护方式建立密文暂存，应将 IM 直输收窄为单字段 prompt；多字段仍走 Web 表单，并在实施前更新本 PRD，不得退化为明文暂存。
 
+### 5.2 Phase 0 现状核对与实施决策（2026-10-12）
+
+代码核对结果：
+
+- `manage_mcp_servers` 已创建带 `secret_fields` 与 `secret_target` 的 `ask_user` prompt；`create_agent_prompt` 将字段定义和 MCP server 目标保存在 `InteractionPrompt.schema_json`，不包含凭据值。prompt 创建时会取消同一 session 里原有的 active prompt。
+- Web 已有独立 `POST /agent/interactions/{prompt_id}/secrets`。API 以当前登录用户查询 prompt，`consume_mcp_secret_prompt` 再校验 prompt 状态、字段集合与用户拥有的 MCP server，使用既有 envelope 加密更新 credential slots，并只写入不含值的完成结果。当前没有按群聊类型拒绝 Web 提交的检查。
+- IM 交互渲染遇到 `secret_fields` 时只发送网页入口提示；QQ/飞书按钮和 IM 文本选项目前统一走普通 `consume_action` / `consume_text_choice`，会按普通选项语义结束 prompt，不能直接复用为凭据输入状态转换。
+- `dispatch_im_message` 在普通持久化、被动群记录、快捷命令和 Agent 执行前消费文本选项，但媒体接入发生得更早。凭据拦截必须在媒体副作用及所有普通消息路径之前完成；附件消息不能作为凭据字段输入。
+- `ConversationSession` 已保存 `source`、`bot_id`、`chat_id`、`chat_type`，私聊会保存 `platform_user_id`，群会话则以 `chat_id` 标识且不保存群成员身份。IM 回调可提供平台操作者身份，但现有 QQ/飞书通用动作消费路径没有将平台操作者和会话作用域一并校验到 prompt。
+- 现有 prompt 和 action 有有效期及单次 token；没有凭据 staging 模型或过期清理任务。会话删除可通过 prompt 外键级联清理，但 MCP server 目标目前只存在 JSON context 中，不具备数据库级联关系。
+- Web 密码表单及 secret endpoint 已独立于普通聊天发送；前端没有消费 `/` 上的 `mcp_credential_prompt` 查询参数的逻辑，因此 IM 链接当前不能保证定位并打开对应 prompt。
+
+实施决策：
+
+1. 增加一张以 `prompt_id` 唯一关联的密文 staging 表，使用现有 envelope 加密完整字段 map；表中只放服务端校验所需的 user/server/session 与 IM 作用域绑定、状态、字段进度和过期时间。正式凭据只在字段齐备后一次写入。staging 对 prompt 和 MCP server 建立级联外键；另提供可重复执行的过期/孤儿清理服务，由现有 Worker 周期任务调用，并在 prompt 取消、替换、server 删除时同事务清除。
+2. 由共享 secret 状态服务负责启动、逐字段暂存、取消、过期、最终提交和幂等消费；使用数据库行锁与条件状态更新约束多 Worker/重放竞争。Web 即时提交和 IM 多字段暂存最终调用同一个 MCP 凭据提交函数，并由入口拥有事务提交权，确保凭据更新、prompt 终态和 staging 清理同事务完成。
+3. 只允许 prompt 创建时绑定的 owner 私聊启动/消费 IM 输入。绑定使用 prompt 对应 session 的平台、Bot、私聊用户、chat 类型和 session 标识；群聊在创建 IM 输入态之前拒绝。平台 callback 需验证动作操作者与原始私聊作用域，文本降级需在普通选项消费前走同一状态服务。附件/非文本事件不作为字段值。
+4. Web 允许直接提交 pending/awaiting 的 secret prompt，不按历史 session 的 `chat_type` 拒绝；Web 取消与 IM 取消复用同一取消状态转换。IM 群消息只提供安全的 Web/私聊说明，不创建可消费的 IM staging。
+5. 恢复原 Run 时只回填固定的成功/取消/失败结果，不包含字段值；凭据值不得出现在 prompt schema、普通消息、Web genstream/SSE 或可见/诊断日志。错误只返回固定结果码/文案。
+6. 深链只携带非授权的 prompt ID；前端需在登录并载入会话交互后定位所属 Web/IM session 并打开相应会话，真实授权仍由登录态及 prompt/server ownership 校验完成。
+
 ## 6. 完整实施 TODO
 
 ### Phase 0：现状与边界核对
 
-- [ ] `MCP2-000` 追踪当前 `secret_fields` prompt 从工具创建、IM 输出、Web 渲染、消费、Runner 恢复到会话落库的完整链路。
-- [ ] `MCP2-001` 核对各 IM adapter 的一对一/群聊标识和消息回调能力，定义共用的归一化字段；确认群事件在任何 secret state 写入前被拒绝。
-- [ ] `MCP2-002` 选择密文 staging 的最小实现和 TTL 清理方式；评估多 Worker、Redis/DB 可用性、事务边界和并发锁，不引入进程本地单例作为唯一状态。
-- [ ] `MCP2-003` 确认“取消”回调和 Web 群会话 secret submit 的授权条件，不改变现有 MCP server 归属边界。
+- [x] `MCP2-000` 追踪当前 `secret_fields` prompt 从工具创建、IM 输出、Web 渲染、消费、Runner 恢复到会话落库的完整链路。
+- [x] `MCP2-001` 核对各 IM adapter 的一对一/群聊标识和消息回调能力，定义共用的归一化字段；确认群事件在任何 secret state 写入前被拒绝。
+- [x] `MCP2-002` 选择密文 staging 的最小实现和 TTL 清理方式；评估多 Worker、Redis/DB 可用性、事务边界和并发锁，不引入进程本地单例作为唯一状态。
+- [x] `MCP2-003` 确认“取消”回调和 Web 群会话 secret submit 的授权条件，不改变现有 MCP server 归属边界。
 
 ### Phase 1：共享 secret 状态机
 
